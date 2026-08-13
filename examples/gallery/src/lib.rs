@@ -15,13 +15,8 @@ pub fn build(ui: &Ui) -> Result<()> {
     root.set_spacing(12.0);
     root.set_padding(Padding::all(24.0));
 
-    // Navbar / Breadcrumbs / Tabs / Dock を 1 つの画面遷移として連動させる。
+    // Tabs を gallery のカテゴリ切り替えに使う。
     let sections = NavItem::list(["ホーム", "ウィジェット", "ナビゲーション"]);
-    let active_section = Rc::new(Cell::new(0usize));
-
-    let navbar = ui.navbar("miui")?;
-    navbar.set_items(&sections);
-    root.append(&navbar);
 
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["miui", "ホーム"]));
@@ -35,9 +30,8 @@ pub fn build(ui: &Ui) -> Result<()> {
     home_pane.set_spacing(12.0);
     home_pane.set_padding(Padding::all(12.0));
     home_pane.append(&ui.label("miui ウィジェットギャラリー")?);
-    home_pane
-        .append(&ui.label("上のナビバー、下のドック、パンくず、タブを使って画面を移動できます。")?);
-    home_pane.append(&ui.label("各画面は同じ API で組み立てられ、選択状態も連動します。")?);
+    home_pane.append(&ui.label("タブとパンくずを使って画面を移動できます。")?);
+    home_pane.append(&ui.label("カテゴリとパンくずの選択状態も連動します。")?);
     home_pane.append(&ui.link("miui のリポジトリ", "https://github.com/mokuichi147/miui")?);
 
     // --- 基本ウィジェット -------------------------------------------------
@@ -134,6 +128,13 @@ pub fn build(ui: &Ui) -> Result<()> {
         .append(&ui.label("メニューとページ送りを操作すると、パンくずも現在位置を表示します。")?);
 
     let menu_items = NavItem::list(["受信箱", "送信済み", "アーカイブ"]);
+
+    // Navbar と Dock はカテゴリ切り替えと混同しないよう、詳細画面内で
+    // 個別のナビゲーションウィジェットとして表示する。
+    let navbar = ui.navbar("フォルダ")?;
+    navbar.set_items(&menu_items);
+    navigation_pane.append(&navbar);
+
     let menu = ui.menu()?;
     menu.set_items(&menu_items);
     menu.set_selected(0);
@@ -147,67 +148,26 @@ pub fn build(ui: &Ui) -> Result<()> {
     navigation_pane.append(&pager);
     navigation_pane.append(&pager_status);
 
-    // 中央の Tabs がこの gallery の主画面。Navbar と Dock からも切り替える。
+    let dock_items = NavItem::list(["前へ", "再読み込み", "次へ"]);
+    let dock = ui.dock()?;
+    dock.set_items(&dock_items);
+    navigation_pane.append(&dock);
+
+    // 中央の Tabs がこの gallery のカテゴリ切り替えを担う。
     let tabs = ui.tabs()?;
     tabs.add_tab("ホーム", &home_pane);
     tabs.add_tab("ウィジェット", &controls_pane);
     tabs.add_tab("ナビゲーション", &navigation_pane);
     root.append(&tabs);
 
-    // ドックはアプリの主画面と同じ項目を持つため、別の入口として使える。
-    let dock = ui.dock()?;
-    dock.set_items(&sections);
-    root.append(&dock);
-
-    // Navbar / Tabs / Dock のいずれから選んでも同じルートへ同期する。
-    navbar.on_select({
-        let tabs = tabs.clone();
-        let crumbs = crumbs.clone();
-        let route_status = route_status.clone();
-        let active_section = active_section.clone();
-        let sections = sections.clone();
-        move |index| {
-            let Some(section) = sections.get(index) else {
-                return;
-            };
-            active_section.set(index);
-            tabs.set_selected(index);
-            crumbs.set_items(&[NavItem::new("miui"), section.clone()]);
-            route_status.set_text(&format!("ルート: {}", section.label));
-        }
-    });
-
     tabs.on_select({
-        let navbar = navbar.clone();
         let crumbs = crumbs.clone();
         let route_status = route_status.clone();
-        let active_section = active_section.clone();
         let sections = sections.clone();
         move |index| {
             let Some(section) = sections.get(index) else {
                 return;
             };
-            active_section.set(index);
-            navbar.set_selected(index);
-            crumbs.set_items(&[NavItem::new("miui"), section.clone()]);
-            route_status.set_text(&format!("ルート: {}", section.label));
-        }
-    });
-
-    dock.on_select({
-        let navbar = navbar.clone();
-        let tabs = tabs.clone();
-        let crumbs = crumbs.clone();
-        let route_status = route_status.clone();
-        let active_section = active_section.clone();
-        let sections = sections.clone();
-        move |index| {
-            let Some(section) = sections.get(index) else {
-                return;
-            };
-            active_section.set(index);
-            navbar.set_selected(index);
-            tabs.set_selected(index);
             crumbs.set_items(&[NavItem::new("miui"), section.clone()]);
             route_status.set_text(&format!("ルート: {}", section.label));
         }
@@ -215,12 +175,51 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     // パンくずの上位階層を選ぶと、その階層の画面へ戻る。
     crumbs.on_select({
-        let navbar = navbar.clone();
-        let active_section = active_section.clone();
+        let tabs = tabs.clone();
         move |index| {
-            if index <= 1 {
-                navbar.select(if index == 0 { 0 } else { active_section.get() });
+            if index == 0 {
+                tabs.select(0);
+            } else if index == 1 {
+                tabs.select(tabs.selected().unwrap_or(0));
             }
+        }
+    });
+
+    navbar.on_select({
+        let crumbs = crumbs.clone();
+        let nav_status = nav_status.clone();
+        let route_status = route_status.clone();
+        let menu_items = menu_items.clone();
+        move |index| {
+            let Some(item) = menu_items.get(index) else {
+                return;
+            };
+            nav_status.set_text(&format!("ナビバー: {}", item.label));
+            route_status.set_text(&format!("ルート: ナビゲーション / {}", item.label));
+            crumbs.set_items(&[
+                NavItem::new("miui"),
+                NavItem::new("ナビゲーション"),
+                item.clone(),
+            ]);
+        }
+    });
+
+    dock.on_select({
+        let crumbs = crumbs.clone();
+        let nav_status = nav_status.clone();
+        let route_status = route_status.clone();
+        let dock_items = dock_items.clone();
+        move |index| {
+            let Some(item) = dock_items.get(index) else {
+                return;
+            };
+            nav_status.set_text(&format!("ドック: {}", item.label));
+            route_status.set_text(&format!("ルート: ナビゲーション / {}", item.label));
+            crumbs.set_items(&[
+                NavItem::new("miui"),
+                NavItem::new("ナビゲーション"),
+                item.clone(),
+            ]);
         }
     });
 
@@ -267,9 +266,7 @@ pub fn build(ui: &Ui) -> Result<()> {
         }
     });
 
-    navbar.set_selected(0);
     tabs.set_selected(0);
-    dock.set_selected(0);
 
     window.set_child(&root);
     window.show();
