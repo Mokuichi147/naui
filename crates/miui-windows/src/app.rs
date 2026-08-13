@@ -6,7 +6,7 @@
 
 use std::ptr::NonNull;
 
-use miui_core::{Error, Result};
+use miui_core::{Error, Result, Theme};
 use windows_core::{
     Array, ComObject, ComObjectInner, ComObjectInterface, IInspectable, IInspectable_Vtbl,
     IUnknown, IUnknownImpl, Interface, InterfaceRef, Ref, GUID, HRESULT, HSTRING,
@@ -18,8 +18,8 @@ use winui3::Microsoft::UI::Xaml::Markup::{
 };
 use winui3::Microsoft::UI::Xaml::XamlTypeInfo::XamlControlsXamlMetaDataProvider;
 use winui3::Microsoft::UI::Xaml::{
-    Application, ApplicationTheme, IApplicationFactory, IApplicationOverrides,
-    IApplicationOverrides_Impl, IApplicationOverrides_Vtbl, LaunchActivatedEventArgs,
+    Application, IApplicationFactory, IApplicationOverrides, IApplicationOverrides_Impl,
+    IApplicationOverrides_Vtbl, LaunchActivatedEventArgs,
 };
 use winui3::{ChildClass, Compose, CreateInstanceFn};
 
@@ -33,6 +33,7 @@ where
     provider: XamlControlsXamlMetaDataProvider,
     state: &'static UiThreadCell<Option<F>>,
     failure: &'static UiThreadCell<Option<Error>>,
+    theme: Theme,
 }
 
 impl<F> IApplicationOverrides_Impl for AppImpl<F>
@@ -41,32 +42,23 @@ where
 {
     fn OnLaunched(&self, _args: Ref<'_, LaunchActivatedEventArgs>) -> windows_core::Result<()> {
         let current = Application::Current()?;
-        current.SetRequestedTheme(ApplicationTheme::Light)?;
+        // Application.RequestedTheme は触らない。未指定時は Windows の設定に
+        // 追従し、実行中の切り替えは各ウィンドウのルート要素で行う。
         let resources = XamlReader::Load(&HSTRING::from(
             r##"<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
                 <Style TargetType="Button">
-                    <Setter Property="Background" Value="#0078D4"/>
-                    <Setter Property="Foreground" Value="White"/>
-                    <Setter Property="BorderBrush" Value="#0078D4"/>
                     <Setter Property="BorderThickness" Value="0"/>
                     <Setter Property="CornerRadius" Value="4"/>
                     <Setter Property="Padding" Value="16,8"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
                 </Style>
                 <Style TargetType="CheckBox">
-                    <Setter Property="Foreground" Value="#1A1A1A"/>
                     <Setter Property="Padding" Value="4,6"/>
                 </Style>
                 <Style TargetType="TextBox">
-                    <Setter Property="Background" Value="#FFFFFF"/>
-                    <Setter Property="Foreground" Value="#1A1A1A"/>
-                    <Setter Property="BorderBrush" Value="#8A8886"/>
                     <Setter Property="BorderThickness" Value="1"/>
                     <Setter Property="CornerRadius" Value="4"/>
                     <Setter Property="Padding" Value="12,8"/>
-                </Style>
-                <Style TargetType="Slider">
-                    <Setter Property="Foreground" Value="#0078D4"/>
                 </Style>
             </ResourceDictionary>"##,
         ))?
@@ -78,7 +70,7 @@ where
         let Some(build) = self.this.state.with_mut_cross_thread(|build| build.take()) else {
             return Ok(());
         };
-        let ui = Ui::new();
+        let ui = Ui::new(self.this.theme);
         if let Err(error) = build(&ui) {
             self.this
                 .failure
@@ -314,6 +306,7 @@ where
 pub(crate) fn compose<F>(
     state: &'static UiThreadCell<Option<F>>,
     failure: &'static UiThreadCell<Option<Error>>,
+    theme: Theme,
 ) -> windows_core::Result<Application>
 where
     F: FnOnce(&Ui) -> Result<()> + 'static,
@@ -324,5 +317,6 @@ where
         provider,
         state,
         failure,
+        theme,
     })
 }

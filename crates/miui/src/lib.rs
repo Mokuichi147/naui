@@ -20,10 +20,10 @@
 //! 4 バックエンドで同じ形にそろえてある。
 //!
 //! ```no_run
-//! use miui::{Orientation, Padding, Settings};
+//! use miui::{Orientation, Padding, Settings, Theme};
 //!
 //! fn main() -> miui::Result<()> {
-//!     miui::run(Settings::new("counter"), |ui| {
+//!     miui::run(Settings::new("counter").theme(Theme::System), |ui| {
 //!         let window = ui.window("counter", 320.0, 180.0)?;
 //!         let stack = ui.stack(Orientation::Vertical)?;
 //!         stack.set_spacing(12.0);
@@ -49,6 +49,9 @@
 //!     })
 //! }
 //! ```
+//!
+//! `Theme::System` が既定で、固定テーマは `Settings::theme(Theme::Dark)` のように
+//! 指定する。実行中は `ui.set_theme(Theme::Light)` などで切り替えられる。
 //!
 //! ## ナビゲーション
 //!
@@ -91,7 +94,7 @@
 
 #![forbid(unsafe_code)]
 
-pub use miui_core::{Align, Error, NavItem, Orientation, Padding, Result, Settings};
+pub use miui_core::{Align, Error, NavItem, Orientation, Padding, Result, Settings, Theme};
 
 #[cfg(target_arch = "wasm32")]
 pub use miui_web::{
@@ -136,6 +139,11 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     window.show();
     window.close();
     let _: bool = window.is_visible();
+    window.set_theme(Theme::Dark)?;
+
+    let _: Theme = ui.theme();
+    ui.set_theme(Theme::Dark)?;
+    ui.set_theme(Theme::System)?;
 
     let stack: Stack = ui.stack(Orientation::Vertical)?;
     stack.set_spacing(1.0);

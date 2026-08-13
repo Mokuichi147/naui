@@ -6,7 +6,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use miui::{NavItem, Orientation, Padding, Result, Settings, Ui};
+use miui::{NavItem, Orientation, Padding, Result, Settings, Theme, Ui};
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
@@ -33,6 +33,31 @@ pub fn build(ui: &Ui) -> Result<()> {
     home_pane.append(&ui.label("タブとパンくずを使って画面を移動できます。")?);
     home_pane.append(&ui.label("カテゴリとパンくずの選択状態も連動します。")?);
     home_pane.append(&ui.link("miui のリポジトリ", "https://github.com/mokuichi147/miui")?);
+
+    let theme_status = ui.label(&format!("テーマ: {}", theme_name(ui.theme())))?;
+    let theme_selector = ui.navbar("テーマ")?;
+    theme_selector.set_items(&NavItem::list(["システム", "ライト", "ダーク"]));
+    theme_selector.set_selected(theme_index(ui.theme()));
+    theme_selector.on_select({
+        let window = window.clone();
+        let theme_status = theme_status.clone();
+        move |index| {
+            let Some((name, theme)) = [
+                ("システム", Theme::System),
+                ("ライト", Theme::Light),
+                ("ダーク", Theme::Dark),
+            ]
+            .get(index)
+            .copied() else {
+                return;
+            };
+            if window.set_theme(theme).is_ok() {
+                theme_status.set_text(&format!("テーマ: {name}"));
+            }
+        }
+    });
+    home_pane.append(&theme_selector);
+    home_pane.append(&theme_status);
 
     // --- 基本ウィジェット -------------------------------------------------
     let controls_pane = ui.stack(Orientation::Vertical)?;
@@ -276,6 +301,22 @@ pub fn build(ui: &Ui) -> Result<()> {
 /// ネイティブ / Web 共通の起動処理。
 pub fn start() -> Result<()> {
     miui::run(Settings::new("miui gallery"), build)
+}
+
+fn theme_name(theme: Theme) -> &'static str {
+    match theme {
+        Theme::System => "システム",
+        Theme::Light => "ライト",
+        Theme::Dark => "ダーク",
+    }
+}
+
+fn theme_index(theme: Theme) -> usize {
+    match theme {
+        Theme::System => 0,
+        Theme::Light => 1,
+        Theme::Dark => 2,
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

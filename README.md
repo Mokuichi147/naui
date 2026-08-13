@@ -72,6 +72,27 @@ fn main() -> miui::Result<()> {
 }
 ```
 
+### テーマ
+
+テーマは `Theme::System` (OS / ブラウザの設定に追従) が標準です。起動時に固定する場合は
+`Settings::theme` を使い、実行中は `Ui::set_theme` で切り替えられます。
+
+```rust
+use miui::{Settings, Theme};
+
+let settings = Settings::new("counter").theme(Theme::System);
+miui::run(settings, |ui| {
+    // 設定画面などのイベントからも呼べます。
+    ui.set_theme(Theme::Dark)?;
+    // ui.set_theme(Theme::Light)?;
+    // ui.set_theme(Theme::System)?;
+    Ok(())
+})?;
+```
+
+`System` は macOS / Windows ではネイティブ UI のシステムテーマ、Web では
+`prefers-color-scheme` に対応するブラウザの配色を使います。
+
 ウィジェットのハンドルは `Rc` なので clone しても実体は 1 つです。
 コンテナに `append` した子はコンテナが保持するため、ハンドルを手放しても
 コールバックは生き続けます。

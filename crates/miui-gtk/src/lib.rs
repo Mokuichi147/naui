@@ -44,9 +44,9 @@
 ))]
 #![forbid(unsafe_code)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
-use miui_core::{Align, Error, NavItem, Orientation, Padding, Result, Settings};
+use miui_core::{Align, Error, NavItem, Orientation, Padding, Result, Settings, Theme};
 
 fn unimplemented_error(what: &'static str) -> Error {
     Error::new(
@@ -247,10 +247,14 @@ impl Window {
     pub fn is_visible(&self) -> bool {
         false
     }
+    pub fn set_theme(&self, _theme: Theme) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// ウィジェットを生成するための入り口 (未実装)。
 pub struct Ui {
+    theme: Cell<Theme>,
     _private: RefCell<()>,
 }
 
@@ -299,6 +303,16 @@ impl Ui {
     }
     pub fn link(&self, _text: &str, _href: &str) -> Result<Link> {
         Err(unimplemented_error("Link の生成"))
+    }
+
+    /// 配色テーマを記録する。GTK4 バックエンドが未実装のため、現時点では描画しない。
+    pub fn set_theme(&self, theme: Theme) -> Result<()> {
+        self.theme.set(theme);
+        Ok(())
+    }
+
+    pub fn theme(&self) -> Theme {
+        self.theme.get()
     }
     pub fn quit(&self) {}
 }

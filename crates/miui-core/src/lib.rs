@@ -45,6 +45,21 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+/// アプリケーションに適用する配色テーマ。
+///
+/// `System` は OS やブラウザの設定に追従する。明示的に固定したい場合は
+/// `Light` または `Dark` を指定できる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Theme {
+    /// OS / ブラウザの設定に追従する (既定値)。
+    #[default]
+    System,
+    /// ライトテーマを使う。
+    Light,
+    /// ダークテーマを使う。
+    Dark,
+}
+
 /// スタックの並び方向。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Orientation {
@@ -168,6 +183,8 @@ pub struct Settings {
     pub name: String,
     /// 逆ドメイン形式の識別子。GTK4 が要求するため必須扱いにしている。
     pub app_id: String,
+    /// 起動時に適用する配色テーマ (既定は [`Theme::System`])。
+    pub theme: Theme,
 }
 
 impl Settings {
@@ -179,11 +196,21 @@ impl Settings {
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
                 .collect::<String>()
         );
-        Self { name, app_id }
+        Self {
+            name,
+            app_id,
+            theme: Theme::System,
+        }
     }
 
     pub fn app_id(mut self, id: impl Into<String>) -> Self {
         self.app_id = id.into();
+        self
+    }
+
+    /// 起動時の配色テーマを指定する。
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
         self
     }
 }
@@ -197,6 +224,15 @@ mod tests {
         let s = Settings::new("my app");
         assert_eq!(s.app_id, "org.miui.my_app");
         assert_eq!(Settings::new("x").app_id("com.example.x").app_id, "com.example.x");
+    }
+
+    #[test]
+    fn settings_default_to_system_theme() {
+        assert_eq!(Settings::new("my app").theme, Theme::System);
+        assert_eq!(
+            Settings::new("my app").theme(Theme::Dark).theme,
+            Theme::Dark
+        );
     }
 
     #[test]

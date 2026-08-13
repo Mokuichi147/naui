@@ -15,9 +15,11 @@ mod navigation;
 mod widgets;
 mod window;
 
-use miui_core::{Error, Orientation, Result, Settings};
+use miui_core::{Error, Orientation, Result, Settings, Theme};
+use std::cell::Cell;
 use std::cell::RefCell;
-use web_sys::Document;
+use wasm_bindgen::JsCast;
+use web_sys::{Document, HtmlElement};
 
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
@@ -41,13 +43,15 @@ pub(crate) fn to_error(context: &'static str, value: wasm_bindgen::JsValue) -> E
 /// ウィジェットを生成するための入り口。
 pub struct Ui {
     document: Document,
+    theme: Cell<Theme>,
     windows: RefCell<Vec<Window>>,
 }
 
 impl Ui {
-    fn new(document: Document) -> Self {
+    fn new(document: Document, theme: Theme) -> Self {
         Self {
             document,
+            theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
         }
     }
@@ -124,6 +128,18 @@ impl Ui {
         Link::new(&self.document, text, href)
     }
 
+    /// 配色テーマを実行中に切り替える。
+    pub fn set_theme(&self, theme: Theme) -> Result<()> {
+        apply_theme(&self.document, theme)?;
+        self.theme.set(theme);
+        Ok(())
+    }
+
+    /// 現在選択されている配色テーマを返す。
+    pub fn theme(&self) -> Theme {
+        self.theme.get()
+    }
+
     /// ブラウザではアプリを終了する概念が無いため、何もしない。
     pub fn quit(&self) {}
 }
@@ -139,7 +155,8 @@ where
 {
     let document = document()?;
     document.set_title(&settings.name);
-    let ui = Ui::new(document);
+    apply_theme(&document, settings.theme)?;
+    let ui = Ui::new(document, settings.theme);
     build(&ui)?;
     // ウィンドウ (と、そこにぶら下がるクロージャ) をページの寿命まで保持する。
     KEEP.with(|k| k.borrow_mut().push(ui));
@@ -148,4 +165,19 @@ where
 
 thread_local! {
     static KEEP: RefCell<Vec<Ui>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn apply_theme(document: &Document, theme: Theme) -> Result<()> {
+    let root: HtmlElement = document
+        .document_element()
+        .ok_or_else(|| Error::new("document 要素の取得", "html 要素がありません"))?
+        .unchecked_into();
+    let value = match theme {
+        Theme::System => "light dark",
+        Theme::Light => "light",
+        Theme::Dark => "dark",
+    };
+    root.style()
+        .set_property("color-scheme", value)
+        .map_err(|e| to_error("color-scheme の設定", e))
 }
