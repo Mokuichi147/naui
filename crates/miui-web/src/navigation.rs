@@ -54,9 +54,9 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
     let _ = element.style().set_property(property, value);
 }
 
-/// 横並びの `<nav>` を作る。
-fn nav_row(doc: &Document, gap: &str) -> Result<HtmlElement> {
-    let element: HtmlElement = create(doc, "nav")?.unchecked_into();
+/// 横並びの要素を作る。`tag` は外枠なら `nav`、入れ子なら `div`。
+fn row(doc: &Document, tag: &str, gap: &str) -> Result<HtmlElement> {
+    let element: HtmlElement = create(doc, tag)?.unchecked_into();
     style(&element, "display", "flex");
     style(&element, "flex-direction", "row");
     style(&element, "align-items", "center");
@@ -243,7 +243,7 @@ impl Tabs {
         style(&element, "flex-direction", "column");
         style(&element, "gap", "8px");
 
-        let tablist = nav_row(doc, "4px")?;
+        let tablist = row(doc, "div", "4px")?;
         let _ = tablist.set_attribute("role", "tablist");
         let panels: HtmlElement = create(doc, "div")?.unchecked_into();
 
@@ -418,12 +418,17 @@ impl_item_bar!(Navbar);
 
 impl Navbar {
     pub(crate) fn new(doc: &Document, title: &str) -> Result<Self> {
-        let element = nav_row(doc, "12px")?;
+        let element = row(doc, "nav", "12px")?;
         let title_element: HtmlElement = create(doc, "strong")?.unchecked_into();
         title_element.set_text_content(Some(title));
         append(&element, &title_element)?;
 
-        let bar = Bar::new(element.clone(), Shape::Flat, false);
+        // 項目は別の入れ物に入れる。`set_items` は入れ物の中身を作り直すので、
+        // 見出しと同じ要素に入れると見出しごと消えてしまう。
+        let items = row(doc, "div", "4px")?;
+        append(&element, &items)?;
+
+        let bar = Bar::new(items, Shape::Flat, false);
         Ok(Self(Rc::new(NavbarInner {
             element,
             title: title_element,
@@ -461,7 +466,7 @@ impl_item_bar!(Dock);
 
 impl Dock {
     pub(crate) fn new(doc: &Document) -> Result<Self> {
-        let element = nav_row(doc, "4px")?;
+        let element = row(doc, "nav", "4px")?;
         let bar = Bar::new(element.clone(), Shape::Flat, true);
         Ok(Self(Rc::new(DockInner {
             element,
@@ -602,13 +607,13 @@ impl_widget!(Pagination, element);
 
 impl Pagination {
     pub(crate) fn new(doc: &Document, page_count: usize) -> Result<Self> {
-        let element = nav_row(doc, "4px")?;
+        let element = row(doc, "nav", "4px")?;
         let _ = element.set_attribute("aria-label", "ページ送り");
 
         let prev: HtmlElement = create(doc, "button")?.unchecked_into();
         prev.set_text_content(Some("‹"));
         let _ = prev.set_attribute("type", "button");
-        let numbers = nav_row(doc, "4px")?;
+        let numbers = row(doc, "div", "4px")?;
         let next: HtmlElement = create(doc, "button")?.unchecked_into();
         next.set_text_content(Some("›"));
         let _ = next.set_attribute("type", "button");
