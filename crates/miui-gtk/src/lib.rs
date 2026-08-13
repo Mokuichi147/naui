@@ -26,6 +26,13 @@
 //! | `TextInput` | `gtk::Entry` + `connect_changed` |
 //! | `Slider` | `gtk::Scale` + `connect_value_changed` |
 //! | `ProgressBar` | `gtk::ProgressBar` |
+//! | `Tabs` | `gtk::Notebook` (または `adw::ViewStack` + `adw::ViewSwitcher`) |
+//! | `Navbar` | `adw::HeaderBar` + `adw::ViewSwitcher` |
+//! | `Dock` | `adw::ViewSwitcherBar` |
+//! | `Menu` | `gtk::ListBox` (`connect_row_selected`) |
+//! | `Breadcrumbs` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
+//! | `Pagination` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
+//! | `Link` | `gtk::LinkButton` |
 //!
 //! GTK のシグナルハンドラは `'static` なクロージャを受けるので、
 //! macOS/Web と同じ `Rc<Inner>` + クロージャ保持の形がそのまま使える
@@ -39,7 +46,7 @@
 
 use std::cell::RefCell;
 
-use miui_core::{Align, Error, Orientation, Padding, Result, Settings};
+use miui_core::{Align, Error, NavItem, Orientation, Padding, Result, Settings};
 
 fn unimplemented_error(what: &'static str) -> Error {
     Error::new(
@@ -51,6 +58,8 @@ fn unimplemented_error(what: &'static str) -> Error {
 /// GTK4 の実ウィジェットに対応する予定のハンドル。現状は中身を持たない。
 macro_rules! placeholder_widget {
     ($name:ident) => {
+        // 中身は実装時に入る。骨組みの間は読まれないので警告を止める。
+        #[allow(dead_code)]
         #[derive(Clone)]
         pub struct $name(std::rc::Rc<()>);
 
@@ -75,6 +84,13 @@ placeholder_widget!(TextInput);
 placeholder_widget!(Slider);
 placeholder_widget!(ProgressBar);
 placeholder_widget!(Stack);
+placeholder_widget!(Tabs);
+placeholder_widget!(Navbar);
+placeholder_widget!(Dock);
+placeholder_widget!(Menu);
+placeholder_widget!(Breadcrumbs);
+placeholder_widget!(Pagination);
+placeholder_widget!(Link);
 
 impl Label {
     pub fn text(&self) -> String {
@@ -137,7 +153,85 @@ impl Stack {
     }
 }
 
+/// 項目を持つナビゲーションの共通実装 (未実装)。
+macro_rules! placeholder_item_bar {
+    ($name:ident) => {
+        impl $name {
+            pub fn set_items(&self, _items: &[NavItem]) {}
+            pub fn len(&self) -> usize {
+                0
+            }
+            pub fn is_empty(&self) -> bool {
+                true
+            }
+            pub fn selected(&self) -> Option<usize> {
+                None
+            }
+            pub fn set_selected(&self, _index: usize) {}
+            pub fn select(&self, _index: usize) {}
+            pub fn on_select(&self, _f: impl FnMut(usize) + 'static) {}
+        }
+    };
+}
+
+placeholder_item_bar!(Navbar);
+placeholder_item_bar!(Dock);
+placeholder_item_bar!(Menu);
+placeholder_item_bar!(Breadcrumbs);
+
+impl Navbar {
+    pub fn set_title(&self, _title: &str) {}
+    pub fn title(&self) -> String {
+        String::new()
+    }
+}
+
+impl Tabs {
+    pub fn add_tab(&self, _label: &str, _child: &dyn Widget) {}
+    pub fn len(&self) -> usize {
+        0
+    }
+    pub fn is_empty(&self) -> bool {
+        true
+    }
+    pub fn selected(&self) -> Option<usize> {
+        None
+    }
+    pub fn set_selected(&self, _index: usize) {}
+    pub fn select(&self, _index: usize) {}
+    pub fn on_select(&self, _f: impl FnMut(usize) + 'static) {}
+}
+
+impl Pagination {
+    pub fn set_page_count(&self, _count: usize) {}
+    pub fn page_count(&self) -> usize {
+        0
+    }
+    pub fn page(&self) -> usize {
+        0
+    }
+    pub fn set_page(&self, _page: usize) {}
+    pub fn select(&self, _page: usize) {}
+    pub fn go_previous(&self) {}
+    pub fn go_next(&self) {}
+    pub fn on_change(&self, _f: impl FnMut(usize) + 'static) {}
+}
+
+impl Link {
+    pub fn text(&self) -> String {
+        String::new()
+    }
+    pub fn set_text(&self, _text: &str) {}
+    pub fn href(&self) -> String {
+        String::new()
+    }
+    pub fn set_href(&self, _href: &str) {}
+    pub fn set_enabled(&self, _enabled: bool) {}
+    pub fn on_click(&self, _f: impl FnMut() + 'static) {}
+}
+
 /// トップレベルウィンドウ (未実装)。
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Window(std::rc::Rc<()>);
 
@@ -184,6 +278,27 @@ impl Ui {
     }
     pub fn progress_bar(&self) -> Result<ProgressBar> {
         Err(unimplemented_error("ProgressBar の生成"))
+    }
+    pub fn tabs(&self) -> Result<Tabs> {
+        Err(unimplemented_error("Tabs の生成"))
+    }
+    pub fn navbar(&self, _title: &str) -> Result<Navbar> {
+        Err(unimplemented_error("Navbar の生成"))
+    }
+    pub fn dock(&self) -> Result<Dock> {
+        Err(unimplemented_error("Dock の生成"))
+    }
+    pub fn menu(&self) -> Result<Menu> {
+        Err(unimplemented_error("Menu の生成"))
+    }
+    pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
+        Err(unimplemented_error("Breadcrumbs の生成"))
+    }
+    pub fn pagination(&self, _page_count: usize) -> Result<Pagination> {
+        Err(unimplemented_error("Pagination の生成"))
+    }
+    pub fn link(&self, _text: &str, _href: &str) -> Result<Link> {
+        Err(unimplemented_error("Link の生成"))
     }
     pub fn quit(&self) {}
 }

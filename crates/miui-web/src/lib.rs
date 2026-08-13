@@ -11,6 +11,7 @@
 #![cfg(target_arch = "wasm32")]
 #![forbid(unsafe_code)]
 
+mod navigation;
 mod widgets;
 mod window;
 
@@ -18,6 +19,7 @@ use miui_core::{Error, Orientation, Result, Settings};
 use std::cell::RefCell;
 use web_sys::Document;
 
+pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
 pub use window::Window;
 
@@ -85,6 +87,41 @@ impl Ui {
 
     pub fn progress_bar(&self) -> Result<ProgressBar> {
         ProgressBar::new(&self.document)
+    }
+
+    /// タブ。中身のウィジェットごと持つ。
+    pub fn tabs(&self) -> Result<Tabs> {
+        Tabs::new(&self.document)
+    }
+
+    /// 画面上部に置く横並びのナビゲーション。`title` は左端の見出し。
+    pub fn navbar(&self, title: &str) -> Result<Navbar> {
+        Navbar::new(&self.document, title)
+    }
+
+    /// 画面下部に置く横並びのナビゲーション (等幅)。
+    pub fn dock(&self) -> Result<Dock> {
+        Dock::new(&self.document)
+    }
+
+    /// 縦に並ぶナビゲーション一覧。
+    pub fn menu(&self) -> Result<Menu> {
+        Menu::new(&self.document)
+    }
+
+    /// パンくず。
+    pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
+        Breadcrumbs::new(&self.document)
+    }
+
+    /// ページ送り。`page_count` はページ数。
+    pub fn pagination(&self, page_count: usize) -> Result<Pagination> {
+        Pagination::new(&self.document, page_count)
+    }
+
+    /// リンク。`href` が空でなければ、押したときに別タブで開く。
+    pub fn link(&self, text: &str, href: &str) -> Result<Link> {
+        Link::new(&self.document, text, href)
     }
 
     /// ブラウザではアプリを終了する概念が無いため、何もしない。

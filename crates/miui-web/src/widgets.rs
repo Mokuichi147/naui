@@ -34,25 +34,35 @@ macro_rules! impl_widget {
     };
 }
 
+pub(crate) use impl_widget;
+
 pub(crate) fn create(doc: &Document, tag: &str) -> Result<Element> {
     doc.create_element(tag)
         .map_err(|e| to_error("DOM 要素の生成", e))
 }
 
 /// クリック等のイベントを購読し、ハンドルが生きている間だけ有効にする。
-struct Listener {
+pub(crate) struct Listener {
     target: web_sys::EventTarget,
     event: &'static str,
-    closure: Closure<dyn FnMut()>,
+    closure: Closure<dyn FnMut(web_sys::Event)>,
 }
 
 impl Listener {
-    fn attach(
+    pub(crate) fn attach(
         target: &web_sys::EventTarget,
         event: &'static str,
-        f: impl FnMut() + 'static,
+        mut f: impl FnMut() + 'static,
     ) -> Result<Self> {
-        let closure = Closure::<dyn FnMut()>::new(f);
+        Self::attach_event(target, event, move |_event| f())
+    }
+
+    pub(crate) fn attach_event(
+        target: &web_sys::EventTarget,
+        event: &'static str,
+        f: impl FnMut(web_sys::Event) + 'static,
+    ) -> Result<Self> {
+        let closure = Closure::<dyn FnMut(web_sys::Event)>::new(f);
         target
             .add_event_listener_with_callback(event, closure.as_ref().unchecked_ref())
             .map_err(|e| to_error("イベントの購読", e))?;
@@ -422,7 +432,7 @@ impl Stack {
     }
 }
 
-fn set_disabled(element: &HtmlElement, disabled: bool) {
+pub(crate) fn set_disabled(element: &HtmlElement, disabled: bool) {
     if disabled {
         let _ = element.set_attribute("disabled", "");
     } else {

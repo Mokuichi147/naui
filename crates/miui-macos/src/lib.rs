@@ -9,6 +9,7 @@
 // Objective-C 呼び出しのため unsafe が必要。
 #![allow(unsafe_code)]
 
+mod navigation;
 mod trampoline;
 mod widgets;
 mod window;
@@ -23,6 +24,7 @@ use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOn
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
 use objc2_foundation::NSNotification;
 
+pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
 pub use window::Window;
 
@@ -78,6 +80,41 @@ impl Ui {
 
     pub fn progress_bar(&self) -> Result<ProgressBar> {
         Ok(ProgressBar::new(self.mtm))
+    }
+
+    /// タブ。中身のウィジェットごと持つ。
+    pub fn tabs(&self) -> Result<Tabs> {
+        Ok(Tabs::new(self.mtm))
+    }
+
+    /// 画面上部に置く横並びのナビゲーション。`title` は左端の見出し。
+    pub fn navbar(&self, title: &str) -> Result<Navbar> {
+        Ok(Navbar::new(self.mtm, title))
+    }
+
+    /// 画面下部に置く横並びのナビゲーション (等幅)。
+    pub fn dock(&self) -> Result<Dock> {
+        Ok(Dock::new(self.mtm))
+    }
+
+    /// 縦に並ぶナビゲーション一覧。
+    pub fn menu(&self) -> Result<Menu> {
+        Ok(Menu::new(self.mtm))
+    }
+
+    /// パンくず。
+    pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
+        Ok(Breadcrumbs::new(self.mtm))
+    }
+
+    /// ページ送り。`page_count` はページ数。
+    pub fn pagination(&self, page_count: usize) -> Result<Pagination> {
+        Ok(Pagination::new(self.mtm, page_count))
+    }
+
+    /// リンク。`href` が空でなければ、押したときにブラウザで開く。
+    pub fn link(&self, text: &str, href: &str) -> Result<Link> {
+        Ok(Link::new(self.mtm, text, href))
     }
 
     /// アプリを終了する。

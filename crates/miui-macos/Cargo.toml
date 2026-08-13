@@ -11,25 +11,36 @@ repository.workspace = true
 miui-core.workspace = true
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = [
+    "NSArray",
     "NSString",
     "NSNotification",
     "NSGeometry",
     "NSObjCRuntime",
+    "NSURL",
 ] }
 objc2-app-kit = { version = "0.3", features = [
     "NSApplication",
     "NSButton",
+    "NSButtonCell",
+    "NSCell",
+    "NSColor",
     "NSControl",
     "NSGraphics",
     "NSLayoutConstraint",
+    "NSPathControl",
+    "NSPathControlItem",
     "NSProgressIndicator",
     "NSResponder",
+    "NSSegmentedControl",
     "NSSlider",
     "NSStackView",
+    "NSTabView",
+    "NSTabViewItem",
     "NSTextField",
     "NSText",
     "NSView",
     "NSWindow",
+    "NSWorkspace",
 ] }
 
 [dev-dependencies]
