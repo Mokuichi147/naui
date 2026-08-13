@@ -14,14 +14,17 @@ mod trampoline;
 mod widgets;
 mod window;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use miui_core::{Error, Orientation, Result, Settings};
+use miui_core::{Error, Orientation, Result, Settings, Theme};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
+use objc2_app_kit::{
+    NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
+    NSApplicationActivationPolicy, NSApplicationDelegate,
+};
 use objc2_foundation::NSNotification;
 
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
@@ -34,14 +37,16 @@ pub use window::Window;
 /// [`MainThreadMarker`] を持ち、`run` のコールバック内でのみ得られる。
 pub struct Ui {
     mtm: MainThreadMarker,
+    theme: Cell<Theme>,
     /// コールバックが終わってもウィンドウを生かしておくための保持。
     windows: RefCell<Vec<Window>>,
 }
 
 impl Ui {
-    fn new(mtm: MainThreadMarker) -> Self {
+    fn new(mtm: MainThreadMarker, theme: Theme) -> Self {
         Self {
             mtm,
+            theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
         }
     }
@@ -117,6 +122,19 @@ impl Ui {
         Ok(Link::new(self.mtm, text, href))
     }
 
+    /// 配色テーマを実行中に切り替える。
+    pub fn set_theme(&self, theme: Theme) -> Result<()> {
+        let appearance = appearance_for_theme(theme);
+        NSApplication::sharedApplication(self.mtm).setAppearance(appearance.as_deref());
+        self.theme.set(theme);
+        Ok(())
+    }
+
+    /// 現在選択されている配色テーマを返す。
+    pub fn theme(&self) -> Theme {
+        self.theme.get()
+    }
+
     /// アプリを終了する。
     pub fn quit(&self) {
         NSApplication::sharedApplication(self.mtm).terminate(None);
@@ -174,15 +192,15 @@ where
 {
     let mtm = MainThreadMarker::new()
         .ok_or_else(|| Error::new("miui の起動", "メインスレッドから呼んでください"))?;
-    let _ = settings;
-
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+    let appearance = appearance_for_theme(settings.theme);
+    app.setAppearance(appearance.as_deref());
 
     let error = Rc::new(RefCell::new(None));
     let delegate = AppDelegate::alloc(mtm).set_ivars(DelegateState {
         build: RefCell::new(Some(Box::new(build))),
-        ui: Rc::new(Ui::new(mtm)),
+        ui: Rc::new(Ui::new(mtm, settings.theme)),
         error: error.clone(),
     });
     let delegate: Retained<AppDelegate> = unsafe { msg_send![super(delegate), init] };
@@ -212,6 +230,14 @@ where
     let app = NSApplication::sharedApplication(mtm);
     // テスト中に Dock アイコンを出さない。
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
-    let ui = Ui::new(mtm);
+    let ui = Ui::new(mtm, Theme::System);
     build(&ui)
+}
+
+fn appearance_for_theme(theme: Theme) -> Option<Retained<NSAppearance>> {
+    match theme {
+        Theme::System => None,
+        Theme::Light => unsafe { NSAppearance::appearanceNamed(NSAppearanceNameAqua) },
+        Theme::Dark => unsafe { NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua) },
+    }
 }

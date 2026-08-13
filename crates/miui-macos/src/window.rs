@@ -3,9 +3,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use miui_core::{Result, Theme};
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSBackingStoreType, NSWindow, NSWindowStyleMask};
+use objc2_app_kit::{
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+    NSBackingStoreType, NSWindow, NSWindowStyleMask,
+};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use crate::widgets::Widget;
@@ -79,6 +83,17 @@ impl Window {
 
     pub fn is_visible(&self) -> bool {
         self.0.native.isVisible()
+    }
+
+    /// このウィンドウの配色テーマを切り替える。
+    pub fn set_theme(&self, theme: Theme) -> Result<()> {
+        let appearance = match theme {
+            Theme::System => None,
+            Theme::Light => unsafe { NSAppearance::appearanceNamed(NSAppearanceNameAqua) },
+            Theme::Dark => unsafe { NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua) },
+        };
+        self.0.native.setAppearance(appearance.as_deref());
+        Ok(())
     }
 
     /// AppKit の実ウィンドウ。バックエンド固有の脱出口。

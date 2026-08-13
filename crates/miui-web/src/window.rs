@@ -4,12 +4,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use miui_core::{Error, Result};
+use miui_core::{Error, Result, Theme};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
 use crate::widgets::{create, Widget};
 use crate::to_error;
+use crate::apply_theme;
 
 struct WindowInner {
     element: HtmlElement,
@@ -87,6 +88,11 @@ impl Window {
             .get_property_value("display")
             .map(|v| v != "none")
             .unwrap_or(true)
+    }
+
+    /// このウィンドウの配色テーマを切り替える。
+    pub fn set_theme(&self, theme: Theme) -> Result<()> {
+        apply_theme(&self.0.document, theme)
     }
 
     /// DOM 要素。バックエンド固有の脱出口。

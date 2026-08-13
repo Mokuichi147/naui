@@ -23,9 +23,9 @@ mod ui_thread;
 mod widgets;
 mod window;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
-use miui_core::{Error, Orientation, Result, Settings};
+use miui_core::{Error, Orientation, Result, Settings, Theme};
 
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
@@ -37,18 +37,20 @@ pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
 
 /// ウィジェットを生成するための入り口。
 pub struct Ui {
+    theme: Cell<Theme>,
     windows: RefCell<Vec<Window>>,
 }
 
 impl Ui {
-    fn new() -> Self {
+    fn new(theme: Theme) -> Self {
         Self {
+            theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
         }
     }
 
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
-        let w = Window::new(title, width, height)?;
+        let w = Window::new(title, width, height, self.theme.get())?;
         self.windows.borrow_mut().push(w.clone());
         Ok(w)
     }
@@ -116,6 +118,20 @@ impl Ui {
         Link::new(text, href)
     }
 
+    /// 配色テーマを実行中に切り替える。
+    pub fn set_theme(&self, theme: Theme) -> Result<()> {
+        for window in self.windows.borrow().iter() {
+            window.set_theme(theme)?;
+        }
+        self.theme.set(theme);
+        Ok(())
+    }
+
+    /// 現在選択されている配色テーマを返す。
+    pub fn theme(&self) -> Theme {
+        self.theme.get()
+    }
+
     /// アプリを終了する。
     pub fn quit(&self) {
         if let Ok(app) = winui3::Microsoft::UI::Xaml::Application::Current() {
@@ -136,7 +152,6 @@ where
     use winui3::Microsoft::UI::Xaml::{Application, ApplicationInitializationCallback};
     use winui3::{init_apartment, ApartmentType};
 
-    let _ = settings;
     let _dependency = winui3::bootstrap::PackageDependency::initialize_version(
         winui3::bootstrap::WindowsAppSDKVersion::V2,
     )
@@ -150,7 +165,7 @@ where
         Box::leak(Box::new(ui_thread::UiThreadCell::new(Some(build))));
 
     Application::Start(&ApplicationInitializationCallback::new(move |_| {
-        let app = app::compose(state, failure)?;
+        let app = app::compose(state, failure, settings.theme)?;
         std::mem::forget(app);
         Ok(())
     }))

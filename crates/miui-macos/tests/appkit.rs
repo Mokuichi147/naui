@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
-use miui_core::{NavItem, Orientation, Padding, Result};
+use miui_core::{NavItem, Orientation, Padding, Result, Theme};
 use miui_macos::{run_for_test, Ui, Widget};
 
 /// テストケース 1 件。
@@ -36,6 +36,7 @@ fn main() {
         ("パンくずが末尾を現在地にする", breadcrumbs_path),
         ("ページ送りが範囲内に収まる", pagination_steps),
         ("リンクのクリックがクロージャへ届く", link_click),
+        ("テーマを実行中に切り替えられる", theme_switch),
     ];
 
     let mut failed = 0;
@@ -375,6 +376,18 @@ fn link_click(ui: &Ui) -> Result<()> {
 
     link.set_text("miui のリポジトリ");
     assert_eq!(link.text(), "miui のリポジトリ");
+    Ok(())
+}
+
+/// テーマはシステム追従を既定とし、実行中に固定テーマへ切り替えられる。
+fn theme_switch(ui: &Ui) -> Result<()> {
+    assert_eq!(ui.theme(), Theme::System);
+    ui.set_theme(Theme::Dark)?;
+    assert_eq!(ui.theme(), Theme::Dark);
+    ui.set_theme(Theme::Light)?;
+    assert_eq!(ui.theme(), Theme::Light);
+    ui.set_theme(Theme::System)?;
+    assert_eq!(ui.theme(), Theme::System);
     Ok(())
 }
 
