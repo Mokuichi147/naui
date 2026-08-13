@@ -69,11 +69,11 @@
 //!
 //! | miui | Windows | macOS | Web |
 //! | --- | --- | --- | --- |
-//! | `Tabs` | `TabView` | `NSTabView` | `role="tablist"` |
+//! | `Tabs` | `StackPanel` + `ToggleButton` | `NSTabView` | `role="tablist"` |
 //! | `Navbar` | `ToggleButton` の横並び | `NSSegmentedControl` | `<nav>` |
 //! | `Dock` | `ToggleButton` の横並び | `NSSegmentedControl` | `<nav>` |
 //! | `Menu` | `ToggleButton` の縦並び | `NSButton` の縦並び | `<nav><ul>` |
-//! | `Breadcrumbs` | `ToggleButton` + 区切り | `NSPathControl` | `<nav><ol>` |
+//! | `Breadcrumbs` | `HyperlinkButton` + 区切り | `NSPathControl` | `<nav><ol><a>` |
 //! | `Pagination` | `Button` + `ToggleButton` | `NSButton` + `NSSegmentedControl` | `<nav>` |
 //! | `Link` | `HyperlinkButton` | `NSButton` (リンク色) | `<a>` |
 //!
@@ -86,7 +86,7 @@
 //! | --- | --- |
 //! | macOS | 実行・自動テストあり (ナビゲーションを含む 14 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーションのクリックまで確認) |
-//! | Windows | 基本ウィジェットは Windows App SDK 2.3.1 の実機で確認。ナビゲーション系はコンパイル確認のみ |
+//! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェットとナビゲーション系を確認 |
 //! | Linux | 未実装 |
 
 #![forbid(unsafe_code)]

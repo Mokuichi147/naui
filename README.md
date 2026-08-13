@@ -21,13 +21,13 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | --- | --- | --- |
 | **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 14 件 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認) |
-| **Windows** | ⚠️ 一部未確認 | 基本ウィジェットは Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し確認済み。**ナビゲーション系 7 種は `cargo check --target x86_64-pc-windows-msvc` が通っているだけで、実機では未確認** |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェットとナビゲーション系 7 種の起動を確認済み |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
-Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で実行確認済みですが、
-`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link` については
-コンパイルが通ることしか確かめていません (実行環境が手元に無いため)。
+Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で、
+`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link` を含む
+`gallery` の起動を確認済みです。
 詳細は [`crates/miui-gtk`](crates/miui-gtk/src/lib.rs) のドキュメントを参照してください。
 
 ---
@@ -115,11 +115,11 @@ let element: web_sys::Element = button.native_element();
 
 | miui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
 | --- | --- | --- | --- | --- |
-| `Tabs` | ✅ `TabView` + `TabViewItem` | ✅ `NSTabView` + `NSTabViewItem` | 🟡 `role="tablist"` + `<button role=tab>` + `hidden` | ❌ |
+| `Tabs` | 🟡 `StackPanel` + `ToggleButton` (TabViewの未パッケージ起動回避) | ✅ `NSTabView` + `NSTabViewItem` | 🟡 `role="tablist"` + `<button role=tab>` + `hidden` | ❌ |
 | `Navbar` | 🟡 `TextBlock` + `ToggleButton` の横並び | 🟡 `NSTextField` + `NSSegmentedControl` | 🟡 `<nav>` + `<strong>` + `<button>` | ❌ |
 | `Dock` | 🟡 `ToggleButton` の横並び | ✅ `NSSegmentedControl` (等幅) | 🟡 `<nav>` + `<button>` (等幅) | ❌ |
 | `Menu` | 🟡 `ToggleButton` の縦並び | 🟡 `NSButton` (AccessoryBar) の縦並び | 🟡 `<nav><ul><li><button>` | ❌ |
-| `Breadcrumbs` | 🟡 `ToggleButton` + 区切りの `TextBlock` | ✅ `NSPathControl` + `NSPathControlItem` | 🟡 `<nav><ol><li><button>` | ❌ |
+| `Breadcrumbs` | 🟡 `HyperlinkButton` + 区切りの `TextBlock` | ✅ `NSPathControl` + `NSPathControlItem` | 🟡 `<nav><ol><li><a href>` | ❌ |
 | `Pagination` | 🟡 `Button` + `ToggleButton` | 🟡 `NSButton` + `NSSegmentedControl` | 🟡 `<nav>` + `<button>` | ❌ |
 | `Link` | ✅ `HyperlinkButton` | 🟡 `NSButton` (枠なし・リンク色) + `NSWorkspace` | ✅ `<a href>` | ❌ |
 
@@ -154,12 +154,13 @@ let _: Option<usize> = navbar.selected();
 | 🔴 Web の `Window` | ブラウザにはページ内ウィンドウの概念が無い。`<body>` 直下の `<div>` で代用し、タイトルは `document.title` に反映している。`show()` / `close()` は `display` の切り替え、`set_size()` は `max-width` / `min-height` の指定であり、**OS のウィンドウ操作ではない** |
 | 🟡 Web の `Stack` | HTML に「スタック」というコントロールは存在しない。ただし CSS Flexbox はブラウザ自身のレイアウト機構なので、独自のレイアウト計算はしていない (`display:flex` + `flex-direction` + `gap` + `padding`) |
 | 🟡 Web の `Checkbox` | `<input type=checkbox>` 自体はネイティブだが、ラベル文字列を持たないため `<label>` で `<input>` と `<span>` を包んでいる |
-| 🟡 Web のナビゲーション全般 | ブラウザに「タブ」「ナビバー」というコントロールは無い。`<nav>` / `<ol>` / `<button>` と WAI-ARIA のロール (`tablist` / `tab` / `tabpanel` / `aria-current`) で意味づけし、隠すのは `hidden` 属性に任せている。CSS は Flexbox のレイアウトと、選択中を示す `font-weight: bold` だけ |
+| 🟡 Web のナビゲーション全般 | ブラウザに「タブ」「ナビバー」というコントロールは無い。`<nav>` / `<ol>` / `<a>` / `<button>` と WAI-ARIA のロール (`tablist` / `tab` / `tabpanel` / `aria-current`) で意味づけし、隠すのは `hidden` 属性に任せている。CSS は Flexbox のレイアウトと、選択中を示す `font-weight: bold` だけ |
 | 🟡 macOS の `Navbar` | `NSSegmentedControl` はネイティブだが、見出しを持てないため `NSTextField` と `NSStackView` で横に並べている |
 | 🟡 macOS の `Menu` | AppKit の `NSMenu` はポップアップ用。サイドバー相当の縦一覧は `NSButton` (AccessoryBar・PushOnPushOff) を `NSStackView` に並べて作っている |
 | 🟡 macOS の `Link` | AppKit にリンク専用のコントロールは無い。枠なしの `NSButton` を `NSColor::linkColor` にし、`href` は `NSWorkspace` で開いている |
 | 🟡 すべての `Pagination` | ページ送りに相当するネイティブコントロールはどの環境にも無い。前へ / 次へのボタンとページ番号を、その環境のネイティブなボタンで並べている |
-| 🟡 Windows の `Navbar` / `Dock` / `Menu` / `Breadcrumbs` | `NavigationView` と `BreadcrumbBar` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、WinUI 標準の `ToggleButton` を `StackPanel` に並べ、選択状態を `IsChecked` で表している |
+| 🟡 Windows の `Navbar` / `Dock` / `Menu` | `NavigationView` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、WinUI 標準の `ToggleButton` を `StackPanel` に並べ、選択状態を `IsChecked` で表している |
+| 🟡 Windows の `Breadcrumbs` | `BreadcrumbBar` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、標準の `HyperlinkButton` と区切り文字を `StackPanel` に並べている |
 
 ### 補足 (誤解しやすい箇所)
 
@@ -183,8 +184,8 @@ let _: Option<usize> = navbar.selected();
 そのため `Dock` を画面下端に固定することもできません。
 
 > **注意:** Windows 列のうち、基本ウィジェットは Windows App SDK 2.3.1 の実機で
-> `cargo run -p gallery` による起動確認済みです。**ナビゲーション系 7 種は
-> `cargo check --target x86_64-pc-windows-msvc` が通っているだけで、実機では未確認です。**
+> `cargo run -p gallery` による起動確認済みです。ナビゲーション系 7 種も
+> 実機での起動を確認しています。
 > `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
 
 ---
@@ -311,10 +312,9 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
 - **Linux が未実装。** 上記のとおり。
 - **Windows App SDK の実行環境が必要。** Windows バックエンドは Windows App SDK 2.x の
   フレームワークランタイムを必要とし、現在は2.3.1で実機確認しています。
-- **Windows のナビゲーション系 7 種は実機未確認。** `cargo check --target x86_64-pc-windows-msvc`
-  が通ることしか確かめていません。`ProgressBar` の例のように、未パッケージ実行で
-  `TabView` の既定テンプレートが問題を起こす可能性があります。その場合に備えて、
-  各ウィジェットのネイティブ生成は `Tabs::new` のように 1 箇所へまとめてあります。
+- **Windows の `Tabs` は `TabView` を使用しません。** Windows App SDK 2.3.1 の
+  未パッケージ実行では `TabView` の既定テンプレートがランタイム終了を起こすため、
+  `StackPanel` と `ToggleButton` で同じ選択 API を構成しています。
 - **Enter で確定するコールバック (`on_submit`) がありません。**
   `winio-winui3` がキーボードイベント (`KeyDown` / `KeyEventHandler`) を
   バインドしていないため、Windows で実装できませんでした。

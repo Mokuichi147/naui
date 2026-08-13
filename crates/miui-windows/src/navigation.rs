@@ -2,11 +2,11 @@
 //!
 //! | miui | WinUI 3 |
 //! | --- | --- |
-//! | `Tabs` | `TabView` + `TabViewItem` |
+//! | `Tabs` | `StackPanel` + `ToggleButton` |
 //! | `Navbar` | `TextBlock` (見出し) + `ToggleButton` の横並び |
 //! | `Dock` | `ToggleButton` の横並び |
 //! | `Menu` | `ToggleButton` の縦並び |
-//! | `Breadcrumbs` | `ToggleButton` + 区切りの `TextBlock` |
+//! | `Breadcrumbs` | `HyperlinkButton` + 区切りの `TextBlock` |
 //! | `Pagination` | `Button` + `ToggleButton` |
 //! | `Link` | `HyperlinkButton` |
 //!
@@ -23,7 +23,7 @@ use windows_core::{Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::Primitives::ToggleButton;
 use winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, HyperlinkButton, Orientation as XamlOrientation,
-    SelectionChangedEventHandler, StackPanel, TabView, TabViewItem, TextBlock,
+    StackPanel, TextBlock,
 };
 use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement, VerticalAlignment};
 
@@ -257,76 +257,86 @@ macro_rules! impl_item_bar {
 // ------------------------------------------------------------------- Tabs
 
 struct TabsInner {
-    native: TabView,
-    /// 子のハンドルを保持し、コールバックごと生かしておく。
+    native: StackPanel,
+    headers: StackPanel,
+    content: StackPanel,
+    /// 子のハンドルを保持し、選択中の内容を表示する。
     children: RefCell<Vec<Box<dyn Widget>>>,
+    buttons: RefCell<Vec<ToggleButton>>,
     handler: SelectHandler,
-    /// `set_selected` の間だけ通知を止める。WinUI は
-    /// プログラムからの選択でも SelectionChanged を発火するため。
-    silent: Arc<std::sync::atomic::AtomicBool>,
+    selected: Cell<Option<usize>>,
 }
 
-/// タブ (TabView)。中身のウィジェットごと持つ。
+/// タブ。見出しと選択中の中身を `StackPanel` で表示する。
 #[derive(Clone)]
 pub struct Tabs(Rc<TabsInner>);
 impl_widget!(Tabs, native);
 
 impl Tabs {
     pub(crate) fn new() -> Result<Self> {
-        let native = TabView::new().map_err(|e| to_error("TabView の生成", e))?;
-        let _ = native.SetIsAddTabButtonVisible(false);
-        let _ = native.SetCanReorderTabs(false);
-        let _ = native.SetCanDragTabs(false);
-
-        let handler = SelectHandler::new();
-        let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-        let state = UiThreadCell::new((native.clone(), handler.clone()));
-        let silent_for_event = silent.clone();
-        let changed = SelectionChangedEventHandler::new(move |_sender, _args| {
-            if silent_for_event.load(std::sync::atomic::Ordering::Relaxed) {
-                return Ok(());
-            }
-            state.with_mut(|(native, handler)| {
-                if let Ok(index) = native.SelectedIndex() {
-                    if index >= 0 {
-                        handler.emit(index as usize);
-                    }
-                }
-            });
-            Ok(())
-        });
-        native
-            .SelectionChanged(&changed)
-            .map_err(|e| to_error("TabView の購読", e))?;
+        // Windows App SDK 2.3.1 の未パッケージ起動では、TabView の既定
+        // テンプレート適用時に Microsoft.UI.Xaml.dll が fail-fast する。
+        // ToggleButton と StackPanel で構成すると、同じ API を保ったまま
+        // 安定して実行できる。
+        let native = panel(XamlOrientation::Vertical, 4.0)?;
+        let headers = panel(XamlOrientation::Horizontal, 4.0)?;
+        let content = panel(XamlOrientation::Vertical, 0.0)?;
+        let headers_element = headers
+            .cast::<UIElement>()
+            .map_err(|e| to_error("タブ見出しの要素化", e))?;
+        let content_element = content
+            .cast::<UIElement>()
+            .map_err(|e| to_error("タブ内容の要素化", e))?;
+        append(&native, &headers_element)?;
+        append(&native, &content_element)?;
 
         Ok(Self(Rc::new(TabsInner {
             native,
+            headers,
+            content,
             children: RefCell::new(Vec::new()),
-            handler,
-            silent,
+            buttons: RefCell::new(Vec::new()),
+            handler: SelectHandler::new(),
+            selected: Cell::new(None),
         })))
     }
 
     /// タブを 1 枚追加する。`child` がそのタブの中身になる。
     pub fn add_tab(&self, label: &str, child: &dyn Widget) {
-        let Ok(item) = TabViewItem::new() else {
+        let Ok(button) = ToggleButton::new() else {
             return;
         };
-        let _ = item.SetIsClosable(false);
         let Ok(header) = text_block(label) else {
             return;
         };
-        if item.SetHeader(&header).is_err() || item.SetContent(&child.native_element()).is_err() {
+        if button.SetContent(&header).is_err() {
             return;
         }
-        let appended = self
-            .0
-            .native
-            .TabItems()
-            .and_then(|items| items.Append(&windows_core::IInspectable::from(item)));
-        if appended.is_ok() {
+        let _ = button.SetIsChecked(bool_ref(false).ok().as_ref());
+
+        let index = self.0.children.borrow().len();
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = RoutedEventHandler::new(move |_sender, _args| {
+            state.with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    Tabs(inner).select(index);
+                }
+            });
+            Ok(())
+        });
+        if button.Click(&handler).is_err() {
+            return;
+        }
+
+        let Ok(element) = button.cast::<UIElement>() else {
+            return;
+        };
+        if append(&self.0.headers, &element).is_ok() {
+            self.0.buttons.borrow_mut().push(button);
             self.0.children.borrow_mut().push(child.boxed_clone());
+            if self.0.selected.get().is_none() {
+                self.mark_selected(Some(0));
+            }
         }
     }
 
@@ -339,35 +349,48 @@ impl Tabs {
     }
 
     pub fn selected(&self) -> Option<usize> {
-        let index = self.0.native.SelectedIndex().ok()?;
-        (index >= 0).then_some(index as usize)
+        self.0.selected.get()
     }
 
     /// 通知せずに選択を変える。
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
-            self.with_silence(|| {
-                let _ = self.0.native.SetSelectedIndex(index as i32);
-            });
+            self.mark_selected(Some(index));
         }
     }
 
     /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
     pub fn select(&self, index: usize) {
         if index < self.len() {
-            self.with_silence(|| {
-                let _ = self.0.native.SetSelectedIndex(index as i32);
-            });
+            self.mark_selected(Some(index));
             self.0.handler.emit(index);
         }
     }
 
-    /// SelectionChanged からの通知を止めて `f` を実行する。
-    fn with_silence(&self, f: impl FnOnce()) {
-        use std::sync::atomic::Ordering;
-        self.0.silent.store(true, Ordering::Relaxed);
-        f();
-        self.0.silent.store(false, Ordering::Relaxed);
+    fn mark_selected(&self, index: Option<usize>) {
+        if let Ok(checked) = bool_ref(true) {
+            if let Ok(unchecked) = bool_ref(false) {
+                for (i, button) in self.0.buttons.borrow().iter().enumerate() {
+                    let value = if Some(i) == index {
+                        &checked
+                    } else {
+                        &unchecked
+                    };
+                    let _ = button.SetIsChecked(value);
+                }
+            }
+        }
+
+        if let Ok(children) = self.0.content.Children() {
+            let _ = children.Clear();
+            if let Some(selected) = index {
+                if let Some(child) = self.0.children.borrow().get(selected) {
+                    let element = child.native_element();
+                    let _ = children.Append(&element);
+                }
+            }
+        }
+        self.0.selected.set(index);
     }
 
     /// タブが切り替わったときに、そのインデックスで呼ばれる。
@@ -481,7 +504,113 @@ impl Menu {
 
 struct BreadcrumbsInner {
     native: StackPanel,
-    bar: Bar,
+    bar: BreadcrumbBar,
+}
+
+/// リンク表示のパンくず用バー。
+#[derive(Clone)]
+struct BreadcrumbBar(Rc<BreadcrumbBarInner>);
+
+struct BreadcrumbBarInner {
+    panel: StackPanel,
+    links: RefCell<Vec<HyperlinkButton>>,
+    handler: SelectHandler,
+    selected: Cell<Option<usize>>,
+}
+
+impl BreadcrumbBar {
+    fn new(panel: StackPanel) -> Self {
+        Self(Rc::new(BreadcrumbBarInner {
+            panel,
+            links: RefCell::new(Vec::new()),
+            handler: SelectHandler::new(),
+            selected: Cell::new(None),
+        }))
+    }
+
+    fn set_items(&self, items: &[NavItem]) -> Result<()> {
+        let children = self
+            .0
+            .panel
+            .Children()
+            .map_err(|e| to_error("パンくず項目の取得", e))?;
+        children
+            .Clear()
+            .map_err(|e| to_error("パンくず項目の消去", e))?;
+        self.0.links.borrow_mut().clear();
+
+        let mut links = Vec::with_capacity(items.len());
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                let separator = text_block("/")?;
+                let element = separator
+                    .cast::<UIElement>()
+                    .map_err(|e| to_error("パンくず区切りの要素化", e))?;
+                append(&self.0.panel, &element)?;
+            }
+
+            let link = HyperlinkButton::new()
+                .map_err(|e| to_error("パンくずリンクの生成", e))?;
+            link
+                .SetContent(&text_block(&item.label)?)
+                .map_err(|e| to_error("パンくずリンクの内容設定", e))?;
+            link
+                .SetNavigateUri(None)
+                .map_err(|e| to_error("パンくずリンクの遷移先設定", e))?;
+            let _ = link.SetIsEnabled(item.enabled);
+
+            let state = UiThreadCell::new(Rc::downgrade(&self.0));
+            let handler = RoutedEventHandler::new(move |_sender, _args| {
+                state.with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        BreadcrumbBar(inner).select(index);
+                    }
+                });
+                Ok(())
+            });
+            link
+                .Click(&handler)
+                .map_err(|e| to_error("パンくずリンクの購読", e))?;
+
+            let element = link
+                .cast::<UIElement>()
+                .map_err(|e| to_error("パンくずリンクの要素化", e))?;
+            append(&self.0.panel, &element)?;
+            links.push(link);
+        }
+        *self.0.links.borrow_mut() = links;
+        self.mark_selected(None);
+        Ok(())
+    }
+
+    fn mark_selected(&self, index: Option<usize>) {
+        self.0.selected.set(index);
+    }
+
+    fn len(&self) -> usize {
+        self.0.links.borrow().len()
+    }
+
+    fn selected(&self) -> Option<usize> {
+        self.0.selected.get()
+    }
+
+    fn set_selected(&self, index: usize) {
+        if index < self.len() {
+            self.mark_selected(Some(index));
+        }
+    }
+
+    fn select(&self, index: usize) {
+        if index < self.len() {
+            self.mark_selected(Some(index));
+            self.0.handler.emit(index);
+        }
+    }
+
+    fn on_select(&self, f: impl FnMut(usize) + 'static) {
+        self.0.handler.set(f);
+    }
 }
 
 /// パンくず。
@@ -494,7 +623,7 @@ impl Breadcrumbs {
         let native = panel(XamlOrientation::Horizontal, 4.0)?;
         Ok(Self(Rc::new(BreadcrumbsInner {
             native: native.clone(),
-            bar: Bar::new(native, true),
+            bar: BreadcrumbBar::new(native),
         })))
     }
 

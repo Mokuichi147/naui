@@ -11,7 +11,7 @@
 //! | `Navbar` | `<nav>` + `<strong>` + `<button>` |
 //! | `Dock` | `<nav>` + `<button>` (等幅) |
 //! | `Menu` | `<nav><ul><li><button>` |
-//! | `Breadcrumbs` | `<nav><ol><li><button>` |
+//! | `Breadcrumbs` | `<nav><ol><li><a href>` |
 //! | `Pagination` | `<nav>` + `<button>` |
 //! | `Link` | `<a href target="_blank">` |
 
@@ -123,23 +123,51 @@ impl Bar {
         let mut buttons = Vec::with_capacity(items.len());
         let mut listeners = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
-            let button: HtmlElement = create(doc, "button")?.unchecked_into();
+            let tag = if self.0.shape == Shape::Crumb {
+                "a"
+            } else {
+                "button"
+            };
+            let button: HtmlElement = create(doc, tag)?.unchecked_into();
             button.set_text_content(Some(&item.label));
-            let _ = button.set_attribute("type", "button");
+            if self.0.shape == Shape::Crumb {
+                let _ = button.set_attribute("href", "#");
+                let _ = button.set_attribute(
+                    "aria-disabled",
+                    if item.enabled { "false" } else { "true" },
+                );
+            } else {
+                let _ = button.set_attribute("type", "button");
+            }
             set_disabled(&button, !item.enabled);
             if self.0.equal_width {
                 style(&button, "flex", "1");
             }
 
             // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
-            let listener = Listener::attach(button.as_ref(), "click", {
-                let weak = Rc::downgrade(&self.0);
-                move || {
-                    if let Some(inner) = weak.upgrade() {
-                        Bar(inner).select(index);
+            let listener = if self.0.shape == Shape::Crumb {
+                Listener::attach_event(button.as_ref(), "click", {
+                    let weak = Rc::downgrade(&self.0);
+                    let enabled = item.enabled;
+                    move |event| {
+                        event.prevent_default();
+                        if enabled {
+                            if let Some(inner) = weak.upgrade() {
+                                Bar(inner).select(index);
+                            }
+                        }
                     }
-                }
-            })?;
+                })?
+            } else {
+                Listener::attach(button.as_ref(), "click", {
+                    let weak = Rc::downgrade(&self.0);
+                    move || {
+                        if let Some(inner) = weak.upgrade() {
+                            Bar(inner).select(index);
+                        }
+                    }
+                })?
+            };
             listeners.push(listener);
 
             match self.0.shape {
@@ -168,7 +196,9 @@ impl Bar {
     fn mark_selected(&self, index: Option<usize>) {
         for (i, button) in self.0.buttons.borrow().iter().enumerate() {
             let current = Some(i) == index;
-            let _ = button.set_attribute("aria-selected", if current { "true" } else { "false" });
+            if self.0.shape != Shape::Crumb {
+                let _ = button.set_attribute("aria-selected", if current { "true" } else { "false" });
+            }
             if current {
                 let _ = button.set_attribute("aria-current", "page");
             } else {
