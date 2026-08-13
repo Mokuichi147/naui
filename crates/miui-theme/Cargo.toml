@@ -1,0 +1,17 @@
+[package]
+name = "miui-theme"
+description = "miui のデザイントークン実体 (Fluent 2 / macOS / Adwaita / Web)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# 全プラットフォームのトークンをコンパイルし、`for_style` を使えるようにする。
+# デザイン比較 / スクリーンショット生成 / 見た目の回帰テスト用。
+all-styles = []
+
+[dependencies]
+miui-core.workspace = true

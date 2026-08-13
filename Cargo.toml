@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/miui-core",
+    "crates/miui-render",
+    "crates/miui-theme",
+    "crates/miui-widgets",
+    "crates/miui",
+    "examples/counter",
+    "examples/gallery",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mokuichi147/miui"
+
+[workspace.dependencies]
+miui-core = { path = "crates/miui-core", version = "0.1.0" }
+miui-render = { path = "crates/miui-render", version = "0.1.0" }
+miui-theme = { path = "crates/miui-theme", version = "0.1.0" }
+miui-widgets = { path = "crates/miui-widgets", version = "0.1.0" }
+miui = { path = "crates/miui", version = "0.1.0" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,12 @@
+[package]
+name = "miui-render"
+description = "miui のソフトウェアラスタライザ (SDF ベース) とテキストエンジン"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+miui-core.workspace = true
+fontdue = { version = "0.9", default-features = false, features = ["std"] }

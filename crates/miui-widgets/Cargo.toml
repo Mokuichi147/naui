@@ -1,0 +1,14 @@
+[package]
+name = "miui-widgets"
+description = "miui の標準ウィジェット (ボタン / 入力 / スライダ / レイアウト)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+miui-core.workspace = true
+
+[dev-dependencies]
+miui-theme.workspace = true
