@@ -43,6 +43,8 @@ macro_rules! impl_widget {
     };
 }
 
+pub(crate) use impl_widget;
+
 // ------------------------------------------------------------------ Label
 
 struct LabelInner {
@@ -471,7 +473,7 @@ impl Stack {
 }
 
 /// `bool` を WinRT の `IReference<bool>` に包む。
-fn bool_ref(value: bool) -> Result<windows::Foundation::IReference<bool>> {
+pub(crate) fn bool_ref(value: bool) -> Result<windows::Foundation::IReference<bool>> {
     use windows_core::Interface;
     windows::Foundation::PropertyValue::CreateBoolean(value)
         .and_then(|v| v.cast())

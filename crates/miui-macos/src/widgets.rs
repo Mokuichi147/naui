@@ -41,6 +41,8 @@ macro_rules! impl_widget {
     };
 }
 
+pub(crate) use impl_widget;
+
 // ------------------------------------------------------------------ Label
 
 struct LabelInner {

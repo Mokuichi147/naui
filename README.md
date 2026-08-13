@@ -19,13 +19,15 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 7 件 |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 14 件 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 |
-| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、WinUI 3ウィンドウの表示と起動後の安定動作を確認 |
+| **Windows** | ⚠️ 一部未確認 | 基本ウィジェットは Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し確認済み。**ナビゲーション系 7 種は `cargo check --target x86_64-pc-windows-msvc` が通っているだけで、実機では未確認** |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
-Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で実行確認済みです。
+Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で実行確認済みですが、
+`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link` については
+コンパイルが通ることしか確かめていません (実行環境が手元に無いため)。
 詳細は [`crates/miui-gtk`](crates/miui-gtk/src/lib.rs) のドキュメントを参照してください。
 
 ---
@@ -109,6 +111,42 @@ let element: web_sys::Element = button.native_element();
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ❌ |
 | `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
 
+### ナビゲーション
+
+| miui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
+| --- | --- | --- | --- | --- |
+| `Tabs` | ✅ `TabView` + `TabViewItem` | ✅ `NSTabView` + `NSTabViewItem` | 🟡 `role="tablist"` + `<button role=tab>` + `hidden` | ❌ |
+| `Navbar` | 🟡 `TextBlock` + `ToggleButton` の横並び | 🟡 `NSTextField` + `NSSegmentedControl` | 🟡 `<nav>` + `<strong>` + `<button>` | ❌ |
+| `Dock` | 🟡 `ToggleButton` の横並び | ✅ `NSSegmentedControl` (等幅) | 🟡 `<nav>` + `<button>` (等幅) | ❌ |
+| `Menu` | 🟡 `ToggleButton` の縦並び | 🟡 `NSButton` (AccessoryBar) の縦並び | 🟡 `<nav><ul><li><button>` | ❌ |
+| `Breadcrumbs` | 🟡 `ToggleButton` + 区切りの `TextBlock` | ✅ `NSPathControl` + `NSPathControlItem` | 🟡 `<nav><ol><li><button>` | ❌ |
+| `Pagination` | 🟡 `Button` + `ToggleButton` | 🟡 `NSButton` + `NSSegmentedControl` | 🟡 `<nav>` + `<button>` | ❌ |
+| `Link` | ✅ `HyperlinkButton` | 🟡 `NSButton` (枠なし・リンク色) + `NSWorkspace` | ✅ `<a href>` | ❌ |
+
+7 種類とも **同じ形の API** を持ちます。項目は `NavItem` の並びで渡し、
+選ばれたものはインデックスで返ります。
+
+```rust
+let navbar = ui.navbar("miui")?;
+navbar.set_items(&NavItem::list(["ホーム", "検索", "設定"]));
+navbar.on_select(|index| println!("{index} 番目が選ばれた"));
+navbar.set_selected(0);            // 通知せずに選択を変える
+navbar.select(1);                  // ユーザー操作と同じ経路 (通知あり)
+let _: Option<usize> = navbar.selected();
+```
+
+| メソッド | 意味 |
+| --- | --- |
+| `set_items(&[NavItem])` | 項目を作り直す。インデックスの意味が変わるため選択は外れる (`Breadcrumbs` だけは末尾が現在地になる) |
+| `selected()` | いま選ばれている位置。未選択なら `None` |
+| `set_selected(i)` | **通知せずに**選択を変える (アプリの状態を UI に反映する用) |
+| `select(i)` | ユーザーが選んだのと同じ経路で選択を変える (通知あり。テストや自動操作にも使える) |
+| `on_select(f)` | 選ばれたときに呼ばれる。設定し直すと以前のものは外れる |
+
+`Tabs` だけは中身のウィジェットごと持つため `add_tab(label, &child)` で組み立て、
+`Pagination` はページ番号を扱うため `set_page_count` / `page` / `set_page` /
+`go_previous` / `go_next` / `on_change` という名前になっています。
+
 ### 🟡 / 🔴 の内訳
 
 | 箇所 | 内容 |
@@ -116,6 +154,12 @@ let element: web_sys::Element = button.native_element();
 | 🔴 Web の `Window` | ブラウザにはページ内ウィンドウの概念が無い。`<body>` 直下の `<div>` で代用し、タイトルは `document.title` に反映している。`show()` / `close()` は `display` の切り替え、`set_size()` は `max-width` / `min-height` の指定であり、**OS のウィンドウ操作ではない** |
 | 🟡 Web の `Stack` | HTML に「スタック」というコントロールは存在しない。ただし CSS Flexbox はブラウザ自身のレイアウト機構なので、独自のレイアウト計算はしていない (`display:flex` + `flex-direction` + `gap` + `padding`) |
 | 🟡 Web の `Checkbox` | `<input type=checkbox>` 自体はネイティブだが、ラベル文字列を持たないため `<label>` で `<input>` と `<span>` を包んでいる |
+| 🟡 Web のナビゲーション全般 | ブラウザに「タブ」「ナビバー」というコントロールは無い。`<nav>` / `<ol>` / `<button>` と WAI-ARIA のロール (`tablist` / `tab` / `tabpanel` / `aria-current`) で意味づけし、隠すのは `hidden` 属性に任せている。CSS は Flexbox のレイアウトと、選択中を示す `font-weight: bold` だけ |
+| 🟡 macOS の `Navbar` | `NSSegmentedControl` はネイティブだが、見出しを持てないため `NSTextField` と `NSStackView` で横に並べている |
+| 🟡 macOS の `Menu` | AppKit の `NSMenu` はポップアップ用。サイドバー相当の縦一覧は `NSButton` (AccessoryBar・PushOnPushOff) を `NSStackView` に並べて作っている |
+| 🟡 macOS の `Link` | AppKit にリンク専用のコントロールは無い。枠なしの `NSButton` を `NSColor::linkColor` にし、`href` は `NSWorkspace` で開いている |
+| 🟡 すべての `Pagination` | ページ送りに相当するネイティブコントロールはどの環境にも無い。前へ / 次へのボタンとページ番号を、その環境のネイティブなボタンで並べている |
+| 🟡 Windows の `Navbar` / `Dock` / `Menu` / `Breadcrumbs` | `NavigationView` と `BreadcrumbBar` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、WinUI 標準の `ToggleButton` を `StackPanel` に並べ、選択状態を `IsChecked` で表している |
 
 ### 補足 (誤解しやすい箇所)
 
@@ -126,15 +170,21 @@ let element: web_sys::Element = button.native_element();
 | WinUI 3 の `Button` / `Checkbox` | ラベルを `TextBlock` にして `Content` に入れている。XAML の標準的なやり方で、コントロール自体はネイティブ |
 | Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
 | すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。miui 側の `clamp` は二重の保険 |
+| `Menu` という名前 | miui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。`NSMenu` / `MenuFlyout` に相当するものは未実装 |
+| `Dock` の配置 | 下端への固定は行わない。miui のレイアウトは縦横のスタックだけなので、**置く場所はアプリの責務**。縦スタックの最後に置くと下端寄りになる |
+| `Link` の遷移 | `href` が空でなければ、押したときにその環境の標準的な方法で開く (macOS は `NSWorkspace`、Windows は `HyperlinkButton` の `NavigateUri`、Web は `target="_blank"`)。Web で同じタブに遷移すると wasm のアプリごと破棄されるため、別タブに揃えている |
 | Windows の `ProgressBar` | Windows App SDK 2.3.1 の未パッケージ実行では `ProgressBar` の既定テンプレート適用時にランタイムが終了するため、WinUI XAML の `Grid` と `Border` を組み合わせて同等の表示を構成している。値の変更 API は維持している |
 
 ### 未対応のコンポーネント
 
-メニュー、ダイアログ、リスト / テーブル、タブ、ラジオボタン、コンボボックス、
+ポップアップメニュー、ダイアログ、リスト / テーブル、ラジオボタン、コンボボックス、
 複数行テキスト、ツールバー、ツリー、画像表示などはありません。
 レイアウトも縦横のスタックのみで、グリッドや絶対配置はありません。
+そのため `Dock` を画面下端に固定することもできません。
 
-> **注意:** Windows 列は Windows App SDK 2.3.1 の実機で `cargo run -p gallery` による起動確認済みです。
+> **注意:** Windows 列のうち、基本ウィジェットは Windows App SDK 2.3.1 の実機で
+> `cargo run -p gallery` による起動確認済みです。**ナビゲーション系 7 種は
+> `cargo check --target x86_64-pc-windows-msvc` が通っているだけで、実機では未確認です。**
 > `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
 
 ---
@@ -220,14 +270,35 @@ cargo run -p gallery
 cargo test --workspace
 ```
 
+バックエンドは別クレートなので、4 ターゲット分のコンパイルも確認します
+(macOS からでも、ターゲットを追加すれば `cargo check` は通ります)。
+
+```sh
+cargo check --target x86_64-pc-windows-msvc -p miui
+```
+
+```sh
+cargo check --target wasm32-unknown-unknown -p miui
+```
+
+```sh
+cargo check --target x86_64-unknown-linux-gnu -p miui
+```
+
 - `miui-core`: 設定・エラー整形の単体テスト
-- `miui-macos`: **AppKit の実コントロールに対する 7 件の統合テスト**
+- `miui-macos`: **AppKit の実コントロールに対する 14 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
   - NSSlider が範囲でクランプすること (miui ではなく AppKit の挙動)
   - ハンドルを捨てた後もコンテナ経由でコールバックが生きていること
   - NSWindow を生成・設定・クローズしても二重解放しないこと
+  - `NSSegmentedControl` の選択が往復し、`set_selected` は通知しないこと
+  - `NSTabView` がタブの中身を保持し、切り替えを 1 回だけ通知すること
+  - メニューの縦一覧で、押し込まれるボタンが常に 1 つだけであること
+  - パンくずが末尾を現在地にし、階層を差し替えても追従すること
+  - ページ送りが先頭・末尾で止まること
+  - リンクのネイティブクリックがクロージャへ届くこと
 
 AppKit はメインスレッドを要求しますが、Rust の標準テストハーネスは
 各テストを別スレッドで走らせます (`--test-threads=1` でも同じ)。
@@ -240,13 +311,21 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
 - **Linux が未実装。** 上記のとおり。
 - **Windows App SDK の実行環境が必要。** Windows バックエンドは Windows App SDK 2.x の
   フレームワークランタイムを必要とし、現在は2.3.1で実機確認しています。
+- **Windows のナビゲーション系 7 種は実機未確認。** `cargo check --target x86_64-pc-windows-msvc`
+  が通ることしか確かめていません。`ProgressBar` の例のように、未パッケージ実行で
+  `TabView` の既定テンプレートが問題を起こす可能性があります。その場合に備えて、
+  各ウィジェットのネイティブ生成は `Tabs::new` のように 1 箇所へまとめてあります。
 - **Enter で確定するコールバック (`on_submit`) がありません。**
   `winio-winui3` がキーボードイベント (`KeyDown` / `KeyEventHandler`) を
   バインドしていないため、Windows で実装できませんでした。
   「共通 API は全バックエンドの共通部分」という方針を優先して、
   macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **ウィジェットは 8 種類のみ。** メニュー、ダイアログ、リスト、タブ、
-  複数行テキストなどは未実装です。
+- **ウィジェットは 15 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
+  `Checkbox` / `TextInput` / `Slider` / `ProgressBar`) と、ナビゲーション 7 種
+  (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`) です。
+  ポップアップメニュー、ダイアログ、リスト、複数行テキストなどは未実装です。
+- **`Dock` を画面下端に固定できません。** レイアウトが縦横のスタックだけなので、
+  置く場所はアプリの責務です。
 - **レイアウトは縦横のスタックのみ。** グリッドや絶対配置はありません。
 - **ウィンドウを閉じるイベントを購読できません。**
 

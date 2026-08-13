@@ -18,6 +18,7 @@
 #![cfg(target_os = "windows")]
 
 mod app;
+mod navigation;
 mod ui_thread;
 mod widgets;
 mod window;
@@ -26,6 +27,7 @@ use std::cell::RefCell;
 
 use miui_core::{Error, Orientation, Result, Settings};
 
+pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
 pub use window::Window;
 
@@ -77,6 +79,41 @@ impl Ui {
 
     pub fn progress_bar(&self) -> Result<ProgressBar> {
         ProgressBar::new()
+    }
+
+    /// タブ。中身のウィジェットごと持つ。
+    pub fn tabs(&self) -> Result<Tabs> {
+        Tabs::new()
+    }
+
+    /// 画面上部に置く横並びのナビゲーション。`title` は左端の見出し。
+    pub fn navbar(&self, title: &str) -> Result<Navbar> {
+        Navbar::new(title)
+    }
+
+    /// 画面下部に置く横並びのナビゲーション。
+    pub fn dock(&self) -> Result<Dock> {
+        Dock::new()
+    }
+
+    /// 縦に並ぶナビゲーション一覧。
+    pub fn menu(&self) -> Result<Menu> {
+        Menu::new()
+    }
+
+    /// パンくず。
+    pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
+        Breadcrumbs::new()
+    }
+
+    /// ページ送り。`page_count` はページ数。
+    pub fn pagination(&self, page_count: usize) -> Result<Pagination> {
+        Pagination::new(page_count)
+    }
+
+    /// リンク。`href` が空でなければ、押したときにブラウザで開く。
+    pub fn link(&self, text: &str, href: &str) -> Result<Link> {
+        Link::new(text, href)
     }
 
     /// アプリを終了する。

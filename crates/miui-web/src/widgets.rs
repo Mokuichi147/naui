@@ -34,20 +34,22 @@ macro_rules! impl_widget {
     };
 }
 
+pub(crate) use impl_widget;
+
 pub(crate) fn create(doc: &Document, tag: &str) -> Result<Element> {
     doc.create_element(tag)
         .map_err(|e| to_error("DOM 要素の生成", e))
 }
 
 /// クリック等のイベントを購読し、ハンドルが生きている間だけ有効にする。
-struct Listener {
+pub(crate) struct Listener {
     target: web_sys::EventTarget,
     event: &'static str,
     closure: Closure<dyn FnMut()>,
 }
 
 impl Listener {
-    fn attach(
+    pub(crate) fn attach(
         target: &web_sys::EventTarget,
         event: &'static str,
         f: impl FnMut() + 'static,
@@ -422,7 +424,7 @@ impl Stack {
     }
 }
 
-fn set_disabled(element: &HtmlElement, disabled: bool) {
+pub(crate) fn set_disabled(element: &HtmlElement, disabled: bool) {
     if disabled {
         let _ = element.set_attribute("disabled", "");
     } else {

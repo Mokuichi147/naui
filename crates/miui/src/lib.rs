@@ -50,32 +50,65 @@
 //! }
 //! ```
 //!
+//! ## ナビゲーション
+//!
+//! タブ・ナビバー・ドック・メニュー・パンくず・ページ送り・リンクは、
+//! どの環境でも同じ API で組み立てられる。項目は [`NavItem`] の並びで渡し、
+//! 選ばれたものはインデックスで返る。
+//!
+//! ```no_run
+//! # use miui::{NavItem, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let navbar = ui.navbar("miui")?;
+//! navbar.set_items(&NavItem::list(["ホーム", "検索", "設定"]));
+//! navbar.on_select(|index| println!("{index} 番目が選ばれた"));
+//! navbar.set_selected(0); // 通知せずに選択を変える
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | miui | Windows | macOS | Web |
+//! | --- | --- | --- | --- |
+//! | `Tabs` | `TabView` | `NSTabView` | `role="tablist"` |
+//! | `Navbar` | `ToggleButton` の横並び | `NSSegmentedControl` | `<nav>` |
+//! | `Dock` | `ToggleButton` の横並び | `NSSegmentedControl` | `<nav>` |
+//! | `Menu` | `ToggleButton` の縦並び | `NSButton` の縦並び | `<nav><ul>` |
+//! | `Breadcrumbs` | `ToggleButton` + 区切り | `NSPathControl` | `<nav><ol>` |
+//! | `Pagination` | `Button` + `ToggleButton` | `NSButton` + `NSSegmentedControl` | `<nav>` |
+//! | `Link` | `HyperlinkButton` | `NSButton` (リンク色) | `<a>` |
+//!
+//! `Menu` は**縦に並ぶナビゲーション一覧**であって、ポップアップメニューではない。
+//! `Dock` の下端への固定は、レイアウトが縦横のスタックだけなのでアプリの責務になる。
+//!
 //! ## 検証状況
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり |
+//! | macOS | 実行・自動テストあり (ナビゲーションを含む 14 件) |
 //! | Web (wasm) | ブラウザで実行確認 |
-//! | Windows | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行確認 |
+//! | Windows | 基本ウィジェットは Windows App SDK 2.3.1 の実機で確認。ナビゲーション系はコンパイル確認のみ |
 //! | Linux | 未実装 |
 
 #![forbid(unsafe_code)]
 
-pub use miui_core::{Align, Error, Orientation, Padding, Result, Settings};
+pub use miui_core::{Align, Error, NavItem, Orientation, Padding, Result, Settings};
 
 #[cfg(target_arch = "wasm32")]
 pub use miui_web::{
-    run, Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Ui, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, Label, Link, Menu, Navbar, Pagination, ProgressBar,
+    Slider, Stack, Tabs, TextInput, Ui, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use miui_macos::{
-    run, Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Ui, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, Label, Link, Menu, Navbar, Pagination, ProgressBar,
+    Slider, Stack, Tabs, TextInput, Ui, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use miui_windows::{
-    run, Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Ui, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, Label, Link, Menu, Navbar, Pagination, ProgressBar,
+    Slider, Stack, Tabs, TextInput, Ui, Widget, Window,
 };
 
 #[cfg(all(
@@ -84,7 +117,8 @@ pub use miui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use miui_gtk::{
-    run, Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Ui, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, Label, Link, Menu, Navbar, Pagination, ProgressBar,
+    Slider, Stack, Tabs, TextInput, Ui, Widget, Window,
 };
 
 /// バックエンド間で API がずれていないことを、コンパイル時に検査する。
@@ -142,12 +176,87 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: f64 = progress.value();
     progress.set_value(0.5);
 
+    // --- ナビゲーション ---------------------------------------------------
+    let items = [NavItem::new("t"), NavItem::new("t").enabled(false)];
+
+    let tabs: Tabs = ui.tabs()?;
+    tabs.add_tab("t", &label);
+    let _: usize = tabs.len();
+    let _: bool = tabs.is_empty();
+    let _: Option<usize> = tabs.selected();
+    tabs.set_selected(0);
+    tabs.select(0);
+    tabs.on_select(|_index: usize| {});
+
+    let navbar: Navbar = ui.navbar("t")?;
+    navbar.set_title("t");
+    let _: String = navbar.title();
+    navbar.set_items(&items);
+    let _: usize = navbar.len();
+    let _: bool = navbar.is_empty();
+    let _: Option<usize> = navbar.selected();
+    navbar.set_selected(0);
+    navbar.select(0);
+    navbar.on_select(|_index: usize| {});
+
+    let dock: Dock = ui.dock()?;
+    dock.set_items(&items);
+    let _: usize = dock.len();
+    let _: bool = dock.is_empty();
+    let _: Option<usize> = dock.selected();
+    dock.set_selected(0);
+    dock.select(0);
+    dock.on_select(|_index: usize| {});
+
+    let menu: Menu = ui.menu()?;
+    menu.set_items(&items);
+    let _: usize = menu.len();
+    let _: bool = menu.is_empty();
+    let _: Option<usize> = menu.selected();
+    menu.set_selected(0);
+    menu.select(0);
+    menu.on_select(|_index: usize| {});
+
+    let breadcrumbs: Breadcrumbs = ui.breadcrumbs()?;
+    breadcrumbs.set_items(&items);
+    let _: usize = breadcrumbs.len();
+    let _: bool = breadcrumbs.is_empty();
+    let _: Option<usize> = breadcrumbs.selected();
+    breadcrumbs.set_selected(0);
+    breadcrumbs.select(0);
+    breadcrumbs.on_select(|_index: usize| {});
+
+    let pagination: Pagination = ui.pagination(3)?;
+    pagination.set_page_count(5);
+    let _: usize = pagination.page_count();
+    let _: usize = pagination.page();
+    pagination.set_page(1);
+    pagination.select(1);
+    pagination.go_previous();
+    pagination.go_next();
+    pagination.on_change(|_page: usize| {});
+
+    let link: Link = ui.link("t", "https://example.com")?;
+    let _: String = link.text();
+    link.set_text("t");
+    let _: String = link.href();
+    link.set_href("t");
+    link.set_enabled(true);
+    link.on_click(|| {});
+
     stack.append(&label);
     stack.append(&button);
     stack.append(&checkbox);
     stack.append(&input);
     stack.append(&slider);
     stack.append(&progress);
+    stack.append(&tabs);
+    stack.append(&navbar);
+    stack.append(&dock);
+    stack.append(&menu);
+    stack.append(&breadcrumbs);
+    stack.append(&pagination);
+    stack.append(&link);
     window.set_child(&stack);
 
     ui.quit();

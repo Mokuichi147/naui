@@ -101,6 +101,66 @@ impl Padding {
     }
 }
 
+/// ナビゲーションの 1 項目。
+///
+/// タブ・ナビバー・ドック・メニュー・パンくずは、どれも
+/// 「項目の並び + いま選ばれているもの」という同じ構造を持つ。
+/// その項目を表すのがこの型で、バックエンドはこれを
+/// NSSegmentedControl のセグメントや `<a>` などに写す。
+///
+/// 項目の識別はアプリ側が持つ順序 (インデックス) で行う。
+/// 選択の通知もインデックスで返るので、`&[NavItem]` を作った側が
+/// そのまま画面の切り替えに使える。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NavItem {
+    /// 画面に出る文字列。
+    pub label: String,
+    /// 選べるかどうか。
+    pub enabled: bool,
+}
+
+impl NavItem {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            enabled: true,
+        }
+    }
+
+    /// 選べるかどうかを指定する (既定は選べる)。
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// 文字列の並びから項目列を作る。
+    ///
+    /// ```
+    /// # use miui_core::NavItem;
+    /// let items = NavItem::list(["ホーム", "検索", "設定"]);
+    /// assert_eq!(items.len(), 3);
+    /// ```
+    pub fn list<I, S>(labels: I) -> Vec<NavItem>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        labels.into_iter().map(NavItem::new).collect()
+    }
+}
+
+impl From<&str> for NavItem {
+    fn from(label: &str) -> Self {
+        NavItem::new(label)
+    }
+}
+
+impl From<String> for NavItem {
+    fn from(label: String) -> Self {
+        NavItem::new(label)
+    }
+}
+
 /// アプリ起動時の設定。
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -137,6 +197,21 @@ mod tests {
         let s = Settings::new("my app");
         assert_eq!(s.app_id, "org.miui.my_app");
         assert_eq!(Settings::new("x").app_id("com.example.x").app_id, "com.example.x");
+    }
+
+    #[test]
+    fn nav_item_defaults_to_enabled() {
+        let item = NavItem::new("ホーム");
+        assert_eq!(item.label, "ホーム");
+        assert!(item.enabled);
+        assert!(!NavItem::new("設定").enabled(false).enabled);
+    }
+
+    #[test]
+    fn nav_item_list_keeps_order() {
+        let items = NavItem::list(["一覧", "詳細"]);
+        assert_eq!(items[0], NavItem::from("一覧"));
+        assert_eq!(items[1].label, "詳細");
     }
 
     #[test]
