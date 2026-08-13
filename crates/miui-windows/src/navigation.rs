@@ -543,6 +543,9 @@ impl BreadcrumbBar {
         for (index, item) in items.iter().enumerate() {
             if index > 0 {
                 let separator = text_block("/")?;
+                separator
+                    .SetVerticalAlignment(VerticalAlignment::Center)
+                    .map_err(|e| to_error("パンくず区切りの縦位置設定", e))?;
                 let element = separator
                     .cast::<UIElement>()
                     .map_err(|e| to_error("パンくず区切りの要素化", e))?;
@@ -557,6 +560,9 @@ impl BreadcrumbBar {
             link
                 .SetNavigateUri(None)
                 .map_err(|e| to_error("パンくずリンクの遷移先設定", e))?;
+            link
+                .SetVerticalAlignment(VerticalAlignment::Center)
+                .map_err(|e| to_error("パンくずリンクの縦位置設定", e))?;
             let _ = link.SetIsEnabled(item.enabled);
 
             let state = UiThreadCell::new(Rc::downgrade(&self.0));
