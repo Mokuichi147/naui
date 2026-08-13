@@ -5,7 +5,10 @@ use std::rc::Rc;
 
 use miui_core::{Result, Theme};
 use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::{FrameworkElement, UIElement, Window as XamlWindow};
+use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use winui3::Microsoft::UI::Xaml::{
+    Controls::Grid, FrameworkElement, UIElement, Window as XamlWindow,
+};
 
 use crate::to_error;
 use crate::widgets::Widget;
@@ -13,6 +16,7 @@ use crate::widgets::Widget;
 struct WindowInner {
     native: XamlWindow,
     child: RefCell<Option<Box<dyn Widget>>>,
+    theme_root: RefCell<Option<UIElement>>,
     visible: RefCell<bool>,
     theme: Cell<Theme>,
     width: i32,
@@ -33,6 +37,7 @@ impl Window {
         let this = Self(Rc::new(WindowInner {
             native,
             child: RefCell::new(None),
+            theme_root: RefCell::new(None),
             visible: RefCell::new(false),
             theme: Cell::new(theme),
             width: width as i32,
@@ -66,8 +71,10 @@ impl Window {
     /// ルートに置くウィジェット。呼ぶたびに置き換わる。
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
-        if self.0.native.SetContent(&element).is_ok() {
-            let _ = set_theme_on_element(&element, self.0.theme.get());
+        let theme_root = themed_content_root(&element).unwrap_or_else(|_| element.clone());
+        if self.0.native.SetContent(&theme_root).is_ok() {
+            let _ = set_theme_on_element(&theme_root, self.0.theme.get());
+            *self.0.theme_root.borrow_mut() = Some(theme_root);
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }
@@ -75,9 +82,14 @@ impl Window {
     /// このウィンドウの配色テーマを切り替える。
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         self.0.theme.set(theme);
-        let child = self.0.child.borrow();
-        if let Some(child) = child.as_deref() {
-            set_theme_on_element(&child.native_element(), theme)?;
+        let theme_root = self.0.theme_root.borrow();
+        if let Some(theme_root) = theme_root.as_ref() {
+            set_theme_on_element(theme_root, theme)?;
+        } else {
+            let child = self.0.child.borrow();
+            if let Some(child) = child.as_deref() {
+                set_theme_on_element(&child.native_element(), theme)?;
+            }
         }
         Ok(())
     }
@@ -106,9 +118,25 @@ impl Window {
     }
 }
 
+fn themed_content_root(element: &UIElement) -> Result<UIElement> {
+    let root = XamlReader::Load(&HSTRING::from(
+        r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"/>"##,
+    ))
+    .map_err(|e| to_error("テーマ背景要素の生成", e))?
+    .cast::<Grid>()
+    .map_err(|e| to_error("テーマ背景要素への変換", e))?;
+    root.Children()
+        .map_err(|e| to_error("テーマ背景要素の子取得", e))?
+        .Append(element)
+        .map_err(|e| to_error("テーマ背景要素への配置", e))?;
+    root.cast::<UIElement>()
+        .map_err(|e| to_error("テーマ背景要素への変換", e))
+}
+
 /// `winio-winui3` 0.4.x は `FrameworkElement.RequestedTheme` の型を公開していない。
-/// ただし生成された vtable には ABI スロットが存在するため、公開されている
-/// `IsLoaded` の 4 スロット前を使って同じ WinRT プロパティを呼び出す。
+/// ただし生成された vtable には ABI スロットが存在する。`IsLoaded` の直前は
+/// `SetRequestedTheme` なので、そのスロットを使って同じ WinRT プロパティを呼び出す。
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 struct ElementTheme(i32);
@@ -132,7 +160,7 @@ fn set_theme_on_element(element: &UIElement, theme: Theme) -> Result<()> {
         ElementTheme,
     ) -> windows_core::HRESULT = unsafe {
         let is_loaded = std::ptr::addr_of!(element.vtable().IsLoaded) as *const usize;
-        std::mem::transmute(*is_loaded.sub(4))
+        std::mem::transmute(*is_loaded.sub(1))
     };
     unsafe { set_requested_theme(Interface::as_raw(&element), theme.into()).ok() }
         .map_err(|e| to_error("テーマの設定", e))
