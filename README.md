@@ -21,12 +21,11 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | --- | --- | --- |
 | **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 7 件 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 |
-| **Windows** | ⚠️ 未実行 | `cargo check --target x86_64-pc-windows-msvc` によるコンパイル確認のみ。**実機で起動したことはありません** |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、WinUI 3ウィンドウの表示と起動後の安定動作を確認 |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
-Linux と Windows の状態がこうなっているのは、実装環境が macOS で、
-GTK4 はシステムライブラリと pkg-config を要求するためコンパイル確認すらできず、
-WinUI 3 は Windows App SDK ランタイムを持つ Windows 機がないと実行できないためです。
+Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
+Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で実行確認済みです。
 詳細は [`crates/miui-gtk`](crates/miui-gtk/src/lib.rs) のドキュメントを参照してください。
 
 ---
@@ -108,7 +107,7 @@ let element: web_sys::Element = button.native_element();
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` (`checkboxWithTitle:`) | 🟡 `<input type=checkbox>` + `<label>` | ❌ |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` (`textFieldWithString:`) | ✅ `<input type=text>` | ❌ |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ❌ |
-| `ProgressBar` | ✅ `ProgressBar` | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
+| `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
 
 ### 🟡 / 🔴 の内訳
 
@@ -127,6 +126,7 @@ let element: web_sys::Element = button.native_element();
 | WinUI 3 の `Button` / `Checkbox` | ラベルを `TextBlock` にして `Content` に入れている。XAML の標準的なやり方で、コントロール自体はネイティブ |
 | Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
 | すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。miui 側の `clamp` は二重の保険 |
+| Windows の `ProgressBar` | Windows App SDK 2.3.1 の未パッケージ実行では `ProgressBar` の既定テンプレート適用時にランタイムが終了するため、WinUI XAML の `Grid` と `Border` を組み合わせて同等の表示を構成している。値の変更 API は維持している |
 
 ### 未対応のコンポーネント
 
@@ -134,8 +134,8 @@ let element: web_sys::Element = button.native_element();
 複数行テキスト、ツールバー、ツリー、画像表示などはありません。
 レイアウトも縦横のスタックのみで、グリッドや絶対配置はありません。
 
-> **注意:** Windows 列は `cargo check` によるコンパイル確認のみで、実機での動作確認をしていません。
-> 「✅ 完全ネイティブ」は、その型を使うコードがコンパイルを通ることまでを意味します。
+> **注意:** Windows 列は Windows App SDK 2.3.1 の実機で `cargo run -p gallery` による起動確認済みです。
+> `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
 
 ---
 
@@ -200,8 +200,13 @@ DOM がテキストを描くため、フォントの埋め込みなどは不要�
 
 ### Windows
 
-Windows 機で以下を実行します (**未検証**)。
-実行環境に Windows App SDK ランタイムが必要です。
+Windows バックエンドは WinUI 3 / Windows App SDK 2.x を使用します。現在の安定版
+である Windows App SDK 2.3.1 をインストールした Windows x64 環境で動作確認済みです。
+実行時には Windows App SDK のフレームワークランタイムが必要です。`cargo run` は
+インストール済みの Windows App SDK 2.x ランタイムを動的依存関係として追加します。
+
+Windows App SDK の[安定版リリース情報](https://github.com/microsoft/WindowsAppSDK/releases)
+も参照してください。
 
 ```sh
 cargo run -p gallery
@@ -233,7 +238,8 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
 ## 既知の制限
 
 - **Linux が未実装。** 上記のとおり。
-- **Windows が実行未確認。** コンパイルが通ることしか確かめていません。
+- **Windows App SDK の実行環境が必要。** Windows バックエンドは Windows App SDK 2.x の
+  フレームワークランタイムを必要とし、現在は2.3.1で実機確認しています。
 - **Enter で確定するコールバック (`on_submit`) がありません。**
   `winio-winui3` がキーボードイベント (`KeyDown` / `KeyEventHandler`) を
   バインドしていないため、Windows で実装できませんでした。

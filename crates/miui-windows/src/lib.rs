@@ -10,13 +10,14 @@
 //! という制約がある。後者のために miui の公開 API は
 //! 「コールバックの中で UI を組み立てる」形になっている。
 //!
-//! ## 検証状況
+//! ## 実行要件
 //!
-//! このバックエンドは **`cargo check --target x86_64-pc-windows-msvc` による
-//! コンパイル確認のみ**で、実機での実行確認は行っていない。
+//! Windows App SDK 2.x ランタイムが必要。実行時には `V2` のフレームワーク
+//! パッケージ依存関係を追加し、インストール済みの最新2.xランタイムを使用する。
 
 #![cfg(target_os = "windows")]
 
+mod app;
 mod ui_thread;
 mod widgets;
 mod window;
@@ -95,45 +96,30 @@ pub fn run<F>(settings: Settings, build: F) -> Result<()>
 where
     F: FnOnce(&Ui) -> Result<()> + 'static,
 {
-    use winui3::bootstrap::{PackageDependency, WindowsAppSDKVersion};
     use winui3::Microsoft::UI::Xaml::{Application, ApplicationInitializationCallback};
     use winui3::{init_apartment, ApartmentType};
 
     let _ = settings;
+    let _dependency = winui3::bootstrap::PackageDependency::initialize_version(
+        winui3::bootstrap::WindowsAppSDKVersion::V2,
+    )
+    .map_err(|e| to_error("Windows App SDK 2.x の初期化", e))?;
     init_apartment(ApartmentType::SingleThreaded)
         .map_err(|e| to_error("COM アパートメントの初期化", e))?;
 
-    // Windows App SDK が未導入なら、既知のバージョンを順に試す。
-    let _dependency = [
-        WindowsAppSDKVersion::V1_8,
-        WindowsAppSDKVersion::V1_7,
-        WindowsAppSDKVersion::V1_6,
-        WindowsAppSDKVersion::V1_5,
-    ]
-    .into_iter()
-    .find_map(|v| PackageDependency::initialize_version(v).ok());
-
     let failure: &'static ui_thread::UiThreadCell<Option<Error>> =
         Box::leak(Box::new(ui_thread::UiThreadCell::new(None)));
-    let state = ui_thread::UiThreadCell::new(Some(build));
+    let state: &'static ui_thread::UiThreadCell<Option<F>> =
+        Box::leak(Box::new(ui_thread::UiThreadCell::new(Some(build))));
 
     Application::Start(&ApplicationInitializationCallback::new(move |_| {
-        let ui = Ui::new();
-        if let Some(build) = state.with_mut(|b| b.take()) {
-            if let Err(e) = build(&ui) {
-                failure.with_mut(|slot| *slot = Some(e));
-                if let Ok(app) = Application::Current() {
-                    let _ = app.Exit();
-                }
-            }
-        }
-        // ウィンドウをアプリの寿命まで保持する。
-        std::mem::forget(ui);
+        let app = app::compose(state, failure)?;
+        std::mem::forget(app);
         Ok(())
     }))
     .map_err(|e| to_error("Application::Start", e))?;
 
-    match failure.with_mut(|slot| slot.take()) {
+    match failure.with_mut_cross_thread(|slot| slot.take()) {
         Some(e) => Err(e),
         None => Ok(()),
     }

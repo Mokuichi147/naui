@@ -37,4 +37,13 @@ impl<T> UiThreadCell<T> {
         );
         f(&mut self.value.borrow_mut())
     }
+
+    /// 起動時の一回限りの状態受け渡し用。UI オブジェクトではなく、
+    /// `Application::Start` と `OnLaunched` の間で移動する状態だけに使う。
+    /// 呼び出し側は同時アクセスがないことを保証する。
+    pub(crate) fn with_mut_cross_thread<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        // SAFETY: この経路は起動時の直列な hand-off 専用で、通常の UI
+        // イベントから同時にアクセスされないことを呼び出し側が保証する。
+        unsafe { f(&mut *self.value.as_ptr()) }
+    }
 }
