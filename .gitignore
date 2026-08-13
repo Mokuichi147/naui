@@ -3,6 +3,3 @@
 
 # Web ビルドの生成物
 examples/gallery/web/pkg/
-
-# スクリーンショット出力
-/shots

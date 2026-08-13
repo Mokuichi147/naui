@@ -10,8 +10,6 @@ members = [
     "examples/counter",
     "examples/gallery",
 ]
-# 自前描画版のアーカイブ。ビルド対象には含めない。
-exclude = ["legacy"]
 
 [workspace.package]
 version = "0.2.0"
