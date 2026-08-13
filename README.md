@@ -90,16 +90,52 @@ let element: web_sys::Element = button.native_element();
 
 ## ウィジェット
 
-| miui | WinUI 3 | AppKit | DOM | GTK4 (予定) |
+凡例:
+
+| 記号 | 意味 |
+| --- | --- |
+| ✅ | **完全ネイティブ** — そのプラットフォームの標準コントロールを 1 つそのまま使用 |
+| 🟡 | **ネイティブ + 合成** — ネイティブコントロールは使うが、単体では足りない部分を組み立てている |
+| 🔴 | **再現** — 相当するネイティブの概念が無いため、別の要素で代用している |
+| ❌ | 未実装 |
+
+| miui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
 | --- | --- | --- | --- | --- |
-| `Window` | `Window` | `NSWindow` | `<div>` + `document.title` | `AdwApplicationWindow` |
-| `Stack` | `StackPanel` | `NSStackView` | `<div>` (flex) | `GtkBox` |
-| `Label` | `TextBlock` | `NSTextField` (label) | `<span>` | `GtkLabel` |
-| `Button` | `Button` | `NSButton` | `<button>` | `GtkButton` |
-| `Checkbox` | `CheckBox` | `NSButton` (Switch) | `<input type=checkbox>` | `GtkCheckButton` |
-| `TextInput` | `TextBox` | `NSTextField` | `<input type=text>` | `GtkEntry` |
-| `Slider` | `Slider` | `NSSlider` | `<input type=range>` | `GtkScale` |
-| `ProgressBar` | `ProgressBar` | `NSProgressIndicator` | `<progress>` | `GtkProgressBar` |
+| `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | 🔴 `<div>` + `document.title` | ❌ |
+| `Stack` | ✅ `StackPanel` | ✅ `NSStackView` | 🟡 `<div>` + CSS Flexbox | ❌ |
+| `Label` | ✅ `TextBlock` | ✅ `NSTextField` (`labelWithString:`) | ✅ `<span>` | ❌ |
+| `Button` | ✅ `Button` | ✅ `NSButton` (`buttonWithTitle:`) | ✅ `<button>` | ❌ |
+| `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` (`checkboxWithTitle:`) | 🟡 `<input type=checkbox>` + `<label>` | ❌ |
+| `TextInput` | ✅ `TextBox` | ✅ `NSTextField` (`textFieldWithString:`) | ✅ `<input type=text>` | ❌ |
+| `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ❌ |
+| `ProgressBar` | ✅ `ProgressBar` | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
+
+### 🟡 / 🔴 の内訳
+
+| 箇所 | 内容 |
+| --- | --- |
+| 🔴 Web の `Window` | ブラウザにはページ内ウィンドウの概念が無い。`<body>` 直下の `<div>` で代用し、タイトルは `document.title` に反映している。`show()` / `close()` は `display` の切り替え、`set_size()` は `max-width` / `min-height` の指定であり、**OS のウィンドウ操作ではない** |
+| 🟡 Web の `Stack` | HTML に「スタック」というコントロールは存在しない。ただし CSS Flexbox はブラウザ自身のレイアウト機構なので、独自のレイアウト計算はしていない (`display:flex` + `flex-direction` + `gap` + `padding`) |
+| 🟡 Web の `Checkbox` | `<input type=checkbox>` 自体はネイティブだが、ラベル文字列を持たないため `<label>` で `<input>` と `<span>` を包んでいる |
+
+### 補足 (誤解しやすい箇所)
+
+| 箇所 | 説明 |
+| --- | --- |
+| macOS の `Label` | AppKit に `NSLabel` は無く、`NSTextField` を非編集で使うのが標準。`labelWithString:` はそのためのファクトリなので完全ネイティブ |
+| macOS の `Checkbox` | `NSButton` の `Switch` タイプが AppKit のチェックボックスそのもの。別クラスではない |
+| WinUI 3 の `Button` / `Checkbox` | ラベルを `TextBlock` にして `Content` に入れている。XAML の標準的なやり方で、コントロール自体はネイティブ |
+| Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
+| すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。miui 側の `clamp` は二重の保険 |
+
+### 未対応のコンポーネント
+
+メニュー、ダイアログ、リスト / テーブル、タブ、ラジオボタン、コンボボックス、
+複数行テキスト、ツールバー、ツリー、画像表示などはありません。
+レイアウトも縦横のスタックのみで、グリッドや絶対配置はありません。
+
+> **注意:** Windows 列は `cargo check` によるコンパイル確認のみで、実機での動作確認をしていません。
+> 「✅ 完全ネイティブ」は、その型を使うコードがコンパイルを通ることまでを意味します。
 
 ---
 
