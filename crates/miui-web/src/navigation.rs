@@ -173,10 +173,19 @@ impl Bar {
             match self.0.shape {
                 Shape::Flat => append(&self.0.mount, &button)?,
                 Shape::ListItem | Shape::Crumb => {
-                    let li = create(doc, "li")?;
+                    let li: HtmlElement = create(doc, "li")?.unchecked_into();
+                    if self.0.shape == Shape::Crumb {
+                        // 区切り文字とリンクを同じ縦位置・間隔で並べる。
+                        // インライン要素のベースライン任せだと、ブラウザや
+                        // フォントによって区切り文字が上下にずれる。
+                        style(&li, "display", "flex");
+                        style(&li, "align-items", "center");
+                        style(&li, "gap", "4px");
+                    }
                     if self.0.shape == Shape::Crumb && index > 0 {
                         let separator = create(doc, "span")?;
                         separator.set_text_content(Some("/"));
+                        let _ = separator.set_attribute("aria-hidden", "true");
                         append(&li, &separator)?;
                     }
                     append(&li, &button)?;
