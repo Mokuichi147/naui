@@ -1,3 +1,3 @@
-fn main() {
-    gallery::start();
+fn main() -> miui::Result<()> {
+    gallery::start()
 }

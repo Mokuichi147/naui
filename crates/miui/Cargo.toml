@@ -1,40 +1,23 @@
 [package]
 name = "miui"
-description = "軽量なクロスプラットフォーム GUI。OS のウィジェットを使わず、各プラットフォームのデザイン言語を模した UI を自前で描画する"
+description = "各 OS のネイティブ UI を 1 つの API から扱う軽量 GUI (WinUI 3 / AppKit / GTK4 / DOM)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-default = []
-# 全プラットフォームのテーマを取り込む (デザイン比較 / スクリーンショット用)。
-all-styles = ["miui-theme/all-styles"]
-
 [dependencies]
 miui-core.workspace = true
-miui-render.workspace = true
-miui-theme.workspace = true
-miui-widgets.workspace = true
-winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
-softbuffer = { version = "0.4", default-features = false }
 
-# Linux では X11 / Wayland のバックエンドを有効にする (どちらも dlopen 経由)。
-[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
-winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
-softbuffer = { version = "0.4", default-features = false, features = ["x11", "wayland", "wayland-dlopen"] }
+[target.'cfg(target_os = "macos")'.dependencies]
+miui-macos.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-console_error_panic_hook = "0.1"
-web-sys = { version = "0.3", features = [
-    "Window",
-    "Document",
-    "Element",
-    "EventTarget",
-    "HtmlCanvasElement",
-    "CssStyleDeclaration",
-    "MediaQueryList",
-    "Navigator",
-] }
+miui-web.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+miui-windows.workspace = true
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+miui-gtk.workspace = true

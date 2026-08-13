@@ -1,0 +1,43 @@
+[package]
+name = "miui-macos"
+description = "miui の macOS バックエンド。AppKit の実コントロールを使う"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+miui-core.workspace = true
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSString",
+    "NSNotification",
+    "NSGeometry",
+    "NSObjCRuntime",
+] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSButton",
+    "NSControl",
+    "NSGraphics",
+    "NSLayoutConstraint",
+    "NSProgressIndicator",
+    "NSResponder",
+    "NSSlider",
+    "NSStackView",
+    "NSTextField",
+    "NSText",
+    "NSView",
+    "NSWindow",
+] }
+
+[dev-dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSButton", "NSControl", "NSView"] }
+
+[[test]]
+name = "appkit"
+path = "tests/appkit.rs"
+# AppKit はメインスレッドを要求するが、標準ハーネスは別スレッドで走らせるため。
+harness = false

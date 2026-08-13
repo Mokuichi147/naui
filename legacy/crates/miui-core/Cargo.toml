@@ -1,6 +1,6 @@
 [package]
 name = "miui-core"
-description = "miui の共通値型 (エラー / 設定 / 向き)。バックエンド非依存"
+description = "miui のコア: ジオメトリ / 色 / レイアウト / イベント / ウィジェット抽象"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,98 +1,155 @@
 //! # miui
 //!
-//! Rust だけで書かれた、とても軽量なクロスプラットフォーム GUI。
+//! **各 OS のネイティブ UI を、1 つの API から扱う軽量 GUI ツールキット。**
 //!
-//! - **1 つのコードで 4 環境**: Windows / macOS / Linux / Web (wasm)
-//! - **各プラットフォームのデザイン言語を模した見た目**: Windows なら
-//!   Fluent 2 (WinUI 3)、macOS なら macOS、Linux なら Adwaita (GNOME)、
-//!   Web ならニュートラル。トークンだけを差し替えるので UI コードは 1 つで済む。
-//! - **軽量**: GPU も外部 2D ライブラリも使わず、SDF ベースの自作
-//!   ソフトウェアラスタライザで描画する。依存はウィンドウ生成 (`winit`)、
-//!   ピクセルバッファ提示 (`softbuffer`)、グリフ展開 (`fontdue`) のみ。
+//! miui は自前で描画しない。ボタンは実際に OS のボタンであり、
+//! 描画・レイアウト・IME・アクセシビリティ・OS のテーマ追従は
+//! すべてプラットフォームのツールキットが行う。
 //!
-//! # 重要: OS のネイティブウィジェットは使っていない
-//!
-//! miui はウィンドウに 1 枚のピクセルバッファを描くだけで、WinUI 3 /
-//! AppKit / GTK4 のコントロールは一切呼ばない。ボタンもテキスト入力も
-//! miui が自前で描いた図形であり、**各 OS のデザイン言語を模した再現**である。
-//!
-//! この方式には次の帰結がある。
-//!
-//! - OS のアクセシビリティツリーに乗らない (スクリーンリーダーが認識しない)
-//! - OS 標準のコンテキストメニューやドラッグ&ドロップ等は自前実装が必要
-//! - OS のテーマ変更 (アクセントカラー設定など) には追従しない
-//! - 一方で、Web を含む 4 環境で完全に同じ挙動・同じ見た目になる
-//!
-//! 本物のネイティブウィジェットが必要な用途では、各 OS のツールキットを
-//! FFI で束ねる別の設計を検討する必要がある。
+//! | ビルド対象 | 使うツールキット | 例: ボタンの実体 |
+//! | --- | --- | --- |
+//! | Windows | WinUI 3 (Windows App SDK) | `Microsoft.UI.Xaml.Controls.Button` |
+//! | macOS | AppKit | `NSButton` |
+//! | Linux | GTK4 / libadwaita | `GtkButton` (未実装) |
+//! | Web (wasm) | DOM | `<button>` |
 //!
 //! ## 使い方
 //!
+//! UI は `run` に渡すコールバックの中で組み立てる。
+//! WinUI 3 が `Application::Start` より前のコントロール生成を許さないため、
+//! 4 バックエンドで同じ形にそろえてある。
+//!
 //! ```no_run
-//! use miui::prelude::*;
+//! use miui::{Orientation, Padding, Settings};
 //!
-//! #[derive(Default)]
-//! struct Counter {
-//!     count: i32,
-//! }
+//! fn main() -> miui::Result<()> {
+//!     miui::run(Settings::new("counter"), |ui| {
+//!         let window = ui.window("counter", 320.0, 180.0)?;
+//!         let stack = ui.stack(Orientation::Vertical)?;
+//!         stack.set_spacing(12.0);
+//!         stack.set_padding(Padding::all(20.0));
 //!
-//! #[derive(Clone)]
-//! enum Msg {
-//!     Increment,
-//! }
+//!         let label = ui.label("0")?;
+//!         let button = ui.button("増やす")?;
 //!
-//! impl Application for Counter {
-//!     type Message = Msg;
+//!         let count = std::cell::Cell::new(0);
+//!         button.on_click({
+//!             let label = label.clone();
+//!             move || {
+//!                 count.set(count.get() + 1);
+//!                 label.set_text(&count.get().to_string());
+//!             }
+//!         });
 //!
-//!     fn view(&self) -> Element<Msg> {
-//!         Element::new(
-//!             column()
-//!                 .spacing(12.0)
-//!                 .padding(Insets::all(24.0))
-//!                 .child(Text::new(format!("count: {}", self.count)).title())
-//!                 .child(Button::new("増やす").accent().on_press(Msg::Increment)),
-//!         )
-//!     }
-//!
-//!     fn update(&mut self, message: Msg) {
-//!         match message {
-//!             Msg::Increment => self.count += 1,
-//!         }
-//!     }
-//! }
-//!
-//! fn main() {
-//!     miui::run(Counter::default(), Settings::new("counter"));
+//!         stack.append(&label);
+//!         stack.append(&button);
+//!         window.set_child(&stack);
+//!         window.show();
+//!         Ok(())
+//!     })
 //! }
 //! ```
+//!
+//! ## 検証状況
+//!
+//! | 環境 | 状態 |
+//! | --- | --- |
+//! | macOS | 実行・自動テストあり |
+//! | Web (wasm) | ブラウザで実行確認 |
+//! | Windows | `cargo check` のみ。実行未確認 |
+//! | Linux | 未実装 |
 
-mod app;
-pub mod headless;
-mod runtime;
+#![forbid(unsafe_code)]
 
-pub use app::{Application, Environment, FontSpec, Settings};
-pub use runtime::run;
+pub use miui_core::{Align, Error, Orientation, Padding, Result, Settings};
 
-pub use miui_core as core;
-pub use miui_render as render;
-pub use miui_theme as theme;
-pub use miui_widgets as widgets;
+#[cfg(target_arch = "wasm32")]
+pub use miui_web::{
+    run, Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Ui, Widget, Window,
+};
 
-/// よく使う型をまとめて取り込むための再エクスポート。
-pub mod prelude {
-    pub use crate::app::{Application, Environment, FontSpec, Settings};
-    pub use crate::run;
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+pub use miui_macos::{
+    run, Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Ui, Widget, Window,
+};
 
-    pub use miui_core::color::{Brush, Color};
-    pub use miui_core::event::{Event, Key, Modifiers, MouseButton};
-    pub use miui_core::geometry::{Corners, Insets, Point, Rect, Size};
-    pub use miui_core::layout::{Alignment, BoxConstraints, CrossAxis, MainAxis};
-    pub use miui_core::painter::{FontFamily, FontWeight, TextAlign, TextStyle};
-    pub use miui_core::theme::{ColorMode, PlatformStyle, Theme};
-    pub use miui_core::widget::{Element, Widget};
+#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+pub use miui_windows::{
+    run, Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Ui, Widget, Window,
+};
 
-    pub use miui_widgets::{
-        column, row, Button, ButtonVariant, Checkbox, Container, Divider, IconButton, IconGlyph,
-        ProgressBar, Radio, Scroll, SizedBox, Slider, Spacer, Switch, Text, TextInput, TextRole,
-    };
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+))]
+pub use miui_gtk::{
+    run, Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Ui, Widget, Window,
+};
+
+/// バックエンド間で API がずれていないことを、コンパイル時に検査する。
+///
+/// バックエンドは別々のクレートなので、シグネチャの食い違いは型検査でしか
+/// 捕まえられない。この関数はどのターゲットでもコンパイルされ、公開 API を
+/// 一通り呼ぶ。**実行はされない。**
+#[doc(hidden)]
+#[allow(dead_code)]
+fn __api_contract(ui: &Ui) -> Result<()> {
+    let window: Window = ui.window("t", 100.0, 100.0)?;
+    window.set_title("t");
+    let _: String = window.title();
+    window.set_size(1.0, 1.0);
+    window.show();
+    window.close();
+    let _: bool = window.is_visible();
+
+    let stack: Stack = ui.stack(Orientation::Vertical)?;
+    stack.set_spacing(1.0);
+    stack.set_padding(Padding::all(1.0));
+    stack.set_align(Align::Center);
+    let _: usize = stack.len();
+    let _: bool = stack.is_empty();
+
+    let label: Label = ui.label("t")?;
+    let _: String = label.text();
+    label.set_text("t");
+
+    let button: Button = ui.button("t")?;
+    button.set_text("t");
+    button.set_enabled(true);
+    button.on_click(|| {});
+
+    let checkbox: Checkbox = ui.checkbox("t")?;
+    let _: bool = checkbox.is_checked();
+    checkbox.set_checked(true);
+    checkbox.set_enabled(true);
+    checkbox.on_toggle(|_v: bool| {});
+
+    let input: TextInput = ui.text_input("t")?;
+    let _: String = input.text();
+    input.set_text("t");
+    input.set_placeholder("t");
+    input.set_enabled(true);
+    input.on_change(|_s: &str| {});
+
+    let slider: Slider = ui.slider(0.0, 1.0)?;
+    let _: f64 = slider.value();
+    slider.set_value(0.5);
+    slider.set_enabled(true);
+    slider.on_change(|_v: f64| {});
+
+    let progress: ProgressBar = ui.progress_bar()?;
+    let _: f64 = progress.value();
+    progress.set_value(0.5);
+
+    stack.append(&label);
+    stack.append(&button);
+    stack.append(&checkbox);
+    stack.append(&input);
+    stack.append(&slider);
+    stack.append(&progress);
+    window.set_child(&stack);
+
+    ui.quit();
+    Ok(())
 }

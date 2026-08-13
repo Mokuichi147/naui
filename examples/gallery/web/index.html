@@ -5,29 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>miui gallery</title>
     <style>
+      /* miui は DOM の標準コントロールをそのまま使うため、見た目には手を入れない。
+         ページ側で OS の配色設定に追従させることだけ宣言する。 */
       :root {
         color-scheme: light dark;
       }
-      html,
       body {
         margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background: #f8fafc;
-      }
-      @media (prefers-color-scheme: dark) {
-        html,
-        body {
-          background: #0f172a;
-        }
-      }
-      /* winit が body へ追加するキャンバス。
-         大きさはランタイムがビューポートに合わせて更新する。 */
-      canvas {
-        display: block;
-        outline: none;
+        font-family: system-ui, sans-serif;
       }
     </style>
   </head>

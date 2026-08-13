@@ -1,0 +1,34 @@
+[package]
+name = "gallery"
+description = "miui のウィジェットギャラリー"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+# `shot` バイナリも同梱しているため、既定で実行するものを明示する。
+default-run = "gallery"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "gallery"
+path = "src/main.rs"
+
+# 全スタイルのスクリーンショットを撮るツール。
+# 通常のビルドには含まれない (ビルド対象のスタイルだけで十分なため)。
+[[bin]]
+name = "shot"
+path = "src/bin/shot.rs"
+required-features = ["all-styles"]
+
+[features]
+default = []
+all-styles = ["miui/all-styles"]
+
+[dependencies]
+miui.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"

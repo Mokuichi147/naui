@@ -1,0 +1,180 @@
+//! # miui-macos
+//!
+//! miui の macOS バックエンド。**AppKit の実コントロール**
+//! (NSWindow / NSButton / NSTextField / NSSlider / NSStackView …) を生成し、
+//! target/action とデリゲートを Rust のクロージャへ中継する。
+//!
+//! 描画・レイアウト・IME・アクセシビリティはすべて AppKit が行う。
+
+// Objective-C 呼び出しのため unsafe が必要。
+#![allow(unsafe_code)]
+
+mod trampoline;
+mod widgets;
+mod window;
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use miui_core::{Error, Orientation, Result, Settings};
+use objc2::rc::Retained;
+use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
+use objc2_foundation::NSNotification;
+
+pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
+pub use window::Window;
+
+/// ウィジェットを生成するための入り口。
+///
+/// AppKit はメインスレッドでしか UI を触れないため、`Ui` は
+/// [`MainThreadMarker`] を持ち、`run` のコールバック内でのみ得られる。
+pub struct Ui {
+    mtm: MainThreadMarker,
+    /// コールバックが終わってもウィンドウを生かしておくための保持。
+    windows: RefCell<Vec<Window>>,
+}
+
+impl Ui {
+    fn new(mtm: MainThreadMarker) -> Self {
+        Self {
+            mtm,
+            windows: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// ウィンドウを作る。フレームワークが参照を保持するので、
+    /// 戻り値を捨てても閉じられることはない。
+    pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
+        let w = Window::new(self.mtm, title, width, height);
+        self.windows.borrow_mut().push(w.clone());
+        Ok(w)
+    }
+
+    pub fn stack(&self, orientation: Orientation) -> Result<Stack> {
+        Ok(Stack::new(self.mtm, orientation))
+    }
+
+    pub fn label(&self, text: &str) -> Result<Label> {
+        Ok(Label::new(self.mtm, text))
+    }
+
+    pub fn button(&self, text: &str) -> Result<Button> {
+        Ok(Button::new(self.mtm, text))
+    }
+
+    pub fn checkbox(&self, label: &str) -> Result<Checkbox> {
+        Ok(Checkbox::new(self.mtm, label))
+    }
+
+    pub fn text_input(&self, text: &str) -> Result<TextInput> {
+        Ok(TextInput::new(self.mtm, text))
+    }
+
+    pub fn slider(&self, min: f64, max: f64) -> Result<Slider> {
+        Ok(Slider::new(self.mtm, min, max))
+    }
+
+    pub fn progress_bar(&self) -> Result<ProgressBar> {
+        Ok(ProgressBar::new(self.mtm))
+    }
+
+    /// アプリを終了する。
+    pub fn quit(&self) {
+        NSApplication::sharedApplication(self.mtm).terminate(None);
+    }
+}
+
+type BuildFn = Box<dyn FnOnce(&Ui) -> Result<()>>;
+
+struct DelegateState {
+    build: RefCell<Option<BuildFn>>,
+    ui: Rc<Ui>,
+    error: Rc<RefCell<Option<Error>>>,
+}
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "MiuiAppDelegate"]
+    #[ivars = DelegateState]
+    struct AppDelegate;
+
+    unsafe impl NSObjectProtocol for AppDelegate {}
+
+    unsafe impl NSApplicationDelegate for AppDelegate {
+        #[unsafe(method(applicationDidFinishLaunching:))]
+        fn did_finish_launching(&self, _notification: &NSNotification) {
+            let state = self.ivars();
+            let Some(build) = state.build.borrow_mut().take() else {
+                return;
+            };
+            if let Err(e) = build(&state.ui) {
+                *state.error.borrow_mut() = Some(e);
+                let mtm = MainThreadMarker::from(self);
+                NSApplication::sharedApplication(mtm).terminate(None);
+            }
+        }
+
+        #[unsafe(method(applicationShouldTerminateAfterLastWindowClosed:))]
+        fn should_terminate_after_last_window_closed(&self, _app: &NSApplication) -> bool {
+            true
+        }
+    }
+);
+
+/// アプリを起動し、`build` の中で UI を組み立てる。
+///
+/// `build` はアプリの初期化が終わってから呼ばれる。ここでしかウィジェットを
+/// 作れないのは、WinUI 3 が `Application::Start` 前のコントロール生成を
+/// 許さないためで、4 バックエンドで同じ形にそろえてある。
+///
+/// この関数はウィンドウがすべて閉じられるまで戻らない。
+pub fn run<F>(settings: Settings, build: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Result<()> + 'static,
+{
+    let mtm = MainThreadMarker::new()
+        .ok_or_else(|| Error::new("miui の起動", "メインスレッドから呼んでください"))?;
+    let _ = settings;
+
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+
+    let error = Rc::new(RefCell::new(None));
+    let delegate = AppDelegate::alloc(mtm).set_ivars(DelegateState {
+        build: RefCell::new(Some(Box::new(build))),
+        ui: Rc::new(Ui::new(mtm)),
+        error: error.clone(),
+    });
+    let delegate: Retained<AppDelegate> = unsafe { msg_send![super(delegate), init] };
+    app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+
+    app.activate();
+    app.run();
+
+    let failure = error.borrow_mut().take();
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// イベントループへ入らずに `build` だけを実行して戻る。**自動テスト専用**。
+///
+/// 実際のアプリでは [`run`] を使うこと。AppKit は
+/// `NSApplication` さえ初期化されていればコントロールを生成できるため、
+/// この形でウィジェットの生成・操作・状態変化を検証できる。
+pub fn run_for_test<F>(build: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Result<()>,
+{
+    let mtm = MainThreadMarker::new()
+        .ok_or_else(|| Error::new("テスト用の起動", "メインスレッドから呼んでください"))?;
+    let app = NSApplication::sharedApplication(mtm);
+    // テスト中に Dock アイコンを出さない。
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    let ui = Ui::new(mtm);
+    build(&ui)
+}

@@ -2,31 +2,33 @@
 resolver = "2"
 members = [
     "crates/miui-core",
-    "crates/miui-render",
-    "crates/miui-theme",
-    "crates/miui-widgets",
+    "crates/miui-macos",
+    "crates/miui-web",
+    "crates/miui-windows",
+    "crates/miui-gtk",
     "crates/miui",
     "examples/counter",
     "examples/gallery",
 ]
+# 自前描画版のアーカイブ。ビルド対象には含めない。
+exclude = ["legacy"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.82"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mokuichi147/miui"
 
 [workspace.dependencies]
-miui-core = { path = "crates/miui-core", version = "0.1.0" }
-miui-render = { path = "crates/miui-render", version = "0.1.0" }
-miui-theme = { path = "crates/miui-theme", version = "0.1.0" }
-miui-widgets = { path = "crates/miui-widgets", version = "0.1.0" }
-miui = { path = "crates/miui", version = "0.1.0" }
+miui-core = { path = "crates/miui-core", version = "0.2.0" }
+miui-macos = { path = "crates/miui-macos", version = "0.2.0" }
+miui-web = { path = "crates/miui-web", version = "0.2.0" }
+miui-windows = { path = "crates/miui-windows", version = "0.2.0" }
+miui-gtk = { path = "crates/miui-gtk", version = "0.2.0" }
+miui = { path = "crates/miui", version = "0.2.0" }
 
 [profile.release]
 opt-level = 3
-lto = "fat"
-codegen-units = 1
-panic = "abort"
+lto = "thin"
 strip = true
