@@ -21,12 +21,11 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | --- | --- | --- |
 | **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 7 件 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 |
-| **Windows** | ⚠️ 未実行 | `cargo check --target x86_64-pc-windows-msvc` によるコンパイル確認のみ。**実機で起動したことはありません** |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、WinUI 3ウィンドウの表示と起動後の安定動作を確認 |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
-Linux と Windows の状態がこうなっているのは、実装環境が macOS で、
-GTK4 はシステムライブラリと pkg-config を要求するためコンパイル確認すらできず、
-WinUI 3 は Windows App SDK ランタイムを持つ Windows 機がないと実行できないためです。
+Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
+Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で実行確認済みです。
 詳細は [`crates/miui-gtk`](crates/miui-gtk/src/lib.rs) のドキュメントを参照してください。
 
 ---
@@ -239,7 +238,8 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
 ## 既知の制限
 
 - **Linux が未実装。** 上記のとおり。
-- **Windows が実行未確認。** コンパイルが通ることしか確かめていません。
+- **Windows App SDK の実行環境が必要。** Windows バックエンドは Windows App SDK 2.x の
+  フレームワークランタイムを必要とし、現在は2.3.1で実機確認しています。
 - **Enter で確定するコールバック (`on_submit`) がありません。**
   `winio-winui3` がキーボードイベント (`KeyDown` / `KeyEventHandler`) を
   バインドしていないため、Windows で実装できませんでした。

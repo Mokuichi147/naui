@@ -56,7 +56,7 @@
 //! | --- | --- |
 //! | macOS | 実行・自動テストあり |
 //! | Web (wasm) | ブラウザで実行確認 |
-//! | Windows | `cargo check` のみ。実行未確認 |
+//! | Windows | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行確認 |
 //! | Linux | 未実装 |
 
 #![forbid(unsafe_code)]
