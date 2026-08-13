@@ -11,15 +11,12 @@ use miui::{Orientation, Padding, Result, Settings, Ui};
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
     let window = ui.window("miui gallery", 460.0, 560.0)?;
-
     let root = ui.stack(Orientation::Vertical)?;
     root.set_spacing(16.0);
     root.set_padding(Padding::all(24.0));
 
     root.append(&ui.label("miui ウィジェットギャラリー")?);
-    root.append(&ui.label(
-        "ここに並んでいるのは、すべて OS の実ウィジェットです。",
-    )?);
+    root.append(&ui.label("ここに並んでいるのは、すべて OS の実ウィジェットです。")?);
 
     // --- ボタンとカウンタ -------------------------------------------------
     let count = Rc::new(Cell::new(0i32));
@@ -59,7 +56,13 @@ pub fn build(ui: &Ui) -> Result<()> {
     let checkbox = ui.checkbox("通知を受け取る")?;
     checkbox.on_toggle({
         let status = status.clone();
-        move |on| status.set_text(if on { "通知: オン" } else { "通知: オフ" })
+        move |on| {
+            status.set_text(if on {
+                "通知: オン"
+            } else {
+                "通知: オフ"
+            })
+        }
     });
     root.append(&checkbox);
     root.append(&status);

@@ -1,16 +1,18 @@
 //! WinUI 3 (Fluent 2) の実コントロールを包むハンドル群。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use miui_core::{Align, Orientation, Padding, Result};
 use windows_core::{Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, CheckBox as XamlCheckBox, Orientation as XamlOrientation, ProgressBar as
-    XamlProgressBar, Slider as XamlSlider, StackPanel, TextBlock, TextBox,
+    Button as XamlButton, CheckBox as XamlCheckBox, Grid, Orientation as XamlOrientation,
+    Slider as XamlSlider, StackPanel, TextBlock, TextBox,
 };
+use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use winui3::Microsoft::UI::Xaml::{
-    HorizontalAlignment, RoutedEventHandler, Thickness, UIElement, VerticalAlignment,
+    FrameworkElement, HorizontalAlignment, RoutedEventHandler, Thickness, UIElement,
+    VerticalAlignment,
 };
 
 use crate::to_error;
@@ -62,7 +64,11 @@ impl Label {
     }
 
     pub fn text(&self) -> String {
-        self.0.native.Text().map(|s| s.to_string()).unwrap_or_default()
+        self.0
+            .native
+            .Text()
+            .map(|s| s.to_string())
+            .unwrap_or_default()
     }
 
     pub fn set_text(&self, text: &str) {
@@ -164,10 +170,7 @@ impl Checkbox {
     }
 
     pub fn set_checked(&self, checked: bool) {
-        let _ = self
-            .0
-            .native
-            .SetIsChecked(bool_ref(checked).ok().as_ref());
+        let _ = self.0.native.SetIsChecked(bool_ref(checked).ok().as_ref());
     }
 
     pub fn set_enabled(&self, enabled: bool) {
@@ -229,7 +232,11 @@ impl TextInput {
     }
 
     pub fn text(&self) -> String {
-        self.0.native.Text().map(|s| s.to_string()).unwrap_or_default()
+        self.0
+            .native
+            .Text()
+            .map(|s| s.to_string())
+            .unwrap_or_default()
     }
 
     pub fn set_text(&self, text: &str) {
@@ -262,7 +269,6 @@ impl TextInput {
             *self.0.token.borrow_mut() = Some(token);
         }
     }
-
 }
 
 // ----------------------------------------------------------------- Slider
@@ -320,7 +326,10 @@ impl Slider {
 // ------------------------------------------------------------ ProgressBar
 
 struct ProgressInner {
-    native: XamlProgressBar,
+    native: UIElement,
+    fill: FrameworkElement,
+    value: Cell<f64>,
+    max_width: f64,
 }
 
 /// 進捗バー (ProgressBar)。
@@ -330,23 +339,46 @@ impl_widget!(ProgressBar, native);
 
 impl ProgressBar {
     pub(crate) fn new() -> Result<Self> {
-        let native = XamlProgressBar::new().map_err(|e| to_error("ProgressBar の生成", e))?;
-        native
-            .SetMinimum(0.0)
-            .map_err(|e| to_error("ProgressBar の範囲設定", e))?;
-        native
-            .SetMaximum(1.0)
-            .map_err(|e| to_error("ProgressBar の範囲設定", e))?;
-        Ok(Self(Rc::new(ProgressInner { native })))
+        // Windows App SDK 2.3.1 の未パッケージ起動では、ProgressBar の
+        // 既定テンプレートが適用される瞬間にランタイムが fail-fast する。
+        // 同じ WinUI XAML の Border を使えば、見た目を保ったまま回避できる。
+        const MAX_WIDTH: f64 = 96.0;
+        let grid = XamlReader::Load(&HSTRING::from(
+            r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                Width="96" Height="6">
+                <Border Background="#E5E5E5" CornerRadius="3"/>
+                <Border Width="0" HorizontalAlignment="Left"
+                    Background="#0078D4" CornerRadius="3"/>
+            </Grid>"##,
+        ))
+        .map_err(|e| to_error("ProgressBar の生成", e))?
+        .cast::<Grid>()
+        .map_err(|e| to_error("ProgressBar の要素化", e))?;
+        let fill = grid
+            .Children()
+            .and_then(|children| children.GetAt(1))
+            .and_then(|element| element.cast::<FrameworkElement>())
+            .map_err(|e| to_error("ProgressBar の前景要素取得", e))?;
+        let native = grid
+            .cast::<UIElement>()
+            .map_err(|e| to_error("ProgressBar の要素化", e))?;
+        Ok(Self(Rc::new(ProgressInner {
+            native,
+            fill,
+            value: Cell::new(0.0),
+            max_width: MAX_WIDTH,
+        })))
     }
 
     /// 0.0..=1.0。
     pub fn set_value(&self, value: f64) {
-        let _ = self.0.native.SetValue(value.clamp(0.0, 1.0));
+        let value = value.clamp(0.0, 1.0);
+        self.0.value.set(value);
+        let _ = self.0.fill.SetWidth(self.0.max_width * value);
     }
 
     pub fn value(&self) -> f64 {
-        self.0.native.Value().unwrap_or(0.0)
+        self.0.value.get()
     }
 }
 

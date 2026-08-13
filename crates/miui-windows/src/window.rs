@@ -14,6 +14,8 @@ struct WindowInner {
     native: XamlWindow,
     child: RefCell<Option<Box<dyn Widget>>>,
     visible: RefCell<bool>,
+    width: i32,
+    height: i32,
 }
 
 /// トップレベルウィンドウ。
@@ -31,8 +33,9 @@ impl Window {
             native,
             child: RefCell::new(None),
             visible: RefCell::new(false),
+            width: width as i32,
+            height: height as i32,
         }));
-        this.set_size(width, height);
         Ok(this)
     }
 
@@ -67,6 +70,7 @@ impl Window {
 
     /// 画面に出して前面へ持ってくる。
     pub fn show(&self) {
+        self.set_size(self.0.width as f64, self.0.height as f64);
         if self.0.native.Activate().is_ok() {
             *self.0.visible.borrow_mut() = true;
         }
