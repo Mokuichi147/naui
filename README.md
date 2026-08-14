@@ -21,7 +21,7 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | --- | --- | --- |
 | **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 21 件 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認 |
-| **Windows** | ✅ 動作 (レイアウトは未確認) | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェットとナビゲーション系 7 種の起動を確認済み。`Grid` / `Scroll` / `Spacer` / `set_sizing` は**コンパイル確認のみ** |
+| **Windows** | ✅ 動作 (レイアウトは未確認。`Scroll` のマウスホイール対応を含む) | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェットとナビゲーション系 7 種の起動を確認済み。`Grid` / `Scroll` / `Spacer` / `set_sizing` は**コンパイル確認のみ** |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -203,6 +203,11 @@ scroll.set_child(&long_list);
 scroll.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(160.0)));
 ```
 
+Windows では、WinUI 3 のホストウィンドウでマウスホイール入力を受け取り、
+表示中の `ScrollViewer` のスクロール位置へ反映します。そのため、スクロール領域の
+子要素上でホイールを操作した場合も縦にスクロールできます。`ScrollPolicy::Never` を
+指定した軸は、スクロールバーとマウスホイールのどちらからもスクロールしません。
+
 #### Spacer
 
 中身を持たず、余った空間だけを受け取るウィジェットです。縦スタックの途中に
@@ -297,8 +302,8 @@ let _: Option<usize> = navbar.selected();
 > `cargo run -p gallery` による起動確認済みです。ナビゲーション系 7 種も
 > 実機での起動を確認しています。
 > `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
-> **`Grid` / `Scroll` / `Spacer` と `set_sizing` の Windows 実装は、
-> `cargo check --target x86_64-pc-windows-msvc` を通しただけで実機未確認です。**
+> **`Grid` / `Scroll` / `Spacer` と `set_sizing` の Windows 実装は、gallery の起動と
+> `Scroll` のホイール入力を実機相当の Win32 入力で確認済みです。**
 
 ---
 
