@@ -217,9 +217,13 @@ impl Grid {
         if wants_fill(&view, true) {
             target.setXPlacement(NSGridCellPlacement::Fill);
         }
-        if wants_fill(&view, false) {
-            target.setYPlacement(NSGridCellPlacement::Fill);
-        }
+        // 縦は中央ぞろえ。NSGridView の既定 (上ぞろえ) だと、同じ行に置いた
+        // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
+        target.setYPlacement(if wants_fill(&view, false) {
+            NSGridCellPlacement::Fill
+        } else {
+            NSGridCellPlacement::Center
+        });
 
         self.apply_padding();
         self.0.children.borrow_mut().push(child.boxed_clone());

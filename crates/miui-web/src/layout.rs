@@ -233,6 +233,9 @@ impl Grid {
     pub(crate) fn new(document: &Document) -> Result<Self> {
         let element: HtmlElement = create(document, "div")?.unchecked_into();
         let _ = element.style().set_property("display", "grid");
+        // 縦は中央ぞろえ。高さの違うもの (ラベルと入力欄など) を同じ行に置いても
+        // 上端で揃わないようにする。`Fill` の子は align-self: stretch で上書きされる。
+        let _ = element.style().set_property("align-items", "center");
         mark_parent(&element, ParentLayout::Grid);
         Ok(Self(Rc::new(GridInner {
             element,

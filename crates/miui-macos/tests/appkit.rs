@@ -51,6 +51,7 @@ fn main() {
         ("スペーサーが余りを吸って後続を端へ寄せる", spacer_pushes),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
         ("スクロールが中身を保持する", scroll_keeps_child),
+        ("グリッドの同じ行が縦中央でそろう", grid_row_alignment),
     ];
 
     let mut failed = 0;
@@ -622,4 +623,38 @@ fn miui_constraints(view: &NSView) -> Vec<Retained<NSLayoutConstraint>> {
                 .is_some_and(|id| id.to_string() == "miui.sizing")
         })
         .collect()
+}
+
+/// 同じ行に高さの違うものを置いても、縦中央でそろう。
+///
+/// NSGridView の既定は上ぞろえなので、ラベル (16pt) と入力欄 (24pt) を
+/// 並べるとラベルだけが上にずれる。
+fn grid_row_alignment(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(12.0, 8.0);
+    grid.set_column_track(0, Track::Fixed(96.0));
+    grid.set_column_track(1, Track::FILL);
+    let label = ui.label("名前")?;
+    let field = ui.text_input("")?;
+    field.set_sizing(Sizing::fill_width());
+    grid.attach(&label, GridCell::new(0, 0));
+    grid.attach(&field, GridCell::new(1, 0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(400.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+
+    let label_frame = label.native_view().frame();
+    let field_frame = field.native_view().frame();
+    assert!(
+        label_frame.size.height < field_frame.size.height,
+        "前提: ラベルのほうが低いこと ({label_frame:?} / {field_frame:?})"
+    );
+    let label_center = label_frame.origin.y + label_frame.size.height / 2.0;
+    let field_center = field_frame.origin.y + field_frame.size.height / 2.0;
+    assert!(
+        (label_center - field_center).abs() <= 1.0,
+        "同じ行の中心がそろうこと: ラベル {label_center} / 入力欄 {field_center}"
+    );
+    Ok(())
 }

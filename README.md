@@ -184,6 +184,10 @@ form.attach(&field, GridCell::new(1, 0));
 form.attach(&submit, GridCell::new(0, 1).span(2, 1)); // 2 マス分
 ```
 
+マスの中では、**縦は中央ぞろえ**です (`Fill` を指定した子だけマスいっぱいに
+広がります)。ラベルと入力欄のように高さの違うものを同じ行に並べても、
+上端でずれません。横は各環境の既定 (先頭ぞろえ) のままです。
+
 `Track::Fill(weight)` の重みは、Web では `fr`、Windows では `Star` に対応します。
 macOS の NSGridView には重みの概念が無いため、**重みの違いは反映されません**
 (`Fill` 配置と hugging priority による近似です)。
@@ -275,6 +279,8 @@ let _: Option<usize> = navbar.selected();
 | `Menu` という名前 | miui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。`NSMenu` / `MenuFlyout` に相当するものは未実装 |
 | `Dock` の配置 | 下端への固定は行わない。**置く場所はアプリの責務**で、縦スタックの最後に置き、手前に `Spacer` か `Fill` を使うと下端に寄る |
 | `Fill` と `Auto` | どちらもネイティブのレイアウト機構への指示。miui 自身は位置も大きさも計算しない |
+| グリッドのマスの中 | 縦は中央ぞろえ (`NSGridCellPlacement::Center` / `VerticalAlignment::Center` / `align-items: center`)。`Fill` を指定した子だけマスいっぱいに広がる |
+| Windows の `Fill` の目印 | `HorizontalAlignment` は指定しなくても `Stretch` なので、プロパティだけでは「`Fill` と言われた」のか「既定のまま」なのかを区別できない。グリッドのマスの中でだけこの違いが要るため、`FrameworkElement.Tag` に目印を残している |
 | `set_sizing` を呼ぶ順番 | macOS の交差軸 `Fill` とグリッドのマス内配置は、`append` / `attach` の**前**に指定しておく (AppKit では追加時に制約とセルの配置を張るため)。Web と Windows は後から変えても追従する |
 | `Link` の遷移 | `href` が空でなければ、押したときにその環境の標準的な方法で開く (macOS は `NSWorkspace`、Windows は `HyperlinkButton` の `NavigateUri`、Web は `target="_blank"`)。Web で同じタブに遷移すると wasm のアプリごと破棄されるため、別タブに揃えている |
 | Windows の `Spacer` / 主軸の `Fill` | `StackPanel` は子へ余りを配らないため、`Stack` の中では効かない。`Grid` の `Track::Fill` (XAML の `Star`) が同じ役割を果たす |

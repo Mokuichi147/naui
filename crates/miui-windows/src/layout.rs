@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use miui_core::{GridCell, Length, Padding, Result, ScrollPolicy, Sizing, Track};
-use windows_core::Interface;
+use windows_core::{Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
     ColumnDefinition, Grid as XamlGrid, RowDefinition, ScrollBarVisibility, ScrollViewer,
 };
@@ -19,11 +19,50 @@ use winui3::Microsoft::UI::Xaml::{
 use crate::to_error;
 use crate::widgets::{impl_widget, Widget};
 
+/// `Fill` を指定されたことを覚えておく目印 (`FrameworkElement.Tag`)。
+///
+/// WinUI の `HorizontalAlignment` は指定しなくても `Stretch` なので、
+/// プロパティを読むだけでは「`Fill` と言われた」のか「既定のまま」なのかを
+/// 区別できない。グリッドのマスの中でだけこの違いが要るため、目印を残す。
+const FILL_TAG: &str = "miui:fill:";
+
+fn set_fill_marker(element: &FrameworkElement, sizing: Sizing) {
+    let mut value = String::from(FILL_TAG);
+    if sizing.width.is_fill() {
+        value.push('w');
+    }
+    if sizing.height.is_fill() {
+        value.push('h');
+    }
+    if let Ok(tag) = windows::Foundation::PropertyValue::CreateString(&HSTRING::from(value)) {
+        let _ = element.SetTag(&tag);
+    }
+}
+
+/// この要素がその方向へ `Fill` を指定されたか。
+fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
+    let Ok(tag) = element.Tag() else {
+        return false;
+    };
+    let Ok(value) = tag.cast::<windows::Foundation::IPropertyValue>() else {
+        return false;
+    };
+    let Ok(text) = value.GetString() else {
+        return false;
+    };
+    let text = text.to_string();
+    let Some(flags) = text.strip_prefix(FILL_TAG) else {
+        return false;
+    };
+    flags.contains(if horizontal { 'w' } else { 'h' })
+}
+
 /// 大きさの指定を要素へ反映する。呼ぶたびに以前の指定は置き換わる。
 pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
     let Ok(element) = element.cast::<FrameworkElement>() else {
         return;
     };
+    set_fill_marker(&element, sizing);
     // WinUI では NaN が「中身に合わせる」を表す。
     let _ = element.SetWidth(sizing.width.fixed_value().unwrap_or(f64::NAN));
     let _ = element.SetHeight(sizing.height.fixed_value().unwrap_or(f64::NAN));
@@ -133,6 +172,13 @@ impl Grid {
             let _ = XamlGrid::SetRow(&framework, cell.row as i32);
             let _ = XamlGrid::SetColumnSpan(&framework, cell.column_span as i32);
             let _ = XamlGrid::SetRowSpan(&framework, cell.row_span as i32);
+            // 縦は中央ぞろえ。既定の Stretch のままだと、同じ行に置いた
+            // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
+            let _ = framework.SetVerticalAlignment(if wants_fill(&framework, false) {
+                VerticalAlignment::Stretch
+            } else {
+                VerticalAlignment::Center
+            });
         }
         let appended = self
             .0
