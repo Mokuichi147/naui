@@ -361,10 +361,10 @@ impl ProgressBar {
         // Windows App SDK 2.3.1 の未パッケージ起動では、ProgressBar の
         // 既定テンプレートが適用される瞬間にランタイムが fail-fast する。
         // 同じ WinUI XAML の Border を使えば、見た目を保ったまま回避できる。
-        const MAX_WIDTH: f64 = 96.0;
+        const MAX_WIDTH: f64 = 240.0;
         let grid = XamlReader::Load(&HSTRING::from(
             r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                Width="96" Height="6">
+                Width="240" Height="6">
                 <Border Background="#E5E5E5" CornerRadius="3"/>
                 <Border Width="0" HorizontalAlignment="Left"
                     Background="#0078D4" CornerRadius="3"/>
