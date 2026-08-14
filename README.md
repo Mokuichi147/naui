@@ -285,7 +285,7 @@ let _: Option<usize> = navbar.selected();
 | `Link` の遷移 | `href` が空でなければ、押したときにその環境の標準的な方法で開く (macOS は `NSWorkspace`、Windows は `HyperlinkButton` の `NavigateUri`、Web は `target="_blank"`)。Web で同じタブに遷移すると wasm のアプリごと破棄されるため、別タブに揃えている |
 | Windows の `Spacer` / 主軸の `Fill` | `StackPanel` は子へ余りを配らないため、`Stack` の中では効かない。`Grid` の `Track::Fill` (XAML の `Star`) が同じ役割を果たす |
 | macOS の `Track::Fill` | NSGridView に重みの概念が無いため、`Fill` 配置と hugging priority による近似。重みの違いは反映されない |
-| Windows の `ProgressBar` | Windows App SDK 2.3.1 の未パッケージ実行では `ProgressBar` の既定テンプレート適用時にランタイムが終了するため、幅240pxのWinUI XAML `Grid` と `Border` を組み合わせて同等の表示を構成している。値の変更 API は維持している |
+| Windows の `ProgressBar` | Windows App SDK 2.3.1 の未パッケージ実行では `ProgressBar` の既定テンプレート適用時にランタイムが終了するため、WinUI XAML の `Grid` と `Border` を組み合わせて同等の表示を構成している。表示幅は親に合わせて伸縮し、値の変更 API は維持している |
 
 ### 未対応のコンポーネント
 
