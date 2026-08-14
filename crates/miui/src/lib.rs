@@ -53,6 +53,38 @@
 //! `Theme::System` が既定で、固定テーマは `Settings::theme(Theme::Dark)` のように
 //! 指定する。実行中は `ui.set_theme(Theme::Light)` などで切り替えられる。
 //!
+//! ## 配置とサイズ
+//!
+//! どのウィジェットも [`Sizing`] で大きさを指定できる。並べ方は
+//! `Stack` (縦横) と `Grid` (行と列)、はみ出しは `Scroll`、
+//! 余りを吸わせたいときは `Spacer` を使う。
+//!
+//! ```no_run
+//! # use miui::{GridCell, Length, Result, ScrollPolicy, Sizing, Track, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let form = ui.grid()?;
+//! form.set_spacing(12.0, 8.0);
+//! form.set_column_track(0, Track::Fixed(96.0)); // ラベルの列は固定幅
+//! form.set_column_track(1, Track::FILL);        // 入力の列は残りいっぱい
+//! form.attach(&ui.label("名前")?, GridCell::new(0, 0));
+//!
+//! let field = ui.text_input("")?;
+//! field.set_sizing(Sizing::fill_width());
+//! form.attach(&field, GridCell::new(1, 0));
+//!
+//! let scroll = ui.scroll()?;
+//! scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+//! scroll.set_child(&form);
+//! scroll.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(160.0)));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`Length::Fill`] は主軸では「余りを受け取る」、交差軸では
+//! 「親いっぱいに広がる」を意味する。Windows の `Stack` は StackPanel なので
+//! **主軸の `Fill` と `Spacer` が効かない**。その場合は `Grid` の
+//! [`Track::Fill`] を使う。
+//!
 //! ## ナビゲーション
 //!
 //! タブ・ナビバー・ドック・メニュー・パンくず・ページ送り・リンクは、
@@ -94,24 +126,27 @@
 
 #![forbid(unsafe_code)]
 
-pub use miui_core::{Align, Error, NavItem, Orientation, Padding, Result, Settings, Theme};
+pub use miui_core::{
+    Align, Error, GridCell, Length, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings,
+    Sizing, Theme, Track,
+};
 
 #[cfg(target_arch = "wasm32")]
 pub use miui_web::{
-    run, Breadcrumbs, Button, Checkbox, Dock, Label, Link, Menu, Navbar, Pagination, ProgressBar,
-    Slider, Stack, Tabs, TextInput, Ui, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
+    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use miui_macos::{
-    run, Breadcrumbs, Button, Checkbox, Dock, Label, Link, Menu, Navbar, Pagination, ProgressBar,
-    Slider, Stack, Tabs, TextInput, Ui, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
+    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use miui_windows::{
-    run, Breadcrumbs, Button, Checkbox, Dock, Label, Link, Menu, Navbar, Pagination, ProgressBar,
-    Slider, Stack, Tabs, TextInput, Ui, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
+    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Widget, Window,
 };
 
 #[cfg(all(
@@ -120,8 +155,8 @@ pub use miui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use miui_gtk::{
-    run, Breadcrumbs, Button, Checkbox, Dock, Label, Link, Menu, Navbar, Pagination, ProgressBar,
-    Slider, Stack, Tabs, TextInput, Ui, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
+    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Widget, Window,
 };
 
 /// バックエンド間で API がずれていないことを、コンパイル時に検査する。
@@ -149,8 +184,28 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.set_spacing(1.0);
     stack.set_padding(Padding::all(1.0));
     stack.set_align(Align::Center);
+    stack.set_sizing(Sizing::fill());
     let _: usize = stack.len();
     let _: bool = stack.is_empty();
+
+    // --- レイアウト -------------------------------------------------------
+    let grid: Grid = ui.grid()?;
+    grid.set_spacing(1.0, 1.0);
+    grid.set_padding(Padding::all(1.0));
+    grid.set_column_track(0, Track::Fixed(1.0));
+    grid.set_row_track(0, Track::FILL);
+    grid.set_sizing(Sizing::AUTO);
+    let _: usize = grid.columns();
+    let _: usize = grid.rows();
+    let _: usize = grid.len();
+    let _: bool = grid.is_empty();
+
+    let scroll: Scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_sizing(Sizing::new().width(Length::Fill).min_height(1.0));
+
+    let spacer: Spacer = ui.spacer()?;
+    spacer.set_sizing(Sizing::fill_height());
 
     let label: Label = ui.label("t")?;
     let _: String = label.text();
@@ -252,6 +307,12 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     link.set_enabled(true);
     link.on_click(|| {});
 
+    grid.attach(&label, GridCell::new(0, 0));
+    grid.attach(&button, GridCell::new(1, 0).span(2, 1));
+    scroll.set_child(&grid);
+
+    stack.append(&spacer);
+    stack.append(&scroll);
     stack.append(&label);
     stack.append(&button);
     stack.append(&checkbox);

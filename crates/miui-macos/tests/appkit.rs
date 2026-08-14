@@ -11,8 +11,13 @@ use std::cell::RefCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
-use miui_core::{NavItem, Orientation, Padding, Result, Theme};
+use miui_core::{
+    GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Sizing, Theme, Track,
+};
 use miui_macos::{run_for_test, Ui, Widget};
+use objc2::rc::Retained;
+use objc2_app_kit::{NSLayoutConstraint, NSView};
+use objc2_foundation::NSSize;
 
 /// テストケース 1 件。
 type Case = (&'static str, fn(&Ui) -> Result<()>);
@@ -37,6 +42,16 @@ fn main() {
         ("ページ送りが範囲内に収まる", pagination_steps),
         ("リンクのクリックがクロージャへ届く", link_click),
         ("テーマを実行中に切り替えられる", theme_switch),
+        ("大きさの指定が制約として反映される", sizing_constraints),
+        (
+            "大きさを指定し直しても制約が積み上がらない",
+            sizing_is_replaced,
+        ),
+        ("交差軸の Fill が親の幅に合わせて広がる", stack_fill_cross),
+        ("スペーサーが余りを吸って後続を端へ寄せる", spacer_pushes),
+        ("グリッドが行と列を広げて子を置く", grid_places_children),
+        ("スクロールが中身を保持する", scroll_keeps_child),
+        ("グリッドの同じ行が縦中央でそろう", grid_row_alignment),
     ];
 
     let mut failed = 0;
@@ -406,5 +421,240 @@ fn window_lifecycle(ui: &Ui) -> Result<()> {
     assert!(window.is_visible());
     window.close();
     assert!(!window.is_visible());
+    Ok(())
+}
+
+/// 大きさの指定が AppKit の制約になり、値まで届く。
+fn sizing_constraints(ui: &Ui) -> Result<()> {
+    let button = ui.button("固定")?;
+    button.set_sizing(Sizing::fixed(160.0, 44.0).min_width(80.0));
+
+    let view = button.native_view();
+    let sizes = miui_constraints(&view);
+    assert_eq!(sizes.len(), 3, "幅・高さ・最小幅の 3 本が付くこと");
+    assert!(
+        sizes.iter().any(|c| (c.constant() - 160.0).abs() < 1e-9),
+        "指定した幅が制約の定数になること"
+    );
+
+    // 制約は AppKit 側で本当に効く (fitting size に出る)。
+    let fitting = view.fittingSize();
+    assert!(
+        (fitting.width - 160.0).abs() < 1e-6 && (fitting.height - 44.0).abs() < 1e-6,
+        "AppKit が計算した大きさ: {fitting:?}"
+    );
+    Ok(())
+}
+
+/// 指定し直しても制約は積み上がらず、AppKit 内部の制約も壊さない。
+fn sizing_is_replaced(ui: &Ui) -> Result<()> {
+    let label = ui.label("文字")?;
+    let view = label.native_view();
+    // AppKit が内部で付ける制約 (intrinsic content size 用) の本数。
+    let before = view.constraints().len();
+
+    // 文字幅より広い値を順に指定する (狭めると圧縮抵抗と競合するため)。
+    label.set_sizing(Sizing::fixed(200.0, 20.0));
+    label.set_sizing(Sizing::fixed(220.0, 30.0));
+    label.set_sizing(Sizing::fixed(240.0, 40.0));
+
+    let mine = miui_constraints(&view);
+    assert_eq!(mine.len(), 2, "最後の指定だけが残ること");
+    assert!(
+        mine.iter().all(|c| c.isActive()),
+        "残った制約は有効であること"
+    );
+    assert_eq!(
+        view.constraints().len(),
+        before + 2,
+        "AppKit 自身の制約は外れていないこと"
+    );
+
+    // 制約が効くのは alignment rect なので、frame は数ピクセル広くなりうる
+    // (NSTextField はフォーカスリング用の余白を持つ)。
+    let fitting = view.fittingSize();
+    assert!(
+        (fitting.width - 240.0).abs() <= 5.0,
+        "最後に指定した幅になること: {fitting:?}"
+    );
+    Ok(())
+}
+
+/// 縦スタックの中で幅 Fill を指定した子は、余白を除いた親の幅まで広がる。
+fn stack_fill_cross(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_padding(Padding::all(10.0));
+    let wide = ui.button("広がる")?;
+    wide.set_sizing(Sizing::fill_width());
+    let narrow = ui.button("広がらない")?;
+    stack.append(&wide);
+    stack.append(&narrow);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(300.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+
+    let filled = wide.native_view().frame();
+    assert!(
+        (filled.size.width - 280.0).abs() < 1e-6,
+        "左右の余白 10px を除いた幅になること: {filled:?}"
+    );
+    assert!(
+        narrow.native_view().frame().size.width < 280.0,
+        "指定していない子は中身の幅のままであること"
+    );
+
+    // 余白を変えると、広がっている子も追従する。
+    stack.set_padding(Padding::all(30.0));
+    root.layoutSubtreeIfNeeded();
+    assert!(
+        (wide.native_view().frame().size.width - 240.0).abs() < 1e-6,
+        "余白の変更に追従すること: {:?}",
+        wide.native_view().frame()
+    );
+    Ok(())
+}
+
+/// スペーサーが縦の余りをすべて受け取り、後ろの子を下端へ寄せる。
+fn spacer_pushes(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let top = ui.label("上")?;
+    let bottom = ui.label("下")?;
+    stack.append(&top);
+    stack.append(&ui.spacer()?);
+    stack.append(&bottom);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(200.0, 400.0));
+    root.layoutSubtreeIfNeeded();
+
+    let top_frame = top.native_view().frame();
+    let bottom_frame = bottom.native_view().frame();
+    // AppKit の座標系は左下原点。下端の子ほど y が小さい。
+    assert!(
+        bottom_frame.origin.y < 1.0,
+        "後ろの子が下端へ寄ること: {bottom_frame:?}"
+    );
+    assert!(
+        top_frame.origin.y > 380.0,
+        "先頭の子は上端に残ること: {top_frame:?}"
+    );
+    Ok(())
+}
+
+/// グリッドは必要な行と列を自分で増やし、子を保持する。
+fn grid_places_children(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(8.0, 4.0);
+    grid.set_padding(Padding::all(12.0));
+    assert!(grid.is_empty());
+
+    grid.attach(&ui.label("左上")?, GridCell::new(0, 0));
+    let middle = ui.label("中央")?;
+    grid.attach(&middle, GridCell::new(1, 0));
+    grid.attach(&ui.label("右下")?, GridCell::new(2, 1));
+    assert_eq!((grid.columns(), grid.rows()), (3, 2), "足りない分は増える");
+
+    let wide = ui.label("2 マス分")?;
+    grid.attach(&wide, GridCell::new(0, 2).span(3, 1));
+    assert_eq!(grid.len(), 4);
+    assert_eq!(grid.rows(), 3);
+    assert!(
+        unsafe { wide.native_view().superview() }.is_some(),
+        "置いた子がグリッドの中に入ること"
+    );
+
+    grid.set_column_track(0, Track::Fixed(120.0));
+    grid.set_column_track(1, Track::FILL);
+    grid.set_row_track(0, Track::Fixed(40.0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    // 2 列目の左端 = 左の余白 12 + 1 列目の幅 120 + 列間 8。
+    // frame は alignment rect より数ピクセル外側に出ることがある。
+    let x = middle.native_view().frame().origin.x;
+    assert!((x - 140.0).abs() <= 5.0, "固定した列幅と余白が効くこと: {x}");
+    Ok(())
+}
+
+/// スクロールは中身のハンドルを捨てても保持し続ける。
+fn scroll_keeps_child(ui: &Ui) -> Result<()> {
+    let scroll = ui.scroll()?;
+    scroll.set_sizing(Sizing::fixed(200.0, 100.0));
+
+    let hits = Rc::new(RefCell::new(0));
+    let button = {
+        let inner = ui.stack(Orientation::Vertical)?;
+        let button = ui.button("押す")?;
+        button.on_click({
+            let hits = hits.clone();
+            move || *hits.borrow_mut() += 1
+        });
+        inner.append(&button);
+        // 中身を長くして、縦にはみ出させる。
+        for i in 0..20 {
+            inner.append(&ui.label(&format!("行 {i}"))?);
+        }
+        scroll.set_child(&inner);
+        button
+    };
+
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    let root = scroll.native_view();
+    root.layoutSubtreeIfNeeded();
+
+    button.click();
+    assert_eq!(*hits.borrow(), 1, "中身のコールバックが生きていること");
+    assert!(
+        unsafe { button.native_view().superview() }.is_some(),
+        "中身がスクロールの中に入っていること"
+    );
+    Ok(())
+}
+
+/// miui が付けた大きさの制約だけを取り出す。
+fn miui_constraints(view: &NSView) -> Vec<Retained<NSLayoutConstraint>> {
+    let all = view.constraints();
+    (0..all.len())
+        .map(|i| all.objectAtIndex(i))
+        .filter(|c| {
+            c.identifier()
+                .is_some_and(|id| id.to_string() == "miui.sizing")
+        })
+        .collect()
+}
+
+/// 同じ行に高さの違うものを置いても、縦中央でそろう。
+///
+/// NSGridView の既定は上ぞろえなので、ラベル (16pt) と入力欄 (24pt) を
+/// 並べるとラベルだけが上にずれる。
+fn grid_row_alignment(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(12.0, 8.0);
+    grid.set_column_track(0, Track::Fixed(96.0));
+    grid.set_column_track(1, Track::FILL);
+    let label = ui.label("名前")?;
+    let field = ui.text_input("")?;
+    field.set_sizing(Sizing::fill_width());
+    grid.attach(&label, GridCell::new(0, 0));
+    grid.attach(&field, GridCell::new(1, 0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(400.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+
+    let label_frame = label.native_view().frame();
+    let field_frame = field.native_view().frame();
+    assert!(
+        label_frame.size.height < field_frame.size.height,
+        "前提: ラベルのほうが低いこと ({label_frame:?} / {field_frame:?})"
+    );
+    let label_center = label_frame.origin.y + label_frame.size.height / 2.0;
+    let field_center = field_frame.origin.y + field_frame.size.height / 2.0;
+    assert!(
+        (label_center - field_center).abs() <= 1.0,
+        "同じ行の中心がそろうこと: ラベル {label_center} / 入力欄 {field_center}"
+    );
     Ok(())
 }

@@ -24,14 +24,18 @@ objc2-app-kit = { version = "0.3", features = [
     "NSButton",
     "NSButtonCell",
     "NSCell",
+    "NSClipView",
     "NSColor",
     "NSControl",
     "NSGraphics",
+    "NSGridView",
+    "NSLayoutAnchor",
     "NSLayoutConstraint",
     "NSPathControl",
     "NSPathControlItem",
     "NSProgressIndicator",
     "NSResponder",
+    "NSScrollView",
     "NSSegmentedControl",
     "NSSlider",
     "NSStackView",
@@ -46,7 +50,13 @@ objc2-app-kit = { version = "0.3", features = [
 
 [dev-dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSButton", "NSControl", "NSView"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSButton",
+    "NSControl",
+    "NSLayoutConstraint",
+    "NSView",
+] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
 
 [[test]]
 name = "appkit"

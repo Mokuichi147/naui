@@ -6,7 +6,10 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use miui::{NavItem, Orientation, Padding, Result, Settings, Theme, Ui};
+use miui::{
+    GridCell, Length, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing, Theme,
+    Track, Ui,
+};
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
@@ -16,7 +19,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     root.set_padding(Padding::all(24.0));
 
     // Tabs を gallery のカテゴリ切り替えに使う。
-    let sections = NavItem::list(["ホーム", "ウィジェット", "ナビゲーション"]);
+    let sections = NavItem::list(["ホーム", "ウィジェット", "ナビゲーション", "レイアウト"]);
 
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["miui", "ホーム"]));
@@ -176,14 +179,66 @@ pub fn build(ui: &Ui) -> Result<()> {
     let dock_items = NavItem::list(["前へ", "再読み込み", "次へ"]);
     let dock = ui.dock()?;
     dock.set_items(&dock_items);
-    navigation_pane.append(&dock);
+
+    // --- レイアウト -------------------------------------------------------
+    let layout_pane = ui.stack(Orientation::Vertical)?;
+    layout_pane.set_spacing(12.0);
+    layout_pane.set_padding(Padding::all(12.0));
+    layout_pane.append(&ui.label("グリッド・スクロール・スペーサー")?);
+
+    // ラベルの列は固定幅、入力の列は残りいっぱい。
+    let form = ui.grid()?;
+    form.set_spacing(12.0, 8.0);
+    form.set_column_track(0, Track::Fixed(96.0));
+    form.set_column_track(1, Track::FILL);
+    form.set_sizing(Sizing::fill_width());
+    for (row, caption) in ["名前", "メール"].iter().enumerate() {
+        form.attach(&ui.label(caption)?, GridCell::new(0, row));
+        let field = ui.text_input("")?;
+        field.set_placeholder(caption);
+        field.set_sizing(Sizing::fill_width());
+        form.attach(&field, GridCell::new(1, row));
+    }
+    let submit = ui.button("送信")?;
+    // 最小幅だけ決めて、あとはネイティブの大きさに任せる。
+    submit.set_sizing(Sizing::new().min_width(160.0));
+    form.attach(&submit, GridCell::new(0, 2).span(2, 1));
+    layout_pane.append(&form);
+
+    // 高さを決めた枠の中で、はみ出した分だけスクロールする。
+    let long_list = ui.stack(Orientation::Vertical)?;
+    long_list.set_spacing(4.0);
+    long_list.set_padding(Padding::all(8.0));
+    for index in 1..=30 {
+        long_list.append(&ui.label(&format!("スクロールする行 {index}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&long_list);
+    scroll.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(160.0)),
+    );
+    layout_pane.append(&scroll);
+
+    // スペーサーが余りを吸うので、次に置いたものが下端へ寄る。
+    layout_pane.append(&ui.spacer()?);
+    layout_pane.append(&ui.label("スペーサーの後ろは下端に寄る")?);
 
     // 中央の Tabs がこの gallery のカテゴリ切り替えを担う。
     let tabs = ui.tabs()?;
     tabs.add_tab("ホーム", &home_pane);
     tabs.add_tab("ウィジェット", &controls_pane);
     tabs.add_tab("ナビゲーション", &navigation_pane);
+    tabs.add_tab("レイアウト", &layout_pane);
+    // タブがウィンドウの余りを受け取り、下のものを端へ寄せる。
+    tabs.set_sizing(Sizing::fill());
     root.append(&tabs);
+
+    // 余りはタブが取るので、ドックはウィンドウの下端に並ぶ。
+    dock.set_sizing(Sizing::fill_width());
+    root.append(&dock);
 
     tabs.on_select({
         let crumbs = crumbs.clone();

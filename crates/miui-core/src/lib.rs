@@ -6,6 +6,10 @@
 
 #![forbid(unsafe_code)]
 
+mod layout;
+
+pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
+
 use std::fmt;
 
 /// miui の操作結果。

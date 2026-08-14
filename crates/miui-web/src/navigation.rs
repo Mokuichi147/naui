@@ -22,6 +22,7 @@ use miui_core::{NavItem, Result};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
+use crate::layout::{apply_child_layout, fill_parent, mark_parent, ParentLayout};
 use crate::to_error;
 use crate::widgets::{create, impl_widget, set_disabled, Listener, Widget};
 
@@ -285,6 +286,11 @@ impl Tabs {
         let tablist = row(doc, "div", "4px")?;
         let _ = tablist.set_attribute("role", "tablist");
         let panels: HtmlElement = create(doc, "div")?.unchecked_into();
+        // 中身がタブの余りを受け取れるようにする (AppKit の NSTabView と同じ)。
+        style(&panels, "flex-grow", "1");
+        style(&panels, "display", "flex");
+        style(&panels, "flex-direction", "column");
+        mark_parent(&panels, ParentLayout::Flex(miui_core::Orientation::Vertical));
 
         append(&element, &tablist)?;
         append(&element, &panels)?;
@@ -319,9 +325,17 @@ impl Tabs {
         };
         let pane: HtmlElement = pane.unchecked_into();
         let _ = pane.set_attribute("role", "tabpanel");
-        if pane.append_child(&child.native_element()).is_err() {
+        // `display` は show() で切り替える。ここで書くと `hidden` が効かなくなる。
+        style(&pane, "flex-grow", "1");
+        style(&pane, "flex-direction", "column");
+        mark_parent(&pane, ParentLayout::Flex(miui_core::Orientation::Vertical));
+        let content = child.native_element();
+        if pane.append_child(&content).is_err() {
             return;
         }
+        // タブの中身は、タブの表示領域いっぱいに広がる。
+        fill_parent(&content);
+        apply_child_layout(&content, ParentLayout::Flex(miui_core::Orientation::Vertical));
 
         let index = self.0.tabs.borrow().len();
         let listener = Listener::attach(tab.as_ref(), "click", {
@@ -361,7 +375,10 @@ impl Tabs {
         for (i, pane) in self.0.panes.borrow().iter().enumerate() {
             if Some(i) == index {
                 let _ = pane.remove_attribute("hidden");
+                style(pane, "display", "flex");
             } else {
+                // `hidden` の `display: none` を上書きしないよう、指定を消す。
+                let _ = pane.style().remove_property("display");
                 let _ = pane.set_attribute("hidden", "");
             }
         }

@@ -31,6 +31,17 @@ macro_rules! impl_widget {
                 Box::new(self.clone())
             }
         }
+
+        impl $t {
+            /// 大きさを指定する。呼ぶたびに以前の指定は外れる。
+            ///
+            /// 実際の大きさを決めるのはブラウザの CSS レイアウトなので、
+            /// ここで渡すのは `width` / `min-width` などの指定だけ。
+            pub fn set_sizing(&self, sizing: miui_core::Sizing) {
+                let element = <$t as Widget>::native_element(self);
+                crate::layout::apply_sizing(&element, sizing);
+            }
+        }
     };
 }
 
@@ -360,6 +371,7 @@ impl ProgressBar {
 
 struct StackInner {
     element: HtmlElement,
+    orientation: Orientation,
     children: RefCell<Vec<Box<dyn Widget>>>,
 }
 
@@ -382,8 +394,13 @@ impl Stack {
             },
         );
         let _ = style.set_property("align-items", "center");
+        crate::layout::mark_parent(
+            &element,
+            crate::layout::ParentLayout::Flex(orientation),
+        );
         Ok(Self(Rc::new(StackInner {
             element,
+            orientation,
             children: RefCell::new(Vec::new()),
         })))
     }
@@ -417,8 +434,16 @@ impl Stack {
     }
 
     /// 末尾に子を追加する。
+    ///
+    /// 子が [`miui_core::Length::Fill`] を指定していれば、主軸なら
+    /// `flex-grow`、交差軸なら `align-self: stretch` をここで付ける。
     pub fn append(&self, child: &dyn Widget) {
-        if self.0.element.append_child(&child.native_element()).is_ok() {
+        let element = child.native_element();
+        if self.0.element.append_child(&element).is_ok() {
+            crate::layout::apply_child_layout(
+                &element,
+                crate::layout::ParentLayout::Flex(self.0.orientation),
+            );
             self.0.children.borrow_mut().push(child.boxed_clone());
         }
     }

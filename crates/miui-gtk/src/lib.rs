@@ -20,6 +20,10 @@
 //! | `run` | `gtk::Application` + `connect_activate` (コールバック内で UI 構築) |
 //! | `Window` | `adw::ApplicationWindow` |
 //! | `Stack` | `gtk::Box` (`Orientation::Vertical` / `Horizontal`) |
+//! | `Grid` | `gtk::Grid` (`attach` に行・列とスパンを渡す) |
+//! | `Scroll` | `gtk::ScrolledWindow` (`set_policy`) |
+//! | `Spacer` | 中身の無い `gtk::Box` (`set_hexpand` / `set_vexpand`) |
+//! | 大きさの指定 | `set_size_request` / `set_hexpand` / `set_halign` |
 //! | `Label` | `gtk::Label` |
 //! | `Button` | `gtk::Button` + `connect_clicked` |
 //! | `Checkbox` | `gtk::CheckButton` + `connect_toggled` |
@@ -46,7 +50,10 @@
 
 use std::cell::{Cell, RefCell};
 
-use miui_core::{Align, Error, NavItem, Orientation, Padding, Result, Settings, Theme};
+use miui_core::{
+    Align, Error, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing,
+    Theme, Track,
+};
 
 fn unimplemented_error(what: &'static str) -> Error {
     Error::new(
@@ -67,6 +74,11 @@ macro_rules! placeholder_widget {
             fn boxed_clone(&self) -> Box<dyn Widget> {
                 Box::new(self.clone())
             }
+        }
+
+        impl $name {
+            /// 大きさを指定する (未実装)。
+            pub fn set_sizing(&self, _sizing: Sizing) {}
         }
     };
 }
@@ -91,6 +103,9 @@ placeholder_widget!(Menu);
 placeholder_widget!(Breadcrumbs);
 placeholder_widget!(Pagination);
 placeholder_widget!(Link);
+placeholder_widget!(Grid);
+placeholder_widget!(Scroll);
+placeholder_widget!(Spacer);
 
 impl Label {
     pub fn text(&self) -> String {
@@ -151,6 +166,31 @@ impl Stack {
     pub fn is_empty(&self) -> bool {
         true
     }
+}
+
+impl Grid {
+    pub fn set_spacing(&self, _column: f64, _row: f64) {}
+    pub fn set_padding(&self, _padding: Padding) {}
+    pub fn attach(&self, _child: &dyn Widget, _cell: GridCell) {}
+    pub fn set_column_track(&self, _index: usize, _track: Track) {}
+    pub fn set_row_track(&self, _index: usize, _track: Track) {}
+    pub fn columns(&self) -> usize {
+        0
+    }
+    pub fn rows(&self) -> usize {
+        0
+    }
+    pub fn len(&self) -> usize {
+        0
+    }
+    pub fn is_empty(&self) -> bool {
+        true
+    }
+}
+
+impl Scroll {
+    pub fn set_policy(&self, _horizontal: ScrollPolicy, _vertical: ScrollPolicy) {}
+    pub fn set_child(&self, _child: &dyn Widget) {}
 }
 
 /// 項目を持つナビゲーションの共通実装 (未実装)。
@@ -264,6 +304,15 @@ impl Ui {
     }
     pub fn stack(&self, _orientation: Orientation) -> Result<Stack> {
         Err(unimplemented_error("Stack の生成"))
+    }
+    pub fn grid(&self) -> Result<Grid> {
+        Err(unimplemented_error("Grid の生成"))
+    }
+    pub fn scroll(&self) -> Result<Scroll> {
+        Err(unimplemented_error("Scroll の生成"))
+    }
+    pub fn spacer(&self) -> Result<Spacer> {
+        Err(unimplemented_error("Spacer の生成"))
     }
     pub fn label(&self, _text: &str) -> Result<Label> {
         Err(unimplemented_error("Label の生成"))

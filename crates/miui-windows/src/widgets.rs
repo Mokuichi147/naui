@@ -4,7 +4,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use miui_core::{Align, Orientation, Padding, Result};
-use windows_core::{Interface, HSTRING};
+use windows::Foundation::EventHandler;
+use windows_core::{IInspectable, Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, Grid, Orientation as XamlOrientation,
     Slider as XamlSlider, StackPanel, TextBlock, TextBox,
@@ -38,6 +39,17 @@ macro_rules! impl_widget {
             }
             fn boxed_clone(&self) -> Box<dyn Widget> {
                 Box::new(self.clone())
+            }
+        }
+
+        impl $t {
+            /// 大きさを指定する。呼ぶたびに以前の指定は置き換わる。
+            ///
+            /// 実際の大きさを決めるのは WinUI のレイアウトパスなので、
+            /// ここで渡すのは `Width` / `MinWidth` などの指定だけ。
+            pub fn set_sizing(&self, sizing: miui_core::Sizing) {
+                let element = <$t as Widget>::native_element(self);
+                crate::layout::apply_sizing(&element, sizing);
             }
         }
     };
@@ -331,7 +343,7 @@ struct ProgressInner {
     native: UIElement,
     fill: FrameworkElement,
     value: Cell<f64>,
-    max_width: f64,
+    track_width: Cell<f64>,
 }
 
 /// 進捗バー (ProgressBar)。
@@ -344,10 +356,9 @@ impl ProgressBar {
         // Windows App SDK 2.3.1 の未パッケージ起動では、ProgressBar の
         // 既定テンプレートが適用される瞬間にランタイムが fail-fast する。
         // 同じ WinUI XAML の Border を使えば、見た目を保ったまま回避できる。
-        const MAX_WIDTH: f64 = 96.0;
         let grid = XamlReader::Load(&HSTRING::from(
             r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                Width="96" Height="6">
+                HorizontalAlignment="Stretch" Height="6">
                 <Border Background="#E5E5E5" CornerRadius="3"/>
                 <Border Width="0" HorizontalAlignment="Left"
                     Background="#0078D4" CornerRadius="3"/>
@@ -364,19 +375,47 @@ impl ProgressBar {
         let native = grid
             .cast::<UIElement>()
             .map_err(|e| to_error("ProgressBar の要素化", e))?;
-        Ok(Self(Rc::new(ProgressInner {
+        let this = Self(Rc::new(ProgressInner {
             native,
             fill,
             value: Cell::new(0.0),
-            max_width: MAX_WIDTH,
-        })))
+            // レイアウト前の一時値。LayoutUpdatedで実幅に置き換える。
+            track_width: Cell::new(240.0),
+        }));
+        let weak = Rc::downgrade(&this.0);
+        let state = UiThreadCell::new(weak);
+        let element = this
+            .0
+            .native
+            .cast::<FrameworkElement>()
+            .map_err(|e| to_error("ProgressBar のレイアウト要素化", e))?;
+        let handler = EventHandler::<IInspectable>::new(move |_sender, _args| {
+            state.with_mut(|weak| {
+                let Some(inner) = weak.upgrade() else {
+                    return Ok(());
+                };
+                let Ok(element) = inner.native.cast::<FrameworkElement>() else {
+                    return Ok(());
+                };
+                let Ok(width) = element.ActualWidth() else {
+                    return Ok(());
+                };
+                if width > 0.0 && (width - inner.track_width.get()).abs() > f64::EPSILON {
+                    inner.track_width.set(width);
+                    let _ = inner.fill.SetWidth(width * inner.value.get());
+                }
+                Ok(())
+            })
+        });
+        let _ = element.LayoutUpdated(&handler);
+        Ok(this)
     }
 
     /// 0.0..=1.0。
     pub fn set_value(&self, value: f64) {
         let value = value.clamp(0.0, 1.0);
         self.0.value.set(value);
-        let _ = self.0.fill.SetWidth(self.0.max_width * value);
+        let _ = self.0.fill.SetWidth(self.0.track_width.get() * value);
     }
 
     pub fn value(&self) -> f64 {
