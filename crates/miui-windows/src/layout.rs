@@ -4,7 +4,7 @@
 //! `Width` / `MinWidth` / `RowDefinition` などのプロパティを設定するだけ。
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use miui_core::{GridCell, Length, Padding, Result, ScrollPolicy, Sizing, Track};
 use windows_core::{Interface, HSTRING};
@@ -13,7 +13,7 @@ use winui3::Microsoft::UI::Xaml::Controls::{
 };
 use winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, Thickness, UIElement,
-    VerticalAlignment,
+    VerticalAlignment, Window as XamlWindow,
 };
 
 use crate::to_error;
@@ -275,6 +275,154 @@ impl Grid {
 struct ScrollInner {
     native: ScrollViewer,
     child: RefCell<Option<Box<dyn Widget>>>,
+    vertical_scroll_enabled: Cell<bool>,
+}
+
+thread_local! {
+    static SCROLLS: RefCell<Vec<Weak<ScrollInner>>> = const { RefCell::new(Vec::new()) };
+    static WHEEL_TARGETS: RefCell<Vec<windows::Win32::Foundation::HWND>> =
+        const { RefCell::new(Vec::new()) };
+    static WHEEL_HOOK: RefCell<Option<windows::Win32::UI::WindowsAndMessaging::HHOOK>> =
+        const { RefCell::new(None) };
+}
+
+const WHEEL_SUBCLASS_ID: usize = 0x4D49_5549;
+
+unsafe extern "system" fn low_level_mouse_hook(
+    code: i32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, GetAncestor, GetForegroundWindow, GA_ROOT, MSLLHOOKSTRUCT, WM_MOUSEWHEEL,
+    };
+
+    if code >= 0 && wparam.0 as u32 == WM_MOUSEWHEEL {
+        let input = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+        let foreground_root = GetAncestor(GetForegroundWindow(), GA_ROOT);
+        let over_scroll_window = WHEEL_TARGETS.with(|targets| {
+            targets
+                .borrow()
+                .iter()
+                .any(|target| GetAncestor(*target, GA_ROOT) == foreground_root)
+        });
+        let delta = ((input.mouseData >> 16) as i16) as f64;
+        if over_scroll_window && delta != 0.0 && apply_wheel_delta(delta) {
+            return windows::Win32::Foundation::LRESULT(1);
+        }
+    }
+
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+fn install_low_level_wheel_hook(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowsHookExW, WH_MOUSE_LL};
+
+    WHEEL_TARGETS.with(|targets| {
+        let mut targets = targets.borrow_mut();
+        if !targets.contains(&hwnd) {
+            targets.push(hwnd);
+        }
+    });
+    WHEEL_HOOK.with(|hook| {
+        let mut hook = hook.borrow_mut();
+        if hook.is_some() {
+            return true;
+        }
+        let Ok(handle) =
+            (unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(low_level_mouse_hook), None, 0) })
+        else {
+            return false;
+        };
+        *hook = Some(handle);
+        true
+    })
+}
+
+fn apply_wheel_delta(delta: f64) -> bool {
+    SCROLLS.with(|scrolls| {
+        let mut scrolls = scrolls.borrow_mut();
+        scrolls.retain(|scroll| scroll.strong_count() != 0);
+        for weak in scrolls.iter().rev() {
+            let Some(inner) = weak.upgrade() else {
+                continue;
+            };
+            if !inner.vertical_scroll_enabled.get() {
+                continue;
+            }
+            let current = inner.native.VerticalOffset().unwrap_or(0.0);
+            let maximum = inner.native.ScrollableHeight().unwrap_or(0.0);
+            let next = (current - delta).clamp(0.0, maximum);
+            if next != current {
+                let _ = inner.native.ScrollToVerticalOffset(next);
+                return true;
+            }
+        }
+        false
+    })
+}
+
+unsafe extern "system" fn wheel_subclass(
+    hwnd: windows::Win32::Foundation::HWND,
+    message: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+    subclass_id: usize,
+    _ref_data: usize,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::{WM_MOUSEWHEEL, WM_POINTERWHEEL};
+
+    if message == WM_MOUSEWHEEL || message == WM_POINTERWHEEL {
+        let delta = ((wparam.0 >> 16) as i16) as f64;
+        if delta != 0.0 && apply_wheel_delta(delta) {
+            return windows::Win32::Foundation::LRESULT(0);
+        }
+    }
+
+    if message == windows::Win32::UI::WindowsAndMessaging::WM_NCDESTROY {
+        let result = DefSubclassProc(hwnd, message, wparam, lparam);
+        let _ = RemoveWindowSubclass(hwnd, Some(wheel_subclass), subclass_id);
+        return result;
+    }
+
+    DefSubclassProc(hwnd, message, wparam, lparam)
+}
+
+pub(crate) fn register_scroll(scroll: &Scroll) {
+    SCROLLS.with(|scrolls| {
+        let mut scrolls = scrolls.borrow_mut();
+        scrolls.retain(|scroll| scroll.strong_count() != 0);
+        scrolls.push(Rc::downgrade(&scroll.0));
+    });
+}
+
+pub(crate) fn install_wheel_subclass(window: &XamlWindow) -> bool {
+    let Ok(native) = window.cast::<winui3::IWindowNative>() else {
+        return false;
+    };
+    let Ok(hwnd) = (unsafe { native.WindowHandle() }) else {
+        return false;
+    };
+    let low_level_hook_installed = install_low_level_wheel_hook(hwnd);
+    let has_scroll = SCROLLS.with(|scrolls| {
+        let mut scrolls = scrolls.borrow_mut();
+        scrolls.retain(|scroll| scroll.strong_count() != 0);
+        !scrolls.is_empty()
+    });
+    if !has_scroll {
+        return low_level_hook_installed;
+    }
+    let installed = unsafe {
+        windows::Win32::UI::Shell::SetWindowSubclass(
+            hwnd,
+            Some(wheel_subclass),
+            WHEEL_SUBCLASS_ID,
+            1,
+        )
+        .as_bool()
+    };
+    installed || low_level_hook_installed
 }
 
 /// 中身がはみ出したらスクロールさせるコンテナ (ScrollViewer)。
@@ -282,19 +430,59 @@ struct ScrollInner {
 pub struct Scroll(Rc<ScrollInner>);
 impl_widget!(Scroll, native);
 
+// `ScrollMode` is not emitted by `winio-winui3`, so the corresponding
+// IScrollViewer methods are represented as raw vtable entries.  The enum is
+// defined by WinUI as Disabled = 0, Enabled = 1, Auto = 2.
+const SCROLLVIEWER_HORIZONTAL_SCROLL_MODE_SLOT: usize = 24;
+const SCROLLVIEWER_VERTICAL_SCROLL_MODE_SLOT: usize = 27;
+
+fn set_scroll_mode(native: &ScrollViewer, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
+    let horizontal_mode = if matches!(horizontal, ScrollPolicy::Never) {
+        0
+    } else {
+        1
+    };
+    let vertical_mode = if matches!(vertical, ScrollPolicy::Never) {
+        0
+    } else {
+        1
+    };
+    unsafe {
+        let slots = Interface::vtable(native) as *const _ as *const usize;
+        let set_mode: unsafe extern "system" fn(
+            *mut std::ffi::c_void,
+            i32,
+        ) -> windows_core::HRESULT =
+            std::mem::transmute(*slots.add(SCROLLVIEWER_HORIZONTAL_SCROLL_MODE_SLOT));
+        let _ = set_mode(Interface::as_raw(native), horizontal_mode).ok();
+        let set_mode: unsafe extern "system" fn(
+            *mut std::ffi::c_void,
+            i32,
+        ) -> windows_core::HRESULT =
+            std::mem::transmute(*slots.add(SCROLLVIEWER_VERTICAL_SCROLL_MODE_SLOT));
+        let _ = set_mode(Interface::as_raw(native), vertical_mode).ok();
+    }
+}
+
 impl Scroll {
     pub(crate) fn new() -> Result<Self> {
         let native = ScrollViewer::new().map_err(|e| to_error("ScrollViewer の生成", e))?;
         let this = Self(Rc::new(ScrollInner {
             native,
             child: RefCell::new(None),
+            vertical_scroll_enabled: Cell::new(true),
         }));
+        register_scroll(&this);
         this.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
         Ok(this)
     }
 
     /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
     pub fn set_policy(&self, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
+        self.0
+            .vertical_scroll_enabled
+            .set(!matches!(vertical, ScrollPolicy::Never));
+        set_scroll_mode(&self.0.native, horizontal, vertical);
         let _ = self
             .0
             .native
@@ -307,7 +495,8 @@ impl Scroll {
 
     /// スクロールさせる中身。呼ぶたびに置き換わる。
     pub fn set_child(&self, child: &dyn Widget) {
-        if self.0.native.SetContent(&child.native_element()).is_ok() {
+        let element = child.native_element();
+        if self.0.native.SetContent(&element).is_ok() {
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }
