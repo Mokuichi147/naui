@@ -21,7 +21,7 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | --- | --- | --- |
 | **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 24 件 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認 |
-| **Windows** | ✅ 動作 (レイアウトは未確認。`Scroll` のマウスホイール対応を含む) | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェットとナビゲーション系 7 種の起動を確認済み。`Grid` / `Scroll` / `Spacer` / `set_sizing` は**コンパイル確認のみ** |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択を確認済み |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -356,13 +356,10 @@ stack.append(&picker);
 ありません (ファイル / フォルダーの選択だけは `FilePicker` があります)。
 レイアウトはスタック・グリッド・スクロールで、絶対配置はありません。
 
-> **注意:** Windows 列のうち、基本ウィジェットは Windows App SDK 2.3.1 の実機で
-> `cargo run -p gallery` による起動確認済みです。ナビゲーション系 7 種も
-> 実機での起動を確認しています。
+> **注意:** Windows 列は、Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を
+> 実行し、基本ウィジェット・ナビゲーション系 7 種・`Grid` / `Scroll` / `Spacer` /
+> `set_sizing`・`FilePicker` のファイル / フォルダー選択まで確認済みです。
 > `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
-> **`FilePicker` の Windows 実装 (`IFileOpenDialog`) は、コンパイル確認のみです。**
-> **`Grid` / `Scroll` / `Spacer` と `set_sizing` の Windows 実装は、gallery の起動と
-> `Scroll` のホイール入力を実機相当の Win32 入力で確認済みです。**
 
 ---
 
@@ -502,16 +499,17 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   バインドしていないため、Windows で実装できませんでした。
   「共通 API は全バックエンドの共通部分」という方針を優先して、
   macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **ウィジェットは 18 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
+- **ウィジェットは 19 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
   `Checkbox` / `TextInput` / `Slider` / `ProgressBar`)、レイアウト 3 種
   (`Grid` / `Scroll` / `Spacer`)、ナビゲーション 7 種
-  (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`) です。
-  ポップアップメニュー、ダイアログ、リスト、複数行テキストなどは未実装です。
+  (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`)、
+  ファイル選択 1 種 (`FilePicker`) です。
+  ポップアップメニュー、汎用のダイアログ、保存ダイアログ、リスト、
+  複数行テキストなどは未実装です。
 - **Windows の `Stack` では主軸の `Fill` と `Spacer` が効きません。** `StackPanel` が
   子へ余りを配らないためです。`Grid` の `Track::Fill` を使ってください。
 - **macOS の `Track::Fill` は重みを無視します。** NSGridView に重みの概念が無く、
   `Fill` 配置と hugging priority による近似だからです。
-- **Windows の `Grid` / `Scroll` / `Spacer` は実機未確認です。** コンパイル確認のみ。
 - **絶対配置はありません。** 位置は `Grid` のマス目・`Align`・`Spacer` で決めます。
 - **`set_sizing` はコンテナの中の子に効きます。** ウィンドウ直下のルートは
   ウィンドウいっぱいに広がるため、そこでの指定は意味を持ちません。
