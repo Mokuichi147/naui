@@ -131,6 +131,7 @@ dependencies = [
 name = "miui-web"
 version = "0.2.0"
 dependencies = [
+ "js-sys",
  "miui-core",
  "wasm-bindgen",
  "web-sys",

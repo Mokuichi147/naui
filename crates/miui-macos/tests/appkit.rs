@@ -12,11 +12,12 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use miui_core::{
-    GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Sizing, Theme, Track,
+    FileFilter, FilePickerMode, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy,
+    Sizing, Theme, Track,
 };
 use miui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
-use objc2_app_kit::{NSLayoutConstraint, NSView};
+use objc2_app_kit::{NSButton, NSLayoutConstraint, NSView};
 use objc2_foundation::NSSize;
 
 /// テストケース 1 件。
@@ -52,6 +53,14 @@ fn main() {
         ("グリッドが行と列を広げて子を置く", grid_places_children),
         ("スクロールが中身を保持する", scroll_keeps_child),
         ("グリッドの同じ行が縦中央でそろう", grid_row_alignment),
+        (
+            "ファイル選択がボタンとして構成され設定を保つ",
+            file_picker_configuration,
+        ),
+        (
+            "ファイル選択のモードが NSOpenPanel へ反映される",
+            file_picker_panel,
+        ),
     ];
 
     let mut failed = 0;
@@ -656,5 +665,85 @@ fn grid_row_alignment(ui: &Ui) -> Result<()> {
         (label_center - field_center).abs() <= 1.0,
         "同じ行の中心がそろうこと: ラベル {label_center} / 入力欄 {field_center}"
     );
+    Ok(())
+}
+
+/// ファイル選択は AppKit のボタンとして構成され、設定を保つ。
+///
+/// `NSOpenPanel` はアプリモーダルで、出すと閉じられるまで戻らない。
+/// 自動テストからは開けないので、**ボタンの実体と設定の保持まで**を確かめる。
+fn file_picker_configuration(ui: &Ui) -> Result<()> {
+    let picker = ui.file_picker("ファイルを選ぶ")?;
+
+    let view = picker.native_view();
+    let button = view
+        .downcast::<NSButton>()
+        .expect("実体は NSButton であること");
+    assert_eq!(button.title().to_string(), "ファイルを選ぶ");
+    picker.set_text("フォルダーを選ぶ");
+    assert_eq!(button.title().to_string(), "フォルダーを選ぶ");
+
+    assert!(button.isEnabled(), "既定では押せること");
+    picker.set_enabled(false);
+    assert!(!button.isEnabled());
+    picker.set_enabled(true);
+
+    assert_eq!(picker.mode(), FilePickerMode::File, "既定はファイル 1 つ");
+    picker.set_mode(FilePickerMode::Folder);
+    assert_eq!(picker.mode(), FilePickerMode::Folder);
+    picker.set_mode(FilePickerMode::Files);
+    assert_eq!(picker.mode(), FilePickerMode::Files);
+
+    // 絞り込みは開くまで使われないので、設定しても選択は変わらない。
+    picker.set_filters(&[FileFilter::new("画像", ["png", "jpg"])]);
+    assert!(picker.selection().is_empty(), "まだ何も選ばれていないこと");
+
+    // コンテナへ入れてもハンドルを手放して大丈夫なこと (他のウィジェットと同じ)。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&picker);
+    assert_eq!(stack.len(), 1);
+    Ok(())
+}
+
+/// モードと絞り込みが、実際の `NSOpenPanel` の設定になる。
+///
+/// `native_panel()` は組み立てるだけで表示しないので、
+/// イベントループを回さずに中身を確かめられる。
+fn file_picker_panel(ui: &Ui) -> Result<()> {
+    let picker = ui.file_picker("選ぶ")?;
+
+    let panel = picker.native_panel();
+    assert!(panel.canChooseFiles(), "既定はファイルを選ぶ");
+    assert!(!panel.canChooseDirectories());
+    assert!(!panel.allowsMultipleSelection());
+
+    picker.set_mode(FilePickerMode::Files);
+    let panel = picker.native_panel();
+    assert!(panel.canChooseFiles());
+    assert!(panel.allowsMultipleSelection(), "複数選べること");
+
+    picker.set_mode(FilePickerMode::Folder);
+    let panel = picker.native_panel();
+    assert!(!panel.canChooseFiles(), "フォルダーだけを選ばせること");
+    assert!(panel.canChooseDirectories());
+    assert!(!panel.allowsMultipleSelection());
+
+    // 絞り込みは拡張子の並びとして渡り、フォルダーのときは渡らない。
+    picker.set_filters(&[
+        FileFilter::new("画像", ["*.PNG", "jpg"]),
+        FileFilter::new("文書", ["txt"]),
+    ]);
+    #[allow(deprecated)]
+    let folder_types = picker.native_panel().allowedFileTypes();
+    assert!(folder_types.is_none(), "フォルダー選択では絞り込まないこと");
+
+    picker.set_mode(FilePickerMode::File);
+    #[allow(deprecated)]
+    let types = picker
+        .native_panel()
+        .allowedFileTypes()
+        .expect("拡張子が設定されること");
+    let types: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+    assert_eq!(types, ["png", "jpg", "txt"]);
     Ok(())
 }

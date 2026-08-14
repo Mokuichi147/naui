@@ -18,6 +18,7 @@
 #![cfg(target_os = "windows")]
 
 mod app;
+mod file_picker;
 mod layout;
 mod navigation;
 mod ui_thread;
@@ -28,6 +29,7 @@ use std::cell::{Cell, RefCell};
 
 use miui_core::{Error, Orientation, Result, Settings, Theme};
 
+pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
@@ -145,6 +147,11 @@ impl Ui {
     /// リンク。`href` が空でなければ、押したときにブラウザで開く。
     pub fn link(&self, text: &str, href: &str) -> Result<Link> {
         Link::new(text, href)
+    }
+
+    /// ファイルやフォルダーを選ばせるボタン。押すと共通ダイアログが出る。
+    pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
+        FilePicker::new(text)
     }
 
     /// 配色テーマを実行中に切り替える。

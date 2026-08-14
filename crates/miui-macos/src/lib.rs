@@ -9,6 +9,7 @@
 // Objective-C 呼び出しのため unsafe が必要。
 #![allow(unsafe_code)]
 
+mod file_picker;
 mod layout;
 mod navigation;
 mod trampoline;
@@ -28,6 +29,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::NSNotification;
 
+pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
@@ -137,6 +139,11 @@ impl Ui {
     /// リンク。`href` が空でなければ、押したときにブラウザで開く。
     pub fn link(&self, text: &str, href: &str) -> Result<Link> {
         Ok(Link::new(self.mtm, text, href))
+    }
+
+    /// ファイルやフォルダーを選ばせるボタン。押すと `NSOpenPanel` が出る。
+    pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
+        Ok(FilePicker::new(self.mtm, text))
     }
 
     /// 配色テーマを実行中に切り替える。

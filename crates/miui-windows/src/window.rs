@@ -181,6 +181,7 @@ impl Window {
         self.set_size(self.0.width as f64, self.0.height as f64);
         if self.0.native.Activate().is_ok() {
             *self.0.visible.borrow_mut() = true;
+            remember_owner(&self.0.native);
         }
     }
 
@@ -377,6 +378,33 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 struct ElementTheme(i32);
+
+thread_local! {
+    /// 最後に表示したウィンドウの HWND。モーダルダイアログの親に使う。
+    ///
+    /// XAML の要素から自分の載っているウィンドウをたどる API が
+    /// `winio-winui3` のバインディングに無いため、表示のたびに覚えておく。
+    static OWNER_HWND: Cell<isize> = const { Cell::new(0) };
+}
+
+/// モーダルダイアログの親にするウィンドウを覚える。
+fn remember_owner(window: &XamlWindow) {
+    let Ok(native) = window.cast::<winui3::IWindowNative>() else {
+        return;
+    };
+    if let Ok(hwnd) = unsafe { native.WindowHandle() } {
+        OWNER_HWND.with(|slot| slot.set(hwnd.0 as isize));
+    }
+}
+
+/// モーダルダイアログの親にするウィンドウ。まだ何も表示していなければ `None`。
+pub(crate) fn owner_hwnd() -> Option<windows::Win32::Foundation::HWND> {
+    let raw = OWNER_HWND.with(|slot| slot.get());
+    if raw == 0 {
+        return None;
+    }
+    Some(windows::Win32::Foundation::HWND(raw as *mut std::ffi::c_void))
+}
 
 impl From<Theme> for ElementTheme {
     fn from(theme: Theme) -> Self {

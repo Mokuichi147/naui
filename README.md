@@ -19,9 +19,9 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 21 件 |
-| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認 |
-| **Windows** | ✅ 動作 (レイアウトは未確認。`Scroll` のマウスホイール対応を含む) | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェットとナビゲーション系 7 種の起動を確認済み。`Grid` / `Scroll` / `Spacer` / `set_sizing` は**コンパイル確認のみ** |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 24 件 |
+| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認 |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択を確認済み |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -134,6 +134,7 @@ let element: web_sys::Element = button.native_element();
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` (`textFieldWithString:`) | ✅ `<input type=text>` | ❌ |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ❌ |
 | `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
+| `FilePicker` | 🟡 `Button` + `IFileOpenDialog` (共通ダイアログ) | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `<button>` + 隠した `<input type=file>` | ❌ |
 
 ### 配置とサイズ
 
@@ -257,6 +258,57 @@ let _: Option<usize> = navbar.selected();
 `Pagination` はページ番号を扱うため `set_page_count` / `page` / `set_page` /
 `go_previous` / `go_next` / `on_change` という名前になっています。
 
+### ファイルとフォルダーの選択
+
+`FilePicker` は**ボタン 1 つ**です。押すと、その環境の標準のファイル選択が
+開きます (macOS は `NSOpenPanel`、Windows はエクスプローラーと同じ
+Common Item Dialog、Web はブラウザのファイル選択)。一覧・検索・アクセス権限の
+扱いは、すべてその環境が行います。
+
+```rust
+use miui::{FileFilter, FilePickerMode};
+
+let picker = ui.file_picker("画像を選ぶ")?;
+picker.set_mode(FilePickerMode::File);   // File / Files / Folder
+picker.set_filters(&[FileFilter::new("画像", ["png", "jpg"])]);
+picker.on_select(|entries| {
+    for entry in entries {
+        match entry.path() {
+            Some(path) => println!("{}", path.display()),  // ネイティブ
+            None => println!("{}", entry.name()),          // Web
+        }
+    }
+});
+stack.append(&picker);
+```
+
+| メソッド | 意味 |
+| --- | --- |
+| `set_mode(FilePickerMode)` | 何を選ばせるか。`File` (既定) / `Files` (複数) / `Folder` |
+| `set_filters(&[FileFilter])` | 拡張子で絞り込む。`Folder` のときは無視される |
+| `selection()` | 最後に選ばれたもの (`Vec<FileEntry>`)。未選択なら空 |
+| `on_select(f)` | 選ばれたときに `&[FileEntry]` で呼ばれる。**取り消したときは呼ばれない** |
+| `open()` | ボタンを押さずにダイアログを出す (Web は後述の制約あり) |
+
+選ばれたものは `FileEntry` で、`name()` は表示名、`path()` は絶対パスです。
+
+| 環境 | `path()` | 備考 |
+| --- | --- | --- |
+| macOS / Windows | `Some(絶対パス)` | |
+| Web | **常に `None`** | ブラウザはパスを渡さない。中身が要るときは `native_element()` から `<input>` を取り出して `FileList` を読む |
+
+**Web には 2 つ制約があります。**
+
+- `open()` は**ユーザー操作のイベントの中でしか効きません**。ブラウザが
+  ファイル選択の自動起動を禁じているためで、ボタンを押した経路 (既定の動き)
+  なら問題ありません。
+- フォルダーを選ぶと、ブラウザは**そのフォルダーの中のファイル一覧**を返します。
+  他の環境はフォルダー 1 つを返すので、miui は `webkitRelativePath` の先頭から
+  フォルダー名を取り出し、**1 件に畳んで**そろえています。
+
+保存ダイアログ (名前を付けて保存) はありません。`<input type=file>` に相当が
+無く、Web だけ形が変わってしまうためです。
+
 ### 🟡 / 🔴 の内訳
 
 | 箇所 | 内容 |
@@ -290,20 +342,24 @@ let _: Option<usize> = navbar.selected();
 | `Link` の遷移 | `href` が空でなければ、押したときにその環境の標準的な方法で開く (macOS は `NSWorkspace`、Windows は `HyperlinkButton` の `NavigateUri`、Web は `target="_blank"`)。Web で同じタブに遷移すると wasm のアプリごと破棄されるため、別タブに揃えている |
 | Windows の `Spacer` / 主軸の `Fill` | `StackPanel` は子へ余りを配らないため、`Stack` の中では効かない。`Grid` の `Track::Fill` (XAML の `Star`) が同じ役割を果たす |
 | macOS の `Track::Fill` | NSGridView に重みの概念が無いため、`Fill` 配置と hugging priority による近似。重みの違いは反映されない |
+| `FilePicker` の通知 | `on_select` は**選ばれたときだけ**呼ばれる。取り消しの通知は、Web の `cancel` イベントが新しく環境がそろわないため持たない |
+| `FilePicker` の絞り込み | 拡張子は `png` の形に正規化される (`.png` や `*.PNG` と書いても同じ)。macOS は `NSSavePanel` の拡張子指定、Windows は種類欄 (`COMDLG_FILTERSPEC`)、Web は `accept` 属性になる |
+| macOS の `NSOpenPanel` を直接使う | `FilePicker::native_panel()` が、設定済みで**未表示**のパネルを返す。シート表示 (`beginSheetModalForWindow:`) や開始ディレクトリの指定はここから行う |
+| 🟡 すべての `FilePicker` | 「押すとファイル選択が開くコントロール」は macOS にも WinUI 3 にも無い。その環境のネイティブなボタンと、その環境の標準のファイル選択ダイアログを組み合わせている。Web の `<input type=file>` は単体でボタンだが、**ボタンの文字列がブラウザ所有で差し替えられない**ため、`<button>` を表に出して押しを転送している |
+| 🟡 Windows の `FilePicker` | `Windows.Storage.Pickers` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、Win32 側の `IFileOpenDialog` (Common Item Dialog) を使っている。エクスプローラーと同じダイアログで、未パッケージ実行でも開ける |
 | Windows の `ProgressBar` | Windows App SDK 2.3.1 の未パッケージ実行では `ProgressBar` の既定テンプレート適用時にランタイムが終了するため、WinUI XAML の `Grid` と `Border` を組み合わせて同等の表示を構成している。表示幅は親に合わせて伸縮し、値の変更 API は維持している |
 
 ### 未対応のコンポーネント
 
-ポップアップメニュー、ダイアログ、リスト / テーブル、ラジオボタン、コンボボックス、
-複数行テキスト、ツールバー、ツリー、画像表示などはありません。
+ポップアップメニュー、汎用のダイアログ、保存ダイアログ、リスト / テーブル、
+ラジオボタン、コンボボックス、複数行テキスト、ツールバー、ツリー、画像表示などは
+ありません (ファイル / フォルダーの選択だけは `FilePicker` があります)。
 レイアウトはスタック・グリッド・スクロールで、絶対配置はありません。
 
-> **注意:** Windows 列のうち、基本ウィジェットは Windows App SDK 2.3.1 の実機で
-> `cargo run -p gallery` による起動確認済みです。ナビゲーション系 7 種も
-> 実機での起動を確認しています。
+> **注意:** Windows 列は、Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を
+> 実行し、基本ウィジェット・ナビゲーション系 7 種・`Grid` / `Scroll` / `Spacer` /
+> `set_sizing`・`FilePicker` のファイル / フォルダー選択まで確認済みです。
 > `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
-> **`Grid` / `Scroll` / `Spacer` と `set_sizing` の Windows 実装は、gallery の起動と
-> `Scroll` のホイール入力を実機相当の Win32 入力で確認済みです。**
 
 ---
 
@@ -443,16 +499,17 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   バインドしていないため、Windows で実装できませんでした。
   「共通 API は全バックエンドの共通部分」という方針を優先して、
   macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **ウィジェットは 18 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
+- **ウィジェットは 19 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
   `Checkbox` / `TextInput` / `Slider` / `ProgressBar`)、レイアウト 3 種
   (`Grid` / `Scroll` / `Spacer`)、ナビゲーション 7 種
-  (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`) です。
-  ポップアップメニュー、ダイアログ、リスト、複数行テキストなどは未実装です。
+  (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`)、
+  ファイル選択 1 種 (`FilePicker`) です。
+  ポップアップメニュー、汎用のダイアログ、保存ダイアログ、リスト、
+  複数行テキストなどは未実装です。
 - **Windows の `Stack` では主軸の `Fill` と `Spacer` が効きません。** `StackPanel` が
   子へ余りを配らないためです。`Grid` の `Track::Fill` を使ってください。
 - **macOS の `Track::Fill` は重みを無視します。** NSGridView に重みの概念が無く、
   `Fill` 配置と hugging priority による近似だからです。
-- **Windows の `Grid` / `Scroll` / `Spacer` は実機未確認です。** コンパイル確認のみ。
 - **絶対配置はありません。** 位置は `Grid` のマス目・`Align`・`Spacer` で決めます。
 - **`set_sizing` はコンテナの中の子に効きます。** ウィンドウ直下のルートは
   ウィンドウいっぱいに広がるため、そこでの指定は意味を持ちません。
