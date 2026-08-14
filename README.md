@@ -19,9 +19,9 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 14 件 |
-| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認) |
-| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェットとナビゲーション系 7 種の起動を確認済み |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 21 件 |
+| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認 |
+| **Windows** | ✅ 動作 (レイアウトは未確認) | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェットとナビゲーション系 7 種の起動を確認済み。`Grid` / `Scroll` / `Spacer` / `set_sizing` は**コンパイル確認のみ** |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -125,12 +125,92 @@ let element: web_sys::Element = button.native_element();
 | --- | --- | --- | --- | --- |
 | `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | 🔴 `<div>` + `document.title` | ❌ |
 | `Stack` | ✅ `StackPanel` | ✅ `NSStackView` | 🟡 `<div>` + CSS Flexbox | ❌ |
+| `Grid` | ✅ `Grid` (`RowDefinition` / `ColumnDefinition`) | ✅ `NSGridView` | 🟡 `<div>` + CSS Grid | ❌ |
+| `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | 🟡 `<div>` + `overflow` | ❌ |
+| `Spacer` | 🔴 中身の無い `Grid` (`StackPanel` では効かない) | 🟡 中身の無い `NSView` (hugging priority 最小) | 🟡 `<div>` + `flex-grow` | ❌ |
 | `Label` | ✅ `TextBlock` | ✅ `NSTextField` (`labelWithString:`) | ✅ `<span>` | ❌ |
 | `Button` | ✅ `Button` | ✅ `NSButton` (`buttonWithTitle:`) | ✅ `<button>` | ❌ |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` (`checkboxWithTitle:`) | 🟡 `<input type=checkbox>` + `<label>` | ❌ |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` (`textFieldWithString:`) | ✅ `<input type=text>` | ❌ |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ❌ |
 | `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
+
+### 配置とサイズ
+
+どのウィジェットも `set_sizing` で大きさを指定できます。計算するのは
+ネイティブのレイアウト機構 (Auto Layout / XAML のレイアウトパス / CSS) で、
+miui は制約やプロパティを設定するだけです。
+
+```rust
+use miui::{GridCell, Length, ScrollPolicy, Sizing, Track};
+
+// 幅は親いっぱい、高さは 160px、幅は 120px 以上。
+widget.set_sizing(
+    Sizing::new()
+        .width(Length::Fill)
+        .height(Length::Fixed(160.0))
+        .min_width(120.0),
+);
+```
+
+`Length` は 3 つです。
+
+| 値 | 意味 |
+| --- | --- |
+| `Auto` | 中身に合わせる (既定) |
+| `Fixed(f64)` | 論理ピクセルで固定する |
+| `Fill` | 親の余りを受け取って広がる |
+
+`Fill` の意味は軸によって変わります。親の並び方向 (主軸) では**余った空間を
+受け取り**、それと直交する方向 (交差軸) では**親いっぱいに広がります**。
+
+| | 主軸の `Fill` | 交差軸の `Fill` |
+| --- | --- | --- |
+| macOS | hugging priority を下げて NSStackView から余りを受け取る | 親の幅 / 高さに合わせる制約 |
+| Web | `flex-grow: 1` | `align-self: stretch` |
+| Windows | **`Stack` では効きません** (StackPanel は余りを配らない)。`Grid` の `Track::Fill` を使ってください | `HorizontalAlignment` / `VerticalAlignment` の `Stretch` |
+
+#### Grid
+
+行と列で位置を決めるコンテナです。列 / 行の幅は `Track` で決めます。
+
+```rust
+let form = ui.grid()?;
+form.set_spacing(12.0, 8.0);          // 列間, 行間
+form.set_column_track(0, Track::Fixed(96.0));
+form.set_column_track(1, Track::FILL); // 残りいっぱい
+form.attach(&ui.label("名前")?, GridCell::new(0, 0));
+form.attach(&field, GridCell::new(1, 0));
+form.attach(&submit, GridCell::new(0, 1).span(2, 1)); // 2 マス分
+```
+
+`Track::Fill(weight)` の重みは、Web では `fr`、Windows では `Star` に対応します。
+macOS の NSGridView には重みの概念が無いため、**重みの違いは反映されません**
+(`Fill` 配置と hugging priority による近似です)。
+
+#### Scroll
+
+はみ出した分をスクロールさせるコンテナです。既定は横 `Never`・縦 `Auto`。
+
+```rust
+let scroll = ui.scroll()?;
+scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+scroll.set_child(&long_list);
+scroll.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(160.0)));
+```
+
+#### Spacer
+
+中身を持たず、余った空間だけを受け取るウィジェットです。縦スタックの途中に
+置くと、後ろの要素が下端へ寄ります (`Dock` を画面下端に置く用途)。
+
+```rust
+root.append(&ui.spacer()?);
+root.append(&dock);   // 下端に寄る
+```
+
+Windows の `StackPanel` は余りを配らないため、`Spacer` と主軸の `Fill` は
+`Stack` の中では効きません。`Grid` の行を `Track::Fill` にしてください。
 
 ### ナビゲーション
 
@@ -193,21 +273,25 @@ let _: Option<usize> = navbar.selected();
 | Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
 | すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。miui 側の `clamp` は二重の保険 |
 | `Menu` という名前 | miui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。`NSMenu` / `MenuFlyout` に相当するものは未実装 |
-| `Dock` の配置 | 下端への固定は行わない。miui のレイアウトは縦横のスタックだけなので、**置く場所はアプリの責務**。縦スタックの最後に置くと下端寄りになる |
+| `Dock` の配置 | 下端への固定は行わない。**置く場所はアプリの責務**で、縦スタックの最後に置き、手前に `Spacer` か `Fill` を使うと下端に寄る |
+| `Fill` と `Auto` | どちらもネイティブのレイアウト機構への指示。miui 自身は位置も大きさも計算しない |
 | `Link` の遷移 | `href` が空でなければ、押したときにその環境の標準的な方法で開く (macOS は `NSWorkspace`、Windows は `HyperlinkButton` の `NavigateUri`、Web は `target="_blank"`)。Web で同じタブに遷移すると wasm のアプリごと破棄されるため、別タブに揃えている |
+| Windows の `Spacer` / 主軸の `Fill` | `StackPanel` は子へ余りを配らないため、`Stack` の中では効かない。`Grid` の `Track::Fill` (XAML の `Star`) が同じ役割を果たす |
+| macOS の `Track::Fill` | NSGridView に重みの概念が無いため、`Fill` 配置と hugging priority による近似。重みの違いは反映されない |
 | Windows の `ProgressBar` | Windows App SDK 2.3.1 の未パッケージ実行では `ProgressBar` の既定テンプレート適用時にランタイムが終了するため、WinUI XAML の `Grid` と `Border` を組み合わせて同等の表示を構成している。値の変更 API は維持している |
 
 ### 未対応のコンポーネント
 
 ポップアップメニュー、ダイアログ、リスト / テーブル、ラジオボタン、コンボボックス、
 複数行テキスト、ツールバー、ツリー、画像表示などはありません。
-レイアウトも縦横のスタックのみで、グリッドや絶対配置はありません。
-そのため `Dock` を画面下端に固定することもできません。
+レイアウトはスタック・グリッド・スクロールで、絶対配置はありません。
 
 > **注意:** Windows 列のうち、基本ウィジェットは Windows App SDK 2.3.1 の実機で
 > `cargo run -p gallery` による起動確認済みです。ナビゲーション系 7 種も
 > 実機での起動を確認しています。
 > `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
+> **`Grid` / `Scroll` / `Spacer` と `set_sizing` の Windows 実装は、
+> `cargo check --target x86_64-pc-windows-msvc` を通しただけで実機未確認です。**
 
 ---
 
@@ -308,7 +392,7 @@ cargo check --target x86_64-unknown-linux-gnu -p miui
 ```
 
 - `miui-core`: 設定・エラー整形の単体テスト
-- `miui-macos`: **AppKit の実コントロールに対する 14 件の統合テスト**
+- `miui-macos`: **AppKit の実コントロールに対する 21 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
@@ -321,6 +405,12 @@ cargo check --target x86_64-unknown-linux-gnu -p miui
   - パンくずが末尾を現在地にし、階層を差し替えても追従すること
   - ページ送りが先頭・末尾で止まること
   - リンクのネイティブクリックがクロージャへ届くこと
+  - 大きさの指定が NSLayoutConstraint になり、AppKit の計算結果に出ること
+  - 指定し直しても制約が積み上がらず、AppKit 自身の制約を壊さないこと
+  - 交差軸の `Fill` が、余白を除いた親の幅に追従すること
+  - `Spacer` が余りを吸い、後続の子が下端へ寄ること
+  - NSGridView が行と列を自分で増やし、固定幅の列が効くこと
+  - NSScrollView が中身を保持し、コールバックが生き続けること
 
 AppKit はメインスレッドを要求しますが、Rust の標準テストハーネスは
 各テストを別スレッドで走らせます (`--test-threads=1` でも同じ)。
@@ -341,13 +431,19 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   バインドしていないため、Windows で実装できませんでした。
   「共通 API は全バックエンドの共通部分」という方針を優先して、
   macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **ウィジェットは 15 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
-  `Checkbox` / `TextInput` / `Slider` / `ProgressBar`) と、ナビゲーション 7 種
+- **ウィジェットは 18 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
+  `Checkbox` / `TextInput` / `Slider` / `ProgressBar`)、レイアウト 3 種
+  (`Grid` / `Scroll` / `Spacer`)、ナビゲーション 7 種
   (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`) です。
   ポップアップメニュー、ダイアログ、リスト、複数行テキストなどは未実装です。
-- **`Dock` を画面下端に固定できません。** レイアウトが縦横のスタックだけなので、
-  置く場所はアプリの責務です。
-- **レイアウトは縦横のスタックのみ。** グリッドや絶対配置はありません。
+- **Windows の `Stack` では主軸の `Fill` と `Spacer` が効きません。** `StackPanel` が
+  子へ余りを配らないためです。`Grid` の `Track::Fill` を使ってください。
+- **macOS の `Track::Fill` は重みを無視します。** NSGridView に重みの概念が無く、
+  `Fill` 配置と hugging priority による近似だからです。
+- **Windows の `Grid` / `Scroll` / `Spacer` は実機未確認です。** コンパイル確認のみ。
+- **絶対配置はありません。** 位置は `Grid` のマス目・`Align`・`Spacer` で決めます。
+- **`set_sizing` はコンテナの中の子に効きます。** ウィンドウ直下のルートは
+  ウィンドウいっぱいに広がるため、そこでの指定は意味を持ちません。
 - **ウィンドウを閉じるイベントを購読できません。**
 
 ---
