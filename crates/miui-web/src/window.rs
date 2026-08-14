@@ -32,6 +32,13 @@ impl Window {
         let _ = style.set_property("min-height", &format!("{height}px"));
         let _ = style.set_property("margin", "0 auto");
         let _ = style.set_property("box-sizing", "border-box");
+        // 中身がウィンドウの高さいっぱいに広がれるようにする。
+        let _ = style.set_property("display", "flex");
+        let _ = style.set_property("flex-direction", "column");
+        crate::layout::mark_parent(
+            &element,
+            crate::layout::ParentLayout::Flex(miui_core::Orientation::Vertical),
+        );
 
         let body = document
             .body()
@@ -65,16 +72,25 @@ impl Window {
     }
 
     /// ルートに置くウィジェット。呼ぶたびに置き換わる。
+    ///
+    /// ルートはウィンドウいっぱいに広がる (AppKit の contentView と同じ)。
     pub fn set_child(&self, child: &dyn Widget) {
         self.0.element.set_inner_html("");
-        if self.0.element.append_child(&child.native_element()).is_ok() {
+        let element = child.native_element();
+        if self.0.element.append_child(&element).is_ok() {
+            crate::layout::fill_parent(&element);
+            crate::layout::apply_child_layout(
+                &element,
+                crate::layout::ParentLayout::Flex(miui_core::Orientation::Vertical),
+            );
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }
 
     /// 表示する。Web では最初から表示されているため、隠していた場合に戻す。
     pub fn show(&self) {
-        let _ = self.0.element.style().remove_property("display");
+        // 中身を縦に積む flex コンテナへ戻す (`none` からの復帰)。
+        let _ = self.0.element.style().set_property("display", "flex");
     }
 
     pub fn close(&self) {

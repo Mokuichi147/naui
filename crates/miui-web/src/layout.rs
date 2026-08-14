@@ -122,6 +122,16 @@ fn parent_layout(element: &HtmlElement) -> ParentLayout {
         .unwrap_or(ParentLayout::Block)
 }
 
+/// 親いっぱいに広がる子として印を付ける。
+///
+/// ウィンドウ直下のルートは、他のバックエンドではウィンドウの中身
+/// (AppKit の contentView / WinUI の Grid の行) がそのまま広がる。
+/// Web でも同じになるよう、ルートには最初から `Fill` を入れておく。
+pub(crate) fn fill_parent(element: &Element) {
+    let _ = element.set_attribute(FILL_WIDTH_ATTR, "");
+    let _ = element.set_attribute(FILL_HEIGHT_ATTR, "");
+}
+
 /// 親の並び方向に依存する指定 (`flex-grow` など) を書き直す。
 ///
 /// コンテナへ入れたときと、大きさを指定し直したときの両方から呼ぶ。
@@ -134,6 +144,14 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
     let _ = style.remove_property("flex-grow");
     let _ = style.remove_property("align-self");
     let _ = style.remove_property("justify-self");
+    // `Fill` の指定は幅・高さのプロパティを使わないので、
+    // 前の親向けに書いた `100%` が残らないようにする。
+    if fill_width {
+        let _ = style.remove_property("width");
+    }
+    if fill_height {
+        let _ = style.remove_property("height");
+    }
 
     match parent {
         // 主軸は flex-grow で余りを受け取り、交差軸は stretch で親に合わせる。
