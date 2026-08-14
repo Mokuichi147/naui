@@ -275,6 +275,7 @@ let _: Option<usize> = navbar.selected();
 | `Menu` という名前 | miui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。`NSMenu` / `MenuFlyout` に相当するものは未実装 |
 | `Dock` の配置 | 下端への固定は行わない。**置く場所はアプリの責務**で、縦スタックの最後に置き、手前に `Spacer` か `Fill` を使うと下端に寄る |
 | `Fill` と `Auto` | どちらもネイティブのレイアウト機構への指示。miui 自身は位置も大きさも計算しない |
+| `set_sizing` を呼ぶ順番 | macOS の交差軸 `Fill` とグリッドのマス内配置は、`append` / `attach` の**前**に指定しておく (AppKit では追加時に制約とセルの配置を張るため)。Web と Windows は後から変えても追従する |
 | `Link` の遷移 | `href` が空でなければ、押したときにその環境の標準的な方法で開く (macOS は `NSWorkspace`、Windows は `HyperlinkButton` の `NavigateUri`、Web は `target="_blank"`)。Web で同じタブに遷移すると wasm のアプリごと破棄されるため、別タブに揃えている |
 | Windows の `Spacer` / 主軸の `Fill` | `StackPanel` は子へ余りを配らないため、`Stack` の中では効かない。`Grid` の `Track::Fill` (XAML の `Star`) が同じ役割を果たす |
 | macOS の `Track::Fill` | NSGridView に重みの概念が無いため、`Fill` 配置と hugging priority による近似。重みの違いは反映されない |
@@ -444,6 +445,9 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
 - **絶対配置はありません。** 位置は `Grid` のマス目・`Align`・`Spacer` で決めます。
 - **`set_sizing` はコンテナの中の子に効きます。** ウィンドウ直下のルートは
   ウィンドウいっぱいに広がるため、そこでの指定は意味を持ちません。
+- **macOS では交差軸の `Fill` とグリッドのマス内配置を、コンテナへ入れる
+  「前」に指定する必要があります。** AppKit では制約とセルの配置を追加時に
+  張るためです (Web と Windows は後から変えても追従します)。
 - **ウィンドウを閉じるイベントを購読できません。**
 
 ---

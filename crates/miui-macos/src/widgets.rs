@@ -51,6 +51,10 @@ macro_rules! impl_sizing {
             ///
             /// 実際の大きさを決めるのは Auto Layout なので、ここで渡すのは
             /// 「固定する」「親の余りを受け取る」といった制約だけ。
+            ///
+            /// 交差軸の `Fill` と、グリッドのマス内で広がる指定は、
+            /// コンテナへ入れる**前**に呼ぶこと。AppKit では制約とセルの配置を
+            /// `append` / `attach` の時点で張るため、後から変えても反映されない。
             pub fn set_sizing(&self, sizing: miui_core::Sizing) {
                 let view = <$t as Widget>::native_view(self);
                 crate::layout::apply_sizing(&view, sizing);
