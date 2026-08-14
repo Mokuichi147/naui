@@ -5,18 +5,37 @@ use std::rc::Rc;
 
 use miui_core::{Result, Theme};
 use windows_core::{Interface, HSTRING};
+use winui3::Microsoft::UI::Composition::ICompositionSupportsSystemBackdrop;
+use winui3::Microsoft::UI::Composition::SystemBackdrops::{
+    MicaController, SystemBackdropConfiguration, SystemBackdropTheme,
+};
+use winui3::Microsoft::UI::Xaml::Controls::TextBlock;
 use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use winui3::Microsoft::UI::Xaml::Media::MicaBackdrop;
 use winui3::Microsoft::UI::Xaml::{
-    Controls::Grid, FrameworkElement, UIElement, Window as XamlWindow,
+    Application, ApplicationTheme, Controls::Grid, FrameworkElement, UIElement,
+    Window as XamlWindow,
 };
 
 use crate::to_error;
 use crate::widgets::Widget;
 
+enum Backdrop {
+    Controller {
+        _controller: MicaController,
+        configuration: SystemBackdropConfiguration,
+    },
+    BuiltIn {
+        _mica: MicaBackdrop,
+    },
+}
+
 struct WindowInner {
     native: XamlWindow,
+    backdrop: Backdrop,
     child: RefCell<Option<Box<dyn Widget>>>,
     theme_root: RefCell<Option<UIElement>>,
+    title_label: RefCell<Option<TextBlock>>,
     visible: RefCell<bool>,
     theme: Cell<Theme>,
     width: i32,
@@ -33,11 +52,14 @@ impl Window {
         native
             .SetTitle(&HSTRING::from(title))
             .map_err(|e| to_error("Window のタイトル設定", e))?;
+        let backdrop = create_backdrop(&native, theme)?;
 
         let this = Self(Rc::new(WindowInner {
             native,
+            backdrop,
             child: RefCell::new(None),
             theme_root: RefCell::new(None),
+            title_label: RefCell::new(None),
             visible: RefCell::new(false),
             theme: Cell::new(theme),
             width: width as i32,
@@ -48,6 +70,9 @@ impl Window {
 
     pub fn set_title(&self, title: &str) {
         let _ = self.0.native.SetTitle(&HSTRING::from(title));
+        if let Some(label) = self.0.title_label.borrow().as_ref() {
+            let _ = label.SetText(&HSTRING::from(title));
+        }
     }
 
     pub fn title(&self) -> String {
@@ -71,10 +96,31 @@ impl Window {
     /// ルートに置くウィジェット。呼ぶたびに置き換わる。
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
-        let theme_root = themed_content_root(&element).unwrap_or_else(|_| element.clone());
+        let themed = themed_content_root(&element, &self.title());
+        let (theme_root, title_bar, title_label) = match themed {
+            Ok(content) => (
+                content.root,
+                Some(content.title_bar),
+                Some(content.title_label),
+            ),
+            Err(error) => {
+                eprintln!("miui-windows: テーマ付きウィンドウルートの生成に失敗: {error}");
+                (element.clone(), None, None)
+            }
+        };
         if self.0.native.SetContent(&theme_root).is_ok() {
+            if let Some(title_bar) = title_bar {
+                // Mica をタイトルバーまで連続させ、タイトルバー要素全体を
+                // ウィンドウのドラッグ領域として扱う。
+                let _ = self.0.native.SetExtendsContentIntoTitleBar(true);
+                let _ = self.0.native.SetTitleBar(&title_bar);
+            }
             let _ = set_theme_on_element(&theme_root, self.0.theme.get());
+            if let Some(label) = title_label.as_ref() {
+                let _ = set_title_foreground(label, &theme_root, self.0.theme.get());
+            }
             *self.0.theme_root.borrow_mut() = Some(theme_root);
+            *self.0.title_label.borrow_mut() = title_label;
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }
@@ -85,11 +131,19 @@ impl Window {
         let theme_root = self.0.theme_root.borrow();
         if let Some(theme_root) = theme_root.as_ref() {
             set_theme_on_element(theme_root, theme)?;
+            if let Some(label) = self.0.title_label.borrow().as_ref() {
+                set_title_foreground(label, theme_root, theme)?;
+            }
         } else {
             let child = self.0.child.borrow();
             if let Some(child) = child.as_deref() {
                 set_theme_on_element(&child.native_element(), theme)?;
             }
+        }
+        if let Backdrop::Controller { configuration, .. } = &self.0.backdrop {
+            configuration
+                .SetTheme(backdrop_theme(theme))
+                .map_err(|e| to_error("Micaテーマの設定", e))?;
         }
         Ok(())
     }
@@ -118,20 +172,143 @@ impl Window {
     }
 }
 
-fn themed_content_root(element: &UIElement) -> Result<UIElement> {
+struct ThemedContent {
+    root: UIElement,
+    title_bar: UIElement,
+    title_label: TextBlock,
+}
+
+fn backdrop_theme(theme: Theme) -> SystemBackdropTheme {
+    match theme {
+        Theme::System => SystemBackdropTheme::Default,
+        Theme::Light => SystemBackdropTheme::Light,
+        Theme::Dark => SystemBackdropTheme::Dark,
+    }
+}
+
+fn create_backdrop(native: &XamlWindow, theme: Theme) -> Result<Backdrop> {
+    if MicaController::IsSupported().unwrap_or(false) {
+        if let Ok(target) = native.cast::<ICompositionSupportsSystemBackdrop>() {
+            if let Ok(controller) = MicaController::new() {
+                if let Ok(configuration) = SystemBackdropConfiguration::new() {
+                    let configured = configuration.SetIsInputActive(true).is_ok()
+                        && configuration.SetTheme(backdrop_theme(theme)).is_ok()
+                        && controller.AddSystemBackdropTarget(&target).unwrap_or(false)
+                        && controller
+                            .SetSystemBackdropConfiguration(&configuration)
+                            .is_ok();
+                    if configured {
+                        return Ok(Backdrop::Controller {
+                            _controller: controller,
+                            configuration,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let mica = MicaBackdrop::new().map_err(|e| to_error("Mica の生成", e))?;
+    native
+        .SetSystemBackdrop(&mica)
+        .map_err(|e| to_error("Mica の適用", e))?;
+    Ok(Backdrop::BuiltIn { _mica: mica })
+}
+
+fn set_title_foreground(label: &TextBlock, root: &UIElement, requested: Theme) -> Result<()> {
+    let theme = effective_theme(root, requested);
+    let color = match theme {
+        Theme::Light => "#FF1A1A1A",
+        Theme::Dark | Theme::System => "#FFFFFFFF",
+    };
+    let brush = XamlReader::Load(&HSTRING::from(format!(
+        r##"<TextBlock xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            Foreground="{color}"/>"##
+    )))
+    .map_err(|e| to_error("タイトル文字色ブラシの生成", e))?
+    .cast::<TextBlock>()
+    .map_err(|e| to_error("タイトル文字色要素への変換", e))?
+    .Foreground()
+    .map_err(|e| to_error("タイトル文字色ブラシの取得", e))?;
+    label
+        .SetForeground(&brush)
+        .map_err(|e| to_error("タイトル文字色の設定", e))
+}
+
+fn effective_theme(root: &UIElement, requested: Theme) -> Theme {
+    if requested != Theme::System {
+        return requested;
+    }
+    Application::Current()
+        .ok()
+        .and_then(|app| app.RequestedTheme().ok())
+        .map(|theme| {
+            if theme == ApplicationTheme::Light {
+                Theme::Light
+            } else {
+                Theme::Dark
+            }
+        })
+        .or_else(|| actual_theme(root).ok())
+        .unwrap_or(Theme::Dark)
+}
+
+fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent> {
     let root = XamlReader::Load(&HSTRING::from(
         r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-            Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"/>"##,
+            Background="Transparent">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Height="48" Background="Transparent"
+                Padding="16,0,140,0">
+                <TextBlock FontSize="14" VerticalAlignment="Center"/>
+            </Grid>
+            <Grid Grid.Row="1" Background="Transparent"/>
+        </Grid>"##,
     ))
     .map_err(|e| to_error("テーマ背景要素の生成", e))?
     .cast::<Grid>()
     .map_err(|e| to_error("テーマ背景要素への変換", e))?;
-    root.Children()
+    let children = root
+        .Children()
+        .map_err(|e| to_error("テーマ背景要素の子取得", e))?;
+    let title_bar = children
+        .GetAt(0)
+        .map_err(|e| to_error("タイトルバーの取得", e))?
+        .cast::<Grid>()
+        .map_err(|e| to_error("タイトルバーへの変換", e))?;
+    let title_label = title_bar
+        .Children()
+        .map_err(|e| to_error("タイトルラベルの子取得", e))?
+        .GetAt(0)
+        .map_err(|e| to_error("タイトルラベルの取得", e))?
+        .cast::<TextBlock>()
+        .map_err(|e| to_error("タイトルラベルへの変換", e))?;
+    title_label
+        .SetText(&HSTRING::from(title))
+        .map_err(|e| to_error("タイトルラベルの設定", e))?;
+
+    let content = children
+        .GetAt(1)
+        .map_err(|e| to_error("コンテンツレイヤーの取得", e))?
+        .cast::<Grid>()
+        .map_err(|e| to_error("コンテンツレイヤーへの変換", e))?;
+    content
+        .Children()
         .map_err(|e| to_error("テーマ背景要素の子取得", e))?
         .Append(element)
         .map_err(|e| to_error("テーマ背景要素への配置", e))?;
-    root.cast::<UIElement>()
-        .map_err(|e| to_error("テーマ背景要素への変換", e))
+    Ok(ThemedContent {
+        root: root
+            .cast::<UIElement>()
+            .map_err(|e| to_error("テーマ背景要素への変換", e))?,
+        title_bar: title_bar
+            .cast::<UIElement>()
+            .map_err(|e| to_error("タイトルバーへの変換", e))?,
+        title_label,
+    })
 }
 
 /// `winio-winui3` 0.4.x は `FrameworkElement.RequestedTheme` の型を公開していない。
@@ -164,4 +341,23 @@ fn set_theme_on_element(element: &UIElement, theme: Theme) -> Result<()> {
     };
     unsafe { set_requested_theme(Interface::as_raw(&element), theme.into()).ok() }
         .map_err(|e| to_error("テーマの設定", e))
+}
+
+fn actual_theme(element: &UIElement) -> Result<Theme> {
+    let element = element
+        .cast::<FrameworkElement>()
+        .map_err(|e| to_error("実テーマ要素への変換", e))?;
+    let is_loaded = std::ptr::addr_of!(element.vtable().IsLoaded) as *const usize;
+    let get_actual_theme: unsafe extern "system" fn(
+        *mut std::ffi::c_void,
+        *mut ElementTheme,
+    ) -> windows_core::HRESULT = unsafe { std::mem::transmute(*is_loaded.add(1)) };
+    let mut actual = ElementTheme(0);
+    unsafe { get_actual_theme(Interface::as_raw(&element), &mut actual).ok() }
+        .map_err(|e| to_error("実テーマの取得", e))?;
+    Ok(match actual.0 {
+        1 => Theme::Light,
+        2 => Theme::Dark,
+        _ => Theme::Dark,
+    })
 }
