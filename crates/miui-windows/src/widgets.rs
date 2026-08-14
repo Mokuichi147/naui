@@ -300,12 +300,6 @@ impl_widget!(Slider, native);
 impl Slider {
     pub(crate) fn new(min: f64, max: f64) -> Result<Self> {
         let native = XamlSlider::new().map_err(|e| to_error("Slider の生成", e))?;
-        // WinUI の既定幅は縦 StackPanel の中では狭く見えるため、
-        // 操作しやすい幅を初期値にする。
-        // 呼び出し側が `set_sizing` を使えば、この幅は上書きされる。
-        native
-            .SetWidth(240.0)
-            .map_err(|e| to_error("Slider の初期幅設定", e))?;
         native
             .SetMinimum(min)
             .map_err(|e| to_error("Slider の範囲設定", e))?;
