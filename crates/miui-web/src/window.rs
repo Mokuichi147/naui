@@ -2,7 +2,7 @@
 //! ウィンドウとして扱う。タイトルは `document.title` に反映する。
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use miui_core::{Error, Result, Theme};
 use wasm_bindgen::JsCast;
@@ -23,7 +23,23 @@ struct WindowInner {
 #[derive(Clone)]
 pub struct Window(Rc<WindowInner>);
 
+/// ウィンドウを強く保持せずにイベントハンドラから参照するための弱参照。
+#[derive(Clone)]
+pub struct WeakWindow(Weak<WindowInner>);
+
+impl WeakWindow {
+    /// ウィンドウがまだ生きていれば強参照へ戻す。
+    pub fn upgrade(&self) -> Option<Window> {
+        self.0.upgrade().map(Window)
+    }
+}
+
 impl Window {
+    /// イベントハンドラなどへ渡しても所有権循環を作らない参照を返す。
+    pub fn downgrade(&self) -> WeakWindow {
+        WeakWindow(Rc::downgrade(&self.0))
+    }
+
     pub(crate) fn new(document: &Document, title: &str, width: f64, height: f64) -> Result<Self> {
         let element: HtmlElement = create(document, "div")?.unchecked_into();
         let style = element.style();

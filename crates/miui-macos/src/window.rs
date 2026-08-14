@@ -1,7 +1,7 @@
 //! NSWindow のハンドル。
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use miui_core::{Result, Theme};
 use objc2::rc::Retained;
@@ -24,7 +24,23 @@ struct WindowInner {
 #[derive(Clone)]
 pub struct Window(Rc<WindowInner>);
 
+/// ウィンドウを強く保持せずにイベントハンドラから参照するための弱参照。
+#[derive(Clone)]
+pub struct WeakWindow(Weak<WindowInner>);
+
+impl WeakWindow {
+    /// ウィンドウがまだ生きていれば強参照へ戻す。
+    pub fn upgrade(&self) -> Option<Window> {
+        self.0.upgrade().map(Window)
+    }
+}
+
 impl Window {
+    /// イベントハンドラなどへ渡しても所有権循環を作らない参照を返す。
+    pub fn downgrade(&self) -> WeakWindow {
+        WeakWindow(Rc::downgrade(&self.0))
+    }
+
     pub(crate) fn new(mtm: MainThreadMarker, title: &str, width: f64, height: f64) -> Self {
         let native = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(

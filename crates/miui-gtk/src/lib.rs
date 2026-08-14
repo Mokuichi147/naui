@@ -275,7 +275,22 @@ impl Link {
 #[derive(Clone)]
 pub struct Window(std::rc::Rc<()>);
 
+/// ウィンドウを強く保持せずにイベントハンドラから参照するための弱参照。
+#[allow(dead_code)]
+#[derive(Clone)]
+pub struct WeakWindow(std::rc::Weak<()>);
+
+impl WeakWindow {
+    pub fn upgrade(&self) -> Option<Window> {
+        self.0.upgrade().map(Window)
+    }
+}
+
 impl Window {
+    pub fn downgrade(&self) -> WeakWindow {
+        WeakWindow(std::rc::Rc::downgrade(&self.0))
+    }
+
     pub fn set_title(&self, _title: &str) {}
     pub fn title(&self) -> String {
         String::new()

@@ -25,7 +25,7 @@ use web_sys::{Document, HtmlElement};
 pub use layout::{Grid, Scroll, Spacer};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
-pub use window::Window;
+pub use window::{WeakWindow, Window};
 
 pub(crate) fn document() -> Result<Document> {
     web_sys::window()

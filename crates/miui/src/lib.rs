@@ -134,13 +134,13 @@ pub use miui_core::{
 #[cfg(target_arch = "wasm32")]
 pub use miui_web::{
     run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
-    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Widget, Window,
+    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use miui_macos::{
     run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
-    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Widget, Window,
+    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
@@ -156,7 +156,7 @@ pub use miui_windows::{
 ))]
 pub use miui_gtk::{
     run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
-    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Widget, Window,
+    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget, Window,
 };
 
 /// バックエンド間で API がずれていないことを、コンパイル時に検査する。
@@ -175,6 +175,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     window.close();
     let _: bool = window.is_visible();
     window.set_theme(Theme::Dark)?;
+    let weak_window = window.downgrade();
+    let _: Option<Window> = weak_window.upgrade();
 
     let _: Theme = ui.theme();
     ui.set_theme(Theme::Dark)?;
