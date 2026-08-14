@@ -65,6 +65,8 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     let style = element.style();
     // 幅や高さを指定したときに、余白で膨らまないようにする。
     let _ = style.set_property("box-sizing", "border-box");
+    // 固定長のときだけ set_length が付け直す。
+    let _ = style.remove_property("flex-shrink");
 
     set_length(element, true, sizing.width);
     set_length(element, false, sizing.height);
