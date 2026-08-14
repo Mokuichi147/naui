@@ -1,9 +1,10 @@
 //! WinUI 3 の Window ハンドル。
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use miui_core::{Result, Theme};
+use windows::Foundation::TypedEventHandler;
 use windows_core::{Interface, HSTRING};
 use winui3::Microsoft::UI::Composition::ICompositionSupportsSystemBackdrop;
 use winui3::Microsoft::UI::Composition::SystemBackdrops::{
@@ -18,6 +19,8 @@ use winui3::Microsoft::UI::Xaml::{
 };
 
 use crate::to_error;
+use crate::ui_thread::UiThreadCell;
+use crate::Ui;
 use crate::widgets::Widget;
 
 enum Backdrop {
@@ -41,13 +44,30 @@ struct WindowInner {
     width: i32,
     height: i32,
     wheel_subclass_installed: Cell<bool>,
+    closing_token: Cell<Option<i64>>,
 }
 
 /// トップレベルウィンドウ。
 #[derive(Clone)]
 pub struct Window(Rc<WindowInner>);
 
+/// `Window` を強く保持せずにイベントハンドラから参照するための弱参照。
+#[derive(Clone)]
+pub struct WeakWindow(Weak<WindowInner>);
+
+impl WeakWindow {
+    /// ウィンドウがまだ生きていれば強参照へ戻す。
+    pub fn upgrade(&self) -> Option<Window> {
+        self.0.upgrade().map(Window)
+    }
+}
+
 impl Window {
+    /// イベントハンドラなどへ渡しても所有権循環を作らない参照を返す。
+    pub fn downgrade(&self) -> WeakWindow {
+        WeakWindow(Rc::downgrade(&self.0))
+    }
+
     pub(crate) fn new(title: &str, width: f64, height: f64, theme: Theme) -> Result<Self> {
         let native = XamlWindow::new().map_err(|e| to_error("Window の生成", e))?;
         native
@@ -66,6 +86,7 @@ impl Window {
             width: width as i32,
             height: height as i32,
             wheel_subclass_installed: Cell::new(false),
+            closing_token: Cell::new(None),
         }));
         Ok(this)
     }
@@ -176,6 +197,38 @@ impl Window {
     /// WinUI 3 の実ウィンドウ。バックエンド固有の脱出口。
     pub fn native_window(&self) -> XamlWindow {
         self.0.native.clone()
+    }
+
+    pub(crate) fn clear_content_for_shutdown(&self) {
+        let _ = self.0.native.SetContent(None);
+        *self.0.child.borrow_mut() = None;
+        *self.0.theme_root.borrow_mut() = None;
+        *self.0.title_label.borrow_mut() = None;
+    }
+
+    /// WinUI の XAML ツリーが破棄される前に、Content と子ウィジェットを外す。
+    /// `Destroying` では遅すぎるため、AppWindow の `Closing` で実行する。
+    pub(crate) fn install_closing_handler(&self, state: &'static UiThreadCell<Option<Ui>>) {
+        if self.0.closing_token.get().is_some() {
+            return;
+        }
+        let Ok(app_window) = self.0.native.AppWindow() else {
+            return;
+        };
+        let handler = TypedEventHandler::<
+            winui3::Microsoft::UI::Windowing::AppWindow,
+            winui3::Microsoft::UI::Windowing::AppWindowClosingEventArgs,
+        >::new(move |_sender, _args| {
+            state.with_mut(|slot| {
+                if let Some(ui) = slot.take() {
+                    ui.clear_windows_for_shutdown();
+                }
+            });
+            Ok(())
+        });
+        if let Ok(token) = app_window.Closing(&handler) {
+            self.0.closing_token.set(Some(token));
+        }
     }
 }
 
