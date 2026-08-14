@@ -13,7 +13,14 @@ miui-core.workspace = true
 # Windows 以外では空のクレートになるので、依存も引き込まない。
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.62"
-windows = { version = "0.62", features = ["Foundation", "Graphics", "System"] }
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Graphics",
+    "System",
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 winio-winui3 = { version = "0.4", features = [
     "UI_Composition",
     "UI_Composition_SystemBackdrops",
@@ -27,4 +34,5 @@ winio-winui3 = { version = "0.4", features = [
     "UI_Xaml_XamlTypeInfo",
     "UI_Xaml_Input",
     "UI_Xaml_Interop",
+    "native",
 ] }

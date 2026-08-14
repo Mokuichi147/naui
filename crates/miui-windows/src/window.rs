@@ -40,6 +40,7 @@ struct WindowInner {
     theme: Cell<Theme>,
     width: i32,
     height: i32,
+    wheel_subclass_installed: Cell<bool>,
 }
 
 /// トップレベルウィンドウ。
@@ -64,6 +65,7 @@ impl Window {
             theme: Cell::new(theme),
             width: width as i32,
             height: height as i32,
+            wheel_subclass_installed: Cell::new(false),
         }));
         Ok(this)
     }
@@ -122,6 +124,11 @@ impl Window {
             *self.0.theme_root.borrow_mut() = Some(theme_root);
             *self.0.title_label.borrow_mut() = title_label;
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
+            if !self.0.wheel_subclass_installed.get() {
+                self.0
+                    .wheel_subclass_installed
+                    .set(crate::layout::install_wheel_subclass(&self.0.native));
+            }
         }
     }
 
