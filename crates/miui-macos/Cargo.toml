@@ -29,6 +29,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSControl",
     "NSGraphics",
     "NSGridView",
+    "NSOpenPanel",
+    "NSPanel",
     "NSLayoutAnchor",
     "NSLayoutConstraint",
     "NSPathControl",
@@ -36,6 +38,7 @@ objc2-app-kit = { version = "0.3", features = [
     "NSProgressIndicator",
     "NSResponder",
     "NSScrollView",
+    "NSSavePanel",
     "NSSegmentedControl",
     "NSSlider",
     "NSStackView",
@@ -54,7 +57,12 @@ objc2-app-kit = { version = "0.3", features = [
     "NSButton",
     "NSControl",
     "NSLayoutConstraint",
+    "NSOpenPanel",
+    "NSPanel",
+    "NSResponder",
+    "NSSavePanel",
     "NSView",
+    "NSWindow",
 ] }
 objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
 

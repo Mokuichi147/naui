@@ -7,8 +7,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use miui::{
-    GridCell, Length, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing, Theme,
-    Track, Ui,
+    FileEntry, FileFilter, FilePickerMode, GridCell, Length, NavItem, Orientation, Padding, Result,
+    ScrollPolicy, Settings, Sizing, Theme, Track, Ui,
 };
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
@@ -19,7 +19,13 @@ pub fn build(ui: &Ui) -> Result<()> {
     root.set_padding(Padding::all(24.0));
 
     // Tabs を gallery のカテゴリ切り替えに使う。
-    let sections = NavItem::list(["ホーム", "ウィジェット", "ナビゲーション", "レイアウト"]);
+    let sections = NavItem::list([
+        "ホーム",
+        "ウィジェット",
+        "ナビゲーション",
+        "レイアウト",
+        "ファイル",
+    ]);
 
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["miui", "ホーム"]));
@@ -229,12 +235,48 @@ pub fn build(ui: &Ui) -> Result<()> {
     layout_pane.append(&ui.spacer()?);
     layout_pane.append(&ui.label("スペーサーの後ろは下端に寄る")?);
 
+    // --- ファイルとフォルダー ---------------------------------------------
+    let files_pane = ui.stack(Orientation::Vertical)?;
+    files_pane.set_spacing(12.0);
+    files_pane.set_padding(Padding::all(12.0));
+    files_pane.append(&ui.label("ファイルとフォルダーの選択")?);
+    files_pane.append(&ui.label("押すと、その環境の標準のダイアログが開きます。")?);
+
+    let picked = ui.label("選択: まだありません")?;
+
+    let pick_file = ui.file_picker("画像を 1 つ選ぶ")?;
+    pick_file.set_filters(&[FileFilter::new("画像", ["png", "jpg", "jpeg", "gif"])]);
+    pick_file.on_select({
+        let picked = picked.clone();
+        move |entries| picked.set_text(&describe(entries))
+    });
+    files_pane.append(&pick_file);
+
+    let pick_files = ui.file_picker("ファイルを複数選ぶ")?;
+    pick_files.set_mode(FilePickerMode::Files);
+    pick_files.on_select({
+        let picked = picked.clone();
+        move |entries| picked.set_text(&describe(entries))
+    });
+    files_pane.append(&pick_files);
+
+    let pick_folder = ui.file_picker("フォルダーを選ぶ")?;
+    pick_folder.set_mode(FilePickerMode::Folder);
+    pick_folder.on_select({
+        let picked = picked.clone();
+        move |entries| picked.set_text(&describe(entries))
+    });
+    files_pane.append(&pick_folder);
+
+    files_pane.append(&picked);
+
     // 中央の Tabs がこの gallery のカテゴリ切り替えを担う。
     let tabs = ui.tabs()?;
     tabs.add_tab("ホーム", &home_pane);
     tabs.add_tab("ウィジェット", &controls_pane);
     tabs.add_tab("ナビゲーション", &navigation_pane);
     tabs.add_tab("レイアウト", &layout_pane);
+    tabs.add_tab("ファイル", &files_pane);
     // タブがウィンドウの余りを受け取り、下のものを端へ寄せる。
     tabs.set_sizing(Sizing::fill());
     root.append(&tabs);
@@ -359,6 +401,20 @@ pub fn build(ui: &Ui) -> Result<()> {
 /// ネイティブ / Web 共通の起動処理。
 pub fn start() -> Result<()> {
     miui::run(Settings::new("miui gallery"), build)
+}
+
+/// 選ばれたものを 1 行で表す。
+///
+/// Web はパスを渡さないので、名前だけになる環境があることも示す。
+fn describe(entries: &[FileEntry]) -> String {
+    match entries {
+        [] => "選択: ありません".to_string(),
+        [entry] => match entry.path() {
+            Some(path) => format!("選択: {}", path.display()),
+            None => format!("選択: {} (この環境はパスを渡しません)", entry.name()),
+        },
+        many => format!("選択: {} 件 ({} ほか)", many.len(), many[0].name()),
+    }
 }
 
 fn theme_name(theme: Theme) -> &'static str {

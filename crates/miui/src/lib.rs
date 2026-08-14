@@ -115,38 +115,67 @@
 //! `Menu` は**縦に並ぶナビゲーション一覧**であって、ポップアップメニューではない。
 //! `Dock` の下端への固定は、レイアウトが縦横のスタックだけなのでアプリの責務になる。
 //!
+//! ## ファイルとフォルダーの選択
+//!
+//! [`FilePicker`] はボタン 1 つで、押すとその環境の標準のファイル選択が開く
+//! (macOS は `NSOpenPanel`、Windows は Common Item Dialog、Web はブラウザのもの)。
+//!
+//! ```no_run
+//! # use miui::{FileFilter, FilePickerMode, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let picker = ui.file_picker("画像を選ぶ")?;
+//! picker.set_mode(FilePickerMode::File); // File / Files / Folder
+//! picker.set_filters(&[FileFilter::new("画像", ["png", "jpg"])]);
+//! picker.on_select(|entries| {
+//!     for entry in entries {
+//!         println!("{}", entry.name());
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! 選ばれたものは [`FileEntry`] で返る。[`FileEntry::path`] は macOS / Windows では
+//! 絶対パスだが、**Web ではブラウザがパスを渡さないため常に `None`** になる。
+//! Web ではさらに、`open()` がユーザー操作のイベント内でしか効かないこと、
+//! フォルダー選択が中身の一覧として返るのを miui が 1 件へ畳んでいることに注意。
+//! 保存ダイアログは、Web に相当が無いため持たない。
+//!
 //! ## 検証状況
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (ナビゲーションを含む 14 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーションのクリックまで確認) |
+//! | macOS | 実行・自動テストあり (ナビゲーションとファイル選択を含む 24 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーションとファイル選択のコールバックまで確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェットとナビゲーション系を確認 |
 //! | Linux | 未実装 |
 
 #![forbid(unsafe_code)]
 
 pub use miui_core::{
-    Align, Error, GridCell, Length, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings,
-    Sizing, Theme, Track,
+    accept_attribute, Align, Error, FileEntry, FileFilter, FilePickerMode, GridCell, Length,
+    NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing, Theme, Track,
 };
 
 #[cfg(target_arch = "wasm32")]
 pub use miui_web::{
-    run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
-    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Label, Link, Menu, Navbar,
+    Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget,
+    Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use miui_macos::{
-    run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
-    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Label, Link, Menu, Navbar,
+    Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget,
+    Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use miui_windows::{
-    run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
-    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Label, Link, Menu, Navbar,
+    Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget,
+    Window,
 };
 
 #[cfg(all(
@@ -155,8 +184,9 @@ pub use miui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use miui_gtk::{
-    run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
-    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget, Window,
+    run, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Label, Link, Menu, Navbar,
+    Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget,
+    Window,
 };
 
 /// バックエンド間で API がずれていないことを、コンパイル時に検査する。
@@ -309,6 +339,17 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     link.set_enabled(true);
     link.on_click(|| {});
 
+    // --- ファイル / フォルダーの選択 ---------------------------------------
+    let picker: FilePicker = ui.file_picker("t")?;
+    picker.set_text("t");
+    picker.set_enabled(true);
+    picker.set_mode(FilePickerMode::Files);
+    let _: FilePickerMode = picker.mode();
+    picker.set_filters(&[FileFilter::new("t", ["png"])]);
+    let _: Vec<FileEntry> = picker.selection();
+    picker.on_select(|_entries: &[FileEntry]| {});
+    // `open()` はダイアログを出すので、契約の確認では呼ばない。
+
     grid.attach(&label, GridCell::new(0, 0));
     grid.attach(&button, GridCell::new(1, 0).span(2, 1));
     scroll.set_child(&grid);
@@ -328,6 +369,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&breadcrumbs);
     stack.append(&pagination);
     stack.append(&link);
+    stack.append(&picker);
     window.set_child(&stack);
 
     ui.quit();

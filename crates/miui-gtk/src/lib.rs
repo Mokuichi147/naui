@@ -37,6 +37,7 @@
 //! | `Breadcrumbs` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
 //! | `Pagination` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
 //! | `Link` | `gtk::LinkButton` |
+//! | `FilePicker` | `gtk::Button` + `gtk::FileDialog` (`open` / `open_multiple` / `select_folder`) |
 //!
 //! GTK のシグナルハンドラは `'static` なクロージャを受けるので、
 //! macOS/Web と同じ `Rc<Inner>` + クロージャ保持の形がそのまま使える
@@ -51,8 +52,8 @@
 use std::cell::{Cell, RefCell};
 
 use miui_core::{
-    Align, Error, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing,
-    Theme, Track,
+    Align, Error, FileEntry, FileFilter, FilePickerMode, GridCell, NavItem, Orientation, Padding,
+    Result, ScrollPolicy, Settings, Sizing, Theme, Track,
 };
 
 fn unimplemented_error(what: &'static str) -> Error {
@@ -106,6 +107,7 @@ placeholder_widget!(Link);
 placeholder_widget!(Grid);
 placeholder_widget!(Scroll);
 placeholder_widget!(Spacer);
+placeholder_widget!(FilePicker);
 
 impl Label {
     pub fn text(&self) -> String {
@@ -270,6 +272,21 @@ impl Link {
     pub fn on_click(&self, _f: impl FnMut() + 'static) {}
 }
 
+impl FilePicker {
+    pub fn set_text(&self, _text: &str) {}
+    pub fn set_enabled(&self, _enabled: bool) {}
+    pub fn set_mode(&self, _mode: FilePickerMode) {}
+    pub fn mode(&self) -> FilePickerMode {
+        FilePickerMode::default()
+    }
+    pub fn set_filters(&self, _filters: &[FileFilter]) {}
+    pub fn selection(&self) -> Vec<FileEntry> {
+        Vec::new()
+    }
+    pub fn on_select(&self, _f: impl FnMut(&[FileEntry]) + 'static) {}
+    pub fn open(&self) {}
+}
+
 /// トップレベルウィンドウ (未実装)。
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -367,6 +384,9 @@ impl Ui {
     }
     pub fn link(&self, _text: &str, _href: &str) -> Result<Link> {
         Err(unimplemented_error("Link の生成"))
+    }
+    pub fn file_picker(&self, _text: &str) -> Result<FilePicker> {
+        Err(unimplemented_error("FilePicker の生成"))
     }
 
     /// 配色テーマを記録する。GTK4 バックエンドが未実装のため、現時点では描画しない。

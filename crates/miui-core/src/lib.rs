@@ -6,8 +6,10 @@
 
 #![forbid(unsafe_code)]
 
+mod file;
 mod layout;
 
+pub use file::{accept_attribute, FileEntry, FileFilter, FilePickerMode};
 pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
 
 use std::fmt;
