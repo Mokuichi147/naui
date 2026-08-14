@@ -41,8 +41,9 @@ pub fn build(ui: &Ui) -> Result<()> {
     let theme_selector = ui.navbar("テーマ")?;
     theme_selector.set_items(&NavItem::list(["システム", "ライト", "ダーク"]));
     theme_selector.set_selected(theme_index(ui.theme()));
+    let weak_window = window.downgrade();
     theme_selector.on_select({
-        let window = window.clone();
+        let window = weak_window.clone();
         let theme_status = theme_status.clone();
         move |index| {
             let Some((name, theme)) = [
@@ -54,8 +55,10 @@ pub fn build(ui: &Ui) -> Result<()> {
             .copied() else {
                 return;
             };
-            if window.set_theme(theme).is_ok() {
-                theme_status.set_text(&format!("テーマ: {name}"));
+            if let Some(window) = window.upgrade() {
+                if window.set_theme(theme).is_ok() {
+                    theme_status.set_text(&format!("テーマ: {name}"));
+                }
             }
         }
     });

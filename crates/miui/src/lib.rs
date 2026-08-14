@@ -146,7 +146,7 @@ pub use miui_macos::{
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use miui_windows::{
     run, Breadcrumbs, Button, Checkbox, Dock, Grid, Label, Link, Menu, Navbar, Pagination,
-    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Widget, Window,
+    ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(

@@ -31,7 +31,7 @@ use miui_core::{Error, Orientation, Result, Settings, Theme};
 pub use layout::{Grid, Scroll, Spacer};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
-pub use window::Window;
+pub use window::{WeakWindow, Window};
 
 pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
     Error::new(context, e.message())
@@ -41,20 +41,32 @@ pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
 pub struct Ui {
     theme: Cell<Theme>,
     windows: RefCell<Vec<Window>>,
+    shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
 }
 
 impl Ui {
-    fn new(theme: Theme) -> Self {
+    fn new(
+        theme: Theme,
+        shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
+    ) -> Self {
         Self {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
+            shutdown,
         }
     }
 
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
         let w = Window::new(title, width, height, self.theme.get())?;
+        w.install_closing_handler(self.shutdown);
         self.windows.borrow_mut().push(w.clone());
         Ok(w)
+    }
+
+    fn clear_windows_for_shutdown(&self) {
+        for window in self.windows.borrow().iter() {
+            window.clear_content_for_shutdown();
+        }
     }
 
     pub fn stack(&self, orientation: Orientation) -> Result<Stack> {
@@ -180,9 +192,11 @@ where
         Box::leak(Box::new(ui_thread::UiThreadCell::new(None)));
     let state: &'static ui_thread::UiThreadCell<Option<F>> =
         Box::leak(Box::new(ui_thread::UiThreadCell::new(Some(build))));
+    let ui_state: &'static ui_thread::UiThreadCell<Option<Ui>> =
+        Box::leak(Box::new(ui_thread::UiThreadCell::new(None)));
 
     Application::Start(&ApplicationInitializationCallback::new(move |_| {
-        let app = app::compose(state, failure, settings.theme)?;
+        let app = app::compose(state, failure, ui_state, settings.theme)?;
         std::mem::forget(app);
         Ok(())
     }))

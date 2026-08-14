@@ -33,6 +33,7 @@ where
     provider: XamlControlsXamlMetaDataProvider,
     state: &'static UiThreadCell<Option<F>>,
     failure: &'static UiThreadCell<Option<Error>>,
+    ui_state: &'static UiThreadCell<Option<Ui>>,
     theme: Theme,
 }
 
@@ -70,7 +71,7 @@ where
         let Some(build) = self.this.state.with_mut_cross_thread(|build| build.take()) else {
             return Ok(());
         };
-        let ui = Ui::new(self.this.theme);
+        let ui = Ui::new(self.this.theme, self.this.ui_state);
         if let Err(error) = build(&ui) {
             self.this
                 .failure
@@ -78,9 +79,11 @@ where
             if let Ok(app) = Application::Current() {
                 let _ = app.Exit();
             }
+        } else {
+            self.this.ui_state.with_mut_cross_thread(|slot| {
+                *slot = Some(ui);
+            });
         }
-        // ウィンドウとウィジェットをアプリの寿命まで保持する。
-        std::mem::forget(ui);
         Ok(())
     }
 }
@@ -306,6 +309,7 @@ where
 pub(crate) fn compose<F>(
     state: &'static UiThreadCell<Option<F>>,
     failure: &'static UiThreadCell<Option<Error>>,
+    ui_state: &'static UiThreadCell<Option<Ui>>,
     theme: Theme,
 ) -> windows_core::Result<Application>
 where
@@ -317,6 +321,7 @@ where
         provider,
         state,
         failure,
+        ui_state,
         theme,
     })
 }
