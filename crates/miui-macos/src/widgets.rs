@@ -3,7 +3,7 @@
 //! どのハンドルも `Rc<Inner>` で、`Inner` が Retained なネイティブオブジェクトと
 //! トランポリンを保持する。ハンドルを clone してもネイティブは 1 つ。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use miui_core::{Align, Orientation, Padding};
@@ -11,8 +11,8 @@ use objc2::rc::Retained;
 use objc2::{sel, MainThreadMarker, Message};
 use objc2_app_kit::{
     NSButton, NSButtonType, NSControlStateValueOff, NSControlStateValueOn, NSLayoutAttribute,
-    NSProgressIndicator, NSProgressIndicatorStyle, NSSlider, NSStackView, NSStackViewDistribution,
-    NSTextField, NSUserInterfaceLayoutOrientation, NSView,
+    NSLayoutConstraint, NSProgressIndicator, NSProgressIndicatorStyle, NSSlider, NSStackView,
+    NSStackViewDistribution, NSTextField, NSUserInterfaceLayoutOrientation, NSView,
 };
 use objc2_foundation::{NSEdgeInsets, NSString};
 
@@ -38,10 +38,28 @@ macro_rules! impl_widget {
                 Box::new(self.clone())
             }
         }
+
+        crate::widgets::impl_sizing!($t);
     };
 }
 
-pub(crate) use impl_widget;
+/// `Widget` を手書きしている型に、大きさの指定だけを足す。
+macro_rules! impl_sizing {
+    ($t:ty) => {
+        impl $t {
+            /// 大きさを指定する。呼ぶたびに以前の指定は外れる。
+            ///
+            /// 実際の大きさを決めるのは Auto Layout なので、ここで渡すのは
+            /// 「固定する」「親の余りを受け取る」といった制約だけ。
+            pub fn set_sizing(&self, sizing: miui_core::Sizing) {
+                let view = <$t as Widget>::native_view(self);
+                crate::layout::apply_sizing(&view, sizing);
+            }
+        }
+    };
+}
+
+pub(crate) use {impl_sizing, impl_widget};
 
 // ------------------------------------------------------------------ Label
 
@@ -326,6 +344,10 @@ struct StackInner {
     native: Retained<NSStackView>,
     /// 子のハンドルを保持し、トランポリンごと生かしておく。
     children: RefCell<Vec<Box<dyn Widget>>>,
+    /// 交差軸に `Fill` を指定された子を、スタックの幅 / 高さへ結び付ける制約。
+    /// 余白が変わると定数も変わるので保持しておく。
+    fill_constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
+    padding: Cell<Padding>,
 }
 
 /// 縦 / 横に子を並べるコンテナ (NSStackView)。
@@ -352,6 +374,8 @@ impl Stack {
         Self(Rc::new(StackInner {
             native,
             children: RefCell::new(Vec::new()),
+            fill_constraints: RefCell::new(Vec::new()),
+            padding: Cell::new(Padding::ZERO),
         }))
     }
 
@@ -360,17 +384,36 @@ impl Stack {
     }
 
     pub fn set_padding(&self, padding: Padding) {
+        self.0.padding.set(padding);
         self.0.native.setEdgeInsets(NSEdgeInsets {
                 top: padding.top,
                 left: padding.left,
                 bottom: padding.bottom,
                 right: padding.right,
             });
+        // 交差軸いっぱいに広げている子は、余白のぶんだけ狭くなる。
+        let inset = self.cross_inset();
+        for constraint in self.0.fill_constraints.borrow().iter() {
+            constraint.setConstant(-inset);
+        }
+    }
+
+    /// 交差軸方向に取られる余白の合計。
+    fn cross_inset(&self) -> f64 {
+        let padding = self.0.padding.get();
+        if self.is_vertical() {
+            padding.left + padding.right
+        } else {
+            padding.top + padding.bottom
+        }
+    }
+
+    fn is_vertical(&self) -> bool {
+        self.0.native.orientation() == NSUserInterfaceLayoutOrientation::Vertical
     }
 
     pub fn set_align(&self, align: Align) {
-        let vertical = self.0.native.orientation()
-            == NSUserInterfaceLayoutOrientation::Vertical;
+        let vertical = self.is_vertical();
         let attr = match (align, vertical) {
             (Align::Fill, _) => NSLayoutAttribute::NotAnAttribute,
             (Align::Start, true) => NSLayoutAttribute::Leading,
@@ -384,8 +427,31 @@ impl Stack {
     }
 
     /// 末尾に子を追加する。
+    ///
+    /// 子が交差軸に [`miui_core::Length::Fill`] を指定していれば、
+    /// スタックの幅 (縦並びのとき) または高さに合わせて広げる。
+    /// 主軸方向の `Fill` は hugging priority を通じて NSStackView が扱う。
     pub fn append(&self, child: &dyn Widget) {
-        self.0.native.addArrangedSubview(&child.native_view());
+        let view = child.native_view();
+        crate::layout::prepare_child(&view);
+        self.0.native.addArrangedSubview(&view);
+
+        let vertical = self.is_vertical();
+        // 縦並びの交差軸は横方向。
+        let cross_is_horizontal = vertical;
+        if crate::layout::wants_fill(&view, cross_is_horizontal) {
+            let inset = self.cross_inset();
+            let constraint = if vertical {
+                view.widthAnchor()
+                    .constraintEqualToAnchor_constant(&self.0.native.widthAnchor(), -inset)
+            } else {
+                view.heightAnchor()
+                    .constraintEqualToAnchor_constant(&self.0.native.heightAnchor(), -inset)
+            };
+            constraint.setActive(true);
+            self.0.fill_constraints.borrow_mut().push(constraint);
+        }
+
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
 

@@ -18,6 +18,7 @@
 #![cfg(target_os = "windows")]
 
 mod app;
+mod layout;
 mod navigation;
 mod ui_thread;
 mod widgets;
@@ -27,6 +28,7 @@ use std::cell::{Cell, RefCell};
 
 use miui_core::{Error, Orientation, Result, Settings, Theme};
 
+pub use layout::{Grid, Scroll, Spacer};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
 pub use window::Window;
@@ -57,6 +59,21 @@ impl Ui {
 
     pub fn stack(&self, orientation: Orientation) -> Result<Stack> {
         Stack::new(orientation)
+    }
+
+    /// 行と列で位置を決めるコンテナ。
+    pub fn grid(&self) -> Result<Grid> {
+        Grid::new()
+    }
+
+    /// 中身がはみ出したらスクロールさせるコンテナ。
+    pub fn scroll(&self) -> Result<Scroll> {
+        Scroll::new()
+    }
+
+    /// 余白そのものになるウィジェット。`Grid` の `Track::Fill` と組み合わせて使う。
+    pub fn spacer(&self) -> Result<Spacer> {
+        Spacer::new()
     }
 
     pub fn label(&self, text: &str) -> Result<Label> {

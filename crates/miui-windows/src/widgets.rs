@@ -40,6 +40,17 @@ macro_rules! impl_widget {
                 Box::new(self.clone())
             }
         }
+
+        impl $t {
+            /// 大きさを指定する。呼ぶたびに以前の指定は置き換わる。
+            ///
+            /// 実際の大きさを決めるのは WinUI のレイアウトパスなので、
+            /// ここで渡すのは `Width` / `MinWidth` などの指定だけ。
+            pub fn set_sizing(&self, sizing: miui_core::Sizing) {
+                let element = <$t as Widget>::native_element(self);
+                crate::layout::apply_sizing(&element, sizing);
+            }
+        }
     };
 }
 

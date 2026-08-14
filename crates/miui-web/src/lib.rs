@@ -11,6 +11,7 @@
 #![cfg(target_arch = "wasm32")]
 #![forbid(unsafe_code)]
 
+mod layout;
 mod navigation;
 mod widgets;
 mod window;
@@ -21,6 +22,7 @@ use std::cell::RefCell;
 use wasm_bindgen::JsCast;
 use web_sys::{Document, HtmlElement};
 
+pub use layout::{Grid, Scroll, Spacer};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
 pub use window::Window;
@@ -67,6 +69,21 @@ impl Ui {
 
     pub fn stack(&self, orientation: Orientation) -> Result<Stack> {
         Stack::new(&self.document, orientation)
+    }
+
+    /// 行と列で位置を決めるコンテナ。
+    pub fn grid(&self) -> Result<Grid> {
+        Grid::new(&self.document)
+    }
+
+    /// 中身がはみ出したらスクロールさせるコンテナ。
+    pub fn scroll(&self) -> Result<Scroll> {
+        Scroll::new(&self.document)
+    }
+
+    /// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。
+    pub fn spacer(&self) -> Result<Spacer> {
+        Spacer::new(&self.document)
     }
 
     pub fn label(&self, text: &str) -> Result<Label> {

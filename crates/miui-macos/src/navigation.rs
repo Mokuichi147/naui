@@ -33,7 +33,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSArray, NSString, NSURL};
 
 use crate::trampoline::{ActionTarget, SelectHandler, TabObserver};
-use crate::widgets::{impl_widget, Widget};
+use crate::widgets::{impl_sizing, impl_widget, Widget};
 
 /// 横並びのスタックを作る。ナビゲーション系の合成に使う。
 fn row(mtm: MainThreadMarker, spacing: f64) -> Retained<NSStackView> {
@@ -317,8 +317,8 @@ struct DockInner {
 
 /// 画面下部に置く横並びのナビゲーション (等幅)。
 ///
-/// **配置はアプリの責務**で、miui のレイアウトは縦横のスタックしか持たないため、
-/// ウィンドウ下端への固定はできない。縦スタックの最後に置くと下端寄りになる。
+/// **配置はアプリの責務**。縦スタックの最後に置き、手前の要素に
+/// [`miui_core::Length::Fill`] か `Spacer` を使うと下端へ寄る。
 #[derive(Clone)]
 pub struct Dock(Rc<DockInner>);
 
@@ -330,6 +330,8 @@ impl Widget for Dock {
         Box::new(self.clone())
     }
 }
+
+impl_sizing!(Dock);
 
 impl Dock {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
