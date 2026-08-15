@@ -405,23 +405,61 @@ pub fn build(ui: &Ui) -> Result<()> {
         }
     });
 
-    tabs.set_selected(0);
+    tabs.set_selected(5); // 一時: 確認用
 
     window.set_child(&root);
     window.show();
     Ok(())
 }
 
+/// 表示形式と、そこへ振り分ける拡張子。
+///
+/// **ファイル選択の絞り込みと、選ばれたあとの振り分けを、どちらもこの表から
+/// 作る。** 片方だけ直して食い違うことが無いようにするため。選択は
+/// この表にある拡張子だけを受け付けるので、選ばれたものは必ずどれかに入る。
+const MEDIA_FORMS: [(&str, &[&str]); 3] = [
+    (
+        "画像",
+        &["png", "jpg", "jpeg", "gif", "bmp", "webp", "heic", "tiff"],
+    ),
+    ("動画", &["mp4", "m4v", "mov", "webm", "mkv", "avi"]),
+    ("音声", &["m4a", "mp3", "aac", "wav", "flac", "ogg"]),
+];
+
+/// メディア表示の基準高さ。横幅はウィンドウに合わせて伸縮させる。
+const MEDIA_DISPLAY_HEIGHT: f64 = 315.0;
+
+/// 名前や場所の拡張子から、どの表示形式かを決める。
+///
+/// ファイル選択から来たものは [`MEDIA_FORMS`] で絞ってあるので必ず決まる。
+/// 直接入力された場所だけは、知らない拡張子や拡張子なしがあり得るので `None`。
+fn media_form_of(source: &str) -> Option<usize> {
+    // クエリとフラグメントを落としてから、末尾の拡張子を見る。
+    let extension = source
+        .split(['?', '#'])
+        .next()?
+        .rsplit(['/', '\\'])
+        .next()?
+        .rsplit_once('.')
+        .filter(|(stem, ext)| !stem.is_empty() && !ext.is_empty())?
+        .1
+        .to_ascii_lowercase();
+    MEDIA_FORMS
+        .iter()
+        .position(|(_, extensions)| extensions.contains(&extension.as_str()))
+}
+
 /// 画像・動画・音声のデモ。
 ///
-/// **選ぶ時点で種類が決まる。** ファイル選択は種類ごとに分かれていて、
-/// それぞれ受け付ける拡張子を絞ってあるので、選ぶとその表示形式へ移る。
-/// 拡張子から種類を推測するような処理は要らない。
+/// **ファイル選択は 1 つだけ。** 受け付ける拡張子を [`MEDIA_FORMS`] に絞って
+/// あるので、選ばれたものは必ず画像 / 動画 / 音声のどれかに決まり、
+/// 対応する表示形式へ自動で切り替わる。
 fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(12.0);
     pane.set_padding(Padding::all(12.0));
-    pane.append(&ui.label("選んだ種類の表示形式に切り替わります。")?);
+    pane.set_sizing(Sizing::fill());
+    pane.append(&ui.label("選んだファイルの種類に合わせて表示形式が切り替わります。")?);
 
     let (image_pane, image) = build_image_pane(ui)?;
     let (video_pane, video) = build_video_pane(ui)?;
@@ -430,120 +468,121 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
     // 表示形式の切り替えはタブが担う。miui にウィジェットを隠す API は
     // 無いので、「1 つだけ見せる」にはタブを使う。
     let forms = ui.tabs()?;
-    forms.add_tab("画像", &image_pane);
-    forms.add_tab("動画", &video_pane);
-    forms.add_tab("音声", &audio_pane);
+    forms.add_tab(MEDIA_FORMS[0].0, &image_pane);
+    forms.add_tab(MEDIA_FORMS[1].0, &video_pane);
+    forms.add_tab(MEDIA_FORMS[2].0, &audio_pane);
 
-    // --- 種類ごとのファイル選択 --------------------------------------------
+    let status = ui.label("種類: 画像 (同梱のサンプル)")?;
+
+    // 場所を対応するウィジェットへ渡し、その表示形式へ移る。
+    let show = {
+        let image = image.clone();
+        let video = video.clone();
+        let audio = audio.clone();
+        let forms = forms.clone();
+        let status = status.clone();
+        move |form: usize, source: &str| {
+            match form {
+                0 => image.set_source(source),
+                1 => video.set_source(source),
+                _ => audio.set_source(source),
+            }
+            forms.select(form);
+            status.set_text(&format!("種類: {}", MEDIA_FORMS[form].0));
+        }
+    };
+    let show = Rc::new(show);
+
+    // --- ファイル選択 ------------------------------------------------------
     //
-    // 受け付ける拡張子を絞ってあるので、どのボタンで選ばれたかがそのまま
-    // 種類になる。中身を見て推測する必要はない。
-    let pickers = ui.stack(Orientation::Horizontal)?;
-    pickers.set_spacing(8.0);
+    // 絞り込みは表示形式の表そのものから作る。ここに無い拡張子は選べないので、
+    // 「種類が分からないファイルを選ばれた」という状態にならない。
+    let pick = ui.file_picker("メディアを選ぶ")?;
+    let extensions: Vec<&str> = MEDIA_FORMS
+        .iter()
+        .flat_map(|(_, extensions)| extensions.iter().copied())
+        .collect();
+    pick.set_filters(&[FileFilter::new("メディア", extensions)]);
 
-    let pick_image = ui.file_picker("画像を選ぶ")?;
-    pick_image.set_filters(&[FileFilter::new(
-        "画像",
-        ["png", "jpg", "jpeg", "gif", "bmp", "webp", "heic", "tiff"],
-    )]);
-    pick_image.on_select(on_picked(&image, &forms, 0, |m, s| m.set_source(s)));
-    pickers.append(&pick_image);
+    let field = ui.text_input("")?;
+    field.set_placeholder("パス または https://…");
+    field.set_sizing(Sizing::fill_width());
 
-    let pick_video = ui.file_picker("動画を選ぶ")?;
-    pick_video.set_filters(&[FileFilter::new(
-        "動画",
-        ["mp4", "m4v", "mov", "webm", "mkv", "avi"],
-    )]);
-    pick_video.on_select(on_picked(&video, &forms, 1, |m, s| m.set_source(s)));
-    pickers.append(&pick_video);
+    pick.on_select({
+        let show = show.clone();
+        let field = field.clone();
+        let status = status.clone();
+        move |entries| {
+            let Some(entry) = entries.first() else {
+                return;
+            };
+            // ネイティブは絶対パス、Web はブラウザが作る blob URL。
+            let Some(source) = entry.source() else {
+                status.set_text(&format!("{} (場所を取得できません)", entry.name()));
+                return;
+            };
+            field.set_text(source);
+            // 種類は名前から決める。Web の blob URL には拡張子が無いため。
+            match media_form_of(entry.name()) {
+                Some(form) => show(form, source),
+                // 絞り込みを通っているので、ここへは来ないはず。
+                None => status.set_text(&format!("種類: 判定できません ({})", entry.name())),
+            }
+        }
+    });
 
-    let pick_audio = ui.file_picker("音声を選ぶ")?;
-    pick_audio.set_filters(&[FileFilter::new(
-        "音声",
-        ["m4a", "mp3", "aac", "wav", "flac", "ogg"],
-    )]);
-    pick_audio.on_select(on_picked(&audio, &forms, 2, |m, s| m.set_source(s)));
-    pickers.append(&pick_audio);
+    // --- 場所の直接入力 ----------------------------------------------------
+    //
+    // ファイル選択では扱えない URL を試すための欄。こちらは絞り込みが
+    // 効かないので、知らない拡張子はそのまま知らないと出す。
+    let load = ui.button("読み込む")?;
+    load.on_click({
+        let show = show.clone();
+        let field = field.clone();
+        let status = status.clone();
+        move || {
+            let source = field.text();
+            if source.is_empty() {
+                return;
+            }
+            match media_form_of(&source) {
+                Some(form) => show(form, &source),
+                None => status.set_text("種類: 判定できません (拡張子で判断しています)"),
+            }
+        }
+    });
 
-    pane.append(&pickers);
+    let row = ui.stack(Orientation::Horizontal)?;
+    row.set_spacing(8.0);
+    row.append(&field);
+    row.append(&load);
+    row.append(&pick);
+    row.set_sizing(Sizing::fill_width());
+    pane.append(&row);
+    pane.append(&status);
 
-    forms.set_sizing(Sizing::fill_width());
+    // ウィンドウの高さが変わったときも、メディア表示側へ余りを渡す。
+    forms.set_sizing(Sizing::fill());
     pane.append(&forms);
     forms.set_selected(0);
     Ok(pane)
 }
 
-/// ファイルが選ばれたら、そのメディアへ渡して表示形式を切り替える。
-///
-/// 渡すのは `FileEntry::source()`。ネイティブでは絶対パス、Web では
-/// ブラウザが作る `blob:` URL になり、どちらもそのまま `set_source` へ渡せる。
-fn on_picked<M: Clone + 'static>(
-    media: &M,
-    forms: &miui::Tabs,
-    form: usize,
-    set: impl Fn(&M, &str) + 'static,
-) -> impl FnMut(&[FileEntry]) + 'static {
-    let media = media.clone();
-    let forms = forms.clone();
-    move |entries| {
-        let Some(source) = entries.first().and_then(|e| e.source()) else {
-            return;
-        };
-        set(&media, source);
-        forms.select(form);
-    }
-}
-
-/// 場所を直接入力するための欄。表示形式ごとに 1 つずつ置く。
-///
-/// ファイル選択では扱えない URL を試せるようにするためのもの。
-/// どの欄かで種類は決まっているので、ここでも推測は要らない。
-fn source_field(
-    ui: &Ui,
-    placeholder: &str,
-    set: impl Fn(&str) + 'static,
-) -> Result<miui::Stack> {
-    let row = ui.stack(Orientation::Horizontal)?;
-    row.set_spacing(8.0);
-
-    let field = ui.text_input("")?;
-    field.set_placeholder(placeholder);
-    field.set_sizing(Sizing::fill_width());
-
-    let load = ui.button("読み込む")?;
-    load.on_click({
-        let field = field.clone();
-        move || {
-            let source = field.text();
-            if !source.is_empty() {
-                set(&source);
-            }
-        }
-    });
-
-    row.append(&field);
-    row.append(&load);
-    row.set_sizing(Sizing::fill_width());
-    Ok(row)
-}
-
 /// 画像の表示形式。収め方を切り替えられる。
-fn build_image_pane(ui: &Ui) -> Result<(miui::Stack, miui::Image)> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(8.0);
+fn build_image_pane(ui: &Ui) -> Result<(miui::Grid, miui::Image)> {
+    let pane = ui.grid()?;
+    pane.set_spacing(0.0, 8.0);
     pane.set_padding(Padding::all(8.0));
+    pane.set_sizing(Sizing::fill());
+    pane.set_column_track(0, Track::FILL);
+    pane.set_row_track(0, Track::FILL);
 
     // 何も選ばれていない間は同梱のサンプルを出しておく。
     let image = ui.image(SAMPLE_IMAGE)?;
     image.set_alt("斜めのグラデーションと市松模様のサンプル画像");
-    // 枠を画像より横長にしておくと、収め方の違いが見て分かる。
-    image.set_sizing(Sizing::fixed(240.0, 140.0));
-    pane.append(&image);
-
-    pane.append(&source_field(ui, "画像のパス または https://…", {
-        let image = image.clone();
-        move |source| image.set_source(source)
-    })?);
+    // 元の高さ 315px を基準にし、横幅はウィンドウの変更へ追従させる。
+    image.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
+    pane.attach(&image, GridCell::new(0, 0));
 
     let fits = [
         ("contain", Fit::Contain),
@@ -562,7 +601,8 @@ fn build_image_pane(ui: &Ui) -> Result<(miui::Stack, miui::Image)> {
             }
         }
     });
-    pane.append(&selector);
+    selector.set_sizing(Sizing::fill_width());
+    pane.attach(&selector, GridCell::new(0, 1));
     Ok((pane, image))
 }
 
@@ -571,15 +611,23 @@ fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(8.0);
     pane.set_padding(Padding::all(8.0));
+    pane.set_sizing(Sizing::fill());
+
+    let media_frame = ui.grid()?;
+    media_frame.set_column_track(0, Track::FILL);
+    media_frame.set_row_track(0, Track::FILL);
+    media_frame.set_sizing(Sizing::fill());
 
     let video = ui.video("")?;
-    video.set_sizing(Sizing::fixed(320.0, 180.0));
-    pane.append(&video);
+    video.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
+    // 動画フレームと操作欄は別ウィジェットに分け、操作欄がフレームへ
+    // 重ならないようにする。
+    media_frame.attach(&video, GridCell::new(0, 0));
+    pane.append(&media_frame);
 
-    pane.append(&source_field(ui, "動画のパス または https://…", {
-        let video = video.clone();
-        move |source| video.set_source(source)
-    })?);
+    let controls = ui.stack(Orientation::Vertical)?;
+    controls.set_spacing(8.0);
+    controls.set_sizing(Sizing::fill_width());
 
     let status = ui.label("状態: 未再生")?;
     video.on_state_change({
@@ -601,11 +649,11 @@ fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
     });
     buttons.append(&play);
     buttons.append(&pause);
-    pane.append(&buttons);
-    pane.append(&status);
+    controls.append(&buttons);
+    controls.append(&status);
 
     let position = ui.label("位置: -")?;
-    pane.append(&position);
+    controls.append(&position);
 
     // 長さが決まるまでシークできないので、割合で指定する。
     let seek = ui.slider(0.0, 1.0)?;
@@ -641,7 +689,7 @@ fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
             position.set_text(&format!("位置: {seconds:.1} / {duration:.1} 秒"));
         }
     });
-    pane.append(&seek);
+    controls.append(&seek);
 
     let volume_label = ui.label("音量: 100%")?;
     let volume = ui.slider(0.0, 1.0)?;
@@ -654,8 +702,8 @@ fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
             volume_label.set_text(&format!("音量: {:.0}%", value * 100.0));
         }
     });
-    pane.append(&volume);
-    pane.append(&volume_label);
+    controls.append(&volume);
+    controls.append(&volume_label);
 
     let toggles = ui.stack(Orientation::Horizontal)?;
     toggles.set_spacing(12.0);
@@ -671,7 +719,8 @@ fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
     });
     toggles.append(&muted);
     toggles.append(&looping);
-    pane.append(&toggles);
+    controls.append(&toggles);
+    pane.append(&controls);
     Ok((pane, video))
 }
 
@@ -685,11 +734,6 @@ fn build_audio_pane(ui: &Ui) -> Result<(miui::Stack, miui::Audio)> {
     let audio = ui.audio("")?;
     audio.set_sizing(Sizing::fill_width());
     pane.append(&audio);
-
-    pane.append(&source_field(ui, "音声のパス または https://…", {
-        let audio = audio.clone();
-        move |source| audio.set_source(source)
-    })?);
 
     let status = ui.label("状態: 未再生")?;
     audio.on_state_change({
