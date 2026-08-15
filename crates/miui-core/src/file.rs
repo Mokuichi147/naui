@@ -126,14 +126,22 @@ pub fn accept_attribute(filters: &[FileFilter]) -> String {
 /// 選ばれたファイル、またはフォルダー 1 つ。
 ///
 /// `path` がある環境 (macOS / Windows / Linux) では絶対パスが入る。
-/// **Web ではブラウザがパスを渡さないため、常に `None`** で、
-/// 使えるのは表示名だけになる。中身が要るときは
-/// `FilePicker::native_element()` から `<input>` を取り出して
-/// `FileList` を読む。
+/// **Web ではブラウザがパスを渡さないため、`path` は常に `None`**。
+///
+/// 代わりに [`source`](Self::source) を使うと、どの環境でも
+/// 「そのまま [`Ui::image`] / [`Ui::video`] / [`Ui::audio`] へ渡せる場所」が
+/// 得られる。ネイティブでは絶対パス、Web ではブラウザが作る
+/// `blob:` URL になる。
+///
+/// [`Ui::image`]: https://docs.rs/miui/latest/miui/struct.Ui.html#method.image
+/// [`Ui::video`]: https://docs.rs/miui/latest/miui/struct.Ui.html#method.video
+/// [`Ui::audio`]: https://docs.rs/miui/latest/miui/struct.Ui.html#method.audio
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FileEntry {
     name: String,
     path: Option<PathBuf>,
+    /// メディアや画像に渡せる場所。ネイティブはパス、Web は blob URL。
+    source: Option<String>,
 }
 
 impl FileEntry {
@@ -145,16 +153,30 @@ impl FileEntry {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
         Self {
+            source: path.to_str().map(str::to_string),
             name,
             path: Some(path),
         }
     }
 
-    /// 表示名だけから作る (パスを渡さない Web 用)。
+    /// 表示名だけから作る (パスも中身も渡さない場合)。
     pub fn from_name(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             path: None,
+            source: None,
+        }
+    }
+
+    /// 表示名と、中身を指す場所から作る。
+    ///
+    /// Web バックエンドが `URL.createObjectURL` で作った `blob:` URL を
+    /// 渡すために使う。パスは持たない。
+    pub fn from_name_and_source(name: impl Into<String>, source: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: None,
+            source: Some(source.into()),
         }
     }
 
@@ -166,6 +188,19 @@ impl FileEntry {
     /// 絶対パス。Web では常に `None`。
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// そのまま `ui.image` / `ui.video` / `ui.audio` へ渡せる場所。
+    ///
+    /// ネイティブでは絶対パス、Web ではブラウザが作る `blob:` URL。
+    /// フォルダーを選んだときや、場所を取れなかったときは `None`。
+    ///
+    /// **Web の `blob:` URL は、同じ [`FilePicker`] で次に選び直すまで
+    /// 有効**。選び直すと以前の URL は破棄される。
+    ///
+    /// [`FilePicker`]: https://docs.rs/miui/latest/miui/struct.FilePicker.html
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 }
 
@@ -185,6 +220,33 @@ fn normalize_extension(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entry_source_is_the_path_on_native() {
+        let entry = FileEntry::from_path("/tmp/写真 1.png");
+        assert_eq!(entry.name(), "写真 1.png");
+        assert_eq!(entry.path().map(|p| p.to_str().unwrap()), Some("/tmp/写真 1.png"));
+        // そのまま ui.image / ui.video へ渡せる場所。
+        assert_eq!(entry.source(), Some("/tmp/写真 1.png"));
+    }
+
+    #[test]
+    fn entry_from_name_has_no_source() {
+        // フォルダーのように、中身を指す場所を持たない場合。
+        let entry = FileEntry::from_name("写真");
+        assert_eq!(entry.name(), "写真");
+        assert_eq!(entry.path(), None);
+        assert_eq!(entry.source(), None);
+    }
+
+    #[test]
+    fn entry_can_carry_a_source_without_a_path() {
+        // Web はパスを渡せないので、blob URL だけを持たせる。
+        let entry = FileEntry::from_name_and_source("clip.mp4", "blob:http://localhost/abc");
+        assert_eq!(entry.name(), "clip.mp4");
+        assert_eq!(entry.path(), None);
+        assert_eq!(entry.source(), Some("blob:http://localhost/abc"));
+    }
 
     #[test]
     fn mode_defaults_to_a_single_file() {

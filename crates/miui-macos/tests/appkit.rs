@@ -12,13 +12,13 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use miui_core::{
-    FileFilter, FilePickerMode, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy,
-    Sizing, Theme, Track,
+    FileFilter, FilePickerMode, Fit, GridCell, NavItem, Orientation, Padding, PlaybackState, Result,
+    ScrollPolicy, Sizing, Theme, Track,
 };
 use miui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
-use objc2_app_kit::{NSButton, NSLayoutConstraint, NSView};
-use objc2_foundation::NSSize;
+use objc2_app_kit::{NSButton, NSImageScaling, NSImageView, NSLayoutConstraint, NSView};
+use objc2_foundation::{NSDate, NSRunLoop, NSSize};
 
 /// テストケース 1 件。
 type Case = (&'static str, fn(&Ui) -> Result<()>);
@@ -64,6 +64,23 @@ fn main() {
         (
             "編集メニューが貼り付けをレスポンダチェーンへ配送する",
             menu_bar_provides_edit_shortcuts,
+        ),
+        ("画像がローカルのファイルから読み込まれる", image_loads_a_local_file),
+        (
+            "収め方が NSImageView の imageScaling になる",
+            image_fit_maps_to_native_scaling,
+        ),
+        ("音声が最後まで再生され Ended が届く", audio_plays_to_the_end),
+        ("繰り返し再生が末尾で止まらない", audio_loops_back_to_the_start),
+        ("再生位置の指定が AVPlayer に届く", media_seek_moves_the_position),
+        ("音量と消音がネイティブと往復する", media_volume_round_trips),
+        (
+            "メディアのハンドルを捨てても落ちない",
+            media_handles_can_be_dropped,
+        ),
+        (
+            "再生位置が定期的にクロージャへ届く",
+            media_reports_position_while_playing,
         ),
     ];
 
@@ -788,6 +805,310 @@ fn menu_bar_provides_edit_shortcuts(_ui: &Ui) -> Result<()> {
     assert!(
         app.mainMenu().is_some_and(|m| m == again),
         "既にメニューがあれば作り直さないこと"
+    );
+    Ok(())
+}
+
+// --------------------------------------------------------------- メディア
+
+/// 2x2 の PNG。画像の読み込みを、実ファイルを介して確かめるために埋め込む。
+const PNG_2X2: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x02, 0x00, 0x00, 0x00, 0xfd, 0xd4, 0x9a,
+    0x73, 0x00, 0x00, 0x00, 0x10, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0x00, 0x04,
+    0xff, 0x19, 0x20, 0x14, 0x00, 0x1b, 0xf2, 0x03, 0xfd, 0xd6, 0x96, 0xf2, 0x2b, 0x00, 0x00, 0x00,
+    0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+/// テストが使う一時ファイル。落ちても残らないよう Drop で消す。
+struct Fixture {
+    dir: std::path::PathBuf,
+}
+
+impl Fixture {
+    /// テストごとに別のディレクトリを作る。
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("miui-{}-{}", std::process::id(), name));
+        std::fs::create_dir_all(&dir).expect("一時ディレクトリの作成");
+        Self { dir }
+    }
+
+    fn write(&self, name: &str, bytes: &[u8]) -> String {
+        let path = self.dir.join(name);
+        std::fs::write(&path, bytes).expect("一時ファイルの書き出し");
+        path.to_str().expect("UTF-8 のパス").to_string()
+    }
+
+    /// 0.5 秒の無音 WAV。AVFoundation が実際に再生できる最小のメディア。
+    fn silent_wav(&self, name: &str) -> String {
+        const RATE: u32 = 8000;
+        const SAMPLES: u32 = RATE / 2;
+        let data_len = SAMPLES * 2;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes()); // fmt チャンクの長さ
+        wav.extend_from_slice(&1u16.to_le_bytes()); // リニア PCM
+        wav.extend_from_slice(&1u16.to_le_bytes()); // モノラル
+        wav.extend_from_slice(&RATE.to_le_bytes());
+        wav.extend_from_slice(&(RATE * 2).to_le_bytes()); // バイト毎秒
+        wav.extend_from_slice(&2u16.to_le_bytes()); // ブロックあたりのバイト数
+        wav.extend_from_slice(&16u16.to_le_bytes()); // 量子化ビット数
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        wav.resize(wav.len() + data_len as usize, 0);
+        self.write(name, &wav)
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// ランループを回して、AVFoundation の非同期な読み込みと再生を進める。
+///
+/// アセットの読み込みも再生位置の更新もランループの上で起きるため、
+/// これを回さないと長さは決まらず、再生も進まない。
+fn pump(seconds: f64) {
+    let until = NSDate::dateWithTimeIntervalSinceNow(seconds);
+    NSRunLoop::currentRunLoop().runUntilDate(&until);
+}
+
+/// 状態の変化を記録するクロージャを付ける。
+fn record_states(seen: &Rc<RefCell<Vec<PlaybackState>>>) -> impl FnMut(PlaybackState) + 'static {
+    let seen = seen.clone();
+    move |state| seen.borrow_mut().push(state)
+}
+
+/// 画像がローカルのファイルから NSImage として読み込まれる。
+fn image_loads_a_local_file(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("image");
+    let path = fixture.write("a.png", PNG_2X2);
+
+    let image = ui.image(&path)?;
+    assert_eq!(image.source(), path, "渡した文字列がそのまま返ること");
+    assert!(image.is_loaded(), "NSImage が読み込まれていること");
+
+    // NSImageView が実際に画像を持ち、大きさも PNG のとおりであること。
+    let view = image.native_view();
+    let native = view
+        .downcast_ref::<NSImageView>()
+        .expect("実体が NSImageView であること");
+    let size = native.image().expect("NSImage があること").size();
+    assert_eq!((size.width, size.height), (2.0, 2.0));
+
+    // 存在しない場所を指すと画像は外れる (NSImage が nil を返す)。
+    image.set_source("/miui/does/not/exist.png");
+    assert!(!image.is_loaded());
+    assert!(native.image().is_none());
+
+    // 空文字列でも落ちない。
+    image.set_source("");
+    assert!(!image.is_loaded());
+    Ok(())
+}
+
+/// 収め方の指定が NSImageView の imageScaling になる。
+fn image_fit_maps_to_native_scaling(ui: &Ui) -> Result<()> {
+    let image = ui.image("")?;
+    let view = image.native_view();
+    let native = view
+        .downcast_ref::<NSImageView>()
+        .expect("実体が NSImageView であること");
+
+    // 既定は縦横比を保って収める。
+    assert_eq!(
+        native.imageScaling(),
+        NSImageScaling::ScaleProportionallyUpOrDown
+    );
+    image.set_fit(Fit::Fill);
+    assert_eq!(native.imageScaling(), NSImageScaling::ScaleAxesIndependently);
+    image.set_fit(Fit::None);
+    assert_eq!(native.imageScaling(), NSImageScaling::ScaleNone);
+    // NSImageView に cover に当たる設定は無いので contain と同じになる。
+    image.set_fit(Fit::Cover);
+    assert_eq!(
+        native.imageScaling(),
+        NSImageScaling::ScaleProportionallyUpOrDown
+    );
+    Ok(())
+}
+
+/// 音声を最後まで再生し、状態と長さが AVPlayer から届く。
+fn audio_plays_to_the_end(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("audio");
+    let audio = ui.audio(&fixture.silent_wav("a.wav"))?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    audio.on_state_change(record_states(&seen));
+
+    // 読み込みが終わるまで長さは決まらない。
+    assert_eq!(audio.duration(), None, "読み込み前の長さは None であること");
+    pump(0.5);
+    let duration = audio.duration().expect("読み込み後は長さが決まること");
+    assert!(
+        (duration - 0.5).abs() < 0.05,
+        "WAV の長さ 0.5 秒が返ること: {duration}"
+    );
+
+    audio.play();
+    pump(1.0);
+    assert_eq!(
+        audio.state(),
+        PlaybackState::Ended,
+        "最後まで再生したら Ended になること"
+    );
+    let states = seen.borrow().clone();
+    assert!(
+        states.contains(&PlaybackState::Playing),
+        "再生中が通知されること: {states:?}"
+    );
+    assert_eq!(
+        states.last(),
+        Some(&PlaybackState::Ended),
+        "最後の通知が Ended であること: {states:?}"
+    );
+    assert!(
+        audio.position() > 0.4,
+        "再生位置が進んでいること: {}",
+        audio.position()
+    );
+
+    // 再生し終えた後の play は、先頭へ戻してから鳴らす。
+    audio.play();
+    pump(0.2);
+    assert!(
+        audio.position() < 0.4,
+        "先頭へ戻って再生されること: {}",
+        audio.position()
+    );
+    Ok(())
+}
+
+/// 繰り返しを指定すると、末尾で止まらずに先頭へ戻る。
+fn audio_loops_back_to_the_start(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("loop");
+    let audio = ui.audio(&fixture.silent_wav("a.wav"))?;
+    audio.set_loop(true);
+    assert!(audio.is_loop());
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    audio.on_state_change(record_states(&seen));
+
+    pump(0.5);
+    audio.play();
+    // 0.5 秒のメディアを 1.2 秒ぶん回すので、必ず末尾を越える。
+    pump(1.2);
+
+    let states = seen.borrow().clone();
+    assert!(
+        !states.contains(&PlaybackState::Ended),
+        "繰り返し中は Ended にならないこと: {states:?}"
+    );
+    assert_eq!(
+        audio.state(),
+        PlaybackState::Playing,
+        "末尾を越えても再生が続くこと: {states:?}"
+    );
+    Ok(())
+}
+
+/// 再生位置を指定すると、AVPlayer の現在位置が動く。
+fn media_seek_moves_the_position(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("seek");
+    let video = ui.video(&fixture.silent_wav("a.wav"))?;
+    pump(0.5);
+
+    video.seek(0.25);
+    pump(0.2);
+    let position = video.position();
+    assert!(
+        (position - 0.25).abs() < 0.1,
+        "指定した位置へ移ること: {position}"
+    );
+
+    // 負の値は先頭として扱う。
+    video.seek(-5.0);
+    pump(0.2);
+    assert!(video.position() < 0.1, "先頭へ戻ること: {}", video.position());
+    Ok(())
+}
+
+/// 音量と消音が AVPlayer と往復し、範囲外は丸められる。
+fn media_volume_round_trips(ui: &Ui) -> Result<()> {
+    let video = ui.video("")?;
+    video.set_volume(0.25);
+    assert!((video.volume() - 0.25).abs() < 1e-6);
+
+    video.set_volume(3.0);
+    assert!((video.volume() - 1.0).abs() < 1e-6, "1.0 で丸めること");
+    video.set_volume(-1.0);
+    assert!((video.volume() - 0.0).abs() < 1e-6, "0.0 で丸めること");
+
+    assert!(!video.is_muted());
+    video.set_muted(true);
+    assert!(video.is_muted(), "AVPlayer の消音が効くこと");
+    video.set_muted(false);
+    assert!(!video.is_muted());
+    Ok(())
+}
+
+/// ハンドルを捨てても、KVO を張ったままの AVPlayer で異常終了しない。
+///
+/// KVO の観測者を登録したまま AVPlayer を解放すると AppKit が落ちる。
+/// Drop で確実に外していることを、実際に解放して確かめる。
+fn media_handles_can_be_dropped(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("drop");
+    let path = fixture.silent_wav("a.wav");
+    {
+        let audio = ui.audio(&path)?;
+        audio.play();
+        pump(0.2);
+        let video = ui.video(&path)?;
+        video.play();
+    }
+    // 解放後にランループを回しても、外れた観測者へ通知が飛ばないこと。
+    pump(0.3);
+    Ok(())
+}
+
+/// 再生中、再生位置が定期的にクロージャへ届く。
+///
+/// シークバーを再生に追従させるための通知。AVPlayer の
+/// `addPeriodicTimeObserverForInterval:` から来る。
+fn media_reports_position_while_playing(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("position");
+    let audio = ui.audio(&fixture.silent_wav("a.wav"))?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    audio.on_position_change({
+        let seen = seen.clone();
+        move |seconds| seen.borrow_mut().push(seconds)
+    });
+
+    pump(0.5);
+    audio.play();
+    pump(1.0);
+
+    let positions = seen.borrow().clone();
+    // 0.5 秒のメディアを 0.25 秒間隔で観測するので、複数回届くはず。
+    assert!(
+        positions.len() >= 2,
+        "再生中に複数回届くこと: {positions:?}"
+    );
+    assert!(
+        positions.iter().any(|&p| p > 0.1),
+        "0 以外の位置が届くこと: {positions:?}"
+    );
+    // 繰り返しは指定していないので、先頭へ巻き戻ることはない。
+    //
+    // ただし末尾では AVPlayer が「長さちょうど」へ丸めるため、直前の観測
+    // (長さを僅かに越えた値) からごく小さく戻ることがある
+    // (例: 0.500151 → 0.5)。それは巻き戻しではないので許容する。
+    const SNAP_BACK: f64 = 0.05;
+    assert!(
+        positions.windows(2).all(|w| w[1] >= w[0] - SNAP_BACK),
+        "位置が先頭へ戻らないこと: {positions:?}"
     );
     Ok(())
 }

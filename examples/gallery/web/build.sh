@@ -35,6 +35,10 @@ wasm-bindgen --target web --no-typescript \
   --out-dir "$here/pkg" \
   "$root/target/wasm32-unknown-unknown/release/gallery.wasm"
 
+# 画像のサンプルは配信ディレクトリからの相対 URL で参照される。
+rm -rf "$here/assets"
+cp -R "$here/../assets" "$here/assets"
+
 echo
 echo "完了。次のように配信してください:"
 echo "  cd \"$here\" && python3 -m http.server 8080"

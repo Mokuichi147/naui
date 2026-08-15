@@ -13,6 +13,7 @@
 
 mod file_picker;
 mod layout;
+mod media;
 mod navigation;
 mod widgets;
 mod window;
@@ -25,6 +26,7 @@ use web_sys::{Document, HtmlElement};
 
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
+pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
 pub use window::{WeakWindow, Window};
@@ -145,6 +147,21 @@ impl Ui {
     /// リンク。`href` が空でなければ、押したときに別タブで開く。
     pub fn link(&self, text: &str, href: &str) -> Result<Link> {
         Link::new(&self.document, text, href)
+    }
+
+    /// 画像。`source` はファイルパスか URL。
+    pub fn image(&self, source: &str) -> Result<Image> {
+        Image::new(&self.document, source)
+    }
+
+    /// 動画。`source` はファイルパスか URL。
+    pub fn video(&self, source: &str) -> Result<Video> {
+        Video::new(&self.document, source)
+    }
+
+    /// 音声。`source` はファイルパスか URL。
+    pub fn audio(&self, source: &str) -> Result<Audio> {
+        Audio::new(&self.document, source)
     }
 
     /// ファイルやフォルダーを選ばせるボタン。中身は `<input type="file">`。

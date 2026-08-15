@@ -10,6 +10,10 @@
 //!
 //! - **パスは取れない。** ブラウザは絶対パスを渡さないので
 //!   [`FileEntry::path`](miui_core::FileEntry::path) は常に `None` になる。
+//!   代わりに [`FileEntry::source`](miui_core::FileEntry::source) が
+//!   `URL.createObjectURL` の作る `blob:` URL を返すので、選んだファイルを
+//!   そのまま `ui.video()` などへ渡せる。**この URL は次に選び直すまで有効**で、
+//!   選び直すと以前のものは `URL.revokeObjectURL` で破棄される。
 //! - **ユーザー操作の中でしか開けない。** [`FilePicker::open`] を
 //!   クリック等のイベント外から呼ぶと、ブラウザに無視される。
 //! - **フォルダーを選ぶと、ブラウザはその中のファイル一覧を返す。**
@@ -39,6 +43,23 @@ struct FilePickerInner {
     /// ボタンの押しを `<input>` へ転送するもの。
     click: RefCell<Option<Listener>>,
     change: RefCell<Option<Listener>>,
+    /// いま配っている `blob:` URL。選び直しと破棄のときに取り消す。
+    ///
+    /// 取り消さないと、選んだファイルの中身がページの寿命まで解放されない。
+    object_urls: RefCell<Vec<String>>,
+}
+
+impl Drop for FilePickerInner {
+    fn drop(&mut self) {
+        revoke_all(&mut self.object_urls.borrow_mut());
+    }
+}
+
+/// 配ってあった `blob:` URL をまとめて取り消す。
+fn revoke_all(urls: &mut Vec<String>) {
+    for url in urls.drain(..) {
+        let _ = web_sys::Url::revoke_object_url(&url);
+    }
 }
 
 /// ファイルやフォルダーを選ばせるボタン (`<button>` + `<input type="file">`)。
@@ -74,6 +95,7 @@ impl FilePicker {
             on_select: RefCell::new(None),
             click: RefCell::new(None),
             change: RefCell::new(None),
+            object_urls: RefCell::new(Vec::new()),
         }));
         this.install_handlers()?;
         Ok(this)
@@ -134,9 +156,22 @@ impl FilePicker {
                 .map(|name| vec![FileEntry::from_name(name)])
                 .unwrap_or_default();
         }
+        // 以前配った URL はここで取り消す。以降は使えなくなる。
+        let mut urls = self.0.object_urls.borrow_mut();
+        revoke_all(&mut urls);
         (0..files.length())
             .filter_map(|i| files.get(i))
-            .map(|file| FileEntry::from_name(file.name()))
+            .map(|file| {
+                let name = file.name();
+                // ブラウザがパスを渡さない代わりに、中身を指す URL を作る。
+                match web_sys::Url::create_object_url_with_blob(&file) {
+                    Ok(url) => {
+                        urls.push(url.clone());
+                        FileEntry::from_name_and_source(name, url)
+                    }
+                    Err(_) => FileEntry::from_name(name),
+                }
+            })
             .collect()
     }
 

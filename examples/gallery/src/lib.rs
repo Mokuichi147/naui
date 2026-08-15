@@ -7,9 +7,18 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use miui::{
-    FileEntry, FileFilter, FilePickerMode, GridCell, Length, NavItem, Orientation, Padding, Result,
-    ScrollPolicy, Settings, Sizing, Theme, Track, Ui,
+    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, NavItem, Orientation, Padding,
+    PlaybackState, Result, ScrollPolicy, Settings, Sizing, Theme, Track, Ui,
 };
+
+/// 同梱のサンプル画像の場所。
+///
+/// ネイティブはビルド時に決まる絶対パス、Web は配信ディレクトリからの
+/// 相対 URL になる (`web/build.sh` が `assets/` をコピーする)。
+#[cfg(not(target_arch = "wasm32"))]
+const SAMPLE_IMAGE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sample.png");
+#[cfg(target_arch = "wasm32")]
+const SAMPLE_IMAGE: &str = "assets/sample.png";
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
@@ -25,6 +34,7 @@ pub fn build(ui: &Ui) -> Result<()> {
         "ナビゲーション",
         "レイアウト",
         "ファイル",
+        "メディア",
     ]);
 
     let crumbs = ui.breadcrumbs()?;
@@ -270,6 +280,9 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     files_pane.append(&picked);
 
+    // --- メディア ---------------------------------------------------------
+    let media_pane = build_media_pane(ui)?;
+
     // 中央の Tabs がこの gallery のカテゴリ切り替えを担う。
     let tabs = ui.tabs()?;
     tabs.add_tab("ホーム", &home_pane);
@@ -277,6 +290,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     tabs.add_tab("ナビゲーション", &navigation_pane);
     tabs.add_tab("レイアウト", &layout_pane);
     tabs.add_tab("ファイル", &files_pane);
+    tabs.add_tab("メディア", &media_pane);
     // タブがウィンドウの余りを受け取り、下のものを端へ寄せる。
     tabs.set_sizing(Sizing::fill());
     root.append(&tabs);
@@ -396,6 +410,269 @@ pub fn build(ui: &Ui) -> Result<()> {
     window.set_child(&root);
     window.show();
     Ok(())
+}
+
+/// 画像・動画・音声のデモ。
+///
+/// 画像は同梱のサンプルを表示し、収め方を切り替えられる。動画と音声は
+/// ファイル選択か、パス / URL の直接入力で読み込ませる
+/// (メディアそのものは同梱していない)。
+fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(12.0);
+    pane.set_padding(Padding::all(12.0));
+
+    // --- 画像 -------------------------------------------------------------
+    pane.append(&ui.label("画像 (同梱のサンプル)")?);
+
+    let image = ui.image(SAMPLE_IMAGE)?;
+    image.set_alt("斜めのグラデーションと市松模様のサンプル画像");
+    // 枠を画像より横長にしておくと、収め方の違いが見て分かる。
+    image.set_sizing(Sizing::fixed(240.0, 140.0));
+    pane.append(&image);
+
+    let fits = [
+        ("contain", Fit::Contain),
+        ("cover", Fit::Cover),
+        ("fill", Fit::Fill),
+        ("none", Fit::None),
+    ];
+    let fit_selector = ui.navbar("収め方")?;
+    fit_selector.set_items(&NavItem::list(fits.map(|(name, _)| name)));
+    fit_selector.set_selected(0);
+    fit_selector.on_select({
+        let image = image.clone();
+        move |index| {
+            if let Some((_, fit)) = fits.get(index) {
+                image.set_fit(*fit);
+            }
+        }
+    });
+    pane.append(&fit_selector);
+
+    // --- 動画 -------------------------------------------------------------
+    pane.append(&ui.label("動画 (パスか URL を入れて「読み込む」)")?);
+
+    let video = ui.video("")?;
+    video.set_sizing(Sizing::fixed(320.0, 180.0));
+
+    let video_field = ui.text_input("")?;
+    video_field.set_placeholder("/path/to/clip.mp4 または https://…");
+    video_field.set_sizing(Sizing::fill_width());
+    let video_load = ui.button("読み込む")?;
+    video_load.on_click({
+        let video = video.clone();
+        let field = video_field.clone();
+        move || video.set_source(&field.text())
+    });
+    // ファイル選択からも指定できるようにする。押すとその環境の標準の
+    // ダイアログが開く。
+    let video_pick = ui.file_picker("ファイルを選ぶ")?;
+    video_pick.set_filters(&[FileFilter::new(
+        "動画",
+        ["mp4", "mov", "m4v", "webm", "mkv"],
+    )]);
+    video_pick.on_select({
+        let video = video.clone();
+        let field = video_field.clone();
+        move |entries| apply_picked(entries, &field, |source| video.set_source(source))
+    });
+
+    let video_row = ui.stack(Orientation::Horizontal)?;
+    video_row.set_spacing(8.0);
+    video_row.append(&video_field);
+    video_row.append(&video_load);
+    video_row.append(&video_pick);
+    video_row.set_sizing(Sizing::fill_width());
+    pane.append(&video_row);
+    pane.append(&video);
+
+    // 再生状態は、ネイティブの再生バーを押したときにも届く。
+    let status = ui.label("状態: 未再生")?;
+    video.on_state_change({
+        let status = status.clone();
+        move |state| status.set_text(&format!("状態: {}", state_name(state)))
+    });
+
+    let buttons = ui.stack(Orientation::Horizontal)?;
+    buttons.set_spacing(8.0);
+    let play = ui.button("再生")?;
+    play.on_click({
+        let video = video.clone();
+        move || video.play()
+    });
+    let pause = ui.button("一時停止")?;
+    pause.on_click({
+        let video = video.clone();
+        move || video.pause()
+    });
+    // 再生位置は時々刻々と変わるが、miui にタイマーは無いので押して読み直す。
+    let position = ui.label("位置: -")?;
+    let refresh = ui.button("位置を読む")?;
+    refresh.on_click({
+        let video = video.clone();
+        let position = position.clone();
+        move || {
+            let text = match video.duration() {
+                Some(duration) => {
+                    format!("位置: {:.1} / {:.1} 秒", video.position(), duration)
+                }
+                None => "位置: 読み込み中 (長さが未確定)".to_string(),
+            };
+            position.set_text(&text);
+        }
+    });
+    buttons.append(&play);
+    buttons.append(&pause);
+    buttons.append(&refresh);
+    pane.append(&buttons);
+    pane.append(&status);
+    pane.append(&position);
+
+    // 長さが決まるまでシークできないので、割合で指定する。
+    let seek_label = ui.label("シーク: 0%")?;
+    let seek = ui.slider(0.0, 1.0)?;
+
+    // つまみを「再生に合わせて動かす」ときと「ユーザーが動かした」ときを
+    // 区別する目印。こちらから値を書くとスライダーの変更通知が出る環境
+    // (WinUI) があるため、これが無いと再生位置を書き戻すたびにシークが
+    // 走ってしまう。
+    let syncing = Rc::new(Cell::new(false));
+
+    seek.on_change({
+        let video = video.clone();
+        let seek_label = seek_label.clone();
+        let syncing = syncing.clone();
+        move |ratio| {
+            if syncing.get() {
+                return;
+            }
+            seek_label.set_text(&format!("シーク: {:.0}%", ratio * 100.0));
+            if let Some(duration) = video.duration() {
+                video.seek(duration * ratio);
+            }
+        }
+    });
+
+    // 再生に合わせてつまみと位置表示を進める。
+    video.on_position_change({
+        let video = video.clone();
+        let seek = seek.clone();
+        let seek_label = seek_label.clone();
+        let position = position.clone();
+        let syncing = syncing.clone();
+        move |seconds| {
+            let Some(duration) = video.duration() else {
+                return;
+            };
+            if duration <= 0.0 {
+                return;
+            }
+            let ratio = (seconds / duration).clamp(0.0, 1.0);
+            syncing.set(true);
+            seek.set_value(ratio);
+            syncing.set(false);
+            seek_label.set_text(&format!("シーク: {:.0}%", ratio * 100.0));
+            position.set_text(&format!("位置: {seconds:.1} / {duration:.1} 秒"));
+        }
+    });
+
+    pane.append(&seek);
+    pane.append(&seek_label);
+
+    let volume_label = ui.label("音量: 100%")?;
+    let volume = ui.slider(0.0, 1.0)?;
+    volume.set_value(1.0);
+    volume.on_change({
+        let video = video.clone();
+        let volume_label = volume_label.clone();
+        move |value| {
+            video.set_volume(value);
+            volume_label.set_text(&format!("音量: {:.0}%", value * 100.0));
+        }
+    });
+    pane.append(&volume);
+    pane.append(&volume_label);
+
+    let toggles = ui.stack(Orientation::Horizontal)?;
+    toggles.set_spacing(12.0);
+    let muted = ui.checkbox("消音")?;
+    muted.on_toggle({
+        let video = video.clone();
+        move |on| video.set_muted(on)
+    });
+    let looping = ui.checkbox("繰り返し")?;
+    looping.on_toggle({
+        let video = video.clone();
+        move |on| video.set_loop(on)
+    });
+    toggles.append(&muted);
+    toggles.append(&looping);
+    pane.append(&toggles);
+
+    // --- 音声 -------------------------------------------------------------
+    pane.append(&ui.label("音声 (操作はネイティブの再生バーから)")?);
+
+    let audio = ui.audio("")?;
+    audio.set_sizing(Sizing::fill_width());
+
+    let audio_field = ui.text_input("")?;
+    audio_field.set_placeholder("/path/to/bgm.m4a または https://…");
+    audio_field.set_sizing(Sizing::fill_width());
+    let audio_load = ui.button("読み込む")?;
+    audio_load.on_click({
+        let audio = audio.clone();
+        let field = audio_field.clone();
+        move || audio.set_source(&field.text())
+    });
+    let audio_pick = ui.file_picker("ファイルを選ぶ")?;
+    audio_pick.set_filters(&[FileFilter::new(
+        "音声",
+        ["m4a", "mp3", "aac", "wav", "flac", "ogg"],
+    )]);
+    audio_pick.on_select({
+        let audio = audio.clone();
+        let field = audio_field.clone();
+        move |entries| apply_picked(entries, &field, |source| audio.set_source(source))
+    });
+
+    let audio_row = ui.stack(Orientation::Horizontal)?;
+    audio_row.set_spacing(8.0);
+    audio_row.append(&audio_field);
+    audio_row.append(&audio_load);
+    audio_row.append(&audio_pick);
+    audio_row.set_sizing(Sizing::fill_width());
+    pane.append(&audio_row);
+    pane.append(&audio);
+
+    Ok(pane)
+}
+
+fn state_name(state: PlaybackState) -> &'static str {
+    match state {
+        PlaybackState::Idle => "未再生",
+        PlaybackState::Buffering => "読み込み中",
+        PlaybackState::Playing => "再生中",
+        PlaybackState::Paused => "一時停止",
+        PlaybackState::Ended => "再生終了",
+    }
+}
+
+/// 選ばれたファイルを入力欄に書き戻し、メディアへ渡す。
+///
+/// 渡すのは `FileEntry::source()`。ネイティブでは絶対パス、Web では
+/// ブラウザが作る `blob:` URL になり、どちらもそのまま `set_source` へ渡せる。
+fn apply_picked(entries: &[FileEntry], field: &miui::TextInput, set: impl FnOnce(&str)) {
+    let Some(entry) = entries.first() else {
+        return;
+    };
+    match entry.source() {
+        Some(source) => {
+            field.set_text(source);
+            set(source);
+        }
+        None => field.set_text(&format!("{} (場所を取得できません)", entry.name())),
+    }
 }
 
 /// ネイティブ / Web 共通の起動処理。

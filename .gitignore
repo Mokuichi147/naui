@@ -1,5 +1,6 @@
 /target
 **/*.rs.bk
 
-# Web ビルドの生成物
+# Web ビルドの生成物 (assets/ は build.sh が examples/gallery/assets からコピーする)
 examples/gallery/web/pkg/
+examples/gallery/web/assets/

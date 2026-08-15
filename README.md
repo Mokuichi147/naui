@@ -19,9 +19,9 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 24 件 |
-| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認 |
-| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択を確認済み |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 33 件。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
+| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。**`Image` / `Video` / `Audio` はブラウザでの動作未確認** (wasm のビルドと起動までは確認) |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択を確認済み。**`Image` / `Video` / `Audio` はコンパイル確認のみ** |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -135,6 +135,9 @@ let element: web_sys::Element = button.native_element();
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ❌ |
 | `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
 | `FilePicker` | 🟡 `Button` + `IFileOpenDialog` (共通ダイアログ) | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `<button>` + 隠した `<input type=file>` | ❌ |
+| `Image` | 🟡 `Image` (バインディングが無いため `XamlReader` 経由) | ✅ `NSImageView` | ✅ `<img>` | ❌ |
+| `Video` | ✅ `MediaPlayerElement` + `MediaPlayer` | ✅ `AVPlayerView` (AVKit) | ✅ `<video>` | ❌ |
+| `Audio` | ✅ `MediaPlayerElement` (映像トラック無し) | 🟡 `AVPlayerView` (映像面を持たない) | ✅ `<audio>` | ❌ |
 
 ### 配置とサイズ
 
@@ -221,6 +224,74 @@ root.append(&dock);   // 下端に寄る
 
 Windows の `StackPanel` は余りを配らないため、`Spacer` と主軸の `Fill` は
 `Stack` の中では効きません。`Grid` の行を `Track::Fill` にしてください。
+
+### メディア
+
+写真・動画・音声を表示します。**デコードも再生も miui は行いません。**
+ファイルを開くのも再生バーを描くのも、その環境のツールキット
+(AVFoundation / ブラウザ / Windows.Media.Playback) の仕事です。
+
+```rust
+use miui::{Fit, PlaybackState};
+
+let photo = ui.image("/path/to/photo.jpg")?;   // パスでも URL でもよい
+photo.set_fit(Fit::Cover);
+photo.set_alt("桜の写真");                      // 読み上げ用の説明
+
+let movie = ui.video("https://example.com/clip.mp4")?;
+movie.set_sizing(Sizing::fixed(320.0, 180.0));
+movie.play();
+movie.set_volume(0.5);
+
+let sound = ui.audio("/path/to/bgm.m4a")?;     // 映像面を持たず再生バーだけ
+```
+
+`Video` と `Audio` は**同じ形の再生 API** を持ちます。
+
+| メソッド | 意味 |
+| --- | --- |
+| `set_source(&str)` / `source()` | 場所を指定する。再生は止まり `Idle` に戻る |
+| `play()` / `pause()` | 再生・一時停止。最後まで再生した後の `play()` は先頭へ戻す |
+| `seek(秒)` / `position()` | 再生位置。負の値は先頭として扱う |
+| `duration()` | 長さ (秒)。**読み込みが終わるまで `None`**。ライブ配信も `None` |
+| `set_volume(0.0..=1.0)` / `set_muted(bool)` | 音量と消音。範囲外は丸める |
+| `set_loop(bool)` / `set_autoplay(bool)` | 繰り返しと自動再生 |
+| `set_controls(bool)` | ネイティブの再生バーを出すか (既定は出す) |
+| `on_state_change(f)` | 状態が変わったとき。`Idle` / `Buffering` / `Playing` / `Paused` / `Ended` |
+| `on_position_change(f)` | 再生位置が進むたび (およそ 4 回/秒)。シークバーの追従に使う |
+
+`on_state_change` と `on_position_change` は、アプリから `play()` を呼んだときだけで
+なく、**ネイティブの再生バーをユーザーが操作したときにも届きます**。
+
+`Fit` は画像と動画の映像面の収め方です。
+
+| 値 | 意味 |
+| --- | --- |
+| `Contain` | 縦横比を保って収める (既定) |
+| `Cover` | 縦横比を保って埋める。はみ出しは切り取る |
+| `Fill` | 縦横比を無視して引き伸ばす |
+| `None` | 原寸のまま |
+
+#### ファイル選択と組み合わせる
+
+`FilePicker` が返す `FileEntry::source()` は、そのままメディアへ渡せます。
+ネイティブでは絶対パス、Web ではブラウザが作る `blob:` URL になります。
+
+```rust
+let pick = ui.file_picker("動画を選ぶ")?;
+pick.set_filters(&[FileFilter::new("動画", ["mp4", "mov"])]);
+pick.on_select({
+    let movie = movie.clone();
+    move |entries| {
+        if let Some(source) = entries.first().and_then(|e| e.source()) {
+            movie.set_source(source);
+        }
+    }
+});
+```
+
+Web の `blob:` URL は、**同じ `FilePicker` で次に選び直すまで**有効です
+(選び直すと以前のものは `URL.revokeObjectURL` で破棄されます)。
 
 ### ナビゲーション
 
@@ -320,6 +391,8 @@ stack.append(&picker);
 | 🟡 macOS の `Navbar` | `NSSegmentedControl` はネイティブだが、見出しを持てないため `NSTextField` と `NSStackView` で横に並べている |
 | 🟡 macOS の `Menu` | AppKit の `NSMenu` はポップアップ用。サイドバー相当の縦一覧は `NSButton` (AccessoryBar・PushOnPushOff) を `NSStackView` に並べて作っている |
 | 🟡 macOS の `Link` | AppKit にリンク専用のコントロールは無い。枠なしの `NSButton` を `NSColor::linkColor` にし、`href` は `NSWorkspace` で開いている |
+| 🟡 Windows の `Image` | `Microsoft.UI.Xaml.Controls.Image` と `BitmapImage` が `winio-winui3` 0.4.5 のバインディングに無く、Rust から `Source` を設定できない。`XamlReader` に `<Image>` の XAML を読ませ、ホストの `Grid` の中身を差し替えている (`ProgressBar` と同じ手口)。表示するのは WinUI 標準の `Image` そのもの |
+| 🟡 macOS の `Audio` | AppKit に音声専用のコントロールは無い。映像トラックの無いメディアを `AVPlayerView` に載せると再生バーだけが出るので、それを使っている |
 | 🟡 すべての `Pagination` | ページ送りに相当するネイティブコントロールはどの環境にも無い。前へ / 次へのボタンとページ番号を、その環境のネイティブなボタンで並べている |
 | 🟡 Windows の `Navbar` / `Dock` / `Menu` | `NavigationView` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、WinUI 標準の `ToggleButton` を `StackPanel` に並べ、選択状態を `IsChecked` で表している |
 | 🟡 Windows の `Breadcrumbs` | `BreadcrumbBar` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、標準の `HyperlinkButton` と区切り文字を `StackPanel` に並べている |
@@ -328,6 +401,11 @@ stack.append(&picker);
 
 | 箇所 | 説明 |
 | --- | --- |
+| macOS の `Image` の読み込み | `NSImage` は**同期的に**読む。リモートの URL を渡すと読み終わるまで UI が止まるため、ローカルのファイルを渡すこと |
+| `duration()` が `None` を返す間 | メディアの読み込みは 3 環境とも非同期。`set_source` の直後は長さが決まっていないので `None` になる。決まったかどうかは `on_state_change` / `on_position_change` を見る |
+| `Fit::Cover` と macOS の `Image` | `NSImageView` に「切り取ってでも埋める」設定が無いため、`Contain` と同じ拡縮になる (動画の `Video` は `AVLayerVideoGravity` があるので効く) |
+| Web の自動再生 | ブラウザの自動再生制限で `play()` が拒否されることがある。拒否されると状態が変わらないので、`on_state_change` で見分けられる |
+| Windows の再生通知のスレッド | `PlaybackStateChanged` などは UI スレッドではなく再生パイプラインのスレッドで起きる。`DispatcherQueue` で UI スレッドへ渡し直してから通知している |
 | macOS の `Label` | AppKit に `NSLabel` は無く、`NSTextField` を非編集で使うのが標準。`labelWithString:` はそのためのファクトリなので完全ネイティブ |
 | macOS のメニューバー | `run` が最小限のメインメニュー (アプリ・編集) を用意する。macOS では ⌘C / ⌘V / ⌘A が**メインメニューのキー等価として配送される**ため、メニューが無いと `TextInput` で貼り付けができない。項目のターゲットは nil で、コピーや貼り付けを行うのは AppKit 自身。アプリが自分でメニューを作っていれば、そちらを尊重して何もしない |
 | macOS の `Checkbox` | `NSButton` の `Switch` タイプが AppKit のチェックボックスそのもの。別クラスではない |
@@ -353,8 +431,9 @@ stack.append(&picker);
 ### 未対応のコンポーネント
 
 ポップアップメニュー、汎用のダイアログ、保存ダイアログ、リスト / テーブル、
-ラジオボタン、コンボボックス、複数行テキスト、ツールバー、ツリー、画像表示などは
-ありません (ファイル / フォルダーの選択だけは `FilePicker` があります)。
+ラジオボタン、コンボボックス、複数行テキスト、ツールバー、ツリーなどはありません
+(ファイル / フォルダーの選択は `FilePicker`、画像・動画・音声は
+`Image` / `Video` / `Audio` があります)。
 レイアウトはスタック・グリッド・スクロールで、絶対配置はありません。
 
 > **注意:** Windows 列は、Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を
@@ -389,7 +468,7 @@ examples/
 
 | バックエンド | 依存 |
 | --- | --- |
-| macOS | `objc2`, `objc2-app-kit`, `objc2-foundation` |
+| macOS | `objc2`, `objc2-app-kit`, `objc2-foundation`, `objc2-av-kit`, `objc2-av-foundation`, `objc2-core-media`, `block2` (メディア) |
 | Web | `wasm-bindgen`, `web-sys` |
 | Windows | `winio-winui3` (WinUI 3 バインディング), `windows`, `windows-core` |
 | Linux | (未実装。実装時に `gtk4` / `libadwaita`) |
@@ -461,7 +540,7 @@ cargo check --target x86_64-unknown-linux-gnu -p miui
 ```
 
 - `miui-core`: 設定・エラー整形の単体テスト
-- `miui-macos`: **AppKit の実コントロールに対する 21 件の統合テスト**
+- `miui-macos`: **AppKit の実コントロールに対する 33 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
@@ -480,6 +559,12 @@ cargo check --target x86_64-unknown-linux-gnu -p miui
   - `Spacer` が余りを吸い、後続の子が下端へ寄ること
   - NSGridView が行と列を自分で増やし、固定幅の列が効くこと
   - NSScrollView が中身を保持し、コールバックが生き続けること
+  - 画像が実ファイルから NSImage として読み込まれ、収め方が imageScaling になること
+  - **実ファイルを最後まで再生し、`Playing` → `Ended` が届くこと**
+  - 繰り返し再生では末尾で止まらないこと
+  - 再生位置が定期的にクロージャへ届き、先頭へ戻らないこと
+  - 音量と消音が AVPlayer と往復し、範囲外が丸められること
+  - KVO と定期観測を張ったままハンドルを捨てても異常終了しないこと
 
 AppKit はメインスレッドを要求しますが、Rust の標準テストハーネスは
 各テストを別スレッドで走らせます (`--test-threads=1` でも同じ)。
@@ -500,17 +585,23 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   バインドしていないため、Windows で実装できませんでした。
   「共通 API は全バックエンドの共通部分」という方針を優先して、
   macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **ウィジェットは 19 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
+- **ウィジェットは 22 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
   `Checkbox` / `TextInput` / `Slider` / `ProgressBar`)、レイアウト 3 種
   (`Grid` / `Scroll` / `Spacer`)、ナビゲーション 7 種
   (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`)、
-  ファイル選択 1 種 (`FilePicker`) です。
+  ファイル選択 1 種 (`FilePicker`)、メディア 3 種 (`Image` / `Video` / `Audio`) です。
   ポップアップメニュー、汎用のダイアログ、保存ダイアログ、リスト、
   複数行テキストなどは未実装です。
 - **Windows の `Stack` では主軸の `Fill` と `Spacer` が効きません。** `StackPanel` が
   子へ余りを配らないためです。`Grid` の `Track::Fill` を使ってください。
 - **macOS の `Track::Fill` は重みを無視します。** NSGridView に重みの概念が無く、
   `Fill` 配置と hugging priority による近似だからです。
+- **メディアのデコードと再生は行いません。** 対応している形式は、その環境の
+  ツールキット (AVFoundation / ブラウザ / Windows.Media.Playback) が決めます。
+- **macOS の `Image` はリモート URL を同期的に読み込みます。** 読み終わるまで
+  UI が止まるため、ローカルのファイルを渡してください。
+- **Windows のメディアは実機未確認です。** コンパイル確認のみ。
+- **Web のメディアはブラウザ未確認です。** wasm のビルドと起動までは確認済み。
 - **絶対配置はありません。** 位置は `Grid` のマス目・`Align`・`Spacer` で決めます。
 - **`set_sizing` はコンテナの中の子に効きます。** ウィンドウ直下のルートは
   ウィンドウいっぱいに広がるため、そこでの指定は意味を持ちません。
