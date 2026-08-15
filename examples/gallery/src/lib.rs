@@ -7,8 +7,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use miui::{
-    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, NavItem, Orientation, Padding,
-    PlaybackState, Result, ScrollPolicy, Settings, Sizing, Theme, Track, Ui,
+    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, MediaKind, NavItem, Orientation,
+    Padding, PlaybackState, Result, ScrollPolicy, Settings, Sizing, Theme, Track, Ui,
 };
 
 /// 同梱のサンプル画像の場所。
@@ -414,17 +414,130 @@ pub fn build(ui: &Ui) -> Result<()> {
 
 /// 画像・動画・音声のデモ。
 ///
-/// 画像は同梱のサンプルを表示し、収め方を切り替えられる。動画と音声は
-/// ファイル選択か、パス / URL の直接入力で読み込ませる
-/// (メディアそのものは同梱していない)。
+/// **1 つのファイル選択で、種類に応じて表示形式が切り替わる。**
+/// 拡張子から [`MediaKind`] を推測し、対応するタブへ自動で移動する。
+/// パスや URL を直接入力しても同じように振り分けられる。
 fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(12.0);
     pane.set_padding(Padding::all(12.0));
+    pane.append(&ui.label("ファイルを選ぶか、パス / URL を入れてください。")?);
+    pane.append(&ui.label("種類は拡張子から判定し、表示形式を切り替えます。")?);
 
-    // --- 画像 -------------------------------------------------------------
-    pane.append(&ui.label("画像 (同梱のサンプル)")?);
+    // --- それぞれの表示形式 ------------------------------------------------
+    let (image_pane, image) = build_image_pane(ui)?;
+    let (video_pane, video) = build_video_pane(ui)?;
+    let (audio_pane, audio) = build_audio_pane(ui)?;
 
+    // 表示形式の切り替えはタブが担う。miui にウィジェットを隠す API は
+    // 無いので、「1 つだけ見せる」にはタブを使う。
+    let forms = ui.tabs()?;
+    forms.add_tab("画像", &image_pane);
+    forms.add_tab("動画", &video_pane);
+    forms.add_tab("音声", &audio_pane);
+
+    let kind_label = ui.label("種類: 画像 (同梱のサンプル)")?;
+
+    // --- 選ばれたものを振り分ける ------------------------------------------
+    //
+    // 名前から種類を決め、場所を対応するウィジェットへ渡してタブを移す。
+    // Web の `blob:` URL には拡張子が無いため、判定には名前のほうを使う。
+    let dispatch = {
+        let image = image.clone();
+        let video = video.clone();
+        let audio = audio.clone();
+        let forms = forms.clone();
+        let kind_label = kind_label.clone();
+        move |name: &str, source: &str| {
+            let Some(kind) = MediaKind::guess(name) else {
+                kind_label.set_text(&format!("種類: 判定できません ({name})"));
+                return;
+            };
+            match kind {
+                MediaKind::Image => {
+                    image.set_source(source);
+                    forms.select(0);
+                }
+                MediaKind::Video => {
+                    video.set_source(source);
+                    forms.select(1);
+                }
+                MediaKind::Audio => {
+                    audio.set_source(source);
+                    forms.select(2);
+                }
+            }
+            kind_label.set_text(&format!("種類: {}", kind_name(kind)));
+        }
+    };
+    let dispatch = Rc::new(dispatch);
+
+    // --- 選ぶ手段: ファイル選択 --------------------------------------------
+    let pick = ui.file_picker("メディアを選ぶ")?;
+    // 3 種類まとめて 1 つのフィルターにする。
+    let mut extensions: Vec<&str> = Vec::new();
+    for kind in [MediaKind::Image, MediaKind::Video, MediaKind::Audio] {
+        extensions.extend_from_slice(kind.extensions());
+    }
+    pick.set_filters(&[FileFilter::new("メディア", extensions)]);
+
+    let field = ui.text_input("")?;
+    field.set_placeholder("/path/to/media またはhttps://…");
+    field.set_sizing(Sizing::fill_width());
+
+    pick.on_select({
+        let dispatch = dispatch.clone();
+        let field = field.clone();
+        move |entries| {
+            let Some(entry) = entries.first() else {
+                return;
+            };
+            // ネイティブは絶対パス、Web はブラウザが作る blob URL。
+            let Some(source) = entry.source() else {
+                field.set_text(&format!("{} (場所を取得できません)", entry.name()));
+                return;
+            };
+            field.set_text(source);
+            dispatch(entry.name(), source);
+        }
+    });
+
+    // --- 選ぶ手段: パス / URL の直接入力 -----------------------------------
+    let load = ui.button("読み込む")?;
+    load.on_click({
+        let dispatch = dispatch.clone();
+        let field = field.clone();
+        move || {
+            let source = field.text();
+            if !source.is_empty() {
+                // 入力の場合は、場所そのものから種類を判定する。
+                dispatch(&source, &source);
+            }
+        }
+    });
+
+    let row = ui.stack(Orientation::Horizontal)?;
+    row.set_spacing(8.0);
+    row.append(&field);
+    row.append(&load);
+    row.append(&pick);
+    row.set_sizing(Sizing::fill_width());
+    pane.append(&row);
+    pane.append(&kind_label);
+
+    forms.set_sizing(Sizing::fill_width());
+    pane.append(&forms);
+    forms.set_selected(0);
+    Ok(pane)
+}
+
+/// 画像の表示形式。収め方を切り替えられる。
+fn build_image_pane(ui: &Ui) -> Result<(miui::Stack, miui::Image)> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(8.0);
+    pane.set_padding(Padding::all(8.0));
+
+    // 何も選ばれていない間は同梱のサンプルを出しておく。
     let image = ui.image(SAMPLE_IMAGE)?;
     image.set_alt("斜めのグラデーションと市松模様のサンプル画像");
     // 枠を画像より横長にしておくと、収め方の違いが見て分かる。
@@ -437,10 +550,10 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
         ("fill", Fit::Fill),
         ("none", Fit::None),
     ];
-    let fit_selector = ui.navbar("収め方")?;
-    fit_selector.set_items(&NavItem::list(fits.map(|(name, _)| name)));
-    fit_selector.set_selected(0);
-    fit_selector.on_select({
+    let selector = ui.navbar("収め方")?;
+    selector.set_items(&NavItem::list(fits.map(|(name, _)| name)));
+    selector.set_selected(0);
+    selector.on_select({
         let image = image.clone();
         move |index| {
             if let Some((_, fit)) = fits.get(index) {
@@ -448,46 +561,20 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
             }
         }
     });
-    pane.append(&fit_selector);
+    pane.append(&selector);
+    Ok((pane, image))
+}
 
-    // --- 動画 -------------------------------------------------------------
-    pane.append(&ui.label("動画 (パスか URL を入れて「読み込む」)")?);
+/// 動画の表示形式。再生の操作を一通り並べる。
+fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(8.0);
+    pane.set_padding(Padding::all(8.0));
 
     let video = ui.video("")?;
     video.set_sizing(Sizing::fixed(320.0, 180.0));
-
-    let video_field = ui.text_input("")?;
-    video_field.set_placeholder("/path/to/clip.mp4 または https://…");
-    video_field.set_sizing(Sizing::fill_width());
-    let video_load = ui.button("読み込む")?;
-    video_load.on_click({
-        let video = video.clone();
-        let field = video_field.clone();
-        move || video.set_source(&field.text())
-    });
-    // ファイル選択からも指定できるようにする。押すとその環境の標準の
-    // ダイアログが開く。
-    let video_pick = ui.file_picker("ファイルを選ぶ")?;
-    video_pick.set_filters(&[FileFilter::new(
-        "動画",
-        ["mp4", "mov", "m4v", "webm", "mkv"],
-    )]);
-    video_pick.on_select({
-        let video = video.clone();
-        let field = video_field.clone();
-        move |entries| apply_picked(entries, &field, |source| video.set_source(source))
-    });
-
-    let video_row = ui.stack(Orientation::Horizontal)?;
-    video_row.set_spacing(8.0);
-    video_row.append(&video_field);
-    video_row.append(&video_load);
-    video_row.append(&video_pick);
-    video_row.set_sizing(Sizing::fill_width());
-    pane.append(&video_row);
     pane.append(&video);
 
-    // 再生状態は、ネイティブの再生バーを押したときにも届く。
     let status = ui.label("状態: 未再生")?;
     video.on_state_change({
         let status = status.clone();
@@ -506,79 +593,49 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
         let video = video.clone();
         move || video.pause()
     });
-    // 再生位置は時々刻々と変わるが、miui にタイマーは無いので押して読み直す。
-    let position = ui.label("位置: -")?;
-    let refresh = ui.button("位置を読む")?;
-    refresh.on_click({
-        let video = video.clone();
-        let position = position.clone();
-        move || {
-            let text = match video.duration() {
-                Some(duration) => {
-                    format!("位置: {:.1} / {:.1} 秒", video.position(), duration)
-                }
-                None => "位置: 読み込み中 (長さが未確定)".to_string(),
-            };
-            position.set_text(&text);
-        }
-    });
     buttons.append(&play);
     buttons.append(&pause);
-    buttons.append(&refresh);
     pane.append(&buttons);
     pane.append(&status);
+
+    let position = ui.label("位置: -")?;
     pane.append(&position);
 
     // 長さが決まるまでシークできないので、割合で指定する。
-    let seek_label = ui.label("シーク: 0%")?;
     let seek = ui.slider(0.0, 1.0)?;
-
     // つまみを「再生に合わせて動かす」ときと「ユーザーが動かした」ときを
     // 区別する目印。こちらから値を書くとスライダーの変更通知が出る環境
-    // (WinUI) があるため、これが無いと再生位置を書き戻すたびにシークが
-    // 走ってしまう。
+    // (WinUI) があるため、これが無いと再生位置を書き戻すたびにシークが走る。
     let syncing = Rc::new(Cell::new(false));
-
     seek.on_change({
         let video = video.clone();
-        let seek_label = seek_label.clone();
         let syncing = syncing.clone();
         move |ratio| {
             if syncing.get() {
                 return;
             }
-            seek_label.set_text(&format!("シーク: {:.0}%", ratio * 100.0));
             if let Some(duration) = video.duration() {
                 video.seek(duration * ratio);
             }
         }
     });
-
     // 再生に合わせてつまみと位置表示を進める。
     video.on_position_change({
         let video = video.clone();
         let seek = seek.clone();
-        let seek_label = seek_label.clone();
         let position = position.clone();
         let syncing = syncing.clone();
         move |seconds| {
-            let Some(duration) = video.duration() else {
+            let Some(duration) = video.duration().filter(|d| *d > 0.0) else {
                 return;
             };
-            if duration <= 0.0 {
-                return;
-            }
-            let ratio = (seconds / duration).clamp(0.0, 1.0);
             syncing.set(true);
-            seek.set_value(ratio);
+            seek.set_value((seconds / duration).clamp(0.0, 1.0));
             syncing.set(false);
-            seek_label.set_text(&format!("シーク: {:.0}%", ratio * 100.0));
             position.set_text(&format!("位置: {seconds:.1} / {duration:.1} 秒"));
         }
     });
-
     pane.append(&seek);
-    pane.append(&seek_label);
 
     let volume_label = ui.label("音量: 100%")?;
     let volume = ui.slider(0.0, 1.0)?;
@@ -609,43 +666,35 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
     toggles.append(&muted);
     toggles.append(&looping);
     pane.append(&toggles);
+    Ok((pane, video))
+}
 
-    // --- 音声 -------------------------------------------------------------
-    pane.append(&ui.label("音声 (操作はネイティブの再生バーから)")?);
+/// 音声の表示形式。映像面が無いので、操作はネイティブの再生バーに任せる。
+fn build_audio_pane(ui: &Ui) -> Result<(miui::Stack, miui::Audio)> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(8.0);
+    pane.set_padding(Padding::all(8.0));
+    pane.append(&ui.label("操作はネイティブの再生バーから行えます。")?);
 
     let audio = ui.audio("")?;
     audio.set_sizing(Sizing::fill_width());
-
-    let audio_field = ui.text_input("")?;
-    audio_field.set_placeholder("/path/to/bgm.m4a または https://…");
-    audio_field.set_sizing(Sizing::fill_width());
-    let audio_load = ui.button("読み込む")?;
-    audio_load.on_click({
-        let audio = audio.clone();
-        let field = audio_field.clone();
-        move || audio.set_source(&field.text())
-    });
-    let audio_pick = ui.file_picker("ファイルを選ぶ")?;
-    audio_pick.set_filters(&[FileFilter::new(
-        "音声",
-        ["m4a", "mp3", "aac", "wav", "flac", "ogg"],
-    )]);
-    audio_pick.on_select({
-        let audio = audio.clone();
-        let field = audio_field.clone();
-        move |entries| apply_picked(entries, &field, |source| audio.set_source(source))
-    });
-
-    let audio_row = ui.stack(Orientation::Horizontal)?;
-    audio_row.set_spacing(8.0);
-    audio_row.append(&audio_field);
-    audio_row.append(&audio_load);
-    audio_row.append(&audio_pick);
-    audio_row.set_sizing(Sizing::fill_width());
-    pane.append(&audio_row);
     pane.append(&audio);
 
-    Ok(pane)
+    let status = ui.label("状態: 未再生")?;
+    audio.on_state_change({
+        let status = status.clone();
+        move |state| status.set_text(&format!("状態: {}", state_name(state)))
+    });
+    pane.append(&status);
+    Ok((pane, audio))
+}
+
+fn kind_name(kind: MediaKind) -> &'static str {
+    match kind {
+        MediaKind::Image => "画像",
+        MediaKind::Video => "動画",
+        MediaKind::Audio => "音声",
+    }
 }
 
 fn state_name(state: PlaybackState) -> &'static str {
@@ -658,22 +707,6 @@ fn state_name(state: PlaybackState) -> &'static str {
     }
 }
 
-/// 選ばれたファイルを入力欄に書き戻し、メディアへ渡す。
-///
-/// 渡すのは `FileEntry::source()`。ネイティブでは絶対パス、Web では
-/// ブラウザが作る `blob:` URL になり、どちらもそのまま `set_source` へ渡せる。
-fn apply_picked(entries: &[FileEntry], field: &miui::TextInput, set: impl FnOnce(&str)) {
-    let Some(entry) = entries.first() else {
-        return;
-    };
-    match entry.source() {
-        Some(source) => {
-            field.set_text(source);
-            set(source);
-        }
-        None => field.set_text(&format!("{} (場所を取得できません)", entry.name())),
-    }
-}
 
 /// ネイティブ / Web 共通の起動処理。
 pub fn start() -> Result<()> {
