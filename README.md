@@ -407,7 +407,7 @@ stack.append(&picker);
 | --- | --- |
 | macOS の `Image` の読み込み | `NSImage` は**同期的に**読む。リモートの URL を渡すと読み終わるまで UI が止まるため、ローカルのファイルを渡すこと |
 | `duration()` が `None` を返す間 | メディアの読み込みは 3 環境とも非同期。`set_source` の直後は長さが決まっていないので `None` になる。決まったかどうかは `on_state_change` / `on_position_change` を見る |
-| `Fit::Cover` と macOS の `Image` | `NSImageView` に「切り取ってでも埋める」設定が無いため、`Contain` と同じ拡縮になる (動画の `Video` は `AVLayerVideoGravity` があるので効く) |
+| `Fit::Cover` と macOS の `Image` | `NSImageView` に設定が無いため独自描画で縦横比を保って拡大し、表示領域外を切り取る (動画の `Video` は `AVLayerVideoGravity` があるので効く) |
 | Web の自動再生 | ブラウザの自動再生制限で `play()` が拒否されることがある。拒否されると状態が変わらないので、`on_state_change` で見分けられる |
 | Windows の再生通知のスレッド | `PlaybackStateChanged` などは UI スレッドではなく再生パイプラインのスレッドで起きる。`DispatcherQueue` で UI スレッドへ渡し直してから通知している |
 | macOS の `Label` | AppKit に `NSLabel` は無く、`NSTextField` を非編集で使うのが標準。`labelWithString:` はそのためのファクトリなので完全ネイティブ |

@@ -929,7 +929,7 @@ fn image_fit_maps_to_native_scaling(ui: &Ui) -> Result<()> {
     assert_eq!(native.imageScaling(), NSImageScaling::ScaleAxesIndependently);
     image.set_fit(Fit::None);
     assert_eq!(native.imageScaling(), NSImageScaling::ScaleNone);
-    // NSImageView に cover に当たる設定は無いので contain と同じになる。
+    // Cover は imageScaling の値を共有するが、MiuiImageView::drawRect で独自に描画する。
     image.set_fit(Fit::Cover);
     assert_eq!(
         native.imageScaling(),

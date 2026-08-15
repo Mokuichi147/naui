@@ -17,9 +17,12 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{
-    define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
+    define_class, msg_send, sel, AnyThread, ClassType, DefinedClass, MainThreadMarker,
+    MainThreadOnly, Message,
 };
-use objc2_app_kit::{NSAccessibility, NSImage, NSImageScaling, NSImageView, NSView};
+use objc2_app_kit::{
+    NSAccessibility, NSCompositingOperation, NSImage, NSImageScaling, NSImageView, NSView,
+};
 use objc2_av_foundation::{
     AVLayerVideoGravity, AVLayerVideoGravityResize, AVLayerVideoGravityResizeAspect,
     AVLayerVideoGravityResizeAspectFill, AVPlayer, AVPlayerActionAtItemEnd, AVPlayerItem,
@@ -28,7 +31,8 @@ use objc2_av_foundation::{
 use objc2_av_kit::{AVPlayerView, AVPlayerViewControlsStyle};
 use objc2_core_media::{CMTime, CMTimeFlags};
 use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSObjectNSKeyValueObserverRegistration, NSString, NSURL,
+    NSNotification, NSNotificationCenter, NSPoint, NSRect, NSSize,
+    NSObjectNSKeyValueObserverRegistration, NSString, NSURL,
 };
 
 use crate::widgets::{impl_widget, Widget};
@@ -65,8 +69,111 @@ fn to_url(source: &str) -> Option<Retained<NSURL>> {
 // ------------------------------------------------------------------ Image
 
 struct ImageInner {
-    native: Retained<NSImageView>,
+    native: Retained<MiuiImageView>,
     source: RefCell<String>,
+}
+
+// `NSImageView` に無い `Fit::Cover` を、表示領域いっぱいに拡大して描く画像ビュー。
+define_class!(
+    #[unsafe(super(NSImageView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "MiuiImageView"]
+    #[ivars = Cell<Fit>]
+    struct MiuiImageView;
+
+    unsafe impl NSObjectProtocol for MiuiImageView {}
+
+    impl MiuiImageView {
+        #[unsafe(method(drawRect:))]
+        fn draw_rect(&self, dirty_rect: NSRect) {
+            if self.ivars().get() != Fit::Cover {
+                let _: () = unsafe { msg_send![super(self), drawRect: dirty_rect] };
+                return;
+            }
+
+            let Some(image) = self.as_super().image() else {
+                return;
+            };
+            let bounds = self.as_super().bounds();
+            let Some(destination) = cover_rect(bounds, image.size()) else {
+                return;
+            };
+            let source = NSRect::new(NSPoint::new(0.0, 0.0), image.size());
+            image.drawInRect_fromRect_operation_fraction(
+                destination,
+                source,
+                NSCompositingOperation::SourceOver,
+                1.0,
+            );
+        }
+    }
+);
+
+impl MiuiImageView {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(Cell::new(Fit::default()));
+        let this: Retained<Self> = unsafe { msg_send![super(this), init] };
+        this.as_super().setClipsToBounds(true);
+        this
+    }
+
+    fn set_fit(&self, fit: Fit) {
+        self.ivars().set(fit);
+        // Contain / Fill / None は NSImageView の描画へ戻す。Cover だけは
+        // drawRect で独自に描くが、ネイティブ側の状態も一貫させておく。
+        self.as_super().setImageScaling(match fit {
+            Fit::Contain | Fit::Cover => NSImageScaling::ScaleProportionallyUpOrDown,
+            Fit::Fill => NSImageScaling::ScaleAxesIndependently,
+            Fit::None => NSImageScaling::ScaleNone,
+        });
+        self.as_super()
+            .as_super()
+            .as_super()
+            .setNeedsDisplay(true);
+    }
+}
+
+/// 画像の縦横比を保ったまま、表示領域を覆う描画先を求める。
+fn cover_rect(bounds: NSRect, image: NSSize) -> Option<NSRect> {
+    let width = bounds.size.width;
+    let height = bounds.size.height;
+    if width <= 0.0 || height <= 0.0 || image.width <= 0.0 || image.height <= 0.0 {
+        return None;
+    }
+
+    let scale = (width / image.width).max(height / image.height);
+    let size = NSSize::new(image.width * scale, image.height * scale);
+    Some(NSRect::new(
+        NSPoint::new(
+            bounds.origin.x + (width - size.width) / 2.0,
+            bounds.origin.y + (height - size.height) / 2.0,
+        ),
+        size,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cover_rect_fills_the_bounds_while_preserving_aspect_ratio() {
+        let bounds = NSRect::new(NSPoint::new(10.0, 20.0), NSSize::new(400.0, 200.0));
+        let rect = cover_rect(bounds, NSSize::new(200.0, 400.0)).expect("有効な矩形");
+
+        // 縦長画像を横長の領域へ cover すると、上下がはみ出す。
+        assert_eq!(rect.size.width, 400.0);
+        assert_eq!(rect.size.height, 800.0);
+        assert_eq!(rect.origin.x, 10.0);
+        assert_eq!(rect.origin.y, -280.0);
+    }
+
+    #[test]
+    fn cover_rect_rejects_empty_sizes() {
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(100.0, 100.0));
+        assert!(cover_rect(bounds, NSSize::new(0.0, 100.0)).is_none());
+        assert!(cover_rect(bounds, NSSize::new(100.0, 0.0)).is_none());
+    }
 }
 
 /// 画像表示 (NSImageView)。
@@ -76,14 +183,9 @@ struct ImageInner {
 /// あらかじめ手元へ落としてから渡すこと。
 #[derive(Clone)]
 pub struct Image(Rc<ImageInner>);
-impl_widget!(Image);
-
 impl Image {
     pub(crate) fn new(mtm: MainThreadMarker, source: &str) -> Self {
-        let native = NSImageView::new(mtm);
-        // Fit::None は画像を原寸で描画するため、表示領域より大きい画像が
-        // 周囲のビューへはみ出さないよう NSImageView の境界で切り取る。
-        native.setClipsToBounds(true);
+        let native = MiuiImageView::new(mtm);
         let this = Self(Rc::new(ImageInner {
             native,
             source: RefCell::new(String::new()),
@@ -106,33 +208,47 @@ impl Image {
         *self.0.source.borrow_mut() = source.to_string();
         let image =
             to_url(source).and_then(|url| NSImage::initWithContentsOfURL(NSImage::alloc(), &url));
-        self.0.native.setImage(image.as_deref());
+        self.0.native.as_super().setImage(image.as_deref());
     }
 
     /// 読み込めているか。
     pub fn is_loaded(&self) -> bool {
-        self.0.native.image().is_some()
+        self.0.native.as_super().image().is_some()
     }
 
     /// 表示領域への収め方。
     ///
-    /// NSImageView に「切り取ってでも埋める」設定は無いため、
-    /// [`Fit::Cover`] は [`Fit::Contain`] と同じ拡縮になる。
+    /// NSImageView に「切り取ってでも埋める」設定が無いため、
+    /// [`Fit::Cover`] だけは `drawRect` で縦横比を保った拡大描画を行う。
     pub fn set_fit(&self, fit: Fit) {
-        self.0.native.setImageScaling(match fit {
-            Fit::Contain | Fit::Cover => NSImageScaling::ScaleProportionallyUpOrDown,
-            Fit::Fill => NSImageScaling::ScaleAxesIndependently,
-            Fit::None => NSImageScaling::ScaleNone,
-        });
+        self.0.native.set_fit(fit);
     }
 
     /// 画像の内容を表す文字列。VoiceOver が読み上げる。
     pub fn set_alt(&self, text: &str) {
         self.0
             .native
+            .as_super()
             .setAccessibilityLabel(Some(&NSString::from_str(text)));
     }
 }
+
+impl Widget for Image {
+    fn native_view(&self) -> Retained<NSView> {
+        self.0
+            .native
+            .clone()
+            .into_super()
+            .into_super()
+            .into_super()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Widget> {
+        Box::new(self.clone())
+    }
+}
+
+crate::widgets::impl_sizing!(Image);
 
 // --------------------------------------------------------------- 再生の中身
 
