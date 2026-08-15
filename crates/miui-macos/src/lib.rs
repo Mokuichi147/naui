@@ -11,6 +11,7 @@
 
 mod file_picker;
 mod layout;
+mod menu_bar;
 mod navigation;
 mod trampoline;
 mod widgets;
@@ -220,6 +221,9 @@ where
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let appearance = appearance_for_theme(settings.theme);
     app.setAppearance(appearance.as_deref());
+    // ⌘C / ⌘V などはメインメニューのキー等価として配送される。
+    // メニューが無いと、テキスト入力で貼り付けができない。
+    menu_bar::install(mtm, &settings.name);
 
     let error = Rc::new(RefCell::new(None));
     let delegate = AppDelegate::alloc(mtm).set_ivars(DelegateState {
@@ -256,6 +260,14 @@ where
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
     let ui = Ui::new(mtm, Theme::System);
     build(&ui)
+}
+
+/// メインメニューを組み立てる。**自動テスト専用**。
+///
+/// 実際のアプリでは [`run`] が起動時に呼ぶ。
+#[doc(hidden)]
+pub fn install_menu_bar_for_test(mtm: MainThreadMarker, app_name: &str) {
+    menu_bar::install(mtm, app_name);
 }
 
 fn appearance_for_theme(theme: Theme) -> Option<Retained<NSAppearance>> {
