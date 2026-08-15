@@ -272,28 +272,6 @@ let sound = ui.audio("/path/to/bgm.m4a")?;     // 映像面を持たず再生バ
 | `Fill` | 縦横比を無視して引き伸ばす |
 | `None` | 原寸のまま |
 
-#### 種類を判別する
-
-`MediaKind::guess` が、ファイル名や場所の拡張子から種類を推測します。
-**中身は見ません。** どのウィジェットで表示するかをアプリが選ぶための目安です。
-
-```rust
-use miui::MediaKind;
-
-match MediaKind::guess("IMG_0001.MOV") {
-    Some(MediaKind::Image) => { /* Image で表示する */ }
-    Some(MediaKind::Video) => { /* Video で表示する */ }
-    Some(MediaKind::Audio) => { /* Audio で表示する */ }
-    None => { /* 拡張子が無い / 知らない拡張子 */ }
-}
-
-// その種類として扱う拡張子は取り出せる。ファイル選択の絞り込みに使えます。
-let _: &[&str] = MediaKind::Video.extensions();
-```
-
-**Web の `blob:` URL には拡張子がありません。** ファイル選択と組み合わせるときは、
-場所ではなく `FileEntry::name()` を渡してください。
-
 #### ファイル選択と組み合わせる
 
 `FilePicker` が返す `FileEntry::source()` は、そのままメディアへ渡せます。
@@ -314,6 +292,10 @@ pick.on_select({
 
 Web の `blob:` URL は、**同じ `FilePicker` で次に選び直すまで**有効です
 (選び直すと以前のものは `URL.revokeObjectURL` で破棄されます)。
+
+どのウィジェットで表示するかは、**`FileFilter` で受け付ける拡張子を絞って
+選ばせる**のが確実です。選ばれた時点で種類が決まるので、miui 側に種類を
+推測する仕組みは持たせていません。
 
 ### ナビゲーション
 
@@ -424,7 +406,6 @@ stack.append(&picker);
 | 箇所 | 説明 |
 | --- | --- |
 | macOS の `Image` の読み込み | `NSImage` は**同期的に**読む。リモートの URL を渡すと読み終わるまで UI が止まるため、ローカルのファイルを渡すこと |
-| `MediaKind::guess` の判定 | 拡張子だけを見る**推測**で、中身は読まない。拡張子の無い URL や `blob:` URL は判断できない。`webm` や `ogg` のように映像と音声のどちらもあり得る拡張子は、片方に決め打ちしている |
 | `duration()` が `None` を返す間 | メディアの読み込みは 3 環境とも非同期。`set_source` の直後は長さが決まっていないので `None` になる。決まったかどうかは `on_state_change` / `on_position_change` を見る |
 | `Fit::Cover` と macOS の `Image` | `NSImageView` に「切り取ってでも埋める」設定が無いため、`Contain` と同じ拡縮になる (動画の `Video` は `AVLayerVideoGravity` があるので効く) |
 | Web の自動再生 | ブラウザの自動再生制限で `play()` が拒否されることがある。拒否されると状態が変わらないので、`on_state_change` で見分けられる |

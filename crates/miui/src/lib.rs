@@ -154,8 +154,8 @@
 
 pub use miui_core::{
     accept_attribute, media, Align, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell,
-    Length, MediaKind, NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy,
-    Settings, Sizing, Theme, Track,
+    Length, NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy, Settings,
+    Sizing, Theme, Track,
 };
 
 #[cfg(target_arch = "wasm32")]
