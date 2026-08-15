@@ -81,6 +81,9 @@ impl_widget!(Image);
 impl Image {
     pub(crate) fn new(mtm: MainThreadMarker, source: &str) -> Self {
         let native = NSImageView::new(mtm);
+        // Fit::None は画像を原寸で描画するため、表示領域より大きい画像が
+        // 周囲のビューへはみ出さないよう NSImageView の境界で切り取る。
+        native.setClipsToBounds(true);
         let this = Self(Rc::new(ImageInner {
             native,
             source: RefCell::new(String::new()),

@@ -918,6 +918,7 @@ fn image_fit_maps_to_native_scaling(ui: &Ui) -> Result<()> {
     let native = view
         .downcast_ref::<NSImageView>()
         .expect("実体が NSImageView であること");
+    assert!(native.clipsToBounds(), "画像表示領域からはみ出さないこと");
 
     // 既定は縦横比を保って収める。
     assert_eq!(
