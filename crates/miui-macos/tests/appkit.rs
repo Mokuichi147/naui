@@ -61,6 +61,10 @@ fn main() {
             "ファイル選択のモードが NSOpenPanel へ反映される",
             file_picker_panel,
         ),
+        (
+            "編集メニューが貼り付けをレスポンダチェーンへ配送する",
+            menu_bar_provides_edit_shortcuts,
+        ),
     ];
 
     let mut failed = 0;
@@ -745,5 +749,45 @@ fn file_picker_panel(ui: &Ui) -> Result<()> {
         .expect("拡張子が設定されること");
     let types: Vec<String> = types.iter().map(|t| t.to_string()).collect();
     assert_eq!(types, ["png", "jpg", "txt"]);
+    Ok(())
+}
+
+/// メインメニューに編集項目があり、⌘V がレスポンダチェーンへ流れる。
+///
+/// macOS では ⌘C / ⌘V はメインメニューのキー等価として配送される。
+/// メニューが無いと、テキスト入力にフォーカスがあっても貼り付けができない。
+fn menu_bar_provides_edit_shortcuts(_ui: &Ui) -> Result<()> {
+    let mtm = objc2::MainThreadMarker::new().expect("メインスレッド");
+    miui_macos::install_menu_bar_for_test(mtm, "miui test");
+
+    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+    let main = app.mainMenu().expect("メインメニューがあること");
+    let edit = (0..main.numberOfItems())
+        .filter_map(|i| main.itemAtIndex(i).and_then(|item| item.submenu()))
+        .find(|menu| menu.title().to_string() == "編集")
+        .expect("編集メニューがあること");
+
+    let paste = (0..edit.numberOfItems())
+        .filter_map(|i| edit.itemAtIndex(i))
+        .find(|item| item.action() == Some(objc2::sel!(paste:)))
+        .expect("paste: を送る項目があること");
+    assert_eq!(
+        paste.keyEquivalent().to_string(),
+        "v",
+        "⌘V に割り当てられていること"
+    );
+    // ターゲットが nil = レスポンダチェーンへ流す (編集中のコントロールへ届く)。
+    assert!(
+        unsafe { paste.target() }.is_none(),
+        "ターゲットを固定せず、いま編集中のコントロールへ送ること"
+    );
+
+    // 起動時に一度組み立てたら、呼び直しても作り直さない。
+    let again = app.mainMenu().expect("メインメニューがあること");
+    miui_macos::install_menu_bar_for_test(mtm, "miui test");
+    assert!(
+        app.mainMenu().is_some_and(|m| m == again),
+        "既にメニューがあれば作り直さないこと"
+    );
     Ok(())
 }

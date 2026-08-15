@@ -33,6 +33,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSPanel",
     "NSLayoutAnchor",
     "NSLayoutConstraint",
+    "NSMenu",
+    "NSMenuItem",
     "NSPathControl",
     "NSPathControlItem",
     "NSProgressIndicator",
@@ -54,9 +56,12 @@ objc2-app-kit = { version = "0.3", features = [
 [dev-dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
     "NSButton",
     "NSControl",
     "NSLayoutConstraint",
+    "NSMenu",
+    "NSMenuItem",
     "NSOpenPanel",
     "NSPanel",
     "NSResponder",

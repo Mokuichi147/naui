@@ -329,6 +329,7 @@ stack.append(&picker);
 | 箇所 | 説明 |
 | --- | --- |
 | macOS の `Label` | AppKit に `NSLabel` は無く、`NSTextField` を非編集で使うのが標準。`labelWithString:` はそのためのファクトリなので完全ネイティブ |
+| macOS のメニューバー | `run` が最小限のメインメニュー (アプリ・編集) を用意する。macOS では ⌘C / ⌘V / ⌘A が**メインメニューのキー等価として配送される**ため、メニューが無いと `TextInput` で貼り付けができない。項目のターゲットは nil で、コピーや貼り付けを行うのは AppKit 自身。アプリが自分でメニューを作っていれば、そちらを尊重して何もしない |
 | macOS の `Checkbox` | `NSButton` の `Switch` タイプが AppKit のチェックボックスそのもの。別クラスではない |
 | WinUI 3 の `Button` / `Checkbox` | ラベルを `TextBlock` にして `Content` に入れている。XAML の標準的なやり方で、コントロール自体はネイティブ |
 | Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
