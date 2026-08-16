@@ -25,10 +25,15 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use miui_core::media::source_url;
+use miui_core::media::{is_url, source_url};
 use miui_core::{Fit, PlaybackState, Result};
 use windows::Foundation::{TimeSpan, TypedEventHandler, Uri};
-use windows::Media::Playback::{MediaPlaybackSession, MediaPlaybackState, MediaPlayer};
+use windows::Media::Core::MediaSource;
+use windows::Media::Playback::{
+    IMediaPlaybackSource, MediaPlaybackSession, MediaPlaybackState, MediaPlayer,
+    MediaPlayerFailedEventArgs,
+};
+use windows::Storage::StorageFile;
 use windows_core::{IInspectable, Interface, HSTRING};
 use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use winui3::Microsoft::UI::Xaml::Controls::{Grid, MediaPlayerElement};
@@ -50,6 +55,18 @@ fn stretch(fit: Fit) -> Stretch {
         Fit::Cover => Stretch::UniformToFill,
         Fit::Fill => Stretch::Fill,
         Fit::None => Stretch::None,
+    }
+}
+
+/// XAMLの属性値として使える `Stretch` の名前。
+///
+/// Rustの `Debug` 表現 (`Stretch(2)`) は XAML の列挙値として解釈できない。
+fn stretch_name(fit: Fit) -> &'static str {
+    match fit {
+        Fit::Contain => "Uniform",
+        Fit::Cover => "UniformToFill",
+        Fit::Fill => "Fill",
+        Fit::None => "None",
     }
 }
 
@@ -163,17 +180,29 @@ impl Image {
         };
         let xaml = format!(
             r#"<Image xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                Source="{source}" Stretch="{stretch:?}"
-                HorizontalAlignment="Stretch" VerticalAlignment="Stretch"{automation}/>"#,
+                Stretch="{stretch}" HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch"{automation}>
+                <Image.Source>
+                    <BitmapImage UriSource="{source}"/>
+                </Image.Source>
+            </Image>"#,
             // WinUI はファイルパスではなく URI を要求する。
             source = escape_xml(&source_url(&source)),
-            stretch = stretch(self.0.fit.get()),
+            stretch = stretch_name(self.0.fit.get()),
         );
-        let Ok(element) = XamlReader::Load(&HSTRING::from(xaml)) else {
+        let element = match XamlReader::Load(&HSTRING::from(xaml)) {
+            Ok(element) => element,
+            Err(error) => {
+                eprintln!("miui-windows: Image の XAML 生成に失敗: {error}");
+                return;
+            }
+        };
+        let Ok(element) = element.cast::<UIElement>() else {
+            eprintln!("miui-windows: Image 要素への変換に失敗");
             return;
         };
-        if let Ok(element) = element.cast::<UIElement>() {
-            let _ = children.Append(&element);
+        if let Err(error) = children.Append(&element) {
+            eprintln!("miui-windows: Image の配置に失敗: {error}");
         }
     }
 }
@@ -256,9 +285,12 @@ impl MediaInner {
     fn new() -> Result<Rc<Self>> {
         let native = MediaPlayerElement::new().map_err(|e| to_error("MediaPlayerElement の生成", e))?;
         let player = MediaPlayer::new().map_err(|e| to_error("MediaPlayer の生成", e))?;
-        // 標準の再生バーを出す。
+        // Windows App SDK 2.2.4 の標準 MediaTransportControls は、
+        // MediaPlayerElement を visual tree へ追加したときに XAML 内部
+        // 例外 (0xc000027b) を起こす環境がある。操作 UI はアプリ側で
+        // 用意するため、ここでは常に無効にしておく。
         native
-            .SetAreTransportControlsEnabled(true)
+            .SetAreTransportControlsEnabled(false)
             .map_err(|e| to_error("再生バーの設定", e))?;
         native
             .SetMediaPlayer(&player)
@@ -301,7 +333,13 @@ impl MediaInner {
                 let Ok(session) = session.ok() else {
                     return Ok(());
                 };
-                let state = map_state(session.PlaybackState()?);
+                let state = match session.PlaybackState() {
+                    Ok(state) => map_state(state),
+                    Err(error) => {
+                        eprintln!("miui-windows: 再生状態の取得に失敗: {error}");
+                        return Ok(());
+                    }
+                };
                 let _ = state_queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
                     deliver(id, state);
                     Ok(())
@@ -320,7 +358,13 @@ impl MediaInner {
                 let Ok(session) = session.ok() else {
                     return Ok(());
                 };
-                let seconds = to_seconds(session.Position()?);
+                let seconds = match session.Position() {
+                    Ok(position) => to_seconds(position),
+                    Err(error) => {
+                        eprintln!("miui-windows: 再生位置の取得に失敗: {error}");
+                        return Ok(());
+                    }
+                };
                 let _ = position_queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
                     deliver_position(id, seconds);
                     Ok(())
@@ -353,15 +397,77 @@ impl MediaInner {
         self.player
             .MediaEnded(&ended)
             .map_err(|e| to_error("再生終了の購読", e))?;
+
+        // MediaPlayer の失敗イベントが持つ HRESULT を記録する。これを
+        // 登録しておかないと、WinRT の非同期メディアエラーが
+        // 0xc000027b (stowed exception) としてしか見えないことがある。
+        let failed = TypedEventHandler::<MediaPlayer, MediaPlayerFailedEventArgs>::new(
+            move |_player, args| {
+                let Ok(args) = args.ok() else {
+                    return Ok(());
+                };
+                let error = args
+                    .Error()
+                    .map(|error| format!("{error:?}"))
+                    .unwrap_or_else(|error| format!("取得失敗: {error}"));
+                let code = args
+                    .ExtendedErrorCode()
+                    .map(|code| format!("{code:?}"))
+                    .unwrap_or_else(|error| format!("取得失敗: {error}"));
+                let message = args
+                    .ErrorMessage()
+                    .map(|message| message.to_string_lossy())
+                    .unwrap_or_default();
+                eprintln!(
+                    "miui-windows: MediaPlayer の再生に失敗: error={error}, extended_error={code}, message={message}"
+                );
+                Ok(())
+            },
+        );
+        self.player
+            .MediaFailed(&failed)
+            .map_err(|e| to_error("再生失敗の購読", e))?;
         Ok(())
+    }
+
+    fn set_uri_source(&self, source: &str) -> windows_core::Result<()> {
+        Uri::CreateUri(&HSTRING::from(source))
+            .and_then(|uri| MediaSource::CreateFromUri(&uri))
+            .and_then(|media_source| media_source.cast::<IMediaPlaybackSource>())
+            // MediaPlayerElement にはこの player を SetMediaPlayer で割り当て
+            // ているため、再生元は Element.Source ではなく player.Source に
+            // 設定する。両方へ設定すると WinUI の内部状態が二重になり、
+            // メディア要素のテンプレート適用時に stowed exception になる。
+            .and_then(|media_source| self.player.SetSource(&media_source))
     }
 
     fn set_source(&self, source: &str) {
         *self.source.borrow_mut() = source.to_string();
         if source.is_empty() {
             let _ = self.player.SetSource(None);
-        } else if let Ok(uri) = Uri::CreateUri(&HSTRING::from(source_url(source))) {
-            let _ = self.player.SetUriSource(&uri);
+        } else if is_url(source) {
+            if let Err(error) = self.set_uri_source(source) {
+                eprintln!("miui-windows: メディア URL の設定に失敗 ({source}): {error}");
+            }
+        } else {
+            // ファイル選択で得たパスは、file:// URI に変換して再生するよりも
+            // StorageFile として渡す方が、ユーザーが選択したファイルへの
+            // アクセス権を Windows のメディアパイプラインへ正しく引き継げる。
+            let result = StorageFile::GetFileFromPathAsync(&HSTRING::from(source))
+                .and_then(|operation| operation.join())
+                .and_then(|file| MediaSource::CreateFromStorageFile(&file))
+                .and_then(|media_source| media_source.cast::<IMediaPlaybackSource>())
+                .and_then(|media_source| self.player.SetSource(&media_source));
+            if let Err(error) = result {
+                eprintln!("miui-windows: メディアファイルの設定に失敗 ({source}): {error}");
+                // 相対パスなど、StorageFile として開けない入力は
+                // file:// URI も試す。
+                if let Err(fallback_error) = self.set_uri_source(&source_url(source)) {
+                    eprintln!(
+                        "miui-windows: メディア URL のフォールバックにも失敗 ({source}): {fallback_error}"
+                    );
+                }
+            }
         }
         self.emit(PlaybackState::Idle);
         if self.autoplay.get() && !source.is_empty() {
@@ -537,9 +643,19 @@ macro_rules! impl_playback {
                 }
             }
 
-            /// WinUI 標準の再生バーを出すかどうか (既定は出す)。
+            /// WinUI 標準の再生バーを使うかどうか。
+            ///
+            /// Windows App SDK 2.2.4 では標準バーを有効にすると
+            /// `MediaPlayerElement` の visual tree 追加時にプロセスが
+            /// `0xc000027b` で終了するため、このバックエンドでは常に
+            /// 無効にする。アプリ側の再生 UI と組み合わせて使う。
             pub fn set_controls(&self, controls: bool) {
-                let _ = self.0.native.SetAreTransportControlsEnabled(controls);
+                if controls {
+                    eprintln!(
+                        "miui-windows: WinUI 標準の再生バーは安全性のため無効です"
+                    );
+                }
+                let _ = self.0.native.SetAreTransportControlsEnabled(false);
             }
 
             /// 再生状態が変わったときに呼ばれる。設定し直すと以前のものは外れる。

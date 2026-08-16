@@ -465,12 +465,25 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
     let (video_pane, video) = build_video_pane(ui)?;
     let (audio_pane, audio) = build_audio_pane(ui)?;
 
-    // 表示形式の切り替えはタブが担う。miui にウィジェットを隠す API は
-    // 無いので、「1 つだけ見せる」にはタブを使う。
-    let forms = ui.tabs()?;
-    forms.add_tab(MEDIA_FORMS[0].0, &image_pane);
-    forms.add_tab(MEDIA_FORMS[1].0, &video_pane);
-    forms.add_tab(MEDIA_FORMS[2].0, &audio_pane);
+    // MediaPlayerElement を WinUI の TabView のコンテンツにすると、
+    // TabView が動画・音声ペインを初めて表示する瞬間に Microsoft.UI.Xaml
+    // が 0xc000027b で fail-fast する環境がある。Windows では Grid の子を
+    // 選択時に差し替え、未選択の MediaPlayerElement を visual tree に置かない。
+    #[cfg(target_os = "windows")]
+    let forms = {
+        let forms = ui.grid()?;
+        forms.attach(&image_pane, GridCell::new(0, 0));
+        forms
+    };
+    #[cfg(not(target_os = "windows"))]
+    let forms = {
+        let forms = ui.tabs()?;
+        forms.add_tab(MEDIA_FORMS[0].0, &image_pane);
+        forms.add_tab(MEDIA_FORMS[1].0, &video_pane);
+        forms.add_tab(MEDIA_FORMS[2].0, &audio_pane);
+        forms.set_selected(0);
+        forms
+    };
 
     let status = ui.label("種類: 画像 (同梱のサンプル)")?;
 
@@ -480,14 +493,27 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
         let video = video.clone();
         let audio = audio.clone();
         let forms = forms.clone();
+        #[cfg(target_os = "windows")]
+        let image_pane = image_pane.clone();
+        #[cfg(target_os = "windows")]
+        let video_pane = video_pane.clone();
+        #[cfg(target_os = "windows")]
+        let audio_pane = audio_pane.clone();
         let status = status.clone();
         move |form: usize, source: &str| {
+            #[cfg(target_os = "windows")]
+            match form {
+                0 => forms.replace(&image_pane, GridCell::new(0, 0)),
+                1 => forms.replace(&video_pane, GridCell::new(0, 0)),
+                _ => forms.replace(&audio_pane, GridCell::new(0, 0)),
+            }
+            #[cfg(not(target_os = "windows"))]
+            forms.select(form);
             match form {
                 0 => image.set_source(source),
                 1 => video.set_source(source),
                 _ => audio.set_source(source),
             }
-            forms.select(form);
             status.set_text(&format!("種類: {}", MEDIA_FORMS[form].0));
         }
     };
@@ -564,7 +590,7 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
     // ウィンドウの高さが変わったときも、メディア表示側へ余りを渡す。
     forms.set_sizing(Sizing::fill());
     pane.append(&forms);
-    forms.set_selected(0);
+
     Ok(pane)
 }
 
@@ -724,16 +750,32 @@ fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
     Ok((pane, video))
 }
 
-/// 音声の表示形式。映像面が無いので、操作はネイティブの再生バーに任せる。
+/// 音声の表示形式。WinUI 標準バーを使わず、Gallery 側の操作欄を使う。
 fn build_audio_pane(ui: &Ui) -> Result<(miui::Stack, miui::Audio)> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(8.0);
     pane.set_padding(Padding::all(8.0));
-    pane.append(&ui.label("操作はネイティブの再生バーから行えます。")?);
+    pane.append(&ui.label("再生ボタンから操作できます。")?);
 
     let audio = ui.audio("")?;
     audio.set_sizing(Sizing::fill_width());
     pane.append(&audio);
+
+    let buttons = ui.stack(Orientation::Horizontal)?;
+    buttons.set_spacing(8.0);
+    let play = ui.button("再生")?;
+    play.on_click({
+        let audio = audio.clone();
+        move || audio.play()
+    });
+    let pause = ui.button("一時停止")?;
+    pause.on_click({
+        let audio = audio.clone();
+        move || audio.pause()
+    });
+    buttons.append(&play);
+    buttons.append(&pause);
+    pane.append(&buttons);
 
     let status = ui.label("状態: 未再生")?;
     audio.on_state_change({

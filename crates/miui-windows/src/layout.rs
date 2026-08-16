@@ -190,6 +190,19 @@ impl Grid {
         }
     }
 
+    /// いまの子を外し、指定した 1 つだけを置く。
+    ///
+    /// `MediaPlayerElement` のように、TabView のコンテンツ切り替え時に
+    /// WinUI 内部でテンプレート適用が走るコントロールを安全に差し替える
+    /// ために使う。
+    pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
+        if let Ok(children) = self.0.native.Children() {
+            let _ = children.Clear();
+        }
+        self.0.children.borrow_mut().clear();
+        self.attach(child, cell);
+    }
+
     /// 列の幅の決め方。
     pub fn set_column_track(&self, index: usize, track: Track) {
         self.ensure_size(index + 1, 0);
