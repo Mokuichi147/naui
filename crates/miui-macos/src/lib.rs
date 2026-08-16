@@ -11,6 +11,7 @@
 
 mod file_picker;
 mod layout;
+mod media;
 mod menu_bar;
 mod navigation;
 mod trampoline;
@@ -32,6 +33,7 @@ use objc2_foundation::NSNotification;
 
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
+pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
 pub use window::{WeakWindow, Window};
@@ -140,6 +142,21 @@ impl Ui {
     /// リンク。`href` が空でなければ、押したときにブラウザで開く。
     pub fn link(&self, text: &str, href: &str) -> Result<Link> {
         Ok(Link::new(self.mtm, text, href))
+    }
+
+    /// 画像。`source` はファイルパスか URL。
+    pub fn image(&self, source: &str) -> Result<Image> {
+        Ok(Image::new(self.mtm, source))
+    }
+
+    /// 動画。`source` はファイルパスか URL。
+    pub fn video(&self, source: &str) -> Result<Video> {
+        Ok(Video::new(self.mtm, source))
+    }
+
+    /// 音声。`source` はファイルパスか URL。
+    pub fn audio(&self, source: &str) -> Result<Audio> {
+        Ok(Audio::new(self.mtm, source))
     }
 
     /// ファイルやフォルダーを選ばせるボタン。押すと `NSOpenPanel` が出る。

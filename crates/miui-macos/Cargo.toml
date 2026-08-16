@@ -10,15 +10,19 @@ repository.workspace = true
 [dependencies]
 miui-core.workspace = true
 objc2 = "0.6"
+# 再生位置を定期的に受け取るブロックを作るため。
+block2 = "0.6"
 objc2-foundation = { version = "0.3", features = [
     "NSArray",
     "NSString",
+    "NSKeyValueObserving",
     "NSNotification",
     "NSGeometry",
     "NSObjCRuntime",
     "NSURL",
 ] }
 objc2-app-kit = { version = "0.3", features = [
+    "NSAccessibilityProtocols",
     "NSApplication",
     "NSAppearance",
     "NSButton",
@@ -29,6 +33,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSControl",
     "NSGraphics",
     "NSGridView",
+    "NSImage",
+    "NSImageView",
     "NSOpenPanel",
     "NSPanel",
     "NSLayoutAnchor",
@@ -53,12 +59,40 @@ objc2-app-kit = { version = "0.3", features = [
     "NSWorkspace",
 ] }
 
+# 動画 / 音声。再生は AVFoundation が行い、再生バーは AVKit の AVPlayerView が出す。
+objc2-av-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "AVPlayerView",
+    "objc2-app-kit",
+    "objc2-av-foundation",
+] }
+objc2-av-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "AVAnimation",
+    "AVAsset",
+    "AVPlayer",
+    "AVPlayerItem",
+    "objc2-core-media",
+    # 再生位置を定期的に受け取る addPeriodicTimeObserver… のため。
+    "block2",
+    "dispatch2",
+] }
+# 再生位置と長さを表す CMTime のため。
+objc2-core-media = { version = "0.3", default-features = false, features = [
+    "std",
+    "CMTime",
+    "objc2",
+] }
+
 [dev-dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
     "NSApplication",
     "NSButton",
+    "NSCell",
     "NSControl",
+    "NSImage",
+    "NSImageView",
     "NSLayoutConstraint",
     "NSMenu",
     "NSMenuItem",
@@ -69,7 +103,7 @@ objc2-app-kit = { version = "0.3", features = [
     "NSView",
     "NSWindow",
 ] }
-objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
+objc2-foundation = { version = "0.3", features = ["NSDate", "NSGeometry", "NSRunLoop"] }
 
 [[test]]
 name = "appkit"

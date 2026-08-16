@@ -19,6 +19,7 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "console",
     "CssStyleDeclaration",
+    "Blob",
     "Document",
     "Element",
     "Event",
@@ -29,8 +30,11 @@ web-sys = { version = "0.3", features = [
     "HtmlDivElement",
     "HtmlElement",
     "HtmlInputElement",
+    "HtmlImageElement",
     "HtmlLabelElement",
+    "HtmlMediaElement",
     "HtmlProgressElement",
     "Node",
+    "Url",
     "Window",
 ] }

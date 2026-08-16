@@ -37,6 +37,9 @@
 //! | `Breadcrumbs` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
 //! | `Pagination` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
 //! | `Link` | `gtk::LinkButton` |
+//! | `Image` | `gtk::Picture` (`set_filename` / `set_file`、収め方は `set_content_fit`) |
+//! | `Video` | `gtk::Video` (`set_filename` / `set_media_stream`) |
+//! | `Audio` | `gtk::MediaControls` + `gtk::MediaFile` (映像面を持たない) |
 //! | `FilePicker` | `gtk::Button` + `gtk::FileDialog` (`open` / `open_multiple` / `select_folder`) |
 //!
 //! GTK のシグナルハンドラは `'static` なクロージャを受けるので、
@@ -52,7 +55,7 @@
 use std::cell::{Cell, RefCell};
 
 use miui_core::{
-    Align, Error, FileEntry, FileFilter, FilePickerMode, GridCell, NavItem, Orientation, Padding,
+    Align, Error, Fit, FileEntry, FileFilter, FilePickerMode, GridCell, NavItem, Orientation, Padding, PlaybackState,
     Result, ScrollPolicy, Settings, Sizing, Theme, Track,
 };
 
@@ -104,6 +107,9 @@ placeholder_widget!(Menu);
 placeholder_widget!(Breadcrumbs);
 placeholder_widget!(Pagination);
 placeholder_widget!(Link);
+placeholder_widget!(Image);
+placeholder_widget!(Video);
+placeholder_widget!(Audio);
 placeholder_widget!(Grid);
 placeholder_widget!(Scroll);
 placeholder_widget!(Spacer);
@@ -259,6 +265,68 @@ impl Pagination {
     pub fn on_change(&self, _f: impl FnMut(usize) + 'static) {}
 }
 
+impl Image {
+    pub fn source(&self) -> String {
+        String::new()
+    }
+    pub fn set_source(&self, _source: &str) {}
+    pub fn is_loaded(&self) -> bool {
+        false
+    }
+    pub fn set_fit(&self, _fit: Fit) {}
+    pub fn set_alt(&self, _text: &str) {}
+}
+
+/// 動画と音声に共通の再生 API (未実装)。
+macro_rules! placeholder_playback {
+    ($name:ident) => {
+        impl $name {
+            pub fn source(&self) -> String {
+                String::new()
+            }
+            pub fn set_source(&self, _source: &str) {}
+            pub fn play(&self) {}
+            pub fn pause(&self) {}
+            pub fn state(&self) -> PlaybackState {
+                PlaybackState::Idle
+            }
+            pub fn is_playing(&self) -> bool {
+                false
+            }
+            pub fn seek(&self, _seconds: f64) {}
+            pub fn position(&self) -> f64 {
+                0.0
+            }
+            pub fn duration(&self) -> Option<f64> {
+                None
+            }
+            pub fn set_volume(&self, _volume: f64) {}
+            pub fn volume(&self) -> f64 {
+                0.0
+            }
+            pub fn set_muted(&self, _muted: bool) {}
+            pub fn is_muted(&self) -> bool {
+                false
+            }
+            pub fn set_loop(&self, _looping: bool) {}
+            pub fn is_loop(&self) -> bool {
+                false
+            }
+            pub fn set_autoplay(&self, _autoplay: bool) {}
+            pub fn set_controls(&self, _controls: bool) {}
+            pub fn on_state_change(&self, _f: impl FnMut(PlaybackState) + 'static) {}
+            pub fn on_position_change(&self, _f: impl FnMut(f64) + 'static) {}
+        }
+    };
+}
+
+placeholder_playback!(Video);
+placeholder_playback!(Audio);
+
+impl Video {
+    pub fn set_fit(&self, _fit: Fit) {}
+}
+
 impl Link {
     pub fn text(&self) -> String {
         String::new()
@@ -363,6 +431,15 @@ impl Ui {
     }
     pub fn progress_bar(&self) -> Result<ProgressBar> {
         Err(unimplemented_error("ProgressBar の生成"))
+    }
+    pub fn image(&self, _source: &str) -> Result<Image> {
+        Err(unimplemented_error("Image の生成"))
+    }
+    pub fn video(&self, _source: &str) -> Result<Video> {
+        Err(unimplemented_error("Video の生成"))
+    }
+    pub fn audio(&self, _source: &str) -> Result<Audio> {
+        Err(unimplemented_error("Audio の生成"))
     }
     pub fn tabs(&self) -> Result<Tabs> {
         Err(unimplemented_error("Tabs の生成"))

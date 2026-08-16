@@ -21,6 +21,7 @@ use windows::Win32::UI::Shell::{
     FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
 };
 use windows_core::{Interface, HSTRING, PCWSTR};
+use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use winui3::Microsoft::UI::Xaml::Controls::{Button as XamlButton, TextBlock};
 use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
 
@@ -114,6 +115,21 @@ impl FilePicker {
         let state = self.0.state.clone();
         let handler = self.0.handler.clone();
         let delegate = RoutedEventHandler::new(move |_sender, _args| {
+            // Common Item Dialog の Show はモーダルで、Button.Click の中から
+            // 直接呼ぶと、そのネストしたメッセージループが Click 中の
+            // WinUI/MediaPlayerElement と衝突することがある。ダイアログを
+            // 開く処理自体を Click の戻り後へ移す。
+            if let Ok(queue) = DispatcherQueue::GetForCurrentThread() {
+                let state = state.clone();
+                let handler = handler.clone();
+                let operation = DispatcherQueueHandler::new(move || {
+                    show_and_report(&state, &handler);
+                    Ok(())
+                });
+                if queue.TryEnqueue(&operation).is_ok() {
+                    return Ok(());
+                }
+            }
             show_and_report(&state, &handler);
             Ok(())
         });
@@ -178,7 +194,21 @@ fn show_and_report(state: &SharedState, handler: &SelectionHandler) {
         return; // 取り消された、またはダイアログを出せなかった。
     };
     state.0.with_mut(|state| state.selection = entries.clone());
-    handler.emit(&entries);
+
+    // IFileOpenDialog.Show は Button.Click の処理中にモーダルに動く。
+    // その直後に MediaPlayerElement の Source を同期設定すると、WinUI の
+    // MediaPlayerPresenter が再入状態になり、動画・音声だけ stowed exception
+    // (0xc000027b) でプロセスを終了させることがある。選択通知を次の UI tick
+    // へ送って、ダイアログと Click イベントを完全に抜けてから呼び出す。
+    let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
+        handler.emit(&entries);
+        return;
+    };
+    let handler = handler.clone();
+    let _ = queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
+        handler.emit(&entries);
+        Ok(())
+    }));
 }
 
 /// Common Item Dialog を開いて、選ばれたパスを返す。取り消しは `None`。

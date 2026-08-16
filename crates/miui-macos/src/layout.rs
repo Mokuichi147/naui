@@ -29,6 +29,10 @@ const SIZING_ID: &str = "miui.sizing";
 const FILL_HUGGING: NSLayoutPriority = 1.0;
 /// `Auto` (中身に合わせる) のときの hugging priority。
 const HUG_CONTENT: NSLayoutPriority = 750.0;
+/// `Fill` のときの compression resistance priority。
+///
+/// 画像や動画の intrinsic size が親の最小幅にならないようにする。
+const FILL_COMPRESSION_RESISTANCE: NSLayoutPriority = 1.0;
 
 /// 大きさの指定をビューへ反映する。呼ぶたびに以前の指定は外れる。
 pub(crate) fn apply_sizing(view: &NSView, sizing: Sizing) {
@@ -67,11 +71,23 @@ pub(crate) fn apply_sizing(view: &NSView, sizing: Sizing) {
     // 主軸方向の `Fill` は「余りを受け取る」= hugging priority を下げること。
     set_hugging(view, true, sizing.width.is_fill());
     set_hugging(view, false, sizing.height.is_fill());
+    // `Fill` は中身の intrinsic size より狭くなってもよい。
+    set_compression_resistance(view, true, sizing.width.is_fill());
+    set_compression_resistance(view, false, sizing.height.is_fill());
 }
 
 fn set_hugging(view: &NSView, horizontal: bool, fill: bool) {
     let priority = if fill { FILL_HUGGING } else { HUG_CONTENT };
     view.setContentHuggingPriority_forOrientation(priority, orientation(horizontal));
+}
+
+fn set_compression_resistance(view: &NSView, horizontal: bool, fill: bool) {
+    let priority = if fill {
+        FILL_COMPRESSION_RESISTANCE
+    } else {
+        HUG_CONTENT
+    };
+    view.setContentCompressionResistancePriority_forOrientation(priority, orientation(horizontal));
 }
 
 fn orientation(horizontal: bool) -> NSLayoutConstraintOrientation {

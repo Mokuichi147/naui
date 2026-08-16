@@ -104,7 +104,7 @@
 //!
 //! | miui | Windows | macOS | Web |
 //! | --- | --- | --- | --- |
-//! | `Tabs` | `StackPanel` + `ToggleButton` | `NSTabView` | `role="tablist"` |
+//! | `Tabs` | `Grid` + `ToggleButton` | `NSTabView` | `role="tablist"` |
 //! | `Navbar` | `ToggleButton` の横並び | `NSSegmentedControl` | `<nav>` |
 //! | `Dock` | `ToggleButton` の横並び | `NSSegmentedControl` | `<nav>` |
 //! | `Menu` | `ToggleButton` の縦並び | `NSButton` の縦並び | `<nav><ul>` |
@@ -146,36 +146,37 @@
 //! | 環境 | 状態 |
 //! | --- | --- |
 //! | macOS | 実行・自動テストあり (ナビゲーションとファイル選択を含む 24 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーションとファイル選択のコールバックまで確認) |
-//! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェット・ナビゲーション系・レイアウト・ファイル選択を確認 |
+//! | Web (wasm) | ブラウザで実行確認 (全ウィジェット、ナビゲーション、ファイル選択、メディアの表示と再生を確認) |
+//! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェット・ナビゲーション系・レイアウト・ファイル選択・メディアの読み込みと再生を確認 |
 //! | Linux | 未実装 |
 
 #![forbid(unsafe_code)]
 
 pub use miui_core::{
-    accept_attribute, Align, Error, FileEntry, FileFilter, FilePickerMode, GridCell, Length,
-    NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing, Theme, Track,
+    accept_attribute, media, Align, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell,
+    Length, NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy, Settings,
+    Sizing, Theme, Track,
 };
 
 #[cfg(target_arch = "wasm32")]
 pub use miui_web::{
-    run, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Label, Link, Menu, Navbar,
-    Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget,
-    Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, Menu,
+    Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use miui_macos::{
-    run, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Label, Link, Menu, Navbar,
-    Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget,
-    Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, Menu,
+    Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use miui_windows::{
-    run, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Label, Link, Menu, Navbar,
-    Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget,
-    Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, Menu,
+    Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -184,9 +185,9 @@ pub use miui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use miui_gtk::{
-    run, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Label, Link, Menu, Navbar,
-    Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, WeakWindow, Widget,
-    Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, Menu,
+    Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 
 /// バックエンド間で API がずれていないことを、コンパイル時に検査する。
@@ -340,6 +341,45 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     link.on_click(|| {});
 
     // --- ファイル / フォルダーの選択 ---------------------------------------
+    // --- メディア ---------------------------------------------------------
+    let image: Image = ui.image("t.png")?;
+    let _: String = image.source();
+    image.set_source("t.png");
+    let _: bool = image.is_loaded();
+    image.set_fit(Fit::Cover);
+    image.set_alt("t");
+
+    let video: Video = ui.video("t.mp4")?;
+    video.set_fit(Fit::Contain);
+    let audio: Audio = ui.audio("t.m4a")?;
+    // 再生の API は動画と音声で同じ形。両方を同じ順で呼んで確かめる。
+    macro_rules! contract_playback {
+        ($m:expr) => {{
+            let m = $m;
+            let _: String = m.source();
+            m.set_source("t");
+            m.play();
+            m.pause();
+            let _: PlaybackState = m.state();
+            let _: bool = m.is_playing();
+            m.seek(1.0);
+            let _: f64 = m.position();
+            let _: Option<f64> = m.duration();
+            m.set_volume(0.5);
+            let _: f64 = m.volume();
+            m.set_muted(true);
+            let _: bool = m.is_muted();
+            m.set_loop(true);
+            let _: bool = m.is_loop();
+            m.set_autoplay(false);
+            m.set_controls(true);
+            m.on_state_change(|_state: PlaybackState| {});
+            m.on_position_change(|_seconds: f64| {});
+        }};
+    }
+    contract_playback!(&video);
+    contract_playback!(&audio);
+
     let picker: FilePicker = ui.file_picker("t")?;
     picker.set_text("t");
     picker.set_enabled(true);
@@ -356,6 +396,9 @@ fn __api_contract(ui: &Ui) -> Result<()> {
 
     stack.append(&spacer);
     stack.append(&scroll);
+    stack.append(&image);
+    stack.append(&video);
+    stack.append(&audio);
     stack.append(&label);
     stack.append(&button);
     stack.append(&checkbox);

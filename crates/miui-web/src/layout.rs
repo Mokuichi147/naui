@@ -75,6 +75,15 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     set_limit(element, "min-height", sizing.min_height);
     set_limit(element, "max-height", sizing.max_height);
 
+    // Flex/Grid の既定の min-size は中身の intrinsic size になるため、
+    // Fill の画像や動画が自然サイズを親の最小幅にしてしまわないようにする。
+    if sizing.width.is_fill() && sizing.min_width.is_none() {
+        let _ = style.set_property("min-width", "0");
+    }
+    if sizing.height.is_fill() && sizing.min_height.is_none() {
+        let _ = style.set_property("min-height", "0");
+    }
+
     // 親が分かっていれば、その並び方向に合わせた指定もここで済ませる。
     apply_child_layout(element.unchecked_ref(), parent_layout(element));
 }
