@@ -1,8 +1,8 @@
 //! リスト (WinUI 3)。
 //!
-//! WinUI 標準の `ListBox` をそのまま使う。行は `ListBoxItem` で、
+//! WinUI 標準の `ListBox` を `ScrollViewer` に載せて使う。行は `ListBoxItem` で、
 //! 中身は `TextBlock`。選べない行は `IsEnabled = false`、
-//! 複数選択・キーボード操作・スクロールは `ListBox` 自身が行う。
+//! 複数選択とキーボード操作は `ListBox`、スクロールは外側の `ScrollViewer` が行う。
 //!
 //! `ListView` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、
 //! 同じ WinUI 標準コントロールである `ListBox` を使っている。
@@ -14,12 +14,15 @@ use std::sync::Arc;
 use naui_core::{ListItem, Result, SelectionMode};
 use windows_core::{IInspectable, Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
-    ListBox as XamlListBox, ListBoxItem, Orientation as XamlOrientation, StackPanel,
-    SelectionChangedEventHandler, SelectionMode as XamlSelectionMode, TextBlock,
+    ListBox as XamlListBox, ListBoxItem, Orientation as XamlOrientation, ScrollBarVisibility,
+    ScrollViewer, StackPanel, SelectionChangedEventHandler, SelectionMode as XamlSelectionMode,
+    TextBlock,
 };
+use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 use winui3::Microsoft::UI::Xaml::UIElement;
 
 use crate::to_error;
+use crate::layout::ListScrollTarget;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::{impl_widget, Widget};
 
@@ -54,7 +57,9 @@ impl SelectionHandler {
 }
 
 struct ListInner {
-    native: XamlListBox,
+    native: ScrollViewer,
+    list_box: XamlListBox,
+    _wheel: Rc<ListScrollTarget>,
     /// 行そのもの。選択の読み書きはここを通す。
     rows: RefCell<Vec<ListBoxItem>>,
     items: RefCell<Vec<ListItem>>,
@@ -63,6 +68,8 @@ struct ListInner {
     /// プログラムから選択を変えている間だけ通知を止める。
     /// `IsSelected` の書き換えでも `SelectionChanged` が起きるため。
     silent: Rc<Cell<bool>>,
+    /// ウィンドウ全体のホイール補助が List の ScrollViewer を選ぶための状態。
+    hovered: Arc<UiThreadCell<usize>>,
 }
 
 /// 縦に並ぶ選択できる一覧 (ListBox)。
@@ -75,18 +82,42 @@ impl_widget!(List, native);
 
 impl List {
     pub(crate) fn new() -> Result<Self> {
-        let native = XamlListBox::new().map_err(|e| to_error("ListBox の生成", e))?;
-        native
+        let list_box = XamlListBox::new().map_err(|e| to_error("ListBox の生成", e))?;
+        list_box
             .SetSelectionMode(XamlSelectionMode::Single)
             .map_err(|e| to_error("ListBox の選択方法の設定", e))?;
+        // スクロールは外側の ScrollViewer に任せるため、ListBox の
+        // テンプレート内にある ScrollViewer は二重スクロールさせない。
+        let _ = ScrollViewer::SetHorizontalScrollBarVisibility2(
+            &list_box,
+            ScrollBarVisibility::Disabled,
+        );
+        let _ = ScrollViewer::SetVerticalScrollBarVisibility2(
+            &list_box,
+            ScrollBarVisibility::Disabled,
+        );
+        let native = ScrollViewer::new().map_err(|e| to_error("List の ScrollViewer 生成", e))?;
+        let _ = native.SetHorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
+        let _ = native.SetVerticalScrollBarVisibility(ScrollBarVisibility::Auto);
+        let element = list_box
+            .cast::<IInspectable>()
+            .map_err(|e| to_error("ListBox の要素化", e))?;
+        native
+            .SetContent(&element)
+            .map_err(|e| to_error("List の ScrollViewer への追加", e))?;
+        let hovered = Arc::new(UiThreadCell::new(0));
+        let wheel = crate::layout::register_list_scroll(native.clone(), hovered.clone());
 
         let this = Self(Rc::new(ListInner {
             native,
+            list_box,
+            _wheel: wheel,
             rows: RefCell::new(Vec::new()),
             items: RefCell::new(Vec::new()),
             mode: Cell::new(SelectionMode::Single),
             handler: SelectionHandler::new(),
             silent: Rc::new(Cell::new(false)),
+            hovered,
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
@@ -104,9 +135,54 @@ impl List {
             Ok(())
         });
         this.0
-            .native
+            .list_box
             .SelectionChanged(&handler)
             .map_err(|e| to_error("ListBox の購読", e))?;
+
+        // `layout` のホイール補助は、子要素の上でも `ScrollViewer` を動かせる
+        // ように、ウィンドウ全体のホイールを先に処理する。List の上では
+        // List 専用の外側の ScrollViewer を選ばせるため、ホバー状態を共有する。
+        let entered_state = this.0.hovered.clone();
+        let entered = PointerEventHandler::new(move |_, _| {
+            entered_state.with_mut(|hovered| *hovered = hovered.saturating_add(1));
+            Ok(())
+        });
+        let exited_state = this.0.hovered.clone();
+        let exited = PointerEventHandler::new(move |_, _| {
+            exited_state.with_mut(|hovered| {
+                if *hovered == 0 {
+                    return;
+                } else {
+                    *hovered -= 1;
+                }
+            });
+            Ok(())
+        });
+        this.0
+            .native
+            .PointerEntered(&entered)
+            .map_err(|e| to_error("ListBox のポインター購読", e))?;
+        this.0
+            .native
+            .PointerExited(&exited)
+            .map_err(|e| to_error("ListBox のポインター購読", e))?;
+
+        // タブの切り替えなどで PointerEntered が発生しないままポインターが
+        // List 上へ移動する場合がある。その場合も次のホイール入力より前に
+        // List を対象として記録できるよう、PointerMoved でも補正する。
+        let moved_state = this.0.hovered.clone();
+        let moved = PointerEventHandler::new(move |_, _| {
+            moved_state.with_mut(|hovered| {
+                if *hovered == 0 {
+                    *hovered = 1;
+                }
+            });
+            Ok(())
+        });
+        this.0
+            .native
+            .PointerMoved(&moved)
+            .map_err(|e| to_error("ListBox のポインター購読", e))?;
         Ok(this)
     }
 
@@ -118,7 +194,7 @@ impl List {
     fn rebuild(&self, items: &[ListItem]) -> Result<()> {
         let children = self
             .0
-            .native
+            .list_box
             .Items()
             .map_err(|e| to_error("行の取得", e))?;
         self.without_notifying(|_| children.Clear())
@@ -164,7 +240,7 @@ impl List {
         } else {
             XamlSelectionMode::Single
         };
-        let _ = self.without_notifying(|this| this.0.native.SetSelectionMode(native));
+        let _ = self.without_notifying(|this| this.0.list_box.SetSelectionMode(native));
         self.write_selection(&[]);
     }
 
@@ -231,7 +307,7 @@ impl List {
 
     /// 中身の `ListBox`。バックエンド固有の脱出口として公開している。
     pub fn native_list_box(&self) -> XamlListBox {
-        self.0.native.clone()
+        self.0.list_box.clone()
     }
 
     /// 選択をそのまま行へ書き込む (通知は起きない)。
@@ -249,6 +325,12 @@ impl List {
         let result = f(self);
         self.0.silent.set(previous);
         result
+    }
+}
+
+impl Drop for ListInner {
+    fn drop(&mut self) {
+        self.hovered.with_mut(|hovered| *hovered = 0);
     }
 }
 

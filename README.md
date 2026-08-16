@@ -21,7 +21,7 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | --- | --- | --- |
 | **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 41 件。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
-| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`List` は実機未確認** (Windows 向けのコンパイルのみ) |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -534,8 +534,6 @@ stack.append(&picker);
 > `set_sizing`・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の
 > 読み込みと再生・動画表示のリサイズまで確認済みです。
 > `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
-> **`List` はこの確認より後に追加したため、実機では未確認です**
-> (Windows 向けのコンパイルは通っています)。
 
 ---
 
@@ -708,9 +706,6 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
 - **Web で `detail` を使うと、`List` は合成になります。** 文字だけの行なら
   `<select>` のままですが、`detail` があると `<ul role="listbox">` に切り替わり、
   複数選択のキーボード操作は naui の実装になります。
-- **`List` の Windows は実機未確認です。** macOS は自動テスト、Web はブラウザで
-  確認していますが、Windows は実機での動作確認をまだ行っていません
-  (Windows 向けのコンパイルは通っています)。
 - **Windows の `Stack` では主軸の `Fill` と `Spacer` が効きません。** `StackPanel` が
   子へ余りを配らないためです。`Grid` の `Track::Fill` を使ってください。
 - **macOS の `Track::Fill` は重みを無視します。** NSGridView に重みの概念が無く、

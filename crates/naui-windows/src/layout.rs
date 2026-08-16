@@ -293,6 +293,7 @@ struct ScrollInner {
 
 thread_local! {
     static SCROLLS: RefCell<Vec<Weak<ScrollInner>>> = const { RefCell::new(Vec::new()) };
+    static LIST_SCROLLS: RefCell<Vec<Weak<ListScrollTarget>>> = const { RefCell::new(Vec::new()) };
     static WHEEL_TARGETS: RefCell<Vec<windows::Win32::Foundation::HWND>> =
         const { RefCell::new(Vec::new()) };
     static WHEEL_HOOK: RefCell<Option<windows::Win32::UI::WindowsAndMessaging::HHOOK>> =
@@ -353,6 +354,9 @@ fn install_low_level_wheel_hook(hwnd: windows::Win32::Foundation::HWND) -> bool 
 }
 
 fn apply_wheel_delta(delta: f64) -> bool {
+    if apply_list_wheel_delta(delta) {
+        return true;
+    }
     SCROLLS.with(|scrolls| {
         let mut scrolls = scrolls.borrow_mut();
         scrolls.retain(|scroll| scroll.strong_count() != 0);
@@ -368,6 +372,30 @@ fn apply_wheel_delta(delta: f64) -> bool {
             let next = (current - delta).clamp(0.0, maximum);
             if next != current {
                 let _ = inner.native.ScrollToVerticalOffset(next);
+                return true;
+            }
+        }
+        false
+    })
+}
+
+fn apply_list_wheel_delta(delta: f64) -> bool {
+    LIST_SCROLLS.with(|targets| {
+        let mut targets = targets.borrow_mut();
+        targets.retain(|target| target.strong_count() != 0);
+        for weak in targets.iter().rev() {
+            let Some(target) = weak.upgrade() else {
+                continue;
+            };
+            let hovered = target.hovered.with_mut(|depth| *depth != 0);
+            if !hovered {
+                continue;
+            }
+            let current = target.native.VerticalOffset().unwrap_or(0.0);
+            let maximum = target.native.ScrollableHeight().unwrap_or(0.0);
+            let next = (current - delta).clamp(0.0, maximum);
+            if next != current {
+                let _ = target.native.ScrollToVerticalOffset(next);
                 return true;
             }
         }
@@ -408,6 +436,24 @@ pub(crate) fn register_scroll(scroll: &Scroll) {
         scrolls.retain(|scroll| scroll.strong_count() != 0);
         scrolls.push(Rc::downgrade(&scroll.0));
     });
+}
+
+pub(crate) struct ListScrollTarget {
+    native: ScrollViewer,
+    hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
+}
+
+pub(crate) fn register_list_scroll(
+    native: ScrollViewer,
+    hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
+) -> Rc<ListScrollTarget> {
+    let target = Rc::new(ListScrollTarget { native, hovered });
+    LIST_SCROLLS.with(|targets| {
+        let mut targets = targets.borrow_mut();
+        targets.retain(|target| target.strong_count() != 0);
+        targets.push(Rc::downgrade(&target));
+    });
+    target
 }
 
 pub(crate) fn install_wheel_subclass(window: &XamlWindow) -> bool {
