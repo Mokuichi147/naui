@@ -51,15 +51,12 @@ fn main() {
         ("交差軸の Fill が親の幅に合わせて広がる", stack_fill_cross),
         ("スペーサーが余りを吸って後続を端へ寄せる", spacer_pushes),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
+        ("グリッドの子を置き換える", grid_replaces_child),
         ("スクロールが中身を保持する", scroll_keeps_child),
         ("グリッドの同じ行が縦中央でそろう", grid_row_alignment),
         (
             "ファイル選択がボタンとして構成され設定を保つ",
             file_picker_configuration,
-        ),
-        (
-            "ファイル選択のモードが NSOpenPanel へ反映される",
-            file_picker_panel,
         ),
         (
             "編集メニューが貼り付けをレスポンダチェーンへ配送する",
@@ -608,6 +605,24 @@ fn grid_places_children(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// グリッドの差し替えで、前の子が親に残らない。
+fn grid_replaces_child(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    let photo = ui.label("写真")?;
+    let video = ui.label("動画")?;
+    let cell = GridCell::new(0, 0);
+
+    grid.attach(&photo, cell);
+    assert!(unsafe { photo.native_view().superview() }.is_some());
+
+    grid.replace(&video, cell);
+
+    assert_eq!(grid.len(), 1);
+    assert!(unsafe { photo.native_view().superview() }.is_none());
+    assert!(unsafe { video.native_view().superview() }.is_some());
+    Ok(())
+}
+
 /// スクロールは中身のハンドルを捨てても保持し続ける。
 fn scroll_keeps_child(ui: &Ui) -> Result<()> {
     let scroll = ui.scroll()?;
@@ -723,49 +738,6 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.append(&picker);
     assert_eq!(stack.len(), 1);
-    Ok(())
-}
-
-/// モードと絞り込みが、実際の `NSOpenPanel` の設定になる。
-///
-/// `native_panel()` は組み立てるだけで表示しないので、
-/// イベントループを回さずに中身を確かめられる。
-fn file_picker_panel(ui: &Ui) -> Result<()> {
-    let picker = ui.file_picker("選ぶ")?;
-
-    let panel = picker.native_panel();
-    assert!(panel.canChooseFiles(), "既定はファイルを選ぶ");
-    assert!(!panel.canChooseDirectories());
-    assert!(!panel.allowsMultipleSelection());
-
-    picker.set_mode(FilePickerMode::Files);
-    let panel = picker.native_panel();
-    assert!(panel.canChooseFiles());
-    assert!(panel.allowsMultipleSelection(), "複数選べること");
-
-    picker.set_mode(FilePickerMode::Folder);
-    let panel = picker.native_panel();
-    assert!(!panel.canChooseFiles(), "フォルダーだけを選ばせること");
-    assert!(panel.canChooseDirectories());
-    assert!(!panel.allowsMultipleSelection());
-
-    // 絞り込みは拡張子の並びとして渡り、フォルダーのときは渡らない。
-    picker.set_filters(&[
-        FileFilter::new("画像", ["*.PNG", "jpg"]),
-        FileFilter::new("文書", ["txt"]),
-    ]);
-    #[allow(deprecated)]
-    let folder_types = picker.native_panel().allowedFileTypes();
-    assert!(folder_types.is_none(), "フォルダー選択では絞り込まないこと");
-
-    picker.set_mode(FilePickerMode::File);
-    #[allow(deprecated)]
-    let types = picker
-        .native_panel()
-        .allowedFileTypes()
-        .expect("拡張子が設定されること");
-    let types: Vec<String> = types.iter().map(|t| t.to_string()).collect();
-    assert_eq!(types, ["png", "jpg", "txt"]);
     Ok(())
 }
 

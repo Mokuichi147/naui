@@ -51,6 +51,22 @@ struct FilePickerInner {
     on_select: SelectionHandler,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PanelOptions {
+    mode: FilePickerMode,
+    extensions: Vec<String>,
+}
+
+impl PanelOptions {
+    fn new(mode: FilePickerMode, filters: &[FileFilter]) -> Self {
+        let extensions = filters
+            .iter()
+            .flat_map(|filter| filter.extensions().iter().cloned())
+            .collect();
+        Self { mode, extensions }
+    }
+}
+
 /// ファイルやフォルダーを選ばせるボタン (NSButton + NSOpenPanel)。
 #[derive(Clone)]
 pub struct FilePicker(Rc<FilePickerInner>);
@@ -143,19 +159,16 @@ impl FilePicker {
     pub fn native_panel(&self) -> Retained<NSOpenPanel> {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let panel = NSOpenPanel::openPanel(mtm);
-        let mode = self.0.mode.get();
-        panel.setCanChooseFiles(!mode.is_folder());
-        panel.setCanChooseDirectories(mode.is_folder());
-        panel.setAllowsMultipleSelection(mode.allows_multiple());
+        let options = PanelOptions::new(self.0.mode.get(), &self.0.filters.borrow());
+        panel.setCanChooseFiles(!options.mode.is_folder());
+        panel.setCanChooseDirectories(options.mode.is_folder());
+        panel.setAllowsMultipleSelection(options.mode.allows_multiple());
 
-        if !mode.is_folder() {
-            let extensions: Vec<Retained<NSString>> = self
-                .0
-                .filters
-                .borrow()
+        if !options.mode.is_folder() {
+            let extensions: Vec<Retained<NSString>> = options
+                .extensions
                 .iter()
-                .flat_map(|f| f.extensions().to_vec())
-                .map(|e| NSString::from_str(&e))
+                .map(|extension| NSString::from_str(extension))
                 .collect();
             if !extensions.is_empty() {
                 let types = NSArray::from_retained_slice(&extensions);
@@ -185,5 +198,22 @@ impl FilePicker {
             return None;
         }
         Some(entries)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_options_flatten_and_normalize_filters() {
+        let filters = [
+            FileFilter::new("画像", ["*.PNG", "jpg"]),
+            FileFilter::new("文書", ["txt"]),
+        ];
+        let options = PanelOptions::new(FilePickerMode::File, &filters);
+
+        assert_eq!(options.mode, FilePickerMode::File);
+        assert_eq!(options.extensions, ["png", "jpg", "txt"]);
     }
 }
