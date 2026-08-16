@@ -115,6 +115,49 @@
 //! `Menu` は**縦に並ぶナビゲーション一覧**であって、ポップアップメニューではない。
 //! `Dock` の下端への固定は、レイアウトが縦横のスタックだけなのでアプリの責務になる。
 //!
+//! ## リスト
+//!
+//! [`List`] は行が縦に並ぶ一覧で、自分でスクロールする。行は [`ListItem`]、
+//! 選び方は [`SelectionMode`] で、選択はインデックスの並びで返る。
+//! [`ListItem::detail`] を付けると、行に補助の文字が付く。
+//!
+//! ```no_run
+//! # use naui::{Length, ListItem, Result, SelectionMode, Sizing, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let list = ui.list()?;
+//! list.set_items(&[
+//!     ListItem::new("札幌"),
+//!     ListItem::new("東京").detail("13,960,000 人"), // 2 行目に小さく出る
+//! ]);
+//! list.set_selection_mode(SelectionMode::Multiple); // 既定は Single
+//! list.on_select(|indices| println!("{indices:?} が選ばれた"));
+//! list.set_selection(&[0, 2]); // 通知せずに選択を置き換える
+//!
+//! // スクロールと同じく高さを自分では決めないので、指定しておく。
+//! list.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(180.0)));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Web |
+//! | --- | --- | --- | --- |
+//! | `List` | `ListBox` + `ListBoxItem` | `NSTableView` (1 列) + `NSScrollView` | `<select size>` / `<ul role="listbox">` |
+//!
+//! `Menu` との違いは役割で、`Menu` は**画面を切り替えるナビゲーション**、
+//! `List` は**データを選ぶ一覧**。`List` だけが複数選択とスクロールを持つ。
+//!
+//! [`SelectionMode::Multiple`] はどの環境でも「⌘ / Ctrl や Shift を押しながら選ぶ」
+//! 形になる (WinUI では `Multiple` ではなく `Extended` に写している)。
+//! 複数選択では選択が 0 件になることがあるため、通知は
+//! `on_select(|indices: &[usize]|)` の形で、空の並びも渡される。
+//! `set_selection` / `set_selected` / `clear_selection` は通知せず、
+//! `select` / `select_many` はユーザー操作と同じく通知する。
+//!
+//! [`ListItem::detail`] は macOS / Windows では 2 行目になる。**Web は行の
+//! 中身で作りが変わり**、文字だけなら `<select size>`、`detail` があれば
+//! `<ul role="listbox">` の合成になる (`<option>` はテキストしか持てないため)。
+//! 行に置けるのは文字だけで、任意のウィジェットや画像のアイコンは置けない。
+//!
 //! ## ファイルとフォルダーの選択
 //!
 //! [`FilePicker`] はボタン 1 つで、押すとその環境の標準のファイル選択が開く
@@ -145,8 +188,8 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (ナビゲーションとファイル選択を含む 24 件) |
-//! | Web (wasm) | ブラウザで実行確認 (全ウィジェット、ナビゲーション、ファイル選択、メディアの表示と再生を確認) |
+//! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択を含む 41 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェット・ナビゲーション系・レイアウト・ファイル選択・メディアの読み込みと再生を確認 |
 //! | Linux | 未実装 |
 
@@ -154,29 +197,29 @@
 
 pub use naui_core::{
     accept_attribute, media, Align, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell,
-    Length, NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy, Settings,
-    Sizing, Theme, Track,
+    Length, ListItem, NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy,
+    SelectionMode, Settings, Sizing, Theme, Track,
 };
 
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, Menu,
-    Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Video,
-    WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
+    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
+    Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, Menu,
-    Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Video,
-    WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
+    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
+    Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, Menu,
-    Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Video,
-    WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
+    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
+    Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -185,9 +228,9 @@ pub use naui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, Menu,
-    Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui, Video,
-    WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
+    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
+    Video, WeakWindow, Widget, Window,
 };
 
 /// バックエンド間で API がずれていないことを、コンパイル時に検査する。
@@ -313,6 +356,26 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     menu.select(0);
     menu.on_select(|_index: usize| {});
 
+    // --- リスト -----------------------------------------------------------
+    let list: List = ui.list()?;
+    list.set_items(&[
+        ListItem::new("t"),
+        ListItem::new("t").detail("t"),
+        ListItem::new("t").enabled(false),
+    ]);
+    let _: usize = list.len();
+    let _: bool = list.is_empty();
+    list.set_selection_mode(SelectionMode::Multiple);
+    let _: SelectionMode = list.selection_mode();
+    let _: Option<usize> = list.selected();
+    let _: Vec<usize> = list.selection();
+    list.set_selected(0);
+    list.set_selection(&[0, 1]);
+    list.clear_selection();
+    list.select(0);
+    list.select_many(&[0, 1]);
+    list.on_select(|_indices: &[usize]| {});
+
     let breadcrumbs: Breadcrumbs = ui.breadcrumbs()?;
     breadcrumbs.set_items(&items);
     let _: usize = breadcrumbs.len();
@@ -409,6 +472,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&navbar);
     stack.append(&dock);
     stack.append(&menu);
+    stack.append(&list);
     stack.append(&breadcrumbs);
     stack.append(&pagination);
     stack.append(&link);

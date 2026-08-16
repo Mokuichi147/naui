@@ -12,12 +12,14 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use naui_core::{
-    FileFilter, FilePickerMode, Fit, GridCell, NavItem, Orientation, Padding, PlaybackState, Result,
-    ScrollPolicy, Sizing, Theme, Track,
+    FileFilter, FilePickerMode, Fit, GridCell, ListItem, NavItem, Orientation, Padding,
+    PlaybackState, Result, ScrollPolicy, SelectionMode, Sizing, Theme, Track,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
-use objc2_app_kit::{NSButton, NSImageScaling, NSImageView, NSLayoutConstraint, NSView};
+use objc2_app_kit::{
+    NSButton, NSImageScaling, NSImageView, NSLayoutConstraint, NSTableViewDelegate, NSView,
+};
 use objc2_foundation::{NSDate, NSRunLoop, NSSize};
 
 /// テストケース 1 件。
@@ -39,6 +41,20 @@ fn main() {
         ("ドックが等幅の項目を持つ", dock_items),
         ("タブが中身ごと切り替わる", tabs_selection),
         ("メニューの選択が 1 つだけ点く", menu_selection),
+        ("リストの行の文字が縦中央にそろう", list_rows_are_vertically_centered),
+        ("リストの補助の文字が 2 行目に出る", list_detail_makes_a_second_line),
+        ("リストの選択がネイティブと往復する", list_selection_round_trips),
+        ("リストの複数選択が 0 件にもなる", list_multiple_selection),
+        ("リストが選べない行を飛ばす", list_skips_disabled_rows),
+        ("リストの行が NSTableView に描かれる", list_rows_are_native_views),
+        (
+            "NSTableView 側の選択がクロージャへ届く",
+            list_native_selection_notifies,
+        ),
+        (
+            "リストの通知の中からリストを操作できる",
+            list_callback_can_touch_the_list,
+        ),
         ("パンくずが末尾を現在地にする", breadcrumbs_path),
         ("ページ送りが範囲内に収まる", pagination_steps),
         ("リンクのクリックがクロージャへ届く", link_click),
@@ -1082,6 +1098,313 @@ fn media_reports_position_while_playing(ui: &Ui) -> Result<()> {
     assert!(
         positions.windows(2).all(|w| w[1] >= w[0] - SNAP_BACK),
         "位置が先頭へ戻らないこと: {positions:?}"
+    );
+    Ok(())
+}
+
+
+/// リストの選択が NSTableView と往復し、`set_selected` は通知しない。
+fn list_selection_round_trips(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(["東京", "大阪", "札幌"]));
+    assert_eq!(list.len(), 3);
+    assert_eq!(list.selected(), None, "作った直後は何も選ばれていないこと");
+    assert_eq!(list.selection_mode(), SelectionMode::Single);
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    list.on_select({
+        let seen = seen.clone();
+        move |indices| seen.borrow_mut().push(indices.to_vec())
+    });
+
+    list.select(1);
+    assert_eq!(list.selected(), Some(1));
+    assert_eq!(*seen.borrow(), vec![vec![1]]);
+
+    // ネイティブ側の選択も動いていること。
+    let table = list.native_table();
+    assert_eq!(table.selectedRow(), 1);
+    assert_eq!(table.numberOfRows(), 3);
+
+    // 単一選択では 2 行目を選ぶと 1 行目は外れる。
+    list.select(2);
+    assert_eq!(list.selection(), vec![2]);
+
+    // `set_selected` は通知しない。
+    list.set_selected(0);
+    assert_eq!(list.selected(), Some(0));
+    assert_eq!(*seen.borrow(), vec![vec![1], vec![2]], "通知は 2 回だけ");
+
+    // 行を作り直すと選択は外れる。
+    list.set_items(&ListItem::list(["那覇"]));
+    assert_eq!(list.len(), 1);
+    assert_eq!(list.selected(), None);
+    assert_eq!(*seen.borrow(), vec![vec![1], vec![2]], "作り直しも通知しない");
+    Ok(())
+}
+
+/// 複数選択では複数行が選ばれ、選択が 0 件にもなる。
+fn list_multiple_selection(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(["赤", "青", "緑", "黄"]));
+    list.set_selection_mode(SelectionMode::Multiple);
+    assert!(list.selection_mode().is_multiple());
+    assert!(
+        list.native_table().allowsMultipleSelection(),
+        "NSTableView 側も複数選択になっていること"
+    );
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    list.on_select({
+        let seen = seen.clone();
+        move |indices| seen.borrow_mut().push(indices.to_vec())
+    });
+
+    // 並びは昇順にそろい、重複と範囲外は落ちる。
+    list.select_many(&[3, 0, 3, 99]);
+    assert_eq!(list.selection(), vec![0, 3]);
+    assert_eq!(*seen.borrow(), vec![vec![0, 3]]);
+    assert_eq!(list.selected(), Some(0), "selected は先頭の行を返すこと");
+
+    // 0 件へも戻せる。
+    list.select_many(&[]);
+    assert_eq!(list.selection(), Vec::<usize>::new());
+    assert_eq!(*seen.borrow(), vec![vec![0, 3], vec![]]);
+
+    // clear_selection は通知しない。
+    list.set_selection(&[1, 2]);
+    assert_eq!(list.selection(), vec![1, 2]);
+    list.clear_selection();
+    assert!(list.selection().is_empty());
+    assert_eq!(seen.borrow().len(), 2, "set_selection と clear は通知しない");
+
+    // 単一選択へ戻すと選択は外れ、以後は 1 行だけになる。
+    list.set_selection_mode(SelectionMode::Single);
+    assert!(list.selection().is_empty());
+    list.set_selection(&[1, 2]);
+    assert_eq!(list.selection(), vec![1], "単一選択では先頭の 1 件だけ");
+    Ok(())
+}
+
+/// 選べない行は、プログラムからもネイティブからも選ばれない。
+fn list_skips_disabled_rows(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("下書き"),
+        ListItem::new("送信中").enabled(false),
+        ListItem::new("送信済み"),
+    ]);
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    list.on_select({
+        let seen = seen.clone();
+        move |indices| seen.borrow_mut().push(indices.to_vec())
+    });
+
+    list.select(1);
+    assert!(list.selection().is_empty(), "選べない行は選ばれないこと");
+    assert_eq!(*seen.borrow(), vec![Vec::<usize>::new()]);
+
+    list.select(2);
+    assert_eq!(list.selection(), vec![2]);
+
+    // AppKit 自身にも「この行は選べない」と伝わっている。
+    let table = list.native_table();
+    let delegate = unsafe { table.delegate() }.expect("デリゲートがあること");
+    assert!(!delegate.tableView_shouldSelectRow(&table, 1));
+    assert!(delegate.tableView_shouldSelectRow(&table, 2));
+    Ok(())
+}
+
+/// 行の中身は AppKit がデリゲートに作らせた NSTextField になる。
+fn list_rows_are_native_views(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(["日本語の行", "ASCII row"]));
+    list.set_sizing(Sizing::fixed(240.0, 120.0));
+
+    // 大きさの制約は親のレイアウトで効くので、スタックに入れてから測る。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&list);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+
+    // スクロールビューは大きさの指定どおりになり、表は幅いっぱいに広がる。
+    let frame = list.native_view().frame();
+    assert!(
+        (frame.size.width - 240.0).abs() < 1e-6 && (frame.size.height - 120.0).abs() < 1e-6,
+        "指定した大きさになること: {frame:?}"
+    );
+    let table = list.native_table();
+    assert!(
+        table.frame().size.width > 0.0,
+        "NSTableView がスクロールの中で幅を持つこと"
+    );
+
+    let cell = table
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("1 行目のビューが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("行は NSTableCellView であること");
+    let field = unsafe { cell.textField() }.expect("行に文字が入っていること");
+    assert_eq!(field.stringValue().to_string(), "日本語の行");
+    Ok(())
+}
+
+/// AppKit 側で選択が変わったときも、そのままクロージャへ届く。
+///
+/// `select` は naui が通知を出す経路なので、ここでは naui を通さずに
+/// `NSTableView` を直接動かし、デリゲート経由の通知を確かめる。
+fn list_native_selection_notifies(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(["朝", "昼", "夜"]));
+    list.set_selection_mode(SelectionMode::Multiple);
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    list.on_select({
+        let seen = seen.clone();
+        move |indices| seen.borrow_mut().push(indices.to_vec())
+    });
+
+    let table = list.native_table();
+    let rows = objc2_foundation::NSMutableIndexSet::new();
+    rows.addIndex(0);
+    rows.addIndex(2);
+    table.selectRowIndexes_byExtendingSelection(&rows, false);
+
+    assert_eq!(
+        *seen.borrow(),
+        vec![vec![0, 2]],
+        "ネイティブ側の選択がそのまま届くこと"
+    );
+    assert_eq!(list.selection(), vec![0, 2]);
+    Ok(())
+}
+
+/// 通知の中から同じリストを触っても、AppKit ごと壊れない。
+///
+/// `on_select` の中で行を作り直すと、AppKit がデリゲートを呼んでいる最中に
+/// `reloadData` が走る。ギャラリーの「選択に合わせて表示を変える」形が
+/// まさにこれなので、実際にやって確かめる。
+fn list_callback_can_touch_the_list(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(["春", "夏", "秋", "冬"]));
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    list.on_select({
+        let seen = seen.clone();
+        let list = list.clone();
+        move |indices| {
+            seen.borrow_mut().push(indices.to_vec());
+            // 1 回目の通知でだけ、中身ごと差し替える。
+            if seen.borrow().len() == 1 {
+                list.set_items(&ListItem::list(["朝", "昼"]));
+                list.set_selected(1);
+            }
+        }
+    });
+
+    // naui を通さず、AppKit 側から選択を起こす。
+    let rows = objc2_foundation::NSMutableIndexSet::new();
+    rows.addIndex(2);
+    list.native_table()
+        .selectRowIndexes_byExtendingSelection(&rows, false);
+
+    assert_eq!(*seen.borrow(), vec![vec![2]], "通知は 1 回だけ");
+    assert_eq!(list.len(), 2, "コールバックの中の差し替えが効くこと");
+    assert_eq!(list.selected(), Some(1));
+    Ok(())
+}
+
+/// 行の文字が、行の高さの縦中央に来る。
+///
+/// 文字だけの `NSTextField` を行にすると、行の高さ (Inset スタイルでは 24pt) に
+/// 対して文字の高さ (16pt 前後) が足りず、AppKit が上寄せで描いてしまう。
+/// 選択の帯は行いっぱいに出るので、そのままだと帯と文字がずれる。
+fn list_rows_are_vertically_centered(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(["札幌", "仙台", "東京"]));
+    list.set_sizing(Sizing::fixed(240.0, 180.0));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&list);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+
+    let table = list.native_table();
+    let cell = table
+        .viewAtColumn_row_makeIfNecessary(0, 1, true)
+        .expect("行のビューが作られること");
+    let subviews = cell.subviews();
+    assert_eq!(subviews.len(), 1, "行の中身は文字 1 つ");
+    let field = subviews.objectAtIndex(0).frame();
+    let cell_height = cell.frame().size.height;
+
+    assert!(
+        field.size.height < cell_height,
+        "文字は行より低いこと (縦中央ぞろえが要る状況であること): {field:?} / {cell_height}"
+    );
+    let field_center = field.origin.y + field.size.height / 2.0;
+    assert!(
+        (field_center - cell_height / 2.0).abs() < 0.5,
+        "文字が行の縦中央にあること: 文字の中心 {field_center} / 行の中心 {}",
+        cell_height / 2.0
+    );
+    Ok(())
+}
+
+/// `detail` を付けた行だけが 2 行になり、そのぶん高くなる。
+///
+/// 行の高さを決めるのは AppKit (`usesAutomaticRowHeights`) なので、
+/// naui 側は制約を張るだけ。高さの数値ではなく「1 行より高い」ことを見る。
+fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪").detail("2,750,000 人"),
+    ]);
+    list.set_sizing(Sizing::fixed(240.0, 180.0));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&list);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+
+    let table = list.native_table();
+    let plain = table
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("1 行目のビュー");
+    let detailed = table
+        .viewAtColumn_row_makeIfNecessary(0, 1, true)
+        .expect("2 行目のビュー");
+    assert_eq!(plain.subviews().len(), 1, "detail が無い行は文字 1 本");
+    assert_eq!(detailed.subviews().len(), 2, "detail がある行は文字 2 本");
+
+    let plain_height = table.rectOfRow(0).size.height;
+    let detailed_height = table.rectOfRow(1).size.height;
+    assert!(
+        detailed_height > plain_height,
+        "2 行になった行のほうが高いこと: {detailed_height} <= {plain_height}"
+    );
+
+    // 補助の文字は本文の下に来る。NSTableCellView は反転していないので、
+    // 画面の下ほど y が小さい (反転していれば逆になる)。
+    let title = detailed.subviews().objectAtIndex(0).frame();
+    let sub = detailed.subviews().objectAtIndex(1).frame();
+    let title_is_above = if detailed.isFlipped() {
+        title.origin.y + title.size.height <= sub.origin.y
+    } else {
+        sub.origin.y + sub.size.height <= title.origin.y
+    };
+    assert!(
+        title_is_above,
+        "補助の文字が本文の下にあること: 本文 {title:?} / 補助 {sub:?}"
+    );
+    assert!(
+        sub.size.height < title.size.height,
+        "補助の文字のほうが小さいこと: {} / {}",
+        sub.size.height,
+        title.size.height
     );
     Ok(())
 }

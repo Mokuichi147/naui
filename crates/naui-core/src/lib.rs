@@ -8,10 +8,12 @@
 
 mod file;
 mod layout;
+mod list;
 pub mod media;
 
 pub use file::{accept_attribute, FileEntry, FileFilter, FilePickerMode};
 pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
+pub use list::{ListItem, SelectionMode};
 pub use media::{Fit, PlaybackState};
 
 use std::fmt;
