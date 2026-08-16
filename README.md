@@ -19,9 +19,9 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 33 件。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
-| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み |
-| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 41 件。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
+| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`List` は実機未確認** (Windows 向けのコンパイルのみ) |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -134,6 +134,7 @@ let element: web_sys::Element = button.native_element();
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` (`textFieldWithString:`) | ✅ `<input type=text>` | ❌ |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ❌ |
 | `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
+| `List` | ✅ `ListBox` + `ListBoxItem` | ✅ `NSTableView` (1 列) + `NSScrollView` | ✅ `<select size>` (文字だけ) / 🟡 `<ul role=listbox>` (`detail` あり) | ❌ |
 | `FilePicker` | 🟡 `Button` + `IFileOpenDialog` (共通ダイアログ) | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `<button>` + 隠した `<input type=file>` | ❌ |
 | `Image` | 🟡 `Image` (バインディングが無いため `XamlReader` 経由) | ✅ `NSImageView` | ✅ `<img>` | ❌ |
 | `Video` | ✅ `MediaPlayerElement` + `MediaPlayer` | ✅ `AVPlayerView` (AVKit) | ✅ `<video>` | ❌ |
@@ -334,6 +335,82 @@ let _: Option<usize> = navbar.selected();
 `Pagination` はページ番号を扱うため `set_page_count` / `page` / `set_page` /
 `go_previous` / `go_next` / `on_change` という名前になっています。
 
+### リスト
+
+`List` は**行が縦に並ぶ一覧**です。ナビゲーションの `Menu` と見た目は
+似ていますが、役割が違います。`Menu` は画面を切り替えるもの、`List` は
+データを選ぶもので、`List` だけが**複数選択**と**自前のスクロール**を持ちます。
+
+```rust
+let list = ui.list()?;
+list.set_items(&ListItem::list(["札幌", "東京", "大阪"]));
+list.set_selection_mode(SelectionMode::Multiple);  // 既定は Single
+list.on_select(|indices| println!("{indices:?} が選ばれた"));
+
+list.set_selection(&[0, 2]);       // 通知せずに選択を置き換える
+list.select(1);                    // ユーザー操作と同じ経路 (通知あり)
+let _: Vec<usize> = list.selection();
+let _: Option<usize> = list.selected();  // 選ばれているうち、いちばん上の行
+
+// スクロールと同じく高さを自分では決めないので、指定しておく。
+list.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(180.0)));
+```
+
+行には**補助の文字**を付けられます。macOS / Windows では 2 行目に小さく出て、
+その行だけ高さが増えます (高さを決めるのは AppKit の
+`usesAutomaticRowHeights` と WinUI のレイアウトパスで、naui は制約を張るだけです)。
+
+```rust
+list.set_items(&[
+    ListItem::new("札幌").detail("北海道"),
+    ListItem::new("東京").detail("東京都"),
+    ListItem::new("京都"),                    // detail 無しの行は 1 行のまま
+]);
+```
+
+**Web は行の中身で作りが変わります。** `<option>` の内容モデルはテキストのみで、
+要素も改行も置けません。そこで
+
+| 行 | Web の作り |
+| --- | --- |
+| 文字だけ | `<select size>` + `<option>` — ブラウザ標準のリストボックスそのもの |
+| `detail` あり | `<ul role="listbox">` + `<li role="option">` — 2 行にするための合成 |
+
+と切り替えます。`<select>` は選択もキーボード操作もスクロールもブラウザが
+面倒を見てくれる本物のコントロールなので、**その必要が無いときは使い続けます**。
+合成のほうは naui がクリック・⌘ / Ctrl / Shift での複数選択・矢印キー・
+Home / End・`aria-activedescendant` を受け持ちますが、枠と選択の配色は
+ブラウザのシステム色 (`Field` / `SelectedItem` / `Highlight` / `GrayText`) に
+任せていて、naui は色を決めません。
+
+| メソッド | 意味 |
+| --- | --- |
+| `set_items(&[ListItem])` | 行を作り直す。インデックスの意味が変わるため選択は外れる |
+| `set_selection_mode(mode)` | `Single` (既定) と `Multiple` の切り替え。切り替えると選択は外れる |
+| `selection()` | 選ばれている行を**昇順**で返す。複数選択では 0 件にもなる |
+| `selected()` | 選ばれているうち、いちばん上の行。無ければ `None` |
+| `set_selected(i)` / `set_selection(&[i])` | **通知せずに**選択を置き換える |
+| `clear_selection()` | **通知せずに**選択をすべて外す |
+| `select(i)` / `select_many(&[i])` | ユーザーが選んだのと同じ経路で選択を変える (通知あり) |
+| `on_select(f)` | 選択が変わったときに、選ばれている行 (昇順) で呼ばれる |
+
+`set_selection` に渡した並びは、**範囲外・選べない行 (`ListItem::enabled` が
+`false`)・重複が取り除かれ、昇順にそろえられます**。`Single` のときは
+先頭の 1 件だけが残ります。この正規化は `naui-core` の
+`SelectionMode::normalize` にあり、3 バックエンドとも同じものを通します。
+
+`Multiple` はどの環境でも「⌘ / Ctrl や Shift を押しながら選ぶ」形です
+(WinUI では `SelectionMode::Multiple` ではなく `Extended` に写しています。
+`Multiple` はクリックのたびに反転する挙動で、macOS / Web と揃わないためです)。
+
+実際の動きは `gallery` の**「リスト」タブ**で確認できます。単一 / 複数の切り替え、
+選択の表示、通知あり (`select`) と通知なし (`clear_selection`) の違い、
+選べない行 (末尾の「那覇 (準備中)」) がクリックで選ばれないことを試せます。
+
+```sh
+cargo run -p gallery          # ネイティブ (macOS / Windows)
+```
+
 ### ファイルとフォルダーの選択
 
 `FilePicker` は**ボタン 1 つ**です。押すと、その環境の標準のファイル選択が
@@ -395,6 +472,8 @@ stack.append(&picker);
 | 🟡 Web のナビゲーション全般 | ブラウザに「タブ」「ナビバー」というコントロールは無い。`<nav>` / `<ol>` / `<a>` / `<button>` と WAI-ARIA のロール (`tablist` / `tab` / `tabpanel` / `aria-current`) で意味づけし、隠すのは `hidden` 属性に任せている。CSS は Flexbox のレイアウトと、選択中を示す `font-weight: bold` だけ |
 | 🟡 macOS の `Navbar` | `NSSegmentedControl` はネイティブだが、見出しを持てないため `NSTextField` と `NSStackView` で横に並べている |
 | 🟡 macOS の `Menu` | AppKit の `NSMenu` はポップアップ用。サイドバー相当の縦一覧は `NSButton` (AccessoryBar・PushOnPushOff) を `NSStackView` に並べて作っている |
+| macOS の `List` の行 | 文字だけの `NSTextField` を行にすると、AppKit が枠の上端に文字を描くため選択の帯とずれる。AppKit 標準の `NSTableCellView` に入れ、上下の余白まで制約でつないで、高さを `usesAutomaticRowHeights` に求めさせている |
+| 🟡 Web の `List` (`detail` あり) | `<option>` はテキストしか持てず 2 行にできないため、`<ul role="listbox">` + `<li role="option">` を組み立てている。選択とキーボード操作は naui が受け持つ。**文字だけの行なら `<select size>` のまま**で、この合成は使わない |
 | 🟡 macOS の `Link` | AppKit にリンク専用のコントロールは無い。枠なしの `NSButton` を `NSColor::linkColor` にし、`href` は `NSWorkspace` で開いている |
 | 🟡 Windows の `Image` | `Microsoft.UI.Xaml.Controls.Image` と `BitmapImage` が `winio-winui3` 0.4.5 のバインディングに無く、Rust から `Source` を設定できない。`XamlReader` に `<Image>` の XAML を読ませ、ホストの `Grid` の中身を差し替えている (`ProgressBar` と同じ手口)。表示するのは WinUI 標準の `Image` そのもの |
 | 🟡 Windows の `Video` / `Audio` | `MediaPlayerElement` と `MediaPlayer` を使う。Windows App SDK の一部環境で標準 `MediaTransportControls` を visual tree に追加すると `0xc000027b` で終了するため、標準の再生バーは無効にし、Gallery は独自の操作欄を使っている |
@@ -419,6 +498,14 @@ stack.append(&picker);
 | Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
 | すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。naui 側の `clamp` は二重の保険 |
 | `Menu` という名前 | naui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。`NSMenu` / `MenuFlyout` に相当するものは未実装 |
+| `List` の高さ | 中身に合わせた高さを持たない (macOS は `NSScrollView` そのものなので `Scroll` と同じ)。`set_sizing` で高さを指定すること |
+| `List` の通知 | `on_select` は**選択が変わるたび**に、選ばれている行の並びで呼ばれる。複数選択では**空の並び**で呼ばれることもある。`set_selected` / `set_selection` / `clear_selection` は通知しない |
+| `List` の列 | 1 列だけ。複数列のテーブルは未実装で、必要なら `native_table()` / `native_list_box()` / `native_select()` から直接触る |
+| `ListItem::detail` | macOS / Windows は 2 行目に小さく出る。**Web は `detail` があると `<select>` から `role="listbox"` の合成へ切り替わる** (`<option>` はテキストしか持てないため) |
+| Web の `List` の切り替わり | 判定は `set_items` のたび。1 行でも `detail` があれば合成になる。切り替わっても外側の要素は変わらないので、`set_sizing` の指定と親への追加はそのまま生きる |
+| Web の `List::native_select` | 合成に切り替わっているときは `None` を返す。どちらの場合も外枠は `native_element()` から取れる |
+| `List` の行の高さ | 行ごとに変わる (`detail` のある行だけ高い)。決めるのは AppKit / WinUI で、naui は上下の余白を制約にするだけ |
+| Web の `List` の行数 | `<select>` は `size` を指定しないとドロップダウンになるため、行数に応じて 2..=8 の値を入れている。`set_sizing` で高さを指定すると CSS が優先される |
 | `Dock` の配置 | 下端への固定は行わない。**置く場所はアプリの責務**で、縦スタックの最後に置き、手前に `Spacer` か `Fill` を使うと下端に寄る |
 | `Fill` と `Auto` | どちらもネイティブのレイアウト機構への指示。naui 自身は位置も大きさも計算しない |
 | グリッドのマスの中 | 縦は中央ぞろえ (`NSGridCellPlacement::Center` / `VerticalAlignment::Center` / `align-items: center`)。`Fill` を指定した子だけマスいっぱいに広がる |
@@ -436,10 +523,10 @@ stack.append(&picker);
 
 ### 未対応のコンポーネント
 
-ポップアップメニュー、汎用のダイアログ、保存ダイアログ、リスト / テーブル、
+ポップアップメニュー、汎用のダイアログ、保存ダイアログ、複数列のテーブル、
 ラジオボタン、コンボボックス、複数行テキスト、ツールバー、ツリーなどはありません
-(ファイル / フォルダーの選択は `FilePicker`、画像・動画・音声は
-`Image` / `Video` / `Audio` があります)。
+(1 列のリストは `List`、ファイル / フォルダーの選択は `FilePicker`、
+画像・動画・音声は `Image` / `Video` / `Audio` があります)。
 レイアウトはスタック・グリッド・スクロールで、絶対配置はありません。
 
 > **注意:** Windows 列は、Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を
@@ -447,6 +534,8 @@ stack.append(&picker);
 > `set_sizing`・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の
 > 読み込みと再生・動画表示のリサイズまで確認済みです。
 > `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
+> **`List` はこの確認より後に追加したため、実機では未確認です**
+> (Windows 向けのコンパイルは通っています)。
 
 ---
 
@@ -547,7 +636,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 ```
 
 - `naui-core`: 設定・エラー整形の単体テスト
-- `naui-macos`: **AppKit の実コントロールに対する 33 件の統合テスト**
+- `naui-macos`: **AppKit の実コントロールに対する 41 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
@@ -557,6 +646,14 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - `NSSegmentedControl` の選択が往復し、`set_selected` は通知しないこと
   - `NSTabView` がタブの中身を保持し、切り替えを 1 回だけ通知すること
   - メニューの縦一覧で、押し込まれるボタンが常に 1 つだけであること
+  - リストの選択が NSTableView と往復し、`set_selected` は通知しないこと
+  - リストの複数選択が昇順にそろい、選択が 0 件にもなること
+  - リストが選べない行を飛ばし、AppKit にも「選べない」と伝えていること
+  - リストの行が NSTableView のビューとして作られ、日本語がそのまま出ること
+  - NSTableView 側で選択を変えても、デリゲート経由でクロージャへ届くこと
+  - 通知の中から行を差し替えても、AppKit の再入で壊れないこと
+  - 行の文字が、選択の帯とずれないよう行の縦中央にそろうこと
+  - `detail` を付けた行だけが 2 行になり、そのぶん高くなること
   - パンくずが末尾を現在地にし、階層を差し替えても追従すること
   - ページ送りが先頭・末尾で止まること
   - リンクのネイティブクリックがクロージャへ届くこと
@@ -592,13 +689,28 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   バインドしていないため、Windows で実装できませんでした。
   「共通 API は全バックエンドの共通部分」という方針を優先して、
   macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **ウィジェットは 22 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
+- **ウィジェットは 23 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
   `Checkbox` / `TextInput` / `Slider` / `ProgressBar`)、レイアウト 3 種
   (`Grid` / `Scroll` / `Spacer`)、ナビゲーション 7 種
   (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`)、
-  ファイル選択 1 種 (`FilePicker`)、メディア 3 種 (`Image` / `Video` / `Audio`) です。
-  ポップアップメニュー、汎用のダイアログ、保存ダイアログ、リスト、
+  リスト 1 種 (`List`)、ファイル選択 1 種 (`FilePicker`)、
+  メディア 3 種 (`Image` / `Video` / `Audio`) です。
+  ポップアップメニュー、汎用のダイアログ、保存ダイアログ、テーブル、
   複数行テキストなどは未実装です。
+- **`List` は 1 列だけです。** 複数列のテーブルはありません。また `List` は
+  中身に合わせた高さを持たないため、`set_sizing` で高さを指定してください。
+- **`List` の行に置けるのは文字 (`label` と `detail`) だけです。** 任意の
+  ウィジェットや画像のアイコンは置けません。macOS の `NSTableView` と WinUI の
+  `ListBox` は行に任意のビューを入れられますが、Web で同じことをするには
+  `role="listbox"` の合成でも足りず (ARIA の `option` は操作できる子要素を
+  持てません)、3 環境で形がそろわないためです。絵文字や記号ならラベルに
+  入れればどの環境でも出ます。
+- **Web で `detail` を使うと、`List` は合成になります。** 文字だけの行なら
+  `<select>` のままですが、`detail` があると `<ul role="listbox">` に切り替わり、
+  複数選択のキーボード操作は naui の実装になります。
+- **`List` の Windows は実機未確認です。** macOS は自動テスト、Web はブラウザで
+  確認していますが、Windows は実機での動作確認をまだ行っていません
+  (Windows 向けのコンパイルは通っています)。
 - **Windows の `Stack` では主軸の `Fill` と `Spacer` が効きません。** `StackPanel` が
   子へ余りを配らないためです。`Grid` の `Track::Fill` を使ってください。
 - **macOS の `Track::Fill` は重みを無視します。** NSGridView に重みの概念が無く、

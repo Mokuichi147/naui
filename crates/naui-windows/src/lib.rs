@@ -20,6 +20,7 @@
 mod app;
 mod file_picker;
 mod layout;
+mod list;
 mod media;
 mod navigation;
 mod ui_thread;
@@ -32,6 +33,7 @@ use naui_core::{Error, Orientation, Result, Settings, Theme};
 
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
+pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
@@ -134,6 +136,11 @@ impl Ui {
     /// 縦に並ぶナビゲーション一覧。
     pub fn menu(&self) -> Result<Menu> {
         Menu::new()
+    }
+
+    /// 選択できる行の一覧。自分でスクロールする。
+    pub fn list(&self) -> Result<List> {
+        List::new()
     }
 
     /// パンくず。

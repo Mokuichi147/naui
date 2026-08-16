@@ -34,6 +34,7 @@
 //! | `Navbar` | `adw::HeaderBar` + `adw::ViewSwitcher` |
 //! | `Dock` | `adw::ViewSwitcherBar` |
 //! | `Menu` | `gtk::ListBox` (`connect_row_selected`) |
+//! | `List` | `gtk::ListBox` を `gtk::ScrolledWindow` に載せる (`set_selection_mode`) |
 //! | `Breadcrumbs` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
 //! | `Pagination` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
 //! | `Link` | `gtk::LinkButton` |
@@ -55,8 +56,9 @@
 use std::cell::{Cell, RefCell};
 
 use naui_core::{
-    Align, Error, Fit, FileEntry, FileFilter, FilePickerMode, GridCell, NavItem, Orientation, Padding, PlaybackState,
-    Result, ScrollPolicy, Settings, Sizing, Theme, Track,
+    Align, Error, Fit, FileEntry, FileFilter, FilePickerMode, GridCell, ListItem, NavItem,
+    Orientation, Padding, PlaybackState, Result, ScrollPolicy, SelectionMode, Settings, Sizing,
+    Theme, Track,
 };
 
 fn unimplemented_error(what: &'static str) -> Error {
@@ -104,6 +106,7 @@ placeholder_widget!(Tabs);
 placeholder_widget!(Navbar);
 placeholder_widget!(Dock);
 placeholder_widget!(Menu);
+placeholder_widget!(List);
 placeholder_widget!(Breadcrumbs);
 placeholder_widget!(Pagination);
 placeholder_widget!(Link);
@@ -227,6 +230,32 @@ placeholder_item_bar!(Navbar);
 placeholder_item_bar!(Dock);
 placeholder_item_bar!(Menu);
 placeholder_item_bar!(Breadcrumbs);
+
+impl List {
+    pub fn set_items(&self, _items: &[ListItem]) {}
+    pub fn len(&self) -> usize {
+        0
+    }
+    pub fn is_empty(&self) -> bool {
+        true
+    }
+    pub fn set_selection_mode(&self, _mode: SelectionMode) {}
+    pub fn selection_mode(&self) -> SelectionMode {
+        SelectionMode::Single
+    }
+    pub fn selected(&self) -> Option<usize> {
+        None
+    }
+    pub fn selection(&self) -> Vec<usize> {
+        Vec::new()
+    }
+    pub fn set_selected(&self, _index: usize) {}
+    pub fn set_selection(&self, _indices: &[usize]) {}
+    pub fn clear_selection(&self) {}
+    pub fn select(&self, _index: usize) {}
+    pub fn select_many(&self, _indices: &[usize]) {}
+    pub fn on_select(&self, _f: impl FnMut(&[usize]) + 'static) {}
+}
 
 impl Navbar {
     pub fn set_title(&self, _title: &str) {}
@@ -453,6 +482,9 @@ impl Ui {
     }
     pub fn menu(&self) -> Result<Menu> {
         Err(unimplemented_error("Menu の生成"))
+    }
+    pub fn list(&self) -> Result<List> {
+        Err(unimplemented_error("List の生成"))
     }
     pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
         Err(unimplemented_error("Breadcrumbs の生成"))

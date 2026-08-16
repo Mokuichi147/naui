@@ -7,8 +7,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use naui::{
-    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, NavItem, Orientation, Padding,
-    PlaybackState, Result, ScrollPolicy, Settings, Sizing, Theme, Track, Ui,
+    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation,
+    Padding, PlaybackState, Result, ScrollPolicy, SelectionMode, Settings, Sizing, Theme, Track, Ui,
 };
 
 /// 同梱のサンプル画像の場所。
@@ -32,6 +32,7 @@ pub fn build(ui: &Ui) -> Result<()> {
         "ホーム",
         "ウィジェット",
         "ナビゲーション",
+        "リスト",
         "レイアウト",
         "ファイル",
         "メディア",
@@ -199,6 +200,124 @@ pub fn build(ui: &Ui) -> Result<()> {
     let dock = ui.dock()?;
     dock.set_items(&dock_items);
 
+    // --- リスト -----------------------------------------------------------
+    let list_pane = ui.stack(Orientation::Vertical)?;
+    list_pane.set_spacing(12.0);
+    list_pane.set_padding(Padding::all(12.0));
+    list_pane.append(&ui.label("選択できる行の一覧")?);
+
+    // detail を付けた行は 2 行になる。
+    let mut cities = vec![
+        ListItem::new("札幌").detail("北海道"),
+        ListItem::new("仙台").detail("宮城県"),
+        ListItem::new("東京").detail("東京都"),
+        ListItem::new("横浜").detail("神奈川県"),
+        ListItem::new("名古屋").detail("愛知県"),
+    ];
+    // detail の無い行は 1 行のまま。混ぜても行ごとに高さが変わる。
+    cities.extend(ListItem::list(["京都", "大阪", "神戸", "広島", "福岡"]));
+    // 選べない行。クリックもキーボードもネイティブ側が弾く。
+    cities.push(ListItem::new("那覇").detail("準備中").enabled(false));
+    // detail を外した版。Web ではこちらが `<select>` になる。
+    let plain: Vec<ListItem> = cities
+        .iter()
+        .map(|item| ListItem::new(&item.label).enabled(item.enabled))
+        .collect();
+
+    let list = ui.list()?;
+    list.set_items(&cities);
+    // スクロールと同じく、高さは自分では決まらないので指定する。
+    list.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(180.0)),
+    );
+
+    let list_status = ui.label("選択: なし")?;
+    list.on_select({
+        let list_status = list_status.clone();
+        let cities = cities.clone();
+        move |indices| {
+            let picked: Vec<&str> = indices
+                .iter()
+                .filter_map(|&i| cities.get(i).map(|item| item.label.as_str()))
+                .collect();
+            let text = if picked.is_empty() {
+                String::from("なし")
+            } else {
+                picked.join(" / ")
+            };
+            list_status.set_text(&format!("選択: {text}"));
+        }
+    });
+
+    // 単一選択と複数選択を切り替える。切り替えると選択は外れる。
+    let mode_selector = ui.navbar("選び方")?;
+    mode_selector.set_items(&NavItem::list(["1 行だけ", "複数行"]));
+    mode_selector.set_selected(0);
+    mode_selector.on_select({
+        let list = list.clone();
+        let list_status = list_status.clone();
+        move |index| {
+            let mode = if index == 0 {
+                SelectionMode::Single
+            } else {
+                SelectionMode::Multiple
+            };
+            list.set_selection_mode(mode);
+            list_status.set_text("選択: なし");
+        }
+    });
+
+    let list_buttons = ui.stack(Orientation::Horizontal)?;
+    list_buttons.set_spacing(8.0);
+    let select_tokyo = ui.button("東京を選ぶ")?;
+    select_tokyo.on_click({
+        let list = list.clone();
+        // 通知ありの経路なので、状態表示も一緒に更新される。
+        move || list.select(2)
+    });
+    let detail_toggle = ui.button("detail を外す")?;
+    detail_toggle.on_click({
+        let list = list.clone();
+        let detail_toggle = detail_toggle.clone();
+        let list_status = list_status.clone();
+        let cities = cities.clone();
+        let plain = plain.clone();
+        let showing_detail = Rc::new(Cell::new(true));
+        move || {
+            let next = !showing_detail.get();
+            showing_detail.set(next);
+            list.set_items(if next { &cities } else { &plain });
+            detail_toggle.set_text(if next {
+                "detail を外す"
+            } else {
+                "detail を付ける"
+            });
+            // 行を作り直すと選択は外れる (通知は来ない)。
+            list_status.set_text("選択: なし");
+        }
+    });
+
+    let clear_selection = ui.button("選択を消す")?;
+    clear_selection.on_click({
+        let list = list.clone();
+        let list_status = list_status.clone();
+        move || {
+            // clear_selection は通知しないので、表示は自分で合わせる。
+            list.clear_selection();
+            list_status.set_text("選択: なし");
+        }
+    });
+    list_buttons.append(&select_tokyo);
+    list_buttons.append(&clear_selection);
+    list_buttons.append(&detail_toggle);
+
+    list_pane.append(&mode_selector);
+    list_pane.append(&list);
+    list_pane.append(&list_status);
+    list_pane.append(&list_buttons);
+
     // --- レイアウト -------------------------------------------------------
     let layout_pane = ui.stack(Orientation::Vertical)?;
     layout_pane.set_spacing(12.0);
@@ -288,6 +407,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     tabs.add_tab("ホーム", &home_pane);
     tabs.add_tab("ウィジェット", &controls_pane);
     tabs.add_tab("ナビゲーション", &navigation_pane);
+    tabs.add_tab("リスト", &list_pane);
     tabs.add_tab("レイアウト", &layout_pane);
     tabs.add_tab("ファイル", &files_pane);
     tabs.add_tab("メディア", &media_pane);

@@ -11,6 +11,7 @@
 
 mod file_picker;
 mod layout;
+mod list;
 mod media;
 mod menu_bar;
 mod navigation;
@@ -33,6 +34,7 @@ use objc2_foundation::NSNotification;
 
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
+pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
@@ -127,6 +129,11 @@ impl Ui {
     /// 縦に並ぶナビゲーション一覧。
     pub fn menu(&self) -> Result<Menu> {
         Ok(Menu::new(self.mtm))
+    }
+
+    /// 選択できる行の一覧。自分でスクロールする。
+    pub fn list(&self) -> Result<List> {
+        Ok(List::new(self.mtm))
     }
 
     /// パンくず。
