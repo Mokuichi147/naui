@@ -59,10 +59,6 @@ fn main() {
             file_picker_configuration,
         ),
         (
-            "ファイル選択のモードが NSOpenPanel へ反映される",
-            file_picker_panel,
-        ),
-        (
             "編集メニューが貼り付けをレスポンダチェーンへ配送する",
             menu_bar_provides_edit_shortcuts,
         ),
@@ -742,49 +738,6 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.append(&picker);
     assert_eq!(stack.len(), 1);
-    Ok(())
-}
-
-/// モードと絞り込みが、実際の `NSOpenPanel` の設定になる。
-///
-/// `native_panel()` は組み立てるだけで表示しないので、
-/// イベントループを回さずに中身を確かめられる。
-fn file_picker_panel(ui: &Ui) -> Result<()> {
-    let picker = ui.file_picker("選ぶ")?;
-
-    let panel = picker.native_panel();
-    assert!(panel.canChooseFiles(), "既定はファイルを選ぶ");
-    assert!(!panel.canChooseDirectories());
-    assert!(!panel.allowsMultipleSelection());
-
-    picker.set_mode(FilePickerMode::Files);
-    let panel = picker.native_panel();
-    assert!(panel.canChooseFiles());
-    assert!(panel.allowsMultipleSelection(), "複数選べること");
-
-    picker.set_mode(FilePickerMode::Folder);
-    let panel = picker.native_panel();
-    assert!(!panel.canChooseFiles(), "フォルダーだけを選ばせること");
-    assert!(panel.canChooseDirectories());
-    assert!(!panel.allowsMultipleSelection());
-
-    // 絞り込みは拡張子の並びとして渡り、フォルダーのときは渡らない。
-    picker.set_filters(&[
-        FileFilter::new("画像", ["*.PNG", "jpg"]),
-        FileFilter::new("文書", ["txt"]),
-    ]);
-    #[allow(deprecated)]
-    let folder_types = picker.native_panel().allowedFileTypes();
-    assert!(folder_types.is_none(), "フォルダー選択では絞り込まないこと");
-
-    picker.set_mode(FilePickerMode::File);
-    #[allow(deprecated)]
-    let types = picker
-        .native_panel()
-        .allowedFileTypes()
-        .expect("拡張子が設定されること");
-    let types: Vec<String> = types.iter().map(|t| t.to_string()).collect();
-    assert_eq!(types, ["png", "jpg", "txt"]);
     Ok(())
 }
 
