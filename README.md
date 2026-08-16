@@ -21,7 +21,7 @@ miui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | --- | --- | --- |
 | **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 33 件。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。**`Image` / `Video` / `Audio` はブラウザでの動作未確認** (wasm のビルドと起動までは確認) |
-| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択を確認済み。**`Image` / `Video` / `Audio` はコンパイル確認のみ** |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -243,7 +243,7 @@ movie.set_sizing(Sizing::fixed(320.0, 180.0));
 movie.play();
 movie.set_volume(0.5);
 
-let sound = ui.audio("/path/to/bgm.m4a")?;     // 映像面を持たず再生バーだけ
+let sound = ui.audio("/path/to/bgm.m4a")?;     // 音声を再生する
 ```
 
 `Video` と `Audio` は**同じ形の再生 API** を持ちます。
@@ -256,12 +256,13 @@ let sound = ui.audio("/path/to/bgm.m4a")?;     // 映像面を持たず再生バ
 | `duration()` | 長さ (秒)。**読み込みが終わるまで `None`**。ライブ配信も `None` |
 | `set_volume(0.0..=1.0)` / `set_muted(bool)` | 音量と消音。範囲外は丸める |
 | `set_loop(bool)` / `set_autoplay(bool)` | 繰り返しと自動再生 |
-| `set_controls(bool)` | ネイティブの再生バーを出すか (既定は出す) |
+| `set_controls(bool)` | ネイティブの再生バーを出すか (Windows では安全性のため常に無効。Gallery は独自の操作欄を使用) |
 | `on_state_change(f)` | 状態が変わったとき。`Idle` / `Buffering` / `Playing` / `Paused` / `Ended` |
 | `on_position_change(f)` | 再生位置が進むたび (およそ 4 回/秒)。シークバーの追従に使う |
 
 `on_state_change` と `on_position_change` は、アプリから `play()` を呼んだときだけで
-なく、**ネイティブの再生バーをユーザーが操作したときにも届きます**。
+なく、macOS / Web の再生UIや、Windowsでアプリ側に用意した操作欄をユーザーが操作した
+ときにも届きます。
 
 `Fit` は画像と動画の映像面の収め方です。
 
@@ -301,7 +302,7 @@ Web の `blob:` URL は、**同じ `FilePicker` で次に選び直すまで**有
 
 | miui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
 | --- | --- | --- | --- | --- |
-| `Tabs` | 🟡 `StackPanel` + `ToggleButton` (TabViewの未パッケージ起動回避) | ✅ `NSTabView` + `NSTabViewItem` | 🟡 `role="tablist"` + `<button role=tab>` + `hidden` | ❌ |
+| `Tabs` | 🟡 `Grid` + `ToggleButton` (TabViewの未パッケージ起動回避) | ✅ `NSTabView` + `NSTabViewItem` | 🟡 `role="tablist"` + `<button role=tab>` + `hidden` | ❌ |
 | `Navbar` | 🟡 `TextBlock` + `ToggleButton` の横並び | 🟡 `NSTextField` + `NSSegmentedControl` | 🟡 `<nav>` + `<strong>` + `<button>` | ❌ |
 | `Dock` | 🟡 `ToggleButton` の横並び | ✅ `NSSegmentedControl` (等幅) | 🟡 `<nav>` + `<button>` (等幅) | ❌ |
 | `Menu` | 🟡 `ToggleButton` の縦並び | 🟡 `NSButton` (AccessoryBar) の縦並び | 🟡 `<nav><ul><li><button>` | ❌ |
@@ -396,6 +397,7 @@ stack.append(&picker);
 | 🟡 macOS の `Menu` | AppKit の `NSMenu` はポップアップ用。サイドバー相当の縦一覧は `NSButton` (AccessoryBar・PushOnPushOff) を `NSStackView` に並べて作っている |
 | 🟡 macOS の `Link` | AppKit にリンク専用のコントロールは無い。枠なしの `NSButton` を `NSColor::linkColor` にし、`href` は `NSWorkspace` で開いている |
 | 🟡 Windows の `Image` | `Microsoft.UI.Xaml.Controls.Image` と `BitmapImage` が `winio-winui3` 0.4.5 のバインディングに無く、Rust から `Source` を設定できない。`XamlReader` に `<Image>` の XAML を読ませ、ホストの `Grid` の中身を差し替えている (`ProgressBar` と同じ手口)。表示するのは WinUI 標準の `Image` そのもの |
+| 🟡 Windows の `Video` / `Audio` | `MediaPlayerElement` と `MediaPlayer` を使う。Windows App SDK の一部環境で標準 `MediaTransportControls` を visual tree に追加すると `0xc000027b` で終了するため、標準の再生バーは無効にし、Gallery は独自の操作欄を使っている |
 | 🟡 macOS の `Audio` | AppKit に音声専用のコントロールは無い。映像トラックの無いメディアを `AVPlayerView` に載せると再生バーだけが出るので、それを使っている |
 | 🟡 すべての `Pagination` | ページ送りに相当するネイティブコントロールはどの環境にも無い。前へ / 次へのボタンとページ番号を、その環境のネイティブなボタンで並べている |
 | 🟡 Windows の `Navbar` / `Dock` / `Menu` | `NavigationView` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、WinUI 標準の `ToggleButton` を `StackPanel` に並べ、選択状態を `IsChecked` で表している |
@@ -442,7 +444,8 @@ stack.append(&picker);
 
 > **注意:** Windows 列は、Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を
 > 実行し、基本ウィジェット・ナビゲーション系 7 種・`Grid` / `Scroll` / `Spacer` /
-> `set_sizing`・`FilePicker` のファイル / フォルダー選択まで確認済みです。
+> `set_sizing`・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の
+> 読み込みと再生・動画表示のリサイズまで確認済みです。
 > `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
 
 ---
@@ -583,7 +586,7 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   フレームワークランタイムを必要とし、現在は2.3.1で実機確認しています。
 - **Windows の `Tabs` は `TabView` を使用しません。** Windows App SDK 2.3.1 の
   未パッケージ実行では `TabView` の既定テンプレートがランタイム終了を起こすため、
-  `StackPanel` と `ToggleButton` で同じ選択 API を構成しています。
+  `Grid` と `ToggleButton` で同じ選択 API を構成しています。
 - **Enter で確定するコールバック (`on_submit`) がありません。**
   `winio-winui3` がキーボードイベント (`KeyDown` / `KeyEventHandler`) を
   バインドしていないため、Windows で実装できませんでした。
@@ -604,7 +607,9 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   ツールキット (AVFoundation / ブラウザ / Windows.Media.Playback) が決めます。
 - **macOS の `Image` はリモート URL を同期的に読み込みます。** 読み終わるまで
   UI が止まるため、ローカルのファイルを渡してください。
-- **Windows のメディアは実機未確認です。** コンパイル確認のみ。
+- **Windows の標準再生バーは無効です。** Windows App SDK の一部環境では
+  `MediaTransportControls` の表示時に `0xc000027b` で終了するため、`Video` / `Audio`
+  の標準バーは使わず、アプリ側で `play()` / `pause()` などの操作欄を用意してください。
 - **Web のメディアはブラウザ未確認です。** wasm のビルドと起動までは確認済み。
 - **絶対配置はありません。** 位置は `Grid` のマス目・`Align`・`Spacer` で決めます。
 - **`set_sizing` はコンテナの中の子に効きます。** ウィンドウ直下のルートは
