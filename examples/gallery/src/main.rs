@@ -1,3 +1,3 @@
-fn main() -> miui::Result<()> {
+fn main() -> naui::Result<()> {
     gallery::start()
 }

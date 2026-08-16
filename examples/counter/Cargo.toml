@@ -1,6 +1,6 @@
 [package]
 name = "counter"
-description = "miui の最小サンプル"
+description = "naui の最小サンプル"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,4 +8,4 @@ license.workspace = true
 publish = false
 
 [dependencies]
-miui.workspace = true
+naui.workspace = true

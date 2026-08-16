@@ -33,7 +33,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 name = "counter"
 version = "0.2.0"
 dependencies = [
- "miui",
+ "naui",
 ]
 
 [[package]]
@@ -75,7 +75,7 @@ dependencies = [
 name = "gallery"
 version = "0.2.0"
 dependencies = [
- "miui",
+ "naui",
  "wasm-bindgen",
 ]
 
@@ -97,33 +97,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
-name = "miui"
+name = "naui"
 version = "0.2.0"
 dependencies = [
- "miui-core",
- "miui-gtk",
- "miui-macos",
- "miui-web",
- "miui-windows",
+ "naui-core",
+ "naui-gtk",
+ "naui-macos",
+ "naui-web",
+ "naui-windows",
 ]
 
 [[package]]
-name = "miui-core"
+name = "naui-core"
 version = "0.2.0"
 
 [[package]]
-name = "miui-gtk"
+name = "naui-gtk"
 version = "0.2.0"
 dependencies = [
- "miui-core",
+ "naui-core",
 ]
 
 [[package]]
-name = "miui-macos"
+name = "naui-macos"
 version = "0.2.0"
 dependencies = [
  "block2",
- "miui-core",
+ "naui-core",
  "objc2",
  "objc2-app-kit",
  "objc2-av-foundation",
@@ -133,20 +133,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "miui-web"
+name = "naui-web"
 version = "0.2.0"
 dependencies = [
  "js-sys",
- "miui-core",
+ "naui-core",
  "wasm-bindgen",
  "web-sys",
 ]
 
 [[package]]
-name = "miui-windows"
+name = "naui-windows"
 version = "0.2.0"
 dependencies = [
- "miui-core",
+ "naui-core",
  "windows",
  "windows-core",
  "winio-winui3",

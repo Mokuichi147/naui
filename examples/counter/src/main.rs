@@ -1,4 +1,4 @@
-//! miui の最小サンプル。ネイティブのボタンとラベルを 1 つずつ使う。
+//! naui の最小サンプル。ネイティブのボタンとラベルを 1 つずつ使う。
 //!
 //! ```sh
 //! cargo run -p counter
@@ -7,10 +7,10 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use miui::{Orientation, Padding, Settings};
+use naui::{Orientation, Padding, Settings};
 
-fn main() -> miui::Result<()> {
-    miui::run(Settings::new("counter"), |ui| {
+fn main() -> naui::Result<()> {
+    naui::run(Settings::new("counter"), |ui| {
         let window = ui.window("counter", 320.0, 200.0)?;
 
         let stack = ui.stack(Orientation::Vertical)?;

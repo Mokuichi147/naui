@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/miui-core",
-    "crates/miui-macos",
-    "crates/miui-web",
-    "crates/miui-windows",
-    "crates/miui-gtk",
-    "crates/miui",
+    "crates/naui-core",
+    "crates/naui-macos",
+    "crates/naui-web",
+    "crates/naui-windows",
+    "crates/naui-gtk",
+    "crates/naui",
     "examples/counter",
     "examples/gallery",
 ]
@@ -16,15 +16,15 @@ version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/mokuichi147/miui"
+repository = "https://github.com/mokuichi147/naui"
 
 [workspace.dependencies]
-miui-core = { path = "crates/miui-core", version = "0.2.0" }
-miui-macos = { path = "crates/miui-macos", version = "0.2.0" }
-miui-web = { path = "crates/miui-web", version = "0.2.0" }
-miui-windows = { path = "crates/miui-windows", version = "0.2.0" }
-miui-gtk = { path = "crates/miui-gtk", version = "0.2.0" }
-miui = { path = "crates/miui", version = "0.2.0" }
+naui-core = { path = "crates/naui-core", version = "0.2.0" }
+naui-macos = { path = "crates/naui-macos", version = "0.2.0" }
+naui-web = { path = "crates/naui-web", version = "0.2.0" }
+naui-windows = { path = "crates/naui-windows", version = "0.2.0" }
+naui-gtk = { path = "crates/naui-gtk", version = "0.2.0" }
+naui = { path = "crates/naui", version = "0.2.0" }
 
 [profile.release]
 opt-level = 3

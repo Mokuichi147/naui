@@ -1,4 +1,4 @@
-//! miui の全ウィジェットのデモ。
+//! naui の全ウィジェットのデモ。
 //!
 //! 表示されるコントロールはすべて OS (またはブラウザ) の実ウィジェット。
 //! macOS なら NSButton / NSTextField、Web なら `<button>` / `<input>`。
@@ -6,7 +6,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use miui::{
+use naui::{
     FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, NavItem, Orientation, Padding,
     PlaybackState, Result, ScrollPolicy, Settings, Sizing, Theme, Track, Ui,
 };
@@ -22,7 +22,7 @@ const SAMPLE_IMAGE: &str = "assets/sample.png";
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
-    let window = ui.window("miui gallery", 680.0, 860.0)?;
+    let window = ui.window("naui gallery", 680.0, 860.0)?;
     let root = ui.grid()?;
     root.set_spacing(0.0, 12.0);
     root.set_padding(Padding::all(24.0));
@@ -44,7 +44,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     ]);
 
     let crumbs = ui.breadcrumbs()?;
-    crumbs.set_items(&NavItem::list(["miui", "ホーム"]));
+    crumbs.set_items(&NavItem::list(["naui", "ホーム"]));
     root.attach(&crumbs, GridCell::new(0, 0));
 
     let route_status = ui.label("ルート: ホーム")?;
@@ -54,10 +54,10 @@ pub fn build(ui: &Ui) -> Result<()> {
     let home_pane = ui.stack(Orientation::Vertical)?;
     home_pane.set_spacing(12.0);
     home_pane.set_padding(Padding::all(12.0));
-    home_pane.append(&ui.label("miui ウィジェットギャラリー")?);
+    home_pane.append(&ui.label("naui ウィジェットギャラリー")?);
     home_pane.append(&ui.label("タブとパンくずを使って画面を移動できます。")?);
     home_pane.append(&ui.label("カテゴリとパンくずの選択状態も連動します。")?);
-    home_pane.append(&ui.link("miui のリポジトリ", "https://github.com/mokuichi147/miui")?);
+    home_pane.append(&ui.link("naui のリポジトリ", "https://github.com/mokuichi147/naui")?);
 
     let theme_status = ui.label(&format!("テーマ: {}", theme_name(ui.theme())))?;
     let theme_selector = ui.navbar("テーマ")?;
@@ -313,7 +313,7 @@ pub fn build(ui: &Ui) -> Result<()> {
             let Some(section) = sections.get(index) else {
                 return;
             };
-            crumbs.set_items(&[NavItem::new("miui"), section.clone()]);
+            crumbs.set_items(&[NavItem::new("naui"), section.clone()]);
             route_status.set_text(&format!("ルート: {}", section.label));
         }
     });
@@ -342,7 +342,7 @@ pub fn build(ui: &Ui) -> Result<()> {
             nav_status.set_text(&format!("ナビバー: {}", item.label));
             route_status.set_text(&format!("ルート: ナビゲーション / {}", item.label));
             crumbs.set_items(&[
-                NavItem::new("miui"),
+                NavItem::new("naui"),
                 NavItem::new("ナビゲーション"),
                 item.clone(),
             ]);
@@ -361,7 +361,7 @@ pub fn build(ui: &Ui) -> Result<()> {
             nav_status.set_text(&format!("ドック: {}", item.label));
             route_status.set_text(&format!("ルート: ナビゲーション / {}", item.label));
             crumbs.set_items(&[
-                NavItem::new("miui"),
+                NavItem::new("naui"),
                 NavItem::new("ナビゲーション"),
                 item.clone(),
             ]);
@@ -382,7 +382,7 @@ pub fn build(ui: &Ui) -> Result<()> {
             nav_status.set_text(&format!("場所: {} / {} ページ", item.label, page));
             route_status.set_text(&format!("ルート: ナビゲーション / {}", item.label));
             crumbs.set_items(&[
-                NavItem::new("miui"),
+                NavItem::new("naui"),
                 NavItem::new("ナビゲーション"),
                 item.clone(),
             ]);
@@ -404,7 +404,7 @@ pub fn build(ui: &Ui) -> Result<()> {
             pager_status.set_text(&format!("ページ: {} / 5", page + 1));
             nav_status.set_text(&format!("場所: {} / {} ページ", item, page + 1));
             crumbs.set_items(&[
-                NavItem::new("miui"),
+                NavItem::new("naui"),
                 NavItem::new("ナビゲーション"),
                 NavItem::new(format!("{} / {}ページ", item, page + 1)),
             ]);
@@ -460,7 +460,7 @@ fn media_form_of(source: &str) -> Option<usize> {
 /// **ファイル選択は 1 つだけ。** 受け付ける拡張子を [`MEDIA_FORMS`] に絞って
 /// あるので、選ばれたものは必ず画像 / 動画 / 音声のどれかに決まり、
 /// 対応する表示形式へ自動で切り替わる。
-fn build_media_pane(ui: &Ui) -> Result<miui::Grid> {
+fn build_media_pane(ui: &Ui) -> Result<naui::Grid> {
     let pane = ui.grid()?;
     pane.set_spacing(0.0, 12.0);
     pane.set_padding(Padding::all(12.0));
@@ -610,7 +610,7 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Grid> {
 }
 
 /// 画像の表示形式。収め方を切り替えられる。
-fn build_image_pane(ui: &Ui) -> Result<(miui::Grid, miui::Image)> {
+fn build_image_pane(ui: &Ui) -> Result<(naui::Grid, naui::Image)> {
     let pane = ui.grid()?;
     pane.set_spacing(0.0, 8.0);
     pane.set_padding(Padding::all(8.0));
@@ -648,7 +648,7 @@ fn build_image_pane(ui: &Ui) -> Result<(miui::Grid, miui::Image)> {
 }
 
 /// 動画の表示形式。再生の操作を一通り並べる。
-fn build_video_pane(ui: &Ui) -> Result<(miui::Grid, miui::Video)> {
+fn build_video_pane(ui: &Ui) -> Result<(naui::Grid, naui::Video)> {
     let pane = ui.grid()?;
     pane.set_spacing(0.0, 8.0);
     pane.set_padding(Padding::all(8.0));
@@ -769,7 +769,7 @@ fn build_video_pane(ui: &Ui) -> Result<(miui::Grid, miui::Video)> {
 }
 
 /// 音声の表示形式。WinUI 標準バーを使わず、Gallery 側の操作欄を使う。
-fn build_audio_pane(ui: &Ui) -> Result<(miui::Stack, miui::Audio)> {
+fn build_audio_pane(ui: &Ui) -> Result<(naui::Stack, naui::Audio)> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(8.0);
     pane.set_padding(Padding::all(8.0));
@@ -817,7 +817,7 @@ fn state_name(state: PlaybackState) -> &'static str {
 
 /// ネイティブ / Web 共通の起動処理。
 pub fn start() -> Result<()> {
-    miui::run(Settings::new("miui gallery"), build)
+    naui::run(Settings::new("naui gallery"), build)
 }
 
 /// 選ばれたものを 1 行で表す。

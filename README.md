@@ -1,8 +1,8 @@
-# miui
+# naui
 
 **各 OS のネイティブ UI を、1 つの API から扱う軽量 GUI ツールキット (Rust)。**
 
-miui は自前で描画しません。`ui.button("押す")` が返すのは **本物の OS のボタン**であり、
+naui は自前で描画しません。`ui.button("押す")` が返すのは **本物の OS のボタン**であり、
 描画・レイアウト・IME・アクセシビリティ・OS のテーマ追従は、すべて
 プラットフォームのツールキットが行います。
 
@@ -28,7 +28,7 @@ Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階
 Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で、
 `Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link` を含む
 `gallery` の起動を確認済みです。
-詳細は [`crates/miui-gtk`](crates/miui-gtk/src/lib.rs) のドキュメントを参照してください。
+詳細は [`crates/naui-gtk`](crates/naui-gtk/src/lib.rs) のドキュメントを参照してください。
 
 ---
 
@@ -41,10 +41,10 @@ WinUI 3 が `Application::Start` より前のコントロール生成を許さ�
 ```rust
 use std::cell::Cell;
 use std::rc::Rc;
-use miui::{Orientation, Padding, Settings};
+use naui::{Orientation, Padding, Settings};
 
-fn main() -> miui::Result<()> {
-    miui::run(Settings::new("counter"), |ui| {
+fn main() -> naui::Result<()> {
+    naui::run(Settings::new("counter"), |ui| {
         let window = ui.window("counter", 320.0, 200.0)?;
 
         let stack = ui.stack(Orientation::Vertical)?;
@@ -78,10 +78,10 @@ fn main() -> miui::Result<()> {
 `Settings::theme` を使い、実行中は `Ui::set_theme` で切り替えられます。
 
 ```rust
-use miui::{Settings, Theme};
+use naui::{Settings, Theme};
 
 let settings = Settings::new("counter").theme(Theme::System);
-miui::run(settings, |ui| {
+naui::run(settings, |ui| {
     // 設定画面などのイベントからも呼べます。
     ui.set_theme(Theme::Dark)?;
     // ui.set_theme(Theme::Light)?;
@@ -121,7 +121,7 @@ let element: web_sys::Element = button.native_element();
 | 🔴 | **再現** — 相当するネイティブの概念が無いため、別の要素で代用している |
 | ❌ | 未実装 |
 
-| miui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
+| naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
 | --- | --- | --- | --- | --- |
 | `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | 🔴 `<div>` + `document.title` | ❌ |
 | `Stack` | ✅ `StackPanel` | ✅ `NSStackView` | 🟡 `<div>` + CSS Flexbox | ❌ |
@@ -143,10 +143,10 @@ let element: web_sys::Element = button.native_element();
 
 どのウィジェットも `set_sizing` で大きさを指定できます。計算するのは
 ネイティブのレイアウト機構 (Auto Layout / XAML のレイアウトパス / CSS) で、
-miui は制約やプロパティを設定するだけです。
+naui は制約やプロパティを設定するだけです。
 
 ```rust
-use miui::{GridCell, Length, ScrollPolicy, Sizing, Track};
+use naui::{GridCell, Length, ScrollPolicy, Sizing, Track};
 
 // 幅は親いっぱい、高さは 160px、幅は 120px 以上。
 widget.set_sizing(
@@ -227,12 +227,12 @@ Windows の `StackPanel` は余りを配らないため、`Spacer` と主軸の 
 
 ### メディア
 
-写真・動画・音声を表示します。**デコードも再生も miui は行いません。**
+写真・動画・音声を表示します。**デコードも再生も naui は行いません。**
 ファイルを開くのも再生バーを描くのも、その環境のツールキット
 (AVFoundation / ブラウザ / Windows.Media.Playback) の仕事です。
 
 ```rust
-use miui::{Fit, PlaybackState};
+use naui::{Fit, PlaybackState};
 
 let photo = ui.image("/path/to/photo.jpg")?;   // パスでも URL でもよい
 photo.set_fit(Fit::Cover);
@@ -295,12 +295,12 @@ Web の `blob:` URL は、**同じ `FilePicker` で次に選び直すまで**有
 (選び直すと以前のものは `URL.revokeObjectURL` で破棄されます)。
 
 どのウィジェットで表示するかは、**`FileFilter` で受け付ける拡張子を絞って
-選ばせる**のが確実です。選ばれた時点で種類が決まるので、miui 側に種類を
+選ばせる**のが確実です。選ばれた時点で種類が決まるので、naui 側に種類を
 推測する仕組みは持たせていません。
 
 ### ナビゲーション
 
-| miui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
+| naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
 | --- | --- | --- | --- | --- |
 | `Tabs` | 🟡 `Grid` + `ToggleButton` (TabViewの未パッケージ起動回避) | ✅ `NSTabView` + `NSTabViewItem` | 🟡 `role="tablist"` + `<button role=tab>` + `hidden` | ❌ |
 | `Navbar` | 🟡 `TextBlock` + `ToggleButton` の横並び | 🟡 `NSTextField` + `NSSegmentedControl` | 🟡 `<nav>` + `<strong>` + `<button>` | ❌ |
@@ -314,7 +314,7 @@ Web の `blob:` URL は、**同じ `FilePicker` で次に選び直すまで**有
 選ばれたものはインデックスで返ります。
 
 ```rust
-let navbar = ui.navbar("miui")?;
+let navbar = ui.navbar("naui")?;
 navbar.set_items(&NavItem::list(["ホーム", "検索", "設定"]));
 navbar.on_select(|index| println!("{index} 番目が選ばれた"));
 navbar.set_selected(0);            // 通知せずに選択を変える
@@ -342,7 +342,7 @@ Common Item Dialog、Web はブラウザのファイル選択)。一覧・検索
 扱いは、すべてその環境が行います。
 
 ```rust
-use miui::{FileFilter, FilePickerMode};
+use naui::{FileFilter, FilePickerMode};
 
 let picker = ui.file_picker("画像を選ぶ")?;
 picker.set_mode(FilePickerMode::File);   // File / Files / Folder
@@ -379,7 +379,7 @@ stack.append(&picker);
   ファイル選択の自動起動を禁じているためで、ボタンを押した経路 (既定の動き)
   なら問題ありません。
 - フォルダーを選ぶと、ブラウザは**そのフォルダーの中のファイル一覧**を返します。
-  他の環境はフォルダー 1 つを返すので、miui は `webkitRelativePath` の先頭から
+  他の環境はフォルダー 1 つを返すので、naui は `webkitRelativePath` の先頭から
   フォルダー名を取り出し、**1 件に畳んで**そろえています。
 
 保存ダイアログ (名前を付けて保存) はありません。`<input type=file>` に相当が
@@ -417,10 +417,10 @@ stack.append(&picker);
 | macOS の `Checkbox` | `NSButton` の `Switch` タイプが AppKit のチェックボックスそのもの。別クラスではない |
 | WinUI 3 の `Button` / `Checkbox` | ラベルを `TextBlock` にして `Content` に入れている。XAML の標準的なやり方で、コントロール自体はネイティブ |
 | Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
-| すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。miui 側の `clamp` は二重の保険 |
-| `Menu` という名前 | miui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。`NSMenu` / `MenuFlyout` に相当するものは未実装 |
+| すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。naui 側の `clamp` は二重の保険 |
+| `Menu` という名前 | naui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。`NSMenu` / `MenuFlyout` に相当するものは未実装 |
 | `Dock` の配置 | 下端への固定は行わない。**置く場所はアプリの責務**で、縦スタックの最後に置き、手前に `Spacer` か `Fill` を使うと下端に寄る |
-| `Fill` と `Auto` | どちらもネイティブのレイアウト機構への指示。miui 自身は位置も大きさも計算しない |
+| `Fill` と `Auto` | どちらもネイティブのレイアウト機構への指示。naui 自身は位置も大きさも計算しない |
 | グリッドのマスの中 | 縦は中央ぞろえ (`NSGridCellPlacement::Center` / `VerticalAlignment::Center` / `align-items: center`)。`Fill` を指定した子だけマスいっぱいに広がる |
 | Windows の `Fill` の目印 | `HorizontalAlignment` は指定しなくても `Stretch` なので、プロパティだけでは「`Fill` と言われた」のか「既定のまま」なのかを区別できない。グリッドのマスの中でだけこの違いが要るため、`FrameworkElement.Tag` に目印を残している |
 | `set_sizing` を呼ぶ順番 | macOS の交差軸 `Fill` とグリッドのマス内配置は、`append` / `attach` の**前**に指定しておく (AppKit では追加時に制約とセルの配置を張るため)。Web と Windows は後から変えても追従する |
@@ -454,19 +454,19 @@ stack.append(&picker);
 
 ```
 crates/
-  miui-core     … 共通の値型 (Error / Settings / Orientation / Align / Padding)
-  miui-macos    … AppKit バックエンド (objc2)
-  miui-web      … DOM バックエンド (web-sys)
-  miui-windows  … WinUI 3 バックエンド (winio-winui3)
-  miui-gtk      … GTK4 バックエンドの骨組み (未実装)
-  miui          … ターゲットに応じてバックエンドを選ぶファサード
+  naui-core     … 共通の値型 (Error / Settings / Orientation / Align / Padding)
+  naui-macos    … AppKit バックエンド (objc2)
+  naui-web      … DOM バックエンド (web-sys)
+  naui-windows  … WinUI 3 バックエンド (winio-winui3)
+  naui-gtk      … GTK4 バックエンドの骨組み (未実装)
+  naui          … ターゲットに応じてバックエンドを選ぶファサード
 examples/
   counter       … 最小サンプル
   gallery       … 全ウィジェットのデモ (ネイティブ / Web 共通コード)
 ```
 
 バックエンドは別クレートなので、API のずれは型検査でしか捕まりません。
-そのため `crates/miui/src/lib.rs` に **`__api_contract`** という関数を置き、
+そのため `crates/naui/src/lib.rs` に **`__api_contract`** という関数を置き、
 公開 API を一通り呼んでいます。どのターゲットでもコンパイルされるので、
 バックエンド間でシグネチャが食い違うとビルドが壊れます
 (実際、この仕組みが Windows 側の実装漏れを 1 件検出しました)。
@@ -535,23 +535,23 @@ cargo test --workspace
 (macOS からでも、ターゲットを追加すれば `cargo check` は通ります)。
 
 ```sh
-cargo check --target x86_64-pc-windows-msvc -p miui
+cargo check --target x86_64-pc-windows-msvc -p naui
 ```
 
 ```sh
-cargo check --target wasm32-unknown-unknown -p miui
+cargo check --target wasm32-unknown-unknown -p naui
 ```
 
 ```sh
-cargo check --target x86_64-unknown-linux-gnu -p miui
+cargo check --target x86_64-unknown-linux-gnu -p naui
 ```
 
-- `miui-core`: 設定・エラー整形の単体テスト
-- `miui-macos`: **AppKit の実コントロールに対する 33 件の統合テスト**
+- `naui-core`: 設定・エラー整形の単体テスト
+- `naui-macos`: **AppKit の実コントロールに対する 33 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
-  - NSSlider が範囲でクランプすること (miui ではなく AppKit の挙動)
+  - NSSlider が範囲でクランプすること (naui ではなく AppKit の挙動)
   - ハンドルを捨てた後もコンテナ経由でコールバックが生きていること
   - NSWindow を生成・設定・クローズしても二重解放しないこと
   - `NSSegmentedControl` の選択が往復し、`set_selected` は通知しないこと
