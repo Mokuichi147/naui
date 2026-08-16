@@ -657,7 +657,9 @@ fn build_video_pane(ui: &Ui) -> Result<(naui::Grid, naui::Video)> {
     media_frame.set_sizing(Sizing::fill());
 
     let video = ui.video("")?;
-    video.set_sizing(Sizing::fill());
+    // 画像と同じ表示領域の上限を設け、縦長動画の intrinsic size で
+    // Web の Gallery 全体が縦に押し広げられないようにする。
+    video.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
     // 動画フレームと操作欄は別ウィジェットに分け、操作欄がフレームへ
     // 重ならないようにする。
     media_frame.attach(&video, GridCell::new(0, 0));
