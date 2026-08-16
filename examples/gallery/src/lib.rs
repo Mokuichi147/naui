@@ -23,9 +23,15 @@ const SAMPLE_IMAGE: &str = "assets/sample.png";
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
     let window = ui.window("miui gallery", 680.0, 860.0)?;
-    let root = ui.stack(Orientation::Vertical)?;
-    root.set_spacing(12.0);
+    let root = ui.grid()?;
+    root.set_spacing(0.0, 12.0);
     root.set_padding(Padding::all(24.0));
+    root.set_sizing(Sizing::fill());
+    root.set_column_track(0, Track::FILL);
+    root.set_row_track(0, Track::Auto);
+    root.set_row_track(1, Track::Auto);
+    root.set_row_track(2, Track::FILL);
+    root.set_row_track(3, Track::Auto);
 
     // Tabs を gallery のカテゴリ切り替えに使う。
     let sections = NavItem::list([
@@ -39,10 +45,10 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["miui", "ホーム"]));
-    root.append(&crumbs);
+    root.attach(&crumbs, GridCell::new(0, 0));
 
     let route_status = ui.label("ルート: ホーム")?;
-    root.append(&route_status);
+    root.attach(&route_status, GridCell::new(0, 1));
 
     // --- ホーム -----------------------------------------------------------
     let home_pane = ui.stack(Orientation::Vertical)?;
@@ -293,11 +299,11 @@ pub fn build(ui: &Ui) -> Result<()> {
     tabs.add_tab("メディア", &media_pane);
     // タブがウィンドウの余りを受け取り、下のものを端へ寄せる。
     tabs.set_sizing(Sizing::fill());
-    root.append(&tabs);
+    root.attach(&tabs, GridCell::new(0, 2));
 
     // 余りはタブが取るので、ドックはウィンドウの下端に並ぶ。
     dock.set_sizing(Sizing::fill_width());
-    root.append(&dock);
+    root.attach(&dock, GridCell::new(0, 3));
 
     tabs.on_select({
         let crumbs = crumbs.clone();
@@ -454,12 +460,19 @@ fn media_form_of(source: &str) -> Option<usize> {
 /// **ファイル選択は 1 つだけ。** 受け付ける拡張子を [`MEDIA_FORMS`] に絞って
 /// あるので、選ばれたものは必ず画像 / 動画 / 音声のどれかに決まり、
 /// 対応する表示形式へ自動で切り替わる。
-fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(12.0);
+fn build_media_pane(ui: &Ui) -> Result<miui::Grid> {
+    let pane = ui.grid()?;
+    pane.set_spacing(0.0, 12.0);
     pane.set_padding(Padding::all(12.0));
     pane.set_sizing(Sizing::fill());
-    pane.append(&ui.label("選んだファイルの種類に合わせて表示形式が切り替わります。")?);
+    pane.set_column_track(0, Track::FILL);
+    pane.set_row_track(0, Track::Auto);
+    pane.set_row_track(1, Track::Auto);
+    pane.set_row_track(2, Track::Auto);
+    pane.set_row_track(3, Track::FILL);
+
+    let description = ui.label("選んだファイルの種類に合わせて表示形式が切り替わります。")?;
+    pane.attach(&description, GridCell::new(0, 0));
 
     let (image_pane, image) = build_image_pane(ui)?;
     let (video_pane, video) = build_video_pane(ui)?;
@@ -472,6 +485,8 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
     #[cfg(target_os = "windows")]
     let forms = {
         let forms = ui.grid()?;
+        forms.set_column_track(0, Track::FILL);
+        forms.set_row_track(0, Track::FILL);
         forms.attach(&image_pane, GridCell::new(0, 0));
         forms
     };
@@ -584,12 +599,12 @@ fn build_media_pane(ui: &Ui) -> Result<miui::Stack> {
     row.append(&load);
     row.append(&pick);
     row.set_sizing(Sizing::fill_width());
-    pane.append(&row);
-    pane.append(&status);
+    pane.attach(&row, GridCell::new(0, 1));
+    pane.attach(&status, GridCell::new(0, 2));
 
     // ウィンドウの高さが変わったときも、メディア表示側へ余りを渡す。
     forms.set_sizing(Sizing::fill());
-    pane.append(&forms);
+    pane.attach(&forms, GridCell::new(0, 3));
 
     Ok(pane)
 }
@@ -633,11 +648,14 @@ fn build_image_pane(ui: &Ui) -> Result<(miui::Grid, miui::Image)> {
 }
 
 /// 動画の表示形式。再生の操作を一通り並べる。
-fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(8.0);
+fn build_video_pane(ui: &Ui) -> Result<(miui::Grid, miui::Video)> {
+    let pane = ui.grid()?;
+    pane.set_spacing(0.0, 8.0);
     pane.set_padding(Padding::all(8.0));
     pane.set_sizing(Sizing::fill());
+    pane.set_column_track(0, Track::FILL);
+    pane.set_row_track(0, Track::FILL);
+    pane.set_row_track(1, Track::Auto);
 
     let media_frame = ui.grid()?;
     media_frame.set_column_track(0, Track::FILL);
@@ -645,11 +663,11 @@ fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
     media_frame.set_sizing(Sizing::fill());
 
     let video = ui.video("")?;
-    video.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
+    video.set_sizing(Sizing::fill());
     // 動画フレームと操作欄は別ウィジェットに分け、操作欄がフレームへ
     // 重ならないようにする。
     media_frame.attach(&video, GridCell::new(0, 0));
-    pane.append(&media_frame);
+    pane.attach(&media_frame, GridCell::new(0, 0));
 
     let controls = ui.stack(Orientation::Vertical)?;
     controls.set_spacing(8.0);
@@ -746,7 +764,7 @@ fn build_video_pane(ui: &Ui) -> Result<(miui::Stack, miui::Video)> {
     toggles.append(&muted);
     toggles.append(&looping);
     controls.append(&toggles);
-    pane.append(&controls);
+    pane.attach(&controls, GridCell::new(0, 1));
     Ok((pane, video))
 }
 

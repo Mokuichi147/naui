@@ -2,7 +2,7 @@
 //!
 //! | miui | WinUI 3 |
 //! | --- | --- |
-//! | `Tabs` | `StackPanel` + `ToggleButton` |
+//! | `Tabs` | `Grid` + `ToggleButton` |
 //! | `Navbar` | `TextBlock` (見出し) + `ToggleButton` の横並び |
 //! | `Dock` | `ToggleButton` の横並び |
 //! | `Menu` | `ToggleButton` の縦並び |
@@ -22,10 +22,13 @@ use miui_core::{NavItem, Result};
 use windows_core::{Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::Primitives::ToggleButton;
 use winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, HyperlinkButton, Orientation as XamlOrientation,
-    StackPanel, TextBlock,
+    Button as XamlButton, Grid as XamlGrid, HyperlinkButton,
+    Orientation as XamlOrientation, RowDefinition, StackPanel, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement, VerticalAlignment};
+use winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, UIElement,
+    VerticalAlignment,
+};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
@@ -257,9 +260,9 @@ macro_rules! impl_item_bar {
 // ------------------------------------------------------------------- Tabs
 
 struct TabsInner {
-    native: StackPanel,
+    native: XamlGrid,
     headers: StackPanel,
-    content: StackPanel,
+    content: XamlGrid,
     /// 子のハンドルを保持し、選択中の内容を表示する。
     children: RefCell<Vec<Box<dyn Widget>>>,
     buttons: RefCell<Vec<ToggleButton>>,
@@ -267,7 +270,7 @@ struct TabsInner {
     selected: Cell<Option<usize>>,
 }
 
-/// タブ。見出しと選択中の中身を `StackPanel` で表示する。
+/// タブ。見出しと選択中の中身を `Grid` で表示する。
 #[derive(Clone)]
 pub struct Tabs(Rc<TabsInner>);
 impl_widget!(Tabs, native);
@@ -276,19 +279,58 @@ impl Tabs {
     pub(crate) fn new() -> Result<Self> {
         // Windows App SDK 2.3.1 の未パッケージ起動では、TabView の既定
         // テンプレート適用時に Microsoft.UI.Xaml.dll が fail-fast する。
-        // ToggleButton と StackPanel で構成すると、同じ API を保ったまま
-        // 安定して実行できる。
-        let native = panel(XamlOrientation::Vertical, 4.0)?;
+        // ToggleButton と Grid で構成すると、同じ API を保ったまま安定して
+        // 実行でき、選択中の内容へウィンドウの余りの高さも渡せる。
+        let native = XamlGrid::new().map_err(|e| to_error("タブGridの生成", e))?;
         let headers = panel(XamlOrientation::Horizontal, 4.0)?;
-        let content = panel(XamlOrientation::Vertical, 0.0)?;
+        let content = XamlGrid::new().map_err(|e| to_error("タブ内容Gridの生成", e))?;
+
+        let rows = native
+            .RowDefinitions()
+            .map_err(|e| to_error("タブ行定義の取得", e))?;
+        let header_row = RowDefinition::new().map_err(|e| to_error("タブ見出し行の生成", e))?;
+        header_row
+            .SetHeight(GridLength {
+                Value: 1.0,
+                GridUnitType: GridUnitType::Auto,
+            })
+            .map_err(|e| to_error("タブ見出し行の設定", e))?;
+        rows.Append(&header_row)
+            .map_err(|e| to_error("タブ見出し行の追加", e))?;
+        let content_row = RowDefinition::new().map_err(|e| to_error("タブ内容行の生成", e))?;
+        content_row
+            .SetHeight(GridLength {
+                Value: 1.0,
+                GridUnitType: GridUnitType::Star,
+            })
+            .map_err(|e| to_error("タブ内容行の設定", e))?;
+        rows.Append(&content_row)
+            .map_err(|e| to_error("タブ内容行の追加", e))?;
+
         let headers_element = headers
             .cast::<UIElement>()
             .map_err(|e| to_error("タブ見出しの要素化", e))?;
         let content_element = content
             .cast::<UIElement>()
             .map_err(|e| to_error("タブ内容の要素化", e))?;
-        append(&native, &headers_element)?;
-        append(&native, &content_element)?;
+        let headers_framework = headers
+            .cast::<FrameworkElement>()
+            .map_err(|e| to_error("タブ見出しのレイアウト要素化", e))?;
+        let content_framework = content
+            .cast::<FrameworkElement>()
+            .map_err(|e| to_error("タブ内容のレイアウト要素化", e))?;
+        let _ = XamlGrid::SetRow(&headers_framework, 0);
+        let _ = XamlGrid::SetRow(&content_framework, 1);
+        let _ = content_framework.SetHorizontalAlignment(HorizontalAlignment::Stretch);
+        let _ = content_framework.SetVerticalAlignment(VerticalAlignment::Stretch);
+        native
+            .Children()
+            .and_then(|children| children.Append(&headers_element))
+            .map_err(|e| to_error("タブ見出しの追加", e))?;
+        native
+            .Children()
+            .and_then(|children| children.Append(&content_element))
+            .map_err(|e| to_error("タブ内容の追加", e))?;
 
         Ok(Self(Rc::new(TabsInner {
             native,
@@ -386,6 +428,10 @@ impl Tabs {
             if let Some(selected) = index {
                 if let Some(child) = self.0.children.borrow().get(selected) {
                     let element = child.native_element();
+                    if let Ok(framework) = element.cast::<FrameworkElement>() {
+                        let _ = XamlGrid::SetRow(&framework, 0);
+                        let _ = XamlGrid::SetColumn(&framework, 0);
+                    }
                     let _ = children.Append(&element);
                 }
             }
