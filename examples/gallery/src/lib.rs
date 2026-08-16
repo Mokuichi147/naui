@@ -472,25 +472,15 @@ fn build_media_pane(ui: &Ui) -> Result<naui::Grid> {
     let (video_pane, video) = build_video_pane(ui)?;
     let (audio_pane, audio) = build_audio_pane(ui)?;
 
-    // MediaPlayerElement を WinUI の TabView のコンテンツにすると、
-    // TabView が動画・音声ペインを初めて表示する瞬間に Microsoft.UI.Xaml
-    // が 0xc000027b で fail-fast する環境がある。Windows では Grid の子を
-    // 選択時に差し替え、未選択の MediaPlayerElement を visual tree に置かない。
-    #[cfg(target_os = "windows")]
+    // MediaPlayerElement をタブのコンテンツにすると、動画・音声ペインを
+    // 初めて表示する瞬間に環境によっては問題が起きる。また、この Gallery
+    // ではファイルの種類に応じて自動で切り替えるため、種類のタブは見せず、
+    // 選択中のペインだけを Grid の子として置く。
     let forms = {
         let forms = ui.grid()?;
         forms.set_column_track(0, Track::FILL);
         forms.set_row_track(0, Track::FILL);
         forms.attach(&image_pane, GridCell::new(0, 0));
-        forms
-    };
-    #[cfg(not(target_os = "windows"))]
-    let forms = {
-        let forms = ui.tabs()?;
-        forms.add_tab(MEDIA_FORMS[0].0, &image_pane);
-        forms.add_tab(MEDIA_FORMS[1].0, &video_pane);
-        forms.add_tab(MEDIA_FORMS[2].0, &audio_pane);
-        forms.set_selected(0);
         forms
     };
 
@@ -502,22 +492,16 @@ fn build_media_pane(ui: &Ui) -> Result<naui::Grid> {
         let video = video.clone();
         let audio = audio.clone();
         let forms = forms.clone();
-        #[cfg(target_os = "windows")]
         let image_pane = image_pane.clone();
-        #[cfg(target_os = "windows")]
         let video_pane = video_pane.clone();
-        #[cfg(target_os = "windows")]
         let audio_pane = audio_pane.clone();
         let status = status.clone();
         move |form: usize, source: &str| {
-            #[cfg(target_os = "windows")]
             match form {
                 0 => forms.replace(&image_pane, GridCell::new(0, 0)),
                 1 => forms.replace(&video_pane, GridCell::new(0, 0)),
                 _ => forms.replace(&audio_pane, GridCell::new(0, 0)),
             }
-            #[cfg(not(target_os = "windows"))]
-            forms.select(form);
             match form {
                 0 => image.set_source(source),
                 1 => video.set_source(source),

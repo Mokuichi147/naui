@@ -245,6 +245,30 @@ impl Grid {
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
 
+    /// いまの子を外し、指定した 1 つだけを置く。
+    pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
+        // NSGridCell::setContentView(None) だけでは、既存のビューが
+        // NSGridView の subviews に残ることがある。先に親から明示的に外し、
+        // 写真ペインが動画ペインの下に残らないようにする。
+        let old_views: Vec<Retained<NSView>> = self
+            .0
+            .children
+            .borrow()
+            .iter()
+            .map(|old| old.native_view())
+            .collect();
+        for old in &old_views {
+            old.removeFromSuperview();
+        }
+        let target = self
+            .0
+            .native
+            .cellAtColumnIndex_rowIndex(cell.column as isize, cell.row as isize);
+        target.setContentView(None);
+        self.0.children.borrow_mut().clear();
+        self.attach(child, cell);
+    }
+
     /// 列の幅の決め方。
     pub fn set_column_track(&self, index: usize, track: Track) {
         self.ensure_size(index + 1, 0);

@@ -180,6 +180,7 @@ impl Grid {
     pub fn set_spacing(&self, _column: f64, _row: f64) {}
     pub fn set_padding(&self, _padding: Padding) {}
     pub fn attach(&self, _child: &dyn Widget, _cell: GridCell) {}
+    pub fn replace(&self, _child: &dyn Widget, _cell: GridCell) {}
     pub fn set_column_track(&self, _index: usize, _track: Track) {}
     pub fn set_row_track(&self, _index: usize, _track: Track) {}
     pub fn columns(&self) -> usize {

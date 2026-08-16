@@ -51,6 +51,7 @@ fn main() {
         ("交差軸の Fill が親の幅に合わせて広がる", stack_fill_cross),
         ("スペーサーが余りを吸って後続を端へ寄せる", spacer_pushes),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
+        ("グリッドの子を置き換える", grid_replaces_child),
         ("スクロールが中身を保持する", scroll_keeps_child),
         ("グリッドの同じ行が縦中央でそろう", grid_row_alignment),
         (
@@ -605,6 +606,24 @@ fn grid_places_children(ui: &Ui) -> Result<()> {
     // frame は alignment rect より数ピクセル外側に出ることがある。
     let x = middle.native_view().frame().origin.x;
     assert!((x - 140.0).abs() <= 5.0, "固定した列幅と余白が効くこと: {x}");
+    Ok(())
+}
+
+/// グリッドの差し替えで、前の子が親に残らない。
+fn grid_replaces_child(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    let photo = ui.label("写真")?;
+    let video = ui.label("動画")?;
+    let cell = GridCell::new(0, 0);
+
+    grid.attach(&photo, cell);
+    assert!(unsafe { photo.native_view().superview() }.is_some());
+
+    grid.replace(&video, cell);
+
+    assert_eq!(grid.len(), 1);
+    assert!(unsafe { photo.native_view().superview() }.is_none());
+    assert!(unsafe { video.native_view().superview() }.is_some());
     Ok(())
 }
 

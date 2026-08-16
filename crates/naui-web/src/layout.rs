@@ -296,6 +296,22 @@ impl Grid {
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
 
+    /// いまの子を外し、指定した 1 つだけを置く。
+    pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
+        let old_children: Vec<Element> = self
+            .0
+            .children
+            .borrow()
+            .iter()
+            .map(|old| old.native_element())
+            .collect();
+        for old in old_children {
+            let _ = self.0.element.remove_child(&old);
+        }
+        self.0.children.borrow_mut().clear();
+        self.attach(child, cell);
+    }
+
     /// 列の幅の決め方。
     pub fn set_column_track(&self, index: usize, track: Track) {
         {
