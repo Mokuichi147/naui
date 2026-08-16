@@ -23,15 +23,9 @@ const SAMPLE_IMAGE: &str = "assets/sample.png";
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
     let window = ui.window("naui gallery", 680.0, 860.0)?;
-    let root = ui.grid()?;
-    root.set_spacing(0.0, 12.0);
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_spacing(12.0);
     root.set_padding(Padding::all(24.0));
-    root.set_sizing(Sizing::fill());
-    root.set_column_track(0, Track::FILL);
-    root.set_row_track(0, Track::Auto);
-    root.set_row_track(1, Track::Auto);
-    root.set_row_track(2, Track::FILL);
-    root.set_row_track(3, Track::Auto);
 
     // Tabs を gallery のカテゴリ切り替えに使う。
     let sections = NavItem::list([
@@ -45,10 +39,10 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["naui", "ホーム"]));
-    root.attach(&crumbs, GridCell::new(0, 0));
+    root.append(&crumbs);
 
     let route_status = ui.label("ルート: ホーム")?;
-    root.attach(&route_status, GridCell::new(0, 1));
+    root.append(&route_status);
 
     // --- ホーム -----------------------------------------------------------
     let home_pane = ui.stack(Orientation::Vertical)?;
@@ -299,11 +293,11 @@ pub fn build(ui: &Ui) -> Result<()> {
     tabs.add_tab("メディア", &media_pane);
     // タブがウィンドウの余りを受け取り、下のものを端へ寄せる。
     tabs.set_sizing(Sizing::fill());
-    root.attach(&tabs, GridCell::new(0, 2));
+    root.append(&tabs);
 
     // 余りはタブが取るので、ドックはウィンドウの下端に並ぶ。
     dock.set_sizing(Sizing::fill_width());
-    root.attach(&dock, GridCell::new(0, 3));
+    root.append(&dock);
 
     tabs.on_select({
         let crumbs = crumbs.clone();
