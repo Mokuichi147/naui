@@ -495,15 +495,22 @@ impl Stack {
         let cross_is_horizontal = vertical;
         if crate::layout::wants_fill(&view, cross_is_horizontal) {
             let inset = self.cross_inset();
-            let constraint = if vertical {
-                view.widthAnchor()
-                    .constraintEqualToAnchor_constant(&self.0.native.widthAnchor(), -inset)
+            let (child, parent) = if vertical {
+                (view.widthAnchor(), self.0.native.widthAnchor())
             } else {
-                view.heightAnchor()
-                    .constraintEqualToAnchor_constant(&self.0.native.heightAnchor(), -inset)
+                (view.heightAnchor(), self.0.native.heightAnchor())
             };
-            constraint.setActive(true);
-            self.0.fill_constraints.borrow_mut().push(constraint);
+            // 「はみ出さない」は必須、「親に合わせる」は 1 段下。上限
+            // (`max_width` など) を付けた子は、上限のほうが勝つ。
+            let at_most = child.constraintLessThanOrEqualToAnchor_constant(&parent, -inset);
+            let equal = child.constraintEqualToAnchor_constant(&parent, -inset);
+            equal.setPriority(crate::layout::CROSS_FILL_PRIORITY);
+            for constraint in [&at_most, &equal] {
+                constraint.setActive(true);
+            }
+            let mut constraints = self.0.fill_constraints.borrow_mut();
+            constraints.push(at_most);
+            constraints.push(equal);
         }
 
         self.0.children.borrow_mut().push(child.boxed_clone());

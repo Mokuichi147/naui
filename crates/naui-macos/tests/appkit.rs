@@ -78,6 +78,10 @@ fn main() {
             "上限付きの Fill が空間のあるときは上限まで広がる",
             fill_with_max_prefers_the_max,
         ),
+        (
+            "交差軸の Fill に上限を付けても親の幅と衝突しない",
+            stack_fill_cross_respects_max,
+        ),
         ("スペーサーが余りを吸って後続を端へ寄せる", spacer_pushes),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
         (
@@ -661,6 +665,55 @@ fn stack_fill_main(ui: &Ui) -> Result<()> {
     assert!(
         fill_frame.size.width > fixed_frame.size.width + 150.0,
         "主軸の Fill だけが余白を受け取ること: {fill_frame:?} / {fixed_frame:?}"
+    );
+    Ok(())
+}
+
+/// 交差軸の `Fill` に上限を付けても、親の幅と衝突しない。
+///
+/// 交差軸の `Fill` は「親の幅に合わせる」だが、上限があるならそちらが優先。
+/// 必須制約どうしがぶつかると、AppKit がどちらかを勝手に落としてしまう。
+fn stack_fill_cross_respects_max(ui: &Ui) -> Result<()> {
+    // 縦並びの交差軸は横。
+    let vertical = ui.stack(Orientation::Vertical)?;
+    let capped = ui.button("上限まで")?;
+    capped.set_sizing(Sizing::fill_width().max_width(200.0));
+    vertical.append(&capped);
+
+    let root = vertical.native_view();
+    root.setFrameSize(NSSize::new(640.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+    // 親に合わせる制約は必須ではない (必須だと上限とぶつかり、AppKit が
+    // どちらを落とすか分からなくなる)。
+    let all = root.constraints();
+    let ours: Vec<_> = (0..all.len())
+        .map(|i| all.objectAtIndex(i))
+        .filter(|c| c.identifier().is_none())
+        .collect();
+    assert!(
+        ours.iter().any(|c| c.priority() < 1000.0),
+        "親に合わせる制約は必須より下であること"
+    );
+
+    let frame = capped.native_view().frame();
+    assert!(
+        (frame.size.width - 200.0).abs() < 1e-6,
+        "交差軸の上限が親の幅より優先されること: {frame:?}"
+    );
+
+    // 横並びの交差軸は縦。
+    let horizontal = ui.stack(Orientation::Horizontal)?;
+    let short = ui.button("上限まで")?;
+    short.set_sizing(Sizing::fill_height().max_height(24.0));
+    horizontal.append(&short);
+
+    let root = horizontal.native_view();
+    root.setFrameSize(NSSize::new(300.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+    let frame = short.native_view().frame();
+    assert!(
+        (frame.size.height - 24.0).abs() < 1e-6,
+        "交差軸の上限が親の高さより優先されること: {frame:?}"
     );
     Ok(())
 }

@@ -30,6 +30,13 @@ const SIZING_ID: &str = "naui.sizing";
 /// 他のどの制約よりも弱くしておき、空間があるときだけ上限まで伸ばす。
 const PREFERRED_SIZE_PRIORITY: NSLayoutPriority = 1.0;
 
+/// 交差軸の `Fill` で「親の幅 / 高さに合わせたい」を表す優先度。
+///
+/// 必須にすると、同じ軸に上限 ([`Sizing::max_width`] など) があるときに
+/// 必須どうしがぶつかり、AppKit がどちらかを勝手に落とす。上限を勝たせたいので
+/// 1 段だけ下げてある (「はみ出さない」ほうは必須のまま別に張る)。
+pub(crate) const CROSS_FILL_PRIORITY: NSLayoutPriority = 999.0;
+
 /// `Fill` のときの hugging priority。低いほど余りを受け取る。
 const FILL_HUGGING: NSLayoutPriority = 1.0;
 /// `Auto` (中身に合わせる) のときの hugging priority。
