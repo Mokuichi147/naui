@@ -7,8 +7,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use naui::{
-    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation,
-    Padding, PlaybackState, Result, ScrollPolicy, SelectionMode, Settings, Sizing, Theme, Track, Ui,
+    Align, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem,
+    Orientation, Padding, PlaybackState, Result, ScrollPolicy, SelectionMode, Settings, Sizing,
+    Theme, Track, Ui,
 };
 
 /// 同梱のサンプル画像の場所。
@@ -574,19 +575,16 @@ fn media_form_of(source: &str) -> Option<usize> {
 /// **ファイル選択は 1 つだけ。** 受け付ける拡張子を [`MEDIA_FORMS`] に絞って
 /// あるので、選ばれたものは必ず画像 / 動画 / 音声のどれかに決まり、
 /// 対応する表示形式へ自動で切り替わる。
-fn build_media_pane(ui: &Ui) -> Result<naui::Grid> {
-    let pane = ui.grid()?;
-    pane.set_spacing(0.0, 12.0);
+fn build_media_pane(ui: &Ui) -> Result<naui::Stack> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(12.0);
     pane.set_padding(Padding::all(12.0));
-    pane.set_sizing(Sizing::fill());
-    pane.set_column_track(0, Track::FILL);
-    pane.set_row_track(0, Track::Auto);
-    pane.set_row_track(1, Track::Auto);
-    pane.set_row_track(2, Track::Auto);
-    pane.set_row_track(3, Track::FILL);
+    pane.set_align(Align::Start);
 
     let description = ui.label("選んだファイルの種類に合わせて表示形式が切り替わります。")?;
-    pane.attach(&description, GridCell::new(0, 0));
+    let description_row = ui.stack(Orientation::Horizontal)?;
+    description_row.append(&description);
+    pane.append(&description_row);
 
     let (image_pane, image) = build_image_pane(ui)?;
     let (video_pane, video) = build_video_pane(ui)?;
@@ -605,6 +603,11 @@ fn build_media_pane(ui: &Ui) -> Result<naui::Grid> {
     };
 
     let status = ui.label("種類: 画像 (同梱のサンプル)")?;
+    // `NSGridView` の Fill 列へラベルを直接置くと、macOS の再レイアウト時に
+    // 列幅をラベルが継承することがある。内容幅を保つ Stack を 1 層はさみ、
+    // 画像表示側の Fill と種類表示の幅を分離する。
+    let status_row = ui.stack(Orientation::Horizontal)?;
+    status_row.append(&status);
 
     // 場所を対応するウィジェットへ渡し、その表示形式へ移る。
     let show = {
@@ -697,12 +700,12 @@ fn build_media_pane(ui: &Ui) -> Result<naui::Grid> {
     row.append(&load);
     row.append(&pick);
     row.set_sizing(Sizing::fill_width());
-    pane.attach(&row, GridCell::new(0, 1));
-    pane.attach(&status, GridCell::new(0, 2));
+    pane.append(&row);
+    pane.append(&status_row);
 
-    // ウィンドウの高さが変わったときも、メディア表示側へ余りを渡す。
+    // 縦 Stack の最後の Fill だけが、ウィンドウの高さの余りを受け取る。
     forms.set_sizing(Sizing::fill());
-    pane.attach(&forms, GridCell::new(0, 3));
+    pane.append(&forms);
 
     Ok(pane)
 }
@@ -746,28 +749,30 @@ fn build_image_pane(ui: &Ui) -> Result<(naui::Grid, naui::Image)> {
 }
 
 /// 動画の表示形式。再生の操作を一通り並べる。
-fn build_video_pane(ui: &Ui) -> Result<(naui::Grid, naui::Video)> {
-    let pane = ui.grid()?;
-    pane.set_spacing(0.0, 8.0);
+fn build_video_pane(ui: &Ui) -> Result<(naui::Stack, naui::Video)> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(8.0);
     pane.set_padding(Padding::all(8.0));
+    pane.set_align(Align::Start);
     pane.set_sizing(Sizing::fill());
-    pane.set_column_track(0, Track::FILL);
-    pane.set_row_track(0, Track::FILL);
-    pane.set_row_track(1, Track::Auto);
 
     let media_frame = ui.grid()?;
     media_frame.set_column_track(0, Track::FILL);
     media_frame.set_row_track(0, Track::FILL);
     media_frame.set_sizing(Sizing::fill());
+    #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+    media_frame.set_preferred_height(MEDIA_DISPLAY_HEIGHT);
 
     let video = ui.video("")?;
-    // 画像と同じ表示領域の上限を設け、動画の intrinsic size で
-    // Web の Gallery 全体が縦に押し広げられないようにする。
+    // AVPlayerView の intrinsic height には任せず、表示枠側の Fill で高さを
+    // 決める。通常時は 315px を希望し、ウィンドウが狭いときは縮められる。
     video.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
+    #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+    video.set_preferred_height(MEDIA_DISPLAY_HEIGHT);
     // 動画フレームと操作欄は別ウィジェットに分け、操作欄がフレームへ
     // 重ならないようにする。
     media_frame.attach(&video, GridCell::new(0, 0));
-    pane.attach(&media_frame, GridCell::new(0, 0));
+    pane.append(&media_frame);
 
     let controls = ui.stack(Orientation::Vertical)?;
     controls.set_spacing(8.0);
@@ -864,7 +869,7 @@ fn build_video_pane(ui: &Ui) -> Result<(naui::Grid, naui::Video)> {
     toggles.append(&muted);
     toggles.append(&looping);
     controls.append(&toggles);
-    pane.attach(&controls, GridCell::new(0, 1));
+    pane.append(&controls);
     Ok((pane, video))
 }
 

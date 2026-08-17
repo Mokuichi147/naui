@@ -25,8 +25,9 @@ use objc2::runtime::ProtocolObject;
 use objc2::{sel, MainThreadMarker, Message};
 use objc2_app_kit::{
     NSBezelStyle, NSButton, NSButtonType, NSColor, NSControlStateValueOff, NSControlStateValueOn,
-    NSLayoutAttribute, NSPathControl, NSPathControlItem, NSPathStyle, NSSegmentDistribution,
-    NSSegmentStyle, NSSegmentSwitchTracking, NSSegmentedControl, NSStackView,
+    NSLayoutAttribute, NSLayoutConstraintOrientation, NSPathControl, NSPathControlItem,
+    NSPathStyle, NSSegmentDistribution, NSSegmentStyle, NSSegmentSwitchTracking,
+    NSSegmentedControl, NSStackView,
     NSStackViewDistribution, NSTabView, NSTabViewItem, NSTextField,
     NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
 };
@@ -39,10 +40,36 @@ use crate::widgets::{impl_sizing, impl_widget, Widget};
 fn row(mtm: MainThreadMarker, spacing: f64) -> Retained<NSStackView> {
     let stack = NSStackView::new(mtm);
     stack.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-    stack.setDistribution(NSStackViewDistribution::Fill);
+    stack.setDistribution(NSStackViewDistribution::GravityAreas);
     stack.setAlignment(NSLayoutAttribute::CenterY);
     stack.setSpacing(spacing);
     stack
+}
+
+/// 内部行の Auto の子へ余りを配らず、末尾へ逃がす。
+fn finish_row(stack: &NSStackView, mtm: MainThreadMarker) {
+    let tail = NSView::new(mtm);
+    crate::layout::prepare_child(&tail);
+    for orientation in [
+        NSLayoutConstraintOrientation::Horizontal,
+        NSLayoutConstraintOrientation::Vertical,
+    ] {
+        tail.setContentHuggingPriority_forOrientation(2.0, orientation);
+        tail.setContentCompressionResistancePriority_forOrientation(1.0, orientation);
+    }
+
+    let arranged = stack.arrangedSubviews();
+    if !arranged.is_empty() {
+        for index in 0..arranged.len() {
+            let child = arranged.objectAtIndex(index);
+            if !crate::layout::wants_fill(&child, true) {
+                crate::layout::keep_auto_size(&child, true);
+            }
+        }
+        let last = arranged.objectAtIndex(arranged.len() - 1);
+        stack.setCustomSpacing_afterView(0.0, &last);
+    }
+    stack.addArrangedSubview(&tail);
 }
 
 // --------------------------------------------------------------- Segments
@@ -260,6 +287,7 @@ impl Navbar {
         let segments = Segments::new(mtm, NSSegmentDistribution::Fit);
         native.addArrangedSubview(&title_field);
         native.addArrangedSubview(&segments.view());
+        finish_row(&native, mtm);
         Self(Rc::new(NavbarInner {
             native,
             title: title_field,
@@ -669,6 +697,7 @@ impl Pagination {
         native.addArrangedSubview(&prev);
         native.addArrangedSubview(&segments.view());
         native.addArrangedSubview(&next);
+        finish_row(&native, mtm);
 
         let this = Self(Rc::new(PaginationInner {
             native,

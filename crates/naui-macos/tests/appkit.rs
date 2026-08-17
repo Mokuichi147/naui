@@ -12,13 +12,14 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use naui_core::{
-    FileFilter, FilePickerMode, Fit, GridCell, ListItem, NavItem, Orientation, Padding,
+    Align, FileFilter, FilePickerMode, Fit, GridCell, ListItem, NavItem, Orientation, Padding,
     PlaybackState, Result, ScrollPolicy, SelectionMode, Sizing, Theme, Track,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
 use objc2_app_kit::{
-    NSButton, NSImageScaling, NSImageView, NSLayoutConstraint, NSTableViewDelegate, NSView,
+    NSButton, NSImageScaling, NSImageView, NSLayoutConstraint, NSSegmentedControl,
+    NSTableViewDelegate, NSTextField, NSView,
 };
 use objc2_foundation::{NSDate, NSRunLoop, NSSize};
 
@@ -65,8 +66,24 @@ fn main() {
             sizing_is_replaced,
         ),
         ("交差軸の Fill が親の幅に合わせて広がる", stack_fill_cross),
+        (
+            "Stack の Auto の子が余白で横に広がらない",
+            stack_auto_does_not_fill,
+        ),
+        (
+            "Stack の主軸の Fill は余白を受け取る",
+            stack_fill_main,
+        ),
         ("スペーサーが余りを吸って後続を端へ寄せる", spacer_pushes),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
+        (
+            "グリッドの Auto の子が再レイアウトで横に広がらない",
+            grid_auto_does_not_fill,
+        ),
+        (
+            "Gallery のメディア欄が高さ変更後にラベル幅を広げない",
+            gallery_media_status_does_not_expand,
+        ),
         ("グリッドの子を置き換える", grid_replaces_child),
         ("スクロールが中身を保持する", scroll_keeps_child),
         ("グリッドの同じ行が縦中央でそろう", grid_row_alignment),
@@ -82,6 +99,10 @@ fn main() {
         (
             "収め方が NSImageView の imageScaling になる",
             image_fit_maps_to_native_scaling,
+        ),
+        (
+            "動画の表示領域が読み込み前から高さを保つ",
+            video_display_reserves_height,
         ),
         ("音声が最後まで再生され Ended が届く", audio_plays_to_the_end),
         ("繰り返し再生が末尾で止まらない", audio_loops_back_to_the_start),
@@ -215,10 +236,13 @@ fn stack_keeps_children(ui: &Ui) -> Result<()> {
     // ネイティブのビュー階層から取り出してクリックする。
     let view = stack.native_view();
     let subviews = view.subviews();
-    assert_eq!(subviews.len(), 1, "NSStackView に 1 つ並んでいること");
-    let control = subviews
-        .objectAtIndex(0)
-        .downcast::<objc2_app_kit::NSButton>()
+    let control = (0..subviews.len())
+        .find_map(|index| {
+            subviews
+                .objectAtIndex(index)
+                .downcast::<objc2_app_kit::NSButton>()
+                .ok()
+        })
         .expect("NSButton であること");
     unsafe { control.performClick(None) };
 
@@ -236,6 +260,27 @@ fn navbar_selection(ui: &Ui) -> Result<()> {
     assert_eq!(navbar.title(), "naui");
     navbar.set_items(&NavItem::list(["ホーム", "検索", "設定"]));
     assert_eq!(navbar.len(), 3);
+
+    let view = navbar.native_view();
+    view.setFrameSize(NSSize::new(500.0, 40.0));
+    view.layoutSubtreeIfNeeded();
+    let subviews = view.subviews();
+    let title = (0..subviews.len())
+        .find_map(|index| subviews.objectAtIndex(index).downcast::<NSTextField>().ok())
+        .expect("見出しがあること");
+    let segments = (0..subviews.len())
+        .find_map(|index| {
+            subviews
+                .objectAtIndex(index)
+                .downcast::<NSSegmentedControl>()
+                .ok()
+        })
+        .expect("セグメントがあること");
+    assert!(title.frame().size.width < 200.0, "見出しが余白で広がらないこと");
+    assert!(
+        segments.frame().size.width < 250.0,
+        "セグメントが余白で広がらないこと"
+    );
 
     let seen = Rc::new(RefCell::new(Vec::new()));
     navbar.on_select({
@@ -558,6 +603,64 @@ fn stack_fill_cross(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// 横スタックの `Auto` の子は、余った主軸の空間を勝手に受け取らない。
+fn stack_auto_does_not_fill(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Horizontal)?;
+    stack.set_spacing(12.0);
+    let first = ui.button("短")?;
+    let second = ui.button("少し長い項目")?;
+    stack.append(&first);
+    stack.append(&second);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(500.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+
+    let first_frame = first.native_view().frame();
+    let second_frame = second.native_view().frame();
+    assert!(
+        first_frame.size.width < 150.0,
+        "Auto の先頭項目が余白で広がらないこと: {first_frame:?}"
+    );
+    assert!(
+        second_frame.size.width < 250.0,
+        "Auto の後続項目が余白で広がらないこと: {second_frame:?}"
+    );
+    assert!(
+        first_frame.origin.x.abs() < 1e-6,
+        "余った空間で先頭項目が中央へ移動しないこと: {first_frame:?}"
+    );
+    assert!(
+        (second_frame.origin.x - first_frame.origin.x - first_frame.size.width - 12.0).abs()
+            < 1e-6,
+        "指定した間隔だけで項目が並ぶこと: {first_frame:?} / {second_frame:?}"
+    );
+    Ok(())
+}
+
+/// 横スタックで幅 `Fill` を指定した子は、明示的に余りを受け取る。
+fn stack_fill_main(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Horizontal)?;
+    stack.set_spacing(12.0);
+    let fill = ui.button("伸びる")?;
+    fill.set_sizing(Sizing::fill_width());
+    let fixed = ui.button("固定")?;
+    stack.append(&fill);
+    stack.append(&fixed);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(500.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+
+    let fill_frame = fill.native_view().frame();
+    let fixed_frame = fixed.native_view().frame();
+    assert!(
+        fill_frame.size.width > fixed_frame.size.width + 150.0,
+        "主軸の Fill だけが余白を受け取ること: {fill_frame:?} / {fixed_frame:?}"
+    );
+    Ok(())
+}
+
 /// スペーサーが縦の余りをすべて受け取り、後ろの子を下端へ寄せる。
 fn spacer_pushes(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
@@ -618,6 +721,195 @@ fn grid_places_children(ui: &Ui) -> Result<()> {
     // frame は alignment rect より数ピクセル外側に出ることがある。
     let x = middle.native_view().frame().origin.x;
     assert!((x - 140.0).abs() <= 5.0, "固定した列幅と余白が効くこと: {x}");
+    Ok(())
+}
+
+/// `Track::Fill` の列に置いた `Auto` の子は、再レイアウト後も内容幅を保つ。
+fn grid_auto_does_not_fill(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::Auto);
+    let status = ui.label("種類: 画像 (同梱のサンプル)")?;
+    grid.attach(&status, GridCell::new(0, 0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(500.0, 860.0));
+    root.layoutSubtreeIfNeeded();
+    let initial = status.native_view().frame();
+
+    root.setFrameSize(NSSize::new(500.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    let shrunk = status.native_view().frame();
+
+    root.setFrameSize(NSSize::new(500.0, 860.0));
+    root.layoutSubtreeIfNeeded();
+    let resized = status.native_view().frame();
+    assert!(
+        resized.size.width < 300.0,
+        "再レイアウト後もラベルが列幅へ広がらないこと: {initial:?} / {resized:?}"
+    );
+    assert!(
+        (initial.size.width - resized.size.width).abs() < 1e-6,
+        "高さ変更でラベルの幅が変わらないこと: {initial:?} / {resized:?}"
+    );
+    assert!(
+        (shrunk.size.width - resized.size.width).abs() < 1e-6,
+        "縮小中もラベルの幅が変わらないこと: {shrunk:?} / {resized:?}"
+    );
+    Ok(())
+}
+
+/// Gallery と同じ Stack -> Tabs -> Stack -> Grid の階層で、高さの縮小・拡大を行う。
+fn gallery_media_status_does_not_expand(ui: &Ui) -> Result<()> {
+    let media = ui.stack(Orientation::Vertical)?;
+    media.set_spacing(12.0);
+    media.set_padding(Padding::all(12.0));
+    media.set_align(Align::Start);
+    let description = ui.label("選んだファイルの種類に合わせて表示形式が切り替わります。")?;
+    let description_row = ui.stack(Orientation::Horizontal)?;
+    description_row.append(&description);
+    media.append(&description_row);
+
+    let image_pane = ui.grid()?;
+    image_pane.set_spacing(0.0, 8.0);
+    image_pane.set_padding(Padding::all(8.0));
+    image_pane.set_sizing(Sizing::fill());
+    image_pane.set_column_track(0, Track::FILL);
+    image_pane.set_row_track(0, Track::FILL);
+    let image = ui.image(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/gallery/assets/sample.png"
+    ))?;
+    image.set_sizing(Sizing::fill().max_height(315.0));
+    image_pane.attach(&image, GridCell::new(0, 0));
+    let selector = ui.navbar("収め方")?;
+    selector.set_items(&NavItem::list(["contain", "cover", "fill", "none"]));
+    selector.set_sizing(Sizing::fill_width());
+    image_pane.attach(&selector, GridCell::new(0, 1));
+
+    let forms = ui.grid()?;
+    forms.set_sizing(Sizing::fill());
+    forms.set_column_track(0, Track::FILL);
+    forms.set_row_track(0, Track::FILL);
+    forms.attach(&image_pane, GridCell::new(0, 0));
+
+    let video_pane = ui.stack(Orientation::Vertical)?;
+    video_pane.set_spacing(8.0);
+    video_pane.set_padding(Padding::all(8.0));
+    video_pane.set_align(Align::Start);
+    video_pane.set_sizing(Sizing::fill());
+    let video_frame = ui.grid()?;
+    video_frame.set_sizing(Sizing::fill());
+    video_frame.set_column_track(0, Track::FILL);
+    video_frame.set_row_track(0, Track::FILL);
+    let video = ui.video("")?;
+    video.set_sizing(Sizing::fill().max_height(315.0));
+    video.set_preferred_height(315.0);
+    video_frame.attach(&video, GridCell::new(0, 0));
+    video_pane.append(&video_frame);
+    let video_controls = ui.stack(Orientation::Vertical)?;
+    video_controls.append(&ui.label("状態: 未再生")?);
+    video_pane.append(&video_controls);
+
+    let status = ui.label("種類: 画像 (同梱のサンプル)")?;
+    let status_row = ui.stack(Orientation::Horizontal)?;
+    status_row.append(&status);
+    let field = ui.text_input("")?;
+    field.set_sizing(Sizing::fill_width());
+    let row = ui.stack(Orientation::Horizontal)?;
+    row.set_spacing(8.0);
+    let load = ui.button("読み込む")?;
+    let pick = ui.button("選ぶ")?;
+    row.append(&field);
+    row.append(&load);
+    row.append(&pick);
+    row.set_sizing(Sizing::fill_width());
+    media.append(&row);
+    media.append(&status_row);
+    media.append(&forms);
+
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_spacing(12.0);
+    root.set_padding(Padding::all(24.0));
+    root.append(&ui.label("naui")?);
+    root.append(&ui.label("ルート: メディア")?);
+    let tabs = ui.tabs()?;
+    let home = ui.label("ホーム")?;
+    tabs.add_tab("ホーム", &home);
+    tabs.add_tab("メディア", &media);
+    tabs.set_sizing(Sizing::fill());
+    root.append(&tabs);
+    root.append(&ui.label("下端")?);
+
+    let window = ui.window("media layout", 680.0, 860.0)?;
+    window.set_child(&root);
+    window.show();
+    let native_window = window.native_window();
+    let content = native_window.contentView().expect("コンテンツビューがあること");
+    content.setFrameSize(NSSize::new(680.0, 860.0));
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    tabs.select(1);
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    let initial = status.native_view().frame();
+    let description_initial = description.native_view().frame();
+    let row_initial = row.native_view().frame();
+    native_window.setContentSize(NSSize::new(680.0, 350.0));
+    content.setFrameSize(NSSize::new(680.0, 350.0));
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    let shrunk = status.native_view().frame();
+    let description_shrunk = description.native_view().frame();
+    let row_shrunk = row.native_view().frame();
+    native_window.setContentSize(NSSize::new(680.0, 860.0));
+    content.setFrameSize(NSSize::new(680.0, 860.0));
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    let resized = status.native_view().frame();
+    let description_resized = description.native_view().frame();
+    let row_resized = row.native_view().frame();
+    let image_frame = image.native_view().frame();
+    forms.replace(&video_pane, GridCell::new(0, 0));
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    let video_frame_after_replace = video.native_view().frame();
+    forms.replace(&image_pane, GridCell::new(0, 0));
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    assert!(
+        resized.size.width < 300.0,
+        "高さ変更後もステータスが列幅へ広がらないこと: {initial:?} / {shrunk:?} / {resized:?}"
+    );
+    assert!(
+        (initial.size.width - resized.size.width).abs() < 1e-6,
+        "縮小してから戻してもステータス幅が変わらないこと: {initial:?} / {shrunk:?} / {resized:?}"
+    );
+    assert!(
+        description_resized.size.width < 500.0,
+        "高さ変更後も説明文が列幅へ広がらないこと: {description_initial:?} / {description_shrunk:?} / {description_resized:?}"
+    );
+    assert!(
+        (description_initial.size.width - description_resized.size.width).abs() < 1e-6,
+        "縮小してから戻しても説明文の幅が変わらないこと: {description_initial:?} / {description_shrunk:?} / {description_resized:?}"
+    );
+    assert!(
+        row_resized.size.height < 100.0,
+        "高さ変更後もパス入力行がメディア表示の余白を受け取らないこと: {row_initial:?} / {row_shrunk:?} / {row_resized:?}"
+    );
+    assert!(
+        (row_initial.size.height - row_resized.size.height).abs() < 1e-6,
+        "縮小してから戻してもパス入力行の高さが変わらないこと: {row_initial:?} / {row_shrunk:?} / {row_resized:?}"
+    );
+    assert!(
+        image_frame.size.width > 500.0,
+        "Auto のラベルがあっても画像の Fill は列いっぱいになること: {image_frame:?}"
+    );
+    assert!(
+        video_frame_after_replace.size.height > 200.0,
+        "画像から動画へ差し替えた直後も動画表示欄が潰れないこと: {video_frame_after_replace:?}"
+    );
+    window.close();
     Ok(())
 }
 
@@ -923,6 +1215,65 @@ fn image_fit_maps_to_native_scaling(ui: &Ui) -> Result<()> {
         native.imageScaling(),
         NSImageScaling::ScaleProportionallyUpOrDown
     );
+    Ok(())
+}
+
+/// AVPlayerView に動画の intrinsic size がまだ無くても、表示領域を確保する。
+fn video_display_reserves_height(ui: &Ui) -> Result<()> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(8.0);
+    pane.set_padding(Padding::all(8.0));
+    pane.set_align(Align::Start);
+    pane.set_sizing(Sizing::fill());
+    let video = ui.video("")?;
+    video.set_sizing(Sizing::fill().max_height(315.0));
+    video.set_preferred_height(315.0);
+    let media_frame = ui.grid()?;
+    media_frame.set_sizing(Sizing::fill());
+    media_frame.set_preferred_height(315.0);
+    media_frame.set_column_track(0, Track::FILL);
+    media_frame.set_row_track(0, Track::FILL);
+    media_frame.attach(&video, GridCell::new(0, 0));
+    pane.append(&media_frame);
+    let controls = ui.stack(Orientation::Vertical)?;
+    controls.set_spacing(8.0);
+    let buttons = ui.stack(Orientation::Horizontal)?;
+    buttons.set_spacing(8.0);
+    buttons.append(&ui.button("再生")?);
+    buttons.append(&ui.button("一時停止")?);
+    controls.append(&buttons);
+    controls.append(&ui.label("状態: 未再生")?);
+    controls.append(&ui.label("位置: -")?);
+    controls.append(&ui.slider(0.0, 1.0)?);
+    controls.append(&ui.slider(0.0, 1.0)?);
+    controls.append(&ui.label("音量: 100%")?);
+    let toggles = ui.stack(Orientation::Horizontal)?;
+    toggles.set_spacing(12.0);
+    toggles.append(&ui.checkbox("消音")?);
+    toggles.append(&ui.checkbox("繰り返し")?);
+    controls.append(&toggles);
+    pane.append(&controls);
+
+    let root = pane.native_view();
+    root.setFrameSize(NSSize::new(640.0, 860.0));
+    root.layoutSubtreeIfNeeded();
+    let initial = video.native_view().frame();
+    assert!(
+        (initial.size.height - 315.0).abs() < 1e-6,
+        "通常の高さでは動画表示領域を上限まで確保すること: {initial:?}"
+    );
+    root.setFrameSize(NSSize::new(640.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    let narrow = video.native_view().frame();
+    assert!(
+        narrow.size.height < initial.size.height,
+        "ウィンドウが狭いときは動画表示領域も縮められること: {initial:?} -> {narrow:?}"
+    );
+    assert!(
+        narrow.size.height > 0.0,
+        "動画表示領域が完全には潰れないこと: {narrow:?}"
+    );
+
     Ok(())
 }
 
