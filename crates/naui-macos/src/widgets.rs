@@ -59,6 +59,12 @@ macro_rules! impl_sizing {
                 let view = <$t as Widget>::native_view(self);
                 crate::layout::apply_sizing(&view, sizing);
             }
+
+            /// 通常時に確保したい高さを指定する。ウィンドウが狭いときは縮められる。
+            pub fn set_preferred_height(&self, height: f64) {
+                let view = <$t as Widget>::native_view(self);
+                crate::layout::apply_preferred_height(&view, height);
+            }
         }
     };
 }
@@ -346,12 +352,16 @@ impl ProgressBar {
 
 struct StackInner {
     native: Retained<NSStackView>,
+    /// Auto の子が余りを受け取らないよう、末尾で余りを受けるビュー。
+    _tail_spacer: Retained<NSView>,
+    tail_spacer_active: Cell<bool>,
     /// 子のハンドルを保持し、トランポリンごと生かしておく。
     children: RefCell<Vec<Box<dyn Widget>>>,
     /// 交差軸に `Fill` を指定された子を、スタックの幅 / 高さへ結び付ける制約。
     /// 余白が変わると定数も変わるので保持しておく。
     fill_constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
     padding: Cell<Padding>,
+    spacing: Cell<f64>,
 }
 
 /// 縦 / 横に子を並べるコンテナ (NSStackView)。
@@ -368,23 +378,49 @@ impl Stack {
             } else {
                 NSUserInterfaceLayoutOrientation::Horizontal
             });
-            native.setDistribution(NSStackViewDistribution::Fill);
+            // `Fill` は AppKit が主軸の hugging priority を必須扱いにし、
+            // Auto の子のどれかへ余りを配ってしまう。GravityAreas は
+            // 子の hugging priority に従うため、Fill / Spacer だけが余りを受ける。
+            native.setDistribution(NSStackViewDistribution::GravityAreas);
             native.setAlignment(if orientation.is_vertical() {
                 NSLayoutAttribute::CenterX
             } else {
                 NSLayoutAttribute::CenterY
             });
         }
+        let spacing = native.spacing();
+        let tail_spacer = NSView::new(mtm);
+        crate::layout::prepare_child(&tail_spacer);
+        // 明示的な `Fill` / `Spacer` よりは優先度を上げ、Auto の子よりは
+        // 下げる。これで、指定が無いときだけ末尾の受け皿が余りを吸う。
+        for horizontal in [true, false] {
+            let orientation = if horizontal {
+                objc2_app_kit::NSLayoutConstraintOrientation::Horizontal
+            } else {
+                objc2_app_kit::NSLayoutConstraintOrientation::Vertical
+            };
+            tail_spacer.setContentHuggingPriority_forOrientation(2.0, orientation);
+            tail_spacer.setContentCompressionResistancePriority_forOrientation(1.0, orientation);
+        }
+        native.addArrangedSubview(&tail_spacer);
         Self(Rc::new(StackInner {
             native,
+            _tail_spacer: tail_spacer,
+            tail_spacer_active: Cell::new(true),
             children: RefCell::new(Vec::new()),
             fill_constraints: RefCell::new(Vec::new()),
             padding: Cell::new(Padding::ZERO),
+            spacing: Cell::new(spacing),
         }))
     }
 
     pub fn set_spacing(&self, spacing: f64) {
+        self.0.spacing.set(spacing);
         self.0.native.setSpacing(spacing);
+        if let Some(last) = self.0.children.borrow().last() {
+            let view = last.native_view();
+            self.0.native.setCustomSpacing_afterView(0.0, &view);
+        }
     }
 
     pub fn set_padding(&self, padding: Padding) {
@@ -438,9 +474,29 @@ impl Stack {
     pub fn append(&self, child: &dyn Widget) {
         let view = child.native_view();
         crate::layout::prepare_child(&view);
-        self.0.native.addArrangedSubview(&view);
-
+        let index = self.0.children.borrow().len();
         let vertical = self.is_vertical();
+        let wants_main_fill = crate::layout::wants_fill(&view, !vertical);
+        if !wants_main_fill {
+            crate::layout::keep_auto_size(&view, !vertical);
+        }
+        if wants_main_fill && self.0.tail_spacer_active.replace(false) {
+            self.0.native.removeArrangedSubview(&self.0._tail_spacer);
+            self.0._tail_spacer.removeFromSuperview();
+        }
+        if let Some(last) = self.0.children.borrow().last() {
+            let previous = last.native_view();
+            self.0
+                .native
+                .setCustomSpacing_afterView(self.0.spacing.get(), &previous);
+        }
+        self.0
+            .native
+            .insertArrangedSubview_atIndex(&view, index as isize);
+        if self.0.tail_spacer_active.get() {
+            self.0.native.setCustomSpacing_afterView(0.0, &view);
+        }
+
         // 縦並びの交差軸は横方向。
         let cross_is_horizontal = vertical;
         if crate::layout::wants_fill(&view, cross_is_horizontal) {

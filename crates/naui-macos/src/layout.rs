@@ -24,11 +24,18 @@ use crate::widgets::{impl_widget, Widget};
 /// (`NSContentSizeLayoutConstraint`)。属性だけで選ぶとそれらまで外して
 /// しまうため、自分で付けたものに識別子を入れて区別する。
 const SIZING_ID: &str = "naui.sizing";
+/// メディア表示欄などの「通常時の希望高さ」を表す制約の目印。
+const PREFERRED_HEIGHT_ID: &str = "naui.preferred-height";
 
 /// `Fill` のときの hugging priority。低いほど余りを受け取る。
 const FILL_HUGGING: NSLayoutPriority = 1.0;
 /// `Auto` (中身に合わせる) のときの hugging priority。
 const HUG_CONTENT: NSLayoutPriority = 750.0;
+/// `Grid` / `Stack` の `Auto` 子が、親の余りを受け取らないための優先度。
+///
+/// AppKit のコンテナが再レイアウト時に追加する制約より優先し、内容幅を
+/// 保つ。明示的な `Fill` はこの値を使わず、hugging を 1 に下げる。
+const AUTO_HUGGING: NSLayoutPriority = 999.0;
 /// `Fill` のときの compression resistance priority。
 ///
 /// 画像や動画の intrinsic size が親の最小幅にならないようにする。
@@ -76,6 +83,32 @@ pub(crate) fn apply_sizing(view: &NSView, sizing: Sizing) {
     set_compression_resistance(view, false, sizing.height.is_fill());
 }
 
+/// 通常時に確保したい高さを設定する。
+///
+/// 最小高さとは違い、優先度を下げた制約にする。十分な空間があるときは
+/// 指定値を確保する一方、ウィンドウをそれより小さくできるようにする。
+pub(crate) fn apply_preferred_height(view: &NSView, height: f64) {
+    let constraints = view.constraints();
+    let mine: Vec<Retained<NSLayoutConstraint>> = (0..constraints.len())
+        .map(|index| constraints.objectAtIndex(index))
+        .filter(|constraint| {
+            constraint
+                .identifier()
+                .is_some_and(|id| id.to_string() == PREFERRED_HEIGHT_ID)
+        })
+        .collect();
+    if !mine.is_empty() {
+        NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&mine));
+    }
+
+    let constraint = view
+        .heightAnchor()
+        .constraintGreaterThanOrEqualToConstant(height.max(0.0));
+    constraint.setIdentifier(Some(&NSString::from_str(PREFERRED_HEIGHT_ID)));
+    constraint.setPriority(1.0);
+    constraint.setActive(true);
+}
+
 fn set_hugging(view: &NSView, horizontal: bool, fill: bool) {
     let priority = if fill { FILL_HUGGING } else { HUG_CONTENT };
     view.setContentHuggingPriority_forOrientation(priority, orientation(horizontal));
@@ -101,6 +134,11 @@ fn orientation(horizontal: bool) -> NSLayoutConstraintOrientation {
 /// このビューがその方向へ広がりたがっているか (= `Length::Fill` を指定されたか)。
 pub(crate) fn wants_fill(view: &NSView, horizontal: bool) -> bool {
     view.contentHuggingPriorityForOrientation(orientation(horizontal)) <= FILL_HUGGING
+}
+
+/// `Auto` の子が内容幅を保つようにする。
+pub(crate) fn keep_auto_size(view: &NSView, horizontal: bool) {
+    view.setContentHuggingPriority_forOrientation(AUTO_HUGGING, orientation(horizontal));
 }
 
 fn clear_sizing_constraints(view: &NSView) {
@@ -229,10 +267,28 @@ impl Grid {
         }
         let target: Retained<NSGridCell> = self.0.native.cellAtColumnIndex_rowIndex(column, row);
         target.setContentView(Some(&view));
-        // 子が `Fill` を指定していたら、マスいっぱいに広げる。
-        if wants_fill(&view, true) {
-            target.setXPlacement(NSGridCellPlacement::Fill);
+        // 列が `Fill` でも、子が `Auto` なら列の幅を継承して広げない。
+        // `Inherited` のままだと、再レイアウト時に NSGridView の列配置を
+        // 継承してラベルまで列いっぱいになることがある。
+        let fill_width = wants_fill(&view, true);
+        if !fill_width {
+            // Leading だけでは、NSGridView が再レイアウト時に作る幅の
+            // 制約に intrinsic size が負けることがある。Auto の意味を
+            // hugging priority でも固定しておく。
+            keep_auto_size(&view, true);
+            // 列の `Fill` も残すと、AppKit の再レイアウトでセルの配置が
+            // `Inherited` 相当に戻る環境がある。Fill の子はセル側で明示
+            // しているので、列の既定を先頭寄せにして継承経路も断つ。
+            self.0
+                .native
+                .columnAtIndex(column)
+                .setXPlacement(NSGridCellPlacement::Leading);
         }
+        target.setXPlacement(if fill_width {
+            NSGridCellPlacement::Fill
+        } else {
+            NSGridCellPlacement::Leading
+        });
         // 縦は中央ぞろえ。NSGridView の既定 (上ぞろえ) だと、同じ行に置いた
         // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
         target.setYPlacement(if wants_fill(&view, false) {
@@ -275,8 +331,14 @@ impl Grid {
         let column = self.0.native.columnAtIndex(index as isize);
         match track {
             // NSGridViewSizeForContent は「中身に合わせる」を表す番兵値。
-            Track::Auto => column.setWidth(unsafe { objc2_app_kit::NSGridViewSizeForContent }),
-            Track::Fixed(value) => column.setWidth(value),
+            Track::Auto => {
+                column.setWidth(unsafe { objc2_app_kit::NSGridViewSizeForContent });
+                column.setXPlacement(NSGridCellPlacement::Leading);
+            }
+            Track::Fixed(value) => {
+                column.setWidth(value);
+                column.setXPlacement(NSGridCellPlacement::Leading);
+            }
             Track::Fill(_) => {
                 column.setWidth(unsafe { objc2_app_kit::NSGridViewSizeForContent });
                 column.setXPlacement(NSGridCellPlacement::Fill);
@@ -289,8 +351,15 @@ impl Grid {
         self.ensure_size(0, index + 1);
         let row = self.0.native.rowAtIndex(index as isize);
         match track {
-            Track::Auto => row.setHeight(unsafe { objc2_app_kit::NSGridViewSizeForContent }),
-            Track::Fixed(value) => row.setHeight(value),
+            Track::Auto => {
+                row.setHeight(unsafe { objc2_app_kit::NSGridViewSizeForContent });
+                // Auto 行は、Fill 行が受け取る余白を継承しない。
+                row.setYPlacement(NSGridCellPlacement::Center);
+            }
+            Track::Fixed(value) => {
+                row.setHeight(value);
+                row.setYPlacement(NSGridCellPlacement::Center);
+            }
             Track::Fill(_) => {
                 row.setHeight(unsafe { objc2_app_kit::NSGridViewSizeForContent });
                 row.setYPlacement(NSGridCellPlacement::Fill);
