@@ -25,6 +25,13 @@ use std::cell::RefCell;
 use wasm_bindgen::JsCast;
 use web_sys::{Document, HtmlElement};
 
+/// wasm の入口を組み立てるために再公開する。
+///
+/// `#[wasm_bindgen(start)]` を使う側が wasm-bindgen へ直接依存しなくて済むよう、
+/// バックエンドが使っているものをそのまま渡す (版が食い違わない)。
+#[doc(hidden)]
+pub use wasm_bindgen;
+
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;

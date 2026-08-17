@@ -526,8 +526,6 @@ pub fn build(ui: &Ui) -> Result<()> {
         }
     });
 
-    tabs.set_selected(5); // 一時: 確認用
-
     window.set_child(&root);
     window.show();
     Ok(())
@@ -603,9 +601,9 @@ fn build_media_pane(ui: &Ui) -> Result<naui::Stack> {
     };
 
     let status = ui.label("種類: 画像 (同梱のサンプル)")?;
-    // `NSGridView` の Fill 列へラベルを直接置くと、macOS の再レイアウト時に
-    // 列幅をラベルが継承することがある。内容幅を保つ Stack を 1 層はさみ、
-    // 画像表示側の Fill と種類表示の幅を分離する。
+    // 横 Stack を 1 層はさんで、ラベルの幅を内容ぶんに保つ。裸のラベルは
+    // 親の幅いっぱいに引き伸ばされることがあり、表示形式側の Fill と
+    // 混ざって幅が揺れる。
     let status_row = ui.stack(Orientation::Horizontal)?;
     status_row.append(&status);
 
@@ -759,16 +757,12 @@ fn build_video_pane(ui: &Ui) -> Result<(naui::Stack, naui::Video)> {
     let media_frame = ui.grid()?;
     media_frame.set_column_track(0, Track::FILL);
     media_frame.set_row_track(0, Track::FILL);
-    media_frame.set_sizing(Sizing::fill());
-    #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
-    media_frame.set_preferred_height(MEDIA_DISPLAY_HEIGHT);
+    // 上限付きの Fill は「空間があれば 315px、狭いときはそれ以下」を表す。
+    media_frame.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
 
     let video = ui.video("")?;
-    // AVPlayerView の intrinsic height には任せず、表示枠側の Fill で高さを
-    // 決める。通常時は 315px を希望し、ウィンドウが狭いときは縮められる。
+    // 動画の intrinsic size には任せず、画像と同じ表示欄の大きさに合わせる。
     video.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
-    #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
-    video.set_preferred_height(MEDIA_DISPLAY_HEIGHT);
     // 動画フレームと操作欄は別ウィジェットに分け、操作欄がフレームへ
     // 重ならないようにする。
     media_frame.attach(&video, GridCell::new(0, 0));
@@ -919,11 +913,9 @@ fn state_name(state: PlaybackState) -> &'static str {
     }
 }
 
-
-/// ネイティブ / Web 共通の起動処理。
-pub fn start() -> Result<()> {
-    naui::run(Settings::new("naui gallery"), build)
-}
+// ネイティブの `start()` と、Web のブラウザから呼ばれる入口を作る。
+// 環境ごとの入口の違いは naui 側にあるので、ここは 1 行で済む。
+naui::entry!(Settings::new("naui gallery"), build);
 
 /// 選ばれたものを 1 行で表す。
 ///
@@ -953,18 +945,4 @@ fn theme_index(theme: Theme) -> usize {
         Theme::Light => 1,
         Theme::Dark => 2,
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn wasm_start() {
-    if let Err(e) = start() {
-        web_sys_error(&e.to_string());
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn web_sys_error(message: &str) {
-    wasm_bindgen::JsValue::from_str(message);
-    panic!("{message}");
 }

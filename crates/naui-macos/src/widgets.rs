@@ -59,12 +59,6 @@ macro_rules! impl_sizing {
                 let view = <$t as Widget>::native_view(self);
                 crate::layout::apply_sizing(&view, sizing);
             }
-
-            /// 通常時に確保したい高さを指定する。ウィンドウが狭いときは縮められる。
-            pub fn set_preferred_height(&self, height: f64) {
-                let view = <$t as Widget>::native_view(self);
-                crate::layout::apply_preferred_height(&view, height);
-            }
         }
     };
 }

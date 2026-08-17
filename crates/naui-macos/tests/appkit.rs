@@ -74,6 +74,10 @@ fn main() {
             "Stack の主軸の Fill は余白を受け取る",
             stack_fill_main,
         ),
+        (
+            "上限付きの Fill が空間のあるときは上限まで広がる",
+            fill_with_max_prefers_the_max,
+        ),
         ("スペーサーが余りを吸って後続を端へ寄せる", spacer_pushes),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
         (
@@ -661,6 +665,44 @@ fn stack_fill_main(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// 上限付きの `Fill` は、空間があれば上限まで広がり、狭ければそれ以下になる。
+///
+/// CSS や WinUI の `Stretch` と同じ意味になるよう、上限を「通常時に確保したい
+/// 大きさ」としても扱う。横も縦も同じ扱いで、指定は `Sizing` だけで済む。
+fn fill_with_max_prefers_the_max(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Horizontal)?;
+    let capped = ui.button("上限まで")?;
+    capped.set_sizing(Sizing::fill_width().max_width(200.0));
+    stack.append(&capped);
+    stack.append(&ui.spacer()?);
+
+    // 上限 (必須) と、上限まで広がりたい希望 (弱い) の 2 本。
+    let constraints = naui_constraints(&capped.native_view());
+    assert_eq!(constraints.len(), 2, "上限と希望の 2 本が付くこと");
+    assert!(
+        constraints.iter().any(|c| c.priority() < 100.0),
+        "希望のほうは弱い優先度であること"
+    );
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(640.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+    let wide = capped.native_view().frame();
+    assert!(
+        (wide.size.width - 200.0).abs() < 1e-6,
+        "空間があるときは上限まで広がること: {wide:?}"
+    );
+
+    root.setFrameSize(NSSize::new(120.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+    let narrow = capped.native_view().frame();
+    assert!(
+        narrow.size.width < wide.size.width,
+        "狭いときは上限より小さくなること: {wide:?} -> {narrow:?}"
+    );
+    Ok(())
+}
+
 /// スペーサーが縦の余りをすべて受け取り、後ろの子を下端へ寄せる。
 fn spacer_pushes(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
@@ -799,12 +841,11 @@ fn gallery_media_status_does_not_expand(ui: &Ui) -> Result<()> {
     video_pane.set_align(Align::Start);
     video_pane.set_sizing(Sizing::fill());
     let video_frame = ui.grid()?;
-    video_frame.set_sizing(Sizing::fill());
+    video_frame.set_sizing(Sizing::fill().max_height(315.0));
     video_frame.set_column_track(0, Track::FILL);
     video_frame.set_row_track(0, Track::FILL);
     let video = ui.video("")?;
     video.set_sizing(Sizing::fill().max_height(315.0));
-    video.set_preferred_height(315.0);
     video_frame.attach(&video, GridCell::new(0, 0));
     video_pane.append(&video_frame);
     let video_controls = ui.stack(Orientation::Vertical)?;
@@ -1219,6 +1260,10 @@ fn image_fit_maps_to_native_scaling(ui: &Ui) -> Result<()> {
 }
 
 /// AVPlayerView に動画の intrinsic size がまだ無くても、表示領域を確保する。
+///
+/// 上限付きの `Fill` は「空間があれば上限まで、狭ければそれ以下」を表す。
+/// Gallery 側に macOS だけの指定を書かずに済むよう、この意味は `Sizing` から
+/// 導く (バックエンド共通の約束)。
 fn video_display_reserves_height(ui: &Ui) -> Result<()> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(8.0);
@@ -1227,10 +1272,8 @@ fn video_display_reserves_height(ui: &Ui) -> Result<()> {
     pane.set_sizing(Sizing::fill());
     let video = ui.video("")?;
     video.set_sizing(Sizing::fill().max_height(315.0));
-    video.set_preferred_height(315.0);
     let media_frame = ui.grid()?;
-    media_frame.set_sizing(Sizing::fill());
-    media_frame.set_preferred_height(315.0);
+    media_frame.set_sizing(Sizing::fill().max_height(315.0));
     media_frame.set_column_track(0, Track::FILL);
     media_frame.set_row_track(0, Track::FILL);
     media_frame.attach(&video, GridCell::new(0, 0));
