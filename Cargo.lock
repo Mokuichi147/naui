@@ -76,7 +76,6 @@ name = "gallery"
 version = "0.2.0"
 dependencies = [
  "naui",
- "wasm-bindgen",
 ]
 
 [[package]]

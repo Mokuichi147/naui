@@ -596,6 +596,13 @@ python3 -m http.server 8080
 
 DOM がテキストを描くため、フォントの埋め込みなどは不要です。
 
+ブラウザから呼ばれる入口 (`#[wasm_bindgen(start)]`) は `naui::entry!` が作るので、
+アプリ側には wasm-bindgen への依存も `cfg` も要りません。
+
+```rust,ignore
+naui::entry!(Settings::new("naui gallery"), build); // pub fn start() ができる
+```
+
 ### Windows
 
 Windows バックエンドは WinUI 3 / Windows App SDK 2.x を使用します。現在の安定版

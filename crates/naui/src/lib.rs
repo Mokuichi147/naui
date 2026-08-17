@@ -53,6 +53,14 @@
 //! `Theme::System` が既定で、固定テーマは `Settings::theme(Theme::Dark)` のように
 //! 指定する。実行中は `ui.set_theme(Theme::Light)` などで切り替えられる。
 //!
+//! ネイティブと Web の両方へ出すときは、入口を [`entry!`] に任せる。Web の
+//! `#[wasm_bindgen(start)]` はこのマクロが作るので、**アプリ側に `cfg` も
+//! wasm-bindgen への依存も要らない**。
+//!
+//! ```ignore
+//! naui::entry!(naui::Settings::new("gallery"), build); // pub fn start() ができる
+//! ```
+//!
 //! ## 配置とサイズ
 //!
 //! どのウィジェットも [`Sizing`] で大きさを指定できる。並べ方は
@@ -84,6 +92,12 @@
 //! 「親いっぱいに広がる」を意味する。Windows の `Stack` は StackPanel なので
 //! **主軸の `Fill` と `Spacer` が効かない**。その場合は `Grid` の
 //! [`Track::Fill`] を使う。
+//!
+//! `Fill` に上限 ([`Sizing::max_width`] / [`Sizing::max_height`]) を付けると、
+//! 上限は「通常時に確保したい大きさ」も兼ねる。**親が大きさを配れるときは
+//! 上限まで広がり、足りなければ上限より小さくなる。** 中身の自然な大きさが
+//! 当てにならないウィジェット (読み込み前の動画など) の表示欄は、この形で
+//! 大きさを決める。
 //!
 //! ## ナビゲーション
 //!
@@ -232,6 +246,54 @@ pub use naui_gtk::{
     Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
     Video, WeakWindow, Widget, Window,
 };
+
+/// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
+#[cfg(target_arch = "wasm32")]
+#[doc(hidden)]
+pub use naui_web::wasm_bindgen;
+
+/// ネイティブと Web の入口をまとめて作る。
+///
+/// アプリの起動処理は環境ごとに形が違う。ネイティブは `main` から呼ぶだけだが、
+/// Web はブラウザから呼ばれる関数を `#[wasm_bindgen(start)]` で公開する必要が
+/// ある。このマクロが両方を作るので、**アプリ側に `cfg` を書かずに済む**
+/// (wasm-bindgen への依存も要らない)。
+///
+/// ```ignore
+/// naui::entry!(naui::Settings::new("gallery"), build);
+///
+/// fn build(ui: &naui::Ui) -> naui::Result<()> { /* ... */ Ok(()) }
+/// ```
+///
+/// 展開されるのは次の 2 つ。
+///
+/// - `pub fn start() -> Result<()>` — どの環境でもある起動処理。ネイティブの
+///   `main` からはこれを呼ぶ。
+/// - Web だけ: ブラウザが読み込み後に呼ぶ入口。失敗は JS の例外として投げるので、
+///   ブラウザのコンソールに理由が出る。
+#[macro_export]
+macro_rules! entry {
+    ($settings:expr, $build:expr $(,)?) => {
+        /// ネイティブ / Web 共通の起動処理。
+        pub fn start() -> $crate::Result<()> {
+            $crate::run($settings, $build)
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        #[doc(hidden)]
+        mod __naui_entry {
+            // wasm-bindgen が展開するコードは `wasm_bindgen::` を参照するので、
+            // naui が再公開しているものをその名前で見えるようにする。
+            use $crate::wasm_bindgen;
+
+            /// 読み込みが終わったブラウザが呼ぶ入口。
+            #[wasm_bindgen::prelude::wasm_bindgen(start)]
+            pub fn start() -> ::core::result::Result<(), wasm_bindgen::JsValue> {
+                super::start().map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))
+            }
+        }
+    };
+}
 
 /// バックエンド間で API がずれていないことを、コンパイル時に検査する。
 ///

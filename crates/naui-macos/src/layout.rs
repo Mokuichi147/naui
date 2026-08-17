@@ -24,8 +24,18 @@ use crate::widgets::{impl_widget, Widget};
 /// (`NSContentSizeLayoutConstraint`)。属性だけで選ぶとそれらまで外して
 /// しまうため、自分で付けたものに識別子を入れて区別する。
 const SIZING_ID: &str = "naui.sizing";
-/// メディア表示欄などの「通常時の希望高さ」を表す制約の目印。
-const PREFERRED_HEIGHT_ID: &str = "naui.preferred-height";
+
+/// `Fill` に上限を付けたときの「上限まで広がりたい」制約の優先度。
+///
+/// 他のどの制約よりも弱くしておき、空間があるときだけ上限まで伸ばす。
+const PREFERRED_SIZE_PRIORITY: NSLayoutPriority = 1.0;
+
+/// 交差軸の `Fill` で「親の幅 / 高さに合わせたい」を表す優先度。
+///
+/// 必須にすると、同じ軸に上限 ([`Sizing::max_width`] など) があるときに
+/// 必須どうしがぶつかり、AppKit がどちらかを勝手に落とす。上限を勝たせたいので
+/// 1 段だけ下げてある (「はみ出さない」ほうは必須のまま別に張る)。
+pub(crate) const CROSS_FILL_PRIORITY: NSLayoutPriority = 999.0;
 
 /// `Fill` のときの hugging priority。低いほど余りを受け取る。
 const FILL_HUGGING: NSLayoutPriority = 1.0;
@@ -67,6 +77,24 @@ pub(crate) fn apply_sizing(view: &NSView, sizing: Sizing) {
         constraints.push(height.constraintLessThanOrEqualToConstant(value));
     }
 
+    // `Fill` に上限を付けたときは、上限を「通常時に確保したい大きさ」として
+    // 扱う。CSS の `flex` / WinUI の `Stretch` は空間があれば上限まで伸びる
+    // ため、AppKit でも同じ見え方になるよう弱い制約で希望を出しておく。
+    // 中身の intrinsic size が当てにならないウィジェット (AVPlayerView など)
+    // でも、これで表示欄の高さが決まる。
+    for (fill, max, anchor) in [
+        (sizing.width.is_fill(), sizing.max_width, &width),
+        (sizing.height.is_fill(), sizing.max_height, &height),
+    ] {
+        let (true, Some(value)) = (fill, max) else {
+            continue;
+        };
+        let preferred = anchor.constraintGreaterThanOrEqualToConstant(value.max(0.0));
+        // 優先度は活性化する前にしか変えられない。
+        preferred.setPriority(PREFERRED_SIZE_PRIORITY);
+        constraints.push(preferred);
+    }
+
     let identifier = NSString::from_str(SIZING_ID);
     for constraint in &constraints {
         constraint.setIdentifier(Some(&identifier));
@@ -81,32 +109,6 @@ pub(crate) fn apply_sizing(view: &NSView, sizing: Sizing) {
     // `Fill` は中身の intrinsic size より狭くなってもよい。
     set_compression_resistance(view, true, sizing.width.is_fill());
     set_compression_resistance(view, false, sizing.height.is_fill());
-}
-
-/// 通常時に確保したい高さを設定する。
-///
-/// 最小高さとは違い、優先度を下げた制約にする。十分な空間があるときは
-/// 指定値を確保する一方、ウィンドウをそれより小さくできるようにする。
-pub(crate) fn apply_preferred_height(view: &NSView, height: f64) {
-    let constraints = view.constraints();
-    let mine: Vec<Retained<NSLayoutConstraint>> = (0..constraints.len())
-        .map(|index| constraints.objectAtIndex(index))
-        .filter(|constraint| {
-            constraint
-                .identifier()
-                .is_some_and(|id| id.to_string() == PREFERRED_HEIGHT_ID)
-        })
-        .collect();
-    if !mine.is_empty() {
-        NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&mine));
-    }
-
-    let constraint = view
-        .heightAnchor()
-        .constraintGreaterThanOrEqualToConstant(height.max(0.0));
-    constraint.setIdentifier(Some(&NSString::from_str(PREFERRED_HEIGHT_ID)));
-    constraint.setPriority(1.0);
-    constraint.setActive(true);
 }
 
 fn set_hugging(view: &NSView, horizontal: bool, fill: bool) {
