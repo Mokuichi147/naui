@@ -28,6 +28,7 @@
 //! | `Button` | `gtk::Button` + `connect_clicked` |
 //! | `Checkbox` | `gtk::CheckButton` + `connect_toggled` |
 //! | `TextInput` | `gtk::Entry` + `connect_changed` |
+//! | `TextArea` | `gtk::TextView` を `gtk::ScrolledWindow` に載せる (`gtk::TextBuffer` の `connect_changed`) |
 //! | `Slider` | `gtk::Scale` + `connect_value_changed` |
 //! | `ProgressBar` | `gtk::ProgressBar` |
 //! | `Tabs` | `gtk::Notebook` (または `adw::ViewStack` + `adw::ViewSwitcher`) |
@@ -99,6 +100,7 @@ placeholder_widget!(Label);
 placeholder_widget!(Button);
 placeholder_widget!(Checkbox);
 placeholder_widget!(TextInput);
+placeholder_widget!(TextArea);
 placeholder_widget!(Slider);
 placeholder_widget!(ProgressBar);
 placeholder_widget!(Stack);
@@ -141,6 +143,16 @@ impl Checkbox {
 }
 
 impl TextInput {
+    pub fn text(&self) -> String {
+        String::new()
+    }
+    pub fn set_text(&self, _text: &str) {}
+    pub fn set_placeholder(&self, _text: &str) {}
+    pub fn set_enabled(&self, _enabled: bool) {}
+    pub fn on_change(&self, _f: impl FnMut(&str) + 'static) {}
+}
+
+impl TextArea {
     pub fn text(&self) -> String {
         String::new()
     }
@@ -455,6 +467,9 @@ impl Ui {
     }
     pub fn text_input(&self, _text: &str) -> Result<TextInput> {
         Err(unimplemented_error("TextInput の生成"))
+    }
+    pub fn text_area(&self, _text: &str) -> Result<TextArea> {
+        Err(unimplemented_error("TextArea の生成"))
     }
     pub fn slider(&self, _min: f64, _max: f64) -> Result<Slider> {
         Err(unimplemented_error("Slider の生成"))

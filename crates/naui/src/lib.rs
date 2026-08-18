@@ -99,6 +99,36 @@
 //! 当てにならないウィジェット (読み込み前の動画など) の表示欄は、この形で
 //! 大きさを決める。
 //!
+//! ## テキスト入力
+//!
+//! 1 行なら [`TextInput`]、改行を含む文章なら [`TextArea`] を使う。API の形は
+//! 同じで、どちらも IME・コピー / 貼り付け・取り消しはネイティブに任せている。
+//!
+//! ```no_run
+//! # use naui::{Length, Result, Sizing, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let memo = ui.text_area("")?;
+//! memo.set_placeholder("複数行のメモ (改行できます)");
+//! // スクロールと同じく中身に合わせた高さを持たないので、指定しておく。
+//! memo.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(96.0)));
+//! memo.on_change(|text| println!("{} 文字", text.chars().count()));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Web |
+//! | --- | --- | --- | --- |
+//! | `TextInput` | `TextBox` | `NSTextField` | `<input type="text">` |
+//! | `TextArea` | `TextBox` (`AcceptsReturn`) | `NSTextView` + `NSScrollView` | `<textarea>` |
+//!
+//! [`TextArea`] は**長い行を折り返し、はみ出した分は縦にスクロール**する。
+//! 折り返しの有無を選ぶ設定は、3 環境の共通部分に無いため持たない。
+//! macOS の `NSTextView` にはプレースホルダーが無いので、薄い色のラベルを
+//! 重ねている (押すと当たり判定は下の `NSTextView` へ通る)。
+//!
+//! `set_text` では `on_change` は呼ばれない (`TextInput` と同じく、Windows だけは
+//! ネイティブの `TextChanged` が出るため呼ばれる)。
+//!
 //! ## ナビゲーション
 //!
 //! タブ・ナビバー・ドック・メニュー・パンくず・ページ送り・リンクは、
@@ -202,7 +232,7 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択を含む 41 件) |
+//! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択を含む 52 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェット・ナビゲーション系・レイアウト・ファイル選択・メディアの読み込みと再生を確認 |
 //! | Linux | 未実装 |
@@ -218,22 +248,22 @@ pub use naui_core::{
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
-    Video, WeakWindow, Widget, Window,
+    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextArea,
+    TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
-    Video, WeakWindow, Widget, Window,
+    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextArea,
+    TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
-    Video, WeakWindow, Widget, Window,
+    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextArea,
+    TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -243,8 +273,8 @@ pub use naui_windows::{
 ))]
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
-    Video, WeakWindow, Widget, Window,
+    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextArea,
+    TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -366,6 +396,14 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     input.set_placeholder("t");
     input.set_enabled(true);
     input.on_change(|_s: &str| {});
+
+    let text_area: TextArea = ui.text_area("t")?;
+    let _: String = text_area.text();
+    text_area.set_text("t\nt");
+    text_area.set_placeholder("t");
+    text_area.set_enabled(true);
+    text_area.on_change(|_s: &str| {});
+    text_area.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(1.0)));
 
     let slider: Slider = ui.slider(0.0, 1.0)?;
     let _: f64 = slider.value();
@@ -528,6 +566,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&button);
     stack.append(&checkbox);
     stack.append(&input);
+    stack.append(&text_area);
     stack.append(&slider);
     stack.append(&progress);
     stack.append(&tabs);

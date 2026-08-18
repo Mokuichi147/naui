@@ -8,11 +8,11 @@ use windows::Foundation::EventHandler;
 use windows_core::{IInspectable, Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, Grid, Orientation as XamlOrientation,
-    Slider as XamlSlider, StackPanel, TextBlock, TextBox,
+    ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox,
 };
 use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, HorizontalAlignment, RoutedEventHandler, Thickness, UIElement,
+    FrameworkElement, HorizontalAlignment, RoutedEventHandler, TextWrapping, Thickness, UIElement,
     VerticalAlignment,
 };
 
@@ -266,6 +266,83 @@ impl TextInput {
     }
 
     /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
+        use winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
+        if let Some(token) = self.0.token.borrow_mut().take() {
+            let _ = self.0.native.RemoveTextChanged(token);
+        }
+        let state = UiThreadCell::new((self.0.native.clone(), f));
+        let handler = TextChangedEventHandler::new(move |_sender, _args| {
+            state.with_mut(|(native, f)| {
+                let text = native.Text().unwrap_or_default().to_string();
+                f(&text);
+            });
+            Ok(())
+        });
+        if let Ok(token) = self.0.native.TextChanged(&handler) {
+            *self.0.token.borrow_mut() = Some(token);
+        }
+    }
+}
+
+// --------------------------------------------------------------- TextArea
+
+struct TextAreaInner {
+    native: TextBox,
+    token: RefCell<Option<i64>>,
+}
+
+/// 複数行テキスト入力 (改行を受け付ける TextBox)。IME は Windows が処理する。
+#[derive(Clone)]
+pub struct TextArea(Rc<TextAreaInner>);
+impl_widget!(TextArea, native);
+
+impl TextArea {
+    pub(crate) fn new(text: &str) -> Result<Self> {
+        let native = TextBox::new().map_err(|e| to_error("TextBox の生成", e))?;
+        // 1 行の TextBox との違いはこの 2 つ。Enter が改行になり、
+        // 長い行は折り返す。
+        native
+            .SetAcceptsReturn(true)
+            .map_err(|e| to_error("TextBox の複数行化", e))?;
+        native
+            .SetTextWrapping(TextWrapping::Wrap)
+            .map_err(|e| to_error("TextBox の折り返し設定", e))?;
+        // はみ出した分は縦にスクロールさせる。
+        ScrollViewer::SetVerticalScrollBarVisibility2(&native, ScrollBarVisibility::Auto)
+            .map_err(|e| to_error("TextBox のスクロール設定", e))?;
+        native
+            .SetText(&HSTRING::from(text))
+            .map_err(|e| to_error("TextBox への設定", e))?;
+        Ok(Self(Rc::new(TextAreaInner {
+            native,
+            token: RefCell::new(None),
+        })))
+    }
+
+    /// いまの文字列。改行はそのまま含まれる。
+    pub fn text(&self) -> String {
+        self.0
+            .native
+            .Text()
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    }
+
+    pub fn set_text(&self, text: &str) {
+        let _ = self.0.native.SetText(&HSTRING::from(text));
+    }
+
+    /// 何も入力されていないときに薄く出る文字。
+    pub fn set_placeholder(&self, text: &str) {
+        let _ = self.0.native.SetPlaceholderText(&HSTRING::from(text));
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        let _ = self.0.native.SetIsEnabled(enabled);
+    }
+
+    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。改行の入力でも呼ばれる。
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         use winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
         if let Some(token) = self.0.token.borrow_mut().take() {

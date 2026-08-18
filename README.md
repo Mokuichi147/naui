@@ -19,8 +19,8 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 41 件。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
-| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 52 件。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
+| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`TextArea` (`<textarea>`) は改行を含む入力が `on_change` へ届くことを確認。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
 | **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
@@ -132,6 +132,7 @@ let element: web_sys::Element = button.native_element();
 | `Button` | ✅ `Button` | ✅ `NSButton` (`buttonWithTitle:`) | ✅ `<button>` | ❌ |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` (`checkboxWithTitle:`) | 🟡 `<input type=checkbox>` + `<label>` | ❌ |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` (`textFieldWithString:`) | ✅ `<input type=text>` | ❌ |
+| `TextArea` | ✅ `TextBox` (`AcceptsReturn`) | 🟡 `NSTextView` + `NSScrollView` (プレースホルダーは重ねたラベル) | ✅ `<textarea>` | ❌ |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ❌ |
 | `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
 | `List` | ✅ `ListBox` + `ListBoxItem` | ✅ `NSTableView` (1 列) + `NSScrollView` | ✅ `<select size>` (文字だけ) / 🟡 `<ul role=listbox>` (`detail` あり) | ❌ |
@@ -225,6 +226,37 @@ root.append(&dock);   // 下端に寄る
 
 Windows の `StackPanel` は余りを配らないため、`Spacer` と主軸の `Fill` は
 `Stack` の中では効きません。`Grid` の行を `Track::Fill` にしてください。
+
+### テキスト入力
+
+1 行なら `TextInput`、改行を含む文章なら `TextArea` を使います。API の形は同じで、
+どちらも IME・コピー / 貼り付け・取り消しはネイティブに任せています。
+
+```rust
+let memo = ui.text_area("")?;
+memo.set_placeholder("複数行のメモ (改行できます)");
+// スクロールと同じく中身に合わせた高さを持たないので、指定しておく。
+memo.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(96.0)));
+memo.on_change(|text| println!("{} 文字", text.chars().count()));
+```
+
+`TextArea` は**長い行を折り返し、はみ出した分は縦にスクロール**します。
+折り返しの有無を選ぶ設定はありません (3 環境の共通部分に無いため)。
+
+| | 実体 | 備考 |
+| --- | --- | --- |
+| macOS | `NSTextView` + `NSScrollView` | `NSTextView` にプレースホルダーが無いため、薄い色のラベルを重ねている。ラベルは当たり判定を通すので、その上を押してもキャレットが立つ |
+| Windows | `TextBox` (`AcceptsReturn` + `TextWrapping::Wrap`) | 1 行のときと同じコントロール |
+| Web | `<textarea>` | ブラウザ既定のまま |
+
+`set_text` で書き換えても `on_change` は呼ばれません
+(Windows だけは `TextChanged` がネイティブ側で出るため呼ばれます。
+`TextInput` と同じ挙動です)。**`Scroll` や `List` と同じく中身に合わせた
+高さを持たない**ので、`set_sizing` で高さを指定してください。
+
+> `TextArea` は macOS (自動テスト) と Web (ブラウザで打鍵し、改行を含む文字列が
+> `on_change` へ届くことを確認) まで確認済みです。**Windows は実装と
+> コンパイルの確認までで、実機での操作確認はこれからです。**
 
 ### メディア
 
@@ -474,6 +506,7 @@ stack.append(&picker);
 | 🟡 macOS の `Menu` | AppKit の `NSMenu` はポップアップ用。サイドバー相当の縦一覧は `NSButton` (AccessoryBar・PushOnPushOff) を `NSStackView` に並べて作っている |
 | macOS の `List` の行 | 文字だけの `NSTextField` を行にすると、AppKit が枠の上端に文字を描くため選択の帯とずれる。AppKit 標準の `NSTableCellView` に入れ、上下の余白まで制約でつないで、高さを `usesAutomaticRowHeights` に求めさせている |
 | 🟡 Web の `List` (`detail` あり) | `<option>` はテキストしか持てず 2 行にできないため、`<ul role="listbox">` + `<li role="option">` を組み立てている。選択とキーボード操作は naui が受け持つ。**文字だけの行なら `<select size>` のまま**で、この合成は使わない |
+| 🟡 macOS の `TextArea` | `NSTextView` はネイティブだが、プレースホルダーを持たない。薄い色の `NSTextField` を重ね、`hitTest:` で nil を返して当たり判定を下の `NSTextView` へ通している |
 | 🟡 macOS の `Link` | AppKit にリンク専用のコントロールは無い。枠なしの `NSButton` を `NSColor::linkColor` にし、`href` は `NSWorkspace` で開いている |
 | 🟡 Windows の `Image` | `Microsoft.UI.Xaml.Controls.Image` と `BitmapImage` が `winio-winui3` 0.4.5 のバインディングに無く、Rust から `Source` を設定できない。`XamlReader` に `<Image>` の XAML を読ませ、ホストの `Grid` の中身を差し替えている (`ProgressBar` と同じ手口)。表示するのは WinUI 標準の `Image` そのもの |
 | 🟡 Windows の `Video` / `Audio` | `MediaPlayerElement` と `MediaPlayer` を使う。Windows App SDK の一部環境で標準 `MediaTransportControls` を visual tree に追加すると `0xc000027b` で終了するため、標準の再生バーは無効にし、Gallery は独自の操作欄を使っている |
@@ -524,8 +557,9 @@ stack.append(&picker);
 ### 未対応のコンポーネント
 
 ポップアップメニュー、汎用のダイアログ、保存ダイアログ、複数列のテーブル、
-ラジオボタン、コンボボックス、複数行テキスト、ツールバー、ツリーなどはありません
-(1 列のリストは `List`、ファイル / フォルダーの選択は `FilePicker`、
+ラジオボタン、コンボボックス、ツールバー、ツリーなどはありません
+(1 列のリストは `List`、複数行のテキスト入力は `TextArea`、
+ファイル / フォルダーの選択は `FilePicker`、
 画像・動画・音声は `Image` / `Video` / `Audio` があります)。
 レイアウトはスタック・グリッド・スクロールで、絶対配置はありません。
 
@@ -641,10 +675,14 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 ```
 
 - `naui-core`: 設定・エラー整形の単体テスト
-- `naui-macos`: **AppKit の実コントロールに対する 41 件の統合テスト**
+- `naui-macos`: **AppKit の実コントロールに対する 52 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
+  - 複数行入力が改行込みで NSTextView と往復すること
+  - NSTextView への打鍵が通知され、重ねたプレースホルダーが出入りすること
+  - プレースホルダーのラベルが当たり判定を NSTextView へ通すこと
+  - 複数行入力が指定した高さに収まり、折り返しの幅が親に追従すること
   - NSSlider が範囲でクランプすること (naui ではなく AppKit の挙動)
   - ハンドルを捨てた後もコンテナ経由でコールバックが生きていること
   - NSWindow を生成・設定・クローズしても二重解放しないこと
@@ -694,14 +732,14 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   バインドしていないため、Windows で実装できませんでした。
   「共通 API は全バックエンドの共通部分」という方針を優先して、
   macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **ウィジェットは 23 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
-  `Checkbox` / `TextInput` / `Slider` / `ProgressBar`)、レイアウト 3 種
+- **ウィジェットは 24 種類のみ。** 基本 9 種 (`Window` / `Stack` / `Label` / `Button` /
+  `Checkbox` / `TextInput` / `TextArea` / `Slider` / `ProgressBar`)、レイアウト 3 種
   (`Grid` / `Scroll` / `Spacer`)、ナビゲーション 7 種
   (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`)、
   リスト 1 種 (`List`)、ファイル選択 1 種 (`FilePicker`)、
   メディア 3 種 (`Image` / `Video` / `Audio`) です。
-  ポップアップメニュー、汎用のダイアログ、保存ダイアログ、テーブル、
-  複数行テキストなどは未実装です。
+  ポップアップメニュー、汎用のダイアログ、保存ダイアログ、テーブルなどは
+  未実装です。
 - **`List` は 1 列だけです。** 複数列のテーブルはありません。また `List` は
   中身に合わせた高さを持たないため、`set_sizing` で高さを指定してください。
 - **`List` の行に置けるのは文字 (`label` と `detail`) だけです。** 任意の

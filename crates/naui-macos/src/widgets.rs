@@ -7,16 +7,18 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{Align, Orientation, Padding};
-use objc2::rc::Retained;
-use objc2::{sel, MainThreadMarker, Message};
+use objc2::rc::{Allocated, Retained};
+use objc2::runtime::NSObjectProtocol;
+use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSButton, NSButtonType, NSControlStateValueOff, NSControlStateValueOn, NSLayoutAttribute,
-    NSLayoutConstraint, NSProgressIndicator, NSProgressIndicatorStyle, NSSlider, NSStackView,
-    NSStackViewDistribution, NSTextField, NSUserInterfaceLayoutOrientation, NSView,
+    NSAutoresizingMaskOptions, NSBorderType, NSButton, NSButtonType, NSColor,
+    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSLayoutAttribute, NSLayoutConstraint,
+    NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSlider, NSStackView,
+    NSStackViewDistribution, NSTextField, NSTextView, NSUserInterfaceLayoutOrientation, NSView,
 };
-use objc2_foundation::{NSEdgeInsets, NSString};
+use objc2_foundation::{NSArray, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString};
 
-use crate::trampoline::{ActionTarget, TextObserver};
+use crate::trampoline::{ActionTarget, TextObserver, TextViewObserver};
 
 /// naui のウィジェットが実装する共通インタフェース。
 pub trait Widget: 'static {
@@ -254,6 +256,223 @@ impl TextInput {
         *self.0.observer.borrow_mut() = Some(observer);
     }
 
+}
+
+// --------------------------------------------------------------- TextArea
+
+// プレースホルダー用のラベル。
+//
+// NSTextView の上に重ねるため、そのままでは文字の載っている場所を
+// クリックしてもキャレットが立たない。`hitTest:` で nil を返すと、
+// AppKit はこのビューを飛ばして下の NSTextView へ当たり判定を渡す。
+define_class!(
+    #[unsafe(super(NSTextField))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiPlaceholderLabel"]
+    /// クリックを下のビューへ通すラベル。
+    struct PlaceholderLabel;
+
+    unsafe impl NSObjectProtocol for PlaceholderLabel {}
+
+    impl PlaceholderLabel {
+        #[unsafe(method_id(hitTest:))]
+        fn hit_test(&self, _point: NSPoint) -> Option<Retained<NSView>> {
+            None
+        }
+    }
+);
+
+impl PlaceholderLabel {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this: Allocated<Self> = Self::alloc(mtm);
+        let this: Retained<Self> = unsafe { msg_send![this, init] };
+        // NSTextField::labelWithString と同じ構成を手で作る。
+        this.setEditable(false);
+        this.setSelectable(false);
+        this.setBezeled(false);
+        this.setDrawsBackground(false);
+        this.setTextColor(Some(&NSColor::placeholderTextColor()));
+        this.setFont(Some(&NSFont::systemFontOfSize(NSFont::systemFontSize())));
+        this.setTranslatesAutoresizingMaskIntoConstraints(false);
+        this
+    }
+}
+
+/// 差し替えできる 1 本の「文字が変わった」通知先。
+///
+/// プレースホルダーの出し入れは naui 側でも購読する必要があるため、
+/// デリゲートは生成時から常に付けておき、アプリのクロージャはここへ入れる。
+/// 通知の最中に `on_change` を呼び直しても二重借用にならないよう、
+/// 呼び出しの間だけ取り出す ([`crate::trampoline::SelectHandler`] と同じ形)。
+#[derive(Clone, Default)]
+struct TextHandler(Rc<RefCell<Option<Box<dyn FnMut(&str)>>>>);
+
+impl TextHandler {
+    fn set(&self, f: impl FnMut(&str) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn emit(&self, text: &str) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(text);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
+struct TextAreaInner {
+    /// 外から見えるビュー。複数行入力はこのスクロールビューごと 1 つ。
+    scroll: Retained<NSScrollView>,
+    text_view: Retained<NSTextView>,
+    placeholder: Retained<PlaceholderLabel>,
+    handler: TextHandler,
+    /// デリゲートは weak 参照なので保持する。
+    _observer: Retained<TextViewObserver>,
+}
+
+/// 複数行テキスト入力 (NSScrollView に載せた NSTextView)。
+///
+/// 改行を含む文字列をそのまま扱い、折り返し・スクロール・IME・取り消しは
+/// AppKit が行う。**スクロールビューは中身に合わせた高さを持たない**ため、
+/// `set_sizing` で高さを指定すること ([`crate::Scroll`] や [`crate::List`] と同じ)。
+#[derive(Clone)]
+pub struct TextArea(Rc<TextAreaInner>);
+
+impl Widget for TextArea {
+    fn native_view(&self) -> Retained<NSView> {
+        let view: &NSView = self.0.scroll.as_ref();
+        view.retain()
+    }
+    fn boxed_clone(&self) -> Box<dyn Widget> {
+        Box::new(self.clone())
+    }
+}
+
+crate::widgets::impl_sizing!(TextArea);
+
+impl TextArea {
+    pub(crate) fn new(mtm: MainThreadMarker, text: &str) -> Self {
+        let scroll = NSScrollView::new(mtm);
+        scroll.setHasVerticalScroller(true);
+        // 1 行入力 (NSTextField) と同じ、へこんだ枠にする。
+        scroll.setBorderType(NSBorderType::BezelBorder);
+
+        let text_view = NSTextView::new(mtm);
+        // NSScrollView の中の NSTextView は、Auto Layout ではなく
+        // autoresizing で幅を追わせるのが AppKit の標準の組み方。
+        // 高さは中身に合わせて伸び、はみ出した分をスクロールが担う。
+        let content = scroll.contentSize();
+        text_view.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), content));
+        text_view.setMinSize(NSSize::new(0.0, 0.0));
+        text_view.setMaxSize(NSSize::new(f64::MAX, f64::MAX));
+        text_view.setVerticallyResizable(true);
+        text_view.setHorizontallyResizable(false);
+        text_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+        if let Some(container) = unsafe { text_view.textContainer() } {
+            // 幅はテキストビューに追従させ、高さは無制限にする。
+            // これで横は折り返し、縦はスクロールになる。
+            container.setContainerSize(NSSize::new(content.width, f64::MAX));
+            container.setWidthTracksTextView(true);
+        }
+        // 書式付きテキストは扱わない。貼り付けも書式を落として素の文字にする。
+        text_view.setRichText(false);
+        text_view.setAllowsUndo(true);
+        text_view.setFont(Some(&NSFont::systemFontOfSize(NSFont::systemFontSize())));
+        text_view.setString(&NSString::from_str(text));
+        scroll.setDocumentView(Some(&text_view));
+
+        // NSTextView にプレースホルダーは無いので、薄い文字のラベルを重ねる。
+        let placeholder = PlaceholderLabel::new(mtm);
+        placeholder.setHidden(!text.is_empty());
+        let view: &NSView = text_view.as_ref();
+        view.addSubview(&placeholder);
+        // 文字の描き始めは「テキストの余白 + 行の余白」の内側。
+        let inset = text_view.textContainerInset();
+        let padding = unsafe { text_view.textContainer() }
+            .map(|container| container.lineFragmentPadding())
+            .unwrap_or(0.0);
+        let constraints = [
+            placeholder
+                .leadingAnchor()
+                .constraintEqualToAnchor_constant(&view.leadingAnchor(), inset.width + padding),
+            placeholder
+                .topAnchor()
+                .constraintEqualToAnchor_constant(&view.topAnchor(), inset.height),
+            placeholder
+                .trailingAnchor()
+                .constraintLessThanOrEqualToAnchor_constant(
+                    &view.trailingAnchor(),
+                    -(inset.width + padding),
+                ),
+        ];
+        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
+
+        // デリゲートは常に付けておく。プレースホルダーの出し入れが
+        // アプリのクロージャの有無に左右されないようにするため。
+        let handler = TextHandler::default();
+        let observer = TextViewObserver::new(mtm, {
+            let placeholder = placeholder.clone();
+            let handler = handler.clone();
+            move |text: &str| {
+                placeholder.setHidden(!text.is_empty());
+                handler.emit(text);
+            }
+        });
+        text_view.setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)));
+
+        Self(Rc::new(TextAreaInner {
+            scroll,
+            text_view,
+            placeholder,
+            handler,
+            _observer: observer,
+        }))
+    }
+
+    /// いまの文字列。改行はそのまま含まれる。
+    pub fn text(&self) -> String {
+        self.0.text_view.string().to_string()
+    }
+
+    /// 文字列を置き換える。`on_change` は呼ばれない。
+    pub fn set_text(&self, text: &str) {
+        self.0.text_view.setString(&NSString::from_str(text));
+        // setString: は textDidChange: を出さないので、ここで合わせる。
+        self.0.placeholder.setHidden(!text.is_empty());
+    }
+
+    /// 何も入力されていないときに薄く出る文字。
+    pub fn set_placeholder(&self, text: &str) {
+        self.0.placeholder.setStringValue(&NSString::from_str(text));
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.0.text_view.setEditable(enabled);
+        // 編集できないことが見て分かるよう、無効なコントロールの色にする。
+        // 戻すときは NSTextView の既定である textColor へ (labelColor ではない)。
+        let color = if enabled {
+            NSColor::textColor()
+        } else {
+            NSColor::disabledControlTextColor()
+        };
+        self.0.text_view.setTextColor(Some(&color));
+    }
+
+    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    ///
+    /// 改行の入力でも呼ばれる。`set_text` では呼ばれない。
+    pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
+        self.0.handler.set(f);
+    }
+
+    /// 中身の `NSTextView`。バックエンド固有の脱出口として公開している。
+    pub fn native_text_view(&self) -> Retained<NSTextView> {
+        self.0.text_view.clone()
+    }
 }
 
 // ----------------------------------------------------------------- Slider

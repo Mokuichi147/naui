@@ -37,7 +37,9 @@ pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
-pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
+pub use widgets::{
+    Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
+};
 pub use window::{WeakWindow, Window};
 
 /// ウィジェットを生成するための入り口。
@@ -101,6 +103,11 @@ impl Ui {
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {
         Ok(TextInput::new(self.mtm, text))
+    }
+
+    /// 改行を含む文字列を入力できる欄。高さは `set_sizing` で指定する。
+    pub fn text_area(&self, text: &str) -> Result<TextArea> {
+        Ok(TextArea::new(self.mtm, text))
     }
 
     pub fn slider(&self, min: f64, max: f64) -> Result<Slider> {

@@ -19,9 +19,9 @@ use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
 use objc2_app_kit::{
     NSButton, NSImageScaling, NSImageView, NSLayoutConstraint, NSSegmentedControl,
-    NSTableViewDelegate, NSTextField, NSView,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
 };
-use objc2_foundation::{NSDate, NSRunLoop, NSSize};
+use objc2_foundation::{NSDate, NSNotFound, NSRange, NSRunLoop, NSSize, NSString};
 
 /// テストケース 1 件。
 type Case = (&'static str, fn(&Ui) -> Result<()>);
@@ -34,6 +34,19 @@ fn main() {
             checkbox_toggle,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
+        ("複数行入力が改行込みで往復する", text_area_round_trip),
+        (
+            "複数行入力の打鍵が通知され、プレースホルダーが消える",
+            text_area_notifies_while_typing,
+        ),
+        (
+            "複数行入力のプレースホルダーがクリックを通す",
+            text_area_placeholder_passes_clicks,
+        ),
+        (
+            "複数行入力が指定した高さに収まり、折り返し幅が追従する",
+            text_area_follows_the_given_size,
+        ),
         ("スライダーが範囲でクランプされる", slider_clamp),
         ("進捗バーが 0..1 に収まる", progress_clamp),
         ("スタックが子を生かし続ける", stack_keeps_children),
@@ -196,6 +209,150 @@ fn text_round_trip(ui: &Ui) -> Result<()> {
     assert_eq!(input.text(), "あいう");
     input.set_placeholder("名前");
     Ok(())
+}
+
+/// 複数行入力は改行を含む文字列をそのまま保つ。
+fn text_area_round_trip(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("あ\nい")?;
+    assert_eq!(area.text(), "あ\nい");
+
+    area.set_text("一行目\n二行目\n三行目");
+    assert_eq!(area.text(), "一行目\n二行目\n三行目");
+
+    // NSScrollView に載っているので、外から見えるビューはスクロールビュー。
+    let view = area.native_view();
+    assert!(
+        view.downcast_ref::<objc2_app_kit::NSScrollView>().is_some(),
+        "複数行入力はスクロールビューごと 1 つのウィジェットであること"
+    );
+
+    let text_view = area.native_text_view();
+    let default_color = text_view.textColor();
+    area.set_enabled(false);
+    assert!(!text_view.isEditable(), "無効なら編集できないこと");
+    area.set_enabled(true);
+    assert!(text_view.isEditable());
+    assert_eq!(
+        text_view.textColor(),
+        default_color,
+        "有効へ戻したら NSTextView の既定の文字色へ戻ること"
+    );
+    Ok(())
+}
+
+/// 打鍵のたびに通知が届き、プレースホルダーは中身の有無で出入りする。
+fn text_area_notifies_while_typing(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("")?;
+    area.set_placeholder("本文");
+    let text_view = area.native_text_view();
+    let placeholder = placeholder_label(&text_view).expect("プレースホルダーが重なっていること");
+    assert_eq!(placeholder.stringValue().to_string(), "本文");
+    assert!(!placeholder.isHidden(), "空のときは出ていること");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    area.on_change({
+        let seen = seen.clone();
+        move |text| seen.borrow_mut().push(text.to_string())
+    });
+
+    for chunk in ["あ", "\n", "い"] {
+        type_into(&text_view, chunk);
+    }
+    assert_eq!(area.text(), "あ\nい");
+    assert_eq!(
+        *seen.borrow(),
+        vec!["あ".to_string(), "あ\n".to_string(), "あ\nい".to_string()],
+        "改行の入力でも通知されること"
+    );
+    assert!(placeholder.isHidden(), "入力後は隠れていること");
+
+    area.set_text("");
+    assert!(!placeholder.isHidden(), "空に戻したら出ること");
+    assert_eq!(
+        seen.borrow().len(),
+        3,
+        "set_text では通知しないこと (1 行入力と同じ)"
+    );
+    Ok(())
+}
+
+/// プレースホルダーの上をクリックしても、当たり判定は下の NSTextView へ通る。
+fn text_area_placeholder_passes_clicks(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("")?;
+    area.set_placeholder("本文");
+    let text_view = area.native_text_view();
+    // レイアウトを確定させてから、ラベルの中心を叩く。
+    let view: &NSView = text_view.as_ref();
+    view.layoutSubtreeIfNeeded();
+    let placeholder = placeholder_label(&text_view).expect("プレースホルダーが重なっていること");
+    let frame = placeholder.frame();
+    let point = objc2_foundation::NSPoint::new(
+        frame.origin.x + frame.size.width / 2.0,
+        frame.origin.y + frame.size.height / 2.0,
+    );
+    let hit = view.hitTest(point);
+    assert!(
+        hit.is_some_and(|hit| hit.downcast_ref::<NSTextView>().is_some()),
+        "プレースホルダーではなく NSTextView が受け取ること"
+    );
+    Ok(())
+}
+
+/// 高さは `set_sizing` の指定どおりになり、折り返しの幅は親に追従する。
+fn text_area_follows_the_given_size(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_sizing(Sizing::fill());
+    let area = ui.text_area("あ")?;
+    area.set_sizing(
+        Sizing::new()
+            .width(naui_core::Length::Fill)
+            .height(naui_core::Length::Fixed(96.0)),
+    );
+    stack.append(&area);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 400.0));
+    root.layoutSubtreeIfNeeded();
+
+    let frame = area.native_view().frame();
+    assert!(
+        (frame.size.height - 96.0).abs() < 1e-6 && (frame.size.width - 400.0).abs() < 1e-6,
+        "指定した高さと親の幅になること: {frame:?}"
+    );
+
+    // 中の NSTextView は、枠のぶんだけ内側でスクロールビューに追従する。
+    // 折り返しはこの幅で起きるので、親が広がれば折り返しも変わる。
+    let inner = area.native_text_view().frame();
+    assert!(
+        inner.size.width > 0.0 && inner.size.width <= frame.size.width,
+        "折り返しの幅がスクロールビューに収まること: {inner:?}"
+    );
+
+    root.setFrameSize(NSSize::new(240.0, 400.0));
+    root.layoutSubtreeIfNeeded();
+    let narrow = area.native_text_view().frame();
+    assert!(
+        narrow.size.width < inner.size.width,
+        "親が狭くなれば折り返しの幅も狭くなること: {inner:?} -> {narrow:?}"
+    );
+    Ok(())
+}
+
+/// 複数行入力に重ねたプレースホルダーのラベルを取り出す。
+fn placeholder_label(text_view: &NSTextView) -> Option<Retained<NSTextField>> {
+    let view: &NSView = text_view.as_ref();
+    let subviews = view.subviews();
+    (0..subviews.len())
+        .map(|index| subviews.objectAtIndex(index))
+        .find_map(|subview| subview.downcast::<NSTextField>().ok())
+}
+
+/// IME や物理キーボードと同じ経路で文字を入れる。
+fn type_into(text_view: &NSTextView, text: &str) {
+    let string = NSString::from_str(text);
+    unsafe {
+        text_view.insertText_replacementRange(&string, NSRange::new(NSNotFound as usize, 0));
+    }
 }
 
 /// スライダーは範囲でクランプされる。

@@ -11,7 +11,7 @@ use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSControl, NSControlTextEditingDelegate, NSTabView, NSTabViewDelegate, NSTabViewItem,
-    NSTextFieldDelegate,
+    NSTextDelegate, NSTextFieldDelegate, NSTextView, NSTextViewDelegate,
 };
 use objc2_foundation::NSNotification;
 
@@ -74,6 +74,42 @@ define_class!(
 );
 
 impl TextObserver {
+    pub(crate) fn new(mtm: MainThreadMarker, f: impl FnMut(&str) + 'static) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(RefCell::new(Box::new(f) as Box<dyn FnMut(&str)>));
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiTextViewObserver"]
+    #[ivars = TextCallback]
+    pub(crate) struct TextViewObserver;
+
+    unsafe impl NSObjectProtocol for TextViewObserver {}
+
+    // NSTextView は NSControl ではないので、`controlTextDidChange:` は来ない。
+    // 複数行の入力は NSText の `textDidChange:` で通知される。
+    unsafe impl NSTextDelegate for TextViewObserver {
+        #[unsafe(method(textDidChange:))]
+        fn text_did_change(&self, notification: &NSNotification) {
+            let Some(object) = notification.object() else {
+                return;
+            };
+            let Ok(view) = object.downcast::<NSTextView>() else {
+                return;
+            };
+            let text = view.string().to_string();
+            let mut cb = self.ivars().borrow_mut();
+            (cb)(&text);
+        }
+    }
+
+    unsafe impl NSTextViewDelegate for TextViewObserver {}
+);
+
+impl TextViewObserver {
     pub(crate) fn new(mtm: MainThreadMarker, f: impl FnMut(&str) + 'static) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(RefCell::new(Box::new(f) as Box<dyn FnMut(&str)>));
         unsafe { msg_send![super(this), init] }

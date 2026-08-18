@@ -8,7 +8,9 @@ use std::rc::Rc;
 use naui_core::{Align, Orientation, Padding, Result};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, HtmlElement, HtmlInputElement, HtmlProgressElement};
+use web_sys::{
+    Document, Element, HtmlElement, HtmlInputElement, HtmlProgressElement, HtmlTextAreaElement,
+};
 
 use crate::to_error;
 
@@ -280,6 +282,60 @@ impl TextInput {
         *self.0.on_change.borrow_mut() = listener;
     }
 
+}
+
+// --------------------------------------------------------------- TextArea
+
+struct TextAreaInner {
+    element: HtmlTextAreaElement,
+    on_change: RefCell<Option<Listener>>,
+}
+
+/// 複数行テキスト入力 (`<textarea>`)。IME はブラウザが処理する。
+#[derive(Clone)]
+pub struct TextArea(Rc<TextAreaInner>);
+impl_widget!(TextArea, element);
+
+impl TextArea {
+    pub(crate) fn new(doc: &Document, text: &str) -> Result<Self> {
+        let element: HtmlTextAreaElement = create(doc, "textarea")?.unchecked_into();
+        element.set_value(text);
+        Ok(Self(Rc::new(TextAreaInner {
+            element,
+            on_change: RefCell::new(None),
+        })))
+    }
+
+    /// いまの文字列。改行はそのまま含まれる。
+    pub fn text(&self) -> String {
+        self.0.element.value()
+    }
+
+    /// 文字列を置き換える。`on_change` は呼ばれない。
+    pub fn set_text(&self, text: &str) {
+        self.0.element.set_value(text);
+    }
+
+    /// 何も入力されていないときに薄く出る文字。
+    pub fn set_placeholder(&self, text: &str) {
+        self.0.element.set_placeholder(text);
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.0.element.set_disabled(!enabled);
+    }
+
+    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    ///
+    /// 改行の入力でも呼ばれる。`set_text` では呼ばれない。
+    pub fn on_change(&self, mut f: impl FnMut(&str) + 'static) {
+        let element = self.0.element.clone();
+        let listener = Listener::attach(self.0.element.as_ref(), "input", move || {
+            f(&element.value());
+        })
+        .ok();
+        *self.0.on_change.borrow_mut() = listener;
+    }
 }
 
 // ----------------------------------------------------------------- Slider
