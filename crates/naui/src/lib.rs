@@ -157,7 +157,53 @@
 //! | `Link` | `HyperlinkButton` | `NSButton` (リンク色) | `<a>` |
 //!
 //! `Menu` は**縦に並ぶナビゲーション一覧**であって、ポップアップメニューではない。
+//! 右クリックで出るほうは [`PopupMenu`] を使う。
 //! `Dock` の下端への固定は、レイアウトが縦横のスタックだけなのでアプリの責務になる。
+//!
+//! ## ポップアップ (コンテキスト) メニュー
+//!
+//! [`PopupMenu`] は画面に並ばないので [`Widget`] ではない。項目は
+//! [`PopupItem`] の並びで渡し、選ばれたものは**区切り線を含めた並びの**
+//! インデックスで返る。
+//!
+//! ```no_run
+//! # use naui::{PopupItem, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let label = ui.label("右クリックしてください")?;
+//!
+//! let popup = ui.popup_menu()?;
+//! popup.set_items(&[
+//!     PopupItem::new("コピー"),
+//!     PopupItem::separator(),          // 選べないので通知も来ない
+//!     PopupItem::new("削除").enabled(false),
+//! ]);
+//! popup.on_select(|index| println!("{index} 番目が選ばれた"));
+//! popup.attach(&label);                // 右クリックで出る
+//! popup.open_at(&label, 0.0, 0.0);     // プログラムから出す (左上からの位置)
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Web |
+//! | --- | --- | --- | --- |
+//! | `PopupMenu` | ルートに重ねる `Grid` + `Button` | `NSMenu` | `<div role="menu">` |
+//!
+//! **階層 (サブメニュー)・チェック印・ショートカットの表示は持たない。**
+//! 項目は「文字・選べるかどうか・区切り線」だけで、これは 4 環境が
+//! そろって同じ形で扱える範囲にそろえたため。
+//!
+//! ネイティブのメニューがあるのは macOS だけ (`NSMenu`) で、
+//! **Windows と Web は合成**になる。WinUI 3 の `MenuFlyout` は
+//! `winio-winui3` のバインディングに無く、ブラウザには既定の
+//! コンテキストメニューを差し替える API が無いため。合成のほうは
+//! **キーボード操作 (矢印キーでの移動) を持たない**。Web は Escape で
+//! 閉じられるが、Windows はキー入力のバインディングが無いため閉じられない
+//! (メニューの外側を押せばどちらも閉じる)。
+//!
+//! `attach` は同じメニューをいくつのウィジェットにも取り付けられる。
+//! Web では**取り付けたウィジェットの上でだけ**ブラウザ既定のメニューを
+//! 抑止する。`select` はユーザー操作と同じく通知し (テストや自動操作用)、
+//! 区切り線と選べない項目は無視する。
 //!
 //! ## リスト
 //!
@@ -232,7 +278,7 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択を含む 52 件) |
+//! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択・ポップアップメニュー・複数行入力を含む 55 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェット・ナビゲーション系・レイアウト・ファイル選択・メディアの読み込みと再生を確認 |
 //! | Linux | 未実装 |
@@ -241,29 +287,29 @@
 
 pub use naui_core::{
     accept_attribute, media, Align, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell,
-    Length, ListItem, NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy,
-    SelectionMode, Settings, Sizing, Theme, Track,
+    Length, ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem, Result,
+    ScrollPolicy, SelectionMode, Settings, Sizing, Theme, Track,
 };
 
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextArea,
-    TextInput, Ui, Video, WeakWindow, Widget, Window,
+    Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs,
+    TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextArea,
-    TextInput, Ui, Video, WeakWindow, Widget, Window,
+    Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs,
+    TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextArea,
-    TextInput, Ui, Video, WeakWindow, Widget, Window,
+    Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs,
+    TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -273,8 +319,8 @@ pub use naui_windows::{
 ))]
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextArea,
-    TextInput, Ui, Video, WeakWindow, Widget, Window,
+    Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs,
+    TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -475,6 +521,23 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     list.select(0);
     list.select_many(&[0, 1]);
     list.on_select(|_indices: &[usize]| {});
+
+    // --- ポップアップ (コンテキスト) メニュー -----------------------------
+    let popup: PopupMenu = ui.popup_menu()?;
+    popup.set_items(&[
+        PopupItem::new("t"),
+        PopupItem::separator(),
+        PopupItem::new("t").enabled(false),
+    ]);
+    let _: usize = popup.len();
+    let _: bool = popup.is_empty();
+    popup.attach(&label);
+    popup.select(0);
+    popup.close();
+    popup.on_select(|_index: usize| {});
+    // `open_at` はメニューを実際に出す (macOS では閉じるまで戻らない) ので、
+    // 呼ばずに型だけ確かめる。
+    let _: fn(&PopupMenu, &dyn Widget, f64, f64) = PopupMenu::open_at;
 
     let breadcrumbs: Breadcrumbs = ui.breadcrumbs()?;
     breadcrumbs.set_items(&items);

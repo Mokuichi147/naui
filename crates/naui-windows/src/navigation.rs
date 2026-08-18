@@ -40,18 +40,18 @@ use crate::widgets::{bool_ref, impl_widget, Widget};
 /// 呼び出しの間だけクロージャを取り出すので、コールバックの中から
 /// 別のナビゲーションを操作しても二重借用にならない。
 #[derive(Clone)]
-struct SelectHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(usize)>>>>);
+pub(crate) struct SelectHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(usize)>>>>);
 
 impl SelectHandler {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Arc::new(UiThreadCell::new(None)))
     }
 
-    fn set(&self, f: impl FnMut(usize) + 'static) {
+    pub(crate) fn set(&self, f: impl FnMut(usize) + 'static) {
         self.0.with_mut(|slot| *slot = Some(Box::new(f)));
     }
 
-    fn emit(&self, index: usize) {
+    pub(crate) fn emit(&self, index: usize) {
         let Some(mut f) = self.0.with_mut(|slot| slot.take()) else {
             return;
         };

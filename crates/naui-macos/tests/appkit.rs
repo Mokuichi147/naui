@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, FileFilter, FilePickerMode, Fit, GridCell, ListItem, NavItem, Orientation, Padding,
-    PlaybackState, Result, ScrollPolicy, SelectionMode, Sizing, Theme, Track,
+    PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, Track,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
@@ -136,6 +136,18 @@ fn main() {
         (
             "再生位置が定期的にクロージャへ届く",
             media_reports_position_while_playing,
+        ),
+        (
+            "ポップアップメニューが項目と区切り線を NSMenu に写す",
+            popup_menu_items_map_to_native,
+        ),
+        (
+            "ポップアップメニューの選択がクロージャへ届く",
+            popup_menu_selection_notifies,
+        ),
+        (
+            "ポップアップメニューが取り付け先のビューのメニューになる",
+            popup_menu_attaches_to_a_view,
         ),
     ];
 
@@ -2010,5 +2022,84 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
         sub.size.height,
         title.size.height
     );
+    Ok(())
+}
+
+/// 項目と区切り線が、そのまま NSMenu の中身になる。
+fn popup_menu_items_map_to_native(ui: &Ui) -> Result<()> {
+    let popup = ui.popup_menu()?;
+    assert!(popup.is_empty());
+
+    popup.set_items(&[
+        PopupItem::new("コピー"),
+        PopupItem::separator(),
+        PopupItem::new("削除").enabled(false),
+    ]);
+    assert_eq!(popup.len(), 3, "区切り線も数に入ること");
+
+    let menu = popup.native_menu();
+    assert_eq!(menu.numberOfItems(), 3);
+    assert!(
+        !menu.autoenablesItems(),
+        "AppKit の自動有効化を切らないと enabled(false) が無視される"
+    );
+
+    let copy = menu.itemAtIndex(0).expect("1 番目の項目");
+    assert_eq!(copy.title().to_string(), "コピー");
+    assert!(copy.isEnabled());
+    assert!(menu.itemAtIndex(1).expect("2 番目の項目").isSeparatorItem());
+    let remove = menu.itemAtIndex(2).expect("3 番目の項目");
+    assert!(!remove.isEnabled(), "選べない項目は無効のままであること");
+
+    // 作り直すと以前の項目は残らない。
+    popup.set_items(&PopupItem::list(["貼り付け"]));
+    assert_eq!(popup.len(), 1);
+    assert_eq!(popup.native_menu().numberOfItems(), 1);
+    Ok(())
+}
+
+/// 項目を選ぶと、区切り線を含めた並びの位置がクロージャへ届く。
+fn popup_menu_selection_notifies(ui: &Ui) -> Result<()> {
+    let popup = ui.popup_menu()?;
+    popup.set_items(&[
+        PopupItem::new("コピー"),
+        PopupItem::separator(),
+        PopupItem::new("貼り付け"),
+        PopupItem::new("削除").enabled(false),
+    ]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    popup.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    popup.select(2);
+    assert_eq!(*seen.borrow(), vec![2], "区切り線を数えた位置で届くこと");
+
+    // 区切り線・選べない項目・範囲外は通知しない。
+    popup.select(1);
+    popup.select(3);
+    popup.select(9);
+    assert_eq!(*seen.borrow(), vec![2]);
+    Ok(())
+}
+
+/// 取り付けたウィジェットのビューが、そのメニューを持つようになる。
+fn popup_menu_attaches_to_a_view(ui: &Ui) -> Result<()> {
+    let label = ui.label("右クリックしてください")?;
+    let popup = ui.popup_menu()?;
+    popup.set_items(&PopupItem::list(["コピー"]));
+    assert!(label.native_view().menu().is_none());
+
+    popup.attach(&label);
+    let attached = label.native_view().menu().expect("ビューのメニュー");
+    assert!(
+        std::ptr::eq(&*attached, &*popup.native_menu()),
+        "取り付けたメニューそのものであること"
+    );
+
+    // 出していないメニューを閉じても落ちない。
+    popup.close();
     Ok(())
 }

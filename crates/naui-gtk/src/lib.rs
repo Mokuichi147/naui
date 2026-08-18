@@ -35,6 +35,7 @@
 //! | `Navbar` | `adw::HeaderBar` + `adw::ViewSwitcher` |
 //! | `Dock` | `adw::ViewSwitcherBar` |
 //! | `Menu` | `gtk::ListBox` (`connect_row_selected`) |
+//! | `PopupMenu` | `gtk::PopoverMenu` + `gio::Menu` (副ボタンは `gtk::GestureClick`) |
 //! | `List` | `gtk::ListBox` を `gtk::ScrolledWindow` に載せる (`set_selection_mode`) |
 //! | `Breadcrumbs` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
 //! | `Pagination` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
@@ -58,8 +59,8 @@ use std::cell::{Cell, RefCell};
 
 use naui_core::{
     Align, Error, Fit, FileEntry, FileFilter, FilePickerMode, GridCell, ListItem, NavItem,
-    Orientation, Padding, PlaybackState, Result, ScrollPolicy, SelectionMode, Settings, Sizing,
-    Theme, Track,
+    Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode, Settings,
+    Sizing, Theme, Track,
 };
 
 fn unimplemented_error(what: &'static str) -> Error {
@@ -397,6 +398,28 @@ impl FilePicker {
     pub fn open(&self) {}
 }
 
+/// ポップアップ (コンテキスト) メニュー (未実装)。
+///
+/// 画面に並ぶウィジェットではないので [`Widget`] ではない。
+#[allow(dead_code)]
+#[derive(Clone)]
+pub struct PopupMenu(std::rc::Rc<()>);
+
+impl PopupMenu {
+    pub fn set_items(&self, _items: &[PopupItem]) {}
+    pub fn len(&self) -> usize {
+        0
+    }
+    pub fn is_empty(&self) -> bool {
+        true
+    }
+    pub fn attach(&self, _widget: &dyn Widget) {}
+    pub fn open_at(&self, _widget: &dyn Widget, _x: f64, _y: f64) {}
+    pub fn close(&self) {}
+    pub fn select(&self, _index: usize) {}
+    pub fn on_select(&self, _f: impl FnMut(usize) + 'static) {}
+}
+
 /// トップレベルウィンドウ (未実装)。
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -500,6 +523,9 @@ impl Ui {
     }
     pub fn list(&self) -> Result<List> {
         Err(unimplemented_error("List の生成"))
+    }
+    pub fn popup_menu(&self) -> Result<PopupMenu> {
+        Err(unimplemented_error("PopupMenu の生成"))
     }
     pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
         Err(unimplemented_error("Breadcrumbs の生成"))

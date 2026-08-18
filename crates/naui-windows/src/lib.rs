@@ -23,6 +23,7 @@ mod layout;
 mod list;
 mod media;
 mod navigation;
+mod popup;
 mod ui_thread;
 mod widgets;
 mod window;
@@ -36,6 +37,7 @@ pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
+pub use popup::PopupMenu;
 pub use widgets::{
     Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
@@ -49,6 +51,8 @@ pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
 pub struct Ui {
     theme: Cell<Theme>,
     windows: RefCell<Vec<Window>>,
+    /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
+    popups: RefCell<Vec<PopupMenu>>,
     shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
 }
 
@@ -60,6 +64,7 @@ impl Ui {
         Self {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
+            popups: RefCell::new(Vec::new()),
             shutdown,
         }
     }
@@ -148,6 +153,16 @@ impl Ui {
     /// 選択できる行の一覧。自分でスクロールする。
     pub fn list(&self) -> Result<List> {
         List::new()
+    }
+
+    /// 右クリックで出るポップアップ (コンテキスト) メニュー。
+    ///
+    /// フレームワークが参照を保持するので、戻り値を捨てても
+    /// 取り付け先から消えることはない。
+    pub fn popup_menu(&self) -> Result<PopupMenu> {
+        let popup = PopupMenu::new()?;
+        self.popups.borrow_mut().push(popup.clone());
+        Ok(popup)
     }
 
     /// パンくず。
