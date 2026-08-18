@@ -38,7 +38,9 @@ pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use popup::PopupMenu;
-pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
+pub use widgets::{
+    Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
+};
 pub use window::{WeakWindow, Window};
 
 pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
@@ -113,6 +115,11 @@ impl Ui {
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {
         TextInput::new(text)
+    }
+
+    /// 改行を含む文字列を入力できる欄。高さは `set_sizing` で指定する。
+    pub fn text_area(&self, text: &str) -> Result<TextArea> {
+        TextArea::new(text)
     }
 
     pub fn slider(&self, min: f64, max: f64) -> Result<Slider> {

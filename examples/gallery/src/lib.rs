@@ -178,6 +178,32 @@ pub fn build(ui: &Ui) -> Result<()> {
     controls_pane.append(&input);
     controls_pane.append(&greeting);
 
+    // 複数行入力。改行を含む文字列をそのまま扱える。
+    let memo_status = ui.label("メモ: 0 行 / 0 文字")?;
+    let memo = ui.text_area("")?;
+    memo.set_placeholder("複数行のメモ (改行できます)");
+    // スクロールと同じく高さは自分では決まらないので指定する。
+    memo.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(96.0)),
+    );
+    memo.on_change({
+        let memo_status = memo_status.clone();
+        move |text| {
+            // 末尾の改行も 1 行として数えたいので `lines()` は使わない。
+            let lines = if text.is_empty() {
+                0
+            } else {
+                text.split('\n').count()
+            };
+            let characters = text.chars().count();
+            memo_status.set_text(&format!("メモ: {lines} 行 / {characters} 文字"));
+        }
+    });
+    controls_pane.append(&memo);
+    controls_pane.append(&memo_status);
+
     let volume_label = ui.label("音量: 40%")?;
     let progress = ui.progress_bar()?;
     progress.set_value(0.4);
