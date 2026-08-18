@@ -16,6 +16,7 @@ mod layout;
 mod list;
 mod media;
 mod navigation;
+mod popup;
 mod widgets;
 mod window;
 
@@ -37,6 +38,7 @@ pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
+pub use popup::PopupMenu;
 pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
 pub use window::{WeakWindow, Window};
 
@@ -60,6 +62,8 @@ pub struct Ui {
     document: Document,
     theme: Cell<Theme>,
     windows: RefCell<Vec<Window>>,
+    /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
+    popups: RefCell<Vec<PopupMenu>>,
 }
 
 impl Ui {
@@ -68,6 +72,7 @@ impl Ui {
             document,
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
+            popups: RefCell::new(Vec::new()),
         }
     }
 
@@ -146,6 +151,16 @@ impl Ui {
     /// 選択できる行の一覧。自分でスクロールする。
     pub fn list(&self) -> Result<List> {
         List::new(&self.document)
+    }
+
+    /// 右クリックで出るポップアップ (コンテキスト) メニュー。
+    ///
+    /// フレームワークが参照を保持するので、戻り値を捨てても
+    /// 取り付け先から消えることはない。
+    pub fn popup_menu(&self) -> Result<PopupMenu> {
+        let popup = PopupMenu::new(&self.document)?;
+        self.popups.borrow_mut().push(popup.clone());
+        Ok(popup)
     }
 
     /// パンくず。

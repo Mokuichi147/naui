@@ -19,9 +19,9 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 41 件。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
-| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
-| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 51 件 (ポップアップメニューの `NSMenu` への写しと選択の通知を含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
+| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。**`PopupMenu` はブラウザでの実行確認をしていません** (合成した `<div role="menu">` のコードはビルドが通るところまで)。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`PopupMenu` は実機で未確認**で、`x86_64-pc-windows-msvc` 向けの `cargo check` が通るところまでです |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -335,6 +335,57 @@ let _: Option<usize> = navbar.selected();
 `Pagination` はページ番号を扱うため `set_page_count` / `page` / `set_page` /
 `go_previous` / `go_next` / `on_change` という名前になっています。
 
+### ポップアップ (コンテキスト) メニュー
+
+`PopupMenu` は**右クリック (副ボタン) で出るメニュー**です。画面に並ばないため
+`Widget` ではなく、`Stack` や `Grid` に入れることはできません。
+
+| naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
+| --- | --- | --- | --- | --- |
+| `PopupMenu` | 🟡 ルートに重ねる `Grid` + `Button` の縦並び | ✅ `NSMenu` + `NSMenuItem` | 🟡 `<div role="menu">` + `<button role="menuitem">` | ❌ |
+
+```rust
+let label = ui.label("右クリックしてください")?;
+
+let popup = ui.popup_menu()?;
+popup.set_items(&[
+    PopupItem::new("コピー"),
+    PopupItem::separator(),               // 選べないので通知も来ない
+    PopupItem::new("削除").enabled(false),
+]);
+popup.on_select(|index| println!("{index} 番目が選ばれた"));
+popup.attach(&label);                    // 右クリックで出るようにする
+popup.open_at(&label, 0.0, 24.0);        // プログラムから出す (左上からの位置)
+popup.close();                           // 出ているものを閉じる
+```
+
+| メソッド | 意味 |
+| --- | --- |
+| `set_items(&[PopupItem])` | 項目を作り直す。インデックスは**区切り線を含めた並びの位置** |
+| `attach(&widget)` | そのウィジェットの右クリックでメニューを出す。いくつでも取り付けられる |
+| `open_at(&widget, x, y)` | プログラムから出す。位置はウィジェットの左上からの論理ピクセル (y は下向き) |
+| `close()` | 出ているメニューを閉じる |
+| `select(i)` | ユーザーが選んだのと同じ経路で通知する (テストや自動操作用)。区切り線と選べない項目は無視する |
+| `on_select(f)` | 選ばれたときに呼ばれる。設定し直すと以前のものは外れる |
+
+**持たないもの**: 階層 (サブメニュー)、チェック印、ショートカットの表示。
+項目は「文字・選べるかどうか・区切り線」だけで、4 環境がそろって同じ形で
+扱える範囲にそろえてあります。
+
+ネイティブのメニューがあるのは macOS (`NSMenu`) だけで、**Windows と Web は
+合成**です (WinUI 3 の `MenuFlyout` は `winio-winui3` のバインディングに無く、
+ブラウザにはコンテキストメニューを差し替える API がありません)。合成のほうは
+**矢印キーでの項目移動を持ちません**。Escape で閉じられるのは Web だけで、
+Windows はキーイベントのバインディングが無いため閉じられません
+(メニューの外側を押せば、どちらも閉じます)。
+
+ブラウザ既定のコンテキストメニューを抑止するのは、**取り付けたウィジェットの
+上だけ**です。それ以外の場所では今までどおり出ます。
+
+`Menu` (縦に並ぶナビゲーション一覧) との違いは役割です。`Menu` は画面を
+切り替えるもので画面に並び続け、`PopupMenu` は操作を選ばせるもので
+押したときだけ出ます。
+
 ### リスト
 
 `List` は**行が縦に並ぶ一覧**です。ナビゲーションの `Menu` と見た目は
@@ -480,6 +531,8 @@ stack.append(&picker);
 | 🟡 macOS の `Audio` | AppKit に音声専用のコントロールは無い。映像トラックの無いメディアを `AVPlayerView` に載せると再生バーだけが出るので、それを使っている |
 | 🟡 すべての `Pagination` | ページ送りに相当するネイティブコントロールはどの環境にも無い。前へ / 次へのボタンとページ番号を、その環境のネイティブなボタンで並べている |
 | 🟡 Windows の `Navbar` / `Dock` / `Menu` | `NavigationView` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、WinUI 標準の `ToggleButton` を `StackPanel` に並べ、選択状態を `IsChecked` で表している |
+| 🟡 Windows の `PopupMenu` | `MenuFlyout` は `winio-winui3` 0.4.5 のバインディングに含まれていない。ウィンドウのルート (いちばん外側の `Panel`) へ透明な `Grid` を重ね、その中に WinUI 標準の `Button` を縦に並べている。位置は `Margin`、色は `{ThemeResource ...}` なので Fluent のテーマには追従する |
+| 🟡 Web の `PopupMenu` | ブラウザ既定のコンテキストメニューは差し替えられないため、`<body>` 直下に `position: fixed` の `<div role="menu">` を置いて合成している。色は CSS のシステムカラー (`Canvas` / `CanvasText`) なので `color-scheme` に追従する |
 | 🟡 Windows の `Breadcrumbs` | `BreadcrumbBar` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、標準の `HyperlinkButton` と区切り文字を `StackPanel` に並べている |
 
 ### 補足 (誤解しやすい箇所)
@@ -497,7 +550,10 @@ stack.append(&picker);
 | WinUI 3 の `Button` / `Checkbox` | ラベルを `TextBlock` にして `Content` に入れている。XAML の標準的なやり方で、コントロール自体はネイティブ |
 | Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
 | すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。naui 側の `clamp` は二重の保険 |
-| `Menu` という名前 | naui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。`NSMenu` / `MenuFlyout` に相当するものは未実装 |
+| `Menu` という名前 | naui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。右クリックで出るほうは `PopupMenu` |
+| `PopupMenu` のインデックス | 区切り線も 1 項目として数える。`set_items` に渡した並びの位置がそのまま返るので、渡した `Vec` を `get(index)` で引ける。区切り線と選べない項目は通知されない |
+| macOS の `PopupMenu` の `open_at` | `NSMenu` が出ている間は AppKit がイベントを取り回すため、**閉じるまで呼び出しが戻らない**。自動テストで呼ばないのはこのため (選択の確認は `select` で行う) |
+| macOS の `autoenablesItems` | `NSMenu` は既定で AppKit 自身が項目の有効・無効を決めてしまい、`enabled(false)` が無視される。naui は生成時に切っている |
 | `List` の高さ | 中身に合わせた高さを持たない (macOS は `NSScrollView` そのものなので `Scroll` と同じ)。`set_sizing` で高さを指定すること |
 | `List` の通知 | `on_select` は**選択が変わるたび**に、選ばれている行の並びで呼ばれる。複数選択では**空の並び**で呼ばれることもある。`set_selected` / `set_selection` / `clear_selection` は通知しない |
 | `List` の列 | 1 列だけ。複数列のテーブルは未実装で、必要なら `native_table()` / `native_list_box()` / `native_select()` から直接触る |
@@ -523,9 +579,10 @@ stack.append(&picker);
 
 ### 未対応のコンポーネント
 
-ポップアップメニュー、汎用のダイアログ、保存ダイアログ、複数列のテーブル、
+汎用のダイアログ、保存ダイアログ、複数列のテーブル、
 ラジオボタン、コンボボックス、複数行テキスト、ツールバー、ツリーなどはありません
 (1 列のリストは `List`、ファイル / フォルダーの選択は `FilePicker`、
+右クリックのメニューは `PopupMenu`、
 画像・動画・音声は `Image` / `Video` / `Audio` があります)。
 レイアウトはスタック・グリッド・スクロールで、絶対配置はありません。
 
@@ -641,7 +698,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 ```
 
 - `naui-core`: 設定・エラー整形の単体テスト
-- `naui-macos`: **AppKit の実コントロールに対する 41 件の統合テスト**
+- `naui-macos`: **AppKit の実コントロールに対する 51 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
@@ -674,6 +731,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - 再生位置が定期的にクロージャへ届き、先頭へ戻らないこと
   - 音量と消音が AVPlayer と往復し、範囲外が丸められること
   - KVO と定期観測を張ったままハンドルを捨てても異常終了しないこと
+  - ポップアップメニューの項目・区切り線・選べない項目が、そのまま `NSMenu` の中身になること
+  - 選択が**区切り線を含めた位置**で届き、区切り線と選べない項目では届かないこと
+  - 取り付けたウィジェットのビューが、そのメニューを持つようになること
 
 AppKit はメインスレッドを要求しますが、Rust の標準テストハーネスは
 各テストを別スレッドで走らせます (`--test-threads=1` でも同じ)。
@@ -694,13 +754,15 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   バインドしていないため、Windows で実装できませんでした。
   「共通 API は全バックエンドの共通部分」という方針を優先して、
   macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **ウィジェットは 23 種類のみ。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
+- **コンポーネントは 24 種類のみ** (画面に並ぶウィジェット 23 種と、
+  並ばない `PopupMenu` 1 種)**。** 基本 8 種 (`Window` / `Stack` / `Label` / `Button` /
   `Checkbox` / `TextInput` / `Slider` / `ProgressBar`)、レイアウト 3 種
   (`Grid` / `Scroll` / `Spacer`)、ナビゲーション 7 種
   (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`)、
-  リスト 1 種 (`List`)、ファイル選択 1 種 (`FilePicker`)、
+  リスト 1 種 (`List`)、ポップアップメニュー 1 種 (`PopupMenu`)、
+  ファイル選択 1 種 (`FilePicker`)、
   メディア 3 種 (`Image` / `Video` / `Audio`) です。
-  ポップアップメニュー、汎用のダイアログ、保存ダイアログ、テーブル、
+  汎用のダイアログ、保存ダイアログ、テーブル、
   複数行テキストなどは未実装です。
 - **`List` は 1 列だけです。** 複数列のテーブルはありません。また `List` は
   中身に合わせた高さを持たないため、`set_sizing` で高さを指定してください。
