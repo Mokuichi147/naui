@@ -38,6 +38,19 @@ impl<T> UiThreadCell<T> {
         f(&mut self.value.borrow_mut())
     }
 
+    /// WinRT コールバックから安全に中身へ触れる。UI スレッド違い、または
+    /// 再入で既に借用されている場合は `None` を返す。
+    ///
+    /// WinRT のデリゲートから panic を巻き戻すと、ABI の境界を越えて
+    /// Windows 側のアクセス違反になるため、イベント処理ではこちらを使う。
+    pub(crate) fn try_with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+        if std::thread::current().id() != self.owner {
+            return None;
+        }
+        let mut value = self.value.try_borrow_mut().ok()?;
+        Some(f(&mut value))
+    }
+
     /// 起動時の一回限りの状態受け渡し用。UI オブジェクトではなく、
     /// `Application::Start` と `OnLaunched` の間で移動する状態だけに使う。
     /// 呼び出し側は同時アクセスがないことを保証する。

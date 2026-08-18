@@ -18,14 +18,13 @@ use std::sync::Arc;
 
 use naui_core::{Error, PopupItem, Result};
 use windows_core::{Interface, HSTRING};
+use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, Canvas, Grid as XamlGrid, Panel, StackPanel, TextBlock,
 };
 use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, RoutedEventHandler, Thickness, UIElement,
-};
+use winui3::Microsoft::UI::Xaml::{FrameworkElement, RoutedEventHandler, Thickness, UIElement};
 
 use crate::navigation::SelectHandler;
 use crate::to_error;
@@ -159,11 +158,12 @@ impl PopupMenu {
         Ok(this)
     }
 
-    /// 受け皿を押したら閉じるようにする。
+    /// 受け皿を押したら閉じるようにする。`close` は次の巡回へ回されるので、
+    /// ポインターの配送中にツリーが変わることはない。
     fn install_dismiss(&self) {
         let weak = weak_cell(&self.0);
         let handler = PointerEventHandler::new(move |_sender, _args| {
-            if let Some(menu) = weak.with_mut(|weak| weak.upgrade()) {
+            if let Some(menu) = weak.try_with_mut(|weak| weak.upgrade()).flatten() {
                 PopupMenu(menu).close();
             }
             Ok(())
@@ -215,7 +215,7 @@ impl PopupMenu {
 
         let weak = weak_cell(&self.0);
         let handler = RoutedEventHandler::new(move |_sender, _args| {
-            if let Some(inner) = weak.with_mut(|weak| weak.upgrade()) {
+            if let Some(inner) = weak.try_with_mut(|weak| weak.upgrade()).flatten() {
                 let menu = PopupMenu(inner);
                 menu.close();
                 menu.0.handler.emit(index);
@@ -262,46 +262,48 @@ impl PopupMenu {
     /// WinUI にはブラウザのような既定のコンテキストメニューが無いので、
     /// 抑止すべきものは無い。
     ///
-    /// **`Button` のようにコントロール自身が `PointerPressed` を
-    /// 処理してしまうものへ取り付けても、右クリックが届かない可能性がある**
-    /// (実機で未確認)。届かない場合は、そのコントロールを包む
-    /// `Stack` などへ取り付けること。
+    /// `winio-winui3` では `ContextRequested` の add メソッドが生成されて
+    /// おらず、手書きの WinRT vtable 呼び出しが必要になる。ここでは生成済みの
+    /// `PointerPressed` を使い、同じ UI スレッド上で右クリックを判定する。
     pub fn attach(&self, widget: &dyn Widget) {
         let element = widget.native_element();
+        let element_for_event = element.clone();
         let weak = weak_cell(&self.0);
-        let handler = PointerEventHandler::new(move |sender, args| {
-            let Some(inner) = weak.with_mut(|weak| weak.upgrade()) else {
-                return Ok(());
-            };
+        let handler = PointerEventHandler::new(move |_sender, args| {
             let Some(args) = args.as_ref() else {
                 return Ok(());
             };
-            let Some(source) = sender
-                .as_ref()
-                .and_then(|sender| sender.cast::<UIElement>().ok())
-            else {
+            let Ok(point) = args.GetCurrentPoint(Option::<&UIElement>::None) else {
                 return Ok(());
             };
-            let Some((host, _, _)) = host_of(&source) else {
+            let Ok(properties) = point.Properties() else {
                 return Ok(());
             };
-            let Ok(host_element) = host.cast::<UIElement>() else {
-                return Ok(());
-            };
-            let Ok(point) = args.GetCurrentPoint(&host_element) else {
-                return Ok(());
-            };
-            let is_right = point
-                .Properties()
-                .and_then(|properties| properties.IsRightButtonPressed())
-                .unwrap_or(false);
-            if !is_right {
+            if !properties.IsRightButtonPressed().unwrap_or(false) {
                 return Ok(());
             }
-            let _ = args.SetHandled(true);
-            if let Ok(position) = point.Position() {
-                PopupMenu(inner).show_on(&host, position.X as f64, position.Y as f64);
-            }
+            let Ok(position) = point.Position() else {
+                return Ok(());
+            };
+            let x = position.X as f64;
+            let y = position.Y as f64;
+
+            // PointerPressed の配送中に同じ XAML ツリーへ overlay を追加しない。
+            let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
+                return Ok(());
+            };
+            let weak = weak.clone();
+            let element = element_for_event.clone();
+            let operation = DispatcherQueueHandler::new(move || {
+                let Some(host) = host_root(&element) else {
+                    return Ok(());
+                };
+                if let Some(inner) = weak.try_with_mut(|weak| weak.upgrade()).flatten() {
+                    PopupMenu(inner).show_on(&host, x, y);
+                }
+                Ok(())
+            });
+            let _ = queue.TryEnqueue(&operation);
             Ok(())
         });
         if let Ok(token) = element.PointerPressed(&handler) {
@@ -316,15 +318,22 @@ impl PopupMenu {
     /// 論理ピクセル (y は下向き)。
     pub fn open_at(&self, widget: &dyn Widget, x: f64, y: f64) {
         let element = widget.native_element();
-        let Some((host, offset_x, offset_y)) = host_of(&element) else {
+        let Some(host) = host_root(&element) else {
             return;
         };
-        self.show_on(&host, offset_x + x, offset_y + y);
+        let (offset_x, offset_y) = offset_in_root(&element);
+        // クリックのハンドラから呼ばれることもあるので、必ず次の巡回で出す。
+        self.defer({
+            let host = host.clone();
+            let x = offset_x + x;
+            let y = offset_y + y;
+            move |menu| menu.show_on(&host, x, y)
+        });
     }
 
     /// 受け皿を親へ載せ、指定の位置にメニューを出す。
     fn show_on(&self, host: &Panel, x: f64, y: f64) {
-        self.close();
+        self.detach();
         let overlay = &self.0.surface.overlay;
         let _ = self.0.surface.frame.SetMargin(Thickness {
             Left: x,
@@ -352,7 +361,16 @@ impl PopupMenu {
     }
 
     /// 出ているメニューを閉じる。出ていなければ何もしない。
+    ///
+    /// XAML のイベント配送中にツリーから要素を外すとアクセス違反になるため、
+    /// 実際の取り外しは次の巡回まで待つ。イベントハンドラの中から呼んでも
+    /// 安全で、`DispatcherQueue` は先入れ先出しなので開閉の順序も保たれる。
     pub fn close(&self) {
+        self.defer(|menu| menu.detach());
+    }
+
+    /// 受け皿をいま親から外す。ツリーを触ってよい場所からだけ呼ぶ。
+    fn detach(&self) {
         let Some(host) = self.0.host.borrow_mut().take() else {
             return;
         };
@@ -388,6 +406,30 @@ impl PopupMenu {
         self.0.handler.set(f);
     }
 
+    /// UI スレッドの次の巡回で、自分自身に対する操作を実行する。
+    ///
+    /// XAML はイベントの配送中に子を足したり外したりされると壊れる
+    /// (右クリックの `PointerPressed` の中で受け皿を足すとアクセス違反になる)。
+    /// 表示と非表示はすべてこの経路を通し、配送が終わってから触る。
+    fn defer(&self, f: impl FnOnce(&PopupMenu) + 'static) {
+        let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
+            return;
+        };
+        let weak = weak_cell(&self.0);
+        // WinRT のデリゲートは `Fn` なので、一度きりの操作はセルに預けて取り出す。
+        let once = Arc::new(UiThreadCell::new(Some(f)));
+        let operation = DispatcherQueueHandler::new(move || {
+            let Some(f) = once.try_with_mut(|slot| slot.take()).flatten() else {
+                return Ok(());
+            };
+            if let Some(inner) = weak.try_with_mut(|weak| weak.upgrade()).flatten() {
+                f(&PopupMenu(inner));
+            }
+            Ok(())
+        });
+        let _ = queue.TryEnqueue(&operation);
+    }
+
     /// メニューを載せる受け皿。バックエンド固有の脱出口として公開している。
     pub fn native_element(&self) -> UIElement {
         self.0
@@ -403,40 +445,66 @@ fn weak_cell(inner: &Rc<PopupMenuInner>) -> Arc<UiThreadCell<Weak<PopupMenuInner
     Arc::new(UiThreadCell::new(Rc::downgrade(inner)))
 }
 
-/// メニューを載せる親と、`element` のその親から見た位置を返す。
+/// メニューを載せるウィンドウのルート。
 ///
-/// XAML ツリーを根までたどり、**いちばん外側の `Panel`** を親に選ぶ。
-/// `TransformToVisual` はバインディングに無いため、位置は途中の
-/// `ActualOffset` を足し合わせて求める (naui のレイアウトは平行移動だけ)。
-fn host_of(element: &UIElement) -> Option<(Panel, f64, f64)> {
-    let element = element.cast::<FrameworkElement>().ok()?;
-    let mut chain = vec![element.clone()];
-    let mut current = element;
-    while let Some(parent) = current
-        .Parent()
+/// `XamlRoot` の内容そのものなので、`GetCurrentPoint(None)` が返す
+/// 「ウィンドウの左上から」の座標をそのまま `Margin` に使える。
+/// ルートが `Panel` でないときだけ、論理ツリーをさかのぼる経路へ落とす。
+fn host_root(element: &UIElement) -> Option<Panel> {
+    element
+        .XamlRoot()
         .ok()
-        .and_then(|parent| parent.cast::<FrameworkElement>().ok())
-    {
-        chain.push(parent.clone());
-        current = parent;
-    }
+        .and_then(|root| root.Content().ok())
+        .and_then(|content| content.cast::<Panel>().ok())
+        .or_else(|| host_panel(element))
+}
 
-    let (index, host) = chain
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(index, item)| item.cast::<Panel>().ok().map(|panel| (index, panel)))?;
-    if index == 0 {
-        // 取り付け先そのものが親になることはない (自分の中には出せない)。
-        return None;
-    }
-
+/// `element` のウィンドウルートから見た位置。
+///
+/// `TransformToVisual` はバインディングに無いため、論理ツリーをさかのぼって
+/// `ActualOffset` を足し合わせて求める (naui のレイアウトは平行移動だけ)。
+fn offset_in_root(element: &UIElement) -> (f64, f64) {
+    let root = element.XamlRoot().ok().and_then(|root| root.Content().ok());
     let (mut x, mut y) = (0.0, 0.0);
-    for item in chain.iter().take(index) {
+    let mut current = element.cast::<FrameworkElement>().ok();
+    while let Some(item) = current {
+        let is_root = match (root.as_ref(), item.cast::<UIElement>().ok()) {
+            (Some(root), Some(item)) => item == *root,
+            _ => false,
+        };
+        if is_root {
+            break;
+        }
         if let Ok(offset) = item.ActualOffset() {
             x += offset.X as f64;
             y += offset.Y as f64;
         }
+        current = item
+            .Parent()
+            .ok()
+            .and_then(|parent| parent.cast::<FrameworkElement>().ok());
     }
-    Some((host, x, y))
+    (x, y)
+}
+
+/// `XamlRoot` からルートを取れなかったときの控え。論理ツリーをさかのぼり、
+/// いちばん外側の `Panel` を親に選ぶ。
+fn host_panel(element: &UIElement) -> Option<Panel> {
+    let element = element.cast::<FrameworkElement>().ok()?;
+    let mut current = element;
+    let mut host = None;
+    loop {
+        if let Ok(panel) = current.cast::<Panel>() {
+            host = Some(panel);
+        }
+        let Some(parent) = current
+            .Parent()
+            .ok()
+            .and_then(|parent| parent.cast::<FrameworkElement>().ok())
+        else {
+            break;
+        };
+        current = parent;
+    }
+    host
 }
