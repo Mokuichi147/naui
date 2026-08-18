@@ -198,42 +198,83 @@
 //! フォルダー選択が中身の一覧として返るのを naui が 1 件へ畳んでいることに注意。
 //! 保存ダイアログは、Web に相当が無いため持たない。
 //!
+//! ## ダイアログ
+//!
+//! [`Dialog`] は、その環境の標準のモーダルを出す。見出し・本文・任意の
+//! ウィジェット・役割つきのボタン (最大 3 つ) を持ち、閉じた理由が
+//! [`DialogResponse`] で返る。
+//!
+//! ```no_run
+//! # use naui::{DialogButtons, DialogResponse, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let dialog = ui.dialog("保存しますか")?;
+//! dialog.set_message("変更が残っています。");
+//! dialog.set_child(&ui.checkbox("次回から確認しない")?); // 任意のウィジェット
+//! dialog.set_buttons(
+//!     DialogButtons::new()
+//!         .primary("保存")
+//!         .secondary("保存しない")
+//!         .cancel("キャンセル"),
+//! );
+//! dialog.on_response(|response| match response {
+//!     DialogResponse::Primary => println!("保存する"),
+//!     DialogResponse::Secondary => println!("保存しない"),
+//!     DialogResponse::Cancel => println!("やめる"), // Esc もここへ来る
+//! });
+//! dialog.open();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Web |
+//! | --- | --- | --- | --- |
+//! | `Dialog` | `ContentDialog` | `NSAlert` (+ `accessoryView`) | `<dialog>` + `showModal()` |
+//!
+//! ボタンの並びは環境の作法に従う (macOS は主となる操作が右端、WinUI 3 は
+//! 左端)。ボタンを 1 つも指定しないと「OK」だけが出る。
+//!
+//! **macOS の [`Dialog::open`] は閉じられるまで戻らない** (`NSAlert` が
+//! アプリモーダルなため) 。`on_response` はその中で呼ばれる。Web と Windows の
+//! `open()` はすぐ戻り、通知はあとから届く。[`Dialog::close`] で閉じたときは
+//! `on_response` を呼ばない (`set_selected` と同じで、アプリ自身の操作は
+//! 通知しない)。
+//!
 //! ## 検証状況
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択を含む 41 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生を確認) |
-//! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェット・ナビゲーション系・レイアウト・ファイル選択・メディアの読み込みと再生を確認 |
+//! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択・ダイアログを含む 52 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
+//! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェット・ナビゲーション系・レイアウト・ファイル選択・メディアの読み込みと再生を確認 (`Dialog` はコンパイル確認のみ) |
 //! | Linux | 未実装 |
 
 #![forbid(unsafe_code)]
 
 pub use naui_core::{
-    accept_attribute, media, Align, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell,
-    Length, ListItem, NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy,
-    SelectionMode, Settings, Sizing, Theme, Track,
+    accept_attribute, media, Align, DialogButtons, DialogResponse, Error, FileEntry, FileFilter,
+    FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
+    Result, ScrollPolicy, SelectionMode, Settings, Sizing, Theme, Track,
 };
 
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
-    Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dialog, Dock, FilePicker, Grid, Image, Label, Link,
+    List, Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput,
+    Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
-    Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dialog, Dock, FilePicker, Grid, Image, Label, Link,
+    List, Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput,
+    Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
-    Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dialog, Dock, FilePicker, Grid, Image, Label, Link,
+    List, Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput,
+    Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -242,9 +283,9 @@ pub use naui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dock, FilePicker, Grid, Image, Label, Link, List,
-    Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput, Ui,
-    Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, Dialog, Dock, FilePicker, Grid, Image, Label, Link,
+    List, Menu, Navbar, Pagination, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs, TextInput,
+    Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -504,6 +545,20 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     }
     contract_playback!(&video);
     contract_playback!(&audio);
+
+    // --- ダイアログ -------------------------------------------------------
+    let dialog: Dialog = ui.dialog("t")?;
+    dialog.set_title("t");
+    let _: String = dialog.title();
+    dialog.set_message("t");
+    let _: String = dialog.message();
+    dialog.set_child(&ui.label("t")?);
+    dialog.set_buttons(DialogButtons::new().primary("t").secondary("t").cancel("t"));
+    let _: DialogButtons = dialog.buttons();
+    dialog.on_response(|_response: DialogResponse| {});
+    let _: bool = dialog.is_open();
+    dialog.close();
+    // `open()` はダイアログを出すので、契約の確認では呼ばない。
 
     let picker: FilePicker = ui.file_picker("t")?;
     picker.set_text("t");

@@ -385,16 +385,31 @@ thread_local! {
     /// XAML の要素から自分の載っているウィンドウをたどる API が
     /// `winio-winui3` のバインディングに無いため、表示のたびに覚えておく。
     static OWNER_HWND: Cell<isize> = const { Cell::new(0) };
+    /// 最後に表示したウィンドウ。`ContentDialog` を出す `XamlRoot` に使う。
+    static OWNER_WINDOW: RefCell<Option<XamlWindow>> = const { RefCell::new(None) };
 }
 
 /// モーダルダイアログの親にするウィンドウを覚える。
 fn remember_owner(window: &XamlWindow) {
+    OWNER_WINDOW.with(|slot| *slot.borrow_mut() = Some(window.clone()));
     let Ok(native) = window.cast::<winui3::IWindowNative>() else {
         return;
     };
     if let Ok(hwnd) = unsafe { native.WindowHandle() } {
         OWNER_HWND.with(|slot| slot.set(hwnd.0 as isize));
     }
+}
+
+/// `ContentDialog` を出す土台。まだウィンドウを表示していなければ `None`。
+///
+/// `XamlRoot` はウィンドウが表示されてから決まるので、覚えたウィンドウから
+/// 呼ばれるたびに取り直す。
+pub(crate) fn owner_xaml_root() -> Option<winui3::Microsoft::UI::Xaml::XamlRoot> {
+    OWNER_WINDOW.with(|slot| {
+        let window = slot.borrow();
+        let content = window.as_ref()?.Content().ok()?;
+        content.XamlRoot().ok()
+    })
 }
 
 /// モーダルダイアログの親にするウィンドウ。まだ何も表示していなければ `None`。
@@ -416,7 +431,7 @@ impl From<Theme> for ElementTheme {
     }
 }
 
-fn set_theme_on_element(element: &UIElement, theme: Theme) -> Result<()> {
+pub(crate) fn set_theme_on_element(element: &UIElement, theme: Theme) -> Result<()> {
     let element = element
         .cast::<FrameworkElement>()
         .map_err(|e| to_error("テーマ要素への変換", e))?;

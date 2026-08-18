@@ -7,9 +7,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use naui::{
-    Align, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem,
-    Orientation, Padding, PlaybackState, Result, ScrollPolicy, SelectionMode, Settings, Sizing,
-    Theme, Track, Ui,
+    Align, DialogButtons, DialogResponse, FileEntry, FileFilter, FilePickerMode, Fit, GridCell,
+    Length, ListItem, NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy,
+    SelectionMode, Settings, Sizing, Theme, Track, Ui,
 };
 
 /// 同梱のサンプル画像の場所。
@@ -37,6 +37,7 @@ pub fn build(ui: &Ui) -> Result<()> {
         "レイアウト",
         "ファイル",
         "メディア",
+        "ダイアログ",
     ]);
 
     let crumbs = ui.breadcrumbs()?;
@@ -403,6 +404,63 @@ pub fn build(ui: &Ui) -> Result<()> {
     // --- メディア ---------------------------------------------------------
     let media_pane = build_media_pane(ui)?;
 
+    // --- ダイアログ -------------------------------------------------------
+    let dialog_pane = ui.stack(Orientation::Vertical)?;
+    dialog_pane.set_spacing(12.0);
+    dialog_pane.set_padding(Padding::all(12.0));
+    dialog_pane.append(&ui.label("モーダルダイアログ")?);
+    dialog_pane.append(&ui.label("その環境の標準のモーダルが出ます。")?);
+
+    let dialog_status = ui.label("結果: まだ出していません")?;
+
+    // 中身にウィジェットを置ける汎用のダイアログ。
+    let remember = ui.checkbox("次回から確認しない")?;
+    let confirm = ui.dialog("保存しますか")?;
+    confirm.set_message("変更が残っています。");
+    confirm.set_child(&remember);
+    confirm.set_buttons(
+        DialogButtons::new()
+            .primary("保存")
+            .secondary("保存しない")
+            .cancel("キャンセル"),
+    );
+    confirm.on_response({
+        let status = dialog_status.clone();
+        let remember = remember.clone();
+        move |response| {
+            let name = match response {
+                DialogResponse::Primary => "保存",
+                DialogResponse::Secondary => "保存しない",
+                DialogResponse::Cancel => "キャンセル",
+            };
+            let checked = if remember.is_checked() { "はい" } else { "いいえ" };
+            status.set_text(&format!("結果: {name} (次回から確認しない: {checked})"));
+        }
+    });
+
+    let open_confirm = ui.button("確認ダイアログを出す")?;
+    open_confirm.on_click({
+        let confirm = confirm.clone();
+        move || confirm.open()
+    });
+    dialog_pane.append(&open_confirm);
+
+    // ボタンを指定しないダイアログには「OK」だけが出る。
+    let notice = ui.dialog("naui gallery")?;
+    notice.set_message("ボタンを指定しないと、閉じるための OK だけが出ます。");
+    notice.on_response({
+        let status = dialog_status.clone();
+        move |_| status.set_text("結果: お知らせを閉じた")
+    });
+    let open_notice = ui.button("お知らせを出す")?;
+    open_notice.on_click({
+        let notice = notice.clone();
+        move || notice.open()
+    });
+    dialog_pane.append(&open_notice);
+
+    dialog_pane.append(&dialog_status);
+
     // 中央の Tabs がこの gallery のカテゴリ切り替えを担う。
     let tabs = ui.tabs()?;
     tabs.add_tab("ホーム", &home_pane);
@@ -412,6 +470,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     tabs.add_tab("レイアウト", &layout_pane);
     tabs.add_tab("ファイル", &files_pane);
     tabs.add_tab("メディア", &media_pane);
+    tabs.add_tab("ダイアログ", &dialog_pane);
     // タブがウィンドウの余りを受け取り、下のものを端へ寄せる。
     tabs.set_sizing(Sizing::fill());
     root.append(&tabs);

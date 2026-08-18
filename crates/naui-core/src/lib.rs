@@ -6,11 +6,13 @@
 
 #![forbid(unsafe_code)]
 
+mod dialog;
 mod file;
 mod layout;
 mod list;
 pub mod media;
 
+pub use dialog::{DialogButtons, DialogResponse};
 pub use file::{accept_attribute, FileEntry, FileFilter, FilePickerMode};
 pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
 pub use list::{ListItem, SelectionMode};

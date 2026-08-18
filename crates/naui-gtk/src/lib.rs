@@ -42,6 +42,7 @@
 //! | `Video` | `gtk::Video` (`set_filename` / `set_media_stream`) |
 //! | `Audio` | `gtk::MediaControls` + `gtk::MediaFile` (映像面を持たない) |
 //! | `FilePicker` | `gtk::Button` + `gtk::FileDialog` (`open` / `open_multiple` / `select_folder`) |
+//! | `Dialog` | `adw::AlertDialog` (見出し・本文・`extra_child`・`add_response` が naui の形とそのまま対応する) |
 //!
 //! GTK のシグナルハンドラは `'static` なクロージャを受けるので、
 //! macOS/Web と同じ `Rc<Inner>` + クロージャ保持の形がそのまま使える
@@ -56,9 +57,9 @@
 use std::cell::{Cell, RefCell};
 
 use naui_core::{
-    Align, Error, Fit, FileEntry, FileFilter, FilePickerMode, GridCell, ListItem, NavItem,
-    Orientation, Padding, PlaybackState, Result, ScrollPolicy, SelectionMode, Settings, Sizing,
-    Theme, Track,
+    Align, DialogButtons, DialogResponse, Error, Fit, FileEntry, FileFilter, FilePickerMode,
+    GridCell, ListItem, NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy,
+    SelectionMode, Settings, Sizing, Theme, Track,
 };
 
 fn unimplemented_error(what: &'static str) -> Error {
@@ -422,6 +423,35 @@ impl Window {
     }
 }
 
+/// モーダルダイアログ (未実装)。
+///
+/// ウィジェットではないので、コンテナへは入れない ([`Window`] と同じ)。
+#[allow(dead_code)]
+#[derive(Clone)]
+pub struct Dialog(std::rc::Rc<()>);
+
+impl Dialog {
+    pub fn set_title(&self, _title: &str) {}
+    pub fn title(&self) -> String {
+        String::new()
+    }
+    pub fn set_message(&self, _message: &str) {}
+    pub fn message(&self) -> String {
+        String::new()
+    }
+    pub fn set_child(&self, _child: &dyn Widget) {}
+    pub fn set_buttons(&self, _buttons: DialogButtons) {}
+    pub fn buttons(&self) -> DialogButtons {
+        DialogButtons::new()
+    }
+    pub fn on_response(&self, _f: impl FnMut(DialogResponse) + 'static) {}
+    pub fn open(&self) {}
+    pub fn close(&self) {}
+    pub fn is_open(&self) -> bool {
+        false
+    }
+}
+
 /// ウィジェットを生成するための入り口 (未実装)。
 pub struct Ui {
     theme: Cell<Theme>,
@@ -497,6 +527,9 @@ impl Ui {
     }
     pub fn file_picker(&self, _text: &str) -> Result<FilePicker> {
         Err(unimplemented_error("FilePicker の生成"))
+    }
+    pub fn dialog(&self, _title: &str) -> Result<Dialog> {
+        Err(unimplemented_error("Dialog の生成"))
     }
 
     /// 配色テーマを記録する。GTK4 バックエンドが未実装のため、現時点では描画しない。

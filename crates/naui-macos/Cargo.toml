@@ -24,6 +24,7 @@ objc2-foundation = { version = "0.3", features = [
 ] }
 objc2-app-kit = { version = "0.3", features = [
     "NSAccessibilityProtocols",
+    "NSAlert",
     "NSApplication",
     "NSAppearance",
     "NSButton",
@@ -93,6 +94,7 @@ objc2-core-media = { version = "0.3", default-features = false, features = [
 [dev-dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
+    "NSAlert",
     "NSApplication",
     "NSButton",
     "NSCell",
