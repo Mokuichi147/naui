@@ -9,6 +9,7 @@
 // Objective-C 呼び出しのため unsafe が必要。
 #![allow(unsafe_code)]
 
+mod dialog;
 mod file_picker;
 mod layout;
 mod list;
@@ -33,6 +34,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::NSNotification;
 
+pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
@@ -53,6 +55,8 @@ pub struct Ui {
     theme: Cell<Theme>,
     /// コールバックが終わってもウィンドウを生かしておくための保持。
     windows: RefCell<Vec<Window>>,
+    /// ダイアログはどこにも append されないので、ここで保持する。
+    dialogs: RefCell<Vec<Dialog>>,
     /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
     popups: RefCell<Vec<PopupMenu>>,
 }
@@ -63,6 +67,7 @@ impl Ui {
             mtm,
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
+            dialogs: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
         }
     }
@@ -191,6 +196,16 @@ impl Ui {
     /// ファイルやフォルダーを選ばせるボタン。押すと `NSOpenPanel` が出る。
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         Ok(FilePicker::new(self.mtm, text))
+    }
+
+    /// モーダルダイアログ。`title` は見出し。中身は `NSAlert`。
+    ///
+    /// フレームワークが参照を保持するので、戻り値を捨てても
+    /// 通知が届かなくなることはない。
+    pub fn dialog(&self, title: &str) -> Result<Dialog> {
+        let d = Dialog::new(self.mtm, title);
+        self.dialogs.borrow_mut().push(d.clone());
+        Ok(d)
     }
 
     /// 配色テーマを実行中に切り替える。

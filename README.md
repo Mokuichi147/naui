@@ -19,9 +19,9 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 55 件 (ポップアップメニューの `NSMenu` への写しと選択の通知、複数行入力の `NSTextView` への写しを含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
-| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`TextArea` (`<textarea>`) は改行を含む入力が `on_change` へ届くことを確認。**`PopupMenu` はブラウザでの実行確認をしていません** (合成した `<div role="menu">` のコードはビルドが通るところまで)。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
-| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`PopupMenu` と `TextArea` は実機で未確認**で、`x86_64-pc-windows-msvc` 向けの `cargo check` が通るところまでです |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 59 件 (ポップアップメニューの `NSMenu` への写しと選択の通知、複数行入力の `NSTextView` への写し、ダイアログの `NSAlert` への写しを含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
+| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`TextArea` (`<textarea>`) は改行を含む入力が `on_change` へ届くことを確認。`Dialog` は `<dialog>` の組み立てと、3 つの役割のボタン・OK だけのダイアログを実際に押して、結果と中身のチェックボックスの状態が届くところまでブラウザで確認 (Esc での取り消しだけは、確認に使った埋め込みブラウザが Esc を配送しないため未確認)。**`PopupMenu` はブラウザでの実行確認をしていません** (合成した `<div role="menu">` のコードはビルドが通るところまで)。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
+| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`PopupMenu` / `TextArea` / `Dialog` は実機で未確認**で、`x86_64-pc-windows-msvc` 向けの `cargo check` が通るところまでです |
 | **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
 
 Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
@@ -137,6 +137,7 @@ let element: web_sys::Element = button.native_element();
 | `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
 | `List` | ✅ `ListBox` + `ListBoxItem` | ✅ `NSTableView` (1 列) + `NSScrollView` | ✅ `<select size>` (文字だけ) / 🟡 `<ul role=listbox>` (`detail` あり) | ❌ |
 | `FilePicker` | 🟡 `Button` + `IFileOpenDialog` (共通ダイアログ) | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `<button>` + 隠した `<input type=file>` | ❌ |
+| `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | 🟡 `<dialog>` + `showModal()` | ❌ |
 | `Image` | 🟡 `Image` (バインディングが無いため `XamlReader` 経由) | ✅ `NSImageView` | ✅ `<img>` | ❌ |
 | `Video` | ✅ `MediaPlayerElement` + `MediaPlayer` | ✅ `AVPlayerView` (AVKit) | ✅ `<video>` | ❌ |
 | `Audio` | ✅ `MediaPlayerElement` (映像トラック無し) | 🟡 `AVPlayerView` (映像面を持たない) | ✅ `<audio>` | ❌ |
@@ -545,6 +546,64 @@ stack.append(&picker);
 保存ダイアログ (名前を付けて保存) はありません。`<input type=file>` に相当が
 無く、Web だけ形が変わってしまうためです。
 
+### ダイアログ
+
+`Dialog` は、その環境の標準のモーダルです (Windows は `ContentDialog`、
+macOS は `NSAlert`、Web は `<dialog>` + `showModal()`)。暗幕・配置・
+背後の操作を止めること・Esc での取り消しは、すべてその環境が行います。
+
+**見出し + 本文 + 任意のウィジェット + 役割つきのボタン (最大 3 つ)** という形は、
+4 環境でいちばん狭い `ContentDialog` に合わせたものです。
+
+```rust
+use naui::{DialogButtons, DialogResponse};
+
+let dialog = ui.dialog("保存しますか")?;
+dialog.set_message("変更が残っています。");
+dialog.set_child(&ui.checkbox("次回から確認しない")?);   // 任意のウィジェット
+dialog.set_buttons(
+    DialogButtons::new()
+        .primary("保存")
+        .secondary("保存しない")
+        .cancel("キャンセル"),
+);
+dialog.on_response(|response| match response {
+    DialogResponse::Primary => println!("保存する"),
+    DialogResponse::Secondary => println!("保存しない"),
+    DialogResponse::Cancel => println!("やめる"),   // Esc もここへ来る
+});
+dialog.open();
+```
+
+| メソッド | 意味 |
+| --- | --- |
+| `set_title(&str)` / `title()` | 見出し |
+| `set_message(&str)` / `message()` | 本文。空にすると出ない |
+| `set_child(&Widget)` | 本文とボタンの間に置くウィジェット。呼ぶたびに置き換わる |
+| `set_buttons(DialogButtons)` / `buttons()` | 出すボタン。役割ごとに 0 個か 1 個 |
+| `on_response(f)` | 閉じたときに `DialogResponse` で呼ばれる。**`close()` で閉じたときは呼ばれない** |
+| `open()` | 出す。**macOS は閉じるまで戻らない** (後述) |
+| `close()` | 閉じる。通知はしない |
+| `is_open()` | いま出ているか |
+
+ボタンの並びはその環境の作法に従います。ラベルを渡さなかった役割のボタンは
+出ません。**1 つも渡さないと「OK」だけ**が出ます (どの環境でも閉じる手段が
+Esc だけになってしまうため)。
+
+| 役割 | Windows | macOS | Web |
+| --- | --- | --- | --- |
+| `Primary` | 左端 (`PrimaryButton`、既定のボタン) | 右端 (先頭に追加、Return) | 右端 |
+| `Secondary` | 中央 (`SecondaryButton`) | 左端 | 左端 |
+| `Cancel` | 右端 (`CloseButton`、Esc) | 中央 (Esc) | 中央 |
+
+**`open()` の戻り方が macOS だけ違います。** `NSAlert` はアプリモーダルなので、
+macOS では `open()` が閉じられるまで戻らず、`on_response` はその中で呼ばれます
+(`FilePicker` の `NSOpenPanel` と同じ性質)。Web と Windows の `open()` はすぐ戻り、
+通知はあとから届きます。**どちらでも動くように、後片付けは `on_response` の中で
+行ってください。**
+
+実際の動きは `gallery` の**「ダイアログ」タブ**で確認できます。
+
 ### 🟡 / 🔴 の内訳
 
 | 箇所 | 内容 |
@@ -583,6 +642,11 @@ stack.append(&picker);
 | WinUI 3 の `Button` / `Checkbox` | ラベルを `TextBlock` にして `Content` に入れている。XAML の標準的なやり方で、コントロール自体はネイティブ |
 | Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
 | すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。naui 側の `clamp` は二重の保険 |
+| `Dialog` の `open()` | macOS だけ**閉じるまで戻らない** (`NSAlert` がアプリモーダルのため)。Web / Windows はすぐ戻り、通知はあとから届く。どちらでも動くよう、続きの処理は `on_response` に書く |
+| `Dialog` の Esc | どの環境でも `DialogResponse::Cancel` になる。取り消しボタンを置いていなくても同じ (WinUI は `CloseButton`、macOS は取り消しボタンの keyEquivalent、Web は `cancel` イベント) |
+| `Dialog` の通知 | ユーザーが閉じたときだけ呼ばれる。`close()` で閉じたときは呼ばれない (`List` の `set_selected` と同じで、アプリ自身の操作は通知しない) |
+| `Dialog` は同時に 1 つ | WinUI 3 は同じ `XamlRoot` に 2 つの `ContentDialog` を出せない。すべての環境で「出ている間は次を出さない」に揃えてあり、出ている `Dialog` の `open()` は何もしない |
+| Windows の `Dialog` と `XamlRoot` | `ContentDialog` はウィンドウの上に出るため、**`window.show()` より前には出せない**。まだウィンドウが無いときは、その旨を標準エラーへ出して何もしない |
 | `Menu` という名前 | naui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。右クリックで出るほうは `PopupMenu` |
 | `PopupMenu` のインデックス | 区切り線も 1 項目として数える。`set_items` に渡した並びの位置がそのまま返るので、渡した `Vec` を `get(index)` で引ける。区切り線と選べない項目は通知されない |
 | macOS の `PopupMenu` の `open_at` | `NSMenu` が出ている間は AppKit がイベントを取り回すため、**閉じるまで呼び出しが戻らない**。自動テストで呼ばないのはこのため (選択の確認は `select` で行う) |
@@ -607,16 +671,18 @@ stack.append(&picker);
 | `FilePicker` の絞り込み | 拡張子は `png` の形に正規化される (`.png` や `*.PNG` と書いても同じ)。macOS は `NSSavePanel` の拡張子指定、Windows は種類欄 (`COMDLG_FILTERSPEC`)、Web は `accept` 属性になる |
 | macOS の `NSOpenPanel` を直接使う | `FilePicker::native_panel()` が、設定済みで**未表示**のパネルを返す。シート表示 (`beginSheetModalForWindow:`) や開始ディレクトリの指定はここから行う |
 | 🟡 すべての `FilePicker` | 「押すとファイル選択が開くコントロール」は macOS にも WinUI 3 にも無い。その環境のネイティブなボタンと、その環境の標準のファイル選択ダイアログを組み合わせている。Web の `<input type=file>` は単体でボタンだが、**ボタンの文字列がブラウザ所有で差し替えられない**ため、`<button>` を表に出して押しを転送している |
+| 🟡 macOS の `Dialog` | AppKit の汎用モーダルは `NSAlert` で、見出し・本文・ボタン・任意のビュー (`accessoryView`) を持つ。ただし `accessoryView` は **frame** で場所が決まるため、Auto Layout の naui のウィジェットには `fittingSize` を frame として入れている (幅が決まらないウィジェットには 260pt を渡す) |
+| 🟡 Web の `Dialog` | `<dialog>` + `showModal()` は完全にブラウザのものだが、中身を持たない箱なので、見出し (`<h2>`)・本文 (`<p>`)・ボタン (`<button>`) は naui が並べている。CSS は Flexbox の並べ方だけ。閉じたことは `close` イベントではなく、押されたボタンと `cancel` (Esc) から直接わかるようにしている (`close` はアプリ自身の `close()` と区別できないため) |
 | 🟡 Windows の `FilePicker` | `Windows.Storage.Pickers` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、Win32 側の `IFileOpenDialog` (Common Item Dialog) を使っている。エクスプローラーと同じダイアログで、未パッケージ実行でも開ける |
 | Windows の `ProgressBar` | Windows App SDK 2.3.1 の未パッケージ実行では `ProgressBar` の既定テンプレート適用時にランタイムが終了するため、WinUI XAML の `Grid` と `Border` を組み合わせて同等の表示を構成している。表示幅は親に合わせて伸縮し、値の変更 API は維持している |
 
 ### 未対応のコンポーネント
 
-汎用のダイアログ、保存ダイアログ、複数列のテーブル、
+保存ダイアログ、複数列のテーブル、
 ラジオボタン、コンボボックス、ツールバー、ツリーなどはありません
 (1 列のリストは `List`、複数行のテキスト入力は `TextArea`、
 ファイル / フォルダーの選択は `FilePicker`、
-右クリックのメニューは `PopupMenu`、
+右クリックのメニューは `PopupMenu`、モーダルは `Dialog`、
 画像・動画・音声は `Image` / `Video` / `Audio` があります)。
 レイアウトはスタック・グリッド・スクロールで、絶対配置はありません。
 
@@ -732,7 +798,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 ```
 
 - `naui-core`: 設定・エラー整形の単体テスト
-- `naui-macos`: **AppKit の実コントロールに対する 55 件の統合テスト**
+- `naui-macos`: **AppKit の実コントロールに対する 59 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
@@ -772,6 +838,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - ポップアップメニューの項目・区切り線・選べない項目が、そのまま `NSMenu` の中身になること
   - 選択が**区切り線を含めた位置**で届き、区切り線と選べない項目では届かないこと
   - 取り付けたウィジェットのビューが、そのメニューを持つようになること
+  - ダイアログの見出し・本文・中身のウィジェットが `NSAlert` へ渡ること
+    (Auto Layout の子にも frame が入り、`accessoryView` が潰れないこと)
+  - ダイアログのボタンが役割の順に並び、取り消しに Esc・先頭に Return が付くこと
+  - ボタンを指定しないダイアログに「OK」だけが出ること
+  - 出していないダイアログを閉じても、modal を中断せず通知もしないこと
 
 AppKit はメインスレッドを要求しますが、Rust の標準テストハーネスは
 各テストを別スレッドで走らせます (`--test-threads=1` でも同じ)。
@@ -792,15 +863,15 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
   バインドしていないため、Windows で実装できませんでした。
   「共通 API は全バックエンドの共通部分」という方針を優先して、
   macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **コンポーネントは 25 種類のみ** (画面に並ぶウィジェット 24 種と、
-  並ばない `PopupMenu` 1 種)**。** 基本 9 種 (`Window` / `Stack` / `Label` / `Button` /
+- **コンポーネントは 26 種類のみ** (画面に並ぶウィジェット 24 種と、
+  並ばない `PopupMenu` / `Dialog` 2 種)**。** 基本 9 種 (`Window` / `Stack` / `Label` / `Button` /
   `Checkbox` / `TextInput` / `TextArea` / `Slider` / `ProgressBar`)、レイアウト 3 種
   (`Grid` / `Scroll` / `Spacer`)、ナビゲーション 7 種
   (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`)、
   リスト 1 種 (`List`)、ポップアップメニュー 1 種 (`PopupMenu`)、
-  ファイル選択 1 種 (`FilePicker`)、
+  ダイアログ 1 種 (`Dialog`)、ファイル選択 1 種 (`FilePicker`)、
   メディア 3 種 (`Image` / `Video` / `Audio`) です。
-  汎用のダイアログ、保存ダイアログ、テーブルなどは未実装です。
+  保存ダイアログ、テーブルなどは未実装です。
 - **`List` は 1 列だけです。** 複数列のテーブルはありません。また `List` は
   中身に合わせた高さを持たないため、`set_sizing` で高さを指定してください。
 - **`List` の行に置けるのは文字 (`label` と `detail`) だけです。** 任意の
@@ -830,6 +901,12 @@ AppKit はメインスレッドを要求しますが、Rust の標準テスト�
 - **macOS では交差軸の `Fill` とグリッドのマス内配置を、コンテナへ入れる
   「前」に指定する必要があります。** AppKit では制約とセルの配置を追加時に
   張るためです (Web と Windows は後から変えても追従します)。
+- **`Dialog` は同時に 1 つだけです。** WinUI 3 が同じ `XamlRoot` に 2 つの
+  `ContentDialog` を出せないためで、全環境でそろえてあります。また Windows では
+  `ContentDialog` がウィンドウの上に出るため、`window.show()` より前には出せません。
+- **`Dialog` のボタンは役割ごとに最大 1 つ (合計 3 つ) です。** `ContentDialog` の
+  枠が 3 つ (主 / 副 / 閉じる) だからです。ボタンごとの有効・無効の切り替えも、
+  `ContentDialog` に閉じるボタン用の API が無いため持っていません。
 - **ウィンドウを閉じるイベントを購読できません。**
 
 ---

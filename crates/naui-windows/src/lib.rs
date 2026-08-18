@@ -18,6 +18,7 @@
 #![cfg(target_os = "windows")]
 
 mod app;
+mod dialog;
 mod file_picker;
 mod layout;
 mod list;
@@ -32,6 +33,7 @@ use std::cell::{Cell, RefCell};
 
 use naui_core::{Error, Orientation, Result, Settings, Theme};
 
+pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
@@ -51,6 +53,8 @@ pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
 pub struct Ui {
     theme: Cell<Theme>,
     windows: RefCell<Vec<Window>>,
+    /// ダイアログはどこにも append されないので、ここで保持する。
+    dialogs: RefCell<Vec<Dialog>>,
     /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
     popups: RefCell<Vec<PopupMenu>>,
     shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
@@ -64,6 +68,7 @@ impl Ui {
         Self {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
+            dialogs: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
             shutdown,
         }
@@ -200,10 +205,24 @@ impl Ui {
         FilePicker::new(text)
     }
 
+    /// モーダルダイアログ。`title` は見出し。中身は `ContentDialog`。
+    ///
+    /// フレームワークが参照を保持するので、戻り値を捨てても
+    /// 通知が届かなくなることはない。
+    pub fn dialog(&self, title: &str) -> Result<Dialog> {
+        let d = Dialog::new(title, self.theme.get())?;
+        self.dialogs.borrow_mut().push(d.clone());
+        Ok(d)
+    }
+
     /// 配色テーマを実行中に切り替える。
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         for window in self.windows.borrow().iter() {
             window.set_theme(theme)?;
+        }
+        // ダイアログはウィンドウとは別の層に出るので、個別に伝える。
+        for dialog in self.dialogs.borrow().iter() {
+            dialog.set_theme(theme);
         }
         self.theme.set(theme);
         Ok(())

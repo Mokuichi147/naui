@@ -11,6 +11,7 @@
 #![cfg(target_arch = "wasm32")]
 #![forbid(unsafe_code)]
 
+mod dialog;
 mod file_picker;
 mod layout;
 mod list;
@@ -33,6 +34,7 @@ use web_sys::{Document, HtmlElement};
 #[doc(hidden)]
 pub use wasm_bindgen;
 
+pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
@@ -64,6 +66,8 @@ pub struct Ui {
     document: Document,
     theme: Cell<Theme>,
     windows: RefCell<Vec<Window>>,
+    /// ダイアログはどこにも append されないので、ここで保持する。
+    dialogs: RefCell<Vec<Dialog>>,
     /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
     popups: RefCell<Vec<PopupMenu>>,
 }
@@ -74,6 +78,7 @@ impl Ui {
             document,
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
+            dialogs: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
         }
     }
@@ -203,6 +208,16 @@ impl Ui {
     /// ファイルやフォルダーを選ばせるボタン。中身は `<input type="file">`。
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         FilePicker::new(&self.document, text)
+    }
+
+    /// モーダルダイアログ。`title` は見出し。中身は `<dialog>`。
+    ///
+    /// フレームワークが参照を保持するので、戻り値を捨てても
+    /// 通知が届かなくなることはない。
+    pub fn dialog(&self, title: &str) -> Result<Dialog> {
+        let d = Dialog::new(&self.document, title)?;
+        self.dialogs.borrow_mut().push(d.clone());
+        Ok(d)
     }
 
     /// 配色テーマを実行中に切り替える。

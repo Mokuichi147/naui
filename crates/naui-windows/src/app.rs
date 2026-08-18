@@ -11,6 +11,7 @@ use windows_core::{
     Array, ComObject, ComObjectInner, ComObjectInterface, IInspectable, IInspectable_Vtbl,
     IUnknown, IUnknownImpl, Interface, InterfaceRef, Ref, GUID, HRESULT, HSTRING,
 };
+use winui3::Microsoft::UI::Xaml::Controls::XamlControlsResources;
 use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use winui3::Microsoft::UI::Xaml::Markup::{
     IXamlMetadataProvider, IXamlMetadataProvider_Impl, IXamlMetadataProvider_Vtbl, IXamlType,
@@ -45,6 +46,14 @@ where
         let current = Application::Current()?;
         // Application.RequestedTheme は触らない。未指定時は Windows の設定に
         // 追従し、実行中の切り替えは各ウィンドウのルート要素で行う。
+        //
+        // WinUI 3 の Fluent なスタイル (角丸・配色・影) は
+        // `XamlControlsResources` を Application.Resources へ入れて初めて
+        // そろう。XAML の App.xaml を持たない naui では、ここで自分で足す。
+        // これが無いと `ContentDialog` のようにテーマリソースへ強く頼る
+        // コントロールが、素の見た目 (角が丸くない・影が無い) で出る。
+        let fluent = XamlControlsResources::new()?
+            .cast::<winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
         let resources = XamlReader::Load(&HSTRING::from(
             r##"<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
                 <Style TargetType="Button">
@@ -64,10 +73,10 @@ where
             </ResourceDictionary>"##,
         ))?
         .cast::<winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
-        current
-            .Resources()?
-            .MergedDictionaries()?
-            .Append(&resources)?;
+        // 後から足したものが勝つ。naui の上書きは Fluent の後に置く。
+        let merged = current.Resources()?.MergedDictionaries()?;
+        merged.Append(&fluent)?;
+        merged.Append(&resources)?;
         let Some(build) = self.this.state.with_mut_cross_thread(|build| build.take()) else {
             return Ok(());
         };

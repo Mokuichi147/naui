@@ -12,8 +12,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, FileFilter, FilePickerMode, Fit, GridCell, ListItem, NavItem, Orientation, Padding,
-    PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, Track,
+    Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, ListItem,
+    NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
+    Sizing, Theme, Track,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
@@ -111,6 +112,22 @@ fn main() {
         (
             "ファイル選択がボタンとして構成され設定を保つ",
             file_picker_configuration,
+        ),
+        (
+            "ダイアログの設定が NSAlert へ届く",
+            dialog_configuration_reaches_the_alert,
+        ),
+        (
+            "ダイアログのボタンが役割の順に並ぶ",
+            dialog_buttons_follow_the_macos_order,
+        ),
+        (
+            "ボタンを指定しないダイアログに OK が出る",
+            dialog_without_buttons_shows_ok,
+        ),
+        (
+            "出していないダイアログは閉じても何も起きない",
+            dialog_is_closed_until_opened,
         ),
         (
             "編集メニューが貼り付けをレスポンダチェーンへ配送する",
@@ -2101,5 +2118,145 @@ fn popup_menu_attaches_to_a_view(ui: &Ui) -> Result<()> {
 
     // 出していないメニューを閉じても落ちない。
     popup.close();
+    Ok(())
+}
+
+/// 見出し・本文・中身のウィジェットが `NSAlert` へそのまま渡ること。
+///
+/// `open()` は `runModal` に入って戻らなくなるため、テストでは
+/// `native_alert()` で組み立てだけを確かめる (表示はしない)。
+fn dialog_configuration_reaches_the_alert(ui: &Ui) -> Result<()> {
+    let dialog = ui.dialog("削除しますか")?;
+    assert_eq!(dialog.title(), "削除しますか");
+    dialog.set_message("この操作は元に戻せません。");
+    assert_eq!(dialog.message(), "この操作は元に戻せません。");
+    assert!(!dialog.is_open(), "作っただけでは出ていないこと");
+
+    let field = ui.text_input("メモ")?;
+    dialog.set_child(&field);
+
+    let alert = dialog.native_alert();
+    assert_eq!(alert.messageText().to_string(), "削除しますか");
+    assert_eq!(
+        alert.informativeText().to_string(),
+        "この操作は元に戻せません。"
+    );
+
+    let accessory = alert.accessoryView().expect("中身が accessoryView に載る");
+    let text_field = accessory
+        .downcast::<NSTextField>()
+        .expect("実体は NSTextField であること");
+    assert_eq!(text_field.stringValue().to_string(), "メモ");
+    // `NSAlert` は frame を見て場所を空けるので、大きさが入っていること。
+    assert!(
+        text_field.frame().size.width > 0.0 && text_field.frame().size.height > 0.0,
+        "Auto Layout の子にも frame が入ること: {:?}",
+        text_field.frame().size
+    );
+
+    // `NSAlert` にレイアウトさせても、中身が潰れずウィンドウの中に載ること。
+    // (表示はしない。`layout()` はレイアウトを走らせるだけ。)
+    alert.layout();
+    let alert_window = alert.window();
+    let laid_out = text_field.frame();
+    assert!(
+        laid_out.size.width > 0.0 && laid_out.size.height > 0.0,
+        "レイアウト後も大きさを持つこと: {:?}",
+        laid_out.size
+    );
+    assert!(
+        unsafe { text_field.superview() }.is_some(),
+        "accessoryView がアラートのビュー階層に入ること"
+    );
+    let content = alert_window.contentView().expect("アラートに contentView がある");
+    assert!(
+        laid_out.size.width <= content.frame().size.width,
+        "中身がアラートの幅からはみ出さないこと: {:?} / {:?}",
+        laid_out.size,
+        content.frame().size
+    );
+
+    // 設定は消えず、何度でも組み立て直せる。
+    let again = dialog.native_alert();
+    assert_eq!(again.messageText().to_string(), "削除しますか");
+    Ok(())
+}
+
+/// macOS の並び (左から 副操作・取り消し・主操作) になること。
+///
+/// `NSAlert` は先に足したものを右端かつ既定のボタンにするので、
+/// 足す順は 主操作・取り消し・副操作 になる。
+fn dialog_buttons_follow_the_macos_order(ui: &Ui) -> Result<()> {
+    let dialog = ui.dialog("保存しますか")?;
+    dialog.set_buttons(
+        DialogButtons::new()
+            .primary("保存")
+            .secondary("保存しない")
+            .cancel("キャンセル"),
+    );
+    assert_eq!(
+        dialog.buttons().label(DialogResponse::Secondary),
+        Some("保存しない"),
+        "設定した組み合わせが読み出せること"
+    );
+
+    let alert = dialog.native_alert();
+    let titles: Vec<String> = alert
+        .buttons()
+        .iter()
+        .map(|button| button.title().to_string())
+        .collect();
+    assert_eq!(titles, ["保存", "キャンセル", "保存しない"]);
+
+    let buttons = alert.buttons();
+    let cancel = buttons.objectAtIndex(1);
+    assert_eq!(
+        cancel.keyEquivalent().to_string(),
+        "\u{1b}",
+        "取り消しは Esc で閉じられること"
+    );
+    let primary = buttons.objectAtIndex(0);
+    assert_eq!(
+        primary.keyEquivalent().to_string(),
+        "\r",
+        "先頭が Return の既定ボタンになること"
+    );
+    Ok(())
+}
+
+/// ボタンを 1 つも指定しないと「OK」だけが出ること。
+fn dialog_without_buttons_shows_ok(ui: &Ui) -> Result<()> {
+    let dialog = ui.dialog("完了しました")?;
+    assert!(dialog.buttons().is_empty(), "既定ではボタンを持たないこと");
+
+    let alert = dialog.native_alert();
+    let titles: Vec<String> = alert
+        .buttons()
+        .iter()
+        .map(|button| button.title().to_string())
+        .collect();
+    assert_eq!(titles, ["OK"]);
+    Ok(())
+}
+
+/// 出していないダイアログへの `close()` が何も壊さないこと。
+///
+/// `close()` は modal を中断するので、出していないときに呼ぶと
+/// AppKit 側が例外を投げうる。呼ばないことを確かめる。
+fn dialog_is_closed_until_opened(ui: &Ui) -> Result<()> {
+    let dialog = ui.dialog("何か")?;
+    assert!(!dialog.is_open());
+    dialog.close();
+    dialog.close();
+    assert!(!dialog.is_open());
+
+    // 通知は設定できるが、閉じていないので呼ばれない。
+    let called = Rc::new(RefCell::new(Vec::new()));
+    dialog.on_response({
+        let called = called.clone();
+        move |response| called.borrow_mut().push(response)
+    });
+    dialog.close();
+    assert!(called.borrow().is_empty(), "閉じていないので通知されないこと");
     Ok(())
 }
