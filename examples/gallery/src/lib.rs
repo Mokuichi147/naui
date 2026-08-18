@@ -8,8 +8,8 @@ use std::rc::Rc;
 
 use naui::{
     Align, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem,
-    Orientation, Padding, PlaybackState, Result, ScrollPolicy, SelectionMode, Settings, Sizing,
-    Theme, Track, Ui,
+    Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode, Settings,
+    Sizing, Theme, Track, Ui,
 };
 
 /// 同梱のサンプル画像の場所。
@@ -118,6 +118,33 @@ pub fn build(ui: &Ui) -> Result<()> {
     buttons.append(&disabled);
     controls_pane.append(&count_label);
     controls_pane.append(&buttons);
+
+    // 回数のラベルを右クリックすると、ボタンと同じ操作をメニューから行える。
+    // ポップアップメニューは画面に並ばないので、取り付け先のウィジェットが
+    // そのまま「右クリックできる場所」になる。
+    let count_menu_items = vec![
+        PopupItem::new("10 増やす"),
+        PopupItem::new("0 に戻す"),
+        PopupItem::separator(),
+        PopupItem::new("減らす (選べません)").enabled(false),
+    ];
+    let count_menu = ui.popup_menu()?;
+    count_menu.set_items(&count_menu_items);
+    count_menu.on_select({
+        let count = count.clone();
+        let label = count_label.clone();
+        move |index| {
+            match index {
+                0 => count.set(count.get() + 10),
+                1 => count.set(0),
+                // 区切り線と選べない項目は、そもそも通知されない。
+                _ => return,
+            }
+            label.set_text(&format!("押した回数: {}", count.get()));
+        }
+    });
+    count_menu.attach(&count_label);
+    controls_pane.append(&ui.label("↑ 回数の行を右クリックすると、メニューからも操作できます")?);
 
     let notification_status = ui.label("通知: オフ")?;
     let checkbox = ui.checkbox("通知を受け取る")?;
@@ -252,6 +279,47 @@ pub fn build(ui: &Ui) -> Result<()> {
         }
     });
 
+    // 一覧を右クリックすると、いま選ばれている行を扱うメニューが出る。
+    // 「選択を持つウィジェット + その選択に対する操作」という、
+    // コンテキストメニューの一番よくある組み合わせ。
+    let list_menu_items = vec![
+        PopupItem::new("選んだ行を書き出す"),
+        PopupItem::new("先頭を選ぶ"),
+        PopupItem::new("選択を外す"),
+        PopupItem::separator(),
+        PopupItem::new("削除 (選べません)").enabled(false),
+    ];
+    let list_menu = ui.popup_menu()?;
+    list_menu.set_items(&list_menu_items);
+    list_menu.on_select({
+        let list = list.clone();
+        let list_status = list_status.clone();
+        let cities = cities.clone();
+        move |index| match index {
+            0 => {
+                let picked: Vec<&str> = list
+                    .selection()
+                    .iter()
+                    .filter_map(|&i| cities.get(i).map(|item| item.label.as_str()))
+                    .collect();
+                let text = if picked.is_empty() {
+                    String::from("なし")
+                } else {
+                    picked.join(" / ")
+                };
+                list_status.set_text(&format!("書き出し: {text}"));
+            }
+            // 通知ありの経路なので、状態表示は on_select 側が更新する。
+            1 => list.select(0),
+            2 => {
+                list.clear_selection();
+                list_status.set_text("選択: なし");
+            }
+            _ => {}
+        }
+    });
+    list_menu.attach(&list);
+
     // 単一選択と複数選択を切り替える。切り替えると選択は外れる。
     let mode_selector = ui.navbar("選び方")?;
     mode_selector.set_items(&NavItem::list(["1 行だけ", "複数行"]));
@@ -316,6 +384,7 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     list_pane.append(&mode_selector);
     list_pane.append(&list);
+    list_pane.append(&ui.label("一覧を右クリックすると、選んだ行に対するメニューが出ます")?);
     list_pane.append(&list_status);
     list_pane.append(&list_buttons);
 

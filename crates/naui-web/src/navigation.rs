@@ -35,11 +35,11 @@ use crate::widgets::{create, impl_widget, set_disabled, Listener, Widget};
 pub(crate) struct SelectHandler(Rc<RefCell<Option<Box<dyn FnMut(usize)>>>>);
 
 impl SelectHandler {
-    fn set(&self, f: impl FnMut(usize) + 'static) {
+    pub(crate) fn set(&self, f: impl FnMut(usize) + 'static) {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    fn emit(&self, index: usize) {
+    pub(crate) fn emit(&self, index: usize) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
         };

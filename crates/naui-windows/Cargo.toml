@@ -30,6 +30,7 @@ winio-winui3 = { version = "0.4", features = [
     "UI_Composition",
     "UI_Composition_SystemBackdrops",
     "UI_Dispatching",
+    "UI_Input",
     "UI_Windowing",
     "UI_Xaml",
     "UI_Xaml_Controls",
