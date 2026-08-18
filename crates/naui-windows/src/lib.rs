@@ -24,6 +24,7 @@ mod layout;
 mod list;
 mod media;
 mod navigation;
+mod popup;
 mod ui_thread;
 mod widgets;
 mod window;
@@ -38,7 +39,10 @@ pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
-pub use widgets::{Button, Checkbox, Label, ProgressBar, Slider, Stack, TextInput, Widget};
+pub use popup::PopupMenu;
+pub use widgets::{
+    Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
+};
 pub use window::{WeakWindow, Window};
 
 pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
@@ -51,6 +55,8 @@ pub struct Ui {
     windows: RefCell<Vec<Window>>,
     /// ダイアログはどこにも append されないので、ここで保持する。
     dialogs: RefCell<Vec<Dialog>>,
+    /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
+    popups: RefCell<Vec<PopupMenu>>,
     shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
 }
 
@@ -63,6 +69,7 @@ impl Ui {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
             dialogs: RefCell::new(Vec::new()),
+            popups: RefCell::new(Vec::new()),
             shutdown,
         }
     }
@@ -115,6 +122,11 @@ impl Ui {
         TextInput::new(text)
     }
 
+    /// 改行を含む文字列を入力できる欄。高さは `set_sizing` で指定する。
+    pub fn text_area(&self, text: &str) -> Result<TextArea> {
+        TextArea::new(text)
+    }
+
     pub fn slider(&self, min: f64, max: f64) -> Result<Slider> {
         Slider::new(min, max)
     }
@@ -146,6 +158,16 @@ impl Ui {
     /// 選択できる行の一覧。自分でスクロールする。
     pub fn list(&self) -> Result<List> {
         List::new()
+    }
+
+    /// 右クリックで出るポップアップ (コンテキスト) メニュー。
+    ///
+    /// フレームワークが参照を保持するので、戻り値を捨てても
+    /// 取り付け先から消えることはない。
+    pub fn popup_menu(&self) -> Result<PopupMenu> {
+        let popup = PopupMenu::new()?;
+        self.popups.borrow_mut().push(popup.clone());
+        Ok(popup)
     }
 
     /// パンくず。

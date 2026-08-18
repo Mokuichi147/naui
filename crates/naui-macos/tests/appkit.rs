@@ -13,16 +13,16 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, ListItem,
-    NavItem, Orientation, Padding, PlaybackState, Result, ScrollPolicy, SelectionMode, Sizing,
-    Theme, Track,
+    NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
+    Sizing, Theme, Track,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
 use objc2_app_kit::{
     NSButton, NSImageScaling, NSImageView, NSLayoutConstraint, NSSegmentedControl,
-    NSTableViewDelegate, NSTextField, NSView,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
 };
-use objc2_foundation::{NSDate, NSRunLoop, NSSize};
+use objc2_foundation::{NSDate, NSNotFound, NSRange, NSRunLoop, NSSize, NSString};
 
 /// テストケース 1 件。
 type Case = (&'static str, fn(&Ui) -> Result<()>);
@@ -35,6 +35,19 @@ fn main() {
             checkbox_toggle,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
+        ("複数行入力が改行込みで往復する", text_area_round_trip),
+        (
+            "複数行入力の打鍵が通知され、プレースホルダーが消える",
+            text_area_notifies_while_typing,
+        ),
+        (
+            "複数行入力のプレースホルダーがクリックを通す",
+            text_area_placeholder_passes_clicks,
+        ),
+        (
+            "複数行入力が指定した高さに収まり、折り返し幅が追従する",
+            text_area_follows_the_given_size,
+        ),
         ("スライダーが範囲でクランプされる", slider_clamp),
         ("進捗バーが 0..1 に収まる", progress_clamp),
         ("スタックが子を生かし続ける", stack_keeps_children),
@@ -141,6 +154,18 @@ fn main() {
             "再生位置が定期的にクロージャへ届く",
             media_reports_position_while_playing,
         ),
+        (
+            "ポップアップメニューが項目と区切り線を NSMenu に写す",
+            popup_menu_items_map_to_native,
+        ),
+        (
+            "ポップアップメニューの選択がクロージャへ届く",
+            popup_menu_selection_notifies,
+        ),
+        (
+            "ポップアップメニューが取り付け先のビューのメニューになる",
+            popup_menu_attaches_to_a_view,
+        ),
     ];
 
     let mut failed = 0;
@@ -213,6 +238,150 @@ fn text_round_trip(ui: &Ui) -> Result<()> {
     assert_eq!(input.text(), "あいう");
     input.set_placeholder("名前");
     Ok(())
+}
+
+/// 複数行入力は改行を含む文字列をそのまま保つ。
+fn text_area_round_trip(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("あ\nい")?;
+    assert_eq!(area.text(), "あ\nい");
+
+    area.set_text("一行目\n二行目\n三行目");
+    assert_eq!(area.text(), "一行目\n二行目\n三行目");
+
+    // NSScrollView に載っているので、外から見えるビューはスクロールビュー。
+    let view = area.native_view();
+    assert!(
+        view.downcast_ref::<objc2_app_kit::NSScrollView>().is_some(),
+        "複数行入力はスクロールビューごと 1 つのウィジェットであること"
+    );
+
+    let text_view = area.native_text_view();
+    let default_color = text_view.textColor();
+    area.set_enabled(false);
+    assert!(!text_view.isEditable(), "無効なら編集できないこと");
+    area.set_enabled(true);
+    assert!(text_view.isEditable());
+    assert_eq!(
+        text_view.textColor(),
+        default_color,
+        "有効へ戻したら NSTextView の既定の文字色へ戻ること"
+    );
+    Ok(())
+}
+
+/// 打鍵のたびに通知が届き、プレースホルダーは中身の有無で出入りする。
+fn text_area_notifies_while_typing(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("")?;
+    area.set_placeholder("本文");
+    let text_view = area.native_text_view();
+    let placeholder = placeholder_label(&text_view).expect("プレースホルダーが重なっていること");
+    assert_eq!(placeholder.stringValue().to_string(), "本文");
+    assert!(!placeholder.isHidden(), "空のときは出ていること");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    area.on_change({
+        let seen = seen.clone();
+        move |text| seen.borrow_mut().push(text.to_string())
+    });
+
+    for chunk in ["あ", "\n", "い"] {
+        type_into(&text_view, chunk);
+    }
+    assert_eq!(area.text(), "あ\nい");
+    assert_eq!(
+        *seen.borrow(),
+        vec!["あ".to_string(), "あ\n".to_string(), "あ\nい".to_string()],
+        "改行の入力でも通知されること"
+    );
+    assert!(placeholder.isHidden(), "入力後は隠れていること");
+
+    area.set_text("");
+    assert!(!placeholder.isHidden(), "空に戻したら出ること");
+    assert_eq!(
+        seen.borrow().len(),
+        3,
+        "set_text では通知しないこと (1 行入力と同じ)"
+    );
+    Ok(())
+}
+
+/// プレースホルダーの上をクリックしても、当たり判定は下の NSTextView へ通る。
+fn text_area_placeholder_passes_clicks(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("")?;
+    area.set_placeholder("本文");
+    let text_view = area.native_text_view();
+    // レイアウトを確定させてから、ラベルの中心を叩く。
+    let view: &NSView = text_view.as_ref();
+    view.layoutSubtreeIfNeeded();
+    let placeholder = placeholder_label(&text_view).expect("プレースホルダーが重なっていること");
+    let frame = placeholder.frame();
+    let point = objc2_foundation::NSPoint::new(
+        frame.origin.x + frame.size.width / 2.0,
+        frame.origin.y + frame.size.height / 2.0,
+    );
+    let hit = view.hitTest(point);
+    assert!(
+        hit.is_some_and(|hit| hit.downcast_ref::<NSTextView>().is_some()),
+        "プレースホルダーではなく NSTextView が受け取ること"
+    );
+    Ok(())
+}
+
+/// 高さは `set_sizing` の指定どおりになり、折り返しの幅は親に追従する。
+fn text_area_follows_the_given_size(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_sizing(Sizing::fill());
+    let area = ui.text_area("あ")?;
+    area.set_sizing(
+        Sizing::new()
+            .width(naui_core::Length::Fill)
+            .height(naui_core::Length::Fixed(96.0)),
+    );
+    stack.append(&area);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 400.0));
+    root.layoutSubtreeIfNeeded();
+
+    let frame = area.native_view().frame();
+    assert!(
+        (frame.size.height - 96.0).abs() < 1e-6 && (frame.size.width - 400.0).abs() < 1e-6,
+        "指定した高さと親の幅になること: {frame:?}"
+    );
+
+    // 中の NSTextView は、枠のぶんだけ内側でスクロールビューに追従する。
+    // 折り返しはこの幅で起きるので、親が広がれば折り返しも変わる。
+    let inner = area.native_text_view().frame();
+    assert!(
+        inner.size.width > 0.0 && inner.size.width <= frame.size.width,
+        "折り返しの幅がスクロールビューに収まること: {inner:?}"
+    );
+
+    root.setFrameSize(NSSize::new(240.0, 400.0));
+    root.layoutSubtreeIfNeeded();
+    let narrow = area.native_text_view().frame();
+    assert!(
+        narrow.size.width < inner.size.width,
+        "親が狭くなれば折り返しの幅も狭くなること: {inner:?} -> {narrow:?}"
+    );
+    Ok(())
+}
+
+/// 複数行入力に重ねたプレースホルダーのラベルを取り出す。
+fn placeholder_label(text_view: &NSTextView) -> Option<Retained<NSTextField>> {
+    let view: &NSView = text_view.as_ref();
+    let subviews = view.subviews();
+    (0..subviews.len())
+        .map(|index| subviews.objectAtIndex(index))
+        .find_map(|subview| subview.downcast::<NSTextField>().ok())
+}
+
+/// IME や物理キーボードと同じ経路で文字を入れる。
+fn type_into(text_view: &NSTextView, text: &str) {
+    let string = NSString::from_str(text);
+    unsafe {
+        text_view.insertText_replacementRange(&string, NSRange::new(NSNotFound as usize, 0));
+    }
 }
 
 /// スライダーは範囲でクランプされる。
@@ -1870,6 +2039,85 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
         sub.size.height,
         title.size.height
     );
+    Ok(())
+}
+
+/// 項目と区切り線が、そのまま NSMenu の中身になる。
+fn popup_menu_items_map_to_native(ui: &Ui) -> Result<()> {
+    let popup = ui.popup_menu()?;
+    assert!(popup.is_empty());
+
+    popup.set_items(&[
+        PopupItem::new("コピー"),
+        PopupItem::separator(),
+        PopupItem::new("削除").enabled(false),
+    ]);
+    assert_eq!(popup.len(), 3, "区切り線も数に入ること");
+
+    let menu = popup.native_menu();
+    assert_eq!(menu.numberOfItems(), 3);
+    assert!(
+        !menu.autoenablesItems(),
+        "AppKit の自動有効化を切らないと enabled(false) が無視される"
+    );
+
+    let copy = menu.itemAtIndex(0).expect("1 番目の項目");
+    assert_eq!(copy.title().to_string(), "コピー");
+    assert!(copy.isEnabled());
+    assert!(menu.itemAtIndex(1).expect("2 番目の項目").isSeparatorItem());
+    let remove = menu.itemAtIndex(2).expect("3 番目の項目");
+    assert!(!remove.isEnabled(), "選べない項目は無効のままであること");
+
+    // 作り直すと以前の項目は残らない。
+    popup.set_items(&PopupItem::list(["貼り付け"]));
+    assert_eq!(popup.len(), 1);
+    assert_eq!(popup.native_menu().numberOfItems(), 1);
+    Ok(())
+}
+
+/// 項目を選ぶと、区切り線を含めた並びの位置がクロージャへ届く。
+fn popup_menu_selection_notifies(ui: &Ui) -> Result<()> {
+    let popup = ui.popup_menu()?;
+    popup.set_items(&[
+        PopupItem::new("コピー"),
+        PopupItem::separator(),
+        PopupItem::new("貼り付け"),
+        PopupItem::new("削除").enabled(false),
+    ]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    popup.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    popup.select(2);
+    assert_eq!(*seen.borrow(), vec![2], "区切り線を数えた位置で届くこと");
+
+    // 区切り線・選べない項目・範囲外は通知しない。
+    popup.select(1);
+    popup.select(3);
+    popup.select(9);
+    assert_eq!(*seen.borrow(), vec![2]);
+    Ok(())
+}
+
+/// 取り付けたウィジェットのビューが、そのメニューを持つようになる。
+fn popup_menu_attaches_to_a_view(ui: &Ui) -> Result<()> {
+    let label = ui.label("右クリックしてください")?;
+    let popup = ui.popup_menu()?;
+    popup.set_items(&PopupItem::list(["コピー"]));
+    assert!(label.native_view().menu().is_none());
+
+    popup.attach(&label);
+    let attached = label.native_view().menu().expect("ビューのメニュー");
+    assert!(
+        std::ptr::eq(&*attached, &*popup.native_menu()),
+        "取り付けたメニューそのものであること"
+    );
+
+    // 出していないメニューを閉じても落ちない。
+    popup.close();
     Ok(())
 }
 

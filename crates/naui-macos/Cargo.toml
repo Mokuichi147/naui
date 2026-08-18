@@ -60,6 +60,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSTableView",
     "NSTextField",
     "NSText",
+    "NSTextContainer",
+    "NSTextView",
     "NSUserInterfaceItemIdentification",
     "NSView",
     "NSWindow",
@@ -108,10 +110,20 @@ objc2-app-kit = { version = "0.3", features = [
     "NSPanel",
     "NSResponder",
     "NSSavePanel",
+    "NSText",
+    "NSTextField",
+    "NSTextInputClient",
+    "NSTextView",
     "NSView",
     "NSWindow",
 ] }
-objc2-foundation = { version = "0.3", features = ["NSDate", "NSGeometry", "NSRunLoop"] }
+objc2-foundation = { version = "0.3", features = [
+    "NSDate",
+    "NSGeometry",
+    "NSObjCRuntime",
+    "NSRange",
+    "NSRunLoop",
+] }
 
 [[test]]
 name = "appkit"
