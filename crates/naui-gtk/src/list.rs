@@ -91,12 +91,17 @@ impl List {
     }
 
     pub fn set_selection_mode(&self, mode: SelectionMode) {
-        self.0.native.set_selection_mode(if mode.is_multiple() {
+        let multiple = mode.is_multiple();
+        self.0.native.set_selection_mode(if multiple {
             // `Multiple` は「⌘ / Ctrl や Shift を押しながら選ぶ」形。
             gtk::SelectionMode::Multiple
         } else {
             gtk::SelectionMode::Single
         });
+        // `GtkListBox` は「1 クリックで確定」(既定) の間、クリックに付いている
+        // Ctrl / Shift を読まず、必ず「その行だけを選ぶ」に倒す。複数選択では
+        // これを切らないと、行を足すことも外すこともできない。
+        self.0.native.set_activate_on_single_click(!multiple);
     }
 
     pub fn selection_mode(&self) -> SelectionMode {

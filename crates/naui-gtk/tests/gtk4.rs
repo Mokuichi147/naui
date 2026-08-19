@@ -126,6 +126,10 @@ fn main() {
             list_native_selection_notifies,
         ),
         ("リストの複数選択が 0 件にもなる", list_multiple_selection),
+        (
+            "複数選択でクリックの修飾キーが GTK4 へ届く",
+            list_multiple_selection_reaches_the_modifier_keys,
+        ),
         ("リストが選べない行を飛ばす", list_skips_disabled_rows),
         (
             "リストの通知の中からリストを操作できる",
@@ -1137,6 +1141,32 @@ fn list_multiple_selection(ui: &Ui) -> Result<()> {
     list.set_selection_mode(SelectionMode::Single);
     list.set_selection(&[2, 1]);
     assert_eq!(list.selection(), vec![1]);
+    Ok(())
+}
+
+fn list_multiple_selection_reaches_the_modifier_keys(ui: &Ui) -> Result<()> {
+    // `GtkListBox` は「1 クリックで確定」(既定) の間、クリックに付いている
+    // Ctrl / Shift を読まず、必ず「その行だけを選ぶ」に倒す。複数選択で
+    // これを切らないと、行を足すことも外すこともできない。
+    //
+    // 修飾キーを見た先のふるまい (足す / 外す / 範囲) は GTK4 のもので、
+    // naui はそこへ届かせているだけなので、ここでは切り替えの有無を見る。
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(["a", "b", "c"]));
+    let native = list_box_of(&list);
+
+    // 単一選択は「1 クリックで確定」のまま (`<select>` と同じ)。
+    assert!(native.activates_on_single_click());
+
+    list.set_selection_mode(SelectionMode::Multiple);
+    assert!(
+        !native.activates_on_single_click(),
+        "複数選択では、クリックの Ctrl / Shift を GTK4 に読ませる"
+    );
+
+    // 単一選択へ戻したら、元のふるまいに戻る。
+    list.set_selection_mode(SelectionMode::Single);
+    assert!(native.activates_on_single_click());
     Ok(())
 }
 

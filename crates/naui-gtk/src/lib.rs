@@ -57,6 +57,10 @@
 //!   そのままだと消音を外しても音が出ない。
 //! - 再生できる形式は GStreamer に入っているプラグイン次第
 //!   (`GtkMediaFile` が GStreamer に載っているため)。
+//! - `List` の複数選択では、`GtkListBox` の**「1 クリックで確定」を切っている**
+//!   (`gtk_list_box_set_activate_on_single_click`)。これが有効な間、
+//!   `GtkListBox` はクリックに付いている Ctrl / Shift を読まず、必ず
+//!   「その行だけを選ぶ」に倒すため、行を足すことも外すこともできなくなる。
 //! - `Tabs` は**タブ列を送れるようにしてある** (`gtk_notebook_set_scrollable`)。
 //!   既定の `GtkNotebook` は「全タブが横に並ぶ幅」を最小幅として申告するため、
 //!   タブが増えるとウィンドウをそれ以下に縮められなくなる。

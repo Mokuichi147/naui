@@ -19,10 +19,10 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 59 件 (ポップアップメニューの `NSMenu` への写しと選択の通知、複数行入力の `NSTextView` への写し、ダイアログの `NSAlert` への写しを含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 60 件 (ポップアップメニューの `NSMenu` への写しと選択の通知、複数行入力の `NSTextView` への写し、ダイアログの `NSAlert` への写しを含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`TextArea` (`<textarea>`) は改行を含む入力が `on_change` へ届くことを確認。`Dialog` は `<dialog>` の組み立てと、3 つの役割のボタン・OK だけのダイアログを実際に押して、結果と中身のチェックボックスの状態が届くところまでブラウザで確認 (Esc での取り消しだけは、確認に使った埋め込みブラウザが Esc を配送しないため未確認)。**`PopupMenu` はブラウザでの実行確認をしていません** (合成した `<div role="menu">` のコードはビルドが通るところまで)。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
 | **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`PopupMenu` / `TextArea` / `Dialog` は実機で未確認**で、`x86_64-pc-windows-msvc` 向けの `cargo check` が通るところまでです |
-| **Linux** | ✅ 動作 | Ubuntu 24.04 (GTK 4.14 / libadwaita 1.5、Wayland) で `cargo run -p gallery` を実行し、全 8 タブ (基本ウィジェット・ナビゲーション系 7 種・リスト・レイアウト・ファイル・メディア・ダイアログ) の描画を確認。GTK4 の実コントロールに対する自動テスト 59 件 (ネイティブのクリック・打鍵・行の選択がクロージャへ届くこと、大きさの指定が `gtk_widget_measure` の結果に出ること、`GMenu` と `AdwAlertDialog` への写しを含む)。メディアは実ファイル (H.264 + AAC) で再生・一時停止・シーク・長さ・再生位置・状態変化 (`Buffering` → `Playing` → `Paused` → `Playing` → `Ended`) まで確認 |
+| **Linux** | ✅ 動作 | Ubuntu 24.04 (GTK 4.14 / libadwaita 1.5、Wayland) で `cargo run -p gallery` を実行し、全 8 タブ (基本ウィジェット・ナビゲーション系 7 種・リスト・レイアウト・ファイル・メディア・ダイアログ) の描画を確認。GTK4 の実コントロールに対する自動テスト 60 件 (ネイティブのクリック・打鍵・行の選択がクロージャへ届くこと、大きさの指定が `gtk_widget_measure` の結果に出ること、`GMenu` と `AdwAlertDialog` への写しを含む)。メディアは実ファイル (H.264 + AAC) で再生・一時停止・シーク・長さ・再生位置・状態変化 (`Buffering` → `Playing` → `Paused` → `Playing` → `Ended`) まで確認 |
 
 Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で、
 `Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link` を含む
@@ -819,7 +819,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 ```
 
 - `naui-core`: 設定・エラー整形の単体テスト
-- `naui-macos`: **AppKit の実コントロールに対する 59 件の統合テスト**
+- `naui-macos`: **AppKit の実コントロールに対する 60 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
@@ -835,6 +835,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - メニューの縦一覧で、押し込まれるボタンが常に 1 つだけであること
   - リストの選択が NSTableView と往復し、`set_selected` は通知しないこと
   - リストの複数選択が昇順にそろい、選択が 0 件にもなること
+  - **複数選択のとき、クリックに付いた Ctrl / Shift が GTK4 へ届くこと**
+    (`GtkListBox` の「1 クリックで確定」は修飾キーを読まないため切る)
   - リストが選べない行を飛ばし、AppKit にも「選べない」と伝えていること
   - リストの行が NSTableView のビューとして作られ、日本語がそのまま出ること
   - NSTableView 側で選択を変えても、デリゲート経由でクロージャへ届くこと
@@ -865,7 +867,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - ボタンを指定しないダイアログに「OK」だけが出ること
   - 出していないダイアログを閉じても、modal を中断せず通知もしないこと
 
-- `naui-gtk`: **GTK4 / libadwaita の実コントロールに対する 59 件の統合テスト**
+- `naui-gtk`: **GTK4 / libadwaita の実コントロールに対する 60 件の統合テスト**
   - `gtk_button_clicked` でネイティブのクリックを発生させ、クロージャに届くこと
   - `GtkCheckButton` の `activate` で反転し、変更後の値が通知されること
   - `GtkEntryBuffer` への差し込み (打鍵と同じ経路) が通知され、`set_text` は通知しないこと
@@ -894,6 +896,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - リストの行が `GtkListBoxRow` として作られ、`detail` が 2 行目になること
   - `GtkListBox` 側の選択がクロージャへ届き、`set_selection` は通知しないこと
   - リストの複数選択が昇順にそろい、選択が 0 件にもなること
+  - **複数選択のとき、クリックに付いた Ctrl / Shift が GTK4 へ届くこと**
+    (`GtkListBox` の「1 クリックで確定」は修飾キーを読まないため切る)
   - 通知の中から一覧を触っても借用が衝突しないこと
   - ポップアップの項目・区切り線が `GMenu` の節になり、**`GAction` の起動
     (メニューを選んだのと同じ経路) がクロージャへ届く**こと
