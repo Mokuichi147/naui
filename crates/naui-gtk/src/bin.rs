@@ -156,6 +156,14 @@ impl SizeBin {
 
         imp.max_width.set(width.cap);
         imp.max_height.set(height.cap);
+        // `Fill` の軸は最小を 0 として申告する (大きさは親が決める) 以上、
+        // 配られた場所からはみ出して描いてはいけない。CSS の
+        // `min-width: 0` と `overflow: hidden` を組みで使うのと同じ。
+        self.set_overflow(if sizing.width.is_fill() || sizing.height.is_fill() {
+            gtk::Overflow::Hidden
+        } else {
+            gtk::Overflow::Visible
+        });
         self.set_size_request(width.request, height.request);
         self.apply_expand(true, width.expand);
         self.apply_expand(false, height.expand);

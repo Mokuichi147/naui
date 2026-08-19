@@ -79,6 +79,10 @@ fn main() {
             fill_does_not_push_the_parent_wider,
         ),
         (
+            "Fill は配られた場所からはみ出して描かない",
+            fill_clips_what_it_cannot_fit,
+        ),
+        (
             "タブが増えても最小幅が増えない",
             tabs_do_not_widen_with_the_number_of_tabs,
         ),
@@ -620,6 +624,22 @@ fn tabs_do_not_widen_with_the_number_of_tabs(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+fn fill_clips_what_it_cannot_fit(ui: &Ui) -> Result<()> {
+    let label = ui.label("あ")?;
+    let bin = bin_of(&label);
+    // 指定が無い間は切り取らない (影や焦点の枠を欠かないため)。
+    assert_eq!(bin.overflow(), gtk::Overflow::Visible);
+
+    // `Fill` の軸は最小を 0 として申告する以上、配られた場所からはみ出して
+    // 描いてはいけない。CSS の `min-width: 0` と `overflow: hidden` の組み。
+    label.set_sizing(Sizing::fill_width());
+    assert_eq!(bin.overflow(), gtk::Overflow::Hidden);
+
+    label.set_sizing(Sizing::new());
+    assert_eq!(bin.overflow(), gtk::Overflow::Visible, "指定を外せば戻る");
+    Ok(())
+}
+
 fn sizing_min_raises_minimum(ui: &Ui) -> Result<()> {
     let button = ui.button("小")?;
     let bin = bin_of(&button);
@@ -789,6 +809,11 @@ fn window_lifecycle(ui: &Ui) -> Result<()> {
         .downcast()
         .expect("AdwToolbarView");
     assert_eq!(toolbar.content(), Some(bin_of(&stack)));
+    assert_eq!(
+        toolbar.overflow(),
+        gtk::Overflow::Hidden,
+        "窓より中身が大きくても、ウィンドウの外へは描かない"
+    );
     // ウィンドウの中身は窓いっぱいに広がる。
     assert_eq!(bin_of(&stack).halign(), gtk::Align::Fill);
     assert_eq!(bin_of(&stack).valign(), gtk::Align::Fill);

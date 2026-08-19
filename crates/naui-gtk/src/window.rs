@@ -52,6 +52,9 @@ impl Window {
         let header = adw::HeaderBar::new();
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
+        // GTK4 は既定でははみ出した中身を切り取らない。窓より中身が大きいとき
+        // (縮めすぎたとき) に、ウィンドウの外へ描かれてしまうのを止める。
+        toolbar.set_overflow(gtk::Overflow::Hidden);
         native.set_content(Some(&toolbar));
 
         Self(Rc::new(WindowInner {
