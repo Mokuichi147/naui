@@ -32,8 +32,11 @@ impl List {
     pub(crate) fn new() -> Self {
         let native = gtk::ListBox::new();
         native.set_selection_mode(gtk::SelectionMode::Single);
-        native.add_css_class("boxed-list");
-
+        // libadwaita の `boxed-list` (角丸のカード) は付けない。スクロール領域の
+        // 枠と二重になって、角丸の中身に四角い枠が付いて見えるため。枠のほうを
+        // 残すのは、一覧の高さが指定で決まる (行が少なくても場所を取る) ので、
+        // どこまでが一覧なのかが分かるようにするため。macOS の `NSTableView` /
+        // Windows の `ListBox` / Web の `<select size>` とも同じ見え方になる。
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_has_frame(true);
