@@ -1,61 +1,90 @@
 # naui
 
-**各 OS のネイティブ UI を、1 つの API から扱う軽量 GUI ツールキット (Rust)。**
+各 OS のネイティブ UI を、1 つの Rust API から扱う軽量 GUI ツールキットです。
 
-naui は自前で描画しません。`ui.button("押す")` が返すのは **本物の OS のボタン**であり、
-描画・レイアウト・IME・アクセシビリティ・OS のテーマ追従は、すべて
-プラットフォームのツールキットが行います。
+naui はウィジェットを自前で描画しません。ボタン、入力欄、レイアウト、IME、
+アクセシビリティ、テーマへの追従は、それぞれのプラットフォームが提供する
+ツールキットへ任せます。
 
-| ビルド対象 | 使うツールキット | 例: ボタンの実体 |
+| 対象 | バックエンド | ボタンの実体 |
 | --- | --- | --- |
-| Windows | **WinUI 3** (Windows App SDK) | `Microsoft.UI.Xaml.Controls.Button` |
-| macOS | **AppKit** | `NSButton` |
-| Linux | **GTK4 / libadwaita** | `GtkButton` |
-| Web (wasm) | **DOM** | `<button>` |
+| Windows | WinUI 3 (Windows App SDK) | `Microsoft.UI.Xaml.Controls.Button` |
+| macOS | AppKit | `NSButton` |
+| Linux | GTK4 / libadwaita | `GtkButton` |
+| Web (wasm) | DOM | `<button>` |
 
----
+## 特長
 
-## 実装状況 (最初に読んでください)
+- 4 つのバックエンドを同じ API で利用可能
+- OS 標準の描画、入力、アクセシビリティ、テーマを活用
+- Rust 側でレイアウト計算やメディアのデコードを行わない軽量な設計
+- 共通 API で足りない場合はネイティブオブジェクトへアクセス可能
+- 最小サンプルと全ウィジェットを確認できる Gallery を同梱
 
-| 環境 | 状態 | 根拠 |
+## 対応状況
+
+| 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 61 件 (ポップアップメニューの `NSMenu` への写しと選択の通知、複数行入力の `NSTextView` への写し、ダイアログの `NSAlert` への写しを含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
-| **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`TextArea` (`<textarea>`) は改行を含む入力が `on_change` へ届くことを確認。`Dialog` は `<dialog>` の組み立てと、3 つの役割のボタン・OK だけのダイアログを実際に押して、結果と中身のチェックボックスの状態が届くところまでブラウザで確認 (Esc での取り消しだけは、確認に使った埋め込みブラウザが Esc を配送しないため未確認)。**`PopupMenu` はブラウザでの実行確認をしていません** (合成した `<div role="menu">` のコードはビルドが通るところまで)。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
-| **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`PopupMenu` / `TextArea` / `Dialog` は実機で未確認**で、`x86_64-pc-windows-msvc` 向けの `cargo check` が通るところまでです |
-| **Linux** | ✅ 動作 | Ubuntu 24.04 (GTK 4.14 / libadwaita 1.5、Wayland) で `cargo run -p gallery` を実行し、全 8 タブ (基本ウィジェット・ナビゲーション系 7 種・リスト・レイアウト・ファイル・メディア・ダイアログ) の描画を確認。GTK4 の実コントロールに対する自動テスト 61 件 (ネイティブのクリック・打鍵・行の選択がクロージャへ届くこと、大きさの指定が `gtk_widget_measure` の結果に出ること、`GMenu` と `AdwAlertDialog` への写しを含む)。メディアは実ファイル (H.264 + AAC) で再生・一時停止・シーク・長さ・再生位置・状態変化 (`Buffering` → `Playing` → `Paused` → `Playing` → `Ended`) まで確認 |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログを操作 |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 |
 
-Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で、
-`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link` を含む
-`gallery` の起動を確認済みです。
-Linux は GTK4 と libadwaita の実コントロールを使います。naui との対応表と、
-他のバックエンドとの違い (グリッドの重み・`Fit::None`・テーマの範囲) は
-[`crates/naui-gtk`](crates/naui-gtk/src/lib.rs) のドキュメントにまとめてあります。
+未確認の範囲もあります。
 
----
+- Web: `PopupMenu` のブラウザ実行と、埋め込みブラウザで配送されなかった
+  `Dialog` の Esc 操作
 
-## 使い方
+これらは実装済みで、Web ターゲット向けの `cargo check` は通ります。
 
-UI は `run` に渡すコールバックの中で組み立てます。
-WinUI 3 が `Application::Start` より前のコントロール生成を許さないため、
-4 バックエンドで同じ形にそろえてあります。
+## クイックスタート
+
+必要な Rust の最小バージョンは 1.82 です。
+
+```sh
+git clone https://github.com/mokuichi147/naui.git
+cd naui
+cargo run -p counter
+```
+
+全ウィジェットは Gallery で確認できます。
+
+```sh
+cargo run -p gallery
+```
+
+Linux では、先に GTK4 と libadwaita の開発用ライブラリを導入してください。
+Ubuntu 24.04 の例:
+
+```sh
+sudo apt install libgtk-4-dev libadwaita-1-dev build-essential pkg-config
+```
+
+Windows での実行には Windows App SDK 2.x のフレームワークランタイムが必要です。
+このリポジトリでは 2.3.1 で動作を確認しています。
+
+## 基本的な使い方
+
+UI は `run` に渡すコールバックの中で組み立てます。ウィジェットのハンドルを
+clone しても、参照するネイティブオブジェクトは同じです。
 
 ```rust
 use std::cell::Cell;
 use std::rc::Rc;
+
 use naui::{Orientation, Padding, Settings};
 
 fn main() -> naui::Result<()> {
     naui::run(Settings::new("counter"), |ui| {
         let window = ui.window("counter", 320.0, 200.0)?;
-
         let stack = ui.stack(Orientation::Vertical)?;
         stack.set_spacing(12.0);
         stack.set_padding(Padding::all(24.0));
 
         let label = ui.label("0")?;
         let button = ui.button("増やす")?;
-
         let count = Rc::new(Cell::new(0));
+
         button.on_click({
             let label = label.clone();
             move || {
@@ -73,937 +102,256 @@ fn main() -> naui::Result<()> {
 }
 ```
 
+より小さな実例は [`examples/counter`](examples/counter/src/main.rs)、全機能の使用例は
+[`examples/gallery`](examples/gallery/src/lib.rs) を参照してください。
+
 ### テーマ
 
-テーマは `Theme::System` (OS / ブラウザの設定に追従) が標準です。起動時に固定する場合は
-`Settings::theme` を使い、実行中は `Ui::set_theme` で切り替えられます。
+既定の `Theme::System` は OS またはブラウザの設定へ追従します。起動時に固定する
+場合は `Settings::theme`、実行中に切り替える場合は `Ui::set_theme` を使います。
 
 ```rust
 use naui::{Settings, Theme};
 
-let settings = Settings::new("counter").theme(Theme::System);
+let settings = Settings::new("counter").theme(Theme::Dark);
 naui::run(settings, |ui| {
-    // 設定画面などのイベントからも呼べます。
-    ui.set_theme(Theme::Dark)?;
-    // ui.set_theme(Theme::Light)?;
-    // ui.set_theme(Theme::System)?;
+    ui.set_theme(Theme::System)?;
     Ok(())
 })?;
 ```
 
-`System` は macOS / Windows ではネイティブ UI のシステムテーマ、Web では
-`prefers-color-scheme` に対応するブラウザの配色を使います。
+### 配置とサイズ
 
-ウィジェットのハンドルは `Rc` なので clone しても実体は 1 つです。
-コンテナに `append` した子はコンテナが保持するため、ハンドルを手放しても
-コールバックは生き続けます。
+レイアウトには次の 4 種類を使います。
 
-### ネイティブへの脱出口
+| API | 用途 |
+| --- | --- |
+| `Stack` | 子を縦または横へ並べる |
+| `Grid` | 行と列を指定して配置する |
+| `Scroll` | はみ出した内容をスクロールする |
+| `Spacer` | 親の余った空間を受け取る |
 
-共通 API で足りない部分は、各バックエンドのネイティブオブジェクトを直接取れます。
+すべてのウィジェットは `Sizing` でサイズを指定できます。`Length` は中身に合わせる
+`Auto`、固定値の `Fixed`、余った領域へ広がる `Fill` の 3 種類です。
 
 ```rust
-// macOS
-let ns_button: objc2::rc::Retained<NSView> = button.native_view();
-// Web
-let element: web_sys::Element = button.native_element();
+use naui::{GridCell, Length, Sizing, Track};
+
+let form = ui.grid()?;
+form.set_spacing(12.0, 8.0);
+form.set_column_track(0, Track::Fixed(96.0));
+form.set_column_track(1, Track::FILL);
+
+let field = ui.text_input("")?;
+field.set_sizing(Sizing::new().width(Length::Fill));
+
+form.attach(&ui.label("名前")?, GridCell::new(0, 0));
+form.attach(&field, GridCell::new(1, 0));
 ```
 
----
+`List`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
+`set_sizing` で高さを指定します。
 
 ## ウィジェット
+
+| 分類 | API |
+| --- | --- |
+| 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`Slider`、`ProgressBar` |
+| レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
+| ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
+| データ選択 | `List` |
+| ファイル選択 | `FilePicker` |
+| メディア | `Image`、`Video`、`Audio` |
+| オーバーレイ | `PopupMenu`、`Dialog` |
+
+### プラットフォーム別の実装
 
 凡例:
 
 | 記号 | 意味 |
 | --- | --- |
-| ✅ | **完全ネイティブ** — そのプラットフォームの標準コントロールを 1 つそのまま使用 |
-| 🟡 | **ネイティブ + 合成** — ネイティブコントロールは使うが、単体では足りない部分を組み立てている |
-| 🔴 | **再現** — 相当するネイティブの概念が無いため、別の要素で代用している |
-| ❌ | 未実装 |
+| ✅ | プラットフォームの標準コントロールをそのまま使用 |
+| 🟡 | 標準コントロールを組み合わせて実装 |
+| 🔴 | 対応する概念がないため、別の要素で再現 |
 
-| naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
+#### ウィジェット対応表
+
+| naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
-| `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | 🔴 `<div>` + `document.title` | ✅ `AdwApplicationWindow` + `AdwToolbarView` + `AdwHeaderBar` |
-| `Stack` | ✅ `StackPanel` | ✅ `NSStackView` | 🟡 `<div>` + CSS Flexbox | ✅ `GtkBox` |
-| `Grid` | ✅ `Grid` (`RowDefinition` / `ColumnDefinition`) | ✅ `NSGridView` | 🟡 `<div>` + CSS Grid | 🟡 `GtkGrid` (列 / 行の幅は中の子へ写す) |
-| `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | 🟡 `<div>` + `overflow` | ✅ `GtkScrolledWindow` |
-| `Spacer` | 🔴 中身の無い `Grid` (`StackPanel` では効かない) | 🟡 中身の無い `NSView` (hugging priority 最小) | 🟡 `<div>` + `flex-grow` | 🟡 中身の無い `GtkBox` (`hexpand` / `vexpand`) |
-| `Label` | ✅ `TextBlock` | ✅ `NSTextField` (`labelWithString:`) | ✅ `<span>` | ✅ `GtkLabel` |
-| `Button` | ✅ `Button` | ✅ `NSButton` (`buttonWithTitle:`) | ✅ `<button>` | ✅ `GtkButton` |
-| `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` (`checkboxWithTitle:`) | 🟡 `<input type=checkbox>` + `<label>` | ✅ `GtkCheckButton` |
-| `TextInput` | ✅ `TextBox` | ✅ `NSTextField` (`textFieldWithString:`) | ✅ `<input type=text>` | ✅ `GtkEntry` |
-| `TextArea` | ✅ `TextBox` (`AcceptsReturn`) | 🟡 `NSTextView` + `NSScrollView` (プレースホルダーは重ねたラベル) | ✅ `<textarea>` | 🟡 `GtkTextView` + `GtkScrolledWindow` (プレースホルダーは重ねたラベル) |
-| `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ✅ `GtkScale` |
-| `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ✅ `GtkProgressBar` |
-| `List` | ✅ `ListBox` + `ListBoxItem` | ✅ `NSTableView` (1 列) + `NSScrollView` | ✅ `<select size>` (文字だけ) / 🟡 `<ul role=listbox>` (`detail` あり) | 🟡 `GtkListBox` + `GtkListBoxRow` + `GtkScrolledWindow` |
-| `FilePicker` | 🟡 `Button` + `IFileOpenDialog` (共通ダイアログ) | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `<button>` + 隠した `<input type=file>` | 🟡 `GtkButton` + `GtkFileDialog` |
-| `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | 🟡 `<dialog>` + `showModal()` | ✅ `AdwAlertDialog` |
-| `Image` | 🟡 `Image` (バインディングが無いため `XamlReader` 経由) | ✅ `NSImageView` | ✅ `<img>` | ✅ `GtkPicture` |
-| `Video` | ✅ `MediaPlayerElement` + `MediaPlayer` | ✅ `AVPlayerView` (AVKit) | ✅ `<video>` | 🟡 `GtkPicture` (`GtkMediaFile` を映す) + `GtkMediaControls` |
-| `Audio` | ✅ `MediaPlayerElement` (映像トラック無し) | 🟡 `AVPlayerView` (映像面を持たない) | ✅ `<audio>` | 🟡 `GtkMediaControls` + `GtkMediaFile` |
+| `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | ✅ `AdwApplicationWindow` | 🔴 `<div>` + `document.title` |
+| `Stack` | ✅ `StackPanel` | ✅ `NSStackView` | ✅ `GtkBox` | 🟡 `<div>` + CSS Flexbox |
+| `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🟡 `GtkGrid` | 🟡 `<div>` + CSS Grid |
+| `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
+| `Spacer` | 🔴 中身のない `Grid` | 🟡 中身のない `NSView` | 🟡 中身のない `GtkBox` | 🟡 `<div>` + `flex-grow` |
+| `Label` | ✅ `TextBlock` | ✅ `NSTextField` | ✅ `GtkLabel` | ✅ `<span>` |
+| `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
+| `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
+| `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
+| `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
+| `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
+| `ProgressBar` | 🟡 `Grid` + `Border` | ✅ `NSProgressIndicator` | ✅ `GtkProgressBar` | ✅ `<progress>` |
+| `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
+| `FilePicker` | 🟡 `Button` + `IFileOpenDialog` | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `GtkButton` + `GtkFileDialog` | 🟡 `<button>` + `<input type="file">` |
+| `Image` | 🟡 `Image` (`XamlReader` 経由) | ✅ `NSImageView` | ✅ `GtkPicture` | ✅ `<img>` |
+| `Video` | ✅ `MediaPlayerElement` | ✅ `AVPlayerView` | 🟡 `GtkPicture` + `GtkMediaControls` | ✅ `<video>` |
+| `Audio` | ✅ `MediaPlayerElement` | 🟡 `AVPlayerView` | 🟡 `GtkMediaControls` + `GtkMediaFile` | ✅ `<audio>` |
+| `PopupMenu` | 🟡 `Grid` + `Button` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
+| `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | ✅ `AdwAlertDialog` | 🟡 `<dialog>` + `showModal()` |
 
-### 配置とサイズ
+#### ナビゲーション対応表
 
-どのウィジェットも `set_sizing` で大きさを指定できます。計算するのは
-ネイティブのレイアウト機構 (Auto Layout / XAML のレイアウトパス / CSS) で、
-naui は制約やプロパティを設定するだけです。
-
-```rust
-use naui::{GridCell, Length, ScrollPolicy, Sizing, Track};
-
-// 幅は親いっぱい、高さは 160px、幅は 120px 以上。
-widget.set_sizing(
-    Sizing::new()
-        .width(Length::Fill)
-        .height(Length::Fixed(160.0))
-        .min_width(120.0),
-);
-```
-
-`Length` は 3 つです。
-
-| 値 | 意味 |
-| --- | --- |
-| `Auto` | 中身に合わせる (既定) |
-| `Fixed(f64)` | 論理ピクセルで固定する |
-| `Fill` | 親の余りを受け取って広がる |
-
-`Fill` の意味は軸によって変わります。親の並び方向 (主軸) では**余った空間を
-受け取り**、それと直交する方向 (交差軸) では**親いっぱいに広がります**。
-
-| | 主軸の `Fill` | 交差軸の `Fill` |
-| --- | --- | --- |
-| macOS | hugging priority を下げて NSStackView から余りを受け取る | 親の幅 / 高さに合わせる制約 |
-| Web | `flex-grow: 1` | `align-self: stretch` |
-| Windows | **`Stack` では効きません** (StackPanel は余りを配らない)。`Grid` の `Track::Fill` を使ってください | `HorizontalAlignment` / `VerticalAlignment` の `Stretch` |
-
-#### Grid
-
-行と列で位置を決めるコンテナです。列 / 行の幅は `Track` で決めます。
-
-```rust
-let form = ui.grid()?;
-form.set_spacing(12.0, 8.0);          // 列間, 行間
-form.set_column_track(0, Track::Fixed(96.0));
-form.set_column_track(1, Track::FILL); // 残りいっぱい
-form.attach(&ui.label("名前")?, GridCell::new(0, 0));
-form.attach(&field, GridCell::new(1, 0));
-form.attach(&submit, GridCell::new(0, 1).span(2, 1)); // 2 マス分
-```
-
-マスの中では、**縦は中央ぞろえ**です (`Fill` を指定した子だけマスいっぱいに
-広がります)。ラベルと入力欄のように高さの違うものを同じ行に並べても、
-上端でずれません。横は各環境の既定 (先頭ぞろえ) のままです。
-
-`Track::Fill(weight)` の重みは、Web では `fr`、Windows では `Star` に対応します。
-macOS の NSGridView には重みの概念が無いため、**重みの違いは反映されません**
-(`Fill` 配置と hugging priority による近似です)。
-
-#### Scroll
-
-はみ出した分をスクロールさせるコンテナです。既定は横 `Never`・縦 `Auto`。
-
-```rust
-let scroll = ui.scroll()?;
-scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
-scroll.set_child(&long_list);
-scroll.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(160.0)));
-```
-
-Windows では、WinUI 3 のホストウィンドウでマウスホイール入力を受け取り、
-表示中の `ScrollViewer` のスクロール位置へ反映します。そのため、スクロール領域の
-子要素上でホイールを操作した場合も縦にスクロールできます。`ScrollPolicy::Never` を
-指定した軸は、スクロールバーとマウスホイールのどちらからもスクロールしません。
-
-#### Spacer
-
-中身を持たず、余った空間だけを受け取るウィジェットです。縦スタックの途中に
-置くと、後ろの要素が下端へ寄ります (`Dock` を画面下端に置く用途)。
-
-```rust
-root.append(&ui.spacer()?);
-root.append(&dock);   // 下端に寄る
-```
-
-Windows の `StackPanel` は余りを配らないため、`Spacer` と主軸の `Fill` は
-`Stack` の中では効きません。`Grid` の行を `Track::Fill` にしてください。
-
-### テキスト入力
-
-1 行なら `TextInput`、改行を含む文章なら `TextArea` を使います。API の形は同じで、
-どちらも IME・コピー / 貼り付け・取り消しはネイティブに任せています。
-
-```rust
-let memo = ui.text_area("")?;
-memo.set_placeholder("複数行のメモ (改行できます)");
-// スクロールと同じく中身に合わせた高さを持たないので、指定しておく。
-memo.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(96.0)));
-memo.on_change(|text| println!("{} 文字", text.chars().count()));
-```
-
-`TextArea` は**長い行を折り返し、はみ出した分は縦にスクロール**します。
-折り返しの有無を選ぶ設定はありません (3 環境の共通部分に無いため)。
-
-| | 実体 | 備考 |
-| --- | --- | --- |
-| macOS | `NSTextView` + `NSScrollView` | `NSTextView` にプレースホルダーが無いため、薄い色のラベルを重ねている。ラベルは当たり判定を通すので、その上を押してもキャレットが立つ |
-| Windows | `TextBox` (`AcceptsReturn` + `TextWrapping::Wrap`) | 1 行のときと同じコントロール |
-| Web | `<textarea>` | ブラウザ既定のまま |
-
-`set_text` で書き換えても `on_change` は呼ばれません
-(Windows だけは `TextChanged` がネイティブ側で出るため呼ばれます。
-`TextInput` と同じ挙動です)。**`Scroll` や `List` と同じく中身に合わせた
-高さを持たない**ので、`set_sizing` で高さを指定してください。
-
-> `TextArea` は macOS (自動テスト) と Web (ブラウザで打鍵し、改行を含む文字列が
-> `on_change` へ届くことを確認) まで確認済みです。**Windows は実装と
-> コンパイルの確認までで、実機での操作確認はこれからです。**
-
-### メディア
-
-写真・動画・音声を表示します。**デコードも再生も naui は行いません。**
-ファイルを開くのも再生バーを描くのも、その環境のツールキット
-(AVFoundation / ブラウザ / Windows.Media.Playback) の仕事です。
-
-```rust
-use naui::{Fit, PlaybackState};
-
-let photo = ui.image("/path/to/photo.jpg")?;   // パスでも URL でもよい
-photo.set_fit(Fit::Cover);
-photo.set_alt("桜の写真");                      // 読み上げ用の説明
-
-let movie = ui.video("https://example.com/clip.mp4")?;
-movie.set_sizing(Sizing::fixed(320.0, 180.0));
-movie.play();
-movie.set_volume(0.5);
-
-let sound = ui.audio("/path/to/bgm.m4a")?;     // 音声を再生する
-```
-
-`Video` と `Audio` は**同じ形の再生 API** を持ちます。
-
-| メソッド | 意味 |
-| --- | --- |
-| `set_source(&str)` / `source()` | 場所を指定する。再生は止まり `Idle` に戻る |
-| `play()` / `pause()` | 再生・一時停止。最後まで再生した後の `play()` は先頭へ戻す |
-| `seek(秒)` / `position()` | 再生位置。負の値は先頭として扱う |
-| `duration()` | 長さ (秒)。**読み込みが終わるまで `None`**。ライブ配信も `None` |
-| `set_volume(0.0..=1.0)` / `set_muted(bool)` | 音量と消音。範囲外は丸める |
-| `set_loop(bool)` / `set_autoplay(bool)` | 繰り返しと自動再生 |
-| `set_controls(bool)` | ネイティブの再生バーを出すか (Windows では安全性のため常に無効。Gallery は独自の操作欄を使用) |
-| `on_state_change(f)` | 状態が変わったとき。`Idle` / `Buffering` / `Playing` / `Paused` / `Ended` |
-| `on_position_change(f)` | 再生位置が進むたび (およそ 4 回/秒)。シークバーの追従に使う |
-
-`on_state_change` と `on_position_change` は、アプリから `play()` を呼んだときだけで
-なく、macOS / Web の再生UIや、Windowsでアプリ側に用意した操作欄をユーザーが操作した
-ときにも届きます。
-
-`Fit` は画像と動画の映像面の収め方です。
-
-| 値 | 意味 |
-| --- | --- |
-| `Contain` | 縦横比を保って収める (既定) |
-| `Cover` | 縦横比を保って埋める。はみ出しは切り取る |
-| `Fill` | 縦横比を無視して引き伸ばす |
-| `None` | 原寸のまま |
-
-#### ファイル選択と組み合わせる
-
-`FilePicker` が返す `FileEntry::source()` は、そのままメディアへ渡せます。
-ネイティブでは絶対パス、Web ではブラウザが作る `blob:` URL になります。
-
-```rust
-let pick = ui.file_picker("動画を選ぶ")?;
-pick.set_filters(&[FileFilter::new("動画", ["mp4", "mov"])]);
-pick.on_select({
-    let movie = movie.clone();
-    move |entries| {
-        if let Some(source) = entries.first().and_then(|e| e.source()) {
-            movie.set_source(source);
-        }
-    }
-});
-```
-
-Web の `blob:` URL は、**同じ `FilePicker` で次に選び直すまで**有効です
-(選び直すと以前のものは `URL.revokeObjectURL` で破棄されます)。
-
-どのウィジェットで表示するかは、**`FileFilter` で受け付ける拡張子を絞って
-選ばせる**のが確実です。選ばれた時点で種類が決まるので、naui 側に種類を
-推測する仕組みは持たせていません。
-
-### ナビゲーション
-
-| naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
+| naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
-| `Tabs` | 🟡 `Grid` + `ToggleButton` (TabViewの未パッケージ起動回避) | ✅ `NSTabView` + `NSTabViewItem` | 🟡 `role="tablist"` + `<button role=tab>` + `hidden` | ✅ `GtkNotebook` |
-| `Navbar` | 🟡 `TextBlock` + `ToggleButton` の横並び | 🟡 `NSTextField` + `NSSegmentedControl` | 🟡 `<nav>` + `<strong>` + `<button>` | 🟡 `GtkLabel` + `GtkToggleButton` の横並び |
-| `Dock` | 🟡 `ToggleButton` の横並び | ✅ `NSSegmentedControl` (等幅) | 🟡 `<nav>` + `<button>` (等幅) | 🟡 `GtkToggleButton` の横並び (等幅) |
-| `Menu` | 🟡 `ToggleButton` の縦並び | 🟡 `NSButton` (AccessoryBar) の縦並び | 🟡 `<nav><ul><li><button>` | 🟡 `GtkToggleButton` の縦並び (`navigation-sidebar`) |
-| `Breadcrumbs` | 🟡 `HyperlinkButton` + 区切りの `TextBlock` | ✅ `NSPathControl` + `NSPathControlItem` | 🟡 `<nav><ol><li><a href>` | 🔴 区切り (`›`) を挟んだ `GtkToggleButton` の横並び |
-| `Pagination` | 🟡 `Button` + `ToggleButton` | 🟡 `NSButton` + `NSSegmentedControl` | 🟡 `<nav>` + `<button>` | 🟡 `GtkButton` + `GtkToggleButton` |
-| `Link` | ✅ `HyperlinkButton` | 🟡 `NSButton` (枠なし・リンク色) + `NSWorkspace` | ✅ `<a href>` | ✅ `GtkLinkButton` |
+| `Tabs` | 🟡 `Grid` + `ToggleButton` | ✅ `NSTabView` | ✅ `GtkNotebook` | 🟡 `role="tablist"` + `<button>` |
+| `Navbar` | 🟡 `TextBlock` + `ToggleButton` | 🟡 `NSTextField` + `NSSegmentedControl` | 🟡 `GtkLabel` + `GtkToggleButton` | 🟡 `<nav>` + `<strong>` + `<button>` |
+| `Dock` | 🟡 `ToggleButton` の横並び | ✅ `NSSegmentedControl` | 🟡 `GtkToggleButton` の横並び | 🟡 `<nav>` + `<button>` |
+| `Menu` | 🟡 `ToggleButton` の縦並び | 🟡 `NSButton` の縦並び | 🟡 `GtkToggleButton` の縦並び | 🟡 `<nav><ul><li><button>` |
+| `Breadcrumbs` | 🟡 `HyperlinkButton` + 区切り | ✅ `NSPathControl` | 🔴 `GtkToggleButton` + 区切り | 🟡 `<nav><ol><li><a>` |
+| `Pagination` | 🟡 `Button` + `ToggleButton` | 🟡 `NSButton` + `NSSegmentedControl` | 🟡 `GtkButton` + `GtkToggleButton` | 🟡 `<nav>` + `<button>` |
+| `Link` | ✅ `HyperlinkButton` | 🟡 `NSButton` + `NSWorkspace` | ✅ `GtkLinkButton` | ✅ `<a>` |
 
-7 種類とも **同じ形の API** を持ちます。項目は `NavItem` の並びで渡し、
-選ばれたものはインデックスで返ります。
+### 主なデータ型
 
-```rust
-let navbar = ui.navbar("naui")?;
-navbar.set_items(&NavItem::list(["ホーム", "検索", "設定"]));
-navbar.on_select(|index| println!("{index} 番目が選ばれた"));
-navbar.set_selected(0);            // 通知せずに選択を変える
-navbar.select(1);                  // ユーザー操作と同じ経路 (通知あり)
-let _: Option<usize> = navbar.selected();
-```
+- `Sizing` / `Length` / `Track` / `GridCell`: 配置とサイズ
+- `NavItem`: ナビゲーション項目
+- `ListItem` / `SelectionMode`: リスト項目と単一・複数選択
+- `FileFilter` / `FilePickerMode` / `FileEntry`: ファイル選択
+- `Fit` / `PlaybackState`: メディア表示と再生状態
+- `PopupItem`: ポップアップメニュー項目
+- `DialogButtons` / `DialogResponse`: ダイアログのボタンと応答
 
-| メソッド | 意味 |
-| --- | --- |
-| `set_items(&[NavItem])` | 項目を作り直す。インデックスの意味が変わるため選択は外れる (`Breadcrumbs` だけは末尾が現在地になる) |
-| `selected()` | いま選ばれている位置。未選択なら `None` |
-| `set_selected(i)` | **通知せずに**選択を変える (アプリの状態を UI に反映する用) |
-| `select(i)` | ユーザーが選んだのと同じ経路で選択を変える (通知あり。テストや自動操作にも使える) |
-| `on_select(f)` | 選ばれたときに呼ばれる。設定し直すと以前のものは外れる |
-
-`Tabs` だけは中身のウィジェットごと持つため `add_tab(label, &child)` で組み立て、
-`Pagination` はページ番号を扱うため `set_page_count` / `page` / `set_page` /
-`go_previous` / `go_next` / `on_change` という名前になっています。
-
-### ポップアップ (コンテキスト) メニュー
-
-`PopupMenu` は**右クリック (副ボタン) で出るメニュー**です。画面に並ばないため
-`Widget` ではなく、`Stack` や `Grid` に入れることはできません。
-
-| naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
-| --- | --- | --- | --- | --- |
-| `PopupMenu` | 🟡 ルートに重ねる `Grid` + `Button` の縦並び | ✅ `NSMenu` + `NSMenuItem` | 🟡 `<div role="menu">` + `<button role="menuitem">` | ✅ `GtkPopoverMenu` + `GMenu` + `GSimpleAction` |
-
-```rust
-let label = ui.label("右クリックしてください")?;
-
-let popup = ui.popup_menu()?;
-popup.set_items(&[
-    PopupItem::new("コピー"),
-    PopupItem::separator(),               // 選べないので通知も来ない
-    PopupItem::new("削除").enabled(false),
-]);
-popup.on_select(|index| println!("{index} 番目が選ばれた"));
-popup.attach(&label);                    // 右クリックで出るようにする
-popup.open_at(&label, 0.0, 24.0);        // プログラムから出す (左上からの位置)
-popup.close();                           // 出ているものを閉じる
-```
-
-| メソッド | 意味 |
-| --- | --- |
-| `set_items(&[PopupItem])` | 項目を作り直す。インデックスは**区切り線を含めた並びの位置** |
-| `attach(&widget)` | そのウィジェットの右クリックでメニューを出す。いくつでも取り付けられる |
-| `open_at(&widget, x, y)` | プログラムから出す。位置はウィジェットの左上からの論理ピクセル (y は下向き) |
-| `close()` | 出ているメニューを閉じる |
-| `select(i)` | ユーザーが選んだのと同じ経路で通知する (テストや自動操作用)。区切り線と選べない項目は無視する |
-| `on_select(f)` | 選ばれたときに呼ばれる。設定し直すと以前のものは外れる |
-
-**持たないもの**: 階層 (サブメニュー)、チェック印、ショートカットの表示。
-項目は「文字・選べるかどうか・区切り線」だけで、4 環境がそろって同じ形で
-扱える範囲にそろえてあります。
-
-ネイティブのメニューがあるのは macOS (`NSMenu`) だけで、**Windows と Web は
-合成**です (WinUI 3 の `MenuFlyout` は `winio-winui3` のバインディングに無く、
-ブラウザにはコンテキストメニューを差し替える API がありません)。合成のほうは
-**矢印キーでの項目移動を持ちません**。Escape で閉じられるのは Web だけで、
-Windows はキーイベントのバインディングが無いため閉じられません
-(メニューの外側を押せば、どちらも閉じます)。
-
-ブラウザ既定のコンテキストメニューを抑止するのは、**取り付けたウィジェットの
-上だけ**です。それ以外の場所では今までどおり出ます。
-
-`Menu` (縦に並ぶナビゲーション一覧) との違いは役割です。`Menu` は画面を
-切り替えるもので画面に並び続け、`PopupMenu` は操作を選ばせるもので
-押したときだけ出ます。
-
-### リスト
-
-`List` は**行が縦に並ぶ一覧**です。ナビゲーションの `Menu` と見た目は
-似ていますが、役割が違います。`Menu` は画面を切り替えるもの、`List` は
-データを選ぶもので、`List` だけが**複数選択**と**自前のスクロール**を持ちます。
-
-```rust
-let list = ui.list()?;
-list.set_items(&ListItem::list(["札幌", "東京", "大阪"]));
-list.set_selection_mode(SelectionMode::Multiple);  // 既定は Single
-list.on_select(|indices| println!("{indices:?} が選ばれた"));
-
-list.set_selection(&[0, 2]);       // 通知せずに選択を置き換える
-list.select(1);                    // ユーザー操作と同じ経路 (通知あり)
-let _: Vec<usize> = list.selection();
-let _: Option<usize> = list.selected();  // 選ばれているうち、いちばん上の行
-
-// スクロールと同じく高さを自分では決めないので、指定しておく。
-list.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(180.0)));
-```
-
-行には**補助の文字**を付けられます。macOS / Windows では 2 行目に小さく出て、
-その行だけ高さが増えます (高さを決めるのは AppKit の
-`usesAutomaticRowHeights` と WinUI のレイアウトパスで、naui は制約を張るだけです)。
-
-```rust
-list.set_items(&[
-    ListItem::new("札幌").detail("北海道"),
-    ListItem::new("東京").detail("東京都"),
-    ListItem::new("京都"),                    // detail 無しの行は 1 行のまま
-]);
-```
-
-**Web は行の中身で作りが変わります。** `<option>` の内容モデルはテキストのみで、
-要素も改行も置けません。そこで
-
-| 行 | Web の作り |
-| --- | --- |
-| 文字だけ | `<select size>` + `<option>` — ブラウザ標準のリストボックスそのもの |
-| `detail` あり | `<ul role="listbox">` + `<li role="option">` — 2 行にするための合成 |
-
-と切り替えます。`<select>` は選択もキーボード操作もスクロールもブラウザが
-面倒を見てくれる本物のコントロールなので、**その必要が無いときは使い続けます**。
-合成のほうは naui がクリック・⌘ / Ctrl / Shift での複数選択・矢印キー・
-Home / End・`aria-activedescendant` を受け持ちますが、枠と選択の配色は
-ブラウザのシステム色 (`Field` / `SelectedItem` / `Highlight` / `GrayText`) に
-任せていて、naui は色を決めません。
-
-| メソッド | 意味 |
-| --- | --- |
-| `set_items(&[ListItem])` | 行を作り直す。インデックスの意味が変わるため選択は外れる |
-| `set_selection_mode(mode)` | `Single` (既定) と `Multiple` の切り替え。切り替えると選択は外れる |
-| `selection()` | 選ばれている行を**昇順**で返す。複数選択では 0 件にもなる |
-| `selected()` | 選ばれているうち、いちばん上の行。無ければ `None` |
-| `set_selected(i)` / `set_selection(&[i])` | **通知せずに**選択を置き換える |
-| `clear_selection()` | **通知せずに**選択をすべて外す |
-| `select(i)` / `select_many(&[i])` | ユーザーが選んだのと同じ経路で選択を変える (通知あり) |
-| `on_select(f)` | 選択が変わったときに、選ばれている行 (昇順) で呼ばれる |
-
-`set_selection` に渡した並びは、**範囲外・選べない行 (`ListItem::enabled` が
-`false`)・重複が取り除かれ、昇順にそろえられます**。`Single` のときは
-先頭の 1 件だけが残ります。この正規化は `naui-core` の
-`SelectionMode::normalize` にあり、3 バックエンドとも同じものを通します。
-
-`Multiple` はどの環境でも「⌘ / Ctrl や Shift を押しながら選ぶ」形です
-(WinUI では `SelectionMode::Multiple` ではなく `Extended` に写しています。
-`Multiple` はクリックのたびに反転する挙動で、macOS / Web と揃わないためです)。
-
-実際の動きは `gallery` の**「リスト」タブ**で確認できます。単一 / 複数の切り替え、
-選択の表示、通知あり (`select`) と通知なし (`clear_selection`) の違い、
-選べない行 (末尾の「那覇 (準備中)」) がクリックで選ばれないことを試せます。
+API の詳しい説明は、リポジトリ内で次のコマンドを実行して確認できます。
 
 ```sh
-cargo run -p gallery          # ネイティブ (macOS / Windows)
+cargo doc --open -p naui
 ```
 
-### ファイルとフォルダーの選択
+### ネイティブオブジェクトへのアクセス
 
-`FilePicker` は**ボタン 1 つ**です。押すと、その環境の標準のファイル選択が
-開きます (macOS は `NSOpenPanel`、Windows はエクスプローラーと同じ
-Common Item Dialog、Web はブラウザのファイル選択)。一覧・検索・アクセス権限の
-扱いは、すべてその環境が行います。
+共通 API で足りない場合は、バックエンド固有のオブジェクトを取得できます。
 
-```rust
-use naui::{FileFilter, FilePickerMode};
+```rust,ignore
+// macOS
+let view = button.native_view();
 
-let picker = ui.file_picker("画像を選ぶ")?;
-picker.set_mode(FilePickerMode::File);   // File / Files / Folder
-picker.set_filters(&[FileFilter::new("画像", ["png", "jpg"])]);
-picker.on_select(|entries| {
-    for entry in entries {
-        match entry.path() {
-            Some(path) => println!("{}", path.display()),  // ネイティブ
-            None => println!("{}", entry.name()),          // Web
-        }
-    }
-});
-stack.append(&picker);
+// Web
+let element = button.native_element();
 ```
 
-| メソッド | 意味 |
-| --- | --- |
-| `set_mode(FilePickerMode)` | 何を選ばせるか。`File` (既定) / `Files` (複数) / `Folder` |
-| `set_filters(&[FileFilter])` | 拡張子で絞り込む。`Folder` のときは無視される |
-| `selection()` | 最後に選ばれたもの (`Vec<FileEntry>`)。未選択なら空 |
-| `on_select(f)` | 選ばれたときに `&[FileEntry]` で呼ばれる。**取り消したときは呼ばれない** |
-| `open()` | ボタンを押さずにダイアログを出す (Web は後述の制約あり) |
+このコードは対象プラットフォームに依存するため、必要に応じて `cfg` で分けてください。
 
-選ばれたものは `FileEntry` で、`name()` は表示名、`path()` は絶対パスです。
+## Web 版の実行
 
-| 環境 | `path()` | 備考 |
-| --- | --- | --- |
-| macOS / Windows | `Some(絶対パス)` | |
-| Web | **常に `None`** | ブラウザはパスを渡さない。中身が要るときは `native_element()` から `<input>` を取り出して `FileList` を読む |
-
-**Web には 2 つ制約があります。**
-
-- `open()` は**ユーザー操作のイベントの中でしか効きません**。ブラウザが
-  ファイル選択の自動起動を禁じているためで、ボタンを押した経路 (既定の動き)
-  なら問題ありません。
-- フォルダーを選ぶと、ブラウザは**そのフォルダーの中のファイル一覧**を返します。
-  他の環境はフォルダー 1 つを返すので、naui は `webkitRelativePath` の先頭から
-  フォルダー名を取り出し、**1 件に畳んで**そろえています。
-
-保存ダイアログ (名前を付けて保存) はありません。`<input type=file>` に相当が
-無く、Web だけ形が変わってしまうためです。
-
-### ダイアログ
-
-`Dialog` は、その環境の標準のモーダルです (Windows は `ContentDialog`、
-macOS は `NSAlert`、Web は `<dialog>` + `showModal()`)。暗幕・配置・
-背後の操作を止めること・Esc での取り消しは、すべてその環境が行います。
-
-**見出し + 本文 + 任意のウィジェット + 役割つきのボタン (最大 3 つ)** という形は、
-4 環境でいちばん狭い `ContentDialog` に合わせたものです。
-
-```rust
-use naui::{DialogButtons, DialogResponse};
-
-let dialog = ui.dialog("保存しますか")?;
-dialog.set_message("変更が残っています。");
-dialog.set_child(&ui.checkbox("次回から確認しない")?);   // 任意のウィジェット
-dialog.set_buttons(
-    DialogButtons::new()
-        .primary("保存")
-        .secondary("保存しない")
-        .cancel("キャンセル"),
-);
-dialog.on_response(|response| match response {
-    DialogResponse::Primary => println!("保存する"),
-    DialogResponse::Secondary => println!("保存しない"),
-    DialogResponse::Cancel => println!("やめる"),   // Esc もここへ来る
-});
-dialog.open();
-```
-
-| メソッド | 意味 |
-| --- | --- |
-| `set_title(&str)` / `title()` | 見出し |
-| `set_message(&str)` / `message()` | 本文。空にすると出ない |
-| `set_child(&Widget)` | 本文とボタンの間に置くウィジェット。呼ぶたびに置き換わる |
-| `set_buttons(DialogButtons)` / `buttons()` | 出すボタン。役割ごとに 0 個か 1 個 |
-| `on_response(f)` | 閉じたときに `DialogResponse` で呼ばれる。**`close()` で閉じたときは呼ばれない** |
-| `open()` | 出す。**macOS は閉じるまで戻らない** (後述) |
-| `close()` | 閉じる。通知はしない |
-| `is_open()` | いま出ているか |
-
-ボタンの並びはその環境の作法に従います。ラベルを渡さなかった役割のボタンは
-出ません。**1 つも渡さないと「OK」だけ**が出ます (どの環境でも閉じる手段が
-Esc だけになってしまうため)。
-
-| 役割 | Windows | macOS | Web |
-| --- | --- | --- | --- |
-| `Primary` | 左端 (`PrimaryButton`、既定のボタン) | 右端 (先頭に追加、Return) | 右端 |
-| `Secondary` | 中央 (`SecondaryButton`) | 左端 | 左端 |
-| `Cancel` | 右端 (`CloseButton`、Esc) | 中央 (Esc) | 中央 |
-
-**`open()` の戻り方が macOS だけ違います。** `NSAlert` はアプリモーダルなので、
-macOS では `open()` が閉じられるまで戻らず、`on_response` はその中で呼ばれます
-(`FilePicker` の `NSOpenPanel` と同じ性質)。Web と Windows の `open()` はすぐ戻り、
-通知はあとから届きます。**どちらでも動くように、後片付けは `on_response` の中で
-行ってください。**
-
-実際の動きは `gallery` の**「ダイアログ」タブ**で確認できます。
-
-### 🟡 / 🔴 の内訳
-
-| 箇所 | 内容 |
-| --- | --- |
-| 🔴 Web の `Window` | ブラウザにはページ内ウィンドウの概念が無い。`<body>` 直下の `<div>` で代用し、タイトルは `document.title` に反映している。`show()` / `close()` は `display` の切り替え、`set_size()` は `max-width` / `min-height` の指定であり、**OS のウィンドウ操作ではない** |
-| 🟡 Web の `Stack` | HTML に「スタック」というコントロールは存在しない。ただし CSS Flexbox はブラウザ自身のレイアウト機構なので、独自のレイアウト計算はしていない (`display:flex` + `flex-direction` + `gap` + `padding`) |
-| 🟡 Web の `Checkbox` | `<input type=checkbox>` 自体はネイティブだが、ラベル文字列を持たないため `<label>` で `<input>` と `<span>` を包んでいる |
-| 🟡 Web のナビゲーション全般 | ブラウザに「タブ」「ナビバー」というコントロールは無い。`<nav>` / `<ol>` / `<a>` / `<button>` と WAI-ARIA のロール (`tablist` / `tab` / `tabpanel` / `aria-current`) で意味づけし、隠すのは `hidden` 属性に任せている。CSS は Flexbox のレイアウトと、選択中を示す `font-weight: bold` だけ |
-| 🟡 macOS の `Navbar` | `NSSegmentedControl` はネイティブだが、見出しを持てないため `NSTextField` と `NSStackView` で横に並べている |
-| 🟡 macOS の `Menu` | AppKit の `NSMenu` はポップアップ用。サイドバー相当の縦一覧は `NSButton` (AccessoryBar・PushOnPushOff) を `NSStackView` に並べて作っている |
-| macOS の `List` の行 | 文字だけの `NSTextField` を行にすると、AppKit が枠の上端に文字を描くため選択の帯とずれる。AppKit 標準の `NSTableCellView` に入れ、上下の余白まで制約でつないで、高さを `usesAutomaticRowHeights` に求めさせている |
-| 🟡 Web の `List` (`detail` あり) | `<option>` はテキストしか持てず 2 行にできないため、`<ul role="listbox">` + `<li role="option">` を組み立てている。選択とキーボード操作は naui が受け持つ。**文字だけの行なら `<select size>` のまま**で、この合成は使わない |
-| 🟡 macOS の `TextArea` | `NSTextView` はネイティブだが、プレースホルダーを持たない。薄い色の `NSTextField` を重ね、`hitTest:` で nil を返して当たり判定を下の `NSTextView` へ通している |
-| 🟡 macOS の `Link` | AppKit にリンク専用のコントロールは無い。枠なしの `NSButton` を `NSColor::linkColor` にし、`href` は `NSWorkspace` で開いている |
-| 🟡 Windows の `Image` | `Microsoft.UI.Xaml.Controls.Image` と `BitmapImage` が `winio-winui3` 0.4.5 のバインディングに無く、Rust から `Source` を設定できない。`XamlReader` に `<Image>` の XAML を読ませ、ホストの `Grid` の中身を差し替えている (`ProgressBar` と同じ手口)。表示するのは WinUI 標準の `Image` そのもの |
-| 🟡 Windows の `Video` / `Audio` | `MediaPlayerElement` と `MediaPlayer` を使う。Windows App SDK の一部環境で標準 `MediaTransportControls` を visual tree に追加すると `0xc000027b` で終了するため、標準の再生バーは無効にし、Gallery は独自の操作欄を使っている |
-| 🟡 macOS の `Audio` | AppKit に音声専用のコントロールは無い。映像トラックの無いメディアを `AVPlayerView` に載せると再生バーだけが出るので、それを使っている |
-| 🟡 すべての `Pagination` | ページ送りに相当するネイティブコントロールはどの環境にも無い。前へ / 次へのボタンとページ番号を、その環境のネイティブなボタンで並べている |
-| 🟡 Windows の `Navbar` / `Dock` / `Menu` | `NavigationView` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、WinUI 標準の `ToggleButton` を `StackPanel` に並べ、選択状態を `IsChecked` で表している |
-| 🟡 Windows の `PopupMenu` | `MenuFlyout` は `winio-winui3` 0.4.5 のバインディングに含まれていない。ウィンドウのルート (いちばん外側の `Panel`) へ透明な `Grid` を重ね、その中に WinUI 標準の `Button` を縦に並べている。位置は `Margin`、色は `{ThemeResource ...}` なので Fluent のテーマには追従する |
-| 🟡 Web の `PopupMenu` | ブラウザ既定のコンテキストメニューは差し替えられないため、`<body>` 直下に `position: fixed` の `<div role="menu">` を置いて合成している。色は CSS のシステムカラー (`Canvas` / `CanvasText`) なので `color-scheme` に追従する |
-| 🟡 Windows の `Breadcrumbs` | `BreadcrumbBar` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、標準の `HyperlinkButton` と区切り文字を `StackPanel` に並べている |
-
-### 補足 (誤解しやすい箇所)
-
-| 箇所 | 説明 |
-| --- | --- |
-| macOS の `Image` の読み込み | `NSImage` は**同期的に**読む。リモートの URL を渡すと読み終わるまで UI が止まるため、ローカルのファイルを渡すこと |
-| `duration()` が `None` を返す間 | メディアの読み込みは 3 環境とも非同期。`set_source` の直後は長さが決まっていないので `None` になる。決まったかどうかは `on_state_change` / `on_position_change` を見る |
-| `Fit::Cover` と macOS の `Image` | `NSImageView` に設定が無いため独自描画で縦横比を保って拡大し、表示領域外を切り取る (動画の `Video` は `AVLayerVideoGravity` があるので効く) |
-| Web の自動再生 | ブラウザの自動再生制限で `play()` が拒否されることがある。拒否されると状態が変わらないので、`on_state_change` で見分けられる |
-| Windows の再生通知のスレッド | `PlaybackStateChanged` などは UI スレッドではなく再生パイプラインのスレッドで起きる。`DispatcherQueue` で UI スレッドへ渡し直してから通知している |
-| macOS の `Label` | AppKit に `NSLabel` は無く、`NSTextField` を非編集で使うのが標準。`labelWithString:` はそのためのファクトリなので完全ネイティブ |
-| macOS のメニューバー | `run` が最小限のメインメニュー (アプリ・編集) を用意する。macOS では ⌘C / ⌘V / ⌘A が**メインメニューのキー等価として配送される**ため、メニューが無いと `TextInput` で貼り付けができない。項目のターゲットは nil で、コピーや貼り付けを行うのは AppKit 自身。アプリが自分でメニューを作っていれば、そちらを尊重して何もしない |
-| macOS の `Checkbox` | `NSButton` の `Switch` タイプが AppKit のチェックボックスそのもの。別クラスではない |
-| WinUI 3 の `Button` / `Checkbox` | ラベルを `TextBlock` にして `Content` に入れている。XAML の標準的なやり方で、コントロール自体はネイティブ |
-| Web の `Slider` | `<input type=range>` の既定 `step` は 1 なので、連続値になるよう `(max-min)/1000` を設定している。値のクランプはブラウザ自身が行う |
-| すべての `Slider` / `ProgressBar` | 値のクランプはネイティブ側でも行われる (`NSSlider` は範囲外を丸める)。naui 側の `clamp` は二重の保険 |
-| `Dialog` の `open()` | macOS だけ**閉じるまで戻らない** (`NSAlert` がアプリモーダルのため)。Web / Windows はすぐ戻り、通知はあとから届く。どちらでも動くよう、続きの処理は `on_response` に書く |
-| `Dialog` の Esc | どの環境でも `DialogResponse::Cancel` になる。取り消しボタンを置いていなくても同じ (WinUI は `CloseButton`、macOS は取り消しボタンの keyEquivalent、Web は `cancel` イベント) |
-| `Dialog` の通知 | ユーザーが閉じたときだけ呼ばれる。`close()` で閉じたときは呼ばれない (`List` の `set_selected` と同じで、アプリ自身の操作は通知しない) |
-| `Dialog` は同時に 1 つ | WinUI 3 は同じ `XamlRoot` に 2 つの `ContentDialog` を出せない。すべての環境で「出ている間は次を出さない」に揃えてあり、出ている `Dialog` の `open()` は何もしない |
-| Windows の `Dialog` と `XamlRoot` | `ContentDialog` はウィンドウの上に出るため、**`window.show()` より前には出せない**。まだウィンドウが無いときは、その旨を標準エラーへ出して何もしない |
-| `Menu` という名前 | naui の `Menu` は**縦に並ぶナビゲーション一覧** (サイドバー) であって、ポップアップメニューではない。右クリックで出るほうは `PopupMenu` |
-| `PopupMenu` のインデックス | 区切り線も 1 項目として数える。`set_items` に渡した並びの位置がそのまま返るので、渡した `Vec` を `get(index)` で引ける。区切り線と選べない項目は通知されない |
-| macOS の `PopupMenu` の `open_at` | `NSMenu` が出ている間は AppKit がイベントを取り回すため、**閉じるまで呼び出しが戻らない**。自動テストで呼ばないのはこのため (選択の確認は `select` で行う) |
-| macOS の `autoenablesItems` | `NSMenu` は既定で AppKit 自身が項目の有効・無効を決めてしまい、`enabled(false)` が無視される。naui は生成時に切っている |
-| `List` の高さ | 中身に合わせた高さを持たない (macOS は `NSScrollView` そのものなので `Scroll` と同じ)。`set_sizing` で高さを指定すること |
-| `List` の通知 | `on_select` は**選択が変わるたび**に、選ばれている行の並びで呼ばれる。複数選択では**空の並び**で呼ばれることもある。`set_selected` / `set_selection` / `clear_selection` は通知しない |
-| `List` の列 | 1 列だけ。複数列のテーブルは未実装で、必要なら `native_table()` / `native_list_box()` / `native_select()` から直接触る |
-| `ListItem::detail` | macOS / Windows は 2 行目に小さく出る。**Web は `detail` があると `<select>` から `role="listbox"` の合成へ切り替わる** (`<option>` はテキストしか持てないため) |
-| Web の `List` の切り替わり | 判定は `set_items` のたび。1 行でも `detail` があれば合成になる。切り替わっても外側の要素は変わらないので、`set_sizing` の指定と親への追加はそのまま生きる |
-| Web の `List::native_select` | 合成に切り替わっているときは `None` を返す。どちらの場合も外枠は `native_element()` から取れる |
-| `List` の行の高さ | 行ごとに変わる (`detail` のある行だけ高い)。決めるのは AppKit / WinUI で、naui は上下の余白を制約にするだけ |
-| Web の `List` の行数 | `<select>` は `size` を指定しないとドロップダウンになるため、行数に応じて 2..=8 の値を入れている。`set_sizing` で高さを指定すると CSS が優先される |
-| `Dock` の配置 | 下端への固定は行わない。**置く場所はアプリの責務**で、縦スタックの最後に置き、手前に `Spacer` か `Fill` を使うと下端に寄る |
-| `Fill` と `Auto` | どちらもネイティブのレイアウト機構への指示。naui 自身は位置も大きさも計算しない |
-| グリッドのマスの中 | 縦は中央ぞろえ (`NSGridCellPlacement::Center` / `VerticalAlignment::Center` / `align-items: center`)。`Fill` を指定した子だけマスいっぱいに広がる |
-| Windows の `Fill` の目印 | `HorizontalAlignment` は指定しなくても `Stretch` なので、プロパティだけでは「`Fill` と言われた」のか「既定のまま」なのかを区別できない。グリッドのマスの中でだけこの違いが要るため、`FrameworkElement.Tag` に目印を残している |
-| `set_sizing` を呼ぶ順番 | macOS の交差軸 `Fill` とグリッドのマス内配置は、`append` / `attach` の**前**に指定しておく (AppKit では追加時に制約とセルの配置を張るため)。Web と Windows は後から変えても追従する |
-| `Link` の遷移 | `href` が空でなければ、押したときにその環境の標準的な方法で開く (macOS は `NSWorkspace`、Windows は `HyperlinkButton` の `NavigateUri`、Web は `target="_blank"`)。Web で同じタブに遷移すると wasm のアプリごと破棄されるため、別タブに揃えている |
-| Windows の `Spacer` / 主軸の `Fill` | `StackPanel` は子へ余りを配らないため、`Stack` の中では効かない。`Grid` の `Track::Fill` (XAML の `Star`) が同じ役割を果たす |
-| macOS の `Track::Fill` | NSGridView に重みの概念が無いため、`Fill` 配置と hugging priority による近似。重みの違いは反映されない |
-| `FilePicker` の通知 | `on_select` は**選ばれたときだけ**呼ばれる。取り消しの通知は、Web の `cancel` イベントが新しく環境がそろわないため持たない |
-| `FilePicker` の絞り込み | 拡張子は `png` の形に正規化される (`.png` や `*.PNG` と書いても同じ)。macOS は `NSSavePanel` の拡張子指定、Windows は種類欄 (`COMDLG_FILTERSPEC`)、Web は `accept` 属性になる |
-| macOS の `NSOpenPanel` を直接使う | `FilePicker::native_panel()` が、設定済みで**未表示**のパネルを返す。シート表示 (`beginSheetModalForWindow:`) や開始ディレクトリの指定はここから行う |
-| 🟡 すべての `FilePicker` | 「押すとファイル選択が開くコントロール」は macOS にも WinUI 3 にも無い。その環境のネイティブなボタンと、その環境の標準のファイル選択ダイアログを組み合わせている。Web の `<input type=file>` は単体でボタンだが、**ボタンの文字列がブラウザ所有で差し替えられない**ため、`<button>` を表に出して押しを転送している |
-| 🟡 macOS の `Dialog` | AppKit の汎用モーダルは `NSAlert` で、見出し・本文・ボタン・任意のビュー (`accessoryView`) を持つ。ただし `accessoryView` は **frame** で場所が決まるため、Auto Layout の naui のウィジェットには `fittingSize` を frame として入れている (幅が決まらないウィジェットには 260pt を渡す) |
-| 🟡 Web の `Dialog` | `<dialog>` + `showModal()` は完全にブラウザのものだが、中身を持たない箱なので、見出し (`<h2>`)・本文 (`<p>`)・ボタン (`<button>`) は naui が並べている。CSS は Flexbox の並べ方だけ。閉じたことは `close` イベントではなく、押されたボタンと `cancel` (Esc) から直接わかるようにしている (`close` はアプリ自身の `close()` と区別できないため) |
-| 🟡 Windows の `FilePicker` | `Windows.Storage.Pickers` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、Win32 側の `IFileOpenDialog` (Common Item Dialog) を使っている。エクスプローラーと同じダイアログで、未パッケージ実行でも開ける |
-| Windows の `ProgressBar` | Windows App SDK 2.3.1 の未パッケージ実行では `ProgressBar` の既定テンプレート適用時にランタイムが終了するため、WinUI XAML の `Grid` と `Border` を組み合わせて同等の表示を構成している。表示幅は親に合わせて伸縮し、値の変更 API は維持している |
-
-### 未対応のコンポーネント
-
-保存ダイアログ、複数列のテーブル、
-ラジオボタン、コンボボックス、ツールバー、ツリーなどはありません
-(1 列のリストは `List`、複数行のテキスト入力は `TextArea`、
-ファイル / フォルダーの選択は `FilePicker`、
-右クリックのメニューは `PopupMenu`、モーダルは `Dialog`、
-画像・動画・音声は `Image` / `Video` / `Audio` があります)。
-レイアウトはスタック・グリッド・スクロールで、絶対配置はありません。
-
-> **注意:** Windows 列は、Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を
-> 実行し、基本ウィジェット・ナビゲーション系 7 種・`Grid` / `Scroll` / `Spacer` /
-> `set_sizing`・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の
-> 読み込みと再生・動画表示のリサイズまで確認済みです。
-> `ProgressBar` だけは上記の理由により、WinUI XAML 要素を組み合わせた実装です。
-
----
-
-## クレート構成
-
-```
-crates/
-  naui-core     … 共通の値型 (Error / Settings / Orientation / Align / Padding)
-  naui-macos    … AppKit バックエンド (objc2)
-  naui-web      … DOM バックエンド (web-sys)
-  naui-windows  … WinUI 3 バックエンド (winio-winui3)
-  naui-gtk      … GTK4 / libadwaita バックエンド (gtk4 / libadwaita)
-  naui          … ターゲットに応じてバックエンドを選ぶファサード
-examples/
-  counter       … 最小サンプル
-  gallery       … 全ウィジェットのデモ (ネイティブ / Web 共通コード)
-```
-
-バックエンドは別クレートなので、API のずれは型検査でしか捕まりません。
-そのため `crates/naui/src/lib.rs` に **`__api_contract`** という関数を置き、
-公開 API を一通り呼んでいます。どのターゲットでもコンパイルされるので、
-バックエンド間でシグネチャが食い違うとビルドが壊れます
-(実際、この仕組みが Windows 側の実装漏れを 1 件検出しました)。
-
-### 依存
-
-| バックエンド | 依存 |
-| --- | --- |
-| macOS | `objc2`, `objc2-app-kit`, `objc2-foundation`, `objc2-av-kit`, `objc2-av-foundation`, `objc2-core-media`, `block2` (メディア) |
-| Web | `wasm-bindgen`, `web-sys` |
-| Windows | `winio-winui3` (WinUI 3 バインディング), `windows`, `windows-core` |
-| Linux | `gtk4`, `libadwaita` (GTK 4.10 以上・libadwaita 1.5 以上の開発用ライブラリが必要) |
-
-ターゲット別の依存として宣言してあるので、macOS ビルドで GTK4 や
-Windows のバインディングが引き込まれることはありません。
-
----
-
-## ビルドと実行
-
-### ネイティブ
+wasm ターゲットと、`Cargo.lock` に記録されたものと同じバージョンの
+`wasm-bindgen-cli` が必要です。現在のロックファイルでは 0.2.127 です。
 
 ```sh
-cargo run -p counter
-```
-
-```sh
-cargo run -p gallery
-```
-
-### Web (wasm)
-
-```sh
-cargo install wasm-bindgen-cli --version 0.2.127   # Cargo.lock と同じ版
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.127
 cd examples/gallery/web
 ./build.sh
 python3 -m http.server 8080
-# → http://localhost:8080/
 ```
 
-DOM がテキストを描くため、フォントの埋め込みなどは不要です。
+その後、<http://localhost:8080/> を開いてください。
 
-ブラウザから呼ばれる入口 (`#[wasm_bindgen(start)]`) は `naui::entry!` が作るので、
-アプリ側には wasm-bindgen への依存も `cfg` も要りません。
+ネイティブと Web の両方を提供するアプリでは `entry!` を使うと、
+`#[wasm_bindgen(start)]` を含む入口を共通化できます。
 
 ```rust,ignore
-naui::entry!(Settings::new("naui gallery"), build); // pub fn start() ができる
+naui::entry!(Settings::new("naui gallery"), build);
 ```
 
-### Windows
+## 開発
 
-Windows バックエンドは WinUI 3 / Windows App SDK 2.x を使用します。現在の安定版
-である Windows App SDK 2.3.1 をインストールした Windows x64 環境で動作確認済みです。
-実行時には Windows App SDK のフレームワークランタイムが必要です。`cargo run` は
-インストール済みの Windows App SDK 2.x ランタイムを動的依存関係として追加します。
+### クレート構成
 
-Windows App SDK の[安定版リリース情報](https://github.com/microsoft/WindowsAppSDK/releases)
-も参照してください。
+```text
+crates/
+  naui-core      共通の値型
+  naui-macos     AppKit バックエンド
+  naui-web       DOM バックエンド
+  naui-windows   WinUI 3 バックエンド
+  naui-gtk       GTK4 / libadwaita バックエンド
+  naui           対象に応じてバックエンドを選ぶファサード
+examples/
+  counter        最小サンプル
+  gallery        全ウィジェットのデモ
+```
+
+バックエンド固有の依存はターゲット別に宣言されています。たとえば macOS の
+ビルドで GTK4 や WinUI 3 の依存が引き込まれることはありません。
+
+### テスト
+
+`naui-core`、現在のプラットフォーム用バックエンド、`naui` を指定して実行します。
+たとえば macOS では:
 
 ```sh
-cargo run -p gallery
+cargo test -p naui-core -p naui-macos -p naui
 ```
 
-### Linux
-
-GTK4 と libadwaita の**開発用ライブラリ**が要ります (実行だけなら
-ランタイムのみ)。Ubuntu 24.04 の例:
-
-```sh
-sudo apt-get install -y libgtk-4-dev libadwaita-1-dev build-essential pkg-config
-```
-
-```sh
-cargo run -p gallery
-```
-
-Wayland と X11 のどちらでも動きます。バックエンドを選ぶときは GTK4 の
-`GDK_BACKEND` を使ってください (naui 側に設定はありません)。
-
-`Settings::app_id` は GTK4 のアプリ ID になります。書き方が決まっている
-(`com.example.myapp` のような逆ドメイン形式で、各要素は数字で始められない)
-ため、受け付けられない ID を渡したときは `run` がエラーを返します。
-
----
-
-## テスト
-
-```sh
-cargo test --workspace
-```
-
-バックエンドは別クレートなので、4 ターゲット分のコンパイルも確認します
-(macOS からでも、ターゲットを追加すれば `cargo check` は通ります)。
-
-```sh
-cargo check --target x86_64-pc-windows-msvc -p naui
-```
-
-```sh
-cargo check --target wasm32-unknown-unknown -p naui
-```
-
-```sh
-cargo check --target x86_64-unknown-linux-gnu -p naui
-```
-
-- `naui-core`: 設定・エラー整形の単体テスト
-- `naui-macos`: **AppKit の実コントロールに対する 61 件の統合テスト**
-  - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
-  - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
-  - 日本語を含む文字列が NSTextField と往復すること
-  - 複数行入力が改行込みで NSTextView と往復すること
-  - NSTextView への打鍵が通知され、重ねたプレースホルダーが出入りすること
-  - プレースホルダーのラベルが当たり判定を NSTextView へ通すこと
-  - 複数行入力が指定した高さに収まり、折り返しの幅が親に追従すること
-  - NSSlider が範囲でクランプすること (naui ではなく AppKit の挙動)
-  - ハンドルを捨てた後もコンテナ経由でコールバックが生きていること
-  - NSWindow を生成・設定・クローズしても二重解放しないこと
-  - `NSSegmentedControl` の選択が往復し、`set_selected` は通知しないこと
-  - `NSTabView` がタブの中身を保持し、切り替えを 1 回だけ通知すること
-  - メニューの縦一覧で、押し込まれるボタンが常に 1 つだけであること
-  - リストの選択が NSTableView と往復し、`set_selected` は通知しないこと
-  - リストの複数選択が昇順にそろい、選択が 0 件にもなること
-  - **複数選択のとき、クリックに付いた Ctrl / Shift が GTK4 へ届くこと**
-    (`GtkListBox` の「1 クリックで確定」は修飾キーを読まないため切る)
-  - リストが選べない行を飛ばし、AppKit にも「選べない」と伝えていること
-  - リストの行が NSTableView のビューとして作られ、日本語がそのまま出ること
-  - NSTableView 側で選択を変えても、デリゲート経由でクロージャへ届くこと
-  - 通知の中から行を差し替えても、AppKit の再入で壊れないこと
-  - 行の文字が、選択の帯とずれないよう行の縦中央にそろうこと
-  - `detail` を付けた行だけが 2 行になり、そのぶん高くなること
-  - パンくずが末尾を現在地にし、階層を差し替えても追従すること
-  - ページ送りが先頭・末尾で止まること
-  - リンクのネイティブクリックがクロージャへ届くこと
-  - 大きさの指定が NSLayoutConstraint になり、AppKit の計算結果に出ること
-  - 指定し直しても制約が積み上がらず、AppKit 自身の制約を壊さないこと
-  - 交差軸の `Fill` が、余白を除いた親の幅に追従すること
-  - `Spacer` が余りを吸い、後続の子が下端へ寄ること
-  - NSGridView が行と列を自分で増やし、固定幅の列が効くこと
-  - NSScrollView が中身を保持し、コールバックが生き続けること
-  - 画像が実ファイルから NSImage として読み込まれ、収め方が imageScaling になること
-  - **実ファイルを最後まで再生し、`Playing` → `Ended` が届くこと**
-  - 繰り返し再生では末尾で止まらないこと
-  - 再生位置が定期的にクロージャへ届き、先頭へ戻らないこと
-  - 音量と消音が AVPlayer と往復し、範囲外が丸められること
-  - KVO と定期観測を張ったままハンドルを捨てても異常終了しないこと
-  - ポップアップメニューの項目・区切り線・選べない項目が、そのまま `NSMenu` の中身になること
-  - 選択が**区切り線を含めた位置**で届き、区切り線と選べない項目では届かないこと
-  - 取り付けたウィジェットのビューが、そのメニューを持つようになること
-  - ダイアログの見出し・本文・中身のウィジェットが `NSAlert` へ渡ること
-    (Auto Layout の子にも frame が入り、`accessoryView` が潰れないこと)
-  - ダイアログのボタンが役割の順に並び、取り消しに Esc・先頭に Return が付くこと
-  - ボタンを指定しないダイアログに「OK」だけが出ること
-  - 出していないダイアログを閉じても、modal を中断せず通知もしないこと
-
-- `naui-gtk`: **GTK4 / libadwaita の実コントロールに対する 61 件の統合テスト**
-  - `gtk_button_clicked` でネイティブのクリックを発生させ、クロージャに届くこと
-  - `GtkCheckButton` の `activate` で反転し、変更後の値が通知されること
-  - `GtkEntryBuffer` への差し込み (打鍵と同じ経路) が通知され、`set_text` は通知しないこと
-  - 日本語を含む文字列が `GtkEntry` / `GtkTextView` と往復すること
-  - `GtkTextView` に重ねたプレースホルダーが出入りし、クリックを通すこと
-  - `GtkAdjustment` を動かすとスライダーの通知が届き、範囲でクランプされること
-  - 大きさの指定が `gtk_widget_measure` の結果に出ること
-    (固定・最小・上限、指定し直しても積み上がらないこと)
-  - **上限付きの `Fill` が、空きがあれば上限まで場所を確保すること**
-  - 交差軸の `Fill` が `Stack::set_align` より優先されること
-  - `Spacer` が両方向に広がり、`Padding` が中身を狭めること
-  - `GtkGrid` が行と列を自分で増やし、固定幅・`Fill` の列が中の子に効くこと
-  - `GtkScrolledWindow` が中身とポリシーを保つこと
-  - `AdwApplicationWindow` を生成・設定・クローズできること
-  - ウィンドウにヘッダーバーが付き、最小化・最大化・閉じるのボタンが出ること
-  - **`Fill` を指定した軸が、中身の都合でウィンドウの縮められる下限を
-    決めてしまわないこと** (下限は `min_width` などで指定する)
-  - **`Fill` を指定したウィジェットが、配られた場所からはみ出して描かないこと**
-  - ウィンドウの中身が、窓の外へ描かれないこと
-  - **タブが 8 枚になっても最小幅が増えないこと** (送りなしの `GtkNotebook`
-    なら全タブぶんの幅が要るところを、送りありで 1 枚ぶんに保つ)
-  - `GtkToggleButton` の選択が往復し、`set_selected` は通知しないこと
-  - メニューの縦一覧で、点いているボタンが常に 1 つだけであること
-  - 選べない項目が `GtkWidget` としても押せず、`select` でも選ばれないこと
-  - パンくずが末尾を現在地にし、区切りが項目の間に入ること
-  - ページ送りが先頭・末尾で止まること
-  - `GtkNotebook` 側でページを変えると通知され、同じタブの選び直しは 1 回だけ届くこと
-  - リストの行が `GtkListBoxRow` として作られ、`detail` が 2 行目になること
-  - `GtkListBox` 側の選択がクロージャへ届き、`set_selection` は通知しないこと
-  - リストの複数選択が昇順にそろい、選択が 0 件にもなること
-  - **複数選択のとき、クリックに付いた Ctrl / Shift が GTK4 へ届くこと**
-    (`GtkListBox` の「1 クリックで確定」は修飾キーを読まないため切る)
-  - 通知の中から一覧を触っても借用が衝突しないこと
-  - ポップアップの項目・区切り線が `GMenu` の節になり、**`GAction` の起動
-    (メニューを選んだのと同じ経路) がクロージャへ届く**こと
-  - 画像が実ファイルから読み込まれ、収め方が `GtkContentFit` になること
-  - **消音を解いたときに音量が戻ること** (`GtkMediaControls` が消音中に音量を
-    0 へ書き戻し、GTK4 はそれを戻さないため)
-  - ファイル選択が `GtkButton` として構成され、設定を保つこと
-  - ダイアログの見出し・本文・中身・役割つきのボタンが `AdwAlertDialog` へ渡ること
-  - 応答がクロージャへ届き、閉じたあとの応答は二重に届かないこと
-  - テーマが `AdwStyleManager` の `color-scheme` になること
-
-AppKit と GTK4 はメインスレッドを要求しますが、Rust の標準テストハーネスは
-各テストを別スレッドで走らせます (`--test-threads=1` でも同じ)。
-そのため `harness = false` にして、自前のランナーをメインスレッドで回しています。
-GTK4 のテストはディスプレイ (Wayland か X11) を要求します。
-
-なお `cargo test --workspace` は、その OS 向けでないバックエンド
-(Linux での `naui-macos` など) までビルドしようとして失敗します。
-プラットフォームのバックエンドとファサードを指定してください。
+Linux ではディスプレイ (Wayland または X11) が必要です。
 
 ```sh
 cargo test -p naui-core -p naui-gtk -p naui
 ```
 
----
+別ターゲットの API 互換性は `cargo check` で確認できます。
+
+```sh
+cargo check --target wasm32-unknown-unknown -p naui
+cargo check --target x86_64-pc-windows-msvc -p naui
+cargo check --target x86_64-unknown-linux-gnu -p naui
+```
+
+`crates/naui/src/lib.rs` の `__api_contract` が公開 API を一通り型検査し、
+バックエンド間のシグネチャのずれを検出します。
 
 ## 既知の制限
 
-- **Linux の `Video` / `Audio` が再生できる形式は GStreamer 次第です。**
-  GTK4 の再生は GStreamer に載っているため、環境に入っているプラグインで
-  扱える形式だけが再生できます (H.264 + AAC で確認済み)。
-- **Linux の `Video` は再生バーを消しても隠れるだけです。** `GtkVideo` では
-  なく `GtkPicture` + `GtkMediaControls` で組んでいるため、`set_controls(false)`
-  は再生バーを非表示にします。
-- **Linux の `Grid` は `Track::Fill` の重みを無視します。** `GtkGrid` は列や行
-  そのものに幅を持たせられず、余りは広がる列で等分されます (macOS と同じ制限)。
-- **Linux の `Fit::None` (原寸) は「拡大しない」止まりです。** GTK4 の
-  `GtkContentFit` に原寸がないため、`GTK_CONTENT_FIT_SCALE_DOWN` に写しています。
-- **Linux のテーマはアプリ全体に効きます。** `AdwStyleManager` が
-  アプリに 1 つしかないため、`Window::set_theme` もウィンドウ単位にはなりません。
-- **Linux のウィンドウは、中身が申告する最小の大きさより小さくできません。**
-  GTK4 の決まりです。`Length::Fill` を指定した軸は「大きさは親が決める」の
-  意味なので下限を 0 として申告しており、中身がウィンドウの下限を決めることは
-  ありません。縮めすぎたくないところは `Sizing::min_width` などで指定して
-  ください。中身が入りきらないところは、ウィンドウの外へ描かないよう
-  切り取られます (重なって見えなくなる部分が出ます)。
-- **Windows App SDK の実行環境が必要。** Windows バックエンドは Windows App SDK 2.x の
-  フレームワークランタイムを必要とし、現在は2.3.1で実機確認しています。
-- **Windows の `Tabs` は `TabView` を使用しません。** Windows App SDK 2.3.1 の
-  未パッケージ実行では `TabView` の既定テンプレートがランタイム終了を起こすため、
-  `Grid` と `ToggleButton` で同じ選択 API を構成しています。
-- **Enter で確定するコールバック (`on_submit`) がありません。**
-  `winio-winui3` がキーボードイベント (`KeyDown` / `KeyEventHandler`) を
-  バインドしていないため、Windows で実装できませんでした。
-  「共通 API は全バックエンドの共通部分」という方針を優先して、
-  macOS / Web からも外してあります。必要な場合はネイティブへの脱出口を使ってください。
-- **コンポーネントは 26 種類のみ** (画面に並ぶウィジェット 24 種と、
-  並ばない `PopupMenu` / `Dialog` 2 種)**。** 基本 9 種 (`Window` / `Stack` / `Label` / `Button` /
-  `Checkbox` / `TextInput` / `TextArea` / `Slider` / `ProgressBar`)、レイアウト 3 種
-  (`Grid` / `Scroll` / `Spacer`)、ナビゲーション 7 種
-  (`Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link`)、
-  リスト 1 種 (`List`)、ポップアップメニュー 1 種 (`PopupMenu`)、
-  ダイアログ 1 種 (`Dialog`)、ファイル選択 1 種 (`FilePicker`)、
-  メディア 3 種 (`Image` / `Video` / `Audio`) です。
-  保存ダイアログ、テーブルなどは未実装です。
-- **`List` は 1 列だけです。** 複数列のテーブルはありません。また `List` は
-  中身に合わせた高さを持たないため、`set_sizing` で高さを指定してください。
-- **`List` の行に置けるのは文字 (`label` と `detail`) だけです。** 任意の
-  ウィジェットや画像のアイコンは置けません。macOS の `NSTableView` と WinUI の
-  `ListBox` は行に任意のビューを入れられますが、Web で同じことをするには
-  `role="listbox"` の合成でも足りず (ARIA の `option` は操作できる子要素を
-  持てません)、3 環境で形がそろわないためです。絵文字や記号ならラベルに
-  入れればどの環境でも出ます。
-- **Web で `detail` を使うと、`List` は合成になります。** 文字だけの行なら
-  `<select>` のままですが、`detail` があると `<ul role="listbox">` に切り替わり、
-  複数選択のキーボード操作は naui の実装になります。
-- **Windows の `Stack` では主軸の `Fill` と `Spacer` が効きません。** `StackPanel` が
-  子へ余りを配らないためです。`Grid` の `Track::Fill` を使ってください。
-- **macOS の `Track::Fill` は重みを無視します。** NSGridView に重みの概念が無く、
-  `Fill` 配置と hugging priority による近似だからです。
-- **メディアのデコードと再生は行いません。** 対応している形式は、その環境の
-  ツールキット (AVFoundation / ブラウザ / Windows.Media.Playback) が決めます。
-- **macOS の `Image` はリモート URL を同期的に読み込みます。** 読み終わるまで
-  UI が止まるため、ローカルのファイルを渡してください。
-- **Windows の標準再生バーは無効です。** Windows App SDK の一部環境では
-  `MediaTransportControls` の表示時に `0xc000027b` で終了するため、`Video` / `Audio`
-  の標準バーは使わず、アプリ側で `play()` / `pause()` などの操作欄を用意してください。
-- **Web のメディアはブラウザ標準のデコーダーに依存します。** 自動再生が拒否された場合は、ユーザー操作から `play()` を呼び出してください。
-- **絶対配置はありません。** 位置は `Grid` のマス目・`Align`・`Spacer` で決めます。
-- **`set_sizing` はコンテナの中の子に効きます。** ウィンドウ直下のルートは
-  ウィンドウいっぱいに広がるため、そこでの指定は意味を持ちません。
-- **macOS では交差軸の `Fill` とグリッドのマス内配置を、コンテナへ入れる
-  「前」に指定する必要があります。** AppKit では制約とセルの配置を追加時に
-  張るためです (Web と Windows は後から変えても追従します)。
-- **`Dialog` は同時に 1 つだけです。** WinUI 3 が同じ `XamlRoot` に 2 つの
-  `ContentDialog` を出せないためで、全環境でそろえてあります。また Windows では
-  `ContentDialog` がウィンドウの上に出るため、`window.show()` より前には出せません。
-- **`Dialog` のボタンは役割ごとに最大 1 つ (合計 3 つ) です。** `ContentDialog` の
-  枠が 3 つ (主 / 副 / 閉じる) だからです。ボタンごとの有効・無効の切り替えも、
-  `ContentDialog` に閉じるボタン用の API が無いため持っていません。
-- **ウィンドウを閉じるイベントを購読できません。**
+### 共通
 
----
+- 対応するのは上記の 26 コンポーネントです。保存ダイアログ、複数列テーブル、
+  ラジオボタン、コンボボックス、ツールバー、ツリーは未実装です。
+- 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
+- `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
+- `Dialog` は同時に 1 つだけで、ボタンは Primary、Secondary、Cancel の最大 3 個です。
+- ウィンドウを閉じるイベントと、入力欄で Enter を押したときの共通
+  `on_submit` はありません。
+- メディアの対応形式は各 OS、ブラウザ、Linux の GStreamer 環境に依存します。
+
+### Windows
+
+- `StackPanel` は主軸の余りを子へ配らないため、`Stack` 内の主軸方向では
+  `Fill` と `Spacer` が効きません。代わりに `Grid` の `Track::Fill` を使います。
+- 一部の Windows App SDK 環境で異常終了を避けるため、`Tabs` は `TabView` を使わず、
+  `Video` / `Audio` の標準再生バーは無効にしています。
+- `Dialog` は `window.show()` より前には開けません。
+
+### macOS
+
+- `Grid` の `Track::Fill` は重みの違いを反映しません。
+- 交差軸の `Fill` と Grid セル内の配置は、コンテナへ追加する前に指定してください。
+- `Image` のリモート URL は同期的に読み込むため、ローカルファイルの利用を推奨します。
+- `Dialog::open` と `PopupMenu::open_at` は閉じるまで戻りません。
+
+### Linux
+
+- `Grid` の `Track::Fill` は重みの違いを反映しません。
+- `Fit::None` は GTK4 の `SCALE_DOWN` に対応するため、「原寸」ではなく
+  「拡大しない」動作になります。
+- テーマはウィンドウ単位ではなくアプリ全体へ適用されます。
+
+### Web
+
+- `Window` は OS のウィンドウではなく、`<body>` 直下の要素と
+  `document.title` で表現されます。
+- `ListItem::detail` を使うと、`List` は `<select>` から
+  `<ul role="listbox">` を使った実装へ切り替わります。
+- `FilePicker::open` はユーザー操作のイベント内で呼ぶ必要があります。
+- ブラウザの制限により、メディアの自動再生が拒否される場合があります。
 
 ## ライセンス
 
-MIT OR Apache-2.0
+[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)
