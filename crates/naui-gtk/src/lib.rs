@@ -11,7 +11,7 @@
 //! | naui | GTK4 / libadwaita |
 //! | --- | --- |
 //! | `run` | `AdwApplication` + `connect_activate` (コールバック内で UI 構築) |
-//! | `Window` | `AdwApplicationWindow` |
+//! | `Window` | `AdwApplicationWindow` + `AdwToolbarView` + `AdwHeaderBar` |
 //! | `Stack` | `GtkBox` |
 //! | `Grid` | `GtkGrid` |
 //! | `Scroll` | `GtkScrolledWindow` |
@@ -47,6 +47,10 @@
 //!   (macOS と同じ制限)。
 //! - 配色テーマは `AdwStyleManager` がアプリ全体に持つため、
 //!   [`Window::set_theme`] もアプリ全体に効く。
+//! - `AdwApplicationWindow` は `GtkApplicationWindow` と違い**既定の
+//!   タイトルバーを持たない**ので、`AdwHeaderBar` を自分で載せている。
+//!   最小化・最大化・閉じるのボタンはこれが出す (どちら側に並ぶかは
+//!   デスクトップの設定に従う)。
 //!
 //! GTK4 のシグナルハンドラは `'static` なクロージャを受けるので、macOS / Web と
 //! 同じ `Rc<Inner>` + クロージャ保持の形がそのまま使える (Windows のような

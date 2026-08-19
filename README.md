@@ -22,7 +22,7 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 59 件 (ポップアップメニューの `NSMenu` への写しと選択の通知、複数行入力の `NSTextView` への写し、ダイアログの `NSAlert` への写しを含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`TextArea` (`<textarea>`) は改行を含む入力が `on_change` へ届くことを確認。`Dialog` は `<dialog>` の組み立てと、3 つの役割のボタン・OK だけのダイアログを実際に押して、結果と中身のチェックボックスの状態が届くところまでブラウザで確認 (Esc での取り消しだけは、確認に使った埋め込みブラウザが Esc を配送しないため未確認)。**`PopupMenu` はブラウザでの実行確認をしていません** (合成した `<div role="menu">` のコードはビルドが通るところまで)。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
 | **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`PopupMenu` / `TextArea` / `Dialog` は実機で未確認**で、`x86_64-pc-windows-msvc` 向けの `cargo check` が通るところまでです |
-| **Linux** | ✅ 動作 | Ubuntu 24.04 (GTK 4.14 / libadwaita 1.5、Wayland) で `cargo run -p gallery` を実行し、全 8 タブ (基本ウィジェット・ナビゲーション系 7 種・リスト・レイアウト・ファイル・メディア・ダイアログ) の描画を確認。GTK4 の実コントロールに対する自動テスト 55 件 (ネイティブのクリック・打鍵・行の選択がクロージャへ届くこと、大きさの指定が `gtk_widget_measure` の結果に出ること、`GMenu` と `AdwAlertDialog` への写しを含む)。**`Video` / `Audio` の再生だけは実ファイルで未確認** (GStreamer のプラグイン構成に依存するため) |
+| **Linux** | ✅ 動作 | Ubuntu 24.04 (GTK 4.14 / libadwaita 1.5、Wayland) で `cargo run -p gallery` を実行し、全 8 タブ (基本ウィジェット・ナビゲーション系 7 種・リスト・レイアウト・ファイル・メディア・ダイアログ) の描画を確認。GTK4 の実コントロールに対する自動テスト 56 件 (ネイティブのクリック・打鍵・行の選択がクロージャへ届くこと、大きさの指定が `gtk_widget_measure` の結果に出ること、`GMenu` と `AdwAlertDialog` への写しを含む)。**`Video` / `Audio` の再生だけは実ファイルで未確認** (GStreamer のプラグイン構成に依存するため) |
 
 Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で、
 `Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link` を含む
@@ -124,7 +124,7 @@ let element: web_sys::Element = button.native_element();
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
 | --- | --- | --- | --- | --- |
-| `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | 🔴 `<div>` + `document.title` | ✅ `AdwApplicationWindow` |
+| `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | 🔴 `<div>` + `document.title` | ✅ `AdwApplicationWindow` + `AdwToolbarView` + `AdwHeaderBar` |
 | `Stack` | ✅ `StackPanel` | ✅ `NSStackView` | 🟡 `<div>` + CSS Flexbox | ✅ `GtkBox` |
 | `Grid` | ✅ `Grid` (`RowDefinition` / `ColumnDefinition`) | ✅ `NSGridView` | 🟡 `<div>` + CSS Grid | 🟡 `GtkGrid` (列 / 行の幅は中の子へ写す) |
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | 🟡 `<div>` + `overflow` | ✅ `GtkScrolledWindow` |
@@ -865,7 +865,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - ボタンを指定しないダイアログに「OK」だけが出ること
   - 出していないダイアログを閉じても、modal を中断せず通知もしないこと
 
-- `naui-gtk`: **GTK4 / libadwaita の実コントロールに対する 55 件の統合テスト**
+- `naui-gtk`: **GTK4 / libadwaita の実コントロールに対する 56 件の統合テスト**
   - `gtk_button_clicked` でネイティブのクリックを発生させ、クロージャに届くこと
   - `GtkCheckButton` の `activate` で反転し、変更後の値が通知されること
   - `GtkEntryBuffer` への差し込み (打鍵と同じ経路) が通知され、`set_text` は通知しないこと
@@ -880,6 +880,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - `GtkGrid` が行と列を自分で増やし、固定幅・`Fill` の列が中の子に効くこと
   - `GtkScrolledWindow` が中身とポリシーを保つこと
   - `AdwApplicationWindow` を生成・設定・クローズできること
+  - ウィンドウにヘッダーバーが付き、最小化・最大化・閉じるのボタンが出ること
   - `GtkToggleButton` の選択が往復し、`set_selected` は通知しないこと
   - メニューの縦一覧で、点いているボタンが常に 1 つだけであること
   - 選べない項目が `GtkWidget` としても押せず、`select` でも選ばれないこと

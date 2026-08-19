@@ -322,7 +322,7 @@
 //! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 59 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェット・ナビゲーション系・レイアウト・ファイル選択・メディアの読み込みと再生を確認 (`Dialog` はコンパイル確認のみ) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 55 件。`Video` / `Audio` の再生だけは実ファイルで未確認 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 56 件。`Video` / `Audio` の再生だけは実ファイルで未確認 |
 
 #![forbid(unsafe_code)]
 

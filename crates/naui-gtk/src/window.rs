@@ -1,4 +1,9 @@
 //! トップレベルウィンドウ (`AdwApplicationWindow`)。
+//!
+//! `AdwApplicationWindow` は `GtkApplicationWindow` と違い、**既定の
+//! タイトルバーを持たない**。最小化・最大化・閉じるのボタンは
+//! `AdwHeaderBar` が出すので、中身をそのまま入れるのではなく
+//! `AdwToolbarView` の上段にヘッダーバーを、下段にアプリの中身を置く。
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -10,6 +15,10 @@ use crate::widgets::Widget;
 
 pub(crate) struct WindowInner {
     native: adw::ApplicationWindow,
+    /// ヘッダーバーとアプリの中身を縦に積む入れ物。
+    toolbar: adw::ToolbarView,
+    /// タイトルと、最小化・最大化・閉じるのボタン。
+    header: adw::HeaderBar,
     child: RefCell<Option<Box<dyn Widget>>>,
 }
 
@@ -38,8 +47,17 @@ impl Window {
             .default_width(to_px(width))
             .default_height(to_px(height))
             .build();
+
+        // ヘッダーバーは自分でタイトルを描かず、ウィンドウの `title` を映す。
+        let header = adw::HeaderBar::new();
+        let toolbar = adw::ToolbarView::new();
+        toolbar.add_top_bar(&header);
+        native.set_content(Some(&toolbar));
+
         Self(Rc::new(WindowInner {
             native,
+            toolbar,
+            header,
             child: RefCell::new(None),
         }))
     }
@@ -47,6 +65,13 @@ impl Window {
     /// 対応する GTK4 のウィンドウ。バックエンド固有の脱出口として公開している。
     pub fn native_window(&self) -> adw::ApplicationWindow {
         self.0.native.clone()
+    }
+
+    /// タイトルと最小化・最大化・閉じるのボタンを持つヘッダーバー。
+    ///
+    /// バックエンド固有の脱出口として公開している。
+    pub fn native_header_bar(&self) -> adw::HeaderBar {
+        self.0.header.clone()
     }
 
     pub fn downgrade(&self) -> WeakWindow {
@@ -74,7 +99,8 @@ impl Window {
         let bin = child.size_bin();
         // ウィンドウの中身は、他のバックエンドと同じく窓いっぱいに広がる。
         bin.fill_parent();
-        self.0.native.set_content(Some(&bin));
+        // ヘッダーバーの下が、アプリの中身の置き場になる。
+        self.0.toolbar.set_content(Some(&bin));
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 

@@ -95,6 +95,7 @@ fn main() {
             scroll_keeps_child_and_policy,
         ),
         ("ウィンドウを設定して閉じられる", window_lifecycle),
+        ("ウィンドウにヘッダーバーが付く", window_has_a_header_bar),
         ("ナビバーの選択がネイティブと往復する", navbar_selection),
         (
             "ナビバーの set_selected は通知しない",
@@ -709,7 +710,13 @@ fn window_lifecycle(ui: &Ui) -> Result<()> {
     window.set_child(&stack);
 
     let native = window.native_window();
-    assert_eq!(native.content(), Some(bin_of(&stack)));
+    // ヘッダーバーの下に中身が入る。
+    let toolbar: adw::ToolbarView = native
+        .content()
+        .expect("中身")
+        .downcast()
+        .expect("AdwToolbarView");
+    assert_eq!(toolbar.content(), Some(bin_of(&stack)));
     // ウィンドウの中身は窓いっぱいに広がる。
     assert_eq!(bin_of(&stack).halign(), gtk::Align::Fill);
     assert_eq!(bin_of(&stack).valign(), gtk::Align::Fill);
@@ -723,6 +730,26 @@ fn window_lifecycle(ui: &Ui) -> Result<()> {
     // 弱参照はハンドルが生きている間だけ辿れる。
     let weak = window.downgrade();
     assert!(weak.upgrade().is_some());
+    Ok(())
+}
+
+fn window_has_a_header_bar(ui: &Ui) -> Result<()> {
+    // `AdwApplicationWindow` は既定のタイトルバーを持たないので、
+    // 最小化・最大化・閉じるのボタンはヘッダーバーが出す。
+    let window = ui.window("naui", 320.0, 200.0)?;
+    let header = window.native_header_bar();
+    assert!(
+        header.shows_start_title_buttons() && header.shows_end_title_buttons(),
+        "最小化・最大化・閉じるのボタンが出る (どちら側に出るかはデスクトップの設定次第)"
+    );
+    assert_eq!(
+        header.root().map(|r| r.upcast::<gtk::Widget>()),
+        Some(window.native_window().upcast())
+    );
+
+    // 中身を入れても、ヘッダーバーは置き換わらない。
+    window.set_child(&ui.label("0")?);
+    assert!(header.root().is_some(), "ヘッダーバーはウィンドウに残る");
     Ok(())
 }
 
