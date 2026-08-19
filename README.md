@@ -19,7 +19,7 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 - OS 標準の描画、入力、アクセシビリティ、テーマを活用
 - Rust 側でレイアウト計算やメディアのデコードを行わない軽量な設計
 - 共通 API で足りない場合はネイティブオブジェクトへアクセス可能
-- 最小サンプルと全ウィジェットを確認できる Gallery を同梱
+- 最小サンプルと、種別ごとに全ウィジェットの特徴を確認できる Gallery を同梱
 
 ## 対応状況
 
@@ -47,7 +47,8 @@ cd naui
 cargo run -p counter
 ```
 
-全ウィジェットは Gallery で確認できます。
+全ウィジェットは、基本、入力、一覧、ナビゲーション、レイアウト、ファイル、
+メディア、ダイアログの種別にまとめた Gallery で確認できます。
 
 ```sh
 cargo run -p gallery
@@ -102,8 +103,8 @@ fn main() -> naui::Result<()> {
 }
 ```
 
-より小さな実例は [`examples/counter`](examples/counter/src/main.rs)、全機能の使用例は
-[`examples/gallery`](examples/gallery/src/lib.rs) を参照してください。
+より小さな実例は [`examples/counter`](examples/counter/src/main.rs)、種別ごとの
+全機能の使用例は [`examples/gallery`](examples/gallery/src/lib.rs) を参照してください。
 
 ### テーマ
 
@@ -276,7 +277,7 @@ crates/
   naui           対象に応じてバックエンドを選ぶファサード
 examples/
   counter        最小サンプル
-  gallery        全ウィジェットのデモ
+  gallery        種別ごとの全ウィジェットデモ
 ```
 
 バックエンド固有の依存はターゲット別に宣言されています。たとえば macOS の

@@ -1,6 +1,6 @@
 [package]
 name = "gallery"
-description = "naui の全ウィジェットのデモ"
+description = "naui の全ウィジェットを種別ごとに試すデモ"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
