@@ -10,7 +10,7 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | --- | --- | --- |
 | Windows | **WinUI 3** (Windows App SDK) | `Microsoft.UI.Xaml.Controls.Button` |
 | macOS | **AppKit** | `NSButton` |
-| Linux | GTK4 / libadwaita | `GtkButton` (**未実装**) |
+| Linux | **GTK4 / libadwaita** | `GtkButton` |
 | Web (wasm) | **DOM** | `<button>` |
 
 ---
@@ -19,16 +19,17 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 
 | 環境 | 状態 | 根拠 |
 | --- | --- | --- |
-| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 59 件 (ポップアップメニューの `NSMenu` への写しと選択の通知、複数行入力の `NSTextView` への写し、ダイアログの `NSAlert` への写しを含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
+| **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 61 件 (ポップアップメニューの `NSMenu` への写しと選択の通知、複数行入力の `NSTextView` への写し、ダイアログの `NSAlert` への写しを含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`TextArea` (`<textarea>`) は改行を含む入力が `on_change` へ届くことを確認。`Dialog` は `<dialog>` の組み立てと、3 つの役割のボタン・OK だけのダイアログを実際に押して、結果と中身のチェックボックスの状態が届くところまでブラウザで確認 (Esc での取り消しだけは、確認に使った埋め込みブラウザが Esc を配送しないため未確認)。**`PopupMenu` はブラウザでの実行確認をしていません** (合成した `<div role="menu">` のコードはビルドが通るところまで)。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
 | **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`PopupMenu` / `TextArea` / `Dialog` は実機で未確認**で、`x86_64-pc-windows-msvc` 向けの `cargo check` が通るところまでです |
-| **Linux** | ❌ 未実装 | API の形だけ定義した骨組み。呼ぶとエラーを返します |
+| **Linux** | ✅ 動作 | Ubuntu 24.04 (GTK 4.14 / libadwaita 1.5、Wayland) で `cargo run -p gallery` を実行し、全 8 タブ (基本ウィジェット・ナビゲーション系 7 種・リスト・レイアウト・ファイル・メディア・ダイアログ) の描画を確認。GTK4 の実コントロールに対する自動テスト 61 件 (ネイティブのクリック・打鍵・行の選択がクロージャへ届くこと、大きさの指定が `gtk_widget_measure` の結果に出ること、`GMenu` と `AdwAlertDialog` への写しを含む)。メディアは実ファイル (H.264 + AAC) で再生・一時停止・シーク・長さ・再生位置・状態変化 (`Buffering` → `Playing` → `Paused` → `Playing` → `Ended`) まで確認 |
 
-Linux が未実装なのは、GTK4 バックエンドがまだ骨組みの段階だからです。
 Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で、
 `Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link` を含む
 `gallery` の起動を確認済みです。
-詳細は [`crates/naui-gtk`](crates/naui-gtk/src/lib.rs) のドキュメントを参照してください。
+Linux は GTK4 と libadwaita の実コントロールを使います。naui との対応表と、
+他のバックエンドとの違い (グリッドの重み・`Fit::None`・テーマの範囲) は
+[`crates/naui-gtk`](crates/naui-gtk/src/lib.rs) のドキュメントにまとめてあります。
 
 ---
 
@@ -123,24 +124,24 @@ let element: web_sys::Element = button.native_element();
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
 | --- | --- | --- | --- | --- |
-| `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | 🔴 `<div>` + `document.title` | ❌ |
-| `Stack` | ✅ `StackPanel` | ✅ `NSStackView` | 🟡 `<div>` + CSS Flexbox | ❌ |
-| `Grid` | ✅ `Grid` (`RowDefinition` / `ColumnDefinition`) | ✅ `NSGridView` | 🟡 `<div>` + CSS Grid | ❌ |
-| `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | 🟡 `<div>` + `overflow` | ❌ |
-| `Spacer` | 🔴 中身の無い `Grid` (`StackPanel` では効かない) | 🟡 中身の無い `NSView` (hugging priority 最小) | 🟡 `<div>` + `flex-grow` | ❌ |
-| `Label` | ✅ `TextBlock` | ✅ `NSTextField` (`labelWithString:`) | ✅ `<span>` | ❌ |
-| `Button` | ✅ `Button` | ✅ `NSButton` (`buttonWithTitle:`) | ✅ `<button>` | ❌ |
-| `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` (`checkboxWithTitle:`) | 🟡 `<input type=checkbox>` + `<label>` | ❌ |
-| `TextInput` | ✅ `TextBox` | ✅ `NSTextField` (`textFieldWithString:`) | ✅ `<input type=text>` | ❌ |
-| `TextArea` | ✅ `TextBox` (`AcceptsReturn`) | 🟡 `NSTextView` + `NSScrollView` (プレースホルダーは重ねたラベル) | ✅ `<textarea>` | ❌ |
-| `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ❌ |
-| `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ❌ |
-| `List` | ✅ `ListBox` + `ListBoxItem` | ✅ `NSTableView` (1 列) + `NSScrollView` | ✅ `<select size>` (文字だけ) / 🟡 `<ul role=listbox>` (`detail` あり) | ❌ |
-| `FilePicker` | 🟡 `Button` + `IFileOpenDialog` (共通ダイアログ) | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `<button>` + 隠した `<input type=file>` | ❌ |
-| `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | 🟡 `<dialog>` + `showModal()` | ❌ |
-| `Image` | 🟡 `Image` (バインディングが無いため `XamlReader` 経由) | ✅ `NSImageView` | ✅ `<img>` | ❌ |
-| `Video` | ✅ `MediaPlayerElement` + `MediaPlayer` | ✅ `AVPlayerView` (AVKit) | ✅ `<video>` | ❌ |
-| `Audio` | ✅ `MediaPlayerElement` (映像トラック無し) | 🟡 `AVPlayerView` (映像面を持たない) | ✅ `<audio>` | ❌ |
+| `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | 🔴 `<div>` + `document.title` | ✅ `AdwApplicationWindow` + `AdwToolbarView` + `AdwHeaderBar` |
+| `Stack` | ✅ `StackPanel` | ✅ `NSStackView` | 🟡 `<div>` + CSS Flexbox | ✅ `GtkBox` |
+| `Grid` | ✅ `Grid` (`RowDefinition` / `ColumnDefinition`) | ✅ `NSGridView` | 🟡 `<div>` + CSS Grid | 🟡 `GtkGrid` (列 / 行の幅は中の子へ写す) |
+| `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | 🟡 `<div>` + `overflow` | ✅ `GtkScrolledWindow` |
+| `Spacer` | 🔴 中身の無い `Grid` (`StackPanel` では効かない) | 🟡 中身の無い `NSView` (hugging priority 最小) | 🟡 `<div>` + `flex-grow` | 🟡 中身の無い `GtkBox` (`hexpand` / `vexpand`) |
+| `Label` | ✅ `TextBlock` | ✅ `NSTextField` (`labelWithString:`) | ✅ `<span>` | ✅ `GtkLabel` |
+| `Button` | ✅ `Button` | ✅ `NSButton` (`buttonWithTitle:`) | ✅ `<button>` | ✅ `GtkButton` |
+| `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` (`checkboxWithTitle:`) | 🟡 `<input type=checkbox>` + `<label>` | ✅ `GtkCheckButton` |
+| `TextInput` | ✅ `TextBox` | ✅ `NSTextField` (`textFieldWithString:`) | ✅ `<input type=text>` | ✅ `GtkEntry` |
+| `TextArea` | ✅ `TextBox` (`AcceptsReturn`) | 🟡 `NSTextView` + `NSScrollView` (プレースホルダーは重ねたラベル) | ✅ `<textarea>` | 🟡 `GtkTextView` + `GtkScrolledWindow` (プレースホルダーは重ねたラベル) |
+| `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `<input type=range>` | ✅ `GtkScale` |
+| `ProgressBar` | 🟡 `Grid` + `Border` (WinUI XAML) | ✅ `NSProgressIndicator` (Bar) | ✅ `<progress>` | ✅ `GtkProgressBar` |
+| `List` | ✅ `ListBox` + `ListBoxItem` | ✅ `NSTableView` (1 列) + `NSScrollView` | ✅ `<select size>` (文字だけ) / 🟡 `<ul role=listbox>` (`detail` あり) | 🟡 `GtkListBox` + `GtkListBoxRow` + `GtkScrolledWindow` |
+| `FilePicker` | 🟡 `Button` + `IFileOpenDialog` (共通ダイアログ) | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `<button>` + 隠した `<input type=file>` | 🟡 `GtkButton` + `GtkFileDialog` |
+| `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | 🟡 `<dialog>` + `showModal()` | ✅ `AdwAlertDialog` |
+| `Image` | 🟡 `Image` (バインディングが無いため `XamlReader` 経由) | ✅ `NSImageView` | ✅ `<img>` | ✅ `GtkPicture` |
+| `Video` | ✅ `MediaPlayerElement` + `MediaPlayer` | ✅ `AVPlayerView` (AVKit) | ✅ `<video>` | 🟡 `GtkPicture` (`GtkMediaFile` を映す) + `GtkMediaControls` |
+| `Audio` | ✅ `MediaPlayerElement` (映像トラック無し) | 🟡 `AVPlayerView` (映像面を持たない) | ✅ `<audio>` | 🟡 `GtkMediaControls` + `GtkMediaFile` |
 
 ### 配置とサイズ
 
@@ -336,13 +337,13 @@ Web の `blob:` URL は、**同じ `FilePicker` で次に選び直すまで**有
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
 | --- | --- | --- | --- | --- |
-| `Tabs` | 🟡 `Grid` + `ToggleButton` (TabViewの未パッケージ起動回避) | ✅ `NSTabView` + `NSTabViewItem` | 🟡 `role="tablist"` + `<button role=tab>` + `hidden` | ❌ |
-| `Navbar` | 🟡 `TextBlock` + `ToggleButton` の横並び | 🟡 `NSTextField` + `NSSegmentedControl` | 🟡 `<nav>` + `<strong>` + `<button>` | ❌ |
-| `Dock` | 🟡 `ToggleButton` の横並び | ✅ `NSSegmentedControl` (等幅) | 🟡 `<nav>` + `<button>` (等幅) | ❌ |
-| `Menu` | 🟡 `ToggleButton` の縦並び | 🟡 `NSButton` (AccessoryBar) の縦並び | 🟡 `<nav><ul><li><button>` | ❌ |
-| `Breadcrumbs` | 🟡 `HyperlinkButton` + 区切りの `TextBlock` | ✅ `NSPathControl` + `NSPathControlItem` | 🟡 `<nav><ol><li><a href>` | ❌ |
-| `Pagination` | 🟡 `Button` + `ToggleButton` | 🟡 `NSButton` + `NSSegmentedControl` | 🟡 `<nav>` + `<button>` | ❌ |
-| `Link` | ✅ `HyperlinkButton` | 🟡 `NSButton` (枠なし・リンク色) + `NSWorkspace` | ✅ `<a href>` | ❌ |
+| `Tabs` | 🟡 `Grid` + `ToggleButton` (TabViewの未パッケージ起動回避) | ✅ `NSTabView` + `NSTabViewItem` | 🟡 `role="tablist"` + `<button role=tab>` + `hidden` | ✅ `GtkNotebook` |
+| `Navbar` | 🟡 `TextBlock` + `ToggleButton` の横並び | 🟡 `NSTextField` + `NSSegmentedControl` | 🟡 `<nav>` + `<strong>` + `<button>` | 🟡 `GtkLabel` + `GtkToggleButton` の横並び |
+| `Dock` | 🟡 `ToggleButton` の横並び | ✅ `NSSegmentedControl` (等幅) | 🟡 `<nav>` + `<button>` (等幅) | 🟡 `GtkToggleButton` の横並び (等幅) |
+| `Menu` | 🟡 `ToggleButton` の縦並び | 🟡 `NSButton` (AccessoryBar) の縦並び | 🟡 `<nav><ul><li><button>` | 🟡 `GtkToggleButton` の縦並び (`navigation-sidebar`) |
+| `Breadcrumbs` | 🟡 `HyperlinkButton` + 区切りの `TextBlock` | ✅ `NSPathControl` + `NSPathControlItem` | 🟡 `<nav><ol><li><a href>` | 🔴 区切り (`›`) を挟んだ `GtkToggleButton` の横並び |
+| `Pagination` | 🟡 `Button` + `ToggleButton` | 🟡 `NSButton` + `NSSegmentedControl` | 🟡 `<nav>` + `<button>` | 🟡 `GtkButton` + `GtkToggleButton` |
+| `Link` | ✅ `HyperlinkButton` | 🟡 `NSButton` (枠なし・リンク色) + `NSWorkspace` | ✅ `<a href>` | ✅ `GtkLinkButton` |
 
 7 種類とも **同じ形の API** を持ちます。項目は `NavItem` の並びで渡し、
 選ばれたものはインデックスで返ります。
@@ -375,7 +376,7 @@ let _: Option<usize> = navbar.selected();
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Web (DOM) | Linux (GTK4) |
 | --- | --- | --- | --- | --- |
-| `PopupMenu` | 🟡 ルートに重ねる `Grid` + `Button` の縦並び | ✅ `NSMenu` + `NSMenuItem` | 🟡 `<div role="menu">` + `<button role="menuitem">` | ❌ |
+| `PopupMenu` | 🟡 ルートに重ねる `Grid` + `Button` の縦並び | ✅ `NSMenu` + `NSMenuItem` | 🟡 `<div role="menu">` + `<button role="menuitem">` | ✅ `GtkPopoverMenu` + `GMenu` + `GSimpleAction` |
 
 ```rust
 let label = ui.label("右クリックしてください")?;
@@ -702,7 +703,7 @@ crates/
   naui-macos    … AppKit バックエンド (objc2)
   naui-web      … DOM バックエンド (web-sys)
   naui-windows  … WinUI 3 バックエンド (winio-winui3)
-  naui-gtk      … GTK4 バックエンドの骨組み (未実装)
+  naui-gtk      … GTK4 / libadwaita バックエンド (gtk4 / libadwaita)
   naui          … ターゲットに応じてバックエンドを選ぶファサード
 examples/
   counter       … 最小サンプル
@@ -722,7 +723,7 @@ examples/
 | macOS | `objc2`, `objc2-app-kit`, `objc2-foundation`, `objc2-av-kit`, `objc2-av-foundation`, `objc2-core-media`, `block2` (メディア) |
 | Web | `wasm-bindgen`, `web-sys` |
 | Windows | `winio-winui3` (WinUI 3 バインディング), `windows`, `windows-core` |
-| Linux | (未実装。実装時に `gtk4` / `libadwaita`) |
+| Linux | `gtk4`, `libadwaita` (GTK 4.10 以上・libadwaita 1.5 以上の開発用ライブラリが必要) |
 
 ターゲット別の依存として宣言してあるので、macOS ビルドで GTK4 や
 Windows のバインディングが引き込まれることはありません。
@@ -774,6 +775,26 @@ Windows App SDK の[安定版リリース情報](https://github.com/microsoft/Wi
 cargo run -p gallery
 ```
 
+### Linux
+
+GTK4 と libadwaita の**開発用ライブラリ**が要ります (実行だけなら
+ランタイムのみ)。Ubuntu 24.04 の例:
+
+```sh
+sudo apt-get install -y libgtk-4-dev libadwaita-1-dev build-essential pkg-config
+```
+
+```sh
+cargo run -p gallery
+```
+
+Wayland と X11 のどちらでも動きます。バックエンドを選ぶときは GTK4 の
+`GDK_BACKEND` を使ってください (naui 側に設定はありません)。
+
+`Settings::app_id` は GTK4 のアプリ ID になります。書き方が決まっている
+(`com.example.myapp` のような逆ドメイン形式で、各要素は数字で始められない)
+ため、受け付けられない ID を渡したときは `run` がエラーを返します。
+
 ---
 
 ## テスト
@@ -798,7 +819,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 ```
 
 - `naui-core`: 設定・エラー整形の単体テスト
-- `naui-macos`: **AppKit の実コントロールに対する 59 件の統合テスト**
+- `naui-macos`: **AppKit の実コントロールに対する 61 件の統合テスト**
   - `performClick` でネイティブのクリックを発生させ、Rust のクロージャに届くこと
   - チェックボックスのネイティブ状態が反転し、変更後の値が通知されること
   - 日本語を含む文字列が NSTextField と往復すること
@@ -814,6 +835,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - メニューの縦一覧で、押し込まれるボタンが常に 1 つだけであること
   - リストの選択が NSTableView と往復し、`set_selected` は通知しないこと
   - リストの複数選択が昇順にそろい、選択が 0 件にもなること
+  - **複数選択のとき、クリックに付いた Ctrl / Shift が GTK4 へ届くこと**
+    (`GtkListBox` の「1 クリックで確定」は修飾キーを読まないため切る)
   - リストが選べない行を飛ばし、AppKit にも「選べない」と伝えていること
   - リストの行が NSTableView のビューとして作られ、日本語がそのまま出ること
   - NSTableView 側で選択を変えても、デリゲート経由でクロージャへ届くこと
@@ -844,15 +867,85 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - ボタンを指定しないダイアログに「OK」だけが出ること
   - 出していないダイアログを閉じても、modal を中断せず通知もしないこと
 
-AppKit はメインスレッドを要求しますが、Rust の標準テストハーネスは
+- `naui-gtk`: **GTK4 / libadwaita の実コントロールに対する 61 件の統合テスト**
+  - `gtk_button_clicked` でネイティブのクリックを発生させ、クロージャに届くこと
+  - `GtkCheckButton` の `activate` で反転し、変更後の値が通知されること
+  - `GtkEntryBuffer` への差し込み (打鍵と同じ経路) が通知され、`set_text` は通知しないこと
+  - 日本語を含む文字列が `GtkEntry` / `GtkTextView` と往復すること
+  - `GtkTextView` に重ねたプレースホルダーが出入りし、クリックを通すこと
+  - `GtkAdjustment` を動かすとスライダーの通知が届き、範囲でクランプされること
+  - 大きさの指定が `gtk_widget_measure` の結果に出ること
+    (固定・最小・上限、指定し直しても積み上がらないこと)
+  - **上限付きの `Fill` が、空きがあれば上限まで場所を確保すること**
+  - 交差軸の `Fill` が `Stack::set_align` より優先されること
+  - `Spacer` が両方向に広がり、`Padding` が中身を狭めること
+  - `GtkGrid` が行と列を自分で増やし、固定幅・`Fill` の列が中の子に効くこと
+  - `GtkScrolledWindow` が中身とポリシーを保つこと
+  - `AdwApplicationWindow` を生成・設定・クローズできること
+  - ウィンドウにヘッダーバーが付き、最小化・最大化・閉じるのボタンが出ること
+  - **`Fill` を指定した軸が、中身の都合でウィンドウの縮められる下限を
+    決めてしまわないこと** (下限は `min_width` などで指定する)
+  - **`Fill` を指定したウィジェットが、配られた場所からはみ出して描かないこと**
+  - ウィンドウの中身が、窓の外へ描かれないこと
+  - **タブが 8 枚になっても最小幅が増えないこと** (送りなしの `GtkNotebook`
+    なら全タブぶんの幅が要るところを、送りありで 1 枚ぶんに保つ)
+  - `GtkToggleButton` の選択が往復し、`set_selected` は通知しないこと
+  - メニューの縦一覧で、点いているボタンが常に 1 つだけであること
+  - 選べない項目が `GtkWidget` としても押せず、`select` でも選ばれないこと
+  - パンくずが末尾を現在地にし、区切りが項目の間に入ること
+  - ページ送りが先頭・末尾で止まること
+  - `GtkNotebook` 側でページを変えると通知され、同じタブの選び直しは 1 回だけ届くこと
+  - リストの行が `GtkListBoxRow` として作られ、`detail` が 2 行目になること
+  - `GtkListBox` 側の選択がクロージャへ届き、`set_selection` は通知しないこと
+  - リストの複数選択が昇順にそろい、選択が 0 件にもなること
+  - **複数選択のとき、クリックに付いた Ctrl / Shift が GTK4 へ届くこと**
+    (`GtkListBox` の「1 クリックで確定」は修飾キーを読まないため切る)
+  - 通知の中から一覧を触っても借用が衝突しないこと
+  - ポップアップの項目・区切り線が `GMenu` の節になり、**`GAction` の起動
+    (メニューを選んだのと同じ経路) がクロージャへ届く**こと
+  - 画像が実ファイルから読み込まれ、収め方が `GtkContentFit` になること
+  - **消音を解いたときに音量が戻ること** (`GtkMediaControls` が消音中に音量を
+    0 へ書き戻し、GTK4 はそれを戻さないため)
+  - ファイル選択が `GtkButton` として構成され、設定を保つこと
+  - ダイアログの見出し・本文・中身・役割つきのボタンが `AdwAlertDialog` へ渡ること
+  - 応答がクロージャへ届き、閉じたあとの応答は二重に届かないこと
+  - テーマが `AdwStyleManager` の `color-scheme` になること
+
+AppKit と GTK4 はメインスレッドを要求しますが、Rust の標準テストハーネスは
 各テストを別スレッドで走らせます (`--test-threads=1` でも同じ)。
 そのため `harness = false` にして、自前のランナーをメインスレッドで回しています。
+GTK4 のテストはディスプレイ (Wayland か X11) を要求します。
+
+なお `cargo test --workspace` は、その OS 向けでないバックエンド
+(Linux での `naui-macos` など) までビルドしようとして失敗します。
+プラットフォームのバックエンドとファサードを指定してください。
+
+```sh
+cargo test -p naui-core -p naui-gtk -p naui
+```
 
 ---
 
 ## 既知の制限
 
-- **Linux が未実装。** 上記のとおり。
+- **Linux の `Video` / `Audio` が再生できる形式は GStreamer 次第です。**
+  GTK4 の再生は GStreamer に載っているため、環境に入っているプラグインで
+  扱える形式だけが再生できます (H.264 + AAC で確認済み)。
+- **Linux の `Video` は再生バーを消しても隠れるだけです。** `GtkVideo` では
+  なく `GtkPicture` + `GtkMediaControls` で組んでいるため、`set_controls(false)`
+  は再生バーを非表示にします。
+- **Linux の `Grid` は `Track::Fill` の重みを無視します。** `GtkGrid` は列や行
+  そのものに幅を持たせられず、余りは広がる列で等分されます (macOS と同じ制限)。
+- **Linux の `Fit::None` (原寸) は「拡大しない」止まりです。** GTK4 の
+  `GtkContentFit` に原寸がないため、`GTK_CONTENT_FIT_SCALE_DOWN` に写しています。
+- **Linux のテーマはアプリ全体に効きます。** `AdwStyleManager` が
+  アプリに 1 つしかないため、`Window::set_theme` もウィンドウ単位にはなりません。
+- **Linux のウィンドウは、中身が申告する最小の大きさより小さくできません。**
+  GTK4 の決まりです。`Length::Fill` を指定した軸は「大きさは親が決める」の
+  意味なので下限を 0 として申告しており、中身がウィンドウの下限を決めることは
+  ありません。縮めすぎたくないところは `Sizing::min_width` などで指定して
+  ください。中身が入りきらないところは、ウィンドウの外へ描かないよう
+  切り取られます (重なって見えなくなる部分が出ます)。
 - **Windows App SDK の実行環境が必要。** Windows バックエンドは Windows App SDK 2.x の
   フレームワークランタイムを必要とし、現在は2.3.1で実機確認しています。
 - **Windows の `Tabs` は `TabView` を使用しません。** Windows App SDK 2.3.1 の
