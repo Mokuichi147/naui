@@ -6,12 +6,28 @@
 //!
 //! `ListView` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、
 //! 同じ WinUI 標準コントロールである `ListBox` を使っている。
+//!
+//! ただし `ListBox` は WinUI 3 でも Fluent 化されていない旧来のコントロールで、
+//! 既定のままでは角が四角く、選択した行がアクセント色で全面に塗られる
+//! (WinUI 3 の `ListView` とは似ても似つかない見た目になる)。そのため
+//! **枠と行の見た目は naui 側で組み直している**。
+//!
+//! | 部分 | 作り |
+//! | --- | --- |
+//! | 枠 | 外側の `ScrollViewer` に背景・境界線・角丸を持たせる |
+//! | 行 | `ListBoxItem` に差し替えの `ControlTemplate` を当てる |
+//! | 選択 | 淡い塗り + 左端のアクセント色のインジケーター |
+//!
+//! 色・角丸はすべて `{ThemeResource ...}` で引くので、ライト / ダークの
+//! 切り替え (ウィンドウの `RequestedTheme`) にそのまま追従する。
+//! テーマリソースが引けない環境では、素の `ListBox` に戻して動作を優先する。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{ListItem, Result, SelectionMode};
+use windows::Foundation::PropertyValue;
 use windows_core::{IInspectable, Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
     ListBox as XamlListBox, ListBoxItem, Orientation as XamlOrientation, ScrollBarVisibility,
@@ -19,12 +35,198 @@ use winui3::Microsoft::UI::Xaml::Controls::{
     TextBlock,
 };
 use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
-use winui3::Microsoft::UI::Xaml::UIElement;
+use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use winui3::Microsoft::UI::Xaml::{ResourceDictionary, Style, UIElement};
 
 use crate::to_error;
 use crate::layout::ListScrollTarget;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::{impl_widget, Widget};
+
+/// 一覧の枠。`ListBox` 自身は中身の高さいっぱいに伸びてしまい、角丸も境界線も
+/// 見えなくなるため、見えている大きさと一致する外側の `ScrollViewer` に持たせる。
+const SURFACE_XAML: &str = r##"<ScrollViewer
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    HorizontalScrollBarVisibility="Disabled"
+    VerticalScrollBarVisibility="Auto"
+    Background="{ThemeResource ControlFillColorDefaultBrush}"
+    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+    BorderThickness="1"
+    CornerRadius="{ThemeResource ControlCornerRadius}"
+    Padding="4">
+    <ListBox Background="Transparent" BorderThickness="0" Padding="0"
+        HorizontalContentAlignment="Stretch"
+        ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+        ScrollViewer.VerticalScrollBarVisibility="Disabled"/>
+</ScrollViewer>"##;
+
+/// 行の見た目。WinUI 3 の `ListView` の行に合わせて、
+/// 淡い塗り + 左端のアクセント色のインジケーターで選択を表す。
+///
+/// 状態の名前は `CommonStates` (ポインター) と `SelectionStates` (選択) に
+/// 分けてある。塗る `Border` も分けてあるので、どちらか一方の名前しか
+/// 使わないコントロールでも、片方が消えるだけで破綻しない。
+///
+/// `ROW_STYLE_KEY` は `ROW_STYLE_XAML` の `x:Key` と同じ文字列にする。
+const ROW_STYLE_KEY: &str = "NauiListRowStyle";
+const ROW_STYLE_XAML: &str = r##"<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Style x:Key="NauiListRowStyle" TargetType="ListBoxItem">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
+        <Setter Property="Padding" Value="12,8"/>
+        <Setter Property="MinHeight" Value="36"/>
+        <Setter Property="Margin" Value="0,1"/>
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="UseSystemFocusVisuals" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Grid Background="Transparent">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal"/>
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="Hover.Background"
+                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="Hover.Background"
+                                            Value="{ThemeResource SubtleFillColorTertiaryBrush}"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <!-- 主・副の 2 行をまとめて薄くする。
+                                            副次テキストは自分の色を持つので、
+                                            文字色の差し替えでは片方しか効かない。 -->
+                                        <Setter Target="Content.Opacity" Value="0.4"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                            <VisualStateGroup x:Name="SelectionStates">
+                                <VisualState x:Name="Unselected"/>
+                                <VisualState x:Name="Selected">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
+                                        <Setter Target="Indicator.Opacity" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="SelectedUnfocused">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
+                                        <Setter Target="Indicator.Opacity" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="SelectedPointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorTertiaryBrush}"/>
+                                        <Setter Target="Indicator.Opacity" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="SelectedPressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorTertiaryBrush}"/>
+                                        <Setter Target="Indicator.Opacity" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="SelectedDisabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
+                                        <Setter Target="Content.Opacity" Value="0.4"/>
+                                        <Setter Target="Indicator.Opacity" Value="0.4"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Border x:Name="Hover" Background="Transparent"
+                            CornerRadius="{ThemeResource ControlCornerRadius}"/>
+                        <Border x:Name="Fill" Background="Transparent"
+                            CornerRadius="{ThemeResource ControlCornerRadius}"/>
+                        <Border x:Name="Indicator" Width="3" Height="16" Opacity="0"
+                            Margin="1,0,0,0" CornerRadius="1.5"
+                            HorizontalAlignment="Left" VerticalAlignment="Center"
+                            Background="{ThemeResource AccentFillColorDefaultBrush}"/>
+                        <ContentPresenter x:Name="Content"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            Foreground="{TemplateBinding Foreground}"
+                            Padding="{TemplateBinding Padding}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>"##;
+
+/// 行の副次テキスト。色は Fluent の副次テキスト用テーマリソースから引く。
+const DETAIL_XAML: &str = r##"<TextBlock
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>"##;
+
+/// テーマ付きの枠を読み込む。読めなければ素の `ScrollViewer` + `ListBox` に戻す。
+fn build_surface() -> Result<(ScrollViewer, XamlListBox)> {
+    match load_surface() {
+        Ok(surface) => Ok(surface),
+        Err(error) => {
+            eprintln!("naui-windows: リストのテーマ付き枠の生成に失敗: {error}");
+            plain_surface()
+        }
+    }
+}
+
+fn load_surface() -> Result<(ScrollViewer, XamlListBox)> {
+    let native = XamlReader::Load(&HSTRING::from(SURFACE_XAML))
+        .and_then(|element| element.cast::<ScrollViewer>())
+        .map_err(|e| to_error("List の枠の生成", e))?;
+    let list_box = native
+        .Content()
+        .and_then(|content| content.cast::<XamlListBox>())
+        .map_err(|e| to_error("List の ListBox の取得", e))?;
+    Ok((native, list_box))
+}
+
+fn plain_surface() -> Result<(ScrollViewer, XamlListBox)> {
+    let list_box = XamlListBox::new().map_err(|e| to_error("ListBox の生成", e))?;
+    let native = ScrollViewer::new().map_err(|e| to_error("List の ScrollViewer 生成", e))?;
+    let element = list_box
+        .cast::<IInspectable>()
+        .map_err(|e| to_error("ListBox の要素化", e))?;
+    native
+        .SetContent(&element)
+        .map_err(|e| to_error("List の ScrollViewer への追加", e))?;
+    Ok((native, list_box))
+}
+
+/// 行に当てる `Style`。読めなければ `None` (WinUI 既定の見た目のまま)。
+fn row_style() -> Option<Style> {
+    let dictionary = XamlReader::Load(&HSTRING::from(ROW_STYLE_XAML))
+        .and_then(|element| element.cast::<ResourceDictionary>())
+        .map_err(|e| to_error("行のスタイルの生成", e));
+    let dictionary = match dictionary {
+        Ok(dictionary) => dictionary,
+        Err(error) => {
+            eprintln!("naui-windows: リストの行のスタイルの生成に失敗: {error}");
+            return None;
+        }
+    };
+    PropertyValue::CreateString(&HSTRING::from(ROW_STYLE_KEY))
+        .and_then(|key| dictionary.Lookup(&key))
+        .and_then(|style| style.cast::<Style>())
+        .ok()
+}
 
 /// 選択が変わったことの通知先。
 ///
@@ -70,6 +272,8 @@ struct ListInner {
     silent: Rc<Cell<bool>>,
     /// ウィンドウ全体のホイール補助が List の ScrollViewer を選ぶための状態。
     hovered: Arc<UiThreadCell<usize>>,
+    /// 行に当てる見た目。読めなかったときだけ `None`。
+    row_style: Option<Style>,
 }
 
 /// 縦に並ぶ選択できる一覧 (ListBox)。
@@ -82,7 +286,7 @@ impl_widget!(List, native);
 
 impl List {
     pub(crate) fn new() -> Result<Self> {
-        let list_box = XamlListBox::new().map_err(|e| to_error("ListBox の生成", e))?;
+        let (native, list_box) = build_surface()?;
         list_box
             .SetSelectionMode(XamlSelectionMode::Single)
             .map_err(|e| to_error("ListBox の選択方法の設定", e))?;
@@ -96,15 +300,8 @@ impl List {
             &list_box,
             ScrollBarVisibility::Disabled,
         );
-        let native = ScrollViewer::new().map_err(|e| to_error("List の ScrollViewer 生成", e))?;
         let _ = native.SetHorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
         let _ = native.SetVerticalScrollBarVisibility(ScrollBarVisibility::Auto);
-        let element = list_box
-            .cast::<IInspectable>()
-            .map_err(|e| to_error("ListBox の要素化", e))?;
-        native
-            .SetContent(&element)
-            .map_err(|e| to_error("List の ScrollViewer への追加", e))?;
         let hovered = Arc::new(UiThreadCell::new(0));
         let wheel = crate::layout::register_list_scroll(native.clone(), hovered.clone());
 
@@ -118,6 +315,7 @@ impl List {
             handler: SelectionHandler::new(),
             silent: Rc::new(Cell::new(false)),
             hovered,
+            row_style: row_style(),
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
@@ -204,6 +402,9 @@ impl List {
         let mut rows = Vec::with_capacity(items.len());
         for item in items {
             let row = ListBoxItem::new().map_err(|e| to_error("ListBoxItem の生成", e))?;
+            if let Some(style) = self.0.row_style.as_ref() {
+                let _ = row.SetStyle(style);
+            }
             set_row_content(&row, item)?;
             let _ = row.SetIsEnabled(item.enabled);
 
@@ -365,17 +566,29 @@ fn set_row_content(row: &ListBoxItem, item: &ListItem) -> Result<()> {
     }
 }
 
-/// 行に載せる 1 本の文字。`secondary` なら小さく淡い見た目にする。
+/// 行に載せる 1 本の文字。`secondary` なら Fluent の副次テキストに合わせる。
+///
+/// 主テキストの色は行 (`ListBoxItem`) から受け継ぐので指定しない。
+/// 副次テキストだけは、テーマに追従する色を `{ThemeResource}` で引くために
+/// XAML から作る。引けなければ濃さを下げるだけの見た目に落とす。
 fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
-    let block = TextBlock::new().map_err(|e| to_error("行ラベルの生成", e))?;
+    let block = if secondary {
+        match XamlReader::Load(&HSTRING::from(DETAIL_XAML))
+            .and_then(|element| element.cast::<TextBlock>())
+        {
+            Ok(block) => block,
+            Err(_) => {
+                let block = TextBlock::new().map_err(|e| to_error("行ラベルの生成", e))?;
+                let _ = block.SetFontSize(12.0);
+                let _ = block.SetOpacity(0.7);
+                block
+            }
+        }
+    } else {
+        TextBlock::new().map_err(|e| to_error("行ラベルの生成", e))?
+    };
     block
         .SetText(&HSTRING::from(text))
         .map_err(|e| to_error("行ラベルの設定", e))?;
-    if secondary {
-        // Fluent の副次テキストに合わせる。色は WinUI のテーマに任せ、
-        // 大きさと濃さだけを下げる。
-        let _ = block.SetFontSize(12.0);
-        let _ = block.SetOpacity(0.7);
-    }
     Ok(block)
 }
