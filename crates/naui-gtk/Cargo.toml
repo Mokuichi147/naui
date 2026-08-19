@@ -1,6 +1,6 @@
 [package]
 name = "naui-gtk"
-description = "naui の Linux バックエンド (GTK4 / libadwaita) の骨組み。未実装"
+description = "naui の Linux バックエンド (GTK4 / libadwaita)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,5 +9,16 @@ repository.workspace = true
 
 [dependencies]
 naui-core.workspace = true
-# gtk4 / libadwaita への依存は、実装に着手する時点で追加する。
-# 現状は API の形だけを定義した骨組みのため、依存を持たない。
+
+# このクレートの中身は同じ cfg で丸ごと囲ってあるので、対象外の OS では
+# 空のクレートになる。GTK4 の開発用ライブラリを要求しないよう、依存も
+# 同じ条件で絞る (macOS から `cargo check --workspace` を通すため)。
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+adw = { version = "0.7", package = "libadwaita", features = ["v1_5"] }
+gtk = { version = "0.9.7", package = "gtk4", features = ["v4_10"] }
+
+[[test]]
+name = "gtk4"
+path = "tests/gtk4.rs"
+# GTK4 はメインスレッドを要求するが、標準ハーネスは別スレッドで走らせるため。
+harness = false

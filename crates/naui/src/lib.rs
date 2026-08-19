@@ -10,7 +10,7 @@
 //! | --- | --- | --- |
 //! | Windows | WinUI 3 (Windows App SDK) | `Microsoft.UI.Xaml.Controls.Button` |
 //! | macOS | AppKit | `NSButton` |
-//! | Linux | GTK4 / libadwaita | `GtkButton` (未実装) |
+//! | Linux | GTK4 / libadwaita | `GtkButton` |
 //! | Web (wasm) | DOM | `<button>` |
 //!
 //! ## 使い方
@@ -116,10 +116,10 @@
 //! # }
 //! ```
 //!
-//! | naui | Windows | macOS | Web |
-//! | --- | --- | --- | --- |
-//! | `TextInput` | `TextBox` | `NSTextField` | `<input type="text">` |
-//! | `TextArea` | `TextBox` (`AcceptsReturn`) | `NSTextView` + `NSScrollView` | `<textarea>` |
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `TextInput` | `TextBox` | `NSTextField` | `GtkEntry` | `<input type="text">` |
+//! | `TextArea` | `TextBox` (`AcceptsReturn`) | `NSTextView` + `NSScrollView` | `GtkTextView` + `GtkScrolledWindow` | `<textarea>` |
 //!
 //! [`TextArea`] は**長い行を折り返し、はみ出した分は縦にスクロール**する。
 //! 折り返しの有無を選ぶ設定は、3 環境の共通部分に無いため持たない。
@@ -146,15 +146,15 @@
 //! # }
 //! ```
 //!
-//! | naui | Windows | macOS | Web |
-//! | --- | --- | --- | --- |
-//! | `Tabs` | `Grid` + `ToggleButton` | `NSTabView` | `role="tablist"` |
-//! | `Navbar` | `ToggleButton` の横並び | `NSSegmentedControl` | `<nav>` |
-//! | `Dock` | `ToggleButton` の横並び | `NSSegmentedControl` | `<nav>` |
-//! | `Menu` | `ToggleButton` の縦並び | `NSButton` の縦並び | `<nav><ul>` |
-//! | `Breadcrumbs` | `HyperlinkButton` + 区切り | `NSPathControl` | `<nav><ol><a>` |
-//! | `Pagination` | `Button` + `ToggleButton` | `NSButton` + `NSSegmentedControl` | `<nav>` |
-//! | `Link` | `HyperlinkButton` | `NSButton` (リンク色) | `<a>` |
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `Tabs` | `Grid` + `ToggleButton` | `NSTabView` | `GtkNotebook` | `role="tablist"` |
+//! | `Navbar` | `ToggleButton` の横並び | `NSSegmentedControl` | `GtkLabel` + `GtkToggleButton` の横並び | `<nav>` |
+//! | `Dock` | `ToggleButton` の横並び | `NSSegmentedControl` | `GtkToggleButton` の横並び (等幅) | `<nav>` |
+//! | `Menu` | `ToggleButton` の縦並び | `NSButton` の縦並び | `GtkToggleButton` の縦並び | `<nav><ul>` |
+//! | `Breadcrumbs` | `HyperlinkButton` + 区切り | `NSPathControl` | `GtkToggleButton` + 区切り | `<nav><ol><a>` |
+//! | `Pagination` | `Button` + `ToggleButton` | `NSButton` + `NSSegmentedControl` | `GtkButton` + `GtkToggleButton` | `<nav>` |
+//! | `Link` | `HyperlinkButton` | `NSButton` (リンク色) | `GtkLinkButton` | `<a>` |
 //!
 //! `Menu` は**縦に並ぶナビゲーション一覧**であって、ポップアップメニューではない。
 //! 右クリックで出るほうは [`PopupMenu`] を使う。
@@ -184,16 +184,16 @@
 //! # }
 //! ```
 //!
-//! | naui | Windows | macOS | Web |
-//! | --- | --- | --- | --- |
-//! | `PopupMenu` | ルートに重ねる `Grid` + `Button` | `NSMenu` | `<div role="menu">` |
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `PopupMenu` | ルートに重ねる `Grid` + `Button` | `NSMenu` | `GtkPopoverMenu` + `GMenu` | `<div role="menu">` |
 //!
 //! **階層 (サブメニュー)・チェック印・ショートカットの表示は持たない。**
 //! 項目は「文字・選べるかどうか・区切り線」だけで、これは 4 環境が
 //! そろって同じ形で扱える範囲にそろえたため。
 //!
-//! ネイティブのメニューがあるのは macOS だけ (`NSMenu`) で、
-//! **Windows と Web は合成**になる。WinUI 3 の `MenuFlyout` は
+//! ネイティブのメニューがあるのは macOS (`NSMenu`) と Linux (`GtkPopoverMenu`)
+//! で、**Windows と Web は合成**になる。WinUI 3 の `MenuFlyout` は
 //! `winio-winui3` のバインディングに無く、ブラウザには既定の
 //! コンテキストメニューを差し替える API が無いため。合成のほうは
 //! **キーボード操作 (矢印キーでの移動) を持たない**。Web は Escape で
@@ -229,9 +229,9 @@
 //! # }
 //! ```
 //!
-//! | naui | Windows | macOS | Web |
-//! | --- | --- | --- | --- |
-//! | `List` | `ListBox` + `ListBoxItem` | `NSTableView` (1 列) + `NSScrollView` | `<select size>` / `<ul role="listbox">` |
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `List` | `ListBox` + `ListBoxItem` | `NSTableView` (1 列) + `NSScrollView` | `GtkListBox` + `GtkScrolledWindow` | `<select size>` / `<ul role="listbox">` |
 //!
 //! `Menu` との違いは役割で、`Menu` は**画面を切り替えるナビゲーション**、
 //! `List` は**データを選ぶ一覧**。`List` だけが複数選択とスクロールを持つ。
@@ -302,9 +302,9 @@
 //! # }
 //! ```
 //!
-//! | naui | Windows | macOS | Web |
-//! | --- | --- | --- | --- |
-//! | `Dialog` | `ContentDialog` | `NSAlert` (+ `accessoryView`) | `<dialog>` + `showModal()` |
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `Dialog` | `ContentDialog` | `NSAlert` (+ `accessoryView`) | `AdwAlertDialog` | `<dialog>` + `showModal()` |
 //!
 //! ボタンの並びは環境の作法に従う (macOS は主となる操作が右端、WinUI 3 は
 //! 左端)。ボタンを 1 つも指定しないと「OK」だけが出る。
@@ -322,7 +322,7 @@
 //! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 59 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で基本ウィジェット・ナビゲーション系・レイアウト・ファイル選択・メディアの読み込みと再生を確認 (`Dialog` はコンパイル確認のみ) |
-//! | Linux | 未実装 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 55 件。`Video` / `Audio` の再生だけは実ファイルで未確認 |
 
 #![forbid(unsafe_code)]
 

@@ -1,594 +1,393 @@
-//! # naui-gtk (骨組み・未実装)
+//! # naui-gtk
 //!
-//! naui の Linux バックエンド。**まだ実装されていない。**
+//! naui の Linux バックエンド。**GTK4 / libadwaita の実コントロール**
+//! (`GtkApplicationWindow` / `GtkButton` / `GtkEntry` / `GtkScale` /
+//! `GtkListBox` …) を生成し、GTK4 のシグナルを Rust のクロージャへ中継する。
 //!
-//! 他のバックエンドと同じ API の形だけを定義してあり、
-//! 呼ぶと必ず「未実装」のエラーを返す。ビルドは通るが動作はしない。
+//! 描画・レイアウト・IME・アクセシビリティ・OS のテーマ追従はすべて GTK4 が行う。
 //!
-//! ## 未実装である理由
-//!
-//! GTK4 / libadwaita のバインディング (`gtk4` / `libadwaita` クレート) は
-//! ビルドに GTK4 の開発用システムライブラリと pkg-config を要求するため、
-//! この実装を書いた環境 (macOS) では **コンパイル確認すらできない**。
-//! 動作未確認のコードを「実装済み」として置くより、
-//! 空であることを明示するほうが誠実だと判断した。
-//!
-//! ## 実装するときの対応表
+//! ## 対応表
 //!
 //! | naui | GTK4 / libadwaita |
 //! | --- | --- |
-//! | `run` | `gtk::Application` + `connect_activate` (コールバック内で UI 構築) |
-//! | `Window` | `adw::ApplicationWindow` |
-//! | `Stack` | `gtk::Box` (`Orientation::Vertical` / `Horizontal`) |
-//! | `Grid` | `gtk::Grid` (`attach` に行・列とスパンを渡す) |
-//! | `Scroll` | `gtk::ScrolledWindow` (`set_policy`) |
-//! | `Spacer` | 中身の無い `gtk::Box` (`set_hexpand` / `set_vexpand`) |
-//! | 大きさの指定 | `set_size_request` / `set_hexpand` / `set_halign` |
-//! | `Label` | `gtk::Label` |
-//! | `Button` | `gtk::Button` + `connect_clicked` |
-//! | `Checkbox` | `gtk::CheckButton` + `connect_toggled` |
-//! | `TextInput` | `gtk::Entry` + `connect_changed` |
-//! | `TextArea` | `gtk::TextView` を `gtk::ScrolledWindow` に載せる (`gtk::TextBuffer` の `connect_changed`) |
-//! | `Slider` | `gtk::Scale` + `connect_value_changed` |
-//! | `ProgressBar` | `gtk::ProgressBar` |
-//! | `Tabs` | `gtk::Notebook` (または `adw::ViewStack` + `adw::ViewSwitcher`) |
-//! | `Navbar` | `adw::HeaderBar` + `adw::ViewSwitcher` |
-//! | `Dock` | `adw::ViewSwitcherBar` |
-//! | `Menu` | `gtk::ListBox` (`connect_row_selected`) |
-//! | `PopupMenu` | `gtk::PopoverMenu` + `gio::Menu` (副ボタンは `gtk::GestureClick`) |
-//! | `List` | `gtk::ListBox` を `gtk::ScrolledWindow` に載せる (`set_selection_mode`) |
-//! | `Breadcrumbs` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
-//! | `Pagination` | 相当するものが無いため `gtk::Box` + `gtk::Button` |
-//! | `Link` | `gtk::LinkButton` |
-//! | `Image` | `gtk::Picture` (`set_filename` / `set_file`、収め方は `set_content_fit`) |
-//! | `Video` | `gtk::Video` (`set_filename` / `set_media_stream`) |
-//! | `Audio` | `gtk::MediaControls` + `gtk::MediaFile` (映像面を持たない) |
-//! | `FilePicker` | `gtk::Button` + `gtk::FileDialog` (`open` / `open_multiple` / `select_folder`) |
-//! | `Dialog` | `adw::AlertDialog` (見出し・本文・`extra_child`・`add_response` が naui の形とそのまま対応する) |
+//! | `run` | `AdwApplication` + `connect_activate` (コールバック内で UI 構築) |
+//! | `Window` | `AdwApplicationWindow` |
+//! | `Stack` | `GtkBox` |
+//! | `Grid` | `GtkGrid` |
+//! | `Scroll` | `GtkScrolledWindow` |
+//! | `Spacer` | 中身の無い `GtkBox` (`hexpand` / `vexpand`) |
+//! | 大きさの指定 | `size_request` / `hexpand` / `halign` + [`SizeBin`] の上限 |
+//! | `Label` | `GtkLabel` |
+//! | `Button` | `GtkButton` |
+//! | `Checkbox` | `GtkCheckButton` |
+//! | `TextInput` | `GtkEntry` |
+//! | `TextArea` | `GtkTextView` を `GtkScrolledWindow` に載せたもの |
+//! | `Slider` | `GtkScale` |
+//! | `ProgressBar` | `GtkProgressBar` |
+//! | `Tabs` | `GtkNotebook` |
+//! | `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` | `GtkToggleButton` の並び |
+//! | `PopupMenu` | `GtkPopoverMenu` + `GMenu` + `GSimpleAction` |
+//! | `List` | `GtkListBox` を `GtkScrolledWindow` に載せたもの |
+//! | `Link` | `GtkLinkButton` |
+//! | `Image` | `GtkPicture` |
+//! | `Video` | `GtkPicture` (`GtkMediaFile` を映す) + `GtkMediaControls` |
+//! | `Audio` | `GtkMediaControls` + `GtkMediaFile` |
+//! | `FilePicker` | `GtkButton` + `GtkFileDialog` |
+//! | `Dialog` | `AdwAlertDialog` |
 //!
-//! GTK のシグナルハンドラは `'static` なクロージャを受けるので、
-//! macOS/Web と同じ `Rc<Inner>` + クロージャ保持の形がそのまま使える
-//! (Windows のような `Send + Sync` 制約は無い)。
+//! ## 他のバックエンドとの違い
+//!
+//! - **`Video` の再生バーは出し入れできる**が、`GtkVideo` ではなく
+//!   `GtkPicture` + `GtkMediaControls` で組んでいるためで、収め方
+//!   ([`Fit`](naui_core::Fit)) もこの形でだけ効く。
+//! - [`Fit::None`](naui_core::Fit::None) (原寸) にあたるものが GTK4 に無いため、
+//!   **拡大はしないが縮小はする** `GTK_CONTENT_FIT_SCALE_DOWN` に写す。
+//! - `Grid` の [`Track::Fill`](naui_core::Track::Fill) の**重みは効かない**。
+//!   `GtkGrid` は列や行そのものに幅を持たせられず、余りは広がる列で等分される
+//!   (macOS と同じ制限)。
+//! - 配色テーマは `AdwStyleManager` がアプリ全体に持つため、
+//!   [`Window::set_theme`] もアプリ全体に効く。
+//!
+//! GTK4 のシグナルハンドラは `'static` なクロージャを受けるので、macOS / Web と
+//! 同じ `Rc<Inner>` + クロージャ保持の形がそのまま使える (Windows のような
+//! `Send + Sync` 制約は無い)。
 
 #![cfg(all(
     unix,
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
-#![forbid(unsafe_code)]
+// glib のサブクラス化マクロだけが `unsafe impl` を必要とする (crate::bin)。
+#![deny(unsafe_code)]
+
+mod bin;
+mod callback;
+mod dialog;
+mod file_picker;
+mod layout;
+mod list;
+mod media;
+mod navigation;
+mod popup;
+mod widgets;
+mod window;
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
-use naui_core::{
-    Align, DialogButtons, DialogResponse, Error, Fit, FileEntry, FileFilter, FilePickerMode,
-    GridCell, ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem, Result,
-    ScrollPolicy, SelectionMode, Settings, Sizing, Theme, Track,
+use gtk::gio;
+use gtk::glib;
+use gtk::prelude::*;
+use naui_core::{Error, Orientation, Result, Settings, Theme};
+
+pub use bin::SizeBin;
+pub use dialog::Dialog;
+pub use file_picker::FilePicker;
+pub use layout::{Grid, Scroll, Spacer};
+pub use list::List;
+pub use media::{Audio, Image, Video};
+pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
+pub use popup::PopupMenu;
+pub use widgets::{
+    Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
+pub use window::{WeakWindow, Window};
 
-fn unimplemented_error(what: &'static str) -> Error {
-    Error::new(
-        what,
-        "Linux (GTK4) バックエンドは未実装です。crates/naui-gtk のドキュメントを参照してください",
-    )
-}
-
-/// GTK4 の実ウィジェットに対応する予定のハンドル。現状は中身を持たない。
-macro_rules! placeholder_widget {
-    ($name:ident) => {
-        // 中身は実装時に入る。骨組みの間は読まれないので警告を止める。
-        #[allow(dead_code)]
-        #[derive(Clone)]
-        pub struct $name(std::rc::Rc<()>);
-
-        impl Widget for $name {
-            fn boxed_clone(&self) -> Box<dyn Widget> {
-                Box::new(self.clone())
-            }
-        }
-
-        impl $name {
-            /// 大きさを指定する (未実装)。
-            pub fn set_sizing(&self, _sizing: Sizing) {}
-        }
-    };
-}
-
-/// naui のウィジェットが実装する共通インタフェース。
-pub trait Widget: 'static {
-    #[doc(hidden)]
-    fn boxed_clone(&self) -> Box<dyn Widget>;
-}
-
-placeholder_widget!(Label);
-placeholder_widget!(Button);
-placeholder_widget!(Checkbox);
-placeholder_widget!(TextInput);
-placeholder_widget!(TextArea);
-placeholder_widget!(Slider);
-placeholder_widget!(ProgressBar);
-placeholder_widget!(Stack);
-placeholder_widget!(Tabs);
-placeholder_widget!(Navbar);
-placeholder_widget!(Dock);
-placeholder_widget!(Menu);
-placeholder_widget!(List);
-placeholder_widget!(Breadcrumbs);
-placeholder_widget!(Pagination);
-placeholder_widget!(Link);
-placeholder_widget!(Image);
-placeholder_widget!(Video);
-placeholder_widget!(Audio);
-placeholder_widget!(Grid);
-placeholder_widget!(Scroll);
-placeholder_widget!(Spacer);
-placeholder_widget!(FilePicker);
-
-impl Label {
-    pub fn text(&self) -> String {
-        String::new()
-    }
-    pub fn set_text(&self, _text: &str) {}
-}
-
-impl Button {
-    pub fn set_text(&self, _text: &str) {}
-    pub fn set_enabled(&self, _enabled: bool) {}
-    pub fn on_click(&self, _f: impl FnMut() + 'static) {}
-}
-
-impl Checkbox {
-    pub fn is_checked(&self) -> bool {
-        false
-    }
-    pub fn set_checked(&self, _checked: bool) {}
-    pub fn set_enabled(&self, _enabled: bool) {}
-    pub fn on_toggle(&self, _f: impl FnMut(bool) + 'static) {}
-}
-
-impl TextInput {
-    pub fn text(&self) -> String {
-        String::new()
-    }
-    pub fn set_text(&self, _text: &str) {}
-    pub fn set_placeholder(&self, _text: &str) {}
-    pub fn set_enabled(&self, _enabled: bool) {}
-    pub fn on_change(&self, _f: impl FnMut(&str) + 'static) {}
-}
-
-impl TextArea {
-    pub fn text(&self) -> String {
-        String::new()
-    }
-    pub fn set_text(&self, _text: &str) {}
-    pub fn set_placeholder(&self, _text: &str) {}
-    pub fn set_enabled(&self, _enabled: bool) {}
-    pub fn on_change(&self, _f: impl FnMut(&str) + 'static) {}
-}
-
-impl Slider {
-    pub fn value(&self) -> f64 {
-        0.0
-    }
-    pub fn set_value(&self, _value: f64) {}
-    pub fn set_enabled(&self, _enabled: bool) {}
-    pub fn on_change(&self, _f: impl FnMut(f64) + 'static) {}
-}
-
-impl ProgressBar {
-    pub fn value(&self) -> f64 {
-        0.0
-    }
-    pub fn set_value(&self, _value: f64) {}
-}
-
-impl Stack {
-    pub fn set_spacing(&self, _spacing: f64) {}
-    pub fn set_padding(&self, _padding: Padding) {}
-    pub fn set_align(&self, _align: Align) {}
-    pub fn append(&self, _child: &dyn Widget) {}
-    pub fn len(&self) -> usize {
-        0
-    }
-    pub fn is_empty(&self) -> bool {
-        true
-    }
-}
-
-impl Grid {
-    pub fn set_spacing(&self, _column: f64, _row: f64) {}
-    pub fn set_padding(&self, _padding: Padding) {}
-    pub fn attach(&self, _child: &dyn Widget, _cell: GridCell) {}
-    pub fn replace(&self, _child: &dyn Widget, _cell: GridCell) {}
-    pub fn set_column_track(&self, _index: usize, _track: Track) {}
-    pub fn set_row_track(&self, _index: usize, _track: Track) {}
-    pub fn columns(&self) -> usize {
-        0
-    }
-    pub fn rows(&self) -> usize {
-        0
-    }
-    pub fn len(&self) -> usize {
-        0
-    }
-    pub fn is_empty(&self) -> bool {
-        true
-    }
-}
-
-impl Scroll {
-    pub fn set_policy(&self, _horizontal: ScrollPolicy, _vertical: ScrollPolicy) {}
-    pub fn set_child(&self, _child: &dyn Widget) {}
-}
-
-/// 項目を持つナビゲーションの共通実装 (未実装)。
-macro_rules! placeholder_item_bar {
-    ($name:ident) => {
-        impl $name {
-            pub fn set_items(&self, _items: &[NavItem]) {}
-            pub fn len(&self) -> usize {
-                0
-            }
-            pub fn is_empty(&self) -> bool {
-                true
-            }
-            pub fn selected(&self) -> Option<usize> {
-                None
-            }
-            pub fn set_selected(&self, _index: usize) {}
-            pub fn select(&self, _index: usize) {}
-            pub fn on_select(&self, _f: impl FnMut(usize) + 'static) {}
-        }
-    };
-}
-
-placeholder_item_bar!(Navbar);
-placeholder_item_bar!(Dock);
-placeholder_item_bar!(Menu);
-placeholder_item_bar!(Breadcrumbs);
-
-impl List {
-    pub fn set_items(&self, _items: &[ListItem]) {}
-    pub fn len(&self) -> usize {
-        0
-    }
-    pub fn is_empty(&self) -> bool {
-        true
-    }
-    pub fn set_selection_mode(&self, _mode: SelectionMode) {}
-    pub fn selection_mode(&self) -> SelectionMode {
-        SelectionMode::Single
-    }
-    pub fn selected(&self) -> Option<usize> {
-        None
-    }
-    pub fn selection(&self) -> Vec<usize> {
-        Vec::new()
-    }
-    pub fn set_selected(&self, _index: usize) {}
-    pub fn set_selection(&self, _indices: &[usize]) {}
-    pub fn clear_selection(&self) {}
-    pub fn select(&self, _index: usize) {}
-    pub fn select_many(&self, _indices: &[usize]) {}
-    pub fn on_select(&self, _f: impl FnMut(&[usize]) + 'static) {}
-}
-
-impl Navbar {
-    pub fn set_title(&self, _title: &str) {}
-    pub fn title(&self) -> String {
-        String::new()
-    }
-}
-
-impl Tabs {
-    pub fn add_tab(&self, _label: &str, _child: &dyn Widget) {}
-    pub fn len(&self) -> usize {
-        0
-    }
-    pub fn is_empty(&self) -> bool {
-        true
-    }
-    pub fn selected(&self) -> Option<usize> {
-        None
-    }
-    pub fn set_selected(&self, _index: usize) {}
-    pub fn select(&self, _index: usize) {}
-    pub fn on_select(&self, _f: impl FnMut(usize) + 'static) {}
-}
-
-impl Pagination {
-    pub fn set_page_count(&self, _count: usize) {}
-    pub fn page_count(&self) -> usize {
-        0
-    }
-    pub fn page(&self) -> usize {
-        0
-    }
-    pub fn set_page(&self, _page: usize) {}
-    pub fn select(&self, _page: usize) {}
-    pub fn go_previous(&self) {}
-    pub fn go_next(&self) {}
-    pub fn on_change(&self, _f: impl FnMut(usize) + 'static) {}
-}
-
-impl Image {
-    pub fn source(&self) -> String {
-        String::new()
-    }
-    pub fn set_source(&self, _source: &str) {}
-    pub fn is_loaded(&self) -> bool {
-        false
-    }
-    pub fn set_fit(&self, _fit: Fit) {}
-    pub fn set_alt(&self, _text: &str) {}
-}
-
-/// 動画と音声に共通の再生 API (未実装)。
-macro_rules! placeholder_playback {
-    ($name:ident) => {
-        impl $name {
-            pub fn source(&self) -> String {
-                String::new()
-            }
-            pub fn set_source(&self, _source: &str) {}
-            pub fn play(&self) {}
-            pub fn pause(&self) {}
-            pub fn state(&self) -> PlaybackState {
-                PlaybackState::Idle
-            }
-            pub fn is_playing(&self) -> bool {
-                false
-            }
-            pub fn seek(&self, _seconds: f64) {}
-            pub fn position(&self) -> f64 {
-                0.0
-            }
-            pub fn duration(&self) -> Option<f64> {
-                None
-            }
-            pub fn set_volume(&self, _volume: f64) {}
-            pub fn volume(&self) -> f64 {
-                0.0
-            }
-            pub fn set_muted(&self, _muted: bool) {}
-            pub fn is_muted(&self) -> bool {
-                false
-            }
-            pub fn set_loop(&self, _looping: bool) {}
-            pub fn is_loop(&self) -> bool {
-                false
-            }
-            pub fn set_autoplay(&self, _autoplay: bool) {}
-            pub fn set_controls(&self, _controls: bool) {}
-            pub fn on_state_change(&self, _f: impl FnMut(PlaybackState) + 'static) {}
-            pub fn on_position_change(&self, _f: impl FnMut(f64) + 'static) {}
-        }
-    };
-}
-
-placeholder_playback!(Video);
-placeholder_playback!(Audio);
-
-impl Video {
-    pub fn set_fit(&self, _fit: Fit) {}
-}
-
-impl Link {
-    pub fn text(&self) -> String {
-        String::new()
-    }
-    pub fn set_text(&self, _text: &str) {}
-    pub fn href(&self) -> String {
-        String::new()
-    }
-    pub fn set_href(&self, _href: &str) {}
-    pub fn set_enabled(&self, _enabled: bool) {}
-    pub fn on_click(&self, _f: impl FnMut() + 'static) {}
-}
-
-impl FilePicker {
-    pub fn set_text(&self, _text: &str) {}
-    pub fn set_enabled(&self, _enabled: bool) {}
-    pub fn set_mode(&self, _mode: FilePickerMode) {}
-    pub fn mode(&self) -> FilePickerMode {
-        FilePickerMode::default()
-    }
-    pub fn set_filters(&self, _filters: &[FileFilter]) {}
-    pub fn selection(&self) -> Vec<FileEntry> {
-        Vec::new()
-    }
-    pub fn on_select(&self, _f: impl FnMut(&[FileEntry]) + 'static) {}
-    pub fn open(&self) {}
-}
-
-/// ポップアップ (コンテキスト) メニュー (未実装)。
+/// 配色テーマをアプリ全体へ適用する。
 ///
-/// 画面に並ぶウィジェットではないので [`Widget`] ではない。
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct PopupMenu(std::rc::Rc<()>);
-
-impl PopupMenu {
-    pub fn set_items(&self, _items: &[PopupItem]) {}
-    pub fn len(&self) -> usize {
-        0
-    }
-    pub fn is_empty(&self) -> bool {
-        true
-    }
-    pub fn attach(&self, _widget: &dyn Widget) {}
-    pub fn open_at(&self, _widget: &dyn Widget, _x: f64, _y: f64) {}
-    pub fn close(&self) {}
-    pub fn select(&self, _index: usize) {}
-    pub fn on_select(&self, _f: impl FnMut(usize) + 'static) {}
+/// libadwaita のテーマはアプリに 1 つしか無いので、ウィンドウごとには持てない。
+pub(crate) fn apply_theme(theme: Theme) {
+    adw::StyleManager::default().set_color_scheme(match theme {
+        Theme::System => adw::ColorScheme::Default,
+        Theme::Light => adw::ColorScheme::ForceLight,
+        Theme::Dark => adw::ColorScheme::ForceDark,
+    });
 }
 
-/// トップレベルウィンドウ (未実装)。
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct Window(std::rc::Rc<()>);
-
-/// ウィンドウを強く保持せずにイベントハンドラから参照するための弱参照。
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct WeakWindow(std::rc::Weak<()>);
-
-impl WeakWindow {
-    pub fn upgrade(&self) -> Option<Window> {
-        self.0.upgrade().map(Window)
-    }
-}
-
-impl Window {
-    pub fn downgrade(&self) -> WeakWindow {
-        WeakWindow(std::rc::Rc::downgrade(&self.0))
-    }
-
-    pub fn set_title(&self, _title: &str) {}
-    pub fn title(&self) -> String {
-        String::new()
-    }
-    pub fn set_size(&self, _width: f64, _height: f64) {}
-    pub fn set_child(&self, _child: &dyn Widget) {}
-    pub fn show(&self) {}
-    pub fn close(&self) {}
-    pub fn is_visible(&self) -> bool {
-        false
-    }
-    pub fn set_theme(&self, _theme: Theme) -> Result<()> {
-        Ok(())
-    }
-}
-
-/// モーダルダイアログ (未実装)。
+/// ウィジェットを生成するための入り口。
 ///
-/// ウィジェットではないので、コンテナへは入れない ([`Window`] と同じ)。
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct Dialog(std::rc::Rc<()>);
-
-impl Dialog {
-    pub fn set_title(&self, _title: &str) {}
-    pub fn title(&self) -> String {
-        String::new()
-    }
-    pub fn set_message(&self, _message: &str) {}
-    pub fn message(&self) -> String {
-        String::new()
-    }
-    pub fn set_child(&self, _child: &dyn Widget) {}
-    pub fn set_buttons(&self, _buttons: DialogButtons) {}
-    pub fn buttons(&self) -> DialogButtons {
-        DialogButtons::new()
-    }
-    pub fn on_response(&self, _f: impl FnMut(DialogResponse) + 'static) {}
-    pub fn open(&self) {}
-    pub fn close(&self) {}
-    pub fn is_open(&self) -> bool {
-        false
-    }
-}
-
-/// ウィジェットを生成するための入り口 (未実装)。
+/// GTK4 は `GtkApplication` が起動したあとでしかウィンドウを作れないため、
+/// `Ui` は [`run`] のコールバックの中でしか得られない。
 pub struct Ui {
+    app: adw::Application,
     theme: Cell<Theme>,
-    _private: RefCell<()>,
+    /// コールバックが終わってもウィンドウを生かしておくための保持。
+    windows: RefCell<Vec<Window>>,
+    /// ダイアログはどこにも append されないので、ここで保持する。
+    dialogs: RefCell<Vec<Dialog>>,
+    /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
+    popups: RefCell<Vec<PopupMenu>>,
 }
 
 impl Ui {
-    pub fn window(&self, _title: &str, _width: f64, _height: f64) -> Result<Window> {
-        Err(unimplemented_error("ウィンドウの生成"))
-    }
-    pub fn stack(&self, _orientation: Orientation) -> Result<Stack> {
-        Err(unimplemented_error("Stack の生成"))
-    }
-    pub fn grid(&self) -> Result<Grid> {
-        Err(unimplemented_error("Grid の生成"))
-    }
-    pub fn scroll(&self) -> Result<Scroll> {
-        Err(unimplemented_error("Scroll の生成"))
-    }
-    pub fn spacer(&self) -> Result<Spacer> {
-        Err(unimplemented_error("Spacer の生成"))
-    }
-    pub fn label(&self, _text: &str) -> Result<Label> {
-        Err(unimplemented_error("Label の生成"))
-    }
-    pub fn button(&self, _text: &str) -> Result<Button> {
-        Err(unimplemented_error("Button の生成"))
-    }
-    pub fn checkbox(&self, _label: &str) -> Result<Checkbox> {
-        Err(unimplemented_error("Checkbox の生成"))
-    }
-    pub fn text_input(&self, _text: &str) -> Result<TextInput> {
-        Err(unimplemented_error("TextInput の生成"))
-    }
-    pub fn text_area(&self, _text: &str) -> Result<TextArea> {
-        Err(unimplemented_error("TextArea の生成"))
-    }
-    pub fn slider(&self, _min: f64, _max: f64) -> Result<Slider> {
-        Err(unimplemented_error("Slider の生成"))
-    }
-    pub fn progress_bar(&self) -> Result<ProgressBar> {
-        Err(unimplemented_error("ProgressBar の生成"))
-    }
-    pub fn image(&self, _source: &str) -> Result<Image> {
-        Err(unimplemented_error("Image の生成"))
-    }
-    pub fn video(&self, _source: &str) -> Result<Video> {
-        Err(unimplemented_error("Video の生成"))
-    }
-    pub fn audio(&self, _source: &str) -> Result<Audio> {
-        Err(unimplemented_error("Audio の生成"))
-    }
-    pub fn tabs(&self) -> Result<Tabs> {
-        Err(unimplemented_error("Tabs の生成"))
-    }
-    pub fn navbar(&self, _title: &str) -> Result<Navbar> {
-        Err(unimplemented_error("Navbar の生成"))
-    }
-    pub fn dock(&self) -> Result<Dock> {
-        Err(unimplemented_error("Dock の生成"))
-    }
-    pub fn menu(&self) -> Result<Menu> {
-        Err(unimplemented_error("Menu の生成"))
-    }
-    pub fn list(&self) -> Result<List> {
-        Err(unimplemented_error("List の生成"))
-    }
-    pub fn popup_menu(&self) -> Result<PopupMenu> {
-        Err(unimplemented_error("PopupMenu の生成"))
-    }
-    pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
-        Err(unimplemented_error("Breadcrumbs の生成"))
-    }
-    pub fn pagination(&self, _page_count: usize) -> Result<Pagination> {
-        Err(unimplemented_error("Pagination の生成"))
-    }
-    pub fn link(&self, _text: &str, _href: &str) -> Result<Link> {
-        Err(unimplemented_error("Link の生成"))
-    }
-    pub fn file_picker(&self, _text: &str) -> Result<FilePicker> {
-        Err(unimplemented_error("FilePicker の生成"))
-    }
-    pub fn dialog(&self, _title: &str) -> Result<Dialog> {
-        Err(unimplemented_error("Dialog の生成"))
+    fn new(app: adw::Application, theme: Theme) -> Self {
+        Self {
+            app,
+            theme: Cell::new(theme),
+            windows: RefCell::new(Vec::new()),
+            dialogs: RefCell::new(Vec::new()),
+            popups: RefCell::new(Vec::new()),
+        }
     }
 
-    /// 配色テーマを記録する。GTK4 バックエンドが未実装のため、現時点では描画しない。
+    /// 対応する `GtkApplication`。バックエンド固有の脱出口として公開している。
+    pub fn native_application(&self) -> adw::Application {
+        self.app.clone()
+    }
+
+    /// ウィンドウを作る。フレームワークが参照を保持するので、
+    /// 戻り値を捨てても閉じられることはない。
+    pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
+        let window = Window::new(&self.app, title, width, height);
+        self.windows.borrow_mut().push(window.clone());
+        Ok(window)
+    }
+
+    pub fn stack(&self, orientation: Orientation) -> Result<Stack> {
+        Ok(Stack::new(orientation))
+    }
+
+    /// 行と列で位置を決めるコンテナ。
+    pub fn grid(&self) -> Result<Grid> {
+        Ok(Grid::new())
+    }
+
+    /// 中身がはみ出したらスクロールさせるコンテナ。
+    pub fn scroll(&self) -> Result<Scroll> {
+        Ok(Scroll::new())
+    }
+
+    /// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。
+    pub fn spacer(&self) -> Result<Spacer> {
+        Ok(Spacer::new())
+    }
+
+    pub fn label(&self, text: &str) -> Result<Label> {
+        Ok(Label::new(text))
+    }
+
+    pub fn button(&self, text: &str) -> Result<Button> {
+        Ok(Button::new(text))
+    }
+
+    pub fn checkbox(&self, label: &str) -> Result<Checkbox> {
+        Ok(Checkbox::new(label))
+    }
+
+    pub fn text_input(&self, text: &str) -> Result<TextInput> {
+        Ok(TextInput::new(text))
+    }
+
+    /// 改行を含む文字列を入力できる欄。高さは `set_sizing` で指定する。
+    pub fn text_area(&self, text: &str) -> Result<TextArea> {
+        Ok(TextArea::new(text))
+    }
+
+    pub fn slider(&self, min: f64, max: f64) -> Result<Slider> {
+        Ok(Slider::new(min, max))
+    }
+
+    pub fn progress_bar(&self) -> Result<ProgressBar> {
+        Ok(ProgressBar::new())
+    }
+
+    /// 画像。`source` はファイルパスか URL。
+    pub fn image(&self, source: &str) -> Result<Image> {
+        Ok(Image::new(source))
+    }
+
+    /// 動画。`source` はファイルパスか URL。
+    pub fn video(&self, source: &str) -> Result<Video> {
+        Ok(Video::new(source))
+    }
+
+    /// 音声。`source` はファイルパスか URL。
+    pub fn audio(&self, source: &str) -> Result<Audio> {
+        Ok(Audio::new(source))
+    }
+
+    /// タブ。中身のウィジェットごと持つ。
+    pub fn tabs(&self) -> Result<Tabs> {
+        Ok(Tabs::new())
+    }
+
+    /// 画面上部に置く横並びのナビゲーション。`title` は左端の見出し。
+    pub fn navbar(&self, title: &str) -> Result<Navbar> {
+        Ok(Navbar::new(title))
+    }
+
+    /// 画面下部に置く横並びのナビゲーション (等幅)。
+    pub fn dock(&self) -> Result<Dock> {
+        Ok(Dock::new())
+    }
+
+    /// 縦に並ぶナビゲーション一覧。
+    pub fn menu(&self) -> Result<Menu> {
+        Ok(Menu::new())
+    }
+
+    /// 選択できる行の一覧。自分でスクロールする。
+    pub fn list(&self) -> Result<List> {
+        Ok(List::new())
+    }
+
+    /// 右クリックで出るポップアップ (コンテキスト) メニュー。
+    ///
+    /// フレームワークが参照を保持するので、戻り値を捨てても
+    /// 取り付け先から消えることはない。
+    pub fn popup_menu(&self) -> Result<PopupMenu> {
+        let popup = PopupMenu::new();
+        self.popups.borrow_mut().push(popup.clone());
+        Ok(popup)
+    }
+
+    /// パンくず。
+    pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
+        Ok(Breadcrumbs::new())
+    }
+
+    /// ページ送り。`page_count` はページ数。
+    pub fn pagination(&self, page_count: usize) -> Result<Pagination> {
+        Ok(Pagination::new(page_count))
+    }
+
+    /// リンク。`href` が空でなければ、押したときに既定のハンドラで開く。
+    pub fn link(&self, text: &str, href: &str) -> Result<Link> {
+        Ok(Link::new(text, href))
+    }
+
+    /// ファイルやフォルダーを選ばせるボタン。押すと `GtkFileDialog` が出る。
+    pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
+        Ok(FilePicker::new(text))
+    }
+
+    /// モーダルダイアログ。フレームワークが参照を保持する。
+    pub fn dialog(&self, title: &str) -> Result<Dialog> {
+        let dialog = Dialog::new(&self.app, title);
+        self.dialogs.borrow_mut().push(dialog.clone());
+        Ok(dialog)
+    }
+
+    /// 配色テーマを切り替える。
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         self.theme.set(theme);
+        apply_theme(theme);
         Ok(())
     }
 
     pub fn theme(&self) -> Theme {
         self.theme.get()
     }
-    pub fn quit(&self) {}
+
+    /// アプリを終了する。
+    pub fn quit(&self) {
+        self.app.quit();
+    }
 }
 
-/// 未実装。呼ぶと必ずエラーを返す。
-pub fn run<F>(_settings: Settings, _build: F) -> Result<()>
+thread_local! {
+    /// [`run_for_test`] が使い回す `GtkApplication`。
+    static TEST_APP: RefCell<Option<adw::Application>> = const { RefCell::new(None) };
+}
+
+thread_local! {
+    /// `run` のコールバックが終わってからも `Ui` を生かしておく。
+    ///
+    /// ウィジェットのクロージャは `Ui` が持つハンドル (ダイアログ・ポップアップ)
+    /// を参照するので、コールバックの終わりで落とすわけにはいかない。
+    static KEEP_ALIVE: RefCell<Vec<Rc<Ui>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// メインループを回さずに `Ui` だけを作る。**自動テスト専用**。
+///
+/// GTK4 のウィジェットは `gtk_init` のあとでないと作れないので、初期化と
+/// `GtkApplication` の登録だけを行い、`build` をそのまま呼ぶ。
+#[doc(hidden)]
+pub fn run_for_test<F>(build: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Result<()>,
+{
+    if !gtk::is_initialized() {
+        adw::init().map_err(|e| Error::new("テスト用の起動", e.to_string()))?;
+    }
+    // `GtkApplication` は 1 プロセスに 1 つ。登録は同じオブジェクトパスを
+    // 使うので、ケースごとに作り直すと 2 回目の登録で失敗する。
+    let app = TEST_APP.with(|slot| -> Result<adw::Application> {
+        if let Some(app) = slot.borrow().as_ref() {
+            return Ok(app.clone());
+        }
+        let app = adw::Application::builder()
+            .application_id("org.naui.test")
+            // 既存プロセスへ起動要求が転送されないようにする。
+            .flags(gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        app.register(gio::Cancellable::NONE)
+            .map_err(|e| Error::new("テスト用の起動", e.to_string()))?;
+        *slot.borrow_mut() = Some(app.clone());
+        Ok(app)
+    })?;
+    let ui = Ui::new(app, Theme::System);
+    build(&ui)
+}
+
+/// アプリを起動し、`build` の中で UI を組み立てる。
+///
+/// `build` は `GtkApplication` の `activate` の中で 1 回だけ呼ばれる。
+/// この関数はウィンドウがすべて閉じるまで戻らない。
+pub fn run<F>(settings: Settings, build: F) -> Result<()>
 where
     F: FnOnce(&Ui) -> Result<()> + 'static,
 {
-    Err(unimplemented_error("Linux でのアプリ起動"))
+    // GTK4 のアプリ ID は書き方が決まっている。不正なまま渡すと GLib が
+    // 落ちるので、ここで弾いて naui のエラーとして返す。
+    if !gio::Application::id_is_valid(&settings.app_id) {
+        return Err(Error::new(
+            "Linux でのアプリ起動",
+            format!(
+                "アプリ ID `{}` は GTK4 が受け付けない形です。\
+                 `Settings::app_id` で逆ドメイン形式 (例: com.example.myapp) を指定してください",
+                settings.app_id
+            ),
+        ));
+    }
+
+    let app = adw::Application::builder()
+        .application_id(&settings.app_id)
+        .build();
+
+    let theme = settings.theme;
+    let build = RefCell::new(Some(build));
+    let failure: Rc<RefCell<Option<Error>>> = Rc::new(RefCell::new(None));
+    {
+        let failure = failure.clone();
+        app.connect_activate(move |app| {
+            let Some(build) = build.borrow_mut().take() else {
+                // 2 回目以降の activate (既存プロセスへの起動要求)。
+                return;
+            };
+            apply_theme(theme);
+            let ui = Rc::new(Ui::new(app.clone(), theme));
+            match build(&ui) {
+                Ok(()) => KEEP_ALIVE.with(|slot| slot.borrow_mut().push(ui)),
+                Err(error) => {
+                    *failure.borrow_mut() = Some(error);
+                    app.quit();
+                }
+            }
+        });
+    }
+
+    // コマンドライン引数は naui の API に無いので、GTK4 へは渡さない。
+    let code = app.run_with_args::<&str>(&[]);
+    KEEP_ALIVE.with(|slot| slot.borrow_mut().clear());
+
+    if let Some(error) = failure.borrow_mut().take() {
+        return Err(error);
+    }
+    if code != glib::ExitCode::SUCCESS {
+        return Err(Error::new(
+            "Linux でのアプリ起動",
+            format!("GtkApplication が {code:?} で終了しました"),
+        ));
+    }
+    Ok(())
 }
