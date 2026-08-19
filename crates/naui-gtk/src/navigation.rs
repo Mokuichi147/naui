@@ -465,6 +465,10 @@ impl_widget!(Tabs);
 impl Tabs {
     pub(crate) fn new() -> Self {
         let native = gtk::Notebook::new();
+        // 既定の `GtkNotebook` は「全タブが横に並ぶ幅」を最小幅として申告する
+        // ため、タブが増えるとウィンドウがそれ以下に縮められなくなる。
+        // 収まらないときは矢印で送る形にして、最小幅をタブ 1 枚ぶんに保つ。
+        native.set_scrollable(true);
         let bin = SizeBin::wrap(&native);
         let inner = Rc::new(TabsInner {
             native,

@@ -74,6 +74,14 @@ fn main() {
             "最小の大きさが measure の下限になる",
             sizing_min_raises_minimum,
         ),
+        (
+            "Fill は中身の都合で親を押し広げない",
+            fill_does_not_push_the_parent_wider,
+        ),
+        (
+            "タブが増えても最小幅が増えない",
+            tabs_do_not_widen_with_the_number_of_tabs,
+        ),
         ("大きさを指定し直すと以前の指定が消える", sizing_is_replaced),
         ("スペーサーが両方向に広がる", spacer_expands),
         (
@@ -545,6 +553,65 @@ fn sizing_max_reserves_room_for_fill(ui: &Ui) -> Result<()> {
     let hugging = ui.label("あ")?;
     hugging.set_sizing(Sizing::new().max_height(315.0));
     assert_eq!(measure_height(&bin_of(&hugging)).1, plain);
+    Ok(())
+}
+
+fn fill_does_not_push_the_parent_wider(ui: &Ui) -> Result<()> {
+    const TEXT: &str = "とても長い文字列がここに入っていて自然な幅は大きい";
+    let plain = ui.label(TEXT)?;
+    let (minimum, natural) = measure_width(&bin_of(&plain));
+    assert!(minimum > 0, "指定が無ければ中身の最小をそのまま申告する");
+
+    // `Fill` は「大きさは親が決める」という指定なので、中身の都合で
+    // 親 (ひいてはウィンドウの縮められる下限) を押し広げない。
+    let filling = ui.label(TEXT)?;
+    filling.set_sizing(Sizing::fill_width());
+    let (minimum, filled_natural) = measure_width(&bin_of(&filling));
+    assert_eq!(minimum, 0, "縮めるときは中身より小さくなれる");
+    assert_eq!(filled_natural, natural, "ふだんの大きさは変わらない");
+
+    // 下限が要るときは min_width で指定する。
+    let floored = ui.label(TEXT)?;
+    floored.set_sizing(Sizing::fill_width().min_width(120.0));
+    assert_eq!(measure_width(&bin_of(&floored)).0, 120);
+    Ok(())
+}
+
+fn tabs_do_not_widen_with_the_number_of_tabs(ui: &Ui) -> Result<()> {
+    const LABEL: &str = "とても長いタブの名前";
+
+    // `GtkNotebook` の既定は「全タブが横に並ぶ幅」を最小幅にするため、
+    // タブが増えるとウィンドウがそれ以下に縮められなくなる。
+    let tabs = ui.tabs()?;
+    let native: gtk::Notebook = tabs.native_widget().downcast().expect("GtkNotebook");
+    assert!(native.is_scrollable(), "収まらないタブは矢印で送る");
+
+    tabs.add_tab(&format!("{LABEL} 1"), &ui.label("1")?);
+    let (one, _) = measure_width(&bin_of(&tabs));
+    for index in 2..=8 {
+        tabs.add_tab(&format!("{LABEL} {index}"), &ui.label("x")?);
+    }
+    let (many, _) = measure_width(&bin_of(&tabs));
+    assert_eq!(tabs.len(), 8);
+    assert!(
+        many < one + 64,
+        "増えるのは送りの矢印ぶんだけ (1 枚: {one}px, 8 枚: {many}px)"
+    );
+
+    // 送りを付けない `GtkNotebook` と比べると、差がそのまま
+    // 「ウィンドウを縮められる下限」の差になる。
+    let plain = gtk::Notebook::new();
+    for index in 1..=8 {
+        plain.append_page(
+            &gtk::Label::new(Some("x")),
+            Some(&gtk::Label::new(Some(&format!("{LABEL} {index}")))),
+        );
+    }
+    let (plain_min, _, _, _) = plain.measure(gtk::Orientation::Horizontal, -1);
+    assert!(
+        many * 2 < plain_min,
+        "送りなしなら全タブぶん ({plain_min}px) 要るところが {many}px で済む"
+    );
     Ok(())
 }
 

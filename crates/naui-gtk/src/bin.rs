@@ -66,8 +66,15 @@ mod imp {
         /// | [`Length::Fill`] + 上限 | **上限そのもの** (空きがあれば上限まで広がる) |
         /// | [`Length::Auto`] / [`Length::Fixed`] + 上限 | 中身と上限の小さいほう |
         ///
-        /// 最小 (`minimum`) も上限まで下げる。そうしないと、空きが上限より
-        /// 狭いときに中身がはみ出す。
+        /// 最小 (`minimum`) は 2 つの理由で下げる。
+        ///
+        /// 1. 上限より下げないと、空きが上限より狭いときに中身がはみ出す。
+        /// 2. [`Length::Fill`] は「大きさを親が決める」という指定なので、
+        ///    **中身の都合で親を押し広げない**。これをしないと、`Fill` を
+        ///    指定した中身がウィンドウの縮められる下限を決めてしまう
+        ///    (Web バックエンドが `min-width: 0` を書いているのと同じ理由)。
+        ///    下限が要るときは [`Sizing::min_width`] などで指定する。
+        ///    そちらは `size_request` として GTK4 が改めて下限に効かせる。
         fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
             let Some(child) = self.obj().first_child() else {
                 return (0, 0, -1, -1);
@@ -81,6 +88,9 @@ mod imp {
             } else {
                 (self.max_height.get(), sizing.height)
             };
+            if length.is_fill() {
+                minimum = 0;
+            }
             if cap >= 0 {
                 natural = if length.is_fill() {
                     // 上限は「通常時に確保したい大きさ」も兼ねる。
