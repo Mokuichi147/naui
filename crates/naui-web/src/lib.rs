@@ -11,6 +11,7 @@
 #![cfg(target_arch = "wasm32")]
 #![forbid(unsafe_code)]
 
+mod combo_box;
 mod dialog;
 mod file_picker;
 mod layout;
@@ -34,6 +35,7 @@ use web_sys::{Document, HtmlElement};
 #[doc(hidden)]
 pub use wasm_bindgen;
 
+pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
@@ -121,6 +123,11 @@ impl Ui {
 
     pub fn checkbox(&self, label: &str) -> Result<Checkbox> {
         Checkbox::new(&self.document, label)
+    }
+
+    /// 1 項目を選ぶドロップダウン。
+    pub fn combo_box(&self) -> Result<ComboBox> {
+        ComboBox::new(&self.document)
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

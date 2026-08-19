@@ -18,6 +18,7 @@
 #![cfg(target_os = "windows")]
 
 mod app;
+mod combo_box;
 mod dialog;
 mod file_picker;
 mod layout;
@@ -33,6 +34,7 @@ use std::cell::{Cell, RefCell};
 
 use naui_core::{Error, Orientation, Result, Settings, Theme};
 
+pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
@@ -116,6 +118,11 @@ impl Ui {
 
     pub fn checkbox(&self, label: &str) -> Result<Checkbox> {
         Checkbox::new(label)
+    }
+
+    /// 選択肢を折りたたんで表示するコンボボックス。
+    pub fn combo_box(&self) -> Result<ComboBox> {
+        ComboBox::new()
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

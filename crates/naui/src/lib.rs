@@ -129,6 +129,30 @@
 //! `set_text` では `on_change` は呼ばれない (`TextInput` と同じく、Windows だけは
 //! ネイティブの `TextChanged` が出るため呼ばれる)。
 //!
+//! ## 選択入力
+//!
+//! 1 つの候補を省スペースに選ばせるときは [`ComboBox`] を使う。候補は
+//! ドロップダウンで表示され、選択されたものはインデックスで返る。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let language = ui.combo_box()?;
+//! language.set_items(&["Rust", "Swift", "TypeScript"]);
+//! language.set_selected(0); // 通知せずに初期値を選ぶ
+//! language.on_select(|index| println!("{index} 番目が選ばれた"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `ComboBox` | `ComboBox` | `NSPopUpButton` | `GtkDropDown` | `<select>` |
+//!
+//! [`ComboBox::set_items`] は候補のインデックスの意味を変えるため、選択を外す。
+//! `set_selected` / `clear_selection` は通知せず、`select` は利用者の操作と同じく
+//! `on_select` を呼ぶ。自由入力のできる編集可能コンボボックスではない。
+//!
 //! ## ナビゲーション
 //!
 //! タブ・ナビバー・ドック・メニュー・パンくず・ページ送り・リンクは、
@@ -319,10 +343,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (ナビゲーション・リスト・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 59 件) |
+//! | macOS | 実行・自動テストあり (コンボボックス・ナビゲーション・リスト・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 61 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 61 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 64 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -334,23 +358,23 @@ pub use naui_core::{
 
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dialog, Dock, FilePicker, Grid, Image, Label, Link,
-    List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs,
-    TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
+    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
+    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dialog, Dock, FilePicker, Grid, Image, Label, Link,
-    List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs,
-    TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
+    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
+    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dialog, Dock, FilePicker, Grid, Image, Label, Link,
-    List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs,
-    TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
+    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
+    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -359,9 +383,9 @@ pub use naui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk::{
-    run, Audio, Breadcrumbs, Button, Checkbox, Dialog, Dock, FilePicker, Grid, Image, Label, Link,
-    List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer, Stack, Tabs,
-    TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
+    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
+    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -476,6 +500,18 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     checkbox.set_checked(true);
     checkbox.set_enabled(true);
     checkbox.on_toggle(|_v: bool| {});
+
+    let combo_box: ComboBox = ui.combo_box()?;
+    combo_box.set_items(&["a", "b"]);
+    let _: usize = combo_box.len();
+    let _: bool = combo_box.is_empty();
+    let _: Option<usize> = combo_box.selected();
+    combo_box.set_selected(0);
+    combo_box.clear_selection();
+    combo_box.select(1);
+    combo_box.set_enabled(true);
+    combo_box.on_select(|_index: usize| {});
+    combo_box.set_sizing(Sizing::fill_width());
 
     let input: TextInput = ui.text_input("t")?;
     let _: String = input.text();
@@ -683,6 +719,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&label);
     stack.append(&button);
     stack.append(&checkbox);
+    stack.append(&combo_box);
     stack.append(&input);
     stack.append(&text_area);
     stack.append(&slider);
