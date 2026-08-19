@@ -22,7 +22,7 @@ naui は自前で描画しません。`ui.button("押す")` が返すのは **�
 | **macOS** | ✅ 動作 | アプリを実行して確認。AppKit の実コントロールに対する自動テスト 59 件 (ポップアップメニューの `NSMenu` への写しと選択の通知、複数行入力の `NSTextView` への写し、ダイアログの `NSAlert` への写しを含む)。メディアは実ファイルの再生 (状態変化・長さ・再生位置・繰り返し) まで自動テストで確認 |
 | **Web (wasm)** | ✅ 動作 | ブラウザで実行し、全ウィジェットを DOM イベントで操作して確認 (ナビゲーション系も、ナビバー・タブ・メニュー・ページ送り・ドックのクリックがコールバックまで届くことを確認)。グリッド・スクロール・スペーサーは実際の描画位置を測って確認。`FilePicker` はボタンから `<input>` への転送と、選択 (単数 / 複数 / フォルダー) がコールバックへ届くところまで確認。`Image` / `Video` / `Audio` の表示・再生もブラウザで確認済み。`TextArea` (`<textarea>`) は改行を含む入力が `on_change` へ届くことを確認。`Dialog` は `<dialog>` の組み立てと、3 つの役割のボタン・OK だけのダイアログを実際に押して、結果と中身のチェックボックスの状態が届くところまでブラウザで確認 (Esc での取り消しだけは、確認に使った埋め込みブラウザが Esc を配送しないため未確認)。**`PopupMenu` はブラウザでの実行確認をしていません** (合成した `<div role="menu">` のコードはビルドが通るところまで)。`List` (`<select size>`) も、行のクリック・複数選択・プログラムからの選択・選べない行のクリックがすべて期待どおりに動くことをブラウザで確認済み |
 | **Windows** | ✅ 動作 | Windows App SDK 2.3.1 の実機で `cargo run -p gallery` を実行し、基本ウィジェット・ナビゲーション系 7 種・レイアウト (`Grid` / `Scroll` / `Spacer` / `set_sizing`、`Scroll` のマウスホイール対応を含む)・`FilePicker` のファイル / フォルダー選択・`Image` / `Video` / `Audio` の読み込みと再生・動画表示のリサイズを確認済み。**`PopupMenu` / `TextArea` / `Dialog` は実機で未確認**で、`x86_64-pc-windows-msvc` 向けの `cargo check` が通るところまでです |
-| **Linux** | ✅ 動作 | Ubuntu 24.04 (GTK 4.14 / libadwaita 1.5、Wayland) で `cargo run -p gallery` を実行し、全 8 タブ (基本ウィジェット・ナビゲーション系 7 種・リスト・レイアウト・ファイル・メディア・ダイアログ) の描画を確認。GTK4 の実コントロールに対する自動テスト 58 件 (ネイティブのクリック・打鍵・行の選択がクロージャへ届くこと、大きさの指定が `gtk_widget_measure` の結果に出ること、`GMenu` と `AdwAlertDialog` への写しを含む)。**`Video` / `Audio` の再生だけは実ファイルで未確認** (GStreamer のプラグイン構成に依存するため) |
+| **Linux** | ✅ 動作 | Ubuntu 24.04 (GTK 4.14 / libadwaita 1.5、Wayland) で `cargo run -p gallery` を実行し、全 8 タブ (基本ウィジェット・ナビゲーション系 7 種・リスト・レイアウト・ファイル・メディア・ダイアログ) の描画を確認。GTK4 の実コントロールに対する自動テスト 59 件 (ネイティブのクリック・打鍵・行の選択がクロージャへ届くこと、大きさの指定が `gtk_widget_measure` の結果に出ること、`GMenu` と `AdwAlertDialog` への写しを含む)。メディアは実ファイル (H.264 + AAC) で再生・一時停止・シーク・長さ・再生位置・状態変化 (`Buffering` → `Playing` → `Paused` → `Playing` → `Ended`) まで確認 |
 
 Windows は Windows App SDK 2.3.1 ランタイムを備えた x64 環境で、
 `Tabs` / `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` / `Link` を含む
@@ -865,7 +865,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - ボタンを指定しないダイアログに「OK」だけが出ること
   - 出していないダイアログを閉じても、modal を中断せず通知もしないこと
 
-- `naui-gtk`: **GTK4 / libadwaita の実コントロールに対する 58 件の統合テスト**
+- `naui-gtk`: **GTK4 / libadwaita の実コントロールに対する 59 件の統合テスト**
   - `gtk_button_clicked` でネイティブのクリックを発生させ、クロージャに届くこと
   - `GtkCheckButton` の `activate` で反転し、変更後の値が通知されること
   - `GtkEntryBuffer` への差し込み (打鍵と同じ経路) が通知され、`set_text` は通知しないこと
@@ -898,6 +898,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   - ポップアップの項目・区切り線が `GMenu` の節になり、**`GAction` の起動
     (メニューを選んだのと同じ経路) がクロージャへ届く**こと
   - 画像が実ファイルから読み込まれ、収め方が `GtkContentFit` になること
+  - **消音を解いたときに音量が戻ること** (`GtkMediaControls` が消音中に音量を
+    0 へ書き戻し、GTK4 はそれを戻さないため)
   - ファイル選択が `GtkButton` として構成され、設定を保つこと
   - ダイアログの見出し・本文・中身・役割つきのボタンが `AdwAlertDialog` へ渡ること
   - 応答がクロージャへ届き、閉じたあとの応答は二重に届かないこと
@@ -920,9 +922,12 @@ cargo test -p naui-core -p naui-gtk -p naui
 
 ## 既知の制限
 
-- **Linux の `Video` / `Audio` は実ファイルでの再生を確認していません。**
-  GTK4 の再生は GStreamer のプラグイン構成に依存するため、環境によって
-  再生できる形式が変わります。読み込みと API の往復までは確認済みです。
+- **Linux の `Video` / `Audio` が再生できる形式は GStreamer 次第です。**
+  GTK4 の再生は GStreamer に載っているため、環境に入っているプラグインで
+  扱える形式だけが再生できます (H.264 + AAC で確認済み)。
+- **Linux の `Video` は再生バーを消しても隠れるだけです。** `GtkVideo` では
+  なく `GtkPicture` + `GtkMediaControls` で組んでいるため、`set_controls(false)`
+  は再生バーを非表示にします。
 - **Linux の `Grid` は `Track::Fill` の重みを無視します。** `GtkGrid` は列や行
   そのものに幅を持たせられず、余りは広がる列で等分されます (macOS と同じ制限)。
 - **Linux の `Fit::None` (原寸) は「拡大しない」止まりです。** GTK4 の

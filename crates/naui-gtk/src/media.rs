@@ -133,6 +133,23 @@ impl PlaybackInner {
         })
     }
 
+    /// 音量と消音をネイティブへ反映する。
+    ///
+    /// `GtkMediaControls` は消音になると音量つまみを 0 に動かし、その 0 を
+    /// `GtkMediaStream` へ書き戻す。**消音を解いても音量は 0 のまま**なので、
+    /// 解いた時点で naui が持っている音量を入れ直す。これをしないと、
+    /// 消音を外しても音が出ない。
+    fn apply_audio(&self) {
+        let Some(stream) = self.stream.borrow().clone() else {
+            return;
+        };
+        let muted = self.muted.get();
+        stream.set_muted(muted);
+        if !muted {
+            stream.set_volume(self.volume.get());
+        }
+    }
+
     /// 状態にかかわるプロパティが動いたときの後始末。
     ///
     /// 自動再生は「読み込めた時点」で始めるので、用意ができるのを待って
@@ -240,11 +257,8 @@ macro_rules! impl_playback {
 
             /// 0.0..=1.0。
             pub fn set_volume(&self, volume: f64) {
-                let volume = volume.clamp(0.0, 1.0);
-                self.0.playback.volume.set(volume);
-                if let Some(stream) = self.0.playback.stream.borrow().clone() {
-                    stream.set_volume(volume);
-                }
+                self.0.playback.volume.set(volume.clamp(0.0, 1.0));
+                self.0.playback.apply_audio();
             }
 
             pub fn volume(&self) -> f64 {
@@ -253,9 +267,7 @@ macro_rules! impl_playback {
 
             pub fn set_muted(&self, muted: bool) {
                 self.0.playback.muted.set(muted);
-                if let Some(stream) = self.0.playback.stream.borrow().clone() {
-                    stream.set_muted(muted);
-                }
+                self.0.playback.apply_audio();
             }
 
             pub fn is_muted(&self) -> bool {
@@ -327,8 +339,6 @@ pub(crate) fn set_source(playback: &Rc<PlaybackInner>, source: &str) {
     }
 
     let stream = gtk::MediaFile::for_file(&to_file(source));
-    stream.set_volume(playback.volume.get());
-    stream.set_muted(playback.muted.get());
     stream.set_loop(playback.looping.get());
 
     // 状態にかかわるプロパティは、どれが動いても同じ判定をやり直す。
@@ -353,12 +363,26 @@ pub(crate) fn set_source(playback: &Rc<PlaybackInner>, source: &str) {
             }
         });
     }
+    {
+        // 再生バーの音量つまみを動かされたら、それを覚えておく。
+        // ただし消音の間は `GtkMediaControls` が 0 を書きに来るので拾わない
+        // (覚えてしまうと、消音を解いたときに戻す音量が 0 になる)。
+        let weak = Rc::downgrade(playback);
+        stream.connect_volume_notify(move |stream| {
+            if let Some(playback) = weak.upgrade() {
+                if !playback.muted.get() {
+                    playback.volume.set(stream.volume());
+                }
+            }
+        });
+    }
 
     playback.controls.set_media_stream(Some(&stream));
     if let Some(picture) = &playback.picture {
         picture.set_paintable(Some(&stream));
     }
     *playback.stream.borrow_mut() = Some(stream);
+    playback.apply_audio();
 
     if playback.autoplay.get() {
         if let Some(stream) = playback.stream.borrow().clone() {

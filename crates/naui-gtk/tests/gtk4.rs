@@ -153,6 +153,7 @@ fn main() {
         ),
         ("メディアの場所が往復する", media_source_round_trips),
         ("再生前の状態は Idle", media_starts_idle),
+        ("消音を解くと音量が戻る", media_unmuting_restores_the_volume),
         (
             "ファイル選択がボタンとして構成され設定を保つ",
             file_picker_configuration,
@@ -1287,6 +1288,32 @@ fn media_source_round_trips(ui: &Ui) -> Result<()> {
 
     // 収め方は映像面へ届く。
     video.set_fit(Fit::Cover);
+    Ok(())
+}
+
+fn media_unmuting_restores_the_volume(ui: &Ui) -> Result<()> {
+    let audio = ui.audio("/tmp/naui-gtk-test-none.m4a")?;
+    let controls: gtk::MediaControls = audio.native_widget().downcast().expect("GtkMediaControls");
+    let stream = || controls.media_stream().expect("GtkMediaFile");
+
+    audio.set_volume(0.5);
+    assert_eq!(audio.volume(), 0.5);
+    assert_eq!(stream().volume(), 0.5);
+
+    audio.set_muted(true);
+    assert!(audio.is_muted());
+    assert!(stream().is_muted());
+    // `GtkMediaControls` は消音になると音量つまみを 0 へ動かし、その 0 を
+    // `GtkMediaStream` へ書き戻す。
+    assert_eq!(stream().volume(), 0.0);
+
+    audio.set_muted(false);
+    assert!(!audio.is_muted());
+    assert!(!stream().is_muted());
+    // GTK4 は音量を戻さないので、naui が持っている音量を入れ直す。
+    // これをしないと、消音を外しても音が出ないままになる。
+    assert_eq!(audio.volume(), 0.5, "消音を解くと音量が戻る");
+    assert_eq!(stream().volume(), 0.5);
     Ok(())
 }
 
