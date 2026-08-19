@@ -9,6 +9,7 @@
 // Objective-C 呼び出しのため unsafe が必要。
 #![allow(unsafe_code)]
 
+mod combo_box;
 mod dialog;
 mod file_picker;
 mod layout;
@@ -34,6 +35,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::NSNotification;
 
+pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
@@ -109,6 +111,11 @@ impl Ui {
 
     pub fn checkbox(&self, label: &str) -> Result<Checkbox> {
         Ok(Checkbox::new(self.mtm, label))
+    }
+
+    /// 選択肢を折りたたんで表示するコンボボックス。
+    pub fn combo_box(&self) -> Result<ComboBox> {
+        Ok(ComboBox::new(self.mtm))
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

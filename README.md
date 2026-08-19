@@ -153,6 +153,18 @@ form.attach(&field, GridCell::new(1, 0));
 `List`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
 `set_sizing` で高さを指定します。
 
+### 選択入力
+
+省スペースな単一選択には `ComboBox` を使います。候補を入れ替えると選択は外れ、
+`set_selected` は通知せず、`select` は利用者が選んだときと同じく通知します。
+
+```rust
+let language = ui.combo_box()?;
+language.set_items(&["Rust", "Swift", "TypeScript"]);
+language.set_selected(0);
+language.on_select(|index| println!("{index} 番目が選ばれました"));
+```
+
 ## ウィジェット
 
 | 分類 | API |
@@ -160,7 +172,7 @@ form.attach(&field, GridCell::new(1, 0));
 | 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`Slider`、`ProgressBar` |
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
-| データ選択 | `List` |
+| データ選択 | `ComboBox`、`List` |
 | ファイル選択 | `FilePicker` |
 | メディア | `Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog` |
@@ -187,6 +199,7 @@ form.attach(&field, GridCell::new(1, 0));
 | `Label` | ✅ `TextBlock` | ✅ `NSTextField` | ✅ `GtkLabel` | ✅ `<span>` |
 | `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
+| `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
@@ -313,8 +326,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 26 コンポーネントです。保存ダイアログ、複数列テーブル、
-  ラジオボタン、コンボボックス、ツールバー、ツリーは未実装です。
+- 対応するのは上記の 27 コンポーネントです。保存ダイアログ、複数列テーブル、
+  ラジオボタン、ツールバー、ツリーは未実装です。
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
 - `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
 - `Dialog` は同時に 1 つだけで、ボタンは Primary、Secondary、Cancel の最大 3 個です。

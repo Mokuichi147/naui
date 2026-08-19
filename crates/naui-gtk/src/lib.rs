@@ -20,6 +20,7 @@
 //! | `Label` | `GtkLabel` |
 //! | `Button` | `GtkButton` |
 //! | `Checkbox` | `GtkCheckButton` |
+//! | `ComboBox` | `GtkDropDown` + `GtkStringList` |
 //! | `TextInput` | `GtkEntry` |
 //! | `TextArea` | `GtkTextView` を `GtkScrolledWindow` に載せたもの |
 //! | `Slider` | `GtkScale` |
@@ -100,6 +101,7 @@
 
 mod bin;
 mod callback;
+mod combo_box;
 mod dialog;
 mod file_picker;
 mod layout;
@@ -119,6 +121,7 @@ use gtk::prelude::*;
 use naui_core::{Error, Orientation, Result, Settings, Theme};
 
 pub use bin::SizeBin;
+pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use layout::{Grid, Scroll, Spacer};
@@ -210,6 +213,11 @@ impl Ui {
 
     pub fn checkbox(&self, label: &str) -> Result<Checkbox> {
         Ok(Checkbox::new(label))
+    }
+
+    /// 選択肢を折りたたんで表示するコンボボックス。
+    pub fn combo_box(&self) -> Result<ComboBox> {
+        Ok(ComboBox::new())
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

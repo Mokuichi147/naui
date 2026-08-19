@@ -50,6 +50,14 @@ fn main() {
         ),
         ("スライダーが範囲でクランプされる", slider_clamp),
         ("進捗バーが 0..1 に収まる", progress_clamp),
+        (
+            "コンボボックスの選択がネイティブと往復する",
+            combo_box_selection_round_trips,
+        ),
+        (
+            "コンボボックスの通知中に内容と通知先を差し替えられる",
+            combo_box_callback_is_reentrant,
+        ),
         ("スタックが子を生かし続ける", stack_keeps_children),
         ("ウィンドウを設定して閉じられる", window_lifecycle),
         ("ナビバーの選択がネイティブと往復する", navbar_selection),
@@ -406,6 +414,88 @@ fn progress_clamp(ui: &Ui) -> Result<()> {
     assert!((bar.value() - 0.25).abs() < 1e-9);
     bar.set_value(5.0);
     assert!((bar.value() - 1.0).abs() < 1e-9);
+    Ok(())
+}
+
+/// 項目・未選択状態・通知の有無が NSPopUpButton と一致する。
+fn combo_box_selection_round_trips(ui: &Ui) -> Result<()> {
+    let combo = ui.combo_box()?;
+    assert!(combo.is_empty());
+    assert_eq!(combo.selected(), None);
+
+    combo.set_items(&["東京", "大阪", "札幌"]);
+    assert_eq!(combo.len(), 3);
+    assert_eq!(combo.selected(), None, "項目の作り直し後は未選択");
+    let native = combo.native_combo_box();
+    assert_eq!(native.numberOfItems(), 3);
+    assert_eq!(native.itemTitleAtIndex(1).to_string(), "大阪");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    combo.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    combo.set_selected(1);
+    assert_eq!(combo.selected(), Some(1));
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+    combo.set_selected(99);
+    assert_eq!(combo.selected(), Some(1), "範囲外は無視する");
+
+    combo.clear_selection();
+    assert_eq!(combo.selected(), None);
+    assert!(seen.borrow().is_empty(), "clear_selection は通知しない");
+
+    combo.select(2);
+    assert_eq!(combo.selected(), Some(2));
+    assert_eq!(*seen.borrow(), vec![2]);
+    combo.select(99);
+    assert_eq!(*seen.borrow(), vec![2], "範囲外は通知もしない");
+
+    // AppKit の target/action から届く実際の通知経路も確かめる。
+    native.selectItemAtIndex(0);
+    let target = native.target();
+    unsafe { native.sendAction_to(native.action(), target.as_deref()) };
+    assert_eq!(*seen.borrow(), vec![2, 0]);
+
+    combo.set_enabled(false);
+    assert!(!native.isEnabled());
+    combo.set_items(&["那覇"]);
+    assert_eq!(combo.selected(), None);
+    assert_eq!(*seen.borrow(), vec![2, 0], "再構築は通知しない");
+    Ok(())
+}
+
+/// 通知の最中でも同じコンボボックスを操作し、コールバックを差し替えられる。
+fn combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let combo = ui.combo_box()?;
+    combo.set_items(&["春", "夏", "秋"]);
+
+    let first = Rc::new(RefCell::new(Vec::new()));
+    let replacement = Rc::new(RefCell::new(Vec::new()));
+    combo.on_select({
+        let combo = combo.clone();
+        let first = first.clone();
+        let replacement = replacement.clone();
+        move |index| {
+            first.borrow_mut().push(index);
+            combo.set_items(&["朝", "昼"]);
+            combo.set_selected(1);
+            combo.on_select({
+                let replacement = replacement.clone();
+                move |index| replacement.borrow_mut().push(index)
+            });
+        }
+    });
+
+    combo.select(0);
+    assert_eq!(*first.borrow(), vec![0]);
+    assert_eq!(combo.len(), 2);
+    assert_eq!(combo.selected(), Some(1));
+
+    combo.select(0);
+    assert_eq!(*first.borrow(), vec![0], "古い通知先は外れること");
+    assert_eq!(*replacement.borrow(), vec![0]);
     Ok(())
 }
 

@@ -1,9 +1,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use naui::{NavItem, Orientation, Padding, Result, Theme, Ui};
+use naui::{Orientation, Padding, Result, Theme, Ui};
 
-/// Label、Button、Checkbox、Slider、ProgressBar とテーマ。
+/// Label、Button、Checkbox、Slider、ProgressBar、ComboBox とテーマ。
 pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(12.0);
@@ -79,10 +79,11 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     pane.append(&progress);
     pane.append(&value_status);
 
-    pane.append(&ui.label("Theme")?);
+    pane.append(&ui.label("ComboBox / Theme")?);
+    pane.append(&ui.label("ドロップダウンからアプリの配色を選べます。")?);
     let theme_status = ui.label(&format!("現在: {}", theme_name(ui.theme())))?;
-    let theme = ui.navbar("配色")?;
-    theme.set_items(&NavItem::list(["システム", "ライト", "ダーク"]));
+    let theme = ui.combo_box()?;
+    theme.set_items(&["システム", "ライト", "ダーク"]);
     theme.set_selected(theme_index(ui.theme()));
     let weak_window = window.downgrade();
     theme.on_select({

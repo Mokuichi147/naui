@@ -39,6 +39,18 @@ fn main() {
             "チェックボックスの set_checked は通知しない",
             checkbox_set_is_silent,
         ),
+        (
+            "コンボボックスの項目と選択がネイティブへ届く",
+            combo_box_items_and_selection,
+        ),
+        (
+            "コンボボックスのプログラム変更は通知しない",
+            combo_box_programmatic_changes_are_silent,
+        ),
+        (
+            "コンボボックスの通知内で操作と差し替えができる",
+            combo_box_callback_is_reentrant_and_replaceable,
+        ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         (
             "打鍵が通知され、set_text は通知しない",
@@ -321,6 +333,87 @@ fn checkbox_set_is_silent(ui: &Ui) -> Result<()> {
     assert!(checkbox.is_checked());
     checkbox.set_checked(false);
     assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+    Ok(())
+}
+
+fn combo_box_items_and_selection(ui: &Ui) -> Result<()> {
+    let combo = ui.combo_box()?;
+    assert!(combo.is_empty());
+    assert_eq!(combo.selected(), None);
+
+    combo.set_items(&["赤", "緑", "青"]);
+    assert_eq!(combo.len(), 3);
+    assert_eq!(combo.selected(), None, "項目の作り直し後も未選択");
+
+    let native: gtk::DropDown = combo.native_widget().downcast().expect("GtkDropDown");
+    assert_eq!(native.selected(), gtk::INVALID_LIST_POSITION);
+    let model = native.model().expect("GtkStringList のモデル");
+    let green: gtk::StringObject = model
+        .item(1)
+        .expect("2 番目の項目")
+        .downcast()
+        .expect("GtkStringObject");
+    assert_eq!(green.string().as_str(), "緑");
+
+    combo.set_selected(2);
+    assert_eq!(combo.selected(), Some(2));
+    assert_eq!(native.selected(), 2);
+    combo.set_selected(99);
+    assert_eq!(combo.selected(), Some(2), "範囲外は無視する");
+
+    combo.clear_selection();
+    assert_eq!(combo.selected(), None);
+    combo.set_enabled(false);
+    assert!(!native.is_sensitive());
+    Ok(())
+}
+
+fn combo_box_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
+    let combo = ui.combo_box()?;
+    combo.set_items(&["A", "B", "C"]);
+    let (log, sink) = recorder::<usize>();
+    combo.on_select(sink);
+
+    combo.set_selected(1);
+    combo.clear_selection();
+    combo.set_items(&["D", "E", "F"]);
+    assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+
+    let native: gtk::DropDown = combo.native_widget().downcast().expect("GtkDropDown");
+    native.set_selected(2);
+    assert_eq!(log.borrow().as_slice(), [2]);
+
+    combo.select(0);
+    combo.select(99);
+    assert_eq!(log.borrow().as_slice(), [2, 0]);
+    Ok(())
+}
+
+fn combo_box_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
+    let combo = ui.combo_box()?;
+    combo.set_items(&["A", "B", "C"]);
+    let first = Rc::new(Cell::new(None));
+    let second = Rc::new(RefCell::new(Vec::new()));
+    combo.on_select({
+        let combo = combo.clone();
+        let first = first.clone();
+        let second = second.clone();
+        move |index| {
+            first.set(Some(index));
+            // 通知中の操作でも二重借用せず、この変更自体は通知しない。
+            combo.set_selected(0);
+            combo.on_select({
+                let second = second.clone();
+                move |index| second.borrow_mut().push(index)
+            });
+        }
+    });
+
+    combo.select(1);
+    assert_eq!(first.get(), Some(1));
+    assert_eq!(combo.selected(), Some(0));
+    combo.select(2);
+    assert_eq!(second.borrow().as_slice(), [2]);
     Ok(())
 }
 
