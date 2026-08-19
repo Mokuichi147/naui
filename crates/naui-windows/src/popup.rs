@@ -11,6 +11,8 @@
 //! | 区切り線 | 高さ 1 の `Grid` |
 //!
 //! 色は `{ThemeResource ...}` で引くので、Fluent のテーマ切り替えに追従する。
+//! ただし背景は不透明なブラシに限る。フライアウト用の半透明ブラシは
+//! ポップアップのバックドロップが下に敷かれる前提で、ここでは素通しになる。
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -40,13 +42,20 @@ const OVERLAY_Z_INDEX: i32 = 1000;
 
 /// メニューの枠の見た目。使えるテーマリソースは環境で違うため、
 /// 読めたものを先頭から採用する。
+///
+/// 背景には**必ず不透明なブラシ**を選ぶ。`MenuFlyoutPresenterBackground` や
+/// `CardBackgroundFillColorDefaultBrush` は、下に敷かれるアクリルや Mica と
+/// 重ねて使う前提の半透明ブラシで、ポップアップではなくウィンドウのツリーへ
+/// 直接重ねるこの受け皿では下地が無く、そのまま素通しになってしまう。
+/// Fluent がフライアウト用に用意している不透明色 (透明効果を切ったときの
+/// フォールバックと同じもの) を使う。
 const SURFACE_BRUSHES: &[(&str, &str)] = &[
     (
-        "{ThemeResource MenuFlyoutPresenterBackground}",
-        "{ThemeResource MenuFlyoutPresenterBorderBrush}",
+        "{ThemeResource SolidBackgroundFillColorTertiaryBrush}",
+        "{ThemeResource SurfaceStrokeColorFlyoutBrush}",
     ),
     (
-        "{ThemeResource CardBackgroundFillColorDefaultBrush}",
+        "{ThemeResource SolidBackgroundFillColorBaseBrush}",
         "{ThemeResource CardStrokeColorDefaultBrush}",
     ),
     (
