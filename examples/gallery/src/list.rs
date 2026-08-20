@@ -2,10 +2,12 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use naui::{
-    Length, ListItem, NavItem, Orientation, Padding, PopupItem, Result, SelectionMode, Sizing, Ui,
+    Length, ListItem, NavItem, Orientation, Padding, PopupItem, Result, SelectionMode, Sizing,
+    TreeItem, Ui,
 };
 
-/// List の補足表示、無効な行、単一・複数選択、コンテキストメニュー。
+/// List の補足表示、無効な行、単一・複数選択、コンテキストメニューと、
+/// Tree の開閉・選択。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(12.0);
@@ -33,7 +35,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     list.set_sizing(
         Sizing::new()
             .width(Length::Fill)
-            .height(Length::Fixed(250.0)),
+            .height(Length::Fixed(180.0)),
     );
     let status = ui.label("選択: なし")?;
     list.on_select({
@@ -124,5 +126,89 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     actions.append(&select_example);
     actions.append(&detail_toggle);
     pane.append(&actions);
+
+    build_tree(ui, &pane)?;
     Ok(pane)
+}
+
+/// Tree の入れ子・開閉・選べない枝・通知。
+fn build_tree(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+    pane.append(&ui.label("Tree")?);
+    pane.append(&ui.label("入れ子の項目の開閉と、選べない枝を確認できます。")?);
+
+    let items = vec![
+        TreeItem::new("src").expanded(true).children([
+            TreeItem::new("main.rs").detail("エントリーポイント"),
+            TreeItem::new("lib.rs"),
+            TreeItem::new("ui").children([
+                TreeItem::new("list.rs"),
+                TreeItem::new("tree.rs").detail("この画面"),
+            ]),
+        ]),
+        TreeItem::new("docs").child(TreeItem::new("guide.md").detail("12 KB")),
+        TreeItem::new("target")
+            .enabled(false)
+            .detail("この枝は中身ごと選べません")
+            .child(TreeItem::new("debug")),
+    ];
+
+    let tree = ui.tree()?;
+    tree.set_items(&items);
+    tree.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(200.0)),
+    );
+
+    let status = ui.label("選択: なし")?;
+    tree.on_select({
+        let status = status.clone();
+        let items = items.clone();
+        move |path| {
+            let label = TreeItem::at(&items, path).map(|item| item.label.clone());
+            match label {
+                Some(label) => status.set_text(&format!("選択: {label} {path:?}")),
+                None => status.set_text("選択: なし"),
+            }
+        }
+    });
+    tree.on_expand({
+        let status = status.clone();
+        let items = items.clone();
+        move |path, expanded| {
+            let Some(item) = TreeItem::at(&items, path) else {
+                return;
+            };
+            let state = if expanded { "開いた" } else { "閉じた" };
+            status.set_text(&format!("{} を{state}", item.label));
+        }
+    });
+    pane.append(&tree);
+    pane.append(&status);
+
+    let actions = ui.stack(Orientation::Horizontal)?;
+    actions.set_spacing(8.0);
+
+    let expand_all = ui.button("すべて開く")?;
+    expand_all.on_click({
+        let tree = tree.clone();
+        move || tree.expand_all()
+    });
+    let collapse_all = ui.button("すべて閉じる")?;
+    collapse_all.on_click({
+        let tree = tree.clone();
+        move || tree.collapse_all()
+    });
+    // 閉じた枝の中でも、祖先ごと開いてから選ばれる。
+    let select_deep = ui.button("深い項目を選ぶ")?;
+    select_deep.on_click({
+        let tree = tree.clone();
+        move || tree.select(&[0, 2, 1])
+    });
+
+    actions.append(&expand_all);
+    actions.append(&collapse_all);
+    actions.append(&select_deep);
+    pane.append(&actions);
+    Ok(())
 }

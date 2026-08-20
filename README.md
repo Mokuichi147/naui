@@ -36,6 +36,8 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
   `Dialog` の Esc 操作
 - `FileSaver`: macOS のみ実機と自動テストで確認しています。Windows・Linux・Web
   での実行は未確認です。
+- Windows / Linux / Web: `Tree` の実機・ブラウザでの実行 (macOS では
+  統合テストと Gallery で確認済み。Linux 向けの統合テストは用意してあります)
 
 これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
@@ -152,7 +154,7 @@ form.attach(&ui.label("名前")?, GridCell::new(0, 0));
 form.attach(&field, GridCell::new(1, 0));
 ```
 
-`List`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
+`List`、`Tree`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
 `set_sizing` で高さを指定します。
 
 ### 選択入力
@@ -179,6 +181,31 @@ plan.on_select(|index| println!("{index} 番目が選ばれました"));
 ```
 
 排他になるのは 1 つの `RadioGroup` の中だけです。同じ画面に複数置いても混ざりません。
+
+### ツリー
+
+入れ子の項目を開閉して 1 つ選ぶには `Tree` を使います。項目は**根からの子
+インデックスの並び (パス)** で指し、`[0, 2]` は「1 番目の根の 3 番目の子」、
+空のパスは「選択なし」を表します。
+
+```rust
+use naui::TreeItem;
+
+let tree = ui.tree()?;
+tree.set_items(&[
+    TreeItem::new("src")
+        .expanded(true) // 最初から開いた状態で出す
+        .children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+    TreeItem::new("docs").child(TreeItem::new("guide.md").detail("12 KB")),
+]);
+tree.on_select(|path| println!("{path:?} が選ばれました"));
+tree.on_expand(|path, expanded| println!("{path:?} は {expanded}"));
+tree.select(&[0, 1]); // 閉じた枝の中でも、祖先ごと開いて選ばれる
+```
+
+`set_selected`、`clear_selection`、`set_expanded`、`expand_all`、`collapse_all`
+は通知せず、`select`、`expand`、`collapse` は利用者の操作と同じく通知します。
+`TreeItem::enabled(false)` にした枝は、その子孫もまとめて選べなくなります。
 
 ### ファイルの保存
 
@@ -207,7 +234,7 @@ saver.on_error(|error| eprintln!("{error}"));
 | 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`Slider`、`ProgressBar` |
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
-| データ選択 | `ComboBox`、`RadioGroup`、`List` |
+| データ選択 | `ComboBox`、`RadioGroup`、`List`、`Tree` |
 | ファイル | `FilePicker`、`FileSaver` |
 | メディア | `Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog` |
@@ -241,6 +268,7 @@ saver.on_error(|error| eprintln!("{error}"));
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
 | `ProgressBar` | 🟡 `Grid` + `Border` | ✅ `NSProgressIndicator` | ✅ `GtkProgressBar` | ✅ `<progress>` |
 | `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
+| `Tree` | 🟡 `ListBox` + 開閉ボタン | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
 | `FilePicker` | 🟡 `Button` + `IFileOpenDialog` | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `GtkButton` + `GtkFileDialog` | 🟡 `<button>` + `<input type="file">` |
 | `FileSaver` | 🟡 `Button` + `IFileSaveDialog` | 🟡 `NSButton` + `NSSavePanel` | 🟡 `GtkButton` + `GtkFileDialog` (save) | 🔴 `<button>` + `showSaveFilePicker` / `<a download>` |
 | `Image` | 🟡 `Image` (`XamlReader` 経由) | ✅ `NSImageView` | ✅ `GtkPicture` | ✅ `<img>` |
@@ -266,6 +294,7 @@ saver.on_error(|error| eprintln!("{error}"));
 - `Sizing` / `Length` / `Track` / `GridCell`: 配置とサイズ
 - `NavItem`: ナビゲーション項目
 - `ListItem` / `SelectionMode`: リスト項目と単一・複数選択
+- `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
 - `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
 - `Fit` / `PlaybackState`: メディア表示と再生状態
 - `PopupItem`: ポップアップメニュー項目
@@ -363,10 +392,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 29 コンポーネントです。複数列テーブル、
-  ツールバー、ツリーは未実装です。
+- 対応するのは上記の 30 コンポーネントです。複数列テーブル、ツールバーは未実装です。
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
 - `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
+- `Tree` は単一選択で、項目に置けるのは `List` と同じ文字列だけです。
+  項目はパス (`&[usize]`) で指し、ドラッグでの並べ替えはできません。
 - `Dialog` は同時に 1 つだけで、ボタンは Primary、Secondary、Cancel の最大 3 個です。
 - ウィンドウを閉じるイベントと、入力欄で Enter を押したときの共通
   `on_submit` はありません。
@@ -379,6 +409,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - 一部の Windows App SDK 環境で異常終了を避けるため、`Tabs` は `TabView` を使わず、
   `Video` / `Audio` の標準再生バーは無効にしています。
 - `Dialog` は `window.show()` より前には開けません。
+- `TreeView` のバインディングが無いため、`Tree` は `ListBox` の行として
+  組み立てています。選べない枝は行ごと無効になるので、その開閉ボタンも
+  押せません (プログラムからの `expand` は効きます)。
 
 ### macOS
 
@@ -393,6 +426,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `Fit::None` は GTK4 の `SCALE_DOWN` に対応するため、「原寸」ではなく
   「拡大しない」動作になります。
 - テーマはウィンドウ単位ではなくアプリ全体へ適用されます。
+- `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
+  行と開閉ボタンで組み立てています。
 
 ### Web
 
@@ -400,13 +435,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `document.title` で表現されます。
 - `ListItem::detail` を使うと、`List` は `<select>` から
   `<ul role="listbox">` を使った実装へ切り替わります。
+- `Tree` の `TreeItem::detail` は、行の高さをそろえるため
+  `ラベル — 補助` の形で 1 行に収まります。
 - `FilePicker::open` と `FileSaver::open` はユーザー操作のイベント内で
   呼ぶ必要があります。
 - `FileSaver` は `showSaveFilePicker` があればそれを使い、無いブラウザ
   (Firefox / Safari) では `<a download>` のダウンロードになります。後者では
   保存先の確認が出ないことがあり、`FileEntry::path` はどちらでも `None` です。
-- ブラウザの制限により、メディアの自動再生が拒否される場合があります。
-
-## ライセンス
-
-[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)

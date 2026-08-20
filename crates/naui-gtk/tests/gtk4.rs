@@ -17,7 +17,7 @@ use adw::prelude::*;
 use naui_core::{
     Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, Length,
     ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
-    SelectionMode, Sizing, Theme, Track,
+    SelectionMode, Sizing, Theme, Track, TreeItem,
 };
 use naui_gtk::{run_for_test, Ui, Widget};
 
@@ -166,6 +166,20 @@ fn main() {
         (
             "リストの通知の中からリストを操作できる",
             list_callback_can_touch_the_list,
+        ),
+        ("ツリーの行が展開に追従する", tree_rows_follow_the_expansion),
+        (
+            "GtkListBox 側のツリーの選択がクロージャへ届く",
+            tree_native_selection_notifies,
+        ),
+        ("ツリーが選べない枝を飛ばす", tree_skips_disabled_branches),
+        (
+            "ツリーの開閉ボタンがクロージャへ届く",
+            tree_expansion_notifies,
+        ),
+        (
+            "閉じた枝の中の開閉が保たれる",
+            tree_remembers_expansion_inside_a_closed_branch,
         ),
         (
             "ポップアップが GMenu へ写る",
@@ -1480,6 +1494,232 @@ fn list_callback_can_touch_the_list(ui: &Ui) -> Result<()> {
 
     list.select(1);
     assert_eq!(seen.borrow().as_slice(), [(vec![1], 3)]);
+    Ok(())
+}
+
+// --------------------------------------------------------------------- ツリー
+
+fn tree_box_of(tree: &naui_gtk::Tree) -> gtk::ListBox {
+    tree.native_widget().downcast().expect("GtkListBox")
+}
+
+/// テストで使う木。src (2 つの葉) と docs (guide > intro.md)。
+fn sample_tree() -> Vec<TreeItem> {
+    vec![
+        TreeItem::new("src").children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+        TreeItem::new("docs").child(TreeItem::new("guide").child(TreeItem::new("intro.md"))),
+    ]
+}
+
+/// いま見えている行の文字を上から順に返す。
+///
+/// 行は全項目ぶん作り置きしてあり、閉じた枝の中は `set_visible(false)` で
+/// 隠れている。
+fn tree_labels(tree: &naui_gtk::Tree) -> Vec<String> {
+    children(&tree_box_of(tree))
+        .into_iter()
+        .filter_map(|row| row.downcast::<gtk::ListBoxRow>().ok())
+        // 祖先の状態に左右されない、行そのものの visible を見る。
+        .filter(|row| row.get_visible())
+        .filter_map(|row| row.child())
+        .filter_map(|line| {
+            // 行は [開閉ボタン (または余白), 文字の縦並び] の順。
+            let content = children(&line).pop()?;
+            let label = children(&content).into_iter().next()?;
+            Some(label.downcast::<gtk::Label>().ok()?.text().to_string())
+        })
+        .collect()
+}
+
+/// 行に置かれた開閉ボタン。葉の行には無い。
+///
+/// `index` は**全項目**を深さ優先で並べたときの位置 (見えていない行も数える)。
+fn tree_twisty(tree: &naui_gtk::Tree, index: i32) -> Option<gtk::Button> {
+    let row = tree_box_of(tree).row_at_index(index)?;
+    let line = row.child()?;
+    children(&line).into_iter().next()?.downcast().ok()
+}
+
+fn tree_rows_follow_the_expansion(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    assert!(tree.is_empty());
+
+    tree.set_items(&sample_tree());
+    assert_eq!(tree.len(), 6, "子孫まで数えること");
+    assert_eq!(
+        children(&tree_box_of(&tree)).len(),
+        6,
+        "行は全項目ぶん作り置きされること"
+    );
+    // 何も開いていないので、見えているのは根の 2 つだけ。
+    assert_eq!(tree_labels(&tree), ["src", "docs"]);
+    assert!(!tree.is_expanded(&[0]));
+
+    tree.set_expanded(&[0], true);
+    assert!(tree.is_expanded(&[0]));
+    assert_eq!(tree_labels(&tree), ["src", "main.rs", "lib.rs", "docs"]);
+
+    // 孫まで開くと、間の枝もまとめて開く。
+    tree.set_expanded(&[1, 0], true);
+    assert!(tree.is_expanded(&[1]), "祖先も開かれること");
+    assert_eq!(
+        tree_labels(&tree),
+        ["src", "main.rs", "lib.rs", "docs", "guide", "intro.md"]
+    );
+
+    tree.collapse_all();
+    assert_eq!(tree_labels(&tree), ["src", "docs"]);
+    tree.expand_all();
+    assert_eq!(tree_labels(&tree).len(), 6);
+
+    // 作り直すと、TreeItem::expanded のとおりに戻る。
+    tree.set_items(&[TreeItem::new("親")
+        .expanded(true)
+        .children(TreeItem::list(["子"]))]);
+    assert_eq!(tree_labels(&tree), ["親", "子"]);
+    assert_eq!(tree.selected(), None);
+    Ok(())
+}
+
+fn tree_native_selection_notifies(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    tree.set_expanded(&[0], true);
+    assert_eq!(tree.selected(), None, "作った直後は何も選ばれていないこと");
+
+    let (log, sink) = recorder::<Vec<usize>>();
+    tree.on_select({
+        let mut sink = sink;
+        move |path: &[usize]| sink(path.to_vec())
+    });
+
+    // GtkListBox 側で行を選ぶ (利用者がクリックしたのと同じ)。
+    let native = tree_box_of(&tree);
+    let row = native.row_at_index(2).expect("3 行目 (lib.rs)");
+    native.select_row(Some(&row));
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    assert_eq!(log.borrow().as_slice(), [vec![0, 1]]);
+
+    // プログラムからの変更は通知しない。閉じた枝の中でも祖先ごと開いて選ぶ。
+    tree.set_selected(&[1, 0, 0]);
+    assert_eq!(tree.selected(), Some(vec![1, 0, 0]));
+    assert!(tree.is_expanded(&[1, 0]), "祖先が開かれること");
+    assert_eq!(log.borrow().len(), 1);
+
+    // select は通知する。
+    tree.select(&[0]);
+    assert_eq!(log.borrow().as_slice(), [vec![0, 1], vec![0]]);
+
+    // 無いパスを選ぶと選択が外れ、空のパスで通知される。
+    tree.select(&[9]);
+    assert_eq!(tree.selected(), None);
+    assert_eq!(log.borrow().as_slice(), [vec![0, 1], vec![0], Vec::new()]);
+
+    // clear_selection は通知しない。
+    tree.set_selected(&[0]);
+    tree.clear_selection();
+    assert_eq!(tree.selected(), None);
+    assert_eq!(log.borrow().len(), 3);
+    Ok(())
+}
+
+fn tree_skips_disabled_branches(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("有効").child(TreeItem::new("子")),
+        TreeItem::new("無効")
+            .enabled(false)
+            .child(TreeItem::new("孫")),
+    ]);
+    tree.expand_all();
+
+    let native = tree_box_of(&tree);
+    assert!(native.row_at_index(0).expect("1 行目").is_selectable());
+    assert!(
+        !native.row_at_index(2).expect("3 行目").is_selectable(),
+        "無効な枝は GtkListBox 側でも選べない"
+    );
+    assert!(
+        !native.row_at_index(3).expect("4 行目").is_selectable(),
+        "無効な枝の中身も選べない"
+    );
+
+    tree.select(&[1, 0]);
+    assert_eq!(tree.selected(), None);
+    tree.select(&[0, 0]);
+    assert_eq!(tree.selected(), Some(vec![0, 0]));
+    Ok(())
+}
+
+fn tree_expansion_notifies(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+
+    let (log, sink) = recorder::<(Vec<usize>, bool)>();
+    tree.on_expand({
+        let mut sink = sink;
+        move |path: &[usize], expanded: bool| sink((path.to_vec(), expanded))
+    });
+
+    tree.expand(&[0]);
+    tree.collapse(&[0]);
+    assert_eq!(
+        log.borrow().as_slice(),
+        [(vec![0], true), (vec![0], false)],
+        "naui からの開閉が 1 回ずつ通知されること"
+    );
+
+    // `set_expanded` と一括の開閉は通知しない。
+    tree.set_expanded(&[0], true);
+    tree.expand_all();
+    tree.collapse_all();
+    assert_eq!(log.borrow().len(), 2);
+
+    // 行の開閉ボタンを押す (利用者がクリックしたのと同じ)。
+    // 全項目の並びは src, main.rs, lib.rs, docs, guide, intro.md。
+    let twisty = tree_twisty(&tree, 3).expect("docs の開閉ボタン");
+    twisty.emit_clicked();
+    assert!(tree.is_expanded(&[1]));
+    assert_eq!(log.borrow().last(), Some(&(vec![1], true)));
+
+    // 葉の行にはボタンが無い。
+    assert!(
+        tree_twisty(&tree, 1).is_none(),
+        "葉 (main.rs) には開閉ボタンが無いこと"
+    );
+    Ok(())
+}
+
+fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    tree.set_expanded(&[1, 0], true);
+    assert_eq!(tree_labels(&tree), ["src", "docs", "guide", "intro.md"]);
+
+    let (log, sink) = recorder::<(Vec<usize>, bool)>();
+    tree.on_expand({
+        let mut sink = sink;
+        move |path: &[usize], expanded: bool| sink((path.to_vec(), expanded))
+    });
+
+    tree.collapse(&[1]);
+    assert_eq!(tree_labels(&tree), ["src", "docs"]);
+    assert!(
+        tree.is_expanded(&[1, 0]),
+        "見えなくなっても、中の開閉は覚えていること"
+    );
+
+    tree.expand(&[1]);
+    assert_eq!(
+        tree_labels(&tree),
+        ["src", "docs", "guide", "intro.md"],
+        "中の開閉ごと戻ること"
+    );
+    assert_eq!(
+        log.borrow().as_slice(),
+        [(vec![1], false), (vec![1], true)],
+        "通知は操作した枝の分だけ"
+    );
     Ok(())
 }
 

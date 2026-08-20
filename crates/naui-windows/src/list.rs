@@ -177,7 +177,7 @@ const DETAIL_XAML: &str = r##"<TextBlock
     FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>"##;
 
 /// テーマ付きの枠を読み込む。読めなければ素の `ScrollViewer` + `ListBox` に戻す。
-fn build_surface() -> Result<(ScrollViewer, XamlListBox)> {
+pub(crate) fn build_surface() -> Result<(ScrollViewer, XamlListBox)> {
     match load_surface() {
         Ok(surface) => Ok(surface),
         Err(error) => {
@@ -211,7 +211,7 @@ fn plain_surface() -> Result<(ScrollViewer, XamlListBox)> {
 }
 
 /// 行に当てる `Style`。読めなければ `None` (WinUI 既定の見た目のまま)。
-fn row_style() -> Option<Style> {
+pub(crate) fn row_style() -> Option<Style> {
     let dictionary = XamlReader::Load(&HSTRING::from(ROW_STYLE_XAML))
         .and_then(|element| element.cast::<ResourceDictionary>())
         .map_err(|e| to_error("行のスタイルの生成", e));
@@ -234,18 +234,18 @@ fn row_style() -> Option<Style> {
 /// 呼び出しの間だけクロージャを取り出すので、コールバックの中から
 /// 同じリストを操作しても二重借用にならない。
 #[derive(Clone)]
-struct SelectionHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(&[usize])>>>>);
+pub(crate) struct SelectionHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(&[usize])>>>>);
 
 impl SelectionHandler {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Arc::new(UiThreadCell::new(None)))
     }
 
-    fn set(&self, f: impl FnMut(&[usize]) + 'static) {
+    pub(crate) fn set(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.with_mut(|slot| *slot = Some(Box::new(f)));
     }
 
-    fn emit(&self, indices: &[usize]) {
+    pub(crate) fn emit(&self, indices: &[usize]) {
         let Some(mut f) = self.0.with_mut(|slot| slot.take()) else {
             return;
         };
@@ -571,7 +571,7 @@ fn set_row_content(row: &ListBoxItem, item: &ListItem) -> Result<()> {
 /// 主テキストの色は行 (`ListBoxItem`) から受け継ぐので指定しない。
 /// 副次テキストだけは、テーマに追従する色を `{ThemeResource}` で引くために
 /// XAML から作る。引けなければ濃さを下げるだけの見た目に落とす。
-fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
+pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
     let block = if secondary {
         match XamlReader::Load(&HSTRING::from(DETAIL_XAML))
             .and_then(|element| element.cast::<TextBlock>())
