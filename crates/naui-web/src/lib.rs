@@ -19,6 +19,7 @@ mod list;
 mod media;
 mod navigation;
 mod popup;
+mod tree;
 mod widgets;
 mod window;
 
@@ -43,6 +44,7 @@ pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use popup::PopupMenu;
+pub use tree::Tree;
 pub use widgets::{
     Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
@@ -170,6 +172,11 @@ impl Ui {
     /// 選択できる行の一覧。自分でスクロールする。
     pub fn list(&self) -> Result<List> {
         List::new(&self.document)
+    }
+
+    /// 入れ子の項目を開閉できる一覧。自分でスクロールする。
+    pub fn tree(&self) -> Result<Tree> {
+        Tree::new(&self.document)
     }
 
     /// 右クリックで出るポップアップ (コンテキスト) メニュー。
