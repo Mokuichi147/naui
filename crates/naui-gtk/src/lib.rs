@@ -104,6 +104,7 @@ mod callback;
 mod combo_box;
 mod dialog;
 mod file_picker;
+mod file_saver;
 mod layout;
 mod list;
 mod media;
@@ -124,6 +125,7 @@ pub use bin::SizeBin;
 pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
+pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
@@ -305,6 +307,11 @@ impl Ui {
     /// ファイルやフォルダーを選ばせるボタン。押すと `GtkFileDialog` が出る。
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         Ok(FilePicker::new(text))
+    }
+
+    /// 内容をファイルへ保存させるボタン。押すと `GtkFileDialog` の保存が出る。
+    pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
+        Ok(FileSaver::new(text))
     }
 
     /// モーダルダイアログ。フレームワークが参照を保持する。

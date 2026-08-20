@@ -296,7 +296,41 @@
 //! 絶対パスだが、**Web ではブラウザがパスを渡さないため常に `None`** になる。
 //! Web ではさらに、`open()` がユーザー操作のイベント内でしか効かないこと、
 //! フォルダー選択が中身の一覧として返るのを naui が 1 件へ畳んでいることに注意。
-//! 保存ダイアログは、Web に相当が無いため持たない。
+//!
+//! ## ファイルの保存
+//!
+//! [`FileSaver`] は対になるボタンで、押すとその環境の標準の保存ダイアログが
+//! 開く。**保存先のパスを返すのではなく、渡しておいた内容を書き出す**形にして
+//! ある。ブラウザに「保存先のパス」という概念が無く、パスを返す API では Web で
+//! 何もできないため。
+//!
+//! ```no_run
+//! # use naui::{FileFilter, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let saver = ui.file_saver("保存")?;
+//! saver.set_file_name("メモ"); // 拡張子は絞り込みから補われる
+//! saver.set_filters(&[FileFilter::new("テキスト", ["txt"])]);
+//! saver.set_contents("こんにちは".as_bytes());
+//! saver.on_save(|entry| println!("{} へ保存しました", entry.name()));
+//! saver.on_error(|error| eprintln!("{error}"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `FileSaver` | `IFileSaveDialog` | `NSSavePanel` | `GtkFileDialog` (save) | `showSaveFilePicker` / `<a download>` |
+//!
+//! [`FileSaver::set_contents`] のバイト列が、ユーザーの選んだ場所へそのまま
+//! 書かれる。成功すると [`FileSaver::on_save`] に書き出し先が届き、取り消した
+//! ときは何も呼ばれない。書き込みに失敗したときだけ [`FileSaver::on_error`] が
+//! 呼ばれる。
+//!
+//! Web はここでも作りが変わる。`showSaveFilePicker` (Chromium 系) があれば OS の
+//! 保存ダイアログが出るが、無いブラウザ (Firefox / Safari) では
+//! `<a download>` のダウンロードになり、**保存先はブラウザ任せで、確認なしに
+//! ダウンロードフォルダーへ落ちることもある**。どちらの場合も
+//! [`FileEntry::path`] は `None` で、名前だけが返る。
 //!
 //! ## ダイアログ
 //!
@@ -351,30 +385,31 @@
 #![forbid(unsafe_code)]
 
 pub use naui_core::{
-    accept_attribute, media, Align, DialogButtons, DialogResponse, Error, FileEntry, FileFilter,
-    FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Settings, Sizing, Theme, Track,
+    accept_attribute, default_extension, media, with_default_extension, Align, DialogButtons,
+    DialogResponse, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem,
+    NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
+    Settings, Sizing, Theme, Track,
 };
 
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
+    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider,
+    Spacer, Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
+    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider,
+    Spacer, Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
+    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider,
+    Spacer, Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -383,9 +418,9 @@ pub use naui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
+    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider,
+    Spacer, Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -707,6 +742,19 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     picker.on_select(|_entries: &[FileEntry]| {});
     // `open()` はダイアログを出すので、契約の確認では呼ばない。
 
+    let saver: FileSaver = ui.file_saver("t")?;
+    saver.set_text("t");
+    saver.set_enabled(true);
+    saver.set_file_name("t");
+    let _: String = saver.file_name();
+    saver.set_filters(&[FileFilter::new("t", ["txt"])]);
+    saver.set_contents(b"t");
+    let _: usize = saver.contents_len();
+    let _: Option<FileEntry> = saver.destination();
+    saver.on_save(|_entry: &FileEntry| {});
+    saver.on_error(|_error: &Error| {});
+    // `open()` はダイアログを出すので、契約の確認では呼ばない。
+
     grid.attach(&label, GridCell::new(0, 0));
     grid.attach(&button, GridCell::new(1, 0).span(2, 1));
     scroll.set_child(&grid);
@@ -733,6 +781,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&pagination);
     stack.append(&link);
     stack.append(&picker);
+    stack.append(&saver);
     window.set_child(&stack);
 
     ui.quit();

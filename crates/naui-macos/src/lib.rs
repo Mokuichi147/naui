@@ -12,6 +12,7 @@
 mod combo_box;
 mod dialog;
 mod file_picker;
+mod file_saver;
 mod layout;
 mod list;
 mod media;
@@ -38,6 +39,7 @@ use objc2_foundation::NSNotification;
 pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
+pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
@@ -203,6 +205,11 @@ impl Ui {
     /// ファイルやフォルダーを選ばせるボタン。押すと `NSOpenPanel` が出る。
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         Ok(FilePicker::new(self.mtm, text))
+    }
+
+    /// 内容をファイルへ保存させるボタン。押すと `NSSavePanel` が出る。
+    pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
+        Ok(FileSaver::new(self.mtm, text))
     }
 
     /// モーダルダイアログ。`title` は見出し。中身は `NSAlert`。

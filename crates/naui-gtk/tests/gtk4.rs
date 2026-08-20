@@ -178,6 +178,7 @@ fn main() {
             "ファイル選択がボタンとして構成され設定を保つ",
             file_picker_configuration,
         ),
+        ("保存ボタンが設定を保つ", file_saver_configuration),
         (
             "ダイアログの設定が AdwAlertDialog へ届く",
             dialog_configuration_reaches_the_alert,
@@ -1506,6 +1507,44 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
 
     picker.set_enabled(false);
     assert!(!native.is_sensitive());
+    Ok(())
+}
+
+/// 保存はボタンとして構成され、設定を保つ。
+///
+/// `GtkFileDialog` の保存は表示するまで中身を読めないので、
+/// **ボタンの実体と設定の保持まで**を確かめる。
+fn file_saver_configuration(ui: &Ui) -> Result<()> {
+    let saver = ui.file_saver("保存する")?;
+    assert_eq!(saver.file_name(), "", "既定の名前は空 (GTK に任せる)");
+    assert!(saver.destination().is_none(), "まだ保存していないこと");
+    assert_eq!(saver.contents_len(), 0);
+
+    saver.set_file_name("メモ");
+    saver.set_filters(&[FileFilter::new("文書", ["txt", "md"])]);
+    saver.set_contents("こんにちは".as_bytes());
+    assert_eq!(saver.file_name(), "メモ", "補う拡張子は表示のときだけ足す");
+    assert_eq!(saver.contents_len(), "こんにちは".len());
+
+    let native: gtk::Button = saver.native_widget().downcast().expect("GtkButton");
+    assert_eq!(
+        native.label().map(|l| l.to_string()),
+        Some("保存する".into())
+    );
+    saver.set_text("書き出す");
+    assert_eq!(
+        native.label().map(|l| l.to_string()),
+        Some("書き出す".into())
+    );
+
+    saver.set_enabled(false);
+    assert!(!native.is_sensitive());
+    saver.set_enabled(true);
+
+    // コンテナへ入れてもハンドルを手放して大丈夫なこと (他のウィジェットと同じ)。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&saver);
+    assert_eq!(stack.len(), 1);
     Ok(())
 }
 
