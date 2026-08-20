@@ -19,8 +19,8 @@ use naui_core::{
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
 use objc2_app_kit::{
-    NSButton, NSImageScaling, NSImageView, NSLayoutConstraint, NSSegmentedControl,
-    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
+    NSButton, NSControlStateValueOff, NSImageScaling, NSImageView, NSLayoutConstraint,
+    NSSegmentedControl, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
 };
 use objc2_foundation::{NSDate, NSNotFound, NSRange, NSRunLoop, NSSize, NSString};
 
@@ -57,6 +57,18 @@ fn main() {
         (
             "コンボボックスの通知中に内容と通知先を差し替えられる",
             combo_box_callback_is_reentrant,
+        ),
+        (
+            "ラジオグループの選択がネイティブと往復する",
+            radio_group_selection_round_trips,
+        ),
+        (
+            "ラジオグループのクリックが 1 つだけ点けて通知する",
+            radio_group_click_selects_one,
+        ),
+        (
+            "ラジオグループの通知中に内容と通知先を差し替えられる",
+            radio_group_callback_is_reentrant,
         ),
         ("スタックが子を生かし続ける", stack_keeps_children),
         ("ウィンドウを設定して閉じられる", window_lifecycle),
@@ -502,6 +514,113 @@ fn combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
     assert_eq!(combo.selected(), Some(1));
 
     combo.select(0);
+    assert_eq!(*first.borrow(), vec![0], "古い通知先は外れること");
+    assert_eq!(*replacement.borrow(), vec![0]);
+    Ok(())
+}
+
+/// 項目・未選択状態・通知の有無が NSButton のラジオ型と一致する。
+fn radio_group_selection_round_trips(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    assert!(radio.is_empty());
+    assert_eq!(radio.selected(), None);
+
+    radio.set_items(&["小", "中", "大"]);
+    assert_eq!(radio.len(), 3);
+    assert_eq!(radio.selected(), None, "項目の作り直し後は未選択");
+    let buttons = radio.native_buttons();
+    assert_eq!(buttons.len(), 3);
+    assert_eq!(buttons[1].title().to_string(), "中");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    radio.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    radio.set_selected(1);
+    assert_eq!(radio.selected(), Some(1));
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+    radio.set_selected(99);
+    assert_eq!(radio.selected(), Some(1), "範囲外は無視する");
+
+    radio.clear_selection();
+    assert_eq!(radio.selected(), None);
+    assert!(seen.borrow().is_empty(), "clear_selection は通知しない");
+
+    radio.select(2);
+    assert_eq!(radio.selected(), Some(2));
+    assert_eq!(*seen.borrow(), vec![2]);
+    radio.select(99);
+    assert_eq!(*seen.borrow(), vec![2], "範囲外は通知もしない");
+
+    radio.set_enabled(false);
+    assert!(buttons.iter().all(|button| !button.isEnabled()));
+    // 無効のまま項目を作り直しても、その指定は引き継がれる。
+    radio.set_items(&["単一"]);
+    assert_eq!(radio.selected(), None);
+    assert!(!radio.native_buttons()[0].isEnabled());
+    assert_eq!(*seen.borrow(), vec![2], "再構築は通知しない");
+    Ok(())
+}
+
+/// AppKit の target/action から届く経路でも、点くのは 1 つだけ。
+fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["赤", "緑", "青"]);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    radio.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    let buttons = radio.native_buttons();
+    unsafe { buttons[2].performClick(None) };
+    assert_eq!(radio.selected(), Some(2));
+    assert_eq!(*seen.borrow(), vec![2]);
+
+    unsafe { buttons[0].performClick(None) };
+    assert_eq!(radio.selected(), Some(0), "選び直すと前のものは消える");
+    assert_eq!(*seen.borrow(), vec![2, 0]);
+    assert_eq!(
+        buttons
+            .iter()
+            .filter(|button| button.state() != NSControlStateValueOff)
+            .count(),
+        1,
+        "点いているのは常に 1 つ"
+    );
+    Ok(())
+}
+
+/// 通知の最中でも同じラジオグループを操作し、コールバックを差し替えられる。
+fn radio_group_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["春", "夏", "秋"]);
+
+    let first = Rc::new(RefCell::new(Vec::new()));
+    let replacement = Rc::new(RefCell::new(Vec::new()));
+    radio.on_select({
+        let radio = radio.clone();
+        let first = first.clone();
+        let replacement = replacement.clone();
+        move |index| {
+            first.borrow_mut().push(index);
+            radio.set_items(&["朝", "昼"]);
+            radio.set_selected(1);
+            radio.on_select({
+                let replacement = replacement.clone();
+                move |index| replacement.borrow_mut().push(index)
+            });
+        }
+    });
+
+    radio.select(0);
+    assert_eq!(*first.borrow(), vec![0]);
+    assert_eq!(radio.len(), 2);
+    assert_eq!(radio.selected(), Some(1));
+
+    radio.select(0);
     assert_eq!(*first.borrow(), vec![0], "古い通知先は外れること");
     assert_eq!(*replacement.borrow(), vec![0]);
     Ok(())

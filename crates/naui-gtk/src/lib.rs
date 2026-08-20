@@ -21,6 +21,7 @@
 //! | `Button` | `GtkButton` |
 //! | `Checkbox` | `GtkCheckButton` |
 //! | `ComboBox` | `GtkDropDown` + `GtkStringList` |
+//! | `RadioGroup` | 組にした `GtkCheckButton` を `GtkBox` へ並べたもの |
 //! | `TextInput` | `GtkEntry` |
 //! | `TextArea` | `GtkTextView` を `GtkScrolledWindow` に載せたもの |
 //! | `Slider` | `GtkScale` |
@@ -65,6 +66,10 @@
 //! - `Tabs` は**タブ列を送れるようにしてある** (`gtk_notebook_set_scrollable`)。
 //!   既定の `GtkNotebook` は「全タブが横に並ぶ幅」を最小幅として申告するため、
 //!   タブが増えるとウィンドウをそれ以下に縮められなくなる。
+//! - `Checkbox` と `RadioGroup` は、**印をラベルの字面の中心へ寄せ直している**。
+//!   GTK4 は印を行の箱 (ascent + descent) の中心に置くが、日本語を含む行は
+//!   ascent が大きく取られるぶん字面が下に寄り、印だけが浮いて見えるため
+//!   (詳しくは `indicator` モジュール)。
 //!
 //! ## ウィンドウを縮められる下限
 //!
@@ -105,11 +110,13 @@ mod combo_box;
 mod dialog;
 mod file_picker;
 mod file_saver;
+mod indicator;
 mod layout;
 mod list;
 mod media;
 mod navigation;
 mod popup;
+mod radio_group;
 mod widgets;
 mod window;
 
@@ -131,6 +138,7 @@ pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use popup::PopupMenu;
+pub use radio_group::RadioGroup;
 pub use widgets::{
     Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
@@ -220,6 +228,11 @@ impl Ui {
     /// 選択肢を折りたたんで表示するコンボボックス。
     pub fn combo_box(&self) -> Result<ComboBox> {
         Ok(ComboBox::new())
+    }
+
+    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    pub fn radio_group(&self) -> Result<RadioGroup> {
+        Ok(RadioGroup::new())
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {
