@@ -165,6 +165,19 @@ language.set_selected(0);
 language.on_select(|index| println!("{index} 番目が選ばれました"));
 ```
 
+候補をすべて画面に出すなら `RadioGroup` を使います。API は `ComboBox` と同じで、
+違うのは候補の見せ方と、並べる向きを選べることだけです。
+
+```rust
+let plan = ui.radio_group()?;
+plan.set_items(&["無料", "標準", "上位"]);
+plan.set_orientation(Orientation::Horizontal); // 既定は縦
+plan.set_selected(0);
+plan.on_select(|index| println!("{index} 番目が選ばれました"));
+```
+
+排他になるのは 1 つの `RadioGroup` の中だけです。同じ画面に複数置いても混ざりません。
+
 ## ウィジェット
 
 | 分類 | API |
@@ -172,7 +185,7 @@ language.on_select(|index| println!("{index} 番目が選ばれました"));
 | 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`Slider`、`ProgressBar` |
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
-| データ選択 | `ComboBox`、`List` |
+| データ選択 | `ComboBox`、`RadioGroup`、`List` |
 | ファイル選択 | `FilePicker` |
 | メディア | `Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog` |
@@ -200,6 +213,7 @@ language.on_select(|index| println!("{index} 番目が選ばれました"));
 | `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
+| `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |

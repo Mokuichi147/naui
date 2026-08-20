@@ -18,6 +18,7 @@ mod media;
 mod menu_bar;
 mod navigation;
 mod popup;
+mod radio_group;
 mod trampoline;
 mod widgets;
 mod window;
@@ -43,6 +44,7 @@ pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use popup::PopupMenu;
+pub use radio_group::RadioGroup;
 pub use widgets::{
     Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
@@ -116,6 +118,11 @@ impl Ui {
     /// 選択肢を折りたたんで表示するコンボボックス。
     pub fn combo_box(&self) -> Result<ComboBox> {
         Ok(ComboBox::new(self.mtm))
+    }
+
+    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    pub fn radio_group(&self) -> Result<RadioGroup> {
+        Ok(RadioGroup::new(self.mtm))
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

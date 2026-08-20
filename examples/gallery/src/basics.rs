@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use naui::{Orientation, Padding, Result, Theme, Ui};
 
-/// Label、Button、Checkbox、Slider、ProgressBar、ComboBox とテーマ。
+/// Label、Button、Checkbox、RadioGroup、Slider、ProgressBar、ComboBox とテーマ。
 pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(12.0);
@@ -59,6 +59,33 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     });
     pane.append(&checkbox);
     pane.append(&check_status);
+
+    pane.append(&ui.label("RadioGroup")?);
+    pane.append(&ui.label("候補を並べて 1 つだけ選べます。選び直すと前の選択は外れます。")?);
+    let plans = ["無料", "標準", "上位"];
+    let plan_status = ui.label("プラン: 未選択")?;
+    let plan = ui.radio_group()?;
+    plan.set_items(&plans);
+    plan.on_select({
+        let plan_status = plan_status.clone();
+        move |index| {
+            let name = plans.get(index).copied().unwrap_or("不明");
+            plan_status.set_text(&format!("プラン: {name}"));
+        }
+    });
+    let clear_plan = ui.button("選択を外す")?;
+    clear_plan.on_click({
+        let plan = plan.clone();
+        let plan_status = plan_status.clone();
+        move || {
+            // clear_selection は通知しないので、表示はこちらで戻す。
+            plan.clear_selection();
+            plan_status.set_text("プラン: 未選択");
+        }
+    });
+    pane.append(&plan);
+    pane.append(&clear_plan);
+    pane.append(&plan_status);
 
     pane.append(&ui.label("Slider / ProgressBar")?);
     pane.append(&ui.label("Slider の値を ProgressBar と数値表示へ反映します。")?);

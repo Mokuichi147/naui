@@ -19,6 +19,7 @@ mod list;
 mod media;
 mod navigation;
 mod popup;
+mod radio_group;
 mod widgets;
 mod window;
 
@@ -43,6 +44,7 @@ pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use popup::PopupMenu;
+pub use radio_group::RadioGroup;
 pub use widgets::{
     Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
@@ -128,6 +130,11 @@ impl Ui {
     /// 1 項目を選ぶドロップダウン。
     pub fn combo_box(&self) -> Result<ComboBox> {
         ComboBox::new(&self.document)
+    }
+
+    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    pub fn radio_group(&self) -> Result<RadioGroup> {
+        RadioGroup::new(&self.document)
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

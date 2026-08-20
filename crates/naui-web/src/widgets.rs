@@ -49,6 +49,33 @@ macro_rules! impl_widget {
 
 pub(crate) use impl_widget;
 
+type SelectCallback = Box<dyn FnMut(usize)>;
+
+/// 選択されたインデックスの通知先。
+///
+/// 呼び出している間だけクロージャを取り出すため、通知の中から同じ
+/// ウィジェットを操作しても `RefCell` の二重借用にならない。通知中に
+/// `on_select` を呼び直した場合は、新しいクロージャを残す。
+#[derive(Default)]
+pub(crate) struct SelectionHandler(RefCell<Option<SelectCallback>>);
+
+impl SelectionHandler {
+    pub(crate) fn set(&self, f: impl FnMut(usize) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub(crate) fn emit(&self, index: usize) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(index);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
 pub(crate) fn create(doc: &Document, tag: &str) -> Result<Element> {
     doc.create_element(tag)
         .map_err(|e| to_error("DOM 要素の生成", e))

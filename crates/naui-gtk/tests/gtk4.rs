@@ -51,6 +51,18 @@ fn main() {
             "コンボボックスの通知内で操作と差し替えができる",
             combo_box_callback_is_reentrant_and_replaceable,
         ),
+        (
+            "ラジオグループの項目と選択がネイティブへ届く",
+            radio_group_items_and_selection,
+        ),
+        (
+            "ラジオグループのクリックが 1 つだけ点けて通知する",
+            radio_group_click_selects_one,
+        ),
+        (
+            "ラジオグループのプログラム変更は通知しない",
+            radio_group_programmatic_changes_are_silent,
+        ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         (
             "打鍵が通知され、set_text は通知しない",
@@ -414,6 +426,98 @@ fn combo_box_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
     assert_eq!(combo.selected(), Some(0));
     combo.select(2);
     assert_eq!(second.borrow().as_slice(), [2]);
+    Ok(())
+}
+
+fn radio_group_items_and_selection(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    assert!(radio.is_empty());
+    assert_eq!(radio.selected(), None);
+
+    radio.set_items(&["小", "中", "大"]);
+    assert_eq!(radio.len(), 3);
+    assert_eq!(radio.selected(), None, "項目の作り直し後も未選択");
+
+    let buttons = radio.native_buttons();
+    assert_eq!(buttons.len(), 3);
+    assert_eq!(
+        buttons[1].label().map(|s| s.to_string()).as_deref(),
+        Some("中")
+    );
+    assert!(buttons.iter().all(|button| !button.is_active()));
+
+    radio.set_selected(2);
+    assert_eq!(radio.selected(), Some(2));
+    assert!(buttons[2].is_active());
+    radio.set_selected(99);
+    assert_eq!(radio.selected(), Some(2), "範囲外は無視する");
+
+    radio.clear_selection();
+    assert_eq!(radio.selected(), None);
+    assert!(buttons.iter().all(|button| !button.is_active()));
+
+    radio.set_enabled(false);
+    let native: gtk::Box = radio.native_widget().downcast().expect("GtkBox");
+    assert!(!native.is_sensitive());
+
+    radio.set_orientation(Orientation::Horizontal);
+    assert_eq!(native.orientation(), gtk::Orientation::Horizontal);
+    Ok(())
+}
+
+/// ネイティブのクリック経路でも、点くのは常に 1 つだけ。
+fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["赤", "緑", "青"]);
+    let (log, sink) = recorder::<usize>();
+    radio.on_select(sink);
+
+    let buttons = radio.native_buttons();
+    buttons[2].emit_clicked();
+    assert_eq!(radio.selected(), Some(2));
+    assert_eq!(log.borrow().as_slice(), [2]);
+
+    buttons[0].emit_clicked();
+    assert_eq!(radio.selected(), Some(0), "選び直すと前のものは消える");
+    // 外れた側の `toggled` は通知しない。
+    assert_eq!(log.borrow().as_slice(), [2, 0]);
+    assert_eq!(
+        buttons.iter().filter(|button| button.is_active()).count(),
+        1,
+        "点いているのは常に 1 つ"
+    );
+    Ok(())
+}
+
+fn radio_group_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["A", "B", "C"]);
+    let (log, sink) = recorder::<usize>();
+    radio.on_select(sink);
+
+    radio.set_selected(1);
+    radio.set_selected(2);
+    radio.clear_selection();
+    radio.set_items(&["D", "E", "F"]);
+    assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+
+    radio.select(0);
+    radio.select(99);
+    assert_eq!(log.borrow().as_slice(), [0], "範囲外は通知もしない");
+
+    // 通知の中で同じグループを触っても二重借用にならない。
+    let seen = Rc::new(Cell::new(None));
+    radio.on_select({
+        let radio = radio.clone();
+        let seen = seen.clone();
+        move |index| {
+            seen.set(Some(index));
+            radio.set_selected(2);
+        }
+    });
+    radio.select(1);
+    assert_eq!(seen.get(), Some(1));
+    assert_eq!(radio.selected(), Some(2));
     Ok(())
 }
 

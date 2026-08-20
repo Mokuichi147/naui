@@ -145,13 +145,31 @@
 //! # }
 //! ```
 //!
+//! 候補をすべて画面に出して選ばせるなら [`RadioGroup`] を使う。API は
+//! `ComboBox` と同じで、違うのは候補の見せ方だけ。
+//!
+//! ```no_run
+//! # use naui::{Orientation, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let plan = ui.radio_group()?;
+//! plan.set_items(&["無料", "標準", "上位"]);
+//! plan.set_orientation(Orientation::Horizontal); // 既定は縦
+//! plan.set_selected(0);
+//! plan.on_select(|index| println!("{index} 番目が選ばれた"));
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
 //! | `ComboBox` | `ComboBox` | `NSPopUpButton` | `GtkDropDown` | `<select>` |
+//! | `RadioGroup` | `RadioButton` の組 | `NSButton` のラジオ型 | 組にした `GtkCheckButton` | `<input type="radio">` |
 //!
-//! [`ComboBox::set_items`] は候補のインデックスの意味を変えるため、選択を外す。
-//! `set_selected` / `clear_selection` は通知せず、`select` は利用者の操作と同じく
-//! `on_select` を呼ぶ。自由入力のできる編集可能コンボボックスではない。
+//! どちらも [`set_items`](ComboBox::set_items) は候補のインデックスの意味を
+//! 変えるため、選択を外す。`set_selected` / `clear_selection` は通知せず、
+//! `select` は利用者の操作と同じく `on_select` を呼ぶ。`ComboBox` は自由入力の
+//! できる編集可能コンボボックスではない。`RadioGroup` は 1 つのグループなので、
+//! 排他になるのはその中だけ。
 //!
 //! ## ナビゲーション
 //!
@@ -343,10 +361,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ナビゲーション・リスト・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 61 件) |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・ナビゲーション・リスト・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 64 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 64 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 67 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -359,22 +377,22 @@ pub use naui_core::{
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -384,8 +402,8 @@ pub use naui_windows::{
 ))]
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
+    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -512,6 +530,19 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     combo_box.set_enabled(true);
     combo_box.on_select(|_index: usize| {});
     combo_box.set_sizing(Sizing::fill_width());
+
+    let radio_group: RadioGroup = ui.radio_group()?;
+    radio_group.set_items(&["a", "b"]);
+    let _: usize = radio_group.len();
+    let _: bool = radio_group.is_empty();
+    let _: Option<usize> = radio_group.selected();
+    radio_group.set_selected(0);
+    radio_group.clear_selection();
+    radio_group.select(1);
+    radio_group.set_orientation(Orientation::Horizontal);
+    radio_group.set_enabled(true);
+    radio_group.on_select(|_index: usize| {});
+    radio_group.set_sizing(Sizing::fill_width());
 
     let input: TextInput = ui.text_input("t")?;
     let _: String = input.text();
@@ -720,6 +751,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&button);
     stack.append(&checkbox);
     stack.append(&combo_box);
+    stack.append(&radio_group);
     stack.append(&input);
     stack.append(&text_area);
     stack.append(&slider);
