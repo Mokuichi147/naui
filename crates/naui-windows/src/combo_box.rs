@@ -2,7 +2,6 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use naui_core::Result;
 use windows_core::{IInspectable, Interface, HSTRING};
@@ -13,39 +12,7 @@ use winui3::Microsoft::UI::Xaml::UIElement;
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
-use crate::widgets::{impl_widget, Widget};
-
-/// 選択が変わったことの通知先。
-///
-/// コールバックを呼ぶ間はセルから一度取り出す。これにより、コールバックから
-/// 同じ ComboBox を操作しても再入時の借用が衝突せず、`on_select` を呼び直して
-/// コールバックを差し替えた場合も新しいものを上書きしない。
-type SelectCallback = Box<dyn FnMut(usize)>;
-
-#[derive(Clone)]
-struct SelectHandler(Arc<UiThreadCell<Option<SelectCallback>>>);
-
-impl SelectHandler {
-    fn new() -> Self {
-        Self(Arc::new(UiThreadCell::new(None)))
-    }
-
-    fn set(&self, f: impl FnMut(usize) + 'static) {
-        self.0.with_mut(|slot| *slot = Some(Box::new(f)));
-    }
-
-    fn emit(&self, index: usize) {
-        let Some(Some(mut f)) = self.0.try_with_mut(|slot| slot.take()) else {
-            return;
-        };
-        f(index);
-        let _ = self.0.try_with_mut(|slot| {
-            if slot.is_none() {
-                *slot = Some(f);
-            }
-        });
-    }
-}
+use crate::widgets::{impl_widget, SelectHandler, Widget};
 
 struct ComboBoxInner {
     native: XamlComboBox,

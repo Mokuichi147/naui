@@ -21,11 +21,13 @@ mod app;
 mod combo_box;
 mod dialog;
 mod file_picker;
+mod file_saver;
 mod layout;
 mod list;
 mod media;
 mod navigation;
 mod popup;
+mod radio_group;
 mod tree;
 mod ui_thread;
 mod widgets;
@@ -38,11 +40,13 @@ use naui_core::{Error, Orientation, Result, Settings, Theme};
 pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
+pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use popup::PopupMenu;
+pub use radio_group::RadioGroup;
 pub use tree::Tree;
 pub use widgets::{
     Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
@@ -125,6 +129,11 @@ impl Ui {
     /// 選択肢を折りたたんで表示するコンボボックス。
     pub fn combo_box(&self) -> Result<ComboBox> {
         ComboBox::new()
+    }
+
+    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    pub fn radio_group(&self) -> Result<RadioGroup> {
+        RadioGroup::new()
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {
@@ -217,6 +226,11 @@ impl Ui {
     /// ファイルやフォルダーを選ばせるボタン。押すと共通ダイアログが出る。
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         FilePicker::new(text)
+    }
+
+    /// 内容をファイルへ保存させるボタン。押すと共通ダイアログの保存が出る。
+    pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
+        FileSaver::new(text)
     }
 
     /// モーダルダイアログ。`title` は見出し。中身は `ContentDialog`。

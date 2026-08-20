@@ -40,6 +40,10 @@ fn main() {
             checkbox_set_is_silent,
         ),
         (
+            "チェックボックスの印がラベルの字面にそろう",
+            checkbox_indicator_is_aligned_to_text,
+        ),
+        (
             "コンボボックスの項目と選択がネイティブへ届く",
             combo_box_items_and_selection,
         ),
@@ -50,6 +54,18 @@ fn main() {
         (
             "コンボボックスの通知内で操作と差し替えができる",
             combo_box_callback_is_reentrant_and_replaceable,
+        ),
+        (
+            "ラジオグループの項目と選択がネイティブへ届く",
+            radio_group_items_and_selection,
+        ),
+        (
+            "ラジオグループのクリックが 1 つだけ点けて通知する",
+            radio_group_click_selects_one,
+        ),
+        (
+            "ラジオグループのプログラム変更は通知しない",
+            radio_group_programmatic_changes_are_silent,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         (
@@ -192,6 +208,7 @@ fn main() {
             "ファイル選択がボタンとして構成され設定を保つ",
             file_picker_configuration,
         ),
+        ("保存ボタンが設定を保つ", file_saver_configuration),
         (
             "ダイアログの設定が AdwAlertDialog へ届く",
             dialog_configuration_reaches_the_alert,
@@ -350,6 +367,50 @@ fn checkbox_set_is_silent(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// GTK4 は印をラベルの「行の箱」の中心へ置くが、日本語の行は ascent が
+/// 大きく取られるぶん字面が下に寄る。naui は印へ上マージンを足して字面の
+/// 中心へそろえ直す。マージンは行の箱に収まる範囲までなので、そろえても
+/// チェックボックスの高さは変わらない。
+fn checkbox_indicator_is_aligned_to_text(ui: &Ui) -> Result<()> {
+    let checkbox = ui.checkbox("項目を有効にする")?;
+    let native: gtk::CheckButton = checkbox.native_widget().downcast().expect("GtkCheckButton");
+    let indicator = native.first_child().expect("印のノード");
+
+    let margin = indicator.margin_top();
+    assert!(
+        margin > 0,
+        "日本語のラベルでは印を下げて字面へそろえる (margin_top={margin})"
+    );
+    assert_eq!(
+        measure_height(&native),
+        measure_height(&gtk::CheckButton::with_label("項目を有効にする")),
+        "そろえてもチェックボックスの高さは変わらない"
+    );
+
+    // 画面に出したときも、そろえたぶんを自分で取り消さない。`map` のたびに
+    // 測り直しているので、前に足したマージンを二重に数えると 0 へ戻ってしまう。
+    let window = ui.window("印の位置", 200.0, 100.0)?;
+    window.set_child(&checkbox);
+    window.show();
+    assert_eq!(
+        indicator.margin_top(),
+        margin,
+        "画面に出しても印の位置は変わらない"
+    );
+    window.close();
+
+    // ラジオの印も同じようにそろえる。
+    let radio = ui.radio_group()?;
+    radio.set_items(&["標準"]);
+    let button = radio.native_buttons().remove(0);
+    assert_eq!(
+        button.first_child().expect("印のノード").margin_top(),
+        margin,
+        "ラジオグループの印も同じだけ下げる"
+    );
+    Ok(())
+}
+
 fn combo_box_items_and_selection(ui: &Ui) -> Result<()> {
     let combo = ui.combo_box()?;
     assert!(combo.is_empty());
@@ -428,6 +489,98 @@ fn combo_box_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
     assert_eq!(combo.selected(), Some(0));
     combo.select(2);
     assert_eq!(second.borrow().as_slice(), [2]);
+    Ok(())
+}
+
+fn radio_group_items_and_selection(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    assert!(radio.is_empty());
+    assert_eq!(radio.selected(), None);
+
+    radio.set_items(&["小", "中", "大"]);
+    assert_eq!(radio.len(), 3);
+    assert_eq!(radio.selected(), None, "項目の作り直し後も未選択");
+
+    let buttons = radio.native_buttons();
+    assert_eq!(buttons.len(), 3);
+    assert_eq!(
+        buttons[1].label().map(|s| s.to_string()).as_deref(),
+        Some("中")
+    );
+    assert!(buttons.iter().all(|button| !button.is_active()));
+
+    radio.set_selected(2);
+    assert_eq!(radio.selected(), Some(2));
+    assert!(buttons[2].is_active());
+    radio.set_selected(99);
+    assert_eq!(radio.selected(), Some(2), "範囲外は無視する");
+
+    radio.clear_selection();
+    assert_eq!(radio.selected(), None);
+    assert!(buttons.iter().all(|button| !button.is_active()));
+
+    radio.set_enabled(false);
+    let native: gtk::Box = radio.native_widget().downcast().expect("GtkBox");
+    assert!(!native.is_sensitive());
+
+    radio.set_orientation(Orientation::Horizontal);
+    assert_eq!(native.orientation(), gtk::Orientation::Horizontal);
+    Ok(())
+}
+
+/// ネイティブのクリック経路でも、点くのは常に 1 つだけ。
+fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["赤", "緑", "青"]);
+    let (log, sink) = recorder::<usize>();
+    radio.on_select(sink);
+
+    let buttons = radio.native_buttons();
+    buttons[2].activate();
+    assert_eq!(radio.selected(), Some(2));
+    assert_eq!(log.borrow().as_slice(), [2]);
+
+    buttons[0].activate();
+    assert_eq!(radio.selected(), Some(0), "選び直すと前のものは消える");
+    // 外れた側の `toggled` は通知しない。
+    assert_eq!(log.borrow().as_slice(), [2, 0]);
+    assert_eq!(
+        buttons.iter().filter(|button| button.is_active()).count(),
+        1,
+        "点いているのは常に 1 つ"
+    );
+    Ok(())
+}
+
+fn radio_group_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["A", "B", "C"]);
+    let (log, sink) = recorder::<usize>();
+    radio.on_select(sink);
+
+    radio.set_selected(1);
+    radio.set_selected(2);
+    radio.clear_selection();
+    radio.set_items(&["D", "E", "F"]);
+    assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+
+    radio.select(0);
+    radio.select(99);
+    assert_eq!(log.borrow().as_slice(), [0], "範囲外は通知もしない");
+
+    // 通知の中で同じグループを触っても二重借用にならない。
+    let seen = Rc::new(Cell::new(None));
+    radio.on_select({
+        let radio = radio.clone();
+        let seen = seen.clone();
+        move |index| {
+            seen.set(Some(index));
+            radio.set_selected(2);
+        }
+    });
+    radio.select(1);
+    assert_eq!(seen.get(), Some(1));
+    assert_eq!(radio.selected(), Some(2));
     Ok(())
 }
 
@@ -1746,6 +1899,44 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
 
     picker.set_enabled(false);
     assert!(!native.is_sensitive());
+    Ok(())
+}
+
+/// 保存はボタンとして構成され、設定を保つ。
+///
+/// `GtkFileDialog` の保存は表示するまで中身を読めないので、
+/// **ボタンの実体と設定の保持まで**を確かめる。
+fn file_saver_configuration(ui: &Ui) -> Result<()> {
+    let saver = ui.file_saver("保存する")?;
+    assert_eq!(saver.file_name(), "", "既定の名前は空 (GTK に任せる)");
+    assert!(saver.destination().is_none(), "まだ保存していないこと");
+    assert_eq!(saver.contents_len(), 0);
+
+    saver.set_file_name("メモ");
+    saver.set_filters(&[FileFilter::new("文書", ["txt", "md"])]);
+    saver.set_contents("こんにちは".as_bytes());
+    assert_eq!(saver.file_name(), "メモ", "補う拡張子は表示のときだけ足す");
+    assert_eq!(saver.contents_len(), "こんにちは".len());
+
+    let native: gtk::Button = saver.native_widget().downcast().expect("GtkButton");
+    assert_eq!(
+        native.label().map(|l| l.to_string()),
+        Some("保存する".into())
+    );
+    saver.set_text("書き出す");
+    assert_eq!(
+        native.label().map(|l| l.to_string()),
+        Some("書き出す".into())
+    );
+
+    saver.set_enabled(false);
+    assert!(!native.is_sensitive());
+    saver.set_enabled(true);
+
+    // コンテナへ入れてもハンドルを手放して大丈夫なこと (他のウィジェットと同じ)。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&saver);
+    assert_eq!(stack.len(), 1);
     Ok(())
 }
 

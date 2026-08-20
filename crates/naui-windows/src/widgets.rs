@@ -57,6 +57,38 @@ macro_rules! impl_widget {
 
 pub(crate) use impl_widget;
 
+/// 選択が変わったことの通知先。
+///
+/// コールバックを呼ぶ間はセルから一度取り出す。これにより、コールバックから
+/// 同じウィジェットを操作しても再入時の借用が衝突せず、`on_select` を呼び直して
+/// コールバックを差し替えた場合も新しいものを上書きしない。
+type SelectCallback = Box<dyn FnMut(usize)>;
+
+#[derive(Clone)]
+pub(crate) struct SelectHandler(std::sync::Arc<UiThreadCell<Option<SelectCallback>>>);
+
+impl SelectHandler {
+    pub(crate) fn new() -> Self {
+        Self(std::sync::Arc::new(UiThreadCell::new(None)))
+    }
+
+    pub(crate) fn set(&self, f: impl FnMut(usize) + 'static) {
+        self.0.with_mut(|slot| *slot = Some(Box::new(f)));
+    }
+
+    pub(crate) fn emit(&self, index: usize) {
+        let Some(Some(mut f)) = self.0.try_with_mut(|slot| slot.take()) else {
+            return;
+        };
+        f(index);
+        let _ = self.0.try_with_mut(|slot| {
+            if slot.is_none() {
+                *slot = Some(f);
+            }
+        });
+    }
+}
+
 // ------------------------------------------------------------------ Label
 
 struct LabelInner {

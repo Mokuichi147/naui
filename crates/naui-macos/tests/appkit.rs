@@ -19,8 +19,9 @@ use naui_core::{
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
 use objc2_app_kit::{
-    NSButton, NSImageScaling, NSImageView, NSLayoutConstraint, NSOutlineViewDelegate,
-    NSSegmentedControl, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
+    NSButton, NSControlStateValueOff, NSImageScaling, NSImageView, NSLayoutConstraint,
+    NSOutlineViewDelegate, NSSegmentedControl, NSTableViewDelegate, NSTextField,
+    NSTextInputClient, NSTextView, NSView,
 };
 use objc2_foundation::{NSDate, NSNotFound, NSRange, NSRunLoop, NSSize, NSString};
 
@@ -57,6 +58,18 @@ fn main() {
         (
             "コンボボックスの通知中に内容と通知先を差し替えられる",
             combo_box_callback_is_reentrant,
+        ),
+        (
+            "ラジオグループの選択がネイティブと往復する",
+            radio_group_selection_round_trips,
+        ),
+        (
+            "ラジオグループのクリックが 1 つだけ点けて通知する",
+            radio_group_click_selects_one,
+        ),
+        (
+            "ラジオグループの通知中に内容と通知先を差し替えられる",
+            radio_group_callback_is_reentrant,
         ),
         ("スタックが子を生かし続ける", stack_keeps_children),
         ("ウィンドウを設定して閉じられる", window_lifecycle),
@@ -139,6 +152,14 @@ fn main() {
         (
             "ファイル選択がボタンとして構成され設定を保つ",
             file_picker_configuration,
+        ),
+        (
+            "保存の設定が NSSavePanel へ届く",
+            file_saver_configuration_reaches_the_panel,
+        ),
+        (
+            "保存の既定名に絞り込みの拡張子が付く",
+            file_saver_adds_the_default_extension,
         ),
         (
             "ダイアログの設定が NSAlert へ届く",
@@ -513,6 +534,113 @@ fn combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
     assert_eq!(combo.selected(), Some(1));
 
     combo.select(0);
+    assert_eq!(*first.borrow(), vec![0], "古い通知先は外れること");
+    assert_eq!(*replacement.borrow(), vec![0]);
+    Ok(())
+}
+
+/// 項目・未選択状態・通知の有無が NSButton のラジオ型と一致する。
+fn radio_group_selection_round_trips(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    assert!(radio.is_empty());
+    assert_eq!(radio.selected(), None);
+
+    radio.set_items(&["小", "中", "大"]);
+    assert_eq!(radio.len(), 3);
+    assert_eq!(radio.selected(), None, "項目の作り直し後は未選択");
+    let buttons = radio.native_buttons();
+    assert_eq!(buttons.len(), 3);
+    assert_eq!(buttons[1].title().to_string(), "中");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    radio.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    radio.set_selected(1);
+    assert_eq!(radio.selected(), Some(1));
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+    radio.set_selected(99);
+    assert_eq!(radio.selected(), Some(1), "範囲外は無視する");
+
+    radio.clear_selection();
+    assert_eq!(radio.selected(), None);
+    assert!(seen.borrow().is_empty(), "clear_selection は通知しない");
+
+    radio.select(2);
+    assert_eq!(radio.selected(), Some(2));
+    assert_eq!(*seen.borrow(), vec![2]);
+    radio.select(99);
+    assert_eq!(*seen.borrow(), vec![2], "範囲外は通知もしない");
+
+    radio.set_enabled(false);
+    assert!(buttons.iter().all(|button| !button.isEnabled()));
+    // 無効のまま項目を作り直しても、その指定は引き継がれる。
+    radio.set_items(&["単一"]);
+    assert_eq!(radio.selected(), None);
+    assert!(!radio.native_buttons()[0].isEnabled());
+    assert_eq!(*seen.borrow(), vec![2], "再構築は通知しない");
+    Ok(())
+}
+
+/// AppKit の target/action から届く経路でも、点くのは 1 つだけ。
+fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["赤", "緑", "青"]);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    radio.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    let buttons = radio.native_buttons();
+    unsafe { buttons[2].performClick(None) };
+    assert_eq!(radio.selected(), Some(2));
+    assert_eq!(*seen.borrow(), vec![2]);
+
+    unsafe { buttons[0].performClick(None) };
+    assert_eq!(radio.selected(), Some(0), "選び直すと前のものは消える");
+    assert_eq!(*seen.borrow(), vec![2, 0]);
+    assert_eq!(
+        buttons
+            .iter()
+            .filter(|button| button.state() != NSControlStateValueOff)
+            .count(),
+        1,
+        "点いているのは常に 1 つ"
+    );
+    Ok(())
+}
+
+/// 通知の最中でも同じラジオグループを操作し、コールバックを差し替えられる。
+fn radio_group_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["春", "夏", "秋"]);
+
+    let first = Rc::new(RefCell::new(Vec::new()));
+    let replacement = Rc::new(RefCell::new(Vec::new()));
+    radio.on_select({
+        let radio = radio.clone();
+        let first = first.clone();
+        let replacement = replacement.clone();
+        move |index| {
+            first.borrow_mut().push(index);
+            radio.set_items(&["朝", "昼"]);
+            radio.set_selected(1);
+            radio.on_select({
+                let replacement = replacement.clone();
+                move |index| replacement.borrow_mut().push(index)
+            });
+        }
+    });
+
+    radio.select(0);
+    assert_eq!(*first.borrow(), vec![0]);
+    assert_eq!(radio.len(), 2);
+    assert_eq!(radio.selected(), Some(1));
+
+    radio.select(0);
     assert_eq!(*first.borrow(), vec![0], "古い通知先は外れること");
     assert_eq!(*replacement.borrow(), vec![0]);
     Ok(())
@@ -1435,6 +1563,83 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.append(&picker);
     assert_eq!(stack.len(), 1);
+    Ok(())
+}
+
+/// 保存はボタンとして構成され、設定が `NSSavePanel` へ届く。
+///
+/// `NSSavePanel` もアプリモーダルで、出すと閉じられるまで戻らない。
+/// 自動テストからは開けないので、**表示前のパネルの中身**を確かめる。
+fn file_saver_configuration_reaches_the_panel(ui: &Ui) -> Result<()> {
+    let saver = ui.file_saver("保存する")?;
+
+    let view = saver.native_view();
+    let button = view
+        .downcast::<NSButton>()
+        .expect("実体は NSButton であること");
+    assert_eq!(button.title().to_string(), "保存する");
+    saver.set_text("書き出す");
+    assert_eq!(button.title().to_string(), "書き出す");
+
+    assert!(button.isEnabled(), "既定では押せること");
+    saver.set_enabled(false);
+    assert!(!button.isEnabled());
+    saver.set_enabled(true);
+
+    assert_eq!(saver.file_name(), "", "既定の名前は空 (AppKit に任せる)");
+    assert!(saver.destination().is_none(), "まだ保存していないこと");
+    assert_eq!(saver.contents_len(), 0);
+
+    saver.set_file_name("メモ.txt");
+    saver.set_contents("こんにちは".as_bytes());
+    saver.set_filters(&[
+        FileFilter::new("文書", ["txt", "md"]),
+        FileFilter::new("画像", ["png"]),
+    ]);
+    assert_eq!(saver.file_name(), "メモ.txt");
+    assert_eq!(saver.contents_len(), "こんにちは".len());
+
+    let panel = saver.native_panel();
+    assert_eq!(panel.nameFieldStringValue().to_string(), "メモ.txt");
+    #[allow(deprecated)]
+    let types: Vec<String> = panel
+        .allowedFileTypes()
+        .expect("絞り込みが届いていること")
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+    assert_eq!(types, ["txt", "md", "png"], "全ての絞り込みが平らに並ぶこと");
+
+    // コンテナへ入れてもハンドルを手放して大丈夫なこと (他のウィジェットと同じ)。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&saver);
+    assert_eq!(stack.len(), 1);
+    Ok(())
+}
+
+/// 拡張子の無い既定名には、絞り込みの先頭の拡張子が付く。
+fn file_saver_adds_the_default_extension(ui: &Ui) -> Result<()> {
+    let saver = ui.file_saver("保存")?;
+    saver.set_filters(&[FileFilter::new("文書", ["txt", "md"])]);
+
+    saver.set_file_name("メモ");
+    assert_eq!(
+        saver.native_panel().nameFieldStringValue().to_string(),
+        "メモ.txt"
+    );
+    // すでに絞り込みの拡張子が付いていれば足さない。
+    saver.set_file_name("メモ.md");
+    assert_eq!(
+        saver.native_panel().nameFieldStringValue().to_string(),
+        "メモ.md"
+    );
+    // 名前を指定しなければ AppKit の既定 (「Untitled」) のまま。
+    saver.set_file_name("");
+    let default_name = saver.native_panel().nameFieldStringValue().to_string();
+    assert!(
+        !default_name.is_empty() && !default_name.contains("メモ"),
+        "名前を指定しなければ AppKit の既定のままであること: {default_name}"
+    );
     Ok(())
 }
 

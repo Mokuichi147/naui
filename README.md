@@ -34,6 +34,8 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 
 - Web: `PopupMenu` のブラウザ実行と、埋め込みブラウザで配送されなかった
   `Dialog` の Esc 操作
+- `FileSaver`: macOS のみ実機と自動テストで確認しています。Windows・Linux・Web
+  での実行は未確認です。
 - Windows / Linux / Web: `Tree` の実機・ブラウザでの実行 (macOS では
   統合テストと Gallery で確認済み。Linux 向けの統合テストは用意してあります)
 
@@ -167,6 +169,19 @@ language.set_selected(0);
 language.on_select(|index| println!("{index} 番目が選ばれました"));
 ```
 
+候補をすべて画面に出すなら `RadioGroup` を使います。API は `ComboBox` と同じで、
+違うのは候補の見せ方と、並べる向きを選べることだけです。
+
+```rust
+let plan = ui.radio_group()?;
+plan.set_items(&["無料", "標準", "上位"]);
+plan.set_orientation(Orientation::Horizontal); // 既定は縦
+plan.set_selected(0);
+plan.on_select(|index| println!("{index} 番目が選ばれました"));
+```
+
+排他になるのは 1 つの `RadioGroup` の中だけです。同じ画面に複数置いても混ざりません。
+
 ### ツリー
 
 入れ子の項目を開閉して 1 つ選ぶには `Tree` を使います。項目は**根からの子
@@ -192,6 +207,26 @@ tree.select(&[0, 1]); // 閉じた枝の中でも、祖先ごと開いて選ば�
 は通知せず、`select`、`expand`、`collapse` は利用者の操作と同じく通知します。
 `TreeItem::enabled(false)` にした枝は、その子孫もまとめて選べなくなります。
 
+### ファイルの保存
+
+`FileSaver` は、押すと環境標準の保存ダイアログが開くボタンです。**保存先の
+パスを返すのではなく、渡しておいた内容を書き出します**。ブラウザには保存先の
+パスという概念が無く、パスを返す API では Web で何もできないためです。
+
+```rust
+let saver = ui.file_saver("保存")?;
+saver.set_file_name("メモ"); // 拡張子は絞り込みから補われる
+saver.set_filters(&[FileFilter::new("テキスト", ["txt"])]);
+saver.set_contents("こんにちは".as_bytes());
+saver.on_save(|entry| println!("{} へ保存しました", entry.name()));
+saver.on_error(|error| eprintln!("{error}"));
+```
+
+`set_contents` のバイト列が、選ばれた場所へそのまま書かれます。書き出しに
+成功すると `on_save` に書き出し先が届き、取り消したときは何も呼ばれません。
+書き込みに失敗したときだけ `on_error` が呼ばれます。ボタンを押した時点の
+内容を書き出すため、内容が変わるたびに `set_contents` を呼び直します。
+
 ## ウィジェット
 
 | 分類 | API |
@@ -199,8 +234,8 @@ tree.select(&[0, 1]); // 閉じた枝の中でも、祖先ごと開いて選ば�
 | 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`Slider`、`ProgressBar` |
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
-| データ選択 | `ComboBox`、`List`、`Tree` |
-| ファイル選択 | `FilePicker` |
+| データ選択 | `ComboBox`、`RadioGroup`、`List`、`Tree` |
+| ファイル | `FilePicker`、`FileSaver` |
 | メディア | `Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog` |
 
@@ -227,6 +262,7 @@ tree.select(&[0, 1]); // 閉じた枝の中でも、祖先ごと開いて選ば�
 | `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
+| `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
@@ -234,6 +270,7 @@ tree.select(&[0, 1]); // 閉じた枝の中でも、祖先ごと開いて選ば�
 | `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
 | `Tree` | 🟡 `ListBox` + 開閉ボタン | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
 | `FilePicker` | 🟡 `Button` + `IFileOpenDialog` | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `GtkButton` + `GtkFileDialog` | 🟡 `<button>` + `<input type="file">` |
+| `FileSaver` | 🟡 `Button` + `IFileSaveDialog` | 🟡 `NSButton` + `NSSavePanel` | 🟡 `GtkButton` + `GtkFileDialog` (save) | 🔴 `<button>` + `showSaveFilePicker` / `<a download>` |
 | `Image` | 🟡 `Image` (`XamlReader` 経由) | ✅ `NSImageView` | ✅ `GtkPicture` | ✅ `<img>` |
 | `Video` | ✅ `MediaPlayerElement` | ✅ `AVPlayerView` | 🟡 `GtkPicture` + `GtkMediaControls` | ✅ `<video>` |
 | `Audio` | ✅ `MediaPlayerElement` | 🟡 `AVPlayerView` | 🟡 `GtkMediaControls` + `GtkMediaFile` | ✅ `<audio>` |
@@ -258,7 +295,7 @@ tree.select(&[0, 1]); // 閉じた枝の中でも、祖先ごと開いて選ば�
 - `NavItem`: ナビゲーション項目
 - `ListItem` / `SelectionMode`: リスト項目と単一・複数選択
 - `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
-- `FileFilter` / `FilePickerMode` / `FileEntry`: ファイル選択
+- `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
 - `Fit` / `PlaybackState`: メディア表示と再生状態
 - `PopupItem`: ポップアップメニュー項目
 - `DialogButtons` / `DialogResponse`: ダイアログのボタンと応答
@@ -355,8 +392,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 28 コンポーネントです。保存ダイアログ、複数列テーブル、
-  ラジオボタン、ツールバーは未実装です。
+- 対応するのは上記の 30 コンポーネントです。複数列テーブル、ツールバーは未実装です。
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
 - `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
 - `Tree` は単一選択で、項目に置けるのは `List` と同じ文字列だけです。
@@ -401,9 +437,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `<ul role="listbox">` を使った実装へ切り替わります。
 - `Tree` の `TreeItem::detail` は、行の高さをそろえるため
   `ラベル — 補助` の形で 1 行に収まります。
-- `FilePicker::open` はユーザー操作のイベント内で呼ぶ必要があります。
-- ブラウザの制限により、メディアの自動再生が拒否される場合があります。
-
-## ライセンス
-
-[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)
+- `FilePicker::open` と `FileSaver::open` はユーザー操作のイベント内で
+  呼ぶ必要があります。
+- `FileSaver` は `showSaveFilePicker` があればそれを使い、無いブラウザ
+  (Firefox / Safari) では `<a download>` のダウンロードになります。後者では
+  保存先の確認が出ないことがあり、`FileEntry::path` はどちらでも `None` です。
