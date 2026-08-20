@@ -451,14 +451,20 @@ impl Tree {
                     .map_err(|e| to_error("行の要素化", e))?
             }
         };
+        if !selectable && branch {
+            // 枝は開閉できる必要があるため、行全体を無効にできない。
+            // その代わり文字だけを無効な行と同じ濃さにする。
+            let _ = text.SetOpacity(0.4);
+        }
         line_children
             .Append(&text)
             .map_err(|e| to_error("行への追加", e))?;
 
         row.SetContent(&line)
             .map_err(|e| to_error("行への内容設定", e))?;
-        // 選べない項目は行ごと無効にする (`List` と同じ)。
-        let _ = row.SetIsEnabled(selectable);
+        // 選べない枝も開閉ボタンは押せるよう、枝の行は有効のままにする。
+        // 選択イベント側で選択不可の行を弾くので、選択可能性は保たれる。
+        let _ = row.SetIsEnabled(selectable || branch);
         Ok((row, twisty_button_handle))
     }
 
@@ -570,6 +576,17 @@ impl Tree {
             .iter()
             .position(|row| row.IsSelected().unwrap_or(false))
             .and_then(|index| self.0.rows.borrow().get(index).cloned());
+
+        // 開閉のために選択可能にしている枝は、ListBox から見ると選択できて
+        // しまう。無効な行が選ばれた場合は、直前の選択を描き戻して選択状態を
+        // 変えない (選択が無い場合はそのまま全解除する)。
+        if picked
+            .as_ref()
+            .is_some_and(|path| !TreeItem::selectable(&self.0.items.borrow(), path))
+        {
+            self.paint_selection();
+            return;
+        }
         *self.0.selected.borrow_mut() = picked;
         let actual = self.selected().unwrap_or_default();
         self.0.handler.emit(&actual);
