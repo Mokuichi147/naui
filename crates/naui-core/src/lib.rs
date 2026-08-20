@@ -14,7 +14,10 @@ pub mod media;
 mod popup;
 
 pub use dialog::{DialogButtons, DialogResponse};
-pub use file::{accept_attribute, FileEntry, FileFilter, FilePickerMode};
+pub use file::{
+    accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
+    FilePickerMode,
+};
 pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
 pub use list::{ListItem, SelectionMode};
 pub use media::{Fit, PlaybackState};

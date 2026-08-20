@@ -134,6 +134,14 @@ fn main() {
             file_picker_configuration,
         ),
         (
+            "保存の設定が NSSavePanel へ届く",
+            file_saver_configuration_reaches_the_panel,
+        ),
+        (
+            "保存の既定名に絞り込みの拡張子が付く",
+            file_saver_adds_the_default_extension,
+        ),
+        (
             "ダイアログの設定が NSAlert へ届く",
             dialog_configuration_reaches_the_alert,
         ),
@@ -1535,6 +1543,83 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.append(&picker);
     assert_eq!(stack.len(), 1);
+    Ok(())
+}
+
+/// 保存はボタンとして構成され、設定が `NSSavePanel` へ届く。
+///
+/// `NSSavePanel` もアプリモーダルで、出すと閉じられるまで戻らない。
+/// 自動テストからは開けないので、**表示前のパネルの中身**を確かめる。
+fn file_saver_configuration_reaches_the_panel(ui: &Ui) -> Result<()> {
+    let saver = ui.file_saver("保存する")?;
+
+    let view = saver.native_view();
+    let button = view
+        .downcast::<NSButton>()
+        .expect("実体は NSButton であること");
+    assert_eq!(button.title().to_string(), "保存する");
+    saver.set_text("書き出す");
+    assert_eq!(button.title().to_string(), "書き出す");
+
+    assert!(button.isEnabled(), "既定では押せること");
+    saver.set_enabled(false);
+    assert!(!button.isEnabled());
+    saver.set_enabled(true);
+
+    assert_eq!(saver.file_name(), "", "既定の名前は空 (AppKit に任せる)");
+    assert!(saver.destination().is_none(), "まだ保存していないこと");
+    assert_eq!(saver.contents_len(), 0);
+
+    saver.set_file_name("メモ.txt");
+    saver.set_contents("こんにちは".as_bytes());
+    saver.set_filters(&[
+        FileFilter::new("文書", ["txt", "md"]),
+        FileFilter::new("画像", ["png"]),
+    ]);
+    assert_eq!(saver.file_name(), "メモ.txt");
+    assert_eq!(saver.contents_len(), "こんにちは".len());
+
+    let panel = saver.native_panel();
+    assert_eq!(panel.nameFieldStringValue().to_string(), "メモ.txt");
+    #[allow(deprecated)]
+    let types: Vec<String> = panel
+        .allowedFileTypes()
+        .expect("絞り込みが届いていること")
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+    assert_eq!(types, ["txt", "md", "png"], "全ての絞り込みが平らに並ぶこと");
+
+    // コンテナへ入れてもハンドルを手放して大丈夫なこと (他のウィジェットと同じ)。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&saver);
+    assert_eq!(stack.len(), 1);
+    Ok(())
+}
+
+/// 拡張子の無い既定名には、絞り込みの先頭の拡張子が付く。
+fn file_saver_adds_the_default_extension(ui: &Ui) -> Result<()> {
+    let saver = ui.file_saver("保存")?;
+    saver.set_filters(&[FileFilter::new("文書", ["txt", "md"])]);
+
+    saver.set_file_name("メモ");
+    assert_eq!(
+        saver.native_panel().nameFieldStringValue().to_string(),
+        "メモ.txt"
+    );
+    // すでに絞り込みの拡張子が付いていれば足さない。
+    saver.set_file_name("メモ.md");
+    assert_eq!(
+        saver.native_panel().nameFieldStringValue().to_string(),
+        "メモ.md"
+    );
+    // 名前を指定しなければ AppKit の既定 (「Untitled」) のまま。
+    saver.set_file_name("");
+    let default_name = saver.native_panel().nameFieldStringValue().to_string();
+    assert!(
+        !default_name.is_empty() && !default_name.contains("メモ"),
+        "名前を指定しなければ AppKit の既定のままであること: {default_name}"
+    );
     Ok(())
 }
 

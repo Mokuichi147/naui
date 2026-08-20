@@ -14,6 +14,7 @@
 mod combo_box;
 mod dialog;
 mod file_picker;
+mod file_saver;
 mod layout;
 mod list;
 mod media;
@@ -39,6 +40,7 @@ pub use wasm_bindgen;
 pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
+pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
@@ -222,6 +224,13 @@ impl Ui {
     /// ファイルやフォルダーを選ばせるボタン。中身は `<input type="file">`。
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         FilePicker::new(&self.document, text)
+    }
+
+    /// 内容をファイルへ保存させるボタン。押すと保存ダイアログが出る。
+    ///
+    /// `showSaveFilePicker` があればそれを、無ければダウンロードを使う。
+    pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
+        FileSaver::new(&self.document, text)
     }
 
     /// モーダルダイアログ。`title` は見出し。中身は `<dialog>`。

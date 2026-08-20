@@ -10,7 +10,7 @@
 
 use std::cell::RefCell;
 
-use naui_core::FileEntry;
+use naui_core::{Error, FileEntry};
 
 /// クロージャ 1 つぶんの置き場。
 type Slot<F> = RefCell<Option<Box<F>>>;
@@ -80,6 +80,16 @@ borrowed_notifier!(
     /// 選ばれたファイルを受け取るコールバック。
     FileNotifier,
     &[FileEntry]
+);
+borrowed_notifier!(
+    /// 書き出した先を受け取るコールバック。
+    SavedNotifier,
+    &FileEntry
+);
+borrowed_notifier!(
+    /// 失敗の内容を受け取るコールバック。
+    ErrorNotifier,
+    &Error
 );
 borrowed_notifier!(
     /// 入力された文字列を受け取るコールバック。

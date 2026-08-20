@@ -1,8 +1,8 @@
-use naui::{FileFilter, FilePickerMode, Orientation, Padding, Result, Ui};
+use naui::{FileFilter, FilePickerMode, Length, Orientation, Padding, Result, Sizing, Ui};
 
 use crate::describe_entries;
 
-/// 単一ファイル、複数ファイル、フォルダーの選択。
+/// 単一ファイル、複数ファイル、フォルダーの選択と、内容の保存。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(14.0);
@@ -46,5 +46,43 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     });
     pane.append(&folder);
     pane.append(&folder_status);
+
+    pane.append(&ui.label("FileSaver")?);
+    pane.append(&ui.label("入力した内容を、環境標準の保存ダイアログで書き出します。")?);
+
+    let editor = ui.text_area("naui で保存したテキストです。")?;
+    editor.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(80.0)),
+    );
+
+    let save_status = ui.label("保存: まだ")?;
+    let saver = ui.file_saver("テキストを保存")?;
+    saver.set_file_name("naui-メモ");
+    saver.set_filters(&[FileFilter::new("テキスト", ["txt", "md"])]);
+    // ボタンを押した時点の内容を書き出したいので、打つたびに渡し直す。
+    saver.set_contents(editor.text().as_bytes());
+    editor.on_change({
+        let saver = saver.clone();
+        move |text| saver.set_contents(text.as_bytes())
+    });
+    saver.on_save({
+        let save_status = save_status.clone();
+        move |entry| {
+            let place = match entry.path() {
+                Some(path) => path.display().to_string(),
+                None => format!("{} (この環境ではパス非公開)", entry.name()),
+            };
+            save_status.set_text(&format!("保存: {place}"));
+        }
+    });
+    saver.on_error({
+        let save_status = save_status.clone();
+        move |error| save_status.set_text(&format!("保存できません: {error}"))
+    });
+    pane.append(&editor);
+    pane.append(&saver);
+    pane.append(&save_status);
     Ok(pane)
 }
