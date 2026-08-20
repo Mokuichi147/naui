@@ -1,8 +1,10 @@
-//! ファイルとフォルダーの選択にかかわる値型。
+//! ファイルの選択と保存にかかわる値型。
 //!
 //! ダイアログそのものは各バックエンドが OS のネイティブなものを出す
-//! (NSOpenPanel / IFileOpenDialog / `<input type="file">`)。ここにあるのは
-//! 「何を選ばせるか」「何が選ばれたか」を表す、環境に依存しない型だけ。
+//! (NSOpenPanel / NSSavePanel / IFileOpenDialog / IFileSaveDialog /
+//! `<input type="file">` / `showSaveFilePicker`)。ここにあるのは
+//! 「何を選ばせるか」「何が選ばれたか」「どこへ書き出すか」を表す、
+//! 環境に依存しない型だけ。
 
 use std::path::{Path, PathBuf};
 
@@ -204,6 +206,77 @@ impl FileEntry {
     }
 }
 
+/// 絞り込みの並びから、既定の拡張子を 1 つ取る。
+///
+/// 保存ダイアログは「種類」を 1 つに決めて書き出すため、最初の使える
+/// 絞り込みの先頭の拡張子を既定とする。Windows の `SetDefaultExtension`
+/// と、名前に拡張子を補うときに使う。
+///
+/// ```
+/// # use naui_core::{default_extension, FileFilter};
+/// let filters = [
+///     FileFilter::new("空", [] as [&str; 0]),
+///     FileFilter::new("画像", ["png", "jpg"]),
+/// ];
+/// assert_eq!(default_extension(&filters), Some("png"));
+/// assert_eq!(default_extension(&[]), None);
+/// ```
+pub fn default_extension(filters: &[FileFilter]) -> Option<&str> {
+    filters
+        .iter()
+        .find_map(|filter| filter.extensions().first())
+        .map(String::as_str)
+}
+
+/// 既定のファイル名へ、絞り込みの拡張子を補う。
+///
+/// どの絞り込みの拡張子でも付いていればそのまま返す。付いていなければ
+/// [`default_extension`] を足す。名前が空のときは何も補わない
+/// (ダイアログ側の既定に任せる)。
+///
+/// GTK の `set_initial_name` と、ブラウザのダウンロード名のように
+/// 「拡張子を補ってくれない」場所のために用意している。
+///
+/// ```
+/// # use naui_core::{with_default_extension, FileFilter};
+/// let filters = [FileFilter::new("画像", ["png", "jpg"])];
+/// assert_eq!(with_default_extension("メモ", &filters), "メモ.png");
+/// assert_eq!(with_default_extension("写真.JPG", &filters), "写真.JPG");
+/// assert_eq!(with_default_extension("メモ", &[]), "メモ");
+/// assert_eq!(with_default_extension("", &filters), "");
+/// ```
+pub fn with_default_extension(name: &str, filters: &[FileFilter]) -> String {
+    let name = name.trim();
+    if name.is_empty() {
+        return String::new();
+    }
+    let Some(default) = default_extension(filters) else {
+        return name.to_string();
+    };
+    let has_known_extension = filters
+        .iter()
+        .flat_map(|filter| filter.extensions())
+        .any(|extension| ends_with_extension(name, extension));
+    if has_known_extension {
+        return name.to_string();
+    }
+    format!("{name}.{default}")
+}
+
+/// `name` が `.<extension>` で終わるか (大文字小文字は区別しない)。
+fn ends_with_extension(name: &str, extension: &str) -> bool {
+    let suffix = format!(".{extension}");
+    let Some(head) = name.len().checked_sub(suffix.len()) else {
+        return false;
+    };
+    // 拡張子だけの名前 (`.png`) は拡張子付きとみなさない。
+    if head == 0 {
+        return false;
+    }
+    // 日本語の名前では区切りが文字の途中に来ることがある。
+    name.is_char_boundary(head) && name[head..].eq_ignore_ascii_case(&suffix)
+}
+
 /// `*.PNG` や `.png` を `png` にそろえる。中身が無ければ捨てる。
 fn normalize_extension(raw: &str) -> Option<String> {
     let trimmed = raw
@@ -283,6 +356,54 @@ mod tests {
         ];
         assert_eq!(accept_attribute(&filters), ".png,.txt,.md");
         assert_eq!(accept_attribute(&[]), "");
+    }
+
+    #[test]
+    fn default_extension_is_the_first_usable_one() {
+        let filters = [
+            FileFilter::new("空", [] as [&str; 0]),
+            FileFilter::new("画像", ["PNG", "jpg"]),
+        ];
+        assert_eq!(default_extension(&filters), Some("png"));
+        assert_eq!(default_extension(&[]), None);
+        assert_eq!(default_extension(&[FileFilter::new("空", ["*"])]), None);
+    }
+
+    #[test]
+    fn default_extension_is_added_only_when_missing() {
+        let filters = [FileFilter::new("画像", ["png", "jpg"])];
+        assert_eq!(with_default_extension("メモ", &filters), "メモ.png");
+        // 絞り込みのどれかに合っていれば足さない (大文字小文字は無視)。
+        assert_eq!(with_default_extension("写真.JPG", &filters), "写真.JPG");
+        assert_eq!(with_default_extension("写真.png", &filters), "写真.png");
+        // 知らない拡張子は名前の一部として扱う。
+        assert_eq!(with_default_extension("写真.bmp", &filters), "写真.bmp.png");
+        // 拡張子だけの名前は隠しファイル名なので、拡張子付きとはみなさない。
+        assert_eq!(with_default_extension(".png", &filters), ".png.png");
+    }
+
+    #[test]
+    fn default_extension_leaves_the_name_alone_without_filters() {
+        assert_eq!(with_default_extension("メモ", &[]), "メモ");
+        // 名前が空ならダイアログ側の既定に任せる。
+        assert_eq!(
+            with_default_extension("  ", &[FileFilter::new("画像", ["png"])]),
+            ""
+        );
+        // 前後の空白は落とす。
+        assert_eq!(
+            with_default_extension(" メモ ", &[FileFilter::new("文書", ["txt"])]),
+            "メモ.txt"
+        );
+    }
+
+    #[test]
+    fn extension_check_survives_multibyte_names() {
+        // 区切りが文字の途中に来ても落ちないこと。
+        let filters = [FileFilter::new("画像", ["p"])];
+        assert_eq!(with_default_extension("あ", &filters), "あ.p");
+        assert_eq!(with_default_extension("aあ", &filters), "aあ.p");
+        assert_eq!(with_default_extension("あ.p", &filters), "あ.p");
     }
 
     #[test]

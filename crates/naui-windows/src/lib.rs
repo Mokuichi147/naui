@@ -21,6 +21,7 @@ mod app;
 mod combo_box;
 mod dialog;
 mod file_picker;
+mod file_saver;
 mod layout;
 mod list;
 mod media;
@@ -37,6 +38,7 @@ use naui_core::{Error, Orientation, Result, Settings, Theme};
 pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
+pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
@@ -210,6 +212,11 @@ impl Ui {
     /// ファイルやフォルダーを選ばせるボタン。押すと共通ダイアログが出る。
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         FilePicker::new(text)
+    }
+
+    /// 内容をファイルへ保存させるボタン。押すと共通ダイアログの保存が出る。
+    pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
+        FileSaver::new(text)
     }
 
     /// モーダルダイアログ。`title` は見出し。中身は `ContentDialog`。
