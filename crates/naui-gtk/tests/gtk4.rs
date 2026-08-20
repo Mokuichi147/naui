@@ -40,6 +40,10 @@ fn main() {
             checkbox_set_is_silent,
         ),
         (
+            "チェックボックスの印がラベルの字面にそろう",
+            checkbox_indicator_is_aligned_to_text,
+        ),
+        (
             "コンボボックスの項目と選択がネイティブへ届く",
             combo_box_items_and_selection,
         ),
@@ -348,6 +352,50 @@ fn checkbox_set_is_silent(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// GTK4 は印をラベルの「行の箱」の中心へ置くが、日本語の行は ascent が
+/// 大きく取られるぶん字面が下に寄る。naui は印へ上マージンを足して字面の
+/// 中心へそろえ直す。マージンは行の箱に収まる範囲までなので、そろえても
+/// チェックボックスの高さは変わらない。
+fn checkbox_indicator_is_aligned_to_text(ui: &Ui) -> Result<()> {
+    let checkbox = ui.checkbox("項目を有効にする")?;
+    let native: gtk::CheckButton = checkbox.native_widget().downcast().expect("GtkCheckButton");
+    let indicator = native.first_child().expect("印のノード");
+
+    let margin = indicator.margin_top();
+    assert!(
+        margin > 0,
+        "日本語のラベルでは印を下げて字面へそろえる (margin_top={margin})"
+    );
+    assert_eq!(
+        measure_height(&native),
+        measure_height(&gtk::CheckButton::with_label("項目を有効にする")),
+        "そろえてもチェックボックスの高さは変わらない"
+    );
+
+    // 画面に出したときも、そろえたぶんを自分で取り消さない。`map` のたびに
+    // 測り直しているので、前に足したマージンを二重に数えると 0 へ戻ってしまう。
+    let window = ui.window("印の位置", 200.0, 100.0)?;
+    window.set_child(&checkbox);
+    window.show();
+    assert_eq!(
+        indicator.margin_top(),
+        margin,
+        "画面に出しても印の位置は変わらない"
+    );
+    window.close();
+
+    // ラジオの印も同じようにそろえる。
+    let radio = ui.radio_group()?;
+    radio.set_items(&["標準"]);
+    let button = radio.native_buttons().remove(0);
+    assert_eq!(
+        button.first_child().expect("印のノード").margin_top(),
+        margin,
+        "ラジオグループの印も同じだけ下げる"
+    );
+    Ok(())
+}
+
 fn combo_box_items_and_selection(ui: &Ui) -> Result<()> {
     let combo = ui.combo_box()?;
     assert!(combo.is_empty());
@@ -473,11 +521,11 @@ fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
     radio.on_select(sink);
 
     let buttons = radio.native_buttons();
-    buttons[2].emit_clicked();
+    buttons[2].activate();
     assert_eq!(radio.selected(), Some(2));
     assert_eq!(log.borrow().as_slice(), [2]);
 
-    buttons[0].emit_clicked();
+    buttons[0].activate();
     assert_eq!(radio.selected(), Some(0), "選び直すと前のものは消える");
     // 外れた側の `toggled` は通知しない。
     assert_eq!(log.borrow().as_slice(), [2, 0]);

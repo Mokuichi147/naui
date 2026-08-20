@@ -66,6 +66,10 @@
 //! - `Tabs` は**タブ列を送れるようにしてある** (`gtk_notebook_set_scrollable`)。
 //!   既定の `GtkNotebook` は「全タブが横に並ぶ幅」を最小幅として申告するため、
 //!   タブが増えるとウィンドウをそれ以下に縮められなくなる。
+//! - `Checkbox` と `RadioGroup` は、**印をラベルの字面の中心へ寄せ直している**。
+//!   GTK4 は印を行の箱 (ascent + descent) の中心に置くが、日本語を含む行は
+//!   ascent が大きく取られるぶん字面が下に寄り、印だけが浮いて見えるため
+//!   (詳しくは `indicator` モジュール)。
 //!
 //! ## ウィンドウを縮められる下限
 //!
@@ -105,6 +109,7 @@ mod callback;
 mod combo_box;
 mod dialog;
 mod file_picker;
+mod indicator;
 mod layout;
 mod list;
 mod media;

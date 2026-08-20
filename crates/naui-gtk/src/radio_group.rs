@@ -56,6 +56,7 @@ impl RadioGroup {
         let mut buttons: Vec<gtk::CheckButton> = Vec::with_capacity(items.len());
         for item in items {
             let button = gtk::CheckButton::with_label(item.as_ref());
+            crate::indicator::watch(&button);
             if let Some(first) = buttons.first() {
                 button.set_group(Some(first));
             }
