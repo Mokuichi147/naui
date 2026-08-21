@@ -185,6 +185,7 @@ impl_widget!(Checkbox);
 impl Checkbox {
     pub(crate) fn new(label: &str) -> Self {
         let native = gtk::CheckButton::with_label(label);
+        crate::indicator::watch(&native);
         let bin = SizeBin::wrap(&native);
         let inner = Rc::new(CheckboxInner {
             native,

@@ -10,7 +10,7 @@
 
 use std::cell::RefCell;
 
-use naui_core::FileEntry;
+use naui_core::{Error, FileEntry};
 
 /// クロージャ 1 つぶんの置き場。
 type Slot<F> = RefCell<Option<Box<F>>>;
@@ -82,7 +82,41 @@ borrowed_notifier!(
     &[FileEntry]
 );
 borrowed_notifier!(
+    /// 書き出した先を受け取るコールバック。
+    SavedNotifier,
+    &FileEntry
+);
+borrowed_notifier!(
+    /// 失敗の内容を受け取るコールバック。
+    ErrorNotifier,
+    &Error
+);
+borrowed_notifier!(
     /// 入力された文字列を受け取るコールバック。
     TextNotifier,
     &str
 );
+
+/// 開閉が変わった項目のパスと、変わった後の状態を受け取るコールバック。
+///
+/// 値を 2 つ受け取るので、[`borrowed_notifier!`] ではなく手で書いている。
+#[derive(Default)]
+pub(crate) struct ExpandNotifier(Slot<dyn FnMut(&[usize], bool)>);
+
+impl ExpandNotifier {
+    pub(crate) fn set(&self, f: impl FnMut(&[usize], bool) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// 呼び出しの間だけクロージャを取り出す ([`emit`] と同じ形)。
+    pub(crate) fn emit(&self, path: &[usize], expanded: bool) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(path, expanded);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}

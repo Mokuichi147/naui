@@ -145,13 +145,31 @@
 //! # }
 //! ```
 //!
+//! 候補をすべて画面に出して選ばせるなら [`RadioGroup`] を使う。API は
+//! `ComboBox` と同じで、違うのは候補の見せ方だけ。
+//!
+//! ```no_run
+//! # use naui::{Orientation, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let plan = ui.radio_group()?;
+//! plan.set_items(&["無料", "標準", "上位"]);
+//! plan.set_orientation(Orientation::Horizontal); // 既定は縦
+//! plan.set_selected(0);
+//! plan.on_select(|index| println!("{index} 番目が選ばれた"));
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
 //! | `ComboBox` | `ComboBox` | `NSPopUpButton` | `GtkDropDown` | `<select>` |
+//! | `RadioGroup` | `RadioButton` の組 | `NSButton` のラジオ型 | 組にした `GtkCheckButton` | `<input type="radio">` |
 //!
-//! [`ComboBox::set_items`] は候補のインデックスの意味を変えるため、選択を外す。
-//! `set_selected` / `clear_selection` は通知せず、`select` は利用者の操作と同じく
-//! `on_select` を呼ぶ。自由入力のできる編集可能コンボボックスではない。
+//! どちらも [`set_items`](ComboBox::set_items) は候補のインデックスの意味を
+//! 変えるため、選択を外す。`set_selected` / `clear_selection` は通知せず、
+//! `select` は利用者の操作と同じく `on_select` を呼ぶ。`ComboBox` は自由入力の
+//! できる編集可能コンボボックスではない。`RadioGroup` は 1 つのグループなので、
+//! 排他になるのはその中だけ。
 //!
 //! ## ナビゲーション
 //!
@@ -319,6 +337,8 @@
 //! | --- | --- | --- | --- | --- |
 //! | `List` | `ListBox` + `ListBoxItem` | `NSTableView` (1 列) + `NSScrollView` | `GtkListBox` + `GtkScrolledWindow` | `<select size>` / `<ul role="listbox">` |
 //!
+//! 入れ子の項目を開閉して選ぶなら [`Tree`] を使う。
+//!
 //! `Menu` との違いは役割で、`Menu` は**画面を切り替えるナビゲーション**、
 //! `List` は**データを選ぶ一覧**。`List` だけが複数選択とスクロールを持つ。
 //!
@@ -333,6 +353,45 @@
 //! 中身で作りが変わり**、文字だけなら `<select size>`、`detail` があれば
 //! `<ul role="listbox">` の合成になる (`<option>` はテキストしか持てないため)。
 //! 行に置けるのは文字だけで、任意のウィジェットや画像のアイコンは置けない。
+//!
+//! ## ツリー
+//!
+//! [`Tree`] は入れ子の項目を開閉できる一覧で、自分でスクロールする。
+//! 項目は [`TreeItem`] で、**根からの子インデックスの並び (パス)** で指す。
+//! `[0, 2]` は「1 番目の根の 3 番目の子」、空のパスは「選択なし」を表す。
+//!
+//! ```no_run
+//! # use naui::{Length, Result, Sizing, TreeItem, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let tree = ui.tree()?;
+//! tree.set_items(&[
+//!     TreeItem::new("src")
+//!         .expanded(true) // 最初から開いた状態で出す
+//!         .children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+//!     TreeItem::new("docs").child(TreeItem::new("guide.md").detail("12 KB")),
+//! ]);
+//! tree.on_select(|path| println!("{path:?} が選ばれた"));
+//! tree.on_expand(|path, expanded| println!("{path:?} は {expanded}"));
+//! tree.set_selected(&[0, 1]); // 通知せずに選ぶ (祖先は開かれる)
+//!
+//! // リストと同じく高さを自分では決めないので、指定しておく。
+//! tree.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(220.0)));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `Tree` | `ListBox` + 開閉ボタン | `NSOutlineView` + `NSScrollView` | `GtkListBox` + 開閉ボタン | `<ul role="tree">` |
+//!
+//! 選べるのは 1 項目だけ (`List` のような複数選択は無い)。
+//! `set_selected` / `clear_selection` / `set_expanded` / `expand_all` /
+//! `collapse_all` は通知せず、`select` / `expand` / `collapse` は
+//! ユーザー操作と同じく通知する。
+//!
+//! [`TreeItem::enabled`] を `false` にすると、**その子孫もまとめて選べなくなる**。
+//! 開閉は項目ごとに覚えられるので、親を閉じてから開き直すと、中の開閉も
+//! 元どおりに出てくる (macOS の Finder と同じ)。
 //!
 //! ## ファイルとフォルダーの選択
 //!
@@ -358,7 +417,41 @@
 //! 絶対パスだが、**Web ではブラウザがパスを渡さないため常に `None`** になる。
 //! Web ではさらに、`open()` がユーザー操作のイベント内でしか効かないこと、
 //! フォルダー選択が中身の一覧として返るのを naui が 1 件へ畳んでいることに注意。
-//! 保存ダイアログは、Web に相当が無いため持たない。
+//!
+//! ## ファイルの保存
+//!
+//! [`FileSaver`] は対になるボタンで、押すとその環境の標準の保存ダイアログが
+//! 開く。**保存先のパスを返すのではなく、渡しておいた内容を書き出す**形にして
+//! ある。ブラウザに「保存先のパス」という概念が無く、パスを返す API では Web で
+//! 何もできないため。
+//!
+//! ```no_run
+//! # use naui::{FileFilter, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let saver = ui.file_saver("保存")?;
+//! saver.set_file_name("メモ"); // 拡張子は絞り込みから補われる
+//! saver.set_filters(&[FileFilter::new("テキスト", ["txt"])]);
+//! saver.set_contents("こんにちは".as_bytes());
+//! saver.on_save(|entry| println!("{} へ保存しました", entry.name()));
+//! saver.on_error(|error| eprintln!("{error}"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `FileSaver` | `IFileSaveDialog` | `NSSavePanel` | `GtkFileDialog` (save) | `showSaveFilePicker` / `<a download>` |
+//!
+//! [`FileSaver::set_contents`] のバイト列が、ユーザーの選んだ場所へそのまま
+//! 書かれる。成功すると [`FileSaver::on_save`] に書き出し先が届き、取り消した
+//! ときは何も呼ばれない。書き込みに失敗したときだけ [`FileSaver::on_error`] が
+//! 呼ばれる。
+//!
+//! Web はここでも作りが変わる。`showSaveFilePicker` (Chromium 系) があれば OS の
+//! 保存ダイアログが出るが、無いブラウザ (Firefox / Safari) では
+//! `<a download>` のダウンロードになり、**保存先はブラウザ任せで、確認なしに
+//! ダウンロードフォルダーへ落ちることもある**。どちらの場合も
+//! [`FileEntry::path`] は `None` で、名前だけが返る。
 //!
 //! ## ダイアログ
 //!
@@ -405,39 +498,40 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ナビゲーション・リスト・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 65 件) |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 78 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 68 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 79 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
 pub use naui_core::{
-    accept_attribute, media, Align, DialogButtons, DialogResponse, Error, FileEntry, FileFilter,
-    FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Settings, Sizing, Theme, ToolbarIcon,
-    ToolbarItem, Track,
+    accept_attribute, default_extension, media, with_default_extension, Align, DialogButtons,
+    DialogResponse, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem,
+    NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
+    Settings, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Toolbar, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
+    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
-
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Toolbar, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
+    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
-
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Toolbar, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
+    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 
 #[cfg(all(
@@ -446,9 +540,10 @@ pub use naui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, Grid, Image,
-    Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, Scroll, Slider, Spacer,
-    Stack, Tabs, TextArea, TextInput, Toolbar, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
+    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -576,6 +671,19 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     combo_box.on_select(|_index: usize| {});
     combo_box.set_sizing(Sizing::fill_width());
 
+    let radio_group: RadioGroup = ui.radio_group()?;
+    radio_group.set_items(&["a", "b"]);
+    let _: usize = radio_group.len();
+    let _: bool = radio_group.is_empty();
+    let _: Option<usize> = radio_group.selected();
+    radio_group.set_selected(0);
+    radio_group.clear_selection();
+    radio_group.select(1);
+    radio_group.set_orientation(Orientation::Horizontal);
+    radio_group.set_enabled(true);
+    radio_group.on_select(|_index: usize| {});
+    radio_group.set_sizing(Sizing::fill_width());
+
     let input: TextInput = ui.text_input("t")?;
     let _: String = input.text();
     input.set_text("t");
@@ -682,6 +790,32 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     list.select(0);
     list.select_many(&[0, 1]);
     list.on_select(|_indices: &[usize]| {});
+
+    // --- ツリー -----------------------------------------------------------
+    let tree: Tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("t"),
+        TreeItem::new("t")
+            .detail("t")
+            .expanded(true)
+            .children([TreeItem::new("t"), TreeItem::from("t")]),
+        TreeItem::new("t").enabled(false).child(TreeItem::new("t")),
+    ]);
+    let _: usize = tree.len();
+    let _: bool = tree.is_empty();
+    let _: Option<Vec<usize>> = tree.selected();
+    tree.set_selected(&[1, 0]);
+    tree.clear_selection();
+    tree.select(&[0]);
+    tree.on_select(|_path: &[usize]| {});
+    let _: bool = tree.is_expanded(&[1]);
+    tree.set_expanded(&[1], true);
+    tree.expand(&[1]);
+    tree.collapse(&[1]);
+    tree.expand_all();
+    tree.collapse_all();
+    tree.on_expand(|_path: &[usize], _expanded: bool| {});
+    tree.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(1.0)));
 
     // --- ポップアップ (コンテキスト) メニュー -----------------------------
     let popup: PopupMenu = ui.popup_menu()?;
@@ -791,6 +925,19 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     picker.on_select(|_entries: &[FileEntry]| {});
     // `open()` はダイアログを出すので、契約の確認では呼ばない。
 
+    let saver: FileSaver = ui.file_saver("t")?;
+    saver.set_text("t");
+    saver.set_enabled(true);
+    saver.set_file_name("t");
+    let _: String = saver.file_name();
+    saver.set_filters(&[FileFilter::new("t", ["txt"])]);
+    saver.set_contents(b"t");
+    let _: usize = saver.contents_len();
+    let _: Option<FileEntry> = saver.destination();
+    saver.on_save(|_entry: &FileEntry| {});
+    saver.on_error(|_error: &Error| {});
+    // `open()` はダイアログを出すので、契約の確認では呼ばない。
+
     grid.attach(&label, GridCell::new(0, 0));
     grid.attach(&button, GridCell::new(1, 0).span(2, 1));
     scroll.set_child(&grid);
@@ -804,6 +951,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&button);
     stack.append(&checkbox);
     stack.append(&combo_box);
+    stack.append(&radio_group);
     stack.append(&input);
     stack.append(&text_area);
     stack.append(&slider);
@@ -813,10 +961,12 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&dock);
     stack.append(&menu);
     stack.append(&list);
+    stack.append(&tree);
     stack.append(&breadcrumbs);
     stack.append(&pagination);
     stack.append(&link);
     stack.append(&picker);
+    stack.append(&saver);
     window.set_child(&stack);
 
     ui.quit();

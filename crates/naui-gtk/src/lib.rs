@@ -21,6 +21,7 @@
 //! | `Button` | `GtkButton` |
 //! | `Checkbox` | `GtkCheckButton` |
 //! | `ComboBox` | `GtkDropDown` + `GtkStringList` |
+//! | `RadioGroup` | 組にした `GtkCheckButton` を `GtkBox` へ並べたもの |
 //! | `TextInput` | `GtkEntry` |
 //! | `TextArea` | `GtkTextView` を `GtkScrolledWindow` に載せたもの |
 //! | `Slider` | `GtkScale` |
@@ -65,6 +66,10 @@
 //! - `Tabs` は**タブ列を送れるようにしてある** (`gtk_notebook_set_scrollable`)。
 //!   既定の `GtkNotebook` は「全タブが横に並ぶ幅」を最小幅として申告するため、
 //!   タブが増えるとウィンドウをそれ以下に縮められなくなる。
+//! - `Checkbox` と `RadioGroup` は、**印をラベルの字面の中心へ寄せ直している**。
+//!   GTK4 は印を行の箱 (ascent + descent) の中心に置くが、日本語を含む行は
+//!   ascent が大きく取られるぶん字面が下に寄り、印だけが浮いて見えるため
+//!   (詳しくは `indicator` モジュール)。
 //!
 //! ## ウィンドウを縮められる下限
 //!
@@ -104,12 +109,16 @@ mod callback;
 mod combo_box;
 mod dialog;
 mod file_picker;
+mod file_saver;
+mod indicator;
 mod layout;
 mod list;
 mod media;
 mod navigation;
 mod popup;
+mod radio_group;
 mod toolbar;
+mod tree;
 mod widgets;
 mod window;
 
@@ -125,12 +134,15 @@ pub use bin::SizeBin;
 pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
+pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use popup::PopupMenu;
+pub use radio_group::RadioGroup;
 pub use toolbar::Toolbar;
+pub use tree::Tree;
 pub use widgets::{
     Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
@@ -225,6 +237,11 @@ impl Ui {
         Ok(ComboBox::new())
     }
 
+    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    pub fn radio_group(&self) -> Result<RadioGroup> {
+        Ok(RadioGroup::new())
+    }
+
     pub fn text_input(&self, text: &str) -> Result<TextInput> {
         Ok(TextInput::new(text))
     }
@@ -292,6 +309,11 @@ impl Ui {
         Ok(List::new())
     }
 
+    /// 入れ子の項目を開閉できる一覧。自分でスクロールする。
+    pub fn tree(&self) -> Result<Tree> {
+        Ok(Tree::new())
+    }
+
     /// 右クリックで出るポップアップ (コンテキスト) メニュー。
     ///
     /// フレームワークが参照を保持するので、戻り値を捨てても
@@ -320,6 +342,11 @@ impl Ui {
     /// ファイルやフォルダーを選ばせるボタン。押すと `GtkFileDialog` が出る。
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         Ok(FilePicker::new(text))
+    }
+
+    /// 内容をファイルへ保存させるボタン。押すと `GtkFileDialog` の保存が出る。
+    pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
+        Ok(FileSaver::new(text))
     }
 
     /// モーダルダイアログ。フレームワークが参照を保持する。

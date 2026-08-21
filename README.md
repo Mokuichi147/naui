@@ -34,8 +34,12 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 
 - Web: `PopupMenu` のブラウザ実行と、埋め込みブラウザで配送されなかった
   `Dialog` の Esc 操作
+- `FileSaver`: macOS のみ実機と自動テストで確認しています。Windows・Linux・Web
+  での実行は未確認です。
+- Windows / Linux / Web: `Tree` の実機・ブラウザでの実行 (macOS では
+  統合テストと Gallery で確認済み。Linux 向けの統合テストは用意してあります)
 
-これらは実装済みで、Web ターゲット向けの `cargo check` は通ります。
+これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
 ## クイックスタート
 
@@ -150,7 +154,7 @@ form.attach(&ui.label("名前")?, GridCell::new(0, 0));
 form.attach(&field, GridCell::new(1, 0));
 ```
 
-`List`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
+`List`、`Tree`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
 `set_sizing` で高さを指定します。
 
 ### 選択入力
@@ -165,6 +169,63 @@ language.set_selected(0);
 language.on_select(|index| println!("{index} 番目が選ばれました"));
 ```
 
+候補をすべて画面に出すなら `RadioGroup` を使います。API は `ComboBox` と同じで、
+違うのは候補の見せ方と、並べる向きを選べることだけです。
+
+```rust
+let plan = ui.radio_group()?;
+plan.set_items(&["無料", "標準", "上位"]);
+plan.set_orientation(Orientation::Horizontal); // 既定は縦
+plan.set_selected(0);
+plan.on_select(|index| println!("{index} 番目が選ばれました"));
+```
+
+排他になるのは 1 つの `RadioGroup` の中だけです。同じ画面に複数置いても混ざりません。
+
+### ツリー
+
+入れ子の項目を開閉して 1 つ選ぶには `Tree` を使います。項目は**根からの子
+インデックスの並び (パス)** で指し、`[0, 2]` は「1 番目の根の 3 番目の子」、
+空のパスは「選択なし」を表します。
+
+```rust
+use naui::TreeItem;
+
+let tree = ui.tree()?;
+tree.set_items(&[
+    TreeItem::new("src")
+        .expanded(true) // 最初から開いた状態で出す
+        .children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+    TreeItem::new("docs").child(TreeItem::new("guide.md").detail("12 KB")),
+]);
+tree.on_select(|path| println!("{path:?} が選ばれました"));
+tree.on_expand(|path, expanded| println!("{path:?} は {expanded}"));
+tree.select(&[0, 1]); // 閉じた枝の中でも、祖先ごと開いて選ばれる
+```
+
+`set_selected`、`clear_selection`、`set_expanded`、`expand_all`、`collapse_all`
+は通知せず、`select`、`expand`、`collapse` は利用者の操作と同じく通知します。
+`TreeItem::enabled(false)` にした枝は、その子孫もまとめて選べなくなります。
+
+### ファイルの保存
+
+`FileSaver` は、押すと環境標準の保存ダイアログが開くボタンです。**保存先の
+パスを返すのではなく、渡しておいた内容を書き出します**。ブラウザには保存先の
+パスという概念が無く、パスを返す API では Web で何もできないためです。
+
+```rust
+let saver = ui.file_saver("保存")?;
+saver.set_file_name("メモ"); // 拡張子は絞り込みから補われる
+saver.set_filters(&[FileFilter::new("テキスト", ["txt"])]);
+saver.set_contents("こんにちは".as_bytes());
+saver.on_save(|entry| println!("{} へ保存しました", entry.name()));
+saver.on_error(|error| eprintln!("{error}"));
+```
+
+`set_contents` のバイト列が、選ばれた場所へそのまま書かれます。書き出しに
+成功すると `on_save` に書き出し先が届き、取り消したときは何も呼ばれません。
+書き込みに失敗したときだけ `on_error` が呼ばれます。ボタンを押した時点の
+内容を書き出すため、内容が変わるたびに `set_contents` を呼び直します。
 ### ツールバー
 
 よく使う操作をウィンドウの上端に並べるには `Toolbar` を使います。ほかの
@@ -211,8 +272,8 @@ window.set_toolbar(&toolbar);
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
 | ウィンドウ付属 | `Toolbar` |
-| データ選択 | `ComboBox`、`List` |
-| ファイル選択 | `FilePicker` |
+| データ選択 | `ComboBox`、`RadioGroup`、`List`、`Tree` |
+| ファイル | `FilePicker`、`FileSaver` |
 | メディア | `Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog` |
 
@@ -239,12 +300,15 @@ window.set_toolbar(&toolbar);
 | `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
+| `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
 | `ProgressBar` | 🟡 `Grid` + `Border` | ✅ `NSProgressIndicator` | ✅ `GtkProgressBar` | ✅ `<progress>` |
 | `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
+| `Tree` | 🟡 `ListBox` + 開閉ボタン | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
 | `FilePicker` | 🟡 `Button` + `IFileOpenDialog` | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `GtkButton` + `GtkFileDialog` | 🟡 `<button>` + `<input type="file">` |
+| `FileSaver` | 🟡 `Button` + `IFileSaveDialog` | 🟡 `NSButton` + `NSSavePanel` | 🟡 `GtkButton` + `GtkFileDialog` (save) | 🔴 `<button>` + `showSaveFilePicker` / `<a download>` |
 | `Image` | 🟡 `Image` (`XamlReader` 経由) | ✅ `NSImageView` | ✅ `GtkPicture` | ✅ `<img>` |
 | `Video` | ✅ `MediaPlayerElement` | ✅ `AVPlayerView` | 🟡 `GtkPicture` + `GtkMediaControls` | ✅ `<video>` |
 | `Audio` | ✅ `MediaPlayerElement` | 🟡 `AVPlayerView` | 🟡 `GtkMediaControls` + `GtkMediaFile` | ✅ `<audio>` |
@@ -269,7 +333,8 @@ window.set_toolbar(&toolbar);
 - `Sizing` / `Length` / `Track` / `GridCell`: 配置とサイズ
 - `NavItem`: ナビゲーション項目
 - `ListItem` / `SelectionMode`: リスト項目と単一・複数選択
-- `FileFilter` / `FilePickerMode` / `FileEntry`: ファイル選択
+- `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
+- `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
 - `Fit` / `PlaybackState`: メディア表示と再生状態
 - `PopupItem`: ポップアップメニュー項目
 - `ToolbarItem` / `ToolbarIcon`: ツールバー項目とアイコン
@@ -367,8 +432,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 28 コンポーネントです。保存ダイアログ、複数列テーブル、
-  ラジオボタン、ツリーは未実装です。
+- 対応するのは上記の 31 コンポーネントです。複数列テーブルは未実装です。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
@@ -376,6 +440,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   切ってあります。
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
 - `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
+- `Tree` は単一選択で、項目に置けるのは `List` と同じ文字列だけです。
+  項目はパス (`&[usize]`) で指し、ドラッグでの並べ替えはできません。
 - `Dialog` は同時に 1 つだけで、ボタンは Primary、Secondary、Cancel の最大 3 個です。
 - ウィンドウを閉じるイベントと、入力欄で Enter を押したときの共通
   `on_submit` はありません。
@@ -388,6 +454,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - 一部の Windows App SDK 環境で異常終了を避けるため、`Tabs` は `TabView` を使わず、
   `Video` / `Audio` の標準再生バーは無効にしています。
 - `Dialog` は `window.show()` より前には開けません。
+- `TreeView` のバインディングが無いため、`Tree` は `ListBox` の行として
+  組み立てています。選べない枝は行ごと無効になるので、その開閉ボタンも
+  押せません (プログラムからの `expand` は効きます)。
 - `CommandBar` がバインディングに無いため、`Toolbar` は `Button` を横に並べて
   構成し、タイトルバー (ドラッグ領域) ではなくその下の行に置きます。アイコンは
   Segoe Fluent Icons を `FontIcon` で出します。
@@ -410,6 +479,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `Fit::None` は GTK4 の `SCALE_DOWN` に対応するため、「原寸」ではなく
   「拡大しない」動作になります。
 - テーマはウィンドウ単位ではなくアプリ全体へ適用されます。
+- `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
+  行と開閉ボタンで組み立てています。
 - `Toolbar` の項目は、GNOME の作法にならってヘッダーバーの左側へ並びます。
 
 ### Web
@@ -418,7 +489,13 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `document.title` で表現されます。
 - `ListItem::detail` を使うと、`List` は `<select>` から
   `<ul role="listbox">` を使った実装へ切り替わります。
-- `FilePicker::open` はユーザー操作のイベント内で呼ぶ必要があります。
+- `Tree` の `TreeItem::detail` は、行の高さをそろえるため
+  `ラベル — 補助` の形で 1 行に収まります。
+- `FilePicker::open` と `FileSaver::open` はユーザー操作のイベント内で
+  呼ぶ必要があります。
+- `FileSaver` は `showSaveFilePicker` があればそれを使い、無いブラウザ
+  (Firefox / Safari) では `<a download>` のダウンロードになります。後者では
+  保存先の確認が出ないことがあり、`FileEntry::path` はどちらでも `None` です。
 - タイトルバーが無いため、`Toolbar` はウィンドウ要素の先頭に置かれます。
 - ブラウザに標準のアイコンセットが無いため、`Toolbar` のアイコンだけは naui が
   SVG を持ちます (ここだけは OS のものを使いません)。

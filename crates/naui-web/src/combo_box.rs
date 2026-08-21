@@ -7,34 +7,7 @@ use naui_core::Result;
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlOptionElement, HtmlSelectElement};
 
-use crate::widgets::{create, impl_widget, Listener, Widget};
-
-type SelectCallback = Box<dyn FnMut(usize)>;
-
-/// 選択された項目の通知先。
-///
-/// 呼び出している間だけクロージャを取り出すため、通知の中から同じ
-/// コンボボックスを操作しても `RefCell` の二重借用にならない。通知中に
-/// `on_select` を呼び直した場合は、新しいクロージャを残す。
-#[derive(Default)]
-struct SelectionHandler(RefCell<Option<SelectCallback>>);
-
-impl SelectionHandler {
-    fn set(&self, f: impl FnMut(usize) + 'static) {
-        *self.0.borrow_mut() = Some(Box::new(f));
-    }
-
-    fn emit(&self, index: usize) {
-        let Some(mut f) = self.0.borrow_mut().take() else {
-            return;
-        };
-        f(index);
-        let mut slot = self.0.borrow_mut();
-        if slot.is_none() {
-            *slot = Some(f);
-        }
-    }
-}
+use crate::widgets::{create, impl_widget, Listener, SelectionHandler, Widget};
 
 struct ComboBoxInner {
     native: HtmlSelectElement,

@@ -17,7 +17,7 @@ use adw::prelude::*;
 use naui_core::{
     Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, Length,
     ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
-    SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track,
+    SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_gtk::{run_for_test, Ui, Widget};
 
@@ -40,6 +40,10 @@ fn main() {
             checkbox_set_is_silent,
         ),
         (
+            "チェックボックスの印がラベルの字面にそろう",
+            checkbox_indicator_is_aligned_to_text,
+        ),
+        (
             "コンボボックスの項目と選択がネイティブへ届く",
             combo_box_items_and_selection,
         ),
@@ -50,6 +54,18 @@ fn main() {
         (
             "コンボボックスの通知内で操作と差し替えができる",
             combo_box_callback_is_reentrant_and_replaceable,
+        ),
+        (
+            "ラジオグループの項目と選択がネイティブへ届く",
+            radio_group_items_and_selection,
+        ),
+        (
+            "ラジオグループのクリックが 1 つだけ点けて通知する",
+            radio_group_click_selects_one,
+        ),
+        (
+            "ラジオグループのプログラム変更は通知しない",
+            radio_group_programmatic_changes_are_silent,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         (
@@ -171,6 +187,20 @@ fn main() {
             "リストの通知の中からリストを操作できる",
             list_callback_can_touch_the_list,
         ),
+        ("ツリーの行が展開に追従する", tree_rows_follow_the_expansion),
+        (
+            "GtkListBox 側のツリーの選択がクロージャへ届く",
+            tree_native_selection_notifies,
+        ),
+        ("ツリーが選べない枝を飛ばす", tree_skips_disabled_branches),
+        (
+            "ツリーの開閉ボタンがクロージャへ届く",
+            tree_expansion_notifies,
+        ),
+        (
+            "閉じた枝の中の開閉が保たれる",
+            tree_remembers_expansion_inside_a_closed_branch,
+        ),
         (
             "ポップアップが GMenu へ写る",
             popup_items_reach_the_menu_model,
@@ -198,6 +228,7 @@ fn main() {
             "ファイル選択がボタンとして構成され設定を保つ",
             file_picker_configuration,
         ),
+        ("保存ボタンが設定を保つ", file_saver_configuration),
         (
             "ダイアログの設定が AdwAlertDialog へ届く",
             dialog_configuration_reaches_the_alert,
@@ -356,6 +387,50 @@ fn checkbox_set_is_silent(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// GTK4 は印をラベルの「行の箱」の中心へ置くが、日本語の行は ascent が
+/// 大きく取られるぶん字面が下に寄る。naui は印へ上マージンを足して字面の
+/// 中心へそろえ直す。マージンは行の箱に収まる範囲までなので、そろえても
+/// チェックボックスの高さは変わらない。
+fn checkbox_indicator_is_aligned_to_text(ui: &Ui) -> Result<()> {
+    let checkbox = ui.checkbox("項目を有効にする")?;
+    let native: gtk::CheckButton = checkbox.native_widget().downcast().expect("GtkCheckButton");
+    let indicator = native.first_child().expect("印のノード");
+
+    let margin = indicator.margin_top();
+    assert!(
+        margin > 0,
+        "日本語のラベルでは印を下げて字面へそろえる (margin_top={margin})"
+    );
+    assert_eq!(
+        measure_height(&native),
+        measure_height(&gtk::CheckButton::with_label("項目を有効にする")),
+        "そろえてもチェックボックスの高さは変わらない"
+    );
+
+    // 画面に出したときも、そろえたぶんを自分で取り消さない。`map` のたびに
+    // 測り直しているので、前に足したマージンを二重に数えると 0 へ戻ってしまう。
+    let window = ui.window("印の位置", 200.0, 100.0)?;
+    window.set_child(&checkbox);
+    window.show();
+    assert_eq!(
+        indicator.margin_top(),
+        margin,
+        "画面に出しても印の位置は変わらない"
+    );
+    window.close();
+
+    // ラジオの印も同じようにそろえる。
+    let radio = ui.radio_group()?;
+    radio.set_items(&["標準"]);
+    let button = radio.native_buttons().remove(0);
+    assert_eq!(
+        button.first_child().expect("印のノード").margin_top(),
+        margin,
+        "ラジオグループの印も同じだけ下げる"
+    );
+    Ok(())
+}
+
 fn combo_box_items_and_selection(ui: &Ui) -> Result<()> {
     let combo = ui.combo_box()?;
     assert!(combo.is_empty());
@@ -434,6 +509,98 @@ fn combo_box_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
     assert_eq!(combo.selected(), Some(0));
     combo.select(2);
     assert_eq!(second.borrow().as_slice(), [2]);
+    Ok(())
+}
+
+fn radio_group_items_and_selection(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    assert!(radio.is_empty());
+    assert_eq!(radio.selected(), None);
+
+    radio.set_items(&["小", "中", "大"]);
+    assert_eq!(radio.len(), 3);
+    assert_eq!(radio.selected(), None, "項目の作り直し後も未選択");
+
+    let buttons = radio.native_buttons();
+    assert_eq!(buttons.len(), 3);
+    assert_eq!(
+        buttons[1].label().map(|s| s.to_string()).as_deref(),
+        Some("中")
+    );
+    assert!(buttons.iter().all(|button| !button.is_active()));
+
+    radio.set_selected(2);
+    assert_eq!(radio.selected(), Some(2));
+    assert!(buttons[2].is_active());
+    radio.set_selected(99);
+    assert_eq!(radio.selected(), Some(2), "範囲外は無視する");
+
+    radio.clear_selection();
+    assert_eq!(radio.selected(), None);
+    assert!(buttons.iter().all(|button| !button.is_active()));
+
+    radio.set_enabled(false);
+    let native: gtk::Box = radio.native_widget().downcast().expect("GtkBox");
+    assert!(!native.is_sensitive());
+
+    radio.set_orientation(Orientation::Horizontal);
+    assert_eq!(native.orientation(), gtk::Orientation::Horizontal);
+    Ok(())
+}
+
+/// ネイティブのクリック経路でも、点くのは常に 1 つだけ。
+fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["赤", "緑", "青"]);
+    let (log, sink) = recorder::<usize>();
+    radio.on_select(sink);
+
+    let buttons = radio.native_buttons();
+    buttons[2].activate();
+    assert_eq!(radio.selected(), Some(2));
+    assert_eq!(log.borrow().as_slice(), [2]);
+
+    buttons[0].activate();
+    assert_eq!(radio.selected(), Some(0), "選び直すと前のものは消える");
+    // 外れた側の `toggled` は通知しない。
+    assert_eq!(log.borrow().as_slice(), [2, 0]);
+    assert_eq!(
+        buttons.iter().filter(|button| button.is_active()).count(),
+        1,
+        "点いているのは常に 1 つ"
+    );
+    Ok(())
+}
+
+fn radio_group_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["A", "B", "C"]);
+    let (log, sink) = recorder::<usize>();
+    radio.on_select(sink);
+
+    radio.set_selected(1);
+    radio.set_selected(2);
+    radio.clear_selection();
+    radio.set_items(&["D", "E", "F"]);
+    assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+
+    radio.select(0);
+    radio.select(99);
+    assert_eq!(log.borrow().as_slice(), [0], "範囲外は通知もしない");
+
+    // 通知の中で同じグループを触っても二重借用にならない。
+    let seen = Rc::new(Cell::new(None));
+    radio.on_select({
+        let radio = radio.clone();
+        let seen = seen.clone();
+        move |index| {
+            seen.set(Some(index));
+            radio.set_selected(2);
+        }
+    });
+    radio.select(1);
+    assert_eq!(seen.get(), Some(1));
+    assert_eq!(radio.selected(), Some(2));
     Ok(())
 }
 
@@ -1350,6 +1517,232 @@ fn list_callback_can_touch_the_list(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+// --------------------------------------------------------------------- ツリー
+
+fn tree_box_of(tree: &naui_gtk::Tree) -> gtk::ListBox {
+    tree.native_widget().downcast().expect("GtkListBox")
+}
+
+/// テストで使う木。src (2 つの葉) と docs (guide > intro.md)。
+fn sample_tree() -> Vec<TreeItem> {
+    vec![
+        TreeItem::new("src").children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+        TreeItem::new("docs").child(TreeItem::new("guide").child(TreeItem::new("intro.md"))),
+    ]
+}
+
+/// いま見えている行の文字を上から順に返す。
+///
+/// 行は全項目ぶん作り置きしてあり、閉じた枝の中は `set_visible(false)` で
+/// 隠れている。
+fn tree_labels(tree: &naui_gtk::Tree) -> Vec<String> {
+    children(&tree_box_of(tree))
+        .into_iter()
+        .filter_map(|row| row.downcast::<gtk::ListBoxRow>().ok())
+        // 祖先の状態に左右されない、行そのものの visible を見る。
+        .filter(|row| row.get_visible())
+        .filter_map(|row| row.child())
+        .filter_map(|line| {
+            // 行は [開閉ボタン (または余白), 文字の縦並び] の順。
+            let content = children(&line).pop()?;
+            let label = children(&content).into_iter().next()?;
+            Some(label.downcast::<gtk::Label>().ok()?.text().to_string())
+        })
+        .collect()
+}
+
+/// 行に置かれた開閉ボタン。葉の行には無い。
+///
+/// `index` は**全項目**を深さ優先で並べたときの位置 (見えていない行も数える)。
+fn tree_twisty(tree: &naui_gtk::Tree, index: i32) -> Option<gtk::Button> {
+    let row = tree_box_of(tree).row_at_index(index)?;
+    let line = row.child()?;
+    children(&line).into_iter().next()?.downcast().ok()
+}
+
+fn tree_rows_follow_the_expansion(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    assert!(tree.is_empty());
+
+    tree.set_items(&sample_tree());
+    assert_eq!(tree.len(), 6, "子孫まで数えること");
+    assert_eq!(
+        children(&tree_box_of(&tree)).len(),
+        6,
+        "行は全項目ぶん作り置きされること"
+    );
+    // 何も開いていないので、見えているのは根の 2 つだけ。
+    assert_eq!(tree_labels(&tree), ["src", "docs"]);
+    assert!(!tree.is_expanded(&[0]));
+
+    tree.set_expanded(&[0], true);
+    assert!(tree.is_expanded(&[0]));
+    assert_eq!(tree_labels(&tree), ["src", "main.rs", "lib.rs", "docs"]);
+
+    // 孫まで開くと、間の枝もまとめて開く。
+    tree.set_expanded(&[1, 0], true);
+    assert!(tree.is_expanded(&[1]), "祖先も開かれること");
+    assert_eq!(
+        tree_labels(&tree),
+        ["src", "main.rs", "lib.rs", "docs", "guide", "intro.md"]
+    );
+
+    tree.collapse_all();
+    assert_eq!(tree_labels(&tree), ["src", "docs"]);
+    tree.expand_all();
+    assert_eq!(tree_labels(&tree).len(), 6);
+
+    // 作り直すと、TreeItem::expanded のとおりに戻る。
+    tree.set_items(&[TreeItem::new("親")
+        .expanded(true)
+        .children(TreeItem::list(["子"]))]);
+    assert_eq!(tree_labels(&tree), ["親", "子"]);
+    assert_eq!(tree.selected(), None);
+    Ok(())
+}
+
+fn tree_native_selection_notifies(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    tree.set_expanded(&[0], true);
+    assert_eq!(tree.selected(), None, "作った直後は何も選ばれていないこと");
+
+    let (log, sink) = recorder::<Vec<usize>>();
+    tree.on_select({
+        let mut sink = sink;
+        move |path: &[usize]| sink(path.to_vec())
+    });
+
+    // GtkListBox 側で行を選ぶ (利用者がクリックしたのと同じ)。
+    let native = tree_box_of(&tree);
+    let row = native.row_at_index(2).expect("3 行目 (lib.rs)");
+    native.select_row(Some(&row));
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    assert_eq!(log.borrow().as_slice(), [vec![0, 1]]);
+
+    // プログラムからの変更は通知しない。閉じた枝の中でも祖先ごと開いて選ぶ。
+    tree.set_selected(&[1, 0, 0]);
+    assert_eq!(tree.selected(), Some(vec![1, 0, 0]));
+    assert!(tree.is_expanded(&[1, 0]), "祖先が開かれること");
+    assert_eq!(log.borrow().len(), 1);
+
+    // select は通知する。
+    tree.select(&[0]);
+    assert_eq!(log.borrow().as_slice(), [vec![0, 1], vec![0]]);
+
+    // 無いパスを選ぶと選択が外れ、空のパスで通知される。
+    tree.select(&[9]);
+    assert_eq!(tree.selected(), None);
+    assert_eq!(log.borrow().as_slice(), [vec![0, 1], vec![0], Vec::new()]);
+
+    // clear_selection は通知しない。
+    tree.set_selected(&[0]);
+    tree.clear_selection();
+    assert_eq!(tree.selected(), None);
+    assert_eq!(log.borrow().len(), 3);
+    Ok(())
+}
+
+fn tree_skips_disabled_branches(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("有効").child(TreeItem::new("子")),
+        TreeItem::new("無効")
+            .enabled(false)
+            .child(TreeItem::new("孫")),
+    ]);
+    tree.expand_all();
+
+    let native = tree_box_of(&tree);
+    assert!(native.row_at_index(0).expect("1 行目").is_selectable());
+    assert!(
+        !native.row_at_index(2).expect("3 行目").is_selectable(),
+        "無効な枝は GtkListBox 側でも選べない"
+    );
+    assert!(
+        !native.row_at_index(3).expect("4 行目").is_selectable(),
+        "無効な枝の中身も選べない"
+    );
+
+    tree.select(&[1, 0]);
+    assert_eq!(tree.selected(), None);
+    tree.select(&[0, 0]);
+    assert_eq!(tree.selected(), Some(vec![0, 0]));
+    Ok(())
+}
+
+fn tree_expansion_notifies(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+
+    let (log, sink) = recorder::<(Vec<usize>, bool)>();
+    tree.on_expand({
+        let mut sink = sink;
+        move |path: &[usize], expanded: bool| sink((path.to_vec(), expanded))
+    });
+
+    tree.expand(&[0]);
+    tree.collapse(&[0]);
+    assert_eq!(
+        log.borrow().as_slice(),
+        [(vec![0], true), (vec![0], false)],
+        "naui からの開閉が 1 回ずつ通知されること"
+    );
+
+    // `set_expanded` と一括の開閉は通知しない。
+    tree.set_expanded(&[0], true);
+    tree.expand_all();
+    tree.collapse_all();
+    assert_eq!(log.borrow().len(), 2);
+
+    // 行の開閉ボタンを押す (利用者がクリックしたのと同じ)。
+    // 全項目の並びは src, main.rs, lib.rs, docs, guide, intro.md。
+    let twisty = tree_twisty(&tree, 3).expect("docs の開閉ボタン");
+    twisty.emit_clicked();
+    assert!(tree.is_expanded(&[1]));
+    assert_eq!(log.borrow().last(), Some(&(vec![1], true)));
+
+    // 葉の行にはボタンが無い。
+    assert!(
+        tree_twisty(&tree, 1).is_none(),
+        "葉 (main.rs) には開閉ボタンが無いこと"
+    );
+    Ok(())
+}
+
+fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    tree.set_expanded(&[1, 0], true);
+    assert_eq!(tree_labels(&tree), ["src", "docs", "guide", "intro.md"]);
+
+    let (log, sink) = recorder::<(Vec<usize>, bool)>();
+    tree.on_expand({
+        let mut sink = sink;
+        move |path: &[usize], expanded: bool| sink((path.to_vec(), expanded))
+    });
+
+    tree.collapse(&[1]);
+    assert_eq!(tree_labels(&tree), ["src", "docs"]);
+    assert!(
+        tree.is_expanded(&[1, 0]),
+        "見えなくなっても、中の開閉は覚えていること"
+    );
+
+    tree.expand(&[1]);
+    assert_eq!(
+        tree_labels(&tree),
+        ["src", "docs", "guide", "intro.md"],
+        "中の開閉ごと戻ること"
+    );
+    assert_eq!(
+        log.borrow().as_slice(),
+        [(vec![1], false), (vec![1], true)],
+        "通知は操作した枝の分だけ"
+    );
+    Ok(())
+}
+
 // ---------------------------------------------------------------- ポップアップ
 
 fn popup_items_reach_the_menu_model(ui: &Ui) -> Result<()> {
@@ -1526,6 +1919,44 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
 
     picker.set_enabled(false);
     assert!(!native.is_sensitive());
+    Ok(())
+}
+
+/// 保存はボタンとして構成され、設定を保つ。
+///
+/// `GtkFileDialog` の保存は表示するまで中身を読めないので、
+/// **ボタンの実体と設定の保持まで**を確かめる。
+fn file_saver_configuration(ui: &Ui) -> Result<()> {
+    let saver = ui.file_saver("保存する")?;
+    assert_eq!(saver.file_name(), "", "既定の名前は空 (GTK に任せる)");
+    assert!(saver.destination().is_none(), "まだ保存していないこと");
+    assert_eq!(saver.contents_len(), 0);
+
+    saver.set_file_name("メモ");
+    saver.set_filters(&[FileFilter::new("文書", ["txt", "md"])]);
+    saver.set_contents("こんにちは".as_bytes());
+    assert_eq!(saver.file_name(), "メモ", "補う拡張子は表示のときだけ足す");
+    assert_eq!(saver.contents_len(), "こんにちは".len());
+
+    let native: gtk::Button = saver.native_widget().downcast().expect("GtkButton");
+    assert_eq!(
+        native.label().map(|l| l.to_string()),
+        Some("保存する".into())
+    );
+    saver.set_text("書き出す");
+    assert_eq!(
+        native.label().map(|l| l.to_string()),
+        Some("書き出す".into())
+    );
+
+    saver.set_enabled(false);
+    assert!(!native.is_sensitive());
+    saver.set_enabled(true);
+
+    // コンテナへ入れてもハンドルを手放して大丈夫なこと (他のウィジェットと同じ)。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&saver);
+    assert_eq!(stack.len(), 1);
     Ok(())
 }
 

@@ -13,14 +13,19 @@ mod list;
 pub mod media;
 mod popup;
 mod toolbar;
+mod tree;
 
 pub use dialog::{DialogButtons, DialogResponse};
-pub use file::{accept_attribute, FileEntry, FileFilter, FilePickerMode};
+pub use file::{
+    accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
+    FilePickerMode,
+};
 pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
 pub use list::{ListItem, SelectionMode};
 pub use media::{Fit, PlaybackState};
 pub use popup::PopupItem;
 pub use toolbar::{ToolbarIcon, ToolbarItem};
+pub use tree::TreeItem;
 
 use std::fmt;
 

@@ -14,16 +14,16 @@ use std::rc::Rc;
 use naui_core::{
     Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, ListItem,
     NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
-    Sizing, Theme, ToolbarIcon, ToolbarItem, Track,
+    Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::sel;
 use objc2_app_kit::{
-    NSButton, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint, NSSegmentedControl,
-    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
-    NSWindowTitleVisibility,
+    NSButton, NSControlStateValueOff, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
+    NSOutlineViewDelegate, NSSegmentedControl, NSTableViewDelegate, NSTextField, NSTextInputClient,
+    NSTextView, NSView, NSWindowTitleVisibility,
 };
 use objc2_foundation::{NSDate, NSNotFound, NSRange, NSRunLoop, NSSize, NSString};
 
@@ -61,6 +61,18 @@ fn main() {
             "コンボボックスの通知中に内容と通知先を差し替えられる",
             combo_box_callback_is_reentrant,
         ),
+        (
+            "ラジオグループの選択がネイティブと往復する",
+            radio_group_selection_round_trips,
+        ),
+        (
+            "ラジオグループのクリックが 1 つだけ点けて通知する",
+            radio_group_click_selects_one,
+        ),
+        (
+            "ラジオグループの通知中に内容と通知先を差し替えられる",
+            radio_group_callback_is_reentrant,
+        ),
         ("スタックが子を生かし続ける", stack_keeps_children),
         ("ウィンドウを設定して閉じられる", window_lifecycle),
         ("ナビバーの選択がネイティブと往復する", navbar_selection),
@@ -80,6 +92,25 @@ fn main() {
         (
             "リストの通知の中からリストを操作できる",
             list_callback_can_touch_the_list,
+        ),
+        ("ツリーの行が展開に追従する", tree_rows_follow_the_expansion),
+        (
+            "ツリーの選択がネイティブと往復する",
+            tree_selection_round_trips,
+        ),
+        ("ツリーが選べない枝を飛ばす", tree_skips_disabled_branches),
+        ("ツリーの開閉が通知される", tree_expansion_notifies),
+        (
+            "閉じた枝の中の開閉が保たれる",
+            tree_remembers_expansion_inside_a_closed_branch,
+        ),
+        (
+            "ツリーの行が NSOutlineView に描かれる",
+            tree_rows_are_native_views,
+        ),
+        (
+            "ツリーの通知の中からツリーを操作できる",
+            tree_callback_can_touch_the_tree,
         ),
         ("パンくずが末尾を現在地にする", breadcrumbs_path),
         ("ページ送りが範囲内に収まる", pagination_steps),
@@ -123,6 +154,14 @@ fn main() {
         (
             "ファイル選択がボタンとして構成され設定を保つ",
             file_picker_configuration,
+        ),
+        (
+            "保存の設定が NSSavePanel へ届く",
+            file_saver_configuration_reaches_the_panel,
+        ),
+        (
+            "保存の既定名に絞り込みの拡張子が付く",
+            file_saver_adds_the_default_extension,
         ),
         (
             "ダイアログの設定が NSAlert へ届く",
@@ -517,6 +556,113 @@ fn combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
     assert_eq!(combo.selected(), Some(1));
 
     combo.select(0);
+    assert_eq!(*first.borrow(), vec![0], "古い通知先は外れること");
+    assert_eq!(*replacement.borrow(), vec![0]);
+    Ok(())
+}
+
+/// 項目・未選択状態・通知の有無が NSButton のラジオ型と一致する。
+fn radio_group_selection_round_trips(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    assert!(radio.is_empty());
+    assert_eq!(radio.selected(), None);
+
+    radio.set_items(&["小", "中", "大"]);
+    assert_eq!(radio.len(), 3);
+    assert_eq!(radio.selected(), None, "項目の作り直し後は未選択");
+    let buttons = radio.native_buttons();
+    assert_eq!(buttons.len(), 3);
+    assert_eq!(buttons[1].title().to_string(), "中");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    radio.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    radio.set_selected(1);
+    assert_eq!(radio.selected(), Some(1));
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+    radio.set_selected(99);
+    assert_eq!(radio.selected(), Some(1), "範囲外は無視する");
+
+    radio.clear_selection();
+    assert_eq!(radio.selected(), None);
+    assert!(seen.borrow().is_empty(), "clear_selection は通知しない");
+
+    radio.select(2);
+    assert_eq!(radio.selected(), Some(2));
+    assert_eq!(*seen.borrow(), vec![2]);
+    radio.select(99);
+    assert_eq!(*seen.borrow(), vec![2], "範囲外は通知もしない");
+
+    radio.set_enabled(false);
+    assert!(buttons.iter().all(|button| !button.isEnabled()));
+    // 無効のまま項目を作り直しても、その指定は引き継がれる。
+    radio.set_items(&["単一"]);
+    assert_eq!(radio.selected(), None);
+    assert!(!radio.native_buttons()[0].isEnabled());
+    assert_eq!(*seen.borrow(), vec![2], "再構築は通知しない");
+    Ok(())
+}
+
+/// AppKit の target/action から届く経路でも、点くのは 1 つだけ。
+fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["赤", "緑", "青"]);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    radio.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    let buttons = radio.native_buttons();
+    unsafe { buttons[2].performClick(None) };
+    assert_eq!(radio.selected(), Some(2));
+    assert_eq!(*seen.borrow(), vec![2]);
+
+    unsafe { buttons[0].performClick(None) };
+    assert_eq!(radio.selected(), Some(0), "選び直すと前のものは消える");
+    assert_eq!(*seen.borrow(), vec![2, 0]);
+    assert_eq!(
+        buttons
+            .iter()
+            .filter(|button| button.state() != NSControlStateValueOff)
+            .count(),
+        1,
+        "点いているのは常に 1 つ"
+    );
+    Ok(())
+}
+
+/// 通知の最中でも同じラジオグループを操作し、コールバックを差し替えられる。
+fn radio_group_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let radio = ui.radio_group()?;
+    radio.set_items(&["春", "夏", "秋"]);
+
+    let first = Rc::new(RefCell::new(Vec::new()));
+    let replacement = Rc::new(RefCell::new(Vec::new()));
+    radio.on_select({
+        let radio = radio.clone();
+        let first = first.clone();
+        let replacement = replacement.clone();
+        move |index| {
+            first.borrow_mut().push(index);
+            radio.set_items(&["朝", "昼"]);
+            radio.set_selected(1);
+            radio.on_select({
+                let replacement = replacement.clone();
+                move |index| replacement.borrow_mut().push(index)
+            });
+        }
+    });
+
+    radio.select(0);
+    assert_eq!(*first.borrow(), vec![0]);
+    assert_eq!(radio.len(), 2);
+    assert_eq!(radio.selected(), Some(1));
+
+    radio.select(0);
     assert_eq!(*first.borrow(), vec![0], "古い通知先は外れること");
     assert_eq!(*replacement.borrow(), vec![0]);
     Ok(())
@@ -1439,6 +1585,83 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.append(&picker);
     assert_eq!(stack.len(), 1);
+    Ok(())
+}
+
+/// 保存はボタンとして構成され、設定が `NSSavePanel` へ届く。
+///
+/// `NSSavePanel` もアプリモーダルで、出すと閉じられるまで戻らない。
+/// 自動テストからは開けないので、**表示前のパネルの中身**を確かめる。
+fn file_saver_configuration_reaches_the_panel(ui: &Ui) -> Result<()> {
+    let saver = ui.file_saver("保存する")?;
+
+    let view = saver.native_view();
+    let button = view
+        .downcast::<NSButton>()
+        .expect("実体は NSButton であること");
+    assert_eq!(button.title().to_string(), "保存する");
+    saver.set_text("書き出す");
+    assert_eq!(button.title().to_string(), "書き出す");
+
+    assert!(button.isEnabled(), "既定では押せること");
+    saver.set_enabled(false);
+    assert!(!button.isEnabled());
+    saver.set_enabled(true);
+
+    assert_eq!(saver.file_name(), "", "既定の名前は空 (AppKit に任せる)");
+    assert!(saver.destination().is_none(), "まだ保存していないこと");
+    assert_eq!(saver.contents_len(), 0);
+
+    saver.set_file_name("メモ.txt");
+    saver.set_contents("こんにちは".as_bytes());
+    saver.set_filters(&[
+        FileFilter::new("文書", ["txt", "md"]),
+        FileFilter::new("画像", ["png"]),
+    ]);
+    assert_eq!(saver.file_name(), "メモ.txt");
+    assert_eq!(saver.contents_len(), "こんにちは".len());
+
+    let panel = saver.native_panel();
+    assert_eq!(panel.nameFieldStringValue().to_string(), "メモ.txt");
+    #[allow(deprecated)]
+    let types: Vec<String> = panel
+        .allowedFileTypes()
+        .expect("絞り込みが届いていること")
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+    assert_eq!(types, ["txt", "md", "png"], "全ての絞り込みが平らに並ぶこと");
+
+    // コンテナへ入れてもハンドルを手放して大丈夫なこと (他のウィジェットと同じ)。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&saver);
+    assert_eq!(stack.len(), 1);
+    Ok(())
+}
+
+/// 拡張子の無い既定名には、絞り込みの先頭の拡張子が付く。
+fn file_saver_adds_the_default_extension(ui: &Ui) -> Result<()> {
+    let saver = ui.file_saver("保存")?;
+    saver.set_filters(&[FileFilter::new("文書", ["txt", "md"])]);
+
+    saver.set_file_name("メモ");
+    assert_eq!(
+        saver.native_panel().nameFieldStringValue().to_string(),
+        "メモ.txt"
+    );
+    // すでに絞り込みの拡張子が付いていれば足さない。
+    saver.set_file_name("メモ.md");
+    assert_eq!(
+        saver.native_panel().nameFieldStringValue().to_string(),
+        "メモ.md"
+    );
+    // 名前を指定しなければ AppKit の既定 (「Untitled」) のまま。
+    saver.set_file_name("");
+    let default_name = saver.native_panel().nameFieldStringValue().to_string();
+    assert!(
+        !default_name.is_empty() && !default_name.contains("メモ"),
+        "名前を指定しなければ AppKit の既定のままであること: {default_name}"
+    );
     Ok(())
 }
 
@@ -2578,5 +2801,289 @@ fn toolbar_icons_exist_as_sf_symbols(_ui: &Ui) -> Result<()> {
         }
     }
     assert!(missing.is_empty(), "実在しない SF Symbols: {missing:?}");
+    Ok(())
+}
+
+/// ツリーが NSOutlineView の行として並び、開くと子の行が増える。
+fn tree_rows_follow_the_expansion(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    assert_eq!(tree.len(), 6, "子孫まで数えること");
+    assert!(!tree.is_empty());
+
+    let outline = tree.native_outline_view();
+    // 何も開いていないので、見えているのは根の 2 つだけ。
+    assert_eq!(outline.numberOfRows(), 2);
+    assert!(!tree.is_expanded(&[0]));
+
+    tree.set_expanded(&[0], true);
+    assert!(tree.is_expanded(&[0]));
+    assert_eq!(outline.numberOfRows(), 4, "src の子 2 つが増えること");
+    assert_eq!(outline.levelForRow(1), 1, "子は 1 段下がること");
+
+    // 孫まで開くと、間の枝もまとめて開く。
+    tree.set_expanded(&[1, 0], true);
+    assert!(tree.is_expanded(&[1]), "祖先も開かれること");
+    assert_eq!(outline.numberOfRows(), 6, "すべての項目が見えること");
+
+    tree.collapse_all();
+    assert_eq!(outline.numberOfRows(), 2);
+    assert!(!tree.is_expanded(&[0]));
+
+    tree.expand_all();
+    assert_eq!(outline.numberOfRows(), 6, "すべての行が見えること");
+
+    // 作り直すと、TreeItem::expanded のとおりに戻る。
+    tree.set_items(&[TreeItem::new("親")
+        .expanded(true)
+        .children(TreeItem::list(["子"]))]);
+    assert_eq!(tree.len(), 2);
+    assert!(tree.is_expanded(&[0]));
+    assert_eq!(tree.native_outline_view().numberOfRows(), 2);
+    Ok(())
+}
+
+/// ツリーの選択が NSOutlineView と往復し、`set_selected` は通知しない。
+fn tree_selection_round_trips(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    assert_eq!(tree.selected(), None, "作った直後は何も選ばれていないこと");
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+
+    // 閉じた枝の中を選ぶと、見えるように祖先が開く。
+    tree.select(&[0, 1]);
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    assert!(tree.is_expanded(&[0]));
+    assert_eq!(*seen.borrow(), vec![vec![0, 1]]);
+
+    let outline = tree.native_outline_view();
+    assert_eq!(outline.selectedRow(), 2, "ネイティブ側も選ばれていること");
+
+    // `set_selected` は通知しない。
+    tree.set_selected(&[1]);
+    assert_eq!(tree.selected(), Some(vec![1]));
+    assert_eq!(*seen.borrow(), vec![vec![0, 1]], "通知は 1 回だけ");
+
+    // 無いパスを選ぶと選択が外れ、空のパスで通知される。
+    tree.select(&[9]);
+    assert_eq!(tree.selected(), None);
+    assert_eq!(*seen.borrow(), vec![vec![0, 1], Vec::new()]);
+
+    // clear_selection は通知しない。
+    tree.set_selected(&[1]);
+    tree.clear_selection();
+    assert_eq!(tree.selected(), None);
+    assert_eq!(seen.borrow().len(), 2);
+
+    // 作り直すと選択は外れる。
+    tree.set_selected(&[1]);
+    tree.set_items(&sample_tree());
+    assert_eq!(tree.selected(), None);
+    assert_eq!(seen.borrow().len(), 2, "作り直しも通知しない");
+    Ok(())
+}
+
+/// 選べない枝は、その子孫までまとめて選べない。
+fn tree_skips_disabled_branches(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("有効").child(TreeItem::new("子")),
+        TreeItem::new("無効")
+            .enabled(false)
+            .child(TreeItem::new("孫")),
+    ]);
+    tree.expand_all();
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+
+    tree.select(&[1]);
+    assert_eq!(tree.selected(), None, "無効な枝は選べないこと");
+    tree.select(&[1, 0]);
+    assert_eq!(tree.selected(), None, "無効な枝の中身も選べないこと");
+    assert_eq!(*seen.borrow(), vec![Vec::<usize>::new(), Vec::new()]);
+
+    tree.select(&[0, 0]);
+    assert_eq!(tree.selected(), Some(vec![0, 0]));
+
+    // AppKit 自身にも「この項目は選べない」と伝わっている。
+    let outline = tree.native_outline_view();
+    let delegate = unsafe { outline.delegate() }.expect("デリゲートがあること");
+    let enabled = outline.itemAtRow(0).expect("1 行目の項目があること");
+    let disabled = outline.itemAtRow(2).expect("3 行目の項目があること");
+    unsafe {
+        assert!(delegate.outlineView_shouldSelectItem(&outline, &enabled));
+        assert!(!delegate.outlineView_shouldSelectItem(&outline, &disabled));
+    }
+    Ok(())
+}
+
+/// 開閉の通知は、ネイティブ側の操作でも naui の `expand` でも届く。
+fn tree_expansion_notifies(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+
+    let seen: Rc<RefCell<Vec<(Vec<usize>, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+    tree.on_expand({
+        let seen = seen.clone();
+        move |path, expanded| seen.borrow_mut().push((path.to_vec(), expanded))
+    });
+
+    tree.expand(&[0]);
+    tree.collapse(&[0]);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(vec![0], true), (vec![0], false)],
+        "naui からの開閉が 1 回ずつ通知されること"
+    );
+
+    // `set_expanded` と一括の開閉は通知しない。
+    tree.set_expanded(&[0], true);
+    tree.expand_all();
+    tree.collapse_all();
+    assert_eq!(seen.borrow().len(), 2);
+
+    // naui を通さず、AppKit 側から開く。
+    let outline = tree.native_outline_view();
+    let item = outline.itemAtRow(1).expect("2 行目の項目があること");
+    unsafe { outline.expandItem(Some(&item)) };
+    assert_eq!(
+        seen.borrow().last(),
+        Some(&(vec![1], true)),
+        "ネイティブ側の開閉もそのまま届くこと"
+    );
+    assert!(tree.is_expanded(&[1]));
+
+    // 葉は開けないので、通知も起きない。
+    tree.expand(&[1, 0, 0]);
+    assert_eq!(seen.borrow().len(), 3);
+    Ok(())
+}
+
+/// 項目の中身は、AppKit がデリゲートに作らせた NSTextField になる。
+fn tree_rows_are_native_views(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&[TreeItem::new("プロジェクト")
+        .detail("3 ファイル")
+        .expanded(true)
+        .child(TreeItem::new("main.rs"))]);
+    tree.set_sizing(Sizing::fixed(260.0, 140.0));
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&tree);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+
+    let frame = tree.native_view().frame();
+    assert!(
+        (frame.size.width - 260.0).abs() < 1e-6 && (frame.size.height - 140.0).abs() < 1e-6,
+        "指定した大きさになること: {frame:?}"
+    );
+
+    let outline = tree.native_outline_view();
+    let cell = outline
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("1 行目のビューが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("行は NSTableCellView であること");
+    let field = unsafe { cell.textField() }.expect("行に文字が入っていること");
+    assert_eq!(field.stringValue().to_string(), "プロジェクト");
+    assert_eq!(cell.subviews().len(), 2, "補助の文字が 2 行目に出ること");
+
+    // 子の行も同じように作られる。
+    let child = outline
+        .viewAtColumn_row_makeIfNecessary(0, 1, true)
+        .expect("2 行目のビューが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("行は NSTableCellView であること");
+    let field = unsafe { child.textField() }.expect("行に文字が入っていること");
+    assert_eq!(field.stringValue().to_string(), "main.rs");
+    Ok(())
+}
+
+/// 通知の中から同じツリーを触っても壊れない (リストと同じ形)。
+fn tree_callback_can_touch_the_tree(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    tree.expand_all();
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        let tree = tree.clone();
+        move |path| {
+            seen.borrow_mut().push(path.to_vec());
+            // 1 回目の通知でだけ、中身ごと差し替える。
+            if seen.borrow().len() == 1 {
+                tree.set_items(&[TreeItem::new("別の木").child(TreeItem::new("葉"))]);
+                tree.set_selected(&[0]);
+            }
+        }
+    });
+
+    // naui を通さず、AppKit 側から選択を起こす。
+    let rows = objc2_foundation::NSMutableIndexSet::new();
+    rows.addIndex(1);
+    tree.native_outline_view()
+        .selectRowIndexes_byExtendingSelection(&rows, false);
+
+    assert_eq!(*seen.borrow(), vec![vec![0, 0]], "通知は 1 回だけ");
+    assert_eq!(tree.len(), 2, "コールバックの中の差し替えが効くこと");
+    assert_eq!(tree.selected(), Some(vec![0]));
+    Ok(())
+}
+
+/// テストで使う木。src (2 つの葉) と docs (guide > intro)。
+fn sample_tree() -> Vec<TreeItem> {
+    vec![
+        TreeItem::new("src").children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+        TreeItem::new("docs").child(TreeItem::new("guide").child(TreeItem::new("intro.md"))),
+    ]
+}
+
+/// 親を閉じても、その中の開閉は覚えられていて、開き直すと元に戻る。
+///
+/// AppKit (Finder と同じ) の動きに合わせている。開き直したときに AppKit が
+/// もう一度出す通知は、naui から見た状態が変わっていないので出さない。
+fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    tree.set_expanded(&[1, 0], true);
+    let outline = tree.native_outline_view();
+    assert_eq!(
+        outline.numberOfRows(),
+        4,
+        "docs > guide > intro.md まで開くこと"
+    );
+
+    let seen: Rc<RefCell<Vec<(Vec<usize>, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+    tree.on_expand({
+        let seen = seen.clone();
+        move |path, expanded| seen.borrow_mut().push((path.to_vec(), expanded))
+    });
+
+    tree.collapse(&[1]);
+    assert_eq!(outline.numberOfRows(), 2);
+    assert!(
+        tree.is_expanded(&[1, 0]),
+        "見えなくなっても、中の開閉は覚えていること"
+    );
+
+    tree.expand(&[1]);
+    assert_eq!(outline.numberOfRows(), 4, "中の開閉ごと戻ること");
+    assert_eq!(
+        *seen.borrow(),
+        vec![(vec![1], false), (vec![1], true)],
+        "通知は操作した枝の分だけ"
+    );
     Ok(())
 }

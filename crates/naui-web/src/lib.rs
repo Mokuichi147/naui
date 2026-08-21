@@ -14,12 +14,15 @@
 mod combo_box;
 mod dialog;
 mod file_picker;
+mod file_saver;
 mod layout;
 mod list;
 mod media;
 mod navigation;
 mod popup;
+mod radio_group;
 mod toolbar;
+mod tree;
 mod widgets;
 mod window;
 
@@ -39,12 +42,15 @@ pub use wasm_bindgen;
 pub use combo_box::ComboBox;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
+pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use popup::PopupMenu;
+pub use radio_group::RadioGroup;
 pub use toolbar::Toolbar;
+pub use tree::Tree;
 pub use widgets::{
     Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
@@ -135,6 +141,11 @@ impl Ui {
         ComboBox::new(&self.document)
     }
 
+    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    pub fn radio_group(&self) -> Result<RadioGroup> {
+        RadioGroup::new(&self.document)
+    }
+
     pub fn text_input(&self, text: &str) -> Result<TextInput> {
         TextInput::new(&self.document, text)
     }
@@ -187,6 +198,11 @@ impl Ui {
         List::new(&self.document)
     }
 
+    /// 入れ子の項目を開閉できる一覧。自分でスクロールする。
+    pub fn tree(&self) -> Result<Tree> {
+        Tree::new(&self.document)
+    }
+
     /// 右クリックで出るポップアップ (コンテキスト) メニュー。
     ///
     /// フレームワークが参照を保持するので、戻り値を捨てても
@@ -230,6 +246,13 @@ impl Ui {
     /// ファイルやフォルダーを選ばせるボタン。中身は `<input type="file">`。
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         FilePicker::new(&self.document, text)
+    }
+
+    /// 内容をファイルへ保存させるボタン。押すと保存ダイアログが出る。
+    ///
+    /// `showSaveFilePicker` があればそれを、無ければダウンロードを使う。
+    pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
+        FileSaver::new(&self.document, text)
     }
 
     /// モーダルダイアログ。`title` は見出し。中身は `<dialog>`。

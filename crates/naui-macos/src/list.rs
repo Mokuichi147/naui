@@ -31,7 +31,7 @@ use crate::widgets::Widget;
 const COLUMN_ID: &str = "naui.list.column";
 
 /// 行の上下に取る余白。行の高さは AppKit が制約から求める。
-const ROW_PADDING: f64 = 4.0;
+pub(crate) const ROW_PADDING: f64 = 4.0;
 /// ラベルと補助の文字の間隔。
 const DETAIL_SPACING: f64 = 1.0;
 
@@ -43,12 +43,12 @@ const DETAIL_SPACING: f64 = 1.0;
 pub(crate) struct SelectionHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize])>>>>);
 
 impl SelectionHandler {
-    fn set(&self, f: impl FnMut(&[usize]) + 'static) {
+    pub(crate) fn set(&self, f: impl FnMut(&[usize]) + 'static) {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
     /// 選択を通知する。まだ設定されていなければ何もしない。
-    fn emit(&self, indices: &[usize]) {
+    pub(crate) fn emit(&self, indices: &[usize]) {
         // クロージャの中からリストを操作しても二重借用にならないよう、
         // 呼び出しの間だけ取り出す (`SelectHandler` と同じ形)。
         let Some(mut f) = self.0.borrow_mut().take() else {
@@ -104,7 +104,7 @@ define_class!(
             usize::try_from(row)
                 .ok()
                 .and_then(|row| items.get(row))
-                .map(|item| cell_view(mtm, item))
+                .map(|item| cell_view(mtm, &item.label, item.detail.as_deref(), item.enabled))
         }
 
         #[unsafe(method(tableView:shouldSelectRow:))]
@@ -143,9 +143,14 @@ define_class!(
 /// `NSTableCellView` に入れ、上下の余白まで**制約でつないで**おくと、
 /// 高さを決めるのは Auto Layout (`usesAutomaticRowHeights`) になり、
 /// 1 行でも 2 行でも帯と文字がそろう。
-fn cell_view(mtm: MainThreadMarker, item: &ListItem) -> Retained<NSView> {
+pub(crate) fn cell_view(
+    mtm: MainThreadMarker,
+    label: &str,
+    detail: Option<&str>,
+    enabled: bool,
+) -> Retained<NSView> {
     let cell = NSTableCellView::new(mtm);
-    let title = row_label(mtm, &item.label, item.enabled, false);
+    let title = row_label(mtm, label, enabled, false);
     cell.addSubview(&title);
     // `textField` に入れておくと、行の背景色に合わせた文字色や
     // アクセシビリティの扱いを NSTableCellView が面倒を見る。
@@ -164,10 +169,10 @@ fn cell_view(mtm: MainThreadMarker, item: &ListItem) -> Retained<NSView> {
     ];
 
     // 下端をどこにつなぐかで、行が 1 行になるか 2 行になるかが決まる。
-    let bottom = match &item.detail {
+    let bottom = match detail {
         None => title.bottomAnchor(),
         Some(detail) => {
-            let sub = row_label(mtm, detail, item.enabled, true);
+            let sub = row_label(mtm, detail, enabled, true);
             cell.addSubview(&sub);
             constraints.push(
                 sub.leadingAnchor()
