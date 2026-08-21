@@ -14,14 +14,16 @@ use std::rc::Rc;
 use naui_core::{
     Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, ListItem,
     NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
-    Sizing, Theme, Track, TreeItem,
+    Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_macos::{run_for_test, Ui, Widget};
+use objc2::msg_send;
 use objc2::rc::Retained;
+use objc2::sel;
 use objc2_app_kit::{
-    NSButton, NSControlStateValueOff, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSOutlineViewDelegate, NSSegmentedControl, NSTableViewDelegate, NSTextField,
-    NSTextInputClient, NSTextView, NSView,
+    NSButton, NSControlStateValueOff, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
+    NSOutlineViewDelegate, NSSegmentedControl, NSTableViewDelegate, NSTextField, NSTextInputClient,
+    NSTextView, NSView, NSWindowTitleVisibility,
 };
 use objc2_foundation::{NSDate, NSNotFound, NSRange, NSRunLoop, NSSize, NSString};
 
@@ -201,6 +203,26 @@ fn main() {
         (
             "再生位置が定期的にクロージャへ届く",
             media_reports_position_while_playing,
+        ),
+        (
+            "ツールバーが NSToolbar に項目と区切りを並べる",
+            toolbar_items_map_to_native,
+        ),
+        (
+            "ツールバーの実行がクロージャへ届く",
+            toolbar_activation_notifies,
+        ),
+        (
+            "すべてのアイコンが SF Symbols に実在する",
+            toolbar_icons_exist_as_sf_symbols,
+        ),
+        (
+            "ツールバーが NSWindow に取り付き外れる",
+            toolbar_attaches_to_a_window,
+        ),
+        (
+            "ツールバーの通知中に内容と通知先を差し替えられる",
+            toolbar_callback_is_reentrant,
         ),
         (
             "ポップアップメニューが項目と区切り線を NSMenu に写す",
@@ -2572,6 +2594,213 @@ fn dialog_is_closed_until_opened(ui: &Ui) -> Result<()> {
     });
     dialog.close();
     assert!(called.borrow().is_empty(), "閉じていないので通知されないこと");
+    Ok(())
+}
+
+/// `NSToolbar` に項目が並び、区切りは AppKit の space 項目へ写る。
+fn toolbar_items_map_to_native(ui: &Ui) -> Result<()> {
+    let toolbar = ui.toolbar()?;
+    assert!(toolbar.is_empty());
+
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::New, "新規"),
+        ToolbarItem::separator(),
+        ToolbarItem::new(ToolbarIcon::Save, "保存").enabled(false),
+    ]);
+    assert_eq!(toolbar.len(), 3, "区切りも 1 項目として数える");
+
+    let native = toolbar.native_toolbar();
+    assert_eq!(native.items().len(), 3, "NSToolbar にも 3 つ並ぶ");
+    assert_eq!(
+        native.items().objectAtIndex(1).itemIdentifier().to_string(),
+        "NSToolbarSpaceItem",
+        "区切りは AppKit の space 項目"
+    );
+
+    let first = toolbar.native_item(0).expect("先頭は項目");
+    assert_eq!(first.label().to_string(), "新規");
+    assert!(first.isEnabled());
+    assert!(
+        first.image().is_some(),
+        "SF Symbols のアイコンが載っていること"
+    );
+    assert_eq!(
+        first.toolTip().map(|t| t.to_string()).as_deref(),
+        Some("新規"),
+        "ラベルはツールチップに出る"
+    );
+    assert!(toolbar.native_item(1).is_none(), "区切りに項目は無い");
+    assert!(!toolbar.native_item(2).expect("3 番目は項目").isEnabled());
+    assert!(toolbar.native_item(9).is_none(), "範囲外は None");
+
+    assert!(toolbar.is_item_enabled(0));
+    assert!(!toolbar.is_item_enabled(1), "区切りは押せない");
+    assert!(!toolbar.is_item_enabled(2));
+
+    // 項目ごとの指定と全体の指定は AND を取る。
+    toolbar.set_item_enabled(2, true);
+    assert!(toolbar.native_item(2).expect("項目").isEnabled());
+    toolbar.set_enabled(false);
+    assert!(!toolbar.is_item_enabled(0));
+    assert!(!toolbar.native_item(0).expect("項目").isEnabled());
+    toolbar.set_enabled(true);
+    assert!(
+        toolbar.is_item_enabled(2),
+        "全体を戻すと項目ごとの指定が残る"
+    );
+
+    // 区切りへの set_item_enabled は無視する。
+    toolbar.set_item_enabled(1, true);
+    assert!(!toolbar.is_item_enabled(1));
+
+    toolbar.set_items(&[]);
+    assert!(toolbar.is_empty());
+    assert_eq!(native.items().len(), 0);
+    Ok(())
+}
+
+/// 押されたインデックスは、区切りを含めた並びの位置で届く。
+fn toolbar_activation_notifies(ui: &Ui) -> Result<()> {
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::Cut, "切り取り"),
+        ToolbarItem::separator(),
+        ToolbarItem::new(ToolbarIcon::Paste, "貼り付け").enabled(false),
+    ]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    toolbar.on_activate({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    toolbar.activate(0);
+    assert_eq!(*seen.borrow(), vec![0]);
+    toolbar.activate(1);
+    toolbar.activate(2);
+    toolbar.activate(9);
+    assert_eq!(
+        *seen.borrow(),
+        vec![0],
+        "区切り・押せない項目・範囲外は通知しない"
+    );
+
+    // AppKit が使うのと同じ target/action の経路も確かめる。
+    let item = toolbar.native_item(0).expect("項目");
+    let target = item.target().expect("target が設定されていること");
+    assert_eq!(
+        item.action(),
+        Some(sel!(invoke:)),
+        "トランポリンの invoke: が action になっている"
+    );
+    // AppKit が action を送るのと同じ形で呼ぶ (invoke: は戻り値を持たない)。
+    unsafe {
+        let _: () = msg_send![&*target, invoke: &*item];
+    }
+    assert_eq!(*seen.borrow(), vec![0, 0]);
+
+    toolbar.set_item_enabled(2, true);
+    toolbar.activate(2);
+    assert_eq!(*seen.borrow(), vec![0, 0, 2]);
+
+    toolbar.set_enabled(false);
+    toolbar.activate(0);
+    assert_eq!(
+        *seen.borrow(),
+        vec![0, 0, 2],
+        "無効なツールバーは通知しない"
+    );
+    Ok(())
+}
+
+/// ツールバーは `NSWindow` に取り付き、外すと消える。
+fn toolbar_attaches_to_a_window(ui: &Ui) -> Result<()> {
+    let window = ui.window("ツールバー", 400.0, 300.0)?;
+    let native_window = window.native_window();
+    assert!(native_window.toolbar().is_none(), "最初は付いていない");
+
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::New, "新規"),
+        ToolbarItem::new(ToolbarIcon::Open, "開く"),
+    ]);
+    window.set_toolbar(&toolbar);
+
+    let attached = native_window.toolbar().expect("取り付いていること");
+    assert_eq!(attached, toolbar.native_toolbar(), "同じ NSToolbar である");
+    assert_eq!(attached.items().len(), 2);
+
+    // タイトル文字を出したままだと、先頭を占めて項目が右端へ寄ってしまう。
+    assert_eq!(
+        native_window.titleVisibility(),
+        NSWindowTitleVisibility::Hidden,
+        "ツールバーを付けるとタイトル文字は隠れる"
+    );
+    assert_eq!(
+        window.title(),
+        "ツールバー",
+        "隠れるのは表示だけで、タイトル自体は残る"
+    );
+
+    window.clear_toolbar();
+    assert!(native_window.toolbar().is_none(), "外すと消える");
+    assert_eq!(
+        native_window.titleVisibility(),
+        NSWindowTitleVisibility::Visible,
+        "外すとタイトル文字も戻る"
+    );
+    window.close();
+    Ok(())
+}
+
+/// 通知の中からツールバーを組み替えても、二重借用にならない。
+fn toolbar_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::New, "春"),
+        ToolbarItem::new(ToolbarIcon::Open, "夏"),
+        ToolbarItem::new(ToolbarIcon::Save, "秋"),
+    ]);
+
+    let first = Rc::new(RefCell::new(Vec::new()));
+    let replacement = Rc::new(RefCell::new(Vec::new()));
+    toolbar.on_activate({
+        let toolbar = toolbar.clone();
+        let first = first.clone();
+        let replacement = replacement.clone();
+        move |index| {
+            first.borrow_mut().push(index);
+            toolbar.set_items(&[
+                ToolbarItem::new(ToolbarIcon::Add, "朝"),
+                ToolbarItem::new(ToolbarIcon::Remove, "昼"),
+            ]);
+            toolbar.on_activate({
+                let replacement = replacement.clone();
+                move |index| replacement.borrow_mut().push(index)
+            });
+        }
+    });
+
+    toolbar.activate(0);
+    assert_eq!(*first.borrow(), vec![0]);
+    assert_eq!(toolbar.len(), 2);
+
+    toolbar.activate(1);
+    assert_eq!(*first.borrow(), vec![0], "古い通知先は外れること");
+    assert_eq!(*replacement.borrow(), vec![1]);
+    Ok(())
+}
+
+/// 記号名を間違えると `NSImage` が nil になり、その項目だけ絵が出なくなる。
+fn toolbar_icons_exist_as_sf_symbols(_ui: &Ui) -> Result<()> {
+    let mut missing = Vec::new();
+    for icon in ToolbarIcon::ALL {
+        let name = NSString::from_str(icon.sf_symbol());
+        if NSImage::imageWithSystemSymbolName_accessibilityDescription(&name, None).is_none() {
+            missing.push(icon.sf_symbol());
+        }
+    }
+    assert!(missing.is_empty(), "実在しない SF Symbols: {missing:?}");
     Ok(())
 }
 

@@ -12,6 +12,7 @@ mod layout;
 mod list;
 pub mod media;
 mod popup;
+mod toolbar;
 mod tree;
 
 pub use dialog::{DialogButtons, DialogResponse};
@@ -23,6 +24,7 @@ pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
 pub use list::{ListItem, SelectionMode};
 pub use media::{Fit, PlaybackState};
 pub use popup::PopupItem;
+pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
 
 use std::fmt;

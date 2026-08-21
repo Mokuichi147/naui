@@ -12,7 +12,21 @@ mod list;
 mod media;
 mod navigation;
 
-use naui::{FileEntry, NavItem, Orientation, Padding, Result, Settings, Sizing, Ui};
+use naui::{
+    FileEntry, NavItem, Orientation, Padding, Result, Settings, Sizing, ToolbarIcon, ToolbarItem,
+    Ui,
+};
+
+/// ウィンドウに取り付けるツールバーの項目。区切りは空文字で埋める。
+const COMMANDS: [&str; 4] = ["新規", "開く", "", "保存"];
+
+/// 上の項目に対応するアイコン。
+const COMMAND_ICONS: [ToolbarIcon; 4] = [
+    ToolbarIcon::New,
+    ToolbarIcon::Open,
+    ToolbarIcon::Add,
+    ToolbarIcon::Save,
+];
 
 const SECTIONS: [&str; 8] = [
     "基本",
@@ -43,6 +57,32 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     root.append(&ui.label("naui UI ギャラリー")?);
     root.append(&ui.label("UI の種別ごとに、特徴・状態・操作結果を確認できます。")?);
+
+    // Toolbar はレイアウトではなくウィンドウに取り付ける。macOS では
+    // NSToolbar、Linux では AdwHeaderBar としてタイトルバーに出る。
+    // 項目はアイコンで並び、ラベルはツールチップと読み上げに使われる。
+    let toolbar_status = ui.label("Toolbar: まだ押されていません")?;
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(COMMAND_ICONS[0], COMMANDS[0]),
+        ToolbarItem::new(COMMAND_ICONS[1], COMMANDS[1]),
+        ToolbarItem::separator(),
+        // 保存できるものがまだ無い状態から始める。
+        ToolbarItem::new(COMMAND_ICONS[3], COMMANDS[3]).enabled(false),
+    ]);
+    toolbar.on_activate({
+        let status = toolbar_status.clone();
+        let toolbar = toolbar.clone();
+        move |index| {
+            status.set_text(&format!("Toolbar: {} を実行しました", COMMANDS[index]));
+            // 新規・開くの後は保存できる。
+            if index != 3 {
+                toolbar.set_item_enabled(3, true);
+            }
+        }
+    });
+    window.set_toolbar(&toolbar);
+    root.append(&toolbar_status);
 
     let tabs = ui.tabs()?;
     tabs.add_tab("基本", &basics::build(ui, &window)?);

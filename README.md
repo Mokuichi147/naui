@@ -226,6 +226,43 @@ saver.on_error(|error| eprintln!("{error}"));
 成功すると `on_save` に書き出し先が届き、取り消したときは何も呼ばれません。
 書き込みに失敗したときだけ `on_error` が呼ばれます。ボタンを押した時点の
 内容を書き出すため、内容が変わるたびに `set_contents` を呼び直します。
+### ツールバー
+
+よく使う操作をウィンドウの上端に並べるには `Toolbar` を使います。ほかの
+ウィジェットと違い**レイアウトには置かず**、`Window::set_toolbar` で
+ウィンドウに取り付けます。macOS の `NSToolbar` がウィンドウに付くもので
+あるためで、macOS と Linux ではタイトルバーと一体で表示されます。
+
+ナビゲーションと違い選択状態を持たず、押されるたびにその場で実行します。
+押された項目は区切りを含めた並びのインデックスで返ります。
+
+項目はアイコンで並びます。アイコンの呼び名は環境ごとに違うため、naui は
+`ToolbarIcon` で**操作の種類**だけを受け取り、その環境の標準アイコンへ
+写します。`label` は読み上げ・ツールチップ・項目が入りきらないときの
+メニューに使われます。
+
+```rust
+let toolbar = ui.toolbar()?;
+toolbar.set_items(&[
+    ToolbarItem::new(ToolbarIcon::New, "新規"),
+    ToolbarItem::new(ToolbarIcon::Open, "開く"),
+    ToolbarItem::separator(),
+    ToolbarItem::new(ToolbarIcon::Save, "保存").enabled(false),
+]);
+toolbar.on_activate(|index| println!("{index} 番目が押されました"));
+toolbar.set_item_enabled(3, true);
+window.set_toolbar(&toolbar);
+```
+
+| 環境 | アイコンの出どころ |
+| --- | --- |
+| macOS | SF Symbols |
+| Linux | アイコンテーマ (freedesktop の標準名) |
+| Windows | Segoe Fluent Icons |
+| Web | naui 同梱の SVG (ブラウザに標準のアイコンセットが無いため) |
+
+用意しているのは `ToolbarIcon` に並ぶ 20 種類の操作だけで、任意の画像は
+置けません。
 
 ## ウィジェット
 
@@ -234,6 +271,7 @@ saver.on_error(|error| eprintln!("{error}"));
 | 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`Slider`、`ProgressBar` |
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
+| ウィンドウ付属 | `Toolbar` |
 | データ選択 | `ComboBox`、`RadioGroup`、`List`、`Tree` |
 | ファイル | `FilePicker`、`FileSaver` |
 | メディア | `Image`、`Video`、`Audio` |
@@ -276,6 +314,7 @@ saver.on_error(|error| eprintln!("{error}"));
 | `Audio` | ✅ `MediaPlayerElement` | 🟡 `AVPlayerView` | 🟡 `GtkMediaControls` + `GtkMediaFile` | ✅ `<audio>` |
 | `PopupMenu` | 🟡 `Grid` + `Button` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
 | `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | ✅ `AdwAlertDialog` | 🟡 `<dialog>` + `showModal()` |
+| `Toolbar` | 🟡 `StackPanel` + `Button` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 
 #### ナビゲーション対応表
 
@@ -298,6 +337,7 @@ saver.on_error(|error| eprintln!("{error}"));
 - `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
 - `Fit` / `PlaybackState`: メディア表示と再生状態
 - `PopupItem`: ポップアップメニュー項目
+- `ToolbarItem` / `ToolbarIcon`: ツールバー項目とアイコン
 - `DialogButtons` / `DialogResponse`: ダイアログのボタンと応答
 
 API の詳しい説明は、リポジトリ内で次のコマンドを実行して確認できます。
@@ -392,7 +432,12 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 30 コンポーネントです。複数列テーブル、ツールバーは未実装です。
+- 対応するのは上記の 31 コンポーネントです。複数列テーブルは未実装です。
+- `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
+  (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
+  20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
+  都合上、macOS の「ツールバーをカスタマイズ」(利用者による並べ替え) は
+  切ってあります。
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
 - `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
 - `Tree` は単一選択で、項目に置けるのは `List` と同じ文字列だけです。
@@ -412,6 +457,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `TreeView` のバインディングが無いため、`Tree` は `ListBox` の行として
   組み立てています。選べない枝は行ごと無効になるので、その開閉ボタンも
   押せません (プログラムからの `expand` は効きます)。
+- `CommandBar` がバインディングに無いため、`Toolbar` は `Button` を横に並べて
+  構成し、タイトルバー (ドラッグ領域) ではなくその下の行に置きます。アイコンは
+  Segoe Fluent Icons を `FontIcon` で出します。
 
 ### macOS
 
@@ -419,6 +467,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - 交差軸の `Fill` と Grid セル内の配置は、コンテナへ追加する前に指定してください。
 - `Image` のリモート URL は同期的に読み込むため、ローカルファイルの利用を推奨します。
 - `Dialog::open` と `PopupMenu::open_at` は閉じるまで戻りません。
+- `Toolbar` の区切りは、macOS の作法にならって `NSToolbarSpaceItem`
+  (一定幅の空き) になります。区切り線は引かれません。
+- `Toolbar` を付けるとウィンドウのタイトル文字は隠れます (macOS の作法)。
+  出したままだとタイトルが先頭を占め、項目が右端へ寄ってしまうためです。
+  `set_title` の値は残り、`clear_toolbar` で外すと表示も戻ります。
 
 ### Linux
 
@@ -428,6 +481,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - テーマはウィンドウ単位ではなくアプリ全体へ適用されます。
 - `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
   行と開閉ボタンで組み立てています。
+- `Toolbar` の項目は、GNOME の作法にならってヘッダーバーの左側へ並びます。
 
 ### Web
 
@@ -442,3 +496,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `FileSaver` は `showSaveFilePicker` があればそれを使い、無いブラウザ
   (Firefox / Safari) では `<a download>` のダウンロードになります。後者では
   保存先の確認が出ないことがあり、`FileEntry::path` はどちらでも `None` です。
+- タイトルバーが無いため、`Toolbar` はウィンドウ要素の先頭に置かれます。
+- ブラウザに標準のアイコンセットが無いため、`Toolbar` のアイコンだけは naui が
+  SVG を持ちます (ここだけは OS のものを使いません)。
+- ブラウザの制限により、メディアの自動再生が拒否される場合があります。
+
+## ライセンス
+
+[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)

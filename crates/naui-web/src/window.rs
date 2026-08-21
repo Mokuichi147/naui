@@ -8,6 +8,7 @@ use naui_core::{Error, Result, Theme};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
+use crate::toolbar::Toolbar;
 use crate::widgets::{create, Widget};
 use crate::to_error;
 use crate::apply_theme;
@@ -17,6 +18,8 @@ struct WindowInner {
     document: Document,
     title: RefCell<String>,
     child: RefCell<Option<Box<dyn Widget>>>,
+    /// 上端に差し込んだツールバー。通知先ごと生かしておく。
+    toolbar: RefCell<Option<Toolbar>>,
 }
 
 /// ページ上のウィンドウ相当。
@@ -67,6 +70,7 @@ impl Window {
             document: document.clone(),
             title: RefCell::new(String::new()),
             child: RefCell::new(None),
+            toolbar: RefCell::new(None),
         }));
         this.set_title(title);
         Ok(this)
@@ -101,6 +105,38 @@ impl Window {
             );
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
+        // 中身を入れ替えると差し込んだ要素も消えるので、付け直す。
+        self.mount_toolbar();
+    }
+
+    /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
+    ///
+    /// ブラウザにはタイトルバーが無いため、ウィンドウ要素の先頭に置く。
+    pub fn set_toolbar(&self, toolbar: &Toolbar) {
+        self.clear_toolbar();
+        *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
+        self.mount_toolbar();
+    }
+
+    /// 取り付けたツールバーを外す。付いていなければ何もしない。
+    pub fn clear_toolbar(&self) {
+        if let Some(old) = self.0.toolbar.borrow_mut().take() {
+            old.mount().remove();
+        }
+    }
+
+    /// ツールバーをウィンドウの先頭へ置き直す。
+    fn mount_toolbar(&self) {
+        let toolbar = self.0.toolbar.borrow();
+        let Some(toolbar) = toolbar.as_ref() else {
+            return;
+        };
+        let mount = toolbar.mount();
+        let first = self.0.element.first_element_child();
+        let _ = self
+            .0
+            .element
+            .insert_before(&mount, first.as_ref().map(|e| e.as_ref()));
     }
 
     /// 表示する。Web では最初から表示されているため、隠していた場合に戻す。

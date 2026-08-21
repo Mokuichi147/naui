@@ -202,6 +202,68 @@
 //! 右クリックで出るほうは [`PopupMenu`] を使う。
 //! `Dock` の下端への固定は、レイアウトが縦横のスタックだけなのでアプリの責務になる。
 //!
+//! ## ツールバー
+//!
+//! よく使う操作をウィンドウの上端に並べるときは [`Toolbar`] を使う。
+//! ほかのウィジェットと違い**レイアウトへは置かない**。macOS の
+//! `NSToolbar` が `NSWindow` に取り付けるものだからで、naui でも
+//! [`Window::set_toolbar`] で取り付ける ([`Widget`] ではない)。
+//!
+//! ナビゲーションと違い**選ばれている項目を持たず**、押されるたびに
+//! その場でコマンドが走る。項目は [`ToolbarItem`] の並びで渡し、
+//! 押されたものは**区切りを含めた並びの**インデックスで返る。
+//!
+//! 項目は**アイコン**で並ぶ。アイコンの呼び名は環境ごとに違うため
+//! ([`ToolbarIcon`] 参照)、naui は操作の種類だけを受け取り、その環境の
+//! 標準アイコンへ写す。`label` は読み上げ・ツールチップ・項目が入りきらない
+//! ときのメニューに使う。
+//!
+//! ```no_run
+//! # use naui::{Result, ToolbarIcon, ToolbarItem, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let window = ui.window("編集", 800.0, 600.0)?;
+//!
+//! let toolbar = ui.toolbar()?;
+//! toolbar.set_items(&[
+//!     ToolbarItem::new(ToolbarIcon::New, "新規"),
+//!     ToolbarItem::new(ToolbarIcon::Open, "開く"),
+//!     ToolbarItem::separator(),        // 押せないので通知も来ない
+//!     ToolbarItem::new(ToolbarIcon::Save, "保存").enabled(false),
+//! ]);
+//! toolbar.on_activate(|index| println!("{index} 番目が押された"));
+//! toolbar.set_item_enabled(3, true);   // 保存できる状態になったら有効にする
+//! window.set_toolbar(&toolbar);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `Toolbar` | `StackPanel` + `Button` | `NSToolbar` + `NSToolbarItem` | `AdwHeaderBar` + `GtkButton` | `<div role="toolbar">` + `<button>` |
+//! | アイコン | Segoe Fluent Icons | SF Symbols | アイコンテーマ | naui 同梱の SVG |
+//!
+//! macOS と Linux では**ウィンドウのタイトルバーと一体**で表示される。
+//! Windows の `CommandBar` と Web の対応する概念は無いため、
+//! タイトルバーの下 (Web ではウィンドウ要素の先頭) に置く。
+//!
+//! macOS では、ツールバーを付けると**タイトル文字が隠れる**。ツールバーの
+//! あるウィンドウでタイトルを出さないのが macOS の作法で、出したままだと
+//! タイトルが先頭を占めて項目が右端へ押しやられてしまうため。
+//! [`Window::set_title`] の値はウィンドウのタイトルとして残り
+//! (ウィンドウメニューや Mission Control には出る)、[`Window::title`] も
+//! 返し続ける。[`Window::clear_toolbar`] で外すと表示も戻る。
+//!
+//! [`Toolbar::len`] は区切りを含めた項目数で、[`Toolbar::activate`] は
+//! 利用者が押したのと同じように通知する (区切り・押せない項目・範囲外は
+//! 何もしない)。[`Toolbar::set_enabled`] はツールバー全体をまとめて
+//! 無効にするもので、項目ごとの指定は残る。
+//!
+//! ブラウザには OS のアイコンテーマが無いため、Web だけは naui が図形を持つ。
+//! 用意しているのは [`ToolbarIcon`] に並ぶ操作だけで、任意の画像は置けない。
+//! また naui は項目をインデックスで識別するため、
+//! macOS の「ツールバーをカスタマイズ」(利用者による並べ替え) は切ってある。
+//! 並べ替えられると通知のインデックスの意味が変わってしまうため。
+//!
 //! ## ポップアップ (コンテキスト) メニュー
 //!
 //! [`PopupMenu`] は画面に並ばないので [`Widget`] ではない。項目は
@@ -436,10 +498,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・ナビゲーション・リスト・ツリー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 73 件) |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 78 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 74 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 79 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -447,26 +509,29 @@ pub use naui_core::{
     accept_attribute, default_extension, media, with_default_extension, Align, DialogButtons,
     DialogResponse, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem,
     NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
-    Settings, Sizing, Theme, Track, TreeItem,
+    Settings, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
     Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
     Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
     Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 
 #[cfg(all(
@@ -477,7 +542,8 @@ pub use naui_windows::{
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
     Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -683,6 +749,27 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     menu.set_selected(0);
     menu.select(0);
     menu.on_select(|_index: usize| {});
+
+    // --- ツールバー (ウィンドウに取り付ける。Widget ではない) -------------
+    let toolbar: Toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::New, "t"),
+        ToolbarItem::separator(),
+        ToolbarItem::new(ToolbarIcon::Save, "t").enabled(false),
+    ]);
+    let _: &str = ToolbarIcon::Open.sf_symbol();
+    let _: &str = ToolbarIcon::Open.icon_name();
+    let _: char = ToolbarIcon::Open.fluent_glyph();
+    let _: &str = ToolbarIcon::Open.svg_path();
+    let _: usize = toolbar.len();
+    let _: bool = toolbar.is_empty();
+    let _: bool = toolbar.is_item_enabled(0);
+    toolbar.set_item_enabled(2, true);
+    toolbar.set_enabled(true);
+    toolbar.activate(0);
+    toolbar.on_activate(|_index: usize| {});
+    window.set_toolbar(&toolbar);
+    window.clear_toolbar();
 
     // --- リスト -----------------------------------------------------------
     let list: List = ui.list()?;
