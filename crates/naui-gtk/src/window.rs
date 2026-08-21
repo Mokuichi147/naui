@@ -17,7 +17,7 @@ use crate::widgets::Widget;
 pub(crate) struct WindowInner {
     native: adw::ApplicationWindow,
     /// ヘッダーバーとアプリの中身を縦に積む入れ物。
-    toolbar: adw::ToolbarView,
+    view: adw::ToolbarView,
     /// タイトルと、最小化・最大化・閉じるのボタン。
     header: adw::HeaderBar,
     child: RefCell<Option<Box<dyn Widget>>>,
@@ -62,7 +62,7 @@ impl Window {
 
         Self(Rc::new(WindowInner {
             native,
-            toolbar,
+            view: toolbar,
             header,
             child: RefCell::new(None),
             toolbar: RefCell::new(None),
@@ -107,7 +107,7 @@ impl Window {
         // ウィンドウの中身は、他のバックエンドと同じく窓いっぱいに広がる。
         bin.fill_parent();
         // ヘッダーバーの下が、アプリの中身の置き場になる。
-        self.0.toolbar.set_content(Some(&bin));
+        self.0.view.set_content(Some(&bin));
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
