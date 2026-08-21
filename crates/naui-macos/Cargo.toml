@@ -63,6 +63,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSText",
     "NSTextContainer",
     "NSTextView",
+    "NSToolbar",
+    "NSToolbarItem",
     "NSUserInterfaceItemIdentification",
     "NSView",
     "NSWindow",
@@ -116,6 +118,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSTextField",
     "NSTextInputClient",
     "NSTextView",
+    "NSToolbar",
+    "NSToolbarItem",
     "NSView",
     "NSWindow",
 ] }

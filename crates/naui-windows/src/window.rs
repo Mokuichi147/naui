@@ -21,6 +21,7 @@ use winui3::Microsoft::UI::Xaml::{
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::Ui;
+use crate::toolbar::Toolbar;
 use crate::widgets::Widget;
 
 enum Backdrop {
@@ -39,6 +40,10 @@ struct WindowInner {
     child: RefCell<Option<Box<dyn Widget>>>,
     theme_root: RefCell<Option<UIElement>>,
     title_label: RefCell<Option<TextBlock>>,
+    /// タイトルバーと中身の間にあるツールバーの入れ物。
+    toolbar_host: RefCell<Option<Grid>>,
+    /// 取り付けたツールバー。通知先ごと生かしておく。
+    toolbar: RefCell<Option<Toolbar>>,
     visible: RefCell<bool>,
     theme: Cell<Theme>,
     width: i32,
@@ -80,6 +85,8 @@ impl Window {
             backdrop,
             child: RefCell::new(None),
             theme_root: RefCell::new(None),
+            toolbar_host: RefCell::new(None),
+            toolbar: RefCell::new(None),
             title_label: RefCell::new(None),
             visible: RefCell::new(false),
             theme: Cell::new(theme),
@@ -120,15 +127,16 @@ impl Window {
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
         let themed = themed_content_root(&element, &self.title());
-        let (theme_root, title_bar, title_label) = match themed {
+        let (theme_root, title_bar, title_label, toolbar_host) = match themed {
             Ok(content) => (
                 content.root,
                 Some(content.title_bar),
                 Some(content.title_label),
+                Some(content.toolbar_host),
             ),
             Err(error) => {
                 eprintln!("naui-windows: テーマ付きウィンドウルートの生成に失敗: {error}");
-                (element.clone(), None, None)
+                (element.clone(), None, None, None)
             }
         };
         if self.0.native.SetContent(&theme_root).is_ok() {
@@ -144,13 +152,49 @@ impl Window {
             }
             *self.0.theme_root.borrow_mut() = Some(theme_root);
             *self.0.title_label.borrow_mut() = title_label;
+            *self.0.toolbar_host.borrow_mut() = toolbar_host;
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
+            // ルートを作り直したので、取り付けてあったツールバーを載せ直す。
+            self.mount_toolbar();
             if !self.0.wheel_subclass_installed.get() {
                 self.0
                     .wheel_subclass_installed
                     .set(crate::layout::install_wheel_subclass(&self.0.native));
             }
         }
+    }
+
+    /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
+    ///
+    /// WinUI 3 の `CommandBar` は `winio-winui3` のバインディングに無いため、
+    /// タイトルバーと中身の間の行へ `StackPanel` を置いて構成する。
+    /// タイトルバーはウィンドウのドラッグ領域なので、そこには置けない。
+    pub fn set_toolbar(&self, toolbar: &Toolbar) {
+        self.clear_toolbar();
+        *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
+        self.mount_toolbar();
+    }
+
+    /// 取り付けたツールバーを外す。付いていなければ何もしない。
+    pub fn clear_toolbar(&self) {
+        self.0.toolbar.borrow_mut().take();
+        if let Some(host) = self.0.toolbar_host.borrow().as_ref() {
+            let _ = host.Children().and_then(|children| children.Clear());
+        }
+    }
+
+    /// ツールバーを置き場へ載せ直す。置き場か中身がまだ無ければ何もしない。
+    fn mount_toolbar(&self) {
+        let host = self.0.toolbar_host.borrow();
+        let toolbar = self.0.toolbar.borrow();
+        let (Some(host), Some(toolbar)) = (host.as_ref(), toolbar.as_ref()) else {
+            return;
+        };
+        let Ok(children) = host.Children() else {
+            return;
+        };
+        let _ = children.Clear();
+        let _ = children.Append(&toolbar.mount());
     }
 
     /// このウィンドウの配色テーマを切り替える。
@@ -237,6 +281,8 @@ struct ThemedContent {
     root: UIElement,
     title_bar: UIElement,
     title_label: TextBlock,
+    /// タイトルバーと中身の間に置くツールバーの入れ物。
+    toolbar_host: Grid,
 }
 
 fn backdrop_theme(theme: Theme) -> SystemBackdropTheme {
@@ -320,13 +366,15 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
             Background="Transparent">
             <Grid.RowDefinitions>
                 <RowDefinition Height="48"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <Grid Grid.Row="0" Height="48" Background="Transparent"
                 Padding="16,0,140,0">
                 <TextBlock FontSize="14" VerticalAlignment="Center"/>
             </Grid>
-            <Grid Grid.Row="1" Background="Transparent"/>
+            <Grid Grid.Row="1" Background="Transparent" Padding="12,0,12,8"/>
+            <Grid Grid.Row="2" Background="Transparent"/>
         </Grid>"##,
     ))
     .map_err(|e| to_error("テーマ背景要素の生成", e))?
@@ -351,8 +399,13 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
         .SetText(&HSTRING::from(title))
         .map_err(|e| to_error("タイトルラベルの設定", e))?;
 
-    let content = children
+    let toolbar_host = children
         .GetAt(1)
+        .map_err(|e| to_error("ツールバー置き場の取得", e))?
+        .cast::<Grid>()
+        .map_err(|e| to_error("ツールバー置き場への変換", e))?;
+    let content = children
+        .GetAt(2)
         .map_err(|e| to_error("コンテンツレイヤーの取得", e))?
         .cast::<Grid>()
         .map_err(|e| to_error("コンテンツレイヤーへの変換", e))?;
@@ -369,6 +422,7 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
             .cast::<UIElement>()
             .map_err(|e| to_error("タイトルバーへの変換", e))?,
         title_label,
+        toolbar_host,
     })
 }
 

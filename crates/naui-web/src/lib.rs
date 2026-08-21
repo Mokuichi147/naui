@@ -19,6 +19,7 @@ mod list;
 mod media;
 mod navigation;
 mod popup;
+mod toolbar;
 mod widgets;
 mod window;
 
@@ -43,6 +44,7 @@ pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use popup::PopupMenu;
+pub use toolbar::Toolbar;
 pub use widgets::{
     Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
@@ -72,6 +74,8 @@ pub struct Ui {
     dialogs: RefCell<Vec<Dialog>>,
     /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
     popups: RefCell<Vec<PopupMenu>>,
+    /// ツールバーもレイアウトに載らないので、ここで保持する。
+    toolbars: RefCell<Vec<Toolbar>>,
 }
 
 impl Ui {
@@ -82,6 +86,7 @@ impl Ui {
             windows: RefCell::new(Vec::new()),
             dialogs: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
+            toolbars: RefCell::new(Vec::new()),
         }
     }
 
@@ -160,6 +165,16 @@ impl Ui {
     /// 画面下部に置く横並びのナビゲーション (等幅)。
     pub fn dock(&self) -> Result<Dock> {
         Dock::new(&self.document)
+    }
+
+    /// ウィンドウの上端に付けるツールバー。
+    ///
+    /// [`Window::set_toolbar`] で取り付ける。フレームワークが参照を保持するので、
+    /// 戻り値を捨てても通知が届かなくなることはない。
+    pub fn toolbar(&self) -> Result<Toolbar> {
+        let toolbar = Toolbar::new(&self.document)?;
+        self.toolbars.borrow_mut().push(toolbar.clone());
+        Ok(toolbar)
     }
 
     /// 縦に並ぶナビゲーション一覧。

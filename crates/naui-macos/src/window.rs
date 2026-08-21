@@ -8,16 +8,20 @@ use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSBackingStoreType, NSWindow, NSWindowStyleMask,
+    NSBackingStoreType, NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
+use crate::toolbar::Toolbar;
 use crate::widgets::Widget;
 
 struct WindowInner {
     native: Retained<NSWindow>,
     /// ルートの子を保持し、トランポリンごと生かしておく。
     child: RefCell<Option<Box<dyn Widget>>>,
+    /// 取り付けたツールバー。`NSWindow` の toolbar は強参照だが、
+    /// naui 側のハンドル (トランポリンと通知先) もここで生かしておく。
+    toolbar: RefCell<Option<Toolbar>>,
 }
 
 /// トップレベルウィンドウ (NSWindow)。
@@ -63,6 +67,7 @@ impl Window {
         Self(Rc::new(WindowInner {
             native,
             child: RefCell::new(None),
+            toolbar: RefCell::new(None),
         }))
     }
 
@@ -86,6 +91,35 @@ impl Window {
         let view = child.native_view();
         self.0.native.setContentView(Some(&view));
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
+    }
+
+    /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
+    ///
+    /// AppKit ではタイトルバーと一体で表示され、項目が入りきらないときは
+    /// AppKit が送り出しのメニューを出す。
+    ///
+    /// **タイトル文字は隠れる。** ツールバーのあるウィンドウでタイトルを
+    /// 出さないのが macOS の作法で、出したままだとタイトルが先頭を占め、
+    /// 項目が右端へ押しやられてしまう。[`set_title`](Self::set_title) で
+    /// 設定した文字はウィンドウのタイトルとして残り (ウィンドウメニューや
+    /// Mission Control には出る)、[`title`](Self::title) も返し続ける。
+    pub fn set_toolbar(&self, toolbar: &Toolbar) {
+        self.0.native.setToolbar(Some(&toolbar.native_toolbar()));
+        self.0
+            .native
+            .setTitleVisibility(NSWindowTitleVisibility::Hidden);
+        *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
+    }
+
+    /// 取り付けたツールバーを外す。付いていなければ何もしない。
+    ///
+    /// 隠していたタイトル文字も出し直す。
+    pub fn clear_toolbar(&self) {
+        self.0.native.setToolbar(None);
+        self.0
+            .native
+            .setTitleVisibility(NSWindowTitleVisibility::Visible);
+        *self.0.toolbar.borrow_mut() = None;
     }
 
     /// 画面に出して前面へ持ってくる。

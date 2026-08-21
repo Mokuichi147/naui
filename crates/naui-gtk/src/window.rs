@@ -11,6 +11,7 @@ use std::rc::{Rc, Weak};
 use adw::prelude::*;
 use naui_core::{Result, Theme};
 
+use crate::toolbar::Toolbar;
 use crate::widgets::Widget;
 
 pub(crate) struct WindowInner {
@@ -20,6 +21,8 @@ pub(crate) struct WindowInner {
     /// タイトルと、最小化・最大化・閉じるのボタン。
     header: adw::HeaderBar,
     child: RefCell<Option<Box<dyn Widget>>>,
+    /// ヘッダーバーへ差し込んだツールバー。通知先ごと生かしておく。
+    toolbar: RefCell<Option<Toolbar>>,
 }
 
 /// トップレベルウィンドウ。
@@ -62,6 +65,7 @@ impl Window {
             toolbar,
             header,
             child: RefCell::new(None),
+            toolbar: RefCell::new(None),
         }))
     }
 
@@ -105,6 +109,22 @@ impl Window {
         // ヘッダーバーの下が、アプリの中身の置き場になる。
         self.0.toolbar.set_content(Some(&bin));
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
+    }
+
+    /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
+    ///
+    /// GNOME の作法どおり、項目はヘッダーバーの左側へ並ぶ。
+    pub fn set_toolbar(&self, toolbar: &Toolbar) {
+        self.clear_toolbar();
+        self.0.header.pack_start(&toolbar.mount());
+        *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
+    }
+
+    /// 取り付けたツールバーを外す。付いていなければ何もしない。
+    pub fn clear_toolbar(&self) {
+        if let Some(old) = self.0.toolbar.borrow_mut().take() {
+            self.0.header.remove(&old.mount());
+        }
     }
 
     pub fn show(&self) {

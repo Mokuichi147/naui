@@ -65,7 +65,7 @@ impl SelectHandler {
 }
 
 /// 文字列を載せた `TextBlock` を作る。
-fn text_block(text: &str) -> Result<TextBlock> {
+pub(crate) fn text_block(text: &str) -> Result<TextBlock> {
     let block = TextBlock::new().map_err(|e| to_error("TextBlock の生成", e))?;
     block
         .SetText(&HSTRING::from(text))
@@ -74,7 +74,7 @@ fn text_block(text: &str) -> Result<TextBlock> {
 }
 
 /// 縦横どちらかに並べる `StackPanel` を作る。
-fn panel(orientation: XamlOrientation, spacing: f64) -> Result<StackPanel> {
+pub(crate) fn panel(orientation: XamlOrientation, spacing: f64) -> Result<StackPanel> {
     let panel = StackPanel::new().map_err(|e| to_error("StackPanel の生成", e))?;
     panel
         .SetOrientation(orientation)
@@ -86,7 +86,7 @@ fn panel(orientation: XamlOrientation, spacing: f64) -> Result<StackPanel> {
     Ok(panel)
 }
 
-fn append(panel: &StackPanel, element: &UIElement) -> Result<()> {
+pub(crate) fn append(panel: &StackPanel, element: &UIElement) -> Result<()> {
     panel
         .Children()
         .and_then(|children| children.Append(element))

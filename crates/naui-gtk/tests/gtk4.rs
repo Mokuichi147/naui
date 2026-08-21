@@ -17,7 +17,7 @@ use adw::prelude::*;
 use naui_core::{
     Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, Length,
     ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
-    SelectionMode, Sizing, Theme, Track,
+    SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track,
 };
 use naui_gtk::{run_for_test, Ui, Widget};
 
@@ -126,6 +126,26 @@ fn main() {
             navbar_set_selected_is_silent,
         ),
         ("ドックが等幅の項目を持つ", dock_items_are_homogeneous),
+        (
+            "ツールバーが項目と区切りを GtkBox に並べる",
+            toolbar_items_map_to_native,
+        ),
+        (
+            "ツールバーの実行がクロージャへ届く",
+            toolbar_activation_notifies,
+        ),
+        (
+            "ツールバーがヘッダーバーへ入り外れる",
+            toolbar_attaches_to_the_header_bar,
+        ),
+        (
+            "すべてのアイコンがテーマに実在する",
+            toolbar_icons_exist_in_the_theme,
+        ),
+        (
+            "ツールバーの通知内で組み替えと差し替えができる",
+            toolbar_callback_is_reentrant_and_replaceable,
+        ),
         ("メニューの選択が 1 つだけ点く", menu_selection_is_exclusive),
         ("選べない項目は選ばれない", nav_skips_disabled_items),
         ("パンくずが末尾を現在地にする", breadcrumbs_last_is_current),
@@ -1624,5 +1644,200 @@ fn theme_switch(ui: &Ui) -> Result<()> {
 
     ui.set_theme(Theme::System)?;
     assert_eq!(manager.color_scheme(), adw::ColorScheme::Default);
+    Ok(())
+}
+
+/// ツールバーは区切りを含めた並びで `GtkBox` に載り、区切りのところは
+/// ボタンを持たない。
+fn toolbar_items_map_to_native(ui: &Ui) -> Result<()> {
+    let toolbar = ui.toolbar()?;
+    assert!(toolbar.is_empty());
+
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::New, "新規"),
+        ToolbarItem::separator(),
+        ToolbarItem::new(ToolbarIcon::Save, "保存").enabled(false),
+    ]);
+    assert_eq!(toolbar.len(), 3, "区切りも 1 項目として数える");
+
+    let native = toolbar.native_box();
+    assert_eq!(native.orientation(), gtk::Orientation::Horizontal);
+
+    let first = toolbar.native_button(0).expect("先頭はボタン");
+    assert_eq!(
+        first.icon_name().map(|n| n.to_string()),
+        Some("document-new-symbolic".to_string()),
+        "アイコンテーマの名前が入る"
+    );
+    assert_eq!(
+        first.tooltip_text().map(|t| t.to_string()),
+        Some("新規".to_string()),
+        "ラベルはツールチップに出る"
+    );
+    assert!(first.is_sensitive());
+    assert!(toolbar.native_button(1).is_none(), "区切りにボタンは無い");
+    assert!(!toolbar
+        .native_button(2)
+        .expect("3 番目はボタン")
+        .is_sensitive());
+    assert!(toolbar.native_button(9).is_none(), "範囲外は None");
+
+    // 区切りは GtkSeparator として並ぶ。
+    let mut separators = 0;
+    let mut child = native.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        if current.downcast::<gtk::Separator>().is_ok() {
+            separators += 1;
+        }
+    }
+    assert_eq!(separators, 1);
+
+    assert!(toolbar.is_item_enabled(0));
+    assert!(!toolbar.is_item_enabled(1), "区切りは押せない");
+    assert!(!toolbar.is_item_enabled(2));
+
+    // 項目ごとの指定と全体の指定は AND を取る。
+    toolbar.set_item_enabled(2, true);
+    assert!(toolbar.native_button(2).expect("ボタン").is_sensitive());
+    toolbar.set_enabled(false);
+    assert!(!toolbar.is_item_enabled(0));
+    assert!(!toolbar.native_button(0).expect("ボタン").is_sensitive());
+    toolbar.set_enabled(true);
+    assert!(
+        toolbar.is_item_enabled(2),
+        "全体を戻すと項目ごとの指定が残る"
+    );
+
+    // 区切りへの set_item_enabled は無視する。
+    toolbar.set_item_enabled(1, true);
+    assert!(!toolbar.is_item_enabled(1));
+
+    toolbar.set_items(&[]);
+    assert!(toolbar.is_empty());
+    assert!(native.first_child().is_none());
+    Ok(())
+}
+
+/// 押されたインデックスは、区切りを含めた並びの位置で届く。
+fn toolbar_activation_notifies(ui: &Ui) -> Result<()> {
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::Cut, "切り取り"),
+        ToolbarItem::separator(),
+        ToolbarItem::new(ToolbarIcon::Paste, "貼り付け").enabled(false),
+    ]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    toolbar.on_activate({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    toolbar.activate(0);
+    assert_eq!(*seen.borrow(), vec![0]);
+    toolbar.activate(1);
+    toolbar.activate(2);
+    toolbar.activate(9);
+    assert_eq!(
+        *seen.borrow(),
+        vec![0],
+        "区切り・押せない項目・範囲外は通知しない"
+    );
+
+    // GTK4 側の clicked から届く実際の通知経路も確かめる。
+    toolbar.native_button(0).expect("ボタン").emit_clicked();
+    assert_eq!(*seen.borrow(), vec![0, 0]);
+
+    toolbar.set_item_enabled(2, true);
+    toolbar.activate(2);
+    assert_eq!(*seen.borrow(), vec![0, 0, 2]);
+
+    toolbar.set_enabled(false);
+    toolbar.activate(0);
+    assert_eq!(
+        *seen.borrow(),
+        vec![0, 0, 2],
+        "無効なツールバーは通知しない"
+    );
+    Ok(())
+}
+
+/// ツールバーはヘッダーバーへ入り、外すと消える。
+fn toolbar_attaches_to_the_header_bar(ui: &Ui) -> Result<()> {
+    let window = ui.window("ツールバー", 400.0, 300.0)?;
+    let header = window.native_header_bar();
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::New, "新規"),
+        ToolbarItem::new(ToolbarIcon::Open, "開く"),
+    ]);
+
+    window.set_toolbar(&toolbar);
+    let mount = toolbar.native_box();
+    assert_eq!(
+        mount.ancestor(adw::HeaderBar::static_type()).as_ref(),
+        Some(header.upcast_ref::<gtk::Widget>()),
+        "ヘッダーバーの中に入っていること"
+    );
+
+    window.clear_toolbar();
+    assert!(
+        mount.ancestor(adw::HeaderBar::static_type()).is_none(),
+        "外すとヘッダーバーから消える"
+    );
+    window.close();
+    Ok(())
+}
+
+/// 通知の中からツールバーを組み替えても、二重借用にならない。
+fn toolbar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::New, "春"),
+        ToolbarItem::new(ToolbarIcon::Open, "夏"),
+        ToolbarItem::new(ToolbarIcon::Save, "秋"),
+    ]);
+
+    let first = Rc::new(RefCell::new(Vec::new()));
+    let replacement = Rc::new(RefCell::new(Vec::new()));
+    toolbar.on_activate({
+        let toolbar = toolbar.clone();
+        let first = first.clone();
+        let replacement = replacement.clone();
+        move |index| {
+            first.borrow_mut().push(index);
+            toolbar.set_items(&[
+                ToolbarItem::new(ToolbarIcon::Add, "朝"),
+                ToolbarItem::new(ToolbarIcon::Remove, "昼"),
+            ]);
+            toolbar.on_activate({
+                let replacement = replacement.clone();
+                move |index| replacement.borrow_mut().push(index)
+            });
+        }
+    });
+
+    toolbar.activate(0);
+    assert_eq!(*first.borrow(), vec![0]);
+    assert_eq!(toolbar.len(), 2);
+
+    toolbar.activate(1);
+    assert_eq!(*first.borrow(), vec![0], "古い通知先は外れること");
+    assert_eq!(*replacement.borrow(), vec![1]);
+    Ok(())
+}
+
+/// 名前を間違えると、その項目だけ「画像がありません」の絵になる。
+fn toolbar_icons_exist_in_the_theme(_ui: &Ui) -> Result<()> {
+    let display = gtk::gdk::Display::default().expect("ディスプレイ");
+    let theme = gtk::IconTheme::for_display(&display);
+    let mut missing = Vec::new();
+    for icon in ToolbarIcon::ALL {
+        if !theme.has_icon(icon.icon_name()) {
+            missing.push(icon.icon_name());
+        }
+    }
+    assert!(missing.is_empty(), "テーマに無いアイコン: {missing:?}");
     Ok(())
 }
