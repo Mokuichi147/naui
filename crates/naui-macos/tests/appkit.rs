@@ -17,18 +17,18 @@ use naui_core::{
     ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_macos::{run_for_test, Ui, Widget};
-use objc2::{msg_send, AnyThread};
 use objc2::rc::Retained;
 use objc2::sel;
+use objc2::{msg_send, AnyThread};
 use objc2_app_kit::{
     NSButton, NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSImage,
-    NSImageScaling, NSImageView, NSLayoutConstraint, NSOutlineViewDelegate, NSSegmentedControl,
-    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
+    NSImageScaling, NSImageView, NSLayoutConstraint, NSOutlineViewDelegate, NSScrollView,
+    NSSegmentedControl, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
     NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound, NSRange,
-    NSRunLoop, NSSize, NSString,
+    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound, NSPoint,
+    NSRange, NSRunLoop, NSSize, NSString,
 };
 
 /// テストケース 1 件。
@@ -154,6 +154,10 @@ fn main() {
         ),
         ("グリッドの子を置き換える", grid_replaces_child),
         ("スクロールが中身を保持する", scroll_keeps_child),
+        (
+            "縦に長いタブの中身がスクロールで下まで届く",
+            tall_tab_content_scrolls,
+        ),
         ("グリッドの同じ行が縦中央でそろう", grid_row_alignment),
         (
             "ファイル選択がボタンとして構成され設定を保つ",
@@ -3317,3 +3321,47 @@ fn date_picker_callback_is_reentrant(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+
+/// ギャラリーのように、縦に長い中身をスクロールへ載せてタブに入れると、
+/// 下まで送れる (ウィンドウの高さで切れて終わりにならない)。
+fn tall_tab_content_scrolls(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 240.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..40 {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    let tabs = ui.tabs()?;
+    tabs.add_tab("t", &scroll);
+    tabs.set_sizing(Sizing::fill());
+    window.set_child(&tabs);
+    window.show();
+    window.native_window().contentView().unwrap().layoutSubtreeIfNeeded();
+
+    let native = scroll
+        .native_view()
+        .downcast::<NSScrollView>()
+        .expect("NSScrollView");
+    let clip = native.contentView();
+    let document = unsafe { native.documentView() }.expect("中身");
+    let visible = clip.bounds().size.height;
+    let content = document.frame().size.height;
+    assert!(visible > 0.0, "タブの中でスクロールが領域を持つ");
+    assert!(content > visible, "中身のほうが高い ({content} > {visible})");
+    assert_eq!(
+        document.frame().size.width,
+        clip.bounds().size.width,
+        "横は送らないので幅はクリップに合わせる"
+    );
+
+    // 下端まで送れる。
+    let hidden = content - visible;
+    clip.scrollToPoint(NSPoint::new(0.0, hidden));
+    unsafe { native.reflectScrolledClipView(&clip) };
+    assert_eq!(clip.bounds().origin.y, hidden, "最後の行まで届く");
+    window.close();
+    Ok(())
+}

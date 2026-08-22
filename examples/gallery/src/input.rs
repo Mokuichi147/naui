@@ -2,7 +2,10 @@ use naui::{DatePickerMode, DateTime, Length, Orientation, Padding, Result, Sizin
 
 /// 日付だけを取り出した表示。
 fn describe_date(value: DateTime) -> String {
-    format!("日付: {:04}-{:02}-{:02}", value.year, value.month, value.day)
+    format!(
+        "日付: {:04}-{:02}-{:02}",
+        value.year, value.month, value.day
+    )
 }
 
 /// 1行入力・複数行入力と、プレースホルダー・無効状態。
@@ -83,7 +86,11 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
 
     let time = ui.date_picker(DatePickerMode::Time)?;
     time.set_value(DateTime::time(7, 30));
-    let time_status = ui.label(&format!("時刻: {:02}:{:02}", time.value().hour, time.value().minute))?;
+    let time_status = ui.label(&format!(
+        "時刻: {:02}:{:02}",
+        time.value().hour,
+        time.value().minute
+    ))?;
     time.on_change({
         let time_status = time_status.clone();
         move |value| {
