@@ -22,6 +22,7 @@
 //! | `Checkbox` | `GtkCheckButton` |
 //! | `ComboBox` | `GtkDropDown` + `GtkStringList` |
 //! | `RadioGroup` | 組にした `GtkCheckButton` を `GtkBox` へ並べたもの |
+//! | `DatePicker` | `GtkMenuButton` + `GtkCalendar` / `GtkSpinButton` の組 |
 //! | `TextInput` | `GtkEntry` |
 //! | `TextArea` | `GtkTextView` を `GtkScrolledWindow` に載せたもの |
 //! | `Slider` | `GtkScale` |
@@ -66,6 +67,9 @@
 //! - `Tabs` は**タブ列を送れるようにしてある** (`gtk_notebook_set_scrollable`)。
 //!   既定の `GtkNotebook` は「全タブが横に並ぶ幅」を最小幅として申告するため、
 //!   タブが増えるとウィンドウをそれ以下に縮められなくなる。
+//! - **`DatePicker` はカレンダーを開いても、日を押した時点では閉じない。**
+//!   `GtkCalendar` は「日を押した」と「月を送った」を区別せず、どちらも
+//!   `day-selected` で届くため、押すたびに閉じると月を送れなくなる。
 //! - `Checkbox` と `RadioGroup` は、**印をラベルの字面の中心へ寄せ直している**。
 //!   GTK4 は印を行の箱 (ascent + descent) の中心に置くが、日本語を含む行は
 //!   ascent が大きく取られるぶん字面が下に寄り、印だけが浮いて見えるため
@@ -107,6 +111,7 @@
 mod bin;
 mod callback;
 mod combo_box;
+mod date_picker;
 mod dialog;
 mod file_picker;
 mod file_saver;
@@ -128,10 +133,11 @@ use std::rc::Rc;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{Error, Orientation, Result, Settings, Theme};
+use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Theme};
 
 pub use bin::SizeBin;
 pub use combo_box::ComboBox;
+pub use date_picker::DatePicker;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
@@ -240,6 +246,11 @@ impl Ui {
     /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
     pub fn radio_group(&self) -> Result<RadioGroup> {
         Ok(RadioGroup::new())
+    }
+
+    /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
+    pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
+        Ok(DatePicker::new(mode))
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

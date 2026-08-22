@@ -12,20 +12,24 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, ListItem,
-    NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
-    Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter, FilePickerMode,
+    Fit, GridCell, ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem, Result,
+    ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_macos::{run_for_test, Ui, Widget};
-use objc2::msg_send;
+use objc2::{msg_send, AnyThread};
 use objc2::rc::Retained;
 use objc2::sel;
 use objc2_app_kit::{
-    NSButton, NSControlStateValueOff, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSOutlineViewDelegate, NSSegmentedControl, NSTableViewDelegate, NSTextField, NSTextInputClient,
-    NSTextView, NSView, NSWindowTitleVisibility,
+    NSButton, NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSImage,
+    NSImageScaling, NSImageView, NSLayoutConstraint, NSOutlineViewDelegate, NSSegmentedControl,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
+    NSWindowTitleVisibility,
 };
-use objc2_foundation::{NSDate, NSNotFound, NSRange, NSRunLoop, NSSize, NSString};
+use objc2_foundation::{
+    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound, NSRange,
+    NSRunLoop, NSSize, NSString,
+};
 
 /// テストケース 1 件。
 type Case = (&'static str, fn(&Ui) -> Result<()>);
@@ -227,6 +231,26 @@ fn main() {
         (
             "ポップアップメニューが項目と区切り線を NSMenu に写す",
             popup_menu_items_map_to_native,
+        ),
+        (
+            "日付ピッカーが表示する項目を種別から決める",
+            date_picker_shows_the_elements_of_its_mode,
+        ),
+        (
+            "日付ピッカーの値がネイティブと往復する",
+            date_picker_value_round_trips,
+        ),
+        (
+            "日付ピッカーが選ばせていない部分を保つ",
+            date_picker_keeps_the_part_it_does_not_show,
+        ),
+        (
+            "日付ピッカーが範囲の外へ出さない",
+            date_picker_stays_inside_the_range,
+        ),
+        (
+            "日付ピッカーの通知中に値と通知先を差し替えられる",
+            date_picker_callback_is_reentrant,
         ),
         (
             "ポップアップメニューの選択がクロージャへ届く",
@@ -3087,3 +3111,209 @@ fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
     );
     Ok(())
 }
+
+// ------------------------------------------------------------ 日付ピッカー
+
+/// ネイティブ側の編集を真似る。
+///
+/// `NSDatePicker` には `performClick` にあたるものが無いので、AppKit が
+/// 利用者の操作でするのと同じ「値を書いてから action を送る」を手で行う。
+fn edit_natively(picker: &NSDatePicker, value: DateTime) {
+    let calendar = NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), unsafe {
+        NSCalendarIdentifierGregorian
+    })
+    .expect("グレゴリオ暦");
+    let components = NSDateComponents::new();
+    components.setYear(value.year as isize);
+    components.setMonth(value.month as isize);
+    components.setDay(value.day as isize);
+    components.setHour(value.hour as isize);
+    components.setMinute(value.minute as isize);
+    components.setSecond(0);
+    let date = calendar.dateFromComponents(&components).expect("NSDate へ変換");
+    picker.setDateValue(&date);
+    let action = picker.action();
+    let target = picker.target();
+    unsafe { picker.sendAction_to(action, target.as_deref()) };
+}
+
+/// 種別ごとに `datePickerElements` が変わる。
+fn date_picker_shows_the_elements_of_its_mode(ui: &Ui) -> Result<()> {
+    let date = ui.date_picker(DatePickerMode::Date)?;
+    assert_eq!(date.mode(), DatePickerMode::Date);
+    assert_eq!(
+        date.native_picker().datePickerElements(),
+        NSDatePickerElementFlags::YearMonthDay
+    );
+
+    let time = ui.date_picker(DatePickerMode::Time)?;
+    assert_eq!(
+        time.native_picker().datePickerElements(),
+        NSDatePickerElementFlags::HourMinute
+    );
+
+    let both = ui.date_picker(DatePickerMode::DateTime)?;
+    assert_eq!(
+        both.native_picker().datePickerElements(),
+        NSDatePickerElementFlags::YearMonthDay | NSDatePickerElementFlags::HourMinute
+    );
+
+    // 日付を選ばせるときだけ、編集中にカレンダーを重ねて出す。
+    assert!(date.native_picker().presentsCalendarOverlay());
+    assert!(both.native_picker().presentsCalendarOverlay());
+    assert!(
+        !time.native_picker().presentsCalendarOverlay(),
+        "時刻だけの表示に暦は出さない"
+    );
+
+    // 作った直後は現在日時。暦は固定しているので西暦で返る。
+    assert!(
+        (2000..=9999).contains(&date.value().year),
+        "初期値が西暦で入る: {}",
+        date.value()
+    );
+    assert!(date.value().is_valid());
+    Ok(())
+}
+
+/// 値の書き込みと、ネイティブ側の編集の両方向。
+fn date_picker_value_round_trips(ui: &Ui) -> Result<()> {
+    let picker = ui.date_picker(DatePickerMode::DateTime)?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    picker.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    picker.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    assert_eq!(picker.value(), DateTime::new(2026, 8, 22, 9, 30));
+    assert!(seen.borrow().is_empty(), "set_value は通知しない");
+
+    // 暦として成り立たない値は丸める。
+    picker.set_value(DateTime::new(2026, 11, 31, 25, 70));
+    assert_eq!(picker.value(), DateTime::new(2026, 11, 30, 23, 59));
+
+    edit_natively(&picker.native_picker(), DateTime::new(2027, 1, 5, 18, 45));
+    assert_eq!(picker.value(), DateTime::new(2027, 1, 5, 18, 45));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2027, 1, 5, 18, 45)]);
+
+    // 同じ値で通知が来ても、値が動いていなければ知らせない。
+    edit_natively(&picker.native_picker(), DateTime::new(2027, 1, 5, 18, 45));
+    assert_eq!(seen.borrow().len(), 1);
+
+    picker.set_enabled(false);
+    assert!(!picker.native_picker().isEnabled());
+    Ok(())
+}
+
+/// 日付だけの表示は時刻を、時刻だけの表示は日付を保つ。
+fn date_picker_keeps_the_part_it_does_not_show(ui: &Ui) -> Result<()> {
+    let date_only = ui.date_picker(DatePickerMode::Date)?;
+    date_only.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    edit_natively(&date_only.native_picker(), DateTime::new(2027, 1, 5, 0, 0));
+    assert_eq!(
+        date_only.value(),
+        DateTime::new(2027, 1, 5, 9, 30),
+        "日付を選んでも時刻は残る"
+    );
+
+    let time_only = ui.date_picker(DatePickerMode::Time)?;
+    time_only.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    edit_natively(&time_only.native_picker(), DateTime::new(1970, 1, 1, 18, 45));
+    assert_eq!(
+        time_only.value(),
+        DateTime::new(2026, 8, 22, 18, 45),
+        "時刻を選んでも日付は残る"
+    );
+    Ok(())
+}
+
+/// 下限・上限の外へは出ない。
+fn date_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    let picker = ui.date_picker(DatePickerMode::Date)?;
+    picker.set_value(DateTime::new(2026, 6, 15, 9, 30));
+    picker.set_range(
+        Some(DateTime::date(2026, 1, 1)),
+        Some(DateTime::date(2026, 12, 31)),
+    );
+    assert_eq!(picker.value(), DateTime::new(2026, 6, 15, 9, 30));
+    assert!(picker.native_picker().minDate().is_some());
+    assert!(picker.native_picker().maxDate().is_some());
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    picker.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    edit_natively(&picker.native_picker(), DateTime::date(2030, 5, 5));
+    assert_eq!(
+        picker.value(),
+        DateTime::new(2026, 12, 31, 9, 30),
+        "上限で止まり、時刻は動かない"
+    );
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2026, 12, 31, 9, 30)]);
+
+    // 範囲の外にある値を渡すと、通知せずに端へ寄る。
+    picker.set_value(DateTime::date(1990, 1, 1));
+    assert_eq!(picker.value(), DateTime::new(2026, 1, 1, 0, 0));
+    assert_eq!(seen.borrow().len(), 1);
+
+    // 範囲を外すと自由に選べる。
+    picker.set_range(None, None);
+    assert!(picker.native_picker().minDate().is_none());
+    edit_natively(&picker.native_picker(), DateTime::date(1990, 1, 1));
+    assert_eq!(picker.value(), DateTime::date(1990, 1, 1));
+
+    // 時刻だけの表示では日付を見ない。
+    let time_only = ui.date_picker(DatePickerMode::Time)?;
+    time_only.set_value(DateTime::new(2026, 8, 22, 6, 0));
+    time_only.set_range(Some(DateTime::time(9, 0)), Some(DateTime::time(18, 0)));
+    assert_eq!(
+        time_only.value(),
+        DateTime::new(2026, 8, 22, 9, 0),
+        "日付はそのままに、時刻だけが下限へ寄る"
+    );
+    assert!(
+        time_only.native_picker().minDate().is_none(),
+        "日付での制限はネイティブへ渡さない"
+    );
+    Ok(())
+}
+
+/// 通知の最中に同じピッカーを操作し、通知先も差し替えられる。
+fn date_picker_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let picker = ui.date_picker(DatePickerMode::DateTime)?;
+    picker.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    picker.on_change({
+        let seen = seen.clone();
+        let picker = picker.clone();
+        move |value| {
+            seen.borrow_mut().push(value);
+            // 通知の中から値を読み書きしても borrow が衝突しない。
+            let _ = picker.value();
+            picker.set_value(DateTime::new(2026, 12, 31, 0, 0));
+            picker.on_change({
+                let seen = seen.clone();
+                move |value| seen.borrow_mut().push(value)
+            });
+        }
+    });
+
+    edit_natively(&picker.native_picker(), DateTime::new(2027, 1, 5, 18, 45));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2027, 1, 5, 18, 45)]);
+    assert_eq!(picker.value(), DateTime::new(2026, 12, 31, 0, 0));
+
+    edit_natively(&picker.native_picker(), DateTime::new(2028, 2, 29, 8, 0));
+    assert_eq!(
+        *seen.borrow(),
+        vec![
+            DateTime::new(2027, 1, 5, 18, 45),
+            DateTime::new(2028, 2, 29, 8, 0)
+        ],
+        "差し替えた通知先が呼ばれる"
+    );
+    Ok(())
+}
+

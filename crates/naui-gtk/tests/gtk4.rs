@@ -14,10 +14,11 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
+use gtk::glib;
 use naui_core::{
-    Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, Length,
-    ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
-    SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter, FilePickerMode,
+    Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem,
+    Result, ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_gtk::{run_for_test, Ui, Widget};
 
@@ -66,6 +67,26 @@ fn main() {
         (
             "ラジオグループのプログラム変更は通知しない",
             radio_group_programmatic_changes_are_silent,
+        ),
+        (
+            "日付ピッカーが種別に応じたコントロールだけを並べる",
+            date_picker_shows_only_what_its_mode_needs,
+        ),
+        (
+            "日付ピッカーの値がネイティブと往復する",
+            date_picker_value_round_trips,
+        ),
+        (
+            "日付ピッカーが選ばせていない部分を保つ",
+            date_picker_keeps_the_part_it_does_not_show,
+        ),
+        (
+            "日付ピッカーが範囲の外へ出さない",
+            date_picker_stays_inside_the_range,
+        ),
+        (
+            "日付ピッカーのプログラム変更は通知しない",
+            date_picker_programmatic_changes_are_silent,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         (
@@ -2270,5 +2291,176 @@ fn toolbar_icons_exist_in_the_theme(_ui: &Ui) -> Result<()> {
         }
     }
     assert!(missing.is_empty(), "テーマに無いアイコン: {missing:?}");
+    Ok(())
+}
+
+// ------------------------------------------------------------ 日付ピッカー
+
+/// `GtkBox` に並んでいる子の数。
+fn children_of(container: &gtk::Box) -> Vec<gtk::Widget> {
+    let mut children = Vec::new();
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        children.push(widget);
+    }
+    children
+}
+
+/// 種別ごとに、必要なコントロールだけが並ぶ。
+fn date_picker_shows_only_what_its_mode_needs(ui: &Ui) -> Result<()> {
+    let date = ui.date_picker(DatePickerMode::Date)?;
+    assert_eq!(date.mode(), DatePickerMode::Date);
+    let native: gtk::Box = date.native_widget().downcast().expect("GtkBox");
+    // 日付はボタン 1 つだけ。
+    assert_eq!(children_of(&native).len(), 1);
+
+    let time = ui.date_picker(DatePickerMode::Time)?;
+    let native: gtk::Box = time.native_widget().downcast().expect("GtkBox");
+    // 時・区切り・分。
+    assert_eq!(children_of(&native).len(), 3);
+
+    let both = ui.date_picker(DatePickerMode::DateTime)?;
+    let native: gtk::Box = both.native_widget().downcast().expect("GtkBox");
+    assert_eq!(children_of(&native).len(), 4);
+
+    // 作った直後は現在日時が入っている。
+    assert!(date.value().is_valid());
+    assert!(date.value().year >= 2000, "{}", date.value());
+
+    // ポップオーバーの中身はカレンダー。
+    assert!(both.native_button().popover().is_some());
+    Ok(())
+}
+
+/// 値の書き込みと、ネイティブ側の操作の両方向。
+fn date_picker_value_round_trips(ui: &Ui) -> Result<()> {
+    let picker = ui.date_picker(DatePickerMode::DateTime)?;
+    let (log, sink) = recorder::<DateTime>();
+    picker.on_change(sink);
+
+    picker.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    assert_eq!(picker.value(), DateTime::new(2026, 8, 22, 9, 30));
+    let calendar = picker.native_calendar();
+    let (hour, minute) = picker.native_spins();
+    assert_eq!(calendar.date().year(), 2026);
+    assert_eq!(calendar.date().month(), 8);
+    assert_eq!(calendar.date().day_of_month(), 22);
+    assert_eq!(hour.value() as i32, 9);
+    assert_eq!(minute.value() as i32, 30);
+    assert!(log.borrow().is_empty(), "set_value は通知しない");
+
+    // 暦として成り立たない値は丸める。
+    picker.set_value(DateTime::new(2026, 11, 31, 25, 70));
+    assert_eq!(picker.value(), DateTime::new(2026, 11, 30, 23, 59));
+
+    // カレンダーで日を選ぶ (GTK 側の `day-selected` が飛ぶ)。
+    let chosen = glib::DateTime::from_local(2027, 1, 5, 0, 0, 0.0).expect("日付");
+    calendar.select_day(&chosen);
+    assert_eq!(picker.value(), DateTime::new(2027, 1, 5, 23, 59));
+
+    // 分のスピンボタンを回す。
+    minute.set_value(45.0);
+    assert_eq!(picker.value(), DateTime::new(2027, 1, 5, 23, 45));
+    assert_eq!(
+        log.borrow().as_slice(),
+        [
+            DateTime::new(2027, 1, 5, 23, 59),
+            DateTime::new(2027, 1, 5, 23, 45)
+        ]
+    );
+
+    picker.set_enabled(false);
+    let native: gtk::Box = picker.native_widget().downcast().expect("GtkBox");
+    assert!(!native.is_sensitive());
+    Ok(())
+}
+
+/// 日付だけの表示は時刻を、時刻だけの表示は日付を保つ。
+fn date_picker_keeps_the_part_it_does_not_show(ui: &Ui) -> Result<()> {
+    let date_only = ui.date_picker(DatePickerMode::Date)?;
+    date_only.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    let chosen = glib::DateTime::from_local(2027, 1, 5, 0, 0, 0.0).expect("日付");
+    date_only.native_calendar().select_day(&chosen);
+    assert_eq!(
+        date_only.value(),
+        DateTime::new(2027, 1, 5, 9, 30),
+        "日付を選んでも時刻は残る"
+    );
+
+    let time_only = ui.date_picker(DatePickerMode::Time)?;
+    time_only.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    let (hour, _) = time_only.native_spins();
+    hour.set_value(18.0);
+    assert_eq!(
+        time_only.value(),
+        DateTime::new(2026, 8, 22, 18, 30),
+        "時刻を選んでも日付は残る"
+    );
+    Ok(())
+}
+
+/// 下限・上限の外へは出ない。
+fn date_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    let picker = ui.date_picker(DatePickerMode::Date)?;
+    picker.set_value(DateTime::new(2026, 6, 15, 9, 30));
+    picker.set_range(
+        Some(DateTime::date(2026, 1, 1)),
+        Some(DateTime::date(2026, 12, 31)),
+    );
+    assert_eq!(picker.value(), DateTime::new(2026, 6, 15, 9, 30));
+
+    let (log, sink) = recorder::<DateTime>();
+    picker.on_change(sink);
+
+    let outside = glib::DateTime::from_local(2030, 5, 5, 0, 0, 0.0).expect("日付");
+    picker.native_calendar().select_day(&outside);
+    assert_eq!(
+        picker.value(),
+        DateTime::new(2026, 12, 31, 9, 30),
+        "上限で止まり、時刻は動かない"
+    );
+    // 押し戻した結果はカレンダーの表示にも反映される。
+    assert_eq!(picker.native_calendar().date().year(), 2026);
+    assert_eq!(picker.native_calendar().date().month(), 12);
+    assert_eq!(log.borrow().as_slice(), [DateTime::new(2026, 12, 31, 9, 30)]);
+
+    // 範囲の外にある値を渡すと、通知せずに端へ寄る。
+    picker.set_value(DateTime::date(1990, 1, 1));
+    assert_eq!(picker.value(), DateTime::new(2026, 1, 1, 0, 0));
+    assert_eq!(log.borrow().len(), 1);
+
+    // 時刻だけの表示では日付を見ない。
+    let time_only = ui.date_picker(DatePickerMode::Time)?;
+    time_only.set_value(DateTime::new(2026, 8, 22, 6, 0));
+    time_only.set_range(Some(DateTime::time(9, 0)), Some(DateTime::time(18, 0)));
+    assert_eq!(time_only.value(), DateTime::new(2026, 8, 22, 9, 0));
+    Ok(())
+}
+
+fn date_picker_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
+    let picker = ui.date_picker(DatePickerMode::DateTime)?;
+    let (log, sink) = recorder::<DateTime>();
+    picker.on_change(sink);
+
+    picker.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    picker.set_value(DateTime::new(2027, 1, 5, 18, 45));
+    picker.set_range(Some(DateTime::date(2020, 1, 1)), None);
+    assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+
+    // 通知の中で同じピッカーを触っても二重借用にならない。
+    let seen = Rc::new(Cell::new(None));
+    picker.on_change({
+        let picker = picker.clone();
+        let seen = seen.clone();
+        move |value| {
+            seen.set(Some(value));
+            picker.set_value(DateTime::new(2026, 12, 31, 0, 0));
+        }
+    });
+    let (hour, _) = picker.native_spins();
+    hour.set_value(8.0);
+    assert_eq!(seen.get(), Some(DateTime::new(2027, 1, 5, 8, 45)));
+    assert_eq!(picker.value(), DateTime::new(2026, 12, 31, 0, 0));
     Ok(())
 }

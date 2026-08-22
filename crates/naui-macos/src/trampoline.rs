@@ -143,6 +143,38 @@ impl SelectHandler {
     }
 }
 
+/// 値を 1 つ受け取る通知先。
+///
+/// [`SelectHandler`] と同じ再入対応を、インデックス以外の値でも使うためのもの
+/// (日付ピッカーの `on_change` など)。`SelectHandler` は `define_class!` の
+/// ivars に載せる都合で型を固定しているので、別に用意している。
+pub(crate) struct ValueHandler<T>(RefCell<Option<Box<dyn FnMut(T)>>>);
+
+impl<T> Default for ValueHandler<T> {
+    fn default() -> Self {
+        Self(RefCell::new(None))
+    }
+}
+
+impl<T> ValueHandler<T> {
+    pub(crate) fn set(&self, f: impl FnMut(T) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// 通知する。まだ設定されていなければ何もしない。
+    pub(crate) fn emit(&self, value: T) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(value);
+        // 呼び出し中に差し替えられていたら、新しいほうを残す。
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]

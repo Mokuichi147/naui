@@ -10,6 +10,7 @@
 #![allow(unsafe_code)]
 
 mod combo_box;
+mod date_picker;
 mod dialog;
 mod file_picker;
 mod file_saver;
@@ -29,7 +30,7 @@ mod window;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Error, Orientation, Result, Settings, Theme};
+use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Theme};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
@@ -40,6 +41,7 @@ use objc2_app_kit::{
 use objc2_foundation::NSNotification;
 
 pub use combo_box::ComboBox;
+pub use date_picker::DatePicker;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
@@ -132,6 +134,11 @@ impl Ui {
     /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
     pub fn radio_group(&self) -> Result<RadioGroup> {
         Ok(RadioGroup::new(self.mtm))
+    }
+
+    /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
+    pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
+        Ok(DatePicker::new(self.mtm, mode))
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

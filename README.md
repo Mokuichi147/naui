@@ -38,6 +38,8 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
   での実行は未確認です。
 - Windows / Linux / Web: `Tree` の実機・ブラウザでの実行 (macOS では
   統合テストと Gallery で確認済み。Linux 向けの統合テストは用意してあります)
+- Windows / Linux: `DatePicker` の実機での実行 (macOS は統合テストと Gallery、
+  Web はブラウザで確認済み。Linux 向けの統合テストは用意してあります)
 
 これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
@@ -182,6 +184,35 @@ plan.on_select(|index| println!("{index} 番目が選ばれました"));
 
 排他になるのは 1 つの `RadioGroup` の中だけです。同じ画面に複数置いても混ざりません。
 
+### 日付と時刻
+
+日付や時刻を選ばせるには `DatePicker` を使います。何を選ばせるかは生成時の
+`DatePickerMode` で決め、値は `DateTime` (年月日と時分) でやり取りします。
+
+```rust
+use naui::{DatePickerMode, DateTime};
+
+let start = ui.date_picker(DatePickerMode::Date)?;
+start.set_value(DateTime::date(2026, 8, 22)); // 通知せずに値を入れる
+start.set_range(Some(DateTime::date(2026, 1, 1)), None); // 下限だけ決める
+start.on_change(|value| println!("{value} が選ばれました"));
+
+let alarm = ui.date_picker(DatePickerMode::Time)?; // 時刻だけ
+alarm.set_value(DateTime::time(7, 30));
+```
+
+作った直後の値は**その環境の現在日時 (ローカル時刻)** で、空の状態は持ちません
+(`NSDatePicker` に「未選択」が無いためです)。**秒は持ちません**。秒まで選ばせる
+コントロールが 4 環境の共通部分に無いためです。
+
+`DatePickerMode::Date` は時刻を、`DatePickerMode::Time` は日付を**選ばせない
+だけで、捨てはしません**。`set_value` で入れた側の値は `value()` にそのまま
+残ります。
+
+`set_value` は通知せず、暦として成り立たない値 (11 月 31 日など) はその月の端へ
+丸めます。`set_range` の外へは出られず、範囲の比較には**選ばせている部分だけ**を
+使います (時刻だけの表示なら日付を見ません)。
+
 ### ツリー
 
 入れ子の項目を開閉して 1 つ選ぶには `Tree` を使います。項目は**根からの子
@@ -272,7 +303,7 @@ window.set_toolbar(&toolbar);
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
 | ウィンドウ付属 | `Toolbar` |
-| データ選択 | `ComboBox`、`RadioGroup`、`List`、`Tree` |
+| データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`List`、`Tree` |
 | ファイル | `FilePicker`、`FileSaver` |
 | メディア | `Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog` |
@@ -301,6 +332,7 @@ window.set_toolbar(&toolbar);
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
 | `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
+| `DatePicker` | 🔴 `ComboBox` の組 (年/月/日 と 時:分) | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
@@ -334,6 +366,7 @@ window.set_toolbar(&toolbar);
 - `NavItem`: ナビゲーション項目
 - `ListItem` / `SelectionMode`: リスト項目と単一・複数選択
 - `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
+- `DateTime` / `DatePickerMode`: 年月日と時分の値、日付選択で何を選ばせるか
 - `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
 - `Fit` / `PlaybackState`: メディア表示と再生状態
 - `PopupItem`: ポップアップメニュー項目
@@ -432,7 +465,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 31 コンポーネントです。複数列テーブルは未実装です。
+- 対応するのは上記の 32 コンポーネントです。複数列テーブルは未実装です。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
@@ -457,6 +490,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `TreeView` のバインディングが無いため、`Tree` は `ListBox` の行として
   組み立てています。選べない枝は行ごと無効になるので、その開閉ボタンも
   押せません (プログラムからの `expand` は効きます)。
+- `CalendarDatePicker` / `TimePicker` のバインディングが無いため、`DatePicker` は
+  `ComboBox` を年 / 月 / 日 (と 時 : 分) の順に並べて組み立てています。並び順は
+  ロケールによらず固定です。年の選択肢は `set_range` があればその範囲、無ければ
+  現在の年の前後 (120 年前〜20 年後) になります。
 - `CommandBar` がバインディングに無いため、`Toolbar` は `Button` を横に並べて
   構成し、タイトルバー (ドラッグ領域) ではなくその下の行に置きます。アイコンは
   Segoe Fluent Icons を `FontIcon` で出します。
@@ -467,6 +504,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - 交差軸の `Fill` と Grid セル内の配置は、コンテナへ追加する前に指定してください。
 - `Image` のリモート URL は同期的に読み込むため、ローカルファイルの利用を推奨します。
 - `Dialog::open` と `PopupMenu::open_at` は閉じるまで戻りません。
+- `DatePicker` は `NSDatePicker` そのものです。欄をクリックするとカレンダーが
+  重なって開き (`presentsCalendarOverlay`)、キーボードとステッパーでも編集
+  できます。見た目・操作とも AppKit の既定 (SwiftUI の `DatePicker` と同じ
+  `textFieldAndStepper`) と変わりません。
 - `Toolbar` の区切りは、macOS の作法にならって `NSToolbarSpaceItem`
   (一定幅の空き) になります。区切り線は引かれません。
 - `Toolbar` を付けるとウィンドウのタイトル文字は隠れます (macOS の作法)。
@@ -482,6 +523,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
   行と開閉ボタンで組み立てています。
 - `Toolbar` の項目は、GNOME の作法にならってヘッダーバーの左側へ並びます。
+- 日付を選ぶ 1 つのコントロールが GTK4 に無いため、`DatePicker` は
+  `GtkMenuButton` のポップオーバーに載せた `GtkCalendar` と、時分の
+  `GtkSpinButton` で組み立てています。`GtkCalendar` は「日を押した」と
+  「月を送った」を区別しないので、**日を選んでもポップオーバーは閉じません**。
+  ボタンに出る日付はロケールの書式に従います。
 
 ### Web
 
@@ -496,6 +542,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `FileSaver` は `showSaveFilePicker` があればそれを使い、無いブラウザ
   (Firefox / Safari) では `<a download>` のダウンロードになります。後者では
   保存先の確認が出ないことがあり、`FileEntry::path` はどちらでも `None` です。
+- `DatePicker` の入力 UI (カレンダーなど) はブラウザが出すため、見た目と操作は
+  ブラウザごとに違います。時間帯を持ち込まないよう `datetime-local` を使います。
 - タイトルバーが無いため、`Toolbar` はウィンドウ要素の先頭に置かれます。
 - ブラウザに標準のアイコンセットが無いため、`Toolbar` のアイコンだけは naui が
   SVG を持ちます (ここだけは OS のものを使いません)。
