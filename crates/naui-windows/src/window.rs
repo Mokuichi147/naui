@@ -19,10 +19,10 @@ use winui3::Microsoft::UI::Xaml::{
 };
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
-use crate::Ui;
 use crate::toolbar::Toolbar;
+use crate::ui_thread::UiThreadCell;
 use crate::widgets::Widget;
+use crate::Ui;
 
 enum Backdrop {
     Controller {
@@ -472,7 +472,9 @@ pub(crate) fn owner_hwnd() -> Option<windows::Win32::Foundation::HWND> {
     if raw == 0 {
         return None;
     }
-    Some(windows::Win32::Foundation::HWND(raw as *mut std::ffi::c_void))
+    Some(windows::Win32::Foundation::HWND(
+        raw as *mut std::ffi::c_void,
+    ))
 }
 
 impl From<Theme> for ElementTheme {

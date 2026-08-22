@@ -8,10 +8,10 @@ use naui_core::{Error, Result, Theme};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
+use crate::apply_theme;
+use crate::to_error;
 use crate::toolbar::Toolbar;
 use crate::widgets::{create, Widget};
-use crate::to_error;
-use crate::apply_theme;
 
 struct WindowInner {
     element: HtmlElement,

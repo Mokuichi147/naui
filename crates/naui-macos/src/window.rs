@@ -80,9 +80,7 @@ impl Window {
     }
 
     pub fn set_size(&self, width: f64, height: f64) {
-        self.0
-                .native
-                .setContentSize(NSSize::new(width, height));
+        self.0.native.setContentSize(NSSize::new(width, height));
         self.0.native.center();
     }
 

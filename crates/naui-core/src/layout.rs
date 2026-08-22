@@ -294,7 +294,9 @@ mod tests {
 
     #[test]
     fn sizing_builders_keep_other_fields() {
-        let s = Sizing::fixed(100.0, 40.0).min_width(10.0).max_size(200.0, 80.0);
+        let s = Sizing::fixed(100.0, 40.0)
+            .min_width(10.0)
+            .max_size(200.0, 80.0);
         assert_eq!(s.width, Length::Fixed(100.0));
         assert_eq!(s.height, Length::Fixed(40.0));
         assert_eq!(s.min_width, Some(10.0));

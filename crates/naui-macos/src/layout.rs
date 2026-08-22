@@ -473,7 +473,9 @@ impl Scroll {
     fn apply_policy(&self) {
         let horizontal = self.0.horizontal.get();
         let vertical = self.0.vertical.get();
-        self.0.native.setHasHorizontalScroller(horizontal.is_enabled());
+        self.0
+            .native
+            .setHasHorizontalScroller(horizontal.is_enabled());
         self.0.native.setHasVerticalScroller(vertical.is_enabled());
         self.0.native.setAutohidesScrollers(
             horizontal != ScrollPolicy::Always && vertical != ScrollPolicy::Always,
@@ -507,7 +509,8 @@ impl Scroll {
             view.widthAnchor()
                 .constraintGreaterThanOrEqualToAnchor(&clip.widthAnchor())
         } else {
-            view.widthAnchor().constraintEqualToAnchor(&clip.widthAnchor())
+            view.widthAnchor()
+                .constraintEqualToAnchor(&clip.widthAnchor())
         });
         constraints.push(if self.0.vertical.get().is_enabled() {
             view.heightAnchor()

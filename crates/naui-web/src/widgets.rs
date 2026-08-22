@@ -145,10 +145,9 @@ impl Listener {
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        let _ = self.target.remove_event_listener_with_callback(
-            self.event,
-            self.closure.as_ref().unchecked_ref(),
-        );
+        let _ = self
+            .target
+            .remove_event_listener_with_callback(self.event, self.closure.as_ref().unchecked_ref());
     }
 }
 
@@ -337,7 +336,6 @@ impl TextInput {
         .ok();
         *self.0.on_change.borrow_mut() = listener;
     }
-
 }
 
 // --------------------------------------------------------------- TextArea
@@ -506,10 +504,7 @@ impl Stack {
             },
         );
         let _ = style.set_property("align-items", "center");
-        crate::layout::mark_parent(
-            &element,
-            crate::layout::ParentLayout::Flex(orientation),
-        );
+        crate::layout::mark_parent(&element, crate::layout::ParentLayout::Flex(orientation));
         Ok(Self(Rc::new(StackInner {
             element,
             orientation,

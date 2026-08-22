@@ -133,10 +133,8 @@ impl Bar {
             button.set_text_content(Some(&item.label));
             if self.0.shape == Shape::Crumb {
                 let _ = button.set_attribute("href", "#");
-                let _ = button.set_attribute(
-                    "aria-disabled",
-                    if item.enabled { "false" } else { "true" },
-                );
+                let _ = button
+                    .set_attribute("aria-disabled", if item.enabled { "false" } else { "true" });
             } else {
                 let _ = button.set_attribute("type", "button");
             }
@@ -207,7 +205,8 @@ impl Bar {
         for (i, button) in self.0.buttons.borrow().iter().enumerate() {
             let current = Some(i) == index;
             if self.0.shape != Shape::Crumb {
-                let _ = button.set_attribute("aria-selected", if current { "true" } else { "false" });
+                let _ =
+                    button.set_attribute("aria-selected", if current { "true" } else { "false" });
             }
             if current {
                 let _ = button.set_attribute("aria-current", "page");
@@ -290,7 +289,10 @@ impl Tabs {
         style(&panels, "flex-grow", "1");
         style(&panels, "display", "flex");
         style(&panels, "flex-direction", "column");
-        mark_parent(&panels, ParentLayout::Flex(naui_core::Orientation::Vertical));
+        mark_parent(
+            &panels,
+            ParentLayout::Flex(naui_core::Orientation::Vertical),
+        );
 
         append(&element, &tablist)?;
         append(&element, &panels)?;
@@ -335,7 +337,10 @@ impl Tabs {
         }
         // タブの中身は、タブの表示領域いっぱいに広がる。
         fill_parent(&content);
-        apply_child_layout(&content, ParentLayout::Flex(naui_core::Orientation::Vertical));
+        apply_child_layout(
+            &content,
+            ParentLayout::Flex(naui_core::Orientation::Vertical),
+        );
 
         let index = self.0.tabs.borrow().len();
         let listener = Listener::attach(tab.as_ref(), "click", {

@@ -75,10 +75,7 @@ pub struct Ui {
 }
 
 impl Ui {
-    fn new(
-        theme: Theme,
-        shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
-    ) -> Self {
+    fn new(theme: Theme, shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>) -> Self {
         Self {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),

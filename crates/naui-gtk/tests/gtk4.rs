@@ -2423,7 +2423,10 @@ fn date_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
     // 押し戻した結果はカレンダーの表示にも反映される。
     assert_eq!(picker.native_calendar().date().year(), 2026);
     assert_eq!(picker.native_calendar().date().month(), 12);
-    assert_eq!(log.borrow().as_slice(), [DateTime::new(2026, 12, 31, 9, 30)]);
+    assert_eq!(
+        log.borrow().as_slice(),
+        [DateTime::new(2026, 12, 31, 9, 30)]
+    );
 
     // 範囲の外にある値を渡すと、通知せずに端へ寄る。
     picker.set_value(DateTime::date(1990, 1, 1));

@@ -542,22 +542,22 @@
 #![forbid(unsafe_code)]
 
 pub use naui_core::{
-    accept_attribute, days_in_month, default_extension, is_leap_year, media, with_default_extension,
-    Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, Error, FileEntry, FileFilter,
-    FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Settings, Sizing, Theme, ToolbarIcon,
-    ToolbarItem, Track, TreeItem,
+    accept_attribute, days_in_month, default_extension, is_leap_year, media,
+    with_default_extension, Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, Error,
+    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation,
+    Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode, Settings, Sizing,
+    Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 
-#[cfg(target_arch = "wasm32")]
-pub use naui_web::{
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
     FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
     RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,
     WeakWindow, Widget, Window,
 };
-#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
-pub use naui_macos::{
+#[cfg(target_arch = "wasm32")]
+pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
     FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
     RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,

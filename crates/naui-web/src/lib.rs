@@ -67,9 +67,7 @@ pub(crate) fn document() -> Result<Document> {
 pub(crate) fn to_error(context: &'static str, value: wasm_bindgen::JsValue) -> Error {
     Error::new(
         context,
-        value
-            .as_string()
-            .unwrap_or_else(|| format!("{value:?}")),
+        value.as_string().unwrap_or_else(|| format!("{value:?}")),
     )
 }
 

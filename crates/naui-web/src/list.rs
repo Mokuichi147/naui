@@ -442,8 +442,8 @@ impl List {
             Body::Listbox { options, .. } => {
                 for (index, option) in options.iter().enumerate() {
                     let picked = indices.contains(&index);
-                    let _ =
-                        option.set_attribute("aria-selected", if picked { "true" } else { "false" });
+                    let _ = option
+                        .set_attribute("aria-selected", if picked { "true" } else { "false" });
                     if picked {
                         // 選択の色はブラウザのシステム色をそのまま使う。
                         // 新しい名前に対応していれば、後の指定が勝つ。

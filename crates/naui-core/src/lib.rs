@@ -246,7 +246,10 @@ mod tests {
     fn app_id_is_derived_from_the_name() {
         let s = Settings::new("my app");
         assert_eq!(s.app_id, "org.naui.my_app");
-        assert_eq!(Settings::new("x").app_id("com.example.x").app_id, "com.example.x");
+        assert_eq!(
+            Settings::new("x").app_id("com.example.x").app_id,
+            "com.example.x"
+        );
     }
 
     #[test]
