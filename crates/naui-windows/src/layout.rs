@@ -13,7 +13,7 @@ use winui3::Microsoft::UI::Xaml::Controls::{
 };
 use winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, Thickness, UIElement,
-    VerticalAlignment, Window as XamlWindow,
+    VerticalAlignment, Visibility, Window as XamlWindow,
 };
 
 use crate::to_error;
@@ -289,6 +289,8 @@ struct ScrollInner {
     native: ScrollViewer,
     child: RefCell<Option<Box<dyn Widget>>>,
     vertical_scroll_enabled: Cell<bool>,
+    /// ホイール入力時に、ポインター直下の ScrollViewer だけを選ぶための状態。
+    hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
 }
 
 thread_local! {
@@ -311,18 +313,21 @@ unsafe extern "system" fn low_level_mouse_hook(
         CallNextHookEx, GetAncestor, GetForegroundWindow, GA_ROOT, MSLLHOOKSTRUCT, WM_MOUSEWHEEL,
     };
 
-    if code >= 0 && wparam.0 as u32 == WM_MOUSEWHEEL {
+    if code >= 0 {
         let input = &*(lparam.0 as *const MSLLHOOKSTRUCT);
         let foreground_root = GetAncestor(GetForegroundWindow(), GA_ROOT);
-        let over_scroll_window = WHEEL_TARGETS.with(|targets| {
+        let over_target_window = WHEEL_TARGETS.with(|targets| {
             targets
                 .borrow()
                 .iter()
                 .any(|target| GetAncestor(*target, GA_ROOT) == foreground_root)
         });
-        let delta = ((input.mouseData >> 16) as i16) as f64;
-        if over_scroll_window && delta != 0.0 && apply_wheel_delta(delta) {
-            return windows::Win32::Foundation::LRESULT(1);
+
+        if over_target_window && wparam.0 as u32 == WM_MOUSEWHEEL {
+            let delta = ((input.mouseData >> 16) as i16) as f64;
+            if delta != 0.0 && apply_wheel_delta(delta) {
+                return windows::Win32::Foundation::LRESULT(1);
+            }
         }
     }
 
@@ -357,26 +362,55 @@ fn apply_wheel_delta(delta: f64) -> bool {
     if apply_list_wheel_delta(delta) {
         return true;
     }
+    apply_scroll_wheel_delta(delta)
+}
+
+/// ポインター直下にある Scroll のうち、ビジュアルツリーで最も深いものだけを送る。
+///
+/// スクロール可能な内側の Scroll が端に達していても入力を消費し、外側への
+/// 意図しないスクロール連鎖を防ぐ。内側にオーバーフローがない場合だけ外側へ渡す。
+fn apply_scroll_wheel_delta(delta: f64) -> bool {
     SCROLLS.with(|scrolls| {
         let mut scrolls = scrolls.borrow_mut();
         scrolls.retain(|scroll| scroll.strong_count() != 0);
-        for weak in scrolls.iter().rev() {
-            let Some(inner) = weak.upgrade() else {
-                continue;
-            };
-            if !inner.vertical_scroll_enabled.get() {
-                continue;
-            }
-            let current = inner.native.VerticalOffset().unwrap_or(0.0);
-            let maximum = inner.native.ScrollableHeight().unwrap_or(0.0);
-            let next = (current - delta).clamp(0.0, maximum);
-            if next != current {
-                let _ = inner.native.ScrollToVerticalOffset(next);
-                return true;
-            }
+        let target = scrolls
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|inner| inner.vertical_scroll_enabled.get())
+            .filter(|inner| inner.hovered.with_mut(|depth| *depth != 0))
+            .filter(|inner| inner.native.ScrollableHeight().unwrap_or(0.0) > 0.0)
+            .filter_map(|inner| visual_depth(&inner.native).map(|depth| (depth, inner)))
+            .max_by_key(|(depth, _)| *depth)
+            .map(|(_, inner)| inner);
+
+        let Some(inner) = target else {
+            return false;
+        };
+        let current = inner.native.VerticalOffset().unwrap_or(0.0);
+        let maximum = inner.native.ScrollableHeight().unwrap_or(0.0);
+        let next = (current - delta).clamp(0.0, maximum);
+        if next != current {
+            let _ = inner.native.ScrollToVerticalOffset(next);
         }
-        false
+        true
     })
+}
+
+fn visual_depth(native: &ScrollViewer) -> Option<usize> {
+    let mut current = Some(native.cast::<FrameworkElement>().ok()?);
+    let mut depth = 0;
+    while let Some(element) = current {
+        let ui_element = element.cast::<UIElement>().ok()?;
+        if ui_element.Visibility().ok()? != Visibility::Visible {
+            return None;
+        }
+        current = element
+            .Parent()
+            .ok()
+            .and_then(|parent| parent.cast::<FrameworkElement>().ok());
+        depth += 1;
+    }
+    Some(depth)
 }
 
 fn apply_list_wheel_delta(delta: f64) -> bool {
@@ -393,11 +427,15 @@ fn apply_list_wheel_delta(delta: f64) -> bool {
             }
             let current = target.native.VerticalOffset().unwrap_or(0.0);
             let maximum = target.native.ScrollableHeight().unwrap_or(0.0);
+            if maximum <= 0.0 {
+                continue;
+            }
             let next = (current - delta).clamp(0.0, maximum);
             if next != current {
                 let _ = target.native.ScrollToVerticalOffset(next);
-                return true;
             }
+            // List が端に達していても外側の Scroll へ連鎖させない。
+            return true;
         }
         false
     })
@@ -436,6 +474,51 @@ pub(crate) fn register_scroll(scroll: &Scroll) {
         scrolls.retain(|scroll| scroll.strong_count() != 0);
         scrolls.push(Rc::downgrade(&scroll.0));
     });
+}
+
+fn track_scroll_pointer(scroll: &Scroll) -> Result<()> {
+    use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+
+    let entered_state = scroll.0.hovered.clone();
+    let entered = PointerEventHandler::new(move |_, _| {
+        entered_state.with_mut(|depth| *depth = depth.saturating_add(1));
+        Ok(())
+    });
+    scroll
+        .0
+        .native
+        .PointerEntered(&entered)
+        .map_err(|e| to_error("Scroll のポインター購読", e))?;
+
+    let exited_state = scroll.0.hovered.clone();
+    let exited = PointerEventHandler::new(move |_, _| {
+        exited_state.with_mut(|depth| *depth = depth.saturating_sub(1));
+        Ok(())
+    });
+    scroll
+        .0
+        .native
+        .PointerExited(&exited)
+        .map_err(|e| to_error("Scroll のポインター購読", e))?;
+
+    // タブ切り替えなどで PointerEntered が発生しない場合にも、次のホイール
+    // 入力までに対象を確定できるよう PointerMoved で補正する。
+    let moved_state = scroll.0.hovered.clone();
+    let moved = PointerEventHandler::new(move |_, _| {
+        moved_state.with_mut(|depth| {
+            if *depth == 0 {
+                *depth = 1;
+            }
+        });
+        Ok(())
+    });
+    scroll
+        .0
+        .native
+        .PointerMoved(&moved)
+        .map_err(|e| to_error("Scroll のポインター購読", e))?;
+
+    Ok(())
 }
 
 pub(crate) struct ListScrollTarget {
@@ -492,7 +575,7 @@ impl_widget!(Scroll, native);
 // `ScrollMode` is not emitted by `winio-winui3`, so the corresponding
 // IScrollViewer methods are represented as raw vtable entries.  The enum is
 // defined by WinUI as Disabled = 0, Enabled = 1, Auto = 2.
-const SCROLLVIEWER_HORIZONTAL_SCROLL_MODE_SLOT: usize = 24;
+const SCROLLVIEWER_HORIZONTAL_SCROLL_MODE_SLOT: usize = 25;
 const SCROLLVIEWER_VERTICAL_SCROLL_MODE_SLOT: usize = 27;
 
 fn set_scroll_mode(native: &ScrollViewer, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
@@ -530,9 +613,11 @@ impl Scroll {
             native,
             child: RefCell::new(None),
             vertical_scroll_enabled: Cell::new(true),
+            hovered: std::sync::Arc::new(crate::ui_thread::UiThreadCell::new(0)),
         }));
         register_scroll(&this);
         this.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+        track_scroll_pointer(&this)?;
         Ok(this)
     }
 
