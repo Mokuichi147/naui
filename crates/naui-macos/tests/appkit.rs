@@ -3474,7 +3474,19 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
         "Fill の子は余りを受け取る"
     );
 
+    // hugging priority だけでは、どの行が余りを受け取るかが AppKit 任せで
+    // 安定しない。`Fill` のセルには「グリッドいっぱいまで伸びたい」という
+    // 最弱の希望も張っておく。
     let root = grid.native_view();
+    let constraints = root.constraints();
+    let has_grow = (0..constraints.len()).any(|index| {
+        constraints
+            .objectAtIndex(index)
+            .identifier()
+            .is_some_and(|id| id.to_string() == "naui.grid.grow.0.1")
+    });
+    assert!(has_grow, "Fill のセルへ伸びる希望が張られていること");
+
     root.setFrameSize(NSSize::new(500.0, 600.0));
     root.layoutSubtreeIfNeeded();
     let header_height = header.native_view().frame().size.height;
