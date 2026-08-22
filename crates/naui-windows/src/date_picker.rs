@@ -1,41 +1,44 @@
-//! 日付と時刻の選択 (WinUI 3 の `ComboBox` を並べたもの)。
+//! 日付と時刻の選択 (WinUI 3 のネイティブ `DatePicker` / `TimePicker`)。
 //!
-//! WinUI 3 には `CalendarDatePicker` と `TimePicker` があるが、naui が使っている
-//! WinUI 3 のバインディングには含まれていない。そこで、Windows の `TimePicker`
-//! 自身がそうであるように**選択肢を並べた回転式の選択**として組み立てる。
-//!
-//! 並びは年 / 月 / 日 の順に固定している。並び順はロケールによって違うが、
-//! ここは naui が自分で組んでいる部分なので、環境によって順番が変わらない
-//! ほうが読み違えにくい。
-//!
-//! 日の選択肢はその月の日数に合わせて作り直す (2 月なら 28 日か 29 日まで)。
+//! `winio-winui3` は WinUI 3 API の subset で、この 2 型を投影していないため、
+//! 公開 WinRT インターフェイスの必要な部分だけをこのモジュールで定義する。
+//! コントロール自体は `XamlReader` から生成される本物の WinUI 3 コントロール。
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
+use std::ffi::c_void;
 use std::rc::Rc;
+use std::sync::Arc;
 
-use naui_core::{days_in_month, DatePickerMode, DateTime, Result};
-use windows_core::{Interface, HSTRING};
+use naui_core::{DatePickerMode, DateTime, Result};
+use windows::Foundation::{DateTime as WinDateTime, TimeSpan, TypedEventHandler};
+use windows::Globalization::{Calendar, CalendarIdentifiers};
+use windows_core::{Interface, Param, Type, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
-    Orientation as XamlOrientation, StackPanel, TextBlock,
+    ColumnDefinition, Control, Grid as XamlGrid, Orientation as XamlOrientation, StackPanel,
+    TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::{UIElement, VerticalAlignment};
+use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use winui3::Microsoft::UI::Xaml::{
+    DependencyObject, FrameworkElement, GridLength, GridUnitType, RoutedEventHandler,
+    TextAlignment, Thickness, UIElement,
+};
 
 use crate::combo_box::ComboBox;
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::{impl_widget, Widget};
 
-/// 下限が指定されていないときに、年の選択肢をどこまで遡るか。
-const YEARS_BACK: i32 = 120;
-/// 上限が指定されていないときに、年の選択肢をどこまで先に出すか。
-const YEARS_AHEAD: i32 = 20;
+const DATE_PICKER_XAML: &str =
+    r#"<DatePicker xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"/>"#;
+const TIME_PICKER_XAML: &str =
+    r#"<TimePicker xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"/>"#;
+const TICKS_PER_MINUTE: i64 = 60 * 10_000_000;
+const DATE_PICKER_COMPACT_WIDTH: f64 = 216.0;
+const TIME_PICKER_COMPACT_WIDTH: f64 = 152.0;
 
 type ChangeCallback = Box<dyn FnMut(DateTime)>;
 
-/// 値が変わったことの通知先。
-///
-/// [`SelectHandler`](crate::widgets::SelectHandler) と同じ形で、呼ぶ間だけ
-/// クロージャを取り出すことで再入を許す。
+/// 値が変わったことの通知先。呼ぶ間だけクロージャを取り出して再入を許す。
 #[derive(Clone)]
 struct ChangeHandler(std::sync::Arc<UiThreadCell<Option<ChangeCallback>>>);
 
@@ -64,24 +67,18 @@ impl ChangeHandler {
 struct DatePickerInner {
     native: StackPanel,
     mode: DatePickerMode,
-    year: ComboBox,
-    month: ComboBox,
-    day: ComboBox,
-    hour: ComboBox,
-    minute: ComboBox,
-    /// 年の選択肢に並んでいる西暦。インデックスから年を引くために持つ。
-    years: RefCell<Vec<i32>>,
-    /// **選ばせていない部分も含めた**現在値。
+    date: Option<NativeDatePicker>,
+    time: Option<NativeTimePicker>,
     value: Cell<DateTime>,
     min: Cell<Option<DateTime>>,
     max: Cell<Option<DateTime>>,
     handler: ChangeHandler,
-    /// 値を書き込んでいる間だけ、選択の通知を無視する。
     silent: Cell<bool>,
 }
 
-/// 日付と時刻を選ばせるコントロール (`ComboBox` の組)。
+/// 日付と時刻を選ばせる WinUI 3 ネイティブコントロール。
 ///
+/// `DateTime` モードでは `DatePicker` と `TimePicker` を横に並べる。
 /// 作った直後の値は、その環境の現在日時 (ローカル時刻)。
 #[derive(Clone)]
 pub struct DatePicker(Rc<DatePickerInner>);
@@ -94,18 +91,16 @@ impl DatePicker {
             .SetOrientation(XamlOrientation::Horizontal)
             .map_err(|e| to_error("日付ピッカーの向きの設定", e))?;
         native
-            .SetSpacing(4.0)
+            .SetSpacing(8.0)
             .map_err(|e| to_error("日付ピッカーの間隔の設定", e))?;
 
+        let date = mode.has_date().then(load_date_picker).transpose()?;
+        let time = mode.has_time().then(load_time_picker).transpose()?;
         let this = Self(Rc::new(DatePickerInner {
             native,
             mode,
-            year: ComboBox::new()?,
-            month: ComboBox::new()?,
-            day: ComboBox::new()?,
-            hour: ComboBox::new()?,
-            minute: ComboBox::new()?,
-            years: RefCell::new(Vec::new()),
+            date,
+            time,
             value: Cell::new(local_now()),
             min: Cell::new(None),
             max: Cell::new(None),
@@ -113,86 +108,126 @@ impl DatePicker {
             silent: Cell::new(false),
         }));
 
-        // 選択肢は固定のものだけ先に入れておく。年と日は値に合わせて作り直す。
-        this.0.month.set_items(&numbers(1..=12));
-        this.0.hour.set_items(&padded(0..=23));
-        this.0.minute.set_items(&padded(0..=59));
-
-        if mode.has_date() {
-            this.append(&this.0.year)?;
-            this.append_text("/")?;
-            this.append(&this.0.month)?;
-            this.append_text("/")?;
-            this.append(&this.0.day)?;
-        }
-        if mode.has_time() {
-            this.append(&this.0.hour)?;
-            this.append_text(":")?;
-            this.append(&this.0.minute)?;
-        }
-
-        for combo in this.combos() {
-            combo.on_select({
-                let weak = Rc::downgrade(&this.0);
-                move |_index| {
+        if let Some(date) = &this.0.date {
+            let element = date
+                .cast::<UIElement>()
+                .map_err(|e| to_error("DatePicker の要素化", e))?;
+            this.append(&element)?;
+            balance_date_picker_columns(date);
+            let loaded_date = Arc::new(UiThreadCell::new(date.clone()));
+            let loaded = RoutedEventHandler::new(move |_, _| {
+                let _ = loaded_date.try_with_mut(|date| balance_date_picker_columns(date));
+                Ok(())
+            });
+            element
+                .cast::<FrameworkElement>()
+                .map_err(|e| to_error("DatePicker のレイアウト要素化", e))?
+                .Loaded(&loaded)
+                .map_err(|e| to_error("DatePicker の読み込み購読", e))?;
+            let target = Arc::new(UiThreadCell::new(Rc::downgrade(&this.0)));
+            let changed = TypedEventHandler::<
+                NativeDatePicker,
+                NativeDatePickerValueChangedEventArgs,
+            >::new(move |_, _| {
+                let _ = target.try_with_mut(|weak| {
                     if let Some(inner) = weak.upgrade() {
                         DatePicker(inner).native_changed();
                     }
-                }
+                });
+                Ok(())
             });
+            date.date_changed(&changed)
+                .map_err(|e| to_error("DatePicker の変更購読", e))?;
+        }
+
+        if let Some(time) = &this.0.time {
+            let element = time
+                .cast::<UIElement>()
+                .map_err(|e| to_error("TimePicker の要素化", e))?;
+            this.append(&element)?;
+            compact_time_picker(time);
+            let loaded_time = Arc::new(UiThreadCell::new(time.clone()));
+            let loaded = RoutedEventHandler::new(move |_, _| {
+                let _ = loaded_time.try_with_mut(|time| compact_time_picker(time));
+                Ok(())
+            });
+            element
+                .cast::<FrameworkElement>()
+                .map_err(|e| to_error("TimePicker のレイアウト要素化", e))?
+                .Loaded(&loaded)
+                .map_err(|e| to_error("TimePicker の読み込み購読", e))?;
+            let target = Arc::new(UiThreadCell::new(Rc::downgrade(&this.0)));
+            let changed = TypedEventHandler::<
+                NativeTimePicker,
+                NativeTimePickerValueChangedEventArgs,
+            >::new(move |_, _| {
+                let _ = target.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        DatePicker(inner).native_changed();
+                    }
+                });
+                Ok(())
+            });
+            time.time_changed(&changed)
+                .map_err(|e| to_error("TimePicker の変更購読", e))?;
         }
 
         this.write_native(this.value());
         Ok(this)
     }
 
-    /// 何を選ばせるか。生成時に決まり、あとから変わらない。
     pub fn mode(&self) -> DatePickerMode {
         self.0.mode
     }
 
-    /// 現在の値。選ばせていない部分も、渡された値のまま返る。
     pub fn value(&self) -> DateTime {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。範囲外なら端へ寄せ、暦として成り立たない値は丸める。
     pub fn set_value(&self, value: DateTime) {
         let value = self.clamp(value);
         self.0.value.set(value);
         self.write_native(value);
     }
 
-    /// 選べる範囲を決める。`None` はその側に制限を置かない。
-    ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。年の選択肢も
-    /// この範囲に合わせて作り直す。
+    /// WinUI 側には年の範囲を反映し、月日・時刻の境界は変更時に端へ寄せる。
     pub fn set_range(&self, min: Option<DateTime>, max: Option<DateTime>) {
         self.0.min.set(min.map(DateTime::normalized));
         self.0.max.set(max.map(DateTime::normalized));
-        self.0.years.borrow_mut().clear();
+        self.write_native_range();
         self.set_value(self.value());
     }
 
     pub fn set_enabled(&self, enabled: bool) {
-        for combo in self.combos() {
-            combo.set_enabled(enabled);
+        for element in self.native_picker_elements() {
+            if let Ok(control) = element.cast::<Control>() {
+                let _ = control.SetIsEnabled(enabled);
+            }
         }
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは置き換わる。
     pub fn on_change(&self, f: impl FnMut(DateTime) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 組み立てに使っている `ComboBox` (年・月・日・時・分の順)。
-    /// バックエンド固有の脱出口として公開している。
-    pub fn native_combo_boxes(&self) -> Vec<ComboBox> {
-        self.combos().to_vec()
+    /// WinUI 3 の `DatePicker`。日付を表示しないモードでは `None`。
+    pub fn native_date_picker_element(&self) -> Option<UIElement> {
+        self.0.date.as_ref()?.cast().ok()
     }
 
-    /// どれかの `ComboBox` で選択が変わったときの処理。
+    /// WinUI 3 の `TimePicker`。時刻を表示しないモードでは `None`。
+    pub fn native_time_picker_element(&self) -> Option<UIElement> {
+        self.0.time.as_ref()?.cast().ok()
+    }
+
+    /// 以前の ComboBox 実装とのソース互換用。ネイティブ化後は常に空。
+    #[deprecated(
+        note = "native_date_picker_element / native_time_picker_element を使用してください"
+    )]
+    pub fn native_combo_boxes(&self) -> Vec<ComboBox> {
+        Vec::new()
+    }
+
     fn native_changed(&self) {
         if self.0.silent.get() {
             return;
@@ -200,8 +235,7 @@ impl DatePicker {
         let Some(shown) = self.read_native() else {
             return;
         };
-        let accepted = self.clamp(self.0.mode.apply(self.value(), shown));
-        // 日数の変わる月へ移ったときのために、選択肢ごと作り直す。
+        let accepted = self.clamp(shown);
         self.write_native(accepted);
         if accepted == self.value() {
             return;
@@ -210,99 +244,69 @@ impl DatePicker {
         self.0.handler.emit(accepted);
     }
 
-    /// いま選ばれている年月日と時分。どれか 1 つでも未選択なら `None`。
     fn read_native(&self) -> Option<DateTime> {
-        let year = *self.0.years.borrow().get(self.0.year.selected()?)?;
-        Some(
-            DateTime {
-                year,
-                month: (self.0.month.selected()? + 1) as u8,
-                day: (self.0.day.selected()? + 1) as u8,
-                hour: self.0.hour.selected()? as u8,
-                minute: self.0.minute.selected()? as u8,
-            }
-            .normalized(),
-        )
+        let mut value = self.value();
+        if let Some(date) = &self.0.date {
+            let selected = from_native_date(date.date().ok()?)?;
+            value = value.with_date(selected.year, selected.month, selected.day);
+        }
+        if let Some(time) = &self.0.time {
+            let (hour, minute) = from_native_time(time.time().ok()?);
+            value = value.with_time(hour, minute);
+        }
+        Some(value.normalized())
     }
 
     fn clamp(&self, value: DateTime) -> DateTime {
         self.0.mode.clamp(value, self.0.min.get(), self.0.max.get())
     }
 
-    /// 値を 5 つの `ComboBox` へ書く。
-    ///
-    /// `ComboBox::set_items` / `set_selected` は通知しないので、ここから
-    /// `on_change` が呼ばれることはない。
     fn write_native(&self, value: DateTime) {
         let previous = self.0.silent.replace(true);
-
-        // `if` の条件に借用を書くと、その借用が本体の実行中まで生きてしまい、
-        // 中で `borrow_mut` する rebuild_years と衝突する。先に受けておく。
-        let known = self.0.years.borrow().contains(&value.year);
-        if !known {
-            self.rebuild_years(value.year);
+        if let (Some(date), Ok(value)) = (&self.0.date, to_native_date(value)) {
+            let _ = date.set_date(value);
         }
-        let index = self.0.years.borrow().iter().position(|y| *y == value.year);
-        if let Some(index) = index {
-            self.0.year.set_selected(index);
+        if let Some(time) = &self.0.time {
+            let _ = time.set_time(to_native_time(value));
         }
-        self.0.month.set_selected(value.month as usize - 1);
-
-        let days = days_in_month(value.year, value.month) as usize;
-        if self.0.day.len() != days {
-            self.0.day.set_items(&numbers(1..=days as i32));
-        }
-        self.0.day.set_selected(value.day as usize - 1);
-
-        self.0.hour.set_selected(value.hour as usize);
-        self.0.minute.set_selected(value.minute as usize);
-
         self.0.silent.set(previous);
     }
 
-    /// 年の選択肢を作り直す。範囲があればその範囲、無ければ現在の年を挟む
-    /// [`YEARS_BACK`]..[`YEARS_AHEAD`] 年ぶん。`needed` は必ず含める。
-    fn rebuild_years(&self, needed: i32) {
-        let now = local_now().year;
-        let first = self.0.min.get().map_or(now - YEARS_BACK, |min| min.year);
-        let last = self.0.max.get().map_or(now + YEARS_AHEAD, |max| max.year);
-        let first = first.min(needed).max(1);
-        let last = last.max(needed).max(first);
-        let years: Vec<i32> = (first..=last).collect();
-        self.0.year.set_items(&numbers_from(&years));
-        *self.0.years.borrow_mut() = years;
+    fn write_native_range(&self) {
+        let Some(date) = &self.0.date else {
+            return;
+        };
+        let min = self.0.min.get().unwrap_or(DateTime::date(1, 1, 1));
+        let max = self.0.max.get().unwrap_or(DateTime::date(9999, 12, 31));
+        // WinUI は設定途中でも MinYear <= MaxYear を要求する。いったん最大範囲へ
+        // 戻してから上限、下限の順で狭める。逆転範囲は naui の clamp と同じく
+        // 上限側へ一点化する。
+        let min = if min > max { max } else { min };
+        let values = [
+            (false, DateTime::date(9999, 12, 31)),
+            (true, DateTime::date(1, 1, 1)),
+            (false, max),
+            (true, min),
+        ];
+        for (is_min, value) in values {
+            let Ok(value) = to_native_date(value) else {
+                continue;
+            };
+            if is_min {
+                let _ = date.set_min_year(value);
+            } else {
+                let _ = date.set_max_year(value);
+            }
+        }
     }
 
-    fn combos(&self) -> [ComboBox; 5] {
-        [
-            self.0.year.clone(),
-            self.0.month.clone(),
-            self.0.day.clone(),
-            self.0.hour.clone(),
-            self.0.minute.clone(),
-        ]
+    fn native_picker_elements(&self) -> impl Iterator<Item = UIElement> + '_ {
+        self.native_date_picker_element()
+            .into_iter()
+            .chain(self.native_time_picker_element())
     }
 
-    fn append(&self, combo: &ComboBox) -> Result<()> {
-        self.append_element(&combo.native_element())
-    }
-
-    /// 区切りの文字を並びへ入れる。
-    fn append_text(&self, text: &str) -> Result<()> {
-        let label = TextBlock::new().map_err(|e| to_error("区切りの生成", e))?;
-        label
-            .SetText(&HSTRING::from(text))
-            .map_err(|e| to_error("区切りの設定", e))?;
-        label
-            .SetVerticalAlignment(VerticalAlignment::Center)
-            .map_err(|e| to_error("区切りの配置", e))?;
-        let element = label
-            .cast::<UIElement>()
-            .map_err(|e| to_error("区切りの要素化", e))?;
-        self.append_element(&element)
-    }
-
-    fn append_element(&self, element: &UIElement) -> Result<()> {
+    fn append(&self, element: &UIElement) -> Result<()> {
         self.0
             .native
             .Children()
@@ -312,22 +316,143 @@ impl DatePicker {
     }
 }
 
-fn numbers(range: std::ops::RangeInclusive<i32>) -> Vec<String> {
-    range.map(|n| n.to_string()).collect()
+fn load_date_picker() -> Result<NativeDatePicker> {
+    let picker: NativeDatePicker = XamlReader::Load(&DATE_PICKER_XAML.into())
+        .and_then(|value| value.cast())
+        .map_err(|e| to_error("WinUI DatePicker の生成", e))?;
+    let gregorian =
+        CalendarIdentifiers::Gregorian().map_err(|e| to_error("グレゴリオ暦の取得", e))?;
+    picker
+        .set_calendar_identifier(&gregorian)
+        .map_err(|e| to_error("DatePicker の暦設定", e))?;
+    Ok(picker)
 }
 
-fn numbers_from(values: &[i32]) -> Vec<String> {
-    values.iter().map(|n| n.to_string()).collect()
+fn load_time_picker() -> Result<NativeTimePicker> {
+    XamlReader::Load(&TIME_PICKER_XAML.into())
+        .and_then(|value| value.cast())
+        .map_err(|e| to_error("WinUI TimePicker の生成", e))
 }
 
-/// 2 桁でそろえた選択肢 (`00`, `01`, …)。時刻に使う。
-fn padded(range: std::ops::RangeInclusive<i32>) -> Vec<String> {
-    range.map(|n| format!("{n:02}")).collect()
+/// 標準テンプレートは英語の長い月名を想定して月だけ広く、かつ左揃えにする。
+/// 日本語表示では3列を等幅・中央揃えにし、既定の最小幅も縮める。
+fn balance_date_picker_columns(picker: &NativeDatePicker) {
+    let Some(root) = picker_template_root(picker) else {
+        return;
+    };
+    let width = GridLength {
+        Value: 1.0,
+        GridUnitType: GridUnitType::Star,
+    };
+    for name in ["DayColumn", "MonthColumn", "YearColumn"] {
+        let Ok(column) = root
+            .FindName(&HSTRING::from(name))
+            .and_then(|value| value.cast::<ColumnDefinition>())
+        else {
+            continue;
+        };
+        let _ = column.SetWidth(width);
+    }
+
+    if let Ok(month) = root
+        .FindName(&HSTRING::from("MonthTextBlock"))
+        .and_then(|value| value.cast::<TextBlock>())
+    {
+        let _ = month.SetTextAlignment(TextAlignment::Center);
+        let _ = month.SetPadding(Thickness {
+            Left: 0.0,
+            Top: 3.0,
+            Right: 0.0,
+            Bottom: 6.0,
+        });
+        let _ = month.SetMargin(Thickness::default());
+    }
+
+    set_template_min_width(&root, DATE_PICKER_COMPACT_WIDTH);
+
+    // テンプレートの内容 Grid が余白を再配分しないよう、3列の変更を
+    // レイアウトへ即座に反映させる。
+    if let Ok(grid) = root
+        .FindName(&HSTRING::from("FlyoutButtonContentGrid"))
+        .and_then(|value| value.cast::<XamlGrid>())
+    {
+        let _ = grid.InvalidateMeasure();
+    }
 }
 
-/// Windows の現在日時 (ローカル時刻)。
+fn compact_time_picker(picker: &NativeTimePicker) {
+    let Some(root) = picker_template_root(picker) else {
+        return;
+    };
+    set_template_min_width(&root, TIME_PICKER_COMPACT_WIDTH);
+}
+
+fn picker_template_root<T: Interface>(picker: &T) -> Option<FrameworkElement> {
+    let control = picker.cast::<Control>().ok()?;
+    let _ = control.ApplyTemplate();
+    picker
+        .cast::<DependencyObject>()
+        .and_then(|picker| NativeVisualTreeHelper::get_child(&picker, 0))
+        .and_then(|root| root.cast::<FrameworkElement>())
+        .ok()
+}
+
+fn set_template_min_width(root: &FrameworkElement, width: f64) {
+    if let Ok(button) = root
+        .FindName(&HSTRING::from("FlyoutButton"))
+        .and_then(|value| value.cast::<FrameworkElement>())
+    {
+        let _ = button.SetMinWidth(width);
+        let _ = button.InvalidateMeasure();
+    }
+}
+
+fn to_native_date(value: DateTime) -> windows_core::Result<WinDateTime> {
+    let value = value.normalized();
+    let calendar = gregorian_calendar()?;
+    calendar.SetToNow()?;
+    calendar.SetDay(1)?;
+    calendar.SetYear(value.year)?;
+    calendar.SetMonth(value.month as i32)?;
+    calendar.SetDay(value.day as i32)?;
+    calendar.SetHour(12)?;
+    calendar.SetMinute(0)?;
+    calendar.SetSecond(0)?;
+    calendar.SetNanosecond(0)?;
+    calendar.GetDateTime()
+}
+
+fn from_native_date(value: WinDateTime) -> Option<DateTime> {
+    let calendar = gregorian_calendar().ok()?;
+    calendar.SetDateTime(value).ok()?;
+    Some(DateTime::date(
+        calendar.Year().ok()?,
+        calendar.Month().ok()? as u8,
+        calendar.Day().ok()? as u8,
+    ))
+}
+
+fn gregorian_calendar() -> windows_core::Result<Calendar> {
+    let calendar = Calendar::new()?;
+    calendar.ChangeCalendarSystem(&CalendarIdentifiers::Gregorian()?)?;
+    Ok(calendar)
+}
+
+fn to_native_time(value: DateTime) -> TimeSpan {
+    TimeSpan {
+        Duration: (i64::from(value.hour) * 60 + i64::from(value.minute)) * TICKS_PER_MINUTE,
+    }
+}
+
+fn from_native_time(value: TimeSpan) -> (u8, u8) {
+    let minutes = value
+        .Duration
+        .div_euclid(TICKS_PER_MINUTE)
+        .clamp(0, 24 * 60 - 1);
+    ((minutes / 60) as u8, (minutes % 60) as u8)
+}
+
 fn local_now() -> DateTime {
-    // SAFETY: 出力を受け取るだけの Win32 呼び出しで、引数も状態も持たない。
     let now = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
     DateTime {
         year: now.wYear as i32,
@@ -337,4 +462,409 @@ fn local_now() -> DateTime {
         minute: now.wMinute as u8,
     }
     .normalized()
+}
+
+windows_core::imp::define_interface!(
+    IVisualTreeHelper,
+    IVisualTreeHelper_Vtbl,
+    0x5f69ac1e_6504_5e3f_a11c_87684c1db814
+);
+impl windows_core::RuntimeType for IVisualTreeHelper {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+#[repr(C)]
+pub struct IVisualTreeHelper_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+}
+
+windows_core::imp::define_interface!(
+    IVisualTreeHelperStatics,
+    IVisualTreeHelperStatics_Vtbl,
+    0x5aece43c_7651_5bb5_855c_2198496e455e
+);
+impl windows_core::RuntimeType for IVisualTreeHelperStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+#[repr(C)]
+pub struct IVisualTreeHelperStatics_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+    find_elements_point: usize,
+    find_elements_rect: usize,
+    find_all_elements_point: usize,
+    find_all_elements_rect: usize,
+    get_child: unsafe extern "system" fn(
+        *mut c_void,
+        *mut c_void,
+        i32,
+        *mut *mut c_void,
+    ) -> windows_core::HRESULT,
+    get_children_count: usize,
+    get_parent: usize,
+    disconnect_children_recursive: usize,
+    get_open_popups: usize,
+    get_open_popups_for_xaml_root: unsafe extern "system" fn(
+        *mut c_void,
+        *mut c_void,
+        *mut *mut c_void,
+    ) -> windows_core::HRESULT,
+}
+
+#[repr(transparent)]
+#[derive(Clone)]
+struct NativeVisualTreeHelper(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    NativeVisualTreeHelper,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl windows_core::RuntimeType for NativeVisualTreeHelper {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IVisualTreeHelper>();
+}
+unsafe impl Interface for NativeVisualTreeHelper {
+    type Vtable = IVisualTreeHelper_Vtbl;
+    const IID: windows_core::GUID = IVisualTreeHelper::IID;
+}
+impl windows_core::RuntimeName for NativeVisualTreeHelper {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Media.VisualTreeHelper";
+}
+
+impl NativeVisualTreeHelper {
+    fn get_child(
+        reference: &DependencyObject,
+        index: i32,
+    ) -> windows_core::Result<DependencyObject> {
+        Self::with_statics(|statics| unsafe {
+            let mut result = core::ptr::null_mut();
+            (Interface::vtable(statics).get_child)(
+                Interface::as_raw(statics),
+                Interface::as_raw(reference),
+                index,
+                &mut result,
+            )
+            .and_then(|| Type::from_abi(result))
+        })
+    }
+
+    fn with_statics<R>(
+        callback: impl FnOnce(&IVisualTreeHelperStatics) -> windows_core::Result<R>,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            NativeVisualTreeHelper,
+            IVisualTreeHelperStatics,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+
+windows_core::imp::define_interface!(
+    IDatePicker,
+    IDatePicker_Vtbl,
+    0xca1dc351_3ae3_5247_8263_16bd516c6e72
+);
+impl windows_core::RuntimeType for IDatePicker {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+
+#[repr(C)]
+pub struct IDatePicker_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+    header: usize,
+    set_header: usize,
+    header_template: usize,
+    set_header_template: usize,
+    calendar_identifier: usize,
+    set_calendar_identifier:
+        unsafe extern "system" fn(*mut c_void, *mut c_void) -> windows_core::HRESULT,
+    date: unsafe extern "system" fn(*mut c_void, *mut WinDateTime) -> windows_core::HRESULT,
+    set_date: unsafe extern "system" fn(*mut c_void, WinDateTime) -> windows_core::HRESULT,
+    day_visible: usize,
+    set_day_visible: usize,
+    month_visible: usize,
+    set_month_visible: usize,
+    year_visible: usize,
+    set_year_visible: usize,
+    day_format: usize,
+    set_day_format: usize,
+    month_format: usize,
+    set_month_format: usize,
+    year_format: usize,
+    set_year_format: usize,
+    min_year: unsafe extern "system" fn(*mut c_void, *mut WinDateTime) -> windows_core::HRESULT,
+    set_min_year: unsafe extern "system" fn(*mut c_void, WinDateTime) -> windows_core::HRESULT,
+    max_year: unsafe extern "system" fn(*mut c_void, *mut WinDateTime) -> windows_core::HRESULT,
+    set_max_year: unsafe extern "system" fn(*mut c_void, WinDateTime) -> windows_core::HRESULT,
+    orientation: usize,
+    set_orientation: usize,
+    light_dismiss_overlay_mode: usize,
+    set_light_dismiss_overlay_mode: usize,
+    selected_date: usize,
+    set_selected_date: usize,
+    date_changed:
+        unsafe extern "system" fn(*mut c_void, *mut c_void, *mut i64) -> windows_core::HRESULT,
+    remove_date_changed: unsafe extern "system" fn(*mut c_void, i64) -> windows_core::HRESULT,
+    selected_date_changed: usize,
+    remove_selected_date_changed: usize,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeDatePicker(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    NativeDatePicker,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl windows_core::RuntimeType for NativeDatePicker {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IDatePicker>();
+}
+unsafe impl Interface for NativeDatePicker {
+    type Vtable = IDatePicker_Vtbl;
+    const IID: windows_core::GUID = IDatePicker::IID;
+}
+impl windows_core::RuntimeName for NativeDatePicker {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.DatePicker";
+}
+
+impl NativeDatePicker {
+    fn set_calendar_identifier(&self, value: &windows_core::HSTRING) -> windows_core::Result<()> {
+        unsafe {
+            (Interface::vtable(self).set_calendar_identifier)(
+                Interface::as_raw(self),
+                core::mem::transmute_copy(value),
+            )
+            .ok()
+        }
+    }
+
+    fn date(&self) -> windows_core::Result<WinDateTime> {
+        unsafe {
+            let mut result = WinDateTime::default();
+            (Interface::vtable(self).date)(Interface::as_raw(self), &mut result).map(|| result)
+        }
+    }
+
+    fn set_date(&self, value: WinDateTime) -> windows_core::Result<()> {
+        unsafe { (Interface::vtable(self).set_date)(Interface::as_raw(self), value).ok() }
+    }
+
+    fn set_min_year(&self, value: WinDateTime) -> windows_core::Result<()> {
+        unsafe { (Interface::vtable(self).set_min_year)(Interface::as_raw(self), value).ok() }
+    }
+
+    fn set_max_year(&self, value: WinDateTime) -> windows_core::Result<()> {
+        unsafe { (Interface::vtable(self).set_max_year)(Interface::as_raw(self), value).ok() }
+    }
+
+    fn date_changed<P>(&self, handler: P) -> windows_core::Result<i64>
+    where
+        P: Param<TypedEventHandler<NativeDatePicker, NativeDatePickerValueChangedEventArgs>>,
+    {
+        unsafe {
+            let mut token = 0;
+            (Interface::vtable(self).date_changed)(
+                Interface::as_raw(self),
+                handler.param().abi(),
+                &mut token,
+            )
+            .map(|| token)
+        }
+    }
+}
+
+windows_core::imp::define_interface!(
+    IDatePickerValueChangedEventArgs,
+    IDatePickerValueChangedEventArgs_Vtbl,
+    0xbd4e36ca_f6ab_57cf_84f0_75d024084f20
+);
+impl windows_core::RuntimeType for IDatePickerValueChangedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+#[repr(C)]
+pub struct IDatePickerValueChangedEventArgs_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+    old_date: usize,
+    new_date: usize,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeDatePickerValueChangedEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    NativeDatePickerValueChangedEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl windows_core::RuntimeType for NativeDatePickerValueChangedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IDatePickerValueChangedEventArgs>();
+}
+unsafe impl Interface for NativeDatePickerValueChangedEventArgs {
+    type Vtable = IDatePickerValueChangedEventArgs_Vtbl;
+    const IID: windows_core::GUID = IDatePickerValueChangedEventArgs::IID;
+}
+impl windows_core::RuntimeName for NativeDatePickerValueChangedEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.DatePickerValueChangedEventArgs";
+}
+
+windows_core::imp::define_interface!(
+    ITimePicker,
+    ITimePicker_Vtbl,
+    0xed4baa33_c240_5934_9229_82d37b26f846
+);
+impl windows_core::RuntimeType for ITimePicker {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+
+#[repr(C)]
+pub struct ITimePicker_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+    header: usize,
+    set_header: usize,
+    header_template: usize,
+    set_header_template: usize,
+    clock_identifier: usize,
+    set_clock_identifier: usize,
+    minute_increment: usize,
+    set_minute_increment: usize,
+    time: unsafe extern "system" fn(*mut c_void, *mut TimeSpan) -> windows_core::HRESULT,
+    set_time: unsafe extern "system" fn(*mut c_void, TimeSpan) -> windows_core::HRESULT,
+    light_dismiss_overlay_mode: usize,
+    set_light_dismiss_overlay_mode: usize,
+    selected_time: usize,
+    set_selected_time: usize,
+    time_changed:
+        unsafe extern "system" fn(*mut c_void, *mut c_void, *mut i64) -> windows_core::HRESULT,
+    remove_time_changed: unsafe extern "system" fn(*mut c_void, i64) -> windows_core::HRESULT,
+    selected_time_changed: usize,
+    remove_selected_time_changed: usize,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeTimePicker(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    NativeTimePicker,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl windows_core::RuntimeType for NativeTimePicker {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITimePicker>();
+}
+unsafe impl Interface for NativeTimePicker {
+    type Vtable = ITimePicker_Vtbl;
+    const IID: windows_core::GUID = ITimePicker::IID;
+}
+impl windows_core::RuntimeName for NativeTimePicker {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TimePicker";
+}
+
+impl NativeTimePicker {
+    fn time(&self) -> windows_core::Result<TimeSpan> {
+        unsafe {
+            let mut result = TimeSpan::default();
+            (Interface::vtable(self).time)(Interface::as_raw(self), &mut result).map(|| result)
+        }
+    }
+
+    fn set_time(&self, value: TimeSpan) -> windows_core::Result<()> {
+        unsafe { (Interface::vtable(self).set_time)(Interface::as_raw(self), value).ok() }
+    }
+
+    fn time_changed<P>(&self, handler: P) -> windows_core::Result<i64>
+    where
+        P: Param<TypedEventHandler<NativeTimePicker, NativeTimePickerValueChangedEventArgs>>,
+    {
+        unsafe {
+            let mut token = 0;
+            (Interface::vtable(self).time_changed)(
+                Interface::as_raw(self),
+                handler.param().abi(),
+                &mut token,
+            )
+            .map(|| token)
+        }
+    }
+}
+
+windows_core::imp::define_interface!(
+    ITimePickerValueChangedEventArgs,
+    ITimePickerValueChangedEventArgs_Vtbl,
+    0x7b98953f_c24a_53c6_8a3a_520558508b08
+);
+impl windows_core::RuntimeType for ITimePickerValueChangedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+#[repr(C)]
+pub struct ITimePickerValueChangedEventArgs_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+    old_time: usize,
+    new_time: usize,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeTimePickerValueChangedEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    NativeTimePickerValueChangedEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl windows_core::RuntimeType for NativeTimePickerValueChangedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITimePickerValueChangedEventArgs>();
+}
+unsafe impl Interface for NativeTimePickerValueChangedEventArgs {
+    type Vtable = ITimePickerValueChangedEventArgs_Vtbl;
+    const IID: windows_core::GUID = ITimePickerValueChangedEventArgs::IID;
+}
+impl windows_core::RuntimeName for NativeTimePickerValueChangedEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TimePickerValueChangedEventArgs";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_time_round_trip_uses_100_nanosecond_ticks() {
+        for (hour, minute) in [(0, 0), (7, 30), (12, 5), (23, 59)] {
+            let value = DateTime::time(hour, minute);
+            assert_eq!(from_native_time(to_native_time(value)), (hour, minute));
+        }
+    }
+
+    #[test]
+    fn native_time_is_clamped_to_one_day() {
+        assert_eq!(from_native_time(TimeSpan { Duration: -1 }), (0, 0));
+        assert_eq!(
+            from_native_time(TimeSpan {
+                Duration: 48 * 60 * TICKS_PER_MINUTE,
+            }),
+            (23, 59)
+        );
+    }
+
+    #[test]
+    fn native_date_round_trip_uses_local_gregorian_calendar() {
+        winui3::init_apartment(winui3::ApartmentType::MultiThreaded).unwrap();
+        for value in [
+            DateTime::date(2000, 2, 29),
+            DateTime::date(2026, 8, 22),
+            DateTime::date(2099, 12, 31),
+        ] {
+            assert_eq!(
+                from_native_date(to_native_date(value).unwrap()),
+                Some(value)
+            );
+        }
+    }
 }
