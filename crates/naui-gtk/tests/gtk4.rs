@@ -101,6 +101,10 @@ fn main() {
             number_input_notifies_on_typing,
         ),
         (
+            "数値入力が指定された幅に収まり、それ以下には潰れない",
+            number_input_keeps_its_buttons_inside,
+        ),
+        (
             "パスワード入力が伏せ字の欄として往復する",
             password_input_round_trips,
         ),
@@ -728,6 +732,45 @@ fn number_input_notifies_on_typing(ui: &Ui) -> Result<()> {
     native.set_text("");
     assert_eq!(number.value(), 100.0);
     assert_eq!(log.borrow().len(), 2);
+    Ok(())
+}
+
+/// 数値入力は、指定された幅に収まり、欄とボタンの幅より下へは潰れない。
+fn number_input_keeps_its_buttons_inside(ui: &Ui) -> Result<()> {
+    /// 数値の欄によくある指定 (論理ピクセル)。
+    const GIVEN: i32 = 140;
+
+    let number = ui.number_input(120.0)?;
+    number.set_decimals(2);
+    // 上限なしは `GtkAdjustment` では 16 桁の範囲になる。`GtkSpinButton` は
+    // 範囲に入る数の桁数から幅を決めるので、そのままだと桁数ぶんを欲しがる。
+    number.set_range(Some(0.0), None);
+    let native: gtk::SpinButton = number.native_widget().downcast().expect("GtkSpinButton");
+
+    let (content, _) = measure_width(&native);
+    assert!(
+        content <= GIVEN,
+        "範囲の桁数で幅が決まっていない ({content}px)"
+    );
+
+    let bin = bin_of(&number);
+    number.set_sizing(Sizing::new().width(Length::Fixed(f64::from(GIVEN))));
+    let (min, nat) = measure_width(&bin);
+    assert_eq!((min, nat), (GIVEN, GIVEN), "指定した幅そのものになる");
+
+    // 中身の最小より狭い指定は、中身に合わせて押し返す。狭いまま配ると、
+    // `GtkSpinButton` は縮まずに上下のボタンを枠の外へ描いてしまう。
+    number.set_sizing(Sizing::new().width(Length::Fixed(40.0)));
+    let (min, nat) = measure_width(&bin);
+    assert_eq!((min, nat), (content, content), "欄とボタンのぶんは残る");
+
+    // 上限付きの `Fill` も同じ。
+    number.set_sizing(Sizing::new().width(Length::Fill).max_width(40.0));
+    let (min, nat) = measure_width(&bin);
+    assert!(
+        min >= content && nat >= content,
+        "上限で潰されない (最小 {min}px, 自然 {nat}px)"
+    );
     Ok(())
 }
 

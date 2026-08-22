@@ -25,6 +25,14 @@ use crate::widgets::{impl_widget, without_signal, Widget};
 /// ここで止まっても naui の答えは変わらない。
 const RANGE_LIMIT: f64 = 1.0e15;
 
+/// 数字の欄に見せておく桁数。
+///
+/// `GtkSpinButton` は幅を決めるとき、範囲に入る数の桁数を数える。範囲を
+/// 指定していない欄は [`RANGE_LIMIT`] の 16 桁ぶんを欲しがってしまうので、
+/// 「自然な大きさ」はここで決め直す。最小のほうは欄を 0 桁まで許して
+/// (`set_width_chars(0)`)、幅を決めるのはアプリに任せる。
+const FIELD_CHARS: i32 = 8;
+
 struct NumberInputInner {
     native: gtk::SpinButton,
     bin: SizeBin,
@@ -49,7 +57,12 @@ impl NumberInput {
         let native = gtk::SpinButton::with_range(-RANGE_LIMIT, RANGE_LIMIT, spec.step);
         // 数字以外は受け付けない。
         native.set_numeric(true);
+        native.set_width_chars(0);
+        native.set_max_width_chars(FIELD_CHARS);
         let bin = SizeBin::wrap(&native);
+        // 欄が 0 桁まで縮んでも、上下のボタンのぶんの幅は要る。それより狭い
+        // 幅を指定されたときに、ボタンが枠の外へはみ出さないようにする。
+        bin.mark_rigid_width();
 
         let this = Self(Rc::new(NumberInputInner {
             native,
