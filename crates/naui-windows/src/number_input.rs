@@ -1,7 +1,7 @@
 //! 数値入力 (`TextBox` + 増減ボタン)。
 //!
 //! WinUI 3 の `NumberBox` は `winio-winui3` のバインディングに無いため、
-//! 数字を打つ `TextBox` と `-` / `+` の `Button` を `StackPanel` へ並べる
+//! 数字を打つ `TextBox` と `-` / `+` の `Button` を `Grid` へ並べる
 //! (`NumberBox` の既定である Inline のスピンボタンと同じ並び)。
 //!
 //! 値の丸めと範囲は [`NumberSpec`] が決める。打っている最中に表示を
@@ -15,14 +15,17 @@ use std::sync::Arc;
 use naui_core::{NumberSpec, Result};
 use windows_core::{Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, Orientation as XamlOrientation, StackPanel, TextBlock, TextBox,
+    Button as XamlButton, ColumnDefinition, Grid as XamlGrid, TextBlock, TextBox,
     TextChangedEventHandler,
 };
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, TextAlignment, UIElement};
+use winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, GridLength, GridUnitType, RoutedEventHandler, TextAlignment, Thickness,
+    UIElement,
+};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
-use crate::widgets::{impl_widget, Widget};
+use crate::widgets::Widget;
 
 /// 数字の欄の最小幅 (論理ピクセル)。中身に合わせると狭くなりすぎるため。
 const FIELD_MIN_WIDTH: f64 = 96.0;
@@ -57,7 +60,7 @@ impl ChangeHandler {
 }
 
 struct NumberInputInner {
-    native: StackPanel,
+    native: XamlGrid,
     field: TextBox,
     down: XamlButton,
     up: XamlButton,
@@ -75,14 +78,33 @@ struct NumberInputInner {
 /// 既定は整数 (刻み 1、小数桁 0、範囲の制限なし)。
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
-impl_widget!(NumberInput, native);
+
+impl Widget for NumberInput {
+    fn native_element(&self) -> UIElement {
+        self.0
+            .native
+            .cast::<UIElement>()
+            .expect("WinUI のコントロールは UIElement である")
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Widget> {
+        Box::new(self.clone())
+    }
+}
+
+impl NumberInput {
+    /// 数字とボタンが見切れないよう、内部構成に必要な幅を下限にする。
+    pub fn set_sizing(&self, mut sizing: naui_core::Sizing) {
+        let content_width = FIELD_MIN_WIDTH + SPIN_WIDTH * 2.0;
+        sizing.min_width = Some(sizing.min_width.unwrap_or(0.0).max(content_width));
+        let element = <Self as Widget>::native_element(self);
+        crate::layout::apply_sizing(&element, sizing);
+    }
+}
 
 impl NumberInput {
     pub(crate) fn new(value: f64) -> Result<Self> {
-        let native = StackPanel::new().map_err(|e| to_error("StackPanel の生成", e))?;
-        native
-            .SetOrientation(XamlOrientation::Horizontal)
-            .map_err(|e| to_error("数値入力の向きの設定", e))?;
+        let native = XamlGrid::new().map_err(|e| to_error("数値入力 Grid の生成", e))?;
 
         let field = TextBox::new().map_err(|e| to_error("TextBox の生成", e))?;
         field
@@ -168,19 +190,52 @@ impl NumberInput {
         (self.0.down.clone(), self.0.up.clone())
     }
 
-    /// 欄とボタンを `StackPanel` へ並べる。
+    /// 欄とボタンを `Grid` へ並べる。
     fn assemble(&self) -> Result<()> {
+        let columns = self
+            .0
+            .native
+            .ColumnDefinitions()
+            .map_err(|e| to_error("数値入力の列の取得", e))?;
+        for width in [
+            GridLength {
+                Value: 1.0,
+                GridUnitType: GridUnitType::Star,
+            },
+            GridLength {
+                Value: SPIN_WIDTH,
+                GridUnitType: GridUnitType::Pixel,
+            },
+            GridLength {
+                Value: SPIN_WIDTH,
+                GridUnitType: GridUnitType::Pixel,
+            },
+        ] {
+            let column = ColumnDefinition::new().map_err(|e| to_error("数値入力の列の生成", e))?;
+            column
+                .SetWidth(width)
+                .map_err(|e| to_error("数値入力の列幅の設定", e))?;
+            columns
+                .Append(&column)
+                .map_err(|e| to_error("数値入力の列の追加", e))?;
+        }
+
         let children = self
             .0
             .native
             .Children()
             .map_err(|e| to_error("数値入力の子の取得", e))?;
-        for element in [
-            self.0.field.cast::<UIElement>(),
-            self.0.down.cast::<UIElement>(),
-            self.0.up.cast::<UIElement>(),
+        for (column, element) in [
+            (0, self.0.field.cast::<UIElement>()),
+            (1, self.0.down.cast::<UIElement>()),
+            (2, self.0.up.cast::<UIElement>()),
         ] {
             let element = element.map_err(|e| to_error("数値入力の要素化", e))?;
+            let framework = element
+                .cast::<FrameworkElement>()
+                .map_err(|e| to_error("数値入力のレイアウト要素化", e))?;
+            XamlGrid::SetColumn(&framework, column)
+                .map_err(|e| to_error("数値入力の列位置の設定", e))?;
             children
                 .Append(&element)
                 .map_err(|e| to_error("数値入力への追加", e))?;
@@ -301,6 +356,20 @@ fn spin_button(text: &str) -> Result<XamlButton> {
     button
         .SetContent(&label)
         .map_err(|e| to_error("Button への内容設定", e))?;
+    button
+        // アプリ共通の Button スタイルには左右 16px の Padding がある。
+        // 幅 34px のスピンボタンへそのまま適用すると、内容幅と既定の
+        // MinWidth がボタン幅を押し広げ、隣のボタンが欠けて見える。
+        .SetPadding(Thickness {
+            Left: 0.0,
+            Top: 8.0,
+            Right: 0.0,
+            Bottom: 8.0,
+        })
+        .map_err(|e| to_error("Button の余白の設定", e))?;
+    button
+        .SetMinWidth(0.0)
+        .map_err(|e| to_error("Button の最小幅の設定", e))?;
     button
         .SetWidth(SPIN_WIDTH)
         .map_err(|e| to_error("Button の幅の設定", e))?;
