@@ -293,7 +293,15 @@ impl Grid {
         });
         // 縦は中央ぞろえ。NSGridView の既定 (上ぞろえ) だと、同じ行に置いた
         // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
-        target.setYPlacement(if wants_fill(&view, false) {
+        let fill_height = wants_fill(&view, false);
+        if !fill_height {
+            // 横と同じ理由で、`Auto` の子は行の余りを受け取らない。
+            // NSStackView のようにコンテナ自身の hugging priority が低い子は、
+            // これが無いと `Fill` 行より先に余りを吸ってしまい、`Fill` 行が
+            // 中身の高さ (タブなら見出しだけ) まで潰れる。
+            keep_auto_size(&view, false);
+        }
+        target.setYPlacement(if fill_height {
             NSGridCellPlacement::Fill
         } else {
             NSGridCellPlacement::Center

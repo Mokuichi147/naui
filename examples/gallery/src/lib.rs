@@ -53,6 +53,8 @@ pub fn build(ui: &Ui) -> Result<()> {
     // 固定部分だけを Stack にまとめ、タブは Grid の Fill 行へ直接置く。
     let header = ui.stack(Orientation::Vertical)?;
     header.set_spacing(10.0);
+    // 見出しはウィンドウの幅いっぱいに広げる (中の文字は中央ぞろえ)。
+    header.set_sizing(Sizing::fill_width());
 
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["naui gallery", "基本"]));

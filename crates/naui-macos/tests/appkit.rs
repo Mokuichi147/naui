@@ -22,9 +22,9 @@ use objc2::sel;
 use objc2::{msg_send, AnyThread};
 use objc2_app_kit::{
     NSButton, NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSImage,
-    NSImageScaling, NSImageView, NSLayoutConstraint, NSOutlineViewDelegate, NSScrollView,
-    NSSegmentedControl, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
-    NSWindowTitleVisibility,
+    NSImageScaling, NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation,
+    NSOutlineViewDelegate, NSScrollView, NSSegmentedControl, NSTableViewDelegate, NSTextField,
+    NSTextInputClient, NSTextView, NSView, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound, NSPoint,
@@ -156,6 +156,10 @@ fn main() {
         (
             "グリッドの Auto の子が再レイアウトで横に広がらない",
             grid_auto_does_not_fill,
+        ),
+        (
+            "グリッドの Auto 行が Fill 行の高さを奪わない",
+            grid_fill_row_keeps_the_rest,
         ),
         (
             "Gallery のメディア欄が高さ変更後にラベル幅を広げない",
@@ -3425,5 +3429,63 @@ fn tall_tab_content_scrolls(ui: &Ui) -> Result<()> {
     unsafe { native.reflectScrolledClipView(&clip) };
     assert_eq!(clip.bounds().origin.y, hidden, "最後の行まで届く");
     window.close();
+    Ok(())
+}
+
+/// `Auto` の行に置いた子は、縦の余りを受け取らない。
+///
+/// NSStackView のようにコンテナ自身の hugging priority が低い子は、これが
+/// 無いと `Fill` 行より先に余りを吸ってしまい、`Fill` 行が中身の高さ
+/// (タブなら見出しだけ) まで潰れる。
+fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::Auto);
+    grid.set_row_track(1, Track::FILL);
+
+    let header = ui.stack(Orientation::Vertical)?;
+    header.append(&ui.label("見出し")?);
+    header.set_sizing(Sizing::fill_width());
+    grid.attach(&header, GridCell::new(0, 0));
+
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..30 {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    grid.attach(&scroll, GridCell::new(0, 1));
+
+    let vertical = NSLayoutConstraintOrientation::Vertical;
+    assert_eq!(
+        header
+            .native_view()
+            .contentHuggingPriorityForOrientation(vertical),
+        999.0,
+        "Auto の子は縦にも内容の高さを保つ"
+    );
+    assert_eq!(
+        scroll
+            .native_view()
+            .contentHuggingPriorityForOrientation(vertical),
+        1.0,
+        "Fill の子は余りを受け取る"
+    );
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(500.0, 600.0));
+    root.layoutSubtreeIfNeeded();
+    let header_height = header.native_view().frame().size.height;
+    let scroll_height = scroll.native_view().frame().size.height;
+    assert!(
+        header_height < 100.0,
+        "見出しは中身の高さのまま: {header_height}"
+    );
+    assert!(
+        scroll_height > 400.0,
+        "Fill 行が残りの高さを受け取る: {scroll_height}"
+    );
     Ok(())
 }
