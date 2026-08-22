@@ -88,6 +88,26 @@ fn main() {
             "日付ピッカーのプログラム変更は通知しない",
             date_picker_programmatic_changes_are_silent,
         ),
+        (
+            "数値入力の値がネイティブと往復する",
+            number_input_value_round_trips,
+        ),
+        (
+            "数値入力が小数桁と刻みと範囲を GtkSpinButton へ渡す",
+            number_input_applies_the_spec,
+        ),
+        (
+            "数値入力の打鍵が通知され、確定で値へそろう",
+            number_input_notifies_on_typing,
+        ),
+        (
+            "数値入力が指定された幅に収まり、それ以下には潰れない",
+            number_input_keeps_its_buttons_inside,
+        ),
+        (
+            "パスワード入力が伏せ字の欄として往復する",
+            password_input_round_trips,
+        ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         (
             "打鍵が通知され、set_text は通知しない",
@@ -622,6 +642,172 @@ fn radio_group_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
     radio.select(1);
     assert_eq!(seen.get(), Some(1));
     assert_eq!(radio.selected(), Some(2));
+    Ok(())
+}
+
+/// 数値入力は `GtkSpinButton` と値をやり取りし、操作を通知する。
+fn number_input_value_round_trips(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(3.0)?;
+    assert_eq!(number.value(), 3.0);
+    let native: gtk::SpinButton = number.native_widget().downcast().expect("GtkSpinButton");
+    assert_eq!(native.value(), 3.0);
+    assert!(native.is_numeric(), "数字以外は受け付けないこと");
+
+    let (log, sink) = recorder::<f64>();
+    number.on_change(sink);
+
+    // 既定は整数なので、小数は丸めて入る。
+    number.set_value(2.4);
+    assert_eq!(number.value(), 2.0);
+    assert_eq!(native.value(), 2.0);
+    assert!(log.borrow().is_empty(), "set_value は通知しない");
+
+    // 上下のボタンと同じく、ネイティブ側で値を動かす。
+    native.set_value(5.0);
+    assert_eq!(number.value(), 5.0);
+    assert_eq!(log.borrow().as_slice(), [5.0]);
+
+    // 値が動かなければ知らせない。
+    native.set_value(5.0);
+    assert_eq!(log.borrow().len(), 1);
+
+    number.set_enabled(false);
+    assert!(!native.is_sensitive());
+    Ok(())
+}
+
+/// 小数桁・刻み・範囲は `GtkSpinButton` にも naui の値にも効く。
+fn number_input_applies_the_spec(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(0.0)?;
+    number.set_decimals(2);
+    number.set_step(0.5);
+    number.set_range(Some(0.0), Some(10.0));
+
+    let native: gtk::SpinButton = number.native_widget().downcast().expect("GtkSpinButton");
+    assert_eq!(native.digits(), 2);
+    assert_eq!(native.increments(), (0.5, 5.0));
+    assert_eq!(native.range(), (0.0, 10.0));
+
+    number.set_value(1.239);
+    assert_eq!(number.value(), 1.24, "小数桁へ丸める");
+
+    number.set_value(12.345);
+    assert_eq!(number.value(), 10.0, "上限で止まる");
+    number.set_value(-1.0);
+    assert_eq!(number.value(), 0.0, "下限で止まる");
+
+    // 範囲を外すと自由に入る。
+    number.set_range(None, None);
+    number.set_value(-30.5);
+    assert_eq!(number.value(), -30.5);
+    assert_eq!(number.spec().max, None);
+    Ok(())
+}
+
+/// 打鍵の時点で読める値は通知し、確定 (`update`) で表示と値がそろう。
+fn number_input_notifies_on_typing(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(0.0)?;
+    number.set_range(None, Some(100.0));
+    let native: gtk::SpinButton = number.native_widget().downcast().expect("GtkSpinButton");
+
+    let (log, sink) = recorder::<f64>();
+    number.on_change(sink);
+
+    // 利用者の打鍵と同じく、欄の文字を差し替える。
+    native.set_text("12");
+    assert_eq!(number.value(), 12.0);
+    assert_eq!(log.borrow().as_slice(), [12.0]);
+
+    // 確定しても、同じ値なら重ねて通知しない。
+    native.update();
+    assert_eq!(number.value(), 12.0);
+    assert_eq!(log.borrow().len(), 1);
+
+    // 範囲の外は端へ寄る。
+    native.set_text("999");
+    assert_eq!(number.value(), 100.0);
+    assert_eq!(log.borrow().as_slice(), [12.0, 100.0]);
+
+    // 数として読めないものは放っておく。
+    native.set_text("");
+    assert_eq!(number.value(), 100.0);
+    assert_eq!(log.borrow().len(), 2);
+    Ok(())
+}
+
+/// 数値入力は、指定された幅に収まり、欄とボタンの幅より下へは潰れない。
+fn number_input_keeps_its_buttons_inside(ui: &Ui) -> Result<()> {
+    /// 数値の欄によくある指定 (論理ピクセル)。
+    const GIVEN: i32 = 140;
+
+    let number = ui.number_input(120.0)?;
+    number.set_decimals(2);
+    // 上限なしは `GtkAdjustment` では 16 桁の範囲になる。`GtkSpinButton` は
+    // 範囲に入る数の桁数から幅を決めるので、そのままだと桁数ぶんを欲しがる。
+    number.set_range(Some(0.0), None);
+    let native: gtk::SpinButton = number.native_widget().downcast().expect("GtkSpinButton");
+
+    let (content, _) = measure_width(&native);
+    assert!(
+        content <= GIVEN,
+        "範囲の桁数で幅が決まっていない ({content}px)"
+    );
+
+    let bin = bin_of(&number);
+    number.set_sizing(Sizing::new().width(Length::Fixed(f64::from(GIVEN))));
+    let (min, nat) = measure_width(&bin);
+    assert_eq!((min, nat), (GIVEN, GIVEN), "指定した幅そのものになる");
+
+    // 中身の最小より狭い指定は、中身に合わせて押し返す。狭いまま配ると、
+    // `GtkSpinButton` は縮まずに上下のボタンを枠の外へ描いてしまう。
+    number.set_sizing(Sizing::new().width(Length::Fixed(40.0)));
+    let (min, nat) = measure_width(&bin);
+    assert_eq!((min, nat), (content, content), "欄とボタンのぶんは残る");
+
+    // 上限付きの `Fill` も同じ。
+    number.set_sizing(Sizing::new().width(Length::Fill).max_width(40.0));
+    let (min, nat) = measure_width(&bin);
+    assert!(
+        min >= content && nat >= content,
+        "上限で潰されない (最小 {min}px, 自然 {nat}px)"
+    );
+    Ok(())
+}
+
+/// パスワード入力は `GtkPasswordEntry` そのもので、文字列は往復する。
+fn password_input_round_trips(ui: &Ui) -> Result<()> {
+    let password = ui.password_input()?;
+    let native: gtk::PasswordEntry = password
+        .native_widget()
+        .downcast()
+        .expect("GtkPasswordEntry");
+
+    let (log, sink) = recorder::<String>();
+    password.on_change({
+        let mut sink = sink;
+        move |text: &str| sink(text.to_string())
+    });
+
+    password.set_text("ひみつ");
+    assert_eq!(password.text(), "ひみつ");
+    assert_eq!(native.text().as_str(), "ひみつ");
+    assert!(log.borrow().is_empty(), "set_text は通知しない");
+
+    password.set_placeholder("パスワード");
+    assert_eq!(
+        native.placeholder_text().map(|t| t.to_string()),
+        Some("パスワード".to_string())
+    );
+
+    // 利用者の打鍵と同じく、末尾へ差し込む。
+    // 差し込む位置は文字数で数える (バイト数ではない)。
+    let mut position = native.text().chars().count() as i32;
+    native.insert_text("！", &mut position);
+    assert_eq!(password.text(), "ひみつ！");
+    assert_eq!(log.borrow().as_slice(), ["ひみつ！"]);
+
+    password.set_enabled(false);
+    assert!(!native.is_sensitive());
     Ok(())
 }
 

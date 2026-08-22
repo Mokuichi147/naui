@@ -288,6 +288,72 @@ impl TextInput {
     }
 }
 
+// ----------------------------------------------------------- PasswordInput
+
+struct PasswordInputInner {
+    native: gtk::PasswordEntry,
+    bin: SizeBin,
+    on_change: TextNotifier,
+    handler: RefCell<Option<glib::SignalHandlerId>>,
+}
+
+/// パスワード入力 (`GtkPasswordEntry`)。
+///
+/// API の形は [`TextInput`] と同じで、違うのは**打った文字が伏せ字になる**
+/// ことだけ。伏せ字を一時的に外すボタン (peek icon) は `GtkPasswordEntry` に
+/// あるが、4 環境の共通部分に無いので出さない。
+#[derive(Clone)]
+pub struct PasswordInput(Rc<PasswordInputInner>);
+impl_widget!(PasswordInput);
+
+impl PasswordInput {
+    pub(crate) fn new() -> Self {
+        let native = gtk::PasswordEntry::new();
+        let bin = SizeBin::wrap(&native);
+        let inner = Rc::new(PasswordInputInner {
+            native,
+            bin,
+            on_change: TextNotifier::default(),
+            handler: RefCell::new(None),
+        });
+        let id = {
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_changed(move |native| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.on_change.emit(native.text().as_str());
+                }
+            })
+        };
+        *inner.handler.borrow_mut() = Some(id);
+        Self(inner)
+    }
+
+    /// いま入力されている文字列。
+    pub fn text(&self) -> String {
+        self.0.native.text().to_string()
+    }
+
+    /// プログラムから中身を差し替える。`on_change` は呼ばれない。
+    pub fn set_text(&self, text: &str) {
+        without_signal(&self.0.native, &self.0.handler, || {
+            self.0.native.set_text(text);
+        });
+    }
+
+    pub fn set_placeholder(&self, text: &str) {
+        self.0.native.set_placeholder_text(Some(text));
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.0.native.set_sensitive(enabled);
+    }
+
+    /// 利用者が打つたびに、そのときの中身で呼ばれる。
+    pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
+        self.0.on_change.set(f);
+    }
+}
+
 // --------------------------------------------------------------- TextArea
 
 struct TextAreaInner {
