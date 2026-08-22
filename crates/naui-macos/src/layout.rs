@@ -49,6 +49,15 @@ const AUTO_HUGGING: NSLayoutPriority = 999.0;
 /// `Fill` 行の子に張る「行いっぱいまで伸びたい」という希望の識別子。
 const GRID_GROW_ID: &str = "naui.grid.grow";
 
+/// その希望の優先度。
+///
+/// `NSGridView` が余りを `Auto` 行へ渡してしまうときの弱い好み
+/// (`NSLayoutPriorityDefaultLow` = 250 相当) には勝ち、`Auto` の子が持つ
+/// compression resistance ([`HUG_CONTENT`]) には**負ける**値にしてある。
+/// これより強くすると `Fill` 行が余りを取りすぎ、`Auto` 行の中身が
+/// 潰れてしまう (見出しが 30pt まで縮む)。
+const GRID_GROW_PRIORITY: NSLayoutPriority = HUG_CONTENT - 1.0;
+
 /// `Fill` のときの compression resistance priority。
 ///
 /// 画像や動画の intrinsic size が親の最小幅にならないようにする。
@@ -351,7 +360,7 @@ impl Grid {
         let grow = view
             .heightAnchor()
             .constraintEqualToAnchor(&self.0.native.heightAnchor());
-        grow.setPriority(PREFERRED_SIZE_PRIORITY);
+        grow.setPriority(GRID_GROW_PRIORITY);
         grow.setIdentifier(Some(&NSString::from_str(&identifier)));
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[grow]));
     }
