@@ -101,8 +101,9 @@
 //!
 //! ## テキスト入力
 //!
-//! 1 行なら [`TextInput`]、改行を含む文章なら [`TextArea`] を使う。API の形は
-//! 同じで、どちらも IME・コピー / 貼り付け・取り消しはネイティブに任せている。
+//! 1 行なら [`TextInput`]、改行を含む文章なら [`TextArea`]、伏せ字にするなら
+//! [`PasswordInput`] を使う。API の形はどれも同じで、IME・コピー / 貼り付け・
+//! 取り消しはネイティブに任せている。
 //!
 //! ```no_run
 //! # use naui::{Length, Result, Sizing, Ui};
@@ -120,6 +121,7 @@
 //! | --- | --- | --- | --- | --- |
 //! | `TextInput` | `TextBox` | `NSTextField` | `GtkEntry` | `<input type="text">` |
 //! | `TextArea` | `TextBox` (`AcceptsReturn`) | `NSTextView` + `NSScrollView` | `GtkTextView` + `GtkScrolledWindow` | `<textarea>` |
+//! | `PasswordInput` | `PasswordBox` | `NSSecureTextField` | `GtkPasswordEntry` | `<input type="password">` |
 //!
 //! [`TextArea`] は**長い行を折り返し、はみ出した分は縦にスクロール**する。
 //! 折り返しの有無を選ぶ設定は、3 環境の共通部分に無いため持たない。
@@ -128,6 +130,42 @@
 //!
 //! `set_text` では `on_change` は呼ばれない (`TextInput` と同じく、Windows だけは
 //! ネイティブの `TextChanged` が出るため呼ばれる)。
+//!
+//! [`PasswordInput`] は打った文字を伏せ字にするだけで、API は [`TextInput`] と
+//! 同じ。**伏せ字を一時的に外すボタンは持たない** (`NSSecureTextField` に
+//! 無いため)。入力された文字列は `text()` で読めるので、扱いはアプリの責任。
+//!
+//! ## 数値入力
+//!
+//! 数を入れさせるときは [`NumberInput`] を使う。値は `f64` で、範囲・刻み・
+//! 小数桁は [`NumberSpec`] が決める。**既定は整数** (刻み 1、小数桁 0、
+//! 範囲の制限なし) なので、小数を扱うなら両方を指定する。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let count = ui.number_input(1.0)?;
+//! count.set_range(Some(1.0), Some(99.0)); // 1..=99 の外へは出られない
+//! count.on_change(|value| println!("{value} 個"));
+//!
+//! let rate = ui.number_input(0.5)?;
+//! rate.set_decimals(2); // 0.50 のように 2 桁で見せる
+//! rate.set_step(0.05); // 上下のボタンで動く量
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `NumberInput` | `TextBox` + 増減ボタン | `NSTextField` + `NSStepper` | `GtkSpinButton` | `<input type="number">` |
+//!
+//! 値は**小数桁へ丸めてから範囲へ収める**。範囲の外の値を
+//! [`set_value`](NumberInput::set_value) へ渡すと、通知せずに端へ寄る。
+//! 打っている最中は表示を書き換えず、読めた時点で `on_change` が呼ばれる。
+//! 中身に合わせた幅を持たないので (`TextInput` と同じ)、幅は
+//! [`set_sizing`](NumberInput::set_sizing) で指定する。
+//! 表示を値へそろえ直すのは**確定したとき** (Enter・欄を離れたとき・増減の
+//! ボタンを押したとき) で、数として読めない文字列は確定時に元の値へ戻る。
 //!
 //! ## 選択入力
 //!
@@ -534,41 +572,41 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 83 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 89 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 84 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 88 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
 pub use naui_core::{
     accept_attribute, days_in_month, default_extension, is_leap_year, media,
     with_default_extension, Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, Error,
-    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation,
-    Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode, Settings, Sizing,
-    Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, NumberSpec,
+    Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode, Settings,
+    Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
-    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,
-    WeakWindow, Widget, Window,
+    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
+    PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
+    TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
-    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,
-    WeakWindow, Widget, Window,
+    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
+    PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
+    TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
-    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,
-    WeakWindow, Widget, Window,
+    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
+    PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
+    TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -578,9 +616,9 @@ pub use naui_windows::{
 ))]
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
-    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,
-    WeakWindow, Widget, Window,
+    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
+    PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
+    TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -747,6 +785,26 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     text_area.set_enabled(true);
     text_area.on_change(|_s: &str| {});
     text_area.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(1.0)));
+
+    let password: PasswordInput = ui.password_input()?;
+    let _: String = password.text();
+    password.set_text("t");
+    password.set_placeholder("t");
+    password.set_enabled(true);
+    password.on_change(|_s: &str| {});
+    password.set_sizing(Sizing::fill_width());
+
+    let number: NumberInput = ui.number_input(1.0)?;
+    let _: f64 = number.value();
+    let _: NumberSpec = number.spec();
+    number.set_value(2.0);
+    number.set_range(Some(0.0), Some(10.0));
+    number.set_range(None, None);
+    number.set_step(0.5);
+    number.set_decimals(2);
+    number.set_enabled(true);
+    number.on_change(|_v: f64| {});
+    number.set_sizing(Sizing::fill_width());
 
     let slider: Slider = ui.slider(0.0, 1.0)?;
     let _: f64 = slider.value();

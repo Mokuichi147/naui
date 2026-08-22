@@ -338,6 +338,60 @@ impl TextInput {
     }
 }
 
+// ----------------------------------------------------------- PasswordInput
+
+struct PasswordInputInner {
+    input: HtmlInputElement,
+    on_change: RefCell<Option<Listener>>,
+}
+
+/// パスワード入力 (`<input type="password">`)。
+///
+/// API の形は [`TextInput`] と同じで、違うのは**打った文字が伏せ字になる**
+/// ことだけ。伏せ字を一時的に外す仕掛けは 4 環境の共通部分に無いので持たない。
+#[derive(Clone)]
+pub struct PasswordInput(Rc<PasswordInputInner>);
+impl_widget!(PasswordInput, input);
+
+impl PasswordInput {
+    pub(crate) fn new(doc: &Document) -> Result<Self> {
+        let input: HtmlInputElement = create(doc, "input")?.unchecked_into();
+        input.set_type("password");
+        Ok(Self(Rc::new(PasswordInputInner {
+            input,
+            on_change: RefCell::new(None),
+        })))
+    }
+
+    /// いま入力されている文字列。
+    pub fn text(&self) -> String {
+        self.0.input.value()
+    }
+
+    /// 文字列を置き換える。`on_change` は呼ばれない。
+    pub fn set_text(&self, text: &str) {
+        self.0.input.set_value(text);
+    }
+
+    pub fn set_placeholder(&self, text: &str) {
+        self.0.input.set_placeholder(text);
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.0.input.set_disabled(!enabled);
+    }
+
+    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    pub fn on_change(&self, mut f: impl FnMut(&str) + 'static) {
+        let input = self.0.input.clone();
+        let listener = Listener::attach(self.0.input.as_ref(), "input", move || {
+            f(&input.value());
+        })
+        .ok();
+        *self.0.on_change.borrow_mut() = listener;
+    }
+}
+
 // --------------------------------------------------------------- TextArea
 
 struct TextAreaInner {

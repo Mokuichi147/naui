@@ -120,6 +120,7 @@ mod layout;
 mod list;
 mod media;
 mod navigation;
+mod number_input;
 mod popup;
 mod radio_group;
 mod toolbar;
@@ -145,12 +146,13 @@ pub use layout::{Grid, Scroll, Spacer};
 pub use list::List;
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
+pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
 pub use toolbar::Toolbar;
 pub use tree::Tree;
 pub use widgets::{
-    Button, Checkbox, Label, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
+    Button, Checkbox, Label, PasswordInput, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
 };
 pub use window::{WeakWindow, Window};
 
@@ -255,6 +257,16 @@ impl Ui {
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {
         Ok(TextInput::new(text))
+    }
+
+    /// 伏せ字で入力させる欄。中身は `GtkPasswordEntry`。
+    pub fn password_input(&self) -> Result<PasswordInput> {
+        Ok(PasswordInput::new())
+    }
+
+    /// 数値を入力させる欄。`value` は初期値。
+    pub fn number_input(&self, value: f64) -> Result<NumberInput> {
+        Ok(NumberInput::new(value))
     }
 
     /// 改行を含む文字列を入力できる欄。高さは `set_sizing` で指定する。

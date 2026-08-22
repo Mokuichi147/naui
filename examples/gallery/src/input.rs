@@ -1,4 +1,6 @@
-use naui::{DatePickerMode, DateTime, Length, Orientation, Padding, Result, Sizing, Ui};
+use naui::{
+    DatePickerMode, DateTime, Label, Length, NumberInput, Orientation, Padding, Result, Sizing, Ui,
+};
 
 /// 日付だけを取り出した表示。
 fn describe_date(value: DateTime) -> String {
@@ -6,6 +8,17 @@ fn describe_date(value: DateTime) -> String {
         "日付: {:04}-{:02}-{:02}",
         value.year, value.month, value.day
     )
+}
+
+/// 数量と単価から合計を出して表示する。
+fn show_total(count: &NumberInput, price: &NumberInput, status: &Label) {
+    let total = count.value() * price.value();
+    status.set_text(&format!(
+        "{} 個 × {:.2} 円 = {:.2} 円",
+        count.value(),
+        price.value(),
+        total
+    ));
 }
 
 /// 1行入力・複数行入力と、プレースホルダー・無効状態。
@@ -57,6 +70,83 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&area);
     pane.append(&area_status);
 
+    pane.append(&ui.label("PasswordInput")?);
+    pane.append(&ui.label("打った文字が伏せ字になる 1 行入力です。API は TextInput と同じです。")?);
+    // 実際のログインフォームに近い見え方にするため、幅を決めて置く。
+    let password_width = Sizing::new().width(Length::Fixed(240.0));
+    let password_status = ui.label("パスワード: 未入力")?;
+    let password = ui.password_input()?;
+    password.set_placeholder("パスワード");
+    password.set_sizing(password_width);
+    let confirm = ui.password_input()?;
+    confirm.set_placeholder("パスワード (確認)");
+    confirm.set_sizing(password_width);
+    // 画面に出すのは長さと一致だけ。中身は表示しない。
+    let describe_password = {
+        let password = password.clone();
+        let confirm = confirm.clone();
+        let password_status = password_status.clone();
+        move || {
+            let typed = password.text();
+            if typed.is_empty() {
+                password_status.set_text("パスワード: 未入力");
+            } else if typed == confirm.text() {
+                password_status.set_text(&format!(
+                    "{} 文字 / 確認と一致しています",
+                    typed.chars().count()
+                ));
+            } else {
+                password_status.set_text(&format!(
+                    "{} 文字 / 確認と一致しません",
+                    typed.chars().count()
+                ));
+            }
+        }
+    };
+    password.on_change({
+        let describe_password = describe_password.clone();
+        move |_| describe_password()
+    });
+    confirm.on_change({
+        let describe_password = describe_password.clone();
+        move |_| describe_password()
+    });
+    pane.append(&password);
+    pane.append(&confirm);
+    pane.append(&password_status);
+
+    pane.append(&ui.label("NumberInput")?);
+    pane.append(&ui.label("数値の入力欄です。範囲・刻み・小数桁を指定できます。")?);
+    // 数値の欄は中身に合わせた幅を持たないので、ここで決めておく。
+    let number_width = Sizing::new().width(Length::Fixed(140.0));
+    let count = ui.number_input(1.0)?;
+    count.set_range(Some(1.0), Some(99.0));
+    count.set_sizing(number_width);
+    let price = ui.number_input(120.0)?;
+    price.set_decimals(2);
+    price.set_step(0.05);
+    price.set_range(Some(0.0), None);
+    price.set_sizing(number_width);
+    let total_status = ui.label("")?;
+    show_total(&count, &price, &total_status);
+    count.on_change({
+        let count = count.clone();
+        let price = price.clone();
+        let total_status = total_status.clone();
+        move |_| show_total(&count, &price, &total_status)
+    });
+    price.on_change({
+        let count = count.clone();
+        let price = price.clone();
+        let total_status = total_status.clone();
+        move |_| show_total(&count, &price, &total_status)
+    });
+    pane.append(&ui.label("数量 (1〜99 の整数)")?);
+    pane.append(&count);
+    pane.append(&ui.label("単価 (小数 2 桁、0.05 刻み)")?);
+    pane.append(&price);
+    pane.append(&total_status);
+
     pane.append(&ui.label("無効状態")?);
     let disabled_input = ui.text_input("編集できない1行入力")?;
     disabled_input.set_enabled(false);
@@ -68,8 +158,17 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
             .width(Length::Fill)
             .height(Length::Fixed(80.0)),
     );
+    let disabled_number = ui.number_input(42.0)?;
+    disabled_number.set_enabled(false);
+    disabled_number.set_sizing(number_width);
+    let disabled_password = ui.password_input()?;
+    disabled_password.set_text("ひみつ");
+    disabled_password.set_enabled(false);
+    disabled_password.set_sizing(password_width);
     pane.append(&disabled_input);
     pane.append(&disabled_area);
+    pane.append(&disabled_password);
+    pane.append(&disabled_number);
 
     pane.append(&ui.label("DatePicker")?);
     pane.append(&ui.label("日付・時刻・その両方を選べます。値は年月日と時分で返ります。")?);
@@ -129,11 +228,17 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         let area_status = area_status.clone();
         let time = time.clone();
         let time_status = time_status.clone();
+        let password = password.clone();
+        let confirm = confirm.clone();
+        let password_status = password_status.clone();
         move || {
             input.set_text("");
             area.set_text("");
             input_status.set_text("入力値: (空)");
             area_status.set_text("0 行 / 0 文字");
+            password.set_text("");
+            confirm.set_text("");
+            password_status.set_text("パスワード: 未入力");
             // set_value は通知しないので、表示は自分で戻す。
             time.set_value(DateTime::time(7, 30));
             time_status.set_text("時刻: 07:30");

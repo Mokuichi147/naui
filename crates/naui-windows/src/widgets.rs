@@ -8,7 +8,8 @@ use windows::Foundation::EventHandler;
 use windows_core::{IInspectable, Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, Grid, Orientation as XamlOrientation,
-    ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox,
+    PasswordBox, ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock,
+    TextBox,
 };
 use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use winui3::Microsoft::UI::Xaml::{
@@ -312,6 +313,75 @@ impl TextInput {
             Ok(())
         });
         if let Ok(token) = self.0.native.TextChanged(&handler) {
+            *self.0.token.borrow_mut() = Some(token);
+        }
+    }
+}
+
+// ----------------------------------------------------------- PasswordInput
+
+struct PasswordInputInner {
+    native: PasswordBox,
+    token: RefCell<Option<i64>>,
+}
+
+/// パスワード入力 (PasswordBox)。
+///
+/// API の形は [`TextInput`] と同じで、違うのは**打った文字が伏せ字になる**
+/// ことだけ。伏せ字を一時的に外すボタン (`IsPasswordRevealButtonEnabled`) は
+/// WinUI 3 にあるが、4 環境の共通部分に無いので出さない。
+#[derive(Clone)]
+pub struct PasswordInput(Rc<PasswordInputInner>);
+impl_widget!(PasswordInput, native);
+
+impl PasswordInput {
+    pub(crate) fn new() -> Result<Self> {
+        let native = PasswordBox::new().map_err(|e| to_error("PasswordBox の生成", e))?;
+        Ok(Self(Rc::new(PasswordInputInner {
+            native,
+            token: RefCell::new(None),
+        })))
+    }
+
+    /// いま入力されている文字列。
+    pub fn text(&self) -> String {
+        self.0
+            .native
+            .Password()
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    }
+
+    /// 文字列を置き換える。
+    ///
+    /// WinUI がネイティブの `PasswordChanged` を出すため、**Windows だけは
+    /// `on_change` も呼ばれる** ([`TextInput::set_text`] と同じ)。
+    pub fn set_text(&self, text: &str) {
+        let _ = self.0.native.SetPassword(&HSTRING::from(text));
+    }
+
+    pub fn set_placeholder(&self, text: &str) {
+        let _ = self.0.native.SetPlaceholderText(&HSTRING::from(text));
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        let _ = self.0.native.SetIsEnabled(enabled);
+    }
+
+    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
+        if let Some(token) = self.0.token.borrow_mut().take() {
+            let _ = self.0.native.RemovePasswordChanged(token);
+        }
+        let state = UiThreadCell::new((self.0.native.clone(), f));
+        let handler = RoutedEventHandler::new(move |_sender, _args| {
+            state.with_mut(|(native, f)| {
+                let text = native.Password().unwrap_or_default().to_string();
+                f(&text);
+            });
+            Ok(())
+        });
+        if let Ok(token) = self.0.native.PasswordChanged(&handler) {
             *self.0.token.borrow_mut() = Some(token);
         }
     }
