@@ -89,9 +89,7 @@ impl Dialog {
         // `showModal()` は文書に入っている要素にしか効かないため、
         // 作った時点で `<body>` へ入れておく。
         doc.body()
-            .ok_or_else(|| {
-                naui_core::Error::new("body の取得", "body がありません")
-            })?
+            .ok_or_else(|| naui_core::Error::new("body の取得", "body がありません"))?
             .append_child(&element)
             .map_err(|e| to_error("ダイアログの追加", e))?;
 
@@ -119,15 +117,14 @@ impl Dialog {
     /// 通知の中から開き直しても、そのあとブラウザに閉じられない。
     fn install_cancel_handler(&self) -> Result<()> {
         let weak = Rc::downgrade(&self.0);
-        let listener =
-            Listener::attach_event(self.0.element.as_ref(), "cancel", move |event| {
-                let Some(inner) = weak.upgrade() else {
-                    return;
-                };
-                event.prevent_default();
-                inner.element.close();
-                Dialog(inner).emit(DialogResponse::Cancel);
-            })?;
+        let listener = Listener::attach_event(self.0.element.as_ref(), "cancel", move |event| {
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            event.prevent_default();
+            inner.element.close();
+            Dialog(inner).emit(DialogResponse::Cancel);
+        })?;
         *self.0.cancel.borrow_mut() = Some(listener);
         Ok(())
     }

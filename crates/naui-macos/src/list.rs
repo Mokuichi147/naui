@@ -208,7 +208,9 @@ fn row_label(
 ) -> Retained<NSTextField> {
     let field = NSTextField::labelWithString(&NSString::from_str(text), mtm);
     if secondary {
-        field.setFont(Some(&NSFont::systemFontOfSize(NSFont::smallSystemFontSize())));
+        field.setFont(Some(&NSFont::systemFontOfSize(
+            NSFont::smallSystemFontSize(),
+        )));
     }
     let color = if !enabled {
         // 選べない行は、AppKit が無効なコントロールに使う色で描く。
@@ -372,11 +374,7 @@ impl List {
     /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
     /// ([`SelectionMode::normalize`])。
     pub fn set_selection(&self, indices: &[usize]) {
-        let picked = self
-            .0
-            .mode
-            .get()
-            .normalize(&self.0.items.borrow(), indices);
+        let picked = self.0.mode.get().normalize(&self.0.items.borrow(), indices);
         self.without_notifying(|this| this.apply_selection(&picked));
     }
 
@@ -392,11 +390,7 @@ impl List {
 
     /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
     pub fn select_many(&self, indices: &[usize]) {
-        let picked = self
-            .0
-            .mode
-            .get()
-            .normalize(&self.0.items.borrow(), indices);
+        let picked = self.0.mode.get().normalize(&self.0.items.borrow(), indices);
         // AppKit は同じ選択を選び直すとデリゲートを呼ばない。
         // 通知の回数をそろえるため、ここで 1 回だけ出す。
         self.without_notifying(|this| this.apply_selection(&picked));

@@ -171,6 +171,42 @@
 //! できる編集可能コンボボックスではない。`RadioGroup` は 1 つのグループなので、
 //! 排他になるのはその中だけ。
 //!
+//! ## 日付と時刻
+//!
+//! 日付や時刻を選ばせるときは [`DatePicker`] を使う。何を選ばせるかは
+//! 生成時の [`DatePickerMode`] で決め、値は [`DateTime`] (年月日と時分) で
+//! やり取りする。
+//!
+//! ```no_run
+//! # use naui::{DatePickerMode, DateTime, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let start = ui.date_picker(DatePickerMode::Date)?;
+//! start.set_value(DateTime::date(2026, 8, 22)); // 通知せずに値を入れる
+//! start.set_range(Some(DateTime::date(2026, 1, 1)), None); // 下限だけ決める
+//! start.on_change(|value| println!("{value} が選ばれた"));
+//!
+//! let alarm = ui.date_picker(DatePickerMode::Time)?;
+//! alarm.set_value(DateTime::time(7, 30));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `DatePicker` | `ComboBox` の組 | `NSDatePicker` | `GtkCalendar` + `GtkSpinButton` | `<input type="date">` ほか |
+//!
+//! 作った直後の値は**その環境の現在日時 (ローカル時刻)** で、空の状態は
+//! 持たない (`NSDatePicker` に「未選択」が無いため)。秒も持たない
+//! ([`DateTime`] 参照)。
+//!
+//! [`DatePickerMode::Date`] は時刻を、[`DatePickerMode::Time`] は日付を
+//! **選ばせないだけで、捨てはしない**。`set_value` で入れた側の値は
+//! [`DatePicker::value`] にそのまま残る。
+//!
+//! [`set_value`](DatePicker::set_value) は通知せず、暦として成り立たない値
+//! (11 月 31 日など) は丸める。[`set_range`](DatePicker::set_range) の外へは
+//! 出られず、範囲の比較には**選ばせている部分だけ**を使う。
+//!
 //! ## ナビゲーション
 //!
 //! タブ・ナビバー・ドック・メニュー・パンくず・ページ送り・リンクは、
@@ -498,40 +534,41 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 78 件) |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 83 件) |
 //! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 79 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 84 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
 pub use naui_core::{
-    accept_attribute, default_extension, media, with_default_extension, Align, DialogButtons,
-    DialogResponse, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem,
-    NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
-    Settings, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    accept_attribute, days_in_month, default_extension, is_leap_year, media,
+    with_default_extension, Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, Error,
+    FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation,
+    Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode, Settings, Sizing,
+    Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 
-#[cfg(target_arch = "wasm32")]
-pub use naui_web::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
-    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
-    Window,
-};
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
-    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
-    Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
+    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
+    RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,
+    WeakWindow, Widget, Window,
+};
+#[cfg(target_arch = "wasm32")]
+pub use naui_web::{
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
+    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
+    RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
-    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
-    Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
+    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
+    RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -540,10 +577,10 @@ pub use naui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, Dialog, Dock, FilePicker, FileSaver, Grid,
-    Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
-    Window,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
+    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, Pagination, PopupMenu, ProgressBar,
+    RadioGroup, Scroll, Slider, Spacer, Stack, Tabs, TextArea, TextInput, Toolbar, Tree, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -683,6 +720,18 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     radio_group.set_enabled(true);
     radio_group.on_select(|_index: usize| {});
     radio_group.set_sizing(Sizing::fill_width());
+
+    let date_picker: DatePicker = ui.date_picker(DatePickerMode::Date)?;
+    let _: DatePickerMode = date_picker.mode();
+    let _: DateTime = date_picker.value();
+    date_picker.set_value(DateTime::date(2026, 8, 22));
+    date_picker.set_range(Some(DateTime::date(2026, 1, 1)), None);
+    date_picker.set_range(None, None);
+    date_picker.set_enabled(true);
+    date_picker.on_change(|_value: DateTime| {});
+    date_picker.set_sizing(Sizing::fill_width());
+    let _: DatePicker = ui.date_picker(DatePickerMode::Time)?;
+    let _: DatePicker = ui.date_picker(DatePickerMode::DateTime)?;
 
     let input: TextInput = ui.text_input("t")?;
     let _: String = input.text();
@@ -952,6 +1001,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&checkbox);
     stack.append(&combo_box);
     stack.append(&radio_group);
+    stack.append(&date_picker);
     stack.append(&input);
     stack.append(&text_area);
     stack.append(&slider);

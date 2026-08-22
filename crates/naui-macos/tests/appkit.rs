@@ -12,20 +12,24 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, DialogButtons, DialogResponse, FileFilter, FilePickerMode, Fit, GridCell, ListItem,
-    NavItem, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode,
-    Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter, FilePickerMode,
+    Fit, GridCell, ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem, Result,
+    ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_macos::{run_for_test, Ui, Widget};
-use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::sel;
+use objc2::{msg_send, AnyThread};
 use objc2_app_kit::{
-    NSButton, NSControlStateValueOff, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSOutlineViewDelegate, NSSegmentedControl, NSTableViewDelegate, NSTextField, NSTextInputClient,
-    NSTextView, NSView, NSWindowTitleVisibility,
+    NSButton, NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSImage,
+    NSImageScaling, NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation,
+    NSOutlineViewDelegate, NSScrollView, NSSegmentedControl, NSTableViewDelegate, NSTextField,
+    NSTextInputClient, NSTextView, NSView, NSWindowTitleVisibility,
 };
-use objc2_foundation::{NSDate, NSNotFound, NSRange, NSRunLoop, NSSize, NSString};
+use objc2_foundation::{
+    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound, NSPoint,
+    NSRange, NSRunLoop, NSSize, NSString,
+};
 
 /// テストケース 1 件。
 type Case = (&'static str, fn(&Ui) -> Result<()>);
@@ -79,12 +83,24 @@ fn main() {
         ("ドックが等幅の項目を持つ", dock_items),
         ("タブが中身ごと切り替わる", tabs_selection),
         ("メニューの選択が 1 つだけ点く", menu_selection),
-        ("リストの行の文字が縦中央にそろう", list_rows_are_vertically_centered),
-        ("リストの補助の文字が 2 行目に出る", list_detail_makes_a_second_line),
-        ("リストの選択がネイティブと往復する", list_selection_round_trips),
+        (
+            "リストの行の文字が縦中央にそろう",
+            list_rows_are_vertically_centered,
+        ),
+        (
+            "リストの補助の文字が 2 行目に出る",
+            list_detail_makes_a_second_line,
+        ),
+        (
+            "リストの選択がネイティブと往復する",
+            list_selection_round_trips,
+        ),
         ("リストの複数選択が 0 件にもなる", list_multiple_selection),
         ("リストが選べない行を飛ばす", list_skips_disabled_rows),
-        ("リストの行が NSTableView に描かれる", list_rows_are_native_views),
+        (
+            "リストの行が NSTableView に描かれる",
+            list_rows_are_native_views,
+        ),
         (
             "NSTableView 側の選択がクロージャへ届く",
             list_native_selection_notifies,
@@ -126,10 +142,7 @@ fn main() {
             "Stack の Auto の子が余白で横に広がらない",
             stack_auto_does_not_fill,
         ),
-        (
-            "Stack の主軸の Fill は余白を受け取る",
-            stack_fill_main,
-        ),
+        ("Stack の主軸の Fill は余白を受け取る", stack_fill_main),
         (
             "上限付きの Fill が空間のあるときは上限まで広がる",
             fill_with_max_prefers_the_max,
@@ -145,11 +158,19 @@ fn main() {
             grid_auto_does_not_fill,
         ),
         (
+            "グリッドの Auto 行が Fill 行の高さを奪わない",
+            grid_fill_row_keeps_the_rest,
+        ),
+        (
             "Gallery のメディア欄が高さ変更後にラベル幅を広げない",
             gallery_media_status_does_not_expand,
         ),
         ("グリッドの子を置き換える", grid_replaces_child),
         ("スクロールが中身を保持する", scroll_keeps_child),
+        (
+            "縦に長いタブの中身がスクロールで下まで届く",
+            tall_tab_content_scrolls,
+        ),
         ("グリッドの同じ行が縦中央でそろう", grid_row_alignment),
         (
             "ファイル選択がボタンとして構成され設定を保つ",
@@ -183,7 +204,10 @@ fn main() {
             "編集メニューが貼り付けをレスポンダチェーンへ配送する",
             menu_bar_provides_edit_shortcuts,
         ),
-        ("画像がローカルのファイルから読み込まれる", image_loads_a_local_file),
+        (
+            "画像がローカルのファイルから読み込まれる",
+            image_loads_a_local_file,
+        ),
         (
             "収め方が NSImageView の imageScaling になる",
             image_fit_maps_to_native_scaling,
@@ -192,9 +216,18 @@ fn main() {
             "動画の表示領域が読み込み前から高さを保つ",
             video_display_reserves_height,
         ),
-        ("音声が最後まで再生され Ended が届く", audio_plays_to_the_end),
-        ("繰り返し再生が末尾で止まらない", audio_loops_back_to_the_start),
-        ("再生位置の指定が AVPlayer に届く", media_seek_moves_the_position),
+        (
+            "音声が最後まで再生され Ended が届く",
+            audio_plays_to_the_end,
+        ),
+        (
+            "繰り返し再生が末尾で止まらない",
+            audio_loops_back_to_the_start,
+        ),
+        (
+            "再生位置の指定が AVPlayer に届く",
+            media_seek_moves_the_position,
+        ),
         ("音量と消音がネイティブと往復する", media_volume_round_trips),
         (
             "メディアのハンドルを捨てても落ちない",
@@ -227,6 +260,26 @@ fn main() {
         (
             "ポップアップメニューが項目と区切り線を NSMenu に写す",
             popup_menu_items_map_to_native,
+        ),
+        (
+            "日付ピッカーが表示する項目を種別から決める",
+            date_picker_shows_the_elements_of_its_mode,
+        ),
+        (
+            "日付ピッカーの値がネイティブと往復する",
+            date_picker_value_round_trips,
+        ),
+        (
+            "日付ピッカーが選ばせていない部分を保つ",
+            date_picker_keeps_the_part_it_does_not_show,
+        ),
+        (
+            "日付ピッカーが範囲の外へ出さない",
+            date_picker_stays_inside_the_range,
+        ),
+        (
+            "日付ピッカーの通知中に値と通知先を差し替えられる",
+            date_picker_callback_is_reentrant,
         ),
         (
             "ポップアップメニューの選択がクロージャへ届く",
@@ -729,7 +782,10 @@ fn navbar_selection(ui: &Ui) -> Result<()> {
                 .ok()
         })
         .expect("セグメントがあること");
-    assert!(title.frame().size.width < 200.0, "見出しが余白で広がらないこと");
+    assert!(
+        title.frame().size.width < 200.0,
+        "見出しが余白で広がらないこと"
+    );
     assert!(
         segments.frame().size.width < 250.0,
         "セグメントが余白で広がらないこと"
@@ -1084,8 +1140,7 @@ fn stack_auto_does_not_fill(ui: &Ui) -> Result<()> {
         "余った空間で先頭項目が中央へ移動しないこと: {first_frame:?}"
     );
     assert!(
-        (second_frame.origin.x - first_frame.origin.x - first_frame.size.width - 12.0).abs()
-            < 1e-6,
+        (second_frame.origin.x - first_frame.origin.x - first_frame.size.width - 12.0).abs() < 1e-6,
         "指定した間隔だけで項目が並ぶこと: {first_frame:?} / {second_frame:?}"
     );
     Ok(())
@@ -1260,7 +1315,10 @@ fn grid_places_children(ui: &Ui) -> Result<()> {
     // 2 列目の左端 = 左の余白 12 + 1 列目の幅 120 + 列間 8。
     // frame は alignment rect より数ピクセル外側に出ることがある。
     let x = middle.native_view().frame().origin.x;
-    assert!((x - 140.0).abs() <= 5.0, "固定した列幅と余白が効くこと: {x}");
+    assert!(
+        (x - 140.0).abs() <= 5.0,
+        "固定した列幅と余白が効くこと: {x}"
+    );
     Ok(())
 }
 
@@ -1384,7 +1442,9 @@ fn gallery_media_status_does_not_expand(ui: &Ui) -> Result<()> {
     window.set_child(&root);
     window.show();
     let native_window = window.native_window();
-    let content = native_window.contentView().expect("コンテンツビューがあること");
+    let content = native_window
+        .contentView()
+        .expect("コンテンツビューがあること");
     content.setFrameSize(NSSize::new(680.0, 860.0));
     content.layoutSubtreeIfNeeded();
     pump(0.05);
@@ -1630,7 +1690,11 @@ fn file_saver_configuration_reaches_the_panel(ui: &Ui) -> Result<()> {
         .iter()
         .map(|t| t.to_string())
         .collect();
-    assert_eq!(types, ["txt", "md", "png"], "全ての絞り込みが平らに並ぶこと");
+    assert_eq!(
+        types,
+        ["txt", "md", "png"],
+        "全ての絞り込みが平らに並ぶこと"
+    );
 
     // コンテナへ入れてもハンドルを手放して大丈夫なこと (他のウィジェットと同じ)。
     let stack = ui.stack(Orientation::Vertical)?;
@@ -1822,7 +1886,10 @@ fn image_fit_maps_to_native_scaling(ui: &Ui) -> Result<()> {
         NSImageScaling::ScaleProportionallyUpOrDown
     );
     image.set_fit(Fit::Fill);
-    assert_eq!(native.imageScaling(), NSImageScaling::ScaleAxesIndependently);
+    assert_eq!(
+        native.imageScaling(),
+        NSImageScaling::ScaleAxesIndependently
+    );
     image.set_fit(Fit::None);
     assert_eq!(native.imageScaling(), NSImageScaling::ScaleNone);
     // Cover は imageScaling の値を共有するが、NauiImageView::drawRect で独自に描画する。
@@ -1989,7 +2056,11 @@ fn media_seek_moves_the_position(ui: &Ui) -> Result<()> {
     // 負の値は先頭として扱う。
     video.seek(-5.0);
     pump(0.2);
-    assert!(video.position() < 0.1, "先頭へ戻ること: {}", video.position());
+    assert!(
+        video.position() < 0.1,
+        "先頭へ戻ること: {}",
+        video.position()
+    );
     Ok(())
 }
 
@@ -2071,7 +2142,6 @@ fn media_reports_position_while_playing(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-
 /// リストの選択が NSTableView と往復し、`set_selected` は通知しない。
 fn list_selection_round_trips(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
@@ -2108,7 +2178,11 @@ fn list_selection_round_trips(ui: &Ui) -> Result<()> {
     list.set_items(&ListItem::list(["那覇"]));
     assert_eq!(list.len(), 1);
     assert_eq!(list.selected(), None);
-    assert_eq!(*seen.borrow(), vec![vec![1], vec![2]], "作り直しも通知しない");
+    assert_eq!(
+        *seen.borrow(),
+        vec![vec![1], vec![2]],
+        "作り直しも通知しない"
+    );
     Ok(())
 }
 
@@ -2145,7 +2219,11 @@ fn list_multiple_selection(ui: &Ui) -> Result<()> {
     assert_eq!(list.selection(), vec![1, 2]);
     list.clear_selection();
     assert!(list.selection().is_empty());
-    assert_eq!(seen.borrow().len(), 2, "set_selection と clear は通知しない");
+    assert_eq!(
+        seen.borrow().len(),
+        2,
+        "set_selection と clear は通知しない"
+    );
 
     // 単一選択へ戻すと選択は外れ、以後は 1 行だけになる。
     list.set_selection_mode(SelectionMode::Single);
@@ -2504,7 +2582,9 @@ fn dialog_configuration_reaches_the_alert(ui: &Ui) -> Result<()> {
         unsafe { text_field.superview() }.is_some(),
         "accessoryView がアラートのビュー階層に入ること"
     );
-    let content = alert_window.contentView().expect("アラートに contentView がある");
+    let content = alert_window
+        .contentView()
+        .expect("アラートに contentView がある");
     assert!(
         laid_out.size.width <= content.frame().size.width,
         "中身がアラートの幅からはみ出さないこと: {:?} / {:?}",
@@ -2593,7 +2673,10 @@ fn dialog_is_closed_until_opened(ui: &Ui) -> Result<()> {
         move |response| called.borrow_mut().push(response)
     });
     dialog.close();
-    assert!(called.borrow().is_empty(), "閉じていないので通知されないこと");
+    assert!(
+        called.borrow().is_empty(),
+        "閉じていないので通知されないこと"
+    );
     Ok(())
 }
 
@@ -3084,6 +3167,345 @@ fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
         *seen.borrow(),
         vec![(vec![1], false), (vec![1], true)],
         "通知は操作した枝の分だけ"
+    );
+    Ok(())
+}
+
+// ------------------------------------------------------------ 日付ピッカー
+
+/// ネイティブ側の編集を真似る。
+///
+/// `NSDatePicker` には `performClick` にあたるものが無いので、AppKit が
+/// 利用者の操作でするのと同じ「値を書いてから action を送る」を手で行う。
+fn edit_natively(picker: &NSDatePicker, value: DateTime) {
+    let calendar = NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), unsafe {
+        NSCalendarIdentifierGregorian
+    })
+    .expect("グレゴリオ暦");
+    let components = NSDateComponents::new();
+    components.setYear(value.year as isize);
+    components.setMonth(value.month as isize);
+    components.setDay(value.day as isize);
+    components.setHour(value.hour as isize);
+    components.setMinute(value.minute as isize);
+    components.setSecond(0);
+    let date = calendar
+        .dateFromComponents(&components)
+        .expect("NSDate へ変換");
+    picker.setDateValue(&date);
+    let action = picker.action();
+    let target = picker.target();
+    unsafe { picker.sendAction_to(action, target.as_deref()) };
+}
+
+/// 種別ごとに `datePickerElements` が変わる。
+fn date_picker_shows_the_elements_of_its_mode(ui: &Ui) -> Result<()> {
+    let date = ui.date_picker(DatePickerMode::Date)?;
+    assert_eq!(date.mode(), DatePickerMode::Date);
+    assert_eq!(
+        date.native_picker().datePickerElements(),
+        NSDatePickerElementFlags::YearMonthDay
+    );
+
+    let time = ui.date_picker(DatePickerMode::Time)?;
+    assert_eq!(
+        time.native_picker().datePickerElements(),
+        NSDatePickerElementFlags::HourMinute
+    );
+
+    let both = ui.date_picker(DatePickerMode::DateTime)?;
+    assert_eq!(
+        both.native_picker().datePickerElements(),
+        NSDatePickerElementFlags::YearMonthDay | NSDatePickerElementFlags::HourMinute
+    );
+
+    // 日付を選ばせるときだけ、編集中にカレンダーを重ねて出す。
+    assert!(date.native_picker().presentsCalendarOverlay());
+    assert!(both.native_picker().presentsCalendarOverlay());
+    assert!(
+        !time.native_picker().presentsCalendarOverlay(),
+        "時刻だけの表示に暦は出さない"
+    );
+
+    // 作った直後は現在日時。暦は固定しているので西暦で返る。
+    assert!(
+        (2000..=9999).contains(&date.value().year),
+        "初期値が西暦で入る: {}",
+        date.value()
+    );
+    assert!(date.value().is_valid());
+    Ok(())
+}
+
+/// 値の書き込みと、ネイティブ側の編集の両方向。
+fn date_picker_value_round_trips(ui: &Ui) -> Result<()> {
+    let picker = ui.date_picker(DatePickerMode::DateTime)?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    picker.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    picker.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    assert_eq!(picker.value(), DateTime::new(2026, 8, 22, 9, 30));
+    assert!(seen.borrow().is_empty(), "set_value は通知しない");
+
+    // 暦として成り立たない値は丸める。
+    picker.set_value(DateTime::new(2026, 11, 31, 25, 70));
+    assert_eq!(picker.value(), DateTime::new(2026, 11, 30, 23, 59));
+
+    edit_natively(&picker.native_picker(), DateTime::new(2027, 1, 5, 18, 45));
+    assert_eq!(picker.value(), DateTime::new(2027, 1, 5, 18, 45));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2027, 1, 5, 18, 45)]);
+
+    // 同じ値で通知が来ても、値が動いていなければ知らせない。
+    edit_natively(&picker.native_picker(), DateTime::new(2027, 1, 5, 18, 45));
+    assert_eq!(seen.borrow().len(), 1);
+
+    picker.set_enabled(false);
+    assert!(!picker.native_picker().isEnabled());
+    Ok(())
+}
+
+/// 日付だけの表示は時刻を、時刻だけの表示は日付を保つ。
+fn date_picker_keeps_the_part_it_does_not_show(ui: &Ui) -> Result<()> {
+    let date_only = ui.date_picker(DatePickerMode::Date)?;
+    date_only.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    edit_natively(&date_only.native_picker(), DateTime::new(2027, 1, 5, 0, 0));
+    assert_eq!(
+        date_only.value(),
+        DateTime::new(2027, 1, 5, 9, 30),
+        "日付を選んでも時刻は残る"
+    );
+
+    let time_only = ui.date_picker(DatePickerMode::Time)?;
+    time_only.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    edit_natively(
+        &time_only.native_picker(),
+        DateTime::new(1970, 1, 1, 18, 45),
+    );
+    assert_eq!(
+        time_only.value(),
+        DateTime::new(2026, 8, 22, 18, 45),
+        "時刻を選んでも日付は残る"
+    );
+    Ok(())
+}
+
+/// 下限・上限の外へは出ない。
+fn date_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    let picker = ui.date_picker(DatePickerMode::Date)?;
+    picker.set_value(DateTime::new(2026, 6, 15, 9, 30));
+    picker.set_range(
+        Some(DateTime::date(2026, 1, 1)),
+        Some(DateTime::date(2026, 12, 31)),
+    );
+    assert_eq!(picker.value(), DateTime::new(2026, 6, 15, 9, 30));
+    assert!(picker.native_picker().minDate().is_some());
+    assert!(picker.native_picker().maxDate().is_some());
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    picker.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    edit_natively(&picker.native_picker(), DateTime::date(2030, 5, 5));
+    assert_eq!(
+        picker.value(),
+        DateTime::new(2026, 12, 31, 9, 30),
+        "上限で止まり、時刻は動かない"
+    );
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2026, 12, 31, 9, 30)]);
+
+    // 範囲の外にある値を渡すと、通知せずに端へ寄る。
+    picker.set_value(DateTime::date(1990, 1, 1));
+    assert_eq!(picker.value(), DateTime::new(2026, 1, 1, 0, 0));
+    assert_eq!(seen.borrow().len(), 1);
+
+    // 範囲を外すと自由に選べる。
+    picker.set_range(None, None);
+    assert!(picker.native_picker().minDate().is_none());
+    edit_natively(&picker.native_picker(), DateTime::date(1990, 1, 1));
+    assert_eq!(picker.value(), DateTime::date(1990, 1, 1));
+
+    // 時刻だけの表示では日付を見ない。
+    let time_only = ui.date_picker(DatePickerMode::Time)?;
+    time_only.set_value(DateTime::new(2026, 8, 22, 6, 0));
+    time_only.set_range(Some(DateTime::time(9, 0)), Some(DateTime::time(18, 0)));
+    assert_eq!(
+        time_only.value(),
+        DateTime::new(2026, 8, 22, 9, 0),
+        "日付はそのままに、時刻だけが下限へ寄る"
+    );
+    assert!(
+        time_only.native_picker().minDate().is_none(),
+        "日付での制限はネイティブへ渡さない"
+    );
+    Ok(())
+}
+
+/// 通知の最中に同じピッカーを操作し、通知先も差し替えられる。
+fn date_picker_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let picker = ui.date_picker(DatePickerMode::DateTime)?;
+    picker.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    picker.on_change({
+        let seen = seen.clone();
+        let picker = picker.clone();
+        move |value| {
+            seen.borrow_mut().push(value);
+            // 通知の中から値を読み書きしても borrow が衝突しない。
+            let _ = picker.value();
+            picker.set_value(DateTime::new(2026, 12, 31, 0, 0));
+            picker.on_change({
+                let seen = seen.clone();
+                move |value| seen.borrow_mut().push(value)
+            });
+        }
+    });
+
+    edit_natively(&picker.native_picker(), DateTime::new(2027, 1, 5, 18, 45));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2027, 1, 5, 18, 45)]);
+    assert_eq!(picker.value(), DateTime::new(2026, 12, 31, 0, 0));
+
+    edit_natively(&picker.native_picker(), DateTime::new(2028, 2, 29, 8, 0));
+    assert_eq!(
+        *seen.borrow(),
+        vec![
+            DateTime::new(2027, 1, 5, 18, 45),
+            DateTime::new(2028, 2, 29, 8, 0)
+        ],
+        "差し替えた通知先が呼ばれる"
+    );
+    Ok(())
+}
+
+/// ギャラリーのように、縦に長い中身をスクロールへ載せてタブに入れると、
+/// 下まで送れる (ウィンドウの高さで切れて終わりにならない)。
+fn tall_tab_content_scrolls(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 240.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..40 {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    let tabs = ui.tabs()?;
+    tabs.add_tab("t", &scroll);
+    tabs.set_sizing(Sizing::fill());
+    window.set_child(&tabs);
+    window.show();
+    window
+        .native_window()
+        .contentView()
+        .unwrap()
+        .layoutSubtreeIfNeeded();
+
+    let native = scroll
+        .native_view()
+        .downcast::<NSScrollView>()
+        .expect("NSScrollView");
+    let clip = native.contentView();
+    let document = unsafe { native.documentView() }.expect("中身");
+    let visible = clip.bounds().size.height;
+    let content = document.frame().size.height;
+    assert!(visible > 0.0, "タブの中でスクロールが領域を持つ");
+    assert!(
+        content > visible,
+        "中身のほうが高い ({content} > {visible})"
+    );
+    assert_eq!(
+        document.frame().size.width,
+        clip.bounds().size.width,
+        "横は送らないので幅はクリップに合わせる"
+    );
+
+    // 下端まで送れる。
+    let hidden = content - visible;
+    clip.scrollToPoint(NSPoint::new(0.0, hidden));
+    unsafe { native.reflectScrolledClipView(&clip) };
+    assert_eq!(clip.bounds().origin.y, hidden, "最後の行まで届く");
+    window.close();
+    Ok(())
+}
+
+/// `Auto` の行に置いた子は、縦の余りを受け取らない。
+///
+/// NSStackView のようにコンテナ自身の hugging priority が低い子は、これが
+/// 無いと `Fill` 行より先に余りを吸ってしまい、`Fill` 行が中身の高さ
+/// (タブなら見出しだけ) まで潰れる。
+fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::Auto);
+    grid.set_row_track(1, Track::FILL);
+
+    let header = ui.stack(Orientation::Vertical)?;
+    header.append(&ui.label("見出し")?);
+    header.set_sizing(Sizing::fill_width());
+    grid.attach(&header, GridCell::new(0, 0));
+
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..30 {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    grid.attach(&scroll, GridCell::new(0, 1));
+
+    let vertical = NSLayoutConstraintOrientation::Vertical;
+    assert_eq!(
+        header
+            .native_view()
+            .contentHuggingPriorityForOrientation(vertical),
+        999.0,
+        "Auto の子は縦にも内容の高さを保つ"
+    );
+    assert_eq!(
+        scroll
+            .native_view()
+            .contentHuggingPriorityForOrientation(vertical),
+        1.0,
+        "Fill の子は余りを受け取る"
+    );
+
+    // hugging priority だけでは、どの行が余りを受け取るかが AppKit 任せで
+    // 安定しない。`Fill` のセルには「グリッドいっぱいまで伸びたい」という
+    // 最弱の希望も張っておく。
+    let root = grid.native_view();
+    let constraints = root.constraints();
+    let grow = (0..constraints.len())
+        .map(|index| constraints.objectAtIndex(index))
+        .find(|constraint| {
+            constraint
+                .identifier()
+                .is_some_and(|id| id.to_string() == "naui.grid.grow.0.1")
+        })
+        .expect("Fill のセルへ伸びる希望が張られていること");
+    // 弱すぎると余りが `Auto` 行に残り、強すぎると `Auto` 行の中身を潰す。
+    // 中身を守る compression resistance (750) より必ず弱くしておく。
+    assert!(
+        (251.0..750.0).contains(&grow.priority()),
+        "希望の優先度が中庸であること: {}",
+        grow.priority()
+    );
+
+    root.setFrameSize(NSSize::new(500.0, 600.0));
+    root.layoutSubtreeIfNeeded();
+    let header_height = header.native_view().frame().size.height;
+    let scroll_height = scroll.native_view().frame().size.height;
+    assert!(
+        header_height < 100.0,
+        "見出しは中身の高さのまま: {header_height}"
+    );
+    assert!(
+        scroll_height > 400.0,
+        "Fill 行が残りの高さを受け取る: {scroll_height}"
     );
     Ok(())
 }

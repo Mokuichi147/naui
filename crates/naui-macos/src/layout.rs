@@ -46,6 +46,18 @@ const HUG_CONTENT: NSLayoutPriority = 750.0;
 /// AppKit のコンテナが再レイアウト時に追加する制約より優先し、内容幅を
 /// 保つ。明示的な `Fill` はこの値を使わず、hugging を 1 に下げる。
 const AUTO_HUGGING: NSLayoutPriority = 999.0;
+/// `Fill` 行の子に張る「行いっぱいまで伸びたい」という希望の識別子。
+const GRID_GROW_ID: &str = "naui.grid.grow";
+
+/// その希望の優先度。
+///
+/// `NSGridView` が余りを `Auto` 行へ渡してしまうときの弱い好み
+/// (`NSLayoutPriorityDefaultLow` = 250 相当) には勝ち、`Auto` の子が持つ
+/// compression resistance ([`HUG_CONTENT`]) には**負ける**値にしてある。
+/// これより強くすると `Fill` 行が余りを取りすぎ、`Auto` 行の中身が
+/// 潰れてしまう (見出しが 30pt まで縮む)。
+const GRID_GROW_PRIORITY: NSLayoutPriority = HUG_CONTENT - 1.0;
+
 /// `Fill` のときの compression resistance priority。
 ///
 /// 画像や動画の intrinsic size が親の最小幅にならないようにする。
@@ -141,6 +153,11 @@ pub(crate) fn wants_fill(view: &NSView, horizontal: bool) -> bool {
 /// `Auto` の子が内容幅を保つようにする。
 pub(crate) fn keep_auto_size(view: &NSView, horizontal: bool) {
     view.setContentHuggingPriority_forOrientation(AUTO_HUGGING, orientation(horizontal));
+}
+
+/// セルごとの希望の識別子。同じセルに置き直したときだけ張り替える。
+fn grow_identifier(cell: &GridCell) -> String {
+    format!("{GRID_GROW_ID}.{}.{}", cell.column, cell.row)
 }
 
 fn clear_sizing_constraints(view: &NSView) {
@@ -293,7 +310,16 @@ impl Grid {
         });
         // 縦は中央ぞろえ。NSGridView の既定 (上ぞろえ) だと、同じ行に置いた
         // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
-        target.setYPlacement(if wants_fill(&view, false) {
+        let fill_height = wants_fill(&view, false);
+        if !fill_height {
+            // 横と同じ理由で、`Auto` の子は行の余りを受け取らない。
+            // NSStackView のようにコンテナ自身の hugging priority が低い子は、
+            // これが無いと `Fill` 行より先に余りを吸ってしまい、`Fill` 行が
+            // 中身の高さ (タブなら見出しだけ) まで潰れる。
+            keep_auto_size(&view, false);
+        }
+        self.set_grow_hint(&view, &cell, fill_height);
+        target.setYPlacement(if fill_height {
             NSGridCellPlacement::Fill
         } else {
             NSGridCellPlacement::Center
@@ -301,6 +327,42 @@ impl Grid {
 
         self.apply_padding();
         self.0.children.borrow_mut().push(child.boxed_clone());
+    }
+
+    /// `Fill` 行の子に「グリッドいっぱいまで伸びたい」という最弱の希望を張る。
+    ///
+    /// `NSGridView` の行の高さは中身から決まり、**余りをどの行へ渡すかは
+    /// 決まっていない**。hugging priority だけでは足りず、同じアプリでも
+    /// 起動のたびに `Auto` 行が余りを吸ってしまうことがある。
+    ///
+    /// そこで「グリッドと同じ高さになりたい」を最弱の優先度で足し、余りが
+    /// 必ず `Fill` 行へ行くようにする。ほかの行の高さ (必須) が勝つので
+    /// 実際にはその手前で止まり、グリッド自身が中身に合わせて縮む場面でも、
+    /// この希望が大きさを押し広げることはない。
+    fn set_grow_hint(&self, view: &NSView, cell: &GridCell, wanted: bool) {
+        let identifier = grow_identifier(cell);
+        // 同じセルに前へ張った希望があれば外す。
+        let constraints = self.0.native.constraints();
+        let previous: Vec<Retained<NSLayoutConstraint>> = (0..constraints.len())
+            .map(|index| constraints.objectAtIndex(index))
+            .filter(|constraint| {
+                constraint
+                    .identifier()
+                    .is_some_and(|id| id.to_string() == identifier)
+            })
+            .collect();
+        if !previous.is_empty() {
+            NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&previous));
+        }
+        if !wanted {
+            return;
+        }
+        let grow = view
+            .heightAnchor()
+            .constraintEqualToAnchor(&self.0.native.heightAnchor());
+        grow.setPriority(GRID_GROW_PRIORITY);
+        grow.setIdentifier(Some(&NSString::from_str(&identifier)));
+        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[grow]));
     }
 
     /// いまの子を外し、指定した 1 つだけを置く。
@@ -473,7 +535,9 @@ impl Scroll {
     fn apply_policy(&self) {
         let horizontal = self.0.horizontal.get();
         let vertical = self.0.vertical.get();
-        self.0.native.setHasHorizontalScroller(horizontal.is_enabled());
+        self.0
+            .native
+            .setHasHorizontalScroller(horizontal.is_enabled());
         self.0.native.setHasVerticalScroller(vertical.is_enabled());
         self.0.native.setAutohidesScrollers(
             horizontal != ScrollPolicy::Always && vertical != ScrollPolicy::Always,
@@ -507,7 +571,8 @@ impl Scroll {
             view.widthAnchor()
                 .constraintGreaterThanOrEqualToAnchor(&clip.widthAnchor())
         } else {
-            view.widthAnchor().constraintEqualToAnchor(&clip.widthAnchor())
+            view.widthAnchor()
+                .constraintEqualToAnchor(&clip.widthAnchor())
         });
         constraints.push(if self.0.vertical.get().is_enabled() {
             view.heightAnchor()

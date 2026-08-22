@@ -381,11 +381,13 @@ impl Grid {
 
 fn template(count: usize, tracks: &[Track]) -> String {
     (0..count)
-        .map(|index| match tracks.get(index).copied().unwrap_or_default() {
-            Track::Auto => "auto".to_string(),
-            Track::Fixed(value) => format!("{value}px"),
-            track @ Track::Fill(_) => format!("{}fr", track.weight()),
-        })
+        .map(
+            |index| match tracks.get(index).copied().unwrap_or_default() {
+                Track::Auto => "auto".to_string(),
+                Track::Fixed(value) => format!("{value}px"),
+                track @ Track::Fill(_) => format!("{}fr", track.weight()),
+            },
+        )
         .collect::<Vec<_>>()
         .join(" ")
 }

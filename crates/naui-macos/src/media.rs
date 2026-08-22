@@ -12,8 +12,8 @@ use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::rc::{Rc, Weak};
 
-use naui_core::{Fit, PlaybackState, Sizing};
 use block2::RcBlock;
+use naui_core::{Fit, PlaybackState, Sizing};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{
@@ -31,8 +31,8 @@ use objc2_av_foundation::{
 use objc2_av_kit::{AVPlayerView, AVPlayerViewControlsStyle};
 use objc2_core_media::{CMTime, CMTimeFlags};
 use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSPoint, NSRect, NSSize,
-    NSObjectNSKeyValueObserverRegistration, NSString, NSURL,
+    NSNotification, NSNotificationCenter, NSObjectNSKeyValueObserverRegistration, NSPoint, NSRect,
+    NSSize, NSString, NSURL,
 };
 
 use crate::widgets::{impl_widget, Widget};
@@ -126,10 +126,7 @@ impl NauiImageView {
             Fit::Fill => NSImageScaling::ScaleAxesIndependently,
             Fit::None => NSImageScaling::ScaleNone,
         });
-        self.as_super()
-            .as_super()
-            .as_super()
-            .setNeedsDisplay(true);
+        self.as_super().as_super().as_super().setNeedsDisplay(true);
     }
 }
 
@@ -235,12 +232,7 @@ impl Image {
 
 impl Widget for Image {
     fn native_view(&self) -> Retained<NSView> {
-        self.0
-            .native
-            .clone()
-            .into_super()
-            .into_super()
-            .into_super()
+        self.0.native.clone().into_super().into_super().into_super()
     }
 
     fn boxed_clone(&self) -> Box<dyn Widget> {
@@ -319,11 +311,12 @@ impl PlaybackInner {
             inner.emit_position(seconds(time).unwrap_or(0.0));
         });
         let token = unsafe {
-            this.player.addPeriodicTimeObserverForInterval_queue_usingBlock(
-                CMTime::with_seconds(POSITION_INTERVAL, TIMESCALE),
-                None,
-                &block,
-            )
+            this.player
+                .addPeriodicTimeObserverForInterval_queue_usingBlock(
+                    CMTime::with_seconds(POSITION_INTERVAL, TIMESCALE),
+                    None,
+                    &block,
+                )
         };
         *this.time_observer.borrow_mut() = Some(token);
 
@@ -354,7 +347,10 @@ impl PlaybackInner {
             let mtm = MainThreadMarker::from(&*self.native);
             unsafe { AVPlayerItem::playerItemWithURL(&url, mtm) }
         });
-        unsafe { self.player.replaceCurrentItemWithPlayerItem(item.as_deref()) };
+        unsafe {
+            self.player
+                .replaceCurrentItemWithPlayerItem(item.as_deref())
+        };
         self.emit(PlaybackState::Idle);
         if self.autoplay.get() && item.is_some() {
             self.play();
@@ -422,7 +418,10 @@ impl PlaybackInner {
         let Some(current) = (unsafe { self.player.currentItem() }) else {
             return;
         };
-        if !std::ptr::eq(&*sender as *const AnyObject, &*current as *const AVPlayerItem as _) {
+        if !std::ptr::eq(
+            &*sender as *const AnyObject,
+            &*current as *const AVPlayerItem as _,
+        ) {
             return;
         }
         if self.looping.get() {
@@ -475,10 +474,8 @@ impl Drop for PlaybackInner {
             return;
         };
         unsafe {
-            self.player.removeObserver_forKeyPath(
-                &observer,
-                &NSString::from_str(TIME_CONTROL_STATUS),
-            );
+            self.player
+                .removeObserver_forKeyPath(&observer, &NSString::from_str(TIME_CONTROL_STATUS));
             NSNotificationCenter::defaultCenter().removeObserver(&observer);
         }
     }

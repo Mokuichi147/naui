@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod combo_box;
+mod date_picker;
 mod dialog;
 mod file_picker;
 mod file_saver;
@@ -26,7 +27,7 @@ mod tree;
 mod widgets;
 mod window;
 
-use naui_core::{Error, Orientation, Result, Settings, Theme};
+use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Theme};
 use std::cell::Cell;
 use std::cell::RefCell;
 use wasm_bindgen::JsCast;
@@ -40,6 +41,7 @@ use web_sys::{Document, HtmlElement};
 pub use wasm_bindgen;
 
 pub use combo_box::ComboBox;
+pub use date_picker::DatePicker;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
@@ -65,9 +67,7 @@ pub(crate) fn document() -> Result<Document> {
 pub(crate) fn to_error(context: &'static str, value: wasm_bindgen::JsValue) -> Error {
     Error::new(
         context,
-        value
-            .as_string()
-            .unwrap_or_else(|| format!("{value:?}")),
+        value.as_string().unwrap_or_else(|| format!("{value:?}")),
     )
 }
 
@@ -144,6 +144,11 @@ impl Ui {
     /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
     pub fn radio_group(&self) -> Result<RadioGroup> {
         RadioGroup::new(&self.document)
+    }
+
+    /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
+    pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
+        DatePicker::new(&self.document, mode)
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

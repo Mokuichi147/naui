@@ -1,4 +1,12 @@
-use naui::{Length, Orientation, Padding, Result, Sizing, Ui};
+use naui::{DatePickerMode, DateTime, Length, Orientation, Padding, Result, Sizing, Ui};
+
+/// 日付だけを取り出した表示。
+fn describe_date(value: DateTime) -> String {
+    format!(
+        "日付: {:04}-{:02}-{:02}",
+        value.year, value.month, value.day
+    )
+}
 
 /// 1行入力・複数行入力と、プレースホルダー・無効状態。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
@@ -63,17 +71,72 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&disabled_input);
     pane.append(&disabled_area);
 
+    pane.append(&ui.label("DatePicker")?);
+    pane.append(&ui.label("日付・時刻・その両方を選べます。値は年月日と時分で返ります。")?);
+
+    let date = ui.date_picker(DatePickerMode::Date)?;
+    // 日付だけの表示なので、時刻の部分は出さずに読む。
+    let date_status = ui.label(&describe_date(date.value()))?;
+    date.on_change({
+        let date_status = date_status.clone();
+        move |value| date_status.set_text(&describe_date(value))
+    });
+    pane.append(&date);
+    pane.append(&date_status);
+
+    let time = ui.date_picker(DatePickerMode::Time)?;
+    time.set_value(DateTime::time(7, 30));
+    let time_status = ui.label(&format!(
+        "時刻: {:02}:{:02}",
+        time.value().hour,
+        time.value().minute
+    ))?;
+    time.on_change({
+        let time_status = time_status.clone();
+        move |value| {
+            time_status.set_text(&format!("時刻: {:02}:{:02}", value.hour, value.minute));
+        }
+    });
+    pane.append(&time);
+    pane.append(&time_status);
+
+    // 範囲を決めると、その外へは出られなくなる。
+    let deadline = ui.date_picker(DatePickerMode::DateTime)?;
+    let today = deadline.value();
+    deadline.set_range(
+        Some(DateTime::date(today.year, today.month, today.day)),
+        Some(DateTime::new(today.year + 1, 12, 31, 23, 59)),
+    );
+    let deadline_status = ui.label(&format!("期限: {}", deadline.value()))?;
+    deadline.on_change({
+        let deadline_status = deadline_status.clone();
+        move |value| deadline_status.set_text(&format!("期限: {value}"))
+    });
+    pane.append(&ui.label("今日から翌年末までしか選べない DateTime の例です。")?);
+    pane.append(&deadline);
+    pane.append(&deadline_status);
+
+    pane.append(&ui.label("選ばせない状態にもできます。")?);
+    let disabled_date = ui.date_picker(DatePickerMode::Date)?;
+    disabled_date.set_enabled(false);
+    pane.append(&disabled_date);
+
     let clear = ui.button("入力をクリア")?;
     clear.on_click({
         let input = input.clone();
         let area = area.clone();
         let input_status = input_status.clone();
         let area_status = area_status.clone();
+        let time = time.clone();
+        let time_status = time_status.clone();
         move || {
             input.set_text("");
             area.set_text("");
             input_status.set_text("入力値: (空)");
             area_status.set_text("0 行 / 0 文字");
+            // set_value は通知しないので、表示は自分で戻す。
+            time.set_value(DateTime::time(7, 30));
+            time_status.set_text("時刻: 07:30");
         }
     });
     pane.append(&clear);

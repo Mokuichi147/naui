@@ -298,7 +298,10 @@ mod tests {
     fn entry_source_is_the_path_on_native() {
         let entry = FileEntry::from_path("/tmp/写真 1.png");
         assert_eq!(entry.name(), "写真 1.png");
-        assert_eq!(entry.path().map(|p| p.to_str().unwrap()), Some("/tmp/写真 1.png"));
+        assert_eq!(
+            entry.path().map(|p| p.to_str().unwrap()),
+            Some("/tmp/写真 1.png")
+        );
         // そのまま ui.image / ui.video へ渡せる場所。
         assert_eq!(entry.source(), Some("/tmp/写真 1.png"));
     }

@@ -13,8 +13,8 @@ mod media;
 mod navigation;
 
 use naui::{
-    FileEntry, NavItem, Orientation, Padding, Result, Settings, Sizing, ToolbarIcon, ToolbarItem,
-    Ui,
+    FileEntry, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing,
+    Tabs, ToolbarIcon, ToolbarItem, Track, Ui, Widget,
 };
 
 /// ウィンドウに取り付けるツールバーの項目。区切りは空文字で埋める。
@@ -42,9 +42,19 @@ const SECTIONS: [&str; 8] = [
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
     let window = ui.window("naui UI gallery", 800.0, 860.0)?;
-    let root = ui.stack(Orientation::Vertical)?;
-    root.set_spacing(10.0);
+    let root = ui.grid()?;
+    root.set_spacing(0.0, 10.0);
     root.set_padding(Padding::all(20.0));
+    root.set_column_track(0, Track::FILL);
+    root.set_row_track(0, Track::Auto);
+    root.set_row_track(1, Track::FILL);
+
+    // Windows の StackPanel は主軸方向の Fill に残りの高さを配らないため、
+    // 固定部分だけを Stack にまとめ、タブは Grid の Fill 行へ直接置く。
+    let header = ui.stack(Orientation::Vertical)?;
+    header.set_spacing(10.0);
+    // 見出しはウィンドウの幅いっぱいに広げる (中の文字は中央ぞろえ)。
+    header.set_sizing(Sizing::fill_width());
 
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["naui gallery", "基本"]));
@@ -53,10 +63,10 @@ pub fn build(ui: &Ui) -> Result<()> {
     let breadcrumb_row = ui.stack(Orientation::Horizontal)?;
     breadcrumb_row.set_sizing(Sizing::fill_width());
     breadcrumb_row.append(&crumbs);
-    root.append(&breadcrumb_row);
+    header.append(&breadcrumb_row);
 
-    root.append(&ui.label("naui UI ギャラリー")?);
-    root.append(&ui.label("UI の種別ごとに、特徴・状態・操作結果を確認できます。")?);
+    header.append(&ui.label("naui UI ギャラリー")?);
+    header.append(&ui.label("UI の種別ごとに、特徴・状態・操作結果を確認できます。")?);
 
     // Toolbar はレイアウトではなくウィンドウに取り付ける。macOS では
     // NSToolbar、Linux では AdwHeaderBar としてタイトルバーに出る。
@@ -82,19 +92,20 @@ pub fn build(ui: &Ui) -> Result<()> {
         }
     });
     window.set_toolbar(&toolbar);
-    root.append(&toolbar_status);
+    header.append(&toolbar_status);
+    root.attach(&header, GridCell::new(0, 0));
 
     let tabs = ui.tabs()?;
-    tabs.add_tab("基本", &basics::build(ui, &window)?);
-    tabs.add_tab("入力", &input::build(ui)?);
-    tabs.add_tab("一覧", &list::build(ui)?);
-    tabs.add_tab("ナビゲーション", &navigation::build(ui)?);
-    tabs.add_tab("レイアウト", &layout::build(ui)?);
-    tabs.add_tab("ファイル", &files::build(ui)?);
-    tabs.add_tab("メディア", &media::build(ui)?);
-    tabs.add_tab("ダイアログ", &dialog::build(ui)?);
+    add_pane(ui, &tabs, "基本", &basics::build(ui, &window)?)?;
+    add_pane(ui, &tabs, "入力", &input::build(ui)?)?;
+    add_pane(ui, &tabs, "一覧", &list::build(ui)?)?;
+    add_pane(ui, &tabs, "ナビゲーション", &navigation::build(ui)?)?;
+    add_pane(ui, &tabs, "レイアウト", &layout::build(ui)?)?;
+    add_pane(ui, &tabs, "ファイル", &files::build(ui)?)?;
+    add_pane(ui, &tabs, "メディア", &media::build(ui)?)?;
+    add_pane(ui, &tabs, "ダイアログ", &dialog::build(ui)?)?;
     tabs.set_sizing(Sizing::fill());
-    root.append(&tabs);
+    root.attach(&tabs, GridCell::new(0, 1));
 
     tabs.on_select({
         let crumbs = crumbs.clone();
@@ -118,6 +129,23 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     window.set_child(&root);
     window.show();
+    Ok(())
+}
+
+/// タブの中身をスクロールに載せて貼る。
+///
+/// ネイティブのウィンドウは、中身がはみ出しても勝手にはスクロールしない
+/// (ページごと縦に伸びるのはブラウザだけ)。ギャラリーは 1 つのタブが縦に
+/// 長いので、タブごとにスクロールへ載せて下まで見られるようにする。
+///
+/// 横は `Never` にしてある。幅はウィンドウに合わせ、縦だけを送る。
+fn add_pane(ui: &Ui, tabs: &Tabs, title: &str, pane: &dyn Widget) -> Result<()> {
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(pane);
+    // スクロールは中身から高さを決めないので、タブの領域いっぱいを指定する。
+    scroll.set_sizing(Sizing::fill());
+    tabs.add_tab(title, &scroll);
     Ok(())
 }
 

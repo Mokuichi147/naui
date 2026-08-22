@@ -236,8 +236,8 @@ impl TextInput {
 
     pub fn set_placeholder(&self, text: &str) {
         self.0
-                .native
-                .setPlaceholderString(Some(&NSString::from_str(text)));
+            .native
+            .setPlaceholderString(Some(&NSString::from_str(text)));
     }
 
     pub fn set_enabled(&self, enabled: bool) {
@@ -249,13 +249,12 @@ impl TextInput {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let observer = TextObserver::new(mtm, f);
         unsafe {
-            self.0.native.setDelegate(Some(
-                objc2::runtime::ProtocolObject::from_ref(&*observer),
-            ))
+            self.0
+                .native
+                .setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)))
         };
         *self.0.observer.borrow_mut() = Some(observer);
     }
-
 }
 
 // --------------------------------------------------------------- TextArea
@@ -639,11 +638,11 @@ impl Stack {
     pub fn set_padding(&self, padding: Padding) {
         self.0.padding.set(padding);
         self.0.native.setEdgeInsets(NSEdgeInsets {
-                top: padding.top,
-                left: padding.left,
-                bottom: padding.bottom,
-                right: padding.right,
-            });
+            top: padding.top,
+            left: padding.left,
+            bottom: padding.bottom,
+            right: padding.right,
+        });
         // 交差軸いっぱいに広げている子は、余白のぶんだけ狭くなる。
         let inset = self.cross_inset();
         for constraint in self.0.fill_constraints.borrow().iter() {

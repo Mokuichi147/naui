@@ -76,6 +76,35 @@ impl SelectionHandler {
     }
 }
 
+/// 値を 1 つ受け取る通知先。
+///
+/// [`SelectionHandler`] と同じ再入対応を、インデックス以外の値でも使うための
+/// もの (日付ピッカーの `on_change` など)。
+pub(crate) struct ValueHandler<T>(RefCell<Option<Box<dyn FnMut(T)>>>);
+
+impl<T> Default for ValueHandler<T> {
+    fn default() -> Self {
+        Self(RefCell::new(None))
+    }
+}
+
+impl<T> ValueHandler<T> {
+    pub(crate) fn set(&self, f: impl FnMut(T) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub(crate) fn emit(&self, value: T) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(value);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
 pub(crate) fn create(doc: &Document, tag: &str) -> Result<Element> {
     doc.create_element(tag)
         .map_err(|e| to_error("DOM 要素の生成", e))
@@ -116,10 +145,9 @@ impl Listener {
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        let _ = self.target.remove_event_listener_with_callback(
-            self.event,
-            self.closure.as_ref().unchecked_ref(),
-        );
+        let _ = self
+            .target
+            .remove_event_listener_with_callback(self.event, self.closure.as_ref().unchecked_ref());
     }
 }
 
@@ -308,7 +336,6 @@ impl TextInput {
         .ok();
         *self.0.on_change.borrow_mut() = listener;
     }
-
 }
 
 // --------------------------------------------------------------- TextArea
@@ -477,10 +504,7 @@ impl Stack {
             },
         );
         let _ = style.set_property("align-items", "center");
-        crate::layout::mark_parent(
-            &element,
-            crate::layout::ParentLayout::Flex(orientation),
-        );
+        crate::layout::mark_parent(&element, crate::layout::ParentLayout::Flex(orientation));
         Ok(Self(Rc::new(StackInner {
             element,
             orientation,

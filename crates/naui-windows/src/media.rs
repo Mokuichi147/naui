@@ -283,7 +283,8 @@ fn to_time_span(seconds: f64) -> TimeSpan {
 
 impl MediaInner {
     fn new() -> Result<Rc<Self>> {
-        let native = MediaPlayerElement::new().map_err(|e| to_error("MediaPlayerElement の生成", e))?;
+        let native =
+            MediaPlayerElement::new().map_err(|e| to_error("MediaPlayerElement の生成", e))?;
         let player = MediaPlayer::new().map_err(|e| to_error("MediaPlayer の生成", e))?;
         // Windows App SDK 2.2.4 の標準 MediaTransportControls は、
         // MediaPlayerElement を visual tree へ追加したときに XAML 内部
@@ -328,8 +329,8 @@ impl MediaInner {
         // スレッドをまたぐのは番号と状態だけ。Rc は渡さない。
         let id = self.id;
         let state_queue = queue.clone();
-        let handler = TypedEventHandler::<MediaPlaybackSession, IInspectable>::new(
-            move |session, _args| {
+        let handler =
+            TypedEventHandler::<MediaPlaybackSession, IInspectable>::new(move |session, _args| {
                 let Ok(session) = session.ok() else {
                     return Ok(());
                 };
@@ -345,16 +346,15 @@ impl MediaInner {
                     Ok(())
                 }));
                 Ok(())
-            },
-        );
+            });
         session
             .PlaybackStateChanged(&handler)
             .map_err(|e| to_error("再生状態の購読", e))?;
 
         // 再生位置も同じ経路で UI スレッドへ渡す。運ぶのは番号と秒数だけ。
         let position_queue = queue.clone();
-        let position = TypedEventHandler::<MediaPlaybackSession, IInspectable>::new(
-            move |session, _args| {
+        let position =
+            TypedEventHandler::<MediaPlaybackSession, IInspectable>::new(move |session, _args| {
                 let Ok(session) = session.ok() else {
                     return Ok(());
                 };
@@ -370,8 +370,7 @@ impl MediaInner {
                     Ok(())
                 }));
                 Ok(())
-            },
-        );
+            });
         session
             .PositionChanged(&position)
             .map_err(|e| to_error("再生位置の購読", e))?;
@@ -651,9 +650,7 @@ macro_rules! impl_playback {
             /// 無効にする。アプリ側の再生 UI と組み合わせて使う。
             pub fn set_controls(&self, controls: bool) {
                 if controls {
-                    eprintln!(
-                        "naui-windows: WinUI 標準の再生バーは安全性のため無効です"
-                    );
+                    eprintln!("naui-windows: WinUI 標準の再生バーは安全性のため無効です");
                 }
                 let _ = self.0.native.SetAreTransportControlsEnabled(false);
             }

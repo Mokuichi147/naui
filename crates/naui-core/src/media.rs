@@ -182,7 +182,10 @@ mod tests {
     fn file_url_encodes_and_normalises_separators() {
         assert_eq!(file_url("/Users/me/a b.png"), "file:///Users/me/a%20b.png");
         assert_eq!(file_url(r"C:\Users\me\a.png"), "file:///C:/Users/me/a.png");
-        assert_eq!(file_url(r"\\server\share\a.png"), "file://server/share/a.png");
+        assert_eq!(
+            file_url(r"\\server\share\a.png"),
+            "file://server/share/a.png"
+        );
         // 相対パスでも `file://` の後ろは絶対パスの形にそろえる。
         assert_eq!(file_url("a.png"), "file:///a.png");
     }

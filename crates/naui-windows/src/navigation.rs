@@ -22,8 +22,8 @@ use naui_core::{NavItem, Result};
 use windows_core::{Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::Primitives::ToggleButton;
 use winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, Grid as XamlGrid, HyperlinkButton,
-    Orientation as XamlOrientation, RowDefinition, StackPanel, TextBlock,
+    Button as XamlButton, Grid as XamlGrid, HyperlinkButton, Orientation as XamlOrientation,
+    RowDefinition, StackPanel, TextBlock,
 };
 use winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, UIElement,
@@ -598,16 +598,12 @@ impl BreadcrumbBar {
                 append(&self.0.panel, &element)?;
             }
 
-            let link = HyperlinkButton::new()
-                .map_err(|e| to_error("パンくずリンクの生成", e))?;
-            link
-                .SetContent(&text_block(&item.label)?)
+            let link = HyperlinkButton::new().map_err(|e| to_error("パンくずリンクの生成", e))?;
+            link.SetContent(&text_block(&item.label)?)
                 .map_err(|e| to_error("パンくずリンクの内容設定", e))?;
-            link
-                .SetNavigateUri(None)
+            link.SetNavigateUri(None)
                 .map_err(|e| to_error("パンくずリンクの遷移先設定", e))?;
-            link
-                .SetVerticalAlignment(VerticalAlignment::Center)
+            link.SetVerticalAlignment(VerticalAlignment::Center)
                 .map_err(|e| to_error("パンくずリンクの縦位置設定", e))?;
             let _ = link.SetIsEnabled(item.enabled);
 
@@ -620,8 +616,7 @@ impl BreadcrumbBar {
                 });
                 Ok(())
             });
-            link
-                .Click(&handler)
+            link.Click(&handler)
                 .map_err(|e| to_error("パンくずリンクの購読", e))?;
 
             let element = link

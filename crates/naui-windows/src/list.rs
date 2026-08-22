@@ -31,15 +31,15 @@ use windows::Foundation::PropertyValue;
 use windows_core::{IInspectable, Interface, HSTRING};
 use winui3::Microsoft::UI::Xaml::Controls::{
     ListBox as XamlListBox, ListBoxItem, Orientation as XamlOrientation, ScrollBarVisibility,
-    ScrollViewer, StackPanel, SelectionChangedEventHandler, SelectionMode as XamlSelectionMode,
+    ScrollViewer, SelectionChangedEventHandler, SelectionMode as XamlSelectionMode, StackPanel,
     TextBlock,
 };
 use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use winui3::Microsoft::UI::Xaml::{ResourceDictionary, Style, UIElement};
 
-use crate::to_error;
 use crate::layout::ListScrollTarget;
+use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::{impl_widget, Widget};
 
@@ -296,10 +296,8 @@ impl List {
             &list_box,
             ScrollBarVisibility::Disabled,
         );
-        let _ = ScrollViewer::SetVerticalScrollBarVisibility2(
-            &list_box,
-            ScrollBarVisibility::Disabled,
-        );
+        let _ =
+            ScrollViewer::SetVerticalScrollBarVisibility2(&list_box, ScrollBarVisibility::Disabled);
         let _ = native.SetHorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
         let _ = native.SetVerticalScrollBarVisibility(ScrollBarVisibility::Auto);
         let hovered = Arc::new(UiThreadCell::new(0));
@@ -554,11 +552,18 @@ fn set_row_content(row: &ListBoxItem, item: &ListItem) -> Result<()> {
                 .Children()
                 .map_err(|e| to_error("行の中身の取得", e))?;
             children
-                .Append(&title.cast::<UIElement>().map_err(|e| to_error("行の要素化", e))?)
+                .Append(
+                    &title
+                        .cast::<UIElement>()
+                        .map_err(|e| to_error("行の要素化", e))?,
+                )
                 .map_err(|e| to_error("行への追加", e))?;
             let sub = text_block(detail, true)?;
             children
-                .Append(&sub.cast::<UIElement>().map_err(|e| to_error("行の要素化", e))?)
+                .Append(
+                    &sub.cast::<UIElement>()
+                        .map_err(|e| to_error("行の要素化", e))?,
+                )
                 .map_err(|e| to_error("行への追加", e))?;
             row.SetContent(&panel)
                 .map_err(|e| to_error("行への内容設定", e))

@@ -27,9 +27,8 @@ use objc2_app_kit::{
     NSBezelStyle, NSButton, NSButtonType, NSColor, NSControlStateValueOff, NSControlStateValueOn,
     NSLayoutAttribute, NSLayoutConstraintOrientation, NSPathControl, NSPathControlItem,
     NSPathStyle, NSSegmentDistribution, NSSegmentStyle, NSSegmentSwitchTracking,
-    NSSegmentedControl, NSStackView,
-    NSStackViewDistribution, NSTabView, NSTabViewItem, NSTextField,
-    NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
+    NSSegmentedControl, NSStackView, NSStackViewDistribution, NSTabView, NSTabViewItem,
+    NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
 };
 use objc2_foundation::{NSArray, NSString, NSURL};
 

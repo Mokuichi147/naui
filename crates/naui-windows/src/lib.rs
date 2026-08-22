@@ -19,6 +19,7 @@
 
 mod app;
 mod combo_box;
+mod date_picker;
 mod dialog;
 mod file_picker;
 mod file_saver;
@@ -36,9 +37,10 @@ mod window;
 
 use std::cell::{Cell, RefCell};
 
-use naui_core::{Error, Orientation, Result, Settings, Theme};
+use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Theme};
 
 pub use combo_box::ComboBox;
+pub use date_picker::DatePicker;
 pub use dialog::Dialog;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
@@ -73,10 +75,7 @@ pub struct Ui {
 }
 
 impl Ui {
-    fn new(
-        theme: Theme,
-        shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
-    ) -> Self {
+    fn new(theme: Theme, shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>) -> Self {
         Self {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
@@ -139,6 +138,11 @@ impl Ui {
     /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
     pub fn radio_group(&self) -> Result<RadioGroup> {
         RadioGroup::new()
+    }
+
+    /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
+    pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
+        DatePicker::new(mode)
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {
