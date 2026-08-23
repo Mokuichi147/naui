@@ -40,6 +40,9 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
   統合テストと Gallery で確認済み。Linux 向けの統合テストは用意してあります)
 - Windows / Linux: `DatePicker` の実機での実行 (macOS は統合テストと Gallery、
   Web はブラウザで確認済み。Linux 向けの統合テストは用意してあります)
+- Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
+  統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
+  Linux 向けの統合テストは用意してあります)
 
 これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
@@ -158,6 +161,41 @@ form.attach(&field, GridCell::new(1, 0));
 
 `List`、`Tree`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
 `set_sizing` で高さを指定します。
+
+### 数値とパスワードの入力
+
+数を入れさせるには `NumberInput` を使います。値は `f64` で、下限・上限・刻み・
+小数桁を指定できます。**既定は整数**(刻み 1、小数桁 0、範囲の制限なし)なので、
+小数を扱うときは刻みと小数桁の両方を指定します。
+
+```rust
+let count = ui.number_input(1.0)?;
+count.set_range(Some(1.0), Some(99.0)); // 1〜99 の外へは出られない
+count.on_change(|value| println!("{value} 個"));
+
+let rate = ui.number_input(0.5)?;
+rate.set_decimals(2); // 0.50 のように 2 桁で見せる
+rate.set_step(0.05); // 上下のボタンで動く量
+```
+
+値は**小数桁へ丸めてから範囲へ収めます**。範囲の外の値を `set_value` へ渡すと、
+通知せずに端へ寄ります。打っている最中は表示を書き換えず、読める値になった時点で
+`on_change` が呼ばれます。表示を値へそろえ直すのは確定したとき (Enter、欄を離れた
+とき、増減のボタン) で、数として読めない文字列は確定時に元の値へ戻ります。
+中身に合わせた幅を持たないので、幅は `set_sizing` で指定します。
+
+パスワードは `PasswordInput` を使います。API は `TextInput` と同じで、違うのは
+打った文字が伏せ字になることだけです。
+
+```rust
+let password = ui.password_input()?;
+password.set_placeholder("パスワード");
+password.on_change(|text| println!("{} 文字", text.chars().count()));
+```
+
+**伏せ字を外す切り替えは持ちません**。`NSSecureTextField` に無く、4 環境の共通
+部分にならないためです。入力された文字列は `text()` で読めるので、扱いはアプリの
+責任になります。
 
 ### 選択入力
 
@@ -299,7 +337,7 @@ window.set_toolbar(&toolbar);
 
 | 分類 | API |
 | --- | --- |
-| 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`Slider`、`ProgressBar` |
+| 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`PasswordInput`、`NumberInput`、`Slider`、`ProgressBar` |
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
 | ウィンドウ付属 | `Toolbar` |
@@ -335,6 +373,8 @@ window.set_toolbar(&toolbar);
 | `DatePicker` | 🔴 `ComboBox` の組 (年/月/日 と 時:分) | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
+| `PasswordInput` | ✅ `PasswordBox` | ✅ `NSSecureTextField` | ✅ `GtkPasswordEntry` | ✅ `<input type="password">` |
+| `NumberInput` | 🟡 `TextBox` + 増減ボタン | 🟡 `NSTextField` + `NSStepper` | ✅ `GtkSpinButton` | ✅ `<input type="number">` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
 | `ProgressBar` | 🟡 `Grid` + `Border` | ✅ `NSProgressIndicator` | ✅ `GtkProgressBar` | ✅ `<progress>` |
 | `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
@@ -367,6 +407,7 @@ window.set_toolbar(&toolbar);
 - `ListItem` / `SelectionMode`: リスト項目と単一・複数選択
 - `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
 - `DateTime` / `DatePickerMode`: 年月日と時分の値、日付選択で何を選ばせるか
+- `NumberSpec`: 数値入力の下限・上限・刻み・小数桁
 - `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
 - `Fit` / `PlaybackState`: メディア表示と再生状態
 - `PopupItem`: ポップアップメニュー項目
@@ -465,7 +506,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 32 コンポーネントです。複数列テーブルは未実装です。
+- 対応するのは上記の 34 コンポーネントです。複数列テーブルは未実装です。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
@@ -494,6 +535,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `ComboBox` を年 / 月 / 日 (と 時 : 分) の順に並べて組み立てています。並び順は
   ロケールによらず固定です。年の選択肢は `set_range` があればその範囲、無ければ
   現在の年の前後 (120 年前〜20 年後) になります。
+- `NumberBox` のバインディングが無いため、`NumberInput` は `TextBox` と
+  `-` / `+` のボタンを横に並べて組み立てています (`NumberBox` の既定と同じ並び)。
+  値の確定は欄を離れたときです。
 - `CommandBar` がバインディングに無いため、`Toolbar` は `Button` を横に並べて
   構成し、タイトルバー (ドラッグ領域) ではなくその下の行に置きます。アイコンは
   Segoe Fluent Icons を `FontIcon` で出します。
@@ -508,6 +552,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   重なって開き (`presentsCalendarOverlay`)、キーボードとステッパーでも編集
   できます。見た目・操作とも AppKit の既定 (SwiftUI の `DatePicker` と同じ
   `textFieldAndStepper`) と変わりません。
+- 数値専用のコントロールが AppKit に無いため、`NumberInput` は `NSTextField` と
+  `NSStepper` を横に並べて組み立てています (システム設定の数値欄と同じ形)。
 - `Toolbar` の区切りは、macOS の作法にならって `NSToolbarSpaceItem`
   (一定幅の空き) になります。区切り線は引かれません。
 - `Toolbar` を付けるとウィンドウのタイトル文字は隠れます (macOS の作法)。

@@ -13,8 +13,9 @@ use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Messa
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBorderType, NSButton, NSButtonType, NSColor,
     NSControlStateValueOff, NSControlStateValueOn, NSFont, NSLayoutAttribute, NSLayoutConstraint,
-    NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSlider, NSStackView,
-    NSStackViewDistribution, NSTextField, NSTextView, NSUserInterfaceLayoutOrientation, NSView,
+    NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSecureTextField, NSSlider,
+    NSStackView, NSStackViewDistribution, NSTextField, NSTextView,
+    NSUserInterfaceLayoutOrientation, NSView,
 };
 use objc2_foundation::{NSArray, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString};
 
@@ -230,6 +231,63 @@ impl TextInput {
         self.0.native.stringValue().to_string()
     }
 
+    pub fn set_text(&self, text: &str) {
+        self.0.native.setStringValue(&NSString::from_str(text));
+    }
+
+    pub fn set_placeholder(&self, text: &str) {
+        self.0
+            .native
+            .setPlaceholderString(Some(&NSString::from_str(text)));
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.0.native.setEnabled(enabled);
+    }
+
+    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
+        let mtm = MainThreadMarker::from(&*self.0.native);
+        let observer = TextObserver::new(mtm, f);
+        unsafe {
+            self.0
+                .native
+                .setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)))
+        };
+        *self.0.observer.borrow_mut() = Some(observer);
+    }
+}
+
+// ----------------------------------------------------------- PasswordInput
+
+struct PasswordInputInner {
+    native: Retained<NSSecureTextField>,
+    observer: RefCell<Option<Retained<TextObserver>>>,
+}
+
+/// パスワード入力 (`NSSecureTextField`)。
+///
+/// API の形は [`TextInput`] と同じで、違うのは**打った文字が伏せ字になる**
+/// ことだけ。伏せ字を一時的に外す仕掛けは AppKit に無いので持たない。
+#[derive(Clone)]
+pub struct PasswordInput(Rc<PasswordInputInner>);
+impl_widget!(PasswordInput);
+
+impl PasswordInput {
+    pub(crate) fn new(mtm: MainThreadMarker) -> Self {
+        let native = NSSecureTextField::new(mtm);
+        Self(Rc::new(PasswordInputInner {
+            native,
+            observer: RefCell::new(None),
+        }))
+    }
+
+    /// いま入力されている文字列。
+    pub fn text(&self) -> String {
+        self.0.native.stringValue().to_string()
+    }
+
+    /// 文字列を置き換える。`on_change` は呼ばれない。
     pub fn set_text(&self, text: &str) {
         self.0.native.setStringValue(&NSString::from_str(text));
     }

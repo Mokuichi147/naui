@@ -31,6 +31,8 @@ mod imp {
         pub max_width: Cell<i32>,
         /// 高さの上限 (論理ピクセル)。負なら上限なし。
         pub max_height: Cell<i32>,
+        /// 中身が幅を縮められないか (`GtkSpinButton` など)。
+        pub rigid_width: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -75,18 +77,23 @@ mod imp {
         ///    (Web バックエンドが `min-width: 0` を書いているのと同じ理由)。
         ///    下限が要るときは [`Sizing::min_width`] などで指定する。
         ///    そちらは `size_request` として GTK4 が改めて下限に効かせる。
+        ///
+        /// ただし**縮められない中身** ([`rigid_width`](Self::rigid_width)) は別で、
+        /// 中身の最小をそのまま通す。GTK4 は最小より狭い場所を配られても中身を
+        /// 縮めず、はみ出して描いてしまうため。
         fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
             let Some(child) = self.obj().first_child() else {
                 return (0, 0, -1, -1);
             };
-            let (mut minimum, mut natural, min_baseline, nat_baseline) =
+            let (child_minimum, child_natural, min_baseline, nat_baseline) =
                 child.measure(orientation, for_size);
+            let (mut minimum, mut natural) = (child_minimum, child_natural);
             let horizontal = orientation == gtk::Orientation::Horizontal;
             let sizing = self.sizing.get();
-            let (cap, length) = if horizontal {
-                (self.max_width.get(), sizing.width)
+            let (cap, length, rigid) = if horizontal {
+                (self.max_width.get(), sizing.width, self.rigid_width.get())
             } else {
-                (self.max_height.get(), sizing.height)
+                (self.max_height.get(), sizing.height, false)
             };
             if length.is_fill() {
                 minimum = 0;
@@ -99,6 +106,10 @@ mod imp {
                     natural.min(cap)
                 };
                 minimum = minimum.min(cap);
+            }
+            if rigid {
+                minimum = child_minimum;
+                natural = natural.max(child_minimum);
             }
             (minimum, natural, min_baseline, nat_baseline)
         }
@@ -139,6 +150,16 @@ impl SizeBin {
 
     fn imp(&self) -> &imp::SizeBin {
         gtk::subclass::prelude::ObjectSubclassIsExt::imp(self)
+    }
+
+    /// 中身が幅を縮められないことを伝える。
+    ///
+    /// `GtkSpinButton` のように「欄とボタンが並ぶ最小の幅」を持つ中身は、
+    /// それより狭い場所を配られても縮まず、はみ出して描かれてしまう。
+    /// これを立てた入れ物は、上限より中身の最小を優先する。
+    pub(crate) fn mark_rigid_width(&self) {
+        self.imp().rigid_width.set(true);
+        self.queue_resize();
     }
 
     /// アプリが指定した大きさ。

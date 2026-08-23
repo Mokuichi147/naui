@@ -23,12 +23,13 @@ use objc2::{msg_send, AnyThread};
 use objc2_app_kit::{
     NSButton, NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSImage,
     NSImageScaling, NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation,
-    NSOutlineViewDelegate, NSScrollView, NSSegmentedControl, NSTableViewDelegate, NSTextField,
-    NSTextInputClient, NSTextView, NSView, NSWindowTitleVisibility,
+    NSOutlineViewDelegate, NSScrollView, NSSecureTextField, NSSegmentedControl, NSStepper,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound, NSPoint,
-    NSRange, NSRunLoop, NSSize, NSString,
+    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound,
+    NSNotification, NSPoint, NSRange, NSRunLoop, NSSize, NSString,
 };
 
 /// テストケース 1 件。
@@ -280,6 +281,22 @@ fn main() {
         (
             "日付ピッカーの通知中に値と通知先を差し替えられる",
             date_picker_callback_is_reentrant,
+        ),
+        (
+            "数値入力の値がネイティブと往復する",
+            number_input_value_round_trips,
+        ),
+        (
+            "数値入力が小数桁と範囲を守る",
+            number_input_applies_the_spec,
+        ),
+        (
+            "数値入力の打鍵が通知され、確定で表示が直る",
+            number_input_notifies_while_typing,
+        ),
+        (
+            "パスワード入力が伏せ字の欄として往復する",
+            password_input_round_trips,
         ),
         (
             "ポップアップメニューの選択がクロージャへ届く",
@@ -3196,6 +3213,186 @@ fn edit_natively(picker: &NSDatePicker, value: DateTime) {
     let action = picker.action();
     let target = picker.target();
     unsafe { picker.sendAction_to(action, target.as_deref()) };
+}
+
+/// 数字の欄へ打ち込む。`controlTextDidChange:` は AppKit が編集中に送るので、
+/// テストからは同じ通知をデリゲートへ直接渡す。
+fn type_into_field(field: &NSTextField, text: &str) {
+    field.setStringValue(&NSString::from_str(text));
+    let Some(delegate) = field.delegate() else {
+        return;
+    };
+    let name = NSString::from_str("NSControlTextDidChangeNotification");
+    let notification =
+        unsafe { NSNotification::notificationWithName_object(&name, Some(field.as_ref())) };
+    unsafe {
+        let _: () = msg_send![&*delegate, controlTextDidChange: &*notification];
+    }
+}
+
+/// 欄を確定する (Enter・欄を離れたときと同じ経路)。
+fn commit_field(control: &NSTextField) {
+    let action = control.action();
+    let target = control.target();
+    unsafe { control.sendAction_to(action, target.as_deref()) };
+}
+
+/// 上下のボタンを動かす (`NSStepper` が値を動かしてから action を送る)。
+fn step_natively(stepper: &NSStepper, value: f64) {
+    stepper.setDoubleValue(value);
+    let action = stepper.action();
+    let target = stepper.target();
+    unsafe { stepper.sendAction_to(action, target.as_deref()) };
+}
+
+/// 数値入力は欄と上下のボタンの両方へ値を書き、ボタンの操作を通知する。
+fn number_input_value_round_trips(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(3.0)?;
+    assert_eq!(number.value(), 3.0);
+    assert_eq!(number.native_field().stringValue().to_string(), "3");
+    assert_eq!(number.native_stepper().doubleValue(), 3.0);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    number.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    // 既定は整数なので、小数は丸めて入る。
+    number.set_value(2.4);
+    assert_eq!(number.value(), 2.0);
+    assert_eq!(number.native_field().stringValue().to_string(), "2");
+    assert!(seen.borrow().is_empty(), "set_value は通知しない");
+
+    step_natively(&number.native_stepper(), 3.0);
+    assert_eq!(number.value(), 3.0);
+    assert_eq!(*seen.borrow(), vec![3.0]);
+    assert_eq!(
+        number.native_field().stringValue().to_string(),
+        "3",
+        "ボタンで動かしたら欄も追いかけること"
+    );
+
+    // 値が動かなければ知らせない。
+    step_natively(&number.native_stepper(), 3.0);
+    assert_eq!(seen.borrow().len(), 1);
+
+    number.set_enabled(false);
+    assert!(!number.native_field().isEnabled());
+    assert!(!number.native_stepper().isEnabled());
+    Ok(())
+}
+
+/// 小数桁・刻み・範囲は `NSStepper` にも naui の値にも効く。
+fn number_input_applies_the_spec(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(0.0)?;
+    number.set_decimals(2);
+    number.set_step(0.5);
+    number.set_range(Some(0.0), Some(10.0));
+
+    let stepper = number.native_stepper();
+    assert_eq!(stepper.minValue(), 0.0);
+    assert_eq!(stepper.maxValue(), 10.0);
+    assert_eq!(stepper.increment(), 0.5);
+
+    number.set_value(1.239);
+    assert_eq!(number.value(), 1.24, "小数桁へ丸める");
+    assert_eq!(number.native_field().stringValue().to_string(), "1.24");
+
+    number.set_value(12.345);
+    assert_eq!(number.value(), 10.0, "上限で止まる");
+    assert_eq!(
+        number.native_field().stringValue().to_string(),
+        "10.00",
+        "桁は必ず埋めること"
+    );
+
+    number.set_value(-1.0);
+    assert_eq!(number.value(), 0.0, "下限で止まる");
+
+    // 範囲を外すと自由に入る。
+    number.set_range(None, None);
+    number.set_value(-30.5);
+    assert_eq!(number.value(), -30.5);
+    assert_eq!(number.spec().min, None);
+    Ok(())
+}
+
+/// 打っている間は通知だけ、確定で表示が値へそろう。
+fn number_input_notifies_while_typing(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(0.0)?;
+    number.set_range(None, Some(100.0));
+    let field = number.native_field();
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    number.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    type_into_field(&field, "12");
+    assert_eq!(number.value(), 12.0);
+    assert_eq!(*seen.borrow(), vec![12.0]);
+    assert_eq!(
+        field.stringValue().to_string(),
+        "12",
+        "打っている間は表示を書き換えないこと"
+    );
+
+    // 数として読めないものは、確定まで放っておく。
+    type_into_field(&field, "12ab");
+    assert_eq!(number.value(), 12.0);
+    assert_eq!(seen.borrow().len(), 1);
+    commit_field(&field);
+    assert_eq!(field.stringValue().to_string(), "12", "元の値へ戻す");
+
+    // 範囲の外は通知の時点で端へ寄り、確定で表示もそろう。
+    type_into_field(&field, "999");
+    assert_eq!(number.value(), 100.0);
+    assert_eq!(*seen.borrow(), vec![12.0, 100.0]);
+    commit_field(&field);
+    assert_eq!(field.stringValue().to_string(), "100");
+    assert_eq!(seen.borrow().len(), 2, "確定だけでは重ねて通知しないこと");
+
+    // 空欄も読めない扱い。確定で元へ戻る。
+    type_into_field(&field, "");
+    commit_field(&field);
+    assert_eq!(number.value(), 100.0);
+    assert_eq!(field.stringValue().to_string(), "100");
+    Ok(())
+}
+
+/// パスワード入力は `NSSecureTextField` そのもので、文字列は往復する。
+fn password_input_round_trips(ui: &Ui) -> Result<()> {
+    let password = ui.password_input()?;
+    let view = password.native_view();
+    let field = view
+        .downcast_ref::<NSSecureTextField>()
+        .expect("伏せ字の欄であること");
+    assert!(field.isEditable(), "打ち込めること");
+    assert!(field.isBezeled(), "1 行入力と同じ枠を持つこと");
+
+    assert_eq!(password.text(), "");
+    password.set_text("ひみつ");
+    assert_eq!(password.text(), "ひみつ");
+    password.set_placeholder("パスワード");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    password.on_change({
+        let seen = seen.clone();
+        move |text| seen.borrow_mut().push(text.to_string())
+    });
+    type_into_field(field.as_ref(), "あい");
+    assert_eq!(password.text(), "あい");
+    assert_eq!(*seen.borrow(), vec!["あい".to_string()]);
+
+    password.set_text("");
+    assert_eq!(password.text(), "");
+    assert_eq!(seen.borrow().len(), 1, "set_text は通知しない");
+
+    password.set_enabled(false);
+    assert!(!field.isEnabled());
+    Ok(())
 }
 
 /// 種別ごとに `datePickerElements` が変わる。
