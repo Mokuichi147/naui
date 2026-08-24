@@ -65,7 +65,8 @@
 //!
 //! どのウィジェットも [`Sizing`] で大きさを指定できる。並べ方は
 //! `Stack` (縦横) と `Grid` (行と列)、はみ出しは `Scroll`、
-//! 余りを吸わせたいときは `Spacer` を使う。
+//! 余りを吸わせたいときは `Spacer`、ふだんは隠しておきたいものは
+//! `Expander` を使う。
 //!
 //! ```no_run
 //! # use naui::{GridCell, Length, Result, ScrollPolicy, Sizing, Track, Ui};
@@ -98,6 +99,39 @@
 //! 上限まで広がり、足りなければ上限より小さくなる。** 中身の自然な大きさが
 //! 当てにならないウィジェット (読み込み前の動画など) の表示欄は、この形で
 //! 大きさを決める。
+//!
+//! ## 折りたたみ
+//!
+//! ふだんは隠しておき、見出しを押したときだけ見せたいものは [`Expander`] へ
+//! 入れる。中身は 1 つなので、複数並べたいときは `Stack` などのコンテナごと
+//! 入れる。
+//!
+//! ```no_run
+//! # use naui::{Orientation, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let details = ui.expander("詳細設定")?;
+//! let body = ui.stack(Orientation::Vertical)?;
+//! body.append(&ui.checkbox("バックアップを作る")?);
+//! details.set_child(&body);
+//! details.set_expanded(true); // 通知せずに開く
+//! details.on_toggle(|expanded| println!("開いている: {expanded}"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `Expander` | `ToggleButton` + `StackPanel` | `NSButton` (入り切り) + `NSStackView` | `GtkExpander` | `<details>` + `<summary>` |
+//!
+//! 同じ役目のコントロールがあるのは GTK4 (`GtkExpander`) と HTML
+//! (`<details>`) だけなので、Windows と macOS は標準のコントロールを組んで
+//! 同じ形にしている (山形は Segoe Fluent Icons と SF Symbols の字)。
+//! WinUI 3 の `Expander` を使わないのは、`winio-winui3` がこの型を投影して
+//! いないため。
+//!
+//! たたんでいる間、中身はレイアウトから外れる (場所を空けない)。既定は
+//! 閉じた状態で、[`set_expanded`](Expander::set_expanded) はプログラムからの
+//! 操作なので `on_toggle` を呼ばない ([`Checkbox::set_checked`] と同じ決まり)。
 //!
 //! ## テキスト入力
 //!
@@ -607,10 +641,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トーストを含む 93 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換えを確認) |
-//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トーストを含む) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トーストを含む) を実行確認。GTK4 の実コントロールに対する自動テスト 91 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみを含む 95 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知を確認) |
+//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トーストを含む。折りたたみは未確認) |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トーストを含む) を実行確認 (折りたたみは未確認)。GTK4 の実コントロールに対する自動テスト 93 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -624,22 +658,22 @@ pub use naui_core::{
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
-    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, Expander,
+    FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
     PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
     TextArea, TextInput, Toast, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
-    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, Expander,
+    FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
     PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
     TextArea, TextInput, Toast, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
-    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, Expander,
+    FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
     PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
     TextArea, TextInput, Toast, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
@@ -650,8 +684,8 @@ pub use naui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
-    FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
+    run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, Expander,
+    FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
     PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
     TextArea, TextInput, Toast, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
@@ -750,6 +784,15 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let scroll: Scroll = ui.scroll()?;
     scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
     scroll.set_sizing(Sizing::new().width(Length::Fill).min_height(1.0));
+
+    let expander: Expander = ui.expander("t")?;
+    let _: String = expander.text();
+    expander.set_text("t");
+    let _: bool = expander.is_expanded();
+    expander.set_expanded(true);
+    expander.set_enabled(true);
+    expander.on_toggle(|_expanded: bool| {});
+    expander.set_sizing(Sizing::fill_width());
 
     let spacer: Spacer = ui.spacer()?;
     spacer.set_sizing(Sizing::fill_height());
@@ -1098,6 +1141,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     grid.attach(&label, GridCell::new(0, 0));
     grid.attach(&button, GridCell::new(1, 0).span(2, 1));
     scroll.set_child(&grid);
+    expander.set_child(&checkbox);
 
     stack.append(&spacer);
     stack.append(&scroll);
@@ -1125,6 +1169,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&link);
     stack.append(&picker);
     stack.append(&saver);
+    stack.append(&expander);
     window.set_child(&stack);
 
     ui.quit();

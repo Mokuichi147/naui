@@ -39,6 +39,29 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     spacer_example.append(&ui.label("右端")?);
     pane.append(&spacer_example);
 
+    pane.append(&ui.label("Expander")?);
+    pane.append(&ui.label("見出しを押すと中身を出し入れします。閉じている間は場所も空けません。")?);
+    let details_status = ui.label("Expander: 閉じています")?;
+    let details_body = ui.stack(Orientation::Vertical)?;
+    details_body.set_spacing(8.0);
+    details_body.append(&ui.checkbox("バックアップを作る")?);
+    details_body.append(&ui.checkbox("保存時に整形する")?);
+    let details = ui.expander("詳細設定")?;
+    details.set_child(&details_body);
+    details.set_sizing(Sizing::fill_width());
+    details.on_toggle({
+        let status = details_status.clone();
+        move |expanded| {
+            status.set_text(if expanded {
+                "Expander: 開いています"
+            } else {
+                "Expander: 閉じています"
+            });
+        }
+    });
+    pane.append(&details);
+    pane.append(&details_status);
+
     pane.append(&ui.label("Scroll")?);
     pane.append(&ui.label("高さを固定し、はみ出した内容だけをスクロールします。")?);
     let content = ui.stack(Orientation::Vertical)?;

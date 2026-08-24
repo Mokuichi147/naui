@@ -175,6 +175,14 @@ fn main() {
             "スクロールが中身とポリシーを保つ",
             scroll_keeps_child_and_policy,
         ),
+        (
+            "折りたたみが中身を持ち、開閉を通知する",
+            expander_keeps_child_and_notifies,
+        ),
+        (
+            "折りたたみの set_expanded は通知しない",
+            expander_set_is_silent,
+        ),
         ("ウィンドウを設定して閉じられる", window_lifecycle),
         ("ウィンドウにヘッダーバーが付く", window_has_a_header_bar),
         ("ナビバーの選択がネイティブと往復する", navbar_selection),
@@ -1287,6 +1295,58 @@ fn scroll_keeps_child_and_policy(ui: &Ui) -> Result<()> {
         native.policy(),
         (gtk::PolicyType::Never, gtk::PolicyType::Always)
     );
+    Ok(())
+}
+
+fn expander_keeps_child_and_notifies(ui: &Ui) -> Result<()> {
+    let expander = ui.expander("詳細設定")?;
+    assert_eq!(expander.text(), "詳細設定");
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&ui.label("中身")?);
+    expander.set_child(&stack);
+
+    let native: gtk::Expander = expander.native_widget().downcast().expect("GtkExpander");
+    assert_eq!(native.child(), Some(bin_of(&stack)));
+    assert!(!expander.is_expanded(), "既定は閉じていること");
+
+    let (log, sink) = recorder::<bool>();
+    expander.on_toggle(sink);
+
+    // GtkExpander の activate は見出しを押したときと同じ経路で開閉する。
+    native.activate();
+    assert!(expander.is_expanded());
+    native.activate();
+    assert!(!expander.is_expanded());
+    assert_eq!(log.borrow().as_slice(), [true, false]);
+
+    expander.set_text("詳細");
+    assert_eq!(expander.text(), "詳細");
+    assert_eq!(
+        native.label().map(|label| label.to_string()).as_deref(),
+        Some("詳細")
+    );
+
+    // たたんでいる間、中身は場所を取らない。
+    let (_, collapsed) = measure_height(&native);
+    expander.set_expanded(true);
+    let (_, expanded) = measure_height(&native);
+    assert!(
+        expanded > collapsed,
+        "開くと中身のぶんだけ高くなること: {collapsed} -> {expanded}"
+    );
+    Ok(())
+}
+
+fn expander_set_is_silent(ui: &Ui) -> Result<()> {
+    let expander = ui.expander("詳細")?;
+    let (log, sink) = recorder::<bool>();
+    expander.on_toggle(sink);
+
+    expander.set_expanded(true);
+    assert!(expander.is_expanded());
+    expander.set_expanded(false);
+    assert!(!expander.is_expanded());
+    assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
     Ok(())
 }
 
