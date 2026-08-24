@@ -43,9 +43,6 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
-- Windows / macOS: `Toast` の実機での実行 (macOS は統合テストで、Web はブラウザで
-  表示・操作ボタン・時間切れ・置き換えまで確認済み。Linux 向けの統合テストは
-  用意してあります)
 
 これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
