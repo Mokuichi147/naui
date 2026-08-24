@@ -19,13 +19,13 @@ use naui_core::{
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
 use objc2::sel;
-use objc2::{msg_send, AnyThread};
+use objc2::{msg_send, AnyThread, Message};
 use objc2_app_kit::{
     NSButton, NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSImage,
     NSImageScaling, NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation,
     NSOutlineViewDelegate, NSScrollView, NSSecureTextField, NSSegmentedControl, NSStepper,
-    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSView,
-    NSWindowTitleVisibility,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
+    NSUserInterfaceItemIdentification, NSView, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound,
@@ -200,6 +200,22 @@ fn main() {
         (
             "出していないダイアログは閉じても何も起きない",
             dialog_is_closed_until_opened,
+        ),
+        (
+            "トーストがウィンドウへ重なり、消すと外れる",
+            toast_is_placed_over_the_window,
+        ),
+        (
+            "トーストの操作ボタンが通知して閉じる",
+            toast_action_notifies_and_dismisses,
+        ),
+        (
+            "新しいトーストが前のものを黙って置き換える",
+            toast_replaces_the_previous_one,
+        ),
+        (
+            "トーストが指定した時間で自分から消える",
+            toast_dismisses_itself_after_the_timeout,
         ),
         (
             "編集メニューが貼り付けをレスポンダチェーンへ配送する",
@@ -2695,6 +2711,227 @@ fn dialog_is_closed_until_opened(ui: &Ui) -> Result<()> {
         "閉じていないので通知されないこと"
     );
     Ok(())
+}
+
+/// トーストがウィンドウの `contentView` へ重なり、消すと外れること。
+fn toast_is_placed_over_the_window(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    window.set_child(&root);
+
+    let toast = ui.toast("保存しました")?;
+    assert_eq!(toast.message(), "保存しました");
+    assert!(!toast.is_visible(), "作っただけでは出ていないこと");
+    assert!(toast.native_view().is_none());
+
+    toast.show();
+    assert!(toast.is_visible());
+    let view = toast.native_view().expect("出ている間はビューがあること");
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    assert!(
+        contains_subview(&content, &view),
+        "ウィンドウの中身へ重なっていること"
+    );
+
+    // 制約から実際の大きさが出ること。frame から作られる制約を外し忘れると
+    // 0 × 0 のまま重なり、出ているのに見えない状態になる。
+    content.setFrameSize(NSSize::new(400.0, 300.0));
+    content.layoutSubtreeIfNeeded();
+    let frame = view.frame();
+    assert!(
+        frame.size.width > 0.0 && frame.size.height > 0.0,
+        "中身の大きさを持つこと: {frame:?}"
+    );
+    assert!(
+        frame.size.width < 400.0,
+        "ウィンドウからはみ出さないこと: {frame:?}"
+    );
+    assert_eq!(
+        frame.origin.y, 24.0,
+        "下端から一定の余白を空けて置かれること"
+    );
+    let center = frame.origin.x + frame.size.width / 2.0;
+    assert!(
+        (center - 200.0).abs() < 1.0,
+        "左右の中央に置かれること: {frame:?}"
+    );
+
+    // 出したまま文字を変えても、載っているのは 1 つだけ。
+    toast.set_message("書き出しました");
+    assert_eq!(toast.message(), "書き出しました");
+    let rebuilt = toast.native_view().expect("作り直しても出ていること");
+    assert_eq!(
+        toast_labels(&rebuilt),
+        ["書き出しました"],
+        "新しい文字が出ていること"
+    );
+    assert!(contains_subview(&content, &rebuilt));
+    assert_eq!(
+        count_toasts(&content),
+        1,
+        "作り直しても重なるのは 1 つだけであること"
+    );
+
+    toast.dismiss();
+    assert!(!toast.is_visible());
+    assert!(toast.native_view().is_none());
+    assert_eq!(count_toasts(&content), 0, "消すとビューが外れること");
+    Ok(())
+}
+
+/// 操作ボタンを押すと `on_action` と `on_dismiss` が呼ばれ、消えること。
+fn toast_action_notifies_and_dismisses(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+
+    let toast = ui.toast("削除しました")?;
+    toast.set_action("元に戻す");
+    assert_eq!(toast.action(), "元に戻す");
+    // 押されるまでは消えないトーストにしておく。
+    toast.set_timeout(0.0);
+    assert!(toast.spec().is_persistent());
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    toast.on_action({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("action")
+    });
+    toast.on_dismiss({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("dismiss")
+    });
+
+    toast.show();
+    let view = toast.native_view().expect("出ている間はビューがあること");
+    let button = toast_button(&view).expect("操作ボタンが並んでいること");
+    assert_eq!(button.title().to_string(), "元に戻す");
+    unsafe { button.performClick(None) };
+
+    assert_eq!(
+        *seen.borrow(),
+        ["action", "dismiss"],
+        "押された通知のあとに、消えた通知が届くこと"
+    );
+    assert!(!toast.is_visible(), "押すと消えること");
+    Ok(())
+}
+
+/// 新しいトーストが前のものを置き換え、置き換えられたほうは通知しないこと。
+fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+
+    let first = ui.toast("1 つめ")?;
+    first.set_timeout(0.0);
+    let dismissed = Rc::new(RefCell::new(0));
+    first.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || *dismissed.borrow_mut() += 1
+    });
+    first.show();
+
+    let second = ui.toast("2 つめ")?;
+    second.set_timeout(0.0);
+    second.show();
+
+    assert!(!first.is_visible(), "前のものは消えること");
+    assert!(second.is_visible());
+    assert_eq!(
+        *dismissed.borrow(),
+        0,
+        "アプリ自身の操作なので、消えた通知は届かないこと"
+    );
+    assert_eq!(
+        count_toasts(&content),
+        1,
+        "同時に出るのは 1 つだけであること"
+    );
+
+    second.dismiss();
+    assert_eq!(count_toasts(&content), 0);
+    Ok(())
+}
+
+/// 指定した時間が過ぎるとトーストが自分から消え、`on_dismiss` が届くこと。
+fn toast_dismisses_itself_after_the_timeout(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+
+    let toast = ui.toast("しばらくしたら消える")?;
+    toast.set_timeout(0.05);
+    assert_eq!(toast.timeout(), 0.05);
+    let dismissed = Rc::new(RefCell::new(0));
+    toast.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || *dismissed.borrow_mut() += 1
+    });
+
+    toast.show();
+    assert!(toast.is_visible());
+    assert_eq!(*dismissed.borrow(), 0, "まだ時間が来ていないこと");
+
+    // NSTimer はランループの上で数えるので、回して時間を進める。
+    pump(0.3);
+    assert!(!toast.is_visible(), "時間が来たら自分から消えること");
+    assert_eq!(*dismissed.borrow(), 1, "消えた通知が 1 回だけ届くこと");
+    Ok(())
+}
+
+/// トーストとして重ねてあるビューか。naui が付けた名前で見分ける。
+fn is_toast_view(view: &NSView) -> bool {
+    view.identifier()
+        .is_some_and(|id| id.to_string() == "naui.toast")
+}
+
+/// `parent` の子に `view` があるか。
+fn contains_subview(parent: &NSView, view: &NSView) -> bool {
+    parent
+        .subviews()
+        .iter()
+        .any(|sub| std::ptr::eq(&*sub as *const NSView, view as *const NSView))
+}
+
+/// `parent` に重なっているトーストの数。
+fn count_toasts(parent: &NSView) -> usize {
+    parent
+        .subviews()
+        .iter()
+        .filter(|sub| is_toast_view(sub))
+        .count()
+}
+
+/// トーストに並んでいる文字。
+fn toast_labels(view: &NSView) -> Vec<String> {
+    toast_row(view)
+        .iter()
+        .filter_map(|item| {
+            item.downcast_ref::<NSTextField>()
+                .map(|f| f.stringValue().to_string())
+        })
+        .collect()
+}
+
+/// トーストの操作ボタン。置いていなければ `None`。
+fn toast_button(view: &NSView) -> Option<Retained<NSButton>> {
+    toast_row(view)
+        .iter()
+        .find_map(|item| item.downcast_ref::<NSButton>().map(|b| b.retain()))
+}
+
+/// トーストの中で文字とボタンを並べている行。
+///
+/// 重ねてあるビュー (影) → 背景 (角丸) → 行、の順に入っている。
+fn toast_row(view: &NSView) -> Retained<objc2_foundation::NSArray<NSView>> {
+    let surface = view.subviews().objectAtIndex(0);
+    let row = surface.subviews().objectAtIndex(0);
+    row.subviews()
 }
 
 /// `NSToolbar` に項目が並び、区切りは AppKit の space 項目へ写る。

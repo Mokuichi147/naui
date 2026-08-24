@@ -4,6 +4,9 @@
 //! タイトルバーを持たない**。最小化・最大化・閉じるのボタンは
 //! `AdwHeaderBar` が出すので、中身をそのまま入れるのではなく
 //! `AdwToolbarView` の上段にヘッダーバーを、下段にアプリの中身を置く。
+//!
+//! 下段はさらに `AdwToastOverlay` で包む。[`Toast`](crate::Toast) はここへ
+//! 足され、ヘッダーバーより下・アプリの中身の上へ重なる (GNOME の作法)。
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -16,8 +19,8 @@ use crate::widgets::Widget;
 
 pub(crate) struct WindowInner {
     native: adw::ApplicationWindow,
-    /// ヘッダーバーとアプリの中身を縦に積む入れ物。
-    view: adw::ToolbarView,
+    /// アプリの中身と、そこへ重なるトーストの入れ物。
+    overlay: adw::ToastOverlay,
     /// タイトルと、最小化・最大化・閉じるのボタン。
     header: adw::HeaderBar,
     child: RefCell<Option<Box<dyn Widget>>>,
@@ -58,11 +61,14 @@ impl Window {
         // GTK4 は既定でははみ出した中身を切り取らない。窓より中身が大きいとき
         // (縮めすぎたとき) に、ウィンドウの外へ描かれてしまうのを止める。
         toolbar.set_overflow(gtk::Overflow::Hidden);
+        // アプリの中身は、トーストを重ねられる入れ物ごしに置く。
+        let overlay = adw::ToastOverlay::new();
+        toolbar.set_content(Some(&overlay));
         native.set_content(Some(&toolbar));
 
         Self(Rc::new(WindowInner {
             native,
-            view: toolbar,
+            overlay,
             header,
             child: RefCell::new(None),
             toolbar: RefCell::new(None),
@@ -79,6 +85,13 @@ impl Window {
     /// バックエンド固有の脱出口として公開している。
     pub fn native_header_bar(&self) -> adw::HeaderBar {
         self.0.header.clone()
+    }
+
+    /// トーストが重なる `AdwToastOverlay`。
+    ///
+    /// バックエンド固有の脱出口として公開している。
+    pub fn native_toast_overlay(&self) -> adw::ToastOverlay {
+        self.0.overlay.clone()
     }
 
     pub fn downgrade(&self) -> WeakWindow {
@@ -107,7 +120,8 @@ impl Window {
         // ウィンドウの中身は、他のバックエンドと同じく窓いっぱいに広がる。
         bin.fill_parent();
         // ヘッダーバーの下が、アプリの中身の置き場になる。
-        self.0.view.set_content(Some(&bin));
+        // 直接ではなく、トーストを重ねる入れ物ごしに入れる。
+        self.0.overlay.set_child(Some(&bin));
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
@@ -146,6 +160,19 @@ impl Window {
         crate::apply_theme(theme);
         Ok(())
     }
+}
+
+/// `window` に載っている `AdwToastOverlay`。naui が作ったウィンドウでなければ
+/// `None`。
+///
+/// [`Toast`](crate::Toast) は「いちばん手前のウィンドウ」へ出すので、
+/// `GtkApplication` からたどったウィンドウを、naui が組んだ構造
+/// (`AdwApplicationWindow` → `AdwToolbarView` → `AdwToastOverlay`) に沿って
+/// 下りる。
+pub(crate) fn toast_overlay(window: &gtk::Window) -> Option<adw::ToastOverlay> {
+    let window = window.clone().downcast::<adw::ApplicationWindow>().ok()?;
+    let view = window.content()?.downcast::<adw::ToolbarView>().ok()?;
+    view.content()?.downcast::<adw::ToastOverlay>().ok()
 }
 
 fn to_px(value: f64) -> i32 {

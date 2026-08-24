@@ -466,6 +466,18 @@ pub(crate) fn owner_xaml_root() -> Option<winui3::Microsoft::UI::Xaml::XamlRoot>
     })
 }
 
+/// トーストを重ねる層。まだウィンドウを表示していなければ `None`。
+///
+/// [`themed_content_root`] が作る 3 行目 (アプリの中身の置き場) で、
+/// `Grid` は子を重ね順に置くため、あとから足したトーストが中身の上に出る。
+pub(crate) fn owner_content_layer() -> Option<Grid> {
+    OWNER_WINDOW.with(|slot| {
+        let window = slot.borrow();
+        let root = window.as_ref()?.Content().ok()?.cast::<Grid>().ok()?;
+        root.Children().ok()?.GetAt(2).ok()?.cast::<Grid>().ok()
+    })
+}
+
 /// モーダルダイアログの親にするウィンドウ。まだ何も表示していなければ `None`。
 pub(crate) fn owner_hwnd() -> Option<windows::Win32::Foundation::HWND> {
     let raw = OWNER_HWND.with(|slot| slot.get());

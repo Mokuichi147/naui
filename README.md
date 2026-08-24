@@ -27,7 +27,7 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 |
 | Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログを操作 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トーストを操作 |
 | Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 |
 
 未確認の範囲もあります。
@@ -43,6 +43,9 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
+- Windows / macOS: `Toast` の実機での実行 (macOS は統合テストで、Web はブラウザで
+  表示・操作ボタン・時間切れ・置き換えまで確認済み。Linux 向けの統合テストは
+  用意してあります)
 
 これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
@@ -295,6 +298,30 @@ saver.on_error(|error| eprintln!("{error}"));
 成功すると `on_save` に書き出し先が届き、取り消したときは何も呼ばれません。
 書き込みに失敗したときだけ `on_error` が呼ばれます。ボタンを押した時点の
 内容を書き出すため、内容が変わるたびに `set_contents` を呼び直します。
+### トースト
+
+済んだことを知らせるだけで、操作を止めたくないときは `Toast` を使います。
+画面の下端に短く出て、**何秒かで自分から消えます**。`Dialog` と同じく
+レイアウトには置かず、`show()` で出します。
+
+```rust
+let toast = ui.toast("保存しました")?;
+toast.set_action("元に戻す"); // 任意。空文字列で外す
+toast.set_timeout(3.0); // 秒。0 なら自分では消えない
+toast.on_action(|| println!("元に戻す"));
+toast.on_dismiss(|| println!("消えました"));
+toast.show();
+```
+
+**同時に出るのは 1 つ**で、新しく出したものが前のものを置き換えます。
+`dismiss()` で消したときと、置き換えられたときは `on_dismiss` を呼びません
+(アプリ自身の操作は通知しない、という `Dialog::close` と同じ決まりです)。
+
+ネイティブのトーストがあるのは Linux (`AdwToast`) だけで、残る 3 環境では
+naui が同じ形に組み立てます。OS の通知センターへ出す通知は、アプリの外へ
+出る別の仕組みなので扱いません。時間の刻みは Linux だけ秒なので、1 秒未満の
+指定は 1 秒になります。
+
 ### ツールバー
 
 よく使う操作をウィンドウの上端に並べるには `Toolbar` を使います。ほかの
@@ -344,7 +371,7 @@ window.set_toolbar(&toolbar);
 | データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`List`、`Tree` |
 | ファイル | `FilePicker`、`FileSaver` |
 | メディア | `Image`、`Video`、`Audio` |
-| オーバーレイ | `PopupMenu`、`Dialog` |
+| オーバーレイ | `PopupMenu`、`Dialog`、`Toast` |
 
 ### プラットフォーム別の実装
 
@@ -386,6 +413,7 @@ window.set_toolbar(&toolbar);
 | `Audio` | ✅ `MediaPlayerElement` | 🟡 `AVPlayerView` | 🟡 `GtkMediaControls` + `GtkMediaFile` | ✅ `<audio>` |
 | `PopupMenu` | 🟡 `Grid` + `Button` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
 | `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | ✅ `AdwAlertDialog` | 🟡 `<dialog>` + `showModal()` |
+| `Toast` | 🔴 `Grid` + `StackPanel` を重ねたもの | 🔴 `NSVisualEffectView` を重ねたもの | ✅ `AdwToast` + `AdwToastOverlay` | 🔴 `<div role="status">` |
 | `Toolbar` | 🟡 `StackPanel` + `Button` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 
 #### ナビゲーション対応表
@@ -413,6 +441,7 @@ window.set_toolbar(&toolbar);
 - `PopupItem`: ポップアップメニュー項目
 - `ToolbarItem` / `ToolbarIcon`: ツールバー項目とアイコン
 - `DialogButtons` / `DialogResponse`: ダイアログのボタンと応答
+- `ToastSpec`: トーストの文字・操作ボタン・消えるまでの時間
 
 API の詳しい説明は、リポジトリ内で次のコマンドを実行して確認できます。
 
@@ -506,7 +535,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 34 コンポーネントです。複数列テーブルは未実装です。
+- 対応するのは上記の 35 コンポーネントです。複数列テーブルは未実装です。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
@@ -517,6 +546,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `Tree` は単一選択で、項目に置けるのは `List` と同じ文字列だけです。
   項目はパス (`&[usize]`) で指し、ドラッグでの並べ替えはできません。
 - `Dialog` は同時に 1 つだけで、ボタンは Primary、Secondary、Cancel の最大 3 個です。
+- `Toast` も同時に 1 つだけで、新しく出したものが前のものを置き換えます
+  (`AdwToastOverlay` の順番待ちも、この形にそろえています)。操作ボタンは 1 個で、
+  出る位置は下端の中央に固定です。
 - ウィンドウを閉じるイベントと、入力欄で Enter を押したときの共通
   `on_submit` はありません。
 - メディアの対応形式は各 OS、ブラウザ、Linux の GStreamer 環境に依存します。
@@ -541,6 +573,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `CommandBar` がバインディングに無いため、`Toolbar` は `Button` を横に並べて
   構成し、タイトルバー (ドラッグ領域) ではなくその下の行に置きます。アイコンは
   Segoe Fluent Icons を `FontIcon` で出します。
+- `InfoBar` / `TeachingTip` がバインディングに無いため、`Toast` は `Grid` と
+  `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
+  `window.show()` より前には出せません。
 
 ### macOS
 
@@ -559,6 +594,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `Toolbar` を付けるとウィンドウのタイトル文字は隠れます (macOS の作法)。
   出したままだとタイトルが先頭を占め、項目が右端へ寄ってしまうためです。
   `set_title` の値は残り、`clear_toolbar` で外すと表示も戻ります。
+- トーストにあたるコントロールが AppKit に無いため、`Toast` は
+  `NSVisualEffectView` (`NSPopover` と同じ材質) をウィンドウの中身へ重ねて
+  組み立てています。出す先はいちばん手前のウィンドウで、まだ焦点が
+  決まっていないときは最後に作ったウィンドウです。
 
 ### Linux
 
@@ -569,6 +608,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
   行と開閉ボタンで組み立てています。
 - `Toolbar` の項目は、GNOME の作法にならってヘッダーバーの左側へ並びます。
+- `Toast` の時間は `AdwToast` に合わせて**秒**単位です。1 秒未満を指定しても
+  1 秒になります (0 に丸めると「消えない」指定に変わってしまうため)。
 - 日付を選ぶ 1 つのコントロールが GTK4 に無いため、`DatePicker` は
   `GtkMenuButton` のポップオーバーに載せた `GtkCalendar` と、時分の
   `GtkSpinButton` で組み立てています。`GtkCalendar` は「日を押した」と
@@ -590,6 +631,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   保存先の確認が出ないことがあり、`FileEntry::path` はどちらでも `None` です。
 - `DatePicker` の入力 UI (カレンダーなど) はブラウザが出すため、見た目と操作は
   ブラウザごとに違います。時間帯を持ち込まないよう `datetime-local` を使います。
+- ページに一時的な通知の標準要素が無いため、`Toast` は `<div role="status">` を
+  `position: fixed` で下端の中央へ出します (`Notification` API はページの外へ
+  出るもので別物です)。
 - タイトルバーが無いため、`Toolbar` はウィンドウ要素の先頭に置かれます。
 - ブラウザに標準のアイコンセットが無いため、`Toolbar` のアイコンだけは naui が
   SVG を持ちます (ここだけは OS のものを使いません)。

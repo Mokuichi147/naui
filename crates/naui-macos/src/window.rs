@@ -8,12 +8,22 @@ use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSBackingStoreType, NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSApplication, NSBackingStoreType, NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use crate::toolbar::Toolbar;
 use crate::widgets::Widget;
+
+thread_local! {
+    /// naui が作ったウィンドウ。作った順に並ぶ。
+    ///
+    /// `NSApplication` の `windows` には AppKit が内部で作る、画面に出ない
+    /// ウィンドウも混ざる。[`Toast`](crate::Toast) の出し先を選ぶときに
+    /// そちらを掴まないよう、naui のぶんだけ覚えておく。
+    /// `Ui` がウィンドウを持ち続けるので、ここで保持しても寿命は変わらない。
+    static WINDOWS: RefCell<Vec<Retained<NSWindow>>> = const { RefCell::new(Vec::new()) };
+}
 
 struct WindowInner {
     native: Retained<NSWindow>,
@@ -63,6 +73,8 @@ impl Window {
         // (切らないと二重解放になる)。
         unsafe { native.setReleasedWhenClosed(false) };
         native.center();
+
+        WINDOWS.with(|slot| slot.borrow_mut().push(native.clone()));
 
         Self(Rc::new(WindowInner {
             native,
@@ -148,4 +160,25 @@ impl Window {
     pub fn native_window(&self) -> Retained<NSWindow> {
         self.0.native.clone()
     }
+}
+
+/// naui が作ったウィンドウのうち、いちばん手前のもの。1 つも無ければ `None`。
+///
+/// 焦点のあるウィンドウを使い、まだどれにも当たっていないとき (起動直後や
+/// 自動テスト) は**最後に作ったもの**にする。`Dialog` が親を選ぶのと
+/// 同じ考え方。
+pub(crate) fn frontmost(mtm: MainThreadMarker) -> Option<Retained<NSWindow>> {
+    let app = NSApplication::sharedApplication(mtm);
+    WINDOWS.with(|slot| {
+        let windows = slot.borrow();
+        let ours = |window: &NSWindow| {
+            windows
+                .iter()
+                .any(|ours| std::ptr::eq(&**ours as *const NSWindow, window as *const NSWindow))
+        };
+        app.keyWindow()
+            .filter(|window| ours(window))
+            .or_else(|| app.mainWindow().filter(|window| ours(window)))
+            .or_else(|| windows.last().cloned())
+    })
 }
