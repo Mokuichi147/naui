@@ -12,6 +12,7 @@
 mod combo_box;
 mod date_picker;
 mod dialog;
+mod expander;
 mod file_picker;
 mod file_saver;
 mod layout;
@@ -45,6 +46,7 @@ use objc2_foundation::NSNotification;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
 pub use dialog::Dialog;
+pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
@@ -114,6 +116,11 @@ impl Ui {
     /// 中身がはみ出したらスクロールさせるコンテナ。
     pub fn scroll(&self) -> Result<Scroll> {
         Ok(Scroll::new(self.mtm))
+    }
+
+    /// 見出しを押して中身を出し入れするコンテナ。`text` は見出しの文字。
+    pub fn expander(&self, text: &str) -> Result<Expander> {
+        Ok(Expander::new(self.mtm, text))
     }
 
     /// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。

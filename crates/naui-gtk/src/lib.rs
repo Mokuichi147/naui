@@ -15,6 +15,7 @@
 //! | `Stack` | `GtkBox` |
 //! | `Grid` | `GtkGrid` |
 //! | `Scroll` | `GtkScrolledWindow` |
+//! | `Expander` | `GtkExpander` |
 //! | `Spacer` | 中身の無い `GtkBox` (`hexpand` / `vexpand`) |
 //! | 大きさの指定 | `size_request` / `hexpand` / `halign` + [`SizeBin`] の上限 |
 //! | `Label` | `GtkLabel` |
@@ -114,6 +115,7 @@ mod callback;
 mod combo_box;
 mod date_picker;
 mod dialog;
+mod expander;
 mod file_picker;
 mod file_saver;
 mod indicator;
@@ -142,6 +144,7 @@ pub use bin::SizeBin;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
 pub use dialog::Dialog;
+pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
@@ -227,6 +230,11 @@ impl Ui {
     /// 中身がはみ出したらスクロールさせるコンテナ。
     pub fn scroll(&self) -> Result<Scroll> {
         Ok(Scroll::new())
+    }
+
+    /// 見出しを押して中身を出し入れするコンテナ。`text` は見出しの文字。
+    pub fn expander(&self, text: &str) -> Result<Expander> {
+        Ok(Expander::new(text))
     }
 
     /// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。

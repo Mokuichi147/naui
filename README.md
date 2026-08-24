@@ -27,7 +27,7 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 |
 | Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トーストを操作 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみを操作 |
 | Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 |
 
 未確認の範囲もあります。
@@ -132,7 +132,7 @@ naui::run(settings, |ui| {
 
 ### 配置とサイズ
 
-レイアウトには次の 4 種類を使います。
+レイアウトには次の 5 種類を使います。
 
 | API | 用途 |
 | --- | --- |
@@ -140,6 +140,7 @@ naui::run(settings, |ui| {
 | `Grid` | 行と列を指定して配置する |
 | `Scroll` | はみ出した内容をスクロールする |
 | `Spacer` | 親の余った空間を受け取る |
+| `Expander` | 見出しを押したときだけ中身を見せる |
 
 すべてのウィジェットは `Sizing` でサイズを指定できます。`Length` は中身に合わせる
 `Auto`、固定値の `Fixed`、余った領域へ広がる `Fill` の 3 種類です。
@@ -161,6 +162,24 @@ form.attach(&field, GridCell::new(1, 0));
 
 `List`、`Tree`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
 `set_sizing` で高さを指定します。
+
+### 折りたたみ
+
+ふだんは隠しておき、見出しを押したときだけ見せたいものは `Expander` へ入れます。
+中身は 1 つなので、複数並べたいときは `Stack` などのコンテナごと入れます。
+
+```rust
+let details = ui.expander("詳細設定")?;
+let body = ui.stack(Orientation::Vertical)?;
+body.append(&ui.checkbox("バックアップを作る")?);
+details.set_child(&body);
+details.set_expanded(true); // 通知せずに開く
+details.on_toggle(|expanded| println!("開いている: {expanded}"));
+```
+
+既定は閉じた状態で、たたんでいる間、中身はレイアウトから外れます (場所を空けません)。
+`set_expanded` はプログラムからの操作なので `on_toggle` を呼びません
+(`Checkbox::set_checked` と同じ決まりです)。
 
 ### 数値とパスワードの入力
 
@@ -362,7 +381,7 @@ window.set_toolbar(&toolbar);
 | 分類 | API |
 | --- | --- |
 | 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`PasswordInput`、`NumberInput`、`Slider`、`ProgressBar` |
-| レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer` |
+| レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer`、`Expander` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
 | ウィンドウ付属 | `Toolbar` |
 | データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`List`、`Tree` |
@@ -389,6 +408,7 @@ window.set_toolbar(&toolbar);
 | `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🟡 `GtkGrid` | 🟡 `<div>` + CSS Grid |
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
 | `Spacer` | 🔴 中身のない `Grid` | 🟡 中身のない `NSView` | 🟡 中身のない `GtkBox` | 🟡 `<div>` + `flex-grow` |
+| `Expander` | ✅ `Expander` | 🟡 `NSButton` (入り切り) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
 | `Label` | ✅ `TextBlock` | ✅ `NSTextField` | ✅ `GtkLabel` | ✅ `<span>` |
 | `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
@@ -532,7 +552,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 35 コンポーネントです。複数列テーブルは未実装です。
+- 対応するのは上記の 36 コンポーネントです。複数列テーブルは未実装です。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
@@ -573,6 +593,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `InfoBar` / `TeachingTip` がバインディングに無いため、`Toast` は `Grid` と
   `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
   `window.show()` より前には出せません。
+- `Expander` は `winio-winui3` の投影に含まれていませんが、WinUI の公開 WinRT
+  インターフェイスを最小限投影し、`XamlReader` から本物の `Expander` を生成しています。
 
 ### macOS
 
@@ -595,6 +617,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `NSVisualEffectView` (`NSPopover` と同じ材質) をウィンドウの中身へ重ねて
   組み立てています。出す先はいちばん手前のウィンドウで、まだ焦点が
   決まっていないときは最後に作ったウィンドウです。
+- 折りたたみにあたるコントロールが AppKit に無いため、`Expander` は入り切りの
+  `NSButton` (山形は SF Symbols) と `NSStackView` で組み立てています。
+  開閉のアニメーションはありません。
 
 ### Linux
 
@@ -628,6 +653,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   保存先の確認が出ないことがあり、`FileEntry::path` はどちらでも `None` です。
 - `DatePicker` の入力 UI (カレンダーなど) はブラウザが出すため、見た目と操作は
   ブラウザごとに違います。時間帯を持ち込まないよう `datetime-local` を使います。
+- `<details>` に `disabled` が無いため、`Expander::set_enabled(false)` は
+  見出しをマウスとタブ順から外して押せなくするだけです (`aria-disabled` は
+  付きますが、ネイティブの無効なコントロールとは扱いが違います)。
 - ページに一時的な通知の標準要素が無いため、`Toast` は `<div role="status">` を
   `position: fixed` で下端の中央へ出します (`Notification` API はページの外へ
   出るもので別物です)。

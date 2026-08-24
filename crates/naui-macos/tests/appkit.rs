@@ -13,8 +13,8 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter, FilePickerMode,
-    Fit, GridCell, ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem, Result,
-    ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem,
+    Result, ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
@@ -168,6 +168,18 @@ fn main() {
         ),
         ("グリッドの子を置き換える", grid_replaces_child),
         ("スクロールが中身を保持する", scroll_keeps_child),
+        (
+            "折りたたみがクリックで開閉し、変わった後を通知する",
+            expander_toggles_and_notifies,
+        ),
+        (
+            "たたんだ折りたたみの中身がレイアウトから外れる",
+            expander_collapsed_child_leaves_the_layout,
+        ),
+        (
+            "折りたたみの中身が幅いっぱいに置かれる",
+            expander_child_fills_the_width,
+        ),
         (
             "縦に長いタブの中身がスクロールで下まで届く",
             tall_tab_content_scrolls,
@@ -1560,6 +1572,127 @@ fn grid_replaces_child(ui: &Ui) -> Result<()> {
     assert_eq!(grid.len(), 1);
     assert!(unsafe { photo.native_view().superview() }.is_none());
     assert!(unsafe { video.native_view().superview() }.is_some());
+    Ok(())
+}
+
+/// 折りたたみは見出しを押すたびに開閉し、変わった後の状態を通知する。
+fn expander_toggles_and_notifies(ui: &Ui) -> Result<()> {
+    let expander = ui.expander("詳細設定")?;
+    assert_eq!(expander.text(), "詳細設定");
+
+    let body = ui.label("中身")?;
+    expander.set_child(&body);
+    assert!(!expander.is_expanded(), "既定は閉じていること");
+    assert!(
+        body.native_view().isHidden(),
+        "閉じている間、中身は隠れていること"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    expander.on_toggle({
+        let seen = seen.clone();
+        move |expanded| seen.borrow_mut().push(expanded)
+    });
+
+    expander.click();
+    assert!(expander.is_expanded());
+    assert!(!body.native_view().isHidden(), "開くと中身が出ること");
+    expander.click();
+    assert!(!expander.is_expanded());
+    assert!(body.native_view().isHidden());
+    assert_eq!(*seen.borrow(), vec![true, false]);
+
+    expander.set_expanded(true);
+    assert!(expander.is_expanded());
+    assert!(!body.native_view().isHidden());
+    assert_eq!(
+        seen.borrow().len(),
+        2,
+        "プログラムからの開閉は通知しないこと"
+    );
+
+    expander.set_text("詳細");
+    assert_eq!(expander.text(), "詳細");
+    assert_eq!(
+        expander.native_header().title().to_string(),
+        "詳細",
+        "見出しのボタンへ文字が届くこと"
+    );
+    Ok(())
+}
+
+/// たたんでいる間、中身はレイアウトから外れて場所を空けない。
+fn expander_collapsed_child_leaves_the_layout(ui: &Ui) -> Result<()> {
+    let expander = ui.expander("詳細")?;
+    let body = ui.text_area("あ\nい\nう")?;
+    body.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(200.0))
+            .height(Length::Fixed(120.0)),
+    );
+    expander.set_child(&body);
+
+    let view = expander.native_view();
+    view.layoutSubtreeIfNeeded();
+    let collapsed = view.fittingSize().height;
+    assert!(collapsed > 0.0, "見出しのぶんの高さはあること");
+
+    expander.set_expanded(true);
+    view.layoutSubtreeIfNeeded();
+    let expanded = view.fittingSize().height;
+    assert!(
+        expanded >= collapsed + 120.0,
+        "開くと中身のぶんだけ高くなること: {collapsed} -> {expanded}"
+    );
+
+    expander.set_expanded(false);
+    view.layoutSubtreeIfNeeded();
+    assert!(
+        (view.fittingSize().height - collapsed).abs() < 1.0,
+        "たたむと見出しだけの高さへ戻ること"
+    );
+    Ok(())
+}
+
+/// 中身は指定が無くても、折りたたみの幅いっぱいに置かれる (`Scroll` と同じ)。
+///
+/// 中身の幅が中身自身の内容で決まると、中で左右のどこへ寄せても場所が
+/// ずれて見える (4 環境で見え方がそろわない)。
+fn expander_child_fills_the_width(ui: &Ui) -> Result<()> {
+    let window = ui.window("折りたたみ", 400.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let expander = ui.expander("詳細")?;
+    expander.set_sizing(Sizing::fill_width());
+
+    let body = ui.stack(Orientation::Vertical)?;
+    body.set_align(Align::Start);
+    body.append(&ui.label("短い")?);
+    expander.set_child(&body);
+    expander.set_expanded(true);
+    root.append(&expander);
+    window.set_child(&root);
+
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(400.0, 300.0));
+    content.layoutSubtreeIfNeeded();
+
+    let outer = expander.native_view().frame();
+    let inner = body.native_view().frame();
+    assert!(
+        outer.size.width > 0.0,
+        "折りたたみが幅を持つこと: {outer:?}"
+    );
+    assert!(
+        (outer.size.width - inner.size.width).abs() < 1.0,
+        "中身が折りたたみの幅いっぱいに置かれること: {outer:?} / {inner:?}"
+    );
+    assert!(
+        (outer.origin.x - inner.origin.x).abs() < 1.0,
+        "中身が折りたたみの左端から始まること: {outer:?} / {inner:?}"
+    );
     Ok(())
 }
 
