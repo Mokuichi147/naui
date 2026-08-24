@@ -36,7 +36,7 @@ struct ExpanderInner {
     header: Retained<NSButton>,
     /// 中身のハンドル。トランポリンごと生かしておくために持つ。
     child: RefCell<Option<Box<dyn Widget>>>,
-    /// 交差軸に `Fill` を指定された中身を、幅へ結び付ける制約。
+    /// 中身を折りたたみの幅へ結び付ける制約。置き換えるときに張り直す。
     fill_constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
     expanded: Cell<bool>,
     handler: ValueHandler<bool>,
@@ -143,22 +143,20 @@ impl Expander {
             crate::layout::keep_auto_size(&view, false);
         }
         self.0.native.addArrangedSubview(&view);
-        // 幅いっぱいを指定された中身は、見出しごと幅へそろえる
-        // (`Stack::append` の交差軸と同じ扱い)。
-        if crate::layout::wants_fill(&view, true) {
-            let at_most = view
-                .widthAnchor()
-                .constraintLessThanOrEqualToAnchor(&self.0.native.widthAnchor());
-            let equal = view
-                .widthAnchor()
-                .constraintEqualToAnchor(&self.0.native.widthAnchor());
-            equal.setPriority(crate::layout::CROSS_FILL_PRIORITY);
-            for constraint in [&at_most, &equal] {
-                constraint.setActive(true);
-            }
-            constraints.push(at_most);
-            constraints.push(equal);
+        // 中身は開いた場所の幅いっぱいに置く (`Scroll::set_child` と同じ扱い)。
+        // 中身の中で左右のどこへ寄せるかは、中身のコンテナが決める。
+        let at_most = view
+            .widthAnchor()
+            .constraintLessThanOrEqualToAnchor(&self.0.native.widthAnchor());
+        let equal = view
+            .widthAnchor()
+            .constraintEqualToAnchor(&self.0.native.widthAnchor());
+        equal.setPriority(crate::layout::CROSS_FILL_PRIORITY);
+        for constraint in [&at_most, &equal] {
+            constraint.setActive(true);
         }
+        constraints.push(at_most);
+        constraints.push(equal);
         drop(constraints);
 
         view.setHidden(!self.is_expanded());

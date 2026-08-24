@@ -177,6 +177,10 @@ fn main() {
             expander_collapsed_child_leaves_the_layout,
         ),
         (
+            "折りたたみの中身が幅いっぱいに置かれる",
+            expander_child_fills_the_width,
+        ),
+        (
             "縦に長いタブの中身がスクロールで下まで届く",
             tall_tab_content_scrolls,
         ),
@@ -1646,6 +1650,48 @@ fn expander_collapsed_child_leaves_the_layout(ui: &Ui) -> Result<()> {
     assert!(
         (view.fittingSize().height - collapsed).abs() < 1.0,
         "たたむと見出しだけの高さへ戻ること"
+    );
+    Ok(())
+}
+
+/// 中身は指定が無くても、折りたたみの幅いっぱいに置かれる (`Scroll` と同じ)。
+///
+/// 中身の幅が中身自身の内容で決まると、中で左右のどこへ寄せても場所が
+/// ずれて見える (4 環境で見え方がそろわない)。
+fn expander_child_fills_the_width(ui: &Ui) -> Result<()> {
+    let window = ui.window("折りたたみ", 400.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let expander = ui.expander("詳細")?;
+    expander.set_sizing(Sizing::fill_width());
+
+    let body = ui.stack(Orientation::Vertical)?;
+    body.set_align(Align::Start);
+    body.append(&ui.label("短い")?);
+    expander.set_child(&body);
+    expander.set_expanded(true);
+    root.append(&expander);
+    window.set_child(&root);
+
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(400.0, 300.0));
+    content.layoutSubtreeIfNeeded();
+
+    let outer = expander.native_view().frame();
+    let inner = body.native_view().frame();
+    assert!(
+        outer.size.width > 0.0,
+        "折りたたみが幅を持つこと: {outer:?}"
+    );
+    assert!(
+        (outer.size.width - inner.size.width).abs() < 1.0,
+        "中身が折りたたみの幅いっぱいに置かれること: {outer:?} / {inner:?}"
+    );
+    assert!(
+        (outer.origin.x - inner.origin.x).abs() < 1.0,
+        "中身が折りたたみの左端から始まること: {outer:?} / {inner:?}"
     );
     Ok(())
 }

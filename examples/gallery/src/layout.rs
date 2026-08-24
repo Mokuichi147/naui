@@ -1,4 +1,6 @@
-use naui::{GridCell, Length, Orientation, Padding, Result, ScrollPolicy, Sizing, Track, Ui};
+use naui::{
+    Align, GridCell, Length, Orientation, Padding, Result, ScrollPolicy, Sizing, Track, Ui,
+};
 
 /// Stack、Grid、Scroll、Spacer の配置特性。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
@@ -44,6 +46,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let details_status = ui.label("Expander: 閉じています")?;
     let details_body = ui.stack(Orientation::Vertical)?;
     details_body.set_spacing(8.0);
+    // 交差軸の既定は中央ぞろえなので、チェックボックスの左端をそろえる。
+    details_body.set_align(Align::Start);
     details_body.append(&ui.checkbox("バックアップを作る")?);
     details_body.append(&ui.checkbox("保存時に整形する")?);
     let details = ui.expander("詳細設定")?;
