@@ -14,6 +14,7 @@ mod list;
 pub mod media;
 mod number;
 mod popup;
+mod toast;
 mod toolbar;
 mod tree;
 
@@ -28,6 +29,7 @@ pub use list::{ListItem, SelectionMode};
 pub use media::{Fit, PlaybackState};
 pub use number::NumberSpec;
 pub use popup::PopupItem;
+pub use toast::ToastSpec;
 pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
 

@@ -568,14 +568,49 @@
 //! `on_response` を呼ばない (`set_selected` と同じで、アプリ自身の操作は
 //! 通知しない)。
 //!
+//! ## トースト
+//!
+//! [`Toast`] は、画面の下端へ短い知らせを出して**自分で消える**通知。
+//! ダイアログと違い操作を止めないので、「保存しました」のような
+//! 済んだことの知らせに使う。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let toast = ui.toast("保存しました")?;
+//! toast.set_action("元に戻す"); // 任意。空文字列で外す
+//! toast.set_timeout(3.0); // 秒。0 なら自分では消えない
+//! toast.on_action(|| println!("元に戻す"));
+//! toast.show();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `Toast` | `Grid` を中身へ重ねたもの | `NSVisualEffectView` を中身へ重ねたもの | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
+//!
+//! **ネイティブのトーストがあるのは Linux だけ** (`AdwToast`)。Windows の
+//! `InfoBar` / `TeachingTip` は `winio-winui3` のバインディングに無く、
+//! macOS とブラウザにはそもそも対応するものが無いので、残る 3 環境では
+//! naui が同じ形に組み立てる。OS の通知センターへ出すものは、アプリの外へ
+//! 出る別の仕組みなので扱わない。
+//!
+//! **同時に出るのは 1 つ**で、新しく出したものが前のものを置き換える
+//! (`AdwToastOverlay` の順番待ちも、naui はこの形にそろえている)。
+//! [`Toast::dismiss`] で消したときと、置き換えられたときは `on_dismiss` を
+//! 呼ばない (アプリ自身の操作は通知しない、という [`Dialog::close`] と
+//! 同じ決まり)。時間の刻みは Linux だけ**秒**なので、1 秒未満の指定は
+//! 1 秒になる。
+//!
 //! ## 検証状況
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログを含む 89 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答を確認) |
-//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブを実行確認。GTK4 の実コントロールに対する自動テスト 88 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トーストを含む 93 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換えを確認) |
+//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トーストを含む) |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トーストを含む) を実行確認。GTK4 の実コントロールに対する自動テスト 91 件。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -584,7 +619,7 @@ pub use naui_core::{
     with_default_extension, Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, Error,
     FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, NumberSpec,
     Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy, SelectionMode, Settings,
-    Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Sizing, Theme, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -592,21 +627,21 @@ pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
     FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
     PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
-    TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    TextArea, TextInput, Toast, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
     FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
     PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
-    TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    TextArea, TextInput, Toast, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
     FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
     PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
-    TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    TextArea, TextInput, Toast, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -618,7 +653,7 @@ pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ComboBox, DatePicker, Dialog, Dock, FilePicker,
     FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput, Pagination,
     PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack, Tabs,
-    TextArea, TextInput, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    TextArea, TextInput, Toast, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1021,6 +1056,21 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: bool = dialog.is_open();
     dialog.close();
     // `open()` はダイアログを出すので、契約の確認では呼ばない。
+
+    // --- トースト ---------------------------------------------------------
+    let toast: Toast = ui.toast("t")?;
+    toast.set_message("t");
+    let _: String = toast.message();
+    toast.set_action("t");
+    let _: String = toast.action();
+    toast.set_timeout(1.0);
+    let _: f64 = toast.timeout();
+    let _: ToastSpec = toast.spec();
+    toast.on_action(|| {});
+    toast.on_dismiss(|| {});
+    let _: bool = toast.is_visible();
+    toast.show();
+    toast.dismiss();
 
     let picker: FilePicker = ui.file_picker("t")?;
     picker.set_text("t");

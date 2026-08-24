@@ -23,6 +23,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSNotification",
     "NSGeometry",
     "NSObjCRuntime",
+    "NSTimer",
     "NSURL",
 ] }
 objc2-app-kit = { version = "0.3", features = [
@@ -60,6 +61,7 @@ objc2-app-kit = { version = "0.3", features = [
     "NSSavePanel",
     "NSSecureTextField",
     "NSSegmentedControl",
+    "NSShadow",
     "NSSlider",
     "NSStackView",
     "NSStepper",
@@ -76,8 +78,19 @@ objc2-app-kit = { version = "0.3", features = [
     "NSToolbarItem",
     "NSUserInterfaceItemIdentification",
     "NSView",
+    "NSVisualEffectView",
     "NSWindow",
     "NSWorkspace",
+    # トーストの角を丸めるため、NSView から CALayer をたどれるようにする。
+    "objc2-quartz-core",
+] }
+
+# トーストの角丸 (CALayer)。
+objc2-quartz-core = { version = "0.3", default-features = false, features = [
+    "std",
+    "CALayer",
+    # cornerRadius が CGFloat を使う。
+    "objc2-core-foundation",
 ] }
 
 # 動画 / 音声。再生は AVFoundation が行い、再生バーは AVKit の AVPlayerView が出す。

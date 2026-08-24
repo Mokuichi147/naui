@@ -30,6 +30,7 @@ mod navigation;
 mod number_input;
 mod popup;
 mod radio_group;
+mod toast;
 mod toolbar;
 mod tree;
 mod ui_thread;
@@ -52,6 +53,7 @@ pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
+pub use toast::Toast;
 pub use toolbar::Toolbar;
 pub use tree::Tree;
 pub use widgets::{
@@ -73,6 +75,8 @@ pub struct Ui {
     popups: RefCell<Vec<PopupMenu>>,
     /// ツールバーもレイアウトに載らないので、ここで保持する。
     toolbars: RefCell<Vec<Toolbar>>,
+    /// トーストもレイアウトに載らないので、ここで保持する。
+    toasts: RefCell<Vec<Toast>>,
     shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
 }
 
@@ -84,6 +88,7 @@ impl Ui {
             dialogs: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
+            toasts: RefCell::new(Vec::new()),
             shutdown,
         }
     }
@@ -262,6 +267,16 @@ impl Ui {
     /// 内容をファイルへ保存させるボタン。押すと共通ダイアログの保存が出る。
     pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
         FileSaver::new(text)
+    }
+
+    /// 一時的な通知 (トースト)。`message` は出す文字列。
+    ///
+    /// フレームワークが参照を保持するので、戻り値を捨てても
+    /// 通知が届かなくなることはない。
+    pub fn toast(&self, message: &str) -> Result<Toast> {
+        let toast = Toast::new(message)?;
+        self.toasts.borrow_mut().push(toast.clone());
+        Ok(toast)
     }
 
     /// モーダルダイアログ。`title` は見出し。中身は `ContentDialog`。

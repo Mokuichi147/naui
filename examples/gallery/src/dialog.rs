@@ -1,6 +1,6 @@
 use naui::{DialogButtons, DialogResponse, Orientation, Padding, Result, Ui};
 
-/// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。
+/// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。Toast の出し方。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(14.0);
@@ -66,5 +66,74 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     });
     pane.append(&open_roles);
     pane.append(&status);
+
+    pane.append(&ui.label("Toast")?);
+    pane.append(&ui.label(
+        "画面の下端に出て自分で消える通知です。同時に出るのは1つで、新しいものが前のものを置き換えます。",
+    )?);
+
+    let toast_status = ui.label("Toast: まだ出していません")?;
+
+    // 何秒かで自分から消えるトースト。
+    let saved = ui.toast("保存しました")?;
+    saved.set_timeout(3.0);
+    saved.on_dismiss({
+        let toast_status = toast_status.clone();
+        move || toast_status.set_text("Toast: 時間が来て消えました")
+    });
+    let show_saved = ui.button("3秒で消えるトーストを出す")?;
+    show_saved.on_click({
+        let saved = saved.clone();
+        let toast_status = toast_status.clone();
+        move || {
+            toast_status.set_text("Toast: 表示中");
+            saved.show();
+        }
+    });
+    pane.append(&show_saved);
+
+    // 操作ボタン付き。押すと通知が届き、そのまま消える。
+    let deleted = ui.toast("削除しました")?;
+    deleted.set_action("元に戻す");
+    deleted.on_action({
+        let toast_status = toast_status.clone();
+        move || toast_status.set_text("Toast: 「元に戻す」が押されました")
+    });
+    let show_deleted = ui.button("操作ボタン付きのトーストを出す")?;
+    show_deleted.on_click({
+        let deleted = deleted.clone();
+        let toast_status = toast_status.clone();
+        move || {
+            toast_status.set_text("Toast: 表示中 (元に戻す)");
+            deleted.show();
+        }
+    });
+    pane.append(&show_deleted);
+
+    // 時間 0 は「自分では消えない」。アプリ側で消す。
+    let sticky = ui.toast("消すまで出したままのトーストです")?;
+    sticky.set_timeout(0.0);
+    let show_sticky = ui.button("消えないトーストを出す")?;
+    show_sticky.on_click({
+        let sticky = sticky.clone();
+        let toast_status = toast_status.clone();
+        move || {
+            toast_status.set_text("Toast: 表示中 (消えません)");
+            sticky.show();
+        }
+    });
+    let hide_sticky = ui.button("消えないトーストを消す")?;
+    hide_sticky.on_click({
+        let sticky = sticky.clone();
+        let toast_status = toast_status.clone();
+        move || {
+            sticky.dismiss();
+            // dismiss() では on_dismiss を呼ばないので、ここで書き換える。
+            toast_status.set_text("Toast: アプリ側から消しました");
+        }
+    });
+    pane.append(&show_sticky);
+    pane.append(&hide_sticky);
+    pane.append(&toast_status);
     Ok(pane)
 }

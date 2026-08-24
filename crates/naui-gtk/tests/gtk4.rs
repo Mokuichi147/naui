@@ -286,6 +286,18 @@ fn main() {
             "出していないダイアログは閉じても何も起きない",
             dialog_is_closed_until_opened,
         ),
+        (
+            "トーストの設定が AdwToast へ届く",
+            toast_configuration_reaches_the_native_toast,
+        ),
+        (
+            "トーストの操作と消滅がクロージャへ届く",
+            toast_events_reach_the_closures,
+        ),
+        (
+            "新しいトーストが前のものを黙って置き換える",
+            toast_replaces_the_previous_one,
+        ),
         ("テーマを実行中に切り替えられる", theme_switch),
     ];
 
@@ -2164,6 +2176,121 @@ fn file_saver_configuration(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.append(&saver);
     assert_eq!(stack.len(), 1);
+    Ok(())
+}
+
+/// トーストの設定が `AdwToast` へ届き、消すと外れること。
+fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 320.0, 200.0)?;
+    let content = ui.stack(Orientation::Vertical)?;
+    window.set_child(&content);
+    window.show();
+    assert!(
+        window.native_toast_overlay().child().is_some(),
+        "アプリの中身はトーストの入れ物ごしに載ること"
+    );
+
+    let toast = ui.toast("保存しました")?;
+    toast.set_action("元に戻す");
+    toast.set_timeout(3.0);
+    assert!(!toast.is_visible(), "作っただけでは出ていないこと");
+    assert!(toast.native_toast().is_none());
+
+    toast.show();
+    assert!(toast.is_visible());
+    let native = toast.native_toast().expect("AdwToast");
+    assert_eq!(native.title().map(|t| t.to_string()), Some("保存しました".into()));
+    assert_eq!(
+        native.button_label().map(|l| l.to_string()),
+        Some("元に戻す".into())
+    );
+    assert_eq!(native.timeout(), 3, "秒で AdwToast へ渡ること");
+
+    // 出したまま書き換えると、出ている AdwToast がその場で変わる。
+    toast.set_message("書き出しました");
+    toast.set_action("");
+    assert_eq!(native.title().map(|t| t.to_string()), Some("書き出しました".into()));
+    assert_eq!(native.button_label(), None, "空文字列でボタンが外れること");
+
+    toast.dismiss();
+    assert!(!toast.is_visible());
+    assert!(toast.native_toast().is_none());
+    window.close();
+    Ok(())
+}
+
+/// 操作ボタンと消滅が、それぞれのクロージャへ届くこと。
+fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 320.0, 200.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let toast = ui.toast("削除しました")?;
+    toast.set_action("元に戻す");
+    // 押されるまで消えないトーストにしておく。
+    toast.set_timeout(0.0);
+    assert_eq!(toast.spec().timeout_secs(), 0);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    toast.on_action({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("action")
+    });
+    toast.on_dismiss({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("dismiss")
+    });
+
+    toast.show();
+    let native = toast.native_toast().expect("AdwToast");
+    assert_eq!(native.timeout(), 0, "0 は自動で消えない指定であること");
+    // 実際に押されたときと同じ順で、AdwToast の側から知らせる。
+    native.emit_by_name::<()>("button-clicked", &[]);
+    native.dismiss();
+
+    assert_eq!(
+        seen.borrow().as_slice(),
+        ["action", "dismiss"],
+        "押された通知のあとに、消えた通知が届くこと"
+    );
+    assert!(!toast.is_visible());
+
+    // 消えたあとに来る通知は捨てられ、二重には届かない。
+    native.dismiss();
+    assert_eq!(seen.borrow().len(), 2);
+    window.close();
+    Ok(())
+}
+
+/// 新しいトーストが前のものを置き換え、置き換えられたほうは通知しないこと。
+fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 320.0, 200.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let first = ui.toast("1 つめ")?;
+    first.set_timeout(0.0);
+    let dismissed = Rc::new(Cell::new(0));
+    first.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || dismissed.set(dismissed.get() + 1)
+    });
+    first.show();
+
+    let second = ui.toast("2 つめ")?;
+    second.set_timeout(0.0);
+    second.show();
+
+    assert!(!first.is_visible(), "前のものは消えること");
+    assert!(second.is_visible());
+    assert_eq!(
+        dismissed.get(),
+        0,
+        "アプリ自身の操作なので、消えた通知は届かないこと"
+    );
+
+    second.dismiss();
+    window.close();
     Ok(())
 }
 

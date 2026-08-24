@@ -37,6 +37,7 @@
 //! | `Audio` | `GtkMediaControls` + `GtkMediaFile` |
 //! | `FilePicker` | `GtkButton` + `GtkFileDialog` |
 //! | `Dialog` | `AdwAlertDialog` |
+//! | `Toast` | `AdwToast` + `AdwToastOverlay` |
 //!
 //! ## 他のバックエンドとの違い
 //!
@@ -123,6 +124,7 @@ mod navigation;
 mod number_input;
 mod popup;
 mod radio_group;
+mod toast;
 mod toolbar;
 mod tree;
 mod widgets;
@@ -149,6 +151,7 @@ pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
+pub use toast::Toast;
 pub use toolbar::Toolbar;
 pub use tree::Tree;
 pub use widgets::{
@@ -182,6 +185,8 @@ pub struct Ui {
     popups: RefCell<Vec<PopupMenu>>,
     /// ツールバーもレイアウトに載らないので、ここで保持する。
     toolbars: RefCell<Vec<Toolbar>>,
+    /// トーストもレイアウトに載らないので、ここで保持する。
+    toasts: RefCell<Vec<Toast>>,
 }
 
 impl Ui {
@@ -193,6 +198,7 @@ impl Ui {
             dialogs: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
+            toasts: RefCell::new(Vec::new()),
         }
     }
 
@@ -370,6 +376,16 @@ impl Ui {
     /// 内容をファイルへ保存させるボタン。押すと `GtkFileDialog` の保存が出る。
     pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
         Ok(FileSaver::new(text))
+    }
+
+    /// 一時的な通知 (トースト)。`message` は出す文字列。
+    ///
+    /// フレームワークが参照を保持するので、戻り値を捨てても
+    /// 通知が届かなくなることはない。
+    pub fn toast(&self, message: &str) -> Result<Toast> {
+        let toast = Toast::new(&self.app, message);
+        self.toasts.borrow_mut().push(toast.clone());
+        Ok(toast)
     }
 
     /// モーダルダイアログ。フレームワークが参照を保持する。
