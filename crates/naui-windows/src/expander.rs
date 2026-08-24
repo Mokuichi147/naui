@@ -1,46 +1,30 @@
-//! 折りたたみ (見出しの `ToggleButton` + 中身の `StackPanel`)。
+//! 折りたたみ (WinUI 3 のネイティブ `Expander`)。
 //!
-//! WinUI 3 には `Expander` があるが、`winio-winui3` がこの型を投影して
-//! いないため、`Tabs` や `Navbar` と同じように**標準コントロールを組んで**
-//! 同じ形を作る。見出しは押すたびに入り切りが変わる `ToggleButton` で、
-//! 山形 (`ChevronRight` / `ChevronDown`) は Segoe Fluent Icons の字を入れる
-//! (`Tree` の開閉ボタンと同じ)。
-//!
-//! たたむときは中身を `Visibility::Collapsed` にする。`StackPanel` は
-//! 隠れた子の場所を空けないので、見出しの高さまで縮む。
+//! `winio-winui3` は WinUI 3 API の subset で、`Expander` を投影していない。
+//! そのため、`DatePicker` と同じく、公開 WinRT インターフェイスの必要な部分
+//! だけをこのモジュールで定義する。コントロール自体は `XamlReader` から生成
+//! される本物の WinUI 3 `Expander` で、開閉・見出し・中身のレイアウトは
+//! WinUI の標準テンプレートが行う。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::Result;
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::Primitives::ToggleButton;
-use winui3::Microsoft::UI::Xaml::Controls::{
-    Orientation as XamlOrientation, StackPanel, TextBlock,
-};
+use windows::Foundation::TypedEventHandler;
+use windows_core::{Interface, Param, HSTRING};
+use winui3::Microsoft::UI::Xaml::Controls::{ContentControl, Control, TextBlock};
 use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement, Visibility};
+use winui3::Microsoft::UI::Xaml::UIElement;
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::{impl_widget, Widget};
 
-/// 見出しのボタン。押せる場所を行いっぱいに広げ、中身は左詰めにする。
-const HEADER_XAML: &str = r#"<ToggleButton
+const EXPANDER_XAML: &str = r#"<Expander
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-    Padding="12,8,12,8"/>"#;
-
-/// 山形の字 (Segoe Fluent Icons)。`Tree` の開閉ボタンと同じもの。
-const GLYPH_XAML: &str = r#"<TextBlock
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    FontFamily="Segoe Fluent Icons" FontSize="10" VerticalAlignment="Center"/>"#;
-
-/// 閉じているときの山形 (ChevronRight)。
-const GLYPH_COLLAPSED: &str = "\u{E76C}";
-/// 開いているときの山形 (ChevronDown)。
-const GLYPH_EXPANDED: &str = "\u{E70D}";
+    HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"/>"#;
 
 /// 開閉が変わったことの通知先。
 ///
@@ -73,13 +57,13 @@ impl ToggleHandler {
 }
 
 struct ExpanderInner {
-    native: StackPanel,
-    header: ToggleButton,
-    glyph: TextBlock,
+    native: NativeExpander,
     label: TextBlock,
     /// 中身のハンドルを保持し、コールバックごと生かしておく。
     child: RefCell<Option<Box<dyn Widget>>>,
     handler: ToggleHandler,
+    /// `set_expanded` による変更では `on_toggle` を呼ばない。
+    silent: Cell<bool>,
 }
 
 /// 見出しを押して中身を出し入れするコンテナ。
@@ -89,78 +73,64 @@ impl_widget!(Expander, native);
 
 impl Expander {
     pub(crate) fn new(text: &str) -> Result<Self> {
-        let native = StackPanel::new().map_err(|e| to_error("StackPanel の生成", e))?;
-        native
-            .SetOrientation(XamlOrientation::Vertical)
-            .map_err(|e| to_error("折りたたみの向き設定", e))?;
-
-        let header = header_button()?;
-        let glyph = glyph_block()?;
+        let native = load_expander()?;
         let label = TextBlock::new().map_err(|e| to_error("見出しの生成", e))?;
         label
             .SetText(&HSTRING::from(text))
             .map_err(|e| to_error("見出しの設定", e))?;
-
-        // 山形と見出しの字を横に並べて、ボタンの内容にする。
-        let content = StackPanel::new().map_err(|e| to_error("見出しの組み立て", e))?;
-        content
-            .SetOrientation(XamlOrientation::Horizontal)
-            .map_err(|e| to_error("見出しの向き設定", e))?;
-        let _ = content.SetSpacing(8.0);
-        let children = content
-            .Children()
-            .map_err(|e| to_error("見出しの子の取得", e))?;
-        children
-            .Append(&glyph)
-            .map_err(|e| to_error("見出しへの追加", e))?;
-        children
-            .Append(&label)
-            .map_err(|e| to_error("見出しへの追加", e))?;
-        header
-            .SetContent(&content)
-            .map_err(|e| to_error("見出しへの内容設定", e))?;
         native
-            .Children()
-            .and_then(|children| children.Append(&header))
-            .map_err(|e| to_error("折りたたみへの追加", e))?;
+            .set_header(&label)
+            .map_err(|e| to_error("Expander の見出し設定", e))?;
 
         let this = Self(Rc::new(ExpanderInner {
             native,
-            header,
-            glyph,
             label,
             child: RefCell::new(None),
             handler: ToggleHandler::new(),
+            silent: Cell::new(false),
         }));
-        this.write_glyph(false);
-        this.connect();
+        this.connect()?;
         Ok(this)
     }
 
-    /// 見出しの押し下げを Rust のクロージャへつなぐ。
-    ///
-    /// `Click` は利用者の操作でしか飛ばない (`SetIsChecked` では呼ばれない)
-    /// ので、プログラムからの開閉と混ざらない。ハンドルを強く持つと購読との
-    /// 間で循環するため、弱参照にする。
-    fn connect(&self) {
-        let handler = self.0.handler.clone();
-        let state = UiThreadCell::new(Rc::downgrade(&self.0));
-        let delegate = RoutedEventHandler::new(move |_sender, _args| {
-            let Some(expanded) = state.try_with_mut(|weak| {
-                let inner = weak.upgrade()?;
-                let this = Expander(inner);
-                let expanded = this.is_expanded();
-                this.write_state(expanded);
-                Some(expanded)
-            }) else {
-                return Ok(());
-            };
-            if let Some(expanded) = expanded {
-                handler.emit(expanded);
-            }
-            Ok(())
-        });
-        let _ = self.0.header.Click(&delegate);
+    /// WinUI の `Expanding` / `Collapsed` を Rust のクロージャへつなぐ。
+    fn connect(&self) -> Result<()> {
+        let expanding_target = Arc::new(UiThreadCell::new(Rc::downgrade(&self.0)));
+        let expanding = TypedEventHandler::<NativeExpander, NativeExpanderExpandingEventArgs>::new(
+            move |_, _| {
+                let _ = expanding_target.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        if !inner.silent.get() {
+                            inner.handler.emit(true);
+                        }
+                    }
+                });
+                Ok(())
+            },
+        );
+        self.0
+            .native
+            .expanding(&expanding)
+            .map_err(|e| to_error("Expander の展開購読", e))?;
+
+        let collapsed_target = Arc::new(UiThreadCell::new(Rc::downgrade(&self.0)));
+        let collapsed = TypedEventHandler::<NativeExpander, NativeExpanderCollapsedEventArgs>::new(
+            move |_, _| {
+                let _ = collapsed_target.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        if !inner.silent.get() {
+                            inner.handler.emit(false);
+                        }
+                    }
+                });
+                Ok(())
+            },
+        );
+        self.0
+            .native
+            .collapsed(&collapsed)
+            .map_err(|e| to_error("Expander の折りたたみ購読", e))?;
+        Ok(())
     }
 
     /// 見出しの文字。
@@ -178,39 +148,32 @@ impl Expander {
 
     /// 開いているかどうか。
     pub fn is_expanded(&self) -> bool {
-        self.0
-            .header
-            .IsChecked()
-            .and_then(|value| value.Value())
-            .unwrap_or(false)
+        self.0.native.is_expanded().unwrap_or(false)
     }
 
     /// プログラムから開閉する。`on_toggle` は呼ばれない。
     pub fn set_expanded(&self, expanded: bool) {
-        let _ = self
-            .0
-            .header
-            .SetIsChecked(crate::widgets::bool_ref(expanded).ok().as_ref());
-        self.write_state(expanded);
+        self.0.silent.set(true);
+        let _ = self.0.native.set_is_expanded(expanded);
+        self.0.silent.set(false);
     }
 
     pub fn set_enabled(&self, enabled: bool) {
-        let _ = self.0.header.SetIsEnabled(enabled);
+        if let Ok(control) = self.0.native.cast::<Control>() {
+            let _ = control.SetIsEnabled(enabled);
+        }
     }
 
     /// 折りたたむ中身。呼ぶたびに置き換わる。
     pub fn set_child(&self, child: &dyn Widget) {
-        let Ok(children) = self.0.native.Children() else {
+        let Ok(content) = self.0.native.cast::<ContentControl>() else {
             return;
         };
-        if self.0.child.borrow().is_some() {
-            // 先頭は見出しなので、中身だけを外す。
-            let _ = children.RemoveAt(1);
-            *self.0.child.borrow_mut() = None;
+        if content.SetContent(None).is_err() {
+            return;
         }
         let element = child.native_element();
-        if children.Append(&element).is_ok() {
-            set_visible(&element, self.is_expanded());
+        if content.SetContent(&element).is_ok() {
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }
@@ -219,55 +182,188 @@ impl Expander {
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.handler.set(f);
     }
-
-    /// 山形と中身の出し入れを、開閉の状態へそろえる。
-    fn write_state(&self, expanded: bool) {
-        self.write_glyph(expanded);
-        if let Some(child) = self.0.child.borrow().as_ref() {
-            set_visible(&child.native_element(), expanded);
-        }
-    }
-
-    fn write_glyph(&self, expanded: bool) {
-        let glyph = if expanded {
-            GLYPH_EXPANDED
-        } else {
-            GLYPH_COLLAPSED
-        };
-        let _ = self.0.glyph.SetText(&HSTRING::from(glyph));
-    }
 }
 
-fn set_visible(element: &UIElement, visible: bool) {
-    let _ = element.SetVisibility(if visible {
-        Visibility::Visible
-    } else {
-        Visibility::Collapsed
-    });
+fn load_expander() -> Result<NativeExpander> {
+    XamlReader::Load(&HSTRING::from(EXPANDER_XAML))
+        .and_then(|element| element.cast::<NativeExpander>())
+        .map_err(|e| to_error("Expander の生成", e))
 }
 
-/// 見出しのボタンを作る。XAML を読めない環境では素のボタンに落とす。
-fn header_button() -> Result<ToggleButton> {
-    match XamlReader::Load(&HSTRING::from(HEADER_XAML))
-        .and_then(|element| element.cast::<ToggleButton>())
+// -------------------------------------------------------------------------
+// Microsoft.UI.Xaml.Controls.Expander の最小 WinRT 投影
+
+windows_core::imp::define_interface!(
+    IExpander,
+    IExpander_Vtbl,
+    0xca633942_e584_55c2_b7ee_cffc73c8127a
+);
+impl windows_core::RuntimeType for IExpander {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+
+#[repr(C)]
+pub struct IExpander_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+    header: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> windows_core::HRESULT,
+    set_header: unsafe extern "system" fn(*mut c_void, *mut c_void) -> windows_core::HRESULT,
+    header_template: usize,
+    set_header_template: usize,
+    header_template_selector: usize,
+    set_header_template_selector: usize,
+    is_expanded: unsafe extern "system" fn(*mut c_void, *mut bool) -> windows_core::HRESULT,
+    set_is_expanded: unsafe extern "system" fn(*mut c_void, bool) -> windows_core::HRESULT,
+    expand_direction: usize,
+    set_expand_direction: usize,
+    expanding:
+        unsafe extern "system" fn(*mut c_void, *mut c_void, *mut i64) -> windows_core::HRESULT,
+    remove_expanding: unsafe extern "system" fn(*mut c_void, i64) -> windows_core::HRESULT,
+    collapsed:
+        unsafe extern "system" fn(*mut c_void, *mut c_void, *mut i64) -> windows_core::HRESULT,
+    remove_collapsed: unsafe extern "system" fn(*mut c_void, i64) -> windows_core::HRESULT,
+    template_settings: usize,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeExpander(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    NativeExpander,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl windows_core::RuntimeType for NativeExpander {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IExpander>();
+}
+unsafe impl Interface for NativeExpander {
+    type Vtable = IExpander_Vtbl;
+    const IID: windows_core::GUID = IExpander::IID;
+}
+impl windows_core::RuntimeName for NativeExpander {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.Expander";
+}
+
+impl NativeExpander {
+    fn set_header<P>(&self, value: P) -> windows_core::Result<()>
+    where
+        P: Param<windows_core::IInspectable>,
     {
-        Ok(button) => Ok(button),
-        Err(error) => {
-            eprintln!("naui-windows: 折りたたみの見出しの生成に失敗: {error}");
-            ToggleButton::new().map_err(|e| to_error("見出しの生成", e))
+        unsafe {
+            (Interface::vtable(self).set_header)(Interface::as_raw(self), value.param().abi()).ok()
+        }
+    }
+
+    fn is_expanded(&self) -> windows_core::Result<bool> {
+        unsafe {
+            let mut result = false;
+            (Interface::vtable(self).is_expanded)(Interface::as_raw(self), &mut result)
+                .map(|| result)
+        }
+    }
+
+    fn set_is_expanded(&self, value: bool) -> windows_core::Result<()> {
+        unsafe { (Interface::vtable(self).set_is_expanded)(Interface::as_raw(self), value).ok() }
+    }
+
+    fn expanding<P>(&self, handler: P) -> windows_core::Result<i64>
+    where
+        P: Param<TypedEventHandler<NativeExpander, NativeExpanderExpandingEventArgs>>,
+    {
+        unsafe {
+            let mut token = 0;
+            (Interface::vtable(self).expanding)(
+                Interface::as_raw(self),
+                handler.param().abi(),
+                &mut token,
+            )
+            .map(|| token)
+        }
+    }
+
+    fn collapsed<P>(&self, handler: P) -> windows_core::Result<i64>
+    where
+        P: Param<TypedEventHandler<NativeExpander, NativeExpanderCollapsedEventArgs>>,
+    {
+        unsafe {
+            let mut token = 0;
+            (Interface::vtable(self).collapsed)(
+                Interface::as_raw(self),
+                handler.param().abi(),
+                &mut token,
+            )
+            .map(|| token)
         }
     }
 }
 
-/// 山形を出す `TextBlock` を作る。字体を指定できなければ素のものに落とす。
-fn glyph_block() -> Result<TextBlock> {
-    match XamlReader::Load(&HSTRING::from(GLYPH_XAML))
-        .and_then(|element| element.cast::<TextBlock>())
-    {
-        Ok(block) => Ok(block),
-        Err(error) => {
-            eprintln!("naui-windows: 折りたたみの山形の生成に失敗: {error}");
-            TextBlock::new().map_err(|e| to_error("山形の生成", e))
-        }
-    }
+windows_core::imp::define_interface!(
+    IExpanderExpandingEventArgs,
+    IExpanderExpandingEventArgs_Vtbl,
+    0x433f2e36_19e7_579c_b4ce_9ce5d510d001
+);
+impl windows_core::RuntimeType for IExpanderExpandingEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+
+#[repr(C)]
+pub struct IExpanderExpandingEventArgs_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeExpanderExpandingEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    NativeExpanderExpandingEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl windows_core::RuntimeType for NativeExpanderExpandingEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IExpanderExpandingEventArgs>();
+}
+unsafe impl Interface for NativeExpanderExpandingEventArgs {
+    type Vtable = IExpanderExpandingEventArgs_Vtbl;
+    const IID: windows_core::GUID = IExpanderExpandingEventArgs::IID;
+}
+impl windows_core::RuntimeName for NativeExpanderExpandingEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ExpanderExpandingEventArgs";
+}
+
+windows_core::imp::define_interface!(
+    IExpanderCollapsedEventArgs,
+    IExpanderCollapsedEventArgs_Vtbl,
+    0x968a6870_7426_535e_a526_279e6eedecd0
+);
+impl windows_core::RuntimeType for IExpanderCollapsedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+
+#[repr(C)]
+pub struct IExpanderCollapsedEventArgs_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeExpanderCollapsedEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    NativeExpanderCollapsedEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl windows_core::RuntimeType for NativeExpanderCollapsedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IExpanderCollapsedEventArgs>();
+}
+unsafe impl Interface for NativeExpanderCollapsedEventArgs {
+    type Vtable = IExpanderCollapsedEventArgs_Vtbl;
+    const IID: windows_core::GUID = IExpanderCollapsedEventArgs::IID;
+}
+impl windows_core::RuntimeName for NativeExpanderCollapsedEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ExpanderCollapsedEventArgs";
 }

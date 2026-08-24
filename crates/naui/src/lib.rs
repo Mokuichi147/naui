@@ -121,13 +121,10 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `Expander` | `ToggleButton` + `StackPanel` | `NSButton` (入り切り) + `NSStackView` | `GtkExpander` | `<details>` + `<summary>` |
+//! | `Expander` | `Expander` | `NSButton` (入り切り) + `NSStackView` | `GtkExpander` | `<details>` + `<summary>` |
 //!
-//! 同じ役目のコントロールがあるのは GTK4 (`GtkExpander`) と HTML
-//! (`<details>`) だけなので、Windows と macOS は標準のコントロールを組んで
-//! 同じ形にしている (山形は Segoe Fluent Icons と SF Symbols の字)。
-//! WinUI 3 の `Expander` を使わないのは、`winio-winui3` がこの型を投影して
-//! いないため。
+//! Windows は WinUI 3 のネイティブ `Expander` を使う。macOS は AppKit に
+//! 単一の Expander がないため、標準の `NSButton` と `NSStackView` を組み合わせる。
 //!
 //! たたんでいる間、中身はレイアウトから外れる (場所を空けない)。既定は
 //! 閉じた状態で、[`set_expanded`](Expander::set_expanded) はプログラムからの

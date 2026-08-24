@@ -411,7 +411,7 @@ window.set_toolbar(&toolbar);
 | `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🟡 `GtkGrid` | 🟡 `<div>` + CSS Grid |
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
 | `Spacer` | 🔴 中身のない `Grid` | 🟡 中身のない `NSView` | 🟡 中身のない `GtkBox` | 🟡 `<div>` + `flex-grow` |
-| `Expander` | 🟡 `ToggleButton` + `StackPanel` | 🟡 `NSButton` (入り切り) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
+| `Expander` | ✅ `Expander` | 🟡 `NSButton` (入り切り) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
 | `Label` | ✅ `TextBlock` | ✅ `NSTextField` | ✅ `GtkLabel` | ✅ `<span>` |
 | `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
@@ -596,8 +596,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `InfoBar` / `TeachingTip` がバインディングに無いため、`Toast` は `Grid` と
   `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
   `window.show()` より前には出せません。
-- `Expander` のバインディングが無いため、`Expander` は `ToggleButton` の見出しと
-  `StackPanel` で組み立てています。開閉のアニメーションはありません。
+- `Expander` は `winio-winui3` の投影に含まれていませんが、WinUI の公開 WinRT
+  インターフェイスを最小限投影し、`XamlReader` から本物の `Expander` を生成しています。
 
 ### macOS
 
