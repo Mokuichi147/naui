@@ -130,11 +130,6 @@
 //! 閉じた状態で、[`set_expanded`](Expander::set_expanded) はプログラムからの
 //! 操作なので `on_toggle` を呼ばない ([`Checkbox::set_checked`] と同じ決まり)。
 //!
-//! 中身は開いた場所の**幅いっぱい**に置かれる ([`Scroll::set_child`] と同じ)。
-//! 中で左右のどこへ寄せるかは中身のコンテナが決めるので、`Stack` の既定
-//! ([`Align::Center`]) のままだと、幅の違う子はそれぞれ中央へ寄る。左端を
-//! そろえたいときは [`Stack::set_align`] へ [`Align::Start`] を渡す。
-//!
 //! ## テキスト入力
 //!
 //! 1 行なら [`TextInput`]、改行を含む文章なら [`TextArea`]、伏せ字にするなら

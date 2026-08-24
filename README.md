@@ -181,11 +181,6 @@ details.on_toggle(|expanded| println!("開いている: {expanded}"));
 `set_expanded` はプログラムからの操作なので `on_toggle` を呼びません
 (`Checkbox::set_checked` と同じ決まりです)。
 
-中身は開いた場所の**幅いっぱい**に置かれます (`Scroll` と同じ)。中で左右のどこへ
-寄せるかは中身のコンテナが決めるため、`Stack` の既定 (`Align::Center`) のままだと
-幅の違う子はそれぞれ中央へ寄ります。左端をそろえるなら `set_align(Align::Start)`
-を指定してください。
-
 ### 数値とパスワードの入力
 
 数を入れさせるには `NumberInput` を使います。値は `f64` で、下限・上限・刻み・
