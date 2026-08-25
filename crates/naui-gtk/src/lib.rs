@@ -21,6 +21,7 @@
 //! | `Label` | `GtkLabel` |
 //! | `Button` | `GtkButton` |
 //! | `Checkbox` | `GtkCheckButton` |
+//! | `Toggle` | `GtkSwitch` + `GtkLabel` を `GtkBox` へ並べたもの |
 //! | `ComboBox` | `GtkDropDown` + `GtkStringList` |
 //! | `RadioGroup` | 組にした `GtkCheckButton` を `GtkBox` へ並べたもの |
 //! | `DatePicker` | `GtkMenuButton` + `GtkCalendar` / `GtkSpinButton` の組 |
@@ -127,6 +128,7 @@ mod number_input;
 mod popup;
 mod radio_group;
 mod toast;
+mod toggle;
 mod toolbar;
 mod tree;
 mod widgets;
@@ -155,6 +157,7 @@ pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
 pub use toast::Toast;
+pub use toggle::Toggle;
 pub use toolbar::Toolbar;
 pub use tree::Tree;
 pub use widgets::{
@@ -252,6 +255,11 @@ impl Ui {
 
     pub fn checkbox(&self, label: &str) -> Result<Checkbox> {
         Ok(Checkbox::new(label))
+    }
+
+    /// 入り切りを切り替えるスイッチ。`label` はとなりへ添える文字。
+    pub fn toggle(&self, label: &str) -> Result<Toggle> {
+        Ok(Toggle::new(label))
     }
 
     /// 選択肢を折りたたんで表示するコンボボックス。

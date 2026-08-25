@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use naui::{Orientation, Padding, Result, Theme, Ui};
 
-/// Label、Button、Checkbox、RadioGroup、Slider、ProgressBar、ComboBox とテーマ。
+/// Label、Button、Checkbox、Toggle、RadioGroup、Slider、ProgressBar、ComboBox とテーマ。
 pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(12.0);
@@ -59,6 +59,34 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     });
     pane.append(&checkbox);
     pane.append(&check_status);
+
+    pane.append(&ui.label("Toggle")?);
+    pane.append(&ui.label("チェックボックスと同じ 2 択を、スイッチの形で切り替えます。")?);
+    let toggle_status = ui.label("バックアップ: 切")?;
+    let toggle = ui.toggle("バックアップを作る")?;
+    toggle.on_toggle({
+        let toggle_status = toggle_status.clone();
+        move |on| {
+            toggle_status.set_text(if on {
+                "バックアップ: 入"
+            } else {
+                "バックアップ: 切"
+            });
+        }
+    });
+    let toggle_reset = ui.button("切に戻す")?;
+    toggle_reset.on_click({
+        let toggle = toggle.clone();
+        let toggle_status = toggle_status.clone();
+        move || {
+            // set_on は通知しないので、表示はこちらで戻す。
+            toggle.set_on(false);
+            toggle_status.set_text("バックアップ: 切");
+        }
+    });
+    pane.append(&toggle);
+    pane.append(&toggle_reset);
+    pane.append(&toggle_status);
 
     pane.append(&ui.label("RadioGroup")?);
     pane.append(&ui.label("候補を並べて 1 つだけ選べます。選び直すと前の選択は外れます。")?);

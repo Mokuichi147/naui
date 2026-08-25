@@ -41,6 +41,11 @@ fn main() {
             checkbox_set_is_silent,
         ),
         (
+            "スイッチが切り替わり新しい値を通知する",
+            toggle_switches_and_notifies,
+        ),
+        ("スイッチの set_on は通知しない", toggle_set_is_silent),
+        (
             "チェックボックスの印がラベルの字面にそろう",
             checkbox_indicator_is_aligned_to_text,
         ),
@@ -444,6 +449,53 @@ fn checkbox_set_is_silent(ui: &Ui) -> Result<()> {
     checkbox.set_checked(true);
     assert!(checkbox.is_checked());
     checkbox.set_checked(false);
+    assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+    Ok(())
+}
+
+/// スイッチは `GtkSwitch` そのもので、ラベルはとなりへ並ぶ。
+fn toggle_switches_and_notifies(ui: &Ui) -> Result<()> {
+    let toggle = ui.toggle("通知を受け取る")?;
+    let (log, sink) = recorder::<bool>();
+    toggle.on_toggle(sink);
+
+    // 箱の中は「スイッチ、ラベル」の順。
+    let native: gtk::Box = toggle.native_widget().downcast().expect("GtkBox");
+    let items = children(&native);
+    assert_eq!(items.len(), 2);
+    assert!(
+        items[0].is::<gtk::Switch>(),
+        "はじめが GtkSwitch であること"
+    );
+    let label: gtk::Label = items[1].clone().downcast().expect("GtkLabel");
+    assert_eq!(label.text().as_str(), "通知を受け取る");
+
+    let switch = toggle.native_switch();
+    assert!(!toggle.is_on(), "既定は切れていること");
+    // GtkSwitch の activate は、利用者が押したときと同じ経路で切り替わる。
+    switch.activate();
+    assert!(toggle.is_on());
+    switch.activate();
+    assert!(!toggle.is_on());
+    assert_eq!(log.borrow().as_slice(), [true, false]);
+
+    // 無効にすると、スイッチも文字も同じ見た目になる。
+    toggle.set_enabled(false);
+    assert!(!switch.is_sensitive());
+    assert!(!label.is_sensitive());
+    Ok(())
+}
+
+fn toggle_set_is_silent(ui: &Ui) -> Result<()> {
+    let toggle = ui.toggle("通知を受け取る")?;
+    let (log, sink) = recorder::<bool>();
+    toggle.on_toggle(sink);
+
+    toggle.set_on(true);
+    assert!(toggle.is_on());
+    assert!(toggle.native_switch().is_active(), "ネイティブへも届くこと");
+    toggle.set_on(false);
+    assert!(!toggle.is_on());
     assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
     Ok(())
 }
