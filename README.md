@@ -27,7 +27,7 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 |
 | Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみを操作 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチを操作 |
 | Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 |
 
 未確認の範囲もあります。
@@ -43,6 +43,10 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
+- Windows / Linux: `Toggle` の実機での実行 (macOS は統合テストと Gallery、Web は
+  ブラウザで切り替えと通知を確認済み。Linux 向けの統合テストは用意してあります)。
+  Windows は `winio-winui3` が投影していない `ToggleSwitch` を naui 側で投影して
+  いるため、実機での確認が要ります
 
 これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
@@ -216,6 +220,30 @@ password.on_change(|text| println!("{} 文字", text.chars().count()));
 部分にならないためです。入力された文字列は `text()` で読めるので、扱いはアプリの
 責任になります。
 
+### 入り切りの切り替え
+
+入っているか切れているかの 2 択は、`Checkbox` か `Toggle` で切り替えます。
+API はどちらも同じで、違うのは見せ方だけです。**印を付けるチェックボックスは
+「同意する」のようにまとめて決めるもの、つまみを動かすスイッチはその場で効く
+設定**に向きます (どちらを使うかは、その環境の作法に合わせてください)。
+
+```rust
+let backup = ui.toggle("バックアップを作る")?;
+backup.set_on(true); // 通知せずに入れる
+backup.on_toggle(|on| println!("バックアップ: {on}"));
+```
+
+`set_checked` と `set_on` はプログラムからの操作なので、`on_toggle` を呼びません。
+
+`NSSwitch` と `GtkSwitch` は文字を持たないため、macOS と Linux ではラベルを
+横へ添えています。Windows は `OnContent` / `OffContent` へ同じ文字を入れて、
+入り切りで読みが変わらないようにしています。**切り替えの当たり判定はスイッチの
+部分**で、Web だけは `<label>` で組む都合上、文字を押しても切り替わります。
+Web は `switch` 属性でブラウザへ「スイッチとして描いて」と頼むだけで、naui が
+見た目を作ることはしません。**この属性に対応しているのは Safari 17.4 以降だけ**
+なので、Chrome や Firefox ではチェックボックスの見た目で出ます (値の扱い・通知・
+読み上げ (`role="switch"`) は同じです)。
+
 ### 選択入力
 
 省スペースな単一選択には `ComboBox` を使います。候補を入れ替えると選択は外れ、
@@ -380,7 +408,7 @@ window.set_toolbar(&toolbar);
 
 | 分類 | API |
 | --- | --- |
-| 基本 | `Window`、`Label`、`Button`、`Checkbox`、`TextInput`、`TextArea`、`PasswordInput`、`NumberInput`、`Slider`、`ProgressBar` |
+| 基本 | `Window`、`Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`NumberInput`、`Slider`、`ProgressBar` |
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer`、`Expander` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
 | ウィンドウ付属 | `Toolbar` |
@@ -412,6 +440,7 @@ window.set_toolbar(&toolbar);
 | `Label` | ✅ `TextBlock` | ✅ `NSTextField` | ✅ `GtkLabel` | ✅ `<span>` |
 | `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
+| `Toggle` | ✅ `ToggleSwitch` | 🟡 `NSSwitch` + `NSTextField` | 🟡 `GtkSwitch` + `GtkLabel` | 🟡 `<input type="checkbox" switch>` + `<label>` |
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
 | `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
 | `DatePicker` | 🔴 `ComboBox` の組 (年/月/日 と 時:分) | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
@@ -552,7 +581,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 36 コンポーネントです。複数列テーブルは未実装です。
+- 対応するのは上記の 37 コンポーネントです。複数列テーブルは未実装です。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する

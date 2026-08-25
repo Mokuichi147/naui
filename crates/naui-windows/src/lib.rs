@@ -32,6 +32,7 @@ mod number_input;
 mod popup;
 mod radio_group;
 mod toast;
+mod toggle;
 mod toolbar;
 mod tree;
 mod ui_thread;
@@ -56,6 +57,7 @@ pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
 pub use toast::Toast;
+pub use toggle::Toggle;
 pub use toolbar::Toolbar;
 pub use tree::Tree;
 pub use widgets::{
@@ -142,6 +144,11 @@ impl Ui {
 
     pub fn checkbox(&self, label: &str) -> Result<Checkbox> {
         Checkbox::new(label)
+    }
+
+    /// 入り切りを切り替えるスイッチ。`label` はとなりへ添える文字。
+    pub fn toggle(&self, label: &str) -> Result<Toggle> {
+        Toggle::new(label)
     }
 
     /// 選択肢を折りたたんで表示するコンボボックス。

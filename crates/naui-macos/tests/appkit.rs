@@ -24,7 +24,7 @@ use objc2_app_kit::{
     NSButton, NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSImage,
     NSImageScaling, NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation,
     NSOutlineViewDelegate, NSScrollView, NSSecureTextField, NSSegmentedControl, NSStepper,
-    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
+    NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
     NSUserInterfaceItemIdentification, NSView, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
@@ -41,6 +41,14 @@ fn main() {
         (
             "チェックボックスが反転し新しい値を通知する",
             checkbox_toggle,
+        ),
+        (
+            "スイッチが切り替わり新しい値を通知する",
+            toggle_switches_and_notifies,
+        ),
+        (
+            "スイッチがネイティブの NSSwitch とラベルを横に並べる",
+            toggle_places_a_native_switch_beside_its_label,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         ("複数行入力が改行込みで往復する", text_area_round_trip),
@@ -390,6 +398,70 @@ fn checkbox_toggle(ui: &Ui) -> Result<()> {
 
     checkbox.set_checked(true);
     assert!(checkbox.is_checked());
+    Ok(())
+}
+
+/// スイッチはネイティブの状態が変わり、変更後の値が通知される。
+fn toggle_switches_and_notifies(ui: &Ui) -> Result<()> {
+    let toggle = ui.toggle("通知を受け取る")?;
+    assert!(!toggle.is_on(), "既定は切れていること");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    toggle.on_toggle({
+        let seen = seen.clone();
+        move |v| seen.borrow_mut().push(v)
+    });
+
+    toggle.click();
+    assert!(toggle.is_on(), "ネイティブ側の状態が変わること");
+    toggle.click();
+    assert!(!toggle.is_on());
+    assert_eq!(*seen.borrow(), vec![true, false]);
+
+    toggle.set_on(true);
+    assert!(toggle.is_on());
+    toggle.set_on(false);
+    assert!(!toggle.is_on());
+    assert_eq!(
+        *seen.borrow(),
+        vec![true, false],
+        "プログラムからの変更は通知しない"
+    );
+    Ok(())
+}
+
+/// スイッチは `NSSwitch` そのもので、ラベルはとなりへ並ぶ。
+/// 幅の余りはラベルが受け取り、スイッチは自分の大きさのままでいる。
+fn toggle_places_a_native_switch_beside_its_label(ui: &Ui) -> Result<()> {
+    let toggle = ui.toggle("通知を受け取る")?;
+    let view = toggle.native_view();
+    view.setFrameSize(NSSize::new(400.0, 40.0));
+    view.layoutSubtreeIfNeeded();
+
+    let subviews = view.subviews();
+    let switch = (0..subviews.len())
+        .find_map(|index| subviews.objectAtIndex(index).downcast::<NSSwitch>().ok())
+        .expect("NSSwitch であること");
+    let label = (0..subviews.len())
+        .find_map(|index| subviews.objectAtIndex(index).downcast::<NSTextField>().ok())
+        .expect("ラベルがあること");
+    assert_eq!(label.stringValue().to_string(), "通知を受け取る");
+    assert_eq!(switch, toggle.native_switch());
+
+    let switch_frame = switch.frame();
+    let label_frame = label.frame();
+    assert!(
+        switch_frame.origin.x < label_frame.origin.x,
+        "スイッチが文字より左にあること"
+    );
+    assert!(
+        switch_frame.size.width < 100.0,
+        "スイッチは自分の大きさのままでいること: {}",
+        switch_frame.size.width
+    );
+
+    toggle.set_enabled(false);
+    assert!(!switch.isEnabled(), "スイッチが無効になること");
     Ok(())
 }
 
