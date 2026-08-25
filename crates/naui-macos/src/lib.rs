@@ -9,6 +9,7 @@
 // Objective-C 呼び出しのため unsafe が必要。
 #![allow(unsafe_code)]
 
+mod color_picker;
 mod combo_box;
 mod date_picker;
 mod dialog;
@@ -44,6 +45,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::NSNotification;
 
+pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
 pub use dialog::Dialog;
@@ -160,6 +162,11 @@ impl Ui {
     /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         Ok(DatePicker::new(self.mtm, mode))
+    }
+
+    /// 色を選ばせるコントロール。初期値は黒。
+    pub fn color_picker(&self) -> Result<ColorPicker> {
+        Ok(ColorPicker::new(self.mtm))
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

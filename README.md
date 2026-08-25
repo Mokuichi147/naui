@@ -25,9 +25,9 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカーを含む) |
 | Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチを含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチを操作 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、色ピッカーを操作 |
 | Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチを含む) |
 
 未確認の範囲もあります。
@@ -43,6 +43,10 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
+- Windows / Linux: `ColorPicker` の実機での実行 (macOS は統合テストと Gallery、
+  Web はブラウザで値の往復と通知まで確認済み。Linux 向けの統合テストは用意して
+  あります)。**Windows は `ColorPicker` と `SolidColorBrush` を自前で WinRT
+  投影している**ので、実機で確かめるまで動作は未確認です
 
 これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
@@ -294,6 +298,34 @@ alarm.set_value(DateTime::time(7, 30));
 丸めます。`set_range` の外へは出られず、範囲の比較には**選ばせている部分だけ**を
 使います (時刻だけの表示なら日付を見ません)。
 
+### 色の選択
+
+色を選ばせるには `ColorPicker` を使います。値は `Color` (sRGB の 8 bit) で
+やり取りし、色を選ぶ UI はその環境のものがそのまま開きます。
+
+```rust
+use naui::Color;
+
+let accent = ui.color_picker()?;
+accent.set_value(Color::rgb(0x33, 0x66, 0xff)); // 通知せずに値を入れる
+accent.on_change(|value| println!("{value} が選ばれました")); // #3366ff
+```
+
+作った直後の値は黒 (`Color::BLACK`) です。**透明度は扱いません**。
+`<input type="color">` が不透明な色しか返さないため、4 環境でそろう範囲に
+合わせています。
+
+`set_value` は通知せず、`pick` は利用者が選んだのと同じく `on_change` を
+呼びます (`ComboBox` の `set_selected` と `select` と同じ決まりです)。
+
+Windows の WinUI 3 `ColorPicker` は、スペクトラムとスライダーを縦に並べた
+**大きな面**で、他の 3 環境の「色の見本を押すと選択の UI が開く」という形とは
+並び方が違います。そこで WinUI 3 の作法どおり `Button` の `Flyout` へ入れ、
+ボタンには選んだ色の見本を出しています。
+
+macOS のカラーパネルはカタログ色 (`systemBlue` など) も返すので、成分を読む
+前に sRGB へ変換しています。
+
 ### ツリー
 
 入れ子の項目を開閉して 1 つ選ぶには `Tree` を使います。項目は**根からの子
@@ -408,7 +440,7 @@ window.set_toolbar(&toolbar);
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer`、`Expander` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
 | ウィンドウ付属 | `Toolbar` |
-| データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`List`、`Tree` |
+| データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`ColorPicker`、`List`、`Tree` |
 | ファイル | `FilePicker`、`FileSaver` |
 | メディア | `Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog`、`Toast` |
@@ -440,6 +472,7 @@ window.set_toolbar(&toolbar);
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
 | `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
 | `DatePicker` | 🔴 `ComboBox` の組 (年/月/日 と 時:分) | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
+| `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `PasswordInput` | ✅ `PasswordBox` | ✅ `NSSecureTextField` | ✅ `GtkPasswordEntry` | ✅ `<input type="password">` |
@@ -478,6 +511,7 @@ window.set_toolbar(&toolbar);
 - `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
 - `DateTime` / `DatePickerMode`: 年月日と時分の値、日付選択で何を選ばせるか
 - `NumberSpec`: 数値入力の下限・上限・刻み・小数桁
+- `Color`: sRGB の 8 bit で表す色 (色の選択でやり取りする値)
 - `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
 - `Fit` / `PlaybackState`: メディア表示と再生状態
 - `PopupItem`: ポップアップメニュー項目
@@ -577,7 +611,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ### 共通
 
-- 対応するのは上記の 37 コンポーネントです。複数列テーブルは未実装です。
+- 対応するのは上記の 38 コンポーネントです。複数列テーブルは未実装です。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
@@ -625,6 +659,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   生成しています。`Toggle` のラベルは `OnContent` と `OffContent` の両方へ
   同じ文字を入れるので、入り切りで読みは変わりません (WinUI の既定は
   「オン」「オフ」と切り替わる文字です)。
+- `ColorPicker` と `SolidColorBrush` も投影に含まれていないため、同じく公開
+  WinRT インターフェイスを最小限投影しています。WinUI 3 の `ColorPicker` は
+  スペクトラムとスライダーを縦に並べた大きな面なので、`Button` の `Flyout` へ
+  入れ、ボタンには選んだ色の見本 (`Border` + `SolidColorBrush`) を出します。
 
 ### macOS
 
@@ -653,6 +691,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `NSSwitch` は文字を持たないため、`Toggle` のラベルは横へ並べた
   `NSTextField` です。**切り替わるのはスイッチを押したときだけ**で、
   文字を押しても切り替わりません。
+- `ColorPicker` は `NSColorWell` そのものです。押すとシステムのカラーパネルが
+  開きます。パネルはカタログ色 (`systemBlue` など) も返すので、成分を読む前に
+  sRGB へ変換しています。`set_enabled(false)` ではパネルとのつながりも切ります。
 
 ### Linux
 
@@ -668,6 +709,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `GtkSwitch` は文字を持たないため、`Toggle` のラベルは `GtkBox` へ横に並べた
   `GtkLabel` です。**切り替わるのはスイッチを押したときだけ**で、文字を押しても
   切り替わりません。
+- `ColorPicker` は `GtkColorDialogButton` (GTK 4.10 以降) です。透明度を
+  扱わないので、開く `GtkColorDialog` の `with-alpha` は切ってあります。
 - 日付を選ぶ 1 つのコントロールが GTK4 に無いため、`DatePicker` は
   `GtkMenuButton` のポップオーバーに載せた `GtkCalendar` と、時分の
   `GtkSpinButton` で組み立てています。`GtkCalendar` は「日を押した」と
@@ -692,6 +735,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `<details>` に `disabled` が無いため、`Expander::set_enabled(false)` は
   見出しをマウスとタブ順から外して押せなくするだけです (`aria-disabled` は
   付きますが、ネイティブの無効なコントロールとは扱いが違います)。
+- `ColorPicker` の入力 UI (パレットやスポイト) はブラウザと OS が出すため、
+  見た目と操作はブラウザごとに違います。値は `change` (確定) で受け取ります。
 - `Toggle` の `switch` 属性に対応しているのは Safari 17.4 以降だけなので、
   Chrome や Firefox ではチェックボックスの見た目で出ます (値の扱い・通知・
   読み上げは同じです)。つまみの見た目を naui の CSS で作ることはしません。
