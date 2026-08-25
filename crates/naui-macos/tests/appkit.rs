@@ -14,8 +14,8 @@ use std::rc::Rc;
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track,
-    TreeItem,
+    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, Time, ToolbarIcon, ToolbarItem,
+    Track, TreeItem,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
@@ -326,6 +326,14 @@ fn main() {
         (
             "日付ピッカーの通知中に値と通知先を差し替えられる",
             date_picker_callback_is_reentrant,
+        ),
+        (
+            "時刻ピッカーが時分だけを出し、値がネイティブと往復する",
+            time_picker_value_round_trips,
+        ),
+        (
+            "時刻ピッカーが範囲の外へ出さない",
+            time_picker_stays_inside_the_range,
         ),
         (
             "数値入力の値がネイティブと往復する",
@@ -3744,6 +3752,16 @@ fn edit_natively(picker: &NSDatePicker, value: DateTime) {
     unsafe { picker.sendAction_to(action, target.as_deref()) };
 }
 
+/// 時刻ピッカーのスピナーを回したときと同じ経路。日付は naui が使うものと
+/// 同じ 1970-01-01 へそろえる。
+fn edit_time_natively(picker: &NSDatePicker, value: Time) {
+    let (year, month, day) = DateTime::TIME_ORIGIN;
+    edit_natively(
+        picker,
+        DateTime::new(year, month, day, value.hour, value.minute),
+    );
+}
+
 /// 数字の欄へ打ち込む。`controlTextDidChange:` は AppKit が編集中に送るので、
 /// テストからは同じ通知をデリゲートへ直接渡す。
 fn type_into_field(field: &NSTextField, text: &str) {
@@ -4103,6 +4121,104 @@ fn date_picker_callback_is_reentrant(ui: &Ui) -> Result<()> {
             DateTime::new(2028, 2, 29, 8, 0)
         ],
         "差し替えた通知先が呼ばれる"
+    );
+    Ok(())
+}
+
+/// 時刻ピッカーは `NSDatePicker` の時分だけを出したもの。値はネイティブと
+/// 往復し、`set_value` は通知しない。
+fn time_picker_value_round_trips(ui: &Ui) -> Result<()> {
+    let picker = ui.time_picker()?;
+    let native = picker.native_picker();
+    assert_eq!(
+        native.datePickerElements(),
+        NSDatePickerElementFlags::HourMinute,
+        "時分だけを出すこと"
+    );
+    assert!(
+        !native.presentsCalendarOverlay(),
+        "時刻だけの表示に暦は出さない"
+    );
+    // 作った直後は現在時刻。
+    assert!(picker.value().is_valid(), "{}", picker.value());
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    picker.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    picker.set_value(Time::new(9, 30));
+    assert_eq!(picker.value(), Time::new(9, 30));
+    assert!(seen.borrow().is_empty(), "set_value は通知しない");
+
+    // 時計として成り立たない値は丸める。
+    picker.set_value(Time::new(25, 70));
+    assert_eq!(picker.value(), Time::new(23, 59));
+
+    // 利用者がスピナーを回したときの経路 (target/action)。
+    edit_time_natively(&native, Time::new(18, 45));
+    assert_eq!(picker.value(), Time::new(18, 45));
+    assert_eq!(*seen.borrow(), vec![Time::new(18, 45)]);
+
+    // 同じ値で通知が来ても、値が動いていなければ知らせない。
+    edit_time_natively(&native, Time::new(18, 45));
+    assert_eq!(seen.borrow().len(), 1);
+
+    picker.set_enabled(false);
+    assert!(!native.isEnabled());
+    Ok(())
+}
+
+/// 下限・上限の外へは出ない。日付を 1970-01-01 へ固定しているので、
+/// `NSDatePicker` にも範囲をそのまま渡せる。
+fn time_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    let picker = ui.time_picker()?;
+    picker.set_value(Time::new(12, 0));
+    picker.set_range(Some(Time::new(9, 0)), Some(Time::new(18, 0)));
+    assert_eq!(picker.value(), Time::new(12, 0));
+    let native = picker.native_picker();
+    assert!(native.minDate().is_some());
+    assert!(native.maxDate().is_some());
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    picker.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    edit_time_natively(&native, Time::new(22, 0));
+    assert_eq!(picker.value(), Time::new(18, 0), "上限で止まること");
+    assert_eq!(*seen.borrow(), vec![Time::new(18, 0)]);
+
+    // 範囲の外にある値を渡すと、通知せずに端へ寄る。
+    picker.set_value(Time::new(1, 0));
+    assert_eq!(picker.value(), Time::new(9, 0));
+    assert_eq!(seen.borrow().len(), 1);
+
+    // 範囲を外すと自由に選べる。
+    picker.set_range(None, None);
+    assert!(native.minDate().is_none());
+    assert!(native.maxDate().is_none());
+    edit_time_natively(&native, Time::new(1, 0));
+    assert_eq!(picker.value(), Time::new(1, 0));
+
+    // 通知の中から同じピッカーを操作しても borrow が衝突しない。
+    picker.on_change({
+        let picker = picker.clone();
+        let seen = seen.clone();
+        move |value| {
+            seen.borrow_mut().push(value);
+            let _ = picker.value();
+            picker.set_value(Time::MIDNIGHT);
+        }
+    });
+    edit_time_natively(&native, Time::new(6, 15));
+    assert_eq!(picker.value(), Time::MIDNIGHT);
+    assert_eq!(
+        *seen.borrow(),
+        vec![Time::new(18, 0), Time::new(1, 0), Time::new(6, 15)],
+        "利用者の操作はどれも 1 回だけ届くこと"
     );
     Ok(())
 }

@@ -9,7 +9,7 @@ use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use naui_core::{DatePickerMode, DateTime, Result};
+use naui_core::{DatePickerMode, DateTime, Result, Time};
 use windows::Foundation::{DateTime as WinDateTime, TimeSpan, TypedEventHandler};
 use windows::Globalization::{Calendar, CalendarIdentifiers};
 use windows_core::{Interface, Param, Type, HSTRING};
@@ -251,8 +251,8 @@ impl DatePicker {
             value = value.with_date(selected.year, selected.month, selected.day);
         }
         if let Some(time) = &self.0.time {
-            let (hour, minute) = from_native_time(time.time().ok()?);
-            value = value.with_time(hour, minute);
+            let shown = from_native_time(time.time().ok()?);
+            value = value.with_time(shown.hour, shown.minute);
         }
         Some(value.normalized())
     }
@@ -267,7 +267,7 @@ impl DatePicker {
             let _ = date.set_date(value);
         }
         if let Some(time) = &self.0.time {
-            let _ = time.set_time(to_native_time(value));
+            let _ = time.set_time(to_native_time(value.time_of_day()));
         }
         self.0.silent.set(previous);
     }
@@ -328,7 +328,7 @@ fn load_date_picker() -> Result<NativeDatePicker> {
     Ok(picker)
 }
 
-fn load_time_picker() -> Result<NativeTimePicker> {
+pub(crate) fn load_time_picker() -> Result<NativeTimePicker> {
     XamlReader::Load(&TIME_PICKER_XAML.into())
         .and_then(|value| value.cast())
         .map_err(|e| to_error("WinUI TimePicker の生成", e))
@@ -380,7 +380,7 @@ fn balance_date_picker_columns(picker: &NativeDatePicker) {
     }
 }
 
-fn compact_time_picker(picker: &NativeTimePicker) {
+pub(crate) fn compact_time_picker(picker: &NativeTimePicker) {
     let Some(root) = picker_template_root(picker) else {
         return;
     };
@@ -438,21 +438,17 @@ fn gregorian_calendar() -> windows_core::Result<Calendar> {
     Ok(calendar)
 }
 
-fn to_native_time(value: DateTime) -> TimeSpan {
+pub(crate) fn to_native_time(value: Time) -> TimeSpan {
     TimeSpan {
-        Duration: (i64::from(value.hour) * 60 + i64::from(value.minute)) * TICKS_PER_MINUTE,
+        Duration: i64::from(value.minutes_since_midnight()) * TICKS_PER_MINUTE,
     }
 }
 
-fn from_native_time(value: TimeSpan) -> (u8, u8) {
-    let minutes = value
-        .Duration
-        .div_euclid(TICKS_PER_MINUTE)
-        .clamp(0, 24 * 60 - 1);
-    ((minutes / 60) as u8, (minutes % 60) as u8)
+pub(crate) fn from_native_time(value: TimeSpan) -> Time {
+    Time::from_minutes_since_midnight(value.Duration.div_euclid(TICKS_PER_MINUTE))
 }
 
-fn local_now() -> DateTime {
+pub(crate) fn local_now() -> DateTime {
     let now = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
     DateTime {
         year: now.wYear as i32,
@@ -748,7 +744,7 @@ pub struct ITimePicker_Vtbl {
 
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct NativeTimePicker(windows_core::IUnknown);
+pub(crate) struct NativeTimePicker(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(
     NativeTimePicker,
     windows_core::IUnknown,
@@ -767,18 +763,18 @@ impl windows_core::RuntimeName for NativeTimePicker {
 }
 
 impl NativeTimePicker {
-    fn time(&self) -> windows_core::Result<TimeSpan> {
+    pub(crate) fn time(&self) -> windows_core::Result<TimeSpan> {
         unsafe {
             let mut result = TimeSpan::default();
             (Interface::vtable(self).time)(Interface::as_raw(self), &mut result).map(|| result)
         }
     }
 
-    fn set_time(&self, value: TimeSpan) -> windows_core::Result<()> {
+    pub(crate) fn set_time(&self, value: TimeSpan) -> windows_core::Result<()> {
         unsafe { (Interface::vtable(self).set_time)(Interface::as_raw(self), value).ok() }
     }
 
-    fn time_changed<P>(&self, handler: P) -> windows_core::Result<i64>
+    pub(crate) fn time_changed<P>(&self, handler: P) -> windows_core::Result<i64>
     where
         P: Param<TypedEventHandler<NativeTimePicker, NativeTimePickerValueChangedEventArgs>>,
     {
@@ -812,7 +808,7 @@ pub struct ITimePickerValueChangedEventArgs_Vtbl {
 
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct NativeTimePickerValueChangedEventArgs(windows_core::IUnknown);
+pub(crate) struct NativeTimePickerValueChangedEventArgs(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(
     NativeTimePickerValueChangedEventArgs,
     windows_core::IUnknown,
@@ -836,20 +832,24 @@ mod tests {
 
     #[test]
     fn native_time_round_trip_uses_100_nanosecond_ticks() {
-        for (hour, minute) in [(0, 0), (7, 30), (12, 5), (23, 59)] {
-            let value = DateTime::time(hour, minute);
-            assert_eq!(from_native_time(to_native_time(value)), (hour, minute));
+        for value in [
+            Time::MIDNIGHT,
+            Time::new(7, 30),
+            Time::new(12, 5),
+            Time::new(23, 59),
+        ] {
+            assert_eq!(from_native_time(to_native_time(value)), value);
         }
     }
 
     #[test]
     fn native_time_is_clamped_to_one_day() {
-        assert_eq!(from_native_time(TimeSpan { Duration: -1 }), (0, 0));
+        assert_eq!(from_native_time(TimeSpan { Duration: -1 }), Time::MIDNIGHT);
         assert_eq!(
             from_native_time(TimeSpan {
                 Duration: 48 * 60 * TICKS_PER_MINUTE,
             }),
-            (23, 59)
+            Time::new(23, 59)
         );
     }
 

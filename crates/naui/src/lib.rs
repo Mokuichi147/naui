@@ -312,6 +312,38 @@
 //! (11 月 31 日など) は丸める。[`set_range`](DatePicker::set_range) の外へは
 //! 出られず、範囲の比較には**選ばせている部分だけ**を使う。
 //!
+//! 時刻だけを選ばせたいなら [`TimePicker`] のほうが扱いやすい。値が
+//! [`Time`] (時分だけ) なので、要らない日付を持ち回らずに済む。
+//!
+//! ## 時刻の選択
+//!
+//! 時刻だけを選ばせるときは [`TimePicker`] を使う。値は [`Time`] (時分) で
+//! やり取りし、日付は持たない。
+//!
+//! ```no_run
+//! # use naui::{Result, Time, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let alarm = ui.time_picker()?;
+//! alarm.set_value(Time::new(7, 30)); // 通知せずに値を入れる
+//! alarm.set_range(Some(Time::new(6, 0)), Some(Time::new(9, 0)));
+//! alarm.on_change(|value| println!("{value} が選ばれた")); // 07:30
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `TimePicker` | `TimePicker` | `NSDatePicker` の時分 | `GtkSpinButton` の組 | `<input type="time">` |
+//!
+//! 作った直後の値は**その環境の現在時刻 (ローカル時刻)** で、空の状態は
+//! 持たない ([`DatePicker`] と同じ)。**秒は持たない** ([`Time`] 参照)。
+//! 12 時間制 / 24 時間制の別は、その環境のロケールに従う。
+//!
+//! [`set_value`](TimePicker::set_value) は通知せず、時計として成り立たない値
+//! (25 時 70 分など) は丸める。[`set_range`](TimePicker::set_range) の外へは
+//! 出られない。日付をまたぐ範囲 (22:00〜翌 06:00 など) は指定できない —
+//! [`Time`] に日付が無く、下限が上限より後ろのときは上限が勝つため。
+//!
 //! ## 色の選択
 //!
 //! 色を選ばせるときは [`ColorPicker`] を使う。値は [`Color`] (sRGB の 8 bit)
@@ -709,10 +741,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカーを含む 100 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
-//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカーを含む) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカーを含む) を実行確認。GTK4 の実コントロールに対する自動テスト 98 件 (スイッチ・色ピッカーを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカーを含む 102 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカーを含む) |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカーを含む) を実行確認。GTK4 の実コントロールに対する自動テスト 100 件 (スイッチ・色ピッカー・時刻ピッカーを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -721,7 +753,8 @@ pub use naui_core::{
     with_default_extension, Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem,
     NumberSpec, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
-    SelectionMode, Settings, Sizing, Theme, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    SelectionMode, Settings, Sizing, Theme, Time, ToastSpec, ToolbarIcon, ToolbarItem, Track,
+    TreeItem,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -729,21 +762,24 @@ pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
     Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Tabs, TextArea, TextInput, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
+    Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
     Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Tabs, TextArea, TextInput, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
+    Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
     Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Tabs, TextArea, TextInput, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
+    Widget, Window,
 };
 
 #[cfg(all(
@@ -755,7 +791,8 @@ pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
     Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Tabs, TextArea, TextInput, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
+    Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -886,6 +923,15 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     toggle.set_enabled(true);
     toggle.on_toggle(|_v: bool| {});
     toggle.set_sizing(Sizing::fill_width());
+
+    let time_picker: TimePicker = ui.time_picker()?;
+    let _: Time = time_picker.value();
+    time_picker.set_value(Time::new(7, 30));
+    time_picker.set_range(Some(Time::new(9, 0)), Some(Time::new(18, 0)));
+    time_picker.set_range(None, None);
+    time_picker.set_enabled(true);
+    time_picker.on_change(|_value: Time| {});
+    time_picker.set_sizing(Sizing::fill_width());
 
     let color_picker: ColorPicker = ui.color_picker()?;
     let _: Color = color_picker.value();
@@ -1237,6 +1283,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&combo_box);
     stack.append(&radio_group);
     stack.append(&date_picker);
+    stack.append(&time_picker);
     stack.append(&color_picker);
     stack.append(&input);
     stack.append(&text_area);
