@@ -466,6 +466,10 @@ impl TextArea {
 
 // ----------------------------------------------------------------- Slider
 
+const SLIDER_XAML: &str = r#"<Slider
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    Style="{StaticResource DefaultSliderStyle}"/>"#;
+
 struct SliderInner {
     native: XamlSlider,
     min: f64,
@@ -479,7 +483,11 @@ impl_widget!(Slider, native);
 
 impl Slider {
     pub(crate) fn new(min: f64, max: f64) -> Result<Self> {
-        let native = XamlSlider::new().map_err(|e| to_error("Slider の生成", e))?;
+        // ABI のコンストラクタから直接生成するのではなく XAML で作り、
+        // XamlControlsResources の Fluent テンプレートを明示的に適用する。
+        let native = XamlReader::Load(&HSTRING::from(SLIDER_XAML))
+            .and_then(|element| element.cast::<XamlSlider>())
+            .map_err(|e| to_error("Slider の生成", e))?;
         native
             .SetMinimum(min)
             .map_err(|e| to_error("Slider の範囲設定", e))?;
@@ -534,13 +542,14 @@ impl ProgressBar {
     pub(crate) fn new() -> Result<Self> {
         // Windows App SDK 2.3.1 の未パッケージ起動では、ProgressBar の
         // 既定テンプレートが適用される瞬間にランタイムが fail-fast する。
-        // 同じ WinUI XAML の Border を使えば、見た目を保ったまま回避できる。
+        // 代替の Border でも公式テンプレートと同じテーマ資源と寸法を使う。
         let grid = XamlReader::Load(&HSTRING::from(
             r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                HorizontalAlignment="Stretch" Height="6">
-                <Border Background="#E5E5E5" CornerRadius="3"/>
+                HorizontalAlignment="Stretch" Height="3">
+                <Border Height="1" VerticalAlignment="Center"
+                    Background="{ThemeResource ProgressBarBackground}" CornerRadius="0.5"/>
                 <Border Width="0" HorizontalAlignment="Left"
-                    Background="#0078D4" CornerRadius="3"/>
+                    Background="{ThemeResource ProgressBarForeground}" CornerRadius="1.5"/>
             </Grid>"##,
         ))
         .map_err(|e| to_error("ProgressBar の生成", e))?
