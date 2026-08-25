@@ -298,7 +298,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `DatePicker` | `ComboBox` の組 | `NSDatePicker` | `GtkCalendar` + `GtkSpinButton` | `<input type="date">` ほか |
+//! | `DatePicker` | `DatePicker` / `TimePicker` | `NSDatePicker` | `GtkCalendar` + `GtkSpinButton` | `<input type="date">` ほか |
 //!
 //! 作った直後の値は**その環境の現在日時 (ローカル時刻)** で、空の状態は
 //! 持たない (`NSDatePicker` に「未選択」が無いため)。秒も持たない
