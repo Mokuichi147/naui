@@ -25,10 +25,10 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (時刻ピッカー・色ピッカーを含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカーを含む) |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカーを含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカーを含む) |
 | Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカーを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカーを含む) |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカーを含む) |
 
 未確認の範囲もあります。
 
@@ -40,9 +40,6 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
   統合テストと Gallery で確認済み。Linux 向けの統合テストは用意してあります)
 - Windows / Linux: `DatePicker` の実機での実行 (macOS は統合テストと Gallery、
   Web はブラウザで確認済み。Linux 向けの統合テストは用意してあります)
-- Windows / Linux: `TimePicker` の実機での実行 (macOS は統合テストと Gallery、
-  Web はブラウザで値の往復・範囲・通知まで確認済み。Linux 向けの統合テストは
-  用意してあります)
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
@@ -496,7 +493,7 @@ window.set_toolbar(&toolbar);
 | `Toggle` | ✅ `ToggleSwitch` | 🟡 `NSSwitch` + `NSTextField` | 🟡 `GtkSwitch` + `GtkLabel` | 🟡 `<input type="checkbox" switch>` + `<label>` |
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
 | `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
-| `DatePicker` | 🔴 `ComboBox` の組 (年/月/日 と 時:分) | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
+| `DatePicker` | ✅ `DatePicker` / `TimePicker` | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
 | `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (時分だけ) | 🟡 時と分の `GtkSpinButton` | ✅ `<input type="time">` |
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
@@ -666,10 +663,6 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `TreeView` のバインディングが無いため、`Tree` は `ListBox` の行として
   組み立てています。選べない枝は行ごと無効になるので、その開閉ボタンも
   押せません (プログラムからの `expand` は効きます)。
-- `CalendarDatePicker` / `TimePicker` のバインディングが無いため、`DatePicker` は
-  `ComboBox` を年 / 月 / 日 (と 時 : 分) の順に並べて組み立てています。並び順は
-  ロケールによらず固定です。年の選択肢は `set_range` があればその範囲、無ければ
-  現在の年の前後 (120 年前〜20 年後) になります。
 - `NumberBox` のバインディングが無いため、`NumberInput` は `TextBox` と
   `-` / `+` のボタンを横に並べて組み立てています (`NumberBox` の既定と同じ並び)。
   値の確定は欄を離れたときです。
@@ -690,9 +683,17 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   WinRT インターフェイスを最小限投影しています。WinUI 3 の `ColorPicker` は
   スペクトラムとスライダーを縦に並べた大きな面なので、`Button` の `Flyout` へ
   入れ、ボタンには選んだ色の見本 (`Border` + `SolidColorBrush`) を出します。
-- `TimePicker` は WinUI 3 の `TimePicker` そのものです (`winio-winui3` の投影に
-  無いため、公開 WinRT インターフェイスを最小限投影しています)。`TimePicker` に
-  下限・上限は無いので、`set_range` の範囲は naui 側で端へ寄せます。
+- `DatePicker` / `TimePicker` も投影に含まれていないため、同じく公開 WinRT
+  インターフェイスを最小限投影し、`XamlReader` から本物の `DatePicker` と
+  `TimePicker` を生成しています。`DatePickerMode::DateTime` では 2 つを
+  `StackPanel` で横に並べます。年 / 月 / 日 の並び順と表記はシステムのロケールに
+  従い、暦はグレゴリオ暦に固定しています。`set_range` は WinUI 側へは年の範囲
+  (`MinYear` / `MaxYear`) として渡し、月日と時刻の境界は naui 側で端へ寄せます。
+  標準テンプレートは英語の長い月名に合わせて月の列だけを広く左寄せにするため、
+  3 列を等幅・中央揃えへ直し、最小幅も詰めています。
+- `TimePicker` ウィジェットは、この `TimePicker` の投影をそのまま共有しています。
+  WinUI 3 の `TimePicker` に下限・上限は無いので、`set_range` の範囲は naui 側で
+  端へ寄せます。
 
 ### macOS
 
