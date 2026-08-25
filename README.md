@@ -21,6 +21,49 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 - 共通 API で足りない場合はネイティブオブジェクトへアクセス可能
 - 最小サンプルと、種別ごとに全ウィジェットの特徴を確認できる Gallery を同梱
 
+## 目次
+
+- [クイックスタート](#クイックスタート)
+- [対応状況](#対応状況)
+- [基本的な使い方](#基本的な使い方)
+- [ウィジェット](#ウィジェット)
+- [Web 版の実行](#web-版の実行)
+- [開発](#開発)
+- [既知の制限](#既知の制限)
+
+## クイックスタート
+
+### 必要なもの
+
+- Rust 1.82 以降
+- Linux: GTK4 と libadwaita の開発用ライブラリ
+- Windows: Windows App SDK 2.x のフレームワークランタイム
+
+Ubuntu 24.04 では、次のコマンドで Linux 向けの依存パッケージを導入できます。
+
+```sh
+sudo apt install libgtk-4-dev libadwaita-1-dev build-essential pkg-config
+```
+
+Windows App SDK は 2.3.1 で動作を確認しています。
+
+### サンプルを実行
+
+最小構成のカウンターを起動します。
+
+```sh
+git clone https://github.com/mokuichi147/naui.git
+cd naui
+cargo run -p counter
+```
+
+全ウィジェットを確認するには Gallery を起動します。画面は基本、入力、一覧、
+ナビゲーション、レイアウト、ファイル、メディア、ダイアログに分かれています。
+
+```sh
+cargo run -p gallery
+```
+
 ## 対応状況
 
 | 環境 | 状態 | 確認内容 |
@@ -30,7 +73,10 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 | Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカーを操作 |
 | Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカーを含む) |
 
-未確認の範囲もあります。
+実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
+
+<details>
+<summary>未確認の範囲を表示</summary>
 
 - Web: `PopupMenu` のブラウザ実行と、埋め込みブラウザで配送されなかった
   `Dialog` の Esc 操作
@@ -44,34 +90,9 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
 
-これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
+</details>
 
-## クイックスタート
-
-必要な Rust の最小バージョンは 1.82 です。
-
-```sh
-git clone https://github.com/mokuichi147/naui.git
-cd naui
-cargo run -p counter
-```
-
-全ウィジェットは、基本、入力、一覧、ナビゲーション、レイアウト、ファイル、
-メディア、ダイアログの種別にまとめた Gallery で確認できます。
-
-```sh
-cargo run -p gallery
-```
-
-Linux では、先に GTK4 と libadwaita の開発用ライブラリを導入してください。
-Ubuntu 24.04 の例:
-
-```sh
-sudo apt install libgtk-4-dev libadwaita-1-dev build-essential pkg-config
-```
-
-Windows での実行には Windows App SDK 2.x のフレームワークランタイムが必要です。
-このリポジトリでは 2.3.1 で動作を確認しています。
+プラットフォーム固有の注意点は[既知の制限](#既知の制限)を参照してください。
 
 ## 基本的な使い方
 
@@ -163,7 +184,16 @@ form.attach(&field, GridCell::new(1, 0));
 `List`、`Tree`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
 `set_sizing` で高さを指定します。
 
-### 折りたたみ
+### 機能別の補足
+
+全ウィジェットの基本的な使用例は
+[`examples/gallery`](examples/gallery/src/lib.rs) にあります。ここでは、共通 API
+だけでは意図や動作が分かりにくい機能を補足します。
+
+<details>
+<summary><strong>機能別の補足を表示</strong></summary>
+
+#### 折りたたみ
 
 ふだんは隠しておき、見出しを押したときだけ見せたいものは `Expander` へ入れます。
 中身は 1 つなので、複数並べたいときは `Stack` などのコンテナごと入れます。
@@ -181,7 +211,7 @@ details.on_toggle(|expanded| println!("開いている: {expanded}"));
 `set_expanded` はプログラムからの操作なので `on_toggle` を呼びません
 (`Checkbox::set_checked` と同じ決まりです)。
 
-### 数値とパスワードの入力
+#### 数値とパスワードの入力
 
 数を入れさせるには `NumberInput` を使います。値は `f64` で、下限・上限・刻み・
 小数桁を指定できます。**既定は整数**(刻み 1、小数桁 0、範囲の制限なし)なので、
@@ -216,7 +246,7 @@ password.on_change(|text| println!("{} 文字", text.chars().count()));
 部分にならないためです。入力された文字列は `text()` で読めるので、扱いはアプリの
 責任になります。
 
-### 入り切りの切り替え
+#### 入り切りの切り替え
 
 入っているか切れているかの 2 択は、`Checkbox` か `Toggle` で切り替えます。
 API はどちらも同じで、違うのは見せ方だけです。**印を付けるチェックボックスは
@@ -240,7 +270,7 @@ Web は `switch` 属性でブラウザへ「スイッチとして描いて」と
 なので、Chrome や Firefox ではチェックボックスの見た目で出ます (値の扱い・通知・
 読み上げ (`role="switch"`) は同じです)。
 
-### 選択入力
+#### 選択入力
 
 省スペースな単一選択には `ComboBox` を使います。候補を入れ替えると選択は外れ、
 `set_selected` は通知せず、`select` は利用者が選んだときと同じく通知します。
@@ -265,7 +295,7 @@ plan.on_select(|index| println!("{index} 番目が選ばれました"));
 
 排他になるのは 1 つの `RadioGroup` の中だけです。同じ画面に複数置いても混ざりません。
 
-### 日付と時刻
+#### 日付と時刻
 
 日付や時刻を選ばせるには `DatePicker` を使います。何を選ばせるかは生成時の
 `DatePickerMode` で決め、値は `DateTime` (年月日と時分) でやり取りします。
@@ -296,7 +326,7 @@ alarm.set_value(DateTime::time(7, 30));
 
 時刻だけを選ばせたいなら、次の `TimePicker` のほうが扱いやすいです。
 
-### 時刻の選択
+#### 時刻の選択
 
 時刻だけを選ばせるには `TimePicker` を使います。値は `Time` (時分) で
 やり取りし、日付は持ちません。
@@ -320,7 +350,7 @@ alarm.on_change(|value| println!("{value} が選ばれました")); // 07:30
 (22:00〜翌 06:00 など) は指定できません。`Time` に日付が無く、下限が上限より
 後ろのときは上限が勝つためです。
 
-### 色の選択
+#### 色の選択
 
 色を選ばせるには `ColorPicker` を使います。値は `Color` (sRGB の 8 bit) で
 やり取りし、色を選ぶ UI はその環境のものがそのまま開きます。
@@ -348,7 +378,7 @@ Windows の WinUI 3 `ColorPicker` は、スペクトラムとスライダーを�
 macOS のカラーパネルはカタログ色 (`systemBlue` など) も返すので、成分を読む
 前に sRGB へ変換しています。
 
-### ツリー
+#### ツリー
 
 入れ子の項目を開閉して 1 つ選ぶには `Tree` を使います。項目は**根からの子
 インデックスの並び (パス)** で指し、`[0, 2]` は「1 番目の根の 3 番目の子」、
@@ -373,7 +403,7 @@ tree.select(&[0, 1]); // 閉じた枝の中でも、祖先ごと開いて選ば�
 は通知せず、`select`、`expand`、`collapse` は利用者の操作と同じく通知します。
 `TreeItem::enabled(false)` にした枝は、その子孫もまとめて選べなくなります。
 
-### ファイルの保存
+#### ファイルの保存
 
 `FileSaver` は、押すと環境標準の保存ダイアログが開くボタンです。**保存先の
 パスを返すのではなく、渡しておいた内容を書き出します**。ブラウザには保存先の
@@ -392,7 +422,8 @@ saver.on_error(|error| eprintln!("{error}"));
 成功すると `on_save` に書き出し先が届き、取り消したときは何も呼ばれません。
 書き込みに失敗したときだけ `on_error` が呼ばれます。ボタンを押した時点の
 内容を書き出すため、内容が変わるたびに `set_contents` を呼び直します。
-### トースト
+
+#### トースト
 
 済んだことを知らせるだけで、操作を止めたくないときは `Toast` を使います。
 画面の下端に短く出て、**何秒かで自分から消えます**。`Dialog` と同じく
@@ -416,7 +447,7 @@ naui が同じ形に組み立てます。OS の通知センターへ出す通知
 出る別の仕組みなので扱いません。時間の刻みは Linux だけ秒なので、1 秒未満の
 指定は 1 秒になります。
 
-### ツールバー
+#### ツールバー
 
 よく使う操作をウィンドウの上端に並べるには `Toolbar` を使います。ほかの
 ウィジェットと違い**レイアウトには置かず**、`Window::set_toolbar` で
@@ -454,18 +485,18 @@ window.set_toolbar(&toolbar);
 用意しているのは `ToolbarIcon` に並ぶ 20 種類の操作だけで、任意の画像は
 置けません。
 
+</details>
+
 ## ウィジェット
 
 | 分類 | API |
 | --- | --- |
-| 基本 | `Window`、`Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`NumberInput`、`Slider`、`ProgressBar` |
-| レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer`、`Expander` |
-| ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
-| ウィンドウ付属 | `Toolbar` |
+| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`Toolbar` |
+| 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`NumberInput`、`Slider`、`ProgressBar` |
 | データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Tree` |
-| ファイル | `FilePicker`、`FileSaver` |
-| メディア | `Image`、`Video`、`Audio` |
+| ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog`、`Toast` |
+| ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
 
 ### プラットフォーム別の実装
 
@@ -477,7 +508,8 @@ window.set_toolbar(&toolbar);
 | 🟡 | 標準コントロールを組み合わせて実装 |
 | 🔴 | 対応する概念がないため、別の要素で再現 |
 
-#### ウィジェット対応表
+<details>
+<summary><strong>ウィンドウ・レイアウト</strong></summary>
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
@@ -487,34 +519,69 @@ window.set_toolbar(&toolbar);
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
 | `Spacer` | 🔴 中身のない `Grid` | 🟡 中身のない `NSView` | 🟡 中身のない `GtkBox` | 🟡 `<div>` + `flex-grow` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (入り切り) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
+| `Toolbar` | 🟡 `StackPanel` + `Button` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
+
+</details>
+
+<details>
+<summary><strong>基本・入力</strong></summary>
+
+| naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
+| --- | --- | --- | --- | --- |
 | `Label` | ✅ `TextBlock` | ✅ `NSTextField` | ✅ `GtkLabel` | ✅ `<span>` |
 | `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
 | `Toggle` | ✅ `ToggleSwitch` | 🟡 `NSSwitch` + `NSTextField` | 🟡 `GtkSwitch` + `GtkLabel` | 🟡 `<input type="checkbox" switch>` + `<label>` |
-| `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
-| `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
-| `DatePicker` | ✅ `DatePicker` / `TimePicker` | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
-| `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (時分だけ) | 🟡 時と分の `GtkSpinButton` | ✅ `<input type="time">` |
-| `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `PasswordInput` | ✅ `PasswordBox` | ✅ `NSSecureTextField` | ✅ `GtkPasswordEntry` | ✅ `<input type="password">` |
 | `NumberInput` | 🟡 `TextBox` + 増減ボタン | 🟡 `NSTextField` + `NSStepper` | ✅ `GtkSpinButton` | ✅ `<input type="number">` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
 | `ProgressBar` | 🟡 `Grid` + `Border` | ✅ `NSProgressIndicator` | ✅ `GtkProgressBar` | ✅ `<progress>` |
+
+</details>
+
+<details>
+<summary><strong>データ選択</strong></summary>
+
+| naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
+| --- | --- | --- | --- | --- |
+| `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
+| `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
+| `DatePicker` | ✅ `DatePicker` / `TimePicker` | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
+| `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (時分だけ) | 🟡 時と分の `GtkSpinButton` | ✅ `<input type="time">` |
+| `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
 | `Tree` | 🟡 `ListBox` + 開閉ボタン | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
+
+</details>
+
+<details>
+<summary><strong>ファイル・メディア</strong></summary>
+
+| naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
+| --- | --- | --- | --- | --- |
 | `FilePicker` | 🟡 `Button` + `IFileOpenDialog` | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `GtkButton` + `GtkFileDialog` | 🟡 `<button>` + `<input type="file">` |
 | `FileSaver` | 🟡 `Button` + `IFileSaveDialog` | 🟡 `NSButton` + `NSSavePanel` | 🟡 `GtkButton` + `GtkFileDialog` (save) | 🔴 `<button>` + `showSaveFilePicker` / `<a download>` |
 | `Image` | 🟡 `Image` (`XamlReader` 経由) | ✅ `NSImageView` | ✅ `GtkPicture` | ✅ `<img>` |
 | `Video` | ✅ `MediaPlayerElement` | ✅ `AVPlayerView` | 🟡 `GtkPicture` + `GtkMediaControls` | ✅ `<video>` |
 | `Audio` | ✅ `MediaPlayerElement` | 🟡 `AVPlayerView` | 🟡 `GtkMediaControls` + `GtkMediaFile` | ✅ `<audio>` |
+
+</details>
+
+<details>
+<summary><strong>オーバーレイ</strong></summary>
+
+| naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
+| --- | --- | --- | --- | --- |
 | `PopupMenu` | 🟡 `Grid` + `Button` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
 | `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | ✅ `AdwAlertDialog` | 🟡 `<dialog>` + `showModal()` |
 | `Toast` | 🔴 `Grid` + `StackPanel` を重ねたもの | 🔴 `NSVisualEffectView` を重ねたもの | ✅ `AdwToast` + `AdwToastOverlay` | 🔴 `<div role="status">` |
-| `Toolbar` | 🟡 `StackPanel` + `Button` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 
-#### ナビゲーション対応表
+</details>
+
+<details>
+<summary><strong>ナビゲーション</strong></summary>
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
@@ -525,6 +592,8 @@ window.set_toolbar(&toolbar);
 | `Breadcrumbs` | 🟡 `HyperlinkButton` + 区切り | ✅ `NSPathControl` | 🔴 `GtkToggleButton` + 区切り | 🟡 `<nav><ol><li><a>` |
 | `Pagination` | 🟡 `Button` + `ToggleButton` | 🟡 `NSButton` + `NSSegmentedControl` | 🟡 `GtkButton` + `GtkToggleButton` | 🟡 `<nav>` + `<button>` |
 | `Link` | ✅ `HyperlinkButton` | 🟡 `NSButton` + `NSWorkspace` | ✅ `GtkLinkButton` | ✅ `<a>` |
+
+</details>
 
 ### 主なデータ型
 
@@ -633,9 +702,12 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 ## 既知の制限
 
-### 共通
+制限事項は環境ごとにまとめています。利用するターゲットの項目を確認してください。
 
-- 対応するのは上記の 38 コンポーネントです。複数列テーブルは未実装です。
+<details>
+<summary><strong>共通</strong></summary>
+
+- 対応するのは上記の 39 コンポーネントです。複数列テーブルは未実装です。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
@@ -653,7 +725,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `on_submit` はありません。
 - メディアの対応形式は各 OS、ブラウザ、Linux の GStreamer 環境に依存します。
 
-### Windows
+</details>
+
+<details>
+<summary><strong>Windows</strong></summary>
 
 - `StackPanel` は主軸の余りを子へ配らないため、`Stack` 内の主軸方向では
   `Fill` と `Spacer` が効きません。代わりに `Grid` の `Track::Fill` を使います。
@@ -695,7 +770,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   WinUI 3 の `TimePicker` に下限・上限は無いので、`set_range` の範囲は naui 側で
   端へ寄せます。
 
-### macOS
+</details>
+
+<details>
+<summary><strong>macOS</strong></summary>
 
 - `Grid` の `Track::Fill` は重みの違いを反映しません。
 - 交差軸の `Fill` と Grid セル内の配置は、コンテナへ追加する前に指定してください。
@@ -730,7 +808,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   開きます。パネルはカタログ色 (`systemBlue` など) も返すので、成分を読む前に
   sRGB へ変換しています。`set_enabled(false)` ではパネルとのつながりも切ります。
 
-### Linux
+</details>
+
+<details>
+<summary><strong>Linux</strong></summary>
 
 - `Grid` の `Track::Fill` は重みの違いを反映しません。
 - `Fit::None` は GTK4 の `SCALE_DOWN` に対応するため、「原寸」ではなく
@@ -756,7 +837,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   「月を送った」を区別しないので、**日を選んでもポップオーバーは閉じません**。
   ボタンに出る日付はロケールの書式に従います。
 
-### Web
+</details>
+
+<details>
+<summary><strong>Web</strong></summary>
 
 - `Window` は OS のウィンドウではなく、`<body>` 直下の要素と
   `document.title` で表現されます。
@@ -789,6 +873,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - ブラウザに標準のアイコンセットが無いため、`Toolbar` のアイコンだけは naui が
   SVG を持ちます (ここだけは OS のものを使いません)。
 - ブラウザの制限により、メディアの自動再生が拒否される場合があります。
+
+</details>
 
 ## ライセンス
 
