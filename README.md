@@ -26,9 +26,9 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカーを含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチを含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカーを含む) |
 | Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、色ピッカーを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチを含む) |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカーを含む) |
 
 未確認の範囲もあります。
 
@@ -43,10 +43,6 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
-- Windows / Linux: `ColorPicker` の実機での実行 (macOS は統合テストと Gallery、
-  Web はブラウザで値の往復と通知まで確認済み。Linux 向けの統合テストは用意して
-  あります)。**Windows は `ColorPicker` と `SolidColorBrush` を自前で WinRT
-  投影している**ので、実機で確かめるまで動作は未確認です
 
 これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
