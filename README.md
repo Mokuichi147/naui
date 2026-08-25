@@ -467,7 +467,7 @@ window.set_toolbar(&toolbar);
 | `Toggle` | ✅ `ToggleSwitch` | 🟡 `NSSwitch` + `NSTextField` | 🟡 `GtkSwitch` + `GtkLabel` | 🟡 `<input type="checkbox" switch>` + `<label>` |
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
 | `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
-| `DatePicker` | 🔴 `ComboBox` の組 (年/月/日 と 時:分) | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
+| `DatePicker` | ✅ `DatePicker` / `TimePicker` | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
@@ -635,10 +635,6 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `TreeView` のバインディングが無いため、`Tree` は `ListBox` の行として
   組み立てています。選べない枝は行ごと無効になるので、その開閉ボタンも
   押せません (プログラムからの `expand` は効きます)。
-- `CalendarDatePicker` / `TimePicker` のバインディングが無いため、`DatePicker` は
-  `ComboBox` を年 / 月 / 日 (と 時 : 分) の順に並べて組み立てています。並び順は
-  ロケールによらず固定です。年の選択肢は `set_range` があればその範囲、無ければ
-  現在の年の前後 (120 年前〜20 年後) になります。
 - `NumberBox` のバインディングが無いため、`NumberInput` は `TextBox` と
   `-` / `+` のボタンを横に並べて組み立てています (`NumberBox` の既定と同じ並び)。
   値の確定は欄を離れたときです。
@@ -659,6 +655,14 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   WinRT インターフェイスを最小限投影しています。WinUI 3 の `ColorPicker` は
   スペクトラムとスライダーを縦に並べた大きな面なので、`Button` の `Flyout` へ
   入れ、ボタンには選んだ色の見本 (`Border` + `SolidColorBrush`) を出します。
+- `DatePicker` / `TimePicker` も投影に含まれていないため、同じく公開 WinRT
+  インターフェイスを最小限投影し、`XamlReader` から本物の `DatePicker` と
+  `TimePicker` を生成しています。`DatePickerMode::DateTime` では 2 つを
+  `StackPanel` で横に並べます。年 / 月 / 日 の並び順と表記はシステムのロケールに
+  従い、暦はグレゴリオ暦に固定しています。`set_range` は WinUI 側へは年の範囲
+  (`MinYear` / `MaxYear`) として渡し、月日と時刻の境界は naui 側で端へ寄せます。
+  標準テンプレートは英語の長い月名に合わせて月の列だけを広く左寄せにするため、
+  3 列を等幅・中央揃えへ直し、最小幅も詰めています。
 
 ### macOS
 
