@@ -14,8 +14,8 @@ use std::rc::Rc;
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, Time, ToolbarIcon, ToolbarItem,
-    Track, TreeItem,
+    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
+    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
@@ -126,6 +126,35 @@ fn main() {
         (
             "リストの通知の中からリストを操作できる",
             list_callback_can_touch_the_list,
+        ),
+        (
+            "テーブルの列と行が NSTableView に並ぶ",
+            table_columns_and_rows_are_native,
+        ),
+        (
+            "テーブルの列の幅と揃えが指定どおりになる",
+            table_columns_follow_the_spec,
+        ),
+        (
+            "テーブルの選択がネイティブと往復する",
+            table_selection_round_trips,
+        ),
+        ("テーブルが選べない行を飛ばす", table_skips_disabled_rows),
+        (
+            "テーブルの列を差し替えても行が残る",
+            table_keeps_rows_when_columns_change,
+        ),
+        (
+            "NSTableView 側の選択がテーブルのクロージャへ届く",
+            table_native_selection_notifies,
+        ),
+        (
+            "列を何度も切り替えても表が使えたままになる",
+            table_survives_repeated_column_changes,
+        ),
+        (
+            "見出しの並べ替えがネイティブと往復する",
+            table_sorting_round_trips,
         ),
         ("ツリーの行が展開に追従する", tree_rows_follow_the_expansion),
         (
@@ -2628,6 +2657,389 @@ fn list_rows_are_native_views(ui: &Ui) -> Result<()> {
         .expect("行は NSTableCellView であること");
     let field = unsafe { cell.textField() }.expect("行に文字が入っていること");
     assert_eq!(field.stringValue().to_string(), "日本語の行");
+    Ok(())
+}
+
+// ------------------------------------------------------------------ Table
+/// 見出しを押した並べ替えが、AppKit と往復する。
+fn table_sorting_round_trips(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("都市").sortable(true),
+        TableColumn::new("人口").align(Align::End).sortable(true),
+        TableColumn::new("備考"),
+    ]);
+    table.set_rows(&TableRow::list([
+        ["東京", "13,960,000", ""],
+        ["大阪", "8,838,000", ""],
+    ]));
+    assert_eq!(table.sort(), None, "作った直後は指定が無いこと");
+
+    let seen: Rc<RefCell<Vec<(usize, SortOrder)>>> = Rc::new(RefCell::new(Vec::new()));
+    table.on_sort({
+        let seen = seen.clone();
+        move |column, order| seen.borrow_mut().push((column, order))
+    });
+
+    let native = table.native_table();
+    let columns = native.tableColumns();
+    // 並べ替えられる列にだけ、AppKit の「押せるヘッダー」が付く。
+    assert!(columns.objectAtIndex(0).sortDescriptorPrototype().is_some());
+    assert!(columns.objectAtIndex(1).sortDescriptorPrototype().is_some());
+    assert!(
+        columns.objectAtIndex(2).sortDescriptorPrototype().is_none(),
+        "sortable でない列は押せないこと"
+    );
+
+    // 利用者が見出しを押したときと同じ経路 (AppKit が sortDescriptors を差し替える)。
+    let prototype = columns
+        .objectAtIndex(1)
+        .sortDescriptorPrototype()
+        .expect("押せる列であること");
+    native.setSortDescriptors(&objc2_foundation::NSArray::from_retained_slice(&[
+        prototype,
+    ]));
+    assert_eq!(table.sort(), Some((1, SortOrder::Ascending)));
+    assert_eq!(*seen.borrow(), vec![(1, SortOrder::Ascending)]);
+
+    // 逆向きも同じ経路で届く。
+    let reversed = objc2_foundation::NSSortDescriptor::sortDescriptorWithKey_ascending(
+        Some(&objc2_foundation::NSString::from_str("naui.table.column.1")),
+        false,
+    );
+    native.setSortDescriptors(&objc2_foundation::NSArray::from_retained_slice(&[reversed]));
+    assert_eq!(table.sort(), Some((1, SortOrder::Descending)));
+    assert_eq!(seen.borrow().len(), 2);
+
+    // set_sort は通知しない。
+    table.set_sort(Some((0, SortOrder::Ascending)));
+    assert_eq!(table.sort(), Some((0, SortOrder::Ascending)));
+    assert_eq!(seen.borrow().len(), 2, "set_sort は通知しないこと");
+
+    // 並べ替えられない列を指すと、指定は外れる。
+    table.set_sort(Some((2, SortOrder::Ascending)));
+    assert_eq!(table.sort(), None);
+
+    // 列を作り直しても、指定は残る。
+    table.set_sort(Some((1, SortOrder::Descending)));
+    table.set_columns(&[
+        TableColumn::new("都市").sortable(true),
+        TableColumn::new("人口").align(Align::End).sortable(true),
+    ]);
+    assert_eq!(table.sort(), Some((1, SortOrder::Descending)));
+    assert_eq!(seen.borrow().len(), 2, "列の作り直しでも通知しないこと");
+    Ok(())
+}
+
+/// 画面に出ている表の列を、ギャラリーの「面積を隠す / 表示」と同じように
+/// 何度も入れ替える。
+///
+/// **セルのビューを作らせてから列を入れ替えるのが肝。** 行の高さを AppKit に
+/// 求めさせる (`usesAutomaticRowHeights`) と、次の `addTableColumn:` で
+/// 「no common ancestor」の例外になり、表がそこで壊れる。
+fn table_survives_repeated_column_changes(ui: &Ui) -> Result<()> {
+    let wide = vec![
+        TableColumn::new("都市"),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+        TableColumn::new("面積").width(100.0).align(Align::End),
+    ];
+    let narrow = vec![
+        TableColumn::new("都市"),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+    ];
+    let rows = vec![
+        TableRow::new(["東京", "13,960,000", "2,194"]),
+        TableRow::new(["大阪", "8,838,000", "1,905"]),
+        TableRow::new(["集計中", "—", "—"]).enabled(false),
+        TableRow::new(["札幌", "1,973,000", "1,121"]),
+    ];
+
+    let table = ui.table()?;
+    table.set_columns(&wide);
+    table.set_rows(&rows);
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    table.on_select({
+        let seen = seen.clone();
+        move |indices| seen.borrow_mut().push(indices.to_vec())
+    });
+
+    let native = table.native_table();
+    // 行の高さは文字より高く、どの行も同じ (自動ではない)。
+    assert!(
+        native.rowHeight() > 16.0,
+        "行の高さが文字に足りること: {}",
+        native.rowHeight()
+    );
+
+    for round in 0..2 {
+        table.select(1);
+        assert_eq!(table.selection(), vec![1], "{round} 周目: 選べること");
+
+        table.set_columns(&narrow);
+        assert_eq!(native.tableColumns().len(), 2, "{round} 周目: 列が減ること");
+        assert_eq!(table.selection(), vec![1], "{round} 周目: 選択が残ること");
+
+        table.set_columns(&wide);
+        assert_eq!(native.tableColumns().len(), 3, "{round} 周目: 列が戻ること");
+
+        // 戻した列のセルを実体化する (画面に出ているのと同じ状態にする)。
+        let cell = native
+            .viewAtColumn_row_makeIfNecessary(2, 0, true)
+            .expect("3 列目のセルが作られること")
+            .downcast::<objc2_app_kit::NSTableCellView>()
+            .expect("セルは NSTableCellView であること");
+        let field = unsafe { cell.textField() }.expect("セルに文字が入っていること");
+        assert_eq!(field.stringValue().to_string(), "2,194");
+
+        // 列を入れ替えた後も、選択を切り替えられる。
+        table.select(3);
+        assert_eq!(
+            table.selection(),
+            vec![3],
+            "{round} 周目: 選択を変えられること"
+        );
+        table.clear_selection();
+    }
+    assert_eq!(
+        *seen.borrow(),
+        vec![vec![1], vec![3], vec![1], vec![3]],
+        "通知は select のぶんだけ出ること"
+    );
+    Ok(())
+}
+
+/// 列と行が、そのまま `NSTableView` の列と行になる。
+fn table_columns_and_rows_are_native(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["都市", "人口"]));
+    table.set_rows(&TableRow::list([
+        ["東京", "13,960,000"],
+        ["大阪", "8,838,000"],
+    ]));
+    assert_eq!(table.column_count(), 2);
+    assert_eq!(table.len(), 2);
+    assert!(!table.is_empty());
+
+    let native = table.native_table();
+    assert_eq!(native.numberOfRows(), 2);
+    assert_eq!(native.tableColumns().len(), 2);
+    assert!(native.headerView().is_some(), "列見出しが出ていること");
+    assert_eq!(
+        native.tableColumns().objectAtIndex(1).title().to_string(),
+        "人口"
+    );
+
+    // セルは NSTableCellView で、列と行の交点の文字が入る。
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(1, 0, true)
+        .expect("1 行目 2 列目のビューが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("セルは NSTableCellView であること");
+    let field = unsafe { cell.textField() }.expect("セルに文字が入っていること");
+    assert_eq!(field.stringValue().to_string(), "13,960,000");
+
+    // 列より短い行は、足りない分が空のセルになる。
+    table.set_rows(&[TableRow::new(["札幌"])]);
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(1, 0, true)
+        .expect("セルが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("セルは NSTableCellView であること");
+    let field = unsafe { cell.textField() }.expect("セルに文字が入っていること");
+    assert_eq!(field.stringValue().to_string(), "");
+    Ok(())
+}
+
+/// 幅を指定した列は固定され、指定の無い列だけが余りを分け合う。
+/// 文字の揃えは、セルと見出しの両方に効く。
+fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("品名"),
+        TableColumn::new("金額").width(120.0).align(Align::End),
+    ]);
+    table.set_rows(&[TableRow::new(["珈琲", "¥480"])]);
+
+    let native = table.native_table();
+    let columns = native.tableColumns();
+    let flexible = columns.objectAtIndex(0);
+    let fixed = columns.objectAtIndex(1);
+    assert!(
+        flexible.width() >= 40.0 && flexible.maxWidth() > 120.0,
+        "指定の無い列は伸び縮みできること: {}",
+        flexible.width()
+    );
+    assert_eq!(fixed.width(), 120.0);
+    assert_eq!(fixed.minWidth(), 120.0, "指定した列は固定されること");
+    assert_eq!(fixed.maxWidth(), 120.0);
+    assert_eq!(
+        fixed.headerCell().alignment(),
+        objc2_app_kit::NSTextAlignment::Right,
+        "見出しもセルと同じ揃えになること"
+    );
+
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(1, 0, true)
+        .expect("セルが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("セルは NSTableCellView であること");
+    let field = unsafe { cell.textField() }.expect("セルに文字が入っていること");
+    assert_eq!(field.alignment(), objc2_app_kit::NSTextAlignment::Right);
+
+    // 揃えを効かせるため、セルの文字は列いっぱいに広がる。
+    table.set_sizing(Sizing::fixed(320.0, 120.0));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&table);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(1, 0, true)
+        .expect("セルが作られること");
+    cell.layoutSubtreeIfNeeded();
+    let field_width = unsafe { cell.downcast_ref::<objc2_app_kit::NSTableCellView>() }
+        .and_then(|cell| unsafe { cell.textField() })
+        .map(|field| field.frame().size.width)
+        .unwrap_or_default();
+    assert!(
+        field_width > cell.frame().size.width - 20.0,
+        "セルの文字が列いっぱいに広がること: {field_width} / {}",
+        cell.frame().size.width
+    );
+    Ok(())
+}
+
+/// 選択は行のインデックスで往復し、通知もそのまま届く。
+fn table_selection_round_trips(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["名前", "係"]));
+    table.set_rows(&TableRow::list([
+        ["朝比奈", "受付"],
+        ["三上", "会計"],
+        ["若宮", "記録"],
+    ]));
+    assert_eq!(table.selected(), None, "作った直後は何も選ばれていないこと");
+    assert_eq!(table.selection_mode(), SelectionMode::Single);
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    table.on_select({
+        let seen = seen.clone();
+        move |indices| seen.borrow_mut().push(indices.to_vec())
+    });
+
+    table.select(1);
+    assert_eq!(table.selected(), Some(1));
+    assert_eq!(table.native_table().selectedRow(), 1);
+    assert_eq!(*seen.borrow(), vec![vec![1]]);
+
+    // 通知なしの経路では、クロージャは呼ばれない。
+    table.set_selected(2);
+    assert_eq!(table.selection(), vec![2]);
+    assert_eq!(*seen.borrow(), vec![vec![1]]);
+    table.clear_selection();
+    assert!(table.selection().is_empty());
+    assert_eq!(*seen.borrow(), vec![vec![1]]);
+
+    // 複数選択では、昇順にそろい 0 件にもなる。
+    table.set_selection_mode(SelectionMode::Multiple);
+    assert!(table.native_table().allowsMultipleSelection());
+    table.select_many(&[2, 0, 2, 99]);
+    assert_eq!(table.selection(), vec![0, 2]);
+    assert_eq!(*seen.borrow(), vec![vec![1], vec![0, 2]]);
+    table.select_many(&[]);
+    assert_eq!(table.selection(), Vec::<usize>::new());
+    assert_eq!(*seen.borrow(), vec![vec![1], vec![0, 2], vec![]]);
+
+    // 行を作り直すと選択は外れる。
+    table.select(1);
+    table.set_rows(&TableRow::list([["新", "係"]]));
+    assert!(
+        table.selection().is_empty(),
+        "行の入れ替えで選択が外れること"
+    );
+    Ok(())
+}
+
+/// 選べない行は、naui からも AppKit からも選べない。
+fn table_skips_disabled_rows(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["状態", "件数"]));
+    table.set_rows(&[
+        TableRow::new(["下書き", "3"]),
+        TableRow::new(["送信中", "1"]).enabled(false),
+        TableRow::new(["送信済み", "12"]),
+    ]);
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    table.on_select({
+        let seen = seen.clone();
+        move |indices| seen.borrow_mut().push(indices.to_vec())
+    });
+
+    table.select(1);
+    assert!(table.selection().is_empty(), "選べない行は選ばれないこと");
+    assert_eq!(*seen.borrow(), vec![Vec::<usize>::new()]);
+    table.select(2);
+    assert_eq!(table.selection(), vec![2]);
+
+    // AppKit 自身にも「この行は選べない」と伝わっている。
+    let native = table.native_table();
+    let delegate = unsafe { native.delegate() }.expect("デリゲートがあること");
+    assert!(!delegate.tableView_shouldSelectRow(&native, 1));
+    assert!(delegate.tableView_shouldSelectRow(&native, 2));
+    Ok(())
+}
+
+/// 列だけを差し替えても、行の中身は残ったまま並べ直される。
+fn table_keeps_rows_when_columns_change(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["都市", "人口", "面積"]));
+    table.set_rows(&TableRow::list([["東京", "13,960,000", "2,194"]]));
+
+    table.set_selected(0);
+    table.set_columns(&TableColumn::list(["都市", "人口"]));
+    assert_eq!(table.column_count(), 2);
+    assert_eq!(table.len(), 1, "行はそのまま残ること");
+    assert_eq!(table.selection(), vec![0], "選択もそのまま残ること");
+
+    let native = table.native_table();
+    assert_eq!(native.tableColumns().len(), 2, "古い列が残らないこと");
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(1, 0, true)
+        .expect("セルが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("セルは NSTableCellView であること");
+    let field = unsafe { cell.textField() }.expect("セルに文字が入っていること");
+    assert_eq!(field.stringValue().to_string(), "13,960,000");
+    Ok(())
+}
+
+/// AppKit 側で選択が変わったときも、そのままクロージャへ届く。
+fn table_native_selection_notifies(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["時間帯"]));
+    table.set_rows(&TableRow::list([["朝"], ["昼"], ["夜"]]));
+    table.set_selection_mode(SelectionMode::Multiple);
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    table.on_select({
+        let seen = seen.clone();
+        move |indices| seen.borrow_mut().push(indices.to_vec())
+    });
+
+    let native = table.native_table();
+    let rows = objc2_foundation::NSMutableIndexSet::new();
+    rows.addIndex(0);
+    rows.addIndex(2);
+    native.selectRowIndexes_byExtendingSelection(&rows, false);
+
+    assert_eq!(
+        *seen.borrow(),
+        vec![vec![0, 2]],
+        "ネイティブ側の選択がそのまま届くこと"
+    );
+    assert_eq!(table.selection(), vec![0, 2]);
     Ok(())
 }
 

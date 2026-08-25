@@ -1,13 +1,15 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use std::cell::RefCell;
+
 use naui::{
-    Length, ListItem, NavItem, Orientation, Padding, PopupItem, Result, SelectionMode, Sizing,
-    TreeItem, Ui,
+    Align, Length, ListItem, NavItem, Orientation, Padding, PopupItem, Result, SelectionMode,
+    Sizing, SortOrder, TableColumn, TableRow, TreeItem, Ui,
 };
 
-/// List の補足表示、無効な行、単一・複数選択、コンテキストメニューと、
-/// Tree の開閉・選択。
+/// List の補足表示、無効な行、単一・複数選択、コンテキストメニュー、
+/// Table の列と選択、Tree の開閉・選択。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(12.0);
@@ -127,8 +129,183 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     actions.append(&detail_toggle);
     pane.append(&actions);
 
+    build_table(ui, &pane)?;
     build_tree(ui, &pane)?;
     Ok(pane)
+}
+
+/// Table の列の幅と揃え、見出しからの並べ替え、選べない行、
+/// 単一・複数選択、列の差し替え。
+fn build_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+    pane.append(&ui.label("Table")?);
+    pane.append(&ui.label(
+        "列見出しと、幅を指定した列・右寄せの列を確認できます。見出しを押すと並べ替わります。",
+    )?);
+
+    // 幅を指定しない列 (都市) だけが、余った幅を受け取って広がる。
+    let wide = vec![
+        TableColumn::new("都市").sortable(true),
+        TableColumn::new("人口")
+            .width(120.0)
+            .align(Align::End)
+            .sortable(true),
+        TableColumn::new("面積 km²")
+            .width(100.0)
+            .align(Align::End)
+            .sortable(true),
+    ];
+    let narrow = vec![
+        TableColumn::new("都市").sortable(true),
+        TableColumn::new("人口")
+            .width(120.0)
+            .align(Align::End)
+            .sortable(true),
+    ];
+    let rows = vec![
+        TableRow::new(["東京", "13,960,000", "2,194"]),
+        TableRow::new(["大阪", "8,838,000", "1,905"]),
+        TableRow::new(["名古屋", "2,332,000", "326"]),
+        TableRow::new(["集計中", "—", "—"]).enabled(false),
+        TableRow::new(["札幌", "1,973,000", "1,121"]),
+    ];
+
+    let table = ui.table()?;
+    table.set_columns(&wide);
+    table.set_rows(&rows);
+    table.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(200.0)),
+    );
+
+    let status = ui.label("選択: なし")?;
+    // いま並んでいる行。見出しからの並べ替えでここが入れ替わる。
+    let sorted = Rc::new(RefCell::new(rows.clone()));
+
+    // 選択の通知は、いま並んでいる行 (`sorted`) から名前を引く。
+    table.on_select({
+        let status = status.clone();
+        let sorted = sorted.clone();
+        move |indices| {
+            let rows = sorted.borrow();
+            let names: Vec<&str> = indices
+                .iter()
+                .filter_map(|&index| rows.get(index).map(|row| row.cell(0)))
+                .collect();
+            if names.is_empty() {
+                status.set_text("選択: なし");
+            } else {
+                status.set_text(&format!("選択: {}", names.join(" / ")));
+            }
+        }
+    });
+
+    // 並べ替えるのはアプリの仕事。naui は「どの列を、どちら向きに」だけを渡す。
+    // 人口と面積は数字なので、桁区切りを外してから数として比べる。
+    table.on_sort({
+        let table = table.clone();
+        let sorted = sorted.clone();
+        let status = status.clone();
+        move |column, order| {
+            let mut rows = sorted.borrow_mut();
+            rows.sort_by(|a, b| {
+                let ordering = match number(a.cell(column)).zip(number(b.cell(column))) {
+                    Some((a, b)) => a.cmp(&b),
+                    None => a.cell(column).cmp(b.cell(column)),
+                };
+                match order {
+                    SortOrder::Ascending => ordering,
+                    SortOrder::Descending => ordering.reverse(),
+                }
+            });
+            table.set_rows(&rows);
+            status.set_text(&format!(
+                "{} 列目で並べ替え ({}) / 選択: なし",
+                column + 1,
+                if order == SortOrder::Ascending {
+                    "昇順"
+                } else {
+                    "降順"
+                }
+            ));
+        }
+    });
+
+    // 選択の通知は、いま並んでいる行 (`sorted`) から名前を引く。
+    table.on_select({
+        let status = status.clone();
+        let sorted = sorted.clone();
+        move |indices| {
+            let rows = sorted.borrow();
+            let names: Vec<&str> = indices
+                .iter()
+                .filter_map(|&index| rows.get(index).map(|row| row.cell(0)))
+                .collect();
+            if names.is_empty() {
+                status.set_text("選択: なし");
+            } else {
+                status.set_text(&format!("選択: {}", names.join(" / ")));
+            }
+        }
+    });
+
+    let mode = ui.navbar("選択方法")?;
+    mode.set_items(&NavItem::list(["単一", "複数"]));
+    mode.set_selected(0);
+    mode.on_select({
+        let table = table.clone();
+        let status = status.clone();
+        move |index| {
+            table.set_selection_mode(if index == 0 {
+                SelectionMode::Single
+            } else {
+                SelectionMode::Multiple
+            });
+            status.set_text("選択: なし");
+        }
+    });
+    pane.append(&mode);
+    pane.append(&table);
+    pane.append(&status);
+
+    let actions = ui.stack(Orientation::Horizontal)?;
+    actions.set_spacing(8.0);
+
+    let select_example = ui.button("選択例")?;
+    select_example.on_click({
+        let table = table.clone();
+        move || table.select_many(&[0, 2])
+    });
+
+    // 列を差し替えても、行の中身はそのまま残る。
+    let column_toggle = ui.button("面積を隠す")?;
+    let showing_area = Rc::new(Cell::new(true));
+    column_toggle.on_click({
+        let table = table.clone();
+        let column_toggle = column_toggle.clone();
+        let showing_area = showing_area.clone();
+        move || {
+            let next = !showing_area.get();
+            showing_area.set(next);
+            table.set_columns(if next { &wide } else { &narrow });
+            column_toggle.set_text(if next {
+                "面積を隠す"
+            } else {
+                "面積を表示"
+            });
+        }
+    });
+
+    actions.append(&select_example);
+    actions.append(&column_toggle);
+    pane.append(&actions);
+    Ok(())
+}
+
+/// 桁区切りを外して数として読む。数でなければ `None` (文字として比べる)。
+fn number(cell: &str) -> Option<u64> {
+    let digits: String = cell.chars().filter(|c| *c != ',').collect();
+    digits.parse().ok()
 }
 
 /// Tree の入れ子・開閉・選べない枝・通知。

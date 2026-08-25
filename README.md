@@ -70,7 +70,7 @@ cargo run -p gallery
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカーを含む) |
 | Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカーを含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカーを操作 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブルを操作 |
 | Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカーを含む) |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
@@ -89,6 +89,10 @@ cargo run -p gallery
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
+- `Table`: Windows・Linux の実機での実行。macOS は統合テストと Gallery、
+  Web はブラウザで列幅・文字揃え・選択・キーボード操作・列の差し替え・
+  見出しからの並べ替えまで確認済みです。Linux 向けの統合テストは
+  用意してあります
 
 </details>
 
@@ -378,6 +382,65 @@ Windows の WinUI 3 `ColorPicker` は、スペクトラムとスライダーを�
 macOS のカラーパネルはカタログ色 (`systemBlue` など) も返すので、成分を読む
 前に sRGB へ変換しています。
 
+#### テーブル
+
+列見出しを持つ表を出すには `Table` を使います。列は `TableColumn`、行は
+`TableRow` で、**行の識別はリストと同じくインデックス**です。選択の通知も
+行のインデックスで返ります。
+
+```rust
+use naui::{Align, TableColumn, TableRow};
+
+let table = ui.table()?;
+table.set_columns(&[
+    TableColumn::new("都市").sortable(true),                 // 見出しを押して並べ替え
+    TableColumn::new("人口").width(120.0).align(Align::End), // 幅を固定して右寄せ
+]);
+table.set_rows(&TableRow::list([
+    ["東京", "13,960,000"],
+    ["大阪", "8,838,000"],
+]));
+table.on_select(|indices| println!("{indices:?} が選ばれました"));
+```
+
+選択のふるまいは `List` と同じで、`SelectionMode` で単一と複数を選べます。
+`set_selection`、`set_selected`、`clear_selection` は通知せず、`select`、
+`select_many` は利用者の操作と同じく通知します。`TableRow::enabled(false)`
+にした行は選べません。
+
+`TableColumn::width` を指定しない列だけで、余った幅を分け合います。セルに
+置けるのは文字だけで、任意のウィジェットは置けません。**列の幅をドラッグで
+変えられるのは macOS だけ**で (`NSTableView` が持つ機能)、他の環境には対応する
+標準コントロールがありません。
+
+`TableColumn::sortable(true)` にした列は、見出しを押して並べ替えられます。
+押すたびに向きが反転し、指標 (macOS は `NSTableView` の ▲▼、ほかは見出しに
+付く矢印と `aria-sort`) は naui が出します。**並べ替えそのものは naui では
+行いません。** セルは文字列なので、それが数値なのか日付なのかを知っているのは
+アプリだけだからです。通知を受けたら、アプリが自分のデータを並べ替えて
+`set_rows` で渡し直します。
+
+```rust
+use naui::SortOrder;
+
+table.on_sort(move |column, order| {
+    rows.sort_by(|a, b| {
+        let ordering = a.cell(column).cmp(b.cell(column));
+        match order {
+            SortOrder::Ascending => ordering,
+            SortOrder::Descending => ordering.reverse(),
+        }
+    });
+    table.set_rows(&rows); // 選択は外れるので、必要なら選び直す
+});
+```
+
+`set_sort` で通知せずに指標だけを動かせます (起動時の既定の並び順を見せる
+とき)。`sort()` でいまの指定を読めます。
+
+行数が多いときは、リストと同じく `set_sizing` で高さを決めておきます
+(中身の高さでは決まりません)。
+
 #### ツリー
 
 入れ子の項目を開閉して 1 つ選ぶには `Tree` を使います。項目は**根からの子
@@ -493,7 +556,7 @@ window.set_toolbar(&toolbar);
 | --- | --- |
 | ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`Toolbar` |
 | 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`NumberInput`、`Slider`、`ProgressBar` |
-| データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Tree` |
+| データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
 | ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog`、`Toast` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
@@ -552,6 +615,7 @@ window.set_toolbar(&toolbar);
 | `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (時分だけ) | 🟡 時と分の `GtkSpinButton` | ✅ `<input type="time">` |
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
+| `Table` | 🟡 `Grid` + `ListBox` (行は `Grid`) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
 | `Tree` | 🟡 `ListBox` + 開閉ボタン | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
 
 </details>
@@ -707,7 +771,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 <details>
 <summary><strong>共通</strong></summary>
 
-- 対応するのは上記の 39 コンポーネントです。複数列テーブルは未実装です。
+- 対応するのは上記の 40 コンポーネントです。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
@@ -715,6 +779,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   切ってあります。
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
 - `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
+- `Table` のセルに置けるのも文字列だけです。見出しを押しての並べ替えは
+  「どの列を、どちら向きに」を通知するところまでで、**行を並べ替えるのは
+  アプリの仕事**です。列の幅をドラッグで変えられるのは macOS だけです。
 - `Tree` は単一選択で、項目に置けるのは `List` と同じ文字列だけです。
   項目はパス (`&[usize]`) で指し、ドラッグでの並べ替えはできません。
 - `Dialog` は同時に 1 つだけで、ボタンは Primary、Secondary、Cancel の最大 3 個です。
@@ -735,6 +802,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - 一部の Windows App SDK 環境で異常終了を避けるため、`Tabs` は `TabView` を使わず、
   `Video` / `Audio` の標準再生バーは無効にしています。
 - `Dialog` は `window.show()` より前には開けません。
+- `DataGrid` も `ListView` もバインディングに無いため、`Table` は `ListBox` の
+  行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に置いて
+  幅をそろえています。並べ替えできる見出しは、地色と枠を消した `Button` です
+  (WinUI に列見出し用のコントロールが無いため)。
 - `TreeView` のバインディングが無いため、`Tree` は `ListBox` の行として
   組み立てています。選べない枝は行ごと無効になるので、その開閉ボタンも
   押せません (プログラムからの `expand` は効きます)。
@@ -817,6 +888,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `Fit::None` は GTK4 の `SCALE_DOWN` に対応するため、「原寸」ではなく
   「拡大しない」動作になります。
 - テーマはウィンドウ単位ではなくアプリ全体へ適用されます。
+- `Table` は `GtkColumnView` (`GtkListItemFactory` と `GListModel` を要求する)
+  ではなく、`GtkListBox` の行を横並びにして組み立て、列の幅は列ごとの
+  `GtkSizeGroup` でそろえています。並べ替えできる見出しは `flat` な
+  `GtkButton` で、向きは見出しの文字に付く矢印で表します。
 - `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
   行と開閉ボタンで組み立てています。
 - `Toolbar` の項目は、GNOME の作法にならってヘッダーバーの左側へ並びます。
@@ -848,6 +923,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `<ul role="listbox">` を使った実装へ切り替わります。
 - `Tree` の `TreeItem::detail` は、行の高さをそろえるため
   `ラベル — 補助` の形で 1 行に収まります。
+- `Table` は `<table role="grid">` です。`<table>` に行を選ぶ仕組みは無いので、
+  クリック (⌘ / Ctrl / Shift) とキー操作 (矢印・Home / End・Space) は naui が
+  足しています。列の幅は `<colgroup>` の `<col>` と `table-layout: fixed` で
+  決まります。並べ替えできる見出しは `<th>` の中の `<button>` で、向きは
+  `aria-sort` と矢印で表します。
 - `FilePicker::open` と `FileSaver::open` はユーザー操作のイベント内で
   呼ぶ必要があります。
 - `FileSaver` は `showSaveFilePicker` があればそれを使い、無いブラウザ

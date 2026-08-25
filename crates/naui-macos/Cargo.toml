@@ -23,6 +23,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSNotification",
     "NSGeometry",
     "NSObjCRuntime",
+    "NSSortDescriptor",
     "NSTimer",
     "NSURL",
 ] }
@@ -72,7 +73,10 @@ objc2-app-kit = { version = "0.3", features = [
     "NSTabViewItem",
     "NSTableCellView",
     "NSTableColumn",
+    "NSTableHeaderCell",
+    "NSTableHeaderView",
     "NSTableView",
+    "NSTextFieldCell",
     "NSTextField",
     "NSText",
     "NSTextContainer",
@@ -161,6 +165,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSDate",
     "NSGeometry",
     "NSObjCRuntime",
+    "NSSortDescriptor",
     "NSRange",
     "NSRunLoop",
 ] }

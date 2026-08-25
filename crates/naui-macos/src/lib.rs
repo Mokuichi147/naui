@@ -24,6 +24,7 @@ mod navigation;
 mod number_input;
 mod popup;
 mod radio_group;
+mod table;
 mod time_picker;
 mod toast;
 mod toggle;
@@ -60,6 +61,7 @@ pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
+pub use table::Table;
 pub use time_picker::TimePicker;
 pub use toast::Toast;
 pub use toggle::Toggle;
@@ -236,6 +238,11 @@ impl Ui {
     /// 選択できる行の一覧。自分でスクロールする。
     pub fn list(&self) -> Result<List> {
         Ok(List::new(self.mtm))
+    }
+
+    /// 列見出しを持つ表。自分でスクロールする。
+    pub fn table(&self) -> Result<Table> {
+        Ok(Table::new(self.mtm))
     }
 
     /// 入れ子の項目を開閉できる一覧。自分でスクロールする。
