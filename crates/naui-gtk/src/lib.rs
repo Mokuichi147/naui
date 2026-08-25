@@ -25,6 +25,7 @@
 //! | `ComboBox` | `GtkDropDown` + `GtkStringList` |
 //! | `RadioGroup` | 組にした `GtkCheckButton` を `GtkBox` へ並べたもの |
 //! | `DatePicker` | `GtkMenuButton` + `GtkCalendar` / `GtkSpinButton` の組 |
+//! | `ColorPicker` | `GtkColorDialogButton` + `GtkColorDialog` |
 //! | `TextInput` | `GtkEntry` |
 //! | `TextArea` | `GtkTextView` を `GtkScrolledWindow` に載せたもの |
 //! | `Slider` | `GtkScale` |
@@ -113,6 +114,7 @@
 
 mod bin;
 mod callback;
+mod color_picker;
 mod combo_box;
 mod date_picker;
 mod dialog;
@@ -143,6 +145,7 @@ use gtk::prelude::*;
 use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Theme};
 
 pub use bin::SizeBin;
+pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
 pub use dialog::Dialog;
@@ -275,6 +278,11 @@ impl Ui {
     /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         Ok(DatePicker::new(mode))
+    }
+
+    /// 色を選ばせるコントロール。初期値は黒。
+    pub fn color_picker(&self) -> Result<ColorPicker> {
+        Ok(ColorPicker::new())
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

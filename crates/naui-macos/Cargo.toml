@@ -37,6 +37,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSCell",
     "NSClipView",
     "NSColor",
+    "NSColorSpace",
+    "NSColorWell",
     "NSControl",
     "NSDatePicker",
     "NSDatePickerCell",
@@ -123,6 +125,9 @@ objc2-core-media = { version = "0.3", default-features = false, features = [
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
     "NSAlert",
+    "NSColor",
+    "NSColorSpace",
+    "NSColorWell",
     "NSOutlineView",
     "NSApplication",
     "NSButton",

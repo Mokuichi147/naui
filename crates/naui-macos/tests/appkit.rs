@@ -12,20 +12,21 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter, FilePickerMode,
-    Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem,
-    Result, ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
+    FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
+    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track,
+    TreeItem,
 };
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
 use objc2::sel;
 use objc2::{msg_send, AnyThread, Message};
 use objc2_app_kit::{
-    NSButton, NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSImage,
-    NSImageScaling, NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation,
-    NSOutlineViewDelegate, NSScrollView, NSSecureTextField, NSSegmentedControl, NSStepper,
-    NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
-    NSUserInterfaceItemIdentification, NSView, NSWindowTitleVisibility,
+    NSButton, NSColor, NSColorSpace, NSControlStateValueOff, NSDatePicker,
+    NSDatePickerElementFlags, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
+    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSSecureTextField,
+    NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient,
+    NSTextView, NSUserInterfaceItemIdentification, NSView, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound,
@@ -49,6 +50,14 @@ fn main() {
         (
             "スイッチがネイティブの NSSwitch とラベルを横に並べる",
             toggle_places_a_native_switch_beside_its_label,
+        ),
+        (
+            "色ピッカーの値がネイティブの NSColorWell と往復する",
+            color_picker_round_trips,
+        ),
+        (
+            "色ピッカーがカタログ色を sRGB として読む",
+            color_picker_reads_catalog_colors_as_srgb,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         ("複数行入力が改行込みで往復する", text_area_round_trip),
@@ -462,6 +471,84 @@ fn toggle_places_a_native_switch_beside_its_label(ui: &Ui) -> Result<()> {
 
     toggle.set_enabled(false);
     assert!(!switch.isEnabled(), "スイッチが無効になること");
+    Ok(())
+}
+
+/// 色ピッカーは `NSColorWell` そのもので、値はネイティブと往復する。
+/// `set_value` は通知せず、`pick` は利用者の操作と同じく 1 回だけ通知する。
+fn color_picker_round_trips(ui: &Ui) -> Result<()> {
+    let picker = ui.color_picker()?;
+    assert_eq!(picker.value(), Color::BLACK, "既定は黒であること");
+
+    let well = picker.native_well();
+    assert!(!well.supportsAlpha(), "透明度は扱わないこと");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    picker.on_change({
+        let seen = seen.clone();
+        move |v| seen.borrow_mut().push(v)
+    });
+
+    let orange = Color::rgb(0xff, 0x88, 0x00);
+    picker.set_value(orange);
+    assert_eq!(picker.value(), orange);
+    let native = well
+        .color()
+        .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+        .expect("sRGB へ変換できること");
+    assert_eq!(
+        Color::from_unit(
+            native.redComponent(),
+            native.greenComponent(),
+            native.blueComponent(),
+        ),
+        orange,
+        "ネイティブ側の色も変わること"
+    );
+    assert!(seen.borrow().is_empty(), "プログラムからの変更は通知しない");
+
+    // 利用者がカラーパネルで色を変えたときの経路 (target/action)。
+    let teal = Color::rgb(0x00, 0x80, 0x80);
+    let (r, g, b) = teal.to_unit();
+    well.setColor(&NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0));
+    unsafe { well.sendAction_to(well.action(), well.target().as_deref()) };
+    assert_eq!(picker.value(), teal);
+    assert_eq!(*seen.borrow(), vec![teal], "ネイティブの操作が届くこと");
+
+    // `pick` はアプリからでも利用者と同じく 1 回だけ通知する。
+    let plum = Color::rgb(0x99, 0x33, 0x99);
+    picker.pick(plum);
+    assert_eq!(picker.value(), plum);
+    assert_eq!(*seen.borrow(), vec![teal, plum]);
+
+    picker.set_enabled(false);
+    assert!(!well.isEnabled(), "色ウェルが無効になること");
+    assert!(!well.isActive(), "カラーパネルとのつながりが切れること");
+    Ok(())
+}
+
+/// カラーパネルはカタログ色 (`systemBlue` など) も返す。成分を読む前に
+/// sRGB へ変換しているので、そのまま [`Color`] として受け取れる。
+fn color_picker_reads_catalog_colors_as_srgb(ui: &Ui) -> Result<()> {
+    let picker = ui.color_picker()?;
+    let well = picker.native_well();
+
+    // 色空間を持たないカタログ色を、ネイティブ側へ直接入れる。
+    well.setColor(unsafe { &NSColor::systemBlueColor() });
+    let value = picker.value();
+    let expected = unsafe { NSColor::systemBlueColor() }
+        .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+        .expect("sRGB へ変換できること");
+    assert_eq!(
+        value,
+        Color::from_unit(
+            expected.redComponent(),
+            expected.greenComponent(),
+            expected.blueComponent(),
+        ),
+        "カタログ色でも成分が読めること"
+    );
+    assert_ne!(value, Color::BLACK, "変換に失敗して黒へ落ちていないこと");
     Ok(())
 }
 

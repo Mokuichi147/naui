@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod color;
 mod datetime;
 mod dialog;
 mod file;
@@ -18,6 +19,7 @@ mod toast;
 mod toolbar;
 mod tree;
 
+pub use color::Color;
 pub use datetime::{days_in_month, is_leap_year, DatePickerMode, DateTime};
 pub use dialog::{DialogButtons, DialogResponse};
 pub use file::{

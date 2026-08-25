@@ -1,5 +1,6 @@
 use naui::{
-    DatePickerMode, DateTime, Label, Length, NumberInput, Orientation, Padding, Result, Sizing, Ui,
+    Color, DatePickerMode, DateTime, Label, Length, NumberInput, Orientation, Padding, Result,
+    Sizing, Ui,
 };
 
 /// 日付だけを取り出した表示。
@@ -219,6 +220,38 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let disabled_date = ui.date_picker(DatePickerMode::Date)?;
     disabled_date.set_enabled(false);
     pane.append(&disabled_date);
+
+    pane.append(&ui.label("ColorPicker")?);
+    pane.append(&ui.label("色を選ばせます。値は sRGB の 8 bit で返ります。")?);
+
+    let color = ui.color_picker()?;
+    color.set_value(Color::rgb(0x33, 0x66, 0xff));
+    let color_status = ui.label(&format!("色: {}", color.value()))?;
+    color.on_change({
+        let color_status = color_status.clone();
+        move |value| {
+            color_status.set_text(&format!(
+                "色: {value} (R {}, G {}, B {})",
+                value.r, value.g, value.b
+            ));
+        }
+    });
+    pane.append(&color);
+    pane.append(&color_status);
+
+    // `pick` は利用者が選んだのと同じ経路なので、表示も通知経由で直る。
+    let color_reset = ui.button("既定の色に戻す")?;
+    color_reset.on_click({
+        let color = color.clone();
+        move || color.pick(Color::rgb(0x33, 0x66, 0xff))
+    });
+    pane.append(&color_reset);
+
+    pane.append(&ui.label("選ばせない状態にもできます。")?);
+    let disabled_color = ui.color_picker()?;
+    disabled_color.set_value(Color::rgb(0x88, 0x88, 0x88));
+    disabled_color.set_enabled(false);
+    pane.append(&disabled_color);
 
     let clear = ui.button("入力をクリア")?;
     clear.on_click({

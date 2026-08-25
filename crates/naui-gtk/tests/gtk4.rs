@@ -16,9 +16,10 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::glib;
 use naui_core::{
-    Align, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter, FilePickerMode,
-    Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState, PopupItem,
-    Result, ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
+    FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
+    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track,
+    TreeItem,
 };
 use naui_gtk::{run_for_test, Ui, Widget};
 
@@ -45,6 +46,14 @@ fn main() {
             toggle_switches_and_notifies,
         ),
         ("スイッチの set_on は通知しない", toggle_set_is_silent),
+        (
+            "色ピッカーの値がネイティブの GtkColorDialogButton と往復する",
+            color_picker_round_trips,
+        ),
+        (
+            "色ピッカーの set_value は通知しない",
+            color_picker_set_is_silent,
+        ),
         (
             "チェックボックスの印がラベルの字面にそろう",
             checkbox_indicator_is_aligned_to_text,
@@ -496,6 +505,59 @@ fn toggle_set_is_silent(ui: &Ui) -> Result<()> {
     assert!(toggle.native_switch().is_active(), "ネイティブへも届くこと");
     toggle.set_on(false);
     assert!(!toggle.is_on());
+    assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+    Ok(())
+}
+
+/// 色ピッカーは `GtkColorDialogButton` そのもので、値はネイティブと往復する。
+fn color_picker_round_trips(ui: &Ui) -> Result<()> {
+    let picker = ui.color_picker()?;
+    let (log, sink) = recorder::<Color>();
+    picker.on_change(sink);
+
+    let native: gtk::ColorDialogButton = picker
+        .native_widget()
+        .downcast()
+        .expect("GtkColorDialogButton");
+    assert_eq!(native, picker.native_button());
+    assert_eq!(picker.value(), Color::BLACK, "既定は黒であること");
+    let dialog = native.dialog().expect("GtkColorDialog を持つこと");
+    assert!(!dialog.is_with_alpha(), "透明度は扱わないこと");
+
+    // ダイアログで選んだのと同じ経路。GTK4 は `rgba` を書くと通知する。
+    let orange = Color::rgb(0xff, 0x88, 0x00);
+    native.set_rgba(&gtk::gdk::RGBA::new(1.0, 0x88 as f32 / 255.0, 0.0, 1.0));
+    assert_eq!(picker.value(), orange, "ネイティブの色が読めること");
+    assert_eq!(log.borrow().as_slice(), [orange]);
+
+    // `pick` はアプリからでも利用者と同じく 1 回だけ通知する。
+    let teal = Color::rgb(0x00, 0x80, 0x80);
+    picker.pick(teal);
+    assert_eq!(picker.value(), teal);
+    assert_eq!(log.borrow().as_slice(), [orange, teal]);
+
+    picker.set_enabled(false);
+    assert!(!native.is_sensitive());
+    Ok(())
+}
+
+fn color_picker_set_is_silent(ui: &Ui) -> Result<()> {
+    let picker = ui.color_picker()?;
+    let (log, sink) = recorder::<Color>();
+    picker.on_change(sink);
+
+    let blue = Color::rgb(0x33, 0x66, 0xff);
+    picker.set_value(blue);
+    assert_eq!(picker.value(), blue);
+    assert_eq!(
+        Color::from_unit(
+            f64::from(picker.native_button().rgba().red()),
+            f64::from(picker.native_button().rgba().green()),
+            f64::from(picker.native_button().rgba().blue()),
+        ),
+        blue,
+        "ネイティブへも届くこと"
+    );
     assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
     Ok(())
 }
