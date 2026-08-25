@@ -25,9 +25,9 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカーを含む) |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (時刻ピッカー・色ピッカーを含む) |
 | Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカーを含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、色ピッカーを操作 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカーを操作 |
 | Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカーを含む) |
 
 未確認の範囲もあります。
@@ -40,6 +40,9 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
   統合テストと Gallery で確認済み。Linux 向けの統合テストは用意してあります)
 - Windows / Linux: `DatePicker` の実機での実行 (macOS は統合テストと Gallery、
   Web はブラウザで確認済み。Linux 向けの統合テストは用意してあります)
+- Windows / Linux: `TimePicker` の実機での実行 (macOS は統合テストと Gallery、
+  Web はブラウザで値の往復・範囲・通知まで確認済み。Linux 向けの統合テストは
+  用意してあります)
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
@@ -294,6 +297,32 @@ alarm.set_value(DateTime::time(7, 30));
 丸めます。`set_range` の外へは出られず、範囲の比較には**選ばせている部分だけ**を
 使います (時刻だけの表示なら日付を見ません)。
 
+時刻だけを選ばせたいなら、次の `TimePicker` のほうが扱いやすいです。
+
+### 時刻の選択
+
+時刻だけを選ばせるには `TimePicker` を使います。値は `Time` (時分) で
+やり取りし、日付は持ちません。
+
+```rust
+use naui::Time;
+
+let alarm = ui.time_picker()?;
+alarm.set_value(Time::new(7, 30)); // 通知せずに値を入れる
+alarm.set_range(Some(Time::new(6, 0)), Some(Time::new(9, 0)));
+alarm.on_change(|value| println!("{value} が選ばれました")); // 07:30
+```
+
+作った直後の値は**その環境の現在時刻 (ローカル時刻)** で、空の状態は持ちません
+(`DatePicker` と同じです)。**秒は持ちません**。12 時間制と 24 時間制のどちらで
+出るかは、その環境のロケールに従います。
+
+`set_value` は通知せず、時計として成り立たない値 (25 時 70 分など) は端へ
+丸めます。繰り上がりはしないので、`Time::new(25, 70)` は翌日の 2 時 10 分では
+なく 23 時 59 分です。`set_range` の外へは出られません。**日付をまたぐ範囲**
+(22:00〜翌 06:00 など) は指定できません。`Time` に日付が無く、下限が上限より
+後ろのときは上限が勝つためです。
+
 ### 色の選択
 
 色を選ばせるには `ColorPicker` を使います。値は `Color` (sRGB の 8 bit) で
@@ -436,7 +465,7 @@ window.set_toolbar(&toolbar);
 | レイアウト | `Stack`、`Grid`、`Scroll`、`Spacer`、`Expander` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
 | ウィンドウ付属 | `Toolbar` |
-| データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`ColorPicker`、`List`、`Tree` |
+| データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Tree` |
 | ファイル | `FilePicker`、`FileSaver` |
 | メディア | `Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog`、`Toast` |
@@ -468,6 +497,7 @@ window.set_toolbar(&toolbar);
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
 | `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
 | `DatePicker` | 🔴 `ComboBox` の組 (年/月/日 と 時:分) | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
+| `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (時分だけ) | 🟡 時と分の `GtkSpinButton` | ✅ `<input type="time">` |
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
@@ -506,6 +536,7 @@ window.set_toolbar(&toolbar);
 - `ListItem` / `SelectionMode`: リスト項目と単一・複数選択
 - `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
 - `DateTime` / `DatePickerMode`: 年月日と時分の値、日付選択で何を選ばせるか
+- `Time`: 時分だけの値 (時刻の選択でやり取りする値)
 - `NumberSpec`: 数値入力の下限・上限・刻み・小数桁
 - `Color`: sRGB の 8 bit で表す色 (色の選択でやり取りする値)
 - `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
@@ -659,6 +690,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   WinRT インターフェイスを最小限投影しています。WinUI 3 の `ColorPicker` は
   スペクトラムとスライダーを縦に並べた大きな面なので、`Button` の `Flyout` へ
   入れ、ボタンには選んだ色の見本 (`Border` + `SolidColorBrush`) を出します。
+- `TimePicker` は WinUI 3 の `TimePicker` そのものです (`winio-winui3` の投影に
+  無いため、公開 WinRT インターフェイスを最小限投影しています)。`TimePicker` に
+  下限・上限は無いので、`set_range` の範囲は naui 側で端へ寄せます。
 
 ### macOS
 
@@ -687,6 +721,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `NSSwitch` は文字を持たないため、`Toggle` のラベルは横へ並べた
   `NSTextField` です。**切り替わるのはスイッチを押したときだけ**で、
   文字を押しても切り替わりません。
+- 時刻専用のコントロールが AppKit に無いため、`TimePicker` は `NSDatePicker` の
+  表示項目を時分だけにしたものです (AppKit で時刻を入力させるときの作法)。
+  日付の部分は画面に出ないので 1970-01-01 へ固定してあり、`set_range` の
+  下限・上限は `NSDatePicker` 自身にも渡ります。
 - `ColorPicker` は `NSColorWell` そのものです。押すとシステムのカラーパネルが
   開きます。パネルはカタログ色 (`systemBlue` など) も返すので、成分を読む前に
   sRGB へ変換しています。`set_enabled(false)` ではパネルとのつながりも切ります。
@@ -707,6 +745,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   切り替わりません。
 - `ColorPicker` は `GtkColorDialogButton` (GTK 4.10 以降) です。透明度を
   扱わないので、開く `GtkColorDialog` の `with-alpha` は切ってあります。
+- 時刻を選ぶ 1 つのコントロールも GTK4 に無いため、`TimePicker` は時と分の
+  `GtkSpinButton` を `:` で挟んで並べています (GNOME の時計アプリと同じ形)。
+  スピンボタンに時刻としての範囲は無いので、`set_range` の範囲は naui 側で
+  端へ寄せ、押し戻した結果を表示にも書き戻します。
 - 日付を選ぶ 1 つのコントロールが GTK4 に無いため、`DatePicker` は
   `GtkMenuButton` のポップオーバーに載せた `GtkCalendar` と、時分の
   `GtkSpinButton` で組み立てています。`GtkCalendar` は「日を押した」と
@@ -731,6 +773,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `<details>` に `disabled` が無いため、`Expander::set_enabled(false)` は
   見出しをマウスとタブ順から外して押せなくするだけです (`aria-disabled` は
   付きますが、ネイティブの無効なコントロールとは扱いが違います)。
+- `TimePicker` の入力 UI (スピナーや時計) もブラウザが出すため、見た目と操作は
+  ブラウザごとに違います。`<input type="time">` が秒まで返した場合、naui は秒を
+  捨てて分までを扱います。
 - `ColorPicker` の入力 UI (パレットやスポイト) はブラウザと OS が出すため、
   見た目と操作はブラウザごとに違います。値は `change` (確定) で受け取ります。
 - `Toggle` の `switch` 属性に対応しているのは Safari 17.4 以降だけなので、

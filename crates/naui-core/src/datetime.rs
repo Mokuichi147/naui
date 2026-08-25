@@ -1,9 +1,10 @@
 //! 日付と時刻の値、および日付選択の表示種別。
 //!
-//! naui は日付の計算をしない。ここにあるのは「年月日と時分の入れ物」と、
-//! バックエンドが値を行き来させるための最小限の変換だけで、暦の計算
-//! (曜日・加減算・タイムゾーン変換) は持たない。実際の入力は
-//! `NSDatePicker` や `<input type="date">` といった環境側のコントロールが行う。
+//! naui は日付の計算をしない。ここにあるのは「年月日と時分の入れ物」
+//! ([`DateTime`]) と「時分だけの入れ物」([`Time`])、そしてバックエンドが値を
+//! 行き来させるための最小限の変換だけで、暦の計算 (曜日・加減算・タイムゾーン
+//! 変換) は持たない。実際の入力は `NSDatePicker` や `<input type="date">` と
+//! いった環境側のコントロールが行う。
 
 use std::fmt;
 
@@ -122,6 +123,21 @@ impl DateTime {
         }
         .normalized()
     }
+
+    /// 時刻の部分だけを [`Time`] として取り出す (結果は丸められる)。
+    ///
+    /// 戻す向きは [`with_time`](Self::with_time) を使う。
+    ///
+    /// ```
+    /// # use naui_core::{DateTime, Time};
+    /// let value = DateTime::new(2026, 8, 22, 9, 30);
+    /// let time = value.time_of_day();
+    /// assert_eq!(time, Time::new(9, 30));
+    /// assert_eq!(value.with_time(time.hour, time.minute), value);
+    /// ```
+    pub fn time_of_day(self) -> Time {
+        Time::new(self.hour, self.minute).normalized()
+    }
 }
 
 impl Default for DateTime {
@@ -140,6 +156,138 @@ impl fmt::Display for DateTime {
             "{:04}-{:02}-{:02} {:02}:{:02}",
             self.year, self.month, self.day, self.hour, self.minute
         )
+    }
+}
+
+/// 時分。**秒は持たない** ([`DateTime`] と同じ理由)。
+///
+/// 時刻だけを選ばせるコントロール (`TimePicker`) の値。日付を持たないので、
+/// 「毎朝 7 時 30 分」のように暦から切り離した時刻を扱うときはこちらを使う。
+/// 日付と組で扱いたいときは [`DateTime`] を使う。
+///
+/// 並び順は時計の順序と一致する ([`Ord`] は時 → 分の順で比べる)。
+///
+/// ```
+/// # use naui_core::Time;
+/// let alarm = Time::new(7, 30);
+/// assert!(Time::MIDNIGHT < alarm);
+/// assert_eq!(alarm.to_string(), "07:30");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Time {
+    /// 時 (0..=23)。
+    pub hour: u8,
+    /// 分 (0..=59)。
+    pub minute: u8,
+}
+
+impl Time {
+    /// 0 時 0 分。[`Default`] でもある。
+    pub const MIDNIGHT: Time = Time::new(0, 0);
+    /// 1 日の分数。[`minutes_since_midnight`](Self::minutes_since_midnight) の
+    /// 上限 (= 23:59) はこれより 1 小さい。
+    pub const MINUTES_PER_DAY: u16 = 24 * 60;
+
+    pub const fn new(hour: u8, minute: u8) -> Self {
+        Self { hour, minute }
+    }
+
+    /// 時計として成り立つ値かどうか。
+    pub fn is_valid(self) -> bool {
+        self.hour <= 23 && self.minute <= 59
+    }
+
+    /// 時計として成り立つ値へ丸める。
+    ///
+    /// 各項目をそれぞれの範囲へ収めるだけで、繰り上がりはしない
+    /// ([`DateTime::normalized`] と同じ決まり)。「25 時 70 分」は翌日の
+    /// 2 時 10 分ではなく **23 時 59 分**になる。
+    ///
+    /// ```
+    /// # use naui_core::Time;
+    /// assert_eq!(Time::new(25, 70).normalized(), Time::new(23, 59));
+    /// ```
+    pub fn normalized(self) -> Self {
+        Self {
+            hour: self.hour.min(23),
+            minute: self.minute.min(59),
+        }
+    }
+
+    /// 値を下限・上限へ収める。丸め ([`normalized`](Self::normalized)) も行う。
+    ///
+    /// 下限が上限より後ろにあるときは、あとから当てる上限が勝つ
+    /// ([`DatePickerMode::clamp`] と同じ決まり)。
+    ///
+    /// ```
+    /// # use naui_core::Time;
+    /// let (min, max) = (Time::new(9, 0), Time::new(18, 0));
+    /// assert_eq!(Time::new(7, 30).clamped(Some(min), Some(max)), min);
+    /// assert_eq!(Time::new(12, 0).clamped(Some(min), Some(max)), Time::new(12, 0));
+    /// ```
+    pub fn clamped(self, min: Option<Time>, max: Option<Time>) -> Time {
+        let mut out = self.normalized();
+        if let Some(min) = min {
+            let min = min.normalized();
+            if out < min {
+                out = min;
+            }
+        }
+        if let Some(max) = max {
+            let max = max.normalized();
+            if out > max {
+                out = max;
+            }
+        }
+        out
+    }
+
+    /// `09:30` の形を読む。
+    ///
+    /// `<input type="time">` が秒まで返すことがあるので、`09:30:00` の形も
+    /// 受け付ける (秒は捨てる)。形が違う文字列 (空文字を含む) では `None`。
+    ///
+    /// ```
+    /// # use naui_core::Time;
+    /// assert_eq!(Time::parse("09:30"), Some(Time::new(9, 30)));
+    /// assert_eq!(Time::parse("09:30:00"), Some(Time::new(9, 30)));
+    /// assert_eq!(Time::parse("9"), None);
+    /// ```
+    pub fn parse(text: &str) -> Option<Time> {
+        let (hour, minute) = parse_time(text)?;
+        Some(Time::new(hour, minute).normalized())
+    }
+
+    /// 0 時 0 分から数えた分数 (0..=1439)。丸めてから数える。
+    ///
+    /// WinUI 3 の `TimePicker` が `TimeSpan` で値を持つように、時刻を
+    /// 1 つの数として渡したいバックエンドが使う。
+    pub fn minutes_since_midnight(self) -> u16 {
+        let v = self.normalized();
+        u16::from(v.hour) * 60 + u16::from(v.minute)
+    }
+
+    /// [`minutes_since_midnight`](Self::minutes_since_midnight) の逆。
+    ///
+    /// 1 日の外にある分数は端へ寄せる (負なら 0 時 0 分、24 時間以上なら
+    /// 23 時 59 分)。
+    ///
+    /// ```
+    /// # use naui_core::Time;
+    /// assert_eq!(Time::from_minutes_since_midnight(570), Time::new(9, 30));
+    /// assert_eq!(Time::from_minutes_since_midnight(-1), Time::MIDNIGHT);
+    /// ```
+    pub fn from_minutes_since_midnight(minutes: i64) -> Time {
+        let minutes = minutes.clamp(0, i64::from(Self::MINUTES_PER_DAY) - 1);
+        Time::new((minutes / 60) as u8, (minutes % 60) as u8)
+    }
+}
+
+impl fmt::Display for Time {
+    /// `09:30` の形。`<input type="time">` の `value` と同じ形なので、
+    /// Web バックエンドはこれをそのまま値や `min` / `max` 属性に使える。
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:02}:{:02}", self.hour, self.minute)
     }
 }
 
@@ -470,6 +618,90 @@ mod tests {
         assert_eq!(DatePickerMode::Time.parse("18", base), None);
         assert_eq!(DatePickerMode::Time.parse("18:45:00:00", base), None);
         assert_eq!(DatePickerMode::DateTime.parse("2027-01-05", base), None);
+    }
+
+    #[test]
+    fn time_ordering_follows_the_clock() {
+        let mut times = [
+            Time::new(9, 30),
+            Time::MIDNIGHT,
+            Time::new(23, 59),
+            Time::new(9, 5),
+        ];
+        times.sort();
+        assert_eq!(
+            times,
+            [
+                Time::MIDNIGHT,
+                Time::new(9, 5),
+                Time::new(9, 30),
+                Time::new(23, 59),
+            ]
+        );
+        assert_eq!(Time::default(), Time::MIDNIGHT);
+    }
+
+    #[test]
+    fn time_normalized_clamps_each_field_without_carrying() {
+        assert_eq!(Time::new(25, 70).normalized(), Time::new(23, 59));
+        assert!(Time::new(23, 59).is_valid());
+        assert!(!Time::new(24, 0).is_valid());
+        assert!(!Time::new(0, 60).is_valid());
+    }
+
+    #[test]
+    fn time_clamped_keeps_values_inside_the_range() {
+        let (min, max) = (Time::new(9, 0), Time::new(18, 0));
+        assert_eq!(
+            Time::new(12, 0).clamped(Some(min), Some(max)),
+            Time::new(12, 0)
+        );
+        assert_eq!(Time::new(7, 30).clamped(Some(min), Some(max)), min);
+        assert_eq!(Time::new(22, 0).clamped(Some(min), Some(max)), max);
+        assert_eq!(Time::new(7, 30).clamped(None, None), Time::new(7, 30));
+        // 丸めも行う。
+        assert_eq!(Time::new(25, 70).clamped(None, None), Time::new(23, 59));
+        // 下限が上限より後ろなら、あとから当てる上限が勝つ。
+        assert_eq!(Time::new(12, 0).clamped(Some(max), Some(min)), min);
+    }
+
+    #[test]
+    fn time_text_round_trips() {
+        for time in [Time::MIDNIGHT, Time::new(9, 5), Time::new(23, 59)] {
+            assert_eq!(Time::parse(&time.to_string()), Some(time));
+        }
+        assert_eq!(Time::new(9, 5).to_string(), "09:05");
+        // ブラウザが秒まで返すことがある。
+        assert_eq!(Time::parse("09:05:00"), Some(Time::new(9, 5)));
+        // 形が違うものは読まない。
+        assert_eq!(Time::parse(""), None);
+        assert_eq!(Time::parse("9"), None);
+        assert_eq!(Time::parse("09:05:00:00"), None);
+    }
+
+    #[test]
+    fn time_minutes_round_trip_and_clamp() {
+        assert_eq!(Time::new(9, 30).minutes_since_midnight(), 570);
+        assert_eq!(Time::from_minutes_since_midnight(570), Time::new(9, 30));
+        assert_eq!(Time::new(23, 59).minutes_since_midnight(), 1439);
+        assert_eq!(Time::from_minutes_since_midnight(-1), Time::MIDNIGHT);
+        assert_eq!(
+            Time::from_minutes_since_midnight(i64::from(Time::MINUTES_PER_DAY)),
+            Time::new(23, 59)
+        );
+        // 丸めてから数える。
+        assert_eq!(Time::new(25, 70).minutes_since_midnight(), 1439);
+    }
+
+    #[test]
+    fn time_of_day_takes_only_the_clock_part() {
+        let value = DateTime::new(2026, 8, 22, 9, 30);
+        assert_eq!(value.time_of_day(), Time::new(9, 30));
+        let time = Time::new(18, 45);
+        assert_eq!(
+            value.with_time(time.hour, time.minute),
+            DateTime::new(2026, 8, 22, 18, 45)
+        );
     }
 
     #[test]

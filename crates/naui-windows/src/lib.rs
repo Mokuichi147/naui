@@ -32,6 +32,7 @@ mod navigation;
 mod number_input;
 mod popup;
 mod radio_group;
+mod time_picker;
 mod toast;
 mod toggle;
 mod toolbar;
@@ -58,6 +59,7 @@ pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
+pub use time_picker::TimePicker;
 pub use toast::Toast;
 pub use toggle::Toggle;
 pub use toolbar::Toolbar;
@@ -166,6 +168,11 @@ impl Ui {
     /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         DatePicker::new(mode)
+    }
+
+    /// 時刻だけを選ばせるコントロール。初期値は現在時刻。
+    pub fn time_picker(&self) -> Result<TimePicker> {
+        TimePicker::new()
     }
 
     /// 色を選ばせるコントロール。初期値は黒。

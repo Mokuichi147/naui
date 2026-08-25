@@ -18,8 +18,8 @@ use gtk::glib;
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, ToolbarIcon, ToolbarItem, Track,
-    TreeItem,
+    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, Time, ToolbarIcon, ToolbarItem,
+    Track, TreeItem,
 };
 use naui_gtk::{run_for_test, Ui, Widget};
 
@@ -101,6 +101,14 @@ fn main() {
         (
             "日付ピッカーのプログラム変更は通知しない",
             date_picker_programmatic_changes_are_silent,
+        ),
+        (
+            "時刻ピッカーが時と分のスピンボタンを並べ、値が往復する",
+            time_picker_value_round_trips,
+        ),
+        (
+            "時刻ピッカーが範囲の外へ出さない",
+            time_picker_stays_inside_the_range,
         ),
         (
             "数値入力の値がネイティブと往復する",
@@ -2952,5 +2960,87 @@ fn date_picker_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
     hour.set_value(8.0);
     assert_eq!(seen.get(), Some(DateTime::new(2027, 1, 5, 8, 45)));
     assert_eq!(picker.value(), DateTime::new(2026, 12, 31, 0, 0));
+    Ok(())
+}
+
+/// 時刻ピッカーは時と分の `GtkSpinButton` を `:` で挟んだもの。値はネイティブと
+/// 往復し、`set_value` は通知しない。
+fn time_picker_value_round_trips(ui: &Ui) -> Result<()> {
+    let picker = ui.time_picker()?;
+    let native: gtk::Box = picker.native_widget().downcast().expect("GtkBox");
+    // 時・区切り・分。
+    assert_eq!(children_of(&native).len(), 3);
+    // 作った直後は現在時刻。
+    assert!(picker.value().is_valid());
+
+    let (log, sink) = recorder::<Time>();
+    picker.on_change(sink);
+
+    let (hour, minute) = picker.native_spins();
+    picker.set_value(Time::new(9, 30));
+    assert_eq!(picker.value(), Time::new(9, 30));
+    assert_eq!(hour.value() as i32, 9);
+    assert_eq!(minute.value() as i32, 30);
+    assert!(log.borrow().is_empty(), "set_value は通知しない");
+
+    // 時計として成り立たない値は丸める。
+    picker.set_value(Time::new(25, 70));
+    assert_eq!(picker.value(), Time::new(23, 59));
+
+    // スピンボタンを回す (GTK 側の `value-changed` が飛ぶ)。
+    hour.set_value(18.0);
+    assert_eq!(picker.value(), Time::new(18, 59));
+    minute.set_value(45.0);
+    assert_eq!(picker.value(), Time::new(18, 45));
+    assert_eq!(
+        log.borrow().as_slice(),
+        [Time::new(18, 59), Time::new(18, 45)]
+    );
+
+    picker.set_enabled(false);
+    assert!(!native.is_sensitive());
+    Ok(())
+}
+
+/// 下限・上限の外へは出ない。`GtkSpinButton` に時刻としての範囲は無いので、
+/// 押し戻した結果はスピンボタンの表示にも書き戻る。
+fn time_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    let picker = ui.time_picker()?;
+    picker.set_value(Time::new(12, 0));
+    picker.set_range(Some(Time::new(9, 0)), Some(Time::new(18, 0)));
+    assert_eq!(picker.value(), Time::new(12, 0));
+
+    let (log, sink) = recorder::<Time>();
+    picker.on_change(sink);
+
+    let (hour, _) = picker.native_spins();
+    hour.set_value(22.0);
+    assert_eq!(picker.value(), Time::new(18, 0), "上限で止まること");
+    assert_eq!(hour.value() as i32, 18, "表示も押し戻ること");
+    assert_eq!(log.borrow().as_slice(), [Time::new(18, 0)]);
+
+    // 範囲の外にある値を渡すと、通知せずに端へ寄る。
+    picker.set_value(Time::new(1, 0));
+    assert_eq!(picker.value(), Time::new(9, 0));
+    assert_eq!(log.borrow().len(), 1);
+
+    // 範囲を外すと自由に選べる。
+    picker.set_range(None, None);
+    hour.set_value(1.0);
+    assert_eq!(picker.value(), Time::new(1, 0));
+
+    // 通知の中で同じピッカーを触っても二重借用にならない。
+    let seen = Rc::new(Cell::new(None));
+    picker.on_change({
+        let picker = picker.clone();
+        let seen = seen.clone();
+        move |value| {
+            seen.set(Some(value));
+            picker.set_value(Time::MIDNIGHT);
+        }
+    });
+    hour.set_value(6.0);
+    assert_eq!(seen.get(), Some(Time::new(6, 0)));
+    assert_eq!(picker.value(), Time::MIDNIGHT);
     Ok(())
 }

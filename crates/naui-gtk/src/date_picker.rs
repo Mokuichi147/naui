@@ -225,8 +225,9 @@ impl DatePicker {
     }
 }
 
-/// 2 桁で表示する 0 始まりのスピンボタン。
-fn spin(min: f64, max: f64) -> gtk::SpinButton {
+/// 2 桁で表示する 0 始まりのスピンボタン。時刻の欄は `TimePicker` も
+/// 同じ形なので、そちらからも使う。
+pub(crate) fn spin(min: f64, max: f64) -> gtk::SpinButton {
     let spin = gtk::SpinButton::with_range(min, max, 1.0);
     spin.set_numeric(true);
     // 23 の次は 0 へ戻る。時刻の入力では端で止まるより自然。

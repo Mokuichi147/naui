@@ -1,6 +1,6 @@
 use naui::{
     Color, DatePickerMode, DateTime, Label, Length, NumberInput, Orientation, Padding, Result,
-    Sizing, Ui,
+    Sizing, Time, Ui,
 };
 
 /// 日付だけを取り出した表示。
@@ -221,6 +221,38 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     disabled_date.set_enabled(false);
     pane.append(&disabled_date);
 
+    pane.append(&ui.label("TimePicker")?);
+    pane.append(&ui.label("時刻だけを選ばせます。値は時分 (Time) で返り、日付は持ちません。")?);
+
+    let alarm = ui.time_picker()?;
+    alarm.set_value(Time::new(7, 30));
+    let alarm_status = ui.label(&format!("起床: {}", alarm.value()))?;
+    alarm.on_change({
+        let alarm_status = alarm_status.clone();
+        move |value| alarm_status.set_text(&format!("起床: {value}"))
+    });
+    pane.append(&alarm);
+    pane.append(&alarm_status);
+
+    // 範囲を決めると、その外へは出られなくなる。
+    pane.append(&ui.label("9:00〜18:00 しか選べない例です。")?);
+    let meeting = ui.time_picker()?;
+    meeting.set_range(Some(Time::new(9, 0)), Some(Time::new(18, 0)));
+    meeting.set_value(Time::new(13, 0));
+    let meeting_status = ui.label(&format!("会議: {}", meeting.value()))?;
+    meeting.on_change({
+        let meeting_status = meeting_status.clone();
+        move |value| meeting_status.set_text(&format!("会議: {value}"))
+    });
+    pane.append(&meeting);
+    pane.append(&meeting_status);
+
+    pane.append(&ui.label("選ばせない状態にもできます。")?);
+    let disabled_time = ui.time_picker()?;
+    disabled_time.set_value(Time::new(0, 0));
+    disabled_time.set_enabled(false);
+    pane.append(&disabled_time);
+
     pane.append(&ui.label("ColorPicker")?);
     pane.append(&ui.label("色を選ばせます。値は sRGB の 8 bit で返ります。")?);
 
@@ -261,6 +293,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         let area_status = area_status.clone();
         let time = time.clone();
         let time_status = time_status.clone();
+        let alarm = alarm.clone();
+        let alarm_status = alarm_status.clone();
         let password = password.clone();
         let confirm = confirm.clone();
         let password_status = password_status.clone();
@@ -275,6 +309,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
             // set_value は通知しないので、表示は自分で戻す。
             time.set_value(DateTime::time(7, 30));
             time_status.set_text("時刻: 07:30");
+            alarm.set_value(Time::new(7, 30));
+            alarm_status.set_text("起床: 07:30");
         }
     });
     pane.append(&clear);

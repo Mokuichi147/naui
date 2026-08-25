@@ -20,7 +20,7 @@ mod toolbar;
 mod tree;
 
 pub use color::Color;
-pub use datetime::{days_in_month, is_leap_year, DatePickerMode, DateTime};
+pub use datetime::{days_in_month, is_leap_year, DatePickerMode, DateTime, Time};
 pub use dialog::{DialogButtons, DialogResponse};
 pub use file::{
     accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
