@@ -26,9 +26,9 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチを含む) |
 | Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチを含む) |
 
 未確認の範囲もあります。
 
@@ -43,10 +43,6 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
-- Windows / Linux: `Toggle` の実機での実行 (macOS は統合テストと Gallery、Web は
-  ブラウザで切り替えと通知を確認済み。Linux 向けの統合テストは用意してあります)。
-  Windows は `winio-winui3` が投影していない `ToggleSwitch` を naui 側で投影して
-  いるため、実機での確認が要ります
 
 これらは実装済みで、各ターゲット向けの `cargo check` は通ります。
 
@@ -624,6 +620,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `window.show()` より前には出せません。
 - `Expander` は `winio-winui3` の投影に含まれていませんが、WinUI の公開 WinRT
   インターフェイスを最小限投影し、`XamlReader` から本物の `Expander` を生成しています。
+- `ToggleSwitch` も投影に含まれていないため、`Expander` と同じく公開 WinRT
+  インターフェイスを最小限投影し、`XamlReader` から本物の `ToggleSwitch` を
+  生成しています。`Toggle` のラベルは `OnContent` と `OffContent` の両方へ
+  同じ文字を入れるので、入り切りで読みは変わりません (WinUI の既定は
+  「オン」「オフ」と切り替わる文字です)。
 
 ### macOS
 
@@ -649,6 +650,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - 折りたたみにあたるコントロールが AppKit に無いため、`Expander` は入り切りの
   `NSButton` (山形は SF Symbols) と `NSStackView` で組み立てています。
   開閉のアニメーションはありません。
+- `NSSwitch` は文字を持たないため、`Toggle` のラベルは横へ並べた
+  `NSTextField` です。**切り替わるのはスイッチを押したときだけ**で、
+  文字を押しても切り替わりません。
 
 ### Linux
 
@@ -661,6 +665,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `Toolbar` の項目は、GNOME の作法にならってヘッダーバーの左側へ並びます。
 - `Toast` の時間は `AdwToast` に合わせて**秒**単位です。1 秒未満を指定しても
   1 秒になります (0 に丸めると「消えない」指定に変わってしまうため)。
+- `GtkSwitch` は文字を持たないため、`Toggle` のラベルは `GtkBox` へ横に並べた
+  `GtkLabel` です。**切り替わるのはスイッチを押したときだけ**で、文字を押しても
+  切り替わりません。
 - 日付を選ぶ 1 つのコントロールが GTK4 に無いため、`DatePicker` は
   `GtkMenuButton` のポップオーバーに載せた `GtkCalendar` と、時分の
   `GtkSpinButton` で組み立てています。`GtkCalendar` は「日を押した」と
@@ -685,6 +692,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `<details>` に `disabled` が無いため、`Expander::set_enabled(false)` は
   見出しをマウスとタブ順から外して押せなくするだけです (`aria-disabled` は
   付きますが、ネイティブの無効なコントロールとは扱いが違います)。
+- `Toggle` の `switch` 属性に対応しているのは Safari 17.4 以降だけなので、
+  Chrome や Firefox ではチェックボックスの見た目で出ます (値の扱い・通知・
+  読み上げは同じです)。つまみの見た目を naui の CSS で作ることはしません。
 - ページに一時的な通知の標準要素が無いため、`Toast` は `<div role="status">` を
   `position: fixed` で下端の中央へ出します (`Notification` API はページの外へ
   出るもので別物です)。
