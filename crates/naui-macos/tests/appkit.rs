@@ -22,7 +22,7 @@ use objc2::rc::Retained;
 use objc2::sel;
 use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
 use objc2_app_kit::{
-    NSButton, NSColor, NSColorSpace, NSControlStateValueOff, NSDatePicker,
+    NSButton, NSColor, NSColorSpace, NSComboBox, NSControlStateValueOff, NSDatePicker,
     NSDatePickerElementFlags, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
     NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSSearchField,
     NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField,
@@ -83,6 +83,18 @@ fn main() {
         (
             "コンボボックスの通知中に内容と通知先を差し替えられる",
             combo_box_callback_is_reentrant,
+        ),
+        (
+            "自由入力コンボボックスの文字列がネイティブと往復する",
+            editable_combo_box_text_round_trips,
+        ),
+        (
+            "自由入力コンボボックスの通知中に内容と通知先を差し替えられる",
+            editable_combo_box_callback_is_reentrant,
+        ),
+        (
+            "自由入力コンボボックスの候補を打鍵のたびに絞り込める",
+            editable_combo_box_items_can_be_narrowed_while_typing,
         ),
         (
             "ラジオグループの選択がネイティブと往復する",
@@ -832,6 +844,151 @@ fn combo_box_selection_round_trips(ui: &Ui) -> Result<()> {
     combo.set_items(&["那覇"]);
     assert_eq!(combo.selected(), None);
     assert_eq!(*seen.borrow(), vec![2, 0], "再構築は通知しない");
+    Ok(())
+}
+
+/// 文字列・候補・通知の有無が NSComboBox と一致する。
+fn editable_combo_box_text_round_trips(ui: &Ui) -> Result<()> {
+    let combo = ui.editable_combo_box()?;
+    assert!(combo.is_empty());
+    assert_eq!(combo.text(), "");
+    assert_eq!(combo.selected(), None);
+
+    combo.set_items(&["東京", "大阪", "札幌"]);
+    assert_eq!(combo.len(), 3);
+    assert_eq!(combo.text(), "", "候補を入れても文字列は変わらない");
+    let native = combo.native_combo_box();
+    assert_eq!(native.numberOfItems(), 3);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    combo.on_change({
+        let seen = seen.clone();
+        move |text: &str| seen.borrow_mut().push(text.to_string())
+    });
+
+    combo.set_text("京都");
+    assert_eq!(combo.text(), "京都");
+    assert_eq!(combo.selected(), None, "候補に無い文字列も持てる");
+    assert!(seen.borrow().is_empty(), "set_text は通知しない");
+
+    combo.set_selected(1);
+    assert_eq!(combo.text(), "大阪");
+    assert_eq!(combo.selected(), Some(1));
+    assert_eq!(native.indexOfSelectedItem(), 1, "一覧側の選択もそろう");
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+    combo.set_selected(99);
+    assert_eq!(combo.text(), "大阪", "範囲外は無視する");
+
+    combo.clear();
+    assert_eq!(combo.text(), "");
+    assert!(seen.borrow().is_empty(), "clear は通知しない");
+
+    combo.select(2);
+    assert_eq!(combo.text(), "札幌");
+    assert_eq!(*seen.borrow(), vec!["札幌".to_string()]);
+    combo.select(99);
+    assert_eq!(seen.borrow().len(), 1, "範囲外は通知もしない");
+
+    // 打ち込んだときに AppKit が送る通知の経路。
+    type_into_field(&native, "な");
+    assert_eq!(combo.text(), "な");
+    assert_eq!(combo.selected(), None);
+    assert_eq!(
+        *seen.borrow(),
+        vec!["札幌".to_string(), "な".to_string()],
+        "打鍵は 1 回だけ通知する"
+    );
+
+    // 一覧から候補を選んだときの経路。
+    pick_natively(&native, 0);
+    assert_eq!(combo.text(), "東京", "選んだ候補が欄へ入る");
+    assert_eq!(combo.selected(), Some(0));
+    assert_eq!(
+        *seen.borrow(),
+        vec!["札幌".to_string(), "な".to_string(), "東京".to_string()],
+        "選択の通知が二重に届かない"
+    );
+
+    combo.set_enabled(false);
+    assert!(!native.isEnabled());
+
+    combo.set_items(&["那覇"]);
+    assert_eq!(combo.len(), 1);
+    assert_eq!(combo.text(), "東京", "候補を作り直しても文字列は残る");
+    assert_eq!(combo.selected(), None, "一致する候補が無くなる");
+    assert_eq!(seen.borrow().len(), 3, "作り直しは通知しない");
+    Ok(())
+}
+
+/// 通知の最中でも同じ入力欄を操作し、コールバックを差し替えられる。
+fn editable_combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let combo = ui.editable_combo_box()?;
+    combo.set_items(&["春", "夏", "秋"]);
+
+    let first = Rc::new(RefCell::new(Vec::new()));
+    let replacement = Rc::new(RefCell::new(Vec::new()));
+    combo.on_change({
+        let combo = combo.clone();
+        let first = first.clone();
+        let replacement = replacement.clone();
+        move |text: &str| {
+            first.borrow_mut().push(text.to_string());
+            combo.set_items(&["朝", "昼"]);
+            combo.set_selected(1);
+            combo.on_change({
+                let replacement = replacement.clone();
+                move |text: &str| replacement.borrow_mut().push(text.to_string())
+            });
+        }
+    });
+
+    combo.select(0);
+    assert_eq!(*first.borrow(), vec!["春".to_string()]);
+    assert_eq!(combo.len(), 2);
+    assert_eq!(combo.text(), "昼");
+
+    combo.select(0);
+    assert_eq!(first.borrow().len(), 1, "古い通知先は外れること");
+    assert_eq!(*replacement.borrow(), vec!["朝".to_string()]);
+    Ok(())
+}
+
+/// `NSComboBox` は一覧を絞り込まないので、絞りたいアプリは `on_change` の中で
+/// 候補を入れ替える。README で案内しているこの手順が実際に通ることを確かめる。
+fn editable_combo_box_items_can_be_narrowed_while_typing(ui: &Ui) -> Result<()> {
+    let combo = ui.editable_combo_box()?;
+    let all = ["東京", "東大阪", "大阪", "札幌"];
+    combo.set_items(&all);
+
+    combo.on_change({
+        let combo = combo.clone();
+        move |text: &str| {
+            let narrowed: Vec<&str> = all
+                .iter()
+                .copied()
+                .filter(|item| item.starts_with(text))
+                .collect();
+            combo.set_items(&narrowed);
+        }
+    });
+
+    let native = combo.native_combo_box();
+    type_into_field(&native, "東");
+    assert_eq!(combo.len(), 2, "打った文字で候補を絞れる");
+    assert_eq!(native.numberOfItems(), 2, "絞り込みがネイティブにも届く");
+    assert_eq!(combo.text(), "東", "候補を入れ替えても文字列は動かない");
+    assert_eq!(combo.selected(), None, "一致する候補はまだ無い");
+
+    type_into_field(&native, "東大阪");
+    assert_eq!(combo.len(), 1);
+    assert_eq!(combo.text(), "東大阪");
+    assert_eq!(combo.selected(), Some(0), "残った 1 件と一致する");
+
+    // 絞り込みで候補が空になっても、打った文字はそのまま残る。
+    type_into_field(&native, "京都");
+    assert!(combo.is_empty());
+    assert_eq!(combo.text(), "京都");
+    assert_eq!(combo.selected(), None);
     Ok(())
 }
 
@@ -4297,6 +4454,21 @@ fn press_return_in_field(field: &NSTextField) {
         ]
     };
     assert!(!handled, "既定の確定は AppKit へ任せること");
+}
+
+/// 一覧から候補を選ぶ。`selectItemAtIndex:` が出す通知に加え、届かなかった
+/// 場合に備えて同じ通知をデリゲートへ直接渡す (二重に届いても 1 回にまとまる)。
+fn pick_natively(combo: &NSComboBox, index: isize) {
+    combo.selectItemAtIndex(index);
+    let Some(delegate) = combo.delegate() else {
+        return;
+    };
+    let name = NSString::from_str("NSComboBoxSelectionDidChangeNotification");
+    let notification =
+        unsafe { NSNotification::notificationWithName_object(&name, Some(combo.as_ref())) };
+    unsafe {
+        let _: () = msg_send![&*delegate, comboBoxSelectionDidChange: &*notification];
+    }
 }
 
 /// 欄を確定する (Enter・欄を離れたときと同じ経路)。

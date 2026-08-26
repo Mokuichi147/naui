@@ -10,8 +10,9 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, Sel};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSControl, NSControlTextEditingDelegate, NSSearchFieldDelegate, NSTabView, NSTabViewDelegate,
-    NSTabViewItem, NSTextDelegate, NSTextFieldDelegate, NSTextView, NSTextViewDelegate,
+    NSComboBoxDelegate, NSControl, NSControlTextEditingDelegate, NSSearchFieldDelegate, NSTabView,
+    NSTabViewDelegate, NSTabViewItem, NSTextDelegate, NSTextFieldDelegate, NSTextView,
+    NSTextViewDelegate,
 };
 use objc2_foundation::NSNotification;
 
@@ -200,6 +201,85 @@ impl TextViewObserver {
     pub(crate) fn new(mtm: MainThreadMarker, f: impl FnMut(&str) + 'static) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(RefCell::new(Box::new(f) as Box<dyn FnMut(&str)>));
         unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// コンボボックスの通知を中継するクロージャ。
+///
+/// 引数は「候補の一覧から選ばれたか」で、`false` は打鍵による変更。
+/// 呼び出しの間だけ取り出すのは、通知の中で候補を選び直されても
+/// (`selectItemAtIndex:` は選択の通知を出す) 二重借用にならないようにするため。
+type ComboCallback = RefCell<Option<Box<dyn FnMut(bool)>>>;
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiComboObserver"]
+    #[ivars = ComboCallback]
+    pub(crate) struct ComboObserver;
+
+    unsafe impl NSObjectProtocol for ComboObserver {}
+
+    unsafe impl NSControlTextEditingDelegate for ComboObserver {
+        #[unsafe(method(controlTextDidChange:))]
+        fn control_text_did_change(&self, _notification: &NSNotification) {
+            invoke_combo(self.ivars(), false);
+        }
+    }
+
+    unsafe impl NSTextFieldDelegate for ComboObserver {}
+
+    unsafe impl NSComboBoxDelegate for ComboObserver {
+        #[unsafe(method(comboBoxSelectionDidChange:))]
+        fn combo_box_selection_did_change(&self, _notification: &NSNotification) {
+            invoke_combo(self.ivars(), true);
+        }
+    }
+);
+
+/// 取り出して呼び、差し替えられていなければ戻す ([`SelectHandler::emit`] と同じ形)。
+fn invoke_combo(slot: &ComboCallback, from_list: bool) {
+    let Some(mut f) = slot.borrow_mut().take() else {
+        return;
+    };
+    f(from_list);
+    let mut slot = slot.borrow_mut();
+    if slot.is_none() {
+        *slot = Some(f);
+    }
+}
+
+impl ComboObserver {
+    pub(crate) fn new(mtm: MainThreadMarker, f: impl FnMut(bool) + 'static) -> Retained<Self> {
+        let this =
+            Self::alloc(mtm).set_ivars(RefCell::new(Some(Box::new(f) as Box<dyn FnMut(bool)>)));
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// 文字列を受け取る通知先。
+///
+/// [`SelectHandler`] と同じ再入対応を `&str` で行う。`ValueHandler<T>` は
+/// 借用した値を受け取れない (寿命の引数が要る) ため、別に用意している。
+#[derive(Clone, Default)]
+pub(crate) struct TextHandler(Rc<RefCell<Option<Box<dyn FnMut(&str)>>>>);
+
+impl TextHandler {
+    pub(crate) fn set(&self, f: impl FnMut(&str) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// 通知する。まだ設定されていなければ何もしない。
+    pub(crate) fn emit(&self, text: &str) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(text);
+        // 呼び出し中に差し替えられていたら、新しいほうを残す。
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
     }
 }
 

@@ -23,6 +23,7 @@
 //! | `Checkbox` | `GtkCheckButton` |
 //! | `Toggle` | `GtkSwitch` + `GtkLabel` を `GtkBox` へ並べたもの |
 //! | `ComboBox` | `GtkDropDown` + `GtkStringList` |
+//! | `EditableComboBox` | `GtkEntry` + `GtkMenuButton` (`GtkListBox` のポップオーバー) |
 //! | `RadioGroup` | 組にした `GtkCheckButton` を `GtkBox` へ並べたもの |
 //! | `DatePicker` | `GtkMenuButton` + `GtkCalendar` / `GtkSpinButton` の組 |
 //! | `TimePicker` | 時と分の `GtkSpinButton` を `:` で挟んだもの |
@@ -119,6 +120,7 @@ mod color_picker;
 mod combo_box;
 mod date_picker;
 mod dialog;
+mod editable_combo_box;
 mod expander;
 mod file_picker;
 mod file_saver;
@@ -152,6 +154,7 @@ pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
 pub use dialog::Dialog;
+pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
@@ -274,6 +277,11 @@ impl Ui {
     /// 選択肢を折りたたんで表示するコンボボックス。
     pub fn combo_box(&self) -> Result<ComboBox> {
         Ok(ComboBox::new())
+    }
+
+    /// 候補から選ぶことも、自由に打ち込むこともできるコンボボックス。
+    pub fn editable_combo_box(&self) -> Result<EditableComboBox> {
+        Ok(EditableComboBox::new())
     }
 
     /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。

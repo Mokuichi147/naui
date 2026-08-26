@@ -68,10 +68,10 @@ cargo run -p gallery
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブルを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブルを操作 |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
 
@@ -303,6 +303,36 @@ language.set_items(&["Rust", "Swift", "TypeScript"]);
 language.set_selected(0);
 language.on_select(|index| println!("{index} 番目が選ばれました"));
 ```
+
+候補にない値も受け付けたいときは `EditableComboBox` を使います。こちらは
+打ち込める入力欄で、候補は入力の補助にすぎません。**値はインデックスではなく
+文字列**で、`on_change` は打鍵でも候補の選択でも呼ばれます。
+
+```rust
+let city = ui.editable_combo_box()?;
+city.set_items(&["東京", "大阪", "札幌"]);
+city.set_placeholder("都市名");
+city.set_text("京都"); // 候補にない値も入ります (通知はしません)
+city.on_change(|text| println!("{text} と入力されました"));
+```
+
+`selected` は「今の文字列とそのまま一致する候補」を返すので、候補にない値が
+入っているときは `None` になります。`set_text` と `set_selected` は通知せず、
+`select` は利用者が選んだときと同じく通知します。
+
+**打った文字で候補の一覧が絞り込まれるかどうかは環境によって違います。**
+naui は一覧を自分で組み立てず、それぞれのコントロールに任せているためです。
+
+| 環境 | 打った文字と候補の一覧 |
+| --- | --- |
+| Windows | 絞り込みません (一致する候補へ選択が移るだけです) |
+| macOS | 絞り込みません (代わりに入力欄の側が補完されます) |
+| Linux | 絞り込みません (矢印を押すと候補が全部出ます) |
+| Web | ブラウザが絞り込みます (前方一致か部分一致かはブラウザ次第で、切れません) |
+
+どの環境でも絞り込みたい場合は、`on_change` の中でアプリが `set_items` を
+呼び直して候補そのものを入れ替えてください (Web ではさらにブラウザ側の
+絞り込みが重なります)。
 
 候補をすべて画面に出すなら `RadioGroup` を使います。API は `ComboBox` と同じで、
 違うのは候補の見せ方と、並べる向きを選べることだけです。
@@ -574,7 +604,7 @@ window.set_toolbar(&toolbar);
 | --- | --- |
 | ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`Toolbar` |
 | 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、`NumberInput`、`Slider`、`ProgressBar` |
-| データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
+| データ選択 | `ComboBox`、`EditableComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
 | ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog`、`Toast` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
@@ -629,6 +659,7 @@ window.set_toolbar(&toolbar);
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
 | `ComboBox` | ✅ `ComboBox` | ✅ `NSPopUpButton` | ✅ `GtkDropDown` | ✅ `<select>` |
+| `EditableComboBox` | ✅ `ComboBox` (`IsEditable`) | ✅ `NSComboBox` | 🟡 `GtkEntry` + `GtkMenuButton` + `GtkListBox` | ✅ `<input list>` + `<datalist>` |
 | `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (ラジオ型) | 🟡 `GtkBox` + 組にした `GtkCheckButton` | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
 | `DatePicker` | ✅ `DatePicker` / `TimePicker` | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
 | `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (時分だけ) | 🟡 時と分の `GtkSpinButton` | ✅ `<input type="time">` |
@@ -790,7 +821,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 <details>
 <summary><strong>共通</strong></summary>
 
-- 対応するのは上記の 40 コンポーネントです。
+- 対応するのは上記の 42 コンポーネントです。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
@@ -820,6 +851,15 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `Fill` と `Spacer` が効きません。代わりに `Grid` の `Track::Fill` を使います。
 - 一部の Windows App SDK 環境で異常終了を避けるため、`Tabs` は `TabView` を使わず、
   `Video` / `Audio` の標準再生バーは無効にしています。
+- `EditableComboBox` の 1 文字ごとの通知は、`ComboBox` のテンプレートにある
+  入力欄 (`EditableText`) の `TextChanged` から拾っています。`ComboBox` 自身は
+  文字の変化を表に出さないためです。標準のテンプレートを差し替えて入力欄が
+  見つからない場合は、候補の選択と Enter での確定だけが通知されます。
+  **候補の一覧は打った文字で絞り込まれません** (`IsTextSearchEnabled` は
+  一致する候補へ選択を移すだけです)。打った文字で候補を出す `AutoSuggestBox` は
+  `SearchInput` が自前投影で使っていますが、あちらは候補を「開いて全部見る」
+  ことができません。`EditableComboBox` は一覧を開いて選べることを軸にしている
+  ので、Fluent の作法どおり `ComboBox` のままにしています。
 - `Dialog` は `window.show()` より前には開けません。
 - `DataGrid` も `ListView` もバインディングに無いため、`Table` は `ListBox` の
   行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に置いて
@@ -881,6 +921,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `textFieldAndStepper`) と変わりません。
 - 数値専用のコントロールが AppKit に無いため、`NumberInput` は `NSTextField` と
   `NSStepper` を横に並べて組み立てています (システム設定の数値欄と同じ形)。
+- `EditableComboBox` は `NSComboBox` です。打ちかけの文字を候補で補う
+  `completes` を入れてあるので、候補の先頭に一致する文字を打つと残りが
+  補完されます (そのまま打ち切れば候補にない文字列も残せます)。**候補の一覧
+  そのものは絞り込まれません。** AppKit に一覧を絞る仕組みが無いためです。
 - `Table` の行の高さは、システムフォントから決めた一定の値です。AppKit に
   求めさせる指定 (`usesAutomaticRowHeights`) は使っていません。それを使うと、
   列を足し引きしたときに AppKit が行へ張る制約が、前の列で外れたセルを指した
@@ -938,6 +982,12 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `GtkSpinButton` を `:` で挟んで並べています (GNOME の時計アプリと同じ形)。
   スピンボタンに時刻としての範囲は無いので、`set_range` の範囲は naui 側で
   端へ寄せ、押し戻した結果を表示にも書き戻します。
+- 打ち込めるコンボボックスが GTK4 に無いため、`EditableComboBox` は
+  `GtkEntry` と、候補を出す `GtkMenuButton` を `.linked` の `GtkBox` へ
+  並べて組み立てています。入力欄を持つ `GtkComboBoxText` と
+  `GtkEntryCompletion` は GTK 4.10 で非推奨になり、置き換え先が用意されて
+  いないためです。**打った文字での候補の絞り込みはありません** (矢印を押すと
+  候補が全部出ます)。
 - 日付を選ぶ 1 つのコントロールが GTK4 に無いため、`DatePicker` は
   `GtkMenuButton` のポップオーバーに載せた `GtkCalendar` と、時分の
   `GtkSpinButton` で組み立てています。`GtkCalendar` は「日を押した」と
@@ -955,6 +1005,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `<ul role="listbox">` を使った実装へ切り替わります。
 - `Tree` の `TreeItem::detail` は、行の高さをそろえるため
   `ラベル — 補助` の形で 1 行に収まります。
+- `EditableComboBox` は `<input list>` と `<datalist>` です。**4 環境のうち、
+  打った文字で候補が絞り込まれるのは Web だけ**ですが、これはブラウザが行う
+  ことで、切ることはできません。絞り込み方 (前方一致か部分一致か)・矢印を
+  出すかどうか・一覧の開き方もブラウザごとに異なります。naui は見た目も
+  絞り込みも作りません。
 - `Table` は `<table role="grid">` です。`<table>` に行を選ぶ仕組みは無いので、
   クリック (⌘ / Ctrl / Shift) とキー操作 (矢印・Home / End・Space) は naui が
   足しています。列の幅は `<colgroup>` の `<col>` と `table-layout: fixed` で
