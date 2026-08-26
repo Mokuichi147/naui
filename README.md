@@ -68,10 +68,10 @@ cargo run -p gallery
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブルを含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブルを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブルを操作 |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
 
@@ -245,6 +245,28 @@ password.on_change(|text| println!("{} 文字", text.chars().count()));
 **伏せ字を外す切り替えは持ちません**。`NSSecureTextField` に無く、4 環境の共通
 部分にならないためです。入力された文字列は `text()` で読めるので、扱いはアプリの
 責任になります。
+
+#### 検索の入力
+
+絞り込みや検索の欄には `SearchInput` を使います。`TextInput` に**確定の通知**を
+足したもので、`on_change` は打つたび、`on_search` は **Enter で確定したとき**に
+呼ばれます (Windows は虫めがねの印を押したときも確定になります)。
+
+```rust
+let search = ui.search_input()?;
+search.set_placeholder("検索");
+search.on_change(|text| println!("絞り込み: {text}")); // 打ちながら絞り込む
+search.on_search(|text| println!("{text} を探す")); // 押されたときだけ探す
+```
+
+虫めがねの印と、打ち始めると出る**取り消しボタン (✕) はその環境が出します**
+(naui は見た目を作りません)。**取り消しボタンは確定ではありません**。空になった
+ことは `on_change` で伝わり、`on_search` は呼ばれません。ブラウザによっては
+取り消しボタンが出ません (Firefox にはありません)。
+
+`set_text` は通知しません (`TextInput` と同じです)。**候補の一覧は持ちません**。
+Windows の `AutoSuggestBox` には候補を出す仕組みがありますが、残る 3 環境の
+検索欄に無いためです。
 
 #### 入り切りの切り替え
 
@@ -551,7 +573,7 @@ window.set_toolbar(&toolbar);
 | 分類 | API |
 | --- | --- |
 | ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`Toolbar` |
-| 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`NumberInput`、`Slider`、`ProgressBar` |
+| 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、`NumberInput`、`Slider`、`ProgressBar` |
 | データ選択 | `ComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
 | ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
 | オーバーレイ | `PopupMenu`、`Dialog`、`Toast` |
@@ -594,6 +616,7 @@ window.set_toolbar(&toolbar);
 | `TextInput` | ✅ `TextBox` | ✅ `NSTextField` | ✅ `GtkEntry` | ✅ `<input type="text">` |
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `PasswordInput` | ✅ `PasswordBox` | ✅ `NSSecureTextField` | ✅ `GtkPasswordEntry` | ✅ `<input type="password">` |
+| `SearchInput` | ✅ `AutoSuggestBox` | ✅ `NSSearchField` | ✅ `GtkSearchEntry` | ✅ `<input type="search">` |
 | `NumberInput` | 🟡 `TextBox` + 増減ボタン | 🟡 `NSTextField` + `NSStepper` | ✅ `GtkSpinButton` | ✅ `<input type="number">` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
 | `ProgressBar` | 🟡 `Grid` + `Border` | ✅ `NSProgressIndicator` | ✅ `GtkProgressBar` | ✅ `<progress>` |
@@ -836,6 +859,12 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `TimePicker` ウィジェットは、この `TimePicker` の投影をそのまま共有しています。
   WinUI 3 の `TimePicker` に下限・上限は無いので、`set_range` の範囲は naui 側で
   端へ寄せます。
+- `AutoSuggestBox` も投影に含まれていないため、同じく公開 WinRT インターフェイスを
+  最小限投影し、`XamlReader` から本物の `AutoSuggestBox` を生成しています。
+  `SearchInput` の虫めがねは `QueryIcon="Find"`、確定 (`on_search`) は
+  `QuerySubmitted` です。候補の一覧 (`ItemsSource`) は渡さないので、打っても
+  候補は出ません。`TextChanged` は `Text` を書き換えたときにも飛ぶため、
+  `Reason` がプログラムからの変更なら黙ります (`set_text` は通知しません)。
 
 </details>
 

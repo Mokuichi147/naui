@@ -116,6 +116,42 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&confirm);
     pane.append(&password_status);
 
+    pane.append(&ui.label("SearchInput")?);
+    pane.append(&ui.label("検索の欄です。打つたびに絞り込み、Enter で確定します。")?);
+    // 絞り込む対象。確定したときは選ばれた 1 件を出す。
+    let fruits = ["りんご", "みかん", "ぶどう", "もも", "なし"];
+    let search_status = ui.label("候補: りんご / みかん / ぶどう / もも / なし")?;
+    let search = ui.search_input()?;
+    search.set_placeholder("検索");
+    search.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
+    search.on_change({
+        let search_status = search_status.clone();
+        move |text| {
+            let hits: Vec<&str> = fruits
+                .iter()
+                .copied()
+                .filter(|name| name.contains(text))
+                .collect();
+            if hits.is_empty() {
+                search_status.set_text("候補: (なし)");
+            } else {
+                search_status.set_text(&format!("候補: {}", hits.join(" / ")));
+            }
+        }
+    });
+    search.on_search({
+        let search_status = search_status.clone();
+        move |text| {
+            if text.is_empty() {
+                search_status.set_text("検索: (空)");
+            } else {
+                search_status.set_text(&format!("検索: {text} を探しました"));
+            }
+        }
+    });
+    pane.append(&search);
+    pane.append(&search_status);
+
     pane.append(&ui.label("NumberInput")?);
     pane.append(&ui.label("数値の入力欄です。範囲・刻み・小数桁を指定できます。")?);
     // 数値の欄は中身に合わせた幅を持たないので、ここで決めておく。

@@ -133,8 +133,8 @@
 //! ## テキスト入力
 //!
 //! 1 行なら [`TextInput`]、改行を含む文章なら [`TextArea`]、伏せ字にするなら
-//! [`PasswordInput`] を使う。API の形はどれも同じで、IME・コピー / 貼り付け・
-//! 取り消しはネイティブに任せている。
+//! [`PasswordInput`]、絞り込みや検索の欄なら [`SearchInput`] を使う。API の形は
+//! どれも同じで、IME・コピー / 貼り付け・取り消しはネイティブに任せている。
 //!
 //! ```no_run
 //! # use naui::{Length, Result, Sizing, Ui};
@@ -153,6 +153,7 @@
 //! | `TextInput` | `TextBox` | `NSTextField` | `GtkEntry` | `<input type="text">` |
 //! | `TextArea` | `TextBox` (`AcceptsReturn`) | `NSTextView` + `NSScrollView` | `GtkTextView` + `GtkScrolledWindow` | `<textarea>` |
 //! | `PasswordInput` | `PasswordBox` | `NSSecureTextField` | `GtkPasswordEntry` | `<input type="password">` |
+//! | `SearchInput` | `AutoSuggestBox` | `NSSearchField` | `GtkSearchEntry` | `<input type="search">` |
 //!
 //! [`TextArea`] は**長い行を折り返し、はみ出した分は縦にスクロール**する。
 //! 折り返しの有無を選ぶ設定は、3 環境の共通部分に無いため持たない。
@@ -165,6 +166,32 @@
 //! [`PasswordInput`] は打った文字を伏せ字にするだけで、API は [`TextInput`] と
 //! 同じ。**伏せ字を一時的に外すボタンは持たない** (`NSSecureTextField` に
 //! 無いため)。入力された文字列は `text()` で読めるので、扱いはアプリの責任。
+//!
+//! [`SearchInput`] は [`TextInput`] に**確定の通知**を足したもの。
+//! [`on_change`](SearchInput::on_change) は打つたび、
+//! [`on_search`](SearchInput::on_search) は **Enter で確定したとき**に呼ばれる
+//! (Windows は虫めがねの印を押したときも確定になる)。打ちながら絞り込むなら
+//! `on_change`、押されたときだけ探しに行くなら `on_search` を使う。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let search = ui.search_input()?;
+//! search.set_placeholder("検索");
+//! search.on_change(|text| println!("絞り込み: {text}"));
+//! search.on_search(|text| println!("{text} を探す"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! 虫めがねの印と、打ち始めると出る**取り消しボタン (✕) はその環境が出す**
+//! (naui は見た目を作らない)。**取り消しボタンは確定ではない**。空になった
+//! ことは `on_change` で伝わり、`on_search` は呼ばれない。ブラウザによっては
+//! 取り消しボタンが出ない (Firefox には無い)。
+//!
+//! [`set_text`](SearchInput::set_text) は通知しない (`TextInput` と同じ)。
+//! 候補の一覧は持たない。Windows の `AutoSuggestBox` には候補を出す仕組みが
+//! あるが、残る 3 環境の検索欄に無いため使っていない。
 //!
 //! ## 数値入力
 //!
@@ -815,10 +842,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカーを含む 110 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替えを確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
-//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) を実行確認。GTK4 の実コントロールに対する自動テスト 106 件 (スイッチ・色ピッカー・時刻ピッカー・テーブルを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカーを含む 113 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない) を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 108 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -835,25 +862,25 @@ pub use naui_core::{
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
-    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video,
-    WeakWindow, Widget, Window,
+    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Slider,
+    Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui,
+    Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
-    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video,
-    WeakWindow, Widget, Window,
+    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Slider,
+    Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui,
+    Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
-    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video,
-    WeakWindow, Widget, Window,
+    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Slider,
+    Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui,
+    Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -864,9 +891,9 @@ pub use naui_windows::{
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
-    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video,
-    WeakWindow, Widget, Window,
+    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Slider,
+    Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui,
+    Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1074,6 +1101,15 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     password.set_enabled(true);
     password.on_change(|_s: &str| {});
     password.set_sizing(Sizing::fill_width());
+
+    let search: SearchInput = ui.search_input()?;
+    let _: String = search.text();
+    search.set_text("t");
+    search.set_placeholder("t");
+    search.set_enabled(true);
+    search.on_change(|_s: &str| {});
+    search.on_search(|_s: &str| {});
+    search.set_sizing(Sizing::fill_width());
 
     let number: NumberInput = ui.number_input(1.0)?;
     let _: f64 = number.value();

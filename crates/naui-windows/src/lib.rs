@@ -32,6 +32,7 @@ mod navigation;
 mod number_input;
 mod popup;
 mod radio_group;
+mod search_input;
 mod table;
 mod time_picker;
 mod toast;
@@ -60,6 +61,7 @@ pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
+pub use search_input::SearchInput;
 pub use table::Table;
 pub use time_picker::TimePicker;
 pub use toast::Toast;
@@ -189,6 +191,11 @@ impl Ui {
     /// 伏せ字で入力させる欄。中身は `PasswordBox`。
     pub fn password_input(&self) -> Result<PasswordInput> {
         PasswordInput::new()
+    }
+
+    /// 検索の入力欄。中身は `AutoSuggestBox`。
+    pub fn search_input(&self) -> Result<SearchInput> {
+        SearchInput::new()
     }
 
     /// 数値を入力させる欄。`value` は初期値。

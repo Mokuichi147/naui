@@ -354,6 +354,89 @@ impl PasswordInput {
     }
 }
 
+// ------------------------------------------------------------- SearchInput
+
+struct SearchInputInner {
+    native: gtk::SearchEntry,
+    bin: SizeBin,
+    on_change: TextNotifier,
+    on_search: TextNotifier,
+    handler: RefCell<Option<glib::SignalHandlerId>>,
+}
+
+/// 検索の入力欄 (`GtkSearchEntry`)。
+///
+/// 虫めがねの印と、打ち始めると出る取り消しボタン (✕) は GTK が出す。
+/// `on_change` は打つたび (`changed` シグナル)、`on_search` は Enter で
+/// 確定したとき (`activate` シグナル) に呼ばれる。GtkSearchEntry には
+/// 打鍵をまとめてから出す `search-changed` もあるが、待ち時間の分だけ
+/// 他の環境とずれるので使わない。
+#[derive(Clone)]
+pub struct SearchInput(Rc<SearchInputInner>);
+impl_widget!(SearchInput);
+
+impl SearchInput {
+    pub(crate) fn new() -> Self {
+        let native = gtk::SearchEntry::new();
+        let bin = SizeBin::wrap(&native);
+        let inner = Rc::new(SearchInputInner {
+            native,
+            bin,
+            on_change: TextNotifier::default(),
+            on_search: TextNotifier::default(),
+            handler: RefCell::new(None),
+        });
+        let id = {
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_changed(move |native| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.on_change.emit(native.text().as_str());
+                }
+            })
+        };
+        *inner.handler.borrow_mut() = Some(id);
+        {
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_activate(move |native| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.on_search.emit(native.text().as_str());
+                }
+            });
+        }
+        Self(inner)
+    }
+
+    /// いま入力されている文字列。
+    pub fn text(&self) -> String {
+        self.0.native.text().to_string()
+    }
+
+    /// プログラムから中身を差し替える。`on_change` は呼ばれない。
+    pub fn set_text(&self, text: &str) {
+        without_signal(&self.0.native, &self.0.handler, || {
+            self.0.native.set_text(text);
+        });
+    }
+
+    pub fn set_placeholder(&self, text: &str) {
+        self.0.native.set_placeholder_text(Some(text));
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.0.native.set_sensitive(enabled);
+    }
+
+    /// 利用者が打つたびに、そのときの中身で呼ばれる。
+    pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
+        self.0.on_change.set(f);
+    }
+
+    /// Enter で確定したときに、そのときの中身で呼ばれる。
+    pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
+        self.0.on_search.set(f);
+    }
+}
+
 // --------------------------------------------------------------- TextArea
 
 struct TextAreaInner {
