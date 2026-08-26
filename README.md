@@ -69,9 +69,9 @@ cargo run -p gallery
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
 | Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブルを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
 
@@ -89,9 +89,6 @@ cargo run -p gallery
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
-- Windows / Linux: `SearchInput` の実機での実行 (macOS は統合テスト、Web は
-  ブラウザで確認済み。Linux 向けの統合テストは用意してあります。Windows は
-  `AutoSuggestBox` を自前で WinRT 投影しているため、実機での確認が要ります)
 
 </details>
 
@@ -862,6 +859,12 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `TimePicker` ウィジェットは、この `TimePicker` の投影をそのまま共有しています。
   WinUI 3 の `TimePicker` に下限・上限は無いので、`set_range` の範囲は naui 側で
   端へ寄せます。
+- `AutoSuggestBox` も投影に含まれていないため、同じく公開 WinRT インターフェイスを
+  最小限投影し、`XamlReader` から本物の `AutoSuggestBox` を生成しています。
+  `SearchInput` の虫めがねは `QueryIcon="Find"`、確定 (`on_search`) は
+  `QuerySubmitted` です。候補の一覧 (`ItemsSource`) は渡さないので、打っても
+  候補は出ません。`TextChanged` は `Text` を書き換えたときにも飛ぶため、
+  `Reason` がプログラムからの変更なら黙ります (`set_text` は通知しません)。
 
 </details>
 
