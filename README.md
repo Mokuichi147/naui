@@ -68,10 +68,10 @@ cargo run -p gallery
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカーを含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカーを含む) |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブルを含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) |
 | Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブルを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカーを含む) |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
 
@@ -89,10 +89,6 @@ cargo run -p gallery
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
-- `Table`: Windows・Linux の実機での実行。macOS は統合テストと Gallery、
-  Web はブラウザで列幅・文字揃え・選択・キーボード操作・列の差し替え・
-  見出しからの並べ替えまで確認済みです。Linux 向けの統合テストは
-  用意してあります
 
 </details>
 
@@ -856,6 +852,13 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `textFieldAndStepper`) と変わりません。
 - 数値専用のコントロールが AppKit に無いため、`NumberInput` は `NSTextField` と
   `NSStepper` を横に並べて組み立てています (システム設定の数値欄と同じ形)。
+- `Table` の行の高さは、システムフォントから決めた一定の値です。AppKit に
+  求めさせる指定 (`usesAutomaticRowHeights`) は使っていません。それを使うと、
+  列を足し引きしたときに AppKit が行へ張る制約が、前の列で外れたセルを指した
+  まま有効になり、表が壊れるためです。
+- `Table` で幅を指定しなかった列への割り当ては naui が計算します。AppKit の
+  列の自動調整は、幅を固定した列があると余りを配りきれず、表の右側が空いた
+  ままになるためです。
 - `Toolbar` の区切りは、macOS の作法にならって `NSToolbarSpaceItem`
   (一定幅の空き) になります。区切り線は引かれません。
 - `Toolbar` を付けるとウィンドウのタイトル文字は隠れます (macOS の作法)。
