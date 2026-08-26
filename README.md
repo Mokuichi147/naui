@@ -69,9 +69,9 @@ cargo run -p gallery
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
 | Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブルを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
 
@@ -89,11 +89,6 @@ cargo run -p gallery
 - Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
   統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
   Linux 向けの統合テストは用意してあります)
-- Windows / Linux: `EditableComboBox` の実機での実行 (macOS は統合テストと
-  Gallery、Web はブラウザで打鍵・候補との一致・通知まで確認済み。Linux 向けの
-  統合テストは用意してあります)。**Windows は `ComboBox` のテンプレートにある
-  入力欄 (`EditableText`) から 1 文字ごとの通知を拾っている**ので、そこも
-  実機で確かめる必要があります
 
 </details>
 
@@ -858,11 +853,13 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `Video` / `Audio` の標準再生バーは無効にしています。
 - `EditableComboBox` の 1 文字ごとの通知は、`ComboBox` のテンプレートにある
   入力欄 (`EditableText`) の `TextChanged` から拾っています。`ComboBox` 自身は
-  文字の変化を表に出さないためです。テンプレートを差し替えて入力欄が
+  文字の変化を表に出さないためです。標準のテンプレートを差し替えて入力欄が
   見つからない場合は、候補の選択と Enter での確定だけが通知されます。
   **候補の一覧は打った文字で絞り込まれません** (`IsTextSearchEnabled` は
-  一致する候補へ選択を移すだけです)。一覧を絞る `AutoSuggestBox` は
-  `winio-winui3` のバインディングにありません。
+  一致する候補へ選択を移すだけです)。打った文字で候補を出す `AutoSuggestBox` は
+  `SearchInput` が自前投影で使っていますが、あちらは候補を「開いて全部見る」
+  ことができません。`EditableComboBox` は一覧を開いて選べることを軸にしている
+  ので、Fluent の作法どおり `ComboBox` のままにしています。
 - `Dialog` は `window.show()` より前には開けません。
 - `DataGrid` も `ListView` もバインディングに無いため、`Table` は `ListBox` の
   行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に置いて
