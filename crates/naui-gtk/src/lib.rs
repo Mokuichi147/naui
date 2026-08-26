@@ -169,7 +169,8 @@ pub use toggle::Toggle;
 pub use toolbar::Toolbar;
 pub use tree::Tree;
 pub use widgets::{
-    Button, Checkbox, Label, PasswordInput, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
+    Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Stack, TextArea,
+    TextInput, Widget,
 };
 pub use window::{WeakWindow, Window};
 
@@ -302,6 +303,11 @@ impl Ui {
     /// 伏せ字で入力させる欄。中身は `GtkPasswordEntry`。
     pub fn password_input(&self) -> Result<PasswordInput> {
         Ok(PasswordInput::new())
+    }
+
+    /// 検索の入力欄。中身は `GtkSearchEntry`。
+    pub fn search_input(&self) -> Result<SearchInput> {
+        Ok(SearchInput::new())
     }
 
     /// 数値を入力させる欄。`value` は初期値。

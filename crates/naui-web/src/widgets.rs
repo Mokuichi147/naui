@@ -10,6 +10,7 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::{
     Document, Element, HtmlElement, HtmlInputElement, HtmlProgressElement, HtmlTextAreaElement,
+    KeyboardEvent,
 };
 
 use crate::to_error;
@@ -389,6 +390,82 @@ impl PasswordInput {
         })
         .ok();
         *self.0.on_change.borrow_mut() = listener;
+    }
+}
+
+// ------------------------------------------------------------- SearchInput
+
+struct SearchInputInner {
+    input: HtmlInputElement,
+    on_change: RefCell<Option<Listener>>,
+    on_search: RefCell<Option<Listener>>,
+}
+
+/// 検索の入力欄 (`<input type="search">`)。
+///
+/// 虫めがねの印や取り消しボタン (✕) はブラウザが出す (出るかどうかは
+/// ブラウザ次第で、naui は見た目を作らない)。
+#[derive(Clone)]
+pub struct SearchInput(Rc<SearchInputInner>);
+impl_widget!(SearchInput, input);
+
+impl SearchInput {
+    pub(crate) fn new(doc: &Document) -> Result<Self> {
+        let input: HtmlInputElement = create(doc, "input")?.unchecked_into();
+        input.set_type("search");
+        Ok(Self(Rc::new(SearchInputInner {
+            input,
+            on_change: RefCell::new(None),
+            on_search: RefCell::new(None),
+        })))
+    }
+
+    /// いま入力されている文字列。
+    pub fn text(&self) -> String {
+        self.0.input.value()
+    }
+
+    /// 文字列を置き換える。`on_change` は呼ばれない。
+    pub fn set_text(&self, text: &str) {
+        self.0.input.set_value(text);
+    }
+
+    pub fn set_placeholder(&self, text: &str) {
+        self.0.input.set_placeholder(text);
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.0.input.set_disabled(!enabled);
+    }
+
+    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    pub fn on_change(&self, mut f: impl FnMut(&str) + 'static) {
+        let input = self.0.input.clone();
+        let listener = Listener::attach(self.0.input.as_ref(), "input", move || {
+            f(&input.value());
+        })
+        .ok();
+        *self.0.on_change.borrow_mut() = listener;
+    }
+
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    ///
+    /// `search` イベントは対応していないブラウザがあるため、キーの押下から
+    /// 拾う。**変換中の Enter は数えない** (`isComposing` が立っている間は
+    /// IME が変換を確定しているだけで、検索の確定ではない)。
+    pub fn on_search(&self, mut f: impl FnMut(&str) + 'static) {
+        let input = self.0.input.clone();
+        let listener = Listener::attach_event(self.0.input.as_ref(), "keydown", move |event| {
+            let Some(key) = event.dyn_ref::<KeyboardEvent>() else {
+                return;
+            };
+            if key.key() != "Enter" || key.is_composing() {
+                return;
+            }
+            f(&input.value());
+        })
+        .ok();
+        *self.0.on_search.borrow_mut() = listener;
     }
 }
 

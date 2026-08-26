@@ -20,13 +20,14 @@ use naui_core::{
 use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
 use objc2::sel;
-use objc2::{msg_send, AnyThread, Message};
+use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
 use objc2_app_kit::{
     NSButton, NSColor, NSColorSpace, NSControlStateValueOff, NSDatePicker,
     NSDatePickerElementFlags, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSSecureTextField,
-    NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient,
-    NSTextView, NSUserInterfaceItemIdentification, NSView, NSWindowTitleVisibility,
+    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSSearchField,
+    NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField,
+    NSTextInputClient, NSTextView, NSUserInterfaceItemIdentification, NSView,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound,
@@ -383,6 +384,14 @@ fn main() {
         (
             "パスワード入力が伏せ字の欄として往復する",
             password_input_round_trips,
+        ),
+        (
+            "検索入力が NSSearchField として往復する",
+            search_input_round_trips,
+        ),
+        (
+            "検索入力が Enter のときだけ確定を通知する",
+            search_input_notifies_on_return,
         ),
         (
             "ポップアップメニューの選択がクロージャへ届く",
@@ -4270,6 +4279,26 @@ fn type_into_field(field: &NSTextField, text: &str) {
     }
 }
 
+/// 検索欄で Enter を押す (AppKit が編集中のフィールドエディタへ投げる
+/// `insertNewline:` と同じ経路)。
+fn press_return_in_field(field: &NSTextField) {
+    let Some(delegate) = field.delegate() else {
+        return;
+    };
+    let mtm = MainThreadMarker::from(field);
+    let editor = NSTextView::new(mtm);
+    let control: &objc2_app_kit::NSControl = field.as_ref();
+    let handled: bool = unsafe {
+        msg_send![
+            &*delegate,
+            control: control,
+            textView: &*editor,
+            doCommandBySelector: sel!(insertNewline:),
+        ]
+    };
+    assert!(!handled, "既定の確定は AppKit へ任せること");
+}
+
 /// 欄を確定する (Enter・欄を離れたときと同じ経路)。
 fn commit_field(control: &NSTextField) {
     let action = control.action();
@@ -4432,6 +4461,82 @@ fn password_input_round_trips(ui: &Ui) -> Result<()> {
 
     password.set_enabled(false);
     assert!(!field.isEnabled());
+    Ok(())
+}
+
+/// 検索入力は `NSSearchField` そのもので、文字列は往復する。
+fn search_input_round_trips(ui: &Ui) -> Result<()> {
+    let search = ui.search_input()?;
+    let view = search.native_view();
+    let field = view
+        .downcast_ref::<NSSearchField>()
+        .expect("検索の欄であること");
+    assert!(field.isEditable(), "打ち込めること");
+
+    assert_eq!(search.text(), "");
+    search.set_text("なう");
+    assert_eq!(search.text(), "なう");
+    search.set_placeholder("検索");
+    assert_eq!(
+        field
+            .placeholderString()
+            .map(|s| s.to_string())
+            .unwrap_or_default(),
+        "検索"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    search.on_change({
+        let seen = seen.clone();
+        move |text| seen.borrow_mut().push(text.to_string())
+    });
+    type_into_field(field.as_ref(), "なうい");
+    assert_eq!(search.text(), "なうい");
+    assert_eq!(*seen.borrow(), vec!["なうい".to_string()]);
+
+    search.set_text("");
+    assert_eq!(search.text(), "");
+    assert_eq!(seen.borrow().len(), 1, "set_text は通知しない");
+
+    search.set_enabled(false);
+    assert!(!field.isEnabled());
+    Ok(())
+}
+
+/// 確定の通知は Enter のときだけで、打っている間は飛ばない。
+fn search_input_notifies_on_return(ui: &Ui) -> Result<()> {
+    let search = ui.search_input()?;
+    let view = search.native_view();
+    let field = view
+        .downcast_ref::<NSSearchField>()
+        .expect("検索の欄であること");
+
+    let typed = Rc::new(RefCell::new(Vec::new()));
+    let submitted = Rc::new(RefCell::new(Vec::new()));
+    search.on_change({
+        let typed = typed.clone();
+        move |text| typed.borrow_mut().push(text.to_string())
+    });
+    search.on_search({
+        let submitted = submitted.clone();
+        move |text| submitted.borrow_mut().push(text.to_string())
+    });
+
+    type_into_field(field.as_ref(), "ねこ");
+    assert_eq!(*typed.borrow(), vec!["ねこ".to_string()]);
+    assert!(submitted.borrow().is_empty(), "打つだけでは確定しない");
+
+    press_return_in_field(field.as_ref());
+    assert_eq!(*submitted.borrow(), vec!["ねこ".to_string()]);
+    assert_eq!(typed.borrow().len(), 1, "確定は打鍵の通知を増やさない");
+
+    // 確定は何度でも起きる。
+    type_into_field(field.as_ref(), "いぬ");
+    press_return_in_field(field.as_ref());
+    assert_eq!(
+        *submitted.borrow(),
+        vec!["ねこ".to_string(), "いぬ".to_string()]
+    );
     Ok(())
 }
 

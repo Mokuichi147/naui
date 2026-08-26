@@ -13,13 +13,15 @@ use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Messa
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBorderType, NSButton, NSButtonType, NSColor,
     NSControlStateValueOff, NSControlStateValueOn, NSFont, NSLayoutAttribute, NSLayoutConstraint,
-    NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSecureTextField, NSSlider,
-    NSStackView, NSStackViewDistribution, NSTextField, NSTextView,
+    NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField, NSSecureTextField,
+    NSSlider, NSStackView, NSStackViewDistribution, NSTextField, NSTextView,
     NSUserInterfaceLayoutOrientation, NSView,
 };
 use objc2_foundation::{NSArray, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString};
 
-use crate::trampoline::{ActionTarget, TextObserver, TextViewObserver};
+use crate::trampoline::{
+    ActionTarget, SearchHandlers, SearchObserver, TextObserver, TextViewObserver,
+};
 
 /// naui のウィジェットが実装する共通インタフェース。
 pub trait Widget: 'static {
@@ -312,6 +314,74 @@ impl PasswordInput {
                 .setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)))
         };
         *self.0.observer.borrow_mut() = Some(observer);
+    }
+}
+
+// ------------------------------------------------------------- SearchInput
+
+struct SearchInputInner {
+    native: Retained<NSSearchField>,
+    handlers: Rc<SearchHandlers>,
+    // NSSearchField の delegate は weak なので、こちら側で生かしておく。
+    observer: RefCell<Option<Retained<SearchObserver>>>,
+}
+
+/// 検索の入力欄 (`NSSearchField`)。
+///
+/// 虫めがねの印と、打ち始めると出る取り消しボタン (✕) は AppKit が出す。
+/// [`on_change`](SearchInput::on_change) は打つたび、
+/// [`on_search`](SearchInput::on_search) は Enter で確定したときに呼ばれる。
+#[derive(Clone)]
+pub struct SearchInput(Rc<SearchInputInner>);
+impl_widget!(SearchInput);
+
+impl SearchInput {
+    pub(crate) fn new(mtm: MainThreadMarker) -> Self {
+        let native = NSSearchField::new(mtm);
+        let this = Self(Rc::new(SearchInputInner {
+            native,
+            handlers: Rc::new(SearchHandlers::default()),
+            observer: RefCell::new(None),
+        }));
+        // デリゲートは 2 つの通知で共有するので、生成のときに一度だけ張る。
+        let observer = SearchObserver::new(mtm, this.0.handlers.clone());
+        unsafe {
+            this.0
+                .native
+                .setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)))
+        };
+        *this.0.observer.borrow_mut() = Some(observer);
+        this
+    }
+
+    /// いま入力されている文字列。
+    pub fn text(&self) -> String {
+        self.0.native.stringValue().to_string()
+    }
+
+    /// 文字列を置き換える。`on_change` は呼ばれない。
+    pub fn set_text(&self, text: &str) {
+        self.0.native.setStringValue(&NSString::from_str(text));
+    }
+
+    pub fn set_placeholder(&self, text: &str) {
+        self.0
+            .native
+            .setPlaceholderString(Some(&NSString::from_str(text)));
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.0.native.setEnabled(enabled);
+    }
+
+    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
+        self.0.handlers.set_change(f);
+    }
+
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
+        self.0.handlers.set_search(f);
     }
 }
 

@@ -7,11 +7,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
-use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, Sel};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSControl, NSControlTextEditingDelegate, NSTabView, NSTabViewDelegate, NSTabViewItem,
-    NSTextDelegate, NSTextFieldDelegate, NSTextView, NSTextViewDelegate,
+    NSControl, NSControlTextEditingDelegate, NSSearchFieldDelegate, NSTabView, NSTabViewDelegate,
+    NSTabViewItem, NSTextDelegate, NSTextFieldDelegate, NSTextView, NSTextViewDelegate,
 };
 use objc2_foundation::NSNotification;
 
@@ -76,6 +76,93 @@ define_class!(
 impl TextObserver {
     pub(crate) fn new(mtm: MainThreadMarker, f: impl FnMut(&str) + 'static) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(RefCell::new(Box::new(f) as Box<dyn FnMut(&str)>));
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// 検索欄の 2 つの通知先。
+///
+/// 打つたびの `on_change` と、Enter で確定したときの `on_search` を 1 つの
+/// デリゲートで受けるため、両方をまとめて持つ。呼び出しの間だけクロージャを
+/// 取り出すのは [`ValueHandler`] と同じ (通知の中で同じ欄を触っても
+/// 二重借用にならない)。
+#[derive(Default)]
+pub(crate) struct SearchHandlers {
+    change: RefCell<Option<Box<dyn FnMut(&str)>>>,
+    search: RefCell<Option<Box<dyn FnMut(&str)>>>,
+}
+
+impl SearchHandlers {
+    pub(crate) fn set_change(&self, f: impl FnMut(&str) + 'static) {
+        *self.change.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub(crate) fn set_search(&self, f: impl FnMut(&str) + 'static) {
+        *self.search.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn emit(slot: &RefCell<Option<Box<dyn FnMut(&str)>>>, text: &str) {
+        let Some(mut f) = slot.borrow_mut().take() else {
+            return;
+        };
+        f(text);
+        // 呼び出し中に差し替えられていたら、新しいほうを残す。
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiSearchObserver"]
+    #[ivars = Rc<SearchHandlers>]
+    pub(crate) struct SearchObserver;
+
+    unsafe impl NSObjectProtocol for SearchObserver {}
+
+    unsafe impl NSControlTextEditingDelegate for SearchObserver {
+        #[unsafe(method(controlTextDidChange:))]
+        fn control_text_did_change(&self, notification: &NSNotification) {
+            let Some(object) = notification.object() else {
+                return;
+            };
+            let Ok(control) = object.downcast::<NSControl>() else {
+                return;
+            };
+            let text = control.stringValue().to_string();
+            SearchHandlers::emit(&self.ivars().change, &text);
+        }
+
+        // Enter だけを拾うため、NSSearchField の action ではなく編集中の
+        // コマンドを見る。action は取り消しボタン (✕) でも飛ぶので、
+        // 「確定したとき」という意味からずれる。
+        #[unsafe(method(control:textView:doCommandBySelector:))]
+        fn do_command_by_selector(
+            &self,
+            control: &NSControl,
+            _text_view: &NSTextView,
+            command: Sel,
+        ) -> bool {
+            if command == sel!(insertNewline:) {
+                let text = control.stringValue().to_string();
+                SearchHandlers::emit(&self.ivars().search, &text);
+            }
+            // 既定の動作 (編集の確定) は AppKit へ任せる。
+            false
+        }
+    }
+
+    unsafe impl NSTextFieldDelegate for SearchObserver {}
+
+    unsafe impl NSSearchFieldDelegate for SearchObserver {}
+);
+
+impl SearchObserver {
+    pub(crate) fn new(mtm: MainThreadMarker, handlers: Rc<SearchHandlers>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(handlers);
         unsafe { msg_send![super(this), init] }
     }
 }

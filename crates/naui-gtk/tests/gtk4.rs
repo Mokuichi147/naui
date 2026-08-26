@@ -130,6 +130,14 @@ fn main() {
             "パスワード入力が伏せ字の欄として往復する",
             password_input_round_trips,
         ),
+        (
+            "検索入力が GtkSearchEntry として往復する",
+            search_input_round_trips,
+        ),
+        (
+            "検索入力が Enter のときだけ確定を通知する",
+            search_input_notifies_on_activate,
+        ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         (
             "打鍵が通知され、set_text は通知しない",
@@ -931,6 +939,73 @@ fn number_input_keeps_its_buttons_inside(ui: &Ui) -> Result<()> {
         min >= content && nat >= content,
         "上限で潰されない (最小 {min}px, 自然 {nat}px)"
     );
+    Ok(())
+}
+
+/// 検索入力は `GtkSearchEntry` そのもので、文字列は往復する。
+fn search_input_round_trips(ui: &Ui) -> Result<()> {
+    let search = ui.search_input()?;
+    let native: gtk::SearchEntry = search.native_widget().downcast().expect("GtkSearchEntry");
+
+    let (log, sink) = recorder::<String>();
+    search.on_change({
+        let mut sink = sink;
+        move |text: &str| sink(text.to_string())
+    });
+
+    search.set_text("なう");
+    assert_eq!(search.text(), "なう");
+    assert_eq!(native.text().as_str(), "なう");
+    assert!(log.borrow().is_empty(), "set_text は通知しない");
+
+    search.set_placeholder("検索");
+    assert_eq!(
+        native.placeholder_text().map(|t| t.to_string()),
+        Some("検索".to_string())
+    );
+
+    // 利用者の打鍵と同じく、末尾へ差し込む (位置は文字数で数える)。
+    let mut position = native.text().chars().count() as i32;
+    native.insert_text("い", &mut position);
+    assert_eq!(search.text(), "なうい");
+    assert_eq!(log.borrow().as_slice(), ["なうい"]);
+
+    search.set_enabled(false);
+    assert!(!native.is_sensitive());
+    Ok(())
+}
+
+/// 確定の通知は `activate` (Enter) のときだけで、打っている間は飛ばない。
+fn search_input_notifies_on_activate(ui: &Ui) -> Result<()> {
+    let search = ui.search_input()?;
+    let native: gtk::SearchEntry = search.native_widget().downcast().expect("GtkSearchEntry");
+
+    let (typed, typed_sink) = recorder::<String>();
+    let (submitted, submitted_sink) = recorder::<String>();
+    search.on_change({
+        let mut sink = typed_sink;
+        move |text: &str| sink(text.to_string())
+    });
+    search.on_search({
+        let mut sink = submitted_sink;
+        move |text: &str| sink(text.to_string())
+    });
+
+    // 利用者の打鍵と同じく、1 文字ずつ末尾へ差し込む。
+    let mut position = 0;
+    native.insert_text("ね", &mut position);
+    native.insert_text("こ", &mut position);
+    assert_eq!(typed.borrow().as_slice(), ["ね", "ねこ"]);
+    assert!(submitted.borrow().is_empty(), "打つだけでは確定しない");
+
+    native.emit_activate();
+    assert_eq!(submitted.borrow().as_slice(), ["ねこ"]);
+    assert_eq!(typed.borrow().len(), 2, "確定は打鍵の通知を増やさない");
+
+    // 確定は何度でも起きる。
+    search.set_text("いぬ");
+    native.emit_activate();
+    assert_eq!(submitted.borrow().as_slice(), ["ねこ", "いぬ"]);
     Ok(())
 }
 
