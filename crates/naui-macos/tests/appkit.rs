@@ -244,6 +244,18 @@ fn main() {
             expander_child_fills_the_width,
         ),
         (
+            "分割ビューがネイティブの NSSplitView に 2 区画を並べる",
+            split_view_arranges_two_panes_in_a_native_split_view,
+        ),
+        (
+            "分割ビューが指定した位置で仕切りを置き start 側の大きさを保つ",
+            split_view_keeps_the_start_size_when_the_window_grows,
+        ),
+        (
+            "分割ビューのドラッグが最小の大きさに収まり通知する",
+            split_view_drag_clamps_to_the_minimums_and_notifies,
+        ),
+        (
             "縦に長いタブの中身がスクロールで下まで届く",
             tall_tab_content_scrolls,
         ),
@@ -2059,6 +2071,142 @@ fn expander_child_fills_the_width(ui: &Ui) -> Result<()> {
         (outer.origin.x - inner.origin.x).abs() < 1.0,
         "中身が折りたたみの左端から始まること: {outer:?} / {inner:?}"
     );
+    Ok(())
+}
+
+/// 分割ビューは NSSplitView そのもので、2 つの区画を並べる。
+fn split_view_arranges_two_panes_in_a_native_split_view(ui: &Ui) -> Result<()> {
+    let split = ui.split_view(Orientation::Horizontal)?;
+    let start = ui.label("左")?;
+    let end = ui.label("右")?;
+    split.set_start(&start);
+    split.set_end(&end);
+
+    let native = split.native_split_view();
+    assert!(
+        native.isVertical(),
+        "Horizontal は区画が横に並ぶので、仕切りは縦であること"
+    );
+    let arranged = native.arrangedSubviews();
+    assert_eq!(arranged.len(), 2, "区画は 2 つであること");
+    assert!(
+        std::ptr::eq(
+            &*arranged.objectAtIndex(0) as *const _,
+            &*start.native_view() as *const _
+        ),
+        "先頭が start 側であること"
+    );
+    assert!(
+        std::ptr::eq(
+            &*arranged.objectAtIndex(1) as *const _,
+            &*end.native_view() as *const _
+        ),
+        "2 つめが end 側であること"
+    );
+    assert_eq!(split.orientation(), Orientation::Horizontal);
+    assert_eq!(
+        split.position(),
+        naui_core::DEFAULT_SPLIT_POSITION,
+        "作った直後は既定の位置であること"
+    );
+
+    let vertical = ui.split_view(Orientation::Vertical)?;
+    assert!(
+        !vertical.native_split_view().isVertical(),
+        "Vertical は区画が縦に並ぶので、仕切りは横であること"
+    );
+    Ok(())
+}
+
+/// 指定した位置で仕切りが置かれ、広がった分は end 側が受け取る。
+fn split_view_keeps_the_start_size_when_the_window_grows(ui: &Ui) -> Result<()> {
+    let window = ui.window("分割", 400.0, 300.0)?;
+    let split = ui.split_view(Orientation::Horizontal)?;
+    let start = ui.stack(Orientation::Vertical)?;
+    start.append(&ui.label("サイドバー")?);
+    let end = ui.stack(Orientation::Vertical)?;
+    end.append(&ui.label("本文")?);
+    split.set_start(&start);
+    split.set_end(&end);
+    split.set_position(150.0);
+    window.set_child(&split);
+
+    let native = split.native_split_view();
+    native.setFrameSize(NSSize::new(400.0, 300.0));
+    native.layoutSubtreeIfNeeded();
+
+    let start_width = start.native_view().frame().size.width;
+    assert!(
+        (start_width - 150.0).abs() < 1.0,
+        "指定した位置に仕切りが置かれること: {start_width}"
+    );
+
+    // ウィンドウが広がっても、start 側は指定した大きさのまま。
+    native.setFrameSize(NSSize::new(700.0, 300.0));
+    native.layoutSubtreeIfNeeded();
+    let start_width = start.native_view().frame().size.width;
+    let end_width = end.native_view().frame().size.width;
+    assert!(
+        (start_width - 150.0).abs() < 1.0,
+        "広げても start 側は同じ大きさであること: {start_width}"
+    );
+    assert!(
+        end_width > 400.0,
+        "広がった分は end 側が受け取ること: {end_width}"
+    );
+    assert!(
+        (split.position() - 150.0).abs() < 1.0,
+        "位置は変わらないこと: {}",
+        split.position()
+    );
+    Ok(())
+}
+
+/// 仕切りは最小の大きさの内側にだけ動き、動いたら通知が届く。
+fn split_view_drag_clamps_to_the_minimums_and_notifies(ui: &Ui) -> Result<()> {
+    let window = ui.window("分割", 400.0, 300.0)?;
+    let split = ui.split_view(Orientation::Horizontal)?;
+    split.set_start(&ui.label("左")?);
+    split.set_end(&ui.label("右")?);
+    split.set_min_sizes(80.0, 120.0);
+    window.set_child(&split);
+
+    let native = split.native_split_view();
+    native.setFrameSize(NSSize::new(400.0, 300.0));
+    native.layoutSubtreeIfNeeded();
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    split.on_resize({
+        let seen = seen.clone();
+        move |position| seen.borrow_mut().push(position)
+    });
+
+    split.set_position(200.0);
+    assert!(
+        seen.borrow().is_empty(),
+        "set_position では通知しないこと: {:?}",
+        seen.borrow()
+    );
+
+    split.drag_to(10.0);
+    assert!(
+        (split.position() - 80.0).abs() < 1.0,
+        "start 側の最小より内側へは行かないこと: {}",
+        split.position()
+    );
+
+    let total = 400.0 - native.dividerThickness();
+    split.drag_to(400.0);
+    assert!(
+        (split.position() - (total - 120.0)).abs() < 1.0,
+        "end 側の最小を残すこと: {} (全体 {total})",
+        split.position()
+    );
+
+    let seen = seen.borrow();
+    assert_eq!(seen.len(), 2, "動かした 2 回だけ通知されること: {seen:?}");
+    assert!((seen[0] - 80.0).abs() < 1.0, "{seen:?}");
+    assert!((seen[1] - (total - 120.0)).abs() < 1.0, "{seen:?}");
     Ok(())
 }
 

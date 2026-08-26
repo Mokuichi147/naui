@@ -26,6 +26,7 @@ mod navigation;
 mod number_input;
 mod popup;
 mod radio_group;
+mod split_view;
 mod table;
 mod time_picker;
 mod toast;
@@ -63,6 +64,7 @@ pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
+pub use split_view::SplitView;
 pub use table::Table;
 pub use time_picker::TimePicker;
 pub use toast::Toast;
@@ -142,6 +144,13 @@ impl Ui {
     /// 見出しを押して中身を出し入れするコンテナ。`text` は見出しの文字。
     pub fn expander(&self, text: &str) -> Result<Expander> {
         Expander::new(&self.document, text)
+    }
+
+    /// 2 つの区画を、動かせる仕切りで分けるコンテナ。
+    ///
+    /// `Horizontal` なら区画が横に並び、仕切りは縦になる。
+    pub fn split_view(&self, orientation: Orientation) -> Result<SplitView> {
+        SplitView::new(&self.document, orientation)
     }
 
     /// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。

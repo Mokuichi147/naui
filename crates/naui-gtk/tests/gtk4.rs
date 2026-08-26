@@ -225,6 +225,18 @@ fn main() {
             "折りたたみの set_expanded は通知しない",
             expander_set_is_silent,
         ),
+        (
+            "分割ビューがネイティブの GtkPaned に 2 区画を並べる",
+            split_view_arranges_two_panes_in_a_gtk_paned,
+        ),
+        (
+            "分割ビューの set_position は通知せず drag_to は通知する",
+            split_view_set_is_silent_and_drag_notifies,
+        ),
+        (
+            "分割ビューの最小の大きさが区画と位置に効く",
+            split_view_minimums_reach_the_panes,
+        ),
         ("ウィンドウを設定して閉じられる", window_lifecycle),
         ("ウィンドウにヘッダーバーが付く", window_has_a_header_bar),
         ("ナビバーの選択がネイティブと往復する", navbar_selection),
@@ -1679,6 +1691,123 @@ fn expander_set_is_silent(ui: &Ui) -> Result<()> {
     expander.set_expanded(false);
     assert!(!expander.is_expanded());
     assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+    Ok(())
+}
+
+fn split_view_arranges_two_panes_in_a_gtk_paned(ui: &Ui) -> Result<()> {
+    let split = ui.split_view(Orientation::Horizontal)?;
+    let native = split.native_paned();
+    assert_eq!(
+        native.orientation(),
+        gtk::Orientation::Horizontal,
+        "Horizontal は区画が横に並ぶこと"
+    );
+    assert!(
+        !native.resizes_start_child() && native.resizes_end_child(),
+        "余りは end 側が受け取ること"
+    );
+    assert!(
+        !native.shrinks_start_child() && !native.shrinks_end_child(),
+        "最小より縮ませないこと"
+    );
+
+    let start = ui.label("左")?;
+    let end = ui.label("右")?;
+    split.set_start(&start);
+    split.set_end(&end);
+    assert_eq!(
+        bin_of(&start).parent(),
+        native.start_child(),
+        "start 側は GtkPaned の始端の子に入ること"
+    );
+    assert_eq!(
+        bin_of(&end).parent(),
+        native.end_child(),
+        "end 側は GtkPaned の終端の子に入ること"
+    );
+
+    assert_eq!(split.orientation(), Orientation::Horizontal);
+    assert_eq!(split.position(), naui_core::DEFAULT_SPLIT_POSITION);
+    assert_eq!(native.position(), naui_core::DEFAULT_SPLIT_POSITION as i32);
+
+    // 差し替えると、前の区画は外れる。
+    let other = ui.label("差し替え")?;
+    split.set_start(&other);
+    assert_eq!(bin_of(&other).parent(), native.start_child());
+    assert!(
+        start
+            .native_widget()
+            .ancestor(gtk::Paned::static_type())
+            .is_none(),
+        "前の区画は外れていること"
+    );
+
+    let vertical = ui.split_view(Orientation::Vertical)?;
+    assert_eq!(
+        vertical.native_paned().orientation(),
+        gtk::Orientation::Vertical
+    );
+    Ok(())
+}
+
+fn split_view_set_is_silent_and_drag_notifies(ui: &Ui) -> Result<()> {
+    let split = ui.split_view(Orientation::Horizontal)?;
+    split.set_start(&ui.label("左")?);
+    split.set_end(&ui.label("右")?);
+    let native = split.native_paned();
+
+    let (log, sink) = recorder::<f64>();
+    split.on_resize(sink);
+
+    split.set_position(160.0);
+    assert_eq!(split.position(), 160.0);
+    assert_eq!(native.position(), 160);
+    assert!(log.borrow().is_empty(), "set_position は通知しないこと");
+
+    split.drag_to(240.0);
+    assert_eq!(split.position(), 240.0);
+    assert_eq!(native.position(), 240);
+    assert_eq!(log.borrow().as_slice(), [240.0]);
+
+    // 利用者が仕切りを動かしたときと同じ経路 (position プロパティ) でも届く。
+    native.set_position(300);
+    assert_eq!(split.position(), 300.0);
+    assert_eq!(log.borrow().as_slice(), [240.0, 300.0]);
+    Ok(())
+}
+
+fn split_view_minimums_reach_the_panes(ui: &Ui) -> Result<()> {
+    let split = ui.split_view(Orientation::Horizontal)?;
+    split.set_start(&ui.label("左")?);
+    split.set_end(&ui.label("右")?);
+    let native = split.native_paned();
+
+    let (log, sink) = recorder::<f64>();
+    split.on_resize(sink);
+    split.set_min_sizes(120.0, 90.0);
+
+    let start_child = native.start_child().expect("始端の子があること");
+    let end_child = native.end_child().expect("終端の子があること");
+    assert_eq!(
+        start_child.size_request(),
+        (120, -1),
+        "start 側の最小が区画の入れ物へ届くこと"
+    );
+    assert_eq!(end_child.size_request(), (90, -1));
+    assert!(
+        measure_width(&start_child).0 >= 120,
+        "区画が最小より小さいと申告しないこと"
+    );
+
+    // 既定の 200 は範囲の中なので動かない。
+    assert_eq!(split.position(), naui_core::DEFAULT_SPLIT_POSITION);
+    split.set_position(10.0);
+    assert_eq!(
+        split.position(),
+        120.0,
+        "start 側の最小より内側へは行かない"
+    );
+    assert!(log.borrow().is_empty(), "押し戻しは通知しないこと");
     Ok(())
 }
 
