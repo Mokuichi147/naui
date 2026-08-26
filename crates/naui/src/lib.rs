@@ -277,6 +277,39 @@
 //! # }
 //! ```
 //!
+//! 候補にない値も受け付けたいときは [`EditableComboBox`] を使う。こちらは
+//! 打ち込める入力欄で、候補は入力の補助にすぎない。**値はインデックスでは
+//! なく文字列**で、`on_change` は打鍵でも候補の選択でも呼ばれる。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let city = ui.editable_combo_box()?;
+//! city.set_items(&["東京", "大阪", "札幌"]);
+//! city.set_placeholder("都市名");
+//! city.set_text("京都"); // 候補に無い値も入る (通知はしない)
+//! city.on_change(|text| println!("{text} と入力された"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`selected`](EditableComboBox::selected) は「今の文字列とそのまま一致する
+//! 候補」を返すので、候補外の値が入っているときは `None` になる。
+//!
+//! **打った文字で候補の一覧が絞り込まれるかは環境によって違う。** naui は
+//! 一覧を自分で組み立てず、それぞれのコントロールに任せているため。
+//!
+//! | 環境 | 打った文字と候補の一覧 |
+//! | --- | --- |
+//! | Windows | 絞り込まない (一致する候補へ選択が移るだけ) |
+//! | macOS | 絞り込まない (代わりに入力欄の側が補完される) |
+//! | Linux | 絞り込まない (矢印を押すと候補が全部出る) |
+//! | Web | ブラウザが絞り込む (規則はブラウザ次第で、切れない) |
+//!
+//! どの環境でも絞り込みたいときは、`on_change` の中でアプリが `set_items` を
+//! 呼び直して候補そのものを入れ替える (Web ではさらにブラウザ側の絞り込みが
+//! 重なる)。
+//!
 //! 候補をすべて画面に出して選ばせるなら [`RadioGroup`] を使う。API は
 //! `ComboBox` と同じで、違うのは候補の見せ方だけ。
 //!
@@ -842,10 +875,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカーを含む 113 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない) を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカーを含む 116 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない) を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 108 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 111 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力を含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -861,26 +894,26 @@ pub use naui_core::{
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
-    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Slider,
-    Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui,
-    Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
+    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    SearchInput, Slider, Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
+    Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
-    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Slider,
-    Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui,
-    Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
+    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    SearchInput, Slider, Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
+    Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
-    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Slider,
-    Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui,
-    Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
+    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    SearchInput, Slider, Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
+    Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -890,10 +923,10 @@ pub use naui_windows::{
 ))]
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
-    Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Slider,
-    Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui,
-    Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
+    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
+    SearchInput, Slider, Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
+    Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1053,6 +1086,21 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     combo_box.set_enabled(true);
     combo_box.on_select(|_index: usize| {});
     combo_box.set_sizing(Sizing::fill_width());
+
+    let editable_combo_box: EditableComboBox = ui.editable_combo_box()?;
+    editable_combo_box.set_items(&["a", "b"]);
+    let _: usize = editable_combo_box.len();
+    let _: bool = editable_combo_box.is_empty();
+    let _: String = editable_combo_box.text();
+    editable_combo_box.set_text("t");
+    let _: Option<usize> = editable_combo_box.selected();
+    editable_combo_box.set_selected(0);
+    editable_combo_box.clear();
+    editable_combo_box.select(1);
+    editable_combo_box.set_placeholder("t");
+    editable_combo_box.set_enabled(true);
+    editable_combo_box.on_change(|_text: &str| {});
+    editable_combo_box.set_sizing(Sizing::fill_width());
 
     let radio_group: RadioGroup = ui.radio_group()?;
     radio_group.set_items(&["a", "b"]);
@@ -1391,6 +1439,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&button);
     stack.append(&checkbox);
     stack.append(&combo_box);
+    stack.append(&editable_combo_box);
     stack.append(&radio_group);
     stack.append(&date_picker);
     stack.append(&time_picker);

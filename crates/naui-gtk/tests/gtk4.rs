@@ -71,6 +71,18 @@ fn main() {
             combo_box_callback_is_reentrant_and_replaceable,
         ),
         (
+            "自由入力コンボボックスの文字列と候補がネイティブへ届く",
+            editable_combo_box_text_and_items,
+        ),
+        (
+            "自由入力コンボボックスのプログラム変更は通知しない",
+            editable_combo_box_programmatic_changes_are_silent,
+        ),
+        (
+            "自由入力コンボボックスの通知内で操作と差し替えができる",
+            editable_combo_box_callback_is_reentrant_and_replaceable,
+        ),
+        (
             "ラジオグループの項目と選択がネイティブへ届く",
             radio_group_items_and_selection,
         ),
@@ -690,6 +702,111 @@ fn combo_box_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
     combo.select(0);
     combo.select(99);
     assert_eq!(log.borrow().as_slice(), [2, 0]);
+    Ok(())
+}
+
+fn editable_combo_box_text_and_items(ui: &Ui) -> Result<()> {
+    let combo = ui.editable_combo_box()?;
+    assert!(combo.is_empty());
+    assert_eq!(combo.text(), "");
+    assert_eq!(combo.selected(), None);
+
+    combo.set_items(&["赤", "緑", "青"]);
+    assert_eq!(combo.len(), 3);
+    assert_eq!(combo.text(), "", "候補を入れても文字列は変わらない");
+
+    let entry = combo.native_entry();
+    let list = combo.native_list();
+    assert_eq!(list.row_at_index(3), None, "候補は 3 行");
+    let row = list.row_at_index(1).expect("2 番目の候補");
+    let label: gtk::Label = row.child().expect("行の中身").downcast().expect("GtkLabel");
+    assert_eq!(label.text().as_str(), "緑");
+
+    combo.set_text("桃");
+    assert_eq!(combo.text(), "桃");
+    assert_eq!(entry.text().as_str(), "桃");
+    assert_eq!(combo.selected(), None, "候補に無い文字列も持てる");
+
+    combo.set_selected(1);
+    assert_eq!(combo.text(), "緑");
+    assert_eq!(combo.selected(), Some(1));
+    combo.set_selected(99);
+    assert_eq!(combo.text(), "緑", "範囲外は無視する");
+
+    combo.clear();
+    assert_eq!(combo.text(), "");
+
+    combo.set_placeholder("色");
+    assert_eq!(
+        entry.placeholder_text().map(|text| text.to_string()),
+        Some("色".to_string())
+    );
+
+    combo.set_enabled(false);
+    assert!(!combo.native_widget().is_sensitive());
+    Ok(())
+}
+
+fn editable_combo_box_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
+    let combo = ui.editable_combo_box()?;
+    combo.set_items(&["A", "B", "C"]);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    combo.on_change({
+        let log = log.clone();
+        move |text: &str| log.borrow_mut().push(text.to_string())
+    });
+
+    combo.set_text("Z");
+    combo.set_selected(1);
+    combo.clear();
+    combo.set_items(&["D", "E", "F"]);
+    assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+
+    // 打ち込んだときと同じ経路 (`GtkEntry` の `changed`)。
+    combo.native_entry().set_text("Z");
+    assert_eq!(log.borrow().as_slice(), ["Z"]);
+
+    // 候補の行を押したときの経路。
+    let list = combo.native_list();
+    let row = list.row_at_index(0).expect("先頭の候補");
+    list.emit_by_name::<()>("row-activated", &[&row]);
+    assert_eq!(combo.text(), "D", "押した候補が欄へ入る");
+    assert_eq!(log.borrow().as_slice(), ["Z", "D"], "通知は 1 回だけ");
+
+    combo.select(2);
+    combo.select(99);
+    assert_eq!(log.borrow().as_slice(), ["Z", "D", "F"], "範囲外は通知しない");
+    Ok(())
+}
+
+fn editable_combo_box_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
+    let combo = ui.editable_combo_box()?;
+    combo.set_items(&["A", "B", "C"]);
+    let first = Rc::new(RefCell::new(Vec::new()));
+    let second = Rc::new(RefCell::new(Vec::new()));
+    combo.on_change({
+        let combo = combo.clone();
+        let first = first.clone();
+        let second = second.clone();
+        move |text: &str| {
+            first.borrow_mut().push(text.to_string());
+            // 通知中の操作でも二重借用せず、この変更自体は通知しない。
+            combo.set_items(&["D", "E"]);
+            combo.set_selected(1);
+            combo.on_change({
+                let second = second.clone();
+                move |text: &str| second.borrow_mut().push(text.to_string())
+            });
+        }
+    });
+
+    combo.select(1);
+    assert_eq!(first.borrow().as_slice(), ["B"]);
+    assert_eq!(combo.text(), "E");
+
+    combo.select(0);
+    assert_eq!(first.borrow().len(), 1, "古い通知先は外れること");
+    assert_eq!(second.borrow().as_slice(), ["D"]);
     Ok(())
 }
 

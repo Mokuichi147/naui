@@ -77,6 +77,30 @@ impl SelectionHandler {
     }
 }
 
+/// 文字列を受け取る通知先。
+///
+/// [`SelectionHandler`] と同じ再入対応を `&str` で行う。`ValueHandler<T>` は
+/// 借用した値を受け取れない (寿命の引数が要る) ため、別に用意している。
+#[derive(Default)]
+pub(crate) struct TextHandler(RefCell<Option<Box<dyn FnMut(&str)>>>);
+
+impl TextHandler {
+    pub(crate) fn set(&self, f: impl FnMut(&str) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub(crate) fn emit(&self, text: &str) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(text);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
 /// 値を 1 つ受け取る通知先。
 ///
 /// [`SelectionHandler`] と同じ再入対応を、インデックス以外の値でも使うための

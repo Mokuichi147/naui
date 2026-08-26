@@ -152,6 +152,42 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&search);
     pane.append(&search_status);
 
+    pane.append(&ui.label("EditableComboBox")?);
+    pane.append(&ui.label(
+        "候補から選ぶことも、候補にない値を打ち込むこともできる入力欄です。値は文字列で返ります。",
+    )?);
+    let city_status = ui.label("都市: (空)")?;
+    let city = ui.editable_combo_box()?;
+    city.set_items(&["東京", "大阪", "札幌", "福岡", "那覇"]);
+    city.set_placeholder("都市名");
+    // 入力欄なので、中身に合わせた幅を持たない。ここで決めておく。
+    city.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
+    city.on_change({
+        let city_status = city_status.clone();
+        let city = city.clone();
+        move |text| {
+            if text.is_empty() {
+                city_status.set_text("都市: (空)");
+            } else {
+                let source = match city.selected() {
+                    Some(index) => format!("候補 {index} と一致"),
+                    None => "候補にない値".to_string(),
+                };
+                city_status.set_text(&format!("都市: {text} ({source})"));
+            }
+        }
+    });
+    pane.append(&city);
+    pane.append(&city_status);
+
+    pane.append(&ui.label("選ばせない状態にもできます。")?);
+    let city_disabled = ui.editable_combo_box()?;
+    city_disabled.set_items(&["東京", "大阪"]);
+    city_disabled.set_selected(0);
+    city_disabled.set_enabled(false);
+    city_disabled.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
+    pane.append(&city_disabled);
+
     pane.append(&ui.label("NumberInput")?);
     pane.append(&ui.label("数値の入力欄です。範囲・刻み・小数桁を指定できます。")?);
     // 数値の欄は中身に合わせた幅を持たないので、ここで決めておく。
