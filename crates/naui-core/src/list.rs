@@ -126,11 +126,26 @@ impl SelectionMode {
     /// assert_eq!(SelectionMode::Single.normalize(&items, &[2, 0]), vec![0]);
     /// ```
     pub fn normalize(self, items: &[ListItem], indices: &[usize]) -> Vec<usize> {
-        let mut picked: Vec<usize> = indices
-            .iter()
-            .copied()
-            .filter(|&i| items.get(i).is_some_and(|item| item.enabled))
-            .collect();
+        self.normalize_by(indices, |i| {
+            items.get(i).is_some_and(|item| item.enabled)
+        })
+    }
+
+    /// 行が [`ListItem`] でない一覧 (テーブルなど) 向けの [`normalize`]。
+    ///
+    /// `enabled` は「その行が存在し、選べるか」を返す。範囲外の行は
+    /// `false` を返せばよい。そろえ方は [`normalize`] と同じ。
+    ///
+    /// [`normalize`]: SelectionMode::normalize
+    ///
+    /// ```
+    /// # use naui_core::SelectionMode;
+    /// let enabled = |i: usize| matches!(i, 0 | 2);
+    /// assert_eq!(SelectionMode::Multiple.normalize_by(&[2, 1, 0], enabled), vec![0, 2]);
+    /// assert_eq!(SelectionMode::Single.normalize_by(&[2, 0], enabled), vec![0]);
+    /// ```
+    pub fn normalize_by(self, indices: &[usize], mut enabled: impl FnMut(usize) -> bool) -> Vec<usize> {
+        let mut picked: Vec<usize> = indices.iter().copied().filter(|&i| enabled(i)).collect();
         picked.sort_unstable();
         picked.dedup();
         if !self.is_multiple() {

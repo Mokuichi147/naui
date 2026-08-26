@@ -18,8 +18,8 @@ use gtk::glib;
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, Theme, Time, ToolbarIcon, ToolbarItem,
-    Track, TreeItem,
+    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
+    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_gtk::{run_for_test, Ui, Widget};
 
@@ -257,6 +257,24 @@ fn main() {
         (
             "リストの通知の中からリストを操作できる",
             list_callback_can_touch_the_list,
+        ),
+        ("テーブルの行が GtkListBox に並ぶ", table_rows_are_native),
+        (
+            "テーブルの列の幅と揃えが指定どおりになる",
+            table_columns_follow_the_spec,
+        ),
+        (
+            "GtkListBox 側のテーブルの選択がクロージャへ届く",
+            table_native_selection_notifies,
+        ),
+        ("テーブルが選べない行を飛ばす", table_skips_disabled_rows),
+        (
+            "テーブルの列を差し替えても行が残る",
+            table_keeps_rows_when_columns_change,
+        ),
+        (
+            "見出しの並べ替えがボタンとして押せる",
+            table_sorting_round_trips,
         ),
         ("ツリーの行が展開に追従する", tree_rows_follow_the_expansion),
         (
@@ -1918,6 +1936,251 @@ fn list_callback_can_touch_the_list(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+// ----------------------------------------------------------------- テーブル
+
+/// 見出しの `GtkBox` と、行が並ぶ `GtkListBox`。
+fn table_parts(table: &naui_gtk::Table) -> (gtk::Box, gtk::ListBox) {
+    let root: gtk::Box = table.native_widget().downcast().expect("GtkBox");
+    let header = root
+        .first_child()
+        .expect("見出し")
+        .downcast::<gtk::Box>()
+        .expect("見出しは GtkBox");
+    (header, table.native_list_box())
+}
+
+/// 中身の `GtkLabel` を並び順に集める。
+fn table_labels(container: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
+    children(container)
+        .into_iter()
+        .filter_map(|child| child.downcast::<gtk::Label>().ok())
+        .collect()
+}
+
+/// 1 行ぶんのセルの文字。
+fn table_cells(row: &gtk::Widget) -> Vec<String> {
+    let content = row
+        .clone()
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow")
+        .child()
+        .expect("中身");
+    table_labels(&content)
+        .into_iter()
+        .map(|label| label.text().to_string())
+        .collect()
+}
+
+fn table_rows_are_native(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    assert!(table.is_empty());
+
+    table.set_columns(&TableColumn::list(["都市", "人口"]));
+    table.set_rows(&TableRow::list([
+        ["東京", "13,960,000"],
+        ["大阪", "8,838,000"],
+    ]));
+    assert_eq!(table.column_count(), 2);
+    assert_eq!(table.len(), 2);
+
+    let (header, list) = table_parts(&table);
+    let titles: Vec<String> = table_labels(&header)
+        .into_iter()
+        .map(|label| label.text().to_string())
+        .collect();
+    assert_eq!(titles, ["都市", "人口"]);
+
+    let rows = children(&list);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(table_cells(&rows[0]), ["東京", "13,960,000"]);
+
+    // 列より短い行は、足りない分が空のセルになる。
+    table.set_rows(&[TableRow::new(["札幌"])]);
+    let rows = children(&list);
+    assert_eq!(table_cells(&rows[0]), ["札幌", ""]);
+
+    // 行を差し替えると、選択も外れる。
+    table.set_selected(0);
+    assert_eq!(table.selected(), Some(0));
+    table.set_rows(&TableRow::list([["福岡", "1,613,000"]]));
+    assert_eq!(table.selected(), None);
+    Ok(())
+}
+
+fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("品名"),
+        TableColumn::new("金額").width(120.0).align(Align::End),
+    ]);
+    table.set_rows(&[TableRow::new(["珈琲", "¥480"])]);
+
+    let (header, list) = table_parts(&table);
+    let head = table_labels(&header);
+    assert_eq!(head[1].xalign(), 1.0, "右寄せの列は見出しも右へ寄ること");
+    assert_eq!(head[1].width_request(), 120, "指定した幅が入ること");
+    assert!(head[0].hexpands(), "指定の無い列だけが余りを受け取ること");
+    assert!(!head[1].hexpands());
+
+    let row = children(&list)[0]
+        .clone()
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow")
+        .child()
+        .expect("中身");
+    let cells = table_labels(&row);
+    assert_eq!(cells[1].xalign(), 1.0);
+    assert_eq!(cells[1].width_request(), 120);
+    // 見出しとセルが同じ `GtkSizeGroup` に入っていれば、幅は同じになる。
+    assert_eq!(
+        measure_width(&cells[0]).0,
+        measure_width(&head[0]).0,
+        "見出しと行の列幅がそろうこと"
+    );
+    Ok(())
+}
+
+fn table_native_selection_notifies(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["時間帯"]));
+    table.set_rows(&TableRow::list([["朝"], ["昼"], ["夜"]]));
+
+    let (log, sink) = recorder::<Vec<usize>>();
+    table.on_select({
+        let mut sink = sink;
+        move |indices: &[usize]| sink(indices.to_vec())
+    });
+
+    // GtkListBox 側で行を選ぶ (利用者がクリックしたのと同じ)。
+    let list = table.native_list_box();
+    let row = list.row_at_index(2).expect("3 行目");
+    list.select_row(Some(&row));
+    assert_eq!(table.selection(), vec![2]);
+    assert_eq!(log.borrow().as_slice(), [vec![2]]);
+
+    // プログラムからの変更は通知しない。
+    table.set_selection(&[0]);
+    assert_eq!(table.selection(), vec![0]);
+    assert_eq!(log.borrow().len(), 1);
+
+    // select は通知する。複数選択では 0 件にもなる。
+    table.set_selection_mode(SelectionMode::Multiple);
+    table.select_many(&[0, 2]);
+    table.select_many(&[]);
+    assert_eq!(log.borrow().as_slice(), [vec![2], vec![0, 2], vec![]]);
+    Ok(())
+}
+
+fn table_skips_disabled_rows(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["状態", "件数"]));
+    table.set_rows(&[
+        TableRow::new(["下書き", "3"]),
+        TableRow::new(["送信中", "1"]).enabled(false),
+        TableRow::new(["送信済み", "12"]),
+    ]);
+
+    table.select(1);
+    assert!(table.selection().is_empty(), "選べない行は選ばれないこと");
+    table.select(2);
+    assert_eq!(table.selection(), vec![2]);
+
+    // GTK4 自身にも「この行は選べない」と伝わっている。
+    let list = table.native_list_box();
+    let row = list.row_at_index(1).expect("2 行目");
+    assert!(!row.is_selectable());
+    assert!(!row.is_sensitive());
+    Ok(())
+}
+
+fn table_keeps_rows_when_columns_change(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["都市", "人口", "面積"]));
+    table.set_rows(&TableRow::list([["東京", "13,960,000", "2,194"]]));
+
+    table.set_selected(0);
+    table.set_columns(&TableColumn::list(["都市", "人口"]));
+    assert_eq!(table.column_count(), 2);
+    assert_eq!(table.len(), 1, "行はそのまま残ること");
+    assert_eq!(table.selection(), vec![0], "選択もそのまま残ること");
+
+    let (header, list) = table_parts(&table);
+    assert_eq!(children(&header).len(), 2, "古い見出しが残らないこと");
+    assert_eq!(table_cells(&children(&list)[0]), ["東京", "13,960,000"]);
+    Ok(())
+}
+
+fn table_sorting_round_trips(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("都市").sortable(true),
+        TableColumn::new("人口").align(Align::End).sortable(true),
+        TableColumn::new("備考"),
+    ]);
+    table.set_rows(&TableRow::list([
+        ["東京", "13,960,000", ""],
+        ["大阪", "8,838,000", ""],
+    ]));
+    assert_eq!(table.sort(), None, "作った直後は指定が無いこと");
+
+    let (header, _) = table_parts(&table);
+    let cells = children(&header);
+    // 並べ替えられる列だけが押せる (`GtkButton`)。
+    assert!(cells[0].is::<gtk::Button>());
+    assert!(cells[1].is::<gtk::Button>());
+    assert!(
+        cells[2].is::<gtk::Label>(),
+        "sortable でない列は押せないこと"
+    );
+
+    let (log, sink) = recorder::<(usize, SortOrder)>();
+    table.on_sort({
+        let mut sink = sink;
+        move |column, order| sink((column, order))
+    });
+
+    // 利用者が見出しを押したのと同じ経路。
+    let button = cells[1]
+        .clone()
+        .downcast::<gtk::Button>()
+        .expect("GtkButton");
+    button.emit_clicked();
+    assert_eq!(table.sort(), Some((1, SortOrder::Ascending)));
+    assert_eq!(log.borrow().as_slice(), [(1, SortOrder::Ascending)]);
+    // 見出しには向きが出る。
+    let label = button
+        .child()
+        .expect("見出しの中身")
+        .downcast::<gtk::Label>()
+        .expect("GtkLabel");
+    assert!(label.text().ends_with('▲'), "昇順の指標が出ること");
+
+    // もう一度押すと向きが反転する。
+    button.emit_clicked();
+    assert_eq!(table.sort(), Some((1, SortOrder::Descending)));
+    assert!(label.text().ends_with('▼'));
+    assert_eq!(log.borrow().len(), 2);
+
+    // 別の列を押すと、その列の昇順から始まる。
+    cells[0]
+        .clone()
+        .downcast::<gtk::Button>()
+        .expect("GtkButton")
+        .emit_clicked();
+    assert_eq!(table.sort(), Some((0, SortOrder::Ascending)));
+    assert_eq!(label.text(), "人口", "前の列の指標は外れること");
+
+    // set_sort は通知しない。
+    table.set_sort(Some((1, SortOrder::Descending)));
+    assert_eq!(table.sort(), Some((1, SortOrder::Descending)));
+    assert_eq!(log.borrow().len(), 3, "set_sort は通知しないこと");
+
+    // 並べ替えられない列を指すと、指定は外れる。
+    table.set_sort(Some((2, SortOrder::Ascending)));
+    assert_eq!(table.sort(), None);
+    Ok(())
+}
+
 // --------------------------------------------------------------------- ツリー
 
 fn tree_box_of(tree: &naui_gtk::Tree) -> gtk::ListBox {
@@ -2381,7 +2644,10 @@ fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     toast.show();
     assert!(toast.is_visible());
     let native = toast.native_toast().expect("AdwToast");
-    assert_eq!(native.title().map(|t| t.to_string()), Some("保存しました".into()));
+    assert_eq!(
+        native.title().map(|t| t.to_string()),
+        Some("保存しました".into())
+    );
     assert_eq!(
         native.button_label().map(|l| l.to_string()),
         Some("元に戻す".into())
@@ -2391,7 +2657,10 @@ fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     // 出したまま書き換えると、出ている AdwToast がその場で変わる。
     toast.set_message("書き出しました");
     toast.set_action("");
-    assert_eq!(native.title().map(|t| t.to_string()), Some("書き出しました".into()));
+    assert_eq!(
+        native.title().map(|t| t.to_string()),
+        Some("書き出しました".into())
+    );
     assert_eq!(native.button_label(), None, "空文字列でボタンが外れること");
 
     toast.dismiss();

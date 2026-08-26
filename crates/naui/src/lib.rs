@@ -601,6 +601,80 @@
 //! 開閉は項目ごとに覚えられるので、親を閉じてから開き直すと、中の開閉も
 //! 元どおりに出てくる (macOS の Finder と同じ)。
 //!
+//! ## テーブル
+//!
+//! [`Table`] は列見出しを持つ表で、自分でスクロールする。列は
+//! [`TableColumn`]、行は [`TableRow`] で、**行の識別はリストと同じく
+//! インデックス**。選択の通知も行のインデックスで返る。
+//!
+//! ```no_run
+//! # use naui::{Align, Length, Result, Sizing, TableColumn, TableRow, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let table = ui.table()?;
+//! table.set_columns(&[
+//!     TableColumn::new("都市").sortable(true),               // 見出しを押して並べ替え
+//!     TableColumn::new("人口").width(120.0).align(Align::End), // 幅を固定して右寄せ
+//! ]);
+//! table.set_rows(&TableRow::list([
+//!     ["東京", "13,960,000"],
+//!     ["大阪", "8,838,000"],
+//! ]));
+//! table.on_select(|indices| println!("{indices:?} が選ばれた"));
+//!
+//! // リストと同じく高さを自分では決めないので、指定しておく。
+//! table.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(200.0)));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `Table` | 2 行の `Grid` + `ListBox` (行は `Grid`) | `NSTableView` + `NSScrollView` | `GtkListBox` + `GtkSizeGroup` | `<table role="grid">` |
+//!
+//! 選択のふるまいは `List` と同じで、[`SelectionMode`] で単一と複数を選べる。
+//! `set_selection` / `set_selected` / `clear_selection` は通知せず、
+//! `select` / `select_many` はユーザー操作と同じく通知する。
+//! [`TableRow::enabled`] が `false` の行は選べない。
+//!
+//! [`TableColumn::width`] を指定しない列だけで、余った幅を分け合う。
+//! セルに置けるのは文字だけで、任意のウィジェットは置けない。**列の幅を
+//! ドラッグで変えられるのは macOS だけ** (`NSTableView` が持つ機能で、
+//! 他の環境には対応する標準コントロールが無い)。
+//!
+//! ### 見出しからの並べ替え
+//!
+//! [`TableColumn::sortable`] を立てた列は、見出しを押して並べ替えられる。
+//! 押されると向きが `Ascending` → `Descending` → … と反転し、指標
+//! (macOS は `NSTableView` の ▲▼、ほかは見出しに付く矢印と `aria-sort`)
+//! も naui が出す。
+//!
+//! **並べ替えそのものは naui では行わない。** セルは文字列なので、それが
+//! 数値なのか日付なのかを知っているのはアプリだけだからだ。通知を受けたら、
+//! アプリが自分のデータを並べ替えて [`Table::set_rows`] で渡し直す。
+//!
+//! ```no_run
+//! # use naui::{Result, SortOrder, TableRow, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! # let table = ui.table()?;
+//! # let mut rows: Vec<TableRow> = Vec::new();
+//! table.on_sort(move |column, order| {
+//!     rows.sort_by(|a, b| {
+//!         let ordering = a.cell(column).cmp(b.cell(column));
+//!         match order {
+//!             SortOrder::Ascending => ordering,
+//!             SortOrder::Descending => ordering.reverse(),
+//!         }
+//!     });
+//!     // 並べ替えた行を渡し直す (選択は外れるので、必要なら選び直す)。
+//!     // table.set_rows(&rows);
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`Table::set_sort`] で通知せずに指標だけを動かせる (起動時の既定の
+//! 並び順を見せるときに使う)。[`Table::sort`] でいまの指定を読める。
+//!
 //! ## ファイルとフォルダーの選択
 //!
 //! [`FilePicker`] はボタン 1 つで、押すとその環境の標準のファイル選択が開く
@@ -741,10 +815,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカーを含む 102 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
-//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカーを含む) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカーを含む) を実行確認。GTK4 の実コントロールに対する自動テスト 100 件 (スイッチ・色ピッカー・時刻ピッカーを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | macOS | 実行・自動テストあり (コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカーを含む 110 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替えを確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブルを含む) を実行確認。GTK4 の実コントロールに対する自動テスト 106 件 (スイッチ・色ピッカー・時刻ピッカー・テーブルを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -753,8 +827,8 @@ pub use naui_core::{
     with_default_extension, Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem,
     NumberSpec, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
-    SelectionMode, Settings, Sizing, Theme, Time, ToastSpec, ToolbarIcon, ToolbarItem, Track,
-    TreeItem,
+    SelectionMode, Settings, Sizing, SortOrder, TableColumn, TableRow, Theme, Time, ToastSpec,
+    ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -762,24 +836,24 @@ pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
     Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
-    Widget, Window,
+    Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
     Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
-    Widget, Window,
+    Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
     Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
-    Widget, Window,
+    Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -791,8 +865,8 @@ pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu, Navbar, NumberInput,
     Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll, Slider, Spacer, Stack,
-    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
-    Widget, Window,
+    Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video,
+    WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。

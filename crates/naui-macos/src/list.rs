@@ -233,7 +233,7 @@ impl ListSource {
 }
 
 /// テーブルの選択を昇順の並びとして読み出す。
-fn selected_indices(table: &NSTableView, len: usize) -> Vec<usize> {
+pub(crate) fn selected_indices(table: &NSTableView, len: usize) -> Vec<usize> {
     let indexes = table.selectedRowIndexes();
     (0..len).filter(|&i| indexes.containsIndex(i)).collect()
 }

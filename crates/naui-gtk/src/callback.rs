@@ -10,7 +10,7 @@
 
 use std::cell::RefCell;
 
-use naui_core::{Error, FileEntry};
+use naui_core::{Error, FileEntry, SortOrder};
 
 /// クロージャ 1 つぶんの置き場。
 type Slot<F> = RefCell<Option<Box<F>>>;
@@ -96,6 +96,30 @@ borrowed_notifier!(
     TextNotifier,
     &str
 );
+
+/// 並べ替えが変わった列と、その向きを受け取るコールバック。
+///
+/// 値を 2 つ受け取るので、[`borrowed_notifier!`] ではなく手で書いている。
+#[derive(Default)]
+pub(crate) struct SortNotifier(Slot<dyn FnMut(usize, SortOrder)>);
+
+impl SortNotifier {
+    pub(crate) fn set(&self, f: impl FnMut(usize, SortOrder) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// 呼び出しの間だけクロージャを取り出す ([`emit`] と同じ形)。
+    pub(crate) fn emit(&self, column: usize, order: SortOrder) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(column, order);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
 
 /// 開閉が変わった項目のパスと、変わった後の状態を受け取るコールバック。
 ///
