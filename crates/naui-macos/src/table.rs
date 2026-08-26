@@ -25,7 +25,8 @@ use objc2_app_kit::{
     NSTableViewGridLineStyle, NSTableViewStyle, NSTextAlignment, NSTextField, NSView,
 };
 use objc2_foundation::{
-    NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSortDescriptor, NSString,
+    NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSSortDescriptor,
+    NSString,
 };
 
 use crate::list::{selected_indices, SelectionHandler};
@@ -83,6 +84,76 @@ fn sort_from(table: &NSTableView) -> Option<(usize, SortOrder)> {
             false => SortOrder::Descending,
         },
     ))
+}
+
+/// 幅を指定していない列へ、余った幅を均等に配る。
+///
+/// AppKit の `columnAutoresizingStyle` は**幅を固定した列があると配りきれない**。
+/// 比率で広げようとして、`minWidth == maxWidth` の列は動かせず、その分が
+/// 余ったままになる (表の右側が空く)。表の幅は naui が決めているので、
+/// 配り方もこちらで決める。
+fn distribute_widths(table: &NSTableView, columns: &[TableColumn]) {
+    let available = table.frame().size.width;
+    if available <= 0.0 {
+        return;
+    }
+    let flexible: Vec<usize> = columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| column.width.is_none())
+        .map(|(index, _)| index)
+        .collect();
+    if flexible.is_empty() {
+        return;
+    }
+    // AppKit は「列の幅の合計 + 列の間の余白」を表の幅として並べる。
+    let fixed: f64 = columns.iter().filter_map(|column| column.width).sum();
+    let spacing = table.intercellSpacing().width * columns.len() as f64;
+    let each = ((available - fixed - spacing) / flexible.len() as f64).max(MIN_COLUMN_WIDTH);
+
+    let native = table.tableColumns();
+    for &index in &flexible {
+        if index >= native.len() {
+            continue;
+        }
+        let column = native.objectAtIndex(index);
+        // 同じ幅を書き戻すと `setFrameSize:` が何度も呼ばれて回り続けるので、
+        // 変わるときだけ書く。
+        if (column.width() - each).abs() > 0.5 {
+            column.setWidth(each);
+        }
+    }
+}
+
+/// 幅を配るために持っておく状態。ハンドルと共有する。
+struct TableViewState {
+    columns: Rc<RefCell<Vec<TableColumn>>>,
+}
+
+define_class!(
+    #[unsafe(super(NSTableView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiTableView"]
+    #[ivars = TableViewState]
+    /// 幅が変わるたびに、余りを列へ配り直す `NSTableView`。
+    struct TableView;
+
+    unsafe impl NSObjectProtocol for TableView {}
+
+    impl TableView {
+        #[unsafe(method(setFrameSize:))]
+        fn set_frame_size(&self, size: NSSize) {
+            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+            distribute_widths(self, &self.ivars().columns.borrow());
+        }
+    }
+);
+
+impl TableView {
+    fn new(mtm: MainThreadMarker, state: TableViewState) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(state);
+        unsafe { msg_send![super(this), init] }
+    }
 }
 
 /// データソース兼デリゲートが見る状態。ハンドルと共有する。
@@ -273,7 +344,7 @@ fn cell_view(mtm: MainThreadMarker, text: &str, align: Align, enabled: bool) -> 
 struct TableInner {
     /// 外から見えるビュー。テーブルはこのスクロールビューごと 1 つのウィジェット。
     scroll: Retained<NSScrollView>,
-    table: Retained<NSTableView>,
+    table: Retained<TableView>,
     columns: Rc<RefCell<Vec<TableColumn>>>,
     rows: Rc<RefCell<Vec<TableRow>>>,
     mode: Cell<SelectionMode>,
@@ -307,7 +378,13 @@ crate::widgets::impl_sizing!(Table);
 
 impl Table {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
-        let table = NSTableView::new(mtm);
+        let columns: Rc<RefCell<Vec<TableColumn>>> = Rc::new(RefCell::new(Vec::new()));
+        let table = TableView::new(
+            mtm,
+            TableViewState {
+                columns: columns.clone(),
+            },
+        );
         // 見出しが端まで伸びる、表向きの見た目。
         table.setStyle(NSTableViewStyle::FullWidth);
         table.setHeaderView(Some(&NSTableHeaderView::new(mtm)));
@@ -325,7 +402,6 @@ impl Table {
         );
         table.setRowHeight(row_height(mtm));
 
-        let columns: Rc<RefCell<Vec<TableColumn>>> = Rc::new(RefCell::new(Vec::new()));
         let rows: Rc<RefCell<Vec<TableRow>>> = Rc::new(RefCell::new(Vec::new()));
         let handler = SelectionHandler::default();
         let sort_handler = SortHandler::default();
@@ -413,6 +489,9 @@ impl Table {
             // 列を作り直すと指定も落ちるので、並べ替えの指標を戻す。
             this.apply_sort(sorted);
         });
+        // 大きさが決まっていれば、この場で余りを配る。まだなら
+        // `setFrameSize:` が決まった時点で配る。
+        distribute_widths(&self.0.table, &self.0.columns.borrow());
     }
 
     /// 列数。
@@ -533,7 +612,8 @@ impl Table {
     ///
     /// 並べ替えや列の見た目など、共通 API に無い設定はここから行う。
     pub fn native_table(&self) -> Retained<NSTableView> {
-        self.0.table.clone()
+        let table: &NSTableView = &self.0.table;
+        table.retain()
     }
 
     /// 指定された選択を、この表で意味を持つ形にそろえる。

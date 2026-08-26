@@ -156,6 +156,10 @@ fn main() {
             "見出しの並べ替えがネイティブと往復する",
             table_sorting_round_trips,
         ),
+        (
+            "列を入れ替えても幅いっぱいを使い続ける",
+            table_columns_keep_filling_the_width,
+        ),
         ("ツリーの行が展開に追従する", tree_rows_follow_the_expansion),
         (
             "ツリーの選択がネイティブと往復する",
@@ -2661,6 +2665,83 @@ fn list_rows_are_native_views(ui: &Ui) -> Result<()> {
 }
 
 // ------------------------------------------------------------------ Table
+/// 列の合計幅 (列の間の余白こみ) と、表そのものの幅。
+fn table_widths(table: &naui_macos::Table) -> (f64, f64) {
+    let native = table.native_table();
+    let columns = native.tableColumns();
+    let total: f64 = (0..columns.len())
+        .map(|i| columns.objectAtIndex(i).width())
+        .sum();
+    let spacing = native.intercellSpacing().width * columns.len() as f64;
+    (total + spacing, native.frame().size.width)
+}
+
+/// 列を減らして戻しても、幅を指定していない列が余りを受け取り続ける。
+///
+/// AppKit の列の自動調整は、幅を固定した列があると余りを配りきれない
+/// (表の右側が空いたままになる)。naui が配り直していることを確かめる。
+fn table_columns_keep_filling_the_width(ui: &Ui) -> Result<()> {
+    let wide = vec![
+        TableColumn::new("都市"),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+        TableColumn::new("面積").width(100.0).align(Align::End),
+    ];
+    let narrow = vec![
+        TableColumn::new("都市"),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+    ];
+
+    let table = ui.table()?;
+    table.set_columns(&wide);
+    table.set_rows(&TableRow::list([["東京", "13,960,000", "2,194"]]));
+    table.set_sizing(Sizing::fixed(400.0, 120.0));
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&table);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(500.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+
+    let (total, width) = table_widths(&table);
+    assert!(
+        width > 0.0 && (total - width).abs() < 2.0,
+        "はじめは幅いっぱいを使うこと: 列の合計 {total} / 表の幅 {width}"
+    );
+
+    // 列を減らして、戻す (ギャラリーの「面積を隠す / 表示」と同じ)。
+    table.set_columns(&narrow);
+    root.layoutSubtreeIfNeeded();
+    let (total, width) = table_widths(&table);
+    assert!(
+        (total - width).abs() < 2.0,
+        "列を減らしても幅いっぱいを使うこと: 列の合計 {total} / 表の幅 {width}"
+    );
+
+    table.set_columns(&wide);
+    root.layoutSubtreeIfNeeded();
+    let (total, width) = table_widths(&table);
+    assert!(
+        (total - width).abs() < 2.0,
+        "列を戻しても幅いっぱいを使うこと: 列の合計 {total} / 表の幅 {width}"
+    );
+
+    // 表そのものが広がったときも、余りは指定の無い列が受け取る。
+    table.set_sizing(Sizing::fixed(560.0, 120.0));
+    root.setFrameSize(NSSize::new(700.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    let (total, width) = table_widths(&table);
+    assert!(
+        (total - width).abs() < 2.0,
+        "広げた分も受け取ること: 列の合計 {total} / 表の幅 {width}"
+    );
+
+    // 幅を指定した列は動かない。
+    let columns = table.native_table().tableColumns();
+    assert_eq!(columns.objectAtIndex(1).width(), 120.0);
+    assert_eq!(columns.objectAtIndex(2).width(), 100.0);
+    Ok(())
+}
+
 /// 見出しを押した並べ替えが、AppKit と往復する。
 fn table_sorting_round_trips(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
