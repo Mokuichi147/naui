@@ -82,13 +82,6 @@ cargo run -p gallery
   `Dialog` の Esc 操作
 - `FileSaver`: macOS のみ実機と自動テストで確認しています。Windows・Linux・Web
   での実行は未確認です。
-- Windows / Linux / Web: `Tree` の実機・ブラウザでの実行 (macOS では
-  統合テストと Gallery で確認済み。Linux 向けの統合テストは用意してあります)
-- Windows / Linux: `DatePicker` の実機での実行 (macOS は統合テストと Gallery、
-  Web はブラウザで確認済み。Linux 向けの統合テストは用意してあります)
-- Windows / Linux: `NumberInput` と `PasswordInput` の実機での実行 (macOS は
-  統合テストと Gallery、Web はブラウザで値の丸め・範囲・通知まで確認済み。
-  Linux 向けの統合テストは用意してあります)
 
 </details>
 
