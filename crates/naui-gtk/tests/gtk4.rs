@@ -231,6 +231,10 @@ fn main() {
             label_wraps_only_when_asked,
         ),
         (
+            "折り返す中身は幅から高さが決まると親へ伝わる",
+            wrapping_child_is_measured_by_width,
+        ),
+        (
             "分割ビューがネイティブの GtkPaned に 2 区画を並べる",
             split_view_arranges_two_panes_in_a_gtk_paned,
         ),
@@ -424,6 +428,12 @@ fn measure_width(widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
 /// 高さの (最小, 自然な大きさ)。
 fn measure_height(widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
     let (min, nat, _, _) = widget.as_ref().measure(gtk::Orientation::Vertical, -1);
+    (min, nat)
+}
+
+/// 幅を決めたときの高さの (最小, 自然な大きさ)。
+fn measure_height_for(widget: &impl IsA<gtk::Widget>, width: i32) -> (i32, i32) {
+    let (min, nat, _, _) = widget.as_ref().measure(gtk::Orientation::Vertical, width);
     (min, nat)
 }
 
@@ -792,7 +802,11 @@ fn editable_combo_box_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
 
     combo.select(2);
     combo.select(99);
-    assert_eq!(log.borrow().as_slice(), ["Z", "D", "F"], "範囲外は通知しない");
+    assert_eq!(
+        log.borrow().as_slice(),
+        ["Z", "D", "F"],
+        "範囲外は通知しない"
+    );
     Ok(())
 }
 
@@ -1729,6 +1743,48 @@ fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
     label.set_wrap(false);
     assert!(!native.wraps(), "何度でも切り替えられること");
     assert_eq!(native.ellipsize(), pango::EllipsizeMode::End);
+    Ok(())
+}
+
+/// 折り返す中身を包んだ入れ物は、「幅が決まってから高さが決まる」と申告する。
+///
+/// これが伝わらないと、親は幅を渡さずに高さを尋ね、**折り返す前の 1 行ぶん**
+/// しか高さを配らない。狭い区画 (`SplitView` など) に入れた説明文が、折り返した
+/// 分だけはみ出して重なって見えるのはこれが原因。
+fn wrapping_child_is_measured_by_width(ui: &Ui) -> Result<()> {
+    let text = "これはとても長い説明の文章で、狭い幅には 1 行で収まりません。";
+    let label = ui.label(text)?;
+    label.set_wrap(true);
+    label.set_sizing(Sizing::fill_width());
+    assert_eq!(
+        bin_of(&label).request_mode(),
+        gtk::SizeRequestMode::HeightForWidth,
+        "入れ物が中身の測り方を伝えること"
+    );
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&label);
+    assert_eq!(
+        bin_of(&stack).request_mode(),
+        gtk::SizeRequestMode::HeightForWidth,
+        "並べる入れ物にも伝わること"
+    );
+
+    // 狭い幅を渡すと、折り返した分だけ高さが増える。
+    let (_, wide) = measure_height_for(&bin_of(&stack), 400);
+    let (_, narrow) = measure_height_for(&bin_of(&stack), 120);
+    assert!(narrow > wide, "狭いほど高くなること: {wide} -> {narrow}");
+
+    // 幅に上限があるなら、それより広い幅で尋ねられても上限の幅で折り返す。
+    let capped = ui.label(text)?;
+    capped.set_wrap(true);
+    capped.set_sizing(Sizing::fill_width().max_width(120.0));
+    let (_, asked_wide) = measure_height_for(&bin_of(&capped), 400);
+    let (_, at_cap) = measure_height_for(&bin_of(&capped), 120);
+    assert_eq!(
+        asked_wide, at_cap,
+        "上限までしか配られないので、上限の幅で測ること"
+    );
     Ok(())
 }
 
