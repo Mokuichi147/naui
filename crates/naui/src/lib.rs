@@ -871,6 +871,121 @@
 //! 同じ決まり)。時間の刻みは Linux だけ**秒**なので、1 秒未満の指定は
 //! 1 秒になる。
 //!
+//! ## 別スレッドと非同期
+//!
+//! ウィジェットのハンドルは `Rc` を持つので**別スレッドへは送れない**。
+//! 重い処理を別のスレッドでやって画面を書き換えたいときは、
+//! **受け取るクロージャを UI スレッド側に据え、送る側だけをスレッドへ渡す**。
+//! 入り口は [`Ui::tasks`] で、返る [`Tasks`] は clone してコールバックへ
+//! 持ち込める。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn heavy_work() -> String { String::new() }
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let label = ui.label("待機中")?;
+//! let sender = ui.tasks().channel({
+//!     let label = label.clone();
+//!     move |text: String| label.set_text(&text) // UI スレッドで呼ばれる
+//! });
+//! std::thread::spawn(move || {
+//!     let _ = sender.send(heavy_work());        // 別スレッドから
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`Sender`] は `Send + Sync + Clone` なので、複数のスレッドから同じ受け口へ
+//! 送れる。同じチャネルへ送った値は**送った順に**届く (チャネルが複数あるとき、
+//! チャネルをまたいだ順序は決まっていない)。[`Sender::send`] はその場では
+//! クロージャを呼ばず、UI スレッドの手が空いてから届く。戻り値の `Ok` は
+//! 「値を受け取り、UI への配送が予約された」の意味で、配送されたことの保証では
+//! ない。naui の UI 実行環境が終わった後は `Err` になる
+//! (ブラウザにはアプリの終了が無いので、そこでは常に `Ok`)。
+//!
+//! ハンドラの中から非同期処理を始めたいときは [`Tasks::spawn`] で future を回す。
+//! **future は `Send` でなくてよい**ので、ウィジェットのハンドルをそのまま
+//! 持ち込める。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # async fn fetch() -> String { String::new() }
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let label = ui.label("待機中")?;
+//! let button = ui.button("読み込む")?;
+//! button.on_click({
+//!     let tasks = ui.tasks();
+//!     let label = label.clone();
+//!     move || {
+//!         let label = label.clone();
+//!         tasks.spawn(async move { label.set_text(&fetch().await); });
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! **naui は async ランタイムを持ち込まない。** [`Tasks::spawn`] は UI スレッドの
+//! イベントループの上で future を進めるだけの小さな実行器で、tokio などは
+//! 要らない。逆に言うと、**future の中でブロッキング処理をすると画面が止まる**。
+//! 重い処理は `std::thread::spawn` と [`Tasks::channel`] へ出す。
+//!
+//! また、**[`Tasks::spawn`] は汎用ランタイムの代わりにはならない。** naui が
+//! 引き受けるのは「future を UI スレッドで poll し、その `Waker` で再び poll する」
+//! ところまでで、特定のランタイムの実行器やリアクターを必要とする future
+//! (tokio の I/O など) が動くことは保証しない。それらは**そのランタイムで動かし、
+//! 結果だけを [`Sender`] で画面へ戻す**。
+//!
+//! ```ignore
+//! let sender = ui.tasks().channel(move |result: String| label.set_text(&result));
+//! tokio::spawn(async move {
+//!     let result = tokio_specific_operation().await;
+//!     let _ = sender.send(result);
+//! });
+//! ```
+//!
+//! [`Task`] を落としてもタスクは止まらない。押すたびに前の処理を打ち切りたい
+//! なら、取っ手を持っておいて次のときに [`Task::cancel`] を呼ぶ。
+//!
+//! ```no_run
+//! # use naui::{Result, Task, Ui};
+//! # use std::cell::RefCell;
+//! # use std::rc::Rc;
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let running: Rc<RefCell<Option<Task>>> = Rc::new(RefCell::new(None));
+//! let button = ui.button("やり直す")?;
+//! button.on_click({
+//!     let tasks = ui.tasks();
+//!     let running = running.clone();
+//!     move || {
+//!         if let Some(task) = running.borrow_mut().take() {
+//!             task.cancel();
+//!         }
+//!         *running.borrow_mut() = Some(tasks.spawn(async {}));
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! 投函先は環境ごとに違うが、**必ず後回しになる**ところは同じ。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 投函先 | `DispatcherQueue.TryEnqueue` | main queue | `g_idle_add` | microtask キュー |
+//!
+//! **Web (wasm) にはスレッドが無い。** `std::thread::spawn` は使えないので、
+//! 送る側は [`Tasks::spawn`] で回す future の中に置く。Web Worker は別の
+//! JavaScript 実行環境なので、[`Sender`] をそこへ渡すことはできない
+//! (`postMessage` で橋を架け、受けた側で `send` を呼ぶ形になる)。
+//! [`Tasks`] の API 自体は 4 環境で同じなので `cfg` の書き分けは要らないが、
+//! `std::thread::spawn` を含むコードはそのままでは Web で動かない。
+//!
+//! クロージャや future の中で panic しても、その場で止めるだけでアプリは
+//! 巻き戻さない (WinRT / GLib / libdispatch の境界を越えて巻き戻せないため、
+//! 4 環境そろえてこの形にしてある)。panic の内容そのものは、いつもどおり
+//! 標準エラー出力へ出る。
+//!
 //! ## 検証状況
 //!
 //! | 環境 | 状態 |
@@ -887,8 +1002,8 @@ pub use naui_core::{
     with_default_extension, Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem,
     NumberSpec, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
-    SelectionMode, Settings, Sizing, SortOrder, TableColumn, TableRow, Theme, Time, ToastSpec,
-    ToolbarIcon, ToolbarItem, Track, TreeItem,
+    SelectionMode, Sender, Settings, Sizing, SortOrder, TableColumn, TableRow, Task, Tasks, Theme,
+    Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -1461,6 +1576,19 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&saver);
     stack.append(&expander);
     window.set_child(&stack);
+
+    // --- 別スレッドと非同期 -----------------------------------------------
+    let tasks: Tasks = ui.tasks();
+    let _: Tasks = tasks.clone();
+
+    let sender: Sender<String> = tasks.channel(|_value: String| {});
+    let _: Sender<String> = sender.clone();
+    let _: Result<()> = sender.send(String::new());
+    let _: bool = sender.is_open();
+
+    let task: Task = tasks.spawn(async {});
+    let _: bool = task.is_finished();
+    task.cancel();
 
     ui.quit();
     Ok(())

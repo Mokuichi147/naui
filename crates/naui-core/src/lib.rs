@@ -1,25 +1,30 @@
 //! # naui-core
 //!
-//! バックエンド (AppKit / WinUI 3 / GTK4 / DOM) に依存しない値型だけを置く。
+//! バックエンド (AppKit / WinUI 3 / GTK4 / DOM) に依存しない値型と、
+//! バックエンドに依らない受け渡し (チャネル / タスク) を置く。
 //! ウィジェットそのものは各バックエンドが OS のネイティブコントロールとして
 //! 実装するため、ここには描画もレイアウト計算も存在しない。
 
 #![forbid(unsafe_code)]
 
+mod channel;
 mod color;
 mod datetime;
 mod dialog;
 mod file;
 mod layout;
 mod list;
+mod main_thread;
 pub mod media;
 mod number;
 mod popup;
 mod table;
+mod task;
 mod toast;
 mod toolbar;
 mod tree;
 
+pub use channel::Sender;
 pub use color::Color;
 pub use datetime::{days_in_month, is_leap_year, DatePickerMode, DateTime, Time};
 pub use dialog::{DialogButtons, DialogResponse};
@@ -29,10 +34,12 @@ pub use file::{
 };
 pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
 pub use list::{ListItem, SelectionMode};
+pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
 pub use number::NumberSpec;
 pub use popup::PopupItem;
 pub use table::{SortOrder, TableColumn, TableRow};
+pub use task::Task;
 pub use toast::ToastSpec;
 pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;

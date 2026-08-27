@@ -19,6 +19,7 @@ mod file_picker;
 mod file_saver;
 mod layout;
 mod list;
+mod main_thread;
 mod media;
 mod menu_bar;
 mod navigation;
@@ -38,7 +39,7 @@ mod window;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Theme};
+use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
@@ -92,6 +93,8 @@ pub struct Ui {
     toolbars: RefCell<Vec<Toolbar>>,
     /// トーストもレイアウトに載らないので、ここで保持する。
     toasts: RefCell<Vec<Toast>>,
+    /// 別スレッドと非同期処理の入り口。
+    tasks: Tasks,
 }
 
 impl Ui {
@@ -104,6 +107,7 @@ impl Ui {
             popups: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
+            tasks: Tasks::from_main_thread(std::sync::Arc::new(main_thread::MainQueue)),
         }
     }
 
@@ -346,6 +350,13 @@ impl Ui {
         self.theme.get()
     }
 
+    /// 別スレッドや非同期処理から画面を書き換えるための入り口。
+    ///
+    /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
+    pub fn tasks(&self) -> Tasks {
+        self.tasks.clone()
+    }
+
     /// アプリを終了する。
     pub fn quit(&self) {
         NSApplication::sharedApplication(self.mtm).terminate(None);
@@ -412,9 +423,10 @@ where
     menu_bar::install(mtm, &settings.name);
 
     let error = Rc::new(RefCell::new(None));
+    let ui = Rc::new(Ui::new(mtm, settings.theme));
     let delegate = AppDelegate::alloc(mtm).set_ivars(DelegateState {
         build: RefCell::new(Some(Box::new(build))),
-        ui: Rc::new(Ui::new(mtm, settings.theme)),
+        ui: ui.clone(),
         error: error.clone(),
     });
     let delegate: Retained<AppDelegate> = unsafe { msg_send![super(delegate), init] };
@@ -422,6 +434,10 @@ where
 
     app.activate();
     app.run();
+
+    // イベントループが終わった後は、投函しても誰も取り出さない。
+    // 送信側へ失敗を返せるようにし、受信クロージャと future を解放する。
+    ui.tasks.shutdown();
 
     let failure = error.borrow_mut().take();
     match failure {

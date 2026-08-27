@@ -533,6 +533,7 @@ name = "naui-macos"
 version = "0.2.0"
 dependencies = [
  "block2",
+ "dispatch2",
  "naui-core",
  "objc2",
  "objc2-app-kit",

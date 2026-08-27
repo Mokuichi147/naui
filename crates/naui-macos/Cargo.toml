@@ -12,6 +12,9 @@ naui-core.workspace = true
 objc2 = "0.6"
 # 再生位置を定期的に受け取るブロックを作るため。
 block2 = "0.6"
+# 別スレッドから UI スレッドへ仕事を投げるため (メインキュー)。
+# objc2-av-foundation の feature 経由で既に依存グラフへ入っているものと同じ版に解決される。
+dispatch2 = { version = "0.3", default-features = false, features = ["std"] }
 objc2-foundation = { version = "0.3", features = [
     "NSArray",
     "NSCalendar",

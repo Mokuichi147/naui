@@ -28,6 +28,7 @@ mod file_picker;
 mod file_saver;
 mod layout;
 mod list;
+mod main_thread;
 mod media;
 mod navigation;
 mod number_input;
@@ -46,7 +47,7 @@ mod window;
 
 use std::cell::{Cell, RefCell};
 
-use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Theme};
+use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
 
 pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
@@ -91,6 +92,8 @@ pub struct Ui {
     toolbars: RefCell<Vec<Toolbar>>,
     /// トーストもレイアウトに載らないので、ここで保持する。
     toasts: RefCell<Vec<Toast>>,
+    /// 別スレッドと非同期処理の入り口。
+    tasks: Tasks,
     shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
 }
 
@@ -103,6 +106,10 @@ impl Ui {
             popups: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
+            // `Ui::new` は OnLaunched (UI スレッド) から呼ばれる。
+            tasks: Tasks::from_main_thread(std::sync::Arc::new(
+                main_thread::Dispatcher::for_current_thread(),
+            )),
             shutdown,
         }
     }
@@ -354,6 +361,13 @@ impl Ui {
     /// 現在選択されている配色テーマを返す。
     pub fn theme(&self) -> Theme {
         self.theme.get()
+    }
+
+    /// 別スレッドや非同期処理から画面を書き換えるための入り口。
+    ///
+    /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
+    pub fn tasks(&self) -> Tasks {
+        self.tasks.clone()
     }
 
     /// アプリを終了する。

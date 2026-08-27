@@ -11,7 +11,10 @@
 //! ディスプレイ (Wayland か X11) が要る。無い環境では `gtk_init` に失敗する。
 
 use std::cell::{Cell, RefCell};
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
+use std::task::{Context, Poll};
 
 use adw::prelude::*;
 use gtk::glib;
@@ -367,6 +370,15 @@ fn main() {
             toast_replaces_the_previous_one,
         ),
         ("テーマを実行中に切り替えられる", theme_switch),
+        (
+            "別スレッドから送った値がラベルへ届く",
+            channel_delivers_from_a_worker_thread,
+        ),
+        (
+            "spawn した処理がメインループの上で完了する",
+            spawn_runs_a_local_future,
+        ),
+        ("cancel した処理は走らない", cancel_stops_a_future),
     ];
 
     let mut failed = 0;
@@ -3503,5 +3515,99 @@ fn time_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
     hour.set_value(6.0);
     assert_eq!(seen.get(), Some(Time::new(6, 0)));
     assert_eq!(picker.value(), Time::MIDNIGHT);
+    Ok(())
+}
+
+// ----------------------------------------------------------------- 非同期
+
+/// idle source を吐かせる。メインループは起動しない。
+///
+/// `run_for_test` はメインループへ入らないので、投函されたものを進めるには
+/// メインコンテキストを自分で回す必要がある。
+fn pump() {
+    let context = glib::MainContext::default();
+    // 入っている分だけ回す。取りこぼしと無限ループの両方を避けるため上限を付ける。
+    for _ in 0..64 {
+        if !context.iteration(false) {
+            break;
+        }
+    }
+}
+
+/// 一度だけ譲る future。次のティックで続きが走る。
+struct YieldOnce(bool);
+
+impl Future for YieldOnce {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if self.0 {
+            return Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    }
+}
+
+/// 別スレッドから送った値が、メインコンテキスト経由でラベルへ届く。
+fn channel_delivers_from_a_worker_thread(ui: &Ui) -> Result<()> {
+    let label = ui.label("待機中")?;
+    let sender = ui.tasks().channel({
+        let label = label.clone();
+        move |text: String| label.set_text(&text)
+    });
+
+    std::thread::spawn(move || sender.send("完了".to_string()))
+        .join()
+        .expect("ワーカースレッド")
+        .expect("送信");
+
+    assert_eq!(
+        label.text(),
+        "待機中",
+        "メインコンテキストを回すまでは届かないこと (必ず後回しになる)"
+    );
+
+    pump();
+    assert_eq!(label.text(), "完了", "idle source 経由で届くこと");
+    Ok(())
+}
+
+/// spawn した処理がメインコンテキストの上で進み、完了する。
+fn spawn_runs_a_local_future(ui: &Ui) -> Result<()> {
+    let label = ui.label("待機中")?;
+    let task = ui.tasks().spawn({
+        let label = label.clone();
+        async move {
+            label.set_text("途中");
+            YieldOnce(false).await;
+            label.set_text("完了");
+        }
+    });
+
+    assert_eq!(label.text(), "待機中", "その場では走らないこと");
+    assert!(!task.is_finished());
+
+    pump();
+    assert_eq!(label.text(), "完了", "譲った先まで進むこと");
+    assert!(task.is_finished(), "終わったら取っ手が終了を返すこと");
+    Ok(())
+}
+
+/// cancel した処理は一度も走らない。
+fn cancel_stops_a_future(ui: &Ui) -> Result<()> {
+    let label = ui.label("待機中")?;
+    let task = ui.tasks().spawn({
+        let label = label.clone();
+        async move {
+            label.set_text("ここへは来ない");
+        }
+    });
+
+    task.cancel();
+    pump();
+
+    assert_eq!(label.text(), "待機中", "cancel した処理は走らないこと");
     Ok(())
 }
