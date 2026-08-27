@@ -4,10 +4,17 @@
 //! 要素の隅につまみを出すだけで、区画の間に仕切りを立てる仕組みではないため、
 //! `Toast` と同じく naui が組み立てる数少ない例外になる。
 //!
-//! 組み立てるのは**位置と当たり判定だけ**で、仕切りの色は CSS のシステム
-//! カラー (`ButtonBorder`)、カーソルは CSS の標準の `col-resize` /
-//! `row-resize` に任せる。ブラウザに標準の見た目が無いので、naui が絵を描く
-//! ことはしない。
+//! 組み立てるのは**位置と当たり判定だけ**で、カーソルは CSS の標準の
+//! `col-resize` / `row-resize` に任せる。ブラウザに標準の見た目が無いので、
+//! naui が絵を描くことはしない。
+//!
+//! **見えるのは 1 px の線だけ**で、残りは透明なつかみ代になっている
+//! (`box-sizing: border-box` の片側だけに `border` を引く)。塗りつぶしの帯に
+//! すると、区切りというより 1 つの部品のように見えて周りから浮くため。
+//! 線の色はシステムカラーの `GrayText` を使う。`ButtonBorder` と `CanvasText`
+//! はブラウザによって**地色の正反対** (ダークなら白、ライトなら黒) になり、
+//! 区切り線としては強すぎるのに対し、`GrayText` はどちらの配色でも地色と
+//! 文字色の中間に来る。
 //!
 //! 仕切りは `role="separator"` + `tabindex="0"` なので、**キーボードでも
 //! 動かせる** (矢印キーで 10 px ずつ)。読み上げには `aria-valuenow` で
@@ -24,8 +31,12 @@ use crate::layout::{apply_child_layout, mark_parent, ParentLayout};
 use crate::to_error;
 use crate::widgets::{create, impl_widget, Listener, ValueHandler, Widget};
 
-/// 仕切りの太さ (論理ピクセル)。指でもつまめる幅にしてある。
+/// 仕切りが占める太さ (論理ピクセル)。指でもつまめる幅にしてある。
+///
+/// このうち見えるのは [`DIVIDER_LINE`] の 1 px だけで、残りは透明。
 const DIVIDER_THICKNESS: f64 = 6.0;
+/// 見えている線の太さ (論理ピクセル)。
+const DIVIDER_LINE: f64 = 1.0;
 /// 矢印キー 1 回で動く量 (論理ピクセル)。
 const KEY_STEP: f64 = 10.0;
 
@@ -48,6 +59,8 @@ struct SplitViewInner {
     min_end: Cell<f64>,
     /// ドラッグ中のポインター。つかんでいない間は `None`。
     dragging: Cell<Option<i32>>,
+    /// つかんだ場所と線の位置とのずれ。線を指の下へ飛ばさないために覚える。
+    grab: Cell<f64>,
     handler: ValueHandler<f64>,
     /// 中継はハンドルと同じ寿命で持つ (通知の中から動かせるように)。
     listeners: RefCell<Vec<Listener>>,
@@ -91,12 +104,17 @@ impl SplitView {
         let _ = divider.set_attribute("tabindex", "0");
         style(&divider, "flex", "0 0 auto");
         style(&divider, "align-self", "stretch");
-        style(&divider, "background", "ButtonBorder");
+        // 見えるのは区画の境目に引く 1 px の線だけ。残りは透明なつかみ代。
+        style(&divider, "box-sizing", "border-box");
+        style(&divider, "background", "transparent");
+        let line = format!("{DIVIDER_LINE}px solid GrayText");
         if vertical {
             style(&divider, "height", &format!("{DIVIDER_THICKNESS}px"));
+            style(&divider, "border-top", &line);
             style(&divider, "cursor", "row-resize");
         } else {
             style(&divider, "width", &format!("{DIVIDER_THICKNESS}px"));
+            style(&divider, "border-left", &line);
             style(&divider, "cursor", "col-resize");
         }
         // ドラッグ中に中身の文字が選択されてしまわないようにする。
@@ -121,6 +139,7 @@ impl SplitView {
             min_start: Cell::new(0.0),
             min_end: Cell::new(0.0),
             dragging: Cell::new(None),
+            grab: Cell::new(0.0),
             handler: ValueHandler::default(),
             listeners: RefCell::new(Vec::new()),
         }));
@@ -146,6 +165,11 @@ impl SplitView {
                     return;
                 };
                 inner.dragging.set(Some(event.pointer_id()));
+                // つかんだ場所と線とのずれを保つ (どこをつかんでも線が
+                // 指の下へ飛ばないようにする)。
+                inner
+                    .grab
+                    .set(inner.pointer_offset(&event) - inner.position.get());
                 // つかんでいる間は、仕切りの外へ出てもイベントを受け取る。
                 let _ = inner.divider.set_pointer_capture(event.pointer_id());
                 event.prevent_default();
@@ -164,7 +188,7 @@ impl SplitView {
                     return;
                 }
                 event.prevent_default();
-                let position = inner.position_from_pointer(&event);
+                let position = inner.pointer_offset(&event) - inner.grab.get();
                 inner.move_to(position);
             })?
         };
@@ -308,13 +332,13 @@ impl SplitViewInner {
         )
     }
 
-    /// ポインターの位置を、start 側の大きさへ読み替える。
-    fn position_from_pointer(&self, event: &PointerEvent) -> f64 {
+    /// ポインターの位置を、分割ビューの始端からの距離へ読み替える。
+    fn pointer_offset(&self, event: &PointerEvent) -> f64 {
         let rect = self.element.get_bounding_client_rect();
         if self.orientation.is_vertical() {
-            f64::from(event.client_y()) - rect.top() - DIVIDER_THICKNESS / 2.0
+            f64::from(event.client_y()) - rect.top()
         } else {
-            f64::from(event.client_x()) - rect.left() - DIVIDER_THICKNESS / 2.0
+            f64::from(event.client_x()) - rect.left()
         }
     }
 

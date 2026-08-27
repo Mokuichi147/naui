@@ -248,6 +248,10 @@ naui が 3 つの区画 (start・仕切り・end) を並べて組み立てます
 位置と当たり判定だけで、仕切りの色はテーマリソース (Windows) と CSS のシステム
 カラー (Web)、カーソルの形は CSS の `col-resize` / `row-resize` に任せています。
 
+この 2 つでは、**見えるのは境目に引く 1 px の線だけ**で、残りは透明なつかみ代に
+なっています (つかめる幅は 6 px)。塗りつぶしの帯にすると、区切りというより
+1 つの部品のように見えて周りから浮くためです。
+
 #### 数値とパスワードの入力
 
 数を入れさせるには `NumberInput` を使います。値は `f64` で、下限・上限・刻み・
@@ -921,7 +925,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   (`Microsoft.UI.Xaml.Controls.SplitView` は開閉するナビゲーションのペインで、
   `GridSplitter` は Community Toolkit の側)、`SplitView` は 3 つの列 (行) を
   持つ `Grid` の真ん中に仕切りを置いて組み立てています。仕切りの地色は
-  `ControlStrokeColorDefaultBrush` から引くのでテーマに追従しますが、
+  `ControlStrokeColorDefaultBrush` から引くのでテーマに追従します。塗るのは
+  境目の 1 px だけ (`BorderThickness`) で、残りは `Background="Transparent"` の
+  つかみ代です (`Transparent` は `null` と違って当たり判定が残ります)。ただし
   **仕切りに合わせたカーソル (⇔) は出ません**。カーソルの形を変える
   `UIElement.ProtectedCursor` は派生クラスからしか触れないためです。
   区画の大きさが変わったことは `SizeChanged` がバインディングに無いため
@@ -1095,10 +1101,14 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   読み上げは同じです)。つまみの見た目を naui の CSS で作ることはしません。
 - 動かせる仕切りで区画を分ける要素が HTML に無いため (`resize` は要素の隅に
   つまみを出すだけです)、`SplitView` は `Toast` と同じく naui が組み立てます。
-  仕切りは `<div role="separator">` で、色は CSS のシステムカラー
-  (`ButtonBorder`)、カーソルは `col-resize` / `row-resize` に任せています
-  (つまみの絵を naui の CSS で描くことはしません)。`tabindex="0"` を付けて
-  あるので**キーボードでも動かせます** (矢印キーで 10 px ずつ)。
+  仕切りは `<div role="separator">` で、カーソルは `col-resize` / `row-resize`
+  に任せています (つまみの絵を naui の CSS で描くことはしません)。見えるのは
+  境目の 1 px の線だけで、残りは透明なつかみ代です。線の色はシステムカラーの
+  `GrayText` を使います。`ButtonBorder` と `CanvasText` はブラウザによって
+  **地色の正反対** (ダークなら白、ライトなら黒) になり、区切り線としては
+  強すぎるのに対し、`GrayText` はどちらの配色でも地色と文字色の中間に来る
+  ためです。`tabindex="0"` を付けてあるので**キーボードでも動かせます**
+  (矢印キーで 10 px ずつ)。
 - ページに一時的な通知の標準要素が無いため、`Toast` は `<div role="status">` を
   `position: fixed` で下端の中央へ出します (`Notification` API はページの外へ
   出るもので別物です)。

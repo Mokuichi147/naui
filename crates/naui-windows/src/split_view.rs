@@ -11,6 +11,12 @@
 //! (`ControlStrokeColorDefaultBrush`) から引くので、ライト / ダークの
 //! 切り替えにそのまま追従する。
 //!
+//! **見えるのは 1 px の線だけ**で、残りは透明なつかみ代になっている
+//! (`Background="Transparent"` + 片側だけの `BorderThickness`)。塗りつぶしの
+//! 帯にすると、区切りというより 1 つの部品のように見えて周りから浮くため。
+//! `Transparent` は `null` と違って当たり判定が残るので、つかみ代としては
+//! そのまま働く。
+//!
 //! 列 (行) の幅は `Pixel` / `Star` で決める。start 側は指定した大きさの
 //! `Pixel`、end 側は残りを受け取る `Star` なので、ウィンドウが広がった分は
 //! end 側が受け取る。
@@ -33,13 +39,24 @@ use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::{impl_widget, Widget};
 
-/// 仕切りの太さ (論理ピクセル)。マウスでつまめる幅にしてある。
+/// 仕切りが占める太さ (論理ピクセル)。マウスでつまめる幅にしてある。
+///
+/// このうち見えるのは境目に引く 1 px の線だけで、残りは透明。
 const DIVIDER_THICKNESS: f64 = 6.0;
 
-/// 仕切り。地色だけを持つ `Grid` で、テーマリソースから色を引く。
-const DIVIDER_XAML: &str = r##"<Grid
+/// 区画が横に並ぶときの仕切り。境目 (左端) にだけ線を引く。
+const DIVIDER_XAML_HORIZONTAL: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    Background="{ThemeResource ControlStrokeColorDefaultBrush}"/>"##;
+    Background="Transparent"
+    BorderThickness="1,0,0,0"
+    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"/>"##;
+
+/// 区画が縦に並ぶときの仕切り。境目 (上端) にだけ線を引く。
+const DIVIDER_XAML_VERTICAL: &str = r##"<Grid
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    Background="Transparent"
+    BorderThickness="0,1,0,0"
+    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"/>"##;
 
 /// 仕切りが動いたことの通知先。
 ///
@@ -88,6 +105,8 @@ struct Geometry {
     /// (`LayoutUpdated` の中から書くとレイアウトが回り続けるため)。
     shown: f64,
     dragging: bool,
+    /// つかんだ場所と線の位置とのずれ。線をポインターの下へ飛ばさないために覚える。
+    grab: f64,
 }
 
 impl Geometry {
@@ -136,10 +155,13 @@ impl Geometry {
         }
     }
 
-    /// ポインターの位置を、start 側の大きさへ読み替える。
-    fn position_from_pointer(&self, x: f64, y: f64) -> f64 {
-        let along = if self.orientation.is_vertical() { y } else { x };
-        along - DIVIDER_THICKNESS / 2.0
+    /// ポインターの位置を、分割ビューの始端からの距離へ読み替える。
+    fn pointer_offset(&self, x: f64, y: f64) -> f64 {
+        if self.orientation.is_vertical() {
+            y
+        } else {
+            x
+        }
     }
 }
 
@@ -167,7 +189,7 @@ impl SplitView {
         let native = XamlGrid::new().map_err(|e| to_error("SplitView の Grid の生成", e))?;
         let start_pane = pane()?;
         let end_pane = pane()?;
-        let divider = divider()?;
+        let divider = divider(orientation)?;
 
         define_tracks(&native, orientation)?;
         for (index, element) in [
@@ -196,6 +218,7 @@ impl SplitView {
             // 列の初期値は 0 なので、最初の apply で必ず書き込まれる。
             shown: -1.0,
             dragging: false,
+            grab: 0.0,
         }));
         let handler = ResizeHandler::new();
 
@@ -227,6 +250,20 @@ impl SplitView {
                     if let Ok(pointer) = args.Pointer() {
                         let _ = geometry.divider.CapturePointer(&pointer);
                     }
+                    // つかんだ場所と線とのずれを保つ (どこをつかんでも線が
+                    // ポインターの下へ飛ばないようにする)。
+                    if let Some(offset) = geometry
+                        .native
+                        .cast::<UIElement>()
+                        .ok()
+                        .and_then(|root| args.GetCurrentPoint(&root).ok())
+                        .and_then(|point| point.Position().ok())
+                        .map(|point| {
+                            geometry.pointer_offset(f64::from(point.X), f64::from(point.Y))
+                        })
+                    {
+                        geometry.grab = offset - geometry.position;
+                    }
                     geometry.dragging = true;
                 });
                 Ok(())
@@ -249,8 +286,8 @@ impl SplitView {
                     }
                     let root = geometry.native.cast::<UIElement>().ok()?;
                     let point = args.GetCurrentPoint(&root).ok()?.Position().ok()?;
-                    let position =
-                        geometry.position_from_pointer(f64::from(point.X), f64::from(point.Y));
+                    let position = geometry.pointer_offset(f64::from(point.X), f64::from(point.Y))
+                        - geometry.grab;
                     let clamped = geometry.clamp(position);
                     if (clamped - geometry.position).abs() < 0.5 {
                         return None;
@@ -408,8 +445,13 @@ fn pane() -> Result<XamlGrid> {
 }
 
 /// 仕切り。テーマリソースが引けない環境では、色なしの `Grid` に落とす。
-fn divider() -> Result<XamlGrid> {
-    let divider = match XamlReader::Load(&HSTRING::from(DIVIDER_XAML))
+fn divider(orientation: Orientation) -> Result<XamlGrid> {
+    let xaml = if orientation.is_vertical() {
+        DIVIDER_XAML_VERTICAL
+    } else {
+        DIVIDER_XAML_HORIZONTAL
+    };
+    let divider = match XamlReader::Load(&HSTRING::from(xaml))
         .and_then(|element| element.cast::<XamlGrid>())
     {
         Ok(divider) => divider,
