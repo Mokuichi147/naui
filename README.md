@@ -70,7 +70,7 @@ cargo run -p gallery
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビューを含む) |
 | Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビューを操作 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、ラベルの折り返しを操作 |
 | Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
@@ -207,6 +207,30 @@ details.on_toggle(|expanded| println!("開いている: {expanded}"));
 既定は閉じた状態で、たたんでいる間、中身はレイアウトから外れます (場所を空けません)。
 `set_expanded` はプログラムからの操作なので `on_toggle` を呼びません
 (`Checkbox::set_checked` と同じ決まりです)。
+
+#### ラベルの折り返し
+
+`Label` は**既定では折り返しません**。1 行に収まらない分は、末尾を省略記号 (…)
+で切ります。長い文章を出すときは `set_wrap(true)` を指定します。
+
+```rust
+let note = ui.label("狭いところでは折り返してほしい長い説明")?;
+note.set_wrap(true);
+note.set_sizing(Sizing::fill_width()); // 折り返す幅は親が決める
+```
+
+**折り返す幅を決めるのは親**なので、`Stack` の中では `set_sizing` で幅も
+与えます。幅が決まらないと、どの環境でも 1 行ぶんの幅を要求したままになります。
+
+| 環境 | 折り返さないとき | 折り返すとき |
+| --- | --- | --- |
+| Windows | `TextWrapping="NoWrap"` + `TextTrimming="CharacterEllipsis"` | `TextWrapping="Wrap"` |
+| macOS | `usesSingleLineMode` + `ByTruncatingTail` | `ByWordWrapping` + `preferredMaxLayoutWidth` |
+| Linux | `PangoEllipsizeMode::End` | `gtk_label_set_wrap` |
+| Web | `white-space: nowrap` + `text-overflow: ellipsis` | `white-space: normal` |
+
+**`<span>` の既定は折り返す**ので、Web だけは naui が CSS で他の 3 環境へ
+そろえています (`Table` や `Tree` のセルと同じ扱いです)。
 
 #### 区画の分割
 
@@ -921,6 +945,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `InfoBar` / `TeachingTip` がバインディングに無いため、`Toast` は `Grid` と
   `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
   `window.show()` より前には出せません。
+- `TextTrimming` が `winio-winui3` の投影に含まれていないため、`Label` の
+  `TextBlock` は `TextTrimming="CharacterEllipsis"` を持つ XAML から生成して
+  います (折り返しの切り替えは `TextWrapping` で行います)。
 - 動かせる仕切りを持つコントロールが Windows App SDK に無いため
   (`Microsoft.UI.Xaml.Controls.SplitView` は開閉するナビゲーションのペインで、
   `GridSplitter` は Community Toolkit の側)、`SplitView` は 3 つの列 (行) を
@@ -996,6 +1023,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `NSVisualEffectView` (`NSPopover` と同じ材質) をウィンドウの中身へ重ねて
   組み立てています。出す先はいちばん手前のウィンドウで、まだ焦点が
   決まっていないときは最後に作ったウィンドウです。
+- `Label::set_wrap(true)` にすると、naui は `NSViewFrameDidChangeNotification`
+  を見て `preferredMaxLayoutWidth` を frame の幅へ追従させます。
+  `NSTextField` は折り返す幅が決まって初めて高さを返せるためです。
 - `SplitView` は `NSSplitView` そのものです。ただし**区画の配り方だけは
   naui が置き換えています** (`splitView:resizeSubviewsWithOldSize:`)。
   `NSSplitView` の既定は大きさが変わったときに**割合**で配るため、そのままでは
@@ -1032,6 +1062,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `GtkButton` で、向きは見出しの文字に付く矢印で表します。
 - `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
   行と開閉ボタンで組み立てています。
+- `Label` の既定 (折り返さない) では `PangoEllipsizeMode::End` を入れています。
+  **省略記号を付けると `GtkLabel` の最小幅も下がる**ので、狭いコンテナへ
+  入れてもコンテナごと押し広げてしまうことがなくなります。
 - `SplitView` は `GtkPaned` です。区画の最小の大きさは、アプリが `Sizing` で
   指定する `size_request` とぶつからないよう、区画ごとにかぶせた入れ物のほうに
   持たせています。`GtkPaned` は子の最小より仕切りを寄せられないので、中身が
@@ -1067,6 +1100,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 - `Window` は OS のウィンドウではなく、`<body>` 直下の要素と
   `document.title` で表現されます。
+- **`<span>` の既定は折り返す**ため、`Label` には naui が
+  `white-space: nowrap` と `text-overflow: ellipsis` を入れて、他の 3 環境の
+  既定 (1 行 + 省略記号) へそろえています。折り返したいときは
+  `Label::set_wrap(true)` を使います。
 - `ListItem::detail` を使うと、`List` は `<select>` から
   `<ul role="listbox">` を使った実装へ切り替わります。
 - `Tree` の `TreeItem::detail` は、行の高さをそろえるため

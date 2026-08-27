@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
+use gtk::pango;
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
@@ -224,6 +225,10 @@ fn main() {
         (
             "折りたたみの set_expanded は通知しない",
             expander_set_is_silent,
+        ),
+        (
+            "ラベルは頼まれたときだけ折り返す",
+            label_wraps_only_when_asked,
         ),
         (
             "分割ビューがネイティブの GtkPaned に 2 区画を並べる",
@@ -1691,6 +1696,39 @@ fn expander_set_is_silent(ui: &Ui) -> Result<()> {
     expander.set_expanded(false);
     assert!(!expander.is_expanded());
     assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+    Ok(())
+}
+
+fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
+    let text = "これはとても長い説明の文章で、狭い幅には 1 行で収まりません。";
+    let label = ui.label(text)?;
+    let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
+
+    // 既定は 1 行。入りきらない分は末尾を省略記号で切る。
+    assert!(!native.wraps(), "既定は折り返さないこと");
+    assert_eq!(native.ellipsize(), pango::EllipsizeMode::End);
+    // 省略記号があるぶん、最小幅は文字列の幅よりずっと小さい。
+    let (min, natural) = measure_width(&native);
+    assert!(
+        min < natural,
+        "省略できる分だけ最小幅が下がること: 最小 {min} / 自然 {natural}"
+    );
+
+    label.set_wrap(true);
+    assert!(native.wraps());
+    assert_eq!(native.ellipsize(), pango::EllipsizeMode::None);
+    assert_eq!(native.wrap_mode(), pango::WrapMode::WordChar);
+    // 折り返す側は、狭い幅を渡すと高さが増える。
+    let one_line = native.measure(gtk::Orientation::Vertical, -1).0;
+    let narrow = native.measure(gtk::Orientation::Vertical, 120).0;
+    assert!(
+        narrow > one_line,
+        "狭いと折り返して高くなること: {one_line} -> {narrow}"
+    );
+
+    label.set_wrap(false);
+    assert!(!native.wraps(), "何度でも切り替えられること");
+    assert_eq!(native.ellipsize(), pango::EllipsizeMode::End);
     Ok(())
 }
 

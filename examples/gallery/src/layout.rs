@@ -89,7 +89,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     body.set_padding(Padding::all(10.0));
     body.set_align(Align::Start);
     body.append(&ui.label("本文")?);
-    body.append(&ui.label("ウィンドウを広げると、この区画だけが広がります。")?);
+    // 区画は狭くなるので、この説明だけは折り返す (Label の既定は 1 行)。
+    // 折り返す幅は親が決めるため、幅も与えておく。
+    let body_note = ui.label("仕切りを左へ動かすと、この文は区画の幅で折り返します。")?;
+    body_note.set_wrap(true);
+    body_note.set_sizing(Sizing::fill_width());
+    body.append(&body_note);
     let split = ui.split_view(Orientation::Horizontal)?;
     split.set_start(&sidebar);
     split.set_end(&body);

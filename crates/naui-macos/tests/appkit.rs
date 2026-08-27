@@ -244,6 +244,10 @@ fn main() {
             expander_child_fills_the_width,
         ),
         (
+            "ラベルは頼まれたときだけ折り返す",
+            label_wraps_only_when_asked,
+        ),
+        (
             "分割ビューがネイティブの NSSplitView に 2 区画を並べる",
             split_view_arranges_two_panes_in_a_native_split_view,
         ),
@@ -2070,6 +2074,68 @@ fn expander_child_fills_the_width(ui: &Ui) -> Result<()> {
     assert!(
         (outer.origin.x - inner.origin.x).abs() < 1.0,
         "中身が折りたたみの左端から始まること: {outer:?} / {inner:?}"
+    );
+    Ok(())
+}
+
+/// `Label` の既定は 1 行で、`set_wrap(true)` のときだけ折り返す。
+fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
+    let window = ui.window("折り返し", 200.0, 240.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let text = "これはとても長い説明の文章で、狭い幅には 1 行で収まりません。";
+
+    let plain = ui.label(text)?;
+    plain.set_sizing(Sizing::fill_width());
+    let wrapped = ui.label(text)?;
+    wrapped.set_wrap(true);
+    wrapped.set_sizing(Sizing::fill_width());
+    stack.append(&plain);
+    stack.append(&wrapped);
+    window.set_child(&stack);
+
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(200.0, 240.0));
+    // 折り返す幅は frame の変化を見て決まるので、そのぶん多く回す。
+    content.layoutSubtreeIfNeeded();
+    content.layoutSubtreeIfNeeded();
+
+    let plain_frame = plain.native_view().frame();
+    let wrapped_frame = wrapped.native_view().frame();
+    // NSTextField は左右に 2pt の差し込みを持つので、その分だけ大きく出る。
+    assert!(
+        (plain_frame.size.width - wrapped_frame.size.width).abs() < 1.0
+            && wrapped_frame.size.width <= 210.0,
+        "どちらも配られた幅に収まること: {plain_frame:?} / {wrapped_frame:?}"
+    );
+    assert!(
+        wrapped_frame.size.height > plain_frame.size.height * 1.5,
+        "折り返した側だけ高くなること: 1 行 {} / 折り返し {}",
+        plain_frame.size.height,
+        wrapped_frame.size.height
+    );
+
+    // 折り返さない側は 1 行のまま、末尾を省略記号で切る。
+    let plain_native: Retained<NSTextField> = plain
+        .native_view()
+        .downcast()
+        .expect("ラベルは NSTextField であること");
+    assert_eq!(plain_native.maximumNumberOfLines(), 1);
+    assert_eq!(
+        plain_native.lineBreakMode(),
+        objc2_app_kit::NSLineBreakMode::ByTruncatingTail
+    );
+
+    // 折り返しは何度でも切り替えられる。
+    wrapped.set_wrap(false);
+    content.layoutSubtreeIfNeeded();
+    content.layoutSubtreeIfNeeded();
+    assert!(
+        (wrapped.native_view().frame().size.height - plain_frame.size.height).abs() < 1.0,
+        "戻すと 1 行に戻ること: {:?}",
+        wrapped.native_view().frame()
     );
     Ok(())
 }
