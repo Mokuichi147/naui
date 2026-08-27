@@ -11,6 +11,7 @@ mod layout;
 mod list;
 mod media;
 mod navigation;
+mod tasks;
 
 use naui::{
     FileEntry, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing,
@@ -28,7 +29,7 @@ const COMMAND_ICONS: [ToolbarIcon; 4] = [
     ToolbarIcon::Save,
 ];
 
-const SECTIONS: [&str; 8] = [
+const SECTIONS: [&str; 9] = [
     "基本",
     "入力",
     "一覧",
@@ -37,6 +38,7 @@ const SECTIONS: [&str; 8] = [
     "ファイル",
     "メディア",
     "ダイアログ",
+    "非同期",
 ];
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
@@ -104,6 +106,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     add_pane(ui, &tabs, "ファイル", &files::build(ui)?)?;
     add_pane(ui, &tabs, "メディア", &media::build(ui)?)?;
     add_pane(ui, &tabs, "ダイアログ", &dialog::build(ui)?)?;
+    add_pane(ui, &tabs, "非同期", &tasks::build(ui)?)?;
     tabs.set_sizing(Sizing::fill());
     root.attach(&tabs, GridCell::new(0, 1));
 

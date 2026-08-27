@@ -106,7 +106,8 @@
 //!
 //! GTK4 のシグナルハンドラは `'static` なクロージャを受けるので、macOS / Web と
 //! 同じ `Rc<Inner>` + クロージャ保持の形がそのまま使える (Windows のような
-//! `Send + Sync` 制約は無い)。
+//! `Send + Sync` 制約は無い)。別スレッドからの受け渡しだけは例外で、
+//! `glib::idle_add_once` を通してメインループへ戻す (`crate::main_thread`)。
 
 #![cfg(all(
     unix,
@@ -128,6 +129,7 @@ mod file_saver;
 mod indicator;
 mod layout;
 mod list;
+mod main_thread;
 mod media;
 mod navigation;
 mod number_input;
@@ -149,7 +151,7 @@ use std::rc::Rc;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Theme};
+use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
 
 pub use bin::SizeBin;
 pub use color_picker::ColorPicker;
@@ -208,6 +210,8 @@ pub struct Ui {
     toolbars: RefCell<Vec<Toolbar>>,
     /// トーストもレイアウトに載らないので、ここで保持する。
     toasts: RefCell<Vec<Toast>>,
+    /// 別スレッドと非同期処理の入り口。
+    tasks: Tasks,
 }
 
 impl Ui {
@@ -220,6 +224,7 @@ impl Ui {
             popups: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
+            tasks: Tasks::from_main_thread(std::sync::Arc::new(main_thread::Idle)),
         }
     }
 
@@ -469,6 +474,13 @@ impl Ui {
         self.theme.get()
     }
 
+    /// 別スレッドや非同期処理から画面を書き換えるための入り口。
+    ///
+    /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
+    pub fn tasks(&self) -> Tasks {
+        self.tasks.clone()
+    }
+
     /// アプリを終了する。
     pub fn quit(&self) {
         self.app.quit();
@@ -569,7 +581,14 @@ where
 
     // コマンドライン引数は naui の API に無いので、GTK4 へは渡さない。
     let code = app.run_with_args::<&str>(&[]);
-    KEEP_ALIVE.with(|slot| slot.borrow_mut().clear());
+    // メインループが終わった後は、投函しても誰も取り出さない。
+    // 送信側へ失敗を返せるようにし、受信クロージャと future を解放する。
+    KEEP_ALIVE.with(|slot| {
+        let alive = std::mem::take(&mut *slot.borrow_mut());
+        for ui in &alive {
+            ui.tasks.shutdown();
+        }
+    });
 
     if let Some(error) = failure.borrow_mut().take() {
         return Err(error);

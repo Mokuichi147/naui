@@ -21,6 +21,7 @@ mod file_picker;
 mod file_saver;
 mod layout;
 mod list;
+mod main_thread;
 mod media;
 mod navigation;
 mod number_input;
@@ -36,7 +37,7 @@ mod tree;
 mod widgets;
 mod window;
 
-use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Theme};
+use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
 use std::cell::Cell;
 use std::cell::RefCell;
 use wasm_bindgen::JsCast;
@@ -103,6 +104,8 @@ pub struct Ui {
     toolbars: RefCell<Vec<Toolbar>>,
     /// トーストもレイアウトに載らないので、ここで保持する。
     toasts: RefCell<Vec<Toast>>,
+    /// 別スレッドと非同期処理の入り口。
+    tasks: Tasks,
 }
 
 impl Ui {
@@ -115,6 +118,7 @@ impl Ui {
             popups: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
+            tasks: Tasks::from_main_thread(std::sync::Arc::new(main_thread::Microtask)),
         }
     }
 
@@ -364,6 +368,13 @@ impl Ui {
     /// 現在選択されている配色テーマを返す。
     pub fn theme(&self) -> Theme {
         self.theme.get()
+    }
+
+    /// 別スレッドや非同期処理から画面を書き換えるための入り口。
+    ///
+    /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
+    pub fn tasks(&self) -> Tasks {
+        self.tasks.clone()
     }
 
     /// ブラウザではアプリを終了する概念が無いため、何もしない。

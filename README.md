@@ -68,10 +68,10 @@ cargo run -p gallery
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビューを含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返しを含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、ラベルの折り返しを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返しを含む) |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・別スレッドからの受け渡しと `spawn` を含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、ラベルの折り返し、非同期処理の実行と中断を操作 |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
 
@@ -82,6 +82,8 @@ cargo run -p gallery
   `Dialog` の Esc 操作
 - `FileSaver`: macOS のみ実機と自動テストで確認しています。Windows・Linux・Web
   での実行は未確認です。
+- 別スレッドからの受け渡しと `spawn` は 4 環境とも実機で確認していますが、
+  Linux は Gallery の実行のみです (GTK4 の統合テストへ足した 3 件は未実行)。
 
 </details>
 
@@ -658,6 +660,69 @@ window.set_toolbar(&toolbar);
 用意しているのは `ToolbarIcon` に並ぶ 20 種類の操作だけで、任意の画像は
 置けません。
 
+#### 別スレッドと非同期
+
+時間のかかる処理を別のスレッドでやって画面を書き換えたいときは `Ui::tasks`
+を使います。ウィジェットのハンドルは `Rc` を持つので**別スレッドへは送れません**。
+そこで、**受け取るクロージャを UI スレッド側に据え、送る側だけをスレッドへ渡す**
+形になります。
+
+```rust
+let label = ui.label("待機中")?;
+let sender = ui.tasks().channel({
+    let label = label.clone();
+    move |text: String| label.set_text(&text) // UI スレッドで呼ばれる
+});
+std::thread::spawn(move || {
+    let _ = sender.send(heavy_work());        // 別スレッドから
+});
+```
+
+`Sender` は `Send + Sync + Clone` なので、複数のスレッドから同じ受け口へ送れます。
+同じチャネルへ送った値は**送った順に**届きます。`send` はその場でクロージャを
+呼ばず、UI スレッドの手が空いてから届きます。
+
+ボタンのクロージャの中から非同期処理を始めたいときは `Tasks::spawn` を使います。
+**future は `Send` でなくてよい**ので、ウィジェットのハンドルをそのまま
+持ち込めます。返る `Task` を捨ててもタスクは止まりません。押すたびに前の処理を
+打ち切りたいときは、取っ手を持っておいて次のときに `cancel` を呼びます。
+
+```rust
+let tasks = ui.tasks();
+let label = ui.label("待機中")?;
+let button = ui.button("読み込む")?;
+button.on_click(move || {
+    let label = label.clone();
+    tasks.spawn(async move { label.set_text(&fetch().await); });
+});
+```
+
+**naui は async ランタイムを持ち込みません。** `spawn` は UI スレッドの
+イベントループの上で future を進めるだけの小さな実行器で、tokio などは
+要りません。逆に言うと、**future の中でブロッキング処理をすると画面が止まります**。
+重い処理は `std::thread::spawn` と `channel` へ出してください。
+
+また `spawn` は**汎用ランタイムの代わりにはなりません**。naui が引き受けるのは
+「future を UI スレッドで poll し、その `Waker` で再び poll する」ところまでで、
+特定のランタイムの実行器やリアクターを必要とする future (tokio の I/O など) が
+動くことは保証しません。それらは**そのランタイムで動かし、結果だけを `Sender`
+で画面へ戻します**。この形なら、好きなランタイムから naui へ戻せます。
+
+```rust,ignore
+let sender = ui.tasks().channel(move |result: String| label.set_text(&result));
+tokio::spawn(async move {
+    let result = tokio_specific_operation().await;
+    let _ = sender.send(result);
+});
+```
+
+投函先は環境ごとに違いますが、**その場では実行せず必ず後回しにする**ところは
+同じです。これにより、通知の中から `send` や `spawn` を呼んでも再入になりません。
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| 投函先 | `DispatcherQueue.TryEnqueue` | main queue | `g_idle_add` | microtask キュー |
+
 </details>
 
 ## ウィジェット
@@ -837,7 +902,7 @@ naui::entry!(Settings::new("naui gallery"), build);
 
 ```text
 crates/
-  naui-core      共通の値型
+  naui-core      共通の値型・チャネル・タスク
   naui-macos     AppKit バックエンド
   naui-web       DOM バックエンド
   naui-windows   WinUI 3 バックエンド
@@ -906,6 +971,21 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - ウィンドウを閉じるイベントと、入力欄で Enter を押したときの共通
   `on_submit` はありません。
 - メディアの対応形式は各 OS、ブラウザ、Linux の GStreamer 環境に依存します。
+- 別スレッドからの受け渡しで順序が保たれるのは**同じチャネルの中だけ**です。
+  チャネルが複数あるとき、チャネルをまたいだ配送の順序は決まっていません。
+- チャネルに上限はありません。短い間に多くの値を送っても**値は 1 つも捨てません**が、
+  複数の通知が次の描画より先にまとめて処理されるため、**途中の状態は画面に見えず
+  最後の状態だけが描かれることがあります**。高頻度の進捗やテレメトリは、
+  アプリ側で間引いてください。
+- `Sender::send` が返す `Ok` は「値を受け取り、UI への配送が予約された」の意味で、
+  配送されたことの保証ではありません。予約の直後に画面が閉じれば実行されません。
+- `Tasks::spawn` に渡せるのは値を返さない future だけです。結果は future の中で
+  直接ウィジェットへ書きます。返る `Task` を落としてもタスクは止まりません
+  (止めるには `Task::cancel` を呼びます)。
+- 受信クロージャや future の中で panic しても、その場で止めるだけでアプリは
+  巻き戻しません。WinRT / GLib / libdispatch の境界を越えて巻き戻せないため、
+  4 環境そろえてこの形にしてあります (panic の内容はいつもどおり標準エラー出力へ
+  出ます)。`panic = "abort"` の設定では捕まえられません。
 
 </details>
 
@@ -926,6 +1006,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   ことができません。`EditableComboBox` は一覧を開いて選べることを軸にしている
   ので、Fluent の作法どおり `ComboBox` のままにしています。
 - `Dialog` は `window.show()` より前には開けません。
+- naui の UI 実行環境が終わった後の `Sender::send` は失敗します
+  (`DispatcherQueue` が受け付けないため)。
 - `DataGrid` も `ListView` もバインディングに無いため、`Table` は `ListBox` の
   行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に置いて
   幅をそろえています。並べ替えできる見出しは、地色と枠を消した `Button` です
@@ -1154,6 +1236,17 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - ブラウザに標準のアイコンセットが無いため、`Toolbar` のアイコンだけは naui が
   SVG を持ちます (ここだけは OS のものを使いません)。
 - ブラウザの制限により、メディアの自動再生が拒否される場合があります。
+- **wasm にはスレッドがありません。** `std::thread::spawn` は使えないので、
+  `Sender` へ送る側は `Tasks::spawn` で回す future の中に置きます。
+  Web Worker は別の JavaScript 実行環境なので、`Sender` が Rust の型として
+  `Send` であっても、そこへ渡すことはできません (`postMessage` で橋を架け、
+  受けた側で `send` を呼ぶ形になります)。`Tasks` の API 自体は 4 環境で同じなので
+  `cfg` の書き分けは要りませんが、**`std::thread::spawn` を含むコードは
+  そのままでは Web で動きません**。
+- `Tasks::spawn` は microtask キューの上で進みます。譲らない future や、
+  自分を起こし続ける future を回すと描画に順番が回りません。
+- ブラウザにはアプリの終了が無いため、`Sender::send` が閉塞を理由に失敗することは
+  ありません。
 
 </details>
 

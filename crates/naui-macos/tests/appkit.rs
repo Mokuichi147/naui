@@ -8,8 +8,11 @@
 //! そのため `harness = false` にして、自前のランナーをメインスレッドで回す。
 
 use std::cell::RefCell;
+use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::pin::Pin;
 use std::rc::Rc;
+use std::task::{Context, Poll};
 
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
@@ -345,6 +348,15 @@ fn main() {
             "再生位置が定期的にクロージャへ届く",
             media_reports_position_while_playing,
         ),
+        (
+            "別スレッドから送った値がラベルへ届く",
+            channel_delivers_from_a_worker_thread,
+        ),
+        (
+            "spawn した処理がランループの上で完了する",
+            spawn_runs_a_local_future,
+        ),
+        ("cancel した処理は走らない", cancel_stops_a_future),
         (
             "ツールバーが NSToolbar に項目と区切りを並べる",
             toolbar_items_map_to_native,
@@ -5333,5 +5345,85 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
         scroll_height > 400.0,
         "Fill 行が残りの高さを受け取る: {scroll_height}"
     );
+    Ok(())
+}
+
+// ----------------------------------------------------------------- 非同期
+
+/// 一度だけ譲る future。次のティックで続きが走る。
+struct YieldOnce(bool);
+
+impl Future for YieldOnce {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if self.0 {
+            return Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    }
+}
+
+/// 別スレッドから送った値が、メインキュー経由でラベルへ届く。
+fn channel_delivers_from_a_worker_thread(ui: &Ui) -> Result<()> {
+    let label = ui.label("待機中")?;
+    let sender = ui.tasks().channel({
+        let label = label.clone();
+        move |text: String| label.set_text(&text)
+    });
+
+    std::thread::spawn(move || sender.send("完了".to_string()))
+        .join()
+        .expect("ワーカースレッド")
+        .expect("送信");
+
+    assert_eq!(
+        label.text(),
+        "待機中",
+        "ランループを回すまでは届かないこと (必ず後回しになる)"
+    );
+
+    pump(0.05);
+    assert_eq!(label.text(), "完了", "メインキュー経由で届くこと");
+    Ok(())
+}
+
+/// spawn した処理がランループの上で進み、完了する。
+fn spawn_runs_a_local_future(ui: &Ui) -> Result<()> {
+    let label = ui.label("待機中")?;
+    let task = ui.tasks().spawn({
+        let label = label.clone();
+        async move {
+            label.set_text("途中");
+            YieldOnce(false).await;
+            label.set_text("完了");
+        }
+    });
+
+    assert_eq!(label.text(), "待機中", "その場では走らないこと");
+    assert!(!task.is_finished());
+
+    pump(0.05);
+    assert_eq!(label.text(), "完了", "譲った先まで進むこと");
+    assert!(task.is_finished(), "終わったら取っ手が終了を返すこと");
+    Ok(())
+}
+
+/// cancel した処理は一度も走らない。
+fn cancel_stops_a_future(ui: &Ui) -> Result<()> {
+    let label = ui.label("待機中")?;
+    let task = ui.tasks().spawn({
+        let label = label.clone();
+        async move {
+            label.set_text("ここへは来ない");
+        }
+    });
+
+    task.cancel();
+    pump(0.05);
+
+    assert_eq!(label.text(), "待機中", "cancel した処理は走らないこと");
     Ok(())
 }
