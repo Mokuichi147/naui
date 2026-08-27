@@ -161,9 +161,15 @@ impl Tree {
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+        //
+        // 選べない行が押されたときは、この中から直前の選択を描き戻す。その
+        // 書き戻しで `SelectionChanged` がその場でもう一度起きるため、
+        // `with_mut` では二重借用の panic が WinRT の境界を越えてクラッシュに
+        // なる。再入を取りこぼしとして扱える `try_with_mut` を使う (再入時は
+        // `silent` が立っていて、どのみち捨てる通知になる)。
         let state = UiThreadCell::new(Rc::downgrade(&this.0));
         let handler = SelectionChangedEventHandler::new(move |_sender, _args| {
-            state.with_mut(|weak| {
+            let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
                     let tree = Tree(inner);
                     if !tree.0.silent.get() {
@@ -386,9 +392,11 @@ impl Tree {
             true => {
                 let twisty = twisty_button()?;
                 // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+                // 開閉の中から行を触るので、選択の購読と同じ理由で再入に
+                // 耐える `try_with_mut` を使う。
                 let state = UiThreadCell::new((Rc::downgrade(&self.0), path.to_vec()));
                 let click = RoutedEventHandler::new(move |_, _| {
-                    state.with_mut(|(weak, path)| {
+                    let _ = state.try_with_mut(|(weak, path)| {
                         if let Some(inner) = weak.upgrade() {
                             let tree = Tree(inner);
                             let expanded = tree.is_expanded(path);
@@ -515,7 +523,8 @@ impl Tree {
         let picked = TreeItem::selectable(&self.0.items.borrow(), path).then(|| path.to_vec());
         if let Some(path) = picked.as_deref() {
             // 見えていないと選んだことが分からないので、祖先を開く。
-            self.write_expanded(path, true);
+            // 葉には開閉が無いので、開くのは親から上だけ。
+            self.write_expanded(&path[..path.len().saturating_sub(1)], true);
         }
         *self.0.selected.borrow_mut() = picked;
         self.paint_selection();

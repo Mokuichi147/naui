@@ -511,6 +511,13 @@ where
 {
     if !gtk::is_initialized() {
         adw::init().map_err(|e| Error::new("テスト用の起動", e.to_string()))?;
+        // メインループを回さないのでフレームクロックが進まない。`GtkSwitch` の
+        // ような、切り替えをアニメーションで見せるウィジェットは、アニメーション
+        // が入ったままだと値が変わらないままになる。デスクトップの設定に
+        // 左右されないよう、テストの間だけ切っておく。
+        if let Some(settings) = gtk::Settings::default() {
+            settings.set_gtk_enable_animations(false);
+        }
     }
     // `GtkApplication` は 1 プロセスに 1 つ。登録は同じオブジェクトパスを
     // 使うので、ケースごとに作り直すと 2 回目の登録で失敗する。
