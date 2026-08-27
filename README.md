@@ -960,6 +960,15 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 無いため、Linux 以外では壊れます。各ジョブは自分のプラットフォーム向けの
 パッケージだけを指定します。
 
+テストには実行環境の前提がいくつかあります。
+
+- Linux: 日本語を持つフォント (CI では `fonts-noto-cjk`)。チェックボックスの
+  印の位置は日本語の行の ascent をもとに測るため、欧文へ代替されると
+  成り立ちません。
+- macOS: スクロールバーが重ね表示であること。CI はポインティングデバイスが
+  無く「常に表示」が選ばれるので、`defaults write -g AppleShowScrollBars
+  -string WhenScrolling` でそろえています。
+
 ### リリース
 
 `v` で始まるタグを push すると `.github/workflows/release.yml` が動き、4 環境ぶんの

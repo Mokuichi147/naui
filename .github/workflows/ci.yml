@@ -48,7 +48,18 @@ jobs:
       # AppKit の統合テストは harness = false の自前ランナーで、
       # ネイティブのコントロールを実際に作って操作する。
       - name: テスト
-        run: cargo test -p naui-core -p naui-macos -p naui
+        run: |
+          # ランナーにはポインティングデバイスが無いので、macOS は既定で
+          # 「常に表示」のスクロールバーを選ぶ。手元の Mac (トラックパッドや
+          # マウスがある環境) と同じ重ね表示にそろえてから測る。
+          #
+          # 常に表示のときは `tall_tab_content_scrolls` が落ちる。中身の幅が
+          # スクローラのぶん (17pt) だけクリップより広いまま戻らず、横へは
+          # 送らない設定なので右端が見えなくなる。手元でも
+          # `defaults write -g AppleShowScrollBars -string Always` で再現する。
+          # naui-macos 側の課題として別に扱う。
+          defaults write -g AppleShowScrollBars -string WhenScrolling
+          cargo test -p naui-core -p naui-macos -p naui
 
   windows:
     name: Windows (WinUI 3)
@@ -75,12 +86,16 @@ jobs:
       GTK_A11Y: none
     steps:
       - uses: actions/checkout@v4
-      - name: GTK4 / libadwaita を導入
+      # 日本語フォントも入れる。`checkbox_indicator_is_aligned_to_text` は
+      # 日本語の行の ascent が大きく取られることを前提に印の位置を測るので、
+      # 日本語を持つフォントが無いと欧文へ代替されて成り立たない。
+      - name: GTK4 / libadwaita と日本語フォントを導入
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             libgtk-4-dev libadwaita-1-dev build-essential pkg-config \
-            xvfb dbus
+            xvfb dbus \
+            fonts-noto-cjk
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
