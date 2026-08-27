@@ -1934,7 +1934,14 @@ fn window_lifecycle(ui: &Ui) -> Result<()> {
         .expect("中身")
         .downcast()
         .expect("AdwToolbarView");
-    assert_eq!(toolbar.content(), Some(bin_of(&stack)));
+    // 中身はそのままではなく、トーストを重ねる入れ物ごしに入る。
+    let overlay: adw::ToastOverlay = toolbar
+        .content()
+        .expect("トーストの入れ物")
+        .downcast()
+        .expect("AdwToastOverlay");
+    assert_eq!(overlay, window.native_toast_overlay());
+    assert_eq!(overlay.child(), Some(bin_of(&stack)));
     assert_eq!(
         toolbar.overflow(),
         gtk::Overflow::Hidden,
