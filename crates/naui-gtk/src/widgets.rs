@@ -13,6 +13,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::glib;
+use gtk::pango;
 use gtk::prelude::*;
 use naui_core::{Align, Orientation, Padding};
 
@@ -111,7 +112,9 @@ impl Label {
         // GtkLabel の既定は中央ぞろえだが、naui のラベルは他の環境と同じく左詰め。
         native.set_xalign(0.0);
         let bin = SizeBin::wrap(&native);
-        Self(Rc::new(LabelInner { native, bin }))
+        let this = Self(Rc::new(LabelInner { native, bin }));
+        this.set_wrap(false);
+        this
     }
 
     pub fn text(&self) -> String {
@@ -120,6 +123,22 @@ impl Label {
 
     pub fn set_text(&self, text: &str) {
         self.0.native.set_text(text);
+    }
+
+    /// 長い文字列を折り返すかどうか。既定は折り返さない。
+    ///
+    /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
+    /// 切る (`PangoEllipsizeMode` の `End`)。**省略記号を付けると `GtkLabel` の
+    /// 最小幅も小さくなる**ので、狭いコンテナへ入れてもコンテナごと押し広げて
+    /// しまうことがなくなる。
+    pub fn set_wrap(&self, wrap: bool) {
+        self.0.native.set_wrap(wrap);
+        self.0.native.set_wrap_mode(pango::WrapMode::WordChar);
+        self.0.native.set_ellipsize(if wrap {
+            pango::EllipsizeMode::None
+        } else {
+            pango::EllipsizeMode::End
+        });
     }
 }
 

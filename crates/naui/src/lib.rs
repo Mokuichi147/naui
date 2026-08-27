@@ -66,7 +66,7 @@
 //! どのウィジェットも [`Sizing`] で大きさを指定できる。並べ方は
 //! `Stack` (縦横) と `Grid` (行と列)、はみ出しは `Scroll`、
 //! 余りを吸わせたいときは `Spacer`、ふだんは隠しておきたいものは
-//! `Expander` を使う。
+//! `Expander`、境目を利用者に動かさせたいときは `SplitView` を使う。
 //!
 //! ```no_run
 //! # use naui::{GridCell, Length, Result, ScrollPolicy, Sizing, Track, Ui};
@@ -129,6 +129,76 @@
 //! たたんでいる間、中身はレイアウトから外れる (場所を空けない)。既定は
 //! 閉じた状態で、[`set_expanded`](Expander::set_expanded) はプログラムからの
 //! 操作なので `on_toggle` を呼ばない ([`Checkbox::set_checked`] と同じ決まり)。
+//!
+//! ## 区画の分割
+//!
+//! 画面を 2 つに分け、その境目を利用者に動かさせたいときは [`SplitView`] を
+//! 使う。区画は start (左または上) と end (右または下) の 2 つで、
+//! 仕切りの位置は **start 側の大きさ**を論理ピクセルで表す。
+//!
+//! ```no_run
+//! # use naui::{Orientation, Result, Sizing, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let split = ui.split_view(Orientation::Horizontal)?; // 区画が横に並ぶ
+//! split.set_start(&ui.tree()?);   // サイドバー
+//! split.set_end(&ui.text_area("")?); // 本文
+//! split.set_position(220.0);      // 通知せずに仕切りを置く
+//! split.set_min_sizes(120.0, 200.0); // これより狭くはできない
+//! split.on_resize(|position| println!("サイドバーの幅は {position}"));
+//! split.set_sizing(Sizing::fill()); // 中身の高さでは決まらない
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `SplitView` | `Grid` + 仕切りの `Grid` | `NSSplitView` | `GtkPaned` | `<div>` + `<div role="separator">` |
+//!
+//! **余った場所は end 側が受け取る。** ウィンドウを広げても start 側は指定した
+//! 大きさのままなので、サイドバーと本文のような組み合わせにそのまま使える。
+//! 逆にしたいときは、狭いほうを end 側へ置く。
+//!
+//! Windows と Web では対応するコントロールが無いので naui が組み立てるが、
+//! そこでも**見えるのは境目に引く 1 px の線だけ**で、残りは透明なつかみ代
+//! (6 px) になっている。色はテーマリソースと CSS のシステムカラーから引く。
+//!
+//! 作った直後の位置は [`DEFAULT_SPLIT_POSITION`] (200 px) で、4 環境で同じ。
+//! [`set_position`](SplitView::set_position) は通知せず、
+//! [`drag_to`](SplitView::drag_to) は利用者が動かしたのと同じく
+//! [`on_resize`](SplitView::on_resize) を呼ぶ (`ComboBox` の `set_selected` と
+//! `select` と同じ決まり)。
+//!
+//! [`set_min_sizes`](SplitView::set_min_sizes) の既定はどちらも 0 だが、
+//! **中身のコントロール自身がそれ以上縮まないことがある**。そのときは環境が
+//! 決める最小のほうが勝つ。画面がせまくて両方の最小を満たせないときは
+//! start 側が優先され、広がればまた指定した位置へ戻る。
+//!
+//! `Scroll` や `List` と同じく**中身の大きさから高さは決まらない**ので、
+//! 大きさは [`set_sizing`](SplitView::set_sizing) で指定する。区画は 2 つ
+//! なので、3 つ以上に分けたいときは `SplitView` を入れ子にする。
+//!
+//! ## ラベルの折り返し
+//!
+//! [`Label`] は**既定では折り返さない**。1 行に収まらない分は、末尾を
+//! 省略記号 (…) で切る。長い文章を出すときは
+//! [`set_wrap(true)`](Label::set_wrap) を指定する。
+//!
+//! ```no_run
+//! # use naui::{Result, Sizing, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let note = ui.label("狭いところでは折り返してほしい長い説明")?;
+//! note.set_wrap(true);
+//! note.set_sizing(Sizing::fill_width()); // 折り返す幅は親が決める
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! **折り返す幅を決めるのは親**なので、`Stack` の中では
+//! [`set_sizing`](Label::set_sizing) で幅も与える。幅が決まらないと、どの環境でも
+//! 1 行ぶんの幅を要求したままになる。
+//!
+//! `<span>` の既定は折り返すので、**Web だけは naui が CSS で他の 3 環境へ
+//! そろえている** (`Table` や `Tree` のセルと同じ扱い)。
 //!
 //! ## テキスト入力
 //!
@@ -875,20 +945,20 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカーを含む 116 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない) を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
-//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) を実行確認。GTK4 の実コントロールに対する自動テスト 111 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・ラベルの折り返しを含む 120 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、ラベルの折り返しと省略記号を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む)。**分割ビューだけは実機で未確認** |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) を実行確認。GTK4 の実コントロールに対する自動テスト 115 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返しを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認。**分割ビューだけは実機で未確認** |
 
 #![forbid(unsafe_code)]
 
 pub use naui_core::{
-    accept_attribute, days_in_month, default_extension, is_leap_year, media,
+    accept_attribute, clamp_split_position, days_in_month, default_extension, is_leap_year, media,
     with_default_extension, Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem,
     NumberSpec, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
     SelectionMode, Settings, Sizing, SortOrder, TableColumn, TableRow, Theme, Time, ToastSpec,
-    ToolbarIcon, ToolbarItem, Track, TreeItem,
+    ToolbarIcon, ToolbarItem, Track, TreeItem, DEFAULT_SPLIT_POSITION,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -896,24 +966,24 @@ pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
     Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
-    Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
+    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
     Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
-    Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
+    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
     Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
-    Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
+    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -925,8 +995,8 @@ pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
     Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
-    Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
+    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1033,12 +1103,22 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     expander.on_toggle(|_expanded: bool| {});
     expander.set_sizing(Sizing::fill_width());
 
+    let split_view: SplitView = ui.split_view(Orientation::Horizontal)?;
+    let _: Orientation = split_view.orientation();
+    let _: f64 = split_view.position();
+    split_view.set_position(1.0);
+    split_view.drag_to(1.0);
+    split_view.set_min_sizes(1.0, 1.0);
+    split_view.on_resize(|_position: f64| {});
+    split_view.set_sizing(Sizing::fill());
+
     let spacer: Spacer = ui.spacer()?;
     spacer.set_sizing(Sizing::fill_height());
 
     let label: Label = ui.label("t")?;
     let _: String = label.text();
     label.set_text("t");
+    label.set_wrap(true);
 
     let button: Button = ui.button("t")?;
     button.set_text("t");
@@ -1429,6 +1509,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     grid.attach(&button, GridCell::new(1, 0).span(2, 1));
     scroll.set_child(&grid);
     expander.set_child(&checkbox);
+    split_view.set_start(&ui.stack(Orientation::Vertical)?);
+    split_view.set_end(&ui.stack(Orientation::Vertical)?);
 
     stack.append(&spacer);
     stack.append(&scroll);
@@ -1460,6 +1542,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&picker);
     stack.append(&saver);
     stack.append(&expander);
+    stack.append(&split_view);
     window.set_child(&stack);
 
     ui.quit();

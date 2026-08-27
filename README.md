@@ -68,10 +68,10 @@ cargo run -p gallery
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブルを操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックスを含む) |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビューを含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返しを含む) |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、ラベルの折り返しを操作 |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返しを含む) |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
 
@@ -146,7 +146,7 @@ naui::run(settings, |ui| {
 
 ### 配置とサイズ
 
-レイアウトには次の 5 種類を使います。
+レイアウトには次の 6 種類を使います。
 
 | API | 用途 |
 | --- | --- |
@@ -155,6 +155,7 @@ naui::run(settings, |ui| {
 | `Scroll` | はみ出した内容をスクロールする |
 | `Spacer` | 親の余った空間を受け取る |
 | `Expander` | 見出しを押したときだけ中身を見せる |
+| `SplitView` | 2 つの区画を、動かせる仕切りで分ける |
 
 すべてのウィジェットは `Sizing` でサイズを指定できます。`Length` は中身に合わせる
 `Auto`、固定値の `Fixed`、余った領域へ広がる `Fill` の 3 種類です。
@@ -174,8 +175,8 @@ form.attach(&ui.label("名前")?, GridCell::new(0, 0));
 form.attach(&field, GridCell::new(1, 0));
 ```
 
-`List`、`Tree`、`Scroll`、`TextArea` は内容から高さを決めないため、通常は
-`set_sizing` で高さを指定します。
+`List`、`Tree`、`Scroll`、`SplitView`、`TextArea` は内容から高さを決めないため、
+通常は `set_sizing` で高さを指定します。
 
 ### 機能別の補足
 
@@ -203,6 +204,74 @@ details.on_toggle(|expanded| println!("開いている: {expanded}"));
 既定は閉じた状態で、たたんでいる間、中身はレイアウトから外れます (場所を空けません)。
 `set_expanded` はプログラムからの操作なので `on_toggle` を呼びません
 (`Checkbox::set_checked` と同じ決まりです)。
+
+#### ラベルの折り返し
+
+`Label` は**既定では折り返しません**。1 行に収まらない分は、末尾を省略記号 (…)
+で切ります。長い文章を出すときは `set_wrap(true)` を指定します。
+
+```rust
+let note = ui.label("狭いところでは折り返してほしい長い説明")?;
+note.set_wrap(true);
+note.set_sizing(Sizing::fill_width()); // 折り返す幅は親が決める
+```
+
+**折り返す幅を決めるのは親**なので、`Stack` の中では `set_sizing` で幅も
+与えます。幅が決まらないと、どの環境でも 1 行ぶんの幅を要求したままになります。
+
+| 環境 | 折り返さないとき | 折り返すとき |
+| --- | --- | --- |
+| Windows | `TextWrapping="NoWrap"` + `TextTrimming="CharacterEllipsis"` | `TextWrapping="Wrap"` |
+| macOS | `usesSingleLineMode` + `ByTruncatingTail` | `ByWordWrapping` + `preferredMaxLayoutWidth` |
+| Linux | `PangoEllipsizeMode::End` | `gtk_label_set_wrap` |
+| Web | `white-space: nowrap` + `text-overflow: ellipsis` | `white-space: normal` |
+
+**`<span>` の既定は折り返す**ので、Web だけは naui が CSS で他の 3 環境へ
+そろえています (`Table` や `Tree` のセルと同じ扱いです)。
+
+#### 区画の分割
+
+画面を 2 つに分け、その境目を利用者に動かさせたいときは `SplitView` を使います。
+区画は start (左または上) と end (右または下) の 2 つで、**仕切りの位置は
+start 側の大きさ**を論理ピクセルで表します。
+
+```rust
+let split = ui.split_view(Orientation::Horizontal)?; // 区画が横に並ぶ
+split.set_start(&sidebar);
+split.set_end(&body);
+split.set_position(220.0);         // 通知せずに仕切りを置く
+split.set_min_sizes(120.0, 200.0); // これより狭くはできない
+split.on_resize(|position| println!("サイドバーの幅は {position}"));
+split.set_sizing(Sizing::fill());  // 中身の高さでは決まらない
+```
+
+**余った場所は end 側が受け取ります。** ウィンドウを広げても start 側は指定した
+大きさのままなので、サイドバーと本文のような組み合わせにそのまま使えます。逆に
+したいときは、狭いほうを end 側へ置いてください。
+
+作った直後の位置は `DEFAULT_SPLIT_POSITION` (200 px) で、4 環境とも同じです
+(環境ごとの既定には任せていません)。`set_position` は通知せず、`drag_to` は
+利用者が動かしたのと同じく `on_resize` を呼びます (`ComboBox` の `set_selected`
+と `select` と同じ決まりです)。
+
+`set_min_sizes` の既定はどちらも 0 ですが、**中身のコントロール自身がそれ以上
+縮まないことがあります**。そのときはその環境が決める最小のほうが勝ちます。
+画面がせまくて両方の最小を満たせないときは start 側が優先され、広がればまた
+指定した位置へ戻ります。
+
+`Scroll` や `List` と同じく**中身の大きさから高さは決まらない**ので、大きさは
+`set_sizing` で指定します。区画は 2 つなので、3 つ以上に分けたいときは
+`SplitView` を入れ子にします。
+
+**仕切りが「その環境の標準コントロール」なのは macOS と Linux だけ**です
+(`NSSplitView` と `GtkPaned`)。Windows と Web には対応するコントロールが無いため、
+naui が 3 つの区画 (start・仕切り・end) を並べて組み立てます。組み立てるのは
+位置と当たり判定だけで、仕切りの色はテーマリソース (Windows) と CSS のシステム
+カラー (Web)、カーソルの形は CSS の `col-resize` / `row-resize` に任せています。
+
+この 2 つでは、**見えるのは境目に引く 1 px の線だけ**で、残りは透明なつかみ代に
+なっています (つかめる幅は 6 px)。塗りつぶしの帯にすると、区切りというより
+1 つの部品のように見えて周りから浮くためです。
 
 #### 数値とパスワードの入力
 
@@ -595,7 +664,7 @@ window.set_toolbar(&toolbar);
 
 | 分類 | API |
 | --- | --- |
-| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`Toolbar` |
+| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`SplitView`、`Toolbar` |
 | 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、`NumberInput`、`Slider`、`ProgressBar` |
 | データ選択 | `ComboBox`、`EditableComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
 | ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
@@ -623,6 +692,7 @@ window.set_toolbar(&toolbar);
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
 | `Spacer` | 🔴 中身のない `Grid` | 🟡 中身のない `NSView` | 🟡 中身のない `GtkBox` | 🟡 `<div>` + `flex-grow` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (入り切り) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
+| `SplitView` | 🔴 `Grid` + 仕切りの `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
 | `Toolbar` | 🟡 `StackPanel` + `Button` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 
 </details>
@@ -814,13 +884,15 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 <details>
 <summary><strong>共通</strong></summary>
 
-- 対応するのは上記の 42 コンポーネントです。
+- 対応するのは上記の 43 コンポーネントです。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
   都合上、macOS の「ツールバーをカスタマイズ」(利用者による並べ替え) は
   切ってあります。
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
+- `SplitView` の区画は 2 つだけで、仕切りも 1 本です。3 つ以上に分けるときは
+  入れ子にします。区画をたたむ (幅 0 にして隠す) 指定はありません。
 - `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
 - `Table` のセルに置けるのも文字列だけです。見出しを押しての並べ替えは
   「どの列を、どちら向きに」を通知するところまでで、**行を並べ替えるのは
@@ -870,6 +942,20 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `InfoBar` / `TeachingTip` がバインディングに無いため、`Toast` は `Grid` と
   `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
   `window.show()` より前には出せません。
+- `TextTrimming` が `winio-winui3` の投影に含まれていないため、`Label` の
+  `TextBlock` は `TextTrimming="CharacterEllipsis"` を持つ XAML から生成して
+  います (折り返しの切り替えは `TextWrapping` で行います)。
+- 動かせる仕切りを持つコントロールが Windows App SDK に無いため
+  (`Microsoft.UI.Xaml.Controls.SplitView` は開閉するナビゲーションのペインで、
+  `GridSplitter` は Community Toolkit の側)、`SplitView` は 3 つの列 (行) を
+  持つ `Grid` の真ん中に仕切りを置いて組み立てています。仕切りの地色は
+  `ControlStrokeColorDefaultBrush` から引くのでテーマに追従します。塗るのは
+  境目の 1 px だけ (`BorderThickness`) で、残りは `Background="Transparent"` の
+  つかみ代です (`Transparent` は `null` と違って当たり判定が残ります)。ただし
+  **仕切りに合わせたカーソル (⇔) は出ません**。カーソルの形を変える
+  `UIElement.ProtectedCursor` は派生クラスからしか触れないためです。
+  区画の大きさが変わったことは `SizeChanged` がバインディングに無いため
+  `LayoutUpdated` で拾っています。
 - `Expander` は `winio-winui3` の投影に含まれていませんが、WinUI の公開 WinRT
   インターフェイスを最小限投影し、`XamlReader` から本物の `Expander` を生成しています。
 - `ToggleSwitch` も投影に含まれていないため、`Expander` と同じく公開 WinRT
@@ -934,6 +1020,16 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `NSVisualEffectView` (`NSPopover` と同じ材質) をウィンドウの中身へ重ねて
   組み立てています。出す先はいちばん手前のウィンドウで、まだ焦点が
   決まっていないときは最後に作ったウィンドウです。
+- `Label::set_wrap(true)` にすると、naui は `NSViewFrameDidChangeNotification`
+  を見て `preferredMaxLayoutWidth` を frame の幅へ追従させます。
+  `NSTextField` は折り返す幅が決まって初めて高さを返せるためです。
+- `SplitView` は `NSSplitView` そのものです。ただし**区画の配り方だけは
+  naui が置き換えています** (`splitView:resizeSubviewsWithOldSize:`)。
+  `NSSplitView` の既定は大きさが変わったときに**割合**で配るため、そのままでは
+  ウィンドウを広げるとサイドバーまで広がってしまうためです。区画の frame を
+  naui が直接置く都合上、区画のビューだけは
+  `translatesAutoresizingMaskIntoConstraints` を切っていません (中身の配置は
+  その frame の中で Auto Layout が行います)。
 - 折りたたみにあたるコントロールが AppKit に無いため、`Expander` は入り切りの
   `NSButton` (山形は SF Symbols) と `NSStackView` で組み立てています。
   開閉のアニメーションはありません。
@@ -963,6 +1059,17 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   `GtkButton` で、向きは見出しの文字に付く矢印で表します。
 - `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
   行と開閉ボタンで組み立てています。
+- `Label` の既定 (折り返さない) では `PangoEllipsizeMode::End` を入れています。
+  **省略記号を付けると `GtkLabel` の最小幅も下がる**ので、狭いコンテナへ
+  入れてもコンテナごと押し広げてしまうことがなくなります。
+- **折り返す中身は「幅が決まってから高さが決まる」**ので、naui が中身を包む
+  入れ物は `GtkSizeRequestMode` を中身から引き継ぎます。`GtkWidget` の既定は
+  `GTK_SIZE_REQUEST_CONSTANT_SIZE` で、そのままだと親が幅を渡さずに高さを
+  尋ね、折り返す前の 1 行ぶんしか場所を配りません。
+- `SplitView` は `GtkPaned` です。区画の最小の大きさは、アプリが `Sizing` で
+  指定する `size_request` とぶつからないよう、区画ごとにかぶせた入れ物のほうに
+  持たせています。`GtkPaned` は子の最小より仕切りを寄せられないので、中身が
+  大きな最小を申告するときはそちらが勝ちます。
 - `Toolbar` の項目は、GNOME の作法にならってヘッダーバーの左側へ並びます。
 - `Toast` の時間は `AdwToast` に合わせて**秒**単位です。1 秒未満を指定しても
   1 秒になります (0 に丸めると「消えない」指定に変わってしまうため)。
@@ -994,6 +1101,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 - `Window` は OS のウィンドウではなく、`<body>` 直下の要素と
   `document.title` で表現されます。
+- **`<span>` の既定は折り返す**ため、`Label` には naui が
+  `white-space: nowrap` と `text-overflow: ellipsis` を入れて、他の 3 環境の
+  既定 (1 行 + 省略記号) へそろえています。折り返したいときは
+  `Label::set_wrap(true)` を使います。
 - `ListItem::detail` を使うと、`List` は `<select>` から
   `<ul role="listbox">` を使った実装へ切り替わります。
 - `Tree` の `TreeItem::detail` は、行の高さをそろえるため
@@ -1026,6 +1137,16 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - `Toggle` の `switch` 属性に対応しているのは Safari 17.4 以降だけなので、
   Chrome や Firefox ではチェックボックスの見た目で出ます (値の扱い・通知・
   読み上げは同じです)。つまみの見た目を naui の CSS で作ることはしません。
+- 動かせる仕切りで区画を分ける要素が HTML に無いため (`resize` は要素の隅に
+  つまみを出すだけです)、`SplitView` は `Toast` と同じく naui が組み立てます。
+  仕切りは `<div role="separator">` で、カーソルは `col-resize` / `row-resize`
+  に任せています (つまみの絵を naui の CSS で描くことはしません)。見えるのは
+  境目の 1 px の線だけで、残りは透明なつかみ代です。線の色はシステムカラーの
+  `GrayText` を使います。`ButtonBorder` と `CanvasText` はブラウザによって
+  **地色の正反対** (ダークなら白、ライトなら黒) になり、区切り線としては
+  強すぎるのに対し、`GrayText` はどちらの配色でも地色と文字色の中間に来る
+  ためです。`tabindex="0"` を付けてあるので**キーボードでも動かせます**
+  (矢印キーで 10 px ずつ)。
 - ページに一時的な通知の標準要素が無いため、`Toast` は `<div role="status">` を
   `position: fixed` で下端の中央へ出します (`Notification` API はページの外へ
   出るもので別物です)。

@@ -101,13 +101,44 @@ struct LabelInner {
 pub struct Label(Rc<LabelInner>);
 impl_widget!(Label, native);
 
+/// ラベルの土台。
+///
+/// 省略記号 (`TextTrimming`) は `winio-winui3` に投影されていないので、
+/// XAML で持たせておく。折り返さないときだけ効く指定なので、実行時に
+/// 切り替える必要はない (切り替えるのは `TextWrapping` のほう)。
+const LABEL_XAML: &str = r##"<TextBlock
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    TextTrimming="CharacterEllipsis"/>"##;
+
 impl Label {
     pub(crate) fn new(text: &str) -> Result<Self> {
-        let native = TextBlock::new().map_err(|e| to_error("TextBlock の生成", e))?;
+        let native = match XamlReader::Load(&HSTRING::from(LABEL_XAML))
+            .and_then(|element| element.cast::<TextBlock>())
+        {
+            Ok(native) => native,
+            Err(error) => {
+                eprintln!("naui-windows: ラベルの生成に失敗 (省略記号なしで続けます): {error}");
+                TextBlock::new().map_err(|e| to_error("TextBlock の生成", e))?
+            }
+        };
         native
             .SetText(&HSTRING::from(text))
             .map_err(|e| to_error("TextBlock への設定", e))?;
-        Ok(Self(Rc::new(LabelInner { native })))
+        let this = Self(Rc::new(LabelInner { native }));
+        this.set_wrap(false);
+        Ok(this)
+    }
+
+    /// 長い文字列を折り返すかどうか。既定は折り返さない。
+    ///
+    /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
+    /// 切る (`TextTrimming="CharacterEllipsis"`)。
+    pub fn set_wrap(&self, wrap: bool) {
+        let _ = self.0.native.SetTextWrapping(if wrap {
+            TextWrapping::Wrap
+        } else {
+            TextWrapping::NoWrap
+        });
     }
 
     pub fn text(&self) -> String {

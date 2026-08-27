@@ -5,8 +5,9 @@
 //! **「これ以上は大きくならない」という上限を持たない**。
 //!
 //! そこで naui のウィジェットは、必ず [`SizeBin`] という薄い入れ物に入れてから
-//! コンテナへ渡す。`SizeBin` は GTK4 の `measure` だけを差し替えたウィジェットで、
-//! 中身が申告する「自然な大きさ」を上限で頭打ちにする。実際の配置は
+//! コンテナへ渡す。`SizeBin` は GTK4 の測り方 (`measure` と `request_mode`) だけを
+//! 差し替えたウィジェットで、中身が申告する「自然な大きさ」を上限で頭打ちにし、
+//! 測り方そのものは中身のものを親へ伝える。実際の配置は
 //! `GtkBinLayout` に任せているので、レイアウト計算は GTK4 が行う。
 
 use gtk::glib;
@@ -57,6 +58,18 @@ mod imp {
         }
     }
 
+    impl SizeBin {
+        /// `measure` に渡される「もう一方の軸の大きさ」の上限。無いなら `None`。
+        fn cross_cap(&self, orientation: gtk::Orientation) -> Option<i32> {
+            let cap = if orientation == gtk::Orientation::Horizontal {
+                self.max_height.get()
+            } else {
+                self.max_width.get()
+            };
+            (cap >= 0).then_some(cap)
+        }
+    }
+
     impl WidgetImpl for SizeBin {
         /// 中身の申告を通しつつ、上限のある軸の「自然な大きさ」を決め直す。
         ///
@@ -85,6 +98,13 @@ mod imp {
             let Some(child) = self.obj().first_child() else {
                 return (0, 0, -1, -1);
             };
+            // もう一方の軸に上限があるなら、中身にはそこまでしか配られない。
+            // 折り返す中身は渡された大きさで高さを決めるので、上限を超えた
+            // 大きさで測らせると高さが足りなくなる。
+            let for_size = match (for_size, self.cross_cap(orientation)) {
+                (for_size, Some(cap)) if for_size >= 0 => for_size.min(cap),
+                (for_size, _) => for_size,
+            };
             let (child_minimum, child_natural, min_baseline, nat_baseline) =
                 child.measure(orientation, for_size);
             let (mut minimum, mut natural) = (child_minimum, child_natural);
@@ -112,6 +132,20 @@ mod imp {
                 natural = natural.max(child_minimum);
             }
             (minimum, natural, min_baseline, nat_baseline)
+        }
+
+        /// 中身の測り方 (`GtkSizeRequestMode`) を、そのまま親へ伝える。
+        ///
+        /// `GtkWidget` の既定は `ConstantSize` (幅と高さを別々に測ってよい) で、
+        /// 折り返す `GtkLabel` のような「幅が決まってから高さが決まる」中身を
+        /// 包んでも、そのままでは親に伝わらない。すると親は幅を渡さずに高さを
+        /// 尋ね、**折り返す前の 1 行ぶんの高さ**しか配らないため、中身がはみ出す。
+        fn request_mode(&self) -> gtk::SizeRequestMode {
+            self.obj()
+                .first_child()
+                .map_or(gtk::SizeRequestMode::ConstantSize, |child| {
+                    child.request_mode()
+                })
         }
 
         /// 中身を自分と同じ場所いっぱいに置く。
