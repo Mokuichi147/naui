@@ -191,7 +191,9 @@ impl Label {
     pub(crate) fn new(doc: &Document, text: &str) -> Result<Self> {
         let element: HtmlElement = create(doc, "span")?.unchecked_into();
         element.set_text_content(Some(text));
-        Ok(Self(Rc::new(LabelInner { element })))
+        let this = Self(Rc::new(LabelInner { element }));
+        this.set_wrap(false);
+        Ok(this)
     }
 
     pub fn text(&self) -> String {
@@ -200,6 +202,24 @@ impl Label {
 
     pub fn set_text(&self, text: &str) {
         self.0.element.set_text_content(Some(text));
+    }
+
+    /// 長い文字列を折り返すかどうか。既定は折り返さない。
+    ///
+    /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
+    /// 切る (`text-overflow: ellipsis`)。**`<span>` の既定は折り返す**ので、
+    /// ここだけは naui が CSS で他の 3 環境へそろえている。
+    pub fn set_wrap(&self, wrap: bool) {
+        let style = self.0.element.style();
+        if wrap {
+            let _ = style.remove_property("white-space");
+            let _ = style.remove_property("overflow");
+            let _ = style.remove_property("text-overflow");
+        } else {
+            let _ = style.set_property("white-space", "nowrap");
+            let _ = style.set_property("overflow", "hidden");
+            let _ = style.set_property("text-overflow", "ellipsis");
+        }
     }
 }
 

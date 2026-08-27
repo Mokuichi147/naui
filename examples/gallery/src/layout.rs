@@ -66,6 +66,52 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&details);
     pane.append(&details_status);
 
+    pane.append(&ui.label("SplitView")?);
+    pane.append(
+        &ui.label(
+            "仕切りをドラッグすると区画の大きさが変わります。余った幅は右側が受け取ります。",
+        )?,
+    );
+    let split_status = ui.label(&format!(
+        "SplitView: 仕切りは {} px",
+        naui::DEFAULT_SPLIT_POSITION
+    ))?;
+    let sidebar = ui.stack(Orientation::Vertical)?;
+    sidebar.set_spacing(6.0);
+    sidebar.set_padding(Padding::all(10.0));
+    sidebar.set_align(Align::Start);
+    sidebar.append(&ui.label("サイドバー")?);
+    for name in ["受信箱", "送信済み", "下書き"] {
+        sidebar.append(&ui.button(name)?);
+    }
+    let body = ui.stack(Orientation::Vertical)?;
+    body.set_spacing(6.0);
+    body.set_padding(Padding::all(10.0));
+    body.set_align(Align::Start);
+    body.append(&ui.label("本文")?);
+    // 区画は狭くなるので、この説明だけは折り返す (Label の既定は 1 行)。
+    // 折り返す幅は親が決めるため、幅も与えておく。
+    let body_note = ui.label("仕切りを左へ動かすと、この文は区画の幅で折り返します。")?;
+    body_note.set_wrap(true);
+    body_note.set_sizing(Sizing::fill_width());
+    body.append(&body_note);
+    let split = ui.split_view(Orientation::Horizontal)?;
+    split.set_start(&sidebar);
+    split.set_end(&body);
+    split.set_min_sizes(120.0, 140.0);
+    split.on_resize({
+        let status = split_status.clone();
+        move |position| status.set_text(&format!("SplitView: 仕切りは {position:.0} px"))
+    });
+    // Scroll と同じく中身の高さでは決まらないので、大きさを指定する。
+    split.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(160.0)),
+    );
+    pane.append(&split);
+    pane.append(&split_status);
+
     pane.append(&ui.label("Scroll")?);
     pane.append(&ui.label("高さを固定し、はみ出した内容だけをスクロールします。")?);
     let content = ui.stack(Orientation::Vertical)?;

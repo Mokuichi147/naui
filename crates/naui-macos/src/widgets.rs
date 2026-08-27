@@ -13,11 +13,13 @@ use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Messa
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBorderType, NSButton, NSButtonType, NSColor,
     NSControlStateValueOff, NSControlStateValueOn, NSFont, NSLayoutAttribute, NSLayoutConstraint,
-    NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField, NSSecureTextField,
-    NSSlider, NSStackView, NSStackViewDistribution, NSTextField, NSTextView,
-    NSUserInterfaceLayoutOrientation, NSView,
+    NSLineBreakMode, NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField,
+    NSSecureTextField, NSSlider, NSStackView, NSStackViewDistribution, NSTextField, NSTextView,
+    NSUserInterfaceLayoutOrientation, NSView, NSViewFrameDidChangeNotification,
 };
-use objc2_foundation::{NSArray, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{
+    NSArray, NSEdgeInsets, NSNotificationCenter, NSPoint, NSRect, NSSize, NSString,
+};
 
 use crate::trampoline::{
     ActionTarget, SearchHandlers, SearchObserver, TextObserver, TextViewObserver,
@@ -74,6 +76,13 @@ pub(crate) use {impl_sizing, impl_widget};
 
 struct LabelInner {
     native: Retained<NSTextField>,
+    mtm: MainThreadMarker,
+    /// 折り返しているかどうか。
+    wraps: Cell<bool>,
+    /// 折り返す幅を frame に追従させる中継。折り返していない間は `None`。
+    ///
+    /// 中継はハンドルと同じ寿命で持つ (`Toast` と同じ決まり)。
+    width_target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
 /// 編集できないテキスト (NSTextField のラベル構成)。
@@ -84,7 +93,14 @@ impl_widget!(Label);
 impl Label {
     pub(crate) fn new(mtm: MainThreadMarker, text: &str) -> Self {
         let native = NSTextField::labelWithString(&NSString::from_str(text), mtm);
-        Self(Rc::new(LabelInner { native }))
+        let this = Self(Rc::new(LabelInner {
+            native,
+            mtm,
+            wraps: Cell::new(false),
+            width_target: RefCell::new(None),
+        }));
+        this.set_wrap(false);
+        this
     }
 
     pub fn text(&self) -> String {
@@ -93,6 +109,84 @@ impl Label {
 
     pub fn set_text(&self, text: &str) {
         self.0.native.setStringValue(&NSString::from_str(text));
+    }
+
+    /// 長い文字列を折り返すかどうか。既定は折り返さない。
+    ///
+    /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
+    /// 切る (`NSLineBreakMode` の `ByTruncatingTail`)。
+    ///
+    /// 折り返す幅を決めるのは親なので、`Stack` の中では
+    /// [`set_sizing`](Self::set_sizing) で幅を与える
+    /// (`Sizing::fill_width()` など)。`NSTextField` は自分の幅が決まって
+    /// 初めて高さを返せるため、naui は frame の変化を見て
+    /// `preferredMaxLayoutWidth` を追従させている。
+    pub fn set_wrap(&self, wrap: bool) {
+        self.0.wraps.set(wrap);
+        self.0.native.setUsesSingleLineMode(!wrap);
+        self.0.native.setLineBreakMode(if wrap {
+            NSLineBreakMode::ByWordWrapping
+        } else {
+            NSLineBreakMode::ByTruncatingTail
+        });
+        self.0
+            .native
+            .setMaximumNumberOfLines(if wrap { 0 } else { 1 });
+
+        let center = NSNotificationCenter::defaultCenter();
+        if let Some(previous) = self.0.width_target.borrow_mut().take() {
+            unsafe {
+                center.removeObserver_name_object(
+                    &previous,
+                    Some(NSViewFrameDidChangeNotification),
+                    Some(&self.0.native),
+                );
+            }
+        }
+        if !wrap {
+            self.0.native.setPreferredMaxLayoutWidth(0.0);
+            return;
+        }
+
+        self.0.sync_preferred_width();
+        self.0.native.setPostsFrameChangedNotifications(true);
+        let target = ActionTarget::new(self.0.mtm, {
+            let weak = Rc::downgrade(&self.0);
+            move || {
+                if let Some(inner) = weak.upgrade() {
+                    inner.sync_preferred_width();
+                }
+            }
+        });
+        unsafe {
+            center.addObserver_selector_name_object(
+                &target,
+                sel!(invoke:),
+                Some(NSViewFrameDidChangeNotification),
+                Some(&self.0.native),
+            );
+        }
+        *self.0.width_target.borrow_mut() = Some(target);
+    }
+}
+
+impl LabelInner {
+    /// 折り返す幅を、いまの frame の幅へそろえる。
+    ///
+    /// 値が変わったときだけ書く。`preferredMaxLayoutWidth` を書くと intrinsic
+    /// size が無効になって次のレイアウトが走るので、毎回書くと回り続ける。
+    fn sync_preferred_width(&self) {
+        if !self.wraps.get() {
+            return;
+        }
+        let width = self.native.frame().size.width;
+        if width <= 0.0 {
+            return;
+        }
+        if (self.native.preferredMaxLayoutWidth() - width).abs() < 0.5 {
+            return;
+        }
+        self.native.setPreferredMaxLayoutWidth(width);
     }
 }
 
