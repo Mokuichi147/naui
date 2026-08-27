@@ -967,9 +967,6 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   ascent と行の高さをもとに測るため、欧文へ代替されたり、GTK 組み込みの
   既定 (`Sans 10`) のまま行が低かったりすると成り立ちません。CI は
   `~/.config/gtk-4.0/settings.ini` に `gtk-font-name=Sans 11` を書いています。
-- macOS: スクロールバーが重ね表示であること。CI はポインティングデバイスが
-  無く「常に表示」が選ばれるので、`defaults write -g AppleShowScrollBars
-  -string WhenScrolling` でそろえています。
 
 ### リリース
 

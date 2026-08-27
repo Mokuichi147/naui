@@ -157,6 +157,7 @@ objc2-app-kit = { version = "0.3", features = [
     "NSPopUpButton",
     "NSResponder",
     "NSSavePanel",
+    "NSScroller",
     "NSScrollView",
     "NSSearchField",
     "NSSecureTextField",
