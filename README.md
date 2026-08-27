@@ -962,9 +962,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 テストには実行環境の前提がいくつかあります。
 
-- Linux: 日本語を持つフォント (CI では `fonts-noto-cjk`)。チェックボックスの
-  印の位置は日本語の行の ascent をもとに測るため、欧文へ代替されると
-  成り立ちません。
+- Linux: 日本語を持つフォント (CI では `fonts-noto-cjk`) と、デスクトップと
+  同じ大きさのフォント設定。チェックボックスの印の位置は日本語の行の
+  ascent と行の高さをもとに測るため、欧文へ代替されたり、GTK 組み込みの
+  既定 (`Sans 10`) のまま行が低かったりすると成り立ちません。CI は
+  `~/.config/gtk-4.0/settings.ini` に `gtk-font-name=Sans 11` を書いています。
 - macOS: スクロールバーが重ね表示であること。CI はポインティングデバイスが
   無く「常に表示」が選ばれるので、`defaults write -g AppleShowScrollBars
   -string WhenScrolling` でそろえています。

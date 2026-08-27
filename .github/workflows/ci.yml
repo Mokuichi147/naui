@@ -96,6 +96,16 @@ jobs:
             libgtk-4-dev libadwaita-1-dev build-essential pkg-config \
             xvfb dbus \
             fonts-noto-cjk
+      # Xvfb には設定デーモンが無いので、GTK は組み込みの既定 "Sans 10" を
+      # 使う。デスクトップの既定 (Ubuntu 24.04 は 11pt) より 1pt 小さく、
+      # チェックボックスの印を字面へ下げる余地が行の高さに残らないため、
+      # `checkbox_indicator_is_aligned_to_text` が成り立たない。
+      # デスクトップと同じ大きさにそろえる。
+      - name: GTK のフォント設定をデスクトップにそろえる
+        run: |
+          mkdir -p "$HOME/.config/gtk-4.0"
+          printf '[Settings]\ngtk-font-name=Sans 11\n' \
+            >"$HOME/.config/gtk-4.0/settings.ini"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
