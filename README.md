@@ -1,5 +1,7 @@
 # naui
 
+[![CI](https://github.com/mokuichi147/naui/actions/workflows/ci.yml/badge.svg)](https://github.com/mokuichi147/naui/actions/workflows/ci.yml)
+
 各 OS のネイティブ UI を、1 つの Rust API から扱う軽量 GUI ツールキットです。
 
 naui はウィジェットを自前で描画しません。ボタン、入力欄、レイアウト、IME、
@@ -941,6 +943,46 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 `crates/naui/src/lib.rs` の `__api_contract` が公開 API を一通り型検査し、
 バックエンド間のシグネチャのずれを検出します。
+
+### CI
+
+`.github/workflows/ci.yml` が push と pull request で 4 環境を並行に検査します。
+
+| ジョブ | ランナー | 内容 |
+| --- | --- | --- |
+| 整形 | ubuntu-latest | `cargo fmt --all --check` |
+| macOS | macos-latest | ビルドと AppKit の統合テスト |
+| Windows | windows-latest | ビルドと `naui-core` のテスト |
+| Linux | ubuntu-latest | GTK4 を導入し、Xvfb 上で統合テスト |
+| Web | ubuntu-latest | wasm ターゲットの型検査と Gallery の wasm ビルド |
+
+`cargo test --workspace` は使いません。`crates/naui-gtk/tests/gtk4.rs` に cfg が
+無いため、Linux 以外では壊れます。各ジョブは自分のプラットフォーム向けの
+パッケージだけを指定します。
+
+### リリース
+
+`v` で始まるタグを push すると `.github/workflows/release.yml` が動き、4 環境ぶんの
+Gallery と counter をビルドして GitHub Release へ添付します。
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+タグ名は `Cargo.toml` の `[workspace.package]` の `version` と一致している必要が
+あり、ずれていればワークフローが止まります。`v0.3.0-rc1` のようにハイフンを
+含むタグはプレリリースとして公開されます。
+
+配布物は次の 4 つです。
+
+- `naui-gallery-<タグ>-macos-universal.tar.gz` (Intel / Apple Silicon 共通)
+- `naui-gallery-<タグ>-linux-x86_64.tar.gz` (Ubuntu 24.04 でビルド)
+- `naui-gallery-<タグ>-windows-x86_64.zip`
+- `naui-gallery-<タグ>-web-wasm.tar.gz` (HTTP で配信して開く)
+
+タグを打たずにビルドだけ確かめたいときは、Actions から `Release` を
+`workflow_dispatch` で実行してください。Release は作られません。
 
 ## 既知の制限
 

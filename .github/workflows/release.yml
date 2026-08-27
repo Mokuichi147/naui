@@ -1,0 +1,230 @@
+# タグ (v0.2.0 など) を打つと、4 環境ぶんの Gallery をビルドして
+# GitHub Release へ添付する。
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # タグを打つ前に一通り通るか確かめたいとき用 (Release は作らない)。
+  workflow_dispatch:
+
+# 既定は読み取りだけ。Release を作るジョブでだけ書き込みを足す。
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  check-version:
+    name: バージョン確認
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          # workflow_dispatch では参照がタグではないので、バージョンから名前を作る。
+          version="$(awk '/^\[workspace\.package\]/{f=1} f && /^version =/{gsub(/[",]/,""); print $3; exit}' Cargo.toml)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+            # タグと Cargo.toml のバージョンがずれたまま公開しないようにする。
+            if [ "$tag" != "v$version" ]; then
+              echo "タグ $tag と Cargo.toml のバージョン $version が一致しません。" >&2
+              exit 1
+            fi
+          else
+            tag="v$version"
+          fi
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          # v0.3.0-rc1 のようにハイフンを含むものはプレリリース扱い。
+          case "$tag" in
+            *-*) echo "prerelease=true" >>"$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >>"$GITHUB_OUTPUT" ;;
+          esac
+
+  build:
+    name: ${{ matrix.name }}
+    needs: check-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-universal
+            os: macos-latest
+          - name: linux-x86_64
+            # 配布物の glibc / GTK の下限を固定する。GTK 4.10 以降が要るので
+            # 22.04 (GTK 4.6) までは下げられない。
+            os: ubuntu-24.04
+          - name: windows-x86_64
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: GTK4 / libadwaita を導入
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libgtk-4-dev libadwaita-1-dev build-essential pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+
+      - name: ビルド (macOS / ユニバーサル)
+        if: runner.os == 'macOS'
+        run: |
+          set -eux
+          # Intel / Apple Silicon の両方を作って 1 つに束ねる。
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release -p gallery -p counter --target "$target"
+          done
+          mkdir -p dist
+          for bin in gallery counter; do
+            lipo -create -output "dist/$bin" \
+              "target/aarch64-apple-darwin/release/$bin" \
+              "target/x86_64-apple-darwin/release/$bin"
+          done
+
+      - name: ビルド (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -eux
+          cargo build --release -p gallery -p counter
+          mkdir -p dist
+          cp target/release/gallery target/release/counter dist/
+
+      - name: ビルド (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -eux
+          cargo build --release -p gallery -p counter
+          mkdir -p dist
+          cp target/release/gallery.exe target/release/counter.exe dist/
+
+      - name: 同梱物をそろえる
+        shell: bash
+        run: |
+          set -eux
+          cp LICENSE-MIT LICENSE-APACHE README.md dist/
+
+      - name: 書庫を作る (tar.gz)
+        if: runner.os != 'Windows'
+        run: |
+          set -eux
+          name="naui-gallery-${{ needs.check-version.outputs.tag }}-${{ matrix.name }}"
+          mv dist "$name"
+          tar -czf "$name.tar.gz" "$name"
+
+      - name: 書庫を作る (zip)
+        if: runner.os == 'Windows'
+        run: |
+          $name = "naui-gallery-${{ needs.check-version.outputs.tag }}-${{ matrix.name }}"
+          Rename-Item dist $name
+          # Compress-Archive は最上位フォルダを含めるかが版で変わるので、
+          # includeBaseDirectory を明示できる .NET 側を直接呼ぶ。
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            (Join-Path $PWD $name),
+            (Join-Path $PWD "$name.zip"),
+            [System.IO.Compression.CompressionLevel]::Optimal,
+            $true)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            naui-gallery-*.tar.gz
+            naui-gallery-*.zip
+          if-no-files-found: error
+
+  build-web:
+    name: web-wasm
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-web
+      - name: wasm-bindgen の版を Cargo.lock から取得
+        id: wb
+        run: |
+          version="$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/[",]/,""); print $3; exit}' Cargo.lock)"
+          [ -n "$version" ] || { echo "Cargo.lock から取得できませんでした" >&2; exit 1; }
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wb.outputs.version }}
+      - name: Gallery を wasm へビルド
+        run: ./build.sh
+        working-directory: examples/gallery/web
+      - name: 書庫を作る
+        run: |
+          set -eux
+          name="naui-gallery-${{ needs.check-version.outputs.tag }}-web-wasm"
+          mkdir -p "$name"
+          # build.sh が pkg/ と assets/ を web/ の下に用意する。
+          cp examples/gallery/web/index.html "$name/"
+          cp -R examples/gallery/web/pkg "$name/pkg"
+          cp -R examples/gallery/web/assets "$name/assets"
+          cp LICENSE-MIT LICENSE-APACHE "$name/"
+          tar -czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-wasm
+          path: naui-gallery-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Release を作る
+    # タグから始まった実行だけが公開する (workflow_dispatch はビルド確認まで)。
+    if: github.ref_type == 'tag'
+    needs: [check-version, build, build-web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 公開
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+        run: |
+          set -eux
+          notes=$(cat <<'EOF'
+          ## 実行に必要なもの
+
+          - macOS: そのまま実行できます (Intel / Apple Silicon 共通)。
+          - Windows: Windows App SDK 2.x のフレームワークランタイムが必要です。
+          - Linux: GTK 4.10 以降と libadwaita 1.5 以降が必要です
+            (Ubuntu 24.04 でビルドしています)。
+          - Web: 展開したディレクトリを HTTP で配信してください
+            (`python3 -m http.server 8080`)。
+
+          ネイティブ版の Gallery は画像サンプルをビルド時の絶対パスで参照するため、
+          「メディア」画面の画像だけは配布物では表示されません。
+
+          EOF
+          )
+          gh release create "$TAG" dist/* \
+            --title "$TAG" \
+            --notes "$notes" \
+            --generate-notes \
+            ${{ needs.check-version.outputs.prerelease == 'true' && '--prerelease' || '' }}
