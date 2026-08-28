@@ -1,5 +1,5 @@
 # タグ (v0.2.0 など) を打つと、4 環境ぶんの Gallery をビルドして
-# GitHub Release へ添付する。
+# GitHub Release へ添付し、あわせて各クレートを crates.io へ公開する。
 #
 #   git tag v0.2.0 && git push origin v0.2.0
 name: Release
@@ -188,11 +188,70 @@ jobs:
           path: naui-gallery-*.tar.gz
           if-no-files-found: error
 
+  publish-crates:
+    name: crates.io へ公開
+    # タグから始まった実行だけが公開する (workflow_dispatch はビルド確認まで)。
+    # 4 環境ぶんのビルドが通ってから公開する (crates.io は取り消せないため)。
+    # Release を作るのはこの後。よくある失敗 (トークンなど) のときに
+    # Release だけ先に出来てしまうのを避ける。
+    if: github.ref_type == 'tag'
+    needs: [check-version, build, build-web]
+    runs-on: ubuntu-24.04
+    # トークン (CARGO_REGISTRY_TOKEN) はこの環境のシークレットから取る。
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v4
+
+      # naui-gtk / naui を検証ビルドするのに要る。
+      - name: GTK4 / libadwaita を導入
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libgtk-4-dev libadwaita-1-dev build-essential pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: publish-crates
+
+      - name: 公開
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+        run: |
+          set -eu
+          version="${TAG#v}"
+
+          publish() {
+            name="$1"
+            shift
+            # 途中で失敗した実行をやり直せるよう、公開済みのものは飛ばす。
+            if curl -sSf -o /dev/null \
+                 -A "naui release workflow" \
+                 "https://crates.io/api/v1/crates/$name/$version"; then
+              echo "$name $version は公開済みなので飛ばします。"
+              return
+            fi
+            echo "$name $version を公開します。"
+            cargo publish -p "$name" "$@"
+          }
+
+          # 依存の順に公開する。cargo publish は索引に載るまで待ってから戻る。
+          publish naui-core
+          # そのバックエンドの OS 以外ではビルドできないので検証を省く。
+          publish naui-macos --no-verify
+          publish naui-windows --no-verify
+          # wasm / GTK 以外では空のクレートになるため、ここで検証できる。
+          publish naui-web
+          publish naui-gtk
+          publish naui
+
   release:
     name: Release を作る
     # タグから始まった実行だけが公開する (workflow_dispatch はビルド確認まで)。
     if: github.ref_type == 'tag'
-    needs: [check-version, build, build-web]
+    # crates.io へ公開できてから Release を作る。
+    needs: [check-version, build, build-web, publish-crates]
     runs-on: ubuntu-latest
     permissions:
       contents: write
