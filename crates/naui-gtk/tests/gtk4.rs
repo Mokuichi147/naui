@@ -437,6 +437,38 @@ fn measure_width(widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
     (min, nat)
 }
 
+/// 印の位置を決めるもとになった数値。
+///
+/// 答えはフォントの計量で変わるので、落ちたときに環境の違い (日本語を持つ
+/// フォントが無い、既定のフォントが小さくて印を下げる余地が無い、など) を
+/// 見分けられるようにする。
+fn indicator_metrics(button: &gtk::CheckButton, indicator: &gtk::Widget) -> String {
+    let Some(label) = indicator.next_sibling().and_downcast::<gtk::Label>() else {
+        return "ラベルが無い".to_owned();
+    };
+    let layout = label.layout();
+    let line_height = layout.pixel_extents().1.height();
+    let baseline = layout.baseline() as f64 / pango::SCALE as f64;
+    let cap = label
+        .create_pango_layout(Some("H"))
+        .pixel_extents()
+        .0
+        .height();
+    let (_, indicator_nat, _, _) = indicator.measure(gtk::Orientation::Vertical, -1);
+    let font = label
+        .pango_context()
+        .font_description()
+        .map(|d| d.to_str().to_string())
+        .unwrap_or_default();
+    let shift = (baseline - f64::from(cap) / 2.0) - f64::from(line_height) / 2.0;
+    format!(
+        "font={font:?} line_height={line_height} baseline={baseline} cap={cap} \
+         indicator_nat={indicator_nat} shift={shift:.2} slack={} button={:?}",
+        line_height - indicator_nat,
+        measure_height(button)
+    )
+}
+
 /// 高さの (最小, 自然な大きさ)。
 fn measure_height(widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
     let (min, nat, _, _) = widget.as_ref().measure(gtk::Orientation::Vertical, -1);
@@ -659,7 +691,8 @@ fn checkbox_indicator_is_aligned_to_text(ui: &Ui) -> Result<()> {
     let margin = indicator.margin_top();
     assert!(
         margin > 0,
-        "日本語のラベルでは印を下げて字面へそろえる (margin_top={margin})"
+        "日本語のラベルでは印を下げて字面へそろえる (margin_top={margin}, {})",
+        indicator_metrics(&native, &indicator)
     );
     assert_eq!(
         measure_height(&native),

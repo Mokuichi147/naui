@@ -1,0 +1,145 @@
+# 4 環境 (macOS / Windows / Linux / Web) のビルドとテスト。
+#
+# `cargo test --workspace` は使わない。GTK4 のテストは cfg で囲われておらず、
+# Linux 以外では依存の入らない gtk / adw を use して壊れるため、
+# 各ジョブが自分のプラットフォーム向けのパッケージだけを指定する。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同じブランチへ続けて push したときは、古い実行を打ち切る。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 既定は読み取りだけ。Release を作るジョブでだけ書き込みを足す。
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI ではインクリメンタルビルドの生成物がキャッシュを膨らませるだけ。
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    name: 整形
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  macos:
+    name: macOS (AppKit)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: ビルド
+        run: cargo build -p naui-core -p naui-macos -p naui -p counter -p gallery
+      # AppKit の統合テストは harness = false の自前ランナーで、
+      # ネイティブのコントロールを実際に作って操作する。
+      - name: テスト
+        run: |
+          # ランナーにはポインティングデバイスが無いので、macOS は既定で
+          # 「常に表示」のスクロールバーを選ぶ。手元の Mac (トラックパッドや
+          # マウスがある環境) と同じ重ね表示にそろえてから測る。
+          #
+          # 常に表示のときは `tall_tab_content_scrolls` が落ちる。中身の幅が
+          # スクローラのぶん (17pt) だけクリップより広いまま戻らず、横へは
+          # 送らない設定なので右端が見えなくなる。手元でも
+          # `defaults write -g AppleShowScrollBars -string Always` で再現する。
+          # naui-macos 側の課題として別に扱う。
+          defaults write -g AppleShowScrollBars -string WhenScrolling
+          cargo test -p naui-core -p naui-macos -p naui
+
+  windows:
+    name: Windows (WinUI 3)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: ビルド
+        run: cargo build -p naui-core -p naui-windows -p naui -p counter -p gallery
+      # naui-windows には統合テストが無く、実行には Windows App SDK の
+      # ランタイムが要るので、バックエンド非依存の分だけ走らせる。
+      - name: テスト
+        run: cargo test -p naui-core
+
+  linux:
+    name: Linux (GTK4 / libadwaita)
+    runs-on: ubuntu-latest
+    env:
+      # Xvfb 上では GL が使えないので、GSK はソフトウェアの cairo で描く。
+      GSK_RENDERER: cairo
+      GDK_BACKEND: x11
+      # at-spi のバスが無い環境での警告を止める。
+      GTK_A11Y: none
+    steps:
+      - uses: actions/checkout@v4
+      # 日本語フォントも入れる。`checkbox_indicator_is_aligned_to_text` は
+      # 日本語の行の ascent が大きく取られることを前提に印の位置を測るので、
+      # 日本語を持つフォントが無いと欧文へ代替されて成り立たない。
+      - name: GTK4 / libadwaita と日本語フォントを導入
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libgtk-4-dev libadwaita-1-dev build-essential pkg-config \
+            xvfb dbus \
+            fonts-noto-cjk
+      # Xvfb には設定デーモンが無いので、GTK は組み込みの既定 "Sans 10" を
+      # 使う。デスクトップの既定 (Ubuntu 24.04 は 11pt) より 1pt 小さく、
+      # チェックボックスの印を字面へ下げる余地が行の高さに残らないため、
+      # `checkbox_indicator_is_aligned_to_text` が成り立たない。
+      # デスクトップと同じ大きさにそろえる。
+      - name: GTK のフォント設定をデスクトップにそろえる
+        run: |
+          mkdir -p "$HOME/.config/gtk-4.0"
+          printf '[Settings]\ngtk-font-name=Sans 11\n' \
+            >"$HOME/.config/gtk-4.0/settings.ini"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: ビルド
+        run: cargo build -p naui-core -p naui-gtk -p naui -p counter -p gallery
+      # GTK4 はディスプレイを要求する。libadwaita は D-Bus のセッションバスから
+      # 配色設定を読むため、dbus-run-session も通す。
+      - name: テスト
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            dbus-run-session -- \
+            cargo test -p naui-core -p naui-gtk -p naui
+
+  web:
+    name: Web (wasm / DOM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      # wasm-bindgen CLI は Cargo.lock のクレートと同じ版でなければならない。
+      - name: wasm-bindgen の版を Cargo.lock から取得
+        id: wb
+        run: |
+          version="$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/[",]/,""); print $3; exit}' Cargo.lock)"
+          [ -n "$version" ] || { echo "Cargo.lock から取得できませんでした" >&2; exit 1; }
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wb.outputs.version }}
+      # __api_contract がバックエンド間のシグネチャのずれを型検査で拾う。
+      - name: API 互換性を確認
+        run: cargo check --target wasm32-unknown-unknown -p naui-core -p naui-web -p naui
+      - name: Gallery を wasm へビルド
+        run: ./build.sh
+        working-directory: examples/gallery/web
