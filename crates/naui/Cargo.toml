@@ -7,6 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# ウィジェット型はビルド対象のバックエンドから再エクスポートするので、
+# 既定の Linux (GTK4) に加えて他の 3 環境の文書も作らせる。
+# default-target を省くと targets の先頭が既定になってしまうため、明示する。
+[package.metadata.docs.rs]
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc", "wasm32-unknown-unknown"]
+
 [dependencies]
 naui-core.workspace = true
 

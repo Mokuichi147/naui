@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# クレート全体が `cfg(target_os = "windows")` で囲ってあり、他の環境では
+# 公開 API が空になるため、docs.rs でも Windows 向けの文書を作らせる。
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []
+
 [dependencies]
 naui-core.workspace = true
 
