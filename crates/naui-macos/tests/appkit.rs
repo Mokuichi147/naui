@@ -27,9 +27,9 @@ use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
 use objc2_app_kit::{
     NSButton, NSColor, NSColorSpace, NSComboBox, NSControlStateValueOff, NSDatePicker,
     NSDatePickerElementFlags, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSSearchField,
-    NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField,
-    NSTextInputClient, NSTextView, NSUserInterfaceItemIdentification, NSView,
+    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSScrollerStyle,
+    NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate,
+    NSTextField, NSTextInputClient, NSTextView, NSUserInterfaceItemIdentification, NSView,
     NSWindowTitleVisibility,
 };
 use objc2_foundation::{
@@ -265,6 +265,10 @@ fn main() {
         (
             "縦に長いタブの中身がスクロールで下まで届く",
             tall_tab_content_scrolls,
+        ),
+        (
+            "場所を取るスクローラが出ても中身が見える幅に収まる",
+            scroll_content_fits_beside_a_legacy_scroller,
         ),
         ("グリッドの同じ行が縦中央でそろう", grid_row_alignment),
         (
@@ -5266,6 +5270,55 @@ fn tall_tab_content_scrolls(ui: &Ui) -> Result<()> {
     clip.scrollToPoint(NSPoint::new(0.0, hidden));
     unsafe { native.reflectScrolledClipView(&clip) };
     assert_eq!(clip.bounds().origin.y, hidden, "最後の行まで届く");
+    window.close();
+    Ok(())
+}
+
+/// スクローラが場所を取っても、中身の幅は「見えている幅」に収まる。
+///
+/// 重ね表示 (overlay) のスクローラは中身に重なるだけで場所を取らないが、
+/// 「常に表示」の設定や、ポインティングデバイスの無い環境では場所を取る
+/// 様式 (legacy) が選ばれる。そのとき中身がスクローラのぶんはみ出すと、
+/// 横へ送らない設定では二度と見えない。
+///
+/// 利用者の設定に左右されずに確かめたいので、様式をこの場で指定する。
+fn scroll_content_fits_beside_a_legacy_scroller(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 240.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..40 {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let native = scroll
+        .native_view()
+        .downcast::<NSScrollView>()
+        .expect("NSScrollView");
+    native.setScrollerStyle(NSScrollerStyle::Legacy);
+    window.show();
+    window
+        .native_window()
+        .contentView()
+        .unwrap()
+        .layoutSubtreeIfNeeded();
+
+    let clip = native.contentView();
+    let document = unsafe { native.documentView() }.expect("中身");
+    let visible = clip.bounds().size.width;
+    assert!(
+        visible < native.frame().size.width,
+        "スクローラが場所を取っている ({visible} < {})",
+        native.frame().size.width
+    );
+    assert_eq!(
+        document.frame().size.width,
+        visible,
+        "中身の幅はスクローラを除いた見える幅に合う"
+    );
     window.close();
     Ok(())
 }

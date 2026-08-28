@@ -47,19 +47,12 @@ jobs:
         run: cargo build -p naui-core -p naui-macos -p naui -p counter -p gallery
       # AppKit の統合テストは harness = false の自前ランナーで、
       # ネイティブのコントロールを実際に作って操作する。
+      #
+      # ランナーにはポインティングデバイスが無く、macOS は場所を取る
+      # スクローラを選ぶ。手元の Mac (重ね表示) と条件が違うが、そのまま
+      # 測る。片方でしか出ない崩れを CI で拾えるようにするため。
       - name: テスト
-        run: |
-          # ランナーにはポインティングデバイスが無いので、macOS は既定で
-          # 「常に表示」のスクロールバーを選ぶ。手元の Mac (トラックパッドや
-          # マウスがある環境) と同じ重ね表示にそろえてから測る。
-          #
-          # 常に表示のときは `tall_tab_content_scrolls` が落ちる。中身の幅が
-          # スクローラのぶん (17pt) だけクリップより広いまま戻らず、横へは
-          # 送らない設定なので右端が見えなくなる。手元でも
-          # `defaults write -g AppleShowScrollBars -string Always` で再現する。
-          # naui-macos 側の課題として別に扱う。
-          defaults write -g AppleShowScrollBars -string WhenScrolling
-          cargo test -p naui-core -p naui-macos -p naui
+        run: cargo test -p naui-core -p naui-macos -p naui
 
   windows:
     name: Windows (WinUI 3)

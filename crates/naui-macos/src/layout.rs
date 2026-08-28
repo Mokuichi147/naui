@@ -481,6 +481,26 @@ define_class!(
         fn is_flipped(&self) -> bool {
             true
         }
+
+        // 中身の大きさはクリップへの制約で決めているが、クリップの大きさが
+        // 変わっても中身のレイアウトはこの回では解き直されない。
+        //
+        // `NSScrollView` はスクローラの出入りを `tile` で処理し、そこで
+        // クリップの frame を直接書き換える。ウィンドウ側から始まった
+        // レイアウトは、どのビューを回るかを tile より前に決めているので、
+        // 中身へは届かない。クリップ自身の `layout` は tile の後に呼ばれる
+        // ため、ここで中身の分を解かせる。
+        //
+        // 直さないと、スクロールバーを「常に表示」にした環境で中身が
+        // スクローラのぶん (17pt) はみ出したままになる。横へ送らない
+        // 設定だと、はみ出した分は二度と見えない。
+        #[unsafe(method(layout))]
+        fn layout(&self) {
+            let _: () = unsafe { msg_send![super(self), layout] };
+            if let Some(document) = self.documentView() {
+                document.layoutSubtreeIfNeeded();
+            }
+        }
     }
 );
 
