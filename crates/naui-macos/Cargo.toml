@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# クレート全体が AppKit に依存し、macOS 以外ではビルドできないため、
+# docs.rs でも Apple 向けの文書を作らせる。
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = []
+
 [dependencies]
 naui-core.workspace = true
 objc2 = "0.6"

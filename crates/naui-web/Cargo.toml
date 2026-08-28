@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# クレート全体が `cfg(target_arch = "wasm32")` で囲ってあり、他の環境では
+# 公開 API が空になるため、docs.rs でも wasm 向けの文書を作らせる。
+[package.metadata.docs.rs]
+default-target = "wasm32-unknown-unknown"
+targets = []
+
 [dependencies]
 naui-core.workspace = true
 
