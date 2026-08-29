@@ -3031,10 +3031,22 @@ fn list_skips_disabled_rows(ui: &Ui) -> Result<()> {
 
 /// 設定画面向けの行は、ラベルだけでなく任意のレイアウトとコントロールを持てる。
 fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
-    let content = ui.stack(Orientation::Horizontal)?;
-    content.set_spacing(8.0);
-    content.append(&ui.checkbox("Wi-Fi")?);
-    content.append(&ui.button("オプション…")?);
+    let content = ui.grid()?;
+    content.set_column_track(0, Track::Auto);
+    content.set_column_track(1, Track::FILL);
+    content.set_column_track(2, Track::Auto);
+    content.set_spacing(8.0, 0.0);
+    let check = ui.checkbox("")?;
+    let text = ui.stack(Orientation::Vertical)?;
+    text.set_align(Align::Start);
+    text.append(&ui.label("Wi-Fi")?);
+    text.append(&ui.label("メニューバーに表示")?);
+    text.set_sizing(Sizing::fill_width());
+    let action = ui.button("オプション…")?;
+    content.attach(&check, GridCell::new(0, 0));
+    content.attach(&text, GridCell::new(1, 0));
+    content.attach(&action, GridCell::new(2, 0));
+    content.set_sizing(Sizing::fill_width());
     let plain = ui.label("選択できる行")?;
 
     let list = ui.list()?;
@@ -3042,6 +3054,7 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
         ListRow::new(&content).selectable(false),
         ListRow::new(&plain),
     ]);
+    list.set_sizing(Sizing::fixed(800.0, 140.0));
     assert_eq!(list.len(), 2);
 
     // 行内のコントロールだけを操作する 1 行目は、プログラムからも選べない。
@@ -3054,10 +3067,27 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     let first = table
         .viewAtColumn_row_makeIfNecessary(0, 0, true)
         .expect("任意内容の行ビュー");
+    let mount = ui.stack(Orientation::Vertical)?;
+    mount.append(&list);
+    let root = mount.native_view();
+    root.setFrameSize(NSSize::new(900.0, 240.0));
+    root.layoutSubtreeIfNeeded();
     assert_eq!(first.subviews().len(), 1, "組み立てた内容が 1 つ載ること");
     assert!(
-        first.subviews().objectAtIndex(0).subviews().len() >= 2,
-        "渡した Stack のチェックボックスとボタンが保たれること"
+        first.subviews().objectAtIndex(0).subviews().len() >= 3,
+        "渡した Grid の各要素が保たれること"
+    );
+
+    let check_frame = check.native_view().frame();
+    let text_frame = text.native_view().frame();
+    let action_frame = action.native_view().frame();
+    assert!(
+        text_frame.origin.x - (check_frame.origin.x + check_frame.size.width) < 16.0,
+        "本文はチェックの直後に置かれること: {check_frame:?} / {text_frame:?}"
+    );
+    assert!(
+        text_frame.origin.x < 50.0 && action_frame.origin.x > 600.0,
+        "本文列は左から始まり、操作は右端へ寄ること: {text_frame:?} / {action_frame:?}"
     );
     Ok(())
 }
@@ -5412,7 +5442,7 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
         .find(|constraint| {
             constraint
                 .identifier()
-                .is_some_and(|id| id.to_string() == "naui.grid.grow.0.1")
+                .is_some_and(|id| id.to_string() == "naui.grid.grow.height.0.1")
         })
         .expect("Fill のセルへ伸びる希望が張られていること");
     // 弱すぎると余りが `Auto` 行に残り、強すぎると `Auto` 行の中身を潰す。

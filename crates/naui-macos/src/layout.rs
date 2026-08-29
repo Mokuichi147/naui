@@ -46,7 +46,7 @@ const HUG_CONTENT: NSLayoutPriority = 750.0;
 /// AppKit のコンテナが再レイアウト時に追加する制約より優先し、内容幅を
 /// 保つ。明示的な `Fill` はこの値を使わず、hugging を 1 に下げる。
 const AUTO_HUGGING: NSLayoutPriority = 999.0;
-/// `Fill` 行の子に張る「行いっぱいまで伸びたい」という希望の識別子。
+/// `Fill` 行・列の子に張る「グリッドいっぱいまで伸びたい」という希望の識別子。
 const GRID_GROW_ID: &str = "naui.grid.grow";
 
 /// その希望の優先度。
@@ -156,8 +156,13 @@ pub(crate) fn keep_auto_size(view: &NSView, horizontal: bool) {
 }
 
 /// セルごとの希望の識別子。同じセルに置き直したときだけ張り替える。
-fn grow_identifier(cell: &GridCell) -> String {
-    format!("{GRID_GROW_ID}.{}.{}", cell.column, cell.row)
+fn grow_identifier(cell: &GridCell, horizontal: bool) -> String {
+    format!(
+        "{GRID_GROW_ID}.{}.{}.{}",
+        if horizontal { "width" } else { "height" },
+        cell.column,
+        cell.row
+    )
 }
 
 fn clear_sizing_constraints(view: &NSView) {
@@ -308,6 +313,7 @@ impl Grid {
         } else {
             NSGridCellPlacement::Leading
         });
+        self.set_grow_hint(&view, &cell, true, fill_width);
         // 縦は中央ぞろえ。NSGridView の既定 (上ぞろえ) だと、同じ行に置いた
         // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
         let fill_height = wants_fill(&view, false);
@@ -318,7 +324,7 @@ impl Grid {
             // 中身の高さ (タブなら見出しだけ) まで潰れる。
             keep_auto_size(&view, false);
         }
-        self.set_grow_hint(&view, &cell, fill_height);
+        self.set_grow_hint(&view, &cell, false, fill_height);
         target.setYPlacement(if fill_height {
             NSGridCellPlacement::Fill
         } else {
@@ -329,18 +335,17 @@ impl Grid {
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
 
-    /// `Fill` 行の子に「グリッドいっぱいまで伸びたい」という最弱の希望を張る。
+    /// `Fill` 行・列の子に「グリッドいっぱいまで伸びたい」という弱い希望を張る。
     ///
-    /// `NSGridView` の行の高さは中身から決まり、**余りをどの行へ渡すかは
-    /// 決まっていない**。hugging priority だけでは足りず、同じアプリでも
-    /// 起動のたびに `Auto` 行が余りを吸ってしまうことがある。
+    /// `NSGridView` の行・列の大きさは中身から決まり、**余りをどこへ渡すかは
+    /// 決まっていない**。hugging priority だけでは足りず、`Auto` 側へ余白が
+    /// 入ることがある。
     ///
-    /// そこで「グリッドと同じ高さになりたい」を最弱の優先度で足し、余りが
-    /// 必ず `Fill` 行へ行くようにする。ほかの行の高さ (必須) が勝つので
-    /// 実際にはその手前で止まり、グリッド自身が中身に合わせて縮む場面でも、
-    /// この希望が大きさを押し広げることはない。
-    fn set_grow_hint(&self, view: &NSView, cell: &GridCell, wanted: bool) {
-        let identifier = grow_identifier(cell);
+    /// そこで「グリッドと同じ幅 / 高さになりたい」を弱い優先度で足し、余りを
+    /// `Fill` の行・列へ誘導する。他のセルの内容サイズが先に勝つため、実際には
+    /// それらを除いた残りで止まり、グリッド自身を押し広げることもない。
+    fn set_grow_hint(&self, view: &NSView, cell: &GridCell, horizontal: bool, wanted: bool) {
+        let identifier = grow_identifier(cell, horizontal);
         // 同じセルに前へ張った希望があれば外す。
         let constraints = self.0.native.constraints();
         let previous: Vec<Retained<NSLayoutConstraint>> = (0..constraints.len())
@@ -357,9 +362,13 @@ impl Grid {
         if !wanted {
             return;
         }
-        let grow = view
-            .heightAnchor()
-            .constraintEqualToAnchor(&self.0.native.heightAnchor());
+        let grow = if horizontal {
+            view.widthAnchor()
+                .constraintEqualToAnchor(&self.0.native.widthAnchor())
+        } else {
+            view.heightAnchor()
+                .constraintEqualToAnchor(&self.0.native.heightAnchor())
+        };
         grow.setPriority(GRID_GROW_PRIORITY);
         grow.setIdentifier(Some(&NSString::from_str(&identifier)));
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[grow]));
