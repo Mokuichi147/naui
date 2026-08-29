@@ -177,7 +177,7 @@ fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
     settings.set_sizing(
         Sizing::new()
             .width(Length::Fill)
-            .height(Length::Fixed(180.0)),
+            .height(Length::Fixed(120.0)),
     );
     pane.append(&settings);
     Ok(())

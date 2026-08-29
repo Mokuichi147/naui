@@ -3047,21 +3047,40 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     content.attach(&text, GridCell::new(1, 0));
     content.attach(&action, GridCell::new(2, 0));
     content.set_sizing(Sizing::fill_width());
-    let plain = ui.label("選択できる行")?;
+    let make_row = |title: &str, detail: &str, action: &str| -> Result<naui_macos::Grid> {
+        let row = ui.grid()?;
+        row.set_column_track(0, Track::Auto);
+        row.set_column_track(1, Track::FILL);
+        row.set_column_track(2, Track::Auto);
+        row.set_spacing(8.0, 0.0);
+        let text = ui.stack(Orientation::Vertical)?;
+        text.set_align(Align::Start);
+        text.append(&ui.label(title)?);
+        text.append(&ui.label(detail)?);
+        text.set_sizing(Sizing::fill_width());
+        row.attach(&ui.checkbox("")?, GridCell::new(0, 0));
+        row.attach(&text, GridCell::new(1, 0));
+        row.attach(&ui.button(action)?, GridCell::new(2, 0));
+        row.set_sizing(Sizing::fill_width());
+        Ok(row)
+    };
+    let second = make_row("Bluetooth", "近くのデバイスを管理", "詳細…")?;
+    let last = make_row("バッテリー", "残量を表示", "設定…")?;
 
     let list = ui.list()?;
     list.set_rows(&[
         ListRow::new(&content).selectable(false),
-        ListRow::new(&plain),
+        ListRow::new(&second).selectable(false),
+        ListRow::new(&last).selectable(false),
     ]);
-    list.set_sizing(Sizing::fixed(800.0, 140.0));
-    assert_eq!(list.len(), 2);
+    list.set_sizing(Sizing::fixed(800.0, 120.0));
+    assert_eq!(list.len(), 3);
 
     // 行内のコントロールだけを操作する 1 行目は、プログラムからも選べない。
     list.select(0);
     assert!(list.selection().is_empty());
     list.select(1);
-    assert_eq!(list.selection(), vec![1]);
+    assert!(list.selection().is_empty());
 
     let table = list.native_table();
     let first = table
@@ -3088,6 +3107,31 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     assert!(
         text_frame.origin.x < 50.0 && action_frame.origin.x > 600.0,
         "本文列は左から始まり、操作は右端へ寄ること: {text_frame:?} / {action_frame:?}"
+    );
+
+    // ギャラリーと同じ 3 行の表示領域に、最後の行の下に大きな空白を残さない。
+    // 横位置だけではリスト全体の崩れを見逃すため、可視高さも確かめる。
+    let scroll = list
+        .native_view()
+        .downcast::<NSScrollView>()
+        .expect("NSScrollView");
+    let visible_bottom = scroll.contentView().bounds().size.height;
+    let document_height = table.frame().size.height;
+    let final_row = table.rectOfRow(2);
+    let rows_bottom = final_row.origin.y + final_row.size.height;
+    let trailing_space = visible_bottom - rows_bottom;
+    assert!(
+        (0.0..=16.0).contains(&trailing_space),
+        "最終行の下に大きな空白が無いこと: 可視高 {visible_bottom} / 行の下端 {rows_bottom} / 空白 {trailing_space}"
+    );
+    assert!(
+        document_height <= visible_bottom,
+        "3 行だけならスクロールを必要としないこと: 中身 {document_height} / 可視高 {visible_bottom}"
+    );
+    let vertical_scroller = scroll.verticalScroller().expect("縦スクローラー");
+    assert!(
+        !vertical_scroller.isEnabled(),
+        "3 行が収まるときは縦スクローラーを無効にすること"
     );
     Ok(())
 }
