@@ -43,6 +43,40 @@ use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::{impl_widget, Widget};
 
+/// `Grid` / `Stack` などで自由に組み立てたリスト行。
+pub struct ListRow {
+    content: Box<dyn Widget>,
+    selectable: bool,
+}
+
+impl Clone for ListRow {
+    fn clone(&self) -> Self {
+        Self {
+            content: self.content.boxed_clone(),
+            selectable: self.selectable,
+        }
+    }
+}
+
+impl ListRow {
+    pub fn new(content: &dyn Widget) -> Self {
+        Self {
+            content: content.boxed_clone(),
+            selectable: true,
+        }
+    }
+
+    /// 行内のコントロールだけを操作する行では `false` にする。
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+}
+
 /// 一覧の枠。`ListBox` 自身は中身の高さいっぱいに伸びてしまい、角丸も境界線も
 /// 見えなくなるため、見えている大きさと一致する外側の `ScrollViewer` に持たせる。
 const SURFACE_XAML: &str = r##"<ScrollViewer
@@ -264,7 +298,9 @@ struct ListInner {
     _wheel: Rc<ListScrollTarget>,
     /// 行そのもの。選択の読み書きはここを通す。
     rows: RefCell<Vec<ListBoxItem>>,
-    items: RefCell<Vec<ListItem>>,
+    selectable: RefCell<Vec<bool>>,
+    /// 任意内容の行に含まれるコールバック等を生かしておく。
+    custom_rows: RefCell<Vec<ListRow>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     /// プログラムから選択を変えている間だけ通知を止める。
@@ -308,7 +344,8 @@ impl List {
             list_box,
             _wheel: wheel,
             rows: RefCell::new(Vec::new()),
-            items: RefCell::new(Vec::new()),
+            selectable: RefCell::new(Vec::new()),
+            custom_rows: RefCell::new(Vec::new()),
             mode: Cell::new(SelectionMode::Single),
             handler: SelectionHandler::new(),
             silent: Rc::new(Cell::new(false)),
@@ -324,6 +361,9 @@ impl List {
                     let list = List(inner);
                     if !list.0.silent.get() {
                         let indices = list.selection();
+                        // 任意内容の設定行など、行全体を選ばない項目へ付いた
+                        // ListBox の選択は即座に戻す。子の Button 等は無効にしない。
+                        list.write_selection(&indices);
                         list.0.handler.emit(&indices);
                     }
                 }
@@ -414,7 +454,45 @@ impl List {
             rows.push(row);
         }
         *self.0.rows.borrow_mut() = rows;
-        *self.0.items.borrow_mut() = items.to_vec();
+        *self.0.selectable.borrow_mut() = items.iter().map(|item| item.enabled).collect();
+        self.0.custom_rows.borrow_mut().clear();
+        self.write_selection(&[]);
+        Ok(())
+    }
+
+    /// 任意のウィジェットで作った行へ置き換える。
+    pub fn set_rows(&self, rows: &[ListRow]) {
+        let _ = self.rebuild_rows(rows);
+    }
+
+    fn rebuild_rows(&self, rows: &[ListRow]) -> Result<()> {
+        let children = self
+            .0
+            .list_box
+            .Items()
+            .map_err(|e| to_error("行の取得", e))?;
+        self.without_notifying(|_| children.Clear())
+            .map_err(|e| to_error("行の消去", e))?;
+        self.0.rows.borrow_mut().clear();
+
+        let mut native_rows = Vec::with_capacity(rows.len());
+        for item in rows {
+            let row = ListBoxItem::new().map_err(|e| to_error("ListBoxItem の生成", e))?;
+            if let Some(style) = self.0.row_style.as_ref() {
+                let _ = row.SetStyle(style);
+            }
+            row.SetContent(&item.content.native_element())
+                .map_err(|e| to_error("任意内容の行への設定", e))?;
+            let element = row
+                .cast::<IInspectable>()
+                .map_err(|e| to_error("行の要素化", e))?;
+            self.without_notifying(|_| children.Append(&element))
+                .map_err(|e| to_error("行の追加", e))?;
+            native_rows.push(row);
+        }
+        *self.0.rows.borrow_mut() = native_rows;
+        *self.0.selectable.borrow_mut() = rows.iter().map(ListRow::is_selectable).collect();
+        *self.0.custom_rows.borrow_mut() = rows.to_vec();
         self.write_selection(&[]);
         Ok(())
     }
@@ -454,12 +532,16 @@ impl List {
 
     /// 選ばれている行 (昇順)。単一選択なら 0 件か 1 件。
     pub fn selection(&self) -> Vec<usize> {
+        let selectable = self.0.selectable.borrow();
         self.0
             .rows
             .borrow()
             .iter()
             .enumerate()
-            .filter(|(_, row)| row.IsSelected().unwrap_or(false))
+            .filter(|(index, row)| {
+                selectable.get(*index).copied().unwrap_or(false)
+                    && row.IsSelected().unwrap_or(false)
+            })
             .map(|(index, _)| index)
             .collect()
     }
@@ -474,7 +556,7 @@ impl List {
     /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
     /// ([`SelectionMode::normalize`])。
     pub fn set_selection(&self, indices: &[usize]) {
-        let picked = self.0.mode.get().normalize(&self.0.items.borrow(), indices);
+        let picked = self.normalize(indices);
         self.write_selection(&picked);
     }
 
@@ -507,6 +589,13 @@ impl List {
     /// 中身の `ListBox`。バックエンド固有の脱出口として公開している。
     pub fn native_list_box(&self) -> XamlListBox {
         self.0.list_box.clone()
+    }
+
+    fn normalize(&self, indices: &[usize]) -> Vec<usize> {
+        let selectable = self.0.selectable.borrow();
+        self.0.mode.get().normalize_by(indices, |index| {
+            selectable.get(index).copied().unwrap_or(false)
+        })
     }
 
     /// 選択をそのまま行へ書き込む (通知は起きない)。

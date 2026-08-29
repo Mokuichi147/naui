@@ -843,7 +843,7 @@ tokio::spawn(async move {
 
 - `Sizing` / `Length` / `Track` / `GridCell`: 配置とサイズ
 - `NavItem`: ナビゲーション項目
-- `ListItem` / `SelectionMode`: リスト項目と単一・複数選択
+- `ListItem` / `ListRow` / `SelectionMode`: 単純なリスト項目、任意内容の行、単一・複数選択
 - `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
 - `DateTime` / `DatePickerMode`: 年月日と時分の値、日付選択で何を選ばせるか
 - `Time`: 時分だけの値 (時刻の選択でやり取りする値)
@@ -1008,7 +1008,9 @@ git push origin v0.2.0
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
 - `SplitView` の区画は 2 つだけで、仕切りも 1 本です。3 つ以上に分けるときは
   入れ子にします。区画をたたむ (幅 0 にして隠す) 指定はありません。
-- `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
+- `List` は 1 列です。単純な行は `ListItem` の `label` / `detail`、複合行は
+  `ListRow` に包んだ任意の `Widget` で作れます。列が必要なデータ一覧には
+  `Table` を使います。
 - `Table` のセルに置けるのも文字列だけです。見出しを押しての並べ替えは
   「どの列を、どちら向きに」を通知するところまでで、**行を並べ替えるのは
   アプリの仕事**です。列の幅をドラッグで変えられるのは macOS だけです。

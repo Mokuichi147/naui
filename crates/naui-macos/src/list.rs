@@ -35,6 +35,69 @@ pub(crate) const ROW_PADDING: f64 = 4.0;
 /// ラベルと補助の文字の間隔。
 const DETAIL_SPACING: f64 = 1.0;
 
+/// リストへ載せる任意内容の行。
+///
+/// [`ListItem`] は文字列だけで済む一覧向けの簡便 API であり、設定画面のように
+/// アイコン、複数のラベル、チェックボックス、末尾のボタンなどを組み合わせる
+/// ときは、`Grid` / `Stack` で内容を作ってこの型に包む。
+///
+/// ```no_run
+/// # use naui_macos::{ListRow, Widget};
+/// # fn row(content: &dyn Widget) {
+/// let row = ListRow::new(content).selectable(false);
+/// # let _ = row;
+/// # }
+/// ```
+pub struct ListRow {
+    content: Box<dyn Widget>,
+    selectable: bool,
+}
+
+impl Clone for ListRow {
+    fn clone(&self) -> Self {
+        Self {
+            content: self.content.boxed_clone(),
+            selectable: self.selectable,
+        }
+    }
+}
+
+impl ListRow {
+    /// ウィジェットを 1 行の内容として使う。既定では行全体も選択できる。
+    pub fn new(content: &dyn Widget) -> Self {
+        Self {
+            content: content.boxed_clone(),
+            selectable: true,
+        }
+    }
+
+    /// 行全体を選択対象にするかどうか。
+    ///
+    /// 行内のボタンやチェックボックスだけを操作する設定行では `false` にする。
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+}
+
+enum Row {
+    Text(ListItem),
+    Custom(ListRow),
+}
+
+impl Row {
+    fn selectable(&self) -> bool {
+        match self {
+            Row::Text(item) => item.enabled,
+            Row::Custom(row) => row.selectable,
+        }
+    }
+}
+
 /// 選択が変わったことの通知先。
 ///
 /// 単一選択でも複数選択でも同じ形にするため、選ばれている行を
@@ -64,7 +127,7 @@ impl SelectionHandler {
 
 /// データソース兼デリゲートが見る状態。ハンドルと共有する。
 struct SourceState {
-    items: Rc<RefCell<Vec<ListItem>>>,
+    rows: Rc<RefCell<Vec<Row>>>,
     handler: SelectionHandler,
     /// プログラムから選択を変えている間だけ通知を止める。
     /// AppKit は `selectRowIndexes:` でもデリゲートを呼ぶため。
@@ -83,7 +146,7 @@ define_class!(
     unsafe impl NSTableViewDataSource for ListSource {
         #[unsafe(method(numberOfRowsInTableView:))]
         fn number_of_rows(&self, _table_view: &NSTableView) -> NSInteger {
-            self.ivars().items.borrow().len() as NSInteger
+            self.ivars().rows.borrow().len() as NSInteger
         }
     }
 
@@ -100,18 +163,24 @@ define_class!(
             row: NSInteger,
         ) -> Option<Retained<NSView>> {
             let mtm = MainThreadMarker::from(self);
-            let items = self.ivars().items.borrow();
-            usize::try_from(row)
-                .ok()
-                .and_then(|row| items.get(row))
-                .map(|item| cell_view(mtm, &item.label, item.detail.as_deref(), item.enabled))
+            let rows = self.ivars().rows.borrow();
+            match usize::try_from(row).ok().and_then(|row| rows.get(row)) {
+                Some(Row::Text(item)) => Some(cell_view(
+                    mtm,
+                    &item.label,
+                    item.detail.as_deref(),
+                    item.enabled,
+                )),
+                Some(Row::Custom(row)) => Some(custom_cell_view(mtm, &*row.content)),
+                None => None,
+            }
         }
 
         #[unsafe(method(tableView:shouldSelectRow:))]
         fn should_select_row(&self, _table_view: &NSTableView, row: NSInteger) -> bool {
             usize::try_from(row)
                 .ok()
-                .and_then(|row| self.ivars().items.borrow().get(row).map(|i| i.enabled))
+                .and_then(|row| self.ivars().rows.borrow().get(row).map(Row::selectable))
                 .unwrap_or(false)
         }
 
@@ -130,7 +199,7 @@ define_class!(
             let Ok(table) = object.downcast::<NSTableView>() else {
                 return;
             };
-            let indices = selected_indices(&table, state.items.borrow().len());
+            let indices = selected_indices(&table, state.rows.borrow().len());
             state.handler.emit(&indices);
         }
     }
@@ -199,6 +268,29 @@ pub(crate) fn cell_view(
     view.retain()
 }
 
+/// 任意のウィジェットを、行の高さも含めて Auto Layout へつなぐ。
+fn custom_cell_view(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSView> {
+    let cell = NSTableCellView::new(mtm);
+    let content = content.native_view();
+    content.setTranslatesAutoresizingMaskIntoConstraints(false);
+    cell.addSubview(&content);
+    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
+        content
+            .leadingAnchor()
+            .constraintEqualToAnchor(&cell.leadingAnchor()),
+        content
+            .trailingAnchor()
+            .constraintEqualToAnchor(&cell.trailingAnchor()),
+        content
+            .topAnchor()
+            .constraintEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
+        cell.bottomAnchor()
+            .constraintEqualToAnchor_constant(&content.bottomAnchor(), ROW_PADDING),
+    ]));
+    let view: &NSView = cell.as_ref();
+    view.retain()
+}
+
 /// 行に載せる 1 本の文字。`secondary` なら小さく淡い見た目にする。
 fn row_label(
     mtm: MainThreadMarker,
@@ -242,7 +334,7 @@ struct ListInner {
     /// 外から見えるビュー。リストはこのスクロールビューごと 1 つのウィジェット。
     scroll: Retained<NSScrollView>,
     table: Retained<NSTableView>,
-    items: Rc<RefCell<Vec<ListItem>>>,
+    rows: Rc<RefCell<Vec<Row>>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     silent: Rc<Cell<bool>>,
@@ -294,13 +386,13 @@ impl List {
         column.setResizingMask(NSTableColumnResizingOptions::AutoresizingMask);
         table.addTableColumn(&column);
 
-        let items: Rc<RefCell<Vec<ListItem>>> = Rc::new(RefCell::new(Vec::new()));
+        let rows: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
         let handler = SelectionHandler::default();
         let silent = Rc::new(Cell::new(false));
         let source = ListSource::new(
             mtm,
             SourceState {
-                items: items.clone(),
+                rows: rows.clone(),
                 handler: handler.clone(),
                 silent: silent.clone(),
             },
@@ -317,7 +409,7 @@ impl List {
         Self(Rc::new(ListInner {
             scroll,
             table,
-            items,
+            rows,
             mode: Cell::new(SelectionMode::Single),
             handler,
             silent,
@@ -327,7 +419,20 @@ impl List {
 
     /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
     pub fn set_items(&self, items: &[ListItem]) {
-        *self.0.items.borrow_mut() = items.to_vec();
+        *self.0.rows.borrow_mut() = items.iter().cloned().map(Row::Text).collect();
+        self.reload_rows();
+    }
+
+    /// 任意のウィジェットで作った行へ置き換える。
+    ///
+    /// 行内の各コントロールは通常どおりそれぞれのコールバックを持てる。
+    /// インデックスの意味が変わるため、選択は外れる。
+    pub fn set_rows(&self, rows: &[ListRow]) {
+        *self.0.rows.borrow_mut() = rows.iter().cloned().map(Row::Custom).collect();
+        self.reload_rows();
+    }
+
+    fn reload_rows(&self) {
         self.without_notifying(|this| {
             this.0.table.reloadData();
             unsafe { this.0.table.deselectAll(None) };
@@ -336,7 +441,7 @@ impl List {
 
     /// 行数。
     pub fn len(&self) -> usize {
-        self.0.items.borrow().len()
+        self.0.rows.borrow().len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -374,7 +479,12 @@ impl List {
     /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
     /// ([`SelectionMode::normalize`])。
     pub fn set_selection(&self, indices: &[usize]) {
-        let picked = self.0.mode.get().normalize(&self.0.items.borrow(), indices);
+        let picked = {
+            let rows = self.0.rows.borrow();
+            self.0.mode.get().normalize_by(indices, |index| {
+                rows.get(index).is_some_and(Row::selectable)
+            })
+        };
         self.without_notifying(|this| this.apply_selection(&picked));
     }
 
@@ -390,7 +500,12 @@ impl List {
 
     /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
     pub fn select_many(&self, indices: &[usize]) {
-        let picked = self.0.mode.get().normalize(&self.0.items.borrow(), indices);
+        let picked = {
+            let rows = self.0.rows.borrow();
+            self.0.mode.get().normalize_by(indices, |index| {
+                rows.get(index).is_some_and(Row::selectable)
+            })
+        };
         // AppKit は同じ選択を選び直すとデリゲートを呼ばない。
         // 通知の回数をそろえるため、ここで 1 回だけ出す。
         self.without_notifying(|this| this.apply_selection(&picked));

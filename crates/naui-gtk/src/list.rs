@@ -11,12 +11,48 @@ use crate::bin::SizeBin;
 use crate::callback::SelectionNotifier;
 use crate::widgets::{impl_widget, without_signal, Widget};
 
+/// `Grid` / `Stack` などで自由に組み立てたリスト行。
+pub struct ListRow {
+    content: Box<dyn Widget>,
+    selectable: bool,
+}
+
+impl Clone for ListRow {
+    fn clone(&self) -> Self {
+        Self {
+            content: self.content.boxed_clone(),
+            selectable: self.selectable,
+        }
+    }
+}
+
+impl ListRow {
+    pub fn new(content: &dyn Widget) -> Self {
+        Self {
+            content: content.boxed_clone(),
+            selectable: true,
+        }
+    }
+
+    /// 行内のコントロールだけを操作する行では `false` にする。
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+}
+
 struct ListInner {
     native: gtk::ListBox,
     /// `GtkListBox` は自分でスクロールしないので、スクロール領域に載せる。
     _scroller: gtk::ScrolledWindow,
     bin: SizeBin,
-    items: RefCell<Vec<ListItem>>,
+    selectable: RefCell<Vec<bool>>,
+    /// 任意内容の行に含まれるコールバック等を生かしておく。
+    custom_rows: RefCell<Vec<ListRow>>,
     on_select: SelectionNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
@@ -47,7 +83,8 @@ impl List {
             native,
             _scroller: scroller,
             bin,
-            items: RefCell::new(Vec::new()),
+            selectable: RefCell::new(Vec::new()),
+            custom_rows: RefCell::new(Vec::new()),
             on_select: SelectionNotifier::default(),
             handler: RefCell::new(None),
         });
@@ -77,13 +114,29 @@ impl List {
             }
             self.0.native.unselect_all();
         });
-        let mut stored = self.0.items.borrow_mut();
+        let mut stored = self.0.selectable.borrow_mut();
         stored.clear();
-        stored.extend_from_slice(items);
+        stored.extend(items.iter().map(|item| item.enabled));
+        self.0.custom_rows.borrow_mut().clear();
+    }
+
+    /// 任意のウィジェットで作った行へ置き換える。
+    pub fn set_rows(&self, rows: &[ListRow]) {
+        without_signal(&self.0.native, &self.0.handler, || {
+            while let Some(row) = self.0.native.first_child() {
+                self.0.native.remove(&row);
+            }
+            for row in rows {
+                self.0.native.append(&build_custom_row(row));
+            }
+            self.0.native.unselect_all();
+        });
+        *self.0.selectable.borrow_mut() = rows.iter().map(ListRow::is_selectable).collect();
+        *self.0.custom_rows.borrow_mut() = rows.to_vec();
     }
 
     pub fn len(&self) -> usize {
-        self.0.items.borrow().len()
+        self.0.selectable.borrow().len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -166,8 +219,10 @@ impl List {
 
     /// 指定された選択を、この一覧で意味を持つ形にそろえる。
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
-        let items = self.0.items.borrow();
-        self.selection_mode().normalize(&items, indices)
+        let selectable = self.0.selectable.borrow();
+        self.selection_mode().normalize_by(indices, |index| {
+            selectable.get(index).copied().unwrap_or(false)
+        })
     }
 
     /// 選択をネイティブへ写す。
@@ -207,5 +262,19 @@ fn build_row(item: &ListItem) -> gtk::ListBoxRow {
     row.set_selectable(item.enabled);
     row.set_activatable(item.enabled);
     row.set_sensitive(item.enabled);
+    row
+}
+
+fn build_custom_row(item: &ListRow) -> gtk::ListBoxRow {
+    let content = item.content.size_bin();
+    content.set_margin_top(6);
+    content.set_margin_bottom(6);
+    content.set_margin_start(10);
+    content.set_margin_end(10);
+
+    let row = gtk::ListBoxRow::new();
+    row.set_child(Some(&content));
+    row.set_selectable(item.selectable);
+    row.set_activatable(item.selectable);
     row
 }

@@ -27,6 +27,40 @@ use web_sys::{
 
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
+/// `Grid` / `Stack` などで自由に組み立てたリスト行。
+pub struct ListRow {
+    content: Box<dyn Widget>,
+    selectable: bool,
+}
+
+impl Clone for ListRow {
+    fn clone(&self) -> Self {
+        Self {
+            content: self.content.boxed_clone(),
+            selectable: self.selectable,
+        }
+    }
+}
+
+impl ListRow {
+    pub fn new(content: &dyn Widget) -> Self {
+        Self {
+            content: content.boxed_clone(),
+            selectable: true,
+        }
+    }
+
+    /// 行内のコントロールだけを操作する行では `false` にする。
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+}
+
 /// `size` の下限。1 以下だとドロップダウンになる。
 const MIN_ROWS: u32 = 2;
 /// `size` の上限。これを超える行数はスクロールで見せる。
@@ -98,6 +132,9 @@ struct ListInner {
     id: u32,
     body: RefCell<Body>,
     items: RefCell<Vec<ListItem>>,
+    selectable: RefCell<Vec<bool>>,
+    /// 任意内容の行に含まれるイベント購読等を生かしておく。
+    custom_rows: RefCell<Vec<ListRow>>,
     mode: Cell<SelectionMode>,
     /// 選ばれている行 (昇順)。`<select>` でも合成でもここが正。
     selected: RefCell<Vec<usize>>,
@@ -134,6 +171,8 @@ impl List {
                 _listener: None,
             }),
             items: RefCell::new(Vec::new()),
+            selectable: RefCell::new(Vec::new()),
+            custom_rows: RefCell::new(Vec::new()),
             mode: Cell::new(SelectionMode::Single),
             selected: RefCell::new(Vec::new()),
             active: Cell::new(None),
@@ -150,6 +189,8 @@ impl List {
     /// 無ければ `<select size>` に組み替える。
     pub fn set_items(&self, items: &[ListItem]) {
         *self.0.items.borrow_mut() = items.to_vec();
+        *self.0.selectable.borrow_mut() = items.iter().map(|item| item.enabled).collect();
+        self.0.custom_rows.borrow_mut().clear();
         self.0.selected.borrow_mut().clear();
         self.0.active.set(None);
         self.0.anchor.set(None);
@@ -162,9 +203,20 @@ impl List {
         };
     }
 
+    /// 任意のウィジェットで作った行へ置き換える。
+    pub fn set_rows(&self, rows: &[ListRow]) {
+        self.0.items.borrow_mut().clear();
+        *self.0.selectable.borrow_mut() = rows.iter().map(ListRow::is_selectable).collect();
+        *self.0.custom_rows.borrow_mut() = rows.to_vec();
+        self.0.selected.borrow_mut().clear();
+        self.0.active.set(None);
+        self.0.anchor.set(None);
+        let _ = self.build_custom_listbox(rows);
+    }
+
     /// 行数。
     pub fn len(&self) -> usize {
-        self.0.items.borrow().len()
+        self.0.selectable.borrow().len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -202,7 +254,7 @@ impl List {
     /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
     /// ([`SelectionMode::normalize`])。
     pub fn set_selection(&self, indices: &[usize]) {
-        let picked = self.0.mode.get().normalize(&self.0.items.borrow(), indices);
+        let picked = self.normalize(indices);
         self.write_selection(&picked);
     }
 
@@ -371,6 +423,78 @@ impl List {
         Ok(())
     }
 
+    /// 任意ウィジェットを内容に持つ `role="listbox"` を組み立てる。
+    fn build_custom_listbox(&self, rows: &[ListRow]) -> Result<()> {
+        let list: HtmlElement = create(&self.0.document, "ul")?.unchecked_into();
+        let _ = list.set_attribute("role", "listbox");
+        let _ = list.set_attribute("tabindex", "0");
+        style(&list, "list-style", "none");
+        style(&list, "margin", "0");
+        style(&list, "padding", "0");
+        style(&list, "overflow-y", "auto");
+        style(&list, "position", "relative");
+        style(&list, "border", "1px solid");
+        style(&list, "border-color", "ButtonBorder");
+        style(&list, "background-color", "Field");
+        style(&list, "color", "FieldText");
+
+        let mut options = Vec::with_capacity(rows.len());
+        let mut listeners = Vec::with_capacity(rows.len() + 1);
+        for (index, row) in rows.iter().enumerate() {
+            let option: HtmlElement = create(&self.0.document, "li")?.unchecked_into();
+            let _ = option.set_attribute("role", "option");
+            let _ = option.set_attribute("id", &self.option_id(index));
+            let _ = option.set_attribute("aria-selected", "false");
+            style(&option, "padding", "6px 10px");
+            let _ = option.append_child(&row.content.native_element());
+
+            if row.selectable {
+                listeners.push(Listener::attach_event(option.as_ref(), "click", {
+                    let weak = Rc::downgrade(&self.0);
+                    move |event| {
+                        let Some(inner) = weak.upgrade() else {
+                            return;
+                        };
+                        // Button や input 自身の操作はそのまま通し、行選択も
+                        // 通常のクリックと同じ規則で更新する。
+                        let mouse = event.dyn_ref::<MouseEvent>();
+                        let toggle = mouse.is_some_and(|e| e.meta_key() || e.ctrl_key());
+                        let extend = mouse.is_some_and(|e| e.shift_key());
+                        List(inner).on_row_activated(index, toggle, extend);
+                    }
+                })?);
+            } else {
+                let _ = option.set_attribute("aria-disabled", "true");
+            }
+
+            let _ = list.append_child(&option);
+            options.push(option);
+        }
+
+        listeners.push(Listener::attach_event(list.as_ref(), "keydown", {
+            let weak = Rc::downgrade(&self.0);
+            move |event| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                if let Some(key) = event.dyn_ref::<KeyboardEvent>() {
+                    if List(inner).on_key(key) {
+                        event.prevent_default();
+                    }
+                }
+            }
+        })?);
+
+        self.swap_body(&list)?;
+        *self.0.body.borrow_mut() = Body::Listbox {
+            list,
+            options,
+            _listeners: listeners,
+        };
+        self.apply_mode();
+        Ok(())
+    }
+
     /// 枠の中身を入れ替える。
     fn swap_body(&self, element: &HtmlElement) -> Result<()> {
         while let Some(child) = self.0.root.last_element_child() {
@@ -421,6 +545,13 @@ impl List {
             })
             .map(|i| i as usize)
             .collect()
+    }
+
+    fn normalize(&self, indices: &[usize]) -> Vec<usize> {
+        let selectable = self.0.selectable.borrow();
+        self.0.mode.get().normalize_by(indices, |index| {
+            selectable.get(index).copied().unwrap_or(false)
+        })
     }
 
     /// 選択を覚えて、そのまま中身へ書き込む (通知は起きない)。
@@ -536,10 +667,10 @@ impl List {
 
     /// `start` から `step` の向きに進んで、最初に選べる行を返す。
     fn first_enabled(&self, start: isize, step: isize) -> Option<usize> {
-        let items = self.0.items.borrow();
+        let items = self.0.selectable.borrow();
         let mut at = start;
         while at >= 0 && (at as usize) < items.len() {
-            if items[at as usize].enabled {
+            if items[at as usize] {
                 return Some(at as usize);
             }
             at += step;
@@ -550,15 +681,15 @@ impl List {
     /// `a` から `b` までの、選べる行の並び。
     fn range(&self, a: usize, b: usize) -> Vec<usize> {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-        let items = self.0.items.borrow();
+        let items = self.0.selectable.borrow();
         (lo..=hi.min(items.len().saturating_sub(1)))
-            .filter(|&i| items[i].enabled)
+            .filter(|&i| items[i])
             .collect()
     }
 
     /// ユーザー操作の結果を確定し、通知する。
     fn commit(&self, indices: &[usize]) {
-        let picked = self.0.mode.get().normalize(&self.0.items.borrow(), indices);
+        let picked = self.normalize(indices);
         self.write_selection(&picked);
         self.reveal_active();
         self.0.handler.emit(&picked);

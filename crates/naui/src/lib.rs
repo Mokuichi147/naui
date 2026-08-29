@@ -690,7 +690,12 @@
 //! [`ListItem::detail`] は macOS / Windows では 2 行目になる。**Web は行の
 //! 中身で作りが変わり**、文字だけなら `<select size>`、`detail` があれば
 //! `<ul role="listbox">` の合成になる (`<option>` はテキストしか持てないため)。
-//! 行に置けるのは文字だけで、任意のウィジェットや画像のアイコンは置けない。
+//!
+//! 設定画面など、先頭の画像・複数行の本文・末尾のボタンやトグルを持つ行は、
+//! 既存の `Grid` / `Stack` で作って [`ListRow::new`] に渡し、[`List::set_rows`]
+//! で表示する。行内のコントロールだけを操作して行全体は選ばせない場合は
+//! [`ListRow::selectable(false)`](ListRow::selectable) を指定する。`ListItem` に
+//! アクセサリの種類を列挙しないため、アプリ固有の行構成も同じ仕組みで扱える。
 //!
 //! ## ツリー
 //!
@@ -1079,26 +1084,26 @@ pub use naui_core::{
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
-    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
-    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
+    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
+    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
-    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
-    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
+    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
+    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
-    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
-    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
+    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
+    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -1108,10 +1113,10 @@ pub use naui_windows::{
 ))]
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
-    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
-    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
+    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
+    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1457,6 +1462,10 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     list.select(0);
     list.select_many(&[0, 1]);
     list.on_select(|_indices: &[usize]| {});
+    let custom_content = ui.label("任意の行内容")?;
+    let custom_row = ListRow::new(&custom_content).selectable(false);
+    let _: bool = custom_row.is_selectable();
+    list.set_rows(&[custom_row]);
 
     // --- ツリー -----------------------------------------------------------
     let tree: Tree = ui.tree()?;

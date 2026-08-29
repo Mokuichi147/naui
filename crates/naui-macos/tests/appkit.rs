@@ -20,7 +20,7 @@ use naui_core::{
     PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
     Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
-use naui_macos::{run_for_test, Ui, Widget};
+use naui_macos::{run_for_test, ListRow, Ui, Widget};
 use objc2::rc::Retained;
 use objc2::sel;
 use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
@@ -131,6 +131,10 @@ fn main() {
         ),
         ("リストの複数選択が 0 件にもなる", list_multiple_selection),
         ("リストが選べない行を飛ばす", list_skips_disabled_rows),
+        (
+            "リストに任意ウィジェットの行を載せられる",
+            list_accepts_composed_rows,
+        ),
         (
             "リストの行が NSTableView に描かれる",
             list_rows_are_native_views,
@@ -3022,6 +3026,39 @@ fn list_skips_disabled_rows(ui: &Ui) -> Result<()> {
     let delegate = unsafe { table.delegate() }.expect("デリゲートがあること");
     assert!(!delegate.tableView_shouldSelectRow(&table, 1));
     assert!(delegate.tableView_shouldSelectRow(&table, 2));
+    Ok(())
+}
+
+/// 設定画面向けの行は、ラベルだけでなく任意のレイアウトとコントロールを持てる。
+fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
+    let content = ui.stack(Orientation::Horizontal)?;
+    content.set_spacing(8.0);
+    content.append(&ui.checkbox("Wi-Fi")?);
+    content.append(&ui.button("オプション…")?);
+    let plain = ui.label("選択できる行")?;
+
+    let list = ui.list()?;
+    list.set_rows(&[
+        ListRow::new(&content).selectable(false),
+        ListRow::new(&plain),
+    ]);
+    assert_eq!(list.len(), 2);
+
+    // 行内のコントロールだけを操作する 1 行目は、プログラムからも選べない。
+    list.select(0);
+    assert!(list.selection().is_empty());
+    list.select(1);
+    assert_eq!(list.selection(), vec![1]);
+
+    let table = list.native_table();
+    let first = table
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("任意内容の行ビュー");
+    assert_eq!(first.subviews().len(), 1, "組み立てた内容が 1 つ載ること");
+    assert!(
+        first.subviews().objectAtIndex(0).subviews().len() >= 2,
+        "渡した Stack のチェックボックスとボタンが保たれること"
+    );
     Ok(())
 }
 
