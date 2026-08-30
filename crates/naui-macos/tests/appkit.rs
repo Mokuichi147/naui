@@ -25,16 +25,17 @@ use objc2::rc::Retained;
 use objc2::sel;
 use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
 use objc2_app_kit::{
-    NSButton, NSColor, NSColorSpace, NSComboBox, NSControlStateValueOff, NSDatePicker,
-    NSDatePickerElementFlags, NSEvent, NSEventModifierFlags, NSEventType, NSImage, NSImageScaling,
-    NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation, NSOutlineViewDelegate,
-    NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper,
-    NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
-    NSUserInterfaceItemIdentification, NSView, NSWindowTitleVisibility,
+    NSApplication, NSApplicationActivationPolicy, NSButton, NSColor, NSColorSpace, NSComboBox,
+    NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
+    NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
+    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSScrollerStyle,
+    NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate,
+    NSTextField, NSTextInputClient, NSTextView, NSUserInterfaceItemIdentification, NSView,
+    NSWindow, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound,
-    NSNotification, NSPoint, NSRange, NSRunLoop, NSSize, NSString,
+    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
+    NSNotFound, NSNotification, NSPoint, NSRange, NSRunLoop, NSSize, NSString,
 };
 
 /// テストケース 1 件。
@@ -131,6 +132,10 @@ fn main() {
         ),
         ("リストの複数選択が 0 件にもなる", list_multiple_selection),
         ("リストが選べない行を飛ばす", list_skips_disabled_rows),
+        (
+            "行のクリックがクロージャへ届く",
+            list_row_activation_notifies,
+        ),
         (
             "リストに任意ウィジェットの行を載せられる",
             list_accepts_composed_rows,
@@ -3029,6 +3034,173 @@ fn list_skips_disabled_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// ウィンドウのイベントキューへ本物のクリックを積み、配送まで進める。
+///
+/// `mouseDown:` を直接呼ぶのとは違い、AppKit のヒットテストと追跡ループを
+/// そのまま通る。`NSTableView` のように「どのビューが受け取るか」で
+/// ふるまいが変わるものは、この経路でないと確かめられない。
+fn click_view(app: &NSApplication, window: &NSWindow, view: &NSView) {
+    let bounds = view.bounds();
+    let center = NSPoint::new(bounds.size.width / 2.0, bounds.size.height / 2.0);
+    let point = view.convertPoint_toView(center, None);
+    for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
+        let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            point,
+            NSEventModifierFlags::empty(),
+            0.0,
+            window.windowNumber(),
+            None,
+            0,
+            1,
+            1.0,
+        )
+        .expect("クリックイベント");
+        unsafe { app.postEvent_atStart(&event, false) };
+    }
+    deliver_events(app);
+    pump(0.05);
+    deliver_events(app);
+}
+
+/// キューに溜まっているイベントをすべて配送する。
+fn deliver_events(app: &NSApplication) {
+    while let Some(event) = unsafe {
+        app.nextEventMatchingMask_untilDate_inMode_dequeue(
+            NSEventMask::Any,
+            Some(&NSDate::distantPast()),
+            NSDefaultRunLoopMode,
+            true,
+        )
+    } {
+        app.sendEvent(&event);
+    }
+}
+
+/// 行そのもののクリックが `on_activate` へ届き、行内のコントロールを
+/// 直接押したときは二重に発火しない。
+///
+/// AppKit は表示専用のラベルやアイコンの上のクリックを `NSTableView` へ渡す
+/// (ヒットテストがセルではなくテーブルを返す) ため、naui はテーブルの action で
+/// 行クリックを受けている。セル側の `mouseDown:` では実際のクリックが届かない
+/// ので、ここでは本物のイベントを配送して確かめる。
+fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+
+    let window = ui.window("行のクリック", 480.0, 320.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+
+    let content = ui.grid()?;
+    content.set_column_track(0, Track::Auto);
+    content.set_column_track(1, Track::FILL);
+    content.set_column_track(2, Track::Auto);
+    content.set_spacing(10.0, 0.0);
+    let check = ui.checkbox("")?;
+    content.attach(&check, GridCell::new(0, 0));
+    let text = ui.stack(Orientation::Vertical)?;
+    text.set_align(Align::Start);
+    let title = ui.label("Wi-Fi")?;
+    text.append(&title);
+    text.append(&ui.label("メニューバーに表示")?);
+    text.set_sizing(Sizing::fill_width());
+    content.attach(&text, GridCell::new(1, 0));
+    let action = ui.button("オプション…")?;
+    let clicks = Rc::new(Cell::new(0));
+    action.on_click({
+        let clicks = clicks.clone();
+        move || clicks.set(clicks.get() + 1)
+    });
+    content.attach(&action, GridCell::new(2, 0));
+    content.set_sizing(Sizing::fill_width());
+
+    let row = ListRow::new(&content).selectable(false);
+    let activated = Rc::new(Cell::new(0));
+    row.on_activate({
+        let check = check.clone();
+        let activated = activated.clone();
+        move || {
+            activated.set(activated.get() + 1);
+            check.set_checked(!check.is_checked());
+        }
+    });
+
+    let list = ui.list()?;
+    list.set_rows(&[row]);
+    list.set_sizing(Sizing::fill_width());
+    root.append(&list);
+    window.set_child(&root);
+
+    // 行クリックを受ける口が付いていること (見た目に依らない確認)。
+    let table = list.native_table();
+    assert!(
+        unsafe { table.target() }.is_some(),
+        "行クリックを受ける target が付いていること"
+    );
+    assert_eq!(
+        table.action(),
+        Some(sel!(invoke:)),
+        "行クリックを action で受けていること"
+    );
+
+    // アクティブでないアプリのウィンドウは key になれず、AppKit は
+    // `NSTableView` へクリックを渡さない。テストの間だけアクセサリにする。
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    window.show();
+    let native = window.native_window();
+    // アクティブ化はランループの上で進むので、key になるまで少し待つ。
+    for _ in 0..40 {
+        if native.isKeyWindow() {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
+
+    let content_view = native.contentView().expect("contentView");
+    content_view.layoutSubtreeIfNeeded();
+    // 行ビューは表示のときに作られるので、先に作らせてから描画まで進める。
+    let _ = table.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    content_view.layoutSubtreeIfNeeded();
+    unsafe { content_view.display() };
+
+    if native.isKeyWindow() {
+        click_view(&app, &native, &title.native_view());
+        assert_eq!(activated.get(), 1, "行クリックが 1 回だけ通知されること");
+        assert!(check.is_checked(), "行クリックからチェックが切り替わること");
+
+        click_view(&app, &native, &check.native_view());
+        assert!(
+            !check.is_checked(),
+            "チェックボックスの直接操作でも切り替わること"
+        );
+        assert_eq!(
+            activated.get(),
+            1,
+            "チェックボックスの直接操作では行が二重発火しないこと"
+        );
+
+        click_view(&app, &native, &action.native_view());
+        assert_eq!(clicks.get(), 1, "行内ボタンのクリックが届くこと");
+        assert_eq!(
+            activated.get(),
+            1,
+            "行内ボタンの直接操作では行 activation が発火しないこと"
+        );
+    } else {
+        // ウィンドウを key にできない環境 (画面セッションが無いなど) では、
+        // AppKit がクリックを配送しないので確かめられない。
+        println!("(key ウィンドウにできないため、実クリックの確認は飛ばしました)");
+    }
+
+    window.close();
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    Ok(())
+}
+
 /// 設定画面向けの行は、ラベルだけでなく任意のレイアウトとコントロールを持てる。
 fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     let content = ui.grid()?;
@@ -3072,20 +3244,9 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     let last = make_row("バッテリー", "残量を表示", "設定…")?;
     let row_contents = [content.clone(), second.clone(), last.clone()];
 
-    let first_row = ListRow::new(&content).selectable(false);
-    let activated = Rc::new(Cell::new(0));
-    first_row.on_activate({
-        let check = check.clone();
-        let activated = activated.clone();
-        move || {
-            activated.set(activated.get() + 1);
-            check.click();
-        }
-    });
-
     let list = ui.list()?;
     list.set_rows(&[
-        first_row,
+        ListRow::new(&content).selectable(false),
         ListRow::new(&second).selectable(false),
         ListRow::new(&last).selectable(false),
     ]);
@@ -3167,43 +3328,6 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     assert!(
         detail_frame.origin.y + detail_frame.size.height <= title_frame.origin.y + 0.5,
         "タイトルと補足が重ならないこと: {title_frame:?} / {detail_frame:?}"
-    );
-
-    // 表示専用ラベルのクリックはレスポンダチェーンを通って行へ届く。
-    // 直接操作するチェックボックスやボタンは自分でイベントを処理するため、
-    // 行の activation と二重発火しない。
-    let click = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
-        NSEventType::LeftMouseDown,
-        NSPoint::new(0.0, 0.0),
-        NSEventModifierFlags::empty(),
-        0.0,
-        0,
-        None,
-        0,
-        1,
-        1.0,
-    )
-    .expect("クリックイベント");
-    title.native_view().mouseDown(&click);
-    assert_eq!(activated.get(), 1, "行クリックが 1 回だけ通知されること");
-    assert!(check.is_checked(), "行クリックからチェックが切り替わること");
-
-    check.click();
-    assert!(
-        !check.is_checked(),
-        "チェックボックスの直接操作でも切り替わること"
-    );
-    assert_eq!(
-        activated.get(),
-        1,
-        "チェックボックスの直接操作では行が二重発火しないこと"
-    );
-
-    action.click();
-    assert_eq!(
-        activated.get(),
-        1,
-        "行内ボタンの直接操作では行 activation が発火しないこと"
     );
 
     // ギャラリーと同じ 3 行を固定高さなしで表示し、最後の行の下に

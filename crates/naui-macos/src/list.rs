@@ -6,6 +6,11 @@
 //!
 //! 文字だけの [`ListItem`] も任意内容の [`ListRow`] へ正規化し、同じ行モデルと
 //! セル生成経路で扱う。選択と行 activation は Rust のクロージャへ渡す。
+//!
+//! **行のクリックは `NSTableView` の action で受ける。** 表示専用のラベルや
+//! アイコンの上を押したときのヒットテストは、セルではなくテーブルを返すため、
+//! セル側の `mouseDown:` では実際のクリックが届かない。ボタンや入力欄は
+//! 自分がヒットするので、この action は呼ばれず二重に発火しない。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -13,9 +18,9 @@ use std::rc::Rc;
 use naui_core::{ListItem, SelectionMode};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSColor, NSControlTextEditingDelegate, NSEvent, NSFont, NSLayoutConstraint, NSScrollView,
+    NSColor, NSControlTextEditingDelegate, NSFont, NSLayoutConstraint, NSScrollView,
     NSTableCellView, NSTableColumn, NSTableColumnResizingOptions, NSTableView,
     NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
     NSTableViewStyle, NSTextField, NSView, NSViewNoIntrinsicMetric,
@@ -24,6 +29,7 @@ use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSString,
 };
 
+use crate::trampoline::ActionTarget;
 use crate::widgets::Widget;
 
 /// 1 列しか使わないので、識別子は固定でよい。
@@ -211,8 +217,8 @@ define_class!(
             let rows = self.ivars().rows.borrow();
             match usize::try_from(row).ok().and_then(|row| rows.get(row)) {
                 Some(row) => match &row.content {
-                    ListRowContent::Item(item) => Some(list_item_cell_view(mtm, item, row)),
-                    ListRowContent::Custom(content) => Some(custom_cell_view(mtm, &**content, row)),
+                    ListRowContent::Item(item) => Some(list_item_cell_view(mtm, item)),
+                    ListRowContent::Custom(content) => Some(custom_cell_view(mtm, &**content)),
                 },
                 None => None,
             }
@@ -253,34 +259,6 @@ define_class!(
     }
 );
 
-// 非コントロール部分を行全体のクリックとして扱うセル。
-// 表示専用ラベルやコンテナが処理しなかった mouseDown はレスポンダーチェーンを
-// 上がってここへ届く。ボタンや入力欄は自分で処理するため二重発火しない。
-define_class!(
-    #[unsafe(super(NSTableCellView))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "NauiActivatingListCellView"]
-    #[ivars = ActivationHandler]
-    struct ActivatingListCellView;
-
-    unsafe impl NSObjectProtocol for ActivatingListCellView {}
-
-    impl ActivatingListCellView {
-        #[unsafe(method(mouseDown:))]
-        fn mouse_down(&self, event: &NSEvent) {
-            self.ivars().emit();
-            let _: () = unsafe { msg_send![super(self), mouseDown: event] };
-        }
-    }
-);
-
-impl ActivatingListCellView {
-    fn new(mtm: MainThreadMarker, handler: ActivationHandler) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(handler);
-        unsafe { msg_send![super(this), init] }
-    }
-}
-
 /// 行 1 つ分のビューを作る。
 ///
 /// 文字だけを載せた `NSTextField` をそのまま行にすると、AppKit は枠の上端に
@@ -301,9 +279,8 @@ pub(crate) fn cell_view(
 }
 
 /// `ListItem` も `ListRow` と同じセル経路へ載せる。
-fn list_item_cell_view(mtm: MainThreadMarker, item: &ListItem, row: &ListRow) -> Retained<NSView> {
-    let activating = ActivatingListCellView::new(mtm, row.activation.clone());
-    let cell: Retained<NSTableCellView> = activating.into_super();
+fn list_item_cell_view(mtm: MainThreadMarker, item: &ListItem) -> Retained<NSView> {
+    let cell = NSTableCellView::new(mtm);
     configure_text_cell(
         mtm,
         &cell,
@@ -369,13 +346,8 @@ fn configure_text_cell(
 }
 
 /// 任意のウィジェットを、行の高さも含めて Auto Layout へつなぐ。
-fn custom_cell_view(
-    mtm: MainThreadMarker,
-    content: &dyn Widget,
-    row: &ListRow,
-) -> Retained<NSView> {
-    let activating = ActivatingListCellView::new(mtm, row.activation.clone());
-    let cell: Retained<NSTableCellView> = activating.into_super();
+fn custom_cell_view(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSView> {
+    let cell = NSTableCellView::new(mtm);
     let content = content.native_view();
     content.setTranslatesAutoresizingMaskIntoConstraints(false);
     cell.addSubview(&content);
@@ -509,6 +481,9 @@ struct ListInner {
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     silent: Rc<Cell<bool>>,
+    /// 行のクリックを受ける target。`NSTableView` は target を保持しないので、
+    /// ここで生かしておく。
+    _action: Retained<ActionTarget>,
     /// デリゲートとデータソースは weak 参照なので保持する。
     _source: Retained<ListSource>,
 }
@@ -574,6 +549,29 @@ impl List {
             table.setDelegate(Some(ProtocolObject::from_ref(&*source)));
         }
 
+        // 行のクリックは `NSTableView` の action で受ける。
+        // 表示専用のラベルやアイコンを押すと、AppKit のヒットテストは
+        // セルではなくテーブルを返すため、セル側の `mouseDown` では届かない。
+        // ボタンやチェックボックスは自分がヒットするので、この action は
+        // 呼ばれず、行の activation と二重に発火しない。
+        let action = ActionTarget::new(mtm, {
+            let rows = rows.clone();
+            let table = table.clone();
+            move || {
+                let Ok(index) = usize::try_from(table.clickedRow()) else {
+                    return;
+                };
+                let activation = rows.borrow().get(index).map(|row| row.activation.clone());
+                if let Some(activation) = activation {
+                    activation.emit();
+                }
+            }
+        });
+        unsafe {
+            table.setTarget(Some(&action));
+            table.setAction(Some(sel!(invoke:)));
+        }
+
         let scroll = ContentSizedScrollView::new(mtm);
         scroll.setHasVerticalScroller(true);
         scroll.setDocumentView(Some(&table));
@@ -586,6 +584,7 @@ impl List {
             handler,
             silent,
             _source: source,
+            _action: action,
         }))
     }
 
