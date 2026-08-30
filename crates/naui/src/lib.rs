@@ -697,6 +697,34 @@
 //! [`ListRow::selectable(false)`](ListRow::selectable) を指定する。`ListItem` に
 //! アクセサリの種類を列挙しないため、アプリ固有の行構成も同じ仕組みで扱える。
 //!
+//! 行のラベルや余白を押したときの処理は
+//! [`ListRow::on_activate`] で受ける。**ボタン・チェックボックス・入力欄を
+//! 直接押したときは呼ばれない**ので、行の処理と中のコントロールの処理が
+//! 二重に起きない (macOS は `NSTableView` の action、GTK / WinUI はイベントの
+//! ルーティング、Web は押された要素をたどって、どれも同じ切り分けにしている)。
+//! 押せるようにするかどうかは行を組み立てるときに決まるので、
+//! `set_rows` へ渡す前に指定する。
+//!
+//! ```no_run
+//! # use naui::{ListRow, Orientation, Result, Sizing, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let content = ui.stack(Orientation::Horizontal)?;
+//! let check = ui.checkbox("")?;
+//! content.append(&check);
+//! content.append(&ui.label("Wi-Fi")?);
+//! content.append(&ui.button("設定…")?);
+//! content.set_sizing(Sizing::fill_width());
+//!
+//! // 行全体は選ばせず、押されたらチェックだけを切り替える。
+//! let row = ListRow::new(&content).selectable(false);
+//! row.on_activate(move || check.set_checked(!check.is_checked()));
+//!
+//! let list = ui.list()?;
+//! list.set_rows(&[row]);
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! ## ツリー
 //!
 //! [`Tree`] は入れ子の項目を開閉できる一覧で、自分でスクロールする。
@@ -1465,6 +1493,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let custom_content = ui.label("任意の行内容")?;
     let custom_row = ListRow::new(&custom_content).selectable(false);
     let _: bool = custom_row.is_selectable();
+    custom_row.on_activate(|| {});
     list.set_rows(&[custom_row]);
 
     // --- ツリー -----------------------------------------------------------

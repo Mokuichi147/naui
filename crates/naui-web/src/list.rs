@@ -5,7 +5,7 @@
 //! | 行 | 作り |
 //! | --- | --- |
 //! | 文字だけ | `<select size>` + `<option>` — ブラウザ標準のリストボックスそのもの |
-//! | `detail` あり | `<ul role="listbox">` + `<li role="option">` — 2 行にするための合成 |
+//! | `detail` あり / 任意内容 | `<ul role="listbox">` + `<li role="option">` — 合成 |
 //!
 //! `<option>` の内容モデルは**テキストのみ**で、要素も改行も置けない。
 //! 2 行の行を出すには `<select>` を離れるしかない。とはいえ `<select>` は
@@ -22,31 +22,97 @@ use std::rc::Rc;
 use naui_core::{ListItem, Result, SelectionMode};
 use wasm_bindgen::JsCast;
 use web_sys::{
-    Document, Element, HtmlElement, HtmlOptionElement, HtmlSelectElement, KeyboardEvent, MouseEvent,
+    Document, Element, Event, HtmlElement, HtmlOptionElement, HtmlSelectElement, KeyboardEvent,
+    MouseEvent,
 };
 
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
-/// `Grid` / `Stack` などで自由に組み立てたリスト行。
+/// 行がクリックされたことの通知先。
+///
+/// 呼び出し中に同じ行のコールバックを差し替えても二重借用しない。
+#[derive(Clone, Default)]
+struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
+
+impl ActivationHandler {
+    fn set(&self, f: impl FnMut() + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn emit(&self) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f();
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
+/// 1 行の内容。通常の文字行も任意ウィジェット行も同じ型へ正規化する。
+enum ListRowContent {
+    Item(ListItem),
+    Custom(Box<dyn Widget>),
+}
+
+impl Clone for ListRowContent {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Item(item) => Self::Item(item.clone()),
+            Self::Custom(content) => Self::Custom(content.boxed_clone()),
+        }
+    }
+}
+
+/// リストへ載せる 1 行。
+///
+/// [`ListItem`] は文字列だけで済む一覧向けの簡便 API であり、設定画面のように
+/// アイコン、複数のラベル、チェックボックス、末尾のボタンなどを組み合わせる
+/// 行は `Grid` / `Stack` で作って `ListRow` に包む。
+///
+/// ```no_run
+/// # use naui_web::{ListRow, Widget};
+/// # fn row(content: &dyn Widget) {
+/// let row = ListRow::new(content).selectable(false);
+/// row.on_activate(|| println!("行がクリックされました"));
+/// # let _ = row;
+/// # }
+/// ```
 pub struct ListRow {
-    content: Box<dyn Widget>,
+    content: ListRowContent,
     selectable: bool,
+    activation: ActivationHandler,
 }
 
 impl Clone for ListRow {
     fn clone(&self) -> Self {
         Self {
-            content: self.content.boxed_clone(),
+            content: self.content.clone(),
             selectable: self.selectable,
+            activation: self.activation.clone(),
         }
     }
 }
 
 impl ListRow {
+    /// ウィジェットを 1 行の内容として使う。既定では行全体も選択できる。
     pub fn new(content: &dyn Widget) -> Self {
         Self {
-            content: content.boxed_clone(),
+            content: ListRowContent::Custom(content.boxed_clone()),
             selectable: true,
+            activation: ActivationHandler::default(),
+        }
+    }
+
+    /// `ListItem` を通常の文字行へ変換する。`List::set_items` の正規化経路。
+    fn from_item(item: ListItem) -> Self {
+        let selectable = item.enabled;
+        Self {
+            content: ListRowContent::Item(item),
+            selectable,
+            activation: ActivationHandler::default(),
         }
     }
 
@@ -59,6 +125,42 @@ impl ListRow {
     pub fn is_selectable(&self) -> bool {
         self.selectable
     }
+
+    /// 行内のラベル・アイコン・余白がクリックされたときに呼ぶ処理。
+    ///
+    /// チェックボックス、ボタン、入力欄などのコントロールを直接押した場合は
+    /// 呼ばれないため、同じ操作が二重に発火しない。
+    pub fn on_activate(&self, f: impl FnMut() + 'static) {
+        self.activation.set(f);
+    }
+
+    /// 選べないうえに操作もできない行 (`ListItem::enabled(false)`)。
+    ///
+    /// 任意内容の行は、行全体を選べなくても中のコントロールは押せるため
+    /// 薄くしない。
+    fn is_dimmed(&self) -> bool {
+        matches!(&self.content, ListRowContent::Item(item) if !item.enabled)
+    }
+}
+
+/// 行そのものの操作と区別する、行内のコントロール。
+///
+/// ほかの環境がヒットテストやイベントのルーティングで行っている切り分けを、
+/// DOM では押された要素の祖先を辿って行う。`<label>` は中の入力を操作するので、
+/// ここに含める。
+const ROW_CONTROLS: &str = "button, input, select, textarea, a[href], label, summary, \
+[role=\"button\"], [contenteditable=\"true\"]";
+
+/// 行の中のコントロールが押されたか。
+fn control_was_clicked(option: &HtmlElement, event: &Event) -> bool {
+    let Some(target) = event.target().and_then(|t| t.dyn_into::<Element>().ok()) else {
+        return false;
+    };
+    let Ok(Some(control)) = target.closest(ROW_CONTROLS) else {
+        return false;
+    };
+    // 行より内側で見つかったときだけ、コントロールの操作とみなす。
+    !control.is_same_node(Some(option.as_ref())) && option.contains(Some(control.as_ref()))
 }
 
 /// `size` の下限。1 以下だとドロップダウンになる。
@@ -111,8 +213,8 @@ enum Body {
     /// ブラウザ標準のリストボックス。
     Select {
         select: HtmlSelectElement,
-        /// `change` の購読。落とすと購読も外れる。
-        _listener: Option<Listener>,
+        /// `change` と `click` の購読。落とすと購読も外れる。
+        _listeners: Vec<Listener>,
     },
     /// 2 行の行を出すための合成。
     Listbox {
@@ -129,10 +231,9 @@ struct ListInner {
     document: Document,
     id: u32,
     body: RefCell<Body>,
-    items: RefCell<Vec<ListItem>>,
-    selectable: RefCell<Vec<bool>>,
-    /// 任意内容の行に含まれるイベント購読等を生かしておく。
-    custom_rows: RefCell<Vec<ListRow>>,
+    /// 行。選べるかどうかも activation もここから引く。
+    /// 行に含まれるイベント購読等を生かしておく役目も持つ。
+    rows: RefCell<Vec<ListRow>>,
     mode: Cell<SelectionMode>,
     /// 選ばれている行 (昇順)。`<select>` でも合成でもここが正。
     selected: RefCell<Vec<usize>>,
@@ -166,11 +267,9 @@ impl List {
             id: next_list_id(),
             body: RefCell::new(Body::Select {
                 select: create(doc, "select")?.unchecked_into(),
-                _listener: None,
+                _listeners: Vec::new(),
             }),
-            items: RefCell::new(Vec::new()),
-            selectable: RefCell::new(Vec::new()),
-            custom_rows: RefCell::new(Vec::new()),
+            rows: RefCell::new(Vec::new()),
             mode: Cell::new(SelectionMode::Single),
             selected: RefCell::new(Vec::new()),
             active: Cell::new(None),
@@ -186,35 +285,35 @@ impl List {
     /// `detail` を持つ行が 1 つでもあれば `<ul role="listbox">` に、
     /// 無ければ `<select size>` に組み替える。
     pub fn set_items(&self, items: &[ListItem]) {
-        *self.0.items.borrow_mut() = items.to_vec();
-        *self.0.selectable.borrow_mut() = items.iter().map(|item| item.enabled).collect();
-        self.0.custom_rows.borrow_mut().clear();
-        self.0.selected.borrow_mut().clear();
-        self.0.active.set(None);
-        self.0.anchor.set(None);
-
-        let needs_listbox = items.iter().any(|item| item.detail.is_some());
-        let _ = if needs_listbox {
-            self.build_listbox(items)
-        } else {
-            self.build_select(items)
-        };
+        let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
+        self.set_rows(&rows);
     }
 
-    /// 任意のウィジェットで作った行へ置き換える。
+    /// 行を作り直す。通常の文字行も任意内容の行もこの経路で組み立てる。
+    ///
+    /// 行内のコントロールは通常どおりそれぞれのコールバックを持てる。
+    /// インデックスの意味が変わるため、選択は外れる。
     pub fn set_rows(&self, rows: &[ListRow]) {
-        self.0.items.borrow_mut().clear();
-        *self.0.selectable.borrow_mut() = rows.iter().map(ListRow::is_selectable).collect();
-        *self.0.custom_rows.borrow_mut() = rows.to_vec();
+        *self.0.rows.borrow_mut() = rows.to_vec();
         self.0.selected.borrow_mut().clear();
         self.0.active.set(None);
         self.0.anchor.set(None);
-        let _ = self.build_custom_listbox(rows);
+
+        // `<option>` はテキストしか持てないので、文字だけの行がそろっている
+        // ときだけブラウザ標準の `<select>` を使い続ける。
+        let plain = rows
+            .iter()
+            .all(|row| matches!(&row.content, ListRowContent::Item(item) if item.detail.is_none()));
+        let _ = if plain {
+            self.build_select(rows)
+        } else {
+            self.build_listbox(rows)
+        };
     }
 
     /// 行数。
     pub fn len(&self) -> usize {
-        self.0.selectable.borrow().len()
+        self.0.rows.borrow().len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -295,21 +394,25 @@ impl List {
 
     // ------------------------------------------------------------ 組み立て
 
-    /// ブラウザ標準の `<select size>` を作る。
-    fn build_select(&self, items: &[ListItem]) -> Result<()> {
+    /// ブラウザ標準の `<select size>` を作る。行が文字だけのときの作り。
+    fn build_select(&self, rows: &[ListRow]) -> Result<()> {
         let select: HtmlSelectElement = create(&self.0.document, "select")?.unchecked_into();
-        for item in items {
+        for row in rows {
+            let ListRowContent::Item(item) = &row.content else {
+                continue;
+            };
             let option: HtmlOptionElement = create(&self.0.document, "option")?.unchecked_into();
             option.set_text_content(Some(&item.label));
             option.set_disabled(!item.enabled);
             let _ = select.append_child(&option);
         }
         // `size` が無いとドロップダウンになるので、必ず 2 以上を入れる。
-        let rows = u32::try_from(items.len()).unwrap_or(u32::MAX).max(MIN_ROWS);
-        select.set_size(rows);
+        let size = u32::try_from(rows.len()).unwrap_or(u32::MAX).max(MIN_ROWS);
+        select.set_size(size);
 
+        let mut listeners = Vec::with_capacity(2);
         // 選択はブラウザが動かすので、その結果を読み取って通知するだけ。
-        let listener = Listener::attach(select.as_ref(), "change", {
+        if let Ok(listener) = Listener::attach(select.as_ref(), "change", {
             let weak = Rc::downgrade(&self.0);
             move || {
                 let Some(inner) = weak.upgrade() else {
@@ -320,20 +423,44 @@ impl List {
                 *list.0.selected.borrow_mut() = picked.clone();
                 list.0.handler.emit(&picked);
             }
-        })
-        .ok();
+        }) {
+            listeners.push(listener);
+        }
+        // `<option>` の中はテキストだけで、行内のコントロールも無い。
+        // 押された `<option>` を辿って、その行の activation を出す。
+        if let Ok(listener) = Listener::attach_event(select.as_ref(), "click", {
+            let weak = Rc::downgrade(&self.0);
+            move |event| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let Some(index) = clicked_option_index(&event) else {
+                    return;
+                };
+                let activation = inner
+                    .rows
+                    .borrow()
+                    .get(index)
+                    .map(|row| row.activation.clone());
+                if let Some(activation) = activation {
+                    activation.emit();
+                }
+            }
+        }) {
+            listeners.push(listener);
+        }
 
         self.swap_body(select.as_ref())?;
         *self.0.body.borrow_mut() = Body::Select {
             select,
-            _listener: listener,
+            _listeners: listeners,
         };
         self.apply_mode();
         Ok(())
     }
 
-    /// 2 行の行を出すために `role="listbox"` を組み立てる。
-    fn build_listbox(&self, items: &[ListItem]) -> Result<()> {
+    /// `role="listbox"` を組み立てる。2 行の行も任意内容の行もここを通る。
+    fn build_listbox(&self, rows: &[ListRow]) -> Result<()> {
         let list: HtmlElement = create(&self.0.document, "ul")?.unchecked_into();
         let _ = list.set_attribute("role", "listbox");
         // キーボードで入れるようにする。中の行は `aria-activedescendant` で指す。
@@ -351,92 +478,6 @@ impl List {
         style(&list, "background-color", "Field");
         style(&list, "color", "FieldText");
 
-        let mut options = Vec::with_capacity(items.len());
-        let mut listeners = Vec::with_capacity(items.len() + 1);
-        for (index, item) in items.iter().enumerate() {
-            let option: HtmlElement = create(&self.0.document, "li")?.unchecked_into();
-            let _ = option.set_attribute("role", "option");
-            let _ = option.set_attribute("id", &self.option_id(index));
-            let _ = option.set_attribute("aria-selected", "false");
-            style(&option, "display", "flex");
-            style(&option, "flex-direction", "column");
-            style(&option, "padding", "2px 4px");
-
-            let title: HtmlElement = create(&self.0.document, "span")?.unchecked_into();
-            title.set_text_content(Some(&item.label));
-            let _ = option.append_child(&title);
-            if let Some(detail) = &item.detail {
-                let sub: HtmlElement = create(&self.0.document, "span")?.unchecked_into();
-                sub.set_text_content(Some(detail));
-                // macOS / Windows の 2 行目に合わせて、小さく淡くする。
-                style(&sub, "font-size", "smaller");
-                style(&sub, "opacity", "0.7");
-                let _ = option.append_child(&sub);
-            }
-
-            if item.enabled {
-                let listener = Listener::attach_event(option.as_ref(), "click", {
-                    let weak = Rc::downgrade(&self.0);
-                    move |event| {
-                        let Some(inner) = weak.upgrade() else {
-                            return;
-                        };
-                        let mouse = event.dyn_ref::<MouseEvent>();
-                        let toggle = mouse.is_some_and(|e| e.meta_key() || e.ctrl_key());
-                        let extend = mouse.is_some_and(|e| e.shift_key());
-                        List(inner).on_row_activated(index, toggle, extend);
-                    }
-                })?;
-                listeners.push(listener);
-            } else {
-                let _ = option.set_attribute("aria-disabled", "true");
-                // 無効な文字にブラウザが使うシステム色。
-                style(&option, "color", "GrayText");
-            }
-
-            let _ = list.append_child(&option);
-            options.push(option);
-        }
-
-        listeners.push(Listener::attach_event(list.as_ref(), "keydown", {
-            let weak = Rc::downgrade(&self.0);
-            move |event| {
-                let Some(inner) = weak.upgrade() else {
-                    return;
-                };
-                if let Some(key) = event.dyn_ref::<KeyboardEvent>() {
-                    if List(inner).on_key(key) {
-                        event.prevent_default();
-                    }
-                }
-            }
-        })?);
-
-        self.swap_body(&list)?;
-        *self.0.body.borrow_mut() = Body::Listbox {
-            list,
-            options,
-            _listeners: listeners,
-        };
-        self.apply_mode();
-        Ok(())
-    }
-
-    /// 任意ウィジェットを内容に持つ `role="listbox"` を組み立てる。
-    fn build_custom_listbox(&self, rows: &[ListRow]) -> Result<()> {
-        let list: HtmlElement = create(&self.0.document, "ul")?.unchecked_into();
-        let _ = list.set_attribute("role", "listbox");
-        let _ = list.set_attribute("tabindex", "0");
-        style(&list, "list-style", "none");
-        style(&list, "margin", "0");
-        style(&list, "padding", "0");
-        style(&list, "overflow-y", "auto");
-        style(&list, "position", "relative");
-        style(&list, "border", "1px solid");
-        style(&list, "border-color", "ButtonBorder");
-        style(&list, "background-color", "Field");
-        style(&list, "color", "FieldText");
-
         let mut options = Vec::with_capacity(rows.len());
         let mut listeners = Vec::with_capacity(rows.len() + 1);
         for (index, row) in rows.iter().enumerate() {
@@ -444,27 +485,72 @@ impl List {
             let _ = option.set_attribute("role", "option");
             let _ = option.set_attribute("id", &self.option_id(index));
             let _ = option.set_attribute("aria-selected", "false");
-            style(&option, "padding", "6px 10px");
-            let _ = option.append_child(&row.content.native_element());
+            match &row.content {
+                ListRowContent::Item(item) => {
+                    style(&option, "display", "flex");
+                    style(&option, "flex-direction", "column");
+                    style(&option, "padding", "2px 4px");
 
-            if row.selectable {
-                listeners.push(Listener::attach_event(option.as_ref(), "click", {
-                    let weak = Rc::downgrade(&self.0);
-                    move |event| {
-                        let Some(inner) = weak.upgrade() else {
-                            return;
-                        };
-                        // Button や input 自身の操作はそのまま通し、行選択も
-                        // 通常のクリックと同じ規則で更新する。
-                        let mouse = event.dyn_ref::<MouseEvent>();
-                        let toggle = mouse.is_some_and(|e| e.meta_key() || e.ctrl_key());
-                        let extend = mouse.is_some_and(|e| e.shift_key());
-                        List(inner).on_row_activated(index, toggle, extend);
+                    let title: HtmlElement = create(&self.0.document, "span")?.unchecked_into();
+                    title.set_text_content(Some(&item.label));
+                    let _ = option.append_child(&title);
+                    if let Some(detail) = &item.detail {
+                        let sub: HtmlElement = create(&self.0.document, "span")?.unchecked_into();
+                        sub.set_text_content(Some(detail));
+                        // macOS / Windows の 2 行目に合わせて、小さく淡くする。
+                        style(&sub, "font-size", "smaller");
+                        style(&sub, "opacity", "0.7");
+                        let _ = option.append_child(&sub);
                     }
-                })?);
-            } else {
+                }
+                ListRowContent::Custom(content) => {
+                    style(&option, "padding", "6px 10px");
+                    let _ = option.append_child(&content.native_element());
+                }
+            }
+
+            if !row.selectable {
                 let _ = option.set_attribute("aria-disabled", "true");
             }
+            if row.is_dimmed() {
+                // 無効な文字にブラウザが使うシステム色。
+                style(&option, "color", "GrayText");
+                // 行そのものも中身も操作できないので、購読も付けない。
+                let _ = list.append_child(&option);
+                options.push(option);
+                continue;
+            }
+
+            let selectable = row.selectable;
+            listeners.push(Listener::attach_event(option.as_ref(), "click", {
+                let weak = Rc::downgrade(&self.0);
+                let option = option.clone();
+                move |event| {
+                    let Some(inner) = weak.upgrade() else {
+                        return;
+                    };
+                    // Button や input 自身の操作はそのまま通し、行そのものが
+                    // 押されたときだけ activation を出す。
+                    if !control_was_clicked(&option, &event) {
+                        let activation = inner
+                            .rows
+                            .borrow()
+                            .get(index)
+                            .map(|row| row.activation.clone());
+                        if let Some(activation) = activation {
+                            activation.emit();
+                        }
+                    }
+                    if !selectable {
+                        return;
+                    }
+                    // 行選択は通常のクリックと同じ規則で更新する。
+                    let mouse = event.dyn_ref::<MouseEvent>();
+                    let toggle = mouse.is_some_and(|e| e.meta_key() || e.ctrl_key());
+                    let extend = mouse.is_some_and(|e| e.shift_key());
+                    List(inner).on_row_activated(index, toggle, extend);
+                }
+            })?);
 
             let _ = list.append_child(&option);
             options.push(option);
@@ -547,9 +633,9 @@ impl List {
     }
 
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
-        let selectable = self.0.selectable.borrow();
+        let rows = self.0.rows.borrow();
         self.0.mode.get().normalize_by(indices, |index| {
-            selectable.get(index).copied().unwrap_or(false)
+            rows.get(index).is_some_and(ListRow::is_selectable)
         })
     }
 
@@ -570,6 +656,7 @@ impl List {
                 }
             }
             Body::Listbox { options, .. } => {
+                let rows = self.0.rows.borrow();
                 for (index, option) in options.iter().enumerate() {
                     let picked = indices.contains(&index);
                     let _ = option
@@ -584,7 +671,7 @@ impl List {
                     } else {
                         style(option, "background-color", "");
                         style(option, "color", "");
-                        if option.has_attribute("aria-disabled") {
+                        if rows.get(index).is_some_and(ListRow::is_dimmed) {
                             style(option, "color", "GrayText");
                         }
                     }
@@ -666,10 +753,10 @@ impl List {
 
     /// `start` から `step` の向きに進んで、最初に選べる行を返す。
     fn first_enabled(&self, start: isize, step: isize) -> Option<usize> {
-        let items = self.0.selectable.borrow();
+        let rows = self.0.rows.borrow();
         let mut at = start;
-        while at >= 0 && (at as usize) < items.len() {
-            if items[at as usize] {
+        while at >= 0 && (at as usize) < rows.len() {
+            if rows[at as usize].is_selectable() {
                 return Some(at as usize);
             }
             at += step;
@@ -680,9 +767,9 @@ impl List {
     /// `a` から `b` までの、選べる行の並び。
     fn range(&self, a: usize, b: usize) -> Vec<usize> {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-        let items = self.0.selectable.borrow();
-        (lo..=hi.min(items.len().saturating_sub(1)))
-            .filter(|&i| items[i])
+        let rows = self.0.rows.borrow();
+        (lo..=hi.min(rows.len().saturating_sub(1)))
+            .filter(|&i| rows[i].is_selectable())
             .collect()
     }
 
@@ -717,4 +804,12 @@ impl List {
             list.set_scroll_top(bottom - list.client_height());
         }
     }
+}
+
+/// 押された `<option>` が何行目か。`<select>` の余白のクリックでは `None`。
+fn clicked_option_index(event: &Event) -> Option<usize> {
+    let target = event.target()?.dyn_into::<Element>().ok()?;
+    let option = target.closest("option").ok()??;
+    let index = option.dyn_into::<HtmlOptionElement>().ok()?.index();
+    usize::try_from(index).ok()
 }

@@ -498,6 +498,38 @@ Windows の WinUI 3 `ColorPicker` は、スペクトラムとスライダーを�
 macOS のカラーパネルはカタログ色 (`systemBlue` など) も返すので、成分を読む
 前に sRGB へ変換しています。
 
+#### リスト
+
+縦に並ぶ一覧は `List` です。文字だけの行は `ListItem` で作り、`detail` を付けると
+補助の文字が添えられます。行の識別はインデックスで、選択は `SelectionMode` で
+単一と複数を選べます。
+
+設定画面のように、先頭のチェックボックス・複数のラベル・末尾のボタンを持つ行は、
+`Grid` や `Stack` で組み立てて `ListRow` に包み、`set_rows` で表示します。
+
+```rust
+use naui::{ListRow, Orientation, Sizing};
+
+let content = ui.stack(Orientation::Horizontal)?;
+let check = ui.checkbox("")?;
+content.append(&check);
+content.append(&ui.label("Wi-Fi")?);
+content.append(&ui.button("設定…")?);
+content.set_sizing(Sizing::fill_width());
+
+// 行全体は選ばせず、押されたらチェックだけを切り替える。
+let row = ListRow::new(&content).selectable(false);
+row.on_activate(move || check.set_checked(!check.is_checked()));
+
+let list = ui.list()?;
+list.set_rows(&[row]);
+```
+
+`on_activate` は**行のラベルや余白が押されたときだけ**呼ばれます。中のボタンや
+チェックボックスを直接押したときは、それぞれのコールバックだけが呼ばれるので、
+同じ操作が二重に起きません。押せるようにするかどうかは行を組み立てるときに
+決まるので、`set_rows` へ渡す前に指定します。
+
 #### テーブル
 
 列見出しを持つ表を出すには `Table` を使います。列は `TableColumn`、行は
@@ -1011,8 +1043,9 @@ git push origin v0.2.0
 - `SplitView` の区画は 2 つだけで、仕切りも 1 本です。3 つ以上に分けるときは
   入れ子にします。区画をたたむ (幅 0 にして隠す) 指定はありません。
 - `List` は 1 列です。単純な行は `ListItem` の `label` / `detail`、複合行は
-  `ListRow` に包んだ任意の `Widget` で作れます。列が必要なデータ一覧には
-  `Table` を使います。
+  `ListRow` に包んだ任意の `Widget` で作れます。行そのものへのクリックは
+  `ListRow::on_activate` の 1 つだけで、右クリックや二度押しは受け取れません。
+  列が必要なデータ一覧には `Table` を使います。
 - `Table` のセルに置けるのも文字列だけです。見出しを押しての並べ替えは
   「どの列を、どちら向きに」を通知するところまでで、**行を並べ替えるのは
   アプリの仕事**です。列の幅をドラッグで変えられるのは macOS だけです。

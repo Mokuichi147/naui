@@ -25,7 +25,7 @@ use naui_core::{
     PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
     Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
-use naui_gtk::{run_for_test, Ui, Widget};
+use naui_gtk::{run_for_test, ListRow, Ui, Widget};
 
 /// テストケース 1 件。
 type Case = (&'static str, fn(&Ui) -> Result<()>);
@@ -297,6 +297,14 @@ fn main() {
             list_native_selection_notifies,
         ),
         ("リストの複数選択が 0 件にもなる", list_multiple_selection),
+        (
+            "任意内容の行が GtkListBoxRow に載る",
+            list_accepts_composed_rows,
+        ),
+        (
+            "行のクリックがクロージャへ届く",
+            list_row_activation_notifies,
+        ),
         (
             "複数選択でクリックの修飾キーが GTK4 へ届く",
             list_multiple_selection_reaches_the_modifier_keys,
@@ -2303,6 +2311,116 @@ fn list_auto_height_follows_rows(ui: &Ui) -> Result<()> {
         three_rows > one_row,
         "Auto の高さが行数に追従すること: 1 行 {one_row} / 3 行 {three_rows}"
     );
+    Ok(())
+}
+
+/// 設定画面向けの行は、ラベルだけでなく任意のレイアウトとコントロールを持てる。
+fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
+    let content = ui.stack(Orientation::Horizontal)?;
+    content.set_spacing(8.0);
+    let check = ui.checkbox("")?;
+    let title = ui.label("Wi-Fi")?;
+    let action = ui.button("設定…")?;
+    content.append(&check);
+    content.append(&title);
+    content.append(&action);
+    content.set_sizing(Sizing::fill_width());
+
+    let list = ui.list()?;
+    list.set_rows(&[ListRow::new(&content).selectable(false)]);
+    assert_eq!(list.len(), 1);
+
+    let native = list_box_of(&list);
+    let rows = children(&native);
+    assert_eq!(rows.len(), 1);
+    let row = rows[0]
+        .clone()
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow");
+    assert!(
+        content.native_widget().is_ancestor(&row),
+        "組み立てた中身がそのまま行に載ること"
+    );
+    assert!(row.is_sensitive(), "行の中のコントロールは押せること");
+    assert!(!row.is_selectable(), "行そのものは選べないこと");
+
+    // 選べない行は、GtkListBox 側から選ぼうとしても選択されない。
+    native.select_row(Some(&row));
+    assert!(list.selection().is_empty());
+    list.set_selection(&[0]);
+    assert!(list.selection().is_empty());
+
+    // 文字だけの行へ戻すと、こちらは選べる。
+    list.set_items(&ListItem::list(["札幌", "東京"]));
+    let rows = children(&list_box_of(&list));
+    assert_eq!(rows.len(), 2);
+    let row = rows[0]
+        .clone()
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow");
+    assert!(row.is_selectable());
+    list.set_selection(&[0]);
+    assert_eq!(list.selection(), vec![0]);
+    Ok(())
+}
+
+/// 行そのものが押されたことがクロージャへ届く。
+///
+/// 行内のボタンやチェックボックスは自分でクリックを受け取るので、
+/// GTK 側でも行の activation とは二重に発火しない。
+fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
+    let content = ui.stack(Orientation::Horizontal)?;
+    let check = ui.checkbox("")?;
+    content.append(&check);
+    content.append(&ui.label("Wi-Fi")?);
+    content.set_sizing(Sizing::fill_width());
+
+    let (log, sink) = recorder::<bool>();
+    let row = ListRow::new(&content).selectable(false);
+    row.on_activate({
+        let check = check.clone();
+        let mut sink = sink;
+        move || {
+            check.set_checked(!check.is_checked());
+            sink(check.is_checked());
+        }
+    });
+
+    // 文字だけの行にも同じように付けられる。
+    let text_row = ListRow::new(&ui.label("そのほか")?);
+    let (text_log, text_sink) = recorder::<()>();
+    text_row.on_activate({
+        let mut sink = text_sink;
+        move || sink(())
+    });
+
+    let list = ui.list()?;
+    list.set_rows(&[row, text_row]);
+
+    let native = list_box_of(&list);
+    let first = native.row_at_index(0).expect("1 行目");
+    assert!(
+        first.is_activatable(),
+        "選べない行でもクリックは受け取れること"
+    );
+    first.emit_activate();
+    assert_eq!(log.borrow().as_slice(), [true]);
+    assert!(check.is_checked(), "行のクリックからチェックが変わること");
+
+    // 2 回目も同じクロージャが呼ばれる (取り出したまま失われない)。
+    first.emit_activate();
+    assert_eq!(log.borrow().as_slice(), [true, false]);
+
+    let second = native.row_at_index(1).expect("2 行目");
+    second.emit_activate();
+    assert_eq!(text_log.borrow().len(), 1);
+    assert_eq!(log.borrow().len(), 2, "他の行は呼ばれないこと");
+
+    // 使えない行は押せない。
+    list.set_items(&[ListItem::new("停止中").enabled(false)]);
+    let disabled = list_box_of(&list).row_at_index(0).expect("1 行目");
+    assert!(!disabled.is_sensitive());
+    assert!(!disabled.is_activatable());
     Ok(())
 }
 
