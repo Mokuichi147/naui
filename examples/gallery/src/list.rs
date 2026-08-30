@@ -1,7 +1,5 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-
-use std::cell::RefCell;
 
 use naui::{
     Align, GridCell, Length, ListItem, ListRow, NavItem, Orientation, Padding, PopupItem, Result,
@@ -9,14 +7,16 @@ use naui::{
 };
 
 /// List の補足表示、無効な行、単一・複数選択、コンテキストメニュー、
-/// Table の列と選択、Tree の開閉・選択。
+/// ListRow の任意内容の行と行クリック、Table の列と選択、Tree の開閉・選択。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(12.0);
     pane.set_padding(Padding::all(12.0));
 
     pane.append(&ui.label("List")?);
-    pane.append(&ui.label("補足表示の有無、選べない行、単一選択と複数選択を確認できます。")?);
+    pane.append(&ui.label(
+        "ListItem を set_items で並べます。補足表示の有無、選べない行、単一・複数選択を確認できます。",
+    )?);
 
     let detailed = vec![
         ListItem::new("項目 A").detail("補足テキスト A"),
@@ -136,11 +136,11 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     Ok(pane)
 }
 
-/// macOS の設定画面のような、先頭・本文・末尾を自由に組んだ行。
+/// 設定画面のような、先頭・本文・末尾を自由に組んだ行 (`ListRow`)。
 fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    pane.append(&ui.label("任意内容の ListRow")?);
+    pane.append(&ui.label("ListRow")?);
     pane.append(&ui.label(
-        "Grid / Stack / Checkbox / Button などを行内容にし、行全体を選ばない設定項目も作れます。",
+        "組み立てたウィジェットを set_rows で並べます。行を押すと on_activate でチェックが切り替わります。",
     )?);
 
     let mut rows = Vec::new();
@@ -170,9 +170,11 @@ fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
         row.attach(&ui.button(action)?, GridCell::new(2, 0));
         row.set_sizing(Sizing::fill_width());
         let list_row = ListRow::new(&row).selectable(false);
+        // 行のラベルや余白を押したときだけ呼ばれる。チェックボックスや
+        // ボタンを直接押したときは、それぞれのコールバックだけが動く。
         list_row.on_activate({
             let check = check.clone();
-            move || check.click()
+            move || check.set_checked(!check.is_checked())
         });
         rows.push(list_row);
     }
