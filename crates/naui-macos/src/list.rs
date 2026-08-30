@@ -4,9 +4,8 @@
 //! ソースリストやファイル一覧と同じコントロールで、行の描画・スクロール・
 //! ⌘ / Shift を使った複数選択・キーボード操作はすべて AppKit が行う。
 //!
-//! naui が足しているのは「行の文字列を返す」「選べない行を教える」
-//! 「選択が変わったら Rust のクロージャへ渡す」の 3 つだけで、
-//! そのためのデータソース兼デリゲートを 1 クラス定義している。
+//! 文字だけの [`ListItem`] も任意内容の [`ListRow`] へ正規化し、同じ行モデルと
+//! セル生成経路で扱う。選択と行 activation は Rust のクロージャへ渡す。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -16,7 +15,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSColor, NSControlTextEditingDelegate, NSFont, NSLayoutConstraint, NSScrollView,
+    NSColor, NSControlTextEditingDelegate, NSEvent, NSFont, NSLayoutConstraint, NSScrollView,
     NSTableCellView, NSTableColumn, NSTableColumnResizingOptions, NSTableView,
     NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
     NSTableViewStyle, NSTextField, NSView, NSViewNoIntrinsicMetric,
@@ -35,7 +34,45 @@ pub(crate) const ROW_PADDING: f64 = 4.0;
 /// ラベルと補助の文字の間隔。
 const DETAIL_SPACING: f64 = 1.0;
 
-/// リストへ載せる任意内容の行。
+/// 行がクリックされたことの通知先。
+///
+/// 呼び出し中に同じ行のコールバックを差し替えても二重借用しない。
+#[derive(Clone, Default)]
+struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
+
+impl ActivationHandler {
+    fn set(&self, f: impl FnMut() + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn emit(&self) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f();
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
+/// 1 行の内容。通常の文字行も任意ウィジェット行も同じ型へ正規化する。
+enum ListRowContent {
+    Item(ListItem),
+    Custom(Box<dyn Widget>),
+}
+
+impl Clone for ListRowContent {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Item(item) => Self::Item(item.clone()),
+            Self::Custom(content) => Self::Custom(content.boxed_clone()),
+        }
+    }
+}
+
+/// リストへ載せる 1 行。
 ///
 /// [`ListItem`] は文字列だけで済む一覧向けの簡便 API であり、設定画面のように
 /// アイコン、複数のラベル、チェックボックス、末尾のボタンなどを組み合わせる
@@ -45,19 +82,22 @@ const DETAIL_SPACING: f64 = 1.0;
 /// # use naui_macos::{ListRow, Widget};
 /// # fn row(content: &dyn Widget) {
 /// let row = ListRow::new(content).selectable(false);
+/// row.on_activate(|| println!("行がクリックされました"));
 /// # let _ = row;
 /// # }
 /// ```
 pub struct ListRow {
-    content: Box<dyn Widget>,
+    content: ListRowContent,
     selectable: bool,
+    activation: ActivationHandler,
 }
 
 impl Clone for ListRow {
     fn clone(&self) -> Self {
         Self {
-            content: self.content.boxed_clone(),
+            content: self.content.clone(),
             selectable: self.selectable,
+            activation: self.activation.clone(),
         }
     }
 }
@@ -66,8 +106,19 @@ impl ListRow {
     /// ウィジェットを 1 行の内容として使う。既定では行全体も選択できる。
     pub fn new(content: &dyn Widget) -> Self {
         Self {
-            content: content.boxed_clone(),
+            content: ListRowContent::Custom(content.boxed_clone()),
             selectable: true,
+            activation: ActivationHandler::default(),
+        }
+    }
+
+    /// `ListItem` を通常の文字行へ変換する。`List::set_items` の正規化経路。
+    fn from_item(item: ListItem) -> Self {
+        let selectable = item.enabled;
+        Self {
+            content: ListRowContent::Item(item),
+            selectable,
+            activation: ActivationHandler::default(),
         }
     }
 
@@ -82,19 +133,13 @@ impl ListRow {
     pub fn is_selectable(&self) -> bool {
         self.selectable
     }
-}
 
-enum Row {
-    Text(ListItem),
-    Custom(ListRow),
-}
-
-impl Row {
-    fn selectable(&self) -> bool {
-        match self {
-            Row::Text(item) => item.enabled,
-            Row::Custom(row) => row.selectable,
-        }
+    /// 行内のラベル・アイコン・余白がクリックされたときに呼ぶ処理。
+    ///
+    /// チェックボックス、ボタン、入力欄などのコントロールを直接押した場合は
+    /// 呼ばれないため、同じ操作が二重に発火しない。
+    pub fn on_activate(&self, f: impl FnMut() + 'static) {
+        self.activation.set(f);
     }
 }
 
@@ -127,7 +172,7 @@ impl SelectionHandler {
 
 /// データソース兼デリゲートが見る状態。ハンドルと共有する。
 struct SourceState {
-    rows: Rc<RefCell<Vec<Row>>>,
+    rows: Rc<RefCell<Vec<ListRow>>>,
     handler: SelectionHandler,
     /// プログラムから選択を変えている間だけ通知を止める。
     /// AppKit は `selectRowIndexes:` でもデリゲートを呼ぶため。
@@ -165,13 +210,10 @@ define_class!(
             let mtm = MainThreadMarker::from(self);
             let rows = self.ivars().rows.borrow();
             match usize::try_from(row).ok().and_then(|row| rows.get(row)) {
-                Some(Row::Text(item)) => Some(cell_view(
-                    mtm,
-                    &item.label,
-                    item.detail.as_deref(),
-                    item.enabled,
-                )),
-                Some(Row::Custom(row)) => Some(custom_cell_view(mtm, &*row.content)),
+                Some(row) => match &row.content {
+                    ListRowContent::Item(item) => Some(list_item_cell_view(mtm, item, row)),
+                    ListRowContent::Custom(content) => Some(custom_cell_view(mtm, &**content, row)),
+                },
                 None => None,
             }
         }
@@ -180,7 +222,13 @@ define_class!(
         fn should_select_row(&self, _table_view: &NSTableView, row: NSInteger) -> bool {
             usize::try_from(row)
                 .ok()
-                .and_then(|row| self.ivars().rows.borrow().get(row).map(Row::selectable))
+                .and_then(|row| {
+                    self.ivars()
+                        .rows
+                        .borrow()
+                        .get(row)
+                        .map(ListRow::is_selectable)
+                })
                 .unwrap_or(false)
         }
 
@@ -205,6 +253,34 @@ define_class!(
     }
 );
 
+// 非コントロール部分を行全体のクリックとして扱うセル。
+// 表示専用ラベルやコンテナが処理しなかった mouseDown はレスポンダーチェーンを
+// 上がってここへ届く。ボタンや入力欄は自分で処理するため二重発火しない。
+define_class!(
+    #[unsafe(super(NSTableCellView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiActivatingListCellView"]
+    #[ivars = ActivationHandler]
+    struct ActivatingListCellView;
+
+    unsafe impl NSObjectProtocol for ActivatingListCellView {}
+
+    impl ActivatingListCellView {
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            self.ivars().emit();
+            let _: () = unsafe { msg_send![super(self), mouseDown: event] };
+        }
+    }
+);
+
+impl ActivatingListCellView {
+    fn new(mtm: MainThreadMarker, handler: ActivationHandler) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(handler);
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 /// 行 1 つ分のビューを作る。
 ///
 /// 文字だけを載せた `NSTextField` をそのまま行にすると、AppKit は枠の上端に
@@ -219,6 +295,33 @@ pub(crate) fn cell_view(
     enabled: bool,
 ) -> Retained<NSView> {
     let cell = NSTableCellView::new(mtm);
+    configure_text_cell(mtm, &cell, label, detail, enabled);
+    let view: &NSView = cell.as_ref();
+    view.retain()
+}
+
+/// `ListItem` も `ListRow` と同じセル経路へ載せる。
+fn list_item_cell_view(mtm: MainThreadMarker, item: &ListItem, row: &ListRow) -> Retained<NSView> {
+    let activating = ActivatingListCellView::new(mtm, row.activation.clone());
+    let cell: Retained<NSTableCellView> = activating.into_super();
+    configure_text_cell(
+        mtm,
+        &cell,
+        &item.label,
+        item.detail.as_deref(),
+        item.enabled,
+    );
+    let view: &NSView = cell.as_ref();
+    view.retain()
+}
+
+fn configure_text_cell(
+    mtm: MainThreadMarker,
+    cell: &NSTableCellView,
+    label: &str,
+    detail: Option<&str>,
+    enabled: bool,
+) {
     let title = row_label(mtm, label, enabled, false);
     cell.addSubview(&title);
     // `textField` に入れておくと、行の背景色に合わせた文字色や
@@ -263,14 +366,16 @@ pub(crate) fn cell_view(
             .constraintEqualToAnchor_constant(&bottom, ROW_PADDING),
     );
     NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
-
-    let view: &NSView = cell.as_ref();
-    view.retain()
 }
 
 /// 任意のウィジェットを、行の高さも含めて Auto Layout へつなぐ。
-fn custom_cell_view(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSView> {
-    let cell = NSTableCellView::new(mtm);
+fn custom_cell_view(
+    mtm: MainThreadMarker,
+    content: &dyn Widget,
+    row: &ListRow,
+) -> Retained<NSView> {
+    let activating = ActivatingListCellView::new(mtm, row.activation.clone());
+    let cell: Retained<NSTableCellView> = activating.into_super();
     let content = content.native_view();
     content.setTranslatesAutoresizingMaskIntoConstraints(false);
     cell.addSubview(&content);
@@ -400,7 +505,7 @@ struct ListInner {
     /// 外から見えるビュー。リストはこのスクロールビューごと 1 つのウィジェット。
     scroll: Retained<ContentSizedScrollView>,
     table: Retained<NSTableView>,
-    rows: Rc<RefCell<Vec<Row>>>,
+    rows: Rc<RefCell<Vec<ListRow>>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     silent: Rc<Cell<bool>>,
@@ -453,7 +558,7 @@ impl List {
         column.setResizingMask(NSTableColumnResizingOptions::AutoresizingMask);
         table.addTableColumn(&column);
 
-        let rows: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
+        let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
         let handler = SelectionHandler::default();
         let silent = Rc::new(Cell::new(false));
         let source = ListSource::new(
@@ -486,8 +591,8 @@ impl List {
 
     /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
     pub fn set_items(&self, items: &[ListItem]) {
-        *self.0.rows.borrow_mut() = items.iter().cloned().map(Row::Text).collect();
-        self.reload_rows();
+        let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
+        self.set_rows(&rows);
     }
 
     /// 任意のウィジェットで作った行へ置き換える。
@@ -495,7 +600,7 @@ impl List {
     /// 行内の各コントロールは通常どおりそれぞれのコールバックを持てる。
     /// インデックスの意味が変わるため、選択は外れる。
     pub fn set_rows(&self, rows: &[ListRow]) {
-        *self.0.rows.borrow_mut() = rows.iter().cloned().map(Row::Custom).collect();
+        *self.0.rows.borrow_mut() = rows.to_vec();
         self.reload_rows();
     }
 
@@ -550,7 +655,7 @@ impl List {
         let picked = {
             let rows = self.0.rows.borrow();
             self.0.mode.get().normalize_by(indices, |index| {
-                rows.get(index).is_some_and(Row::selectable)
+                rows.get(index).is_some_and(ListRow::is_selectable)
             })
         };
         self.without_notifying(|this| this.apply_selection(&picked));
@@ -571,7 +676,7 @@ impl List {
         let picked = {
             let rows = self.0.rows.borrow();
             self.0.mode.get().normalize_by(indices, |index| {
-                rows.get(index).is_some_and(Row::selectable)
+                rows.get(index).is_some_and(ListRow::is_selectable)
             })
         };
         // AppKit は同じ選択を選び直すとデリゲートを呼ばない。

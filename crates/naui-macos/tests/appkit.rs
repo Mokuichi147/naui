@@ -7,7 +7,7 @@
 //! 各テストを別スレッドで走らせる (`--test-threads=1` でも同じ)。
 //! そのため `harness = false` にして、自前のランナーをメインスレッドで回す。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
@@ -26,11 +26,11 @@ use objc2::sel;
 use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
 use objc2_app_kit::{
     NSButton, NSColor, NSColorSpace, NSComboBox, NSControlStateValueOff, NSDatePicker,
-    NSDatePickerElementFlags, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSScrollerStyle,
-    NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate,
-    NSTextField, NSTextInputClient, NSTextView, NSUserInterfaceItemIdentification, NSView,
-    NSWindowTitleVisibility,
+    NSDatePickerElementFlags, NSEvent, NSEventModifierFlags, NSEventType, NSImage, NSImageScaling,
+    NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation, NSOutlineViewDelegate,
+    NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper,
+    NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
+    NSUserInterfaceItemIdentification, NSView, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound,
@@ -3072,9 +3072,20 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     let last = make_row("バッテリー", "残量を表示", "設定…")?;
     let row_contents = [content.clone(), second.clone(), last.clone()];
 
+    let first_row = ListRow::new(&content).selectable(false);
+    let activated = Rc::new(Cell::new(0));
+    first_row.on_activate({
+        let check = check.clone();
+        let activated = activated.clone();
+        move || {
+            activated.set(activated.get() + 1);
+            check.click();
+        }
+    });
+
     let list = ui.list()?;
     list.set_rows(&[
-        ListRow::new(&content).selectable(false),
+        first_row,
         ListRow::new(&second).selectable(false),
         ListRow::new(&last).selectable(false),
     ]);
@@ -3088,9 +3099,6 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     assert!(list.selection().is_empty());
 
     let table = list.native_table();
-    let first = table
-        .viewAtColumn_row_makeIfNecessary(0, 0, true)
-        .expect("任意内容の行ビュー");
     let mount = ui.stack(Orientation::Vertical)?;
     mount.append(&list);
     let root = mount.native_view();
@@ -3099,6 +3107,9 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     // intrinsic height が更新される。2 回目で親 Stack まで解き直す。
     root.layoutSubtreeIfNeeded();
     root.layoutSubtreeIfNeeded();
+    let first = table
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("任意内容の行ビュー");
     assert_eq!(first.subviews().len(), 1, "組み立てた内容が 1 つ載ること");
     assert!(
         first.subviews().objectAtIndex(0).subviews().len() >= 3,
@@ -3156,6 +3167,43 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     assert!(
         detail_frame.origin.y + detail_frame.size.height <= title_frame.origin.y + 0.5,
         "タイトルと補足が重ならないこと: {title_frame:?} / {detail_frame:?}"
+    );
+
+    // 表示専用ラベルのクリックはレスポンダチェーンを通って行へ届く。
+    // 直接操作するチェックボックスやボタンは自分でイベントを処理するため、
+    // 行の activation と二重発火しない。
+    let click = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        NSEventType::LeftMouseDown,
+        NSPoint::new(0.0, 0.0),
+        NSEventModifierFlags::empty(),
+        0.0,
+        0,
+        None,
+        0,
+        1,
+        1.0,
+    )
+    .expect("クリックイベント");
+    title.native_view().mouseDown(&click);
+    assert_eq!(activated.get(), 1, "行クリックが 1 回だけ通知されること");
+    assert!(check.is_checked(), "行クリックからチェックが切り替わること");
+
+    check.click();
+    assert!(
+        !check.is_checked(),
+        "チェックボックスの直接操作でも切り替わること"
+    );
+    assert_eq!(
+        activated.get(),
+        1,
+        "チェックボックスの直接操作では行が二重発火しないこと"
+    );
+
+    action.click();
+    assert_eq!(
+        activated.get(),
+        1,
+        "行内ボタンの直接操作では行 activation が発火しないこと"
     );
 
     // ギャラリーと同じ 3 行を固定高さなしで表示し、最後の行の下に

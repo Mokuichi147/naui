@@ -169,7 +169,12 @@ fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
 
         row.attach(&ui.button(action)?, GridCell::new(2, 0));
         row.set_sizing(Sizing::fill_width());
-        rows.push(ListRow::new(&row).selectable(false));
+        let list_row = ListRow::new(&row).selectable(false);
+        list_row.on_activate({
+            let check = check.clone();
+            move || check.click()
+        });
+        rows.push(list_row);
     }
 
     let settings = ui.list()?;
