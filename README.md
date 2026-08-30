@@ -179,7 +179,9 @@ form.attach(&ui.label("名前")?, GridCell::new(0, 0));
 form.attach(&field, GridCell::new(1, 0));
 ```
 
-`List`、`Tree`、`Scroll`、`SplitView`、`TextArea` は内容から高さを決めないため、
+`List` の `Auto` 高さは全行に追従します。行数が多く、限られた領域で
+スクロールさせたいときは `Fixed` または `Fill` を指定します。
+`Tree`、`Scroll`、`SplitView`、`TextArea` は内容から高さを決めないため、
 通常は `set_sizing` で高さを指定します。
 
 ### 機能別の補足
@@ -263,7 +265,7 @@ split.set_sizing(Sizing::fill());  // 中身の高さでは決まらない
 画面がせまくて両方の最小を満たせないときは start 側が優先され、広がればまた
 指定した位置へ戻ります。
 
-`Scroll` や `List` と同じく**中身の大きさから高さは決まらない**ので、大きさは
+`Scroll` と同じく**中身の大きさから高さは決まらない**ので、大きさは
 `set_sizing` で指定します。区画は 2 つなので、3 つ以上に分けたいときは
 `SplitView` を入れ子にします。
 
@@ -552,7 +554,7 @@ table.on_sort(move |column, order| {
 `set_sort` で通知せずに指標だけを動かせます (起動時の既定の並び順を見せる
 とき)。`sort()` でいまの指定を読めます。
 
-行数が多いときは、リストと同じく `set_sizing` で高さを決めておきます
+行数が多いときは、`set_sizing` で表示領域の高さを決めておきます
 (中身の高さでは決まりません)。
 
 #### ツリー

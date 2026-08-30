@@ -59,7 +59,8 @@ struct ListInner {
 
 /// 選択できる行の一覧。自分でスクロールする。
 ///
-/// 高さは中身から決まらないので、[`List::set_sizing`] で指定しておく。
+/// 高さを指定しないときは全行の高さに追従し、固定高さや `Fill` では
+/// はみ出した分をスクロールする。
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
 impl_widget!(List);
@@ -76,6 +77,7 @@ impl List {
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_has_frame(true);
+        scroller.set_propagate_natural_height(true);
         scroller.set_child(Some(&native));
 
         let bin = SizeBin::wrap(&scroller);

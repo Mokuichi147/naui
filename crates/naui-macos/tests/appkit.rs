@@ -3073,7 +3073,7 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
         ListRow::new(&second).selectable(false),
         ListRow::new(&last).selectable(false),
     ]);
-    list.set_sizing(Sizing::fixed(800.0, 120.0));
+    list.set_sizing(Sizing::fill_width());
     assert_eq!(list.len(), 3);
 
     // 行内のコントロールだけを操作する 1 行目は、プログラムからも選べない。
@@ -3090,6 +3090,9 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     mount.append(&list);
     let root = mount.native_view();
     root.setFrameSize(NSSize::new(900.0, 240.0));
+    // 1 回目で横幅が決まり、その幅で行高が更新される。
+    // 再通知された intrinsic height を 2 回目で解く。
+    root.layoutSubtreeIfNeeded();
     root.layoutSubtreeIfNeeded();
     assert_eq!(first.subviews().len(), 1, "組み立てた内容が 1 つ載ること");
     assert!(
@@ -3109,8 +3112,9 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
         "本文列は左から始まり、操作は右端へ寄ること: {text_frame:?} / {action_frame:?}"
     );
 
-    // ギャラリーと同じ 3 行の表示領域に、最後の行の下に大きな空白を残さない。
-    // 横位置だけではリスト全体の崩れを見逃すため、可視高さも確かめる。
+    // ギャラリーと同じ 3 行を固定高さなしで表示し、最後の行の下に
+    // 大きな空白を残さない。横位置だけではリスト全体の崩れを見逃すため、
+    // Auto で決まった可視高さとスクロールの要否も確かめる。
     let scroll = list
         .native_view()
         .downcast::<NSScrollView>()
@@ -3132,6 +3136,15 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     assert!(
         !vertical_scroller.isEnabled(),
         "3 行が収まるときは縦スクローラーを無効にすること"
+    );
+
+    list.set_rows(&[ListRow::new(&content).selectable(false)]);
+    root.layoutSubtreeIfNeeded();
+    root.layoutSubtreeIfNeeded();
+    let one_row_height = scroll.contentView().bounds().size.height;
+    assert!(
+        one_row_height < visible_bottom,
+        "行を減らしたら Auto の高さも縮むこと: 3 行 {visible_bottom} / 1 行 {one_row_height}"
     );
     Ok(())
 }

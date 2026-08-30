@@ -130,7 +130,7 @@ struct TreeInner {
 /// 項目は根からの子インデックスの並び (パス) で指す。`[0, 2]` は
 /// 「1 番目の根の 3 番目の子」で、空のパスは「選択なし」を表す。
 ///
-/// 高さは中身から決まらないので、`set_sizing` で指定する (`List` と同じ)。
+/// 高さは中身から決まらないので、`set_sizing` で指定する。
 #[derive(Clone)]
 pub struct Tree(Rc<TreeInner>);
 impl_widget!(Tree, root);

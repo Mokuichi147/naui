@@ -360,7 +360,7 @@ struct TableInner {
 /// 中身は `NSScrollView` に載った `NSTableView` で、
 /// [`Widget::native_view`] が返すのはそのスクロールビュー。
 /// **スクロールビューは中身に合わせた高さを持たない**ため、
-/// `set_sizing` で高さを指定すること (`List` と同じ)。
+/// `set_sizing` で高さを指定すること。
 #[derive(Clone)]
 pub struct Table(Rc<TableInner>);
 

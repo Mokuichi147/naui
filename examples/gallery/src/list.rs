@@ -174,11 +174,7 @@ fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
 
     let settings = ui.list()?;
     settings.set_rows(&rows);
-    settings.set_sizing(
-        Sizing::new()
-            .width(Length::Fill)
-            .height(Length::Fixed(120.0)),
-    );
+    settings.set_sizing(Sizing::fill_width());
     pane.append(&settings);
     Ok(())
 }

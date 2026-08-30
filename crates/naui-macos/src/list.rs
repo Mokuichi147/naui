@@ -19,10 +19,10 @@ use objc2_app_kit::{
     NSColor, NSControlTextEditingDelegate, NSFont, NSLayoutConstraint, NSScrollView,
     NSTableCellView, NSTableColumn, NSTableColumnResizingOptions, NSTableView,
     NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
-    NSTableViewStyle, NSTextField, NSView,
+    NSTableViewStyle, NSTextField, NSView, NSViewNoIntrinsicMetric,
 };
 use objc2_foundation::{
-    NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSString,
+    NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSString,
 };
 
 use crate::widgets::Widget;
@@ -330,9 +330,73 @@ pub(crate) fn selected_indices(table: &NSTableView, len: usize) -> Vec<usize> {
     (0..len).filter(|&i| indexes.containsIndex(i)).collect()
 }
 
+/// `NSScrollView` が持たない「全行を表示する自然な高さ」を補う。
+///
+/// `NSTableView` 自体は自動行高を足した intrinsic size を返すので、
+/// それを外側のスクロールビューへ伝える。固定高さと `Fill` は
+/// `apply_sizing` がこの値より優先するため、従来どおりスクロール可能である。
+struct ContentSizedScrollState {
+    last_height: Cell<f64>,
+}
+
+define_class!(
+    #[unsafe(super(NSScrollView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiContentSizedListScrollView"]
+    #[ivars = ContentSizedScrollState]
+    struct ContentSizedScrollView;
+
+    unsafe impl NSObjectProtocol for ContentSizedScrollView {}
+
+    impl ContentSizedScrollView {
+        #[unsafe(method(intrinsicContentSize))]
+        fn intrinsic_content_size(&self) -> NSSize {
+            let height = self.document_height();
+            self.ivars().last_height.set(height);
+            NSSize::new(unsafe { NSViewNoIntrinsicMetric }, height)
+        }
+
+        /// 親から幅が配られると、折り返しを持つ行の高さは作成時から変わる。
+        /// その変化だけを次の Auto Layout に戻す。
+        #[unsafe(method(layout))]
+        fn layout(&self) {
+            let _: () = unsafe { msg_send![super(self), layout] };
+            if let Some(document) = self.documentView() {
+                document.layoutSubtreeIfNeeded();
+            }
+            let height = self.document_height();
+            let previous = self.ivars().last_height.get();
+            if !previous.is_finite() || (previous - height).abs() > 0.5 {
+                self.ivars().last_height.set(height);
+                self.invalidateIntrinsicContentSize();
+            }
+        }
+    }
+);
+
+impl ContentSizedScrollView {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(ContentSizedScrollState {
+            last_height: Cell::new(f64::NAN),
+        });
+        unsafe { msg_send![super(this), init] }
+    }
+
+    fn document_height(&self) -> f64 {
+        self.documentView()
+            .map(|document| document.intrinsicContentSize().height.max(0.0))
+            .unwrap_or(0.0)
+    }
+
+    fn invalidate_document_size(&self) {
+        self.ivars().last_height.set(f64::NAN);
+        self.invalidateIntrinsicContentSize();
+    }
+}
+
 struct ListInner {
     /// 外から見えるビュー。リストはこのスクロールビューごと 1 つのウィジェット。
-    scroll: Retained<NSScrollView>,
+    scroll: Retained<ContentSizedScrollView>,
     table: Retained<NSTableView>,
     rows: Rc<RefCell<Vec<Row>>>,
     mode: Cell<SelectionMode>,
@@ -346,14 +410,15 @@ struct ListInner {
 ///
 /// 中身は `NSScrollView` に載った 1 列の `NSTableView` で、
 /// [`Widget::native_view`] が返すのはそのスクロールビュー。
-/// **スクロールビューは中身に合わせた高さを持たない**ため、
-/// `set_sizing` で高さを指定すること (`Scroll` と同じ)。
+/// 高さを指定しない ([`naui_core::Length::Auto`]) ときは全行の高さに追従し、
+/// 固定高さや `Fill` ではみ出した分をスクロールする。
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
 
 impl Widget for List {
     fn native_view(&self) -> Retained<NSView> {
-        let view: &NSView = self.0.scroll.as_ref();
+        let scroll: &NSScrollView = self.0.scroll.as_ref();
+        let view: &NSView = scroll;
         view.retain()
     }
     fn boxed_clone(&self) -> Box<dyn Widget> {
@@ -402,7 +467,7 @@ impl List {
             table.setDelegate(Some(ProtocolObject::from_ref(&*source)));
         }
 
-        let scroll = NSScrollView::new(mtm);
+        let scroll = ContentSizedScrollView::new(mtm);
         scroll.setHasVerticalScroller(true);
         scroll.setDocumentView(Some(&table));
 
@@ -436,6 +501,7 @@ impl List {
         self.without_notifying(|this| {
             this.0.table.reloadData();
             unsafe { this.0.table.deselectAll(None) };
+            this.0.scroll.invalidate_document_size();
         });
     }
 

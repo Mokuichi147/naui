@@ -63,8 +63,6 @@ impl ListRow {
 
 /// `size` の下限。1 以下だとドロップダウンになる。
 const MIN_ROWS: u32 = 2;
-/// `size` の上限。これを超える行数はスクロールで見せる。
-const MAX_ROWS: u32 = 8;
 
 thread_local! {
     /// `aria-activedescendant` から行を指すための、リストごとの通し番号。
@@ -148,8 +146,8 @@ struct ListInner {
 /// 縦に並ぶ選択できる一覧。
 ///
 /// 行が文字だけなら `<select size>`、`detail` があれば
-/// `<ul role="listbox">` になる。高さは `set_sizing` で指定する
-/// (`<select>` のときだけ、指定が無ければ行数から決まる)。
+/// `<ul role="listbox">` になる。`Auto` の高さは行数と行内容に追従し、
+/// 固定高さや `Fill` ではみ出した分をスクロールする。
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
 impl_widget!(List, root);
@@ -307,7 +305,8 @@ impl List {
             let _ = select.append_child(&option);
         }
         // `size` が無いとドロップダウンになるので、必ず 2 以上を入れる。
-        select.set_size((items.len() as u32).clamp(MIN_ROWS, MAX_ROWS));
+        let rows = u32::try_from(items.len()).unwrap_or(u32::MAX).max(MIN_ROWS);
+        select.set_size(rows);
 
         // 選択はブラウザが動かすので、その結果を読み取って通知するだけ。
         let listener = Listener::attach(select.as_ref(), "change", {

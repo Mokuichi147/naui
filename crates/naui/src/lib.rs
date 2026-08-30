@@ -173,7 +173,7 @@
 //! 決める最小のほうが勝つ。画面がせまくて両方の最小を満たせないときは
 //! start 側が優先され、広がればまた指定した位置へ戻る。
 //!
-//! `Scroll` や `List` と同じく**中身の大きさから高さは決まらない**ので、
+//! `Scroll` と同じく**中身の大きさから高さは決まらない**ので、
 //! 大きさは [`set_sizing`](SplitView::set_sizing) で指定する。区画は 2 つ
 //! なので、3 つ以上に分けたいときは `SplitView` を入れ子にする。
 //!
@@ -654,7 +654,7 @@
 //! [`ListItem::detail`] を付けると、行に補助の文字が付く。
 //!
 //! ```no_run
-//! # use naui::{Length, ListItem, Result, SelectionMode, Sizing, Ui};
+//! # use naui::{ListItem, Result, SelectionMode, Sizing, Ui};
 //! # fn build(ui: &Ui) -> Result<()> {
 //! let list = ui.list()?;
 //! list.set_items(&[
@@ -665,8 +665,8 @@
 //! list.on_select(|indices| println!("{indices:?} が選ばれた"));
 //! list.set_selection(&[0, 2]); // 通知せずに選択を置き換える
 //!
-//! // スクロールと同じく高さを自分では決めないので、指定しておく。
-//! list.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(180.0)));
+//! // Auto の高さは全行に追従する。高さを制限したい一覧だけ Fixed / Fill にする。
+//! list.set_sizing(Sizing::fill_width());
 //! # Ok(())
 //! # }
 //! ```
@@ -717,7 +717,7 @@
 //! tree.on_expand(|path, expanded| println!("{path:?} は {expanded}"));
 //! tree.set_selected(&[0, 1]); // 通知せずに選ぶ (祖先は開かれる)
 //!
-//! // リストと同じく高さを自分では決めないので、指定しておく。
+//! // Tree は高さを自分では決めないので、指定しておく。
 //! tree.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(220.0)));
 //! # Ok(())
 //! # }
@@ -756,7 +756,7 @@
 //! ]));
 //! table.on_select(|indices| println!("{indices:?} が選ばれた"));
 //!
-//! // リストと同じく高さを自分では決めないので、指定しておく。
+//! // Table は高さを自分では決めないので、指定しておく。
 //! table.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(200.0)));
 //! # Ok(())
 //! # }

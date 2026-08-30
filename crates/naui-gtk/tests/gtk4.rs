@@ -289,6 +289,10 @@ fn main() {
             list_detail_makes_a_second_line,
         ),
         (
+            "Auto のリスト高が行数に追従する",
+            list_auto_height_follows_rows,
+        ),
+        (
             "GtkListBox 側の選択がクロージャへ届く",
             list_native_selection_notifies,
         ),
@@ -2279,6 +2283,26 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
     };
     assert_eq!(labels(&rows[0]), ["東京", "13,960,000 人"]);
     assert_eq!(labels(&rows[1]), ["札幌"]);
+    Ok(())
+}
+
+fn list_auto_height_follows_rows(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill_width());
+    list.set_items(&[ListItem::new("東京").detail("13,960,000 人")]);
+    let one_row = measure_height(&bin_of(&list)).1;
+
+    list.set_items(&[
+        ListItem::new("東京").detail("13,960,000 人"),
+        ListItem::new("大阪").detail("8,838,000 人"),
+        ListItem::new("札幌").detail("1,973,000 人"),
+    ]);
+    let three_rows = measure_height(&bin_of(&list)).1;
+    assert!(one_row > 0, "1 行でも自然な高さを持つこと");
+    assert!(
+        three_rows > one_row,
+        "Auto の高さが行数に追従すること: 1 行 {one_row} / 3 行 {three_rows}"
+    );
     Ok(())
 }
 
