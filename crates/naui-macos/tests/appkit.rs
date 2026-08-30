@@ -3039,8 +3039,11 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     let check = ui.checkbox("")?;
     let text = ui.stack(Orientation::Vertical)?;
     text.set_align(Align::Start);
-    text.append(&ui.label("Wi-Fi")?);
-    text.append(&ui.label("メニューバーに表示")?);
+    text.set_spacing(2.0);
+    let title = ui.label("Wi-Fi")?;
+    let detail = ui.label("メニューバーに表示")?;
+    text.append(&title);
+    text.append(&detail);
     text.set_sizing(Sizing::fill_width());
     let action = ui.button("オプション…")?;
     content.attach(&check, GridCell::new(0, 0));
@@ -3055,6 +3058,7 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
         row.set_spacing(8.0, 0.0);
         let text = ui.stack(Orientation::Vertical)?;
         text.set_align(Align::Start);
+        text.set_spacing(2.0);
         text.append(&ui.label(title)?);
         text.append(&ui.label(detail)?);
         text.set_sizing(Sizing::fill_width());
@@ -3066,6 +3070,7 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     };
     let second = make_row("Bluetooth", "近くのデバイスを管理", "詳細…")?;
     let last = make_row("バッテリー", "残量を表示", "設定…")?;
+    let row_contents = [content.clone(), second.clone(), last.clone()];
 
     let list = ui.list()?;
     list.set_rows(&[
@@ -3090,8 +3095,8 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     mount.append(&list);
     let root = mount.native_view();
     root.setFrameSize(NSSize::new(900.0, 240.0));
-    // 1 回目で横幅が決まり、その幅で行高が更新される。
-    // 再通知された intrinsic height を 2 回目で解く。
+    // 1 回目で Grid の幅と各セルの fitting height が決まり、List の
+    // intrinsic height が更新される。2 回目で親 Stack まで解き直す。
     root.layoutSubtreeIfNeeded();
     root.layoutSubtreeIfNeeded();
     assert_eq!(first.subviews().len(), 1, "組み立てた内容が 1 つ載ること");
@@ -3110,6 +3115,47 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     assert!(
         text_frame.origin.x < 50.0 && action_frame.origin.x > 600.0,
         "本文列は左から始まり、操作は右端へ寄ること: {text_frame:?} / {action_frame:?}"
+    );
+
+    // 行高そのものだけでなく、全内容が行内へ収まり、2 本のラベルが互いに
+    // 潰れていないことを確認する。これが無いと 40pt 必要な Stack を 24pt の
+    // Grid 行へ押し込み、見た目では隣接行まで重なる不具合を見逃す。
+    for (index, row_content) in row_contents.iter().enumerate() {
+        let cell = table
+            .viewAtColumn_row_makeIfNecessary(0, index as isize, true)
+            .expect("任意内容の行ビュー");
+        let row_rect = table.rectOfRow(index as isize);
+        let grid_frame = row_content.native_view().frame();
+        assert!(
+            grid_frame.origin.y >= 0.0
+                && grid_frame.origin.y + grid_frame.size.height <= cell.frame().size.height + 0.5,
+            "{index} 行目の Grid がセル内に収まること: 行 {row_rect:?} / セル {:?} / Grid {grid_frame:?}",
+            cell.frame()
+        );
+        assert!(
+            row_rect.size.height >= grid_frame.size.height + 8.0 - 0.5,
+            "{index} 行目が内容高と上下余白を持つこと: 行 {row_rect:?} / Grid {grid_frame:?}"
+        );
+        let grid = row_content.native_view();
+        for child_index in 0..grid.subviews().len() {
+            let child = grid.subviews().objectAtIndex(child_index);
+            let frame = child.frame();
+            assert!(
+                frame.origin.y >= -0.5
+                    && frame.origin.y + frame.size.height <= grid_frame.size.height + 0.5,
+                "{index} 行目の子 {child_index} が Grid 内に収まること: {frame:?} / Grid {grid_frame:?}"
+            );
+        }
+    }
+    let title_frame = title.native_view().frame();
+    let detail_frame = detail.native_view().frame();
+    assert!(
+        title_frame.size.height > 0.0 && detail_frame.size.height > 0.0,
+        "タイトルと補足がどちらも描画高を持つこと: {title_frame:?} / {detail_frame:?}"
+    );
+    assert!(
+        detail_frame.origin.y + detail_frame.size.height <= title_frame.origin.y + 0.5,
+        "タイトルと補足が重ならないこと: {title_frame:?} / {detail_frame:?}"
     );
 
     // ギャラリーと同じ 3 行を固定高さなしで表示し、最後の行の下に
@@ -3137,14 +3183,39 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
         !vertical_scroller.isEnabled(),
         "3 行が収まるときは縦スクローラーを無効にすること"
     );
+    // 表示後に内容が変わっても、作成時に測った固定値へ留まらないこと。
+    let previous_row_height = table.rectOfRow(0).size.height;
+    let extra = ui.label("接続済み")?;
+    text.append(&extra);
+    root.layoutSubtreeIfNeeded();
+    root.layoutSubtreeIfNeeded();
+    let expanded_row = table.rectOfRow(0);
+    let expanded_grid = content.native_view().frame();
+    assert!(
+        expanded_row.size.height > previous_row_height + 8.0,
+        "Stack の内容追加後に Auto 行が高くなること: 変更前 {previous_row_height} / 変更後 {expanded_row:?}"
+    );
+    assert!(
+        expanded_grid.origin.y + expanded_grid.size.height
+            <= table
+                .viewAtColumn_row_makeIfNecessary(0, 0, true)
+                .expect("更新後の行ビュー")
+                .frame()
+                .size
+                .height
+                + 0.5,
+        "更新後の Grid も行内に収まること: {expanded_grid:?} / 行 {expanded_row:?}"
+    );
+    assert!(extra.native_view().frame().size.height > 0.0);
 
+    let expanded_list_height = scroll.contentView().bounds().size.height;
     list.set_rows(&[ListRow::new(&content).selectable(false)]);
     root.layoutSubtreeIfNeeded();
     root.layoutSubtreeIfNeeded();
     let one_row_height = scroll.contentView().bounds().size.height;
     assert!(
-        one_row_height < visible_bottom,
-        "行を減らしたら Auto の高さも縮むこと: 3 行 {visible_bottom} / 1 行 {one_row_height}"
+        one_row_height < expanded_list_height,
+        "行を減らしたら Auto の高さも縮むこと: 3 行 {expanded_list_height} / 1 行 {one_row_height}"
     );
     Ok(())
 }

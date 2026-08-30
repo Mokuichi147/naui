@@ -361,6 +361,8 @@ define_class!(
         #[unsafe(method(layout))]
         fn layout(&self) {
             let _: () = unsafe { msg_send![super(self), layout] };
+            // 子 Grid の Auto 行高は、親から幅が配られた後に確定する。
+            // 先に文書側を解き、更新後の NSTableView の自然高をこの回で読む。
             if let Some(document) = self.documentView() {
                 document.layoutSubtreeIfNeeded();
             }

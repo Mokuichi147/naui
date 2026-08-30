@@ -9,7 +9,7 @@ use std::rc::Rc;
 use naui_core::{GridCell, Padding, ScrollPolicy, Sizing, Track};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::NSObjectProtocol;
-use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly, Message};
+use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSClipView, NSGridCell, NSGridCellPlacement, NSGridView, NSLayoutConstraint,
     NSLayoutConstraintOrientation, NSLayoutPriority, NSScrollView, NSView,
@@ -216,9 +216,104 @@ impl Spacer {
 
 // ------------------------------------------------------------------- Grid
 
+/// `NSGridView` が Auto 行の高さを決めるために使う情報。
+///
+/// AppKit は `NSStackView` の `fittingSize` を計算できても、Grid セルの
+/// 自然高としては使わず、同じ行のボタンなどに合わせて Stack を潰すことがある。
+/// 行に載せた実ビューを保持し、Auto 行だけ必要高を再計算する。
+type GridCells = Rc<RefCell<Vec<(Retained<NSView>, GridCell)>>>;
+
+struct ContentSizedGridState {
+    row_tracks: Rc<RefCell<Vec<Track>>>,
+    cells: GridCells,
+    updating: Cell<bool>,
+}
+
+define_class!(
+    #[unsafe(super(NSGridView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiContentSizedGridView"]
+    #[ivars = ContentSizedGridState]
+    struct ContentSizedGridView;
+
+    unsafe impl NSObjectProtocol for ContentSizedGridView {}
+
+    impl ContentSizedGridView {
+        #[unsafe(method(layout))]
+        fn layout(&self) {
+            let _: () = unsafe { msg_send![super(self), layout] };
+            if self.ivars().updating.replace(true) {
+                return;
+            }
+            if self.update_auto_row_heights() {
+                let _: () = unsafe { msg_send![super(self), layout] };
+                self.invalidateIntrinsicContentSize();
+            }
+            self.ivars().updating.set(false);
+        }
+    }
+);
+
+impl ContentSizedGridView {
+    fn new(
+        mtm: MainThreadMarker,
+        row_tracks: Rc<RefCell<Vec<Track>>>,
+        cells: GridCells,
+    ) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(ContentSizedGridState {
+            row_tracks,
+            cells,
+            updating: Cell::new(false),
+        });
+        unsafe { msg_send![super(this), init] }
+    }
+
+    /// Auto 行を、その行に掛かるセル内容の fitting height 以上にする。
+    /// 複数行セルは必要高を span へ均等に配り、過大な行高を避ける。
+    fn update_auto_row_heights(&self) -> bool {
+        let tracks = self.ivars().row_tracks.borrow();
+        let cells = self.ivars().cells.borrow();
+        let mut changed = false;
+        for (index, track) in tracks.iter().copied().enumerate() {
+            if track != Track::Auto || index >= self.numberOfRows() as usize {
+                continue;
+            }
+            let desired = cells
+                .iter()
+                .filter(|(view, cell)| {
+                    !view.isHidden()
+                        && index >= cell.row
+                        && index < cell.row.saturating_add(cell.row_span)
+                })
+                .map(|(view, cell)| {
+                    let span = cell.row_span.max(1) as f64;
+                    (view.fittingSize().height / span).max(0.0)
+                })
+                .reduce(f64::max);
+            let row = self.rowAtIndex(index as isize);
+            match desired {
+                Some(desired) if (row.height() - desired).abs() > 0.5 => {
+                    row.setHeight(desired);
+                    changed = true;
+                }
+                None if row.height() > 0.5 => {
+                    row.setHeight(unsafe { objc2_app_kit::NSGridViewSizeForContent });
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+}
+
 struct GridInner {
     native: Retained<NSGridView>,
     children: RefCell<Vec<Box<dyn Widget>>>,
+    row_tracks: Rc<RefCell<Vec<Track>>>,
+    cells: GridCells,
+    /// `native` と同じオブジェクト。Auto 行を再計算する subclass として保持する。
+    content_sized: Retained<ContentSizedGridView>,
     padding: Cell<Padding>,
 }
 
@@ -229,10 +324,16 @@ impl_widget!(Grid);
 
 impl Grid {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
-        let native = NSGridView::gridViewWithNumberOfColumns_rows(0, 0, mtm);
+        let row_tracks = Rc::new(RefCell::new(Vec::new()));
+        let cells = Rc::new(RefCell::new(Vec::new()));
+        let content_sized = ContentSizedGridView::new(mtm, row_tracks.clone(), cells.clone());
+        let native = content_sized.clone().into_super();
         Self(Rc::new(GridInner {
             native,
             children: RefCell::new(Vec::new()),
+            row_tracks,
+            cells,
+            content_sized,
             padding: Cell::new(Padding::ZERO),
         }))
     }
@@ -330,9 +431,10 @@ impl Grid {
         } else {
             NSGridCellPlacement::Center
         });
-
         self.apply_padding();
+        self.0.cells.borrow_mut().push((view, cell));
         self.0.children.borrow_mut().push(child.boxed_clone());
+        self.0.content_sized.update_auto_row_heights();
     }
 
     /// `Fill` 行・列の子に「グリッドいっぱいまで伸びたい」という弱い希望を張る。
@@ -395,6 +497,7 @@ impl Grid {
             .cellAtColumnIndex_rowIndex(cell.column as isize, cell.row as isize);
         target.setContentView(None);
         self.0.children.borrow_mut().clear();
+        self.0.cells.borrow_mut().clear();
         self.attach(child, cell);
     }
 
@@ -422,6 +525,7 @@ impl Grid {
     /// 行の高さの決め方。
     pub fn set_row_track(&self, index: usize, track: Track) {
         self.ensure_size(0, index + 1);
+        self.0.row_tracks.borrow_mut()[index] = track;
         let row = self.0.native.rowAtIndex(index as isize);
         match track {
             Track::Auto => {
@@ -438,6 +542,7 @@ impl Grid {
                 row.setYPlacement(NSGridCellPlacement::Fill);
             }
         }
+        self.0.content_sized.update_auto_row_heights();
     }
 
     /// いまある列数。
@@ -466,6 +571,7 @@ impl Grid {
         }
         while (self.0.native.numberOfRows() as usize) < rows {
             self.0.native.addRowWithViews(&empty);
+            self.0.row_tracks.borrow_mut().push(Track::Auto);
         }
     }
 }
