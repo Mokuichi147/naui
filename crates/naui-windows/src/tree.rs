@@ -1,7 +1,7 @@
 //! ツリー (WinUI 3)。
 //!
-//! `TreeView` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、
-//! `List` と同じ `ScrollViewer` + `ListBox` の上に組み立てている。
+//! `List` と同じ `ScrollViewer` + `ListBox` の上に組み立てている。`TreeView`
+//! は [`naui_winui3`] の投影に入っているので、そちらへ移すのは今後の課題。
 //!
 //! | 部分 | 作り |
 //! | --- | --- |
@@ -20,21 +20,23 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{Result, TreeItem};
-use windows::Foundation::PropertyValue;
-use windows_core::{IInspectable, Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button, ListBox as XamlListBox, ListBoxItem, Orientation as XamlOrientation,
     ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler,
     SelectionMode as XamlSelectionMode, StackPanel, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, Style, Thickness, UIElement, Visibility};
+use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{
+    RoutedEventHandler, Style, Thickness, UIElement, Visibility,
+};
+use windows::Foundation::PropertyValue;
+use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
 use crate::list::{build_surface, row_style, text_block, SelectionHandler};
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 /// 1 段ぶんの字下げ (論理ピクセル)。
@@ -59,13 +61,16 @@ const GLYPH_EXPANDED: &str = "\u{E70D}";
 /// 開閉のボタンと同じ幅。葉の行で、文字の左端をそろえるために空ける。
 const TWISTY_WIDTH: f64 = 20.0;
 
+/// 開閉した枝の道筋と、開いたかどうかを受け取る通知。
+type ExpandCallback = dyn FnMut(&[usize], bool);
+
 /// 開閉が変わったことの通知先。
 ///
 /// WinRT のデリゲートは `Send + Sync` を要求するため `UiThreadCell` に載せる。
 /// 呼び出しの間だけクロージャを取り出すので、通知の中から同じツリーを
 /// 操作しても二重借用にならない。
 #[derive(Clone)]
-struct ExpandHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(&[usize], bool)>>>>);
+struct ExpandHandler(HandlerCell<ExpandCallback>);
 
 impl ExpandHandler {
     fn new() -> Self {

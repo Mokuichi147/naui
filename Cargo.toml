@@ -5,11 +5,13 @@ members = [
     "crates/naui-macos",
     "crates/naui-web",
     "crates/naui-windows",
+    "crates/naui-winui3",
     "crates/naui-gtk",
     "crates/naui",
     "examples/counter",
     "examples/gallery",
 ]
+exclude = ["tools/winui3-bindgen"]
 
 [workspace.package]
 version = "0.2.0"
@@ -23,6 +25,7 @@ naui-core = { path = "crates/naui-core", version = "0.2.0" }
 naui-macos = { path = "crates/naui-macos", version = "0.2.0" }
 naui-web = { path = "crates/naui-web", version = "0.2.0" }
 naui-windows = { path = "crates/naui-windows", version = "0.2.0" }
+naui-winui3 = { path = "crates/naui-winui3", version = "0.2.0" }
 naui-gtk = { path = "crates/naui-gtk", version = "0.2.0" }
 naui = { path = "crates/naui", version = "0.2.0" }
 

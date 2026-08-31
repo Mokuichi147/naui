@@ -19,18 +19,19 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use naui_core::{DialogButtons, DialogResponse, Result, Theme};
-use windows::Foundation::TypedEventHandler;
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ContentDialog, ContentDialogButton, ContentDialogClosingEventArgs, ContentDialogResult,
     Orientation as XamlOrientation, StackPanel, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::{UIElement, Visibility};
+use naui_winui3::Microsoft::UI::Xaml::{UIElement, Visibility};
+use windows::Foundation::TypedEventHandler;
+use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::Widget;
 use crate::window::{owner_xaml_root, set_theme_on_element};
+use crate::Slot;
 
 struct DialogInner {
     native: ContentDialog,
@@ -40,7 +41,7 @@ struct DialogInner {
     message: TextBlock,
     child: RefCell<Option<Box<dyn Widget>>>,
     buttons: RefCell<DialogButtons>,
-    on_response: RefCell<Option<Box<dyn FnMut(DialogResponse)>>>,
+    on_response: RefCell<Slot<dyn FnMut(DialogResponse)>>,
     theme: Cell<Theme>,
     open: Cell<bool>,
     /// [`Dialog::close`] で閉じたか。閉じた理由を通知しないための目印。
@@ -101,8 +102,8 @@ impl Dialog {
 
     /// 閉じることをまとめて受ける。
     ///
-    /// `ContentDialog` の `Closed` は `winio-winui3` 0.4.5 のバインディングに
-    /// 無い (イベント引数の型が生成されていない)。閉じる直前の `Closing` は
+    /// `ContentDialog` の `Closed` は [`naui_winui3`] の投影に無い
+    /// (イベント引数の型が生成されていない)。閉じる直前の `Closing` は
     /// あり、押されたボタンが `Result` で分かるので、こちらを使う。
     /// 取り消し (`Cancel`) はしないので、閉じるのを妨げない。
     fn install_closing_handler(&self) -> Result<()> {

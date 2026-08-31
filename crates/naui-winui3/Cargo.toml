@@ -1,6 +1,6 @@
 [package]
-name = "naui-windows"
-description = "naui の Windows バックエンド。WinUI 3 (Fluent 2) の実コントロールを使う"
+name = "naui-winui3"
+description = "naui が使う WinUI 3 (Windows App SDK) の WinRT 投影"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,26 +13,38 @@ repository.workspace = true
 default-target = "x86_64-pc-windows-msvc"
 targets = []
 
-[dependencies]
-naui-core.workspace = true
-
 # Windows 以外では空のクレートになるので、依存も引き込まない。
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.62"
+windows-collections = "0.3"
+windows-future = "0.3"
+windows-numerics = "0.3"
 windows = { version = "0.62", features = [
+    "ApplicationModel_Activation",
+    "ApplicationModel_Contacts",
+    "ApplicationModel_DataTransfer_DragDrop",
+    "Devices_Geolocation",
     "Foundation",
+    "Foundation_Collections",
     "Globalization",
+    "Globalization_NumberFormatting",
     "Graphics",
+    "Graphics_Imaging",
+    "Media_Casting",
     "Media_Core",
     "Media_Playback",
     "Storage",
+    "Storage_Streams",
     "System",
     "UI",
+    "UI_Composition",
+    "UI_Core",
+    "UI_Text",
     "Win32_Foundation",
-    "Win32_System_Com",
-    "Win32_System_SystemInformation",
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_Common",
-    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Dxgi",
+    "Win32_Security",
+    "Win32_Storage_Packaging_Appx",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_WinRT",
 ] }
-naui-winui3.workspace = true

@@ -1,8 +1,8 @@
 //! 入り切りのスイッチ (WinUI 3 のネイティブ `ToggleSwitch`)。
 //!
-//! `winio-winui3` は WinUI 3 API の subset で、`ToggleSwitch` を投影して
-//! いない。そのため、`Expander` と同じように公開 WinRT インターフェイスの
-//! 必要な部分だけをこのモジュールで定義する。コントロール自体は
+//! 公開 WinRT インターフェイスの必要な部分をこのモジュールで定義している。
+//! `ToggleSwitch` は [`naui_winui3`] にも入ったので、この手書きの投影は
+//! 将来そちらへ寄せられる。コントロール自体は
 //! `XamlReader` から生成される本物の WinUI 3 `ToggleSwitch` で、つまみの
 //! 描画・アニメーション・キーボード操作は WinUI の標準テンプレートが行う。
 //!
@@ -15,13 +15,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::Result;
+use naui_winui3::Microsoft::UI::Xaml::Controls::{Control, TextBlock};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
 use windows_core::{IInspectable, Interface, Param, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{Control, TextBlock};
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 const TOGGLE_SWITCH_XAML: &str = r#"<ToggleSwitch
@@ -33,7 +33,7 @@ const TOGGLE_SWITCH_XAML: &str = r#"<ToggleSwitch
 /// 載せる。呼び出しの間だけクロージャを取り出すため、通知の中から同じ
 /// スイッチを操作しても二重借用にならない。
 #[derive(Clone)]
-struct ToggleHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(bool)>>>>);
+struct ToggleHandler(HandlerCell<dyn FnMut(bool)>);
 
 impl ToggleHandler {
     fn new() -> Self {

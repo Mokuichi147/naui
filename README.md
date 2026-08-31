@@ -39,7 +39,7 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 
 - Rust 1.82 以降
 - Linux: GTK4 と libadwaita の開発用ライブラリ
-- Windows: Windows App SDK 2.x のフレームワークランタイム
+- Windows: Windows App SDK 1.3 以降のフレームワークランタイム
 
 Ubuntu 24.04 では、次のコマンドで Linux 向けの依存パッケージを導入できます。
 
@@ -47,7 +47,8 @@ Ubuntu 24.04 では、次のコマンドで Linux 向けの依存パッケージ
 sudo apt install libgtk-4-dev libadwaita-1-dev build-essential pkg-config
 ```
 
-Windows App SDK は 2.3.1 で動作を確認しています。
+naui は 2.x から 1.3 まで新しい順に探し、最初に見つかったランタイムを使います。
+実機での動作確認は 2.3.1 で行っています。
 
 ### サンプルを実行
 
@@ -908,15 +909,24 @@ crates/
   naui-macos     AppKit バックエンド
   naui-web       DOM バックエンド
   naui-windows   WinUI 3 バックエンド
+  naui-winui3    WinUI 3 の WinRT 投影 (naui-windows だけが使う)
   naui-gtk       GTK4 / libadwaita バックエンド
   naui           対象に応じてバックエンドを選ぶファサード
 examples/
   counter        最小サンプル
   gallery        種別ごとの全ウィジェットデモ
+tools/
+  winui3-bindgen naui-winui3 の投影を .winmd から作り直すツール
 ```
 
 バックエンド固有の依存はターゲット別に宣言されています。たとえば macOS の
 ビルドで GTK4 や WinUI 3 の依存が引き込まれることはありません。
+
+WinUI 3 は Windows App SDK に入っていて `windows` クレートに投影がないため、
+`naui-winui3` が Microsoft の配る `.winmd` から作った投影を持っています。
+生成物 (`crates/naui-winui3/src/bindings.rs`) はコミットしてあるので、
+ふだんのビルドに `.winmd` は要りません。型を足したいときの手順は
+`tools/winui3-bindgen/README.md` にあります。
 
 ### テスト
 
@@ -950,9 +960,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 | ジョブ | ランナー | 内容 |
 | --- | --- | --- |
-| 整形 | ubuntu-latest | `cargo fmt --all --check` |
+| 整形と lint | ubuntu-latest | `cargo fmt --all --check` と `naui-core` の clippy |
 | macOS | macos-latest | ビルドと AppKit の統合テスト |
-| Windows | windows-latest | ビルドと `naui-core` のテスト |
+| Windows | windows-latest | ビルド、clippy、単体 / ドキュメンテーションテスト |
 | Linux | ubuntu-latest | GTK4 を導入し、Xvfb 上で統合テスト |
 | Web | ubuntu-latest | wasm ターゲットの型検査と Gallery の wasm ビルド |
 
@@ -1071,12 +1081,11 @@ git push origin v0.2.0
 - `CommandBar` がバインディングに無いため、`Toolbar` は `Button` を横に並べて
   構成し、タイトルバー (ドラッグ領域) ではなくその下の行に置きます。アイコンは
   Segoe Fluent Icons を `FontIcon` で出します。
-- `InfoBar` / `TeachingTip` がバインディングに無いため、`Toast` は `Grid` と
+- `InfoBar` / `TeachingTip` を投影していないため、`Toast` は `Grid` と
   `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
   `window.show()` より前には出せません。
-- `TextTrimming` が `winio-winui3` の投影に含まれていないため、`Label` の
-  `TextBlock` は `TextTrimming="CharacterEllipsis"` を持つ XAML から生成して
-  います (折り返しの切り替えは `TextWrapping` で行います)。
+- `Label` の `TextBlock` は `TextTrimming="CharacterEllipsis"` を持つ XAML から
+  生成しています (折り返しの切り替えは `TextWrapping` で行います)。
 - 動かせる仕切りを持つコントロールが Windows App SDK に無いため
   (`Microsoft.UI.Xaml.Controls.SplitView` は開閉するナビゲーションのペインで、
   `GridSplitter` は Community Toolkit の側)、`SplitView` は 3 つの列 (行) を
@@ -1086,13 +1095,11 @@ git push origin v0.2.0
   つかみ代です (`Transparent` は `null` と違って当たり判定が残ります)。ただし
   **仕切りに合わせたカーソル (⇔) は出ません**。カーソルの形を変える
   `UIElement.ProtectedCursor` は派生クラスからしか触れないためです。
-  区画の大きさが変わったことは `SizeChanged` がバインディングに無いため
-  `LayoutUpdated` で拾っています。
-- `Expander` は `winio-winui3` の投影に含まれていませんが、WinUI の公開 WinRT
-  インターフェイスを最小限投影し、`XamlReader` から本物の `Expander` を生成しています。
-- `ToggleSwitch` も投影に含まれていないため、`Expander` と同じく公開 WinRT
-  インターフェイスを最小限投影し、`XamlReader` から本物の `ToggleSwitch` を
-  生成しています。`Toggle` のラベルは `OnContent` と `OffContent` の両方へ
+  区画の大きさが変わったことは `LayoutUpdated` で拾っています。
+- `Expander` は、WinUI の公開 WinRT インターフェイスを最小限投影して
+  `XamlReader` から本物の `Expander` を生成しています。
+- `ToggleSwitch` も `Expander` と同じく公開 WinRT インターフェイスを最小限
+  投影し、`XamlReader` から本物の `ToggleSwitch` を生成しています。`Toggle` のラベルは `OnContent` と `OffContent` の両方へ
   同じ文字を入れるので、入り切りで読みは変わりません (WinUI の既定は
   「オン」「オフ」と切り替わる文字です)。
 - `ColorPicker` と `SolidColorBrush` も投影に含まれていないため、同じく公開

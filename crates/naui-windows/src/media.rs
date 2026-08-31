@@ -4,8 +4,8 @@
 //! **Windows.Media.Playback.MediaPlayer** がそのまま担う。
 //!
 //! 画像だけは事情が違う。`Microsoft.UI.Xaml.Controls.Image` と
-//! `Media.Imaging.BitmapImage` は `winio-winui3` 0.4.5 のバインディングに
-//! 含まれていないため、Rust から `Source` を設定できない。そこで
+//! `Media.Imaging.BitmapImage` は [`naui_winui3`] の投影に入ったが、
+//! `Controls.Image` のほうがまだ無く、Rust から `Source` を設定できない。そこで
 //! **`XamlReader` に `<Image>` を書いた XAML を読ませ**、ホストの `Grid` の
 //! 中身を差し替える形にしている (`ProgressBar` と同じ手口)。
 //! 表示するのは WinUI 標準の `Image` そのもので、読み込みも描画も WinUI が行う。
@@ -27,6 +27,11 @@ use std::rc::{Rc, Weak};
 
 use naui_core::media::{is_url, source_url};
 use naui_core::{Fit, PlaybackState, Result};
+use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
+use naui_winui3::Microsoft::UI::Xaml::Controls::{Grid, MediaPlayerElement};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Media::Stretch;
+use naui_winui3::Microsoft::UI::Xaml::UIElement;
 use windows::Foundation::{TimeSpan, TypedEventHandler, Uri};
 use windows::Media::Core::MediaSource;
 use windows::Media::Playback::{
@@ -35,15 +40,11 @@ use windows::Media::Playback::{
 };
 use windows::Storage::StorageFile;
 use windows_core::{IInspectable, Interface, HSTRING};
-use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
-use winui3::Microsoft::UI::Xaml::Controls::{Grid, MediaPlayerElement};
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::Media::Stretch;
-use winui3::Microsoft::UI::Xaml::UIElement;
 
 use crate::to_error;
 use crate::widgets::impl_widget;
 use crate::widgets::Widget;
+use crate::Slot;
 
 /// TimeSpan の 1 秒あたりの刻み数 (100 ナノ秒単位)。
 const TICKS_PER_SECOND: f64 = 10_000_000.0;
@@ -219,8 +220,8 @@ struct MediaInner {
     looping: Cell<bool>,
     autoplay: Cell<bool>,
     state: Cell<PlaybackState>,
-    callback: RefCell<Option<Box<dyn FnMut(PlaybackState)>>>,
-    position_callback: RefCell<Option<Box<dyn FnMut(f64)>>>,
+    callback: RefCell<Slot<dyn FnMut(PlaybackState)>>,
+    position_callback: RefCell<Slot<dyn FnMut(f64)>>,
 }
 
 thread_local! {

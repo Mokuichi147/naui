@@ -7,10 +7,10 @@
 //! 見本 (`Border` + `SolidColorBrush`) を出す。色を選ぶ UI そのものは
 //! WinUI の `ColorPicker` のままで、naui が描くものは無い。
 //!
-//! `winio-winui3` は WinUI 3 API の subset で、`ColorPicker` も
-//! `SolidColorBrush` も投影していない。そのため `Expander` や
-//! `ToggleSwitch` と同じく、公開 WinRT インターフェイスの必要な部分だけを
-//! このモジュールで定義する。組み立ては XAML に書いて `XamlReader` へ渡し、
+//! 公開 WinRT インターフェイスの必要な部分をこのモジュールで定義している。
+//! `ColorPicker` と `SolidColorBrush` は [`naui_winui3`] にも入ったので、
+//! この手書きの投影は将来そちらへ寄せられる。組み立ては XAML に書いて
+//! `XamlReader` へ渡し、
 //! 中の要素は `x:Name` から引く。
 //!
 //! 透明度は扱わないので `IsAlphaEnabled` を切ってある ([`Color`] が
@@ -22,15 +22,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{Color, Result};
+use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, UIElement};
 use windows::Foundation::TypedEventHandler;
 use windows::UI::Color as WinColor;
 use windows_core::{Interface, Param, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::Control;
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{FrameworkElement, UIElement};
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 /// 色の見本を出すボタンと、その中に開く `ColorPicker`。
@@ -63,7 +63,7 @@ const COLOR_PICKER_XAML: &str = r##"<Button
 /// 載せる。呼び出しの間だけクロージャを取り出すため、通知の中から同じ
 /// ピッカーを操作しても二重借用にならない。
 #[derive(Clone)]
-struct ColorHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(Color)>>>>);
+struct ColorHandler(HandlerCell<dyn FnMut(Color)>);
 
 impl ColorHandler {
     fn new() -> Self {

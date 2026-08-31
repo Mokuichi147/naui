@@ -1,0 +1,9 @@
+[package]
+name = "winui3-bindgen"
+description = "crates/naui-winui3 の投影を Windows App SDK の .winmd から作り直す"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+windows-bindgen = "0.62.1"

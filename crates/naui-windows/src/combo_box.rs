@@ -4,11 +4,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use naui_core::Result;
-use windows_core::{IInspectable, Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ComboBox as XamlComboBox, ComboBoxItem, SelectionChangedEventHandler, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::UIElement;
+use naui_winui3::Microsoft::UI::Xaml::UIElement;
+use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;

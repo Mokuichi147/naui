@@ -1,8 +1,9 @@
 //! テーブル (WinUI 3)。
 //!
-//! WinUI 3 のバインディング (`winio-winui3` 0.4.5) には `DataGrid` も
-//! `ListView` も含まれていないため、リスト ([`crate::List`]) と同じ
-//! `ListBox` を土台にして、**行の中身を `Grid` にした**形で組んでいる。
+//! WinUI 3 に `DataGrid` は無い (Community Toolkit のもの) ので、リスト
+//! ([`crate::List`]) と同じ `ListBox` を土台にして、**行の中身を `Grid` に
+//! した**形で組んでいる。`ListView` は [`naui_winui3`] の投影に入っている
+//! ので、そちらへ移すのは今後の課題。
 //!
 //! | 部分 | 作り |
 //! | --- | --- |
@@ -24,25 +25,25 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{Align, Result, SelectionMode, SortOrder, TableColumn, TableRow};
-use windows::Foundation::PropertyValue;
-use windows_core::{IInspectable, Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button, ColumnDefinition, Grid as XamlGrid, ListBox as XamlListBox, ListBoxItem, RowDefinition,
     ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler,
     SelectionMode as XamlSelectionMode, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::ResourceDictionary;
-use winui3::Microsoft::UI::Xaml::{
+use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::ResourceDictionary;
+use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, RoutedEventHandler, Style, TextAlignment,
     TextWrapping, Thickness, UIElement,
 };
+use windows::Foundation::PropertyValue;
+use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
 use crate::list::{row_style, text_block, SelectionHandler};
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 /// 表の枠。見出しと本体を縦に分けた `Grid` で、境界線と角丸はここが持つ。
@@ -125,7 +126,7 @@ fn sort_arrow(order: Option<SortOrder>) -> &'static str {
 /// WinRT のデリゲートは `Send + Sync` を要求するため `UiThreadCell` に載せる
 /// ([`SelectionHandler`] と同じ形)。
 #[derive(Clone)]
-struct SortHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(usize, SortOrder)>>>>);
+struct SortHandler(HandlerCell<dyn FnMut(usize, SortOrder)>);
 
 impl SortHandler {
     fn new() -> Self {

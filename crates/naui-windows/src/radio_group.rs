@@ -8,11 +8,11 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{Orientation, Result};
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Orientation as XamlOrientation, RadioButton, StackPanel, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;

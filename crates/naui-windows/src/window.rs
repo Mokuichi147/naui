@@ -4,19 +4,19 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use naui_core::{Result, Theme};
-use windows::Foundation::TypedEventHandler;
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Composition::ICompositionSupportsSystemBackdrop;
-use winui3::Microsoft::UI::Composition::SystemBackdrops::{
+use naui_winui3::Microsoft::UI::Composition::ICompositionSupportsSystemBackdrop;
+use naui_winui3::Microsoft::UI::Composition::SystemBackdrops::{
     MicaController, SystemBackdropConfiguration, SystemBackdropTheme,
 };
-use winui3::Microsoft::UI::Xaml::Controls::TextBlock;
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::Media::MicaBackdrop;
-use winui3::Microsoft::UI::Xaml::{
-    Application, ApplicationTheme, Controls::Grid, FrameworkElement, UIElement,
+use naui_winui3::Microsoft::UI::Xaml::Controls::TextBlock;
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Media::MicaBackdrop;
+use naui_winui3::Microsoft::UI::Xaml::{
+    Application, ApplicationTheme, Controls::Grid, ElementTheme, FrameworkElement, UIElement,
     Window as XamlWindow,
 };
+use windows::Foundation::TypedEventHandler;
+use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::toolbar::Toolbar;
@@ -32,6 +32,8 @@ enum Backdrop {
     BuiltIn {
         _mica: MicaBackdrop,
     },
+    /// Mica を取り付けられなかったとき。ウィンドウは既定の背景で出す。
+    None,
 }
 
 struct WindowInner {
@@ -78,7 +80,7 @@ impl Window {
         native
             .SetTitle(&HSTRING::from(title))
             .map_err(|e| to_error("Window のタイトル設定", e))?;
-        let backdrop = create_backdrop(&native, theme)?;
+        let backdrop = create_backdrop(&native, theme);
 
         let this = Self(Rc::new(WindowInner {
             native,
@@ -166,7 +168,6 @@ impl Window {
 
     /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
     ///
-    /// WinUI 3 の `CommandBar` は `winio-winui3` のバインディングに無いため、
     /// タイトルバーと中身の間の行へ `StackPanel` を置いて構成する。
     /// タイトルバーはウィンドウのドラッグ領域なので、そこには置けない。
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
@@ -261,8 +262,8 @@ impl Window {
             return;
         };
         let handler = TypedEventHandler::<
-            winui3::Microsoft::UI::Windowing::AppWindow,
-            winui3::Microsoft::UI::Windowing::AppWindowClosingEventArgs,
+            naui_winui3::Microsoft::UI::Windowing::AppWindow,
+            naui_winui3::Microsoft::UI::Windowing::AppWindowClosingEventArgs,
         >::new(move |_sender, _args| {
             state.with_mut(|slot| {
                 if let Some(ui) = slot.take() {
@@ -296,7 +297,13 @@ fn backdrop_theme(theme: Theme) -> SystemBackdropTheme {
     }
 }
 
-fn create_backdrop(native: &XamlWindow, theme: Theme) -> Result<Backdrop> {
+/// ウィンドウの背景に Mica を敷く。
+///
+/// Mica は「あれば嬉しい」ものなので、失敗しても諦めるだけにする。半透明に
+/// ならないのと、ウィンドウが出ないのとでは後者のほうが困る。古い Windows
+/// App SDK や Mica を持たない Windows 10 では、ここで [`Backdrop::None`] に
+/// なる。
+fn create_backdrop(native: &XamlWindow, theme: Theme) -> Backdrop {
     if MicaController::IsSupported().unwrap_or(false) {
         if let Ok(target) = native.cast::<ICompositionSupportsSystemBackdrop>() {
             if let Ok(controller) = MicaController::new() {
@@ -308,32 +315,39 @@ fn create_backdrop(native: &XamlWindow, theme: Theme) -> Result<Backdrop> {
                             .SetSystemBackdropConfiguration(&configuration)
                             .is_ok();
                     if configured {
-                        return Ok(Backdrop::Controller {
+                        return Backdrop::Controller {
                             _controller: controller,
                             configuration,
-                        });
+                        };
                     }
                 }
             }
         }
     }
 
-    let mica = MicaBackdrop::new().map_err(|e| to_error("Mica の生成", e))?;
-    native
-        .SetSystemBackdrop(&mica)
-        .map_err(|e| to_error("Mica の適用", e))?;
-    Ok(Backdrop::BuiltIn { _mica: mica })
+    let Ok(mica) = MicaBackdrop::new() else {
+        return Backdrop::None;
+    };
+    match native.SetSystemBackdrop(&mica) {
+        Ok(()) => Backdrop::BuiltIn { _mica: mica },
+        Err(_) => Backdrop::None,
+    }
 }
 
 fn set_title_foreground(label: &TextBlock, root: &UIElement, requested: Theme) -> Result<()> {
     let theme = effective_theme(root, requested);
-    let color = match theme {
-        Theme::Light => "#FF1A1A1A",
-        Theme::Dark | Theme::System => "#FFFFFFFF",
+    // 色は決め打ちにせず、WinUI 3 のテーマリソースから引く。タイトルバーの
+    // 文字は本文と同じ `TextFillColorPrimaryBrush` で、明暗それぞれの値は
+    // `XamlControlsResources` が持つ。要素の `RequestedTheme` を先に決めて
+    // おくと、その場でどちらの値を引くかが定まる。
+    let theme_name = match theme {
+        Theme::Light => "Light",
+        Theme::Dark | Theme::System => "Dark",
     };
     let brush = XamlReader::Load(&HSTRING::from(format!(
         r##"<TextBlock xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-            Foreground="{color}"/>"##
+            RequestedTheme="{theme_name}"
+            Foreground="{{ThemeResource TextFillColorPrimaryBrush}}"/>"##
     )))
     .map_err(|e| to_error("タイトル文字色ブラシの生成", e))?
     .cast::<TextBlock>()
@@ -429,18 +443,11 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
     })
 }
 
-/// `winio-winui3` 0.4.x は `FrameworkElement.RequestedTheme` の型を公開していない。
-/// ただし生成された vtable には ABI スロットが存在する。`IsLoaded` の直前は
-/// `SetRequestedTheme` なので、そのスロットを使って同じ WinRT プロパティを呼び出す。
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-struct ElementTheme(i32);
-
 thread_local! {
     /// 最後に表示したウィンドウの HWND。モーダルダイアログの親に使う。
     ///
-    /// XAML の要素から自分の載っているウィンドウをたどる API が
-    /// `winio-winui3` のバインディングに無いため、表示のたびに覚えておく。
+    /// XAML の要素から自分の載っているウィンドウをたどる API が WinUI 3 に
+    /// 無いため、表示のたびに覚えておく。
     static OWNER_HWND: Cell<isize> = const { Cell::new(0) };
     /// 最後に表示したウィンドウ。`ContentDialog` を出す `XamlRoot` に使う。
     static OWNER_WINDOW: RefCell<Option<XamlWindow>> = const { RefCell::new(None) };
@@ -449,7 +456,7 @@ thread_local! {
 /// モーダルダイアログの親にするウィンドウを覚える。
 fn remember_owner(window: &XamlWindow) {
     OWNER_WINDOW.with(|slot| *slot.borrow_mut() = Some(window.clone()));
-    let Ok(native) = window.cast::<winui3::IWindowNative>() else {
+    let Ok(native) = window.cast::<naui_winui3::IWindowNative>() else {
         return;
     };
     if let Ok(hwnd) = unsafe { native.WindowHandle() } {
@@ -461,7 +468,7 @@ fn remember_owner(window: &XamlWindow) {
 ///
 /// `XamlRoot` はウィンドウが表示されてから決まるので、覚えたウィンドウから
 /// 呼ばれるたびに取り直す。
-pub(crate) fn owner_xaml_root() -> Option<winui3::Microsoft::UI::Xaml::XamlRoot> {
+pub(crate) fn owner_xaml_root() -> Option<naui_winui3::Microsoft::UI::Xaml::XamlRoot> {
     OWNER_WINDOW.with(|slot| {
         let window = slot.borrow();
         let content = window.as_ref()?.Content().ok()?;
@@ -492,46 +499,33 @@ pub(crate) fn owner_hwnd() -> Option<windows::Win32::Foundation::HWND> {
     ))
 }
 
-impl From<Theme> for ElementTheme {
-    fn from(theme: Theme) -> Self {
-        Self(match theme {
-            Theme::System => 0,
-            Theme::Light => 1,
-            Theme::Dark => 2,
-        })
+/// naui のテーマを XAML の `ElementTheme` へ写す。
+fn element_theme(theme: Theme) -> ElementTheme {
+    match theme {
+        Theme::System => ElementTheme::Default,
+        Theme::Light => ElementTheme::Light,
+        Theme::Dark => ElementTheme::Dark,
     }
 }
 
 pub(crate) fn set_theme_on_element(element: &UIElement, theme: Theme) -> Result<()> {
-    let element = element
+    element
         .cast::<FrameworkElement>()
-        .map_err(|e| to_error("テーマ要素への変換", e))?;
-    let set_requested_theme: unsafe extern "system" fn(
-        *mut std::ffi::c_void,
-        ElementTheme,
-    ) -> windows_core::HRESULT = unsafe {
-        let is_loaded = std::ptr::addr_of!(element.vtable().IsLoaded) as *const usize;
-        std::mem::transmute(*is_loaded.sub(1))
-    };
-    unsafe { set_requested_theme(Interface::as_raw(&element), theme.into()).ok() }
+        .map_err(|e| to_error("テーマ要素への変換", e))?
+        .SetRequestedTheme(element_theme(theme))
         .map_err(|e| to_error("テーマの設定", e))
 }
 
 fn actual_theme(element: &UIElement) -> Result<Theme> {
-    let element = element
+    let actual = element
         .cast::<FrameworkElement>()
-        .map_err(|e| to_error("実テーマ要素への変換", e))?;
-    let is_loaded = std::ptr::addr_of!(element.vtable().IsLoaded) as *const usize;
-    let get_actual_theme: unsafe extern "system" fn(
-        *mut std::ffi::c_void,
-        *mut ElementTheme,
-    ) -> windows_core::HRESULT = unsafe { std::mem::transmute(*is_loaded.add(1)) };
-    let mut actual = ElementTheme(0);
-    unsafe { get_actual_theme(Interface::as_raw(&element), &mut actual).ok() }
+        .map_err(|e| to_error("実テーマ要素への変換", e))?
+        .ActualTheme()
         .map_err(|e| to_error("実テーマの取得", e))?;
-    Ok(match actual.0 {
-        1 => Theme::Light,
-        2 => Theme::Dark,
-        _ => Theme::Dark,
+    // `ActualTheme` が `Default` を返すことは無いが、念のため暗いほうへ寄せる。
+    Ok(if actual == ElementTheme::Light {
+        Theme::Light
+    } else {
+        Theme::Dark
     })
 }

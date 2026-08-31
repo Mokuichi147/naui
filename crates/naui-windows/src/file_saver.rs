@@ -11,6 +11,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{default_extension, with_default_extension, Error, FileEntry, FileFilter, Result};
+use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
+use naui_winui3::Microsoft::UI::Xaml::Controls::{Button as XamlButton, TextBlock};
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
 use windows::Win32::Foundation::ERROR_CANCELLED;
 use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
@@ -19,12 +22,9 @@ use windows::Win32::UI::Shell::{
     FOS_OVERWRITEPROMPT, SIGDN_FILESYSPATH,
 };
 use windows_core::{Interface, HRESULT, HSTRING, PCWSTR};
-use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
-use winui3::Microsoft::UI::Xaml::Controls::{Button as XamlButton, TextBlock};
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 /// ダイアログの設定と、最後に書き出した先。
@@ -50,7 +50,7 @@ impl SharedState {
 
 /// 差し替え可能なクロージャ 1 本。呼び出しの間だけ取り出すので、
 /// 通知の中から設定し直しても二重借用にならない。
-struct Handler<T: ?Sized>(Arc<UiThreadCell<Option<Box<dyn FnMut(&T)>>>>);
+struct Handler<T: ?Sized>(HandlerCell<dyn FnMut(&T)>);
 
 impl<T: ?Sized> Clone for Handler<T> {
     fn clone(&self) -> Self {

@@ -7,14 +7,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use naui_core::{GridCell, Length, Padding, Result, ScrollPolicy, Sizing, Track};
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
-    ColumnDefinition, Grid as XamlGrid, RowDefinition, ScrollBarVisibility, ScrollViewer,
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
+    ColumnDefinition, Grid as XamlGrid, RowDefinition, ScrollBarVisibility, ScrollMode,
+    ScrollViewer,
 };
-use winui3::Microsoft::UI::Xaml::{
+use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, Thickness, UIElement,
     VerticalAlignment, Visibility, Window as XamlWindow,
 };
+use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::widgets::{impl_widget, Widget};
@@ -477,7 +478,7 @@ pub(crate) fn register_scroll(scroll: &Scroll) {
 }
 
 fn track_scroll_pointer(scroll: &Scroll) -> Result<()> {
-    use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+    use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 
     let entered_state = scroll.0.hovered.clone();
     let entered = PointerEventHandler::new(move |_, _| {
@@ -540,7 +541,7 @@ pub(crate) fn register_list_scroll(
 }
 
 pub(crate) fn install_wheel_subclass(window: &XamlWindow) -> bool {
-    let Ok(native) = window.cast::<winui3::IWindowNative>() else {
+    let Ok(native) = window.cast::<naui_winui3::IWindowNative>() else {
         return false;
     };
     let Ok(hwnd) = (unsafe { native.WindowHandle() }) else {
@@ -572,38 +573,20 @@ pub(crate) fn install_wheel_subclass(window: &XamlWindow) -> bool {
 pub struct Scroll(Rc<ScrollInner>);
 impl_widget!(Scroll, native);
 
-// `ScrollMode` is not emitted by `winio-winui3`, so the corresponding
-// IScrollViewer methods are represented as raw vtable entries.  The enum is
-// defined by WinUI as Disabled = 0, Enabled = 1, Auto = 2.
-const SCROLLVIEWER_HORIZONTAL_SCROLL_MODE_SLOT: usize = 25;
-const SCROLLVIEWER_VERTICAL_SCROLL_MODE_SLOT: usize = 27;
-
+/// 横 / 縦それぞれのスクロールを許すかどうか。
+///
+/// `ScrollBarVisibility` はスクロールバーの見せかたで、スクロールそのものを
+/// 止めるのは `ScrollMode` のほう。両方そろえないと、バーが消えたまま
+/// ホイールでは動く、という食い違いが起きる。
 fn set_scroll_mode(native: &ScrollViewer, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
-    let horizontal_mode = if matches!(horizontal, ScrollPolicy::Never) {
-        0
-    } else {
-        1
-    };
-    let vertical_mode = if matches!(vertical, ScrollPolicy::Never) {
-        0
-    } else {
-        1
-    };
-    unsafe {
-        let slots = Interface::vtable(native) as *const _ as *const usize;
-        let set_mode: unsafe extern "system" fn(
-            *mut std::ffi::c_void,
-            i32,
-        ) -> windows_core::HRESULT =
-            std::mem::transmute(*slots.add(SCROLLVIEWER_HORIZONTAL_SCROLL_MODE_SLOT));
-        let _ = set_mode(Interface::as_raw(native), horizontal_mode).ok();
-        let set_mode: unsafe extern "system" fn(
-            *mut std::ffi::c_void,
-            i32,
-        ) -> windows_core::HRESULT =
-            std::mem::transmute(*slots.add(SCROLLVIEWER_VERTICAL_SCROLL_MODE_SLOT));
-        let _ = set_mode(Interface::as_raw(native), vertical_mode).ok();
+    fn mode(policy: ScrollPolicy) -> ScrollMode {
+        match policy {
+            ScrollPolicy::Never => ScrollMode::Disabled,
+            _ => ScrollMode::Enabled,
+        }
     }
+    let _ = native.SetHorizontalScrollMode(mode(horizontal));
+    let _ = native.SetVerticalScrollMode(mode(vertical));
 }
 
 impl Scroll {

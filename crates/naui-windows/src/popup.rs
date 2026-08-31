@@ -1,6 +1,5 @@
 //! ポップアップ (コンテキスト) メニュー (WinUI 3)。
 //!
-//! `MenuFlyout` は `winio-winui3` のバインディングに含まれていないため、
 //! **ウィンドウのルートに重ねる `Grid` + `Button` の縦並び**で構成している
 //! (`Navbar` などを `ToggleButton` で組んでいるのと同じ方針)。
 //!
@@ -19,14 +18,16 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use naui_core::{Error, PopupItem, Result};
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, Canvas, Grid as XamlGrid, Panel, StackPanel, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{FrameworkElement, RoutedEventHandler, Thickness, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, RoutedEventHandler, Thickness, UIElement,
+};
+use windows_core::{Interface, HSTRING};
 
 use crate::navigation::SelectHandler;
 use crate::to_error;
@@ -70,13 +71,15 @@ fn surface_xaml(background: &str, border: &str) -> String {
             Background="Transparent">
             <Grid HorizontalAlignment="Left" VerticalAlignment="Top" MinWidth="160"
                 Background="{background}" BorderBrush="{border}"
-                BorderThickness="1" CornerRadius="8" Padding="4">
+                BorderThickness="1" Padding="4"
+                CornerRadius="{{ThemeResource OverlayCornerRadius}}">
                 <StackPanel Orientation="Vertical">
                     <StackPanel.Resources>
                         <Style TargetType="Button">
                             <Setter Property="Background" Value="Transparent"/>
                             <Setter Property="BorderThickness" Value="0"/>
-                            <Setter Property="CornerRadius" Value="4"/>
+                            <Setter Property="CornerRadius"
+                                Value="{{ThemeResource ControlCornerRadius}}"/>
                             <Setter Property="Padding" Value="12,6"/>
                             <Setter Property="HorizontalAlignment" Value="Stretch"/>
                             <Setter Property="HorizontalContentAlignment" Value="Left"/>
@@ -132,12 +135,16 @@ fn load_surface(background: &str, border: &str) -> Result<Surface> {
     })
 }
 
+/// 取り付け先のウィジェット。要素・`PointerPressed` のトークン・
+/// ハンドルの組で覚え、取り外すときに使う。
+type Attached = (UIElement, i64, Box<dyn Widget>);
+
 struct PopupMenuInner {
     surface: Surface,
     /// 項目ごとのボタン。区切り線の位置は `None`。
     buttons: RefCell<Vec<Option<XamlButton>>>,
     /// 取り付けたウィジェットのハンドルと `PointerPressed` のトークン。
-    attached: RefCell<Vec<(UIElement, i64, Box<dyn Widget>)>>,
+    attached: RefCell<Vec<Attached>>,
     /// いま受け皿を載せている親。閉じるときに取り外す。
     host: RefCell<Option<Panel>>,
     handler: SelectHandler,
@@ -271,8 +278,8 @@ impl PopupMenu {
     /// WinUI にはブラウザのような既定のコンテキストメニューが無いので、
     /// 抑止すべきものは無い。
     ///
-    /// `winio-winui3` では `ContextRequested` の add メソッドが生成されて
-    /// おらず、手書きの WinRT vtable 呼び出しが必要になる。ここでは生成済みの
+    /// `ContextRequested` は [`naui_winui3`] の投影でも add メソッドが
+    /// 生成されていない。ここでは生成済みの
     /// `PointerPressed` を使い、同じ UI スレッド上で右クリックを判定する。
     pub fn attach(&self, widget: &dyn Widget) {
         let element = widget.native_element();

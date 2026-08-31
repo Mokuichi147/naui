@@ -26,14 +26,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{clamp_split_position, Orientation, Result, DEFAULT_SPLIT_POSITION};
-use windows::Foundation::EventHandler;
-use windows_core::{IInspectable, Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{ColumnDefinition, Grid as XamlGrid, RowDefinition};
-use winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
+    ColumnDefinition, Grid as XamlGrid, RowDefinition,
+};
+use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, UIElement, VerticalAlignment,
 };
+use windows::Foundation::EventHandler;
+use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
@@ -339,8 +341,9 @@ impl SplitView {
 
     /// 大きさが決まった (変わった) ときに、位置を収め直す。
     ///
-    /// `SizeChanged` は `winio-winui3` のバインディングに含まれていないため、
-    /// `LayoutUpdated` で拾う。表示中の位置が変わらないときは何も書かないので、
+    /// 大きさが変わったことは `LayoutUpdated` で拾う (`SizeChanged` でも
+    /// 拾えるが、仕切りを動かした直後の更新まで拾いたいのでこちら)。
+    /// 表示中の位置が変わらないときは何も書かないので、
     /// レイアウトが回り続けることはない。
     fn track_layout(&self) -> Result<()> {
         let geometry = self.0.geometry.clone();

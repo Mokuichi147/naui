@@ -10,28 +10,29 @@
 //! | `Pagination` | `Button` + `ToggleButton` |
 //! | `Link` | `HyperlinkButton` |
 //!
-//! `NavigationView` と `BreadcrumbBar` は `winio-winui3` のバインディングに
-//! 含まれていないため、`ToggleButton` (WinUI の標準コントロール) を並べて
-//! 構成している。選択状態は `IsChecked` で表すので、見た目は Fluent のまま。
+//! `ToggleButton` (WinUI の標準コントロール) を並べて構成している。選択状態は
+//! `IsChecked` で表すので、見た目は Fluent のまま。`NavigationView` は
+//! [`naui_winui3`] の投影に入っているので、そちらへ移すのは今後の課題
+//! (`BreadcrumbBar` はまだ投影していない)。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{NavItem, Result};
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::Primitives::ToggleButton;
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::ToggleButton;
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, Grid as XamlGrid, HyperlinkButton, Orientation as XamlOrientation,
     RowDefinition, StackPanel, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::{
+use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, UIElement,
     VerticalAlignment,
 };
+use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{bool_ref, impl_widget, Widget};
 
 /// ナビゲーション系ウィジェットの「選択された」通知先。
@@ -40,7 +41,7 @@ use crate::widgets::{bool_ref, impl_widget, Widget};
 /// 呼び出しの間だけクロージャを取り出すので、コールバックの中から
 /// 別のナビゲーションを操作しても二重借用にならない。
 #[derive(Clone)]
-pub(crate) struct SelectHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(usize)>>>>);
+pub(crate) struct SelectHandler(HandlerCell<dyn FnMut(usize)>);
 
 impl SelectHandler {
     pub(crate) fn new() -> Self {

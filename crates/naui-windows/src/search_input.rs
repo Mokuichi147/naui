@@ -1,10 +1,10 @@
 //! 検索の入力欄 (WinUI 3 のネイティブ `AutoSuggestBox`)。
 //!
 //! Fluent 2 で検索の欄にあたるのは `AutoSuggestBox` で、虫めがねの印は
-//! `QueryIcon`、確定は `QuerySubmitted` が受け持つ。`winio-winui3` は
-//! WinUI 3 API の subset でこの型を投影していないため、`ToggleSwitch` と
-//! 同じように公開 WinRT インターフェイスの必要な部分だけをこのモジュールで
-//! 定義する。コントロール自体は `XamlReader` から生成される本物の
+//! `QueryIcon`、確定は `QuerySubmitted` が受け持つ。公開 WinRT インター
+//! フェイスの必要な部分をこのモジュールで定義している。`AutoSuggestBox` は
+//! [`naui_winui3`] にも入ったので、この手書きの投影は将来そちらへ
+//! 寄せられる。コントロール自体は `XamlReader` から生成される本物の
 //! `AutoSuggestBox`。
 //!
 //! 候補の一覧 (`ItemsSource`) は渡さないので、打っても候補は出ない。
@@ -16,14 +16,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::Result;
+use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::UIElement;
 use windows::Foundation::TypedEventHandler;
 use windows_core::{Interface, Param, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::Control;
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::UIElement;
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 // 虫めがねの印は WinUI の標準アイコン (Segoe Fluent Icons の Find) を使う。
@@ -42,7 +42,7 @@ const REASON_PROGRAMMATIC_CHANGE: i32 = 1;
 /// 載せる。呼び出しの間だけクロージャを取り出すため、通知の中から同じ欄を
 /// 操作しても二重借用にならない。
 #[derive(Clone)]
-struct TextHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(&str)>>>>);
+struct TextHandler(HandlerCell<dyn FnMut(&str)>);
 
 impl TextHandler {
     fn new() -> Self {

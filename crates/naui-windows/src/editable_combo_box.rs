@@ -14,16 +14,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::Result;
-use windows::Foundation::{PropertyValue, TypedEventHandler};
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ComboBox as XamlComboBox, ComboBoxTextSubmittedEventArgs, SelectionChangedEventHandler,
     TextBox, TextChangedEventHandler,
 };
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use windows::Foundation::{PropertyValue, TypedEventHandler};
+use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 /// WinUI 3 の `ComboBox` テンプレートが持つ入力欄の名前。
@@ -35,7 +35,7 @@ const EDITABLE_TEXT_PART: &str = "EditableText";
 /// 呼び出しの間だけ取り出すため、通知の中から同じコンボボックスを操作しても
 /// 二重借用にならない。
 #[derive(Clone)]
-struct TextHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(&str)>>>>);
+struct TextHandler(HandlerCell<dyn FnMut(&str)>);
 
 impl TextHandler {
     fn new() -> Self {
