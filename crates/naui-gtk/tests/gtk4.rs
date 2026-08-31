@@ -222,6 +222,10 @@ fn main() {
             scroll_keeps_child_and_policy,
         ),
         (
+            "スクロールの中で高さを指定しない中身が縮まない",
+            scroll_gives_the_child_its_natural_height,
+        ),
+        (
             "折りたたみが中身を持ち、開閉を通知する",
             expander_keeps_child_and_notifies,
         ),
@@ -1715,6 +1719,41 @@ fn scroll_keeps_child_and_policy(ui: &Ui) -> Result<()> {
         native.policy(),
         (gtk::PolicyType::Never, gtk::PolicyType::Always)
     );
+    Ok(())
+}
+
+/// `GtkScrolledWindow` の `GtkViewport` は、既定では場所が足りないときに
+/// 中身を最小の大きさまで潰す。高さを指定しない `List` は最小 (1 行分) と
+/// 自然な大きさ (全行) が違うので、送れる向きでは自然な大きさで置く。
+fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill_width());
+    list.set_items(&ListItem::list(["東京", "大阪", "札幌", "那覇", "福岡"]));
+    let bin = bin_of(&list);
+    let (minimum, natural) = measure_height(&bin);
+    assert!(
+        minimum < natural,
+        "この検証は最小と自然な大きさが違う中身で行う: {minimum} / {natural}"
+    );
+
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.append(&list);
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+
+    // 中身より低いウィンドウ。ここで潰れると一覧が 1 行分まで縮む。
+    let window = ui.window("スクロール", 400.0, 120.0)?;
+    window.set_child(&scroll);
+    window.show();
+    pump();
+    assert_eq!(
+        bin.height(),
+        natural,
+        "送れる向きでは自然な高さのまま置かれること (最小は {minimum})"
+    );
+    window.close();
     Ok(())
 }
 

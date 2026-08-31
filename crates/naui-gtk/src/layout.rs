@@ -196,6 +196,7 @@ impl Scroll {
         self.0
             .native
             .set_policy(to_policy(horizontal), to_policy(vertical));
+        self.follow_natural_size();
     }
 
     pub fn set_child(&self, child: &dyn Widget) {
@@ -203,7 +204,34 @@ impl Scroll {
         // スクロールの中では、中身は自分の大きさのまま置かれる。
         bin.fill_parent();
         self.0.native.set_child(Some(&bin));
+        self.follow_natural_size();
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
+    }
+
+    /// 送れる向きでは、中身を「自然な大きさ」で置く。
+    ///
+    /// `GtkScrolledWindow` は自分でスクロールしない中身を `GtkViewport` へ
+    /// 包む。その既定 (`Minimum`) は、場所が足りないときに中身を**最小の
+    /// 大きさまで潰す**。高さを指定していない `List` のように最小と自然な
+    /// 大きさが違うウィジェットが、1 行分まで縮んでしまう。
+    ///
+    /// 送れる向き (`Auto` / `Always`) は、はみ出してもスクロールで見られる
+    /// ので自然な大きさで置く。送れない向き (`Never`) は既定のままにする。
+    /// スクロールバーが出ない以上、はみ出した分は見えなくなるため。
+    fn follow_natural_size(&self) {
+        let Some(viewport) = self.0.native.child().and_downcast::<gtk::Viewport>() else {
+            return;
+        };
+        viewport.set_hscroll_policy(scrollable_policy(self.0.native.hscrollbar_policy()));
+        viewport.set_vscroll_policy(scrollable_policy(self.0.native.vscrollbar_policy()));
+    }
+}
+
+/// スクロールバーの出し方から、中身の置き方を決める。
+fn scrollable_policy(policy: gtk::PolicyType) -> gtk::ScrollablePolicy {
+    match policy {
+        gtk::PolicyType::Never => gtk::ScrollablePolicy::Minimum,
+        _ => gtk::ScrollablePolicy::Natural,
     }
 }
 
