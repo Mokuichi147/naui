@@ -64,6 +64,10 @@ where
                 </Style>
                 <Style TargetType="CheckBox">
                     <Setter Property="Padding" Value="4,6"/>
+                    <!-- WinUI 既定の CheckBox は MinWidth=120 で、ラベルが短く
+                         ても (空でも) 120px ぶんの幅を占める。naui は幅を親の
+                         レイアウトで決めるので、この下限は外して中身に沿わせる。 -->
+                    <Setter Property="MinWidth" Value="0"/>
                 </Style>
                 <Style TargetType="TextBox">
                     <Setter Property="BorderThickness" Value="1"/>

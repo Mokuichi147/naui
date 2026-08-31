@@ -1,22 +1,22 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use std::cell::RefCell;
-
 use naui::{
-    Align, Length, ListItem, NavItem, Orientation, Padding, PopupItem, Result, SelectionMode,
-    Sizing, SortOrder, TableColumn, TableRow, TreeItem, Ui,
+    Align, GridCell, Length, ListItem, ListRow, NavItem, Orientation, Padding, PopupItem, Result,
+    SelectionMode, Sizing, SortOrder, TableColumn, TableRow, Track, TreeItem, Ui,
 };
 
 /// List の補足表示、無効な行、単一・複数選択、コンテキストメニュー、
-/// Table の列と選択、Tree の開閉・選択。
+/// ListRow の任意内容の行と行クリック、Table の列と選択、Tree の開閉・選択。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(12.0);
     pane.set_padding(Padding::all(12.0));
 
     pane.append(&ui.label("List")?);
-    pane.append(&ui.label("補足表示の有無、選べない行、単一選択と複数選択を確認できます。")?);
+    pane.append(&ui.label(
+        "ListItem を set_items で並べます。補足表示の有無、選べない行、単一・複数選択を確認できます。",
+    )?);
 
     let detailed = vec![
         ListItem::new("項目 A").detail("補足テキスト A"),
@@ -129,9 +129,61 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     actions.append(&detail_toggle);
     pane.append(&actions);
 
+    build_composed_list(ui, &pane)?;
+
     build_table(ui, &pane)?;
     build_tree(ui, &pane)?;
     Ok(pane)
+}
+
+/// 設定画面のような、先頭・本文・末尾を自由に組んだ行 (`ListRow`)。
+fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+    pane.append(&ui.label("ListRow")?);
+    pane.append(&ui.label(
+        "組み立てたウィジェットを set_rows で並べます。行を押すと on_activate でチェックが切り替わります。",
+    )?);
+
+    let mut rows = Vec::new();
+    for (checked, title, detail, action) in [
+        (true, "Wi-Fi", "メニューバーに表示", "オプション…"),
+        (false, "Bluetooth", "近くのデバイスを管理", "詳細…"),
+        (true, "バッテリー", "残量を表示", "設定…"),
+    ] {
+        let row = ui.grid()?;
+        row.set_column_track(0, Track::Auto);
+        row.set_column_track(1, Track::FILL);
+        row.set_column_track(2, Track::Auto);
+        row.set_spacing(10.0, 0.0);
+
+        let check = ui.checkbox("")?;
+        check.set_checked(checked);
+        row.attach(&check, GridCell::new(0, 0));
+
+        let text = ui.stack(Orientation::Vertical)?;
+        text.set_align(Align::Start);
+        text.set_spacing(2.0);
+        text.append(&ui.label(title)?);
+        text.append(&ui.label(detail)?);
+        text.set_sizing(Sizing::fill_width());
+        row.attach(&text, GridCell::new(1, 0));
+
+        row.attach(&ui.button(action)?, GridCell::new(2, 0));
+        row.set_sizing(Sizing::fill_width());
+        let list_row = ListRow::new(&row).selectable(false);
+        // 行のラベルや余白を押したときだけ呼ばれる。チェックボックスや
+        // ボタンを直接押したときは、それぞれのコールバックだけが動く。
+        list_row.on_activate({
+            let check = check.clone();
+            move || check.set_checked(!check.is_checked())
+        });
+        rows.push(list_row);
+    }
+
+    let settings = ui.list()?;
+    settings.set_rows(&rows);
+    settings.set_sizing(Sizing::fill_width());
+    pane.append(&settings);
+    Ok(())
 }
 
 /// Table の列の幅と揃え、見出しからの並べ替え、選べない行、

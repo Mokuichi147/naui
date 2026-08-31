@@ -7,7 +7,7 @@
 //! 各テストを別スレッドで走らせる (`--test-threads=1` でも同じ)。
 //! そのため `harness = false` にして、自前のランナーをメインスレッドで回す。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
@@ -20,21 +20,22 @@ use naui_core::{
     PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
     Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
-use naui_macos::{run_for_test, Ui, Widget};
+use naui_macos::{run_for_test, ListRow, Ui, Widget};
 use objc2::rc::Retained;
 use objc2::sel;
 use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
 use objc2_app_kit::{
-    NSButton, NSColor, NSColorSpace, NSComboBox, NSControlStateValueOff, NSDatePicker,
-    NSDatePickerElementFlags, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
+    NSApplication, NSApplicationActivationPolicy, NSButton, NSColor, NSColorSpace, NSComboBox,
+    NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
+    NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
     NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSScrollerStyle,
     NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate,
     NSTextField, NSTextInputClient, NSTextView, NSUserInterfaceItemIdentification, NSView,
-    NSWindowTitleVisibility,
+    NSWindow, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSNotFound,
-    NSNotification, NSPoint, NSRange, NSRunLoop, NSSize, NSString,
+    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
+    NSNotFound, NSNotification, NSPoint, NSRange, NSRunLoop, NSSize, NSString,
 };
 
 /// テストケース 1 件。
@@ -132,6 +133,14 @@ fn main() {
         ("リストの複数選択が 0 件にもなる", list_multiple_selection),
         ("リストが選べない行を飛ばす", list_skips_disabled_rows),
         (
+            "行のクリックがクロージャへ届く",
+            list_row_activation_notifies,
+        ),
+        (
+            "リストに任意ウィジェットの行を載せられる",
+            list_accepts_composed_rows,
+        ),
+        (
             "リストの行が NSTableView に描かれる",
             list_rows_are_native_views,
         ),
@@ -227,6 +236,14 @@ fn main() {
         (
             "グリッドの Auto 行が Fill 行の高さを奪わない",
             grid_fill_row_keeps_the_rest,
+        ),
+        (
+            "グリッドの Fill の子がセルの取り分だけ広がる",
+            grid_fill_column_takes_only_its_share,
+        ),
+        (
+            "グリッドの Fill の子が固定幅の列を奪わない",
+            grid_fill_column_leaves_fixed_columns,
         ),
         (
             "Gallery のメディア欄が高さ変更後にラベル幅を広げない",
@@ -3025,6 +3042,364 @@ fn list_skips_disabled_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// ウィンドウのイベントキューへ本物のクリックを積み、配送まで進める。
+///
+/// `mouseDown:` を直接呼ぶのとは違い、AppKit のヒットテストと追跡ループを
+/// そのまま通る。`NSTableView` のように「どのビューが受け取るか」で
+/// ふるまいが変わるものは、この経路でないと確かめられない。
+fn click_view(app: &NSApplication, window: &NSWindow, view: &NSView) {
+    let bounds = view.bounds();
+    let center = NSPoint::new(bounds.size.width / 2.0, bounds.size.height / 2.0);
+    let point = view.convertPoint_toView(center, None);
+    for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
+        let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            point,
+            NSEventModifierFlags::empty(),
+            0.0,
+            window.windowNumber(),
+            None,
+            0,
+            1,
+            1.0,
+        )
+        .expect("クリックイベント");
+        unsafe { app.postEvent_atStart(&event, false) };
+    }
+    deliver_events(app);
+    pump(0.05);
+    deliver_events(app);
+}
+
+/// キューに溜まっているイベントをすべて配送する。
+fn deliver_events(app: &NSApplication) {
+    while let Some(event) = unsafe {
+        app.nextEventMatchingMask_untilDate_inMode_dequeue(
+            NSEventMask::Any,
+            Some(&NSDate::distantPast()),
+            NSDefaultRunLoopMode,
+            true,
+        )
+    } {
+        app.sendEvent(&event);
+    }
+}
+
+/// 行そのもののクリックが `on_activate` へ届き、行内のコントロールを
+/// 直接押したときは二重に発火しない。
+///
+/// AppKit は表示専用のラベルやアイコンの上のクリックを `NSTableView` へ渡す
+/// (ヒットテストがセルではなくテーブルを返す) ため、naui はテーブルの action で
+/// 行クリックを受けている。セル側の `mouseDown:` では実際のクリックが届かない
+/// ので、ここでは本物のイベントを配送して確かめる。
+fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+
+    let window = ui.window("行のクリック", 480.0, 320.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+
+    let content = ui.grid()?;
+    content.set_column_track(0, Track::Auto);
+    content.set_column_track(1, Track::FILL);
+    content.set_column_track(2, Track::Auto);
+    content.set_spacing(10.0, 0.0);
+    let check = ui.checkbox("")?;
+    content.attach(&check, GridCell::new(0, 0));
+    let text = ui.stack(Orientation::Vertical)?;
+    text.set_align(Align::Start);
+    let title = ui.label("Wi-Fi")?;
+    text.append(&title);
+    text.append(&ui.label("メニューバーに表示")?);
+    text.set_sizing(Sizing::fill_width());
+    content.attach(&text, GridCell::new(1, 0));
+    let action = ui.button("オプション…")?;
+    let clicks = Rc::new(Cell::new(0));
+    action.on_click({
+        let clicks = clicks.clone();
+        move || clicks.set(clicks.get() + 1)
+    });
+    content.attach(&action, GridCell::new(2, 0));
+    content.set_sizing(Sizing::fill_width());
+
+    let row = ListRow::new(&content).selectable(false);
+    let activated = Rc::new(Cell::new(0));
+    row.on_activate({
+        let check = check.clone();
+        let activated = activated.clone();
+        move || {
+            activated.set(activated.get() + 1);
+            check.set_checked(!check.is_checked());
+        }
+    });
+
+    let list = ui.list()?;
+    list.set_rows(&[row]);
+    list.set_sizing(Sizing::fill_width());
+    root.append(&list);
+    window.set_child(&root);
+
+    // 行クリックを受ける口が付いていること (見た目に依らない確認)。
+    let table = list.native_table();
+    assert!(
+        unsafe { table.target() }.is_some(),
+        "行クリックを受ける target が付いていること"
+    );
+    assert_eq!(
+        table.action(),
+        Some(sel!(invoke:)),
+        "行クリックを action で受けていること"
+    );
+
+    // アクティブでないアプリのウィンドウは key になれず、AppKit は
+    // `NSTableView` へクリックを渡さない。テストの間だけアクセサリにする。
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    window.show();
+    let native = window.native_window();
+    // アクティブ化はランループの上で進むので、key になるまで少し待つ。
+    for _ in 0..40 {
+        if native.isKeyWindow() {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
+
+    let content_view = native.contentView().expect("contentView");
+    content_view.layoutSubtreeIfNeeded();
+    // 行ビューは表示のときに作られるので、先に作らせてから描画まで進める。
+    let _ = table.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    content_view.layoutSubtreeIfNeeded();
+    unsafe { content_view.display() };
+
+    if native.isKeyWindow() {
+        click_view(&app, &native, &title.native_view());
+        assert_eq!(activated.get(), 1, "行クリックが 1 回だけ通知されること");
+        assert!(check.is_checked(), "行クリックからチェックが切り替わること");
+
+        click_view(&app, &native, &check.native_view());
+        assert!(
+            !check.is_checked(),
+            "チェックボックスの直接操作でも切り替わること"
+        );
+        assert_eq!(
+            activated.get(),
+            1,
+            "チェックボックスの直接操作では行が二重発火しないこと"
+        );
+
+        click_view(&app, &native, &action.native_view());
+        assert_eq!(clicks.get(), 1, "行内ボタンのクリックが届くこと");
+        assert_eq!(
+            activated.get(),
+            1,
+            "行内ボタンの直接操作では行 activation が発火しないこと"
+        );
+    } else {
+        // ウィンドウを key にできない環境 (画面セッションが無いなど) では、
+        // AppKit がクリックを配送しないので確かめられない。
+        println!("(key ウィンドウにできないため、実クリックの確認は飛ばしました)");
+    }
+
+    window.close();
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    Ok(())
+}
+
+/// 設定画面向けの行は、ラベルだけでなく任意のレイアウトとコントロールを持てる。
+fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
+    let content = ui.grid()?;
+    content.set_column_track(0, Track::Auto);
+    content.set_column_track(1, Track::FILL);
+    content.set_column_track(2, Track::Auto);
+    content.set_spacing(8.0, 0.0);
+    let check = ui.checkbox("")?;
+    let text = ui.stack(Orientation::Vertical)?;
+    text.set_align(Align::Start);
+    text.set_spacing(2.0);
+    let title = ui.label("Wi-Fi")?;
+    let detail = ui.label("メニューバーに表示")?;
+    text.append(&title);
+    text.append(&detail);
+    text.set_sizing(Sizing::fill_width());
+    let action = ui.button("オプション…")?;
+    content.attach(&check, GridCell::new(0, 0));
+    content.attach(&text, GridCell::new(1, 0));
+    content.attach(&action, GridCell::new(2, 0));
+    content.set_sizing(Sizing::fill_width());
+    let make_row = |title: &str, detail: &str, action: &str| -> Result<naui_macos::Grid> {
+        let row = ui.grid()?;
+        row.set_column_track(0, Track::Auto);
+        row.set_column_track(1, Track::FILL);
+        row.set_column_track(2, Track::Auto);
+        row.set_spacing(8.0, 0.0);
+        let text = ui.stack(Orientation::Vertical)?;
+        text.set_align(Align::Start);
+        text.set_spacing(2.0);
+        text.append(&ui.label(title)?);
+        text.append(&ui.label(detail)?);
+        text.set_sizing(Sizing::fill_width());
+        row.attach(&ui.checkbox("")?, GridCell::new(0, 0));
+        row.attach(&text, GridCell::new(1, 0));
+        row.attach(&ui.button(action)?, GridCell::new(2, 0));
+        row.set_sizing(Sizing::fill_width());
+        Ok(row)
+    };
+    let second = make_row("Bluetooth", "近くのデバイスを管理", "詳細…")?;
+    let last = make_row("バッテリー", "残量を表示", "設定…")?;
+    let row_contents = [content.clone(), second.clone(), last.clone()];
+
+    let list = ui.list()?;
+    list.set_rows(&[
+        ListRow::new(&content).selectable(false),
+        ListRow::new(&second).selectable(false),
+        ListRow::new(&last).selectable(false),
+    ]);
+    list.set_sizing(Sizing::fill_width());
+    assert_eq!(list.len(), 3);
+
+    // 行内のコントロールだけを操作する 1 行目は、プログラムからも選べない。
+    list.select(0);
+    assert!(list.selection().is_empty());
+    list.select(1);
+    assert!(list.selection().is_empty());
+
+    let table = list.native_table();
+    let mount = ui.stack(Orientation::Vertical)?;
+    mount.append(&list);
+    let root = mount.native_view();
+    root.setFrameSize(NSSize::new(900.0, 240.0));
+    // 1 回目で Grid の幅と各セルの fitting height が決まり、List の
+    // intrinsic height が更新される。2 回目で親 Stack まで解き直す。
+    root.layoutSubtreeIfNeeded();
+    root.layoutSubtreeIfNeeded();
+    let first = table
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("任意内容の行ビュー");
+    assert_eq!(first.subviews().len(), 1, "組み立てた内容が 1 つ載ること");
+    assert!(
+        first.subviews().objectAtIndex(0).subviews().len() >= 3,
+        "渡した Grid の各要素が保たれること"
+    );
+
+    let check_frame = check.native_view().frame();
+    let text_frame = text.native_view().frame();
+    let action_frame = action.native_view().frame();
+    assert!(
+        text_frame.origin.x - (check_frame.origin.x + check_frame.size.width) < 16.0,
+        "本文はチェックの直後に置かれること: {check_frame:?} / {text_frame:?}"
+    );
+    assert!(
+        text_frame.origin.x < 50.0 && action_frame.origin.x > 600.0,
+        "本文列は左から始まり、操作は右端へ寄ること: {text_frame:?} / {action_frame:?}"
+    );
+
+    // 行高そのものだけでなく、全内容が行内へ収まり、2 本のラベルが互いに
+    // 潰れていないことを確認する。これが無いと 40pt 必要な Stack を 24pt の
+    // Grid 行へ押し込み、見た目では隣接行まで重なる不具合を見逃す。
+    for (index, row_content) in row_contents.iter().enumerate() {
+        let cell = table
+            .viewAtColumn_row_makeIfNecessary(0, index as isize, true)
+            .expect("任意内容の行ビュー");
+        let row_rect = table.rectOfRow(index as isize);
+        let grid_frame = row_content.native_view().frame();
+        assert!(
+            grid_frame.origin.y >= 0.0
+                && grid_frame.origin.y + grid_frame.size.height <= cell.frame().size.height + 0.5,
+            "{index} 行目の Grid がセル内に収まること: 行 {row_rect:?} / セル {:?} / Grid {grid_frame:?}",
+            cell.frame()
+        );
+        assert!(
+            row_rect.size.height >= grid_frame.size.height + 8.0 - 0.5,
+            "{index} 行目が内容高と上下余白を持つこと: 行 {row_rect:?} / Grid {grid_frame:?}"
+        );
+        let grid = row_content.native_view();
+        for child_index in 0..grid.subviews().len() {
+            let child = grid.subviews().objectAtIndex(child_index);
+            let frame = child.frame();
+            assert!(
+                frame.origin.y >= -0.5
+                    && frame.origin.y + frame.size.height <= grid_frame.size.height + 0.5,
+                "{index} 行目の子 {child_index} が Grid 内に収まること: {frame:?} / Grid {grid_frame:?}"
+            );
+        }
+    }
+    let title_frame = title.native_view().frame();
+    let detail_frame = detail.native_view().frame();
+    assert!(
+        title_frame.size.height > 0.0 && detail_frame.size.height > 0.0,
+        "タイトルと補足がどちらも描画高を持つこと: {title_frame:?} / {detail_frame:?}"
+    );
+    assert!(
+        detail_frame.origin.y + detail_frame.size.height <= title_frame.origin.y + 0.5,
+        "タイトルと補足が重ならないこと: {title_frame:?} / {detail_frame:?}"
+    );
+
+    // ギャラリーと同じ 3 行を固定高さなしで表示し、最後の行の下に
+    // 大きな空白を残さない。横位置だけではリスト全体の崩れを見逃すため、
+    // Auto で決まった可視高さとスクロールの要否も確かめる。
+    let scroll = list
+        .native_view()
+        .downcast::<NSScrollView>()
+        .expect("NSScrollView");
+    let visible_bottom = scroll.contentView().bounds().size.height;
+    let document_height = table.frame().size.height;
+    let final_row = table.rectOfRow(2);
+    let rows_bottom = final_row.origin.y + final_row.size.height;
+    let trailing_space = visible_bottom - rows_bottom;
+    assert!(
+        (0.0..=16.0).contains(&trailing_space),
+        "最終行の下に大きな空白が無いこと: 可視高 {visible_bottom} / 行の下端 {rows_bottom} / 空白 {trailing_space}"
+    );
+    assert!(
+        document_height <= visible_bottom,
+        "3 行だけならスクロールを必要としないこと: 中身 {document_height} / 可視高 {visible_bottom}"
+    );
+    let vertical_scroller = scroll.verticalScroller().expect("縦スクローラー");
+    assert!(
+        !vertical_scroller.isEnabled(),
+        "3 行が収まるときは縦スクローラーを無効にすること"
+    );
+    // 表示後に内容が変わっても、作成時に測った固定値へ留まらないこと。
+    let previous_row_height = table.rectOfRow(0).size.height;
+    let extra = ui.label("接続済み")?;
+    text.append(&extra);
+    root.layoutSubtreeIfNeeded();
+    root.layoutSubtreeIfNeeded();
+    let expanded_row = table.rectOfRow(0);
+    let expanded_grid = content.native_view().frame();
+    assert!(
+        expanded_row.size.height > previous_row_height + 8.0,
+        "Stack の内容追加後に Auto 行が高くなること: 変更前 {previous_row_height} / 変更後 {expanded_row:?}"
+    );
+    assert!(
+        expanded_grid.origin.y + expanded_grid.size.height
+            <= table
+                .viewAtColumn_row_makeIfNecessary(0, 0, true)
+                .expect("更新後の行ビュー")
+                .frame()
+                .size
+                .height
+                + 0.5,
+        "更新後の Grid も行内に収まること: {expanded_grid:?} / 行 {expanded_row:?}"
+    );
+    assert!(extra.native_view().frame().size.height > 0.0);
+
+    let expanded_list_height = scroll.contentView().bounds().size.height;
+    list.set_rows(&[ListRow::new(&content).selectable(false)]);
+    root.layoutSubtreeIfNeeded();
+    root.layoutSubtreeIfNeeded();
+    let one_row_height = scroll.contentView().bounds().size.height;
+    assert!(
+        one_row_height < expanded_list_height,
+        "行を減らしたら Auto の高さも縮むこと: 3 行 {expanded_list_height} / 1 行 {one_row_height}"
+    );
+    Ok(())
+}
+
 /// 行の中身は AppKit がデリゲートに作らせた NSTextField になる。
 fn list_rows_are_native_views(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
@@ -5323,6 +5698,138 @@ fn scroll_content_fits_beside_a_legacy_scroller(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// 複数列のグリッドでは、`Fill` の子はそのセルの取り分だけを望む。
+///
+/// グリッド全体の幅をそのまま望むと、同じ行にあるほかのセルの中身
+/// (compression resistance がこの希望より弱いもの) を押し潰しかねない。
+fn grid_fill_column_takes_only_its_share(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Auto);
+    grid.set_column_track(1, Track::FILL);
+    grid.set_column_track(2, Track::Auto);
+    grid.set_spacing(8.0, 0.0);
+
+    let leading = ui.checkbox("")?;
+    let middle = ui.stack(Orientation::Vertical)?;
+    middle.set_align(Align::Start);
+    middle.append(&ui.label("Wi-Fi")?);
+    middle.set_sizing(Sizing::fill_width());
+    let trailing = ui.button("オプション…")?;
+    grid.attach(&leading, GridCell::new(0, 0));
+    grid.attach(&middle, GridCell::new(1, 0));
+    grid.attach(&trailing, GridCell::new(2, 0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(600.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+
+    let leading_width = leading.native_view().frame().size.width;
+    let middle_width = middle.native_view().frame().size.width;
+    let trailing_width = trailing.native_view().frame().size.width;
+
+    // 望むのは「グリッドの幅 − ほかの列」。定数が引かれていないと、1 つの
+    // セルの子がグリッド全体の幅を要求してしまう。
+    let constraints = root.constraints();
+    let grow = (0..constraints.len())
+        .map(|index| constraints.objectAtIndex(index))
+        .find(|constraint| {
+            constraint
+                .identifier()
+                .is_some_and(|id| id.to_string() == "naui.grid.grow.width.1.0")
+        })
+        .expect("Fill のセルへ伸びる希望が張られていること");
+    assert!(
+        grow.constant() <= -(leading_width + trailing_width),
+        "ほかの列の幅が差し引かれていること: {} / {leading_width} + {trailing_width}",
+        grow.constant()
+    );
+
+    // それでいて、余りは Fill の列が受け取る。
+    assert!(
+        middle_width > 400.0,
+        "Fill の列が余りを受け取ること: {middle_width}"
+    );
+    assert!(
+        trailing_width > 60.0,
+        "ほかの列は中身の幅を保つこと: {trailing_width}"
+    );
+    assert!(
+        leading_width + middle_width + trailing_width <= 600.0,
+        "グリッドからはみ出さないこと: {leading_width} + {middle_width} + {trailing_width}"
+    );
+    Ok(())
+}
+
+/// 幅を決め打ちした列は、中身が短くても `Fill` の子に食われない。
+///
+/// 取り分を中身の幅だけで見積もると、固定幅の列に載せたものが短いときに
+/// `Fill` の列へ余分な幅を渡してしまい、後続の列と重なる。
+fn grid_fill_column_leaves_fixed_columns(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fixed(120.0));
+    grid.set_column_track(1, Track::FILL);
+    grid.set_column_track(2, Track::Auto);
+    grid.set_spacing(8.0, 0.0);
+
+    // 120pt の列に、それより狭い中身を置く。
+    let leading = ui.label("短い")?;
+    let middle = ui.stack(Orientation::Vertical)?;
+    middle.set_align(Align::Start);
+    middle.append(&ui.label("本文")?);
+    middle.set_sizing(Sizing::fill_width());
+    let trailing = ui.button("オプション…")?;
+    grid.attach(&leading, GridCell::new(0, 0));
+    grid.attach(&middle, GridCell::new(1, 0));
+    grid.attach(&trailing, GridCell::new(2, 0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(600.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+
+    let leading_width = leading.native_view().frame().size.width;
+    let middle_frame = middle.native_view().frame();
+    let trailing_frame = trailing.native_view().frame();
+    assert!(
+        leading_width < 120.0,
+        "固定幅より中身が狭いこと (この検査の前提): {leading_width}"
+    );
+
+    // 差し引くのは中身の幅ではなく、列に指定した 120pt。
+    let constraints = root.constraints();
+    let grow = (0..constraints.len())
+        .map(|index| constraints.objectAtIndex(index))
+        .find(|constraint| {
+            constraint
+                .identifier()
+                .is_some_and(|id| id.to_string() == "naui.grid.grow.width.1.0")
+        })
+        .expect("Fill のセルへ伸びる希望が張られていること");
+    assert!(
+        grow.constant() <= -(120.0 + trailing_frame.size.width),
+        "固定幅の列がそのまま差し引かれること: {} / 120 + {}",
+        grow.constant(),
+        trailing_frame.size.width
+    );
+
+    assert!(
+        middle_frame.origin.x >= 120.0,
+        "Fill の列が固定幅の列へ食い込まないこと: {middle_frame:?}"
+    );
+    assert!(
+        middle_frame.origin.x + middle_frame.size.width <= trailing_frame.origin.x + 0.5,
+        "Fill の列が後続の列と重ならないこと: {middle_frame:?} / {trailing_frame:?}"
+    );
+    assert!(
+        trailing_frame.origin.x + trailing_frame.size.width <= 600.5,
+        "グリッドからはみ出さないこと: {trailing_frame:?}"
+    );
+    assert!(
+        middle_frame.size.width > 300.0,
+        "それでも余りは Fill の列が受け取ること: {middle_frame:?}"
+    );
+    Ok(())
+}
+
 /// `Auto` の行に置いた子は、縦の余りを受け取らない。
 ///
 /// NSStackView のようにコンテナ自身の hugging priority が低い子は、これが
@@ -5375,7 +5882,7 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
         .find(|constraint| {
             constraint
                 .identifier()
-                .is_some_and(|id| id.to_string() == "naui.grid.grow.0.1")
+                .is_some_and(|id| id.to_string() == "naui.grid.grow.height.0.1")
         })
         .expect("Fill のセルへ伸びる希望が張られていること");
     // 弱すぎると余りが `Auto` 行に残り、強すぎると `Auto` 行の中身を潰す。

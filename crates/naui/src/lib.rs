@@ -173,7 +173,7 @@
 //! 決める最小のほうが勝つ。画面がせまくて両方の最小を満たせないときは
 //! start 側が優先され、広がればまた指定した位置へ戻る。
 //!
-//! `Scroll` や `List` と同じく**中身の大きさから高さは決まらない**ので、
+//! `Scroll` と同じく**中身の大きさから高さは決まらない**ので、
 //! 大きさは [`set_sizing`](SplitView::set_sizing) で指定する。区画は 2 つ
 //! なので、3 つ以上に分けたいときは `SplitView` を入れ子にする。
 //!
@@ -654,7 +654,7 @@
 //! [`ListItem::detail`] を付けると、行に補助の文字が付く。
 //!
 //! ```no_run
-//! # use naui::{Length, ListItem, Result, SelectionMode, Sizing, Ui};
+//! # use naui::{ListItem, Result, SelectionMode, Sizing, Ui};
 //! # fn build(ui: &Ui) -> Result<()> {
 //! let list = ui.list()?;
 //! list.set_items(&[
@@ -665,8 +665,8 @@
 //! list.on_select(|indices| println!("{indices:?} が選ばれた"));
 //! list.set_selection(&[0, 2]); // 通知せずに選択を置き換える
 //!
-//! // スクロールと同じく高さを自分では決めないので、指定しておく。
-//! list.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(180.0)));
+//! // Auto の高さは全行に追従する。高さを制限したい一覧だけ Fixed / Fill にする。
+//! list.set_sizing(Sizing::fill_width());
 //! # Ok(())
 //! # }
 //! ```
@@ -690,7 +690,40 @@
 //! [`ListItem::detail`] は macOS / Windows では 2 行目になる。**Web は行の
 //! 中身で作りが変わり**、文字だけなら `<select size>`、`detail` があれば
 //! `<ul role="listbox">` の合成になる (`<option>` はテキストしか持てないため)。
-//! 行に置けるのは文字だけで、任意のウィジェットや画像のアイコンは置けない。
+//!
+//! 設定画面など、先頭の画像・複数行の本文・末尾のボタンやトグルを持つ行は、
+//! 既存の `Grid` / `Stack` で作って [`ListRow::new`] に渡し、[`List::set_rows`]
+//! で表示する。行内のコントロールだけを操作して行全体は選ばせない場合は
+//! [`ListRow::selectable(false)`](ListRow::selectable) を指定する。`ListItem` に
+//! アクセサリの種類を列挙しないため、アプリ固有の行構成も同じ仕組みで扱える。
+//!
+//! 行のラベルや余白を押したときの処理は
+//! [`ListRow::on_activate`] で受ける。**ボタン・チェックボックス・入力欄を
+//! 直接押したときは呼ばれない**ので、行の処理と中のコントロールの処理が
+//! 二重に起きない (macOS は `NSTableView` の action、GTK / WinUI はイベントの
+//! ルーティング、Web は押された要素をたどって、どれも同じ切り分けにしている)。
+//! 押せるようにするかどうかは行を組み立てるときに決まるので、
+//! `set_rows` へ渡す前に指定する。
+//!
+//! ```no_run
+//! # use naui::{ListRow, Orientation, Result, Sizing, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let content = ui.stack(Orientation::Horizontal)?;
+//! let check = ui.checkbox("")?;
+//! content.append(&check);
+//! content.append(&ui.label("Wi-Fi")?);
+//! content.append(&ui.button("設定…")?);
+//! content.set_sizing(Sizing::fill_width());
+//!
+//! // 行全体は選ばせず、押されたらチェックだけを切り替える。
+//! let row = ListRow::new(&content).selectable(false);
+//! row.on_activate(move || check.set_checked(!check.is_checked()));
+//!
+//! let list = ui.list()?;
+//! list.set_rows(&[row]);
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! ## ツリー
 //!
@@ -712,7 +745,7 @@
 //! tree.on_expand(|path, expanded| println!("{path:?} は {expanded}"));
 //! tree.set_selected(&[0, 1]); // 通知せずに選ぶ (祖先は開かれる)
 //!
-//! // リストと同じく高さを自分では決めないので、指定しておく。
+//! // Tree は高さを自分では決めないので、指定しておく。
 //! tree.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(220.0)));
 //! # Ok(())
 //! # }
@@ -751,7 +784,7 @@
 //! ]));
 //! table.on_select(|indices| println!("{indices:?} が選ばれた"));
 //!
-//! // リストと同じく高さを自分では決めないので、指定しておく。
+//! // Table は高さを自分では決めないので、指定しておく。
 //! table.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(200.0)));
 //! # Ok(())
 //! # }
@@ -1079,26 +1112,26 @@ pub use naui_core::{
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
-    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
-    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
+    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
+    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
-    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
-    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
+    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
+    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
-    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
-    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
+    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
+    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -1108,10 +1141,10 @@ pub use naui_windows::{
 ))]
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, Menu,
-    Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup, Scroll,
-    SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker,
-    Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
+    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
+    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1457,6 +1490,11 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     list.select(0);
     list.select_many(&[0, 1]);
     list.on_select(|_indices: &[usize]| {});
+    let custom_content = ui.label("任意の行内容")?;
+    let custom_row = ListRow::new(&custom_content).selectable(false);
+    let _: bool = custom_row.is_selectable();
+    custom_row.on_activate(|| {});
+    list.set_rows(&[custom_row]);
 
     // --- ツリー -----------------------------------------------------------
     let tree: Tree = ui.tree()?;
