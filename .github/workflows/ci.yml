@@ -27,14 +27,19 @@ env:
 
 jobs:
   fmt:
-    name: 整形
+    name: 整形と lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
+      # バックエンドに依存しない naui-core だけは、どの環境でも同じ結果に
+      # なるのでここで見る。各バックエンドの clippy はそれぞれのジョブが持つ。
+      - name: clippy (naui-core)
+        run: cargo clippy -p naui-core --all-targets -- -D warnings
 
   macos:
     name: macOS (AppKit)
@@ -60,13 +65,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-windows -p naui -p counter -p gallery
-      # naui-windows には統合テストが無く、実行には Windows App SDK の
-      # ランタイムが要るので、バックエンド非依存の分だけ走らせる。
+        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p counter -p gallery
+      # 他の環境と同じく、バックエンドのクレートまで lint をかける。
+      # naui-windows は WinRT の生ポインタを触るので、警告を残さない。
+      - name: clippy
+        run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui --all-targets -- -D warnings
+      # ネイティブのコントロールを作る統合テストは Windows App SDK の
+      # ランタイムとデスクトップセッションが要るのでまだ持てない。
+      # ランタイム無しで通る単体テストとドキュメンテーションテストは、
+      # macOS / Linux と同じ範囲 (naui-core・バックエンド・naui) を走らせる。
       - name: テスト
-        run: cargo test -p naui-core
+        run: cargo test -p naui-core -p naui-winui3 -p naui-windows -p naui
 
   linux:
     name: Linux (GTK4 / libadwaita)
