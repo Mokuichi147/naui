@@ -223,9 +223,16 @@ impl Spacer {
 /// 行に載せた実ビューを保持し、Auto 行だけ必要高を再計算する。
 type GridCells = Rc<RefCell<Vec<(Retained<NSView>, GridCell)>>>;
 
+/// `Fill` の子に張った「横に伸びたい」希望と、その置き場所。
+///
+/// 伸びる量はほかの列が要る幅で決まるので、レイアウトのたびに定数を
+/// 引き直す。そのために、張った制約を場所とともに持っておく。
+type GridGrows = Rc<RefCell<Vec<(Retained<NSLayoutConstraint>, GridCell)>>>;
+
 struct ContentSizedGridState {
     row_tracks: Rc<RefCell<Vec<Track>>>,
     cells: GridCells,
+    grows: GridGrows,
     updating: Cell<bool>,
 }
 
@@ -245,7 +252,9 @@ define_class!(
             if self.ivars().updating.replace(true) {
                 return;
             }
-            if self.update_auto_row_heights() {
+            let rows = self.update_auto_row_heights();
+            let widths = self.update_grow_widths();
+            if rows || widths {
                 let _: () = unsafe { msg_send![super(self), layout] };
                 self.invalidateIntrinsicContentSize();
             }
@@ -259,10 +268,12 @@ impl ContentSizedGridView {
         mtm: MainThreadMarker,
         row_tracks: Rc<RefCell<Vec<Track>>>,
         cells: GridCells,
+        grows: GridGrows,
     ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(ContentSizedGridState {
             row_tracks,
             cells,
+            grows,
             updating: Cell::new(false),
         });
         unsafe { msg_send![super(this), init] }
@@ -305,6 +316,69 @@ impl ContentSizedGridView {
         }
         changed
     }
+
+    /// `Fill` の子に張った「横に伸びたい」希望を、そのセルの取り分に合わせる。
+    ///
+    /// 希望する幅は「グリッドの幅 − ほかの列が要る幅」。ほかの列の内容幅は
+    /// レイアウトのたびに変わるので、制約の定数として引き直す。
+    fn update_grow_widths(&self) -> bool {
+        let grows = self.ivars().grows.borrow();
+        if grows.is_empty() {
+            return false;
+        }
+        let widths = self.column_content_widths();
+        let mut changed = false;
+        for (constraint, cell) in grows.iter() {
+            let outside = self.width_outside_cell(cell, &widths);
+            if (constraint.constant() + outside).abs() > 0.5 {
+                constraint.setConstant(-outside);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// 列ごとの内容幅。複数列にまたがるセルは span へ均等に配る。
+    fn column_content_widths(&self) -> Vec<f64> {
+        let columns = self.numberOfColumns().max(0) as usize;
+        let mut widths = vec![0.0; columns];
+        for (view, cell) in self.ivars().cells.borrow().iter() {
+            if view.isHidden() {
+                continue;
+            }
+            let span = cell.column_span.max(1);
+            let each = (view.fittingSize().width / span as f64).max(0.0);
+            for width in widths
+                .iter_mut()
+                .take((cell.column + span).min(columns))
+                .skip(cell.column)
+            {
+                *width = f64::max(*width, each);
+            }
+        }
+        widths
+    }
+
+    /// このセルが使えない幅 (ほかの列の内容と、外周・列間の余白)。
+    fn width_outside_cell(&self, cell: &GridCell, widths: &[f64]) -> f64 {
+        let columns = widths.len();
+        let span = cell.column_span.max(1);
+        let end = (cell.column + span).min(columns);
+        let mut outside: f64 = widths
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index < cell.column || *index >= end)
+            .map(|(_, width)| *width)
+            .sum();
+        // 列間のすき間。セルがまたぐぶんはセルの取り分なので数えない。
+        outside += self.columnSpacing() * columns.saturating_sub(span) as f64;
+        // 外周の余白 (apply_padding が両端の列へ入れる)。
+        for index in 0..columns {
+            let column = self.columnAtIndex(index as isize);
+            outside += column.leadingPadding() + column.trailingPadding();
+        }
+        outside
+    }
 }
 
 struct GridInner {
@@ -312,6 +386,8 @@ struct GridInner {
     children: RefCell<Vec<Box<dyn Widget>>>,
     row_tracks: Rc<RefCell<Vec<Track>>>,
     cells: GridCells,
+    /// 横に伸びたい希望。セルの取り分に合わせて定数を引き直すため保持する。
+    grows: GridGrows,
     /// `native` と同じオブジェクト。Auto 行を再計算する subclass として保持する。
     content_sized: Retained<ContentSizedGridView>,
     padding: Cell<Padding>,
@@ -326,13 +402,16 @@ impl Grid {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let row_tracks = Rc::new(RefCell::new(Vec::new()));
         let cells = Rc::new(RefCell::new(Vec::new()));
-        let content_sized = ContentSizedGridView::new(mtm, row_tracks.clone(), cells.clone());
+        let grows: GridGrows = Rc::new(RefCell::new(Vec::new()));
+        let content_sized =
+            ContentSizedGridView::new(mtm, row_tracks.clone(), cells.clone(), grows.clone());
         let native = content_sized.clone().into_super();
         Self(Rc::new(GridInner {
             native,
             children: RefCell::new(Vec::new()),
             row_tracks,
             cells,
+            grows,
             content_sized,
             padding: Cell::new(Padding::ZERO),
         }))
@@ -435,19 +514,34 @@ impl Grid {
         self.0.cells.borrow_mut().push((view, cell));
         self.0.children.borrow_mut().push(child.boxed_clone());
         self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_grow_widths();
     }
 
-    /// `Fill` 行・列の子に「グリッドいっぱいまで伸びたい」という弱い希望を張る。
+    /// `Fill` 行・列の子に「余りのぶんだけ伸びたい」という弱い希望を張る。
     ///
     /// `NSGridView` の行・列の大きさは中身から決まり、**余りをどこへ渡すかは
     /// 決まっていない**。hugging priority だけでは足りず、`Auto` 側へ余白が
     /// 入ることがある。
     ///
-    /// そこで「グリッドと同じ幅 / 高さになりたい」を弱い優先度で足し、余りを
-    /// `Fill` の行・列へ誘導する。他のセルの内容サイズが先に勝つため、実際には
-    /// それらを除いた残りで止まり、グリッド自身を押し広げることもない。
+    /// そこで「グリッドと同じ大きさになりたい」を弱い優先度で足し、余りを
+    /// `Fill` の行・列へ誘導する。ただし**横はそのままだと、複数列のときに
+    /// 1 つのセルの子がグリッド全体の幅を要求してしまう**ので、ほかの列が
+    /// 要る幅を定数として差し引き、そのセル (結合していれば結合後の領域) の
+    /// 取り分だけを望むようにする。差し引く量は中身で変わるため、
+    /// [`ContentSizedGridView::update_grow_widths`] がレイアウトのたびに
+    /// 引き直す。
+    ///
+    /// 縦は `Auto` 行の高さを [`ContentSizedGridView::update_auto_row_heights`]
+    /// が必須の行高として決めているので、グリッドの高さのままでよい。
     fn set_grow_hint(&self, view: &NSView, cell: &GridCell, horizontal: bool, wanted: bool) {
         let identifier = grow_identifier(cell, horizontal);
+        if horizontal {
+            // 同じセルの古い希望は、定数を引き直す対象から外す。
+            self.0
+                .grows
+                .borrow_mut()
+                .retain(|(_, old)| old.column != cell.column || old.row != cell.row);
+        }
         // 同じセルに前へ張った希望があれば外す。
         let constraints = self.0.native.constraints();
         let previous: Vec<Retained<NSLayoutConstraint>> = (0..constraints.len())
@@ -473,7 +567,10 @@ impl Grid {
         };
         grow.setPriority(GRID_GROW_PRIORITY);
         grow.setIdentifier(Some(&NSString::from_str(&identifier)));
-        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[grow]));
+        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[grow.clone()]));
+        if horizontal {
+            self.0.grows.borrow_mut().push((grow, *cell));
+        }
     }
 
     /// いまの子を外し、指定した 1 つだけを置く。
@@ -498,6 +595,8 @@ impl Grid {
         target.setContentView(None);
         self.0.children.borrow_mut().clear();
         self.0.cells.borrow_mut().clear();
+        // 外したビューに掛かる制約は AppKit が落とすので、こちらの控えも捨てる。
+        self.0.grows.borrow_mut().clear();
         self.attach(child, cell);
     }
 

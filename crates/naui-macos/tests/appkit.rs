@@ -238,6 +238,10 @@ fn main() {
             grid_fill_row_keeps_the_rest,
         ),
         (
+            "グリッドの Fill の子がセルの取り分だけ広がる",
+            grid_fill_column_takes_only_its_share,
+        ),
+        (
             "Gallery のメディア欄が高さ変更後にラベル幅を広げない",
             gallery_media_status_does_not_expand,
         ),
@@ -5687,6 +5691,68 @@ fn scroll_content_fits_beside_a_legacy_scroller(ui: &Ui) -> Result<()> {
         "中身の幅はスクローラを除いた見える幅に合う"
     );
     window.close();
+    Ok(())
+}
+
+/// 複数列のグリッドでは、`Fill` の子はそのセルの取り分だけを望む。
+///
+/// グリッド全体の幅をそのまま望むと、同じ行にあるほかのセルの中身
+/// (compression resistance がこの希望より弱いもの) を押し潰しかねない。
+fn grid_fill_column_takes_only_its_share(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Auto);
+    grid.set_column_track(1, Track::FILL);
+    grid.set_column_track(2, Track::Auto);
+    grid.set_spacing(8.0, 0.0);
+
+    let leading = ui.checkbox("")?;
+    let middle = ui.stack(Orientation::Vertical)?;
+    middle.set_align(Align::Start);
+    middle.append(&ui.label("Wi-Fi")?);
+    middle.set_sizing(Sizing::fill_width());
+    let trailing = ui.button("オプション…")?;
+    grid.attach(&leading, GridCell::new(0, 0));
+    grid.attach(&middle, GridCell::new(1, 0));
+    grid.attach(&trailing, GridCell::new(2, 0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(600.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+
+    let leading_width = leading.native_view().frame().size.width;
+    let middle_width = middle.native_view().frame().size.width;
+    let trailing_width = trailing.native_view().frame().size.width;
+
+    // 望むのは「グリッドの幅 − ほかの列」。定数が引かれていないと、1 つの
+    // セルの子がグリッド全体の幅を要求してしまう。
+    let constraints = root.constraints();
+    let grow = (0..constraints.len())
+        .map(|index| constraints.objectAtIndex(index))
+        .find(|constraint| {
+            constraint
+                .identifier()
+                .is_some_and(|id| id.to_string() == "naui.grid.grow.width.1.0")
+        })
+        .expect("Fill のセルへ伸びる希望が張られていること");
+    assert!(
+        grow.constant() <= -(leading_width + trailing_width),
+        "ほかの列の幅が差し引かれていること: {} / {leading_width} + {trailing_width}",
+        grow.constant()
+    );
+
+    // それでいて、余りは Fill の列が受け取る。
+    assert!(
+        middle_width > 400.0,
+        "Fill の列が余りを受け取ること: {middle_width}"
+    );
+    assert!(
+        trailing_width > 60.0,
+        "ほかの列は中身の幅を保つこと: {trailing_width}"
+    );
+    assert!(
+        leading_width + middle_width + trailing_width <= 600.0,
+        "グリッドからはみ出さないこと: {leading_width} + {middle_width} + {trailing_width}"
+    );
     Ok(())
 }
 
