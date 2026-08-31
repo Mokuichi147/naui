@@ -500,9 +500,16 @@ macOS のカラーパネルはカタログ色 (`systemBlue` など) も返すの
 
 #### リスト
 
-縦に並ぶ一覧は `List` です。文字だけの行は `ListItem` で作り、`detail` を付けると
-補助の文字が添えられます。行の識別はインデックスで、選択は `SelectionMode` で
-単一と複数を選べます。
+縦に並ぶ一覧は `List` です。行の作り方は 2 通りあります。
+
+| 行の作り方 | 使う型 | 中身 |
+| --- | --- | --- |
+| `set_items` | `ListItem` | 文字だけの行。`detail` を付けると補助の文字が 2 行目に添えられます |
+| `set_rows` | `ListRow` | 任意のウィジェットを 1 行として並べます |
+
+どちらも**行の識別はインデックス**で、選択は `SelectionMode` で単一と複数を
+選べます。高さを指定しなければ全行に追従します
+([配置とサイズ](#配置とサイズ)を参照)。
 
 設定画面のように、先頭のチェックボックス・複数のラベル・末尾のボタンを持つ行は、
 `Grid` や `Stack` で組み立てて `ListRow` に包み、`set_rows` で表示します。
@@ -1222,6 +1229,12 @@ git push origin v0.2.0
 - `Fit::None` は GTK4 の `SCALE_DOWN` に対応するため、「原寸」ではなく
   「拡大しない」動作になります。
 - テーマはウィンドウ単位ではなくアプリ全体へ適用されます。
+- `List` は `GtkListBox` を `GtkScrolledWindow` へ載せたものです。行のクリック
+  (`ListRow::on_activate`) は `GtkListBox` の `row-activated` で受けます
+  (`GtkListBoxRow` の `activate` はキーボードの Enter / Space だけの経路です)。
+  `SelectionMode::Multiple` では、クリックに付いた Ctrl / Shift を GTK4 に
+  読ませるため単発クリックでの確定を切るので、**行のクリックは 2 回押しで
+  届きます**。
 - `Table` は `GtkColumnView` (`GtkListItemFactory` と `GListModel` を要求する)
   ではなく、`GtkListBox` の行を横並びにして組み立て、列の幅は列ごとの
   `GtkSizeGroup` でそろえています。並べ替えできる見出しは `flat` な
@@ -1274,8 +1287,9 @@ git push origin v0.2.0
   `white-space: nowrap` と `text-overflow: ellipsis` を入れて、他の 3 環境の
   既定 (1 行 + 省略記号) へそろえています。折り返したいときは
   `Label::set_wrap(true)` を使います。
-- `ListItem::detail` を使うと、`List` は `<select>` から
-  `<ul role="listbox">` を使った実装へ切り替わります。
+- `ListItem::detail` か `ListRow` (任意内容の行) を使うと、`List` は
+  `<select>` から `<ul role="listbox">` を使った実装へ切り替わります。
+  文字だけの行しか無ければ `<select size>` のままです。
 - `Tree` の `TreeItem::detail` は、行の高さをそろえるため
   `ラベル — 補助` の形で 1 行に収まります。
 - `EditableComboBox` は `<input list>` と `<datalist>` です。**4 環境のうち、
