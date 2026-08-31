@@ -412,9 +412,14 @@ impl Table {
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+        //
+        // 通知を受けた側が `set_selection` などで選択を書き換えると、その場で
+        // `SelectionChanged` がもう一度起きる。`with_mut` では二重借用の panic が
+        // WinRT の境界を越えてクラッシュになるため、再入を取りこぼしとして
+        // 扱える `try_with_mut` を使う (List・Tree と同じ)。
         let state = UiThreadCell::new(Rc::downgrade(&this.0));
         let handler = SelectionChangedEventHandler::new(move |_sender, _args| {
-            state.with_mut(|weak| {
+            let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
                     let table = Table(inner);
                     if !table.0.silent.get() {

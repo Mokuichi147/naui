@@ -20,6 +20,7 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 - 4 つのバックエンドを同じ API で利用可能
 - OS 標準の描画、入力、アクセシビリティ、テーマを活用
 - Rust 側でレイアウト計算やメディアのデコードを行わない軽量な設計
+  (プラットフォームを補う必要があるところは「既知の制限」に明記しています)
 - 共通 API で足りない場合はネイティブオブジェクトへアクセス可能
 - 最小サンプルと、種別ごとに全ウィジェットの特徴を確認できる Gallery を同梱
 
@@ -180,7 +181,9 @@ form.attach(&ui.label("名前")?, GridCell::new(0, 0));
 form.attach(&field, GridCell::new(1, 0));
 ```
 
-`List`、`Tree`、`Scroll`、`SplitView`、`TextArea` は内容から高さを決めないため、
+`List` の `Auto` 高さは全行に追従します。行数が多く、限られた領域で
+スクロールさせたいときは `Fixed` または `Fill` を指定します。
+`Tree`、`Scroll`、`SplitView`、`TextArea` は内容から高さを決めないため、
 通常は `set_sizing` で高さを指定します。
 
 ### 機能別の補足
@@ -264,7 +267,7 @@ split.set_sizing(Sizing::fill());  // 中身の高さでは決まらない
 画面がせまくて両方の最小を満たせないときは start 側が優先され、広がればまた
 指定した位置へ戻ります。
 
-`Scroll` や `List` と同じく**中身の大きさから高さは決まらない**ので、大きさは
+`Scroll` と同じく**中身の大きさから高さは決まらない**ので、大きさは
 `set_sizing` で指定します。区画は 2 つなので、3 つ以上に分けたいときは
 `SplitView` を入れ子にします。
 
@@ -497,6 +500,45 @@ Windows の WinUI 3 `ColorPicker` は、スペクトラムとスライダーを�
 macOS のカラーパネルはカタログ色 (`systemBlue` など) も返すので、成分を読む
 前に sRGB へ変換しています。
 
+#### リスト
+
+縦に並ぶ一覧は `List` です。行の作り方は 2 通りあります。
+
+| 行の作り方 | 使う型 | 中身 |
+| --- | --- | --- |
+| `set_items` | `ListItem` | 文字だけの行。`detail` を付けると補助の文字が 2 行目に添えられます |
+| `set_rows` | `ListRow` | 任意のウィジェットを 1 行として並べます |
+
+どちらも**行の識別はインデックス**で、選択は `SelectionMode` で単一と複数を
+選べます。高さを指定しなければ全行に追従します
+([配置とサイズ](#配置とサイズ)を参照)。
+
+設定画面のように、先頭のチェックボックス・複数のラベル・末尾のボタンを持つ行は、
+`Grid` や `Stack` で組み立てて `ListRow` に包み、`set_rows` で表示します。
+
+```rust
+use naui::{ListRow, Orientation, Sizing};
+
+let content = ui.stack(Orientation::Horizontal)?;
+let check = ui.checkbox("")?;
+content.append(&check);
+content.append(&ui.label("Wi-Fi")?);
+content.append(&ui.button("設定…")?);
+content.set_sizing(Sizing::fill_width());
+
+// 行全体は選ばせず、押されたらチェックだけを切り替える。
+let row = ListRow::new(&content).selectable(false);
+row.on_activate(move || check.set_checked(!check.is_checked()));
+
+let list = ui.list()?;
+list.set_rows(&[row]);
+```
+
+`on_activate` は**行のラベルや余白が押されたときだけ**呼ばれます。中のボタンや
+チェックボックスを直接押したときは、それぞれのコールバックだけが呼ばれるので、
+同じ操作が二重に起きません。押せるようにするかどうかは行を組み立てるときに
+決まるので、`set_rows` へ渡す前に指定します。
+
 #### テーブル
 
 列見出しを持つ表を出すには `Table` を使います。列は `TableColumn`、行は
@@ -553,7 +595,7 @@ table.on_sort(move |column, order| {
 `set_sort` で通知せずに指標だけを動かせます (起動時の既定の並び順を見せる
 とき)。`sort()` でいまの指定を読めます。
 
-行数が多いときは、リストと同じく `set_sizing` で高さを決めておきます
+行数が多いときは、`set_sizing` で表示領域の高さを決めておきます
 (中身の高さでは決まりません)。
 
 #### ツリー
@@ -844,7 +886,7 @@ tokio::spawn(async move {
 
 - `Sizing` / `Length` / `Track` / `GridCell`: 配置とサイズ
 - `NavItem`: ナビゲーション項目
-- `ListItem` / `SelectionMode`: リスト項目と単一・複数選択
+- `ListItem` / `ListRow` / `SelectionMode`: 単純なリスト項目、任意内容の行、単一・複数選択
 - `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
 - `DateTime` / `DatePickerMode`: 年月日と時分の値、日付選択で何を選ばせるか
 - `Time`: 時分だけの値 (時刻の選択でやり取りする値)
@@ -1018,7 +1060,10 @@ git push origin v0.2.0
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
 - `SplitView` の区画は 2 つだけで、仕切りも 1 本です。3 つ以上に分けるときは
   入れ子にします。区画をたたむ (幅 0 にして隠す) 指定はありません。
-- `List` は 1 列で、行に置けるのは `label` と `detail` の文字列だけです。
+- `List` は 1 列です。単純な行は `ListItem` の `label` / `detail`、複合行は
+  `ListRow` に包んだ任意の `Widget` で作れます。行そのものへのクリックは
+  `ListRow::on_activate` の 1 つだけで、右クリックや二度押しは受け取れません。
+  列が必要なデータ一覧には `Table` を使います。
 - `Table` のセルに置けるのも文字列だけです。見出しを押しての並べ替えは
   「どの列を、どちら向きに」を通知するところまでで、**行を並べ替えるのは
   アプリの仕事**です。列の幅をドラッグで変えられるのは macOS だけです。
@@ -1150,6 +1195,14 @@ git push origin v0.2.0
 - `Table` で幅を指定しなかった列への割り当ては naui が計算します。AppKit の
   列の自動調整は、幅を固定した列があると余りを配りきれず、表の右側が空いた
   ままになるためです。
+- `Grid` の `Auto` 行の高さと、`Fill` の子が受け取る取り分も naui が計算します
+  (「Rust 側でレイアウト計算を行わない」の**例外**です)。`NSGridView` は行と列の
+  大きさを中身から決めますが、**余りをどこへ渡すかは決まっておらず**、hugging
+  priority だけでは `Auto` の側へ余白が入ります。そこで `Auto` 行にはセル内容の
+  `fittingSize` を行の高さとして渡し、`Fill` の子には「グリッドの大きさ − ほかの
+  列が要る幅」まで伸びたいという弱い希望を張ります (固定幅の列はその指定幅、
+  それ以外はセル内容の `fittingSize` で見積もります)。**位置と大きさそのものを
+  決めるのは Auto Layout** で、naui が frame を置くわけではありません。
 - `Toolbar` の区切りは、macOS の作法にならって `NSToolbarSpaceItem`
   (一定幅の空き) になります。区切り線は引かれません。
 - `Toolbar` を付けるとウィンドウのタイトル文字は隠れます (macOS の作法)。
@@ -1192,6 +1245,12 @@ git push origin v0.2.0
 - `Fit::None` は GTK4 の `SCALE_DOWN` に対応するため、「原寸」ではなく
   「拡大しない」動作になります。
 - テーマはウィンドウ単位ではなくアプリ全体へ適用されます。
+- `List` は `GtkListBox` を `GtkScrolledWindow` へ載せたものです。行のクリック
+  (`ListRow::on_activate`) は `GtkListBox` の `row-activated` で受けます
+  (`GtkListBoxRow` の `activate` はキーボードの Enter / Space だけの経路です)。
+  `SelectionMode::Multiple` では、クリックに付いた Ctrl / Shift を GTK4 に
+  読ませるため単発クリックでの確定を切るので、**行のクリックは 2 回押しで
+  届きます**。
 - `Table` は `GtkColumnView` (`GtkListItemFactory` と `GListModel` を要求する)
   ではなく、`GtkListBox` の行を横並びにして組み立て、列の幅は列ごとの
   `GtkSizeGroup` でそろえています。並べ替えできる見出しは `flat` な
@@ -1244,8 +1303,24 @@ git push origin v0.2.0
   `white-space: nowrap` と `text-overflow: ellipsis` を入れて、他の 3 環境の
   既定 (1 行 + 省略記号) へそろえています。折り返したいときは
   `Label::set_wrap(true)` を使います。
-- `ListItem::detail` を使うと、`List` は `<select>` から
-  `<ul role="listbox">` を使った実装へ切り替わります。
+- `ListItem::detail` か `ListRow` (任意内容の行) を使うと、`List` は
+  `<select>` から `<ul role="listbox">` を使った実装へ切り替わります。
+  文字だけの行しか無ければ `<select size>` のままです。`<option>` の内容モデルは
+  テキストだけで、要素も改行も置けないためです。**`<select>` を離れたぶん、
+  選択・フォーカス・キー操作 (矢印・Home / End・Space) は `Table` と同じく naui が
+  足しています**。指している行は `aria-activedescendant` で示し、行そのものを
+  押したときはリスト (`<ul tabindex="0">`) へフォーカスを移してキーボードで
+  続けられるようにします。行の中に置いたボタンや入力欄はそれ自身のものなので、
+  そこへ届いたクリックとキーはリスト操作にしません (チェックボックスの Space が
+  行の選択に化けないようにするためです)。枠と選択の色はブラウザのシステム色
+  (`Field` / `SelectedItem` / `Highlight` / `GrayText`) のままです。
+- 任意内容の行は `role="option"` の中にボタンや入力欄が入るため、**ARIA の
+  「option の中に操作できるものを置かない」規定からは外れます**。Tab では行の中の
+  コントロールへ届き、それぞれの名前と役割もそのまま読まれますが、読み上げソフトの
+  ブラウズモードでは行が 1 つの項目として読まれ、中のコントロールが出ないことが
+  あります。`<option>` に要素を置けない以上、任意内容の行を出すにはこの形しか
+  ないため、行そのものの操作 (`ListRow::on_activate`) と行内のコントロールの
+  両方を残し、どちらの経路でも操作できるようにしています。
 - `Tree` の `TreeItem::detail` は、行の高さをそろえるため
   `ラベル — 補助` の形で 1 行に収まります。
 - `EditableComboBox` は `<input list>` と `<datalist>` です。**4 環境のうち、

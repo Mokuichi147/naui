@@ -855,6 +855,7 @@ impl Stack {
             let view = last.native_view();
             self.0.native.setCustomSpacing_afterView(0.0, &view);
         }
+        self.invalidate_natural_size();
     }
 
     pub fn set_padding(&self, padding: Padding) {
@@ -870,6 +871,7 @@ impl Stack {
         for constraint in self.0.fill_constraints.borrow().iter() {
             constraint.setConstant(-inset);
         }
+        self.invalidate_natural_size();
     }
 
     /// 交差軸方向に取られる余白の合計。
@@ -884,6 +886,17 @@ impl Stack {
 
     fn is_vertical(&self) -> bool {
         self.0.native.orientation() == NSUserInterfaceLayoutOrientation::Vertical
+    }
+
+    /// NSStackView 自身は intrinsic size を公開しないため、子や余白の変更を
+    /// Grid の Auto 行へ明示的に伝える。
+    fn invalidate_natural_size(&self) {
+        self.0.native.invalidateIntrinsicContentSize();
+        self.0.native.setNeedsLayout(true);
+        if let Some(parent) = unsafe { self.0.native.superview() } {
+            parent.invalidateIntrinsicContentSize();
+            parent.setNeedsLayout(true);
+        }
     }
 
     pub fn set_align(&self, align: Align) {
@@ -954,6 +967,7 @@ impl Stack {
         }
 
         self.0.children.borrow_mut().push(child.boxed_clone());
+        self.invalidate_natural_size();
     }
 
     /// 追加済みの子の数。

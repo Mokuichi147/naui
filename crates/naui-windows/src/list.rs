@@ -1,7 +1,8 @@
 //! リスト (WinUI 3)。
 //!
 //! WinUI 標準の `ListBox` を `ScrollViewer` に載せて使う。行は `ListBoxItem` で、
-//! 中身は `TextBlock`。選べない行は `IsEnabled = false`、
+//! 中身は透明な `Grid` に載せた `TextBlock` か、任意の組み立て済みウィジェット。
+//! 使えない行は `IsEnabled = false`、
 //! 複数選択とキーボード操作は `ListBox`、スクロールは外側の `ScrollViewer` が行う。
 //!
 //! 土台は WinUI 標準の `ListBox`。`ListView` は [`naui_winui3`] の投影に
@@ -28,11 +29,11 @@ use std::sync::Arc;
 
 use naui_core::{ListItem, Result, SelectionMode};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    ListBox as XamlListBox, ListBoxItem, Orientation as XamlOrientation, ScrollBarVisibility,
-    ScrollViewer, SelectionChangedEventHandler, SelectionMode as XamlSelectionMode, StackPanel,
-    TextBlock,
+    Grid as XamlGrid, ListBox as XamlListBox, ListBoxItem, Orientation as XamlOrientation,
+    ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler,
+    SelectionMode as XamlSelectionMode, StackPanel, TextBlock,
 };
-use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{ResourceDictionary, Style, UIElement};
 use windows::Foundation::PropertyValue;
@@ -42,6 +43,126 @@ use crate::layout::ListScrollTarget;
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
+
+/// 行がクリックされたことの通知先。
+///
+/// WinRT のデリゲートは `Send + Sync` を要求するため `UiThreadCell` に載せる。
+/// 呼び出しの間だけクロージャを取り出すので、コールバックの中から
+/// 同じ行を操作しても二重借用にならない。
+#[derive(Clone)]
+struct ActivationHandler(HandlerCell<dyn FnMut()>);
+
+impl ActivationHandler {
+    fn new() -> Self {
+        Self(Arc::new(UiThreadCell::new(None)))
+    }
+
+    fn set(&self, f: impl FnMut() + 'static) {
+        self.0.with_mut(|slot| *slot = Some(Box::new(f)));
+    }
+
+    fn emit(&self) {
+        // WinRT のデリゲートから panic を出さないよう try_ 系で触る。
+        let Some(Some(mut f)) = self.0.try_with_mut(|slot| slot.take()) else {
+            return;
+        };
+        f();
+        self.0.try_with_mut(|slot| {
+            if slot.is_none() {
+                *slot = Some(f);
+            }
+        });
+    }
+}
+
+/// 1 行の内容。通常の文字行も任意ウィジェット行も同じ型へ正規化する。
+enum ListRowContent {
+    Item(ListItem),
+    Custom(Box<dyn Widget>),
+}
+
+impl Clone for ListRowContent {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Item(item) => Self::Item(item.clone()),
+            Self::Custom(content) => Self::Custom(content.boxed_clone()),
+        }
+    }
+}
+
+/// リストへ載せる 1 行。
+///
+/// [`ListItem`] は文字列だけで済む一覧向けの簡便 API であり、設定画面のように
+/// アイコン、複数のラベル、チェックボックス、末尾のボタンなどを組み合わせる
+/// 行は `Grid` / `Stack` で作って `ListRow` に包む。
+///
+/// ```no_run
+/// # use naui_windows::{ListRow, Widget};
+/// # fn row(content: &dyn Widget) {
+/// let row = ListRow::new(content).selectable(false);
+/// row.on_activate(|| println!("行がクリックされました"));
+/// # let _ = row;
+/// # }
+/// ```
+pub struct ListRow {
+    content: ListRowContent,
+    selectable: bool,
+    activation: ActivationHandler,
+}
+
+impl Clone for ListRow {
+    fn clone(&self) -> Self {
+        Self {
+            content: self.content.clone(),
+            selectable: self.selectable,
+            activation: self.activation.clone(),
+        }
+    }
+}
+
+impl ListRow {
+    /// ウィジェットを 1 行の内容として使う。既定では行全体も選択できる。
+    pub fn new(content: &dyn Widget) -> Self {
+        Self {
+            content: ListRowContent::Custom(content.boxed_clone()),
+            selectable: true,
+            activation: ActivationHandler::new(),
+        }
+    }
+
+    /// `ListItem` を通常の文字行へ変換する。`List::set_items` の正規化経路。
+    fn from_item(item: ListItem) -> Self {
+        let selectable = item.enabled;
+        Self {
+            content: ListRowContent::Item(item),
+            selectable,
+            activation: ActivationHandler::new(),
+        }
+    }
+
+    /// 行内のコントロールだけを操作する行では `false` にする。
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+
+    /// 行内のラベル・アイコン・余白がクリックされたときに呼ぶ処理。
+    ///
+    /// チェックボックス、ボタン、入力欄などのコントロールを直接押した場合は
+    /// 呼ばれないため、同じ操作が二重に発火しない。
+    pub fn on_activate(&self, f: impl FnMut() + 'static) {
+        self.activation.set(f);
+    }
+
+    /// 行そのものも中身も操作できない行 (`ListItem::enabled(false)`)。
+    fn is_disabled_item(&self) -> bool {
+        matches!(&self.content, ListRowContent::Item(item) if !item.enabled)
+    }
+}
 
 /// 一覧の枠。`ListBox` 自身は中身の高さいっぱいに伸びてしまい、角丸も境界線も
 /// 見えなくなるため、見えている大きさと一致する外側の `ScrollViewer` に持たせる。
@@ -171,6 +292,12 @@ const ROW_STYLE_XAML: &str = r##"<ResourceDictionary
     </Style>
 </ResourceDictionary>"##;
 
+/// 行の中身を載せる器。`Background="Transparent"` にすると、文字の無い余白でも
+/// ポインターを受け取れる (行そのもののクリックを拾うため)。
+const ROW_HOST_XAML: &str = r##"<Grid
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    Background="Transparent"/>"##;
+
 /// 行の副次テキスト。色は Fluent の副次テキスト用テーマリソースから引く。
 const DETAIL_XAML: &str = r##"<TextBlock
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -266,8 +393,10 @@ struct ListInner {
     list_box: XamlListBox,
     _wheel: Rc<ListScrollTarget>,
     /// 行そのもの。選択の読み書きはここを通す。
-    rows: RefCell<Vec<ListBoxItem>>,
-    items: RefCell<Vec<ListItem>>,
+    native_rows: RefCell<Vec<ListBoxItem>>,
+    /// 行のモデル。選べるかどうかも activation もここから引く。
+    /// 行に含まれるコールバック等を生かしておく役目も持つ。
+    rows: RefCell<Vec<ListRow>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     /// プログラムから選択を変えている間だけ通知を止める。
@@ -310,8 +439,8 @@ impl List {
             native,
             list_box,
             _wheel: wheel,
+            native_rows: RefCell::new(Vec::new()),
             rows: RefCell::new(Vec::new()),
-            items: RefCell::new(Vec::new()),
             mode: Cell::new(SelectionMode::Single),
             handler: SelectionHandler::new(),
             silent: Rc::new(Cell::new(false)),
@@ -320,13 +449,22 @@ impl List {
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+        //
+        // 選べない行が押されたときは、この中から選択を描き戻す。その書き戻しで
+        // `SelectionChanged` がその場でもう一度起きるため、`with_mut` では
+        // 二重借用の panic が WinRT の境界を越えてクラッシュになる。再入を
+        // 取りこぼしとして扱える `try_with_mut` を使う (再入時は `silent` が
+        // 立っていて、どのみち捨てる通知になる)。
         let state = UiThreadCell::new(Rc::downgrade(&this.0));
         let handler = SelectionChangedEventHandler::new(move |_sender, _args| {
-            state.with_mut(|weak| {
+            let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
                     let list = List(inner);
                     if !list.0.silent.get() {
                         let indices = list.selection();
+                        // 任意内容の設定行など、行全体を選ばない項目へ付いた
+                        // ListBox の選択は即座に戻す。子の Button 等は無効にしない。
+                        list.write_selection(&indices);
                         list.0.handler.emit(&indices);
                     }
                 }
@@ -381,10 +519,19 @@ impl List {
 
     /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
     pub fn set_items(&self, items: &[ListItem]) {
-        let _ = self.rebuild(items);
+        let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
+        self.set_rows(&rows);
     }
 
-    fn rebuild(&self, items: &[ListItem]) -> Result<()> {
+    /// 行を作り直す。通常の文字行も任意内容の行もこの経路で組み立てる。
+    ///
+    /// 行内のコントロールは通常どおりそれぞれのコールバックを持てる。
+    /// インデックスの意味が変わるため、選択は外れる。
+    pub fn set_rows(&self, rows: &[ListRow]) {
+        let _ = self.rebuild(rows);
+    }
+
+    fn rebuild(&self, rows: &[ListRow]) -> Result<()> {
         let children = self
             .0
             .list_box
@@ -392,26 +539,31 @@ impl List {
             .map_err(|e| to_error("行の取得", e))?;
         self.without_notifying(|_| children.Clear())
             .map_err(|e| to_error("行の消去", e))?;
-        self.0.rows.borrow_mut().clear();
+        self.0.native_rows.borrow_mut().clear();
 
-        let mut rows = Vec::with_capacity(items.len());
-        for item in items {
-            let row = ListBoxItem::new().map_err(|e| to_error("ListBoxItem の生成", e))?;
+        let mut native_rows = Vec::with_capacity(rows.len());
+        for row in rows {
+            let native = ListBoxItem::new().map_err(|e| to_error("ListBoxItem の生成", e))?;
             if let Some(style) = self.0.row_style.as_ref() {
-                let _ = row.SetStyle(style);
+                let _ = native.SetStyle(style);
             }
-            set_row_content(&row, item)?;
-            let _ = row.SetIsEnabled(item.enabled);
+            let host = row_host(row)?;
+            native
+                .SetContent(&host)
+                .map_err(|e| to_error("行への内容設定", e))?;
+            // 選べないだけの行は中のコントロールを押せる必要があるので、
+            // 無効にするのは `ListItem::enabled(false)` の行だけ。
+            let _ = native.SetIsEnabled(!row.is_disabled_item());
 
-            let element = row
+            let element = native
                 .cast::<IInspectable>()
                 .map_err(|e| to_error("行の要素化", e))?;
             self.without_notifying(|_| children.Append(&element))
                 .map_err(|e| to_error("行の追加", e))?;
-            rows.push(row);
+            native_rows.push(native);
         }
-        *self.0.rows.borrow_mut() = rows;
-        *self.0.items.borrow_mut() = items.to_vec();
+        *self.0.native_rows.borrow_mut() = native_rows;
+        *self.0.rows.borrow_mut() = rows.to_vec();
         self.write_selection(&[]);
         Ok(())
     }
@@ -451,12 +603,16 @@ impl List {
 
     /// 選ばれている行 (昇順)。単一選択なら 0 件か 1 件。
     pub fn selection(&self) -> Vec<usize> {
+        let rows = self.0.rows.borrow();
         self.0
-            .rows
+            .native_rows
             .borrow()
             .iter()
             .enumerate()
-            .filter(|(_, row)| row.IsSelected().unwrap_or(false))
+            .filter(|(index, native)| {
+                rows.get(*index).is_some_and(ListRow::is_selectable)
+                    && native.IsSelected().unwrap_or(false)
+            })
             .map(|(index, _)| index)
             .collect()
     }
@@ -471,7 +627,7 @@ impl List {
     /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
     /// ([`SelectionMode::normalize`])。
     pub fn set_selection(&self, indices: &[usize]) {
-        let picked = self.0.mode.get().normalize(&self.0.items.borrow(), indices);
+        let picked = self.normalize(indices);
         self.write_selection(&picked);
     }
 
@@ -506,11 +662,18 @@ impl List {
         self.0.list_box.clone()
     }
 
+    fn normalize(&self, indices: &[usize]) -> Vec<usize> {
+        let rows = self.0.rows.borrow();
+        self.0.mode.get().normalize_by(indices, |index| {
+            rows.get(index).is_some_and(ListRow::is_selectable)
+        })
+    }
+
     /// 選択をそのまま行へ書き込む (通知は起きない)。
     fn write_selection(&self, indices: &[usize]) {
         self.without_notifying(|this| {
-            for (index, row) in this.0.rows.borrow().iter().enumerate() {
-                let _ = row.SetIsSelected(indices.contains(&index));
+            for (index, native) in this.0.native_rows.borrow().iter().enumerate() {
+                let _ = native.SetIsSelected(indices.contains(&index));
             }
         });
     }
@@ -530,42 +693,91 @@ impl Drop for ListInner {
     }
 }
 
-/// 行の中身を組み立てる。
+/// 行の中身を、押されたことを拾える器に載せる。
 ///
-/// `detail` が無ければ `TextBlock` 1 つ、あれば縦の `StackPanel` に 2 つ入れる。
-/// 縦の位置合わせは WinUI のレイアウトパスが行うので、naui は組むだけ。
-fn set_row_content(row: &ListBoxItem, item: &ListItem) -> Result<()> {
-    let title = text_block(&item.label, false)?;
-    match &item.detail {
-        None => row
-            .SetContent(&title)
-            .map_err(|e| to_error("行への内容設定", e)),
-        Some(detail) => {
-            let panel = StackPanel::new().map_err(|e| to_error("行の StackPanel の生成", e))?;
-            panel
-                .SetOrientation(XamlOrientation::Vertical)
-                .map_err(|e| to_error("行の向き設定", e))?;
-            let children = panel
-                .Children()
-                .map_err(|e| to_error("行の中身の取得", e))?;
-            children
-                .Append(
-                    &title
-                        .cast::<UIElement>()
-                        .map_err(|e| to_error("行の要素化", e))?,
-                )
-                .map_err(|e| to_error("行への追加", e))?;
-            let sub = text_block(detail, true)?;
-            children
-                .Append(
-                    &sub.cast::<UIElement>()
-                        .map_err(|e| to_error("行の要素化", e))?,
-                )
-                .map_err(|e| to_error("行への追加", e))?;
-            row.SetContent(&panel)
-                .map_err(|e| to_error("行への内容設定", e))
+/// 器の `Background` は透明なので、文字の無い余白で押しても
+/// `PointerPressed` が届く。ボタン・チェックボックス・入力欄はこの
+/// イベントを自分で処理して止めるため、行の activation とは二重に
+/// 発火しない (ほかの環境と同じ切り分け)。
+fn row_host(row: &ListRow) -> Result<XamlGrid> {
+    let host = match XamlReader::Load(&HSTRING::from(ROW_HOST_XAML))
+        .and_then(|element| element.cast::<XamlGrid>())
+    {
+        Ok(host) => host,
+        // 透明な背景を持てないと余白では押せなくなるが、
+        // 文字やアイコンの上では届くので動作を優先する。
+        Err(_) => XamlGrid::new().map_err(|e| to_error("行の器の生成", e))?,
+    };
+    let children = host.Children().map_err(|e| to_error("行の器の取得", e))?;
+    children
+        .Append(&row_content(row)?)
+        .map_err(|e| to_error("行への追加", e))?;
+
+    let activation = row.activation.clone();
+    let handler = PointerEventHandler::new(move |_sender, args| {
+        // 右クリックは行の操作にしない (macOS の mouseDown と同じ扱い)。
+        if !is_primary_press(args.as_ref()) {
+            return Ok(());
         }
-    }
+        activation.emit();
+        Ok(())
+    });
+    let _ = host.PointerPressed(&handler);
+    Ok(host)
+}
+
+/// 押されたのが主ボタン (左クリック・タッチ・ペン) か。
+fn is_primary_press(args: Option<&PointerRoutedEventArgs>) -> bool {
+    let Some(args) = args else {
+        return false;
+    };
+    args.GetCurrentPoint(Option::<&UIElement>::None)
+        .and_then(|point| point.Properties())
+        .and_then(|properties| properties.IsLeftButtonPressed())
+        .unwrap_or(false)
+}
+
+/// 1 行分の中身を作る。
+///
+/// 文字行は `detail` が無ければ `TextBlock` 1 つ、あれば縦の `StackPanel` に
+/// 2 つ入れる。縦の位置合わせは WinUI のレイアウトパスが行うので、naui は
+/// 組むだけ。任意内容の行は、組み立て済みのウィジェットをそのまま使う。
+fn row_content(row: &ListRow) -> Result<UIElement> {
+    let item = match &row.content {
+        ListRowContent::Custom(content) => return Ok(content.native_element()),
+        ListRowContent::Item(item) => item,
+    };
+    let title = text_block(&item.label, false)?;
+    let Some(detail) = &item.detail else {
+        return title
+            .cast::<UIElement>()
+            .map_err(|e| to_error("行の要素化", e));
+    };
+
+    let panel = StackPanel::new().map_err(|e| to_error("行の StackPanel の生成", e))?;
+    panel
+        .SetOrientation(XamlOrientation::Vertical)
+        .map_err(|e| to_error("行の向き設定", e))?;
+    let children = panel
+        .Children()
+        .map_err(|e| to_error("行の中身の取得", e))?;
+    children
+        .Append(
+            &title
+                .cast::<UIElement>()
+                .map_err(|e| to_error("行の要素化", e))?,
+        )
+        .map_err(|e| to_error("行への追加", e))?;
+    let sub = text_block(detail, true)?;
+    children
+        .Append(
+            &sub.cast::<UIElement>()
+                .map_err(|e| to_error("行の要素化", e))?,
+        )
+        .map_err(|e| to_error("行への追加", e))?;
+    panel
+        .cast::<UIElement>()
+        .map_err(|e| to_error("行の要素化", e))
 }
 
 /// 行に載せる 1 本の文字。`secondary` なら Fluent の副次テキストに合わせる。

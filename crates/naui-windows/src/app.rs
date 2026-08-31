@@ -8,6 +8,7 @@ use std::ptr::NonNull;
 
 use naui_core::{Error, Result, Theme};
 use naui_winui3::Microsoft::UI::Xaml::Controls::XamlControlsResources;
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Markup::{
     IXamlMetadataProvider, IXamlMetadataProvider_Impl, IXamlMetadataProvider_Vtbl, IXamlType,
     XmlnsDefinition,
@@ -52,12 +53,27 @@ where
         // これが無いと `ContentDialog` のようにテーマリソースへ強く頼る
         // コントロールが、素の見た目 (角が丸くない・影が無い) で出る。
         //
-        // naui からの上書きは足さない。枠線・角丸・余白は WinUI 3 の既定の
+        // 見た目の上書きは足さない。枠線・角丸・余白は WinUI 3 の既定の
         // スタイル (`ButtonPadding` や `TextControlThemePadding` など) が
         // 決める。ここで上書きすると、実機の WinUI 3 アプリと見た目がずれる。
         let fluent = XamlControlsResources::new()?
             .cast::<naui_winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
-        current.Resources()?.MergedDictionaries()?.Append(&fluent)?;
+        // 例外はレイアウトに関わる下限だけ。WinUI 既定の CheckBox は
+        // MinWidth=120 で、ラベルが短くても (空でも) 120px ぶんの幅を占める。
+        // naui は幅を親のレイアウトで決めるので、この下限は外して中身に
+        // 沿わせる。
+        let layout = XamlReader::Load(&HSTRING::from(
+            r##"<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+                <Style TargetType="CheckBox">
+                    <Setter Property="MinWidth" Value="0"/>
+                </Style>
+            </ResourceDictionary>"##,
+        ))?
+        .cast::<naui_winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
+        // 後から足したものが勝つ。naui の上書きは Fluent の後に置く。
+        let merged = current.Resources()?.MergedDictionaries()?;
+        merged.Append(&fluent)?;
+        merged.Append(&layout)?;
         let Some(build) = self.this.state.with_mut_cross_thread(|build| build.take()) else {
             return Ok(());
         };

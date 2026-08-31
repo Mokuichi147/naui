@@ -61,7 +61,7 @@ pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
-pub use list::List;
+pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
