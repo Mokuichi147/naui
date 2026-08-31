@@ -151,16 +151,19 @@ impl ListRow {
 const ROW_CONTROLS: &str = "button, input, select, textarea, a[href], label, summary, \
 [role=\"button\"], [contenteditable=\"true\"]";
 
-/// 行の中のコントロールが押されたか。
-fn control_was_clicked(option: &HtmlElement, event: &Event) -> bool {
+/// 行の中のコントロールへ向いたイベントか。
+///
+/// クリックだけでなくキー操作にも使う。`container` には、クリックなら行、
+/// キー操作ならリストそのものを渡す。
+fn control_was_targeted(container: &HtmlElement, event: &Event) -> bool {
     let Some(target) = event.target().and_then(|t| t.dyn_into::<Element>().ok()) else {
         return false;
     };
     let Ok(Some(control)) = target.closest(ROW_CONTROLS) else {
         return false;
     };
-    // 行より内側で見つかったときだけ、コントロールの操作とみなす。
-    !control.is_same_node(Some(option.as_ref())) && option.contains(Some(control.as_ref()))
+    // 内側で見つかったときだけ、コントロールの操作とみなす。
+    !control.is_same_node(Some(container.as_ref())) && container.contains(Some(control.as_ref()))
 }
 
 /// `size` の下限。1 以下だとドロップダウンになる。
@@ -525,13 +528,18 @@ impl List {
             listeners.push(Listener::attach_event(option.as_ref(), "click", {
                 let weak = Rc::downgrade(&self.0);
                 let option = option.clone();
+                let list = list.clone();
                 move |event| {
                     let Some(inner) = weak.upgrade() else {
                         return;
                     };
                     // Button や input 自身の操作はそのまま通し、行そのものが
                     // 押されたときだけ activation を出す。
-                    if !control_was_clicked(&option, &event) {
+                    if !control_was_targeted(&option, &event) {
+                        // クリックの続きを矢印キーで行えるように、
+                        // リストへフォーカスを移す (行内のコントロールを
+                        // 押したときは、そのコントロールから奪わない)。
+                        let _ = list.focus();
                         let activation = inner
                             .rows
                             .borrow()
@@ -558,10 +566,17 @@ impl List {
 
         listeners.push(Listener::attach_event(list.as_ref(), "keydown", {
             let weak = Rc::downgrade(&self.0);
+            let list = list.clone();
             move |event| {
                 let Some(inner) = weak.upgrade() else {
                     return;
                 };
+                // 行内のコントロールが受けたキーは、そのコントロールのもの。
+                // リスト操作として横取りすると、チェックボックスの Space や
+                // 入力欄の矢印キーが動かなくなる。
+                if control_was_targeted(&list, &event) {
+                    return;
+                }
                 if let Some(key) = event.dyn_ref::<KeyboardEvent>() {
                     if List(inner).on_key(key) {
                         event.prevent_default();
