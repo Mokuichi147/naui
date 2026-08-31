@@ -338,25 +338,39 @@ impl ContentSizedGridView {
         changed
     }
 
-    /// 列ごとの内容幅。複数列にまたがるセルは span へ均等に配る。
+    /// 列ごとに要る幅。
+    ///
+    /// 幅を決め打ちした列 (`Track::Fixed`) は中身に関わらずその幅を占めるので、
+    /// 内容幅ではなく指定された幅を使う。それ以外は載っている中身の
+    /// `fittingSize` から決め、複数列にまたがるセルは span へ均等に配る。
     fn column_content_widths(&self) -> Vec<f64> {
         let columns = self.numberOfColumns().max(0) as usize;
-        let mut widths = vec![0.0; columns];
+        let fixed: Vec<Option<f64>> = (0..columns)
+            .map(|index| self.fixed_column_width(index))
+            .collect();
+        let mut widths: Vec<f64> = fixed.iter().map(|width| width.unwrap_or(0.0)).collect();
         for (view, cell) in self.ivars().cells.borrow().iter() {
             if view.isHidden() {
                 continue;
             }
             let span = cell.column_span.max(1);
             let each = (view.fittingSize().width / span as f64).max(0.0);
-            for width in widths
-                .iter_mut()
-                .take((cell.column + span).min(columns))
-                .skip(cell.column)
-            {
-                *width = f64::max(*width, each);
+            for index in cell.column..(cell.column + span).min(columns) {
+                if fixed[index].is_some() {
+                    continue;
+                }
+                widths[index] = f64::max(widths[index], each);
             }
         }
         widths
+    }
+
+    /// 幅を決め打ちした列なら、その幅。中身に合わせる列 (`Auto` / `Fill`) は `None`。
+    fn fixed_column_width(&self, index: usize) -> Option<f64> {
+        let width = self.columnAtIndex(index as isize).width();
+        // `NSGridViewSizeForContent` は「中身に合わせる」を表す番兵値。
+        let content = unsafe { objc2_app_kit::NSGridViewSizeForContent };
+        (width != content && width.is_finite() && width > 0.0).then_some(width)
     }
 
     /// このセルが使えない幅 (ほかの列の内容と、外周・列間の余白)。

@@ -242,6 +242,10 @@ fn main() {
             grid_fill_column_takes_only_its_share,
         ),
         (
+            "グリッドの Fill の子が固定幅の列を奪わない",
+            grid_fill_column_leaves_fixed_columns,
+        ),
+        (
             "Gallery のメディア欄が高さ変更後にラベル幅を広げない",
             gallery_media_status_does_not_expand,
         ),
@@ -5752,6 +5756,76 @@ fn grid_fill_column_takes_only_its_share(ui: &Ui) -> Result<()> {
     assert!(
         leading_width + middle_width + trailing_width <= 600.0,
         "グリッドからはみ出さないこと: {leading_width} + {middle_width} + {trailing_width}"
+    );
+    Ok(())
+}
+
+/// 幅を決め打ちした列は、中身が短くても `Fill` の子に食われない。
+///
+/// 取り分を中身の幅だけで見積もると、固定幅の列に載せたものが短いときに
+/// `Fill` の列へ余分な幅を渡してしまい、後続の列と重なる。
+fn grid_fill_column_leaves_fixed_columns(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fixed(120.0));
+    grid.set_column_track(1, Track::FILL);
+    grid.set_column_track(2, Track::Auto);
+    grid.set_spacing(8.0, 0.0);
+
+    // 120pt の列に、それより狭い中身を置く。
+    let leading = ui.label("短い")?;
+    let middle = ui.stack(Orientation::Vertical)?;
+    middle.set_align(Align::Start);
+    middle.append(&ui.label("本文")?);
+    middle.set_sizing(Sizing::fill_width());
+    let trailing = ui.button("オプション…")?;
+    grid.attach(&leading, GridCell::new(0, 0));
+    grid.attach(&middle, GridCell::new(1, 0));
+    grid.attach(&trailing, GridCell::new(2, 0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(600.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+
+    let leading_width = leading.native_view().frame().size.width;
+    let middle_frame = middle.native_view().frame();
+    let trailing_frame = trailing.native_view().frame();
+    assert!(
+        leading_width < 120.0,
+        "固定幅より中身が狭いこと (この検査の前提): {leading_width}"
+    );
+
+    // 差し引くのは中身の幅ではなく、列に指定した 120pt。
+    let constraints = root.constraints();
+    let grow = (0..constraints.len())
+        .map(|index| constraints.objectAtIndex(index))
+        .find(|constraint| {
+            constraint
+                .identifier()
+                .is_some_and(|id| id.to_string() == "naui.grid.grow.width.1.0")
+        })
+        .expect("Fill のセルへ伸びる希望が張られていること");
+    assert!(
+        grow.constant() <= -(120.0 + trailing_frame.size.width),
+        "固定幅の列がそのまま差し引かれること: {} / 120 + {}",
+        grow.constant(),
+        trailing_frame.size.width
+    );
+
+    assert!(
+        middle_frame.origin.x >= 120.0,
+        "Fill の列が固定幅の列へ食い込まないこと: {middle_frame:?}"
+    );
+    assert!(
+        middle_frame.origin.x + middle_frame.size.width <= trailing_frame.origin.x + 0.5,
+        "Fill の列が後続の列と重ならないこと: {middle_frame:?} / {trailing_frame:?}"
+    );
+    assert!(
+        trailing_frame.origin.x + trailing_frame.size.width <= 600.5,
+        "グリッドからはみ出さないこと: {trailing_frame:?}"
+    );
+    assert!(
+        middle_frame.size.width > 300.0,
+        "それでも余りは Fill の列が受け取ること: {middle_frame:?}"
     );
     Ok(())
 }
