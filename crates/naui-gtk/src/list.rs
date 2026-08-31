@@ -184,6 +184,29 @@ impl List {
             })
         };
         *inner.handler.borrow_mut() = Some(id);
+        // 行のクリックは `GtkListBox` の `row-activated` にだけ出る。
+        // `GtkListBoxRow` の `activate` (キーボードの Enter / Space) も
+        // 同じ経路へ入るので、通知はここ 1 か所で受ける。
+        {
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_row_activated(move |_, row| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let Ok(index) = usize::try_from(row.index()) else {
+                    return;
+                };
+                // 通知の中から `set_rows` を呼べるように、借りたまま呼ばない。
+                let activation = inner
+                    .rows
+                    .borrow()
+                    .get(index)
+                    .map(|row| row.activation.clone());
+                if let Some(activation) = activation {
+                    activation.emit();
+                }
+            });
+        }
         Self(inner)
     }
 
@@ -341,7 +364,5 @@ fn build_row(item: &ListRow) -> gtk::ListBoxRow {
     if matches!(&item.content, ListRowContent::Item(item) if !item.enabled) {
         row.set_sensitive(false);
     }
-    let activation = item.activation.clone();
-    row.connect_activate(move |_| activation.emit());
     row
 }

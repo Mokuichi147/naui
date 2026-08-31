@@ -2407,6 +2407,14 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
 ///
 /// 行内のボタンやチェックボックスは自分でクリックを受け取るので、
 /// GTK 側でも行の activation とは二重に発火しない。
+/// マウスで行を押したときに `GtkListBox` が出す通知。
+///
+/// GTK4 の `GtkGestureClick` は `row-activated` を出すだけで、
+/// `GtkListBoxRow::activate` (キーボード側) は通らない。
+fn activate_row(list: &gtk::ListBox, row: &gtk::ListBoxRow) {
+    list.emit_by_name::<()>("row-activated", &[row]);
+}
+
 fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
     let content = ui.stack(Orientation::Horizontal)?;
     let check = ui.checkbox("")?;
@@ -2442,18 +2450,25 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
         first.is_activatable(),
         "選べない行でもクリックは受け取れること"
     );
-    first.emit_activate();
+
+    // マウスのクリックは `GtkListBoxRow` の `activate` を出さない。
+    // `GtkListBox` が `row-activated` を出すだけなので、そちらで確かめる。
+    activate_row(&native, &first);
     assert_eq!(log.borrow().as_slice(), [true]);
     assert!(check.is_checked(), "行のクリックからチェックが変わること");
 
     // 2 回目も同じクロージャが呼ばれる (取り出したまま失われない)。
-    first.emit_activate();
+    activate_row(&native, &first);
     assert_eq!(log.borrow().as_slice(), [true, false]);
 
+    // キーボード (Enter / Space) は行の `activate` から同じ経路へ入る。
+    first.emit_activate();
+    assert_eq!(log.borrow().as_slice(), [true, false, true]);
+
     let second = native.row_at_index(1).expect("2 行目");
-    second.emit_activate();
+    activate_row(&native, &second);
     assert_eq!(text_log.borrow().len(), 1);
-    assert_eq!(log.borrow().len(), 2, "他の行は呼ばれないこと");
+    assert_eq!(log.borrow().len(), 3, "他の行は呼ばれないこと");
 
     // 使えない行は押せない。
     list.set_items(&[ListItem::new("停止中").enabled(false)]);
