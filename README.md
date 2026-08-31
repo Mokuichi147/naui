@@ -1107,24 +1107,27 @@ git push origin v0.2.0
   見つからない場合は、候補の選択と Enter での確定だけが通知されます。
   **候補の一覧は打った文字で絞り込まれません** (`IsTextSearchEnabled` は
   一致する候補へ選択を移すだけです)。打った文字で候補を出す `AutoSuggestBox` は
-  `SearchInput` が自前投影で使っていますが、あちらは候補を「開いて全部見る」
+  `SearchInput` が最小限の投影で使っていますが、あちらは候補を「開いて全部見る」
   ことができません。`EditableComboBox` は一覧を開いて選べることを軸にしている
   ので、Fluent の作法どおり `ComboBox` のままにしています。
 - `Dialog` は `window.show()` より前には開けません。
 - naui の UI 実行環境が終わった後の `Sender::send` は失敗します
   (`DispatcherQueue` が受け付けないため)。
-- `DataGrid` も `ListView` もバインディングに無いため、`Table` は `ListBox` の
-  行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に置いて
-  幅をそろえています。並べ替えできる見出しは、地色と枠を消した `Button` です
+- WinUI 3 に `DataGrid` は無い (Community Toolkit のもの) ため、`Table` は
+  `ListBox` の行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に
+  置いて幅をそろえています (`ListView` は投影に入ったので、そちらへ移すのは
+  今後の課題です)。並べ替えできる見出しは、地色と枠を消した `Button` です
   (WinUI に列見出し用のコントロールが無いため)。
-- `TreeView` のバインディングが無いため、`Tree` は `ListBox` の行として
-  組み立てています。選べない枝は行ごと無効になるので、その開閉ボタンも
+- `Tree` は `ListBox` の行として組み立てています (`TreeView` は投影に入ったので、
+  そちらへ移すのは今後の課題です)。選べない枝は行ごと無効になるので、その開閉ボタンも
   押せません (プログラムからの `expand` は効きます)。
-- `NumberBox` のバインディングが無いため、`NumberInput` は `TextBox` と
-  `-` / `+` のボタンを横に並べて組み立てています (`NumberBox` の既定と同じ並び)。
+- `NumberInput` は `TextBox` と `-` / `+` のボタンを横に並べて組み立てています
+  (`NumberBox` の既定と同じ並び。`NumberBox` は投影に入ったので、そちらへ移すのは
+  今後の課題です)。
   値の確定は欄を離れたときです。
-- `CommandBar` がバインディングに無いため、`Toolbar` は `Button` を横に並べて
-  構成し、タイトルバー (ドラッグ領域) ではなくその下の行に置きます。アイコンは
+- `Toolbar` は `Button` を横に並べて構成し、タイトルバー (ドラッグ領域) では
+  なくその下の行に置きます (`CommandBar` と `AppBarButton` は投影に入ったので、
+  そちらへ移すのは今後の課題です)。アイコンは
   Segoe Fluent Icons を `FontIcon` で出します。
 - `InfoBar` / `TeachingTip` を投影していないため、`Toast` は `Grid` と
   `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
@@ -1147,12 +1150,13 @@ git push origin v0.2.0
   投影し、`XamlReader` から本物の `ToggleSwitch` を生成しています。`Toggle` のラベルは `OnContent` と `OffContent` の両方へ
   同じ文字を入れるので、入り切りで読みは変わりません (WinUI の既定は
   「オン」「オフ」と切り替わる文字です)。
-- `ColorPicker` と `SolidColorBrush` も投影に含まれていないため、同じく公開
-  WinRT インターフェイスを最小限投影しています。WinUI 3 の `ColorPicker` は
+- `ColorPicker` と `SolidColorBrush` も、同じく公開 WinRT インターフェイスを
+  最小限投影しています (どちらも `naui-winui3` の投影に入ったので、そちらへ
+  寄せるのは今後の課題です)。WinUI 3 の `ColorPicker` は
   スペクトラムとスライダーを縦に並べた大きな面なので、`Button` の `Flyout` へ
   入れ、ボタンには選んだ色の見本 (`Border` + `SolidColorBrush`) を出します。
-- `DatePicker` / `TimePicker` も投影に含まれていないため、同じく公開 WinRT
-  インターフェイスを最小限投影し、`XamlReader` から本物の `DatePicker` と
+- `DatePicker` / `TimePicker` は `naui-winui3` の投影に入れていないため、公開
+  WinRT インターフェイスを最小限投影し、`XamlReader` から本物の `DatePicker` と
   `TimePicker` を生成しています。`DatePickerMode::DateTime` では 2 つを
   `StackPanel` で横に並べます。年 / 月 / 日 の並び順と表記はシステムのロケールに
   従い、暦はグレゴリオ暦に固定しています。`set_range` は WinUI 側へは年の範囲
@@ -1162,8 +1166,9 @@ git push origin v0.2.0
 - `TimePicker` ウィジェットは、この `TimePicker` の投影をそのまま共有しています。
   WinUI 3 の `TimePicker` に下限・上限は無いので、`set_range` の範囲は naui 側で
   端へ寄せます。
-- `AutoSuggestBox` も投影に含まれていないため、同じく公開 WinRT インターフェイスを
-  最小限投影し、`XamlReader` から本物の `AutoSuggestBox` を生成しています。
+- `AutoSuggestBox` も、同じく公開 WinRT インターフェイスを最小限投影し、
+  `XamlReader` から本物の `AutoSuggestBox` を生成しています (`naui-winui3` の
+  投影に入ったので、そちらへ寄せるのは今後の課題です)。
   `SearchInput` の虫めがねは `QueryIcon="Find"`、確定 (`on_search`) は
   `QuerySubmitted` です。候補の一覧 (`ItemsSource`) は渡さないので、打っても
   候補は出ません。`TextChanged` は `Text` を書き換えたときにも飛ぶため、
