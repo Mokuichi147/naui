@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::channel::Sender;
 use crate::task::Task;
-use crate::Error;
+use crate::{Error, Slot};
 
 /// UI スレッドで 1 回だけ実行される仕事。
 pub type Work = Box<dyn FnOnce() + Send + 'static>;
@@ -133,7 +133,7 @@ fn clear_registry() {
 /// naui で共通のイディオム。panic はここで止める (どのバックエンドでも
 /// C / WinRT の境界を越えて巻き戻せないため)。panic の内容そのものは
 /// 既定の panic hook が stderr へ出すので、ここでは何も出力しない。
-pub(crate) fn call_guarded<T>(slot: &RefCell<Option<Box<dyn FnMut(T)>>>, value: T) {
+pub(crate) fn call_guarded<T>(slot: &RefCell<Slot<dyn FnMut(T)>>, value: T) {
     let taken = slot.borrow_mut().take();
     let Some(mut f) = taken else {
         return;

@@ -7,6 +7,13 @@
 
 #![forbid(unsafe_code)]
 
+/// 通知を 1 つだけ覚えておく入れ物。
+///
+/// `Option<Box<dyn FnMut(..)>>` を毎回書くと型が深くなり、読むのも
+/// `clippy::type_complexity` も辛い。中身の関数型は使う側が書く
+/// (`Slot<dyn FnMut(&str)>` のように) ので、高階の寿命はそのまま残る。
+pub(crate) type Slot<F> = Option<Box<F>>;
+
 mod channel;
 mod color;
 mod datetime;

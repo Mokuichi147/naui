@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn selection_is_normalized_by_the_row_state() {
-        let rows = vec![
+        let rows = [
             TableRow::new(["東京"]),
             TableRow::new(["大阪"]).enabled(false),
             TableRow::new(["札幌"]),
