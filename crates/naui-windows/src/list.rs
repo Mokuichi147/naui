@@ -446,9 +446,15 @@ impl List {
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+        //
+        // 選べない行が押されたときは、この中から選択を描き戻す。その書き戻しで
+        // `SelectionChanged` がその場でもう一度起きるため、`with_mut` では
+        // 二重借用の panic が WinRT の境界を越えてクラッシュになる。再入を
+        // 取りこぼしとして扱える `try_with_mut` を使う (再入時は `silent` が
+        // 立っていて、どのみち捨てる通知になる)。
         let state = UiThreadCell::new(Rc::downgrade(&this.0));
         let handler = SelectionChangedEventHandler::new(move |_sender, _args| {
-            state.with_mut(|weak| {
+            let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
                     let list = List(inner);
                     if !list.0.silent.get() {
