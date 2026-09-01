@@ -1,7 +1,7 @@
-# タグ (v0.2.0 など) を打つと、4 環境ぶんの Gallery をビルドして
+# タグ (v0.3.0 など) を打つと、4 環境ぶんの Gallery をビルドして
 # GitHub Release へ添付し、あわせて各クレートを crates.io へ公開する。
 #
-#   git tag v0.2.0 && git push origin v0.2.0
+#   git tag v0.3.0 && git push origin v0.3.0
 name: Release
 
 on:

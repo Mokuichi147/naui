@@ -14,20 +14,20 @@ members = [
 exclude = ["tools/winui3-bindgen"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mokuichi147/naui"
 
 [workspace.dependencies]
-naui-core = { path = "crates/naui-core", version = "0.2.0" }
-naui-macos = { path = "crates/naui-macos", version = "0.2.0" }
-naui-web = { path = "crates/naui-web", version = "0.2.0" }
-naui-windows = { path = "crates/naui-windows", version = "0.2.0" }
-naui-winui3 = { path = "crates/naui-winui3", version = "0.2.0" }
-naui-gtk = { path = "crates/naui-gtk", version = "0.2.0" }
-naui = { path = "crates/naui", version = "0.2.0" }
+naui-core = { path = "crates/naui-core", version = "0.3.0" }
+naui-macos = { path = "crates/naui-macos", version = "0.3.0" }
+naui-web = { path = "crates/naui-web", version = "0.3.0" }
+naui-windows = { path = "crates/naui-windows", version = "0.3.0" }
+naui-winui3 = { path = "crates/naui-winui3", version = "0.3.0" }
+naui-gtk = { path = "crates/naui-gtk", version = "0.3.0" }
+naui = { path = "crates/naui", version = "0.3.0" }
 
 [profile.release]
 opt-level = 3

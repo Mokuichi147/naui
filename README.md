@@ -1027,8 +1027,8 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 Gallery と counter をビルドして GitHub Release へ添付します。
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 タグ名は `Cargo.toml` の `[workspace.package]` の `version` と一致している必要が
