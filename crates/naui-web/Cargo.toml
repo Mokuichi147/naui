@@ -56,3 +56,24 @@ web-sys = { version = "0.3", features = [
     "Url",
     "Window",
 ] }
+
+# ブラウザ上で走らせるテスト (`tests/dom.rs`)。実ブラウザが要るので、
+# `cargo test --target wasm32-unknown-unknown -p naui-web` で動かす。
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+wasm-bindgen = "0.2"
+# テストはブラウザ側の実挙動 (実イベントの発火、Flexbox の実レイアウト、
+# 算出後のスタイル) を直接読むので、テスト側にも web-sys が要る。
+web-sys = { version = "0.3", features = [
+    "CssStyleDeclaration",
+    "Document",
+    "DomRect",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlElement",
+    "HtmlInputElement",
+    "HtmlSelectElement",
+    "Node",
+    "Window",
+] }

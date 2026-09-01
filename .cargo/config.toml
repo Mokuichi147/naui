@@ -1,0 +1,16 @@
+# wasm のテストは実ブラウザの上で走らせる。
+#
+# `crates/naui-web/tests/dom.rs` は DOM の実コントロールを作って操作するため、
+# Node.js では動かない (`wasm_bindgen_test_configure!(run_in_browser)`)。
+# ランナーは wasm-bindgen-cli に同梱されており、Cargo.lock の wasm-bindgen と
+# 同じ版を入れておく必要がある。
+#
+#   cargo install wasm-bindgen-cli --version <Cargo.lock の版>
+#   cargo test --target wasm32-unknown-unknown -p naui-web
+#
+# 既定ではヘッドレスで動き、ドライバ (chromedriver / geckodriver) を PATH か
+# CHROMEDRIVER / GECKODRIVER 環境変数で指す。手元にドライバが無いときは
+# NO_HEADLESS=1 を付けると、ランナーが待ち受ける URL を
+# 表示するので、任意のブラウザで開けば同じテストが走る。
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"

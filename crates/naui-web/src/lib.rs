@@ -381,6 +381,20 @@ impl Ui {
     pub fn quit(&self) {}
 }
 
+/// ページのイベントループへ触らずに `build` だけを実行して戻る。**自動テスト専用**。
+///
+/// 実際のアプリでは [`run`] を使うこと。[`run`] と違って `document.title` と
+/// 配色テーマには触らないので、テストランナーが用意したページの見た目を
+/// 変えずに、ウィジェットの生成・操作・状態変化を検証できる。
+#[doc(hidden)]
+pub fn run_for_test<F>(build: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Result<()>,
+{
+    let ui = Ui::new(document()?, Theme::System);
+    build(&ui)
+}
+
 /// UI を組み立てる。
 ///
 /// ブラウザのイベントループはページ自身が回しているため、この関数は

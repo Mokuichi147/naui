@@ -156,6 +156,27 @@ jobs:
       # __api_contract がバックエンド間のシグネチャのずれを型検査で拾う。
       - name: API 互換性を確認
         run: cargo check --target wasm32-unknown-unknown -p naui-core -p naui-web -p naui
+      # Web バックエンドはウィジェットを自前で描かず、ブラウザの挙動
+      # (`<label>` を押すとチェックが入る、同じ name のラジオが排他になる、
+      # Flexbox が子を並べる) にそのまま乗っている。そこは実ブラウザの上
+      # でしか確かめられないので、DOM のイベントを実際に起こして測る。
+      #
+      # ブラウザとドライバはランナーのイメージに入っている。どちらの
+      # ブラウザを使うかは、ランナーが CHROMEDRIVER / GECKODRIVER の
+      # どちらを見つけるかで決まるため、1 つずつ渡して 2 回走らせる。
+      # DOM の実装差はここで拾う。
+      - name: ブラウザテスト (Chrome)
+        run: |
+          driver="${CHROMEWEBDRIVER:-/usr/bin}/chromedriver"
+          [ -x "$driver" ] || { echo "chromedriver が見つかりません: $driver" >&2; exit 1; }
+          CHROMEDRIVER="$driver" \
+            cargo test --target wasm32-unknown-unknown -p naui-web
+      - name: ブラウザテスト (Firefox)
+        run: |
+          driver="${GECKOWEBDRIVER:-/usr/bin}/geckodriver"
+          [ -x "$driver" ] || { echo "geckodriver が見つかりません: $driver" >&2; exit 1; }
+          GECKODRIVER="$driver" \
+            cargo test --target wasm32-unknown-unknown -p naui-web
       - name: Gallery を wasm へビルド
         run: ./build.sh
         working-directory: examples/gallery/web
