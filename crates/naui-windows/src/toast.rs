@@ -1,7 +1,7 @@
 //! トースト (WinUI 3)。
 //!
-//! WinUI 3 の `InfoBar` と `TeachingTip` は `winio-winui3` 0.4.5 の
-//! バインディングに無く、`Windows.UI.Notifications` のトーストは**アプリの
+//! WinUI 3 の `InfoBar` と `TeachingTip` は [`naui_winui3`] の投影に無く、
+//! `Windows.UI.Notifications` のトーストは**アプリの
 //! 外** (通知センター) へ出るもので別物なので、`Grid` + `StackPanel` +
 //! `TextBlock` + `Button` を組み立て、ウィンドウの中身へ重ねる。
 //!
@@ -18,14 +18,14 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use naui_core::{Result, ToastSpec};
-use windows::Foundation::TimeSpan;
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button, Grid, Orientation as XamlOrientation, StackPanel, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement, Visibility};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement, Visibility};
+use windows::Foundation::TimeSpan;
+use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
@@ -37,7 +37,8 @@ const TOAST_XAML: &str = r##"<Grid
     HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="24"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
-    BorderThickness="1" CornerRadius="8" Padding="16,10">
+    BorderThickness="1" Padding="16,10"
+    CornerRadius="{ThemeResource OverlayCornerRadius}">
     <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
         <TextBlock VerticalAlignment="Center" TextWrapping="WrapWholeWords"
             Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>

@@ -1,12 +1,13 @@
 //! ツールバー (WinUI 3)。
 //!
-//! `CommandBar` と `AppBarButton` は `winio-winui3` のバインディングに
-//! 含まれていないため、標準の `Button` を `StackPanel` へ横に並べて
-//! 構成している。区切りは幅 1 の `Border` で、見た目は Fluent のまま。
+//! 標準の `Button` を `StackPanel` へ横に並べて構成している。区切りは幅 1 の
+//! `Border` で、見た目は Fluent のまま。`CommandBar` と `AppBarButton` は
+//! [`naui_winui3`] の投影に入っているので、そちらへ移すのは今後の課題。
 //!
 //! アイコンは [`ToolbarIcon`](naui_core::ToolbarIcon) を Segoe Fluent Icons
-//! の字面へ写したもの。`FontIcon` と `Border` はバインディングに型が無いため、
-//! `Border` と同じく XAML から読み込む。`label` はツールチップと読み上げに使う。
+//! の字面へ写したもの。`FontIcon` と `Border` は XAML から読み込む
+//! (投影にも入っているが、属性をまとめて書けるので XAML のまま)。
+//! `label` はツールチップと読み上げに使う。
 //!
 //! ほかのバックエンドに合わせて [`Widget`](crate::Widget) にはせず、
 //! [`Window::set_toolbar`](crate::Window::set_toolbar) でウィンドウの
@@ -18,24 +19,24 @@ use std::rc::Rc;
 
 use naui_core::ToolbarIcon;
 use naui_core::{Result, ToolbarItem};
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, Orientation as XamlOrientation, StackPanel,
 };
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use windows_core::{Interface, HSTRING};
 
 use crate::navigation::{append, panel, SelectHandler};
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 
-/// 区切り。`Border` は `winio-winui3` のバインディングに型が無いため、
-/// XAML から読み込んで `UIElement` として扱う。`ThemeResource` は未パッケージ
-/// 起動で解決できないことがあるので、明暗どちらの配色でも見える半透明の
-/// グレーを直に指定する。
+/// 区切り。XAML から読み込んで `UIElement` として扱う。色は
+/// `AppBarSeparator` と同じ `DividerStrokeColorDefaultBrush` を引くので、
+/// ライト / ダークの切り替えは WinUI 3 のテーマリソースが面倒を見る。
 const SEPARATOR_XAML: &str = r##"<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Width="1" MinHeight="16" VerticalAlignment="Stretch"
-    Margin="2,4,2,4" Background="#40808080"/>"##;
+    Margin="2,4,2,4"
+    Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>"##;
 
 /// XAML の属性値として安全な文字列にする。ラベルはアプリが決めるため、
 /// 引用符や記号が入っていても壊れないようにエスケープする。

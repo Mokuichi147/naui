@@ -8,6 +8,15 @@
 use std::cell::RefCell;
 use std::thread::ThreadId;
 
+use crate::Slot;
+
+/// WinRT のデリゲートへ載せる、通知 1 つぶんの置き場。
+///
+/// デリゲートは `Send + Sync` を要求するので [`UiThreadCell`] で包み、
+/// 購読を解いたあとも生き残る参照があるので `Arc` で数える。中身の関数型は
+/// 使う側が書く (`HandlerCell<dyn FnMut(&str)>` のように)。
+pub(crate) type HandlerCell<F> = std::sync::Arc<UiThreadCell<Slot<F>>>;
+
 /// 生成したスレッドでのみ中身に触れるセル。
 pub(crate) struct UiThreadCell<T> {
     owner: ThreadId,

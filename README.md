@@ -40,7 +40,7 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 
 - Rust 1.82 以降
 - Linux: GTK4 と libadwaita の開発用ライブラリ
-- Windows: Windows App SDK 2.x のフレームワークランタイム
+- Windows: Windows App SDK 1.3 以降のフレームワークランタイム
 
 Ubuntu 24.04 では、次のコマンドで Linux 向けの依存パッケージを導入できます。
 
@@ -48,7 +48,9 @@ Ubuntu 24.04 では、次のコマンドで Linux 向けの依存パッケージ
 sudo apt install libgtk-4-dev libadwaita-1-dev build-essential pkg-config
 ```
 
-Windows App SDK は 2.3.1 で動作を確認しています。
+naui は 2.x から 1.3 まで新しい順に探し、最初に見つかったランタイムを使います。
+OS 同梱の系統 (`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れます。実機での
+動作確認は 2.x で行っています。
 
 ### サンプルを実行
 
@@ -950,15 +952,24 @@ crates/
   naui-macos     AppKit バックエンド
   naui-web       DOM バックエンド
   naui-windows   WinUI 3 バックエンド
+  naui-winui3    WinUI 3 の WinRT 投影 (naui-windows だけが使う)
   naui-gtk       GTK4 / libadwaita バックエンド
   naui           対象に応じてバックエンドを選ぶファサード
 examples/
   counter        最小サンプル
   gallery        種別ごとの全ウィジェットデモ
+tools/
+  winui3-bindgen naui-winui3 の投影を .winmd から作り直すツール
 ```
 
 バックエンド固有の依存はターゲット別に宣言されています。たとえば macOS の
 ビルドで GTK4 や WinUI 3 の依存が引き込まれることはありません。
+
+WinUI 3 は Windows App SDK に入っていて `windows` クレートに投影がないため、
+`naui-winui3` が Microsoft の配る `.winmd` から作った投影を持っています。
+生成物 (`crates/naui-winui3/src/bindings.rs`) はコミットしてあるので、
+ふだんのビルドに `.winmd` は要りません。型を足したいときの手順は
+`tools/winui3-bindgen/README.md` にあります。
 
 ### テスト
 
@@ -992,9 +1003,9 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 
 | ジョブ | ランナー | 内容 |
 | --- | --- | --- |
-| 整形 | ubuntu-latest | `cargo fmt --all --check` |
+| 整形と lint | ubuntu-latest | `cargo fmt --all --check` と `naui-core` の clippy |
 | macOS | macos-latest | ビルドと AppKit の統合テスト |
-| Windows | windows-latest | ビルドと `naui-core` のテスト |
+| Windows | windows-latest | ビルド、clippy、単体 / ドキュメンテーションテスト |
 | Linux | ubuntu-latest | GTK4 を導入し、Xvfb 上で統合テスト |
 | Web | ubuntu-latest | wasm ターゲットの型検査と Gallery の wasm ビルド |
 
@@ -1097,31 +1108,33 @@ git push origin v0.2.0
   見つからない場合は、候補の選択と Enter での確定だけが通知されます。
   **候補の一覧は打った文字で絞り込まれません** (`IsTextSearchEnabled` は
   一致する候補へ選択を移すだけです)。打った文字で候補を出す `AutoSuggestBox` は
-  `SearchInput` が自前投影で使っていますが、あちらは候補を「開いて全部見る」
+  `SearchInput` が最小限の投影で使っていますが、あちらは候補を「開いて全部見る」
   ことができません。`EditableComboBox` は一覧を開いて選べることを軸にしている
   ので、Fluent の作法どおり `ComboBox` のままにしています。
 - `Dialog` は `window.show()` より前には開けません。
 - naui の UI 実行環境が終わった後の `Sender::send` は失敗します
   (`DispatcherQueue` が受け付けないため)。
-- `DataGrid` も `ListView` もバインディングに無いため、`Table` は `ListBox` の
-  行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に置いて
-  幅をそろえています。並べ替えできる見出しは、地色と枠を消した `Button` です
+- WinUI 3 に `DataGrid` は無い (Community Toolkit のもの) ため、`Table` は
+  `ListBox` の行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に
+  置いて幅をそろえています (`ListView` は投影に入ったので、そちらへ移すのは
+  今後の課題です)。並べ替えできる見出しは、地色と枠を消した `Button` です
   (WinUI に列見出し用のコントロールが無いため)。
-- `TreeView` のバインディングが無いため、`Tree` は `ListBox` の行として
-  組み立てています。選べない枝は行ごと無効になるので、その開閉ボタンも
+- `Tree` は `ListBox` の行として組み立てています (`TreeView` は投影に入ったので、
+  そちらへ移すのは今後の課題です)。選べない枝は行ごと無効になるので、その開閉ボタンも
   押せません (プログラムからの `expand` は効きます)。
-- `NumberBox` のバインディングが無いため、`NumberInput` は `TextBox` と
-  `-` / `+` のボタンを横に並べて組み立てています (`NumberBox` の既定と同じ並び)。
+- `NumberInput` は `TextBox` と `-` / `+` のボタンを横に並べて組み立てています
+  (`NumberBox` の既定と同じ並び。`NumberBox` は投影に入ったので、そちらへ移すのは
+  今後の課題です)。
   値の確定は欄を離れたときです。
-- `CommandBar` がバインディングに無いため、`Toolbar` は `Button` を横に並べて
-  構成し、タイトルバー (ドラッグ領域) ではなくその下の行に置きます。アイコンは
+- `Toolbar` は `Button` を横に並べて構成し、タイトルバー (ドラッグ領域) では
+  なくその下の行に置きます (`CommandBar` と `AppBarButton` は投影に入ったので、
+  そちらへ移すのは今後の課題です)。アイコンは
   Segoe Fluent Icons を `FontIcon` で出します。
-- `InfoBar` / `TeachingTip` がバインディングに無いため、`Toast` は `Grid` と
+- `InfoBar` / `TeachingTip` を投影していないため、`Toast` は `Grid` と
   `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
   `window.show()` より前には出せません。
-- `TextTrimming` が `winio-winui3` の投影に含まれていないため、`Label` の
-  `TextBlock` は `TextTrimming="CharacterEllipsis"` を持つ XAML から生成して
-  います (折り返しの切り替えは `TextWrapping` で行います)。
+- `Label` の `TextBlock` は `TextTrimming="CharacterEllipsis"` を持つ XAML から
+  生成しています (折り返しの切り替えは `TextWrapping` で行います)。
 - 動かせる仕切りを持つコントロールが Windows App SDK に無いため
   (`Microsoft.UI.Xaml.Controls.SplitView` は開閉するナビゲーションのペインで、
   `GridSplitter` は Community Toolkit の側)、`SplitView` は 3 つの列 (行) を
@@ -1131,21 +1144,20 @@ git push origin v0.2.0
   つかみ代です (`Transparent` は `null` と違って当たり判定が残ります)。ただし
   **仕切りに合わせたカーソル (⇔) は出ません**。カーソルの形を変える
   `UIElement.ProtectedCursor` は派生クラスからしか触れないためです。
-  区画の大きさが変わったことは `SizeChanged` がバインディングに無いため
-  `LayoutUpdated` で拾っています。
-- `Expander` は `winio-winui3` の投影に含まれていませんが、WinUI の公開 WinRT
-  インターフェイスを最小限投影し、`XamlReader` から本物の `Expander` を生成しています。
-- `ToggleSwitch` も投影に含まれていないため、`Expander` と同じく公開 WinRT
-  インターフェイスを最小限投影し、`XamlReader` から本物の `ToggleSwitch` を
-  生成しています。`Toggle` のラベルは `OnContent` と `OffContent` の両方へ
+  区画の大きさが変わったことは `LayoutUpdated` で拾っています。
+- `Expander` は、WinUI の公開 WinRT インターフェイスを最小限投影して
+  `XamlReader` から本物の `Expander` を生成しています。
+- `ToggleSwitch` も `Expander` と同じく公開 WinRT インターフェイスを最小限
+  投影し、`XamlReader` から本物の `ToggleSwitch` を生成しています。`Toggle` のラベルは `OnContent` と `OffContent` の両方へ
   同じ文字を入れるので、入り切りで読みは変わりません (WinUI の既定は
   「オン」「オフ」と切り替わる文字です)。
-- `ColorPicker` と `SolidColorBrush` も投影に含まれていないため、同じく公開
-  WinRT インターフェイスを最小限投影しています。WinUI 3 の `ColorPicker` は
+- `ColorPicker` と `SolidColorBrush` も、同じく公開 WinRT インターフェイスを
+  最小限投影しています (どちらも `naui-winui3` の投影に入ったので、そちらへ
+  寄せるのは今後の課題です)。WinUI 3 の `ColorPicker` は
   スペクトラムとスライダーを縦に並べた大きな面なので、`Button` の `Flyout` へ
   入れ、ボタンには選んだ色の見本 (`Border` + `SolidColorBrush`) を出します。
-- `DatePicker` / `TimePicker` も投影に含まれていないため、同じく公開 WinRT
-  インターフェイスを最小限投影し、`XamlReader` から本物の `DatePicker` と
+- `DatePicker` / `TimePicker` は `naui-winui3` の投影に入れていないため、公開
+  WinRT インターフェイスを最小限投影し、`XamlReader` から本物の `DatePicker` と
   `TimePicker` を生成しています。`DatePickerMode::DateTime` では 2 つを
   `StackPanel` で横に並べます。年 / 月 / 日 の並び順と表記はシステムのロケールに
   従い、暦はグレゴリオ暦に固定しています。`set_range` は WinUI 側へは年の範囲
@@ -1155,8 +1167,9 @@ git push origin v0.2.0
 - `TimePicker` ウィジェットは、この `TimePicker` の投影をそのまま共有しています。
   WinUI 3 の `TimePicker` に下限・上限は無いので、`set_range` の範囲は naui 側で
   端へ寄せます。
-- `AutoSuggestBox` も投影に含まれていないため、同じく公開 WinRT インターフェイスを
-  最小限投影し、`XamlReader` から本物の `AutoSuggestBox` を生成しています。
+- `AutoSuggestBox` も、同じく公開 WinRT インターフェイスを最小限投影し、
+  `XamlReader` から本物の `AutoSuggestBox` を生成しています (`naui-winui3` の
+  投影に入ったので、そちらへ寄せるのは今後の課題です)。
   `SearchInput` の虫めがねは `QueryIcon="Find"`、確定 (`on_search`) は
   `QuerySubmitted` です。候補の一覧 (`ItemsSource`) は渡さないので、打っても
   候補は出ません。`TextChanged` は `Text` を書き換えたときにも飛ぶため、

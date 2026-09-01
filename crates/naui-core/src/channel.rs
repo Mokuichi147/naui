@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use crate::main_thread::{
     call_guarded, deregister, next_id, pump_by_id, register, AppDispatch, LocalEntry,
 };
-use crate::Result;
+use crate::{Result, Slot};
 
 /// 送る側が共有する状態。**別スレッドへ渡る唯一の部分。**
 pub(crate) struct ChannelShared<T> {
@@ -68,7 +68,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// 受け取る側。UI スレッド専用で、登録簿が保持する。
 struct ChannelLocal<T: Send + 'static> {
     shared: Arc<ChannelShared<T>>,
-    handler: RefCell<Option<Box<dyn FnMut(T)>>>,
+    handler: RefCell<Slot<dyn FnMut(T)>>,
     /// pump の再入 (コールバックの中から同じチャネルへ送った) を弾く。
     busy: Cell<bool>,
 }

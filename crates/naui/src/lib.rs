@@ -635,9 +635,9 @@
 //! そろって同じ形で扱える範囲にそろえたため。
 //!
 //! ネイティブのメニューがあるのは macOS (`NSMenu`) と Linux (`GtkPopoverMenu`)
-//! で、**Windows と Web は合成**になる。WinUI 3 の `MenuFlyout` は
-//! `winio-winui3` のバインディングに無く、ブラウザには既定の
-//! コンテキストメニューを差し替える API が無いため。合成のほうは
+//! で、**Windows と Web は合成**になる。Windows はまだ WinUI 3 の
+//! `MenuFlyout` へ移せておらず、ブラウザには既定のコンテキストメニューを
+//! 差し替える API が無いため。合成のほうは
 //! **キーボード操作 (矢印キーでの移動) を持たない**。Web は Escape で
 //! 閉じられるが、Windows はキー入力のバインディングが無いため閉じられない
 //! (メニューの外側を押せばどちらも閉じる)。
@@ -962,7 +962,7 @@
 //! | `Toast` | `Grid` を中身へ重ねたもの | `NSVisualEffectView` を中身へ重ねたもの | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
 //!
 //! **ネイティブのトーストがあるのは Linux だけ** (`AdwToast`)。Windows の
-//! `InfoBar` / `TeachingTip` は `winio-winui3` のバインディングに無く、
+//! `InfoBar` / `TeachingTip` は naui が投影していないため使えず、
 //! macOS とブラウザにはそもそも対応するものが無いので、残る 3 環境では
 //! naui が同じ形に組み立てる。OS の通知センターへ出すものは、アプリの外へ
 //! 出る別の仕組みなので扱わない。

@@ -5,8 +5,8 @@
 //! 使えない行は `IsEnabled = false`、
 //! 複数選択とキーボード操作は `ListBox`、スクロールは外側の `ScrollViewer` が行う。
 //!
-//! `ListView` は `winio-winui3` 0.4.5 のバインディングに含まれていないため、
-//! 同じ WinUI 標準コントロールである `ListBox` を使っている。
+//! 土台は WinUI 標準の `ListBox`。`ListView` は [`naui_winui3`] の投影に
+//! 入っているので、そちらへ移すのは今後の課題。
 //!
 //! ただし `ListBox` は WinUI 3 でも Fluent 化されていない旧来のコントロールで、
 //! 既定のままでは角が四角く、選択した行がアクセント色で全面に塗られる
@@ -28,20 +28,20 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{ListItem, Result, SelectionMode};
-use windows::Foundation::PropertyValue;
-use windows_core::{IInspectable, Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Grid as XamlGrid, ListBox as XamlListBox, ListBoxItem, Orientation as XamlOrientation,
     ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler,
     SelectionMode as XamlSelectionMode, StackPanel, TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{ResourceDictionary, Style, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{ResourceDictionary, Style, UIElement};
+use windows::Foundation::PropertyValue;
+use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 /// 行がクリックされたことの通知先。
@@ -50,7 +50,7 @@ use crate::widgets::{impl_widget, Widget};
 /// 呼び出しの間だけクロージャを取り出すので、コールバックの中から
 /// 同じ行を操作しても二重借用にならない。
 #[derive(Clone)]
-struct ActivationHandler(Arc<UiThreadCell<Option<Box<dyn FnMut()>>>>);
+struct ActivationHandler(HandlerCell<dyn FnMut()>);
 
 impl ActivationHandler {
     fn new() -> Self {
@@ -355,13 +355,16 @@ pub(crate) fn row_style() -> Option<Style> {
         .ok()
 }
 
+/// 選ばれている行の位置を受け取る通知。
+pub(crate) type SelectionCallback = dyn FnMut(&[usize]);
+
 /// 選択が変わったことの通知先。
 ///
 /// WinRT のデリゲートは `Send + Sync` を要求するため `UiThreadCell` に載せる。
 /// 呼び出しの間だけクロージャを取り出すので、コールバックの中から
 /// 同じリストを操作しても二重借用にならない。
 #[derive(Clone)]
-pub(crate) struct SelectionHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(&[usize])>>>>);
+pub(crate) struct SelectionHandler(HandlerCell<SelectionCallback>);
 
 impl SelectionHandler {
     pub(crate) fn new() -> Self {
@@ -483,13 +486,7 @@ impl List {
         });
         let exited_state = this.0.hovered.clone();
         let exited = PointerEventHandler::new(move |_, _| {
-            exited_state.with_mut(|hovered| {
-                if *hovered == 0 {
-                    return;
-                } else {
-                    *hovered -= 1;
-                }
-            });
+            exited_state.with_mut(|hovered| *hovered = hovered.saturating_sub(1));
             Ok(())
         });
         this.0

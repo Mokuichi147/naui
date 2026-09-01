@@ -1,6 +1,6 @@
 //! 時刻の選択 (WinUI 3 のネイティブ `TimePicker`)。
 //!
-//! `winio-winui3` は WinUI 3 API の subset で `TimePicker` を投影していない。
+//! [`naui_winui3`] の投影は `TimePicker` を含んでいない。
 //! 公開 WinRT インターフェイスの投影は [`crate::date_picker`] にあるものを
 //! そのまま使い、このモジュールは時刻だけを扱うウィジェットを組み立てる。
 //! コントロール自体は `XamlReader` から生成される本物の WinUI 3 コントロール。
@@ -13,10 +13,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{Result, Time};
+use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, RoutedEventHandler, UIElement};
 use windows::Foundation::TypedEventHandler;
 use windows_core::Interface;
-use winui3::Microsoft::UI::Xaml::Controls::Control;
-use winui3::Microsoft::UI::Xaml::{FrameworkElement, RoutedEventHandler, UIElement};
 
 use crate::date_picker::{
     compact_time_picker, from_native_time, load_time_picker, local_now, to_native_time,

@@ -1,8 +1,8 @@
 //! 折りたたみ (WinUI 3 のネイティブ `Expander`)。
 //!
-//! `winio-winui3` は WinUI 3 API の subset で、`Expander` を投影していない。
-//! そのため、`DatePicker` と同じく、公開 WinRT インターフェイスの必要な部分
-//! だけをこのモジュールで定義する。コントロール自体は `XamlReader` から生成
+//! 公開 WinRT インターフェイスの必要な部分をこのモジュールで定義している。
+//! `Expander` は [`naui_winui3`] にも入ったので、この手書きの投影は将来
+//! そちらへ寄せられる。コントロール自体は `XamlReader` から生成
 //! される本物の WinUI 3 `Expander` で、開閉・見出し・中身のレイアウトは
 //! WinUI の標準テンプレートが行う。
 
@@ -12,14 +12,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::Result;
+use naui_winui3::Microsoft::UI::Xaml::Controls::{ContentControl, Control, TextBlock};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::UIElement;
 use windows::Foundation::TypedEventHandler;
 use windows_core::{Interface, Param, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{ContentControl, Control, TextBlock};
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::UIElement;
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 const EXPANDER_XAML: &str = r#"<Expander
@@ -32,7 +32,7 @@ const EXPANDER_XAML: &str = r#"<Expander
 /// 載せる。呼び出しの間だけクロージャを取り出すため、通知の中から同じ
 /// 折りたたみを操作しても二重借用にならない。
 #[derive(Clone)]
-struct ToggleHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(bool)>>>>);
+struct ToggleHandler(HandlerCell<dyn FnMut(bool)>);
 
 impl ToggleHandler {
     fn new() -> Self {

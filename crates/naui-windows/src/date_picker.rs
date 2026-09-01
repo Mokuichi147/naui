@@ -1,7 +1,8 @@
 //! 日付と時刻の選択 (WinUI 3 のネイティブ `DatePicker` / `TimePicker`)。
 //!
-//! `winio-winui3` は WinUI 3 API の subset で、この 2 型を投影していないため、
-//! 公開 WinRT インターフェイスの必要な部分だけをこのモジュールで定義する。
+//! [`naui_winui3`] の投影はこの 2 型を含んでいないため (`CalendarDatePicker`
+//! は入っている)、公開 WinRT インターフェイスの必要な部分をこのモジュールで
+//! 定義する。足したいときは `tools/winui3-bindgen/filter.txt` に書き足す。
 //! コントロール自体は `XamlReader` から生成される本物の WinUI 3 コントロール。
 
 use std::cell::Cell;
@@ -10,18 +11,18 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{DatePickerMode, DateTime, Result, Time};
-use windows::Foundation::{DateTime as WinDateTime, TimeSpan, TypedEventHandler};
-use windows::Globalization::{Calendar, CalendarIdentifiers};
-use windows_core::{Interface, Param, Type, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ColumnDefinition, Control, Grid as XamlGrid, Orientation as XamlOrientation, StackPanel,
     TextBlock,
 };
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{
     DependencyObject, FrameworkElement, GridLength, GridUnitType, RoutedEventHandler,
     TextAlignment, Thickness, UIElement,
 };
+use windows::Foundation::{DateTime as WinDateTime, TimeSpan, TypedEventHandler};
+use windows::Globalization::{Calendar, CalendarIdentifiers};
+use windows_core::{Interface, Param, Type, HSTRING};
 
 use crate::combo_box::ComboBox;
 use crate::to_error;
@@ -855,7 +856,7 @@ mod tests {
 
     #[test]
     fn native_date_round_trip_uses_local_gregorian_calendar() {
-        winui3::init_apartment(winui3::ApartmentType::MultiThreaded).unwrap();
+        naui_winui3::init_apartment(naui_winui3::ApartmentType::MultiThreaded).unwrap();
         for value in [
             DateTime::date(2000, 2, 29),
             DateTime::date(2026, 8, 22),

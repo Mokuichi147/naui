@@ -240,6 +240,7 @@ jobs:
           publish naui-core
           # そのバックエンドの OS 以外ではビルドできないので検証を省く。
           publish naui-macos --no-verify
+          publish naui-winui3 --no-verify
           publish naui-windows --no-verify
           # wasm / GTK 以外では空のクレートになるため、ここで検証できる。
           publish naui-web

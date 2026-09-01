@@ -4,18 +4,18 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{Align, Orientation, Padding, Result};
-use windows::Foundation::EventHandler;
-use windows_core::{IInspectable, Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, Grid, Orientation as XamlOrientation,
     PasswordBox, ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock,
     TextBox,
 };
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::{
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, HorizontalAlignment, RoutedEventHandler, TextWrapping, Thickness, UIElement,
     VerticalAlignment,
 };
+use windows::Foundation::EventHandler;
+use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
@@ -103,8 +103,8 @@ impl_widget!(Label, native);
 
 /// ラベルの土台。
 ///
-/// 省略記号 (`TextTrimming`) は `winio-winui3` に投影されていないので、
-/// XAML で持たせておく。折り返さないときだけ効く指定なので、実行時に
+/// 省略記号 (`TextTrimming`) は XAML で持たせておく。折り返さないときだけ
+/// 効く指定なので、実行時に
 /// 切り替える必要はない (切り替えるのは `TextWrapping` のほう)。
 const LABEL_XAML: &str = r##"<TextBlock
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -331,7 +331,7 @@ impl TextInput {
 
     /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
-        use winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
+        use naui_winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
         if let Some(token) = self.0.token.borrow_mut().take() {
             let _ = self.0.native.RemoveTextChanged(token);
         }
@@ -477,7 +477,7 @@ impl TextArea {
 
     /// 1 文字入力するたびに、その時点の文字列で呼ばれる。改行の入力でも呼ばれる。
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
-        use winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
+        use naui_winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
         if let Some(token) = self.0.token.borrow_mut().take() {
             let _ = self.0.native.RemoveTextChanged(token);
         }
@@ -545,7 +545,7 @@ impl Slider {
 
     /// つまみが動くたびに、その値で呼ばれる。
     pub fn on_change(&self, f: impl FnMut(f64) + 'static) {
-        use winui3::Microsoft::UI::Xaml::Controls::Primitives::RangeBaseValueChangedEventHandler;
+        use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::RangeBaseValueChangedEventHandler;
         let state = UiThreadCell::new((self.0.native.clone(), f));
         let handler = RangeBaseValueChangedEventHandler::new(move |_sender, _args| {
             state.with_mut(|(native, f)| f(native.Value().unwrap_or_default()));

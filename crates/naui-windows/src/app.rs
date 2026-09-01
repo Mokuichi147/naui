@@ -7,22 +7,22 @@
 use std::ptr::NonNull;
 
 use naui_core::{Error, Result, Theme};
+use naui_winui3::Microsoft::UI::Xaml::Controls::XamlControlsResources;
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Markup::{
+    IXamlMetadataProvider, IXamlMetadataProvider_Impl, IXamlMetadataProvider_Vtbl, IXamlType,
+    XmlnsDefinition,
+};
+use naui_winui3::Microsoft::UI::Xaml::XamlTypeInfo::XamlControlsXamlMetaDataProvider;
+use naui_winui3::Microsoft::UI::Xaml::{
+    Application, IApplicationFactory, IApplicationOverrides, IApplicationOverrides_Impl,
+    IApplicationOverrides_Vtbl, LaunchActivatedEventArgs,
+};
+use naui_winui3::{ChildClass, Compose, CreateInstanceFn};
 use windows_core::{
     Array, ComObject, ComObjectInner, ComObjectInterface, IInspectable, IInspectable_Vtbl,
     IUnknown, IUnknownImpl, Interface, InterfaceRef, Ref, GUID, HRESULT, HSTRING,
 };
-use winui3::Microsoft::UI::Xaml::Controls::XamlControlsResources;
-use winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use winui3::Microsoft::UI::Xaml::Markup::{
-    IXamlMetadataProvider, IXamlMetadataProvider_Impl, IXamlMetadataProvider_Vtbl, IXamlType,
-    XmlnsDefinition,
-};
-use winui3::Microsoft::UI::Xaml::XamlTypeInfo::XamlControlsXamlMetaDataProvider;
-use winui3::Microsoft::UI::Xaml::{
-    Application, IApplicationFactory, IApplicationOverrides, IApplicationOverrides_Impl,
-    IApplicationOverrides_Vtbl, LaunchActivatedEventArgs,
-};
-use winui3::{ChildClass, Compose, CreateInstanceFn};
 
 use crate::ui_thread::UiThreadCell;
 use crate::Ui;
@@ -52,35 +52,28 @@ where
         // そろう。XAML の App.xaml を持たない naui では、ここで自分で足す。
         // これが無いと `ContentDialog` のようにテーマリソースへ強く頼る
         // コントロールが、素の見た目 (角が丸くない・影が無い) で出る。
+        //
+        // 見た目の上書きは足さない。枠線・角丸・余白は WinUI 3 の既定の
+        // スタイル (`ButtonPadding` や `TextControlThemePadding` など) が
+        // 決める。ここで上書きすると、実機の WinUI 3 アプリと見た目がずれる。
         let fluent = XamlControlsResources::new()?
-            .cast::<winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
-        let resources = XamlReader::Load(&HSTRING::from(
+            .cast::<naui_winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
+        // 例外はレイアウトに関わる下限だけ。WinUI 既定の CheckBox は
+        // MinWidth=120 で、ラベルが短くても (空でも) 120px ぶんの幅を占める。
+        // naui は幅を親のレイアウトで決めるので、この下限は外して中身に
+        // 沿わせる。
+        let layout = XamlReader::Load(&HSTRING::from(
             r##"<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
-                <Style TargetType="Button">
-                    <Setter Property="BorderThickness" Value="0"/>
-                    <Setter Property="CornerRadius" Value="4"/>
-                    <Setter Property="Padding" Value="16,8"/>
-                    <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                </Style>
                 <Style TargetType="CheckBox">
-                    <Setter Property="Padding" Value="4,6"/>
-                    <!-- WinUI 既定の CheckBox は MinWidth=120 で、ラベルが短く
-                         ても (空でも) 120px ぶんの幅を占める。naui は幅を親の
-                         レイアウトで決めるので、この下限は外して中身に沿わせる。 -->
                     <Setter Property="MinWidth" Value="0"/>
-                </Style>
-                <Style TargetType="TextBox">
-                    <Setter Property="BorderThickness" Value="1"/>
-                    <Setter Property="CornerRadius" Value="4"/>
-                    <Setter Property="Padding" Value="12,8"/>
                 </Style>
             </ResourceDictionary>"##,
         ))?
-        .cast::<winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
+        .cast::<naui_winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
         // 後から足したものが勝つ。naui の上書きは Fluent の後に置く。
         let merged = current.Resources()?.MergedDictionaries()?;
         merged.Append(&fluent)?;
-        merged.Append(&resources)?;
+        merged.Append(&layout)?;
         let Some(build) = self.this.state.with_mut_cross_thread(|build| build.take()) else {
             return Ok(());
         };
@@ -107,7 +100,7 @@ where
 {
     fn GetXamlType(
         &self,
-        r#type: &winui3::Windows::UI::Xaml::Interop::TypeName,
+        r#type: &naui_winui3::Windows::UI::Xaml::Interop::TypeName,
     ) -> windows_core::Result<IXamlType> {
         self.this.provider.GetXamlType(r#type)
     }

@@ -5,8 +5,8 @@
 //! 同じダイアログで、一覧・検索・クイックアクセスはすべて Windows が描く。
 //!
 //! `Windows.Storage.Pickers.FileOpenPicker` (WinRT) ではなく Win32 側の
-//! ダイアログを使っているのは、`winio-winui3` 0.4.5 のバインディングに
-//! `Windows.Storage` が含まれていないため。見た目と機能はどちらも同じ
+//! ダイアログを使っているのは、`Windows.Storage.Pickers` の投影を naui が
+//! 引き込んでいないため。見た目と機能はどちらも同じ
 //! Common Item Dialog で、未パッケージ実行でも HWND を渡すだけで開ける。
 
 use std::cell::RefCell;
@@ -14,6 +14,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{FileEntry, FileFilter, FilePickerMode, Result};
+use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
+use naui_winui3::Microsoft::UI::Xaml::Controls::{Button as XamlButton, TextBlock};
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
 use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{
@@ -21,12 +24,9 @@ use windows::Win32::UI::Shell::{
     FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
 };
 use windows_core::{Interface, HSTRING, PCWSTR};
-use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
-use winui3::Microsoft::UI::Xaml::Controls::{Button as XamlButton, TextBlock};
-use winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 /// ダイアログの設定と、最後に選ばれたもの。
@@ -49,10 +49,13 @@ impl SharedState {
     }
 }
 
+/// 選んだファイルの一覧を受け取る通知。
+type SelectionCallback = dyn FnMut(&[FileEntry]);
+
 /// 選ばれたときの通知先。呼び出しの間だけクロージャを取り出すので、
 /// 通知の中から設定し直しても二重借用にならない。
 #[derive(Clone)]
-struct SelectionHandler(Arc<UiThreadCell<Option<Box<dyn FnMut(&[FileEntry])>>>>);
+struct SelectionHandler(HandlerCell<SelectionCallback>);
 
 impl SelectionHandler {
     fn new() -> Self {

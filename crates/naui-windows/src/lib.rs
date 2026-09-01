@@ -12,8 +12,13 @@
 //!
 //! ## 実行要件
 //!
-//! Windows App SDK 2.x ランタイムが必要。実行時には `V2` のフレームワーク
-//! パッケージ依存関係を追加し、インストール済みの最新2.xランタイムを使用する。
+//! Windows App SDK 1.3 以降のランタイムが必要。起動時にフレームワーク
+//! パッケージの依存関係を追加するが、版は決め打ちにせず 2.x から 1.3 まで
+//! 新しい順に試し、**最初に取り付けられたもの**を使う。OS 同梱の系統
+//! (`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れる。
+//!
+//! 下限が 1.3 なのは、ウィンドウの背景に使う `MicaBackdrop` と
+//! `Window.SystemBackdrop` がそこで入ったため。
 
 #![cfg(target_os = "windows")]
 
@@ -34,6 +39,7 @@ mod navigation;
 mod number_input;
 mod popup;
 mod radio_group;
+mod sdk;
 mod search_input;
 mod split_view;
 mod table;
@@ -81,6 +87,10 @@ pub use window::{WeakWindow, Window};
 pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
     Error::new(context, e.message())
 }
+
+/// 通知を 1 つだけ覚えておく入れ物。`naui_core` の同名の別名と同じ役目で、
+/// `Option<Box<dyn FnMut(..)>>` の入れ子を 1 段浅くする。
+pub(crate) type Slot<F> = Option<Box<F>>;
 
 /// ウィジェットを生成するための入り口。
 pub struct Ui {
@@ -381,7 +391,7 @@ impl Ui {
 
     /// アプリを終了する。
     pub fn quit(&self) {
-        if let Ok(app) = winui3::Microsoft::UI::Xaml::Application::Current() {
+        if let Ok(app) = naui_winui3::Microsoft::UI::Xaml::Application::Current() {
             let _ = app.Exit();
         }
     }
@@ -389,20 +399,18 @@ impl Ui {
 
 /// アプリを起動し、`build` の中で UI を組み立てる。
 ///
-/// Windows App SDK のブートストラップを行ってから `Application::Start` に入り、
-/// XAML の初期化が終わったところで `build` を呼ぶ。
+/// Windows App SDK のブートストラップ (版はクレートの説明のとおり新しい順に
+/// 試す) を行ってから `Application::Start` に入り、XAML の初期化が終わった
+/// ところで `build` を呼ぶ。
 /// この関数はアプリが終了するまで戻らない。
 pub fn run<F>(settings: Settings, build: F) -> Result<()>
 where
     F: FnOnce(&Ui) -> Result<()> + 'static,
 {
-    use winui3::Microsoft::UI::Xaml::{Application, ApplicationInitializationCallback};
-    use winui3::{init_apartment, ApartmentType};
+    use naui_winui3::Microsoft::UI::Xaml::{Application, ApplicationInitializationCallback};
+    use naui_winui3::{init_apartment, ApartmentType};
 
-    let _dependency = winui3::bootstrap::PackageDependency::initialize_version(
-        winui3::bootstrap::WindowsAppSDKVersion::V2,
-    )
-    .map_err(|e| to_error("Windows App SDK 2.x の初期化", e))?;
+    let _dependency = sdk::initialize()?;
     init_apartment(ApartmentType::SingleThreaded)
         .map_err(|e| to_error("COM アパートメントの初期化", e))?;
 

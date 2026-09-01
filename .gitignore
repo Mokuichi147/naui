@@ -1,4 +1,6 @@
 /target
+# 生成ツールはワークスペースの外なので、自分の target を持つ。
+/tools/*/target
 **/*.rs.bk
 
 # Web ビルドの生成物 (assets/ は build.sh が examples/gallery/assets からコピーする)

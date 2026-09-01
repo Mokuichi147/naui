@@ -1,6 +1,5 @@
 //! 数値入力 (`TextBox` + 増減ボタン)。
 //!
-//! WinUI 3 の `NumberBox` は `winio-winui3` のバインディングに無いため、
 //! 数字を打つ `TextBox` と `-` / `+` の `Button` を `Grid` へ並べる
 //! (`NumberBox` の既定である Inline のスピンボタンと同じ並び)。
 //!
@@ -13,15 +12,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{NumberSpec, Result};
-use windows_core::{Interface, HSTRING};
-use winui3::Microsoft::UI::Xaml::Controls::{
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, ColumnDefinition, Grid as XamlGrid, TextBlock, TextBox,
     TextChangedEventHandler,
 };
-use winui3::Microsoft::UI::Xaml::{
+use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, RoutedEventHandler, TextAlignment, Thickness,
     UIElement,
 };
+use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
