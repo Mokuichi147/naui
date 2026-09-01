@@ -9,29 +9,27 @@
 //! 取り付けられたもの**を使う。利用者の環境に 2.x が入っていなくても、
 //! 1.x が入っていればそのまま動く。
 //!
-//! 下限を 1.3 にしているのは、ウィンドウの背景に使う `MicaBackdrop` と
-//! `Window.SystemBackdrop` が 1.3 で入ったため。それより古い版では
-//! `Window` の組み立てから成り立たない。
+//! 版の付く候補の下限を 1.3 にしているのは、ウィンドウの背景に使う
+//! `MicaBackdrop` と `Window.SystemBackdrop` が 1.3 で入ったため。それより
+//! 古い版では `Window` の組み立てから成り立たない。
+//!
+//! 版の付かない `Microsoft.WindowsAppRuntime.CBS` は OS 同梱の系統で、どの
+//! 世代か名前から分からない。ほかが 1 つも見つからなかったときの最後の
+//! 頼みにする。古すぎて Mica が作れない場合は背景を諦めるだけで済む
+//! ([`crate::window`] を参照)。
 
 use naui_core::{Error, Result};
 use naui_winui3::bootstrap::{PackageDependency, Version};
 
 /// 取り付けを試す版。新しいものが先。
 ///
+/// 並びは [`naui_winui3`] が持つものをそのまま使う。ブートストラップの DLL を
+/// 探すときと同じ一覧なので、片方だけ増えることがない。
+///
 /// `Cbs`(OS 同梱) 系は、対応する版の通常パッケージが入っていない環境向けの
-/// 別系統なので、同じ版の直後に置く。
-pub(crate) const CANDIDATES: &[Version] = &[
-    Version::V2,
-    Version::Cbs2,
-    Version::V1_8,
-    Version::Cbs1_8,
-    Version::V1_7,
-    Version::V1_6,
-    Version::Cbs1_6,
-    Version::V1_5,
-    Version::V1_4,
-    Version::V1_3,
-];
+/// 別系統。版の付く `CBS.2` などは同じ版の直後、版の付かない `CBS` は
+/// どの世代か分からないので最後に来る。
+pub(crate) const CANDIDATES: &[Version] = Version::ALL;
 
 /// 使える Windows App SDK ランタイムを 1 つ取り付ける。
 ///
@@ -69,13 +67,16 @@ mod tests {
     use super::*;
 
     /// 新しい版から順に試す。古いほうが先に当たると、2.x が入っている環境で
-    /// わざわざ 1.x を掴んでしまう。
+    /// わざわざ 1.x を掴んでしまう。版の付かない `CBS` はどの世代か分からない
+    /// ので、いちばん後ろに置く。
     #[test]
     fn candidates_are_newest_first() {
         let order: Vec<String> = CANDIDATES.iter().map(|v| format!("{v:?}")).collect();
-        let first = order.first().map(String::as_str);
-        assert_eq!(first, Some("V2"));
-        assert_eq!(order.last().map(String::as_str), Some("V1_3"));
+        assert_eq!(order.first().map(String::as_str), Some("V2"));
+        assert_eq!(order.last().map(String::as_str), Some("Cbs"));
+        let versioned = order.iter().position(|v| v == "V1_3").expect("V1_3 が無い");
+        let plain_cbs = order.iter().position(|v| v == "Cbs").expect("Cbs が無い");
+        assert!(versioned < plain_cbs, "版の付く候補を先に試す");
     }
 
     /// 同じ版を 2 回試しても意味が無い。

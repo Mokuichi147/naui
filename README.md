@@ -49,7 +49,8 @@ sudo apt install libgtk-4-dev libadwaita-1-dev build-essential pkg-config
 ```
 
 naui は 2.x から 1.3 まで新しい順に探し、最初に見つかったランタイムを使います。
-実機での動作確認は 2.3.1 で行っています。
+OS 同梱の系統 (`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れます。実機での
+動作確認は 2.x で行っています。
 
 ### サンプルを実行
 
