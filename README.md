@@ -986,6 +986,23 @@ Linux ではディスプレイ (Wayland または X11) が必要です。
 cargo test -p naui-core -p naui-gtk -p naui
 ```
 
+Web バックエンドのテストは**実ブラウザの上**で走ります (`crates/naui-web/tests/dom.rs`)。
+`Cargo.lock` と同じ版の wasm-bindgen CLI と、ブラウザのドライバが必要です。
+
+```sh
+cargo install wasm-bindgen-cli --version "$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/[",]/,""); print $3; exit}' Cargo.lock)"
+CHROMEDRIVER="$(command -v chromedriver)" \
+  cargo test --target wasm32-unknown-unknown -p naui-web
+```
+
+`GECKODRIVER` を渡せば Firefox でも同じテストが走ります。ドライバが手元に無い
+ときは `NO_HEADLESS=1` を付けると、ランナーが待ち受ける URL を表示するので、
+任意のブラウザで開けば結果がそのページに出ます。
+
+```sh
+NO_HEADLESS=1 cargo test --target wasm32-unknown-unknown -p naui-web
+```
+
 別ターゲットの API 互換性は `cargo check` で確認できます。
 
 ```sh
@@ -1007,7 +1024,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 | macOS | macos-latest | ビルドと AppKit の統合テスト |
 | Windows | windows-latest | ビルド、clippy、単体 / ドキュメンテーションテスト |
 | Linux | ubuntu-latest | GTK4 を導入し、Xvfb 上で統合テスト |
-| Web | ubuntu-latest | wasm ターゲットの型検査と Gallery の wasm ビルド |
+| Web | ubuntu-latest | wasm ターゲットの型検査、Chrome / Firefox 上の DOM テスト、Gallery の wasm ビルド |
 
 `cargo test --workspace` は使いません。`crates/naui-gtk/tests/gtk4.rs` に cfg が
 無いため、Linux 以外では壊れます。各ジョブは自分のプラットフォーム向けの
@@ -1020,6 +1037,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   ascent と行の高さをもとに測るため、欧文へ代替されたり、GTK 組み込みの
   既定 (`Sans 10`) のまま行が低かったりすると成り立ちません。CI は
   `~/.config/gtk-4.0/settings.ini` に `gtk-font-name=Sans 11` を書いています。
+- Web: 実ブラウザとそのドライバ。ラベルを押すとチェックが入る、同じ `name` の
+  ラジオが排他になる、Flexbox が子を並べるといった挙動はブラウザのもので、
+  naui は実装を持ちません。ドキュメントへ載っていない要素はレイアウトされず、
+  `click()` を呼んでも `change` が飛ばないため、通知や位置を見るテストは
+  `<body>` へ載せてから測ります。
 
 ### リリース
 
