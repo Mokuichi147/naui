@@ -61,21 +61,6 @@ const CASES: &[Case] = &[
     ("ウィンドウを設定して閉じられる", window_lifecycle),
 ];
 
-/// あとで確かめる仕事。イベントループを 1 周まわしてから呼ばれる。
-type Deferred = Box<dyn FnOnce() -> Result<()>>;
-
-/// 仕込みと確認が 1 周ぶん離れるケース。
-///
-/// WinUI が非同期に出す通知 (`TextBox.TextChanged` など) は、書き換えたその場
-/// では届かない。DispatcherQueue へ積まれ、イベントループが次に手を空けた
-/// ときに配送される。仕込みで書き換え、確認はループを 1 周まわしてから行う。
-type AsyncCase = (&'static str, fn(&Ui) -> Result<Deferred>);
-
-const ASYNC_CASES: &[AsyncCase] = &[(
-    "打鍵がクロージャへ届く (通知は 1 周あと)",
-    text_notifies_after_a_turn,
-)];
-
 /// `Application::Start` に入ったきり戻らないと、CI が打ち切るまで詰まる。
 /// 全ケースぶんの余裕を取ったうえで、必ず終わらせる。
 const WATCHDOG: Duration = Duration::from_secs(180);
@@ -97,34 +82,11 @@ pub(crate) fn run() {
             report(name, catch_unwind(AssertUnwindSafe(|| case(ui))), &counter);
         }
 
-        // 非同期のケースは、まず仕込みだけ済ませる。
-        let mut deferred = Vec::new();
-        for (name, setup) in ASYNC_CASES {
-            match catch_unwind(AssertUnwindSafe(|| setup(ui))) {
-                Ok(Ok(check)) => deferred.push((*name, check)),
-                other => report(name, other.map(|result| result.map(|_| ())), &counter),
-            }
-        }
-
-        // ここで積んだ仕事は、WinUI が仕込みの間に積んだ通知より後ろに並ぶ。
-        // 同じ DispatcherQueue なので、先に通知が配送されてから呼ばれる。
-        let mut deferred = Some(deferred);
-        let later = counter.clone();
-        let checks = ui.tasks().channel(move |()| {
-            let Some(deferred) = deferred.take() else {
-                return;
-            };
-            for (name, check) in deferred {
-                report(name, catch_unwind(AssertUnwindSafe(check)), &later);
-            }
-        });
-        checks.send(())?;
         Ok(())
     });
 
-    let total = CASES.len() + ASYNC_CASES.len();
     let failed = failed.load(Ordering::Relaxed);
-    println!("\n{total} 件中 {} 件成功", total - failed);
+    println!("\n{} 件中 {} 件成功", CASES.len(), CASES.len() - failed);
     if let Err(error) = outcome {
         eprintln!("アプリを起こせませんでした: {error}");
         std::process::exit(1);
@@ -339,30 +301,6 @@ fn text_round_trip(ui: &Ui) -> Result<()> {
         "ネイティブの TextBox にも届くこと"
     );
     Ok(())
-}
-
-/// `TextBox.TextChanged` は非同期に出る。書き換えたその場では届かないので、
-/// イベントループを 1 周まわしてから確かめる。
-fn text_notifies_after_a_turn(ui: &Ui) -> Result<Deferred> {
-    let input = ui.text_input("")?;
-    let seen = Rc::new(RefCell::new(String::new()));
-    let sink = seen.clone();
-    input.on_change(move |text| *sink.borrow_mut() = text.to_string());
-
-    native::<TextBox>(&input)
-        .SetText(&HSTRING::from("こんにちは naui"))
-        .expect("TextBox への書き込み");
-
-    Ok(Box::new(move || {
-        assert_eq!(
-            seen.borrow().as_str(),
-            "こんにちは naui",
-            "打鍵がクロージャへ届くこと"
-        );
-        // 確かめ終わるまでウィジェットを生かしておく。
-        drop(input);
-        Ok(())
-    }))
 }
 
 fn label_round_trips(ui: &Ui) -> Result<()> {

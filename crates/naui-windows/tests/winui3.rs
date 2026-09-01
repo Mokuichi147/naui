@@ -10,6 +10,19 @@
 //! 順に走らせる。ケースごとにアプリを作り直す macOS 版とはそこが違う。
 //!
 //! 実行には Windows App SDK ランタイムが要る (`crates/naui-windows/src/sdk.rs`)。
+//!
+//! ## ここで確かめられないこと
+//!
+//! ウィジェットは作るだけで画面には出していないので、WinUI の既定テンプレート
+//! が当たっていない。テンプレート頼みのふるまいはここでは見られない。
+//!
+//! - `TextBox` の `TextChanged`。書き換えても出ない (`on_change` は macOS /
+//!   GTK / Web の統合テストと、Windows は Gallery の実行で見ている)。
+//! - `TextBox` の Value パターン。`GetPattern` が空を返すので、打ち込みは
+//!   `TextBox.Text` の書き換えで代えている。
+//!
+//! 一方 `Click` `Checked` `Toggled` `SelectionChanged` はテンプレート無しでも
+//! 出るので、通知が Rust のクロージャへ届くところまで確かめている。
 
 #[cfg(target_os = "windows")]
 #[path = "winui3/cases.rs"]
