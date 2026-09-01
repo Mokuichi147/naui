@@ -13,7 +13,7 @@ use naui_winui3::Microsoft::UI::Xaml::Automation::Peers::{
     AutomationPeer, FrameworkElementAutomationPeer, PatternInterface,
 };
 use naui_winui3::Microsoft::UI::Xaml::Automation::Provider::{
-    IInvokeProvider, ISelectionItemProvider, IToggleProvider, IValueProvider,
+    IInvokeProvider, ISelectionItemProvider, IToggleProvider,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Slider as XamlSlider,
@@ -154,18 +154,6 @@ fn select(element: &UIElement) {
         .expect("Select に失敗しました");
 }
 
-/// 実際に打ち込んだのと同じ経路 (Value パターン) で文字列を入れる。
-fn type_text(widget: &dyn Widget, text: &str) {
-    let pattern = peer(&widget.native_element())
-        .GetPattern(PatternInterface::Value)
-        .expect("Value パターンを取れませんでした");
-    pattern
-        .cast::<IValueProvider>()
-        .expect("IValueProvider ではありません")
-        .SetValue(&HSTRING::from(text))
-        .expect("SetValue に失敗しました");
-}
-
 /// 支援技術へ渡る読み上げ名。
 fn accessible_name(widget: &dyn Widget) -> String {
     peer(&widget.native_element())
@@ -289,7 +277,14 @@ fn text_round_trip(ui: &Ui) -> Result<()> {
     let sink = seen.clone();
     input.on_change(move |text| *sink.borrow_mut() = text.to_string());
 
-    type_text(&input, "こんにちは naui");
+    // 打鍵は UI オートメーションの Value パターンでは起こせない。TextBox の
+    // peer が Value を返すのは既定テンプレートが当たってからで、画面に出て
+    // いないコントロールにはまだ当たっていない (GetPattern が空を返す)。
+    // キーを打ったとき WinUI 自身が行うのと同じ、`TextBox.Text` の書き換えで
+    // 代える。ここから先の TextChanged → naui の通知はまったく同じ経路。
+    native::<TextBox>(&input)
+        .SetText(&HSTRING::from("こんにちは naui"))
+        .expect("TextBox への書き込み");
     assert_eq!(input.text(), "こんにちは naui", "打った文字が読めること");
     assert_eq!(
         native::<TextBox>(&input)

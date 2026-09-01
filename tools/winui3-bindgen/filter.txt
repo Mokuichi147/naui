@@ -18,7 +18,6 @@ Microsoft.UI.Xaml.Automation.Peers.PatternInterface
 Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider
 Microsoft.UI.Xaml.Automation.Provider.ISelectionItemProvider
 Microsoft.UI.Xaml.Automation.Provider.IToggleProvider
-Microsoft.UI.Xaml.Automation.Provider.IValueProvider
 Microsoft.UI.Xaml.Controls.AppBar
 Microsoft.UI.Xaml.Controls.AppBarButton
 Microsoft.UI.Xaml.Controls.AppBarSeparator

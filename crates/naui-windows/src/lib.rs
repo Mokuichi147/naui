@@ -452,6 +452,11 @@ where
         let result = build(ui);
         // 失敗したときは `run` の側が畳むので、二重に呼ばない。
         if result.is_ok() {
+            // 実際のアプリでは AppWindow の `Closing` がこの後片づけをする。
+            // テストは `OnLaunched` の中で畳むので、その時点ではまだ `Ui` が
+            // 置き場へ入っておらず `Closing` から届かない。XAML のツリーが
+            // 壊される前に中身を外さないと、終了時にアクセス違反になる。
+            ui.clear_windows_for_shutdown();
             ui.quit();
         }
         result
