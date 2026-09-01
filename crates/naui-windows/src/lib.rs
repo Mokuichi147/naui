@@ -53,6 +53,7 @@ mod widgets;
 mod window;
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
 
@@ -106,11 +107,34 @@ pub struct Ui {
     toasts: RefCell<Vec<Toast>>,
     /// 別スレッドと非同期処理の入り口。
     tasks: Tasks,
-    shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
+    shutdown: &'static UiSlot,
+}
+
+/// 起動から終了まで `Ui` を置いておく場所。
+///
+/// `Rc` で持つのは、`build` の途中でウィンドウを閉じられるため。閉じると
+/// [`shut_down`] がここから `Ui` を取り出すが、`build` へ貸している参照は
+/// そのまま生き残る必要がある。
+pub(crate) type UiSlot = ui_thread::UiThreadCell<Option<Rc<Ui>>>;
+
+/// 置き場に `Ui` があれば取り出し、後片づけをして手放す。
+///
+/// 取り出してから中身へ触るので、置き場を借りたまま `Ui` を動かすことには
+/// ならない。2 度目からは置き場が空なので何もしない。
+pub(crate) fn shut_down(slot: &'static UiSlot) {
+    // WinRT のデリゲートから呼ばれる。panic を ABI の境界へ通さないよう、
+    // 借りられなければ諦める。
+    let Some(Some(ui)) = slot.try_with_mut(|slot| slot.take()) else {
+        return;
+    };
+    // 画面が畳まれた後は、投函しても誰も取り出さない。
+    // 送信側へ失敗を返せるようにし、受信クロージャと future を解放する。
+    ui.tasks.shutdown();
+    ui.clear_windows_for_shutdown();
 }
 
 impl Ui {
-    fn new(theme: Theme, shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>) -> Self {
+    fn new(theme: Theme, shutdown: &'static UiSlot) -> Self {
         Self {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
@@ -134,7 +158,11 @@ impl Ui {
     }
 
     fn clear_windows_for_shutdown(&self) {
-        for window in self.windows.borrow().iter() {
+        // ここも WinRT のデリゲートから来る。借りられなければ諦める。
+        let Ok(windows) = self.windows.try_borrow() else {
+            return;
+        };
+        for window in windows.iter() {
             window.clear_content_for_shutdown();
         }
     }
@@ -418,8 +446,7 @@ where
         Box::leak(Box::new(ui_thread::UiThreadCell::new(None)));
     let state: &'static ui_thread::UiThreadCell<Option<F>> =
         Box::leak(Box::new(ui_thread::UiThreadCell::new(Some(build))));
-    let ui_state: &'static ui_thread::UiThreadCell<Option<Ui>> =
-        Box::leak(Box::new(ui_thread::UiThreadCell::new(None)));
+    let ui_state: &'static UiSlot = Box::leak(Box::new(ui_thread::UiThreadCell::new(None)));
 
     Application::Start(&ApplicationInitializationCallback::new(move |_| {
         let app = app::compose(state, failure, ui_state, settings.theme)?;
@@ -428,7 +455,9 @@ where
     }))
     .map_err(|e| to_error("Application::Start", e))?;
 
-    match failure.with_mut_cross_thread(|slot| slot.take()) {
+    // `Application::Start` は呼んだスレッドでメッセージループを回すので、
+    // ここは `failure` を作ったスレッドのまま。
+    match failure.with_mut(|slot| slot.take()) {
         Some(e) => Err(e),
         None => Ok(()),
     }
@@ -452,11 +481,10 @@ where
         let result = build(ui);
         // 失敗したときは `run` の側が畳むので、二重に呼ばない。
         if result.is_ok() {
-            // 実際のアプリでは AppWindow の `Closing` がこの後片づけをする。
-            // テストは `OnLaunched` の中で畳むので、その時点ではまだ `Ui` が
-            // 置き場へ入っておらず `Closing` から届かない。XAML のツリーが
-            // 壊される前に中身を外さないと、終了時にアクセス違反になる。
-            ui.clear_windows_for_shutdown();
+            // 後片づけ (XAML の Content と子ウィジェットを外す) は、実際の
+            // アプリと同じく AppWindow の `Closing` に任せる。`Ui` は `build`
+            // より前に置き場へ入っているので、`build` の中で閉じても届く。
+            //
             // 畳むのはイベントループへ入ってから。`OnLaunched` の中で
             // `Application::Exit` を呼ぶと、ループが始まる前に XAML の
             // 後片づけが走り、終了時にアクセス違反になる。

@@ -20,9 +20,8 @@ use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::toolbar::Toolbar;
-use crate::ui_thread::UiThreadCell;
 use crate::widgets::Widget;
-use crate::Ui;
+use crate::UiSlot;
 
 enum Backdrop {
     Controller {
@@ -254,7 +253,7 @@ impl Window {
 
     /// WinUI の XAML ツリーが破棄される前に、Content と子ウィジェットを外す。
     /// `Destroying` では遅すぎるため、AppWindow の `Closing` で実行する。
-    pub(crate) fn install_closing_handler(&self, state: &'static UiThreadCell<Option<Ui>>) {
+    pub(crate) fn install_closing_handler(&self, state: &'static UiSlot) {
         if self.0.closing_token.get().is_some() {
             return;
         }
@@ -265,14 +264,7 @@ impl Window {
             naui_winui3::Microsoft::UI::Windowing::AppWindow,
             naui_winui3::Microsoft::UI::Windowing::AppWindowClosingEventArgs,
         >::new(move |_sender, _args| {
-            state.with_mut(|slot| {
-                if let Some(ui) = slot.take() {
-                    // 画面が畳まれた後は、投函しても誰も取り出さない。
-                    // 送信側へ失敗を返せるようにし、受信クロージャと future を解放する。
-                    ui.tasks.shutdown();
-                    ui.clear_windows_for_shutdown();
-                }
-            });
+            crate::shut_down(state);
             Ok(())
         });
         if let Ok(token) = app_window.Closing(&handler) {

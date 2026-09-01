@@ -5,6 +5,7 @@
 //! 実装した composed object が必要。
 
 use std::ptr::NonNull;
+use std::rc::Rc;
 
 use naui_core::{Error, Result, Theme};
 use naui_winui3::Microsoft::UI::Xaml::Controls::XamlControlsResources;
@@ -25,7 +26,7 @@ use windows_core::{
 };
 
 use crate::ui_thread::UiThreadCell;
-use crate::Ui;
+use crate::{Ui, UiSlot};
 
 pub struct App<F>
 where
@@ -34,7 +35,7 @@ where
     provider: XamlControlsXamlMetaDataProvider,
     state: &'static UiThreadCell<Option<F>>,
     failure: &'static UiThreadCell<Option<Error>>,
-    ui_state: &'static UiThreadCell<Option<Ui>>,
+    ui_state: &'static UiSlot,
     theme: Theme,
 }
 
@@ -74,21 +75,25 @@ where
         let merged = current.Resources()?.MergedDictionaries()?;
         merged.Append(&fluent)?;
         merged.Append(&layout)?;
-        let Some(build) = self.this.state.with_mut_cross_thread(|build| build.take()) else {
+        let Some(Some(build)) = self.this.state.try_with_mut(|build| build.take()) else {
             return Ok(());
         };
-        let ui = Ui::new(self.this.theme, self.this.ui_state);
+        let ui = Rc::new(Ui::new(self.this.theme, self.this.ui_state));
+        // 置き場へは `build` より**前に**入れる。`build` の中でウィンドウを
+        // 閉じても、AppWindow の `Closing` からここへ届いて後片づけが走る。
+        // 置き場は `Rc` を持つだけなので、`Closing` が取り出しても下の
+        // `build(&ui)` へ貸している参照は生きたまま。
+        let _ = self
+            .this
+            .ui_state
+            .try_with_mut(|slot| *slot = Some(Rc::clone(&ui)));
         if let Err(error) = build(&ui) {
-            self.this
-                .failure
-                .with_mut_cross_thread(|slot| *slot = Some(error));
+            let _ = self.this.failure.try_with_mut(|slot| *slot = Some(error));
+            // 組み立てに失敗したときも、XAML のツリーが壊れる前に中身を外す。
+            crate::shut_down(self.this.ui_state);
             if let Ok(app) = Application::Current() {
                 let _ = app.Exit();
             }
-        } else {
-            self.this.ui_state.with_mut_cross_thread(|slot| {
-                *slot = Some(ui);
-            });
         }
         Ok(())
     }
@@ -315,7 +320,7 @@ where
 pub(crate) fn compose<F>(
     state: &'static UiThreadCell<Option<F>>,
     failure: &'static UiThreadCell<Option<Error>>,
-    ui_state: &'static UiThreadCell<Option<Ui>>,
+    ui_state: &'static UiSlot,
     theme: Theme,
 ) -> windows_core::Result<Application>
 where

@@ -481,5 +481,10 @@ fn window_lifecycle(ui: &Ui) -> Result<()> {
 
     window.close();
     assert!(!window.is_visible(), "閉じたら見えないこと");
+    // ここで閉じても、後片づけ (`crate::shut_down`) はまだ走らない。
+    // `Window::Close` は WM_CLOSE を積むだけで、AppWindow の `Closing` は
+    // メッセージループが回ってから出る。`build` の中はループの前なので、
+    // 届くのはここを抜けた後 (このテストは先にプロセスを終える)。
+    // 表示済みのウィンドウでも同じ。
     Ok(())
 }
