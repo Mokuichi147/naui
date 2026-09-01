@@ -36,3 +36,17 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 naui-winui3.workspace = true
+
+# 統合テストは WinUI 3 の実コントロールを直に読むので、投影 (naui-winui3) と
+# WinRT の基本型が要る。Windows 以外ではクレートごと空になるため引き込まない。
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+naui-winui3.workspace = true
+windows-core = "0.62"
+
+[[test]]
+name = "winui3"
+path = "tests/winui3.rs"
+# WinUI 3 のコントロールは UI スレッドの STA でしか作れず、`Application::Start`
+# は 1 プロセスで 1 回しか呼べない。テストごとに別スレッドで走る標準ハーネス
+# では成り立たないため、自前のランナーを 1 本だけ回す。
+harness = false

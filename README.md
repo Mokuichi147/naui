@@ -76,7 +76,7 @@ cargo run -p gallery
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・別スレッドからの受け渡しと `spawn` を含む) |
 | Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
 | Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、ラベルの折り返し、非同期処理の実行と中断を操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。あわせて WinUI 3 の実コントロールを使った統合テストを CI で実行 |
 
 実装済みで `cargo check` は通るものの、実機で未確認の範囲があります。
 
@@ -986,6 +986,17 @@ Linux ではディスプレイ (Wayland または X11) が必要です。
 cargo test -p naui-core -p naui-gtk -p naui
 ```
 
+Windows では Windows App SDK ランタイムとデスクトップセッションが必要です
+(`crates/naui-windows/tests/winui3.rs`)。WinUI 3 のコントロールは
+`Application::Start` より前には 1 つも作れず、`Application::Start` は 1 つの
+プロセスで 1 回しか呼べないので、アプリを 1 度だけ起こして全ケースをその中で
+走らせます。操作は UI オートメーション (Invoke / Toggle / Value / SelectionItem)
+から起こすため、支援技術や自動操作ツールと同じ経路を通ります。
+
+```sh
+cargo test -p naui-core -p naui-winui3 -p naui-windows -p naui
+```
+
 Web バックエンドのテストは**実ブラウザの上**で走ります (`crates/naui-web/tests/dom.rs`)。
 `Cargo.lock` と同じ版の wasm-bindgen CLI と、ブラウザのドライバが必要です。
 
@@ -1022,7 +1033,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 | --- | --- | --- |
 | 整形と lint | ubuntu-latest | `cargo fmt --all --check` と `naui-core` の clippy |
 | macOS | macos-latest | ビルドと AppKit の統合テスト |
-| Windows | windows-latest | ビルド、clippy、単体 / ドキュメンテーションテスト |
+| Windows | windows-latest | ビルド、clippy、Windows App SDK ランタイムを導入して WinUI 3 の統合テスト |
 | Linux | ubuntu-latest | GTK4 を導入し、Xvfb 上で統合テスト |
 | Web | ubuntu-latest | wasm ターゲットの型検査、Chrome / Firefox 上の DOM テスト、Gallery の wasm ビルド |
 
@@ -1037,6 +1048,10 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
   ascent と行の高さをもとに測るため、欧文へ代替されたり、GTK 組み込みの
   既定 (`Sans 10`) のまま行が低かったりすると成り立ちません。CI は
   `~/.config/gtk-4.0/settings.ini` に `gtk-font-name=Sans 11` を書いています。
+- Windows: Windows App SDK ランタイム (CI は `WindowsAppRuntimeInstall-x64.exe`
+  を `--quiet` で導入) と、ウィンドウを作れるデスクトップセッション。
+  WinUI 3 のコントロールは Windows SDK ではなく Windows App SDK に入って
+  いるため、ランタイムが無いと 1 つも生成できません。
 - Web: 実ブラウザとそのドライバ。ラベルを押すとチェックが入る、同じ `name` の
   ラジオが排他になる、Flexbox が子を並べるといった挙動はブラウザのもので、
   naui は実装を持ちません。ドキュメントへ載っていない要素はレイアウトされず、

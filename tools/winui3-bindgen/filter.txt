@@ -12,6 +12,13 @@ Microsoft.UI.Windowing.AppWindowClosingEventArgs
 Microsoft.UI.Xaml.Application
 Microsoft.UI.Xaml.ApplicationInitializationCallback
 Microsoft.UI.Xaml.ApplicationTheme
+Microsoft.UI.Xaml.Automation.Peers.AutomationPeer
+Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer
+Microsoft.UI.Xaml.Automation.Peers.PatternInterface
+Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider
+Microsoft.UI.Xaml.Automation.Provider.ISelectionItemProvider
+Microsoft.UI.Xaml.Automation.Provider.IToggleProvider
+Microsoft.UI.Xaml.Automation.Provider.IValueProvider
 Microsoft.UI.Xaml.Controls.AppBar
 Microsoft.UI.Xaml.Controls.AppBarButton
 Microsoft.UI.Xaml.Controls.AppBarSeparator

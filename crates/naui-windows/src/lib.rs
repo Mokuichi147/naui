@@ -433,3 +433,27 @@ where
         None => Ok(()),
     }
 }
+
+/// `build` を WinUI 3 の初期化が終わったところで 1 度だけ呼び、戻ったら
+/// アプリを終わらせる。**自動テスト専用**。
+///
+/// 実際のアプリでは [`run`] を使うこと。AppKit や DOM と違い、WinUI 3 の
+/// コントロールは `Application::Start` より前には 1 つも作れない。しかも
+/// `Application::Start` は 1 プロセスで 1 回しか呼べないので、テストは
+/// 「アプリを起こし、その中で全ケースを走らせ、最後に畳む」形になる。
+/// ケースごとにやり直せる macOS 版 (`naui_macos::run_for_test`) とは
+/// そこが違う。
+#[doc(hidden)]
+pub fn run_for_test<F>(build: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Result<()> + 'static,
+{
+    run(Settings::new("naui tests"), move |ui| {
+        let result = build(ui);
+        // 失敗したときは `run` の側が畳むので、二重に呼ばない。
+        if result.is_ok() {
+            ui.quit();
+        }
+        result
+    })
+}
