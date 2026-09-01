@@ -23,6 +23,10 @@
 //!
 //! 一方 `Click` `Checked` `Toggled` `SelectionChanged` はテンプレート無しでも
 //! 出るので、通知が Rust のクロージャへ届くところまで確かめている。
+//!
+//! アプリの畳みかたも実アプリとは違う。`Application::Exit` から先の XAML の
+//! 後片づけが未パッケージ起動ではアクセス違反で落ちるため、結果を出し切った
+//! 時点でプロセスを終えている。
 
 #[cfg(target_os = "windows")]
 #[path = "winui3/cases.rs"]

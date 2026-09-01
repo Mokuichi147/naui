@@ -75,25 +75,31 @@ pub(crate) fn run() {
         std::process::exit(1);
     });
 
-    let failed = Arc::new(AtomicUsize::new(0));
-    let counter = failed.clone();
+    let counter = Arc::new(AtomicUsize::new(0));
     let outcome = run_for_test(move |ui| {
         for (name, case) in CASES {
             report(name, catch_unwind(AssertUnwindSafe(|| case(ui))), &counter);
         }
 
-        Ok(())
+        let failed = counter.load(Ordering::Relaxed);
+        println!("\n{} 件中 {} 件成功", CASES.len(), CASES.len() - failed);
+
+        // 結果を出し切ったら、ここでプロセスを終える。
+        //
+        // `Application::Exit` から先の XAML の後片づけが、未パッケージ起動
+        // ではアクセス違反で落ちる。naui のコードは通っておらず、全ケースが
+        // 通った回でも同じように落ちるので、終了コードだけこちらで決める。
+        // (`crates/naui-windows/src/widgets.rs` の ProgressBar にある、
+        // 同じく未パッケージ起動でランタイムが fail-fast する話と同種。)
+        std::process::exit(if failed > 0 { 1 } else { 0 });
     });
 
-    let failed = failed.load(Ordering::Relaxed);
-    println!("\n{} 件中 {} 件成功", CASES.len(), CASES.len() - failed);
-    if let Err(error) = outcome {
-        eprintln!("アプリを起こせませんでした: {error}");
-        std::process::exit(1);
+    // ここへ来るのは、`build` まで届かずにアプリを起こせなかったときだけ。
+    match outcome {
+        Ok(()) => eprintln!("アプリが UI を組み立てずに終わりました"),
+        Err(error) => eprintln!("アプリを起こせませんでした: {error}"),
     }
-    if failed > 0 {
-        std::process::exit(1);
-    }
+    std::process::exit(1);
 }
 
 /// 1 件ぶんの結果を出す。落ちていたら数える。

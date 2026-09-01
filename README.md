@@ -1051,7 +1051,11 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 - Windows: Windows App SDK ランタイム (CI は `WindowsAppRuntimeInstall-x64.exe`
   を `--quiet` で導入) と、ウィンドウを作れるデスクトップセッション。
   WinUI 3 のコントロールは Windows SDK ではなく Windows App SDK に入って
-  いるため、ランタイムが無いと 1 つも生成できません。
+  いるため、ランタイムが無いと 1 つも生成できません。ウィジェットは画面に
+  出さずに調べるので、WinUI の既定テンプレートが当たっていないと出ない
+  ふるまい (`TextBox` の `TextChanged` や UI オートメーションの Value
+  パターン) はここでは見られません。何が確かめられないかは
+  `crates/naui-windows/tests/winui3.rs` の冒頭にあります。
 - Web: 実ブラウザとそのドライバ。ラベルを押すとチェックが入る、同じ `name` の
   ラジオが排他になる、Flexbox が子を並べるといった挙動はブラウザのもので、
   naui は実装を持ちません。ドキュメントへ載っていない要素はレイアウトされず、
