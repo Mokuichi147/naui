@@ -457,7 +457,21 @@ where
             // 置き場へ入っておらず `Closing` から届かない。XAML のツリーが
             // 壊される前に中身を外さないと、終了時にアクセス違反になる。
             ui.clear_windows_for_shutdown();
-            ui.quit();
+            // 畳むのはイベントループへ入ってから。`OnLaunched` の中で
+            // `Application::Exit` を呼ぶと、ループが始まる前に XAML の
+            // 後片づけが走り、終了時にアクセス違反になる。
+            //
+            // `build` が積んだ仕事のほうが先に入っているので、そちらが
+            // 終わってからここへ来る。
+            let quit = ui.tasks().channel(|()| {
+                if let Ok(app) = naui_winui3::Microsoft::UI::Xaml::Application::Current() {
+                    let _ = app.Exit();
+                }
+            });
+            if quit.send(()).is_err() {
+                // 積めなかったときは、その場で畳むしかない。
+                ui.quit();
+            }
         }
         result
     })
