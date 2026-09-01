@@ -4,19 +4,19 @@
 //!
 //! WinUI 3 のコントロールは Windows SDK ではなく Windows App SDK に入って
 //! いて、`windows` クレートには投影が無い。naui は Microsoft が配る
-//! `.winmd` から [`windows-bindgen`] で投影を作り、その出力
-//! ([`bindings`]) をこのクレートへ収めている。生成のしかたは
+//! `.winmd` から [`windows-bindgen`] で投影を作り、その出力を
+//! [`Microsoft`] と [`Windows`] として公開している。生成のしかたは
 //! `tools/winui3-bindgen` を参照。
 //!
 //! 生成物だけでは足りないものを、このクレートが手で足す。
 //!
 //! - [`bootstrap`]: 未パッケージのアプリが Windows App SDK ランタイムを
 //!   自分のプロセスへ取り付ける仕組み (動的依存)
-//! - [`compose`]: `Application` のような **composable なクラスを Rust 側で
+//! - [`Compose`]: `Application` のような **composable なクラスを Rust 側で
 //!   継承する**ための土台。`Application::Start` には基底クラスそのもの
 //!   ではなく、`IApplicationOverrides` を実装した合成オブジェクトが要る
-//! - [`native`]: XAML の `Window` から HWND を取り出す、WinRT のメタデータ
-//!   には出てこない COM インターフェース
+//! - [`IWindowNative`]: XAML の `Window` から HWND を取り出す、WinRT の
+//!   メタデータには出てこない COM インターフェース
 //!
 //! [`windows-bindgen`]: https://crates.io/crates/windows-bindgen
 

@@ -40,6 +40,11 @@ jobs:
       # なるのでここで見る。各バックエンドの clippy はそれぞれのジョブが持つ。
       - name: clippy (naui-core)
         run: cargo clippy -p naui-core --all-targets -- -D warnings
+      # 壊れたリンクや、公開ドキュメントから私有項目へのリンクを拾う。
+      - name: ドキュメント (naui-core)
+        run: cargo doc --no-deps -p naui-core
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   macos:
     name: macOS (AppKit)
@@ -74,6 +79,11 @@ jobs:
       # naui-windows は WinRT の生ポインタを触るので、警告を残さない。
       - name: clippy
         run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui --all-targets -- -D warnings
+      # docs.rs は Windows 向けにこのクレート群を文書化するので、ここで見る。
+      - name: ドキュメント
+        run: cargo doc --no-deps -p naui-core -p naui-winui3 -p naui-windows -p naui
+        env:
+          RUSTDOCFLAGS: -D warnings
       # ネイティブのコントロールを作る統合テストは Windows App SDK の
       # ランタイムとデスクトップセッションが要るのでまだ持てない。
       # ランタイム無しで通る単体テストとドキュメンテーションテストは、

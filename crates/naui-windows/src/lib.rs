@@ -15,7 +15,10 @@
 //! Windows App SDK 1.3 以降のランタイムが必要。起動時にフレームワーク
 //! パッケージの依存関係を追加するが、版は決め打ちにせず 2.x から 1.3 まで
 //! 新しい順に試し、**最初に取り付けられたもの**を使う。OS 同梱の系統
-//! (`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れる (詳しくは [`sdk`])。
+//! (`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れる。
+//!
+//! 下限が 1.3 なのは、ウィンドウの背景に使う `MicaBackdrop` と
+//! `Window.SystemBackdrop` がそこで入ったため。
 
 #![cfg(target_os = "windows")]
 
@@ -396,8 +399,9 @@ impl Ui {
 
 /// アプリを起動し、`build` の中で UI を組み立てる。
 ///
-/// Windows App SDK のブートストラップ (版の選択は [`sdk`]) を行ってから
-/// `Application::Start` に入り、XAML の初期化が終わったところで `build` を呼ぶ。
+/// Windows App SDK のブートストラップ (版はクレートの説明のとおり新しい順に
+/// 試す) を行ってから `Application::Start` に入り、XAML の初期化が終わった
+/// ところで `build` を呼ぶ。
 /// この関数はアプリが終了するまで戻らない。
 pub fn run<F>(settings: Settings, build: F) -> Result<()>
 where
