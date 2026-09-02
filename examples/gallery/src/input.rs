@@ -190,8 +190,9 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
 
     pane.append(&ui.label("NumberInput")?);
     pane.append(&ui.label("数値の入力欄です。範囲・刻み・小数桁を指定できます。")?);
-    // 数値の欄は中身に合わせた幅を持たないので、ここで決めておく。
-    let number_width = Sizing::new().width(Length::Fixed(140.0));
+    // 数値の欄は中身に合わせた幅を持たないので、ここで決めておく。上下の
+    // ボタンや消去ボタンが並ぶぶん、1 行入力より広めに取る。
+    let number_width = Sizing::new().width(Length::Fixed(200.0));
     let count = ui.number_input(1.0)?;
     count.set_range(Some(1.0), Some(99.0));
     count.set_sizing(number_width);

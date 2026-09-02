@@ -377,7 +377,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `NumberInput` | `TextBox` + 増減ボタン | `NSTextField` + `NSStepper` | `GtkSpinButton` | `<input type="number">` |
+//! | `NumberInput` | `NumberBox` | `NSTextField` + `NSStepper` | `GtkSpinButton` | `<input type="number">` |
 //!
 //! 値は**小数桁へ丸めてから範囲へ収める**。範囲の外の値を
 //! [`set_value`](NumberInput::set_value) へ渡すと、通知せずに端へ寄る。

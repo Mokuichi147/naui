@@ -1,11 +1,17 @@
-//! 数値入力 (`TextBox` + 増減ボタン)。
+//! 数値入力 (`NumberBox`)。
 //!
-//! 数字を打つ `TextBox` と `-` / `+` の `Button` を `Grid` へ並べる
-//! (`NumberBox` の既定である Inline のスピンボタンと同じ並び)。
+//! WinUI 3 の数値専用コントロールをそのまま使う。増減ボタンは既定で隠れて
+//! いるので、`SpinButtonPlacementMode` を `Inline` にして欄の右へ出す。
 //!
-//! 値の丸めと範囲は [`NumberSpec`] が決める。打っている最中に表示を
-//! 書き換えると打ちづらいので、**書き戻しは確定 (欄を離れたとき) と
-//! ボタンを押したときだけ**行う。
+//! 値の丸めと範囲は [`NumberSpec`] が決める。範囲・刻み・小数桁は
+//! `NumberBox` 側 (`Minimum` / `Maximum` / `SmallChange` / `NumberFormatter`)
+//! にも書いて、増減ボタンや上下キーの動きと表示をそろえる。
+//!
+//! `NumberBox` が値を決めるのは**確定したとき** (Enter・欄を離れたとき・
+//! 増減ボタン・上下キー・ホイール) だけなので、1 文字ごとの通知は
+//! テンプレートの中にある入力欄 (`InputBox`) の `TextChanged` から拾う。
+//! 標準のテンプレートが差し替えられていて入力欄が見つからないときは、
+//! 確定したときだけ通知される。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -13,28 +19,38 @@ use std::sync::Arc;
 
 use naui_core::{NumberSpec, Result};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, ColumnDefinition, Grid as XamlGrid, TextBlock, TextBox,
-    TextChangedEventHandler,
+    NumberBox as XamlNumberBox, NumberBoxSpinButtonPlacementMode, NumberBoxValidationMode,
+    NumberBoxValueChangedEventArgs, TextBox, TextChangedEventHandler,
 };
-use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, GridLength, GridUnitType, RoutedEventHandler, TextAlignment, Thickness,
-    UIElement,
-};
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use windows::Foundation::TypedEventHandler;
+use windows::Globalization::NumberFormatting::DecimalFormatter;
 use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
-use crate::widgets::Widget;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
+use crate::widgets::{impl_widget, Widget};
 
-/// 数字の欄の最小幅 (論理ピクセル)。中身に合わせると狭くなりすぎるため。
-const FIELD_MIN_WIDTH: f64 = 96.0;
-/// 増減ボタンの幅。WinUI の `NumberBox` のスピンボタンに合わせる。
-const SPIN_WIDTH: f64 = 34.0;
+/// WinUI 3 の `NumberBox` テンプレートが持つ入力欄の名前。
+const INPUT_BOX_PART: &str = "InputBox";
 
-type ChangeCallback = Box<dyn FnMut(f64)>;
+/// 範囲を指定されていないときに `NumberBox` へ渡す端の値。
+///
+/// `NumberBox` は下限・上限を必ず持つので、その既定値と同じものを
+/// 「制限なし」の代わりに使う。丸めと範囲は [`NumberSpec`] が持っているので、
+/// ここで止まっても naui の答えは変わらない。
+const UNBOUNDED: f64 = f64::MAX;
 
-/// 値が変わったことの通知先。呼ぶ間だけクロージャを取り出して再入を許す。
-struct ChangeHandler(Arc<UiThreadCell<Option<ChangeCallback>>>);
+/// PageUp / PageDown で動く量は刻みの何倍か (`NumberBox` の既定と同じ比)。
+const LARGE_CHANGE_STEPS: f64 = 10.0;
+
+/// 値が変わったことの通知先。
+///
+/// WinRT のデリゲートは `Send + Sync` を要求するので [`UiThreadCell`] に
+/// 載せる。呼ぶ間だけクロージャを取り出すので、通知の中から同じ欄を操作しても
+/// 二重借用にならない。
+#[derive(Clone)]
+struct ChangeHandler(HandlerCell<dyn FnMut(f64)>);
 
 impl ChangeHandler {
     fn new() -> Self {
@@ -59,75 +75,45 @@ impl ChangeHandler {
 }
 
 struct NumberInputInner {
-    native: XamlGrid,
-    field: TextBox,
-    down: XamlButton,
-    up: XamlButton,
+    native: XamlNumberBox,
     spec: Cell<NumberSpec>,
     value: Cell<f64>,
     handler: ChangeHandler,
     /// 値を書き込んでいる間だけ、WinUI からの通知を無視する。
     silent: Cell<bool>,
-    /// 付け替えのために覚えておくイベントのトークン。
-    tokens: RefCell<Vec<i64>>,
+    /// テンプレートの入力欄。見つかるまでは `None`。
+    field: RefCell<Option<TextBox>>,
 }
 
-/// 数値を入力させるコントロール (`TextBox` + 増減ボタン)。
+/// 数値を入力させるコントロール (`NumberBox`)。
 ///
 /// 既定は整数 (刻み 1、小数桁 0、範囲の制限なし)。
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
-
-impl Widget for NumberInput {
-    fn native_element(&self) -> UIElement {
-        self.0
-            .native
-            .cast::<UIElement>()
-            .expect("WinUI のコントロールは UIElement である")
-    }
-
-    fn boxed_clone(&self) -> Box<dyn Widget> {
-        Box::new(self.clone())
-    }
-}
-
-impl NumberInput {
-    /// 数字とボタンが見切れないよう、内部構成に必要な幅を下限にする。
-    pub fn set_sizing(&self, mut sizing: naui_core::Sizing) {
-        let content_width = FIELD_MIN_WIDTH + SPIN_WIDTH * 2.0;
-        sizing.min_width = Some(sizing.min_width.unwrap_or(0.0).max(content_width));
-        let element = <Self as Widget>::native_element(self);
-        crate::layout::apply_sizing(&element, sizing);
-    }
-}
+impl_widget!(NumberInput, native);
 
 impl NumberInput {
     pub(crate) fn new(value: f64) -> Result<Self> {
-        let native = XamlGrid::new().map_err(|e| to_error("数値入力 Grid の生成", e))?;
-
-        let field = TextBox::new().map_err(|e| to_error("TextBox の生成", e))?;
-        field
-            .SetTextAlignment(TextAlignment::Right)
-            .map_err(|e| to_error("数値入力の文字ぞろえの設定", e))?;
-        field
-            .SetMinWidth(FIELD_MIN_WIDTH)
-            .map_err(|e| to_error("数値入力の幅の設定", e))?;
-
-        let down = spin_button("\u{2212}")?; // −
-        let up = spin_button("\u{FF0B}")?; // ＋
+        let native = XamlNumberBox::new().map_err(|e| to_error("NumberBox の生成", e))?;
+        // 増減ボタンは既定では出ない。欄の右へ並べる Inline にする。
+        native
+            .SetSpinButtonPlacementMode(NumberBoxSpinButtonPlacementMode::Inline)
+            .map_err(|e| to_error("数値入力の増減ボタンの設定", e))?;
+        // 数として読めない文字列は確定時に元の値へ戻す。既定と同じだが、
+        // naui が約束している動きなので明示しておく。
+        native
+            .SetValidationMode(NumberBoxValidationMode::InvalidInputOverwritten)
+            .map_err(|e| to_error("数値入力の検証方法の設定", e))?;
 
         let this = Self(Rc::new(NumberInputInner {
             native,
-            field,
-            down,
-            up,
             spec: Cell::new(NumberSpec::default()),
             value: Cell::new(NumberSpec::default().clamp(value)),
             handler: ChangeHandler::new(),
             silent: Cell::new(false),
-            tokens: RefCell::new(Vec::new()),
+            field: RefCell::new(None),
         }));
-        this.assemble()?;
+        this.write_native_spec()?;
         this.write_native(this.value());
         this.connect()?;
         Ok(this)
@@ -168,9 +154,7 @@ impl NumberInput {
     }
 
     pub fn set_enabled(&self, enabled: bool) {
-        let _ = self.0.field.SetIsEnabled(enabled);
-        let _ = self.0.down.SetIsEnabled(enabled);
-        let _ = self.0.up.SetIsEnabled(enabled);
+        let _ = self.0.native.SetIsEnabled(enabled);
     }
 
     /// 値が変わったときに、変わったあとの値で呼ばれる。
@@ -179,149 +163,139 @@ impl NumberInput {
         self.0.handler.set(f);
     }
 
-    /// 数字を打つ欄。バックエンド固有の脱出口として公開している。
-    pub fn native_text_box(&self) -> TextBox {
-        self.0.field.clone()
+    /// 対応する `NumberBox`。バックエンド固有の脱出口として公開している。
+    pub fn native_number_box(&self) -> XamlNumberBox {
+        self.0.native.clone()
     }
 
-    /// 減らす・増やすボタン。
-    pub fn native_spin_buttons(&self) -> (XamlButton, XamlButton) {
-        (self.0.down.clone(), self.0.up.clone())
-    }
-
-    /// 欄とボタンを `Grid` へ並べる。
-    fn assemble(&self) -> Result<()> {
-        let columns = self
-            .0
+    /// 確定と打鍵の購読をつなぐ。
+    fn connect(&self) -> Result<()> {
+        // 確定 (Enter・欄を離れたとき・増減ボタン・上下キー・ホイール)。
+        let committed = UiThreadCell::new(Rc::downgrade(&self.0));
+        let changed = TypedEventHandler::<XamlNumberBox, NumberBoxValueChangedEventArgs>::new(
+            move |_sender, args| {
+                let Some(inner) = committed.try_with_mut(|weak| weak.upgrade()).flatten() else {
+                    return Ok(());
+                };
+                let this = NumberInput(inner);
+                if this.0.silent.get() {
+                    return Ok(());
+                }
+                // 欄が空だと `NumberBox` は値を NaN にする。読めなかった表示と
+                // 同じ扱いにして、いまの値へ戻す。
+                let shown = args
+                    .as_ref()
+                    .and_then(|args| args.NewValue().ok())
+                    .filter(|value| value.is_finite())
+                    .unwrap_or_else(|| this.value());
+                this.accept(shown, true);
+                Ok(())
+            },
+        );
+        self.0
             .native
-            .ColumnDefinitions()
-            .map_err(|e| to_error("数値入力の列の取得", e))?;
-        for width in [
-            GridLength {
-                Value: 1.0,
-                GridUnitType: GridUnitType::Star,
-            },
-            GridLength {
-                Value: SPIN_WIDTH,
-                GridUnitType: GridUnitType::Pixel,
-            },
-            GridLength {
-                Value: SPIN_WIDTH,
-                GridUnitType: GridUnitType::Pixel,
-            },
-        ] {
-            let column = ColumnDefinition::new().map_err(|e| to_error("数値入力の列の生成", e))?;
-            column
-                .SetWidth(width)
-                .map_err(|e| to_error("数値入力の列幅の設定", e))?;
-            columns
-                .Append(&column)
-                .map_err(|e| to_error("数値入力の列の追加", e))?;
-        }
+            .ValueChanged(&changed)
+            .map_err(|e| to_error("数値入力の確定購読", e))?;
 
-        let children = self
-            .0
+        // テンプレートが展開されてから入力欄を探す。
+        let loaded = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = RoutedEventHandler::new(move |_sender, _args| {
+            if let Some(inner) = loaded.try_with_mut(|weak| weak.upgrade()).flatten() {
+                NumberInput(inner).watch_input_box();
+            }
+            Ok(())
+        });
+        self.0
             .native
-            .Children()
-            .map_err(|e| to_error("数値入力の子の取得", e))?;
-        for (column, element) in [
-            (0, self.0.field.cast::<UIElement>()),
-            (1, self.0.down.cast::<UIElement>()),
-            (2, self.0.up.cast::<UIElement>()),
-        ] {
-            let element = element.map_err(|e| to_error("数値入力の要素化", e))?;
-            let framework = element
-                .cast::<FrameworkElement>()
-                .map_err(|e| to_error("数値入力のレイアウト要素化", e))?;
-            XamlGrid::SetColumn(&framework, column)
-                .map_err(|e| to_error("数値入力の列位置の設定", e))?;
-            children
-                .Append(&element)
-                .map_err(|e| to_error("数値入力への追加", e))?;
-        }
+            .Loaded(&handler)
+            .map_err(|e| to_error("数値入力の読み込み購読", e))?;
         Ok(())
     }
 
-    /// 打鍵・確定・増減ボタンの購読をつなぐ。
-    fn connect(&self) -> Result<()> {
-        let mut tokens = Vec::new();
+    /// テンプレートの入力欄を見つけて、1 文字ごとの変化を購読する。
+    ///
+    /// 見つからないときは何もしない (確定は `ValueChanged` で届く)。
+    fn watch_input_box(&self) {
+        if self.0.field.borrow().is_some() {
+            return;
+        }
+        let Ok(part) = self
+            .0
+            .native
+            .GetTemplateChild(&HSTRING::from(INPUT_BOX_PART))
+        else {
+            return;
+        };
+        let Ok(field) = part.cast::<TextBox>() else {
+            return;
+        };
 
-        // 打鍵のたびに、読める値なら受け取る。
-        let typed = UiThreadCell::new(Rc::downgrade(&self.0));
-        let handler = TextChangedEventHandler::new(move |_sender, _args| {
-            let Some(inner) = typed.try_with_mut(|weak| weak.upgrade()).flatten() else {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let typed = TextChangedEventHandler::new(move |_sender, _args| {
+            let Some(inner) = state.try_with_mut(|weak| weak.upgrade()).flatten() else {
                 return Ok(());
             };
             let this = NumberInput(inner);
             if this.0.silent.get() {
                 return Ok(());
             }
-            let text = this.0.field.Text().unwrap_or_default().to_string();
-            if let Some(shown) = this.0.spec.get().parse(&text) {
+            // `NumberBox.Text` は確定するまで追いつかないので、入力欄から直に読む。
+            let text = this
+                .0
+                .field
+                .borrow()
+                .as_ref()
+                .and_then(|field| field.Text().ok())
+                .map(|text| text.to_string());
+            // 打っている途中で読めない表示 (空欄や `-` だけ) は確定まで待つ。
+            if let Some(shown) = text.and_then(|text| this.0.spec.get().parse(&text)) {
                 this.accept(shown, false);
             }
             Ok(())
         });
-        tokens.push(
-            self.0
-                .field
-                .TextChanged(&handler)
-                .map_err(|e| to_error("数値入力の打鍵購読", e))?,
-        );
-
-        // 欄を離れたら確定する。読めなかった表示はここで元へ戻す。
-        let left = UiThreadCell::new(Rc::downgrade(&self.0));
-        let handler = RoutedEventHandler::new(move |_sender, _args| {
-            let Some(inner) = left.try_with_mut(|weak| weak.upgrade()).flatten() else {
-                return Ok(());
-            };
-            let this = NumberInput(inner);
-            let text = this.0.field.Text().unwrap_or_default().to_string();
-            let shown = this
-                .0
-                .spec
-                .get()
-                .parse(&text)
-                .unwrap_or_else(|| this.value());
-            this.accept(shown, true);
-            Ok(())
-        });
-        tokens.push(
-            self.0
-                .field
-                .LostFocus(&handler)
-                .map_err(|e| to_error("数値入力の確定購読", e))?,
-        );
-
-        // 増減ボタン。刻みと範囲は NumberSpec が守る。
-        for (button, steps) in [(&self.0.down, -1.0), (&self.0.up, 1.0)] {
-            let pressed = UiThreadCell::new(Rc::downgrade(&self.0));
-            let handler = RoutedEventHandler::new(move |_sender, _args| {
-                let Some(inner) = pressed.try_with_mut(|weak| weak.upgrade()).flatten() else {
-                    return Ok(());
-                };
-                let this = NumberInput(inner);
-                let stepped = this.0.spec.get().stepped(this.value(), steps);
-                this.accept(stepped, true);
-                Ok(())
-            });
-            tokens.push(
-                button
-                    .Click(&handler)
-                    .map_err(|e| to_error("数値入力のボタン購読", e))?,
-            );
+        if field.TextChanged(&typed).is_ok() {
+            *self.0.field.borrow_mut() = Some(field);
         }
-
-        *self.0.tokens.borrow_mut() = tokens;
-        Ok(())
     }
 
+    /// 決まりを差し替え、`NumberBox` と現在値へ反映する。
     fn update_spec(&self, edit: impl FnOnce(NumberSpec) -> NumberSpec) {
         self.0.spec.set(edit(self.0.spec.get()));
+        let _ = self.write_native_spec();
         self.set_value(self.value());
     }
 
-    /// 画面に出ている値を受け取る。`commit` なら表示も書き直す。
+    /// 範囲・刻み・小数桁を `NumberBox` へ書く。
+    ///
+    /// 下限を先に書くと、上限がまだ古いままなら `NumberBox` が上限を押し上げる
+    /// ことがあるが、続けて上限を書くので最後には指定どおりになる
+    /// (下限が上限より大きいときに上限が勝つのも [`NumberSpec`] と同じ)。
+    fn write_native_spec(&self) -> Result<()> {
+        let spec = self.0.spec.get();
+        self.0
+            .native
+            .SetMinimum(spec.min.unwrap_or(-UNBOUNDED))
+            .map_err(|e| to_error("数値入力の下限の設定", e))?;
+        self.0
+            .native
+            .SetMaximum(spec.max.unwrap_or(UNBOUNDED))
+            .map_err(|e| to_error("数値入力の上限の設定", e))?;
+        self.0
+            .native
+            .SetSmallChange(spec.step)
+            .map_err(|e| to_error("数値入力の刻みの設定", e))?;
+        self.0
+            .native
+            .SetLargeChange(spec.step * LARGE_CHANGE_STEPS)
+            .map_err(|e| to_error("数値入力の大きい刻みの設定", e))?;
+        self.0
+            .native
+            .SetNumberFormatter(&formatter(spec.decimals)?)
+            .map_err(|e| to_error("数値入力の書式の設定", e))?;
+        Ok(())
+    }
+
+    /// 画面に出ている値を受け取る。`commit` なら `NumberBox` へも書き戻す。
     fn accept(&self, shown: f64, commit: bool) {
         let accepted = self.0.spec.get().clamp(shown);
         if commit {
@@ -334,43 +308,30 @@ impl NumberInput {
         self.0.handler.emit(accepted);
     }
 
-    /// 値を欄へ書く。この間の `TextChanged` は無視する。
+    /// 値を `NumberBox` へ書く。この間の通知は無視する。
+    ///
+    /// 表示は `NumberBox` が `NumberFormatter` で書き直すので、ここでは触らない。
     fn write_native(&self, value: f64) {
         let previous = self.0.silent.replace(true);
-        let _ = self
-            .0
-            .field
-            .SetText(&HSTRING::from(self.0.spec.get().format(value)));
+        let _ = self.0.native.SetValue(value);
         self.0.silent.set(previous);
     }
 }
 
-/// `-` / `+` のボタン。文字だけを見せる小さなボタンにする。
-fn spin_button(text: &str) -> Result<XamlButton> {
-    let button = XamlButton::new().map_err(|e| to_error("Button の生成", e))?;
-    let label = TextBlock::new().map_err(|e| to_error("Button ラベルの生成", e))?;
-    label
-        .SetText(&HSTRING::from(text))
-        .map_err(|e| to_error("Button ラベルの設定", e))?;
-    button
-        .SetContent(&label)
-        .map_err(|e| to_error("Button への内容設定", e))?;
-    button
-        // アプリ共通の Button スタイルには左右 16px の Padding がある。
-        // 幅 34px のスピンボタンへそのまま適用すると、内容幅と既定の
-        // MinWidth がボタン幅を押し広げ、隣のボタンが欠けて見える。
-        .SetPadding(Thickness {
-            Left: 0.0,
-            Top: 8.0,
-            Right: 0.0,
-            Bottom: 8.0,
-        })
-        .map_err(|e| to_error("Button の余白の設定", e))?;
-    button
-        .SetMinWidth(0.0)
-        .map_err(|e| to_error("Button の最小幅の設定", e))?;
-    button
-        .SetWidth(SPIN_WIDTH)
-        .map_err(|e| to_error("Button の幅の設定", e))?;
-    Ok(button)
+/// 小数桁ぶんを必ず書く書式。[`NumberSpec::format`] と同じ見た目にする。
+///
+/// `NumberBox` は書式を数の読み取りにも使うので、桁区切りは入れない
+/// (区切られた表示は [`NumberSpec::parse`] が読めないため)。
+fn formatter(decimals: u32) -> Result<DecimalFormatter> {
+    let formatter = DecimalFormatter::new().map_err(|e| to_error("数の書式の生成", e))?;
+    formatter
+        .SetIntegerDigits(1)
+        .map_err(|e| to_error("数の書式の整数桁の設定", e))?;
+    formatter
+        .SetFractionDigits(decimals as i32)
+        .map_err(|e| to_error("数の書式の小数桁の設定", e))?;
+    formatter
+        .SetIsGrouped(false)
+        .map_err(|e| to_error("数の書式の桁区切りの設定", e))?;
+    Ok(formatter)
 }

@@ -22,6 +22,7 @@ windows-core = "0.62"
 windows = { version = "0.62", features = [
     "Foundation",
     "Globalization",
+    "Globalization_NumberFormatting",
     "Graphics",
     "Media_Core",
     "Media_Playback",

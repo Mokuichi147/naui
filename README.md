@@ -899,7 +899,7 @@ tokio::spawn(async move {
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `PasswordInput` | ✅ `PasswordBox` | ✅ `NSSecureTextField` | ✅ `GtkPasswordEntry` | ✅ `<input type="password">` |
 | `SearchInput` | ✅ `AutoSuggestBox` | ✅ `NSSearchField` | ✅ `GtkSearchEntry` | ✅ `<input type="search">` |
-| `NumberInput` | 🟡 `TextBox` + 増減ボタン | 🟡 `NSTextField` + `NSStepper` | ✅ `GtkSpinButton` | ✅ `<input type="number">` |
+| `NumberInput` | ✅ `NumberBox` | 🟡 `NSTextField` + `NSStepper` | ✅ `GtkSpinButton` | ✅ `<input type="number">` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
 | `ProgressBar` | 🟡 `Grid` + `Border` | ✅ `NSProgressIndicator` | ✅ `GtkProgressBar` | ✅ `<progress>` |
 
@@ -1222,10 +1222,19 @@ git push origin v0.3.0
 - `Tree` は `ListBox` の行として組み立てています (`TreeView` は投影に入ったので、
   そちらへ移すのは今後の課題です)。選べない枝は行ごと無効になるので、その開閉ボタンも
   押せません (プログラムからの `expand` は効きます)。
-- `NumberInput` は `TextBox` と `-` / `+` のボタンを横に並べて組み立てています
-  (`NumberBox` の既定と同じ並び。`NumberBox` は投影に入ったので、そちらへ移すのは
-  今後の課題です)。
-  値の確定は欄を離れたときです。
+- `NumberInput` は `NumberBox` です。増減ボタンは既定では出ないので
+  `SpinButtonPlacementMode` を `Inline` にして欄の右へ並べ、範囲・刻み・小数桁は
+  `Minimum` / `Maximum` / `SmallChange` / `NumberFormatter` にも書いて、
+  上下キーやホイールの動きと表示をそろえています。端に来ると増減ボタンが
+  自分で無効になり、PageUp / PageDown は刻みの 10 倍動きます。
+  `NumberBox` の 1 文字ごとの通知は、`EditableComboBox` と同じくテンプレートに
+  ある入力欄 (`InputBox`) の `TextChanged` から拾っています。`NumberBox` が値を
+  決めるのは確定したとき (Enter・欄を離れたとき・増減ボタン・上下キー・
+  ホイール) だけだからです。標準のテンプレートを差し替えて入力欄が見つからない
+  場合は、確定したときだけ通知されます。
+  `TextInput` と同じく中身に合わせた幅を持たないので幅は `set_sizing` で
+  指定しますが、増減ボタンと消去ボタンが並ぶぶん**1 行入力より広めに**取って
+  ください (naui のギャラリーは 200 px にしています)。
 - `Toolbar` は `Button` を横に並べて構成し、タイトルバー (ドラッグ領域) では
   なくその下の行に置きます (`CommandBar` と `AppBarButton` は投影に入ったので、
   そちらへ移すのは今後の課題です)。アイコンは
