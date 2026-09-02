@@ -26,7 +26,7 @@ use crate::Ui;
 
 enum Backdrop {
     Controller {
-        _controller: MicaController,
+        controller: MicaController,
         configuration: SystemBackdropConfiguration,
     },
     BuiltIn {
@@ -231,6 +231,7 @@ impl Window {
     }
 
     pub fn close(&self) {
+        self.release_backdrop();
         if self.0.native.Close().is_ok() {
             *self.0.visible.borrow_mut() = false;
         }
@@ -245,7 +246,27 @@ impl Window {
         self.0.native.clone()
     }
 
+    /// 自分で取り付けた Mica のコントローラーを閉じる。
+    ///
+    /// コントローラーはウィンドウの合成面を掴んでいるので、掴んだまま
+    /// ウィンドウが壊れると落ちる (STATUS_ACCESS_VIOLATION)。畳む経路は
+    /// 3 つあり、どれからも必ず通す。
+    ///
+    /// | 経路 | 呼ぶところ |
+    /// | --- | --- |
+    /// | ユーザーが閉じる | `AppWindow` の `Closing` → `clear_content_for_shutdown` |
+    /// | `Window::close` | ここ (`Window::Close` では `Closing` が上がらない) |
+    /// | `Ui::quit` | `Application::Exit` の前に全ウィンドウぶん |
+    ///
+    /// `SetSystemBackdrop` で付けた既定の Mica は WinUI の持ち物なので触らない。
+    pub(crate) fn release_backdrop(&self) {
+        if let Backdrop::Controller { controller, .. } = &self.0.backdrop {
+            let _ = controller.Close();
+        }
+    }
+
     pub(crate) fn clear_content_for_shutdown(&self) {
+        self.release_backdrop();
         let _ = self.0.native.SetContent(None);
         *self.0.child.borrow_mut() = None;
         *self.0.theme_root.borrow_mut() = None;
@@ -269,7 +290,7 @@ impl Window {
                 if let Some(ui) = slot.take() {
                     // 画面が畳まれた後は、投函しても誰も取り出さない。
                     // 送信側へ失敗を返せるようにし、受信クロージャと future を解放する。
-                    ui.tasks.shutdown();
+                    ui.0.tasks.shutdown();
                     ui.clear_windows_for_shutdown();
                 }
             });
@@ -316,7 +337,7 @@ fn create_backdrop(native: &XamlWindow, theme: Theme) -> Backdrop {
                             .is_ok();
                     if configured {
                         return Backdrop::Controller {
-                            _controller: controller,
+                            controller,
                             configuration,
                         };
                     }

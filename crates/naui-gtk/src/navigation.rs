@@ -500,6 +500,44 @@ impl Tabs {
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
 
+    /// タブを 1 枚外す。範囲外のときは何もしない。
+    ///
+    /// 選択中のタブを外したときは、環境が近くのタブを選び直す。
+    /// この移動は [`set_selected`](Tabs::set_selected) と同じく通知しない。
+    pub fn remove_tab(&self, index: usize) {
+        if index >= self.len() {
+            return;
+        }
+        let selected = self.selected();
+        without_signal(&self.0.native, &self.0.handler, || {
+            self.0.native.remove_page(Some(index as u32));
+        });
+        self.0.children.borrow_mut().remove(index);
+        // 選択の寄せ先は環境任せにせず、4 バックエンドで同じ形にそろえる。
+        let left = self.len();
+        let selected = match selected {
+            _ if left == 0 => None,
+            Some(current) if current == index => Some(index.min(left - 1)),
+            Some(current) if current > index => Some(current - 1),
+            other => other,
+        };
+        if let Some(selected) = selected {
+            without_signal(&self.0.native, &self.0.handler, || {
+                self.0.native.set_current_page(Some(selected as u32));
+            });
+        }
+    }
+
+    /// タブをすべて外す。
+    pub fn clear(&self) {
+        without_signal(&self.0.native, &self.0.handler, || {
+            while self.0.native.n_pages() > 0 {
+                self.0.native.remove_page(Some(0));
+            }
+        });
+        self.0.children.borrow_mut().clear();
+    }
+
     pub fn len(&self) -> usize {
         self.0.native.n_pages() as usize
     }

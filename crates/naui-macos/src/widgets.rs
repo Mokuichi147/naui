@@ -970,6 +970,65 @@ impl Stack {
         self.invalidate_natural_size();
     }
 
+    /// 指定した位置へ子を差し込む。`index` が今の数以上なら末尾へ足す。
+    pub fn insert(&self, index: usize, child: &dyn Widget) {
+        let mut children = self.take_children();
+        let index = index.min(children.len());
+        children.insert(index, child.boxed_clone());
+        self.refill(children);
+    }
+
+    /// 指定した位置の子を外す。範囲外のときは何もしない。
+    pub fn remove(&self, index: usize) {
+        let mut children = self.take_children();
+        if index >= children.len() {
+            self.refill(children);
+            return;
+        }
+        children.remove(index);
+        self.refill(children);
+    }
+
+    /// 子をすべて外す。
+    pub fn clear(&self) {
+        drop(self.take_children());
+        self.invalidate_natural_size();
+    }
+
+    /// 並んでいる子をいったん全部外して返す。
+    ///
+    /// [`append`](Stack::append) は末尾の受け皿・行間・`Fill` の制約を
+    /// 「そのときの並び」に対して張るので、順番が変わる操作は
+    /// 外して積み直す形で行う。
+    fn take_children(&self) -> Vec<Box<dyn Widget>> {
+        let children = std::mem::take(&mut *self.0.children.borrow_mut());
+        for child in &children {
+            let view = child.native_view();
+            self.0.native.removeArrangedSubview(&view);
+            view.removeFromSuperview();
+        }
+        {
+            let mut constraints = self.0.fill_constraints.borrow_mut();
+            for constraint in constraints.iter() {
+                constraint.setActive(false);
+            }
+            constraints.clear();
+        }
+        // 主軸に `Fill` の子がいて外していた受け皿を、空の状態へ戻す。
+        if !self.0.tail_spacer_active.replace(true) {
+            self.0.native.addArrangedSubview(&self.0._tail_spacer);
+        }
+        children
+    }
+
+    /// [`take_children`](Stack::take_children) で外した子を積み直す。
+    fn refill(&self, children: Vec<Box<dyn Widget>>) {
+        for child in &children {
+            self.append(&**child);
+        }
+        self.invalidate_natural_size();
+    }
+
     /// 追加済みの子の数。
     pub fn len(&self) -> usize {
         self.0.children.borrow().len()

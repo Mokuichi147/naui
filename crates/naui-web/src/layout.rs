@@ -226,7 +226,8 @@ impl Spacer {
 
 struct GridInner {
     element: HtmlElement,
-    children: RefCell<Vec<Box<dyn Widget>>>,
+    /// 置いた子と、その置き場所。マス単位で外すために持つ。
+    children: RefCell<Vec<(GridCell, Box<dyn Widget>)>>,
     columns: Cell<usize>,
     rows: Cell<usize>,
     column_tracks: RefCell<Vec<Track>>,
@@ -293,23 +294,39 @@ impl Grid {
         apply_child_layout(&element, ParentLayout::Grid);
 
         self.grow_to(cell.columns_needed(), cell.rows_needed());
-        self.0.children.borrow_mut().push(child.boxed_clone());
+        self.0
+            .children
+            .borrow_mut()
+            .push((cell, child.boxed_clone()));
     }
 
-    /// いまの子を外し、指定した 1 つだけを置く。
+    /// そのマスの中身を差し替える。同じマスに置かれていたものは外れる。
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
-        let old_children: Vec<Element> = self
-            .0
-            .children
-            .borrow()
-            .iter()
-            .map(|old| old.native_element())
-            .collect();
-        for old in old_children {
-            let _ = self.0.element.remove_child(&old);
-        }
-        self.0.children.borrow_mut().clear();
+        self.remove(cell);
         self.attach(child, cell);
+    }
+
+    /// 指定したマスに置かれているものを外す。何も無ければ何もしない。
+    ///
+    /// 見るのは `cell` の列と行だけで、span は見ない。
+    pub fn remove(&self, cell: GridCell) {
+        let mut children = self.0.children.borrow_mut();
+        let mut index = 0;
+        while index < children.len() {
+            if children[index].0.column == cell.column && children[index].0.row == cell.row {
+                let (_, child) = children.remove(index);
+                let _ = self.0.element.remove_child(&child.native_element());
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    /// 子をすべて外す。行と列の指定はそのまま残る。
+    pub fn clear(&self) {
+        for (_, child) in std::mem::take(&mut *self.0.children.borrow_mut()) {
+            let _ = self.0.element.remove_child(&child.native_element());
+        }
     }
 
     /// 列の幅の決め方。

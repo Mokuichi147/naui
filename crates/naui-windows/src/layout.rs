@@ -126,7 +126,8 @@ impl Spacer {
 
 struct GridInner {
     native: XamlGrid,
-    children: RefCell<Vec<Box<dyn Widget>>>,
+    /// 置いた子と、その置き場所。マス単位で外すために持つ。
+    children: RefCell<Vec<(GridCell, Box<dyn Widget>)>>,
     columns: Cell<usize>,
     rows: Cell<usize>,
 }
@@ -187,21 +188,54 @@ impl Grid {
             .Children()
             .and_then(|children| children.Append(&element));
         if appended.is_ok() {
-            self.0.children.borrow_mut().push(child.boxed_clone());
+            self.0
+                .children
+                .borrow_mut()
+                .push((cell, child.boxed_clone()));
         }
     }
 
-    /// いまの子を外し、指定した 1 つだけを置く。
+    /// そのマスの中身を差し替える。同じマスに置かれていたものは外れる。
     ///
     /// `MediaPlayerElement` のように、TabView のコンテンツ切り替え時に
     /// WinUI 内部でテンプレート適用が走るコントロールを安全に差し替える
     /// ために使う。
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
+        self.remove(cell);
+        self.attach(child, cell);
+    }
+
+    /// 指定したマスに置かれているものを外す。何も無ければ何もしない。
+    ///
+    /// 見るのは `cell` の列と行だけで、span は見ない。
+    pub fn remove(&self, cell: GridCell) {
+        let mut children = self.0.children.borrow_mut();
+        let mut index = 0;
+        while index < children.len() {
+            if children[index].0.column != cell.column || children[index].0.row != cell.row {
+                index += 1;
+                continue;
+            }
+            // `attach` は Children へ順に足すので、位置はここの並びと同じ。
+            let removed = self
+                .0
+                .native
+                .Children()
+                .and_then(|c| c.RemoveAt(index as u32));
+            if removed.is_err() {
+                index += 1;
+                continue;
+            }
+            children.remove(index);
+        }
+    }
+
+    /// 子をすべて外す。行と列の指定はそのまま残る。
+    pub fn clear(&self) {
         if let Ok(children) = self.0.native.Children() {
             let _ = children.Clear();
         }
         self.0.children.borrow_mut().clear();
-        self.attach(child, cell);
     }
 
     /// 列の幅の決め方。

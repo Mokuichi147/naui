@@ -53,6 +53,7 @@ mod widgets;
 mod window;
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
 
@@ -93,7 +94,15 @@ pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
 pub(crate) type Slot<F> = Option<Box<F>>;
 
 /// ウィジェットを生成するための入り口。
-pub struct Ui {
+///
+/// ウィジェットのハンドルと同じく **clone しても中身は同じ**なので、
+/// コールバックへ持ち込めば後からウィジェットを作れる。UI スレッド
+/// 専用で `Send` ではないため、別スレッドへは渡せない (そちらは
+/// [`Tasks`] を使う)。
+#[derive(Clone)]
+pub struct Ui(Rc<UiInner>);
+
+struct UiInner {
     theme: Cell<Theme>,
     windows: RefCell<Vec<Window>>,
     /// ダイアログはどこにも append されないので、ここで保持する。
@@ -111,7 +120,7 @@ pub struct Ui {
 
 impl Ui {
     fn new(theme: Theme, shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>) -> Self {
-        Self {
+        Self(Rc::new(UiInner {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
             dialogs: RefCell::new(Vec::new()),
@@ -123,18 +132,18 @@ impl Ui {
                 main_thread::Dispatcher::for_current_thread(),
             )),
             shutdown,
-        }
+        }))
     }
 
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
-        let w = Window::new(title, width, height, self.theme.get())?;
-        w.install_closing_handler(self.shutdown);
-        self.windows.borrow_mut().push(w.clone());
+        let w = Window::new(title, width, height, self.0.theme.get())?;
+        w.install_closing_handler(self.0.shutdown);
+        self.0.windows.borrow_mut().push(w.clone());
         Ok(w)
     }
 
     fn clear_windows_for_shutdown(&self) {
-        for window in self.windows.borrow().iter() {
+        for window in self.0.windows.borrow().iter() {
             window.clear_content_for_shutdown();
         }
     }
@@ -270,7 +279,7 @@ impl Ui {
     /// 戻り値を捨てても通知が届かなくなることはない。
     pub fn toolbar(&self) -> Result<Toolbar> {
         let toolbar = Toolbar::new()?;
-        self.toolbars.borrow_mut().push(toolbar.clone());
+        self.0.toolbars.borrow_mut().push(toolbar.clone());
         Ok(toolbar)
     }
 
@@ -300,7 +309,7 @@ impl Ui {
     /// 取り付け先から消えることはない。
     pub fn popup_menu(&self) -> Result<PopupMenu> {
         let popup = PopupMenu::new()?;
-        self.popups.borrow_mut().push(popup.clone());
+        self.0.popups.borrow_mut().push(popup.clone());
         Ok(popup)
     }
 
@@ -350,7 +359,7 @@ impl Ui {
     /// 通知が届かなくなることはない。
     pub fn toast(&self, message: &str) -> Result<Toast> {
         let toast = Toast::new(message)?;
-        self.toasts.borrow_mut().push(toast.clone());
+        self.0.toasts.borrow_mut().push(toast.clone());
         Ok(toast)
     }
 
@@ -359,38 +368,43 @@ impl Ui {
     /// フレームワークが参照を保持するので、戻り値を捨てても
     /// 通知が届かなくなることはない。
     pub fn dialog(&self, title: &str) -> Result<Dialog> {
-        let d = Dialog::new(title, self.theme.get())?;
-        self.dialogs.borrow_mut().push(d.clone());
+        let d = Dialog::new(title, self.0.theme.get())?;
+        self.0.dialogs.borrow_mut().push(d.clone());
         Ok(d)
     }
 
     /// 配色テーマを実行中に切り替える。
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
-        for window in self.windows.borrow().iter() {
+        for window in self.0.windows.borrow().iter() {
             window.set_theme(theme)?;
         }
         // ダイアログはウィンドウとは別の層に出るので、個別に伝える。
-        for dialog in self.dialogs.borrow().iter() {
+        for dialog in self.0.dialogs.borrow().iter() {
             dialog.set_theme(theme);
         }
-        self.theme.set(theme);
+        self.0.theme.set(theme);
         Ok(())
     }
 
     /// 現在選択されている配色テーマを返す。
     pub fn theme(&self) -> Theme {
-        self.theme.get()
+        self.0.theme.get()
     }
 
     /// 別スレッドや非同期処理から画面を書き換えるための入り口。
     ///
     /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
     pub fn tasks(&self) -> Tasks {
-        self.tasks.clone()
+        self.0.tasks.clone()
     }
 
     /// アプリを終了する。
     pub fn quit(&self) {
+        // `Application::Exit` でもウィンドウは通知を上げずに畳まれるので、
+        // 取り付けた Mica のコントローラーはここで閉じる。
+        for window in self.0.windows.borrow().iter() {
+            window.release_backdrop();
+        }
         if let Ok(app) = naui_winui3::Microsoft::UI::Xaml::Application::Current() {
             let _ = app.Exit();
         }

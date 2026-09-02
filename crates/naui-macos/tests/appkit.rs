@@ -113,6 +113,19 @@ fn main() {
             radio_group_callback_is_reentrant,
         ),
         ("スタックが子を生かし続ける", stack_keeps_children),
+        (
+            "スタックが子を差し込み・外し・空にできる",
+            stack_inserts_and_removes_children,
+        ),
+        (
+            "グリッドがマス単位で子を外せる",
+            grid_removes_children_by_cell,
+        ),
+        (
+            "グリッドの結合したマスは外した後も 1 つのマス",
+            grid_keeps_merges_after_the_child_is_removed,
+        ),
+        ("タブを外して空にできる", tabs_remove_and_clear),
         ("ウィンドウを設定して閉じられる", window_lifecycle),
         ("ナビバーの選択がネイティブと往復する", navbar_selection),
         ("ドックが等幅の項目を持つ", dock_items),
@@ -139,6 +152,10 @@ fn main() {
         (
             "リストに任意ウィジェットの行を載せられる",
             list_accepts_composed_rows,
+        ),
+        (
+            "clone した Ui で行を後から作れる",
+            ui_clone_builds_rows_from_a_callback,
         ),
         (
             "リストの行が NSTableView に描かれる",
@@ -1182,6 +1199,264 @@ fn radio_group_callback_is_reentrant(ui: &Ui) -> Result<()> {
 }
 
 /// スタックへ追加した子は、ハンドルを捨ててもコールバックが生き続ける。
+/// `Stack` は後から子を差し込み、外し、空にできる。
+fn stack_inserts_and_removes_children(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let first = ui.label("A")?;
+    let last = ui.label("C")?;
+    stack.append(&first);
+    stack.append(&last);
+
+    // 間へ差し込む。
+    let middle = ui.label("B")?;
+    stack.insert(1, &middle);
+    assert_eq!(stack.len(), 3);
+    assert_eq!(arranged_labels(&stack), ["A", "B", "C"]);
+
+    // 範囲外の index は末尾へ足す。
+    stack.insert(99, &ui.label("D")?);
+    assert_eq!(arranged_labels(&stack), ["A", "B", "C", "D"]);
+
+    // 外すと NSStackView からも消える。
+    stack.remove(1);
+    assert_eq!(stack.len(), 3);
+    assert_eq!(arranged_labels(&stack), ["A", "C", "D"]);
+    assert!(
+        unsafe { middle.native_view().superview() }.is_none(),
+        "外した子はビュー階層からも抜けること"
+    );
+
+    // 範囲外の index は何もしない。
+    stack.remove(9);
+    assert_eq!(stack.len(), 3);
+
+    // 主軸の Fill を持つ子を入れても、外した後にまた足せる。
+    let filler = ui.label("E")?;
+    filler.set_sizing(Sizing::new().height(Length::Fill));
+    stack.append(&filler);
+    assert_eq!(arranged_labels(&stack), ["A", "C", "D", "E"]);
+    stack.remove(3);
+    assert_eq!(arranged_labels(&stack), ["A", "C", "D"]);
+
+    // 外したぶんは AppKit の計算する大きさにも出る。
+    let view = stack.native_view();
+    view.layoutSubtreeIfNeeded();
+    let before = view.fittingSize().height;
+    stack.remove(0);
+    view.layoutSubtreeIfNeeded();
+    let after = view.fittingSize().height;
+    assert!(
+        after < before,
+        "子を外したらスタックが縮むこと: 外す前 {before} / 外した後 {after}"
+    );
+    stack.insert(0, &ui.label("A")?);
+
+    stack.clear();
+    assert_eq!(stack.len(), 0);
+    assert!(stack.is_empty());
+    assert!(arranged_labels(&stack).is_empty());
+    assert!(unsafe { first.native_view().superview() }.is_none());
+
+    // 空にした後もふつうに積める。
+    stack.append(&ui.label("F")?);
+    assert_eq!(arranged_labels(&stack), ["F"]);
+    Ok(())
+}
+
+/// `NSStackView` に並んでいるラベルの文字を、並び順で取り出す。
+fn arranged_labels(stack: &naui_macos::Stack) -> Vec<String> {
+    let native: Retained<objc2_app_kit::NSStackView> = stack
+        .native_view()
+        .downcast()
+        .expect("NSStackView であること");
+    let arranged = native.arrangedSubviews();
+    (0..arranged.len())
+        .filter_map(|index| arranged.objectAtIndex(index).downcast::<NSTextField>().ok())
+        .map(|field| field.stringValue().to_string())
+        .collect()
+}
+
+/// `Grid` はマスを指定して子を外せる。
+fn grid_removes_children_by_cell(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    let name = ui.label("名前")?;
+    let field = ui.text_input("")?;
+    grid.attach(&name, GridCell::new(0, 0));
+    grid.attach(&field, GridCell::new(1, 0));
+    assert_eq!(grid.len(), 2);
+
+    grid.remove(GridCell::new(0, 0));
+    assert_eq!(grid.len(), 1);
+    assert!(
+        unsafe { name.native_view().superview() }.is_none(),
+        "外した子はビュー階層からも抜けること"
+    );
+    assert!(
+        unsafe { field.native_view().superview() }.is_some(),
+        "他のマスの子は残ること"
+    );
+
+    // 何も無いマスを指定しても何も起きない。
+    grid.remove(GridCell::new(0, 0));
+    assert_eq!(grid.len(), 1);
+
+    // 空いたマスへまた置ける。
+    let renamed = ui.label("表示名")?;
+    grid.attach(&renamed, GridCell::new(0, 0));
+    assert_eq!(grid.len(), 2);
+
+    // replace は「そのマスだけ」差し替える (他のマスは残る)。
+    let replaced = ui.label("別名")?;
+    grid.replace(&replaced, GridCell::new(0, 0));
+    assert_eq!(grid.len(), 2, "replace は他のマスの子を外さないこと");
+    assert!(unsafe { renamed.native_view().superview() }.is_none());
+    assert!(unsafe { field.native_view().superview() }.is_some());
+
+    grid.clear();
+    assert_eq!(grid.len(), 0);
+    assert!(grid.is_empty());
+    assert!(unsafe { field.native_view().superview() }.is_none());
+
+    // 行と列の指定は残るので、そのまま置き直せる。
+    grid.attach(&ui.label("再")?, GridCell::new(0, 0));
+    assert_eq!(grid.len(), 1);
+    Ok(())
+}
+
+/// 結合したマス (span を持つ子) を外しても、結合そのものは残る。
+///
+/// `NSGridView` に結合を解く API は無く、行や列ごと外すこともできない
+/// (結合をまたぐ行・列の削除は AppKit が例外を投げる)。そこで naui は
+/// **結合した範囲を「1 つのマス」として扱いきる**ことで、見え方を決めている。
+fn grid_keeps_merges_after_the_child_is_removed(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fixed(120.0));
+    grid.set_column_track(1, Track::Fixed(80.0));
+
+    let wide = ui.label("2 列にまたがるセル")?;
+    grid.attach(&wide, GridCell::new(0, 0).span(2, 1));
+    let below = ui.label("下の行")?;
+    grid.attach(&below, GridCell::new(0, 1));
+    assert!(
+        shares_cell(&grid, (0, 0), (1, 0)),
+        "span を持つ子はマスを結合すること"
+    );
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(400.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+    let normal = below.native_view().frame();
+
+    grid.remove(GridCell::new(0, 0));
+    assert!(
+        shares_cell(&grid, (0, 0), (1, 0)),
+        "外しても結合は残ること (AppKit に解く手段が無い)"
+    );
+
+    // それでも、1 マスぶんの子を置いたときの位置と大きさは他の行と変わらない。
+    let single = ui.label("下の行")?;
+    grid.attach(&single, GridCell::new(0, 0));
+    root.layoutSubtreeIfNeeded();
+    let placed = single.native_view().frame();
+    assert!(
+        (placed.origin.x - normal.origin.x).abs() < 0.5
+            && (placed.size.width - normal.size.width).abs() < 0.5,
+        "結合の跡でも 1 マスと同じ位置・大きさで出ること: 跡 {placed:?} / ふつうの行 {normal:?}"
+    );
+
+    // ただし `Fill` の子は、1 マスではなく結合した範囲いっぱいに広がる。
+    let stretched = ui.text_input("")?;
+    stretched.set_sizing(Sizing::fill_width());
+    grid.attach(&stretched, GridCell::new(0, 0));
+    let plain = ui.text_input("")?;
+    plain.set_sizing(Sizing::fill_width());
+    grid.attach(&plain, GridCell::new(0, 2));
+    root.layoutSubtreeIfNeeded();
+    let merged_width = stretched.native_view().frame().size.width;
+    let single_width = plain.native_view().frame().size.width;
+    assert!(
+        merged_width > single_width + 40.0,
+        "Fill の子は結合した範囲まで広がること: 結合の跡 {merged_width} / ふつうの行 {single_width}"
+    );
+
+    // 結合した範囲は 1 つのマスなので、範囲内の別の位置へ置くと前の子が外れる。
+    let other = ui.label("2 列目")?;
+    grid.attach(&other, GridCell::new(1, 0));
+    assert_eq!(grid.len(), 3, "重ねて置いた分だけ増えないこと");
+    assert!(
+        unsafe { stretched.native_view().superview() }.is_none(),
+        "前の子はビュー階層からも外れること (宙に浮いたまま残さない)"
+    );
+    assert!(unsafe { other.native_view().superview() }.is_some());
+    assert!(
+        unsafe { below.native_view().superview() }.is_some(),
+        "結合と関係ないマスの子は残ること"
+    );
+    Ok(())
+}
+
+/// 2 つの場所が同じ `NSGridCell` を指しているか (= 結合されているか)。
+fn shares_cell(grid: &naui_macos::Grid, left: (isize, isize), right: (isize, isize)) -> bool {
+    let native: Retained<objc2_app_kit::NSGridView> = grid
+        .native_view()
+        .downcast()
+        .expect("NSGridView であること");
+    let first = native.cellAtColumnIndex_rowIndex(left.0, left.1);
+    let second = native.cellAtColumnIndex_rowIndex(right.0, right.1);
+    Retained::as_ptr(&first) == Retained::as_ptr(&second)
+}
+
+/// タブは後から外せる。選択の寄せ直しは通知しない。
+fn tabs_remove_and_clear(ui: &Ui) -> Result<()> {
+    let tabs = ui.tabs()?;
+    let first = ui.label("1 枚目")?;
+    tabs.add_tab("A", &first);
+    tabs.add_tab("B", &ui.label("2 枚目")?);
+    tabs.add_tab("C", &ui.label("3 枚目")?);
+    assert_eq!(tabs.len(), 3);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    tabs.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+
+    tabs.set_selected(2);
+    assert_eq!(tabs.selected(), Some(2));
+
+    // 選択より前のタブを外すと、選択は同じタブへ付いていく。
+    tabs.remove_tab(0);
+    assert_eq!(tabs.len(), 2);
+    assert_eq!(tabs.selected(), Some(1));
+    assert!(seen.borrow().is_empty(), "外したことは通知しないこと");
+    assert!(
+        unsafe { first.native_view().superview() }.is_none(),
+        "外したタブの中身はビュー階層からも抜けること"
+    );
+
+    // 選択中のタブを外すと、環境が近くのタブを選び直す (通知はしない)。
+    tabs.remove_tab(1);
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs.selected(), Some(0));
+    assert!(seen.borrow().is_empty());
+
+    // 範囲外は何もしない。
+    tabs.remove_tab(5);
+    assert_eq!(tabs.len(), 1);
+
+    tabs.clear();
+    assert_eq!(tabs.len(), 0);
+    assert!(tabs.is_empty());
+    assert_eq!(tabs.selected(), None);
+    assert!(seen.borrow().is_empty());
+
+    // 空にした後もふつうに足せる。
+    tabs.add_tab("D", &ui.label("新しい 1 枚目")?);
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs.selected(), Some(0));
+    Ok(())
+}
+
 fn stack_keeps_children(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.set_spacing(8.0);
@@ -3397,6 +3672,59 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
         one_row_height < expanded_list_height,
         "行を減らしたら Auto の高さも縮むこと: 3 行 {expanded_list_height} / 1 行 {one_row_height}"
     );
+    Ok(())
+}
+
+/// `Ui` は clone できるので、コールバックの中からでもウィジェットを作れる。
+///
+/// 行の中身は `build` の中で全部そろうとは限らない。押されたときに
+/// 1 行増やすような画面では、通知の中で新しいウィジェットを作って
+/// [`List::set_rows`] へ渡す必要がある。
+fn ui_clone_builds_rows_from_a_callback(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill_width());
+
+    // 行は積み上げていくので、アプリ側で並びを持つ。
+    let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let add = ui.button("行を足す")?;
+    add.on_click({
+        // コールバックへ持ち込むのは clone した `Ui`。中身は同じ。
+        let ui = ui.clone();
+        let list = list.clone();
+        let rows = rows.clone();
+        move || {
+            let index = rows.borrow().len() + 1;
+            let content = ui.stack(Orientation::Horizontal).expect("行の中身");
+            content.append(&ui.label(&format!("行 {index}")).expect("行のラベル"));
+            content.set_sizing(Sizing::fill_width());
+            rows.borrow_mut().push(ListRow::new(&content));
+            list.set_rows(&rows.borrow());
+        }
+    });
+
+    assert_eq!(list.len(), 0);
+    add.click();
+    add.click();
+    assert_eq!(list.len(), 2, "コールバックの中で作った行が載ること");
+
+    let table = list.native_table();
+    assert_eq!(table.numberOfRows(), 2, "NSTableView 側も 2 行になること");
+
+    // 後から足した行も、他の行と同じようにネイティブのビューになる。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&list);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    assert!(
+        table.viewAtColumn_row_makeIfNecessary(0, 1, true).is_some(),
+        "後から足した行が NSTableView に描かれること"
+    );
+
+    // 選択もふつうの行と同じに動く。
+    list.select(1);
+    assert_eq!(list.selected(), Some(1));
+    assert_eq!(table.selectedRow(), 1);
     Ok(())
 }
 

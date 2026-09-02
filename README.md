@@ -136,6 +136,80 @@ fn main() -> naui::Result<()> {
 より小さな実例は [`examples/counter`](examples/counter/src/main.rs)、種別ごとの
 全機能の使用例は [`examples/gallery`](examples/gallery/src/lib.rs) を参照してください。
 
+### 後からウィジェットを作る
+
+`Ui` はウィジェットのハンドルと同じく clone できます。clone しても参照が増える
+だけで中身は同じなので、コールバックへ持ち込めば `build` が終わったあとでも
+ウィジェットを作れます。一覧へ行を足す、入力欄を増やすといった、数が実行時に
+決まる画面はこの形で書きます。
+
+```rust
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use naui::{ListRow, Orientation};
+
+let list = ui.list()?;
+// 行は積み上げていくので、並びはアプリ側で持つ。
+let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
+
+let add = ui.button("行を足す")?;
+add.on_click({
+    let ui = ui.clone(); // コールバックの中で使う Ui
+    let list = list.clone();
+    let rows = rows.clone();
+    move || {
+        // ウィジェットを作る API は Result を返すので、ここで受ける。
+        let (Ok(content), Ok(label)) =
+            (ui.stack(Orientation::Horizontal), ui.label("新しい行"))
+        else {
+            return;
+        };
+        content.append(&label);
+        rows.borrow_mut().push(ListRow::new(&content));
+        list.set_rows(&rows.borrow());
+    }
+});
+```
+
+`Ui` は UI スレッド専用で `Send` ではないため、別スレッドへは渡せません。
+作れるのは `build` と同じ UI スレッドの上だけで、ウィジェットの通知と
+`Tasks` の受け口・`spawn` した future の中がそれにあたります
+([別スレッドと非同期](#別スレッドと非同期)を参照)。
+
+### 後からウィジェットを外す
+
+置いたものを減らす側も、コンテナごとに手段があります。
+
+| 変えたいもの | 使う API |
+| --- | --- |
+| `Stack` の子 | `insert` / `remove` / `clear` |
+| `Grid` のマス | `replace` / `remove` / `clear` |
+| `Tabs` のタブ | `remove_tab` / `clear` |
+| 一覧・表・ツリー・ナビゲーション | `set_items` / `set_rows` で丸ごと置き換える |
+| 中身が 1 つのもの (`Scroll`、`Expander`、`SplitView`、`Window`) | `set_child` などで差し替える |
+
+```rust
+use naui::{GridCell, Orientation};
+
+let stack = ui.stack(Orientation::Vertical)?;
+stack.append(&ui.label("1 行目")?);
+stack.insert(0, &ui.label("見出し")?); // 先頭へ差し込む
+stack.remove(1);                       // 位置を指して外す
+stack.clear();                         // 全部外す
+
+let form = ui.grid()?;
+form.attach(&ui.label("名前")?, GridCell::new(0, 0));
+form.remove(GridCell::new(0, 0));      // マスを指して外す
+```
+
+`Stack` と `Tabs` は**位置 (インデックス) で指し**、`Grid` は**マスで指します**
+(span は見ません)。範囲外の位置や空のマスを指したときは何もしません。
+`Tabs::remove_tab` で選択中のタブを外したときは、同じ位置のタブ (無ければ最後の
+タブ) が選ばれ、**この移動は通知しません** (`set_selected` と同じ決まりです)。
+
+`Grid::replace` は**そのマスだけ**を差し替えます。ほかのマスの子は残ります。
+
 ### テーマ
 
 既定の `Theme::System` は OS またはブラウザの設定へ追従します。起動時に固定する
@@ -539,6 +613,10 @@ list.set_rows(&[row]);
 チェックボックスを直接押したときは、それぞれのコールバックだけが呼ばれるので、
 同じ操作が二重に起きません。押せるようにするかどうかは行を組み立てるときに
 決まるので、`set_rows` へ渡す前に指定します。
+
+行の数や中身が実行時に決まるときは、clone した `Ui` をコールバックへ持ち込んで、
+そこで行を組み立てます ([後からウィジェットを作る](#後からウィジェットを作る)を
+参照)。
 
 #### テーブル
 
@@ -1204,6 +1282,15 @@ git push origin v0.3.0
 
 - `Grid` の `Track::Fill` は重みの違いを反映しません。
 - 交差軸の `Fill` と Grid セル内の配置は、コンテナへ追加する前に指定してください。
+- `Grid` で**結合したマス (span を持つ子) を外しても、結合そのものは残ります**。
+  `NSGridView` に結合を解く API が無く、結合をまたぐ行・列も外せません
+  (試すと AppKit が例外を投げます)。naui は結合した範囲を**まとめて 1 つのマスと
+  して扱う**ので、跡へ 1 マスぶんの子を置いても位置と大きさはふつうのマスと
+  変わりません。違いが出るのは、`Fill` の子が結合した範囲まで広がることと、
+  範囲内の別の位置へ置くと同じマスなので前の子が外れることの 2 つです。
+- `Grid` の**同じマスへ子を重ねて置けません**。後から置いたものが前のものを
+  外します (`NSGridCell` は中身を 1 つしか持てないため)。他の 3 環境では
+  重ねて置けます。
 - `Image` のリモート URL は同期的に読み込むため、ローカルファイルの利用を推奨します。
 - `Dialog::open` と `PopupMenu::open_at` は閉じるまで戻りません。
 - `DatePicker` は `NSDatePicker` そのものです。欄をクリックするとカレンダーが

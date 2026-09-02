@@ -82,9 +82,9 @@ where
             self.this
                 .failure
                 .with_mut_cross_thread(|slot| *slot = Some(error));
-            if let Ok(app) = Application::Current() {
-                let _ = app.Exit();
-            }
+            // 組み立ての途中でウィンドウができていることがあるので、
+            // 畳む前の後始末ごと `Ui::quit` に任せる。
+            ui.quit();
         } else {
             self.this.ui_state.with_mut_cross_thread(|slot| {
                 *slot = Some(ui);

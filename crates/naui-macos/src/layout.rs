@@ -470,6 +470,11 @@ impl Grid {
     }
 
     /// 指定した場所に子を置く。足りない行と列は自動で足される。
+    ///
+    /// **同じマスへ重ねて置くことはできない。** `NSGridCell` は中身を 1 つ
+    /// しか持てないため、すでに何かが置かれているマスへ置くと、前の子は
+    /// 外れる (他の 3 環境では重ねて置ける)。結合したマスは範囲内のどこを
+    /// 指しても同じマスなので、この決まりが範囲全体に効く。
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         let view = child.native_view();
         prepare_child(&view);
@@ -484,6 +489,10 @@ impl Grid {
             );
         }
         let target: Retained<NSGridCell> = self.0.native.cellAtColumnIndex_rowIndex(column, row);
+        // `NSGridCell` は中身を 1 つしか持てない。重ねて置くと前のビューが
+        // 宙に浮いたまま残るので、先に外しておく (結合したマスでは、範囲内の
+        // どの位置を指しても同じマスになる)。
+        self.remove_sharing(&target);
         target.setContentView(Some(&view));
         // 列が `Fill` でも、子が `Auto` なら列の幅を継承して広げない。
         // `Inherited` のままだと、再レイアウト時に NSGridView の列配置を
@@ -587,31 +596,98 @@ impl Grid {
         }
     }
 
-    /// いまの子を外し、指定した 1 つだけを置く。
+    /// そのマスの中身を差し替える。同じマスに置かれていたものは外れる。
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
-        // NSGridCell::setContentView(None) だけでは、既存のビューが
-        // NSGridView の subviews に残ることがある。先に親から明示的に外し、
-        // 写真ペインが動画ペインの下に残らないようにする。
-        let old_views: Vec<Retained<NSView>> = self
+        self.remove(cell);
+        self.attach(child, cell);
+    }
+
+    /// 指定したマスに置かれているものを外す。何も無ければ何もしない。
+    ///
+    /// 見るのは `cell` の列と行だけで、span は見ない。
+    ///
+    /// **結合したマス (span を持つ子) を外しても、結合そのものは残る。**
+    /// `NSGridView` に結合を解く API が無く、結合をまたぐ行・列も外せない
+    /// (試すと AppKit が例外を投げる)。naui は結合した範囲をまとめて 1 つの
+    /// マスとして扱うので、跡へ 1 マスぶんの子を置いても位置と大きさは
+    /// ふつうのマスと変わらない。違うのは、`Fill` の子が結合した範囲まで
+    /// 広がることと、範囲内の別の位置へ置くと同じマスなので前の子が外れる
+    /// ことの 2 つ。
+    pub fn remove(&self, cell: GridCell) {
+        self.remove_at(cell);
+        self.apply_padding();
+        self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_grow_widths();
+    }
+
+    /// 子をすべて外す。行と列の指定はそのまま残る。
+    pub fn clear(&self) {
+        let cells: Vec<GridCell> = self
             .0
-            .children
+            .cells
             .borrow()
             .iter()
-            .map(|old| old.native_view())
+            .map(|(_, cell)| *cell)
             .collect();
-        for old in &old_views {
-            old.removeFromSuperview();
+        for cell in cells {
+            self.remove_at(cell);
         }
+        self.apply_padding();
+        self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_grow_widths();
+    }
+
+    /// 指定したマスの子を外す。同じマスに重ねて置かれていれば全部外す。
+    fn remove_at(&self, cell: GridCell) {
+        loop {
+            let found = self
+                .0
+                .cells
+                .borrow()
+                .iter()
+                .position(|(_, placed)| placed.column == cell.column && placed.row == cell.row);
+            let Some(found) = found else {
+                return;
+            };
+            self.detach(found);
+        }
+    }
+
+    /// `target` と同じ `NSGridCell` を使っている子を外す。
+    ///
+    /// 結合したマスはどの位置から引いても同じ `NSGridCell` を返す。
+    /// 1 つのマスは中身を 1 つしか持てないので、重ねて置く前に外しておく。
+    fn remove_sharing(&self, target: &NSGridCell) {
+        loop {
+            let found = self.0.cells.borrow().iter().position(|(_, placed)| {
+                let existing = self
+                    .0
+                    .native
+                    .cellAtColumnIndex_rowIndex(placed.column as isize, placed.row as isize);
+                std::ptr::eq(Retained::as_ptr(&existing), target as *const NSGridCell)
+            });
+            let Some(found) = found else {
+                return;
+            };
+            self.detach(found);
+        }
+    }
+
+    /// 控えの `found` 番目の子を、マスとビュー階層から外す。
+    fn detach(&self, found: usize) {
+        let (view, placed) = self.0.cells.borrow_mut().remove(found);
+        self.0.children.borrow_mut().remove(found);
+        // 「余りのぶんだけ伸びたい」という希望を外す。
+        self.set_grow_hint(&view, &placed, true, false);
+        self.set_grow_hint(&view, &placed, false, false);
+        // NSGridCell::setContentView(None) だけでは、外したビューが
+        // NSGridView の subviews に残ることがある。親からも明示的に外す。
         let target = self
             .0
             .native
-            .cellAtColumnIndex_rowIndex(cell.column as isize, cell.row as isize);
+            .cellAtColumnIndex_rowIndex(placed.column as isize, placed.row as isize);
         target.setContentView(None);
-        self.0.children.borrow_mut().clear();
-        self.0.cells.borrow_mut().clear();
-        // 外したビューに掛かる制約は AppKit が落とすので、こちらの控えも捨てる。
-        self.0.grows.borrow_mut().clear();
-        self.attach(child, cell);
+        view.removeFromSuperview();
     }
 
     /// 列の幅の決め方。

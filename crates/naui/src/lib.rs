@@ -61,6 +61,98 @@
 //! naui::entry!(naui::Settings::new("gallery"), build); // pub fn start() ができる
 //! ```
 //!
+//! ## 後からウィジェットを作る
+//!
+//! [`Ui`] はウィジェットのハンドルと同じく **clone できる**。clone しても
+//! 参照が増えるだけで中身は同じなので、コールバックへ持ち込めば `build` が
+//! 終わったあとでもウィジェットを作れる。一覧へ行を足す、入力欄を増やすと
+//! いった、数が実行時に決まる画面はこの形で書く。
+//!
+//! ```no_run
+//! # use naui::{ListRow, Orientation, Result, Ui};
+//! # use std::cell::RefCell;
+//! # use std::rc::Rc;
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let list = ui.list()?;
+//! // 行は積み上げていくので、並びはアプリ側で持つ。
+//! let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
+//!
+//! let add = ui.button("行を足す")?;
+//! add.on_click({
+//!     let ui = ui.clone(); // コールバックの中で使う Ui
+//!     let list = list.clone();
+//!     let rows = rows.clone();
+//!     move || {
+//!         // ウィジェットを作る API は Result を返すので、ここで受ける。
+//!         let (Ok(content), Ok(label)) = (
+//!             ui.stack(Orientation::Horizontal),
+//!             ui.label("新しい行"),
+//!         ) else {
+//!             return;
+//!         };
+//!         content.append(&label);
+//!         rows.borrow_mut().push(ListRow::new(&content));
+//!         list.set_rows(&rows.borrow());
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! `Ui` は UI スレッド専用で `Send` ではないので、**別スレッドへは渡せない**。
+//! 作れるのは `build` と同じ UI スレッドの上だけで、ウィジェットの通知と
+//! [`Tasks`] の受け口・`spawn` した future の中がそれにあたる
+//! (「[別スレッドと非同期](#別スレッドと非同期)」を参照)。
+//!
+//! ## 後からウィジェットを外す
+//!
+//! 置いたものを減らす側も、コンテナごとに手段がある。
+//!
+//! | 変えたいもの | 使う API |
+//! | --- | --- |
+//! | `Stack` の子 | [`insert`](Stack::insert) / [`remove`](Stack::remove) / [`clear`](Stack::clear) |
+//! | `Grid` のマス | [`replace`](Grid::replace) / [`remove`](Grid::remove) / [`clear`](Grid::clear) |
+//! | `Tabs` のタブ | [`remove_tab`](Tabs::remove_tab) / [`clear`](Tabs::clear) |
+//! | 一覧・表・ツリー・ナビゲーション | `set_items` / `set_rows` で丸ごと置き換える |
+//! | 中身が 1 つのもの (`Scroll` / `Expander` / `SplitView` / `Window`) | `set_child` などで差し替える |
+//!
+//! ```no_run
+//! # use naui::{GridCell, Orientation, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let stack = ui.stack(Orientation::Vertical)?;
+//! stack.append(&ui.label("1 行目")?);
+//! stack.insert(0, &ui.label("見出し")?); // 先頭へ差し込む
+//! stack.remove(1);                       // 位置を指して外す
+//! stack.clear();                         // 全部外す
+//!
+//! let form = ui.grid()?;
+//! form.attach(&ui.label("名前")?, GridCell::new(0, 0));
+//! form.remove(GridCell::new(0, 0));      // マスを指して外す
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! `Stack` と `Tabs` は**位置 (インデックス) で指し**、`Grid` は**マスで指す**
+//! (span は見ない)。範囲外の位置や空のマスを指したときは何もしない。
+//! [`Tabs::remove_tab`] で選択中のタブを外したときは、同じ位置のタブ
+//! (無ければ最後のタブ) が選ばれ、**この移動は通知しない**
+//! ([`Tabs::set_selected`] と同じ決まり)。
+//!
+//! [`Grid::replace`] は**そのマスだけ**を差し替える。ほかのマスの子は残る。
+//!
+//! macOS だけ、**結合したマス (span を持つ子) を外しても結合は残る**。
+//! `NSGridView` に結合を解く API が無く、結合をまたぐ行・列も外せないため
+//! (試すと AppKit が例外を投げる)。naui はその範囲を**まとめて 1 つのマスと
+//! して扱う**ので、跡へ 1 マスぶんの子を置いても位置と大きさはふつうのマスと
+//! 変わらない。違いが出るのは次の 2 つだけ。
+//!
+//! - `Fill` の子は、1 マスではなく結合した範囲いっぱいに広がる
+//! - 範囲内の別の位置へ置くと、同じマスなので前の子が外れる
+//!
+//! なお macOS では**同じマスへ子を重ねて置けない** (`NSGridCell` が中身を
+//! 1 つしか持てないため、後から置いたものが前のものを外す)。他の 3 環境では
+//! 重ねて置ける。
+//!
 //! ## 配置とサイズ
 //!
 //! どのウィジェットも [`Sizing`] で大きさを指定できる。並べ方は
@@ -705,6 +797,10 @@
 //! 押せるようにするかどうかは行を組み立てるときに決まるので、
 //! `set_rows` へ渡す前に指定する。
 //!
+//! 行の数や中身が実行時に決まるときは、clone した `Ui` をコールバックへ
+//! 持ち込んで、そこで行を組み立てる
+//! (「[後からウィジェットを作る](#後からウィジェットを作る)」)。
+//!
 //! ```no_run
 //! # use naui::{ListRow, Orientation, Result, Sizing, Ui};
 //! # fn build(ui: &Ui) -> Result<()> {
@@ -976,7 +1072,8 @@
 //!
 //! ## 別スレッドと非同期
 //!
-//! ウィジェットのハンドルは `Rc` を持つので**別スレッドへは送れない**。
+//! ウィジェットのハンドルは `Rc` を持つので**別スレッドへは送れない**
+//! ([`Ui`] も同じ)。
 //! 重い処理を別のスレッドでやって画面を書き換えたいときは、
 //! **受け取るクロージャを UI スレッド側に据え、送る側だけをスレッドへ渡す**。
 //! 入り口は [`Ui::tasks`] で、返る [`Tasks`] は clone してコールバックへ
@@ -1008,7 +1105,8 @@
 //!
 //! ハンドラの中から非同期処理を始めたいときは [`Tasks::spawn`] で future を回す。
 //! **future は `Send` でなくてよい**ので、ウィジェットのハンドルをそのまま
-//! 持ち込める。
+//! 持ち込める。clone した `Ui` を持ち込めば、待ち終わったところで
+//! ウィジェットを作れる。
 //!
 //! ```no_run
 //! # use naui::{Result, Ui};
@@ -1203,6 +1301,10 @@ macro_rules! entry {
 #[doc(hidden)]
 #[allow(dead_code)]
 fn __api_contract(ui: &Ui) -> Result<()> {
+    // `Ui` は clone できる。コールバックの中でウィジェットを作るために、
+    // 4 バックエンドすべてで同じ形にそろえてある。
+    let ui: &Ui = &ui.clone();
+
     let window: Window = ui.window("t", 100.0, 100.0)?;
     window.set_title("t");
     let _: String = window.title();
@@ -1225,6 +1327,9 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.set_sizing(Sizing::fill());
     let _: usize = stack.len();
     let _: bool = stack.is_empty();
+    stack.insert(0, &ui.label("t")?);
+    stack.remove(0);
+    stack.clear();
 
     // --- レイアウト -------------------------------------------------------
     let grid: Grid = ui.grid()?;
@@ -1237,6 +1342,9 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: usize = grid.rows();
     let _: usize = grid.len();
     let _: bool = grid.is_empty();
+    grid.replace(&ui.label("t")?, GridCell::new(0, 0));
+    grid.remove(GridCell::new(0, 0));
+    grid.clear();
 
     let scroll: Scroll = ui.scroll()?;
     scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
@@ -1414,6 +1522,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
 
     let tabs: Tabs = ui.tabs()?;
     tabs.add_tab("t", &label);
+    tabs.remove_tab(0);
+    tabs.clear();
     let _: usize = tabs.len();
     let _: bool = tabs.is_empty();
     let _: Option<usize> = tabs.selected();

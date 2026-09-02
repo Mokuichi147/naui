@@ -20,8 +20,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Align, Color, Orientation, Padding, Result, Theme};
-use naui_web::{run_for_test, Ui, Widget};
+use naui_core::{Align, Color, GridCell, Orientation, Padding, Result, Theme};
+use naui_web::{run_for_test, ListRow, Ui, Widget};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{Element, EventTarget, HtmlElement, HtmlInputElement, HtmlSelectElement};
@@ -703,6 +703,200 @@ fn label_text_round_trips() {
         assert_eq!(label.text(), "はじめ");
         label.set_text("あと");
         assert_eq!(label.text(), "あと");
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------ Stack / Grid / Tabs
+
+/// `<div>` に並んだ子のテキストを、並び順で取り出す。
+fn child_texts(widget: &dyn Widget) -> Vec<String> {
+    let element = widget.native_element();
+    let children = element.children();
+    (0..children.length())
+        .filter_map(|index| children.item(index))
+        .map(|child| child.text_content().unwrap_or_default())
+        .collect()
+}
+
+/// `Stack` は後から子を差し込み、外し、空にできる。
+#[wasm_bindgen_test]
+fn stack_inserts_and_removes_children() {
+    with_ui(|ui| {
+        let stack = ui.stack(Orientation::Vertical)?;
+        let first = ui.label("A")?;
+        stack.append(&first);
+        stack.append(&ui.label("C")?);
+        stack.insert(1, &ui.label("B")?);
+        let _mounted = Mounted::new(&stack);
+
+        assert_eq!(stack.len(), 3);
+        assert_eq!(child_texts(&stack), ["A", "B", "C"]);
+
+        // 範囲外の index は末尾へ足す。
+        stack.insert(99, &ui.label("D")?);
+        assert_eq!(child_texts(&stack), ["A", "B", "C", "D"]);
+
+        stack.remove(1);
+        assert_eq!(stack.len(), 3);
+        assert_eq!(child_texts(&stack), ["A", "C", "D"]);
+
+        // 範囲外の index は何もしない。
+        stack.remove(9);
+        assert_eq!(stack.len(), 3);
+
+        stack.clear();
+        assert!(stack.is_empty());
+        assert!(child_texts(&stack).is_empty());
+        assert!(
+            first.native_element().parent_element().is_none(),
+            "外した子は DOM からも抜けること"
+        );
+
+        // 空にした後もふつうに積める。
+        stack.append(&ui.label("F")?);
+        assert_eq!(child_texts(&stack), ["F"]);
+        Ok(())
+    });
+}
+
+/// `Grid` はマスを指定して子を外せる。
+#[wasm_bindgen_test]
+fn grid_removes_children_by_cell() {
+    with_ui(|ui| {
+        let grid = ui.grid()?;
+        let name = ui.label("名前")?;
+        let field = ui.text_input("")?;
+        grid.attach(&name, GridCell::new(0, 0));
+        grid.attach(&field, GridCell::new(1, 0));
+        let _mounted = Mounted::new(&grid);
+        assert_eq!(grid.len(), 2);
+
+        grid.remove(GridCell::new(0, 0));
+        assert_eq!(grid.len(), 1);
+        assert!(name.native_element().parent_element().is_none());
+        assert!(field.native_element().parent_element().is_some());
+
+        // 何も無いマスを指定しても何も起きない。
+        grid.remove(GridCell::new(0, 0));
+        assert_eq!(grid.len(), 1);
+
+        // replace は「そのマスだけ」差し替える。
+        grid.attach(&ui.label("表示名")?, GridCell::new(0, 0));
+        grid.replace(&ui.label("別名")?, GridCell::new(0, 0));
+        assert_eq!(grid.len(), 2, "replace は他のマスの子を外さないこと");
+
+        grid.clear();
+        assert!(grid.is_empty());
+        assert!(field.native_element().parent_element().is_none());
+        Ok(())
+    });
+}
+
+/// タブを外しても、残ったタブを押したときのインデックスがずれない。
+#[wasm_bindgen_test]
+fn tabs_remove_and_clear() {
+    with_ui(|ui| {
+        let tabs = ui.tabs()?;
+        let first = ui.label("1 枚目")?;
+        tabs.add_tab("A", &first);
+        tabs.add_tab("B", &ui.label("2 枚目")?);
+        tabs.add_tab("C", &ui.label("3 枚目")?);
+        let _mounted = Mounted::new(&tabs);
+        assert_eq!(tabs.len(), 3);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        tabs.on_select({
+            let seen = seen.clone();
+            move |index| seen.borrow_mut().push(index)
+        });
+
+        tabs.set_selected(2);
+        assert_eq!(tabs.selected(), Some(2));
+
+        // 選択より前のタブを外すと、選択は同じタブへ付いていく。
+        tabs.remove_tab(0);
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs.selected(), Some(1));
+        assert!(seen.borrow().is_empty(), "外したことは通知しないこと");
+        assert!(
+            !first.native_element().is_connected(),
+            "外したタブの中身は (囲みの <div> ごと) ページから抜けること"
+        );
+
+        // 残ったタブ (もとの B) をブラウザから押すと、詰めた後の位置が届く。
+        let tablist = tabs.native_element().children().item(0).expect("tablist");
+        let head: HtmlElement = tablist
+            .children()
+            .item(0)
+            .expect("1 枚目のタブ")
+            .unchecked_into();
+        head.click();
+        assert_eq!(*seen.borrow(), vec![0]);
+        assert_eq!(tabs.selected(), Some(0));
+
+        tabs.clear();
+        assert!(tabs.is_empty());
+        assert_eq!(tabs.selected(), None);
+        assert_eq!(tablist.children().length(), 0);
+
+        // 空にした後もふつうに足せる。
+        tabs.add_tab("D", &ui.label("新しい 1 枚目")?);
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs.selected(), Some(0));
+        Ok(())
+    });
+}
+
+// ---------------------------------------------------------------- List
+
+/// `Ui` は clone できるので、コールバックの中からでもウィジェットを作れる。
+///
+/// 押されたときに 1 行増やす画面では、通知の中で行の中身を組み立てて
+/// `set_rows` へ渡すことになる。
+#[wasm_bindgen_test]
+fn ui_clone_builds_rows_from_a_callback() {
+    with_ui(|ui| {
+        let list = ui.list()?;
+        // 行は積み上げていくので、アプリ側で並びを持つ。
+        let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
+        let add = ui.button("行を足す")?;
+        add.on_click({
+            // コールバックへ持ち込むのは clone した `Ui`。中身は同じ。
+            let ui = ui.clone();
+            let list = list.clone();
+            let rows = rows.clone();
+            move || {
+                let index = rows.borrow().len() + 1;
+                let content = ui.stack(Orientation::Horizontal).expect("行の中身");
+                content.append(&ui.label(&format!("行 {index}")).expect("行のラベル"));
+                rows.borrow_mut().push(ListRow::new(&content));
+                list.set_rows(&rows.borrow());
+            }
+        });
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.append(&add);
+        stack.append(&list);
+        let _mounted = Mounted::new(&stack);
+
+        assert_eq!(list.len(), 0);
+        add.click();
+        add.click();
+        assert_eq!(list.len(), 2, "コールバックの中で作った行が載ること");
+
+        // 任意内容の行は `<ul role="listbox">` の合成になる。
+        let element = list.native_element();
+        let listbox = element.children().item(0).expect("listbox の枠");
+        assert_eq!(listbox.tag_name(), "UL");
+        assert_eq!(
+            listbox.children().length(),
+            2,
+            "後から足した行が DOM にも出ること"
+        );
+        assert!(
+            listbox.text_content().unwrap_or_default().contains("行 2"),
+            "後から作ったラベルが行の中に入ること"
+        );
         Ok(())
     });
 }

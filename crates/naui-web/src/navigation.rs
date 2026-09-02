@@ -343,21 +343,28 @@ impl Tabs {
         );
 
         let index = self.0.tabs.borrow().len();
-        let listener = Listener::attach(tab.as_ref(), "click", {
+        // 押されたタブの位置は、並びが変わることがあるので押されてから調べる
+        // (`remove_tab` の後もそのタブが指す先がずれない)。
+        let Ok(listener) = Listener::attach(tab.as_ref(), "click", {
             let weak = Rc::downgrade(&self.0);
+            let tab = tab.clone();
             move || {
-                if let Some(inner) = weak.upgrade() {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let index = inner.tabs.borrow().iter().position(|other| other == &tab);
+                if let Some(index) = index {
                     Tabs(inner).select(index);
                 }
             }
-        });
+        }) else {
+            return;
+        };
         if self.0.tablist.append_child(&tab).is_err() || self.0.panels.append_child(&pane).is_err()
         {
             return;
         }
-        if let Ok(listener) = listener {
-            self.0.listeners.borrow_mut().push(listener);
-        }
+        self.0.listeners.borrow_mut().push(listener);
         self.0.tabs.borrow_mut().push(tab);
         self.0.panes.borrow_mut().push(pane);
         self.0.children.borrow_mut().push(child.boxed_clone());
@@ -388,6 +395,46 @@ impl Tabs {
             }
         }
         self.0.selected.set(index);
+    }
+
+    /// タブを 1 枚外す。範囲外のときは何もしない。
+    ///
+    /// 選択中のタブを外したときは、同じ位置のタブ (無ければ最後のタブ) を
+    /// 選び直す。この移動は [`set_selected`](Tabs::set_selected) と同じく
+    /// 通知しない。
+    pub fn remove_tab(&self, index: usize) {
+        if index >= self.len() {
+            return;
+        }
+        let tab = self.0.tabs.borrow_mut().remove(index);
+        let pane = self.0.panes.borrow_mut().remove(index);
+        self.0.children.borrow_mut().remove(index);
+        // 購読は Listener の Drop で外れる。
+        self.0.listeners.borrow_mut().remove(index);
+        tab.remove();
+        pane.remove();
+
+        let left = self.len();
+        let selected = match self.0.selected.get() {
+            _ if left == 0 => None,
+            Some(current) if current == index => Some(index.min(left - 1)),
+            Some(current) if current > index => Some(current - 1),
+            other => other,
+        };
+        self.show(selected);
+    }
+
+    /// タブをすべて外す。
+    pub fn clear(&self) {
+        for tab in std::mem::take(&mut *self.0.tabs.borrow_mut()) {
+            tab.remove();
+        }
+        for pane in std::mem::take(&mut *self.0.panes.borrow_mut()) {
+            pane.remove();
+        }
+        self.0.children.borrow_mut().clear();
+        self.0.listeners.borrow_mut().clear();
+        self.show(None);
     }
 
     pub fn len(&self) -> usize {

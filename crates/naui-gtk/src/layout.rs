@@ -67,14 +67,23 @@ impl Grid {
             .push((cell, child.boxed_clone()));
     }
 
-    /// マスの中身を差し替える。同じマスに置かれていたものは外れる。
+    /// そのマスの中身を差し替える。同じマスに置かれていたものは外れる。
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
-        self.remove_at(cell);
+        self.remove(cell);
         self.attach(child, cell);
     }
 
-    /// 指定のマスに置かれているものを外す。
-    fn remove_at(&self, cell: GridCell) {
+    /// 子をすべて外す。行と列の指定はそのまま残る。
+    pub fn clear(&self) {
+        for (_, child) in std::mem::take(&mut *self.0.children.borrow_mut()) {
+            self.0.native.remove(&child.size_bin());
+        }
+    }
+
+    /// 指定したマスに置かれているものを外す。何も無ければ何もしない。
+    ///
+    /// 見るのは `cell` の列と行だけで、span は見ない。
+    pub fn remove(&self, cell: GridCell) {
         let mut children = self.0.children.borrow_mut();
         let mut index = 0;
         while index < children.len() {

@@ -130,6 +130,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&actions);
 
     build_composed_list(ui, &pane)?;
+    build_dynamic_rows(ui, &pane)?;
 
     build_table(ui, &pane)?;
     build_tree(ui, &pane)?;
@@ -183,6 +184,69 @@ fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
     settings.set_rows(&rows);
     settings.set_sizing(Sizing::fill_width());
     pane.append(&settings);
+    Ok(())
+}
+
+/// コールバックの中で `Ui` を clone し、行を後から組み立てる。
+fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+    pane.append(&ui.label("後から作る行")?);
+    pane.append(&ui.label(
+        "Ui は clone できます。押されたところで行の中身を組み立て、set_rows へ渡しています。",
+    )?);
+
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill_width());
+    // 行は積み上げていくので、並びはアプリ側で持つ。
+    let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
+
+    let actions = ui.stack(Orientation::Horizontal)?;
+    actions.set_spacing(8.0);
+    let add = ui.button("行を足す")?;
+    add.on_click({
+        // コールバックへ持ち込むのは clone した Ui。中身は同じ。
+        let ui = ui.clone();
+        let list = list.clone();
+        let rows = rows.clone();
+        move || {
+            let index = rows.borrow().len() + 1;
+            // ウィジェットを作る API は Result を返すので、ここで受ける。
+            let (Ok(content), Ok(check), Ok(label)) = (
+                ui.grid(),
+                ui.checkbox(""),
+                ui.label(&format!("あとから作った行 {index}")),
+            ) else {
+                return;
+            };
+            content.set_column_track(0, Track::Auto);
+            content.set_column_track(1, Track::FILL);
+            content.set_spacing(10.0, 0.0);
+            content.attach(&check, GridCell::new(0, 0));
+            label.set_sizing(Sizing::fill_width());
+            content.attach(&label, GridCell::new(1, 0));
+            content.set_sizing(Sizing::fill_width());
+
+            // 後から作った行でも、通知の付け方はふつうの行と同じ。
+            let row = ListRow::new(&content).selectable(false);
+            row.on_activate(move || check.set_checked(!check.is_checked()));
+            rows.borrow_mut().push(row);
+            list.set_rows(&rows.borrow());
+        }
+    });
+    actions.append(&add);
+
+    let clear = ui.button("空にする")?;
+    clear.on_click({
+        let list = list.clone();
+        let rows = rows.clone();
+        move || {
+            rows.borrow_mut().clear();
+            list.set_rows(&rows.borrow());
+        }
+    });
+    actions.append(&clear);
+
+    pane.append(&actions);
+    pane.append(&list);
     Ok(())
 }
 
