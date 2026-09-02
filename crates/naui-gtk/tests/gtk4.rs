@@ -286,6 +286,15 @@ fn main() {
         ("パンくずが末尾を現在地にする", breadcrumbs_last_is_current),
         ("ページ送りが範囲内に収まる", pagination_steps),
         ("タブが中身ごと切り替わる", tabs_selection),
+        ("タブを外して空にできる", tabs_remove_and_clear),
+        (
+            "スタックが子を差し込み・外し・空にできる",
+            stack_inserts_and_removes_children,
+        ),
+        (
+            "グリッドがマス単位で子を外せる",
+            grid_removes_children_by_cell,
+        ),
         ("リンクのクリックがクロージャへ届く", link_click),
         ("リストの行が GtkListBox に並ぶ", list_rows_are_native),
         (
@@ -304,6 +313,10 @@ fn main() {
         (
             "任意内容の行が GtkListBoxRow に載る",
             list_accepts_composed_rows,
+        ),
+        (
+            "clone した Ui で行を後から作れる",
+            ui_clone_builds_rows_from_a_callback,
         ),
         (
             "行のクリックがクロージャへ届く",
@@ -2256,6 +2269,136 @@ fn tabs_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// タブは後から外せる。選択の寄せ直しは通知しない。
+fn tabs_remove_and_clear(ui: &Ui) -> Result<()> {
+    let tabs = ui.tabs()?;
+    let first = ui.label("1 枚目")?;
+    tabs.add_tab("あ", &first);
+    tabs.add_tab("い", &ui.label("2 枚目")?);
+    tabs.add_tab("う", &ui.label("3 枚目")?);
+    assert_eq!(tabs.len(), 3);
+
+    let (log, sink) = recorder::<usize>();
+    tabs.on_select(sink);
+
+    tabs.set_selected(2);
+    assert_eq!(tabs.selected(), Some(2));
+
+    // 選択より前のタブを外すと、選択は同じタブへ付いていく。
+    tabs.remove_tab(0);
+    assert_eq!(tabs.len(), 2);
+    assert_eq!(tabs.selected(), Some(1));
+    assert!(log.borrow().is_empty(), "外したことは通知しないこと");
+
+    let native: gtk::Notebook = tabs.native_widget().downcast().expect("GtkNotebook");
+    assert_eq!(native.n_pages(), 2, "GtkNotebook 側もページが減ること");
+    assert!(
+        bin_of(&first).parent().is_none(),
+        "外したタブの中身は GtkNotebook から抜けること"
+    );
+
+    // 選択中のタブを外しても通知はしない。
+    tabs.remove_tab(1);
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs.selected(), Some(0));
+    assert!(log.borrow().is_empty());
+
+    // 範囲外は何もしない。
+    tabs.remove_tab(5);
+    assert_eq!(tabs.len(), 1);
+
+    tabs.clear();
+    assert!(tabs.is_empty());
+    assert_eq!(tabs.selected(), None);
+    assert_eq!(native.n_pages(), 0);
+    assert!(log.borrow().is_empty());
+
+    // 空にした後もふつうに足せる。
+    tabs.add_tab("え", &ui.label("新しい 1 枚目")?);
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs.selected(), Some(0));
+    Ok(())
+}
+
+/// `Stack` は後から子を差し込み、外し、空にできる。
+fn stack_inserts_and_removes_children(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let first = ui.label("A")?;
+    stack.append(&first);
+    stack.append(&ui.label("C")?);
+    stack.insert(1, &ui.label("B")?);
+    assert_eq!(stack.len(), 3);
+
+    let native: gtk::Box = stack.native_widget().downcast().expect("GtkBox");
+    let labels = |native: &gtk::Box| -> Vec<String> {
+        children(native)
+            .iter()
+            .filter_map(|bin| bin.first_child())
+            .filter_map(|child| child.downcast::<gtk::Label>().ok())
+            .map(|label| label.text().to_string())
+            .collect()
+    };
+    assert_eq!(labels(&native), ["A", "B", "C"]);
+
+    // 範囲外の index は末尾へ足す。
+    stack.insert(99, &ui.label("D")?);
+    assert_eq!(labels(&native), ["A", "B", "C", "D"]);
+
+    stack.remove(1);
+    assert_eq!(stack.len(), 3);
+    assert_eq!(labels(&native), ["A", "C", "D"]);
+
+    // 範囲外の index は何もしない。
+    stack.remove(9);
+    assert_eq!(stack.len(), 3);
+
+    stack.clear();
+    assert!(stack.is_empty());
+    assert_eq!(children(&native).len(), 0);
+    assert!(
+        bin_of(&first).parent().is_none(),
+        "外した子は GtkBox から抜けること"
+    );
+
+    // 空にした後もふつうに積める。
+    stack.append(&ui.label("F")?);
+    assert_eq!(labels(&native), ["F"]);
+    Ok(())
+}
+
+/// `Grid` はマスを指定して子を外せる。
+fn grid_removes_children_by_cell(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    let name = ui.label("名前")?;
+    let field = ui.text_input("")?;
+    grid.attach(&name, GridCell::new(0, 0));
+    grid.attach(&field, GridCell::new(1, 0));
+    assert_eq!(grid.len(), 2);
+
+    grid.remove(GridCell::new(0, 0));
+    assert_eq!(grid.len(), 1);
+    assert!(bin_of(&name).parent().is_none());
+    assert!(bin_of(&field).parent().is_some());
+
+    // 何も無いマスを指定しても何も起きない。
+    grid.remove(GridCell::new(0, 0));
+    assert_eq!(grid.len(), 1);
+
+    // replace は「そのマスだけ」差し替える。
+    grid.attach(&ui.label("表示名")?, GridCell::new(0, 0));
+    grid.replace(&ui.label("別名")?, GridCell::new(0, 0));
+    assert_eq!(grid.len(), 2, "replace は他のマスの子を外さないこと");
+
+    grid.clear();
+    assert!(grid.is_empty());
+    assert!(bin_of(&field).parent().is_none());
+
+    // 行と列の指定は残るので、そのまま置き直せる。
+    grid.attach(&ui.label("再")?, GridCell::new(0, 0));
+    assert_eq!(grid.len(), 1);
+    Ok(())
+}
+
 fn link_click(ui: &Ui) -> Result<()> {
     let link = ui.link("naui", "")?;
     assert_eq!(link.text(), "naui");
@@ -2400,6 +2543,54 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     assert!(row.is_selectable());
     list.set_selection(&[0]);
     assert_eq!(list.selection(), vec![0]);
+    Ok(())
+}
+
+/// `Ui` は clone できるので、コールバックの中からでもウィジェットを作れる。
+///
+/// 押されたときに 1 行増やす画面では、通知の中で行の中身を組み立てて
+/// `set_rows` へ渡すことになる。
+fn ui_clone_builds_rows_from_a_callback(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    // 行は積み上げていくので、アプリ側で並びを持つ。
+    let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let add = ui.button("行を足す")?;
+    add.on_click({
+        // コールバックへ持ち込むのは clone した `Ui`。中身は同じ。
+        let ui = ui.clone();
+        let list = list.clone();
+        let rows = rows.clone();
+        move || {
+            let index = rows.borrow().len() + 1;
+            let content = ui.stack(Orientation::Horizontal).expect("行の中身");
+            content.append(&ui.label(&format!("行 {index}")).expect("行のラベル"));
+            content.set_sizing(Sizing::fill_width());
+            rows.borrow_mut().push(ListRow::new(&content));
+            list.set_rows(&rows.borrow());
+        }
+    });
+
+    assert!(list.is_empty());
+    let native_button: gtk::Button = add.native_widget().downcast().expect("GtkButton");
+    native_button.emit_clicked();
+    native_button.emit_clicked();
+    assert_eq!(list.len(), 2, "コールバックの中で作った行が載ること");
+
+    // 後から足した行も、他の行と同じように GtkListBoxRow になる。
+    let native = list_box_of(&list);
+    let native_rows = children(&native);
+    assert_eq!(native_rows.len(), 2, "GtkListBox 側も 2 行になること");
+    assert!(native_rows[1].is::<gtk::ListBoxRow>());
+
+    // 選択もふつうの行と同じに動く。
+    list.select(1);
+    assert_eq!(list.selected(), Some(1));
+    let selected: Vec<i32> = native
+        .selected_rows()
+        .iter()
+        .map(|row| row.index())
+        .collect();
+    assert_eq!(selected, vec![1], "GtkListBox 側の選択も動くこと");
     Ok(())
 }
 

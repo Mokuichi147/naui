@@ -721,6 +721,44 @@ impl Stack {
         }
     }
 
+    /// 指定した位置へ子を差し込む。`index` が今の数以上なら末尾へ足す。
+    pub fn insert(&self, index: usize, child: &dyn Widget) {
+        let mut children = self.0.children.borrow_mut();
+        let index = index.min(children.len());
+        let inserted = self
+            .0
+            .native
+            .Children()
+            .and_then(|c| c.InsertAt(index as u32, &child.native_element()));
+        if inserted.is_ok() {
+            children.insert(index, child.boxed_clone());
+        }
+    }
+
+    /// 指定した位置の子を外す。範囲外のときは何もしない。
+    pub fn remove(&self, index: usize) {
+        let mut children = self.0.children.borrow_mut();
+        if index >= children.len() {
+            return;
+        }
+        let removed = self
+            .0
+            .native
+            .Children()
+            .and_then(|c| c.RemoveAt(index as u32));
+        if removed.is_ok() {
+            children.remove(index);
+        }
+    }
+
+    /// 子をすべて外す。
+    pub fn clear(&self) {
+        if let Ok(children) = self.0.native.Children() {
+            let _ = children.Clear();
+        }
+        self.0.children.borrow_mut().clear();
+    }
+
     pub fn len(&self) -> usize {
         self.0.children.borrow().len()
     }

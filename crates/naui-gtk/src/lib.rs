@@ -197,7 +197,15 @@ pub(crate) fn apply_theme(theme: Theme) {
 ///
 /// GTK4 は `GtkApplication` が起動したあとでしかウィンドウを作れないため、
 /// `Ui` は [`run`] のコールバックの中でしか得られない。
-pub struct Ui {
+///
+/// ウィジェットのハンドルと同じく **clone しても中身は同じ**なので、
+/// コールバックへ持ち込めば後からウィジェットを作れる。メインスレッド
+/// 専用で `Send` ではないため、別スレッドへは渡せない (そちらは
+/// [`Tasks`] を使う)。
+#[derive(Clone)]
+pub struct Ui(Rc<UiInner>);
+
+struct UiInner {
     app: adw::Application,
     theme: Cell<Theme>,
     /// コールバックが終わってもウィンドウを生かしておくための保持。
@@ -216,7 +224,7 @@ pub struct Ui {
 
 impl Ui {
     fn new(app: adw::Application, theme: Theme) -> Self {
-        Self {
+        Self(Rc::new(UiInner {
             app,
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
@@ -225,19 +233,19 @@ impl Ui {
             toolbars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
             tasks: Tasks::from_main_thread(std::sync::Arc::new(main_thread::Idle)),
-        }
+        }))
     }
 
     /// 対応する `GtkApplication`。バックエンド固有の脱出口として公開している。
     pub fn native_application(&self) -> adw::Application {
-        self.app.clone()
+        self.0.app.clone()
     }
 
     /// ウィンドウを作る。フレームワークが参照を保持するので、
     /// 戻り値を捨てても閉じられることはない。
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
-        let window = Window::new(&self.app, title, width, height);
-        self.windows.borrow_mut().push(window.clone());
+        let window = Window::new(&self.0.app, title, width, height);
+        self.0.windows.borrow_mut().push(window.clone());
         Ok(window)
     }
 
@@ -392,7 +400,7 @@ impl Ui {
     /// 戻り値を捨てても通知が届かなくなることはない。
     pub fn toolbar(&self) -> Result<Toolbar> {
         let toolbar = Toolbar::new();
-        self.toolbars.borrow_mut().push(toolbar.clone());
+        self.0.toolbars.borrow_mut().push(toolbar.clone());
         Ok(toolbar)
     }
 
@@ -417,7 +425,7 @@ impl Ui {
     /// 取り付け先から消えることはない。
     pub fn popup_menu(&self) -> Result<PopupMenu> {
         let popup = PopupMenu::new();
-        self.popups.borrow_mut().push(popup.clone());
+        self.0.popups.borrow_mut().push(popup.clone());
         Ok(popup)
     }
 
@@ -451,39 +459,39 @@ impl Ui {
     /// フレームワークが参照を保持するので、戻り値を捨てても
     /// 通知が届かなくなることはない。
     pub fn toast(&self, message: &str) -> Result<Toast> {
-        let toast = Toast::new(&self.app, message);
-        self.toasts.borrow_mut().push(toast.clone());
+        let toast = Toast::new(&self.0.app, message);
+        self.0.toasts.borrow_mut().push(toast.clone());
         Ok(toast)
     }
 
     /// モーダルダイアログ。フレームワークが参照を保持する。
     pub fn dialog(&self, title: &str) -> Result<Dialog> {
-        let dialog = Dialog::new(&self.app, title);
-        self.dialogs.borrow_mut().push(dialog.clone());
+        let dialog = Dialog::new(&self.0.app, title);
+        self.0.dialogs.borrow_mut().push(dialog.clone());
         Ok(dialog)
     }
 
     /// 配色テーマを切り替える。
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
-        self.theme.set(theme);
+        self.0.theme.set(theme);
         apply_theme(theme);
         Ok(())
     }
 
     pub fn theme(&self) -> Theme {
-        self.theme.get()
+        self.0.theme.get()
     }
 
     /// 別スレッドや非同期処理から画面を書き換えるための入り口。
     ///
     /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
     pub fn tasks(&self) -> Tasks {
-        self.tasks.clone()
+        self.0.tasks.clone()
     }
 
     /// アプリを終了する。
     pub fn quit(&self) {
-        self.app.quit();
+        self.0.app.quit();
     }
 }
 
@@ -497,7 +505,7 @@ thread_local! {
     ///
     /// ウィジェットのクロージャは `Ui` が持つハンドル (ダイアログ・ポップアップ)
     /// を参照するので、コールバックの終わりで落とすわけにはいかない。
-    static KEEP_ALIVE: RefCell<Vec<Rc<Ui>>> = const { RefCell::new(Vec::new()) };
+    static KEEP_ALIVE: RefCell<Vec<Ui>> = const { RefCell::new(Vec::new()) };
 }
 
 /// メインループを回さずに `Ui` だけを作る。**自動テスト専用**。
@@ -575,7 +583,7 @@ where
                 return;
             };
             apply_theme(theme);
-            let ui = Rc::new(Ui::new(app.clone(), theme));
+            let ui = Ui::new(app.clone(), theme);
             match build(&ui) {
                 Ok(()) => KEEP_ALIVE.with(|slot| slot.borrow_mut().push(ui)),
                 Err(error) => {
@@ -593,7 +601,7 @@ where
     KEEP_ALIVE.with(|slot| {
         let alive = std::mem::take(&mut *slot.borrow_mut());
         for ui in &alive {
-            ui.tasks.shutdown();
+            ui.0.tasks.shutdown();
         }
     });
 

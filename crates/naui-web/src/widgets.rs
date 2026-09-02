@@ -730,6 +730,42 @@ impl Stack {
         }
     }
 
+    /// 指定した位置へ子を差し込む。`index` が今の数以上なら末尾へ足す。
+    pub fn insert(&self, index: usize, child: &dyn Widget) {
+        let element = child.native_element();
+        let mut children = self.0.children.borrow_mut();
+        let index = index.min(children.len());
+        let anchor = children.get(index).map(|next| next.native_element());
+        let inserted = self
+            .0
+            .element
+            .insert_before(&element, anchor.as_ref().map(|next| &**next));
+        if inserted.is_ok() {
+            crate::layout::apply_child_layout(
+                &element,
+                crate::layout::ParentLayout::Flex(self.0.orientation),
+            );
+            children.insert(index, child.boxed_clone());
+        }
+    }
+
+    /// 指定した位置の子を外す。範囲外のときは何もしない。
+    pub fn remove(&self, index: usize) {
+        let mut children = self.0.children.borrow_mut();
+        if index >= children.len() {
+            return;
+        }
+        let child = children.remove(index);
+        let _ = self.0.element.remove_child(&child.native_element());
+    }
+
+    /// 子をすべて外す。
+    pub fn clear(&self) {
+        for child in std::mem::take(&mut *self.0.children.borrow_mut()) {
+            let _ = self.0.element.remove_child(&child.native_element());
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.0.children.borrow().len()
     }

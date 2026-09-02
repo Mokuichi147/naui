@@ -357,11 +357,20 @@ impl Tabs {
         }
         let _ = button.SetIsChecked(bool_ref(false).ok().as_ref());
 
-        let index = self.0.children.borrow().len();
-        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        // 押されたタブの位置は、並びが変わることがあるので押されてから調べる
+        // (`remove_tab` の後もそのタブが指す先がずれない)。
+        let state = UiThreadCell::new((Rc::downgrade(&self.0), button.clone()));
         let handler = RoutedEventHandler::new(move |_sender, _args| {
-            state.with_mut(|weak| {
-                if let Some(inner) = weak.upgrade() {
+            state.with_mut(|(weak, button)| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let index = inner
+                    .buttons
+                    .borrow()
+                    .iter()
+                    .position(|other| other == &*button);
+                if let Some(index) = index {
                     Tabs(inner).select(index);
                 }
             });
@@ -381,6 +390,47 @@ impl Tabs {
                 self.mark_selected(Some(0));
             }
         }
+    }
+
+    /// タブを 1 枚外す。範囲外のときは何もしない。
+    ///
+    /// 選択中のタブを外したときは、同じ位置のタブ (無ければ最後のタブ) を
+    /// 選び直す。この移動は [`set_selected`](Tabs::set_selected) と同じく
+    /// 通知しない。
+    pub fn remove_tab(&self, index: usize) {
+        if index >= self.len() {
+            return;
+        }
+        // 見出しは追加した順に並ぶので、位置はここの並びと同じ。
+        let removed = self
+            .0
+            .headers
+            .Children()
+            .and_then(|children| children.RemoveAt(index as u32));
+        if removed.is_err() {
+            return;
+        }
+        self.0.buttons.borrow_mut().remove(index);
+        self.0.children.borrow_mut().remove(index);
+
+        let left = self.len();
+        let selected = match self.0.selected.get() {
+            _ if left == 0 => None,
+            Some(current) if current == index => Some(index.min(left - 1)),
+            Some(current) if current > index => Some(current - 1),
+            other => other,
+        };
+        self.mark_selected(selected);
+    }
+
+    /// タブをすべて外す。
+    pub fn clear(&self) {
+        if let Ok(children) = self.0.headers.Children() {
+            let _ = children.Clear();
+        }
+        self.0.buttons.borrow_mut().clear();
+        self.0.children.borrow_mut().clear();
+        self.mark_selected(None);
     }
 
     pub fn len(&self) -> usize {

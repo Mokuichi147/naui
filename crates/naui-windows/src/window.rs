@@ -269,7 +269,7 @@ impl Window {
                 if let Some(ui) = slot.take() {
                     // 画面が畳まれた後は、投函しても誰も取り出さない。
                     // 送信側へ失敗を返せるようにし、受信クロージャと future を解放する。
-                    ui.tasks.shutdown();
+                    ui.0.tasks.shutdown();
                     ui.clear_windows_for_shutdown();
                 }
             });

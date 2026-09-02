@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use naui::{
     Align, GridCell, Length, Orientation, Padding, Result, ScrollPolicy, Sizing, Track, Ui,
 };
@@ -16,6 +19,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     horizontal.append(&ui.button("中央")?);
     horizontal.append(&ui.button("右")?);
     pane.append(&horizontal);
+
+    pane.append(&ui.label("子の出し入れ")?);
+    pane.append(&ui.label(
+        "コールバックの中で Ui を clone して子を作り、insert / remove / clear で並びを変えます。",
+    )?);
+    build_dynamic_children(ui, &pane)?;
 
     pane.append(&ui.label("Grid")?);
     pane.append(&ui.label("固定幅と Fill の列、複数列にまたがるセルを確認できます。")?);
@@ -130,4 +139,64 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     );
     pane.append(&scroll);
     Ok(pane)
+}
+
+/// `Stack` の子を後から足したり外したりする例。
+fn build_dynamic_children(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+    let items = ui.stack(Orientation::Vertical)?;
+    items.set_spacing(4.0);
+    items.set_align(Align::Start);
+    let count = Rc::new(Cell::new(0));
+
+    let actions = ui.stack(Orientation::Horizontal)?;
+    actions.set_spacing(8.0);
+
+    let add = ui.button("末尾へ足す")?;
+    add.on_click({
+        // コールバックへ持ち込むのは clone した Ui。中身は同じ。
+        let ui = ui.clone();
+        let items = items.clone();
+        let count = count.clone();
+        move || {
+            count.set(count.get() + 1);
+            let Ok(label) = ui.label(&format!("項目 {}", count.get())) else {
+                return;
+            };
+            items.append(&label);
+        }
+    });
+    actions.append(&add);
+
+    let insert = ui.button("先頭へ差し込む")?;
+    insert.on_click({
+        let ui = ui.clone();
+        let items = items.clone();
+        let count = count.clone();
+        move || {
+            count.set(count.get() + 1);
+            let Ok(label) = ui.label(&format!("項目 {} (先頭)", count.get())) else {
+                return;
+            };
+            items.insert(0, &label);
+        }
+    });
+    actions.append(&insert);
+
+    let remove = ui.button("先頭を外す")?;
+    remove.on_click({
+        let items = items.clone();
+        move || items.remove(0)
+    });
+    actions.append(&remove);
+
+    let clear = ui.button("空にする")?;
+    clear.on_click({
+        let items = items.clone();
+        move || items.clear()
+    });
+    actions.append(&clear);
+
+    pane.append(&actions);
+    pane.append(&items);
+    Ok(())
 }

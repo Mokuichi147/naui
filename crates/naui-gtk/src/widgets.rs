@@ -726,6 +726,38 @@ impl Stack {
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
 
+    /// 指定した位置へ子を差し込む。`index` が今の数以上なら末尾へ足す。
+    pub fn insert(&self, index: usize, child: &dyn Widget) {
+        let mut children = self.0.children.borrow_mut();
+        let index = index.min(children.len());
+        let bin = child.size_bin();
+        bin.set_cross_align(self.0.align.get(), self.0.vertical);
+        // `GtkBox` は「この子の後ろへ」で場所を指す。先頭は `None`。
+        let after = index
+            .checked_sub(1)
+            .and_then(|previous| children.get(previous))
+            .map(|previous| previous.size_bin());
+        self.0.native.insert_child_after(&bin, after.as_ref());
+        children.insert(index, child.boxed_clone());
+    }
+
+    /// 指定した位置の子を外す。範囲外のときは何もしない。
+    pub fn remove(&self, index: usize) {
+        let mut children = self.0.children.borrow_mut();
+        if index >= children.len() {
+            return;
+        }
+        let child = children.remove(index);
+        self.0.native.remove(&child.size_bin());
+    }
+
+    /// 子をすべて外す。
+    pub fn clear(&self) {
+        for child in std::mem::take(&mut *self.0.children.borrow_mut()) {
+            self.0.native.remove(&child.size_bin());
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.0.children.borrow().len()
     }
