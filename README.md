@@ -85,10 +85,6 @@ cargo run -p gallery
 
 - Web: `PopupMenu` のブラウザ実行と、埋め込みブラウザで配送されなかった
   `Dialog` の Esc 操作
-- `FileSaver`: macOS のみ実機と自動テストで確認しています。Windows・Linux・Web
-  での実行は未確認です。
-- 別スレッドからの受け渡しと `spawn` は 4 環境とも実機で確認していますが、
-  Linux は Gallery の実行のみです (GTK4 の統合テストへ足した 3 件は未実行)。
 
 </details>
 
