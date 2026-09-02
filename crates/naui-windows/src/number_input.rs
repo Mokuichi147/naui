@@ -12,6 +12,10 @@
 //! テンプレートの中にある入力欄 (`InputBox`) の `TextChanged` から拾う。
 //! 標準のテンプレートが差し替えられていて入力欄が見つからないときは、
 //! 確定したときだけ通知される。
+//!
+//! 打っている途中の表示は、`NumberBox` が確定に使うのと同じ `NumberFormatter`
+//! で読む。小数点や桁区切りは地域設定で変わるので、打鍵中と確定とで読み手が
+//! 違うと通知の出かたがずれる。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -24,7 +28,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
 use windows::Foundation::TypedEventHandler;
-use windows::Globalization::NumberFormatting::DecimalFormatter;
+use windows::Globalization::NumberFormatting::{DecimalFormatter, INumberParser};
 use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
@@ -248,7 +252,7 @@ impl NumberInput {
                 .and_then(|field| field.Text().ok())
                 .map(|text| text.to_string());
             // 打っている途中で読めない表示 (空欄や `-` だけ) は確定まで待つ。
-            if let Some(shown) = text.and_then(|text| this.0.spec.get().parse(&text)) {
+            if let Some(shown) = text.and_then(|text| this.parse_shown(&text)) {
                 this.accept(shown, false);
             }
             Ok(())
@@ -258,10 +262,41 @@ impl NumberInput {
         }
     }
 
+    /// 打っている途中の表示を数として読む。読めなければ `None`。
+    ///
+    /// 読み手は `NumberBox` が確定に使うものと同じ (`NumberFormatter` は
+    /// `INumberParser` でもある) にする。小数点や桁区切りは地域設定で変わる
+    /// ので、[`NumberSpec::parse`] (`.` しか読まない) で読むと、`1,5` のような
+    /// 表示が打っている間だけ読めず、確定して初めて通知が出ることになる。
+    ///
+    /// 読み手を取れないときだけ [`NumberSpec`] へ戻す。
+    fn parse_shown(&self, text: &str) -> Option<f64> {
+        let parser = self
+            .0
+            .native
+            .NumberFormatter()
+            .ok()
+            .and_then(|formatter| formatter.cast::<INumberParser>().ok());
+        let Some(parser) = parser else {
+            return self.0.spec.get().parse(text);
+        };
+        parser
+            .ParseDouble(&HSTRING::from(text))
+            .ok()
+            .and_then(|value| value.Value().ok())
+            .filter(|value| value.is_finite())
+    }
+
     /// 決まりを差し替え、`NumberBox` と現在値へ反映する。
+    ///
+    /// 範囲を書くと `NumberBox` は現在値を範囲の中へ寄せ、その `ValueChanged`
+    /// を出す。決まりの差し替えは**通知しない**約束なので、書いている間は
+    /// 止めておき、あとから naui 側の値をそろえ直す。
     fn update_spec(&self, edit: impl FnOnce(NumberSpec) -> NumberSpec) {
         self.0.spec.set(edit(self.0.spec.get()));
+        let previous = self.0.silent.replace(true);
         let _ = self.write_native_spec();
+        self.0.silent.set(previous);
         self.set_value(self.value());
     }
 
@@ -318,10 +353,11 @@ impl NumberInput {
     }
 }
 
-/// 小数桁ぶんを必ず書く書式。[`NumberSpec::format`] と同じ見た目にする。
+/// 小数桁ぶんを必ず書く書式。
 ///
-/// `NumberBox` は書式を数の読み取りにも使うので、桁区切りは入れない
-/// (区切られた表示は [`NumberSpec::parse`] が読めないため)。
+/// 桁区切りは入れない。ほかの 3 バックエンド ([`NumberSpec::format`]・
+/// `GtkSpinButton`・`<input type="number">`) がどれも区切らないので、そこへ
+/// そろえる。小数点そのものは地域設定のままにする (`NumberBox` の既定と同じ)。
 fn formatter(decimals: u32) -> Result<DecimalFormatter> {
     let formatter = DecimalFormatter::new().map_err(|e| to_error("数の書式の生成", e))?;
     formatter
