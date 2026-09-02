@@ -400,6 +400,11 @@ impl Ui {
 
     /// アプリを終了する。
     pub fn quit(&self) {
+        // `Application::Exit` でもウィンドウは通知を上げずに畳まれるので、
+        // 取り付けた Mica のコントローラーはここで閉じる。
+        for window in self.0.windows.borrow().iter() {
+            window.release_backdrop();
+        }
         if let Ok(app) = naui_winui3::Microsoft::UI::Xaml::Application::Current() {
             let _ = app.Exit();
         }
