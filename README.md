@@ -190,6 +190,8 @@ add.on_click({
 | 中身が 1 つのもの (`Scroll`、`Expander`、`SplitView`、`Window`) | `set_child` などで差し替える |
 
 ```rust
+use naui::{GridCell, Orientation};
+
 let stack = ui.stack(Orientation::Vertical)?;
 stack.append(&ui.label("1 行目")?);
 stack.insert(0, &ui.label("見出し")?); // 先頭へ差し込む
