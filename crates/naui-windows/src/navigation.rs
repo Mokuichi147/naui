@@ -29,7 +29,7 @@ use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, UIElement,
     VerticalAlignment,
 };
-use windows_core::{Interface, HSTRING};
+use windows_core::{IUnknown, Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
@@ -359,17 +359,28 @@ impl Tabs {
 
         // 押されたタブの位置は、並びが変わることがあるので押されてから調べる
         // (`remove_tab` の後もそのタブが指す先がずれない)。
-        let state = UiThreadCell::new((Rc::downgrade(&self.0), button.clone()));
-        let handler = RoutedEventHandler::new(move |_sender, _args| {
-            state.with_mut(|(weak, button)| {
+        //
+        // 押されたボタンは **sender から引く**。ハンドラ側でボタンを持つと
+        // 「ボタン → Click のハンドラ → ボタン」で循環し、外したタブが
+        // 解放されないまま溜まる。
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = RoutedEventHandler::new(move |sender, _args| {
+            state.with_mut(|weak| {
                 let Some(inner) = weak.upgrade() else {
                     return;
                 };
-                let index = inner
-                    .buttons
-                    .borrow()
-                    .iter()
-                    .position(|other| other == &*button);
+                // COM の同一性は `IUnknown` で比べる (型ごとのインターフェイス
+                // ポインタは同じオブジェクトでも一致するとは限らない)。
+                let Some(pressed) = sender
+                    .as_ref()
+                    .and_then(|sender| sender.cast::<IUnknown>().ok())
+                else {
+                    return;
+                };
+                let index =
+                    inner.buttons.borrow().iter().position(|other| {
+                        other.cast::<IUnknown>().is_ok_and(|other| other == pressed)
+                    });
                 if let Some(index) = index {
                     Tabs(inner).select(index);
                 }
