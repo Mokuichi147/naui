@@ -537,6 +537,7 @@ impl List {
             .list_box
             .Items()
             .map_err(|e| to_error("行の取得", e))?;
+        self.release_row_contents();
         self.without_notifying(|_| children.Clear())
             .map_err(|e| to_error("行の消去", e))?;
         self.0.native_rows.borrow_mut().clear();
@@ -566,6 +567,27 @@ impl List {
         *self.0.rows.borrow_mut() = rows.to_vec();
         self.write_selection(&[]);
         Ok(())
+    }
+
+    /// いま並んでいる行の器を空にする。
+    ///
+    /// 任意内容の行は、アプリが持っているウィジェットをそのまま器 (`Grid`) へ
+    /// 載せている。載せたまま器を手放すと、そのウィジェットは「親がある」
+    /// ままになり、次に組み直すときに
+    /// 「Element is already the child of another element」で弾かれる。
+    /// 器を捨てる前に、ここで必ず外しておく。
+    fn release_row_contents(&self) {
+        for native in self.0.native_rows.borrow().iter() {
+            let Ok(host) = native
+                .Content()
+                .and_then(|content| content.cast::<XamlGrid>())
+            else {
+                continue;
+            };
+            if let Ok(children) = host.Children() {
+                let _ = children.Clear();
+            }
+        }
     }
 
     /// 行数。
