@@ -109644,6 +109644,18 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn ValidationMode(&self) -> windows_core::Result<NumberBoxValidationMode>;
+                    fn SetValidationMode(
+                        &self,
+                        value: NumberBoxValidationMode,
+                    ) -> windows_core::Result<()>;
+                    fn SpinButtonPlacementMode(
+                        &self,
+                    ) -> windows_core::Result<NumberBoxSpinButtonPlacementMode>;
+                    fn SetSpinButtonPlacementMode(
+                        &self,
+                        value: NumberBoxSpinButtonPlacementMode,
+                    ) -> windows_core::Result<()>;
                     fn IsWrapEnabled(&self) -> windows_core::Result<bool>;
                     fn SetIsWrapEnabled(&self, value: bool) -> windows_core::Result<()>;
                     fn AcceptsExpression(&self) -> windows_core::Result<bool>;
@@ -109660,6 +109672,16 @@ pub mod Microsoft {
                             windows::Globalization::NumberFormatting::INumberFormatter2,
                         >,
                     ) -> windows_core::Result<()>;
+                    fn ValueChanged(
+                        &self,
+                        handler: windows_core::Ref<
+                            '_,
+                            windows::Foundation::TypedEventHandler<
+                                NumberBox,
+                                NumberBoxValueChangedEventArgs,
+                            >,
+                        >,
+                    ) -> windows_core::Result<i64>;
                     fn RemoveValueChanged(&self, token: i64) -> windows_core::Result<()>;
                 }
                 impl INumberBox_Vtbl {
@@ -110076,6 +110098,70 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn ValidationMode<
+                            Identity: INumberBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut NumberBoxValidationMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match INumberBox_Impl::ValidationMode(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetValidationMode<
+                            Identity: INumberBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: NumberBoxValidationMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                INumberBox_Impl::SetValidationMode(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn SpinButtonPlacementMode<
+                            Identity: INumberBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut NumberBoxSpinButtonPlacementMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match INumberBox_Impl::SpinButtonPlacementMode(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSpinButtonPlacementMode<
+                            Identity: INumberBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: NumberBoxSpinButtonPlacementMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                INumberBox_Impl::SetSpinButtonPlacementMode(this, value).into()
+                            }
+                        }
                         unsafe extern "system" fn IsWrapEnabled<
                             Identity: INumberBox_Impl,
                             const OFFSET: isize,
@@ -110177,6 +110263,29 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn ValueChanged<
+                            Identity: INumberBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match INumberBox_Impl::ValueChanged(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
                         unsafe extern "system" fn RemoveValueChanged<
                             Identity: INumberBox_Impl,
                             const OFFSET: isize,
@@ -110229,17 +110338,20 @@ pub mod Microsoft {
                                 SetPreventKeyboardDisplayOnProgrammaticFocus::<Identity, OFFSET>,
                             Description: Description::<Identity, OFFSET>,
                             SetDescription: SetDescription::<Identity, OFFSET>,
-                            ValidationMode: 0,
-                            SetValidationMode: 0,
-                            SpinButtonPlacementMode: 0,
-                            SetSpinButtonPlacementMode: 0,
+                            ValidationMode: ValidationMode::<Identity, OFFSET>,
+                            SetValidationMode: SetValidationMode::<Identity, OFFSET>,
+                            SpinButtonPlacementMode: SpinButtonPlacementMode::<Identity, OFFSET>,
+                            SetSpinButtonPlacementMode: SetSpinButtonPlacementMode::<
+                                Identity,
+                                OFFSET,
+                            >,
                             IsWrapEnabled: IsWrapEnabled::<Identity, OFFSET>,
                             SetIsWrapEnabled: SetIsWrapEnabled::<Identity, OFFSET>,
                             AcceptsExpression: AcceptsExpression::<Identity, OFFSET>,
                             SetAcceptsExpression: SetAcceptsExpression::<Identity, OFFSET>,
                             NumberFormatter: NumberFormatter::<Identity, OFFSET>,
                             SetNumberFormatter: SetNumberFormatter::<Identity, OFFSET>,
-                            ValueChanged: 0,
+                            ValueChanged: ValueChanged::<Identity, OFFSET>,
                             RemoveValueChanged: RemoveValueChanged::<Identity, OFFSET>,
                         }
                     }
@@ -110375,10 +110487,26 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    ValidationMode: usize,
-                    SetValidationMode: usize,
-                    SpinButtonPlacementMode: usize,
-                    SetSpinButtonPlacementMode: usize,
+                    pub ValidationMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut NumberBoxValidationMode,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetValidationMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        NumberBoxValidationMode,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SpinButtonPlacementMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut NumberBoxSpinButtonPlacementMode,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetSpinButtonPlacementMode:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            NumberBoxSpinButtonPlacementMode,
+                        ) -> windows_core::HRESULT,
                     pub IsWrapEnabled: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut bool,
@@ -110409,7 +110537,12 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    ValueChanged: usize,
+                    pub ValueChanged: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
                     pub RemoveValueChanged: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         i64,
@@ -110559,6 +110692,95 @@ pub mod Microsoft {
                     IsWrapEnabledProperty: usize,
                     AcceptsExpressionProperty: usize,
                     NumberFormatterProperty: usize,
+                }
+                windows_core::imp::define_interface!(
+                    INumberBoxValueChangedEventArgs,
+                    INumberBoxValueChangedEventArgs_Vtbl,
+                    0xc66cf16e_7c8a_532e_9d23_058c1c98dd50
+                );
+                impl windows_core::RuntimeType for INumberBoxValueChangedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for INumberBoxValueChangedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.INumberBoxValueChangedEventArgs";
+                }
+                pub trait INumberBoxValueChangedEventArgs_Impl: windows_core::IUnknownImpl {
+                    fn OldValue(&self) -> windows_core::Result<f64>;
+                    fn NewValue(&self) -> windows_core::Result<f64>;
+                }
+                impl INumberBoxValueChangedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: INumberBoxValueChangedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn OldValue<
+                            Identity: INumberBoxValueChangedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match INumberBoxValueChangedEventArgs_Impl::OldValue(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn NewValue<
+                            Identity: INumberBoxValueChangedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match INumberBoxValueChangedEventArgs_Impl::NewValue(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                INumberBoxValueChangedEventArgs,
+                                OFFSET,
+                            >(),
+                            OldValue: OldValue::<Identity, OFFSET>,
+                            NewValue: NewValue::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<INumberBoxValueChangedEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct INumberBoxValueChangedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub OldValue: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut f64,
+                    )
+                        -> windows_core::HRESULT,
+                    pub NewValue: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut f64,
+                    )
+                        -> windows_core::HRESULT,
                 }
                 windows_core::imp::define_interface!(
                     IPanel,
@@ -155022,6 +155244,57 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ValidationMode(&self) -> windows_core::Result<NumberBoxValidationMode> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ValidationMode)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetValidationMode(
+                        &self,
+                        value: NumberBoxValidationMode,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetValidationMode)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SpinButtonPlacementMode(
+                        &self,
+                    ) -> windows_core::Result<NumberBoxSpinButtonPlacementMode>
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SpinButtonPlacementMode)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetSpinButtonPlacementMode(
+                        &self,
+                        value: NumberBoxSpinButtonPlacementMode,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSpinButtonPlacementMode)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn IsWrapEnabled(&self) -> windows_core::Result<bool> {
                         let this = self;
                         unsafe {
@@ -155092,6 +155365,26 @@ pub mod Microsoft {
                                 value.param().abi(),
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ValueChanged<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                NumberBox,
+                                NumberBoxValueChangedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ValueChanged)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveValueChanged(&self, token: i64) -> windows_core::Result<()> {
@@ -156836,6 +157129,90 @@ pub mod Microsoft {
                 }
                 unsafe impl Send for NumberBox {}
                 unsafe impl Sync for NumberBox {}
+                #[repr(transparent)]
+                #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+                pub struct NumberBoxSpinButtonPlacementMode(pub i32);
+                impl NumberBoxSpinButtonPlacementMode {
+                    pub const Hidden: Self = Self(0i32);
+                    pub const Compact: Self = Self(1i32);
+                    pub const Inline: Self = Self(2i32);
+                }
+                impl windows_core::TypeKind for NumberBoxSpinButtonPlacementMode {
+                    type TypeKind = windows_core::CopyType;
+                }
+                impl windows_core::RuntimeType for NumberBoxSpinButtonPlacementMode {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::from_slice(
+                            b"enum(Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode;i4)",
+                        );
+                }
+                #[repr(transparent)]
+                #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+                pub struct NumberBoxValidationMode(pub i32);
+                impl NumberBoxValidationMode {
+                    pub const InvalidInputOverwritten: Self = Self(0i32);
+                    pub const Disabled: Self = Self(1i32);
+                }
+                impl windows_core::TypeKind for NumberBoxValidationMode {
+                    type TypeKind = windows_core::CopyType;
+                }
+                impl windows_core::RuntimeType for NumberBoxValidationMode {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::from_slice(
+                            b"enum(Microsoft.UI.Xaml.Controls.NumberBoxValidationMode;i4)",
+                        );
+                }
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct NumberBoxValueChangedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    NumberBoxValueChangedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl NumberBoxValueChangedEventArgs {
+                    pub fn OldValue(&self) -> windows_core::Result<f64> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OldValue)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn NewValue(&self) -> windows_core::Result<f64> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).NewValue)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for NumberBoxValueChangedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            INumberBoxValueChangedEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for NumberBoxValueChangedEventArgs {
+                    type Vtable =
+                        <INumberBoxValueChangedEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <INumberBoxValueChangedEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for NumberBoxValueChangedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.NumberBoxValueChangedEventArgs";
+                }
+                unsafe impl Send for NumberBoxValueChangedEventArgs {}
+                unsafe impl Sync for NumberBoxValueChangedEventArgs {}
                 #[repr(transparent)]
                 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
                 pub struct Orientation(pub i32);

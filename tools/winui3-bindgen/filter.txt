@@ -49,6 +49,9 @@ Microsoft.UI.Xaml.Controls.MediaPlayerElement
 Microsoft.UI.Xaml.Controls.MenuFlyout
 Microsoft.UI.Xaml.Controls.NavigationView
 Microsoft.UI.Xaml.Controls.NumberBox
+Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode
+Microsoft.UI.Xaml.Controls.NumberBoxValidationMode
+Microsoft.UI.Xaml.Controls.NumberBoxValueChangedEventArgs
 Microsoft.UI.Xaml.Controls.Orientation
 Microsoft.UI.Xaml.Controls.Panel
 Microsoft.UI.Xaml.Controls.PasswordBox
