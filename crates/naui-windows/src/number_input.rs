@@ -280,11 +280,7 @@ impl NumberInput {
         let Some(parser) = parser else {
             return self.0.spec.get().parse(text);
         };
-        parser
-            .ParseDouble(&HSTRING::from(text))
-            .ok()
-            .and_then(|value| value.Value().ok())
-            .filter(|value| value.is_finite())
+        parse_with(&parser, text)
     }
 
     /// 決まりを差し替え、`NumberBox` と現在値へ反映する。
@@ -358,6 +354,21 @@ impl NumberInput {
 /// 桁区切りは入れない。ほかの 3 バックエンド ([`NumberSpec::format`]・
 /// `GtkSpinButton`・`<input type="number">`) がどれも区切らないので、そこへ
 /// そろえる。小数点そのものは地域設定のままにする (`NumberBox` の既定と同じ)。
+/// 書式に付いている読み手で数を読む。読めなければ `None`。
+///
+/// **前後の空白は落としてから渡す。** `INumberParser` は空白が付いていると
+/// 読まないが、`NumberBox` は確定のときだけ落としてから読む
+/// (`ValidateInput`)。落とさずに渡すと、`" 12 "` を貼ったときだけ打っている
+/// 間は通知が出ず、確定して初めて出ることになる。[`NumberSpec::parse`] も
+/// 前後の空白を無視するので、そこへそろえる。
+fn parse_with(parser: &INumberParser, text: &str) -> Option<f64> {
+    parser
+        .ParseDouble(&HSTRING::from(text.trim()))
+        .ok()
+        .and_then(|value| value.Value().ok())
+        .filter(|value| value.is_finite())
+}
+
 fn formatter(decimals: u32) -> Result<DecimalFormatter> {
     let formatter = DecimalFormatter::new().map_err(|e| to_error("数の書式の生成", e))?;
     formatter
@@ -370,4 +381,40 @@ fn formatter(decimals: u32) -> Result<DecimalFormatter> {
         .SetIsGrouped(false)
         .map_err(|e| to_error("数の書式の桁区切りの設定", e))?;
     Ok(formatter)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `DecimalFormatter` は OS の WinRT 型なので、Windows App SDK の
+    /// ランタイムが要らない。ネイティブのコントロールを作る統合テストと違い、
+    /// これは CI でもそのまま走る。
+    fn parser() -> INumberParser {
+        formatter(0)
+            .expect("数の書式")
+            .cast::<INumberParser>()
+            .expect("書式は読み手でもある")
+    }
+
+    /// 地域設定によって小数点も桁区切りも変わるので、どの地域でも同じに
+    /// 読める整数だけで見る。
+    #[test]
+    fn the_parser_ignores_surrounding_whitespace() {
+        let parser = parser();
+        for text in ["12", " 12", "12 ", " 12 ", "\t12\n", "  12  "] {
+            assert_eq!(parse_with(&parser, text), Some(12.0), "{text:?}");
+        }
+        assert_eq!(parse_with(&parser, " -3 "), Some(-3.0));
+    }
+
+    /// 打っている途中の、まだ数になっていない表示は読めないままにする
+    /// (確定を待つ)。
+    #[test]
+    fn text_that_is_not_a_number_stays_unread() {
+        let parser = parser();
+        for text in ["", " ", "   ", "-", "+", "abc", "12ab", "1 2"] {
+            assert_eq!(parse_with(&parser, text), None, "{text:?}");
+        }
+    }
 }
