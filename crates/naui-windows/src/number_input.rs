@@ -13,10 +13,11 @@
 //! 標準のテンプレートが差し替えられていて入力欄が見つからないときは、
 //! 確定したときだけ通知される。
 //!
-//! そのため打っている間の値は naui だけが持ち、`NumberBox.Value` は古いまま
-//! になる。**読めない文字列を元へ戻すのは naui の仕事**にしてあるのはこの
-//! ためで、`NumberBox` に任せると自分の古い値へ戻してしまう
-//! (`ValidationMode` を参照)。
+//! そのため打っている間の値は naui だけが持ち、`NumberBox` の値は古いままに
+//! なる。巻き戻しと増減はどちらも `NumberBox` が自分の値を基準にするので、
+//! **表示が読めなくなった時点で受け取り済みの値を渡す**
+//! ([`sync_native`](NumberInput::sync_native))。読める表示なら `NumberBox` が
+//! 自分で読み取るので渡さなくてよい。
 //!
 //! 打っている途中の表示は、`NumberBox` が確定に使うのと同じ `NumberFormatter`
 //! で読む。小数点や桁区切りは地域設定で変わるので、打鍵中と確定とで読み手が
@@ -108,16 +109,14 @@ impl NumberInput {
         native
             .SetSpinButtonPlacementMode(NumberBoxSpinButtonPlacementMode::Inline)
             .map_err(|e| to_error("数値入力の増減ボタンの設定", e))?;
-        // 読めない文字列を元へ戻すのは naui が行う (`commit`)。
+        // 読めない文字列は確定時に元の値へ戻し、範囲の外は端へ寄せる (既定)。
         //
-        // 既定の `InvalidInputOverwritten` に任せると、`NumberBox` は**自分が
-        // 持っている値**へ表示を戻す。打っている間の値は naui だけが持って
-        // いて `NumberBox.Value` は古いままなので、`12` まで打ってから `12x`
-        // にして欄を離れると、受け取り済みの `12` ではなく古い値へ戻って
-        // しまう。範囲へ寄せるのも [`NumberSpec`] の仕事なので、`NumberBox`
-        // 側の検証はまとめて切る。
+        // 戻す先も増減の基準も `NumberBox` が持っている値なので、読めない表示に
+        // なった時点で受け取り済みの値を渡しておく
+        // ([`sync_native`](Self::sync_native) を参照)。これをしないと、`12` まで
+        // 打ってから `12x` にしたときに古い値へ戻ってしまう。
         native
-            .SetValidationMode(NumberBoxValidationMode::Disabled)
+            .SetValidationMode(NumberBoxValidationMode::InvalidInputOverwritten)
             .map_err(|e| to_error("数値入力の検証方法の設定", e))?;
 
         let this = Self(Rc::new(NumberInputInner {
@@ -213,26 +212,6 @@ impl NumberInput {
             .ValueChanged(&changed)
             .map_err(|e| to_error("数値入力の確定購読", e))?;
 
-        // 欄を離れたら、受け取り済みの値へ表示をそろえ直す。
-        //
-        // 検証を切ってあるので、読めない文字列 (`12x`) はそのまま残る。
-        // ここで書き戻すと `NumberBox` が `NumberFormatter` で表示を作り直す
-        // ため、**受け取り済みの値**へ戻る (`NumberBox` に任せると古い値へ
-        // 戻ってしまう)。`NumberBox` 自身の `LostFocus` はコンストラクタで
-        // 繋がれていて先に走るが、検証を切ってあるので何もしない。
-        let left = UiThreadCell::new(Rc::downgrade(&self.0));
-        let handler = RoutedEventHandler::new(move |_sender, _args| {
-            if let Some(inner) = left.try_with_mut(|weak| weak.upgrade()).flatten() {
-                let this = NumberInput(inner);
-                this.accept(this.value(), true);
-            }
-            Ok(())
-        });
-        self.0
-            .native
-            .LostFocus(&handler)
-            .map_err(|e| to_error("数値入力の確定購読", e))?;
-
         // テンプレートが展開されてから入力欄を探す。
         let loaded = UiThreadCell::new(Rc::downgrade(&self.0));
         let handler = RoutedEventHandler::new(move |_sender, _args| {
@@ -283,9 +262,11 @@ impl NumberInput {
                 .as_ref()
                 .and_then(|field| field.Text().ok())
                 .map(|text| text.to_string());
-            // 打っている途中で読めない表示 (空欄や `-` だけ) は確定まで待つ。
-            if let Some(shown) = text.and_then(|text| this.parse_shown(&text)) {
-                this.accept(shown, false);
+            match text.and_then(|text| this.parse_shown(&text)) {
+                Some(shown) => this.accept(shown, false),
+                // 打っている途中で読めない表示 (空欄や `-` だけ) は確定まで
+                // 待つ。ただし受け取り済みの値だけは `NumberBox` へ渡す。
+                None => this.sync_native(),
             }
             Ok(())
         });
@@ -313,6 +294,43 @@ impl NumberInput {
             return self.0.spec.get().parse(text);
         };
         parse_with(&parser, text)
+    }
+
+    /// 受け取り済みの値を `NumberBox` へ渡す。**表示はそのまま残す。**
+    ///
+    /// 確定 (Enter・欄を離れる) の巻き戻し先も、増減 (`StepValue`) の基準も、
+    /// `NumberBox` が持っている値である。打っている間の値は naui だけが持って
+    /// いるので、表示が読めなくなった時点で渡しておかないと、`12` まで打って
+    /// から `12x` にしたときに巻き戻しも増減も古い値から始まってしまう。
+    ///
+    /// 表示が読める間は渡さなくてよい。`NumberBox` は確定と増減のどちらでも
+    /// **先に表示を読んで値へ入れる** (`ValidateInput`) ので、読める表示なら
+    /// そこから同じ値にたどり着く。
+    ///
+    /// 値を渡すと `NumberBox` が `NumberFormatter` で表示を作り直してしまう
+    /// ので、打っている途中の表示 (`-` だけ、`12x`) と選択位置を書き戻す。
+    fn sync_native(&self) {
+        let Some(field) = self.0.field.borrow().clone() else {
+            // 入力欄が見つかっていないなら打鍵の経路も無く、値はずれない。
+            return;
+        };
+        let Ok(text) = field.Text() else {
+            return;
+        };
+        let start = field.SelectionStart().unwrap_or_default();
+        let length = field.SelectionLength().unwrap_or_default();
+
+        self.write_native(self.value());
+
+        // 値が変わらなければ `NumberBox` は表示に触っていない。
+        if field.Text().is_ok_and(|shown| shown == text) {
+            return;
+        }
+        let previous = self.0.silent.replace(true);
+        let _ = field.SetText(&text);
+        let _ = field.SetSelectionStart(start);
+        let _ = field.SetSelectionLength(length);
+        self.0.silent.set(previous);
     }
 
     /// 決まりを差し替え、`NumberBox` と現在値へ反映する。
