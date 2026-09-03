@@ -377,7 +377,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `NumberInput` | `TextBox` + 増減ボタン | `NSTextField` + `NSStepper` | `GtkSpinButton` | `<input type="number">` |
+//! | `NumberInput` | `NumberBox` | `NSTextField` + `NSStepper` | `GtkSpinButton` | `<input type="number">` |
 //!
 //! 値は**小数桁へ丸めてから範囲へ収める**。範囲の外の値を
 //! [`set_value`](NumberInput::set_value) へ渡すと、通知せずに端へ寄る。
@@ -386,6 +386,11 @@
 //! [`set_sizing`](NumberInput::set_sizing) で指定する。
 //! 表示を値へそろえ直すのは**確定したとき** (Enter・欄を離れたとき・増減の
 //! ボタンを押したとき) で、数として読めない文字列は確定時に元の値へ戻る。
+//!
+//! **Windows では有効数字が 10 桁までになる。**`NumberBox` が表示を作る前に
+//! 有効数字 10 桁へ丸めるためで、確定するとその表示を読み直すので値もそこへ
+//! そろう。[`NumberSpec::decimals`] にそれを超える桁数を渡しても、Windows
+//! では 10 桁で切れる (残る 3 環境は `f64` の精度まで扱える)。
 //!
 //! ## 入り切りの切り替え
 //!

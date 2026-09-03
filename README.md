@@ -895,7 +895,7 @@ tokio::spawn(async move {
 | `TextArea` | ✅ `TextBox` | 🟡 `NSTextView` + `NSScrollView` | 🟡 `GtkTextView` + `GtkScrolledWindow` | ✅ `<textarea>` |
 | `PasswordInput` | ✅ `PasswordBox` | ✅ `NSSecureTextField` | ✅ `GtkPasswordEntry` | ✅ `<input type="password">` |
 | `SearchInput` | ✅ `AutoSuggestBox` | ✅ `NSSearchField` | ✅ `GtkSearchEntry` | ✅ `<input type="search">` |
-| `NumberInput` | 🟡 `TextBox` + 増減ボタン | 🟡 `NSTextField` + `NSStepper` | ✅ `GtkSpinButton` | ✅ `<input type="number">` |
+| `NumberInput` | ✅ `NumberBox` | 🟡 `NSTextField` + `NSStepper` | ✅ `GtkSpinButton` | ✅ `<input type="number">` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
 | `ProgressBar` | 🟡 `Grid` + `Border` | ✅ `NSProgressIndicator` | ✅ `GtkProgressBar` | ✅ `<progress>` |
 
@@ -1218,10 +1218,42 @@ git push origin v0.3.0
 - `Tree` は `ListBox` の行として組み立てています (`TreeView` は投影に入ったので、
   そちらへ移すのは今後の課題です)。選べない枝は行ごと無効になるので、その開閉ボタンも
   押せません (プログラムからの `expand` は効きます)。
-- `NumberInput` は `TextBox` と `-` / `+` のボタンを横に並べて組み立てています
-  (`NumberBox` の既定と同じ並び。`NumberBox` は投影に入ったので、そちらへ移すのは
-  今後の課題です)。
-  値の確定は欄を離れたときです。
+- `NumberInput` は `NumberBox` です。増減ボタンは既定では出ないので
+  `SpinButtonPlacementMode` を `Inline` にして欄の右へ並べ、範囲・刻み・小数桁は
+  `Minimum` / `Maximum` / `SmallChange` / `NumberFormatter` にも書いて、
+  上下キーやホイールの動きと表示をそろえています。端に来ると増減ボタンが
+  自分で無効になり、PageUp / PageDown は刻みの 10 倍動きます。
+  `NumberBox` の 1 文字ごとの通知は、`EditableComboBox` と同じくテンプレートに
+  ある入力欄 (`InputBox`) の `TextChanged` から拾っています。`NumberBox` が値を
+  決めるのは確定したとき (Enter・欄を離れたとき・増減ボタン・上下キー・
+  ホイール) だけだからです。標準のテンプレートを差し替えて入力欄が見つからない
+  場合は、確定したときだけ通知されます。
+  そのため**打っている間の値を持っているのは naui だけ**で、`NumberBox` の値は
+  確定するまで古いままです。読めない文字列を戻す先も増減の基準も `NumberBox` が
+  持っている値なので、**表示が読めなくなった時点で受け取り済みの値を渡して**
+  います。これをしないと、`12` まで打ってから `12x` にしたときに、巻き戻しも
+  増減も古い値から始まってしまいます (`12x` で上矢印を押すと 13 ではなく 2 に
+  なる)。値を渡すと `NumberBox` が表示を作り直してしまうので、打っている途中の
+  表示 (`-` だけ、`12x`) と選択位置は書き戻しています。読める表示なら
+  `NumberBox` が確定と増減のどちらでも先に表示を読むので、渡す必要はありません。
+  打っている途中の表示は `NumberBox` が確定に使うのと同じ `NumberFormatter`
+  (`INumberParser` でもある) で読みます。小数点や桁区切りは地域設定で変わるので、
+  打鍵中と確定とで読み手が違うと通知の出かたがずれるためです。
+  **有効数字は 10 桁までです。**`NumberBox` は表示を作る前に値を有効数字 10 桁へ
+  丸めます (`SignificantDigits(10)` の丸め器を内部に持っており、`NumberFormatter`
+  を差し替えても外せません)。確定すると `NumberBox` はその表示を読み直すので値も
+  10 桁へそろい、値と表示がずれたままにはなりませんが、`set_decimals` に 10 桁を
+  超える有効数字を求める桁数を渡しても Windows では切れます。
+  数字は**右へそろえて**います。`NumberBox` の既定は左寄せですが、macOS の
+  `NSTextField` と 0.3.0 までの Windows が右寄せだったので、そちらへ合わせて
+  います (`GtkSpinButton` と `<input type="number">` は環境の既定のまま左寄せ
+  です)。`NumberBox` 自身の `TextAlignment` は投影元の Windows App SDK にまだ
+  無いため、テンプレートの入力欄へ直に書いています。
+  `TextInput` と同じく中身に合わせた幅を持たないので幅は `set_sizing` で
+  指定しますが、増減ボタンと消去ボタンが並ぶぶん**1 行入力より広めに**取って
+  ください (naui のギャラリーは 200 px にしています)。
+  なお 0.3.0 までの脱出口だった `native_text_box()` と `native_spin_buttons()`
+  は無くなり、**`native_number_box()` に変わりました** (組み立てをやめたため)。
 - `Toolbar` は `Button` を横に並べて構成し、タイトルバー (ドラッグ領域) では
   なくその下の行に置きます (`CommandBar` と `AppBarButton` は投影に入ったので、
   そちらへ移すのは今後の課題です)。アイコンは
