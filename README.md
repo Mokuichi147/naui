@@ -1243,6 +1243,11 @@ git push origin v0.3.0
   打っている途中の表示は `NumberBox` が確定に使うのと同じ `NumberFormatter`
   (`INumberParser` でもある) で読みます。小数点や桁区切りは地域設定で変わるので、
   打鍵中と確定とで読み手が違うと通知の出かたがずれるためです。
+  **有効数字は 10 桁までです。**`NumberBox` は表示を作る前に値を有効数字 10 桁へ
+  丸めます (`SignificantDigits(10)` の丸め器を内部に持っており、`NumberFormatter`
+  を差し替えても外せません)。確定すると `NumberBox` はその表示を読み直すので値も
+  10 桁へそろい、値と表示がずれたままにはなりませんが、`set_decimals` に 10 桁を
+  超える有効数字を求める桁数を渡しても Windows では切れます。
   数字は**右へそろえて**います。`NumberBox` の既定は左寄せですが、macOS の
   `NSTextField` と 0.3.0 までの Windows が右寄せだったので、そちらへ合わせて
   います (`GtkSpinButton` と `<input type="number">` は環境の既定のまま左寄せ

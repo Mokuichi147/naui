@@ -22,6 +22,17 @@
 //! 打っている途中の表示は、`NumberBox` が確定に使うのと同じ `NumberFormatter`
 //! で読む。小数点や桁区切りは地域設定で変わるので、打鍵中と確定とで読み手が
 //! 違うと通知の出かたがずれる。
+//!
+//! # 有効数字は 10 桁まで
+//!
+//! `NumberBox` は表示を作る前に値を**有効数字 10 桁へ丸める**
+//! (`SignificantDigits(10)` の `NumberRounder`)。この丸めは `NumberBox` が
+//! 内部で持っているもので、`NumberFormatter` を差し替えても外せない。
+//!
+//! そのため [`NumberSpec::decimals`] に 10 桁を超える有効数字を求める桁数を
+//! 渡すと、表示は 10 桁で切れる。確定すると `NumberBox` はその表示を読み直す
+//! ので、値も 10 桁へそろう ([`value`](NumberInput::value) と表示がずれたまま
+//! にはならない)。`f64` の精度 (15〜17 桁) をそのまま見せたい用途には向かない。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -306,6 +317,33 @@ impl NumberInput {
         parse_with(&parser, text)
     }
 
+    /// 表示がすでにその値のとおりなら、`NumberBox` へも渡しておく。
+    ///
+    /// 増減ボタンを端で無効にするかどうかを決めるのは `NumberBox` が持っている
+    /// 値なので、渡しておかないと `1..=3` の欄に `3` と打った時点では上のボタン
+    /// が有効なままになる (押しても範囲の外へは出ない)。
+    ///
+    /// 表示が変わってしまう場合 (`3.7` を小数 2 桁で見せているときなど) は渡さ
+    /// ない。打っている最中に表示を書き換えることになるためで、確定と増減の
+    /// ときは `NumberBox` が自分で表示を読むので困らない。
+    fn sync_native_if_shown(&self, value: f64) {
+        let Some(field) = self.0.field.borrow().clone() else {
+            return;
+        };
+        let shown = self
+            .0
+            .native
+            .NumberFormatter()
+            .and_then(|formatter| formatter.FormatDouble(value));
+        let (Ok(shown), Ok(text)) = (shown, field.Text()) else {
+            return;
+        };
+        if shown != text {
+            return;
+        }
+        self.write_native(value);
+    }
+
     /// 受け取り済みの値を `NumberBox` へ渡す。**表示はそのまま残す。**
     ///
     /// 確定 (Enter・欄を離れる) の巻き戻し先も、増減 (`StepValue`) の基準も、
@@ -392,6 +430,8 @@ impl NumberInput {
         if commit {
             self.write_native(accepted);
             self.write_native_text(accepted);
+        } else {
+            self.sync_native_if_shown(accepted);
         }
         if accepted == self.value() {
             return;
