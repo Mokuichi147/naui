@@ -1225,13 +1225,21 @@ git push origin v0.3.0
 - `NumberInput` は `NumberBox` です。増減ボタンは既定では出ないので
   `SpinButtonPlacementMode` を `Inline` にして欄の右へ並べ、範囲・刻み・小数桁は
   `Minimum` / `Maximum` / `SmallChange` / `NumberFormatter` にも書いて、
-  上下キーやホイールの動きと表示をそろえています。端に来ると増減ボタンが
-  自分で無効になり、PageUp / PageDown は刻みの 10 倍動きます。
+  上下キーやホイールの動きと表示をそろえています。PageUp / PageDown は刻みの
+  10 倍動きます。
   `NumberBox` の 1 文字ごとの通知は、`EditableComboBox` と同じくテンプレートに
   ある入力欄 (`InputBox`) の `TextChanged` から拾っています。`NumberBox` が値を
   決めるのは確定したとき (Enter・欄を離れたとき・増減ボタン・上下キー・
   ホイール) だけだからです。標準のテンプレートを差し替えて入力欄が見つからない
   場合は、確定したときだけ通知されます。
+  そのため**打っている間の値を持っているのは naui だけ**で、`NumberBox.Value`
+  は確定するまで古いままです。`ValidationMode` を `Disabled` にして、範囲へ
+  寄せるのも読めない文字列を元へ戻すのも naui が行っているのはこのためです。
+  既定の `InvalidInputOverwritten` に任せると、`12` まで打ってから `12x` にして
+  欄を離れたときに、受け取り済みの `12` ではなく `NumberBox` が持っている古い値
+  へ戻ってしまいます。引き換えに、WinUI が端で増減ボタンを自分で無効にする
+  動きは無くなります (`ValidationMode` が既定のときだけ働くため)。**押しても
+  端から先へは出ません**が、ボタンは灰色になりません。
   打っている途中の表示は `NumberBox` が確定に使うのと同じ `NumberFormatter`
   (`INumberParser` でもある) で読みます。小数点や桁区切りは地域設定で変わるので、
   打鍵中と確定とで読み手が違うと通知の出かたがずれるためです。

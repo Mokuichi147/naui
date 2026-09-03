@@ -13,6 +13,11 @@
 //! 標準のテンプレートが差し替えられていて入力欄が見つからないときは、
 //! 確定したときだけ通知される。
 //!
+//! そのため打っている間の値は naui だけが持ち、`NumberBox.Value` は古いまま
+//! になる。**読めない文字列を元へ戻すのは naui の仕事**にしてあるのはこの
+//! ためで、`NumberBox` に任せると自分の古い値へ戻してしまう
+//! (`ValidationMode` を参照)。
+//!
 //! 打っている途中の表示は、`NumberBox` が確定に使うのと同じ `NumberFormatter`
 //! で読む。小数点や桁区切りは地域設定で変わるので、打鍵中と確定とで読み手が
 //! 違うと通知の出かたがずれる。
@@ -103,10 +108,16 @@ impl NumberInput {
         native
             .SetSpinButtonPlacementMode(NumberBoxSpinButtonPlacementMode::Inline)
             .map_err(|e| to_error("数値入力の増減ボタンの設定", e))?;
-        // 数として読めない文字列は確定時に元の値へ戻す。既定と同じだが、
-        // naui が約束している動きなので明示しておく。
+        // 読めない文字列を元へ戻すのは naui が行う (`commit`)。
+        //
+        // 既定の `InvalidInputOverwritten` に任せると、`NumberBox` は**自分が
+        // 持っている値**へ表示を戻す。打っている間の値は naui だけが持って
+        // いて `NumberBox.Value` は古いままなので、`12` まで打ってから `12x`
+        // にして欄を離れると、受け取り済みの `12` ではなく古い値へ戻って
+        // しまう。範囲へ寄せるのも [`NumberSpec`] の仕事なので、`NumberBox`
+        // 側の検証はまとめて切る。
         native
-            .SetValidationMode(NumberBoxValidationMode::InvalidInputOverwritten)
+            .SetValidationMode(NumberBoxValidationMode::Disabled)
             .map_err(|e| to_error("数値入力の検証方法の設定", e))?;
 
         let this = Self(Rc::new(NumberInputInner {
@@ -133,6 +144,7 @@ impl NumberInput {
         let value = self.0.spec.get().clamp(value);
         self.0.value.set(value);
         self.write_native(value);
+        self.write_native_text(value);
     }
 
     /// 入れられる範囲を決める。`None` はその側に制限を置かない。
@@ -199,6 +211,26 @@ impl NumberInput {
         self.0
             .native
             .ValueChanged(&changed)
+            .map_err(|e| to_error("数値入力の確定購読", e))?;
+
+        // 欄を離れたら、受け取り済みの値へ表示をそろえ直す。
+        //
+        // 検証を切ってあるので、読めない文字列 (`12x`) はそのまま残る。
+        // ここで書き戻すと `NumberBox` が `NumberFormatter` で表示を作り直す
+        // ため、**受け取り済みの値**へ戻る (`NumberBox` に任せると古い値へ
+        // 戻ってしまう)。`NumberBox` 自身の `LostFocus` はコンストラクタで
+        // 繋がれていて先に走るが、検証を切ってあるので何もしない。
+        let left = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = RoutedEventHandler::new(move |_sender, _args| {
+            if let Some(inner) = left.try_with_mut(|weak| weak.upgrade()).flatten() {
+                let this = NumberInput(inner);
+                this.accept(this.value(), true);
+            }
+            Ok(())
+        });
+        self.0
+            .native
+            .LostFocus(&handler)
             .map_err(|e| to_error("数値入力の確定購読", e))?;
 
         // テンプレートが展開されてから入力欄を探す。
@@ -331,6 +363,7 @@ impl NumberInput {
         let accepted = self.0.spec.get().clamp(shown);
         if commit {
             self.write_native(accepted);
+            self.write_native_text(accepted);
         }
         if accepted == self.value() {
             return;
@@ -341,10 +374,40 @@ impl NumberInput {
 
     /// 値を `NumberBox` へ書く。この間の通知は無視する。
     ///
-    /// 表示は `NumberBox` が `NumberFormatter` で書き直すので、ここでは触らない。
+    /// 値が変われば `NumberBox` が `NumberFormatter` で表示を作り直す。
+    /// 変わらなかったときのために [`write_native_text`](Self::write_native_text)
+    /// を続けて呼ぶこと。
     fn write_native(&self, value: f64) {
         let previous = self.0.silent.replace(true);
         let _ = self.0.native.SetValue(value);
+        self.0.silent.set(previous);
+    }
+
+    /// 表示を値へそろえ直す。この間の通知は無視する。
+    ///
+    /// `NumberBox` が表示を作り直すのは**値が変わったとき**だけなので、値は
+    /// そのままで表示だけずれている場合 (`12` を受け取ったあとに `12x` へ
+    /// 書き換えて欄を離れたときなど) はここで直す。書式は `NumberBox` が
+    /// 使うものと同じにして、`NumberBox` が書いたときと同じ表示にする。
+    fn write_native_text(&self, value: f64) {
+        let Some(field) = self.0.field.borrow().clone() else {
+            // 入力欄が見つかっていないなら打鍵の経路も無い。値と表示は
+            // `NumberBox` が自分でそろえている。
+            return;
+        };
+        let Ok(text) = self
+            .0
+            .native
+            .NumberFormatter()
+            .and_then(|formatter| formatter.FormatDouble(value))
+        else {
+            return;
+        };
+        if field.Text().is_ok_and(|shown| shown == text) {
+            return;
+        }
+        let previous = self.0.silent.replace(true);
+        let _ = field.SetText(&text);
         self.0.silent.set(previous);
     }
 }
