@@ -32,7 +32,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     NumberBox as XamlNumberBox, NumberBoxSpinButtonPlacementMode, NumberBoxValidationMode,
     NumberBoxValueChangedEventArgs, TextBox, TextChangedEventHandler,
 };
-use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, TextAlignment, UIElement};
 use windows::Foundation::TypedEventHandler;
 use windows::Globalization::NumberFormatting::{DecimalFormatter, INumberParser};
 use windows_core::{Interface, HSTRING};
@@ -227,9 +227,11 @@ impl NumberInput {
         Ok(())
     }
 
-    /// テンプレートの入力欄を見つけて、1 文字ごとの変化を購読する。
+    /// テンプレートの入力欄を見つけて、文字ぞろえを決め、1 文字ごとの変化を
+    /// 購読する。
     ///
-    /// 見つからないときは何もしない (確定は `ValueChanged` で届く)。
+    /// 見つからないときは何もしない (確定は `ValueChanged` で届く)。文字は
+    /// 左へそろったままになる。
     fn watch_input_box(&self) {
         if self.0.field.borrow().is_some() {
             return;
@@ -244,6 +246,14 @@ impl NumberInput {
         let Ok(field) = part.cast::<TextBox>() else {
             return;
         };
+
+        // 数字は右へそろえる。`NumberBox` の既定は左寄せだが、macOS の
+        // `NSTextField` と 0.3.0 までの Windows は右寄せだった。桁の位置が
+        // そろって読み比べやすいので、そちらへ合わせる。
+        //
+        // `NumberBox` 自身の `TextAlignment` は投影元の Windows App SDK に
+        // まだ無いので、入力欄へ直に書く。
+        let _ = field.SetTextAlignment(TextAlignment::Right);
 
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let typed = TextChangedEventHandler::new(move |_sender, _args| {

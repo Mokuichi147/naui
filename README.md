@@ -1243,6 +1243,11 @@ git push origin v0.3.0
   打っている途中の表示は `NumberBox` が確定に使うのと同じ `NumberFormatter`
   (`INumberParser` でもある) で読みます。小数点や桁区切りは地域設定で変わるので、
   打鍵中と確定とで読み手が違うと通知の出かたがずれるためです。
+  数字は**右へそろえて**います。`NumberBox` の既定は左寄せですが、macOS の
+  `NSTextField` と 0.3.0 までの Windows が右寄せだったので、そちらへ合わせて
+  います (`GtkSpinButton` と `<input type="number">` は環境の既定のまま左寄せ
+  です)。`NumberBox` 自身の `TextAlignment` は投影元の Windows App SDK にまだ
+  無いため、テンプレートの入力欄へ直に書いています。
   `TextInput` と同じく中身に合わせた幅を持たないので幅は `set_sizing` で
   指定しますが、増減ボタンと消去ボタンが並ぶぶん**1 行入力より広めに**取って
   ください (naui のギャラリーは 200 px にしています)。
