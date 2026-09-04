@@ -13,6 +13,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
@@ -2891,6 +2892,18 @@ fn pump(seconds: f64) {
     NSRunLoop::currentRunLoop().runUntilDate(&until);
 }
 
+/// 条件が満たされるまで、上限までランループを回す。
+///
+/// 読み込み・再生・タイマーの進み方はマシンの速さに左右されるので、固定時間の
+/// `pump` では遅い CI ランナーで足りないことがある。待ちたいものはこちらで待つ。
+/// 上限まで待っても満たされないときはそのまま返るので、呼び出し側で確かめる。
+fn pump_until(limit: f64, mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs_f64(limit);
+    while !ready() && Instant::now() < deadline {
+        pump(0.05);
+    }
+}
+
 /// 状態の変化を記録するクロージャを付ける。
 fn record_states(seen: &Rc<RefCell<Vec<PlaybackState>>>) -> impl FnMut(PlaybackState) + 'static {
     let seen = seen.clone();
@@ -3025,7 +3038,7 @@ fn audio_plays_to_the_end(ui: &Ui) -> Result<()> {
 
     // 読み込みが終わるまで長さは決まらない。
     assert_eq!(audio.duration(), None, "読み込み前の長さは None であること");
-    pump(0.5);
+    pump_until(5.0, || audio.duration().is_some());
     let duration = audio.duration().expect("読み込み後は長さが決まること");
     assert!(
         (duration - 0.5).abs() < 0.05,
@@ -3033,7 +3046,7 @@ fn audio_plays_to_the_end(ui: &Ui) -> Result<()> {
     );
 
     audio.play();
-    pump(1.0);
+    pump_until(5.0, || audio.state() == PlaybackState::Ended);
     assert_eq!(
         audio.state(),
         PlaybackState::Ended,
@@ -3057,7 +3070,7 @@ fn audio_plays_to_the_end(ui: &Ui) -> Result<()> {
 
     // 再生し終えた後の play は、先頭へ戻してから鳴らす。
     audio.play();
-    pump(0.2);
+    pump_until(5.0, || audio.position() < 0.4);
     assert!(
         audio.position() < 0.4,
         "先頭へ戻って再生されること: {}",
@@ -3075,10 +3088,22 @@ fn audio_loops_back_to_the_start(ui: &Ui) -> Result<()> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     audio.on_state_change(record_states(&seen));
 
-    pump(0.5);
+    pump_until(5.0, || audio.duration().is_some());
     audio.play();
-    // 0.5 秒のメディアを 1.2 秒ぶん回すので、必ず末尾を越える。
-    pump(1.2);
+    // 0.5 秒のメディアが末尾を越えて先頭へ戻るまで回す。時間で待つと遅い
+    // ランナーでは一周しきらず、繰り返しを確かめないまま通ってしまう。
+    let passed_end = Cell::new(false);
+    let looped = Cell::new(false);
+    pump_until(5.0, || {
+        let position = audio.position();
+        if position > 0.4 {
+            passed_end.set(true);
+        } else if passed_end.get() && position < 0.2 {
+            looped.set(true);
+        }
+        looped.get()
+    });
+    assert!(looped.get(), "末尾まで進んで先頭へ戻ること");
 
     let states = seen.borrow().clone();
     assert!(
@@ -3097,10 +3122,10 @@ fn audio_loops_back_to_the_start(ui: &Ui) -> Result<()> {
 fn media_seek_moves_the_position(ui: &Ui) -> Result<()> {
     let fixture = Fixture::new("seek");
     let video = ui.video(&fixture.silent_wav("a.wav"))?;
-    pump(0.5);
+    pump_until(5.0, || video.duration().is_some());
 
     video.seek(0.25);
-    pump(0.2);
+    pump_until(5.0, || (video.position() - 0.25).abs() < 0.1);
     let position = video.position();
     assert!(
         (position - 0.25).abs() < 0.1,
@@ -3109,7 +3134,7 @@ fn media_seek_moves_the_position(ui: &Ui) -> Result<()> {
 
     // 負の値は先頭として扱う。
     video.seek(-5.0);
-    pump(0.2);
+    pump_until(5.0, || video.position() < 0.1);
     assert!(
         video.position() < 0.1,
         "先頭へ戻ること: {}",
@@ -3169,9 +3194,12 @@ fn media_reports_position_while_playing(ui: &Ui) -> Result<()> {
         move |seconds| seen.borrow_mut().push(seconds)
     });
 
-    pump(0.5);
+    pump_until(5.0, || audio.duration().is_some());
     audio.play();
-    pump(1.0);
+    pump_until(5.0, || {
+        let positions = seen.borrow();
+        positions.len() >= 2 && positions.iter().any(|&p| p > 0.1)
+    });
 
     let positions = seen.borrow().clone();
     // 0.5 秒のメディアを 0.25 秒間隔で観測するので、複数回届くはず。
@@ -4770,7 +4798,7 @@ fn toast_dismisses_itself_after_the_timeout(ui: &Ui) -> Result<()> {
     assert_eq!(*dismissed.borrow(), 0, "まだ時間が来ていないこと");
 
     // NSTimer はランループの上で数えるので、回して時間を進める。
-    pump(0.3);
+    pump_until(5.0, || !toast.is_visible());
     assert!(!toast.is_visible(), "時間が来たら自分から消えること");
     assert_eq!(*dismissed.borrow(), 1, "消えた通知が 1 回だけ届くこと");
     Ok(())
