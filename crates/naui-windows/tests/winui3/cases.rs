@@ -9,12 +9,8 @@ use std::time::Duration;
 
 use naui_core::{Orientation, Result};
 use naui_windows::{run_for_test, Ui, Widget};
-use naui_winui3::Microsoft::UI::Xaml::Automation::Peers::{
-    AutomationPeer, FrameworkElementAutomationPeer, PatternInterface,
-};
-use naui_winui3::Microsoft::UI::Xaml::Automation::Provider::{
-    IInvokeProvider, ISelectionItemProvider, IToggleProvider,
-};
+
+use crate::automation;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Grid,
     Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
@@ -155,57 +151,27 @@ fn report(name: &str, outcome: std::thread::Result<Result<()>>, failed: &Arc<Ato
 
 // ------------------------------------------------------------------ 補助
 
-/// ネイティブの UI オートメーションから見たこのウィジェット。
-///
-/// 画面読み上げソフトや自動操作ツールが触るのと同じ口で、WinUI が
-/// コントロールごとに用意する peer が応じる。
-fn peer(element: &UIElement) -> AutomationPeer {
-    FrameworkElementAutomationPeer::CreatePeerForElement(element)
-        .expect("AutomationPeer を作れませんでした")
-}
-
 /// 実際に押したのと同じ経路 (Invoke パターン) でクリックする。
+///
+/// 経路の中身は [`crate::automation`]。WinUI がコントロールごとに用意する
+/// peer を通すので、`Click` を上げるのは WinUI 自身になる。
 fn invoke(widget: &dyn Widget) {
-    let pattern = peer(&widget.native_element())
-        .GetPattern(PatternInterface::Invoke)
-        .expect("Invoke パターンを取れませんでした");
-    pattern
-        .cast::<IInvokeProvider>()
-        .expect("IInvokeProvider ではありません")
-        .Invoke()
-        .expect("Invoke に失敗しました");
+    automation::invoke(&widget.native_element());
 }
 
 /// 実際に押したのと同じ経路 (Toggle パターン) で入り切りを反転させる。
 fn toggle(widget: &dyn Widget) {
-    let pattern = peer(&widget.native_element())
-        .GetPattern(PatternInterface::Toggle)
-        .expect("Toggle パターンを取れませんでした");
-    pattern
-        .cast::<IToggleProvider>()
-        .expect("IToggleProvider ではありません")
-        .Toggle()
-        .expect("Toggle に失敗しました");
+    automation::toggle(&widget.native_element());
 }
 
 /// 実際に選んだのと同じ経路 (SelectionItem パターン) で項目を選ぶ。
 fn select(element: &UIElement) {
-    let pattern = peer(element)
-        .GetPattern(PatternInterface::SelectionItem)
-        .expect("SelectionItem パターンを取れませんでした");
-    pattern
-        .cast::<ISelectionItemProvider>()
-        .expect("ISelectionItemProvider ではありません")
-        .Select()
-        .expect("Select に失敗しました");
+    automation::select(element);
 }
 
 /// 支援技術へ渡る読み上げ名。
 fn accessible_name(widget: &dyn Widget) -> String {
-    peer(&widget.native_element())
-        .GetName()
-        .map(|name| name.to_string())
-        .unwrap_or_default()
+    automation::accessible_name(&widget.native_element())
 }
 
 /// ネイティブのコントロールとして取り出す。型が違えばテストを落とす。

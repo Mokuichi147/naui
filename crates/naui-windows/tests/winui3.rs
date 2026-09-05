@@ -25,6 +25,9 @@
 //! 出るので、通知が Rust のクロージャへ届くところまで確かめている。
 
 #[cfg(target_os = "windows")]
+#[path = "winui3/automation.rs"]
+mod automation;
+#[cfg(target_os = "windows")]
 #[path = "winui3/cases.rs"]
 mod cases;
 
