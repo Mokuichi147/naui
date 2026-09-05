@@ -938,7 +938,7 @@ tokio::spawn(async move {
 | --- | --- | --- | --- | --- |
 | `PopupMenu` | ✅ `MenuFlyout` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
 | `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | ✅ `AdwAlertDialog` | 🟡 `<dialog>` + `showModal()` |
-| `Toast` | 🔴 `Grid` + `StackPanel` を重ねたもの | 🔴 `NSVisualEffectView` を重ねたもの | ✅ `AdwToast` + `AdwToastOverlay` | 🔴 `<div role="status">` |
+| `Toast` | 🟡 `InfoBar` を重ねたもの | 🔴 `NSVisualEffectView` を重ねたもの | ✅ `AdwToast` + `AdwToastOverlay` | 🔴 `<div role="status">` |
 
 </details>
 
@@ -1276,9 +1276,12 @@ git push origin v0.3.0
   送るため、切り詰められて押せなくなることはありません。
   なお 0.3.0 までの脱出口だった `native_panel()` は無くなり、
   **`native_command_bar()` に変わりました** (組み立てをやめたため)。
-- `InfoBar` / `TeachingTip` を投影していないため、`Toast` は `Grid` と
-  `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
-  `window.show()` より前には出せません。
+- `Toast` の見た目は `InfoBar` です。ただし `InfoBar` は本来ページの中へ
+  並べて使う帯なので、下端の中央へ寄せて中身の層に重ねています。操作ボタンは
+  `ActionButton` に置くので、文字の右か下かの並べ方は WinUI が決めます。
+  閉じるボタン (×) は出しません (`IsClosable` を切っています)。消えるのは
+  時間切れ・操作ボタン・`dismiss` の 3 つで、ほかの 3 環境にも × が無いため
+  です。`Dialog` と同じく、`window.show()` より前には出せません。
 - `Label` の `TextBlock` は `TextTrimming="CharacterEllipsis"` を持つ XAML から
   生成しています (折り返しの切り替えは `TextWrapping` で行います)。
 - 動かせる仕切りを持つコントロールが Windows App SDK に無いため

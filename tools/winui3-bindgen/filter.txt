@@ -53,6 +53,8 @@ Microsoft.UI.Xaml.Controls.Grid
 Microsoft.UI.Xaml.Controls.HyperlinkButton
 Microsoft.UI.Xaml.Controls.IconElement
 Microsoft.UI.Xaml.Controls.Image
+Microsoft.UI.Xaml.Controls.InfoBar
+Microsoft.UI.Xaml.Controls.InfoBarSeverity
 Microsoft.UI.Xaml.Controls.ItemCollection
 Microsoft.UI.Xaml.Controls.ItemsControl
 Microsoft.UI.Xaml.Controls.ListBox

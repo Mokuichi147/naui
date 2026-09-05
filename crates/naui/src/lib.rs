@@ -1060,7 +1060,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `Toast` | `Grid` を中身へ重ねたもの | `NSVisualEffectView` を中身へ重ねたもの | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
+//! | `Toast` | `InfoBar` を中身へ重ねたもの | `NSVisualEffectView` を中身へ重ねたもの | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
 //!
 //! **ネイティブのトーストがあるのは Linux だけ** (`AdwToast`)。Windows の
 //! `InfoBar` / `TeachingTip` は naui が投影していないため使えず、
