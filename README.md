@@ -914,7 +914,7 @@ tokio::spawn(async move {
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
 | `Table` | 🟡 `Grid` + `ListBox` (行は `Grid`) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
-| `Tree` | 🟡 `ListBox` + 開閉ボタン | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
+| `Tree` | ✅ `TreeView` | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
 
 </details>
 
@@ -1215,9 +1215,15 @@ git push origin v0.3.0
   置いて幅をそろえています (`ListView` は投影に入ったので、そちらへ移すのは
   今後の課題です)。並べ替えできる見出しは、地色と枠を消した `Button` です
   (WinUI に列見出し用のコントロールが無いため)。
-- `Tree` は `ListBox` の行として組み立てています (`TreeView` は投影に入ったので、
-  そちらへ移すのは今後の課題です)。選べない枝は行ごと無効になるので、その開閉ボタンも
-  押せません (プログラムからの `expand` は効きます)。
+- `Tree` は `TreeView` です。項目は `TreeViewNode` へ写して木のまま渡すので、
+  段付け・開閉の山形・キーボード操作・選択の見た目はすべて WinUI が持ちます。
+  枠だけは `List` と同じ色と角丸を持たせた `Border` で囲みます。
+  `TreeItem::enabled` に当たるものは WinUI に無い (`TreeViewItem` を無効にすると、
+  枝では開閉までできなくなる) ため、文字を薄くしたうえで行の中身に押下を
+  受け止める覆いをかぶせています。覆いがかかるのは開閉の山形より右だけなので、
+  **選べない枝も開閉はできます**。スクロールは `TreeView` が自分で持ちます
+  (中の一覧は与えられた高さぶんしか並べないので、`List` のように外側の
+  `ScrollViewer` へ預けると伸びずに切れてしまいます)。
 - `NumberInput` は `NumberBox` です。増減ボタンは既定では出ないので
   `SpinButtonPlacementMode` を `Inline` にして欄の右へ並べ、範囲・刻み・小数桁は
   `Minimum` / `Maximum` / `SmallChange` / `NumberFormatter` にも書いて、
