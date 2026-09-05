@@ -447,3 +447,43 @@ where
         None => Ok(()),
     }
 }
+
+/// `build` を WinUI 3 の初期化が終わったところで 1 度だけ呼び、戻ったら
+/// アプリを終わらせる。**自動テスト専用**。
+///
+/// 実際のアプリでは [`run`] を使うこと。AppKit や DOM と違い、WinUI 3 の
+/// コントロールは `Application::Start` より前には 1 つも作れない。しかも
+/// `Application::Start` は 1 プロセスで 1 回しか呼べないので、テストは
+/// 「アプリを起こし、その中で全ケースを走らせ、最後に畳む」形になる。
+/// ケースごとにやり直せる macOS 版 (`naui_macos::run_for_test`) とは
+/// そこが違う。
+#[doc(hidden)]
+pub fn run_for_test<F>(build: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Result<()> + 'static,
+{
+    run(Settings::new("naui tests"), move |ui| {
+        let result = build(ui);
+        // 失敗したときは `run` の側が畳むので、二重に呼ばない。
+        if result.is_ok() {
+            // 実際のアプリでは AppWindow の `Closing` がこの後片づけをする。
+            // テストは `OnLaunched` の中で畳むので、その時点ではまだ `Ui` が
+            // 置き場へ入っておらず `Closing` から届かない。XAML のツリーが
+            // 壊される前に中身を外さないと、終了時にアクセス違反になる。
+            ui.clear_windows_for_shutdown();
+            // 畳むのはイベントループへ入ってから。`OnLaunched` の中で
+            // `Application::Exit` を呼ぶと、ループが始まる前に XAML の
+            // 後片づけが走り、終了時にアクセス違反になる。
+            //
+            // `build` が積んだ仕事のほうが先に入っているので、そちらが
+            // 終わってからここへ来る。
+            let deferred = ui.clone();
+            let quit = ui.tasks().channel(move |()| deferred.quit());
+            if quit.send(()).is_err() {
+                // 積めなかったときは、その場で畳むしかない。
+                ui.quit();
+            }
+        }
+        result
+    })
+}
