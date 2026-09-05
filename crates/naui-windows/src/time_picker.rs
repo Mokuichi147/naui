@@ -1,9 +1,8 @@
 //! 時刻の選択 (WinUI 3 のネイティブ `TimePicker`)。
 //!
-//! [`naui_winui3`] の投影は `TimePicker` を含んでいない。
-//! 公開 WinRT インターフェイスの投影は [`crate::date_picker`] にあるものを
-//! そのまま使い、このモジュールは時刻だけを扱うウィジェットを組み立てる。
-//! コントロール自体は `XamlReader` から生成される本物の WinUI 3 コントロール。
+//! コントロールは [`naui_winui3`] の投影の `TimePicker` そのもので、
+//! 生成と表示の詰め方は [`crate::date_picker`] と分け合う。このモジュールは
+//! 時刻だけを扱うウィジェットを組み立てる。
 //!
 //! WinUI 3 の `TimePicker` に下限・上限は無いので、範囲は naui 側の丸めだけで
 //! 守る (`MinuteIncrement` も使わず、1 分刻みのまま)。
@@ -15,12 +14,15 @@ use std::sync::Arc;
 use naui_core::{Result, Time};
 use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
 use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, RoutedEventHandler, UIElement};
-use windows::Foundation::TypedEventHandler;
+use windows::Foundation::EventHandler;
 use windows_core::Interface;
 
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
+    TimePicker as XamlTimePicker, TimePickerValueChangedEventArgs,
+};
+
 use crate::date_picker::{
-    compact_time_picker, from_native_time, load_time_picker, local_now, to_native_time,
-    NativeTimePicker, NativeTimePickerValueChangedEventArgs,
+    compact_time_picker, from_native_time, local_now, new_time_picker, to_native_time,
 };
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
@@ -57,7 +59,7 @@ impl ChangeHandler {
 struct TimePickerInner {
     /// レイアウトへ載る要素。中身は `picker` と同じコントロール。
     native: FrameworkElement,
-    picker: NativeTimePicker,
+    picker: XamlTimePicker,
     value: Cell<Time>,
     min: Cell<Option<Time>>,
     max: Cell<Option<Time>>,
@@ -75,7 +77,7 @@ impl_widget!(TimePicker, native);
 
 impl TimePicker {
     pub(crate) fn new() -> Result<Self> {
-        let picker = load_time_picker()?;
+        let picker = new_time_picker()?;
         let native = picker
             .cast::<FrameworkElement>()
             .map_err(|e| to_error("TimePicker のレイアウト要素化", e))?;
@@ -105,20 +107,17 @@ impl TimePicker {
             .map_err(|e| to_error("TimePicker の読み込み購読", e))?;
 
         let target = Arc::new(UiThreadCell::new(Rc::downgrade(&this.0)));
-        let changed =
-            TypedEventHandler::<NativeTimePicker, NativeTimePickerValueChangedEventArgs>::new(
-                move |_, _| {
-                    let _ = target.try_with_mut(|weak| {
-                        if let Some(inner) = weak.upgrade() {
-                            TimePicker(inner).native_changed();
-                        }
-                    });
-                    Ok(())
-                },
-            );
+        let changed = EventHandler::<TimePickerValueChangedEventArgs>::new(move |_, _| {
+            let _ = target.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    TimePicker(inner).native_changed();
+                }
+            });
+            Ok(())
+        });
         this.0
             .picker
-            .time_changed(&changed)
+            .TimeChanged(&changed)
             .map_err(|e| to_error("TimePicker の変更購読", e))?;
 
         this.write_native(this.value());
@@ -170,7 +169,7 @@ impl TimePicker {
         if self.0.silent.get() {
             return;
         }
-        let Ok(shown) = self.0.picker.time() else {
+        let Ok(shown) = self.0.picker.Time() else {
             return;
         };
         let accepted = self.clamp(from_native_time(shown));
@@ -190,7 +189,7 @@ impl TimePicker {
     /// ネイティブへ値を書く。この間の通知は無視する。
     fn write_native(&self, value: Time) {
         let previous = self.0.silent.replace(true);
-        let _ = self.0.picker.set_time(to_native_time(value));
+        let _ = self.0.picker.SetTime(to_native_time(value));
         self.0.silent.set(previous);
     }
 }

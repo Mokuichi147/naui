@@ -7,27 +7,27 @@
 //! 見本 (`Border` + `SolidColorBrush`) を出す。色を選ぶ UI そのものは
 //! WinUI の `ColorPicker` のままで、naui が描くものは無い。
 //!
-//! 公開 WinRT インターフェイスの必要な部分をこのモジュールで定義している。
-//! `ColorPicker` と `SolidColorBrush` は [`naui_winui3`] にも入ったので、
-//! この手書きの投影は将来そちらへ寄せられる。組み立ては XAML に書いて
-//! `XamlReader` へ渡し、
-//! 中の要素は `x:Name` から引く。
+//! 型は [`naui_winui3`] の投影をそのまま使う。組み立ては XAML に書いて
+//! `XamlReader` へ渡し (`Flyout` は投影に無い)、中の要素は `x:Name` から
+//! 引く。
 //!
 //! 透明度は扱わないので `IsAlphaEnabled` を切ってある ([`Color`] が
 //! 不透明な色しか持たないため)。
 
 use std::cell::Cell;
-use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{Color, Result};
-use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
+    ColorChangedEventArgs, ColorPicker as XamlColorPicker, Control,
+};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, UIElement};
 use windows::Foundation::TypedEventHandler;
 use windows::UI::Color as WinColor;
-use windows_core::{Interface, Param, HSTRING};
+use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
@@ -91,9 +91,9 @@ struct ColorPickerInner {
     /// 見本を出すボタン。レイアウトへ載るのはこれ。
     native: FrameworkElement,
     /// フライアウトの中身。値を持っているのはこちら。
-    picker: NativeColorPicker,
+    picker: XamlColorPicker,
     /// ボタンの見本を塗るブラシ。
-    swatch: NativeSolidColorBrush,
+    swatch: SolidColorBrush,
     handler: ColorHandler,
     /// `set_value` による変更では `on_change` を呼ばない。
     silent: Cell<bool>,
@@ -109,13 +109,13 @@ impl_widget!(ColorPicker, native);
 impl ColorPicker {
     pub(crate) fn new() -> Result<Self> {
         let native = load_button()?;
-        let picker: NativeColorPicker = find(&native, "Picker")?;
-        let swatch: NativeSolidColorBrush = find(&native, "Swatch")?;
+        let picker: XamlColorPicker = find(&native, "Picker")?;
+        let swatch: SolidColorBrush = find(&native, "Swatch")?;
         picker
-            .set_is_alpha_enabled(false)
+            .SetIsAlphaEnabled(false)
             .map_err(|e| to_error("ColorPicker の初期化", e))?;
         picker
-            .set_color(to_win_color(Color::BLACK))
+            .SetColor(to_win_color(Color::BLACK))
             .map_err(|e| to_error("ColorPicker の初期化", e))?;
 
         let this = Self(Rc::new(ColorPickerInner {
@@ -137,16 +137,16 @@ impl ColorPicker {
     fn connect(&self) -> Result<()> {
         let target = Arc::new(UiThreadCell::new(Rc::downgrade(&self.0)));
         let changed = TypedEventHandler::new(
-            move |_sender: windows_core::Ref<'_, NativeColorPicker>,
-                  args: windows_core::Ref<'_, NativeColorChangedEventArgs>| {
+            move |_sender: windows_core::Ref<'_, XamlColorPicker>,
+                  args: windows_core::Ref<'_, ColorChangedEventArgs>| {
                 let _ = target.try_with_mut(|weak| {
                     let Some(inner) = weak.upgrade() else {
                         return;
                     };
-                    let Some(color) = args.as_ref().and_then(|a| a.new_color().ok()) else {
+                    let Some(color) = args.as_ref().and_then(|a| a.NewColor().ok()) else {
                         return;
                     };
-                    let _ = inner.swatch.set_color(color);
+                    let _ = inner.swatch.SetColor(color);
                     if !inner.silent.get() {
                         inner.handler.emit(from_win_color(color));
                     }
@@ -156,7 +156,7 @@ impl ColorPicker {
         );
         self.0
             .picker
-            .color_changed(&changed)
+            .ColorChanged(&changed)
             .map_err(|e| to_error("ColorPicker の購読", e))?;
         Ok(())
     }
@@ -165,7 +165,7 @@ impl ColorPicker {
     pub fn value(&self) -> Color {
         self.0
             .picker
-            .color()
+            .Color()
             .map(from_win_color)
             .unwrap_or(Color::BLACK)
     }
@@ -173,10 +173,10 @@ impl ColorPicker {
     /// プログラムから色を差し替える。`on_change` は呼ばれない。
     pub fn set_value(&self, color: Color) {
         self.0.silent.set(true);
-        let _ = self.0.picker.set_color(to_win_color(color));
+        let _ = self.0.picker.SetColor(to_win_color(color));
         self.0.silent.set(false);
         // `ColorChanged` が飛ばなかったときのために、見本はここでも塗る。
-        let _ = self.0.swatch.set_color(to_win_color(color));
+        let _ = self.0.swatch.SetColor(to_win_color(color));
     }
 
     /// 利用者が選んだのと同じ経路で色を決め、1 回通知する。
@@ -221,211 +221,4 @@ fn to_win_color(color: Color) -> WinColor {
 
 fn from_win_color(color: WinColor) -> Color {
     Color::rgb(color.R, color.G, color.B)
-}
-
-// -------------------------------------------------------------------------
-// Microsoft.UI.Xaml.Controls.ColorPicker / ColorChangedEventArgs と
-// Microsoft.UI.Xaml.Media.SolidColorBrush の最小 WinRT 投影
-//
-// IID と vtable の並びは cppwinrt の生成ヘッダー
-// (winrt/impl/Microsoft.UI.Xaml.Controls.0.h ほか) の guid_v / abi<...> に
-// 合わせている。使わないメソッドは `usize` で場所だけ空けてある。
-
-windows_core::imp::define_interface!(
-    IColorPicker,
-    IColorPicker_Vtbl,
-    0xae72b24b_f93f_5a19_8ce4_a18b73c3356d
-);
-impl windows_core::RuntimeType for IColorPicker {
-    const SIGNATURE: windows_core::imp::ConstBuffer =
-        windows_core::imp::ConstBuffer::for_interface::<Self>();
-}
-
-#[repr(C)]
-pub struct IColorPicker_Vtbl {
-    base__: windows_core::IInspectable_Vtbl,
-    color: unsafe extern "system" fn(*mut c_void, *mut WinColor) -> windows_core::HRESULT,
-    set_color: unsafe extern "system" fn(*mut c_void, WinColor) -> windows_core::HRESULT,
-    previous_color: usize,
-    set_previous_color: usize,
-    is_alpha_enabled: usize,
-    set_is_alpha_enabled: unsafe extern "system" fn(*mut c_void, bool) -> windows_core::HRESULT,
-    is_color_spectrum_visible: usize,
-    set_is_color_spectrum_visible: usize,
-    is_color_preview_visible: usize,
-    set_is_color_preview_visible: usize,
-    is_color_slider_visible: usize,
-    set_is_color_slider_visible: usize,
-    is_alpha_slider_visible: usize,
-    set_is_alpha_slider_visible: usize,
-    is_more_button_visible: usize,
-    set_is_more_button_visible: usize,
-    is_color_channel_text_input_visible: usize,
-    set_is_color_channel_text_input_visible: usize,
-    is_alpha_text_input_visible: usize,
-    set_is_alpha_text_input_visible: usize,
-    is_hex_input_visible: usize,
-    set_is_hex_input_visible: usize,
-    min_hue: usize,
-    set_min_hue: usize,
-    max_hue: usize,
-    set_max_hue: usize,
-    min_saturation: usize,
-    set_min_saturation: usize,
-    max_saturation: usize,
-    set_max_saturation: usize,
-    min_value: usize,
-    set_min_value: usize,
-    max_value: usize,
-    set_max_value: usize,
-    color_spectrum_shape: usize,
-    set_color_spectrum_shape: usize,
-    color_spectrum_components: usize,
-    set_color_spectrum_components: usize,
-    color_changed:
-        unsafe extern "system" fn(*mut c_void, *mut c_void, *mut i64) -> windows_core::HRESULT,
-    remove_color_changed: unsafe extern "system" fn(*mut c_void, i64) -> windows_core::HRESULT,
-}
-
-#[repr(transparent)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct NativeColorPicker(windows_core::IUnknown);
-windows_core::imp::interface_hierarchy!(
-    NativeColorPicker,
-    windows_core::IUnknown,
-    windows_core::IInspectable
-);
-impl windows_core::RuntimeType for NativeColorPicker {
-    const SIGNATURE: windows_core::imp::ConstBuffer =
-        windows_core::imp::ConstBuffer::for_class::<Self, IColorPicker>();
-}
-unsafe impl Interface for NativeColorPicker {
-    type Vtable = IColorPicker_Vtbl;
-    const IID: windows_core::GUID = IColorPicker::IID;
-}
-impl windows_core::RuntimeName for NativeColorPicker {
-    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ColorPicker";
-}
-
-impl NativeColorPicker {
-    fn color(&self) -> windows_core::Result<WinColor> {
-        unsafe {
-            let mut result = WinColor::default();
-            (Interface::vtable(self).color)(Interface::as_raw(self), &mut result).map(|| result)
-        }
-    }
-
-    fn set_color(&self, value: WinColor) -> windows_core::Result<()> {
-        unsafe { (Interface::vtable(self).set_color)(Interface::as_raw(self), value).ok() }
-    }
-
-    fn set_is_alpha_enabled(&self, value: bool) -> windows_core::Result<()> {
-        unsafe {
-            (Interface::vtable(self).set_is_alpha_enabled)(Interface::as_raw(self), value).ok()
-        }
-    }
-
-    fn color_changed<P>(&self, handler: P) -> windows_core::Result<i64>
-    where
-        P: Param<TypedEventHandler<NativeColorPicker, NativeColorChangedEventArgs>>,
-    {
-        unsafe {
-            let mut token = 0;
-            (Interface::vtable(self).color_changed)(
-                Interface::as_raw(self),
-                handler.param().abi(),
-                &mut token,
-            )
-            .map(|| token)
-        }
-    }
-}
-
-windows_core::imp::define_interface!(
-    IColorChangedEventArgs,
-    IColorChangedEventArgs_Vtbl,
-    0x148d57a2_b1cb_5f5d_b6b5_512805d71761
-);
-impl windows_core::RuntimeType for IColorChangedEventArgs {
-    const SIGNATURE: windows_core::imp::ConstBuffer =
-        windows_core::imp::ConstBuffer::for_interface::<Self>();
-}
-
-#[repr(C)]
-pub struct IColorChangedEventArgs_Vtbl {
-    base__: windows_core::IInspectable_Vtbl,
-    old_color: usize,
-    new_color: unsafe extern "system" fn(*mut c_void, *mut WinColor) -> windows_core::HRESULT,
-}
-
-#[repr(transparent)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct NativeColorChangedEventArgs(windows_core::IUnknown);
-windows_core::imp::interface_hierarchy!(
-    NativeColorChangedEventArgs,
-    windows_core::IUnknown,
-    windows_core::IInspectable
-);
-impl windows_core::RuntimeType for NativeColorChangedEventArgs {
-    const SIGNATURE: windows_core::imp::ConstBuffer =
-        windows_core::imp::ConstBuffer::for_class::<Self, IColorChangedEventArgs>();
-}
-unsafe impl Interface for NativeColorChangedEventArgs {
-    type Vtable = IColorChangedEventArgs_Vtbl;
-    const IID: windows_core::GUID = IColorChangedEventArgs::IID;
-}
-impl windows_core::RuntimeName for NativeColorChangedEventArgs {
-    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ColorChangedEventArgs";
-}
-
-impl NativeColorChangedEventArgs {
-    fn new_color(&self) -> windows_core::Result<WinColor> {
-        unsafe {
-            let mut result = WinColor::default();
-            (Interface::vtable(self).new_color)(Interface::as_raw(self), &mut result).map(|| result)
-        }
-    }
-}
-
-windows_core::imp::define_interface!(
-    ISolidColorBrush,
-    ISolidColorBrush_Vtbl,
-    0xb3865c31_37c8_55c1_8a72_d41c67642e2a
-);
-impl windows_core::RuntimeType for ISolidColorBrush {
-    const SIGNATURE: windows_core::imp::ConstBuffer =
-        windows_core::imp::ConstBuffer::for_interface::<Self>();
-}
-
-#[repr(C)]
-pub struct ISolidColorBrush_Vtbl {
-    base__: windows_core::IInspectable_Vtbl,
-    color: usize,
-    set_color: unsafe extern "system" fn(*mut c_void, WinColor) -> windows_core::HRESULT,
-}
-
-#[repr(transparent)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct NativeSolidColorBrush(windows_core::IUnknown);
-windows_core::imp::interface_hierarchy!(
-    NativeSolidColorBrush,
-    windows_core::IUnknown,
-    windows_core::IInspectable
-);
-impl windows_core::RuntimeType for NativeSolidColorBrush {
-    const SIGNATURE: windows_core::imp::ConstBuffer =
-        windows_core::imp::ConstBuffer::for_class::<Self, ISolidColorBrush>();
-}
-unsafe impl Interface for NativeSolidColorBrush {
-    type Vtable = ISolidColorBrush_Vtbl;
-    const IID: windows_core::GUID = ISolidColorBrush::IID;
-}
-impl windows_core::RuntimeName for NativeSolidColorBrush {
-    const NAME: &'static str = "Microsoft.UI.Xaml.Media.SolidColorBrush";
-}
-
-impl NativeSolidColorBrush {
-    fn set_color(&self, value: WinColor) -> windows_core::Result<()> {
-        unsafe { (Interface::vtable(self).set_color)(Interface::as_raw(self), value).ok() }
-    }
 }

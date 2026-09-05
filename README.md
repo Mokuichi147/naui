@@ -925,7 +925,7 @@ tokio::spawn(async move {
 | --- | --- | --- | --- | --- |
 | `FilePicker` | 🟡 `Button` + `IFileOpenDialog` | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `GtkButton` + `GtkFileDialog` | 🟡 `<button>` + `<input type="file">` |
 | `FileSaver` | 🟡 `Button` + `IFileSaveDialog` | 🟡 `NSButton` + `NSSavePanel` | 🟡 `GtkButton` + `GtkFileDialog` (save) | 🔴 `<button>` + `showSaveFilePicker` / `<a download>` |
-| `Image` | 🟡 `Image` (`XamlReader` 経由) | ✅ `NSImageView` | ✅ `GtkPicture` | ✅ `<img>` |
+| `Image` | ✅ `Image` | ✅ `NSImageView` | ✅ `GtkPicture` | ✅ `<img>` |
 | `Video` | ✅ `MediaPlayerElement` | ✅ `AVPlayerView` | 🟡 `GtkPicture` + `GtkMediaControls` | ✅ `<video>` |
 | `Audio` | ✅ `MediaPlayerElement` | 🟡 `AVPlayerView` | 🟡 `GtkMediaControls` + `GtkMediaFile` | ✅ `<audio>` |
 
@@ -1204,7 +1204,7 @@ git push origin v0.3.0
   見つからない場合は、候補の選択と Enter での確定だけが通知されます。
   **候補の一覧は打った文字で絞り込まれません** (`IsTextSearchEnabled` は
   一致する候補へ選択を移すだけです)。打った文字で候補を出す `AutoSuggestBox` は
-  `SearchInput` が最小限の投影で使っていますが、あちらは候補を「開いて全部見る」
+  `SearchInput` が使っていますが、あちらは候補を「開いて全部見る」
   ことができません。`EditableComboBox` は一覧を開いて選べることを軸にしている
   ので、Fluent の作法どおり `ComboBox` のままにしています。
 - `Dialog` は `window.show()` より前には開けません。
@@ -1273,33 +1273,25 @@ git push origin v0.3.0
   **仕切りに合わせたカーソル (⇔) は出ません**。カーソルの形を変える
   `UIElement.ProtectedCursor` は派生クラスからしか触れないためです。
   区画の大きさが変わったことは `LayoutUpdated` で拾っています。
-- `Expander` は、WinUI の公開 WinRT インターフェイスを最小限投影して
-  `XamlReader` から本物の `Expander` を生成しています。
-- `ToggleSwitch` も `Expander` と同じく公開 WinRT インターフェイスを最小限
-  投影し、`XamlReader` から本物の `ToggleSwitch` を生成しています。`Toggle` のラベルは `OnContent` と `OffContent` の両方へ
-  同じ文字を入れるので、入り切りで読みは変わりません (WinUI の既定は
-  「オン」「オフ」と切り替わる文字です)。
-- `ColorPicker` と `SolidColorBrush` も、同じく公開 WinRT インターフェイスを
-  最小限投影しています (どちらも `naui-winui3` の投影に入ったので、そちらへ
-  寄せるのは今後の課題です)。WinUI 3 の `ColorPicker` は
-  スペクトラムとスライダーを縦に並べた大きな面なので、`Button` の `Flyout` へ
-  入れ、ボタンには選んだ色の見本 (`Border` + `SolidColorBrush`) を出します。
-- `DatePicker` / `TimePicker` は `naui-winui3` の投影に入れていないため、公開
-  WinRT インターフェイスを最小限投影し、`XamlReader` から本物の `DatePicker` と
-  `TimePicker` を生成しています。`DatePickerMode::DateTime` では 2 つを
+- `Toggle` のラベルは `OnContent` と `OffContent` の両方へ同じ文字を入れる
+  ので、入り切りで読みは変わりません (WinUI の既定は「オン」「オフ」と
+  切り替わる文字です)。
+- WinUI 3 の `ColorPicker` はスペクトラムとスライダーを縦に並べた大きな面
+  なので、`Button` の `Flyout` へ入れ、ボタンには選んだ色の見本
+  (`Border` + `SolidColorBrush`) を出します。組み立てだけは XAML に書いて
+  `XamlReader` へ渡します (`Flyout` は投影に入れていないため)。
+- `DatePicker` は `DatePickerMode::DateTime` では 2 つを
   `StackPanel` で横に並べます。年 / 月 / 日 の並び順と表記はシステムのロケールに
   従い、暦はグレゴリオ暦に固定しています。`set_range` は WinUI 側へは年の範囲
   (`MinYear` / `MaxYear`) として渡し、月日と時刻の境界は naui 側で端へ寄せます。
   標準テンプレートは英語の長い月名に合わせて月の列だけを広く左寄せにするため、
   3 列を等幅・中央揃えへ直し、最小幅も詰めています。
-- `TimePicker` ウィジェットは、この `TimePicker` の投影をそのまま共有しています。
+- `TimePicker` ウィジェットは、`DatePicker` と同じ WinUI の `TimePicker` です。
   WinUI 3 の `TimePicker` に下限・上限は無いので、`set_range` の範囲は naui 側で
   端へ寄せます。
-- `AutoSuggestBox` も、同じく公開 WinRT インターフェイスを最小限投影し、
-  `XamlReader` から本物の `AutoSuggestBox` を生成しています (`naui-winui3` の
-  投影に入ったので、そちらへ寄せるのは今後の課題です)。
-  `SearchInput` の虫めがねは `QueryIcon="Find"`、確定 (`on_search`) は
-  `QuerySubmitted` です。候補の一覧 (`ItemsSource`) は渡さないので、打っても
+- `SearchInput` は `AutoSuggestBox` です。虫めがねは `QueryIcon="Find"` を
+  XAML で渡して作らせ (`SymbolIcon` は投影に入れていないため)、確定
+  (`on_search`) は `QuerySubmitted` です。候補の一覧 (`ItemsSource`) は渡さないので、打っても
   候補は出ません。`TextChanged` は `Text` を書き換えたときにも飛ぶため、
   `Reason` がプログラムからの変更なら黙ります (`set_text` は通知しません)。
 
