@@ -6054,6 +6054,108 @@ pub mod Microsoft {
             }
             #[repr(transparent)]
             #[derive(Clone, Debug, Eq, PartialEq)]
+            pub struct DataTemplate(windows_core::IUnknown);
+            windows_core::imp::interface_hierarchy!(
+                DataTemplate,
+                windows_core::IUnknown,
+                windows_core::IInspectable
+            );
+            windows_core::imp::required_hierarchy!(
+                DataTemplate,
+                IElementFactory,
+                FrameworkTemplate,
+                DependencyObject
+            );
+            impl DataTemplate {
+                pub fn LoadContent(&self) -> windows_core::Result<DependencyObject> {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).LoadContent)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn new() -> windows_core::Result<DataTemplate> {
+                    Self::IDataTemplateFactory(|this| unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).CreateInstance)(
+                            windows_core::Interface::as_raw(this),
+                            core::ptr::null_mut(),
+                            &mut core::ptr::null_mut(),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    })
+                }
+                pub fn Dispatcher(
+                    &self,
+                ) -> windows_core::Result<windows::UI::Core::CoreDispatcher> {
+                    let this = &windows_core::Interface::cast::<IDependencyObject>(self)?;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).Dispatcher)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn DispatcherQueue(
+                    &self,
+                ) -> windows_core::Result<super::Dispatching::DispatcherQueue> {
+                    let this = &windows_core::Interface::cast::<IDependencyObject>(self)?;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).DispatcherQueue)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                fn IDataTemplateFactory<
+                    R,
+                    F: FnOnce(&IDataTemplateFactory) -> windows_core::Result<R>,
+                >(
+                    callback: F,
+                ) -> windows_core::Result<R> {
+                    static SHARED: windows_core::imp::FactoryCache<
+                        DataTemplate,
+                        IDataTemplateFactory,
+                    > = windows_core::imp::FactoryCache::new();
+                    SHARED.call(callback)
+                }
+                fn IDataTemplateStatics<
+                    R,
+                    F: FnOnce(&IDataTemplateStatics) -> windows_core::Result<R>,
+                >(
+                    callback: F,
+                ) -> windows_core::Result<R> {
+                    static SHARED: windows_core::imp::FactoryCache<
+                        DataTemplate,
+                        IDataTemplateStatics,
+                    > = windows_core::imp::FactoryCache::new();
+                    SHARED.call(callback)
+                }
+            }
+            impl windows_core::RuntimeType for DataTemplate {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_class::<Self, IDataTemplate>();
+            }
+            unsafe impl windows_core::Interface for DataTemplate {
+                type Vtable = <IDataTemplate as windows_core::Interface>::Vtable;
+                const IID: windows_core::GUID = <IDataTemplate as windows_core::Interface>::IID;
+            }
+            impl windows_core::RuntimeName for DataTemplate {
+                const NAME: &'static str = "Microsoft.UI.Xaml.DataTemplate";
+            }
+            unsafe impl Send for DataTemplate {}
+            unsafe impl Sync for DataTemplate {}
+            #[repr(transparent)]
+            #[derive(Clone, Debug, Eq, PartialEq)]
             pub struct DependencyObject(windows_core::IUnknown);
             windows_core::imp::interface_hierarchy!(
                 DependencyObject,
@@ -8741,6 +8843,81 @@ pub mod Microsoft {
             }
             unsafe impl Send for FrameworkElement {}
             unsafe impl Sync for FrameworkElement {}
+            #[repr(transparent)]
+            #[derive(Clone, Debug, Eq, PartialEq)]
+            pub struct FrameworkTemplate(windows_core::IUnknown);
+            windows_core::imp::interface_hierarchy!(
+                FrameworkTemplate,
+                windows_core::IUnknown,
+                windows_core::IInspectable
+            );
+            windows_core::imp::required_hierarchy!(FrameworkTemplate, DependencyObject);
+            impl FrameworkTemplate {
+                pub fn Dispatcher(
+                    &self,
+                ) -> windows_core::Result<windows::UI::Core::CoreDispatcher> {
+                    let this = &windows_core::Interface::cast::<IDependencyObject>(self)?;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).Dispatcher)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn DispatcherQueue(
+                    &self,
+                ) -> windows_core::Result<super::Dispatching::DispatcherQueue> {
+                    let this = &windows_core::Interface::cast::<IDependencyObject>(self)?;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).DispatcherQueue)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn new() -> windows_core::Result<FrameworkTemplate> {
+                    Self::IFrameworkTemplateFactory(|this| unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).CreateInstance)(
+                            windows_core::Interface::as_raw(this),
+                            core::ptr::null_mut(),
+                            &mut core::ptr::null_mut(),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    })
+                }
+                fn IFrameworkTemplateFactory<
+                    R,
+                    F: FnOnce(&IFrameworkTemplateFactory) -> windows_core::Result<R>,
+                >(
+                    callback: F,
+                ) -> windows_core::Result<R> {
+                    static SHARED: windows_core::imp::FactoryCache<
+                        FrameworkTemplate,
+                        IFrameworkTemplateFactory,
+                    > = windows_core::imp::FactoryCache::new();
+                    SHARED.call(callback)
+                }
+            }
+            impl windows_core::RuntimeType for FrameworkTemplate {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_class::<Self, IFrameworkTemplate>();
+            }
+            unsafe impl windows_core::Interface for FrameworkTemplate {
+                type Vtable = <IFrameworkTemplate as windows_core::Interface>::Vtable;
+                const IID: windows_core::GUID =
+                    <IFrameworkTemplate as windows_core::Interface>::IID;
+            }
+            impl windows_core::RuntimeName for FrameworkTemplate {
+                const NAME: &'static str = "Microsoft.UI.Xaml.FrameworkTemplate";
+            }
+            unsafe impl Send for FrameworkTemplate {}
+            unsafe impl Sync for FrameworkTemplate {}
             #[repr(C)]
             #[derive(Clone, Copy, Debug, Default, PartialEq)]
             pub struct GridLength {
@@ -9345,6 +9522,178 @@ pub mod Microsoft {
                 LoadComponentWithResourceLocation: usize,
             }
             windows_core::imp::define_interface!(
+                IDataTemplate,
+                IDataTemplate_Vtbl,
+                0x08fa70fa_ee75_5e92_a101_f52d0e1e9fab
+            );
+            impl windows_core::RuntimeType for IDataTemplate {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IDataTemplate {
+                const NAME: &'static str = "Microsoft.UI.Xaml.IDataTemplate";
+            }
+            pub trait IDataTemplate_Impl: windows_core::IUnknownImpl {
+                fn LoadContent(&self) -> windows_core::Result<DependencyObject>;
+            }
+            impl IDataTemplate_Vtbl {
+                pub const fn new<Identity: IDataTemplate_Impl, const OFFSET: isize>() -> Self {
+                    unsafe extern "system" fn LoadContent<
+                        Identity: IDataTemplate_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IDataTemplate_Impl::LoadContent(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IDataTemplate,
+                            OFFSET,
+                        >(),
+                        LoadContent: LoadContent::<Identity, OFFSET>,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IDataTemplate as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IDataTemplate_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                pub LoadContent: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+            }
+            windows_core::imp::define_interface!(
+                IDataTemplateFactory,
+                IDataTemplateFactory_Vtbl,
+                0xd8e8249d_305b_5ca5_acf8_3e1beffd0219
+            );
+            impl windows_core::RuntimeType for IDataTemplateFactory {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IDataTemplateFactory {
+                const NAME: &'static str = "Microsoft.UI.Xaml.IDataTemplateFactory";
+            }
+            pub trait IDataTemplateFactory_Impl: windows_core::IUnknownImpl {
+                fn CreateInstance(
+                    &self,
+                    baseInterface: windows_core::Ref<'_, windows_core::IInspectable>,
+                    innerInterface: windows_core::OutRef<'_, windows_core::IInspectable>,
+                ) -> windows_core::Result<DataTemplate>;
+            }
+            impl IDataTemplateFactory_Vtbl {
+                pub const fn new<Identity: IDataTemplateFactory_Impl, const OFFSET: isize>() -> Self
+                {
+                    unsafe extern "system" fn CreateInstance<
+                        Identity: IDataTemplateFactory_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        baseinterface: *mut core::ffi::c_void,
+                        innerinterface: *mut *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IDataTemplateFactory_Impl::CreateInstance(
+                                this,
+                                core::mem::transmute_copy(&baseinterface),
+                                core::mem::transmute_copy(&innerinterface),
+                            ) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IDataTemplateFactory,
+                            OFFSET,
+                        >(),
+                        CreateInstance: CreateInstance::<Identity, OFFSET>,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IDataTemplateFactory as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IDataTemplateFactory_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                pub CreateInstance: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+            }
+            windows_core::imp::define_interface!(
+                IDataTemplateStatics,
+                IDataTemplateStatics_Vtbl,
+                0xcf6ada69_4bf1_5f2d_8bdb_09ea1a26f975
+            );
+            impl windows_core::RuntimeType for IDataTemplateStatics {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IDataTemplateStatics {
+                const NAME: &'static str = "Microsoft.UI.Xaml.IDataTemplateStatics";
+            }
+            pub trait IDataTemplateStatics_Impl: windows_core::IUnknownImpl {}
+            impl IDataTemplateStatics_Vtbl {
+                pub const fn new<Identity: IDataTemplateStatics_Impl, const OFFSET: isize>() -> Self
+                {
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IDataTemplateStatics,
+                            OFFSET,
+                        >(),
+                        ExtensionInstanceProperty: 0,
+                        GetExtensionInstance: 0,
+                        SetExtensionInstance: 0,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IDataTemplateStatics as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IDataTemplateStatics_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                ExtensionInstanceProperty: usize,
+                GetExtensionInstance: usize,
+                SetExtensionInstance: usize,
+            }
+            windows_core::imp::define_interface!(
                 IDependencyObject,
                 IDependencyObject_Vtbl,
                 0xe7beaee7_160e_50f7_8789_d63463f979fa
@@ -9518,6 +9867,47 @@ pub mod Microsoft {
                     *mut *mut core::ffi::c_void,
                 )
                     -> windows_core::HRESULT,
+            }
+            windows_core::imp::define_interface!(
+                IElementFactory,
+                IElementFactory_Vtbl,
+                0x75faba47_2cf2_54ae_91e6_0581556fddaa
+            );
+            impl windows_core::RuntimeType for IElementFactory {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            windows_core::imp::interface_hierarchy!(
+                IElementFactory,
+                windows_core::IUnknown,
+                windows_core::IInspectable
+            );
+            impl windows_core::RuntimeName for IElementFactory {
+                const NAME: &'static str = "Microsoft.UI.Xaml.IElementFactory";
+            }
+            pub trait IElementFactory_Impl: windows_core::IUnknownImpl {}
+            impl IElementFactory_Vtbl {
+                pub const fn new<Identity: IElementFactory_Impl, const OFFSET: isize>() -> Self {
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IElementFactory,
+                            OFFSET,
+                        >(),
+                        GetElement: 0,
+                        RecycleElement: 0,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IElementFactory as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IElementFactory_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                GetElement: usize,
+                RecycleElement: usize,
             }
             windows_core::imp::define_interface!(
                 IFrameworkElement,
@@ -11609,6 +11999,111 @@ pub mod Microsoft {
                     *mut core::ffi::c_void,
                     *mut core::ffi::c_void,
                 ) -> windows_core::HRESULT,
+            }
+            windows_core::imp::define_interface!(
+                IFrameworkTemplate,
+                IFrameworkTemplate_Vtbl,
+                0x0084c7c2_de48_5b0b_8a5a_e4fb76b7f7d1
+            );
+            impl windows_core::RuntimeType for IFrameworkTemplate {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IFrameworkTemplate {
+                const NAME: &'static str = "Microsoft.UI.Xaml.IFrameworkTemplate";
+            }
+            pub trait IFrameworkTemplate_Impl: windows_core::IUnknownImpl {}
+            impl IFrameworkTemplate_Vtbl {
+                pub const fn new<Identity: IFrameworkTemplate_Impl, const OFFSET: isize>() -> Self {
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IFrameworkTemplate,
+                            OFFSET,
+                        >(),
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IFrameworkTemplate as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IFrameworkTemplate_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+            }
+            windows_core::imp::define_interface!(
+                IFrameworkTemplateFactory,
+                IFrameworkTemplateFactory_Vtbl,
+                0x616dd6db_b064_561d_b162_46ceb45dc562
+            );
+            impl windows_core::RuntimeType for IFrameworkTemplateFactory {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IFrameworkTemplateFactory {
+                const NAME: &'static str = "Microsoft.UI.Xaml.IFrameworkTemplateFactory";
+            }
+            pub trait IFrameworkTemplateFactory_Impl: windows_core::IUnknownImpl {
+                fn CreateInstance(
+                    &self,
+                    baseInterface: windows_core::Ref<'_, windows_core::IInspectable>,
+                    innerInterface: windows_core::OutRef<'_, windows_core::IInspectable>,
+                ) -> windows_core::Result<FrameworkTemplate>;
+            }
+            impl IFrameworkTemplateFactory_Vtbl {
+                pub const fn new<Identity: IFrameworkTemplateFactory_Impl, const OFFSET: isize>(
+                ) -> Self {
+                    unsafe extern "system" fn CreateInstance<
+                        Identity: IFrameworkTemplateFactory_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        baseinterface: *mut core::ffi::c_void,
+                        innerinterface: *mut *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IFrameworkTemplateFactory_Impl::CreateInstance(
+                                this,
+                                core::mem::transmute_copy(&baseinterface),
+                                core::mem::transmute_copy(&innerinterface),
+                            ) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IFrameworkTemplateFactory,
+                            OFFSET,
+                        >(),
+                        CreateInstance: CreateInstance::<Identity, OFFSET>,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IFrameworkTemplateFactory as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IFrameworkTemplateFactory_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                pub CreateInstance: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
             }
             windows_core::imp::define_interface!(
                 ILaunchActivatedEventArgs,
@@ -20998,6 +21493,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -21025,6 +21544,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -24657,6 +25196,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -24684,6 +25247,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -33541,6 +34124,30 @@ pub mod Microsoft {
                             .and_then(|| windows_core::Type::from_abi(result__))
                         }
                     }
+                    pub fn ItemTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetItemTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn DisplayMemberPath(&self) -> windows_core::Result<windows_core::HSTRING> {
                         let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
                         unsafe {
@@ -33727,6 +34334,25 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 olditemcontainerstyle.param().abi(),
                                 newitemcontainerstyle.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnItemTemplateChanged<P0, P1>(
+                        &self,
+                        olditemtemplate: P0,
+                        newitemtemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnItemTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                olditemtemplate.param().abi(),
+                                newitemtemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -38454,6 +39080,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -38481,6 +39131,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -41965,6 +42635,30 @@ pub mod Microsoft {
                         let this = self;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetHeader)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -48662,6 +49356,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -48689,6 +49407,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -56468,6 +57206,19 @@ pub mod Microsoft {
                             .and_then(|| windows_core::Type::from_abi(result__))
                         }
                     }
+                    pub fn SelectionBoxItemTemplate(
+                        &self,
+                    ) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectionBoxItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
                     pub fn Header(&self) -> windows_core::Result<windows_core::IInspectable> {
                         let this = self;
                         unsafe {
@@ -56486,6 +57237,30 @@ pub mod Microsoft {
                         let this = self;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetHeader)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -58495,6 +59270,30 @@ pub mod Microsoft {
                             .and_then(|| windows_core::Type::from_abi(result__))
                         }
                     }
+                    pub fn ItemTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetItemTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn DisplayMemberPath(&self) -> windows_core::Result<windows_core::HSTRING> {
                         let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
                         unsafe {
@@ -58681,6 +59480,25 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 olditemcontainerstyle.param().abi(),
                                 newitemcontainerstyle.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnItemTemplateChanged<P0, P1>(
+                        &self,
+                        olditemtemplate: P0,
+                        newitemtemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnItemTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                olditemtemplate.param().abi(),
+                                newitemtemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -60604,6 +61422,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -60631,6 +61473,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -64414,6 +65276,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -64441,6 +65327,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -67842,6 +68748,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = self;
                         unsafe {
@@ -67881,6 +68811,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -71284,6 +72234,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -71315,6 +72289,26 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn Title(&self) -> windows_core::Result<windows_core::IInspectable> {
                         let this = self;
                         unsafe {
@@ -71333,6 +72327,30 @@ pub mod Microsoft {
                         let this = self;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetTitle)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TitleTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TitleTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTitleTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTitleTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -78715,6 +79733,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -78742,6 +79784,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -79445,6 +80507,30 @@ pub mod Microsoft {
                         let this = self;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetHeader)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -88225,6 +89311,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -88252,6 +89362,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -94073,6 +95203,11 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn CalendarViewStyle(&self) -> windows_core::Result<super::Style>;
                     fn SetCalendarViewStyle(
                         &self,
@@ -94324,6 +95459,43 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 ICalendarDatePicker_Impl::SetHeader(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: ICalendarDatePicker_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarDatePicker_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: ICalendarDatePicker_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarDatePicker_Impl::SetHeaderTemplate(
                                     this,
                                     core::mem::transmute_copy(&value),
                                 )
@@ -94829,8 +96001,8 @@ pub mod Microsoft {
                             SetPlaceholderText: SetPlaceholderText::<Identity, OFFSET>,
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             CalendarViewStyle: CalendarViewStyle::<Identity, OFFSET>,
                             SetCalendarViewStyle: SetCalendarViewStyle::<Identity, OFFSET>,
                             LightDismissOverlayMode: 0,
@@ -94931,8 +96103,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub CalendarViewStyle: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
@@ -97063,10 +98243,17 @@ pub mod Microsoft {
                     fn MaxDropDownHeight(&self) -> windows_core::Result<f64>;
                     fn SetMaxDropDownHeight(&self, value: f64) -> windows_core::Result<()>;
                     fn SelectionBoxItem(&self) -> windows_core::Result<windows_core::IInspectable>;
+                    fn SelectionBoxItemTemplate(&self)
+                        -> windows_core::Result<super::DataTemplate>;
                     fn Header(&self) -> windows_core::Result<windows_core::IInspectable>;
                     fn SetHeader(
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
+                    ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
                     ) -> windows_core::Result<()>;
                     fn PlaceholderText(&self) -> windows_core::Result<windows_core::HSTRING>;
                     fn SetPlaceholderText(
@@ -97257,6 +98444,26 @@ pub mod Microsoft {
                                 }
                             }
                         }
+                        unsafe extern "system" fn SelectionBoxItemTemplate<
+                            Identity: IComboBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IComboBox_Impl::SelectionBoxItemTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
                         unsafe extern "system" fn Header<
                             Identity: IComboBox_Impl,
                             const OFFSET: isize,
@@ -97289,6 +98496,43 @@ pub mod Microsoft {
                                     as *const Identity);
                                 IComboBox_Impl::SetHeader(this, core::mem::transmute_copy(&value))
                                     .into()
+                            }
+                        }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: IComboBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IComboBox_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: IComboBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IComboBox_Impl::SetHeaderTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
                             }
                         }
                         unsafe extern "system" fn PlaceholderText<
@@ -97626,12 +98870,12 @@ pub mod Microsoft {
                             MaxDropDownHeight: MaxDropDownHeight::<Identity, OFFSET>,
                             SetMaxDropDownHeight: SetMaxDropDownHeight::<Identity, OFFSET>,
                             SelectionBoxItem: SelectionBoxItem::<Identity, OFFSET>,
-                            SelectionBoxItemTemplate: 0,
+                            SelectionBoxItemTemplate: SelectionBoxItemTemplate::<Identity, OFFSET>,
                             TemplateSettings: 0,
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             PlaceholderText: PlaceholderText::<Identity, OFFSET>,
                             SetPlaceholderText: SetPlaceholderText::<Identity, OFFSET>,
                             LightDismissOverlayMode: 0,
@@ -97704,7 +98948,11 @@ pub mod Microsoft {
                         *mut *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    SelectionBoxItemTemplate: usize,
+                    pub SelectionBoxItemTemplate:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
                     TemplateSettings: usize,
                     pub Header: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
@@ -97716,8 +98964,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub PlaceholderText: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
@@ -98842,6 +100098,11 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetContentTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement>;
                 }
                 impl IContentControl_Vtbl {
@@ -98884,6 +100145,43 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn ContentTemplate<
+                            Identity: IContentControl_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IContentControl_Impl::ContentTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetContentTemplate<
+                            Identity: IContentControl_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IContentControl_Impl::SetContentTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
                         unsafe extern "system" fn ContentTemplateRoot<
                             Identity: IContentControl_Impl,
                             const OFFSET: isize,
@@ -98912,8 +100210,8 @@ pub mod Microsoft {
                             >(),
                             Content: Content::<Identity, OFFSET>,
                             SetContent: SetContent::<Identity, OFFSET>,
-                            ContentTemplate: 0,
-                            SetContentTemplate: 0,
+                            ContentTemplate: ContentTemplate::<Identity, OFFSET>,
+                            SetContentTemplate: SetContentTemplate::<Identity, OFFSET>,
                             ContentTemplateSelector: 0,
                             SetContentTemplateSelector: 0,
                             ContentTransitions: 0,
@@ -98939,8 +100237,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    ContentTemplate: usize,
-                    SetContentTemplate: usize,
+                    pub ContentTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetContentTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     ContentTemplateSelector: usize,
                     SetContentTemplateSelector: usize,
                     ContentTransitions: usize,
@@ -99043,6 +100349,11 @@ pub mod Microsoft {
                         oldContent: windows_core::Ref<'_, windows_core::IInspectable>,
                         newContent: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn OnContentTemplateChanged(
+                        &self,
+                        oldContentTemplate: windows_core::Ref<'_, super::DataTemplate>,
+                        newContentTemplate: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                 }
                 impl IContentControlOverrides_Vtbl {
                     pub const fn new<
@@ -99068,6 +100379,25 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn OnContentTemplateChanged<
+                            Identity: IContentControlOverrides_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            oldcontenttemplate: *mut core::ffi::c_void,
+                            newcontenttemplate: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IContentControlOverrides_Impl::OnContentTemplateChanged(
+                                    this,
+                                    core::mem::transmute_copy(&oldcontenttemplate),
+                                    core::mem::transmute_copy(&newcontenttemplate),
+                                )
+                                .into()
+                            }
+                        }
                         Self {
                             base__: windows_core::IInspectable_Vtbl::new::<
                                 Identity,
@@ -99075,7 +100405,7 @@ pub mod Microsoft {
                                 OFFSET,
                             >(),
                             OnContentChanged: OnContentChanged::<Identity, OFFSET>,
-                            OnContentTemplateChanged: 0,
+                            OnContentTemplateChanged: OnContentTemplateChanged::<Identity, OFFSET>,
                             OnContentTemplateSelectorChanged: 0,
                         }
                     }
@@ -99093,7 +100423,12 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    OnContentTemplateChanged: usize,
+                    pub OnContentTemplateChanged:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
                     OnContentTemplateSelectorChanged: usize,
                 }
                 windows_core::imp::define_interface!(
@@ -99154,6 +100489,11 @@ pub mod Microsoft {
                     fn SetTitle(
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
+                    ) -> windows_core::Result<()>;
+                    fn TitleTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetTitleTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
                     ) -> windows_core::Result<()>;
                     fn FullSizeDesired(&self) -> windows_core::Result<bool>;
                     fn SetFullSizeDesired(&self, value: bool) -> windows_core::Result<()>;
@@ -99271,6 +100611,43 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 IContentDialog_Impl::SetTitle(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TitleTemplate<
+                            Identity: IContentDialog_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IContentDialog_Impl::TitleTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTitleTemplate<
+                            Identity: IContentDialog_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IContentDialog_Impl::SetTitleTemplate(
                                     this,
                                     core::mem::transmute_copy(&value),
                                 )
@@ -99879,8 +101256,8 @@ pub mod Microsoft {
                             >(),
                             Title: Title::<Identity, OFFSET>,
                             SetTitle: SetTitle::<Identity, OFFSET>,
-                            TitleTemplate: 0,
-                            SetTitleTemplate: 0,
+                            TitleTemplate: TitleTemplate::<Identity, OFFSET>,
+                            SetTitleTemplate: SetTitleTemplate::<Identity, OFFSET>,
                             FullSizeDesired: FullSizeDesired::<Identity, OFFSET>,
                             SetFullSizeDesired: SetFullSizeDesired::<Identity, OFFSET>,
                             PrimaryButtonText: PrimaryButtonText::<Identity, OFFSET>,
@@ -99972,8 +101349,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    TitleTemplate: usize,
-                    SetTitleTemplate: usize,
+                    pub TitleTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetTitleTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub FullSizeDesired: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut bool,
@@ -102261,6 +103646,11 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn IsExpanded(&self) -> windows_core::Result<bool>;
                     fn SetIsExpanded(&self, value: bool) -> windows_core::Result<()>;
                     fn RemoveExpanding(&self, token: i64) -> windows_core::Result<()>;
@@ -102300,6 +103690,43 @@ pub mod Microsoft {
                                     as *const Identity);
                                 IExpander_Impl::SetHeader(this, core::mem::transmute_copy(&value))
                                     .into()
+                            }
+                        }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: IExpander_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IExpander_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: IExpander_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IExpander_Impl::SetHeaderTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
                             }
                         }
                         unsafe extern "system" fn IsExpanded<
@@ -102368,8 +103795,8 @@ pub mod Microsoft {
                             >(),
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             HeaderTemplateSelector: 0,
                             SetHeaderTemplateSelector: 0,
                             IsExpanded: IsExpanded::<Identity, OFFSET>,
@@ -102401,8 +103828,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     HeaderTemplateSelector: usize,
                     SetHeaderTemplateSelector: usize,
                     pub IsExpanded: unsafe extern "system" fn(
@@ -104469,6 +105904,11 @@ pub mod Microsoft {
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
                     fn Items(&self) -> windows_core::Result<ItemCollection>;
+                    fn ItemTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetItemTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn DisplayMemberPath(&self) -> windows_core::Result<windows_core::HSTRING>;
                     fn SetDisplayMemberPath(
                         &self,
@@ -104543,6 +105983,43 @@ pub mod Microsoft {
                                     }
                                     Err(err) => err.into(),
                                 }
+                            }
+                        }
+                        unsafe extern "system" fn ItemTemplate<
+                            Identity: IItemsControl_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IItemsControl_Impl::ItemTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetItemTemplate<
+                            Identity: IItemsControl_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IItemsControl_Impl::SetItemTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
                             }
                         }
                         unsafe extern "system" fn DisplayMemberPath<
@@ -104691,8 +106168,8 @@ pub mod Microsoft {
                             ItemsSource: ItemsSource::<Identity, OFFSET>,
                             SetItemsSource: SetItemsSource::<Identity, OFFSET>,
                             Items: Items::<Identity, OFFSET>,
-                            ItemTemplate: 0,
-                            SetItemTemplate: 0,
+                            ItemTemplate: ItemTemplate::<Identity, OFFSET>,
+                            SetItemTemplate: SetItemTemplate::<Identity, OFFSET>,
                             ItemTemplateSelector: 0,
                             SetItemTemplateSelector: 0,
                             ItemsPanel: 0,
@@ -104738,8 +106215,16 @@ pub mod Microsoft {
                         *mut *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    ItemTemplate: usize,
-                    SetItemTemplate: usize,
+                    pub ItemTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetItemTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     ItemTemplateSelector: usize,
                     SetItemTemplateSelector: usize,
                     ItemsPanel: usize,
@@ -104901,6 +106386,11 @@ pub mod Microsoft {
                         oldItemContainerStyle: windows_core::Ref<'_, super::Style>,
                         newItemContainerStyle: windows_core::Ref<'_, super::Style>,
                     ) -> windows_core::Result<()>;
+                    fn OnItemTemplateChanged(
+                        &self,
+                        oldItemTemplate: windows_core::Ref<'_, super::DataTemplate>,
+                        newItemTemplate: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                 }
                 impl IItemsControlOverrides_Vtbl {
                     pub const fn new<Identity: IItemsControlOverrides_Impl, const OFFSET: isize>(
@@ -105023,6 +106513,25 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn OnItemTemplateChanged<
+                            Identity: IItemsControlOverrides_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            olditemtemplate: *mut core::ffi::c_void,
+                            newitemtemplate: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IItemsControlOverrides_Impl::OnItemTemplateChanged(
+                                    this,
+                                    core::mem::transmute_copy(&olditemtemplate),
+                                    core::mem::transmute_copy(&newitemtemplate),
+                                )
+                                .into()
+                            }
+                        }
                         Self {
                             base__: windows_core::IInspectable_Vtbl::new::<
                                 Identity,
@@ -105051,7 +106560,7 @@ pub mod Microsoft {
                                 OFFSET,
                             >,
                             OnItemContainerStyleSelectorChanged: 0,
-                            OnItemTemplateChanged: 0,
+                            OnItemTemplateChanged: OnItemTemplateChanged::<Identity, OFFSET>,
                             OnItemTemplateSelectorChanged: 0,
                             OnGroupStyleSelectorChanged: 0,
                         }
@@ -105099,7 +106608,12 @@ pub mod Microsoft {
                             *mut core::ffi::c_void,
                         ) -> windows_core::HRESULT,
                     OnItemContainerStyleSelectorChanged: usize,
-                    OnItemTemplateChanged: usize,
+                    pub OnItemTemplateChanged: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     OnItemTemplateSelectorChanged: usize,
                     OnGroupStyleSelectorChanged: usize,
                 }
@@ -105760,10 +107274,20 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn Footer(&self) -> windows_core::Result<windows_core::IInspectable>;
                     fn SetFooter(
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
+                    ) -> windows_core::Result<()>;
+                    fn FooterTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetFooterTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
                     ) -> windows_core::Result<()>;
                 }
                 impl IListViewBase_Vtbl {
@@ -106262,6 +107786,43 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: IListViewBase_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IListViewBase_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: IListViewBase_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IListViewBase_Impl::SetHeaderTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
                         unsafe extern "system" fn Footer<
                             Identity: IListViewBase_Impl,
                             const OFFSET: isize,
@@ -106293,6 +107854,43 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 IListViewBase_Impl::SetFooter(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn FooterTemplate<
+                            Identity: IListViewBase_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IListViewBase_Impl::FooterTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFooterTemplate<
+                            Identity: IListViewBase_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IListViewBase_Impl::SetFooterTemplate(
                                     this,
                                     core::mem::transmute_copy(&value),
                                 )
@@ -106391,14 +107989,14 @@ pub mod Microsoft {
                             PrepareConnectedAnimation: 0,
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             HeaderTransitions: 0,
                             SetHeaderTransitions: 0,
                             Footer: Footer::<Identity, OFFSET>,
                             SetFooter: SetFooter::<Identity, OFFSET>,
-                            FooterTemplate: 0,
-                            SetFooterTemplate: 0,
+                            FooterTemplate: FooterTemplate::<Identity, OFFSET>,
+                            SetFooterTemplate: SetFooterTemplate::<Identity, OFFSET>,
                             FooterTransitions: 0,
                             SetFooterTransitions: 0,
                         }
@@ -106582,8 +108180,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     HeaderTransitions: usize,
                     SetHeaderTransitions: usize,
                     pub Footer: unsafe extern "system" fn(
@@ -106596,8 +108202,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    FooterTemplate: usize,
-                    SetFooterTemplate: usize,
+                    pub FooterTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetFooterTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     FooterTransitions: usize,
                     SetFooterTransitions: usize,
                 }
@@ -107624,6 +109238,11 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn IsSettingsVisible(&self) -> windows_core::Result<bool>;
                     fn SetIsSettingsVisible(&self, value: bool) -> windows_core::Result<()>;
                     fn IsPaneToggleButtonVisible(&self) -> windows_core::Result<bool>;
@@ -107660,6 +109279,11 @@ pub mod Microsoft {
                     fn SetAutoSuggestBox(
                         &self,
                         value: windows_core::Ref<'_, AutoSuggestBox>,
+                    ) -> windows_core::Result<()>;
+                    fn MenuItemTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetMenuItemTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
                     ) -> windows_core::Result<()>;
                     fn MenuItemContainerStyle(&self) -> windows_core::Result<super::Style>;
                     fn SetMenuItemContainerStyle(
@@ -107909,6 +109533,43 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 INavigationView_Impl::SetHeader(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: INavigationView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match INavigationView_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: INavigationView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                INavigationView_Impl::SetHeaderTemplate(
                                     this,
                                     core::mem::transmute_copy(&value),
                                 )
@@ -108264,6 +109925,43 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn MenuItemTemplate<
+                            Identity: INavigationView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match INavigationView_Impl::MenuItemTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetMenuItemTemplate<
+                            Identity: INavigationView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                INavigationView_Impl::SetMenuItemTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
                         unsafe extern "system" fn MenuItemContainerStyle<
                             Identity: INavigationView_Impl,
                             const OFFSET: isize,
@@ -108449,8 +110147,8 @@ pub mod Microsoft {
                             SetPaneFooter: SetPaneFooter::<Identity, OFFSET>,
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             DisplayMode: 0,
                             IsSettingsVisible: IsSettingsVisible::<Identity, OFFSET>,
                             SetIsSettingsVisible: SetIsSettingsVisible::<Identity, OFFSET>,
@@ -108475,8 +110173,8 @@ pub mod Microsoft {
                             SettingsItem: SettingsItem::<Identity, OFFSET>,
                             AutoSuggestBox: AutoSuggestBox::<Identity, OFFSET>,
                             SetAutoSuggestBox: SetAutoSuggestBox::<Identity, OFFSET>,
-                            MenuItemTemplate: 0,
-                            SetMenuItemTemplate: 0,
+                            MenuItemTemplate: MenuItemTemplate::<Identity, OFFSET>,
+                            SetMenuItemTemplate: SetMenuItemTemplate::<Identity, OFFSET>,
                             MenuItemTemplateSelector: 0,
                             SetMenuItemTemplateSelector: 0,
                             MenuItemContainerStyle: MenuItemContainerStyle::<Identity, OFFSET>,
@@ -108574,8 +110272,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     DisplayMode: usize,
                     pub IsSettingsVisible: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
@@ -108677,8 +110383,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    MenuItemTemplate: usize,
-                    SetMenuItemTemplate: usize,
+                    pub MenuItemTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetMenuItemTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     MenuItemTemplateSelector: usize,
                     SetMenuItemTemplateSelector: usize,
                     pub MenuItemContainerStyle: unsafe extern "system" fn(
@@ -109615,6 +111329,11 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn PlaceholderText(&self) -> windows_core::Result<windows_core::HSTRING>;
                     fn SetPlaceholderText(
                         &self,
@@ -109911,6 +111630,43 @@ pub mod Microsoft {
                                     as *const Identity);
                                 INumberBox_Impl::SetHeader(this, core::mem::transmute_copy(&value))
                                     .into()
+                            }
+                        }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: INumberBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match INumberBox_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: INumberBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                INumberBox_Impl::SetHeaderTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
                             }
                         }
                         unsafe extern "system" fn PlaceholderText<
@@ -110319,8 +112075,8 @@ pub mod Microsoft {
                             SetText: SetText::<Identity, OFFSET>,
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             PlaceholderText: PlaceholderText::<Identity, OFFSET>,
                             SetPlaceholderText: SetPlaceholderText::<Identity, OFFSET>,
                             SelectionFlyout: SelectionFlyout::<Identity, OFFSET>,
@@ -110433,8 +112189,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub PlaceholderText: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
@@ -111069,6 +112833,11 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn PlaceholderText(&self) -> windows_core::Result<windows_core::HSTRING>;
                     fn SetPlaceholderText(
                         &self,
@@ -111279,6 +113048,43 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 IPasswordBox_Impl::SetHeader(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: IPasswordBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IPasswordBox_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: IPasswordBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IPasswordBox_Impl::SetHeaderTemplate(
                                     this,
                                     core::mem::transmute_copy(&value),
                                 )
@@ -111610,8 +113416,8 @@ pub mod Microsoft {
                             SetMaxLength: SetMaxLength::<Identity, OFFSET>,
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             PlaceholderText: PlaceholderText::<Identity, OFFSET>,
                             SetPlaceholderText: SetPlaceholderText::<Identity, OFFSET>,
                             SelectionHighlightColor: SelectionHighlightColor::<Identity, OFFSET>,
@@ -111704,8 +113510,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub PlaceholderText: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
@@ -116136,6 +117950,11 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                 }
                 impl ISlider_Vtbl {
                     pub const fn new<Identity: ISlider_Impl, const OFFSET: isize>() -> Self {
@@ -116365,6 +118184,43 @@ pub mod Microsoft {
                                     .into()
                             }
                         }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: ISlider_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ISlider_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: ISlider_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ISlider_Impl::SetHeaderTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
                         Self {
                             base__: windows_core::IInspectable_Vtbl::new::<Identity, ISlider, OFFSET>(
                             ),
@@ -116388,8 +118244,8 @@ pub mod Microsoft {
                             SetThumbToolTipValueConverter: 0,
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                         }
                     }
                     pub fn matches(iid: &windows_core::GUID) -> bool {
@@ -116476,8 +118332,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                 }
                 windows_core::imp::define_interface!(
                     ISliderFactory,
@@ -118520,6 +120384,11 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn PlaceholderText(&self) -> windows_core::Result<windows_core::HSTRING>;
                     fn SetPlaceholderText(
                         &self,
@@ -119007,6 +120876,43 @@ pub mod Microsoft {
                                     as *const Identity);
                                 ITextBox_Impl::SetHeader(this, core::mem::transmute_copy(&value))
                                     .into()
+                            }
+                        }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: ITextBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITextBox_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: ITextBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITextBox_Impl::SetHeaderTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
                             }
                         }
                         unsafe extern "system" fn PlaceholderText<
@@ -119802,8 +121708,8 @@ pub mod Microsoft {
                             SetInputScope: 0,
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             PlaceholderText: PlaceholderText::<Identity, OFFSET>,
                             SetPlaceholderText: SetPlaceholderText::<Identity, OFFSET>,
                             SelectionHighlightColor: SelectionHighlightColor::<Identity, OFFSET>,
@@ -120025,8 +121931,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub PlaceholderText: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
@@ -120475,6 +122389,11 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn ClockIdentifier(&self) -> windows_core::Result<windows_core::HSTRING>;
                     fn SetClockIdentifier(
                         &self,
@@ -120536,6 +122455,43 @@ pub mod Microsoft {
                                     as *const Identity);
                                 ITimePicker_Impl::SetHeader(this, core::mem::transmute_copy(&value))
                                     .into()
+                            }
+                        }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: ITimePicker_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITimePicker_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: ITimePicker_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITimePicker_Impl::SetHeaderTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
                             }
                         }
                         unsafe extern "system" fn ClockIdentifier<
@@ -120710,8 +122666,8 @@ pub mod Microsoft {
                             >(),
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             ClockIdentifier: ClockIdentifier::<Identity, OFFSET>,
                             SetClockIdentifier: SetClockIdentifier::<Identity, OFFSET>,
                             MinuteIncrement: MinuteIncrement::<Identity, OFFSET>,
@@ -120746,8 +122702,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub ClockIdentifier: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
@@ -120943,15 +122907,30 @@ pub mod Microsoft {
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetHeaderTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn OnContent(&self) -> windows_core::Result<windows_core::IInspectable>;
                     fn SetOnContent(
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
+                    fn OnContentTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetOnContentTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn OffContent(&self) -> windows_core::Result<windows_core::IInspectable>;
                     fn SetOffContent(
                         &self,
                         value: windows_core::Ref<'_, windows_core::IInspectable>,
+                    ) -> windows_core::Result<()>;
+                    fn OffContentTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetOffContentTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
                     ) -> windows_core::Result<()>;
                     fn Toggled(
                         &self,
@@ -121030,6 +123009,43 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn HeaderTemplate<
+                            Identity: IToggleSwitch_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IToggleSwitch_Impl::HeaderTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHeaderTemplate<
+                            Identity: IToggleSwitch_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IToggleSwitch_Impl::SetHeaderTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
                         unsafe extern "system" fn OnContent<
                             Identity: IToggleSwitch_Impl,
                             const OFFSET: isize,
@@ -121067,6 +123083,43 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn OnContentTemplate<
+                            Identity: IToggleSwitch_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IToggleSwitch_Impl::OnContentTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetOnContentTemplate<
+                            Identity: IToggleSwitch_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IToggleSwitch_Impl::SetOnContentTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
                         unsafe extern "system" fn OffContent<
                             Identity: IToggleSwitch_Impl,
                             const OFFSET: isize,
@@ -121098,6 +123151,43 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 IToggleSwitch_Impl::SetOffContent(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn OffContentTemplate<
+                            Identity: IToggleSwitch_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IToggleSwitch_Impl::OffContentTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetOffContentTemplate<
+                            Identity: IToggleSwitch_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IToggleSwitch_Impl::SetOffContentTemplate(
                                     this,
                                     core::mem::transmute_copy(&value),
                                 )
@@ -121150,16 +123240,16 @@ pub mod Microsoft {
                             SetIsOn: SetIsOn::<Identity, OFFSET>,
                             Header: Header::<Identity, OFFSET>,
                             SetHeader: SetHeader::<Identity, OFFSET>,
-                            HeaderTemplate: 0,
-                            SetHeaderTemplate: 0,
+                            HeaderTemplate: HeaderTemplate::<Identity, OFFSET>,
+                            SetHeaderTemplate: SetHeaderTemplate::<Identity, OFFSET>,
                             OnContent: OnContent::<Identity, OFFSET>,
                             SetOnContent: SetOnContent::<Identity, OFFSET>,
-                            OnContentTemplate: 0,
-                            SetOnContentTemplate: 0,
+                            OnContentTemplate: OnContentTemplate::<Identity, OFFSET>,
+                            SetOnContentTemplate: SetOnContentTemplate::<Identity, OFFSET>,
                             OffContent: OffContent::<Identity, OFFSET>,
                             SetOffContent: SetOffContent::<Identity, OFFSET>,
-                            OffContentTemplate: 0,
-                            SetOffContentTemplate: 0,
+                            OffContentTemplate: OffContentTemplate::<Identity, OFFSET>,
+                            SetOffContentTemplate: SetOffContentTemplate::<Identity, OFFSET>,
                             TemplateSettings: 0,
                             Toggled: Toggled::<Identity, OFFSET>,
                             RemoveToggled: RemoveToggled::<Identity, OFFSET>,
@@ -121193,8 +123283,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    HeaderTemplate: usize,
-                    SetHeaderTemplate: usize,
+                    pub HeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHeaderTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub OnContent: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
@@ -121205,8 +123303,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    OnContentTemplate: usize,
-                    SetOnContentTemplate: usize,
+                    pub OnContentTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetOnContentTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub OffContent: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
@@ -121217,8 +123323,16 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    OffContentTemplate: usize,
-                    SetOffContentTemplate: usize,
+                    pub OffContentTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetOffContentTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     TemplateSettings: usize,
                     pub Toggled: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
@@ -121435,13 +123549,152 @@ pub mod Microsoft {
                     const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ITreeView";
                 }
                 pub trait ITreeView_Impl: windows_core::IUnknownImpl {
+                    fn RootNodes(
+                        &self,
+                    ) -> windows_core::Result<windows_collections::IVector<TreeViewNode>>;
+                    fn SelectionMode(&self) -> windows_core::Result<TreeViewSelectionMode>;
+                    fn SetSelectionMode(
+                        &self,
+                        value: TreeViewSelectionMode,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedNodes(
+                        &self,
+                    ) -> windows_core::Result<windows_collections::IVector<TreeViewNode>>;
+                    fn Expand(
+                        &self,
+                        value: windows_core::Ref<'_, TreeViewNode>,
+                    ) -> windows_core::Result<()>;
+                    fn Collapse(
+                        &self,
+                        value: windows_core::Ref<'_, TreeViewNode>,
+                    ) -> windows_core::Result<()>;
                     fn SelectAll(&self) -> windows_core::Result<()>;
                     fn RemoveItemInvoked(&self, token: i64) -> windows_core::Result<()>;
+                    fn Expanding(
+                        &self,
+                        handler: windows_core::Ref<
+                            '_,
+                            windows::Foundation::TypedEventHandler<
+                                TreeView,
+                                TreeViewExpandingEventArgs,
+                            >,
+                        >,
+                    ) -> windows_core::Result<i64>;
                     fn RemoveExpanding(&self, token: i64) -> windows_core::Result<()>;
+                    fn Collapsed(
+                        &self,
+                        handler: windows_core::Ref<
+                            '_,
+                            windows::Foundation::TypedEventHandler<
+                                TreeView,
+                                TreeViewCollapsedEventArgs,
+                            >,
+                        >,
+                    ) -> windows_core::Result<i64>;
                     fn RemoveCollapsed(&self, token: i64) -> windows_core::Result<()>;
                 }
                 impl ITreeView_Vtbl {
                     pub const fn new<Identity: ITreeView_Impl, const OFFSET: isize>() -> Self {
+                        unsafe extern "system" fn RootNodes<
+                            Identity: ITreeView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView_Impl::RootNodes(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectionMode<
+                            Identity: ITreeView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut TreeViewSelectionMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView_Impl::SelectionMode(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectionMode<
+                            Identity: ITreeView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: TreeViewSelectionMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITreeView_Impl::SetSelectionMode(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedNodes<
+                            Identity: ITreeView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView_Impl::SelectedNodes(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn Expand<
+                            Identity: ITreeView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITreeView_Impl::Expand(this, core::mem::transmute_copy(&value))
+                                    .into()
+                            }
+                        }
+                        unsafe extern "system" fn Collapse<
+                            Identity: ITreeView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITreeView_Impl::Collapse(this, core::mem::transmute_copy(&value))
+                                    .into()
+                            }
+                        }
                         unsafe extern "system" fn SelectAll<
                             Identity: ITreeView_Impl,
                             const OFFSET: isize,
@@ -121467,6 +123720,29 @@ pub mod Microsoft {
                                 ITreeView_Impl::RemoveItemInvoked(this, token).into()
                             }
                         }
+                        unsafe extern "system" fn Expanding<
+                            Identity: ITreeView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView_Impl::Expanding(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
                         unsafe extern "system" fn RemoveExpanding<
                             Identity: ITreeView_Impl,
                             const OFFSET: isize,
@@ -121478,6 +123754,29 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 ITreeView_Impl::RemoveExpanding(this, token).into()
+                            }
+                        }
+                        unsafe extern "system" fn Collapsed<
+                            Identity: ITreeView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView_Impl::Collapsed(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
                             }
                         }
                         unsafe extern "system" fn RemoveCollapsed<
@@ -121499,18 +123798,18 @@ pub mod Microsoft {
                                 ITreeView,
                                 OFFSET,
                             >(),
-                            RootNodes: 0,
-                            SelectionMode: 0,
-                            SetSelectionMode: 0,
-                            SelectedNodes: 0,
-                            Expand: 0,
-                            Collapse: 0,
+                            RootNodes: RootNodes::<Identity, OFFSET>,
+                            SelectionMode: SelectionMode::<Identity, OFFSET>,
+                            SetSelectionMode: SetSelectionMode::<Identity, OFFSET>,
+                            SelectedNodes: SelectedNodes::<Identity, OFFSET>,
+                            Expand: Expand::<Identity, OFFSET>,
+                            Collapse: Collapse::<Identity, OFFSET>,
                             SelectAll: SelectAll::<Identity, OFFSET>,
                             ItemInvoked: 0,
                             RemoveItemInvoked: RemoveItemInvoked::<Identity, OFFSET>,
-                            Expanding: 0,
+                            Expanding: Expanding::<Identity, OFFSET>,
                             RemoveExpanding: RemoveExpanding::<Identity, OFFSET>,
-                            Collapsed: 0,
+                            Collapsed: Collapsed::<Identity, OFFSET>,
                             RemoveCollapsed: RemoveCollapsed::<Identity, OFFSET>,
                         }
                     }
@@ -121522,12 +123821,36 @@ pub mod Microsoft {
                 #[doc(hidden)]
                 pub struct ITreeView_Vtbl {
                     pub base__: windows_core::IInspectable_Vtbl,
-                    RootNodes: usize,
-                    SelectionMode: usize,
-                    SetSelectionMode: usize,
-                    SelectedNodes: usize,
-                    Expand: usize,
-                    Collapse: usize,
+                    pub RootNodes: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SelectionMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut TreeViewSelectionMode,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetSelectionMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        TreeViewSelectionMode,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SelectedNodes: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub Expand: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub Collapse: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub SelectAll:
                         unsafe extern "system" fn(*mut core::ffi::c_void) -> windows_core::HRESULT,
                     ItemInvoked: usize,
@@ -121536,13 +123859,23 @@ pub mod Microsoft {
                         i64,
                     )
                         -> windows_core::HRESULT,
-                    Expanding: usize,
+                    pub Expanding: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
                     pub RemoveExpanding: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         i64,
                     )
                         -> windows_core::HRESULT,
-                    Collapsed: usize,
+                    pub Collapsed: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
                     pub RemoveCollapsed: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         i64,
@@ -121562,6 +123895,14 @@ pub mod Microsoft {
                     const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ITreeView2";
                 }
                 pub trait ITreeView2_Impl: windows_core::IUnknownImpl {
+                    fn NodeFromContainer(
+                        &self,
+                        container: windows_core::Ref<'_, super::DependencyObject>,
+                    ) -> windows_core::Result<TreeViewNode>;
+                    fn ContainerFromNode(
+                        &self,
+                        node: windows_core::Ref<'_, TreeViewNode>,
+                    ) -> windows_core::Result<super::DependencyObject>;
                     fn ItemFromContainer(
                         &self,
                         container: windows_core::Ref<'_, super::DependencyObject>,
@@ -121574,6 +123915,11 @@ pub mod Microsoft {
                     fn SetCanDragItems(&self, value: bool) -> windows_core::Result<()>;
                     fn CanReorderItems(&self) -> windows_core::Result<bool>;
                     fn SetCanReorderItems(&self, value: bool) -> windows_core::Result<()>;
+                    fn ItemTemplate(&self) -> windows_core::Result<super::DataTemplate>;
+                    fn SetItemTemplate(
+                        &self,
+                        value: windows_core::Ref<'_, super::DataTemplate>,
+                    ) -> windows_core::Result<()>;
                     fn ItemContainerStyle(&self) -> windows_core::Result<super::Style>;
                     fn SetItemContainerStyle(
                         &self,
@@ -121586,6 +123932,11 @@ pub mod Microsoft {
                     ) -> windows_core::Result<()>;
                     fn RemoveDragItemsStarting(&self, token: i64) -> windows_core::Result<()>;
                     fn RemoveDragItemsCompleted(&self, token: i64) -> windows_core::Result<()>;
+                    fn SelectedNode(&self) -> windows_core::Result<TreeViewNode>;
+                    fn SetSelectedNode(
+                        &self,
+                        value: windows_core::Ref<'_, TreeViewNode>,
+                    ) -> windows_core::Result<()>;
                     fn SelectedItem(&self) -> windows_core::Result<windows_core::IInspectable>;
                     fn SetSelectedItem(
                         &self,
@@ -121599,6 +123950,54 @@ pub mod Microsoft {
                 }
                 impl ITreeView2_Vtbl {
                     pub const fn new<Identity: ITreeView2_Impl, const OFFSET: isize>() -> Self {
+                        unsafe extern "system" fn NodeFromContainer<
+                            Identity: ITreeView2_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            container: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView2_Impl::NodeFromContainer(
+                                    this,
+                                    core::mem::transmute_copy(&container),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn ContainerFromNode<
+                            Identity: ITreeView2_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            node: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView2_Impl::ContainerFromNode(
+                                    this,
+                                    core::mem::transmute_copy(&node),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
                         unsafe extern "system" fn ItemFromContainer<
                             Identity: ITreeView2_Impl,
                             const OFFSET: isize,
@@ -121711,6 +124110,43 @@ pub mod Microsoft {
                                 ITreeView2_Impl::SetCanReorderItems(this, value).into()
                             }
                         }
+                        unsafe extern "system" fn ItemTemplate<
+                            Identity: ITreeView2_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView2_Impl::ItemTemplate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetItemTemplate<
+                            Identity: ITreeView2_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITreeView2_Impl::SetItemTemplate(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
                         unsafe extern "system" fn ItemContainerStyle<
                             Identity: ITreeView2_Impl,
                             const OFFSET: isize,
@@ -121811,6 +124247,43 @@ pub mod Microsoft {
                                 ITreeView2_Impl::RemoveDragItemsCompleted(this, token).into()
                             }
                         }
+                        unsafe extern "system" fn SelectedNode<
+                            Identity: ITreeView2_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView2_Impl::SelectedNode(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectedNode<
+                            Identity: ITreeView2_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITreeView2_Impl::SetSelectedNode(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
                         unsafe extern "system" fn SelectedItem<
                             Identity: ITreeView2_Impl,
                             const OFFSET: isize,
@@ -121874,16 +124347,16 @@ pub mod Microsoft {
                                 ITreeView2,
                                 OFFSET,
                             >(),
-                            NodeFromContainer: 0,
-                            ContainerFromNode: 0,
+                            NodeFromContainer: NodeFromContainer::<Identity, OFFSET>,
+                            ContainerFromNode: ContainerFromNode::<Identity, OFFSET>,
                             ItemFromContainer: ItemFromContainer::<Identity, OFFSET>,
                             ContainerFromItem: ContainerFromItem::<Identity, OFFSET>,
                             CanDragItems: CanDragItems::<Identity, OFFSET>,
                             SetCanDragItems: SetCanDragItems::<Identity, OFFSET>,
                             CanReorderItems: CanReorderItems::<Identity, OFFSET>,
                             SetCanReorderItems: SetCanReorderItems::<Identity, OFFSET>,
-                            ItemTemplate: 0,
-                            SetItemTemplate: 0,
+                            ItemTemplate: ItemTemplate::<Identity, OFFSET>,
+                            SetItemTemplate: SetItemTemplate::<Identity, OFFSET>,
                             ItemTemplateSelector: 0,
                             SetItemTemplateSelector: 0,
                             ItemContainerStyle: ItemContainerStyle::<Identity, OFFSET>,
@@ -121898,8 +124371,8 @@ pub mod Microsoft {
                             RemoveDragItemsStarting: RemoveDragItemsStarting::<Identity, OFFSET>,
                             DragItemsCompleted: 0,
                             RemoveDragItemsCompleted: RemoveDragItemsCompleted::<Identity, OFFSET>,
-                            SelectedNode: 0,
-                            SetSelectedNode: 0,
+                            SelectedNode: SelectedNode::<Identity, OFFSET>,
+                            SetSelectedNode: SetSelectedNode::<Identity, OFFSET>,
                             SelectedItem: SelectedItem::<Identity, OFFSET>,
                             SetSelectedItem: SetSelectedItem::<Identity, OFFSET>,
                             SelectedItems: SelectedItems::<Identity, OFFSET>,
@@ -121913,8 +124386,18 @@ pub mod Microsoft {
                 #[doc(hidden)]
                 pub struct ITreeView2_Vtbl {
                     pub base__: windows_core::IInspectable_Vtbl,
-                    NodeFromContainer: usize,
-                    ContainerFromNode: usize,
+                    pub NodeFromContainer: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub ContainerFromNode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub ItemFromContainer: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut core::ffi::c_void,
@@ -121947,8 +124430,16 @@ pub mod Microsoft {
                         bool,
                     )
                         -> windows_core::HRESULT,
-                    ItemTemplate: usize,
-                    SetItemTemplate: usize,
+                    pub ItemTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetItemTemplate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     ItemTemplateSelector: usize,
                     SetItemTemplateSelector: usize,
                     pub ItemContainerStyle: unsafe extern "system" fn(
@@ -121987,8 +124478,16 @@ pub mod Microsoft {
                             *mut core::ffi::c_void,
                             i64,
                         ) -> windows_core::HRESULT,
-                    SelectedNode: usize,
-                    SetSelectedNode: usize,
+                    pub SelectedNode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetSelectedNode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     pub SelectedItem: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
@@ -122018,10 +124517,43 @@ pub mod Microsoft {
                     const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ITreeView3";
                 }
                 pub trait ITreeView3_Impl: windows_core::IUnknownImpl {
+                    fn SelectionChanged(
+                        &self,
+                        handler: windows_core::Ref<
+                            '_,
+                            windows::Foundation::TypedEventHandler<
+                                TreeView,
+                                TreeViewSelectionChangedEventArgs,
+                            >,
+                        >,
+                    ) -> windows_core::Result<i64>;
                     fn RemoveSelectionChanged(&self, token: i64) -> windows_core::Result<()>;
                 }
                 impl ITreeView3_Vtbl {
                     pub const fn new<Identity: ITreeView3_Impl, const OFFSET: isize>() -> Self {
+                        unsafe extern "system" fn SelectionChanged<
+                            Identity: ITreeView3_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeView3_Impl::SelectionChanged(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
                         unsafe extern "system" fn RemoveSelectionChanged<
                             Identity: ITreeView3_Impl,
                             const OFFSET: isize,
@@ -122041,7 +124573,7 @@ pub mod Microsoft {
                                 ITreeView3,
                                 OFFSET,
                             >(),
-                            SelectionChanged: 0,
+                            SelectionChanged: SelectionChanged::<Identity, OFFSET>,
                             RemoveSelectionChanged: RemoveSelectionChanged::<Identity, OFFSET>,
                         }
                     }
@@ -122053,10 +124585,271 @@ pub mod Microsoft {
                 #[doc(hidden)]
                 pub struct ITreeView3_Vtbl {
                     pub base__: windows_core::IInspectable_Vtbl,
-                    SelectionChanged: usize,
+                    pub SelectionChanged: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
                     pub RemoveSelectionChanged: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         i64,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ITreeViewCollapsedEventArgs,
+                    ITreeViewCollapsedEventArgs_Vtbl,
+                    0x8ee00b59_42c6_5d73_809f_68710088e5a5
+                );
+                impl windows_core::RuntimeType for ITreeViewCollapsedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITreeViewCollapsedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.ITreeViewCollapsedEventArgs";
+                }
+                pub trait ITreeViewCollapsedEventArgs_Impl: windows_core::IUnknownImpl {
+                    fn Node(&self) -> windows_core::Result<TreeViewNode>;
+                }
+                impl ITreeViewCollapsedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: ITreeViewCollapsedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn Node<
+                            Identity: ITreeViewCollapsedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewCollapsedEventArgs_Impl::Node(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITreeViewCollapsedEventArgs,
+                                OFFSET,
+                            >(),
+                            Node: Node::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITreeViewCollapsedEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITreeViewCollapsedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub Node: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ITreeViewCollapsedEventArgs2,
+                    ITreeViewCollapsedEventArgs2_Vtbl,
+                    0x77804a23_9feb_5c57_9c95_4dd984267217
+                );
+                impl windows_core::RuntimeType for ITreeViewCollapsedEventArgs2 {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITreeViewCollapsedEventArgs2 {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.ITreeViewCollapsedEventArgs2";
+                }
+                pub trait ITreeViewCollapsedEventArgs2_Impl: windows_core::IUnknownImpl {
+                    fn Item(&self) -> windows_core::Result<windows_core::IInspectable>;
+                }
+                impl ITreeViewCollapsedEventArgs2_Vtbl {
+                    pub const fn new<
+                        Identity: ITreeViewCollapsedEventArgs2_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn Item<
+                            Identity: ITreeViewCollapsedEventArgs2_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewCollapsedEventArgs2_Impl::Item(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITreeViewCollapsedEventArgs2,
+                                OFFSET,
+                            >(),
+                            Item: Item::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITreeViewCollapsedEventArgs2 as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITreeViewCollapsedEventArgs2_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub Item: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ITreeViewExpandingEventArgs,
+                    ITreeViewExpandingEventArgs_Vtbl,
+                    0xbd769ef7_cadc_5334_93ad_c9bbe820643d
+                );
+                impl windows_core::RuntimeType for ITreeViewExpandingEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITreeViewExpandingEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.ITreeViewExpandingEventArgs";
+                }
+                pub trait ITreeViewExpandingEventArgs_Impl: windows_core::IUnknownImpl {
+                    fn Node(&self) -> windows_core::Result<TreeViewNode>;
+                }
+                impl ITreeViewExpandingEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: ITreeViewExpandingEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn Node<
+                            Identity: ITreeViewExpandingEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewExpandingEventArgs_Impl::Node(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITreeViewExpandingEventArgs,
+                                OFFSET,
+                            >(),
+                            Node: Node::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITreeViewExpandingEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITreeViewExpandingEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub Node: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ITreeViewExpandingEventArgs2,
+                    ITreeViewExpandingEventArgs2_Vtbl,
+                    0xed7840e5_dbf5_5937_89dd_997a6fde0d5c
+                );
+                impl windows_core::RuntimeType for ITreeViewExpandingEventArgs2 {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITreeViewExpandingEventArgs2 {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.ITreeViewExpandingEventArgs2";
+                }
+                pub trait ITreeViewExpandingEventArgs2_Impl: windows_core::IUnknownImpl {
+                    fn Item(&self) -> windows_core::Result<windows_core::IInspectable>;
+                }
+                impl ITreeViewExpandingEventArgs2_Vtbl {
+                    pub const fn new<
+                        Identity: ITreeViewExpandingEventArgs2_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn Item<
+                            Identity: ITreeViewExpandingEventArgs2_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewExpandingEventArgs2_Impl::Item(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITreeViewExpandingEventArgs2,
+                                OFFSET,
+                            >(),
+                            Item: Item::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITreeViewExpandingEventArgs2 as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITreeViewExpandingEventArgs2_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub Item: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
                 }
@@ -122129,6 +124922,508 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                         *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ITreeViewNode,
+                    ITreeViewNode_Vtbl,
+                    0x00378a74_790b_5328_8afa_7d65e22da426
+                );
+                impl windows_core::RuntimeType for ITreeViewNode {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITreeViewNode {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ITreeViewNode";
+                }
+                pub trait ITreeViewNode_Impl: windows_core::IUnknownImpl {
+                    fn Content(&self) -> windows_core::Result<windows_core::IInspectable>;
+                    fn SetContent(
+                        &self,
+                        value: windows_core::Ref<'_, windows_core::IInspectable>,
+                    ) -> windows_core::Result<()>;
+                    fn Parent(&self) -> windows_core::Result<TreeViewNode>;
+                    fn IsExpanded(&self) -> windows_core::Result<bool>;
+                    fn SetIsExpanded(&self, value: bool) -> windows_core::Result<()>;
+                    fn HasChildren(&self) -> windows_core::Result<bool>;
+                    fn Depth(&self) -> windows_core::Result<i32>;
+                    fn HasUnrealizedChildren(&self) -> windows_core::Result<bool>;
+                    fn SetHasUnrealizedChildren(&self, value: bool) -> windows_core::Result<()>;
+                    fn Children(
+                        &self,
+                    ) -> windows_core::Result<windows_collections::IVector<TreeViewNode>>;
+                }
+                impl ITreeViewNode_Vtbl {
+                    pub const fn new<Identity: ITreeViewNode_Impl, const OFFSET: isize>() -> Self {
+                        unsafe extern "system" fn Content<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewNode_Impl::Content(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetContent<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITreeViewNode_Impl::SetContent(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn Parent<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewNode_Impl::Parent(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn IsExpanded<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewNode_Impl::IsExpanded(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetIsExpanded<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITreeViewNode_Impl::SetIsExpanded(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn HasChildren<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewNode_Impl::HasChildren(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn Depth<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut i32,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewNode_Impl::Depth(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn HasUnrealizedChildren<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewNode_Impl::HasUnrealizedChildren(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHasUnrealizedChildren<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ITreeViewNode_Impl::SetHasUnrealizedChildren(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn Children<
+                            Identity: ITreeViewNode_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewNode_Impl::Children(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITreeViewNode,
+                                OFFSET,
+                            >(),
+                            Content: Content::<Identity, OFFSET>,
+                            SetContent: SetContent::<Identity, OFFSET>,
+                            Parent: Parent::<Identity, OFFSET>,
+                            IsExpanded: IsExpanded::<Identity, OFFSET>,
+                            SetIsExpanded: SetIsExpanded::<Identity, OFFSET>,
+                            HasChildren: HasChildren::<Identity, OFFSET>,
+                            Depth: Depth::<Identity, OFFSET>,
+                            HasUnrealizedChildren: HasUnrealizedChildren::<Identity, OFFSET>,
+                            SetHasUnrealizedChildren: SetHasUnrealizedChildren::<Identity, OFFSET>,
+                            Children: Children::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITreeViewNode as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITreeViewNode_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub Content: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetContent: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub Parent: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub IsExpanded: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetIsExpanded: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub HasChildren: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub Depth: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut i32,
+                    )
+                        -> windows_core::HRESULT,
+                    pub HasUnrealizedChildren: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHasUnrealizedChildren:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            bool,
+                        ) -> windows_core::HRESULT,
+                    pub Children: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ITreeViewNodeFactory,
+                    ITreeViewNodeFactory_Vtbl,
+                    0xc105a5e5_cea8_5efd_8be8_3d89b54cbd5f
+                );
+                impl windows_core::RuntimeType for ITreeViewNodeFactory {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITreeViewNodeFactory {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ITreeViewNodeFactory";
+                }
+                pub trait ITreeViewNodeFactory_Impl: windows_core::IUnknownImpl {
+                    fn CreateInstance(
+                        &self,
+                        baseInterface: windows_core::Ref<'_, windows_core::IInspectable>,
+                        innerInterface: windows_core::OutRef<'_, windows_core::IInspectable>,
+                    ) -> windows_core::Result<TreeViewNode>;
+                }
+                impl ITreeViewNodeFactory_Vtbl {
+                    pub const fn new<Identity: ITreeViewNodeFactory_Impl, const OFFSET: isize>(
+                    ) -> Self {
+                        unsafe extern "system" fn CreateInstance<
+                            Identity: ITreeViewNodeFactory_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            baseinterface: *mut core::ffi::c_void,
+                            innerinterface: *mut *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewNodeFactory_Impl::CreateInstance(
+                                    this,
+                                    core::mem::transmute_copy(&baseinterface),
+                                    core::mem::transmute_copy(&innerinterface),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITreeViewNodeFactory,
+                                OFFSET,
+                            >(),
+                            CreateInstance: CreateInstance::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITreeViewNodeFactory as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITreeViewNodeFactory_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub CreateInstance: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ITreeViewNodeStatics,
+                    ITreeViewNodeStatics_Vtbl,
+                    0xf5bb217c_66b9_5b62_b2d6_fb47843c8f6f
+                );
+                impl windows_core::RuntimeType for ITreeViewNodeStatics {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITreeViewNodeStatics {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ITreeViewNodeStatics";
+                }
+                pub trait ITreeViewNodeStatics_Impl: windows_core::IUnknownImpl {}
+                impl ITreeViewNodeStatics_Vtbl {
+                    pub const fn new<Identity: ITreeViewNodeStatics_Impl, const OFFSET: isize>(
+                    ) -> Self {
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITreeViewNodeStatics,
+                                OFFSET,
+                            >(),
+                            ContentProperty: 0,
+                            DepthProperty: 0,
+                            IsExpandedProperty: 0,
+                            HasChildrenProperty: 0,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITreeViewNodeStatics as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITreeViewNodeStatics_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    ContentProperty: usize,
+                    DepthProperty: usize,
+                    IsExpandedProperty: usize,
+                    HasChildrenProperty: usize,
+                }
+                windows_core::imp::define_interface!(
+                    ITreeViewSelectionChangedEventArgs,
+                    ITreeViewSelectionChangedEventArgs_Vtbl,
+                    0x664190f3_7133_5599_b41c_1d54cd2cb930
+                );
+                impl windows_core::RuntimeType for ITreeViewSelectionChangedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITreeViewSelectionChangedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.ITreeViewSelectionChangedEventArgs";
+                }
+                pub trait ITreeViewSelectionChangedEventArgs_Impl:
+                    windows_core::IUnknownImpl
+                {
+                    fn AddedItems(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVector<windows_core::IInspectable>,
+                    >;
+                    fn RemovedItems(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVector<windows_core::IInspectable>,
+                    >;
+                }
+                impl ITreeViewSelectionChangedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: ITreeViewSelectionChangedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn AddedItems<
+                            Identity: ITreeViewSelectionChangedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewSelectionChangedEventArgs_Impl::AddedItems(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn RemovedItems<
+                            Identity: ITreeViewSelectionChangedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITreeViewSelectionChangedEventArgs_Impl::RemovedItems(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITreeViewSelectionChangedEventArgs,
+                                OFFSET,
+                            >(),
+                            AddedItems: AddedItems::<Identity, OFFSET>,
+                            RemovedItems: RemovedItems::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITreeViewSelectionChangedEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITreeViewSelectionChangedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub AddedItems: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub RemovedItems: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
                         *mut *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
@@ -127192,6 +130487,30 @@ pub mod Microsoft {
                             .and_then(|| windows_core::Type::from_abi(result__))
                         }
                     }
+                    pub fn ItemTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetItemTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn DisplayMemberPath(&self) -> windows_core::Result<windows_core::HSTRING> {
                         let this = self;
                         unsafe {
@@ -127390,6 +130709,25 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 olditemcontainerstyle.param().abi(),
                                 newitemcontainerstyle.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnItemTemplateChanged<P0, P1>(
+                        &self,
+                        olditemtemplate: P0,
+                        newitemtemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnItemTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                olditemtemplate.param().abi(),
+                                newitemtemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -130901,6 +134239,30 @@ pub mod Microsoft {
                             .and_then(|| windows_core::Type::from_abi(result__))
                         }
                     }
+                    pub fn ItemTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetItemTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn DisplayMemberPath(&self) -> windows_core::Result<windows_core::HSTRING> {
                         let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
                         unsafe {
@@ -131087,6 +134449,25 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 olditemcontainerstyle.param().abi(),
                                 newitemcontainerstyle.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnItemTemplateChanged<P0, P1>(
+                        &self,
+                        olditemtemplate: P0,
+                        newitemtemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnItemTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                olditemtemplate.param().abi(),
+                                newitemtemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -133095,6 +136476,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -133122,6 +136527,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -138262,6 +141687,30 @@ pub mod Microsoft {
                             .and_then(|| windows_core::Type::from_abi(result__))
                         }
                     }
+                    pub fn ItemTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetItemTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn DisplayMemberPath(&self) -> windows_core::Result<windows_core::HSTRING> {
                         let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
                         unsafe {
@@ -138448,6 +141897,25 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 olditemcontainerstyle.param().abi(),
                                 newitemcontainerstyle.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnItemTemplateChanged<P0, P1>(
+                        &self,
+                        olditemtemplate: P0,
+                        newitemtemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnItemTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                olditemtemplate.param().abi(),
+                                newitemtemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -138809,6 +142277,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn Footer(&self) -> windows_core::Result<windows_core::IInspectable> {
                         let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
                         unsafe {
@@ -138827,6 +142319,30 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetFooter)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FooterTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FooterTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetFooterTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFooterTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -142521,6 +146037,30 @@ pub mod Microsoft {
                             .and_then(|| windows_core::Type::from_abi(result__))
                         }
                     }
+                    pub fn ItemTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetItemTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn DisplayMemberPath(&self) -> windows_core::Result<windows_core::HSTRING> {
                         let this = &windows_core::Interface::cast::<IItemsControl>(self)?;
                         unsafe {
@@ -142707,6 +146247,25 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 olditemcontainerstyle.param().abi(),
                                 newitemcontainerstyle.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnItemTemplateChanged<P0, P1>(
+                        &self,
+                        olditemtemplate: P0,
+                        newitemtemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IItemsControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnItemTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                olditemtemplate.param().abi(),
+                                newitemtemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -143068,6 +146627,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn Footer(&self) -> windows_core::Result<windows_core::IInspectable> {
                         let this = self;
                         unsafe {
@@ -143086,6 +146669,30 @@ pub mod Microsoft {
                         let this = self;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetFooter)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FooterTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FooterTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetFooterTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFooterTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -149118,6 +152725,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -149145,6 +152776,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -150944,6 +154595,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn IsSettingsVisible(&self) -> windows_core::Result<bool> {
                         let this = self;
                         unsafe {
@@ -151173,6 +154848,30 @@ pub mod Microsoft {
                         let this = self;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetAutoSuggestBox)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MenuItemTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MenuItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetMenuItemTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMenuItemTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -155109,6 +158808,30 @@ pub mod Microsoft {
                         let this = self;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetHeader)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -161779,6 +165502,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn PlaceholderText(&self) -> windows_core::Result<windows_core::HSTRING> {
                         let this = self;
                         unsafe {
@@ -167449,6 +171196,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -167476,6 +171247,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -171484,6 +175275,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<IContentControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ContentTemplateRoot(&self) -> windows_core::Result<super::UIElement> {
                         let this = &windows_core::Interface::cast::<IContentControl>(self)?;
                         unsafe {
@@ -171511,6 +175326,26 @@ pub mod Microsoft {
                                 windows_core::Interface::as_raw(this),
                                 oldcontent.param().abi(),
                                 newcontent.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnContentTemplateChanged<P0, P1>(
+                        &self,
+                        oldcontenttemplate: P0,
+                        newcontenttemplate: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                        P1: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<IContentControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                windows_core::Interface::as_raw(this),
+                                oldcontenttemplate.param().abi(),
+                                newcontenttemplate.param().abi(),
                             )
                             .ok()
                         }
@@ -178412,6 +182247,30 @@ pub mod Microsoft {
                         let this = self;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetHeader)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -188421,6 +192280,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn PlaceholderText(&self) -> windows_core::Result<windows_core::HSTRING> {
                         let this = self;
                         unsafe {
@@ -192563,6 +196446,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ClockIdentifier(&self) -> windows_core::Result<windows_core::HSTRING> {
                         let this = self;
                         unsafe {
@@ -196130,6 +200037,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn HeaderTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHeaderTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeaderTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn OnContent(&self) -> windows_core::Result<windows_core::IInspectable> {
                         let this = self;
                         unsafe {
@@ -196154,6 +200085,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn OnContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OnContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetOnContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetOnContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn OffContent(&self) -> windows_core::Result<windows_core::IInspectable> {
                         let this = self;
                         unsafe {
@@ -196172,6 +200127,30 @@ pub mod Microsoft {
                         let this = self;
                         unsafe {
                             (windows_core::Interface::vtable(this).SetOffContent)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OffContentTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OffContentTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetOffContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetOffContentTemplate)(
                                 windows_core::Interface::as_raw(this),
                                 value.param().abi(),
                             )
@@ -199630,6 +203609,84 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn RootNodes(
+                        &self,
+                    ) -> windows_core::Result<windows_collections::IVector<TreeViewNode>>
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).RootNodes)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SelectionMode(&self) -> windows_core::Result<TreeViewSelectionMode> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectionMode)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetSelectionMode(
+                        &self,
+                        value: TreeViewSelectionMode,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectionMode)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedNodes(
+                        &self,
+                    ) -> windows_core::Result<windows_collections::IVector<TreeViewNode>>
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedNodes)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn Expand<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<TreeViewNode>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).Expand)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Collapse<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<TreeViewNode>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).Collapse)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn SelectAll(&self) -> windows_core::Result<()> {
                         let this = self;
                         unsafe {
@@ -199649,6 +203706,26 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn Expanding<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                TreeView,
+                                TreeViewExpandingEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Expanding)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveExpanding(&self, token: i64) -> windows_core::Result<()> {
                         let this = self;
                         unsafe {
@@ -199659,6 +203736,26 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn Collapsed<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                TreeView,
+                                TreeViewCollapsedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Collapsed)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveCollapsed(&self, token: i64) -> windows_core::Result<()> {
                         let this = self;
                         unsafe {
@@ -199667,6 +203764,42 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn NodeFromContainer<P0>(
+                        &self,
+                        container: P0,
+                    ) -> windows_core::Result<TreeViewNode>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).NodeFromContainer)(
+                                windows_core::Interface::as_raw(this),
+                                container.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn ContainerFromNode<P0>(
+                        &self,
+                        node: P0,
+                    ) -> windows_core::Result<super::DependencyObject>
+                    where
+                        P0: windows_core::Param<TreeViewNode>,
+                    {
+                        let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContainerFromNode)(
+                                windows_core::Interface::as_raw(this),
+                                node.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
                         }
                     }
                     pub fn ItemFromContainer<P0>(
@@ -199747,6 +203880,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ItemTemplate(&self) -> windows_core::Result<super::DataTemplate> {
+                        let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetItemTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DataTemplate>,
+                    {
+                        let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetItemTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn ItemContainerStyle(&self) -> windows_core::Result<super::Style> {
                         let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
                         unsafe {
@@ -199815,6 +203972,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn SelectedNode(&self) -> windows_core::Result<TreeViewNode> {
+                        let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedNode)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSelectedNode<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<TreeViewNode>,
+                    {
+                        let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectedNode)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn SelectedItem(&self) -> windows_core::Result<windows_core::IInspectable> {
                         let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
                         unsafe {
@@ -199852,6 +204033,26 @@ pub mod Microsoft {
                                 &mut result__,
                             )
                             .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SelectionChanged<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                TreeView,
+                                TreeViewSelectionChangedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<ITreeView3>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectionChanged)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveSelectionChanged(&self, token: i64) -> windows_core::Result<()> {
@@ -201606,6 +205807,390 @@ pub mod Microsoft {
                 unsafe impl Sync for TreeView {}
                 #[repr(transparent)]
                 #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct TreeViewCollapsedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    TreeViewCollapsedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl TreeViewCollapsedEventArgs {
+                    pub fn Node(&self) -> windows_core::Result<TreeViewNode> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Node)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn Item(&self) -> windows_core::Result<windows_core::IInspectable> {
+                        let this =
+                            &windows_core::Interface::cast::<ITreeViewCollapsedEventArgs2>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Item)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for TreeViewCollapsedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            ITreeViewCollapsedEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for TreeViewCollapsedEventArgs {
+                    type Vtable = <ITreeViewCollapsedEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <ITreeViewCollapsedEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for TreeViewCollapsedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.TreeViewCollapsedEventArgs";
+                }
+                unsafe impl Send for TreeViewCollapsedEventArgs {}
+                unsafe impl Sync for TreeViewCollapsedEventArgs {}
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct TreeViewExpandingEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    TreeViewExpandingEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl TreeViewExpandingEventArgs {
+                    pub fn Node(&self) -> windows_core::Result<TreeViewNode> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Node)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn Item(&self) -> windows_core::Result<windows_core::IInspectable> {
+                        let this =
+                            &windows_core::Interface::cast::<ITreeViewExpandingEventArgs2>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Item)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for TreeViewExpandingEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            ITreeViewExpandingEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for TreeViewExpandingEventArgs {
+                    type Vtable = <ITreeViewExpandingEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <ITreeViewExpandingEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for TreeViewExpandingEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.TreeViewExpandingEventArgs";
+                }
+                unsafe impl Send for TreeViewExpandingEventArgs {}
+                unsafe impl Sync for TreeViewExpandingEventArgs {}
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct TreeViewNode(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    TreeViewNode,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                windows_core::imp::required_hierarchy!(TreeViewNode, super::DependencyObject);
+                impl TreeViewNode {
+                    pub fn Dispatcher(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Core::CoreDispatcher>
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Dispatcher)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn DispatcherQueue(
+                        &self,
+                    ) -> windows_core::Result<super::super::Dispatching::DispatcherQueue>
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DispatcherQueue)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn Content(&self) -> windows_core::Result<windows_core::IInspectable> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Content)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContent<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<windows_core::IInspectable>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContent)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Parent(&self) -> windows_core::Result<TreeViewNode> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Parent)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn IsExpanded(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsExpanded)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsExpanded(&self, value: bool) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsExpanded)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HasChildren(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HasChildren)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn Depth(&self) -> windows_core::Result<i32> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Depth)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn HasUnrealizedChildren(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HasUnrealizedChildren)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetHasUnrealizedChildren(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHasUnrealizedChildren)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Children(
+                        &self,
+                    ) -> windows_core::Result<windows_collections::IVector<TreeViewNode>>
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Children)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn new() -> windows_core::Result<TreeViewNode> {
+                        Self::ITreeViewNodeFactory(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CreateInstance)(
+                                windows_core::Interface::as_raw(this),
+                                core::ptr::null_mut(),
+                                &mut core::ptr::null_mut(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    fn ITreeViewNodeFactory<
+                        R,
+                        F: FnOnce(&ITreeViewNodeFactory) -> windows_core::Result<R>,
+                    >(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<
+                            TreeViewNode,
+                            ITreeViewNodeFactory,
+                        > = windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                    fn ITreeViewNodeStatics<
+                        R,
+                        F: FnOnce(&ITreeViewNodeStatics) -> windows_core::Result<R>,
+                    >(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<
+                            TreeViewNode,
+                            ITreeViewNodeStatics,
+                        > = windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                }
+                impl windows_core::RuntimeType for TreeViewNode {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<Self, ITreeViewNode>();
+                }
+                unsafe impl windows_core::Interface for TreeViewNode {
+                    type Vtable = <ITreeViewNode as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID = <ITreeViewNode as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for TreeViewNode {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TreeViewNode";
+                }
+                unsafe impl Send for TreeViewNode {}
+                unsafe impl Sync for TreeViewNode {}
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct TreeViewSelectionChangedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    TreeViewSelectionChangedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl TreeViewSelectionChangedEventArgs {
+                    pub fn AddedItems(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVector<windows_core::IInspectable>,
+                    > {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AddedItems)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn RemovedItems(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVector<windows_core::IInspectable>,
+                    > {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).RemovedItems)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for TreeViewSelectionChangedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            ITreeViewSelectionChangedEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for TreeViewSelectionChangedEventArgs {
+                    type Vtable =
+                        <ITreeViewSelectionChangedEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <ITreeViewSelectionChangedEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for TreeViewSelectionChangedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.TreeViewSelectionChangedEventArgs";
+                }
+                unsafe impl Send for TreeViewSelectionChangedEventArgs {}
+                unsafe impl Sync for TreeViewSelectionChangedEventArgs {}
+                #[repr(transparent)]
+                #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+                pub struct TreeViewSelectionMode(pub i32);
+                impl TreeViewSelectionMode {
+                    pub const None: Self = Self(0i32);
+                    pub const Single: Self = Self(1i32);
+                    pub const Multiple: Self = Self(2i32);
+                }
+                impl windows_core::TypeKind for TreeViewSelectionMode {
+                    type TypeKind = windows_core::CopyType;
+                }
+                impl windows_core::RuntimeType for TreeViewSelectionMode {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::from_slice(
+                            b"enum(Microsoft.UI.Xaml.Controls.TreeViewSelectionMode;i4)",
+                        );
+                }
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
                 pub struct UIElementCollection(windows_core::IUnknown);
                 windows_core::imp::interface_hierarchy!(
                     UIElementCollection,
@@ -202325,6 +206910,35 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn ContentTemplate(
+                            &self,
+                        ) -> windows_core::Result<super::super::DataTemplate>
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IContentControl>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ContentTemplate)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<super::super::DataTemplate>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IContentControl>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                    windows_core::Interface::as_raw(this),
+                                    value.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
                         pub fn ContentTemplateRoot(
                             &self,
                         ) -> windows_core::Result<super::super::UIElement> {
@@ -202356,6 +206970,27 @@ pub mod Microsoft {
                                     windows_core::Interface::as_raw(this),
                                     oldcontent.param().abi(),
                                     newcontent.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OnContentTemplateChanged<P0, P1>(
+                            &self,
+                            oldcontenttemplate: P0,
+                            newcontenttemplate: P1,
+                        ) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<super::super::DataTemplate>,
+                            P1: windows_core::Param<super::super::DataTemplate>,
+                        {
+                            let this = &windows_core::Interface::cast::<
+                                super::IContentControlOverrides,
+                            >(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                    windows_core::Interface::as_raw(this),
+                                    oldcontenttemplate.param().abi(),
+                                    newcontenttemplate.param().abi(),
                                 )
                                 .ok()
                             }
@@ -220654,6 +225289,35 @@ pub mod Microsoft {
                                 .and_then(|| windows_core::Type::from_abi(result__))
                             }
                         }
+                        pub fn ItemTemplate(
+                            &self,
+                        ) -> windows_core::Result<super::super::DataTemplate>
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IItemsControl>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ItemTemplate)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn SetItemTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<super::super::DataTemplate>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IItemsControl>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetItemTemplate)(
+                                    windows_core::Interface::as_raw(this),
+                                    value.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
                         pub fn DisplayMemberPath(
                             &self,
                         ) -> windows_core::Result<windows_core::HSTRING> {
@@ -220870,6 +225534,27 @@ pub mod Microsoft {
                                     windows_core::Interface::as_raw(this),
                                     olditemcontainerstyle.param().abi(),
                                     newitemcontainerstyle.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OnItemTemplateChanged<P0, P1>(
+                            &self,
+                            olditemtemplate: P0,
+                            newitemtemplate: P1,
+                        ) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<super::super::DataTemplate>,
+                            P1: windows_core::Param<super::super::DataTemplate>,
+                        {
+                            let this = &windows_core::Interface::cast::<
+                                super::IItemsControlOverrides,
+                            >(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnItemTemplateChanged)(
+                                    windows_core::Interface::as_raw(this),
+                                    olditemtemplate.param().abi(),
+                                    newitemtemplate.param().abi(),
                                 )
                                 .ok()
                             }
@@ -223049,6 +227734,35 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn ContentTemplate(
+                            &self,
+                        ) -> windows_core::Result<super::super::DataTemplate>
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IContentControl>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ContentTemplate)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<super::super::DataTemplate>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IContentControl>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                    windows_core::Interface::as_raw(this),
+                                    value.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
                         pub fn ContentTemplateRoot(
                             &self,
                         ) -> windows_core::Result<super::super::UIElement> {
@@ -223080,6 +227794,27 @@ pub mod Microsoft {
                                     windows_core::Interface::as_raw(this),
                                     oldcontent.param().abi(),
                                     newcontent.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OnContentTemplateChanged<P0, P1>(
+                            &self,
+                            oldcontenttemplate: P0,
+                            newcontenttemplate: P1,
+                        ) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<super::super::DataTemplate>,
+                            P1: windows_core::Param<super::super::DataTemplate>,
+                        {
+                            let this = &windows_core::Interface::cast::<
+                                super::IContentControlOverrides,
+                            >(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                    windows_core::Interface::as_raw(this),
+                                    oldcontenttemplate.param().abi(),
+                                    newcontenttemplate.param().abi(),
                                 )
                                 .ok()
                             }
@@ -226996,6 +231731,35 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn ContentTemplate(
+                            &self,
+                        ) -> windows_core::Result<super::super::DataTemplate>
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IContentControl>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ContentTemplate)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn SetContentTemplate<P0>(&self, value: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<super::super::DataTemplate>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IContentControl>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetContentTemplate)(
+                                    windows_core::Interface::as_raw(this),
+                                    value.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
                         pub fn ContentTemplateRoot(
                             &self,
                         ) -> windows_core::Result<super::super::UIElement> {
@@ -227027,6 +231791,27 @@ pub mod Microsoft {
                                     windows_core::Interface::as_raw(this),
                                     oldcontent.param().abi(),
                                     newcontent.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OnContentTemplateChanged<P0, P1>(
+                            &self,
+                            oldcontenttemplate: P0,
+                            newcontenttemplate: P1,
+                        ) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<super::super::DataTemplate>,
+                            P1: windows_core::Param<super::super::DataTemplate>,
+                        {
+                            let this = &windows_core::Interface::cast::<
+                                super::IContentControlOverrides,
+                            >(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnContentTemplateChanged)(
+                                    windows_core::Interface::as_raw(this),
+                                    oldcontenttemplate.param().abi(),
+                                    newcontenttemplate.param().abi(),
                                 )
                                 .ok()
                             }
@@ -234327,6 +239112,343 @@ pub mod Microsoft {
                             *mut core::ffi::c_void,
                         ) -> windows_core::HRESULT,
                 }
+                windows_core::imp::define_interface!(
+                    IVisualTreeHelper,
+                    IVisualTreeHelper_Vtbl,
+                    0x5f69ac1e_6504_5e3f_a11c_87684c1db814
+                );
+                impl windows_core::RuntimeType for IVisualTreeHelper {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IVisualTreeHelper {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Media.IVisualTreeHelper";
+                }
+                pub trait IVisualTreeHelper_Impl: windows_core::IUnknownImpl {}
+                impl IVisualTreeHelper_Vtbl {
+                    pub const fn new<Identity: IVisualTreeHelper_Impl, const OFFSET: isize>() -> Self
+                    {
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                IVisualTreeHelper,
+                                OFFSET,
+                            >(),
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IVisualTreeHelper as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IVisualTreeHelper_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                }
+                windows_core::imp::define_interface!(
+                    IVisualTreeHelperStatics,
+                    IVisualTreeHelperStatics_Vtbl,
+                    0x5aece43c_7651_5bb5_855c_2198496e455e
+                );
+                impl windows_core::RuntimeType for IVisualTreeHelperStatics {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IVisualTreeHelperStatics {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics";
+                }
+                pub trait IVisualTreeHelperStatics_Impl: windows_core::IUnknownImpl {
+                    fn FindElementsInHostCoordinatesPoint(
+                        &self,
+                        intersectingPoint: &windows::Foundation::Point,
+                        subtree: windows_core::Ref<'_, super::UIElement>,
+                    ) -> windows_core::Result<windows_collections::IIterable<super::UIElement>>;
+                    fn FindElementsInHostCoordinatesRect(
+                        &self,
+                        intersectingRect: &windows::Foundation::Rect,
+                        subtree: windows_core::Ref<'_, super::UIElement>,
+                    ) -> windows_core::Result<windows_collections::IIterable<super::UIElement>>;
+                    fn FindAllElementsInHostCoordinatesPoint(
+                        &self,
+                        intersectingPoint: &windows::Foundation::Point,
+                        subtree: windows_core::Ref<'_, super::UIElement>,
+                        includeAllElements: bool,
+                    ) -> windows_core::Result<windows_collections::IIterable<super::UIElement>>;
+                    fn FindAllElementsInHostCoordinatesRect(
+                        &self,
+                        intersectingRect: &windows::Foundation::Rect,
+                        subtree: windows_core::Ref<'_, super::UIElement>,
+                        includeAllElements: bool,
+                    ) -> windows_core::Result<windows_collections::IIterable<super::UIElement>>;
+                    fn GetChild(
+                        &self,
+                        reference: windows_core::Ref<'_, super::DependencyObject>,
+                        childIndex: i32,
+                    ) -> windows_core::Result<super::DependencyObject>;
+                    fn GetChildrenCount(
+                        &self,
+                        reference: windows_core::Ref<'_, super::DependencyObject>,
+                    ) -> windows_core::Result<i32>;
+                    fn GetParent(
+                        &self,
+                        reference: windows_core::Ref<'_, super::DependencyObject>,
+                    ) -> windows_core::Result<super::DependencyObject>;
+                    fn DisconnectChildrenRecursive(
+                        &self,
+                        element: windows_core::Ref<'_, super::UIElement>,
+                    ) -> windows_core::Result<()>;
+                }
+                impl IVisualTreeHelperStatics_Vtbl {
+                    pub const fn new<
+                        Identity: IVisualTreeHelperStatics_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn FindElementsInHostCoordinatesPoint<
+                            Identity: IVisualTreeHelperStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            intersectingpoint: windows::Foundation::Point,
+                            subtree: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IVisualTreeHelperStatics_Impl:: FindElementsInHostCoordinatesPoint ( this , core::mem::transmute ( & intersectingpoint ) , core::mem::transmute_copy ( & subtree ) , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn FindElementsInHostCoordinatesRect<
+                            Identity: IVisualTreeHelperStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            intersectingrect: windows::Foundation::Rect,
+                            subtree: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IVisualTreeHelperStatics_Impl:: FindElementsInHostCoordinatesRect ( this , core::mem::transmute ( & intersectingrect ) , core::mem::transmute_copy ( & subtree ) , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn FindAllElementsInHostCoordinatesPoint<
+                            Identity: IVisualTreeHelperStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            intersectingpoint: windows::Foundation::Point,
+                            subtree: *mut core::ffi::c_void,
+                            includeallelements: bool,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IVisualTreeHelperStatics_Impl:: FindAllElementsInHostCoordinatesPoint ( this , core::mem::transmute ( & intersectingpoint ) , core::mem::transmute_copy ( & subtree ) , includeallelements , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn FindAllElementsInHostCoordinatesRect<
+                            Identity: IVisualTreeHelperStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            intersectingrect: windows::Foundation::Rect,
+                            subtree: *mut core::ffi::c_void,
+                            includeallelements: bool,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IVisualTreeHelperStatics_Impl:: FindAllElementsInHostCoordinatesRect ( this , core::mem::transmute ( & intersectingrect ) , core::mem::transmute_copy ( & subtree ) , includeallelements , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn GetChild<
+                            Identity: IVisualTreeHelperStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            reference: *mut core::ffi::c_void,
+                            childindex: i32,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IVisualTreeHelperStatics_Impl::GetChild(
+                                    this,
+                                    core::mem::transmute_copy(&reference),
+                                    childindex,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn GetChildrenCount<
+                            Identity: IVisualTreeHelperStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            reference: *mut core::ffi::c_void,
+                            result__: *mut i32,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IVisualTreeHelperStatics_Impl::GetChildrenCount(
+                                    this,
+                                    core::mem::transmute_copy(&reference),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn GetParent<
+                            Identity: IVisualTreeHelperStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            reference: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IVisualTreeHelperStatics_Impl::GetParent(
+                                    this,
+                                    core::mem::transmute_copy(&reference),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn DisconnectChildrenRecursive<
+                            Identity: IVisualTreeHelperStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            element: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IVisualTreeHelperStatics_Impl::DisconnectChildrenRecursive(
+                                    this,
+                                    core::mem::transmute_copy(&element),
+                                )
+                                .into()
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                IVisualTreeHelperStatics,
+                                OFFSET,
+                            >(),
+                            FindElementsInHostCoordinatesPoint: FindElementsInHostCoordinatesPoint::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FindElementsInHostCoordinatesRect: FindElementsInHostCoordinatesRect::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FindAllElementsInHostCoordinatesPoint:
+                                FindAllElementsInHostCoordinatesPoint::<Identity, OFFSET>,
+                            FindAllElementsInHostCoordinatesRect:
+                                FindAllElementsInHostCoordinatesRect::<Identity, OFFSET>,
+                            GetChild: GetChild::<Identity, OFFSET>,
+                            GetChildrenCount: GetChildrenCount::<Identity, OFFSET>,
+                            GetParent: GetParent::<Identity, OFFSET>,
+                            DisconnectChildrenRecursive: DisconnectChildrenRecursive::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            GetOpenPopups: 0,
+                            GetOpenPopupsForXamlRoot: 0,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IVisualTreeHelperStatics as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IVisualTreeHelperStatics_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub FindElementsInHostCoordinatesPoint:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::Foundation::Point,
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FindElementsInHostCoordinatesRect:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::Foundation::Rect,
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FindAllElementsInHostCoordinatesPoint:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::Foundation::Point,
+                            *mut core::ffi::c_void,
+                            bool,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FindAllElementsInHostCoordinatesRect:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::Foundation::Rect,
+                            *mut core::ffi::c_void,
+                            bool,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub GetChild: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        i32,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub GetChildrenCount: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i32,
+                    )
+                        -> windows_core::HRESULT,
+                    pub GetParent: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub DisconnectChildrenRecursive:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    GetOpenPopups: usize,
+                    GetOpenPopupsForXamlRoot: usize,
+                }
                 #[repr(transparent)]
                 #[derive(Clone, Debug, Eq, PartialEq)]
                 pub struct ImageSource(windows_core::IUnknown);
@@ -234906,6 +240028,182 @@ pub mod Microsoft {
                 }
                 unsafe impl Send for SystemBackdrop {}
                 unsafe impl Sync for SystemBackdrop {}
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct VisualTreeHelper(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    VisualTreeHelper,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl VisualTreeHelper {
+                    pub fn FindElementsInHostCoordinatesPoint<P1>(
+                        intersectingpoint: windows::Foundation::Point,
+                        subtree: P1,
+                    ) -> windows_core::Result<windows_collections::IIterable<super::UIElement>>
+                    where
+                        P1: windows_core::Param<super::UIElement>,
+                    {
+                        Self::IVisualTreeHelperStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FindElementsInHostCoordinatesPoint)(
+                                windows_core::Interface::as_raw(this),
+                                intersectingpoint,
+                                subtree.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FindElementsInHostCoordinatesRect<P1>(
+                        intersectingrect: windows::Foundation::Rect,
+                        subtree: P1,
+                    ) -> windows_core::Result<windows_collections::IIterable<super::UIElement>>
+                    where
+                        P1: windows_core::Param<super::UIElement>,
+                    {
+                        Self::IVisualTreeHelperStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FindElementsInHostCoordinatesRect)(
+                                windows_core::Interface::as_raw(this),
+                                intersectingrect,
+                                subtree.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FindAllElementsInHostCoordinatesPoint<P1>(
+                        intersectingpoint: windows::Foundation::Point,
+                        subtree: P1,
+                        includeallelements: bool,
+                    ) -> windows_core::Result<windows_collections::IIterable<super::UIElement>>
+                    where
+                        P1: windows_core::Param<super::UIElement>,
+                    {
+                        Self::IVisualTreeHelperStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FindAllElementsInHostCoordinatesPoint)(
+                                windows_core::Interface::as_raw(this),
+                                intersectingpoint,
+                                subtree.param().abi(),
+                                includeallelements,
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FindAllElementsInHostCoordinatesRect<P1>(
+                        intersectingrect: windows::Foundation::Rect,
+                        subtree: P1,
+                        includeallelements: bool,
+                    ) -> windows_core::Result<windows_collections::IIterable<super::UIElement>>
+                    where
+                        P1: windows_core::Param<super::UIElement>,
+                    {
+                        Self::IVisualTreeHelperStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FindAllElementsInHostCoordinatesRect)(
+                                windows_core::Interface::as_raw(this),
+                                intersectingrect,
+                                subtree.param().abi(),
+                                includeallelements,
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn GetChild<P0>(
+                        reference: P0,
+                        childindex: i32,
+                    ) -> windows_core::Result<super::DependencyObject>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        Self::IVisualTreeHelperStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GetChild)(
+                                windows_core::Interface::as_raw(this),
+                                reference.param().abi(),
+                                childindex,
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn GetChildrenCount<P0>(reference: P0) -> windows_core::Result<i32>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        Self::IVisualTreeHelperStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GetChildrenCount)(
+                                windows_core::Interface::as_raw(this),
+                                reference.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        })
+                    }
+                    pub fn GetParent<P0>(
+                        reference: P0,
+                    ) -> windows_core::Result<super::DependencyObject>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        Self::IVisualTreeHelperStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GetParent)(
+                                windows_core::Interface::as_raw(this),
+                                reference.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn DisconnectChildrenRecursive<P0>(element: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::UIElement>,
+                    {
+                        Self::IVisualTreeHelperStatics(|this| unsafe {
+                            (windows_core::Interface::vtable(this).DisconnectChildrenRecursive)(
+                                windows_core::Interface::as_raw(this),
+                                element.param().abi(),
+                            )
+                            .ok()
+                        })
+                    }
+                    fn IVisualTreeHelperStatics<
+                        R,
+                        F: FnOnce(&IVisualTreeHelperStatics) -> windows_core::Result<R>,
+                    >(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<
+                            VisualTreeHelper,
+                            IVisualTreeHelperStatics,
+                        > = windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                }
+                impl windows_core::RuntimeType for VisualTreeHelper {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<Self, IVisualTreeHelper>();
+                }
+                unsafe impl windows_core::Interface for VisualTreeHelper {
+                    type Vtable = <IVisualTreeHelper as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <IVisualTreeHelper as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for VisualTreeHelper {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Media.VisualTreeHelper";
+                }
+                unsafe impl Send for VisualTreeHelper {}
+                unsafe impl Sync for VisualTreeHelper {}
                 pub mod Imaging {
                     #[repr(transparent)]
                     #[derive(Clone, Debug, Eq, PartialEq)]
