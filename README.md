@@ -1273,11 +1273,12 @@ git push origin v0.3.0
   は無くなり、**`native_number_box()` に変わりました** (組み立てをやめたため)。
 - `Toolbar` は `CommandBar` で、項目は `AppBarButton`、区切りは
   `AppBarSeparator` です。**タイトルの右**に置きます (macOS の `NSToolbar`、
-  Linux の `AdwHeaderBar` と同じ位置)。`SetTitleBar` へ渡した要素は、その中の
-  操作できるコントロールの上でもウィンドウのドラッグが始まってしまうため、
-  ツールバーを付けている間はドラッグ領域をツールバーより右の空きだけに
-  狭めています (**タイトル文字の上ではつかめません**。ツールバーを付けて
-  いないウィンドウは従来どおりタイトルバー全体でつかめます)。
+  Linux の `AdwHeaderBar` と同じ位置)。`SetTitleBar` へ要素を渡す形だと、その
+  中の操作できるコントロールの上でもウィンドウのドラッグが始まってしまうため、
+  ドラッグ領域は `AppWindowTitleBar::SetDragRectangles` で**タイトル文字の側と
+  ツールバーより右の空きの 2 つ**に分けています。ボタンの上ではドラッグが
+  始まらず、それ以外のタイトルバーはどこでもつかめます。矩形は物理ピクセル
+  なので、ウィンドウの幅・項目数・表示倍率が変わるたびに計算し直します。
   アイコンは Segoe Fluent Icons を `FontIcon` で出し、印 1 つの幅は 40 です
   (`AppBarButton` の既定 68 は、印の下へラベルを出す配置のための幅です)。
   ラベルは `DefaultLabelPosition` を `Collapsed` にして隠し、ほかの 3 環境と

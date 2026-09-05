@@ -4329,6 +4329,17 @@ pub mod Microsoft {
                         .ok()
                     }
                 }
+                pub fn TitleBar(&self) -> windows_core::Result<AppWindowTitleBar> {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).TitleBar)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
                 pub fn Destroy(&self) -> windows_core::Result<()> {
                     let this = self;
                     unsafe {
@@ -4683,6 +4694,474 @@ pub mod Microsoft {
             }
             unsafe impl Send for AppWindowClosingEventArgs {}
             unsafe impl Sync for AppWindowClosingEventArgs {}
+            #[repr(transparent)]
+            #[derive(Clone, Debug, Eq, PartialEq)]
+            pub struct AppWindowTitleBar(windows_core::IUnknown);
+            windows_core::imp::interface_hierarchy!(
+                AppWindowTitleBar,
+                windows_core::IUnknown,
+                windows_core::IInspectable
+            );
+            impl AppWindowTitleBar {
+                pub fn BackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).BackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetBackgroundColor<P0>(&self, value: P0) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ButtonBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ButtonBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetButtonBackgroundColor<P0>(&self, value: P0) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetButtonBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ButtonForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ButtonForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetButtonForegroundColor<P0>(&self, value: P0) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetButtonForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ButtonHoverBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ButtonHoverBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetButtonHoverBackgroundColor<P0>(
+                    &self,
+                    value: P0,
+                ) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetButtonHoverBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ButtonHoverForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ButtonHoverForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetButtonHoverForegroundColor<P0>(
+                    &self,
+                    value: P0,
+                ) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetButtonHoverForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ButtonInactiveBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ButtonInactiveBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetButtonInactiveBackgroundColor<P0>(
+                    &self,
+                    value: P0,
+                ) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetButtonInactiveBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ButtonInactiveForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ButtonInactiveForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetButtonInactiveForegroundColor<P0>(
+                    &self,
+                    value: P0,
+                ) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetButtonInactiveForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ButtonPressedBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ButtonPressedBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetButtonPressedBackgroundColor<P0>(
+                    &self,
+                    value: P0,
+                ) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetButtonPressedBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ButtonPressedForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ButtonPressedForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetButtonPressedForegroundColor<P0>(
+                    &self,
+                    value: P0,
+                ) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetButtonPressedForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ExtendsContentIntoTitleBar(&self) -> windows_core::Result<bool> {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ExtendsContentIntoTitleBar)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
+                pub fn SetExtendsContentIntoTitleBar(
+                    &self,
+                    value: bool,
+                ) -> windows_core::Result<()> {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetExtendsContentIntoTitleBar)(
+                            windows_core::Interface::as_raw(this),
+                            value,
+                        )
+                        .ok()
+                    }
+                }
+                pub fn ForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetForegroundColor<P0>(&self, value: P0) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn Height(&self) -> windows_core::Result<i32> {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).Height)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
+                pub fn InactiveBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).InactiveBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetInactiveBackgroundColor<P0>(&self, value: P0) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetInactiveBackgroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn InactiveForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).InactiveForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .and_then(|| windows_core::Type::from_abi(result__))
+                    }
+                }
+                pub fn SetInactiveForegroundColor<P0>(&self, value: P0) -> windows_core::Result<()>
+                where
+                    P0: windows_core::Param<windows::Foundation::IReference<windows::UI::Color>>,
+                {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetInactiveForegroundColor)(
+                            windows_core::Interface::as_raw(this),
+                            value.param().abi(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn LeftInset(&self) -> windows_core::Result<i32> {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).LeftInset)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
+                pub fn RightInset(&self) -> windows_core::Result<i32> {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).RightInset)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
+                pub fn ResetToDefault(&self) -> windows_core::Result<()> {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).ResetToDefault)(
+                            windows_core::Interface::as_raw(this),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn SetDragRectangles(
+                    &self,
+                    value: &[windows::Graphics::RectInt32],
+                ) -> windows_core::Result<()> {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetDragRectangles)(
+                            windows_core::Interface::as_raw(this),
+                            value.len().try_into().unwrap(),
+                            value.as_ptr(),
+                        )
+                        .ok()
+                    }
+                }
+                pub fn IsCustomizationSupported() -> windows_core::Result<bool> {
+                    Self::IAppWindowTitleBarStatics(|this| unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).IsCustomizationSupported)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    })
+                }
+                fn IAppWindowTitleBarStatics<
+                    R,
+                    F: FnOnce(&IAppWindowTitleBarStatics) -> windows_core::Result<R>,
+                >(
+                    callback: F,
+                ) -> windows_core::Result<R> {
+                    static SHARED: windows_core::imp::FactoryCache<
+                        AppWindowTitleBar,
+                        IAppWindowTitleBarStatics,
+                    > = windows_core::imp::FactoryCache::new();
+                    SHARED.call(callback)
+                }
+            }
+            impl windows_core::RuntimeType for AppWindowTitleBar {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_class::<Self, IAppWindowTitleBar>();
+            }
+            unsafe impl windows_core::Interface for AppWindowTitleBar {
+                type Vtable = <IAppWindowTitleBar as windows_core::Interface>::Vtable;
+                const IID: windows_core::GUID =
+                    <IAppWindowTitleBar as windows_core::Interface>::IID;
+            }
+            impl windows_core::RuntimeName for AppWindowTitleBar {
+                const NAME: &'static str = "Microsoft.UI.Windowing.AppWindowTitleBar";
+            }
+            unsafe impl Send for AppWindowTitleBar {}
+            unsafe impl Sync for AppWindowTitleBar {}
             windows_core::imp::define_interface!(
                 IAppWindow,
                 IAppWindow_Vtbl,
@@ -4703,6 +5182,7 @@ pub mod Microsoft {
                 fn Size(&self) -> windows_core::Result<windows::Graphics::SizeInt32>;
                 fn Title(&self) -> windows_core::Result<windows_core::HSTRING>;
                 fn SetTitle(&self, value: &windows_core::HSTRING) -> windows_core::Result<()>;
+                fn TitleBar(&self) -> windows_core::Result<AppWindowTitleBar>;
                 fn Destroy(&self) -> windows_core::Result<()>;
                 fn Hide(&self) -> windows_core::Result<()>;
                 fn Move(
@@ -4863,6 +5343,26 @@ pub mod Microsoft {
                             let this: &Identity =
                                 &*((this as *const *const ()).offset(OFFSET) as *const Identity);
                             IAppWindow_Impl::SetTitle(this, core::mem::transmute(&value)).into()
+                        }
+                    }
+                    unsafe extern "system" fn TitleBar<
+                        Identity: IAppWindow_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindow_Impl::TitleBar(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
                         }
                     }
                     unsafe extern "system" fn Destroy<
@@ -5064,7 +5564,7 @@ pub mod Microsoft {
                         Size: Size::<Identity, OFFSET>,
                         Title: Title::<Identity, OFFSET>,
                         SetTitle: SetTitle::<Identity, OFFSET>,
-                        TitleBar: 0,
+                        TitleBar: TitleBar::<Identity, OFFSET>,
                         Destroy: Destroy::<Identity, OFFSET>,
                         Hide: Hide::<Identity, OFFSET>,
                         Move: Move::<Identity, OFFSET>,
@@ -5126,7 +5626,10 @@ pub mod Microsoft {
                     *mut core::ffi::c_void,
                     *mut core::ffi::c_void,
                 ) -> windows_core::HRESULT,
-                TitleBar: usize,
+                pub TitleBar: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                ) -> windows_core::HRESULT,
                 pub Destroy:
                     unsafe extern "system" fn(*mut core::ffi::c_void) -> windows_core::HRESULT,
                 pub Hide:
@@ -5655,6 +6158,1088 @@ pub mod Microsoft {
             pub struct IAppWindowStatics2_Vtbl {
                 pub base__: windows_core::IInspectable_Vtbl,
                 CreateWithDispatcherQueue: usize,
+            }
+            windows_core::imp::define_interface!(
+                IAppWindowTitleBar,
+                IAppWindowTitleBar_Vtbl,
+                0x5574efa2_c91c_5700_a363_539c71a7aaf4
+            );
+            impl windows_core::RuntimeType for IAppWindowTitleBar {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IAppWindowTitleBar {
+                const NAME: &'static str = "Microsoft.UI.Windowing.IAppWindowTitleBar";
+            }
+            pub trait IAppWindowTitleBar_Impl: windows_core::IUnknownImpl {
+                fn BackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetBackgroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn ButtonBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetButtonBackgroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn ButtonForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetButtonForegroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn ButtonHoverBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetButtonHoverBackgroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn ButtonHoverForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetButtonHoverForegroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn ButtonInactiveBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetButtonInactiveBackgroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn ButtonInactiveForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetButtonInactiveForegroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn ButtonPressedBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetButtonPressedBackgroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn ButtonPressedForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetButtonPressedForegroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn ExtendsContentIntoTitleBar(&self) -> windows_core::Result<bool>;
+                fn SetExtendsContentIntoTitleBar(&self, value: bool) -> windows_core::Result<()>;
+                fn ForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetForegroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn Height(&self) -> windows_core::Result<i32>;
+                fn InactiveBackgroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetInactiveBackgroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn InactiveForegroundColor(
+                    &self,
+                ) -> windows_core::Result<windows::Foundation::IReference<windows::UI::Color>>;
+                fn SetInactiveForegroundColor(
+                    &self,
+                    value: windows_core::Ref<
+                        '_,
+                        windows::Foundation::IReference<windows::UI::Color>,
+                    >,
+                ) -> windows_core::Result<()>;
+                fn LeftInset(&self) -> windows_core::Result<i32>;
+                fn RightInset(&self) -> windows_core::Result<i32>;
+                fn ResetToDefault(&self) -> windows_core::Result<()>;
+                fn SetDragRectangles(
+                    &self,
+                    value: &[windows::Graphics::RectInt32],
+                ) -> windows_core::Result<()>;
+            }
+            impl IAppWindowTitleBar_Vtbl {
+                pub const fn new<Identity: IAppWindowTitleBar_Impl, const OFFSET: isize>() -> Self {
+                    unsafe extern "system" fn BackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::BackgroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetBackgroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn ButtonBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ButtonBackgroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetButtonBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetButtonBackgroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn ButtonForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ButtonForegroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetButtonForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetButtonForegroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn ButtonHoverBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ButtonHoverBackgroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetButtonHoverBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetButtonHoverBackgroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn ButtonHoverForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ButtonHoverForegroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetButtonHoverForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetButtonHoverForegroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn ButtonInactiveBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ButtonInactiveBackgroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetButtonInactiveBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetButtonInactiveBackgroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn ButtonInactiveForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ButtonInactiveForegroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetButtonInactiveForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetButtonInactiveForegroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn ButtonPressedBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ButtonPressedBackgroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetButtonPressedBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetButtonPressedBackgroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn ButtonPressedForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ButtonPressedForegroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetButtonPressedForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetButtonPressedForegroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn ExtendsContentIntoTitleBar<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut bool,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ExtendsContentIntoTitleBar(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetExtendsContentIntoTitleBar<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: bool,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetExtendsContentIntoTitleBar(this, value)
+                                .into()
+                        }
+                    }
+                    unsafe extern "system" fn ForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::ForegroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetForegroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn Height<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut i32,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::Height(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn InactiveBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::InactiveBackgroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetInactiveBackgroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetInactiveBackgroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn InactiveForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::InactiveForegroundColor(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    core::mem::forget(ok__);
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetInactiveForegroundColor<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetInactiveForegroundColor(
+                                this,
+                                core::mem::transmute_copy(&value),
+                            )
+                            .into()
+                        }
+                    }
+                    unsafe extern "system" fn LeftInset<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut i32,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::LeftInset(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn RightInset<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut i32,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar_Impl::RightInset(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn ResetToDefault<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::ResetToDefault(this).into()
+                        }
+                    }
+                    unsafe extern "system" fn SetDragRectangles<
+                        Identity: IAppWindowTitleBar_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value_array_size: u32,
+                        value: *const windows::Graphics::RectInt32,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar_Impl::SetDragRectangles(
+                                this,
+                                core::slice::from_raw_parts(
+                                    core::mem::transmute_copy(&value),
+                                    value_array_size as usize,
+                                ),
+                            )
+                            .into()
+                        }
+                    }
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IAppWindowTitleBar,
+                            OFFSET,
+                        >(),
+                        BackgroundColor: BackgroundColor::<Identity, OFFSET>,
+                        SetBackgroundColor: SetBackgroundColor::<Identity, OFFSET>,
+                        ButtonBackgroundColor: ButtonBackgroundColor::<Identity, OFFSET>,
+                        SetButtonBackgroundColor: SetButtonBackgroundColor::<Identity, OFFSET>,
+                        ButtonForegroundColor: ButtonForegroundColor::<Identity, OFFSET>,
+                        SetButtonForegroundColor: SetButtonForegroundColor::<Identity, OFFSET>,
+                        ButtonHoverBackgroundColor: ButtonHoverBackgroundColor::<Identity, OFFSET>,
+                        SetButtonHoverBackgroundColor: SetButtonHoverBackgroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        ButtonHoverForegroundColor: ButtonHoverForegroundColor::<Identity, OFFSET>,
+                        SetButtonHoverForegroundColor: SetButtonHoverForegroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        ButtonInactiveBackgroundColor: ButtonInactiveBackgroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        SetButtonInactiveBackgroundColor: SetButtonInactiveBackgroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        ButtonInactiveForegroundColor: ButtonInactiveForegroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        SetButtonInactiveForegroundColor: SetButtonInactiveForegroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        ButtonPressedBackgroundColor: ButtonPressedBackgroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        SetButtonPressedBackgroundColor: SetButtonPressedBackgroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        ButtonPressedForegroundColor: ButtonPressedForegroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        SetButtonPressedForegroundColor: SetButtonPressedForegroundColor::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        ExtendsContentIntoTitleBar: ExtendsContentIntoTitleBar::<Identity, OFFSET>,
+                        SetExtendsContentIntoTitleBar: SetExtendsContentIntoTitleBar::<
+                            Identity,
+                            OFFSET,
+                        >,
+                        ForegroundColor: ForegroundColor::<Identity, OFFSET>,
+                        SetForegroundColor: SetForegroundColor::<Identity, OFFSET>,
+                        Height: Height::<Identity, OFFSET>,
+                        IconShowOptions: 0,
+                        SetIconShowOptions: 0,
+                        InactiveBackgroundColor: InactiveBackgroundColor::<Identity, OFFSET>,
+                        SetInactiveBackgroundColor: SetInactiveBackgroundColor::<Identity, OFFSET>,
+                        InactiveForegroundColor: InactiveForegroundColor::<Identity, OFFSET>,
+                        SetInactiveForegroundColor: SetInactiveForegroundColor::<Identity, OFFSET>,
+                        LeftInset: LeftInset::<Identity, OFFSET>,
+                        RightInset: RightInset::<Identity, OFFSET>,
+                        ResetToDefault: ResetToDefault::<Identity, OFFSET>,
+                        SetDragRectangles: SetDragRectangles::<Identity, OFFSET>,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IAppWindowTitleBar as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IAppWindowTitleBar_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                pub BackgroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub SetBackgroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub ButtonBackgroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub SetButtonBackgroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub ButtonForegroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub SetButtonForegroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub ButtonHoverBackgroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub SetButtonHoverBackgroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub ButtonHoverForegroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub SetButtonHoverForegroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub ButtonInactiveBackgroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub SetButtonInactiveBackgroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub ButtonInactiveForegroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub SetButtonInactiveForegroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub ButtonPressedBackgroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub SetButtonPressedBackgroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub ButtonPressedForegroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub SetButtonPressedForegroundColor:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                pub ExtendsContentIntoTitleBar: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut bool,
+                )
+                    -> windows_core::HRESULT,
+                pub SetExtendsContentIntoTitleBar:
+                    unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        bool,
+                    ) -> windows_core::HRESULT,
+                pub ForegroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub SetForegroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub Height: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut i32,
+                ) -> windows_core::HRESULT,
+                IconShowOptions: usize,
+                SetIconShowOptions: usize,
+                pub InactiveBackgroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub SetInactiveBackgroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub InactiveForegroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub SetInactiveForegroundColor: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                )
+                    -> windows_core::HRESULT,
+                pub LeftInset: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut i32,
+                ) -> windows_core::HRESULT,
+                pub RightInset: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut i32,
+                ) -> windows_core::HRESULT,
+                pub ResetToDefault:
+                    unsafe extern "system" fn(*mut core::ffi::c_void) -> windows_core::HRESULT,
+                pub SetDragRectangles: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    u32,
+                    *const windows::Graphics::RectInt32,
+                )
+                    -> windows_core::HRESULT,
+            }
+            windows_core::imp::define_interface!(
+                IAppWindowTitleBar2,
+                IAppWindowTitleBar2_Vtbl,
+                0x86faed38_748a_5b4b_9ccf_3ba0496c9041
+            );
+            impl windows_core::RuntimeType for IAppWindowTitleBar2 {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IAppWindowTitleBar2 {
+                const NAME: &'static str = "Microsoft.UI.Windowing.IAppWindowTitleBar2";
+            }
+            pub trait IAppWindowTitleBar2_Impl: windows_core::IUnknownImpl {}
+            impl IAppWindowTitleBar2_Vtbl {
+                pub const fn new<Identity: IAppWindowTitleBar2_Impl, const OFFSET: isize>() -> Self
+                {
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IAppWindowTitleBar2,
+                            OFFSET,
+                        >(),
+                        PreferredHeightOption: 0,
+                        SetPreferredHeightOption: 0,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IAppWindowTitleBar2 as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IAppWindowTitleBar2_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                PreferredHeightOption: usize,
+                SetPreferredHeightOption: usize,
+            }
+            windows_core::imp::define_interface!(
+                IAppWindowTitleBar3,
+                IAppWindowTitleBar3_Vtbl,
+                0x07146e74_0410_5597_aba7_1af276d2ae07
+            );
+            impl windows_core::RuntimeType for IAppWindowTitleBar3 {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IAppWindowTitleBar3 {
+                const NAME: &'static str = "Microsoft.UI.Windowing.IAppWindowTitleBar3";
+            }
+            pub trait IAppWindowTitleBar3_Impl: windows_core::IUnknownImpl {}
+            impl IAppWindowTitleBar3_Vtbl {
+                pub const fn new<Identity: IAppWindowTitleBar3_Impl, const OFFSET: isize>() -> Self
+                {
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IAppWindowTitleBar3,
+                            OFFSET,
+                        >(),
+                        PreferredTheme: 0,
+                        SetPreferredTheme: 0,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IAppWindowTitleBar3 as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IAppWindowTitleBar3_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                PreferredTheme: usize,
+                SetPreferredTheme: usize,
+            }
+            windows_core::imp::define_interface!(
+                IAppWindowTitleBarStatics,
+                IAppWindowTitleBarStatics_Vtbl,
+                0x9e1da52e_8b15_54d6_a886_f7b9f9d930b2
+            );
+            impl windows_core::RuntimeType for IAppWindowTitleBarStatics {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IAppWindowTitleBarStatics {
+                const NAME: &'static str = "Microsoft.UI.Windowing.IAppWindowTitleBarStatics";
+            }
+            pub trait IAppWindowTitleBarStatics_Impl: windows_core::IUnknownImpl {
+                fn IsCustomizationSupported(&self) -> windows_core::Result<bool>;
+            }
+            impl IAppWindowTitleBarStatics_Vtbl {
+                pub const fn new<Identity: IAppWindowTitleBarStatics_Impl, const OFFSET: isize>(
+                ) -> Self {
+                    unsafe extern "system" fn IsCustomizationSupported<
+                        Identity: IAppWindowTitleBarStatics_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut bool,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBarStatics_Impl::IsCustomizationSupported(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IAppWindowTitleBarStatics,
+                            OFFSET,
+                        >(),
+                        IsCustomizationSupported: IsCustomizationSupported::<Identity, OFFSET>,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IAppWindowTitleBarStatics as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IAppWindowTitleBarStatics_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                pub IsCustomizationSupported: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut bool,
+                )
+                    -> windows_core::HRESULT,
             }
         }
         pub mod Xaml {

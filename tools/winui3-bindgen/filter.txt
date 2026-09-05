@@ -9,6 +9,7 @@ Microsoft.UI.Input.PointerPoint
 Microsoft.UI.Input.PointerPointProperties
 Microsoft.UI.Windowing.AppWindow
 Microsoft.UI.Windowing.AppWindowClosingEventArgs
+Microsoft.UI.Windowing.AppWindowTitleBar
 Microsoft.UI.Xaml.Application
 Microsoft.UI.Xaml.ApplicationInitializationCallback
 Microsoft.UI.Xaml.ApplicationTheme

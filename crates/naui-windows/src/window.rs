@@ -12,8 +12,8 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::TextBlock;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::MicaBackdrop;
 use naui_winui3::Microsoft::UI::Xaml::{
-    Application, ApplicationTheme, Controls::Grid, ElementTheme, FrameworkElement, UIElement,
-    Window as XamlWindow,
+    Application, ApplicationTheme, Controls::Grid, ElementTheme, FrameworkElement,
+    SizeChangedEventHandler, UIElement, Window as XamlWindow,
 };
 use windows::Foundation::TypedEventHandler;
 use windows_core::{Interface, HSTRING};
@@ -35,6 +35,10 @@ enum Backdrop {
     /// Mica を取り付けられなかったとき。ウィンドウは既定の背景で出す。
     None,
 }
+
+/// タイトルバーの右端に空けておく幅。最小化・最大化・閉じるのボタンの場所で、
+/// タイトルバーの XAML の `Padding` と同じ値にしてある。
+const CAPTION_RESERVE: f64 = 140.0;
 
 struct WindowInner {
     native: XamlWindow,
@@ -158,6 +162,7 @@ impl Window {
             *self.0.title_bar.borrow_mut() = title_bar;
             *self.0.drag_area.borrow_mut() = drag_area;
             self.apply_drag_area();
+            self.install_drag_area_updates();
             let _ = set_theme_on_element(&theme_root, self.0.theme.get());
             if let Some(label) = title_label.as_ref() {
                 let _ = set_title_foreground(label, &theme_root, self.0.theme.get());
@@ -180,7 +185,7 @@ impl Window {
     ///
     /// タイトルの右へ置く (macOS の `NSToolbar`、Linux の `AdwHeaderBar` と
     /// 同じ位置)。付けている間は、ボタンの上でウィンドウが動いてしまわない
-    /// ように、ドラッグ領域をツールバーより右の空きだけに狭める。
+    /// ように、ドラッグ領域をボタンの左右 2 つの矩形へ分ける。
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
         self.clear_toolbar();
         *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
@@ -199,11 +204,17 @@ impl Window {
 
     /// いまの状態に合うドラッグ領域をウィンドウへ渡す。
     ///
-    /// `SetTitleBar` に渡した要素は、その中にある操作できるコントロールの
-    /// 上でもウィンドウのドラッグが始まる。ツールバーを付けている間は
-    /// ボタンを含まない右の空きだけを渡し、付けていなければタイトルバー
-    /// 全体を渡してどこでもつかめるようにする。
+    /// `SetTitleBar` に要素を渡す形だと、その中にある操作できるコントロールの
+    /// 上でもウィンドウのドラッグが始まってしまう。ツールバーを付けている間は
+    /// **タイトル文字の側**と**ツールバーより右の空き**の 2 つに分けたいので、
+    /// 矩形を複数渡せる `AppWindowTitleBar::SetDragRectangles` を使う。
+    /// 渡せなかったときだけ `SetTitleBar` の形へ落とす。
     fn apply_drag_area(&self) {
+        if self.apply_drag_rectangles().is_some() {
+            return;
+        }
+        // 矩形を計算できないときの控え。ツールバーを付けているならボタンを
+        // 含まない右の空きだけ、付けていなければタイトルバー全体を渡す。
         let has_toolbar = self.0.toolbar.borrow().is_some();
         let area = if has_toolbar {
             self.0.drag_area.borrow().clone()
@@ -214,6 +225,105 @@ impl Window {
             return;
         };
         let _ = self.0.native.SetTitleBar(&area);
+    }
+
+    /// タイトルバーのうち、つかんで動かせる範囲を矩形で渡す。
+    ///
+    /// 渡す座標は**物理ピクセル**なので、論理ピクセルの配置に
+    /// `RasterizationScale` を掛ける。右端の [`CAPTION_RESERVE`] は
+    /// 最小化・最大化・閉じるのボタンの場所なので空けておく。
+    ///
+    /// レイアウトが決まる前 (幅が 0) は諦めて `None` を返す。
+    /// [`install_drag_area_updates`](Self::install_drag_area_updates) が
+    /// 大きさの変わるたびに呼び直す。
+    fn apply_drag_rectangles(&self) -> Option<()> {
+        let title_bar = self.0.title_bar.borrow().clone()?;
+        let title_bar = title_bar.cast::<FrameworkElement>().ok()?;
+        let width = title_bar.ActualWidth().ok()?;
+        let height = title_bar.ActualHeight().ok()?;
+        if width <= 0.0 || height <= 0.0 {
+            return None;
+        }
+        let scale = title_bar
+            .XamlRoot()
+            .and_then(|root| root.RasterizationScale())
+            .unwrap_or(1.0);
+        if scale <= 0.0 {
+            return None;
+        }
+
+        // ツールバーが載っているなら、その左右で 2 つに分ける。
+        let toolbar = self
+            .0
+            .toolbar
+            .borrow()
+            .is_some()
+            .then(|| self.0.toolbar_host.borrow().clone())
+            .flatten();
+        let (skip_from, skip_to) = match toolbar {
+            Some(host) => {
+                let offset = host.ActualOffset().ok()?;
+                let host_width = host.ActualWidth().ok()?;
+                (f64::from(offset.X), f64::from(offset.X) + host_width)
+            }
+            None => (width, width),
+        };
+
+        let right_edge = (width - CAPTION_RESERVE).max(0.0);
+        let mut rects = Vec::with_capacity(2);
+        for (from, to) in [(0.0, skip_from.min(right_edge)), (skip_to, right_edge)] {
+            if to - from < 1.0 {
+                continue;
+            }
+            rects.push(windows::Graphics::RectInt32 {
+                X: (from * scale).round() as i32,
+                Y: 0,
+                Width: ((to - from) * scale).round() as i32,
+                Height: (height * scale).round() as i32,
+            });
+        }
+        if rects.is_empty() {
+            return None;
+        }
+
+        self.0
+            .native
+            .AppWindow()
+            .and_then(|window| window.TitleBar())
+            .and_then(|bar| bar.SetDragRectangles(&rects))
+            .ok()
+    }
+
+    /// 大きさが変わるたびにドラッグ領域を計算し直すようにする。
+    ///
+    /// 矩形は物理ピクセルの固定値なので、ウィンドウの幅・ツールバーの項目数・
+    /// 表示倍率のどれが変わっても取り直しが要る。どれもタイトルバーか
+    /// ツールバーの置き場の大きさに出るので、その 2 つを見ておけば足りる。
+    fn install_drag_area_updates(&self) {
+        let targets = [
+            self.0
+                .title_bar
+                .borrow()
+                .clone()
+                .and_then(|element| element.cast::<FrameworkElement>().ok()),
+            self.0
+                .toolbar_host
+                .borrow()
+                .clone()
+                .and_then(|host| host.cast::<FrameworkElement>().ok()),
+        ];
+        for target in targets.into_iter().flatten() {
+            let state = UiThreadCell::new(Rc::downgrade(&self.0));
+            let changed = SizeChangedEventHandler::new(move |_, _| {
+                let _ = state.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        Window(inner).apply_drag_area();
+                    }
+                });
+                Ok(())
+            });
+            let _ = target.SizeChanged(&changed);
+        }
     }
 
     /// ツールバーを置き場へ載せ直す。置き場か中身がまだ無ければ何もしない。
@@ -445,7 +555,7 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*" MinWidth="48"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" FontSize="14" VerticalAlignment="Center"/>
                 <Grid Grid.Column="1" Background="Transparent" Margin="12,0,0,0"/>

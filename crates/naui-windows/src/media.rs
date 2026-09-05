@@ -27,7 +27,9 @@ use naui_core::media::{is_url, source_url};
 use naui_core::{Fit, PlaybackState, Result};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
-use naui_winui3::Microsoft::UI::Xaml::Controls::{Grid, Image as XamlImage, MediaPlayerElement};
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
+    Grid, Image as XamlImage, MediaPlayerElement, UIElementCollection,
+};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
 use naui_winui3::Microsoft::UI::Xaml::Media::Stretch;
 use naui_winui3::Microsoft::UI::Xaml::{HorizontalAlignment, UIElement, VerticalAlignment};
@@ -135,29 +137,35 @@ impl Image {
         let _ = AutomationProperties::SetName(&self.0.image, &HSTRING::from(text));
     }
 
+    /// 画像をホストから外し、読み込みの指示も落とす。
+    ///
+    /// 場所が空のときと、読み込みを指示できなかったときの両方で通る。
+    /// [`is_loaded`](Self::is_loaded) が見ているのはこの出し入れ。
+    fn take_down(&self, children: &UIElementCollection) {
+        let _ = children.Clear();
+        let _ = self.0.image.SetSource(None);
+    }
+
     /// いまの場所を `Image` へ渡し、ホストへの出し入れを合わせる。
     ///
-    /// 場所が空のときはホストから外す。[`is_loaded`](Self::is_loaded) が
-    /// 見ているのはこの出し入れ。
+    /// 場所が空のときと、読み込みを指示できなかったときは
+    /// [`take_down`](Self::take_down) で外す。
     fn apply_source(&self) {
         let Ok(children) = self.0.native.Children() else {
             return;
         };
         let source = self.0.source.borrow();
         if source.is_empty() {
-            let _ = children.Clear();
-            let _ = self.0.image.SetSource(None);
+            self.take_down(&children);
             return;
         }
 
-        // 読み込みを指示できなかったときは、前の画像を残さず外す
-        // ([`is_loaded`](Self::is_loaded) が false を返せるように)。
         // WinUI はファイルパスではなく URI を要求する。
         let uri = match Uri::CreateUri(&HSTRING::from(source_url(&source))) {
             Ok(uri) => uri,
             Err(error) => {
                 eprintln!("naui-windows: Image の場所を URI にできません: {error}");
-                let _ = children.Clear();
+                self.take_down(&children);
                 return;
             }
         };
@@ -165,13 +173,13 @@ impl Image {
             Ok(bitmap) => bitmap,
             Err(error) => {
                 eprintln!("naui-windows: Image の読み込み指示に失敗: {error}");
-                let _ = children.Clear();
+                self.take_down(&children);
                 return;
             }
         };
         if let Err(error) = self.0.image.SetSource(&bitmap) {
             eprintln!("naui-windows: Image の差し替えに失敗: {error}");
-            let _ = children.Clear();
+            self.take_down(&children);
             return;
         }
         if children.Size().is_ok_and(|size| size > 0) {
