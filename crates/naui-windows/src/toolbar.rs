@@ -21,8 +21,14 @@
 //!
 //! ほかのバックエンドに合わせて [`Widget`](crate::Widget) にはせず、
 //! [`Window::set_toolbar`](crate::Window::set_toolbar) でウィンドウの
-//! 上端へ取り付ける。タイトルバーはウィンドウのドラッグ領域なので、
-//! そこではなくタイトルバーと中身の間の行へ置く。
+//! タイトルの右へ取り付ける (macOS の `NSToolbar`、Linux の `AdwHeaderBar`
+//! と同じ位置)。`SetTitleBar` へ渡した要素は、その中の操作できる
+//! コントロールの上でもウィンドウのドラッグが始まってしまうので、
+//! ドラッグ領域はツールバーより右の空きだけに狭めている
+//! ([`crate::window`])。
+//!
+//! 印 1 つの幅は 40。`AppBarButton` の既定は 68 だが、それは印の下へ
+//! ラベルを出す配置のための幅で、ラベルを隠しているここでは余る。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -42,6 +48,10 @@ use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 
 use crate::navigation::SelectHandler;
+
+/// 印 1 つあたりの幅。`AppBarButton` の既定は 68 だが、それは印の下へ
+/// ラベルを出す配置のための幅で、ラベルを隠している naui では余る。
+const ITEM_WIDTH: f64 = 40.0;
 
 struct ToolbarInner {
     native: CommandBar,
@@ -131,6 +141,9 @@ impl Toolbar {
 
     fn build_button(&self, icon: ToolbarIcon, label: &str, index: usize) -> Result<AppBarButton> {
         let button = AppBarButton::new().map_err(|e| to_error("ツールバーのボタン生成", e))?;
+        button
+            .SetWidth(ITEM_WIDTH)
+            .map_err(|e| to_error("ツールバーのボタン幅の設定", e))?;
         let glyph = FontIcon::new().map_err(|e| to_error("ツールバーの印の生成", e))?;
         glyph
             .SetGlyph(&HSTRING::from(icon.fluent_glyph().to_string()))

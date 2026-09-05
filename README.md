@@ -1272,8 +1272,14 @@ git push origin v0.3.0
   なお 0.3.0 までの脱出口だった `native_text_box()` と `native_spin_buttons()`
   は無くなり、**`native_number_box()` に変わりました** (組み立てをやめたため)。
 - `Toolbar` は `CommandBar` で、項目は `AppBarButton`、区切りは
-  `AppBarSeparator` です。タイトルバー (ドラッグ領域) ではなく、その下の行に
-  置きます。アイコンは Segoe Fluent Icons を `FontIcon` で出します。
+  `AppBarSeparator` です。**タイトルの右**に置きます (macOS の `NSToolbar`、
+  Linux の `AdwHeaderBar` と同じ位置)。`SetTitleBar` へ渡した要素は、その中の
+  操作できるコントロールの上でもウィンドウのドラッグが始まってしまうため、
+  ツールバーを付けている間はドラッグ領域をツールバーより右の空きだけに
+  狭めています (**タイトル文字の上ではつかめません**。ツールバーを付けて
+  いないウィンドウは従来どおりタイトルバー全体でつかめます)。
+  アイコンは Segoe Fluent Icons を `FontIcon` で出し、印 1 つの幅は 40 です
+  (`AppBarButton` の既定 68 は、印の下へラベルを出す配置のための幅です)。
   ラベルは `DefaultLabelPosition` を `Collapsed` にして隠し、ほかの 3 環境と
   同じく印だけを並べます。隠したラベルは `AutomationProperties.Name` と
   `ToolTipService.ToolTip` へ回すので、読み上げとツールチップには出ます。

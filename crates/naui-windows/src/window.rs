@@ -42,8 +42,13 @@ struct WindowInner {
     child: RefCell<Option<Box<dyn Widget>>>,
     theme_root: RefCell<Option<UIElement>>,
     title_label: RefCell<Option<TextBlock>>,
-    /// タイトルバーと中身の間にあるツールバーの入れ物。
+    /// タイトルの右にあるツールバーの入れ物。
     toolbar_host: RefCell<Option<Grid>>,
+    /// ドラッグ領域の候補。ツールバーが付いていなければタイトルバー全体を、
+    /// 付いていればツールバーより右の空きだけを使う (ボタンの上で
+    /// ウィンドウが動いてしまわないように)。
+    title_bar: RefCell<Option<UIElement>>,
+    drag_area: RefCell<Option<UIElement>>,
     /// 取り付けたツールバー。通知先ごと生かしておく。
     toolbar: RefCell<Option<Toolbar>>,
     visible: RefCell<bool>,
@@ -88,6 +93,8 @@ impl Window {
             child: RefCell::new(None),
             theme_root: RefCell::new(None),
             toolbar_host: RefCell::new(None),
+            title_bar: RefCell::new(None),
+            drag_area: RefCell::new(None),
             toolbar: RefCell::new(None),
             title_label: RefCell::new(None),
             visible: RefCell::new(false),
@@ -129,25 +136,28 @@ impl Window {
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
         let themed = themed_content_root(&element, &self.title());
-        let (theme_root, title_bar, title_label, toolbar_host) = match themed {
+        let (theme_root, title_bar, title_label, toolbar_host, drag_area) = match themed {
             Ok(content) => (
                 content.root,
                 Some(content.title_bar),
                 Some(content.title_label),
                 Some(content.toolbar_host),
+                Some(content.drag_area),
             ),
             Err(error) => {
                 eprintln!("naui-windows: テーマ付きウィンドウルートの生成に失敗: {error}");
-                (element.clone(), None, None, None)
+                (element.clone(), None, None, None, None)
             }
         };
         if self.0.native.SetContent(&theme_root).is_ok() {
-            if let Some(title_bar) = title_bar {
-                // Mica をタイトルバーまで連続させ、タイトルバー要素全体を
-                // ウィンドウのドラッグ領域として扱う。
+            if title_bar.is_some() {
+                // Mica をタイトルバーまで連続させる。ドラッグ領域は
+                // `apply_drag_area` が選ぶ。
                 let _ = self.0.native.SetExtendsContentIntoTitleBar(true);
-                let _ = self.0.native.SetTitleBar(&title_bar);
             }
+            *self.0.title_bar.borrow_mut() = title_bar;
+            *self.0.drag_area.borrow_mut() = drag_area;
+            self.apply_drag_area();
             let _ = set_theme_on_element(&theme_root, self.0.theme.get());
             if let Some(label) = title_label.as_ref() {
                 let _ = set_title_foreground(label, &theme_root, self.0.theme.get());
@@ -168,12 +178,14 @@ impl Window {
 
     /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
     ///
-    /// タイトルバーと中身の間の行へ `StackPanel` を置いて構成する。
-    /// タイトルバーはウィンドウのドラッグ領域なので、そこには置けない。
+    /// タイトルの右へ置く (macOS の `NSToolbar`、Linux の `AdwHeaderBar` と
+    /// 同じ位置)。付けている間は、ボタンの上でウィンドウが動いてしまわない
+    /// ように、ドラッグ領域をツールバーより右の空きだけに狭める。
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
         self.clear_toolbar();
         *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
         self.mount_toolbar();
+        self.apply_drag_area();
     }
 
     /// 取り付けたツールバーを外す。付いていなければ何もしない。
@@ -182,6 +194,26 @@ impl Window {
         if let Some(host) = self.0.toolbar_host.borrow().as_ref() {
             let _ = host.Children().and_then(|children| children.Clear());
         }
+        self.apply_drag_area();
+    }
+
+    /// いまの状態に合うドラッグ領域をウィンドウへ渡す。
+    ///
+    /// `SetTitleBar` に渡した要素は、その中にある操作できるコントロールの
+    /// 上でもウィンドウのドラッグが始まる。ツールバーを付けている間は
+    /// ボタンを含まない右の空きだけを渡し、付けていなければタイトルバー
+    /// 全体を渡してどこでもつかめるようにする。
+    fn apply_drag_area(&self) {
+        let has_toolbar = self.0.toolbar.borrow().is_some();
+        let area = if has_toolbar {
+            self.0.drag_area.borrow().clone()
+        } else {
+            self.0.title_bar.borrow().clone()
+        };
+        let Some(area) = area else {
+            return;
+        };
+        let _ = self.0.native.SetTitleBar(&area);
     }
 
     /// ツールバーを置き場へ載せ直す。置き場か中身がまだ無ければ何もしない。
@@ -306,8 +338,10 @@ struct ThemedContent {
     root: UIElement,
     title_bar: UIElement,
     title_label: TextBlock,
-    /// タイトルバーと中身の間に置くツールバーの入れ物。
+    /// タイトルの右に置くツールバーの入れ物。
     toolbar_host: Grid,
+    /// ツールバーより右の空き。ツールバーを付けている間のドラッグ領域。
+    drag_area: UIElement,
 }
 
 fn backdrop_theme(theme: Theme) -> SystemBackdropTheme {
@@ -404,15 +438,20 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
             Background="Transparent">
             <Grid.RowDefinitions>
                 <RowDefinition Height="48"/>
-                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <Grid Grid.Row="0" Height="48" Background="Transparent"
                 Padding="16,0,140,0">
-                <TextBlock FontSize="14" VerticalAlignment="Center"/>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" FontSize="14" VerticalAlignment="Center"/>
+                <Grid Grid.Column="1" Background="Transparent" Margin="12,0,0,0"/>
+                <Grid Grid.Column="2" Background="Transparent"/>
             </Grid>
-            <Grid Grid.Row="1" Background="Transparent" Padding="12,0,12,0"/>
-            <Grid Grid.Row="2" Background="Transparent"/>
+            <Grid Grid.Row="1" Background="Transparent"/>
         </Grid>"##,
     ))
     .map_err(|e| to_error("テーマ背景要素の生成", e))?
@@ -437,13 +476,20 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
         .SetText(&HSTRING::from(title))
         .map_err(|e| to_error("タイトルラベルの設定", e))?;
 
-    let toolbar_host = children
+    let toolbar_host = title_bar
+        .Children()
+        .map_err(|e| to_error("ツールバー置き場の子取得", e))?
         .GetAt(1)
         .map_err(|e| to_error("ツールバー置き場の取得", e))?
         .cast::<Grid>()
         .map_err(|e| to_error("ツールバー置き場への変換", e))?;
-    let content = children
+    let drag_area = title_bar
+        .Children()
+        .map_err(|e| to_error("ドラッグ領域の子取得", e))?
         .GetAt(2)
+        .map_err(|e| to_error("ドラッグ領域の取得", e))?;
+    let content = children
+        .GetAt(1)
         .map_err(|e| to_error("コンテンツレイヤーの取得", e))?
         .cast::<Grid>()
         .map_err(|e| to_error("コンテンツレイヤーへの変換", e))?;
@@ -461,6 +507,7 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
             .map_err(|e| to_error("タイトルバーへの変換", e))?,
         title_label,
         toolbar_host,
+        drag_area,
     })
 }
 
@@ -499,13 +546,13 @@ pub(crate) fn owner_xaml_root() -> Option<naui_winui3::Microsoft::UI::Xaml::Xaml
 
 /// トーストを重ねる層。まだウィンドウを表示していなければ `None`。
 ///
-/// [`themed_content_root`] が作る 3 行目 (アプリの中身の置き場) で、
+/// [`themed_content_root`] が作る 2 行目 (アプリの中身の置き場) で、
 /// `Grid` は子を重ね順に置くため、あとから足したトーストが中身の上に出る。
 pub(crate) fn owner_content_layer() -> Option<Grid> {
     OWNER_WINDOW.with(|slot| {
         let window = slot.borrow();
         let root = window.as_ref()?.Content().ok()?.cast::<Grid>().ok()?;
-        root.Children().ok()?.GetAt(2).ok()?.cast::<Grid>().ok()
+        root.Children().ok()?.GetAt(1).ok()?.cast::<Grid>().ok()
     })
 }
 
