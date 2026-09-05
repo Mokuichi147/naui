@@ -3105,6 +3105,9 @@ fn audio_loops_back_to_the_start(ui: &Ui) -> Result<()> {
     });
     assert!(looped.get(), "末尾まで進んで先頭へ戻ること");
 
+    // 先頭へ戻った直後は、まだ読み込み待ちを名乗っていることがある。
+    // 落ち着くまで回してから、再生が続いていることを確かめる。
+    pump_until(5.0, || audio.state() == PlaybackState::Playing);
     let states = seen.borrow().clone();
     assert!(
         !states.contains(&PlaybackState::Ended),

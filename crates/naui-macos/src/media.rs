@@ -425,6 +425,8 @@ impl PlaybackInner {
             return;
         }
         if self.looping.get() {
+            // 末尾では止まらない設定にしてあるので、鳴らしたまま先頭へ戻す。
+            // `play()` は取りこぼしの保険 (何かの拍子に止まっていたとき用)。
             self.seek(0.0);
             unsafe { self.player.play() };
             return;
@@ -617,6 +619,15 @@ macro_rules! impl_playback {
             /// 最後まで再生したら先頭へ戻って繰り返す。
             pub fn set_loop(&self, looping: bool) {
                 self.0.looping.set(looping);
+                // 繰り返すなら末尾で止めさせない。止めてしまうと、先頭へ
+                // 戻して鳴らし直すまでの間だけ「一時停止」が通知され、
+                // 繰り返しているのに再生が途切れたように見える。
+                let action = if looping {
+                    AVPlayerActionAtItemEnd::None
+                } else {
+                    AVPlayerActionAtItemEnd::Pause
+                };
+                unsafe { self.0.player.setActionAtItemEnd(action) };
             }
 
             pub fn is_loop(&self) -> bool {
