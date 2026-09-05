@@ -14,7 +14,7 @@
 //! (macOS の `NSAlert` は閉じるまで戻らない)。
 //!
 //! 閉じたことは `<dialog>` の `close` イベントではなく、**押されたボタン**と
-//! **`cancel` イベント (Esc)** から直接わかるようにしている。`close` は
+//! **Esc の `keydown`** から直接わかるようにしている。`close` は
 //! `close()` を呼んだ側 (アプリ自身の [`Dialog::close`] を含む) と
 //! ユーザー操作を区別できないうえ、埋め込みブラウザによっては届かない。
 
@@ -23,7 +23,7 @@ use std::rc::Rc;
 
 use naui_core::{DialogButtons, DialogResponse, Result};
 use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, HtmlDialogElement, HtmlElement};
+use web_sys::{Document, Element, HtmlDialogElement, HtmlElement, KeyboardEvent};
 
 use crate::to_error;
 use crate::widgets::{create, Listener, Widget};
@@ -47,8 +47,8 @@ struct DialogInner {
     buttons: RefCell<DialogButtons>,
     /// ボタンのクリックを受けるもの。組み立て直すたびに置き換わる。
     listeners: RefCell<Vec<Listener>>,
-    /// Esc で閉じられたことを受けるもの。
-    cancel: RefCell<Option<Listener>>,
+    /// Esc など、取り消しとして閉じられたことを受けるもの。
+    dismiss: RefCell<Vec<Listener>>,
     on_response: RefCell<Option<Box<dyn FnMut(DialogResponse)>>>,
 }
 
@@ -102,31 +102,74 @@ impl Dialog {
             child: RefCell::new(None),
             buttons: RefCell::new(DialogButtons::new()),
             listeners: RefCell::new(Vec::new()),
-            cancel: RefCell::new(None),
+            dismiss: RefCell::new(Vec::new()),
             on_response: RefCell::new(None),
         }));
         this.set_title(title);
         this.rebuild_buttons()?;
-        this.install_cancel_handler()?;
+        this.install_dismiss_handlers()?;
         Ok(this)
     }
 
     /// Esc で閉じられたときに、取り消しとして通知する。
     ///
-    /// ブラウザ既定の「閉じる」は止めて自分で閉じる。こうすると
-    /// 通知の中から開き直しても、そのあとブラウザに閉じられない。
-    fn install_cancel_handler(&self) -> Result<()> {
+    /// 受けるのは `cancel` ではなく **Esc の `keydown`** で、キーの既定動作を
+    /// 止めてから自分で閉じる。Safari はウィンドウが全画面のとき、Esc を
+    /// まず全画面の解除に使い、**ページが既定動作を止めない限り**
+    /// ダイアログまで回さない (解除に 1 回、閉じるのにもう 1 回 Esc が要る)。
+    /// 止めておけば全画面でも 1 回で閉じられる。ブラウザ既定の「閉じる」を
+    /// 止めているので、通知の中から開き直しても、そのあと閉じられない。
+    ///
+    /// `cancel` も併せて受ける。キー以外の「閉じる要求」はこちらにしか
+    /// 来ない。Esc で閉じたときは既定を止めていて `cancel` が起きないため、
+    /// 二重には通知されない。
+    fn install_dismiss_handlers(&self) -> Result<()> {
+        let mut listeners = Vec::new();
+
         let weak = Rc::downgrade(&self.0);
-        let listener = Listener::attach_event(self.0.element.as_ref(), "cancel", move |event| {
-            let Some(inner) = weak.upgrade() else {
-                return;
-            };
-            event.prevent_default();
-            inner.element.close();
-            Dialog(inner).emit(DialogResponse::Cancel);
-        })?;
-        *self.0.cancel.borrow_mut() = Some(listener);
+        listeners.push(Listener::attach_event(
+            self.0.element.as_ref(),
+            "keydown",
+            move |event| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let Some(key) = event.dyn_ref::<KeyboardEvent>() else {
+                    return;
+                };
+                // 変換中の Esc は入力を取り消すためのものなので、IME へ渡す。
+                if key.key() != "Escape" || key.is_composing() {
+                    return;
+                }
+                event.prevent_default();
+                Dialog(inner).dismiss();
+            },
+        )?);
+
+        let weak = Rc::downgrade(&self.0);
+        listeners.push(Listener::attach_event(
+            self.0.element.as_ref(),
+            "cancel",
+            move |event| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                event.prevent_default();
+                Dialog(inner).dismiss();
+            },
+        )?);
+
+        *self.0.dismiss.borrow_mut() = listeners;
         Ok(())
+    }
+
+    /// 取り消しとして閉じ、通知する。すでに閉じているなら何もしない。
+    fn dismiss(&self) {
+        if !self.0.element.open() {
+            return;
+        }
+        self.0.element.close();
+        self.emit(DialogResponse::Cancel);
     }
 
     /// 通知。通知の中から設定し直しても二重借用にならないよう、
