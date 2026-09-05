@@ -69,7 +69,11 @@ jobs:
     runs-on: windows-latest
     env:
       # 統合テストで取り付ける Windows App SDK ランタイムの版。
-      WINDOWS_APP_SDK: "2.3"
+      #
+      # `latest` にすると将来べつのパッチ版へ動いて、同じコミットでも
+      # 違うランタイムで走ってしまう。完全な版で固定する。一覧は
+      # https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads
+      WINDOWS_APP_SDK: "2.3.1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -96,12 +100,15 @@ jobs:
       - name: Windows App SDK ランタイムを導入
         shell: pwsh
         run: |
-          $url = "https://aka.ms/windowsappsdk/$env:WINDOWS_APP_SDK/latest/windowsappruntimeinstall-x64.exe"
+          # 配布 URL は <系統>/<版> の形。系統は版の上 2 桁から作る。
+          $version = $env:WINDOWS_APP_SDK
+          $channel = ($version -split '\.')[0, 1] -join '.'
+          $url = "https://aka.ms/windowsappsdk/$channel/$version/windowsappruntimeinstall-x64.exe"
           $exe = Join-Path $env:RUNNER_TEMP "WindowsAppRuntimeInstall.exe"
           Invoke-WebRequest -Uri $url -OutFile $exe
           & $exe --quiet
           if ($LASTEXITCODE -ne 0) {
-            throw "Windows App SDK $env:WINDOWS_APP_SDK の導入に失敗しました (終了コード $LASTEXITCODE)"
+            throw "Windows App SDK $version の導入に失敗しました (終了コード $LASTEXITCODE)"
           }
       # 単体テストとドキュメンテーションテストに加えて、`winui3` の統合
       # テストが走る。こちらはランタイムを取り付け、`Application::Start` に

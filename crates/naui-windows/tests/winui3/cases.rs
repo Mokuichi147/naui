@@ -58,8 +58,19 @@ const CASES: &[Case] = &[
         "ラベルの付くウィジェットが読み上げ名を持つ",
         widgets_expose_accessible_names,
     ),
-    ("ウィンドウを設定して閉じられる", window_lifecycle),
 ];
+
+/// あとで確かめる仕事。イベントループを 1 周まわしてから呼ばれる。
+type Deferred = Box<dyn FnOnce() -> Result<()>>;
+
+/// 仕込みと確認が 1 周ぶん離れるケース。
+///
+/// ウィンドウを出しても `Window.Visible` はその場では立たない。WinUI が
+/// メッセージを一巡させてからでないと、出たかどうかを見られない。仕込みで
+/// 出し、確認はループが回ってから行う。
+type AsyncCase = (&'static str, fn(&Ui) -> Result<Deferred>);
+
+const ASYNC_CASES: &[AsyncCase] = &[("ウィンドウが出て、閉じると消える", window_lifecycle)];
 
 /// `Application::Start` に入ったきり戻らないと、CI が打ち切るまで詰まる。
 /// 全ケースぶんの余裕を取ったうえで、必ず終わらせる。
@@ -81,10 +92,37 @@ pub(crate) fn run() {
         for (name, case) in CASES {
             report(name, catch_unwind(AssertUnwindSafe(|| case(ui))), &counter);
         }
-        // 結果はここで出し切る。この先はアプリの後片づけなので、そこで
-        // 転んでも何が通って何が落ちたかは読める。
-        let failed = counter.load(Ordering::Relaxed);
-        println!("\n{} 件中 {} 件成功", CASES.len(), CASES.len() - failed);
+
+        // 2 段構えのケースは、まず仕込みだけ済ませる。
+        let mut deferred = Vec::new();
+        for (name, setup) in ASYNC_CASES {
+            match catch_unwind(AssertUnwindSafe(|| setup(ui))) {
+                Ok(Ok(check)) => deferred.push((*name, check)),
+                other => report(name, other.map(|result| result.map(|_| ())), &counter),
+            }
+        }
+
+        // ここで積んだ仕事は、WinUI が仕込みの間に積んだものより後ろに並ぶ。
+        // 同じ DispatcherQueue なので、一巡してから呼ばれる。`run_for_test`
+        // が畳む仕事を積むのはこの後なので、集計まで済ませてから終わる。
+        let mut deferred = Some(deferred);
+        let later = counter.clone();
+        let checks = ui.tasks().channel(move |()| {
+            let Some(deferred) = deferred.take() else {
+                return;
+            };
+            for (name, check) in deferred {
+                report(name, catch_unwind(AssertUnwindSafe(check)), &later);
+            }
+            // 結果はここで出し切る。この先はアプリの後片づけなので、そこで
+            // 転んでも何が通って何が落ちたかは読める。
+            let total = CASES.len() + ASYNC_CASES.len();
+            println!(
+                "\n{total} 件中 {} 件成功",
+                total - later.load(Ordering::Relaxed)
+            );
+        });
+        checks.send(())?;
         Ok(())
     });
 
@@ -491,17 +529,24 @@ fn widgets_expose_accessible_names(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-fn window_lifecycle(ui: &Ui) -> Result<()> {
+fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
     let window = ui.window("テスト", 320.0, 240.0)?;
     assert_eq!(window.title(), "テスト");
     window.set_title("別の題");
     assert_eq!(window.title(), "別の題");
+    assert!(!window.is_visible(), "出すまでは見えないこと");
 
     let stack = ui.stack(Orientation::Vertical)?;
     stack.append(&ui.label("中身")?);
     window.set_child(&stack);
+    window.show();
 
-    window.close();
-    assert!(!window.is_visible(), "閉じたら見えないこと");
-    Ok(())
+    Ok(Box::new(move || {
+        // 出したことを先に確かめる。ここを飛ばすと、はじめから見えていない
+        // ウィンドウを閉じただけでも「閉じたら見えない」が成り立ってしまう。
+        assert!(window.is_visible(), "出したら見えること");
+        window.close();
+        assert!(!window.is_visible(), "閉じたら見えないこと");
+        Ok(())
+    }))
 }
