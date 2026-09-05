@@ -11,9 +11,24 @@
 //! | `Link` | `HyperlinkButton` |
 //!
 //! `ToggleButton` (WinUI の標準コントロール) を並べて構成している。選択状態は
-//! `IsChecked` で表すので、見た目は Fluent のまま。`NavigationView` は
-//! [`naui_winui3`] の投影に入っているので、そちらへ移すのは今後の課題
-//! (`BreadcrumbBar` はまだ投影していない)。
+//! `IsChecked` で表すので、見た目は Fluent のまま。
+//!
+//! ## 名前の似た WinUI のコントロールを使っていない理由
+//!
+//! naui のナビゲーションは**選ばれている位置を通知するだけの帯**で、中身は
+//! 持たない。対して WinUI の対応しそうなコントロールは、どれも中身まで
+//! 引き受ける作りになっていて、そのまま置き換えると naui の API の意味が
+//! 変わってしまう。
+//!
+//! | naui | 近い WinUI | 合わないところ |
+//! | --- | --- | --- |
+//! | `Tabs` | `TabView` | タブごとに中身を持たせる作り。naui はインデックスを返すだけで、中身の出し分けはアプリの側にある |
+//! | `Navbar` / `Menu` / `Dock` | `NavigationView` | ペイン・戻るボタン・見出しに加えて**中身の領域まで**持つアプリの外枠。帯として並べて置くものではない |
+//! | `Breadcrumbs` | `BreadcrumbBar` | **末尾がいまいる場所**と決まっている。naui の `set_selected` のように途中の項目へ移せない |
+//! | `Pagination` | `PipsPager` | 点で位置を示すもので、ページ番号を並べるものではない |
+//!
+//! どれも移すなら naui 側の API を決め直すことになるので、`ToggleButton` を
+//! 並べる形のままにしている。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
