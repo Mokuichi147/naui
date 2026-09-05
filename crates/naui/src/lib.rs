@@ -893,7 +893,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `Table` | 2 行の `Grid` + `ListBox` (行は `Grid`) | `NSTableView` + `NSScrollView` | `GtkListBox` + `GtkSizeGroup` | `<table role="grid">` |
+//! | `Table` | 2 行の `Grid` + `ListView` (行は `Grid`) | `NSTableView` + `NSScrollView` | `GtkListBox` + `GtkSizeGroup` | `<table role="grid">` |
 //!
 //! 選択のふるまいは `List` と同じで、[`SelectionMode`] で単一と複数を選べる。
 //! `set_selection` / `set_selected` / `clear_selection` は通知せず、

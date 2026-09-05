@@ -913,7 +913,7 @@ tokio::spawn(async move {
 | `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (時分だけ) | 🟡 時と分の `GtkSpinButton` | ✅ `<input type="time">` |
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `List` | ✅ `ListView` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
-| `Table` | 🟡 `Grid` + `ListBox` (行は `Grid`) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
+| `Table` | 🟡 `Grid` + `ListView` (行は `Grid`) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
 | `Tree` | ✅ `TreeView` | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
 
 </details>
@@ -1222,10 +1222,10 @@ git push origin v0.3.0
   持ちます。なお 0.3.0 までの脱出口だった `native_list_box()` は無くなり、
   **`native_list_view()` に変わりました**。
 - WinUI 3 に `DataGrid` は無い (Community Toolkit のもの) ため、`Table` は
-  `ListBox` の行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に
-  置いて幅をそろえています (`ListView` は投影に入ったので、そちらへ移すのは
-  今後の課題です)。並べ替えできる見出しは、地色と枠を消した `Button` です
-  (WinUI に列見出し用のコントロールが無いため)。
+  `ListView` の行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に
+  置いて幅をそろえています。行の余白だけは `ListView` の既定ではなく見出しと
+  同じ値を書いて、列の位置をそろえています。並べ替えできる見出しは、地色と枠を
+  消した `Button` です (WinUI に列見出し用のコントロールが無いため)。
 - `Tree` は `TreeView` です。項目は `TreeViewNode` へ写して木のまま渡すので、
   段付け・開閉の山形・キーボード操作・選択の見た目はすべて WinUI が持ちます。
   枠だけは `List` と同じ色と角丸を持たせた `Border` で囲みます。
