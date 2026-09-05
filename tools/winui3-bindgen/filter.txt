@@ -69,6 +69,8 @@ Microsoft.UI.Xaml.Controls.MenuFlyoutItem
 Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase
 Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator
 Microsoft.UI.Xaml.Controls.NavigationView
+Microsoft.UI.Xaml.Controls.NavigationViewItem
+Microsoft.UI.Xaml.Controls.NavigationViewItemBase
 Microsoft.UI.Xaml.Controls.NumberBox
 Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode
 Microsoft.UI.Xaml.Controls.NumberBoxValidationMode
@@ -124,6 +126,8 @@ Microsoft.UI.Xaml.IApplicationOverrides
 Microsoft.UI.Xaml.Input.Pointer
 Microsoft.UI.Xaml.Input.PointerEventHandler
 Microsoft.UI.Xaml.Input.PointerRoutedEventArgs
+Microsoft.UI.Xaml.Input.TappedEventHandler
+Microsoft.UI.Xaml.Input.TappedRoutedEventArgs
 Microsoft.UI.Xaml.LaunchActivatedEventArgs
 Microsoft.UI.Xaml.Markup.IXamlMetadataProvider
 Microsoft.UI.Xaml.Markup.IXamlType
