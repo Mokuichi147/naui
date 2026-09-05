@@ -674,7 +674,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `Toolbar` | `StackPanel` + `Button` | `NSToolbar` + `NSToolbarItem` | `AdwHeaderBar` + `GtkButton` | `<div role="toolbar">` + `<button>` |
+//! | `Toolbar` | `CommandBar` + `AppBarButton` | `NSToolbar` + `NSToolbarItem` | `AdwHeaderBar` + `GtkButton` | `<div role="toolbar">` + `<button>` |
 //! | アイコン | Segoe Fluent Icons | SF Symbols | アイコンテーマ | naui 同梱の SVG |
 //!
 //! macOS と Linux では**ウィンドウのタイトルバーと一体**で表示される。

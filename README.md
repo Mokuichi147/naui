@@ -878,7 +878,7 @@ tokio::spawn(async move {
 | `Spacer` | 🔴 中身のない `Grid` | 🟡 中身のない `NSView` | 🟡 中身のない `GtkBox` | 🟡 `<div>` + `flex-grow` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (入り切り) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
 | `SplitView` | 🔴 `Grid` + 仕切りの `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
-| `Toolbar` | 🟡 `StackPanel` + `Button` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
+| `Toolbar` | ✅ `CommandBar` + `AppBarButton` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 
 </details>
 
@@ -1266,10 +1266,16 @@ git push origin v0.3.0
   ください (naui のギャラリーは 200 px にしています)。
   なお 0.3.0 までの脱出口だった `native_text_box()` と `native_spin_buttons()`
   は無くなり、**`native_number_box()` に変わりました** (組み立てをやめたため)。
-- `Toolbar` は `Button` を横に並べて構成し、タイトルバー (ドラッグ領域) では
-  なくその下の行に置きます (`CommandBar` と `AppBarButton` は投影に入ったので、
-  そちらへ移すのは今後の課題です)。アイコンは
-  Segoe Fluent Icons を `FontIcon` で出します。
+- `Toolbar` は `CommandBar` で、項目は `AppBarButton`、区切りは
+  `AppBarSeparator` です。タイトルバー (ドラッグ領域) ではなく、その下の行に
+  置きます。アイコンは Segoe Fluent Icons を `FontIcon` で出します。
+  ラベルは `DefaultLabelPosition` を `Collapsed` にして隠し、ほかの 3 環境と
+  同じく印だけを並べます。隠したラベルは `AutomationProperties.Name` と
+  `ToolTipService.ToolTip` へ回すので、読み上げとツールチップには出ます。
+  幅が足りなくなると `CommandBar` が自分で項目をオーバーフローメニューへ
+  送るため、切り詰められて押せなくなることはありません。
+  なお 0.3.0 までの脱出口だった `native_panel()` は無くなり、
+  **`native_command_bar()` に変わりました** (組み立てをやめたため)。
 - `InfoBar` / `TeachingTip` を投影していないため、`Toast` は `Grid` と
   `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
   `window.show()` より前には出せません。

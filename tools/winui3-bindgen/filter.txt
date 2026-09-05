@@ -59,6 +59,8 @@ Microsoft.UI.Xaml.Controls.ListBox
 Microsoft.UI.Xaml.Controls.ListBoxItem
 Microsoft.UI.Xaml.Controls.ListView
 Microsoft.UI.Xaml.Controls.ListViewBase
+Microsoft.UI.Xaml.Controls.ListViewItem
+Microsoft.UI.Xaml.Controls.ListViewSelectionMode
 Microsoft.UI.Xaml.Controls.MediaPlayerElement
 Microsoft.UI.Xaml.Controls.MenuFlyout
 Microsoft.UI.Xaml.Controls.MenuFlyoutItem
@@ -97,6 +99,7 @@ Microsoft.UI.Xaml.Controls.TextChangedEventHandler
 Microsoft.UI.Xaml.Controls.TimePicker
 Microsoft.UI.Xaml.Controls.TimePickerValueChangedEventArgs
 Microsoft.UI.Xaml.Controls.ToggleSwitch
+Microsoft.UI.Xaml.Controls.ToolTipService
 Microsoft.UI.Xaml.Controls.TreeView
 Microsoft.UI.Xaml.Controls.TreeViewCollapsedEventArgs
 Microsoft.UI.Xaml.Controls.TreeViewExpandingEventArgs

@@ -1,13 +1,22 @@
-//! ツールバー (WinUI 3)。
+//! ツールバー (WinUI 3 のネイティブ `CommandBar`)。
 //!
-//! 標準の `Button` を `StackPanel` へ横に並べて構成している。区切りは幅 1 の
-//! `Border` で、見た目は Fluent のまま。`CommandBar` と `AppBarButton` は
-//! [`naui_winui3`] の投影に入っているので、そちらへ移すのは今後の課題。
+//! | naui | WinUI 3 |
+//! | --- | --- |
+//! | `Toolbar` | `CommandBar` (`PrimaryCommands`) |
+//! | 項目 | `AppBarButton` + `FontIcon` |
+//! | 区切り | `AppBarSeparator` |
 //!
-//! アイコンは [`ToolbarIcon`](naui_core::ToolbarIcon) を Segoe Fluent Icons
-//! の字面へ写したもの。`FontIcon` と `Border` は XAML から読み込む
-//! (投影にも入っているが、属性をまとめて書けるので XAML のまま)。
-//! `label` はツールチップと読み上げに使う。
+//! ラベルは `DefaultLabelPosition` を `Collapsed` にして隠し、印だけを並べる
+//! (ほかの 3 環境のツールバーに合わせる)。隠したラベルは
+//! `AutomationProperties.Name` と `ToolTipService.ToolTip` へ回すので、
+//! 読み上げとツールチップには出る。
+//!
+//! 幅が足りなくなると `CommandBar` が自分で項目をオーバーフローメニューへ
+//! 送る。切り詰めて押せなくなることはない。
+//!
+//! アイコンは [`ToolbarIcon`](naui_core::ToolbarIcon) を Segoe Fluent Icons の
+//! 字面へ写したもの。`FontIcon` の既定の書体がその Segoe Fluent Icons なので、
+//! 字面だけを渡す。
 //!
 //! ほかのバックエンドに合わせて [`Widget`](crate::Widget) にはせず、
 //! [`Window::set_toolbar`](crate::Window::set_toolbar) でウィンドウの
@@ -19,61 +28,25 @@ use std::rc::Rc;
 
 use naui_core::ToolbarIcon;
 use naui_core::{Result, ToolbarItem};
+use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, Orientation as XamlOrientation, StackPanel,
+    AppBarButton, AppBarSeparator, CommandBar, CommandBarDefaultLabelPosition, FontIcon,
+    ToolTipService,
 };
-use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use windows::Foundation::PropertyValue;
 use windows_core::{Interface, HSTRING};
 
-use crate::navigation::{append, panel, SelectHandler};
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 
-/// 区切り。XAML から読み込んで `UIElement` として扱う。色は
-/// `AppBarSeparator` と同じ `DividerStrokeColorDefaultBrush` を引くので、
-/// ライト / ダークの切り替えは WinUI 3 のテーマリソースが面倒を見る。
-const SEPARATOR_XAML: &str = r##"<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    Width="1" MinHeight="16" VerticalAlignment="Stretch"
-    Margin="2,4,2,4"
-    Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>"##;
-
-/// XAML の属性値として安全な文字列にする。ラベルはアプリが決めるため、
-/// 引用符や記号が入っていても壊れないようにエスケープする。
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// アイコン付きボタンの XAML。字面は数値参照で埋める。
-fn button_xaml(icon: ToolbarIcon, label: &str) -> String {
-    let label = escape(label);
-    format!(
-        r#"<Button xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-            ToolTipService.ToolTip="{label}" AutomationProperties.Name="{label}"
-            Padding="8,6,8,6" Background="Transparent" BorderThickness="0">
-            <FontIcon FontFamily="Segoe Fluent Icons" FontSize="16" Glyph="&#x{glyph:04X};"/>
-        </Button>"#,
-        label = label,
-        glyph = icon.fluent_glyph() as u32,
-    )
-}
+use crate::navigation::SelectHandler;
 
 struct ToolbarInner {
-    native: StackPanel,
+    native: CommandBar,
     items: RefCell<Vec<ToolbarItem>>,
     /// 項目と同じ並び。区切りのところは `None`。
-    buttons: RefCell<Vec<Option<XamlButton>>>,
+    buttons: RefCell<Vec<Option<AppBarButton>>>,
     handler: SelectHandler,
     /// ツールバー全体の有効・無効。項目ごとの指定と AND を取る。
     enabled: Cell<bool>,
@@ -91,8 +64,12 @@ pub struct Toolbar(Rc<ToolbarInner>);
 
 impl Toolbar {
     pub(crate) fn new() -> Result<Self> {
+        let native = CommandBar::new().map_err(|e| to_error("CommandBar の生成", e))?;
+        native
+            .SetDefaultLabelPosition(CommandBarDefaultLabelPosition::Collapsed)
+            .map_err(|e| to_error("ツールバーのラベル位置の設定", e))?;
         Ok(Self(Rc::new(ToolbarInner {
-            native: panel(XamlOrientation::Horizontal, 6.0)?,
+            native,
             items: RefCell::new(Vec::new()),
             buttons: RefCell::new(Vec::new()),
             handler: SelectHandler::new(),
@@ -108,10 +85,13 @@ impl Toolbar {
     }
 
     fn rebuild(&self, items: &[ToolbarItem]) -> Result<()> {
-        self.0
+        let commands = self
+            .0
             .native
-            .Children()
-            .and_then(|children| children.Clear())
+            .PrimaryCommands()
+            .map_err(|e| to_error("ツールバーの項目取得", e))?;
+        commands
+            .Clear()
             .map_err(|e| to_error("ツールバーの項目消去", e))?;
         self.0.buttons.borrow_mut().clear();
 
@@ -119,38 +99,20 @@ impl Toolbar {
         let mut buttons = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
             if item.is_separator() {
-                let separator = XamlReader::Load(&HSTRING::from(SEPARATOR_XAML))
-                    .and_then(|o| o.cast::<UIElement>())
-                    .map_err(|e| to_error("ツールバーの区切り生成", e))?;
-                append(&self.0.native, &separator)?;
+                let separator =
+                    AppBarSeparator::new().map_err(|e| to_error("ツールバーの区切り生成", e))?;
+                commands
+                    .Append(&separator)
+                    .map_err(|e| to_error("ツールバーへの区切り追加", e))?;
                 buttons.push(None);
                 continue;
             }
 
-            // アイコン・ツールチップ・読み上げ名をまとめて XAML で組み立てる。
-            let button = XamlReader::Load(&HSTRING::from(button_xaml(item.icon, &item.label)))
-                .and_then(|o| o.cast::<XamlButton>())
-                .map_err(|e| to_error("ツールバーのボタン生成", e))?;
+            let button = self.build_button(item.icon, &item.label, index)?;
             let _ = button.SetIsEnabled(item.enabled && whole);
-
-            // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
-            let state = UiThreadCell::new(Rc::downgrade(&self.0));
-            let handler = RoutedEventHandler::new(move |_sender, _args| {
-                state.with_mut(|weak| {
-                    if let Some(inner) = weak.upgrade() {
-                        inner.handler.emit(index);
-                    }
-                });
-                Ok(())
-            });
-            button
-                .Click(&handler)
-                .map_err(|e| to_error("Button の購読", e))?;
-
-            let element = button
-                .cast::<UIElement>()
-                .map_err(|e| to_error("項目の要素化", e))?;
-            append(&self.0.native, &element)?;
+            commands
+                .Append(&button)
+                .map_err(|e| to_error("ツールバーへの項目追加", e))?;
             buttons.push(Some(button));
         }
 
@@ -158,6 +120,42 @@ impl Toolbar {
         self.0.items.borrow_mut().clear();
         self.0.items.borrow_mut().extend_from_slice(items);
         Ok(())
+    }
+
+    fn build_button(&self, icon: ToolbarIcon, label: &str, index: usize) -> Result<AppBarButton> {
+        let button = AppBarButton::new().map_err(|e| to_error("ツールバーのボタン生成", e))?;
+        let glyph = FontIcon::new().map_err(|e| to_error("ツールバーの印の生成", e))?;
+        glyph
+            .SetGlyph(&HSTRING::from(icon.fluent_glyph().to_string()))
+            .map_err(|e| to_error("ツールバーの印の設定", e))?;
+        button
+            .SetIcon(&glyph)
+            .map_err(|e| to_error("ツールバーの印の取り付け", e))?;
+
+        // ラベルは隠すので、読み上げとツールチップへ回す。
+        let text = HSTRING::from(label);
+        button
+            .SetLabel(&text)
+            .map_err(|e| to_error("ツールバーのラベル設定", e))?;
+        let _ = AutomationProperties::SetName(&button, &text);
+        if let Ok(tip) = PropertyValue::CreateString(&text) {
+            let _ = ToolTipService::SetToolTip(&button, &tip);
+        }
+
+        // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = RoutedEventHandler::new(move |_sender, _args| {
+            state.with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.handler.emit(index);
+                }
+            });
+            Ok(())
+        });
+        button
+            .Click(&handler)
+            .map_err(|e| to_error("AppBarButton の購読", e))?;
+        Ok(button)
     }
 
     /// 区切りを含めた項目数。
@@ -228,13 +226,13 @@ impl Toolbar {
 
     /// 項目に対応する WinUI 3 のボタン。区切りと範囲外は `None`。
     /// バックエンド固有の脱出口として公開している。
-    pub fn native_button(&self, index: usize) -> Option<XamlButton> {
+    pub fn native_button(&self, index: usize) -> Option<AppBarButton> {
         self.0.buttons.borrow().get(index)?.clone()
     }
 
-    /// 項目を並べている `StackPanel`。
+    /// 項目を並べている `CommandBar`。
     /// バックエンド固有の脱出口として公開している。
-    pub fn native_panel(&self) -> StackPanel {
+    pub fn native_command_bar(&self) -> CommandBar {
         self.0.native.clone()
     }
 
@@ -243,6 +241,6 @@ impl Toolbar {
         self.0
             .native
             .cast::<UIElement>()
-            .expect("StackPanel は UIElement である")
+            .expect("CommandBar は UIElement である")
     }
 }
