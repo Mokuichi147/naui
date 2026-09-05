@@ -411,7 +411,7 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
                 Padding="16,0,140,0">
                 <TextBlock FontSize="14" VerticalAlignment="Center"/>
             </Grid>
-            <Grid Grid.Row="1" Background="Transparent" Padding="12,0,12,8"/>
+            <Grid Grid.Row="1" Background="Transparent" Padding="12,0,12,0"/>
             <Grid Grid.Row="2" Background="Transparent"/>
         </Grid>"##,
     ))

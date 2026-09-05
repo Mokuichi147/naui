@@ -46,7 +46,14 @@ pub fn build(ui: &Ui) -> Result<()> {
     let window = ui.window("naui UI gallery", 800.0, 860.0)?;
     let root = ui.grid()?;
     root.set_spacing(0.0, 10.0);
-    root.set_padding(Padding::all(20.0));
+    // 上だけ詰める。ツールバーの帯 (WinUI では 48px の CommandBar) が
+    // すでにタイトルバーと中身を隔てているので、そこへさらに 20 足すと空きすぎる。
+    root.set_padding(Padding {
+        top: 8.0,
+        right: 20.0,
+        bottom: 20.0,
+        left: 20.0,
+    });
     root.set_column_track(0, Track::FILL);
     root.set_row_track(0, Track::Auto);
     root.set_row_track(1, Track::FILL);

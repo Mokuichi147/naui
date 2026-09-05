@@ -29,7 +29,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, Thickness, UIElement};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
@@ -156,6 +156,16 @@ impl ListRow {
         matches!(&self.content, ListRowContent::Item(item) if !item.enabled)
     }
 }
+
+/// 行の余白。`ListView` の既定は縦が 0 で、`label` と `detail` の 2 行を
+/// 載せると詰まって見えるため、上下を空ける。横は既定と同じ 12。
+/// (`Table` は見出しと列をそろえる必要があるので、同じ値を自分で持つ。)
+const ROW_PADDING: Thickness = Thickness {
+    Left: 12.0,
+    Top: 8.0,
+    Right: 12.0,
+    Bottom: 8.0,
+};
 
 /// 一覧の枠。`ListView` は枠を持たないので、`Table` と `Tree` と同じ色・
 /// 角丸の `Border` で囲む。
@@ -429,6 +439,7 @@ impl List {
         let mut native_rows = Vec::with_capacity(rows.len());
         for row in rows {
             let native = ListViewItem::new().map_err(|e| to_error("ListViewItem の生成", e))?;
+            let _ = native.SetPadding(ROW_PADDING);
             let host = row_host(row)?;
             native
                 .SetContent(&host)

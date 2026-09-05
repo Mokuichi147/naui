@@ -51,8 +51,8 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{Button, NavigationViewItem};
 use naui_winui3::Microsoft::UI::Xaml::Input::TappedEventHandler;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, UIElement,
-    VerticalAlignment,
+    FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, Thickness,
+    UIElement, VerticalAlignment,
 };
 use windows_core::{IUnknown, Interface, HSTRING};
 
@@ -124,11 +124,15 @@ pub(crate) fn append(panel: &StackPanel, element: &UIElement) -> Result<()> {
 /// 「項目の並び + いま選ばれているもの」を持つ内部ハンドル。
 ///
 /// ナビバー・ドック・メニュー・パンくず・ページネーションが共有する。
+/// パンくずの項目の左右の余白。押したときの淡い塗りが文字に貼り付かない
+/// ようにするためのもので、この分だけ帯を左へずらして文字の左端をそろえる。
+const CRUMB_PADDING_X: f64 = 4.0;
+
 /// パンくずの項目。WinUI の `BreadcrumbBar` に合わせて、地色も枠も出さず
 /// 文字だけを見せる (押したときの淡い塗りは `Button` の標準テンプレートが持つ)。
 const CRUMB_BUTTON_XAML: &str = r##"<Button
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    Background="Transparent" BorderThickness="0" Padding="4,2"
+    Background="Transparent" BorderThickness="0" Padding="{padding},2"
     VerticalAlignment="Center"/>"##;
 
 /// パンくずの区切り。`BreadcrumbBar` と同じ山形 (Segoe Fluent Icons)。
@@ -851,6 +855,17 @@ impl_widget!(Breadcrumbs, native);
 impl Breadcrumbs {
     pub(crate) fn new() -> Result<Self> {
         let native = panel(XamlOrientation::Horizontal, 4.0)?;
+        // 項目の左右の余白は押したときの塗りのためのもので、文字の位置を
+        // 決めるものではない。その分だけ帯を左へずらして、先頭の項目の文字が
+        // 周りの文章と同じ左端に来るようにする。
+        native
+            .SetMargin(Thickness {
+                Left: -CRUMB_PADDING_X,
+                Top: 0.0,
+                Right: 0.0,
+                Bottom: 0.0,
+            })
+            .map_err(|e| to_error("パンくずの配置設定", e))?;
         Ok(Self(Rc::new(BreadcrumbsInner {
             native: native.clone(),
             bar: BreadcrumbBar::new(native),
@@ -896,9 +911,8 @@ impl Breadcrumbs {
 
 /// パンくずの項目のボタン。読めなければ素の `Button` に戻す。
 fn crumb_button() -> Result<Button> {
-    match XamlReader::Load(&HSTRING::from(CRUMB_BUTTON_XAML))
-        .and_then(|element| element.cast::<Button>())
-    {
+    let xaml = CRUMB_BUTTON_XAML.replace("{padding}", &CRUMB_PADDING_X.to_string());
+    match XamlReader::Load(&HSTRING::from(xaml)).and_then(|element| element.cast::<Button>()) {
         Ok(button) => Ok(button),
         Err(_) => Button::new().map_err(|e| to_error("パンくずリンクの生成", e)),
     }

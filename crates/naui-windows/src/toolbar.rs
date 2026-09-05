@@ -7,7 +7,8 @@
 //! | 区切り | `AppBarSeparator` |
 //!
 //! ラベルは `DefaultLabelPosition` を `Collapsed` にして隠し、印だけを並べる
-//! (ほかの 3 環境のツールバーに合わせる)。隠したラベルは
+//! (ほかの 3 環境のツールバーに合わせる)。並びも同じ理由で左詰めにする
+//! (`CommandBar` の既定は右寄せで、左は `Content` の場所)。隠したラベルは
 //! `AutomationProperties.Name` と `ToolTipService.ToolTip` へ回すので、
 //! 読み上げとツールチップには出る。
 //!
@@ -33,7 +34,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     AppBarButton, AppBarSeparator, CommandBar, CommandBarDefaultLabelPosition, FontIcon,
     ToolTipService,
 };
-use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{HorizontalAlignment, RoutedEventHandler, UIElement};
 use windows::Foundation::PropertyValue;
 use windows_core::{Interface, HSTRING};
 
@@ -68,6 +69,12 @@ impl Toolbar {
         native
             .SetDefaultLabelPosition(CommandBarDefaultLabelPosition::Collapsed)
             .map_err(|e| to_error("ツールバーのラベル位置の設定", e))?;
+        // `CommandBar` は `PrimaryCommands` を右へ寄せる (左は `Content` の
+        // 場所)。naui のツールバーはほかの 3 環境と同じく左詰めにしたいので、
+        // 帯そのものを左へ寄せて中身の幅にする。
+        native
+            .SetHorizontalAlignment(HorizontalAlignment::Left)
+            .map_err(|e| to_error("ツールバーの配置設定", e))?;
         Ok(Self(Rc::new(ToolbarInner {
             native,
             items: RefCell::new(Vec::new()),
