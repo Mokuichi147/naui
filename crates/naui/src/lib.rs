@@ -854,7 +854,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `Tree` | `ListBox` + 開閉ボタン | `NSOutlineView` + `NSScrollView` | `GtkListBox` + 開閉ボタン | `<ul role="tree">` |
+//! | `Tree` | `TreeView` | `NSOutlineView` + `NSScrollView` | `GtkListBox` + 開閉ボタン | `<ul role="tree">` |
 //!
 //! 選べるのは 1 項目だけ (`List` のような複数選択は無い)。
 //! `set_selected` / `clear_selection` / `set_expanded` / `expand_all` /
