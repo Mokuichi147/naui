@@ -770,7 +770,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `List` | `ListBox` + `ListBoxItem` | `NSTableView` (1 列) + `NSScrollView` | `GtkListBox` + `GtkScrolledWindow` | `<select size>` / `<ul role="listbox">` |
+//! | `List` | `ListView` + `ListViewItem` | `NSTableView` (1 列) + `NSScrollView` | `GtkListBox` + `GtkScrolledWindow` | `<select size>` / `<ul role="listbox">` |
 //!
 //! 入れ子の項目を開閉して選ぶなら [`Tree`] を使う。
 //!

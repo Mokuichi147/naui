@@ -11,9 +11,10 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ColumnDefinition, Grid as XamlGrid, RowDefinition, ScrollBarVisibility, ScrollMode,
     ScrollViewer,
 };
+use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, Thickness, UIElement,
-    VerticalAlignment, Visibility, Window as XamlWindow,
+    DependencyObject, FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, Thickness,
+    UIElement, VerticalAlignment, Visibility, Window as XamlWindow,
 };
 use windows_core::{Interface, HSTRING};
 
@@ -559,6 +560,28 @@ fn track_scroll_pointer(scroll: &Scroll) -> Result<()> {
 pub(crate) struct ListScrollTarget {
     native: ScrollViewer,
     hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
+}
+
+/// その要素の中にある最初の `ScrollViewer` を、深さ優先で探す。
+///
+/// `ListView` や `TreeView` はテンプレートの中に自分の `ScrollViewer` を
+/// 持つ。段数はテンプレート次第なので、名前ではなく型で探す。中身は
+/// `Loaded` まで組み上がらないので、そこまで待ってから呼ぶ。
+pub(crate) fn scroll_viewer_within<T: Interface>(root: &T) -> Option<ScrollViewer> {
+    let root = root.cast::<DependencyObject>().ok()?;
+    let mut queue = vec![root];
+    while let Some(element) = queue.pop() {
+        if let Ok(scroll) = element.cast::<ScrollViewer>() {
+            return Some(scroll);
+        }
+        let count = VisualTreeHelper::GetChildrenCount(&element).unwrap_or(0);
+        for index in (0..count).rev() {
+            if let Ok(child) = VisualTreeHelper::GetChild(&element, index) {
+                queue.push(child);
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn register_list_scroll(

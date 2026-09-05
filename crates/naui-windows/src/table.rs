@@ -41,13 +41,142 @@ use windows::Foundation::PropertyValue;
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
-use crate::list::{row_style, text_block, SelectionHandler};
+use crate::list::{text_block, SelectionHandler};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 /// 表の枠。見出しと本体を縦に分けた `Grid` で、境界線と角丸はここが持つ。
 ///
+/// 行の見た目。WinUI 3 の `ListView` の行に合わせて、
+/// 淡い塗り + 左端のアクセント色のインジケーターで選択を表す。
+///
+/// 状態の名前は `CommonStates` (ポインター) と `SelectionStates` (選択) に
+/// 分けてある。塗る `Border` も分けてあるので、どちらか一方の名前しか
+/// 使わないコントロールでも、片方が消えるだけで破綻しない。
+///
+/// `ROW_STYLE_KEY` は `ROW_STYLE_XAML` の `x:Key` と同じ文字列にする。
+const ROW_STYLE_KEY: &str = "NauiListRowStyle";
+const ROW_STYLE_XAML: &str = r##"<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Style x:Key="NauiListRowStyle" TargetType="ListBoxItem">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
+        <Setter Property="Padding" Value="12,8"/>
+        <Setter Property="MinHeight" Value="36"/>
+        <Setter Property="Margin" Value="0,1"/>
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="UseSystemFocusVisuals" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Grid Background="Transparent">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal"/>
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="Hover.Background"
+                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="Hover.Background"
+                                            Value="{ThemeResource SubtleFillColorTertiaryBrush}"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <!-- 主・副の 2 行をまとめて薄くする。
+                                            副次テキストは自分の色を持つので、
+                                            文字色の差し替えでは片方しか効かない。 -->
+                                        <Setter Target="Content.Opacity" Value="0.4"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                            <VisualStateGroup x:Name="SelectionStates">
+                                <VisualState x:Name="Unselected"/>
+                                <VisualState x:Name="Selected">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
+                                        <Setter Target="Indicator.Opacity" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="SelectedUnfocused">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
+                                        <Setter Target="Indicator.Opacity" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="SelectedPointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorTertiaryBrush}"/>
+                                        <Setter Target="Indicator.Opacity" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="SelectedPressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorTertiaryBrush}"/>
+                                        <Setter Target="Indicator.Opacity" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="SelectedDisabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="Fill.Background"
+                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
+                                        <Setter Target="Content.Opacity" Value="0.4"/>
+                                        <Setter Target="Indicator.Opacity" Value="0.4"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Border x:Name="Hover" Background="Transparent"
+                            CornerRadius="{ThemeResource ControlCornerRadius}"/>
+                        <Border x:Name="Fill" Background="Transparent"
+                            CornerRadius="{ThemeResource ControlCornerRadius}"/>
+                        <Border x:Name="Indicator" Width="3" Height="16" Opacity="0"
+                            Margin="1,0,0,0" CornerRadius="1.5"
+                            HorizontalAlignment="Left" VerticalAlignment="Center"
+                            Background="{ThemeResource AccentFillColorDefaultBrush}"/>
+                        <ContentPresenter x:Name="Content"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            Foreground="{TemplateBinding Foreground}"
+                            Padding="{TemplateBinding Padding}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>"##;
+
+/// 行に当てる `Style`。読めなければ `None` (WinUI 既定の見た目のまま)。
+fn row_style() -> Option<Style> {
+    let dictionary = XamlReader::Load(&HSTRING::from(ROW_STYLE_XAML))
+        .and_then(|element| element.cast::<ResourceDictionary>())
+        .map_err(|e| to_error("行のスタイルの生成", e));
+    let dictionary = match dictionary {
+        Ok(dictionary) => dictionary,
+        Err(error) => {
+            eprintln!("naui-windows: リストの行のスタイルの生成に失敗: {error}");
+            return None;
+        }
+    };
+    PropertyValue::CreateString(&HSTRING::from(ROW_STYLE_KEY))
+        .and_then(|key| dictionary.Lookup(&key))
+        .and_then(|style| style.cast::<Style>())
+        .ok()
+}
+
 /// 見出しの `Padding` は、行 (`ListBoxItem`) の `Padding` と同じ横位置に
 /// なるようにそろえてある。本体の `ScrollViewer` に `Padding` を置くと
 /// 見出しとずれるため、そちらは 0 のままにしている。

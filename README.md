@@ -912,7 +912,7 @@ tokio::spawn(async move {
 | `DatePicker` | ✅ `DatePicker` / `TimePicker` | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
 | `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (時分だけ) | 🟡 時と分の `GtkSpinButton` | ✅ `<input type="time">` |
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
-| `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
+| `List` | ✅ `ListView` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
 | `Table` | 🟡 `Grid` + `ListBox` (行は `Grid`) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
 | `Tree` | ✅ `TreeView` | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
 
@@ -1216,6 +1216,11 @@ git push origin v0.3.0
 - `Dialog` は `window.show()` より前には開けません。
 - naui の UI 実行環境が終わった後の `Sender::send` は失敗します
   (`DispatcherQueue` が受け付けないため)。
+- `List` は `ListView` です。行の見た目 (角丸・淡い塗り・左端のアクセント色の
+  インジケーター) は標準テンプレートが持つので、naui は枠の `Border` だけを
+  足します (`Table` と `Tree` と同じ色・角丸)。スクロールは `ListView` が自分で
+  持ちます。なお 0.3.0 までの脱出口だった `native_list_box()` は無くなり、
+  **`native_list_view()` に変わりました**。
 - WinUI 3 に `DataGrid` は無い (Community Toolkit のもの) ため、`Table` は
   `ListBox` の行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に
   置いて幅をそろえています (`ListView` は投影に入ったので、そちらへ移すのは
