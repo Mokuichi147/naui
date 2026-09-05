@@ -121,13 +121,17 @@ impl PopupMenu {
                 if !inner.open.get() {
                     return;
                 }
-                let is_escape = event
-                    .dyn_ref::<KeyboardEvent>()
-                    .map(|e| e.key() == "Escape")
-                    .unwrap_or(false);
-                if is_escape {
-                    PopupMenu(inner).close();
+                let Some(key) = event.dyn_ref::<KeyboardEvent>() else {
+                    return;
+                };
+                // 変換中の Esc は入力を取り消すためのものなので、IME へ渡す。
+                if key.key() != "Escape" || key.is_composing() {
+                    return;
                 }
+                // Safari は全画面のとき、ページが既定動作を止めない限り Esc を
+                // 全画面の解除に使ってしまう ([`crate::Dialog`] と同じ理由)。
+                event.prevent_default();
+                PopupMenu(inner).close();
             }
         })?;
 

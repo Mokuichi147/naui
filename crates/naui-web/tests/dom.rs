@@ -20,11 +20,16 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Align, Color, GridCell, Orientation, Padding, Result, Theme};
+use naui_core::{
+    Align, Color, DialogResponse, GridCell, Orientation, Padding, PopupItem, Result, Theme,
+};
 use naui_web::{run_for_test, ListRow, Ui, Widget};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
-use web_sys::{Element, EventTarget, HtmlElement, HtmlInputElement, HtmlSelectElement};
+use web_sys::{
+    Element, EventTarget, HtmlElement, HtmlInputElement, HtmlSelectElement, KeyboardEvent,
+    KeyboardEventInit,
+};
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -68,6 +73,19 @@ fn body() -> HtmlElement {
 fn dispatch(target: &EventTarget, kind: &str) {
     let event = web_sys::Event::new(kind).expect("イベントの生成");
     target.dispatch_event(&event).expect("イベントの配送");
+}
+
+/// Escape の `keydown` を起こす。**戻り値は既定動作を止められたか**
+/// (`dispatchEvent` は `preventDefault()` されると `false` を返す)。
+fn press_escape(target: &EventTarget, composing: bool) -> bool {
+    let init = KeyboardEventInit::new();
+    init.set_key("Escape");
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    init.set_is_composing(composing);
+    let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+        .expect("キーイベントの生成");
+    !target.dispatch_event(&event).expect("イベントの配送")
 }
 
 /// 算出後のスタイル (ブラウザが解釈した結果)。
@@ -897,6 +915,71 @@ fn ui_clone_builds_rows_from_a_callback() {
             listbox.text_content().unwrap_or_default().contains("行 2"),
             "後から作ったラベルが行の中に入ること"
         );
+        Ok(())
+    });
+}
+
+// -------------------------------------------------------------- Dialog
+
+#[wasm_bindgen_test]
+fn dialog_escape_closes_and_stops_the_browser_default() {
+    with_ui(|ui| {
+        let dialog = ui.dialog("確認")?;
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        dialog.on_response({
+            let seen = seen.clone();
+            move |response| seen.borrow_mut().push(response)
+        });
+
+        dialog.open();
+        assert!(dialog.is_open(), "open() でモーダルが出ること");
+
+        let prevented = press_escape(dialog.native_element().as_ref(), false);
+        assert!(!dialog.is_open(), "Esc で閉じること");
+        assert_eq!(*seen.borrow(), vec![DialogResponse::Cancel]);
+        // 既定動作を残すと、Safari は全画面のとき Esc をまず全画面の解除に
+        // 使ってしまい、ダイアログを閉じるのに 2 回押すことになる。
+        assert!(prevented, "Esc の既定動作を止めていること");
+
+        dialog.native_element().remove();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn dialog_leaves_escape_to_the_ime_while_composing() {
+    with_ui(|ui| {
+        let dialog = ui.dialog("確認")?;
+        dialog.open();
+
+        let prevented = press_escape(dialog.native_element().as_ref(), true);
+        assert!(dialog.is_open(), "変換中の Esc では閉じないこと");
+        assert!(!prevented, "変換中の Esc は IME へ渡すこと");
+
+        dialog.close();
+        dialog.native_element().remove();
+        Ok(())
+    });
+}
+
+// ----------------------------------------------------------- PopupMenu
+
+#[wasm_bindgen_test]
+fn popup_menu_escape_closes_and_stops_the_browser_default() {
+    with_ui(|ui| {
+        let menu = ui.popup_menu()?;
+        menu.set_items(&[PopupItem::new("先頭を選択")]);
+        let anchor = ui.label("ここを右クリック")?;
+        let _mounted = Mounted::new(&anchor);
+
+        menu.open_at(&anchor, 10.0, 10.0);
+        let element = menu.native_element();
+        assert_ne!(computed(&element, "display"), "none", "メニューが出ること");
+
+        // 購読しているのは document なので、`<body>` から上がってくる。
+        let prevented = press_escape(body().as_ref(), false);
+        assert_eq!(computed(&element, "display"), "none", "Esc で閉じること");
+        assert!(prevented, "Esc の既定動作を止めていること");
         Ok(())
     });
 }
