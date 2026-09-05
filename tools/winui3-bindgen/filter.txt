@@ -123,6 +123,8 @@ Microsoft.UI.Xaml.GridUnitType
 Microsoft.UI.Xaml.HorizontalAlignment
 Microsoft.UI.Xaml.IApplicationFactory
 Microsoft.UI.Xaml.IApplicationOverrides
+Microsoft.UI.Xaml.Input.KeyEventHandler
+Microsoft.UI.Xaml.Input.KeyRoutedEventArgs
 Microsoft.UI.Xaml.Input.Pointer
 Microsoft.UI.Xaml.Input.PointerEventHandler
 Microsoft.UI.Xaml.Input.PointerRoutedEventArgs

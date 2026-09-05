@@ -44,16 +44,16 @@ use std::sync::Arc;
 use naui_core::{NavItem, Result};
 use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::ToggleButton;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, Grid as XamlGrid, HyperlinkButton, Orientation as XamlOrientation,
-    RowDefinition, StackPanel, TextBlock,
+    Button as XamlButton, Grid as XamlGrid, HyperlinkButton, NavigationViewItem,
+    Orientation as XamlOrientation, RowDefinition, StackPanel, TextBlock,
 };
-use naui_winui3::Microsoft::UI::Xaml::Controls::{Button, NavigationViewItem};
-use naui_winui3::Microsoft::UI::Xaml::Input::TappedEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Input::{KeyEventHandler, TappedEventHandler};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, Thickness,
     UIElement, VerticalAlignment,
 };
+use windows::System::VirtualKey;
 use windows_core::{IUnknown, Interface, HSTRING};
 
 use crate::to_error;
@@ -254,6 +254,12 @@ impl Bar {
     /// `IsChecked` / `IsSelected` の書き換えでは呼ばれないので、
     /// プログラムからの選択と混ざらない。
     /// ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+    ///
+    /// `NavigationViewItem` には `Click` に当たるものが無く、`Tapped` は
+    /// ポインターの操作でしか飛ばない。`NavigationView` の外なので
+    /// `ItemInvoked` も来ない。そこで Space と Enter を `KeyUp` から拾って
+    /// 補う (押し下げではなく離したときに確定させるのは `ButtonBase` と
+    /// 同じで、押しっぱなしの自動リピートで連発しないため)。
     fn build_item(&self, item: &NavItem, index: usize) -> Result<BarItem> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         match self.0.kind {
@@ -291,6 +297,27 @@ impl Bar {
                 entry
                     .Tapped(&handler)
                     .map_err(|e| to_error("項目の購読", e))?;
+
+                let key_state = UiThreadCell::new(Rc::downgrade(&self.0));
+                let keyed = KeyEventHandler::new(move |_sender, args| {
+                    let Some(args) = args.as_ref() else {
+                        return Ok(());
+                    };
+                    let key = args.Key().unwrap_or(VirtualKey::None);
+                    if key != VirtualKey::Space && key != VirtualKey::Enter {
+                        return Ok(());
+                    }
+                    let _ = args.SetHandled(true);
+                    key_state.with_mut(|weak| {
+                        if let Some(inner) = weak.upgrade() {
+                            Bar(inner).select(index);
+                        }
+                    });
+                    Ok(())
+                });
+                entry
+                    .KeyUp(&keyed)
+                    .map_err(|e| to_error("項目のキー操作の購読", e))?;
                 Ok(BarItem::Navigation(entry))
             }
         }
@@ -736,7 +763,7 @@ struct BreadcrumbBar(Rc<BreadcrumbBarInner>);
 
 struct BreadcrumbBarInner {
     panel: StackPanel,
-    links: RefCell<Vec<Button>>,
+    links: RefCell<Vec<XamlButton>>,
     /// 項目の文字。いまいる場所が変わると色を変えるので持っておく。
     labels: RefCell<Vec<String>>,
     handler: SelectHandler,
@@ -910,11 +937,11 @@ impl Breadcrumbs {
 }
 
 /// パンくずの項目のボタン。読めなければ素の `Button` に戻す。
-fn crumb_button() -> Result<Button> {
+fn crumb_button() -> Result<XamlButton> {
     let xaml = CRUMB_BUTTON_XAML.replace("{padding}", &CRUMB_PADDING_X.to_string());
-    match XamlReader::Load(&HSTRING::from(xaml)).and_then(|element| element.cast::<Button>()) {
+    match XamlReader::Load(&HSTRING::from(xaml)).and_then(|element| element.cast::<XamlButton>()) {
         Ok(button) => Ok(button),
-        Err(_) => Button::new().map_err(|e| to_error("パンくずリンクの生成", e)),
+        Err(_) => XamlButton::new().map_err(|e| to_error("パンくずリンクの生成", e)),
     }
 }
 
