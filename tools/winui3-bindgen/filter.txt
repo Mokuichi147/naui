@@ -15,6 +15,7 @@ Microsoft.UI.Xaml.ApplicationTheme
 Microsoft.UI.Xaml.Automation.AutomationProperties
 Microsoft.UI.Xaml.Controls.AppBar
 Microsoft.UI.Xaml.Controls.AppBarButton
+Microsoft.UI.Xaml.Controls.AppBarClosedDisplayMode
 Microsoft.UI.Xaml.Controls.AppBarSeparator
 Microsoft.UI.Xaml.Controls.AutoSuggestBox
 Microsoft.UI.Xaml.Controls.AutoSuggestBoxQuerySubmittedEventArgs
@@ -33,6 +34,9 @@ Microsoft.UI.Xaml.Controls.ComboBox
 Microsoft.UI.Xaml.Controls.ComboBoxItem
 Microsoft.UI.Xaml.Controls.ComboBoxTextSubmittedEventArgs
 Microsoft.UI.Xaml.Controls.CommandBar
+Microsoft.UI.Xaml.Controls.CommandBarDefaultLabelPosition
+Microsoft.UI.Xaml.Controls.CommandBarLabelPosition
+Microsoft.UI.Xaml.Controls.CommandBarOverflowButtonVisibility
 Microsoft.UI.Xaml.Controls.ContentControl
 Microsoft.UI.Xaml.Controls.ContentDialog
 Microsoft.UI.Xaml.Controls.ContentDialogButton
@@ -57,6 +61,9 @@ Microsoft.UI.Xaml.Controls.ListView
 Microsoft.UI.Xaml.Controls.ListViewBase
 Microsoft.UI.Xaml.Controls.MediaPlayerElement
 Microsoft.UI.Xaml.Controls.MenuFlyout
+Microsoft.UI.Xaml.Controls.MenuFlyoutItem
+Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase
+Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator
 Microsoft.UI.Xaml.Controls.NavigationView
 Microsoft.UI.Xaml.Controls.NumberBox
 Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode

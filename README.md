@@ -936,7 +936,7 @@ tokio::spawn(async move {
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
-| `PopupMenu` | 🟡 `Grid` + `Button` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
+| `PopupMenu` | ✅ `MenuFlyout` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
 | `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | ✅ `AdwAlertDialog` | 🟡 `<dialog>` + `showModal()` |
 | `Toast` | 🔴 `Grid` + `StackPanel` を重ねたもの | 🔴 `NSVisualEffectView` を重ねたもの | ✅ `AdwToast` + `AdwToastOverlay` | 🔴 `<div role="status">` |
 
@@ -1207,6 +1207,12 @@ git push origin v0.3.0
   `SearchInput` が使っていますが、あちらは候補を「開いて全部見る」
   ことができません。`EditableComboBox` は一覧を開いて選べることを軸にしている
   ので、Fluent の作法どおり `ComboBox` のままにしています。
+- `PopupMenu` は `MenuFlyout` です。出す位置・影・角丸・ライトディスミス・
+  キーボード操作 (矢印と Esc)・画面端での回り込みはすべて WinUI が持ちます。
+  右クリックは `UIElement.ContextFlyout` へ預けるので、長押しとコンテキスト
+  キーでも同じメニューが出ます。なお 0.3.0 までの脱出口だった
+  `native_element()` は無くなり、**`native_flyout()` に変わりました**
+  (受け皿を組み立てなくなったため)。
 - `Dialog` は `window.show()` より前には開けません。
 - naui の UI 実行環境が終わった後の `Sender::send` は失敗します
   (`DispatcherQueue` が受け付けないため)。

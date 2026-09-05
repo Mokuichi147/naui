@@ -725,7 +725,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `PopupMenu` | ルートに重ねる `Grid` + `Button` | `NSMenu` | `GtkPopoverMenu` + `GMenu` | `<div role="menu">` |
+//! | `PopupMenu` | `MenuFlyout` | `NSMenu` | `GtkPopoverMenu` + `GMenu` | `<div role="menu">` |
 //!
 //! **階層 (サブメニュー)・チェック印・ショートカットの表示は持たない。**
 //! 項目は「文字・選べるかどうか・区切り線」だけで、これは 4 環境が
