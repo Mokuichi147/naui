@@ -30,16 +30,13 @@ use std::sync::Arc;
 use naui_core::{Result, TreeItem};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Grid as XamlGrid, Orientation as XamlOrientation, ScrollViewer, StackPanel, TreeView,
+    Border, Grid as XamlGrid, Orientation as XamlOrientation, StackPanel, TreeView,
     TreeViewCollapsedEventArgs, TreeViewExpandingEventArgs, TreeViewNode,
     TreeViewSelectionChangedEventArgs, TreeViewSelectionMode,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
-use naui_winui3::Microsoft::UI::Xaml::{
-    DataTemplate, DependencyObject, RoutedEventHandler, UIElement,
-};
+use naui_winui3::Microsoft::UI::Xaml::{DataTemplate, RoutedEventHandler, UIElement};
 use windows::Foundation::TypedEventHandler;
 use windows_core::{IInspectable, Interface, HSTRING};
 
@@ -390,7 +387,7 @@ impl Tree {
         if self.0.wheel.borrow().is_some() {
             return;
         }
-        let Some(scroll) = scroll_viewer_within(&self.0.tree_view) else {
+        let Some(scroll) = crate::layout::scroll_viewer_within(&self.0.tree_view) else {
             return;
         };
         let target = crate::layout::register_list_scroll(scroll, self.0.hovered.clone());
@@ -880,27 +877,6 @@ fn plain_surface() -> Result<(Border, TreeView)> {
         .SetChild(&element)
         .map_err(|e| to_error("ツリーの Border への追加", e))?;
     Ok((native, tree_view))
-}
-
-/// その要素の中にある最初の `ScrollViewer` を、深さ優先で探す。
-///
-/// `TreeView` は `TreeViewList` を持ち、その中に `ScrollViewer` がある。
-/// 段数はテンプレート次第なので、名前ではなく型で探す。
-fn scroll_viewer_within(root: &TreeView) -> Option<ScrollViewer> {
-    let root = root.cast::<DependencyObject>().ok()?;
-    let mut queue = vec![root];
-    while let Some(element) = queue.pop() {
-        if let Ok(scroll) = element.cast::<ScrollViewer>() {
-            return Some(scroll);
-        }
-        let count = VisualTreeHelper::GetChildrenCount(&element).unwrap_or(0);
-        for index in (0..count).rev() {
-            if let Ok(child) = VisualTreeHelper::GetChild(&element, index) {
-                queue.push(child);
-            }
-        }
-    }
-    None
 }
 
 /// 行に当てる `DataTemplate`。

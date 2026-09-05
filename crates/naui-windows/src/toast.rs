@@ -1,16 +1,17 @@
 //! トースト (WinUI 3)。
 //!
-//! WinUI 3 の `InfoBar` と `TeachingTip` は [`naui_winui3`] の投影に無く、
-//! `Windows.UI.Notifications` のトーストは**アプリの
-//! 外** (通知センター) へ出るもので別物なので、`Grid` + `StackPanel` +
-//! `TextBlock` + `Button` を組み立て、ウィンドウの中身へ重ねる。
+//! 通知の見た目は WinUI 3 の `InfoBar` そのもの。`Windows.UI.Notifications`
+//! のトーストは**アプリの外** (通知センター) へ出るもので別物なので使わない。
 //!
-//! 重ねる先はタイトルバーとツールバーの下、アプリの中身と同じ層
-//! ([`crate::window`] が作る 3 行目)。`Grid` は子を重ね順に置くので、
+//! `InfoBar` は本来ページの中へ並べて使う帯だが、naui のトーストは重ねて
+//! 出すものなので、下端の中央へ寄せてウィンドウの中身の層へ重ねる。
+//! 重ねる先はタイトルバーの下、アプリの中身と同じ層
+//! ([`crate::window`] が作る 2 行目)。`Grid` は子を重ね順に置くので、
 //! あとから足したトーストが中身の上に出る。
 //!
-//! 色と角丸は `{ThemeResource ...}` で引くので、ライト / ダークの
-//! どちらにも追従する ([`crate::list`] の枠と同じ作り)。
+//! 閉じるボタン (×) は出さない (`IsClosable` を切る)。naui のトーストが
+//! 消えるのは時間切れ・操作ボタン・[`Toast::dismiss`] の 3 つで、
+//! ほかの 3 環境にも × は無いため。
 //!
 //! 消えるまでの時間は `DispatcherQueueTimer` が数える。
 
@@ -20,10 +21,11 @@ use std::rc::{Rc, Weak};
 use naui_core::{Result, ToastSpec};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button, Grid, Orientation as XamlOrientation, StackPanel, TextBlock,
+    Button, Grid, InfoBar, InfoBarSeverity, TextBlock,
 };
-use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement, Visibility};
+use naui_winui3::Microsoft::UI::Xaml::{
+    HorizontalAlignment, RoutedEventHandler, Thickness, UIElement, VerticalAlignment,
+};
 use windows::Foundation::TimeSpan;
 use windows_core::{Interface, HSTRING};
 
@@ -31,22 +33,8 @@ use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::window::owner_content_layer;
 
-/// トーストの見た目。下端の中央へ置く。
-const TOAST_XAML: &str = r##"<Grid
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="24"
-    Background="{ThemeResource ControlFillColorDefaultBrush}"
-    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
-    BorderThickness="1" Padding="16,10"
-    CornerRadius="{ThemeResource OverlayCornerRadius}">
-    <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-        <TextBlock VerticalAlignment="Center" TextWrapping="WrapWholeWords"
-            Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
-        <Button Visibility="Collapsed">
-            <TextBlock/>
-        </Button>
-    </StackPanel>
-</Grid>"##;
+/// 重ねる位置。下端の中央から 24 だけ離す。
+const TOAST_MARGIN: f64 = 24.0;
 
 /// `TimeSpan` の 1 ミリ秒 (100 ナノ秒きざみ)。
 const TICKS_PER_MILLI: i64 = 10_000;
@@ -58,8 +46,8 @@ thread_local! {
 
 struct ToastInner {
     /// 重ねる本体。
-    native: Grid,
-    label: TextBlock,
+    native: InfoBar,
+    /// 操作ボタン。文字を入れたときだけ `ActionButton` へ取り付ける。
     button: Button,
     /// 操作ボタンの文字。`Button` の中身は `TextBlock` にしてある
     /// (ほかのボタンと同じ作り)。
@@ -74,7 +62,7 @@ struct ToastInner {
     visible: Cell<bool>,
 }
 
-/// 一時的な通知 (`Grid` を重ねたもの)。
+/// 一時的な通知 (`InfoBar` を重ねたもの)。
 ///
 /// ウィジェットではないので、コンテナへは入れない (`Dialog` と同じ)。
 #[derive(Clone)]
@@ -82,14 +70,13 @@ pub struct Toast(Rc<ToastInner>);
 
 impl Toast {
     pub(crate) fn new(message: &str) -> Result<Self> {
-        let (native, label, button, button_label) = build_surface()?;
-        label
-            .SetText(&HSTRING::from(message))
+        let (native, button, button_label) = build_surface()?;
+        native
+            .SetMessage(&HSTRING::from(message))
             .map_err(|e| to_error("トーストの文字設定", e))?;
 
         let this = Self(Rc::new(ToastInner {
             native,
-            label,
             button,
             button_label,
             spec: RefCell::new(ToastSpec::new(message)),
@@ -124,7 +111,7 @@ impl Toast {
     /// 出す文字列。出している間に呼ぶと、その場で書き換わる。
     pub fn set_message(&self, message: &str) {
         self.0.spec.borrow_mut().set_message(message);
-        let _ = self.0.label.SetText(&HSTRING::from(message));
+        let _ = self.0.native.SetMessage(&HSTRING::from(message));
     }
 
     pub fn message(&self) -> String {
@@ -138,10 +125,10 @@ impl Toast {
         match action {
             Some(label) => {
                 let _ = self.0.button_label.SetText(&HSTRING::from(label));
-                let _ = self.0.button.SetVisibility(Visibility::Visible);
+                let _ = self.0.native.SetActionButton(&self.0.button);
             }
             None => {
-                let _ = self.0.button.SetVisibility(Visibility::Collapsed);
+                let _ = self.0.native.SetActionButton(None);
             }
         }
     }
@@ -214,6 +201,7 @@ impl Toast {
             return;
         }
         *self.0.layer.borrow_mut() = Some(layer);
+        let _ = self.0.native.SetIsOpen(true);
         self.0.visible.set(true);
         self.start_timer();
         CURRENT.with(|slot| *slot.borrow_mut() = Some(self.clone()));
@@ -238,7 +226,7 @@ impl Toast {
         self.0
             .native
             .cast::<UIElement>()
-            .expect("Grid は UIElement")
+            .expect("InfoBar は UIElement")
     }
 
     /// 時間を数え始める。消えない指定なら何もしない。
@@ -295,6 +283,7 @@ impl Toast {
             let _ = timer.Stop();
         }
         self.0.visible.set(false);
+        let _ = self.0.native.SetIsOpen(false);
         let Ok(element) = self.0.native.cast::<UIElement>() else {
             return;
         };
@@ -339,74 +328,37 @@ fn emit(slot: &RefCell<Option<Box<dyn FnMut()>>>) {
     }
 }
 
-/// テーマ付きの見た目を読み込む。読めなければ素の `Grid` に戻す
-/// ([`crate::list`] の枠と同じ受け皿)。
-fn build_surface() -> Result<(Grid, TextBlock, Button, TextBlock)> {
-    match load_surface() {
-        Ok(surface) => Ok(surface),
-        Err(error) => {
-            eprintln!("naui-windows: トーストのテーマ付き見た目の生成に失敗: {error}");
-            plain_surface()
-        }
-    }
-}
+/// 重ねる `InfoBar` と、操作ボタンを作る。
+///
+/// 操作ボタンは `ActionButton` に置くので、`InfoBar` の中の並べ方 (文字の
+/// 右か、狭いときは下か) は WinUI が決める。中身を `TextBlock` にするのは
+/// ほかのボタンと同じ作り。
+fn build_surface() -> Result<(InfoBar, Button, TextBlock)> {
+    let native = InfoBar::new().map_err(|e| to_error("トーストの生成", e))?;
+    native
+        .SetSeverity(InfoBarSeverity::Informational)
+        .map_err(|e| to_error("トーストの種類の設定", e))?;
+    // × は出さない。消えるのは時間切れ・操作ボタン・dismiss の 3 つだけ。
+    native
+        .SetIsClosable(false)
+        .map_err(|e| to_error("トーストの閉じるボタンの設定", e))?;
+    native
+        .SetHorizontalAlignment(HorizontalAlignment::Center)
+        .and_then(|()| native.SetVerticalAlignment(VerticalAlignment::Bottom))
+        .and_then(|()| {
+            native.SetMargin(Thickness {
+                Left: TOAST_MARGIN,
+                Top: TOAST_MARGIN,
+                Right: TOAST_MARGIN,
+                Bottom: TOAST_MARGIN,
+            })
+        })
+        .map_err(|e| to_error("トーストの配置設定", e))?;
 
-fn load_surface() -> Result<(Grid, TextBlock, Button, TextBlock)> {
-    let native = XamlReader::Load(&HSTRING::from(TOAST_XAML))
-        .and_then(|element| element.cast::<Grid>())
-        .map_err(|e| to_error("トーストの生成", e))?;
-    let row = native
-        .Children()
-        .and_then(|children| children.GetAt(0))
-        .and_then(|child| child.cast::<StackPanel>())
-        .map_err(|e| to_error("トーストの中身の取得", e))?;
-    let children = row
-        .Children()
-        .map_err(|e| to_error("トーストの中身の取得", e))?;
-    let label = children
-        .GetAt(0)
-        .and_then(|child| child.cast::<TextBlock>())
-        .map_err(|e| to_error("トーストの文字の取得", e))?;
-    let button = children
-        .GetAt(1)
-        .and_then(|child| child.cast::<Button>())
-        .map_err(|e| to_error("トーストのボタンの取得", e))?;
-    let button_label = button
-        .Content()
-        .and_then(|content| content.cast::<TextBlock>())
-        .map_err(|e| to_error("トーストのボタンの文字の取得", e))?;
-    Ok((native, label, button, button_label))
-}
-
-fn plain_surface() -> Result<(Grid, TextBlock, Button, TextBlock)> {
-    let native = Grid::new().map_err(|e| to_error("トーストの生成", e))?;
-    let row = StackPanel::new().map_err(|e| to_error("トーストの中身の生成", e))?;
-    row.SetOrientation(XamlOrientation::Horizontal)
-        .map_err(|e| to_error("トーストの中身の向き設定", e))?;
-    row.SetSpacing(12.0)
-        .map_err(|e| to_error("トーストの中身の間隔設定", e))?;
-    let label = TextBlock::new().map_err(|e| to_error("トーストの文字の生成", e))?;
     let button = Button::new().map_err(|e| to_error("トーストのボタンの生成", e))?;
     let button_label = TextBlock::new().map_err(|e| to_error("トーストのボタンの文字の生成", e))?;
     button
         .SetContent(&button_label)
         .map_err(|e| to_error("トーストのボタンの文字の配置", e))?;
-    button
-        .SetVisibility(Visibility::Collapsed)
-        .map_err(|e| to_error("トーストのボタンの表示設定", e))?;
-    let children = row
-        .Children()
-        .map_err(|e| to_error("トーストの中身の子取得", e))?;
-    children
-        .Append(&label)
-        .map_err(|e| to_error("トーストの文字の配置", e))?;
-    children
-        .Append(&button)
-        .map_err(|e| to_error("トーストのボタンの配置", e))?;
-    native
-        .Children()
-        .map_err(|e| to_error("トーストの子取得", e))?
-        .Append(&row)
-        .map_err(|e| to_error("トーストの中身の配置", e))?;
-    Ok((native, label, button, button_label))
+    Ok((native, button, button_label))
 }

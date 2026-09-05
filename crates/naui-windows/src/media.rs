@@ -3,12 +3,10 @@
 //! 動画と音声は WinUI 3 の **MediaPlayerElement** と
 //! **Windows.Media.Playback.MediaPlayer** がそのまま担う。
 //!
-//! 画像だけは事情が違う。`Microsoft.UI.Xaml.Controls.Image` と
-//! `Media.Imaging.BitmapImage` は [`naui_winui3`] の投影に入ったが、
-//! `Controls.Image` のほうがまだ無く、Rust から `Source` を設定できない。そこで
-//! **`XamlReader` に `<Image>` を書いた XAML を読ませ**、ホストの `Grid` の
-//! 中身を差し替える形にしている (`ProgressBar` と同じ手口)。
-//! 表示するのは WinUI 標準の `Image` そのもので、読み込みも描画も WinUI が行う。
+//! 画像は WinUI 標準の `Image` と `BitmapImage` で、どちらも
+//! [`naui_winui3`] の投影から直に作る。読み込みも描画も WinUI が行う。
+//! 要素はホストの `Grid` に 1 つだけ置き、場所や収め方が変わっても
+//! 作り直さずプロパティを書き換える。
 //!
 //! ## 再生状態の通知とスレッド
 //!
@@ -28,10 +26,13 @@ use std::rc::{Rc, Weak};
 use naui_core::media::{is_url, source_url};
 use naui_core::{Fit, PlaybackState, Result};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
-use naui_winui3::Microsoft::UI::Xaml::Controls::{Grid, MediaPlayerElement};
-use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+use naui_winui3::Microsoft::UI::Xaml::Controls::{
+    Grid, Image as XamlImage, MediaPlayerElement, UIElementCollection,
+};
+use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
 use naui_winui3::Microsoft::UI::Xaml::Media::Stretch;
-use naui_winui3::Microsoft::UI::Xaml::UIElement;
+use naui_winui3::Microsoft::UI::Xaml::{HorizontalAlignment, UIElement, VerticalAlignment};
 use windows::Foundation::{TimeSpan, TypedEventHandler, Uri};
 use windows::Media::Core::MediaSource;
 use windows::Media::Playback::{
@@ -59,48 +60,19 @@ fn stretch(fit: Fit) -> Stretch {
     }
 }
 
-/// XAMLの属性値として使える `Stretch` の名前。
-///
-/// Rustの `Debug` 表現 (`Stretch(2)`) は XAML の列挙値として解釈できない。
-fn stretch_name(fit: Fit) -> &'static str {
-    match fit {
-        Fit::Contain => "Uniform",
-        Fit::Cover => "UniformToFill",
-        Fit::Fill => "Fill",
-        Fit::None => "None",
-    }
-}
-
-/// XAML の属性値に埋め込める形へ直す。
-///
-/// パスや代替テキストに `&` や `"` が入っていると XAML が壊れるため、
-/// 属性値として意味を持つ文字だけを実体参照にする。
-fn escape_xml(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for c in value.chars() {
-        match c {
-            '&' => escaped.push_str("&amp;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '"' => escaped.push_str("&quot;"),
-            '\'' => escaped.push_str("&apos;"),
-            _ => escaped.push(c),
-        }
-    }
-    escaped
-}
-
 // ------------------------------------------------------------------ Image
 
 struct ImageInner {
-    /// 差し替えても外から見た要素が変わらないようにするホスト。
+    /// 大きさの指定を受け取り、画像を出し入れするホスト。
     native: Grid,
+    /// 表示する WinUI の `Image`。場所が空のときはホストから外す。
+    image: XamlImage,
     source: RefCell<String>,
     fit: Cell<Fit>,
     alt: RefCell<String>,
 }
 
-/// 画像表示 (WinUI の `Image` を `XamlReader` 経由で生成)。
+/// 画像表示 (WinUI の `Image`)。
 ///
 /// 読み込みは WinUI が非同期に行うため、[`set_source`](Self::set_source) の
 /// 直後にはまだ表示されていない。
@@ -111,8 +83,15 @@ impl_widget!(Image, native);
 impl Image {
     pub(crate) fn new(source: &str) -> Result<Self> {
         let native = Grid::new().map_err(|e| to_error("Image ホストの生成", e))?;
+        let image = XamlImage::new().map_err(|e| to_error("Image の生成", e))?;
+        image
+            .SetHorizontalAlignment(HorizontalAlignment::Stretch)
+            .and_then(|()| image.SetVerticalAlignment(VerticalAlignment::Stretch))
+            .and_then(|()| image.SetStretch(stretch(Fit::default())))
+            .map_err(|e| to_error("Image の配置設定", e))?;
         let this = Self(Rc::new(ImageInner {
             native,
+            image,
             source: RefCell::new(String::new()),
             fit: Cell::new(Fit::default()),
             alt: RefCell::new(String::new()),
@@ -131,7 +110,7 @@ impl Image {
     /// 空文字列を渡すと画像を外す。
     pub fn set_source(&self, source: &str) {
         *self.0.source.borrow_mut() = source.to_string();
-        self.rebuild();
+        self.apply_source();
     }
 
     /// 読み込みを指示できているか (要素を組み立てられたか)。
@@ -146,59 +125,67 @@ impl Image {
             .is_ok_and(|size| size > 0)
     }
 
-    /// 表示領域への収め方 (XAML の `Stretch`)。
+    /// 表示領域への収め方 (`Image` の `Stretch`)。
     pub fn set_fit(&self, fit: Fit) {
         self.0.fit.set(fit);
-        self.rebuild();
+        let _ = self.0.image.SetStretch(stretch(fit));
     }
 
     /// 画像の内容を表す文字列。ナレーターが読み上げる。
     pub fn set_alt(&self, text: &str) {
         *self.0.alt.borrow_mut() = text.to_string();
-        self.rebuild();
+        let _ = AutomationProperties::SetName(&self.0.image, &HSTRING::from(text));
     }
 
-    /// いまの指定で `<Image>` を組み立て直し、ホストの中身を入れ替える。
+    /// 画像をホストから外し、読み込みの指示も落とす。
     ///
-    /// `Source` を後から差し替えるバインディングが無いため、指定が変わる
-    /// たびに要素ごと作り直す。ホストの `Grid` は変わらないので、
-    /// `set_sizing` やコンテナへの追加はやり直さなくてよい。
-    fn rebuild(&self) {
+    /// 場所が空のときと、読み込みを指示できなかったときの両方で通る。
+    /// [`is_loaded`](Self::is_loaded) が見ているのはこの出し入れ。
+    fn take_down(&self, children: &UIElementCollection) {
+        let _ = children.Clear();
+        let _ = self.0.image.SetSource(None);
+    }
+
+    /// いまの場所を `Image` へ渡し、ホストへの出し入れを合わせる。
+    ///
+    /// 場所が空のときと、読み込みを指示できなかったときは
+    /// [`take_down`](Self::take_down) で外す。
+    fn apply_source(&self) {
         let Ok(children) = self.0.native.Children() else {
             return;
         };
-        let _ = children.Clear();
-
         let source = self.0.source.borrow();
         if source.is_empty() {
+            self.take_down(&children);
             return;
         }
-        let alt = self.0.alt.borrow();
-        let automation = if alt.is_empty() {
-            String::new()
-        } else {
-            format!(r#" AutomationProperties.Name="{}""#, escape_xml(&alt))
-        };
-        let xaml = format!(
-            r#"<Image xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                Stretch="{stretch}" HorizontalAlignment="Stretch"
-                VerticalAlignment="Stretch"{automation}>
-                <Image.Source>
-                    <BitmapImage UriSource="{source}"/>
-                </Image.Source>
-            </Image>"#,
-            // WinUI はファイルパスではなく URI を要求する。
-            source = escape_xml(&source_url(&source)),
-            stretch = stretch_name(self.0.fit.get()),
-        );
-        let element = match XamlReader::Load(&HSTRING::from(xaml)) {
-            Ok(element) => element,
+
+        // WinUI はファイルパスではなく URI を要求する。
+        let uri = match Uri::CreateUri(&HSTRING::from(source_url(&source))) {
+            Ok(uri) => uri,
             Err(error) => {
-                eprintln!("naui-windows: Image の XAML 生成に失敗: {error}");
+                eprintln!("naui-windows: Image の場所を URI にできません: {error}");
+                self.take_down(&children);
                 return;
             }
         };
-        let Ok(element) = element.cast::<UIElement>() else {
+        let bitmap = match BitmapImage::CreateInstanceWithUriSource(&uri) {
+            Ok(bitmap) => bitmap,
+            Err(error) => {
+                eprintln!("naui-windows: Image の読み込み指示に失敗: {error}");
+                self.take_down(&children);
+                return;
+            }
+        };
+        if let Err(error) = self.0.image.SetSource(&bitmap) {
+            eprintln!("naui-windows: Image の差し替えに失敗: {error}");
+            self.take_down(&children);
+            return;
+        }
+        if children.Size().is_ok_and(|size| size > 0) {
+            return;
+        }
+        let Ok(element) = self.0.image.cast::<UIElement>() else {
             eprintln!("naui-windows: Image 要素への変換に失敗");
             return;
         };

@@ -5,15 +5,37 @@
 //! | `Tabs` | `Grid` + `ToggleButton` |
 //! | `Navbar` | `TextBlock` (見出し) + `ToggleButton` の横並び |
 //! | `Dock` | `ToggleButton` の横並び |
-//! | `Menu` | `ToggleButton` の縦並び |
-//! | `Breadcrumbs` | `HyperlinkButton` + 区切りの `TextBlock` |
+//! | `Menu` | `NavigationViewItem` の縦並び |
+//! | `Breadcrumbs` | 地色を消した `Button` + 山形の区切り |
 //! | `Pagination` | `Button` + `ToggleButton` |
 //! | `Link` | `HyperlinkButton` |
 //!
-//! `ToggleButton` (WinUI の標準コントロール) を並べて構成している。選択状態は
-//! `IsChecked` で表すので、見た目は Fluent のまま。`NavigationView` は
-//! [`naui_winui3`] の投影に入っているので、そちらへ移すのは今後の課題
-//! (`BreadcrumbBar` はまだ投影していない)。
+//! 横に並べる帯は `ToggleButton` (WinUI の標準コントロール) を並べて構成して
+//! いる。選択状態は `IsChecked` で表すので、見た目は Fluent のまま。
+//!
+//! 縦に並べる `Menu` だけは `NavigationViewItem` そのものを部品として使う。
+//! この既定のテンプレートは左ペイン用 (項目を横いっぱいに広げ、選択は左端の
+//! アクセントのピルで表す) で、縦並びの見た目がそのまま合うため。横に並べる
+//! 帯で使うと左ペインの見た目のままになるので、そちらは `ToggleButton` の
+//! ままにしている (横向きの見た目は親の `NavigationView` が Top モードの
+//! ときに差し替えるもので、単体では出せない)。
+//!
+//! ## 名前の似た WinUI のコントロールを使っていない理由
+//!
+//! naui のナビゲーションは**選ばれている位置を通知するだけの帯**で、中身は
+//! 持たない。対して WinUI の対応しそうなコントロールは、どれも中身まで
+//! 引き受ける作りになっていて、そのまま置き換えると naui の API の意味が
+//! 変わってしまう。
+//!
+//! | naui | 近い WinUI | 合わないところ |
+//! | --- | --- | --- |
+//! | `Tabs` | `TabView` | タブごとに中身を持たせる作り。naui はインデックスを返すだけで、中身の出し分けはアプリの側にある |
+//! | `Navbar` / `Menu` / `Dock` | `NavigationView` | ペイン・戻るボタン・見出しに加えて**中身の領域まで**持つアプリの外枠。帯として並べて置くものではない |
+//! | `Breadcrumbs` | `BreadcrumbBar` | **末尾がいまいる場所**と決まっている。naui の `set_selected` のように途中の項目へ移せない |
+//! | `Pagination` | `PipsPager` | 点で位置を示すもので、ページ番号を並べるものではない |
+//!
+//! どれも移すなら naui 側の API を決め直すことになるので、`ToggleButton` を
+//! 並べる形のままにしている。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -22,13 +44,16 @@ use std::sync::Arc;
 use naui_core::{NavItem, Result};
 use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::ToggleButton;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, Grid as XamlGrid, HyperlinkButton, Orientation as XamlOrientation,
-    RowDefinition, StackPanel, TextBlock,
+    Button as XamlButton, Grid as XamlGrid, HyperlinkButton, NavigationViewItem,
+    Orientation as XamlOrientation, RowDefinition, StackPanel, TextBlock,
 };
+use naui_winui3::Microsoft::UI::Xaml::Input::{KeyEventHandler, TappedEventHandler};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, UIElement,
-    VerticalAlignment,
+    FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, Thickness,
+    UIElement, VerticalAlignment,
 };
+use windows::System::VirtualKey;
 use windows_core::{IUnknown, Interface, HSTRING};
 
 use crate::to_error;
@@ -99,26 +124,102 @@ pub(crate) fn append(panel: &StackPanel, element: &UIElement) -> Result<()> {
 /// 「項目の並び + いま選ばれているもの」を持つ内部ハンドル。
 ///
 /// ナビバー・ドック・メニュー・パンくず・ページネーションが共有する。
+/// パンくずの項目の左右の余白。押したときの淡い塗りが文字に貼り付かない
+/// ようにするためのもので、この分だけ帯を左へずらして文字の左端をそろえる。
+const CRUMB_PADDING_X: f64 = 4.0;
+
+/// パンくずの項目。WinUI の `BreadcrumbBar` に合わせて、地色も枠も出さず
+/// 文字だけを見せる (押したときの淡い塗りは `Button` の標準テンプレートが持つ)。
+const CRUMB_BUTTON_XAML: &str = r##"<Button
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    Background="Transparent" BorderThickness="0" Padding="{padding},2"
+    VerticalAlignment="Center"/>"##;
+
+/// パンくずの区切り。`BreadcrumbBar` と同じ山形 (Segoe Fluent Icons)。
+const CRUMB_SEPARATOR_XAML: &str = r##"<FontIcon
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    Glyph="&#xE76C;" FontSize="12" VerticalAlignment="Center"
+    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>"##;
+
+/// いまいる場所の文字。色はテーマに追従させたいので XAML から作る。
+const CRUMB_CURRENT_XAML: &str = r##"<TextBlock
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>"##;
+
+/// たどってきた場所の文字。いまいる場所より一段淡い。
+const CRUMB_ANCESTOR_XAML: &str = r##"<TextBlock
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>"##;
+
 #[derive(Clone)]
 struct Bar(Rc<BarInner>);
 
+/// 項目に使うコントロール。並べ方によって見た目の合うものが違う。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BarKind {
+    /// 押し込みで選択を表す `ToggleButton`。横に並べる帯 (`Navbar` /
+    /// `Dock` / `Pagination`) 向け。
+    Toggle,
+    /// WinUI の左ペインの項目 (`NavigationViewItem`)。縦に並べる `Menu` 向け。
+    Navigation,
+}
+
+/// 並べた項目 1 つ。選択の表しかたがコントロールごとに違う。
+enum BarItem {
+    Toggle(ToggleButton),
+    Navigation(NavigationViewItem),
+}
+
+impl BarItem {
+    fn set_selected(&self, selected: bool) {
+        match self {
+            Self::Toggle(button) => {
+                if let Ok(value) = bool_ref(selected) {
+                    let _ = button.SetIsChecked(&value);
+                }
+            }
+            Self::Navigation(item) => {
+                let _ = item.SetIsSelected(selected);
+            }
+        }
+    }
+
+    fn set_enabled(&self, enabled: bool) {
+        match self {
+            Self::Toggle(button) => {
+                let _ = button.SetIsEnabled(enabled);
+            }
+            Self::Navigation(item) => {
+                let _ = item.SetIsEnabled(enabled);
+            }
+        }
+    }
+
+    fn element(&self) -> Result<UIElement> {
+        match self {
+            Self::Toggle(button) => button.cast::<UIElement>(),
+            Self::Navigation(item) => item.cast::<UIElement>(),
+        }
+        .map_err(|e| to_error("項目の要素化", e))
+    }
+}
+
 struct BarInner {
     panel: StackPanel,
-    buttons: RefCell<Vec<ToggleButton>>,
+    kind: BarKind,
+    buttons: RefCell<Vec<BarItem>>,
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
-    /// 2 つ目以降の項目の前に区切りを入れる (パンくず用)。
-    separators: bool,
 }
 
 impl Bar {
-    fn new(panel: StackPanel, separators: bool) -> Self {
+    fn new(panel: StackPanel, kind: BarKind) -> Self {
         Self(Rc::new(BarInner {
             panel,
+            kind,
             buttons: RefCell::new(Vec::new()),
             handler: SelectHandler::new(),
             selected: Cell::new(None),
-            separators,
         }))
     }
 
@@ -133,42 +234,12 @@ impl Bar {
 
         let mut buttons = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
-            if self.0.separators && index > 0 {
-                let separator = text_block("/")?;
-                let element = separator
-                    .cast::<UIElement>()
-                    .map_err(|e| to_error("区切りの要素化", e))?;
-                append(&self.0.panel, &element)?;
-            }
-
-            let button = ToggleButton::new().map_err(|e| to_error("ToggleButton の生成", e))?;
-            button
-                .SetContent(&text_block(&item.label)?)
-                .map_err(|e| to_error("ToggleButton への内容設定", e))?;
-            let _ = button.SetIsEnabled(item.enabled);
-            let _ = button.SetIsChecked(&bool_ref(false)?);
-
-            // Click はユーザー操作でしか発火しない。`SetIsChecked` では
-            // 呼ばれないので、プログラムからの選択と混ざらない。
-            // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
-            let state = UiThreadCell::new(Rc::downgrade(&self.0));
-            let handler = RoutedEventHandler::new(move |_sender, _args| {
-                state.with_mut(|weak| {
-                    if let Some(inner) = weak.upgrade() {
-                        Bar(inner).select(index);
-                    }
-                });
-                Ok(())
-            });
-            button
-                .Click(&handler)
-                .map_err(|e| to_error("ToggleButton の購読", e))?;
-
-            let element = button
-                .cast::<UIElement>()
-                .map_err(|e| to_error("項目の要素化", e))?;
+            let entry = self.build_item(item, index)?;
+            entry.set_enabled(item.enabled);
+            entry.set_selected(false);
+            let element = entry.element()?;
             append(&self.0.panel, &element)?;
-            buttons.push(button);
+            buttons.push(entry);
         }
         *self.0.buttons.borrow_mut() = buttons;
         // 項目が変わればインデックスの意味も変わるので、選択は必ず外す。
@@ -176,19 +247,86 @@ impl Bar {
         Ok(())
     }
 
-    /// 選択されたボタンだけを押し込む。
-    fn mark_selected(&self, index: Option<usize>) {
-        if let Ok(checked) = bool_ref(true) {
-            if let Ok(unchecked) = bool_ref(false) {
-                for (i, button) in self.0.buttons.borrow().iter().enumerate() {
-                    let value = if Some(i) == index {
-                        &checked
-                    } else {
-                        &unchecked
-                    };
-                    let _ = button.SetIsChecked(value);
-                }
+    /// 項目 1 つを作り、押されたら選ぶようにする。
+    ///
+    /// 拾うイベントは**利用者の操作でしか起きないもの**を選ぶ
+    /// (`ToggleButton` の `Click`、`NavigationViewItem` の `Tapped`)。
+    /// `IsChecked` / `IsSelected` の書き換えでは呼ばれないので、
+    /// プログラムからの選択と混ざらない。
+    /// ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+    ///
+    /// `NavigationViewItem` には `Click` に当たるものが無く、`Tapped` は
+    /// ポインターの操作でしか飛ばない。`NavigationView` の外なので
+    /// `ItemInvoked` も来ない。そこで Space と Enter を `KeyUp` から拾って
+    /// 補う (押し下げではなく離したときに確定させるのは `ButtonBase` と
+    /// 同じで、押しっぱなしの自動リピートで連発しないため)。
+    fn build_item(&self, item: &NavItem, index: usize) -> Result<BarItem> {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        match self.0.kind {
+            BarKind::Toggle => {
+                let button = ToggleButton::new().map_err(|e| to_error("ToggleButton の生成", e))?;
+                button
+                    .SetContent(&text_block(&item.label)?)
+                    .map_err(|e| to_error("ToggleButton への内容設定", e))?;
+                let handler = RoutedEventHandler::new(move |_sender, _args| {
+                    state.with_mut(|weak| {
+                        if let Some(inner) = weak.upgrade() {
+                            Bar(inner).select(index);
+                        }
+                    });
+                    Ok(())
+                });
+                button
+                    .Click(&handler)
+                    .map_err(|e| to_error("ToggleButton の購読", e))?;
+                Ok(BarItem::Toggle(button))
             }
+            BarKind::Navigation => {
+                let entry = NavigationViewItem::new().map_err(|e| to_error("項目の生成", e))?;
+                entry
+                    .SetContent(&text_block(&item.label)?)
+                    .map_err(|e| to_error("項目への内容設定", e))?;
+                let handler = TappedEventHandler::new(move |_sender, _args| {
+                    state.with_mut(|weak| {
+                        if let Some(inner) = weak.upgrade() {
+                            Bar(inner).select(index);
+                        }
+                    });
+                    Ok(())
+                });
+                entry
+                    .Tapped(&handler)
+                    .map_err(|e| to_error("項目の購読", e))?;
+
+                let key_state = UiThreadCell::new(Rc::downgrade(&self.0));
+                let keyed = KeyEventHandler::new(move |_sender, args| {
+                    let Some(args) = args.as_ref() else {
+                        return Ok(());
+                    };
+                    let key = args.Key().unwrap_or(VirtualKey::None);
+                    if key != VirtualKey::Space && key != VirtualKey::Enter {
+                        return Ok(());
+                    }
+                    let _ = args.SetHandled(true);
+                    key_state.with_mut(|weak| {
+                        if let Some(inner) = weak.upgrade() {
+                            Bar(inner).select(index);
+                        }
+                    });
+                    Ok(())
+                });
+                entry
+                    .KeyUp(&keyed)
+                    .map_err(|e| to_error("項目のキー操作の購読", e))?;
+                Ok(BarItem::Navigation(entry))
+            }
+        }
+    }
+
+    /// 選ばれた項目だけを選択状態にする。
+    fn mark_selected(&self, index: Option<usize>) {
+        for (i, entry) in self.0.buttons.borrow().iter().enumerate() {
+            entry.set_selected(Some(i) == index);
         }
         self.0.selected.set(index);
     }
@@ -539,7 +677,7 @@ impl Navbar {
         Ok(Self(Rc::new(NavbarInner {
             native,
             title: title_block,
-            bar: Bar::new(items, false),
+            bar: Bar::new(items, BarKind::Toggle),
         })))
     }
 
@@ -578,7 +716,7 @@ impl Dock {
         let native = panel(XamlOrientation::Horizontal, 4.0)?;
         Ok(Self(Rc::new(DockInner {
             native: native.clone(),
-            bar: Bar::new(native, false),
+            bar: Bar::new(native, BarKind::Toggle),
         })))
     }
 }
@@ -603,7 +741,7 @@ impl Menu {
         let native = panel(XamlOrientation::Vertical, 2.0)?;
         Ok(Self(Rc::new(MenuInner {
             native: native.clone(),
-            bar: Bar::new(native, false),
+            bar: Bar::new(native, BarKind::Navigation),
         })))
     }
 }
@@ -615,13 +753,19 @@ struct BreadcrumbsInner {
     bar: BreadcrumbBar,
 }
 
-/// リンク表示のパンくず用バー。
+/// パンくず用のバー。WinUI の `BreadcrumbBar` に見た目を寄せてある
+/// (山形の区切り、いまいる場所は主色・たどってきた場所は副次色)。
+///
+/// `BreadcrumbBar` そのものを使わないのは、あちらが**末尾をいまいる場所と
+/// 決めている**ため。naui は `set_selected` で途中の項目へも移せる。
 #[derive(Clone)]
 struct BreadcrumbBar(Rc<BreadcrumbBarInner>);
 
 struct BreadcrumbBarInner {
     panel: StackPanel,
-    links: RefCell<Vec<HyperlinkButton>>,
+    links: RefCell<Vec<XamlButton>>,
+    /// 項目の文字。いまいる場所が変わると色を変えるので持っておく。
+    labels: RefCell<Vec<String>>,
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
 }
@@ -631,6 +775,7 @@ impl BreadcrumbBar {
         Self(Rc::new(BreadcrumbBarInner {
             panel,
             links: RefCell::new(Vec::new()),
+            labels: RefCell::new(Vec::new()),
             handler: SelectHandler::new(),
             selected: Cell::new(None),
         }))
@@ -646,27 +791,18 @@ impl BreadcrumbBar {
             .Clear()
             .map_err(|e| to_error("パンくず項目の消去", e))?;
         self.0.links.borrow_mut().clear();
+        self.0.labels.borrow_mut().clear();
 
         let mut links = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
             if index > 0 {
-                let separator = text_block("/")?;
-                separator
-                    .SetVerticalAlignment(VerticalAlignment::Center)
-                    .map_err(|e| to_error("パンくず区切りの縦位置設定", e))?;
-                let element = separator
-                    .cast::<UIElement>()
-                    .map_err(|e| to_error("パンくず区切りの要素化", e))?;
-                append(&self.0.panel, &element)?;
+                let separator = crumb_separator()?;
+                append(&self.0.panel, &separator)?;
             }
 
-            let link = HyperlinkButton::new().map_err(|e| to_error("パンくずリンクの生成", e))?;
-            link.SetContent(&text_block(&item.label)?)
+            let link = crumb_button()?;
+            link.SetContent(&crumb_label(&item.label, false)?)
                 .map_err(|e| to_error("パンくずリンクの内容設定", e))?;
-            link.SetNavigateUri(None)
-                .map_err(|e| to_error("パンくずリンクの遷移先設定", e))?;
-            link.SetVerticalAlignment(VerticalAlignment::Center)
-                .map_err(|e| to_error("パンくずリンクの縦位置設定", e))?;
             let _ = link.SetIsEnabled(item.enabled);
 
             let state = UiThreadCell::new(Rc::downgrade(&self.0));
@@ -688,11 +824,27 @@ impl BreadcrumbBar {
             links.push(link);
         }
         *self.0.links.borrow_mut() = links;
+        *self.0.labels.borrow_mut() = items.iter().map(|item| item.label.clone()).collect();
         self.mark_selected(None);
         Ok(())
     }
 
+    /// いまいる場所を主色に、たどってきた場所を副次色にする。
+    ///
+    /// 色はテーマに追従させたいので、`{ThemeResource}` を持つ `TextBlock` を
+    /// その都度作って差し替える (取り出したブラシを使い回すと、ライト /
+    /// ダークの切り替えに付いてこないため)。
     fn mark_selected(&self, index: Option<usize>) {
+        let labels = self.0.labels.borrow();
+        for (i, link) in self.0.links.borrow().iter().enumerate() {
+            let Some(text) = labels.get(i) else {
+                continue;
+            };
+            if let Ok(label) = crumb_label(text, Some(i) == index) {
+                let _ = link.SetContent(&label);
+            }
+        }
+        drop(labels);
         self.0.selected.set(index);
     }
 
@@ -730,6 +882,17 @@ impl_widget!(Breadcrumbs, native);
 impl Breadcrumbs {
     pub(crate) fn new() -> Result<Self> {
         let native = panel(XamlOrientation::Horizontal, 4.0)?;
+        // 項目の左右の余白は押したときの塗りのためのもので、文字の位置を
+        // 決めるものではない。その分だけ帯を左へずらして、先頭の項目の文字が
+        // 周りの文章と同じ左端に来るようにする。
+        native
+            .SetMargin(Thickness {
+                Left: -CRUMB_PADDING_X,
+                Top: 0.0,
+                Right: 0.0,
+                Bottom: 0.0,
+            })
+            .map_err(|e| to_error("パンくずの配置設定", e))?;
         Ok(Self(Rc::new(BreadcrumbsInner {
             native: native.clone(),
             bar: BreadcrumbBar::new(native),
@@ -773,6 +936,51 @@ impl Breadcrumbs {
     }
 }
 
+/// パンくずの項目のボタン。読めなければ素の `Button` に戻す。
+fn crumb_button() -> Result<XamlButton> {
+    let xaml = CRUMB_BUTTON_XAML.replace("{padding}", &CRUMB_PADDING_X.to_string());
+    match XamlReader::Load(&HSTRING::from(xaml)).and_then(|element| element.cast::<XamlButton>()) {
+        Ok(button) => Ok(button),
+        Err(_) => XamlButton::new().map_err(|e| to_error("パンくずリンクの生成", e)),
+    }
+}
+
+/// パンくずの区切り。読めなければ文字の「/」に戻す。
+fn crumb_separator() -> Result<UIElement> {
+    if let Ok(icon) = XamlReader::Load(&HSTRING::from(CRUMB_SEPARATOR_XAML))
+        .and_then(|element| element.cast::<UIElement>())
+    {
+        return Ok(icon);
+    }
+    let separator = text_block("/")?;
+    separator
+        .SetVerticalAlignment(VerticalAlignment::Center)
+        .map_err(|e| to_error("パンくず区切りの縦位置設定", e))?;
+    separator
+        .cast::<UIElement>()
+        .map_err(|e| to_error("パンくず区切りの要素化", e))
+}
+
+/// パンくずの項目の文字。`current` ならいまいる場所の色にする。
+fn crumb_label(text: &str, current: bool) -> Result<TextBlock> {
+    let xaml = if current {
+        CRUMB_CURRENT_XAML
+    } else {
+        CRUMB_ANCESTOR_XAML
+    };
+    let block = match XamlReader::Load(&HSTRING::from(xaml))
+        .and_then(|element| element.cast::<TextBlock>())
+    {
+        Ok(block) => block,
+        // 色が引けなくても文字は出す。
+        Err(_) => TextBlock::new().map_err(|e| to_error("パンくずの文字の生成", e))?,
+    };
+    block
+        .SetText(&HSTRING::from(text))
+        .map_err(|e| to_error("パンくずの文字の設定", e))?;
+    Ok(block)
+}
+
 // ------------------------------------------------------------- Pagination
 
 struct PaginationInner {
@@ -811,7 +1019,7 @@ impl Pagination {
 
         let this = Self(Rc::new(PaginationInner {
             native,
-            bar: Bar::new(numbers, false),
+            bar: Bar::new(numbers, BarKind::Toggle),
         }));
 
         for (button, forward) in [(&prev, false), (&next, true)] {

@@ -1,27 +1,21 @@
 //! リスト (WinUI 3)。
 //!
-//! WinUI 標準の `ListBox` を `ScrollViewer` に載せて使う。行は `ListBoxItem` で、
-//! 中身は透明な `Grid` に載せた `TextBlock` か、任意の組み立て済みウィジェット。
-//! 使えない行は `IsEnabled = false`、
-//! 複数選択とキーボード操作は `ListBox`、スクロールは外側の `ScrollViewer` が行う。
+//! WinUI 標準の `ListView` をそのまま使う。行は `ListViewItem` で、中身は
+//! 透明な `Grid` に載せた `TextBlock` か、任意の組み立て済みウィジェット。
+//! 使えない行は `IsEnabled = false`、複数選択とキーボード操作は `ListView` が
+//! 行う。
 //!
-//! 土台は WinUI 標準の `ListBox`。`ListView` は [`naui_winui3`] の投影に
-//! 入っているので、そちらへ移すのは今後の課題。
+//! 行の見た目 (角丸・淡い塗り・左端のアクセント色のインジケーター) は
+//! `ListView` の標準テンプレートが持っている。枠だけは付いていないので、
+//! `List` と `Table` と `Tree` で同じ色・角丸の `Border` で囲む。
+//! 色はすべて `{ThemeResource ...}` で引くので、ライト / ダークの切り替え
+//! (ウィンドウの `RequestedTheme`) にそのまま追従する。テーマリソースが
+//! 引けない環境では、素の `Border` に戻して動作を優先する。
 //!
-//! ただし `ListBox` は WinUI 3 でも Fluent 化されていない旧来のコントロールで、
-//! 既定のままでは角が四角く、選択した行がアクセント色で全面に塗られる
-//! (WinUI 3 の `ListView` とは似ても似つかない見た目になる)。そのため
-//! **枠と行の見た目は naui 側で組み直している**。
-//!
-//! | 部分 | 作り |
-//! | --- | --- |
-//! | 枠 | 外側の `ScrollViewer` に背景・境界線・角丸を持たせる |
-//! | 行 | `ListBoxItem` に差し替えの `ControlTemplate` を当てる |
-//! | 選択 | 淡い塗り + 左端のアクセント色のインジケーター |
-//!
-//! 色・角丸はすべて `{ThemeResource ...}` で引くので、ライト / ダークの
-//! 切り替え (ウィンドウの `RequestedTheme`) にそのまま追従する。
-//! テーマリソースが引けない環境では、素の `ListBox` に戻して動作を優先する。
+//! スクロールは `ListView` が自分で持つ (中の一覧は与えられた高さぶんしか
+//! 並べないので、外側の `ScrollViewer` へ預けると伸びずに切れてしまう)。
+//! ウィンドウ全体のホイール補助 ([`crate::layout`]) には、テンプレートの
+//! 中にある `ScrollViewer` を見つけて登録する。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -29,14 +23,13 @@ use std::sync::Arc;
 
 use naui_core::{ListItem, Result, SelectionMode};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Grid as XamlGrid, ListBox as XamlListBox, ListBoxItem, Orientation as XamlOrientation,
-    ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler,
-    SelectionMode as XamlSelectionMode, StackPanel, TextBlock,
+    Border, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
+    Orientation as XamlOrientation, ScrollBarVisibility, ScrollViewer,
+    SelectionChangedEventHandler, StackPanel, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use naui_winui3::Microsoft::UI::Xaml::{ResourceDictionary, Style, UIElement};
-use windows::Foundation::PropertyValue;
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, Thickness, UIElement};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
@@ -164,133 +157,28 @@ impl ListRow {
     }
 }
 
-/// 一覧の枠。`ListBox` 自身は中身の高さいっぱいに伸びてしまい、角丸も境界線も
-/// 見えなくなるため、見えている大きさと一致する外側の `ScrollViewer` に持たせる。
-const SURFACE_XAML: &str = r##"<ScrollViewer
+/// 行の余白。`ListView` の既定は縦が 0 で、`label` と `detail` の 2 行を
+/// 載せると詰まって見えるため、上下を空ける。横は既定と同じ 12。
+/// (`Table` は見出しと列をそろえる必要があるので、同じ値を自分で持つ。)
+const ROW_PADDING: Thickness = Thickness {
+    Left: 12.0,
+    Top: 8.0,
+    Right: 12.0,
+    Bottom: 8.0,
+};
+
+/// 一覧の枠。`ListView` は枠を持たないので、`Table` と `Tree` と同じ色・
+/// 角丸の `Border` で囲む。
+const SURFACE_XAML: &str = r##"<Border
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    HorizontalScrollBarVisibility="Disabled"
-    VerticalScrollBarVisibility="Auto"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
     BorderThickness="1"
     CornerRadius="{ThemeResource ControlCornerRadius}"
     Padding="4">
-    <ListBox Background="Transparent" BorderThickness="0" Padding="0"
-        HorizontalContentAlignment="Stretch"
-        ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-        ScrollViewer.VerticalScrollBarVisibility="Disabled"/>
-</ScrollViewer>"##;
-
-/// 行の見た目。WinUI 3 の `ListView` の行に合わせて、
-/// 淡い塗り + 左端のアクセント色のインジケーターで選択を表す。
-///
-/// 状態の名前は `CommonStates` (ポインター) と `SelectionStates` (選択) に
-/// 分けてある。塗る `Border` も分けてあるので、どちらか一方の名前しか
-/// 使わないコントロールでも、片方が消えるだけで破綻しない。
-///
-/// `ROW_STYLE_KEY` は `ROW_STYLE_XAML` の `x:Key` と同じ文字列にする。
-const ROW_STYLE_KEY: &str = "NauiListRowStyle";
-const ROW_STYLE_XAML: &str = r##"<ResourceDictionary
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Style x:Key="NauiListRowStyle" TargetType="ListBoxItem">
-        <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
-        <Setter Property="Padding" Value="12,8"/>
-        <Setter Property="MinHeight" Value="36"/>
-        <Setter Property="Margin" Value="0,1"/>
-        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-        <Setter Property="VerticalContentAlignment" Value="Center"/>
-        <Setter Property="UseSystemFocusVisuals" Value="True"/>
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="ListBoxItem">
-                    <Grid Background="Transparent">
-                        <VisualStateManager.VisualStateGroups>
-                            <VisualStateGroup x:Name="CommonStates">
-                                <VisualState x:Name="Normal"/>
-                                <VisualState x:Name="PointerOver">
-                                    <VisualState.Setters>
-                                        <Setter Target="Hover.Background"
-                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                                <VisualState x:Name="Pressed">
-                                    <VisualState.Setters>
-                                        <Setter Target="Hover.Background"
-                                            Value="{ThemeResource SubtleFillColorTertiaryBrush}"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                                <VisualState x:Name="Disabled">
-                                    <VisualState.Setters>
-                                        <!-- 主・副の 2 行をまとめて薄くする。
-                                            副次テキストは自分の色を持つので、
-                                            文字色の差し替えでは片方しか効かない。 -->
-                                        <Setter Target="Content.Opacity" Value="0.4"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                            </VisualStateGroup>
-                            <VisualStateGroup x:Name="SelectionStates">
-                                <VisualState x:Name="Unselected"/>
-                                <VisualState x:Name="Selected">
-                                    <VisualState.Setters>
-                                        <Setter Target="Fill.Background"
-                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
-                                        <Setter Target="Indicator.Opacity" Value="1"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                                <VisualState x:Name="SelectedUnfocused">
-                                    <VisualState.Setters>
-                                        <Setter Target="Fill.Background"
-                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
-                                        <Setter Target="Indicator.Opacity" Value="1"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                                <VisualState x:Name="SelectedPointerOver">
-                                    <VisualState.Setters>
-                                        <Setter Target="Fill.Background"
-                                            Value="{ThemeResource SubtleFillColorTertiaryBrush}"/>
-                                        <Setter Target="Indicator.Opacity" Value="1"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                                <VisualState x:Name="SelectedPressed">
-                                    <VisualState.Setters>
-                                        <Setter Target="Fill.Background"
-                                            Value="{ThemeResource SubtleFillColorTertiaryBrush}"/>
-                                        <Setter Target="Indicator.Opacity" Value="1"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                                <VisualState x:Name="SelectedDisabled">
-                                    <VisualState.Setters>
-                                        <Setter Target="Fill.Background"
-                                            Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
-                                        <Setter Target="Content.Opacity" Value="0.4"/>
-                                        <Setter Target="Indicator.Opacity" Value="0.4"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                            </VisualStateGroup>
-                        </VisualStateManager.VisualStateGroups>
-                        <Border x:Name="Hover" Background="Transparent"
-                            CornerRadius="{ThemeResource ControlCornerRadius}"/>
-                        <Border x:Name="Fill" Background="Transparent"
-                            CornerRadius="{ThemeResource ControlCornerRadius}"/>
-                        <Border x:Name="Indicator" Width="3" Height="16" Opacity="0"
-                            Margin="1,0,0,0" CornerRadius="1.5"
-                            HorizontalAlignment="Left" VerticalAlignment="Center"
-                            Background="{ThemeResource AccentFillColorDefaultBrush}"/>
-                        <ContentPresenter x:Name="Content"
-                            Content="{TemplateBinding Content}"
-                            ContentTemplate="{TemplateBinding ContentTemplate}"
-                            Foreground="{TemplateBinding Foreground}"
-                            Padding="{TemplateBinding Padding}"
-                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
-                    </Grid>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
-    </Style>
-</ResourceDictionary>"##;
+    <ListView Background="Transparent" BorderThickness="0" Padding="0"
+        HorizontalContentAlignment="Stretch"/>
+</Border>"##;
 
 /// 行の中身を載せる器。`Background="Transparent"` にすると、文字の無い余白でも
 /// ポインターを受け取れる (行そのもののクリックを拾うため)。
@@ -303,8 +191,8 @@ const DETAIL_XAML: &str = r##"<TextBlock
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>"##;
 
-/// テーマ付きの枠を読み込む。読めなければ素の `ScrollViewer` + `ListBox` に戻す。
-pub(crate) fn build_surface() -> Result<(ScrollViewer, XamlListBox)> {
+/// テーマ付きの枠を読み込む。読めなければ素の `Border` + `ListView` に戻す。
+fn build_surface() -> Result<(Border, ListView)> {
     match load_surface() {
         Ok(surface) => Ok(surface),
         Err(error) => {
@@ -314,45 +202,24 @@ pub(crate) fn build_surface() -> Result<(ScrollViewer, XamlListBox)> {
     }
 }
 
-fn load_surface() -> Result<(ScrollViewer, XamlListBox)> {
+fn load_surface() -> Result<(Border, ListView)> {
     let native = XamlReader::Load(&HSTRING::from(SURFACE_XAML))
-        .and_then(|element| element.cast::<ScrollViewer>())
+        .and_then(|element| element.cast::<Border>())
         .map_err(|e| to_error("List の枠の生成", e))?;
-    let list_box = native
-        .Content()
-        .and_then(|content| content.cast::<XamlListBox>())
-        .map_err(|e| to_error("List の ListBox の取得", e))?;
-    Ok((native, list_box))
+    let list_view = native
+        .Child()
+        .and_then(|child| child.cast::<ListView>())
+        .map_err(|e| to_error("List の ListView の取得", e))?;
+    Ok((native, list_view))
 }
 
-fn plain_surface() -> Result<(ScrollViewer, XamlListBox)> {
-    let list_box = XamlListBox::new().map_err(|e| to_error("ListBox の生成", e))?;
-    let native = ScrollViewer::new().map_err(|e| to_error("List の ScrollViewer 生成", e))?;
-    let element = list_box
-        .cast::<IInspectable>()
-        .map_err(|e| to_error("ListBox の要素化", e))?;
+fn plain_surface() -> Result<(Border, ListView)> {
+    let list_view = ListView::new().map_err(|e| to_error("ListView の生成", e))?;
+    let native = Border::new().map_err(|e| to_error("List の Border 生成", e))?;
     native
-        .SetContent(&element)
-        .map_err(|e| to_error("List の ScrollViewer への追加", e))?;
-    Ok((native, list_box))
-}
-
-/// 行に当てる `Style`。読めなければ `None` (WinUI 既定の見た目のまま)。
-pub(crate) fn row_style() -> Option<Style> {
-    let dictionary = XamlReader::Load(&HSTRING::from(ROW_STYLE_XAML))
-        .and_then(|element| element.cast::<ResourceDictionary>())
-        .map_err(|e| to_error("行のスタイルの生成", e));
-    let dictionary = match dictionary {
-        Ok(dictionary) => dictionary,
-        Err(error) => {
-            eprintln!("naui-windows: リストの行のスタイルの生成に失敗: {error}");
-            return None;
-        }
-    };
-    PropertyValue::CreateString(&HSTRING::from(ROW_STYLE_KEY))
-        .and_then(|key| dictionary.Lookup(&key))
-        .and_then(|style| style.cast::<Style>())
-        .ok()
+        .SetChild(&list_view)
+        .map_err(|e| to_error("List の Border への追加", e))?;
+    Ok((native, list_view))
 }
 
 /// 選ばれている行の位置を受け取る通知。
@@ -389,11 +256,13 @@ impl SelectionHandler {
 }
 
 struct ListInner {
-    native: ScrollViewer,
-    list_box: XamlListBox,
-    _wheel: Rc<ListScrollTarget>,
+    native: Border,
+    list_view: ListView,
+    /// ホイール補助への登録。テンプレートの `ScrollViewer` が現れるまで
+    /// 決まらないので、`Loaded` のあとで入る。
+    wheel: RefCell<Option<Rc<ListScrollTarget>>>,
     /// 行そのもの。選択の読み書きはここを通す。
-    native_rows: RefCell<Vec<ListBoxItem>>,
+    native_rows: RefCell<Vec<ListViewItem>>,
     /// 行のモデル。選べるかどうかも activation もここから引く。
     /// 行に含まれるコールバック等を生かしておく役目も持つ。
     rows: RefCell<Vec<ListRow>>,
@@ -404,13 +273,11 @@ struct ListInner {
     silent: Rc<Cell<bool>>,
     /// ウィンドウ全体のホイール補助が List の ScrollViewer を選ぶための状態。
     hovered: Arc<UiThreadCell<usize>>,
-    /// 行に当てる見た目。読めなかったときだけ `None`。
-    row_style: Option<Style>,
 }
 
-/// 縦に並ぶ選択できる一覧 (ListBox)。
+/// 縦に並ぶ選択できる一覧 (`ListView`)。
 ///
-/// 高さは `ListBox` 自身が持つが、行数に関係なく固定したいときは
+/// 高さは `ListView` 自身が持つが、行数に関係なく固定したいときは
 /// `set_sizing` で指定する。
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
@@ -418,34 +285,27 @@ impl_widget!(List, native);
 
 impl List {
     pub(crate) fn new() -> Result<Self> {
-        let (native, list_box) = build_surface()?;
-        list_box
-            .SetSelectionMode(XamlSelectionMode::Single)
-            .map_err(|e| to_error("ListBox の選択方法の設定", e))?;
-        // スクロールは外側の ScrollViewer に任せるため、ListBox の
-        // テンプレート内にある ScrollViewer は二重スクロールさせない。
+        let (native, list_view) = build_surface()?;
+        list_view
+            .SetSelectionMode(ListViewSelectionMode::Single)
+            .map_err(|e| to_error("ListView の選択方法の設定", e))?;
+        // 横スクロールは持たせない (行は幅いっぱいに広げる)。
         let _ = ScrollViewer::SetHorizontalScrollBarVisibility2(
-            &list_box,
+            &list_view,
             ScrollBarVisibility::Disabled,
         );
-        let _ =
-            ScrollViewer::SetVerticalScrollBarVisibility2(&list_box, ScrollBarVisibility::Disabled);
-        let _ = native.SetHorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
-        let _ = native.SetVerticalScrollBarVisibility(ScrollBarVisibility::Auto);
         let hovered = Arc::new(UiThreadCell::new(0));
-        let wheel = crate::layout::register_list_scroll(native.clone(), hovered.clone());
 
         let this = Self(Rc::new(ListInner {
             native,
-            list_box,
-            _wheel: wheel,
+            list_view,
+            wheel: RefCell::new(None),
             native_rows: RefCell::new(Vec::new()),
             rows: RefCell::new(Vec::new()),
             mode: Cell::new(SelectionMode::Single),
             handler: SelectionHandler::new(),
             silent: Rc::new(Cell::new(false)),
             hovered,
-            row_style: row_style(),
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
@@ -472,9 +332,10 @@ impl List {
             Ok(())
         });
         this.0
-            .list_box
+            .list_view
             .SelectionChanged(&handler)
-            .map_err(|e| to_error("ListBox の購読", e))?;
+            .map_err(|e| to_error("ListView の購読", e))?;
+        this.install_wheel_target()?;
 
         // `layout` のホイール補助は、子要素の上でも `ScrollViewer` を動かせる
         // ように、ウィンドウ全体のホイールを先に処理する。List の上では
@@ -492,11 +353,11 @@ impl List {
         this.0
             .native
             .PointerEntered(&entered)
-            .map_err(|e| to_error("ListBox のポインター購読", e))?;
+            .map_err(|e| to_error("List のポインター購読", e))?;
         this.0
             .native
             .PointerExited(&exited)
-            .map_err(|e| to_error("ListBox のポインター購読", e))?;
+            .map_err(|e| to_error("List のポインター購読", e))?;
 
         // タブの切り替えなどで PointerEntered が発生しないままポインターが
         // List 上へ移動する場合がある。その場合も次のホイール入力より前に
@@ -513,8 +374,41 @@ impl List {
         this.0
             .native
             .PointerMoved(&moved)
-            .map_err(|e| to_error("ListBox のポインター購読", e))?;
+            .map_err(|e| to_error("List のポインター購読", e))?;
         Ok(this)
+    }
+
+    /// テンプレートの中の `ScrollViewer` を、ホイール補助の行き先として登録する。
+    ///
+    /// `ListView` の中身は `Loaded` まで組み上がらないので、そこまで待つ。
+    /// 見つからなければ登録しないだけで、コントロール自身のスクロールは動く。
+    fn install_wheel_target(&self) -> Result<()> {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let loaded = RoutedEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    List(inner).register_wheel_target();
+                }
+            });
+            Ok(())
+        });
+        self.0
+            .list_view
+            .Loaded(&loaded)
+            .map_err(|e| to_error("List の表示の購読", e))?;
+        Ok(())
+    }
+
+    /// ホイール補助への登録を 1 回だけ行う。
+    fn register_wheel_target(&self) {
+        if self.0.wheel.borrow().is_some() {
+            return;
+        }
+        let Some(scroll) = crate::layout::scroll_viewer_within(&self.0.list_view) else {
+            return;
+        };
+        let target = crate::layout::register_list_scroll(scroll, self.0.hovered.clone());
+        *self.0.wheel.borrow_mut() = Some(target);
     }
 
     /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
@@ -534,7 +428,7 @@ impl List {
     fn rebuild(&self, rows: &[ListRow]) -> Result<()> {
         let children = self
             .0
-            .list_box
+            .list_view
             .Items()
             .map_err(|e| to_error("行の取得", e))?;
         self.release_row_contents();
@@ -544,10 +438,8 @@ impl List {
 
         let mut native_rows = Vec::with_capacity(rows.len());
         for row in rows {
-            let native = ListBoxItem::new().map_err(|e| to_error("ListBoxItem の生成", e))?;
-            if let Some(style) = self.0.row_style.as_ref() {
-                let _ = native.SetStyle(style);
-            }
+            let native = ListViewItem::new().map_err(|e| to_error("ListViewItem の生成", e))?;
+            let _ = native.SetPadding(ROW_PADDING);
             let host = row_host(row)?;
             native
                 .SetContent(&host)
@@ -606,11 +498,11 @@ impl List {
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.mode.set(mode);
         let native = if mode.is_multiple() {
-            XamlSelectionMode::Extended
+            ListViewSelectionMode::Extended
         } else {
-            XamlSelectionMode::Single
+            ListViewSelectionMode::Single
         };
-        let _ = self.without_notifying(|this| this.0.list_box.SetSelectionMode(native));
+        let _ = self.without_notifying(|this| this.0.list_view.SetSelectionMode(native));
         self.write_selection(&[]);
     }
 
@@ -679,9 +571,9 @@ impl List {
         self.0.handler.set(f);
     }
 
-    /// 中身の `ListBox`。バックエンド固有の脱出口として公開している。
-    pub fn native_list_box(&self) -> XamlListBox {
-        self.0.list_box.clone()
+    /// 中身の `ListView`。バックエンド固有の脱出口として公開している。
+    pub fn native_list_view(&self) -> ListView {
+        self.0.list_view.clone()
     }
 
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
@@ -804,7 +696,7 @@ fn row_content(row: &ListRow) -> Result<UIElement> {
 
 /// 行に載せる 1 本の文字。`secondary` なら Fluent の副次テキストに合わせる。
 ///
-/// 主テキストの色は行 (`ListBoxItem`) から受け継ぐので指定しない。
+/// 主テキストの色は行 (`ListViewItem`) から受け継ぐので指定しない。
 /// 副次テキストだけは、テーマに追従する色を `{ThemeResource}` で引くために
 /// XAML から作る。引けなければ濃さを下げるだけの見た目に落とす。
 pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {

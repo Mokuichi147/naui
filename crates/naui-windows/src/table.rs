@@ -1,16 +1,15 @@
 //! テーブル (WinUI 3)。
 //!
 //! WinUI 3 に `DataGrid` は無い (Community Toolkit のもの) ので、リスト
-//! ([`crate::List`]) と同じ `ListBox` を土台にして、**行の中身を `Grid` に
-//! した**形で組んでいる。`ListView` は [`naui_winui3`] の投影に入っている
-//! ので、そちらへ移すのは今後の課題。
+//! ([`crate::List`]) と同じ `ListView` を土台にして、**行の中身を `Grid` に
+//! した**形で組んでいる。
 //!
 //! | 部分 | 作り |
 //! | --- | --- |
 //! | 枠 | 2 行の `Grid` (見出し / 本体) に背景・境界線・角丸を持たせる |
 //! | 見出し | 列と同じ `ColumnDefinition` を持つ `Grid` + `TextBlock` |
-//! | 本体 | `ScrollViewer` + `ListBox`。行は `ListBoxItem` + `Grid` |
-//! | 選択 | リストと同じ `ControlTemplate` (淡い塗り + 左端の指標) |
+//! | 本体 | `ListView`。行は `ListViewItem` + `Grid` |
+//! | 選択 | `ListView` の標準テンプレート (淡い塗り + 左端の指標) |
 //!
 //! 見出しと行は**同じ列定義を配る**ことで幅をそろえる。列の幅を
 //! ドラッグで変えることはできない (`NSTableView` と違い、WinUI には
@@ -18,7 +17,7 @@
 //!
 //! 色・角丸はすべて `{ThemeResource ...}` で引くので、ライト / ダークの
 //! 切り替えにそのまま追従する。テーマリソースが引けない環境では、
-//! 素の `Grid` + `ScrollViewer` + `ListBox` に戻して動作を優先する。
+//! 素の `Grid` + `ListView` に戻して動作を優先する。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,9 +25,8 @@ use std::sync::Arc;
 
 use naui_core::{Align, Result, SelectionMode, SortOrder, TableColumn, TableRow};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button, ColumnDefinition, Grid as XamlGrid, ListBox as XamlListBox, ListBoxItem, RowDefinition,
-    ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler,
-    SelectionMode as XamlSelectionMode, TextBlock,
+    Button, ColumnDefinition, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
+    RowDefinition, ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
@@ -41,16 +39,28 @@ use windows::Foundation::PropertyValue;
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
-use crate::list::{row_style, text_block, SelectionHandler};
+use crate::list::{text_block, SelectionHandler};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 /// 表の枠。見出しと本体を縦に分けた `Grid` で、境界線と角丸はここが持つ。
 ///
-/// 見出しの `Padding` は、行 (`ListBoxItem`) の `Padding` と同じ横位置に
-/// なるようにそろえてある。本体の `ScrollViewer` に `Padding` を置くと
-/// 見出しとずれるため、そちらは 0 のままにしている。
+/// 行 (`ListViewItem`) の余白。見出しの `Padding` と**左右をそろえる**ことで
+/// 列の位置が合う。`ListView` の既定の余白は見出しと違うので、行ごとに書く。
+const ROW_PADDING: Thickness = Thickness {
+    Left: 12.0,
+    Top: 8.0,
+    Right: 12.0,
+    Bottom: 8.0,
+};
+
+/// 行の高さの下限。`List` の行と同じ。
+const ROW_MIN_HEIGHT: f64 = 36.0;
+
+/// 見出しの `Padding` は、行の `Padding` ([`ROW_PADDING`]) と同じ横位置に
+/// なるようにそろえてある。本体へ `Padding` を置くと見出しとずれるため、
+/// そちらは 0 のままにしている。
 const SURFACE_XAML: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
@@ -64,14 +74,8 @@ const SURFACE_XAML: &str = r##"<Grid
     <Grid Grid.Row="0" Padding="12,6"
         BorderThickness="0,0,0,1"
         BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"/>
-    <ScrollViewer Grid.Row="1"
-        HorizontalScrollBarVisibility="Disabled"
-        VerticalScrollBarVisibility="Auto">
-        <ListBox Background="Transparent" BorderThickness="0" Padding="0"
-            HorizontalContentAlignment="Stretch"
-            ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-            ScrollViewer.VerticalScrollBarVisibility="Disabled"/>
-    </ScrollViewer>
+    <ListView Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="0"
+        HorizontalContentAlignment="Stretch"/>
 </Grid>"##;
 
 /// 並べ替えできる見出しのボタン。地色も枠も出さず、見出しの文字のまま
@@ -154,8 +158,7 @@ impl SortHandler {
 struct Surface {
     root: XamlGrid,
     header: XamlGrid,
-    scroll: ScrollViewer,
-    list_box: XamlListBox,
+    list_view: ListView,
 }
 
 /// テーマ付きの枠を読み込む。読めなければ素の `Grid` で組み直す。
@@ -180,19 +183,14 @@ fn load_surface() -> Result<Surface> {
         .GetAt(0)
         .and_then(|child| child.cast::<XamlGrid>())
         .map_err(|e| to_error("Table の見出しの取得", e))?;
-    let scroll = children
+    let list_view = children
         .GetAt(1)
-        .and_then(|child| child.cast::<ScrollViewer>())
+        .and_then(|child| child.cast::<ListView>())
         .map_err(|e| to_error("Table の本体の取得", e))?;
-    let list_box = scroll
-        .Content()
-        .and_then(|content| content.cast::<XamlListBox>())
-        .map_err(|e| to_error("Table の ListBox の取得", e))?;
     Ok(Surface {
         root,
         header,
-        scroll,
-        list_box,
+        list_view,
     })
 }
 
@@ -227,21 +225,17 @@ fn plain_surface() -> Result<Surface> {
         Right: 12.0,
         Bottom: 6.0,
     });
-    let scroll = ScrollViewer::new().map_err(|e| to_error("Table の ScrollViewer 生成", e))?;
-    let list_box = XamlListBox::new().map_err(|e| to_error("ListBox の生成", e))?;
-    let element = list_box
-        .cast::<IInspectable>()
-        .map_err(|e| to_error("ListBox の要素化", e))?;
-    scroll
-        .SetContent(&element)
-        .map_err(|e| to_error("Table の ScrollViewer への追加", e))?;
+    let list_view = ListView::new().map_err(|e| to_error("ListView の生成", e))?;
 
     let children = root
         .Children()
         .map_err(|e| to_error("Table の枠の取得", e))?;
-    for (row, part) in [header.cast::<IInspectable>(), scroll.cast::<IInspectable>()]
-        .into_iter()
-        .enumerate()
+    for (row, part) in [
+        header.cast::<IInspectable>(),
+        list_view.cast::<IInspectable>(),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let part = part.map_err(|e| to_error("Table の要素化", e))?;
         // 行の指定は FrameworkElement、追加は UIElement として渡す。
@@ -259,8 +253,7 @@ fn plain_surface() -> Result<Surface> {
     Ok(Surface {
         root,
         header,
-        scroll,
-        list_box,
+        list_view,
     })
 }
 
@@ -334,10 +327,12 @@ fn append_cell(
 struct TableInner {
     native: XamlGrid,
     header: XamlGrid,
-    list_box: XamlListBox,
-    _wheel: Rc<ListScrollTarget>,
+    list_view: ListView,
+    /// ホイール補助への登録。テンプレートの `ScrollViewer` が現れるまで
+    /// 決まらないので、`Loaded` のあとで入る。
+    wheel: RefCell<Option<Rc<ListScrollTarget>>>,
     /// 行そのもの。選択の読み書きはここを通す。
-    row_items: RefCell<Vec<ListBoxItem>>,
+    row_items: RefCell<Vec<ListViewItem>>,
     columns: RefCell<Vec<TableColumn>>,
     rows: RefCell<Vec<TableRow>>,
     mode: Cell<SelectionMode>,
@@ -354,8 +349,6 @@ struct TableInner {
     silent: Rc<Cell<bool>>,
     /// ウィンドウ全体のホイール補助が、この表の ScrollViewer を選ぶための状態。
     hovered: Arc<UiThreadCell<usize>>,
-    /// 行に当てる見た目。読めなかったときだけ `None`。
-    row_style: Option<Style>,
 }
 
 /// 列見出しを持つ表 (Grid + ListBox)。
@@ -370,33 +363,22 @@ impl Table {
     pub(crate) fn new() -> Result<Self> {
         let surface = build_surface()?;
         surface
-            .list_box
-            .SetSelectionMode(XamlSelectionMode::Single)
-            .map_err(|e| to_error("ListBox の選択方法の設定", e))?;
-        // スクロールは外側の ScrollViewer に任せる。
+            .list_view
+            .SetSelectionMode(ListViewSelectionMode::Single)
+            .map_err(|e| to_error("ListView の選択方法の設定", e))?;
+        // 横スクロールは持たせない (列は見出しと同じ幅で並べる)。
         let _ = ScrollViewer::SetHorizontalScrollBarVisibility2(
-            &surface.list_box,
+            &surface.list_view,
             ScrollBarVisibility::Disabled,
         );
-        let _ = ScrollViewer::SetVerticalScrollBarVisibility2(
-            &surface.list_box,
-            ScrollBarVisibility::Disabled,
-        );
-        let _ = surface
-            .scroll
-            .SetHorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
-        let _ = surface
-            .scroll
-            .SetVerticalScrollBarVisibility(ScrollBarVisibility::Auto);
 
         let hovered = Arc::new(UiThreadCell::new(0));
-        let wheel = crate::layout::register_list_scroll(surface.scroll.clone(), hovered.clone());
 
         let this = Self(Rc::new(TableInner {
             native: surface.root,
             header: surface.header,
-            list_box: surface.list_box,
-            _wheel: wheel,
+            list_view: surface.list_view,
+            wheel: RefCell::new(None),
             row_items: RefCell::new(Vec::new()),
             columns: RefCell::new(Vec::new()),
             rows: RefCell::new(Vec::new()),
@@ -408,7 +390,6 @@ impl Table {
             header_style: header_style(),
             silent: Rc::new(Cell::new(false)),
             hovered,
-            row_style: row_style(),
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
@@ -431,9 +412,10 @@ impl Table {
             Ok(())
         });
         this.0
-            .list_box
+            .list_view
             .SelectionChanged(&handler)
-            .map_err(|e| to_error("ListBox の購読", e))?;
+            .map_err(|e| to_error("ListView の購読", e))?;
+        this.install_wheel_target()?;
 
         // ホイールの扱いはリストと同じ。ポインターがこの表の上にある間だけ、
         // ウィンドウ全体のホイール補助が表の ScrollViewer を選ぶ。
@@ -521,11 +503,11 @@ impl Table {
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.mode.set(mode);
         let native = if mode.is_multiple() {
-            XamlSelectionMode::Extended
+            ListViewSelectionMode::Extended
         } else {
-            XamlSelectionMode::Single
+            ListViewSelectionMode::Single
         };
-        let _ = self.without_notifying(|this| this.0.list_box.SetSelectionMode(native));
+        let _ = self.without_notifying(|this| this.0.list_view.SetSelectionMode(native));
         self.write_selection(&[]);
     }
 
@@ -621,8 +603,8 @@ impl Table {
     }
 
     /// 中身の `ListBox`。バックエンド固有の脱出口として公開している。
-    pub fn native_list_box(&self) -> XamlListBox {
-        self.0.list_box.clone()
+    pub fn native_list_view(&self) -> ListView {
+        self.0.list_view.clone()
     }
 
     // ------------------------------------------------------------ 組み立て
@@ -720,11 +702,44 @@ impl Table {
         }
     }
 
+    /// テンプレートの中の `ScrollViewer` を、ホイール補助の行き先として登録する。
+    ///
+    /// `ListView` の中身は `Loaded` まで組み上がらないので、そこまで待つ。
+    /// 見つからなければ登録しないだけで、コントロール自身のスクロールは動く。
+    fn install_wheel_target(&self) -> Result<()> {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let loaded = RoutedEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    Table(inner).register_wheel_target();
+                }
+            });
+            Ok(())
+        });
+        self.0
+            .list_view
+            .Loaded(&loaded)
+            .map_err(|e| to_error("Table の表示の購読", e))?;
+        Ok(())
+    }
+
+    /// ホイール補助への登録を 1 回だけ行う。
+    fn register_wheel_target(&self) {
+        if self.0.wheel.borrow().is_some() {
+            return;
+        }
+        let Some(scroll) = crate::layout::scroll_viewer_within(&self.0.list_view) else {
+            return;
+        };
+        let target = crate::layout::register_list_scroll(scroll, self.0.hovered.clone());
+        *self.0.wheel.borrow_mut() = Some(target);
+    }
+
     /// 行を、いまの列と行から作り直す。
     fn rebuild_rows(&self, rows: &[TableRow]) -> Result<()> {
         let children = self
             .0
-            .list_box
+            .list_view
             .Items()
             .map_err(|e| to_error("行の取得", e))?;
         self.without_notifying(|_| children.Clear())
@@ -734,10 +749,10 @@ impl Table {
         let columns = self.0.columns.borrow();
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
-            let item = ListBoxItem::new().map_err(|e| to_error("ListBoxItem の生成", e))?;
-            if let Some(style) = self.0.row_style.as_ref() {
-                let _ = item.SetStyle(style);
-            }
+            let item = ListViewItem::new().map_err(|e| to_error("ListViewItem の生成", e))?;
+            // 見出しと列をそろえるため、余白と高さは行ごとに書く。
+            let _ = item.SetPadding(ROW_PADDING);
+            let _ = item.SetMinHeight(ROW_MIN_HEIGHT);
             let content = XamlGrid::new().map_err(|e| to_error("行の Grid の生成", e))?;
             apply_columns(&content, &columns)?;
             for (index, column) in columns.iter().enumerate() {

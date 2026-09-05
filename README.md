@@ -878,7 +878,7 @@ tokio::spawn(async move {
 | `Spacer` | 🔴 中身のない `Grid` | 🟡 中身のない `NSView` | 🟡 中身のない `GtkBox` | 🟡 `<div>` + `flex-grow` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (入り切り) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
 | `SplitView` | 🔴 `Grid` + 仕切りの `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
-| `Toolbar` | 🟡 `StackPanel` + `Button` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
+| `Toolbar` | ✅ `CommandBar` + `AppBarButton` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 
 </details>
 
@@ -912,9 +912,9 @@ tokio::spawn(async move {
 | `DatePicker` | ✅ `DatePicker` / `TimePicker` | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
 | `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (時分だけ) | 🟡 時と分の `GtkSpinButton` | ✅ `<input type="time">` |
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
-| `List` | ✅ `ListBox` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
-| `Table` | 🟡 `Grid` + `ListBox` (行は `Grid`) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
-| `Tree` | 🟡 `ListBox` + 開閉ボタン | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
+| `List` | ✅ `ListView` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
+| `Table` | 🟡 `Grid` + `ListView` (行は `Grid`) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
+| `Tree` | ✅ `TreeView` | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + 開閉ボタン | 🟡 `<ul role="tree">` |
 
 </details>
 
@@ -925,7 +925,7 @@ tokio::spawn(async move {
 | --- | --- | --- | --- | --- |
 | `FilePicker` | 🟡 `Button` + `IFileOpenDialog` | 🟡 `NSButton` + `NSOpenPanel` | 🟡 `GtkButton` + `GtkFileDialog` | 🟡 `<button>` + `<input type="file">` |
 | `FileSaver` | 🟡 `Button` + `IFileSaveDialog` | 🟡 `NSButton` + `NSSavePanel` | 🟡 `GtkButton` + `GtkFileDialog` (save) | 🔴 `<button>` + `showSaveFilePicker` / `<a download>` |
-| `Image` | 🟡 `Image` (`XamlReader` 経由) | ✅ `NSImageView` | ✅ `GtkPicture` | ✅ `<img>` |
+| `Image` | ✅ `Image` | ✅ `NSImageView` | ✅ `GtkPicture` | ✅ `<img>` |
 | `Video` | ✅ `MediaPlayerElement` | ✅ `AVPlayerView` | 🟡 `GtkPicture` + `GtkMediaControls` | ✅ `<video>` |
 | `Audio` | ✅ `MediaPlayerElement` | 🟡 `AVPlayerView` | 🟡 `GtkMediaControls` + `GtkMediaFile` | ✅ `<audio>` |
 
@@ -936,9 +936,9 @@ tokio::spawn(async move {
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
-| `PopupMenu` | 🟡 `Grid` + `Button` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
+| `PopupMenu` | ✅ `MenuFlyout` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
 | `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | ✅ `AdwAlertDialog` | 🟡 `<dialog>` + `showModal()` |
-| `Toast` | 🔴 `Grid` + `StackPanel` を重ねたもの | 🔴 `NSVisualEffectView` を重ねたもの | ✅ `AdwToast` + `AdwToastOverlay` | 🔴 `<div role="status">` |
+| `Toast` | 🟡 `InfoBar` を重ねたもの | 🔴 `NSVisualEffectView` を重ねたもの | ✅ `AdwToast` + `AdwToastOverlay` | 🔴 `<div role="status">` |
 
 </details>
 
@@ -1204,20 +1204,37 @@ git push origin v0.3.0
   見つからない場合は、候補の選択と Enter での確定だけが通知されます。
   **候補の一覧は打った文字で絞り込まれません** (`IsTextSearchEnabled` は
   一致する候補へ選択を移すだけです)。打った文字で候補を出す `AutoSuggestBox` は
-  `SearchInput` が最小限の投影で使っていますが、あちらは候補を「開いて全部見る」
+  `SearchInput` が使っていますが、あちらは候補を「開いて全部見る」
   ことができません。`EditableComboBox` は一覧を開いて選べることを軸にしている
   ので、Fluent の作法どおり `ComboBox` のままにしています。
+- `PopupMenu` は `MenuFlyout` です。出す位置・影・角丸・ライトディスミス・
+  キーボード操作 (矢印と Esc)・画面端での回り込みはすべて WinUI が持ちます。
+  右クリックは `UIElement.ContextFlyout` へ預けるので、長押しとコンテキスト
+  キーでも同じメニューが出ます。なお 0.3.0 までの脱出口だった
+  `native_element()` は無くなり、**`native_flyout()` に変わりました**
+  (受け皿を組み立てなくなったため)。
 - `Dialog` は `window.show()` より前には開けません。
 - naui の UI 実行環境が終わった後の `Sender::send` は失敗します
   (`DispatcherQueue` が受け付けないため)。
+- `List` は `ListView` です。行の見た目 (角丸・淡い塗り・左端のアクセント色の
+  インジケーター) は標準テンプレートが持つので、naui は枠の `Border` だけを
+  足します (`Table` と `Tree` と同じ色・角丸)。スクロールは `ListView` が自分で
+  持ちます。なお 0.3.0 までの脱出口だった `native_list_box()` は無くなり、
+  **`native_list_view()` に変わりました**。
 - WinUI 3 に `DataGrid` は無い (Community Toolkit のもの) ため、`Table` は
-  `ListBox` の行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に
-  置いて幅をそろえています (`ListView` は投影に入ったので、そちらへ移すのは
-  今後の課題です)。並べ替えできる見出しは、地色と枠を消した `Button` です
-  (WinUI に列見出し用のコントロールが無いため)。
-- `Tree` は `ListBox` の行として組み立てています (`TreeView` は投影に入ったので、
-  そちらへ移すのは今後の課題です)。選べない枝は行ごと無効になるので、その開閉ボタンも
-  押せません (プログラムからの `expand` は効きます)。
+  `ListView` の行を `Grid` にして組み立て、見出しは同じ列定義を持つ別の `Grid` に
+  置いて幅をそろえています。行の余白だけは `ListView` の既定ではなく見出しと
+  同じ値を書いて、列の位置をそろえています。並べ替えできる見出しは、地色と枠を
+  消した `Button` です (WinUI に列見出し用のコントロールが無いため)。
+- `Tree` は `TreeView` です。項目は `TreeViewNode` へ写して木のまま渡すので、
+  段付け・開閉の山形・キーボード操作・選択の見た目はすべて WinUI が持ちます。
+  枠だけは `List` と同じ色と角丸を持たせた `Border` で囲みます。
+  `TreeItem::enabled` に当たるものは WinUI に無い (`TreeViewItem` を無効にすると、
+  枝では開閉までできなくなる) ため、文字を薄くしたうえで行の中身に押下を
+  受け止める覆いをかぶせています。覆いがかかるのは開閉の山形より右だけなので、
+  **選べない枝も開閉はできます**。スクロールは `TreeView` が自分で持ちます
+  (中の一覧は与えられた高さぶんしか並べないので、`List` のように外側の
+  `ScrollViewer` へ預けると伸びずに切れてしまいます)。
 - `NumberInput` は `NumberBox` です。増減ボタンは既定では出ないので
   `SpinButtonPlacementMode` を `Inline` にして欄の右へ並べ、範囲・刻み・小数桁は
   `Minimum` / `Maximum` / `SmallChange` / `NumberFormatter` にも書いて、
@@ -1254,13 +1271,29 @@ git push origin v0.3.0
   ください (naui のギャラリーは 200 px にしています)。
   なお 0.3.0 までの脱出口だった `native_text_box()` と `native_spin_buttons()`
   は無くなり、**`native_number_box()` に変わりました** (組み立てをやめたため)。
-- `Toolbar` は `Button` を横に並べて構成し、タイトルバー (ドラッグ領域) では
-  なくその下の行に置きます (`CommandBar` と `AppBarButton` は投影に入ったので、
-  そちらへ移すのは今後の課題です)。アイコンは
-  Segoe Fluent Icons を `FontIcon` で出します。
-- `InfoBar` / `TeachingTip` を投影していないため、`Toast` は `Grid` と
-  `StackPanel` を中身の層へ重ねて組み立てています。`Dialog` と同じく、
-  `window.show()` より前には出せません。
+- `Toolbar` は `CommandBar` で、項目は `AppBarButton`、区切りは
+  `AppBarSeparator` です。**タイトルの右**に置きます (macOS の `NSToolbar`、
+  Linux の `AdwHeaderBar` と同じ位置)。`SetTitleBar` へ要素を渡す形だと、その
+  中の操作できるコントロールの上でもウィンドウのドラッグが始まってしまうため、
+  ドラッグ領域は `AppWindowTitleBar::SetDragRectangles` で**タイトル文字の側と
+  ツールバーより右の空きの 2 つ**に分けています。ボタンの上ではドラッグが
+  始まらず、それ以外のタイトルバーはどこでもつかめます。矩形は物理ピクセル
+  なので、ウィンドウの幅・項目数・表示倍率が変わるたびに計算し直します。
+  アイコンは Segoe Fluent Icons を `FontIcon` で出し、印 1 つの幅は 40 です
+  (`AppBarButton` の既定 68 は、印の下へラベルを出す配置のための幅です)。
+  ラベルは `DefaultLabelPosition` を `Collapsed` にして隠し、ほかの 3 環境と
+  同じく印だけを並べます。隠したラベルは `AutomationProperties.Name` と
+  `ToolTipService.ToolTip` へ回すので、読み上げとツールチップには出ます。
+  幅が足りなくなると `CommandBar` が自分で項目をオーバーフローメニューへ
+  送るため、切り詰められて押せなくなることはありません。
+  なお 0.3.0 までの脱出口だった `native_panel()` は無くなり、
+  **`native_command_bar()` に変わりました** (組み立てをやめたため)。
+- `Toast` の見た目は `InfoBar` です。ただし `InfoBar` は本来ページの中へ
+  並べて使う帯なので、下端の中央へ寄せて中身の層に重ねています。操作ボタンは
+  `ActionButton` に置くので、文字の右か下かの並べ方は WinUI が決めます。
+  閉じるボタン (×) は出しません (`IsClosable` を切っています)。消えるのは
+  時間切れ・操作ボタン・`dismiss` の 3 つで、ほかの 3 環境にも × が無いため
+  です。`Dialog` と同じく、`window.show()` より前には出せません。
 - `Label` の `TextBlock` は `TextTrimming="CharacterEllipsis"` を持つ XAML から
   生成しています (折り返しの切り替えは `TextWrapping` で行います)。
 - 動かせる仕切りを持つコントロールが Windows App SDK に無いため
@@ -1273,33 +1306,25 @@ git push origin v0.3.0
   **仕切りに合わせたカーソル (⇔) は出ません**。カーソルの形を変える
   `UIElement.ProtectedCursor` は派生クラスからしか触れないためです。
   区画の大きさが変わったことは `LayoutUpdated` で拾っています。
-- `Expander` は、WinUI の公開 WinRT インターフェイスを最小限投影して
-  `XamlReader` から本物の `Expander` を生成しています。
-- `ToggleSwitch` も `Expander` と同じく公開 WinRT インターフェイスを最小限
-  投影し、`XamlReader` から本物の `ToggleSwitch` を生成しています。`Toggle` のラベルは `OnContent` と `OffContent` の両方へ
-  同じ文字を入れるので、入り切りで読みは変わりません (WinUI の既定は
-  「オン」「オフ」と切り替わる文字です)。
-- `ColorPicker` と `SolidColorBrush` も、同じく公開 WinRT インターフェイスを
-  最小限投影しています (どちらも `naui-winui3` の投影に入ったので、そちらへ
-  寄せるのは今後の課題です)。WinUI 3 の `ColorPicker` は
-  スペクトラムとスライダーを縦に並べた大きな面なので、`Button` の `Flyout` へ
-  入れ、ボタンには選んだ色の見本 (`Border` + `SolidColorBrush`) を出します。
-- `DatePicker` / `TimePicker` は `naui-winui3` の投影に入れていないため、公開
-  WinRT インターフェイスを最小限投影し、`XamlReader` から本物の `DatePicker` と
-  `TimePicker` を生成しています。`DatePickerMode::DateTime` では 2 つを
+- `Toggle` のラベルは `OnContent` と `OffContent` の両方へ同じ文字を入れる
+  ので、入り切りで読みは変わりません (WinUI の既定は「オン」「オフ」と
+  切り替わる文字です)。
+- WinUI 3 の `ColorPicker` はスペクトラムとスライダーを縦に並べた大きな面
+  なので、`Button` の `Flyout` へ入れ、ボタンには選んだ色の見本
+  (`Border` + `SolidColorBrush`) を出します。組み立てだけは XAML に書いて
+  `XamlReader` へ渡します (`Flyout` は投影に入れていないため)。
+- `DatePicker` は `DatePickerMode::DateTime` では 2 つを
   `StackPanel` で横に並べます。年 / 月 / 日 の並び順と表記はシステムのロケールに
   従い、暦はグレゴリオ暦に固定しています。`set_range` は WinUI 側へは年の範囲
   (`MinYear` / `MaxYear`) として渡し、月日と時刻の境界は naui 側で端へ寄せます。
   標準テンプレートは英語の長い月名に合わせて月の列だけを広く左寄せにするため、
   3 列を等幅・中央揃えへ直し、最小幅も詰めています。
-- `TimePicker` ウィジェットは、この `TimePicker` の投影をそのまま共有しています。
+- `TimePicker` ウィジェットは、`DatePicker` と同じ WinUI の `TimePicker` です。
   WinUI 3 の `TimePicker` に下限・上限は無いので、`set_range` の範囲は naui 側で
   端へ寄せます。
-- `AutoSuggestBox` も、同じく公開 WinRT インターフェイスを最小限投影し、
-  `XamlReader` から本物の `AutoSuggestBox` を生成しています (`naui-winui3` の
-  投影に入ったので、そちらへ寄せるのは今後の課題です)。
-  `SearchInput` の虫めがねは `QueryIcon="Find"`、確定 (`on_search`) は
-  `QuerySubmitted` です。候補の一覧 (`ItemsSource`) は渡さないので、打っても
+- `SearchInput` は `AutoSuggestBox` です。虫めがねは `QueryIcon="Find"` を
+  XAML で渡して作らせ (`SymbolIcon` は投影に入れていないため)、確定
+  (`on_search`) は `QuerySubmitted` です。候補の一覧 (`ItemsSource`) は渡さないので、打っても
   候補は出ません。`TextChanged` は `Text` を書き換えたときにも飛ぶため、
   `Reason` がプログラムからの変更なら黙ります (`set_text` は通知しません)。
 

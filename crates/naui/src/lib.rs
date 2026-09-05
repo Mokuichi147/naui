@@ -674,7 +674,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `Toolbar` | `StackPanel` + `Button` | `NSToolbar` + `NSToolbarItem` | `AdwHeaderBar` + `GtkButton` | `<div role="toolbar">` + `<button>` |
+//! | `Toolbar` | `CommandBar` + `AppBarButton` | `NSToolbar` + `NSToolbarItem` | `AdwHeaderBar` + `GtkButton` | `<div role="toolbar">` + `<button>` |
 //! | アイコン | Segoe Fluent Icons | SF Symbols | アイコンテーマ | naui 同梱の SVG |
 //!
 //! macOS と Linux では**ウィンドウのタイトルバーと一体**で表示される。
@@ -725,7 +725,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `PopupMenu` | ルートに重ねる `Grid` + `Button` | `NSMenu` | `GtkPopoverMenu` + `GMenu` | `<div role="menu">` |
+//! | `PopupMenu` | `MenuFlyout` | `NSMenu` | `GtkPopoverMenu` + `GMenu` | `<div role="menu">` |
 //!
 //! **階層 (サブメニュー)・チェック印・ショートカットの表示は持たない。**
 //! 項目は「文字・選べるかどうか・区切り線」だけで、これは 4 環境が
@@ -770,7 +770,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `List` | `ListBox` + `ListBoxItem` | `NSTableView` (1 列) + `NSScrollView` | `GtkListBox` + `GtkScrolledWindow` | `<select size>` / `<ul role="listbox">` |
+//! | `List` | `ListView` + `ListViewItem` | `NSTableView` (1 列) + `NSScrollView` | `GtkListBox` + `GtkScrolledWindow` | `<select size>` / `<ul role="listbox">` |
 //!
 //! 入れ子の項目を開閉して選ぶなら [`Tree`] を使う。
 //!
@@ -893,7 +893,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `Table` | 2 行の `Grid` + `ListBox` (行は `Grid`) | `NSTableView` + `NSScrollView` | `GtkListBox` + `GtkSizeGroup` | `<table role="grid">` |
+//! | `Table` | 2 行の `Grid` + `ListView` (行は `Grid`) | `NSTableView` + `NSScrollView` | `GtkListBox` + `GtkSizeGroup` | `<table role="grid">` |
 //!
 //! 選択のふるまいは `List` と同じで、[`SelectionMode`] で単一と複数を選べる。
 //! `set_selection` / `set_selected` / `clear_selection` は通知せず、
@@ -1060,7 +1060,7 @@
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `Toast` | `Grid` を中身へ重ねたもの | `NSVisualEffectView` を中身へ重ねたもの | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
+//! | `Toast` | `InfoBar` を中身へ重ねたもの | `NSVisualEffectView` を中身へ重ねたもの | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
 //!
 //! **ネイティブのトーストがあるのは Linux だけ** (`AdwToast`)。Windows の
 //! `InfoBar` / `TeachingTip` は naui が投影していないため使えず、
