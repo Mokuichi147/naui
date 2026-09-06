@@ -148,15 +148,33 @@ mod imp {
                 })
         }
 
-        /// 中身を自分と同じ場所いっぱいに置く。
+        /// 中身を自分と同じ場所いっぱいに置く。ただし中身の最小より狭くはしない。
         ///
         /// `GtkBinLayout` に任せたいところだが、**レイアウトマネージャーを
         /// 付けると GTK4 は `measure` をそちらへ回してしまい**、上限が効かなく
         /// なる。置き方そのものは 1 行で済むので、ここで両方を受け持つ。
+        ///
+        /// [`measure`](Self::measure) は最小を 0 まで下げて申告するので、
+        /// 中身が縮めない大きさより狭い場所を配られることがある。そのまま
+        /// 渡すと GTK4 の中で負の大きさが出る (`GtkEntry` は配られた幅から
+        /// 枠の分を引いて `GtkText` へ渡すため、狭いと `-18` のような値に
+        /// なって警告が出る)。中身は最小のまま置き、はみ出した分は
+        /// `Overflow::Hidden` で隠す (CSS の `min-width: 0` と
+        /// `overflow: hidden` の組みと同じ)。
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
-            if let Some(child) = self.obj().first_child() {
-                child.allocate(width, height, baseline, None);
-            }
+            let Some(child) = self.obj().first_child() else {
+                return;
+            };
+            let (horizontal, vertical) = (gtk::Orientation::Horizontal, gtk::Orientation::Vertical);
+            // 「もう一方が決まってから測る」中身があるので、測る順を守る。
+            let (width, height) = if child.request_mode() == gtk::SizeRequestMode::WidthForHeight {
+                let height = height.max(child.measure(vertical, -1).0);
+                (width.max(child.measure(horizontal, height).0), height)
+            } else {
+                let width = width.max(child.measure(horizontal, -1).0);
+                (width, height.max(child.measure(vertical, width).0))
+            };
+            child.allocate(width, height, baseline, None);
         }
     }
 }

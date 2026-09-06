@@ -198,6 +198,10 @@ fn main() {
             fill_clips_what_it_cannot_fit,
         ),
         (
+            "狭い場所を配られても中身を潰さない",
+            a_narrow_allocation_does_not_squash_the_content,
+        ),
+        (
             "タブが増えても最小幅が増えない",
             tabs_do_not_widen_with_the_number_of_tabs,
         ),
@@ -1612,6 +1616,38 @@ fn fill_clips_what_it_cannot_fit(ui: &Ui) -> Result<()> {
 
     label.set_sizing(Sizing::new());
     assert_eq!(bin.overflow(), gtk::Overflow::Visible, "指定を外せば戻る");
+    Ok(())
+}
+
+/// 幅いっぱいの入力欄が、入りきらない幅の行に置かれたとき。
+///
+/// `Fill` の軸は最小を 0 として申告するので、GTK4 は中身が縮められる
+/// 幅より狭い場所を配ってくる。そのまま渡すと `GtkEntry` が「配られた幅
+/// から枠の分を引いた」負の幅を中の `GtkText` へ渡してしまい、GTK4 が
+/// 警告を出して中身が描かれなくなる (ウィンドウを縮めたときに起きる)。
+/// 中身は最小のまま置き、はみ出した分は `overflow` で隠す。
+fn a_narrow_allocation_does_not_squash_the_content(ui: &Ui) -> Result<()> {
+    let row = ui.stack(Orientation::Horizontal)?;
+    row.set_sizing(Sizing::fill_width());
+    let input = ui.text_input("")?;
+    input.set_sizing(Sizing::fill_width());
+    let button = ui.button("読み込む")?;
+    row.append(&input);
+    row.append(&button);
+
+    let bin = bin_of(&row);
+    let native = input.native_widget();
+    let height = measure_height(&bin).1;
+    for width in [0, 1, 40, 120] {
+        bin.queue_resize();
+        bin.allocate(width, height, -1, None);
+        assert!(
+            native.width() >= 0 && native.height() >= 0,
+            "幅 {width}px で入力欄が {}x{}px になった",
+            native.width(),
+            native.height()
+        );
+    }
     Ok(())
 }
 
