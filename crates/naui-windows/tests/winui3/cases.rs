@@ -54,6 +54,10 @@ const CASES: &[Case] = &[
         "ラジオグループの選択が 1 つだけ点いて通知する",
         radio_group_selects_one,
     ),
+    (
+        "ツリーの行が中身を行の幅いっぱいに置く",
+        tree_rows_stretch_their_content,
+    ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
         "ラベルの付くウィジェットが読み上げ名を持つ",
@@ -527,6 +531,39 @@ fn radio_group_selects_one(ui: &Ui) -> Result<()> {
         "前に選んでいたものは消えること"
     );
     assert_eq!(seen.borrow().as_slice(), [1, 2].as_slice());
+    Ok(())
+}
+
+/// ツリーの行は、中身を行の幅いっぱいに置く `Style` を持つ。
+///
+/// WinUI の `TreeViewItem` は中身の横位置を `HorizontalContentAlignment` へ
+/// 束ねている (既定のテンプレートの `ContentPresenter`)。これが無いと、文字が
+/// 中身の幅までしか広がらず、行の残り幅を使わない。
+///
+/// 画面へ出していないので配られた幅は測れない。行へ `Style` が当たって
+/// いることだけを見る。
+fn tree_rows_stretch_their_content(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    let style = tree
+        .native_tree_view()
+        .ItemContainerStyle()
+        .expect("行の Style が当たっていること");
+    assert_eq!(
+        style
+            .TargetType()
+            .expect("TargetType")
+            .Name
+            .to_string()
+            .rsplit('.')
+            .next()
+            .unwrap_or_default(),
+        "TreeViewItem",
+        "行そのものへ当たる Style であること"
+    );
+
+    // `Style::Setters` は投影に入っていないので、中身の `Stretch` そのものは
+    // ここでは見られない (投影を増やすと下流のコンパイルを壊すため増やさない)。
+    // 当たっていること自体が消える回帰は、これで捕まえられる。
     Ok(())
 }
 
