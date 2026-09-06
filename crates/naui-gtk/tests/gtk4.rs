@@ -361,6 +361,10 @@ fn main() {
             "見出しの並べ替えがボタンとして押せる",
             table_sorting_round_trips,
         ),
+        (
+            "ツリーの行の中身が行の幅いっぱいに置かれる",
+            tree_row_content_fills_the_row,
+        ),
         ("ツリーの行が展開に追従する", tree_rows_follow_the_expansion),
         (
             "GtkListBox 側のツリーの選択がクロージャへ届く",
@@ -3236,6 +3240,58 @@ fn table_sorting_round_trips(ui: &Ui) -> Result<()> {
 
 fn tree_box_of(tree: &naui_gtk::Tree) -> gtk::ListBox {
     tree.native_widget().downcast().expect("GtkListBox")
+}
+
+/// ツリーの行も、開閉ボタンの右をぜんぶ文字の領域として使う。
+///
+/// `SizeBin` の既定は中身の大きさに合わせる寄せ方なので、そのままでは
+/// 文字が行の残り幅を使わない。幅が決まらないと `PangoEllipsizeMode::End` も
+/// 効かず、長いラベルが行を押し広げる (`List` と同じ理由)。
+fn tree_row_content_fills_the_row(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_sizing(Sizing::fill());
+    tree.set_items(&[TreeItem::new("プロジェクト")
+        .detail("3 ファイル")
+        .expanded(true)
+        .child(TreeItem::new("main.rs"))]);
+
+    let window = ui.window("ツリー", 400.0, 200.0)?;
+    window.set_child(&tree);
+    window.show();
+    let native = tree_box_of(&tree);
+    // 配られた幅を測るので、フレームを 1 つ進めてから見る。
+    tick(&native);
+
+    let row = children(&native)
+        .remove(0)
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow");
+    let line = row.child().expect("行の中身");
+    assert!(line.width() > 0, "行に幅が配られていること");
+
+    // 行は [開閉ボタン, 文字の縦並び] の順。開閉ボタンを除いた残りが文字の
+    // 領域になる。間の空きだけは行の組み方しだいなので、そこは緩く見る。
+    let parts = children(&line);
+    let twisty = parts.first().expect("開閉ボタン").width();
+    let content = parts.last().expect("文字の縦並び");
+    assert!(
+        content.width() >= line.width() - twisty - 8,
+        "文字の領域が行の残り幅を使っていない: 領域 {} / 行 {} (開閉ボタン {twisty})",
+        content.width(),
+        line.width()
+    );
+
+    // 中の文字も、その領域いっぱいに置かれる。
+    for (index, label) in labels_in(content).iter().enumerate() {
+        assert!(
+            label.width() >= content.width() - 1,
+            "{index} 本目の文字が領域の幅を使っていない: 文字 {} / 領域 {}",
+            label.width(),
+            content.width()
+        );
+    }
+    window.close();
+    Ok(())
 }
 
 /// テストで使う木。src (2 つの葉) と docs (guide > intro.md)。

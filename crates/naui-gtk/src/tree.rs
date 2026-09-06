@@ -21,7 +21,7 @@ use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
-use naui_core::TreeItem;
+use naui_core::{Sizing, TreeItem};
 
 use crate::bin::SizeBin;
 use crate::callback::{ExpandNotifier, SelectionNotifier};
@@ -273,6 +273,11 @@ impl Tree {
         // 文字は `List` と同じ組み方 (補助があれば 2 行目に小さく出す)。
         let content = crate::list::item_content(&item.label, item.detail.as_deref());
         let content = content.size_bin();
+        // 開閉ボタンの右はぜんぶ文字の領域。`SizeBin` の既定は中身の大きさに
+        // 合わせるので、そのままでは行の残り幅を使わず、長い文字が切られない。
+        content.apply_sizing(Sizing::fill_width());
+        // 開閉ボタンと縦中央でそろえる。`apply_sizing` は縦の寄せ方も書くので、
+        // そのあとに指定する。
         content.set_valign(gtk::Align::Center);
         // 選べない項目は文字だけを淡くする。行ごと無効にすると、
         // 中の開閉ボタンまで押せなくなるため。
