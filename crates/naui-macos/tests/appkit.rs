@@ -145,6 +145,10 @@ fn main() {
             list_long_text_stays_inside_the_row,
         ),
         (
+            "選べない行は本文も補助も無効な色になる",
+            list_disabled_row_dims_both_lines,
+        ),
+        (
             "リストの選択がネイティブと往復する",
             list_selection_round_trips,
         ),
@@ -4561,6 +4565,58 @@ fn list_long_text_stays_inside_the_row(ui: &Ui) -> Result<()> {
         assert!(
             width > row_width * 0.5,
             "{index} 本目の文字が行の幅を使っていない: 文字 {width} / 行 {row_width}"
+        );
+    }
+    Ok(())
+}
+
+/// 選べない行は、本文も補助もまとめて無効な色で描く。
+///
+/// `NSTableView` には行の無効という考えが無いので、色でしか表せない。補助の
+/// 文字は役割としては `Secondary` だが、**選べない行ではそちらより無効の色が
+/// 勝つ**。当てる順番を間違えると、補助だけ普通の色に戻ってしまう。
+fn list_disabled_row_dims_both_lines(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("東京").detail("13,960,000 人"),
+        ListItem::new("大阪").detail("2,750,000 人").enabled(false),
+    ]);
+    list.set_sizing(Sizing::fixed(240.0, 160.0));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&list);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+
+    let table = list.native_table();
+    let color_of = |row: isize| -> Vec<Retained<NSColor>> {
+        let view = table
+            .viewAtColumn_row_makeIfNecessary(0, row, true)
+            .expect("行のビュー");
+        text_fields(&view)
+            .into_iter()
+            .map(|field| field.textColor().expect("色が決まっていること"))
+            .collect()
+    };
+
+    // 選べる行は、本文と補助でそれぞれの役割の色になる。
+    let enabled = color_of(0);
+    assert_eq!(enabled.len(), 2, "文字が 2 本あること");
+    assert_eq!(enabled[0], NSColor::labelColor(), "本文は labelColor");
+    assert_eq!(
+        enabled[1],
+        NSColor::secondaryLabelColor(),
+        "補助は secondaryLabelColor"
+    );
+
+    // 選べない行は、どちらも無効な色になる。
+    let disabled = color_of(1);
+    assert_eq!(disabled.len(), 2, "文字が 2 本あること");
+    for (index, color) in disabled.iter().enumerate() {
+        assert_eq!(
+            color,
+            &NSColor::disabledControlTextColor(),
+            "{index} 本目が無効な色になっていない"
         );
     }
     Ok(())

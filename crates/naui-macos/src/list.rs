@@ -295,13 +295,22 @@ fn item_content(
     content.set_align(Align::Fill);
     content.set_spacing(DETAIL_SPACING);
 
-    let title = row_label(mtm, label, enabled);
+    let title = row_label(mtm, label);
+    let mut lines = vec![title.clone()];
     content.append(&title);
     if let Some(detail) = detail {
-        let sub = row_label(mtm, detail, enabled);
+        let sub = row_label(mtm, detail);
         sub.set_style(TextStyle::Caption);
         sub.set_color(TextColor::Secondary);
         content.append(&sub);
+        lines.push(sub);
+    }
+    // 無効の色は**役割の色より後に**当てる。補助は役割としては `Secondary`
+    // だが、選べない行ではそちらより無効の色が勝つ。
+    if !enabled {
+        for line in &lines {
+            dim_disabled(line);
+        }
     }
     (content, native_field(&title))
 }
@@ -310,12 +319,9 @@ fn item_content(
 ///
 /// **行の幅いっぱいに広げる。** 幅が決まって初めて、入りきらない文字を
 /// 省略記号で切れる。交差軸の `Fill` はコンテナへ入れる前に指定する。
-fn row_label(mtm: MainThreadMarker, text: &str, enabled: bool) -> Label {
+fn row_label(mtm: MainThreadMarker, text: &str) -> Label {
     let label = Label::new(mtm, text);
     label.set_sizing(Sizing::fill_width());
-    if !enabled {
-        dim_disabled(&label);
-    }
     label
 }
 
