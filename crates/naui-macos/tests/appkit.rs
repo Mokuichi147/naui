@@ -141,6 +141,10 @@ fn main() {
             list_detail_makes_a_second_line,
         ),
         (
+            "リストの長い文字が行の幅に収まる",
+            list_long_text_stays_inside_the_row,
+        ),
+        (
             "リストの選択がネイティブと往復する",
             list_selection_round_trips,
         ),
@@ -4517,6 +4521,48 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
         sub.size.height,
         title.size.height
     );
+    Ok(())
+}
+
+/// 行の文字は行の幅いっぱいに広がり、あふれた分は省略記号で切られる。
+///
+/// 幅が決まらないと `NSTextField` は自然な幅を要求したままになり、長い
+/// ラベルが行からはみ出す。文字を入れる `Stack` へ渡す `Sizing` が効いて
+/// いることを、実際の frame で見る。
+fn list_long_text_stays_inside_the_row(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    let long = "これは行の幅にはとても収まらない、ずいぶん長いラベルの文字列です";
+    list.set_items(&[ListItem::new(long).detail(long)]);
+    list.set_sizing(Sizing::fixed(200.0, 120.0));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&list);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    root.layoutSubtreeIfNeeded();
+
+    let table = list.native_table();
+    let row = table
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("1 行目のビュー");
+    let row_width = row.frame().size.width;
+    assert!(row_width > 0.0, "行に幅が配られていること");
+
+    for (index, field) in text_fields(&row).into_iter().enumerate() {
+        let width = field.frame().size.width;
+        // NSTextField は左右に 2pt の差し込みを持つので、そのぶんだけ大きく出る
+        // (折り返しのテストと同じ)。幅が配られていなければ、自然な幅
+        // (この文字列なら数百 pt) を要求したままになる。
+        assert!(
+            width <= row_width + 6.0,
+            "{index} 本目の文字が行からはみ出している: 文字 {width} / 行 {row_width}"
+        );
+        // 幅いっぱいまでは使う (自然な幅のまま縮こまっていない)。
+        assert!(
+            width > row_width * 0.5,
+            "{index} 本目の文字が行の幅を使っていない: 文字 {width} / 行 {row_width}"
+        );
+    }
     Ok(())
 }
 

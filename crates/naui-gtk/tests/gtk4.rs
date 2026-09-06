@@ -306,6 +306,10 @@ fn main() {
             list_detail_makes_a_second_line,
         ),
         (
+            "リストの長い文字が行の幅に収まる",
+            list_long_text_stays_inside_the_row,
+        ),
+        (
             "リストの行の中身が行の幅いっぱいに置かれる",
             list_row_content_fills_the_row,
         ),
@@ -2625,6 +2629,46 @@ fn list_row_content_fills_the_row(ui: &Ui) -> Result<()> {
         "中身が行の幅いっぱいに置かれること (行の幅 {})",
         row.width()
     );
+    window.close();
+    Ok(())
+}
+
+/// 行の文字は行の幅いっぱいに広がり、あふれた分は省略記号で切られる。
+///
+/// `GtkLabel` は `PangoEllipsizeMode::End` で末尾を切るが、**それが効くのは
+/// 幅が決まってから**。内容の幅のままだと、長いラベルが行を押し広げる。
+fn list_long_text_stays_inside_the_row(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    let long = "これは行の幅にはとても収まらない、ずいぶん長いラベルの文字列です";
+    list.set_items(&[ListItem::new(long).detail(long)]);
+    list.set_sizing(Sizing::fill());
+
+    let window = ui.window("一覧", 240.0, 200.0)?;
+    window.set_child(&list);
+    window.show();
+    let native = list_box_of(&list);
+    // 配られた幅を測るので、フレームを 1 つ進めてから見る。
+    tick(&native);
+
+    let row = children(&native).into_iter().next().expect("1 行目");
+    let row_width = row.width();
+    assert!(row_width > 0, "行に幅が配られていること");
+
+    let labels = labels_in(&row);
+    assert_eq!(labels.len(), 2, "文字が 2 本あること");
+    for (index, label) in labels.iter().enumerate() {
+        assert!(
+            label.width() <= row_width,
+            "{index} 本目の文字が行からはみ出している: 文字 {} / 行 {row_width}",
+            label.width()
+        );
+        // 幅いっぱいまでは使う (内容の幅のまま縮こまっていない)。
+        assert!(
+            label.width() * 2 > row_width,
+            "{index} 本目の文字が行の幅を使っていない: 文字 {} / 行 {row_width}",
+            label.width()
+        );
+    }
     window.close();
     Ok(())
 }

@@ -21,7 +21,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use naui_core::{Align, ListItem, Orientation, Result, SelectionMode, TextColor, TextStyle};
+use naui_core::{
+    Align, ListItem, Orientation, Result, SelectionMode, Sizing, TextColor, TextStyle,
+};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode, ScrollBarVisibility,
     ScrollViewer, SelectionChangedEventHandler, TextBlock,
@@ -685,14 +687,26 @@ pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
 /// 主テキストの色は指定しない (行の `ListViewItem` から受け継ぐ)。
 pub(crate) fn item_content(label: &str, detail: Option<&str>) -> Result<Stack> {
     let content = Stack::new(Orientation::Vertical)?;
-    content.set_align(Align::Start);
+    // `StackPanel` そのものを行の幅いっぱいに広げる。`Align::Start` にすると
+    // `HorizontalAlignment=Left` で中身の幅まで縮み、中の文字が行からはみ出す。
+    content.set_align(Align::Fill);
     content.set_spacing(DETAIL_SPACING);
-    content.append(&Label::new(label)?);
+    content.append(&row_label(label)?);
     if let Some(detail) = detail {
-        let sub = Label::new(detail)?;
+        let sub = row_label(detail)?;
         sub.set_style(TextStyle::Caption);
         sub.set_color(TextColor::Secondary);
         content.append(&sub);
     }
     Ok(content)
+}
+
+/// 行に載せる 1 本の文字。
+///
+/// **行の幅いっぱいに広げる。** `Label` は `TextTrimming="CharacterEllipsis"`
+/// で末尾を切るが、それが効くのは幅が決まってから。
+fn row_label(text: &str) -> Result<Label> {
+    let label = Label::new(text)?;
+    label.set_sizing(Sizing::fill_width());
+    Ok(label)
 }

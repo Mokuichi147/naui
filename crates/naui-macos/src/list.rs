@@ -15,7 +15,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Align, ListItem, Orientation, SelectionMode, TextColor, TextStyle};
+use naui_core::{Align, ListItem, Orientation, SelectionMode, Sizing, TextColor, TextStyle};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
@@ -292,25 +292,31 @@ fn item_content(
     enabled: bool,
 ) -> (Stack, Retained<NSTextField>) {
     let content = Stack::new(mtm, Orientation::Vertical);
-    content.set_align(Align::Start);
+    content.set_align(Align::Fill);
     content.set_spacing(DETAIL_SPACING);
 
-    let title = Label::new(mtm, label);
-    if !enabled {
-        dim_disabled(&title);
-    }
+    let title = row_label(mtm, label, enabled);
     content.append(&title);
-
     if let Some(detail) = detail {
-        let sub = Label::new(mtm, detail);
+        let sub = row_label(mtm, detail, enabled);
         sub.set_style(TextStyle::Caption);
         sub.set_color(TextColor::Secondary);
-        if !enabled {
-            dim_disabled(&sub);
-        }
         content.append(&sub);
     }
     (content, native_field(&title))
+}
+
+/// 行に載せる 1 本の文字。
+///
+/// **行の幅いっぱいに広げる。** 幅が決まって初めて、入りきらない文字を
+/// 省略記号で切れる。交差軸の `Fill` はコンテナへ入れる前に指定する。
+fn row_label(mtm: MainThreadMarker, text: &str, enabled: bool) -> Label {
+    let label = Label::new(mtm, text);
+    label.set_sizing(Sizing::fill_width());
+    if !enabled {
+        dim_disabled(&label);
+    }
+    label
 }
 
 /// 選べない行の文字色。

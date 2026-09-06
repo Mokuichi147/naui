@@ -1058,6 +1058,40 @@ fn list_detail_makes_a_second_line() {
     });
 }
 
+/// 行の文字は行の幅いっぱいに広がり、あふれた分は省略記号で切られる。
+///
+/// `Label` は既定で `nowrap` + `ellipsis` だが、**幅が決まらないと切れない**。
+/// 内容の幅のままだと、長いラベルが行から横へはみ出す。
+#[wasm_bindgen_test]
+fn list_long_text_stays_inside_the_row() {
+    with_ui(|ui| {
+        let list = ui.list()?;
+        let long = "これは行の幅にはとても収まらない、ずいぶん長いラベルの文字列です";
+        list.set_items(&[ListItem::new(long).detail(long)]);
+        let element: HtmlElement = list.native_element().unchecked_into();
+        let _mounted = Mounted::new(&list);
+        // 一覧の幅を決める。行の幅はここから決まる。
+        let _ = element.style().set_property("width", "200px");
+
+        let listbox = element.children().item(0).expect("listbox の枠");
+        let row = listbox.children().item(0).expect("1 行目");
+        let row_width = row.get_bounding_client_rect().width();
+        assert!(row_width > 0.0, "行に幅が配られていること");
+
+        let found = row.get_elements_by_tag_name("span");
+        assert_eq!(found.length(), 2, "文字が 2 本あること");
+        for index in 0..found.length() {
+            let text: HtmlElement = found.item(index).expect("行の中の文字").unchecked_into();
+            let width = text.get_bounding_client_rect().width();
+            assert!(
+                width <= row_width,
+                "{index} 本目の文字が行からはみ出している: 文字 {width} / 行 {row_width}"
+            );
+        }
+        Ok(())
+    });
+}
+
 /// `Ui` は clone できるので、コールバックの中からでもウィジェットを作れる。
 ///
 /// 押されたときに 1 行増やす画面では、通知の中で行の中身を組み立てて

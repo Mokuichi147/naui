@@ -19,7 +19,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Align, ListItem, Orientation, Result, SelectionMode, TextColor, TextStyle};
+use naui_core::{
+    Align, ListItem, Orientation, Result, SelectionMode, Sizing, TextColor, TextStyle,
+};
 use wasm_bindgen::JsCast;
 use web_sys::{
     Document, Element, Event, HtmlElement, HtmlOptionElement, HtmlSelectElement, KeyboardEvent,
@@ -191,16 +193,27 @@ const DETAIL_SPACING: f64 = 2.0;
 /// [`TextColor::Secondary`] が決めるので、ここに CSS は書かない。
 pub(crate) fn item_content(doc: &Document, label: &str, detail: Option<&str>) -> Result<Stack> {
     let content = Stack::new(doc, Orientation::Vertical)?;
-    content.set_align(Align::Start);
+    content.set_align(Align::Fill);
     content.set_spacing(DETAIL_SPACING);
-    content.append(&Label::new(doc, label)?);
+    content.append(&row_label(doc, label)?);
     if let Some(detail) = detail {
-        let sub = Label::new(doc, detail)?;
+        let sub = row_label(doc, detail)?;
         sub.set_style(TextStyle::Caption);
         sub.set_color(TextColor::Secondary);
         content.append(&sub);
     }
     Ok(content)
+}
+
+/// 行に載せる 1 本の文字。
+///
+/// **行の幅いっぱいに広げる。** `Label` は既定で折り返さず末尾を省略記号で
+/// 切るが、それが効くのは幅が決まってからで、内容の幅のままだと長いラベルが
+/// 行から横へはみ出す。
+fn row_label(doc: &Document, text: &str) -> Result<Label> {
+    let label = Label::new(doc, text)?;
+    label.set_sizing(Sizing::fill_width());
+    Ok(label)
 }
 
 fn style(element: &HtmlElement, property: &str, value: &str) {
