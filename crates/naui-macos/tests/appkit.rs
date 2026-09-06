@@ -6837,7 +6837,13 @@ fn nested_stack_with_fill_takes_the_slack(ui: &Ui) -> Result<()> {
 ///
 /// 標準スタイルの `NSPathControl` は枠の内側へ余白を取って文字を描くので、
 /// そのままだと同じ列のラベルより右へずれて見える。
+///
+/// 位置合わせの値どうしを突き合わせても「同じ計算をなぞる」だけなので、
+/// **実際に描かれた文字**を画像に焼いて左端を測る。OS の版や外観、文字サイズで
+/// 余白が変われば、ここで気付ける。
 fn breadcrumbs_align_with_labels(ui: &Ui) -> Result<()> {
+    // 描かせるために、表示はしないウィンドウへ入れておく。
+    let window = ui.window("パンくずの位置合わせ", 400.0, 200.0)?;
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_align(Align::Start);
     let label = ui.label("階層と現在地を表示します。")?;
@@ -6845,26 +6851,58 @@ fn breadcrumbs_align_with_labels(ui: &Ui) -> Result<()> {
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["階層 1", "階層 2", "現在地"]));
     pane.append(&crumbs);
+    window.set_child(&pane);
 
-    let root = pane.native_view();
-    root.setFrameSize(NSSize::new(400.0, 200.0));
-    root.layoutSubtreeIfNeeded();
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(400.0, 200.0));
+    content.layoutSubtreeIfNeeded();
 
-    let crumbs_view = crumbs.native_view();
-    let insets = crumbs_view.alignmentRectInsets();
-    assert!(
-        insets.left > 0.0,
-        "文字までの余白を位置合わせから外すこと: {insets:?}"
-    );
-    // ラベル (NSTextField) も同じ仕組みで枠を 2pt 左へずらしている。
     let label_view = label.native_view();
-    let label_text = label_view.frame().origin.x + label_view.alignmentRectInsets().left;
-    let crumbs_text = crumbs_view.frame().origin.x + insets.left;
+    let crumbs_view = crumbs.native_view();
+    // 親から見た「文字の左端」= 枠の位置 + ビューの中で文字が始まる位置。
+    let label_text = label_view.frame().origin.x + first_ink_x(&label_view);
+    let crumbs_text = crumbs_view.frame().origin.x + first_ink_x(&crumbs_view);
     assert!(
-        (label_text - crumbs_text).abs() < 0.5,
-        "文字の左端がそろうこと: ラベル {label_text} / パンくず {crumbs_text}"
+        (label_text - crumbs_text).abs() < 1.5,
+        "描かれた文字の左端がそろうこと: ラベル {label_text} / パンくず {crumbs_text}"
     );
+    window.close();
     Ok(())
+}
+
+/// ビューを画像に焼いて、何かが描かれているいちばん左の位置を返す (pt)。
+///
+/// ラベルもパンくずも背景を描かないので、透明でない画素の左端がそのまま
+/// 文字の左端になる。明暗どちらの外観でも同じように測れる。
+fn first_ink_x(view: &NSView) -> f64 {
+    let bounds = view.bounds();
+    let rep = view
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .expect("描画用のビットマップを作れること");
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &rep);
+    assert!(!rep.isPlanar(), "画素がまとめて並んでいること");
+    let width = rep.pixelsWide();
+    let height = rep.pixelsHigh();
+    let bytes_per_row = rep.bytesPerRow();
+    let bytes_per_pixel = rep.bitsPerPixel() / 8;
+    assert!(bytes_per_pixel >= 4, "アルファを含む画素であること");
+    let data = rep.bitmapData();
+    assert!(!data.is_null(), "画素を読めること");
+    let scale = width as f64 / bounds.size.width.max(1.0);
+    for x in 0..width {
+        for y in 0..height {
+            let offset = (y * bytes_per_row + x * bytes_per_pixel) as usize;
+            let pixel = unsafe { std::slice::from_raw_parts(data.add(offset), 4) };
+            // 縁のぼかしを拾わないよう、はっきり描かれた画素だけを見る。
+            if pixel[3] > 40 {
+                return x as f64 / scale;
+            }
+        }
+    }
+    panic!("文字が描かれていること");
 }
 
 /// パンくずは、クリックだけではキーボードフォーカスを取らない。
@@ -6907,11 +6945,15 @@ fn breadcrumbs_click_leaves_no_focus_ring(ui: &Ui) -> Result<()> {
     root.append(&crumbs);
     window.set_child(&root);
 
+    // アクティブでないアプリのウィンドウは key になれず、クリックが届かない。
+    // テストの間だけアクセサリにして、終わったら元へ戻す。
+    let policy = app.activationPolicy();
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
     window.show();
     let native = window.native_window();
+    native.makeKeyAndOrderFront(None);
     for _ in 0..40 {
         if native.isKeyWindow() {
             break;
@@ -6923,15 +6965,22 @@ fn breadcrumbs_click_leaves_no_focus_ring(ui: &Ui) -> Result<()> {
     content_view.layoutSubtreeIfNeeded();
     content_view.display();
 
+    let view = crumbs.native_view();
     if native.isKeyWindow() {
-        let view = crumbs.native_view();
         click_view(&app, &native, &view);
         let responder = native.firstResponder();
         let focused = responder
             .map(|responder| std::ptr::eq(&*responder as *const _ as *const NSView, &*view))
             .unwrap_or(false);
         assert!(!focused, "クリックでフォーカスを取らないこと");
+    } else {
+        // 黙って通さない。何を確かめられなかったかを必ず残す。
+        // (フォーカスを受け取らないこと自体は
+        //  `breadcrumbs_take_focus_like_a_button` が無条件に確かめている。)
+        eprintln!("  ⚠ 一部スキップ: ウィンドウが key にならず、本物のクリックを配送できなかった");
     }
     window.close();
+    // 後続のテストへ影響しないよう、アプリの状態を戻す。
+    app.setActivationPolicy(policy);
     Ok(())
 }
