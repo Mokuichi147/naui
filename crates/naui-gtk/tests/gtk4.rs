@@ -1637,27 +1637,41 @@ fn a_narrow_allocation_does_not_squash_the_content(ui: &Ui) -> Result<()> {
 
     let bin = bin_of(&row);
     let native = input.native_widget();
-    // 入力欄がそれ以上は縮められない大きさ。ここより狭く置かれると、
-    // `GtkEntry` は枠の分を引いた負の幅を中の `GtkText` へ渡してしまう
-    // (`width >= 0` を見るだけでは、この潰れ方を捕まえられない)。
-    let (min_width, _) = measure_width(&native);
-    let (min_height, _) = measure_height(&native);
-    assert!(min_width > 0, "入力欄に最小の幅があること: {min_width}px");
-
     let height = measure_height(&bin).1;
+
+    // 潰れ方は「中で**負の大きさ**が出る」こと。`GtkEntry` は配られた幅から
+    // 枠の分を引いて中の `GtkText` へ渡すので、狭いと `-18px` のような値になり、
+    // GTK4 の警告とともに中身が描かれなくなる。
+    //
+    // 0px は「入る場所が無い」ぶんには正しい (何も描かれないだけ) ので、
+    // 見るのは負にならないことだけ。直す前は、下のどの幅でも入力欄が
+    // -18px になっていた (Linux の CI で実測)。
     for width in [0, 1, 40, 120] {
         bin.queue_resize();
         bin.allocate(width, height, -1, None);
         assert!(
-            native.width() >= min_width && native.height() >= min_height,
-            "幅 {width}px で入力欄が {}x{}px になった (最小 {min_width}x{min_height}px)",
+            native.width() >= 0 && native.height() >= 0,
+            "行へ幅 {width}px を配ったら、入力欄が {}x{}px になった",
+            native.width(),
+            native.height()
+        );
+    }
+
+    // 入れ物へ直接配ったときも同じ (行の割り振りを通らない経路)。
+    // 直す前はここでも -18px / -17px になっていた。
+    let input_bin = bin_of(&input);
+    for width in [0, 1, 40] {
+        input_bin.queue_resize();
+        input_bin.allocate(width, height, -1, None);
+        assert!(
+            native.width() >= 0 && native.height() >= 0,
+            "入れ物へ幅 {width}px を配ったら、入力欄が {}x{}px になった",
             native.width(),
             native.height()
         );
     }
     Ok(())
 }
-
 fn sizing_min_raises_minimum(ui: &Ui) -> Result<()> {
     let button = ui.button("小")?;
     let bin = bin_of(&button);
