@@ -15,22 +15,22 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{ListItem, SelectionMode};
+use naui_core::{Align, ListItem, Orientation, SelectionMode, Sizing, TextColor, TextStyle};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSColor, NSControlTextEditingDelegate, NSFont, NSLayoutConstraint, NSScrollView,
-    NSTableCellView, NSTableColumn, NSTableColumnResizingOptions, NSTableView,
-    NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
-    NSTableViewStyle, NSTextField, NSView, NSViewNoIntrinsicMetric,
+    NSColor, NSControlTextEditingDelegate, NSLayoutConstraint, NSScrollView, NSTableCellView,
+    NSTableColumn, NSTableColumnResizingOptions, NSTableView, NSTableViewColumnAutoresizingStyle,
+    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSView,
+    NSViewNoIntrinsicMetric,
 };
 use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSString,
 };
 
 use crate::trampoline::ActionTarget;
-use crate::widgets::Widget;
+use crate::widgets::{Label, Stack, Widget};
 
 /// 1 列しか使わないので、識別子は固定でよい。
 const COLUMN_ID: &str = "naui.list.column";
@@ -261,137 +261,117 @@ define_class!(
 
 /// 行 1 つ分のビューを作る。
 ///
-/// 文字だけを載せた `NSTextField` をそのまま行にすると、AppKit は枠の上端に
-/// 文字を描くため、行いっぱいに出る選択の帯と文字がずれる。AppKit 標準の
-/// `NSTableCellView` に入れ、上下の余白まで**制約でつないで**おくと、
-/// 高さを決めるのは Auto Layout (`usesAutomaticRowHeights`) になり、
-/// 1 行でも 2 行でも帯と文字がそろう。
+/// 中身は naui の `Stack` と `Label` で組む。副次テキストの小ささと淡さは
+/// [`TextStyle::Caption`] と [`TextColor::Secondary`] が決めるので、
+/// ここに級数や色は書かない。
 pub(crate) fn cell_view(
     mtm: MainThreadMarker,
     label: &str,
     detail: Option<&str>,
     enabled: bool,
 ) -> Retained<NSView> {
-    let cell = NSTableCellView::new(mtm);
-    configure_text_cell(mtm, &cell, label, detail, enabled);
+    let (content, title) = item_content(mtm, label, detail, enabled);
+    let cell = cell_with_content(mtm, &content);
+    // `textField` に入れておくと、行の背景色に合わせた文字色や
+    // アクセシビリティの扱いを NSTableCellView が面倒を見る。
+    unsafe { cell.setTextField(Some(&title)) };
     let view: &NSView = cell.as_ref();
     view.retain()
 }
 
 /// `ListItem` も `ListRow` と同じセル経路へ載せる。
 fn list_item_cell_view(mtm: MainThreadMarker, item: &ListItem) -> Retained<NSView> {
-    let cell = NSTableCellView::new(mtm);
-    configure_text_cell(
-        mtm,
-        &cell,
-        &item.label,
-        item.detail.as_deref(),
-        item.enabled,
-    );
-    let view: &NSView = cell.as_ref();
-    view.retain()
+    cell_view(mtm, &item.label, item.detail.as_deref(), item.enabled)
 }
 
-fn configure_text_cell(
+/// 文字だけの行の中身。返す `NSTextField` は 1 行目のもの。
+fn item_content(
     mtm: MainThreadMarker,
-    cell: &NSTableCellView,
     label: &str,
     detail: Option<&str>,
     enabled: bool,
-) {
-    let title = row_label(mtm, label, enabled, false);
-    cell.addSubview(&title);
-    // `textField` に入れておくと、行の背景色に合わせた文字色や
-    // アクセシビリティの扱いを NSTableCellView が面倒を見る。
-    unsafe { cell.setTextField(Some(&title)) };
+) -> (Stack, Retained<NSTextField>) {
+    let content = Stack::new(mtm, Orientation::Vertical);
+    content.set_align(Align::Fill);
+    content.set_spacing(DETAIL_SPACING);
 
-    let mut constraints = vec![
-        title
-            .leadingAnchor()
-            .constraintEqualToAnchor(&cell.leadingAnchor()),
-        title
-            .trailingAnchor()
-            .constraintLessThanOrEqualToAnchor(&cell.trailingAnchor()),
-        title
-            .topAnchor()
-            .constraintEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
-    ];
-
-    // 下端をどこにつなぐかで、行が 1 行になるか 2 行になるかが決まる。
-    let bottom = match detail {
-        None => title.bottomAnchor(),
-        Some(detail) => {
-            let sub = row_label(mtm, detail, enabled, true);
-            cell.addSubview(&sub);
-            constraints.push(
-                sub.leadingAnchor()
-                    .constraintEqualToAnchor(&cell.leadingAnchor()),
-            );
-            constraints.push(
-                sub.trailingAnchor()
-                    .constraintLessThanOrEqualToAnchor(&cell.trailingAnchor()),
-            );
-            constraints.push(
-                sub.topAnchor()
-                    .constraintEqualToAnchor_constant(&title.bottomAnchor(), DETAIL_SPACING),
-            );
-            sub.bottomAnchor()
+    let title = row_label(mtm, label);
+    let mut lines = vec![title.clone()];
+    content.append(&title);
+    if let Some(detail) = detail {
+        let sub = row_label(mtm, detail);
+        sub.set_style(TextStyle::Caption);
+        sub.set_color(TextColor::Secondary);
+        content.append(&sub);
+        lines.push(sub);
+    }
+    // 無効の色は**役割の色より後に**当てる。補助は役割としては `Secondary`
+    // だが、選べない行ではそちらより無効の色が勝つ。
+    if !enabled {
+        for line in &lines {
+            dim_disabled(line);
         }
-    };
-    constraints.push(
+    }
+    (content, native_field(&title))
+}
+
+/// 行に載せる 1 本の文字。
+///
+/// **行の幅いっぱいに広げる。** 幅が決まって初めて、入りきらない文字を
+/// 省略記号で切れる。交差軸の `Fill` はコンテナへ入れる前に指定する。
+fn row_label(mtm: MainThreadMarker, text: &str) -> Label {
+    let label = Label::new(mtm, text);
+    label.set_sizing(Sizing::fill_width());
+    label
+}
+
+/// 選べない行の文字色。
+///
+/// `NSTableView` には行の無効という考えが無いので、AppKit が無効な
+/// コントロールへ使う色を文字に当てて表す (ほかの 3 環境は行そのものを
+/// 無効にできるため、この扱いは macOS だけ)。
+fn dim_disabled(label: &Label) {
+    native_field(label).setTextColor(Some(&NSColor::disabledControlTextColor()));
+}
+
+/// ラベルの実体。`NSTableCellView` へ渡すときだけ必要になる。
+fn native_field(label: &Label) -> Retained<NSTextField> {
+    label
+        .native_view()
+        .downcast()
+        .expect("ラベルは NSTextField である")
+}
+
+/// 中身を 1 つ載せた `NSTableCellView` を作る。
+///
+/// 文字だけを載せた `NSTextField` をそのまま行にすると、AppKit は枠の上端に
+/// 文字を描くため、行いっぱいに出る選択の帯と文字がずれる。AppKit 標準の
+/// `NSTableCellView` に入れ、上下の余白まで**制約でつないで**おくと、
+/// 高さを決めるのは Auto Layout (`usesAutomaticRowHeights`) になり、
+/// 1 行でも 2 行でも帯と文字がそろう。
+fn cell_with_content(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSTableCellView> {
+    let cell = NSTableCellView::new(mtm);
+    let view = content.native_view();
+    view.setTranslatesAutoresizingMaskIntoConstraints(false);
+    cell.addSubview(&view);
+    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
+        view.leadingAnchor()
+            .constraintEqualToAnchor(&cell.leadingAnchor()),
+        view.trailingAnchor()
+            .constraintEqualToAnchor(&cell.trailingAnchor()),
+        view.topAnchor()
+            .constraintEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
         cell.bottomAnchor()
-            .constraintEqualToAnchor_constant(&bottom, ROW_PADDING),
-    );
-    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
+            .constraintEqualToAnchor_constant(&view.bottomAnchor(), ROW_PADDING),
+    ]));
+    cell
 }
 
 /// 任意のウィジェットを、行の高さも含めて Auto Layout へつなぐ。
 fn custom_cell_view(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSView> {
-    let cell = NSTableCellView::new(mtm);
-    let content = content.native_view();
-    content.setTranslatesAutoresizingMaskIntoConstraints(false);
-    cell.addSubview(&content);
-    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
-        content
-            .leadingAnchor()
-            .constraintEqualToAnchor(&cell.leadingAnchor()),
-        content
-            .trailingAnchor()
-            .constraintEqualToAnchor(&cell.trailingAnchor()),
-        content
-            .topAnchor()
-            .constraintEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
-        cell.bottomAnchor()
-            .constraintEqualToAnchor_constant(&content.bottomAnchor(), ROW_PADDING),
-    ]));
+    let cell = cell_with_content(mtm, content);
     let view: &NSView = cell.as_ref();
     view.retain()
-}
-
-/// 行に載せる 1 本の文字。`secondary` なら小さく淡い見た目にする。
-fn row_label(
-    mtm: MainThreadMarker,
-    text: &str,
-    enabled: bool,
-    secondary: bool,
-) -> Retained<NSTextField> {
-    let field = NSTextField::labelWithString(&NSString::from_str(text), mtm);
-    if secondary {
-        field.setFont(Some(&NSFont::systemFontOfSize(
-            NSFont::smallSystemFontSize(),
-        )));
-    }
-    let color = if !enabled {
-        // 選べない行は、AppKit が無効なコントロールに使う色で描く。
-        NSColor::disabledControlTextColor()
-    } else if secondary {
-        NSColor::secondaryLabelColor()
-    } else {
-        NSColor::labelColor()
-    };
-    field.setTextColor(Some(&color));
-    field.setTranslatesAutoresizingMaskIntoConstraints(false);
-    field
 }
 
 impl ListSource {

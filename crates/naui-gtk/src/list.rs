@@ -9,11 +9,14 @@ use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{ListItem, SelectionMode};
+use naui_core::{Align, ListItem, Orientation, SelectionMode, Sizing, TextColor, TextStyle};
 
 use crate::bin::SizeBin;
 use crate::callback::SelectionNotifier;
-use crate::widgets::{impl_widget, without_signal, Widget};
+use crate::widgets::{impl_widget, without_signal, Label, Stack, Widget};
+
+/// ラベルと補助の文字の間隔。
+const DETAIL_SPACING: f64 = 2.0;
 
 /// 行がクリックされたことの通知先。
 ///
@@ -333,25 +336,62 @@ impl List {
     }
 }
 
+/// 文字だけの行の中身。
+///
+/// 副次テキストの小ささと淡さは [`TextStyle::Caption`] と
+/// [`TextColor::Secondary`] が決めるので、ここにスタイルクラスは書かない。
+pub(crate) fn item_content(label: &str, detail: Option<&str>) -> Stack {
+    let content = Stack::new(Orientation::Vertical);
+    content.set_align(Align::Fill);
+    content.set_spacing(DETAIL_SPACING);
+    content.append(&row_label(label));
+    if let Some(detail) = detail {
+        let sub = row_label(detail);
+        sub.set_style(TextStyle::Caption);
+        sub.set_color(TextColor::Secondary);
+        content.append(&sub);
+    }
+    content
+}
+
+/// 行に載せる 1 本の文字。
+///
+/// **行の幅いっぱいに広げる。** `GtkLabel` は `PangoEllipsizeMode::End` で
+/// 末尾を切るが、それが効くのは幅が決まってから。広げても文字は左詰めのまま
+/// (`Label` が `xalign` を 0 にしている)。
+fn row_label(text: &str) -> Label {
+    let label = Label::new(text);
+    label.set_sizing(Sizing::fill_width());
+    label
+}
+
+/// `List` の補助と同じ見た目 (小さく淡く) を、生の `GtkLabel` へ当てる。
+///
+/// naui の `Label` を使えない場所 (表の見出しのように幅や `GtkSizeGroup` を
+/// 直に扱うところ) 向け。当てるクラスは [`TextStyle::Caption`] と
+/// [`TextColor::Secondary`] から引く。
+pub(crate) fn apply_caption(label: &gtk::Label) {
+    for class in [
+        TextStyle::Caption.style_class(),
+        TextColor::Secondary.style_class(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        label.add_css_class(class);
+    }
+}
+
 /// 1 行を組み立てる。`ListItem` も任意内容も同じ経路を通る。
 fn build_row(item: &ListRow) -> gtk::ListBoxRow {
-    let content: gtk::Widget = match &item.content {
-        ListRowContent::Item(item) => {
-            let content = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            let label = gtk::Label::new(Some(&item.label));
-            label.set_xalign(0.0);
-            content.append(&label);
-            if let Some(detail) = &item.detail {
-                let detail = gtk::Label::new(Some(detail));
-                detail.set_xalign(0.0);
-                detail.add_css_class("dim-label");
-                detail.add_css_class("caption");
-                content.append(&detail);
-            }
-            content.upcast()
-        }
-        ListRowContent::Custom(content) => content.size_bin().upcast(),
+    let content: SizeBin = match &item.content {
+        ListRowContent::Item(item) => item_content(&item.label, item.detail.as_deref()).size_bin(),
+        ListRowContent::Custom(content) => content.size_bin(),
     };
+    // 行の幅いっぱいに置く。`SizeBin` の既定は `Center` (中身の大きさに合わせる)
+    // なので、そのままでは文字が行の真ん中へ寄る。大きさを自分で指定している
+    // 中身はそちらが優先される。
+    content.fill_parent();
     content.set_margin_top(6);
     content.set_margin_bottom(6);
     content.set_margin_start(10);

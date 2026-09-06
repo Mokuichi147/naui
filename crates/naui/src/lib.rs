@@ -292,6 +292,43 @@
 //! `<span>` の既定は折り返すので、**Web だけは naui が CSS で他の 3 環境へ
 //! そろえている** (`Table` や `Tree` のセルと同じ扱い)。
 //!
+//! ## ラベルの文字づかい
+//!
+//! [`Label`] の大きさと色は、[`set_style`](Label::set_style) と
+//! [`set_color`](Label::set_color) で変えられる。渡すのは**段階と役割**で、
+//! 級数や色の値ではない。naui はそれを、その環境が標準で持っている見出しの
+//! 段階と意味づけされた色へ写す ([`ToolbarIcon`] と同じ決まり)。
+//!
+//! ```no_run
+//! # use naui::{Result, TextColor, TextStyle, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let title = ui.label("設定")?;
+//! title.set_style(TextStyle::Title);
+//!
+//! let note = ui.label("保存されていない変更があります")?;
+//! note.set_style(TextStyle::Caption);
+//! note.set_color(TextColor::Warning);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! 実際の級数と色を決めるのは OS なので、**文字を大きくする設定・アクセント
+//! カラー・ライト / ダークの切り替えにそのまま追従する**。段階は
+//! [`TextStyle`] の 6 つ、役割は [`TextColor`] の 6 つで、それぞれの写し先は
+//! 各型のドキュメントに表で置いてある。
+//!
+//! | 環境 | 段階の写し先 | 色の写し先 |
+//! | --- | --- | --- |
+//! | macOS | `NSFontTextStyle` (`preferredFontForTextStyle:`) | `NSColor` の意味づけされた色 |
+//! | Windows | type ramp の `Style` | `{ThemeResource}` のブラシ |
+//! | Linux | libadwaita のスタイルクラス | 同じくスタイルクラス |
+//! | Web | naui が決めた `em` の相対値 | CSS のシステム色 (3 つだけ naui が決める) |
+//!
+//! **Web だけは、ブラウザに見出しの段階そのものが無い**ので、折り返しと同じく
+//! naui が CSS で他の 3 環境へそろえている。色も、`Secondary` と `Accent` は
+//! CSS のシステム色 (`GrayText` / `AccentColor`) を使えるが、成功・注意・危険に
+//! あたるシステム色は無いため、そこだけ naui が値を決めている。
+//!
 //! ## テキスト入力
 //!
 //! 1 行なら [`TextInput`]、改行を含む文章なら [`TextArea`]、伏せ字にするなら
@@ -784,9 +821,12 @@
 //! `set_selection` / `set_selected` / `clear_selection` は通知せず、
 //! `select` / `select_many` はユーザー操作と同じく通知する。
 //!
-//! [`ListItem::detail`] は macOS / Windows では 2 行目になる。**Web は行の
-//! 中身で作りが変わり**、文字だけなら `<select size>`、`detail` があれば
-//! `<ul role="listbox">` の合成になる (`<option>` はテキストしか持てないため)。
+//! [`ListItem::detail`] はどの環境でも 2 行目になる。行の中身は naui の
+//! `Stack` と [`Label`] で組んであり、小ささと淡さを決めるのは
+//! [`TextStyle::Caption`] と [`TextColor::Secondary`] なので、その環境の
+//! 「補助テキスト」の見た目になる。**Web は行の中身で作りが変わり**、
+//! 文字だけなら `<select size>`、`detail` があれば `<ul role="listbox">` の
+//! 合成になる (`<option>` はテキストしか持てないため)。
 //!
 //! 設定画面など、先頭の画像・複数行の本文・末尾のボタンやトグルを持つ行は、
 //! 既存の `Grid` / `Stack` で作って [`ListRow::new`] に渡し、[`List::set_rows`]
@@ -1196,8 +1236,8 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む 123 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、ラベルの折り返しと省略記号、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・ラベルの折り返し・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む 134 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、ラベルの折り返しと省略記号、ラベルの文字づかい、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・別スレッドからの受け渡しと `spawn` を含む) |
 //! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・別スレッドからの受け渡しと `spawn` を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 115 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返しを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
@@ -1208,8 +1248,9 @@ pub use naui_core::{
     with_default_extension, Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem,
     NumberSpec, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
-    SelectionMode, Sender, Settings, Sizing, SortOrder, TableColumn, TableRow, Task, Tasks, Theme,
-    Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, DEFAULT_SPLIT_POSITION,
+    SelectionMode, Sender, Settings, Sizing, SortOrder, TableColumn, TableRow, Task, Tasks,
+    TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    DEFAULT_SPLIT_POSITION,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -1380,6 +1421,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: String = label.text();
     label.set_text("t");
     label.set_wrap(true);
+    label.set_style(TextStyle::Title);
+    label.set_color(TextColor::Danger);
 
     let button: Button = ui.button("t")?;
     button.set_text("t");

@@ -30,18 +30,19 @@ use std::sync::Arc;
 use naui_core::{Result, TreeItem};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Grid as XamlGrid, Orientation as XamlOrientation, StackPanel, TreeView,
-    TreeViewCollapsedEventArgs, TreeViewExpandingEventArgs, TreeViewNode,
-    TreeViewSelectionChangedEventArgs, TreeViewSelectionMode,
+    Border, Grid as XamlGrid, TreeView, TreeViewCollapsedEventArgs, TreeViewExpandingEventArgs,
+    TreeViewNode, TreeViewSelectionChangedEventArgs, TreeViewSelectionMode,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use naui_winui3::Microsoft::UI::Xaml::{DataTemplate, RoutedEventHandler, UIElement};
-use windows::Foundation::TypedEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::{
+    DataTemplate, ResourceDictionary, RoutedEventHandler, Style, UIElement,
+};
+use windows::Foundation::{PropertyValue, TypedEventHandler};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
-use crate::list::{text_block, SelectionHandler};
+use crate::list::{item_content, SelectionHandler};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
@@ -56,6 +57,25 @@ const SURFACE_XAML: &str = r##"<Border
     Padding="4">
     <TreeView Background="Transparent"/>
 </Border>"##;
+
+/// 行の中身を、行の幅いっぱいに置くための `Style`。
+///
+/// WinUI の `TreeViewItem` は、中身の横位置を `HorizontalContentAlignment` へ
+/// 束ねている (既定のテンプレートの `ContentPresenter` が
+/// `HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"`)。
+/// 既定のままだと中身の幅までしか広がらず、文字が行の残り幅を使わない。
+/// `List` と `Table` の行と同じく `Stretch` にする。
+///
+/// `x:Key` は [`ITEM_STYLE_KEY`] と同じ文字列にする。
+const ITEM_STYLE_XAML: &str = r##"<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Style x:Key="NauiTreeItemStyle" TargetType="TreeViewItem">
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    </Style>
+</ResourceDictionary>"##;
+
+const ITEM_STYLE_KEY: &str = "NauiTreeItemStyle";
 
 /// 行に当てる `DataTemplate`。
 ///
@@ -772,38 +792,7 @@ fn append_nodes(
 
 /// 行の中身を組み立てる。文字は `List` と同じ組み方 (補助があれば 2 行)。
 fn row_content(item: &TreeItem, selectable: bool) -> Result<UIElement> {
-    let title = text_block(&item.label, false)?;
-    let content: UIElement = match &item.detail {
-        None => title
-            .cast::<UIElement>()
-            .map_err(|e| to_error("行の要素化", e))?,
-        Some(detail) => {
-            let stack = StackPanel::new().map_err(|e| to_error("行の StackPanel の生成", e))?;
-            stack
-                .SetOrientation(XamlOrientation::Vertical)
-                .map_err(|e| to_error("行の向き設定", e))?;
-            let children = stack
-                .Children()
-                .map_err(|e| to_error("行の中身の取得", e))?;
-            children
-                .Append(
-                    &title
-                        .cast::<UIElement>()
-                        .map_err(|e| to_error("行の要素化", e))?,
-                )
-                .map_err(|e| to_error("行への追加", e))?;
-            children
-                .Append(
-                    &text_block(detail, true)?
-                        .cast::<UIElement>()
-                        .map_err(|e| to_error("行の要素化", e))?,
-                )
-                .map_err(|e| to_error("行への追加", e))?;
-            stack
-                .cast::<UIElement>()
-                .map_err(|e| to_error("行の要素化", e))?
-        }
-    };
+    let content = item_content(&item.label, item.detail.as_deref())?.native_element();
     if selectable {
         return Ok(content);
     }
@@ -847,13 +836,35 @@ fn pointer_blocker() -> Result<XamlGrid> {
 
 /// テーマ付きの枠を読み込む。読めなければ素の `Border` + `TreeView` に戻す。
 fn build_surface() -> Result<(Border, TreeView)> {
-    match load_surface() {
-        Ok(surface) => Ok(surface),
+    let surface = match load_surface() {
+        Ok(surface) => surface,
         Err(error) => {
             eprintln!("naui-windows: ツリーのテーマ付き枠の生成に失敗: {error}");
-            plain_surface()
+            plain_surface()?
         }
+    };
+    // 枠がテーマ付きでも素でも、行の寄せ方は同じにする。
+    if let Some(style) = item_style() {
+        let _ = surface.1.SetItemContainerStyle(&style);
     }
+    Ok(surface)
+}
+
+/// 行に当てる `Style`。読めなければ `None` (WinUI 既定の寄せ方のまま)。
+fn item_style() -> Option<Style> {
+    let dictionary = match XamlReader::Load(&HSTRING::from(ITEM_STYLE_XAML))
+        .and_then(|element| element.cast::<ResourceDictionary>())
+    {
+        Ok(dictionary) => dictionary,
+        Err(error) => {
+            eprintln!("naui-windows: ツリーの行のスタイルの生成に失敗: {error}");
+            return None;
+        }
+    };
+    PropertyValue::CreateString(&HSTRING::from(ITEM_STYLE_KEY))
+        .and_then(|key| dictionary.Lookup(&key))
+        .and_then(|style| style.cast::<Style>())
+        .ok()
 }
 
 fn load_surface() -> Result<(Border, TreeView)> {

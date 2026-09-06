@@ -20,8 +20,12 @@ pub struct ListItem {
     pub label: String,
     /// 補助の文字列。指定すると 2 行目に小さく出る。
     ///
-    /// **Web だけは 1 行に収まる。** `<option>` は 1 行のテキストしか
-    /// 持てないため、`ラベル — 補助` の形で同じ行に続けて出る。
+    /// 小ささと淡さは [`crate::TextStyle::Caption`] と
+    /// [`crate::TextColor::Secondary`] が決めるので、どの環境でも
+    /// その環境の「補助テキスト」の見た目になる。
+    ///
+    /// Web の `<option>` は 1 行のテキストしか持てないため、補助のある行が
+    /// 1 つでもあれば、一覧ごと `<ul role="listbox">` の組み立てに切り替える。
     pub detail: Option<String>,
     /// 選べるかどうか。
     pub enabled: bool,

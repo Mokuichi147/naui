@@ -19,14 +19,16 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{ListItem, Result, SelectionMode};
+use naui_core::{
+    Align, ListItem, Orientation, Result, SelectionMode, Sizing, TextColor, TextStyle,
+};
 use wasm_bindgen::JsCast;
 use web_sys::{
     Document, Element, Event, HtmlElement, HtmlOptionElement, HtmlSelectElement, KeyboardEvent,
     MouseEvent,
 };
 
-use crate::widgets::{create, impl_widget, Listener, Widget};
+use crate::widgets::{create, impl_widget, Label, Listener, Stack, Widget};
 
 /// 行がクリックされたことの通知先。
 ///
@@ -180,6 +182,38 @@ fn next_list_id() -> u32 {
         n.set(id + 1);
         id
     })
+}
+
+/// ラベルと補助の文字の間隔。
+const DETAIL_SPACING: f64 = 2.0;
+
+/// 文字だけの行の中身。
+///
+/// 補助の文字の小ささと淡さは [`TextStyle::Caption`] と
+/// [`TextColor::Secondary`] が決めるので、ここに CSS は書かない。
+pub(crate) fn item_content(doc: &Document, label: &str, detail: Option<&str>) -> Result<Stack> {
+    let content = Stack::new(doc, Orientation::Vertical)?;
+    content.set_align(Align::Fill);
+    content.set_spacing(DETAIL_SPACING);
+    content.append(&row_label(doc, label)?);
+    if let Some(detail) = detail {
+        let sub = row_label(doc, detail)?;
+        sub.set_style(TextStyle::Caption);
+        sub.set_color(TextColor::Secondary);
+        content.append(&sub);
+    }
+    Ok(content)
+}
+
+/// 行に載せる 1 本の文字。
+///
+/// **行の幅いっぱいに広げる。** `Label` は既定で折り返さず末尾を省略記号で
+/// 切るが、それが効くのは幅が決まってからで、内容の幅のままだと長いラベルが
+/// 行から横へはみ出す。
+fn row_label(doc: &Document, text: &str) -> Result<Label> {
+    let label = Label::new(doc, text)?;
+    label.set_sizing(Sizing::fill_width());
+    Ok(label)
 }
 
 fn style(element: &HtmlElement, property: &str, value: &str) {
@@ -490,21 +524,10 @@ impl List {
             let _ = option.set_attribute("aria-selected", "false");
             match &row.content {
                 ListRowContent::Item(item) => {
-                    style(&option, "display", "flex");
-                    style(&option, "flex-direction", "column");
                     style(&option, "padding", "2px 4px");
-
-                    let title: HtmlElement = create(&self.0.document, "span")?.unchecked_into();
-                    title.set_text_content(Some(&item.label));
-                    let _ = option.append_child(&title);
-                    if let Some(detail) = &item.detail {
-                        let sub: HtmlElement = create(&self.0.document, "span")?.unchecked_into();
-                        sub.set_text_content(Some(detail));
-                        // macOS / Windows の 2 行目に合わせて、小さく淡くする。
-                        style(&sub, "font-size", "smaller");
-                        style(&sub, "opacity", "0.7");
-                        let _ = option.append_child(&sub);
-                    }
+                    let content =
+                        item_content(&self.0.document, &item.label, item.detail.as_deref())?;
+                    let _ = option.append_child(&content.native_element());
                 }
                 ListRowContent::Custom(content) => {
                     style(&option, "padding", "6px 10px");

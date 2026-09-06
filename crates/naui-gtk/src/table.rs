@@ -341,8 +341,7 @@ impl Table {
         for (index, column) in columns.iter().enumerate() {
             let label = cell_label(&column.title, column, &groups[index]);
             // 見出しは、行の文字より小さく淡くする (`List` の補助と同じ扱い)。
-            label.add_css_class("dim-label");
-            label.add_css_class("caption");
+            crate::list::apply_caption(&label);
             match column.sortable {
                 // 並べ替えられる列は、見出しそのものをボタンにする。
                 // 幅をそろえる `GtkSizeGroup` の相手もボタンへ移す。

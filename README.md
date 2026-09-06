@@ -73,10 +73,10 @@ cargo run -p gallery
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・別スレッドからの受け渡しと `spawn` を含む) |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む) |
 | Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ (Esc での取り消しを含む)、ポップアップメニュー、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、ラベルの折り返し、非同期処理の実行と中断を操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。あわせて WinUI 3 の実コントロールを使った統合テストを CI で実行 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ (Esc での取り消しを含む)、ポップアップメニュー、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、ラベルの折り返し、ラベルの文字づかい、非同期処理の実行と中断を操作 |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。あわせて WinUI 3 の実コントロールを使った統合テスト (ラベルの文字づかいを含む) を CI で実行 |
 
 プラットフォーム固有の注意点は[既知の制限](#既知の制限)を参照してください。
 
@@ -297,6 +297,50 @@ note.set_sizing(Sizing::fill_width()); // 折り返す幅は親が決める
 
 **`<span>` の既定は折り返す**ので、Web だけは naui が CSS で他の 3 環境へ
 そろえています (`Table` や `Tree` のセルと同じ扱いです)。
+
+#### ラベルの文字づかい
+
+`Label` の大きさと色は `set_style` と `set_color` で変えられます。渡すのは
+**段階と役割**で、級数や色の値ではありません。naui はそれを、その環境が標準で
+持っている見出しの段階と意味づけされた色へ写します (`ToolbarIcon` と同じ
+考え方です)。
+
+```rust
+let title = ui.label("設定")?;
+title.set_style(TextStyle::Title);
+
+let note = ui.label("保存されていない変更があります")?;
+note.set_style(TextStyle::Caption);
+note.set_color(TextColor::Warning);
+```
+
+実際の級数と色を決めるのは OS なので、**文字を大きくする設定・アクセント
+カラー・ライト / ダークの切り替えにそのまま追従します**。
+
+| 段階 | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `LargeTitle` | `TitleLargeTextBlockStyle` | `NSFontTextStyleLargeTitle` | `.title-1` | `2em` / 700 |
+| `Title` | `TitleTextBlockStyle` | `NSFontTextStyleTitle1` | `.title-2` | `1.5em` / 700 |
+| `Subtitle` | `SubtitleTextBlockStyle` | `NSFontTextStyleTitle3` | `.title-3` | `1.25em` / 600 |
+| `Heading` | `BodyStrongTextBlockStyle` | `NSFontTextStyleHeadline` | `.heading` | `1em` / 700 |
+| `Body` (既定) | `BodyTextBlockStyle` | `NSFontTextStyleBody` | (既定) | (既定) |
+| `Caption` | `CaptionTextBlockStyle` | `NSFontTextStyleCaption1` | `.caption` | `0.85em` |
+
+| 役割 | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `Default` (既定) | (既定) | `labelColor` | (既定) | (既定) |
+| `Secondary` | `TextFillColorSecondaryBrush` | `secondaryLabelColor` | `.dim-label` | `GrayText` |
+| `Accent` | `AccentTextFillColorPrimaryBrush` | `controlAccentColor` | `.accent` | `AccentColor` |
+| `Success` | `SystemFillColorSuccessBrush` | `systemGreenColor` | `.success` | naui が決める |
+| `Warning` | `SystemFillColorCautionBrush` | `systemOrangeColor` | `.warning` | naui が決める |
+| `Danger` | `SystemFillColorCriticalBrush` | `systemRedColor` | `.error` | naui が決める |
+
+Web だけは事情が違います。**ブラウザには見出しの段階そのものが無い**ので、
+折り返しと同じく naui が CSS の相対値で他の 3 環境へそろえています。色も、
+`Secondary` と `Accent` は CSS のシステム色を使いますが、成功・注意・危険に
+あたるシステム色は無いため、そこだけ naui が `light-dark()` で決めています。
+また **Chromium 系は `AccentColor` に OS のアクセントカラーを出さず、灰色を
+返します** (Firefox と Safari は OS の色を返します)。
 
 #### 区画の分割
 
@@ -1434,6 +1478,11 @@ git push origin v0.3.0
   `GtkButton` で、向きは見出しの文字に付く矢印で表します。
 - `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
   行と開閉ボタンで組み立てています。
+- `Label::set_style` は libadwaita のスタイルクラス (`.title-1` など) を当てる
+  だけで、級数と太さを決めるのはテーマです。**libadwaita は `.title-2` と
+  `.title-3` に同じ級数を与え、太さだけを変えます**。そのため
+  `TextStyle::Title` と `TextStyle::Subtitle` は太さで見分ける段階になります
+  (`Heading` と `Body` も同じ関係です)。ここで naui が級数を決めることはしません。
 - `Label` の既定 (折り返さない) では `PangoEllipsizeMode::End` を入れています。
   **省略記号を付けると `GtkLabel` の最小幅も下がる**ので、狭いコンテナへ
   入れてもコンテナごと押し広げてしまうことがなくなります。
@@ -1528,6 +1577,14 @@ git push origin v0.3.0
 - `Toggle` の `switch` 属性に対応しているのは Safari 17.4 以降だけなので、
   Chrome や Firefox ではチェックボックスの見た目で出ます (値の扱い・通知・
   読み上げは同じです)。つまみの見た目を naui の CSS で作ることはしません。
+- ブラウザに見出しの段階 (type ramp) が無いため、`Label::set_style` の大きさ
+  だけは naui が CSS の相対値 (`em`) で他の 3 環境へそろえています。相対値
+  なので、ブラウザとユーザーが決めた基準の文字サイズには追従します。
+- `Label::set_color` は CSS のシステム色を使いますが、成功・注意・危険に
+  あたるシステム色がブラウザに無いため、その 3 つだけ naui が `light-dark()`
+  で色を決めています。また **Chromium 系は `AccentColor` に OS のアクセント
+  カラーを出さず灰色を返す**ので、`TextColor::Accent` は Firefox と Safari で
+  しか OS の色になりません (naui が別の色を当てて代えることはしません)。
 - 動かせる仕切りで区画を分ける要素が HTML に無いため (`resize` は要素の隅に
   つまみを出すだけです)、`SplitView` は `Toast` と同じく naui が組み立てます。
   仕切りは `<div role="separator">` で、カーソルは `col-resize` / `row-resize`

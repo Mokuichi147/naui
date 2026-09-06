@@ -21,11 +21,12 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use naui_core::{ListItem, Result, SelectionMode};
+use naui_core::{
+    Align, ListItem, Orientation, Result, SelectionMode, Sizing, TextColor, TextStyle,
+};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
-    Orientation as XamlOrientation, ScrollBarVisibility, ScrollViewer,
-    SelectionChangedEventHandler, StackPanel, TextBlock,
+    Border, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode, ScrollBarVisibility,
+    ScrollViewer, SelectionChangedEventHandler, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
@@ -35,7 +36,7 @@ use windows_core::{IInspectable, Interface, HSTRING};
 use crate::layout::ListScrollTarget;
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
-use crate::widgets::{impl_widget, Widget};
+use crate::widgets::{impl_widget, label_style, Label, Stack, Widget};
 
 /// 行がクリックされたことの通知先。
 ///
@@ -185,11 +186,6 @@ const SURFACE_XAML: &str = r##"<Border
 const ROW_HOST_XAML: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="Transparent"/>"##;
-
-/// 行の副次テキスト。色は Fluent の副次テキスト用テーマリソースから引く。
-const DETAIL_XAML: &str = r##"<TextBlock
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>"##;
 
 /// テーマ付きの枠を読み込む。読めなければ素の `Border` + `ListView` に戻す。
 fn build_surface() -> Result<(Border, ListView)> {
@@ -653,70 +649,64 @@ fn is_primary_press(args: Option<&PointerRoutedEventArgs>) -> bool {
 
 /// 1 行分の中身を作る。
 ///
-/// 文字行は `detail` が無ければ `TextBlock` 1 つ、あれば縦の `StackPanel` に
-/// 2 つ入れる。縦の位置合わせは WinUI のレイアウトパスが行うので、naui は
-/// 組むだけ。任意内容の行は、組み立て済みのウィジェットをそのまま使う。
+/// 任意内容の行は、組み立て済みのウィジェットをそのまま使う。
 fn row_content(row: &ListRow) -> Result<UIElement> {
-    let item = match &row.content {
-        ListRowContent::Custom(content) => return Ok(content.native_element()),
-        ListRowContent::Item(item) => item,
-    };
-    let title = text_block(&item.label, false)?;
-    let Some(detail) = &item.detail else {
-        return title
-            .cast::<UIElement>()
-            .map_err(|e| to_error("行の要素化", e));
-    };
-
-    let panel = StackPanel::new().map_err(|e| to_error("行の StackPanel の生成", e))?;
-    panel
-        .SetOrientation(XamlOrientation::Vertical)
-        .map_err(|e| to_error("行の向き設定", e))?;
-    let children = panel
-        .Children()
-        .map_err(|e| to_error("行の中身の取得", e))?;
-    children
-        .Append(
-            &title
-                .cast::<UIElement>()
-                .map_err(|e| to_error("行の要素化", e))?,
-        )
-        .map_err(|e| to_error("行への追加", e))?;
-    let sub = text_block(detail, true)?;
-    children
-        .Append(
-            &sub.cast::<UIElement>()
-                .map_err(|e| to_error("行の要素化", e))?,
-        )
-        .map_err(|e| to_error("行への追加", e))?;
-    panel
-        .cast::<UIElement>()
-        .map_err(|e| to_error("行の要素化", e))
+    match &row.content {
+        ListRowContent::Custom(content) => Ok(content.native_element()),
+        ListRowContent::Item(item) => {
+            Ok(item_content(&item.label, item.detail.as_deref())?.native_element())
+        }
+    }
 }
 
-/// 行に載せる 1 本の文字。`secondary` なら Fluent の副次テキストに合わせる。
+/// ラベルと補助の文字の間隔。
+const DETAIL_SPACING: f64 = 2.0;
+
+/// 行に載せる 1 本の文字。`secondary` なら `List` の補助と同じ見た目にする。
 ///
-/// 主テキストの色は行 (`ListViewItem`) から受け継ぐので指定しない。
-/// 副次テキストだけは、テーマに追従する色を `{ThemeResource}` で引くために
-/// XAML から作る。引けなければ濃さを下げるだけの見た目に落とす。
+/// naui の `Label` を使えない場所 (表のセルのように文字揃えと折り返しを
+/// 直に決めるところ) 向け。見た目の値は [`TextStyle::Caption`] と
+/// [`TextColor::Secondary`] から引くので、ここには書かない。
 pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
-    let block = if secondary {
-        match XamlReader::Load(&HSTRING::from(DETAIL_XAML))
-            .and_then(|element| element.cast::<TextBlock>())
-        {
-            Ok(block) => block,
-            Err(_) => {
-                let block = TextBlock::new().map_err(|e| to_error("行ラベルの生成", e))?;
-                let _ = block.SetFontSize(12.0);
-                let _ = block.SetOpacity(0.7);
-                block
-            }
+    let block = TextBlock::new().map_err(|e| to_error("行ラベルの生成", e))?;
+    if secondary {
+        if let Some(style) = label_style(TextStyle::Caption, TextColor::Secondary) {
+            let _ = block.SetStyle(&style);
         }
-    } else {
-        TextBlock::new().map_err(|e| to_error("行ラベルの生成", e))?
-    };
+    }
     block
         .SetText(&HSTRING::from(text))
         .map_err(|e| to_error("行ラベルの設定", e))?;
     Ok(block)
+}
+
+/// 文字だけの行の中身。
+///
+/// 副次テキストの小ささと淡さは [`TextStyle::Caption`] と
+/// [`TextColor::Secondary`] が決めるので、ここに級数もブラシも書かない。
+/// 主テキストの色は指定しない (行の `ListViewItem` から受け継ぐ)。
+pub(crate) fn item_content(label: &str, detail: Option<&str>) -> Result<Stack> {
+    let content = Stack::new(Orientation::Vertical)?;
+    // `StackPanel` そのものを行の幅いっぱいに広げる。`Align::Start` にすると
+    // `HorizontalAlignment=Left` で中身の幅まで縮み、中の文字が行からはみ出す。
+    content.set_align(Align::Fill);
+    content.set_spacing(DETAIL_SPACING);
+    content.append(&row_label(label)?);
+    if let Some(detail) = detail {
+        let sub = row_label(detail)?;
+        sub.set_style(TextStyle::Caption);
+        sub.set_color(TextColor::Secondary);
+        content.append(&sub);
+    }
+    Ok(content)
+}
+
+/// 行に載せる 1 本の文字。
+///
+/// **行の幅いっぱいに広げる。** `Label` は `TextTrimming="CharacterEllipsis"`
+/// で末尾を切るが、それが効くのは幅が決まってから。
+fn row_label(text: &str) -> Result<Label> {
+    let label = Label::new(text)?;
+    label.set_sizing(Sizing::fill_width());
+    Ok(label)
 }

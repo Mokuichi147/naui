@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Align, Orientation, Padding, Result};
+use naui_core::{Align, Orientation, Padding, Result, TextColor, TextStyle};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, Grid, Orientation as XamlOrientation,
     PasswordBox, ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock,
@@ -11,10 +11,10 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, HorizontalAlignment, RoutedEventHandler, TextWrapping, Thickness, UIElement,
-    VerticalAlignment,
+    Application, FrameworkElement, HorizontalAlignment, ResourceDictionary, RoutedEventHandler,
+    Style, TextWrapping, Thickness, UIElement, VerticalAlignment,
 };
-use windows::Foundation::EventHandler;
+use windows::Foundation::{EventHandler, PropertyValue};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
@@ -94,6 +94,10 @@ impl SelectHandler {
 
 struct LabelInner {
     native: TextBlock,
+    /// いま当てている段階と役割。片方だけ変えても、両方を持つ `Style` を
+    /// 組み直せるように覚えておく。
+    style: Cell<TextStyle>,
+    color: Cell<TextColor>,
 }
 
 /// テキスト表示 (TextBlock)。
@@ -124,7 +128,11 @@ impl Label {
         native
             .SetText(&HSTRING::from(text))
             .map_err(|e| to_error("TextBlock への設定", e))?;
-        let this = Self(Rc::new(LabelInner { native }));
+        let this = Self(Rc::new(LabelInner {
+            native,
+            style: Cell::new(TextStyle::default()),
+            color: Cell::new(TextColor::default()),
+        }));
         this.set_wrap(false);
         Ok(this)
     }
@@ -152,6 +160,91 @@ impl Label {
     pub fn set_text(&self, text: &str) {
         let _ = self.0.native.SetText(&HSTRING::from(text));
     }
+
+    /// 文字の大きさと太さの段階。既定は [`TextStyle::Body`]。
+    ///
+    /// WinUI 3 の type ramp が持つ `Style` (`TitleTextBlockStyle` など) を
+    /// そのまま当てる。級数と太さを決めるのは Fluent のテーマのほう。
+    pub fn set_style(&self, style: TextStyle) {
+        self.0.style.set(style);
+        self.apply_text_style();
+    }
+
+    /// 文字色の役割。既定は [`TextColor::Default`]。
+    ///
+    /// 色は `{ThemeResource}` として置くので、ウィンドウの `RequestedTheme` を
+    /// 切り替えたときもそのまま追従する (`Foreground` へ直に書いた色は
+    /// 切り替えに付いてこない)。
+    pub fn set_color(&self, color: TextColor) {
+        self.0.color.set(color);
+        self.apply_text_style();
+    }
+
+    /// 段階と役割を 1 つの `Style` にまとめて当てる。
+    ///
+    /// 要素に当てられる `Style` は 1 つだけなので、色の `Setter` だけを持つ
+    /// `Style` を type ramp の `Style` の上へ重ねる (`BasedOn`)。
+    /// どちらかが引けなければ何もしない (前の見た目のまま続ける)。
+    fn apply_text_style(&self) {
+        let Some(style) = label_style(self.0.style.get(), self.0.color.get()) else {
+            eprintln!("naui-windows: ラベルのスタイルが引けませんでした");
+            return;
+        };
+        let _ = self.0.native.SetStyle(&style);
+    }
+}
+
+/// 色の `Setter` を持つ `Style` の土台。`{brush}` にテーマリソースの名前が入る。
+///
+/// `x:Key` は [`LABEL_COLOR_STYLE_KEY`] と同じ文字列にする。
+const LABEL_COLOR_STYLE_XAML: &str = r##"<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Style x:Key="NauiLabelColorStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource {brush}}"/>
+    </Style>
+</ResourceDictionary>"##;
+
+const LABEL_COLOR_STYLE_KEY: &str = "NauiLabelColorStyle";
+
+/// 段階と役割に対応する `Style`。引けなければ `None`。
+///
+/// naui の `Label` を使えない場所 (表のセルのように文字揃えを直に決める
+/// ところ) でも、同じ見た目を当てられるように公開している。
+pub(crate) fn label_style(style: TextStyle, color: TextColor) -> Option<Style> {
+    let ramp = app_resource(style.xaml_style_key())?.cast::<Style>().ok()?;
+    let Some(brush_key) = color.xaml_brush_key() else {
+        return Some(ramp);
+    };
+    let tinted = label_color_style(brush_key)?;
+    tinted.SetBasedOn(&ramp).ok()?;
+    Some(tinted)
+}
+
+/// 文字色だけを決める `Style` を作る。
+///
+/// `Style` は一度当てると封をされて変えられなくなるので、当てるたびに
+/// 作り直す。
+fn label_color_style(brush_key: &str) -> Option<Style> {
+    let xaml = LABEL_COLOR_STYLE_XAML.replace("{brush}", brush_key);
+    let dictionary = XamlReader::Load(&HSTRING::from(xaml))
+        .and_then(|element| element.cast::<ResourceDictionary>())
+        .ok()?;
+    PropertyValue::CreateString(&HSTRING::from(LABEL_COLOR_STYLE_KEY))
+        .and_then(|key| dictionary.Lookup(&key))
+        .and_then(|value| value.cast::<Style>())
+        .ok()
+}
+
+/// アプリのリソース辞書から 1 つ引く。`XamlControlsResources` を通して
+/// Fluent の type ramp とテーマリソースがここに入っている。
+fn app_resource(key: &str) -> Option<IInspectable> {
+    let resources = Application::Current()
+        .and_then(|app| app.Resources())
+        .ok()?;
+    PropertyValue::CreateString(&HSTRING::from(key))
+        .and_then(|key| resources.Lookup(&key))
+        .ok()
 }
 
 // ----------------------------------------------------------------- Button

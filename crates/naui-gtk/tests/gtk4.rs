@@ -23,7 +23,7 @@ use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
     PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_gtk::{run_for_test, ListRow, Ui, Widget};
 
@@ -238,6 +238,10 @@ fn main() {
             label_wraps_only_when_asked,
         ),
         (
+            "ラベルの段階と役割が libadwaita のスタイルクラスへ写る",
+            label_style_and_color_map_to_style_classes,
+        ),
+        (
             "折り返す中身は幅から高さが決まると親へ伝わる",
             wrapping_child_is_measured_by_width,
         ),
@@ -302,6 +306,14 @@ fn main() {
             list_detail_makes_a_second_line,
         ),
         (
+            "リストの長い文字が行の幅に収まる",
+            list_long_text_stays_inside_the_row,
+        ),
+        (
+            "リストの行の中身が行の幅いっぱいに置かれる",
+            list_row_content_fills_the_row,
+        ),
+        (
             "Auto のリスト高が行数に追従する",
             list_auto_height_follows_rows,
         ),
@@ -348,6 +360,10 @@ fn main() {
         (
             "見出しの並べ替えがボタンとして押せる",
             table_sorting_round_trips,
+        ),
+        (
+            "ツリーの行の中身が行の幅いっぱいに置かれる",
+            tree_row_content_fills_the_row,
         ),
         ("ツリーの行が展開に追従する", tree_rows_follow_the_expansion),
         (
@@ -516,6 +532,21 @@ fn bin_of(widget: &dyn Widget) -> gtk::Widget {
         .native_widget()
         .ancestor(naui_gtk::SizeBin::static_type())
         .expect("SizeBin に包まれている")
+}
+
+/// ウィジェットの中にある `GtkLabel` を、入れ子をたどって前から順に集める。
+///
+/// 行の中身は naui の `Stack` と `Label` で組むので、文字は行の直下には無い。
+/// ここで見たいのは文字の並びだけなので、階層は問わない。
+fn labels_in(widget: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
+    let mut found = Vec::new();
+    for child in children(widget) {
+        match child.downcast::<gtk::Label>() {
+            Ok(label) => found.push(label),
+            Err(other) => found.extend(labels_in(&other)),
+        }
+    }
+    found
 }
 
 /// `GtkBox` などの子を順に集める。
@@ -1760,7 +1791,7 @@ fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
     let window = ui.window("スクロール", 400.0, 120.0)?;
     window.set_child(&scroll);
     window.show();
-    pump();
+    tick(&bin);
     assert_eq!(
         bin.height(),
         natural,
@@ -1852,6 +1883,96 @@ fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
     label.set_wrap(false);
     assert!(!native.wraps(), "何度でも切り替えられること");
     assert_eq!(native.ellipsize(), pango::EllipsizeMode::End);
+    Ok(())
+}
+
+/// `set_style` / `set_color` は libadwaita のスタイルクラスへ写り、
+/// 実際に文字の大きさが変わる。
+///
+/// naui 側で級数も色も持たないので、確かめるのは「どのクラスが付いているか」と
+/// 「テーマがそれをどう描くか」の 2 つ。
+fn label_style_and_color_map_to_style_classes(ui: &Ui) -> Result<()> {
+    let label = ui.label("見出し")?;
+    let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
+
+    // 既定 (`Body` / `Default`) はクラスを付けない。
+    for style in TextStyle::ALL {
+        if let Some(class) = style.style_class() {
+            assert!(!native.has_css_class(class), "既定で {class} が付いている");
+        }
+    }
+
+    // 段階を切り替えると、前の段階のクラスは外れる。
+    label.set_style(TextStyle::Title);
+    assert!(native.has_css_class("title-2"), "title-2 が付くこと");
+    label.set_style(TextStyle::Caption);
+    assert!(!native.has_css_class("title-2"), "前の段階が外れること");
+    assert!(native.has_css_class("caption"), "caption が付くこと");
+    label.set_style(TextStyle::Body);
+    for style in TextStyle::ALL {
+        if let Some(class) = style.style_class() {
+            assert!(
+                !native.has_css_class(class),
+                "本文へ戻すと {class} が外れること"
+            );
+        }
+    }
+
+    // 色も同じ決まり。
+    label.set_color(TextColor::Danger);
+    assert!(native.has_css_class("error"), "error が付くこと");
+    label.set_color(TextColor::Secondary);
+    assert!(!native.has_css_class("error"), "前の役割が外れること");
+    assert!(native.has_css_class("dim-label"), "dim-label が付くこと");
+    label.set_color(TextColor::Default);
+    for color in TextColor::ALL {
+        if let Some(class) = color.style_class() {
+            assert!(
+                !native.has_css_class(class),
+                "既定へ戻すと {class} が外れること"
+            );
+        }
+    }
+
+    // 段階が上がるほど、テーマは大きく (または太く) 描く。CSS はウィジェットが
+    // 画面へ付いてから解決されるので、ウィンドウへ入れて測る。
+    let window = ui.window("文字づかい", 320.0, 120.0)?;
+    window.set_child(&label);
+    window.show();
+
+    // 見るのは、テーマが決めた級数と太さの組。libadwaita は `.title-2` と
+    // `.title-3` に同じ級数を与えて太さだけを変えるので、大きさだけでは
+    // 段階の違いを見分けられない。
+    let mut fonts = Vec::new();
+    for style in [
+        TextStyle::Caption,
+        TextStyle::Body,
+        TextStyle::Heading,
+        TextStyle::Subtitle,
+        TextStyle::Title,
+        TextStyle::LargeTitle,
+    ] {
+        label.set_style(style);
+        tick(&native);
+        let font = native
+            .pango_context()
+            .font_description()
+            .expect("テーマが決めた書体");
+        fonts.push((style, font.size(), font.weight()));
+    }
+    for pair in fonts.windows(2) {
+        let (before, before_size, before_weight) = pair[0];
+        let (after, after_size, after_weight) = pair[1];
+        assert!(
+            after_size >= before_size,
+            "段階が上がって小さくならないこと: {before:?} {before_size} / {after:?} {after_size}"
+        );
+        assert!(
+            (after_size, after_weight) != (before_size, before_weight),
+            "段階ごとに違う描き方になること: {before:?} と {after:?} が同じ ({after_size}, {after_weight:?})"
+        );
+    }
+    window.close();
     Ok(())
 }
 
@@ -2458,21 +2579,101 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
 
     let native = list_box_of(&list);
     let rows = children(&native);
-    let labels = |row: &gtk::Widget| -> Vec<String> {
+    let row_labels = |row: &gtk::Widget| -> Vec<gtk::Label> {
         let content = row
             .clone()
             .downcast::<gtk::ListBoxRow>()
             .expect("GtkListBoxRow")
             .child()
             .expect("中身");
-        children(&content)
+        labels_in(&content)
+    };
+    let texts = |row: &gtk::Widget| -> Vec<String> {
+        row_labels(row)
             .into_iter()
-            .filter_map(|child| child.downcast::<gtk::Label>().ok())
             .map(|label| label.text().to_string())
             .collect()
     };
-    assert_eq!(labels(&rows[0]), ["東京", "13,960,000 人"]);
-    assert_eq!(labels(&rows[1]), ["札幌"]);
+    assert_eq!(texts(&rows[0]), ["東京", "13,960,000 人"]);
+    assert_eq!(texts(&rows[1]), ["札幌"]);
+
+    // 補助の文字は `TextStyle::Caption` と `TextColor::Secondary` で小さく淡く
+    // なる。naui 側で級数も色も持たないので、当たっているクラスで見る。
+    let detail = row_labels(&rows[0]).pop().expect("補助の文字");
+    assert!(detail.has_css_class("caption"), "補助は小さくなること");
+    assert!(detail.has_css_class("dim-label"), "補助は淡くなること");
+    Ok(())
+}
+
+/// 行の中身は、行の幅いっぱいに置かれる。
+///
+/// 中身を包む `SizeBin` の既定は `Center` (中身の大きさに合わせる) なので、
+/// そのまま `GtkListBoxRow` へ入れると文字が行の真ん中へ寄ってしまう。
+/// 大きさを配るのは GTK4 なので、画面に出して配られた幅で見る。
+fn list_row_content_fills_the_row(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill());
+    list.set_items(&[ListItem::new("東京").detail("13,960,000 人")]);
+
+    let window = ui.window("一覧", 400.0, 200.0)?;
+    window.set_child(&list);
+    window.show();
+    let native = list_box_of(&list);
+    tick(&native);
+
+    let row = children(&native)
+        .remove(0)
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow");
+    let content = row.child().expect("行の中身");
+    assert!(row.width() > 0, "行に幅が配られていること");
+    assert_eq!(
+        content.width(),
+        row.width() - content.margin_start() - content.margin_end(),
+        "中身が行の幅いっぱいに置かれること (行の幅 {})",
+        row.width()
+    );
+    window.close();
+    Ok(())
+}
+
+/// 行の文字は行の幅いっぱいに広がり、あふれた分は省略記号で切られる。
+///
+/// `GtkLabel` は `PangoEllipsizeMode::End` で末尾を切るが、**それが効くのは
+/// 幅が決まってから**。内容の幅のままだと、長いラベルが行を押し広げる。
+fn list_long_text_stays_inside_the_row(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    let long = "これは行の幅にはとても収まらない、ずいぶん長いラベルの文字列です";
+    list.set_items(&[ListItem::new(long).detail(long)]);
+    list.set_sizing(Sizing::fill());
+
+    let window = ui.window("一覧", 240.0, 200.0)?;
+    window.set_child(&list);
+    window.show();
+    let native = list_box_of(&list);
+    // 配られた幅を測るので、フレームを 1 つ進めてから見る。
+    tick(&native);
+
+    let row = children(&native).into_iter().next().expect("1 行目");
+    let row_width = row.width();
+    assert!(row_width > 0, "行に幅が配られていること");
+
+    let labels = labels_in(&row);
+    assert_eq!(labels.len(), 2, "文字が 2 本あること");
+    for (index, label) in labels.iter().enumerate() {
+        assert!(
+            label.width() <= row_width,
+            "{index} 本目の文字が行からはみ出している: 文字 {} / 行 {row_width}",
+            label.width()
+        );
+        // 幅いっぱいまでは使う (内容の幅のまま縮こまっていない)。
+        assert!(
+            label.width() * 2 > row_width,
+            "{index} 本目の文字が行の幅を使っていない: 文字 {} / 行 {row_width}",
+            label.width()
+        );
+    }
+    window.close();
     Ok(())
 }
 
@@ -3041,6 +3242,61 @@ fn tree_box_of(tree: &naui_gtk::Tree) -> gtk::ListBox {
     tree.native_widget().downcast().expect("GtkListBox")
 }
 
+/// ツリーの行も、開閉ボタンの右をぜんぶ文字の領域として使う。
+///
+/// `SizeBin` の既定は中身の大きさに合わせる寄せ方なので、そのままでは
+/// 文字が行の残り幅を使わない。幅が決まらないと `PangoEllipsizeMode::End` も
+/// 効かず、長いラベルが行を押し広げる (`List` と同じ理由)。
+fn tree_row_content_fills_the_row(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_sizing(Sizing::fill());
+    tree.set_items(&[TreeItem::new("プロジェクト")
+        .detail("3 ファイル")
+        .expanded(true)
+        .child(TreeItem::new("main.rs"))]);
+
+    let window = ui.window("ツリー", 400.0, 200.0)?;
+    window.set_child(&tree);
+    window.show();
+    let native = tree_box_of(&tree);
+    // 配られた幅を測るので、フレームを 1 つ進めてから見る。
+    tick(&native);
+
+    let row = children(&native)
+        .remove(0)
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow");
+    let line = row.child().expect("行の中身");
+    assert!(line.width() > 0, "行に幅が配られていること");
+
+    // 行は [開閉ボタン, 文字の縦並び] の順。文字の領域には、中身の自然な幅より
+    // 広く配られる (開閉ボタンの右の余りを使う)。寄せ方が「中身の大きさに
+    // 合わせる」ままだと、配られた幅と自然な幅が一致する。
+    //
+    // 残り幅そのものを計算しないのは、行の間隔や余白の取り方に縛られないため。
+    let parts = children(&line);
+    let content = parts.last().expect("文字の縦並び");
+    let (_, natural) = measure_width(content);
+    assert!(
+        content.width() > natural,
+        "文字の領域が行の残り幅を使っていない: 領域 {} / 中身 {natural} (行 {})",
+        content.width(),
+        line.width()
+    );
+
+    // 中の文字も、その領域に合わせて広がる。
+    for (index, label) in labels_in(content).iter().enumerate() {
+        let (_, natural) = measure_width(label);
+        assert!(
+            label.width() > natural,
+            "{index} 本目の文字が領域の幅を使っていない: 文字 {} / 中身 {natural}",
+            label.width()
+        );
+    }
+    window.close();
+    Ok(())
+}
+
 /// テストで使う木。src (2 つの葉) と docs (guide > intro.md)。
 fn sample_tree() -> Vec<TreeItem> {
     vec![
@@ -3063,8 +3319,7 @@ fn tree_labels(tree: &naui_gtk::Tree) -> Vec<String> {
         .filter_map(|line| {
             // 行は [開閉ボタン (または余白), 文字の縦並び] の順。
             let content = children(&line).pop()?;
-            let label = children(&content).into_iter().next()?;
-            Some(label.downcast::<gtk::Label>().ok()?.text().to_string())
+            Some(labels_in(&content).first()?.text().to_string())
         })
         .collect()
 }
@@ -4182,6 +4437,36 @@ fn pump() {
             break;
         }
     }
+}
+
+/// CSS の解決とレイアウトが済むまで、フレームを 1 つ進める。
+///
+/// GTK4 はスタイルクラスを付けた瞬間に級数を決めず、フレームクロックの layout
+/// フェーズでまとめて解決してから場所を配る。`pump` は溜まっている分を回すだけで
+/// フレームを進めないので、**CSS の結果や配られた大きさを測る前**はこちらを使う。
+///
+/// 待ちは 2 秒で打ち切る。進まないまま止まり続けるより、測った値で落ちたほうが
+/// 理由が分かるため。
+fn tick(widget: &impl IsA<gtk::Widget>) {
+    let Some(clock) = widget.as_ref().frame_clock() else {
+        pump();
+        return;
+    };
+    let laid_out = Rc::new(Cell::new(false));
+    let handler = clock.connect_layout({
+        let laid_out = laid_out.clone();
+        move |_| laid_out.set(true)
+    });
+    clock.request_phase(gtk::gdk::FrameClockPhase::LAYOUT);
+    let context = glib::MainContext::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !laid_out.get() && std::time::Instant::now() < deadline {
+        // 次のティックまでは回すものが無いので、空回りのあいだは少し休む。
+        if !context.iteration(false) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    clock.disconnect(handler);
 }
 
 /// 一度だけ譲る future。次のティックで続きが走る。
