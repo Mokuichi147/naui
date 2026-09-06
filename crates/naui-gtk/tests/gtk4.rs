@@ -1637,13 +1637,20 @@ fn a_narrow_allocation_does_not_squash_the_content(ui: &Ui) -> Result<()> {
 
     let bin = bin_of(&row);
     let native = input.native_widget();
+    // 入力欄がそれ以上は縮められない大きさ。ここより狭く置かれると、
+    // `GtkEntry` は枠の分を引いた負の幅を中の `GtkText` へ渡してしまう
+    // (`width >= 0` を見るだけでは、この潰れ方を捕まえられない)。
+    let (min_width, _) = measure_width(&native);
+    let (min_height, _) = measure_height(&native);
+    assert!(min_width > 0, "入力欄に最小の幅があること: {min_width}px");
+
     let height = measure_height(&bin).1;
     for width in [0, 1, 40, 120] {
         bin.queue_resize();
         bin.allocate(width, height, -1, None);
         assert!(
-            native.width() >= 0 && native.height() >= 0,
-            "幅 {width}px で入力欄が {}x{}px になった",
+            native.width() >= min_width && native.height() >= min_height,
+            "幅 {width}px で入力欄が {}x{}px になった (最小 {min_width}x{min_height}px)",
             native.width(),
             native.height()
         );

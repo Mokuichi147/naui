@@ -527,23 +527,54 @@ fn main() {
     ];
 
     let mut failed = 0;
+    let mut skipped = 0;
     for (name, case) in cases {
+        take_skip();
         let result = catch_unwind(AssertUnwindSafe(|| {
             run_for_test(*case).expect("テスト用の起動")
         }));
-        match result {
-            Ok(()) => println!("ok   ... {name}"),
-            Err(_) => {
+        match (result, take_skip()) {
+            (Ok(()), None) => println!("ok   ... {name}"),
+            // 走らせられなかった確認があるものは、成功として数えない。
+            (Ok(()), Some(reason)) => {
+                println!("SKIP ... {name} ({reason})");
+                skipped += 1;
+            }
+            (Err(_), _) => {
                 println!("FAIL ... {name}");
                 failed += 1;
             }
         }
     }
 
-    println!("\n{} 件中 {} 件成功", cases.len(), cases.len() - failed);
+    println!(
+        "\n{} 件中 {} 件成功 / {} 件スキップ / {} 件失敗",
+        cases.len(),
+        cases.len() - failed - skipped,
+        skipped,
+        failed
+    );
     if failed > 0 {
         std::process::exit(1);
     }
+}
+
+thread_local! {
+    /// そのテストで**確かめられなかったこと**の置き場 ([`skip`])。
+    static SKIP_REASON: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// 実行環境の都合で確かめられなかったことを記録する。
+///
+/// 記録したテストは「成功」ではなく SKIP として数える。黙って通ると、
+/// **何も確かめていないのに緑になる**ので、CI から気付けない。
+fn skip(reason: &str) {
+    SKIP_REASON.with(|slot| *slot.borrow_mut() = Some(reason.to_string()));
+}
+
+/// 記録を取り出して空へ戻す。
+fn take_skip() -> Option<String> {
+    SKIP_REASON.with(|slot| slot.borrow_mut().take())
 }
 
 /// ボタンのクリックが Rust のクロージャへ届く。
@@ -3610,6 +3641,9 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
     content_view.layoutSubtreeIfNeeded();
     unsafe { content_view.display() };
 
+    if !native.isKeyWindow() {
+        skip("ウィンドウが key にならず、本物のクリックを配送できなかった");
+    }
     if native.isKeyWindow() {
         click_view(&app, &native, &title.native_view());
         assert_eq!(activated.get(), 1, "行クリックが 1 回だけ通知されること");
@@ -6883,21 +6917,18 @@ fn first_ink_x(view: &NSView) -> f64 {
         .bitmapImageRepForCachingDisplayInRect(bounds)
         .expect("描画用のビットマップを作れること");
     view.cacheDisplayInRect_toBitmapImageRep(bounds, &rep);
-    assert!(!rep.isPlanar(), "画素がまとめて並んでいること");
     let width = rep.pixelsWide();
     let height = rep.pixelsHigh();
-    let bytes_per_row = rep.bytesPerRow();
-    let bytes_per_pixel = rep.bitsPerPixel() / 8;
-    assert!(bytes_per_pixel >= 4, "アルファを含む画素であること");
-    let data = rep.bitmapData();
-    assert!(!data.is_null(), "画素を読めること");
     let scale = width as f64 / bounds.size.width.max(1.0);
     for x in 0..width {
         for y in 0..height {
-            let offset = (y * bytes_per_row + x * bytes_per_pixel) as usize;
-            let pixel = unsafe { std::slice::from_raw_parts(data.add(offset), 4) };
+            // 画素の並び (RGBA / ARGB、前乗せかどうか) は AppKit が決めるので、
+            // 生のバイトではなく色として読む。
+            let Some(color) = rep.colorAtX_y(x, y) else {
+                continue;
+            };
             // 縁のぼかしを拾わないよう、はっきり描かれた画素だけを見る。
-            if pixel[3] > 40 {
+            if color.alphaComponent() > 0.15 {
                 return x as f64 / scale;
             }
         }
@@ -6974,10 +7005,10 @@ fn breadcrumbs_click_leaves_no_focus_ring(ui: &Ui) -> Result<()> {
             .unwrap_or(false);
         assert!(!focused, "クリックでフォーカスを取らないこと");
     } else {
-        // 黙って通さない。何を確かめられなかったかを必ず残す。
+        // 黙って通さない。確かめられなかったことを SKIP として残す
         // (フォーカスを受け取らないこと自体は
-        //  `breadcrumbs_take_focus_like_a_button` が無条件に確かめている。)
-        eprintln!("  ⚠ 一部スキップ: ウィンドウが key にならず、本物のクリックを配送できなかった");
+        //  `breadcrumbs_take_focus_like_a_button` が無条件に確かめている)。
+        skip("ウィンドウが key にならず、本物のクリックを配送できなかった");
     }
     window.close();
     // 後続のテストへ影響しないよう、アプリの状態を戻す。
