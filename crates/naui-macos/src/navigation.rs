@@ -21,16 +21,16 @@ use std::rc::Rc;
 
 use naui_core::NavItem;
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
-use objc2::{sel, MainThreadMarker, Message};
+use objc2::runtime::{NSObjectProtocol, ProtocolObject};
+use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSBezelStyle, NSButton, NSButtonType, NSColor, NSControlStateValueOff, NSControlStateValueOn,
-    NSLayoutAttribute, NSLayoutConstraintOrientation, NSPathControl, NSPathControlItem,
-    NSPathStyle, NSSegmentDistribution, NSSegmentStyle, NSSegmentSwitchTracking,
+    NSApplication, NSBezelStyle, NSButton, NSButtonType, NSColor, NSControlStateValueOff,
+    NSControlStateValueOn, NSLayoutAttribute, NSLayoutConstraintOrientation, NSPathControl,
+    NSPathControlItem, NSPathStyle, NSSegmentDistribution, NSSegmentStyle, NSSegmentSwitchTracking,
     NSSegmentedControl, NSStackView, NSStackViewDistribution, NSTabView, NSTabViewItem,
     NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
 };
-use objc2_foundation::{NSArray, NSString, NSURL};
+use objc2_foundation::{NSArray, NSEdgeInsets, NSString, NSURL};
 
 use crate::trampoline::{ActionTarget, SelectHandler, TabObserver};
 use crate::widgets::{impl_sizing, impl_widget, Widget};
@@ -572,8 +572,60 @@ impl Menu {
 
 // ------------------------------------------------------------ Breadcrumbs
 
+/// 標準スタイルの `NSPathControl` が、枠の左端から文字を描き始めるまでの余白。
+///
+/// この幅だけ `alignmentRectInsets` へ返し、Auto Layout には**文字の位置**で
+/// そろえてもらう (`NSTextField` のラベルが 2pt ずらしているのと同じ仕組み)。
+/// 返さないと、同じ列に並ぶラベルより右へずれて見える。
+///
+/// 値は AppKit が公開していないので、Gallery を撮って文字の左端を数えて
+/// 決めた (ずれていた 8px = 4pt)。ずれが出たら同じやり方で測り直す。
+const TEXT_INSET: f64 = 4.0;
+
+define_class!(
+    #[unsafe(super(NSPathControl))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiBreadcrumbs"]
+    #[ivars = ()]
+    struct BreadcrumbsControl;
+
+    unsafe impl NSObjectProtocol for BreadcrumbsControl {}
+
+    impl BreadcrumbsControl {
+        /// 位置合わせは枠ではなく文字の左端で行う ([`TEXT_INSET`])。
+        #[unsafe(method(alignmentRectInsets))]
+        fn alignment_rect_insets(&self) -> NSEdgeInsets {
+            NSEdgeInsets {
+                top: 0.0,
+                left: TEXT_INSET,
+                bottom: 0.0,
+                right: 0.0,
+            }
+        }
+
+        /// クリックではキーボードフォーカスを取らない。
+        ///
+        /// `NSPathControl` は `acceptsFirstResponder` が常に真なので、一度
+        /// クリックすると青いフォーカスリングが出たまま消えない。パンくずは
+        /// 押すと画面が変わるだけのナビゲーションなので、`NSButton` と同じく
+        /// **キーボード操作の設定が入のときだけ**フォーカスを受ける。
+        #[unsafe(method(acceptsFirstResponder))]
+        fn accepts_first_responder(&self) -> bool {
+            let mtm = MainThreadMarker::from(self);
+            NSApplication::sharedApplication(mtm).isFullKeyboardAccessEnabled()
+        }
+    }
+);
+
+impl BreadcrumbsControl {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 struct BreadcrumbsInner {
-    native: Retained<NSPathControl>,
+    native: Retained<BreadcrumbsControl>,
     /// クリックされた項目の位置を求めるため、トランポリンと共有する。
     items: Rc<RefCell<Vec<Retained<NSPathControlItem>>>>,
     handler: SelectHandler,
@@ -587,11 +639,23 @@ struct BreadcrumbsInner {
 /// そのインデックスで [`Breadcrumbs::on_select`] が呼ばれる。
 #[derive(Clone)]
 pub struct Breadcrumbs(Rc<BreadcrumbsInner>);
-impl_widget!(Breadcrumbs);
+
+// `NSPathControl` を継いだ自前のクラスなので、`NSView` までは自分で降りる。
+impl Widget for Breadcrumbs {
+    fn native_view(&self) -> Retained<NSView> {
+        self.0.native.clone().into_super().into_super().into_super()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Widget> {
+        Box::new(self.clone())
+    }
+}
+
+impl_sizing!(Breadcrumbs);
 
 impl Breadcrumbs {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
-        let native = NSPathControl::new(mtm);
+        let native = BreadcrumbsControl::new(mtm);
         native.setPathStyle(NSPathStyle::Standard);
         native.setEditable(false);
 

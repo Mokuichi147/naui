@@ -6,6 +6,8 @@ use naui::{
     Track, Ui,
 };
 
+use crate::parts;
+
 /// 同梱のサンプル画像の場所。
 #[cfg(not(target_arch = "wasm32"))]
 const SAMPLE_IMAGE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sample.png");
@@ -26,13 +28,14 @@ const MEDIA_DISPLAY_HEIGHT: f64 = 315.0;
 
 /// Image、Video、Audio のソース切り替えと再生操作。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(10.0);
-    pane.set_padding(Padding::all(12.0));
-    pane.set_align(Align::Start);
+    let pane = parts::pane(ui)?;
 
-    pane.append(&ui.label("Image / Video / Audio")?);
-    pane.append(&ui.label("ファイルまたは URL の拡張子から表示形式を切り替えます。")?);
+    parts::section(
+        ui,
+        &pane,
+        "Image / Video / Audio",
+        &["ファイルまたは URL の拡張子から表示形式を切り替えます。"],
+    )?;
 
     let (image_pane, image) = build_image_pane(ui)?;
     let (video_pane, video) = build_video_pane(ui)?;
@@ -45,7 +48,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     forms.set_row_track(0, Track::FILL);
     forms.attach(&image_pane, GridCell::new(0, 0));
 
-    let status = ui.label("表示形式: Image (同梱サンプル)")?;
+    let status = parts::status(ui, "表示形式: Image (同梱サンプル)")?;
 
     let show = Rc::new({
         let image = image.clone();
@@ -222,7 +225,7 @@ fn build_video_pane(ui: &Ui) -> Result<(naui::Stack, naui::Video)> {
     buttons.append(&pause);
     controls.append(&buttons);
 
-    let state = ui.label("状態: 未再生")?;
+    let state = parts::status(ui, "状態: 未再生")?;
     video.on_state_change({
         let state = state.clone();
         move |value| state.set_text(&format!("状態: {}", state_name(value)))
@@ -298,7 +301,7 @@ fn build_audio_pane(ui: &Ui) -> Result<(naui::Stack, naui::Audio)> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(8.0);
     pane.set_padding(Padding::all(8.0));
-    pane.append(&ui.label("音声を再生して内容を確認します。")?);
+    pane.append(&parts::note(ui, "音声を再生して内容を確認します。")?);
 
     let audio = ui.audio("")?;
     audio.set_sizing(Sizing::fill_width());
@@ -320,7 +323,7 @@ fn build_audio_pane(ui: &Ui) -> Result<(naui::Stack, naui::Audio)> {
     buttons.append(&pause);
     pane.append(&buttons);
 
-    let state = ui.label("状態: 未再生")?;
+    let state = parts::status(ui, "状態: 未再生")?;
     audio.on_state_change({
         let state = state.clone();
         move |value| state.set_text(&format!("状態: {}", state_name(value)))

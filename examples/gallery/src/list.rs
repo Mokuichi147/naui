@@ -2,21 +2,23 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{
-    Align, GridCell, Length, ListItem, ListRow, NavItem, Orientation, Padding, PopupItem, Result,
+    Align, GridCell, Length, ListItem, ListRow, NavItem, Orientation, PopupItem, Result,
     SelectionMode, Sizing, SortOrder, TableColumn, TableRow, Track, TreeItem, Ui,
 };
+
+use crate::parts;
 
 /// List の補足表示、無効な行、単一・複数選択、コンテキストメニュー、
 /// ListRow の任意内容の行と行クリック、Table の列と選択、Tree の開閉・選択。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(12.0);
-    pane.set_padding(Padding::all(12.0));
+    let pane = parts::pane(ui)?;
 
-    pane.append(&ui.label("List")?);
-    pane.append(&ui.label(
-        "ListItem を set_items で並べます。補足表示の有無、選べない行、単一・複数選択を確認できます。",
-    )?);
+    parts::section(
+        ui,
+        &pane,
+        "List",
+        &["ListItem を set_items で並べます。補足表示の有無、選べない行、単一・複数選択を確認できます。"],
+    )?;
 
     let detailed = vec![
         ListItem::new("項目 A").detail("補足テキスト A"),
@@ -39,7 +41,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
             .width(Length::Fill)
             .height(Length::Fixed(180.0)),
     );
-    let status = ui.label("選択: なし")?;
+    let status = parts::status(ui, "選択: なし")?;
     list.on_select({
         let status = status.clone();
         let detailed = detailed.clone();
@@ -73,7 +75,10 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     });
     pane.append(&mode);
     pane.append(&list);
-    pane.append(&ui.label("一覧を右クリックすると PopupMenu が開きます。")?);
+    pane.append(&parts::note(
+        ui,
+        "一覧を右クリックすると PopupMenu が開きます。",
+    )?);
     pane.append(&status);
 
     let popup = ui.popup_menu()?;
@@ -139,10 +144,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
 
 /// 設定画面のような、先頭・本文・末尾を自由に組んだ行 (`ListRow`)。
 fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    pane.append(&ui.label("ListRow")?);
-    pane.append(&ui.label(
-        "組み立てたウィジェットを set_rows で並べます。行を押すと on_activate でチェックが切り替わります。",
-    )?);
+    parts::section(
+        ui,
+        pane,
+        "ListRow",
+        &["組み立てたウィジェットを set_rows で並べます。行を押すと on_activate でチェックが切り替わります。"],
+    )?;
 
     let mut rows = Vec::new();
     for (checked, title, detail, action) in [
@@ -189,10 +196,12 @@ fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
 
 /// コールバックの中で `Ui` を clone し、行を後から組み立てる。
 fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    pane.append(&ui.label("後から作る行")?);
-    pane.append(&ui.label(
-        "Ui は clone できます。押されたところで行の中身を組み立て、set_rows へ渡しています。",
-    )?);
+    parts::section(
+        ui,
+        pane,
+        "後から作る行",
+        &["Ui は clone できます。押されたところで行の中身を組み立て、set_rows へ渡しています。"],
+    )?;
 
     let list = ui.list()?;
     list.set_sizing(Sizing::fill_width());
@@ -253,10 +262,12 @@ fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
 /// Table の列の幅と揃え、見出しからの並べ替え、選べない行、
 /// 単一・複数選択、列の差し替え。
 fn build_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    pane.append(&ui.label("Table")?);
-    pane.append(&ui.label(
-        "列見出しと、幅を指定した列・右寄せの列を確認できます。見出しを押すと並べ替わります。",
-    )?);
+    parts::section(
+        ui,
+        pane,
+        "Table",
+        &["列見出しと、幅を指定した列・右寄せの列を確認できます。見出しを押すと並べ替わります。"],
+    )?;
 
     // 幅を指定しない列 (都市) だけが、余った幅を受け取って広がる。
     let wide = vec![
@@ -294,7 +305,7 @@ fn build_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
             .height(Length::Fixed(200.0)),
     );
 
-    let status = ui.label("選択: なし")?;
+    let status = parts::status(ui, "選択: なし")?;
     // いま並んでいる行。見出しからの並べ替えでここが入れ替わる。
     let sorted = Rc::new(RefCell::new(rows.clone()));
 
@@ -426,8 +437,12 @@ fn number(cell: &str) -> Option<u64> {
 
 /// Tree の入れ子・開閉・選べない枝・通知。
 fn build_tree(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    pane.append(&ui.label("Tree")?);
-    pane.append(&ui.label("入れ子の項目の開閉と、選べない枝を確認できます。")?);
+    parts::section(
+        ui,
+        pane,
+        "Tree",
+        &["入れ子の項目の開閉と、選べない枝を確認できます。"],
+    )?;
 
     let items = vec![
         TreeItem::new("src").expanded(true).children([
@@ -453,7 +468,7 @@ fn build_tree(ui: &Ui, pane: &naui::Stack) -> Result<()> {
             .height(Length::Fixed(200.0)),
     );
 
-    let status = ui.label("選択: なし")?;
+    let status = parts::status(ui, "選択: なし")?;
     tree.on_select({
         let status = status.clone();
         let items = items.clone();

@@ -197,5 +197,8 @@ impl ExpanderInner {
         if let Some(child) = self.child.borrow().as_ref() {
             child.native_view().setHidden(!expanded);
         }
+        // 開閉で高さが変わる。親の連なりへ伝えないと、Grid の Auto 行が
+        // たたんだときの高さのままになり、開いた中身が潰れる。
+        crate::layout::invalidate_ancestors(&self.native);
     }
 }

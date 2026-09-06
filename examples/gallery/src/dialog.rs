@@ -1,20 +1,26 @@
-use naui::{DialogButtons, DialogResponse, Orientation, Padding, Result, Ui};
+use naui::{DialogButtons, DialogResponse, Result, Ui};
+
+use crate::parts;
 
 /// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。Toast の出し方。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(14.0);
-    pane.set_padding(Padding::all(12.0));
+    let pane = parts::pane(ui)?;
 
-    pane.append(&ui.label("Dialog")?);
-    pane.append(
-        &ui.label("見出し、本文、任意の子ウィジェット、最大3種類の応答ボタンを持てます。")?,
-    );
+    parts::section(
+        ui,
+        &pane,
+        "Dialog",
+        &["見出し、本文、任意の子ウィジェット、最大3種類の応答ボタンを持てます。"],
+    )?;
 
-    let status = ui.label("結果: まだ開いていません")?;
+    let status = parts::status(ui, "結果: まだ開いていません")?;
 
-    pane.append(&ui.label("ボタン指定なし")?);
-    pane.append(&ui.label("閉じるための OK ボタンが自動で追加されます。")?);
+    parts::group(
+        ui,
+        &pane,
+        "ボタン指定なし",
+        &["閉じるための OK ボタンが自動で追加されます。"],
+    )?;
     let simple = ui.dialog("標準ダイアログ")?;
     simple.set_message("ボタンを指定していないダイアログです。");
     simple.on_response({
@@ -28,8 +34,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     });
     pane.append(&open_simple);
 
-    pane.append(&ui.label("Primary / Secondary / Cancel")?);
-    pane.append(&ui.label("ボタンの並びは各 OS の標準に従います。")?);
+    parts::group(
+        ui,
+        &pane,
+        "Primary / Secondary / Cancel",
+        &["ボタンの並びは各 OS の標準に従います。"],
+    )?;
     let option = ui.checkbox("子ウィジェットの例")?;
     let roles = ui.dialog("3種類の応答")?;
     roles.set_message("押したボタンは役割で通知されます。");
@@ -67,12 +77,14 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&open_roles);
     pane.append(&status);
 
-    pane.append(&ui.label("Toast")?);
-    pane.append(&ui.label(
-        "画面の下端に出て自分で消える通知です。同時に出るのは1つで、新しいものが前のものを置き換えます。",
-    )?);
+    parts::section(
+        ui,
+        &pane,
+        "Toast",
+        &["画面の下端に出て自分で消える通知です。同時に出るのは1つで、新しいものが前のものを置き換えます。"],
+    )?;
 
-    let toast_status = ui.label("Toast: まだ出していません")?;
+    let toast_status = parts::status(ui, "Toast: まだ出していません")?;
 
     // 何秒かで自分から消えるトースト。
     let saved = ui.toast("保存しました")?;

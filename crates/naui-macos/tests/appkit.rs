@@ -231,6 +231,18 @@ fn main() {
             tree_callback_can_touch_the_tree,
         ),
         ("パンくずが末尾を現在地にする", breadcrumbs_path),
+        (
+            "パンくずが文字の左端で同じ列のラベルとそろう",
+            breadcrumbs_align_with_labels,
+        ),
+        (
+            "パンくずのフォーカスの受け取りがボタンと同じ",
+            breadcrumbs_take_focus_like_a_button,
+        ),
+        (
+            "パンくずをクリックしてもフォーカスの枠が残らない",
+            breadcrumbs_click_leaves_no_focus_ring,
+        ),
         ("ページ送りが範囲内に収まる", pagination_steps),
         ("リンクのクリックがクロージャへ届く", link_click),
         ("テーマを実行中に切り替えられる", theme_switch),
@@ -262,6 +274,26 @@ fn main() {
         (
             "グリッドの Auto 行が Fill 行の高さを奪わない",
             grid_fill_row_keeps_the_rest,
+        ),
+        (
+            "入れ子の縦 Stack が余りの高さを吸わない",
+            nested_stack_does_not_take_the_slack,
+        ),
+        (
+            "主軸に Fill を指定した入れ子の Stack は余りを受け取る",
+            nested_stack_with_fill_takes_the_slack,
+        ),
+        (
+            "グリッドの Auto 行が後からの高さ変化に追従する",
+            grid_auto_row_follows_later_growth,
+        ),
+        (
+            "グリッドの Auto 行が後から足した一覧の行に追従する",
+            grid_auto_row_follows_added_list_rows,
+        ),
+        (
+            "グリッドの Auto 行が折り返しラベルの行数に追従する",
+            grid_auto_row_follows_wrapped_label,
         ),
         (
             "グリッドの Fill の子がセルの取り分だけ広がる",
@@ -495,23 +527,59 @@ fn main() {
     ];
 
     let mut failed = 0;
+    let mut skipped = 0;
     for (name, case) in cases {
+        take_skip();
         let result = catch_unwind(AssertUnwindSafe(|| {
             run_for_test(*case).expect("テスト用の起動")
         }));
-        match result {
-            Ok(()) => println!("ok   ... {name}"),
-            Err(_) => {
+        match (result, take_skip()) {
+            (Ok(()), None) => println!("ok   ... {name}"),
+            // 走らせられなかった確認があるものは、成功として数えない。
+            (Ok(()), Some(reason)) => {
+                println!("SKIP ... {name} ({reason})");
+                skipped += 1;
+            }
+            (Err(_), _) => {
                 println!("FAIL ... {name}");
                 failed += 1;
             }
         }
     }
 
-    println!("\n{} 件中 {} 件成功", cases.len(), cases.len() - failed);
-    if failed > 0 {
+    println!(
+        "\n{} 件中 {} 件成功 / {} 件スキップ / {} 件失敗",
+        cases.len(),
+        cases.len() - failed - skipped,
+        skipped,
+        failed
+    );
+    if skipped > 0 {
+        // スキップは「確かめられなかった」こと。緑で通すと、走っていない確認が
+        // あることに気付けないので、失敗と同じ扱いにする。
+        println!("確かめられなかったテストがあるので、成功としては終わらない。");
+    }
+    if failed > 0 || skipped > 0 {
         std::process::exit(1);
     }
+}
+
+thread_local! {
+    /// そのテストで**確かめられなかったこと**の置き場 ([`skip`])。
+    static SKIP_REASON: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// 実行環境の都合で確かめられなかったことを記録する。
+///
+/// 記録したテストは「成功」ではなく SKIP として数え、**終了コードも 0 に
+/// しない**。黙って通ると、何も確かめていないのに緑になり、CI から気付けない。
+fn skip(reason: &str) {
+    SKIP_REASON.with(|slot| *slot.borrow_mut() = Some(reason.to_string()));
+}
+
+/// 記録を取り出して空へ戻す。
+fn take_skip() -> Option<String> {
+    SKIP_REASON.with(|slot| slot.borrow_mut().take())
 }
 
 /// ボタンのクリックが Rust のクロージャへ届く。
@@ -3578,6 +3646,9 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
     content_view.layoutSubtreeIfNeeded();
     unsafe { content_view.display() };
 
+    if !native.isKeyWindow() {
+        skip("ウィンドウが key にならず、本物のクリックを配送できなかった");
+    }
     if native.isKeyWindow() {
         click_view(&app, &native, &title.native_view());
         assert_eq!(activated.get(), 1, "行クリックが 1 回だけ通知されること");
@@ -6558,5 +6629,397 @@ fn cancel_stops_a_future(ui: &Ui) -> Result<()> {
     pump(0.05);
 
     assert_eq!(label.text(), "待機中", "cancel した処理は走らないこと");
+    Ok(())
+}
+
+/// 縦 `Stack` の中の縦 `Stack` は、余った高さを吸わない。
+///
+/// 吸ってしまうと、画面より中身が短いときに節の途中へ大きな空きができる。
+/// 余りは常にいちばん外側の末尾へ残す。
+fn nested_stack_does_not_take_the_slack(ui: &Ui) -> Result<()> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(10.0);
+    let group = ui.stack(Orientation::Vertical)?;
+    group.set_spacing(4.0);
+    group.append(&ui.label("見出し")?);
+    group.append(&ui.label("説明")?);
+    group.set_sizing(Sizing::fill_width());
+    pane.append(&group);
+    let after = ui.label("次の節")?;
+    pane.append(&after);
+
+    let root = pane.native_view();
+    root.setFrameSize(NSSize::new(400.0, 600.0));
+    root.layoutSubtreeIfNeeded();
+
+    let group_frame = group.native_view().frame();
+    assert!(
+        group_frame.size.height < 100.0,
+        "内側の Stack は中身の高さのままであること: {group_frame:?}"
+    );
+    // AppKit の座標系は左下原点。内側の Stack の下端から間隔だけ空けて次が来る。
+    let after_frame = after.native_view().frame();
+    let gap = group_frame.origin.y - (after_frame.origin.y + after_frame.size.height);
+    assert!(
+        (gap - 10.0).abs() < 1.0,
+        "次の子が内側の Stack のすぐ下へ来ること: 空き {gap}"
+    );
+    Ok(())
+}
+
+/// `Grid` の `Auto` 行は、表示のあとで中身が高くなっても追従する。
+///
+/// 追従しないと、Expander を開いたときや一覧へ行を足したときに、行の中身が
+/// 潰れて後ろと重なる。Gallery と同じ入れ子 (ウィンドウ > スクロール >
+/// 縦 Stack > グリッド) で確かめる。
+fn grid_auto_row_follows_later_growth(ui: &Ui) -> Result<()> {
+    let window = ui.window("追従", 400.0, 400.0)?;
+    let grid = ui.grid()?;
+    grid.set_spacing(0.0, 8.0);
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::Auto);
+    grid.set_row_track(1, Track::Auto);
+    grid.set_sizing(Sizing::fill_width());
+
+    let inner = ui.stack(Orientation::Vertical)?;
+    inner.set_align(Align::Start);
+    inner.append(&ui.checkbox("たたんだ中身")?);
+    inner.append(&ui.checkbox("もう 1 行")?);
+    let body = ui.expander("詳細")?;
+    body.set_child(&inner);
+    body.set_sizing(Sizing::fill_width());
+    grid.attach(&body, GridCell::new(0, 0));
+    let after = ui.label("次の行")?;
+    grid.attach(&after, GridCell::new(0, 1));
+
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(12.0);
+    pane.set_align(Align::Start);
+    pane.append(&grid);
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(400.0, 400.0));
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    let collapsed = body.native_view().frame().size.height;
+
+    // 表示のあとで中身が増える。
+    body.set_expanded(true);
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+
+    let expanded = body.native_view().frame();
+    assert!(
+        expanded.size.height > collapsed + 30.0,
+        "行の高さが中身に追従すること: {collapsed} -> {expanded:?}"
+    );
+    let rows: Vec<_> = (0..inner.len()).map(|_| ()).collect();
+    let _ = rows;
+    let after_frame = after.native_view().frame();
+    assert!(
+        after_frame.origin.y + after_frame.size.height <= expanded.origin.y + 0.5,
+        "後ろの行が押し下げられ、重ならないこと: {expanded:?} / {after_frame:?}"
+    );
+    Ok(())
+}
+
+/// 表示のあとで一覧へ行を足しても、`Grid` の `Auto` 行が高さを取り直す。
+fn grid_auto_row_follows_added_list_rows(ui: &Ui) -> Result<()> {
+    let window = ui.window("一覧の追加", 400.0, 400.0)?;
+    let grid = ui.grid()?;
+    grid.set_spacing(0.0, 8.0);
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::Auto);
+    grid.set_row_track(1, Track::Auto);
+    grid.set_sizing(Sizing::fill_width());
+
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill_width());
+    grid.attach(&list, GridCell::new(0, 0));
+    let after = ui.label("次の行")?;
+    grid.attach(&after, GridCell::new(0, 1));
+
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(12.0);
+    pane.set_align(Align::Start);
+    pane.append(&grid);
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(400.0, 400.0));
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    let empty = list.native_view().frame().size.height;
+
+    // 表示のあとで行を足す (Gallery の「後から作る行」と同じ経路)。
+    let mut rows = Vec::new();
+    for index in 1..=3 {
+        let row = ui.stack(Orientation::Horizontal)?;
+        row.append(&ui.label(&format!("あとから作った行 {index}"))?);
+        rows.push(ListRow::new(&row));
+    }
+    list.set_rows(&rows);
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+
+    let filled = list.native_view().frame();
+    assert!(
+        filled.size.height > empty + 40.0,
+        "足した行のぶんだけ一覧が高くなること: {empty} -> {filled:?}"
+    );
+    let after_frame = after.native_view().frame();
+    assert!(
+        after_frame.origin.y + after_frame.size.height <= filled.origin.y + 0.5,
+        "後ろの行が押し下げられ、重ならないこと: {filled:?} / {after_frame:?}"
+    );
+    Ok(())
+}
+
+/// 折り返すラベルの文字を差し替えると、`Grid` の `Auto` 行が行数に追従する。
+fn grid_auto_row_follows_wrapped_label(ui: &Ui) -> Result<()> {
+    let window = ui.window("折り返しの追従", 300.0, 300.0)?;
+    let grid = ui.grid()?;
+    grid.set_spacing(0.0, 8.0);
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::Auto);
+    grid.set_row_track(1, Track::Auto);
+    grid.set_sizing(Sizing::fill_width());
+
+    let note = ui.label("短い説明")?;
+    note.set_wrap(true);
+    note.set_sizing(Sizing::fill_width());
+    grid.attach(&note, GridCell::new(0, 0));
+    let after = ui.label("次の行")?;
+    grid.attach(&after, GridCell::new(0, 1));
+
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_align(Align::Start);
+    pane.append(&grid);
+    window.set_child(&pane);
+
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(300.0, 300.0));
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    let short = note.native_view().frame().size.height;
+
+    note.set_text(
+        "これはとても長い説明の文章で、この幅では何行にも折り返して表示されるはずのものです。",
+    );
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+
+    let long = note.native_view().frame();
+    assert!(
+        long.size.height > short + 10.0,
+        "折り返した行数のぶんだけ高くなること: {short} -> {long:?}"
+    );
+    let after_frame = after.native_view().frame();
+    assert!(
+        after_frame.origin.y + after_frame.size.height <= long.origin.y + 0.5,
+        "後ろの行が押し下げられ、重ならないこと: {long:?} / {after_frame:?}"
+    );
+    Ok(())
+}
+
+/// 入れ子でも、主軸に `Fill` を指定した `Stack` は今までどおり余りを受け取る。
+///
+/// [`nested_stack_does_not_take_the_slack`] で「勝手には伸びない」ようにした
+/// 裏返し。頼まれたときだけ伸びる。
+fn nested_stack_with_fill_takes_the_slack(ui: &Ui) -> Result<()> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_spacing(10.0);
+    pane.append(&ui.label("上")?);
+    let body = ui.stack(Orientation::Vertical)?;
+    body.append(&ui.label("伸びる区画")?);
+    body.set_sizing(Sizing::fill());
+    pane.append(&body);
+    let after = ui.label("下")?;
+    pane.append(&after);
+
+    let root = pane.native_view();
+    root.setFrameSize(NSSize::new(400.0, 600.0));
+    root.layoutSubtreeIfNeeded();
+
+    let body_frame = body.native_view().frame();
+    assert!(
+        body_frame.size.height > 400.0,
+        "Fill を指定した入れ子の Stack が余りを受け取ること: {body_frame:?}"
+    );
+    let after_frame = after.native_view().frame();
+    assert!(
+        after_frame.origin.y < 30.0,
+        "後ろの子が下端まで押されること: {after_frame:?}"
+    );
+    Ok(())
+}
+
+/// パンくずは、枠ではなく**文字の左端**で同じ列のラベルとそろう。
+///
+/// 標準スタイルの `NSPathControl` は枠の内側へ余白を取って文字を描くので、
+/// そのままだと同じ列のラベルより右へずれて見える。
+///
+/// 位置合わせの値どうしを突き合わせても「同じ計算をなぞる」だけなので、
+/// **実際に描かれた文字**を画像に焼いて左端を測る。OS の版や外観、文字サイズで
+/// 余白が変われば、ここで気付ける。
+fn breadcrumbs_align_with_labels(ui: &Ui) -> Result<()> {
+    // 描かせるために、表示はしないウィンドウへ入れておく。
+    let window = ui.window("パンくずの位置合わせ", 400.0, 200.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_align(Align::Start);
+    let label = ui.label("階層と現在地を表示します。")?;
+    pane.append(&label);
+    let crumbs = ui.breadcrumbs()?;
+    crumbs.set_items(&NavItem::list(["階層 1", "階層 2", "現在地"]));
+    pane.append(&crumbs);
+    window.set_child(&pane);
+
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(400.0, 200.0));
+    content.layoutSubtreeIfNeeded();
+
+    let label_view = label.native_view();
+    let crumbs_view = crumbs.native_view();
+    // 親から見た「文字の左端」= 枠の位置 + ビューの中で文字が始まる位置。
+    let label_text = label_view.frame().origin.x + first_ink_x(&label_view);
+    let crumbs_text = crumbs_view.frame().origin.x + first_ink_x(&crumbs_view);
+    assert!(
+        (label_text - crumbs_text).abs() < 1.5,
+        "描かれた文字の左端がそろうこと: ラベル {label_text} / パンくず {crumbs_text}"
+    );
+    window.close();
+    Ok(())
+}
+
+/// ビューを画像に焼いて、何かが描かれているいちばん左の位置を返す (pt)。
+///
+/// ラベルもパンくずも背景を描かないので、透明でない画素の左端がそのまま
+/// 文字の左端になる。明暗どちらの外観でも同じように測れる。
+fn first_ink_x(view: &NSView) -> f64 {
+    let bounds = view.bounds();
+    let rep = view
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .expect("描画用のビットマップを作れること");
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &rep);
+    let width = rep.pixelsWide();
+    let height = rep.pixelsHigh();
+    let scale = width as f64 / bounds.size.width.max(1.0);
+    for x in 0..width {
+        for y in 0..height {
+            // 画素の並び (RGBA / ARGB、前乗せかどうか) は AppKit が決めるので、
+            // 生のバイトではなく色として読む。
+            let Some(color) = rep.colorAtX_y(x, y) else {
+                continue;
+            };
+            // 縁のぼかしを拾わないよう、はっきり描かれた画素だけを見る。
+            if color.alphaComponent() > 0.15 {
+                return x as f64 / scale;
+            }
+        }
+    }
+    panic!("文字が描かれていること");
+}
+
+/// パンくずは、クリックだけではキーボードフォーカスを取らない。
+///
+/// `NSPathControl` は既定でフォーカスを受けるので、一度クリックすると青い
+/// フォーカスリングが出たまま消えない。押すと画面が変わるだけのナビゲーション
+/// なので、キーボード操作の設定 (システム設定 > キーボード) が入のときだけ
+/// フォーカスを受けるようにしてある。
+fn breadcrumbs_take_focus_like_a_button(ui: &Ui) -> Result<()> {
+    let crumbs = ui.breadcrumbs()?;
+    crumbs.set_items(&NavItem::list(["階層 1", "現在地"]));
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let keyboard = NSApplication::sharedApplication(mtm).isFullKeyboardAccessEnabled();
+    assert_eq!(
+        crumbs.native_view().acceptsFirstResponder(),
+        keyboard,
+        "キーボード操作の設定が入のときだけフォーカスを受けること"
+    );
+    Ok(())
+}
+
+/// パンくずをクリックしても、青いフォーカスの枠が出たまま残らない。
+///
+/// [`breadcrumbs_take_focus_like_a_button`] の実地版。本物のクリックを配送し、
+/// パンくずがウィンドウの first responder になっていないことを確かめる
+/// (フォーカスの枠は first responder にだけ描かれる)。
+fn breadcrumbs_click_leaves_no_focus_ring(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    if app.isFullKeyboardAccessEnabled() {
+        // キーボード操作が入のときは、フォーカスを受けるのが正しい。
+        return Ok(());
+    }
+
+    let window = ui.window("パンくずのクリック", 360.0, 120.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    let crumbs = ui.breadcrumbs()?;
+    crumbs.set_items(&NavItem::list(["階層 1", "現在地"]));
+    root.append(&crumbs);
+    window.set_child(&root);
+
+    // アクティブでないアプリのウィンドウは key になれず、クリックが届かない。
+    // テストの間だけアクセサリにして、終わったら元へ戻す。
+    let policy = app.activationPolicy();
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    window.show();
+    let native = window.native_window();
+    native.makeKeyAndOrderFront(None);
+    for _ in 0..40 {
+        if native.isKeyWindow() {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
+    let content_view = native.contentView().expect("contentView");
+    content_view.layoutSubtreeIfNeeded();
+    content_view.display();
+
+    let view = crumbs.native_view();
+    if native.isKeyWindow() {
+        // ウィンドウのイベントキューへ積む。ヒットテストと追跡ループを通る。
+        click_view(&app, &native, &view);
+        let responder = native.firstResponder();
+        let focused = responder
+            .map(|responder| std::ptr::eq(&*responder as *const _ as *const NSView, &*view))
+            .unwrap_or(false);
+        assert!(!focused, "クリックでフォーカスを取らないこと");
+    } else {
+        // ここで `mouseDown:` を直接呼ぶ手もあるが、それだと**直す前でも
+        // フォーカスを取らない** (取りに行くのはウィンドウがイベントを配る
+        // 経路)。確かめられていないのに緑になるので、SKIP として残す。
+        // フォーカスを受け取るかどうか自体は
+        // `breadcrumbs_take_focus_like_a_button` が無条件に確かめている。
+        skip("ウィンドウが key にならず、本物のクリックを配送できなかった");
+    }
+    window.close();
+    // 後続のテストへ影響しないよう、アプリの状態を戻す。
+    app.setActivationPolicy(policy);
     Ok(())
 }

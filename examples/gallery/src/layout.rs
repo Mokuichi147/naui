@@ -5,14 +5,18 @@ use naui::{
     Align, GridCell, Length, Orientation, Padding, Result, ScrollPolicy, Sizing, Track, Ui,
 };
 
+use crate::parts;
+
 /// Stack、Grid、Scroll、Spacer の配置特性。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(12.0);
-    pane.set_padding(Padding::all(12.0));
+    let pane = parts::pane(ui)?;
 
-    pane.append(&ui.label("Stack")?);
-    pane.append(&ui.label("Vertical は縦、Horizontal は横へ順番に並べます。")?);
+    parts::section(
+        ui,
+        &pane,
+        "Stack",
+        &["Vertical は縦、Horizontal は横へ順番に並べます。"],
+    )?;
     let horizontal = ui.stack(Orientation::Horizontal)?;
     horizontal.set_spacing(8.0);
     horizontal.append(&ui.button("左")?);
@@ -20,14 +24,14 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     horizontal.append(&ui.button("右")?);
     pane.append(&horizontal);
 
-    pane.append(&ui.label("子の出し入れ")?);
-    pane.append(&ui.label(
-        "コールバックの中で Ui を clone して子を作り、insert / remove / clear で並びを変えます。",
-    )?);
     build_dynamic_children(ui, &pane)?;
 
-    pane.append(&ui.label("Grid")?);
-    pane.append(&ui.label("固定幅と Fill の列、複数列にまたがるセルを確認できます。")?);
+    parts::section(
+        ui,
+        &pane,
+        "Grid",
+        &["固定幅と Fill の列、複数列にまたがるセルを確認できます。"],
+    )?;
     let grid = ui.grid()?;
     grid.set_spacing(10.0, 8.0);
     grid.set_column_track(0, Track::Fixed(120.0));
@@ -41,8 +45,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     );
     pane.append(&grid);
 
-    pane.append(&ui.label("Spacer")?);
-    pane.append(&ui.label("余った幅を吸収し、後ろの要素を端へ押します。")?);
+    parts::section(
+        ui,
+        &pane,
+        "Spacer",
+        &["余った幅を吸収し、後ろの要素を端へ押します。"],
+    )?;
     let spacer_example = ui.stack(Orientation::Horizontal)?;
     spacer_example.set_sizing(Sizing::fill_width());
     spacer_example.append(&ui.label("左端")?);
@@ -50,9 +58,13 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     spacer_example.append(&ui.label("右端")?);
     pane.append(&spacer_example);
 
-    pane.append(&ui.label("Expander")?);
-    pane.append(&ui.label("見出しを押すと中身を出し入れします。閉じている間は場所も空けません。")?);
-    let details_status = ui.label("Expander: 閉じています")?;
+    parts::section(
+        ui,
+        &pane,
+        "Expander",
+        &["見出しを押すと中身を出し入れします。閉じている間は場所も空けません。"],
+    )?;
+    let details_status = parts::status(ui, "Expander: 閉じています")?;
     let details_body = ui.stack(Orientation::Vertical)?;
     details_body.set_spacing(8.0);
     // 交差軸の既定は中央ぞろえなので、チェックボックスの左端をそろえる。
@@ -75,16 +87,16 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&details);
     pane.append(&details_status);
 
-    pane.append(&ui.label("SplitView")?);
-    pane.append(
-        &ui.label(
-            "仕切りをドラッグすると区画の大きさが変わります。余った幅は右側が受け取ります。",
-        )?,
-    );
-    let split_status = ui.label(&format!(
-        "SplitView: 仕切りは {} px",
-        naui::DEFAULT_SPLIT_POSITION
-    ))?;
+    parts::section(
+        ui,
+        &pane,
+        "SplitView",
+        &["仕切りをドラッグすると区画の大きさが変わります。余った幅は右側が受け取ります。"],
+    )?;
+    let split_status = parts::status(
+        ui,
+        &format!("SplitView: 仕切りは {} px", naui::DEFAULT_SPLIT_POSITION),
+    )?;
     let sidebar = ui.stack(Orientation::Vertical)?;
     sidebar.set_spacing(6.0);
     sidebar.set_padding(Padding::all(10.0));
@@ -121,8 +133,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&split);
     pane.append(&split_status);
 
-    pane.append(&ui.label("Scroll")?);
-    pane.append(&ui.label("高さを固定し、はみ出した内容だけをスクロールします。")?);
+    parts::section(
+        ui,
+        &pane,
+        "Scroll",
+        &["高さを固定し、はみ出した内容だけをスクロールします。"],
+    )?;
     let content = ui.stack(Orientation::Vertical)?;
     content.set_spacing(5.0);
     content.set_padding(Padding::all(8.0));
@@ -143,6 +159,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
 
 /// `Stack` の子を後から足したり外したりする例。
 fn build_dynamic_children(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+    parts::section(
+        ui,
+        pane,
+        "子の出し入れ",
+        &["コールバックの中で Ui を clone して子を作り、insert / remove / clear で並びを変えます。"],
+    )?;
     let items = ui.stack(Orientation::Vertical)?;
     items.set_spacing(4.0);
     items.set_align(Align::Start);

@@ -155,6 +155,33 @@ pub(crate) fn keep_auto_size(view: &NSView, horizontal: bool) {
     view.setContentHuggingPriority_forOrientation(AUTO_HUGGING, orientation(horizontal));
 }
 
+/// 受け皿 (tail spacer) が「余りを受け取ってよい」ときの、縮みたさの優先度。
+///
+/// 明示的な `Fill` / `Spacer` ([`FILL_HUGGING`]) より高く、`Auto` の子より低い。
+/// 指定が無いときだけ受け皿が余りを吸う。
+pub(crate) const TAIL_PRIORITY: NSLayoutPriority = 2.0;
+
+/// 入れ子になった `Stack` の受け皿が、縮みたがる強さ。
+///
+/// 受け皿は中身を持たない `NSView` で intrinsic size が無く、**そのままでは
+/// 伸びるのに何の抵抗もしない**。外側と内側の受け皿が同じ扱いだと、どちらが
+/// 伸びても Auto Layout の解として等価になり、内側が伸びて節の途中に大きな
+/// 空きができる。入れ子側だけ強く縮めておくと、余りを吸うのはいちばん外側に
+/// 決まる。
+pub(crate) const NESTED_TAIL_PRIORITY: NSLayoutPriority = HUG_CONTENT;
+
+/// 受け皿を「主軸で 0 にしたい」という制約を作る (まだ張らない)。
+pub(crate) fn tail_zero_constraint(tail: &NSView, vertical: bool) -> Retained<NSLayoutConstraint> {
+    let anchor = if vertical {
+        tail.heightAnchor()
+    } else {
+        tail.widthAnchor()
+    };
+    let constraint = anchor.constraintEqualToConstant(0.0);
+    constraint.setPriority(TAIL_PRIORITY);
+    constraint
+}
+
 /// セルごとの希望の識別子。同じセルに置き直したときだけ張り替える。
 fn grow_identifier(cell: &GridCell, horizontal: bool) -> String {
     format!(
@@ -183,6 +210,25 @@ fn clear_sizing_constraints(view: &NSView) {
 /// コンテナへ入れる子の下ごしらえ。Auto Layout に任せる。
 pub(crate) fn prepare_child(view: &NSView) {
     view.setTranslatesAutoresizingMaskIntoConstraints(false);
+}
+
+/// 中身の大きさが変わったことを、親の連なりへ伝える。
+///
+/// **表示したあとで高さが変わる子**(開いた `Expander`、行を足した一覧、
+/// 子を足した `Stack`) は、これを呼ばないと親のレイアウトが回らない。
+/// `Grid` の `Auto` 行は自分の `layout` で行高を引き直すので、
+/// レイアウトが要ることを伝えないと行が古い高さのまま残り、中身が潰れて
+/// 後ろの行と重なる。1 つ上だけでは足りない (グリッドがさらに Stack や
+/// スクロールの中にいると、そこで止まってしまう)。
+pub(crate) fn invalidate_ancestors(view: &NSView) {
+    view.invalidateIntrinsicContentSize();
+    view.setNeedsLayout(true);
+    let mut current = unsafe { view.superview() };
+    while let Some(parent) = current {
+        parent.invalidateIntrinsicContentSize();
+        parent.setNeedsLayout(true);
+        current = unsafe { parent.superview() };
+    }
 }
 
 // ----------------------------------------------------------------- Spacer

@@ -1,18 +1,21 @@
-use naui::{FileFilter, FilePickerMode, Length, Orientation, Padding, Result, Sizing, Ui};
+use naui::{FileFilter, FilePickerMode, Length, Result, Sizing, Ui};
 
 use crate::describe_entries;
+use crate::parts;
 
 /// 単一ファイル、複数ファイル、フォルダーの選択と、内容の保存。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(14.0);
-    pane.set_padding(Padding::all(12.0));
+    let pane = parts::pane(ui)?;
 
-    pane.append(&ui.label("FilePicker")?);
-    pane.append(&ui.label("環境標準の選択ダイアログを、3つのモードで開きます。")?);
+    parts::section(
+        ui,
+        &pane,
+        "FilePicker",
+        &["環境標準の選択ダイアログを、3つのモードで開きます。"],
+    )?;
 
-    pane.append(&ui.label("ファイルを1つ選択 — 拡張子フィルターあり")?);
-    let single_status = ui.label("選択: なし")?;
+    parts::group(ui, &pane, "ファイルを1つ選択", &["拡張子フィルターあり。"])?;
+    let single_status = parts::status(ui, "選択: なし")?;
     let single = ui.file_picker("画像を1つ選ぶ")?;
     single.set_filters(&[FileFilter::new(
         "画像",
@@ -25,8 +28,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&single);
     pane.append(&single_status);
 
-    pane.append(&ui.label("ファイルを複数選択")?);
-    let multiple_status = ui.label("選択: なし")?;
+    parts::group(ui, &pane, "ファイルを複数選択", &[])?;
+    let multiple_status = parts::status(ui, "選択: なし")?;
     let multiple = ui.file_picker("ファイルを複数選ぶ")?;
     multiple.set_mode(FilePickerMode::Files);
     multiple.on_select({
@@ -36,8 +39,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&multiple);
     pane.append(&multiple_status);
 
-    pane.append(&ui.label("フォルダーを選択")?);
-    let folder_status = ui.label("選択: なし")?;
+    parts::group(ui, &pane, "フォルダーを選択", &[])?;
+    let folder_status = parts::status(ui, "選択: なし")?;
     let folder = ui.file_picker("フォルダーを選ぶ")?;
     folder.set_mode(FilePickerMode::Folder);
     folder.on_select({
@@ -47,8 +50,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&folder);
     pane.append(&folder_status);
 
-    pane.append(&ui.label("FileSaver")?);
-    pane.append(&ui.label("入力した内容を、環境標準の保存ダイアログで書き出します。")?);
+    parts::section(
+        ui,
+        &pane,
+        "FileSaver",
+        &["入力した内容を、環境標準の保存ダイアログで書き出します。"],
+    )?;
 
     let editor = ui.text_area("naui で保存したテキストです。")?;
     editor.set_sizing(
@@ -57,7 +64,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
             .height(Length::Fixed(80.0)),
     );
 
-    let save_status = ui.label("保存: まだ")?;
+    let save_status = parts::status(ui, "保存: まだ")?;
     let saver = ui.file_saver("テキストを保存")?;
     saver.set_file_name("naui-メモ");
     saver.set_filters(&[FileFilter::new("テキスト", ["txt", "md"])]);

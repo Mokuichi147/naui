@@ -1,7 +1,6 @@
-use naui::{
-    Color, DatePickerMode, DateTime, Label, Length, NumberInput, Orientation, Padding, Result,
-    Sizing, Time, Ui,
-};
+use naui::{Color, DatePickerMode, DateTime, Label, Length, NumberInput, Result, Sizing, Time, Ui};
+
+use crate::parts;
 
 /// 日付だけを取り出した表示。
 fn describe_date(value: DateTime) -> String {
@@ -24,13 +23,15 @@ fn show_total(count: &NumberInput, price: &NumberInput, status: &Label) {
 
 /// 1行入力・複数行入力と、プレースホルダー・無効状態。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(12.0);
-    pane.set_padding(Padding::all(12.0));
+    let pane = parts::pane(ui)?;
 
-    pane.append(&ui.label("TextInput")?);
-    pane.append(&ui.label("1行入力。入力内容は変更通知から取得できます。")?);
-    let input_status = ui.label("入力値: (空)")?;
+    parts::section(
+        ui,
+        &pane,
+        "TextInput",
+        &["1行入力。入力内容は変更通知から取得できます。"],
+    )?;
+    let input_status = parts::status(ui, "入力値: (空)")?;
     let input = ui.text_input("")?;
     input.set_placeholder("プレースホルダー");
     input.set_sizing(Sizing::fill_width());
@@ -47,9 +48,13 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&input);
     pane.append(&input_status);
 
-    pane.append(&ui.label("TextArea")?);
-    pane.append(&ui.label("改行・折り返し・縦スクロールに対応する複数行入力です。")?);
-    let area_status = ui.label("0 行 / 0 文字")?;
+    parts::section(
+        ui,
+        &pane,
+        "TextArea",
+        &["改行・折り返し・縦スクロールに対応する複数行入力です。"],
+    )?;
+    let area_status = parts::status(ui, "0 行 / 0 文字")?;
     let area = ui.text_area("")?;
     area.set_placeholder("複数行のテキストを入力");
     area.set_sizing(
@@ -71,11 +76,15 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&area);
     pane.append(&area_status);
 
-    pane.append(&ui.label("PasswordInput")?);
-    pane.append(&ui.label("打った文字が伏せ字になる 1 行入力です。API は TextInput と同じです。")?);
+    parts::section(
+        ui,
+        &pane,
+        "PasswordInput",
+        &["打った文字が伏せ字になる 1 行入力です。API は TextInput と同じです。"],
+    )?;
     // 実際のログインフォームに近い見え方にするため、幅を決めて置く。
     let password_width = Sizing::new().width(Length::Fixed(240.0));
-    let password_status = ui.label("パスワード: 未入力")?;
+    let password_status = parts::status(ui, "パスワード: 未入力")?;
     let password = ui.password_input()?;
     password.set_placeholder("パスワード");
     password.set_sizing(password_width);
@@ -116,11 +125,15 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&confirm);
     pane.append(&password_status);
 
-    pane.append(&ui.label("SearchInput")?);
-    pane.append(&ui.label("検索の欄です。打つたびに絞り込み、Enter で確定します。")?);
+    parts::section(
+        ui,
+        &pane,
+        "SearchInput",
+        &["検索の欄です。打つたびに絞り込み、Enter で確定します。"],
+    )?;
     // 絞り込む対象。確定したときは選ばれた 1 件を出す。
     let fruits = ["りんご", "みかん", "ぶどう", "もも", "なし"];
-    let search_status = ui.label("候補: りんご / みかん / ぶどう / もも / なし")?;
+    let search_status = parts::status(ui, "候補: りんご / みかん / ぶどう / もも / なし")?;
     let search = ui.search_input()?;
     search.set_placeholder("検索");
     search.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
@@ -152,11 +165,13 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&search);
     pane.append(&search_status);
 
-    pane.append(&ui.label("EditableComboBox")?);
-    pane.append(&ui.label(
-        "候補から選ぶことも、候補にない値を打ち込むこともできる入力欄です。値は文字列で返ります。",
-    )?);
-    let city_status = ui.label("都市: (空)")?;
+    parts::section(
+        ui,
+        &pane,
+        "EditableComboBox",
+        &["候補から選ぶことも、候補にない値を打ち込むこともできる入力欄です。値は文字列で返ります。"],
+    )?;
+    let city_status = parts::status(ui, "都市: (空)")?;
     let city = ui.editable_combo_box()?;
     city.set_items(&["東京", "大阪", "札幌", "福岡", "那覇"]);
     city.set_placeholder("都市名");
@@ -180,7 +195,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&city);
     pane.append(&city_status);
 
-    pane.append(&ui.label("選ばせない状態にもできます。")?);
+    pane.append(&parts::note(ui, "選ばせない状態にもできます。")?);
     let city_disabled = ui.editable_combo_box()?;
     city_disabled.set_items(&["東京", "大阪"]);
     city_disabled.set_selected(0);
@@ -188,8 +203,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     city_disabled.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
     pane.append(&city_disabled);
 
-    pane.append(&ui.label("NumberInput")?);
-    pane.append(&ui.label("数値の入力欄です。範囲・刻み・小数桁を指定できます。")?);
+    parts::section(
+        ui,
+        &pane,
+        "NumberInput",
+        &["数値の入力欄です。範囲・刻み・小数桁を指定できます。"],
+    )?;
     // 数値の欄は中身に合わせた幅を持たないので、ここで決めておく。上下の
     // ボタンや消去ボタンが並ぶぶん、1 行入力より広めに取る。
     let number_width = Sizing::new().width(Length::Fixed(200.0));
@@ -201,7 +220,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     price.set_step(0.05);
     price.set_range(Some(0.0), None);
     price.set_sizing(number_width);
-    let total_status = ui.label("")?;
+    let total_status = parts::status(ui, "")?;
     show_total(&count, &price, &total_status);
     count.on_change({
         let count = count.clone();
@@ -221,7 +240,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&price);
     pane.append(&total_status);
 
-    pane.append(&ui.label("無効状態")?);
+    parts::section(
+        ui,
+        &pane,
+        "無効状態",
+        &["どの入力欄も、set_enabled(false) で操作を止められます。"],
+    )?;
     let disabled_input = ui.text_input("編集できない1行入力")?;
     disabled_input.set_enabled(false);
     disabled_input.set_sizing(Sizing::fill_width());
@@ -244,12 +268,16 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&disabled_password);
     pane.append(&disabled_number);
 
-    pane.append(&ui.label("DatePicker")?);
-    pane.append(&ui.label("日付・時刻・その両方を選べます。値は年月日と時分で返ります。")?);
+    parts::section(
+        ui,
+        &pane,
+        "DatePicker",
+        &["日付・時刻・その両方を選べます。値は年月日と時分で返ります。"],
+    )?;
 
     let date = ui.date_picker(DatePickerMode::Date)?;
     // 日付だけの表示なので、時刻の部分は出さずに読む。
-    let date_status = ui.label(&describe_date(date.value()))?;
+    let date_status = parts::status(ui, &describe_date(date.value()))?;
     date.on_change({
         let date_status = date_status.clone();
         move |value| date_status.set_text(&describe_date(value))
@@ -259,11 +287,10 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
 
     let time = ui.date_picker(DatePickerMode::Time)?;
     time.set_value(DateTime::time(7, 30));
-    let time_status = ui.label(&format!(
-        "時刻: {:02}:{:02}",
-        time.value().hour,
-        time.value().minute
-    ))?;
+    let time_status = parts::status(
+        ui,
+        &format!("時刻: {:02}:{:02}", time.value().hour, time.value().minute),
+    )?;
     time.on_change({
         let time_status = time_status.clone();
         move |value| {
@@ -280,26 +307,33 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         Some(DateTime::date(today.year, today.month, today.day)),
         Some(DateTime::new(today.year + 1, 12, 31, 23, 59)),
     );
-    let deadline_status = ui.label(&format!("期限: {}", deadline.value()))?;
+    let deadline_status = parts::status(ui, &format!("期限: {}", deadline.value()))?;
     deadline.on_change({
         let deadline_status = deadline_status.clone();
         move |value| deadline_status.set_text(&format!("期限: {value}"))
     });
-    pane.append(&ui.label("今日から翌年末までしか選べない DateTime の例です。")?);
+    pane.append(&parts::note(
+        ui,
+        "今日から翌年末までしか選べない DateTime の例です。",
+    )?);
     pane.append(&deadline);
     pane.append(&deadline_status);
 
-    pane.append(&ui.label("選ばせない状態にもできます。")?);
+    pane.append(&parts::note(ui, "選ばせない状態にもできます。")?);
     let disabled_date = ui.date_picker(DatePickerMode::Date)?;
     disabled_date.set_enabled(false);
     pane.append(&disabled_date);
 
-    pane.append(&ui.label("TimePicker")?);
-    pane.append(&ui.label("時刻だけを選ばせます。値は時分 (Time) で返り、日付は持ちません。")?);
+    parts::section(
+        ui,
+        &pane,
+        "TimePicker",
+        &["時刻だけを選ばせます。値は時分 (Time) で返り、日付は持ちません。"],
+    )?;
 
     let alarm = ui.time_picker()?;
     alarm.set_value(Time::new(7, 30));
-    let alarm_status = ui.label(&format!("起床: {}", alarm.value()))?;
+    let alarm_status = parts::status(ui, &format!("起床: {}", alarm.value()))?;
     alarm.on_change({
         let alarm_status = alarm_status.clone();
         move |value| alarm_status.set_text(&format!("起床: {value}"))
@@ -308,11 +342,11 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&alarm_status);
 
     // 範囲を決めると、その外へは出られなくなる。
-    pane.append(&ui.label("9:00〜18:00 しか選べない例です。")?);
+    pane.append(&parts::note(ui, "9:00〜18:00 しか選べない例です。")?);
     let meeting = ui.time_picker()?;
     meeting.set_range(Some(Time::new(9, 0)), Some(Time::new(18, 0)));
     meeting.set_value(Time::new(13, 0));
-    let meeting_status = ui.label(&format!("会議: {}", meeting.value()))?;
+    let meeting_status = parts::status(ui, &format!("会議: {}", meeting.value()))?;
     meeting.on_change({
         let meeting_status = meeting_status.clone();
         move |value| meeting_status.set_text(&format!("会議: {value}"))
@@ -320,18 +354,22 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&meeting);
     pane.append(&meeting_status);
 
-    pane.append(&ui.label("選ばせない状態にもできます。")?);
+    pane.append(&parts::note(ui, "選ばせない状態にもできます。")?);
     let disabled_time = ui.time_picker()?;
     disabled_time.set_value(Time::new(0, 0));
     disabled_time.set_enabled(false);
     pane.append(&disabled_time);
 
-    pane.append(&ui.label("ColorPicker")?);
-    pane.append(&ui.label("色を選ばせます。値は sRGB の 8 bit で返ります。")?);
+    parts::section(
+        ui,
+        &pane,
+        "ColorPicker",
+        &["色を選ばせます。値は sRGB の 8 bit で返ります。"],
+    )?;
 
     let color = ui.color_picker()?;
     color.set_value(Color::rgb(0x33, 0x66, 0xff));
-    let color_status = ui.label(&format!("色: {}", color.value()))?;
+    let color_status = parts::status(ui, &format!("色: {}", color.value()))?;
     color.on_change({
         let color_status = color_status.clone();
         move |value| {
@@ -352,12 +390,18 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     });
     pane.append(&color_reset);
 
-    pane.append(&ui.label("選ばせない状態にもできます。")?);
+    pane.append(&parts::note(ui, "選ばせない状態にもできます。")?);
     let disabled_color = ui.color_picker()?;
     disabled_color.set_value(Color::rgb(0x88, 0x88, 0x88));
     disabled_color.set_enabled(false);
     pane.append(&disabled_color);
 
+    parts::section(
+        ui,
+        &pane,
+        "まとめて戻す",
+        &["この画面で打った内容を、一度に消して初期値へ戻します。"],
+    )?;
     let clear = ui.button("入力をクリア")?;
     clear.on_click({
         let input = input.clone();

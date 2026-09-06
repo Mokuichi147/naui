@@ -34,6 +34,13 @@ pub trait Widget: 'static {
 
     #[doc(hidden)]
     fn boxed_clone(&self) -> Box<dyn Widget>;
+
+    /// `Stack` の中へ入れられたときに、その向き (縦なら `true`) で呼ばれる。
+    ///
+    /// 入れ子になった `Stack` だけが使う。余りを吸うのを外側に決めるため、
+    /// 同じ向きのときは自分の受け皿を固くする。ほかのウィジェットは何もしない。
+    #[doc(hidden)]
+    fn nested_in_stack(&self, _vertical: bool) {}
 }
 
 macro_rules! impl_widget {
@@ -111,6 +118,9 @@ impl Label {
 
     pub fn set_text(&self, text: &str) {
         self.0.native.setStringValue(&NSString::from_str(text));
+        // 文字が変われば要る大きさも変わる (折り返していれば行数ごと)。
+        // 親の連なりへ伝えないと、`Grid` の `Auto` 行が前の高さのまま残る。
+        crate::layout::invalidate_ancestors(&self.0.native);
     }
 
     /// 長い文字列を折り返すかどうか。既定は折り返さない。
@@ -841,8 +851,15 @@ impl ProgressBar {
 struct StackInner {
     native: Retained<NSStackView>,
     /// Auto の子が余りを受け取らないよう、末尾で余りを受けるビュー。
-    _tail_spacer: Retained<NSView>,
+    tail_spacer: Retained<NSView>,
     tail_spacer_active: Cell<bool>,
+    /// 受け皿を主軸で 0 に留めたい、という制約。優先度で「余りを吸ってよいか」を
+    /// 決める (入れ子のときだけ強くする)。
+    tail_zero: Retained<NSLayoutConstraint>,
+    /// 同じ向きの `Stack` の中に入っているか。
+    nested: Cell<bool>,
+    /// 主軸に `Fill` を指定されたか。指定されていれば、入れ子でも伸びてよい。
+    fill_main: Cell<bool>,
     /// 子のハンドルを保持し、トランポリンごと生かしておく。
     children: RefCell<Vec<Box<dyn Widget>>>,
     /// 交差軸に `Fill` を指定された子を、スタックの幅 / 高さへ結び付ける制約。
@@ -855,9 +872,57 @@ struct StackInner {
 /// 縦 / 横に子を並べるコンテナ (NSStackView)。
 #[derive(Clone)]
 pub struct Stack(Rc<StackInner>);
-impl_widget!(Stack);
+
+impl Widget for Stack {
+    fn native_view(&self) -> Retained<NSView> {
+        let view: &NSView = self.0.native.as_ref();
+        view.retain()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Widget> {
+        Box::new(self.clone())
+    }
+
+    /// 同じ向きの `Stack` の中に入ったら、受け皿を強く縮める。
+    ///
+    /// そうしないと、外側と内側のどちらが伸びても Auto Layout の解として
+    /// 等価になり、内側が伸びて節の途中に大きな空きができる
+    /// ([`crate::layout::NESTED_TAIL_PRIORITY`])。
+    fn nested_in_stack(&self, vertical: bool) {
+        if self.is_vertical() == vertical {
+            self.0.nested.set(true);
+            self.update_tail_priority();
+        }
+    }
+}
 
 impl Stack {
+    /// 大きさを指定する。呼ぶたびに以前の指定は外れる。
+    ///
+    /// 主軸に `Fill` を指定された `Stack` は、入れ子でも余りを受け取ってよい
+    /// (「伸びたい」と言っているのはこちらなので)。
+    pub fn set_sizing(&self, sizing: naui_core::Sizing) {
+        let view = <Self as Widget>::native_view(self);
+        crate::layout::apply_sizing(&view, sizing);
+        let fill_main = if self.is_vertical() {
+            sizing.height.is_fill()
+        } else {
+            sizing.width.is_fill()
+        };
+        self.0.fill_main.set(fill_main);
+        self.update_tail_priority();
+    }
+
+    /// 受け皿が余りを吸ってよいかを、いまの状態から決め直す。
+    fn update_tail_priority(&self) {
+        let hold = self.0.nested.get() && !self.0.fill_main.get();
+        self.0.tail_zero.setPriority(if hold {
+            crate::layout::NESTED_TAIL_PRIORITY
+        } else {
+            crate::layout::TAIL_PRIORITY
+        });
+    }
+
     pub(crate) fn new(mtm: MainThreadMarker, orientation: Orientation) -> Self {
         let native = NSStackView::new(mtm);
         {
@@ -891,10 +956,19 @@ impl Stack {
             tail_spacer.setContentCompressionResistancePriority_forOrientation(1.0, orientation);
         }
         native.addArrangedSubview(&tail_spacer);
+        // 受け皿は中身を持たないので、放っておくと何の抵抗もなく伸びる。
+        // 「主軸で 0 にしたい」を弱い優先度で張っておき、入れ子になったときは
+        // `nested_in_stack` がこれを強める。
+        let tail_zero =
+            crate::layout::tail_zero_constraint(&tail_spacer, orientation.is_vertical());
+        tail_zero.setActive(true);
         Self(Rc::new(StackInner {
             native,
-            _tail_spacer: tail_spacer,
+            tail_spacer,
             tail_spacer_active: Cell::new(true),
+            tail_zero,
+            nested: Cell::new(false),
+            fill_main: Cell::new(false),
             children: RefCell::new(Vec::new()),
             fill_constraints: RefCell::new(Vec::new()),
             padding: Cell::new(Padding::ZERO),
@@ -945,12 +1019,7 @@ impl Stack {
     /// NSStackView 自身は intrinsic size を公開しないため、子や余白の変更を
     /// Grid の Auto 行へ明示的に伝える。
     fn invalidate_natural_size(&self) {
-        self.0.native.invalidateIntrinsicContentSize();
-        self.0.native.setNeedsLayout(true);
-        if let Some(parent) = unsafe { self.0.native.superview() } {
-            parent.invalidateIntrinsicContentSize();
-            parent.setNeedsLayout(true);
-        }
+        crate::layout::invalidate_ancestors(&self.0.native);
     }
 
     pub fn set_align(&self, align: Align) {
@@ -977,13 +1046,16 @@ impl Stack {
         crate::layout::prepare_child(&view);
         let index = self.0.children.borrow().len();
         let vertical = self.is_vertical();
+        // 入れ子の `Stack` は、余りを吸うのを外側へ譲る。
+        child.nested_in_stack(vertical);
         let wants_main_fill = crate::layout::wants_fill(&view, !vertical);
         if !wants_main_fill {
             crate::layout::keep_auto_size(&view, !vertical);
         }
         if wants_main_fill && self.0.tail_spacer_active.replace(false) {
-            self.0.native.removeArrangedSubview(&self.0._tail_spacer);
-            self.0._tail_spacer.removeFromSuperview();
+            self.0.tail_zero.setActive(false);
+            self.0.native.removeArrangedSubview(&self.0.tail_spacer);
+            self.0.tail_spacer.removeFromSuperview();
         }
         if let Some(last) = self.0.children.borrow().last() {
             let previous = last.native_view();
@@ -1070,7 +1142,8 @@ impl Stack {
         }
         // 主軸に `Fill` の子がいて外していた受け皿を、空の状態へ戻す。
         if !self.0.tail_spacer_active.replace(true) {
-            self.0.native.addArrangedSubview(&self.0._tail_spacer);
+            self.0.native.addArrangedSubview(&self.0.tail_spacer);
+            self.0.tail_zero.setActive(true);
         }
         children
     }
