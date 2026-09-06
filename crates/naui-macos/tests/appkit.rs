@@ -554,7 +554,12 @@ fn main() {
         skipped,
         failed
     );
-    if failed > 0 {
+    if skipped > 0 {
+        // スキップは「確かめられなかった」こと。緑で通すと、走っていない確認が
+        // あることに気付けないので、失敗と同じ扱いにする。
+        println!("確かめられなかったテストがあるので、成功としては終わらない。");
+    }
+    if failed > 0 || skipped > 0 {
         std::process::exit(1);
     }
 }
@@ -566,8 +571,8 @@ thread_local! {
 
 /// 実行環境の都合で確かめられなかったことを記録する。
 ///
-/// 記録したテストは「成功」ではなく SKIP として数える。黙って通ると、
-/// **何も確かめていないのに緑になる**ので、CI から気付けない。
+/// 記録したテストは「成功」ではなく SKIP として数え、**終了コードも 0 に
+/// しない**。黙って通ると、何も確かめていないのに緑になり、CI から気付けない。
 fn skip(reason: &str) {
     SKIP_REASON.with(|slot| *slot.borrow_mut() = Some(reason.to_string()));
 }
@@ -6998,6 +7003,7 @@ fn breadcrumbs_click_leaves_no_focus_ring(ui: &Ui) -> Result<()> {
 
     let view = crumbs.native_view();
     if native.isKeyWindow() {
+        // ウィンドウのイベントキューへ積む。ヒットテストと追跡ループを通る。
         click_view(&app, &native, &view);
         let responder = native.firstResponder();
         let focused = responder
@@ -7005,9 +7011,11 @@ fn breadcrumbs_click_leaves_no_focus_ring(ui: &Ui) -> Result<()> {
             .unwrap_or(false);
         assert!(!focused, "クリックでフォーカスを取らないこと");
     } else {
-        // 黙って通さない。確かめられなかったことを SKIP として残す
-        // (フォーカスを受け取らないこと自体は
-        //  `breadcrumbs_take_focus_like_a_button` が無条件に確かめている)。
+        // ここで `mouseDown:` を直接呼ぶ手もあるが、それだと**直す前でも
+        // フォーカスを取らない** (取りに行くのはウィンドウがイベントを配る
+        // 経路)。確かめられていないのに緑になるので、SKIP として残す。
+        // フォーカスを受け取るかどうか自体は
+        // `breadcrumbs_take_focus_like_a_button` が無条件に確かめている。
         skip("ウィンドウが key にならず、本物のクリックを配送できなかった");
     }
     window.close();
