@@ -1,19 +1,23 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use naui::{Orientation, Padding, Result, TextColor, TextStyle, Theme, Ui};
+use naui::{Align, Orientation, Result, TextColor, TextStyle, Theme, Ui};
+
+use crate::parts;
 
 /// Label、Button、Checkbox、Toggle、RadioGroup、Slider、ProgressBar、ComboBox とテーマ。
 pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(12.0);
-    pane.set_padding(Padding::all(12.0));
+    let pane = parts::pane(ui)?;
 
-    pane.append(&ui.label("Label / Button")?);
-    pane.append(&ui.label("通常・操作中・無効の状態を確認できます。")?);
+    parts::section(
+        ui,
+        &pane,
+        "Label / Button",
+        &["通常・操作中・無効の状態を確認できます。"],
+    )?;
 
     let count = Rc::new(Cell::new(0usize));
-    let button_status = ui.label("クリック回数: 0")?;
+    let button_status = parts::status(ui, "クリック回数: 0")?;
     let buttons = ui.stack(Orientation::Horizontal)?;
     buttons.set_spacing(8.0);
 
@@ -44,16 +48,15 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     pane.append(&buttons);
     pane.append(&button_status);
 
-    let text_style_heading = ui.label("Label の文字づかい")?;
-    text_style_heading.set_style(TextStyle::Heading);
-    pane.append(&text_style_heading);
-    let text_style_note = ui.label(
-        "大きさは段階で、色は役割で指定します。級数と色そのものは OS が決めるので、\
-         テーマや文字サイズの設定に追従します。",
+    parts::section(
+        ui,
+        &pane,
+        "Label の文字づかい",
+        &[
+            "大きさは段階で、色は役割で指定します。級数と色そのものは OS が決めるので、\
+             テーマや文字サイズの設定に追従します。",
+        ],
     )?;
-    text_style_note.set_style(TextStyle::Caption);
-    text_style_note.set_color(TextColor::Secondary);
-    pane.append(&text_style_note);
 
     let styles = ui.stack(Orientation::Vertical)?;
     styles.set_spacing(4.0);
@@ -69,6 +72,8 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
         sample.set_style(style);
         styles.append(&sample);
     }
+    // 見本も左端でそろえる (Stack の交差軸は既定が中央ぞろえ)。
+    styles.set_align(Align::Start);
     pane.append(&styles);
 
     let colors = ui.stack(Orientation::Horizontal)?;
@@ -87,8 +92,13 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     }
     pane.append(&colors);
 
-    pane.append(&ui.label("Checkbox")?);
-    let check_status = ui.label("チェック状態: オフ")?;
+    parts::section(
+        ui,
+        &pane,
+        "Checkbox",
+        &["入り切りを 2 択で持ちます。切り替えると通知が届きます。"],
+    )?;
+    let check_status = parts::status(ui, "チェック状態: オフ")?;
     let checkbox = ui.checkbox("項目を有効にする")?;
     checkbox.on_toggle({
         let check_status = check_status.clone();
@@ -103,9 +113,13 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     pane.append(&checkbox);
     pane.append(&check_status);
 
-    pane.append(&ui.label("Toggle")?);
-    pane.append(&ui.label("チェックボックスと同じ 2 択を、スイッチの形で切り替えます。")?);
-    let toggle_status = ui.label("バックアップ: 切")?;
+    parts::section(
+        ui,
+        &pane,
+        "Toggle",
+        &["チェックボックスと同じ 2 択を、スイッチの形で切り替えます。"],
+    )?;
+    let toggle_status = parts::status(ui, "バックアップ: 切")?;
     let toggle = ui.toggle("バックアップを作る")?;
     toggle.on_toggle({
         let toggle_status = toggle_status.clone();
@@ -131,10 +145,14 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     pane.append(&toggle_reset);
     pane.append(&toggle_status);
 
-    pane.append(&ui.label("RadioGroup")?);
-    pane.append(&ui.label("候補を並べて 1 つだけ選べます。選び直すと前の選択は外れます。")?);
+    parts::section(
+        ui,
+        &pane,
+        "RadioGroup",
+        &["候補を並べて 1 つだけ選べます。選び直すと前の選択は外れます。"],
+    )?;
     let plans = ["無料", "標準", "上位"];
-    let plan_status = ui.label("プラン: 未選択")?;
+    let plan_status = parts::status(ui, "プラン: 未選択")?;
     let plan = ui.radio_group()?;
     plan.set_items(&plans);
     plan.on_select({
@@ -158,9 +176,13 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     pane.append(&clear_plan);
     pane.append(&plan_status);
 
-    pane.append(&ui.label("Slider / ProgressBar")?);
-    pane.append(&ui.label("Slider の値を ProgressBar と数値表示へ反映します。")?);
-    let value_status = ui.label("値: 40%")?;
+    parts::section(
+        ui,
+        &pane,
+        "Slider / ProgressBar",
+        &["Slider の値を ProgressBar と数値表示へ反映します。"],
+    )?;
+    let value_status = parts::status(ui, "値: 40%")?;
     let progress = ui.progress_bar()?;
     progress.set_value(0.4);
     let slider = ui.slider(0.0, 1.0)?;
@@ -177,9 +199,13 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     pane.append(&progress);
     pane.append(&value_status);
 
-    pane.append(&ui.label("ComboBox / Theme")?);
-    pane.append(&ui.label("ドロップダウンからアプリの配色を選べます。")?);
-    let theme_status = ui.label(&format!("現在: {}", theme_name(ui.theme())))?;
+    parts::section(
+        ui,
+        &pane,
+        "ComboBox / Theme",
+        &["ドロップダウンからアプリの配色を選べます。"],
+    )?;
+    let theme_status = parts::status(ui, &format!("現在: {}", theme_name(ui.theme())))?;
     let theme = ui.combo_box()?;
     theme.set_items(&["システム", "ライト", "ダーク"]);
     theme.set_selected(theme_index(ui.theme()));

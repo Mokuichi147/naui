@@ -11,7 +11,9 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-use naui::{Orientation, Padding, Result, Task, Ui};
+use naui::{Orientation, Result, Task, Ui};
+
+use crate::parts;
 
 /// ワーカーが送ってくる進捗。
 ///
@@ -95,22 +97,25 @@ impl Future for Oneshot {
 
 /// 別スレッドからの受け渡しと、UI スレッドで回す非同期処理。
 pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
-    let pane = ui.stack(Orientation::Vertical)?;
-    pane.set_spacing(12.0);
-    pane.set_padding(Padding::all(12.0));
+    let pane = parts::pane(ui)?;
 
-    pane.append(&ui.label("別スレッドからの受け渡し")?);
-    pane.append(&ui.label("重い処理を別のスレッドへ出し、途中経過だけを画面へ返します。")?);
-    pane.append(&ui.label("3 段階に分けて進むので、進捗バーが 1 段ずつ動きます。")?);
+    parts::section(
+        ui,
+        &pane,
+        "別スレッドからの受け渡し",
+        &[
+            "重い処理を別のスレッドへ出し、途中経過だけを画面へ返します。",
+            "3 段階に分けて進むので、進捗バーが 1 段ずつ動きます。",
+        ],
+    )?;
     // ブラウザにはスレッドが無い。待ち時間を作れないので、そのことを画面にも書く。
     #[cfg(target_arch = "wasm32")]
-    pane.append(
-        &ui.label(
-            "※ ブラウザにはスレッドが無いため、この画面ではどれも待ち時間なしで終わります。",
-        )?,
-    );
+    pane.append(&parts::note(
+        ui,
+        "※ ブラウザにはスレッドが無いため、この画面ではどれも待ち時間なしで終わります。",
+    )?);
 
-    let worker_status = ui.label("待機中")?;
+    let worker_status = parts::status(ui, "待機中")?;
     let progress = ui.progress_bar()?;
     let start = ui.button("重い処理を始める")?;
     start.on_click({
@@ -158,9 +163,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pane.append(&progress);
 
     // 「待っている間も画面は止まっていない」ことを、その場で確かめられるようにする。
-    pane.append(&ui.label("処理の間も画面は止まりません。下のボタンで確かめてください。")?);
+    pane.append(&parts::note(
+        ui,
+        "処理の間も画面は止まりません。下のボタンで確かめてください。",
+    )?);
     let taps = Rc::new(Cell::new(0usize));
-    let tap_status = ui.label("押した回数: 0")?;
+    let tap_status = parts::status(ui, "押した回数: 0")?;
     let tap = ui.button("反応を確かめる")?;
     tap.on_click({
         let taps = taps.clone();
@@ -177,13 +185,17 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     tap_row.append(&tap_status);
     pane.append(&tap_row);
 
-    pane.append(&ui.label("非同期処理")?);
-    pane.append(
-        &ui.label("ボタンのクロージャの中から async を始め、別スレッドの結果を待ちます。")?,
-    );
-    pane.append(&ui.label("待っている間に「止める」を押すと、続きは実行されません。")?);
+    parts::section(
+        ui,
+        &pane,
+        "非同期処理",
+        &[
+            "ボタンのクロージャの中から async を始め、別スレッドの結果を待ちます。",
+            "待っている間に「止める」を押すと、続きは実行されません。",
+        ],
+    )?;
 
-    let async_status = ui.label("待機中")?;
+    let async_status = parts::status(ui, "待機中")?;
     // 走っているものを覚えておき、次に押されたら止める。
     let running: Rc<RefCell<Option<Task>>> = Rc::new(RefCell::new(None));
 

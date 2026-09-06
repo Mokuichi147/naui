@@ -11,11 +11,12 @@ mod layout;
 mod list;
 mod media;
 mod navigation;
+mod parts;
 mod tasks;
 
 use naui::{
-    FileEntry, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing,
-    Tabs, ToolbarIcon, ToolbarItem, Track, Ui, Widget,
+    Align, FileEntry, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings,
+    Sizing, Tabs, TextStyle, ToolbarIcon, ToolbarItem, Track, Ui, Widget,
 };
 
 /// ウィンドウに取り付けるツールバーの項目。区切りは空文字で埋める。
@@ -61,26 +62,30 @@ pub fn build(ui: &Ui) -> Result<()> {
     // Windows の StackPanel は主軸方向の Fill に残りの高さを配らないため、
     // 固定部分だけを Stack にまとめ、タブは Grid の Fill 行へ直接置く。
     let header = ui.stack(Orientation::Vertical)?;
-    header.set_spacing(10.0);
-    // 見出しはウィンドウの幅いっぱいに広げる (中の文字は中央ぞろえ)。
+    header.set_spacing(6.0);
+    // 見出しはウィンドウの幅いっぱいに広げ、中身は左端でそろえる
+    // (交差軸の既定は中央ぞろえ)。
     header.set_sizing(Sizing::fill_width());
+    header.set_align(Align::Start);
 
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["naui gallery", "基本"]));
     // パンくずは画面全体の現在地を示すため、タイトルより先の左上へ置く。
-    // 幅いっぱいの横 Stack に入れることで、ほかの要素の配置は変えずに左へ寄せる。
-    let breadcrumb_row = ui.stack(Orientation::Horizontal)?;
-    breadcrumb_row.set_sizing(Sizing::fill_width());
-    breadcrumb_row.append(&crumbs);
-    header.append(&breadcrumb_row);
+    header.append(&crumbs);
 
-    header.append(&ui.label("naui UI ギャラリー")?);
-    header.append(&ui.label("UI の種別ごとに、特徴・状態・操作結果を確認できます。")?);
+    // 画面の顔になる見出しなので、本文より 1 段大きい段階を指定する。
+    let title = ui.label("naui UI ギャラリー")?;
+    title.set_style(TextStyle::Title);
+    header.append(&title);
+    header.append(&parts::note(
+        ui,
+        "UI の種別ごとに、特徴・状態・操作結果を確認できます。",
+    )?);
 
     // Toolbar はレイアウトではなくウィンドウに取り付ける。macOS では
     // NSToolbar、Linux では AdwHeaderBar としてタイトルバーに出る。
     // 項目はアイコンで並び、ラベルはツールチップと読み上げに使われる。
-    let toolbar_status = ui.label("Toolbar: まだ押されていません")?;
+    let toolbar_status = parts::status(ui, "Toolbar: まだ押されていません")?;
     let toolbar = ui.toolbar()?;
     toolbar.set_items(&[
         ToolbarItem::new(COMMAND_ICONS[0], COMMANDS[0]),
