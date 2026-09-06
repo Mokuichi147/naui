@@ -373,12 +373,14 @@ pub(crate) fn apply_caption(label: &gtk::Label) {
 
 /// 1 行を組み立てる。`ListItem` も任意内容も同じ経路を通る。
 fn build_row(item: &ListRow) -> gtk::ListBoxRow {
-    let content: gtk::Widget = match &item.content {
-        ListRowContent::Item(item) => item_content(&item.label, item.detail.as_deref())
-            .size_bin()
-            .upcast(),
-        ListRowContent::Custom(content) => content.size_bin().upcast(),
+    let content: SizeBin = match &item.content {
+        ListRowContent::Item(item) => item_content(&item.label, item.detail.as_deref()).size_bin(),
+        ListRowContent::Custom(content) => content.size_bin(),
     };
+    // 行の幅いっぱいに置く。`SizeBin` の既定は `Center` (中身の大きさに合わせる)
+    // なので、そのままでは文字が行の真ん中へ寄る。大きさを自分で指定している
+    // 中身はそちらが優先される。
+    content.fill_parent();
     content.set_margin_top(6);
     content.set_margin_bottom(6);
     content.set_margin_start(10);

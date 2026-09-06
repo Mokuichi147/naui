@@ -1478,6 +1478,11 @@ git push origin v0.3.0
   `GtkButton` で、向きは見出しの文字に付く矢印で表します。
 - `Tree` は `GtkTreeExpander` (`GtkListView` 専用) ではなく、`GtkListBox` の
   行と開閉ボタンで組み立てています。
+- `Label::set_style` は libadwaita のスタイルクラス (`.title-1` など) を当てる
+  だけで、級数と太さを決めるのはテーマです。**libadwaita は `.title-2` と
+  `.title-3` に同じ級数を与え、太さだけを変えます**。そのため
+  `TextStyle::Title` と `TextStyle::Subtitle` は太さで見分ける段階になります
+  (`Heading` と `Body` も同じ関係です)。ここで naui が級数を決めることはしません。
 - `Label` の既定 (折り返さない) では `PangoEllipsizeMode::End` を入れています。
   **省略記号を付けると `GtkLabel` の最小幅も下がる**ので、狭いコンテナへ
   入れてもコンテナごと押し広げてしまうことがなくなります。

@@ -306,6 +306,10 @@ fn main() {
             list_detail_makes_a_second_line,
         ),
         (
+            "リストの行の中身が行の幅いっぱいに置かれる",
+            list_row_content_fills_the_row,
+        ),
+        (
             "Auto のリスト高が行数に追従する",
             list_auto_height_follows_rows,
         ),
@@ -1779,7 +1783,7 @@ fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
     let window = ui.window("スクロール", 400.0, 120.0)?;
     window.set_child(&scroll);
     window.show();
-    pump();
+    tick(&bin);
     assert_eq!(
         bin.height(),
         natural,
@@ -1922,33 +1926,42 @@ fn label_style_and_color_map_to_style_classes(ui: &Ui) -> Result<()> {
         }
     }
 
-    // 段階が上がるほど、テーマは大きく描く。CSS はウィジェットが画面へ
-    // 付いてから解決されるので、ウィンドウへ入れて測る。
+    // 段階が上がるほど、テーマは大きく (または太く) 描く。CSS はウィジェットが
+    // 画面へ付いてから解決されるので、ウィンドウへ入れて測る。
     let window = ui.window("文字づかい", 320.0, 120.0)?;
     window.set_child(&label);
     window.show();
-    pump();
 
-    let mut widths = Vec::new();
+    // 見るのは、テーマが決めた級数と太さの組。libadwaita は `.title-2` と
+    // `.title-3` に同じ級数を与えて太さだけを変えるので、大きさだけでは
+    // 段階の違いを見分けられない。
+    let mut fonts = Vec::new();
     for style in [
         TextStyle::Caption,
         TextStyle::Body,
+        TextStyle::Heading,
         TextStyle::Subtitle,
         TextStyle::Title,
         TextStyle::LargeTitle,
     ] {
         label.set_style(style);
-        pump();
-        widths.push((style, measure_width(&native).1));
+        tick(&native);
+        let font = native
+            .pango_context()
+            .font_description()
+            .expect("テーマが決めた書体");
+        fonts.push((style, font.size(), font.weight()));
     }
-    for pair in widths.windows(2) {
+    for pair in fonts.windows(2) {
+        let (before, before_size, before_weight) = pair[0];
+        let (after, after_size, after_weight) = pair[1];
         assert!(
-            pair[1].1 > pair[0].1,
-            "段階が上がるほど大きく描かれること: {:?} {} / {:?} {}",
-            pair[0].0,
-            pair[0].1,
-            pair[1].0,
-            pair[1].1
+            after_size >= before_size,
+            "段階が上がって小さくならないこと: {before:?} {before_size} / {after:?} {after_size}"
+        );
+        assert!(
+            (after_size, after_weight) != (before_size, before_weight),
+            "段階ごとに違う描き方になること: {before:?} と {after:?} が同じ ({after_size}, {after_weight:?})"
         );
     }
     window.close();
@@ -2581,6 +2594,38 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
     let detail = row_labels(&rows[0]).pop().expect("補助の文字");
     assert!(detail.has_css_class("caption"), "補助は小さくなること");
     assert!(detail.has_css_class("dim-label"), "補助は淡くなること");
+    Ok(())
+}
+
+/// 行の中身は、行の幅いっぱいに置かれる。
+///
+/// 中身を包む `SizeBin` の既定は `Center` (中身の大きさに合わせる) なので、
+/// そのまま `GtkListBoxRow` へ入れると文字が行の真ん中へ寄ってしまう。
+/// 大きさを配るのは GTK4 なので、画面に出して配られた幅で見る。
+fn list_row_content_fills_the_row(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill());
+    list.set_items(&[ListItem::new("東京").detail("13,960,000 人")]);
+
+    let window = ui.window("一覧", 400.0, 200.0)?;
+    window.set_child(&list);
+    window.show();
+    let native = list_box_of(&list);
+    tick(&native);
+
+    let row = children(&native)
+        .remove(0)
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow");
+    let content = row.child().expect("行の中身");
+    assert!(row.width() > 0, "行に幅が配られていること");
+    assert_eq!(
+        content.width(),
+        row.width() - content.margin_start() - content.margin_end(),
+        "中身が行の幅いっぱいに置かれること (行の幅 {})",
+        row.width()
+    );
+    window.close();
     Ok(())
 }
 
@@ -4289,6 +4334,36 @@ fn pump() {
             break;
         }
     }
+}
+
+/// CSS の解決とレイアウトが済むまで、フレームを 1 つ進める。
+///
+/// GTK4 はスタイルクラスを付けた瞬間に級数を決めず、フレームクロックの layout
+/// フェーズでまとめて解決してから場所を配る。`pump` は溜まっている分を回すだけで
+/// フレームを進めないので、**CSS の結果や配られた大きさを測る前**はこちらを使う。
+///
+/// 待ちは 2 秒で打ち切る。進まないまま止まり続けるより、測った値で落ちたほうが
+/// 理由が分かるため。
+fn tick(widget: &impl IsA<gtk::Widget>) {
+    let Some(clock) = widget.as_ref().frame_clock() else {
+        pump();
+        return;
+    };
+    let laid_out = Rc::new(Cell::new(false));
+    let handler = clock.connect_layout({
+        let laid_out = laid_out.clone();
+        move |_| laid_out.set(true)
+    });
+    clock.request_phase(gtk::gdk::FrameClockPhase::LAYOUT);
+    let context = glib::MainContext::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !laid_out.get() && std::time::Instant::now() < deadline {
+        // 次のティックまでは回すものが無いので、空回りのあいだは少し休む。
+        if !context.iteration(false) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    clock.disconnect(handler);
 }
 
 /// 一度だけ譲る future。次のティックで続きが走る。
