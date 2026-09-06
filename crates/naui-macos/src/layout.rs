@@ -12,7 +12,7 @@ use objc2::runtime::NSObjectProtocol;
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSClipView, NSGridCell, NSGridCellPlacement, NSGridView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSLayoutPriority, NSScrollView, NSStackView, NSView,
+    NSLayoutConstraintOrientation, NSLayoutPriority, NSScrollView, NSView,
 };
 use objc2_foundation::{NSArray, NSRange, NSString};
 
@@ -155,16 +155,31 @@ pub(crate) fn keep_auto_size(view: &NSView, horizontal: bool) {
     view.setContentHuggingPriority_forOrientation(AUTO_HUGGING, orientation(horizontal));
 }
 
-/// `NSStackView` が、主軸で中身より大きくされることに抵抗する強さを決める。
+/// 受け皿 (tail spacer) が「余りを受け取ってよい」ときの、縮みたさの優先度。
 ///
-/// `Stack` は末尾へ受け皿 (tail spacer) を入れて余りを吸わせているが、
-/// **受け皿だけでは入れ子にしたときに外側と内側のどちらが伸びるか決まらない**
-/// (どちらの受け皿も同じ優先度なので、Auto Layout の解として一意にならない)。
-/// スタック自身が中身を抱える優先度をここで上げておくと、伸びるのは必須の
-/// 制約で伸ばされた側 (ウィンドウやスクロールに貼られた、いちばん外側) だけに
-/// なり、内側は中身の大きさで収まる。
-pub(crate) fn hug_main_axis(stack: &NSStackView, vertical: bool) {
-    stack.setHuggingPriority_forOrientation(HUG_CONTENT, orientation(!vertical));
+/// 明示的な `Fill` / `Spacer` ([`FILL_HUGGING`]) より高く、`Auto` の子より低い。
+/// 指定が無いときだけ受け皿が余りを吸う。
+pub(crate) const TAIL_PRIORITY: NSLayoutPriority = 2.0;
+
+/// 入れ子になった `Stack` の受け皿が、縮みたがる強さ。
+///
+/// 受け皿は中身を持たない `NSView` で intrinsic size が無く、**そのままでは
+/// 伸びるのに何の抵抗もしない**。外側と内側の受け皿が同じ扱いだと、どちらが
+/// 伸びても Auto Layout の解として等価になり、内側が伸びて節の途中に大きな
+/// 空きができる。入れ子側だけ強く縮めておくと、余りを吸うのはいちばん外側に
+/// 決まる。
+pub(crate) const NESTED_TAIL_PRIORITY: NSLayoutPriority = HUG_CONTENT;
+
+/// 受け皿を「主軸で 0 にしたい」という制約を作る (まだ張らない)。
+pub(crate) fn tail_zero_constraint(tail: &NSView, vertical: bool) -> Retained<NSLayoutConstraint> {
+    let anchor = if vertical {
+        tail.heightAnchor()
+    } else {
+        tail.widthAnchor()
+    };
+    let constraint = anchor.constraintEqualToConstant(0.0);
+    constraint.setPriority(TAIL_PRIORITY);
+    constraint
 }
 
 /// セルごとの希望の識別子。同じセルに置き直したときだけ張り替える。
