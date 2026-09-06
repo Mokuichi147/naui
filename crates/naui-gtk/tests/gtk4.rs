@@ -3269,25 +3269,28 @@ fn tree_row_content_fills_the_row(ui: &Ui) -> Result<()> {
     let line = row.child().expect("行の中身");
     assert!(line.width() > 0, "行に幅が配られていること");
 
-    // 行は [開閉ボタン, 文字の縦並び] の順。開閉ボタンを除いた残りが文字の
-    // 領域になる。間の空きだけは行の組み方しだいなので、そこは緩く見る。
+    // 行は [開閉ボタン, 文字の縦並び] の順。文字の領域には、中身の自然な幅より
+    // 広く配られる (開閉ボタンの右の余りを使う)。寄せ方が「中身の大きさに
+    // 合わせる」ままだと、配られた幅と自然な幅が一致する。
+    //
+    // 残り幅そのものを計算しないのは、行の間隔や余白の取り方に縛られないため。
     let parts = children(&line);
-    let twisty = parts.first().expect("開閉ボタン").width();
     let content = parts.last().expect("文字の縦並び");
+    let (_, natural) = measure_width(content);
     assert!(
-        content.width() >= line.width() - twisty - 8,
-        "文字の領域が行の残り幅を使っていない: 領域 {} / 行 {} (開閉ボタン {twisty})",
+        content.width() > natural,
+        "文字の領域が行の残り幅を使っていない: 領域 {} / 中身 {natural} (行 {})",
         content.width(),
         line.width()
     );
 
-    // 中の文字も、その領域いっぱいに置かれる。
+    // 中の文字も、その領域に合わせて広がる。
     for (index, label) in labels_in(content).iter().enumerate() {
+        let (_, natural) = measure_width(label);
         assert!(
-            label.width() >= content.width() - 1,
-            "{index} 本目の文字が領域の幅を使っていない: 文字 {} / 領域 {}",
-            label.width(),
-            content.width()
+            label.width() > natural,
+            "{index} 本目の文字が領域の幅を使っていない: 文字 {} / 中身 {natural}",
+            label.width()
         );
     }
     window.close();
