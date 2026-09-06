@@ -12,7 +12,7 @@ use objc2::runtime::NSObjectProtocol;
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSClipView, NSGridCell, NSGridCellPlacement, NSGridView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSLayoutPriority, NSScrollView, NSView,
+    NSLayoutConstraintOrientation, NSLayoutPriority, NSScrollView, NSStackView, NSView,
 };
 use objc2_foundation::{NSArray, NSRange, NSString};
 
@@ -155,6 +155,18 @@ pub(crate) fn keep_auto_size(view: &NSView, horizontal: bool) {
     view.setContentHuggingPriority_forOrientation(AUTO_HUGGING, orientation(horizontal));
 }
 
+/// `NSStackView` が、主軸で中身より大きくされることに抵抗する強さを決める。
+///
+/// `Stack` は末尾へ受け皿 (tail spacer) を入れて余りを吸わせているが、
+/// **受け皿だけでは入れ子にしたときに外側と内側のどちらが伸びるか決まらない**
+/// (どちらの受け皿も同じ優先度なので、Auto Layout の解として一意にならない)。
+/// スタック自身が中身を抱える優先度をここで上げておくと、伸びるのは必須の
+/// 制約で伸ばされた側 (ウィンドウやスクロールに貼られた、いちばん外側) だけに
+/// なり、内側は中身の大きさで収まる。
+pub(crate) fn hug_main_axis(stack: &NSStackView, vertical: bool) {
+    stack.setHuggingPriority_forOrientation(HUG_CONTENT, orientation(!vertical));
+}
+
 /// セルごとの希望の識別子。同じセルに置き直したときだけ張り替える。
 fn grow_identifier(cell: &GridCell, horizontal: bool) -> String {
     format!(
@@ -183,6 +195,25 @@ fn clear_sizing_constraints(view: &NSView) {
 /// コンテナへ入れる子の下ごしらえ。Auto Layout に任せる。
 pub(crate) fn prepare_child(view: &NSView) {
     view.setTranslatesAutoresizingMaskIntoConstraints(false);
+}
+
+/// 中身の大きさが変わったことを、親の連なりへ伝える。
+///
+/// **表示したあとで高さが変わる子**(開いた `Expander`、行を足した一覧、
+/// 子を足した `Stack`) は、これを呼ばないと親のレイアウトが回らない。
+/// `Grid` の `Auto` 行は自分の `layout` で行高を引き直すので、
+/// レイアウトが要ることを伝えないと行が古い高さのまま残り、中身が潰れて
+/// 後ろの行と重なる。1 つ上だけでは足りない (グリッドがさらに Stack や
+/// スクロールの中にいると、そこで止まってしまう)。
+pub(crate) fn invalidate_ancestors(view: &NSView) {
+    view.invalidateIntrinsicContentSize();
+    view.setNeedsLayout(true);
+    let mut current = unsafe { view.superview() };
+    while let Some(parent) = current {
+        parent.invalidateIntrinsicContentSize();
+        parent.setNeedsLayout(true);
+        current = unsafe { parent.superview() };
+    }
 }
 
 // ----------------------------------------------------------------- Spacer

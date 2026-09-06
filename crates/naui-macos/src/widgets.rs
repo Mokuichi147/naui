@@ -111,6 +111,9 @@ impl Label {
 
     pub fn set_text(&self, text: &str) {
         self.0.native.setStringValue(&NSString::from_str(text));
+        // 文字が変われば要る大きさも変わる (折り返していれば行数ごと)。
+        // 親の連なりへ伝えないと、`Grid` の `Auto` 行が前の高さのまま残る。
+        crate::layout::invalidate_ancestors(&self.0.native);
     }
 
     /// 長い文字列を折り返すかどうか。既定は折り返さない。
@@ -875,6 +878,9 @@ impl Stack {
             } else {
                 NSLayoutAttribute::CenterY
             });
+            // 入れ子にしたとき、内側が余りを受け取らないようにする
+            // (受け皿だけでは、外側と内側のどちらが伸びるかが決まらない)。
+            crate::layout::hug_main_axis(&native, orientation.is_vertical());
         }
         let spacing = native.spacing();
         let tail_spacer = NSView::new(mtm);
@@ -945,12 +951,7 @@ impl Stack {
     /// NSStackView 自身は intrinsic size を公開しないため、子や余白の変更を
     /// Grid の Auto 行へ明示的に伝える。
     fn invalidate_natural_size(&self) {
-        self.0.native.invalidateIntrinsicContentSize();
-        self.0.native.setNeedsLayout(true);
-        if let Some(parent) = unsafe { self.0.native.superview() } {
-            parent.invalidateIntrinsicContentSize();
-            parent.setNeedsLayout(true);
-        }
+        crate::layout::invalidate_ancestors(&self.0.native);
     }
 
     pub fn set_align(&self, align: Align) {

@@ -449,7 +449,11 @@ impl ContentSizedScrollView {
 
     fn invalidate_document_size(&self) {
         self.ivars().last_height.set(f64::NAN);
-        self.invalidateIntrinsicContentSize();
+        // 行が増減すると一覧の自然高が変わる。intrinsic size を捨てるだけでは
+        // 親のレイアウトが回らないので (`Grid` の `Auto` 行は自分の `layout` で
+        // 行高を引き直す)、親の連なりへも伝える。
+        let view: &NSView = self;
+        crate::layout::invalidate_ancestors(view);
     }
 }
 
