@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use naui_core::{Orientation, Result};
+use naui_core::{Orientation, Result, TextColor, TextStyle};
 use naui_windows::{run_for_test, Ui, Widget};
 
 use crate::automation;
@@ -15,6 +15,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Grid,
     Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
+use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, UIElement};
 use windows_core::{Interface, HSTRING};
 
@@ -39,6 +40,10 @@ const CASES: &[Case] = &[
     ),
     ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
     ("ラベルの文字列がネイティブと往復する", label_round_trips),
+    (
+        "ラベルの段階と役割が type ramp とテーマリソースへ写る",
+        label_style_and_color_map_to_the_type_ramp,
+    ),
     ("スライダーが範囲でクランプされる", slider_clamp),
     ("進捗バーが 0..1 に収まる", progress_clamp),
     (
@@ -321,6 +326,80 @@ fn label_round_trips(ui: &Ui) -> Result<()> {
         "差し替え",
         "ネイティブの TextBlock にも届くこと"
     );
+    Ok(())
+}
+
+/// `set_style` / `set_color` は WinUI の type ramp とテーマリソースへ写る。
+///
+/// 級数も色も naui 側では持たないので、確かめるのは「Fluent が決めた値が
+/// 入ってくるか」と「段階と役割を重ねても両方効くか」の 2 つ。
+fn label_style_and_color_map_to_the_type_ramp(ui: &Ui) -> Result<()> {
+    let label = ui.label("見出し")?;
+    let native = native::<TextBlock>(&label);
+    let font_size = || native.FontSize().expect("FontSize");
+
+    // 段階が上がるほど級数も上がる。値を決めるのは type ramp のほう。
+    let mut sizes: Vec<(TextStyle, f64)> = Vec::new();
+    for style in [
+        TextStyle::Caption,
+        TextStyle::Body,
+        TextStyle::Subtitle,
+        TextStyle::Title,
+        TextStyle::LargeTitle,
+    ] {
+        label.set_style(style);
+        sizes.push((style, font_size()));
+    }
+    for pair in sizes.windows(2) {
+        assert!(
+            pair[1].1 > pair[0].1,
+            "段階が上がるほど大きくなること: {:?} {} / {:?} {}",
+            pair[0].0,
+            pair[0].1,
+            pair[1].0,
+            pair[1].1
+        );
+    }
+
+    // `Heading` は本文と同じ級数で、太さだけが違う。
+    label.set_style(TextStyle::Body);
+    let body_size = font_size();
+    let body_weight = native.FontWeight().expect("FontWeight").Weight;
+    label.set_style(TextStyle::Heading);
+    assert!(
+        (font_size() - body_size).abs() < 0.5,
+        "見出しは本文と同じ級数であること: {body_size} / {}",
+        font_size()
+    );
+    assert!(
+        native.FontWeight().expect("FontWeight").Weight > body_weight,
+        "見出しは本文より太いこと"
+    );
+
+    // 色は役割ごとに違うブラシへ落ちる。段階の上へ重ねるので、
+    // 色を変えても級数はそのまま残る (`Style` の `BasedOn`)。
+    label.set_style(TextStyle::Title);
+    let title_size = font_size();
+    let mut seen = Vec::new();
+    for color in TextColor::ALL {
+        label.set_color(color);
+        assert!(
+            (font_size() - title_size).abs() < 0.5,
+            "{color:?} にしても段階が残ること: {title_size} / {}",
+            font_size()
+        );
+        let brush = native
+            .Foreground()
+            .expect("Foreground")
+            .cast::<SolidColorBrush>()
+            .expect("テーマリソースは SolidColorBrush であること");
+        let current = brush.Color().expect("ブラシの色");
+        assert!(
+            !seen.contains(&current),
+            "{color:?} が別の役割と同じ色になっている: {current:?}"
+        );
+        seen.push(current);
+    }
     Ok(())
 }
 

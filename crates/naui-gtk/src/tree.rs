@@ -271,18 +271,9 @@ impl Tree {
         };
 
         // 文字は `List` と同じ組み方 (補助があれば 2 行目に小さく出す)。
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let content = crate::list::item_content(&item.label, item.detail.as_deref());
+        let content = content.size_bin();
         content.set_valign(gtk::Align::Center);
-        let label = gtk::Label::new(Some(&item.label));
-        label.set_xalign(0.0);
-        content.append(&label);
-        if let Some(detail) = &item.detail {
-            let detail = gtk::Label::new(Some(detail));
-            detail.set_xalign(0.0);
-            detail.add_css_class("dim-label");
-            detail.add_css_class("caption");
-            content.append(&detail);
-        }
         // 選べない項目は文字だけを淡くする。行ごと無効にすると、
         // 中の開閉ボタンまで押せなくなるため。
         content.set_sensitive(selectable);

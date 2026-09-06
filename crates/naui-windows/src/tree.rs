@@ -30,9 +30,8 @@ use std::sync::Arc;
 use naui_core::{Result, TreeItem};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Grid as XamlGrid, Orientation as XamlOrientation, StackPanel, TreeView,
-    TreeViewCollapsedEventArgs, TreeViewExpandingEventArgs, TreeViewNode,
-    TreeViewSelectionChangedEventArgs, TreeViewSelectionMode,
+    Border, Grid as XamlGrid, TreeView, TreeViewCollapsedEventArgs, TreeViewExpandingEventArgs,
+    TreeViewNode, TreeViewSelectionChangedEventArgs, TreeViewSelectionMode,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
@@ -41,7 +40,7 @@ use windows::Foundation::TypedEventHandler;
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
-use crate::list::{text_block, SelectionHandler};
+use crate::list::{item_content, SelectionHandler};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
@@ -772,38 +771,7 @@ fn append_nodes(
 
 /// 行の中身を組み立てる。文字は `List` と同じ組み方 (補助があれば 2 行)。
 fn row_content(item: &TreeItem, selectable: bool) -> Result<UIElement> {
-    let title = text_block(&item.label, false)?;
-    let content: UIElement = match &item.detail {
-        None => title
-            .cast::<UIElement>()
-            .map_err(|e| to_error("行の要素化", e))?,
-        Some(detail) => {
-            let stack = StackPanel::new().map_err(|e| to_error("行の StackPanel の生成", e))?;
-            stack
-                .SetOrientation(XamlOrientation::Vertical)
-                .map_err(|e| to_error("行の向き設定", e))?;
-            let children = stack
-                .Children()
-                .map_err(|e| to_error("行の中身の取得", e))?;
-            children
-                .Append(
-                    &title
-                        .cast::<UIElement>()
-                        .map_err(|e| to_error("行の要素化", e))?,
-                )
-                .map_err(|e| to_error("行への追加", e))?;
-            children
-                .Append(
-                    &text_block(detail, true)?
-                        .cast::<UIElement>()
-                        .map_err(|e| to_error("行の要素化", e))?,
-                )
-                .map_err(|e| to_error("行への追加", e))?;
-            stack
-                .cast::<UIElement>()
-                .map_err(|e| to_error("行の要素化", e))?
-        }
-    };
+    let content = item_content(&item.label, item.detail.as_deref())?.native_element();
     if selectable {
         return Ok(content);
     }

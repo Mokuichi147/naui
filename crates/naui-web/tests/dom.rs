@@ -21,7 +21,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Color, DialogResponse, GridCell, Orientation, Padding, PopupItem, Result, Theme,
+    Align, Color, DialogResponse, GridCell, ListItem, Orientation, Padding, PopupItem, Result,
+    TextColor, TextStyle, Theme,
 };
 use naui_web::{run_for_test, ListRow, Ui, Widget};
 use wasm_bindgen::JsCast;
@@ -714,6 +715,127 @@ fn label_wraps_only_when_asked() {
     });
 }
 
+/// `set_style` / `set_color` が、実際に描かれる文字の大きさと色を変える。
+///
+/// Web にだけ見出しの段階が無いので、naui が CSS で他の 3 環境へそろえている。
+/// 指定した値ではなく、ブラウザが解決したあとの値を見る。
+#[wasm_bindgen_test]
+fn label_style_and_color_change_the_rendered_text() {
+    with_ui(|ui| {
+        let label = ui.label("見出し")?;
+        let _mounted = Mounted::new(&label);
+        let element: HtmlElement = label.native_element().unchecked_into();
+        let resolved = |property: &str| {
+            web_sys::window()
+                .and_then(|w| w.get_computed_style(&element).ok().flatten())
+                .and_then(|style| style.get_property_value(property).ok())
+                .unwrap_or_default()
+        };
+        let font_size = || {
+            resolved("font-size")
+                .trim_end_matches("px")
+                .parse::<f64>()
+                .expect("font-size が px で返ること")
+        };
+
+        // 大きい段階ほど大きく描かれる。
+        let ramp = [
+            TextStyle::Caption,
+            TextStyle::Body,
+            TextStyle::Subtitle,
+            TextStyle::Title,
+            TextStyle::LargeTitle,
+        ];
+        let mut sizes: Vec<(TextStyle, f64)> = Vec::new();
+        for style in ramp {
+            label.set_style(style);
+            sizes.push((style, font_size()));
+        }
+        for pair in sizes.windows(2) {
+            assert!(
+                pair[1].1 > pair[0].1,
+                "段階が上がるほど大きくなること: {:?} {} / {:?} {}",
+                pair[0].0,
+                pair[0].1,
+                pair[1].0,
+                pair[1].1
+            );
+        }
+
+        // `Heading` は本文と同じ大きさで、太さだけが違う。
+        label.set_style(TextStyle::Body);
+        let body_size = font_size();
+        let body_weight = resolved("font-weight");
+        label.set_style(TextStyle::Heading);
+        assert!(
+            (font_size() - body_size).abs() < 0.5,
+            "見出しは本文と同じ大きさであること: {body_size} / {}",
+            font_size()
+        );
+        assert_ne!(
+            resolved("font-weight"),
+            body_weight,
+            "見出しは本文と違う太さであること"
+        );
+
+        // 本文へ戻すと naui の指定は消え、ブラウザ既定へ返る。
+        label.set_style(TextStyle::Body);
+        let style = element.style();
+        assert_eq!(
+            style.get_property_value("font-size").unwrap_or_default(),
+            ""
+        );
+        assert_eq!(
+            style.get_property_value("font-weight").unwrap_or_default(),
+            ""
+        );
+
+        // どの役割も、ブラウザが解釈できる色として書かれる (指定を捨てられない)。
+        for color in TextColor::ALL {
+            label.set_color(color);
+            assert_eq!(
+                element
+                    .style()
+                    .get_property_value("color")
+                    .unwrap_or_default()
+                    .is_empty(),
+                color == TextColor::Default,
+                "{color:?} の指定がブラウザに受け取られること"
+            );
+            assert!(
+                !resolved("color").is_empty(),
+                "{color:?} の色が解決できていない"
+            );
+        }
+
+        // `light-dark()` で決めている 3 つは、互いに違う色として解決される。
+        // システム色に任せている `Secondary` と `Accent` は**ブラウザ次第**で、
+        // Chromium はアクセントカラーを出さずに灰色を返す。
+        let mut seen: Vec<String> = Vec::new();
+        for color in [TextColor::Success, TextColor::Warning, TextColor::Danger] {
+            label.set_color(color);
+            let current = resolved("color");
+            assert!(
+                !seen.contains(&current),
+                "{color:?} が別の役割と同じ色になっている: {current} \
+                 (light-dark() が効いていない可能性)"
+            );
+            seen.push(current);
+        }
+
+        label.set_color(TextColor::Default);
+        assert_eq!(
+            element
+                .style()
+                .get_property_value("color")
+                .unwrap_or_default(),
+            "",
+            "既定へ戻すと色の指定が消えること"
+        );
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn label_text_round_trips() {
     with_ui(|ui| {
@@ -867,6 +989,74 @@ fn tabs_remove_and_clear() {
 }
 
 // ---------------------------------------------------------------- List
+
+/// `ListItem::detail` は 2 行目に小さく淡く出る。
+///
+/// 行の中身は naui の `Stack` と `Label` で組むので、小ささと淡さを決めるのは
+/// [`TextStyle::Caption`] と [`TextColor::Secondary`] のほう。ここでは、
+/// ブラウザが解決したあとの値でそれが効いていることを見る。
+#[wasm_bindgen_test]
+fn list_detail_makes_a_second_line() {
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_items(&[
+            ListItem::new("東京"),
+            ListItem::new("大阪").detail("2,750,000 人"),
+        ]);
+        let _mounted = Mounted::new(&list);
+
+        // `detail` がある行が 1 つでもあれば、一覧は `<ul role="listbox">` になる。
+        let listbox = list
+            .native_element()
+            .children()
+            .item(0)
+            .expect("listbox の枠");
+        assert_eq!(listbox.tag_name(), "UL");
+        let plain = listbox.children().item(0).expect("1 行目");
+        let detailed = listbox.children().item(1).expect("2 行目");
+
+        let texts = |row: &Element| -> Vec<HtmlElement> {
+            let found = row.get_elements_by_tag_name("span");
+            (0..found.length())
+                .filter_map(|i| found.item(i))
+                .map(|element| element.unchecked_into())
+                .collect()
+        };
+        let plain_texts = texts(&plain);
+        let detailed_texts = texts(&detailed);
+        assert_eq!(plain_texts.len(), 1, "detail が無い行は文字 1 本");
+        assert_eq!(detailed_texts.len(), 2, "detail がある行は文字 2 本");
+        assert_eq!(
+            detailed_texts[1].text_content().unwrap_or_default(),
+            "2,750,000 人"
+        );
+
+        let resolved = |element: &HtmlElement, property: &str| {
+            web_sys::window()
+                .and_then(|w| w.get_computed_style(element).ok().flatten())
+                .and_then(|style| style.get_property_value(property).ok())
+                .unwrap_or_default()
+        };
+        let size = |element: &HtmlElement| {
+            resolved(element, "font-size")
+                .trim_end_matches("px")
+                .parse::<f64>()
+                .expect("font-size が px で返ること")
+        };
+        assert!(
+            size(&detailed_texts[1]) < size(&detailed_texts[0]),
+            "補助の文字のほうが小さいこと: {} / {}",
+            size(&detailed_texts[0]),
+            size(&detailed_texts[1])
+        );
+        assert_ne!(
+            resolved(&detailed_texts[1], "color"),
+            resolved(&detailed_texts[0], "color"),
+            "補助の文字のほうが淡いこと"
+        );
+        Ok(())
+    });
+}
 
 /// `Ui` は clone できるので、コールバックの中からでもウィジェットを作れる。
 ///

@@ -15,7 +15,7 @@ use std::rc::Rc;
 use gtk::glib;
 use gtk::pango;
 use gtk::prelude::*;
-use naui_core::{Align, Orientation, Padding};
+use naui_core::{Align, Orientation, Padding, TextColor, TextStyle};
 
 use crate::bin::{apply_padding, SizeBin};
 use crate::callback::{Notifier, TextNotifier};
@@ -139,6 +139,39 @@ impl Label {
         } else {
             pango::EllipsizeMode::End
         });
+    }
+
+    /// 文字の大きさと太さの段階。既定は [`TextStyle::Body`]。
+    ///
+    /// libadwaita のスタイルクラス (`.title-1` など) を当てるだけなので、
+    /// 級数と太さを決めるのはテーマのほう。デスクトップのフォント設定にも
+    /// そのまま追従する。
+    pub fn set_style(&self, style: TextStyle) {
+        // 呼ぶたびに以前の段階は外す。付けっぱなしにすると、あとから
+        // 当てたクラスとどちらが勝つかがテーマの並び順で決まってしまう。
+        for candidate in TextStyle::ALL {
+            if let Some(class) = candidate.style_class() {
+                self.0.native.remove_css_class(class);
+            }
+        }
+        if let Some(class) = style.style_class() {
+            self.0.native.add_css_class(class);
+        }
+    }
+
+    /// 文字色の役割。既定は [`TextColor::Default`]。
+    ///
+    /// 色そのものはテーマが持つ (`.accent` はデスクトップのアクセントカラー)。
+    /// ライト / ダークの切り替えにもテーマ側で追従する。
+    pub fn set_color(&self, color: TextColor) {
+        for candidate in TextColor::ALL {
+            if let Some(class) = candidate.style_class() {
+                self.0.native.remove_css_class(class);
+            }
+        }
+        if let Some(class) = color.style_class() {
+            self.0.native.add_css_class(class);
+        }
     }
 }
 

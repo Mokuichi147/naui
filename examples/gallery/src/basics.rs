@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use naui::{Orientation, Padding, Result, Theme, Ui};
+use naui::{Orientation, Padding, Result, TextColor, TextStyle, Theme, Ui};
 
 /// Label、Button、Checkbox、Toggle、RadioGroup、Slider、ProgressBar、ComboBox とテーマ。
 pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
@@ -43,6 +43,49 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     buttons.append(&disabled);
     pane.append(&buttons);
     pane.append(&button_status);
+
+    let text_style_heading = ui.label("Label の文字づかい")?;
+    text_style_heading.set_style(TextStyle::Heading);
+    pane.append(&text_style_heading);
+    let text_style_note = ui.label(
+        "大きさは段階で、色は役割で指定します。級数と色そのものは OS が決めるので、\
+         テーマや文字サイズの設定に追従します。",
+    )?;
+    text_style_note.set_style(TextStyle::Caption);
+    text_style_note.set_color(TextColor::Secondary);
+    pane.append(&text_style_note);
+
+    let styles = ui.stack(Orientation::Vertical)?;
+    styles.set_spacing(4.0);
+    for (style, name) in [
+        (TextStyle::LargeTitle, "LargeTitle"),
+        (TextStyle::Title, "Title"),
+        (TextStyle::Subtitle, "Subtitle"),
+        (TextStyle::Heading, "Heading"),
+        (TextStyle::Body, "Body (既定)"),
+        (TextStyle::Caption, "Caption"),
+    ] {
+        let sample = ui.label(name)?;
+        sample.set_style(style);
+        styles.append(&sample);
+    }
+    pane.append(&styles);
+
+    let colors = ui.stack(Orientation::Horizontal)?;
+    colors.set_spacing(12.0);
+    for (color, name) in [
+        (TextColor::Default, "Default"),
+        (TextColor::Secondary, "Secondary"),
+        (TextColor::Accent, "Accent"),
+        (TextColor::Success, "Success"),
+        (TextColor::Warning, "Warning"),
+        (TextColor::Danger, "Danger"),
+    ] {
+        let sample = ui.label(name)?;
+        sample.set_color(color);
+        colors.append(&sample);
+    }
+    pane.append(&colors);
 
     pane.append(&ui.label("Checkbox")?);
     let check_status = ui.label("チェック状態: オフ")?;

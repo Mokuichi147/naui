@@ -23,7 +23,7 @@ use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
     PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_gtk::{run_for_test, ListRow, Ui, Widget};
 
@@ -236,6 +236,10 @@ fn main() {
         (
             "ラベルは頼まれたときだけ折り返す",
             label_wraps_only_when_asked,
+        ),
+        (
+            "ラベルの段階と役割が libadwaita のスタイルクラスへ写る",
+            label_style_and_color_map_to_style_classes,
         ),
         (
             "折り返す中身は幅から高さが決まると親へ伝わる",
@@ -516,6 +520,21 @@ fn bin_of(widget: &dyn Widget) -> gtk::Widget {
         .native_widget()
         .ancestor(naui_gtk::SizeBin::static_type())
         .expect("SizeBin に包まれている")
+}
+
+/// ウィジェットの中にある `GtkLabel` を、入れ子をたどって前から順に集める。
+///
+/// 行の中身は naui の `Stack` と `Label` で組むので、文字は行の直下には無い。
+/// ここで見たいのは文字の並びだけなので、階層は問わない。
+fn labels_in(widget: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
+    let mut found = Vec::new();
+    for child in children(widget) {
+        match child.downcast::<gtk::Label>() {
+            Ok(label) => found.push(label),
+            Err(other) => found.extend(labels_in(&other)),
+        }
+    }
+    found
 }
 
 /// `GtkBox` などの子を順に集める。
@@ -1855,6 +1874,87 @@ fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// `set_style` / `set_color` は libadwaita のスタイルクラスへ写り、
+/// 実際に文字の大きさが変わる。
+///
+/// naui 側で級数も色も持たないので、確かめるのは「どのクラスが付いているか」と
+/// 「テーマがそれをどう描くか」の 2 つ。
+fn label_style_and_color_map_to_style_classes(ui: &Ui) -> Result<()> {
+    let label = ui.label("見出し")?;
+    let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
+
+    // 既定 (`Body` / `Default`) はクラスを付けない。
+    for style in TextStyle::ALL {
+        if let Some(class) = style.style_class() {
+            assert!(!native.has_css_class(class), "既定で {class} が付いている");
+        }
+    }
+
+    // 段階を切り替えると、前の段階のクラスは外れる。
+    label.set_style(TextStyle::Title);
+    assert!(native.has_css_class("title-2"), "title-2 が付くこと");
+    label.set_style(TextStyle::Caption);
+    assert!(!native.has_css_class("title-2"), "前の段階が外れること");
+    assert!(native.has_css_class("caption"), "caption が付くこと");
+    label.set_style(TextStyle::Body);
+    for style in TextStyle::ALL {
+        if let Some(class) = style.style_class() {
+            assert!(
+                !native.has_css_class(class),
+                "本文へ戻すと {class} が外れること"
+            );
+        }
+    }
+
+    // 色も同じ決まり。
+    label.set_color(TextColor::Danger);
+    assert!(native.has_css_class("error"), "error が付くこと");
+    label.set_color(TextColor::Secondary);
+    assert!(!native.has_css_class("error"), "前の役割が外れること");
+    assert!(native.has_css_class("dim-label"), "dim-label が付くこと");
+    label.set_color(TextColor::Default);
+    for color in TextColor::ALL {
+        if let Some(class) = color.style_class() {
+            assert!(
+                !native.has_css_class(class),
+                "既定へ戻すと {class} が外れること"
+            );
+        }
+    }
+
+    // 段階が上がるほど、テーマは大きく描く。CSS はウィジェットが画面へ
+    // 付いてから解決されるので、ウィンドウへ入れて測る。
+    let window = ui.window("文字づかい", 320.0, 120.0)?;
+    window.set_child(&label);
+    window.show();
+    pump();
+
+    let mut widths = Vec::new();
+    for style in [
+        TextStyle::Caption,
+        TextStyle::Body,
+        TextStyle::Subtitle,
+        TextStyle::Title,
+        TextStyle::LargeTitle,
+    ] {
+        label.set_style(style);
+        pump();
+        widths.push((style, measure_width(&native).1));
+    }
+    for pair in widths.windows(2) {
+        assert!(
+            pair[1].1 > pair[0].1,
+            "段階が上がるほど大きく描かれること: {:?} {} / {:?} {}",
+            pair[0].0,
+            pair[0].1,
+            pair[1].0,
+            pair[1].1
+        );
+    }
+    window.close();
+    Ok(())
+}
+
 /// 折り返す中身を包んだ入れ物は、「幅が決まってから高さが決まる」と申告する。
 ///
 /// これが伝わらないと、親は幅を渡さずに高さを尋ね、**折り返す前の 1 行ぶん**
@@ -2458,21 +2558,29 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
 
     let native = list_box_of(&list);
     let rows = children(&native);
-    let labels = |row: &gtk::Widget| -> Vec<String> {
+    let row_labels = |row: &gtk::Widget| -> Vec<gtk::Label> {
         let content = row
             .clone()
             .downcast::<gtk::ListBoxRow>()
             .expect("GtkListBoxRow")
             .child()
             .expect("中身");
-        children(&content)
+        labels_in(&content)
+    };
+    let texts = |row: &gtk::Widget| -> Vec<String> {
+        row_labels(row)
             .into_iter()
-            .filter_map(|child| child.downcast::<gtk::Label>().ok())
             .map(|label| label.text().to_string())
             .collect()
     };
-    assert_eq!(labels(&rows[0]), ["東京", "13,960,000 人"]);
-    assert_eq!(labels(&rows[1]), ["札幌"]);
+    assert_eq!(texts(&rows[0]), ["東京", "13,960,000 人"]);
+    assert_eq!(texts(&rows[1]), ["札幌"]);
+
+    // 補助の文字は `TextStyle::Caption` と `TextColor::Secondary` で小さく淡く
+    // なる。naui 側で級数も色も持たないので、当たっているクラスで見る。
+    let detail = row_labels(&rows[0]).pop().expect("補助の文字");
+    assert!(detail.has_css_class("caption"), "補助は小さくなること");
+    assert!(detail.has_css_class("dim-label"), "補助は淡くなること");
     Ok(())
 }
 
@@ -3063,8 +3171,7 @@ fn tree_labels(tree: &naui_gtk::Tree) -> Vec<String> {
         .filter_map(|line| {
             // 行は [開閉ボタン (または余白), 文字の縦並び] の順。
             let content = children(&line).pop()?;
-            let label = children(&content).into_iter().next()?;
-            Some(label.downcast::<gtk::Label>().ok()?.text().to_string())
+            Some(labels_in(&content).first()?.text().to_string())
         })
         .collect()
 }

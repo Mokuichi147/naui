@@ -9,11 +9,14 @@ use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{ListItem, SelectionMode};
+use naui_core::{Align, ListItem, Orientation, SelectionMode, TextColor, TextStyle};
 
 use crate::bin::SizeBin;
 use crate::callback::SelectionNotifier;
-use crate::widgets::{impl_widget, without_signal, Widget};
+use crate::widgets::{impl_widget, without_signal, Label, Stack, Widget};
+
+/// ラベルと補助の文字の間隔。
+const DETAIL_SPACING: f64 = 2.0;
 
 /// 行がクリックされたことの通知先。
 ///
@@ -333,23 +336,47 @@ impl List {
     }
 }
 
+/// 文字だけの行の中身。
+///
+/// 副次テキストの小ささと淡さは [`TextStyle::Caption`] と
+/// [`TextColor::Secondary`] が決めるので、ここにスタイルクラスは書かない。
+pub(crate) fn item_content(label: &str, detail: Option<&str>) -> Stack {
+    let content = Stack::new(Orientation::Vertical);
+    content.set_align(Align::Start);
+    content.set_spacing(DETAIL_SPACING);
+    content.append(&Label::new(label));
+    if let Some(detail) = detail {
+        let sub = Label::new(detail);
+        sub.set_style(TextStyle::Caption);
+        sub.set_color(TextColor::Secondary);
+        content.append(&sub);
+    }
+    content
+}
+
+/// `List` の補助と同じ見た目 (小さく淡く) を、生の `GtkLabel` へ当てる。
+///
+/// naui の `Label` を使えない場所 (表の見出しのように幅や `GtkSizeGroup` を
+/// 直に扱うところ) 向け。当てるクラスは [`TextStyle::Caption`] と
+/// [`TextColor::Secondary`] から引く。
+pub(crate) fn apply_caption(label: &gtk::Label) {
+    for class in [
+        TextStyle::Caption.style_class(),
+        TextColor::Secondary.style_class(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        label.add_css_class(class);
+    }
+}
+
 /// 1 行を組み立てる。`ListItem` も任意内容も同じ経路を通る。
 fn build_row(item: &ListRow) -> gtk::ListBoxRow {
     let content: gtk::Widget = match &item.content {
-        ListRowContent::Item(item) => {
-            let content = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            let label = gtk::Label::new(Some(&item.label));
-            label.set_xalign(0.0);
-            content.append(&label);
-            if let Some(detail) = &item.detail {
-                let detail = gtk::Label::new(Some(detail));
-                detail.set_xalign(0.0);
-                detail.add_css_class("dim-label");
-                detail.add_css_class("caption");
-                content.append(&detail);
-            }
-            content.upcast()
-        }
+        ListRowContent::Item(item) => item_content(&item.label, item.detail.as_deref())
+            .size_bin()
+            .upcast(),
         ListRowContent::Custom(content) => content.size_bin().upcast(),
     };
     content.set_margin_top(6);

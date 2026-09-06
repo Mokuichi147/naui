@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use naui_core::{Align, Orientation, Padding, Result};
+use naui_core::{Align, Orientation, Padding, Result, TextColor, TextStyle};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::{
@@ -219,6 +219,40 @@ impl Label {
             let _ = style.set_property("white-space", "nowrap");
             let _ = style.set_property("overflow", "hidden");
             let _ = style.set_property("text-overflow", "ellipsis");
+        }
+    }
+
+    /// 文字の大きさと太さの段階。既定は [`TextStyle::Body`]。
+    ///
+    /// **ブラウザには見出しの段階そのものが無い**ので、ここだけは naui が
+    /// CSS で他の 3 環境へそろえている (ラベルの折り返しと同じ扱い)。
+    /// 大きさは `em` の相対値なので、ブラウザとユーザーが決めた基準の
+    /// 文字サイズには追従する。
+    pub fn set_style(&self, style: TextStyle) {
+        set_or_clear(&self.0.element, "font-size", style.css_font_size());
+        set_or_clear(&self.0.element, "font-weight", style.css_font_weight());
+    }
+
+    /// 文字色の役割。既定は [`TextColor::Default`]。
+    ///
+    /// 補足の色とアクセントカラーは CSS のシステム色 (`GrayText` /
+    /// `AccentColor`) をそのまま使うので、ブラウザと OS の設定に追従する。
+    /// 成功・注意・危険にあたるシステム色は無いため、そこだけは naui が
+    /// `light-dark()` で決めている。
+    pub fn set_color(&self, color: TextColor) {
+        set_or_clear(&self.0.element, "color", color.css_color());
+    }
+}
+
+/// CSS のプロパティを書くか、`None` なら消してブラウザ既定へ戻す。
+fn set_or_clear(element: &HtmlElement, property: &str, value: Option<&str>) {
+    let style = element.style();
+    match value {
+        Some(value) => {
+            let _ = style.set_property(property, value);
+        }
+        None => {
+            let _ = style.remove_property(property);
         }
     }
 }

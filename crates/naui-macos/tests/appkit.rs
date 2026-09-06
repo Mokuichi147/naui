@@ -19,7 +19,7 @@ use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
     PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_macos::{run_for_test, ListRow, Ui, Widget};
 use objc2::rc::Retained;
@@ -284,6 +284,10 @@ fn main() {
         (
             "ラベルは頼まれたときだけ折り返す",
             label_wraps_only_when_asked,
+        ),
+        (
+            "ラベルの段階と役割が AppKit のフォントと色へ写る",
+            label_style_and_color_map_to_appkit,
         ),
         (
             "分割ビューがネイティブの NSSplitView に 2 区画を並べる",
@@ -2449,6 +2453,91 @@ fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// `set_style` / `set_color` は AppKit のフォントと色へ写る。naui 側で
+/// 級数や色の値を持たないことを、実物のフォントと `NSColor` で確かめる。
+fn label_style_and_color_map_to_appkit(ui: &Ui) -> Result<()> {
+    let label = ui.label("見出し")?;
+    let native: Retained<NSTextField> = label
+        .native_view()
+        .downcast()
+        .expect("ラベルは NSTextField であること");
+    let font = || native.font().expect("フォントが決まっていること");
+
+    // 大きい段階ほど級数も大きい。値は AppKit が決めるので、順序だけを見る。
+    let ramp = [
+        TextStyle::Caption,
+        TextStyle::Body,
+        TextStyle::Subtitle,
+        TextStyle::Title,
+        TextStyle::LargeTitle,
+    ];
+    let mut sizes: Vec<(TextStyle, f64)> = Vec::new();
+    for style in ramp {
+        label.set_style(style);
+        sizes.push((style, font().pointSize()));
+    }
+    for pair in sizes.windows(2) {
+        assert!(
+            pair[1].1 > pair[0].1,
+            "段階が上がるほど大きくなること: {:?} {} / {:?} {}",
+            pair[0].0,
+            pair[0].1,
+            pair[1].0,
+            pair[1].1
+        );
+    }
+
+    // `Heading` は本文と同じ級数で、太さだけが違う。
+    label.set_style(TextStyle::Body);
+    let body = font();
+    label.set_style(TextStyle::Heading);
+    let heading = font();
+    assert!(
+        (heading.pointSize() - body.pointSize()).abs() < 0.5,
+        "見出しは本文と同じ級数であること: {} / {}",
+        body.pointSize(),
+        heading.pointSize()
+    );
+    assert_ne!(
+        heading.fontName().to_string(),
+        body.fontName().to_string(),
+        "見出しは本文と違う太さであること"
+    );
+
+    // 色は役割ごとに違う NSColor が来る。どれも AppKit が持つ色そのもの。
+    label.set_color(TextColor::Default);
+    assert_eq!(
+        native.textColor().expect("色が決まっていること"),
+        NSColor::labelColor(),
+        "既定は labelColor であること"
+    );
+    label.set_color(TextColor::Secondary);
+    assert_eq!(
+        native.textColor().expect("色が決まっていること"),
+        NSColor::secondaryLabelColor(),
+        "補足は secondaryLabelColor であること"
+    );
+    label.set_color(TextColor::Danger);
+    assert_eq!(
+        native.textColor().expect("色が決まっていること"),
+        NSColor::systemRedColor(),
+        "危険は systemRedColor であること"
+    );
+
+    // 役割ごとに違う色へ落ちる (どれか 2 つが同じ色だと区別が付かない)。
+    let mut seen: Vec<Retained<NSColor>> = Vec::new();
+    for color in TextColor::ALL {
+        label.set_color(color);
+        let current = native.textColor().expect("色が決まっていること");
+        assert!(
+            !seen.contains(&current),
+            "{color:?} が別の役割と同じ色になっている"
+        );
+        seen.push(current);
+    }
+    Ok(())
+}
+
 /// 分割ビューは NSSplitView そのもので、2 つの区画を並べる。
 fn split_view_arranges_two_panes_in_a_native_split_view(ui: &Ui) -> Result<()> {
     let split = ui.split_view(Orientation::Horizontal)?;
@@ -4358,6 +4447,21 @@ fn list_rows_are_vertically_centered(ui: &Ui) -> Result<()> {
 
 /// `detail` を付けた行だけが 2 行になり、そのぶん高くなる。
 ///
+/// ビューの中にある `NSTextField` を、入れ子をたどって前から順に集める。
+///
+/// 行の中身は naui の `Stack` と `Label` で組むので、文字はセルの直下には
+/// 無い。ここで見たいのは文字の数と並びだけなので、階層は問わない。
+fn text_fields(view: &NSView) -> Vec<Retained<NSTextField>> {
+    let mut found = Vec::new();
+    for subview in view.subviews().iter() {
+        match subview.downcast::<NSTextField>() {
+            Ok(field) => found.push(field),
+            Err(other) => found.extend(text_fields(&other)),
+        }
+    }
+    found
+}
+
 /// 行の高さを決めるのは AppKit (`usesAutomaticRowHeights`) なので、
 /// naui 側は制約を張るだけ。高さの数値ではなく「1 行より高い」ことを見る。
 fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
@@ -4380,8 +4484,10 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
     let detailed = table
         .viewAtColumn_row_makeIfNecessary(0, 1, true)
         .expect("2 行目のビュー");
-    assert_eq!(plain.subviews().len(), 1, "detail が無い行は文字 1 本");
-    assert_eq!(detailed.subviews().len(), 2, "detail がある行は文字 2 本");
+    let plain_fields = text_fields(&plain);
+    let detailed_fields = text_fields(&detailed);
+    assert_eq!(plain_fields.len(), 1, "detail が無い行は文字 1 本");
+    assert_eq!(detailed_fields.len(), 2, "detail がある行は文字 2 本");
 
     let plain_height = table.rectOfRow(0).size.height;
     let detailed_height = table.rectOfRow(1).size.height;
@@ -4390,11 +4496,13 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
         "2 行になった行のほうが高いこと: {detailed_height} <= {plain_height}"
     );
 
-    // 補助の文字は本文の下に来る。NSTableCellView は反転していないので、
-    // 画面の下ほど y が小さい (反転していれば逆になる)。
-    let title = detailed.subviews().objectAtIndex(0).frame();
-    let sub = detailed.subviews().objectAtIndex(1).frame();
-    let title_is_above = if detailed.isFlipped() {
+    // 補助の文字は本文の下に来る。y の向きは入れ物しだいなので、
+    // 文字が乗っている親の向きで見分ける。
+    let title = detailed_fields[0].frame();
+    let sub = detailed_fields[1].frame();
+    // SAFETY: 行のビューは組み立て済みで、親をたどるだけ。
+    let holder = unsafe { detailed_fields[0].superview() }.expect("文字は入れ物に乗っている");
+    let title_is_above = if holder.isFlipped() {
         title.origin.y + title.size.height <= sub.origin.y
     } else {
         sub.origin.y + sub.size.height <= title.origin.y
@@ -5257,7 +5365,11 @@ fn tree_rows_are_native_views(ui: &Ui) -> Result<()> {
         .expect("行は NSTableCellView であること");
     let field = unsafe { cell.textField() }.expect("行に文字が入っていること");
     assert_eq!(field.stringValue().to_string(), "プロジェクト");
-    assert_eq!(cell.subviews().len(), 2, "補助の文字が 2 行目に出ること");
+    assert_eq!(
+        text_fields(cell.as_ref()).len(),
+        2,
+        "補助の文字が 2 行目に出ること"
+    );
 
     // 子の行も同じように作られる。
     let child = outline

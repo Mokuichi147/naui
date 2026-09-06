@@ -6,19 +6,21 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Align, Orientation, Padding};
+use naui_core::{Align, Orientation, Padding, TextColor, TextStyle};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::NSObjectProtocol;
 use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBorderType, NSButton, NSButtonType, NSColor,
-    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSLayoutAttribute, NSLayoutConstraint,
+    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontTextStyle, NSFontTextStyleBody,
+    NSFontTextStyleCaption1, NSFontTextStyleHeadline, NSFontTextStyleLargeTitle,
+    NSFontTextStyleTitle1, NSFontTextStyleTitle3, NSLayoutAttribute, NSLayoutConstraint,
     NSLineBreakMode, NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField,
     NSSecureTextField, NSSlider, NSStackView, NSStackViewDistribution, NSTextField, NSTextView,
     NSUserInterfaceLayoutOrientation, NSView, NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
-    NSArray, NSEdgeInsets, NSNotificationCenter, NSPoint, NSRect, NSSize, NSString,
+    NSArray, NSDictionary, NSEdgeInsets, NSNotificationCenter, NSPoint, NSRect, NSSize, NSString,
 };
 
 use crate::trampoline::{
@@ -167,6 +169,58 @@ impl Label {
             );
         }
         *self.0.width_target.borrow_mut() = Some(target);
+    }
+
+    /// 文字の大きさと太さの段階。既定は [`TextStyle::Body`]。
+    ///
+    /// AppKit が段階ごとに用意しているフォントをそのまま使う
+    /// (`preferredFontForTextStyle:`)。級数を決めるのは OS なので、
+    /// システム側の文字サイズの設定にそのまま追従する。
+    pub fn set_style(&self, style: TextStyle) {
+        self.0.native.setFont(Some(&preferred_font(style)));
+        // フォントが変われば行の高さも変わる。折り返し中なら、いまの幅で
+        // 測り直させる (frame が動かないときは通知が来ないため)。
+        self.0.sync_preferred_width();
+    }
+
+    /// 文字色の役割。既定は [`TextColor::Default`]。
+    ///
+    /// AppKit の意味づけされた色 (`labelColor` など) をそのまま使うので、
+    /// ライト / ダークの切り替えとアクセントカラーの設定に追従する。
+    pub fn set_color(&self, color: TextColor) {
+        self.0.native.setTextColor(Some(&label_color(color)));
+    }
+}
+
+/// 段階に対応する AppKit のフォント。
+///
+/// `NSFontTextStyle` は macOS 11 で入ったもので、それぞれの級数と太さは
+/// システムが決める。
+fn preferred_font(style: TextStyle) -> Retained<NSFont> {
+    // SAFETY: 定数はどれも AppKit が持つ `NSFontTextStyle`。options は
+    // 型どおりの空辞書 (指定できるのは表示サイズの上限だけで、既定に任せる)。
+    unsafe {
+        let name: &NSFontTextStyle = match style {
+            TextStyle::LargeTitle => NSFontTextStyleLargeTitle,
+            TextStyle::Title => NSFontTextStyleTitle1,
+            TextStyle::Subtitle => NSFontTextStyleTitle3,
+            TextStyle::Heading => NSFontTextStyleHeadline,
+            TextStyle::Body => NSFontTextStyleBody,
+            TextStyle::Caption => NSFontTextStyleCaption1,
+        };
+        NSFont::preferredFontForTextStyle_options(name, &NSDictionary::new())
+    }
+}
+
+/// 役割に対応する AppKit の色。
+fn label_color(color: TextColor) -> Retained<NSColor> {
+    match color {
+        TextColor::Default => NSColor::labelColor(),
+        TextColor::Secondary => NSColor::secondaryLabelColor(),
+        TextColor::Accent => NSColor::controlAccentColor(),
+        TextColor::Success => NSColor::systemGreenColor(),
+        TextColor::Warning => NSColor::systemOrangeColor(),
+        TextColor::Danger => NSColor::systemRedColor(),
     }
 }
 
