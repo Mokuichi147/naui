@@ -70,6 +70,12 @@ const ITEM_HEIGHT: f64 = CAPTION_HEIGHT;
 /// 印と区切りがそろう。
 const ICON_HEIGHT: f64 = 16.0;
 
+/// hover・押されたときの下敷き (`AppBarButtonInnerBorder`) をボタンの内側へ
+/// 寄せる幅。既定の上下の余白は 48 の帯に合わせて 6 あり、そのままだと
+/// 32 の帯では縦 20・横 28 の平たい形になる。左右と同じ 2 にして
+/// 28 角へそろえる。
+const INNER_BORDER_INSET: f64 = 2.0;
+
 struct ToolbarInner {
     native: CommandBar,
     items: RefCell<Vec<ToolbarItem>>,
@@ -322,14 +328,22 @@ impl Toolbar {
 ///   区切りの線はこの中で上下に 8 空けた残り ([`ICON_HEIGHT`] と同じ) になる。
 /// - `AppBarButtonContentViewboxCollapsedMargin`: ラベルを隠したときに
 ///   印の箱 ([`ICON_HEIGHT`]) の周りへ空ける分。上下を同じにして中央へ置く。
+/// - `AppBarButtonInnerBorderMargin` / `...CompactMargin`: hover・押された
+///   ときに色が付く下敷きの余白 ([`INNER_BORDER_INSET`])。既定は 48 の帯に
+///   合わせた上下 6 で、32 では平たくなる。ラベルを隠している naui では
+///   `...CompactMargin` の状態にはならないが、どちらへ転んでも同じ形に
+///   なるよう両方入れておく。
 fn apply_compact_resources(element: &FrameworkElement) -> Result<()> {
     let pad = (ITEM_HEIGHT - ICON_HEIGHT) / 2.0;
+    let inset = INNER_BORDER_INSET;
     let dictionary = XamlReader::Load(&HSTRING::from(format!(
         r##"<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
             <x:Double x:Key="AppBarThemeCompactHeight">{ITEM_HEIGHT}</x:Double>
             <x:Double x:Key="AppBarThemeMinHeight">{ITEM_HEIGHT}</x:Double>
             <Thickness x:Key="AppBarButtonContentViewboxCollapsedMargin">0,{pad},0,{pad}</Thickness>
+            <Thickness x:Key="AppBarButtonInnerBorderMargin">{inset},{inset},{inset},{inset}</Thickness>
+            <Thickness x:Key="AppBarButtonInnerBorderCompactMargin">{inset},{inset},{inset},{inset}</Thickness>
         </ResourceDictionary>"##
     )))
     .map_err(|e| to_error("ツールバーの寸法リソースの生成", e))?
