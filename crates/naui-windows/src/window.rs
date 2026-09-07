@@ -40,6 +40,17 @@ enum Backdrop {
 /// タイトルバーの XAML の `Padding` と同じ値にしてある。
 const CAPTION_RESERVE: f64 = 140.0;
 
+/// タイトルバーの高さ。最小化・最大化・閉じるのボタンの高さがこれで、
+/// `SetExtendsContentIntoTitleBar(true)` でもボタンだけはこの高さのまま
+/// システムが描く (48 にする `AppWindowTitleBar::PreferredHeightOption` は
+/// [`naui_winui3`] の投影に無い)。タイトル文字とツールバーもこの中へ収めて、
+/// 3 つが同じ高さで並ぶようにする。
+pub(crate) const CAPTION_HEIGHT: f64 = 32.0;
+
+/// タイトル文字の大きさ。WinUI 3 のキャプション文字 (`CaptionTextBlockStyle`)
+/// と同じ 12。本文と同じ 14 だと [`CAPTION_HEIGHT`] の帯に対して大きい。
+const TITLE_FONT_SIZE: f64 = 12.0;
+
 struct WindowInner {
     native: XamlWindow,
     backdrop: Backdrop,
@@ -543,27 +554,32 @@ fn effective_theme(root: &UIElement, requested: Theme) -> Theme {
 }
 
 fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent> {
-    let root = XamlReader::Load(&HSTRING::from(
+    // 帯の高さは `CAPTION_HEIGHT`。システムが描く最小化・最大化・閉じるの
+    // ボタンがこの高さなので、タイトル文字もツールバーもその中へ収まる。
+    // 帯と中身の間は空けない。空きの取り方は中身の側 (ウィジェットの
+    // パディング) に任せる。
+    let root = XamlReader::Load(&HSTRING::from(format!(
         r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             Background="Transparent">
             <Grid.RowDefinitions>
-                <RowDefinition Height="48"/>
+                <RowDefinition Height="{CAPTION_HEIGHT}"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
-            <Grid Grid.Row="0" Height="48" Background="Transparent"
-                Padding="16,0,140,0">
+            <Grid Grid.Row="0" Background="Transparent"
+                Padding="16,0,{CAPTION_RESERVE},0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*" MinWidth="48"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" FontSize="14" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="0" FontSize="{TITLE_FONT_SIZE}"
+                    VerticalAlignment="Center"/>
                 <Grid Grid.Column="1" Background="Transparent" Margin="12,0,0,0"/>
                 <Grid Grid.Column="2" Background="Transparent"/>
             </Grid>
             <Grid Grid.Row="1" Background="Transparent"/>
         </Grid>"##,
-    ))
+    )))
     .map_err(|e| to_error("テーマ背景要素の生成", e))?
     .cast::<Grid>()
     .map_err(|e| to_error("テーマ背景要素への変換", e))?;

@@ -26,8 +26,11 @@
 //! コントロールの上でもウィンドウのドラッグが始まってしまうので、
 //! ドラッグ領域は矩形で 2 つに分けている ([`crate::window`])。
 //!
-//! 印 1 つの幅は 40。`AppBarButton` の既定は 68 だが、それは印の下へ
-//! ラベルを出す配置のための幅で、ラベルを隠しているここでは余る。
+//! 印 1 つの幅は高さと同じ 32。`AppBarButton` の既定は 68 だが、それは印の
+//! 下へラベルを出す配置のための幅で、ラベルを隠しているここでは余る。高さも
+//! 同じ理由で、ラベルの場所を空けた 48 ではなくタイトルバーと同じ
+//! [`CAPTION_HEIGHT`](crate::window) へ詰める
+//! ([`apply_compact_resources`])。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -39,18 +42,33 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     AppBarButton, AppBarSeparator, CommandBar, CommandBarDefaultLabelPosition, FontIcon,
     ToolTipService,
 };
-use naui_winui3::Microsoft::UI::Xaml::{HorizontalAlignment, RoutedEventHandler, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, HorizontalAlignment, ResourceDictionary, RoutedEventHandler, UIElement,
+    VerticalAlignment,
+};
 use windows::Foundation::PropertyValue;
 use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
+use crate::window::CAPTION_HEIGHT;
 
 use crate::navigation::SelectHandler;
 
 /// 印 1 つあたりの幅。`AppBarButton` の既定は 68 だが、それは印の下へ
 /// ラベルを出す配置のための幅で、ラベルを隠している naui では余る。
-const ITEM_WIDTH: f64 = 40.0;
+/// [`ITEM_HEIGHT`] と同じにして、印の周りの空きを上下左右でそろえる。
+const ITEM_WIDTH: f64 = ITEM_HEIGHT;
+
+/// 印 1 つあたりの高さ。タイトルバーの高さ (最小化・最大化・閉じるの
+/// ボタンと同じ [`CAPTION_HEIGHT`]) へ収める。
+const ITEM_HEIGHT: f64 = CAPTION_HEIGHT;
+
+/// 印の箱の高さ。`AppBarButton` のテンプレートは印を 16 の `Viewbox` へ
+/// 入れる。区切りの線もテーマの余白 8 を上下に取った同じ高さになるので、
+/// 印と区切りがそろう。
+const ICON_HEIGHT: f64 = 16.0;
 
 struct ToolbarInner {
     native: CommandBar,
@@ -84,6 +102,21 @@ impl Toolbar {
         native
             .SetHorizontalAlignment(HorizontalAlignment::Left)
             .map_err(|e| to_error("ツールバーの配置設定", e))?;
+        // 帯もタイトルバーの高さへ収める。テーマの `MinHeight` が 48 なので、
+        // `Height` だけでは縮まない。
+        native
+            .SetMinHeight(ITEM_HEIGHT)
+            .map_err(|e| to_error("ツールバーの最小高さの設定", e))?;
+        native
+            .SetHeight(ITEM_HEIGHT)
+            .map_err(|e| to_error("ツールバーの高さの設定", e))?;
+        // 項目の並びと項目そのものの寸法はテンプレートが持っている。帯へ
+        // 入れたリソースは中の要素からも引かれるので、ここで一度だけ渡す。
+        apply_compact_resources(
+            &native
+                .cast::<FrameworkElement>()
+                .map_err(|e| to_error("ツールバーの変換", e))?,
+        )?;
         Ok(Self(Rc::new(ToolbarInner {
             native,
             items: RefCell::new(Vec::new()),
@@ -117,6 +150,9 @@ impl Toolbar {
             if item.is_separator() {
                 let separator =
                     AppBarSeparator::new().map_err(|e| to_error("ツールバーの区切り生成", e))?;
+                let _ = separator.SetMinHeight(ITEM_HEIGHT);
+                let _ = separator.SetHeight(ITEM_HEIGHT);
+                let _ = separator.SetVerticalAlignment(VerticalAlignment::Top);
                 commands
                     .Append(&separator)
                     .map_err(|e| to_error("ツールバーへの区切り追加", e))?;
@@ -143,6 +179,15 @@ impl Toolbar {
         button
             .SetWidth(ITEM_WIDTH)
             .map_err(|e| to_error("ツールバーのボタン幅の設定", e))?;
+        button
+            .SetMinHeight(ITEM_HEIGHT)
+            .map_err(|e| to_error("ツールバーのボタン最小高さの設定", e))?;
+        button
+            .SetHeight(ITEM_HEIGHT)
+            .map_err(|e| to_error("ツールバーのボタン高さの設定", e))?;
+        button
+            .SetVerticalAlignment(VerticalAlignment::Top)
+            .map_err(|e| to_error("ツールバーのボタン配置の設定", e))?;
         let glyph = FontIcon::new().map_err(|e| to_error("ツールバーの印の生成", e))?;
         glyph
             .SetGlyph(&HSTRING::from(icon.fluent_glyph().to_string()))
@@ -262,4 +307,35 @@ impl Toolbar {
             .cast::<UIElement>()
             .expect("CommandBar は UIElement である")
     }
+}
+
+/// テーマリソースを差し替えて、帯と項目をタイトルバーの高さへ収める。
+///
+/// `CommandBar`・`AppBarButton`・`AppBarSeparator` のテンプレートは、印の
+/// 下へラベルを出す 48 の帯を前提に組まれている。要素へ `Height` を渡しても
+/// テンプレートの中までは縮まないので、その寸法を決めているテーマリソースを
+/// 同じ名前で上書きする。テーマリソースは読み込みのときに親をたどって
+/// 引かれるので、帯へ一度入れておけば中の項目にも効き、ほかの `CommandBar`
+/// には影響しない。
+///
+/// - `AppBarThemeCompactHeight` / `AppBarThemeMinHeight`: 項目の並びの高さ。
+///   区切りの線はこの中で上下に 8 空けた残り ([`ICON_HEIGHT`] と同じ) になる。
+/// - `AppBarButtonContentViewboxCollapsedMargin`: ラベルを隠したときに
+///   印の箱 ([`ICON_HEIGHT`]) の周りへ空ける分。上下を同じにして中央へ置く。
+fn apply_compact_resources(element: &FrameworkElement) -> Result<()> {
+    let pad = (ITEM_HEIGHT - ICON_HEIGHT) / 2.0;
+    let dictionary = XamlReader::Load(&HSTRING::from(format!(
+        r##"<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <x:Double x:Key="AppBarThemeCompactHeight">{ITEM_HEIGHT}</x:Double>
+            <x:Double x:Key="AppBarThemeMinHeight">{ITEM_HEIGHT}</x:Double>
+            <Thickness x:Key="AppBarButtonContentViewboxCollapsedMargin">0,{pad},0,{pad}</Thickness>
+        </ResourceDictionary>"##
+    )))
+    .map_err(|e| to_error("ツールバーの寸法リソースの生成", e))?
+    .cast::<ResourceDictionary>()
+    .map_err(|e| to_error("ツールバーの寸法リソースへの変換", e))?;
+    element
+        .SetResources(&dictionary)
+        .map_err(|e| to_error("ツールバーの寸法リソースの登録", e))
 }
