@@ -5552,6 +5552,26 @@ fn tree_rows_are_native_views(ui: &Ui) -> Result<()> {
         .expect("行は NSTableCellView であること");
     let field = unsafe { child.textField() }.expect("行に文字が入っていること");
     assert_eq!(field.stringValue().to_string(), "main.rs");
+
+    // 高さは AppKit の自動 (`usesAutomaticRowHeights`) ではなく naui が答える。
+    // 自動にすると、閉じた枝を開き直したときの復元が親の開閉のデリゲートの
+    // 中で走り、AppKit に「再入した」と警告される。
+    assert!(
+        !outline.usesAutomaticRowHeights(),
+        "行の高さを AppKit に測らせていないこと"
+    );
+    let two_lines = outline.rectOfRow(0).size.height;
+    let one_line = outline.rectOfRow(1).size.height;
+    assert!(one_line > 0.0, "1 行の項目に高さがあること");
+    assert!(
+        two_lines > one_line,
+        "補助のある項目のほうが高いこと: {two_lines} / {one_line}"
+    );
+    assert!(
+        two_lines + 0.5 >= cell.fittingSize().height,
+        "2 行の中身が収まる高さであること: {two_lines} / {}",
+        cell.fittingSize().height
+    );
     Ok(())
 }
 
