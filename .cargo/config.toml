@@ -14,3 +14,10 @@
 # 表示するので、任意のブラウザで開けば同じテストが走る。
 [target.wasm32-unknown-unknown]
 runner = "wasm-bindgen-test-runner"
+
+# `gallery` は Web 版のために `cdylib` も生成する。MinGW の DLL リンカーは
+# 既定で Rust の内部シンボルまで自動 export するため、全ウィジェットを
+# 含む Gallery では PE の export ordinal (16 bit) を超えてしまう。
+# ネイティブ DLL として公開する API は無いので、自動 export を止める。
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-Wl,--exclude-all-symbols"]
