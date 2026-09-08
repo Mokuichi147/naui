@@ -510,8 +510,11 @@ impl List {
         // (`reveal_active` がスクロール位置を求めるのに使う)。
         style(&list, "position", "relative");
         // 枠と地の色は、ブラウザが入力欄に使うシステム色に任せる。
+        // 線は `GrayText` にする。Safari (WebKit) の `ButtonBorder` は明暗
+        // どちらの配色でも白に解決されるため、明るい配色では枠が消え、
+        // 暗い配色では白く出すぎる (`SplitView` の仕切りや `Table` と同じ判断)。
         style(&list, "border", "1px solid");
-        style(&list, "border-color", "ButtonBorder");
+        style(&list, "border-color", "GrayText");
         style(&list, "background-color", "Field");
         style(&list, "color", "FieldText");
 
