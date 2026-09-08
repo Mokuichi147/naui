@@ -1425,10 +1425,16 @@ fn table_header_stays_above_the_rows() {
             "auto",
             "行の中のコントロールより上に置くこと"
         );
+        // 地色は**不透明**でなければならない。行がこの下を流れるため。
+        // Safari (WebKit) の暗い配色では入力欄の地色 `Field` が半透明なので、
+        // 不透明な下地を敷いた上へ重ねている。
         let background = computed(&header, "background-color");
-        assert!(
-            !background.contains("rgba(0, 0, 0, 0)"),
-            "見出しに地色があること: {background}"
+        let opaque = !background.contains("rgba(") || background.ends_with(", 1)");
+        assert!(opaque, "見出しの地色が透けないこと: {background}");
+        assert_ne!(
+            computed(&header, "background-image"),
+            "none",
+            "表の地色を下地の上へ重ねること"
         );
 
         // スクロールしても見出しは動かない (`top: 0` に留まる)。

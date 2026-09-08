@@ -374,8 +374,11 @@ impl Table {
         style(&root, "overflow", "auto");
         style(&root, "min-height", "0");
         // 枠と地の色は、ブラウザが入力欄に使うシステム色に任せる。
+        // 線は `GrayText` にする。Safari (WebKit) の `ButtonBorder` は明暗
+        // どちらの配色でも白に解決されるため、明るい配色では線が消え、
+        // 暗い配色では強く出すぎる (`SplitView` の仕切りと同じ判断)。
         style(&root, "border", "1px solid");
-        style(&root, "border-color", "ButtonBorder");
+        style(&root, "border-color", "GrayText");
         style(&root, "background-color", "Field");
         style(&root, "color", "FieldText");
         // 行の `offsetTop` がこの要素を基準になるようにする
@@ -694,9 +697,15 @@ impl Table {
             style(&cell, "position", "sticky");
             style(&cell, "top", "0");
             style(&cell, "z-index", "1");
-            style(&cell, "background-color", "Field");
+            // **見出しの地は透けてはいけない。** 行がこの下を流れるため。
+            // Safari (WebKit) の暗い配色では、入力欄の地色 `Field` が
+            // 半透明 (白 24.7%) に解決されるので、そのまま塗ると行が透ける。
+            // 不透明な `Canvas` (ページの地色) を敷いた上へ同じ `Field` を
+            // 重ねて、表の地と同じ見た目のまま不透明にする。
+            style(&cell, "background-color", "Canvas");
+            style(&cell, "background-image", "linear-gradient(Field, Field)");
             style(&cell, "border-bottom", "1px solid");
-            style(&cell, "border-color", "ButtonBorder");
+            style(&cell, "border-color", "GrayText");
 
             // 並べ替えられる列は、見出しそのものを `<button>` にする。
             // キーボードでも押せて、読み上げにも「押せる」と伝わる。
@@ -793,7 +802,7 @@ impl Table {
                 // 下側へ引くのは、見出しの枠と重なって 2 本にならないため
                 // (枠を重ねない `separate` にしているため)。
                 style(&cell, "border-bottom", "1px solid");
-                style(&cell, "border-color", "ButtonBorder");
+                style(&cell, "border-color", "GrayText");
                 match cells.content(column_index) {
                     Some(CellContent::Widget(content)) => {
                         let _ = cell.append_child(&content.native_element());
