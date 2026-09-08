@@ -1562,7 +1562,7 @@ fn table_widget_cells_separate_the_row_and_its_controls() {
                     move || pressed.set(pressed.get() + 1)
                 });
                 let cells = TableCells::new()
-                    .text(format!("都市 {index}"))
+                    .cell(&ui.label(&format!("都市 {index}"))?)
                     .cell(&button)
                     .selectable(index != 1);
                 cells.on_activate({
@@ -1575,6 +1575,19 @@ fn table_widget_cells_separate_the_row_and_its_controls() {
 
         let rows = table_rows(&table);
         assert_eq!(rows.len(), 3);
+        assert!(!rows[1].has_attribute("aria-disabled"));
+        let label_color = |index: usize| {
+            computed(
+                &rows[index].query_selector("span").unwrap().unwrap(),
+                "color",
+            )
+        };
+        let normal_color = label_color(0);
+        assert_eq!(
+            label_color(1),
+            normal_color,
+            "選択不可でも通常の文字色を使うこと"
+        );
         assert_eq!(
             rows[0].query_selector("button").expect("検索").is_some(),
             true,
@@ -1604,6 +1617,11 @@ fn table_widget_cells_separate_the_row_and_its_controls() {
         rows[1].click();
         assert_eq!(*activated.borrow(), vec![0, 1]);
         assert_eq!(table.selection(), vec![0], "選べない行は選ばれないこと");
+        assert_eq!(
+            label_color(1),
+            normal_color,
+            "選択の再描画でも文字色を保つこと"
+        );
         drop(mounted);
         Ok(())
     });

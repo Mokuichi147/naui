@@ -826,9 +826,8 @@ impl Table {
                 style(&element, "color", "GrayText");
             } else {
                 let selectable = cells.is_selectable();
-                if !selectable {
-                    let _ = element.set_attribute("aria-disabled", "true");
-                }
+                // 選択不可でも activation とセル内の操作は有効なので、
+                // 無効を表す aria-disabled や薄い文字色は付けない。
                 listeners.push(Listener::attach_event(element.as_ref(), "click", {
                     let weak = Rc::downgrade(&self.0);
                     let element = element.clone();
