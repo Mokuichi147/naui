@@ -30,7 +30,8 @@ use naui_core::{
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button, ColumnDefinition, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
-    RowDefinition, ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler, TextBlock,
+    RowDefinition, ScrollBarVisibility, ScrollMode, ScrollViewer, SelectionChangedEventHandler,
+    StackPanel, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, TappedEventHandler};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
@@ -79,8 +80,28 @@ const SURFACE_XAML: &str = r##"<Grid
         BorderThickness="0,0,0,1"
         BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"/>
     <ListView Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="0"
-        HorizontalContentAlignment="Stretch"/>
+        HorizontalContentAlignment="Stretch">
+        <ListView.ItemContainerTransitions>
+            <TransitionCollection/>
+        </ListView.ItemContainerTransitions>
+        <ListView.ItemsPanel>
+            <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+        </ListView.ItemsPanel>
+    </ListView>
 </Grid>"##;
+
+// 仮想化は RowWindow が担当する。ItemsStackPanel の仮想化・アンカー補正を
+// 重ねると、窓の移動に伴う詰め物の高さ変更で表示位置が動いてしまう。
+const PLAIN_LIST_XAML: &str = r#"<ListView
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    HorizontalContentAlignment="Stretch" Padding="0">
+    <ListView.ItemContainerTransitions>
+        <TransitionCollection/>
+    </ListView.ItemContainerTransitions>
+    <ListView.ItemsPanel>
+        <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+    </ListView.ItemsPanel>
+</ListView>"#;
 
 /// 並べ替えできる見出しのボタン。地色も枠も出さず、見出しの文字のまま
 /// 押せるようにする (WinUI に列見出し用のコントロールが無いため)。
@@ -229,7 +250,9 @@ fn plain_surface() -> Result<Surface> {
         Right: 12.0,
         Bottom: 6.0,
     });
-    let list_view = ListView::new().map_err(|e| to_error("ListView の生成", e))?;
+    let list_view = XamlReader::Load(&HSTRING::from(PLAIN_LIST_XAML))
+        .and_then(|element| element.cast::<ListView>())
+        .map_err(|e| to_error("ListView の生成", e))?;
 
     let children = root
         .Children()
@@ -274,6 +297,8 @@ fn text_alignment(align: Align) -> TextAlignment {
 ///
 /// 見出しにも行にも同じものを配ることで、幅がそろう。
 fn apply_columns(grid: &XamlGrid, columns: &[TableColumn]) -> Result<()> {
+    grid.SetColumnSpacing(12.0)
+        .map_err(|e| to_error("列間隔の設定", e))?;
     let definitions = grid
         .ColumnDefinitions()
         .map_err(|e| to_error("列定義の取得", e))?;
@@ -318,6 +343,9 @@ fn append_cell(
     let framework = block
         .cast::<FrameworkElement>()
         .map_err(|e| to_error("セルの要素化", e))?;
+    framework
+        .SetVerticalAlignment(VerticalAlignment::Center)
+        .map_err(|e| to_error("セルの縦揃え", e))?;
     XamlGrid::SetColumn(&framework, index as i32).map_err(|e| to_error("セルの列の指定", e))?;
     let element = block
         .cast::<UIElement>()
@@ -593,12 +621,12 @@ struct TableInner {
     row_height: Cell<f64>,
     /// アプリが決めた行の高さ。無ければ組み立てた行から測る。
     fixed_row_height: Cell<Option<f64>>,
-    /// 窓の外にある行の分を埋める枠 (`ListView` の Header / Footer)。
+    /// 窓の外にある行の分を埋める枠 (行リストの前後に置く)。
     top_spacer: XamlGrid,
     bottom_spacer: XamlGrid,
     /// 表示位置を読むタイマー。行を絞っている間だけ動かす。
     scroll_timer: RefCell<Option<DispatcherQueueTimer>>,
-    /// テンプレートの中の `ScrollViewer`。`Loaded` のあとで入る。
+    /// 行リストと前後の詰め物をまとめたスクロール領域。
     scroll: RefCell<Option<ScrollViewer>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
@@ -641,11 +669,45 @@ impl Table {
 
         let top_spacer = XamlGrid::new().map_err(|e| to_error("Table の詰め物の生成", e))?;
         let bottom_spacer = XamlGrid::new().map_err(|e| to_error("Table の詰め物の生成", e))?;
-        // 行が多い表では、画面に出ている分だけを `Items` へ入れ、残りの行が
-        // 占めるはずの高さを Header / Footer が持つ。スクロールバーの長さも
-        // 位置も、全行を入れたときと変わらない。
-        let _ = surface.list_view.SetHeader(&top_spacer);
-        let _ = surface.list_view.SetFooter(&bottom_spacer);
+        // ListView 内の Header/Footer で巨大な空白を動かすと、行が存在しても
+        // 内部の表示領域のクリップが追従せず描画されないことがある。
+        // スクロールと詰め物は外側が持ち、ListView は実体化した行だけを測る。
+        ScrollViewer::SetVerticalScrollBarVisibility2(
+            &surface.list_view,
+            ScrollBarVisibility::Disabled,
+        )
+        .map_err(|e| to_error("行リストのスクロールバー無効化", e))?;
+        ScrollViewer::SetVerticalScrollMode2(&surface.list_view, ScrollMode::Disabled)
+            .map_err(|e| to_error("行リストのスクロール無効化", e))?;
+        let body = StackPanel::new().map_err(|e| to_error("Table の本体の生成", e))?;
+        let root_children = surface
+            .root
+            .Children()
+            .map_err(|e| to_error("枠の取得", e))?;
+        root_children
+            .RemoveAt(1)
+            .map_err(|e| to_error("行リストの移動", e))?;
+        let body_children = body.Children().map_err(|e| to_error("本体の取得", e))?;
+        for element in [
+            top_spacer.cast::<UIElement>(),
+            surface.list_view.cast::<UIElement>(),
+            bottom_spacer.cast::<UIElement>(),
+        ] {
+            body_children
+                .Append(&element.map_err(|e| to_error("本体の要素化", e))?)
+                .map_err(|e| to_error("本体への追加", e))?;
+        }
+        let scroll = ScrollViewer::new().map_err(|e| to_error("表のスクロール領域の生成", e))?;
+        scroll
+            .SetHorizontalScrollBarVisibility(ScrollBarVisibility::Disabled)
+            .map_err(|e| to_error("横スクロールの無効化", e))?;
+        scroll
+            .SetContent(&body)
+            .map_err(|e| to_error("表のスクロール内容の設定", e))?;
+        XamlGrid::SetRow(&scroll, 1).map_err(|e| to_error("表の本体の配置", e))?;
+        root_children
+            .Append(&scroll)
+            .map_err(|e| to_error("表の本体の追加", e))?;
 
         let this = Self(Rc::new(TableInner {
             native: surface.root,
@@ -664,7 +726,7 @@ impl Table {
             top_spacer,
             bottom_spacer,
             scroll_timer: RefCell::new(None),
-            scroll: RefCell::new(None),
+            scroll: RefCell::new(Some(scroll)),
             mode: Cell::new(SelectionMode::Single),
             handler: SelectionHandler::new(),
             sort: Cell::new(None),
@@ -700,6 +762,7 @@ impl Table {
             .SelectionChanged(&handler)
             .map_err(|e| to_error("ListView の購読", e))?;
         this.install_wheel_target()?;
+        this.install_layout_updates()?;
 
         // ホイールの扱いはリストと同じ。ポインターがこの表の上にある間だけ、
         // ウィンドウ全体のホイール補助が表の ScrollViewer を選ぶ。
@@ -768,7 +831,7 @@ impl Table {
     /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
     ///
     /// 行数が多いときは、`ListViewItem` を作るのも画面に出ている分だけに
-    /// なる (残りは Header / Footer の詰め物が高さを持つので、
+    /// なる (残りは前後の詰め物が高さを持つので、
     /// スクロールバーの長さは全行分のまま)。
     pub fn set_rows(&self, rows: &[TableRow]) {
         self.0.rows.set_rows(rows);
@@ -1038,10 +1101,9 @@ impl Table {
         }
     }
 
-    /// テンプレートの中の `ScrollViewer` を、ホイール補助の行き先として登録する。
+    /// 表の `ScrollViewer` を、ホイール補助の行き先として登録する。
     ///
-    /// `ListView` の中身は `Loaded` まで組み上がらないので、そこまで待つ。
-    /// 見つからなければ登録しないだけで、コントロール自身のスクロールは動く。
+    /// `Loaded` で表示サイズが決まってから、表示範囲も更新する。
     fn install_wheel_target(&self) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let loaded = RoutedEventHandler::new(move |_, _| {
@@ -1064,10 +1126,9 @@ impl Table {
         if self.0.wheel.borrow().is_some() {
             return;
         }
-        let Some(scroll) = crate::layout::scroll_viewer_within(&self.0.list_view) else {
+        let Some(scroll) = self.0.scroll.borrow().clone() else {
             return;
         };
-        *self.0.scroll.borrow_mut() = Some(scroll.clone());
         let target = crate::layout::register_list_scroll(scroll, self.0.hovered.clone());
         *self.0.wheel.borrow_mut() = Some(target);
         // 大きさが決まったので、組み立てる範囲を引き直す。
@@ -1075,6 +1136,25 @@ impl Table {
     }
 
     // ------------------------------------------------------- 行を絞る窓
+
+    /// 行の差し替えを描画に間に合わせる。タイマーだけではスクロール後に
+    /// 空の詰め物が見える時間が生じるため、レイアウトの完了時にも更新する。
+    fn install_layout_updates(&self) -> Result<()> {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = windows::Foundation::EventHandler::<IInspectable>::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    Table(inner).update_window();
+                }
+            });
+            Ok(())
+        });
+        self.0
+            .list_view
+            .LayoutUpdated(&handler)
+            .map_err(|e| to_error("Table のレイアウト更新の購読", e))?;
+        Ok(())
+    }
 
     /// 行を作り直して、窓を先頭へ戻す。選択も外れる。
     fn reset_rows(&self) {
@@ -1102,13 +1182,18 @@ impl Table {
     }
 
     fn build_window_once(&self) -> Result<()> {
+        // コレクションを空にせず置換し、スクロールのリセットを避ける。
+        // 行数が減って位置が補正された場合だけ、レイアウト後に戻す。
+        let scroll = self.0.scroll.borrow().clone();
+        let offset = scroll
+            .as_ref()
+            .and_then(|scroll| scroll.VerticalOffset().ok());
         let children = self
             .0
             .list_view
             .Items()
             .map_err(|e| to_error("行の取得", e))?;
-        self.without_notifying(|_| children.Clear())
-            .map_err(|e| to_error("行の消去", e))?;
+        let previous_count = children.Size().map_err(|e| to_error("行数の取得", e))?;
         self.0.row_items.borrow_mut().clear();
         self.0.realized.borrow_mut().clear();
 
@@ -1156,10 +1241,21 @@ impl Table {
             let element = item
                 .cast::<IInspectable>()
                 .map_err(|e| to_error("行の要素化", e))?;
-            self.without_notifying(|_| children.Append(&element))
-                .map_err(|e| to_error("行の追加", e))?;
+            let slot = items.len() as u32;
+            self.without_notifying(|_| {
+                if slot < previous_count {
+                    children.SetAt(slot, &element)
+                } else {
+                    children.Append(&element)
+                }
+            })
+            .map_err(|e| to_error("行の置換", e))?;
             items.push(item);
             realized.push(cells);
+        }
+        for _ in items.len() as u32..previous_count {
+            self.without_notifying(|_| children.RemoveAtEnd())
+                .map_err(|e| to_error("余った行の消去", e))?;
         }
         *self.0.row_items.borrow_mut() = items;
         *self.0.realized.borrow_mut() = realized;
@@ -1171,6 +1267,21 @@ impl Table {
         // 覚えている選択を、組み立て直した行へ写す。
         let picked = self.selection();
         self.write_selection(&picked);
+        if let (Some(scroll), Some(offset)) = (scroll, offset) {
+            scroll
+                .UpdateLayout()
+                .map_err(|e| to_error("テーブルのレイアウト更新", e))?;
+            // 毎回 ChangeView を呼ぶと、ホイールの進行中の移動まで止めてしまう。
+            if (scroll.VerticalOffset().unwrap_or(offset) - offset).abs() < 0.5 {
+                return Ok(());
+            }
+            let offset = PropertyValue::CreateDouble(offset)
+                .and_then(|value| value.cast::<windows::Foundation::IReference<f64>>())
+                .map_err(|e| to_error("スクロール位置の生成", e))?;
+            scroll
+                .ChangeViewWithOptionalAnimation(None, &offset, None, true)
+                .map_err(|e| to_error("スクロール位置の復元", e))?;
+        }
         Ok(())
     }
 
@@ -1232,6 +1343,13 @@ impl Table {
     /// 1 行スクロールするたびに作り直すのは重いので、余分に作ってある分
     /// ([`ROW_WINDOW_OVERSCAN`]) の半分までは、そのまま使う。
     fn update_window(&self) {
+        // UpdateLayout 中の再入では、差し替え途中の位置を読まない。
+        if self.0.rebuilding.get() {
+            return;
+        }
+        // 行の追加直後は ActualHeight が 0 のことがある。窓が同じでも
+        // レイアウト後に再計測し、全行分のスクロール領域を確保する。
+        self.measure_row_height();
         let current = self.0.window.get();
         let needed = self.compute_window(ROW_WINDOW_OVERSCAN / 2);
         let next = self.compute_window(ROW_WINDOW_OVERSCAN);
