@@ -1378,6 +1378,73 @@ fn table_sorting_works_while_windowed() {
     });
 }
 
+/// 見出しはスクロールしても残り、行の中身が透けない。
+///
+/// 枠を重ねる (`border-collapse: collapse`) と、枠を描くのがセルではなく表に
+/// なるので、留めた見出しに枠が付いてこない。ブラウザによっては地色ごと
+/// 描かれず、行が透けて見える。行の中のボタンや入力欄は自分で重なりの層を
+/// 作るので、見出しにも層 (`z-index`) が要る。
+#[wasm_bindgen_test]
+fn table_header_stays_above_the_rows() {
+    with_ui(|ui| {
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["番号", "操作"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(120.0)),
+        );
+        let mounted = Mounted::new(&table);
+        // セルにウィジェットを置いた行で確かめる (透けたのはこの形)。
+        table.set_row_builder(50, {
+            let ui = ui.clone();
+            move |index| {
+                let open = ui.button("開く")?;
+                Ok(TableCells::new().text(index.to_string()).cell(&open))
+            }
+        });
+
+        let native: Element = mounted
+            .0
+            .query_selector("table")
+            .expect("table の検索")
+            .expect("table");
+        assert_ne!(
+            computed(&native, "border-collapse"),
+            "collapse",
+            "枠を重ねると、留めた見出しに枠が付いてこない"
+        );
+        let header: Element = mounted
+            .0
+            .query_selector("thead th")
+            .expect("見出しの検索")
+            .expect("見出し");
+        assert_eq!(computed(&header, "position"), "sticky");
+        assert_ne!(
+            computed(&header, "z-index"),
+            "auto",
+            "行の中のコントロールより上に置くこと"
+        );
+        let background = computed(&header, "background-color");
+        assert!(
+            !background.contains("rgba(0, 0, 0, 0)"),
+            "見出しに地色があること: {background}"
+        );
+
+        // スクロールしても見出しは動かない (`top: 0` に留まる)。
+        let root: HtmlElement = mounted.0.clone().unchecked_into();
+        let before = header.get_bounding_client_rect().y() - root.get_bounding_client_rect().y();
+        root.set_scroll_top(60);
+        let after = header.get_bounding_client_rect().y() - root.get_bounding_client_rect().y();
+        assert!(
+            (before - after).abs() < 1.0,
+            "見出しが枠の上端に留まること: {before} → {after}"
+        );
+
+        Ok(())
+    });
+}
+
 /// 組み立てる行 (`TableCells`) でも、行数が多いときは見えている分だけを作り、
 /// 見出しの並べ替えもそのまま働く。
 #[wasm_bindgen_test]

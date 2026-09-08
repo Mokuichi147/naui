@@ -387,7 +387,13 @@ impl Table {
         // キーボードで入れるようにする。中の行は `aria-activedescendant` で指す。
         let _ = table.set_attribute("tabindex", "0");
         style(&table, "width", "100%");
-        style(&table, "border-collapse", "collapse");
+        // **枠は重ねない (`collapse` にしない)。** 重ねた枠はセルではなく表が
+        // 描くので、見出しを `position: sticky` で留めても枠が付いてこず、
+        // ブラウザによっては見出しの地色ごと描かれない (行が透けて見える)。
+        // 区切り線はセルの枠として引き、間隔は 0 にして重ねたときと同じ細さに
+        // する。
+        style(&table, "border-collapse", "separate");
+        style(&table, "border-spacing", "0");
         // 列の幅を `<col>` の指定どおりにする。指定の無い列は余りを分け合う。
         style(&table, "table-layout", "fixed");
 
@@ -682,9 +688,12 @@ impl Table {
             let _ = cell.set_attribute("scope", "col");
             style(&cell, "text-align", text_align(column.align));
             style(&cell, "padding", "4px 8px");
-            // スクロールしても見出しが残るようにする。
+            // スクロールしても見出しが残るようにする。行の中のボタンや入力欄は
+            // 自分で重なりの層を作るので、見出しにも層を与えて上に置く
+            // (`z-index` が無いと、それらが見出しの上へ描かれてしまう)。
             style(&cell, "position", "sticky");
             style(&cell, "top", "0");
+            style(&cell, "z-index", "1");
             style(&cell, "background-color", "Field");
             style(&cell, "border-bottom", "1px solid");
             style(&cell, "border-color", "ButtonBorder");
@@ -781,7 +790,9 @@ impl Table {
                 style(&cell, "text-align", text_align(column.align));
                 style(&cell, "padding", "4px 8px");
                 // 行の区切りだけを引く。縦線まで引くと表としては強すぎる。
-                style(&cell, "border-top", "1px solid");
+                // 下側へ引くのは、見出しの枠と重なって 2 本にならないため
+                // (枠を重ねない `separate` にしているため)。
+                style(&cell, "border-bottom", "1px solid");
                 style(&cell, "border-color", "ButtonBorder");
                 match cells.content(column_index) {
                     Some(CellContent::Widget(content)) => {

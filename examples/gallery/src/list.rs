@@ -431,6 +431,29 @@ fn build_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
     Ok(())
 }
 
+/// かかった時間を測って「 (12ms)」の形にする。
+///
+/// **Web では測らない。** `std::time::Instant` は wasm32-unknown-unknown に
+/// 実装が無く、呼ぶとその場で panic する。
+#[cfg(not(target_arch = "wasm32"))]
+fn took(started: std::time::Instant) -> String {
+    format!(" ({:?})", started.elapsed())
+}
+
+/// 時間を測り始める。Web では何も持たない。
+#[cfg(not(target_arch = "wasm32"))]
+fn start_timer() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_timer() {}
+
+#[cfg(target_arch = "wasm32")]
+fn took(_started: ()) -> String {
+    String::new()
+}
+
 /// いま持っている行を、選ばれている作り方で表へ渡す。
 ///
 /// 文字だけの行は `set_rows`、ウィジェットの行は `set_row_builder` で渡す。
@@ -590,7 +613,7 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
         let widget_rows = widget_rows.clone();
         let status = status.clone();
         move |column, order| {
-            let started = std::time::Instant::now();
+            let started = start_timer();
             // **借用はここで返す。** 組み立てる行では、このあとの出し直しで
             // 同じデータを読むので、borrow_mut を持ったままだと落ちる。
             let count = {
@@ -609,14 +632,14 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
             };
             show_rows(&ui, &table, &rows, widget_rows.get());
             status.set_text(&format!(
-                "{} 列目で並べ替え ({}) / {count} 行 ({:?})",
+                "{} 列目で並べ替え ({}) / {count} 行{}",
                 column + 1,
                 if order == SortOrder::Ascending {
                     "昇順"
                 } else {
                     "降順"
                 },
-                started.elapsed()
+                took(started)
             ));
         }
     });
@@ -632,16 +655,16 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
         let status = status.clone();
         move |index| {
             widget_rows.set(index == 1);
-            let started = std::time::Instant::now();
+            let started = start_timer();
             show_rows(&ui, &table, &rows, widget_rows.get());
             status.set_text(&format!(
-                "{} の行にしました ({:?})",
+                "{} の行にしました{}",
                 if widget_rows.get() {
                     "ウィジェット"
                 } else {
                     "文字"
                 },
-                started.elapsed()
+                took(started)
             ));
         }
     });
@@ -658,7 +681,7 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
         let rows = rows.clone();
         let widget_rows = widget_rows.clone();
         move || {
-            let started = std::time::Instant::now();
+            let started = start_timer();
             *rows.borrow_mut() = (0..ROWS)
                 .map(|index| {
                     TableRow::new([
@@ -674,7 +697,7 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
                 })
                 .collect();
             show_rows(&ui, &table, &rows, widget_rows.get());
-            status.set_text(&format!("{ROWS} 行を入れました ({:?})", started.elapsed()));
+            status.set_text(&format!("{ROWS} 行を入れました{}", took(started)));
         }
     });
 
