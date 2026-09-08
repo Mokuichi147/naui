@@ -346,6 +346,18 @@ fn append_cell(
     framework
         .SetVerticalAlignment(VerticalAlignment::Center)
         .map_err(|e| to_error("セルの縦揃え", e))?;
+    // 行ボックスの中央より字面がわずかに下に見えるため、文字だけを
+    // 1 DIP 上へ光学補正する。上下の合計は 0 で、行の高さは変えない。
+    if !secondary {
+        framework
+            .SetMargin(Thickness {
+                Left: 0.0,
+                Top: -1.0,
+                Right: 0.0,
+                Bottom: 1.0,
+            })
+            .map_err(|e| to_error("セルの文字位置の補正", e))?;
+    }
     XamlGrid::SetColumn(&framework, index as i32).map_err(|e| to_error("セルの列の指定", e))?;
     let element = block
         .cast::<UIElement>()
