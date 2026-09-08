@@ -156,9 +156,18 @@ impl Toolbar {
             if item.is_separator() {
                 let separator =
                     AppBarSeparator::new().map_err(|e| to_error("ツールバーの区切り生成", e))?;
-                let _ = separator.SetMinHeight(ITEM_HEIGHT);
-                let _ = separator.SetHeight(ITEM_HEIGHT);
                 let _ = separator.SetVerticalAlignment(VerticalAlignment::Top);
+                apply_separator_metrics(&separator);
+                let metrics = RoutedEventHandler::new(|sender, _| {
+                    if let Some(separator) = sender
+                        .as_ref()
+                        .and_then(|s| s.cast::<AppBarSeparator>().ok())
+                    {
+                        apply_separator_metrics(&separator);
+                    }
+                    Ok(())
+                });
+                let _ = separator.Loaded(&metrics);
                 commands
                     .Append(&separator)
                     .map_err(|e| to_error("ツールバーへの区切り追加", e))?;
@@ -183,17 +192,21 @@ impl Toolbar {
     fn build_button(&self, icon: ToolbarIcon, label: &str, index: usize) -> Result<AppBarButton> {
         let button = AppBarButton::new().map_err(|e| to_error("ツールバーのボタン生成", e))?;
         button
-            .SetWidth(ITEM_WIDTH)
-            .map_err(|e| to_error("ツールバーのボタン幅の設定", e))?;
-        button
-            .SetMinHeight(ITEM_HEIGHT)
-            .map_err(|e| to_error("ツールバーのボタン最小高さの設定", e))?;
-        button
-            .SetHeight(ITEM_HEIGHT)
-            .map_err(|e| to_error("ツールバーのボタン高さの設定", e))?;
-        button
             .SetVerticalAlignment(VerticalAlignment::Top)
             .map_err(|e| to_error("ツールバーのボタン配置の設定", e))?;
+        apply_button_metrics(&button);
+        // 置かれ方が変わると読み込み直されるので、そのたびに渡し直す。
+        // ハンドラは `sender` から引くだけにして、ボタンを掴まない
+        // (掴むと購読との間で循環する)。
+        let metrics = RoutedEventHandler::new(|sender, _| {
+            if let Some(button) = sender.as_ref().and_then(|s| s.cast::<AppBarButton>().ok()) {
+                apply_button_metrics(&button);
+            }
+            Ok(())
+        });
+        button
+            .Loaded(&metrics)
+            .map_err(|e| to_error("ツールバーのボタンの読み込み購読", e))?;
         let glyph = FontIcon::new().map_err(|e| to_error("ツールバーの印の生成", e))?;
         glyph
             .SetGlyph(&HSTRING::from(icon.fluent_glyph().to_string()))
@@ -352,4 +365,37 @@ fn apply_compact_resources(element: &FrameworkElement) -> Result<()> {
     element
         .SetResources(&dictionary)
         .map_err(|e| to_error("ツールバーの寸法リソースの登録", e))
+}
+
+/// 帯に並んでいるあいだだけ効かせたい寸法。
+///
+/// 幅が足りないと `CommandBar` は項目をオーバーフローメニューへ移す。
+/// メニューの行は印の右にラベルを出す横長の形で、幅はメニュー側のスタイルが
+/// `Auto` にする。ここで 32 角の寸法をローカル値として残すと、ローカル値が
+/// スタイルより強いためラベルが 32 幅へ潰れる。移っているあいだは寸法を
+/// 手放し、帯へ戻ったら渡し直す。
+///
+/// 投影に `ClearValue` が無いので、`Width` と `Height` は XAML の `Auto` と
+/// 同じ `f64::NAN`、`MinHeight` は 0 を渡して既定へ譲る。
+fn apply_button_metrics(button: &AppBarButton) {
+    if button.IsInOverflow().unwrap_or(false) {
+        let _ = button.SetWidth(f64::NAN);
+        let _ = button.SetHeight(f64::NAN);
+        let _ = button.SetMinHeight(0.0);
+        return;
+    }
+    let _ = button.SetWidth(ITEM_WIDTH);
+    let _ = button.SetHeight(ITEM_HEIGHT);
+    let _ = button.SetMinHeight(ITEM_HEIGHT);
+}
+
+/// 区切りも同じ。メニューでは行いっぱいの線になるので高さを手放す。
+fn apply_separator_metrics(separator: &AppBarSeparator) {
+    if separator.IsInOverflow().unwrap_or(false) {
+        let _ = separator.SetHeight(f64::NAN);
+        let _ = separator.SetMinHeight(0.0);
+        return;
+    }
+    let _ = separator.SetHeight(ITEM_HEIGHT);
+    let _ = separator.SetMinHeight(ITEM_HEIGHT);
 }
