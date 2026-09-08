@@ -23,23 +23,27 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use naui_core::{Align, Result, SelectionMode, SortOrder, TableColumn, TableRow};
+use naui_core::{
+    keeps_hidden_selection, keeps_row_window, row_window, Align, Result, RowWindow, SelectionMode,
+    SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
+};
+use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button, ColumnDefinition, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
     RowDefinition, ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler, TextBlock,
 };
-use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, TappedEventHandler};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::ResourceDictionary;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, GridLength, GridUnitType, RoutedEventHandler, Style, TextAlignment,
-    TextWrapping, Thickness, UIElement,
+    FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
+    TextAlignment, TextWrapping, Thickness, UIElement, VerticalAlignment,
 };
-use windows::Foundation::PropertyValue;
+use windows::Foundation::{PropertyValue, TimeSpan};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
-use crate::list::{text_block, SelectionHandler};
+use crate::list::{text_block, ActivationHandler, SelectionHandler};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
@@ -324,6 +328,247 @@ fn append_cell(
     Ok(())
 }
 
+/// 表示位置を読み直す間隔 (ミリ秒)。
+///
+/// `ScrollViewer.ViewChanged` はこの投影に入っていないので、スクロール中は
+/// 短い間隔で表示位置を読む。読むだけなので、位置が変わらなければ何もしない。
+const SCROLL_POLL_MILLIS: i64 = 50;
+
+/// `TimeSpan` の 1 ミリ秒 (100 ナノ秒きざみ)。
+const TICKS_PER_MILLI: i64 = 10_000;
+
+/// セル 1 つ分の中身。
+enum CellContent {
+    Text(String),
+    Widget(Box<dyn Widget>),
+}
+
+impl Clone for CellContent {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Text(text) => Self::Text(text.clone()),
+            Self::Widget(content) => Self::Widget(content.boxed_clone()),
+        }
+    }
+}
+
+/// 表へ載せる 1 行の中身。
+///
+/// [`TableRow`] は文字列だけで済む表向けの簡便 API であり、セルにボタンや
+/// チェックボックス、アイコンを置きたいときは `Grid` / `Stack` で中身を
+/// 作ってこの型へ並べる。行は [`Table::set_row_builder`] から返す。
+///
+/// ```no_run
+/// # use naui_windows::{Table, TableCells};
+/// # fn fill(table: &Table, cities: Vec<String>) {
+/// table.set_row_builder(cities.len(), move |index| {
+///     Ok(TableCells::new().text(&cities[index]).text("13,960,000"))
+/// });
+/// # }
+/// ```
+pub struct TableCells {
+    cells: Vec<CellContent>,
+    selectable: bool,
+    /// 文字だけの行で `enabled` が `false` のとき。行ごと操作できなくする。
+    dimmed: bool,
+    activation: ActivationHandler,
+}
+
+impl Clone for TableCells {
+    fn clone(&self) -> Self {
+        Self {
+            cells: self.cells.clone(),
+            selectable: self.selectable,
+            dimmed: self.dimmed,
+            activation: self.activation.clone(),
+        }
+    }
+}
+
+impl Default for TableCells {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TableCells {
+    /// セルが 1 つも無い行を作る。
+    pub fn new() -> Self {
+        Self {
+            cells: Vec::new(),
+            selectable: true,
+            dimmed: false,
+            activation: ActivationHandler::new(),
+        }
+    }
+
+    /// 文字のセルを 1 つ足す。揃えは列の指定に従う。
+    pub fn text(mut self, text: impl Into<String>) -> Self {
+        self.cells.push(CellContent::Text(text.into()));
+        self
+    }
+
+    /// ウィジェットのセルを 1 つ足す。
+    pub fn cell(mut self, content: &dyn Widget) -> Self {
+        self.cells.push(CellContent::Widget(content.boxed_clone()));
+        self
+    }
+
+    /// 行全体を選択できるようにするかどうか (既定はできる)。
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+
+    /// 列数。
+    pub fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    /// 行のセルや余白がクリックされたときに呼ぶ処理。
+    ///
+    /// ボタンや入力欄を直接押した場合は、そのコントロールがクリックを
+    /// 受け取るので呼ばれない。
+    pub fn on_activate(&self, f: impl FnMut() + 'static) {
+        self.activation.set(f);
+    }
+
+    /// 文字だけの行から作る。`enabled` はそのまま「選べるか」になる。
+    fn from_row(row: &TableRow) -> Self {
+        Self {
+            cells: row.cells.iter().cloned().map(CellContent::Text).collect(),
+            selectable: row.enabled,
+            dimmed: !row.enabled,
+            activation: ActivationHandler::new(),
+        }
+    }
+
+    fn content(&self, index: usize) -> Option<&CellContent> {
+        self.cells.get(index)
+    }
+}
+
+/// 行を組み立てるクロージャ。呼び出しの間だけ取り出す。
+/// 行を組み立てるクロージャの置き場。
+type RowBuildCell = Rc<RefCell<Option<Box<dyn FnMut(usize) -> Result<TableCells>>>>>;
+
+/// 行を組み立てるクロージャ。
+///
+/// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
+/// 二重借用にならない。
+#[derive(Clone, Default)]
+struct RowBuilder(RowBuildCell);
+
+impl RowBuilder {
+    fn set(&self, f: impl FnMut(usize) -> Result<TableCells> + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn clear(&self) {
+        *self.0.borrow_mut() = None;
+    }
+
+    fn is_set(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+
+    fn build(&self, index: usize) -> Option<Result<TableCells>> {
+        let mut f = self.0.borrow_mut().take()?;
+        let cells = f(index);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+        Some(cells)
+    }
+}
+
+/// 行の出どころ。文字だけの行 ([`Table::set_rows`]) と、
+/// 見えたときに組み立てる行 ([`Table::set_row_builder`]) の 2 通り。
+#[derive(Default)]
+struct RowsState {
+    rows: RefCell<Vec<TableRow>>,
+    builder: RowBuilder,
+    count: Cell<usize>,
+}
+
+impl RowsState {
+    fn len(&self) -> usize {
+        self.count.get()
+    }
+
+    fn set_rows(&self, rows: &[TableRow]) {
+        self.builder.clear();
+        *self.rows.borrow_mut() = rows.to_vec();
+        self.count.set(rows.len());
+    }
+
+    fn set_builder(&self, count: usize, f: impl FnMut(usize) -> Result<TableCells> + 'static) {
+        self.rows.borrow_mut().clear();
+        self.builder.set(f);
+        self.count.set(count);
+    }
+
+    /// その行の中身。無ければ `None`。
+    fn cells(&self, index: usize) -> Option<TableCells> {
+        if index >= self.count.get() {
+            return None;
+        }
+        if !self.builder.is_set() {
+            return self.rows.borrow().get(index).map(TableCells::from_row);
+        }
+        // 組み立てに失敗した行は、列だけそろえた空の行にする。
+        Some(self.builder.build(index)?.unwrap_or_default())
+    }
+
+    /// 文字だけの行で、その行が選べるか。組み立てる行では `None`。
+    fn text_row_selectable(&self, index: usize) -> Option<bool> {
+        match self.builder.is_set() {
+            true => None,
+            false => Some(self.rows.borrow().get(index).is_some_and(|row| row.enabled)),
+        }
+    }
+}
+
+/// ウィジェットのセルを、列の位置へ置く。
+fn append_widget_cell(
+    grid: &XamlGrid,
+    index: usize,
+    content: &dyn Widget,
+    align: Align,
+) -> Result<()> {
+    let element = content.native_element();
+    let framework = element
+        .cast::<FrameworkElement>()
+        .map_err(|e| to_error("セルの要素化", e))?;
+    // 列の中のどこへ置くかは列の指定に従う。`Fill` は列いっぱいに広げる。
+    let _ = framework.SetHorizontalAlignment(match align {
+        Align::Center => HorizontalAlignment::Center,
+        Align::End => HorizontalAlignment::Right,
+        Align::Fill => HorizontalAlignment::Stretch,
+        Align::Start => HorizontalAlignment::Left,
+    });
+    let _ = framework.SetVerticalAlignment(VerticalAlignment::Center);
+    XamlGrid::SetColumn(&framework, index as i32).map_err(|e| to_error("セルの列の指定", e))?;
+    grid.Children()
+        .and_then(|children| children.Append(&element))
+        .map_err(|e| to_error("セルの追加", e))?;
+    Ok(())
+}
+
+/// 窓の外にある行の分を、詰め物の高さとして持たせる。
+fn set_spacer_height(spacer: &XamlGrid, height: f64) {
+    let _ = spacer.SetHeight(height.max(0.0));
+}
+
 struct TableInner {
     native: XamlGrid,
     header: XamlGrid,
@@ -331,10 +576,30 @@ struct TableInner {
     /// ホイール補助への登録。テンプレートの `ScrollViewer` が現れるまで
     /// 決まらないので、`Loaded` のあとで入る。
     wheel: RefCell<Option<Rc<ListScrollTarget>>>,
-    /// 行そのもの。選択の読み書きはここを通す。
+    /// 組み立ててある行そのもの。並びは `window.start` から。
     row_items: RefCell<Vec<ListViewItem>>,
+    /// 組み立ててある行の中身。`row_items` と同じ並び。
+    realized: RefCell<Vec<TableCells>>,
     columns: RefCell<Vec<TableColumn>>,
-    rows: RefCell<Vec<TableRow>>,
+    rows: Rc<RowsState>,
+    /// いま組み立ててある行の範囲。行数が多いと画面の前後だけになる。
+    window: Cell<RowWindow>,
+    /// 行を組み立てている最中か。入れ子の作り直しを防ぐ。
+    rebuilding: Cell<bool>,
+    /// 選ばれている行 (昇順)。窓の外の行も入るので、`ListView` ではなく
+    /// ここが正。
+    selected: RefCell<Vec<usize>>,
+    /// 1 行の高さ (論理ピクセル)。測った値か [`Table::set_row_height`] の指定。
+    row_height: Cell<f64>,
+    /// アプリが決めた行の高さ。無ければ組み立てた行から測る。
+    fixed_row_height: Cell<Option<f64>>,
+    /// 窓の外にある行の分を埋める枠 (`ListView` の Header / Footer)。
+    top_spacer: XamlGrid,
+    bottom_spacer: XamlGrid,
+    /// 表示位置を読むタイマー。行を絞っている間だけ動かす。
+    scroll_timer: RefCell<Option<DispatcherQueueTimer>>,
+    /// テンプレートの中の `ScrollViewer`。`Loaded` のあとで入る。
+    scroll: RefCell<Option<ScrollViewer>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     /// いまの並べ替え (列と向き)。
@@ -374,14 +639,32 @@ impl Table {
 
         let hovered = Arc::new(UiThreadCell::new(0));
 
+        let top_spacer = XamlGrid::new().map_err(|e| to_error("Table の詰め物の生成", e))?;
+        let bottom_spacer = XamlGrid::new().map_err(|e| to_error("Table の詰め物の生成", e))?;
+        // 行が多い表では、画面に出ている分だけを `Items` へ入れ、残りの行が
+        // 占めるはずの高さを Header / Footer が持つ。スクロールバーの長さも
+        // 位置も、全行を入れたときと変わらない。
+        let _ = surface.list_view.SetHeader(&top_spacer);
+        let _ = surface.list_view.SetFooter(&bottom_spacer);
+
         let this = Self(Rc::new(TableInner {
             native: surface.root,
             header: surface.header,
             list_view: surface.list_view,
             wheel: RefCell::new(None),
             row_items: RefCell::new(Vec::new()),
+            realized: RefCell::new(Vec::new()),
             columns: RefCell::new(Vec::new()),
-            rows: RefCell::new(Vec::new()),
+            rows: Rc::new(RowsState::default()),
+            window: Cell::new(RowWindow::default()),
+            rebuilding: Cell::new(false),
+            selected: RefCell::new(Vec::new()),
+            row_height: Cell::new(0.0),
+            fixed_row_height: Cell::new(None),
+            top_spacer,
+            bottom_spacer,
+            scroll_timer: RefCell::new(None),
+            scroll: RefCell::new(None),
             mode: Cell::new(SelectionMode::Single),
             handler: SelectionHandler::new(),
             sort: Cell::new(None),
@@ -404,7 +687,8 @@ impl Table {
                 if let Some(inner) = weak.upgrade() {
                     let table = Table(inner);
                     if !table.0.silent.get() {
-                        let indices = table.selection();
+                        let indices = table.read_native_selection();
+                        *table.0.selected.borrow_mut() = indices.clone();
                         table.0.handler.emit(&indices);
                     }
                 }
@@ -472,8 +756,7 @@ impl Table {
         *self.0.columns.borrow_mut() = columns.to_vec();
         let _ = self.rebuild_header();
         // セルの数と揃えが変わるので、行も組み直す。
-        let rows = self.0.rows.borrow().clone();
-        let _ = self.rebuild_rows(&rows);
+        self.build_window();
         self.write_selection(&picked);
     }
 
@@ -483,14 +766,71 @@ impl Table {
     }
 
     /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
+    ///
+    /// 行数が多いときは、`ListViewItem` を作るのも画面に出ている分だけに
+    /// なる (残りは Header / Footer の詰め物が高さを持つので、
+    /// スクロールバーの長さは全行分のまま)。
     pub fn set_rows(&self, rows: &[TableRow]) {
-        *self.0.rows.borrow_mut() = rows.to_vec();
-        let _ = self.rebuild_rows(rows);
+        self.0.rows.set_rows(rows);
+        self.reset_rows();
+    }
+
+    /// セルにウィジェットを置ける行を、**見えたときに組み立てる**形で渡す。
+    ///
+    /// `count` は行数で、`build` は 0 から `count - 1` のインデックスを受けて
+    /// その行の中身 ([`TableCells`]) を返す。呼ばれるのは画面に出ている行
+    /// (と、その少し前後) だけなので、行数が数十万になっても開くのは速い。
+    ///
+    /// ```no_run
+    /// # use naui_windows::{Table, TableCells};
+    /// # fn fill(table: &Table, cities: Vec<String>) {
+    /// table.set_row_builder(cities.len(), move |index| {
+    ///     Ok(TableCells::new().text(&cities[index]))
+    /// });
+    /// # }
+    /// ```
+    pub fn set_row_builder(
+        &self,
+        count: usize,
+        build: impl FnMut(usize) -> Result<TableCells> + 'static,
+    ) {
+        self.0.rows.set_builder(count, build);
+        self.reset_rows();
+    }
+
+    /// 見えている行を組み立て直す。行数と選択はそのまま。
+    pub fn refresh(&self) {
+        let picked = self.selection();
+        self.build_window();
+        self.write_selection(&picked);
+        // 中身が変わって行の高さが動いていれば、窓を引き直す。
+        if self.measure_row_height() {
+            self.update_window();
+        }
+    }
+
+    /// 行の高さを論理ピクセルで決める。0 以下を渡すと、組み立てた行から測る。
+    ///
+    /// どの行も同じ高さになる。画面の外にある行の分は「行数 × この高さ」で
+    /// 詰めるので、行の高さがそろっていないと、スクロールバーの長さが
+    /// 実際と少しずれる。
+    pub fn set_row_height(&self, height: f64) {
+        self.0
+            .fixed_row_height
+            .set((height > 0.0).then_some(height));
+        // 指定を外したときは、組み立て直した行から測り直す。
+        self.0.row_height.set(height.max(0.0));
+        self.refresh();
+    }
+
+    /// 行の高さ (論理ピクセル)。まだ 1 行も組み立てていなければ 0。
+    pub fn row_height(&self) -> f64 {
+        self.0.row_height.get()
     }
 
     /// 行数。
     pub fn len(&self) -> usize {
-        self.0.rows.borrow().len()
+        self.0.rows.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -521,15 +861,11 @@ impl Table {
     }
 
     /// 選ばれている行 (昇順)。単一選択なら 0 件か 1 件。
+    ///
+    /// 窓の外にある行も入る。`ListView` が知っているのは組み立ててある行
+    /// だけなので、覚えているほうを返す。
     pub fn selection(&self) -> Vec<usize> {
-        self.0
-            .row_items
-            .borrow()
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| row.IsSelected().unwrap_or(false))
-            .map(|(index, _)| index)
-            .collect()
+        self.0.selected.borrow().clone()
     }
 
     /// 通知せずに 1 行だけを選ぶ。
@@ -731,12 +1067,41 @@ impl Table {
         let Some(scroll) = crate::layout::scroll_viewer_within(&self.0.list_view) else {
             return;
         };
+        *self.0.scroll.borrow_mut() = Some(scroll.clone());
         let target = crate::layout::register_list_scroll(scroll, self.0.hovered.clone());
         *self.0.wheel.borrow_mut() = Some(target);
+        // 大きさが決まったので、組み立てる範囲を引き直す。
+        self.update_window();
     }
 
-    /// 行を、いまの列と行から作り直す。
-    fn rebuild_rows(&self, rows: &[TableRow]) -> Result<()> {
+    // ------------------------------------------------------- 行を絞る窓
+
+    /// 行を作り直して、窓を先頭へ戻す。選択も外れる。
+    fn reset_rows(&self) {
+        self.0.selected.borrow_mut().clear();
+        self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
+        self.build_window();
+        if self.measure_row_height() {
+            self.update_window();
+        }
+        self.watch_scrolling();
+    }
+
+    /// いまの窓の分だけ、`ListView` の行を作り直す。
+    fn build_window(&self) {
+        // 組み立ての途中でアプリのコードが動くので、そこから呼ばれても
+        // 二重に作り直さない。
+        if self.0.rebuilding.replace(true) {
+            return;
+        }
+        let result = self.build_window_once();
+        self.0.rebuilding.set(false);
+        if let Err(error) = result {
+            eprintln!("naui-windows: テーブルの行の組み立てに失敗: {error}");
+        }
+    }
+
+    fn build_window_once(&self) -> Result<()> {
         let children = self
             .0
             .list_view
@@ -745,22 +1110,48 @@ impl Table {
         self.without_notifying(|_| children.Clear())
             .map_err(|e| to_error("行の消去", e))?;
         self.0.row_items.borrow_mut().clear();
+        self.0.realized.borrow_mut().clear();
 
-        let columns = self.0.columns.borrow();
-        let mut items = Vec::with_capacity(rows.len());
-        for row in rows {
+        let window = self.0.window.get();
+        // 組み立ての中でアプリのコードが動くので、列の借用は持ち越さない。
+        let columns = self.0.columns.borrow().clone();
+        let mut items = Vec::with_capacity(window.len());
+        let mut realized = Vec::with_capacity(window.len());
+        for index in window.indices() {
+            let Some(cells) = self.0.rows.cells(index) else {
+                continue;
+            };
             let item = ListViewItem::new().map_err(|e| to_error("ListViewItem の生成", e))?;
             // 見出しと列をそろえるため、余白と高さは行ごとに書く。
             let _ = item.SetPadding(ROW_PADDING);
-            let _ = item.SetMinHeight(ROW_MIN_HEIGHT);
+            match self.0.fixed_row_height.get() {
+                Some(height) => {
+                    let _ = item.SetHeight(height);
+                    let _ = item.SetMinHeight(height);
+                }
+                None => {
+                    let _ = item.SetMinHeight(ROW_MIN_HEIGHT);
+                }
+            }
             let content = XamlGrid::new().map_err(|e| to_error("行の Grid の生成", e))?;
             apply_columns(&content, &columns)?;
-            for (index, column) in columns.iter().enumerate() {
-                append_cell(&content, index, row.cell(index), column.align, false)?;
+            for (column_index, column) in columns.iter().enumerate() {
+                match cells.content(column_index) {
+                    Some(CellContent::Widget(widget)) => {
+                        append_widget_cell(&content, column_index, &**widget, column.align)?;
+                    }
+                    // 列より短い行は、足りない分が空のセルになる。
+                    Some(CellContent::Text(text)) => {
+                        append_cell(&content, column_index, text, column.align, false)?;
+                    }
+                    None => append_cell(&content, column_index, "", column.align, false)?,
+                }
             }
             item.SetContent(&content)
                 .map_err(|e| to_error("行への内容設定", e))?;
-            let _ = item.SetIsEnabled(row.enabled);
+            // 文字だけの行で `enabled` が `false` のときは、行ごと操作できない。
+            let _ = item.SetIsEnabled(!cells.dimmed);
+            self.attach_row_click(&item, index)?;
 
             let element = item
                 .cast::<IInspectable>()
@@ -768,30 +1159,241 @@ impl Table {
             self.without_notifying(|_| children.Append(&element))
                 .map_err(|e| to_error("行の追加", e))?;
             items.push(item);
+            realized.push(cells);
         }
         *self.0.row_items.borrow_mut() = items;
-        self.write_selection(&[]);
+        *self.0.realized.borrow_mut() = realized;
+
+        let height = self.0.row_height.get();
+        set_spacer_height(&self.0.top_spacer, window.leading(height));
+        set_spacer_height(&self.0.bottom_spacer, window.trailing(height));
+
+        // 覚えている選択を、組み立て直した行へ写す。
+        let picked = self.selection();
+        self.write_selection(&picked);
         Ok(())
+    }
+
+    /// 行が押されたときに activation を出す購読を付ける。
+    ///
+    /// セルのボタンや入力欄はそれ自身がクリックを受け取り、`Tapped` は
+    /// そこで止まるので、行の activation とは二重にならない。
+    fn attach_row_click(&self, item: &ListViewItem, index: usize) -> Result<()> {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = TappedEventHandler::new(move |_sender, _args| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    Table(inner).activate_row(index);
+                }
+            });
+            Ok(())
+        });
+        item.Tapped(&handler).map_err(|e| to_error("行の購読", e))?;
+        Ok(())
+    }
+
+    /// その行の activation を出す。
+    fn activate_row(&self, index: usize) {
+        let window = self.0.window.get();
+        let activation = self
+            .0
+            .realized
+            .borrow()
+            .get(index.wrapping_sub(window.start))
+            .map(|cells| cells.activation.clone());
+        if let Some(activation) = activation {
+            activation.emit();
+        }
+    }
+
+    /// いまのスクロール位置から、組み立てておく行の範囲を求める。
+    fn compute_window(&self, overscan: usize) -> RowWindow {
+        let scroll = self.0.scroll.borrow().clone();
+        let (offset, viewport) = match scroll {
+            Some(scroll) => (
+                scroll.VerticalOffset().unwrap_or(0.0),
+                scroll.ViewportHeight().unwrap_or(0.0),
+            ),
+            None => (0.0, 0.0),
+        };
+        // 詰め物が窓の外の行と同じ高さを持つので、表示位置は
+        // 「全行を入れたとき」と同じ座標になる。
+        row_window(
+            self.len(),
+            offset,
+            viewport,
+            self.0.row_height.get(),
+            overscan,
+        )
+    }
+
+    /// スクロールに合わせて、組み立てる範囲を動かす。
+    ///
+    /// 1 行スクロールするたびに作り直すのは重いので、余分に作ってある分
+    /// ([`ROW_WINDOW_OVERSCAN`]) の半分までは、そのまま使う。
+    fn update_window(&self) {
+        let current = self.0.window.get();
+        let needed = self.compute_window(ROW_WINDOW_OVERSCAN / 2);
+        let next = self.compute_window(ROW_WINDOW_OVERSCAN);
+        if next == current || keeps_row_window(current, needed, next) {
+            return;
+        }
+        self.0.window.set(next);
+        self.build_window();
+        self.measure_row_height();
+    }
+
+    /// 組み立てた行から 1 行の高さを測る。変わったら `true`。
+    fn measure_row_height(&self) -> bool {
+        if self.0.fixed_row_height.get().is_some() {
+            return false;
+        }
+        let measured = self
+            .0
+            .row_items
+            .borrow()
+            .first()
+            .and_then(|item| item.ActualHeight().ok())
+            .unwrap_or(0.0);
+        if measured <= 0.0 || (self.0.row_height.get() - measured).abs() < 0.5 {
+            return false;
+        }
+        self.0.row_height.set(measured);
+        let window = self.0.window.get();
+        set_spacer_height(&self.0.top_spacer, window.leading(measured));
+        set_spacer_height(&self.0.bottom_spacer, window.trailing(measured));
+        true
+    }
+
+    /// 行を絞っている間だけ、表示位置を読み直すタイマーを動かす。
+    ///
+    /// `ScrollViewer.ViewChanged` はこの投影に入っていないので、
+    /// スクロールに気づく手立てがこれしかない。行が少ない表では止めておく。
+    fn watch_scrolling(&self) {
+        let needed = self.len() > ROW_WINDOW_THRESHOLD;
+        if !needed {
+            if let Some(timer) = self.0.scroll_timer.borrow_mut().take() {
+                let _ = timer.Stop();
+            }
+            return;
+        }
+        if self.0.scroll_timer.borrow().is_some() {
+            return;
+        }
+        let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
+            return;
+        };
+        let Ok(timer) = queue.CreateTimer() else {
+            return;
+        };
+        let interval = TimeSpan {
+            Duration: SCROLL_POLL_MILLIS * TICKS_PER_MILLI,
+        };
+        if timer.SetInterval(interval).is_err() || timer.SetIsRepeating(true).is_err() {
+            return;
+        }
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = windows::Foundation::TypedEventHandler::<
+            DispatcherQueueTimer,
+            windows_core::IInspectable,
+        >::new(move |_sender, _args| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    Table(inner).update_window();
+                }
+            });
+            Ok(())
+        });
+        if timer.Tick(&handler).is_err() || timer.Start().is_err() {
+            return;
+        }
+        *self.0.scroll_timer.borrow_mut() = Some(timer);
     }
 
     // --------------------------------------------------------------- 選択
 
     /// 指定された選択を、この表で意味を持つ形にそろえる。
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
-        let rows = self.0.rows.borrow();
         self.0
             .mode
             .get()
-            .normalize_by(indices, |i| rows.get(i).is_some_and(|row| row.enabled))
+            .normalize_by(indices, |index| self.is_selectable(index))
     }
 
-    /// 選択をそのまま行へ書き込む (通知は起きない)。
+    /// その行を選べるか。
+    ///
+    /// 組み立てる行では、まだ作っていない行は「選べる」とみなす
+    /// (作ってみないと分からないため)。
+    fn is_selectable(&self, index: usize) -> bool {
+        if index >= self.len() {
+            return false;
+        }
+        if let Some(enabled) = self.0.rows.text_row_selectable(index) {
+            return enabled;
+        }
+        let window = self.0.window.get();
+        match window.contains(index) {
+            true => self
+                .0
+                .realized
+                .borrow()
+                .get(index - window.start)
+                .is_none_or(TableCells::is_selectable),
+            false => true,
+        }
+    }
+
+    /// 選択を覚えて、組み立ててある行へ書き込む (通知は起きない)。
+    ///
+    /// 窓の外の行には `ListViewItem` が無いので書けない。窓が動いて
+    /// 組み立て直したときに、また覚えているほうから書く。
     fn write_selection(&self, indices: &[usize]) {
+        *self.0.selected.borrow_mut() = indices.to_vec();
+        let start = self.0.window.get().start;
         self.without_notifying(|this| {
-            for (index, item) in this.0.row_items.borrow().iter().enumerate() {
-                let _ = item.SetIsSelected(indices.contains(&index));
+            for (offset, item) in this.0.row_items.borrow().iter().enumerate() {
+                let _ = item.SetIsSelected(indices.contains(&(start + offset)));
             }
         });
+    }
+
+    /// ユーザーが変えた選択を読む。窓の外の行の扱いもここで決める。
+    fn read_native_selection(&self) -> Vec<usize> {
+        let window = self.0.window.get();
+        let mut picked: Vec<usize> = self
+            .0
+            .row_items
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.IsSelected().unwrap_or(false))
+            .map(|(offset, _)| window.start + offset)
+            .collect();
+        // `ListViewItem` には「選ばせない」指定が無い (`IsEnabled` を落とすと
+        // 中のボタンまで効かなくなる) ので、選べない行はここで外し、
+        // ネイティブ側へも書き戻す。
+        if picked.iter().any(|&index| !self.is_selectable(index)) {
+            picked.retain(|&index| self.is_selectable(index));
+            self.write_selection(&picked);
+        }
+        if window.is_complete() {
+            return picked;
+        }
+        // 組み立ててある行の選択しか届かないので、窓の外の選択を残すかどうかを
+        // 変わり方から決める (`keeps_hidden_selection`)。
+        let previous = self.0.selected.borrow().clone();
+        let inside: Vec<usize> = previous
+            .iter()
+            .copied()
+            .filter(|&index| window.contains(index))
+            .collect();
+        if !keeps_hidden_selection(&inside, &picked) {
+            return picked;
+        }
+        picked.extend(previous.iter().copied().filter(|&i| !window.contains(i)));
+        picked.sort_unstable();
+        picked.dedup();
+        picked
     }
 
     /// WinUI からの通知を止めたまま操作する。

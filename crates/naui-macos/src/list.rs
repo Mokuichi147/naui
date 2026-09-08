@@ -44,14 +44,14 @@ const DETAIL_SPACING: f64 = 1.0;
 ///
 /// 呼び出し中に同じ行のコールバックを差し替えても二重借用しない。
 #[derive(Clone, Default)]
-struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
+pub(crate) struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
 
 impl ActivationHandler {
-    fn set(&self, f: impl FnMut() + 'static) {
+    pub(crate) fn set(&self, f: impl FnMut() + 'static) {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    fn emit(&self) {
+    pub(crate) fn emit(&self) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
         };

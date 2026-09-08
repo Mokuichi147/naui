@@ -21,7 +21,7 @@ use naui_core::{
     PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
     TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
-use naui_macos::{run_for_test, ListRow, Ui, Widget};
+use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::Retained;
 use objc2::sel;
 use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
@@ -210,6 +210,22 @@ fn main() {
         (
             "列を入れ替えても幅いっぱいを使い続ける",
             table_columns_keep_filling_the_width,
+        ),
+        (
+            "テーブルが見えている行だけを組み立てる",
+            table_builds_only_the_rows_it_shows,
+        ),
+        (
+            "テーブルのセルにウィジェットを置ける",
+            table_widget_cells_are_native,
+        ),
+        (
+            "テーブルの行の高さを決められる",
+            table_row_height_follows_the_setting,
+        ),
+        (
+            "行を絞っていても見出しの並べ替えが届く",
+            table_sorting_works_while_windowed,
         ),
         ("ツリーの行が展開に追従する", tree_rows_follow_the_expansion),
         (
@@ -4286,6 +4302,223 @@ fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
         "セルの文字が列いっぱいに広がること: {field_width} / {}",
         cell.frame().size.width
     );
+    Ok(())
+}
+
+/// 行数がいくら多くても、組み立てるのは画面に出ている行だけ。
+///
+/// `set_row_builder` に渡した関数が何行目で呼ばれたかを数え、
+/// 全行分は呼ばれないこと・同じ行は列の数だけ呼ばれないことを確かめる。
+fn table_builds_only_the_rows_it_shows(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 500_000;
+    let built: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
+
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["番号", "名前"]));
+    let started = Instant::now();
+    table.set_row_builder(ROWS, {
+        let built = built.clone();
+        move |index| {
+            built.borrow_mut().push(index);
+            Ok(TableCells::new()
+                .text(index.to_string())
+                .text(format!("行 {index}")))
+        }
+    });
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "{ROWS} 行でも渡すだけなら待たされないこと: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(table.len(), ROWS);
+    let native = table.native_table();
+    assert_eq!(native.numberOfRows() as usize, ROWS);
+    assert!(
+        built.borrow().is_empty(),
+        "まだ画面に出ていないので、1 行も組み立てないこと"
+    );
+
+    // 画面に出た行だけが組み立てられる。同じ行の 2 列目は組み立て直さない。
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(0, 42, true)
+        .expect("42 行目 1 列目のビューが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("セルは NSTableCellView であること");
+    let field = unsafe { cell.textField() }.expect("セルに文字が入っていること");
+    assert_eq!(field.stringValue().to_string(), "42");
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(1, 42, true)
+        .expect("42 行目 2 列目のビューが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("セルは NSTableCellView であること");
+    let field = unsafe { cell.textField() }.expect("セルに文字が入っていること");
+    assert_eq!(field.stringValue().to_string(), "行 42");
+    assert_eq!(
+        *built.borrow(),
+        vec![42],
+        "組み立てるのは見えた行だけで、列ごとには作り直さないこと"
+    );
+
+    // 中身が変わったら `refresh` で組み立て直す。
+    table.refresh();
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(0, 42, true)
+        .expect("セルが作られること");
+    assert!(cell
+        .downcast_ref::<objc2_app_kit::NSTableCellView>()
+        .is_some());
+    assert_eq!(
+        *built.borrow(),
+        vec![42, 42],
+        "`refresh` は組み立て直すこと"
+    );
+    Ok(())
+}
+
+/// セルにウィジェットを置くと、そのままネイティブのビューとして入る。
+/// `selectable(false)` の行は、プログラムからも選べない。
+fn table_widget_cells_are_native(ui: &Ui) -> Result<()> {
+    let pressed = Rc::new(Cell::new(0));
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["都市", "操作"]));
+    let ui = ui.clone();
+    let pressed_for_button = pressed.clone();
+    table.set_row_builder(3, move |index| {
+        let button = ui.button("開く")?;
+        button.on_click({
+            let pressed = pressed_for_button.clone();
+            move || pressed.set(pressed.get() + 1)
+        });
+        Ok(TableCells::new()
+            .text(format!("都市 {index}"))
+            .cell(&button)
+            // 2 行目だけは行として選べない (中のボタンだけを使う行)。
+            .selectable(index != 1))
+    });
+
+    let native = table.native_table();
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(1, 0, true)
+        .expect("ウィジェットのセルが作られること");
+    let button = cell
+        .subviews()
+        .iter()
+        .find_map(|view| view.downcast_ref::<NSButton>().map(|b| b.retain()))
+        .expect("セルの中がボタンであること");
+    assert_eq!(button.title().to_string(), "開く");
+    unsafe { button.performClick(None) };
+    assert_eq!(pressed.get(), 1, "セルのボタンがそのまま押せること");
+
+    // 組み立て済みの行は、選べるかどうかもそのとおりになる。
+    let _ = native.viewAtColumn_row_makeIfNecessary(0, 1, true);
+    table.set_selection(&[0, 1]);
+    assert_eq!(table.selection(), vec![0], "選べない行は落ちること");
+    Ok(())
+}
+
+/// 行の高さを決められる。0 以下を渡すと既定へ戻る。
+fn table_row_height_follows_the_setting(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["都市"]));
+    table.set_rows(&TableRow::list([["東京"], ["大阪"]]));
+    let default = table.row_height();
+    assert!(default > 0.0, "既定の行の高さが決まっていること");
+
+    table.set_row_height(64.0);
+    assert_eq!(table.row_height(), 64.0);
+    assert_eq!(table.native_table().rowHeight(), 64.0);
+
+    table.set_row_height(0.0);
+    assert_eq!(table.row_height(), default, "0 以下は既定へ戻すこと");
+    Ok(())
+}
+
+/// 行が多い表でも、組み立てる行でも、見出しの並べ替えはそのまま働く。
+///
+/// 並べ替えるのはアプリなので、通知を受けて `set_rows` / `refresh` で
+/// 渡し直したものが、画面に出ている行へ反映されることまで確かめる。
+fn table_sorting_works_while_windowed(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 50_000;
+    let table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("番号").sortable(true),
+        TableColumn::new("名前"),
+    ]);
+
+    // 昇順・降順を切り替えるだけの並べ替え。
+    let descending = Rc::new(Cell::new(false));
+    let row_text = |index: usize, descending: bool| match descending {
+        true => ROWS - 1 - index,
+        false => index,
+    };
+    table.set_row_builder(ROWS, {
+        let descending = descending.clone();
+        move |index| {
+            let value = row_text(index, descending.get());
+            Ok(TableCells::new()
+                .text(value.to_string())
+                .text(format!("項目 {value}")))
+        }
+    });
+    let seen: Rc<RefCell<Vec<(usize, SortOrder)>>> = Rc::new(RefCell::new(Vec::new()));
+    table.on_sort({
+        let seen = seen.clone();
+        let table = table.clone();
+        let descending = descending.clone();
+        move |column, order| {
+            seen.borrow_mut().push((column, order));
+            descending.set(!order.is_ascending());
+            // 並べ替えたデータを出し直す (行数は変わらないので `refresh`)。
+            table.refresh();
+        }
+    });
+
+    let native = table.native_table();
+    let first_cell = || {
+        native
+            .viewAtColumn_row_makeIfNecessary(0, 0, true)
+            .and_then(|cell| cell.downcast::<objc2_app_kit::NSTableCellView>().ok())
+            .and_then(|cell| unsafe { cell.textField() })
+            .map(|field| field.stringValue().to_string())
+            .unwrap_or_default()
+    };
+    assert_eq!(first_cell(), "0");
+
+    // 利用者が見出しを押したときと同じ経路。
+    let prototype = native
+        .tableColumns()
+        .objectAtIndex(0)
+        .sortDescriptorPrototype()
+        .expect("押せる列であること");
+    let descriptor = objc2_foundation::NSSortDescriptor::sortDescriptorWithKey_ascending(
+        prototype.key().as_deref(),
+        false,
+    );
+    native.setSortDescriptors(&objc2_foundation::NSArray::from_retained_slice(&[
+        descriptor,
+    ]));
+    assert_eq!(*seen.borrow(), vec![(0, SortOrder::Descending)]);
+    assert_eq!(table.sort(), Some((0, SortOrder::Descending)));
+    assert_eq!(
+        first_cell(),
+        (ROWS - 1).to_string(),
+        "並べ替えた結果が画面の行に出ること"
+    );
+
+    // 文字だけの行 (`set_rows`) でも同じ。行数は多いままにする。
+    let rows: Vec<TableRow> = (0..ROWS)
+        .map(|index| TableRow::new([index.to_string(), format!("項目 {index}")]))
+        .collect();
+    table.set_rows(&rows);
+    assert_eq!(first_cell(), "0");
+    assert_eq!(
+        table.sort(),
+        Some((0, SortOrder::Descending)),
+        "行を入れ替えても指標は残ること"
+    );
+    let reversed: Vec<TableRow> = rows.iter().rev().cloned().collect();
+    table.set_rows(&reversed);
+    assert_eq!(first_cell(), (ROWS - 1).to_string());
     Ok(())
 }
 

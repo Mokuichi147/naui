@@ -44,18 +44,18 @@ use crate::widgets::{impl_widget, label_style, Label, Stack, Widget};
 /// 呼び出しの間だけクロージャを取り出すので、コールバックの中から
 /// 同じ行を操作しても二重借用にならない。
 #[derive(Clone)]
-struct ActivationHandler(HandlerCell<dyn FnMut()>);
+pub(crate) struct ActivationHandler(HandlerCell<dyn FnMut()>);
 
 impl ActivationHandler {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Arc::new(UiThreadCell::new(None)))
     }
 
-    fn set(&self, f: impl FnMut() + 'static) {
+    pub(crate) fn set(&self, f: impl FnMut() + 'static) {
         self.0.with_mut(|slot| *slot = Some(Box::new(f)));
     }
 
-    fn emit(&self) {
+    pub(crate) fn emit(&self) {
         // WinRT のデリゲートから panic を出さないよう try_ 系で触る。
         let Some(Some(mut f)) = self.0.try_with_mut(|slot| slot.take()) else {
             return;
