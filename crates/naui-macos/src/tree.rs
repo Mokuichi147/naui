@@ -36,6 +36,39 @@ const COLUMN_ID: &str = "naui.tree.column";
 /// (`NSOutlineViewItemDidExpandNotification` の仕様)。
 const ITEM_KEY: &str = "NSObject";
 
+/// 行の高さ。ツリーの行は 1 行か、補助を添えた 2 行かのどちらかしかない。
+///
+/// **自動 (`usesAutomaticRowHeights`) にはしない。** いったん閉じた枝を
+/// 開き直すと、AppKit は**中の枝の開閉も復元する**。その復元は親の開閉の
+/// デリゲート呼び出しの中で起きるので、自動の高さのために行ビューの
+/// 組み立てまでそこで走ると、AppKit に「デリゲートの中で再入した」と
+/// 警告される (将来はアサートになる)。行は 2 通りしかないのだから、
+/// 高さはこちらで測ってしまう。
+#[derive(Clone, Copy)]
+struct RowHeights {
+    single: f64,
+    double: f64,
+}
+
+impl RowHeights {
+    /// 実際のセルを 1 つずつ組み立てて測る。中身は文字だけで、折り返しも
+    /// しない ([`crate::list::cell_view`]) ので、高さは文字列に依らない。
+    fn measure(mtm: MainThreadMarker) -> Self {
+        let probe = |detail| cell_view(mtm, "Ag", detail, true).fittingSize().height;
+        Self {
+            single: probe(None),
+            double: probe(Some("Ag")),
+        }
+    }
+
+    fn of(&self, has_detail: bool) -> f64 {
+        match has_detail {
+            true => self.double,
+            false => self.single,
+        }
+    }
+}
+
 /// 開閉が変わったことの通知先。パスと、変わった後の状態で呼ぶ。
 #[derive(Clone, Default)]
 struct ExpandHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize], bool)>>>>);
@@ -131,6 +164,8 @@ struct SourceState {
     /// プログラムから選択や開閉を変えている間だけ通知を止める。
     /// AppKit は `expandItem:` や `selectRowIndexes:` でも通知を出すため。
     silent: Rc<Cell<bool>>,
+    /// 行の高さ。作るときに 1 度だけ測る。
+    heights: RowHeights,
 }
 
 impl SourceState {
@@ -219,6 +254,13 @@ define_class!(
             self.build_cell(MainThreadMarker::from(self), item)
         }
 
+        // 高さは AppKit に測らせず、こちらが答える ([`RowHeights`])。
+        #[unsafe(method(outlineView:heightOfRowByItem:))]
+        fn height_of_row(&self, _outline_view: &NSOutlineView, item: &AnyObject) -> f64 {
+            let state = self.ivars();
+            state.heights.of(self.has_detail(item))
+        }
+
         #[unsafe(method(outlineView:shouldSelectItem:))]
         fn should_select_item(&self, _outline_view: &NSOutlineView, item: &AnyObject) -> bool {
             let state = self.ivars();
@@ -284,6 +326,16 @@ impl TreeSource {
         // 選べるかどうかは祖先まで見て決まる。淡い見た目もそれにそろえる。
         let enabled = TreeItem::selectable(&items, &path);
         Some(cell_view(mtm, &node.label, node.detail.as_deref(), enabled))
+    }
+
+    /// その項目が補助の文字を持つか (= 2 行になるか)。
+    fn has_detail(&self, item: &AnyObject) -> bool {
+        let state = self.ivars();
+        let Some(path) = state.nodes.path(Some(item)) else {
+            return false;
+        };
+        let items = state.items.borrow();
+        TreeItem::at(&items, &path).is_some_and(|item| item.detail.is_some())
     }
 
     /// これから開閉する項目を覚える。連鎖の 1 つ目だけが操作された項目。
@@ -385,8 +437,8 @@ impl Tree {
         outline.setColumnAutoresizingStyle(
             NSTableViewColumnAutoresizingStyle::UniformColumnAutoresizingStyle,
         );
-        // 行の高さは中身の制約から AppKit に求めさせる (`List` と同じ)。
-        outline.setUsesAutomaticRowHeights(true);
+        // 行の高さは `outlineView:heightOfRowByItem:` で答える ([`RowHeights`])。
+        outline.setUsesAutomaticRowHeights(false);
 
         let column = NSTableColumn::initWithIdentifier(
             NSTableColumn::alloc(mtm),
@@ -413,6 +465,7 @@ impl Tree {
                 target: RefCell::new(None),
                 expanded: expanded.clone(),
                 silent: silent.clone(),
+                heights: RowHeights::measure(mtm),
             },
         );
         unsafe {
