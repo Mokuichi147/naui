@@ -34,14 +34,14 @@ use crate::widgets::{create, impl_widget, Label, Listener, Stack, Widget};
 ///
 /// 呼び出し中に同じ行のコールバックを差し替えても二重借用しない。
 #[derive(Clone, Default)]
-struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
+pub(crate) struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
 
 impl ActivationHandler {
-    fn set(&self, f: impl FnMut() + 'static) {
+    pub(crate) fn set(&self, f: impl FnMut() + 'static) {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    fn emit(&self) {
+    pub(crate) fn emit(&self) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
         };
@@ -150,14 +150,14 @@ impl ListRow {
 /// ほかの環境がヒットテストやイベントのルーティングで行っている切り分けを、
 /// DOM では押された要素の祖先を辿って行う。`<label>` は中の入力を操作するので、
 /// ここに含める。
-const ROW_CONTROLS: &str = "button, input, select, textarea, a[href], label, summary, \
+pub(crate) const ROW_CONTROLS: &str = "button, input, select, textarea, a[href], label, summary, \
 [role=\"button\"], [contenteditable=\"true\"]";
 
 /// 行の中のコントロールへ向いたイベントか。
 ///
 /// クリックだけでなくキー操作にも使う。`container` には、クリックなら行、
 /// キー操作ならリストそのものを渡す。
-fn control_was_targeted(container: &HtmlElement, event: &Event) -> bool {
+pub(crate) fn control_was_targeted(container: &HtmlElement, event: &Event) -> bool {
     let Some(target) = event.target().and_then(|t| t.dyn_into::<Element>().ok()) else {
         return false;
     };
@@ -510,8 +510,11 @@ impl List {
         // (`reveal_active` がスクロール位置を求めるのに使う)。
         style(&list, "position", "relative");
         // 枠と地の色は、ブラウザが入力欄に使うシステム色に任せる。
+        // 線は `GrayText` にする。Safari (WebKit) の `ButtonBorder` は明暗
+        // どちらの配色でも白に解決されるため、明るい配色では枠が消え、
+        // 暗い配色では白く出すぎる (`SplitView` の仕切りや `Table` と同じ判断)。
         style(&list, "border", "1px solid");
-        style(&list, "border-color", "ButtonBorder");
+        style(&list, "border-color", "GrayText");
         style(&list, "background-color", "Field");
         style(&list, "color", "FieldText");
 

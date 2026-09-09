@@ -941,9 +941,118 @@
 //! [`TableRow::enabled`] が `false` の行は選べない。
 //!
 //! [`TableColumn::width`] を指定しない列だけで、余った幅を分け合う。
-//! セルに置けるのは文字だけで、任意のウィジェットは置けない。**列の幅を
-//! ドラッグで変えられるのは macOS だけ** (`NSTableView` が持つ機能で、
-//! 他の環境には対応する標準コントロールが無い)。
+//! **列の幅をドラッグで変えられるのは macOS だけ** (`NSTableView` が持つ
+//! 機能で、他の環境には対応する標準コントロールが無い)。
+//!
+//! ### セルにウィジェットを置く
+//!
+//! [`TableRow`] は文字だけの表向けの簡便 API で、セルにボタンやチェック
+//! ボックス、アイコンを置きたいときは [`Table::set_row_builder`] を使う。
+//! 行数と「その行の中身を返す関数」を渡すと、**画面に出る行だけ**が
+//! 組み立てられる。`List` の [`ListRow`] と同じように、行ごとに
+//! [`TableCells::selectable`] と [`TableCells::on_activate`] を指定できる。
+//!
+//! ```no_run
+//! # use naui::{Result, TableCells, TableColumn, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! # let cities: Vec<String> = Vec::new();
+//! let table = ui.table()?;
+//! table.set_columns(&TableColumn::list(["都市", "操作"]));
+//!
+//! let ui = ui.clone(); // 行はコールバックの中で組み立てる
+//! table.set_row_builder(cities.len(), move |index| {
+//!     let open = ui.button("開く")?;
+//!     open.on_click(move || println!("{index} 行目を開く"));
+//!     // セルは列と同じ順に並べる。文字とウィジェットを混ぜてよい。
+//!     let cells = TableCells::new().text(&cities[index]).cell(&open);
+//!     // 行内のボタンだけを使う行にする (行そのものは選ばせない)。
+//!     Ok(cells.selectable(false))
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! 行の中のウィジェットは、組み立てるたびに作り直してよい。行ごとの状態は
+//! アプリのデータ側に持ち、関数の中でそこから作る。中身が変わったら
+//! [`Table::refresh`] で組み立て直す。
+//!
+//! **組み立てる関数の中でアプリのデータを借りる (`RefCell::borrow`) なら、
+//! [`Table::refresh`] や [`Table::set_row_builder`] を呼ぶ前に借用を返しておく。**
+//! これらは見えている行をその場で組み立て直すので、`borrow_mut` を持ったまま
+//! 呼ぶと二重借用で落ちる。並べ替えの通知はこの形になりやすい。
+//!
+//! ```no_run
+//! # use naui::{Result, TableRow, Ui};
+//! # use std::cell::RefCell;
+//! # use std::rc::Rc;
+//! # fn build(ui: &Ui, data: Rc<RefCell<Vec<TableRow>>>) -> Result<()> {
+//! # let table = ui.table()?;
+//! table.on_sort({
+//!     let table = table.clone();
+//!     move |column, _order| {
+//!         {
+//!             let mut rows = data.borrow_mut();
+//!             rows.sort_by(|a, b| a.cell(column).cmp(b.cell(column)));
+//!         } // ← ここで借用を返してから
+//!         table.refresh(); // ← 組み立て直す
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`TableCells::on_activate`] は、行のセルや余白が押されたときだけ呼ばれる。
+//! **ボタン・チェックボックス・入力欄を直接押したときは呼ばれない**ので、
+//! 行の処理と中のコントロールの処理が二重に起きない ([`ListRow::on_activate`]
+//! と同じ切り分け)。
+//!
+//! ### 行が多い表
+//!
+//! 行数が [`ROW_WINDOW_THRESHOLD`] を超えると、どの環境でも
+//! **画面に出ている範囲 (と、その少し前後) だけ**を組み立てる。
+//! [`Table::set_rows`] に数十万行を渡しても、[`Table::set_row_builder`] に
+//! 大きな `count` を渡しても、開くのにかかる時間と使うメモリは
+//! 画面の大きさで決まる。スクロールバーの長さと位置は全行分のままになる
+//! (見えていない行の分は、上下の詰め物が高さを持つ)。
+//!
+//! そのために、**行の高さはどれも同じ**とみなす。既定では組み立てた行から
+//! 測るが、セルにボタンや画像を置いて高さが変わるときは
+//! [`Table::set_row_height`] で決めておくと、スクロールバーの長さが
+//! 実際とずれない。
+//!
+//! Web では、行数 × 行の高さがブラウザの扱える要素の高さ (Chromium で
+//! 3,300 万 px ほど) を超えると、スクロールバーの位置と行の対応がずれる
+//! (30px の行なら 100 万行あたり)。インデックスでの選択や
+//! [`Table::set_rows`] は、それより多くても動く。
+//!
+//! 選択はインデックスで覚えているので、画面の外にある行も選べる
+//! ([`Table::set_selection`]) し、[`Table::selection`] にも出てくる。
+//! 絞っている表では、ネイティブのコントロールへ届くのが組み立ててある行の
+//! 選択だけなので、**画面の外の選択を残すかどうかは押された修飾キーで決める**。
+//! ⌘ / Ctrl の足し引きは残し、ふつうのクリックと Shift の範囲選びは
+//! 選び直しとして落とす (macOS は `NSTableView` が全行の選択を持つので、
+//! この判断そのものが要らない)。
+//!
+//! [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
+//! 選べるかどうかを naui は知らない。既定では「選べる」とみなすので、
+//! 画面の外の行に [`TableCells::selectable(false)`](TableCells::selectable) を
+//! 使うなら、同じ判断を [`Table::set_row_selectable`] にも渡しておく。
+//!
+//! ```no_run
+//! # use naui::{Result, TableCells, Ui};
+//! # fn build(ui: &Ui, locked: std::rc::Rc<Vec<bool>>) -> Result<()> {
+//! # let table = ui.table()?;
+//! let rows = locked.clone();
+//! table.set_row_builder(locked.len(), move |index| {
+//!     Ok(TableCells::new()
+//!         .text(format!("行 {index}"))
+//!         .selectable(!rows[index]))
+//! });
+//! // 画面の外の行についても `set_selection` が同じ判断をできるようにする。
+//! table.set_row_selectable(move |index| !locked[index]);
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! ### 見出しからの並べ替え
 //!
@@ -975,6 +1084,10 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! [`Table::set_row_builder`] で行を組み立てている表では、行数が変わらないので
+//! [`Table::refresh`] を呼ぶ (アプリのデータを並べ替えてから)。行を絞っていても
+//! 並べ替えは同じで、指標は見出しに出るのでスクロールしても消えない。
 //!
 //! [`Table::set_sort`] で通知せずに指標だけを動かせる (起動時の既定の
 //! 並び順を見せるときに使う)。[`Table::sort`] でいまの指定を読める。
@@ -1250,7 +1363,7 @@ pub use naui_core::{
     NumberSpec, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
     SelectionMode, Sender, Settings, Sizing, SortOrder, TableColumn, TableRow, Task, Tasks,
     TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    DEFAULT_SPLIT_POSITION,
+    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -1258,24 +1371,24 @@ pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
     Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
-    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
-    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs, TextArea,
+    TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
     Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
-    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
-    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs, TextArea,
+    TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
     Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
-    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
-    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs, TextArea,
+    TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -1287,8 +1400,8 @@ pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
     EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
     Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
-    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, Tabs, TextArea, TextInput,
-    TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs, TextArea,
+    TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1653,6 +1766,42 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: bool = custom_row.is_selectable();
     custom_row.on_activate(|| {});
     list.set_rows(&[custom_row]);
+
+    // --- テーブル ---------------------------------------------------------
+    let table: Table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("t"),
+        TableColumn::new("t").width(1.0).align(Align::End),
+        TableColumn::from("t").sortable(true),
+    ]);
+    let _: usize = table.column_count();
+    table.set_rows(&TableRow::list([["t", "t"]]));
+    let _: usize = table.len();
+    let _: bool = table.is_empty();
+    let cells = TableCells::new().text("t").cell(&custom_content);
+    let _: bool = cells.is_selectable();
+    let _: usize = cells.len();
+    let _: bool = cells.is_empty();
+    cells.on_activate(|| {});
+    table.set_row_builder(1, move |_index: usize| Ok(cells.clone().selectable(false)));
+    table.set_row_selectable(|_index: usize| true);
+    table.refresh();
+    table.set_row_height(1.0);
+    let _: f64 = table.row_height();
+    table.set_selection_mode(SelectionMode::Multiple);
+    let _: SelectionMode = table.selection_mode();
+    let _: Option<usize> = table.selected();
+    let _: Vec<usize> = table.selection();
+    table.set_selected(0);
+    table.set_selection(&[0]);
+    table.clear_selection();
+    table.select(0);
+    table.select_many(&[0]);
+    table.on_select(|_indices: &[usize]| {});
+    table.on_sort(|_column: usize, _order: SortOrder| {});
+    let _: Option<(usize, SortOrder)> = table.sort();
+    table.set_sort(Some((2, SortOrder::Descending)));
+    table.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(1.0)));
 
     // --- ツリー -----------------------------------------------------------
     let tree: Tree = ui.tree()?;

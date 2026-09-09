@@ -275,6 +275,26 @@ impl SizeBin {
         }
     }
 
+    /// 列の幅を、中身の自然な大きさで決めさせない。
+    ///
+    /// 行を絞っている表では、列の幅は**組み立ててある行だけ**から決まる。
+    /// 中身の自然な幅がそのまま列の幅になると、スクロールで別の行が出る
+    /// たびに列が動いてしまう。申告する幅を 0 にして、列の幅は見出しと
+    /// 余りの分け合いだけで決まるようにする (配られた幅いっぱいには広がる)。
+    ///
+    /// 文字のセルで `max-width-chars` を 1 にしているのと同じ扱い。
+    /// **自分で大きさを指定している中身には触れない** (アプリの指定が優先)。
+    pub(crate) fn limit_natural_width(&self) {
+        let sizing = self.sizing();
+        if !matches!(sizing.width, Length::Auto) || sizing.max_width.is_some() {
+            return;
+        }
+        self.imp().max_width.set(0);
+        // 配られた幅より中身が大きくても、隣の列へはみ出して描かない。
+        self.set_overflow(gtk::Overflow::Hidden);
+        self.set_halign(gtk::Align::Fill);
+    }
+
     /// グリッドの列 / 行の決め方を受け取る。
     ///
     /// `GtkGrid` は列や行そのものに幅を持たせられない。代わりに

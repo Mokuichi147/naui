@@ -74,7 +74,7 @@ pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
 pub use search_input::SearchInput;
 pub use split_view::SplitView;
-pub use table::Table;
+pub use table::{Table, TableCells};
 pub use time_picker::TimePicker;
 pub use toast::Toast;
 pub use toggle::Toggle;

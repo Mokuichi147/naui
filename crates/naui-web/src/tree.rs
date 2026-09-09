@@ -148,8 +148,11 @@ impl Tree {
         // 項目の `offsetTop` がこの要素を基準になるようにする。
         style(&root, "position", "relative");
         // 枠と地の色は、ブラウザが入力欄に使うシステム色に任せる。
+        // 線は `GrayText` にする。Safari (WebKit) の `ButtonBorder` は明暗
+        // どちらの配色でも白に解決されるため、明るい配色では枠が消え、
+        // 暗い配色では白く出すぎる (`SplitView` の仕切りや `Table` と同じ判断)。
         style(&root, "border", "1px solid");
-        style(&root, "border-color", "ButtonBorder");
+        style(&root, "border-color", "GrayText");
         style(&root, "background-color", "Field");
         style(&root, "color", "FieldText");
 

@@ -25,7 +25,7 @@ use naui_core::{
     PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
     TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
-use naui_gtk::{run_for_test, ListRow, Ui, Widget};
+use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
 /// テストケース 1 件。
 type Case = (&'static str, fn(&Ui) -> Result<()>);
@@ -364,6 +364,34 @@ fn main() {
         (
             "見出しの並べ替えがボタンとして押せる",
             table_sorting_round_trips,
+        ),
+        (
+            "テーブルが見えている行だけを組み立てる",
+            table_builds_only_the_visible_rows,
+        ),
+        (
+            "テーブルのセルにウィジェットを置ける",
+            table_widget_cells_are_native,
+        ),
+        (
+            "テーブルの行の高さを決められる",
+            table_row_height_can_be_fixed,
+        ),
+        (
+            "行を絞っていても見出しの並べ替えが届く",
+            table_sorting_works_while_windowed,
+        ),
+        (
+            "組み立てる行でも行数と並べ替えに耐える",
+            table_builder_rows_scale_and_sort,
+        ),
+        (
+            "ウィジェットのセルでも列の幅がスクロールで動かない",
+            table_widget_cells_keep_the_column_width,
+        ),
+        (
+            "選べるかどうかを行を組み立てずに答えられる",
+            table_row_selectable_answers_without_building,
         ),
         (
             "ツリーの行の中身が行の幅いっぱいに置かれる",
@@ -3067,6 +3095,430 @@ fn table_labels(container: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
         .into_iter()
         .filter_map(|child| child.downcast::<gtk::Label>().ok())
         .collect()
+}
+
+/// 組み立てる行 (`TableCells`) でも、行数が多いときは見えている分だけを作り、
+/// 見出しの並べ替えもそのまま働く。
+fn table_builder_rows_scale_and_sort(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 20_000;
+    let built = Rc::new(Cell::new(0usize));
+    let descending = Rc::new(Cell::new(false));
+
+    let table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("番号").sortable(true),
+        TableColumn::new("操作"),
+    ]);
+    table.set_sizing(Sizing::fill());
+    let window = ui.window("大きな表", 400.0, 200.0)?;
+    window.set_child(&table);
+    window.show();
+
+    table.set_row_builder(ROWS, {
+        let ui = ui.clone();
+        let built = built.clone();
+        let descending = descending.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            // 並べ替えはアプリの仕事。ここでは向きを反転するだけ。
+            let value = match descending.get() {
+                true => ROWS - 1 - index,
+                false => index,
+            };
+            let open = ui.button("開く")?;
+            Ok(TableCells::new().text(value.to_string()).cell(&open))
+        }
+    });
+    tick(&table.native_list_box());
+
+    let list = table.native_list_box();
+    let realized = children(&list).len();
+    assert!(
+        realized > 0 && realized < 200,
+        "見えている分だけを組み立てること: {realized} 行"
+    );
+    assert!(
+        built.get() < 400,
+        "組み立てを呼ぶのも見えている行の分だけであること: {} 回",
+        built.get()
+    );
+    assert!(
+        find_button(&children(&list)[0]).is_some(),
+        "セルの中がボタンであること"
+    );
+
+    // 見出しを押すと、組み立てる中身のほうが入れ替わる。
+    table.on_sort({
+        let table = table.clone();
+        let descending = descending.clone();
+        move |_column, order| {
+            descending.set(!order.is_ascending());
+            // 行数は変わらないので `refresh` で組み立て直す。
+            table.refresh();
+        }
+    });
+    let (header, _) = table_parts(&table);
+    let button = children(&header)
+        .into_iter()
+        .find_map(|child| child.downcast::<gtk::Button>().ok())
+        .expect("押せる見出し");
+    button.emit_clicked();
+    button.emit_clicked();
+
+    assert_eq!(
+        table_cells(&children(&list)[0])[0],
+        (ROWS - 1).to_string(),
+        "並べ替えた結果が出ること"
+    );
+    assert!(
+        built.get() < 800,
+        "並べ替えでも作り直すのは見えている行だけであること: {} 回",
+        built.get()
+    );
+    window.close();
+    Ok(())
+}
+
+/// 組み立てる行でも、選べるかどうかを行を作らずに答えられる。
+fn table_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 10_000;
+    const LOCKED: usize = 5_000;
+    let built = Rc::new(Cell::new(0usize));
+
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["番号"]));
+    table.set_row_builder(ROWS, {
+        let built = built.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            Ok(TableCells::new()
+                .text(index.to_string())
+                .selectable(index != LOCKED))
+        }
+    });
+
+    // 画面に出る分はここまでで組み立てられている。以降は増えないはず。
+    let realized = built.get();
+
+    // 述語が無いと、まだ作っていない行は選べる扱いになる。
+    table.set_selection(&[LOCKED]);
+    assert_eq!(table.selection(), vec![LOCKED], "述語が無ければ選べる扱い");
+
+    // 述語を渡すと、行を組み立てずに落とせる。
+    table.clear_selection();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    table.set_row_selectable({
+        let seen = seen.clone();
+        move |index| {
+            seen.borrow_mut().push(index);
+            index != LOCKED
+        }
+    });
+    table.set_selection(&[LOCKED]);
+    assert!(table.selection().is_empty(), "選べない行は取り除かれること");
+    table.set_selection(&[LOCKED - 1]);
+    assert_eq!(table.selection(), vec![LOCKED - 1]);
+    assert!(seen.borrow().contains(&LOCKED), "述語が呼ばれること");
+    assert_eq!(
+        built.get(),
+        realized,
+        "選択のために行を組み立て直さないこと"
+    );
+    Ok(())
+}
+
+/// 行を絞っている表で、セルのウィジェットの幅が列の幅を動かさない。
+///
+/// 列の幅は組み立ててある行だけから決まるので、中身の自然な幅がそのまま
+/// 列の幅になると、スクロールで別の行が出るたびに列が動いてしまう。
+fn table_widget_cells_keep_the_column_width(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let table = ui.table()?;
+    // どちらの列も幅を指定しない (余りを分け合う)。
+    table.set_columns(&TableColumn::list(["操作", "名前"]));
+    table.set_sizing(Sizing::fill());
+    let window = ui.window("列の幅", 400.0, 200.0)?;
+    window.set_child(&table);
+    window.show();
+
+    table.set_row_builder(ROWS, {
+        let ui = ui.clone();
+        move |index| {
+            // 先頭には出さず、ずっと下の行だけラベルを長くする。
+            let label = match index >= 3_000 {
+                true => "とても長いラベルの操作ボタン",
+                false => "実行",
+            };
+            let button = ui.button(label)?;
+            Ok(TableCells::new()
+                .cell(&button)
+                .text(format!("項目 {index}")))
+        }
+    });
+    tick(&table.native_list_box());
+
+    let (header, list) = table_parts(&table);
+    let column = children(&header)[0].clone();
+    let before = column.width();
+    assert!(before > 0, "列の幅が決まっていること");
+
+    // 長いラベルの行が出るところまでスクロールする。
+    let scroller = scroller_of(&list).expect("GtkScrolledWindow");
+    let adjustment = scroller.vadjustment();
+    adjustment.set_value(table.row_height() * 3_500.0);
+    tick(&list);
+    let long_label_shown = children(&list).iter().any(|row| {
+        find_button(row).is_some_and(|b| b.label().is_some_and(|l| l.contains("とても長い")))
+    });
+    assert!(long_label_shown, "長いラベルの行が出ていること");
+
+    assert_eq!(
+        column.width(),
+        before,
+        "スクロールしても列の幅が動かないこと"
+    );
+    window.close();
+    Ok(())
+}
+
+/// 行が多い表でも、見出しを押した並べ替えはそのまま働く。
+///
+/// 並べ替えるのはアプリなので、通知を受けて `set_rows` で渡し直したものが、
+/// 画面に出ている行へ反映されることまで確かめる。
+fn table_sorting_works_while_windowed(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 10_000;
+    let table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("番号").sortable(true),
+        TableColumn::new("名前"),
+    ]);
+    let rows: Vec<TableRow> = (0..ROWS)
+        .map(|i| TableRow::new([i.to_string(), format!("項目 {i}")]))
+        .collect();
+    table.set_rows(&rows);
+
+    let (log, sink) = recorder::<(usize, bool)>();
+    let sink = Rc::new(RefCell::new(sink));
+    table.on_sort({
+        let table = table.clone();
+        let rows = rows.clone();
+        move |column, order| {
+            (sink.borrow_mut())((column, order.is_ascending()));
+            let sorted: Vec<TableRow> = match order.is_ascending() {
+                true => rows.clone(),
+                false => rows.iter().rev().cloned().collect(),
+            };
+            table.set_rows(&sorted);
+        }
+    });
+
+    let list = table.native_list_box();
+    let first_cell = || table_cells(&children(&list)[0])[0].clone();
+    assert_eq!(first_cell(), "0");
+
+    // 見出しのボタンを押す (利用者の操作と同じ経路)。
+    let (header, _) = table_parts(&table);
+    let button = children(&header)
+        .into_iter()
+        .find_map(|child| child.downcast::<gtk::Button>().ok())
+        .expect("押せる見出し");
+    button.emit_clicked();
+    assert_eq!(*log.borrow(), vec![(0, true)]);
+    button.emit_clicked();
+    assert_eq!(*log.borrow(), vec![(0, true), (0, false)]);
+    assert_eq!(
+        first_cell(),
+        (ROWS - 1).to_string(),
+        "並べ替えた結果が画面の行に出ること"
+    );
+
+    // 向きの指標は見出しの文字に付く。
+    let title = table_labels(&button).first().map(|l| l.text().to_string());
+    assert_eq!(title.as_deref(), Some("番号 ▼"));
+    Ok(())
+}
+
+/// 行数が多い表では、`GtkListBoxRow` を作るのは画面に出ている分だけになる。
+/// それでもスクロールできる高さは全行分あり、スクロールすると中身が入れ替わる。
+fn table_builds_only_the_visible_rows(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 20_000;
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["番号", "名前"]));
+    table.set_sizing(Sizing::fill());
+
+    let window = ui.window("大きな表", 400.0, 200.0)?;
+    window.set_child(&table);
+    window.show();
+
+    let started = std::time::Instant::now();
+    table.set_rows(
+        &(0..ROWS)
+            .map(|i| TableRow::new([i.to_string(), format!("行 {i}")]))
+            .collect::<Vec<_>>(),
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "{ROWS} 行でも待たされないこと: {:?}",
+        started.elapsed()
+    );
+    tick(&table.native_list_box());
+    assert_eq!(table.len(), ROWS);
+
+    let list = table.native_list_box();
+    let realized = children(&list).len();
+    assert!(
+        realized > 0 && realized < 200,
+        "見えている分だけを作ること: {realized} 行"
+    );
+    assert_eq!(table_cells(&children(&list)[0]), ["0", "行 0"]);
+
+    // 詰め物のぶん、中身の高さは全行分ある。
+    let height = table.row_height();
+    assert!(height > 0.0, "行の高さを測れていること: {height}");
+    let scroller = scroller_of(&list).expect("GtkScrolledWindow");
+    let adjustment = scroller.vadjustment();
+    let expected = ROWS as f64 * height;
+    assert!(
+        (adjustment.upper() - expected).abs() < expected * 0.05,
+        "全行分の高さがあること: {} / {expected}",
+        adjustment.upper()
+    );
+
+    // 途中までスクロールすると、その辺りの行に入れ替わる。
+    adjustment.set_value(10_000.0 * height);
+    tick(&list);
+    let rows = children(&list);
+    assert!(rows.len() < 200, "作る量は増えないこと");
+    let first = table_cells(&rows[0])[0].parse::<usize>().expect("番号");
+    assert!(
+        (9_900..=10_000).contains(&first),
+        "スクロール先の行を作ること: {first} 行目から"
+    );
+
+    // 窓の外の行を選んでも覚えている。
+    table.set_selected(19_999);
+    assert_eq!(table.selection(), vec![19_999]);
+    adjustment.set_value(adjustment.upper());
+    tick(&list);
+    assert_eq!(
+        table.selection(),
+        vec![19_999],
+        "戻ってきても選択は残ること"
+    );
+    let selected: Vec<i32> = list.selected_rows().iter().map(|row| row.index()).collect();
+    assert_eq!(selected.len(), 1, "見えている行としても選ばれること");
+    window.close();
+    Ok(())
+}
+
+/// セルにウィジェットを置ける。行のクリックは activation になり、
+/// 選べない行は選択だけが起きない。
+fn table_widget_cells_are_native(ui: &Ui) -> Result<()> {
+    let (log, sink) = recorder::<usize>();
+    let pressed = Rc::new(Cell::new(0));
+
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["都市", "操作"]));
+    {
+        let ui = ui.clone();
+        let sink = Rc::new(RefCell::new(sink));
+        let pressed = pressed.clone();
+        table.set_row_builder(3, move |index| {
+            let button = ui.button("開く")?;
+            button.on_click({
+                let pressed = pressed.clone();
+                move || pressed.set(pressed.get() + 1)
+            });
+            let cells = TableCells::new()
+                .text(format!("都市 {index}"))
+                .cell(&button)
+                .selectable(index != 1);
+            cells.on_activate({
+                let sink = sink.clone();
+                move || (sink.borrow_mut())(index)
+            });
+            Ok(cells)
+        });
+    }
+
+    let list = table.native_list_box();
+    let rows = children(&list);
+    assert_eq!(rows.len(), 3);
+    // 2 列目はボタンそのものが入る。
+    let button = rows[0]
+        .clone()
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow")
+        .child()
+        .map(|content| children(&content))
+        .unwrap_or_default()
+        .into_iter()
+        .find_map(|cell| find_button(&cell))
+        .expect("セルの中がボタンであること");
+    button.emit_clicked();
+    assert_eq!(pressed.get(), 1, "セルのボタンがそのまま押せること");
+    assert!(log.borrow().is_empty(), "行の activation は起きないこと");
+
+    // 行そのものを押すと activation が出る。
+    let row = rows[0]
+        .clone()
+        .downcast::<gtk::ListBoxRow>()
+        .expect("GtkListBoxRow");
+    list.emit_by_name::<()>("row-activated", &[&row]);
+    assert_eq!(*log.borrow(), vec![0]);
+
+    // 選べない行は、選択の対象から外れる。
+    table.set_selection(&[0, 1]);
+    assert_eq!(table.selection(), vec![0]);
+    Ok(())
+}
+
+/// その widget を載せている `GtkScrolledWindow` を、親をたどって探す。
+fn scroller_of(widget: &impl IsA<gtk::Widget>) -> Option<gtk::ScrolledWindow> {
+    let mut parent = widget.as_ref().parent();
+    while let Some(current) = parent {
+        if let Ok(scroller) = current.clone().downcast::<gtk::ScrolledWindow>() {
+            return Some(scroller);
+        }
+        parent = current.parent();
+    }
+    None
+}
+
+/// 表の中からボタンを探す。
+fn find_button(widget: &gtk::Widget) -> Option<gtk::Button> {
+    if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
+        return Some(button);
+    }
+    children(widget)
+        .into_iter()
+        .find_map(|child| find_button(&child))
+}
+
+/// 行の高さを決めると、その高さで詰め物も引き直される。
+fn table_row_height_can_be_fixed(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["番号"]));
+    table.set_rows(
+        &(0..1_000)
+            .map(|i| TableRow::new([i.to_string()]))
+            .collect::<Vec<_>>(),
+    );
+    table.set_row_height(40.0);
+    assert_eq!(table.row_height(), 40.0);
+
+    let list = table.native_list_box();
+    let row = children(&list)[0].clone();
+    let (_, natural, _, _) = row.measure(gtk::Orientation::Vertical, -1);
+    assert_eq!(natural, 40, "指定した高さになること");
+
+    table.set_row_height(0.0);
+    assert!(
+        table.row_height() > 0.0,
+        "0 以下は測った高さへ戻すこと: {}",
+        table.row_height()
+    );
+    Ok(())
 }
 
 /// 1 行ぶんのセルの文字。

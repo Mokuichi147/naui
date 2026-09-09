@@ -21,10 +21,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Color, DialogResponse, GridCell, ListItem, Orientation, Padding, PopupItem, Result,
-    TextColor, TextStyle, Theme,
+    Align, Color, DialogResponse, GridCell, Length, ListItem, Orientation, Padding, PopupItem,
+    Result, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme,
 };
-use naui_web::{run_for_test, ListRow, Ui, Widget};
+use naui_web::{run_for_test, ListRow, TableCells, Ui, Widget};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{
@@ -1144,6 +1144,571 @@ fn ui_clone_builds_rows_from_a_callback() {
 }
 
 // -------------------------------------------------------------- Dialog
+
+// ------------------------------------------------------------- Table
+
+/// 表の `<tbody>` にある、詰め物ではない行。
+fn table_rows(table: &dyn Widget) -> Vec<HtmlElement> {
+    let body = table
+        .native_element()
+        .query_selector("tbody")
+        .expect("tbody の検索")
+        .expect("tbody");
+    let rows = body
+        .query_selector_all("tr[aria-rowindex]")
+        .expect("行の検索");
+    (0..rows.length())
+        .filter_map(|i| rows.get(i))
+        .map(|node| node.unchecked_into::<HtmlElement>())
+        .collect()
+}
+
+/// 行のインデックス (`aria-rowindex` は見出しの分だけずれている)。
+fn table_row_index(row: &HtmlElement) -> usize {
+    row.get_attribute("aria-rowindex")
+        .expect("aria-rowindex")
+        .parse::<usize>()
+        .expect("数値")
+        - 2
+}
+
+/// 行数が多い表では、`<tr>` を作るのは画面に出ている分だけになる。
+/// それでもスクロールできる高さは全行分あり、スクロールすると中身が入れ替わる。
+#[wasm_bindgen_test]
+fn table_builds_only_the_visible_rows() {
+    with_ui(|ui| {
+        const ROWS: usize = 20_000;
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["番号", "名前"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(200.0)),
+        );
+        let mounted = Mounted::new(&table);
+
+        table.set_rows(
+            &(0..ROWS)
+                .map(|i| TableRow::new([i.to_string(), format!("行 {i}")]))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(table.len(), ROWS);
+
+        let realized = table_rows(&table);
+        assert!(
+            !realized.is_empty() && realized.len() < 200,
+            "見えている分だけを作ること: {} 行",
+            realized.len()
+        );
+        assert_eq!(table_row_index(&realized[0]), 0, "はじめは先頭から");
+        assert_eq!(
+            mounted.0.get_attribute("aria-rowcount").as_deref(),
+            None,
+            "行数は <table> 側に書く"
+        );
+        let native: HtmlElement = table
+            .native_element()
+            .query_selector("table")
+            .expect("table の検索")
+            .expect("table")
+            .unchecked_into();
+        assert_eq!(
+            native.get_attribute("aria-rowcount").as_deref(),
+            Some("20001"),
+            "読み上げには全行数を伝えること"
+        );
+
+        // 詰め物のぶん、スクロールできる高さは全行分ある。
+        let height = table.row_height();
+        assert!(height > 0.0, "行の高さを測れていること: {height}");
+        let scroll_height = mounted.0.scroll_height() as f64;
+        let expected = ROWS as f64 * height;
+        assert!(
+            (scroll_height - expected).abs() < expected * 0.05,
+            "全行分の高さがあること: {scroll_height} / {expected}"
+        );
+
+        // 途中までスクロールすると、その辺りの行に入れ替わる。
+        let root: HtmlElement = mounted.0.clone().unchecked_into();
+        root.set_scroll_top((10_000.0 * height) as i32);
+        dispatch(root.as_ref(), "scroll");
+        let realized = table_rows(&table);
+        let first = table_row_index(&realized[0]);
+        assert!(
+            (9_900..=10_000).contains(&first),
+            "スクロール先の行を作ること: {first} 行目から"
+        );
+        assert!(realized.len() < 200, "作る量は増えないこと");
+        let text = realized[0].text_content().unwrap_or_default();
+        assert!(
+            text.contains(&first.to_string()),
+            "中身も入れ替わること: {text}"
+        );
+        Ok(())
+    });
+}
+
+/// 窓の外にある行を選んでも、選択は覚えられていて、
+/// スクロールで戻ってきたときに選ばれた見た目になる。
+#[wasm_bindgen_test]
+fn table_keeps_the_selection_outside_the_window() {
+    with_ui(|ui| {
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["番号"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(200.0)),
+        );
+        let mounted = Mounted::new(&table);
+        table.set_rows(
+            &(0..5_000)
+                .map(|i| TableRow::new([i.to_string()]))
+                .collect::<Vec<_>>(),
+        );
+
+        table.set_selection(&[4_000]);
+        assert_eq!(table.selection(), vec![4_000]);
+        assert!(
+            table_rows(&table)
+                .iter()
+                .all(|row| row.get_attribute("aria-selected").as_deref() == Some("false")),
+            "まだ画面の外なので、選ばれた行は出ていない"
+        );
+
+        let root: HtmlElement = mounted.0.clone().unchecked_into();
+        root.set_scroll_top((4_000.0 * table.row_height()) as i32);
+        dispatch(root.as_ref(), "scroll");
+        let selected: Vec<usize> = table_rows(&table)
+            .iter()
+            .filter(|row| row.get_attribute("aria-selected").as_deref() == Some("true"))
+            .map(table_row_index)
+            .collect();
+        assert_eq!(
+            selected,
+            vec![4_000],
+            "戻ってきたら選ばれた見た目になること"
+        );
+        Ok(())
+    });
+}
+
+/// 行が多い表でも、見出しを押した並べ替えはそのまま働く。
+///
+/// 並べ替えるのはアプリなので、通知を受けて `set_rows` で渡し直したものが、
+/// 画面に出ている行へ反映されることまで確かめる。
+#[wasm_bindgen_test]
+fn table_sorting_works_while_windowed() {
+    with_ui(|ui| {
+        const ROWS: usize = 10_000;
+        let table = ui.table()?;
+        table.set_columns(&[
+            TableColumn::new("番号").sortable(true),
+            TableColumn::new("名前"),
+        ]);
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(200.0)),
+        );
+        let mounted = Mounted::new(&table);
+
+        let rows: Vec<TableRow> = (0..ROWS)
+            .map(|i| TableRow::new([i.to_string(), format!("項目 {i}")]))
+            .collect();
+        table.set_rows(&rows);
+
+        let seen: Rc<RefCell<Vec<(usize, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+        table.on_sort({
+            let seen = seen.clone();
+            let table = table.clone();
+            let rows = rows.clone();
+            move |column, order| {
+                seen.borrow_mut().push((column, order.is_ascending()));
+                let sorted: Vec<TableRow> = match order.is_ascending() {
+                    true => rows.clone(),
+                    false => rows.iter().rev().cloned().collect(),
+                };
+                table.set_rows(&sorted);
+            }
+        });
+
+        let first_cell = || {
+            table_rows(&table)
+                .first()
+                .and_then(|row| row.query_selector("td").ok().flatten())
+                .and_then(|cell| cell.text_content())
+                .unwrap_or_default()
+        };
+        assert_eq!(first_cell(), "0");
+
+        // 見出しの `<button>` を押す (利用者の操作と同じ経路)。
+        let header: HtmlElement = mounted
+            .0
+            .query_selector("thead th button")
+            .expect("見出しの検索")
+            .expect("押せる見出し")
+            .unchecked_into();
+        header.click();
+        assert_eq!(*seen.borrow(), vec![(0, true)]);
+        header.click();
+        assert_eq!(*seen.borrow(), vec![(0, true), (0, false)]);
+        assert_eq!(
+            first_cell(),
+            (ROWS - 1).to_string(),
+            "並べ替えた結果が画面の行に出ること"
+        );
+
+        // 指標は見出しに出る (読み上げ向けの aria-sort と、目に見える矢印)。
+        let cell: HtmlElement = mounted
+            .0
+            .query_selector("thead th")
+            .expect("見出しの検索")
+            .expect("見出し")
+            .unchecked_into();
+        assert_eq!(
+            cell.get_attribute("aria-sort").as_deref(),
+            Some("descending")
+        );
+        assert!(
+            cell.text_content().unwrap_or_default().contains('▼'),
+            "向きの矢印が出ること"
+        );
+        Ok(())
+    });
+}
+
+/// 見出しはスクロールしても残り、行の中身が透けない。
+///
+/// 枠を重ねる (`border-collapse: collapse`) と、枠を描くのがセルではなく表に
+/// なるので、留めた見出しに枠が付いてこない。ブラウザによっては地色ごと
+/// 描かれず、行が透けて見える。行の中のボタンや入力欄は自分で重なりの層を
+/// 作るので、見出しにも層 (`z-index`) が要る。
+#[wasm_bindgen_test]
+fn table_header_stays_above_the_rows() {
+    with_ui(|ui| {
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["番号", "操作"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(120.0)),
+        );
+        let mounted = Mounted::new(&table);
+        // セルにウィジェットを置いた行で確かめる (透けたのはこの形)。
+        table.set_row_builder(50, {
+            let ui = ui.clone();
+            move |index| {
+                let open = ui.button("開く")?;
+                Ok(TableCells::new().text(index.to_string()).cell(&open))
+            }
+        });
+
+        let native: Element = mounted
+            .0
+            .query_selector("table")
+            .expect("table の検索")
+            .expect("table");
+        assert_ne!(
+            computed(&native, "border-collapse"),
+            "collapse",
+            "枠を重ねると、留めた見出しに枠が付いてこない"
+        );
+        let header: Element = mounted
+            .0
+            .query_selector("thead th")
+            .expect("見出しの検索")
+            .expect("見出し");
+        assert_eq!(computed(&header, "position"), "sticky");
+        assert_ne!(
+            computed(&header, "z-index"),
+            "auto",
+            "行の中のコントロールより上に置くこと"
+        );
+        // 地色は**不透明**でなければならない。行がこの下を流れるため。
+        // Safari (WebKit) の暗い配色では入力欄の地色 `Field` が半透明なので、
+        // 不透明な下地を敷いた上へ重ねている。
+        let background = computed(&header, "background-color");
+        let opaque = !background.contains("rgba(") || background.ends_with(", 1)");
+        assert!(opaque, "見出しの地色が透けないこと: {background}");
+        assert_ne!(
+            computed(&header, "background-image"),
+            "none",
+            "表の地色を下地の上へ重ねること"
+        );
+
+        // スクロールしても見出しは動かない (`top: 0` に留まる)。
+        let root: HtmlElement = mounted.0.clone().unchecked_into();
+        let before = header.get_bounding_client_rect().y() - root.get_bounding_client_rect().y();
+        root.set_scroll_top(60);
+        let after = header.get_bounding_client_rect().y() - root.get_bounding_client_rect().y();
+        assert!(
+            (before - after).abs() < 1.0,
+            "見出しが枠の上端に留まること: {before} → {after}"
+        );
+
+        Ok(())
+    });
+}
+
+/// 組み立てる行でも、選べるかどうかを行を作らずに答えられる。
+#[wasm_bindgen_test]
+fn table_row_selectable_answers_without_building() {
+    with_ui(|ui| {
+        const ROWS: usize = 10_000;
+        const LOCKED: usize = 5_000;
+        let built = Rc::new(Cell::new(0usize));
+
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["番号"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(120.0)),
+        );
+        let _mounted = Mounted::new(&table);
+        table.set_row_builder(ROWS, {
+            let built = built.clone();
+            move |index| {
+                built.set(built.get() + 1);
+                Ok(TableCells::new()
+                    .text(index.to_string())
+                    .selectable(index != LOCKED))
+            }
+        });
+        // 画面に出る分はここまでで組み立てられている。以降は増えないはず。
+        let realized = built.get();
+
+        // 述語が無いと、まだ作っていない行は選べる扱いになる。
+        table.set_selection(&[LOCKED]);
+        assert_eq!(table.selection(), vec![LOCKED], "述語が無ければ選べる扱い");
+
+        // 述語を渡すと、行を組み立てずに落とせる。
+        table.clear_selection();
+        table.set_row_selectable(|index| index != LOCKED);
+        table.set_selection(&[LOCKED]);
+        assert!(table.selection().is_empty(), "選べない行は取り除かれること");
+        table.set_selection(&[LOCKED - 1]);
+        assert_eq!(table.selection(), vec![LOCKED - 1]);
+        assert_eq!(
+            built.get(),
+            realized,
+            "選択のために行を組み立て直さないこと"
+        );
+        Ok(())
+    });
+}
+
+/// 組み立てる行 (`TableCells`) でも、行数が多いときは見えている分だけを作り、
+/// 見出しの並べ替えもそのまま働く。
+#[wasm_bindgen_test]
+fn table_builder_rows_scale_and_sort() {
+    with_ui(|ui| {
+        const ROWS: usize = 20_000;
+        let built = Rc::new(Cell::new(0usize));
+        let descending = Rc::new(Cell::new(false));
+
+        let table = ui.table()?;
+        table.set_columns(&[
+            TableColumn::new("番号").sortable(true),
+            TableColumn::new("操作"),
+        ]);
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(200.0)),
+        );
+        let mounted = Mounted::new(&table);
+
+        table.set_row_builder(ROWS, {
+            let ui = ui.clone();
+            let built = built.clone();
+            let descending = descending.clone();
+            move |index| {
+                built.set(built.get() + 1);
+                // 並べ替えはアプリの仕事。ここでは向きを反転するだけ。
+                let value = match descending.get() {
+                    true => ROWS - 1 - index,
+                    false => index,
+                };
+                let open = ui.button("開く")?;
+                Ok(TableCells::new().text(value.to_string()).cell(&open))
+            }
+        });
+
+        let realized = table_rows(&table).len();
+        assert!(
+            realized > 0 && realized < 200,
+            "見えている分だけを組み立てること: {realized} 行"
+        );
+        assert!(
+            built.get() < 400,
+            "組み立てを呼ぶのも見えている行の分だけであること: {} 回",
+            built.get()
+        );
+        assert!(
+            table_rows(&table)[0]
+                .query_selector("button")
+                .expect("検索")
+                .is_some(),
+            "セルの中がボタンであること"
+        );
+
+        // 見出しを押すと、組み立てる中身のほうが入れ替わる。
+        table.on_sort({
+            let table = table.clone();
+            let descending = descending.clone();
+            move |_column, order| {
+                descending.set(!order.is_ascending());
+                // 行数は変わらないので `refresh` で組み立て直す。
+                table.refresh();
+            }
+        });
+        let header: HtmlElement = mounted
+            .0
+            .query_selector("thead th button")
+            .expect("見出しの検索")
+            .expect("押せる見出し")
+            .unchecked_into();
+        header.click();
+        header.click();
+
+        let first = table_rows(&table)
+            .first()
+            .and_then(|row| row.query_selector("td").ok().flatten())
+            .and_then(|cell| cell.text_content())
+            .unwrap_or_default();
+        assert_eq!(first, (ROWS - 1).to_string(), "並べ替えた結果が出ること");
+        assert!(
+            built.get() < 800,
+            "並べ替えでも作り直すのは見えている行だけであること: {} 回",
+            built.get()
+        );
+        Ok(())
+    });
+}
+
+/// セルにウィジェットを置ける。行のクリックは activation になり、
+/// セルの中のボタンを押したときは行の activation にはならない。
+#[wasm_bindgen_test]
+fn table_widget_cells_separate_the_row_and_its_controls() {
+    with_ui(|ui| {
+        let activated: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
+        let pressed = Rc::new(Cell::new(0));
+
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["都市", "操作"]));
+        let mounted = Mounted::new(&table);
+        {
+            let ui = ui.clone();
+            let activated = activated.clone();
+            let pressed = pressed.clone();
+            table.set_row_builder(3, move |index| {
+                let button = ui.button("開く")?;
+                button.on_click({
+                    let pressed = pressed.clone();
+                    move || pressed.set(pressed.get() + 1)
+                });
+                let cells = TableCells::new()
+                    .cell(&ui.label(&format!("都市 {index}"))?)
+                    .cell(&button)
+                    .selectable(index != 1);
+                cells.on_activate({
+                    let activated = activated.clone();
+                    move || activated.borrow_mut().push(index)
+                });
+                Ok(cells)
+            });
+        }
+
+        let rows = table_rows(&table);
+        assert_eq!(rows.len(), 3);
+        assert!(!rows[1].has_attribute("aria-disabled"));
+        let label_color = |index: usize| {
+            computed(
+                &rows[index].query_selector("span").unwrap().unwrap(),
+                "color",
+            )
+        };
+        let normal_color = label_color(0);
+        assert_eq!(
+            label_color(1),
+            normal_color,
+            "選択不可でも通常の文字色を使うこと"
+        );
+        assert_eq!(
+            rows[0].query_selector("button").expect("検索").is_some(),
+            true,
+            "セルの中がボタンになっていること"
+        );
+
+        // 行そのものを押すと activation と選択が起きる。
+        rows[0].click();
+        assert_eq!(*activated.borrow(), vec![0]);
+        assert_eq!(table.selection(), vec![0]);
+
+        // セルの中のボタンを押しても、行の activation にはならない。
+        let button: HtmlElement = rows[2]
+            .query_selector("button")
+            .expect("検索")
+            .expect("ボタン")
+            .unchecked_into();
+        button.click();
+        assert_eq!(pressed.get(), 1, "ボタン自身は押せること");
+        assert_eq!(
+            *activated.borrow(),
+            vec![0],
+            "行の activation は起きないこと"
+        );
+
+        // 選べない行は、選択だけが起きない (activation は起きる)。
+        rows[1].click();
+        assert_eq!(*activated.borrow(), vec![0, 1]);
+        assert_eq!(table.selection(), vec![0], "選べない行は選ばれないこと");
+        assert_eq!(
+            label_color(1),
+            normal_color,
+            "選択の再描画でも文字色を保つこと"
+        );
+        drop(mounted);
+        Ok(())
+    });
+}
+
+/// 行の高さを決めると、その高さで詰め物も引き直される。
+#[wasm_bindgen_test]
+fn table_row_height_can_be_fixed() {
+    with_ui(|ui| {
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["番号"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(200.0)),
+        );
+        let mounted = Mounted::new(&table);
+        table.set_rows(
+            &(0..1_000)
+                .map(|i| TableRow::new([i.to_string()]))
+                .collect::<Vec<_>>(),
+        );
+
+        table.set_row_height(40.0);
+        assert_eq!(table.row_height(), 40.0);
+        let rows = table_rows(&table);
+        let height = rows[0].get_bounding_client_rect().height();
+        assert!(
+            (height - 40.0).abs() < 1.0,
+            "指定した高さになること: {height}"
+        );
+        let scroll_height = mounted.0.scroll_height() as f64;
+        assert!(
+            (scroll_height - 1_000.0 * 40.0).abs() < 200.0,
+            "全行分の高さになること: {scroll_height}"
+        );
+        Ok(())
+    });
+}
 
 #[wasm_bindgen_test]
 fn dialog_escape_closes_and_stops_the_browser_default() {
