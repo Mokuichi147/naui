@@ -222,6 +222,9 @@ impl TableCells {
 /// 行を組み立てるクロージャの置き場。
 type RowBuildCell = Rc<RefCell<Option<Box<dyn FnMut(usize) -> Result<TableCells>>>>>;
 
+/// 「その行は選べるか」を答える関数の置き場 ([`Table::set_row_selectable`])。
+type RowSelectableCell = RefCell<Option<Rc<dyn Fn(usize) -> bool>>>;
+
 /// 行を組み立てるクロージャ。
 ///
 /// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
@@ -259,6 +262,8 @@ impl RowBuilder {
 struct RowsState {
     rows: RefCell<Vec<TableRow>>,
     builder: RowBuilder,
+    /// 行を組み立てずに「選べるか」を答える関数 ([`Table::set_row_selectable`])。
+    selectable: RowSelectableCell,
     count: Cell<usize>,
 }
 
@@ -289,6 +294,18 @@ impl RowsState {
         }
         // 組み立てに失敗した行は、列だけそろえた空の行にする。
         Some(self.builder.build(index)?.unwrap_or_default())
+    }
+
+    fn set_selectable(&self, f: impl Fn(usize) -> bool + 'static) {
+        *self.selectable.borrow_mut() = Some(Rc::new(f));
+    }
+
+    /// 行を組み立てずに答えられるなら、その行が選べるか。
+    ///
+    /// 呼び出しの間は借用を持たない (この中からアプリが表を触れるため)。
+    fn selectable_hint(&self, index: usize) -> Option<bool> {
+        let f = self.selectable.borrow().clone()?;
+        Some(f(index))
     }
 
     /// 文字だけの行で、その行が選べるか。組み立てる行では `None`。
@@ -526,6 +543,27 @@ impl Table {
     ) {
         self.0.rows.set_builder(count, build);
         self.reset_rows();
+    }
+
+    /// 行が選べるかどうかを、**行を組み立てずに**答える関数を渡す。
+    ///
+    /// [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
+    /// 選べるかどうかを naui は知らない。これを渡しておくと、画面の外の行に
+    /// ついても [`Table::set_selection`] が「選べない行を取り除く」を守れる。
+    /// 渡さないときは、作ってある行は [`TableCells::selectable`] に従い、
+    /// まだ作っていない行は選べるものとして扱う。
+    ///
+    /// 返す答えは `build` が返す [`TableCells::selectable`] と同じにすること。
+    ///
+    /// ```no_run
+    /// # use naui_web::{Table, TableCells};
+    /// # fn fill(table: &Table, done: std::rc::Rc<Vec<bool>>) {
+    /// let rows = done.clone();
+    /// table.set_row_selectable(move |index| !rows[index]);
+    /// # }
+    /// ```
+    pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        self.0.rows.set_selectable(selectable);
     }
 
     /// 見えている行を組み立て直す。行数と選択はそのまま。
@@ -1028,6 +1066,10 @@ impl Table {
         }
         if let Some(enabled) = self.0.rows.text_row_selectable(index) {
             return enabled;
+        }
+        // 組み立てずに答えられるなら、そちらが先 (画面の外の行にも効く)。
+        if let Some(selectable) = self.0.rows.selectable_hint(index) {
+            return selectable;
         }
         let window = self.0.window.get();
         match window.contains(index) {

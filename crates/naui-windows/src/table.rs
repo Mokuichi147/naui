@@ -24,8 +24,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{
-    keeps_hidden_selection, keeps_row_window, row_window, Align, Result, RowWindow, SelectionMode,
-    SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
+    keeps_hidden_selection, keeps_row_window, row_window, Align, Result, RowWindow,
+    SelectionGesture, SelectionMode, SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN,
+    ROW_WINDOW_THRESHOLD,
 };
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
@@ -500,6 +501,9 @@ impl TableCells {
 /// 行を組み立てるクロージャの置き場。
 type RowBuildCell = Rc<RefCell<Option<Box<dyn FnMut(usize) -> Result<TableCells>>>>>;
 
+/// 「その行は選べるか」を答える関数の置き場 ([`Table::set_row_selectable`])。
+type RowSelectableCell = RefCell<Option<Rc<dyn Fn(usize) -> bool>>>;
+
 /// 行を組み立てるクロージャ。
 ///
 /// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
@@ -537,6 +541,8 @@ impl RowBuilder {
 struct RowsState {
     rows: RefCell<Vec<TableRow>>,
     builder: RowBuilder,
+    /// 行を組み立てずに「選べるか」を答える関数 ([`Table::set_row_selectable`])。
+    selectable: RowSelectableCell,
     count: Cell<usize>,
 }
 
@@ -567,6 +573,18 @@ impl RowsState {
         }
         // 組み立てに失敗した行は、列だけそろえた空の行にする。
         Some(self.builder.build(index)?.unwrap_or_default())
+    }
+
+    fn set_selectable(&self, f: impl Fn(usize) -> bool + 'static) {
+        *self.selectable.borrow_mut() = Some(Rc::new(f));
+    }
+
+    /// 行を組み立てずに答えられるなら、その行が選べるか。
+    ///
+    /// 呼び出しの間は借用を持たない (この中からアプリが表を触れるため)。
+    fn selectable_hint(&self, index: usize) -> Option<bool> {
+        let f = self.selectable.borrow().clone()?;
+        Some(f(index))
     }
 
     /// 文字だけの行で、その行が選べるか。組み立てる行では `None`。
@@ -602,6 +620,29 @@ fn append_widget_cell(
         .and_then(|children| children.Append(&element))
         .map_err(|e| to_error("セルの追加", e))?;
     Ok(())
+}
+
+/// いま押されている修飾キーから、選択の変え方を見分ける。
+///
+/// `SelectionChanged` には修飾キーが乗らないので、その場のキーの状態を読む。
+/// `GetKeyState` はスレッドが処理したところまでの状態を返すので、選択を
+/// 起こしたクリックやキー操作と同じ時点の状態になる。
+fn selection_gesture() -> SelectionGesture {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SHIFT};
+
+    // 最上位のビットが立っていれば、そのキーは押されている。
+    let down = |key: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY| -> bool {
+        let state = unsafe { GetKeyState(i32::from(key.0)) };
+        state < 0
+    };
+    if down(VK_SHIFT) {
+        // Shift は起点からの範囲。選び直しなので、窓の外の選択は落とす。
+        return SelectionGesture::Extend;
+    }
+    if down(VK_CONTROL) {
+        return SelectionGesture::Toggle;
+    }
+    SelectionGesture::Plain
 }
 
 /// 窓の外にある行の分を、詰め物の高さとして持たせる。
@@ -871,6 +912,27 @@ impl Table {
     ) {
         self.0.rows.set_builder(count, build);
         self.reset_rows();
+    }
+
+    /// 行が選べるかどうかを、**行を組み立てずに**答える関数を渡す。
+    ///
+    /// [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
+    /// 選べるかどうかを naui は知らない。これを渡しておくと、画面の外の行に
+    /// ついても [`Table::set_selection`] が「選べない行を取り除く」を守れる。
+    /// 渡さないときは、作ってある行は [`TableCells::selectable`] に従い、
+    /// まだ作っていない行は選べるものとして扱う。
+    ///
+    /// 返す答えは `build` が返す [`TableCells::selectable`] と同じにすること。
+    ///
+    /// ```no_run
+    /// # use naui_windows::{Table, TableCells};
+    /// # fn fill(table: &Table, done: std::rc::Rc<Vec<bool>>) {
+    /// let rows = done.clone();
+    /// table.set_row_selectable(move |index| !rows[index]);
+    /// # }
+    /// ```
+    pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        self.0.rows.set_selectable(selectable);
     }
 
     /// 見えている行を組み立て直す。行数と選択はそのまま。
@@ -1461,6 +1523,10 @@ impl Table {
         if let Some(enabled) = self.0.rows.text_row_selectable(index) {
             return enabled;
         }
+        // 組み立てずに答えられるなら、そちらが先 (画面の外の行にも効く)。
+        if let Some(selectable) = self.0.rows.selectable_hint(index) {
+            return selectable;
+        }
         let window = self.0.window.get();
         match window.contains(index) {
             true => self
@@ -1510,14 +1576,14 @@ impl Table {
             return picked;
         }
         // 組み立ててある行の選択しか届かないので、窓の外の選択を残すかどうかを
-        // 変わり方から決める (`keeps_hidden_selection`)。
+        // 修飾キーから決める (`keeps_hidden_selection`)。
         let previous = self.0.selected.borrow().clone();
         let inside: Vec<usize> = previous
             .iter()
             .copied()
             .filter(|&index| window.contains(index))
             .collect();
-        if !keeps_hidden_selection(&inside, &picked) {
+        if !keeps_hidden_selection(&inside, &picked, selection_gesture()) {
             return picked;
         }
         picked.extend(previous.iter().copied().filter(|&i| !window.contains(i)));

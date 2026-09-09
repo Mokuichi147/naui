@@ -224,6 +224,10 @@ fn main() {
             table_row_height_follows_the_setting,
         ),
         (
+            "選べるかどうかを行を組み立てずに答えられる",
+            table_row_selectable_answers_without_building,
+        ),
+        (
             "行を絞っていても見出しの並べ替えが届く",
             table_sorting_works_while_windowed,
         ),
@@ -4519,6 +4523,53 @@ fn table_sorting_works_while_windowed(ui: &Ui) -> Result<()> {
     let reversed: Vec<TableRow> = rows.iter().rev().cloned().collect();
     table.set_rows(&reversed);
     assert_eq!(first_cell(), (ROWS - 1).to_string());
+    Ok(())
+}
+
+/// 組み立てる行でも、選べるかどうかを行を作らずに答えられる。
+///
+/// 渡さないうちは「まだ作っていない行は選べる」とみなすので、
+/// 画面の外の行を指した `set_selection` はそのまま残る。
+fn table_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 10_000;
+    const LOCKED: usize = 5_000;
+    let built = Rc::new(Cell::new(0usize));
+
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["番号"]));
+    table.set_row_builder(ROWS, {
+        let built = built.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            Ok(TableCells::new()
+                .text(index.to_string())
+                .selectable(index != LOCKED))
+        }
+    });
+
+    // 述語が無いと、まだ作っていない行は選べる扱いになる。
+    table.set_selection(&[LOCKED]);
+    assert_eq!(table.selection(), vec![LOCKED], "述語が無ければ選べる扱い");
+
+    // 述語を渡すと、行を組み立てずに落とせる。
+    table.clear_selection();
+    table.set_row_selectable(|index| index != LOCKED);
+    table.set_selection(&[LOCKED]);
+    assert!(
+        table.selection().is_empty(),
+        "選べない行は取り除かれること: {:?}",
+        table.selection()
+    );
+    // 選べる行はそのまま通る。
+    table.set_selection(&[LOCKED - 1]);
+    assert_eq!(table.selection(), vec![LOCKED - 1]);
+    assert_eq!(built.get(), 0, "選択のために行を組み立てないこと");
+
+    // AppKit 側にも「この行は選べない」と伝わる。
+    let native = table.native_table();
+    let delegate = unsafe { native.delegate() }.expect("デリゲートがあること");
+    assert!(!delegate.tableView_shouldSelectRow(&native, LOCKED as isize));
+    assert!(delegate.tableView_shouldSelectRow(&native, (LOCKED - 1) as isize));
     Ok(())
 }
 

@@ -1027,9 +1027,32 @@
 //!
 //! 選択はインデックスで覚えているので、画面の外にある行も選べる
 //! ([`Table::set_selection`]) し、[`Table::selection`] にも出てくる。
-//! ただし macOS 以外では、絞っている表で**画面の外の行を⌘ / Ctrl で
-//! 選び足したあと、別の行をふつうに押すと、外の選択は落ちる**
-//! (ネイティブのコントロールへ届くのは、組み立ててある行の選択だけのため)。
+//! 絞っている表では、ネイティブのコントロールへ届くのが組み立ててある行の
+//! 選択だけなので、**画面の外の選択を残すかどうかは押された修飾キーで決める**。
+//! ⌘ / Ctrl の足し引きは残し、ふつうのクリックと Shift の範囲選びは
+//! 選び直しとして落とす (macOS は `NSTableView` が全行の選択を持つので、
+//! この判断そのものが要らない)。
+//!
+//! [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
+//! 選べるかどうかを naui は知らない。既定では「選べる」とみなすので、
+//! 画面の外の行に [`TableCells::selectable(false)`](TableCells::selectable) を
+//! 使うなら、同じ判断を [`Table::set_row_selectable`] にも渡しておく。
+//!
+//! ```no_run
+//! # use naui::{Result, TableCells, Ui};
+//! # fn build(ui: &Ui, locked: std::rc::Rc<Vec<bool>>) -> Result<()> {
+//! # let table = ui.table()?;
+//! let rows = locked.clone();
+//! table.set_row_builder(locked.len(), move |index| {
+//!     Ok(TableCells::new()
+//!         .text(format!("行 {index}"))
+//!         .selectable(!rows[index]))
+//! });
+//! // 画面の外の行についても `set_selection` が同じ判断をできるようにする。
+//! table.set_row_selectable(move |index| !locked[index]);
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! ### 見出しからの並べ替え
 //!
@@ -1761,6 +1784,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: bool = cells.is_empty();
     cells.on_activate(|| {});
     table.set_row_builder(1, move |_index: usize| Ok(cells.clone().selectable(false)));
+    table.set_row_selectable(|_index: usize| true);
     table.refresh();
     table.set_row_height(1.0);
     let _: f64 = table.row_height();

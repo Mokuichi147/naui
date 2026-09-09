@@ -386,6 +386,14 @@ fn main() {
             table_builder_rows_scale_and_sort,
         ),
         (
+            "ウィジェットのセルでも列の幅がスクロールで動かない",
+            table_widget_cells_keep_the_column_width,
+        ),
+        (
+            "選べるかどうかを行を組み立てずに答えられる",
+            table_row_selectable_answers_without_building,
+        ),
+        (
             "ツリーの行の中身が行の幅いっぱいに置かれる",
             tree_row_content_fills_the_row,
         ),
@@ -3166,6 +3174,108 @@ fn table_builder_rows_scale_and_sort(ui: &Ui) -> Result<()> {
         built.get() < 800,
         "並べ替えでも作り直すのは見えている行だけであること: {} 回",
         built.get()
+    );
+    window.close();
+    Ok(())
+}
+
+/// 組み立てる行でも、選べるかどうかを行を作らずに答えられる。
+fn table_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 10_000;
+    const LOCKED: usize = 5_000;
+    let built = Rc::new(Cell::new(0usize));
+
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["番号"]));
+    table.set_row_builder(ROWS, {
+        let built = built.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            Ok(TableCells::new()
+                .text(index.to_string())
+                .selectable(index != LOCKED))
+        }
+    });
+
+    // 画面に出る分はここまでで組み立てられている。以降は増えないはず。
+    let realized = built.get();
+
+    // 述語が無いと、まだ作っていない行は選べる扱いになる。
+    table.set_selection(&[LOCKED]);
+    assert_eq!(table.selection(), vec![LOCKED], "述語が無ければ選べる扱い");
+
+    // 述語を渡すと、行を組み立てずに落とせる。
+    table.clear_selection();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    table.set_row_selectable({
+        let seen = seen.clone();
+        move |index| {
+            seen.borrow_mut().push(index);
+            index != LOCKED
+        }
+    });
+    table.set_selection(&[LOCKED]);
+    assert!(table.selection().is_empty(), "選べない行は取り除かれること");
+    table.set_selection(&[LOCKED - 1]);
+    assert_eq!(table.selection(), vec![LOCKED - 1]);
+    assert!(seen.borrow().contains(&LOCKED), "述語が呼ばれること");
+    assert_eq!(
+        built.get(),
+        realized,
+        "選択のために行を組み立て直さないこと"
+    );
+    Ok(())
+}
+
+/// 行を絞っている表で、セルのウィジェットの幅が列の幅を動かさない。
+///
+/// 列の幅は組み立ててある行だけから決まるので、中身の自然な幅がそのまま
+/// 列の幅になると、スクロールで別の行が出るたびに列が動いてしまう。
+fn table_widget_cells_keep_the_column_width(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let table = ui.table()?;
+    // どちらの列も幅を指定しない (余りを分け合う)。
+    table.set_columns(&TableColumn::list(["操作", "名前"]));
+    table.set_sizing(Sizing::fill());
+    let window = ui.window("列の幅", 400.0, 200.0)?;
+    window.set_child(&table);
+    window.show();
+
+    table.set_row_builder(ROWS, {
+        let ui = ui.clone();
+        move |index| {
+            // 先頭には出さず、ずっと下の行だけラベルを長くする。
+            let label = match index >= 3_000 {
+                true => "とても長いラベルの操作ボタン",
+                false => "実行",
+            };
+            let button = ui.button(label)?;
+            Ok(TableCells::new()
+                .cell(&button)
+                .text(format!("項目 {index}")))
+        }
+    });
+    tick(&table.native_list_box());
+
+    let (header, list) = table_parts(&table);
+    let column = children(&header)[0].clone();
+    let before = column.width();
+    assert!(before > 0, "列の幅が決まっていること");
+
+    // 長いラベルの行が出るところまでスクロールする。
+    let scroller = scroller_of(&list).expect("GtkScrolledWindow");
+    let adjustment = scroller.vadjustment();
+    adjustment.set_value(table.row_height() * 3_500.0);
+    tick(&list);
+    let long_label_shown = children(&list).iter().any(|row| {
+        find_button(row).is_some_and(|b| b.label().is_some_and(|l| l.contains("とても長い")))
+    });
+    assert!(long_label_shown, "長いラベルの行が出ていること");
+
+    assert_eq!(
+        column.width(),
+        before,
+        "スクロールしても列の幅が動かないこと"
     );
     window.close();
     Ok(())

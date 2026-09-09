@@ -209,6 +209,9 @@ impl TableCells {
 /// 行を組み立てるクロージャの置き場。
 type RowBuildCell = Rc<RefCell<Option<Box<dyn FnMut(usize) -> Result<TableCells>>>>>;
 
+/// 「その行は選べるか」を答える関数の置き場 ([`Table::set_row_selectable`])。
+type RowSelectableCell = RefCell<Option<Rc<dyn Fn(usize) -> bool>>>;
+
 /// 行を組み立てるクロージャ。
 ///
 /// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
@@ -251,6 +254,8 @@ impl RowBuilder {
 struct RowsState {
     rows: RefCell<Vec<TableRow>>,
     builder: RowBuilder,
+    /// 行を組み立てずに「選べるか」を答える関数 ([`Table::set_row_selectable`])。
+    selectable: RowSelectableCell,
     count: Cell<usize>,
     built: RefCell<HashMap<usize, TableCells>>,
 }
@@ -296,16 +301,32 @@ impl RowsState {
         Some(cells)
     }
 
+    fn set_selectable(&self, f: impl Fn(usize) -> bool + 'static) {
+        *self.selectable.borrow_mut() = Some(Rc::new(f));
+    }
+
+    /// 行を組み立てずに答えられるなら、その行が選べるか。
+    ///
+    /// 呼び出しの間は借用を持たない (この中からアプリが表を触れるため)。
+    fn selectable_hint(&self, index: usize) -> Option<bool> {
+        let f = self.selectable.borrow().clone()?;
+        Some(f(index))
+    }
+
     /// その行を選べるか。
     ///
-    /// 組み立てる行では、まだ作っていない行は「選べる」とみなす
-    /// (作ってみないと分からないため)。画面に出た行はそのときの指定に従う。
+    /// 組み立てる行では、[`Table::set_row_selectable`] を渡していなければ
+    /// まだ作っていない行を「選べる」とみなす (作ってみないと分からないため)。
+    /// 画面に出た行はそのときの指定に従う。
     fn is_selectable(&self, index: usize) -> bool {
         if index >= self.count.get() {
             return false;
         }
         if !self.builder.is_set() {
             return self.rows.borrow().get(index).is_some_and(|row| row.enabled);
+        }
+        if let Some(selectable) = self.selectable_hint(index) {
+            return selectable;
         }
         self.built
             .borrow()
@@ -891,6 +912,27 @@ impl Table {
     ) {
         self.0.rows.set_builder(count, build);
         self.reload();
+    }
+
+    /// 行が選べるかどうかを、**行を組み立てずに**答える関数を渡す。
+    ///
+    /// [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
+    /// 選べるかどうかを naui は知らない。これを渡しておくと、画面の外の行に
+    /// ついても [`Table::set_selection`] が「選べない行を取り除く」を守れる。
+    /// 渡さないときは、作ってある行は [`TableCells::selectable`] に従い、
+    /// まだ作っていない行は選べるものとして扱う。
+    ///
+    /// 返す答えは `build` が返す [`TableCells::selectable`] と同じにすること。
+    ///
+    /// ```no_run
+    /// # use naui_macos::{Table, TableCells};
+    /// # fn fill(table: &Table, done: std::rc::Rc<Vec<bool>>) {
+    /// let rows = done.clone();
+    /// table.set_row_selectable(move |index| !rows[index]);
+    /// # }
+    /// ```
+    pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        self.0.rows.set_selectable(selectable);
     }
 
     /// 見えている行を組み立て直す。行数と選択はそのまま。

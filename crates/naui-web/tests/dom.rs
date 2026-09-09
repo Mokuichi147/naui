@@ -1451,6 +1451,54 @@ fn table_header_stays_above_the_rows() {
     });
 }
 
+/// 組み立てる行でも、選べるかどうかを行を作らずに答えられる。
+#[wasm_bindgen_test]
+fn table_row_selectable_answers_without_building() {
+    with_ui(|ui| {
+        const ROWS: usize = 10_000;
+        const LOCKED: usize = 5_000;
+        let built = Rc::new(Cell::new(0usize));
+
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["番号"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(120.0)),
+        );
+        let _mounted = Mounted::new(&table);
+        table.set_row_builder(ROWS, {
+            let built = built.clone();
+            move |index| {
+                built.set(built.get() + 1);
+                Ok(TableCells::new()
+                    .text(index.to_string())
+                    .selectable(index != LOCKED))
+            }
+        });
+        // 画面に出る分はここまでで組み立てられている。以降は増えないはず。
+        let realized = built.get();
+
+        // 述語が無いと、まだ作っていない行は選べる扱いになる。
+        table.set_selection(&[LOCKED]);
+        assert_eq!(table.selection(), vec![LOCKED], "述語が無ければ選べる扱い");
+
+        // 述語を渡すと、行を組み立てずに落とせる。
+        table.clear_selection();
+        table.set_row_selectable(|index| index != LOCKED);
+        table.set_selection(&[LOCKED]);
+        assert!(table.selection().is_empty(), "選べない行は取り除かれること");
+        table.set_selection(&[LOCKED - 1]);
+        assert_eq!(table.selection(), vec![LOCKED - 1]);
+        assert_eq!(
+            built.get(),
+            realized,
+            "選択のために行を組み立て直さないこと"
+        );
+        Ok(())
+    });
+}
+
 /// 組み立てる行 (`TableCells`) でも、行数が多いときは見えている分だけを作り、
 /// 見出しの並べ替えもそのまま働く。
 #[wasm_bindgen_test]

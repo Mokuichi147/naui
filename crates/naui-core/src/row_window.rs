@@ -192,34 +192,71 @@ pub fn keeps_row_window(current: RowWindow, needed: RowWindow, next: RowWindow) 
     current.covers(needed) && current.len() <= next.len()
 }
 
+/// 選択を変えた操作。押されていた修飾キーから決まる。
+///
+/// 行を絞っている一覧では「窓の外の選択を残すか」を決めるのに使う
+/// ([`keeps_hidden_selection`])。足し引きなら残し、選び直しなら落とす。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelectionGesture {
+    /// 修飾キー無し。押した行だけを選び直す。
+    Plain,
+    /// ⌘ / Ctrl を押しながら。選択を足す / 外す。
+    Toggle,
+    /// Shift を押しながら。起点からの範囲を選び直す。
+    Extend,
+    /// 分からない。修飾キーを読めなかったとき (既定)。
+    #[default]
+    Unknown,
+}
+
 /// 窓の外にある選択を残すか。
 ///
 /// 行を絞っている一覧では、ネイティブのコントロールが知っているのは
 /// **組み立ててある行の選択だけ**である。ユーザーが行を押したときに
 /// 返ってくるのもその範囲なので、窓の外の選択を残してよいのか、
-/// 押し直しとして落とすのかを、変わり方から見分ける。
+/// 選び直しとして落とすのかを決める必要がある。
 ///
-/// - 窓の中の選択が増えただけ (⌘ / Ctrl を押しながら足した) → 残す
-/// - 窓の中の選択が減っただけ (⌘ / Ctrl を押しながら外した) → 残す
-/// - 入れ替わった (ふつうのクリックや Shift の範囲選び) → 落とす
+/// | 操作 | 窓の外の選択 |
+/// | --- | --- |
+/// | [`SelectionGesture::Toggle`] (⌘ / Ctrl) | 残す |
+/// | [`SelectionGesture::Plain`] / [`SelectionGesture::Extend`] | 落とす |
+/// | [`SelectionGesture::Unknown`] | 変わり方から見分ける |
+///
+/// **Shift の範囲選びは変わり方では見分けられない。** 起点から広げた範囲は
+/// 前の選択を含むことがあり (`[1]` → `[1, 2, 3]`)、⌘ / Ctrl で足したときと
+/// 同じ形になるためである。修飾キーが読めるバックエンドは
+/// [`SelectionGesture`] を渡すこと。
 ///
 /// `previous` は前の選択のうち窓の中にあったもの、`current` はネイティブが
 /// 返してきた選択。どちらも昇順で重複が無いこと。
 ///
 /// ```
-/// # use naui_core::keeps_hidden_selection;
-/// // 足しただけなら、画面の外で選ばれている行はそのまま。
-/// assert!(keeps_hidden_selection(&[1], &[1, 3]));
-/// // 外しただけでも、そのまま。
-/// assert!(keeps_hidden_selection(&[1, 3], &[1]));
-/// // 別の行を押したときは、選び直しなので落とす。
-/// assert!(!keeps_hidden_selection(&[1, 3], &[5]));
+/// # use naui_core::{keeps_hidden_selection, SelectionGesture};
+/// // ⌘ / Ctrl での足し引きなら、画面の外で選ばれている行はそのまま。
+/// assert!(keeps_hidden_selection(&[1], &[1, 3], SelectionGesture::Toggle));
+/// // Shift の範囲選びは、形が同じでも選び直しなので落とす。
+/// assert!(!keeps_hidden_selection(&[1], &[1, 3], SelectionGesture::Extend));
+/// // 修飾キーが読めないときは、変わり方から見分ける。
+/// assert!(keeps_hidden_selection(&[1], &[1, 3], SelectionGesture::Unknown));
+/// assert!(!keeps_hidden_selection(&[1, 3], &[5], SelectionGesture::Unknown));
 /// ```
-pub fn keeps_hidden_selection(previous: &[usize], current: &[usize]) -> bool {
-    let added = current.iter().all(|index| previous.contains(index));
-    let removed = previous.iter().all(|index| current.contains(index));
-    // どちらか一方だけの変化なら、押し足し / 押し外し。
-    added || removed
+pub fn keeps_hidden_selection(
+    previous: &[usize],
+    current: &[usize],
+    gesture: SelectionGesture,
+) -> bool {
+    match gesture {
+        // 足し引きなので、窓の外はそのまま。
+        SelectionGesture::Toggle => true,
+        // ふつうのクリックも Shift の範囲選びも、選び直し。
+        SelectionGesture::Plain | SelectionGesture::Extend => false,
+        SelectionGesture::Unknown => {
+            let added = current.iter().all(|index| previous.contains(index));
+            let removed = previous.iter().all(|index| current.contains(index));
+            // どちらか一方だけの変化なら、押し足し / 押し外しとみなす。
+            added || removed
+        }
+    }
 }
 
 #[cfg(test)]
@@ -328,15 +365,32 @@ mod tests {
     }
 
     #[test]
-    fn hidden_selection_survives_adding_and_removing() {
-        // 足す / 外すだけなら、画面の外の選択は残す。
-        assert!(keeps_hidden_selection(&[1], &[1, 3]));
-        assert!(keeps_hidden_selection(&[1, 3], &[1]));
-        assert!(keeps_hidden_selection(&[], &[2]), "0 件から足したとき");
-        assert!(keeps_hidden_selection(&[2], &[]), "全部外したとき");
+    fn hidden_selection_follows_the_gesture() {
+        use SelectionGesture::*;
+        // ⌘ / Ctrl の足し引きなら残す。
+        assert!(keeps_hidden_selection(&[1], &[1, 3], Toggle));
+        assert!(keeps_hidden_selection(&[1, 3], &[1], Toggle));
+        // ふつうのクリックと Shift の範囲選びは落とす。形が同じでも変わらない。
+        assert!(!keeps_hidden_selection(&[1], &[1, 3], Extend));
+        assert!(!keeps_hidden_selection(&[1], &[3], Plain));
+        assert!(!keeps_hidden_selection(&[1, 2, 3], &[1, 2, 3], Extend));
+    }
+
+    #[test]
+    fn hidden_selection_falls_back_to_the_difference() {
+        use SelectionGesture::Unknown;
+        // 修飾キーが読めないときは、足す / 外すだけなら残す。
+        assert!(keeps_hidden_selection(&[1], &[1, 3], Unknown));
+        assert!(keeps_hidden_selection(&[1, 3], &[1], Unknown));
+        assert!(
+            keeps_hidden_selection(&[], &[2], Unknown),
+            "0 件から足したとき"
+        );
+        assert!(keeps_hidden_selection(&[2], &[], Unknown), "全部外したとき");
         // 入れ替わったら選び直しとみなす。
-        assert!(!keeps_hidden_selection(&[1, 3], &[5]));
-        assert!(!keeps_hidden_selection(&[1, 3], &[3, 5]));
+        assert!(!keeps_hidden_selection(&[1, 3], &[5], Unknown));
+        assert!(!keeps_hidden_selection(&[1, 3], &[3, 5], Unknown));
+        assert_eq!(SelectionGesture::default(), Unknown);
     }
 
     #[test]

@@ -22,8 +22,8 @@ use gtk::glib;
 use gtk::pango;
 use gtk::prelude::*;
 use naui_core::{
-    keeps_hidden_selection, keeps_row_window, row_window, Align, Result, RowWindow, SelectionMode,
-    SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN,
+    keeps_hidden_selection, keeps_row_window, row_window, Align, Result, RowWindow,
+    SelectionGesture, SelectionMode, SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN,
 };
 
 use crate::bin::SizeBin;
@@ -209,6 +209,9 @@ impl TableCells {
 /// 行を組み立てるクロージャの置き場。
 type RowBuildCell = Rc<RefCell<Option<Box<dyn FnMut(usize) -> Result<TableCells>>>>>;
 
+/// 「その行は選べるか」を答える関数の置き場 ([`Table::set_row_selectable`])。
+type RowSelectableCell = RefCell<Option<Rc<dyn Fn(usize) -> bool>>>;
+
 /// 行を組み立てるクロージャ。
 ///
 /// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
@@ -246,6 +249,8 @@ impl RowBuilder {
 struct RowsState {
     rows: RefCell<Vec<TableRow>>,
     builder: RowBuilder,
+    /// 行を組み立てずに「選べるか」を答える関数 ([`Table::set_row_selectable`])。
+    selectable: RowSelectableCell,
     count: Cell<usize>,
 }
 
@@ -280,6 +285,18 @@ impl RowsState {
         Some(self.builder.build(index)?.unwrap_or_default())
     }
 
+    fn set_selectable(&self, f: impl Fn(usize) -> bool + 'static) {
+        *self.selectable.borrow_mut() = Some(Rc::new(f));
+    }
+
+    /// 行を組み立てずに答えられるなら、その行が選べるか。
+    ///
+    /// 呼び出しの間は借用を持たない (この中からアプリが表を触れるため)。
+    fn selectable_hint(&self, index: usize) -> Option<bool> {
+        let f = self.selectable.borrow().clone()?;
+        Some(f(index))
+    }
+
     /// 文字だけの行で、その行が選べるか。組み立てる行では `None`。
     fn text_row_selectable(&self, index: usize) -> Option<bool> {
         match self.builder.is_set() {
@@ -309,6 +326,8 @@ struct TableInner {
     window: Cell<RowWindow>,
     /// 行を組み立てている最中か。入れ子の作り直しを防ぐ。
     rebuilding: Cell<bool>,
+    /// 直前の入力から見分けた、選択の変え方 (修飾キー)。
+    gesture: Cell<SelectionGesture>,
     /// 組み立ててある行の中身。`window.start` から順に並ぶ。
     realized: RefCell<Vec<TableCells>>,
     /// 選ばれている行 (昇順)。**窓の外の行も入る**ので、
@@ -389,6 +408,7 @@ impl Table {
             rows: Rc::new(RowsState::default()),
             window: Cell::new(RowWindow::default()),
             rebuilding: Cell::new(false),
+            gesture: Cell::new(SelectionGesture::Unknown),
             realized: RefCell::new(Vec::new()),
             selected: RefCell::new(Vec::new()),
             row_height: Cell::new(0.0),
@@ -438,6 +458,22 @@ impl Table {
                     activation.emit();
                 }
             });
+        }
+        // 選択が変わる前に、そのとき押されていた修飾キーを覚えておく。
+        // `selected-rows-changed` には修飾キーが乗らないが、窓の外の選択を
+        // 残すかどうかの判断に要る (`keeps_hidden_selection`)。捕捉の段
+        // (`Capture`) で見るので、一覧が選択を決めるより先に入る。
+        {
+            let controller = gtk::EventControllerLegacy::new();
+            controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+            let weak = Rc::downgrade(&table.0);
+            controller.connect_event(move |_, event| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.gesture.set(gesture_of(event.modifier_state()));
+                }
+                glib::Propagation::Proceed
+            });
+            table.0.list.add_controller(controller);
         }
         // スクロールに合わせて、組み立てる範囲を動かす。
         {
@@ -512,6 +548,27 @@ impl Table {
     ) {
         self.0.rows.set_builder(count, build);
         self.reset_rows();
+    }
+
+    /// 行が選べるかどうかを、**行を組み立てずに**答える関数を渡す。
+    ///
+    /// [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
+    /// 選べるかどうかを naui は知らない。これを渡しておくと、画面の外の行に
+    /// ついても [`Table::set_selection`] が「選べない行を取り除く」を守れる。
+    /// 渡さないときは、作ってある行は [`TableCells::selectable`] に従い、
+    /// まだ作っていない行は選べるものとして扱う。
+    ///
+    /// 返す答えは `build` が返す [`TableCells::selectable`] と同じにすること。
+    ///
+    /// ```no_run
+    /// # use naui_gtk::{Table, TableCells};
+    /// # fn fill(table: &Table, done: std::rc::Rc<Vec<bool>>) {
+    /// let rows = done.clone();
+    /// table.set_row_selectable(move |index| !rows[index]);
+    /// # }
+    /// ```
+    pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        self.0.rows.set_selectable(selectable);
     }
 
     /// 見えている行を組み立て直す。行数と選択はそのまま。
@@ -890,6 +947,10 @@ impl Table {
         if let Some(enabled) = self.0.rows.text_row_selectable(index) {
             return enabled;
         }
+        // 組み立てずに答えられるなら、そちらが先 (画面の外の行にも効く)。
+        if let Some(selectable) = self.0.rows.selectable_hint(index) {
+            return selectable;
+        }
         let window = self.0.window.get();
         match window.contains(index) {
             true => self
@@ -936,14 +997,14 @@ impl Table {
             return picked;
         }
         // 組み立ててある行の選択しか届かないので、窓の外の選択を残すかどうかを
-        // 変わり方から決める (`keeps_hidden_selection`)。
+        // 修飾キーから決める (`keeps_hidden_selection`)。
         let previous = self.0.selected.borrow().clone();
         let inside: Vec<usize> = previous
             .iter()
             .copied()
             .filter(|&index| window.contains(index))
             .collect();
-        if !keeps_hidden_selection(&inside, &picked) {
+        if !keeps_hidden_selection(&inside, &picked, self.0.gesture.get()) {
             return picked;
         }
         let outside = previous.iter().copied().filter(|&i| !window.contains(i));
@@ -973,6 +1034,12 @@ fn build_row(
                 let bin = widget.size_bin();
                 bin.fill_parent();
                 apply_column_width(&bin, column);
+                // 行を絞っているときは、ウィジェットの幅で列幅を決めない。
+                // 行ごとに中身の幅が違うと、スクロールで列が動いてしまう
+                // (文字のセルを 1 文字ぶんに抑えているのと同じ扱い)。
+                if uniform && column.width.is_none() {
+                    bin.limit_natural_width();
+                }
                 groups[index].add_widget(&bin);
                 content.append(&bin);
             }
@@ -1000,6 +1067,18 @@ fn build_row(
     // 文字だけの行で `enabled` が `false` のときは、行ごと操作できなくする。
     native.set_sensitive(!cells.dimmed);
     native
+}
+
+/// 押されている修飾キーから、選択の変え方を見分ける。
+fn gesture_of(state: gtk::gdk::ModifierType) -> SelectionGesture {
+    if state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+        // Shift は起点からの範囲。選び直しなので、窓の外の選択は落とす。
+        return SelectionGesture::Extend;
+    }
+    if state.intersects(gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::META_MASK) {
+        return SelectionGesture::Toggle;
+    }
+    SelectionGesture::Plain
 }
 
 /// 窓の外にある行の分を、詰め物の高さとして持たせる。

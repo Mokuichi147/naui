@@ -49,8 +49,8 @@ pub use media::{Fit, PlaybackState};
 pub use number::NumberSpec;
 pub use popup::PopupItem;
 pub use row_window::{
-    keeps_hidden_selection, keeps_row_window, row_window, RowWindow, ROW_WINDOW_OVERSCAN,
-    ROW_WINDOW_THRESHOLD,
+    keeps_hidden_selection, keeps_row_window, row_window, RowWindow, SelectionGesture,
+    ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 pub use split::{clamp_split_position, DEFAULT_SPLIT_POSITION};
 pub use table::{SortOrder, TableColumn, TableRow};
