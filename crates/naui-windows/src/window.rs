@@ -201,6 +201,12 @@ impl Window {
         self.clear_toolbar();
         *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
         self.mount_toolbar();
+        // 項目がオーバーフローメニューへ出入りすると `CommandBar` の幅だけが
+        // 変わる (置き場は `*` で変わらない)。ドラッグ領域はその幅から
+        // 決めているので、帯そのものも見ておく。
+        if let Ok(bar) = toolbar.native_command_bar().cast::<FrameworkElement>() {
+            self.watch_for_drag_area(&bar);
+        }
         self.apply_drag_area();
     }
 
@@ -263,19 +269,21 @@ impl Window {
             return None;
         }
 
-        // ツールバーが載っているなら、その左右で 2 つに分ける。
-        let toolbar = self
-            .0
-            .toolbar
-            .borrow()
-            .is_some()
-            .then(|| self.0.toolbar_host.borrow().clone())
-            .flatten();
+        // ツールバーが載っているなら、その左右で 2 つに分ける。置き場は
+        // 残りの幅いっぱい (`*`) なので、避けるのは置き場ではなく
+        // **`CommandBar` が実際に使っている幅**。そうしないと右の空きが
+        // 置き場に含まれてしまい、つかめる場所がタイトル文字の側だけに
+        // なってしまう。
+        let toolbar = self.0.toolbar.borrow().clone();
         let (skip_from, skip_to) = match toolbar {
-            Some(host) => {
-                let offset = host.ActualOffset().ok()?;
-                let host_width = host.ActualWidth().ok()?;
-                (f64::from(offset.X), f64::from(offset.X) + host_width)
+            Some(toolbar) => {
+                let host = self.0.toolbar_host.borrow().clone()?;
+                let offset = f64::from(host.ActualOffset().ok()?.X);
+                let bar = toolbar
+                    .native_command_bar()
+                    .cast::<FrameworkElement>()
+                    .ok()?;
+                (offset, offset + bar.ActualWidth().ok()?)
             }
             None => (width, width),
         };
@@ -308,8 +316,9 @@ impl Window {
     /// 大きさが変わるたびにドラッグ領域を計算し直すようにする。
     ///
     /// 矩形は物理ピクセルの固定値なので、ウィンドウの幅・ツールバーの項目数・
-    /// 表示倍率のどれが変わっても取り直しが要る。どれもタイトルバーか
-    /// ツールバーの置き場の大きさに出るので、その 2 つを見ておけば足りる。
+    /// 表示倍率のどれが変わっても取り直しが要る。ウィンドウの幅と倍率は
+    /// タイトルバーと置き場の大きさに出る。項目数の変化は
+    /// [`set_toolbar`](Self::set_toolbar) が `CommandBar` を足して見る。
     fn install_drag_area_updates(&self) {
         let targets = [
             self.0
@@ -324,17 +333,22 @@ impl Window {
                 .and_then(|host| host.cast::<FrameworkElement>().ok()),
         ];
         for target in targets.into_iter().flatten() {
-            let state = UiThreadCell::new(Rc::downgrade(&self.0));
-            let changed = SizeChangedEventHandler::new(move |_, _| {
-                let _ = state.try_with_mut(|weak| {
-                    if let Some(inner) = weak.upgrade() {
-                        Window(inner).apply_drag_area();
-                    }
-                });
-                Ok(())
-            });
-            let _ = target.SizeChanged(&changed);
+            self.watch_for_drag_area(&target);
         }
+    }
+
+    /// 要素の大きさが変わったらドラッグ領域を取り直す。
+    fn watch_for_drag_area(&self, target: &FrameworkElement) {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let changed = SizeChangedEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    Window(inner).apply_drag_area();
+                }
+            });
+            Ok(())
+        });
+        let _ = target.SizeChanged(&changed);
     }
 
     /// ツールバーを置き場へ載せ直す。置き場か中身がまだ無ければ何もしない。
@@ -558,6 +572,14 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
     // ボタンがこの高さなので、タイトル文字もツールバーもその中へ収まる。
     // 帯と中身の間は空けない。空きの取り方は中身の側 (ウィジェットの
     // パディング) に任せる。
+    //
+    // ツールバーの置き場 (2 列目) は `*`。`Auto` だと `CommandBar` が
+    // 幅の制限なしで測られ、項目が入りきらなくなってもオーバーフロー
+    // メニューへ移らず、キャプションボタンの上へはみ出してしまう。残りの
+    // 幅を渡しておけば `CommandBar` が自分で項目をメニューへ送る。
+    // `CommandBar` は左寄せなので、余った分はそのまま右の空きになる
+    // ([`Window::apply_drag_rectangles`] がそこをドラッグ領域にする)。
+    // 3 列目はドラッグ領域の控え。矩形を渡せなかったときだけ使う。
     let root = XamlReader::Load(&HSTRING::from(format!(
         r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             Background="Transparent">
@@ -569,8 +591,8 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
                 Padding="16,0,{CAPTION_RESERVE},0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*" MinWidth="48"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto" MinWidth="48"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" FontSize="{TITLE_FONT_SIZE}"
                     VerticalAlignment="Center"/>
