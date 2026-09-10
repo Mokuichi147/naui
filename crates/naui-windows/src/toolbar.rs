@@ -26,8 +26,11 @@
 //! コントロールの上でもウィンドウのドラッグが始まってしまうので、
 //! ドラッグ領域は矩形で 2 つに分けている ([`crate::window`])。
 //!
-//! 印 1 つの幅は 40。`AppBarButton` の既定は 68 だが、それは印の下へ
-//! ラベルを出す配置のための幅で、ラベルを隠しているここでは余る。
+//! 印 1 つの幅は高さと同じ 32。`AppBarButton` の既定は 68 だが、それは印の
+//! 下へラベルを出す配置のための幅で、ラベルを隠しているここでは余る。高さも
+//! 同じ理由で、ラベルの場所を空けた 48 ではなくタイトルバーと同じ
+//! [`CAPTION_HEIGHT`](crate::window) へ詰める
+//! ([`apply_compact_resources`])。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -39,18 +42,39 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     AppBarButton, AppBarSeparator, CommandBar, CommandBarDefaultLabelPosition, FontIcon,
     ToolTipService,
 };
-use naui_winui3::Microsoft::UI::Xaml::{HorizontalAlignment, RoutedEventHandler, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, HorizontalAlignment, ResourceDictionary, RoutedEventHandler, UIElement,
+    VerticalAlignment,
+};
 use windows::Foundation::PropertyValue;
 use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
+use crate::window::CAPTION_HEIGHT;
 
 use crate::navigation::SelectHandler;
 
 /// 印 1 つあたりの幅。`AppBarButton` の既定は 68 だが、それは印の下へ
 /// ラベルを出す配置のための幅で、ラベルを隠している naui では余る。
-const ITEM_WIDTH: f64 = 40.0;
+/// [`ITEM_HEIGHT`] と同じにして、印の周りの空きを上下左右でそろえる。
+const ITEM_WIDTH: f64 = ITEM_HEIGHT;
+
+/// 印 1 つあたりの高さ。タイトルバーの高さ (最小化・最大化・閉じるの
+/// ボタンと同じ [`CAPTION_HEIGHT`]) へ収める。
+const ITEM_HEIGHT: f64 = CAPTION_HEIGHT;
+
+/// 印の箱の高さ。`AppBarButton` のテンプレートは印を 16 の `Viewbox` へ
+/// 入れる。区切りの線もテーマの余白 8 を上下に取った同じ高さになるので、
+/// 印と区切りがそろう。
+const ICON_HEIGHT: f64 = 16.0;
+
+/// hover・押されたときの下敷き (`AppBarButtonInnerBorder`) をボタンの内側へ
+/// 寄せる幅。既定の上下の余白は 48 の帯に合わせて 6 あり、そのままだと
+/// 32 の帯では縦 20・横 28 の平たい形になる。左右と同じ 2 にして
+/// 28 角へそろえる。
+const INNER_BORDER_INSET: f64 = 2.0;
 
 struct ToolbarInner {
     native: CommandBar,
@@ -84,6 +108,21 @@ impl Toolbar {
         native
             .SetHorizontalAlignment(HorizontalAlignment::Left)
             .map_err(|e| to_error("ツールバーの配置設定", e))?;
+        // 帯もタイトルバーの高さへ収める。テーマの `MinHeight` が 48 なので、
+        // `Height` だけでは縮まない。
+        native
+            .SetMinHeight(ITEM_HEIGHT)
+            .map_err(|e| to_error("ツールバーの最小高さの設定", e))?;
+        native
+            .SetHeight(ITEM_HEIGHT)
+            .map_err(|e| to_error("ツールバーの高さの設定", e))?;
+        // 項目の並びと項目そのものの寸法はテンプレートが持っている。帯へ
+        // 入れたリソースは中の要素からも引かれるので、ここで一度だけ渡す。
+        apply_compact_resources(
+            &native
+                .cast::<FrameworkElement>()
+                .map_err(|e| to_error("ツールバーの変換", e))?,
+        )?;
         Ok(Self(Rc::new(ToolbarInner {
             native,
             items: RefCell::new(Vec::new()),
@@ -117,6 +156,18 @@ impl Toolbar {
             if item.is_separator() {
                 let separator =
                     AppBarSeparator::new().map_err(|e| to_error("ツールバーの区切り生成", e))?;
+                let _ = separator.SetVerticalAlignment(VerticalAlignment::Top);
+                apply_separator_metrics(&separator);
+                let metrics = RoutedEventHandler::new(|sender, _| {
+                    if let Some(separator) = sender
+                        .as_ref()
+                        .and_then(|s| s.cast::<AppBarSeparator>().ok())
+                    {
+                        apply_separator_metrics(&separator);
+                    }
+                    Ok(())
+                });
+                let _ = separator.Loaded(&metrics);
                 commands
                     .Append(&separator)
                     .map_err(|e| to_error("ツールバーへの区切り追加", e))?;
@@ -141,8 +192,21 @@ impl Toolbar {
     fn build_button(&self, icon: ToolbarIcon, label: &str, index: usize) -> Result<AppBarButton> {
         let button = AppBarButton::new().map_err(|e| to_error("ツールバーのボタン生成", e))?;
         button
-            .SetWidth(ITEM_WIDTH)
-            .map_err(|e| to_error("ツールバーのボタン幅の設定", e))?;
+            .SetVerticalAlignment(VerticalAlignment::Top)
+            .map_err(|e| to_error("ツールバーのボタン配置の設定", e))?;
+        apply_button_metrics(&button);
+        // 置かれ方が変わると読み込み直されるので、そのたびに渡し直す。
+        // ハンドラは `sender` から引くだけにして、ボタンを掴まない
+        // (掴むと購読との間で循環する)。
+        let metrics = RoutedEventHandler::new(|sender, _| {
+            if let Some(button) = sender.as_ref().and_then(|s| s.cast::<AppBarButton>().ok()) {
+                apply_button_metrics(&button);
+            }
+            Ok(())
+        });
+        button
+            .Loaded(&metrics)
+            .map_err(|e| to_error("ツールバーのボタンの読み込み購読", e))?;
         let glyph = FontIcon::new().map_err(|e| to_error("ツールバーの印の生成", e))?;
         glyph
             .SetGlyph(&HSTRING::from(icon.fluent_glyph().to_string()))
@@ -262,4 +326,76 @@ impl Toolbar {
             .cast::<UIElement>()
             .expect("CommandBar は UIElement である")
     }
+}
+
+/// テーマリソースを差し替えて、帯と項目をタイトルバーの高さへ収める。
+///
+/// `CommandBar`・`AppBarButton`・`AppBarSeparator` のテンプレートは、印の
+/// 下へラベルを出す 48 の帯を前提に組まれている。要素へ `Height` を渡しても
+/// テンプレートの中までは縮まないので、その寸法を決めているテーマリソースを
+/// 同じ名前で上書きする。テーマリソースは読み込みのときに親をたどって
+/// 引かれるので、帯へ一度入れておけば中の項目にも効き、ほかの `CommandBar`
+/// には影響しない。
+///
+/// - `AppBarThemeCompactHeight` / `AppBarThemeMinHeight`: 項目の並びの高さ。
+///   区切りの線はこの中で上下に 8 空けた残り ([`ICON_HEIGHT`] と同じ) になる。
+/// - `AppBarButtonContentViewboxCollapsedMargin`: ラベルを隠したときに
+///   印の箱 ([`ICON_HEIGHT`]) の周りへ空ける分。上下を同じにして中央へ置く。
+/// - `AppBarButtonInnerBorderMargin` / `...CompactMargin`: hover・押された
+///   ときに色が付く下敷きの余白 ([`INNER_BORDER_INSET`])。既定は 48 の帯に
+///   合わせた上下 6 で、32 では平たくなる。ラベルを隠している naui では
+///   `...CompactMargin` の状態にはならないが、どちらへ転んでも同じ形に
+///   なるよう両方入れておく。
+fn apply_compact_resources(element: &FrameworkElement) -> Result<()> {
+    let pad = (ITEM_HEIGHT - ICON_HEIGHT) / 2.0;
+    let inset = INNER_BORDER_INSET;
+    let dictionary = XamlReader::Load(&HSTRING::from(format!(
+        r##"<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <x:Double x:Key="AppBarThemeCompactHeight">{ITEM_HEIGHT}</x:Double>
+            <x:Double x:Key="AppBarThemeMinHeight">{ITEM_HEIGHT}</x:Double>
+            <Thickness x:Key="AppBarButtonContentViewboxCollapsedMargin">0,{pad},0,{pad}</Thickness>
+            <Thickness x:Key="AppBarButtonInnerBorderMargin">{inset},{inset},{inset},{inset}</Thickness>
+            <Thickness x:Key="AppBarButtonInnerBorderCompactMargin">{inset},{inset},{inset},{inset}</Thickness>
+        </ResourceDictionary>"##
+    )))
+    .map_err(|e| to_error("ツールバーの寸法リソースの生成", e))?
+    .cast::<ResourceDictionary>()
+    .map_err(|e| to_error("ツールバーの寸法リソースへの変換", e))?;
+    element
+        .SetResources(&dictionary)
+        .map_err(|e| to_error("ツールバーの寸法リソースの登録", e))
+}
+
+/// 帯に並んでいるあいだだけ効かせたい寸法。
+///
+/// 幅が足りないと `CommandBar` は項目をオーバーフローメニューへ移す。
+/// メニューの行は印の右にラベルを出す横長の形で、幅はメニュー側のスタイルが
+/// `Auto` にする。ここで 32 角の寸法をローカル値として残すと、ローカル値が
+/// スタイルより強いためラベルが 32 幅へ潰れる。移っているあいだは寸法を
+/// 手放し、帯へ戻ったら渡し直す。
+///
+/// 投影に `ClearValue` が無いので、`Width` と `Height` は XAML の `Auto` と
+/// 同じ `f64::NAN`、`MinHeight` は 0 を渡して既定へ譲る。
+fn apply_button_metrics(button: &AppBarButton) {
+    if button.IsInOverflow().unwrap_or(false) {
+        let _ = button.SetWidth(f64::NAN);
+        let _ = button.SetHeight(f64::NAN);
+        let _ = button.SetMinHeight(0.0);
+        return;
+    }
+    let _ = button.SetWidth(ITEM_WIDTH);
+    let _ = button.SetHeight(ITEM_HEIGHT);
+    let _ = button.SetMinHeight(ITEM_HEIGHT);
+}
+
+/// 区切りも同じ。メニューでは行いっぱいの線になるので高さを手放す。
+fn apply_separator_metrics(separator: &AppBarSeparator) {
+    if separator.IsInOverflow().unwrap_or(false) {
+        let _ = separator.SetHeight(f64::NAN);
+        let _ = separator.SetMinHeight(0.0);
+        return;
+    }
+    let _ = separator.SetHeight(ITEM_HEIGHT);
+    let _ = separator.SetMinHeight(ITEM_HEIGHT);
 }
