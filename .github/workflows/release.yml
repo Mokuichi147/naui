@@ -27,6 +27,10 @@ jobs:
       prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # タグのコミットが main に載っているかを下で見るので、
+          # 浅い取得ではなく履歴ごと持ってくる。
+          fetch-depth: 0
       - id: meta
         run: |
           # workflow_dispatch では参照がタグではないので、バージョンから名前を作る。
@@ -47,6 +51,18 @@ jobs:
             *-*) echo "prerelease=true" >>"$GITHUB_OUTPUT" ;;
             *) echo "prerelease=false" >>"$GITHUB_OUTPUT" ;;
           esac
+      # タグだけを押して、対応するコミットを main へ入れ忘れると、
+      # main が古い版のまま crates.io と Release だけが進んでしまう。
+      # crates.io の公開は取り消せないので、ビルドに入る前に止める。
+      - name: タグが main に載っているか確認
+        if: github.ref_type == 'tag'
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "タグ ${GITHUB_REF_NAME} のコミット ${GITHUB_SHA} が main にありません。" >&2
+            echo "先に main へ push してから、そのコミットへタグを打ち直してください。" >&2
+            exit 1
+          fi
 
   build:
     name: ${{ matrix.name }}
