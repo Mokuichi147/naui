@@ -744,6 +744,16 @@ struct StackInner {
     children: RefCell<Vec<Box<dyn Widget>>>,
 }
 
+impl Drop for StackInner {
+    fn drop(&mut self) {
+        if let Ok(children) = self.children.try_borrow() {
+            for child in children.iter() {
+                crate::layout::clear_parent_layout(&child.native_element());
+            }
+        }
+    }
+}
+
 /// 縦 / 横に子を並べるコンテナ (StackPanel)。
 #[derive(Clone)]
 pub struct Stack(Rc<StackInner>);
@@ -798,9 +808,9 @@ impl Stack {
     /// 末尾に子を追加する。
     pub fn append(&self, child: &dyn Widget) {
         let element = child.native_element();
-        crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
         let appended = self.0.native.Children().and_then(|c| c.Append(&element));
         if appended.is_ok() {
+            crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
             self.0.children.borrow_mut().push(child.boxed_clone());
         }
     }
@@ -810,13 +820,13 @@ impl Stack {
         let mut children = self.0.children.borrow_mut();
         let index = index.min(children.len());
         let element = child.native_element();
-        crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
         let inserted = self
             .0
             .native
             .Children()
             .and_then(|c| c.InsertAt(index as u32, &element));
         if inserted.is_ok() {
+            crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
             children.insert(index, child.boxed_clone());
         }
     }
@@ -847,8 +857,11 @@ impl Stack {
             .iter()
             .map(|child| child.native_element())
             .collect::<Vec<_>>();
-        if let Ok(children) = self.0.native.Children() {
-            let _ = children.Clear();
+        let Ok(children) = self.0.native.Children() else {
+            return;
+        };
+        if children.Clear().is_err() {
+            return;
         }
         for element in elements {
             crate::layout::clear_parent_layout(&element);

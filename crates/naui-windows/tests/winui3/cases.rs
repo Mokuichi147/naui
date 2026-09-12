@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use naui_core::{Align, Orientation, Result, Sizing, TextColor, TextStyle};
+use naui_core::{Align, Orientation, Result, ScrollPolicy, Sizing, TextColor, TextStyle};
 use naui_windows::{run_for_test, Ui, Widget};
 
 use crate::automation;
@@ -17,6 +17,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, HorizontalAlignment, UIElement};
+use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows_core::{Interface, HSTRING};
 
 /// テストケース 1 件。
@@ -73,6 +74,14 @@ const CASES: &[Case] = &[
     (
         "スクロール内容の Stretch がサイズ変更で維持される",
         scroll_stretch_survives_sizing,
+    ),
+    (
+        "親への追加失敗がレイアウト状態を汚さない",
+        failed_parent_operations_keep_layout_state,
+    ),
+    (
+        "利用者の Tag をレイアウトが上書きしない",
+        layout_preserves_user_tag,
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
@@ -714,6 +723,97 @@ fn scroll_stretch_survives_sizing(ui: &Ui) -> Result<()> {
             .expect("サイズ変更後のスクロール内容の横配置"),
         HorizontalAlignment::Stretch,
         "Sizing を後から指定しても非スクロール軸の Stretch を保つこと"
+    );
+    Ok(())
+}
+
+/// すでに別の親に属している要素を追加できなくても、失敗した親の状態を
+/// 記録しない。実際の親の状態が Sizing 後にも残ることを検証する。
+fn failed_parent_operations_keep_layout_state(ui: &Ui) -> Result<()> {
+    let first_stack = ui.stack(Orientation::Vertical)?;
+    first_stack.set_align(Align::End);
+    let second_stack = ui.stack(Orientation::Vertical)?;
+    second_stack.set_align(Align::Start);
+    let stack_child = ui.label("既存の Stack 子")?;
+    first_stack.append(&stack_child);
+    // すでに親があるため、ネイティブ側の Append は失敗する。
+    second_stack.append(&stack_child);
+    stack_child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        native::<TextBlock>(&stack_child)
+            .HorizontalAlignment()
+            .expect("追加失敗後の Stack 子の横配置"),
+        HorizontalAlignment::Right,
+        "失敗した Stack の寄せ方を後から再適用しないこと"
+    );
+
+    let first_scroll = ui.scroll()?;
+    first_scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    let second_scroll = ui.scroll()?;
+    second_scroll.set_policy(ScrollPolicy::Always, ScrollPolicy::Auto);
+    let scroll_child = ui.stack(Orientation::Vertical)?;
+    first_scroll.set_child(&scroll_child);
+    // 水平スクロールを許す別の Scroll への SetContent は失敗する。
+    second_scroll.set_child(&scroll_child);
+    scroll_child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        native::<StackPanel>(&scroll_child)
+            .HorizontalAlignment()
+            .expect("追加失敗後の Scroll 内容の横配置"),
+        HorizontalAlignment::Stretch,
+        "失敗した Scroll のポリシーを後から再適用しないこと"
+    );
+    Ok(())
+}
+
+/// WinUI の脱出口から設定した Tag を、Sizing や親コンテナの操作で失わない。
+fn layout_preserves_user_tag(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let stack_child = ui.label("Tag を持つ Stack 子")?;
+    let stack_native = native::<TextBlock>(&stack_child)
+        .cast::<FrameworkElement>()
+        .expect("Stack 子の FrameworkElement 変換");
+    let user_tag =
+        PropertyValue::CreateString(&HSTRING::from("user-stack-tag")).expect("Stack 子の Tag");
+    stack_native.SetTag(&user_tag).expect("Stack 子の Tag 設定");
+    stack.append(&stack_child);
+    stack.set_align(Align::End);
+    stack_child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        stack_native
+            .Tag()
+            .expect("Stack 子の Tag 読み出し")
+            .cast::<IPropertyValue>()
+            .expect("Stack 子の Tag 型")
+            .GetString()
+            .expect("Stack 子の Tag 文字列")
+            .to_string(),
+        "user-stack-tag"
+    );
+    stack.remove(0);
+
+    let scroll = ui.scroll()?;
+    let scroll_child = ui.stack(Orientation::Vertical)?;
+    let scroll_native = native::<StackPanel>(&scroll_child)
+        .cast::<FrameworkElement>()
+        .expect("Scroll 内容の FrameworkElement 変換");
+    let user_tag =
+        PropertyValue::CreateString(&HSTRING::from("user-scroll-tag")).expect("Scroll 内容の Tag");
+    scroll_native
+        .SetTag(&user_tag)
+        .expect("Scroll 内容の Tag 設定");
+    scroll.set_child(&scroll_child);
+    scroll_child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        scroll_native
+            .Tag()
+            .expect("Scroll 内容の Tag 読み出し")
+            .cast::<IPropertyValue>()
+            .expect("Scroll 内容の Tag 型")
+            .GetString()
+            .expect("Scroll 内容の Tag 文字列")
+            .to_string(),
+        "user-scroll-tag"
     );
     Ok(())
 }

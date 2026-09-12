@@ -4,6 +4,7 @@
 //! `Width` / `MinWidth` / `RowDefinition` などのプロパティを設定するだけ。
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use naui_core::{Align, GridCell, Length, Padding, Result, ScrollPolicy, Sizing, Track};
@@ -16,128 +17,108 @@ use naui_winui3::Microsoft::UI::Xaml::{
     DependencyObject, FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, Thickness,
     UIElement, VerticalAlignment, Visibility, Window as XamlWindow,
 };
-use windows_core::{Interface, HSTRING};
+use windows_core::Interface;
 
 use crate::to_error;
 use crate::widgets::{impl_widget, Widget};
 
-/// `Fill` を指定されたことを覚えておく目印 (`FrameworkElement.Tag`)。
-///
-/// WinUI の `HorizontalAlignment` は指定しなくても `Stretch` なので、
-/// プロパティを読むだけでは「`Fill` と言われた」のか「既定のまま」なのかを
-/// 区別できない。グリッドのマスの中でだけこの違いが要るため、目印を残す。
-const FILL_TAG: &str = "naui:fill:";
-const PARENT_TAG: &str = "parent=";
+/// `Sizing` と親コンテナの情報。利用者に公開された `FrameworkElement.Tag`
+/// ではなく、UI スレッド上の状態表に保持する。
+#[derive(Clone, Copy)]
+enum ParentLayout {
+    Stack {
+        align: Align,
+        vertical: bool,
+    },
+    Scroll {
+        horizontal_scroll_enabled: bool,
+        vertical_scroll_enabled: bool,
+    },
+}
 
-fn set_fill_marker(element: &FrameworkElement, sizing: Sizing) {
-    let mut value = String::from(FILL_TAG);
-    if sizing.width.is_fill() {
-        value.push('w');
-    }
-    if sizing.height.is_fill() {
-        value.push('h');
-    }
-    let parent = tag_text(element)
-        .as_deref()
-        .and_then(parent_value)
-        .map(str::to_owned);
-    if let Some(parent) = parent {
-        value.push('|');
-        value.push_str(PARENT_TAG);
-        value.push_str(&parent);
-    }
-    set_tag_text(element, value);
+#[derive(Clone, Copy, Default)]
+struct LayoutState {
+    fill_width: bool,
+    fill_height: bool,
+    parent: Option<ParentLayout>,
+}
+
+fn element_key(element: &UIElement) -> usize {
+    let unknown = element
+        .cast::<windows_core::IUnknown>()
+        .expect("UIElement は IUnknown へ変換できる");
+    Interface::as_raw(&unknown) as usize
+}
+
+fn state_key(element: &FrameworkElement) -> Option<usize> {
+    element
+        .cast::<UIElement>()
+        .ok()
+        .map(|element| element_key(&element))
+}
+
+fn update_layout_state(element: &UIElement, update: impl FnOnce(&mut LayoutState)) {
+    let key = element_key(element);
+    LAYOUT_STATES.with(|states| {
+        let mut states = states.borrow_mut();
+        let empty = {
+            let state = states.entry(key).or_default();
+            update(state);
+            !state.fill_width && !state.fill_height && state.parent.is_none()
+        };
+        if empty {
+            states.remove(&key);
+        }
+    });
+}
+
+fn set_sizing_state(element: &UIElement, sizing: Sizing) {
+    update_layout_state(element, |state| {
+        state.fill_width = sizing.width.is_fill();
+        state.fill_height = sizing.height.is_fill();
+    });
 }
 
 /// この要素がその方向へ `Fill` を指定されたか。
 pub(crate) fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
-    let Some(text) = tag_text(element) else {
+    let Some(key) = state_key(element) else {
         return false;
     };
-    let Some(flags) = fill_flags(&text) else {
-        return false;
-    };
-    flags.contains(if horizontal { 'w' } else { 'h' })
+    LAYOUT_STATES.with(|states| {
+        let states = states.borrow();
+        let Some(state) = states.get(&key) else {
+            return false;
+        };
+        if horizontal {
+            state.fill_width
+        } else {
+            state.fill_height
+        }
+    })
 }
 
-fn tag_text(element: &FrameworkElement) -> Option<String> {
-    let tag = element.Tag().ok()?;
-    let value = tag.cast::<windows::Foundation::IPropertyValue>().ok()?;
-    value.GetString().ok().map(|text| text.to_string())
+fn set_parent_state(element: &UIElement, parent: ParentLayout) {
+    update_layout_state(element, |state| state.parent = Some(parent));
 }
 
-fn set_tag_text(element: &FrameworkElement, text: String) {
-    if let Ok(tag) = windows::Foundation::PropertyValue::CreateString(&HSTRING::from(text)) {
-        let _ = element.SetTag(&tag);
-    }
-}
-
-fn fill_flags(text: &str) -> Option<&str> {
-    text.strip_prefix(FILL_TAG)
-        .map(|value| value.split('|').next().unwrap_or_default())
-}
-
-fn parent_value(text: &str) -> Option<&str> {
-    text.split('|')
-        .find_map(|part| part.strip_prefix(PARENT_TAG))
-}
-
-fn rewrite_parent_marker(element: &FrameworkElement, parent: Option<&str>) {
-    let current = tag_text(element);
-    // Tag が naui の目印でない場合、削除はアプリ側の値を触らない。
-    if parent.is_none() && current.as_deref().and_then(fill_flags).is_none() {
-        return;
-    }
-    let flags = current.as_deref().and_then(fill_flags).unwrap_or_default();
-    let mut value = String::from(FILL_TAG);
-    value.push_str(flags);
-    if let Some(parent) = parent {
-        value.push('|');
-        value.push_str(PARENT_TAG);
-        value.push_str(parent);
-    }
-    set_tag_text(element, value);
-}
-
-fn align_tag(align: Align) -> &'static str {
-    match align {
-        Align::Start => "start",
-        Align::Center => "center",
-        Align::End => "end",
-        Align::Fill => "fill",
-    }
-}
-
-fn parse_align(value: &str) -> Option<Align> {
-    match value {
-        "start" => Some(Align::Start),
-        "center" => Some(Align::Center),
-        "end" => Some(Align::End),
-        "fill" => Some(Align::Fill),
-        _ => None,
-    }
-}
-
-fn parse_bool(value: &str) -> Option<bool> {
-    match value {
-        "0" => Some(false),
-        "1" => Some(true),
-        _ => None,
-    }
+fn parent_state(element: &FrameworkElement) -> Option<ParentLayout> {
+    let key = state_key(element)?;
+    LAYOUT_STATES.with(|states| states.borrow().get(&key).and_then(|state| state.parent))
 }
 
 /// Stack の親情報を子へ記録し、現在の寄せ方も適用する。
 pub(crate) fn set_stack_parent(element: &UIElement, align: Align, vertical_stack: bool) {
-    let Ok(element) = element.cast::<FrameworkElement>() else {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
         return;
     };
-    let parent = format!(
-        "stack:{}:{}",
-        if vertical_stack { "v" } else { "h" },
-        align_tag(align)
+    set_parent_state(
+        element,
+        ParentLayout::Stack {
+            align,
+            vertical: vertical_stack,
+        },
     );
-    rewrite_parent_marker(&element, Some(&parent));
-    apply_stack_alignment(&element, align, vertical_stack);
+    apply_stack_alignment(&framework, align, vertical_stack);
 }
 
 /// Scroll の親情報を子へ記録し、スクロールしない軸の Stretch も適用する。
@@ -146,90 +127,85 @@ pub(crate) fn set_scroll_parent(
     horizontal_scroll_enabled: bool,
     vertical_scroll_enabled: bool,
 ) {
-    let Ok(element) = element.cast::<FrameworkElement>() else {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
         return;
     };
-    let parent = format!(
-        "scroll:{}:{}",
-        if horizontal_scroll_enabled { "1" } else { "0" },
-        if vertical_scroll_enabled { "1" } else { "0" }
+    set_parent_state(
+        element,
+        ParentLayout::Scroll {
+            horizontal_scroll_enabled,
+            vertical_scroll_enabled,
+        },
     );
-    rewrite_parent_marker(&element, Some(&parent));
-    stretch_non_scrolling_child(&element, horizontal_scroll_enabled, vertical_scroll_enabled);
+    stretch_non_scrolling_child(
+        &framework,
+        horizontal_scroll_enabled,
+        vertical_scroll_enabled,
+    );
 }
 
 /// 親コンテナのレイアウトを、Sizing が上書きした後にもう一度適用する。
 pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
-    let Some(parent) = tag_text(element)
-        .as_deref()
-        .and_then(parent_value)
-        .map(str::to_owned)
-    else {
+    let Some(parent) = parent_state(element) else {
         return;
     };
-    let mut parts = parent.split(':');
-    match parts.next() {
-        Some("stack") => {
-            let Some(vertical_stack) = parts.next().and_then(|axis| match axis {
-                "v" => Some(true),
-                "h" => Some(false),
-                _ => None,
-            }) else {
-                return;
-            };
-            let Some(align) = parts.next().and_then(parse_align) else {
-                return;
-            };
-            apply_stack_alignment(element, align, vertical_stack);
+    match parent {
+        ParentLayout::Stack { align, vertical } => {
+            apply_stack_alignment(element, align, vertical);
         }
-        Some("scroll") => {
-            let Some(horizontal_scroll_enabled) = parts.next().and_then(parse_bool) else {
-                return;
-            };
-            let Some(vertical_scroll_enabled) = parts.next().and_then(parse_bool) else {
-                return;
-            };
+        ParentLayout::Scroll {
+            horizontal_scroll_enabled,
+            vertical_scroll_enabled,
+        } => {
             stretch_non_scrolling_child(
                 element,
                 horizontal_scroll_enabled,
                 vertical_scroll_enabled,
             );
         }
-        _ => {}
     }
 }
 
-/// 親コンテナの記録を外す。
+/// 親コンテナの記録を外す。Sizing の状態はそのまま残す。
 pub(crate) fn clear_parent_layout(element: &UIElement) {
-    let Ok(element) = element.cast::<FrameworkElement>() else {
-        return;
-    };
-    rewrite_parent_marker(&element, None);
+    let key = element_key(element);
+    LAYOUT_STATES.with(|states| {
+        let mut states = states.borrow_mut();
+        let empty = if let Some(state) = states.get_mut(&key) {
+            state.parent = None;
+            !state.fill_width && !state.fill_height
+        } else {
+            false
+        };
+        if empty {
+            states.remove(&key);
+        }
+    });
 }
 
 /// 大きさの指定を要素へ反映する。呼ぶたびに以前の指定は置き換わる。
 pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
-    let Ok(element) = element.cast::<FrameworkElement>() else {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
         return;
     };
-    set_fill_marker(&element, sizing);
+    set_sizing_state(element, sizing);
     // WinUI では NaN が「中身に合わせる」を表す。
-    let _ = element.SetWidth(sizing.width.fixed_value().unwrap_or(f64::NAN));
-    let _ = element.SetHeight(sizing.height.fixed_value().unwrap_or(f64::NAN));
-    let _ = element.SetMinWidth(sizing.min_width.unwrap_or(0.0));
-    let _ = element.SetMinHeight(sizing.min_height.unwrap_or(0.0));
-    let _ = element.SetMaxWidth(sizing.max_width.unwrap_or(f64::INFINITY));
-    let _ = element.SetMaxHeight(sizing.max_height.unwrap_or(f64::INFINITY));
+    let _ = framework.SetWidth(sizing.width.fixed_value().unwrap_or(f64::NAN));
+    let _ = framework.SetHeight(sizing.height.fixed_value().unwrap_or(f64::NAN));
+    let _ = framework.SetMinWidth(sizing.min_width.unwrap_or(0.0));
+    let _ = framework.SetMinHeight(sizing.min_height.unwrap_or(0.0));
+    let _ = framework.SetMaxWidth(sizing.max_width.unwrap_or(f64::INFINITY));
+    let _ = framework.SetMaxHeight(sizing.max_height.unwrap_or(f64::INFINITY));
 
-    let _ = element.SetHorizontalAlignment(match sizing.width {
+    let _ = framework.SetHorizontalAlignment(match sizing.width {
         Length::Fill => HorizontalAlignment::Stretch,
         _ => HorizontalAlignment::Left,
     });
-    let _ = element.SetVerticalAlignment(match sizing.height {
+    let _ = framework.SetVerticalAlignment(match sizing.height {
         Length::Fill => VerticalAlignment::Stretch,
         _ => VerticalAlignment::Top,
     });
-    reapply_parent_layout(&element);
+    reapply_parent_layout(&framework);
 }
 
 /// `Stack::set_align` を StackPanel の子要素へ写す。
@@ -506,7 +482,19 @@ struct ScrollInner {
     hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
 }
 
+impl Drop for ScrollInner {
+    fn drop(&mut self) {
+        if let Ok(child) = self.child.try_borrow() {
+            if let Some(child) = child.as_ref() {
+                clear_parent_layout(&child.native_element());
+            }
+        }
+    }
+}
+
 thread_local! {
+    static LAYOUT_STATES: RefCell<HashMap<usize, LayoutState>> =
+        RefCell::new(HashMap::new());
     static SCROLLS: RefCell<Vec<Weak<ScrollInner>>> = const { RefCell::new(Vec::new()) };
     static LIST_SCROLLS: RefCell<Vec<Weak<ListScrollTarget>>> = const { RefCell::new(Vec::new()) };
     static WHEEL_TARGETS: RefCell<Vec<windows::Win32::Foundation::HWND>> =
@@ -887,15 +875,23 @@ impl Scroll {
     /// スクロールさせる中身。呼ぶたびに置き換わる。
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
-        if let Some(previous) = self.0.child.borrow().as_ref() {
-            clear_parent_layout(&previous.native_element());
-        }
-        set_scroll_parent(
-            &element,
-            self.0.horizontal_scroll_enabled.get(),
-            self.0.vertical_scroll_enabled.get(),
-        );
+        let previous = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
         if self.0.native.SetContent(&element).is_ok() {
+            set_scroll_parent(
+                &element,
+                self.0.horizontal_scroll_enabled.get(),
+                self.0.vertical_scroll_enabled.get(),
+            );
+            if let Some(previous) = previous {
+                if element_key(&previous) != element_key(&element) {
+                    clear_parent_layout(&previous);
+                }
+            }
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }
