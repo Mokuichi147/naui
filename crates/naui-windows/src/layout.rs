@@ -42,7 +42,7 @@ fn set_fill_marker(element: &FrameworkElement, sizing: Sizing) {
 }
 
 /// この要素がその方向へ `Fill` を指定されたか。
-fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
+pub(crate) fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
     let Ok(tag) = element.Tag() else {
         return false;
     };
@@ -324,6 +324,7 @@ impl Grid {
 struct ScrollInner {
     native: ScrollViewer,
     child: RefCell<Option<Box<dyn Widget>>>,
+    horizontal_scroll_enabled: Cell<bool>,
     vertical_scroll_enabled: Cell<bool>,
     /// ホイール入力時に、ポインター直下の ScrollViewer だけを選ぶための状態。
     hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
@@ -652,6 +653,7 @@ impl Scroll {
         let this = Self(Rc::new(ScrollInner {
             native,
             child: RefCell::new(None),
+            horizontal_scroll_enabled: Cell::new(false),
             vertical_scroll_enabled: Cell::new(true),
             hovered: std::sync::Arc::new(crate::ui_thread::UiThreadCell::new(0)),
         }));
@@ -664,9 +666,38 @@ impl Scroll {
     /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
     pub fn set_policy(&self, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
         self.0
+            .horizontal_scroll_enabled
+            .set(horizontal.is_enabled());
+        self.0
             .vertical_scroll_enabled
             .set(!matches!(vertical, ScrollPolicy::Never));
         set_scroll_mode(&self.0.native, horizontal, vertical);
+        // `Control` の内容配置の既定は左上寄せなので、スクロールしない軸
+        // だけはビューポートいっぱいへ広げる。スクロールする軸は内容の
+        // 自然な大きさを残し、必要ならそのまま送れるようにする。
+        let _ = self
+            .0
+            .native
+            .SetHorizontalContentAlignment(if horizontal.is_enabled() {
+                HorizontalAlignment::Left
+            } else {
+                HorizontalAlignment::Stretch
+            });
+        let _ = self
+            .0
+            .native
+            .SetVerticalContentAlignment(if vertical.is_enabled() {
+                VerticalAlignment::Top
+            } else {
+                VerticalAlignment::Stretch
+            });
+        if let Some(child) = self.0.child.borrow().as_ref() {
+            stretch_non_scrolling_child(
+                &child.native_element(),
+                horizontal.is_enabled(),
+                vertical.is_enabled(),
+            );
+        }
         let _ = self
             .0
             .native
@@ -680,8 +711,42 @@ impl Scroll {
     /// スクロールさせる中身。呼ぶたびに置き換わる。
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
+        stretch_non_scrolling_child(
+            &element,
+            self.0.horizontal_scroll_enabled.get(),
+            self.0.vertical_scroll_enabled.get(),
+        );
         if self.0.native.SetContent(&element).is_ok() {
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        }
+    }
+}
+
+/// スクロールしない軸の内容を、ビューポートの大きさまで広げる。
+///
+/// 明示的な大きさや上限を付けた子はアプリの指定を優先する。`Fill` は
+/// `HorizontalAlignment` / `VerticalAlignment` が既に `Stretch` なので、
+/// ここで同じ値を書き直しても意味は変わらない。
+fn stretch_non_scrolling_child(
+    element: &UIElement,
+    horizontal_scroll_enabled: bool,
+    vertical_scroll_enabled: bool,
+) {
+    let Ok(element) = element.cast::<FrameworkElement>() else {
+        return;
+    };
+    if !horizontal_scroll_enabled {
+        let width = element.Width().unwrap_or(f64::NAN);
+        let max_width = element.MaxWidth().unwrap_or(f64::INFINITY);
+        if width.is_nan() && max_width.is_infinite() {
+            let _ = element.SetHorizontalAlignment(HorizontalAlignment::Stretch);
+        }
+    }
+    if !vertical_scroll_enabled {
+        let height = element.Height().unwrap_or(f64::NAN);
+        let max_height = element.MaxHeight().unwrap_or(f64::INFINITY);
+        if height.is_nan() && max_height.is_infinite() {
+            let _ = element.SetVerticalAlignment(VerticalAlignment::Stretch);
         }
     }
 }

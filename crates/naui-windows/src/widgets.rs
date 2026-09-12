@@ -739,6 +739,8 @@ impl ProgressBar {
 
 struct StackInner {
     native: StackPanel,
+    /// 交差軸に置く子の既定の寄せ方。`Fill` の子は自分の指定を優先する。
+    align: Cell<Align>,
     children: RefCell<Vec<Box<dyn Widget>>>,
 }
 
@@ -759,6 +761,7 @@ impl Stack {
             .map_err(|e| to_error("StackPanel の向き設定", e))?;
         Ok(Self(Rc::new(StackInner {
             native,
+            align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
         })))
     }
@@ -777,38 +780,26 @@ impl Stack {
     }
 
     pub fn set_align(&self, align: Align) {
-        let vertical = self
-            .0
+        self.0.align.set(align);
+        let vertical = self.is_vertical();
+        for child in self.0.children.borrow().iter() {
+            apply_cross_alignment(&child.native_element(), align, vertical);
+        }
+    }
+
+    fn is_vertical(&self) -> bool {
+        self.0
             .native
             .Orientation()
             .map(|o| o == XamlOrientation::Vertical)
-            .unwrap_or(true);
-        if vertical {
-            let value = match align {
-                Align::Start => HorizontalAlignment::Left,
-                Align::Center => HorizontalAlignment::Center,
-                Align::End => HorizontalAlignment::Right,
-                Align::Fill => HorizontalAlignment::Stretch,
-            };
-            let _ = self.0.native.SetHorizontalAlignment(value);
-        } else {
-            let value = match align {
-                Align::Start => VerticalAlignment::Top,
-                Align::Center => VerticalAlignment::Center,
-                Align::End => VerticalAlignment::Bottom,
-                Align::Fill => VerticalAlignment::Stretch,
-            };
-            let _ = self.0.native.SetVerticalAlignment(value);
-        }
+            .unwrap_or(true)
     }
 
     /// 末尾に子を追加する。
     pub fn append(&self, child: &dyn Widget) {
-        let appended = self
-            .0
-            .native
-            .Children()
-            .and_then(|c| c.Append(&child.native_element()));
+        let element = child.native_element();
+        apply_cross_alignment(&element, self.0.align.get(), self.is_vertical());
+        let appended = self.0.native.Children().and_then(|c| c.Append(&element));
         if appended.is_ok() {
             self.0.children.borrow_mut().push(child.boxed_clone());
         }
@@ -818,11 +809,13 @@ impl Stack {
     pub fn insert(&self, index: usize, child: &dyn Widget) {
         let mut children = self.0.children.borrow_mut();
         let index = index.min(children.len());
+        let element = child.native_element();
+        apply_cross_alignment(&element, self.0.align.get(), self.is_vertical());
         let inserted = self
             .0
             .native
             .Children()
-            .and_then(|c| c.InsertAt(index as u32, &child.native_element()));
+            .and_then(|c| c.InsertAt(index as u32, &element));
         if inserted.is_ok() {
             children.insert(index, child.boxed_clone());
         }
@@ -858,6 +851,40 @@ impl Stack {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+/// `Stack::set_align` を WinUI の子要素へ写す。
+///
+/// `StackPanel` 自身の `HorizontalAlignment` / `VerticalAlignment` は親の中で
+/// パネルを置く位置を変えるだけで、子の交差軸の寄せ方にはならない。そこへ
+/// 書くと、`Fill` で幅を確保したパネルを `Align::Start` と併用したときに、
+/// パネル自身が内容幅まで縮んでしまう。
+fn apply_cross_alignment(element: &UIElement, align: Align, vertical_stack: bool) {
+    let Ok(element) = element.cast::<FrameworkElement>() else {
+        return;
+    };
+    // 子自身の `Fill` がコンテナの寄せ方に勝つ。これがないと
+    // `set_align(Align::Start)` が `fill_width()` を左寄せへ戻してしまう。
+    if crate::layout::wants_fill(&element, vertical_stack) {
+        return;
+    }
+    if vertical_stack {
+        let value = match align {
+            Align::Start => HorizontalAlignment::Left,
+            Align::Center => HorizontalAlignment::Center,
+            Align::End => HorizontalAlignment::Right,
+            Align::Fill => HorizontalAlignment::Stretch,
+        };
+        let _ = element.SetHorizontalAlignment(value);
+    } else {
+        let value = match align {
+            Align::Start => VerticalAlignment::Top,
+            Align::Center => VerticalAlignment::Center,
+            Align::End => VerticalAlignment::Bottom,
+            Align::Fill => VerticalAlignment::Stretch,
+        };
+        let _ = element.SetVerticalAlignment(value);
     }
 }
 

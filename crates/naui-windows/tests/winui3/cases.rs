@@ -7,16 +7,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use naui_core::{Orientation, Result, TextColor, TextStyle};
+use naui_core::{Align, Orientation, Result, Sizing, TextColor, TextStyle};
 use naui_windows::{run_for_test, Ui, Widget};
 
 use crate::automation;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Grid,
+    Button as XamlButton, CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Grid, ScrollViewer,
     Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
-use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, HorizontalAlignment, UIElement};
 use windows_core::{Interface, HSTRING};
 
 /// テストケース 1 件。
@@ -57,6 +57,14 @@ const CASES: &[Case] = &[
     (
         "ツリーの行が中身を行の幅いっぱいに置く",
         tree_rows_stretch_their_content,
+    ),
+    (
+        "スタックの寄せ方が幅の Fill を壊さない",
+        stack_alignment_keeps_fill_width,
+    ),
+    (
+        "スクロールの非スクロール軸が内容を広げる",
+        scroll_stretches_non_scrolling_content,
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
@@ -564,6 +572,86 @@ fn tree_rows_stretch_their_content(ui: &Ui) -> Result<()> {
     // `Style::Setters` は投影に入っていないので、中身の `Stretch` そのものは
     // ここでは見られない (投影を増やすと下流のコンパイルを壊すため増やさない)。
     // 当たっていること自体が消える回帰は、これで捕まえられる。
+    Ok(())
+}
+
+/// `Align` は StackPanel 自身ではなく、交差軸に置く子へ適用する。
+///
+/// StackPanel 自身を `Left` にすると、`fill_width()` を指定した Stack まで
+/// 内容幅へ縮み、中の要素が Stretch でも親の幅を受け取れない。
+fn stack_alignment_keeps_fill_width(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::Start);
+
+    let normal = ui.label("通常")?;
+    let fill = ui.label("幅いっぱい")?;
+    fill.set_sizing(Sizing::fill_width());
+    stack.append(&normal);
+    stack.append(&fill);
+
+    let panel = native::<StackPanel>(&stack);
+    assert_eq!(
+        panel.HorizontalAlignment().expect("StackPanel の横配置"),
+        HorizontalAlignment::Stretch,
+        "StackPanel 自身は親の幅を受け取ること"
+    );
+    assert_eq!(
+        native::<TextBlock>(&normal)
+            .HorizontalAlignment()
+            .expect("通常ラベルの横配置"),
+        HorizontalAlignment::Left,
+        "通常の子は Stack の Align に従うこと"
+    );
+    assert_eq!(
+        native::<TextBlock>(&fill)
+            .HorizontalAlignment()
+            .expect("Fill ラベルの横配置"),
+        HorizontalAlignment::Stretch,
+        "子自身の Fill が Stack の Align より優先されること"
+    );
+
+    stack.set_align(Align::Center);
+    assert_eq!(
+        native::<TextBlock>(&normal)
+            .HorizontalAlignment()
+            .expect("通常ラベルの横配置"),
+        HorizontalAlignment::Center,
+        "後から寄せ方を変えても既存の子へ反映されること"
+    );
+    assert_eq!(
+        native::<TextBlock>(&fill)
+            .HorizontalAlignment()
+            .expect("Fill ラベルの横配置"),
+        HorizontalAlignment::Stretch,
+        "後から寄せ方を変えても Fill は広がること"
+    );
+    Ok(())
+}
+
+/// `ScrollViewer` の既定 (左上寄せ) では、横へ送らない中身がビューポートの
+/// 幅を使えない。naui の既定ポリシーでは横軸を Stretch にする。
+fn scroll_stretches_non_scrolling_content(ui: &Ui) -> Result<()> {
+    let scroll = ui.scroll()?;
+    let child = ui.stack(Orientation::Vertical)?;
+    // 明示的な Auto が先に入っていても、スクロールしない軸は埋める。
+    child.set_sizing(Sizing::AUTO);
+    scroll.set_child(&child);
+
+    let scroll_native = native::<ScrollViewer>(&scroll);
+    assert_eq!(
+        scroll_native
+            .HorizontalContentAlignment()
+            .expect("横の内容配置"),
+        HorizontalAlignment::Stretch,
+        "横へ送らない内容はビューポート幅へ広がること"
+    );
+    assert_eq!(
+        native::<StackPanel>(&child)
+            .HorizontalAlignment()
+            .expect("スクロール内容の横配置"),
+        HorizontalAlignment::Stretch,
+        "中身自身も横へ広がること"
+    );
     Ok(())
 }
 
