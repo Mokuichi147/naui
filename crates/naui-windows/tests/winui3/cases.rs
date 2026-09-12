@@ -63,8 +63,16 @@ const CASES: &[Case] = &[
         stack_alignment_keeps_fill_width,
     ),
     (
+        "スタックの寄せ方がサイズ変更で維持される",
+        stack_alignment_survives_sizing,
+    ),
+    (
         "スクロールの非スクロール軸が内容を広げる",
         scroll_stretches_non_scrolling_content,
+    ),
+    (
+        "スクロール内容の Stretch がサイズ変更で維持される",
+        scroll_stretch_survives_sizing,
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
@@ -628,6 +636,35 @@ fn stack_alignment_keeps_fill_width(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// 子を追加してから寄せ方と大きさを変更しても、Stack の交差軸の寄せ方を
+/// 保持する。Sizing はネイティブの Alignment を上書きするため、呼び出し順が
+/// 逆になったときの回帰を検証する。
+fn stack_alignment_survives_sizing(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let child = ui.label("後からサイズ変更")?;
+    stack.append(&child);
+    stack.set_align(Align::End);
+
+    child.set_sizing(Sizing::fixed(120.0, 24.0));
+    assert_eq!(
+        native::<TextBlock>(&child)
+            .HorizontalAlignment()
+            .expect("サイズ固定後の横配置"),
+        HorizontalAlignment::Right,
+        "固定サイズを後から指定しても Stack の End を保つこと"
+    );
+
+    child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        native::<TextBlock>(&child)
+            .HorizontalAlignment()
+            .expect("Auto 後の横配置"),
+        HorizontalAlignment::Right,
+        "Auto を後から指定しても Stack の End を保つこと"
+    );
+    Ok(())
+}
+
 /// `ScrollViewer` の既定 (左上寄せ) では、横へ送らない中身がビューポートの
 /// 幅を使えない。naui の既定ポリシーでは横軸を Stretch にする。
 fn scroll_stretches_non_scrolling_content(ui: &Ui) -> Result<()> {
@@ -651,6 +688,32 @@ fn scroll_stretches_non_scrolling_content(ui: &Ui) -> Result<()> {
             .expect("スクロール内容の横配置"),
         HorizontalAlignment::Stretch,
         "中身自身も横へ広がること"
+    );
+    Ok(())
+}
+
+/// Scroll の中身を先に置いてから Sizing を変更しても、横スクロールを禁止した
+/// 軸の Stretch を保つ。親の状態を子の Sizing 後にも再適用できることを検証する。
+fn scroll_stretch_survives_sizing(ui: &Ui) -> Result<()> {
+    let scroll = ui.scroll()?;
+    let child = ui.stack(Orientation::Vertical)?;
+    scroll.set_child(&child);
+    child.set_sizing(Sizing::AUTO);
+
+    let scroll_native = native::<ScrollViewer>(&scroll);
+    assert_eq!(
+        scroll_native
+            .HorizontalContentAlignment()
+            .expect("横の内容配置"),
+        HorizontalAlignment::Stretch,
+        "横へ送らない内容はビューポート幅へ広がること"
+    );
+    assert_eq!(
+        native::<StackPanel>(&child)
+            .HorizontalAlignment()
+            .expect("サイズ変更後のスクロール内容の横配置"),
+        HorizontalAlignment::Stretch,
+        "Sizing を後から指定しても非スクロール軸の Stretch を保つこと"
     );
     Ok(())
 }

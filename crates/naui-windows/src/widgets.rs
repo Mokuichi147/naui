@@ -11,8 +11,8 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
-    Application, FrameworkElement, HorizontalAlignment, ResourceDictionary, RoutedEventHandler,
-    Style, TextWrapping, Thickness, UIElement, VerticalAlignment,
+    Application, FrameworkElement, ResourceDictionary, RoutedEventHandler, Style, TextWrapping,
+    Thickness, UIElement,
 };
 use windows::Foundation::{EventHandler, PropertyValue};
 use windows_core::{IInspectable, Interface, HSTRING};
@@ -783,7 +783,7 @@ impl Stack {
         self.0.align.set(align);
         let vertical = self.is_vertical();
         for child in self.0.children.borrow().iter() {
-            apply_cross_alignment(&child.native_element(), align, vertical);
+            crate::layout::set_stack_parent(&child.native_element(), align, vertical);
         }
     }
 
@@ -798,7 +798,7 @@ impl Stack {
     /// 末尾に子を追加する。
     pub fn append(&self, child: &dyn Widget) {
         let element = child.native_element();
-        apply_cross_alignment(&element, self.0.align.get(), self.is_vertical());
+        crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
         let appended = self.0.native.Children().and_then(|c| c.Append(&element));
         if appended.is_ok() {
             self.0.children.borrow_mut().push(child.boxed_clone());
@@ -810,7 +810,7 @@ impl Stack {
         let mut children = self.0.children.borrow_mut();
         let index = index.min(children.len());
         let element = child.native_element();
-        apply_cross_alignment(&element, self.0.align.get(), self.is_vertical());
+        crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
         let inserted = self
             .0
             .native
@@ -833,14 +833,25 @@ impl Stack {
             .Children()
             .and_then(|c| c.RemoveAt(index as u32));
         if removed.is_ok() {
+            crate::layout::clear_parent_layout(&children[index].native_element());
             children.remove(index);
         }
     }
 
     /// 子をすべて外す。
     pub fn clear(&self) {
+        let elements = self
+            .0
+            .children
+            .borrow()
+            .iter()
+            .map(|child| child.native_element())
+            .collect::<Vec<_>>();
         if let Ok(children) = self.0.native.Children() {
             let _ = children.Clear();
+        }
+        for element in elements {
+            crate::layout::clear_parent_layout(&element);
         }
         self.0.children.borrow_mut().clear();
     }
@@ -851,40 +862,6 @@ impl Stack {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-}
-
-/// `Stack::set_align` を WinUI の子要素へ写す。
-///
-/// `StackPanel` 自身の `HorizontalAlignment` / `VerticalAlignment` は親の中で
-/// パネルを置く位置を変えるだけで、子の交差軸の寄せ方にはならない。そこへ
-/// 書くと、`Fill` で幅を確保したパネルを `Align::Start` と併用したときに、
-/// パネル自身が内容幅まで縮んでしまう。
-fn apply_cross_alignment(element: &UIElement, align: Align, vertical_stack: bool) {
-    let Ok(element) = element.cast::<FrameworkElement>() else {
-        return;
-    };
-    // 子自身の `Fill` がコンテナの寄せ方に勝つ。これがないと
-    // `set_align(Align::Start)` が `fill_width()` を左寄せへ戻してしまう。
-    if crate::layout::wants_fill(&element, vertical_stack) {
-        return;
-    }
-    if vertical_stack {
-        let value = match align {
-            Align::Start => HorizontalAlignment::Left,
-            Align::Center => HorizontalAlignment::Center,
-            Align::End => HorizontalAlignment::Right,
-            Align::Fill => HorizontalAlignment::Stretch,
-        };
-        let _ = element.SetHorizontalAlignment(value);
-    } else {
-        let value = match align {
-            Align::Start => VerticalAlignment::Top,
-            Align::Center => VerticalAlignment::Center,
-            Align::End => VerticalAlignment::Bottom,
-            Align::Fill => VerticalAlignment::Stretch,
-        };
-        let _ = element.SetVerticalAlignment(value);
     }
 }
 
