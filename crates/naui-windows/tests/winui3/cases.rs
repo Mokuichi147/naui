@@ -7,16 +7,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use naui_core::{Orientation, Result, TextColor, TextStyle};
+use naui_core::{Align, Orientation, Result, ScrollPolicy, Sizing, TextColor, TextStyle};
 use naui_windows::{run_for_test, Ui, Widget};
 
 use crate::automation;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Grid,
+    Button as XamlButton, CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Grid, ScrollViewer,
     Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
-use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, HorizontalAlignment, UIElement};
+use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows_core::{Interface, HSTRING};
 
 /// テストケース 1 件。
@@ -57,6 +58,30 @@ const CASES: &[Case] = &[
     (
         "ツリーの行が中身を行の幅いっぱいに置く",
         tree_rows_stretch_their_content,
+    ),
+    (
+        "スタックの寄せ方が幅の Fill を壊さない",
+        stack_alignment_keeps_fill_width,
+    ),
+    (
+        "スタックの寄せ方がサイズ変更で維持される",
+        stack_alignment_survives_sizing,
+    ),
+    (
+        "スクロールの非スクロール軸が内容を広げる",
+        scroll_stretches_non_scrolling_content,
+    ),
+    (
+        "スクロール内容の Stretch がサイズ変更で維持される",
+        scroll_stretch_survives_sizing,
+    ),
+    (
+        "親への追加失敗がレイアウト状態を汚さない",
+        failed_parent_operations_keep_layout_state,
+    ),
+    (
+        "利用者の Tag をレイアウトが上書きしない",
+        layout_preserves_user_tag,
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
@@ -564,6 +589,232 @@ fn tree_rows_stretch_their_content(ui: &Ui) -> Result<()> {
     // `Style::Setters` は投影に入っていないので、中身の `Stretch` そのものは
     // ここでは見られない (投影を増やすと下流のコンパイルを壊すため増やさない)。
     // 当たっていること自体が消える回帰は、これで捕まえられる。
+    Ok(())
+}
+
+/// `Align` は StackPanel 自身ではなく、交差軸に置く子へ適用する。
+///
+/// StackPanel 自身を `Left` にすると、`fill_width()` を指定した Stack まで
+/// 内容幅へ縮み、中の要素が Stretch でも親の幅を受け取れない。
+fn stack_alignment_keeps_fill_width(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::Start);
+
+    let normal = ui.label("通常")?;
+    let fill = ui.label("幅いっぱい")?;
+    fill.set_sizing(Sizing::fill_width());
+    stack.append(&normal);
+    stack.append(&fill);
+
+    let panel = native::<StackPanel>(&stack);
+    assert_eq!(
+        panel.HorizontalAlignment().expect("StackPanel の横配置"),
+        HorizontalAlignment::Stretch,
+        "StackPanel 自身は親の幅を受け取ること"
+    );
+    assert_eq!(
+        native::<TextBlock>(&normal)
+            .HorizontalAlignment()
+            .expect("通常ラベルの横配置"),
+        HorizontalAlignment::Left,
+        "通常の子は Stack の Align に従うこと"
+    );
+    assert_eq!(
+        native::<TextBlock>(&fill)
+            .HorizontalAlignment()
+            .expect("Fill ラベルの横配置"),
+        HorizontalAlignment::Stretch,
+        "子自身の Fill が Stack の Align より優先されること"
+    );
+
+    stack.set_align(Align::Center);
+    assert_eq!(
+        native::<TextBlock>(&normal)
+            .HorizontalAlignment()
+            .expect("通常ラベルの横配置"),
+        HorizontalAlignment::Center,
+        "後から寄せ方を変えても既存の子へ反映されること"
+    );
+    assert_eq!(
+        native::<TextBlock>(&fill)
+            .HorizontalAlignment()
+            .expect("Fill ラベルの横配置"),
+        HorizontalAlignment::Stretch,
+        "後から寄せ方を変えても Fill は広がること"
+    );
+    Ok(())
+}
+
+/// 子を追加してから寄せ方と大きさを変更しても、Stack の交差軸の寄せ方を
+/// 保持する。Sizing はネイティブの Alignment を上書きするため、呼び出し順が
+/// 逆になったときの回帰を検証する。
+fn stack_alignment_survives_sizing(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let child = ui.label("後からサイズ変更")?;
+    stack.append(&child);
+    stack.set_align(Align::End);
+
+    child.set_sizing(Sizing::fixed(120.0, 24.0));
+    assert_eq!(
+        native::<TextBlock>(&child)
+            .HorizontalAlignment()
+            .expect("サイズ固定後の横配置"),
+        HorizontalAlignment::Right,
+        "固定サイズを後から指定しても Stack の End を保つこと"
+    );
+
+    child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        native::<TextBlock>(&child)
+            .HorizontalAlignment()
+            .expect("Auto 後の横配置"),
+        HorizontalAlignment::Right,
+        "Auto を後から指定しても Stack の End を保つこと"
+    );
+    Ok(())
+}
+
+/// `ScrollViewer` の既定 (左上寄せ) では、横へ送らない中身がビューポートの
+/// 幅を使えない。naui の既定ポリシーでは横軸を Stretch にする。
+fn scroll_stretches_non_scrolling_content(ui: &Ui) -> Result<()> {
+    let scroll = ui.scroll()?;
+    let child = ui.stack(Orientation::Vertical)?;
+    // 明示的な Auto が先に入っていても、スクロールしない軸は埋める。
+    child.set_sizing(Sizing::AUTO);
+    scroll.set_child(&child);
+
+    let scroll_native = native::<ScrollViewer>(&scroll);
+    assert_eq!(
+        scroll_native
+            .HorizontalContentAlignment()
+            .expect("横の内容配置"),
+        HorizontalAlignment::Stretch,
+        "横へ送らない内容はビューポート幅へ広がること"
+    );
+    assert_eq!(
+        native::<StackPanel>(&child)
+            .HorizontalAlignment()
+            .expect("スクロール内容の横配置"),
+        HorizontalAlignment::Stretch,
+        "中身自身も横へ広がること"
+    );
+    Ok(())
+}
+
+/// Scroll の中身を先に置いてから Sizing を変更しても、横スクロールを禁止した
+/// 軸の Stretch を保つ。親の状態を子の Sizing 後にも再適用できることを検証する。
+fn scroll_stretch_survives_sizing(ui: &Ui) -> Result<()> {
+    let scroll = ui.scroll()?;
+    let child = ui.stack(Orientation::Vertical)?;
+    scroll.set_child(&child);
+    child.set_sizing(Sizing::AUTO);
+
+    let scroll_native = native::<ScrollViewer>(&scroll);
+    assert_eq!(
+        scroll_native
+            .HorizontalContentAlignment()
+            .expect("横の内容配置"),
+        HorizontalAlignment::Stretch,
+        "横へ送らない内容はビューポート幅へ広がること"
+    );
+    assert_eq!(
+        native::<StackPanel>(&child)
+            .HorizontalAlignment()
+            .expect("サイズ変更後のスクロール内容の横配置"),
+        HorizontalAlignment::Stretch,
+        "Sizing を後から指定しても非スクロール軸の Stretch を保つこと"
+    );
+    Ok(())
+}
+
+/// すでに別の親に属している要素を追加できなくても、失敗した親の状態を
+/// 記録しない。実際の親の状態が Sizing 後にも残ることを検証する。
+fn failed_parent_operations_keep_layout_state(ui: &Ui) -> Result<()> {
+    let first_stack = ui.stack(Orientation::Vertical)?;
+    first_stack.set_align(Align::End);
+    let second_stack = ui.stack(Orientation::Vertical)?;
+    second_stack.set_align(Align::Start);
+    let stack_child = ui.label("既存の Stack 子")?;
+    first_stack.append(&stack_child);
+    // すでに親があるため、ネイティブ側の Append は失敗する。
+    second_stack.append(&stack_child);
+    stack_child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        native::<TextBlock>(&stack_child)
+            .HorizontalAlignment()
+            .expect("追加失敗後の Stack 子の横配置"),
+        HorizontalAlignment::Right,
+        "失敗した Stack の寄せ方を後から再適用しないこと"
+    );
+
+    let first_scroll = ui.scroll()?;
+    first_scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    let second_scroll = ui.scroll()?;
+    second_scroll.set_policy(ScrollPolicy::Always, ScrollPolicy::Auto);
+    let scroll_child = ui.stack(Orientation::Vertical)?;
+    first_scroll.set_child(&scroll_child);
+    // 水平スクロールを許す別の Scroll への SetContent は失敗する。
+    second_scroll.set_child(&scroll_child);
+    scroll_child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        native::<StackPanel>(&scroll_child)
+            .HorizontalAlignment()
+            .expect("追加失敗後の Scroll 内容の横配置"),
+        HorizontalAlignment::Stretch,
+        "失敗した Scroll のポリシーを後から再適用しないこと"
+    );
+    Ok(())
+}
+
+/// WinUI の脱出口から設定した Tag を、Sizing や親コンテナの操作で失わない。
+fn layout_preserves_user_tag(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let stack_child = ui.label("Tag を持つ Stack 子")?;
+    let stack_native = native::<TextBlock>(&stack_child)
+        .cast::<FrameworkElement>()
+        .expect("Stack 子の FrameworkElement 変換");
+    let user_tag =
+        PropertyValue::CreateString(&HSTRING::from("user-stack-tag")).expect("Stack 子の Tag");
+    stack_native.SetTag(&user_tag).expect("Stack 子の Tag 設定");
+    stack.append(&stack_child);
+    stack.set_align(Align::End);
+    stack_child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        stack_native
+            .Tag()
+            .expect("Stack 子の Tag 読み出し")
+            .cast::<IPropertyValue>()
+            .expect("Stack 子の Tag 型")
+            .GetString()
+            .expect("Stack 子の Tag 文字列")
+            .to_string(),
+        "user-stack-tag"
+    );
+    stack.remove(0);
+
+    let scroll = ui.scroll()?;
+    let scroll_child = ui.stack(Orientation::Vertical)?;
+    let scroll_native = native::<StackPanel>(&scroll_child)
+        .cast::<FrameworkElement>()
+        .expect("Scroll 内容の FrameworkElement 変換");
+    let user_tag =
+        PropertyValue::CreateString(&HSTRING::from("user-scroll-tag")).expect("Scroll 内容の Tag");
+    scroll_native
+        .SetTag(&user_tag)
+        .expect("Scroll 内容の Tag 設定");
+    scroll.set_child(&scroll_child);
+    scroll_child.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        scroll_native
+            .Tag()
+            .expect("Scroll 内容の Tag 読み出し")
+            .cast::<IPropertyValue>()
+            .expect("Scroll 内容の Tag 型")
+            .GetString()
+            .expect("Scroll 内容の Tag 文字列")
+            .to_string(),
+        "user-scroll-tag"
+    );
     Ok(())
 }
 

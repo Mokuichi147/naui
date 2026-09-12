@@ -11,8 +11,8 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
-    Application, FrameworkElement, HorizontalAlignment, ResourceDictionary, RoutedEventHandler,
-    Style, TextWrapping, Thickness, UIElement, VerticalAlignment,
+    Application, FrameworkElement, ResourceDictionary, RoutedEventHandler, Style, TextWrapping,
+    Thickness, UIElement,
 };
 use windows::Foundation::{EventHandler, PropertyValue};
 use windows_core::{IInspectable, Interface, HSTRING};
@@ -739,7 +739,19 @@ impl ProgressBar {
 
 struct StackInner {
     native: StackPanel,
+    /// 交差軸に置く子の既定の寄せ方。`Fill` の子は自分の指定を優先する。
+    align: Cell<Align>,
     children: RefCell<Vec<Box<dyn Widget>>>,
+}
+
+impl Drop for StackInner {
+    fn drop(&mut self) {
+        if let Ok(children) = self.children.try_borrow() {
+            for child in children.iter() {
+                crate::layout::clear_parent_layout(&child.native_element());
+            }
+        }
+    }
 }
 
 /// 縦 / 横に子を並べるコンテナ (StackPanel)。
@@ -759,6 +771,7 @@ impl Stack {
             .map_err(|e| to_error("StackPanel の向き設定", e))?;
         Ok(Self(Rc::new(StackInner {
             native,
+            align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
         })))
     }
@@ -777,39 +790,27 @@ impl Stack {
     }
 
     pub fn set_align(&self, align: Align) {
-        let vertical = self
-            .0
+        self.0.align.set(align);
+        let vertical = self.is_vertical();
+        for child in self.0.children.borrow().iter() {
+            crate::layout::set_stack_parent(&child.native_element(), align, vertical);
+        }
+    }
+
+    fn is_vertical(&self) -> bool {
+        self.0
             .native
             .Orientation()
             .map(|o| o == XamlOrientation::Vertical)
-            .unwrap_or(true);
-        if vertical {
-            let value = match align {
-                Align::Start => HorizontalAlignment::Left,
-                Align::Center => HorizontalAlignment::Center,
-                Align::End => HorizontalAlignment::Right,
-                Align::Fill => HorizontalAlignment::Stretch,
-            };
-            let _ = self.0.native.SetHorizontalAlignment(value);
-        } else {
-            let value = match align {
-                Align::Start => VerticalAlignment::Top,
-                Align::Center => VerticalAlignment::Center,
-                Align::End => VerticalAlignment::Bottom,
-                Align::Fill => VerticalAlignment::Stretch,
-            };
-            let _ = self.0.native.SetVerticalAlignment(value);
-        }
+            .unwrap_or(true)
     }
 
     /// 末尾に子を追加する。
     pub fn append(&self, child: &dyn Widget) {
-        let appended = self
-            .0
-            .native
-            .Children()
-            .and_then(|c| c.Append(&child.native_element()));
+        let element = child.native_element();
+        let appended = self.0.native.Children().and_then(|c| c.Append(&element));
         if appended.is_ok() {
+            crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
             self.0.children.borrow_mut().push(child.boxed_clone());
         }
     }
@@ -818,12 +819,14 @@ impl Stack {
     pub fn insert(&self, index: usize, child: &dyn Widget) {
         let mut children = self.0.children.borrow_mut();
         let index = index.min(children.len());
+        let element = child.native_element();
         let inserted = self
             .0
             .native
             .Children()
-            .and_then(|c| c.InsertAt(index as u32, &child.native_element()));
+            .and_then(|c| c.InsertAt(index as u32, &element));
         if inserted.is_ok() {
+            crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
             children.insert(index, child.boxed_clone());
         }
     }
@@ -840,14 +843,28 @@ impl Stack {
             .Children()
             .and_then(|c| c.RemoveAt(index as u32));
         if removed.is_ok() {
+            crate::layout::clear_parent_layout(&children[index].native_element());
             children.remove(index);
         }
     }
 
     /// 子をすべて外す。
     pub fn clear(&self) {
-        if let Ok(children) = self.0.native.Children() {
-            let _ = children.Clear();
+        let elements = self
+            .0
+            .children
+            .borrow()
+            .iter()
+            .map(|child| child.native_element())
+            .collect::<Vec<_>>();
+        let Ok(children) = self.0.native.Children() else {
+            return;
+        };
+        if children.Clear().is_err() {
+            return;
+        }
+        for element in elements {
+            crate::layout::clear_parent_layout(&element);
         }
         self.0.children.borrow_mut().clear();
     }
