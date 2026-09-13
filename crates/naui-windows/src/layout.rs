@@ -436,26 +436,28 @@ impl Grid {
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         self.ensure_size(cell.columns_needed(), cell.rows_needed());
         let element = child.native_element();
-        // 置き場所は添付プロパティなので、FrameworkElement として設定する。
-        if let Ok(framework) = element.cast::<FrameworkElement>() {
-            let _ = XamlGrid::SetColumn(&framework, cell.column as i32);
-            let _ = XamlGrid::SetRow(&framework, cell.row as i32);
-            let _ = XamlGrid::SetColumnSpan(&framework, cell.column_span as i32);
-            let _ = XamlGrid::SetRowSpan(&framework, cell.row_span as i32);
-            // 縦は中央ぞろえ。既定の Stretch のままだと、同じ行に置いた
-            // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
-            let _ = framework.SetVerticalAlignment(if wants_fill(&framework, false) {
-                VerticalAlignment::Stretch
-            } else {
-                VerticalAlignment::Center
-            });
-        }
         let appended = self
             .0
             .native
             .Children()
             .and_then(|children| children.Append(&element));
         if appended.is_ok() {
+            // 置き場所は添付プロパティなので、FrameworkElement として設定する。
+            // Append に成功してから設定することで、すでに別の親に属している
+            // 要素の追加に失敗しても、既存の配置を変更しない。
+            if let Ok(framework) = element.cast::<FrameworkElement>() {
+                let _ = XamlGrid::SetColumn(&framework, cell.column as i32);
+                let _ = XamlGrid::SetRow(&framework, cell.row as i32);
+                let _ = XamlGrid::SetColumnSpan(&framework, cell.column_span as i32);
+                let _ = XamlGrid::SetRowSpan(&framework, cell.row_span as i32);
+                // 縦は中央ぞろえ。既定の Stretch のままだと、同じ行に置いた
+                // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
+                let _ = framework.SetVerticalAlignment(if wants_fill(&framework, false) {
+                    VerticalAlignment::Stretch
+                } else {
+                    VerticalAlignment::Center
+                });
+            }
             self.0
                 .children
                 .borrow_mut()

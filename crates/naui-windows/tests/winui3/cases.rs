@@ -16,7 +16,9 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
-use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, HorizontalAlignment, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, HorizontalAlignment, UIElement, VerticalAlignment,
+};
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows_core::{Interface, HSTRING};
 
@@ -78,6 +80,10 @@ const CASES: &[Case] = &[
     (
         "親への追加失敗がレイアウト状態を汚さない",
         failed_parent_operations_keep_layout_state,
+    ),
+    (
+        "Grid への追加失敗が既存の配置を汚さない",
+        failed_grid_attach_keeps_existing_state,
     ),
     (
         "利用者の Tag をレイアウトが上書きしない",
@@ -766,6 +772,53 @@ fn failed_parent_operations_keep_layout_state(ui: &Ui) -> Result<()> {
             .expect("追加失敗後の Scroll 内容の横配置"),
         HorizontalAlignment::Stretch,
         "失敗した Scroll のポリシーを後から再適用しないこと"
+    );
+    Ok(())
+}
+
+/// すでに別の親に属している要素を Grid へ追加できなくても、Grid の添付
+/// プロパティや既存の親が設定した Alignment を変更しない。
+fn failed_grid_attach_keeps_existing_state(ui: &Ui) -> Result<()> {
+    let first_grid = ui.grid()?;
+    let second_grid = ui.grid()?;
+    let grid_child = ui.label("既存の Grid 子")?;
+    let original_cell = GridCell::new(2, 3).span(2, 2);
+    first_grid.attach(&grid_child, original_cell);
+
+    // すでに親があるため、ネイティブ側の Append は失敗する。
+    second_grid.attach(&grid_child, GridCell::new(0, 0));
+    let grid_native = native::<TextBlock>(&grid_child)
+        .cast::<FrameworkElement>()
+        .expect("Grid 子の FrameworkElement 変換");
+    assert_eq!(
+        Grid::GetColumn(&grid_native).expect("失敗後の Grid 列"),
+        original_cell.column as i32
+    );
+    assert_eq!(
+        Grid::GetRow(&grid_native).expect("失敗後の Grid 行"),
+        original_cell.row as i32
+    );
+    assert_eq!(
+        Grid::GetColumnSpan(&grid_native).expect("失敗後の Grid 列 span"),
+        original_cell.column_span as i32
+    );
+    assert_eq!(
+        Grid::GetRowSpan(&grid_native).expect("失敗後の Grid 行 span"),
+        original_cell.row_span as i32
+    );
+
+    let stack = ui.stack(Orientation::Horizontal)?;
+    stack.set_align(Align::End);
+    let stack_child = ui.label("既存の Stack 子")?;
+    stack.append(&stack_child);
+    let third_grid = ui.grid()?;
+    third_grid.attach(&stack_child, GridCell::new(0, 0));
+    assert_eq!(
+        native::<TextBlock>(&stack_child)
+            .VerticalAlignment()
+            .expect("失敗後の Stack 子の縦配置"),
+        VerticalAlignment::Bottom,
+        "失敗した Grid の中央寄せを既存の Stack 子へ残さないこと"
     );
     Ok(())
 }
