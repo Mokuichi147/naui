@@ -36,11 +36,42 @@ enum ParentLayout {
     },
 }
 
+impl ParentLayout {
+    fn owns_horizontal(self) -> bool {
+        match self {
+            Self::Stack { vertical, .. } => vertical,
+            Self::Scroll {
+                horizontal_scroll_enabled,
+                ..
+            } => !horizontal_scroll_enabled,
+        }
+    }
+
+    fn owns_vertical(self) -> bool {
+        match self {
+            Self::Stack { vertical, .. } => !vertical,
+            Self::Scroll {
+                vertical_scroll_enabled,
+                ..
+            } => !vertical_scroll_enabled,
+        }
+    }
+
+    fn same_kind(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Stack { .. }, Self::Stack { .. }) | (Self::Scroll { .. }, Self::Scroll { .. })
+        )
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 struct LayoutState {
     fill_width: bool,
     fill_height: bool,
     parent: Option<ParentLayout>,
+    restore_horizontal: Option<HorizontalAlignment>,
+    restore_vertical: Option<VerticalAlignment>,
 }
 
 fn element_key(element: &UIElement) -> usize {
@@ -64,7 +95,11 @@ fn update_layout_state(element: &UIElement, update: impl FnOnce(&mut LayoutState
         let empty = {
             let state = states.entry(key).or_default();
             update(state);
-            !state.fill_width && !state.fill_height && state.parent.is_none()
+            !state.fill_width
+                && !state.fill_height
+                && state.parent.is_none()
+                && state.restore_horizontal.is_none()
+                && state.restore_vertical.is_none()
         };
         if empty {
             states.remove(&key);
@@ -73,9 +108,25 @@ fn update_layout_state(element: &UIElement, update: impl FnOnce(&mut LayoutState
 }
 
 fn set_sizing_state(element: &UIElement, sizing: Sizing) {
+    let horizontal_alignment = match sizing.width {
+        Length::Fill => HorizontalAlignment::Stretch,
+        _ => HorizontalAlignment::Left,
+    };
+    let vertical_alignment = match sizing.height {
+        Length::Fill => VerticalAlignment::Stretch,
+        _ => VerticalAlignment::Top,
+    };
     update_layout_state(element, |state| {
         state.fill_width = sizing.width.is_fill();
         state.fill_height = sizing.height.is_fill();
+        if let Some(parent) = state.parent {
+            if parent.owns_horizontal() {
+                state.restore_horizontal = Some(horizontal_alignment);
+            }
+            if parent.owns_vertical() {
+                state.restore_vertical = Some(vertical_alignment);
+            }
+        }
     });
 }
 
@@ -97,8 +148,52 @@ pub(crate) fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
     })
 }
 
-fn set_parent_state(element: &UIElement, parent: ParentLayout) {
-    update_layout_state(element, |state| state.parent = Some(parent));
+fn set_parent_state(element: &UIElement, framework: &FrameworkElement, parent: ParentLayout) {
+    if let Some(previous) = parent_state(framework) {
+        if !previous.same_kind(parent) {
+            clear_parent_layout(element);
+        }
+    }
+
+    let previous = parent_state(framework);
+    let owns_horizontal = parent.owns_horizontal();
+    let owns_vertical = parent.owns_vertical();
+    let captured_horizontal = owns_horizontal.then(|| framework.HorizontalAlignment().ok());
+    let captured_vertical = owns_vertical.then(|| framework.VerticalAlignment().ok());
+    let mut restore_horizontal = None;
+    let mut restore_vertical = None;
+
+    update_layout_state(element, |state| {
+        if let Some(previous) = previous {
+            if previous.owns_horizontal() && !owns_horizontal {
+                restore_horizontal = state.restore_horizontal;
+                state.restore_horizontal = None;
+            } else if !previous.owns_horizontal() && owns_horizontal {
+                state.restore_horizontal = captured_horizontal.flatten();
+            }
+            if previous.owns_vertical() && !owns_vertical {
+                restore_vertical = state.restore_vertical;
+                state.restore_vertical = None;
+            } else if !previous.owns_vertical() && owns_vertical {
+                state.restore_vertical = captured_vertical.flatten();
+            }
+        } else {
+            if owns_horizontal {
+                state.restore_horizontal = captured_horizontal.flatten();
+            }
+            if owns_vertical {
+                state.restore_vertical = captured_vertical.flatten();
+            }
+        }
+        state.parent = Some(parent);
+    });
+
+    if let Some(value) = restore_horizontal {
+        let _ = framework.SetHorizontalAlignment(value);
+    }
+    if let Some(value) = restore_vertical {
+        let _ = framework.SetVerticalAlignment(value);
+    }
 }
 
 fn parent_state(element: &FrameworkElement) -> Option<ParentLayout> {
@@ -113,6 +208,7 @@ pub(crate) fn set_stack_parent(element: &UIElement, align: Align, vertical_stack
     };
     set_parent_state(
         element,
+        &framework,
         ParentLayout::Stack {
             align,
             vertical: vertical_stack,
@@ -132,6 +228,7 @@ pub(crate) fn set_scroll_parent(
     };
     set_parent_state(
         element,
+        &framework,
         ParentLayout::Scroll {
             horizontal_scroll_enabled,
             vertical_scroll_enabled,
@@ -166,20 +263,38 @@ pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
     }
 }
 
-/// 親コンテナの記録を外す。Sizing の状態はそのまま残す。
+/// 親コンテナの記録を外し、親が上書きしていた配置を元へ戻す。
 pub(crate) fn clear_parent_layout(element: &UIElement) {
     let key = element_key(element);
-    LAYOUT_STATES.with(|states| {
-        let mut states = states.borrow_mut();
-        let empty = if let Some(state) = states.get_mut(&key) {
-            state.parent = None;
-            !state.fill_width && !state.fill_height
-        } else {
-            false
-        };
-        if empty {
-            states.remove(&key);
+    let Some(mut state) = LAYOUT_STATES.with(|states| states.borrow_mut().remove(&key)) else {
+        return;
+    };
+
+    if state.parent.is_some() {
+        if let Ok(framework) = element.cast::<FrameworkElement>() {
+            if let Some(value) = state.restore_horizontal {
+                let _ = framework.SetHorizontalAlignment(value);
+            }
+            if let Some(value) = state.restore_vertical {
+                let _ = framework.SetVerticalAlignment(value);
+            }
         }
+    }
+    state.parent = None;
+    state.restore_horizontal = None;
+    state.restore_vertical = None;
+    if state.fill_width || state.fill_height {
+        LAYOUT_STATES.with(|states| {
+            states.borrow_mut().insert(key, state);
+        });
+    }
+}
+
+/// ウィジェット破棄時に、その要素の状態を表から外す。
+pub(crate) fn clear_layout_state(element: &UIElement) {
+    let key = element_key(element);
+    LAYOUT_STATES.with(|states| {
+        states.borrow_mut().remove(&key);
     });
 }
 

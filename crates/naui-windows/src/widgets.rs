@@ -43,6 +43,16 @@ macro_rules! impl_widget {
             }
         }
 
+        impl Drop for $t {
+            fn drop(&mut self) {
+                if std::rc::Rc::strong_count(&self.0) != 1 {
+                    return;
+                }
+                let element = <$t as Widget>::native_element(self);
+                crate::layout::clear_layout_state(&element);
+            }
+        }
+
         impl $t {
             /// 大きさを指定する。呼ぶたびに以前の指定は置き換わる。
             ///

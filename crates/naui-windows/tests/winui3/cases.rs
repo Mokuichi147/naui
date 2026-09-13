@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use naui_core::{Align, Orientation, Result, ScrollPolicy, Sizing, TextColor, TextStyle};
+use naui_core::{Align, GridCell, Orientation, Result, ScrollPolicy, Sizing, TextColor, TextStyle};
 use naui_windows::{run_for_test, Ui, Widget};
 
 use crate::automation;
@@ -82,6 +82,10 @@ const CASES: &[Case] = &[
     (
         "利用者の Tag をレイアウトが上書きしない",
         layout_preserves_user_tag,
+    ),
+    (
+        "Stack から外すと配置を次の親へ戻せる",
+        removing_stack_child_restores_alignment,
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
@@ -814,6 +818,27 @@ fn layout_preserves_user_tag(ui: &Ui) -> Result<()> {
             .expect("Scroll 内容の Tag 文字列")
             .to_string(),
         "user-scroll-tag"
+    );
+    Ok(())
+}
+
+/// Stack が交差軸へ設定した Alignment を、子を外したときに元へ戻す。そう
+/// しないと、次に Grid へ置いた要素へ前の Stack の寄せ方が残ってしまう。
+fn removing_stack_child_restores_alignment(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::End);
+    let child = ui.label("親を移る")?;
+    stack.append(&child);
+    stack.remove(0);
+
+    let grid = ui.grid()?;
+    grid.attach(&child, GridCell::new(0, 0));
+    assert_eq!(
+        native::<TextBlock>(&child)
+            .HorizontalAlignment()
+            .expect("Grid へ移した子の横配置"),
+        HorizontalAlignment::Stretch,
+        "Stack の Right が次の親へ持ち越されないこと"
     );
     Ok(())
 }
