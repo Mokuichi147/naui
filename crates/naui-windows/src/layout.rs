@@ -4,9 +4,10 @@
 //! `Width` / `MinWidth` / `RowDefinition` などのプロパティを設定するだけ。
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use naui_core::{GridCell, Length, Padding, Result, ScrollPolicy, Sizing, Track};
+use naui_core::{Align, GridCell, Length, Padding, Result, ScrollPolicy, Sizing, Track};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ColumnDefinition, Grid as XamlGrid, RowDefinition, ScrollBarVisibility, ScrollMode,
     ScrollViewer,
@@ -16,71 +17,337 @@ use naui_winui3::Microsoft::UI::Xaml::{
     DependencyObject, FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, Thickness,
     UIElement, VerticalAlignment, Visibility, Window as XamlWindow,
 };
-use windows_core::{Interface, HSTRING};
+use windows_core::Interface;
 
 use crate::to_error;
 use crate::widgets::{impl_widget, Widget};
 
-/// `Fill` を指定されたことを覚えておく目印 (`FrameworkElement.Tag`)。
-///
-/// WinUI の `HorizontalAlignment` は指定しなくても `Stretch` なので、
-/// プロパティを読むだけでは「`Fill` と言われた」のか「既定のまま」なのかを
-/// 区別できない。グリッドのマスの中でだけこの違いが要るため、目印を残す。
-const FILL_TAG: &str = "naui:fill:";
+/// `Sizing` と親コンテナの情報。利用者に公開された `FrameworkElement.Tag`
+/// ではなく、UI スレッド上の状態表に保持する。
+#[derive(Clone, Copy)]
+enum ParentLayout {
+    Stack {
+        align: Align,
+        vertical: bool,
+    },
+    Scroll {
+        horizontal_scroll_enabled: bool,
+        vertical_scroll_enabled: bool,
+    },
+}
 
-fn set_fill_marker(element: &FrameworkElement, sizing: Sizing) {
-    let mut value = String::from(FILL_TAG);
-    if sizing.width.is_fill() {
-        value.push('w');
+impl ParentLayout {
+    fn owns_horizontal(self) -> bool {
+        match self {
+            Self::Stack { vertical, .. } => vertical,
+            Self::Scroll {
+                horizontal_scroll_enabled,
+                ..
+            } => !horizontal_scroll_enabled,
+        }
     }
-    if sizing.height.is_fill() {
-        value.push('h');
+
+    fn owns_vertical(self) -> bool {
+        match self {
+            Self::Stack { vertical, .. } => !vertical,
+            Self::Scroll {
+                vertical_scroll_enabled,
+                ..
+            } => !vertical_scroll_enabled,
+        }
     }
-    if let Ok(tag) = windows::Foundation::PropertyValue::CreateString(&HSTRING::from(value)) {
-        let _ = element.SetTag(&tag);
+
+    fn same_kind(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Stack { .. }, Self::Stack { .. }) | (Self::Scroll { .. }, Self::Scroll { .. })
+        )
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct LayoutState {
+    fill_width: bool,
+    fill_height: bool,
+    parent: Option<ParentLayout>,
+    restore_horizontal: Option<HorizontalAlignment>,
+    restore_vertical: Option<VerticalAlignment>,
+}
+
+fn element_key(element: &UIElement) -> usize {
+    let unknown = element
+        .cast::<windows_core::IUnknown>()
+        .expect("UIElement は IUnknown へ変換できる");
+    Interface::as_raw(&unknown) as usize
+}
+
+fn state_key(element: &FrameworkElement) -> Option<usize> {
+    element
+        .cast::<UIElement>()
+        .ok()
+        .map(|element| element_key(&element))
+}
+
+fn update_layout_state(element: &UIElement, update: impl FnOnce(&mut LayoutState)) {
+    let key = element_key(element);
+    LAYOUT_STATES.with(|states| {
+        let mut states = states.borrow_mut();
+        let empty = {
+            let state = states.entry(key).or_default();
+            update(state);
+            !state.fill_width
+                && !state.fill_height
+                && state.parent.is_none()
+                && state.restore_horizontal.is_none()
+                && state.restore_vertical.is_none()
+        };
+        if empty {
+            states.remove(&key);
+        }
+    });
+}
+
+fn set_sizing_state(element: &UIElement, sizing: Sizing) {
+    let horizontal_alignment = match sizing.width {
+        Length::Fill => HorizontalAlignment::Stretch,
+        _ => HorizontalAlignment::Left,
+    };
+    let vertical_alignment = match sizing.height {
+        Length::Fill => VerticalAlignment::Stretch,
+        _ => VerticalAlignment::Top,
+    };
+    update_layout_state(element, |state| {
+        state.fill_width = sizing.width.is_fill();
+        state.fill_height = sizing.height.is_fill();
+        if let Some(parent) = state.parent {
+            if parent.owns_horizontal() {
+                state.restore_horizontal = Some(horizontal_alignment);
+            }
+            if parent.owns_vertical() {
+                state.restore_vertical = Some(vertical_alignment);
+            }
+        }
+    });
+}
+
 /// この要素がその方向へ `Fill` を指定されたか。
-fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
-    let Ok(tag) = element.Tag() else {
+pub(crate) fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
+    let Some(key) = state_key(element) else {
         return false;
     };
-    let Ok(value) = tag.cast::<windows::Foundation::IPropertyValue>() else {
-        return false;
+    LAYOUT_STATES.with(|states| {
+        let states = states.borrow();
+        let Some(state) = states.get(&key) else {
+            return false;
+        };
+        if horizontal {
+            state.fill_width
+        } else {
+            state.fill_height
+        }
+    })
+}
+
+fn set_parent_state(element: &UIElement, framework: &FrameworkElement, parent: ParentLayout) {
+    if let Some(previous) = parent_state(framework) {
+        if !previous.same_kind(parent) {
+            clear_parent_layout(element);
+        }
+    }
+
+    let previous = parent_state(framework);
+    let owns_horizontal = parent.owns_horizontal();
+    let owns_vertical = parent.owns_vertical();
+    let captured_horizontal = owns_horizontal.then(|| framework.HorizontalAlignment().ok());
+    let captured_vertical = owns_vertical.then(|| framework.VerticalAlignment().ok());
+    let mut restore_horizontal = None;
+    let mut restore_vertical = None;
+
+    update_layout_state(element, |state| {
+        if let Some(previous) = previous {
+            if previous.owns_horizontal() && !owns_horizontal {
+                restore_horizontal = state.restore_horizontal;
+                state.restore_horizontal = None;
+            } else if !previous.owns_horizontal() && owns_horizontal {
+                state.restore_horizontal = captured_horizontal.flatten();
+            }
+            if previous.owns_vertical() && !owns_vertical {
+                restore_vertical = state.restore_vertical;
+                state.restore_vertical = None;
+            } else if !previous.owns_vertical() && owns_vertical {
+                state.restore_vertical = captured_vertical.flatten();
+            }
+        } else {
+            if owns_horizontal {
+                state.restore_horizontal = captured_horizontal.flatten();
+            }
+            if owns_vertical {
+                state.restore_vertical = captured_vertical.flatten();
+            }
+        }
+        state.parent = Some(parent);
+    });
+
+    if let Some(value) = restore_horizontal {
+        let _ = framework.SetHorizontalAlignment(value);
+    }
+    if let Some(value) = restore_vertical {
+        let _ = framework.SetVerticalAlignment(value);
+    }
+}
+
+fn parent_state(element: &FrameworkElement) -> Option<ParentLayout> {
+    let key = state_key(element)?;
+    LAYOUT_STATES.with(|states| states.borrow().get(&key).and_then(|state| state.parent))
+}
+
+/// Stack の親情報を子へ記録し、現在の寄せ方も適用する。
+pub(crate) fn set_stack_parent(element: &UIElement, align: Align, vertical_stack: bool) {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return;
     };
-    let Ok(text) = value.GetString() else {
-        return false;
+    set_parent_state(
+        element,
+        &framework,
+        ParentLayout::Stack {
+            align,
+            vertical: vertical_stack,
+        },
+    );
+    apply_stack_alignment(&framework, align, vertical_stack);
+}
+
+/// Scroll の親情報を子へ記録し、スクロールしない軸の Stretch も適用する。
+pub(crate) fn set_scroll_parent(
+    element: &UIElement,
+    horizontal_scroll_enabled: bool,
+    vertical_scroll_enabled: bool,
+) {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return;
     };
-    let text = text.to_string();
-    let Some(flags) = text.strip_prefix(FILL_TAG) else {
-        return false;
+    set_parent_state(
+        element,
+        &framework,
+        ParentLayout::Scroll {
+            horizontal_scroll_enabled,
+            vertical_scroll_enabled,
+        },
+    );
+    stretch_non_scrolling_child(
+        &framework,
+        horizontal_scroll_enabled,
+        vertical_scroll_enabled,
+    );
+}
+
+/// 親コンテナのレイアウトを、Sizing が上書きした後にもう一度適用する。
+pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
+    let Some(parent) = parent_state(element) else {
+        return;
     };
-    flags.contains(if horizontal { 'w' } else { 'h' })
+    match parent {
+        ParentLayout::Stack { align, vertical } => {
+            apply_stack_alignment(element, align, vertical);
+        }
+        ParentLayout::Scroll {
+            horizontal_scroll_enabled,
+            vertical_scroll_enabled,
+        } => {
+            stretch_non_scrolling_child(
+                element,
+                horizontal_scroll_enabled,
+                vertical_scroll_enabled,
+            );
+        }
+    }
+}
+
+/// 親コンテナの記録を外し、親が上書きしていた配置を元へ戻す。
+pub(crate) fn clear_parent_layout(element: &UIElement) {
+    let key = element_key(element);
+    let Some(mut state) = LAYOUT_STATES.with(|states| states.borrow_mut().remove(&key)) else {
+        return;
+    };
+
+    if state.parent.is_some() {
+        if let Ok(framework) = element.cast::<FrameworkElement>() {
+            if let Some(value) = state.restore_horizontal {
+                let _ = framework.SetHorizontalAlignment(value);
+            }
+            if let Some(value) = state.restore_vertical {
+                let _ = framework.SetVerticalAlignment(value);
+            }
+        }
+    }
+    state.parent = None;
+    state.restore_horizontal = None;
+    state.restore_vertical = None;
+    if state.fill_width || state.fill_height {
+        LAYOUT_STATES.with(|states| {
+            states.borrow_mut().insert(key, state);
+        });
+    }
+}
+
+/// ウィジェット破棄時に、その要素の状態を表から外す。
+pub(crate) fn clear_layout_state(element: &UIElement) {
+    let key = element_key(element);
+    LAYOUT_STATES.with(|states| {
+        states.borrow_mut().remove(&key);
+    });
 }
 
 /// 大きさの指定を要素へ反映する。呼ぶたびに以前の指定は置き換わる。
 pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
-    let Ok(element) = element.cast::<FrameworkElement>() else {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
         return;
     };
-    set_fill_marker(&element, sizing);
+    set_sizing_state(element, sizing);
     // WinUI では NaN が「中身に合わせる」を表す。
-    let _ = element.SetWidth(sizing.width.fixed_value().unwrap_or(f64::NAN));
-    let _ = element.SetHeight(sizing.height.fixed_value().unwrap_or(f64::NAN));
-    let _ = element.SetMinWidth(sizing.min_width.unwrap_or(0.0));
-    let _ = element.SetMinHeight(sizing.min_height.unwrap_or(0.0));
-    let _ = element.SetMaxWidth(sizing.max_width.unwrap_or(f64::INFINITY));
-    let _ = element.SetMaxHeight(sizing.max_height.unwrap_or(f64::INFINITY));
+    let _ = framework.SetWidth(sizing.width.fixed_value().unwrap_or(f64::NAN));
+    let _ = framework.SetHeight(sizing.height.fixed_value().unwrap_or(f64::NAN));
+    let _ = framework.SetMinWidth(sizing.min_width.unwrap_or(0.0));
+    let _ = framework.SetMinHeight(sizing.min_height.unwrap_or(0.0));
+    let _ = framework.SetMaxWidth(sizing.max_width.unwrap_or(f64::INFINITY));
+    let _ = framework.SetMaxHeight(sizing.max_height.unwrap_or(f64::INFINITY));
 
-    let _ = element.SetHorizontalAlignment(match sizing.width {
+    let _ = framework.SetHorizontalAlignment(match sizing.width {
         Length::Fill => HorizontalAlignment::Stretch,
         _ => HorizontalAlignment::Left,
     });
-    let _ = element.SetVerticalAlignment(match sizing.height {
+    let _ = framework.SetVerticalAlignment(match sizing.height {
         Length::Fill => VerticalAlignment::Stretch,
         _ => VerticalAlignment::Top,
     });
+    reapply_parent_layout(&framework);
+}
+
+/// `Stack::set_align` を StackPanel の子要素へ写す。
+///
+/// StackPanel 自身の配置は親の中でパネルを置く位置を変えるだけなので、
+/// 交差軸の寄せ方は子へ設定する。子自身の `Fill` がある場合はそれを優先する。
+fn apply_stack_alignment(element: &FrameworkElement, align: Align, vertical_stack: bool) {
+    if wants_fill(element, vertical_stack) {
+        return;
+    }
+    if vertical_stack {
+        let value = match align {
+            Align::Start => HorizontalAlignment::Left,
+            Align::Center => HorizontalAlignment::Center,
+            Align::End => HorizontalAlignment::Right,
+            Align::Fill => HorizontalAlignment::Stretch,
+        };
+        let _ = element.SetHorizontalAlignment(value);
+    } else {
+        let value = match align {
+            Align::Start => VerticalAlignment::Top,
+            Align::Center => VerticalAlignment::Center,
+            Align::End => VerticalAlignment::Bottom,
+            Align::Fill => VerticalAlignment::Stretch,
+        };
+        let _ = element.SetVerticalAlignment(value);
+    }
 }
 
 fn grid_length(track: Track) -> GridLength {
@@ -169,26 +436,28 @@ impl Grid {
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         self.ensure_size(cell.columns_needed(), cell.rows_needed());
         let element = child.native_element();
-        // 置き場所は添付プロパティなので、FrameworkElement として設定する。
-        if let Ok(framework) = element.cast::<FrameworkElement>() {
-            let _ = XamlGrid::SetColumn(&framework, cell.column as i32);
-            let _ = XamlGrid::SetRow(&framework, cell.row as i32);
-            let _ = XamlGrid::SetColumnSpan(&framework, cell.column_span as i32);
-            let _ = XamlGrid::SetRowSpan(&framework, cell.row_span as i32);
-            // 縦は中央ぞろえ。既定の Stretch のままだと、同じ行に置いた
-            // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
-            let _ = framework.SetVerticalAlignment(if wants_fill(&framework, false) {
-                VerticalAlignment::Stretch
-            } else {
-                VerticalAlignment::Center
-            });
-        }
         let appended = self
             .0
             .native
             .Children()
             .and_then(|children| children.Append(&element));
         if appended.is_ok() {
+            // 置き場所は添付プロパティなので、FrameworkElement として設定する。
+            // Append に成功してから設定することで、すでに別の親に属している
+            // 要素の追加に失敗しても、既存の配置を変更しない。
+            if let Ok(framework) = element.cast::<FrameworkElement>() {
+                let _ = XamlGrid::SetColumn(&framework, cell.column as i32);
+                let _ = XamlGrid::SetRow(&framework, cell.row as i32);
+                let _ = XamlGrid::SetColumnSpan(&framework, cell.column_span as i32);
+                let _ = XamlGrid::SetRowSpan(&framework, cell.row_span as i32);
+                // 縦は中央ぞろえ。既定の Stretch のままだと、同じ行に置いた
+                // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
+                let _ = framework.SetVerticalAlignment(if wants_fill(&framework, false) {
+                    VerticalAlignment::Stretch
+                } else {
+                    VerticalAlignment::Center
+                });
+            }
             self.0
                 .children
                 .borrow_mut()
@@ -324,12 +593,25 @@ impl Grid {
 struct ScrollInner {
     native: ScrollViewer,
     child: RefCell<Option<Box<dyn Widget>>>,
+    horizontal_scroll_enabled: Cell<bool>,
     vertical_scroll_enabled: Cell<bool>,
     /// ホイール入力時に、ポインター直下の ScrollViewer だけを選ぶための状態。
     hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
 }
 
+impl Drop for ScrollInner {
+    fn drop(&mut self) {
+        if let Ok(child) = self.child.try_borrow() {
+            if let Some(child) = child.as_ref() {
+                clear_parent_layout(&child.native_element());
+            }
+        }
+    }
+}
+
 thread_local! {
+    static LAYOUT_STATES: RefCell<HashMap<usize, LayoutState>> =
+        RefCell::new(HashMap::new());
     static SCROLLS: RefCell<Vec<Weak<ScrollInner>>> = const { RefCell::new(Vec::new()) };
     static LIST_SCROLLS: RefCell<Vec<Weak<ListScrollTarget>>> = const { RefCell::new(Vec::new()) };
     static WHEEL_TARGETS: RefCell<Vec<windows::Win32::Foundation::HWND>> =
@@ -652,6 +934,7 @@ impl Scroll {
         let this = Self(Rc::new(ScrollInner {
             native,
             child: RefCell::new(None),
+            horizontal_scroll_enabled: Cell::new(false),
             vertical_scroll_enabled: Cell::new(true),
             hovered: std::sync::Arc::new(crate::ui_thread::UiThreadCell::new(0)),
         }));
@@ -664,9 +947,38 @@ impl Scroll {
     /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
     pub fn set_policy(&self, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
         self.0
+            .horizontal_scroll_enabled
+            .set(horizontal.is_enabled());
+        self.0
             .vertical_scroll_enabled
             .set(!matches!(vertical, ScrollPolicy::Never));
         set_scroll_mode(&self.0.native, horizontal, vertical);
+        // `Control` の内容配置の既定は左上寄せなので、スクロールしない軸
+        // だけはビューポートいっぱいへ広げる。スクロールする軸は内容の
+        // 自然な大きさを残し、必要ならそのまま送れるようにする。
+        let _ = self
+            .0
+            .native
+            .SetHorizontalContentAlignment(if horizontal.is_enabled() {
+                HorizontalAlignment::Left
+            } else {
+                HorizontalAlignment::Stretch
+            });
+        let _ = self
+            .0
+            .native
+            .SetVerticalContentAlignment(if vertical.is_enabled() {
+                VerticalAlignment::Top
+            } else {
+                VerticalAlignment::Stretch
+            });
+        if let Some(child) = self.0.child.borrow().as_ref() {
+            set_scroll_parent(
+                &child.native_element(),
+                horizontal.is_enabled(),
+                vertical.is_enabled(),
+            );
+        }
         let _ = self
             .0
             .native
@@ -680,8 +992,50 @@ impl Scroll {
     /// スクロールさせる中身。呼ぶたびに置き換わる。
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
+        let previous = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
         if self.0.native.SetContent(&element).is_ok() {
+            set_scroll_parent(
+                &element,
+                self.0.horizontal_scroll_enabled.get(),
+                self.0.vertical_scroll_enabled.get(),
+            );
+            if let Some(previous) = previous {
+                if element_key(&previous) != element_key(&element) {
+                    clear_parent_layout(&previous);
+                }
+            }
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        }
+    }
+}
+
+/// スクロールしない軸の内容を、ビューポートの大きさまで広げる。
+///
+/// 明示的な大きさや上限を付けた子はアプリの指定を優先する。`Fill` は
+/// `HorizontalAlignment` / `VerticalAlignment` が既に `Stretch` なので、
+/// ここで同じ値を書き直しても意味は変わらない。
+fn stretch_non_scrolling_child(
+    element: &FrameworkElement,
+    horizontal_scroll_enabled: bool,
+    vertical_scroll_enabled: bool,
+) {
+    if !horizontal_scroll_enabled {
+        let width = element.Width().unwrap_or(f64::NAN);
+        let max_width = element.MaxWidth().unwrap_or(f64::INFINITY);
+        if width.is_nan() && max_width.is_infinite() {
+            let _ = element.SetHorizontalAlignment(HorizontalAlignment::Stretch);
+        }
+    }
+    if !vertical_scroll_enabled {
+        let height = element.Height().unwrap_or(f64::NAN);
+        let max_height = element.MaxHeight().unwrap_or(f64::INFINITY);
+        if height.is_nan() && max_height.is_infinite() {
+            let _ = element.SetVerticalAlignment(VerticalAlignment::Stretch);
         }
     }
 }
