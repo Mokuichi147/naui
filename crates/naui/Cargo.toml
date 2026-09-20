@@ -6,6 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+keywords = ["gui", "native", "appkit", "winui", "gtk4"]
+categories = ["gui"]
 
 # ウィジェット型はビルド対象のバックエンドから再エクスポートするので、
 # 既定の Linux (GTK4) に加えて他の 3 環境の文書も作らせる。
