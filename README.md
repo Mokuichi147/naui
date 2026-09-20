@@ -2,6 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/naui.svg)](https://crates.io/crates/naui)
 [![docs.rs](https://docs.rs/naui/badge.svg)](https://docs.rs/naui)
+[![License](https://img.shields.io/crates/l/naui.svg)](#ライセンス)
 [![CI](https://github.com/mokuichi147/naui/actions/workflows/ci.yml/badge.svg)](https://github.com/mokuichi147/naui/actions/workflows/ci.yml)
 
 各 OS のネイティブ UI を、1 つの Rust API から扱う軽量 GUI ツールキットです。
