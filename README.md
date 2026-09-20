@@ -1,5 +1,7 @@
 # naui
 
+[![crates.io](https://img.shields.io/crates/v/naui.svg)](https://crates.io/crates/naui)
+[![docs.rs](https://docs.rs/naui/badge.svg)](https://docs.rs/naui)
 [![CI](https://github.com/mokuichi147/naui/actions/workflows/ci.yml/badge.svg)](https://github.com/mokuichi147/naui/actions/workflows/ci.yml)
 
 各 OS のネイティブ UI を、1 つの Rust API から扱う軽量 GUI ツールキットです。
@@ -36,6 +38,17 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 
 ## クイックスタート
 
+### 導入
+
+```sh
+cargo add naui
+```
+
+`src/main.rs` に[基本的な使い方](#基本的な使い方)のコードを貼って `cargo run`
+すると、OS 標準のボタンを持つカウンターが立ち上がります。API の詳細は
+[docs.rs](https://docs.rs/naui) を参照してください。Web (wasm) で動かす手順は
+[Web 版の実行](#web-版の実行)にあります。
+
 ### 必要なもの
 
 - Rust 1.82 以降
@@ -52,22 +65,19 @@ naui は 2.x から 1.3 まで新しい順に探し、最初に見つかった�
 OS 同梱の系統 (`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れます。実機での
 動作確認は 2.x で行っています。
 
-### サンプルを実行
+### Gallery を実行
 
-最小構成のカウンターを起動します。
+全ウィジェットを確認するには、リポジトリを取得して Gallery を起動します。
+画面は基本、入力、一覧、ナビゲーション、レイアウト、ファイル、メディア、
+ダイアログに分かれています。
 
 ```sh
 git clone https://github.com/mokuichi147/naui.git
 cd naui
-cargo run -p counter
-```
-
-全ウィジェットを確認するには Gallery を起動します。画面は基本、入力、一覧、
-ナビゲーション、レイアウト、ファイル、メディア、ダイアログに分かれています。
-
-```sh
 cargo run -p gallery
 ```
+
+最小構成のカウンターは `cargo run -p counter` で起動できます。
 
 ## 対応状況
 
