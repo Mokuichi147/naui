@@ -10,8 +10,9 @@
 //! 座標は `isFlipped` を `true` にして**左上原点・下向き**にそろえる
 //! (他の 3 環境と同じ)。フォントはシステムフォント (`systemFontOfSize:`)。
 //!
-//! ポインターの通知は `mouseDown:` / `mouseDragged:` / `mouseUp:` と、
-//! `NSTrackingArea` を通した `mouseMoved:` から取る。
+//! ポインターの通知は `mouseDown:` / `mouseDragged:` / `mouseUp:` (右ボタンと
+//! 中ボタンの同じ組も) と、`NSTrackingArea` を通した `mouseMoved:` から取る。
+//! ボタンは区別しない (他の 3 環境と同じ)。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -126,6 +127,40 @@ define_class!(
         #[unsafe(method(mouseMoved:))]
         fn mouse_moved(&self, event: &NSEvent) {
             self.emit_pointer(PointerPhase::Move, event);
+        }
+
+        // 右ボタンと中ボタンは AppKit が別のメソッドへ配るので、同じ通知へ寄せる。
+        // 既定の `rightMouseDown:` はコンテキストメニューの経路へ回るため、
+        // ここで受け止めて `super` は呼ばない。
+
+        #[unsafe(method(rightMouseDown:))]
+        fn right_mouse_down(&self, event: &NSEvent) {
+            self.emit_pointer(PointerPhase::Down, event);
+        }
+
+        #[unsafe(method(rightMouseDragged:))]
+        fn right_mouse_dragged(&self, event: &NSEvent) {
+            self.emit_pointer(PointerPhase::Move, event);
+        }
+
+        #[unsafe(method(rightMouseUp:))]
+        fn right_mouse_up(&self, event: &NSEvent) {
+            self.emit_pointer(PointerPhase::Up, event);
+        }
+
+        #[unsafe(method(otherMouseDown:))]
+        fn other_mouse_down(&self, event: &NSEvent) {
+            self.emit_pointer(PointerPhase::Down, event);
+        }
+
+        #[unsafe(method(otherMouseDragged:))]
+        fn other_mouse_dragged(&self, event: &NSEvent) {
+            self.emit_pointer(PointerPhase::Move, event);
+        }
+
+        #[unsafe(method(otherMouseUp:))]
+        fn other_mouse_up(&self, event: &NSEvent) {
+            self.emit_pointer(PointerPhase::Up, event);
         }
     }
 );

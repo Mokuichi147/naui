@@ -470,8 +470,15 @@ fn argb(color: Color, opacity: f64) -> String {
 }
 
 /// 属性値として書けるように、XML の予約文字を実体参照に直す。
+///
+/// `{` で始まる属性値は XAML がマークアップ拡張 (`{Binding}` など) として
+/// 読もうとして失敗するので、先頭に `{}` を置いて文字列のまま読ませる
+/// (XAML の決まりで、`{}` は「ここから先は文字」という印)。
 fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+    let mut out = String::with_capacity(text.len() + 2);
+    if text.starts_with('{') {
+        out.push_str("{}");
+    }
     for c in text.chars() {
         match c {
             '&' => out.push_str("&amp;"),
@@ -541,6 +548,14 @@ mod tests {
         );
         assert!(xaml.contains(r#"x:Name="t2""#));
         assert!(xaml.ends_with("</Canvas>"));
+    }
+
+    #[test]
+    fn leading_brace_is_not_a_markup_extension() {
+        assert_eq!(escape("{Binding}"), "{}{Binding}");
+        assert_eq!(escape("{"), "{}{");
+        assert_eq!(escape("a{b}"), "a{b}", "先頭でなければそのまま");
+        assert_eq!(escape(""), "");
     }
 
     #[test]

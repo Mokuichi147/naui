@@ -10,7 +10,7 @@
 //! 文字はウィジェットの Pango コンテキストから作るので、書体はテーマの
 //! UI フォントで、大きさだけを命令の `size` に差し替える。
 //!
-//! ポインターの通知は `GtkGestureDrag` (押下・解放) と
+//! ポインターの通知は `GtkGestureClick` (押下・解放。ボタンは区別しない) と
 //! `GtkEventControllerMotion` (移動) から取る。
 
 use std::cell::RefCell;
@@ -69,23 +69,20 @@ impl Canvas {
             }
         });
 
-        // 押下と解放。`drag-end` は面の外で離しても届く。
-        let drag = gtk::GestureDrag::new();
-        drag.connect_drag_begin({
+        // 押下と解放。`pressed` は押した瞬間に届き (ドラッグの判定を待たない)、
+        // `released` は面の外で離しても届く。ボタンは区別しないので、右ボタンや
+        // 中ボタンも同じ通知になる (他の 3 環境と同じ)。
+        let click = gtk::GestureClick::new();
+        click.set_button(0);
+        click.connect_pressed({
             let pointer = pointer.clone();
-            move |_, x, y| pointer.emit(PointerEvent::new(PointerPhase::Down, Point::new(x, y)))
+            move |_, _, x, y| pointer.emit(PointerEvent::new(PointerPhase::Down, Point::new(x, y)))
         });
-        drag.connect_drag_end({
+        click.connect_released({
             let pointer = pointer.clone();
-            move |gesture, dx, dy| {
-                let (sx, sy) = gesture.start_point().unwrap_or((0.0, 0.0));
-                pointer.emit(PointerEvent::new(
-                    PointerPhase::Up,
-                    Point::new(sx + dx, sy + dy),
-                ));
-            }
+            move |_, _, x, y| pointer.emit(PointerEvent::new(PointerPhase::Up, Point::new(x, y)))
         });
-        native.add_controller(drag);
+        native.add_controller(click);
 
         // 移動。押していない間 (ホバー) も、押している間も届く。
         let motion = gtk::EventControllerMotion::new();

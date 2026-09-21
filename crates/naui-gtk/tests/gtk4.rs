@@ -800,15 +800,19 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
 
 /// ポインターの押下・移動・解放が、面の左上を原点にした位置で届く。
 ///
-/// ジェスチャーとモーションのコントローラーはウィジェットに付いているので、
-/// コントローラーへ直接イベントを流す代わりに、シグナルを起こして確かめる。
+/// GTK4 には、ウィジェットへポインターのイベントを流し込む公開 API が無い
+/// (`gtk_test_widget_click` は GTK4 で無くなり、`GdkEvent` はアプリからは
+/// 作れない)。そこで、付いているコントローラーが**押した瞬間に `pressed` を
+/// 出す `GtkGestureClick`** (ドラッグの判定を待つ `GtkGestureDrag` ではない)
+/// で、ボタンを区別しない設定になっていることを確かめたうえで、その
+/// シグナルを起こして通知の写りを見る。
 fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     let (log, sink) = recorder::<naui_core::PointerEvent>();
     canvas.on_pointer(sink);
 
     let area = canvas.native_area();
-    let mut drag = None;
+    let mut click = None;
     let mut motion = None;
     // `observe_controllers` の項目の型は `GObject` として申告されるので、
     // 1 つずつ取り出して見分ける。
@@ -817,20 +821,23 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
         let Some(c) = controllers.item(index) else {
             continue;
         };
-        if let Ok(d) = c.clone().downcast::<gtk::GestureDrag>() {
-            drag = Some(d);
+        if let Ok(g) = c.clone().downcast::<gtk::GestureClick>() {
+            click = Some(g);
         } else if let Ok(m) = c.downcast::<gtk::EventControllerMotion>() {
             motion = Some(m);
         }
     }
-    let drag = drag.expect("押下と解放を受ける GtkGestureDrag が付いていること");
+    let click = click.expect("押下と解放を受ける GtkGestureClick が付いていること");
     let motion = motion.expect("移動を受ける GtkEventControllerMotion が付いていること");
+    assert_eq!(
+        click.button(),
+        0,
+        "ボタンを区別せず、右ボタンや中ボタンでも届くこと"
+    );
 
-    drag.emit_by_name::<()>("drag-begin", &[&30.0f64, &20.0f64]);
+    click.emit_by_name::<()>("pressed", &[&1i32, &30.0f64, &20.0f64]);
     motion.emit_by_name::<()>("motion", &[&50.0f64, &40.0f64]);
-    // `drag-end` は始点からのずれで届く。始点はジェスチャーが持つが、
-    // シグナルを直接起こしたときは持っていないので 0 として扱われる。
-    drag.emit_by_name::<()>("drag-end", &[&50.0f64, &40.0f64]);
+    click.emit_by_name::<()>("released", &[&1i32, &50.0f64, &40.0f64]);
 
     let seen = log.borrow();
     assert_eq!(seen.len(), 3, "{seen:?}");

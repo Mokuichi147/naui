@@ -328,6 +328,9 @@ fn canvas_commands_become_xaml_shapes(ui: &Ui) -> Result<()> {
             );
             painter.set_text_align(Align::Center);
             painter.text("naui <&>", Point::new(60.0, 40.0), 12.0, Color::BLACK);
+            // `{` で始まる文字はマークアップ拡張と読まれて面ごと壊れるので、
+            // 文字のまま通ることを見る。
+            painter.text("{Binding}", Point::new(60.0, 60.0), 12.0, Color::BLACK);
         }
     });
 
@@ -337,7 +340,11 @@ fn canvas_commands_become_xaml_shapes(ui: &Ui) -> Result<()> {
         .and_then(|element| element.cast::<XamlCanvas>())
         .unwrap_or_else(|e| panic!("組み立てた XAML を WinUI が読めること: {e}\n{xaml}"));
     let children = scene.Children().expect("子");
-    assert_eq!(children.Size().unwrap_or(0), 3, "塗り・線・文字の 3 要素");
+    assert_eq!(
+        children.Size().unwrap_or(0),
+        4,
+        "塗り・線・文字 2 つの 4 要素"
+    );
 
     let root: FrameworkElement = scene.cast().expect("FrameworkElement");
     assert!(
@@ -356,6 +363,15 @@ fn canvas_commands_become_xaml_shapes(ui: &Ui) -> Result<()> {
     assert!(
         (text.FontSize().unwrap_or(0.0) - 12.0).abs() < 0.01,
         "文字の大きさが FontSize に写ること"
+    );
+    let braced: TextBlock = root
+        .FindName(&HSTRING::from("t3"))
+        .and_then(|value| value.cast())
+        .expect("`{` で始まる文字の TextBlock");
+    assert_eq!(
+        braced.Text().map(|t| t.to_string()).as_deref(),
+        Ok("{Binding}"),
+        "`{{}}` の印は表示には出ず、文字がそのまま残ること"
     );
     Ok(())
 }

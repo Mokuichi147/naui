@@ -930,25 +930,49 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
         match kind {
             NSEventType::LeftMouseDown => view.mouseDown(&event),
             NSEventType::LeftMouseDragged => view.mouseDragged(&event),
-            _ => view.mouseUp(&event),
+            NSEventType::LeftMouseUp => view.mouseUp(&event),
+            NSEventType::RightMouseDown => view.rightMouseDown(&event),
+            NSEventType::RightMouseUp => view.rightMouseUp(&event),
+            NSEventType::OtherMouseDown => view.otherMouseDown(&event),
+            _ => view.otherMouseUp(&event),
         }
     };
     send(NSEventType::LeftMouseDown, 30.0, 20.0);
     send(NSEventType::LeftMouseDragged, 50.0, 40.0);
     send(NSEventType::LeftMouseUp, 50.0, 40.0);
 
-    let seen = seen.borrow();
-    assert_eq!(seen.len(), 3);
-    assert_eq!(seen[0].phase, PointerPhase::Down);
-    assert_eq!(seen[1].phase, PointerPhase::Move);
-    assert_eq!(seen[2].phase, PointerPhase::Up);
-    let near = |a: Point, x: f64, y: f64| (a.x - x).abs() < 0.5 && (a.y - y).abs() < 0.5;
-    assert!(
-        near(seen[0].point, 30.0, 20.0),
-        "左上原点で届くこと: {:?}",
-        seen[0]
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 3);
+        assert_eq!(seen[0].phase, PointerPhase::Down);
+        assert_eq!(seen[1].phase, PointerPhase::Move);
+        assert_eq!(seen[2].phase, PointerPhase::Up);
+        let near = |a: Point, x: f64, y: f64| (a.x - x).abs() < 0.5 && (a.y - y).abs() < 0.5;
+        assert!(
+            near(seen[0].point, 30.0, 20.0),
+            "左上原点で届くこと: {:?}",
+            seen[0]
+        );
+        assert!(near(seen[2].point, 50.0, 40.0), "{:?}", seen[2]);
+    }
+
+    // 右ボタンと中ボタンも区別せず同じ通知になる。
+    seen.borrow_mut().clear();
+    send(NSEventType::RightMouseDown, 10.0, 10.0);
+    send(NSEventType::RightMouseUp, 10.0, 10.0);
+    send(NSEventType::OtherMouseDown, 12.0, 12.0);
+    send(NSEventType::OtherMouseUp, 12.0, 12.0);
+    let phases: Vec<PointerPhase> = seen.borrow().iter().map(|e| e.phase).collect();
+    assert_eq!(
+        phases,
+        vec![
+            PointerPhase::Down,
+            PointerPhase::Up,
+            PointerPhase::Down,
+            PointerPhase::Up
+        ],
+        "右ボタンと中ボタンも届くこと"
     );
-    assert!(near(seen[2].point, 50.0, 40.0), "{:?}", seen[2]);
     window.close();
     Ok(())
 }
