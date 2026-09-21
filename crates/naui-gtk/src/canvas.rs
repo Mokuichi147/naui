@@ -109,6 +109,12 @@ impl Canvas {
             let dragging = dragging.clone();
             move |_, _, _| dragging.set(false)
         });
+        // 親のスクロールなどにシーケンスを奪われると `drag-end` は来ず
+        // `cancel` になる。ここでも戻さないと、ホバーが止まったままになる。
+        drag.connect_cancel({
+            let dragging = dragging.clone();
+            move |_, _| dragging.set(false)
+        });
         native.add_controller(drag);
 
         // 押していない間の移動 (ホバー)。`motion` は面の中にいる間しか出ないので、

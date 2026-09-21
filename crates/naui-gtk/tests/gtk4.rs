@@ -861,6 +861,13 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     // 離したあとの移動はまたホバーとして届く。
     motion.emit_by_name::<()>("motion", &[&7.0f64, &8.0f64]);
 
+    // 親のスクロールなどにシーケンスを奪われると `drag-end` は来ず `cancel` に
+    // なる。そのあともホバーが止まらないこと。
+    drag.emit_by_name::<()>("drag-begin", &[&1.0f64, &1.0f64]);
+    motion.emit_by_name::<()>("motion", &[&2.0f64, &2.0f64]);
+    drag.emit_by_name::<()>("cancel", &[&None::<gtk::gdk::EventSequence>]);
+    motion.emit_by_name::<()>("motion", &[&3.0f64, &4.0f64]);
+
     let seen = log.borrow();
     let phases: Vec<_> = seen.iter().map(|e| (e.phase, e.point)).collect();
     assert_eq!(
@@ -873,6 +880,8 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
             (PointerPhase::Move, Point::new(-10.0, -10.0)),
             (PointerPhase::Up, Point::new(-10.0, -10.0)),
             (PointerPhase::Move, Point::new(7.0, 8.0)),
+            // 取り消された間の `motion` (2, 2) は出ず、取り消し後は届く。
+            (PointerPhase::Move, Point::new(3.0, 4.0)),
         ],
         "{seen:?}"
     );

@@ -524,8 +524,10 @@ impl Painter {
     }
 
     /// 図形の線をなぞる。`width` は線の太さ (論理ピクセル)。
+    ///
+    /// 0 以下・無限・NaN の太さは描かない (環境ごとに扱いが変わるため)。
     pub fn stroke_path(&mut self, path: &Path, color: Color, width: f64) {
-        if path.is_empty() || width <= 0.0 || width.is_nan() {
+        if path.is_empty() || !width.is_finite() || width <= 0.0 {
             return;
         }
         self.commands.push(DrawCommand::Stroke {
@@ -578,9 +580,10 @@ impl Painter {
     /// [`set_text_align`](Self::set_text_align) で決めた寄せ方に従う。
     /// `size` は文字の大きさ (論理ピクセル)。書体はその環境の標準の UI フォント。
     ///
-    /// 改行は折り返さない (その環境の描き方に任せる)。空文字は描かない。
+    /// 改行は折り返さない (その環境の描き方に任せる)。空文字と、0 以下・
+    /// 無限・NaN の大きさは描かない。
     pub fn text(&mut self, text: &str, at: Point, size: f64, color: Color) {
-        if text.is_empty() || size <= 0.0 || size.is_nan() {
+        if text.is_empty() || !size.is_finite() || size <= 0.0 {
             return;
         }
         self.commands.push(DrawCommand::Text {
@@ -811,6 +814,11 @@ mod tests {
         painter.fill_polygon(&[Point::new(0.0, 0.0), Point::new(1.0, 1.0)], Color::BLACK);
         painter.text("", Point::new(0.0, 0.0), 12.0, Color::BLACK);
         painter.text("a", Point::new(0.0, 0.0), 0.0, Color::BLACK);
+        // 無限や NaN の太さ・大きさは、環境ごとに扱いが変わるので積まない。
+        painter.stroke_rect(Rect::new(0.0, 0.0, 1.0, 1.0), Color::BLACK, f64::INFINITY);
+        painter.stroke_rect(Rect::new(0.0, 0.0, 1.0, 1.0), Color::BLACK, f64::NAN);
+        painter.text("a", Point::new(0.0, 0.0), f64::INFINITY, Color::BLACK);
+        painter.text("a", Point::new(0.0, 0.0), f64::NAN, Color::BLACK);
         assert!(painter.commands().is_empty());
         painter.set_dash(&[-1.0, 2.0]);
         assert!(painter.dash().is_empty(), "負の破線は無視する");
