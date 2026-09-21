@@ -22,8 +22,9 @@ use gtk::pango;
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
-    TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Point, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder,
+    TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
+    TreeItem,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -57,6 +58,14 @@ fn main() {
         (
             "色ピッカーの set_value は通知しない",
             color_picker_set_is_silent,
+        ),
+        (
+            "描画面が on_draw の命令を cairo で画素に落とす",
+            canvas_paints_recorded_commands,
+        ),
+        (
+            "描画面がポインターの押下・移動・解放を面の座標で通知する",
+            canvas_reports_pointer_events,
         ),
         (
             "チェックボックスの印がラベルの字面にそろう",
@@ -715,6 +724,122 @@ fn toggle_set_is_silent(ui: &Ui) -> Result<()> {
     toggle.set_on(false);
     assert!(!toggle.is_on());
     assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+    Ok(())
+}
+
+/// 描画面は `GtkDrawingArea` で、`on_draw` が記録した命令を cairo で塗る。
+/// ウィジェットのスナップショットを cairo の画像へ描いて、塗った矩形の中と
+/// 外の画素を読む。
+fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    let (sizes, sink) = recorder::<(f64, f64)>();
+    canvas.on_draw({
+        let mut sink = sink;
+        move |painter| {
+            sink((painter.width(), painter.height()));
+            painter.fill_rect(painter.bounds(), Color::WHITE);
+            painter.fill_rect(Rect::new(10.0, 10.0, 40.0, 20.0), Color::rgb(0xff, 0, 0));
+            painter.set_text_align(Align::End);
+            painter.text("naui", Point::new(110.0, 50.0), 12.0, Color::BLACK);
+        }
+    });
+
+    let window = ui.window("canvas", 200.0, 160.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let area = canvas.native_area();
+    tick(&area);
+    assert_eq!(canvas.size(), (120.0, 80.0), "指定した大きさになること");
+
+    // 描画をレンダーノードへ取り、cairo の画像へ落として画素を読む。
+    let snapshot = gtk::Snapshot::new();
+    bin_of(&canvas).snapshot_child(&area, &snapshot);
+    let node = snapshot.to_node().expect("描いたものがあること");
+    let mut surface =
+        gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 120, 80).expect("画像の生成");
+    let cr = gtk::cairo::Context::new(&surface).expect("コンテキストの生成");
+    node.draw(&cr);
+    drop(cr);
+    surface.flush();
+    let stride = surface.stride() as usize;
+    let data = surface.data().expect("画素の読み出し");
+    // ARGB32 はネイティブのエンディアンで 1 画素 4 バイト (BGRA の並び)。
+    let read = |x: usize, y: usize| -> (u8, u8, u8) {
+        let i = y * stride + x * 4;
+        (data[i + 2], data[i + 1], data[i])
+    };
+
+    assert!(
+        sizes.borrow().iter().all(|&size| size == (120.0, 80.0)),
+        "面の大きさで呼ばれること: {:?}",
+        sizes.borrow()
+    );
+    assert!(!sizes.borrow().is_empty(), "描くときに呼ばれること");
+    assert_eq!(read(20, 15), (255, 0, 0), "矩形の中は赤いこと");
+    assert_eq!(read(80, 60), (255, 255, 255), "矩形の外は白いこと");
+
+    // 右寄せの文字は x=110 より左にだけ描かれる。
+    let dark = |x: usize, y: usize| {
+        let (r, g, b) = read(x, y);
+        u32::from(r) + u32::from(g) + u32::from(b) < 600
+    };
+    let found = (85..110).any(|x| (50..64).any(|y| dark(x, y)));
+    assert!(found, "文字が右寄せで描かれていること");
+    assert!(
+        (50..64).all(|y| !dark(114, y)),
+        "右端より右には描かないこと"
+    );
+    window.close();
+    Ok(())
+}
+
+/// ポインターの押下・移動・解放が、面の左上を原点にした位置で届く。
+///
+/// ジェスチャーとモーションのコントローラーはウィジェットに付いているので、
+/// コントローラーへ直接イベントを流す代わりに、シグナルを起こして確かめる。
+fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    let (log, sink) = recorder::<naui_core::PointerEvent>();
+    canvas.on_pointer(sink);
+
+    let area = canvas.native_area();
+    let mut drag = None;
+    let mut motion = None;
+    // `observe_controllers` の項目の型は `GObject` として申告されるので、
+    // 1 つずつ取り出して見分ける。
+    let controllers = area.observe_controllers();
+    for index in 0..controllers.n_items() {
+        let Some(c) = controllers.item(index) else {
+            continue;
+        };
+        if let Ok(d) = c.clone().downcast::<gtk::GestureDrag>() {
+            drag = Some(d);
+        } else if let Ok(m) = c.downcast::<gtk::EventControllerMotion>() {
+            motion = Some(m);
+        }
+    }
+    let drag = drag.expect("押下と解放を受ける GtkGestureDrag が付いていること");
+    let motion = motion.expect("移動を受ける GtkEventControllerMotion が付いていること");
+
+    drag.emit_by_name::<()>("drag-begin", &[&30.0f64, &20.0f64]);
+    motion.emit_by_name::<()>("motion", &[&50.0f64, &40.0f64]);
+    // `drag-end` は始点からのずれで届く。始点はジェスチャーが持つが、
+    // シグナルを直接起こしたときは持っていないので 0 として扱われる。
+    drag.emit_by_name::<()>("drag-end", &[&50.0f64, &40.0f64]);
+
+    let seen = log.borrow();
+    assert_eq!(seen.len(), 3, "{seen:?}");
+    assert_eq!(seen[0].phase, PointerPhase::Down);
+    assert_eq!(seen[0].point, Point::new(30.0, 20.0));
+    assert_eq!(seen[1].phase, PointerPhase::Move);
+    assert_eq!(seen[1].point, Point::new(50.0, 40.0));
+    assert_eq!(seen[2].phase, PointerPhase::Up);
+    assert_eq!(seen[2].point, Point::new(50.0, 40.0));
     Ok(())
 }
 

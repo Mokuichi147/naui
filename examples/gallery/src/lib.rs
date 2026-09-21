@@ -4,6 +4,7 @@
 //! macOS なら NSButton / NSTextField、Web なら `<button>` / `<input>`。
 
 mod basics;
+mod canvas;
 mod dialog;
 mod files;
 mod input;
@@ -30,12 +31,13 @@ const COMMAND_ICONS: [ToolbarIcon; 4] = [
     ToolbarIcon::Save,
 ];
 
-const SECTIONS: [&str; 9] = [
+const SECTIONS: [&str; 10] = [
     "基本",
     "入力",
     "一覧",
     "ナビゲーション",
     "レイアウト",
+    "描画",
     "ファイル",
     "メディア",
     "ダイアログ",
@@ -115,6 +117,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     add_pane(ui, &tabs, "一覧", &list::build(ui)?)?;
     add_pane(ui, &tabs, "ナビゲーション", &navigation::build(ui)?)?;
     add_pane(ui, &tabs, "レイアウト", &layout::build(ui)?)?;
+    add_pane(ui, &tabs, "描画", &canvas::build(ui)?)?;
     add_pane(ui, &tabs, "ファイル", &files::build(ui)?)?;
     add_pane(ui, &tabs, "メディア", &media::build(ui)?)?;
     add_pane(ui, &tabs, "ダイアログ", &dialog::build(ui)?)?;

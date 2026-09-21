@@ -63,7 +63,8 @@ cargo run -p counter
 ```
 
 全ウィジェットを確認するには Gallery を起動します。画面は基本、入力、一覧、
-ナビゲーション、レイアウト、ファイル、メディア、ダイアログに分かれています。
+ナビゲーション、レイアウト、描画、ファイル、メディア、ダイアログ、非同期に
+分かれています。
 
 ```sh
 cargo run -p gallery
@@ -73,10 +74,10 @@ cargo run -p gallery
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ (Esc での取り消しを含む)、ポップアップメニュー、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、ラベルの折り返し、ラベルの文字づかい、非同期処理の実行と中断を操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。あわせて WinUI 3 の実コントロールを使った統合テスト (ラベルの文字づかいを含む) を CI で実行 |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。描画面は GTK4 の統合テスト (cairo の画素とポインター) で確認 |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ (Esc での取り消しを含む)、ポップアップメニュー、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、描画面 (画素の確認とポインター)、ラベルの折り返し、ラベルの文字づかい、非同期処理の実行と中断を操作 |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。あわせて WinUI 3 の実コントロールを使った統合テスト (ラベルの文字づかい・描画面の XAML への写しを含む) を CI で実行。**描画面は実機未確認** (統合テストで XAML の組み立てと読み込みまでを見ている) |
 
 プラットフォーム固有の注意点は[既知の制限](#既知の制限)を参照してください。
 
@@ -824,6 +825,67 @@ saver.on_error(|error| eprintln!("{error}"));
 書き込みに失敗したときだけ `on_error` が呼ばれます。ボタンを押した時点の
 内容を書き出すため、内容が変わるたびに `set_contents` を呼び直します。
 
+#### 描画面
+
+グラフ・図形・可視化のように**アプリが自分で描くもの**は `Canvas` に描きます。
+描く内容は `on_draw` に渡すクロージャの中で `Painter` へ書き、描き直したいときは
+`redraw` を呼びます。面の大きさが変わったときは naui が描き直します。
+
+```rust
+use naui::{Color, Point, Rect, Sizing};
+
+let chart = ui.canvas()?;
+chart.set_sizing(Sizing::fill()); // 中身から大きさは決まらない
+chart.on_draw(|painter| {
+    let bar = Rect::new(10.0, 10.0, 40.0, painter.height() - 20.0);
+    painter.fill_rect(bar, Color::rgb(0x33, 0x66, 0xff));
+    painter.text("売上", Point::new(10.0, painter.height() - 16.0), 12.0, Color::BLACK);
+});
+chart.on_pointer(|event| println!("{:?} at {:?}", event.phase, event.point));
+chart.redraw();
+```
+
+`Painter` は描画命令を**記録するだけ**で、画素に落とすのはその環境の 2D API の
+仕事です (naui はラスタライズもフォントの計量も持ちません)。座標は左上原点・
+右と下が正の論理ピクセルで、高解像度の倍率は環境が掛けます。
+
+| 環境 | 描く実体 |
+| --- | --- |
+| Windows | `Canvas` に置いた XAML の `Path` と `TextBlock` (`XamlReader` で組み直す) |
+| macOS | `NSView` の `drawRect:` で `NSBezierPath` と `NSString` の描画 |
+| Linux | `GtkDrawingArea` の cairo と Pango |
+| Web | `<canvas>` の 2D コンテキスト |
+
+語彙は 4 環境でそろう最小限にしぼっています。
+
+| 命令 | 内容 |
+| --- | --- |
+| `fill_rect` / `stroke_rect` | 矩形の塗りと線 |
+| `fill_circle` / `stroke_circle` | 円の塗りと線 |
+| `line` / `polyline` / `fill_polygon` | 直線・折れ線・多角形 |
+| `fill_path` / `stroke_path` | 任意の `Path` (直線と 3 次ベジェ。2 次ベジェ・楕円・弧はベジェへ直して積む) |
+| `text` | 1 行の文字。`at` は**上端**で、横は寄せ方に従う |
+| `set_opacity` / `set_dash` / `set_text_align` | 以後の命令に効く状態 (透け具合・破線・文字の寄せ方) |
+
+文字の書体はその環境の標準の UI フォントで、`size` は文字の大きさ (論理
+ピクセル) です。**文字の幅を測る API はありません** (計量を持たないため)。
+
+`redraw` は**その場では描きません**。次の描画のとき (macOS / Linux はネイティブの
+描画パス、Web は次のフレーム、Windows は `DispatcherQueue` の次の順番) に
+`on_draw` が呼ばれます。続けて何度呼んでも描くのは 1 回で、`on_draw` の中から
+呼んでも再入しません。
+
+`on_pointer` にはポインター (マウス・タッチ・ペン) の押下・移動・解放が、面の
+左上を原点にした位置で届きます (`PointerEvent`)。移動は押していない間 (ホバー) も
+届き、押している間は面の外へ出ても届きます (捕捉します)。右クリックや修飾キーは
+区別しません。
+
+Windows だけは**画素を描く面が Windows App SDK にありません** (Win2D は別
+パッケージ、`SwapChainPanel` は DirectX を自前で回す口)。そこで XAML が持つ図形の
+要素 `Path` と `TextBlock` を `Canvas` へ置く形にしていて、描き直しのたびに面を
+丸ごと組み直します。命令が数千を超える図では、他の 3 環境より描き直しに時間が
+かかります。
+
 #### トースト
 
 済んだことを知らせるだけで、操作を止めたくないときは `Toast` を使います。
@@ -959,6 +1021,7 @@ tokio::spawn(async move {
 | 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、`NumberInput`、`Slider`、`ProgressBar` |
 | データ選択 | `ComboBox`、`EditableComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
 | ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
+| 描画 | `Canvas` |
 | オーバーレイ | `PopupMenu`、`Dialog`、`Toast` |
 | ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
 
@@ -1049,6 +1112,15 @@ tokio::spawn(async move {
 </details>
 
 <details>
+<summary><strong>描画</strong></summary>
+
+| naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
+| --- | --- | --- | --- | --- |
+| `Canvas` | 🔴 `Grid` + `Canvas` + `Path` / `TextBlock` | ✅ `NSView` + `drawRect:` | ✅ `GtkDrawingArea` | ✅ `<canvas>` |
+
+</details>
+
+<details>
 <summary><strong>ナビゲーション</strong></summary>
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
@@ -1075,6 +1147,7 @@ tokio::spawn(async move {
 - `Color`: sRGB の 8 bit で表す色 (色の選択でやり取りする値)
 - `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
 - `Fit` / `PlaybackState`: メディア表示と再生状態
+- `Painter` / `Path` / `Point` / `Rect` / `PointerEvent`: 描画面に描く命令と、その座標・ポインターの通知
 - `PopupItem`: ポップアップメニュー項目
 - `ToolbarItem` / `ToolbarIcon`: ツールバー項目とアイコン
 - `DialogButtons` / `DialogResponse`: ダイアログのボタンと応答
@@ -1273,13 +1346,16 @@ git push origin v0.3.0
 <details>
 <summary><strong>共通</strong></summary>
 
-- 対応するのは上記の 43 コンポーネントです。
+- 対応するのは上記の 44 コンポーネントです。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
   都合上、macOS の「ツールバーをカスタマイズ」(利用者による並べ替え) は
   切ってあります。
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
+- `Canvas` の語彙は塗り・線・1 行の文字だけで、画像の貼り付け・クリップ・
+  変形 (回転や拡大) ・グラデーション・文字の幅の計量はありません。中身から
+  大きさは決まらないので `set_sizing` で指定します。
 - `SplitView` の区画は 2 つだけで、仕切りも 1 本です。3 つ以上に分けるときは
   入れ子にします。区画をたたむ (幅 0 にして隠す) 指定はありません。
 - `List` は 1 列です。単純な行は `ListItem` の `label` / `detail`、複合行は
@@ -1446,6 +1522,12 @@ git push origin v0.3.0
 - `Toggle` のラベルは `OnContent` と `OffContent` の両方へ同じ文字を入れる
   ので、入り切りで読みは変わりません (WinUI の既定は「オン」「オフ」と
   切り替わる文字です)。
+- `Canvas` は `Grid` の中に XAML の `Canvas` を置き、`on_draw` の命令を
+  `Path` (パスの記法 `M` / `L` / `C` / `Z`) と `TextBlock` にして `XamlReader`
+  で組み立てます。描き直しのたびに面を丸ごと差し替えるので、命令が数千を
+  超える図では他の 3 環境より時間がかかります。破線は XAML の決まりどおり
+  **線の太さを 1 とする単位**へ直して渡しています。中央・右寄せの文字は、
+  読み込んだ `TextBlock` を測って `Canvas.Left` を書き直します。
 - WinUI 3 の `ColorPicker` はスペクトラムとスライダーを縦に並べた大きな面
   なので、`Button` の `Flyout` へ入れ、ボタンには選んだ色の見本
   (`Border` + `SolidColorBrush`) を出します。組み立てだけは XAML に書いて
