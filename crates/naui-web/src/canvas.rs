@@ -10,7 +10,10 @@
 //! `scale` を掛けてから描く。アプリが見る座標は CSS ピクセルのまま。
 //!
 //! 面の大きさは CSS のレイアウトで決まる (`set_sizing`)。大きさが変わったことは
-//! `ResizeObserver` で拾い、そのたびに描き直す。描き直しの要求
+//! `ResizeObserver` で拾い、そのたびに描き直す。CSS の大きさが変わらないまま
+//! 倍率だけが変わること (別のモニターへ移す、ブラウザの拡大率を変える) は
+//! `ResizeObserver` では分からないので、いまの倍率を条件にした
+//! `matchMedia("(resolution: …dppx)")` の `change` で拾う。描き直しの要求
 //! (`redraw`) は `requestAnimationFrame` へまとめ、その場では描かない
 //! (他の 3 環境と同じ決まり)。
 
@@ -47,6 +50,11 @@ struct CanvasInner {
     observer: RefCell<Option<ResizeObserver>>,
     _observer_callback: JsSlot<dyn FnMut(JsValue)>,
     _listeners: RefCell<Vec<Listener>>,
+    /// 最後に描いたときの倍率と、その倍率から外れたことを知らせる購読。
+    ///
+    /// 倍率が変わると条件に合わなくなって `change` が飛ぶので、そのたびに
+    /// 新しい倍率で張り直す。
+    ratio_watch: RefCell<Option<(f64, Listener)>>,
 }
 
 /// アプリが自分で描く面 (`<canvas>`)。
@@ -81,6 +89,7 @@ impl Canvas {
             observer: RefCell::new(None),
             _observer_callback: RefCell::new(None),
             _listeners: RefCell::new(Vec::new()),
+            ratio_watch: RefCell::new(None),
         });
 
         // 予約した描画。
@@ -207,16 +216,45 @@ impl CanvasInner {
         )
     }
 
+    /// いまの表示の倍率 (`devicePixelRatio`)。読めなければ 1。
+    fn ratio(&self) -> f64 {
+        web_sys::window()
+            .map(|w| w.device_pixel_ratio())
+            .filter(|r| r.is_finite() && *r > 0.0)
+            .unwrap_or(1.0)
+    }
+
+    /// 倍率が `ratio` から外れたら描き直すように、購読を張り直す。
+    ///
+    /// すでに同じ倍率で張ってあれば何もしない。
+    fn watch_ratio(self: &Rc<Self>, ratio: f64) {
+        if matches!(&*self.ratio_watch.borrow(), Some((watched, _)) if *watched == ratio) {
+            return;
+        }
+        let Some(list) = web_sys::window()
+            .and_then(|w| w.match_media(&format!("(resolution: {ratio}dppx)")).ok())
+            .flatten()
+        else {
+            return;
+        };
+        let weak = Rc::downgrade(self);
+        let listener = Listener::attach(list.as_ref(), "change", move || {
+            if let Some(inner) = weak.upgrade() {
+                inner.paint();
+            }
+        });
+        // 前の購読は、ここで置き換わるときに落ちて外れる。
+        *self.ratio_watch.borrow_mut() = listener.ok().map(|listener| (ratio, listener));
+    }
+
     /// 裏の画素数を CSS の大きさ × 倍率にそろえてから、`on_draw` を呼んで描く。
-    fn paint(&self) {
+    fn paint(self: &Rc<Self>) {
         let (width, height) = self.css_size();
         if width <= 0.0 || height <= 0.0 {
             return;
         }
-        let ratio = web_sys::window()
-            .map(|w| w.device_pixel_ratio())
-            .filter(|r| r.is_finite() && *r > 0.0)
-            .unwrap_or(1.0);
+        let ratio = self.ratio();
+        self.watch_ratio(ratio);
         let pixel_width = (width * ratio).round() as u32;
         let pixel_height = (height * ratio).round() as u32;
         if self.canvas.width() != pixel_width {

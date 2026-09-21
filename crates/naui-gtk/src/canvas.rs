@@ -10,10 +10,12 @@
 //! 文字はウィジェットの Pango コンテキストから作るので、書体はテーマの
 //! UI フォントで、大きさだけを命令の `size` に差し替える。
 //!
-//! ポインターの通知は `GtkGestureClick` (押下・解放。ボタンは区別しない) と
-//! `GtkEventControllerMotion` (移動) から取る。
+//! ポインターの通知は 3 つのコントローラーから取る。`GtkGestureClick` が
+//! 押下・解放 (ボタンは区別しない)、`GtkGestureDrag` が**押している間の
+//! 移動** (面の外へ出ても届く)、`GtkEventControllerMotion` が押していない
+//! 間の移動 (ホバー。こちらは面の中にいる間しか出ない)。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::cairo;
@@ -84,11 +86,42 @@ impl Canvas {
         });
         native.add_controller(click);
 
-        // 移動。押していない間 (ホバー) も、押している間も届く。
+        // 押している間の移動。`drag-update` は始点からのずれで届き、面の外へ
+        // 出ても (暗黙のグラブが続くので) 止まらない。
+        let dragging = Rc::new(Cell::new(false));
+        let drag = gtk::GestureDrag::new();
+        drag.set_button(0);
+        drag.connect_drag_begin({
+            let dragging = dragging.clone();
+            move |_, _, _| dragging.set(true)
+        });
+        drag.connect_drag_update({
+            let pointer = pointer.clone();
+            move |gesture, dx, dy| {
+                let (sx, sy) = gesture.start_point().unwrap_or((0.0, 0.0));
+                pointer.emit(PointerEvent::new(
+                    PointerPhase::Move,
+                    Point::new(sx + dx, sy + dy),
+                ));
+            }
+        });
+        drag.connect_drag_end({
+            let dragging = dragging.clone();
+            move |_, _, _| dragging.set(false)
+        });
+        native.add_controller(drag);
+
+        // 押していない間の移動 (ホバー)。`motion` は面の中にいる間しか出ないので、
+        // 押している間は上の `drag-update` に任せて二重に出さない。
         let motion = gtk::EventControllerMotion::new();
         motion.connect_motion({
             let pointer = pointer.clone();
-            move |_, x, y| pointer.emit(PointerEvent::new(PointerPhase::Move, Point::new(x, y)))
+            let dragging = dragging.clone();
+            move |_, x, y| {
+                if !dragging.get() {
+                    pointer.emit(PointerEvent::new(PointerPhase::Move, Point::new(x, y)));
+                }
+            }
         });
         native.add_controller(motion);
 

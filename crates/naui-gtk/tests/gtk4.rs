@@ -802,10 +802,14 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
 ///
 /// GTK4 には、ウィジェットへポインターのイベントを流し込む公開 API が無い
 /// (`gtk_test_widget_click` は GTK4 で無くなり、`GdkEvent` はアプリからは
-/// 作れない)。そこで、付いているコントローラーが**押した瞬間に `pressed` を
-/// 出す `GtkGestureClick`** (ドラッグの判定を待つ `GtkGestureDrag` ではない)
-/// で、ボタンを区別しない設定になっていることを確かめたうえで、その
-/// シグナルを起こして通知の写りを見る。
+/// 作れない)。そこで、付いているコントローラーの組み合わせを確かめたうえで、
+/// そのシグナルを起こして通知の写りを見る。
+///
+/// - `GtkGestureClick`: 押した瞬間に `pressed` を出す (ドラッグの判定を待たない)。
+///   ボタンを区別しない設定
+/// - `GtkGestureDrag`: 押している間の移動。面の外へ出ても届く
+/// - `GtkEventControllerMotion`: 押していない間の移動 (ホバー)。押している間は
+///   `drag-update` と二重にならないよう黙る
 fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     let (log, sink) = recorder::<naui_core::PointerEvent>();
@@ -813,6 +817,7 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
 
     let area = canvas.native_area();
     let mut click = None;
+    let mut drag = None;
     let mut motion = None;
     // `observe_controllers` の項目の型は `GObject` として申告されるので、
     // 1 つずつ取り出して見分ける。
@@ -823,30 +828,54 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
         };
         if let Ok(g) = c.clone().downcast::<gtk::GestureClick>() {
             click = Some(g);
+        } else if let Ok(d) = c.clone().downcast::<gtk::GestureDrag>() {
+            drag = Some(d);
         } else if let Ok(m) = c.downcast::<gtk::EventControllerMotion>() {
             motion = Some(m);
         }
     }
     let click = click.expect("押下と解放を受ける GtkGestureClick が付いていること");
-    let motion = motion.expect("移動を受ける GtkEventControllerMotion が付いていること");
+    let drag = drag.expect("押している間の移動を受ける GtkGestureDrag が付いていること");
+    let motion = motion.expect("ホバーを受ける GtkEventControllerMotion が付いていること");
     assert_eq!(
         click.button(),
         0,
         "ボタンを区別せず、右ボタンや中ボタンでも届くこと"
     );
+    assert_eq!(drag.button(), 0, "ドラッグもボタンを区別しないこと");
 
+    // 押していない間の移動はホバーとして届く。
+    motion.emit_by_name::<()>("motion", &[&5.0f64, &6.0f64]);
+
+    // 押してから動かす。`drag-update` は始点からのずれで届く (シグナルを直接
+    // 起こしたときは始点を持っていないので 0 として扱われる)。面の外
+    // (負の座標) へ出た移動も届く。
     click.emit_by_name::<()>("pressed", &[&1i32, &30.0f64, &20.0f64]);
-    motion.emit_by_name::<()>("motion", &[&50.0f64, &40.0f64]);
-    click.emit_by_name::<()>("released", &[&1i32, &50.0f64, &40.0f64]);
+    drag.emit_by_name::<()>("drag-begin", &[&30.0f64, &20.0f64]);
+    drag.emit_by_name::<()>("drag-update", &[&50.0f64, &40.0f64]);
+    motion.emit_by_name::<()>("motion", &[&51.0f64, &41.0f64]);
+    drag.emit_by_name::<()>("drag-update", &[&-10.0f64, &-10.0f64]);
+    drag.emit_by_name::<()>("drag-end", &[&-10.0f64, &-10.0f64]);
+    click.emit_by_name::<()>("released", &[&1i32, &-10.0f64, &-10.0f64]);
+
+    // 離したあとの移動はまたホバーとして届く。
+    motion.emit_by_name::<()>("motion", &[&7.0f64, &8.0f64]);
 
     let seen = log.borrow();
-    assert_eq!(seen.len(), 3, "{seen:?}");
-    assert_eq!(seen[0].phase, PointerPhase::Down);
-    assert_eq!(seen[0].point, Point::new(30.0, 20.0));
-    assert_eq!(seen[1].phase, PointerPhase::Move);
-    assert_eq!(seen[1].point, Point::new(50.0, 40.0));
-    assert_eq!(seen[2].phase, PointerPhase::Up);
-    assert_eq!(seen[2].point, Point::new(50.0, 40.0));
+    let phases: Vec<_> = seen.iter().map(|e| (e.phase, e.point)).collect();
+    assert_eq!(
+        phases,
+        vec![
+            (PointerPhase::Move, Point::new(5.0, 6.0)),
+            (PointerPhase::Down, Point::new(30.0, 20.0)),
+            (PointerPhase::Move, Point::new(50.0, 40.0)),
+            // 押している間の `motion` (51, 41) は二重になるので出ない。
+            (PointerPhase::Move, Point::new(-10.0, -10.0)),
+            (PointerPhase::Up, Point::new(-10.0, -10.0)),
+            (PointerPhase::Move, Point::new(7.0, 8.0)),
+        ],
+        "{seen:?}"
+    );
     Ok(())
 }
 

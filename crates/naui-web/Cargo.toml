@@ -49,6 +49,7 @@ web-sys = { version = "0.3", features = [
     "HtmlOptionsCollection",
     "HtmlProgressElement",
     "KeyboardEvent",
+    "MediaQueryList",
     "MouseEvent",
     "HtmlSelectElement",
     "HtmlTableElement",
