@@ -21,10 +21,10 @@ use gtk::glib;
 use gtk::pango;
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
-    FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    Point, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder,
-    TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
-    TreeItem,
+    FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
+    Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
+    ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
+    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -297,6 +297,22 @@ fn main() {
         (
             "ツールバーの通知内で組み替えと差し替えができる",
             toolbar_callback_is_reentrant_and_replaceable,
+        ),
+        (
+            "メニューバーの見出しと項目が GMenu と GAction になる",
+            menu_bar_menus_map_to_native,
+        ),
+        (
+            "メニューバーの項目がインデックスの組で通知する",
+            menu_bar_activation_notifies,
+        ),
+        (
+            "メニューバーがウィンドウに取り付き、操作が引ける",
+            menu_bar_attaches_to_the_window,
+        ),
+        (
+            "メニューバーの通知内で操作と差し替えができる",
+            menu_bar_callback_is_reentrant_and_replaceable,
         ),
         ("メニューの選択が 1 つだけ点く", menu_selection_is_exclusive),
         ("選べない項目は選ばれない", nav_skips_disabled_items),
@@ -5223,5 +5239,228 @@ fn cancel_stops_a_future(ui: &Ui) -> Result<()> {
     pump();
 
     assert_eq!(label.text(), "待機中", "cancel した処理は走らないこと");
+    Ok(())
+}
+
+/// 見出しは `GMenu` の submenu、項目は `GSimpleAction` になる。
+fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    assert!(menu_bar.is_empty());
+
+    menu_bar.set_menus(&[
+        MenuSpec::new(
+            "ファイル",
+            [
+                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                MenuItem::separator(),
+                MenuItem::new("保存")
+                    .shortcut(MenuShortcut::new('s').shift(true))
+                    .enabled(false),
+            ],
+        ),
+        MenuSpec::new("表示", ["拡大", "縮小"]),
+    ]);
+
+    assert_eq!(menu_bar.len(), 2, "見出しの数");
+    assert_eq!(menu_bar.menu_len(0), 3, "区切り線も 1 項目として数える");
+    assert_eq!(menu_bar.menu_len(1), 2);
+    assert_eq!(menu_bar.menu_len(9), 0, "範囲外は 0");
+
+    // メニューモデルには見出しの数だけ submenu が並ぶ。
+    let model = menu_bar
+        .native_menu_bar()
+        .menu_model()
+        .expect("メニューモデル");
+    assert_eq!(model.n_items(), 2);
+
+    let first = menu_bar.native_action(0, 0).expect("先頭は操作を持つ");
+    assert_eq!(first.name(), "m0i0");
+    assert!(first.is_enabled());
+    assert!(
+        menu_bar.native_action(0, 1).is_none(),
+        "区切り線に操作は無い"
+    );
+    assert!(!menu_bar
+        .native_action(0, 2)
+        .expect("3 番目は操作を持つ")
+        .is_enabled());
+    assert!(menu_bar.native_action(9, 0).is_none(), "範囲外は None");
+    assert!(menu_bar.native_action(0, 9).is_none(), "範囲外は None");
+
+    assert!(menu_bar.is_item_enabled(0, 0));
+    assert!(!menu_bar.is_item_enabled(0, 1), "区切り線は押せない");
+    assert!(!menu_bar.is_item_enabled(0, 2));
+
+    // 項目ごとの指定と全体の指定は AND を取る。
+    menu_bar.set_item_enabled(0, 2, true);
+    assert!(menu_bar.native_action(0, 2).expect("操作").is_enabled());
+    menu_bar.set_enabled(false);
+    assert!(!menu_bar.is_item_enabled(0, 0));
+    assert!(
+        !menu_bar.native_action(0, 0).expect("操作").is_enabled(),
+        "全体を無効にすると、アクセラレータも効かないように操作ごと落とす"
+    );
+    assert!(!menu_bar.native_menu_bar().is_sensitive());
+    menu_bar.set_enabled(true);
+    assert!(
+        menu_bar.is_item_enabled(0, 2),
+        "全体を戻すと項目ごとの指定が残る"
+    );
+
+    // 区切り線への set_item_enabled は無視する。
+    menu_bar.set_item_enabled(0, 1, true);
+    assert!(!menu_bar.is_item_enabled(0, 1));
+
+    menu_bar.set_menus(&[]);
+    assert!(menu_bar.is_empty());
+    assert!(menu_bar.native_action(0, 0).is_none());
+    Ok(())
+}
+
+/// 押された項目は (見出し, 項目) のインデックスの組で届く。
+fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[
+        MenuSpec::new(
+            "編集",
+            [
+                MenuItem::new("元に戻す"),
+                MenuItem::separator(),
+                MenuItem::new("やり直す").enabled(false),
+            ],
+        ),
+        MenuSpec::new("表示", ["拡大"]),
+    ]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    menu_bar.on_activate({
+        let seen = seen.clone();
+        move |menu, item| seen.borrow_mut().push((menu, item))
+    });
+
+    menu_bar.activate(0, 0);
+    assert_eq!(*seen.borrow(), vec![(0, 0)]);
+    menu_bar.activate(0, 1);
+    menu_bar.activate(0, 2);
+    menu_bar.activate(9, 0);
+    menu_bar.activate(0, 9);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(0, 0)],
+        "区切り線・押せない項目・範囲外は通知しない"
+    );
+
+    // GTK4 側の操作から届く実際の通知経路も確かめる。
+    menu_bar.native_action(1, 0).expect("操作").activate(None);
+    assert_eq!(*seen.borrow(), vec![(0, 0), (1, 0)]);
+
+    menu_bar.set_item_enabled(0, 2, true);
+    menu_bar.activate(0, 2);
+    assert_eq!(*seen.borrow(), vec![(0, 0), (1, 0), (0, 2)]);
+
+    menu_bar.set_enabled(false);
+    menu_bar.activate(0, 0);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(0, 0), (1, 0), (0, 2)],
+        "無効なメニューバーは通知しない"
+    );
+    Ok(())
+}
+
+/// ウィンドウへ取り付くと、その操作の組がウィンドウから引けるようになる。
+///
+/// アクセラレータは、フォーカスのあるウィジェットからたどれる操作の組の中を
+/// 探して呼ばれる。ウィンドウから引けることが、`GtkApplication` へ登録した
+/// ショートカットが効く条件そのもの。
+fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
+    let window = ui.window("メニューバー", 400.0, 300.0)?;
+    let native = window.native_window();
+    let app = native.application().expect("GtkApplication");
+
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "ファイル",
+        [MenuItem::new("開く").shortcut(MenuShortcut::new('o'))],
+    )]);
+    assert_eq!(
+        app.accels_for_action("naui-menubar.m0i0"),
+        vec!["<Control>o"],
+        "ショートカットはアプリのアクセラレータへ登録する"
+    );
+
+    window.set_menu_bar(&menu_bar);
+    let mount = menu_bar.native_menu_bar();
+    assert_eq!(
+        mount
+            .ancestor(adw::ApplicationWindow::static_type())
+            .as_ref(),
+        Some(native.upcast_ref::<gtk::Widget>()),
+        "ウィンドウの中に入っていること"
+    );
+
+    let seen = Rc::new(Cell::new(0));
+    menu_bar.on_activate({
+        let seen = seen.clone();
+        move |_menu, _item| seen.set(seen.get() + 1)
+    });
+    WidgetExt::activate_action(&native, "naui-menubar.m0i0", None)
+        .expect("ウィンドウから操作を引けること");
+    assert_eq!(seen.get(), 1);
+
+    window.clear_menu_bar();
+    assert!(
+        mount
+            .ancestor(adw::ApplicationWindow::static_type())
+            .is_none(),
+        "外すとウィンドウから消える"
+    );
+    assert!(
+        WidgetExt::activate_action(&native, "naui-menubar.m0i0", None).is_err(),
+        "外すと操作も引けなくなる"
+    );
+
+    // 作り直すと、以前のアクセラレータは残らない。
+    menu_bar.set_menus(&[]);
+    assert!(
+        app.accels_for_action("naui-menubar.m0i0").is_empty(),
+        "項目が消えたらアクセラレータも外す"
+    );
+    window.close();
+    Ok(())
+}
+
+/// 通知の中からメニューバーを組み替えても、二重借用にならない。
+fn menu_bar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規", "開く"])]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    menu_bar.on_activate({
+        let seen = seen.clone();
+        let menu_bar = menu_bar.clone();
+        move |menu, item| {
+            seen.borrow_mut().push((menu, item));
+            // 通知の中でメニューを組み替え、コールバックも差し替える。
+            menu_bar.set_menus(&[MenuSpec::new("編集", ["元に戻す"])]);
+            menu_bar.set_item_enabled(0, 0, true);
+            menu_bar.on_activate({
+                let seen = seen.clone();
+                move |menu, item| seen.borrow_mut().push((menu + 10, item + 10))
+            });
+        }
+    });
+
+    menu_bar.activate(0, 1);
+    assert_eq!(*seen.borrow(), vec![(0, 1)]);
+    assert_eq!(menu_bar.len(), 1);
+    assert_eq!(menu_bar.menu_len(0), 1);
+
+    menu_bar.activate(0, 0);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(0, 1), (10, 10)],
+        "差し替えたコールバックが呼ばれる"
+    );
     Ok(())
 }

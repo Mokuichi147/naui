@@ -12,6 +12,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
+use crate::menu_bar::MenuBar;
 use crate::toolbar::Toolbar;
 use crate::widgets::Widget;
 
@@ -32,6 +33,9 @@ struct WindowInner {
     /// 取り付けたツールバー。`NSWindow` の toolbar は強参照だが、
     /// naui 側のハンドル (トランポリンと通知先) もここで生かしておく。
     toolbar: RefCell<Option<Toolbar>>,
+    /// 取り付けたメニューバー。`NSApplication` が `mainMenu` を強参照するが、
+    /// naui 側のハンドル (トランポリンと通知先) もここで生かしておく。
+    menu_bar: RefCell<Option<MenuBar>>,
 }
 
 /// トップレベルウィンドウ (NSWindow)。
@@ -80,6 +84,7 @@ impl Window {
             native,
             child: RefCell::new(None),
             toolbar: RefCell::new(None),
+            menu_bar: RefCell::new(None),
         }))
     }
 
@@ -130,6 +135,27 @@ impl Window {
             .native
             .setTitleVisibility(NSWindowTitleVisibility::Visible);
         *self.0.toolbar.borrow_mut() = None;
+    }
+
+    /// 画面上端に出すメニューバー。呼ぶたびに置き換わる。
+    ///
+    /// **macOS のメニューバーはアプリに 1 つ**なので、
+    /// `NSApplication.mainMenu` を差し替える。どのウィンドウから呼んでも
+    /// アプリ全体に効き、ウィンドウが前面かどうかでは変わらない
+    /// (ほかの 3 環境に合わせてウィンドウの API にしてある)。
+    pub fn set_menu_bar(&self, menu_bar: &MenuBar) {
+        menu_bar.install();
+        *self.0.menu_bar.borrow_mut() = Some(menu_bar.clone());
+    }
+
+    /// 取り付けたメニューバーを外す。付いていなければ何もしない。
+    ///
+    /// メニューが 1 つも無いと ⌘C / ⌘V が配送されなくなるため、naui の
+    /// 既定のメニュー (アプリメニューと編集メニュー) へ戻す。
+    pub fn clear_menu_bar(&self) {
+        if let Some(old) = self.0.menu_bar.borrow_mut().take() {
+            old.uninstall();
+        }
     }
 
     /// 画面に出して前面へ持ってくる。

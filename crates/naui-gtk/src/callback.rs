@@ -121,6 +121,30 @@ impl SortNotifier {
     }
 }
 
+/// 押された項目の、見出しと項目のインデックスを受け取るコールバック。
+///
+/// 値を 2 つ受け取るので、[`borrowed_notifier!`] ではなく手で書いている。
+#[derive(Default)]
+pub(crate) struct ActivateNotifier(Slot<dyn FnMut(usize, usize)>);
+
+impl ActivateNotifier {
+    pub(crate) fn set(&self, f: impl FnMut(usize, usize) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// 呼び出しの間だけクロージャを取り出す ([`emit`] と同じ形)。
+    pub(crate) fn emit(&self, menu: usize, item: usize) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(menu, item);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
 /// 開閉が変わった項目のパスと、変わった後の状態を受け取るコールバック。
 ///
 /// 値を 2 つ受け取るので、[`borrowed_notifier!`] ではなく手で書いている。

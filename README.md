@@ -85,8 +85,8 @@ cargo run -p gallery
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
 | macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ (Esc での取り消しを含む)、ポップアップメニュー、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、描画面 (画素の確認とポインター)、ラベルの折り返し、ラベルの文字づかい、非同期処理の実行と中断を操作 |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・メニューバー (見出しの開閉とショートカット)・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ (Esc での取り消しを含む)、ポップアップメニュー、メニューバー (見出しの開閉とショートカット)、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、描画面 (画素の確認とポインター)、ラベルの折り返し、ラベルの文字づかい、非同期処理の実行と中断を操作 |
 | Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。あわせて WinUI 3 の実コントロールを使った統合テスト (ラベルの文字づかい・描画面の XAML への写しを含む) を CI で実行 |
 
 プラットフォーム固有の注意点は[既知の制限](#既知の制限)を参照してください。
@@ -958,6 +958,53 @@ window.set_toolbar(&toolbar);
 用意しているのは `ToolbarIcon` に並ぶ 20 種類の操作だけで、任意の画像は
 置けません。
 
+#### メニューバー (OS のアプリケーションメニュー)
+
+「ファイル」「編集」のような**見出しと項目の 2 段**のメニューは `MenuBar` を
+使います。`Toolbar` と同じくレイアウトには置かず、`Window::set_menu_bar` で
+ウィンドウに取り付けます。
+
+見出し 1 つが `MenuSpec`、その中の 1 行が `MenuItem` です。押されると
+**(見出しのインデックス, 区切り線を含めた項目のインデックス)** で通知されます。
+
+```rust
+let menu_bar = ui.menu_bar()?;
+menu_bar.set_menus(&[
+    MenuSpec::new("ファイル", [
+        MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+        MenuItem::new("開く").shortcut(MenuShortcut::new('o')),
+        MenuItem::separator(),
+        MenuItem::new("保存").shortcut(MenuShortcut::new('s')).enabled(false),
+    ]),
+    MenuSpec::new("表示", ["拡大", "縮小"]), // 文字列の並びでもよい
+]);
+menu_bar.on_activate(|menu, item| println!("{menu} 番目の {item} 番目"));
+menu_bar.set_item_enabled(0, 3, true);
+window.set_menu_bar(&menu_bar);
+```
+
+**macOS ではメニューバーはアプリに 1 つ**で、画面の上端に出ます
+(`NSApplication.mainMenu`)。`Window::set_menu_bar` はどのウィンドウから呼んでも
+アプリ全体に効きます。ほかの 3 環境ではウィンドウの上端 (タイトルバーの下) に
+敷かれます。
+
+ショートカットは `MenuShortcut` で指定します。主修飾キーは macOS だけ ⌘ で、
+Windows・Linux・Web では Ctrl になります。⇧ と ⌥ / Alt は `shift` / `alt` で
+足します。
+
+| 環境 | 押されたキーを受け取るのは | 項目の右端の表示 |
+| --- | --- | --- |
+| macOS | AppKit (`keyEquivalent`) | AppKit |
+| Linux | GTK4 (`GtkApplication` のアクセラレータ) | GTK4 |
+| Windows | naui (根の `KeyDown`) | naui (`Ctrl+S` の形) |
+| Web | naui (`document` の `keydown`) | naui (`Ctrl+S` の形) |
+
+macOS では ⌘C / ⌘V などがメインメニューのキー等価として配送されるため、
+メニューが無いと**テキスト入力で貼り付けができなくなります**。そのため naui は
+アプリ名のメニュー (先頭) と「編集」メニュー (末尾) を必ず用意し、アプリが
+渡した見出しをその間へ並べます。`Window::clear_menu_bar` で外すと、この 2 つ
+だけの既定のメニューへ戻ります。
+
 #### 別スレッドと非同期
 
 時間のかかる処理を別のスレッドでやって画面を書き換えたいときは `Ui::tasks`
@@ -1027,7 +1074,7 @@ tokio::spawn(async move {
 
 | 分類 | API |
 | --- | --- |
-| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`SplitView`、`Toolbar` |
+| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`SplitView`、`Toolbar`、`MenuBar` |
 | 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、`NumberInput`、`Slider`、`ProgressBar` |
 | データ選択 | `ComboBox`、`EditableComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
 | ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
@@ -1058,6 +1105,7 @@ tokio::spawn(async move {
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (入り切り) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
 | `SplitView` | 🔴 `Grid` + 仕切りの `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
 | `Toolbar` | ✅ `CommandBar` + `AppBarButton` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
+| `MenuBar` | 🟡 `Button` + `MenuFlyout` の横並び | ✅ `NSMenu` (`NSApplication.mainMenu`) | ✅ `GtkPopoverMenuBar` + `GMenu` | 🟡 `<div role="menubar">` + `<div role="menu">` |
 
 </details>
 
@@ -1160,6 +1208,7 @@ tokio::spawn(async move {
 - `Painter` / `Path` / `Point` / `Rect` / `PointerEvent`: 描画面に描く命令と、その座標・ポインターの通知
 - `PopupItem`: ポップアップメニュー項目
 - `ToolbarItem` / `ToolbarIcon`: ツールバー項目とアイコン
+- `MenuSpec` / `MenuItem` / `MenuShortcut`: メニューバーの見出し・項目・ショートカット
 - `DialogButtons` / `DialogResponse`: ダイアログのボタンと応答
 - `ToastSpec`: トーストの文字・操作ボタン・消えるまでの時間
 
@@ -1356,12 +1405,18 @@ git push origin v0.3.0
 <details>
 <summary><strong>共通</strong></summary>
 
-- 対応するのは上記の 44 コンポーネントです。
+- 対応するのは上記の 45 コンポーネントです。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
   都合上、macOS の「ツールバーをカスタマイズ」(利用者による並べ替え) は
   切ってあります。
+- `MenuBar` も `Toolbar` と同じくウィンドウに取り付けるもので、レイアウトの
+  好きな位置には置けません。**入れ子のメニュー (サブメニューのさらに下) と、
+  チェックの付く項目はありません。** 見出しと項目の 2 段までです。
+  ショートカット (`MenuShortcut`) は**主修飾キー + 英数字 1 文字**の
+  組み合わせだけで、主修飾キーは macOS が ⌘、ほかの 3 環境が Ctrl です。
+  ファンクションキーや記号のキーは指定できません。
 - 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
 - `Canvas` の語彙は塗り・線・1 行の文字だけで、画像の貼り付け・クリップ・
   変形 (回転や拡大) ・グラデーション・文字の幅の計量はありません。中身から
@@ -1419,6 +1474,12 @@ git push origin v0.3.0
 
 - `StackPanel` は主軸の余りを子へ配らないため、`Stack` 内の主軸方向では
   `Fill` と `Spacer` が効きません。代わりに `Grid` の `Track::Fill` を使います。
+- `MenuBar` は WinUI 3 の `MenuBar` ではなく、地色を消した `Button` に
+  `MenuFlyout` を預けたものを横に並べて組み立てています。`MenuBar` /
+  `MenuBarItem` / `KeyboardAccelerator` は `naui-winui3` の投影に入れていない
+  ためです (投影はコミットしてある生成物で、型を増やすと全体を作り直すことに
+  なります)。そのぶんショートカットは、ウィンドウの根まで上ってきた `KeyDown`
+  を naui が見て呼び出しています。
 - 一部の Windows App SDK 環境で異常終了を避けるため、`Tabs` は `TabView` を使わず、
   `Video` / `Audio` の標準再生バーは無効にしています。
 - `EditableComboBox` の 1 文字ごとの通知は、`ComboBox` のテンプレートにある
@@ -1575,6 +1636,11 @@ git push origin v0.3.0
   重ねて置けます。
 - `Image` のリモート URL は同期的に読み込むため、ローカルファイルの利用を推奨します。
 - `Dialog::open` と `PopupMenu::open_at` は閉じるまで戻りません。
+- `MenuBar` はウィンドウではなくアプリに付きます (`NSApplication.mainMenu`)。
+  **naui はアプリ名のメニューと「編集」メニューを必ず残す**ので、アプリが渡した
+  見出しはその 2 つに挟まれて並びます。⌘C / ⌘V がメインメニューのキー等価として
+  配送される以上、これを外すとテキスト入力で貼り付けができなくなるためです。
+  並びを完全に決めたいときは `MenuBar::native_menu` から `NSMenu` を取り出します。
 - `DatePicker` は `NSDatePicker` そのものです。欄をクリックするとカレンダーが
   重なって開き (`presentsCalendarOverlay`)、キーボードとステッパーでも編集
   できます。見た目・操作とも AppKit の既定 (SwiftUI の `DatePicker` と同じ
@@ -1642,6 +1708,11 @@ git push origin v0.3.0
 - `Fit::None` は GTK4 の `SCALE_DOWN` に対応するため、「原寸」ではなく
   「拡大しない」動作になります。
 - テーマはウィンドウ単位ではなくアプリ全体へ適用されます。
+- `MenuBar` は `GtkPopoverMenuBar` で、ヘッダーバーの**下**に入ります。GNOME は
+  メニューバーよりハンバーガーメニューを勧めますが、naui は 4 環境で同じ API を
+  出すため、GTK4 が持つメニューバーをそのまま使います。項目は `GMenu` のモデルと
+  `GSimpleAction` の組で表し、ショートカットは `GtkApplication` のアクセラレータ
+  へ登録します (**メニューを開かなくても効きます**)。
 - `List` は `GtkListBox` を `GtkScrolledWindow` へ載せたものです。行のクリック
   (`ListRow::on_activate`) は `GtkListBox` の `row-activated` で受けます
   (`GtkListBoxRow` の `activate` はキーボードの Enter / Space だけの経路です)。
@@ -1701,6 +1772,13 @@ git push origin v0.3.0
 
 - `Window` は OS のウィンドウではなく、`<body>` 直下の要素と
   `document.title` で表現されます。
+- ブラウザには OS のアプリケーションメニューが無いため、`MenuBar` は
+  WAI-ARIA の役割 (`role="menubar"` / `"menu"` / `"menuitem"`) を付けた要素で
+  組み立てています。ショートカットも `document` の `keydown` を naui が見張って
+  突き合わせ、押されたときは `preventDefault()` でブラウザの既定 (⌘S など) を
+  止めます。**主修飾キーは Ctrl と ⌘ のどちらでも通します** (macOS の
+  ブラウザでは ⌘ が主修飾キーになるため)。項目の右端の `Ctrl+S` という表示も
+  naui が添えています。
 - **`<span>` の既定は折り返す**ため、`Label` には naui が
   `white-space: nowrap` と `text-overflow: ellipsis` を入れて、他の 3 環境の
   既定 (1 行 + 省略記号) へそろえています。折り返したいときは

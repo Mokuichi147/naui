@@ -16,8 +16,9 @@ mod parts;
 mod tasks;
 
 use naui::{
-    Align, FileEntry, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings,
-    Sizing, Tabs, TextStyle, ToolbarIcon, ToolbarItem, Track, Ui, Widget,
+    Align, FileEntry, GridCell, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
+    Result, ScrollPolicy, Settings, Sizing, Tabs, TextStyle, ToolbarIcon, ToolbarItem, Track, Ui,
+    Widget,
 };
 
 /// ウィンドウに取り付けるツールバーの項目。区切りは空文字で埋める。
@@ -43,6 +44,36 @@ const SECTIONS: [&str; 10] = [
     "ダイアログ",
     "非同期",
 ];
+
+/// メニューバーの中身。
+///
+/// ショートカットは**主修飾キー + 英数字 1 文字**で指定する。主修飾キーは
+/// macOS だけ ⌘ で、Windows・Linux・Web では Ctrl になる。
+fn menus() -> Vec<MenuSpec> {
+    vec![
+        MenuSpec::new(
+            "ファイル",
+            [
+                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                MenuItem::new("開く").shortcut(MenuShortcut::new('o')),
+                MenuItem::separator(),
+                MenuItem::new("保存").shortcut(MenuShortcut::new('s')),
+                MenuItem::new("別名で保存").shortcut(MenuShortcut::new('s').shift(true)),
+            ],
+        ),
+        MenuSpec::new(
+            "表示",
+            [
+                MenuItem::new("拡大"),
+                MenuItem::new("縮小"),
+                MenuItem::separator(),
+                // 押せない項目は、その場ではできないことを表す。
+                MenuItem::new("全画面").enabled(false),
+            ],
+        ),
+        MenuSpec::new("ヘルプ", ["naui について"]),
+    ]
+}
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
@@ -109,6 +140,29 @@ pub fn build(ui: &Ui) -> Result<()> {
     });
     window.set_toolbar(&toolbar);
     header.append(&toolbar_status);
+
+    // MenuBar もレイアウトではなくウィンドウに取り付ける。macOS では画面
+    // 上端のメニューバー (NSApplication.mainMenu)、ほかの 3 環境では
+    // タイトルバーの下に敷かれる帯になる。
+    // ショートカットの主修飾キーは macOS だけ ⌘ で、ほかは Ctrl。
+    let menu_status = parts::status(ui, "MenuBar: まだ選ばれていません")?;
+    let menu_bar = ui.menu_bar()?;
+    let specs = menus();
+    menu_bar.set_menus(&specs);
+    menu_bar.on_activate({
+        let status = menu_status.clone();
+        // 通知はインデックスの組で来るので、渡した並びから名前を引く。
+        move |menu, item| {
+            let label = specs
+                .get(menu)
+                .and_then(|spec| spec.items.get(item))
+                .map(|entry| entry.label.as_str())
+                .unwrap_or_default();
+            status.set_text(&format!("MenuBar: {label} を選びました"));
+        }
+    });
+    window.set_menu_bar(&menu_bar);
+    header.append(&menu_status);
     root.attach(&header, GridCell::new(0, 0));
 
     let tabs = ui.tabs()?;

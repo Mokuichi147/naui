@@ -17,10 +17,10 @@ use std::time::{Duration, Instant};
 
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
-    FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    Point, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder,
-    TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
-    TreeItem,
+    FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
+    Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
+    ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
+    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::Retained;
@@ -488,6 +488,26 @@ fn main() {
         (
             "ツールバーの通知中に内容と通知先を差し替えられる",
             toolbar_callback_is_reentrant,
+        ),
+        (
+            "メニューバーの見出しと項目が NSMenu になる",
+            menu_bar_menus_map_to_native,
+        ),
+        (
+            "メニューバーはアプリメニューと編集メニューを挟んで並べる",
+            menu_bar_keeps_the_standard_menus,
+        ),
+        (
+            "メニューバーの項目がインデックスの組で通知する",
+            menu_bar_activation_notifies,
+        ),
+        (
+            "メニューバーがアプリのメインメニューになる",
+            menu_bar_attaches_to_the_application,
+        ),
+        (
+            "メニューバーの通知内で組み替えと差し替えができる",
+            menu_bar_callback_is_reentrant,
         ),
         (
             "ポップアップメニューが項目と区切り線を NSMenu に写す",
@@ -7521,5 +7541,300 @@ fn breadcrumbs_click_leaves_no_focus_ring(ui: &Ui) -> Result<()> {
     window.close();
     // 後続のテストへ影響しないよう、アプリの状態を戻す。
     app.setActivationPolicy(policy);
+    Ok(())
+}
+
+// -------------------------------------------------------------- メニューバー
+
+/// アプリが渡した見出しの `NSMenu` を、naui の標準メニューの間から取り出す。
+///
+/// 先頭はアプリメニュー、末尾は編集メニュー。その間がアプリのぶん。
+fn app_menus(bar: &naui_macos::MenuBar) -> Vec<Retained<objc2_app_kit::NSMenu>> {
+    let main = bar.native_menu();
+    let count = main.numberOfItems();
+    (1..count.saturating_sub(1))
+        .filter_map(|i| main.itemAtIndex(i).and_then(|item| item.submenu()))
+        .collect()
+}
+
+/// 見出しは `NSMenu`、項目は `NSMenuItem` になる。
+fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    assert!(menu_bar.is_empty());
+
+    menu_bar.set_menus(&[
+        MenuSpec::new(
+            "ファイル",
+            [
+                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                MenuItem::separator(),
+                MenuItem::new("保存")
+                    .shortcut(MenuShortcut::new('s').shift(true))
+                    .enabled(false),
+            ],
+        ),
+        MenuSpec::new("表示", ["拡大", "縮小"]),
+    ]);
+
+    assert_eq!(menu_bar.len(), 2, "見出しの数");
+    assert_eq!(menu_bar.menu_len(0), 3, "区切り線も 1 項目として数える");
+    assert_eq!(menu_bar.menu_len(1), 2);
+    assert_eq!(menu_bar.menu_len(9), 0, "範囲外は 0");
+
+    let menus = app_menus(&menu_bar);
+    assert_eq!(menus.len(), 2);
+    assert_eq!(menus[0].title().to_string(), "ファイル");
+    assert_eq!(menus[0].numberOfItems(), 3);
+    assert!(
+        !menus[0].autoenablesItems(),
+        "有効・無効はアプリの指定をそのまま使う"
+    );
+
+    let first = menu_bar.native_item(0, 0).expect("先頭は項目");
+    assert_eq!(first.title().to_string(), "新規");
+    assert!(first.isEnabled());
+    assert_eq!(first.keyEquivalent().to_string(), "n");
+    assert_eq!(
+        first.keyEquivalentModifierMask(),
+        NSEventModifierFlags::Command,
+        "主修飾キーは ⌘"
+    );
+    assert!(menu_bar.native_item(0, 1).is_none(), "区切り線に項目は無い");
+    assert!(menus[0].itemAtIndex(1).expect("2 番目").isSeparatorItem());
+
+    let save = menu_bar.native_item(0, 2).expect("3 番目は項目");
+    assert!(!save.isEnabled());
+    assert_eq!(save.keyEquivalent().to_string(), "s");
+    assert_eq!(
+        save.keyEquivalentModifierMask(),
+        NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+        "⇧ を足すと ⇧⌘ になる"
+    );
+    assert!(menu_bar.native_item(9, 0).is_none(), "範囲外は None");
+    assert!(menu_bar.native_item(0, 9).is_none(), "範囲外は None");
+
+    // ショートカットを指定しなければキー等価は付かない。
+    assert_eq!(
+        menu_bar
+            .native_item(1, 0)
+            .expect("項目")
+            .keyEquivalent()
+            .to_string(),
+        ""
+    );
+
+    assert!(menu_bar.is_item_enabled(0, 0));
+    assert!(!menu_bar.is_item_enabled(0, 1), "区切り線は押せない");
+    assert!(!menu_bar.is_item_enabled(0, 2));
+
+    // 項目ごとの指定と全体の指定は AND を取る。
+    menu_bar.set_item_enabled(0, 2, true);
+    assert!(menu_bar.native_item(0, 2).expect("項目").isEnabled());
+    menu_bar.set_enabled(false);
+    assert!(!menu_bar.is_item_enabled(0, 0));
+    assert!(!menu_bar.native_item(0, 0).expect("項目").isEnabled());
+    menu_bar.set_enabled(true);
+    assert!(
+        menu_bar.is_item_enabled(0, 2),
+        "全体を戻すと項目ごとの指定が残る"
+    );
+
+    // 区切り線への set_item_enabled は無視する。
+    menu_bar.set_item_enabled(0, 1, true);
+    assert!(!menu_bar.is_item_enabled(0, 1));
+
+    menu_bar.set_menus(&[]);
+    assert!(menu_bar.is_empty());
+    assert!(menu_bar.native_item(0, 0).is_none());
+    assert!(app_menus(&menu_bar).is_empty());
+    Ok(())
+}
+
+/// naui の標準メニュー (アプリメニューと編集メニュー) は必ず残る。
+///
+/// ⌘C / ⌘V はメインメニューのキー等価として配送されるので、アプリが
+/// メニューバーを差し替えても、この 2 つが消えると貼り付けができなくなる。
+fn menu_bar_keeps_the_standard_menus(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+
+    let main = menu_bar.native_menu();
+    assert_eq!(
+        main.numberOfItems(),
+        3,
+        "アプリメニュー + アプリの見出し + 編集メニュー"
+    );
+    assert!(
+        !main.autoenablesItems(),
+        "見出しの有効・無効もアプリの指定を使う"
+    );
+
+    let titles: Vec<String> = (0..main.numberOfItems())
+        .filter_map(|i| main.itemAtIndex(i).and_then(|item| item.submenu()))
+        .map(|menu| menu.title().to_string())
+        .collect();
+    assert_eq!(
+        titles[0], "naui",
+        "先頭はアプリメニュー (run_for_test の名前)"
+    );
+    assert_eq!(titles[1], "ファイル");
+    assert_eq!(titles[2], "編集", "末尾は標準の編集メニュー");
+
+    // 編集メニューはレスポンダチェーンへ流す (ターゲットを固定しない)。
+    let edit = main
+        .itemAtIndex(main.numberOfItems() - 1)
+        .and_then(|item| item.submenu())
+        .expect("編集メニュー");
+    let paste = (0..edit.numberOfItems())
+        .filter_map(|i| edit.itemAtIndex(i))
+        .find(|item| item.action() == Some(sel!(paste:)))
+        .expect("paste: を送る項目があること");
+    assert!(unsafe { paste.target() }.is_none());
+
+    // 全体を無効にしても、⌘Q と ⌘V は取り上げない。
+    menu_bar.set_enabled(false);
+    assert!(
+        main.itemAtIndex(0).expect("アプリメニュー").isEnabled(),
+        "アプリメニューは無効にしない"
+    );
+    assert!(
+        main.itemAtIndex(2).expect("編集メニュー").isEnabled(),
+        "編集メニューは無効にしない"
+    );
+    assert!(
+        !main.itemAtIndex(1).expect("アプリの見出し").isEnabled(),
+        "アプリの見出しは無効になる"
+    );
+    Ok(())
+}
+
+/// 押された項目は (見出し, 項目) のインデックスの組で届く。
+fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[
+        MenuSpec::new(
+            "編集",
+            [
+                MenuItem::new("元に戻す"),
+                MenuItem::separator(),
+                MenuItem::new("やり直す").enabled(false),
+            ],
+        ),
+        MenuSpec::new("表示", ["拡大"]),
+    ]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    menu_bar.on_activate({
+        let seen = seen.clone();
+        move |menu, item| seen.borrow_mut().push((menu, item))
+    });
+
+    menu_bar.activate(0, 0);
+    assert_eq!(*seen.borrow(), vec![(0, 0)]);
+    menu_bar.activate(0, 1);
+    menu_bar.activate(0, 2);
+    menu_bar.activate(9, 0);
+    menu_bar.activate(0, 9);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(0, 0)],
+        "区切り線・押せない項目・範囲外は通知しない"
+    );
+
+    // AppKit が使うのと同じ target/action の経路も確かめる。
+    let item = menu_bar.native_item(1, 0).expect("項目");
+    let target = unsafe { item.target() }.expect("target が設定されていること");
+    assert_eq!(
+        item.action(),
+        Some(sel!(invoke:)),
+        "トランポリンの invoke: が action になっている"
+    );
+    unsafe {
+        let _: () = msg_send![&*target, invoke: &*item];
+    }
+    assert_eq!(*seen.borrow(), vec![(0, 0), (1, 0)]);
+
+    menu_bar.set_item_enabled(0, 2, true);
+    menu_bar.activate(0, 2);
+    assert_eq!(*seen.borrow(), vec![(0, 0), (1, 0), (0, 2)]);
+
+    menu_bar.set_enabled(false);
+    menu_bar.activate(0, 0);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(0, 0), (1, 0), (0, 2)],
+        "無効なメニューバーは通知しない"
+    );
+    Ok(())
+}
+
+/// 取り付けると `NSApplication.mainMenu` になり、外すと既定へ戻る。
+fn menu_bar_attaches_to_the_application(ui: &Ui) -> Result<()> {
+    let mtm = objc2::MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("メニューバー", 400.0, 300.0)?;
+
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規", "開く"])]);
+    window.set_menu_bar(&menu_bar);
+    assert!(
+        app.mainMenu()
+            .is_some_and(|main| main == menu_bar.native_menu()),
+        "アプリのメインメニューになること"
+    );
+
+    // 取り付けたあとに組み替えても、メインメニューへ映る。
+    menu_bar.set_menus(&[MenuSpec::new("編集", ["元に戻す"])]);
+    assert!(
+        app.mainMenu()
+            .is_some_and(|main| main == menu_bar.native_menu()),
+        "組み替えても取り付いたまま"
+    );
+    assert_eq!(app_menus(&menu_bar).len(), 1);
+
+    window.clear_menu_bar();
+    let restored = app.mainMenu().expect("既定のメニューへ戻ること");
+    assert_ne!(restored, menu_bar.native_menu());
+    assert_eq!(
+        restored.numberOfItems(),
+        2,
+        "アプリメニューと編集メニューだけが残る"
+    );
+    window.close();
+    Ok(())
+}
+
+/// 通知の中からメニューバーを組み替えても、二重借用にならない。
+fn menu_bar_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規", "開く"])]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    menu_bar.on_activate({
+        let seen = seen.clone();
+        let menu_bar = menu_bar.clone();
+        move |menu, item| {
+            seen.borrow_mut().push((menu, item));
+            // 通知の中でメニューを組み替え、コールバックも差し替える。
+            menu_bar.set_menus(&[MenuSpec::new("編集", ["元に戻す"])]);
+            menu_bar.set_item_enabled(0, 0, true);
+            menu_bar.on_activate({
+                let seen = seen.clone();
+                move |menu, item| seen.borrow_mut().push((menu + 10, item + 10))
+            });
+        }
+    });
+
+    menu_bar.activate(0, 1);
+    assert_eq!(*seen.borrow(), vec![(0, 1)]);
+    assert_eq!(menu_bar.len(), 1);
+    assert_eq!(menu_bar.menu_len(0), 1);
+
+    menu_bar.activate(0, 0);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(0, 1), (10, 10)],
+        "差し替えたコールバックが呼ばれる"
+    );
     Ok(())
 }
