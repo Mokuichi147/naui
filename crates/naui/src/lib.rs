@@ -643,6 +643,62 @@
 //! macOS のカラーパネルはカタログ色 (`systemBlue` など) も返すので、
 //! 成分を読む前に sRGB へ変換している。
 //!
+//! ## 描画面
+//!
+//! グラフ・図形・可視化のように**アプリが自分で描くもの**は [`Canvas`] に
+//! 描く。描く内容は [`on_draw`](Canvas::on_draw) に渡すクロージャの中で
+//! [`Painter`] へ書き、描き直したいときは [`redraw`](Canvas::redraw) を呼ぶ。
+//! 面の大きさが変わったときは naui が描き直す。
+//!
+//! ```no_run
+//! # use naui::{Color, Point, Rect, Result, Sizing, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let chart = ui.canvas()?;
+//! chart.set_sizing(Sizing::fill()); // 中身から大きさは決まらない
+//! chart.on_draw(|painter| {
+//!     let bar = Rect::new(10.0, 10.0, 40.0, painter.height() - 20.0);
+//!     painter.fill_rect(bar, Color::rgb(0x33, 0x66, 0xff));
+//!     painter.text("売上", Point::new(10.0, painter.height() - 16.0), 12.0, Color::BLACK);
+//! });
+//! chart.on_pointer(|event| println!("{:?} at {:?}", event.phase, event.point));
+//! chart.redraw();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `Canvas` | `Grid` + `Canvas` + `Path` / `TextBlock` | `NSView` + `drawRect:` (`NSBezierPath`) | `GtkDrawingArea` (cairo + Pango) | `<canvas>` + 2D コンテキスト |
+//!
+//! `Painter` は描画命令を**記録するだけ**で、画素に落とすのはその環境の
+//! 2D API の仕事 (naui はラスタライズもフォントの計量も持たない)。座標は
+//! 左上原点・右と下が正の論理ピクセルで、高解像度の倍率は環境が掛ける。
+//! 語彙は 4 環境でそろう最小限 — 矩形・円・直線・折れ線・多角形・任意の
+//! [`Path`] (直線と 3 次ベジェ) の塗りと線、1 行の文字 — で、透け具合
+//! ([`set_opacity`](Painter::set_opacity))・破線 ([`set_dash`](Painter::set_dash))・
+//! 文字の寄せ方 ([`set_text_align`](Painter::set_text_align)) は状態として
+//! 持ち、変えるまで後の命令に効く。円と弧は `Path` がベジェへ直してから
+//! 渡すので、どの環境でも同じ形になる。
+//!
+//! 文字の書体はその環境の標準の UI フォントで、`size` は文字の大きさ
+//! (論理ピクセル)。`at` は文字の**上端**で、横は寄せ方に従う。**文字の幅を
+//! 測る API は無い** (計量を持たないため)。
+//!
+//! `redraw` は**その場では描かない**。次の描画のとき (macOS / Linux は
+//! ネイティブの描画パス、Web は次のフレーム、Windows は `DispatcherQueue` の
+//! 次の順番) に `on_draw` が呼ばれる。続けて何度呼んでも描くのは 1 回で、
+//! `on_draw` の中から呼んでも再入しない。
+//!
+//! [`on_pointer`](Canvas::on_pointer) にはポインター (マウス・タッチ・ペン) の
+//! 押下・移動・解放が、面の左上を原点にした位置で届く
+//! ([`PointerEvent`])。移動は押していない間 (ホバー) も届き、押している間は
+//! 面の外へ出ても届く (捕捉する)。右クリックや修飾キーは区別しない。
+//!
+//! Windows だけは**画素を描く面が Windows App SDK に無い** (Win2D は別
+//! パッケージ)。そこで XAML が持つ図形の要素 `Path` と `TextBlock` を
+//! `Canvas` へ置く形にしていて、描き直しのたびに面を丸ごと組み直す。
+//! 命令が数千を超える図では、他の 3 環境より描き直しに時間がかかる。
+//!
 //! ## ナビゲーション
 //!
 //! タブ・ナビバー・ドック・メニュー・パンくず・ページ送り・リンクは、
@@ -1349,46 +1405,50 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・ラベルの折り返し・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む 134 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、ラベルの折り返しと省略記号、ラベルの文字づかい、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
-//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・別スレッドからの受け渡しと `spawn` を含む) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・別スレッドからの受け渡しと `spawn` を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 115 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・ラベルの折り返しを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・描画面・ラベルの折り返し・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む 151 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、描画面の画素とポインター、ラベルの折り返しと省略記号、ラベルの文字づかい、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・描画面・別スレッドからの受け渡しと `spawn` を含む) |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・別スレッドからの受け渡しと `spawn` を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 141 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの折り返しを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
 pub use naui_core::{
     accept_attribute, clamp_split_position, days_in_month, default_extension, is_leap_year, media,
     with_default_extension, Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
-    Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, NavItem,
-    NumberSpec, Orientation, Padding, PlaybackState, PopupItem, Result, ScrollPolicy,
-    SelectionMode, Sender, Settings, Sizing, SortOrder, TableColumn, TableRow, Task, Tasks,
-    TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
+    DrawCommand, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem,
+    NavItem, NumberSpec, Orientation, Padding, Painter, Path, PathSegment, PlaybackState, Point,
+    PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, Sender,
+    Settings, Sizing, SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme,
+    Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, DEFAULT_SPLIT_POSITION,
+    ROW_WINDOW_THRESHOLD,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
-    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
-    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs, TextArea,
-    TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
+    Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
+    ListRow, Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
+    RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
+    TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
-    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
-    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs, TextArea,
-    TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
+    Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
+    ListRow, Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
+    RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
+    TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
-    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
-    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs, TextArea,
-    TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
+    Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
+    ListRow, Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
+    RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
+    TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 
 #[cfg(all(
@@ -1397,11 +1457,12 @@ pub use naui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk::{
-    run, Audio, Breadcrumbs, Button, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog, Dock,
-    EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List, ListRow,
-    Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar, RadioGroup,
-    Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs, TextArea,
-    TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget, Window,
+    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
+    Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
+    ListRow, Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
+    RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
+    TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
+    Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1571,6 +1632,50 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     color_picker.set_enabled(true);
     color_picker.on_change(|_value: Color| {});
     color_picker.set_sizing(Sizing::fill_width());
+
+    let canvas: Canvas = ui.canvas()?;
+    canvas.on_draw(|painter: &mut Painter| {
+        let _: f64 = painter.width();
+        let _: f64 = painter.height();
+        let _: Rect = painter.bounds();
+        painter.set_opacity(0.5);
+        painter.set_dash(&[4.0, 2.0]);
+        painter.set_text_align(Align::Center);
+        painter.fill_rect(Rect::new(0.0, 0.0, 1.0, 1.0), Color::BLACK);
+        painter.stroke_rect(Rect::new(0.0, 0.0, 1.0, 1.0), Color::BLACK, 1.0);
+        painter.fill_circle(Point::new(0.0, 0.0), 1.0, Color::BLACK);
+        painter.stroke_circle(Point::new(0.0, 0.0), 1.0, Color::BLACK, 1.0);
+        painter.line(
+            Point::new(0.0, 0.0),
+            Point::new(1.0, 1.0),
+            Color::BLACK,
+            1.0,
+        );
+        painter.polyline(&[Point::new(0.0, 0.0)], Color::BLACK, 1.0);
+        painter.fill_polygon(&[Point::new(0.0, 0.0)], Color::BLACK);
+        let path: Path = Path::new()
+            .move_to(Point::new(0.0, 0.0))
+            .line_to(Point::new(1.0, 0.0))
+            .quad_to(Point::new(1.0, 1.0), Point::new(0.0, 1.0))
+            .cubic_to(
+                Point::new(0.0, 0.0),
+                Point::new(1.0, 1.0),
+                Point::new(0.0, 0.0),
+            )
+            .arc(Point::new(0.0, 0.0), 1.0, 0.0, 1.0)
+            .close();
+        painter.fill_path(&path, Color::BLACK);
+        painter.stroke_path(&path, Color::BLACK, 1.0);
+        painter.text("t", Point::new(0.0, 0.0), 12.0, Color::BLACK);
+        let _: &[DrawCommand] = painter.commands();
+    });
+    canvas.on_pointer(|event: PointerEvent| {
+        let _: PointerPhase = event.phase;
+        let _: Point = event.point;
+    });
+    canvas.redraw();
+    let _: (f64, f64) = canvas.size();
+    canvas.set_sizing(Sizing::fill());
 
     let combo_box: ComboBox = ui.combo_box()?;
     combo_box.set_items(&["a", "b"]);
@@ -1986,6 +2091,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     stack.append(&date_picker);
     stack.append(&time_picker);
     stack.append(&color_picker);
+    stack.append(&canvas);
     stack.append(&input);
     stack.append(&text_area);
     stack.append(&slider);

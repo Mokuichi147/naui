@@ -14,6 +14,7 @@
 /// (`Slot<dyn FnMut(&str)>` のように) ので、高階の寿命はそのまま残る。
 pub(crate) type Slot<F> = Option<Box<F>>;
 
+mod canvas;
 mod channel;
 mod color;
 mod datetime;
@@ -34,6 +35,9 @@ mod toast;
 mod toolbar;
 mod tree;
 
+pub use canvas::{
+    DrawCommand, Painter, Path, PathSegment, Point, PointerEvent, PointerPhase, Rect,
+};
 pub use channel::Sender;
 pub use color::Color;
 pub use datetime::{days_in_month, is_leap_year, DatePickerMode, DateTime, Time};

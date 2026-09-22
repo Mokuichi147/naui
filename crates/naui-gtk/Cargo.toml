@@ -16,6 +16,8 @@ naui-core.workspace = true
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
 adw = { version = "0.7", package = "libadwaita", features = ["v1_5"] }
 gtk = { version = "0.9.7", package = "gtk4", features = ["v4_10"] }
+# 描画面の文字を Pango のレイアウトで cairo へ描くため。
+pangocairo = "0.20"
 
 [[test]]
 name = "gtk4"

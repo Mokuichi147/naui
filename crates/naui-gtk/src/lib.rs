@@ -29,6 +29,7 @@
 //! | `DatePicker` | `GtkMenuButton` + `GtkCalendar` / `GtkSpinButton` の組 |
 //! | `TimePicker` | 時と分の `GtkSpinButton` を `:` で挟んだもの |
 //! | `ColorPicker` | `GtkColorDialogButton` + `GtkColorDialog` |
+//! | `Canvas` | `GtkDrawingArea` (cairo + Pango で描く) |
 //! | `TextInput` | `GtkEntry` |
 //! | `TextArea` | `GtkTextView` を `GtkScrolledWindow` に載せたもの |
 //! | `Slider` | `GtkScale` |
@@ -118,6 +119,7 @@
 
 mod bin;
 mod callback;
+mod canvas;
 mod color_picker;
 mod combo_box;
 mod date_picker;
@@ -154,6 +156,7 @@ use gtk::prelude::*;
 use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
 
 pub use bin::SizeBin;
+pub use canvas::Canvas;
 pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
@@ -325,6 +328,11 @@ impl Ui {
     /// 色を選ばせるコントロール。初期値は黒。
     pub fn color_picker(&self) -> Result<ColorPicker> {
         Ok(ColorPicker::new())
+    }
+
+    /// アプリが自分で描く面。大きさは `set_sizing` で指定する。
+    pub fn canvas(&self) -> Result<Canvas> {
+        Ok(Canvas::new())
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

@@ -21,15 +21,16 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Color, DialogResponse, GridCell, Length, ListItem, Orientation, Padding, PopupItem,
-    Result, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme,
+    Align, Color, DialogResponse, GridCell, Length, ListItem, Orientation, Padding, Point,
+    PointerPhase, PopupItem, Rect, Result, Sizing, TableColumn, TableRow, TextColor, TextStyle,
+    Theme,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, Widget};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{
-    Element, EventTarget, HtmlElement, HtmlInputElement, HtmlSelectElement, KeyboardEvent,
-    KeyboardEventInit,
+    CanvasRenderingContext2d, Element, EventTarget, HtmlElement, HtmlInputElement,
+    HtmlSelectElement, KeyboardEvent, KeyboardEventInit, PointerEvent, PointerEventInit,
 };
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -516,6 +517,122 @@ fn color_picker_round_trips() {
         native.set_value("#ff8800");
         dispatch(native.as_ref(), "change");
         assert_eq!(seen.get(), Some(Color::rgb(0xff, 0x88, 0x00)));
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------------- Canvas
+
+/// 描画面は `<canvas>` で、`on_draw` が記録した命令を 2D コンテキストで塗る。
+/// 裏の画素数は CSS の大きさ × `devicePixelRatio` にそろえ、座標は CSS
+/// ピクセルのまま渡せる。画素は `getImageData` で読む。
+#[wasm_bindgen_test]
+fn canvas_paints_recorded_commands() {
+    with_ui(|ui| {
+        let canvas = ui.canvas()?;
+        canvas.set_sizing(
+            Sizing::new()
+                .width(Length::Fixed(120.0))
+                .height(Length::Fixed(80.0)),
+        );
+        let sizes = Rc::new(RefCell::new(Vec::new()));
+        canvas.on_draw({
+            let sizes = sizes.clone();
+            move |painter| {
+                sizes.borrow_mut().push((painter.width(), painter.height()));
+                painter.fill_rect(painter.bounds(), Color::WHITE);
+                painter.fill_rect(Rect::new(10.0, 10.0, 40.0, 20.0), Color::rgb(0xff, 0, 0));
+                painter.set_text_align(Align::End);
+                painter.text("naui", Point::new(110.0, 50.0), 12.0, Color::BLACK);
+            }
+        });
+        let _mounted = Mounted::new(&canvas);
+        canvas.draw_for_test();
+
+        assert_eq!(
+            *sizes.borrow(),
+            vec![(120.0, 80.0)],
+            "CSS の大きさで呼ばれること"
+        );
+        let native = canvas.native_canvas();
+        let ratio = web_sys::window().expect("window").device_pixel_ratio();
+        assert_eq!(
+            f64::from(native.width()),
+            (120.0 * ratio).round(),
+            "裏の画素数は倍率ぶん増えること"
+        );
+
+        let context: CanvasRenderingContext2d = native
+            .get_context("2d")
+            .expect("2D コンテキスト")
+            .expect("2D コンテキスト")
+            .unchecked_into();
+        let read = |x: f64, y: f64| -> (u8, u8, u8, u8) {
+            let data = context
+                .get_image_data((x * ratio).floor(), (y * ratio).floor(), 1.0, 1.0)
+                .expect("画素の読み出し")
+                .data();
+            (data[0], data[1], data[2], data[3])
+        };
+        assert_eq!(read(20.0, 15.0), (255, 0, 0, 255), "矩形の中は赤いこと");
+        assert_eq!(read(80.0, 60.0), (255, 255, 255, 255), "矩形の外は白いこと");
+
+        // 右寄せの文字は x=110 より左にだけ描かれる。
+        let dark = |x: f64, y: f64| {
+            let (r, g, b, _) = read(x, y);
+            u32::from(r) + u32::from(g) + u32::from(b) < 600
+        };
+        let found = (85..110).any(|x| (50..64).any(|y| dark(f64::from(x), f64::from(y))));
+        assert!(found, "文字が右寄せで描かれていること");
+        assert!(
+            (50..64).all(|y| !dark(114.0, f64::from(y))),
+            "右端より右には描かないこと"
+        );
+        Ok(())
+    });
+}
+
+/// ポインターの押下・移動・解放が、面の左上を原点にした位置で届く。
+#[wasm_bindgen_test]
+fn canvas_reports_pointer_events() {
+    with_ui(|ui| {
+        let canvas = ui.canvas()?;
+        canvas.set_sizing(
+            Sizing::new()
+                .width(Length::Fixed(100.0))
+                .height(Length::Fixed(60.0)),
+        );
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        canvas.on_pointer({
+            let seen = seen.clone();
+            move |event| seen.borrow_mut().push(event)
+        });
+        let _mounted = Mounted::new(&canvas);
+
+        let element = canvas.native_element();
+        let rect = element.get_bounding_client_rect();
+        let send = |kind: &str, x: f64, y: f64| {
+            let init = PointerEventInit::new();
+            init.set_bubbles(true);
+            init.set_client_x((rect.left() + x) as i32);
+            init.set_client_y((rect.top() + y) as i32);
+            init.set_pointer_id(1);
+            let event = PointerEvent::new_with_event_init_dict(kind, &init)
+                .expect("ポインターイベントの生成");
+            element.dispatch_event(&event).expect("イベントの配送");
+        };
+        send("pointerdown", 30.0, 20.0);
+        send("pointermove", 50.0, 40.0);
+        send("pointerup", 50.0, 40.0);
+
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 3);
+        assert_eq!(seen[0].phase, PointerPhase::Down);
+        assert_eq!(seen[1].phase, PointerPhase::Move);
+        assert_eq!(seen[2].phase, PointerPhase::Up);
+        let near = |a: Point, x: f64, y: f64| (a.x - x).abs() <= 1.0 && (a.y - y).abs() <= 1.0;
+        assert!(near(seen[0].point, 30.0, 20.0), "{:?}", seen[0]);
+        assert!(near(seen[2].point, 50.0, 40.0), "{:?}", seen[2]);
         Ok(())
     });
 }

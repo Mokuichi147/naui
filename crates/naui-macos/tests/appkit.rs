@@ -18,8 +18,9 @@ use std::time::{Duration, Instant};
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
-    TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Point, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder,
+    TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
+    TreeItem,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::Retained;
@@ -64,6 +65,14 @@ fn main() {
         (
             "色ピッカーがカタログ色を sRGB として読む",
             color_picker_reads_catalog_colors_as_srgb,
+        ),
+        (
+            "描画面が on_draw の命令を AppKit で画素に落とす",
+            canvas_paints_recorded_commands,
+        ),
+        (
+            "描画面がマウスの押下・移動・解放を面の座標で通知する",
+            canvas_reports_pointer_events,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         ("複数行入力が改行込みで往復する", text_area_round_trip),
@@ -778,6 +787,193 @@ fn color_picker_reads_catalog_colors_as_srgb(ui: &Ui) -> Result<()> {
         "カタログ色でも成分が読めること"
     );
     assert_ne!(value, Color::BLACK, "変換に失敗して黒へ落ちていないこと");
+    Ok(())
+}
+
+/// 描画面は `NSView` の `drawRect:` で、`on_draw` が記録した命令を
+/// `NSBezierPath` で塗る。ビューの描画をビットマップへ写して、塗った矩形の
+/// 中と外の画素を読む。
+fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    let sizes = Rc::new(RefCell::new(Vec::new()));
+    canvas.on_draw({
+        let sizes = sizes.clone();
+        move |painter| {
+            sizes.borrow_mut().push((painter.width(), painter.height()));
+            painter.fill_rect(Rect::new(0.0, 0.0, 120.0, 80.0), Color::WHITE);
+            painter.fill_rect(
+                Rect::new(10.0, 10.0, 40.0, 20.0),
+                Color::rgb(0xff, 0x00, 0x00),
+            );
+            painter.set_text_align(Align::End);
+            painter.text("naui", Point::new(110.0, 50.0), 12.0, Color::BLACK);
+        }
+    });
+
+    let window = ui.window("canvas", 200.0, 160.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let view = canvas.native_view();
+    view.layoutSubtreeIfNeeded();
+    assert_eq!(canvas.size(), (120.0, 80.0), "指定した大きさになること");
+
+    let bounds = view.bounds();
+    let bitmap = view
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .expect("ビットマップを用意できること");
+    unsafe { view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap) };
+    // ウィンドウを出したときにも 1 回描かれるので、回数ではなく大きさを見る。
+    let drawn = sizes.borrow().len();
+    assert!(drawn >= 1, "描くときに呼ばれること");
+    assert!(
+        sizes.borrow().iter().all(|&size| size == (120.0, 80.0)),
+        "面の大きさで呼ばれること: {:?}",
+        sizes.borrow()
+    );
+
+    // 左上原点なので、(20, 15) は赤い矩形の中、(80, 60) は白い地。
+    // Retina では 1 論理ピクセルが複数の画素になるので、倍率を掛けて読む。
+    let scale = bitmap.pixelsWide() as f64 / bounds.size.width;
+    let read = |x: f64, y: f64| -> Color {
+        let color = bitmap
+            .colorAtX_y((x * scale) as isize, (y * scale) as isize)
+            .expect("画素が読めること");
+        let srgb = color
+            .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+            .expect("sRGB へ変換できること");
+        Color::from_unit(
+            srgb.redComponent(),
+            srgb.greenComponent(),
+            srgb.blueComponent(),
+        )
+    };
+    // ビットマップの色空間はディスプレイのものなので、値は sRGB へ戻しても
+    // 少しずれる (#ff0000 が #f14b2d になる)。赤が勝っていることだけを見る。
+    let inside = read(20.0, 15.0);
+    assert!(
+        inside.r > 180 && inside.g < 120 && inside.b < 120,
+        "矩形の中は赤いこと: {inside}"
+    );
+    let outside = read(80.0, 60.0);
+    assert!(
+        outside.r > 200 && outside.g > 200 && outside.b > 200,
+        "矩形の外は白いこと: {outside}"
+    );
+    // 右寄せの文字は x=110 より左に描かれる。文字の行 (y=50..62) の
+    // 右端付近に暗い画素がある一方、x=112 より右には無い。
+    let dark = |x: f64, y: f64| {
+        let c = read(x, y);
+        u32::from(c.r) + u32::from(c.g) + u32::from(c.b) < 600
+    };
+    let mut found = false;
+    for x in 85..110 {
+        for y in 50..64 {
+            if dark(f64::from(x), f64::from(y)) {
+                found = true;
+            }
+        }
+    }
+    assert!(found, "文字が右寄せで描かれていること");
+    for y in 50..64 {
+        assert!(!dark(114.0, f64::from(y)), "右端より右には描かないこと");
+    }
+
+    // 描き直しを頼むと次の描画でまた呼ばれる。
+    canvas.redraw();
+    unsafe { view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap) };
+    assert!(sizes.borrow().len() > drawn, "描き直しで呼ばれること");
+    window.close();
+    Ok(())
+}
+
+/// マウスの押下・ドラッグ・解放が、ウィンドウ座標から面の座標へ直して届く。
+fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(100.0))
+            .height(Length::Fixed(60.0)),
+    );
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    canvas.on_pointer({
+        let seen = seen.clone();
+        move |event| seen.borrow_mut().push(event)
+    });
+
+    let window = ui.window("canvas", 100.0, 60.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let view = canvas.native_view();
+    view.layoutSubtreeIfNeeded();
+    let native_window = window.native_window();
+
+    // 面の (30, 20) をウィンドウ座標へ直して、本物の NSEvent を作る。
+    let send = |kind: NSEventType, x: f64, y: f64| {
+        let point = view.convertPoint_toView(NSPoint::new(x, y), None);
+        let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            point,
+            NSEventModifierFlags::empty(),
+            0.0,
+            native_window.windowNumber(),
+            None,
+            0,
+            1,
+            1.0,
+        )
+        .expect("マウスイベント");
+        match kind {
+            NSEventType::LeftMouseDown => view.mouseDown(&event),
+            NSEventType::LeftMouseDragged => view.mouseDragged(&event),
+            NSEventType::LeftMouseUp => view.mouseUp(&event),
+            NSEventType::RightMouseDown => view.rightMouseDown(&event),
+            NSEventType::RightMouseUp => view.rightMouseUp(&event),
+            NSEventType::OtherMouseDown => view.otherMouseDown(&event),
+            _ => view.otherMouseUp(&event),
+        }
+    };
+    send(NSEventType::LeftMouseDown, 30.0, 20.0);
+    send(NSEventType::LeftMouseDragged, 50.0, 40.0);
+    send(NSEventType::LeftMouseUp, 50.0, 40.0);
+
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 3);
+        assert_eq!(seen[0].phase, PointerPhase::Down);
+        assert_eq!(seen[1].phase, PointerPhase::Move);
+        assert_eq!(seen[2].phase, PointerPhase::Up);
+        let near = |a: Point, x: f64, y: f64| (a.x - x).abs() < 0.5 && (a.y - y).abs() < 0.5;
+        assert!(
+            near(seen[0].point, 30.0, 20.0),
+            "左上原点で届くこと: {:?}",
+            seen[0]
+        );
+        assert!(near(seen[2].point, 50.0, 40.0), "{:?}", seen[2]);
+    }
+
+    // 右ボタンと中ボタンも区別せず同じ通知になる。
+    seen.borrow_mut().clear();
+    send(NSEventType::RightMouseDown, 10.0, 10.0);
+    send(NSEventType::RightMouseUp, 10.0, 10.0);
+    send(NSEventType::OtherMouseDown, 12.0, 12.0);
+    send(NSEventType::OtherMouseUp, 12.0, 12.0);
+    let phases: Vec<PointerPhase> = seen.borrow().iter().map(|e| e.phase).collect();
+    assert_eq!(
+        phases,
+        vec![
+            PointerPhase::Down,
+            PointerPhase::Up,
+            PointerPhase::Down,
+            PointerPhase::Up
+        ],
+        "右ボタンと中ボタンも届くこと"
+    );
+    window.close();
     Ok(())
 }
 

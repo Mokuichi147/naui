@@ -248,15 +248,22 @@ impl_widget!(Spacer);
 impl Spacer {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let native = NSView::new(mtm);
-        // 中身が無いので、縮むことにも広がることにも抵抗しない。
-        for horizontal in [true, false] {
-            native.setContentHuggingPriority_forOrientation(FILL_HUGGING, orientation(horizontal));
-            native.setContentCompressionResistancePriority_forOrientation(
-                FILL_HUGGING,
-                orientation(horizontal),
-            );
-        }
+        relax_hugging(&native);
         Self(Rc::new(SpacerInner { native }))
+    }
+}
+
+/// 中身の無いビューを、縮むことにも広がることにも抵抗しないようにする。
+///
+/// `Spacer` と `Canvas` のように自然な大きさを持たないビューは、これで
+/// 親の余りを受け取る側に回る。
+pub(crate) fn relax_hugging(view: &NSView) {
+    for horizontal in [true, false] {
+        view.setContentHuggingPriority_forOrientation(FILL_HUGGING, orientation(horizontal));
+        view.setContentCompressionResistancePriority_forOrientation(
+            FILL_HUGGING,
+            orientation(horizontal),
+        );
     }
 }
 

@@ -9,6 +9,7 @@
 // Objective-C 呼び出しのため unsafe が必要。
 #![allow(unsafe_code)]
 
+mod canvas;
 mod color_picker;
 mod combo_box;
 mod date_picker;
@@ -50,6 +51,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::NSNotification;
 
+pub use canvas::Canvas;
 pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
@@ -205,6 +207,11 @@ impl Ui {
     /// 色を選ばせるコントロール。初期値は黒。
     pub fn color_picker(&self) -> Result<ColorPicker> {
         Ok(ColorPicker::new(self.0.mtm))
+    }
+
+    /// アプリが自分で描く面。大きさは `set_sizing` で指定する。
+    pub fn canvas(&self) -> Result<Canvas> {
+        Ok(Canvas::new(self.0.mtm))
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

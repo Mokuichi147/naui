@@ -7,14 +7,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use naui_core::{Align, GridCell, Orientation, Result, ScrollPolicy, Sizing, TextColor, TextStyle};
+use naui_core::{
+    Align, Color, GridCell, Orientation, Point, Rect, Result, ScrollPolicy, Sizing, TextColor,
+    TextStyle,
+};
 use naui_windows::{run_for_test, Ui, Widget};
 
 use crate::automation;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Grid, ScrollViewer,
-    Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
+    Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox, ComboBox as XamlComboBox,
+    Grid, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, HorizontalAlignment, UIElement, VerticalAlignment,
@@ -94,6 +98,10 @@ const CASES: &[Case] = &[
         removing_stack_child_restores_alignment,
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
+    (
+        "描画面の命令が XAML の Path と TextBlock になり、読み込める",
+        canvas_commands_become_xaml_shapes,
+    ),
     (
         "ラベルの付くウィジェットが読み上げ名を持つ",
         widgets_expose_accessible_names,
@@ -291,6 +299,79 @@ fn checkbox_toggle(ui: &Ui) -> Result<()> {
         seen.borrow().as_slice(),
         [true, false].as_slice(),
         "変わったあとの値が順に届くこと"
+    );
+    Ok(())
+}
+
+/// 描画面は `Grid` の中に `Canvas` を置き、`on_draw` の命令を XAML の
+/// `Path` と `TextBlock` にして読み込む。画面に出していないので大きさは
+/// 決まらず、`xaml_for_test` で大きさを与えて組み立てた XAML を WinUI に
+/// 読ませ、要素の数と種類を確かめる。
+fn canvas_commands_become_xaml_shapes(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    assert!(
+        native::<Grid>(&canvas).Background().is_ok(),
+        "土台の Grid に当たり判定のための背景があること"
+    );
+    let calls = Rc::new(Cell::new(0));
+    canvas.on_draw({
+        let calls = calls.clone();
+        move |painter| {
+            calls.set(calls.get() + 1);
+            painter.fill_rect(Rect::new(10.0, 10.0, 40.0, 20.0), Color::rgb(0xff, 0, 0));
+            painter.set_dash(&[4.0, 2.0]);
+            painter.line(
+                Point::new(0.0, 0.0),
+                Point::new(50.0, 30.0),
+                Color::BLACK,
+                2.0,
+            );
+            painter.set_text_align(Align::Center);
+            painter.text("naui <&>", Point::new(60.0, 40.0), 12.0, Color::BLACK);
+            // `{` で始まる文字はマークアップ拡張と読まれて面ごと壊れるので、
+            // 文字のまま通ることを見る。
+            painter.text("{Binding}", Point::new(60.0, 60.0), 12.0, Color::BLACK);
+        }
+    });
+
+    let xaml = canvas.xaml_for_test(120.0, 80.0);
+    assert_eq!(calls.get(), 1, "面の大きさで on_draw が呼ばれること");
+    let scene: XamlCanvas = XamlReader::Load(&HSTRING::from(xaml.as_str()))
+        .and_then(|element| element.cast::<XamlCanvas>())
+        .unwrap_or_else(|e| panic!("組み立てた XAML を WinUI が読めること: {e}\n{xaml}"));
+    let children = scene.Children().expect("子");
+    assert_eq!(
+        children.Size().unwrap_or(0),
+        4,
+        "塗り・線・文字 2 つの 4 要素"
+    );
+
+    let root: FrameworkElement = scene.cast().expect("FrameworkElement");
+    assert!(
+        (root.Width().unwrap_or(0.0) - 120.0).abs() < 0.5
+            && (root.Height().unwrap_or(0.0) - 80.0).abs() < 0.5,
+        "面の大きさが Canvas に付くこと"
+    );
+    let text: TextBlock = root
+        .FindName(&HSTRING::from("t2"))
+        .and_then(|value| value.cast())
+        .expect("文字の TextBlock");
+    assert_eq!(
+        text.Text().map(|t| t.to_string()).as_deref(),
+        Ok("naui <&>")
+    );
+    assert!(
+        (text.FontSize().unwrap_or(0.0) - 12.0).abs() < 0.01,
+        "文字の大きさが FontSize に写ること"
+    );
+    let braced: TextBlock = root
+        .FindName(&HSTRING::from("t3"))
+        .and_then(|value| value.cast())
+        .expect("`{` で始まる文字の TextBlock");
+    assert_eq!(
+        braced.Text().map(|t| t.to_string()).as_deref(),
+        Ok("{Binding}"),
+        "`{{}}` の印は表示には出ず、文字がそのまま残ること"
     );
     Ok(())
 }

@@ -22,8 +22,9 @@ use gtk::pango;
 use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, NavItem, Orientation, Padding, PlaybackState,
-    PopupItem, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow,
-    TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    Point, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, Sizing, SortOrder,
+    TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
+    TreeItem,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -57,6 +58,14 @@ fn main() {
         (
             "色ピッカーの set_value は通知しない",
             color_picker_set_is_silent,
+        ),
+        (
+            "描画面が on_draw の命令を cairo で画素に落とす",
+            canvas_paints_recorded_commands,
+        ),
+        (
+            "描画面がポインターの押下・移動・解放を面の座標で通知する",
+            canvas_reports_pointer_events,
         ),
         (
             "チェックボックスの印がラベルの字面にそろう",
@@ -715,6 +724,167 @@ fn toggle_set_is_silent(ui: &Ui) -> Result<()> {
     toggle.set_on(false);
     assert!(!toggle.is_on());
     assert!(log.borrow().is_empty(), "プログラムからの変更は通知しない");
+    Ok(())
+}
+
+/// 描画面は `GtkDrawingArea` で、`on_draw` が記録した命令を cairo で塗る。
+/// ウィジェットのスナップショットを cairo の画像へ描いて、塗った矩形の中と
+/// 外の画素を読む。
+fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    let (sizes, sink) = recorder::<(f64, f64)>();
+    canvas.on_draw({
+        let mut sink = sink;
+        move |painter| {
+            sink((painter.width(), painter.height()));
+            painter.fill_rect(painter.bounds(), Color::WHITE);
+            painter.fill_rect(Rect::new(10.0, 10.0, 40.0, 20.0), Color::rgb(0xff, 0, 0));
+            painter.set_text_align(Align::End);
+            painter.text("naui", Point::new(110.0, 50.0), 12.0, Color::BLACK);
+        }
+    });
+
+    let window = ui.window("canvas", 200.0, 160.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let area = canvas.native_area();
+    tick(&area);
+    assert_eq!(canvas.size(), (120.0, 80.0), "指定した大きさになること");
+
+    // 描画をレンダーノードへ取り、cairo の画像へ落として画素を読む。
+    let snapshot = gtk::Snapshot::new();
+    bin_of(&canvas).snapshot_child(&area, &snapshot);
+    let node = snapshot.to_node().expect("描いたものがあること");
+    let mut surface =
+        gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 120, 80).expect("画像の生成");
+    let cr = gtk::cairo::Context::new(&surface).expect("コンテキストの生成");
+    node.draw(&cr);
+    drop(cr);
+    surface.flush();
+    let stride = surface.stride() as usize;
+    let data = surface.data().expect("画素の読み出し");
+    // ARGB32 はネイティブのエンディアンで 1 画素 4 バイト (BGRA の並び)。
+    let read = |x: usize, y: usize| -> (u8, u8, u8) {
+        let i = y * stride + x * 4;
+        (data[i + 2], data[i + 1], data[i])
+    };
+
+    assert!(
+        sizes.borrow().iter().all(|&size| size == (120.0, 80.0)),
+        "面の大きさで呼ばれること: {:?}",
+        sizes.borrow()
+    );
+    assert!(!sizes.borrow().is_empty(), "描くときに呼ばれること");
+    assert_eq!(read(20, 15), (255, 0, 0), "矩形の中は赤いこと");
+    assert_eq!(read(80, 60), (255, 255, 255), "矩形の外は白いこと");
+
+    // 右寄せの文字は x=110 より左にだけ描かれる。
+    let dark = |x: usize, y: usize| {
+        let (r, g, b) = read(x, y);
+        u32::from(r) + u32::from(g) + u32::from(b) < 600
+    };
+    let found = (85..110).any(|x| (50..64).any(|y| dark(x, y)));
+    assert!(found, "文字が右寄せで描かれていること");
+    assert!(
+        (50..64).all(|y| !dark(114, y)),
+        "右端より右には描かないこと"
+    );
+    window.close();
+    Ok(())
+}
+
+/// ポインターの押下・移動・解放が、面の左上を原点にした位置で届く。
+///
+/// GTK4 には、ウィジェットへポインターのイベントを流し込む公開 API が無い
+/// (`gtk_test_widget_click` は GTK4 で無くなり、`GdkEvent` はアプリからは
+/// 作れない)。そこで、付いているコントローラーの組み合わせを確かめたうえで、
+/// そのシグナルを起こして通知の写りを見る。
+///
+/// - `GtkGestureClick`: 押した瞬間に `pressed` を出す (ドラッグの判定を待たない)。
+///   ボタンを区別しない設定
+/// - `GtkGestureDrag`: 押している間の移動。面の外へ出ても届く
+/// - `GtkEventControllerMotion`: 押していない間の移動 (ホバー)。押している間は
+///   `drag-update` と二重にならないよう黙る
+fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    let (log, sink) = recorder::<naui_core::PointerEvent>();
+    canvas.on_pointer(sink);
+
+    let area = canvas.native_area();
+    let mut click = None;
+    let mut drag = None;
+    let mut motion = None;
+    // `observe_controllers` の項目の型は `GObject` として申告されるので、
+    // 1 つずつ取り出して見分ける。
+    let controllers = area.observe_controllers();
+    for index in 0..controllers.n_items() {
+        let Some(c) = controllers.item(index) else {
+            continue;
+        };
+        if let Ok(g) = c.clone().downcast::<gtk::GestureClick>() {
+            click = Some(g);
+        } else if let Ok(d) = c.clone().downcast::<gtk::GestureDrag>() {
+            drag = Some(d);
+        } else if let Ok(m) = c.downcast::<gtk::EventControllerMotion>() {
+            motion = Some(m);
+        }
+    }
+    let click = click.expect("押下と解放を受ける GtkGestureClick が付いていること");
+    let drag = drag.expect("押している間の移動を受ける GtkGestureDrag が付いていること");
+    let motion = motion.expect("ホバーを受ける GtkEventControllerMotion が付いていること");
+    assert_eq!(
+        click.button(),
+        0,
+        "ボタンを区別せず、右ボタンや中ボタンでも届くこと"
+    );
+    assert_eq!(drag.button(), 0, "ドラッグもボタンを区別しないこと");
+
+    // 押していない間の移動はホバーとして届く。
+    motion.emit_by_name::<()>("motion", &[&5.0f64, &6.0f64]);
+
+    // 押してから動かす。`drag-update` は始点からのずれで届く (シグナルを直接
+    // 起こしたときは始点を持っていないので 0 として扱われる)。面の外
+    // (負の座標) へ出た移動も届く。
+    click.emit_by_name::<()>("pressed", &[&1i32, &30.0f64, &20.0f64]);
+    drag.emit_by_name::<()>("drag-begin", &[&30.0f64, &20.0f64]);
+    drag.emit_by_name::<()>("drag-update", &[&50.0f64, &40.0f64]);
+    motion.emit_by_name::<()>("motion", &[&51.0f64, &41.0f64]);
+    drag.emit_by_name::<()>("drag-update", &[&-10.0f64, &-10.0f64]);
+    drag.emit_by_name::<()>("drag-end", &[&-10.0f64, &-10.0f64]);
+    click.emit_by_name::<()>("released", &[&1i32, &-10.0f64, &-10.0f64]);
+
+    // 離したあとの移動はまたホバーとして届く。
+    motion.emit_by_name::<()>("motion", &[&7.0f64, &8.0f64]);
+
+    // 親のスクロールなどにシーケンスを奪われると `drag-end` は来ず `cancel` に
+    // なる。そのあともホバーが止まらないこと。
+    drag.emit_by_name::<()>("drag-begin", &[&1.0f64, &1.0f64]);
+    motion.emit_by_name::<()>("motion", &[&2.0f64, &2.0f64]);
+    drag.emit_by_name::<()>("cancel", &[&None::<gtk::gdk::EventSequence>]);
+    motion.emit_by_name::<()>("motion", &[&3.0f64, &4.0f64]);
+
+    let seen = log.borrow();
+    let phases: Vec<_> = seen.iter().map(|e| (e.phase, e.point)).collect();
+    assert_eq!(
+        phases,
+        vec![
+            (PointerPhase::Move, Point::new(5.0, 6.0)),
+            (PointerPhase::Down, Point::new(30.0, 20.0)),
+            (PointerPhase::Move, Point::new(50.0, 40.0)),
+            // 押している間の `motion` (51, 41) は二重になるので出ない。
+            (PointerPhase::Move, Point::new(-10.0, -10.0)),
+            (PointerPhase::Up, Point::new(-10.0, -10.0)),
+            (PointerPhase::Move, Point::new(7.0, 8.0)),
+            // 取り消された間の `motion` (2, 2) は出ず、取り消し後は届く。
+            (PointerPhase::Move, Point::new(3.0, 4.0)),
+        ],
+        "{seen:?}"
+    );
     Ok(())
 }
 
