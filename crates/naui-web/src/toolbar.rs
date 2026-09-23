@@ -66,8 +66,8 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
     let _ = element.style().set_property(property, value);
 }
 
-/// アイコン 1 つぶんのインライン SVG を作る。
-fn icon_svg(doc: &Document, icon: ToolbarIcon) -> Result<Element> {
+/// アイコン 1 つぶんのインライン SVG を作る。サイドバーの項目も使う。
+pub(crate) fn icon_svg(doc: &Document, icon: ToolbarIcon) -> Result<Element> {
     const NS: &str = "http://www.w3.org/2000/svg";
     let svg = doc
         .create_element_ns(Some(NS), "svg")

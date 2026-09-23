@@ -7,6 +7,10 @@
 //!
 //! 下段はさらに `AdwToastOverlay` で包む。[`Toast`](crate::Toast) はここへ
 //! 足され、ヘッダーバーより下・アプリの中身の上へ重なる (GNOME の作法)。
+//!
+//! [`Sidebar`] を付けると、ウィンドウの中身は `AdwOverlaySplitView` になり、
+//! 上の `AdwToolbarView` はその右の区画へ移る。左の区画はサイドバー自身の
+//! ヘッダーバーと一覧を持つ。
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -15,6 +19,7 @@ use adw::prelude::*;
 use naui_core::{Result, Theme};
 
 use crate::menu_bar::MenuBar;
+use crate::sidebar::Sidebar;
 use crate::toolbar::Toolbar;
 use crate::widgets::Widget;
 
@@ -31,6 +36,8 @@ pub(crate) struct WindowInner {
     toolbar: RefCell<Option<Toolbar>>,
     /// ヘッダーバーの下へ差し込んだメニューバー。通知先ごと生かしておく。
     menu_bar: RefCell<Option<MenuBar>>,
+    /// 取り付けたサイドバー。通知先ごと生かしておく。
+    sidebar: RefCell<Option<Sidebar>>,
 }
 
 /// トップレベルウィンドウ。
@@ -79,6 +86,7 @@ impl Window {
             child: RefCell::new(None),
             toolbar: RefCell::new(None),
             menu_bar: RefCell::new(None),
+            sidebar: RefCell::new(None),
         }))
     }
 
@@ -130,6 +138,32 @@ impl Window {
         // 直接ではなく、トーストを重ねる入れ物ごしに入れる。
         self.0.overlay.set_child(Some(&bin));
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
+    }
+
+    /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
+    ///
+    /// ウィンドウの中身を `AdwOverlaySplitView` へ差し替え、これまでの中身
+    /// (ヘッダーバー・メニューバー・子) はその右の区画へ移す。
+    pub fn set_sidebar(&self, sidebar: &Sidebar) {
+        self.clear_sidebar();
+        let split = sidebar.native_split_view();
+        self.0.native.set_content(None::<&gtk::Widget>);
+        split.set_content(Some(&self.0.view));
+        self.0.native.set_content(Some(&split));
+        *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
+    }
+
+    /// 取り付けたサイドバーを外す。付いていなければ何もしない。
+    ///
+    /// 右の区画にあった中身は、ウィンドウの中身へ戻る。
+    pub fn clear_sidebar(&self) {
+        let Some(old) = self.0.sidebar.borrow_mut().take() else {
+            return;
+        };
+        let split = old.native_split_view();
+        self.0.native.set_content(None::<&gtk::Widget>);
+        split.set_content(None::<&gtk::Widget>);
+        self.0.native.set_content(Some(&self.0.view));
     }
 
     /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
@@ -203,10 +237,15 @@ impl Window {
 /// [`Toast`](crate::Toast) は「いちばん手前のウィンドウ」へ出すので、
 /// `GtkApplication` からたどったウィンドウを、naui が組んだ構造
 /// (`AdwApplicationWindow` → `AdwToolbarView` → `AdwToastOverlay`) に沿って
-/// 下りる。
+/// 下りる。サイドバーを付けていれば、間に `AdwOverlaySplitView` の右の
+/// 区画が挟まる。
 pub(crate) fn toast_overlay(window: &gtk::Window) -> Option<adw::ToastOverlay> {
     let window = window.clone().downcast::<adw::ApplicationWindow>().ok()?;
-    let view = window.content()?.downcast::<adw::ToolbarView>().ok()?;
+    let mut content = window.content()?;
+    if let Some(split) = content.downcast_ref::<adw::OverlaySplitView>() {
+        content = split.content()?;
+    }
+    let view = content.downcast::<adw::ToolbarView>().ok()?;
     view.content()?.downcast::<adw::ToastOverlay>().ok()
 }
 

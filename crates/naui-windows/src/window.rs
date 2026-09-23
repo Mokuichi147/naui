@@ -22,6 +22,7 @@ use windows::System::VirtualKey;
 use windows_core::{Interface, HSTRING};
 
 use crate::menu_bar::MenuBar;
+use crate::sidebar::Sidebar;
 use crate::to_error;
 use crate::toolbar::Toolbar;
 use crate::ui_thread::UiThreadCell;
@@ -75,6 +76,9 @@ struct WindowInner {
     toolbar_host: RefCell<Option<Grid>>,
     /// タイトルバーの下にあるメニューバーの入れ物。
     menu_bar_host: RefCell<Option<Grid>>,
+    /// アプリの中身とトーストが入る層 ([`CONTENT_ROW`])。先頭の子が中身
+    /// (サイドバーを付けていれば `NavigationView`)。
+    content_layer: RefCell<Option<Grid>>,
     /// ドラッグ領域の候補。ツールバーが付いていなければタイトルバー全体を、
     /// 付いていればツールバーより右の空きだけを使う (ボタンの上で
     /// ウィンドウが動いてしまわないように)。
@@ -84,6 +88,8 @@ struct WindowInner {
     toolbar: RefCell<Option<Toolbar>>,
     /// 取り付けたメニューバー。通知先ごと生かしておく。
     menu_bar: RefCell<Option<MenuBar>>,
+    /// 取り付けたサイドバー。通知先ごと生かしておく。
+    sidebar: RefCell<Option<Sidebar>>,
     visible: RefCell<bool>,
     theme: Cell<Theme>,
     width: i32,
@@ -129,10 +135,12 @@ impl Window {
             theme_root: RefCell::new(None),
             toolbar_host: RefCell::new(None),
             menu_bar_host: RefCell::new(None),
+            content_layer: RefCell::new(None),
             title_bar: RefCell::new(None),
             drag_area: RefCell::new(None),
             toolbar: RefCell::new(None),
             menu_bar: RefCell::new(None),
+            sidebar: RefCell::new(None),
             title_label: RefCell::new(None),
             visible: RefCell::new(false),
             theme: Cell::new(theme),
@@ -171,10 +179,16 @@ impl Window {
     }
 
     /// ルートに置くウィジェット。呼ぶたびに置き換わる。
+    ///
+    /// サイドバーを付けているときは、その右の区画 (`NavigationView.Content`)
+    /// に置かれる。
     pub fn set_child(&self, child: &dyn Widget) {
-        let element = child.native_element();
+        // 根は作り直すが、サイドバー (`NavigationView`) は同じものを使い回す。
+        // XAML の要素は親を 1 つしか持てないので、古い根の層から外しておく。
+        self.take_content_head();
+        let element = self.host_content(&child.native_element());
         let themed = themed_content_root(&element, &self.title());
-        let (theme_root, title_bar, title_label, toolbar_host, menu_bar_host, drag_area) =
+        let (theme_root, title_bar, title_label, toolbar_host, menu_bar_host, drag_area, layer) =
             match themed {
                 Ok(content) => (
                     content.root,
@@ -183,10 +197,11 @@ impl Window {
                     Some(content.toolbar_host),
                     Some(content.menu_bar_host),
                     Some(content.drag_area),
+                    Some(content.content),
                 ),
                 Err(error) => {
                     eprintln!("naui-windows: テーマ付きウィンドウルートの生成に失敗: {error}");
-                    (element.clone(), None, None, None, None, None)
+                    (element.clone(), None, None, None, None, None, None)
                 }
             };
         if self.0.native.SetContent(&theme_root).is_ok() {
@@ -207,6 +222,7 @@ impl Window {
             *self.0.title_label.borrow_mut() = title_label;
             *self.0.toolbar_host.borrow_mut() = toolbar_host;
             *self.0.menu_bar_host.borrow_mut() = menu_bar_host;
+            *self.0.content_layer.borrow_mut() = layer;
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
             // ルートを作り直したので、取り付けてあったものを載せ直す。
             // ショートカットの購読も、新しい根へ付け直す。
@@ -220,6 +236,84 @@ impl Window {
                     .set(crate::layout::install_wheel_subclass(&self.0.native));
             }
         }
+    }
+
+    /// 中身の層へ置く要素。サイドバーを付けていれば、子をその右の区画へ
+    /// 入れたうえで `NavigationView` を返す。
+    fn host_content(&self, element: &UIElement) -> UIElement {
+        let sidebar = self.0.sidebar.borrow().clone();
+        let Some(sidebar) = sidebar else {
+            return element.clone();
+        };
+        match sidebar.element() {
+            Ok(navigation) => {
+                sidebar.set_content(Some(element));
+                navigation
+            }
+            Err(error) => {
+                eprintln!("naui-windows: サイドバーを置けませんでした: {error}");
+                element.clone()
+            }
+        }
+    }
+
+    /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
+    ///
+    /// 中身の層の先頭を `NavigationView` へ差し替え、[`set_child`]
+    /// (Self::set_child) の子はその右の区画 (`Content`) へ移す。タイトル
+    /// バーとメニューバーは上に残るので、サイドバーはその下から始まる
+    /// (Windows の「設定」と同じ並び)。
+    pub fn set_sidebar(&self, sidebar: &Sidebar) {
+        self.clear_sidebar();
+        *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
+        self.remount_content();
+    }
+
+    /// 取り付けたサイドバーを外す。付いていなければ何もしない。
+    ///
+    /// 右の区画にあった子は、ウィンドウの中身へ戻る。
+    pub fn clear_sidebar(&self) {
+        let Some(old) = self.0.sidebar.borrow_mut().take() else {
+            return;
+        };
+        // 先に層から外してから中身を手放す。XAML の要素は親を 1 つしか
+        // 持てないので、子を層へ戻す前に `Content` から抜いておく。
+        self.take_content_head();
+        old.set_content(None);
+        self.remount_content();
+    }
+
+    /// 中身の層の先頭 (子または `NavigationView`) を外す。
+    fn take_content_head(&self) {
+        let layer = self.0.content_layer.borrow().clone();
+        if let Some(children) = layer.and_then(|layer| layer.Children().ok()) {
+            if children.Size().unwrap_or(0) > 0 {
+                let _ = children.RemoveAt(0);
+            }
+        }
+    }
+
+    /// いまの子とサイドバーの組み合わせで、中身の層の先頭を置き直す。
+    ///
+    /// まだ [`set_child`](Self::set_child) を呼んでいなければ何もしない
+    /// (そちらが組み立てる)。
+    fn remount_content(&self) {
+        let layer = self.0.content_layer.borrow().clone();
+        let child = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
+        let (Some(layer), Some(child)) = (layer, child) else {
+            return;
+        };
+        let Ok(children) = layer.Children() else {
+            return;
+        };
+        self.take_content_head();
+        let element = self.host_content(&child);
+        let _ = children.InsertAt(0, &element);
     }
 
     /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
@@ -537,8 +631,13 @@ impl Window {
     pub(crate) fn clear_content_for_shutdown(&self) {
         self.release_backdrop();
         let _ = self.0.native.SetContent(None);
+        // サイドバーは `Ui` が持ち続けるので、右の区画の子もここで手放す。
+        if let Some(sidebar) = self.0.sidebar.borrow().as_ref() {
+            sidebar.set_content(None);
+        }
         *self.0.child.borrow_mut() = None;
         *self.0.theme_root.borrow_mut() = None;
+        *self.0.content_layer.borrow_mut() = None;
         *self.0.title_label.borrow_mut() = None;
     }
 
@@ -579,6 +678,8 @@ struct ThemedContent {
     toolbar_host: Grid,
     /// タイトルバーの下に置くメニューバーの入れ物。
     menu_bar_host: Grid,
+    /// アプリの中身とトーストが入る層。
+    content: Grid,
     /// ツールバーより右の空き。ツールバーを付けている間のドラッグ領域。
     drag_area: UIElement,
 }
@@ -761,6 +862,7 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
         .map_err(|e| to_error("テーマ背景要素の子取得", e))?
         .Append(element)
         .map_err(|e| to_error("テーマ背景要素への配置", e))?;
+    let layer = content.clone();
     Ok(ThemedContent {
         root: root
             .cast::<UIElement>()
@@ -771,6 +873,7 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
         title_label,
         toolbar_host,
         menu_bar_host,
+        content: layer,
         drag_area,
     })
 }

@@ -19,8 +19,9 @@ use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
     Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
-    ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
+    TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::Retained;
@@ -488,6 +489,30 @@ fn main() {
         (
             "ツールバーの通知中に内容と通知先を差し替えられる",
             toolbar_callback_is_reentrant,
+        ),
+        (
+            "サイドバーがソースリストの NSTableView に項目と見出しを並べる",
+            sidebar_rows_map_to_a_source_list,
+        ),
+        (
+            "サイドバーの選択が通し番号で往復し、利用者の選択だけを通知する",
+            sidebar_selection_round_trips,
+        ),
+        (
+            "サイドバーが NSSplitViewController として取り付き外れる",
+            sidebar_attaches_to_a_window,
+        ),
+        (
+            "サイドバーの幅と開閉が NSSplitViewItem に届く",
+            sidebar_width_and_collapse,
+        ),
+        (
+            "サイドバーを付けたウィンドウではトーストが中身の区画に重なる",
+            sidebar_toast_goes_to_the_content_pane,
+        ),
+        (
+            "サイドバーの通知中に内容と通知先を差し替えられる",
+            sidebar_callback_is_reentrant,
         ),
         (
             "メニューバーの見出しと項目が NSMenu になる",
@@ -7836,5 +7861,305 @@ fn menu_bar_callback_is_reentrant(ui: &Ui) -> Result<()> {
         vec![(0, 1), (10, 10)],
         "差し替えたコールバックが呼ばれる"
     );
+    Ok(())
+}
+
+/// サイドバーのまとまり。見出しの無いものと、見出し付きのものを 1 つずつ。
+fn sidebar_fixture() -> Vec<SidebarSection> {
+    vec![
+        SidebarSection::untitled([
+            SidebarItem::new("一般").icon(ToolbarIcon::Settings),
+            SidebarItem::new("検索").icon(ToolbarIcon::Search),
+        ]),
+        SidebarSection::untitled([SidebarItem::new("情報")]),
+        SidebarSection::new(
+            "場所",
+            [
+                SidebarItem::new("書類").icon(ToolbarIcon::Open),
+                SidebarItem::new("共有").enabled(false),
+            ],
+        ),
+    ]
+}
+
+/// ソースリスト様式の `NSTableView` に、項目・隙間・見出しが並ぶ。
+fn sidebar_rows_map_to_a_source_list(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    assert!(sidebar.is_empty());
+    sidebar.set_sections(&sidebar_fixture());
+    assert_eq!(sidebar.len(), 5, "見出しと隙間は数えない");
+
+    let table = sidebar.native_table_view();
+    assert_eq!(table.style(), objc2_app_kit::NSTableViewStyle::SourceList);
+    assert!(table.headerView().is_none(), "列の見出しは出さない");
+    // 一般・検索 | 隙間 | 情報 | 場所 (見出し。前の隙間は省く) | 書類・共有
+    assert_eq!(table.numberOfRows(), 7);
+
+    let delegate = unsafe { table.delegate() }.expect("デリゲートがあること");
+    let is_group = |row: isize| unsafe { delegate.tableView_isGroupRow(&table, row) };
+    assert!(!is_group(0));
+    assert!(is_group(4), "見出しはグループ行になる");
+    let height = |row: isize| unsafe { delegate.tableView_heightOfRow(&table, row) };
+    assert!(height(2) < height(0), "隙間の行は項目より低い");
+    let selectable = |row: isize| unsafe { delegate.tableView_shouldSelectRow(&table, row) };
+    assert!(selectable(0));
+    assert!(!selectable(2), "隙間は選べない");
+    assert!(!selectable(4), "見出しは選べない");
+    assert!(!selectable(6), "選べない項目は選べない");
+
+    // 項目のセルは NSTableCellView で、文字とアイコンを持つ。
+    let cell = |row: isize| {
+        table
+            .viewAtColumn_row_makeIfNecessary(0, row, true)
+            .and_then(|view| view.downcast::<objc2_app_kit::NSTableCellView>().ok())
+            .expect("セルがあること")
+    };
+    let first = cell(0);
+    assert_eq!(
+        unsafe { first.textField() }.map(|f| f.stringValue().to_string()),
+        Some("一般".to_string())
+    );
+    assert!(
+        unsafe { first.imageView() }.is_some(),
+        "アイコンを指定した項目は記号を持つ"
+    );
+    assert!(
+        unsafe { cell(3).imageView() }.is_none(),
+        "アイコンの無い項目は文字だけ"
+    );
+    assert_eq!(
+        unsafe { cell(4).textField() }.map(|f| f.stringValue().to_string()),
+        Some("場所".to_string())
+    );
+
+    sidebar.set_items(&SidebarItem::list(["春", "夏"]));
+    assert_eq!(sidebar.len(), 2);
+    assert_eq!(table.numberOfRows(), 2, "まとまり 1 つなら隙間は無い");
+    Ok(())
+}
+
+/// 選択は通し番号でやり取りし、`set_selected` は通知せず `select` と
+/// 利用者の選択は通知する。
+fn sidebar_selection_round_trips(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    sidebar.set_sections(&sidebar_fixture());
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+    assert_eq!(sidebar.selected(), None, "最初は何も選ばれていない");
+
+    sidebar.set_selected(3);
+    assert_eq!(sidebar.selected(), Some(3));
+    let table = sidebar.native_table_view();
+    assert_eq!(table.selectedRow(), 5, "書類の行 (見出しの後ろ) が選ばれる");
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+
+    sidebar.set_selected(4);
+    sidebar.set_selected(99);
+    assert_eq!(
+        sidebar.selected(),
+        Some(3),
+        "選べない項目と範囲外は無視する"
+    );
+
+    sidebar.select(2);
+    assert_eq!(sidebar.selected(), Some(2));
+    assert_eq!(*seen.borrow(), [2], "select は通知する");
+    sidebar.select(2);
+    assert_eq!(*seen.borrow(), [2, 2], "同じ項目を選び直しても通知する");
+
+    // 利用者がクリックしたときと同じく、テーブル側から選ぶ。
+    table.selectRowIndexes_byExtendingSelection(
+        &objc2_foundation::NSIndexSet::indexSetWithIndex(1),
+        false,
+    );
+    assert_eq!(sidebar.selected(), Some(1));
+    assert_eq!(*seen.borrow(), [2, 2, 1], "テーブルでの選択も通知する");
+
+    // 項目を差し替えても、同じ番号がまだ選べれば残る。
+    sidebar.set_sections(&sidebar_fixture());
+    assert_eq!(sidebar.selected(), Some(1));
+    sidebar.set_items(&SidebarItem::list(["ひとつ"]));
+    assert_eq!(sidebar.selected(), None, "無くなった番号の選択は外れる");
+    assert_eq!(seen.borrow().len(), 3, "差し替えでは通知しない");
+
+    sidebar.set_selected(0);
+    sidebar.clear_selection();
+    assert_eq!(sidebar.selected(), None);
+    assert_eq!(seen.borrow().len(), 3, "clear_selection は通知しない");
+    Ok(())
+}
+
+/// 取り付けると `contentViewController` が `NSSplitViewController` になり、
+/// 子は右の区画へ、外すとウィンドウの中身へ戻る。
+fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::{NSSplitViewController, NSSplitViewItemBehavior, NSWindowStyleMask};
+
+    let window = ui.window("サイドバー", 640.0, 400.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.append(&ui.label("本文")?);
+    window.set_child(&root);
+    let native_window = window.native_window();
+    let frame = native_window.frame();
+
+    let sidebar = ui.sidebar()?;
+    sidebar.set_sections(&sidebar_fixture());
+    window.set_sidebar(&sidebar);
+
+    let controller = native_window
+        .contentViewController()
+        .and_then(|c| c.downcast::<NSSplitViewController>().ok())
+        .expect("contentViewController が NSSplitViewController になる");
+    assert_eq!(controller, sidebar.native_split_view_controller());
+    let items = controller.splitViewItems();
+    assert_eq!(items.len(), 2);
+    let first = items.objectAtIndex(0);
+    assert_eq!(first.behavior(), NSSplitViewItemBehavior::Sidebar);
+    assert!(first.allowsFullHeightLayout(), "タイトルバーの下まで伸びる");
+    assert!(native_window
+        .styleMask()
+        .contains(NSWindowStyleMask::FullSizeContentView));
+    assert_eq!(
+        native_window.frame(),
+        frame,
+        "ウィンドウの大きさは変わらない"
+    );
+
+    let mtm = MainThreadMarker::new().unwrap();
+    let host = items.objectAtIndex(1).viewController(mtm).view();
+    let root_view = root.native_view();
+    assert!(contains_subview(&host, &root_view), "子は右の区画に移る");
+
+    // 子の上端はタイトルバーを避ける。
+    controller.view().layoutSubtreeIfNeeded();
+    let inset = host.safeAreaInsets().top;
+    assert!(inset > 0.0, "中身の区画はタイトルバーの下まで伸びている");
+    let top = root_view.frame().origin.y + root_view.frame().size.height;
+    assert!(
+        (host.frame().size.height - top - inset).abs() < 1.0,
+        "子の上端は安全領域の上端にそろう: host={:?} child={:?} inset={inset}",
+        host.frame(),
+        root_view.frame()
+    );
+
+    // 付けたまま子を差し替えても、右の区画に置かれる。
+    let other = ui.stack(Orientation::Vertical)?;
+    window.set_child(&other);
+    assert!(contains_subview(&host, &other.native_view()));
+    assert!(!contains_subview(&host, &root_view), "前の子は外れる");
+
+    window.clear_sidebar();
+    assert!(native_window.contentViewController().is_none());
+    assert!(!native_window
+        .styleMask()
+        .contains(NSWindowStyleMask::FullSizeContentView));
+    assert_eq!(
+        native_window.contentView(),
+        Some(other.native_view()),
+        "子はウィンドウの中身へ戻る"
+    );
+    assert_eq!(native_window.frame(), frame);
+    window.clear_sidebar(); // 付いていなければ何もしない
+    window.close();
+    Ok(())
+}
+
+/// 幅と開閉は `NSSplitView` の区画と `NSSplitViewItem` に届く。
+fn sidebar_width_and_collapse(ui: &Ui) -> Result<()> {
+    let window = ui.window("サイドバーの幅", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    assert_eq!(sidebar.width(), DEFAULT_SIDEBAR_WIDTH, "付ける前は覚えた幅");
+    window.set_sidebar(&sidebar);
+
+    let split = sidebar.native_split_view_controller().splitView();
+    let pane = || split.arrangedSubviews().objectAtIndex(0).frame().size.width;
+    split.layoutSubtreeIfNeeded();
+    assert!(
+        (pane() - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
+        "既定の幅で出る: {}",
+        pane()
+    );
+
+    sidebar.set_width(260.0);
+    split.layoutSubtreeIfNeeded();
+    assert!((pane() - 260.0).abs() < 1.0, "幅が区画に届く: {}", pane());
+    assert!((sidebar.width() - 260.0).abs() < 1.0);
+
+    assert!(!sidebar.is_collapsed());
+    sidebar.set_collapsed(true);
+    assert!(sidebar.is_collapsed());
+    assert!(
+        (sidebar.width() - 260.0).abs() < 1.0,
+        "閉じても開いたときの幅を返す"
+    );
+    sidebar.set_collapsed(false);
+    assert!(!sidebar.is_collapsed());
+
+    sidebar.set_width(-1.0);
+    sidebar.set_width(f64::NAN);
+    assert!(
+        (sidebar.width() - 260.0).abs() < 1.0,
+        "おかしな幅は無視する"
+    );
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// `NSSplitView` へ直に足すと区画の 1 つとして並べられてしまうので、
+/// トーストは右の区画へ重ねる。
+fn sidebar_toast_goes_to_the_content_pane(ui: &Ui) -> Result<()> {
+    let window = ui.window("サイドバーとトースト", 640.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    window.set_sidebar(&sidebar);
+    window.show();
+
+    let toast = ui.toast("保存しました")?;
+    toast.show();
+    let view = toast.native_view().expect("出ていること");
+    let mtm = MainThreadMarker::new().unwrap();
+    let controller = sidebar.native_split_view_controller();
+    let host = controller
+        .splitViewItems()
+        .objectAtIndex(1)
+        .viewController(mtm)
+        .view();
+    assert!(contains_subview(&host, &view), "中身の区画に重なる");
+    assert_eq!(
+        controller.splitView().arrangedSubviews().len(),
+        2,
+        "区画は増えない"
+    );
+    toast.dismiss();
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// 通知の中からサイドバーを組み替えても、二重借用にならない。
+fn sidebar_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["春", "夏", "秋"]));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_select({
+        let sidebar = sidebar.clone();
+        let seen = seen.clone();
+        move |index| {
+            seen.borrow_mut().push(index);
+            sidebar.set_items(&SidebarItem::list(["冬"]));
+            let seen = seen.clone();
+            sidebar.on_select(move |index| seen.borrow_mut().push(100 + index));
+        }
+    });
+    sidebar.select(1);
+    assert_eq!(sidebar.len(), 1);
+    assert_eq!(sidebar.selected(), None, "組み替えで選択は外れる");
+    sidebar.select(0);
+    assert_eq!(*seen.borrow(), [1, 100], "差し替えた通知先が使われる");
     Ok(())
 }

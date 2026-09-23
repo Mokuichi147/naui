@@ -17,8 +17,8 @@ mod tasks;
 
 use naui::{
     Align, FileEntry, GridCell, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
-    Result, ScrollPolicy, Settings, Sizing, Tabs, TextStyle, ToolbarIcon, ToolbarItem, Track, Ui,
-    Widget,
+    Result, ScrollPolicy, Settings, SidebarItem, SidebarSection, Sizing, Tabs, TextStyle,
+    ToolbarIcon, ToolbarItem, Track, Ui, Widget,
 };
 
 /// ウィンドウに取り付けるツールバーの項目。区切りは空文字で埋める。
@@ -44,6 +44,33 @@ const SECTIONS: [&str; 10] = [
     "ダイアログ",
     "非同期",
 ];
+
+/// サイドバーの中身。並びは [`SECTIONS`] (タブの順) と同じにしてあるので、
+/// 通知の通し番号をそのままタブの位置として使える。
+///
+/// アイコンは [`ToolbarIcon`] の中から近いものを選んでいる。
+fn sidebar_sections() -> Vec<SidebarSection> {
+    let item = |index: usize, icon| SidebarItem::new(SECTIONS[index]).icon(icon);
+    vec![
+        SidebarSection::untitled([
+            item(0, ToolbarIcon::Info),
+            item(1, ToolbarIcon::Edit),
+            item(2, ToolbarIcon::Search),
+            item(3, ToolbarIcon::Forward),
+            item(4, ToolbarIcon::Copy),
+        ]),
+        SidebarSection::new(
+            "そのほか",
+            [
+                item(5, ToolbarIcon::Cut),
+                item(6, ToolbarIcon::Open),
+                item(7, ToolbarIcon::Share),
+                item(8, ToolbarIcon::New),
+                item(9, ToolbarIcon::Refresh),
+            ],
+        ),
+    ]
+}
 
 /// メニューバーの中身。
 ///
@@ -165,11 +192,22 @@ pub fn build(ui: &Ui) -> Result<()> {
     header.append(&menu_status);
     root.attach(&header, GridCell::new(0, 0));
 
+    // Sidebar もウィンドウに取り付けるもの。取り付けは「ナビゲーション」の
+    // タブで切り替える。項目はタブと同じ並びなので、選択を互いに映し合う。
+    let sidebar = ui.sidebar()?;
+    sidebar.set_sections(&sidebar_sections());
+    sidebar.set_selected(0);
+
     let tabs = ui.tabs()?;
     add_pane(ui, &tabs, "基本", &basics::build(ui, &window)?)?;
     add_pane(ui, &tabs, "入力", &input::build(ui)?)?;
     add_pane(ui, &tabs, "一覧", &list::build(ui)?)?;
-    add_pane(ui, &tabs, "ナビゲーション", &navigation::build(ui)?)?;
+    add_pane(
+        ui,
+        &tabs,
+        "ナビゲーション",
+        &navigation::build(ui, &window, &sidebar)?,
+    )?;
     add_pane(ui, &tabs, "レイアウト", &layout::build(ui)?)?;
     add_pane(ui, &tabs, "描画", &canvas::build(ui)?)?;
     add_pane(ui, &tabs, "ファイル", &files::build(ui)?)?;
@@ -181,12 +219,21 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     tabs.on_select({
         let crumbs = crumbs.clone();
+        let sidebar = sidebar.clone();
         move |index| {
             let Some(section) = SECTIONS.get(index) else {
                 return;
             };
             crumbs.set_items(&NavItem::list(["naui gallery", *section]));
+            sidebar.set_selected(index);
         }
+    });
+
+    // サイドバーで選んだらタブを移す。タブの `select` は通知するので、
+    // パンくずも上の `on_select` がそろえる。
+    sidebar.on_select({
+        let tabs = tabs.clone();
+        move |index| tabs.select(index)
     });
 
     // パンくずの先頭を選ぶと概要へ戻る。現在地側はそのままにする。

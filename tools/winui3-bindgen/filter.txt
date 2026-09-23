@@ -70,8 +70,13 @@ Microsoft.UI.Xaml.Controls.MenuFlyoutItem
 Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase
 Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator
 Microsoft.UI.Xaml.Controls.NavigationView
+Microsoft.UI.Xaml.Controls.NavigationViewBackButtonVisible
 Microsoft.UI.Xaml.Controls.NavigationViewItem
 Microsoft.UI.Xaml.Controls.NavigationViewItemBase
+Microsoft.UI.Xaml.Controls.NavigationViewItemHeader
+Microsoft.UI.Xaml.Controls.NavigationViewItemSeparator
+Microsoft.UI.Xaml.Controls.NavigationViewPaneDisplayMode
+Microsoft.UI.Xaml.Controls.NavigationViewSelectionChangedEventArgs
 Microsoft.UI.Xaml.Controls.NumberBox
 Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode
 Microsoft.UI.Xaml.Controls.NumberBoxValidationMode

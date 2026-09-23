@@ -8,11 +8,13 @@ use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSApplication, NSBackingStoreType, NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSApplication, NSBackingStoreType, NSSplitViewController, NSView, NSWindow, NSWindowStyleMask,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use crate::menu_bar::MenuBar;
+use crate::sidebar::Sidebar;
 use crate::toolbar::Toolbar;
 use crate::widgets::Widget;
 
@@ -36,6 +38,9 @@ struct WindowInner {
     /// 取り付けたメニューバー。`NSApplication` が `mainMenu` を強参照するが、
     /// naui 側のハンドル (トランポリンと通知先) もここで生かしておく。
     menu_bar: RefCell<Option<MenuBar>>,
+    /// 取り付けたサイドバー。`contentViewController` として強参照されるが、
+    /// naui 側のハンドル (データソースと通知先) もここで生かしておく。
+    sidebar: RefCell<Option<Sidebar>>,
 }
 
 /// トップレベルウィンドウ (NSWindow)。
@@ -85,6 +90,7 @@ impl Window {
             child: RefCell::new(None),
             toolbar: RefCell::new(None),
             menu_bar: RefCell::new(None),
+            sidebar: RefCell::new(None),
         }))
     }
 
@@ -102,10 +108,65 @@ impl Window {
     }
 
     /// ルートに置くウィジェット。呼ぶたびに置き換わる。
+    ///
+    /// サイドバーを付けているときは、その右の区画に置かれる。
     pub fn set_child(&self, child: &dyn Widget) {
         let view = child.native_view();
-        self.0.native.setContentView(Some(&view));
+        let sidebar = self.0.sidebar.borrow().clone();
+        match sidebar {
+            Some(sidebar) => sidebar.set_content(Some(view)),
+            None => self.0.native.setContentView(Some(&view)),
+        }
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
+    }
+
+    /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
+    ///
+    /// ウィンドウの `contentViewController` を `NSSplitViewController` へ
+    /// 差し替え、[`set_child`](Self::set_child) の子はその右の区画へ移す。
+    /// サイドバーをタイトルバーの下まで伸ばすため (「システム設定」と同じ形)、
+    /// 付けている間はウィンドウに `fullSizeContentView` を足す。子の上端は
+    /// タイトルバーを避けるので、中身の見え方は変わらない。
+    pub fn set_sidebar(&self, sidebar: &Sidebar) {
+        self.clear_sidebar();
+        let native = &self.0.native;
+        // `contentViewController` を差し替えると、ウィンドウがその大きさへ
+        // 合わせて縮むことがある。置く前の枠へ戻す。
+        let frame = native.frame();
+        let child = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_view());
+        if let Some(view) = &child {
+            view.removeFromSuperview();
+        }
+        native.setStyleMask(native.styleMask() | NSWindowStyleMask::FullSizeContentView);
+        native.setContentViewController(Some(&sidebar.native_split_view_controller()));
+        native.setFrame_display(frame, true);
+        sidebar.set_content(child);
+        sidebar.apply_width();
+        *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
+    }
+
+    /// 取り付けたサイドバーを外す。付いていなければ何もしない。
+    ///
+    /// 右の区画にあった子は、ウィンドウの中身へ戻る。
+    pub fn clear_sidebar(&self) {
+        let Some(sidebar) = self.0.sidebar.borrow_mut().take() else {
+            return;
+        };
+        let native = &self.0.native;
+        let frame = native.frame();
+        let child = sidebar.take_content();
+        native.setContentViewController(None);
+        native.setStyleMask(native.styleMask() & !NSWindowStyleMask::FullSizeContentView);
+        let view = child.unwrap_or_else(|| NSView::new(MainThreadMarker::from(&**native)));
+        // 右の区画では制約で置いていた。ウィンドウの中身は枠で置かれる。
+        view.setTranslatesAutoresizingMaskIntoConstraints(true);
+        native.setContentView(Some(&view));
+        native.setFrame_display(frame, true);
     }
 
     /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
@@ -185,6 +246,26 @@ impl Window {
     /// AppKit の実ウィンドウ。バックエンド固有の脱出口。
     pub fn native_window(&self) -> Retained<NSWindow> {
         self.0.native.clone()
+    }
+}
+
+/// ウィンドウの中身へ重ねるビュー (トーストの載せ先)。
+///
+/// naui のサイドバーを付けたウィンドウでは、`contentViewController` が
+/// `NSSplitViewController` になっているので、その最後の区画 (中身の側) を
+/// 返す。`contentView` そのもの (`NSSplitView`) へ足すと、区画の 1 つとして
+/// 並べられてしまう。
+pub(crate) fn overlay_host(window: &NSWindow) -> Option<Retained<NSView>> {
+    let mtm = MainThreadMarker::from(window);
+    let split = window
+        .contentViewController()
+        .and_then(|controller| controller.downcast::<NSSplitViewController>().ok());
+    match split {
+        Some(split) => split
+            .splitViewItems()
+            .lastObject()
+            .map(|item| item.viewController(mtm).view()),
+        None => window.contentView(),
     }
 }
 

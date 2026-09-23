@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use naui_core::{
     Align, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect, Result,
-    ScrollPolicy, Sizing, TextColor, TextStyle,
+    ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle, ToolbarIcon,
+    DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, Ui, Widget};
 
@@ -114,6 +115,14 @@ const CASES: &[Case] = &[
         "メニューバーの項目がインデックスの組で通知する",
         menu_bar_activation_notifies,
     ),
+    (
+        "サイドバーが NavigationView の項目・見出し・区切りになる",
+        sidebar_items_map_to_native,
+    ),
+    (
+        "サイドバーの選択が通し番号で往復し、select だけが通知する",
+        sidebar_selection_round_trips,
+    ),
 ];
 
 /// あとで確かめる仕事。イベントループを 1 周まわしてから呼ばれる。
@@ -131,6 +140,10 @@ const ASYNC_CASES: &[AsyncCase] = &[
     (
         "トーストはメニューバーの行ではなく中身の行に重なる",
         toast_overlays_the_content_below_the_menu_bar,
+    ),
+    (
+        "サイドバーは中身の行に入り、子をその右の区画へ移す",
+        sidebar_takes_the_content_row,
     ),
 ];
 
@@ -1299,4 +1312,232 @@ fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
         "無効なメニューバーは通知しない"
     );
     Ok(())
+}
+
+// -------------------------------------------------------------- サイドバー
+
+fn sidebar_fixture() -> Vec<SidebarSection> {
+    vec![
+        SidebarSection::untitled([
+            SidebarItem::new("一般").icon(ToolbarIcon::Settings),
+            SidebarItem::new("検索"),
+        ]),
+        SidebarSection::new(
+            "場所",
+            [
+                SidebarItem::new("書類").icon(ToolbarIcon::Open),
+                SidebarItem::new("共有").enabled(false),
+            ],
+        ),
+    ]
+}
+
+fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{
+        NavigationViewItem, NavigationViewItemHeader, NavigationViewItemSeparator,
+        NavigationViewPaneDisplayMode,
+    };
+
+    let sidebar = ui.sidebar()?;
+    assert!(sidebar.is_empty());
+    sidebar.set_sections(&sidebar_fixture());
+    assert_eq!(sidebar.len(), 4, "見出しと区切りは数えない");
+
+    let native = sidebar.native_navigation_view();
+    assert_eq!(
+        native.PaneDisplayMode().expect("表示形式"),
+        NavigationViewPaneDisplayMode::Left
+    );
+    assert!(!native.IsSettingsVisible().expect("設定項目"));
+    assert!(!native.IsPaneToggleButtonVisible().expect("畳むボタン"));
+
+    let menu = native.MenuItems().expect("項目");
+    // 一般・検索 | 区切り | 場所 (見出し) | 書類・共有
+    assert_eq!(menu.Size().expect("項目数"), 6);
+    let at = |i: u32| menu.GetAt(i).expect("項目");
+    assert!(at(2).cast::<NavigationViewItemSeparator>().is_ok());
+    let header = at(3)
+        .cast::<NavigationViewItemHeader>()
+        .expect("見出しは NavigationViewItemHeader");
+    let title = header
+        .Content()
+        .expect("見出しの中身")
+        .cast::<IPropertyValue>()
+        .expect("文字")
+        .GetString()
+        .expect("文字列");
+    assert_eq!(title.to_string(), "場所");
+
+    let first = at(0).cast::<NavigationViewItem>().expect("項目");
+    // 空の参照は Err で返る。
+    assert!(
+        first.Icon().is_ok(),
+        "アイコンを指定した項目は FontIcon を持つ"
+    );
+    let plain = at(1).cast::<NavigationViewItem>().expect("項目");
+    assert!(plain.Icon().is_err(), "アイコンの無い項目は文字だけ");
+    let shared = at(5).cast::<NavigationViewItem>().expect("項目");
+    assert!(!shared.IsEnabled().expect("有効"), "選べない項目は無効");
+    assert!(!shared.SelectsOnInvoked().expect("選ばれるか"));
+
+    assert_eq!(native.OpenPaneLength().expect("幅"), DEFAULT_SIDEBAR_WIDTH);
+    sidebar.set_width(160.0);
+    assert_eq!(native.OpenPaneLength().expect("幅"), 160.0);
+    assert_eq!(sidebar.width(), 160.0);
+    sidebar.set_width(-1.0);
+    assert_eq!(sidebar.width(), 160.0, "おかしな幅は無視する");
+
+    assert!(!sidebar.is_collapsed());
+    sidebar.set_collapsed(true);
+    assert!(sidebar.is_collapsed());
+    assert!(!native.IsPaneVisible().expect("ペイン"));
+    sidebar.set_collapsed(false);
+    assert!(native.IsPaneVisible().expect("ペイン"));
+
+    sidebar.set_items(&SidebarItem::list(["春", "夏"]));
+    assert_eq!(
+        menu.Size().expect("項目数"),
+        2,
+        "まとまり 1 つなら区切りは無い"
+    );
+    Ok(())
+}
+
+fn sidebar_selection_round_trips(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    sidebar.set_sections(&sidebar_fixture());
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+    let native = sidebar.native_navigation_view();
+    let menu = native.MenuItems().expect("項目");
+    let same = |a: windows_core::IInspectable, b: windows_core::IInspectable| {
+        a.cast::<windows_core::IUnknown>()
+            .expect("IUnknown")
+            .as_raw()
+            == b.cast::<windows_core::IUnknown>()
+                .expect("IUnknown")
+                .as_raw()
+    };
+
+    sidebar.set_selected(2);
+    assert_eq!(sidebar.selected(), Some(2));
+    assert!(
+        same(
+            native.SelectedItem().expect("選択"),
+            menu.GetAt(4).expect("書類")
+        ),
+        "書類の項目 (見出しの後ろ) が選ばれる"
+    );
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+    sidebar.set_selected(3);
+    sidebar.set_selected(9);
+    assert_eq!(sidebar.selected(), Some(2), "選べない・範囲外は無視");
+
+    sidebar.select(1);
+    assert_eq!(*seen.borrow(), [1], "select は通知する");
+    sidebar.select(1);
+    assert_eq!(*seen.borrow(), [1, 1], "同じ項目でも通知する");
+
+    sidebar.set_selected(2);
+    sidebar.set_sections(&sidebar_fixture());
+    assert_eq!(sidebar.selected(), Some(2), "同じ番号が選べれば残る");
+    sidebar.set_items(&SidebarItem::list(["ひとつ"]));
+    assert_eq!(sidebar.selected(), None, "無くなった番号の選択は外れる");
+    sidebar.set_selected(0);
+    sidebar.clear_selection();
+    assert_eq!(sidebar.selected(), None);
+    assert_eq!(seen.borrow().len(), 2, "差し替えと解除は通知しない");
+    Ok(())
+}
+
+/// サイドバーは中身の行 (`CONTENT_ROW`) の先頭に入り、子はその `Content` へ
+/// 移る。外すと子が中身の行へ戻る。
+///
+/// トーストのケースと同じく、ウィンドウは閉じずにアプリの終了に任せる。
+fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
+    let window = ui.window("サイドバー", 480.0, 320.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&ui.label("中身")?);
+    window.set_child(&stack);
+
+    let rows = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<Grid>()
+        .expect("根は Grid")
+        .Children()
+        .expect("根の子");
+    let first_in_content_row = || -> UIElement {
+        rows.GetAt(2)
+            .expect("行")
+            .cast::<Grid>()
+            .expect("行は Grid")
+            .Children()
+            .expect("行の子")
+            .GetAt(0)
+            .expect("先頭の子")
+    };
+    let child = stack.native_element();
+    assert_eq!(first_in_content_row(), child, "最初は子がそのまま入る");
+
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    let navigation = sidebar
+        .native_navigation_view()
+        .cast::<UIElement>()
+        .expect("要素化");
+    assert_eq!(
+        first_in_content_row(),
+        navigation,
+        "サイドバーが中身の行に入る"
+    );
+    let content = sidebar
+        .native_navigation_view()
+        .Content()
+        .expect("右の区画")
+        .cast::<UIElement>()
+        .expect("要素");
+    assert_eq!(content, child, "子は右の区画へ移る");
+
+    // 付けたまま子を差し替えても、右の区画に置かれる。
+    let other = ui.stack(Orientation::Vertical)?;
+    window.set_child(&other);
+    let content = sidebar
+        .native_navigation_view()
+        .Content()
+        .expect("右の区画")
+        .cast::<UIElement>()
+        .expect("要素");
+    assert_eq!(content, other.native_element());
+
+    window.clear_sidebar();
+    let rows = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<Grid>()
+        .expect("根は Grid")
+        .Children()
+        .expect("根の子");
+    let head = rows
+        .GetAt(2)
+        .expect("行")
+        .cast::<Grid>()
+        .expect("行は Grid")
+        .Children()
+        .expect("行の子")
+        .GetAt(0)
+        .expect("先頭の子");
+    assert_eq!(head, other.native_element(), "外すと子が中身の行へ戻る");
+    assert!(
+        sidebar.native_navigation_view().Content().is_err(),
+        "サイドバーは中身を手放す (空の参照は Err で返る)"
+    );
+    window.clear_sidebar(); // 付いていなければ何もしない
+    Ok(Box::new(|| Ok(())))
 }

@@ -22,8 +22,9 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, Color, DialogResponse, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, Sizing, TableColumn,
-    TableRow, TextColor, TextStyle, Theme,
+    Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, SidebarItem,
+    SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
+    DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, Widget};
 use wasm_bindgen::JsCast;
@@ -2374,6 +2375,227 @@ fn checkbox_is_a_label_around_a_native_input() {
         let input = first_input(&element);
         assert_eq!(input.type_(), "checkbox");
         assert_eq!(computed(&element, "display"), "inline-flex");
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------------- サイドバー
+
+fn sidebar_fixture() -> Vec<SidebarSection> {
+    vec![
+        SidebarSection::untitled([
+            SidebarItem::new("一般").icon(ToolbarIcon::Settings),
+            SidebarItem::new("検索"),
+        ]),
+        SidebarSection::new(
+            "場所",
+            [
+                SidebarItem::new("書類").icon(ToolbarIcon::Open),
+                SidebarItem::new("共有").enabled(false),
+            ],
+        ),
+    ]
+}
+
+/// サイドバーの項目のボタン (通し番号の順)。
+fn sidebar_buttons(aside: &Element) -> Vec<HtmlElement> {
+    let found = aside
+        .query_selector_all("li > button")
+        .expect("ボタンの検索");
+    (0..found.length())
+        .filter_map(|i| found.item(i))
+        .map(|node| node.unchecked_into::<HtmlElement>())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn sidebar_builds_a_nav_with_headed_lists() {
+    with_ui(|ui| {
+        let sidebar = ui.sidebar()?;
+        assert!(sidebar.is_empty());
+        sidebar.set_sections(&sidebar_fixture());
+        assert_eq!(sidebar.len(), 4);
+
+        let aside = sidebar.native_element();
+        assert_eq!(aside.tag_name(), "ASIDE");
+        let nav = aside.query_selector("nav").ok().flatten().expect("<nav>");
+        assert!(nav.get_attribute("aria-label").is_some(), "読み上げの名前");
+
+        let lists = nav.query_selector_all("ul").expect("一覧の検索");
+        assert_eq!(lists.length(), 2, "まとまりごとに <ul>");
+        let heading = nav
+            .query_selector("[role=heading]")
+            .ok()
+            .flatten()
+            .expect("見出し");
+        assert_eq!(heading.text_content().as_deref(), Some("場所"));
+        let second: Element = lists.item(1).expect("2 つ目の一覧").unchecked_into();
+        assert_eq!(
+            second.get_attribute("aria-labelledby"),
+            heading.get_attribute("id"),
+            "見出しが一覧の名前になる"
+        );
+
+        let buttons = sidebar_buttons(&aside);
+        let labels: Vec<String> = buttons
+            .iter()
+            .map(|b| b.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(labels, ["一般", "検索", "書類", "共有"]);
+        assert!(buttons[0].query_selector("svg").ok().flatten().is_some());
+        assert!(buttons[1].query_selector("svg").ok().flatten().is_none());
+        assert!(buttons[3].has_attribute("disabled"), "選べない項目は無効");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_click_selects_and_notifies() {
+    with_ui(|ui| {
+        let sidebar = ui.sidebar()?;
+        sidebar.set_sections(&sidebar_fixture());
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sidebar.on_select({
+            let seen = seen.clone();
+            move |index| seen.borrow_mut().push(index)
+        });
+        let aside = sidebar.native_element();
+        let _mounted = Mounted::new_element(&aside);
+        let buttons = sidebar_buttons(&aside);
+
+        buttons[2].click();
+        assert_eq!(sidebar.selected(), Some(2));
+        assert_eq!(*seen.borrow(), [2]);
+        assert_eq!(
+            buttons[2].get_attribute("aria-current").as_deref(),
+            Some("page")
+        );
+        buttons[3].click();
+        assert_eq!(sidebar.selected(), Some(2), "無効な項目は押せない");
+
+        sidebar.set_selected(0);
+        assert_eq!(sidebar.selected(), Some(0));
+        assert!(!buttons[2].has_attribute("aria-current"));
+        assert_eq!(seen.borrow().len(), 1, "set_selected は通知しない");
+        sidebar.set_selected(3);
+        sidebar.set_selected(9);
+        assert_eq!(sidebar.selected(), Some(0), "選べない・範囲外は無視");
+
+        sidebar.select(1);
+        assert_eq!(*seen.borrow(), [2, 1], "select は通知する");
+
+        sidebar.set_sections(&sidebar_fixture());
+        assert_eq!(sidebar.selected(), Some(1), "同じ番号が選べれば残る");
+        sidebar.set_items(&SidebarItem::list(["ひとつ"]));
+        assert_eq!(sidebar.selected(), None);
+        sidebar.set_selected(0);
+        sidebar.clear_selection();
+        assert_eq!(sidebar.selected(), None);
+        assert_eq!(seen.borrow().len(), 2, "差し替えと解除は通知しない");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_attaches_to_the_left_of_the_window() {
+    with_ui(|ui| {
+        let window = ui.window("サイドバー", 600.0, 300.0)?;
+        let content = ui.label("中身")?;
+        window.set_child(&content);
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+        window.set_menu_bar(&menu_bar);
+
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&SidebarItem::list(["一般"]));
+        window.set_sidebar(&sidebar);
+
+        let root = window.native_element();
+        let aside = sidebar.native_element();
+        assert!(root.contains(Some(&aside)), "ウィンドウの中に入る");
+        let element = content.native_element();
+        assert_eq!(
+            element.parent_element(),
+            aside.next_element_sibling(),
+            "子はサイドバーの右の中身の側へ移る"
+        );
+        assert_eq!(
+            root.first_element_child(),
+            Some(menu_bar.native_element()),
+            "メニューバーは先頭に残る"
+        );
+
+        let side = aside.get_bounding_client_rect();
+        let body_rect = element.get_bounding_client_rect();
+        assert!(
+            (side.width() - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
+            "既定の幅: {}",
+            side.width()
+        );
+        assert!(side.right() <= body_rect.left() + 0.5, "サイドバーが左");
+        // 表示枠の幅はランナーによって 0 になることがあるので、幅そのもの
+        // ではなく、余りを受け取る指定になっていることを見る。
+        let pane = aside.next_element_sibling().expect("中身の側");
+        assert_eq!(
+            computed(&pane, "flex-grow"),
+            "1",
+            "中身が残りの幅を受け取る"
+        );
+        assert_eq!(computed(&aside, "flex-shrink"), "0", "サイドバーは縮まない");
+
+        sidebar.set_width(160.0);
+        assert!((aside.get_bounding_client_rect().width() - 160.0).abs() < 1.0);
+        sidebar.set_collapsed(true);
+        assert!(sidebar.is_collapsed());
+        assert_eq!(
+            aside.get_bounding_client_rect().width(),
+            0.0,
+            "閉じると消える"
+        );
+        assert_eq!(sidebar.width(), 160.0, "閉じても幅は覚えている");
+        sidebar.set_collapsed(false);
+
+        // 付けたまま子を差し替えても中身の側に入る。
+        let other = ui.label("別の中身")?;
+        window.set_child(&other);
+        assert_eq!(
+            other.native_element().parent_element(),
+            aside.next_element_sibling()
+        );
+
+        window.clear_sidebar();
+        assert!(!root.contains(Some(&aside)), "外すとページから消える");
+        assert_eq!(
+            other.native_element().parent_element().as_ref(),
+            Some(&root),
+            "子はウィンドウの直下へ戻る"
+        );
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_callback_is_reentrant_and_replaceable() {
+    with_ui(|ui| {
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&SidebarItem::list(["春", "夏"]));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sidebar.on_select({
+            let sidebar = sidebar.clone();
+            let seen = seen.clone();
+            move |index| {
+                seen.borrow_mut().push(index);
+                sidebar.set_items(&SidebarItem::list(["冬"]));
+                let seen = seen.clone();
+                sidebar.on_select(move |index| seen.borrow_mut().push(100 + index));
+            }
+        });
+        sidebar.select(1);
+        assert_eq!(sidebar.len(), 1);
+        sidebar.select(0);
+        assert_eq!(*seen.borrow(), [1, 100]);
         Ok(())
     });
 }

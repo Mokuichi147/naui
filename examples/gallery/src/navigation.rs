@@ -1,10 +1,45 @@
-use naui::{NavItem, Result, Sizing, Ui};
+use naui::{NavItem, Result, Sidebar, Sizing, Ui, Window};
 
 use crate::parts;
 
 /// 各ナビゲーション UI の形と選択通知。
-pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
+///
+/// `sidebar` はギャラリーのタブと連動させてあるもの ([`crate::build`])。
+/// ここではウィンドウへの取り付けと開閉だけを試せるようにする。
+pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
+
+    parts::section(
+        ui,
+        &pane,
+        "Sidebar",
+        &[
+            "ウィンドウの左に付くサイドバー。レイアウトではなくウィンドウに取り付けます。",
+            "項目を選ぶと、上のタブが切り替わります。",
+        ],
+    )?;
+    let attach = ui.checkbox("ウィンドウに付ける")?;
+    let collapse = ui.checkbox("閉じる")?;
+    collapse.set_enabled(false);
+    attach.on_toggle({
+        let window = window.clone();
+        let sidebar = sidebar.clone();
+        let collapse = collapse.clone();
+        move |on| {
+            if on {
+                window.set_sidebar(&sidebar);
+            } else {
+                window.clear_sidebar();
+            }
+            collapse.set_enabled(on);
+        }
+    });
+    collapse.on_toggle({
+        let sidebar = sidebar.clone();
+        move |on| sidebar.set_collapsed(on)
+    });
+    pane.append(&attach);
+    pane.append(&collapse);
 
     parts::section(
         ui,

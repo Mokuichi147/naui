@@ -185,6 +185,7 @@ add.on_click({
 | `Tabs` のタブ | `remove_tab` / `clear` |
 | 一覧・表・ツリー・ナビゲーション | `set_items` / `set_rows` で丸ごと置き換える |
 | 中身が 1 つのもの (`Scroll`、`Expander`、`SplitView`、`Window`) | `set_child` などで差し替える |
+| ウィンドウに取り付けたもの (`Toolbar`、`MenuBar`、`Sidebar`) | `clear_toolbar` / `clear_menu_bar` / `clear_sidebar` |
 
 ```rust
 use naui::{GridCell, Orientation};
@@ -1005,6 +1006,49 @@ macOS では ⌘C / ⌘V などがメインメニューのキー等価として�
 渡した見出しをその間へ並べます。`Window::clear_menu_bar` で外すと、この 2 つ
 だけの既定のメニューへ戻ります。
 
+#### サイドバー
+
+「システム設定」や Finder の左側のような、ウィンドウの高さいっぱいの
+サイドバーは `Sidebar` を使います。`Toolbar` と同じくレイアウトには置かず、
+`Window::set_sidebar` でウィンドウに取り付けます。取り付けると、`set_child`
+の子はサイドバーの右の区画に置かれます。
+
+項目は `SidebarItem` (文字とアイコン)、まとまりは `SidebarSection` です。
+選ばれた項目は**まとまりをまたいだ通し番号**で通知されます (見出しは数えません)。
+
+```rust
+let sidebar = ui.sidebar()?;
+sidebar.set_sections(&[
+    SidebarSection::untitled([
+        SidebarItem::new("一般").icon(ToolbarIcon::Settings),
+        SidebarItem::new("情報").icon(ToolbarIcon::Info),
+    ]),
+    SidebarSection::new("場所", ["書類", "ダウンロード"]), // 見出し付き
+]);
+sidebar.on_select(|index| println!("{index} 番目が選ばれました")); // 0〜3
+sidebar.set_selected(0);     // 通知せずに選ぶ
+sidebar.set_width(240.0);    // 既定は 220
+window.set_sidebar(&sidebar);
+sidebar.set_collapsed(true); // 閉じる (項目と選択は残る)
+```
+
+| 環境 | 実体 | 位置 |
+| --- | --- | --- |
+| macOS | `NSSplitViewController` のサイドバー項目 + ソースリストの `NSTableView` | タイトルバーの下まで伸びる (macOS 26 では浮いたガラス) |
+| Linux | `AdwOverlaySplitView` + `.navigation-sidebar` の `GtkListBox` | サイドバーと中身がそれぞれヘッダーバーを持つ |
+| Windows | `NavigationView` (`PaneDisplayMode` は Left) | タイトルバー (とメニューバー) の下から |
+| Web | `<aside>` + `<nav>` + `<button>` | ウィンドウ要素の中、メニューバー・ツールバーの下 |
+
+macOS では付けている間だけウィンドウに `fullSizeContentView` が付きますが、
+子の上端はタイトルバーを避けるので中身の見え方は変わりません。アイコンは
+`ToolbarIcon` と同じ種類を使います。幅を利用者が仕切りで変えられるのは
+macOS だけで、ほかの 3 環境では `set_width` の幅に固定されます。
+
+libadwaita 1.9 にはサイドバーの一覧まで持つ `AdwSidebar` がありますが、naui が
+対象にしている 1.5 には無いため、Linux は 1.5 までの推奨どおり
+`GtkListBox` で組んでいます。Web はブラウザにサイドバーのコントロールが
+無いので、`Menu` と同じく標準要素とブラウザ既定のボタンで組み立てます。
+
 #### 別スレッドと非同期
 
 時間のかかる処理を別のスレッドでやって画面を書き換えたいときは `Ui::tasks`
@@ -1074,7 +1118,7 @@ tokio::spawn(async move {
 
 | 分類 | API |
 | --- | --- |
-| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`SplitView`、`Toolbar`、`MenuBar` |
+| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`SplitView`、`Toolbar`、`MenuBar`、`Sidebar` |
 | 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、`NumberInput`、`Slider`、`ProgressBar` |
 | データ選択 | `ComboBox`、`EditableComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
 | ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
@@ -1106,6 +1150,7 @@ tokio::spawn(async move {
 | `SplitView` | 🔴 `Grid` + 仕切りの `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
 | `Toolbar` | ✅ `CommandBar` + `AppBarButton` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 | `MenuBar` | 🟡 `Button` + `MenuFlyout` の横並び | ✅ `NSMenu` (`NSApplication.mainMenu`) | ✅ `GtkPopoverMenuBar` + `GMenu` | 🟡 `<div role="menubar">` + `<div role="menu">` |
+| `Sidebar` | ✅ `NavigationView` (Left) | ✅ `NSSplitViewController` (サイドバー項目) + `NSTableView` (ソースリスト) | 🟡 `AdwOverlaySplitView` + `GtkListBox` (`.navigation-sidebar`) | 🔴 `<aside>` + `<nav>` + `<button>` |
 
 </details>
 
@@ -1209,6 +1254,7 @@ tokio::spawn(async move {
 - `PopupItem`: ポップアップメニュー項目
 - `ToolbarItem` / `ToolbarIcon`: ツールバー項目とアイコン
 - `MenuSpec` / `MenuItem` / `MenuShortcut`: メニューバーの見出し・項目・ショートカット
+- `SidebarSection` / `SidebarItem`: サイドバーのまとまり (見出し) と項目 (文字とアイコン)
 - `DialogButtons` / `DialogResponse`: ダイアログのボタンと応答
 - `ToastSpec`: トーストの文字・操作ボタン・消えるまでの時間
 
