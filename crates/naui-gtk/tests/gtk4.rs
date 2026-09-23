@@ -314,6 +314,10 @@ fn main() {
             "メニューバーの通知内で操作と差し替えができる",
             menu_bar_callback_is_reentrant_and_replaceable,
         ),
+        (
+            "別のウィンドウのメニューバーは同じショートカットを上書きしない",
+            menu_bar_shortcuts_are_kept_per_menu_bar,
+        ),
         ("メニューの選択が 1 つだけ点く", menu_selection_is_exclusive),
         ("選べない項目は選ばれない", nav_skips_disabled_items),
         ("パンくずが末尾を現在地にする", breadcrumbs_last_is_current),
@@ -5383,8 +5387,13 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
         "ファイル",
         [MenuItem::new("開く").shortcut(MenuShortcut::new('o'))],
     )]);
+    let name = menu_bar.native_action_name(0, 0).expect("操作の名前");
+    assert!(
+        name.starts_with("naui-menubar-") && name.ends_with(".m0i0"),
+        "メニューバーごとの名前空間に入る: {name}"
+    );
     assert_eq!(
-        app.accels_for_action("naui-menubar.m0i0"),
+        app.accels_for_action(&name),
         vec!["<Control>o"],
         "ショートカットはアプリのアクセラレータへ登録する"
     );
@@ -5404,8 +5413,7 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
         let seen = seen.clone();
         move |_menu, _item| seen.set(seen.get() + 1)
     });
-    WidgetExt::activate_action(&native, "naui-menubar.m0i0", None)
-        .expect("ウィンドウから操作を引けること");
+    WidgetExt::activate_action(&native, &name, None).expect("ウィンドウから操作を引けること");
     assert_eq!(seen.get(), 1);
 
     window.clear_menu_bar();
@@ -5416,14 +5424,14 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
         "外すとウィンドウから消える"
     );
     assert!(
-        WidgetExt::activate_action(&native, "naui-menubar.m0i0", None).is_err(),
+        WidgetExt::activate_action(&native, &name, None).is_err(),
         "外すと操作も引けなくなる"
     );
 
     // 作り直すと、以前のアクセラレータは残らない。
     menu_bar.set_menus(&[]);
     assert!(
-        app.accels_for_action("naui-menubar.m0i0").is_empty(),
+        app.accels_for_action(&name).is_empty(),
         "項目が消えたらアクセラレータも外す"
     );
     window.close();
@@ -5462,5 +5470,70 @@ fn menu_bar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
         vec![(0, 1), (10, 10)],
         "差し替えたコールバックが呼ばれる"
     );
+    Ok(())
+}
+
+/// 同じショートカットを 2 つのウィンドウのメニューバーで使っても、互いの
+/// 登録を上書きせず、それぞれのウィンドウからは自分の操作だけが引ける。
+fn menu_bar_shortcuts_are_kept_per_menu_bar(ui: &Ui) -> Result<()> {
+    let spec = [MenuSpec::new(
+        "ファイル",
+        [MenuItem::new("開く").shortcut(MenuShortcut::new('o'))],
+    )];
+
+    let first_window = ui.window("1 つ目", 400.0, 300.0)?;
+    let first = ui.menu_bar()?;
+    first.set_menus(&spec);
+    first_window.set_menu_bar(&first);
+
+    let second_window = ui.window("2 つ目", 400.0, 300.0)?;
+    let second = ui.menu_bar()?;
+    second.set_menus(&spec);
+    second_window.set_menu_bar(&second);
+
+    let first_name = first.native_action_name(0, 0).expect("操作の名前");
+    let second_name = second.native_action_name(0, 0).expect("操作の名前");
+    assert_ne!(first_name, second_name, "メニューバーごとに名前空間が違う");
+
+    let app = first_window
+        .native_window()
+        .application()
+        .expect("GtkApplication");
+    assert_eq!(
+        app.accels_for_action(&first_name),
+        vec!["<Control>o"],
+        "あとから作ったメニューバーに上書きされない"
+    );
+    assert_eq!(app.accels_for_action(&second_name), vec!["<Control>o"]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    first.on_activate({
+        let seen = seen.clone();
+        move |_menu, _item| seen.borrow_mut().push(1)
+    });
+    second.on_activate({
+        let seen = seen.clone();
+        move |_menu, _item| seen.borrow_mut().push(2)
+    });
+
+    // それぞれのウィンドウから引けるのは、自分のメニューバーの操作だけ。
+    let first_native = first_window.native_window();
+    let second_native = second_window.native_window();
+    WidgetExt::activate_action(&first_native, &first_name, None).expect("1 つ目の操作");
+    WidgetExt::activate_action(&second_native, &second_name, None).expect("2 つ目の操作");
+    assert_eq!(*seen.borrow(), vec![1, 2]);
+    assert!(
+        WidgetExt::activate_action(&first_native, &second_name, None).is_err(),
+        "1 つ目のウィンドウから 2 つ目の操作は引けない"
+    );
+    assert!(
+        WidgetExt::activate_action(&second_native, &first_name, None).is_err(),
+        "2 つ目のウィンドウから 1 つ目の操作は引けない"
+    );
+
+    first_window.clear_menu_bar();
+    second_window.clear_menu_bar();
+    first_window.close();
+    second_window.close();
     Ok(())
 }

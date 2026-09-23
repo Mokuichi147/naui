@@ -2003,9 +2003,10 @@ fn menu_bar_builds_aria_roles_for_each_menu() {
 #[wasm_bindgen_test]
 fn menu_bar_opens_on_the_title_and_closes_after_choosing() {
     with_ui(|ui| {
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
         let menu_bar = ui.menu_bar()?;
         menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規", "開く"])]);
-        let _mounted = Mounted::new_element(&menu_bar.native_element());
+        window.set_menu_bar(&menu_bar);
 
         let seen = Rc::new(RefCell::new(Vec::new()));
         menu_bar.on_activate({
@@ -2039,6 +2040,9 @@ fn menu_bar_opens_on_the_title_and_closes_after_choosing() {
         let prevented = press_escape(body().as_ref(), false);
         assert_eq!(computed(&menu, "display"), "none", "Esc で閉じること");
         assert!(prevented, "Esc の既定動作を止めていること");
+
+        window.clear_menu_bar();
+        window.close();
         Ok(())
     });
 }
@@ -2057,7 +2061,8 @@ fn menu_bar_shortcuts_reach_the_closure() {
                     .enabled(false),
             ],
         )]);
-        let _mounted = Mounted::new_element(&menu_bar.native_element());
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        window.set_menu_bar(&menu_bar);
 
         let seen = Rc::new(RefCell::new(Vec::new()));
         menu_bar.on_activate({
@@ -2091,6 +2096,123 @@ fn menu_bar_shortcuts_reach_the_closure() {
             vec![(0, 0), (0, 1), (0, 2)],
             "無効なメニューバーは通知しない"
         );
+
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+/// ショートカットは、ウィンドウへ取り付けて画面に出ている間だけ効く。
+#[wasm_bindgen_test]
+fn menu_bar_shortcuts_follow_the_attachment() {
+    with_ui(|ui| {
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new(
+            "ファイル",
+            [MenuItem::new("保存").shortcut(MenuShortcut::new('s'))],
+        )]);
+        let seen = Rc::new(Cell::new(0));
+        menu_bar.on_activate({
+            let seen = seen.clone();
+            move |_menu, _item| seen.set(seen.get() + 1)
+        });
+
+        // 取り付ける前は、キーを見張っていない。
+        let prevented = press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 0, "取り付ける前は反応しない");
+        assert!(!prevented, "ブラウザの既定動作も止めない");
+
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        window.set_menu_bar(&menu_bar);
+        press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 1, "取り付けると効く");
+
+        // 閉じた (隠した) ウィンドウのメニューバーは反応しない。
+        window.close();
+        let prevented = press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 1, "閉じたウィンドウでは反応しない");
+        assert!(!prevented);
+        window.show();
+        press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 2, "出し直すとまた効く");
+
+        // 外したメニューバーは、もう反応しない。
+        window.clear_menu_bar();
+        let prevented = press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 2, "外したあとは反応しない");
+        assert!(!prevented);
+
+        // 付け直せば、また効く。
+        window.set_menu_bar(&menu_bar);
+        press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 3);
+
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+/// 同じショートカットを持つウィンドウが 2 つあっても、1 回だけ通知する。
+#[wasm_bindgen_test]
+fn menu_bar_shortcuts_reach_only_one_window() {
+    with_ui(|ui| {
+        let spec = [MenuSpec::new(
+            "ファイル",
+            [MenuItem::new("保存").shortcut(MenuShortcut::new('s'))],
+        )];
+
+        let first_window = ui.window("1 つ目", 400.0, 300.0)?;
+        let first_input = ui.text_input("")?;
+        first_window.set_child(&first_input);
+        let first = ui.menu_bar()?;
+        first.set_menus(&spec);
+        first_window.set_menu_bar(&first);
+
+        let second_window = ui.window("2 つ目", 400.0, 300.0)?;
+        let second_input = ui.text_input("")?;
+        second_window.set_child(&second_input);
+        let second = ui.menu_bar()?;
+        second.set_menus(&spec);
+        second_window.set_menu_bar(&second);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        first.on_activate({
+            let seen = seen.clone();
+            move |_menu, _item| seen.borrow_mut().push(1)
+        });
+        second.on_activate({
+            let seen = seen.clone();
+            move |_menu, _item| seen.borrow_mut().push(2)
+        });
+
+        // キーが上がってきたウィンドウのメニューバーだけが受け取る。
+        press_shortcut(
+            second_input.native_element().as_ref(),
+            "s",
+            true,
+            false,
+            false,
+        );
+        assert_eq!(*seen.borrow(), vec![2], "2 つ目のウィンドウの中から");
+        press_shortcut(
+            first_input.native_element().as_ref(),
+            "s",
+            true,
+            false,
+            false,
+        );
+        assert_eq!(*seen.borrow(), vec![2, 1], "1 つ目のウィンドウの中から");
+
+        // どのウィンドウにも属さないところからのキーは、1 つだけが受け取る。
+        press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.borrow().len(), 3, "二重に通知しない");
+
+        first_window.clear_menu_bar();
+        second_window.clear_menu_bar();
+        first_window.close();
+        second_window.close();
         Ok(())
     });
 }

@@ -14,6 +14,12 @@ use crate::to_error;
 use crate::toolbar::Toolbar;
 use crate::widgets::{create, Widget};
 
+/// ウィンドウ要素に付ける印。
+const WINDOW_ATTRIBUTE: &str = "data-naui-window";
+
+/// ウィンドウ要素を `closest` で探すためのセレクタ。
+pub(crate) const WINDOW_SELECTOR: &str = "[data-naui-window]";
+
 struct WindowInner {
     element: HtmlElement,
     document: Document,
@@ -48,6 +54,8 @@ impl Window {
 
     pub(crate) fn new(document: &Document, title: &str, width: f64, height: f64) -> Result<Self> {
         let element: HtmlElement = create(document, "div")?.unchecked_into();
+        // メニューバーが「キーがどのウィンドウから上がってきたか」を見分ける印。
+        let _ = element.set_attribute(WINDOW_ATTRIBUTE, "");
         let style = element.style();
         // 指定サイズを上限としつつ、狭い画面では縮む。
         let _ = style.set_property("max-width", &format!("{width}px"));
@@ -148,12 +156,17 @@ impl Window {
         self.clear_menu_bar();
         *self.0.menu_bar.borrow_mut() = Some(menu_bar.clone());
         self.mount_menu_bar();
+        // ショートカットの購読は、取り付けている間だけ張る。
+        menu_bar.attach(self.0.element.as_ref());
     }
 
     /// 取り付けたメニューバーを外す。付いていなければ何もしない。
+    ///
+    /// 外したメニューバーはショートカットにも反応しなくなる。
     pub fn clear_menu_bar(&self) {
-        if let Some(old) = self.0.menu_bar.borrow_mut().take() {
-            old.close();
+        let old = self.0.menu_bar.borrow_mut().take();
+        if let Some(old) = old {
+            old.detach();
             old.mount().remove();
         }
     }

@@ -19,6 +19,13 @@
 //! 見張って naui が突き合わせる。主修飾キーは Ctrl と ⌘ のどちらでもよい
 //! (macOS のブラウザでは ⌘ が主修飾キーになるため)。項目の右端には
 //! [`MenuShortcut::label`](naui_core::MenuShortcut::label) を出す。
+//!
+//! `document` への購読は**ウィンドウへ取り付けている間だけ**張る。外した
+//! メニューバーや、閉じた (隠した) ウィンドウのメニューバーが、押されたキーに
+//! 反応し続けないようにするため。ページに複数のウィンドウがあるときは、
+//! キーが上がってきたウィンドウのメニューバーだけが受け取り、どのウィンドウ
+//! にも属さないところ (`<body>` など) からのキーは、最初に合ったものだけが
+//! 受け取る (合ったところで既定動作を止めるので、あとの購読はそれを見て引く)。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -77,7 +84,11 @@ struct MenuBarInner {
     /// 見出しと項目のクリック購読。メニューを作り直すと外れる。
     listeners: RefCell<Vec<Listener>>,
     /// 外側を押したとき・Escape・ショートカットのための購読。
-    _document_listeners: RefCell<Vec<Listener>>,
+    /// ウィンドウへ取り付けている間だけ持つ。
+    document_listeners: RefCell<Vec<Listener>>,
+    /// 取り付け先のウィンドウ要素。ショートカットをどのウィンドウのものとして
+    /// 受け取るかを決める。
+    window: RefCell<Option<Element>>,
     handler: Handler,
     /// いま開いている見出し。
     open: Cell<Option<usize>>,
@@ -119,18 +130,68 @@ impl MenuBar {
             menus: RefCell::new(Vec::new()),
             parts: RefCell::new(Vec::new()),
             listeners: RefCell::new(Vec::new()),
-            _document_listeners: RefCell::new(Vec::new()),
+            document_listeners: RefCell::new(Vec::new()),
+            window: RefCell::new(None),
             handler: Handler::default(),
             open: Cell::new(None),
             enabled: Cell::new(true),
         }));
-        this.install_document_listeners(doc)?;
         Ok(this)
     }
 
+    /// ウィンドウへ取り付けたときに呼ぶ。[`crate::Window`] だけが使う。
+    ///
+    /// 外側を押したとき・Escape で閉じ、ショートカットを拾う購読を張る。
+    pub(crate) fn attach(&self, window: &Element) {
+        *self.0.window.borrow_mut() = Some(window.clone());
+        if self.0.document_listeners.borrow().is_empty() {
+            let _ = self.install_document_listeners();
+        }
+    }
+
+    /// ウィンドウから外したときに呼ぶ。[`crate::Window`] だけが使う。
+    ///
+    /// `document` への購読を外すので、以後ショートカットには反応しない。
+    pub(crate) fn detach(&self) {
+        self.close();
+        self.0.document_listeners.borrow_mut().clear();
+        *self.0.window.borrow_mut() = None;
+    }
+
+    /// 押されたキーを、このメニューバーが受け取ってよいか。
+    ///
+    /// 画面に出ていない (ウィンドウを閉じた) ときと、別のウィンドウの中から
+    /// 上がってきたキーは受け取らない。
+    fn accepts_keys_from(&self, event: &web_sys::Event) -> bool {
+        // `display: none` の祖先を持つ要素は `offsetParent` を持たない。
+        if !self.0.element.is_connected() || self.0.element.offset_parent().is_none() {
+            return false;
+        }
+        let window = self.0.window.borrow();
+        let Some(window) = window.as_ref() else {
+            return false;
+        };
+        let owner = event
+            .target()
+            .and_then(|t| t.dyn_into::<Element>().ok())
+            .and_then(|element| {
+                element
+                    .closest(crate::window::WINDOW_SELECTOR)
+                    .ok()
+                    .flatten()
+            });
+        match owner {
+            // キーが上がってきたウィンドウのメニューバーだけが受け取る。
+            Some(owner) => &owner == window,
+            // どのウィンドウにも属さないところからのキーは、誰もまだ
+            // 受け取っていなければ受け取る。
+            None => !event.default_prevented(),
+        }
+    }
+
     /// 外側を押したとき・Escape で閉じ、ショートカットを拾うようにする。
-    fn install_document_listeners(&self, doc: &Document) -> Result<()> {
-        let target: web_sys::EventTarget = doc.clone().unchecked_into();
+    fn install_document_listeners(&self) -> Result<()> {
+        let target: web_sys::EventTarget = self.0.document.clone().unchecked_into();
 
         let outside = Listener::attach_event(&target, "pointerdown", {
             let weak = Rc::downgrade(&self.0);
@@ -173,7 +234,7 @@ impl MenuBar {
                 }
                 // 主修飾キーは Ctrl と ⌘ のどちらでもよい。
                 let primary = key.ctrl_key() || key.meta_key();
-                if !primary {
+                if !primary || !bar.accepts_keys_from(&event) {
                     return;
                 }
                 if let Some((menu, item)) =
@@ -187,7 +248,7 @@ impl MenuBar {
             }
         })?;
 
-        *self.0._document_listeners.borrow_mut() = vec![outside, keys];
+        *self.0.document_listeners.borrow_mut() = vec![outside, keys];
         Ok(())
     }
 

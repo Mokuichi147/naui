@@ -22,12 +22,25 @@ use naui_core::MenuSpec;
 
 use crate::callback::ActivateNotifier;
 
-/// メニューの操作をまとめて置く名前空間。
-const GROUP: &str = "naui-menubar";
+/// メニューの操作をまとめて置く名前空間の頭。後ろにメニューバーごとの番号が付く。
+///
+/// アクセラレータは `GtkApplication` に**アプリ全体で 1 つの表**として
+/// 登録されるので、名前空間を共有すると、あとから作ったメニューバーが
+/// 前のメニューバーの登録を上書きしてしまう。メニューバーごとに分けておけば、
+/// 同じキーを複数のウィンドウで使っても、GTK4 がフォーカスのあるウィンドウに
+/// 入っている操作だけを呼ぶ。
+const GROUP_PREFIX: &str = "naui-menubar-";
+
+thread_local! {
+    /// 次に作るメニューバーの番号。GTK4 はメインスレッドでしか触れない。
+    static NEXT_GROUP: Cell<u64> = const { Cell::new(0) };
+}
 
 struct MenuBarInner {
     native: gtk::PopoverMenuBar,
     app: adw::Application,
+    /// このメニューバーの操作の名前空間 (`naui-menubar-<番号>`)。
+    group: String,
     actions: gio::SimpleActionGroup,
     menus: RefCell<Vec<MenuSpec>>,
     /// 見出しと項目のインデックスから引ける操作。区切り線のところは `None`。
@@ -38,9 +51,14 @@ struct MenuBarInner {
 }
 
 impl MenuBarInner {
-    /// 操作の名前。`GMenu` から参照するときは `GROUP` を頭に付ける。
+    /// 操作の名前。`GMenu` から参照するときは名前空間を頭に付ける。
     fn action_name(menu: usize, item: usize) -> String {
         format!("m{menu}i{item}")
+    }
+
+    /// 名前空間を付けた操作の名前 (`naui-menubar-3.m0i1` の形)。
+    fn detailed_name(&self, menu: usize, item: usize) -> String {
+        format!("{}.{}", self.group, Self::action_name(menu, item))
     }
 
     /// 登録したアクセラレータを 1 つずつ外す。
@@ -48,8 +66,8 @@ impl MenuBarInner {
         for (menu, spec) in self.menus.borrow().iter().enumerate() {
             for (item, entry) in spec.items.iter().enumerate() {
                 if entry.shortcut.is_some() {
-                    let name = format!("{GROUP}.{}", Self::action_name(menu, item));
-                    self.app.set_accels_for_action(&name, &[]);
+                    self.app
+                        .set_accels_for_action(&self.detailed_name(menu, item), &[]);
                 }
             }
         }
@@ -70,13 +88,19 @@ impl MenuBar {
     pub(crate) fn new(app: &adw::Application) -> Self {
         let native = gtk::PopoverMenuBar::from_model(None::<&gio::Menu>);
         let actions = gio::SimpleActionGroup::new();
+        let group = NEXT_GROUP.with(|next| {
+            let id = next.get();
+            next.set(id + 1);
+            format!("{GROUP_PREFIX}{id}")
+        });
         // 取り付ける前でもメニューから操作を引けるようにしておく。
         // 取り付け先のウィンドウへも同じ組を入れる (アクセラレータの解決は
         // フォーカスのあるウィジェットからたどるため)。
-        native.insert_action_group(GROUP, Some(&actions));
+        native.insert_action_group(&group, Some(&actions));
         Self(Rc::new(MenuBarInner {
             native,
             app: app.clone(),
+            group,
             actions,
             menus: RefCell::new(Vec::new()),
             items: RefCell::new(Vec::new()),
@@ -125,7 +149,7 @@ impl MenuBar {
                 });
                 self.0.actions.add_action(&action);
 
-                let detailed = format!("{GROUP}.{name}");
+                let detailed = self.0.detailed_name(menu_index, item_index);
                 section.append(Some(&item.label), Some(&detailed));
                 if let Some(shortcut) = item.shortcut {
                     // 右端の表示も、押されたキーの受け取りも GTK4 が行う。
@@ -246,6 +270,16 @@ impl MenuBar {
         self.0.items.borrow().get(menu)?.get(item)?.clone()
     }
 
+    /// 項目の操作を、名前空間を付けた名前 (`naui-menubar-3.m0i1` の形) で返す。
+    /// 区切り線と範囲外は `None`。
+    ///
+    /// `gtk_widget_activate_action` や `gtk_application_set_accels_for_action`
+    /// に渡す名前で、バックエンド固有の脱出口として公開している。
+    pub fn native_action_name(&self, menu: usize, item: usize) -> Option<String> {
+        self.native_action(menu, item)?;
+        Some(self.0.detailed_name(menu, item))
+    }
+
     /// ウィンドウの上段へ差し込む widget。[`crate::Window`] だけが使う。
     pub(crate) fn mount(&self) -> gtk::PopoverMenuBar {
         self.0.native.clone()
@@ -257,8 +291,8 @@ impl MenuBar {
     }
 
     /// 操作の名前空間。[`crate::Window`] だけが使う。
-    pub(crate) const fn group() -> &'static str {
-        GROUP
+    pub(crate) fn group(&self) -> String {
+        self.0.group.clone()
     }
 }
 

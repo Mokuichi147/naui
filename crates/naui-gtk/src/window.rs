@@ -158,7 +158,7 @@ impl Window {
         self.0.view.add_top_bar(&menu_bar.mount());
         self.0
             .native
-            .insert_action_group(MenuBar::group(), Some(&menu_bar.action_group()));
+            .insert_action_group(&menu_bar.group(), Some(&menu_bar.action_group()));
         *self.0.menu_bar.borrow_mut() = Some(menu_bar.clone());
     }
 
@@ -168,7 +168,7 @@ impl Window {
             self.0.view.remove(&old.mount());
             self.0
                 .native
-                .insert_action_group(MenuBar::group(), None::<&gtk::gio::SimpleActionGroup>);
+                .insert_action_group(&old.group(), None::<&gtk::gio::SimpleActionGroup>);
         }
     }
 

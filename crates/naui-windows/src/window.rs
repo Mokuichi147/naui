@@ -51,6 +51,16 @@ const CAPTION_RESERVE: f64 = 140.0;
 /// 3 つが同じ高さで並ぶようにする。
 pub(crate) const CAPTION_HEIGHT: f64 = 32.0;
 
+/// ウィンドウの根の `Grid` で、メニューバーの置き場が入る行。
+///
+/// 行の並びは [`themed_content_root`] の XAML が決める。XAML は子を行の順に
+/// 並べているので、この番号はそのまま根の子の位置にもなる。根から子をたどる
+/// ところ (トーストの重ね先など) は、番号を直に書かずにこれを使う。
+const MENU_BAR_ROW: u32 = 1;
+
+/// ウィンドウの根の `Grid` で、アプリの中身とトーストが入る行。
+const CONTENT_ROW: u32 = 2;
+
 /// タイトル文字の大きさ。WinUI 3 のキャプション文字 (`CaptionTextBlockStyle`)
 /// と同じ 12。本文と同じ 14 だと [`CAPTION_HEIGHT`] の帯に対して大きい。
 const TITLE_FONT_SIZE: f64 = 12.0;
@@ -698,8 +708,8 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
                 <Grid Grid.Column="1" Background="Transparent" Margin="12,0,0,0"/>
                 <Grid Grid.Column="2" Background="Transparent"/>
             </Grid>
-            <Grid Grid.Row="1" Background="Transparent" Padding="6,0,0,0"/>
-            <Grid Grid.Row="2" Background="Transparent"/>
+            <Grid Grid.Row="{MENU_BAR_ROW}" Background="Transparent" Padding="6,0,0,0"/>
+            <Grid Grid.Row="{CONTENT_ROW}" Background="Transparent"/>
         </Grid>"##,
     )))
     .map_err(|e| to_error("テーマ背景要素の生成", e))?
@@ -737,12 +747,12 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
         .GetAt(2)
         .map_err(|e| to_error("ドラッグ領域の取得", e))?;
     let menu_bar_host = children
-        .GetAt(1)
+        .GetAt(MENU_BAR_ROW)
         .map_err(|e| to_error("メニューバー置き場の取得", e))?
         .cast::<Grid>()
         .map_err(|e| to_error("メニューバー置き場への変換", e))?;
     let content = children
-        .GetAt(2)
+        .GetAt(CONTENT_ROW)
         .map_err(|e| to_error("コンテンツレイヤーの取得", e))?
         .cast::<Grid>()
         .map_err(|e| to_error("コンテンツレイヤーへの変換", e))?;
@@ -800,13 +810,18 @@ pub(crate) fn owner_xaml_root() -> Option<naui_winui3::Microsoft::UI::Xaml::Xaml
 
 /// トーストを重ねる層。まだウィンドウを表示していなければ `None`。
 ///
-/// [`themed_content_root`] が作る 2 行目 (アプリの中身の置き場) で、
+/// [`themed_content_root`] が作る中身の行 ([`CONTENT_ROW`]) で、
 /// `Grid` は子を重ね順に置くため、あとから足したトーストが中身の上に出る。
 pub(crate) fn owner_content_layer() -> Option<Grid> {
     OWNER_WINDOW.with(|slot| {
         let window = slot.borrow();
         let root = window.as_ref()?.Content().ok()?.cast::<Grid>().ok()?;
-        root.Children().ok()?.GetAt(1).ok()?.cast::<Grid>().ok()
+        root.Children()
+            .ok()?
+            .GetAt(CONTENT_ROW)
+            .ok()?
+            .cast::<Grid>()
+            .ok()
     })
 }
 
