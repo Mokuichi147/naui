@@ -21,9 +21,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Color, DialogResponse, GridCell, Length, ListItem, Orientation, Padding, Point,
-    PointerPhase, PopupItem, Rect, Result, Sizing, TableColumn, TableRow, TextColor, TextStyle,
-    Theme,
+    Align, Color, DialogResponse, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
+    Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, Sizing, TableColumn,
+    TableRow, TextColor, TextStyle, Theme,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, Widget};
 use wasm_bindgen::JsCast;
@@ -52,9 +52,13 @@ struct Mounted(Element);
 
 impl Mounted {
     fn new(widget: &dyn Widget) -> Self {
-        let element = widget.native_element();
-        body().append_child(&element).expect("body への追加");
-        Self(element)
+        Self::new_element(&widget.native_element())
+    }
+
+    /// [`Widget`] ではないもの (メニューバーなど) を載せる。
+    fn new_element(element: &Element) -> Self {
+        body().append_child(element).expect("body への追加");
+        Self(element.clone())
     }
 }
 
@@ -85,6 +89,20 @@ fn press_escape(target: &EventTarget, composing: bool) -> bool {
     init.set_bubbles(true);
     init.set_cancelable(true);
     init.set_is_composing(composing);
+    let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+        .expect("キーイベントの生成");
+    !target.dispatch_event(&event).expect("イベントの配送")
+}
+
+/// ショートカットの `keydown` を起こす。**戻り値は既定動作を止められたか**。
+fn press_shortcut(target: &EventTarget, key: &str, ctrl: bool, shift: bool, alt: bool) -> bool {
+    let init = KeyboardEventInit::new();
+    init.set_key(key);
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    init.set_ctrl_key(ctrl);
+    init.set_shift_key(shift);
+    init.set_alt_key(alt);
     let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
         .expect("キーイベントの生成");
     !target.dispatch_event(&event).expect("イベントの配送")
@@ -1886,6 +1904,434 @@ fn popup_menu_escape_closes_and_stops_the_browser_default() {
         let prevented = press_escape(body().as_ref(), false);
         assert_eq!(computed(&element, "display"), "none", "Esc で閉じること");
         assert!(prevented, "Esc の既定動作を止めていること");
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------------- MenuBar
+
+#[wasm_bindgen_test]
+fn menu_bar_builds_aria_roles_for_each_menu() {
+    with_ui(|ui| {
+        let menu_bar = ui.menu_bar()?;
+        assert!(menu_bar.is_empty());
+
+        menu_bar.set_menus(&[
+            MenuSpec::new(
+                "ファイル",
+                [
+                    MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                    MenuItem::separator(),
+                    MenuItem::new("保存").enabled(false),
+                ],
+            ),
+            MenuSpec::new("表示", ["拡大", "縮小"]),
+        ]);
+
+        assert_eq!(menu_bar.len(), 2);
+        assert_eq!(menu_bar.menu_len(0), 3, "区切り線も 1 項目として数える");
+        assert_eq!(menu_bar.menu_len(9), 0, "範囲外は 0");
+
+        let bar = menu_bar.native_element();
+        assert_eq!(bar.get_attribute("role").as_deref(), Some("menubar"));
+
+        let title = menu_bar.native_title(0).expect("見出し");
+        assert_eq!(title.get_attribute("role").as_deref(), Some("menuitem"));
+        assert_eq!(
+            title.get_attribute("aria-haspopup").as_deref(),
+            Some("true")
+        );
+        assert_eq!(title.text_content().as_deref(), Some("ファイル"));
+
+        let menu = menu_bar.native_menu(0).expect("メニュー");
+        assert_eq!(menu.get_attribute("role").as_deref(), Some("menu"));
+
+        let first = menu_bar.native_item(0, 0).expect("先頭は項目");
+        assert_eq!(first.get_attribute("role").as_deref(), Some("menuitem"));
+        assert_eq!(
+            first.get_attribute("aria-keyshortcuts").as_deref(),
+            Some("Control+N"),
+            "ショートカットは読み上げへも伝える"
+        );
+        assert!(
+            first.text_content().unwrap_or_default().contains("Ctrl+N"),
+            "ブラウザは右端の表示を持たないので naui が添える"
+        );
+        assert!(
+            menu_bar.native_item(0, 1).is_none(),
+            "区切り線にボタンは無い"
+        );
+        assert!(menu_bar
+            .native_item(0, 2)
+            .expect("3 番目は項目")
+            .has_attribute("disabled"));
+        assert!(menu_bar.native_item(9, 0).is_none(), "範囲外は None");
+
+        assert!(menu_bar.is_item_enabled(0, 0));
+        assert!(!menu_bar.is_item_enabled(0, 1), "区切り線は押せない");
+        assert!(!menu_bar.is_item_enabled(0, 2));
+
+        // 項目ごとの指定と全体の指定は AND を取る。
+        menu_bar.set_item_enabled(0, 2, true);
+        assert!(!menu_bar
+            .native_item(0, 2)
+            .expect("項目")
+            .has_attribute("disabled"));
+        menu_bar.set_enabled(false);
+        assert!(!menu_bar.is_item_enabled(0, 0));
+        assert!(menu_bar
+            .native_title(0)
+            .expect("見出し")
+            .has_attribute("disabled"));
+        menu_bar.set_enabled(true);
+        assert!(
+            menu_bar.is_item_enabled(0, 2),
+            "全体を戻すと項目ごとの指定が残る"
+        );
+
+        // 区切り線への set_item_enabled は無視する。
+        menu_bar.set_item_enabled(0, 1, true);
+        assert!(!menu_bar.is_item_enabled(0, 1));
+
+        menu_bar.set_menus(&[]);
+        assert!(menu_bar.is_empty());
+        assert!(menu_bar.native_title(0).is_none());
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn menu_bar_opens_on_the_title_and_closes_after_choosing() {
+    with_ui(|ui| {
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規", "開く"])]);
+        window.set_menu_bar(&menu_bar);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        menu_bar.on_activate({
+            let seen = seen.clone();
+            move |menu, item| seen.borrow_mut().push((menu, item))
+        });
+
+        let title = menu_bar.native_title(0).expect("見出し");
+        let menu = menu_bar.native_menu(0).expect("メニュー");
+        assert_eq!(computed(&menu, "display"), "none", "はじめは閉じている");
+
+        title.click();
+        assert_ne!(computed(&menu, "display"), "none", "見出しを押すと開く");
+        assert_eq!(
+            title.get_attribute("aria-expanded").as_deref(),
+            Some("true")
+        );
+
+        // 項目を押すと通知が届き、メニューは閉じる。
+        menu_bar.native_item(0, 1).expect("項目").click();
+        assert_eq!(*seen.borrow(), vec![(0, 1)]);
+        assert_eq!(computed(&menu, "display"), "none");
+        assert_eq!(
+            title.get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+
+        // もう一度開いて、Esc で閉じる (購読しているのは document)。
+        title.click();
+        assert_ne!(computed(&menu, "display"), "none");
+        let prevented = press_escape(body().as_ref(), false);
+        assert_eq!(computed(&menu, "display"), "none", "Esc で閉じること");
+        assert!(prevented, "Esc の既定動作を止めていること");
+
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn menu_bar_shortcuts_reach_the_closure() {
+    with_ui(|ui| {
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new(
+            "ファイル",
+            [
+                MenuItem::new("保存").shortcut(MenuShortcut::new('s')),
+                MenuItem::new("別名で保存").shortcut(MenuShortcut::new('s').shift(true)),
+                MenuItem::new("閉じる")
+                    .shortcut(MenuShortcut::new('w'))
+                    .enabled(false),
+            ],
+        )]);
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        window.set_menu_bar(&menu_bar);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        menu_bar.on_activate({
+            let seen = seen.clone();
+            move |menu, item| seen.borrow_mut().push((menu, item))
+        });
+
+        let prevented = press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(*seen.borrow(), vec![(0, 0)]);
+        assert!(prevented, "ブラウザの既定のショートカットは起こさない");
+
+        // ⇧ の有無で別の項目になる。
+        press_shortcut(body().as_ref(), "S", true, true, false);
+        assert_eq!(*seen.borrow(), vec![(0, 0), (0, 1)]);
+
+        // 修飾キーが足りない・余っているときは合わない。
+        press_shortcut(body().as_ref(), "s", false, false, false);
+        press_shortcut(body().as_ref(), "s", true, false, true);
+        // 押せない項目のショートカットは効かない。
+        press_shortcut(body().as_ref(), "w", true, false, false);
+        assert_eq!(*seen.borrow(), vec![(0, 0), (0, 1)]);
+
+        menu_bar.set_item_enabled(0, 2, true);
+        press_shortcut(body().as_ref(), "w", true, false, false);
+        assert_eq!(*seen.borrow(), vec![(0, 0), (0, 1), (0, 2)]);
+
+        menu_bar.set_enabled(false);
+        press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(
+            *seen.borrow(),
+            vec![(0, 0), (0, 1), (0, 2)],
+            "無効なメニューバーは通知しない"
+        );
+
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+/// ショートカットは、ウィンドウへ取り付けて画面に出ている間だけ効く。
+#[wasm_bindgen_test]
+fn menu_bar_shortcuts_follow_the_attachment() {
+    with_ui(|ui| {
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new(
+            "ファイル",
+            [MenuItem::new("保存").shortcut(MenuShortcut::new('s'))],
+        )]);
+        let seen = Rc::new(Cell::new(0));
+        menu_bar.on_activate({
+            let seen = seen.clone();
+            move |_menu, _item| seen.set(seen.get() + 1)
+        });
+
+        // 取り付ける前は、キーを見張っていない。
+        let prevented = press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 0, "取り付ける前は反応しない");
+        assert!(!prevented, "ブラウザの既定動作も止めない");
+
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        window.set_menu_bar(&menu_bar);
+        press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 1, "取り付けると効く");
+
+        // 閉じた (隠した) ウィンドウのメニューバーは反応しない。
+        window.close();
+        let prevented = press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 1, "閉じたウィンドウでは反応しない");
+        assert!(!prevented);
+        window.show();
+        press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 2, "出し直すとまた効く");
+
+        // 外したメニューバーは、もう反応しない。
+        window.clear_menu_bar();
+        let prevented = press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 2, "外したあとは反応しない");
+        assert!(!prevented);
+
+        // 付け直せば、また効く。
+        window.set_menu_bar(&menu_bar);
+        press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.get(), 3);
+
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+/// 隠れたウィンドウや別のウィンドウのメニューバーは、Escape の既定動作を
+/// 止めない (開いたメニューを閉じる相手ではないため)。
+#[wasm_bindgen_test]
+fn menu_bar_escape_is_left_alone_when_it_is_not_ours() {
+    with_ui(|ui| {
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+        window.set_menu_bar(&menu_bar);
+        let title = menu_bar.native_title(0).expect("見出し");
+        let menu = menu_bar.native_menu(0).expect("メニュー");
+
+        // 閉じたウィンドウでは、開いていたメニューも一緒に閉じ、Esc は拾わない。
+        title.click();
+        assert_ne!(computed(&menu, "display"), "none");
+        window.close();
+        assert_eq!(
+            title.get_attribute("aria-expanded").as_deref(),
+            Some("false"),
+            "ウィンドウを閉じるとメニューも閉じる"
+        );
+        let prevented = press_escape(body().as_ref(), false);
+        assert!(!prevented, "隠れたウィンドウは Esc の既定動作を止めない");
+
+        // 別のウィンドウの中から上がってきた Esc も拾わない。
+        window.show();
+        let other = ui.window("別のウィンドウ", 400.0, 300.0)?;
+        let input = ui.text_input("")?;
+        other.set_child(&input);
+        title.click();
+        assert_ne!(computed(&menu, "display"), "none");
+        let prevented = press_escape(input.native_element().as_ref(), false);
+        assert!(!prevented, "別のウィンドウの Esc の既定動作は止めない");
+        assert_ne!(computed(&menu, "display"), "none", "メニューは開いたまま");
+
+        // 自分のウィンドウ (や、どのウィンドウにも属さないところ) からなら閉じる。
+        let prevented = press_escape(body().as_ref(), false);
+        assert!(prevented);
+        assert_eq!(computed(&menu, "display"), "none");
+
+        window.clear_menu_bar();
+        window.close();
+        other.close();
+        Ok(())
+    });
+}
+
+/// 同じショートカットを持つウィンドウが 2 つあっても、1 回だけ通知する。
+#[wasm_bindgen_test]
+fn menu_bar_shortcuts_reach_only_one_window() {
+    with_ui(|ui| {
+        let spec = [MenuSpec::new(
+            "ファイル",
+            [MenuItem::new("保存").shortcut(MenuShortcut::new('s'))],
+        )];
+
+        let first_window = ui.window("1 つ目", 400.0, 300.0)?;
+        let first_input = ui.text_input("")?;
+        first_window.set_child(&first_input);
+        let first = ui.menu_bar()?;
+        first.set_menus(&spec);
+        first_window.set_menu_bar(&first);
+
+        let second_window = ui.window("2 つ目", 400.0, 300.0)?;
+        let second_input = ui.text_input("")?;
+        second_window.set_child(&second_input);
+        let second = ui.menu_bar()?;
+        second.set_menus(&spec);
+        second_window.set_menu_bar(&second);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        first.on_activate({
+            let seen = seen.clone();
+            move |_menu, _item| seen.borrow_mut().push(1)
+        });
+        second.on_activate({
+            let seen = seen.clone();
+            move |_menu, _item| seen.borrow_mut().push(2)
+        });
+
+        // キーが上がってきたウィンドウのメニューバーだけが受け取る。
+        press_shortcut(
+            second_input.native_element().as_ref(),
+            "s",
+            true,
+            false,
+            false,
+        );
+        assert_eq!(*seen.borrow(), vec![2], "2 つ目のウィンドウの中から");
+        press_shortcut(
+            first_input.native_element().as_ref(),
+            "s",
+            true,
+            false,
+            false,
+        );
+        assert_eq!(*seen.borrow(), vec![2, 1], "1 つ目のウィンドウの中から");
+
+        // どのウィンドウにも属さないところからのキーは、1 つだけが受け取る。
+        press_shortcut(body().as_ref(), "s", true, false, false);
+        assert_eq!(seen.borrow().len(), 3, "二重に通知しない");
+
+        first_window.clear_menu_bar();
+        second_window.clear_menu_bar();
+        first_window.close();
+        second_window.close();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn menu_bar_attaches_to_the_top_of_the_window() {
+    with_ui(|ui| {
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        let content = ui.label("中身")?;
+        window.set_child(&content);
+
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+        window.set_menu_bar(&menu_bar);
+
+        let bar = menu_bar.native_element();
+        let parent = bar.parent_element().expect("親要素");
+        assert_eq!(
+            parent.first_element_child().as_ref(),
+            Some(&bar),
+            "ウィンドウの先頭に入る"
+        );
+
+        // 中身を差し替えても先頭に残る。
+        let other = ui.label("別の中身")?;
+        window.set_child(&other);
+        assert_eq!(
+            bar.parent_element()
+                .and_then(|p| p.first_element_child())
+                .as_ref(),
+            Some(&bar),
+            "中身を入れ替えても付いたまま"
+        );
+
+        window.clear_menu_bar();
+        assert!(bar.parent_element().is_none(), "外すとページから消える");
+        window.close();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn menu_bar_callback_is_reentrant_and_replaceable() {
+    with_ui(|ui| {
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規", "開く"])]);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        menu_bar.on_activate({
+            let seen = seen.clone();
+            let menu_bar = menu_bar.clone();
+            move |menu, item| {
+                seen.borrow_mut().push((menu, item));
+                // 通知の中でメニューを組み替え、コールバックも差し替える。
+                menu_bar.set_menus(&[MenuSpec::new("編集", ["元に戻す"])]);
+                menu_bar.on_activate({
+                    let seen = seen.clone();
+                    move |menu, item| seen.borrow_mut().push((menu + 10, item + 10))
+                });
+            }
+        });
+
+        menu_bar.activate(0, 1);
+        assert_eq!(*seen.borrow(), vec![(0, 1)]);
+        assert_eq!(menu_bar.len(), 1);
+
+        menu_bar.activate(0, 0);
+        assert_eq!(
+            *seen.borrow(),
+            vec![(0, 1), (10, 10)],
+            "差し替えたコールバックが呼ばれる"
+        );
         Ok(())
     });
 }

@@ -2,6 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 
 use naui_core::{Result, Theme};
 use naui_winui3::Microsoft::UI::Composition::ICompositionSupportsSystemBackdrop;
@@ -9,6 +10,7 @@ use naui_winui3::Microsoft::UI::Composition::SystemBackdrops::{
     MicaController, SystemBackdropConfiguration, SystemBackdropTheme,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::TextBlock;
+use naui_winui3::Microsoft::UI::Xaml::Input::KeyEventHandler;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::MicaBackdrop;
 use naui_winui3::Microsoft::UI::Xaml::{
@@ -16,8 +18,10 @@ use naui_winui3::Microsoft::UI::Xaml::{
     SizeChangedEventHandler, UIElement, Window as XamlWindow,
 };
 use windows::Foundation::TypedEventHandler;
+use windows::System::VirtualKey;
 use windows_core::{Interface, HSTRING};
 
+use crate::menu_bar::MenuBar;
 use crate::to_error;
 use crate::toolbar::Toolbar;
 use crate::ui_thread::UiThreadCell;
@@ -47,6 +51,16 @@ const CAPTION_RESERVE: f64 = 140.0;
 /// 3 つが同じ高さで並ぶようにする。
 pub(crate) const CAPTION_HEIGHT: f64 = 32.0;
 
+/// ウィンドウの根の `Grid` で、メニューバーの置き場が入る行。
+///
+/// 行の並びは [`themed_content_root`] の XAML が決める。XAML は子を行の順に
+/// 並べているので、この番号はそのまま根の子の位置にもなる。根から子をたどる
+/// ところ (トーストの重ね先など) は、番号を直に書かずにこれを使う。
+const MENU_BAR_ROW: u32 = 1;
+
+/// ウィンドウの根の `Grid` で、アプリの中身とトーストが入る行。
+const CONTENT_ROW: u32 = 2;
+
 /// タイトル文字の大きさ。WinUI 3 のキャプション文字 (`CaptionTextBlockStyle`)
 /// と同じ 12。本文と同じ 14 だと [`CAPTION_HEIGHT`] の帯に対して大きい。
 const TITLE_FONT_SIZE: f64 = 12.0;
@@ -59,6 +73,8 @@ struct WindowInner {
     title_label: RefCell<Option<TextBlock>>,
     /// タイトルの右にあるツールバーの入れ物。
     toolbar_host: RefCell<Option<Grid>>,
+    /// タイトルバーの下にあるメニューバーの入れ物。
+    menu_bar_host: RefCell<Option<Grid>>,
     /// ドラッグ領域の候補。ツールバーが付いていなければタイトルバー全体を、
     /// 付いていればツールバーより右の空きだけを使う (ボタンの上で
     /// ウィンドウが動いてしまわないように)。
@@ -66,11 +82,15 @@ struct WindowInner {
     drag_area: RefCell<Option<UIElement>>,
     /// 取り付けたツールバー。通知先ごと生かしておく。
     toolbar: RefCell<Option<Toolbar>>,
+    /// 取り付けたメニューバー。通知先ごと生かしておく。
+    menu_bar: RefCell<Option<MenuBar>>,
     visible: RefCell<bool>,
     theme: Cell<Theme>,
     width: i32,
     height: i32,
     wheel_subclass_installed: Cell<bool>,
+    /// ショートカットを拾う `KeyDown` を付けたかどうか。
+    menu_key_installed: Cell<bool>,
     closing_token: Cell<Option<i64>>,
 }
 
@@ -108,15 +128,18 @@ impl Window {
             child: RefCell::new(None),
             theme_root: RefCell::new(None),
             toolbar_host: RefCell::new(None),
+            menu_bar_host: RefCell::new(None),
             title_bar: RefCell::new(None),
             drag_area: RefCell::new(None),
             toolbar: RefCell::new(None),
+            menu_bar: RefCell::new(None),
             title_label: RefCell::new(None),
             visible: RefCell::new(false),
             theme: Cell::new(theme),
             width: width as i32,
             height: height as i32,
             wheel_subclass_installed: Cell::new(false),
+            menu_key_installed: Cell::new(false),
             closing_token: Cell::new(None),
         }));
         Ok(this)
@@ -151,19 +174,21 @@ impl Window {
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
         let themed = themed_content_root(&element, &self.title());
-        let (theme_root, title_bar, title_label, toolbar_host, drag_area) = match themed {
-            Ok(content) => (
-                content.root,
-                Some(content.title_bar),
-                Some(content.title_label),
-                Some(content.toolbar_host),
-                Some(content.drag_area),
-            ),
-            Err(error) => {
-                eprintln!("naui-windows: テーマ付きウィンドウルートの生成に失敗: {error}");
-                (element.clone(), None, None, None, None)
-            }
-        };
+        let (theme_root, title_bar, title_label, toolbar_host, menu_bar_host, drag_area) =
+            match themed {
+                Ok(content) => (
+                    content.root,
+                    Some(content.title_bar),
+                    Some(content.title_label),
+                    Some(content.toolbar_host),
+                    Some(content.menu_bar_host),
+                    Some(content.drag_area),
+                ),
+                Err(error) => {
+                    eprintln!("naui-windows: テーマ付きウィンドウルートの生成に失敗: {error}");
+                    (element.clone(), None, None, None, None, None)
+                }
+            };
         if self.0.native.SetContent(&theme_root).is_ok() {
             if title_bar.is_some() {
                 // Mica をタイトルバーまで連続させる。ドラッグ領域は
@@ -181,9 +206,14 @@ impl Window {
             *self.0.theme_root.borrow_mut() = Some(theme_root);
             *self.0.title_label.borrow_mut() = title_label;
             *self.0.toolbar_host.borrow_mut() = toolbar_host;
+            *self.0.menu_bar_host.borrow_mut() = menu_bar_host;
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
-            // ルートを作り直したので、取り付けてあったツールバーを載せ直す。
+            // ルートを作り直したので、取り付けてあったものを載せ直す。
+            // ショートカットの購読も、新しい根へ付け直す。
             self.mount_toolbar();
+            self.mount_menu_bar();
+            self.0.menu_key_installed.set(false);
+            self.install_menu_shortcuts();
             if !self.0.wheel_subclass_installed.get() {
                 self.0
                     .wheel_subclass_installed
@@ -217,6 +247,78 @@ impl Window {
             let _ = host.Children().and_then(|children| children.Clear());
         }
         self.apply_drag_area();
+    }
+
+    /// ウィンドウの上端に付けるメニューバー。呼ぶたびに置き換わる。
+    ///
+    /// Windows のメニューバーはタイトルバーの中ではなく**その下**に敷く
+    /// 帯なので、タイトルバーと中身の間へ置く。
+    pub fn set_menu_bar(&self, menu_bar: &MenuBar) {
+        self.clear_menu_bar();
+        *self.0.menu_bar.borrow_mut() = Some(menu_bar.clone());
+        self.mount_menu_bar();
+        self.install_menu_shortcuts();
+    }
+
+    /// 取り付けたメニューバーを外す。付いていなければ何もしない。
+    pub fn clear_menu_bar(&self) {
+        if let Some(old) = self.0.menu_bar.borrow_mut().take() {
+            old.close();
+        }
+        if let Some(host) = self.0.menu_bar_host.borrow().as_ref() {
+            let _ = host.Children().and_then(|children| children.Clear());
+        }
+    }
+
+    /// メニューバーを置き場へ載せる。どちらかが無ければ何もしない。
+    fn mount_menu_bar(&self) {
+        let host = self.0.menu_bar_host.borrow();
+        let menu_bar = self.0.menu_bar.borrow();
+        let (Some(host), Some(menu_bar)) = (host.as_ref(), menu_bar.as_ref()) else {
+            return;
+        };
+        let Ok(children) = host.Children() else {
+            return;
+        };
+        let _ = children.Clear();
+        let _ = children.Append(&menu_bar.mount());
+    }
+
+    /// ショートカットを拾う `KeyDown` を、ウィンドウの根へ 1 度だけ付ける。
+    ///
+    /// `KeyboardAccelerator` が投影に無いため、根まで上ってきたキーを見て
+    /// [`MenuBar`] へ渡す。どのメニューバーが付いているかは呼ばれた時点で
+    /// 見るので、取り付け・取り外しのたびに購読を張り替える必要はない。
+    fn install_menu_shortcuts(&self) {
+        if self.0.menu_key_installed.get() {
+            return;
+        }
+        let root = self.0.theme_root.borrow().clone();
+        let Some(root) = root else {
+            return;
+        };
+        let weak = Arc::new(UiThreadCell::new(self.downgrade()));
+        let handler = KeyEventHandler::new(move |_sender, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            let Some(window) = weak.try_with_mut(|weak| weak.upgrade()).flatten() else {
+                return Ok(());
+            };
+            let menu_bar = window.0.menu_bar.borrow().clone();
+            let Some(menu_bar) = menu_bar else {
+                return Ok(());
+            };
+            let key = args.Key().unwrap_or(VirtualKey::None);
+            if menu_bar.handle_key(key.0) {
+                // 拾ったキーは、ほかのコントロールへは渡さない。
+                let _ = args.SetHandled(true);
+            }
+            Ok(())
+        });
+        if root.KeyDown(&handler).is_ok() {
+            self.0.menu_key_installed.set(true);
+        }
     }
 
     /// いまの状態に合うドラッグ領域をウィンドウへ渡す。
@@ -475,6 +577,8 @@ struct ThemedContent {
     title_label: TextBlock,
     /// タイトルの右に置くツールバーの入れ物。
     toolbar_host: Grid,
+    /// タイトルバーの下に置くメニューバーの入れ物。
+    menu_bar_host: Grid,
     /// ツールバーより右の空き。ツールバーを付けている間のドラッグ領域。
     drag_area: UIElement,
 }
@@ -580,11 +684,16 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
     // `CommandBar` は左寄せなので、余った分はそのまま右の空きになる
     // ([`Window::apply_drag_rectangles`] がそこをドラッグ領域にする)。
     // 3 列目はドラッグ領域の控え。矩形を渡せなかったときだけ使う。
+    //
+    // メニューバーの置き場 (2 行目) は `Auto`。付いていなければ中身が無く、
+    // 高さ 0 になるので、タイトルバーと中身がそのまま隣り合う。左の余白は、
+    // 見出しのボタンが持つ内側の余白とあわせてタイトル文字の左端にそろう。
     let root = XamlReader::Load(&HSTRING::from(format!(
         r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             Background="Transparent">
             <Grid.RowDefinitions>
                 <RowDefinition Height="{CAPTION_HEIGHT}"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <Grid Grid.Row="0" Background="Transparent"
@@ -599,7 +708,8 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
                 <Grid Grid.Column="1" Background="Transparent" Margin="12,0,0,0"/>
                 <Grid Grid.Column="2" Background="Transparent"/>
             </Grid>
-            <Grid Grid.Row="1" Background="Transparent"/>
+            <Grid Grid.Row="{MENU_BAR_ROW}" Background="Transparent" Padding="6,0,0,0"/>
+            <Grid Grid.Row="{CONTENT_ROW}" Background="Transparent"/>
         </Grid>"##,
     )))
     .map_err(|e| to_error("テーマ背景要素の生成", e))?
@@ -636,8 +746,13 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
         .map_err(|e| to_error("ドラッグ領域の子取得", e))?
         .GetAt(2)
         .map_err(|e| to_error("ドラッグ領域の取得", e))?;
+    let menu_bar_host = children
+        .GetAt(MENU_BAR_ROW)
+        .map_err(|e| to_error("メニューバー置き場の取得", e))?
+        .cast::<Grid>()
+        .map_err(|e| to_error("メニューバー置き場への変換", e))?;
     let content = children
-        .GetAt(1)
+        .GetAt(CONTENT_ROW)
         .map_err(|e| to_error("コンテンツレイヤーの取得", e))?
         .cast::<Grid>()
         .map_err(|e| to_error("コンテンツレイヤーへの変換", e))?;
@@ -655,6 +770,7 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
             .map_err(|e| to_error("タイトルバーへの変換", e))?,
         title_label,
         toolbar_host,
+        menu_bar_host,
         drag_area,
     })
 }
@@ -694,13 +810,18 @@ pub(crate) fn owner_xaml_root() -> Option<naui_winui3::Microsoft::UI::Xaml::Xaml
 
 /// トーストを重ねる層。まだウィンドウを表示していなければ `None`。
 ///
-/// [`themed_content_root`] が作る 2 行目 (アプリの中身の置き場) で、
+/// [`themed_content_root`] が作る中身の行 ([`CONTENT_ROW`]) で、
 /// `Grid` は子を重ね順に置くため、あとから足したトーストが中身の上に出る。
 pub(crate) fn owner_content_layer() -> Option<Grid> {
     OWNER_WINDOW.with(|slot| {
         let window = slot.borrow();
         let root = window.as_ref()?.Content().ok()?.cast::<Grid>().ok()?;
-        root.Children().ok()?.GetAt(1).ok()?.cast::<Grid>().ok()
+        root.Children()
+            .ok()?
+            .GetAt(CONTENT_ROW)
+            .ok()?
+            .cast::<Grid>()
+            .ok()
     })
 }
 

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use naui_core::{
-    Align, Color, GridCell, Orientation, Point, Rect, Result, ScrollPolicy, Sizing, TextColor,
-    TextStyle,
+    Align, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect, Result,
+    ScrollPolicy, Sizing, TextColor, TextStyle,
 };
 use naui_windows::{run_for_test, Ui, Widget};
 
@@ -106,6 +106,14 @@ const CASES: &[Case] = &[
         "ラベルの付くウィジェットが読み上げ名を持つ",
         widgets_expose_accessible_names,
     ),
+    (
+        "メニューバーの見出しと項目が MenuFlyout になる",
+        menu_bar_menus_map_to_native,
+    ),
+    (
+        "メニューバーの項目がインデックスの組で通知する",
+        menu_bar_activation_notifies,
+    ),
 ];
 
 /// あとで確かめる仕事。イベントループを 1 周まわしてから呼ばれる。
@@ -118,7 +126,13 @@ type Deferred = Box<dyn FnOnce() -> Result<()>>;
 /// 出し、確認はループが回ってから行う。
 type AsyncCase = (&'static str, fn(&Ui) -> Result<Deferred>);
 
-const ASYNC_CASES: &[AsyncCase] = &[("ウィンドウが出て、閉じると消える", window_lifecycle)];
+const ASYNC_CASES: &[AsyncCase] = &[
+    ("ウィンドウが出て、閉じると消える", window_lifecycle),
+    (
+        "トーストはメニューバーの行ではなく中身の行に重なる",
+        toast_overlays_the_content_below_the_menu_bar,
+    ),
+];
 
 /// `Application::Start` に入ったきり戻らないと、CI が打ち切るまで詰まる。
 /// 全ケースぶんの余裕を取ったうえで、必ず終わらせる。
@@ -1021,6 +1035,79 @@ fn widgets_expose_accessible_names(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// ウィンドウの根は「タイトルバー → メニューバー → 中身」の 3 行で、
+/// トーストは中身の行 (3 行目) に重ねる。行を足したときに重ね先が古い番号の
+/// ままだと、トーストがメニューバーの行 (`Auto`) に入って中身を押し下げる。
+///
+/// 重ね先はトーストを出したその場で決まるので、確かめるのは仕込みの中で
+/// 済ませる。ウィンドウが閉じると後片づけ (`AppWindow` の `Closing`) が
+/// 全ウィンドウの中身を外すので、一巡後 (ほかのケースがウィンドウを
+/// 閉じたあと) では根の `Grid` を読めない。同じ理由で、このウィンドウも
+/// 閉じずにアプリの終了に任せる。
+fn toast_overlays_the_content_below_the_menu_bar(ui: &Ui) -> Result<Deferred> {
+    let window = ui.window("トースト", 320.0, 240.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&ui.label("中身")?);
+    window.set_child(&stack);
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+    window.set_menu_bar(&menu_bar);
+    window.show();
+
+    // 重ね先は「最後に出したウィンドウ」なので、出してから重ねる。
+    let toast = ui.toast("保存しました")?;
+    toast.show();
+
+    let rows = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<Grid>()
+        .expect("根は Grid")
+        .Children()
+        .expect("根の子");
+    // 行ごとの子。XAML は子を行の順に並べている。
+    let row = |index: u32| -> Vec<UIElement> {
+        let children = rows
+            .GetAt(index)
+            .expect("行")
+            .cast::<Grid>()
+            .expect("行は Grid")
+            .Children()
+            .expect("行の子");
+        (0..children.Size().expect("子の数"))
+            .map(|i| children.GetAt(i).expect("子"))
+            .collect()
+    };
+
+    let toast_element = toast.native_element();
+    assert!(toast.is_visible(), "トーストが出ていること");
+    assert!(
+        row(2).contains(&toast_element),
+        "トーストは中身の行に重なること"
+    );
+    assert!(
+        !row(1).contains(&toast_element),
+        "メニューバーの行には入らないこと"
+    );
+    let panel = menu_bar
+        .native_panel()
+        .cast::<UIElement>()
+        .expect("StackPanel の要素化");
+    assert_eq!(
+        row(1),
+        vec![panel],
+        "メニューバーの行にはメニューバーだけが入ること"
+    );
+
+    toast.dismiss();
+    window.clear_menu_bar();
+    assert_eq!(row(1).len(), 0, "外すとメニューバーの行は空になること");
+
+    // 確かめることはもう無い。ウィンドウは `Ui` が持ち、アプリの終了で畳まれる。
+    Ok(Box::new(|| Ok(())))
+}
+
 fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
     let window = ui.window("テスト", 320.0, 240.0)?;
     assert_eq!(window.title(), "テスト");
@@ -1041,4 +1128,175 @@ fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
         assert!(!window.is_visible(), "閉じたら見えないこと");
         Ok(())
     }))
+}
+
+// -------------------------------------------------------------- メニューバー
+
+/// `StackPanel` に並んだ見出しの数。
+fn title_count(menu_bar: &naui_windows::MenuBar) -> u32 {
+    menu_bar
+        .native_panel()
+        .Children()
+        .expect("見出しの入れ物")
+        .Size()
+        .expect("見出しの数")
+}
+
+/// 見出しは `Button` + `MenuFlyout`、項目は `MenuFlyoutItem` になる。
+fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    assert!(menu_bar.is_empty());
+
+    menu_bar.set_menus(&[
+        MenuSpec::new(
+            "ファイル",
+            [
+                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                MenuItem::separator(),
+                MenuItem::new("保存")
+                    .shortcut(MenuShortcut::new('s').shift(true))
+                    .enabled(false),
+            ],
+        ),
+        MenuSpec::new("表示", ["拡大", "縮小"]),
+    ]);
+
+    assert_eq!(menu_bar.len(), 2, "見出しの数");
+    assert_eq!(menu_bar.menu_len(0), 3, "区切り線も 1 項目として数える");
+    assert_eq!(menu_bar.menu_len(1), 2);
+    assert_eq!(menu_bar.menu_len(9), 0, "範囲外は 0");
+    assert_eq!(title_count(&menu_bar), 2, "見出しの数だけボタンが並ぶ");
+
+    let flyout = menu_bar.native_flyout(0).expect("メニュー");
+    assert_eq!(
+        flyout.Items().expect("項目").Size().expect("項目の数"),
+        3,
+        "区切り線も 1 つとして並ぶ"
+    );
+
+    let first = menu_bar.native_item(0, 0).expect("先頭は項目");
+    assert_eq!(first.Text().expect("文字").to_string(), "新規");
+    assert!(first.IsEnabled().expect("有効かどうか"));
+    assert_eq!(
+        first
+            .KeyboardAcceleratorTextOverride()
+            .expect("右端の表示")
+            .to_string(),
+        "Ctrl+N",
+        "ショートカットの表示は naui が添える"
+    );
+    assert!(menu_bar.native_item(0, 1).is_none(), "区切り線に項目は無い");
+
+    let save = menu_bar.native_item(0, 2).expect("3 番目は項目");
+    assert!(!save.IsEnabled().expect("有効かどうか"));
+    assert_eq!(
+        save.KeyboardAcceleratorTextOverride()
+            .expect("右端の表示")
+            .to_string(),
+        "Ctrl+Shift+S"
+    );
+    assert!(menu_bar.native_item(9, 0).is_none(), "範囲外は None");
+    assert!(menu_bar.native_item(0, 9).is_none(), "範囲外は None");
+    assert!(menu_bar.native_flyout(9).is_none(), "範囲外は None");
+
+    // ショートカットを指定しなければ右端には何も出ない。
+    assert_eq!(
+        menu_bar
+            .native_item(1, 0)
+            .expect("項目")
+            .KeyboardAcceleratorTextOverride()
+            .expect("右端の表示")
+            .to_string(),
+        ""
+    );
+
+    assert!(menu_bar.is_item_enabled(0, 0));
+    assert!(!menu_bar.is_item_enabled(0, 1), "区切り線は押せない");
+    assert!(!menu_bar.is_item_enabled(0, 2));
+
+    // 項目ごとの指定と全体の指定は AND を取る。
+    menu_bar.set_item_enabled(0, 2, true);
+    assert!(menu_bar
+        .native_item(0, 2)
+        .expect("項目")
+        .IsEnabled()
+        .expect("有効かどうか"));
+    menu_bar.set_enabled(false);
+    assert!(!menu_bar.is_item_enabled(0, 0));
+    assert!(!menu_bar
+        .native_item(0, 0)
+        .expect("項目")
+        .IsEnabled()
+        .expect("有効かどうか"));
+    menu_bar.set_enabled(true);
+    assert!(
+        menu_bar.is_item_enabled(0, 2),
+        "全体を戻すと項目ごとの指定が残る"
+    );
+
+    // 区切り線への set_item_enabled は無視する。
+    menu_bar.set_item_enabled(0, 1, true);
+    assert!(!menu_bar.is_item_enabled(0, 1));
+
+    menu_bar.set_menus(&[]);
+    assert!(menu_bar.is_empty());
+    assert!(menu_bar.native_item(0, 0).is_none());
+    assert_eq!(title_count(&menu_bar), 0);
+    Ok(())
+}
+
+/// 押された項目は (見出し, 項目) のインデックスの組で届く。
+///
+/// `MenuFlyoutItem` の `Click` は、メニューを出さないと通せない (`MenuFlyout`
+/// は画面に出てはじめて項目へ peer を用意する)。ここは naui 側の経路だけを
+/// 見て、実際のクリックからの配線は macOS / GTK / Web の統合テストと、
+/// Windows は Gallery の実行で確かめている。
+fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[
+        MenuSpec::new(
+            "編集",
+            [
+                MenuItem::new("元に戻す"),
+                MenuItem::separator(),
+                MenuItem::new("やり直す").enabled(false),
+            ],
+        ),
+        MenuSpec::new("表示", ["拡大"]),
+    ]);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    menu_bar.on_activate(move |menu, item| sink.borrow_mut().push((menu, item)));
+
+    menu_bar.activate(0, 0);
+    assert_eq!(seen.borrow().as_slice(), [(0, 0)].as_slice());
+    menu_bar.activate(0, 1);
+    menu_bar.activate(0, 2);
+    menu_bar.activate(9, 0);
+    menu_bar.activate(0, 9);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [(0, 0)].as_slice(),
+        "区切り線・押せない項目・範囲外は通知しない"
+    );
+
+    menu_bar.activate(1, 0);
+    assert_eq!(seen.borrow().as_slice(), [(0, 0), (1, 0)].as_slice());
+
+    menu_bar.set_item_enabled(0, 2, true);
+    menu_bar.activate(0, 2);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [(0, 0), (1, 0), (0, 2)].as_slice()
+    );
+
+    menu_bar.set_enabled(false);
+    menu_bar.activate(0, 0);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [(0, 0), (1, 0), (0, 2)].as_slice(),
+        "無効なメニューバーは通知しない"
+    );
+    Ok(())
 }

@@ -9,9 +9,16 @@ use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
 use crate::apply_theme;
+use crate::menu_bar::MenuBar;
 use crate::to_error;
 use crate::toolbar::Toolbar;
 use crate::widgets::{create, Widget};
+
+/// ウィンドウ要素に付ける印。
+const WINDOW_ATTRIBUTE: &str = "data-naui-window";
+
+/// ウィンドウ要素を `closest` で探すためのセレクタ。
+pub(crate) const WINDOW_SELECTOR: &str = "[data-naui-window]";
 
 struct WindowInner {
     element: HtmlElement,
@@ -20,6 +27,8 @@ struct WindowInner {
     child: RefCell<Option<Box<dyn Widget>>>,
     /// 上端に差し込んだツールバー。通知先ごと生かしておく。
     toolbar: RefCell<Option<Toolbar>>,
+    /// 上端に差し込んだメニューバー。通知先ごと生かしておく。
+    menu_bar: RefCell<Option<MenuBar>>,
 }
 
 /// ページ上のウィンドウ相当。
@@ -45,6 +54,8 @@ impl Window {
 
     pub(crate) fn new(document: &Document, title: &str, width: f64, height: f64) -> Result<Self> {
         let element: HtmlElement = create(document, "div")?.unchecked_into();
+        // メニューバーが「キーがどのウィンドウから上がってきたか」を見分ける印。
+        let _ = element.set_attribute(WINDOW_ATTRIBUTE, "");
         let style = element.style();
         // 指定サイズを上限としつつ、狭い画面では縮む。
         let _ = style.set_property("max-width", &format!("{width}px"));
@@ -71,6 +82,7 @@ impl Window {
             title: RefCell::new(String::new()),
             child: RefCell::new(None),
             toolbar: RefCell::new(None),
+            menu_bar: RefCell::new(None),
         }));
         this.set_title(title);
         Ok(this)
@@ -106,7 +118,9 @@ impl Window {
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
         // 中身を入れ替えると差し込んだ要素も消えるので、付け直す。
+        // メニューバーはツールバーより上に来る (OS のメニューと同じ順)。
         self.mount_toolbar();
+        self.mount_menu_bar();
     }
 
     /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
@@ -131,12 +145,48 @@ impl Window {
         let Some(toolbar) = toolbar.as_ref() else {
             return;
         };
-        let mount = toolbar.mount();
+        self.mount_first(&toolbar.mount());
+    }
+
+    /// ウィンドウの上端に付けるメニューバー。呼ぶたびに置き換わる。
+    ///
+    /// ブラウザには OS のメニューバーが無いため、ウィンドウ要素の先頭
+    /// (ツールバーより上) に置く。
+    pub fn set_menu_bar(&self, menu_bar: &MenuBar) {
+        self.clear_menu_bar();
+        *self.0.menu_bar.borrow_mut() = Some(menu_bar.clone());
+        self.mount_menu_bar();
+        // ショートカットの購読は、取り付けている間だけ張る。
+        menu_bar.attach(self.0.element.as_ref());
+    }
+
+    /// 取り付けたメニューバーを外す。付いていなければ何もしない。
+    ///
+    /// 外したメニューバーはショートカットにも反応しなくなる。
+    pub fn clear_menu_bar(&self) {
+        let old = self.0.menu_bar.borrow_mut().take();
+        if let Some(old) = old {
+            old.detach();
+            old.mount().remove();
+        }
+    }
+
+    /// メニューバーをウィンドウの先頭へ置き直す。
+    fn mount_menu_bar(&self) {
+        let menu_bar = self.0.menu_bar.borrow();
+        let Some(menu_bar) = menu_bar.as_ref() else {
+            return;
+        };
+        self.mount_first(&menu_bar.mount());
+    }
+
+    /// ウィンドウ要素の先頭へ差し込む。
+    fn mount_first(&self, mount: &HtmlElement) {
         let first = self.0.element.first_element_child();
         let _ = self
             .0
             .element
-            .insert_before(&mount, first.as_ref().map(|e| e.as_ref()));
+            .insert_before(mount, first.as_ref().map(|e| e.as_ref()));
     }
 
     /// 表示する。Web では最初から表示されているため、隠していた場合に戻す。
@@ -146,6 +196,11 @@ impl Window {
     }
 
     pub fn close(&self) {
+        // 開いたままのメニューを残さない (隠れたウィンドウの Esc を拾わない)。
+        let menu_bar = self.0.menu_bar.borrow().clone();
+        if let Some(menu_bar) = menu_bar {
+            menu_bar.close();
+        }
         let _ = self.0.element.style().set_property("display", "none");
     }
 

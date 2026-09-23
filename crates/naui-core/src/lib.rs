@@ -24,6 +24,7 @@ mod layout;
 mod list;
 mod main_thread;
 pub mod media;
+mod menu;
 mod number;
 mod popup;
 mod row_window;
@@ -50,6 +51,7 @@ pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
 pub use list::{ListItem, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
+pub use menu::{MenuItem, MenuShortcut, MenuSpec};
 pub use number::NumberSpec;
 pub use popup::PopupItem;
 pub use row_window::{

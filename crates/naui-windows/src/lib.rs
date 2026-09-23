@@ -36,6 +36,7 @@ mod layout;
 mod list;
 mod main_thread;
 mod media;
+mod menu_bar;
 mod navigation;
 mod number_input;
 mod popup;
@@ -70,6 +71,7 @@ pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
+pub use menu_bar::MenuBar;
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;
@@ -113,6 +115,8 @@ struct UiInner {
     popups: RefCell<Vec<PopupMenu>>,
     /// ツールバーもレイアウトに載らないので、ここで保持する。
     toolbars: RefCell<Vec<Toolbar>>,
+    /// メニューバーもレイアウトに載らないので、ここで保持する。
+    menu_bars: RefCell<Vec<MenuBar>>,
     /// トーストもレイアウトに載らないので、ここで保持する。
     toasts: RefCell<Vec<Toast>>,
     /// 別スレッドと非同期処理の入り口。
@@ -128,6 +132,7 @@ impl Ui {
             dialogs: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
+            menu_bars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
             // `Ui::new` は OnLaunched (UI スレッド) から呼ばれる。
             tasks: Tasks::from_main_thread(std::sync::Arc::new(
@@ -288,6 +293,16 @@ impl Ui {
         let toolbar = Toolbar::new()?;
         self.0.toolbars.borrow_mut().push(toolbar.clone());
         Ok(toolbar)
+    }
+
+    /// ウィンドウの上端に付ける、OS のアプリケーションメニュー。
+    ///
+    /// [`Window::set_menu_bar`] で取り付ける。フレームワークが参照を保持するので、
+    /// 戻り値を捨てても通知が届かなくなることはない。
+    pub fn menu_bar(&self) -> Result<MenuBar> {
+        let menu_bar = MenuBar::new()?;
+        self.0.menu_bars.borrow_mut().push(menu_bar.clone());
+        Ok(menu_bar)
     }
 
     /// 縦に並ぶナビゲーション一覧。

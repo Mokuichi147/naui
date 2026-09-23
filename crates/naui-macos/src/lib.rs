@@ -63,6 +63,7 @@ pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
+pub use menu_bar::MenuBar;
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;
@@ -94,6 +95,8 @@ pub struct Ui(Rc<UiInner>);
 
 struct UiInner {
     mtm: MainThreadMarker,
+    /// アプリ名。メニューバーの先頭 (アプリメニュー) の見出しに使う。
+    app_name: String,
     theme: Cell<Theme>,
     /// コールバックが終わってもウィンドウを生かしておくための保持。
     windows: RefCell<Vec<Window>>,
@@ -103,6 +106,8 @@ struct UiInner {
     popups: RefCell<Vec<PopupMenu>>,
     /// ツールバーもレイアウトに載らないので、ここで保持する。
     toolbars: RefCell<Vec<Toolbar>>,
+    /// メニューバーもレイアウトに載らないので、ここで保持する。
+    menu_bars: RefCell<Vec<MenuBar>>,
     /// トーストもレイアウトに載らないので、ここで保持する。
     toasts: RefCell<Vec<Toast>>,
     /// 別スレッドと非同期処理の入り口。
@@ -110,14 +115,16 @@ struct UiInner {
 }
 
 impl Ui {
-    fn new(mtm: MainThreadMarker, theme: Theme) -> Self {
+    fn new(mtm: MainThreadMarker, app_name: &str, theme: Theme) -> Self {
         Self(Rc::new(UiInner {
             mtm,
+            app_name: app_name.to_string(),
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
             dialogs: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
+            menu_bars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
             tasks: Tasks::from_main_thread(std::sync::Arc::new(main_thread::MainQueue)),
         }))
@@ -274,6 +281,16 @@ impl Ui {
         let toolbar = Toolbar::new(self.0.mtm);
         self.0.toolbars.borrow_mut().push(toolbar.clone());
         Ok(toolbar)
+    }
+
+    /// 画面上端に出す、OS のアプリケーションメニュー。
+    ///
+    /// [`Window::set_menu_bar`] で取り付ける。フレームワークが参照を保持するので、
+    /// 戻り値を捨てても通知が届かなくなることはない。
+    pub fn menu_bar(&self) -> Result<MenuBar> {
+        let menu_bar = MenuBar::new(self.0.mtm, &self.0.app_name);
+        self.0.menu_bars.borrow_mut().push(menu_bar.clone());
+        Ok(menu_bar)
     }
 
     /// 選択できる行の一覧。自分でスクロールする。
@@ -447,7 +464,7 @@ where
     menu_bar::install(mtm, &settings.name);
 
     let error = Rc::new(RefCell::new(None));
-    let ui = Ui::new(mtm, settings.theme);
+    let ui = Ui::new(mtm, &settings.name, settings.theme);
     let delegate = AppDelegate::alloc(mtm).set_ivars(DelegateState {
         build: RefCell::new(Some(Box::new(build))),
         ui: ui.clone(),
@@ -484,7 +501,7 @@ where
     let app = NSApplication::sharedApplication(mtm);
     // テスト中に Dock アイコンを出さない。
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
-    let ui = Ui::new(mtm, Theme::System);
+    let ui = Ui::new(mtm, "naui", Theme::System);
     build(&ui)
 }
 

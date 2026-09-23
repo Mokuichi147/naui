@@ -792,6 +792,82 @@
 //! macOS の「ツールバーをカスタマイズ」(利用者による並べ替え) は切ってある。
 //! 並べ替えられると通知のインデックスの意味が変わってしまうため。
 //!
+//! ## メニューバー (OS のアプリケーションメニュー)
+//!
+//! 「ファイル」「編集」のような**見出しと項目の 2 段**のメニューは
+//! [`MenuBar`] を使う。[`Toolbar`] と同じくレイアウトへは置かず、
+//! [`Window::set_menu_bar`] で取り付ける ([`Widget`] ではない)。
+//!
+//! 見出し 1 つが [`MenuSpec`]、その中の 1 行が [`MenuItem`]。押されると
+//! **(見出しのインデックス, 区切り線を含めた項目のインデックス)** で
+//! [`MenuBar::on_activate`] が呼ばれる。
+//!
+//! ```no_run
+//! # use naui::{MenuItem, MenuShortcut, MenuSpec, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let window = ui.window("編集", 800.0, 600.0)?;
+//!
+//! let menu_bar = ui.menu_bar()?;
+//! menu_bar.set_menus(&[
+//!     MenuSpec::new(
+//!         "ファイル",
+//!         [
+//!             MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+//!             MenuItem::new("開く").shortcut(MenuShortcut::new('o')),
+//!             MenuItem::separator(),      // 押せないので通知も来ない
+//!             MenuItem::new("保存").shortcut(MenuShortcut::new('s')).enabled(false),
+//!         ],
+//!     ),
+//!     // 文字列の並びをそのまま渡すこともできる。
+//!     MenuSpec::new("表示", ["拡大", "縮小"]),
+//! ]);
+//! menu_bar.on_activate(|menu, item| println!("{menu} 番目の {item} 番目が押された"));
+//! menu_bar.set_item_enabled(0, 3, true); // 保存できる状態になったら有効にする
+//! window.set_menu_bar(&menu_bar);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `MenuBar` | `Button` の横並び | `NSMenu` (`NSApplication.mainMenu`) | `GtkPopoverMenuBar` + `GMenu` | `<div role="menubar">` |
+//! | メニュー | `MenuFlyout` | `NSMenu` | `GMenu` の submenu | `<div role="menu">` |
+//! | 項目 | `MenuFlyoutItem` | `NSMenuItem` | `GMenuItem` + `GSimpleAction` | `<button role="menuitem">` |
+//!
+//! **macOS ではメニューバーはアプリに 1 つ**で、画面上端に出る
+//! (`NSApplication.mainMenu`)。[`Window::set_menu_bar`] はどのウィンドウから
+//! 呼んでもアプリ全体に効く。ほかの 3 環境ではウィンドウの上端 (タイトルバーの
+//! 下) に敷かれる。
+//!
+//! ### ショートカット
+//!
+//! [`MenuShortcut`] は**主修飾キーと英数字 1 文字**の組み合わせで、主修飾キーは
+//! macOS では ⌘、ほかでは Ctrl になる。⇧ と ⌥ / Alt は
+//! [`shift`](MenuShortcut::shift) / [`alt`](MenuShortcut::alt) で足す。
+//! macOS と Linux では OS (AppKit / GTK4) がキーを受け取って項目を呼び、
+//! 項目の右端の表示も OS が作る。Windows と Web にはその仕組みが無いため、
+//! naui が押されたキーを見張り、右端の表示 (`Ctrl+S` の形) も自分で添える。
+//!
+//! ### macOS の標準メニュー
+//!
+//! macOS では ⌘C / ⌘V などがメインメニューのキー等価として配送されるため、
+//! メニューが無いと**テキスト入力で貼り付けができなくなる**。そこで naui は
+//! アプリ名のメニュー (先頭) と「編集」メニュー (末尾) を必ず用意し、
+//! アプリが渡した見出しをその間へ並べる。[`Window::clear_menu_bar`] で外すと、
+//! この 2 つだけの既定のメニューへ戻る。
+//!
+//! ### そのほか
+//!
+//! [`MenuBar::len`] は見出しの数、[`MenuBar::menu_len`] は見出し 1 つが持つ
+//! 区切り線を含めた項目数。[`MenuBar::activate`] は利用者が選んだのと同じように
+//! 通知する (区切り線・押せない項目・範囲外は何もしない)。
+//! [`MenuBar::set_enabled`] はメニューバー全体をまとめて無効にするもので、
+//! 項目ごとの指定は残る (macOS では naui の標準メニューは対象にしない)。
+//!
+//! 入れ子のメニュー (サブメニューのさらに下) と、チェックの付く項目は
+//! **持たない**。4 環境で同じ形にそろうところまでを共通 API にしてあるので、
+//! それ以上が要るときはネイティブオブジェクトへの脱出口を使う。
+//!
 //! ## ポップアップ (コンテキスト) メニュー
 //!
 //! [`PopupMenu`] は画面に並ばないので [`Widget`] ではない。項目は
@@ -1405,10 +1481,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・描画面・ラベルの折り返し・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む 151 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、描画面の画素とポインター、ラベルの折り返しと省略記号、ラベルの文字づかい、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・メニューバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・描画面・ラベルの折り返し・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む 156 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、描画面の画素とポインター、メニューバーの見出しの開閉・ショートカット・ウィンドウへの取り付け、ラベルの折り返しと省略記号、ラベルの文字づかい、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・描画面・別スレッドからの受け渡しと `spawn` を含む) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・別スレッドからの受け渡しと `spawn` を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 141 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの折り返しを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・別スレッドからの受け渡しと `spawn` を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 146 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・メニューバー・ラベルの折り返しを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -1416,18 +1492,18 @@ pub use naui_core::{
     accept_attribute, clamp_split_position, days_in_month, default_extension, is_leap_year, media,
     with_default_extension, Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     DrawCommand, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem,
-    NavItem, NumberSpec, Orientation, Padding, Painter, Path, PathSegment, PlaybackState, Point,
-    PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, Sender,
-    Settings, Sizing, SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme,
-    Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, DEFAULT_SPLIT_POSITION,
-    ROW_WINDOW_THRESHOLD,
+    MenuItem, MenuShortcut, MenuSpec, NavItem, NumberSpec, Orientation, Padding, Painter, Path,
+    PathSegment, PlaybackState, Point, PointerEvent, PointerPhase, PopupItem, Rect, Result,
+    ScrollPolicy, SelectionMode, Sender, Settings, Sizing, SortOrder, TableColumn, TableRow, Task,
+    Tasks, TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
     Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
-    ListRow, Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
+    ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
     RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
     TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
     Window,
@@ -1436,7 +1512,7 @@ pub use naui_macos::{
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
     Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
-    ListRow, Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
+    ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
     RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
     TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
     Window,
@@ -1445,7 +1521,7 @@ pub use naui_web::{
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
     Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
-    ListRow, Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
+    ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
     RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
     TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
     Window,
@@ -1459,7 +1535,7 @@ pub use naui_windows::{
 pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
     Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
-    ListRow, Menu, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
+    ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
     RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
     TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
     Window,
@@ -1846,6 +1922,43 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     toolbar.on_activate(|_index: usize| {});
     window.set_toolbar(&toolbar);
     window.clear_toolbar();
+
+    // --- メニューバー (ウィンドウに取り付ける。Widget ではない) -----------
+    let menu_bar: MenuBar = ui.menu_bar()?;
+    menu_bar.set_menus(&[
+        MenuSpec::new(
+            "t",
+            [
+                MenuItem::new("t").shortcut(MenuShortcut::new('n')),
+                MenuItem::separator(),
+                MenuItem::new("t")
+                    .shortcut(MenuShortcut::new('z').shift(true).alt(true))
+                    .enabled(false),
+            ],
+        ),
+        // 文字列の並びからも作れる。
+        MenuSpec::new("t", ["t", "t"]),
+    ]);
+    let _: usize = MenuSpec::new("t", ["t"]).len();
+    let _: bool = MenuSpec::new("t", ["t"]).is_empty();
+    let _: Vec<MenuItem> = MenuItem::list(["t", "t"]);
+    let _: bool = MenuItem::from("t").is_separator();
+    let _: bool = MenuShortcut::new('s').is_valid();
+    let _: String = MenuShortcut::new('s').key_equivalent();
+    let _: String = MenuShortcut::new('s').accelerator();
+    let _: String = MenuShortcut::new('s').label();
+    let _: i32 = MenuShortcut::new('s').virtual_key();
+    let _: bool = MenuShortcut::new('s').matches("s", true, false, false);
+    let _: usize = menu_bar.len();
+    let _: bool = menu_bar.is_empty();
+    let _: usize = menu_bar.menu_len(0);
+    let _: bool = menu_bar.is_item_enabled(0, 0);
+    menu_bar.set_item_enabled(0, 2, true);
+    menu_bar.set_enabled(true);
+    menu_bar.activate(0, 0);
+    menu_bar.on_activate(|_menu: usize, _item: usize| {});
+    window.set_menu_bar(&menu_bar);
+    window.clear_menu_bar();
 
     // --- リスト -----------------------------------------------------------
     let list: List = ui.list()?;
