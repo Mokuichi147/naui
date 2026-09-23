@@ -126,7 +126,13 @@ type Deferred = Box<dyn FnOnce() -> Result<()>>;
 /// 出し、確認はループが回ってから行う。
 type AsyncCase = (&'static str, fn(&Ui) -> Result<Deferred>);
 
-const ASYNC_CASES: &[AsyncCase] = &[("ウィンドウが出て、閉じると消える", window_lifecycle)];
+const ASYNC_CASES: &[AsyncCase] = &[
+    ("ウィンドウが出て、閉じると消える", window_lifecycle),
+    (
+        "トーストはメニューバーの行ではなく中身の行に重なる",
+        toast_overlays_the_content_below_the_menu_bar,
+    ),
+];
 
 /// `Application::Start` に入ったきり戻らないと、CI が打ち切るまで詰まる。
 /// 全ケースぶんの余裕を取ったうえで、必ず終わらせる。
@@ -1027,6 +1033,74 @@ fn widgets_expose_accessible_names(ui: &Ui) -> Result<()> {
     let label = ui.label("見出し")?;
     assert_eq!(accessible_name(&label), "見出し", "ラベルの読み上げ名");
     Ok(())
+}
+
+/// ウィンドウの根は「タイトルバー → メニューバー → 中身」の 3 行で、
+/// トーストは中身の行 (3 行目) に重ねる。行を足したときに重ね先が古い番号の
+/// ままだと、トーストがメニューバーの行 (`Auto`) に入って中身を押し下げる。
+fn toast_overlays_the_content_below_the_menu_bar(ui: &Ui) -> Result<Deferred> {
+    let window = ui.window("トースト", 320.0, 240.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&ui.label("中身")?);
+    window.set_child(&stack);
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+    window.set_menu_bar(&menu_bar);
+    window.show();
+
+    // 重ね先は「最後に出したウィンドウ」なので、出してから重ねる。
+    let toast = ui.toast("保存しました")?;
+    toast.show();
+
+    Ok(Box::new(move || {
+        let rows = window
+            .native_window()
+            .Content()
+            .expect("ウィンドウの中身")
+            .cast::<Grid>()
+            .expect("根は Grid")
+            .Children()
+            .expect("根の子");
+        // 行ごとの子。XAML は子を行の順に並べている。
+        let row = |index: u32| -> Vec<UIElement> {
+            let children = rows
+                .GetAt(index)
+                .expect("行")
+                .cast::<Grid>()
+                .expect("行は Grid")
+                .Children()
+                .expect("行の子");
+            (0..children.Size().expect("子の数"))
+                .map(|i| children.GetAt(i).expect("子"))
+                .collect()
+        };
+
+        let toast_element = toast.native_element();
+        assert!(toast.is_visible(), "トーストが出ていること");
+        assert!(
+            row(2).contains(&toast_element),
+            "トーストは中身の行に重なること"
+        );
+        assert!(
+            !row(1).contains(&toast_element),
+            "メニューバーの行には入らないこと"
+        );
+        let panel = menu_bar
+            .native_panel()
+            .cast::<UIElement>()
+            .expect("StackPanel の要素化");
+        assert_eq!(
+            row(1),
+            vec![panel],
+            "メニューバーの行にはメニューバーだけが入ること"
+        );
+
+        toast.dismiss();
+        window.clear_menu_bar();
+        assert_eq!(row(1).len(), 0, "外すとメニューバーの行は空になること");
+        window.close();
+        Ok(())
+    }))
 }
 
 fn window_lifecycle(ui: &Ui) -> Result<Deferred> {

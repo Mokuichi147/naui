@@ -159,16 +159,20 @@ impl Window {
         self.0
             .native
             .insert_action_group(&menu_bar.group(), Some(&menu_bar.action_group()));
+        menu_bar.attach();
         *self.0.menu_bar.borrow_mut() = Some(menu_bar.clone());
     }
 
     /// 取り付けたメニューバーを外す。付いていなければ何もしない。
     pub fn clear_menu_bar(&self) {
-        if let Some(old) = self.0.menu_bar.borrow_mut().take() {
+        let old = self.0.menu_bar.borrow_mut().take();
+        if let Some(old) = old {
             self.0.view.remove(&old.mount());
             self.0
                 .native
                 .insert_action_group(&old.group(), None::<&gtk::gio::SimpleActionGroup>);
+            // アプリ全体のアクセラレータの表からも外す。
+            old.detach();
         }
     }
 

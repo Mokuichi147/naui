@@ -5392,13 +5392,17 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
         name.starts_with("naui-menubar-") && name.ends_with(".m0i0"),
         "メニューバーごとの名前空間に入る: {name}"
     );
-    assert_eq!(
-        app.accels_for_action(&name),
-        vec!["<Control>o"],
-        "ショートカットはアプリのアクセラレータへ登録する"
+    assert!(
+        app.accels_for_action(&name).is_empty(),
+        "取り付ける前はアクセラレータへ登録しない"
     );
 
     window.set_menu_bar(&menu_bar);
+    assert_eq!(
+        app.accels_for_action(&name),
+        vec!["<Control>o"],
+        "取り付けるとアプリのアクセラレータへ登録する"
+    );
     let mount = menu_bar.native_menu_bar();
     assert_eq!(
         mount
@@ -5427,13 +5431,29 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
         WidgetExt::activate_action(&native, &name, None).is_err(),
         "外すと操作も引けなくなる"
     );
+    assert!(
+        app.accels_for_action(&name).is_empty(),
+        "外すとアクセラレータの登録も外す"
+    );
 
-    // 作り直すと、以前のアクセラレータは残らない。
+    // 外している間に組み替えても、登録はしない。
+    menu_bar.set_menus(&[MenuSpec::new(
+        "ファイル",
+        [MenuItem::new("保存").shortcut(MenuShortcut::new('s'))],
+    )]);
+    assert!(app.accels_for_action(&name).is_empty());
+
+    // 付け直すと、そのときの項目で登録し直す。
+    window.set_menu_bar(&menu_bar);
+    assert_eq!(app.accels_for_action(&name), vec!["<Control>s"]);
+
+    // 取り付けたまま作り直すと、以前のアクセラレータは残らない。
     menu_bar.set_menus(&[]);
     assert!(
         app.accels_for_action(&name).is_empty(),
         "項目が消えたらアクセラレータも外す"
     );
+    window.clear_menu_bar();
     window.close();
     Ok(())
 }

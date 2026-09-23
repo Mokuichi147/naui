@@ -7,7 +7,8 @@
 //!
 //! ショートカットは `GtkApplication` のアクセラレータへ登録する。押されたキーを
 //! naui が見張るのではなく、**GTK4 が操作を呼び出す**ので、メニューを開いて
-//! いなくても効き、項目の右端の表示も GTK4 が作る。
+//! いなくても効き、項目の右端の表示も GTK4 が作る。アクセラレータの表は
+//! アプリ全体で 1 つなので、登録するのは**ウィンドウへ取り付けている間だけ**。
 //!
 //! 見出しは `AdwToolbarView` の上段 (ヘッダーバーの下) へ入る。GNOME では
 //! メニューバーよりハンバーガーメニューが好まれるが、naui は 4 環境で同じ
@@ -48,6 +49,9 @@ struct MenuBarInner {
     on_activate: ActivateNotifier,
     /// メニューバー全体の有効・無効。項目ごとの指定と AND を取る。
     enabled: Cell<bool>,
+    /// 取り付けているウィンドウの数。アクセラレータはこれが 1 以上の間だけ
+    /// アプリへ登録する。
+    attachments: Cell<usize>,
 }
 
 impl MenuBarInner {
@@ -59,6 +63,24 @@ impl MenuBarInner {
     /// 名前空間を付けた操作の名前 (`naui-menubar-3.m0i1` の形)。
     fn detailed_name(&self, menu: usize, item: usize) -> String {
         format!("{}.{}", self.group, Self::action_name(menu, item))
+    }
+
+    /// いまの項目のショートカットを、アプリのアクセラレータへ登録する。
+    fn register_accels(&self) {
+        for (menu, spec) in self.menus.borrow().iter().enumerate() {
+            for (item, entry) in spec.items.iter().enumerate() {
+                if entry.is_separator() {
+                    continue;
+                }
+                if let Some(shortcut) = entry.shortcut {
+                    // 右端の表示も、押されたキーの受け取りも GTK4 が行う。
+                    self.app.set_accels_for_action(
+                        &self.detailed_name(menu, item),
+                        &[&shortcut.accelerator()],
+                    );
+                }
+            }
+        }
     }
 
     /// 登録したアクセラレータを 1 つずつ外す。
@@ -106,6 +128,7 @@ impl MenuBar {
             items: RefCell::new(Vec::new()),
             on_activate: ActivateNotifier::default(),
             enabled: Cell::new(true),
+            attachments: Cell::new(0),
         }))
     }
 
@@ -151,12 +174,6 @@ impl MenuBar {
 
                 let detailed = self.0.detailed_name(menu_index, item_index);
                 section.append(Some(&item.label), Some(&detailed));
-                if let Some(shortcut) = item.shortcut {
-                    // 右端の表示も、押されたキーの受け取りも GTK4 が行う。
-                    self.0
-                        .app
-                        .set_accels_for_action(&detailed, &[&shortcut.accelerator()]);
-                }
                 actions.push(Some(action));
             }
             if section.n_items() > 0 {
@@ -171,6 +188,11 @@ impl MenuBar {
         let mut stored = self.0.menus.borrow_mut();
         stored.clear();
         stored.extend_from_slice(menus);
+        drop(stored);
+        // ショートカットは、ウィンドウへ取り付けている間だけ登録する。
+        if self.0.attachments.get() > 0 {
+            self.0.register_accels();
+        }
     }
 
     /// 見出しの数。
@@ -288,6 +310,32 @@ impl MenuBar {
     /// 取り付け先のウィンドウへ入れる操作の組。[`crate::Window`] だけが使う。
     pub(crate) fn action_group(&self) -> gio::SimpleActionGroup {
         self.0.actions.clone()
+    }
+
+    /// ウィンドウへ取り付けたときに呼ぶ。[`crate::Window`] だけが使う。
+    ///
+    /// 最初の取り付けで、ショートカットをアプリのアクセラレータへ登録する。
+    pub(crate) fn attach(&self) {
+        let count = self.0.attachments.get();
+        self.0.attachments.set(count + 1);
+        if count == 0 {
+            self.0.register_accels();
+        }
+    }
+
+    /// ウィンドウから外したときに呼ぶ。[`crate::Window`] だけが使う。
+    ///
+    /// どのウィンドウにも付いていなくなったら、アクセラレータの登録も外す。
+    /// 外したメニューバーのショートカットが、アプリの表に残らないようにする。
+    pub(crate) fn detach(&self) {
+        let count = self.0.attachments.get();
+        if count == 0 {
+            return;
+        }
+        self.0.attachments.set(count - 1);
+        if count == 1 {
+            self.0.clear_accels();
+        }
     }
 
     /// 操作の名前空間。[`crate::Window`] だけが使う。
