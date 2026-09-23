@@ -259,8 +259,8 @@ impl Window {
 
     /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
     ///
-    /// 中身の層の先頭を `NavigationView` へ差し替え、[`set_child`]
-    /// (Self::set_child) の子はその右の区画 (`Content`) へ移す。タイトル
+    /// 中身の層の先頭を `NavigationView` へ差し替え、
+    /// [`set_child`](Self::set_child) の子はその右の区画 (`Content`) へ移す。タイトル
     /// バーとメニューバーは上に残るので、サイドバーはその下から始まる
     /// (Windows の「設定」と同じ並び)。
     pub fn set_sidebar(&self, sidebar: &Sidebar) {

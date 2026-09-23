@@ -526,8 +526,8 @@ impl Sidebar {
 
     /// サイドバーの幅 (論理ピクセル)。既定は [`DEFAULT_SIDEBAR_WIDTH`]。
     ///
-    /// 利用者は仕切りを動かして幅を変えられる。そのあとの幅は [`width`]
-    /// (Self::width) が返す。
+    /// 利用者は仕切りを動かして幅を変えられる。そのあとの幅は
+    /// [`width`](Self::width) が返す。
     pub fn set_width(&self, width: f64) {
         if !width.is_finite() || width <= 0.0 {
             return;
