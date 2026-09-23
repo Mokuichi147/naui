@@ -16,6 +16,11 @@
 //! 左右の区画がそれぞれヘッダーバーを持つのが GNOME の作法で、閉じる・
 //! 最小化のボタンはウィンドウの端に接するほうへ libadwaita が寄せる。
 //!
+//! 開閉は、右の区画のヘッダーバーの左端に置くサイドバーボタン
+//! (`sidebar-show-symbolic` の `GtkToggleButton`) で行う。ボタンは
+//! `show-sidebar` と双方向につないであり、閉じても右の区画に残るので
+//! 開き直せる (GNOME のファイルや「設定」と同じ置き方)。
+//!
 //! libadwaita 1.9 には一覧まで引き受ける `AdwSidebar` があるが、naui が
 //! 対象にしている 1.5 (Ubuntu 24.04) には無い。1.5 までの推奨どおり、
 //! `.navigation-sidebar` を付けた `GtkListBox` で組む。
@@ -44,6 +49,11 @@ struct SidebarInner {
     /// `row-selected` の購読。プログラムから選ぶ間だけ止める。
     handler: RefCell<Option<glib::SignalHandlerId>>,
     width: Cell<f64>,
+    /// 右の区画のヘッダーバーへ置くサイドバーボタン。
+    toggle: gtk::ToggleButton,
+    /// 最後に知っている開閉。利用者の開閉だけを通知するために比べる。
+    collapsed: Cell<bool>,
+    on_collapse: Notifier<bool>,
 }
 
 /// ウィンドウの左に付けるサイドバー。
@@ -78,6 +88,15 @@ impl Sidebar {
         split.set_collapsed(false);
         split.set_show_sidebar(true);
 
+        let toggle = gtk::ToggleButton::new();
+        toggle.set_icon_name("sidebar-show-symbolic");
+        toggle.set_tooltip_text(Some("サイドバー"));
+        split
+            .bind_property("show-sidebar", &toggle, "active")
+            .bidirectional()
+            .sync_create()
+            .build();
+
         let this = Self(Rc::new(SidebarInner {
             split,
             list,
@@ -87,8 +106,26 @@ impl Sidebar {
             on_select: Notifier::default(),
             handler: RefCell::new(None),
             width: Cell::new(DEFAULT_SIDEBAR_WIDTH),
+            toggle,
+            collapsed: Cell::new(false),
+            on_collapse: Notifier::default(),
         }));
         this.apply_width();
+
+        // 利用者がボタンで開閉したら通知する。`set_collapsed` は先に覚えて
+        // おくので、ここでは食い違ったときだけが利用者の操作になる。
+        let weak = Rc::downgrade(&this.0);
+        this.0
+            .split
+            .connect_notify_local(Some("show-sidebar"), move |split, _| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let collapsed = !split.shows_sidebar();
+                if inner.collapsed.replace(collapsed) != collapsed {
+                    inner.on_collapse.emit(collapsed);
+                }
+            });
 
         // ハンドルを強く持つと循環するので弱参照にする。
         let weak = Rc::downgrade(&this.0);
@@ -242,8 +279,24 @@ impl Sidebar {
     /// サイドバーを閉じる (`true`) か開く (`false`)。
     ///
     /// 閉じても項目と選択は残る。
+    ///
+    /// [`on_collapse`](Self::on_collapse) は呼ばない。
     pub fn set_collapsed(&self, collapsed: bool) {
+        self.0.collapsed.set(collapsed);
         self.0.split.set_show_sidebar(!collapsed);
+    }
+
+    /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
+    ///
+    /// サイドバーボタンの操作で呼ばれ、[`set_collapsed`](Self::set_collapsed)
+    /// では呼ばれない。
+    pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
+        self.0.on_collapse.set(f);
+    }
+
+    /// 右の区画のヘッダーバーへ置くサイドバーボタン。バックエンド固有の脱出口。
+    pub fn native_toggle_button(&self) -> gtk::ToggleButton {
+        self.0.toggle.clone()
     }
 
     /// サイドバーが閉じているかどうか。

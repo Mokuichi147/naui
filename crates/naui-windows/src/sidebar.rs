@@ -12,13 +12,14 @@
 //! | まとまりの間 | `NavigationViewItemSeparator` |
 //! | 右の区画 | `NavigationView.Content`。ウィンドウの子をここへ置く |
 //!
-//! 戻るボタン・設定項目・ペインを畳む (ハンバーガー) ボタンは出さない。
-//! naui のサイドバーは項目と開閉だけを持ち、開閉は [`Sidebar::set_collapsed`]
-//! で行う (畳むボタンの「アイコンだけの細いペイン」は他の 3 環境に無い)。
-//! 閉じるときは `IsPaneVisible` でペインごと隠す。
+//! 開閉は `NavigationView` 標準のペインを畳むボタン (ハンバーガー) で行う。
+//! Windows の作法どおり、畳むとペインは**アイコンだけの細い帯**になる
+//! (`IsPaneOpen` が偽。帯にボタンが残るので開き直せる)。アイコンの無い項目は
+//! 畳んでいる間は何も出ない。戻るボタンと設定項目は出さない。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use naui_core::{
     sidebar_item, sidebar_len, sidebar_rows, Result, SidebarItem, SidebarRow, SidebarSection,
@@ -35,7 +36,7 @@ use windows_core::{IInspectable, IUnknown, Interface, HSTRING};
 
 use crate::navigation::{text_block, SelectHandler};
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{HandlerCell, UiThreadCell};
 
 struct SidebarInner {
     native: NavigationView,
@@ -48,6 +49,35 @@ struct SidebarInner {
     /// `SelectedItem` の書き換えでも `SelectionChanged` が起きるため。
     silent: Cell<bool>,
     width: Cell<f64>,
+    /// 最後に知っている開閉。利用者の開閉だけを通知するために比べる。
+    collapsed: Cell<bool>,
+    on_collapse: CollapseHandler,
+}
+
+/// 開閉の通知先。呼び出しの間だけクロージャを取り出す (再入に備える)。
+#[derive(Clone)]
+struct CollapseHandler(HandlerCell<dyn FnMut(bool)>);
+
+impl CollapseHandler {
+    fn new() -> Self {
+        Self(Arc::new(UiThreadCell::new(None)))
+    }
+
+    fn set(&self, f: impl FnMut(bool) + 'static) {
+        self.0.with_mut(|slot| *slot = Some(Box::new(f)));
+    }
+
+    fn emit(&self, collapsed: bool) {
+        let Some(mut f) = self.0.with_mut(|slot| slot.take()) else {
+            return;
+        };
+        f(collapsed);
+        self.0.with_mut(|slot| {
+            if slot.is_none() {
+                *slot = Some(f);
+            }
+        });
+    }
 }
 
 /// ウィンドウの左に付けるサイドバー。
@@ -65,7 +95,7 @@ impl Sidebar {
             .map_err(|e| to_error("NavigationView の表示形式の設定", e))?;
         let _ = native.SetIsBackButtonVisible(NavigationViewBackButtonVisible::Collapsed);
         let _ = native.SetIsSettingsVisible(false);
-        let _ = native.SetIsPaneToggleButtonVisible(false);
+        let _ = native.SetIsPaneToggleButtonVisible(true);
         // タイトルバーは naui が上に別の行で持つので、その分を空けない。
         let _ = native.SetIsTitleBarAutoPaddingEnabled(false);
         let _ = native.SetIsPaneOpen(true);
@@ -78,6 +108,8 @@ impl Sidebar {
             handler: SelectHandler::new(),
             silent: Cell::new(false),
             width: Cell::new(DEFAULT_SIDEBAR_WIDTH),
+            collapsed: Cell::new(false),
+            on_collapse: CollapseHandler::new(),
         }));
         this.apply_width();
 
@@ -99,7 +131,34 @@ impl Sidebar {
             .native
             .SelectionChanged(&changed)
             .map_err(|e| to_error("NavigationView の購読", e))?;
+
+        // 畳むボタンでの開閉。プログラムからの開閉でも届くので、覚えている
+        // 状態と食い違ったときだけ通知する (`set_collapsed` は先に覚える)。
+        for opened in [true, false] {
+            let state = UiThreadCell::new(Rc::downgrade(&this.0));
+            let handler = TypedEventHandler::<NavigationView, IInspectable>::new(move |_, _| {
+                let _ = state.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        Sidebar(inner).pane_changed(!opened);
+                    }
+                });
+                Ok(())
+            });
+            let result = if opened {
+                this.0.native.PaneOpened(&handler)
+            } else {
+                this.0.native.PaneClosed(&handler)
+            };
+            result.map_err(|e| to_error("NavigationView の開閉の購読", e))?;
+        }
         Ok(this)
+    }
+
+    /// ペインが開いた・畳まれたときに、変わっていれば覚え直して通知する。
+    fn pane_changed(&self, collapsed: bool) {
+        if self.0.collapsed.replace(collapsed) != collapsed {
+            self.0.on_collapse.emit(collapsed);
+        }
     }
 
     /// `SelectionChanged` を受けて、選ばれた番号を覚え、変わっていれば通知する。
@@ -271,14 +330,25 @@ impl Sidebar {
 
     /// サイドバーを閉じる (`true`) か開く (`false`)。
     ///
-    /// 閉じても項目と選択は残る。
+    /// 閉じても項目と選択は残る。Windows ではアイコンだけの細い帯に畳まれる
+    /// (畳むボタンを押したときと同じ)。[`on_collapse`](Self::on_collapse) は
+    /// 呼ばない。
     pub fn set_collapsed(&self, collapsed: bool) {
-        let _ = self.0.native.SetIsPaneVisible(!collapsed);
+        self.0.collapsed.set(collapsed);
+        let _ = self.0.native.SetIsPaneOpen(!collapsed);
     }
 
     /// サイドバーが閉じているかどうか。
     pub fn is_collapsed(&self) -> bool {
-        !self.0.native.IsPaneVisible().unwrap_or(true)
+        !self.0.native.IsPaneOpen().unwrap_or(true)
+    }
+
+    /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
+    ///
+    /// 畳むボタンの操作で呼ばれ、[`set_collapsed`](Self::set_collapsed)
+    /// では呼ばれない。
+    pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
+        self.0.on_collapse.set(f);
     }
 
     /// WinUI 3 の実体 (`NavigationView`)。バックエンド固有の脱出口。

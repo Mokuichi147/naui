@@ -15,29 +15,40 @@
 //! | まとまりの見出し | グループ行 (`tableView:isGroupRow:`) |
 //! | 右の区画 | `NSSplitViewItem` (中身)。ウィンドウの子をここへ置く |
 //!
+//! 開閉は AppKit 標準のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`)
+//! で行う。ボタンはツールバーの項目なので、アプリがツールバーを付けていれば
+//! その先頭へ差し込み、付けていなければボタンだけのツールバーをウィンドウへ
+//! 付ける ([`Window::set_sidebar`](crate::Window::set_sidebar))。仕切りを
+//! 端まで寄せても閉じる。利用者が開閉したことは `NSSplitView` の
+//! 大きさの変化 (`NSSplitViewDidResizeSubviewsNotification`) から拾う。
+//!
 //! 項目の一覧は `NSOutlineView` ではなく `NSTableView` にしてある。naui の
 //! サイドバーは 2 段 (まとまりと項目) までで開閉を持たないので、開閉の
 //! 三角や「隠す」ボタンが付く `NSOutlineView` のグループ項目は合わない。
 //! まとまりの間の隙間は、選べない空の行で空ける。
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use naui_core::{
     sidebar_len, sidebar_rows, SidebarItem, SidebarRow, SidebarSection, DEFAULT_SIDEBAR_WIDTH,
 };
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSColor, NSControlTextEditingDelegate, NSFont, NSImage, NSImageView, NSLayoutConstraint,
-    NSScrollView, NSSplitViewController, NSSplitViewItem, NSTableCellView, NSTableColumn,
-    NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
-    NSTableViewStyle, NSTextField, NSView, NSViewController,
+    NSScrollView, NSSplitViewController, NSSplitViewDidResizeSubviewsNotification, NSSplitViewItem,
+    NSTableCellView, NSTableColumn, NSTableView, NSTableViewColumnAutoresizingStyle,
+    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSView,
+    NSViewController,
 };
-use objc2_foundation::{NSArray, NSIndexSet, NSInteger, NSNotification, NSString};
+use objc2_foundation::{
+    NSArray, NSIndexSet, NSInteger, NSNotification, NSNotificationCenter, NSString,
+};
 
-use crate::trampoline::SelectHandler;
+use crate::toolbar::Toolbar;
+use crate::trampoline::{SelectHandler, ValueHandler};
 
 /// 1 列しか使わないので、識別子は固定でよい。
 const COLUMN_ID: &str = "naui.sidebar.column";
@@ -189,6 +200,38 @@ impl SidebarSource {
     }
 }
 
+define_class!(
+    /// `NSSplitView` の大きさの変化を受け取り、開閉が変わったかを確かめる。
+    ///
+    /// [`ActionTarget`](crate::trampoline::ActionTarget) は呼び出しの間
+    /// クロージャを借りたままにするので、通知の中から `set_collapsed` を呼ぶと
+    /// 同じ通知が入れ子で届いて二重借用になる。こちらは弱参照をたどるだけに
+    /// して、入れ子で呼ばれても借用が残らないようにしてある。
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiSidebarResizeObserver"]
+    #[ivars = Weak<SidebarInner>]
+    struct ResizeObserver;
+
+    unsafe impl NSObjectProtocol for ResizeObserver {}
+
+    impl ResizeObserver {
+        #[unsafe(method(splitViewDidResize:))]
+        fn split_view_did_resize(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                Sidebar(inner).sync_collapsed();
+            }
+        }
+    }
+);
+
+impl ResizeObserver {
+    fn new(mtm: MainThreadMarker, inner: Weak<SidebarInner>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(inner);
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 /// まとまりの見出し。
 ///
 /// グループ行の見た目 (小さく淡い文字) は、Finder のサイドバーの見出しに
@@ -291,6 +334,22 @@ struct SidebarInner {
     handler: SelectHandler,
     silent: Rc<Cell<bool>>,
     width: Cell<f64>,
+    /// 最後に知っている開閉。利用者の開閉だけを通知するために比べる。
+    collapsed: Cell<bool>,
+    on_collapse: ValueHandler<bool>,
+    /// アプリがツールバーを付けていないときに使う、サイドバーボタンだけの
+    /// ツールバー。
+    controls: Toolbar,
+    /// 大きさの変化の受け口。通知センターは observer を強く持たない。
+    observer: RefCell<Option<Retained<ResizeObserver>>>,
+}
+
+impl Drop for SidebarInner {
+    fn drop(&mut self) {
+        if let Some(observer) = self.observer.borrow_mut().take() {
+            unsafe { NSNotificationCenter::defaultCenter().removeObserver(&observer) };
+        }
+    }
 }
 
 /// ウィンドウの左に付けるサイドバー。
@@ -354,6 +413,9 @@ impl Sidebar {
         controller.addSplitViewItem(&sidebar_item);
         controller.addSplitViewItem(&content_item);
 
+        let controls = Toolbar::new(mtm);
+        controls.set_sidebar_controls(true);
+
         let this = Self(Rc::new(SidebarInner {
             controller,
             sidebar_item,
@@ -367,8 +429,24 @@ impl Sidebar {
             handler,
             silent,
             width: Cell::new(DEFAULT_SIDEBAR_WIDTH),
+            collapsed: Cell::new(false),
+            on_collapse: ValueHandler::default(),
+            controls,
+            observer: RefCell::new(None),
         }));
         this.apply_width();
+
+        let observer = ResizeObserver::new(mtm, Rc::downgrade(&this.0));
+        let split = this.0.controller.splitView();
+        unsafe {
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                &observer,
+                sel!(splitViewDidResize:),
+                Some(NSSplitViewDidResizeSubviewsNotification),
+                Some(&split),
+            );
+        }
+        *this.0.observer.borrow_mut() = Some(observer);
         this
     }
 
@@ -472,13 +550,38 @@ impl Sidebar {
 
     /// サイドバーを閉じる (`true`) か開く (`false`)。
     ///
-    /// 閉じても項目と選択は残る。
+    /// 閉じても項目と選択は残る。[`on_collapse`](Self::on_collapse) は
+    /// 呼ばない (利用者がサイドバーボタンや仕切りで開閉したときだけ呼ぶ)。
     pub fn set_collapsed(&self, collapsed: bool) {
         if collapsed && !self.is_collapsed() {
             // 開き直すときに同じ幅へ戻れるよう覚えておく。
             self.0.width.set(self.width());
         }
+        // 先に覚えておくと、このあと届く大きさの変化を通知しないで済む。
+        self.0.collapsed.set(collapsed);
         self.0.sidebar_item.setCollapsed(collapsed);
+    }
+
+    /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
+    ///
+    /// サイドバーボタン・仕切りの操作で呼ばれ、
+    /// [`set_collapsed`](Self::set_collapsed) では呼ばれない。
+    pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
+        self.0.on_collapse.set(f);
+    }
+
+    /// 開閉が変わっていれば覚え直して通知する。
+    fn sync_collapsed(&self) {
+        let now = self.is_collapsed();
+        if self.0.collapsed.replace(now) != now {
+            self.0.on_collapse.emit(now);
+        }
+    }
+
+    /// アプリがツールバーを付けていないときに使う、サイドバーボタンだけの
+    /// ツールバー。
+    pub(crate) fn controls_toolbar(&self) -> Toolbar {
+        self.0.controls.clone()
     }
 
     /// サイドバーが閉じているかどうか。

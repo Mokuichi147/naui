@@ -2514,10 +2514,16 @@ fn sidebar_attaches_to_the_left_of_the_window() {
         let aside = sidebar.native_element();
         assert!(root.contains(Some(&aside)), "ウィンドウの中に入る");
         let element = content.native_element();
+        let pane = aside.next_element_sibling().expect("中身の側");
         assert_eq!(
             element.parent_element(),
-            aside.next_element_sibling(),
+            pane.last_element_child(),
             "子はサイドバーの右の中身の側へ移る"
+        );
+        assert_eq!(
+            pane.first_element_child(),
+            Some(sidebar.native_toggle_button()),
+            "中身の側の上端に開閉ボタンがある"
         );
         assert_eq!(
             root.first_element_child(),
@@ -2535,7 +2541,6 @@ fn sidebar_attaches_to_the_left_of_the_window() {
         assert!(side.right() <= body_rect.left() + 0.5, "サイドバーが左");
         // 表示枠の幅はランナーによって 0 になることがあるので、幅そのもの
         // ではなく、余りを受け取る指定になっていることを見る。
-        let pane = aside.next_element_sibling().expect("中身の側");
         assert_eq!(
             computed(&pane, "flex-grow"),
             "1",
@@ -2560,7 +2565,7 @@ fn sidebar_attaches_to_the_left_of_the_window() {
         window.set_child(&other);
         assert_eq!(
             other.native_element().parent_element(),
-            aside.next_element_sibling()
+            pane.last_element_child()
         );
 
         window.clear_sidebar();
@@ -2596,6 +2601,50 @@ fn sidebar_callback_is_reentrant_and_replaceable() {
         assert_eq!(sidebar.len(), 1);
         sidebar.select(0);
         assert_eq!(*seen.borrow(), [1, 100]);
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_toggle_button_collapses_and_notifies() {
+    with_ui(|ui| {
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&SidebarItem::list(["一般"]));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sidebar.on_collapse({
+            let seen = seen.clone();
+            move |collapsed| seen.borrow_mut().push(collapsed)
+        });
+        let aside = sidebar.native_element();
+        let toggle: HtmlElement = sidebar.native_toggle_button().unchecked_into();
+        assert_eq!(
+            toggle.get_attribute("aria-controls"),
+            aside.get_attribute("id"),
+            "ボタンがどの区画を開閉するかを読み上げに伝える"
+        );
+        assert_eq!(
+            toggle.get_attribute("aria-expanded").as_deref(),
+            Some("true")
+        );
+
+        toggle.click();
+        assert!(sidebar.is_collapsed());
+        assert_eq!(
+            toggle.get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        assert_eq!(*seen.borrow(), [true]);
+        toggle.click();
+        assert!(!sidebar.is_collapsed());
+        assert_eq!(*seen.borrow(), [true, false]);
+
+        sidebar.set_collapsed(true);
+        assert_eq!(
+            toggle.get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        sidebar.set_collapsed(false);
+        assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
         Ok(())
     });
 }

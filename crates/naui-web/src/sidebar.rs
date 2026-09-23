@@ -15,6 +15,11 @@
 //! 見た目はブラウザ既定のままで、CSS は並びと、中身との境目の線にしか
 //! 使わない。線の色は `SplitView` と同じシステムカラーの `GrayText`。
 //!
+//! ブラウザには開閉のボタンも無いので、中身の側の上端 (GNOME がサイドバー
+//! ボタンを置くのと同じ位置) に `aria-expanded` / `aria-controls` を持つ
+//! `<button>` を置く。閉じても中身の側に残るので開き直せる。図形だけは
+//! ツールバーと同じく naui が持つ。
+//!
 //! ほかのバックエンドに合わせて [`Widget`](crate::Widget) にはせず、
 //! [`Window::set_sidebar`](crate::Window::set_sidebar) でウィンドウに
 //! 取り付ける。
@@ -32,8 +37,11 @@ use web_sys::{Document, Element, HtmlElement};
 use crate::layout::{apply_child_layout, fill_parent, mark_parent, ParentLayout};
 use crate::navigation::SelectHandler;
 use crate::to_error;
-use crate::toolbar::icon_svg;
+use crate::toolbar::{icon_svg, path_svg};
 use crate::widgets::{create, set_disabled, Listener};
+
+/// 開閉ボタンの図形 (左に区画のある窓)。
+const TOGGLE_PATH: &str = "M4 5h16v14H4zM9 5v14";
 
 /// ページ内で見出しの id を重ねないための通し番号。
 static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -55,8 +63,13 @@ struct SidebarInner {
     mount: HtmlElement,
     aside: HtmlElement,
     nav: HtmlElement,
-    /// 中身 (ウィンドウの子) を入れる `<div>`。
-    content: HtmlElement,
+    /// ウィンドウの子を入れる `<div>`。
+    slot: HtmlElement,
+    /// 開閉ボタン。
+    toggle: HtmlElement,
+    /// 開閉ボタンのクリック購読。
+    toggle_listener: RefCell<Option<Listener>>,
+    on_collapse: crate::widgets::ValueHandler<bool>,
     sections: RefCell<Vec<SidebarSection>>,
     /// 項目の通し番号と同じ並びのボタン。
     buttons: RefCell<Vec<HtmlElement>>,
@@ -96,16 +109,37 @@ impl Sidebar {
         style(&nav, "gap", "12px");
         append(&aside, &nav)?;
 
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _ = aside.set_attribute("id", &format!("naui-sidebar-{id}"));
+
         let content: HtmlElement = create(doc, "div")?.unchecked_into();
         style(&content, "display", "flex");
         style(&content, "flex-direction", "column");
         style(&content, "flex-grow", "1");
         // 中身が広くても、サイドバーを押し出さずに縮む。
         style(&content, "min-width", "0");
-        mark_parent(
-            &content,
-            ParentLayout::Flex(naui_core::Orientation::Vertical),
-        );
+
+        // 中身の側の上端に開閉ボタンを置く。
+        let toggle: HtmlElement = create(doc, "button")?.unchecked_into();
+        let _ = toggle.set_attribute("type", "button");
+        let _ = toggle.set_attribute("aria-label", "サイドバー");
+        let _ = toggle.set_attribute("title", "サイドバー");
+        let _ = toggle.set_attribute("aria-controls", &format!("naui-sidebar-{id}"));
+        let _ = toggle.set_attribute("aria-expanded", "true");
+        style(&toggle, "display", "inline-flex");
+        style(&toggle, "align-items", "center");
+        style(&toggle, "align-self", "flex-start");
+        style(&toggle, "flex-shrink", "0");
+        append(&toggle, &path_svg(doc, TOGGLE_PATH)?)?;
+        append(&content, &toggle)?;
+
+        let slot: HtmlElement = create(doc, "div")?.unchecked_into();
+        style(&slot, "display", "flex");
+        style(&slot, "flex-direction", "column");
+        style(&slot, "flex-grow", "1");
+        style(&slot, "min-height", "0");
+        mark_parent(&slot, ParentLayout::Flex(naui_core::Orientation::Vertical));
+        append(&content, &slot)?;
 
         append(&mount, &aside)?;
         append(&mount, &content)?;
@@ -115,16 +149,33 @@ impl Sidebar {
             mount,
             aside,
             nav,
-            content,
+            slot,
+            toggle,
+            toggle_listener: RefCell::new(None),
+            on_collapse: crate::widgets::ValueHandler::default(),
             sections: RefCell::new(Vec::new()),
             buttons: RefCell::new(Vec::new()),
             listeners: RefCell::new(Vec::new()),
             handler: SelectHandler::default(),
             selected: Cell::new(None),
             width: Cell::new(DEFAULT_SIDEBAR_WIDTH),
-            id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            id,
         }));
         this.apply_width();
+
+        // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+        let listener = Listener::attach(this.0.toggle.as_ref(), "click", {
+            let weak = Rc::downgrade(&this.0);
+            move || {
+                if let Some(inner) = weak.upgrade() {
+                    let sidebar = Sidebar(inner);
+                    let collapsed = !sidebar.is_collapsed();
+                    sidebar.set_collapsed(collapsed);
+                    sidebar.0.on_collapse.emit(collapsed);
+                }
+            }
+        })?;
+        *this.0.toggle_listener.borrow_mut() = Some(listener);
         Ok(this)
     }
 
@@ -328,8 +379,27 @@ impl Sidebar {
     /// サイドバーを閉じる (`true`) か開く (`false`)。
     ///
     /// 閉じても項目と選択は残る。閉じている間は `hidden` で隠す。
+    ///
+    /// [`on_collapse`](Self::on_collapse) は呼ばない。
     pub fn set_collapsed(&self, collapsed: bool) {
         self.0.aside.set_hidden(collapsed);
+        let _ = self
+            .0
+            .toggle
+            .set_attribute("aria-expanded", if collapsed { "false" } else { "true" });
+    }
+
+    /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
+    ///
+    /// 開閉ボタンの操作で呼ばれ、[`set_collapsed`](Self::set_collapsed)
+    /// では呼ばれない。
+    pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
+        self.0.on_collapse.set(f);
+    }
+
+    /// 中身の側の上端に置く開閉ボタン。バックエンド固有の脱出口。
+    pub fn native_toggle_button(&self) -> Element {
+        self.0.toggle.clone().unchecked_into()
     }
 
     /// サイドバーが閉じているかどうか。
@@ -349,9 +419,9 @@ impl Sidebar {
 
     /// 中身の側へウィンドウの子を置く。`None` なら空にする。
     pub(crate) fn set_content(&self, element: Option<&Element>) {
-        self.0.content.set_inner_html("");
+        self.0.slot.set_inner_html("");
         if let Some(element) = element {
-            if self.0.content.append_child(element).is_ok() {
+            if self.0.slot.append_child(element).is_ok() {
                 fill_parent(element);
                 apply_child_layout(
                     element,

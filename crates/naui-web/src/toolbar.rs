@@ -68,6 +68,11 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
 
 /// アイコン 1 つぶんのインライン SVG を作る。サイドバーの項目も使う。
 pub(crate) fn icon_svg(doc: &Document, icon: ToolbarIcon) -> Result<Element> {
+    path_svg(doc, icon.svg_path())
+}
+
+/// 線描きの図形 1 つぶんのインライン SVG を作る (24x24 の座標系)。
+pub(crate) fn path_svg(doc: &Document, d: &str) -> Result<Element> {
     const NS: &str = "http://www.w3.org/2000/svg";
     let svg = doc
         .create_element_ns(Some(NS), "svg")
@@ -86,7 +91,7 @@ pub(crate) fn icon_svg(doc: &Document, icon: ToolbarIcon) -> Result<Element> {
     let path = doc
         .create_element_ns(Some(NS), "path")
         .map_err(|e| to_error("SVG パスの生成", e))?;
-    let _ = path.set_attribute("d", icon.svg_path());
+    let _ = path.set_attribute("d", d);
     append(&svg, &path)?;
     Ok(svg)
 }

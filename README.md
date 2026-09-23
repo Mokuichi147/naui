@@ -1030,6 +1030,7 @@ sidebar.set_selected(0);     // 通知せずに選ぶ
 sidebar.set_width(240.0);    // 既定は 220
 window.set_sidebar(&sidebar);
 sidebar.set_collapsed(true); // 閉じる (項目と選択は残る)
+sidebar.on_collapse(|collapsed| println!("利用者が開閉しました: {collapsed}"));
 ```
 
 | 環境 | 実体 | 位置 |
@@ -1038,6 +1039,16 @@ sidebar.set_collapsed(true); // 閉じる (項目と選択は残る)
 | Linux | `AdwOverlaySplitView` + `.navigation-sidebar` の `GtkListBox` | サイドバーと中身がそれぞれヘッダーバーを持つ |
 | Windows | `NavigationView` (`PaneDisplayMode` は Left) | タイトルバー (とメニューバー) の下から |
 | Web | `<aside>` + `<nav>` + `<button>` | ウィンドウ要素の中、メニューバー・ツールバーの下 |
+
+開閉は各環境の標準のサイドバーボタンで利用者も行え、そのときは
+`on_collapse` が呼ばれます (`set_collapsed` では呼ばれません)。
+
+| 環境 | 開閉ボタン | 閉じたときの姿 |
+| --- | --- | --- |
+| macOS | ツールバー先頭のサイドバーボタン (ツールバーが無ければボタンだけのツールバーを付ける) | 区画ごと隠れる |
+| Linux | 中身の側のヘッダーバーの左端 (`sidebar-show-symbolic`) | 区画ごと隠れる |
+| Windows | `NavigationView` のペインを畳むボタン | アイコンだけの細い帯 |
+| Web | 中身の側の上端の `<button aria-expanded>` | 区画ごと隠れる |
 
 macOS では付けている間だけウィンドウに `fullSizeContentView` が付きますが、
 子の上端はタイトルバーを避けるので中身の見え方は変わりません。アイコンは

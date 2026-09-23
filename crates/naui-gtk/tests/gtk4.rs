@@ -308,6 +308,10 @@ fn main() {
             sidebar_callback_is_reentrant,
         ),
         (
+            "サイドバーボタンが中身のヘッダーバーの左端に入り、開閉を通知する",
+            sidebar_toggle_button_collapses_and_notifies,
+        ),
+        (
             "すべてのアイコンがテーマに実在する",
             toolbar_icons_exist_in_the_theme,
         ),
@@ -5767,5 +5771,53 @@ fn sidebar_callback_is_reentrant(ui: &Ui) -> Result<()> {
     assert_eq!(sidebar.len(), 1);
     sidebar.select(0);
     assert_eq!(*seen.borrow(), [1, 100]);
+    Ok(())
+}
+
+fn sidebar_toggle_button_collapses_and_notifies(ui: &Ui) -> Result<()> {
+    let window = ui.window("サイドバーボタン", 640.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[ToolbarItem::new(ToolbarIcon::New, "新規")]);
+    window.set_toolbar(&toolbar);
+
+    let sidebar = ui.sidebar()?;
+    window.set_sidebar(&sidebar);
+    let toggle = sidebar.native_toggle_button();
+    let header = window.native_header_bar();
+    assert!(
+        toggle.is_ancestor(&header),
+        "サイドバーボタンは中身の側のヘッダーバーに入る"
+    );
+    assert_eq!(toggle.icon_name().as_deref(), Some("sidebar-show-symbolic"));
+    assert!(toggle.is_active(), "開いている間は押し込まれている");
+    // ツールバーより先に付けたかどうかに関わらず、左端 (ツールバーの前) に来る。
+    assert_eq!(
+        toggle.next_sibling().as_ref(),
+        Some(toolbar.native_box().upcast_ref::<gtk::Widget>()),
+        "サイドバーボタンの右隣がツールバー"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    toggle.set_active(false); // 利用者がボタンを押したのと同じ
+    assert!(sidebar.is_collapsed());
+    assert_eq!(*seen.borrow(), [true]);
+    toggle.set_active(true);
+    assert!(!sidebar.is_collapsed());
+    assert_eq!(*seen.borrow(), [true, false]);
+
+    sidebar.set_collapsed(true);
+    assert!(!toggle.is_active(), "set_collapsed もボタンに映る");
+    sidebar.set_collapsed(false);
+    assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
+
+    window.clear_sidebar();
+    assert!(toggle.parent().is_none(), "外すとボタンも消える");
+    window.clear_toolbar();
+    window.close();
     Ok(())
 }

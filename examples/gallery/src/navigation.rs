@@ -16,6 +16,7 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
         &[
             "ウィンドウの左に付いているのがサイドバーです。レイアウトではなくウィンドウに取り付けます。",
             "項目を選ぶと上のタブが切り替わり、タブを選ぶとサイドバーの選択も移ります。",
+            "開閉はその環境のサイドバーボタンでも行えます (macOS はツールバーの先頭、Linux はヘッダーバーの左端、Windows はペインの ☰、Web は中身の上端)。",
         ],
     )?;
     let attach = ui.checkbox("ウィンドウに付ける")?;
@@ -38,6 +39,11 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
     collapse.on_toggle({
         let sidebar = sidebar.clone();
         move |on| sidebar.set_collapsed(on)
+    });
+    // サイドバーボタン (その環境の標準のもの) で開閉されたら、チェックも合わせる。
+    sidebar.on_collapse({
+        let collapse = collapse.clone();
+        move |collapsed| collapse.set_checked(collapsed)
     });
     pane.append(&attach);
     pane.append(&collapse);

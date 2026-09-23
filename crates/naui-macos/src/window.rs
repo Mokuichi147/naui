@@ -148,6 +148,7 @@ impl Window {
         sidebar.set_content(child);
         sidebar.apply_width();
         *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
+        self.apply_toolbar();
     }
 
     /// 取り付けたサイドバーを外す。付いていなければ何もしない。
@@ -166,6 +167,9 @@ impl Window {
         // 右の区画では制約で置いていた。ウィンドウの中身は枠で置かれる。
         view.setTranslatesAutoresizingMaskIntoConstraints(true);
         native.setContentView(Some(&view));
+        // ボタンだけのツールバーを外すとウィンドウの高さが変わるので、
+        // ツールバーを決め直してから元の枠へ戻す。
+        self.apply_toolbar();
         native.setFrame_display(frame, true);
     }
 
@@ -179,23 +183,68 @@ impl Window {
     /// 項目が右端へ押しやられてしまう。[`set_title`](Self::set_title) で
     /// 設定した文字はウィンドウのタイトルとして残り (ウィンドウメニューや
     /// Mission Control には出る)、[`title`](Self::title) も返し続ける。
+    ///
+    /// サイドバーを付けているときは、先頭に AppKit 標準のサイドバーボタンが
+    /// 入る (naui の項目のインデックスには数えない)。
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
-        self.0.native.setToolbar(Some(&toolbar.native_toolbar()));
-        self.0
-            .native
-            .setTitleVisibility(NSWindowTitleVisibility::Hidden);
-        *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
+        let old = self.0.toolbar.borrow_mut().replace(toolbar.clone());
+        self.apply_toolbar();
+        // 前のツールバーは、ウィンドウから外れてから元の並びへ戻す。
+        if let Some(old) = old.filter(|old| !old.is_same(toolbar)) {
+            old.set_sidebar_controls(false);
+        }
     }
 
     /// 取り付けたツールバーを外す。付いていなければ何もしない。
     ///
     /// 隠していたタイトル文字も出し直す。
+    ///
+    /// サイドバーを付けているときは、サイドバーボタンだけのツールバーが残る。
     pub fn clear_toolbar(&self) {
+        let old = self.0.toolbar.borrow_mut().take();
+        self.apply_toolbar();
+        if let Some(old) = old {
+            old.set_sidebar_controls(false);
+        }
+    }
+
+    /// ツールバーとサイドバーの組み合わせから、ウィンドウのツールバーを決める。
+    ///
+    /// | アプリのツールバー | サイドバー | ウィンドウに付くもの |
+    /// | --- | --- | --- |
+    /// | あり | あり | アプリのツールバー (先頭にサイドバーボタン) |
+    /// | あり | なし | アプリのツールバー |
+    /// | なし | あり | サイドバーボタンだけのツールバー (タイトルは出したまま) |
+    /// | なし | なし | 無し |
+    ///
+    /// サイドバー用の項目を外すのは、ツールバーをウィンドウから外している
+    /// 間に行い、入れるのはウィンドウに付けてから行う
+    /// (`NSToolbarSidebarTrackingSeparatorItemIdentifier` は、付いていない
+    /// ツールバーには入らない)。
+    fn apply_toolbar(&self) {
+        let toolbar = self.0.toolbar.borrow().clone();
+        let sidebar = self.0.sidebar.borrow().clone();
         self.0.native.setToolbar(None);
+        if let Some(toolbar) = &toolbar {
+            toolbar.set_sidebar_controls(sidebar.is_some());
+        }
+        let (chosen, visibility) = match (&toolbar, &sidebar) {
+            (Some(toolbar), _) => (Some(toolbar.clone()), NSWindowTitleVisibility::Hidden),
+            (None, Some(sidebar)) => (
+                Some(sidebar.controls_toolbar()),
+                NSWindowTitleVisibility::Visible,
+            ),
+            (None, None) => (None, NSWindowTitleVisibility::Visible),
+        };
         self.0
             .native
-            .setTitleVisibility(NSWindowTitleVisibility::Visible);
-        *self.0.toolbar.borrow_mut() = None;
+            .setToolbar(chosen.as_ref().map(|t| t.native_toolbar()).as_deref());
+        self.0.native.setTitleVisibility(visibility);
+        // ウィンドウに付いてからでないとサイドバー用の区切りが入らないので、
+        // 付けたあとでもう一度そろえる。
+        if let Some(chosen) = &chosen {
+            chosen.set_sidebar_controls(sidebar.is_some());
+        }
     }
 
     /// 画面上端に出すメニューバー。呼ぶたびに置き換わる。

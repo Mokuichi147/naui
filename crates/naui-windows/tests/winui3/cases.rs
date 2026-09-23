@@ -1349,7 +1349,10 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
         NavigationViewPaneDisplayMode::Left
     );
     assert!(!native.IsSettingsVisible().expect("設定項目"));
-    assert!(!native.IsPaneToggleButtonVisible().expect("畳むボタン"));
+    assert!(
+        native.IsPaneToggleButtonVisible().expect("畳むボタン"),
+        "標準の畳むボタンで開閉できる"
+    );
 
     let menu = native.MenuItems().expect("項目");
     // 一般・検索 | 区切り | 場所 (見出し) | 書類・共有
@@ -1387,12 +1390,22 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
     sidebar.set_width(-1.0);
     assert_eq!(sidebar.width(), 160.0, "おかしな幅は無視する");
 
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
     assert!(!sidebar.is_collapsed());
     sidebar.set_collapsed(true);
     assert!(sidebar.is_collapsed());
-    assert!(!native.IsPaneVisible().expect("ペイン"));
+    assert!(
+        !native.IsPaneOpen().expect("ペイン"),
+        "畳むとアイコンだけの帯になる (Windows の作法)"
+    );
+    assert!(native.IsPaneVisible().expect("ペイン"), "帯は残る");
     sidebar.set_collapsed(false);
-    assert!(native.IsPaneVisible().expect("ペイン"));
+    assert!(native.IsPaneOpen().expect("ペイン"));
+    assert!(seen.borrow().is_empty(), "set_collapsed では通知しない");
 
     sidebar.set_items(&SidebarItem::list(["春", "夏"]));
     assert_eq!(

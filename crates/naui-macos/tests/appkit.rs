@@ -511,6 +511,14 @@ fn main() {
             sidebar_toast_goes_to_the_content_pane,
         ),
         (
+            "サイドバーを付けるとツールバーの先頭にサイドバーボタンが入る",
+            sidebar_adds_the_toggle_button_to_the_toolbar,
+        ),
+        (
+            "サイドバーボタンで開閉すると on_collapse が呼ばれる",
+            sidebar_toggle_notifies_collapse,
+        ),
+        (
             "サイドバーの通知中に内容と通知先を差し替えられる",
             sidebar_callback_is_reentrant,
         ),
@@ -8090,14 +8098,38 @@ fn sidebar_width_and_collapse(ui: &Ui) -> Result<()> {
     assert!((sidebar.width() - 260.0).abs() < 1.0);
 
     assert!(!sidebar.is_collapsed());
+    window.show();
     sidebar.set_collapsed(true);
     assert!(sidebar.is_collapsed());
     assert!(
         (sidebar.width() - 260.0).abs() < 1.0,
         "閉じても開いたときの幅を返す"
     );
+    // 画面の上でも区画が畳まれ、中身の区画がウィンドウの幅いっぱいになる。
+    // 閉じる動きはアニメーションなので、終わるまでランループを回す。
+    let sidebar_view = split.arrangedSubviews().objectAtIndex(0);
+    let content = || split.arrangedSubviews().objectAtIndex(1).frame().size.width;
+    pump_until(3.0, || split.isSubviewCollapsed(&sidebar_view));
+    split.layoutSubtreeIfNeeded();
+    assert!(
+        split.isSubviewCollapsed(&sidebar_view),
+        "サイドバーの区画が畳まれる"
+    );
+    assert!(
+        (content() - split.frame().size.width).abs() < 1.0,
+        "中身がウィンドウの幅いっぱいになる: {} / {}",
+        content(),
+        split.frame().size.width
+    );
     sidebar.set_collapsed(false);
     assert!(!sidebar.is_collapsed());
+    pump_until(3.0, || !split.isSubviewCollapsed(&sidebar_view));
+    split.layoutSubtreeIfNeeded();
+    assert!(
+        (pane() - 260.0).abs() < 1.0,
+        "開き直すと同じ幅へ戻る: {}",
+        pane()
+    );
 
     sidebar.set_width(-1.0);
     sidebar.set_width(f64::NAN);
@@ -8161,5 +8193,131 @@ fn sidebar_callback_is_reentrant(ui: &Ui) -> Result<()> {
     assert_eq!(sidebar.selected(), None, "組み替えで選択は外れる");
     sidebar.select(0);
     assert_eq!(*seen.borrow(), [1, 100], "差し替えた通知先が使われる");
+    Ok(())
+}
+
+/// ツールバーの項目の識別子を並びの順に読む。
+fn toolbar_identifiers(window: &NSWindow) -> Vec<String> {
+    window
+        .toolbar()
+        .map(|toolbar| {
+            toolbar
+                .items()
+                .iter()
+                .map(|item| item.itemIdentifier().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// アプリのツールバーが無ければボタンだけのツールバーが付き、あれば
+/// その先頭へ差し込まれる。どちらも外すと元に戻る。
+fn sidebar_adds_the_toggle_button_to_the_toolbar(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::{
+        NSToolbarSidebarTrackingSeparatorItemIdentifier, NSToolbarToggleSidebarItemIdentifier,
+    };
+    let toggle = unsafe { NSToolbarToggleSidebarItemIdentifier }.to_string();
+    let tracking = unsafe { NSToolbarSidebarTrackingSeparatorItemIdentifier }.to_string();
+
+    let window = ui.window("サイドバーボタン", 640.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let native = window.native_window();
+    let sidebar = ui.sidebar()?;
+    window.set_sidebar(&sidebar);
+    assert_eq!(
+        toolbar_identifiers(&native),
+        [toggle.clone(), tracking.clone()],
+        "ツールバーが無くてもサイドバーボタンは出る"
+    );
+    assert_eq!(
+        native.titleVisibility(),
+        NSWindowTitleVisibility::Visible,
+        "ボタンだけのときはタイトルを隠さない"
+    );
+
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::New, "新規"),
+        ToolbarItem::new(ToolbarIcon::Open, "開く"),
+    ]);
+    window.set_toolbar(&toolbar);
+    let ids = toolbar_identifiers(&native);
+    assert_eq!(ids.len(), 4);
+    assert_eq!(&ids[..2], [toggle.clone(), tracking.clone()], "先頭に入る");
+    assert_eq!(toolbar.len(), 2, "naui の項目の数には数えない");
+    assert!(
+        toolbar.native_item(0).is_some(),
+        "項目のインデックスはそのまま"
+    );
+
+    // アプリのツールバーを外しても、サイドバーボタンは残る。
+    window.clear_toolbar();
+    assert_eq!(
+        toolbar_identifiers(&native),
+        [toggle.clone(), tracking.clone()]
+    );
+    window.set_toolbar(&toolbar);
+
+    window.clear_sidebar();
+    assert_eq!(
+        toolbar_identifiers(&native),
+        ["naui.item.0", "naui.item.1"],
+        "サイドバーを外すとボタンも消える"
+    );
+    window.clear_toolbar();
+    assert!(native.toolbar().is_none());
+    window.close();
+    Ok(())
+}
+
+/// サイドバーボタン (`toggleSidebar:`) で閉じると `on_collapse` が呼ばれ、
+/// `set_collapsed` では呼ばれない。
+fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
+    let window = ui.window("サイドバーの開閉", 640.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+
+    // サイドバーボタンが送るのと同じ操作。
+    let controller = sidebar.native_split_view_controller();
+    unsafe { controller.toggleSidebar(None) };
+    pump_until(3.0, || !seen.borrow().is_empty());
+    assert!(sidebar.is_collapsed());
+    assert_eq!(*seen.borrow(), [true], "閉じたことが届く");
+
+    unsafe { controller.toggleSidebar(None) };
+    pump_until(3.0, || seen.borrow().len() >= 2);
+    assert!(!sidebar.is_collapsed());
+    assert_eq!(*seen.borrow(), [true, false], "開いたことも届く");
+
+    sidebar.set_collapsed(true);
+    pump(0.5);
+    sidebar.set_collapsed(false);
+    pump(0.5);
+    assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
+
+    // 通知の中から開閉し直しても、入れ子の通知で落ちない。
+    sidebar.on_collapse({
+        let sidebar = sidebar.clone();
+        let seen = seen.clone();
+        move |collapsed| {
+            seen.borrow_mut().push(collapsed);
+            sidebar.set_collapsed(false);
+        }
+    });
+    unsafe { controller.toggleSidebar(None) };
+    pump_until(3.0, || seen.borrow().len() >= 3);
+    pump(0.5);
+    assert_eq!(seen.borrow()[2], true);
+    assert!(!sidebar.is_collapsed(), "通知の中で開き直せる");
+    window.clear_sidebar();
+    window.close();
     Ok(())
 }

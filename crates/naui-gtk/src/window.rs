@@ -151,6 +151,7 @@ impl Window {
         split.set_content(Some(&self.0.view));
         self.0.native.set_content(Some(&split));
         *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
+        self.mount_header_start();
     }
 
     /// 取り付けたサイドバーを外す。付いていなければ何もしない。
@@ -164,6 +165,34 @@ impl Window {
         self.0.native.set_content(None::<&gtk::Widget>);
         split.set_content(None::<&gtk::Widget>);
         self.0.native.set_content(Some(&self.0.view));
+        self.0.header.remove(&old.native_toggle_button());
+    }
+
+    /// ヘッダーバーの左側を、サイドバーボタン → ツールバーの順に並べ直す。
+    ///
+    /// `pack_start` は後ろへ足していくので、先に付いていたほうを外してから
+    /// 並べる (サイドバーボタンはいつも左端)。
+    fn mount_header_start(&self) {
+        let sidebar = self.0.sidebar.borrow().clone();
+        let toolbar = self.0.toolbar.borrow().clone();
+        if let Some(sidebar) = &sidebar {
+            let toggle = sidebar.native_toggle_button();
+            if toggle.parent().is_some() {
+                self.0.header.remove(&toggle);
+            }
+        }
+        if let Some(toolbar) = &toolbar {
+            let mount = toolbar.mount();
+            if mount.parent().is_some() {
+                self.0.header.remove(&mount);
+            }
+        }
+        if let Some(sidebar) = &sidebar {
+            self.0.header.pack_start(&sidebar.native_toggle_button());
+        }
+        if let Some(toolbar) = &toolbar {
+            self.0.header.pack_start(&toolbar.mount());
+        }
     }
 
     /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
@@ -171,8 +200,8 @@ impl Window {
     /// GNOME の作法どおり、項目はヘッダーバーの左側へ並ぶ。
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
         self.clear_toolbar();
-        self.0.header.pack_start(&toolbar.mount());
         *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
+        self.mount_header_start();
     }
 
     /// 取り付けたツールバーを外す。付いていなければ何もしない。

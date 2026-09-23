@@ -899,6 +899,7 @@
 //! sidebar.set_width(240.0);     // 既定は DEFAULT_SIDEBAR_WIDTH (220)
 //! window.set_sidebar(&sidebar);
 //! sidebar.set_collapsed(true);  // 閉じる (項目と選択は残る)
+//! sidebar.on_collapse(|collapsed| println!("利用者が開閉した: {collapsed}"));
 //! # Ok(())
 //! # }
 //! ```
@@ -914,6 +915,17 @@
 //! `fullSizeContentView` が付き、子の上端はタイトルバーを避けた位置になる。
 //! Linux ではサイドバーと中身がそれぞれヘッダーバーを持つ (GNOME の作法)。
 //! Windows と Web ではタイトルバー (とメニューバー) の下から始まる。
+//!
+//! 開閉は**その環境の標準のサイドバーボタン**で利用者も行える。利用者が
+//! 開閉すると [`Sidebar::on_collapse`] が呼ばれる ([`Sidebar::set_collapsed`]
+//! では呼ばれない)。
+//!
+//! | 環境 | 開閉ボタン | 閉じたときの姿 |
+//! | --- | --- | --- |
+//! | macOS | ツールバー先頭のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`)。ツールバーが無ければボタンだけのツールバーを付ける | 区画ごと隠れる (仕切りを端まで寄せても閉じる) |
+//! | Linux | 中身の側のヘッダーバーの左端 (`sidebar-show-symbolic`) | 区画ごと隠れる |
+//! | Windows | `NavigationView` のペインを畳むボタン | アイコンだけの細い帯 |
+//! | Web | 中身の側の上端の `<button aria-expanded>` | 区画ごと隠れる |
 //!
 //! アイコンは [`ToolbarIcon`] と同じ種類を使い、その環境の標準アイコンへ
 //! 写す。幅は利用者が仕切りで変えられるのは macOS だけで、ほかの 3 環境では
@@ -2036,6 +2048,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: f64 = sidebar.width();
     sidebar.set_collapsed(false);
     let _: bool = sidebar.is_collapsed();
+    sidebar.on_collapse(|_collapsed: bool| {});
     window.set_sidebar(&sidebar);
     window.clear_sidebar();
 
