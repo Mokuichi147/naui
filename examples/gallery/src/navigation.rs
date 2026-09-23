@@ -4,8 +4,8 @@ use crate::parts;
 
 /// 各ナビゲーション UI の形と選択通知。
 ///
-/// `sidebar` はギャラリーのタブと連動させてあるもの ([`crate::build`])。
-/// ここではウィンドウへの取り付けと開閉だけを試せるようにする。
+/// `sidebar` はギャラリーのタブと連動させてあるもので、起動時からウィンドウに
+/// 付いている ([`crate::build`])。ここでは取り外しと開閉を試せるようにする。
 pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
@@ -14,13 +14,13 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
         &pane,
         "Sidebar",
         &[
-            "ウィンドウの左に付くサイドバー。レイアウトではなくウィンドウに取り付けます。",
-            "項目を選ぶと、上のタブが切り替わります。",
+            "ウィンドウの左に付いているのがサイドバーです。レイアウトではなくウィンドウに取り付けます。",
+            "項目を選ぶと上のタブが切り替わり、タブを選ぶとサイドバーの選択も移ります。",
         ],
     )?;
     let attach = ui.checkbox("ウィンドウに付ける")?;
+    attach.set_checked(true);
     let collapse = ui.checkbox("閉じる")?;
-    collapse.set_enabled(false);
     attach.on_toggle({
         let window = window.clone();
         let sidebar = sidebar.clone();
@@ -31,6 +31,7 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
             } else {
                 window.clear_sidebar();
             }
+            // 付けていない間は開閉しても見えないので、押せなくする。
             collapse.set_enabled(on);
         }
     });

@@ -104,7 +104,8 @@ fn menus() -> Vec<MenuSpec> {
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
-    let window = ui.window("naui UI gallery", 800.0, 860.0)?;
+    // 幅はサイドバー (既定 220) を付けても、中身が従来の 800 を保てる大きさ。
+    let window = ui.window("naui UI gallery", 1020.0, 860.0)?;
     let root = ui.grid()?;
     root.set_spacing(0.0, 10.0);
     // 上だけ詰める。ツールバーの帯 (WinUI では 48px の CommandBar) が
@@ -192,8 +193,9 @@ pub fn build(ui: &Ui) -> Result<()> {
     header.append(&menu_status);
     root.attach(&header, GridCell::new(0, 0));
 
-    // Sidebar もウィンドウに取り付けるもの。取り付けは「ナビゲーション」の
-    // タブで切り替える。項目はタブと同じ並びなので、選択を互いに映し合う。
+    // Sidebar もウィンドウに取り付けるもの。起動時から付けておき、取り外しと
+    // 開閉は「ナビゲーション」のタブで試せる。項目はタブと同じ並びなので、
+    // 選択を互いに映し合う。
     let sidebar = ui.sidebar()?;
     sidebar.set_sections(&sidebar_sections());
     sidebar.set_selected(0);
@@ -247,6 +249,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     });
 
     window.set_child(&root);
+    window.set_sidebar(&sidebar);
     window.show();
     Ok(())
 }
