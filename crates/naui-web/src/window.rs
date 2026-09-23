@@ -196,6 +196,11 @@ impl Window {
     }
 
     pub fn close(&self) {
+        // 開いたままのメニューを残さない (隠れたウィンドウの Esc を拾わない)。
+        let menu_bar = self.0.menu_bar.borrow().clone();
+        if let Some(menu_bar) = menu_bar {
+            menu_bar.close();
+        }
         let _ = self.0.element.style().set_property("display", "none");
     }
 

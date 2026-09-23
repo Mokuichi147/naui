@@ -2154,6 +2154,53 @@ fn menu_bar_shortcuts_follow_the_attachment() {
     });
 }
 
+/// 隠れたウィンドウや別のウィンドウのメニューバーは、Escape の既定動作を
+/// 止めない (開いたメニューを閉じる相手ではないため)。
+#[wasm_bindgen_test]
+fn menu_bar_escape_is_left_alone_when_it_is_not_ours() {
+    with_ui(|ui| {
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+        window.set_menu_bar(&menu_bar);
+        let title = menu_bar.native_title(0).expect("見出し");
+        let menu = menu_bar.native_menu(0).expect("メニュー");
+
+        // 閉じたウィンドウでは、開いていたメニューも一緒に閉じ、Esc は拾わない。
+        title.click();
+        assert_ne!(computed(&menu, "display"), "none");
+        window.close();
+        assert_eq!(
+            title.get_attribute("aria-expanded").as_deref(),
+            Some("false"),
+            "ウィンドウを閉じるとメニューも閉じる"
+        );
+        let prevented = press_escape(body().as_ref(), false);
+        assert!(!prevented, "隠れたウィンドウは Esc の既定動作を止めない");
+
+        // 別のウィンドウの中から上がってきた Esc も拾わない。
+        window.show();
+        let other = ui.window("別のウィンドウ", 400.0, 300.0)?;
+        let input = ui.text_input("")?;
+        other.set_child(&input);
+        title.click();
+        assert_ne!(computed(&menu, "display"), "none");
+        let prevented = press_escape(input.native_element().as_ref(), false);
+        assert!(!prevented, "別のウィンドウの Esc の既定動作は止めない");
+        assert_ne!(computed(&menu, "display"), "none", "メニューは開いたまま");
+
+        // 自分のウィンドウ (や、どのウィンドウにも属さないところ) からなら閉じる。
+        let prevented = press_escape(body().as_ref(), false);
+        assert!(prevented);
+        assert_eq!(computed(&menu, "display"), "none");
+
+        window.clear_menu_bar();
+        window.close();
+        other.close();
+        Ok(())
+    });
+}
+
 /// 同じショートカットを持つウィンドウが 2 つあっても、1 回だけ通知する。
 #[wasm_bindgen_test]
 fn menu_bar_shortcuts_reach_only_one_window() {

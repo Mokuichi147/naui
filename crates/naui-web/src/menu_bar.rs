@@ -158,10 +158,11 @@ impl MenuBar {
         *self.0.window.borrow_mut() = None;
     }
 
-    /// 押されたキーを、このメニューバーが受け取ってよいか。
+    /// 押されたキー (ショートカットと Escape) を、このメニューバーが
+    /// 受け取ってよいか。
     ///
     /// 画面に出ていない (ウィンドウを閉じた) ときと、別のウィンドウの中から
-    /// 上がってきたキーは受け取らない。
+    /// 上がってきたキーは受け取らない。受け取らないキーは既定動作も止めない。
     fn accepts_keys_from(&self, event: &web_sys::Event) -> bool {
         // `display: none` の祖先を持つ要素は `offsetParent` を持たない。
         if !self.0.element.is_connected() || self.0.element.offset_parent().is_none() {
@@ -224,7 +225,9 @@ impl MenuBar {
                 }
                 let bar = MenuBar(inner);
                 if key.key() == "Escape" {
-                    if bar.0.open.get().is_some() {
+                    // ショートカットと同じく、画面に出ていないときと、別の
+                    // ウィンドウから上がってきたキーには触らない。
+                    if bar.0.open.get().is_some() && bar.accepts_keys_from(&event) {
                         // Safari は全画面のとき、ページが既定動作を止めない
                         // 限り Esc を全画面の解除に使ってしまう。
                         event.prevent_default();
