@@ -23,8 +23,9 @@ use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
     Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
-    ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
+    TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -289,6 +290,26 @@ fn main() {
         (
             "ツールバーがヘッダーバーへ入り外れる",
             toolbar_attaches_to_the_header_bar,
+        ),
+        (
+            "サイドバーが navigation-sidebar の GtkListBox に項目と見出しを並べ、仕切りで幅を変えられる",
+            sidebar_rows_map_to_a_list_box,
+        ),
+        (
+            "サイドバーの選択が通し番号で往復し、利用者の選択だけを通知する",
+            sidebar_selection_round_trips,
+        ),
+        (
+            "サイドバーが GtkPaned として取り付き外れる",
+            sidebar_attaches_to_a_window,
+        ),
+        (
+            "サイドバーの通知中に内容と通知先を差し替えられる",
+            sidebar_callback_is_reentrant,
+        ),
+        (
+            "サイドバーボタンが開いている間はサイドバー、閉じたら中身の左上に入り、開閉を通知する",
+            sidebar_toggle_button_collapses_and_notifies,
         ),
         (
             "すべてのアイコンがテーマに実在する",
@@ -5555,5 +5576,321 @@ fn menu_bar_shortcuts_are_kept_per_menu_bar(ui: &Ui) -> Result<()> {
     second_window.clear_menu_bar();
     first_window.close();
     second_window.close();
+    Ok(())
+}
+
+fn sidebar_fixture() -> Vec<SidebarSection> {
+    vec![
+        SidebarSection::untitled([
+            SidebarItem::new("一般").icon(ToolbarIcon::Settings),
+            SidebarItem::new("検索"),
+        ]),
+        SidebarSection::new(
+            "場所",
+            [
+                SidebarItem::new("書類").icon(ToolbarIcon::Open),
+                SidebarItem::new("共有").enabled(false),
+            ],
+        ),
+    ]
+}
+
+/// `GtkListBox` の行を上から順に集める。
+fn list_box_rows(list: &gtk::ListBox) -> Vec<gtk::ListBoxRow> {
+    let mut rows = Vec::new();
+    let mut index = 0;
+    while let Some(row) = list.row_at_index(index) {
+        rows.push(row);
+        index += 1;
+    }
+    rows
+}
+
+/// 行の中身に並ぶ文字 (見出し・項目の名前)。
+fn row_text(row: &gtk::ListBoxRow) -> Option<String> {
+    let child = row.child()?;
+    if let Some(label) = child.downcast_ref::<gtk::Label>() {
+        return Some(label.text().to_string());
+    }
+    let mut next = child.first_child();
+    while let Some(widget) = next {
+        if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+            return Some(label.text().to_string());
+        }
+        next = widget.next_sibling();
+    }
+    None
+}
+
+fn sidebar_rows_map_to_a_list_box(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    assert!(sidebar.is_empty());
+    sidebar.set_sections(&sidebar_fixture());
+    assert_eq!(sidebar.len(), 4, "見出しと区切りは数えない");
+
+    let list = sidebar.native_list_box();
+    assert!(list.has_css_class("navigation-sidebar"));
+    let rows = list_box_rows(&list);
+    // 一般・検索 | 区切り | 場所 (見出し) | 書類・共有
+    assert_eq!(rows.len(), 6);
+    assert!(rows[2].child().is_some_and(|c| c.is::<gtk::Separator>()));
+    assert!(!rows[2].is_selectable() && !rows[2].is_activatable());
+    assert_eq!(row_text(&rows[3]).as_deref(), Some("場所"));
+    assert!(!rows[3].is_selectable(), "見出しは選べない");
+    assert_eq!(row_text(&rows[0]).as_deref(), Some("一般"));
+    assert!(
+        rows[0]
+            .child()
+            .and_then(|c| c.first_child())
+            .is_some_and(|c| c.is::<gtk::Image>()),
+        "アイコンを指定した項目は GtkImage を持つ"
+    );
+    assert!(!rows[5].is_selectable(), "選べない項目は選べない");
+    assert!(!rows[5].is_sensitive());
+
+    // 幅は GtkPaned の仕切りの位置。利用者が動かせる。
+    let paned = sidebar.native_paned();
+    assert_eq!(paned.position(), DEFAULT_SIDEBAR_WIDTH as i32);
+    assert!(!paned.resizes_start_child(), "ウィンドウを広げても幅を保つ");
+    assert!(!paned.shrinks_start_child(), "下限より狭くはならない");
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
+    sidebar.set_width(160.0);
+    assert_eq!(paned.position(), 160);
+    assert_eq!(sidebar.width(), 160.0);
+    sidebar.set_width(40.0);
+    assert_eq!(
+        sidebar.width(),
+        naui_core::SIDEBAR_MIN_WIDTH,
+        "下限で止まる"
+    );
+    sidebar.set_width(160.0);
+    assert!(resized.borrow().is_empty(), "set_width では通知しない");
+    // 利用者が仕切りを動かしたときと同じ経路 (position プロパティ)。
+    paned.set_position(240);
+    assert_eq!(sidebar.width(), 240.0);
+    assert_eq!(*resized.borrow(), [240.0], "利用者が動かしたら通知する");
+
+    sidebar.set_collapsed(true);
+    assert!(sidebar.is_collapsed());
+    assert!(
+        !paned.start_child().is_some_and(|c| c.get_visible()),
+        "区画が隠れる"
+    );
+    sidebar.set_collapsed(false);
+    assert!(paned.start_child().is_some_and(|c| c.get_visible()));
+    assert_eq!(paned.position(), 240, "開き直すと元の幅");
+
+    sidebar.set_items(&SidebarItem::list(["春", "夏"]));
+    assert_eq!(
+        list_box_rows(&list).len(),
+        2,
+        "まとまり 1 つなら区切りは無い"
+    );
+    Ok(())
+}
+
+fn sidebar_selection_round_trips(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    sidebar.set_sections(&sidebar_fixture());
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+    let list = sidebar.native_list_box();
+    assert_eq!(sidebar.selected(), None);
+
+    sidebar.set_selected(2);
+    assert_eq!(sidebar.selected(), Some(2));
+    assert_eq!(list.selected_row().map(|r| r.index()), Some(4));
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+    sidebar.set_selected(3);
+    sidebar.set_selected(9);
+    assert_eq!(sidebar.selected(), Some(2), "選べない・範囲外は無視");
+
+    sidebar.select(1);
+    assert_eq!(*seen.borrow(), [1]);
+    sidebar.select(1);
+    assert_eq!(*seen.borrow(), [1, 1], "同じ項目でも通知する");
+
+    // 利用者が選んだときと同じく、一覧の側から選ぶ。
+    list.select_row(list.row_at_index(0).as_ref());
+    assert_eq!(sidebar.selected(), Some(0));
+    assert_eq!(*seen.borrow(), [1, 1, 0]);
+
+    sidebar.set_selected(2);
+    sidebar.set_sections(&sidebar_fixture());
+    assert_eq!(sidebar.selected(), Some(2), "同じ番号が選べれば残る");
+    assert_eq!(list.selected_row().map(|r| r.index()), Some(4));
+    sidebar.set_items(&SidebarItem::list(["ひとつ"]));
+    assert_eq!(sidebar.selected(), None, "無くなった番号の選択は外れる");
+    sidebar.set_selected(0);
+    sidebar.clear_selection();
+    assert_eq!(sidebar.selected(), None);
+    assert!(list.selected_row().is_none());
+    assert_eq!(seen.borrow().len(), 3, "差し替えと解除は通知しない");
+    Ok(())
+}
+
+fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
+    let window = ui.window("サイドバー", 640.0, 400.0)?;
+    let content = ui.stack(Orientation::Vertical)?;
+    window.set_child(&content);
+    let native = window.native_window();
+    let view = native.content().expect("中身");
+    assert!(view.is::<adw::ToolbarView>());
+
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    let paned = sidebar.native_paned();
+    assert_eq!(
+        native.content().as_ref(),
+        Some(paned.upcast_ref::<gtk::Widget>()),
+        "ウィンドウの中身が GtkPaned になる"
+    );
+    assert_eq!(
+        paned.end_child(),
+        Some(view.clone()),
+        "元の中身は右の区画へ"
+    );
+    assert!(paned
+        .start_child()
+        .is_some_and(|pane| pane.is::<adw::ToolbarView>()));
+    // ウィンドウのボタンは、ウィンドウの端に接するほうにだけ出す。
+    assert!(!sidebar.native_header_bar().shows_end_title_buttons());
+    assert!(!window.native_header_bar().shows_start_title_buttons());
+
+    // 付けたままでも、子とトーストは右の区画のトースト置き場に入る。
+    let other = ui.stack(Orientation::Vertical)?;
+    window.set_child(&other);
+    assert!(window.native_toast_overlay().child().is_some());
+    window.show();
+    let toast = ui.toast("保存しました")?;
+    toast.show();
+    assert!(toast.is_visible(), "右の区画のトースト置き場が見つかる");
+    toast.dismiss();
+
+    window.clear_sidebar();
+    assert_eq!(native.content(), Some(view), "外すと元の中身へ戻る");
+    assert!(paned.end_child().is_none());
+    assert!(
+        window.native_header_bar().shows_start_title_buttons(),
+        "外すと中身のヘッダーバーが両端のボタンを出し直す"
+    );
+    window.clear_sidebar(); // 付いていなければ何もしない
+    window.close();
+    Ok(())
+}
+
+fn sidebar_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["春", "夏"]));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_select({
+        let sidebar = sidebar.clone();
+        let seen = seen.clone();
+        move |index| {
+            seen.borrow_mut().push(index);
+            sidebar.set_items(&SidebarItem::list(["冬"]));
+            let seen = seen.clone();
+            sidebar.on_select(move |index| seen.borrow_mut().push(100 + index));
+        }
+    });
+    sidebar.select(1);
+    assert_eq!(sidebar.len(), 1);
+    sidebar.select(0);
+    assert_eq!(*seen.borrow(), [1, 100]);
+    Ok(())
+}
+
+fn sidebar_toggle_button_collapses_and_notifies(ui: &Ui) -> Result<()> {
+    let window = ui.window("サイドバーボタン", 640.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[ToolbarItem::new(ToolbarIcon::New, "新規")]);
+    window.set_toolbar(&toolbar);
+
+    let sidebar = ui.sidebar()?;
+    window.set_sidebar(&sidebar);
+    pump();
+    let toggle = sidebar.native_toggle_button();
+    let side_header = sidebar.native_header_bar();
+    let content_header = window.native_header_bar();
+    assert_eq!(toggle.icon_name().as_deref(), Some("sidebar-show-symbolic"));
+    assert!(
+        toggle.is_ancestor(&side_header),
+        "開いている間はサイドバーのヘッダーバーの左端"
+    );
+    assert!(toggle.is_active(), "開いている間は押し込まれている");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    toggle.set_active(false); // 利用者がボタンを押したのと同じ
+    pump();
+    assert!(sidebar.is_collapsed());
+    assert_eq!(*seen.borrow(), [true]);
+    assert!(
+        toggle.is_ancestor(&content_header),
+        "閉じたら中身のヘッダーバーの左端へ移る"
+    );
+    // ツールバーより左に来る。
+    let slot = toggle.parent().expect("置き場");
+    assert_eq!(
+        slot.next_sibling().as_ref(),
+        Some(toolbar.native_box().upcast_ref::<gtk::Widget>()),
+        "サイドバーボタンの右隣がツールバー"
+    );
+    assert!(
+        content_header.shows_start_title_buttons(),
+        "閉じたら中身のヘッダーバーが左側のウィンドウのボタンも出す"
+    );
+
+    toggle.set_active(true);
+    pump();
+    assert!(!sidebar.is_collapsed());
+    assert_eq!(*seen.borrow(), [true, false]);
+    assert!(toggle.is_ancestor(&side_header), "開いたら戻る");
+
+    sidebar.set_collapsed(true);
+    pump();
+    assert!(!toggle.is_active(), "set_collapsed もボタンに映る");
+    sidebar.set_collapsed(false);
+    pump();
+    assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
+
+    // 閉じている間に置いた幅が、ボタンで開き直したときに反映され、その後の
+    // 利用者の仕切りの操作も通知される。
+    let paned = sidebar.native_paned();
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
+    sidebar.set_width(260.0);
+    sidebar.set_collapsed(true);
+    pump();
+    sidebar.set_width(300.0);
+    toggle.set_active(true); // 利用者がボタンで開いたのと同じ
+    pump();
+    assert!(!sidebar.is_collapsed());
+    assert_eq!(paned.position(), 300, "開き直すと閉じている間に置いた幅");
+    assert!(
+        resized.borrow().is_empty(),
+        "set_width と開き直しでは通知しない"
+    );
+    paned.set_position(250); // 利用者が仕切りを動かしたのと同じ経路
+    assert_eq!(*resized.borrow(), [250.0], "開き直したあとの操作も通知する");
+
+    window.clear_sidebar();
+    window.clear_toolbar();
+    window.close();
     Ok(())
 }

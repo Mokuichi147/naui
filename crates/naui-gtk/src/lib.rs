@@ -139,6 +139,7 @@ mod navigation;
 mod number_input;
 mod popup;
 mod radio_group;
+mod sidebar;
 mod split_view;
 mod table;
 mod time_picker;
@@ -175,6 +176,7 @@ pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
+pub use sidebar::Sidebar;
 pub use split_view::SplitView;
 pub use table::{Table, TableCells};
 pub use time_picker::TimePicker;
@@ -224,6 +226,8 @@ struct UiInner {
     toolbars: RefCell<Vec<Toolbar>>,
     /// メニューバーもレイアウトに載らないので、ここで保持する。
     menu_bars: RefCell<Vec<MenuBar>>,
+    /// サイドバーもレイアウトに載らないので、ここで保持する。
+    sidebars: RefCell<Vec<Sidebar>>,
     /// トーストもレイアウトに載らないので、ここで保持する。
     toasts: RefCell<Vec<Toast>>,
     /// 別スレッドと非同期処理の入り口。
@@ -240,6 +244,7 @@ impl Ui {
             popups: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
             menu_bars: RefCell::new(Vec::new()),
+            sidebars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
             tasks: Tasks::from_main_thread(std::sync::Arc::new(main_thread::Idle)),
         }))
@@ -426,6 +431,16 @@ impl Ui {
         let menu_bar = MenuBar::new(&self.0.app);
         self.0.menu_bars.borrow_mut().push(menu_bar.clone());
         Ok(menu_bar)
+    }
+
+    /// ウィンドウの左に付けるサイドバー。
+    ///
+    /// [`Window::set_sidebar`] で取り付ける。フレームワークが参照を保持するので、
+    /// 戻り値を捨てても通知が届かなくなることはない。
+    pub fn sidebar(&self) -> Result<Sidebar> {
+        let sidebar = Sidebar::new();
+        self.0.sidebars.borrow_mut().push(sidebar.clone());
+        Ok(sidebar)
     }
 
     /// 選択できる行の一覧。自分でスクロールする。

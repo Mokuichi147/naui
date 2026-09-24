@@ -450,6 +450,9 @@ impl Toast {
 /// 出し先は naui が作ったウィンドウのうちいちばん手前のもの
 /// ([`crate::window::frontmost`])。AppKit が内部で作るウィンドウを
 /// 掴まないよう、`NSApplication` の `windows` は直接見ない。
+///
+/// サイドバーを付けたウィンドウでは右の区画 (中身の側) へ重ねる。
+/// Linux の `AdwToastOverlay` が中身の側にあるのと同じ位置になる。
 fn host_view(mtm: MainThreadMarker) -> Option<Retained<NSView>> {
-    crate::window::frontmost(mtm)?.contentView()
+    crate::window::overlay_host(&*crate::window::frontmost(mtm)?)
 }

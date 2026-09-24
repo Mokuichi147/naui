@@ -22,8 +22,9 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, Color, DialogResponse, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, Sizing, TableColumn,
-    TableRow, TextColor, TextStyle, Theme,
+    Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, SidebarItem,
+    SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
+    ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, Widget};
 use wasm_bindgen::JsCast;
@@ -2374,6 +2375,435 @@ fn checkbox_is_a_label_around_a_native_input() {
         let input = first_input(&element);
         assert_eq!(input.type_(), "checkbox");
         assert_eq!(computed(&element, "display"), "inline-flex");
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------------- サイドバー
+
+fn sidebar_fixture() -> Vec<SidebarSection> {
+    vec![
+        SidebarSection::untitled([
+            SidebarItem::new("一般").icon(ToolbarIcon::Settings),
+            SidebarItem::new("検索"),
+        ]),
+        SidebarSection::new(
+            "場所",
+            [
+                SidebarItem::new("書類").icon(ToolbarIcon::Open),
+                SidebarItem::new("共有").enabled(false),
+            ],
+        ),
+    ]
+}
+
+/// サイドバーの項目のボタン (通し番号の順)。
+fn sidebar_buttons(aside: &Element) -> Vec<HtmlElement> {
+    let found = aside
+        .query_selector_all("li > button")
+        .expect("ボタンの検索");
+    (0..found.length())
+        .filter_map(|i| found.item(i))
+        .map(|node| node.unchecked_into::<HtmlElement>())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn sidebar_builds_a_nav_with_headed_lists() {
+    with_ui(|ui| {
+        let sidebar = ui.sidebar()?;
+        assert!(sidebar.is_empty());
+        sidebar.set_sections(&sidebar_fixture());
+        assert_eq!(sidebar.len(), 4);
+
+        let aside = sidebar.native_element();
+        assert_eq!(aside.tag_name(), "ASIDE");
+        let nav = aside.query_selector("nav").ok().flatten().expect("<nav>");
+        assert!(nav.get_attribute("aria-label").is_some(), "読み上げの名前");
+
+        let lists = nav.query_selector_all("ul").expect("一覧の検索");
+        assert_eq!(lists.length(), 2, "まとまりごとに <ul>");
+        let heading = nav
+            .query_selector("[role=heading]")
+            .ok()
+            .flatten()
+            .expect("見出し");
+        assert_eq!(heading.text_content().as_deref(), Some("場所"));
+        let second: Element = lists.item(1).expect("2 つ目の一覧").unchecked_into();
+        assert_eq!(
+            second.get_attribute("aria-labelledby"),
+            heading.get_attribute("id"),
+            "見出しが一覧の名前になる"
+        );
+
+        let buttons = sidebar_buttons(&aside);
+        let labels: Vec<String> = buttons
+            .iter()
+            .map(|b| b.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(labels, ["一般", "検索", "書類", "共有"]);
+        assert!(buttons[0].query_selector("svg").ok().flatten().is_some());
+        assert!(buttons[1].query_selector("svg").ok().flatten().is_none());
+        assert!(buttons[3].has_attribute("disabled"), "選べない項目は無効");
+        let _mounted = Mounted::new_element(&aside);
+        let label = buttons[0]
+            .query_selector("span")
+            .ok()
+            .flatten()
+            .expect("文字");
+        assert_eq!(
+            computed(&label, "text-overflow"),
+            "ellipsis",
+            "入りきらない文字は末尾を省略記号にする"
+        );
+        assert_eq!(computed(&label, "white-space"), "nowrap", "折り返さない");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_click_selects_and_notifies() {
+    with_ui(|ui| {
+        let sidebar = ui.sidebar()?;
+        sidebar.set_sections(&sidebar_fixture());
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sidebar.on_select({
+            let seen = seen.clone();
+            move |index| seen.borrow_mut().push(index)
+        });
+        let aside = sidebar.native_element();
+        let _mounted = Mounted::new_element(&aside);
+        let buttons = sidebar_buttons(&aside);
+
+        buttons[2].click();
+        assert_eq!(sidebar.selected(), Some(2));
+        assert_eq!(*seen.borrow(), [2]);
+        assert_eq!(
+            buttons[2].get_attribute("aria-current").as_deref(),
+            Some("page")
+        );
+        buttons[3].click();
+        assert_eq!(sidebar.selected(), Some(2), "無効な項目は押せない");
+
+        sidebar.set_selected(0);
+        assert_eq!(sidebar.selected(), Some(0));
+        assert!(!buttons[2].has_attribute("aria-current"));
+        assert_eq!(seen.borrow().len(), 1, "set_selected は通知しない");
+        sidebar.set_selected(3);
+        sidebar.set_selected(9);
+        assert_eq!(sidebar.selected(), Some(0), "選べない・範囲外は無視");
+
+        sidebar.select(1);
+        assert_eq!(*seen.borrow(), [2, 1], "select は通知する");
+
+        sidebar.set_sections(&sidebar_fixture());
+        assert_eq!(sidebar.selected(), Some(1), "同じ番号が選べれば残る");
+        sidebar.set_items(&SidebarItem::list(["ひとつ"]));
+        assert_eq!(sidebar.selected(), None);
+        sidebar.set_selected(0);
+        sidebar.clear_selection();
+        assert_eq!(sidebar.selected(), None);
+        assert_eq!(seen.borrow().len(), 2, "差し替えと解除は通知しない");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_attaches_to_the_left_of_the_window() {
+    with_ui(|ui| {
+        let window = ui.window("サイドバー", 600.0, 300.0)?;
+        let content = ui.label("中身")?;
+        window.set_child(&content);
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+        window.set_menu_bar(&menu_bar);
+
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&SidebarItem::list(["一般"]));
+        window.set_sidebar(&sidebar);
+
+        let root = window.native_element();
+        let aside = sidebar.native_element();
+        assert!(root.contains(Some(&aside)), "ウィンドウの中に入る");
+        // サイドバーと中身は SplitView の start と end に入り、間が仕切り。
+        let start = aside.parent_element().expect("start 側の区画");
+        let divider: Element = sidebar.native_divider().unchecked_into();
+        assert_eq!(start.next_element_sibling(), Some(divider.clone()));
+        assert_eq!(divider.get_attribute("role").as_deref(), Some("separator"));
+        let end = divider.next_element_sibling().expect("end 側の区画");
+        let element = content.native_element();
+        assert!(
+            end.contains(Some(&element)),
+            "子はサイドバーの右の中身の側へ移る"
+        );
+        // 開閉ボタンはツールバーの行の先頭 (メニューバーの直下)。
+        let row = sidebar
+            .native_toggle_button()
+            .parent_element()
+            .expect("ツールバーの行");
+        assert_eq!(row.parent_element().as_ref(), Some(&root));
+        assert_eq!(
+            menu_bar.native_element().next_element_sibling(),
+            Some(row.clone()),
+            "ツールバーの行はメニューバーの直下"
+        );
+        assert_eq!(
+            row.first_element_child(),
+            Some(sidebar.native_toggle_button())
+        );
+        assert_eq!(
+            root.first_element_child(),
+            Some(menu_bar.native_element()),
+            "メニューバーは先頭に残る"
+        );
+
+        // 表示枠の幅はランナーによって 0 になることがあるので、実際の幅では
+        // なく、区画へ書いた幅と、余りを受け取る指定を見る。
+        let start_html: &HtmlElement = start.unchecked_ref();
+        let width_of =
+            |pane: &HtmlElement| pane.style().get_property_value("width").unwrap_or_default();
+        assert_eq!(
+            width_of(start_html),
+            format!("{DEFAULT_SIDEBAR_WIDTH}px"),
+            "既定の幅"
+        );
+        assert_eq!(computed(&end, "flex-grow"), "1", "中身が残りの幅を受け取る");
+
+        sidebar.set_width(160.0);
+        assert_eq!(width_of(start_html), "160px");
+        assert_eq!(sidebar.width(), 160.0);
+        sidebar.set_width(40.0);
+        assert_eq!(
+            sidebar.width(),
+            naui_core::SIDEBAR_MIN_WIDTH,
+            "下限より狭くはならない"
+        );
+        sidebar.set_width(160.0);
+        sidebar.set_collapsed(true);
+        assert!(sidebar.is_collapsed());
+        assert!(start_html.hidden(), "閉じるとサイドバーの区画が隠れる");
+        // 属性だけでなく、実際に描かれなくなっていること (インラインの
+        // `display` が `[hidden]` より強いので、属性だけでは消えない)。
+        assert_eq!(computed(&start, "display"), "none", "区画が実際に消える");
+        assert_eq!(
+            computed(&divider, "display"),
+            "none",
+            "仕切りも実際に消える"
+        );
+        assert!(
+            divider.unchecked_ref::<HtmlElement>().hidden(),
+            "仕切りも隠れる"
+        );
+        assert_eq!(sidebar.width(), 160.0, "閉じても幅は覚えている");
+        sidebar.set_collapsed(false);
+        assert!(!start_html.hidden());
+        assert_eq!(
+            computed(&start, "display"),
+            "flex",
+            "開き直すと元の並びに戻る"
+        );
+
+        // 付けたまま子を差し替えても中身の側に入る。
+        let other = ui.label("別の中身")?;
+        window.set_child(&other);
+        assert!(end.contains(Some(&other.native_element())));
+
+        window.clear_sidebar();
+        assert!(!root.contains(Some(&aside)), "外すとページから消える");
+        assert_eq!(
+            other.native_element().parent_element().as_ref(),
+            Some(&root),
+            "子はウィンドウの直下へ戻る"
+        );
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_callback_is_reentrant_and_replaceable() {
+    with_ui(|ui| {
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&SidebarItem::list(["春", "夏"]));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sidebar.on_select({
+            let sidebar = sidebar.clone();
+            let seen = seen.clone();
+            move |index| {
+                seen.borrow_mut().push(index);
+                sidebar.set_items(&SidebarItem::list(["冬"]));
+                let seen = seen.clone();
+                sidebar.on_select(move |index| seen.borrow_mut().push(100 + index));
+            }
+        });
+        sidebar.select(1);
+        assert_eq!(sidebar.len(), 1);
+        sidebar.select(0);
+        assert_eq!(*seen.borrow(), [1, 100]);
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_toggle_button_collapses_and_notifies() {
+    with_ui(|ui| {
+        let window = ui.window("サイドバーの開閉", 600.0, 300.0)?;
+        let content = ui.label("中身")?;
+        window.set_child(&content);
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+        window.set_menu_bar(&menu_bar);
+        let toolbar = ui.toolbar()?;
+        toolbar.set_items(&[ToolbarItem::new(ToolbarIcon::New, "新規")]);
+        window.set_toolbar(&toolbar);
+
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&SidebarItem::list(["一般"]));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sidebar.on_collapse({
+            let seen = seen.clone();
+            move |collapsed| seen.borrow_mut().push(collapsed)
+        });
+        window.set_sidebar(&sidebar);
+
+        let aside = sidebar.native_element();
+        let toggle: HtmlElement = sidebar.native_toggle_button().unchecked_into();
+        assert_eq!(
+            toggle.get_attribute("aria-controls"),
+            aside.get_attribute("id"),
+            "ボタンがどの区画を開閉するかを読み上げに伝える"
+        );
+        assert_eq!(
+            toggle.get_attribute("aria-expanded").as_deref(),
+            Some("true")
+        );
+        // ツールバーの行に [開閉ボタン][ツールバー] の順で並ぶ (macOS と同じ)。
+        let row = toggle.parent_element().expect("ツールバーの行");
+        assert_eq!(
+            toggle.next_element_sibling(),
+            Some(toolbar.native_element()),
+            "開閉ボタンの右隣がツールバー"
+        );
+
+        let start = aside.parent_element().expect("start 側の区画");
+        let element = content.native_element();
+        let before_toggle = toggle.get_bounding_client_rect();
+        let before_content = element.get_bounding_client_rect().top();
+        toggle.click();
+        assert!(sidebar.is_collapsed());
+        assert_eq!(computed(&start, "display"), "none", "ボタンで実際に消える");
+        assert_eq!(
+            toggle.parent_element(),
+            Some(row.clone()),
+            "ボタンは動かない"
+        );
+        let after_toggle = toggle.get_bounding_client_rect();
+        assert_eq!(
+            (after_toggle.top(), after_toggle.left()),
+            (before_toggle.top(), before_toggle.left()),
+            "開閉してもボタンの位置は変わらない"
+        );
+        assert_eq!(
+            element.get_bounding_client_rect().top(),
+            before_content,
+            "開閉しても中身が上下しない"
+        );
+        assert_eq!(
+            toggle.get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        assert_eq!(*seen.borrow(), [true]);
+        toggle.click();
+        assert!(!sidebar.is_collapsed());
+        assert_eq!(*seen.borrow(), [true, false]);
+
+        sidebar.set_collapsed(true);
+        assert_eq!(
+            toggle.get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        sidebar.set_collapsed(false);
+        assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
+
+        // ツールバーを外してもボタンだけの行が残り、サイドバーを外すと消える。
+        window.clear_toolbar();
+        assert_eq!(toggle.parent_element(), Some(row.clone()));
+        assert_eq!(
+            menu_bar.native_element().next_element_sibling(),
+            Some(row.clone()),
+            "組み直してもメニューバーの直下"
+        );
+        window.clear_sidebar();
+        assert!(toggle.parent_element().is_none(), "外すとボタンも消える");
+        assert!(row.parent_element().is_none(), "空の行は置かない");
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_divider_resizes_and_notifies() {
+    with_ui(|ui| {
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&SidebarItem::list(["一般"]));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sidebar.on_resize({
+            let seen = seen.clone();
+            move |width| seen.borrow_mut().push(width)
+        });
+        sidebar.set_width(200.0);
+        assert!(seen.borrow().is_empty(), "set_width では通知しない");
+
+        // 仕切りは SplitView と同じく矢印キーでも動く (10 px ずつ)。
+        let divider = sidebar.native_divider();
+        let key = |name: &str| {
+            let init = KeyboardEventInit::new();
+            init.set_key(name);
+            init.set_bubbles(true);
+            let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+                .expect("キーイベント");
+            divider.dispatch_event(&event).expect("配送");
+        };
+        key("ArrowRight");
+        assert_eq!(sidebar.width(), 210.0);
+        assert_eq!(*seen.borrow(), [210.0], "利用者が動かしたら通知する");
+        for _ in 0..20 {
+            key("ArrowLeft");
+        }
+        assert_eq!(
+            sidebar.width(),
+            naui_core::SIDEBAR_MIN_WIDTH,
+            "下限で止まる"
+        );
+
+        // 閉じている間に置いた幅が、開き直したときに反映され、その後の操作も
+        // 通知される。
+        sidebar.set_collapsed(true);
+        sidebar.set_width(300.0);
+        sidebar.set_collapsed(false);
+        let start: HtmlElement = sidebar
+            .native_element()
+            .parent_element()
+            .expect("start 側の区画")
+            .unchecked_into();
+        assert_eq!(
+            start
+                .style()
+                .get_property_value("width")
+                .unwrap_or_default(),
+            "300px",
+            "開き直すと閉じている間に置いた幅"
+        );
+        let count = seen.borrow().len();
+        key("ArrowRight");
+        assert_eq!(sidebar.width(), 310.0);
+        assert_eq!(
+            seen.borrow().len(),
+            count + 1,
+            "開き直したあとの操作も通知する"
+        );
         Ok(())
     });
 }

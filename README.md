@@ -84,10 +84,10 @@ cargo run -p gallery
 
 | 環境 | 状態 | 確認内容 |
 | --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・メニューバー (見出しの開閉とショートカット)・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ (Esc での取り消しを含む)、ポップアップメニュー、メニューバー (見出しの開閉とショートカット)、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、描画面 (画素の確認とポインター)、ラベルの折り返し、ラベルの文字づかい、非同期処理の実行と中断を操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。あわせて WinUI 3 の実コントロールを使った統合テスト (ラベルの文字づかい・描画面の XAML への写しを含む) を CI で実行 |
+| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (サイドバー・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む) |
+| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (サイドバー・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・メニューバー (見出しの開閉とショートカット)・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
+| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、サイドバー (選択・仕切りでの幅の変更・開閉)、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ (Esc での取り消しを含む)、ポップアップメニュー、メニューバー (見出しの開閉とショートカット)、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、描画面 (画素の確認とポインター)、ラベルの折り返し、ラベルの文字づかい、非同期処理の実行と中断を操作 |
+| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (サイドバー・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。あわせて WinUI 3 の実コントロールを使った統合テスト (ラベルの文字づかい・描画面の XAML への写しを含む) を CI で実行 |
 
 プラットフォーム固有の注意点は[既知の制限](#既知の制限)を参照してください。
 
@@ -185,6 +185,7 @@ add.on_click({
 | `Tabs` のタブ | `remove_tab` / `clear` |
 | 一覧・表・ツリー・ナビゲーション | `set_items` / `set_rows` で丸ごと置き換える |
 | 中身が 1 つのもの (`Scroll`、`Expander`、`SplitView`、`Window`) | `set_child` などで差し替える |
+| ウィンドウに取り付けたもの (`Toolbar`、`MenuBar`、`Sidebar`) | `clear_toolbar` / `clear_menu_bar` / `clear_sidebar` |
 
 ```rust
 use naui::{GridCell, Orientation};
@@ -1005,6 +1006,68 @@ macOS では ⌘C / ⌘V などがメインメニューのキー等価として�
 渡した見出しをその間へ並べます。`Window::clear_menu_bar` で外すと、この 2 つ
 だけの既定のメニューへ戻ります。
 
+#### サイドバー
+
+「システム設定」や Finder の左側のような、ウィンドウの高さいっぱいの
+サイドバーは `Sidebar` を使います。`Toolbar` と同じくレイアウトには置かず、
+`Window::set_sidebar` でウィンドウに取り付けます。取り付けると、`set_child`
+の子はサイドバーの右の区画に置かれます。
+
+項目は `SidebarItem` (文字とアイコン)、まとまりは `SidebarSection` です。
+選ばれた項目は**まとまりをまたいだ通し番号**で通知されます (見出しは数えません)。
+
+```rust
+let sidebar = ui.sidebar()?;
+sidebar.set_sections(&[
+    SidebarSection::untitled([
+        SidebarItem::new("一般").icon(ToolbarIcon::Settings),
+        SidebarItem::new("情報").icon(ToolbarIcon::Info),
+    ]),
+    SidebarSection::new("場所", ["書類", "ダウンロード"]), // 見出し付き
+]);
+sidebar.on_select(|index| println!("{index} 番目が選ばれました")); // 0〜3
+sidebar.set_selected(0);     // 通知せずに選ぶ
+sidebar.set_width(240.0);    // 既定は 220
+window.set_sidebar(&sidebar);
+sidebar.set_collapsed(true); // 閉じる (項目と選択は残る)
+sidebar.on_collapse(|collapsed| println!("利用者が開閉しました: {collapsed}"));
+sidebar.on_resize(|width| println!("利用者が幅を {width} にしました"));
+```
+
+| 環境 | 実体 | 位置 |
+| --- | --- | --- |
+| macOS | `NSSplitViewController` のサイドバー項目 + ソースリストの `NSTableView` | タイトルバーの下まで伸びる (macOS 26 では浮いたガラス) |
+| Linux | `GtkPaned` + `.navigation-sidebar` の `GtkListBox` | サイドバーと中身がそれぞれヘッダーバーを持つ |
+| Windows | `NavigationView` (`PaneDisplayMode` は Left) | タイトルバー (とメニューバー) の下から |
+| Web | naui の `SplitView` の中に `<aside>` + `<nav>` + `<button>` | ウィンドウ要素の中、メニューバー・ツールバーの下 |
+
+**4 環境とも、利用者は仕切りをドラッグして幅を変えられます** (下限は
+`SIDEBAR_MIN_WIDTH` の 140)。変えると `on_resize` が呼ばれます (`set_width`
+では呼ばれません)。macOS と Linux は標準の仕切り (`NSSplitView` / `GtkPaned`)、
+Windows と Web は `SplitView` と同じ 6 px のつかみ代です。Linux の
+`AdwOverlaySplitView` は幅を変えられないため、`GtkPaned` で分けています。
+
+開閉は各環境の標準のサイドバーボタンで利用者も行え、そのときは
+`on_collapse` が呼ばれます (`set_collapsed` では呼ばれません)。ボタンの
+位置は 4 環境でそろえてあり、**ウィンドウの上端の左 (ツールバーと同じ高さ)** に
+来ます。開閉してもボタンは動かず、中身も上下しません。
+
+| 環境 | 開閉ボタン | 閉じたときの姿 |
+| --- | --- | --- |
+| macOS | ツールバー先頭のサイドバーボタン (ツールバーが無ければボタンだけのツールバーを付ける) | 区画ごと隠れる |
+| Linux | ヘッダーバーの左端の `sidebar-show-symbolic` | 区画ごと隠れる |
+| Windows | `NavigationView` のペインを畳むボタン | アイコンだけの細い帯 |
+| Web | ツールバーの行の先頭の `<button aria-expanded>` (ツールバーが無ければボタンだけの行) | 区画ごと隠れる |
+
+macOS では付けている間だけウィンドウに `fullSizeContentView` が付きますが、
+子の上端はタイトルバーを避けるので中身の見え方は変わりません。アイコンは
+`ToolbarIcon` と同じ種類を使います。
+
+libadwaita 1.9 にはサイドバーの一覧まで持つ `AdwSidebar` がありますが、naui が
+対象にしている 1.5 には無いため、Linux は 1.5 までの推奨どおり
+`GtkListBox` で組んでいます。Web はブラウザにサイドバーのコントロールが
+無いので、`Menu` と同じく標準要素とブラウザ既定のボタンで組み立てます。
+
 #### 別スレッドと非同期
 
 時間のかかる処理を別のスレッドでやって画面を書き換えたいときは `Ui::tasks`
@@ -1074,7 +1137,7 @@ tokio::spawn(async move {
 
 | 分類 | API |
 | --- | --- |
-| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`SplitView`、`Toolbar`、`MenuBar` |
+| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`SplitView`、`Toolbar`、`MenuBar`、`Sidebar` |
 | 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、`NumberInput`、`Slider`、`ProgressBar` |
 | データ選択 | `ComboBox`、`EditableComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
 | ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
@@ -1106,6 +1169,7 @@ tokio::spawn(async move {
 | `SplitView` | 🔴 `Grid` + 仕切りの `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
 | `Toolbar` | ✅ `CommandBar` + `AppBarButton` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 | `MenuBar` | 🟡 `Button` + `MenuFlyout` の横並び | ✅ `NSMenu` (`NSApplication.mainMenu`) | ✅ `GtkPopoverMenuBar` + `GMenu` | 🟡 `<div role="menubar">` + `<div role="menu">` |
+| `Sidebar` | 🟡 `NavigationView` (Left) + 仕切りの `Grid` | ✅ `NSSplitViewController` (サイドバー項目) + `NSTableView` (ソースリスト) | 🟡 `GtkPaned` + `GtkListBox` (`.navigation-sidebar`) | 🔴 `<aside>` + `<nav>` + `<div role="separator">` |
 
 </details>
 
@@ -1209,6 +1273,7 @@ tokio::spawn(async move {
 - `PopupItem`: ポップアップメニュー項目
 - `ToolbarItem` / `ToolbarIcon`: ツールバー項目とアイコン
 - `MenuSpec` / `MenuItem` / `MenuShortcut`: メニューバーの見出し・項目・ショートカット
+- `SidebarSection` / `SidebarItem`: サイドバーのまとまり (見出し) と項目 (文字とアイコン)
 - `DialogButtons` / `DialogResponse`: ダイアログのボタンと応答
 - `ToastSpec`: トーストの文字・操作ボタン・消えるまでの時間
 

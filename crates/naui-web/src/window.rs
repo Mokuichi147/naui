@@ -10,6 +10,7 @@ use web_sys::{Document, Element, HtmlElement};
 
 use crate::apply_theme;
 use crate::menu_bar::MenuBar;
+use crate::sidebar::Sidebar;
 use crate::to_error;
 use crate::toolbar::Toolbar;
 use crate::widgets::{create, Widget};
@@ -29,6 +30,10 @@ struct WindowInner {
     toolbar: RefCell<Option<Toolbar>>,
     /// 上端に差し込んだメニューバー。通知先ごと生かしておく。
     menu_bar: RefCell<Option<MenuBar>>,
+    /// 取り付けたサイドバー。通知先ごと生かしておく。
+    sidebar: RefCell<Option<Sidebar>>,
+    /// ツールバーの行。サイドバーの開閉ボタンとツールバーを横に並べる。
+    toolbar_row: HtmlElement,
 }
 
 /// ページ上のウィンドウ相当。
@@ -76,6 +81,16 @@ impl Window {
         body.append_child(&element)
             .map_err(|e| to_error("ウィンドウの追加", e))?;
 
+        // ツールバーの行。サイドバーの開閉ボタン (あれば) とツールバーを並べる。
+        // macOS でサイドバーボタンがツールバーの先頭に入るのと同じ並び。
+        let toolbar_row: HtmlElement = create(document, "div")?.unchecked_into();
+        let row_style = toolbar_row.style();
+        let _ = row_style.set_property("display", "flex");
+        let _ = row_style.set_property("flex-direction", "row");
+        let _ = row_style.set_property("align-items", "center");
+        let _ = row_style.set_property("gap", "6px");
+        let _ = row_style.set_property("flex-shrink", "0");
+
         let this = Self(Rc::new(WindowInner {
             element,
             document: document.clone(),
@@ -83,6 +98,8 @@ impl Window {
             child: RefCell::new(None),
             toolbar: RefCell::new(None),
             menu_bar: RefCell::new(None),
+            sidebar: RefCell::new(None),
+            toolbar_row,
         }));
         this.set_title(title);
         Ok(this)
@@ -106,16 +123,61 @@ impl Window {
     /// ルートに置くウィジェット。呼ぶたびに置き換わる。
     ///
     /// ルートはウィンドウいっぱいに広がる (AppKit の contentView と同じ)。
+    /// サイドバーを付けているときは、その右の中身の側に置かれる。
     pub fn set_child(&self, child: &dyn Widget) {
+        *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        self.mount_body();
+    }
+
+    /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
+    ///
+    /// ブラウザにはサイドバーのコントロールが無いため、ウィンドウ要素の中を
+    /// 「サイドバー (`<aside>`) と中身」の横並びへ組み替え、
+    /// [`set_child`](Self::set_child) の子は中身の側へ移す。
+    pub fn set_sidebar(&self, sidebar: &Sidebar) {
+        *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
+        self.mount_body();
+    }
+
+    /// 取り付けたサイドバーを外す。付いていなければ何もしない。
+    ///
+    /// 中身の側にあった子は、ウィンドウの中身へ戻る。
+    pub fn clear_sidebar(&self) {
+        let old = self.0.sidebar.borrow_mut().take();
+        if let Some(old) = old {
+            old.set_content(None);
+            old.mount().remove();
+            self.mount_body();
+        }
+    }
+
+    /// ウィンドウ要素の中身を組み直す。
+    ///
+    /// 子 (とサイドバー) を置き、先頭へツールバーとメニューバーを差し込む。
+    fn mount_body(&self) {
         self.0.element.set_inner_html("");
-        let element = child.native_element();
-        if self.0.element.append_child(&element).is_ok() {
-            crate::layout::fill_parent(&element);
-            crate::layout::apply_child_layout(
-                &element,
-                crate::layout::ParentLayout::Flex(naui_core::Orientation::Vertical),
-            );
-            *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        let child = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
+        let sidebar = self.0.sidebar.borrow().clone();
+        let body = match &sidebar {
+            Some(sidebar) => {
+                sidebar.set_content(child.as_ref());
+                Some(sidebar.mount().unchecked_into::<Element>())
+            }
+            None => child,
+        };
+        if let Some(body) = body {
+            if self.0.element.append_child(&body).is_ok() {
+                crate::layout::fill_parent(&body);
+                crate::layout::apply_child_layout(
+                    &body,
+                    crate::layout::ParentLayout::Flex(naui_core::Orientation::Vertical),
+                );
+            }
         }
         // 中身を入れ替えると差し込んだ要素も消えるので、付け直す。
         // メニューバーはツールバーより上に来る (OS のメニューと同じ順)。
@@ -137,15 +199,38 @@ impl Window {
         if let Some(old) = self.0.toolbar.borrow_mut().take() {
             old.mount().remove();
         }
+        self.mount_toolbar();
     }
 
-    /// ツールバーをウィンドウの先頭へ置き直す。
+    /// ツールバーの行を組み直して、ウィンドウの先頭へ置く。
+    ///
+    /// 並びは [サイドバーの開閉ボタン][ツールバー]。どちらも無ければ行ごと
+    /// 外す。ツールバーが無くてもサイドバーがあれば、ボタンだけの行になる
+    /// (macOS のボタンだけのツールバーと同じ)。
     fn mount_toolbar(&self) {
-        let toolbar = self.0.toolbar.borrow();
-        let Some(toolbar) = toolbar.as_ref() else {
+        let row = &self.0.toolbar_row;
+        row.set_inner_html("");
+        if let Some(sidebar) = self.0.sidebar.borrow().as_ref() {
+            let _ = row.append_child(&sidebar.toggle());
+        }
+        if let Some(toolbar) = self.0.toolbar.borrow().as_ref() {
+            let _ = row.append_child(&toolbar.mount());
+        }
+        if row.child_element_count() == 0 {
+            row.remove();
             return;
-        };
-        self.mount_first(&toolbar.mount());
+        }
+        // メニューバーが付いていれば、その直下 (OS のメニューと同じ順)。
+        let menu_bar = self.0.menu_bar.borrow().as_ref().map(|m| m.mount());
+        match menu_bar.filter(|m| m.parent_element().as_ref() == Some(self.0.element.as_ref())) {
+            Some(menu_bar) => {
+                let _ = self
+                    .0
+                    .element
+                    .insert_before(row, menu_bar.next_sibling().as_ref());
+            }
+            None => self.mount_first(row),
+        }
     }
 
     /// ウィンドウの上端に付けるメニューバー。呼ぶたびに置き換わる。
