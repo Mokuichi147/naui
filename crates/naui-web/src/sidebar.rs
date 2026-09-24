@@ -16,9 +16,10 @@
 //! `SplitView` の仕切りそのもので、ドラッグ (と矢印キー) で幅を変えられる。
 //!
 //! ブラウザには開閉のボタンも無いので、`aria-expanded` / `aria-controls` を
-//! 持つ `<button>` を置く。場所はほかの 3 環境とそろえて、開いている間は
-//! サイドバーの左上、閉じている間は中身の左上。図形だけはツールバーと同じく
-//! naui が持つ。
+//! 持つ `<button>` を置く。場所は macOS と同じくツールバーの行の先頭で
+//! ([`Window`](crate::Window) が置く。ツールバーが無ければボタンだけの行に
+//! なる)、開閉してもボタンは動かず、中身も上下しない。図形だけはツールバーと
+//! 同じく naui が持つ。
 //!
 //! ほかのバックエンドに合わせて [`Widget`](crate::Widget) にはせず、
 //! [`Window::set_sidebar`](crate::Window::set_sidebar) でウィンドウに
@@ -65,8 +66,6 @@ struct SidebarInner {
     split: SplitView,
     aside: HtmlElement,
     nav: HtmlElement,
-    /// 中身の側 (閉じている間は開閉ボタンがここの先頭に来る)。
-    content: HtmlElement,
     /// ウィンドウの子を入れる `<div>`。
     slot: HtmlElement,
     /// 開閉ボタン。
@@ -130,7 +129,6 @@ impl Sidebar {
         let _ = toggle.set_attribute("aria-expanded", "true");
         style(&toggle, "display", "inline-flex");
         style(&toggle, "align-items", "center");
-        style(&toggle, "align-self", "flex-start");
         style(&toggle, "flex-shrink", "0");
         append(&toggle, &path_svg(doc, TOGGLE_PATH)?)?;
 
@@ -148,7 +146,6 @@ impl Sidebar {
             split,
             aside,
             nav,
-            content,
             slot,
             toggle,
             toggle_listener: RefCell::new(None),
@@ -160,7 +157,6 @@ impl Sidebar {
             selected: Cell::new(None),
             id,
         }));
-        this.place_toggle();
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
         let listener = Listener::attach(this.0.toggle.as_ref(), "click", {
@@ -176,17 +172,6 @@ impl Sidebar {
         })?;
         *this.0.toggle_listener.borrow_mut() = Some(listener);
         Ok(this)
-    }
-
-    /// 開閉ボタンを、開いていればサイドバーの左上、閉じていれば中身の左上へ置く。
-    fn place_toggle(&self) {
-        let toggle = &self.0.toggle;
-        let (parent, before): (&HtmlElement, &HtmlElement) = if self.is_collapsed() {
-            (&self.0.content, &self.0.slot)
-        } else {
-            (&self.0.aside, &self.0.nav)
-        };
-        let _ = parent.insert_before(toggle, Some(before));
     }
 
     /// 項目をまとまりごとに並べる。呼ぶたびに置き換わる。
@@ -405,7 +390,6 @@ impl Sidebar {
             .0
             .toggle
             .set_attribute("aria-expanded", if collapsed { "false" } else { "true" });
-        self.place_toggle();
     }
 
     /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
@@ -416,9 +400,14 @@ impl Sidebar {
         self.0.on_collapse.set(f);
     }
 
-    /// 開閉ボタン。バックエンド固有の脱出口。
+    /// 開閉ボタン。ウィンドウがツールバーの行の先頭へ置く。バックエンド固有の脱出口。
     pub fn native_toggle_button(&self) -> Element {
         self.0.toggle.clone().unchecked_into()
+    }
+
+    /// 開閉ボタン (ウィンドウがツールバーの行へ置くため)。
+    pub(crate) fn toggle(&self) -> HtmlElement {
+        self.0.toggle.clone()
     }
 
     /// サイドバーが閉じているかどうか。

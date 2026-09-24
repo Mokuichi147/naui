@@ -24,7 +24,7 @@ use naui_core::{
     Align, Color, DialogResponse, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
     Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, SidebarItem,
     SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
-    DEFAULT_SIDEBAR_WIDTH,
+    ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, Widget};
 use wasm_bindgen::JsCast;
@@ -2536,10 +2536,20 @@ fn sidebar_attaches_to_the_left_of_the_window() {
             end.contains(Some(&element)),
             "子はサイドバーの右の中身の側へ移る"
         );
+        // 開閉ボタンはツールバーの行の先頭 (メニューバーの直下)。
+        let row = sidebar
+            .native_toggle_button()
+            .parent_element()
+            .expect("ツールバーの行");
+        assert_eq!(row.parent_element().as_ref(), Some(&root));
         assert_eq!(
-            aside.first_element_child(),
-            Some(sidebar.native_toggle_button()),
-            "開いている間、開閉ボタンはサイドバーの左上にある"
+            menu_bar.native_element().next_element_sibling(),
+            Some(row.clone()),
+            "ツールバーの行はメニューバーの直下"
+        );
+        assert_eq!(
+            row.first_element_child(),
+            Some(sidebar.native_toggle_button())
         );
         assert_eq!(
             root.first_element_child(),
@@ -2638,6 +2648,16 @@ fn sidebar_callback_is_reentrant_and_replaceable() {
 #[wasm_bindgen_test]
 fn sidebar_toggle_button_collapses_and_notifies() {
     with_ui(|ui| {
+        let window = ui.window("サイドバーの開閉", 600.0, 300.0)?;
+        let content = ui.label("中身")?;
+        window.set_child(&content);
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+        window.set_menu_bar(&menu_bar);
+        let toolbar = ui.toolbar()?;
+        toolbar.set_items(&[ToolbarItem::new(ToolbarIcon::New, "新規")]);
+        window.set_toolbar(&toolbar);
+
         let sidebar = ui.sidebar()?;
         sidebar.set_items(&SidebarItem::list(["一般"]));
         let seen = Rc::new(RefCell::new(Vec::new()));
@@ -2645,6 +2665,8 @@ fn sidebar_toggle_button_collapses_and_notifies() {
             let seen = seen.clone();
             move |collapsed| seen.borrow_mut().push(collapsed)
         });
+        window.set_sidebar(&sidebar);
+
         let aside = sidebar.native_element();
         let toggle: HtmlElement = sidebar.native_toggle_button().unchecked_into();
         assert_eq!(
@@ -2656,30 +2678,37 @@ fn sidebar_toggle_button_collapses_and_notifies() {
             toggle.get_attribute("aria-expanded").as_deref(),
             Some("true")
         );
-
+        // ツールバーの行に [開閉ボタン][ツールバー] の順で並ぶ (macOS と同じ)。
+        let row = toggle.parent_element().expect("ツールバーの行");
         assert_eq!(
-            toggle.parent_element(),
-            Some(aside.clone()),
-            "開いている間はサイドバーの左上"
+            toggle.next_element_sibling(),
+            Some(toolbar.native_element()),
+            "開閉ボタンの右隣がツールバー"
         );
-        // 実際に描かれるかを見るので、ページへ載せる。
-        let split_root = aside
-            .parent_element()
-            .and_then(|pane| pane.parent_element())
-            .expect("SplitView の要素");
-        let _mounted = Mounted::new_element(&split_root);
+
         let start = aside.parent_element().expect("start 側の区画");
+        let element = content.native_element();
+        let before_toggle = toggle.get_bounding_client_rect();
+        let before_content = element.get_bounding_client_rect().top();
         toggle.click();
         assert!(sidebar.is_collapsed());
         assert_eq!(computed(&start, "display"), "none", "ボタンで実際に消える");
-        assert_ne!(
+        assert_eq!(
             toggle.parent_element(),
-            Some(aside.clone()),
-            "閉じたら中身の左上へ移る (サイドバーと一緒に隠れない)"
+            Some(row.clone()),
+            "ボタンは動かない"
         );
-        assert!(!toggle
-            .parent_element()
-            .is_some_and(|p| p.unchecked_ref::<HtmlElement>().hidden()));
+        let after_toggle = toggle.get_bounding_client_rect();
+        assert_eq!(
+            (after_toggle.top(), after_toggle.left()),
+            (before_toggle.top(), before_toggle.left()),
+            "開閉してもボタンの位置は変わらない"
+        );
+        assert_eq!(
+            element.get_bounding_client_rect().top(),
+            before_content,
+            "開閉しても中身が上下しない"
+        );
         assert_eq!(
             toggle.get_attribute("aria-expanded").as_deref(),
             Some("false")
@@ -2696,6 +2725,20 @@ fn sidebar_toggle_button_collapses_and_notifies() {
         );
         sidebar.set_collapsed(false);
         assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
+
+        // ツールバーを外してもボタンだけの行が残り、サイドバーを外すと消える。
+        window.clear_toolbar();
+        assert_eq!(toggle.parent_element(), Some(row.clone()));
+        assert_eq!(
+            menu_bar.native_element().next_element_sibling(),
+            Some(row.clone()),
+            "組み直してもメニューバーの直下"
+        );
+        window.clear_sidebar();
+        assert!(toggle.parent_element().is_none(), "外すとボタンも消える");
+        assert!(row.parent_element().is_none(), "空の行は置かない");
+        window.clear_menu_bar();
+        window.close();
         Ok(())
     });
 }
