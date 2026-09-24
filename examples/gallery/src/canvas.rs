@@ -13,7 +13,7 @@ use naui::{
     Align, Color, Length, Orientation, Path, Point, PointerPhase, Rect, Result, Sizing, Ui,
 };
 
-use crate::parts;
+use crate::parts::{self, Notice};
 
 /// 棒グラフに出す値。
 const SALES: [(&str, f64); 6] = [
@@ -41,7 +41,7 @@ struct ChartState {
     bars: Vec<Rect>,
 }
 
-pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
+pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
     parts::section(
@@ -50,11 +50,10 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         "Canvas",
         &[
             "アプリが自分で描く面です。矩形・円・線・パス・文字の命令を Painter に積むと、その環境の 2D API が画素にします。",
-            "棒の上にポインターを置くと色が変わり、押すと選ばれます。面の幅を変えると描き直されます。",
+            "棒の上にポインターを置くと色が変わり、押すと選ばれて値が出ます。面の幅を変えると描き直されます。",
         ],
     )?;
 
-    let chart_status = parts::status(ui, "棒を押すと値が出ます")?;
     let chart = ui.canvas()?;
     chart.set_sizing(
         Sizing::new()
@@ -146,7 +145,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     chart.on_pointer({
         let state = state.clone();
         let chart = chart.clone();
-        let status = chart_status.clone();
+        let notice = notice.clone();
         move |event| {
             let hit = state
                 .borrow()
@@ -163,11 +162,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
                 if event.phase == PointerPhase::Down && state.selected != hit {
                     state.selected = hit;
                     changed = true;
-                    match hit {
-                        Some(index) => {
-                            status.set_text(&format!("{}: {:.0}", SALES[index].0, SALES[index].1))
-                        }
-                        None => status.set_text("棒を押すと値が出ます"),
+                    if let Some(index) = hit {
+                        notice.show(&format!("{}: {:.0}", SALES[index].0, SALES[index].1));
                     }
                 }
             }
@@ -177,7 +173,6 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         }
     });
     pane.append(&chart);
-    pane.append(&chart_status);
 
     parts::group(
         ui,

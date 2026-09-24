@@ -5,6 +5,7 @@
 
 mod basics;
 mod canvas;
+mod commands;
 mod dialog;
 mod files;
 mod input;
@@ -13,92 +14,45 @@ mod list;
 mod media;
 mod navigation;
 mod parts;
+mod table;
 mod tasks;
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use naui::{
-    Align, FileEntry, GridCell, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
-    Result, ScrollPolicy, Settings, SidebarItem, SidebarSection, Sizing, Tabs, TextStyle,
-    ToolbarIcon, ToolbarItem, Track, Ui, Widget,
+    GridCell, NavItem, Padding, Result, Scroll, ScrollPolicy, Settings, SidebarItem,
+    SidebarSection, Sizing, ToolbarIcon, Track, Ui, Widget,
 };
 
-/// ウィンドウに取り付けるツールバーの項目。区切りは空文字で埋める。
-const COMMANDS: [&str; 4] = ["新規", "開く", "", "保存"];
-
-/// 上の項目に対応するアイコン。
-const COMMAND_ICONS: [ToolbarIcon; 4] = [
-    ToolbarIcon::New,
-    ToolbarIcon::Open,
-    ToolbarIcon::Add,
-    ToolbarIcon::Save,
-];
-
-const SECTIONS: [&str; 10] = [
-    "基本",
-    "入力",
-    "一覧",
-    "ナビゲーション",
-    "レイアウト",
-    "描画",
-    "ファイル",
-    "メディア",
-    "ダイアログ",
-    "非同期",
-];
-
-/// サイドバーの中身。並びは [`SECTIONS`] (タブの順) と同じにしてあるので、
-/// 通知の通し番号をそのままタブの位置として使える。
+/// ギャラリーの区分。サイドバーと「表示」メニューの項目はこの順に並ぶので、
+/// どちらの通知の通し番号も、そのまま区分の位置として使える。
 ///
-/// アイコンは [`ToolbarIcon`] の中から近いものを選んでいる。
+/// アイコンはサイドバーに出す。[`ToolbarIcon`] の中から近いものを選んでいる。
+const SECTIONS: [(&str, ToolbarIcon); 11] = [
+    ("基本", ToolbarIcon::Info),
+    ("入力", ToolbarIcon::Edit),
+    ("一覧", ToolbarIcon::Search),
+    ("表", ToolbarIcon::Print),
+    ("ナビゲーション", ToolbarIcon::Forward),
+    ("レイアウト", ToolbarIcon::Copy),
+    ("描画", ToolbarIcon::Cut),
+    ("ファイル", ToolbarIcon::Open),
+    ("メディア", ToolbarIcon::Share),
+    ("ダイアログ", ToolbarIcon::New),
+    ("非同期", ToolbarIcon::Refresh),
+];
+
+/// サイドバーで見出しなしの先頭にまとめる数。残りは「そのほか」へ入れる。
+const PRIMARY_SECTIONS: usize = 6;
+
+/// サイドバーの中身。見出しで区切っても通し番号は先頭から数える。
 fn sidebar_sections() -> Vec<SidebarSection> {
-    let item = |index: usize, icon| SidebarItem::new(SECTIONS[index]).icon(icon);
+    let items = SECTIONS.map(|(title, icon)| SidebarItem::new(title).icon(icon));
+    let (primary, rest) = items.split_at(PRIMARY_SECTIONS);
     vec![
-        SidebarSection::untitled([
-            item(0, ToolbarIcon::Info),
-            item(1, ToolbarIcon::Edit),
-            item(2, ToolbarIcon::Search),
-            item(3, ToolbarIcon::Forward),
-            item(4, ToolbarIcon::Copy),
-        ]),
-        SidebarSection::new(
-            "そのほか",
-            [
-                item(5, ToolbarIcon::Cut),
-                item(6, ToolbarIcon::Open),
-                item(7, ToolbarIcon::Share),
-                item(8, ToolbarIcon::New),
-                item(9, ToolbarIcon::Refresh),
-            ],
-        ),
-    ]
-}
-
-/// メニューバーの中身。
-///
-/// ショートカットは**主修飾キー + 英数字 1 文字**で指定する。主修飾キーは
-/// macOS だけ ⌘ で、Windows・Linux・Web では Ctrl になる。
-fn menus() -> Vec<MenuSpec> {
-    vec![
-        MenuSpec::new(
-            "ファイル",
-            [
-                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
-                MenuItem::new("開く").shortcut(MenuShortcut::new('o')),
-                MenuItem::separator(),
-                MenuItem::new("保存").shortcut(MenuShortcut::new('s')),
-                MenuItem::new("別名で保存").shortcut(MenuShortcut::new('s').shift(true)),
-            ],
-        ),
-        MenuSpec::new(
-            "表示",
-            [
-                MenuItem::new("拡大"),
-                MenuItem::new("縮小"),
-                MenuItem::separator(),
-                // 押せない項目は、その場ではできないことを表す。
-                MenuItem::new("全画面").enabled(false),
-            ],
-        ),
-        MenuSpec::new("ヘルプ", ["naui について"]),
+        SidebarSection::untitled(primary.to_vec()),
+        SidebarSection::new("そのほか", rest.to_vec()),
     ]
 }
 
@@ -117,136 +71,89 @@ pub fn build(ui: &Ui) -> Result<()> {
         left: 20.0,
     });
     root.set_column_track(0, Track::FILL);
+    // 画面の中身は Grid の Fill 行へ直接置く。Windows の StackPanel は主軸方向の
+    // Fill に残りの高さを配らないため、Stack へ入れると下まで伸びない。
     root.set_row_track(0, Track::Auto);
     root.set_row_track(1, Track::FILL);
 
-    // Windows の StackPanel は主軸方向の Fill に残りの高さを配らないため、
-    // 固定部分だけを Stack にまとめ、タブは Grid の Fill 行へ直接置く。
-    let header = ui.stack(Orientation::Vertical)?;
-    header.set_spacing(6.0);
-    // 見出しはウィンドウの幅いっぱいに広げ、中身は左端でそろえる
-    // (交差軸の既定は中央ぞろえ)。
-    header.set_sizing(Sizing::fill_width());
-    header.set_align(Align::Start);
-
+    // パンくずは画面全体の現在地を示すため、どの区分でも左上に置く。
+    // ギャラリーの題と説明は、最初の区分 (基本) の画面の先頭にだけ出す。
     let crumbs = ui.breadcrumbs()?;
-    crumbs.set_items(&NavItem::list(["naui gallery", "基本"]));
-    // パンくずは画面全体の現在地を示すため、タイトルより先の左上へ置く。
-    header.append(&crumbs);
+    crumbs.set_items(&NavItem::list(["naui gallery", SECTIONS[0].0]));
+    root.attach(&crumbs, GridCell::new(0, 0));
 
-    // 画面の顔になる見出しなので、本文より 1 段大きい段階を指定する。
-    let title = ui.label("naui UI ギャラリー")?;
-    title.set_style(TextStyle::Title);
-    header.append(&title);
-    header.append(&parts::note(
-        ui,
-        "UI の種別ごとに、特徴・状態・操作結果を確認できます。",
-    )?);
+    // 操作の結果は、画面に Label を並べずトーストで知らせる。
+    let notice = parts::Notice::new(ui)?;
 
-    // Toolbar はレイアウトではなくウィンドウに取り付ける。macOS では
-    // NSToolbar、Linux では AdwHeaderBar としてタイトルバーに出る。
-    // 項目はアイコンで並び、ラベルはツールチップと読み上げに使われる。
-    let toolbar_status = parts::status(ui, "Toolbar: まだ押されていません")?;
-    let toolbar = ui.toolbar()?;
-    toolbar.set_items(&[
-        ToolbarItem::new(COMMAND_ICONS[0], COMMANDS[0]),
-        ToolbarItem::new(COMMAND_ICONS[1], COMMANDS[1]),
-        ToolbarItem::separator(),
-        // 保存できるものがまだ無い状態から始める。
-        ToolbarItem::new(COMMAND_ICONS[3], COMMANDS[3]).enabled(false),
-    ]);
-    toolbar.on_activate({
-        let status = toolbar_status.clone();
-        let toolbar = toolbar.clone();
-        move |index| {
-            status.set_text(&format!("Toolbar: {} を実行しました", COMMANDS[index]));
-            // 新規・開くの後は保存できる。
-            if index != 3 {
-                toolbar.set_item_enabled(3, true);
-            }
-        }
-    });
-    window.set_toolbar(&toolbar);
-    header.append(&toolbar_status);
-
-    // MenuBar もレイアウトではなくウィンドウに取り付ける。macOS では画面
-    // 上端のメニューバー (NSApplication.mainMenu)、ほかの 3 環境では
-    // タイトルバーの下に敷かれる帯になる。
-    // ショートカットの主修飾キーは macOS だけ ⌘ で、ほかは Ctrl。
-    let menu_status = parts::status(ui, "MenuBar: まだ選ばれていません")?;
-    let menu_bar = ui.menu_bar()?;
-    let specs = menus();
-    menu_bar.set_menus(&specs);
-    menu_bar.on_activate({
-        let status = menu_status.clone();
-        // 通知はインデックスの組で来るので、渡した並びから名前を引く。
-        move |menu, item| {
-            let label = specs
-                .get(menu)
-                .and_then(|spec| spec.items.get(item))
-                .map(|entry| entry.label.as_str())
-                .unwrap_or_default();
-            status.set_text(&format!("MenuBar: {label} を選びました"));
-        }
-    });
-    window.set_menu_bar(&menu_bar);
-    header.append(&menu_status);
-    root.attach(&header, GridCell::new(0, 0));
-
-    // Sidebar もウィンドウに取り付けるもの。起動時から付けておき、取り外しと
-    // 開閉は「ナビゲーション」のタブで試せる。項目はタブと同じ並びなので、
-    // 選択を互いに映し合う。
+    // Sidebar もウィンドウに取り付けるもの。選んだ区分の画面だけを下の行へ
+    // 出す。取り外しと開閉は「ナビゲーション」の画面で試せる。
     let sidebar = ui.sidebar()?;
     sidebar.set_sections(&sidebar_sections());
-    sidebar.set_selected(0);
 
-    let tabs = ui.tabs()?;
-    add_pane(ui, &tabs, "基本", &basics::build(ui, &window)?)?;
-    add_pane(ui, &tabs, "入力", &input::build(ui)?)?;
-    add_pane(ui, &tabs, "一覧", &list::build(ui)?)?;
-    add_pane(
-        ui,
-        &tabs,
-        "ナビゲーション",
-        &navigation::build(ui, &window, &sidebar)?,
-    )?;
-    add_pane(ui, &tabs, "レイアウト", &layout::build(ui)?)?;
-    add_pane(ui, &tabs, "描画", &canvas::build(ui)?)?;
-    add_pane(ui, &tabs, "ファイル", &files::build(ui)?)?;
-    add_pane(ui, &tabs, "メディア", &media::build(ui)?)?;
-    add_pane(ui, &tabs, "ダイアログ", &dialog::build(ui)?)?;
-    add_pane(ui, &tabs, "非同期", &tasks::build(ui)?)?;
-    tabs.set_sizing(Sizing::fill());
-    root.attach(&tabs, GridCell::new(0, 1));
+    let (media, stop_media) = media::build(ui, &notice)?;
 
-    tabs.on_select({
+    // 並びは SECTIONS と同じ。
+    let panes = [
+        basics::build(ui, &window, &notice)?,
+        input::build(ui, &notice)?,
+        list::build(ui, &notice)?,
+        table::build(ui, &notice)?,
+        navigation::build(ui, &window, &sidebar, &notice)?,
+        layout::build(ui, &notice)?,
+        canvas::build(ui, &notice)?,
+        files::build(ui, &notice)?,
+        media,
+        dialog::build(ui, &notice)?,
+        tasks::build(ui, &notice)?,
+    ];
+    let screens = panes
+        .iter()
+        .map(|pane| scrollable(ui, pane))
+        .collect::<Result<Vec<_>>>()?;
+
+    // 区分を移る。サイドバー・「表示」メニュー・パンくずのどこから選んでも
+    // ここを通るので、ほかの 2 つの表示もここでそろえる。
+    // サイドバーの `set_selected` は通知しないので、選び直しが回り続けない。
+    let go: Rc<dyn Fn(usize)> = Rc::new({
+        let root = root.clone();
         let crumbs = crumbs.clone();
         let sidebar = sidebar.clone();
+        let current = Cell::new(None);
         move |index| {
-            let Some(section) = SECTIONS.get(index) else {
+            let (Some(screen), Some((title, _))) = (screens.get(index), SECTIONS.get(index)) else {
                 return;
             };
-            crumbs.set_items(&NavItem::list(["naui gallery", *section]));
+            if current.replace(Some(index)) == Some(index) {
+                return;
+            }
+            // 画面から外しても再生は止まらないので、区分を移るたびに止める。
+            // 止まっているものを止めても何も起きない。
+            stop_media();
+            root.replace(screen, GridCell::new(0, 1));
+            crumbs.set_items(&NavItem::list(["naui gallery", *title]));
             sidebar.set_selected(index);
         }
     });
+    go(0);
 
-    // サイドバーで選んだらタブを移す。タブの `select` は通知するので、
-    // パンくずも上の `on_select` がそろえる。
     sidebar.on_select({
-        let tabs = tabs.clone();
-        move |index| tabs.select(index)
+        let go = go.clone();
+        move |index| go(index)
     });
 
-    // パンくずの先頭を選ぶと概要へ戻る。現在地側はそのままにする。
+    // パンくずの先頭を選ぶと概要 (先頭の区分) へ戻る。現在地側はそのままにする。
     crumbs.on_select({
-        let tabs = tabs.clone();
+        let go = go.clone();
         move |index| {
             if index == 0 {
-                tabs.select(0);
+                go(0);
             }
         }
     });
+
+    // サイドバーを外している間も、「表示」メニューから区分を移れる。
+    let titles = SECTIONS.map(|(title, _)| title);
+    commands::attach(ui, &window, &titles, go, &notice)?;
 
     window.set_child(&root);
     window.set_sidebar(&sidebar);
@@ -254,33 +161,20 @@ pub fn build(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// タブの中身をスクロールに載せて貼る。
+/// 区分の画面をスクロールに載せる。
 ///
 /// ネイティブのウィンドウは、中身がはみ出しても勝手にはスクロールしない
-/// (ページごと縦に伸びるのはブラウザだけ)。ギャラリーは 1 つのタブが縦に
-/// 長いので、タブごとにスクロールへ載せて下まで見られるようにする。
+/// (ページごと縦に伸びるのはブラウザだけ)。ギャラリーは 1 つの画面が縦に
+/// 長いので、画面ごとにスクロールへ載せて下まで見られるようにする。
 ///
 /// 横は `Never` にしてある。幅はウィンドウに合わせ、縦だけを送る。
-fn add_pane(ui: &Ui, tabs: &Tabs, title: &str, pane: &dyn Widget) -> Result<()> {
+fn scrollable(ui: &Ui, pane: &dyn Widget) -> Result<Scroll> {
     let scroll = ui.scroll()?;
     scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
     scroll.set_child(pane);
-    // スクロールは中身から高さを決めないので、タブの領域いっぱいを指定する。
+    // スクロールは中身から高さを決めないので、置かれた行いっぱいを指定する。
     scroll.set_sizing(Sizing::fill());
-    tabs.add_tab(title, &scroll);
-    Ok(())
-}
-
-/// 選ばれたファイルやフォルダーを、画面内の短いステータスとして表す。
-pub(crate) fn describe_entries(entries: &[FileEntry]) -> String {
-    match entries {
-        [] => "選択されていません".to_string(),
-        [entry] => match entry.path() {
-            Some(path) => path.display().to_string(),
-            None => format!("{} (この環境ではパス非公開)", entry.name()),
-        },
-        many => format!("{} 件: {} ほか", many.len(), many[0].name()),
-    }
+    Ok(scroll)
 }
 
 // ネイティブの `start()` と、Web のブラウザから呼ばれる入口を作る。

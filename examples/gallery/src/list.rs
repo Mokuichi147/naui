@@ -1,16 +1,16 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use naui::{
-    Align, GridCell, Length, ListItem, ListRow, NavItem, Orientation, PopupItem, Result,
-    SelectionMode, Sizing, SortOrder, TableCells, TableColumn, TableRow, Track, TreeItem, Ui,
+    Align, GridCell, Length, ListItem, ListRow, Orientation, PopupItem, Result, SelectionMode,
+    Sizing, Track, TreeItem, Ui,
 };
 
-use crate::parts;
+use crate::parts::{self, Notice};
 
 /// List の補足表示、無効な行、単一・複数選択、コンテキストメニュー、
-/// ListRow の任意内容の行と行クリック、Table の列と選択、Tree の開閉・選択。
-pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
+/// ListRow の任意内容の行と行クリック、Tree の開閉・選択。
+pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
     parts::section(
@@ -41,9 +41,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
             .width(Length::Fill)
             .height(Length::Fixed(180.0)),
     );
-    let status = parts::status(ui, "選択: なし")?;
     list.on_select({
-        let status = status.clone();
+        let notice = notice.clone();
         let detailed = detailed.clone();
         move |indices| {
             let labels: Vec<&str> = indices
@@ -51,35 +50,30 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
                 .filter_map(|&index| detailed.get(index).map(|item| item.label.as_str()))
                 .collect();
             if labels.is_empty() {
-                status.set_text("選択: なし");
+                notice.show("選択: なし");
             } else {
-                status.set_text(&format!("選択: {}", labels.join(" / ")));
+                notice.show(&format!("選択: {}", labels.join(" / ")));
             }
         }
     });
 
-    let mode = ui.navbar("選択方法")?;
-    mode.set_items(&NavItem::list(["単一", "複数"]));
-    mode.set_selected(0);
+    let (mode_row, mode) = parts::choice(ui, "選択方法", &["単一", "複数"])?;
     mode.on_select({
         let list = list.clone();
-        let status = status.clone();
         move |index| {
             list.set_selection_mode(if index == 0 {
                 SelectionMode::Single
             } else {
                 SelectionMode::Multiple
             });
-            status.set_text("選択: なし");
         }
     });
-    pane.append(&mode);
+    pane.append(&mode_row);
     pane.append(&list);
     pane.append(&parts::note(
         ui,
         "一覧を右クリックすると PopupMenu が開きます。",
     )?);
-    pane.append(&status);
 
     let popup = ui.popup_menu()?;
     popup.set_items(&[
@@ -90,13 +84,9 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     ]);
     popup.on_select({
         let list = list.clone();
-        let status = status.clone();
         move |index| match index {
             0 => list.select(0),
-            1 => {
-                list.clear_selection();
-                status.set_text("選択: なし");
-            }
+            1 => list.clear_selection(),
             _ => {}
         }
     });
@@ -109,26 +99,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         let list = list.clone();
         move || list.select_many(&[0, 2])
     });
-    let detail_toggle = ui.button("補足を隠す")?;
-    let showing_detail = Rc::new(Cell::new(true));
-    detail_toggle.on_click({
+    let detail_toggle = ui.checkbox("補足を表示")?;
+    detail_toggle.set_checked(true);
+    detail_toggle.on_toggle({
         let list = list.clone();
         let detailed = detailed.clone();
-        let plain = plain.clone();
-        let detail_toggle = detail_toggle.clone();
-        let showing_detail = showing_detail.clone();
-        let status = status.clone();
-        move || {
-            let next = !showing_detail.get();
-            showing_detail.set(next);
-            list.set_items(if next { &detailed } else { &plain });
-            detail_toggle.set_text(if next {
-                "補足を隠す"
-            } else {
-                "補足を表示"
-            });
-            status.set_text("選択: なし");
-        }
+        move |showing| list.set_items(if showing { &detailed } else { &plain })
     });
     actions.append(&select_example);
     actions.append(&detail_toggle);
@@ -137,10 +113,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     build_composed_list(ui, &pane)?;
     build_dynamic_rows(ui, &pane)?;
 
-    build_table(ui, &pane)?;
-    build_table_cells(ui, &pane)?;
-    build_large_table(ui, &pane)?;
-    build_tree(ui, &pane)?;
+    build_tree(ui, &pane, notice)?;
     Ok(pane)
 }
 
@@ -261,478 +234,8 @@ fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
     Ok(())
 }
 
-/// Table の列の幅と揃え、見出しからの並べ替え、選べない行、
-/// 単一・複数選択、列の差し替え。
-fn build_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "Table",
-        &["列見出しと、幅を指定した列・右寄せの列を確認できます。見出しを押すと並べ替わります。"],
-    )?;
-
-    // 幅を指定しない列 (都市) だけが、余った幅を受け取って広がる。
-    let wide = vec![
-        TableColumn::new("都市").sortable(true),
-        TableColumn::new("人口")
-            .width(120.0)
-            .align(Align::End)
-            .sortable(true),
-        TableColumn::new("面積 km²")
-            .width(100.0)
-            .align(Align::End)
-            .sortable(true),
-    ];
-    let narrow = vec![
-        TableColumn::new("都市").sortable(true),
-        TableColumn::new("人口")
-            .width(120.0)
-            .align(Align::End)
-            .sortable(true),
-    ];
-    let rows = vec![
-        TableRow::new(["東京", "13,960,000", "2,194"]),
-        TableRow::new(["大阪", "8,838,000", "1,905"]),
-        TableRow::new(["名古屋", "2,332,000", "326"]),
-        TableRow::new(["集計中", "—", "—"]).enabled(false),
-        TableRow::new(["札幌", "1,973,000", "1,121"]),
-    ];
-
-    let table = ui.table()?;
-    table.set_columns(&wide);
-    table.set_rows(&rows);
-    table.set_sizing(
-        Sizing::new()
-            .width(Length::Fill)
-            .height(Length::Fixed(200.0)),
-    );
-
-    let status = parts::status(ui, "選択: なし")?;
-    // いま並んでいる行。見出しからの並べ替えでここが入れ替わる。
-    let sorted = Rc::new(RefCell::new(rows.clone()));
-
-    // 選択の通知は、いま並んでいる行 (`sorted`) から名前を引く。
-    table.on_select({
-        let status = status.clone();
-        let sorted = sorted.clone();
-        move |indices| {
-            let rows = sorted.borrow();
-            let names: Vec<&str> = indices
-                .iter()
-                .filter_map(|&index| rows.get(index).map(|row| row.cell(0)))
-                .collect();
-            if names.is_empty() {
-                status.set_text("選択: なし");
-            } else {
-                status.set_text(&format!("選択: {}", names.join(" / ")));
-            }
-        }
-    });
-
-    // 並べ替えるのはアプリの仕事。naui は「どの列を、どちら向きに」だけを渡す。
-    // 人口と面積は数字なので、桁区切りを外してから数として比べる。
-    table.on_sort({
-        let table = table.clone();
-        let sorted = sorted.clone();
-        let status = status.clone();
-        move |column, order| {
-            let mut rows = sorted.borrow_mut();
-            rows.sort_by(|a, b| {
-                let ordering = match number(a.cell(column)).zip(number(b.cell(column))) {
-                    Some((a, b)) => a.cmp(&b),
-                    None => a.cell(column).cmp(b.cell(column)),
-                };
-                match order {
-                    SortOrder::Ascending => ordering,
-                    SortOrder::Descending => ordering.reverse(),
-                }
-            });
-            table.set_rows(&rows);
-            status.set_text(&format!(
-                "{} 列目で並べ替え ({}) / 選択: なし",
-                column + 1,
-                if order == SortOrder::Ascending {
-                    "昇順"
-                } else {
-                    "降順"
-                }
-            ));
-        }
-    });
-
-    // 選択の通知は、いま並んでいる行 (`sorted`) から名前を引く。
-    table.on_select({
-        let status = status.clone();
-        let sorted = sorted.clone();
-        move |indices| {
-            let rows = sorted.borrow();
-            let names: Vec<&str> = indices
-                .iter()
-                .filter_map(|&index| rows.get(index).map(|row| row.cell(0)))
-                .collect();
-            if names.is_empty() {
-                status.set_text("選択: なし");
-            } else {
-                status.set_text(&format!("選択: {}", names.join(" / ")));
-            }
-        }
-    });
-
-    let mode = ui.navbar("選択方法")?;
-    mode.set_items(&NavItem::list(["単一", "複数"]));
-    mode.set_selected(0);
-    mode.on_select({
-        let table = table.clone();
-        let status = status.clone();
-        move |index| {
-            table.set_selection_mode(if index == 0 {
-                SelectionMode::Single
-            } else {
-                SelectionMode::Multiple
-            });
-            status.set_text("選択: なし");
-        }
-    });
-    pane.append(&mode);
-    pane.append(&table);
-    pane.append(&status);
-
-    let actions = ui.stack(Orientation::Horizontal)?;
-    actions.set_spacing(8.0);
-
-    let select_example = ui.button("選択例")?;
-    select_example.on_click({
-        let table = table.clone();
-        move || table.select_many(&[0, 2])
-    });
-
-    // 列を差し替えても、行の中身はそのまま残る。
-    let column_toggle = ui.button("面積を隠す")?;
-    let showing_area = Rc::new(Cell::new(true));
-    column_toggle.on_click({
-        let table = table.clone();
-        let column_toggle = column_toggle.clone();
-        let showing_area = showing_area.clone();
-        move || {
-            let next = !showing_area.get();
-            showing_area.set(next);
-            table.set_columns(if next { &wide } else { &narrow });
-            column_toggle.set_text(if next {
-                "面積を隠す"
-            } else {
-                "面積を表示"
-            });
-        }
-    });
-
-    actions.append(&select_example);
-    actions.append(&column_toggle);
-    pane.append(&actions);
-    Ok(())
-}
-
-/// かかった時間を測って「 (12ms)」の形にする。
-///
-/// **Web では測らない。** `std::time::Instant` は wasm32-unknown-unknown に
-/// 実装が無く、呼ぶとその場で panic する。
-#[cfg(not(target_arch = "wasm32"))]
-fn took(started: std::time::Instant) -> String {
-    format!(" ({:?})", started.elapsed())
-}
-
-/// 時間を測り始める。Web では何も持たない。
-#[cfg(not(target_arch = "wasm32"))]
-fn start_timer() -> std::time::Instant {
-    std::time::Instant::now()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn start_timer() {}
-
-#[cfg(target_arch = "wasm32")]
-fn took(_started: ()) -> String {
-    String::new()
-}
-
-/// いま持っている行を、選ばれている作り方で表へ渡す。
-///
-/// 文字だけの行は `set_rows`、ウィジェットの行は `set_row_builder` で渡す。
-/// どちらも組み立てるのは画面に出ている分だけなので、行数が多くても同じ。
-fn show_rows(ui: &Ui, table: &naui::Table, rows: &Rc<RefCell<Vec<TableRow>>>, widget_rows: bool) {
-    if !widget_rows {
-        table.set_rows(&rows.borrow());
-        return;
-    }
-    let count = rows.borrow().len();
-    let ui = ui.clone();
-    let data = rows.clone();
-    table.set_row_builder(count, move |index| {
-        // ここはアプリのコードなので、データの借用はこの中で完結させる。
-        let (number, name, done) = {
-            let rows = data.borrow();
-            let row = &rows[index];
-            (
-                row.cell(0).to_owned(),
-                row.cell(1).to_owned(),
-                row.cell(2) == "完了",
-            )
-        };
-        let check = ui.checkbox("")?;
-        check.set_checked(done);
-        // 行ごとの状態はアプリのデータ側に持つ (行は作り直されるため)。
-        check.on_toggle({
-            let data = data.clone();
-            move |checked| {
-                if let Some(row) = data.borrow_mut().get_mut(index) {
-                    let state = if checked { "完了" } else { "確認中" };
-                    row.cells[2] = state.to_owned();
-                }
-            }
-        });
-        // 行そのものも選べるままにする (チェックを押したときは選択は動かない)。
-        Ok(TableCells::new().text(number).text(name).cell(&check))
-    });
-}
-
-/// 桁区切りを外して数として読む。数でなければ `None` (文字として比べる)。
-fn number(cell: &str) -> Option<u64> {
-    let digits: String = cell.chars().filter(|c| *c != ',').collect();
-    digits.parse().ok()
-}
-
-/// セルにウィジェットを置く表 (`TableCells` + `set_row_builder`)。
-fn build_table_cells(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "TableCells",
-        &[
-            "set_row_builder に「行数」と「その行を組み立てる関数」を渡すと、セルにウィジェットを置けます。",
-            "行のセルや余白を押すと on_activate が出ますが、中のボタンやチェックを押したときは出ません。",
-        ],
-    )?;
-
-    let table = ui.table()?;
-    table.set_columns(&[
-        TableColumn::new("公開").width(60.0).align(Align::Center),
-        TableColumn::new("名前"),
-        TableColumn::new("操作").width(90.0).align(Align::End),
-    ]);
-    table.set_sizing(
-        Sizing::new()
-            .width(Length::Fill)
-            .height(Length::Fixed(180.0)),
-    );
-    // セルにボタンを置くと、文字だけの行より高さが要る。
-    table.set_row_height(44.0);
-
-    let status = ui.label("操作: なし")?;
-    const NAMES: [&str; 5] = ["設計メモ", "議事録", "見積り", "写真", "録音"];
-    table.set_row_builder(NAMES.len(), {
-        let ui = ui.clone();
-        let status = status.clone();
-        move |index| {
-            let check = ui.checkbox("")?;
-            let open = ui.button("開く")?;
-            open.on_click({
-                let status = status.clone();
-                move || status.set_text(&format!("操作: {} を開く", NAMES[index]))
-            });
-            let cells = TableCells::new()
-                .cell(&check)
-                .text(NAMES[index])
-                .cell(&open)
-                // 行の中のコントロールだけを使う行にする。
-                .selectable(false);
-            // 行そのものを押したら、チェックを反転する。
-            cells.on_activate(move || check.set_checked(!check.is_checked()));
-            Ok(cells)
-        }
-    });
-
-    pane.append(&table);
-    pane.append(&status);
-    Ok(())
-}
-
-/// 行が多い表。画面に出ている行だけが組み立てられる。
-fn build_large_table(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "行が多い表",
-        &[
-            "10 万行を渡しても、組み立てるのは画面に出ている行だけです。",
-            "スクロールバーの長さと位置は全行分のまま、選択もインデックスで覚えています。",
-            "見出しを押すと並べ替わります。行を絞っていても、並べ替えの扱いは小さい表と同じです。",
-            "行の作り方を「ウィジェット」にすると、10 万行のままセルにチェックボックスが入ります。",
-        ],
-    )?;
-
-    const ROWS: usize = 100_000;
-    let table = ui.table()?;
-    table.set_columns(&[
-        TableColumn::new("番号")
-            .width(90.0)
-            .align(Align::End)
-            .sortable(true),
-        TableColumn::new("名前").sortable(true),
-        TableColumn::new("状態").width(90.0).sortable(true),
-    ]);
-    table.set_sizing(
-        Sizing::new()
-            .width(Length::Fill)
-            .height(Length::Fixed(200.0)),
-    );
-
-    let status = ui.label("選択: なし")?;
-    // いま並んでいる行はアプリが持つ。並べ替えるのもアプリの仕事。
-    let rows: Rc<RefCell<Vec<TableRow>>> = Rc::new(RefCell::new(Vec::new()));
-
-    table.on_select({
-        let status = status.clone();
-        move |indices| {
-            let text = match indices.first() {
-                Some(index) => format!("選択: {index} 行目"),
-                None => "選択: なし".to_owned(),
-            };
-            status.set_text(&text);
-        }
-    });
-
-    // 行の作り方。文字だけの行 (`set_rows`) と、組み立てる行
-    // (`set_row_builder` + `TableCells`) を切り替える。
-    let widget_rows = Rc::new(Cell::new(false));
-
-    // 10 万行でも、並べ替えは小さい表とまったく同じ形で書ける。
-    // 番号は数として比べる (文字のままだと "10" が "2" より前へ来る)。
-    table.on_sort({
-        let ui = ui.clone();
-        let table = table.clone();
-        let rows = rows.clone();
-        let widget_rows = widget_rows.clone();
-        let status = status.clone();
-        move |column, order| {
-            let started = start_timer();
-            // **借用はここで返す。** 組み立てる行では、このあとの出し直しで
-            // 同じデータを読むので、borrow_mut を持ったままだと落ちる。
-            let count = {
-                let mut rows = rows.borrow_mut();
-                rows.sort_by(|a, b| {
-                    let ordering = match number(a.cell(column)).zip(number(b.cell(column))) {
-                        Some((a, b)) => a.cmp(&b),
-                        None => a.cell(column).cmp(b.cell(column)),
-                    };
-                    match order {
-                        SortOrder::Ascending => ordering,
-                        SortOrder::Descending => ordering.reverse(),
-                    }
-                });
-                rows.len()
-            };
-            show_rows(&ui, &table, &rows, widget_rows.get());
-            status.set_text(&format!(
-                "{} 列目で並べ替え ({}) / {count} 行{}",
-                column + 1,
-                if order == SortOrder::Ascending {
-                    "昇順"
-                } else {
-                    "降順"
-                },
-                took(started)
-            ));
-        }
-    });
-
-    let mode = ui.navbar("行の作り方")?;
-    mode.set_items(&NavItem::list(["文字", "ウィジェット"]));
-    mode.set_selected(0);
-    mode.on_select({
-        let ui = ui.clone();
-        let table = table.clone();
-        let rows = rows.clone();
-        let widget_rows = widget_rows.clone();
-        let status = status.clone();
-        move |index| {
-            widget_rows.set(index == 1);
-            let started = start_timer();
-            show_rows(&ui, &table, &rows, widget_rows.get());
-            status.set_text(&format!(
-                "{} の行にしました{}",
-                if widget_rows.get() {
-                    "ウィジェット"
-                } else {
-                    "文字"
-                },
-                took(started)
-            ));
-        }
-    });
-    pane.append(&mode);
-
-    let actions = ui.stack(Orientation::Horizontal)?;
-    actions.set_spacing(8.0);
-
-    let fill = ui.button("10 万行を入れる")?;
-    fill.on_click({
-        let ui = ui.clone();
-        let table = table.clone();
-        let status = status.clone();
-        let rows = rows.clone();
-        let widget_rows = widget_rows.clone();
-        move || {
-            let started = start_timer();
-            *rows.borrow_mut() = (0..ROWS)
-                .map(|index| {
-                    TableRow::new([
-                        index.to_string(),
-                        format!("項目 {index}"),
-                        if index % 3 == 0 {
-                            "確認中"
-                        } else {
-                            "完了"
-                        }
-                        .to_owned(),
-                    ])
-                })
-                .collect();
-            show_rows(&ui, &table, &rows, widget_rows.get());
-            status.set_text(&format!("{ROWS} 行を入れました{}", took(started)));
-        }
-    });
-
-    // 画面の外にある行も、インデックスで選べる。
-    let select_far = ui.button("いちばん下の行を選ぶ")?;
-    select_far.on_click({
-        let table = table.clone();
-        move || table.select_many(&[ROWS - 1])
-    });
-
-    let clear = ui.button("空にする")?;
-    clear.on_click({
-        let ui = ui.clone();
-        let table = table.clone();
-        let status = status.clone();
-        let rows = rows.clone();
-        let widget_rows = widget_rows.clone();
-        move || {
-            rows.borrow_mut().clear();
-            show_rows(&ui, &table, &rows, widget_rows.get());
-            status.set_text("選択: なし");
-        }
-    });
-
-    actions.append(&fill);
-    actions.append(&select_far);
-    actions.append(&clear);
-    pane.append(&table);
-    pane.append(&status);
-    pane.append(&actions);
-    Ok(())
-}
-
 /// Tree の入れ子・開閉・選べない枝・通知。
-fn build_tree(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     parts::section(
         ui,
         pane,
@@ -764,31 +267,26 @@ fn build_tree(ui: &Ui, pane: &naui::Stack) -> Result<()> {
             .height(Length::Fixed(200.0)),
     );
 
-    let status = parts::status(ui, "選択: なし")?;
     tree.on_select({
-        let status = status.clone();
+        let notice = notice.clone();
         let items = items.clone();
-        move |path| {
-            let label = TreeItem::at(&items, path).map(|item| item.label.clone());
-            match label {
-                Some(label) => status.set_text(&format!("選択: {label} {path:?}")),
-                None => status.set_text("選択: なし"),
-            }
+        move |path| match TreeItem::at(&items, path) {
+            Some(item) => notice.show(&format!("選択: {} {path:?}", item.label)),
+            None => notice.show("選択: なし"),
         }
     });
     tree.on_expand({
-        let status = status.clone();
+        let notice = notice.clone();
         let items = items.clone();
         move |path, expanded| {
             let Some(item) = TreeItem::at(&items, path) else {
                 return;
             };
             let state = if expanded { "開いた" } else { "閉じた" };
-            status.set_text(&format!("{} を{state}", item.label));
+            notice.show(&format!("{} を{state}", item.label));
         }
     });
     pane.append(&tree);
-    pane.append(&status);
 
     let actions = ui.stack(Orientation::Horizontal)?;
     actions.set_spacing(8.0);

@@ -1,12 +1,17 @@
-use naui::{NavItem, Result, Sidebar, Sizing, Ui, Window};
+use naui::{Align, Length, NavItem, Orientation, Padding, Result, Sidebar, Sizing, Ui, Window};
 
-use crate::parts;
+use crate::parts::{self, Notice};
 
 /// 各ナビゲーション UI の形と選択通知。
 ///
-/// `sidebar` はギャラリーのタブと連動させてあるもので、起動時からウィンドウに
+/// `sidebar` はギャラリーの区分を選ぶためのもので、起動時からウィンドウに
 /// 付いている ([`crate::build`])。ここでは取り外しと開閉を試せるようにする。
-pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui::Stack> {
+pub(crate) fn build(
+    ui: &Ui,
+    window: &Window,
+    sidebar: &Sidebar,
+    notice: &Notice,
+) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
     parts::section(
@@ -15,8 +20,9 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
         "Sidebar",
         &[
             "ウィンドウの左に付いているのがサイドバーです。レイアウトではなくウィンドウに取り付けます。",
-            "項目を選ぶと上のタブが切り替わり、タブを選ぶとサイドバーの選択も移ります。",
+            "項目を選ぶと右側の画面が切り替わります。外している間は「表示」メニューから移れます。",
             "開閉はその環境のサイドバーボタンでも行えます。ボタンはウィンドウの上端の左 (ツールバーと同じ高さ) にあります。",
+            "幅は仕切りをドラッグして変えられます。",
         ],
     )?;
     let attach = ui.checkbox("ウィンドウに付ける")?;
@@ -46,34 +52,64 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
         move |collapsed| collapse.set_checked(collapsed)
     });
     // 仕切りで幅を変えると届く。
-    let width = parts::status(
-        ui,
-        &format!("幅: {} (仕切りをドラッグして変えられます)", sidebar.width()),
-    )?;
     sidebar.on_resize({
-        let width = width.clone();
-        move |value| width.set_text(&format!("幅: {value:.0}"))
+        let notice = notice.clone();
+        move |value| notice.show(&format!("Sidebar: 幅は {value:.0}"))
     });
     pane.append(&attach);
     pane.append(&collapse);
-    pane.append(&width);
 
     parts::section(
         ui,
         &pane,
         "Tabs",
-        &["Gallery 上部のタブが Tabs の例です。中身ごと切り替えます。"],
+        &["見出しを並べ、選んだものの中身だけを出します。"],
     )?;
-
-    let status = parts::status(ui, "操作結果: なし")?;
+    const PAGES: [(&str, &str); 3] = [
+        (
+            "概要",
+            "タブごとに中身を 1 つ持ちます。選び直すと前の中身は隠れます。",
+        ),
+        (
+            "詳細",
+            "中身には Stack や Grid など、どのウィジェットでも置けます。",
+        ),
+        ("履歴", "選び直すと on_select が届きます。"),
+    ];
+    let tabs = ui.tabs()?;
+    for (title, body) in PAGES {
+        let page = ui.stack(Orientation::Vertical)?;
+        page.set_padding(Padding::all(12.0));
+        page.set_align(Align::Start);
+        let text = ui.label(body)?;
+        text.set_wrap(true);
+        text.set_sizing(Sizing::fill_width());
+        page.append(&text);
+        tabs.add_tab(title, &page);
+    }
+    // 中身の高さでは決まらないので、大きさを指定する。
+    tabs.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(140.0)),
+    );
+    tabs.on_select({
+        let notice = notice.clone();
+        move |index| {
+            if let Some((title, _)) = PAGES.get(index) {
+                notice.show(&format!("Tabs: {title}"));
+            }
+        }
+    });
+    pane.append(&tabs);
 
     parts::section(ui, &pane, "Navbar", &["見出し付きの横並びナビゲーション。"])?;
     let navbar = ui.navbar("Navbar")?;
     navbar.set_items(&NavItem::list(["項目 A", "項目 B", "項目 C"]));
     navbar.set_selected(0);
     navbar.on_select({
-        let status = status.clone();
-        move |index| status.set_text(&format!("Navbar: 項目 {}", index + 1))
+        let notice = notice.clone();
+        move |index| notice.show(&format!("Navbar: 項目 {}", index + 1))
     });
     pane.append(&navbar);
 
@@ -91,8 +127,8 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
     ]);
     menu.set_selected(0);
     menu.on_select({
-        let status = status.clone();
-        move |index| status.set_text(&format!("Menu: 項目 {}", index + 1))
+        let notice = notice.clone();
+        move |index| notice.show(&format!("Menu: 項目 {}", index + 1))
     });
     pane.append(&menu);
 
@@ -100,16 +136,16 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
     let breadcrumbs = ui.breadcrumbs()?;
     breadcrumbs.set_items(&NavItem::list(["階層 1", "階層 2", "現在地"]));
     breadcrumbs.on_select({
-        let status = status.clone();
-        move |index| status.set_text(&format!("Breadcrumbs: {} 番目", index + 1))
+        let notice = notice.clone();
+        move |index| notice.show(&format!("Breadcrumbs: {} 番目", index + 1))
     });
     pane.append(&breadcrumbs);
 
     parts::section(ui, &pane, "Pagination", &["ページ番号と前後移動。"])?;
     let pagination = ui.pagination(5)?;
     pagination.on_change({
-        let status = status.clone();
-        move |page| status.set_text(&format!("Pagination: {} ページ", page + 1))
+        let notice = notice.clone();
+        move |page| notice.show(&format!("Pagination: {} ページ", page + 1))
     });
     pane.append(&pagination);
 
@@ -118,20 +154,12 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
     dock.set_items(&NavItem::list(["左", "中央", "右"]));
     dock.set_sizing(Sizing::fill_width());
     dock.on_select({
-        let status = status.clone();
-        move |index| status.set_text(&format!("Dock: {}", ["左", "中央", "右"][index]))
+        let notice = notice.clone();
+        move |index| notice.show(&format!("Dock: {}", ["左", "中央", "右"][index]))
     });
     pane.append(&dock);
 
     parts::section(ui, &pane, "Link", &["ブラウザまたは標準アプリで開きます。"])?;
     pane.append(&ui.link("naui のリポジトリ", "https://github.com/mokuichi147/naui")?);
-
-    parts::section(
-        ui,
-        &pane,
-        "操作結果",
-        &["上のどれを選んでも、最後の操作をここへ出します。"],
-    )?;
-    pane.append(&status);
     Ok(pane)
 }

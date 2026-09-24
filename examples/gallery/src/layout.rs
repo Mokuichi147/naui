@@ -5,10 +5,10 @@ use naui::{
     Align, GridCell, Length, Orientation, Padding, Result, ScrollPolicy, Sizing, Track, Ui,
 };
 
-use crate::parts;
+use crate::parts::{self, Notice};
 
 /// Stack、Grid、Scroll、Spacer の配置特性。
-pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
+pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
     parts::section(
@@ -64,7 +64,6 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         "Expander",
         &["見出しを押すと中身を出し入れします。閉じている間は場所も空けません。"],
     )?;
-    let details_status = parts::status(ui, "Expander: 閉じています")?;
     let details_body = ui.stack(Orientation::Vertical)?;
     details_body.set_spacing(8.0);
     // 交差軸の既定は中央ぞろえなので、チェックボックスの左端をそろえる。
@@ -75,9 +74,9 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     details.set_child(&details_body);
     details.set_sizing(Sizing::fill_width());
     details.on_toggle({
-        let status = details_status.clone();
+        let notice = notice.clone();
         move |expanded| {
-            status.set_text(if expanded {
+            notice.show(if expanded {
                 "Expander: 開いています"
             } else {
                 "Expander: 閉じています"
@@ -85,17 +84,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         }
     });
     pane.append(&details);
-    pane.append(&details_status);
 
     parts::section(
         ui,
         &pane,
         "SplitView",
         &["仕切りをドラッグすると区画の大きさが変わります。余った幅は右側が受け取ります。"],
-    )?;
-    let split_status = parts::status(
-        ui,
-        &format!("SplitView: 仕切りは {} px", naui::DEFAULT_SPLIT_POSITION),
     )?;
     let sidebar = ui.stack(Orientation::Vertical)?;
     sidebar.set_spacing(6.0);
@@ -121,8 +115,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     split.set_end(&body);
     split.set_min_sizes(120.0, 140.0);
     split.on_resize({
-        let status = split_status.clone();
-        move |position| status.set_text(&format!("SplitView: 仕切りは {position:.0} px"))
+        let notice = notice.clone();
+        move |position| notice.show(&format!("SplitView: 仕切りは {position:.0} px"))
     });
     // Scroll と同じく中身の高さでは決まらないので、大きさを指定する。
     split.set_sizing(
@@ -131,7 +125,6 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
             .height(Length::Fixed(160.0)),
     );
     pane.append(&split);
-    pane.append(&split_status);
 
     parts::section(
         ui,

@@ -1,14 +1,10 @@
-use naui::{Color, DatePickerMode, DateTime, Label, Length, NumberInput, Result, Sizing, Time, Ui};
+use naui::{
+    Button, Color, ColorPicker, DatePicker, DatePickerMode, DateTime, EditableComboBox, Label,
+    Length, NumberInput, PasswordInput, Result, SearchInput, Sizing, TextArea, TextInput, Time,
+    TimePicker, Ui,
+};
 
-use crate::parts;
-
-/// 日付だけを取り出した表示。
-fn describe_date(value: DateTime) -> String {
-    format!(
-        "日付: {:04}-{:02}-{:02}",
-        value.year, value.month, value.day
-    )
-}
+use crate::parts::{self, Disabler, Notice};
 
 /// 数量と単価から合計を出して表示する。
 fn show_total(count: &NumberInput, price: &NumberInput, status: &Label) {
@@ -22,8 +18,19 @@ fn show_total(count: &NumberInput, price: &NumberInput, status: &Label) {
 }
 
 /// 1行入力・複数行入力と、プレースホルダー・無効状態。
-pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
+///
+/// 無効状態は、画面の先頭のスイッチでこの画面の入力欄をまとめて切り替える。
+///
+/// 値が届いたことはトーストで知らせる。文字数・一致・候補・合計のように
+/// 入力に合わせて変わり続ける表示は、実際のフォームと同じく欄のそばへ置く。
+pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
+
+    let disabler = Disabler::new(
+        ui,
+        &pane,
+        &["どの入力欄も set_enabled(false) で操作を止められます。入れた値はそのまま残ります。"],
+    )?;
 
     parts::section(
         ui,
@@ -31,22 +38,21 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         "TextInput",
         &["1行入力。入力内容は変更通知から取得できます。"],
     )?;
-    let input_status = parts::status(ui, "入力値: (空)")?;
     let input = ui.text_input("")?;
+    disabler.add(&input, TextInput::set_enabled);
     input.set_placeholder("プレースホルダー");
     input.set_sizing(Sizing::fill_width());
     input.on_change({
-        let input_status = input_status.clone();
+        let notice = notice.clone();
         move |text| {
             if text.is_empty() {
-                input_status.set_text("入力値: (空)");
+                notice.show("入力値: (空)");
             } else {
-                input_status.set_text(&format!("入力値: {text}"));
+                notice.show(&format!("入力値: {text}"));
             }
         }
     });
     pane.append(&input);
-    pane.append(&input_status);
 
     parts::section(
         ui,
@@ -54,17 +60,21 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         "TextArea",
         &["改行・折り返し・縦スクロールに対応する複数行入力です。"],
     )?;
-    let area_status = parts::status(ui, "0 行 / 0 文字")?;
+    let area_status = parts::readout(ui, "")?;
     let area = ui.text_area("")?;
+    disabler.add(&area, TextArea::set_enabled);
     area.set_placeholder("複数行のテキストを入力");
     area.set_sizing(
         Sizing::new()
             .width(Length::Fill)
             .height(Length::Fixed(150.0)),
     );
-    area.on_change({
+    // 欄のそばの表示は、いまの中身から作り直す。まとめて戻すときにも使う。
+    let describe_area = {
+        let area = area.clone();
         let area_status = area_status.clone();
-        move |text| {
+        move || {
+            let text = area.text();
             let lines = if text.is_empty() {
                 0
             } else {
@@ -72,6 +82,11 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
             };
             area_status.set_text(&format!("{lines} 行 / {} 文字", text.chars().count()));
         }
+    };
+    describe_area();
+    area.on_change({
+        let describe_area = describe_area.clone();
+        move |_| describe_area()
     });
     pane.append(&area);
     pane.append(&area_status);
@@ -84,11 +99,13 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     )?;
     // 実際のログインフォームに近い見え方にするため、幅を決めて置く。
     let password_width = Sizing::new().width(Length::Fixed(240.0));
-    let password_status = parts::status(ui, "パスワード: 未入力")?;
+    let password_status = parts::readout(ui, "")?;
     let password = ui.password_input()?;
+    disabler.add(&password, PasswordInput::set_enabled);
     password.set_placeholder("パスワード");
     password.set_sizing(password_width);
     let confirm = ui.password_input()?;
+    disabler.add(&confirm, PasswordInput::set_enabled);
     confirm.set_placeholder("パスワード (確認)");
     confirm.set_sizing(password_width);
     // 画面に出すのは長さと一致だけ。中身は表示しない。
@@ -113,6 +130,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
             }
         }
     };
+    describe_password();
     password.on_change({
         let describe_password = describe_password.clone();
         move |_| describe_password()
@@ -133,17 +151,20 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     )?;
     // 絞り込む対象。確定したときは選ばれた 1 件を出す。
     let fruits = ["りんご", "みかん", "ぶどう", "もも", "なし"];
-    let search_status = parts::status(ui, "候補: りんご / みかん / ぶどう / もも / なし")?;
+    let search_status = parts::readout(ui, "")?;
     let search = ui.search_input()?;
+    disabler.add(&search, SearchInput::set_enabled);
     search.set_placeholder("検索");
     search.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
-    search.on_change({
+    let describe_search = {
+        let search = search.clone();
         let search_status = search_status.clone();
-        move |text| {
+        move || {
+            let text = search.text();
             let hits: Vec<&str> = fruits
                 .iter()
                 .copied()
-                .filter(|name| name.contains(text))
+                .filter(|name| name.contains(text.as_str()))
                 .collect();
             if hits.is_empty() {
                 search_status.set_text("候補: (なし)");
@@ -151,14 +172,19 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
                 search_status.set_text(&format!("候補: {}", hits.join(" / ")));
             }
         }
+    };
+    describe_search();
+    search.on_change({
+        let describe_search = describe_search.clone();
+        move |_| describe_search()
     });
     search.on_search({
-        let search_status = search_status.clone();
+        let notice = notice.clone();
         move |text| {
             if text.is_empty() {
-                search_status.set_text("検索: (空)");
+                notice.show("検索: (空)");
             } else {
-                search_status.set_text(&format!("検索: {text} を探しました"));
+                notice.show(&format!("検索: {text} を探しました"));
             }
         }
     });
@@ -171,37 +197,28 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         "EditableComboBox",
         &["候補から選ぶことも、候補にない値を打ち込むこともできる入力欄です。値は文字列で返ります。"],
     )?;
-    let city_status = parts::status(ui, "都市: (空)")?;
     let city = ui.editable_combo_box()?;
+    disabler.add(&city, EditableComboBox::set_enabled);
     city.set_items(&["東京", "大阪", "札幌", "福岡", "那覇"]);
     city.set_placeholder("都市名");
     // 入力欄なので、中身に合わせた幅を持たない。ここで決めておく。
     city.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
     city.on_change({
-        let city_status = city_status.clone();
+        let notice = notice.clone();
         let city = city.clone();
         move |text| {
             if text.is_empty() {
-                city_status.set_text("都市: (空)");
+                notice.show("都市: (空)");
             } else {
                 let source = match city.selected() {
                     Some(index) => format!("候補 {index} と一致"),
                     None => "候補にない値".to_string(),
                 };
-                city_status.set_text(&format!("都市: {text} ({source})"));
+                notice.show(&format!("都市: {text} ({source})"));
             }
         }
     });
     pane.append(&city);
-    pane.append(&city_status);
-
-    pane.append(&parts::note(ui, "選ばせない状態にもできます。")?);
-    let city_disabled = ui.editable_combo_box()?;
-    city_disabled.set_items(&["東京", "大阪"]);
-    city_disabled.set_selected(0);
-    city_disabled.set_enabled(false);
-    city_disabled.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
-    pane.append(&city_disabled);
 
     parts::section(
         ui,
@@ -213,14 +230,16 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     // ボタンや消去ボタンが並ぶぶん、1 行入力より広めに取る。
     let number_width = Sizing::new().width(Length::Fixed(200.0));
     let count = ui.number_input(1.0)?;
+    disabler.add(&count, NumberInput::set_enabled);
     count.set_range(Some(1.0), Some(99.0));
     count.set_sizing(number_width);
     let price = ui.number_input(120.0)?;
+    disabler.add(&price, NumberInput::set_enabled);
     price.set_decimals(2);
     price.set_step(0.05);
     price.set_range(Some(0.0), None);
     price.set_sizing(number_width);
-    let total_status = parts::status(ui, "")?;
+    let total_status = parts::readout(ui, "")?;
     show_total(&count, &price, &total_status);
     count.on_change({
         let count = count.clone();
@@ -243,86 +262,50 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     parts::section(
         ui,
         &pane,
-        "無効状態",
-        &["どの入力欄も、set_enabled(false) で操作を止められます。"],
-    )?;
-    let disabled_input = ui.text_input("編集できない1行入力")?;
-    disabled_input.set_enabled(false);
-    disabled_input.set_sizing(Sizing::fill_width());
-    let disabled_area = ui.text_area("編集できない複数行入力")?;
-    disabled_area.set_enabled(false);
-    disabled_area.set_sizing(
-        Sizing::new()
-            .width(Length::Fill)
-            .height(Length::Fixed(80.0)),
-    );
-    let disabled_number = ui.number_input(42.0)?;
-    disabled_number.set_enabled(false);
-    disabled_number.set_sizing(number_width);
-    let disabled_password = ui.password_input()?;
-    disabled_password.set_text("ひみつ");
-    disabled_password.set_enabled(false);
-    disabled_password.set_sizing(password_width);
-    pane.append(&disabled_input);
-    pane.append(&disabled_area);
-    pane.append(&disabled_password);
-    pane.append(&disabled_number);
-
-    parts::section(
-        ui,
-        &pane,
         "DatePicker",
         &["日付・時刻・その両方を選べます。値は年月日と時分で返ります。"],
     )?;
 
     let date = ui.date_picker(DatePickerMode::Date)?;
-    // 日付だけの表示なので、時刻の部分は出さずに読む。
-    let date_status = parts::status(ui, &describe_date(date.value()))?;
+    disabler.add(&date, DatePicker::set_enabled);
     date.on_change({
-        let date_status = date_status.clone();
-        move |value| date_status.set_text(&describe_date(value))
-    });
-    pane.append(&date);
-    pane.append(&date_status);
-
-    let time = ui.date_picker(DatePickerMode::Time)?;
-    time.set_value(DateTime::time(7, 30));
-    let time_status = parts::status(
-        ui,
-        &format!("時刻: {:02}:{:02}", time.value().hour, time.value().minute),
-    )?;
-    time.on_change({
-        let time_status = time_status.clone();
+        let notice = notice.clone();
+        // 日付だけの欄なので、時刻の部分は出さずに読む。
         move |value| {
-            time_status.set_text(&format!("時刻: {:02}:{:02}", value.hour, value.minute));
+            notice.show(&format!(
+                "日付: {:04}-{:02}-{:02}",
+                value.year, value.month, value.day
+            ));
         }
     });
+    pane.append(&date);
+
+    let time = ui.date_picker(DatePickerMode::Time)?;
+    disabler.add(&time, DatePicker::set_enabled);
+    time.set_value(DateTime::time(7, 30));
+    time.on_change({
+        let notice = notice.clone();
+        move |value| notice.show(&format!("時刻: {:02}:{:02}", value.hour, value.minute))
+    });
     pane.append(&time);
-    pane.append(&time_status);
 
     // 範囲を決めると、その外へは出られなくなる。
     let deadline = ui.date_picker(DatePickerMode::DateTime)?;
+    disabler.add(&deadline, DatePicker::set_enabled);
     let today = deadline.value();
     deadline.set_range(
         Some(DateTime::date(today.year, today.month, today.day)),
         Some(DateTime::new(today.year + 1, 12, 31, 23, 59)),
     );
-    let deadline_status = parts::status(ui, &format!("期限: {}", deadline.value()))?;
     deadline.on_change({
-        let deadline_status = deadline_status.clone();
-        move |value| deadline_status.set_text(&format!("期限: {value}"))
+        let notice = notice.clone();
+        move |value| notice.show(&format!("期限: {value}"))
     });
     pane.append(&parts::note(
         ui,
         "今日から翌年末までしか選べない DateTime の例です。",
     )?);
     pane.append(&deadline);
-    pane.append(&deadline_status);
-
-    pane.append(&parts::note(ui, "選ばせない状態にもできます。")?);
-    let disabled_date = ui.date_picker(DatePickerMode::Date)?;
-    disabled_date.set_enabled(false);
-    pane.append(&disabled_date);
 
     parts::section(
         ui,
@@ -332,33 +315,25 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     )?;
 
     let alarm = ui.time_picker()?;
+    disabler.add(&alarm, TimePicker::set_enabled);
     alarm.set_value(Time::new(7, 30));
-    let alarm_status = parts::status(ui, &format!("起床: {}", alarm.value()))?;
     alarm.on_change({
-        let alarm_status = alarm_status.clone();
-        move |value| alarm_status.set_text(&format!("起床: {value}"))
+        let notice = notice.clone();
+        move |value| notice.show(&format!("起床: {value}"))
     });
     pane.append(&alarm);
-    pane.append(&alarm_status);
 
     // 範囲を決めると、その外へは出られなくなる。
     pane.append(&parts::note(ui, "9:00〜18:00 しか選べない例です。")?);
     let meeting = ui.time_picker()?;
+    disabler.add(&meeting, TimePicker::set_enabled);
     meeting.set_range(Some(Time::new(9, 0)), Some(Time::new(18, 0)));
     meeting.set_value(Time::new(13, 0));
-    let meeting_status = parts::status(ui, &format!("会議: {}", meeting.value()))?;
     meeting.on_change({
-        let meeting_status = meeting_status.clone();
-        move |value| meeting_status.set_text(&format!("会議: {value}"))
+        let notice = notice.clone();
+        move |value| notice.show(&format!("会議: {value}"))
     });
     pane.append(&meeting);
-    pane.append(&meeting_status);
-
-    pane.append(&parts::note(ui, "選ばせない状態にもできます。")?);
-    let disabled_time = ui.time_picker()?;
-    disabled_time.set_value(Time::new(0, 0));
-    disabled_time.set_enabled(false);
-    pane.append(&disabled_time);
 
     parts::section(
         ui,
@@ -368,66 +343,69 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     )?;
 
     let color = ui.color_picker()?;
+    disabler.add(&color, ColorPicker::set_enabled);
     color.set_value(Color::rgb(0x33, 0x66, 0xff));
-    let color_status = parts::status(ui, &format!("色: {}", color.value()))?;
     color.on_change({
-        let color_status = color_status.clone();
+        let notice = notice.clone();
         move |value| {
-            color_status.set_text(&format!(
+            notice.show(&format!(
                 "色: {value} (R {}, G {}, B {})",
                 value.r, value.g, value.b
             ));
         }
     });
     pane.append(&color);
-    pane.append(&color_status);
 
-    // `pick` は利用者が選んだのと同じ経路なので、表示も通知経由で直る。
+    // `pick` は利用者が選んだのと同じ経路なので、on_change も呼ばれる。
     let color_reset = ui.button("既定の色に戻す")?;
+    disabler.add(&color_reset, Button::set_enabled);
     color_reset.on_click({
         let color = color.clone();
         move || color.pick(Color::rgb(0x33, 0x66, 0xff))
     });
     pane.append(&color_reset);
 
-    pane.append(&parts::note(ui, "選ばせない状態にもできます。")?);
-    let disabled_color = ui.color_picker()?;
-    disabled_color.set_value(Color::rgb(0x88, 0x88, 0x88));
-    disabled_color.set_enabled(false);
-    pane.append(&disabled_color);
-
     parts::section(
         ui,
         &pane,
         "まとめて戻す",
-        &["この画面で打った内容を、一度に消して初期値へ戻します。"],
+        &["この画面の欄を、一度にすべて初期値へ戻します。"],
     )?;
-    let clear = ui.button("入力をクリア")?;
+    // 初期値は、組み立て終えたいまの値。
+    let initial_count = count.value();
+    let initial_price = price.value();
+    let initial_date = date.value();
+    let initial_time = time.value();
+    let initial_deadline = deadline.value();
+    let initial_alarm = alarm.value();
+    let initial_meeting = meeting.value();
+    let initial_color = color.value();
+    let clear = ui.button("すべて初期値へ戻す")?;
+    disabler.add(&clear, Button::set_enabled);
     clear.on_click({
-        let input = input.clone();
-        let area = area.clone();
-        let input_status = input_status.clone();
-        let area_status = area_status.clone();
-        let time = time.clone();
-        let time_status = time_status.clone();
-        let alarm = alarm.clone();
-        let alarm_status = alarm_status.clone();
-        let password = password.clone();
-        let confirm = confirm.clone();
-        let password_status = password_status.clone();
+        let notice = notice.clone();
         move || {
             input.set_text("");
             area.set_text("");
-            input_status.set_text("入力値: (空)");
-            area_status.set_text("0 行 / 0 文字");
             password.set_text("");
             confirm.set_text("");
-            password_status.set_text("パスワード: 未入力");
-            // set_value は通知しないので、表示は自分で戻す。
-            time.set_value(DateTime::time(7, 30));
-            time_status.set_text("時刻: 07:30");
-            alarm.set_value(Time::new(7, 30));
-            alarm_status.set_text("起床: 07:30");
+            search.set_text("");
+            city.set_text("");
+            count.set_value(initial_count);
+            price.set_value(initial_price);
+            date.set_value(initial_date);
+            time.set_value(initial_time);
+            deadline.set_value(initial_deadline);
+            alarm.set_value(initial_alarm);
+            meeting.set_value(initial_meeting);
+            color.set_value(initial_color);
+            // set_text / set_value は on_change を呼ばないので、欄のそばの
+            // 表示はこちらで作り直す。
+            describe_area();
+            describe_password();
+            describe_search();
+            show_total(&count, &price, &total_status);
+            notice.show("すべて初期値へ戻しました");
         }
     });
     pane.append(&clear);

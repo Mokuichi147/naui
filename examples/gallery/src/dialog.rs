@@ -1,9 +1,9 @@
 use naui::{DialogButtons, DialogResponse, Result, Ui};
 
-use crate::parts;
+use crate::parts::{self, Notice};
 
 /// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。Toast の出し方。
-pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
+pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
     parts::section(
@@ -12,8 +12,6 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         "Dialog",
         &["見出し、本文、任意の子ウィジェット、最大3種類の応答ボタンを持てます。"],
     )?;
-
-    let status = parts::status(ui, "結果: まだ開いていません")?;
 
     parts::group(
         ui,
@@ -24,8 +22,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let simple = ui.dialog("標準ダイアログ")?;
     simple.set_message("ボタンを指定していないダイアログです。");
     simple.on_response({
-        let status = status.clone();
-        move |_| status.set_text("結果: OK")
+        let notice = notice.clone();
+        move |_| notice.show("Dialog: OK")
     });
     let open_simple = ui.button("標準ダイアログを開く")?;
     open_simple.on_click({
@@ -51,7 +49,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
             .cancel("Cancel"),
     );
     roles.on_response({
-        let status = status.clone();
+        let notice = notice.clone();
         let option = option.clone();
         move |response| {
             let name = match response {
@@ -59,8 +57,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
                 DialogResponse::Secondary => "Secondary",
                 DialogResponse::Cancel => "Cancel",
             };
-            status.set_text(&format!(
-                "結果: {name} / チェック: {}",
+            notice.show(&format!(
+                "Dialog: {name} / チェック: {}",
                 if option.is_checked() {
                     "オン"
                 } else {
@@ -75,7 +73,6 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         move || roles.open()
     });
     pane.append(&open_roles);
-    pane.append(&status);
 
     parts::section(
         ui,
@@ -84,23 +81,20 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         &["画面の下端に出て自分で消える通知です。同時に出るのは1つで、新しいものが前のものを置き換えます。"],
     )?;
 
-    let toast_status = parts::status(ui, "Toast: まだ出していません")?;
+    // ギャラリーの操作結果の知らせもトーストなので、ここで出すものとは
+    // 互いに置き換え合う。
 
     // 何秒かで自分から消えるトースト。
     let saved = ui.toast("保存しました")?;
     saved.set_timeout(3.0);
     saved.on_dismiss({
-        let toast_status = toast_status.clone();
-        move || toast_status.set_text("Toast: 時間が来て消えました")
+        let notice = notice.clone();
+        move || notice.show("「保存しました」は時間が来て消えました (on_dismiss)")
     });
     let show_saved = ui.button("3秒で消えるトーストを出す")?;
     show_saved.on_click({
         let saved = saved.clone();
-        let toast_status = toast_status.clone();
-        move || {
-            toast_status.set_text("Toast: 表示中");
-            saved.show();
-        }
+        move || saved.show()
     });
     pane.append(&show_saved);
 
@@ -108,44 +102,31 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let deleted = ui.toast("削除しました")?;
     deleted.set_action("元に戻す");
     deleted.on_action({
-        let toast_status = toast_status.clone();
-        move || toast_status.set_text("Toast: 「元に戻す」が押されました")
+        let notice = notice.clone();
+        move || notice.show("元に戻しました (on_action)")
     });
     let show_deleted = ui.button("操作ボタン付きのトーストを出す")?;
     show_deleted.on_click({
         let deleted = deleted.clone();
-        let toast_status = toast_status.clone();
-        move || {
-            toast_status.set_text("Toast: 表示中 (元に戻す)");
-            deleted.show();
-        }
+        move || deleted.show()
     });
     pane.append(&show_deleted);
 
     // 時間 0 は「自分では消えない」。アプリ側で消す。
+    // dismiss() はアプリ自身の操作なので on_dismiss を呼ばない。
     let sticky = ui.toast("消すまで出したままのトーストです")?;
     sticky.set_timeout(0.0);
     let show_sticky = ui.button("消えないトーストを出す")?;
     show_sticky.on_click({
         let sticky = sticky.clone();
-        let toast_status = toast_status.clone();
-        move || {
-            toast_status.set_text("Toast: 表示中 (消えません)");
-            sticky.show();
-        }
+        move || sticky.show()
     });
     let hide_sticky = ui.button("消えないトーストを消す")?;
     hide_sticky.on_click({
         let sticky = sticky.clone();
-        let toast_status = toast_status.clone();
-        move || {
-            sticky.dismiss();
-            // dismiss() では on_dismiss を呼ばないので、ここで書き換える。
-            toast_status.set_text("Toast: アプリ側から消しました");
-        }
+        move || sticky.dismiss()
     });
     pane.append(&show_sticky);
     pane.append(&hide_sticky);
-    pane.append(&toast_status);
     Ok(pane)
 }
