@@ -132,7 +132,7 @@ impl Bar {
             let button: HtmlElement = create(doc, tag)?.unchecked_into();
             button.set_text_content(Some(&item.label));
             if self.0.shape == Shape::Crumb {
-                let _ = button.set_attribute("href", "#");
+                // `href` は選択に合わせて `mark_selected` が付け外しする。
                 let _ = button
                     .set_attribute("aria-disabled", if item.enabled { "false" } else { "true" });
             } else {
@@ -206,8 +206,8 @@ impl Bar {
     /// 選択状態を ARIA 属性と見た目で表す。
     ///
     /// ボタンは太字にする。パンくずは太字にすると選び直すたびに文字幅が
-    /// 変わり、後ろの項目がずれるので、いまいる場所の `href` を外して
-    /// リンクでない普通の文字 (ブラウザ既定の描き方) にする。
+    /// 変わり、後ろの項目がずれるので、いまいる場所と選べない項目の
+    /// `href` を外してリンクでない普通の文字 (ブラウザ既定の描き方) にする。
     fn mark_selected(&self, index: Option<usize>) {
         for (i, button) in self.0.buttons.borrow().iter().enumerate() {
             let current = Some(i) == index;
@@ -217,7 +217,8 @@ impl Bar {
                 let _ = button.remove_attribute("aria-current");
             }
             if self.0.shape == Shape::Crumb {
-                if current {
+                let enabled = button.get_attribute("aria-disabled").as_deref() != Some("true");
+                if current || !enabled {
                     let _ = button.remove_attribute("href");
                 } else {
                     let _ = button.set_attribute("href", "#");

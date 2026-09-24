@@ -324,6 +324,7 @@ impl Breadcrumbs {
                 native.append(&separator);
             }
             let label = gtk::Label::new(None);
+            without_context_menu(&label);
             let weak: Weak<BreadcrumbsInner> = Rc::downgrade(&self.0);
             label.connect_activate_link(move |_, _| {
                 if let Some(inner) = weak.upgrade() {
@@ -393,6 +394,7 @@ impl Breadcrumbs {
         for (index, (label, item)) in self.0.labels.borrow().iter().zip(items.iter()).enumerate() {
             let text = glib::markup_escape_text(&item.label);
             if item.enabled && Some(index) != selected {
+                // href は外へ見せない (右クリックのメニューを出さない) ので、番号で足りる。
                 label.set_markup(&format!("<a href=\"{index}\">{text}</a>"));
             } else {
                 label.set_markup(&text);
@@ -400,6 +402,28 @@ impl Breadcrumbs {
             label.set_sensitive(item.enabled);
         }
     }
+}
+
+/// ラベルの右クリックのメニューを出さない。
+///
+/// リンクを持つ `GtkLabel` のメニューに並ぶのは「リンクを開く」と
+/// 「リンクのアドレスをコピー」だけで、前者はクリックと同じ、後者は
+/// URI の代わりに持たせた項目の番号をコピーしてしまう ([`NavItem`] は
+/// URI を持たない)。メニューは 2 か所から開くので、両方を止める。
+///
+/// - キー操作 (Shift+F10 / Menu キー): `menu.popup` アクションを無効にする。
+///   `GtkLabel` はこのアクションを自分では有効へ戻さない。
+/// - 右クリック: ラベルのジェスチャーがアクションを通さず直に開くので、
+///   捕捉段階のジェスチャーで先に取る。
+fn without_context_menu(label: &gtk::Label) {
+    label.action_set_enabled("menu.popup", false);
+    let secondary = gtk::GestureClick::new();
+    secondary.set_button(gtk::gdk::BUTTON_SECONDARY);
+    secondary.set_propagation_phase(gtk::PropagationPhase::Capture);
+    secondary.connect_pressed(|gesture, _, _, _| {
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+    });
+    label.add_controller(secondary);
 }
 
 // ------------------------------------------------------------- Pagination
