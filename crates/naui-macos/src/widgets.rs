@@ -13,7 +13,7 @@ use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Messa
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBorderType, NSButton, NSButtonType, NSColor,
     NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontTextStyle, NSFontTextStyleBody,
-    NSFontTextStyleCaption1, NSFontTextStyleHeadline, NSFontTextStyleLargeTitle,
+    NSFontTextStyleHeadline, NSFontTextStyleLargeTitle, NSFontTextStyleSubheadline,
     NSFontTextStyleTitle1, NSFontTextStyleTitle3, NSLayoutAttribute, NSLayoutConstraint,
     NSLineBreakMode, NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField,
     NSSecureTextField, NSSlider, NSStackView, NSStackViewDistribution, NSTextField, NSTextView,
@@ -206,6 +206,10 @@ impl Label {
 ///
 /// `NSFontTextStyle` は macOS 11 で入ったもので、それぞれの級数と太さは
 /// システムが決める。
+///
+/// `Caption` に `Caption1` を使わないのは、macOS では 10pt と本文 (13pt) の
+/// 0.77 倍しかなく、補足の文字として読みづらいため。`Subheadline` (11pt) は
+/// 0.85 倍で、Windows (12 / 14px)・Web (`0.85em`) の比とそろう。
 fn preferred_font(style: TextStyle) -> Retained<NSFont> {
     // SAFETY: 定数はどれも AppKit が持つ `NSFontTextStyle`。options は
     // 型どおりの空辞書 (指定できるのは表示サイズの上限だけで、既定に任せる)。
@@ -216,7 +220,7 @@ fn preferred_font(style: TextStyle) -> Retained<NSFont> {
             TextStyle::Subtitle => NSFontTextStyleTitle3,
             TextStyle::Heading => NSFontTextStyleHeadline,
             TextStyle::Body => NSFontTextStyleBody,
-            TextStyle::Caption => NSFontTextStyleCaption1,
+            TextStyle::Caption => NSFontTextStyleSubheadline,
         };
         NSFont::preferredFontForTextStyle_options(name, &NSDictionary::new())
     }

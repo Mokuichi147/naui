@@ -722,7 +722,7 @@
 //! | `Navbar` | `ToggleButton` の横並び | `NSSegmentedControl` | `GtkLabel` + `GtkToggleButton` の横並び | `<nav>` |
 //! | `Dock` | `ToggleButton` の横並び | `NSSegmentedControl` | `GtkToggleButton` の横並び (等幅) | `<nav>` |
 //! | `Menu` | `ToggleButton` の縦並び | `NSButton` の縦並び | `GtkToggleButton` の縦並び | `<nav><ul>` |
-//! | `Breadcrumbs` | `HyperlinkButton` + 区切り | `NSPathControl` | `GtkToggleButton` + 区切り | `<nav><ol><a>` |
+//! | `Breadcrumbs` | `HyperlinkButton` + 区切り | `NSPathControl` | `GtkLabel` のリンク + 区切り | `<nav><ol><a>` |
 //! | `Pagination` | `Button` + `ToggleButton` | `NSButton` + `NSSegmentedControl` | `GtkButton` + `GtkToggleButton` | `<nav>` |
 //! | `Link` | `HyperlinkButton` | `NSButton` (リンク色) | `GtkLinkButton` | `<a>` |
 //!

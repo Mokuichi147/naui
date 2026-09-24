@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, Color, DialogResponse, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, SidebarItem,
+    NavItem, Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, SidebarItem,
     SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
     ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
 };
@@ -2375,6 +2375,95 @@ fn checkbox_is_a_label_around_a_native_input() {
         let input = first_input(&element);
         assert_eq!(input.type_(), "checkbox");
         assert_eq!(computed(&element, "display"), "inline-flex");
+        Ok(())
+    });
+}
+
+// --------------------------------------------------------- Breadcrumbs
+
+/// パンくずの `<a>` を並び順で取り出す。
+fn crumb_links(nav: &Element) -> Vec<HtmlElement> {
+    let links = nav.query_selector_all("a").expect("a の検索");
+    (0..links.length())
+        .filter_map(|index| links.item(index))
+        .map(|node| node.unchecked_into())
+        .collect()
+}
+
+/// 祖先だけがリンク (`href`) で、現在地と選べない項目は普通の文字になる。
+/// 区切りは `›` で、項目の文字は HTML として解釈しない。
+#[wasm_bindgen_test]
+fn breadcrumbs_link_only_the_ancestors() {
+    with_ui(|ui| {
+        let breadcrumbs = ui.breadcrumbs()?;
+        let mut items = NavItem::list(["<b>&</b>", "書類", "2026"]);
+        items[1].enabled = false;
+        breadcrumbs.set_items(&items);
+        let _mounted = Mounted::new(&breadcrumbs);
+        let nav = breadcrumbs.native_element();
+
+        let items = nav.query_selector_all("li").expect("li の検索");
+        let texts: Vec<String> = (0..items.length())
+            .filter_map(|index| items.item(index))
+            .map(|li| li.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(texts, ["<b>&</b>", "›書類", "›2026"]);
+
+        let links = crumb_links(&nav);
+        assert!(links[0].query_selector("b").expect("b の検索").is_none());
+        assert!(links[0].has_attribute("href"), "祖先はリンク");
+        assert!(
+            !links[1].has_attribute("href"),
+            "選べない項目はリンクにしない"
+        );
+        assert!(!links[2].has_attribute("href"), "現在地はリンクにしない");
+        assert_eq!(
+            links[2].get_attribute("aria-current").as_deref(),
+            Some("page")
+        );
+        assert_eq!(links[0].get_attribute("aria-current"), None);
+        Ok(())
+    });
+}
+
+/// 祖先を押すと通知され、現在地と選べない項目を押しても通知されない。
+/// 現在地が移っても、各項目の幅は変わらない (太字にしない)。
+#[wasm_bindgen_test]
+fn breadcrumbs_click_moves_the_current_place() {
+    with_ui(|ui| {
+        let breadcrumbs = ui.breadcrumbs()?;
+        let mut items = NavItem::list(["ホーム", "書類", "2026"]);
+        items[1].enabled = false;
+        breadcrumbs.set_items(&items);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        breadcrumbs.on_select({
+            let log = log.clone();
+            move |index| log.borrow_mut().push(index)
+        });
+        let _mounted = Mounted::new(&breadcrumbs);
+        let links = crumb_links(&breadcrumbs.native_element());
+        let widths = || -> Vec<f64> {
+            links
+                .iter()
+                .map(|link| link.get_bounding_client_rect().width())
+                .collect()
+        };
+        let before = widths();
+
+        links[2].click();
+        links[1].click();
+        assert!(log.borrow().is_empty(), "現在地と選べない項目は通知しない");
+        assert_eq!(breadcrumbs.selected(), Some(2));
+
+        links[0].click();
+        assert_eq!(log.borrow().as_slice(), [0]);
+        assert_eq!(breadcrumbs.selected(), Some(0));
+        assert!(
+            !links[0].has_attribute("href"),
+            "新しい現在地はリンクでなくなる"
+        );
+        assert!(links[2].has_attribute("href"), "前の現在地はリンクに戻る");
+        assert_eq!(widths(), before, "現在地が移っても幅は変わらない");
         Ok(())
     });
 }

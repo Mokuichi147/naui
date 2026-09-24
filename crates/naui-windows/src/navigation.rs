@@ -945,14 +945,14 @@ fn crumb_button() -> Result<XamlButton> {
     }
 }
 
-/// パンくずの区切り。読めなければ文字の「/」に戻す。
+/// パンくずの区切り。読めなければ文字の「›」に戻す。
 fn crumb_separator() -> Result<UIElement> {
     if let Ok(icon) = XamlReader::Load(&HSTRING::from(CRUMB_SEPARATOR_XAML))
         .and_then(|element| element.cast::<UIElement>())
     {
         return Ok(icon);
     }
-    let separator = text_block("/")?;
+    let separator = text_block("›")?;
     separator
         .SetVerticalAlignment(VerticalAlignment::Center)
         .map_err(|e| to_error("パンくず区切りの縦位置設定", e))?;

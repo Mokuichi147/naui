@@ -342,6 +342,10 @@ fn main() {
         ("メニューの選択が 1 つだけ点く", menu_selection_is_exclusive),
         ("選べない項目は選ばれない", nav_skips_disabled_items),
         ("パンくずが末尾を現在地にする", breadcrumbs_last_is_current),
+        (
+            "パンくずのリンクは右クリックのメニューを出さない",
+            breadcrumbs_have_no_context_menu,
+        ),
         ("ページ送りが範囲内に収まる", pagination_steps),
         ("タブが中身ごと切り替わる", tabs_selection),
         ("タブを外して空にできる", tabs_remove_and_clear),
@@ -2611,23 +2615,107 @@ fn nav_skips_disabled_items(ui: &Ui) -> Result<()> {
 
 fn breadcrumbs_last_is_current(ui: &Ui) -> Result<()> {
     let breadcrumbs = ui.breadcrumbs()?;
-    breadcrumbs.set_items(&NavItem::list(["ホーム", "書類", "2026"]));
+    let mut items = NavItem::list(["ホーム", "書類", "2026"]);
+    items[1].enabled = false;
+    breadcrumbs.set_items(&items);
     assert_eq!(breadcrumbs.len(), 3);
     assert_eq!(breadcrumbs.selected(), Some(2), "末尾がいまいる場所");
 
+    // 項目はボタンではなくラベルで、間に区切りのラベルが入る。
+    let native: gtk::Box = breadcrumbs.native_widget().downcast().expect("GtkBox");
+    let labels: Vec<gtk::Label> = children(&native)
+        .into_iter()
+        .map(|child| child.downcast().expect("子はどれも GtkLabel"))
+        .collect();
+    let texts: Vec<String> = labels.iter().map(|l| l.text().to_string()).collect();
+    assert_eq!(texts, ["ホーム", "›", "書類", "›", "2026"]);
+    // 選べる祖先はリンク、選べない項目と現在地はリンクにしない。
+    assert!(
+        labels[0].label().contains("<a href"),
+        "{}",
+        labels[0].label()
+    );
+    assert!(
+        !labels[2].label().contains("<a href"),
+        "{}",
+        labels[2].label()
+    );
+    assert!(!labels[2].is_sensitive(), "選べない項目は無効");
+    // 現在地は太字にもしない (選び直しで文字幅が変わらないように)。
+    assert_eq!(labels[4].label(), "2026");
+
     let (log, sink) = recorder::<usize>();
     breadcrumbs.on_select(sink);
-    toggle_buttons(&breadcrumbs)[0].emit_clicked();
+    let handled: bool = labels[0].emit_by_name("activate-link", &[&"0"]);
+    assert!(handled, "リンクの既定の処理 (URI を開く) へは渡さない");
     assert_eq!(log.borrow().as_slice(), [0]);
     assert_eq!(breadcrumbs.selected(), Some(0));
+    assert_eq!(labels[0].label(), "ホーム");
+    assert!(
+        labels[4].label().contains("<a href"),
+        "{}",
+        labels[4].label()
+    );
 
-    // 区切りのラベルが項目の間に入る。
+    // 選べない項目は選ばれない。
+    breadcrumbs.select(1);
+    assert_eq!(breadcrumbs.selected(), Some(0));
+    assert_eq!(log.borrow().len(), 1);
+
+    // 記号はマークアップとして解釈しない。
+    breadcrumbs.set_items(&NavItem::list(["<a>&", "末尾"]));
+    let first: gtk::Label = native
+        .first_child()
+        .expect("子")
+        .downcast()
+        .expect("GtkLabel");
+    assert_eq!(first.text(), "<a>&");
+    Ok(())
+}
+
+fn breadcrumbs_have_no_context_menu(ui: &Ui) -> Result<()> {
+    let breadcrumbs = ui.breadcrumbs()?;
+    breadcrumbs.set_items(&NavItem::list(["ホーム", "書類"]));
+    let window = ui.window("パンくず", 320.0, 80.0)?;
+    window.set_child(&breadcrumbs);
+    window.show();
     let native: gtk::Box = breadcrumbs.native_widget().downcast().expect("GtkBox");
-    let separators = children(&native)
-        .into_iter()
-        .filter(|child| child.is::<gtk::Label>())
-        .count();
-    assert_eq!(separators, 2);
+    let link: gtk::Label = native
+        .first_child()
+        .expect("子")
+        .downcast()
+        .expect("GtkLabel");
+    tick(&link);
+
+    // 比べる相手: 素のリンク入りラベルは、menu.popup でメニュー (GtkPopoverMenu) を子に作る。
+    let plain = gtk::Label::new(None);
+    plain.set_markup("<a href=\"0\">素</a>");
+    native.append(&plain);
+    tick(&plain);
+    plain
+        .activate_action("menu.popup", None)
+        .expect("menu.popup がある");
+    assert!(
+        plain.first_child().is_some(),
+        "素のラベルはメニューを作ること (比較の前提)"
+    );
+    native.remove(&plain);
+
+    // キー操作の経路: menu.popup を起こしてもメニューは作られない。
+    let _ = link.activate_action("menu.popup", None);
+    assert!(link.first_child().is_none(), "キー操作でメニューが出ない");
+
+    // 右クリックの経路: 捕捉段階で右ボタンを取るジェスチャーがある。
+    let controllers = link.observe_controllers();
+    let claims_secondary = (0..controllers.n_items())
+        .filter_map(|i| controllers.item(i))
+        .filter_map(|item| item.downcast::<gtk::GestureClick>().ok())
+        .any(|gesture| {
+            gesture.button() == gtk::gdk::BUTTON_SECONDARY
+                && gesture.propagation_phase() == gtk::PropagationPhase::Capture
+        });
+    assert!(claims_secondary, "右クリックを先に取るジェスチャーがある");
+    window.close();
     Ok(())
 }
 

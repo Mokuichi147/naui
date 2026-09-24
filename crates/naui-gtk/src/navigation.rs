@@ -1,12 +1,14 @@
 //! ナビゲーション系のウィジェット。
 //!
-//! タブ・ナビバー・ドック・メニュー・パンくず・ページ送りは、どれも
+//! タブ・ナビバー・ドック・メニュー・ページ送りは、どれも
 //! 「項目の並び + いま選ばれているもの」という同じ構造を持つ。GTK4 には
 //! これらをそのまま表すコントロールが無いため、[`ItemBar`] という共通の
 //! 土台 (`GtkToggleButton` を `GtkBox` に並べたもの) を作り、
 //! 見た目の違いは CSS クラスと並ぶ向きで付けている。
 //!
 //! `Tabs` だけは中身のウィジェットを持つので `GtkNotebook` を使う。
+//! パンくずはボタンではなく、リンクを持つ `GtkLabel` を並べる
+//! ([`Breadcrumbs`] を参照)。
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -27,8 +29,6 @@ struct BarInner {
     items: RefCell<Vec<NavItem>>,
     selected: Cell<Option<usize>>,
     on_select: Notifier<usize>,
-    /// 項目の間に挟む区切り (パンくずの `›`)。
-    separator: Option<&'static str>,
     /// ボタンに付ける CSS クラス。
     css: &'static [&'static str],
 }
@@ -38,13 +38,8 @@ struct BarInner {
 pub(crate) struct ItemBar(Rc<BarInner>);
 
 impl ItemBar {
-    fn new(
-        orientation: gtk::Orientation,
-        homogeneous: bool,
-        separator: Option<&'static str>,
-        css: &'static [&'static str],
-    ) -> Self {
-        let native = gtk::Box::new(orientation, if separator.is_some() { 2 } else { 0 });
+    fn new(orientation: gtk::Orientation, homogeneous: bool, css: &'static [&'static str]) -> Self {
+        let native = gtk::Box::new(orientation, 0);
         native.set_homogeneous(homogeneous);
         Self(Rc::new(BarInner {
             native,
@@ -52,7 +47,6 @@ impl ItemBar {
             items: RefCell::new(Vec::new()),
             selected: Cell::new(None),
             on_select: Notifier::default(),
-            separator,
             css,
         }))
     }
@@ -70,13 +64,6 @@ impl ItemBar {
         self.0.selected.set(None);
 
         for (index, item) in items.iter().enumerate() {
-            if index > 0 {
-                if let Some(separator) = self.0.separator {
-                    let label = gtk::Label::new(Some(separator));
-                    label.add_css_class("dim-label");
-                    self.0.native.append(&label);
-                }
-            }
             let button = gtk::ToggleButton::with_label(&item.label);
             button.set_sensitive(item.enabled);
             for class in self.0.css {
@@ -145,10 +132,15 @@ impl ItemBar {
     }
 }
 
-/// 項目を持つナビゲーションに共通の API を生やす (`set_items` を除く)。
-macro_rules! impl_item_bar_core {
+/// 項目を持つナビゲーションに共通の API を生やす。
+macro_rules! impl_item_bar {
     ($t:ty) => {
         impl $t {
+            /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+            pub fn set_items(&self, items: &[NavItem]) {
+                self.0.bar.set_items(items);
+            }
+
             pub fn len(&self) -> usize {
                 self.0.bar.len()
             }
@@ -179,20 +171,6 @@ macro_rules! impl_item_bar_core {
     };
 }
 
-/// 項目を持つナビゲーションに共通の API を生やす。
-macro_rules! impl_item_bar {
-    ($t:ty) => {
-        impl_item_bar_core!($t);
-
-        impl $t {
-            /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
-            pub fn set_items(&self, items: &[NavItem]) {
-                self.0.bar.set_items(items);
-            }
-        }
-    };
-}
-
 // ----------------------------------------------------------------- Navbar
 
 struct NavbarInner {
@@ -215,7 +193,7 @@ impl Navbar {
         let native = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let label = gtk::Label::new(Some(title));
         label.add_css_class("title-4");
-        let bar = ItemBar::new(gtk::Orientation::Horizontal, false, None, &["flat"]);
+        let bar = ItemBar::new(gtk::Orientation::Horizontal, false, &["flat"]);
         bar.native().add_css_class("linked");
         native.append(&label);
         native.append(bar.native());
@@ -257,7 +235,7 @@ impl_item_bar!(Dock);
 
 impl Dock {
     pub(crate) fn new() -> Self {
-        let bar = ItemBar::new(gtk::Orientation::Horizontal, true, None, &["flat"]);
+        let bar = ItemBar::new(gtk::Orientation::Horizontal, true, &["flat"]);
         let native = bar.native().clone();
         native.add_css_class("toolbar");
         let bin = SizeBin::wrap(&native);
@@ -286,7 +264,7 @@ impl_item_bar!(Menu);
 
 impl Menu {
     pub(crate) fn new() -> Self {
-        let bar = ItemBar::new(gtk::Orientation::Vertical, false, None, &["flat"]);
+        let bar = ItemBar::new(gtk::Orientation::Vertical, false, &["flat"]);
         let native = bar.native().clone();
         native.add_css_class("navigation-sidebar");
         let bin = SizeBin::wrap(&native);
@@ -299,33 +277,153 @@ impl Menu {
 struct BreadcrumbsInner {
     native: gtk::Box,
     bin: SizeBin,
-    bar: ItemBar,
+    /// 項目ごとのラベル (区切りは含まない)。
+    labels: RefCell<Vec<gtk::Label>>,
+    items: RefCell<Vec<NavItem>>,
+    selected: Cell<Option<usize>>,
+    on_select: Notifier<usize>,
 }
 
 /// パンくず。階層のいまいる場所を左から順に並べる。
 ///
-/// GTK4 に相当するコントロールが無いため、区切り (`›`) を挟んだ
-/// 枠なしボタンの横並びで組み立てる。
+/// GTK4 に相当するコントロールが無いため、`GtkLabel` のマークアップが持つ
+/// リンク (`<a href>`) を区切り (`›`) で挟んで並べる。いまいる場所だけは
+/// リンクにせず普通の文字にする (Web の `<a>` や macOS の `NSPathControl` と
+/// 同じく、枠の無い文字の並びになる)。太字にしないのは、選び直すたびに
+/// 文字幅が変わって後ろの項目がずれるため。ボタンにすると libadwaita の余白
+/// (`padding: 5px 10px`) が項目ごとに付き、間延びするため使わない。
 #[derive(Clone)]
 pub struct Breadcrumbs(Rc<BreadcrumbsInner>);
 impl_widget!(Breadcrumbs);
-impl_item_bar_core!(Breadcrumbs);
 
 impl Breadcrumbs {
     pub(crate) fn new() -> Self {
-        let bar = ItemBar::new(gtk::Orientation::Horizontal, false, Some("›"), &["flat"]);
-        let native = bar.native().clone();
+        let native = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let bin = SizeBin::wrap(&native);
-        Self(Rc::new(BreadcrumbsInner { native, bin, bar }))
+        Self(Rc::new(BreadcrumbsInner {
+            native,
+            bin,
+            labels: RefCell::new(Vec::new()),
+            items: RefCell::new(Vec::new()),
+            selected: Cell::new(None),
+            on_select: Notifier::default(),
+        }))
     }
 
     /// 階層を作り直す。**末尾がいまいる場所**になる。
     pub fn set_items(&self, items: &[NavItem]) {
-        self.0.bar.set_items(items);
-        if !items.is_empty() {
-            self.0.bar.set_selected(items.len() - 1);
+        let native = &self.0.native;
+        while let Some(child) = native.first_child() {
+            native.remove(&child);
+        }
+        let mut labels = Vec::with_capacity(items.len());
+        for index in 0..items.len() {
+            if index > 0 {
+                let separator = gtk::Label::new(Some("›"));
+                separator.add_css_class("dim-label");
+                native.append(&separator);
+            }
+            let label = gtk::Label::new(None);
+            without_context_menu(&label);
+            let weak: Weak<BreadcrumbsInner> = Rc::downgrade(&self.0);
+            label.connect_activate_link(move |_, _| {
+                if let Some(inner) = weak.upgrade() {
+                    Breadcrumbs(inner).select(index);
+                }
+                // 既定の処理 (URI をブラウザで開く) には渡さない。
+                glib::Propagation::Stop
+            });
+            native.append(&label);
+            labels.push(label);
+        }
+        *self.0.labels.borrow_mut() = labels;
+        *self.0.items.borrow_mut() = items.to_vec();
+        self.show(None);
+        if let Some(last) = items.len().checked_sub(1) {
+            self.set_selected(last);
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.0.labels.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn selected(&self) -> Option<usize> {
+        self.0.selected.get()
+    }
+
+    /// 通知せずに選択を変える。
+    pub fn set_selected(&self, index: usize) {
+        if self.is_selectable(index) {
+            self.show(Some(index));
+        }
+    }
+
+    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    pub fn select(&self, index: usize) {
+        if self.is_selectable(index) {
+            self.show(Some(index));
+            self.0.on_select.emit(index);
+        }
+    }
+
+    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
+        self.0.on_select.set(f);
+    }
+
+    fn is_selectable(&self, index: usize) -> bool {
+        self.0
+            .items
+            .borrow()
+            .get(index)
+            .is_some_and(|item| item.enabled)
+    }
+
+    /// 選ばれている項目を普通の文字に、選べるほかの項目をリンクにする。
+    ///
+    /// マークアップを毎回書き直すので、押したリンクに付く「訪問済み」の色も
+    /// ここで消える。
+    fn show(&self, selected: Option<usize>) {
+        self.0.selected.set(selected);
+        let items = self.0.items.borrow();
+        for (index, (label, item)) in self.0.labels.borrow().iter().zip(items.iter()).enumerate() {
+            let text = glib::markup_escape_text(&item.label);
+            if item.enabled && Some(index) != selected {
+                // href は外へ見せない (右クリックのメニューを出さない) ので、番号で足りる。
+                label.set_markup(&format!("<a href=\"{index}\">{text}</a>"));
+            } else {
+                label.set_markup(&text);
+            }
+            label.set_sensitive(item.enabled);
+        }
+    }
+}
+
+/// ラベルの右クリックのメニューを出さない。
+///
+/// リンクを持つ `GtkLabel` のメニューに並ぶのは「リンクを開く」と
+/// 「リンクのアドレスをコピー」だけで、前者はクリックと同じ、後者は
+/// URI の代わりに持たせた項目の番号をコピーしてしまう ([`NavItem`] は
+/// URI を持たない)。メニューは 2 か所から開くので、両方を止める。
+///
+/// - キー操作 (Shift+F10 / Menu キー): `menu.popup` アクションを無効にする。
+///   `GtkLabel` はこのアクションを自分では有効へ戻さない。
+/// - 右クリック: ラベルのジェスチャーがアクションを通さず直に開くので、
+///   捕捉段階のジェスチャーで先に取る。
+fn without_context_menu(label: &gtk::Label) {
+    label.action_set_enabled("menu.popup", false);
+    let secondary = gtk::GestureClick::new();
+    secondary.set_button(gtk::gdk::BUTTON_SECONDARY);
+    secondary.set_propagation_phase(gtk::PropagationPhase::Capture);
+    secondary.connect_pressed(|gesture, _, _, _| {
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+    });
+    label.add_controller(secondary);
 }
 
 // ------------------------------------------------------------- Pagination
@@ -351,7 +449,7 @@ impl Pagination {
         let native = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let previous = gtk::Button::from_icon_name("go-previous-symbolic");
         let next = gtk::Button::from_icon_name("go-next-symbolic");
-        let bar = ItemBar::new(gtk::Orientation::Horizontal, false, None, &["flat"]);
+        let bar = ItemBar::new(gtk::Orientation::Horizontal, false, &["flat"]);
         bar.native().add_css_class("linked");
         native.append(&previous);
         native.append(bar.native());

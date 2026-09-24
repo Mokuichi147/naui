@@ -35,7 +35,8 @@
 //! | `Slider` | `GtkScale` |
 //! | `ProgressBar` | `GtkProgressBar` |
 //! | `Tabs` | `GtkNotebook` |
-//! | `Navbar` / `Dock` / `Menu` / `Breadcrumbs` / `Pagination` | `GtkToggleButton` の並び |
+//! | `Navbar` / `Dock` / `Menu` / `Pagination` | `GtkToggleButton` の並び |
+//! | `Breadcrumbs` | リンク (`<a href>`) を持つ `GtkLabel` + 区切り |
 //! | `PopupMenu` | `GtkPopoverMenu` + `GMenu` + `GSimpleAction` |
 //! | `MenuBar` | `GtkPopoverMenuBar` + `GMenu` + `GSimpleAction` |
 //! | `List` | `GtkListBox` を `GtkScrolledWindow` に載せたもの |
