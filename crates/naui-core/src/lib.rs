@@ -61,7 +61,7 @@ pub use row_window::{
 };
 pub use sidebar::{
     sidebar_item, sidebar_len, sidebar_rows, SidebarItem, SidebarRow, SidebarSection,
-    DEFAULT_SIDEBAR_WIDTH,
+    DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 pub use split::{clamp_split_position, DEFAULT_SPLIT_POSITION};
 pub use table::{SortOrder, TableColumn, TableRow};

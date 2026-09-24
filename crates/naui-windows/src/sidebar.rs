@@ -11,6 +11,14 @@
 //! | まとまりの見出し | `NavigationViewItemHeader` |
 //! | まとまりの間 | `NavigationViewItemSeparator` |
 //! | 右の区画 | `NavigationView.Content`。ウィンドウの子をここへ置く |
+//! | 仕切り | ペインの右端に重ねた透明な `Grid` (naui の `SplitView` と同じつかみ代) |
+//!
+//! `NavigationView` のペインの幅 (`OpenPaneLength`) は利用者が変えられる
+//! 作りになっていないが、ほかの 3 環境のサイドバーはどれも仕切りで幅を変え
+//! られる。そこで naui の `SplitView` と同じ 6 px の透明なつかみ代をペインの
+//! 右端へ重ね、ドラッグで `OpenPaneLength` を動かす。境目の線は
+//! `NavigationView` 自身が描くので、つかみ代は透明のまま (線を足さない)。
+//! カーソルの形は `SplitView` と同じく変えない (`ProtectedCursor` が投影に無い)。
 //!
 //! 開閉は `NavigationView` 標準のペインを畳むボタン (ハンバーガー) で行う。
 //! Windows の作法どおり、畳むとペインは**アイコンだけの細い帯**になる
@@ -22,21 +30,35 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{
-    sidebar_item, sidebar_len, sidebar_rows, Result, SidebarItem, SidebarRow, SidebarSection,
-    DEFAULT_SIDEBAR_WIDTH,
+    clamp_split_position, sidebar_item, sidebar_len, sidebar_rows, Result, SidebarItem, SidebarRow,
+    SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    FontIcon, NavigationView, NavigationViewBackButtonVisible, NavigationViewItem,
-    NavigationViewItemHeader, NavigationViewItemSeparator, NavigationViewPaneDisplayMode,
-    NavigationViewSelectionChangedEventArgs,
+    FontIcon, Grid as XamlGrid, NavigationView, NavigationViewBackButtonVisible,
+    NavigationViewItem, NavigationViewItemHeader, NavigationViewItemSeparator,
+    NavigationViewPaneDisplayMode, NavigationViewSelectionChangedEventArgs,
 };
-use naui_winui3::Microsoft::UI::Xaml::UIElement;
+use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
+use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, Thickness, UIElement, Visibility};
 use windows::Foundation::{PropertyValue, TypedEventHandler};
 use windows_core::{IInspectable, IUnknown, Interface, HSTRING};
 
 use crate::navigation::{text_block, SelectHandler};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
+
+/// 仕切りのつかみ代の幅 (論理ピクセル)。naui の `SplitView` と同じ。
+const GRIP_THICKNESS: f64 = 6.0;
+
+/// ペインの右端に重ねるつかみ代。`Transparent` は `null` と違って当たり判定が
+/// 残るので、見えないままつかめる。
+const GRIP_XAML: &str = r##"<Grid
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    Background="Transparent"
+    Width="6"
+    HorizontalAlignment="Left"
+    VerticalAlignment="Stretch"/>"##;
 
 struct SidebarInner {
     native: NavigationView,
@@ -49,29 +71,38 @@ struct SidebarInner {
     /// `SelectedItem` の書き換えでも `SelectionChanged` が起きるため。
     silent: Cell<bool>,
     width: Cell<f64>,
+    on_resize: ValueHandler<f64>,
     /// 最後に知っている開閉。利用者の開閉だけを通知するために比べる。
     collapsed: Cell<bool>,
-    on_collapse: CollapseHandler,
+    on_collapse: ValueHandler<bool>,
+    /// `NavigationView` と仕切りを重ねる `Grid`。ウィンドウの中へ置くのはこれ。
+    host: XamlGrid,
+    /// ペインの右端に重ねる透明なつかみ代。
+    grip: XamlGrid,
+    /// つかんでいる間は真。
+    dragging: Cell<bool>,
+    /// つかんだ場所とペインの右端とのずれ。
+    grab: Cell<f64>,
 }
 
-/// 開閉の通知先。呼び出しの間だけクロージャを取り出す (再入に備える)。
+/// 値を 1 つ受け取る通知先。呼び出しの間だけクロージャを取り出す (再入に備える)。
 #[derive(Clone)]
-struct CollapseHandler(HandlerCell<dyn FnMut(bool)>);
+struct ValueHandler<T: 'static>(HandlerCell<dyn FnMut(T)>);
 
-impl CollapseHandler {
+impl<T: 'static> ValueHandler<T> {
     fn new() -> Self {
         Self(Arc::new(UiThreadCell::new(None)))
     }
 
-    fn set(&self, f: impl FnMut(bool) + 'static) {
+    fn set(&self, f: impl FnMut(T) + 'static) {
         self.0.with_mut(|slot| *slot = Some(Box::new(f)));
     }
 
-    fn emit(&self, collapsed: bool) {
+    fn emit(&self, value: T) {
         let Some(mut f) = self.0.with_mut(|slot| slot.take()) else {
             return;
         };
-        f(collapsed);
+        f(value);
         self.0.with_mut(|slot| {
             if slot.is_none() {
                 *slot = Some(f);
@@ -100,6 +131,17 @@ impl Sidebar {
         let _ = native.SetIsTitleBarAutoPaddingEnabled(false);
         let _ = native.SetIsPaneOpen(true);
 
+        let host = XamlGrid::new().map_err(|e| to_error("サイドバーの Grid の生成", e))?;
+        let grip = XamlReader::Load(&HSTRING::from(GRIP_XAML))
+            .and_then(|grip| grip.cast::<XamlGrid>())
+            .map_err(|e| to_error("サイドバーの仕切りの生成", e))?;
+        for element in [native.cast::<UIElement>(), grip.cast::<UIElement>()] {
+            let element = element.map_err(|e| to_error("サイドバーの要素化", e))?;
+            host.Children()
+                .and_then(|children| children.Append(&element))
+                .map_err(|e| to_error("サイドバーの組み立て", e))?;
+        }
+
         let this = Self(Rc::new(SidebarInner {
             native,
             sections: RefCell::new(Vec::new()),
@@ -108,10 +150,16 @@ impl Sidebar {
             handler: SelectHandler::new(),
             silent: Cell::new(false),
             width: Cell::new(DEFAULT_SIDEBAR_WIDTH),
+            on_resize: ValueHandler::new(),
             collapsed: Cell::new(false),
-            on_collapse: CollapseHandler::new(),
+            on_collapse: ValueHandler::new(),
+            host,
+            grip,
+            dragging: Cell::new(false),
+            grab: Cell::new(0.0),
         }));
         this.apply_width();
+        this.track_grip()?;
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
         let state = UiThreadCell::new(Rc::downgrade(&this.0));
@@ -156,9 +204,88 @@ impl Sidebar {
 
     /// ペインが開いた・畳まれたときに、変わっていれば覚え直して通知する。
     fn pane_changed(&self, collapsed: bool) {
+        self.show_grip(!collapsed);
         if self.0.collapsed.replace(collapsed) != collapsed {
             self.0.on_collapse.emit(collapsed);
         }
+    }
+
+    /// 仕切りのつまみ方 (ポインター) をつなぐ。`SplitView` と同じ形。
+    fn track_grip(&self) -> Result<()> {
+        let grip = self.0.grip.clone();
+        let with = |f: fn(&Sidebar, &PointerRoutedEventArgs)| {
+            let state = UiThreadCell::new(Rc::downgrade(&self.0));
+            PointerEventHandler::new(move |_, args| {
+                if let Some(args) = args.as_ref() {
+                    let _ = state.try_with_mut(|weak| {
+                        if let Some(inner) = weak.upgrade() {
+                            f(&Sidebar(inner), args);
+                        }
+                    });
+                }
+                Ok(())
+            })
+        };
+        grip.PointerPressed(&with(|sidebar, args| {
+            if let Ok(pointer) = args.Pointer() {
+                let _ = sidebar.0.grip.CapturePointer(&pointer);
+            }
+            if let Some(x) = sidebar.pointer_x(args) {
+                // どこをつかんでも、ペインの端がポインターの下へ飛ばないように。
+                sidebar.0.grab.set(x - sidebar.0.width.get());
+            }
+            sidebar.0.dragging.set(true);
+        }))
+        .map_err(|e| to_error("サイドバーの仕切りの購読", e))?;
+        grip.PointerMoved(&with(|sidebar, args| {
+            if !sidebar.0.dragging.get() {
+                return;
+            }
+            let Some(x) = sidebar.pointer_x(args) else {
+                return;
+            };
+            let total = sidebar
+                .0
+                .host
+                .cast::<FrameworkElement>()
+                .and_then(|host| host.ActualWidth())
+                .unwrap_or(0.0);
+            let width =
+                clamp_split_position(x - sidebar.0.grab.get(), total, SIDEBAR_MIN_WIDTH, 0.0);
+            if (width - sidebar.0.width.get()).abs() < 0.5 {
+                return;
+            }
+            sidebar.0.width.set(width);
+            sidebar.apply_width();
+            sidebar.0.on_resize.emit(width);
+        }))
+        .map_err(|e| to_error("サイドバーの仕切りの購読", e))?;
+        grip.PointerReleased(&with(|sidebar, args| {
+            if let Ok(pointer) = args.Pointer() {
+                let _ = sidebar.0.grip.ReleasePointerCapture(&pointer);
+            }
+            sidebar.0.dragging.set(false);
+        }))
+        .map_err(|e| to_error("サイドバーの仕切りの購読", e))?;
+        grip.PointerCaptureLost(&with(|sidebar, _| sidebar.0.dragging.set(false)))
+            .map_err(|e| to_error("サイドバーの仕切りの購読", e))?;
+        Ok(())
+    }
+
+    /// ポインターの横位置 (サイドバーの左端から)。
+    fn pointer_x(&self, args: &PointerRoutedEventArgs) -> Option<f64> {
+        let host = self.0.host.cast::<UIElement>().ok()?;
+        let point = args.GetCurrentPoint(&host).ok()?.Position().ok()?;
+        Some(f64::from(point.X))
+    }
+
+    /// 仕切りを出す (ペインが開いている間だけ。畳んだ帯の幅は変えられない)。
+    fn show_grip(&self, show: bool) {
+        let _ = self.0.grip.SetVisibility(if show {
+            Visibility::Visible
+        } else {
+            Visibility::Collapsed
+        });
     }
 
     /// `SelectionChanged` を受けて、選ばれた番号を覚え、変わっていれば通知する。
@@ -311,11 +438,16 @@ impl Sidebar {
     }
 
     /// サイドバーの幅 (論理ピクセル)。既定は [`DEFAULT_SIDEBAR_WIDTH`]。
+    ///
+    /// 利用者は仕切りをドラッグして幅を変えられる (下限は
+    /// [`SIDEBAR_MIN_WIDTH`])。変えたあとの幅は [`width`](Self::width) が返し、
+    /// [`on_resize`](Self::on_resize) で届く。この呼び出しでは `on_resize` を
+    /// 呼ばない。
     pub fn set_width(&self, width: f64) {
         if !width.is_finite() || width <= 0.0 {
             return;
         }
-        self.0.width.set(width);
+        self.0.width.set(width.max(SIDEBAR_MIN_WIDTH));
         self.apply_width();
     }
 
@@ -324,8 +456,21 @@ impl Sidebar {
         self.0.width.get()
     }
 
+    /// 利用者が仕切りで幅を変えるたび、変えた後の幅で呼ばれる。
+    pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
+        self.0.on_resize.set(f);
+    }
+
+    /// 幅をペインへ書き、仕切りをペインの右端 (つかみ代の真ん中が境目) へ置く。
     fn apply_width(&self) {
-        let _ = self.0.native.SetOpenPaneLength(self.0.width.get());
+        let width = self.0.width.get();
+        let _ = self.0.native.SetOpenPaneLength(width);
+        let _ = self.0.grip.SetMargin(Thickness {
+            Left: (width - GRIP_THICKNESS / 2.0).max(0.0),
+            Top: 0.0,
+            Right: 0.0,
+            Bottom: 0.0,
+        });
     }
 
     /// サイドバーを閉じる (`true`) か開く (`false`)。
@@ -336,6 +481,7 @@ impl Sidebar {
     pub fn set_collapsed(&self, collapsed: bool) {
         self.0.collapsed.set(collapsed);
         let _ = self.0.native.SetIsPaneOpen(!collapsed);
+        self.show_grip(!collapsed);
     }
 
     /// サイドバーが閉じているかどうか。
@@ -356,12 +502,17 @@ impl Sidebar {
         self.0.native.clone()
     }
 
-    /// ウィンドウの中へ置く要素 (`NavigationView` そのもの)。
+    /// ペインの右端に重ねた仕切り。バックエンド固有の脱出口。
+    pub fn native_divider(&self) -> XamlGrid {
+        self.0.grip.clone()
+    }
+
+    /// ウィンドウの中へ置く要素 (`NavigationView` と仕切りを重ねた `Grid`)。
     pub(crate) fn element(&self) -> Result<UIElement> {
         self.0
-            .native
+            .host
             .cast::<UIElement>()
-            .map_err(|e| to_error("NavigationView の要素化", e))
+            .map_err(|e| to_error("サイドバーの要素化", e))
     }
 
     /// 右の区画へウィンドウの子を置く。`None` なら空にする。

@@ -7,18 +7,18 @@
 //!
 //! | naui | DOM |
 //! | --- | --- |
-//! | サイドバー全体 | `<div>` (横並び) の中に `<aside>` と中身の `<div>` |
+//! | サイドバー全体 | naui の [`SplitView`](crate::SplitView) (start に `<aside>`、end に中身) |
 //! | 項目の一覧 | `<nav>` + まとまりごとの `<ul>` |
 //! | まとまりの見出し | `<div role="heading">` (`<ul>` の `aria-labelledby`) |
 //! | 項目 | `<li><button>` (アイコンは naui 同梱の SVG) |
 //!
-//! 見た目はブラウザ既定のままで、CSS は並びと、中身との境目の線にしか
-//! 使わない。線の色は `SplitView` と同じシステムカラーの `GrayText`。
+//! 見た目はブラウザ既定のままで、CSS は並びにしか使わない。中身との境目は
+//! `SplitView` の仕切りそのもので、ドラッグ (と矢印キー) で幅を変えられる。
 //!
-//! ブラウザには開閉のボタンも無いので、中身の側の上端 (GNOME がサイドバー
-//! ボタンを置くのと同じ位置) に `aria-expanded` / `aria-controls` を持つ
-//! `<button>` を置く。閉じても中身の側に残るので開き直せる。図形だけは
-//! ツールバーと同じく naui が持つ。
+//! ブラウザには開閉のボタンも無いので、`aria-expanded` / `aria-controls` を
+//! 持つ `<button>` を置く。場所はほかの 3 環境とそろえて、開いている間は
+//! サイドバーの左上、閉じている間は中身の左上。図形だけはツールバーと同じく
+//! naui が持つ。
 //!
 //! ほかのバックエンドに合わせて [`Widget`](crate::Widget) にはせず、
 //! [`Window::set_sidebar`](crate::Window::set_sidebar) でウィンドウに
@@ -29,15 +29,17 @@ use std::rc::Rc;
 
 use naui_core::{
     sidebar_item, sidebar_len, sidebar_rows, Result, SidebarItem, SidebarRow, SidebarSection,
-    DEFAULT_SIDEBAR_WIDTH,
+    DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
 use crate::layout::{apply_child_layout, fill_parent, mark_parent, ParentLayout};
 use crate::navigation::SelectHandler;
+use crate::split_view::SplitView;
 use crate::to_error;
 use crate::toolbar::{icon_svg, path_svg};
+use crate::widgets::Widget;
 use crate::widgets::{create, set_disabled, Listener};
 
 /// 開閉ボタンの図形 (左に区画のある窓)。
@@ -59,10 +61,12 @@ fn append(parent: &Element, child: &Element) -> Result<()> {
 
 struct SidebarInner {
     document: Document,
-    /// サイドバーと中身を横に並べる外枠。ウィンドウの中へ置く。
-    mount: HtmlElement,
+    /// サイドバーと中身を分ける仕切り。これの要素をウィンドウの中へ置く。
+    split: SplitView,
     aside: HtmlElement,
     nav: HtmlElement,
+    /// 中身の側 (閉じている間は開閉ボタンがここの先頭に来る)。
+    content: HtmlElement,
     /// ウィンドウの子を入れる `<div>`。
     slot: HtmlElement,
     /// 開閉ボタン。
@@ -76,7 +80,6 @@ struct SidebarInner {
     listeners: RefCell<Vec<Listener>>,
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
-    width: Cell<f64>,
     id: usize,
 }
 
@@ -89,18 +92,21 @@ pub struct Sidebar(Rc<SidebarInner>);
 
 impl Sidebar {
     pub(crate) fn new(doc: &Document) -> Result<Self> {
-        let mount: HtmlElement = create(doc, "div")?.unchecked_into();
-        style(&mount, "display", "flex");
-        style(&mount, "flex-direction", "row");
-        style(&mount, "min-height", "0");
-        fill_parent(&mount);
+        let split = SplitView::new(doc, naui_core::Orientation::Horizontal)?;
+        split.set_min_sizes(SIDEBAR_MIN_WIDTH, 0.0);
+        split.set_position(DEFAULT_SIDEBAR_WIDTH);
 
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let aside: HtmlElement = create(doc, "aside")?.unchecked_into();
+        let _ = aside.set_attribute("id", &format!("naui-sidebar-{id}"));
         style(&aside, "box-sizing", "border-box");
-        style(&aside, "flex-shrink", "0");
+        style(&aside, "display", "flex");
+        style(&aside, "flex-direction", "column");
+        style(&aside, "gap", "8px");
+        style(&aside, "flex-grow", "1");
+        style(&aside, "min-height", "0");
         style(&aside, "overflow-y", "auto");
         style(&aside, "padding", "8px");
-        style(&aside, "border-inline-end", "1px solid GrayText");
 
         let nav: HtmlElement = create(doc, "nav")?.unchecked_into();
         let _ = nav.set_attribute("aria-label", "サイドバー");
@@ -108,18 +114,14 @@ impl Sidebar {
         style(&nav, "flex-direction", "column");
         style(&nav, "gap", "12px");
         append(&aside, &nav)?;
-
-        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let _ = aside.set_attribute("id", &format!("naui-sidebar-{id}"));
+        append(&split.start_element(), &aside)?;
 
         let content: HtmlElement = create(doc, "div")?.unchecked_into();
         style(&content, "display", "flex");
         style(&content, "flex-direction", "column");
         style(&content, "flex-grow", "1");
-        // 中身が広くても、サイドバーを押し出さずに縮む。
-        style(&content, "min-width", "0");
+        style(&content, "min-height", "0");
 
-        // 中身の側の上端に開閉ボタンを置く。
         let toggle: HtmlElement = create(doc, "button")?.unchecked_into();
         let _ = toggle.set_attribute("type", "button");
         let _ = toggle.set_attribute("aria-label", "サイドバー");
@@ -131,7 +133,6 @@ impl Sidebar {
         style(&toggle, "align-self", "flex-start");
         style(&toggle, "flex-shrink", "0");
         append(&toggle, &path_svg(doc, TOGGLE_PATH)?)?;
-        append(&content, &toggle)?;
 
         let slot: HtmlElement = create(doc, "div")?.unchecked_into();
         style(&slot, "display", "flex");
@@ -140,15 +141,14 @@ impl Sidebar {
         style(&slot, "min-height", "0");
         mark_parent(&slot, ParentLayout::Flex(naui_core::Orientation::Vertical));
         append(&content, &slot)?;
-
-        append(&mount, &aside)?;
-        append(&mount, &content)?;
+        append(&split.end_element(), &content)?;
 
         let this = Self(Rc::new(SidebarInner {
             document: doc.clone(),
-            mount,
+            split,
             aside,
             nav,
+            content,
             slot,
             toggle,
             toggle_listener: RefCell::new(None),
@@ -158,10 +158,9 @@ impl Sidebar {
             listeners: RefCell::new(Vec::new()),
             handler: SelectHandler::default(),
             selected: Cell::new(None),
-            width: Cell::new(DEFAULT_SIDEBAR_WIDTH),
             id,
         }));
-        this.apply_width();
+        this.place_toggle();
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
         let listener = Listener::attach(this.0.toggle.as_ref(), "click", {
@@ -177,6 +176,17 @@ impl Sidebar {
         })?;
         *this.0.toggle_listener.borrow_mut() = Some(listener);
         Ok(this)
+    }
+
+    /// 開閉ボタンを、開いていればサイドバーの左上、閉じていれば中身の左上へ置く。
+    fn place_toggle(&self) {
+        let toggle = &self.0.toggle;
+        let (parent, before): (&HtmlElement, &HtmlElement) = if self.is_collapsed() {
+            (&self.0.content, &self.0.slot)
+        } else {
+            (&self.0.aside, &self.0.nav)
+        };
+        let _ = parent.insert_before(toggle, Some(before));
     }
 
     /// 項目をまとまりごとに並べる。呼ぶたびに置き換わる。
@@ -363,30 +373,30 @@ impl Sidebar {
         if !width.is_finite() || width <= 0.0 {
             return;
         }
-        self.0.width.set(width);
-        self.apply_width();
+        self.0.split.set_position(width.max(SIDEBAR_MIN_WIDTH));
     }
 
     /// サイドバーの幅。閉じていても開いたときの幅を返す。
     pub fn width(&self) -> f64 {
-        self.0.width.get()
+        self.0.split.position()
     }
 
-    fn apply_width(&self) {
-        style(&self.0.aside, "width", &format!("{}px", self.0.width.get()));
+    /// 利用者が仕切りで幅を変えるたび、変えた後の幅で呼ばれる。
+    pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
+        self.0.split.on_resize(f);
     }
 
     /// サイドバーを閉じる (`true`) か開く (`false`)。
     ///
-    /// 閉じても項目と選択は残る。閉じている間は `hidden` で隠す。
-    ///
-    /// [`on_collapse`](Self::on_collapse) は呼ばない。
+    /// 閉じても項目と選択と幅は残る。閉じている間はサイドバーと仕切りを
+    /// `hidden` で隠す。[`on_collapse`](Self::on_collapse) は呼ばない。
     pub fn set_collapsed(&self, collapsed: bool) {
-        self.0.aside.set_hidden(collapsed);
+        self.0.split.set_start_hidden(collapsed);
         let _ = self
             .0
             .toggle
             .set_attribute("aria-expanded", if collapsed { "false" } else { "true" });
+        self.place_toggle();
     }
 
     /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
@@ -397,14 +407,19 @@ impl Sidebar {
         self.0.on_collapse.set(f);
     }
 
-    /// 中身の側の上端に置く開閉ボタン。バックエンド固有の脱出口。
+    /// 開閉ボタン。バックエンド固有の脱出口。
     pub fn native_toggle_button(&self) -> Element {
         self.0.toggle.clone().unchecked_into()
     }
 
     /// サイドバーが閉じているかどうか。
     pub fn is_collapsed(&self) -> bool {
-        self.0.aside.hidden()
+        self.0.split.is_start_hidden()
+    }
+
+    /// サイドバーと中身の間の仕切り。バックエンド固有の脱出口。
+    pub fn native_divider(&self) -> HtmlElement {
+        self.0.split.native_divider()
     }
 
     /// サイドバーの `<aside>`。バックエンド固有の脱出口。
@@ -412,9 +427,9 @@ impl Sidebar {
         self.0.aside.clone().unchecked_into()
     }
 
-    /// ウィンドウの中へ置く外枠 (サイドバーと中身の横並び)。
+    /// ウィンドウの中へ置く外枠 (サイドバーと中身を分ける `SplitView`)。
     pub(crate) fn mount(&self) -> HtmlElement {
-        self.0.mount.clone()
+        self.0.split.native_element().unchecked_into()
     }
 
     /// 中身の側へウィンドウの子を置く。`None` なら空にする。

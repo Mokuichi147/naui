@@ -292,7 +292,7 @@ fn main() {
             toolbar_attaches_to_the_header_bar,
         ),
         (
-            "サイドバーが navigation-sidebar の GtkListBox に項目と見出しを並べる",
+            "サイドバーが navigation-sidebar の GtkListBox に項目と見出しを並べ、仕切りで幅を変えられる",
             sidebar_rows_map_to_a_list_box,
         ),
         (
@@ -300,7 +300,7 @@ fn main() {
             sidebar_selection_round_trips,
         ),
         (
-            "サイドバーが AdwOverlaySplitView として取り付き外れる",
+            "サイドバーが GtkPaned として取り付き外れる",
             sidebar_attaches_to_a_window,
         ),
         (
@@ -308,7 +308,7 @@ fn main() {
             sidebar_callback_is_reentrant,
         ),
         (
-            "サイドバーボタンが中身のヘッダーバーの左端に入り、開閉を通知する",
+            "サイドバーボタンが開いている間はサイドバー、閉じたら中身の左上に入り、開閉を通知する",
             sidebar_toggle_button_collapses_and_notifies,
         ),
         (
@@ -5648,18 +5648,41 @@ fn sidebar_rows_map_to_a_list_box(ui: &Ui) -> Result<()> {
     assert!(!rows[5].is_selectable(), "選べない項目は選べない");
     assert!(!rows[5].is_sensitive());
 
-    let split = sidebar.native_split_view();
-    assert_eq!(split.min_sidebar_width(), DEFAULT_SIDEBAR_WIDTH);
-    assert_eq!(split.max_sidebar_width(), DEFAULT_SIDEBAR_WIDTH);
+    // 幅は GtkPaned の仕切りの位置。利用者が動かせる。
+    let paned = sidebar.native_paned();
+    assert_eq!(paned.position(), DEFAULT_SIDEBAR_WIDTH as i32);
+    assert!(!paned.resizes_start_child(), "ウィンドウを広げても幅を保つ");
+    assert!(!paned.shrinks_start_child(), "下限より狭くはならない");
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
     sidebar.set_width(160.0);
-    assert_eq!(split.min_sidebar_width(), 160.0);
-    assert_eq!(split.max_sidebar_width(), 160.0);
+    assert_eq!(paned.position(), 160);
     assert_eq!(sidebar.width(), 160.0);
+    sidebar.set_width(40.0);
+    assert_eq!(
+        sidebar.width(),
+        naui_core::SIDEBAR_MIN_WIDTH,
+        "下限で止まる"
+    );
+    sidebar.set_width(160.0);
+    assert!(resized.borrow().is_empty(), "set_width では通知しない");
+    // 利用者が仕切りを動かしたときと同じ経路 (position プロパティ)。
+    paned.set_position(240);
+    assert_eq!(sidebar.width(), 240.0);
+    assert_eq!(*resized.borrow(), [240.0], "利用者が動かしたら通知する");
+
     sidebar.set_collapsed(true);
     assert!(sidebar.is_collapsed());
-    assert!(!split.shows_sidebar());
+    assert!(
+        !paned.start_child().is_some_and(|c| c.get_visible()),
+        "区画が隠れる"
+    );
     sidebar.set_collapsed(false);
-    assert!(split.shows_sidebar());
+    assert!(paned.start_child().is_some_and(|c| c.get_visible()));
+    assert_eq!(paned.position(), 240, "開き直すと元の幅");
 
     sidebar.set_items(&SidebarItem::list(["春", "夏"]));
     assert_eq!(
@@ -5724,16 +5747,23 @@ fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
     let sidebar = ui.sidebar()?;
     sidebar.set_items(&SidebarItem::list(["一般"]));
     window.set_sidebar(&sidebar);
-    let split = sidebar.native_split_view();
+    let paned = sidebar.native_paned();
     assert_eq!(
         native.content().as_ref(),
-        Some(split.upcast_ref::<gtk::Widget>()),
-        "ウィンドウの中身が AdwOverlaySplitView になる"
+        Some(paned.upcast_ref::<gtk::Widget>()),
+        "ウィンドウの中身が GtkPaned になる"
     );
-    assert_eq!(split.content(), Some(view.clone()), "元の中身は右の区画へ");
-    assert!(split
-        .sidebar()
+    assert_eq!(
+        paned.end_child(),
+        Some(view.clone()),
+        "元の中身は右の区画へ"
+    );
+    assert!(paned
+        .start_child()
         .is_some_and(|pane| pane.is::<adw::ToolbarView>()));
+    // ウィンドウのボタンは、ウィンドウの端に接するほうにだけ出す。
+    assert!(!sidebar.native_header_bar().shows_end_title_buttons());
+    assert!(!window.native_header_bar().shows_start_title_buttons());
 
     // 付けたままでも、子とトーストは右の区画のトースト置き場に入る。
     let other = ui.stack(Orientation::Vertical)?;
@@ -5747,7 +5777,11 @@ fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
 
     window.clear_sidebar();
     assert_eq!(native.content(), Some(view), "外すと元の中身へ戻る");
-    assert!(split.content().is_none());
+    assert!(paned.end_child().is_none());
+    assert!(
+        window.native_header_bar().shows_start_title_buttons(),
+        "外すと中身のヘッダーバーが両端のボタンを出し直す"
+    );
     window.clear_sidebar(); // 付いていなければ何もしない
     window.close();
     Ok(())
@@ -5783,20 +5817,16 @@ fn sidebar_toggle_button_collapses_and_notifies(ui: &Ui) -> Result<()> {
 
     let sidebar = ui.sidebar()?;
     window.set_sidebar(&sidebar);
+    pump();
     let toggle = sidebar.native_toggle_button();
-    let header = window.native_header_bar();
-    assert!(
-        toggle.is_ancestor(&header),
-        "サイドバーボタンは中身の側のヘッダーバーに入る"
-    );
+    let side_header = sidebar.native_header_bar();
+    let content_header = window.native_header_bar();
     assert_eq!(toggle.icon_name().as_deref(), Some("sidebar-show-symbolic"));
-    assert!(toggle.is_active(), "開いている間は押し込まれている");
-    // ツールバーより先に付けたかどうかに関わらず、左端 (ツールバーの前) に来る。
-    assert_eq!(
-        toggle.next_sibling().as_ref(),
-        Some(toolbar.native_box().upcast_ref::<gtk::Widget>()),
-        "サイドバーボタンの右隣がツールバー"
+    assert!(
+        toggle.is_ancestor(&side_header),
+        "開いている間はサイドバーのヘッダーバーの左端"
     );
+    assert!(toggle.is_active(), "開いている間は押し込まれている");
 
     let seen = Rc::new(RefCell::new(Vec::new()));
     sidebar.on_collapse({
@@ -5804,19 +5834,39 @@ fn sidebar_toggle_button_collapses_and_notifies(ui: &Ui) -> Result<()> {
         move |collapsed| seen.borrow_mut().push(collapsed)
     });
     toggle.set_active(false); // 利用者がボタンを押したのと同じ
+    pump();
     assert!(sidebar.is_collapsed());
     assert_eq!(*seen.borrow(), [true]);
+    assert!(
+        toggle.is_ancestor(&content_header),
+        "閉じたら中身のヘッダーバーの左端へ移る"
+    );
+    // ツールバーより左に来る。
+    let slot = toggle.parent().expect("置き場");
+    assert_eq!(
+        slot.next_sibling().as_ref(),
+        Some(toolbar.native_box().upcast_ref::<gtk::Widget>()),
+        "サイドバーボタンの右隣がツールバー"
+    );
+    assert!(
+        content_header.shows_start_title_buttons(),
+        "閉じたら中身のヘッダーバーが左側のウィンドウのボタンも出す"
+    );
+
     toggle.set_active(true);
+    pump();
     assert!(!sidebar.is_collapsed());
     assert_eq!(*seen.borrow(), [true, false]);
+    assert!(toggle.is_ancestor(&side_header), "開いたら戻る");
 
     sidebar.set_collapsed(true);
+    pump();
     assert!(!toggle.is_active(), "set_collapsed もボタンに映る");
     sidebar.set_collapsed(false);
+    pump();
     assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
 
     window.clear_sidebar();
-    assert!(toggle.parent().is_none(), "外すとボタンも消える");
     window.clear_toolbar();
     window.close();
     Ok(())

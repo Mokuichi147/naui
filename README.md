@@ -1031,29 +1031,37 @@ sidebar.set_width(240.0);    // 既定は 220
 window.set_sidebar(&sidebar);
 sidebar.set_collapsed(true); // 閉じる (項目と選択は残る)
 sidebar.on_collapse(|collapsed| println!("利用者が開閉しました: {collapsed}"));
+sidebar.on_resize(|width| println!("利用者が幅を {width} にしました"));
 ```
 
 | 環境 | 実体 | 位置 |
 | --- | --- | --- |
 | macOS | `NSSplitViewController` のサイドバー項目 + ソースリストの `NSTableView` | タイトルバーの下まで伸びる (macOS 26 では浮いたガラス) |
-| Linux | `AdwOverlaySplitView` + `.navigation-sidebar` の `GtkListBox` | サイドバーと中身がそれぞれヘッダーバーを持つ |
+| Linux | `GtkPaned` + `.navigation-sidebar` の `GtkListBox` | サイドバーと中身がそれぞれヘッダーバーを持つ |
 | Windows | `NavigationView` (`PaneDisplayMode` は Left) | タイトルバー (とメニューバー) の下から |
-| Web | `<aside>` + `<nav>` + `<button>` | ウィンドウ要素の中、メニューバー・ツールバーの下 |
+| Web | naui の `SplitView` の中に `<aside>` + `<nav>` + `<button>` | ウィンドウ要素の中、メニューバー・ツールバーの下 |
+
+**4 環境とも、利用者は仕切りをドラッグして幅を変えられます** (下限は
+`SIDEBAR_MIN_WIDTH` の 140)。変えると `on_resize` が呼ばれます (`set_width`
+では呼ばれません)。macOS と Linux は標準の仕切り (`NSSplitView` / `GtkPaned`)、
+Windows と Web は `SplitView` と同じ 6 px のつかみ代です。Linux の
+`AdwOverlaySplitView` は幅を変えられないため、`GtkPaned` で分けています。
 
 開閉は各環境の標準のサイドバーボタンで利用者も行え、そのときは
-`on_collapse` が呼ばれます (`set_collapsed` では呼ばれません)。
+`on_collapse` が呼ばれます (`set_collapsed` では呼ばれません)。ボタンの
+位置は 4 環境でそろえてあり、**開いている間はサイドバーの左上、閉じている間は
+中身の左上**に来ます。
 
 | 環境 | 開閉ボタン | 閉じたときの姿 |
 | --- | --- | --- |
 | macOS | ツールバー先頭のサイドバーボタン (ツールバーが無ければボタンだけのツールバーを付ける) | 区画ごと隠れる |
-| Linux | 中身の側のヘッダーバーの左端 (`sidebar-show-symbolic`) | 区画ごと隠れる |
+| Linux | ヘッダーバーの左端の `sidebar-show-symbolic` | 区画ごと隠れる |
 | Windows | `NavigationView` のペインを畳むボタン | アイコンだけの細い帯 |
-| Web | 中身の側の上端の `<button aria-expanded>` | 区画ごと隠れる |
+| Web | `<button aria-expanded>` | 区画ごと隠れる |
 
 macOS では付けている間だけウィンドウに `fullSizeContentView` が付きますが、
 子の上端はタイトルバーを避けるので中身の見え方は変わりません。アイコンは
-`ToolbarIcon` と同じ種類を使います。幅を利用者が仕切りで変えられるのは
-macOS だけで、ほかの 3 環境では `set_width` の幅に固定されます。
+`ToolbarIcon` と同じ種類を使います。
 
 libadwaita 1.9 にはサイドバーの一覧まで持つ `AdwSidebar` がありますが、naui が
 対象にしている 1.5 には無いため、Linux は 1.5 までの推奨どおり
@@ -1161,7 +1169,7 @@ tokio::spawn(async move {
 | `SplitView` | 🔴 `Grid` + 仕切りの `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
 | `Toolbar` | ✅ `CommandBar` + `AppBarButton` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 | `MenuBar` | 🟡 `Button` + `MenuFlyout` の横並び | ✅ `NSMenu` (`NSApplication.mainMenu`) | ✅ `GtkPopoverMenuBar` + `GMenu` | 🟡 `<div role="menubar">` + `<div role="menu">` |
-| `Sidebar` | ✅ `NavigationView` (Left) | ✅ `NSSplitViewController` (サイドバー項目) + `NSTableView` (ソースリスト) | 🟡 `AdwOverlaySplitView` + `GtkListBox` (`.navigation-sidebar`) | 🔴 `<aside>` + `<nav>` + `<button>` |
+| `Sidebar` | 🟡 `NavigationView` (Left) + 仕切りの `Grid` | ✅ `NSSplitViewController` (サイドバー項目) + `NSTableView` (ソースリスト) | 🟡 `GtkPaned` + `GtkListBox` (`.navigation-sidebar`) | 🔴 `<aside>` + `<nav>` + `<div role="separator">` |
 
 </details>
 

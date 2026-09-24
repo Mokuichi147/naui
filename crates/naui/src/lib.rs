@@ -900,13 +900,14 @@
 //! window.set_sidebar(&sidebar);
 //! sidebar.set_collapsed(true);  // 閉じる (項目と選択は残る)
 //! sidebar.on_collapse(|collapsed| println!("利用者が開閉した: {collapsed}"));
+//! sidebar.on_resize(|width| println!("利用者が幅を {width} にした"));
 //! # Ok(())
 //! # }
 //! ```
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
-//! | `Sidebar` | `NavigationView` (Left) | `NSSplitViewController` のサイドバー項目 | `AdwOverlaySplitView` | `<aside>` + `<nav>` |
+//! | `Sidebar` | `NavigationView` (Left) | `NSSplitViewController` のサイドバー項目 | `GtkPaned` | `SplitView` の中に `<aside>` + `<nav>` |
 //! | 項目の一覧 | `NavigationViewItem` | `NSTableView` (ソースリスト) | `GtkListBox` (`.navigation-sidebar`) | `<ul>` + `<button>` |
 //! | 見出し | `NavigationViewItemHeader` | グループ行 | 淡い `GtkLabel` の行 | `<div role="heading">` |
 //!
@@ -916,21 +917,29 @@
 //! Linux ではサイドバーと中身がそれぞれヘッダーバーを持つ (GNOME の作法)。
 //! Windows と Web ではタイトルバー (とメニューバー) の下から始まる。
 //!
-//! 開閉は**その環境の標準のサイドバーボタン**で利用者も行える。利用者が
-//! 開閉すると [`Sidebar::on_collapse`] が呼ばれる ([`Sidebar::set_collapsed`]
-//! では呼ばれない)。
+//! ### 幅と開閉
+//!
+//! **4 環境とも、利用者は仕切りをドラッグして幅を変えられる** (下限は
+//! [`SIDEBAR_MIN_WIDTH`])。変えると [`Sidebar::on_resize`] が呼ばれる
+//! ([`Sidebar::set_width`] では呼ばれない)。macOS と Linux は標準の仕切り
+//! (`NSSplitView` / `GtkPaned`)、Windows と Web は naui の [`SplitView`] と同じ
+//! 6 px のつかみ代になる。
+//!
+//! 開閉は**その環境の標準のサイドバーボタン**で利用者も行え、そのときは
+//! [`Sidebar::on_collapse`] が呼ばれる ([`Sidebar::set_collapsed`] では呼ばれない)。
+//! ボタンの位置は 4 環境でそろえてあり、**開いている間はサイドバーの左上、
+//! 閉じている間は中身の左上**に来る。
 //!
 //! | 環境 | 開閉ボタン | 閉じたときの姿 |
 //! | --- | --- | --- |
-//! | macOS | ツールバー先頭のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`)。ツールバーが無ければボタンだけのツールバーを付ける | 区画ごと隠れる (仕切りを端まで寄せても閉じる) |
-//! | Linux | 中身の側のヘッダーバーの左端 (`sidebar-show-symbolic`) | 区画ごと隠れる |
+//! | macOS | ツールバー先頭のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`)。ツールバーが無ければボタンだけのツールバーを付ける | 区画ごと隠れる (仕切りを下限より左へ引いても閉じる) |
+//! | Linux | ヘッダーバーの左端の `sidebar-show-symbolic` | 区画ごと隠れる |
 //! | Windows | `NavigationView` のペインを畳むボタン | アイコンだけの細い帯 |
-//! | Web | 中身の側の上端の `<button aria-expanded>` | 区画ごと隠れる |
+//! | Web | `<button aria-expanded>` | 区画ごと隠れる |
 //!
 //! アイコンは [`ToolbarIcon`] と同じ種類を使い、その環境の標準アイコンへ
-//! 写す。幅は利用者が仕切りで変えられるのは macOS だけで、ほかの 3 環境では
-//! [`Sidebar::set_width`] の幅に固定される。`set_selected` / `clear_selection`
-//! は通知せず、`select` と利用者の選択は通知する (ほかのナビゲーションと同じ)。
+//! 写す。`set_selected` / `clear_selection` は通知せず、`select` と利用者の
+//! 選択は通知する (ほかのナビゲーションと同じ)。
 //!
 //! ## ポップアップ (コンテキスト) メニュー
 //!
@@ -1561,7 +1570,7 @@ pub use naui_core::{
     ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, SortOrder,
     TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon,
     ToolbarItem, Track, TreeItem, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION,
-    ROW_WINDOW_THRESHOLD,
+    ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -2046,6 +2055,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     sidebar.on_select(|_index: usize| {});
     sidebar.set_width(DEFAULT_SIDEBAR_WIDTH);
     let _: f64 = sidebar.width();
+    let _: f64 = SIDEBAR_MIN_WIDTH;
+    sidebar.on_resize(|_width: f64| {});
     sidebar.set_collapsed(false);
     let _: bool = sidebar.is_collapsed();
     sidebar.on_collapse(|_collapsed: bool| {});

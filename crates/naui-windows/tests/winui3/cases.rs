@@ -1384,11 +1384,32 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
     assert!(!shared.SelectsOnInvoked().expect("選ばれるか"));
 
     assert_eq!(native.OpenPaneLength().expect("幅"), DEFAULT_SIDEBAR_WIDTH);
+    let divider = sidebar.native_divider();
+    let divider_left = || divider.Margin().expect("仕切りの余白").Left;
+    assert_eq!(
+        divider_left(),
+        DEFAULT_SIDEBAR_WIDTH - 3.0,
+        "仕切りのつかみ代はペインの右端をまたぐ"
+    );
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
     sidebar.set_width(160.0);
     assert_eq!(native.OpenPaneLength().expect("幅"), 160.0);
+    assert_eq!(divider_left(), 157.0, "仕切りもペインの端へ動く");
     assert_eq!(sidebar.width(), 160.0);
     sidebar.set_width(-1.0);
     assert_eq!(sidebar.width(), 160.0, "おかしな幅は無視する");
+    sidebar.set_width(40.0);
+    assert_eq!(
+        sidebar.width(),
+        naui_core::SIDEBAR_MIN_WIDTH,
+        "下限より狭くはならない"
+    );
+    sidebar.set_width(160.0);
+    assert!(resized.borrow().is_empty(), "set_width では通知しない");
 
     let seen = Rc::new(RefCell::new(Vec::new()));
     sidebar.on_collapse({
@@ -1403,6 +1424,11 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
         "畳むとアイコンだけの帯になる (Windows の作法)"
     );
     assert!(native.IsPaneVisible().expect("ペイン"), "帯は残る");
+    assert_eq!(
+        sidebar.native_divider().Visibility().expect("仕切り"),
+        naui_winui3::Microsoft::UI::Xaml::Visibility::Collapsed,
+        "畳んだ帯の幅は変えられないので仕切りを隠す"
+    );
     sidebar.set_collapsed(false);
     assert!(native.IsPaneOpen().expect("ペイン"));
     assert!(seen.borrow().is_empty(), "set_collapsed では通知しない");
@@ -1500,14 +1526,29 @@ fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
     let sidebar = ui.sidebar()?;
     sidebar.set_items(&SidebarItem::list(["一般"]));
     window.set_sidebar(&sidebar);
+    // 中身の行には、NavigationView と仕切りを重ねた Grid が入る。
+    let host = first_in_content_row()
+        .cast::<Grid>()
+        .expect("サイドバーの Grid")
+        .Children()
+        .expect("子");
     let navigation = sidebar
         .native_navigation_view()
         .cast::<UIElement>()
         .expect("要素化");
+    let divider = sidebar
+        .native_divider()
+        .cast::<UIElement>()
+        .expect("要素化");
     assert_eq!(
-        first_in_content_row(),
+        host.GetAt(0).expect("先頭"),
         navigation,
         "サイドバーが中身の行に入る"
+    );
+    assert_eq!(
+        host.GetAt(1).expect("2 番目"),
+        divider,
+        "仕切りがその上に重なる"
     );
     let content = sidebar
         .native_navigation_view()

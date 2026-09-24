@@ -16,7 +16,7 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
         &[
             "ウィンドウの左に付いているのがサイドバーです。レイアウトではなくウィンドウに取り付けます。",
             "項目を選ぶと上のタブが切り替わり、タブを選ぶとサイドバーの選択も移ります。",
-            "開閉はその環境のサイドバーボタンでも行えます (macOS はツールバーの先頭、Linux はヘッダーバーの左端、Windows はペインの ☰、Web は中身の上端)。",
+            "開閉はその環境のサイドバーボタンでも行えます。ボタンは開いている間はサイドバーの左上、閉じている間は中身の左上にあります。",
         ],
     )?;
     let attach = ui.checkbox("ウィンドウに付ける")?;
@@ -45,8 +45,18 @@ pub(crate) fn build(ui: &Ui, window: &Window, sidebar: &Sidebar) -> Result<naui:
         let collapse = collapse.clone();
         move |collapsed| collapse.set_checked(collapsed)
     });
+    // 仕切りで幅を変えると届く。
+    let width = parts::status(
+        ui,
+        &format!("幅: {} (仕切りをドラッグして変えられます)", sidebar.width()),
+    )?;
+    sidebar.on_resize({
+        let width = width.clone();
+        move |value| width.set_text(&format!("幅: {value:.0}"))
+    });
     pane.append(&attach);
     pane.append(&collapse);
+    pane.append(&width);
 
     parts::section(
         ui,

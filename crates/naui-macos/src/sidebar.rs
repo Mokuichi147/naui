@@ -18,8 +18,8 @@
 //! 開閉は AppKit 標準のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`)
 //! で行う。ボタンはツールバーの項目なので、アプリがツールバーを付けていれば
 //! その先頭へ差し込み、付けていなければボタンだけのツールバーをウィンドウへ
-//! 付ける ([`Window::set_sidebar`](crate::Window::set_sidebar))。仕切りを
-//! 端まで寄せても閉じる。利用者が開閉したことは `NSSplitView` の
+//! 付ける ([`Window::set_sidebar`](crate::Window::set_sidebar))。利用者が
+//! 開閉したことは `NSSplitView` の
 //! 大きさの変化 (`NSSplitViewDidResizeSubviewsNotification`) から拾う。
 //!
 //! 項目の一覧は `NSOutlineView` ではなく `NSTableView` にしてある。naui の
@@ -32,16 +32,17 @@ use std::rc::{Rc, Weak};
 
 use naui_core::{
     sidebar_len, sidebar_rows, SidebarItem, SidebarRow, SidebarSection, DEFAULT_SIDEBAR_WIDTH,
+    SIDEBAR_MIN_WIDTH,
 };
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSColor, NSControlTextEditingDelegate, NSFont, NSImage, NSImageView, NSLayoutConstraint,
-    NSScrollView, NSSplitViewController, NSSplitViewDidResizeSubviewsNotification, NSSplitViewItem,
-    NSTableCellView, NSTableColumn, NSTableView, NSTableViewColumnAutoresizingStyle,
-    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSView,
-    NSViewController,
+    NSApplication, NSColor, NSControlTextEditingDelegate, NSEventType, NSFont, NSImage,
+    NSImageView, NSLayoutConstraint, NSScrollView, NSSplitViewController,
+    NSSplitViewDidResizeSubviewsNotification, NSSplitViewItem, NSTableCellView, NSTableColumn,
+    NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
+    NSTableViewStyle, NSTextField, NSView, NSViewController,
 };
 use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSNotification, NSNotificationCenter, NSString,
@@ -218,8 +219,21 @@ define_class!(
     impl ResizeObserver {
         #[unsafe(method(splitViewDidResize:))]
         fn split_view_did_resize(&self, _notification: &NSNotification) {
-            if let Some(inner) = self.ivars().upgrade() {
-                Sidebar(inner).sync_collapsed();
+            let Some(inner) = self.ivars().upgrade() else {
+                return;
+            };
+            let sidebar = Sidebar(inner);
+            sidebar.sync_collapsed();
+            // 利用者が仕切りをつかんでいる間、`NSSplitView` はマウスの
+            // ドラッグのイベントを回しながら区画を並べ直す。開閉のアニメー
+            // ションやウィンドウへの取り付けでは、いまのイベントはドラッグでは
+            // ない (仕切りの番号付きの通知はどちらでも来るので、目印にならない)。
+            let mtm = MainThreadMarker::from(self);
+            let dragging = NSApplication::sharedApplication(mtm)
+                .currentEvent()
+                .is_some_and(|event| event.r#type() == NSEventType::LeftMouseDragged);
+            if dragging {
+                sidebar.sync_width();
             }
         }
     }
@@ -333,7 +347,12 @@ struct SidebarInner {
     selected: Rc<Cell<Option<usize>>>,
     handler: SelectHandler,
     silent: Rc<Cell<bool>>,
+    /// サイドバーの幅。`set_width` の値か、利用者が仕切りで変えた幅。
     width: Cell<f64>,
+    on_resize: ValueHandler<f64>,
+    /// naui が仕切りを置いている間、またはまだ幅を置いていない間は真。
+    /// この間の大きさの変化は利用者の操作ではない。
+    applying: Cell<bool>,
     /// 最後に知っている開閉。利用者の開閉だけを通知するために比べる。
     collapsed: Cell<bool>,
     on_collapse: ValueHandler<bool>,
@@ -404,6 +423,9 @@ impl Sidebar {
         let sidebar_item = NSSplitViewItem::sidebarWithViewController(&sidebar_controller);
         sidebar_item.setAllowsFullHeightLayout(true);
         sidebar_item.setCanCollapse(true);
+        // 仕切りで狭められる下限。これより左へ引くと、AppKit の作法どおり
+        // サイドバーごと閉じる (`on_collapse` が呼ばれる)。
+        sidebar_item.setMinimumThickness(SIDEBAR_MIN_WIDTH);
 
         let content_host = NSView::new(mtm);
         let content_controller = view_controller(mtm, &content_host);
@@ -431,6 +453,8 @@ impl Sidebar {
             width: Cell::new(DEFAULT_SIDEBAR_WIDTH),
             collapsed: Cell::new(false),
             on_collapse: ValueHandler::default(),
+            on_resize: ValueHandler::default(),
+            applying: Cell::new(true),
             controls,
             observer: RefCell::new(None),
         }));
@@ -526,37 +550,48 @@ impl Sidebar {
 
     /// サイドバーの幅 (論理ピクセル)。既定は [`DEFAULT_SIDEBAR_WIDTH`]。
     ///
-    /// 利用者は仕切りを動かして幅を変えられる。そのあとの幅は
-    /// [`width`](Self::width) が返す。
+    /// 利用者は仕切りをドラッグして幅を変えられる (下限は
+    /// [`SIDEBAR_MIN_WIDTH`](naui_core::SIDEBAR_MIN_WIDTH))。変えたあとの幅は
+    /// [`width`](Self::width) が返し、[`on_resize`](Self::on_resize) で届く。
+    /// この呼び出しでは `on_resize` を呼ばない。
     pub fn set_width(&self, width: f64) {
         if !width.is_finite() || width <= 0.0 {
             return;
         }
-        self.0.width.set(width);
+        self.0.width.set(width.max(SIDEBAR_MIN_WIDTH));
         self.apply_width();
     }
 
-    /// いまのサイドバーの幅。閉じていても開いたときの幅を返す。
+    /// サイドバーの幅。閉じていても開いたときの幅を返す。
     pub fn width(&self) -> f64 {
+        self.0.width.get()
+    }
+
+    /// 利用者が仕切りで幅を変えるたび、変えた後の幅で呼ばれる。
+    pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
+        self.0.on_resize.set(f);
+    }
+
+    /// 区画の幅を読み、変わっていれば覚え直して通知する。
+    fn sync_width(&self) {
+        if self.0.applying.get() || self.is_collapsed() {
+            return;
+        }
         let split = self.0.controller.splitView();
-        let sidebar = split.arrangedSubviews();
-        match sidebar.firstObject() {
-            Some(view) if !self.is_collapsed() && view.frame().size.width > 0.0 => {
-                view.frame().size.width
-            }
-            _ => self.0.width.get(),
+        let Some(pane) = split.arrangedSubviews().firstObject() else {
+            return;
+        };
+        let width = pane.frame().size.width;
+        if width > 0.0 && (width - self.0.width.replace(width)).abs() >= 0.5 {
+            self.0.on_resize.emit(width);
         }
     }
 
     /// サイドバーを閉じる (`true`) か開く (`false`)。
     ///
     /// 閉じても項目と選択は残る。[`on_collapse`](Self::on_collapse) は
-    /// 呼ばない (利用者がサイドバーボタンや仕切りで開閉したときだけ呼ぶ)。
+    /// 呼ばない (利用者がサイドバーボタンで開閉したときだけ呼ぶ)。
     pub fn set_collapsed(&self, collapsed: bool) {
-        if collapsed && !self.is_collapsed() {
-            // 開き直すときに同じ幅へ戻れるよう覚えておく。
-            self.0.width.set(self.width());
-        }
         // 先に覚えておくと、このあと届く大きさの変化を通知しないで済む。
         self.0.collapsed.set(collapsed);
         self.0.sidebar_item.setCollapsed(collapsed);
@@ -564,7 +599,7 @@ impl Sidebar {
 
     /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
     ///
-    /// サイドバーボタン・仕切りの操作で呼ばれ、
+    /// サイドバーボタンの操作で呼ばれ、
     /// [`set_collapsed`](Self::set_collapsed) では呼ばれない。
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse.set(f);
@@ -635,15 +670,20 @@ impl Sidebar {
 
     /// 覚えている幅へ仕切りを置く。
     ///
-    /// ウィンドウへ取り付ける前は区画の大きさが 0 なので、取り付けたあと
-    /// ([`Window::set_sidebar`](crate::Window::set_sidebar)) にも呼び直す。
+    /// 幅は区画のビューの幅 (macOS 26 の浮いたガラスでは、その周りの余白を
+    /// 含む)。ウィンドウへ取り付ける前は区画の大きさが 0 なので、取り付けた
+    /// あと ([`Window::set_sidebar`](crate::Window::set_sidebar)) にも呼び直す。
     pub(crate) fn apply_width(&self) {
         let split = self.0.controller.splitView();
+        self.0.applying.set(true);
         split.layoutSubtreeIfNeeded();
-        if split.frame().size.width <= 0.0 || self.is_collapsed() {
-            return;
+        let placed = split.frame().size.width > 0.0 && !self.is_collapsed();
+        if placed {
+            split.setPosition_ofDividerAtIndex(self.0.width.get(), 0);
+            split.layoutSubtreeIfNeeded();
         }
-        split.setPosition_ofDividerAtIndex(self.0.width.get(), 0);
+        // 置けたときだけ、この先の仕切りの動きを利用者の操作として拾う。
+        self.0.applying.set(!placed);
     }
 
     fn is_selectable(&self, index: usize) -> bool {

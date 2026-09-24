@@ -8,8 +8,8 @@
 //! 下段はさらに `AdwToastOverlay` で包む。[`Toast`](crate::Toast) はここへ
 //! 足され、ヘッダーバーより下・アプリの中身の上へ重なる (GNOME の作法)。
 //!
-//! [`Sidebar`] を付けると、ウィンドウの中身は `AdwOverlaySplitView` になり、
-//! 上の `AdwToolbarView` はその右の区画へ移る。左の区画はサイドバー自身の
+//! [`Sidebar`] を付けると、ウィンドウの中身は `GtkPaned` になり、上の
+//! `AdwToolbarView` はその右の区画へ移る。左の区画はサイドバー自身の
 //! ヘッダーバーと一覧を持つ。
 
 use std::cell::RefCell;
@@ -142,16 +142,17 @@ impl Window {
 
     /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
     ///
-    /// ウィンドウの中身を `AdwOverlaySplitView` へ差し替え、これまでの中身
+    /// ウィンドウの中身を `GtkPaned` へ差し替え、これまでの中身
     /// (ヘッダーバー・メニューバー・子) はその右の区画へ移す。
     pub fn set_sidebar(&self, sidebar: &Sidebar) {
         self.clear_sidebar();
-        let split = sidebar.native_split_view();
+        let paned = sidebar.native_paned();
         self.0.native.set_content(None::<&gtk::Widget>);
-        split.set_content(Some(&self.0.view));
-        self.0.native.set_content(Some(&split));
+        paned.set_end_child(Some(&self.0.view));
+        self.0.native.set_content(Some(&paned));
         *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
         self.mount_header_start();
+        sidebar.set_content_header(Some(&self.0.header));
     }
 
     /// 取り付けたサイドバーを外す。付いていなければ何もしない。
@@ -161,24 +162,30 @@ impl Window {
         let Some(old) = self.0.sidebar.borrow_mut().take() else {
             return;
         };
-        let split = old.native_split_view();
+        let paned = old.native_paned();
         self.0.native.set_content(None::<&gtk::Widget>);
-        split.set_content(None::<&gtk::Widget>);
+        paned.set_end_child(None::<&gtk::Widget>);
         self.0.native.set_content(Some(&self.0.view));
-        self.0.header.remove(&old.native_toggle_button());
+        let slot = old.content_slot();
+        if slot.parent().is_some() {
+            self.0.header.remove(&slot);
+        }
+        old.set_content_header(None);
     }
 
-    /// ヘッダーバーの左側を、サイドバーボタン → ツールバーの順に並べ直す。
+    /// ヘッダーバーの左側を、サイドバーボタンの置き場 → ツールバーの順に
+    /// 並べ直す。
     ///
+    /// 置き場にはサイドバーを閉じている間だけサイドバーボタンが入る。
     /// `pack_start` は後ろへ足していくので、先に付いていたほうを外してから
-    /// 並べる (サイドバーボタンはいつも左端)。
+    /// 並べる (置き場はいつも左端)。
     fn mount_header_start(&self) {
         let sidebar = self.0.sidebar.borrow().clone();
         let toolbar = self.0.toolbar.borrow().clone();
         if let Some(sidebar) = &sidebar {
-            let toggle = sidebar.native_toggle_button();
-            if toggle.parent().is_some() {
-                self.0.header.remove(&toggle);
+            let slot = sidebar.content_slot();
+            if slot.parent().is_some() {
+                self.0.header.remove(&slot);
             }
         }
         if let Some(toolbar) = &toolbar {
@@ -188,7 +195,7 @@ impl Window {
             }
         }
         if let Some(sidebar) = &sidebar {
-            self.0.header.pack_start(&sidebar.native_toggle_button());
+            self.0.header.pack_start(&sidebar.content_slot());
         }
         if let Some(toolbar) = &toolbar {
             self.0.header.pack_start(&toolbar.mount());
@@ -266,13 +273,12 @@ impl Window {
 /// [`Toast`](crate::Toast) は「いちばん手前のウィンドウ」へ出すので、
 /// `GtkApplication` からたどったウィンドウを、naui が組んだ構造
 /// (`AdwApplicationWindow` → `AdwToolbarView` → `AdwToastOverlay`) に沿って
-/// 下りる。サイドバーを付けていれば、間に `AdwOverlaySplitView` の右の
-/// 区画が挟まる。
+/// 下りる。サイドバーを付けていれば、間に `GtkPaned` の右の区画が挟まる。
 pub(crate) fn toast_overlay(window: &gtk::Window) -> Option<adw::ToastOverlay> {
     let window = window.clone().downcast::<adw::ApplicationWindow>().ok()?;
     let mut content = window.content()?;
-    if let Some(split) = content.downcast_ref::<adw::OverlaySplitView>() {
-        content = split.content()?;
+    if let Some(paned) = content.downcast_ref::<gtk::Paned>() {
+        content = paned.end_child()?;
     }
     let view = content.downcast::<adw::ToolbarView>().ok()?;
     view.content()?.downcast::<adw::ToastOverlay>().ok()

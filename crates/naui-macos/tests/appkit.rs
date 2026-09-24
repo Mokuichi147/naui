@@ -8084,18 +8084,69 @@ fn sidebar_width_and_collapse(ui: &Ui) -> Result<()> {
     window.set_sidebar(&sidebar);
 
     let split = sidebar.native_split_view_controller().splitView();
-    let pane = || split.arrangedSubviews().objectAtIndex(0).frame().size.width;
-    split.layoutSubtreeIfNeeded();
+    let pane = || {
+        split.layoutSubtreeIfNeeded();
+        split.arrangedSubviews().objectAtIndex(0).frame().size.width
+    };
     assert!(
         (pane() - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
         "既定の幅で出る: {}",
         pane()
     );
 
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
     sidebar.set_width(260.0);
-    split.layoutSubtreeIfNeeded();
     assert!((pane() - 260.0).abs() < 1.0, "幅が区画に届く: {}", pane());
     assert!((sidebar.width() - 260.0).abs() < 1.0);
+    sidebar.set_width(40.0);
+    assert!(
+        (sidebar.width() - naui_core::SIDEBAR_MIN_WIDTH).abs() < 1.0,
+        "下限より狭くはならない"
+    );
+    sidebar.set_width(220.0);
+    assert!(resized.borrow().is_empty(), "set_width では通知しない");
+
+    // 利用者と同じく、仕切りをつかんで右へ 40 動かす (220 → 260 付近)。
+    window.show();
+    let app = NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
+    drag_divider(&app, &window.native_window(), &split, 40.0);
+    let dragged = pane();
+    assert!(
+        (dragged - 260.0).abs() < 3.0,
+        "仕切りで広げられる: {dragged}"
+    );
+    assert!((sidebar.width() - dragged).abs() < 0.5, "動かした幅を返す");
+    assert!(!resized.borrow().is_empty(), "利用者が動かしたら通知する");
+    assert!((resized.borrow().last().unwrap() - dragged).abs() < 0.5);
+    let count = resized.borrow().len();
+    drag_divider(&app, &window.native_window(), &split, -80.0);
+    assert!(
+        (pane() - (dragged - 80.0)).abs() < 3.0,
+        "仕切りで狭められる: {}",
+        pane()
+    );
+    assert!(resized.borrow().len() > count);
+
+    // 下限を越えて端まで寄せると、AppKit の作法どおり閉じる。
+    let collapsed = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let collapsed = collapsed.clone();
+        move |value| collapsed.borrow_mut().push(value)
+    });
+    drag_divider(&app, &window.native_window(), &split, -400.0);
+    pump_until(3.0, || sidebar.is_collapsed());
+    assert!(sidebar.is_collapsed(), "端まで寄せると閉じる");
+    assert_eq!(*collapsed.borrow(), [true], "閉じたことが届く");
+    sidebar.set_collapsed(false);
+    pump_until(3.0, || {
+        !split.isSubviewCollapsed(&split.arrangedSubviews().objectAtIndex(0))
+    });
+    sidebar.set_width(260.0);
+    let fixed = pane();
 
     assert!(!sidebar.is_collapsed());
     window.show();
@@ -8126,7 +8177,7 @@ fn sidebar_width_and_collapse(ui: &Ui) -> Result<()> {
     pump_until(3.0, || !split.isSubviewCollapsed(&sidebar_view));
     split.layoutSubtreeIfNeeded();
     assert!(
-        (pane() - 260.0).abs() < 1.0,
+        (pane() - fixed).abs() < 1.0,
         "開き直すと同じ幅へ戻る: {}",
         pane()
     );
@@ -8284,6 +8335,11 @@ fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
         let seen = seen.clone();
         move |collapsed| seen.borrow_mut().push(collapsed)
     });
+    let resized = Rc::new(Cell::new(0));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |_| resized.set(resized.get() + 1)
+    });
 
     // サイドバーボタンが送るのと同じ操作。
     let controller = sidebar.native_split_view_controller();
@@ -8296,6 +8352,17 @@ fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
     pump_until(3.0, || seen.borrow().len() >= 2);
     assert!(!sidebar.is_collapsed());
     assert_eq!(*seen.borrow(), [true, false], "開いたことも届く");
+    pump(0.5);
+    assert_eq!(
+        resized.get(),
+        0,
+        "開閉のアニメーションは幅の変更として通知しない"
+    );
+    assert!(
+        (sidebar.width() - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
+        "開き直すと元の幅: {}",
+        sidebar.width()
+    );
 
     sidebar.set_collapsed(true);
     pump(0.5);
@@ -8320,4 +8387,45 @@ fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
     window.clear_sidebar();
     window.close();
     Ok(())
+}
+
+/// 分割ビューの最初の仕切りをつかみ、横へ `dx` 動かして離す。
+///
+/// イベントをキューへ積んでから押下を配送するので、`NSSplitView` の
+/// 追跡ループが本物のドラッグと同じく続きのイベントを読み取る。
+fn drag_divider(
+    app: &NSApplication,
+    window: &NSWindow,
+    split: &objc2_app_kit::NSSplitView,
+    dx: f64,
+) {
+    split.layoutSubtreeIfNeeded();
+    let first = split.arrangedSubviews().objectAtIndex(0).frame();
+    let y = split.bounds().size.height / 2.0;
+    let x = first.origin.x + first.size.width + split.dividerThickness() / 2.0;
+    let start = split.convertPoint_toView(NSPoint::new(x, y), None);
+    let event = |kind, point: NSPoint| {
+        NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            point,
+            NSEventModifierFlags::empty(),
+            0.0,
+            window.windowNumber(),
+            None,
+            0,
+            1,
+            1.0,
+        )
+        .expect("マウスイベント")
+    };
+    let steps = 4;
+    for step in 1..=steps {
+        let point = NSPoint::new(start.x + dx * f64::from(step) / f64::from(steps), start.y);
+        unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseDragged, point), false) };
+    }
+    let end = NSPoint::new(start.x + dx, start.y);
+    unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseUp, end), false) };
+    app.sendEvent(&event(NSEventType::LeftMouseDown, start));
+    deliver_events(app);
+    pump(0.05);
 }

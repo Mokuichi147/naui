@@ -2513,17 +2513,21 @@ fn sidebar_attaches_to_the_left_of_the_window() {
         let root = window.native_element();
         let aside = sidebar.native_element();
         assert!(root.contains(Some(&aside)), "ウィンドウの中に入る");
+        // サイドバーと中身は SplitView の start と end に入り、間が仕切り。
+        let start = aside.parent_element().expect("start 側の区画");
+        let divider: Element = sidebar.native_divider().unchecked_into();
+        assert_eq!(start.next_element_sibling(), Some(divider.clone()));
+        assert_eq!(divider.get_attribute("role").as_deref(), Some("separator"));
+        let end = divider.next_element_sibling().expect("end 側の区画");
         let element = content.native_element();
-        let pane = aside.next_element_sibling().expect("中身の側");
-        assert_eq!(
-            element.parent_element(),
-            pane.last_element_child(),
+        assert!(
+            end.contains(Some(&element)),
             "子はサイドバーの右の中身の側へ移る"
         );
         assert_eq!(
-            pane.first_element_child(),
+            aside.first_element_child(),
             Some(sidebar.native_toggle_button()),
-            "中身の側の上端に開閉ボタンがある"
+            "開いている間、開閉ボタンはサイドバーの左上にある"
         );
         assert_eq!(
             root.first_element_child(),
@@ -2531,42 +2535,43 @@ fn sidebar_attaches_to_the_left_of_the_window() {
             "メニューバーは先頭に残る"
         );
 
-        let side = aside.get_bounding_client_rect();
-        let body_rect = element.get_bounding_client_rect();
-        assert!(
-            (side.width() - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
-            "既定の幅: {}",
-            side.width()
-        );
-        assert!(side.right() <= body_rect.left() + 0.5, "サイドバーが左");
-        // 表示枠の幅はランナーによって 0 になることがあるので、幅そのもの
-        // ではなく、余りを受け取る指定になっていることを見る。
+        // 表示枠の幅はランナーによって 0 になることがあるので、実際の幅では
+        // なく、区画へ書いた幅と、余りを受け取る指定を見る。
+        let start_html: &HtmlElement = start.unchecked_ref();
+        let width_of =
+            |pane: &HtmlElement| pane.style().get_property_value("width").unwrap_or_default();
         assert_eq!(
-            computed(&pane, "flex-grow"),
-            "1",
-            "中身が残りの幅を受け取る"
+            width_of(start_html),
+            format!("{DEFAULT_SIDEBAR_WIDTH}px"),
+            "既定の幅"
         );
-        assert_eq!(computed(&aside, "flex-shrink"), "0", "サイドバーは縮まない");
+        assert_eq!(computed(&end, "flex-grow"), "1", "中身が残りの幅を受け取る");
 
         sidebar.set_width(160.0);
-        assert!((aside.get_bounding_client_rect().width() - 160.0).abs() < 1.0);
+        assert_eq!(width_of(start_html), "160px");
+        assert_eq!(sidebar.width(), 160.0);
+        sidebar.set_width(40.0);
+        assert_eq!(
+            sidebar.width(),
+            naui_core::SIDEBAR_MIN_WIDTH,
+            "下限より狭くはならない"
+        );
+        sidebar.set_width(160.0);
         sidebar.set_collapsed(true);
         assert!(sidebar.is_collapsed());
-        assert_eq!(
-            aside.get_bounding_client_rect().width(),
-            0.0,
-            "閉じると消える"
+        assert!(start_html.hidden(), "閉じるとサイドバーの区画が隠れる");
+        assert!(
+            divider.unchecked_ref::<HtmlElement>().hidden(),
+            "仕切りも隠れる"
         );
         assert_eq!(sidebar.width(), 160.0, "閉じても幅は覚えている");
         sidebar.set_collapsed(false);
+        assert!(!start_html.hidden());
 
         // 付けたまま子を差し替えても中身の側に入る。
         let other = ui.label("別の中身")?;
         window.set_child(&other);
-        assert_eq!(
-            other.native_element().parent_element(),
-            pane.last_element_child()
-        );
+        assert!(end.contains(Some(&other.native_element())));
 
         window.clear_sidebar();
         assert!(!root.contains(Some(&aside)), "外すとページから消える");
@@ -2627,8 +2632,21 @@ fn sidebar_toggle_button_collapses_and_notifies() {
             Some("true")
         );
 
+        assert_eq!(
+            toggle.parent_element(),
+            Some(aside.clone()),
+            "開いている間はサイドバーの左上"
+        );
         toggle.click();
         assert!(sidebar.is_collapsed());
+        assert_ne!(
+            toggle.parent_element(),
+            Some(aside.clone()),
+            "閉じたら中身の左上へ移る (サイドバーと一緒に隠れない)"
+        );
+        assert!(!toggle
+            .parent_element()
+            .is_some_and(|p| p.unchecked_ref::<HtmlElement>().hidden()));
         assert_eq!(
             toggle.get_attribute("aria-expanded").as_deref(),
             Some("false")
@@ -2645,6 +2663,44 @@ fn sidebar_toggle_button_collapses_and_notifies() {
         );
         sidebar.set_collapsed(false);
         assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sidebar_divider_resizes_and_notifies() {
+    with_ui(|ui| {
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&SidebarItem::list(["一般"]));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sidebar.on_resize({
+            let seen = seen.clone();
+            move |width| seen.borrow_mut().push(width)
+        });
+        sidebar.set_width(200.0);
+        assert!(seen.borrow().is_empty(), "set_width では通知しない");
+
+        // 仕切りは SplitView と同じく矢印キーでも動く (10 px ずつ)。
+        let divider = sidebar.native_divider();
+        let key = |name: &str| {
+            let init = KeyboardEventInit::new();
+            init.set_key(name);
+            init.set_bubbles(true);
+            let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+                .expect("キーイベント");
+            divider.dispatch_event(&event).expect("配送");
+        };
+        key("ArrowRight");
+        assert_eq!(sidebar.width(), 210.0);
+        assert_eq!(*seen.borrow(), [210.0], "利用者が動かしたら通知する");
+        for _ in 0..20 {
+            key("ArrowLeft");
+        }
+        assert_eq!(
+            sidebar.width(),
+            naui_core::SIDEBAR_MIN_WIDTH,
+            "下限で止まる"
+        );
         Ok(())
     });
 }
