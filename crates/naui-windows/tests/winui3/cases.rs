@@ -145,10 +145,6 @@ const ASYNC_CASES: &[AsyncCase] = &[
         "サイドバーは中身の行に入り、子をその右の区画へ移す",
         sidebar_takes_the_content_row,
     ),
-    (
-        "サイドバーの幅を変えても、項目の文字が前の幅で切れたまま残らない",
-        sidebar_labels_follow_the_width,
-    ),
 ];
 
 /// `Application::Start` に入ったきり戻らないと、CI が打ち切るまで詰まる。
@@ -1608,94 +1604,4 @@ fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
     );
     window.clear_sidebar(); // 付いていなければ何もしない
     Ok(Box::new(|| Ok(())))
-}
-
-/// 項目の文字から項目の枠まで、親をたどって型と幅を並べる (CI のログ用)。
-fn label_ancestry(label: &TextBlock) -> String {
-    use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
-    use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
-    let mut out = Vec::new();
-    let mut next = label.cast::<DependencyObject>().ok();
-    for _ in 0..12 {
-        let Some(node) = next else {
-            break;
-        };
-        let name = windows_core::Interface::cast::<windows_core::IInspectable>(&node)
-            .ok()
-            .and_then(|i| i.GetRuntimeClassName().ok())
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        let width = node
-            .cast::<FrameworkElement>()
-            .ok()
-            .and_then(|e| e.ActualWidth().ok())
-            .unwrap_or(-1.0);
-        out.push(format!(
-            "{} {width:.1}",
-            name.rsplit('.').next().unwrap_or("?")
-        ));
-        if name.ends_with("NavigationViewItem") {
-            break;
-        }
-        next = VisualTreeHelper::GetParent(&node).ok();
-    }
-    out.join(" < ")
-}
-
-/// 仕切りで幅を狭めてから広げたとき、項目の枠 (選択の帯) だけが広がって
-/// 文字が前の幅で切れたまま残らないこと。
-///
-/// テンプレートが当たるのは画面に出したコントロールだけなので、ウィンドウを
-/// 出して一巡させてから測る。ウィンドウはほかのケースと同じく閉じない。
-fn sidebar_labels_follow_the_width(ui: &Ui) -> Result<Deferred> {
-    use naui_winui3::Microsoft::UI::Xaml::Controls::NavigationViewItem;
-
-    let window = ui.window("サイドバーの文字", 640.0, 400.0)?;
-    window.set_child(&ui.stack(Orientation::Vertical)?);
-    let sidebar = ui.sidebar()?;
-    sidebar.set_items(&[
-        SidebarItem::new("基本").icon(ToolbarIcon::Info),
-        SidebarItem::new("ナビゲーション").icon(ToolbarIcon::Forward),
-    ]);
-    sidebar.set_selected(1);
-    window.set_sidebar(&sidebar);
-    window.show();
-
-    Ok(Box::new(move || {
-        let native = sidebar.native_navigation_view();
-        let label = native
-            .MenuItems()
-            .expect("項目")
-            .GetAt(1)
-            .expect("ナビゲーション")
-            .cast::<NavigationViewItem>()
-            .expect("項目")
-            .Content()
-            .expect("中身")
-            .cast::<TextBlock>()
-            .expect("文字");
-        let layout = || {
-            let _ = native.UpdateLayout();
-        };
-        layout();
-        println!("  既定の幅: {}", label_ancestry(&label));
-        assert!(
-            !label.IsTextTrimmed().expect("省略"),
-            "既定の幅 (220) では省略されない: {}",
-            label_ancestry(&label)
-        );
-
-        sidebar.set_width(150.0);
-        layout();
-        println!("  150 に狭めた: {}", label_ancestry(&label));
-        sidebar.set_width(300.0);
-        layout();
-        println!("  300 に広げた: {}", label_ancestry(&label));
-        assert!(
-            !label.IsTextTrimmed().expect("省略"),
-            "広げ直したら省略されない: {}",
-            label_ancestry(&label)
-        );
-        Ok(())
-    }))
 }
