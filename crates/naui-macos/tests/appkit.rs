@@ -511,6 +511,10 @@ fn main() {
             sidebar_toast_goes_to_the_content_pane,
         ),
         (
+            "サイドバーを閉じている間に置いた幅が、開き直したときに反映される",
+            sidebar_width_set_while_collapsed_applies_on_reopen,
+        ),
+        (
             "サイドバーを付けるとツールバーの先頭にサイドバーボタンが入る",
             sidebar_adds_the_toggle_button_to_the_toolbar,
         ),
@@ -8119,9 +8123,17 @@ fn sidebar_width_and_collapse(ui: &Ui) -> Result<()> {
         (dragged - 260.0).abs() < 3.0,
         "仕切りで広げられる: {dragged}"
     );
-    assert!((sidebar.width() - dragged).abs() < 0.5, "動かした幅を返す");
+    // 手を離したあと、AppKit は区画を画素の境目へそろえる (257.5 → 258)。
+    // その並べ直しはドラッグのイベントの外で起きるので拾わない (拾うと開閉の
+    // アニメーション中の幅まで拾ってしまう)。差は半画素までになる。
+    assert!(
+        (sidebar.width() - dragged).abs() < 1.0,
+        "動かした幅を返す: width={} pane={dragged} resized={:?}",
+        sidebar.width(),
+        resized.borrow()
+    );
     assert!(!resized.borrow().is_empty(), "利用者が動かしたら通知する");
-    assert!((resized.borrow().last().unwrap() - dragged).abs() < 0.5);
+    assert!((resized.borrow().last().unwrap() - dragged).abs() < 1.0);
     let count = resized.borrow().len();
     drag_divider(&app, &window.native_window(), &split, -80.0);
     assert!(
@@ -8428,4 +8440,81 @@ fn drag_divider(
     app.sendEvent(&event(NSEventType::LeftMouseDown, start));
     deliver_events(app);
     pump(0.05);
+}
+
+/// 閉じている間に `set_width` した幅が、開き直したときに区画へ反映され、
+/// そのあとの利用者のドラッグも `on_resize` へ届くこと。
+///
+/// 開き直しは `set_collapsed(false)` とサイドバーボタン (`toggleSidebar:`) の
+/// 両方を見る。AppKit はボタンで開くとき、閉じる前に覚えた幅へ戻す。
+fn sidebar_width_set_while_collapsed_applies_on_reopen(ui: &Ui) -> Result<()> {
+    let window = ui.window("閉じている間の幅", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+
+    let controller = sidebar.native_split_view_controller();
+    let split = controller.splitView();
+    let pane = || {
+        split.layoutSubtreeIfNeeded();
+        split.arrangedSubviews().objectAtIndex(0).frame().size.width
+    };
+    let collapsed = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let collapsed = collapsed.clone();
+        move |value| collapsed.borrow_mut().push(value)
+    });
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
+
+    // set_collapsed(false) で開き直す。
+    sidebar.set_width(260.0);
+    sidebar.set_collapsed(true);
+    sidebar.set_width(300.0);
+    assert!(sidebar.is_collapsed(), "幅を置いても閉じたまま");
+    assert_eq!(sidebar.width(), 300.0);
+    sidebar.set_collapsed(false);
+    assert!(
+        (pane() - 300.0).abs() < 1.0,
+        "開き直すと新しい幅: {}",
+        pane()
+    );
+
+    // その後の利用者のドラッグも届く。
+    let app = NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
+    drag_divider(&app, &window.native_window(), &split, -40.0);
+    assert!(
+        !resized.borrow().is_empty(),
+        "開き直したあとのドラッグも通知する"
+    );
+    assert!(
+        (sidebar.width() - pane()).abs() < 1.0,
+        "動かした幅を返す (画素の境目へのそろえ分まで)"
+    );
+
+    // サイドバーボタンで開き直しても、閉じている間に置いた幅になる。
+    sidebar.set_collapsed(true);
+    sidebar.set_width(320.0);
+    unsafe { controller.toggleSidebar(None) };
+    pump_until(3.0, || !sidebar.is_collapsed());
+    pump(0.5);
+    assert!(!sidebar.is_collapsed());
+    assert!(
+        (pane() - 320.0).abs() < 1.0,
+        "ボタンで開いても新しい幅: {}",
+        pane()
+    );
+    assert_eq!(
+        *collapsed.borrow(),
+        [false],
+        "閉じている間に幅を置いても開閉は通知せず、ボタンで開いたことだけが届く"
+    );
+    window.clear_sidebar();
+    window.close();
+    Ok(())
 }

@@ -2777,6 +2777,33 @@ fn sidebar_divider_resizes_and_notifies() {
             naui_core::SIDEBAR_MIN_WIDTH,
             "下限で止まる"
         );
+
+        // 閉じている間に置いた幅が、開き直したときに反映され、その後の操作も
+        // 通知される。
+        sidebar.set_collapsed(true);
+        sidebar.set_width(300.0);
+        sidebar.set_collapsed(false);
+        let start: HtmlElement = sidebar
+            .native_element()
+            .parent_element()
+            .expect("start 側の区画")
+            .unchecked_into();
+        assert_eq!(
+            start
+                .style()
+                .get_property_value("width")
+                .unwrap_or_default(),
+            "300px",
+            "開き直すと閉じている間に置いた幅"
+        );
+        let count = seen.borrow().len();
+        key("ArrowRight");
+        assert_eq!(sidebar.width(), 310.0);
+        assert_eq!(
+            seen.borrow().len(),
+            count + 1,
+            "開き直したあとの操作も通知する"
+        );
         Ok(())
     });
 }

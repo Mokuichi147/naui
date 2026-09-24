@@ -1443,6 +1443,19 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
     assert!(native.IsPaneOpen().expect("ペイン"));
     assert!(seen.borrow().is_empty(), "set_collapsed では通知しない");
 
+    // 閉じている間に置いた幅が、開き直したときに使われる。
+    sidebar.set_collapsed(true);
+    sidebar.set_width(300.0);
+    assert_eq!(sidebar.width(), 300.0);
+    sidebar.set_collapsed(false);
+    assert!(native.IsPaneOpen().expect("ペイン"));
+    assert_eq!(
+        native.OpenPaneLength().expect("幅"),
+        300.0,
+        "開き直すと閉じている間に置いた幅"
+    );
+    sidebar.set_width(160.0);
+
     sidebar.set_items(&SidebarItem::list(["春", "夏"]));
     assert_eq!(
         menu.Size().expect("項目数"),

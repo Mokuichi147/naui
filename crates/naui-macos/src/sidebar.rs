@@ -350,8 +350,8 @@ struct SidebarInner {
     /// サイドバーの幅。`set_width` の値か、利用者が仕切りで変えた幅。
     width: Cell<f64>,
     on_resize: ValueHandler<f64>,
-    /// naui が仕切りを置いている間、またはまだ幅を置いていない間は真。
-    /// この間の大きさの変化は利用者の操作ではない。
+    /// naui が仕切りを置いている間は真。この間の開閉と大きさの変化は
+    /// 利用者の操作ではない。
     applying: Cell<bool>,
     /// 最後に知っている開閉。利用者の開閉だけを通知するために比べる。
     collapsed: Cell<bool>,
@@ -454,7 +454,7 @@ impl Sidebar {
             collapsed: Cell::new(false),
             on_collapse: ValueHandler::default(),
             on_resize: ValueHandler::default(),
-            applying: Cell::new(true),
+            applying: Cell::new(false),
             controls,
             observer: RefCell::new(None),
         }));
@@ -595,6 +595,10 @@ impl Sidebar {
         // 先に覚えておくと、このあと届く大きさの変化を通知しないで済む。
         self.0.collapsed.set(collapsed);
         self.0.sidebar_item.setCollapsed(collapsed);
+        if !collapsed {
+            // 開き直した区画を、いま覚えている幅へそろえる。
+            self.apply_width();
+        }
     }
 
     /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
@@ -607,6 +611,9 @@ impl Sidebar {
 
     /// 開閉が変わっていれば覚え直して通知する。
     fn sync_collapsed(&self) {
+        if self.0.applying.get() {
+            return;
+        }
         let now = self.is_collapsed();
         if self.0.collapsed.replace(now) != now {
             self.0.on_collapse.emit(now);
@@ -673,17 +680,33 @@ impl Sidebar {
     /// 幅は区画のビューの幅 (macOS 26 の浮いたガラスでは、その周りの余白を
     /// 含む)。ウィンドウへ取り付ける前は区画の大きさが 0 なので、取り付けた
     /// あと ([`Window::set_sidebar`](crate::Window::set_sidebar)) にも呼び直す。
+    ///
+    /// 閉じているときは、描かれる前に黙って開いて置き、黙って閉じ直す。
+    /// 閉じた区画には仕切りを置けず、AppKit は開き直すとき (サイドバー
+    /// ボタンでも) 閉じる前に覚えた幅へ戻すので、その覚えている幅ごと
+    /// 新しい幅にしておく。この間の開閉と大きさの変化は通知しない
+    /// (`applying` の間は [`sync_collapsed`](Self::sync_collapsed) も
+    /// [`sync_width`](Self::sync_width) も何もしない)。
     pub(crate) fn apply_width(&self) {
         let split = self.0.controller.splitView();
         self.0.applying.set(true);
         split.layoutSubtreeIfNeeded();
-        let placed = split.frame().size.width > 0.0 && !self.is_collapsed();
-        if placed {
+        if split.frame().size.width > 0.0 {
+            let collapsed = self.0.sidebar_item.isCollapsed();
+            if collapsed {
+                self.0.sidebar_item.setCollapsed(false);
+                split.layoutSubtreeIfNeeded();
+            }
             split.setPosition_ofDividerAtIndex(self.0.width.get(), 0);
             split.layoutSubtreeIfNeeded();
+            if collapsed {
+                self.0.sidebar_item.setCollapsed(true);
+                split.layoutSubtreeIfNeeded();
+            }
         }
-        // 置けたときだけ、この先の仕切りの動きを利用者の操作として拾う。
-        self.0.applying.set(!placed);
+        // どの道を通っても必ず下ろす。立てたままにすると、この先の利用者の
+        // ドラッグも開閉も拾えなくなる。
+        self.0.applying.set(false);
     }
 
     fn is_selectable(&self, index: usize) -> bool {

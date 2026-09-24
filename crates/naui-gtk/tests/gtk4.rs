@@ -5866,6 +5866,29 @@ fn sidebar_toggle_button_collapses_and_notifies(ui: &Ui) -> Result<()> {
     pump();
     assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
 
+    // 閉じている間に置いた幅が、ボタンで開き直したときに反映され、その後の
+    // 利用者の仕切りの操作も通知される。
+    let paned = sidebar.native_paned();
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
+    sidebar.set_width(260.0);
+    sidebar.set_collapsed(true);
+    pump();
+    sidebar.set_width(300.0);
+    toggle.set_active(true); // 利用者がボタンで開いたのと同じ
+    pump();
+    assert!(!sidebar.is_collapsed());
+    assert_eq!(paned.position(), 300, "開き直すと閉じている間に置いた幅");
+    assert!(
+        resized.borrow().is_empty(),
+        "set_width と開き直しでは通知しない"
+    );
+    paned.set_position(250); // 利用者が仕切りを動かしたのと同じ経路
+    assert_eq!(*resized.borrow(), [250.0], "開き直したあとの操作も通知する");
+
     window.clear_sidebar();
     window.clear_toolbar();
     window.close();
