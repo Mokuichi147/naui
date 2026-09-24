@@ -34,14 +34,16 @@ use naui_core::{
     SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    FontIcon, Grid as XamlGrid, NavigationView, NavigationViewBackButtonVisible,
+    Control, FontIcon, Grid as XamlGrid, NavigationView, NavigationViewBackButtonVisible,
     NavigationViewItem, NavigationViewItemHeader, NavigationViewItemSeparator,
     NavigationViewPaneDisplayMode, NavigationViewSelectionChangedEventArgs,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, TextTrimming, Thickness, UIElement, Visibility,
+    DependencyObject, FrameworkElement, RoutedEventHandler, TextTrimming, Thickness, UIElement,
+    Visibility,
 };
 use windows::Foundation::{PropertyValue, TypedEventHandler};
 use windows_core::{IInspectable, IUnknown, Interface, HSTRING};
@@ -558,6 +560,20 @@ fn item_entry(item: &SidebarItem) -> Result<NavigationViewItem> {
     entry
         .SetContent(&label)
         .map_err(|e| to_error("サイドバーの項目の設定", e))?;
+    // テンプレートは項目が画面に載るときに当たる。載り直すたびに当て直すので、
+    // そのつど右の溝を外す。送り主から引くので項目を抱え込まない。
+    let loaded = RoutedEventHandler::new(|sender, _| {
+        if let Some(entry) = sender
+            .as_ref()
+            .and_then(|s| s.cast::<NavigationViewItem>().ok())
+        {
+            drop_chevron_gutter(&entry);
+        }
+        Ok(())
+    });
+    entry
+        .Loaded(&loaded)
+        .map_err(|e| to_error("サイドバーの項目の読み込み購読", e))?;
     if let Some(icon) = item.icon {
         let glyph = FontIcon::new().map_err(|e| to_error("サイドバーの印の生成", e))?;
         glyph
@@ -572,4 +588,42 @@ fn item_entry(item: &SidebarItem) -> Result<NavigationViewItem> {
         let _ = entry.SetSelectsOnInvoked(false);
     }
     Ok(entry)
+}
+
+/// 項目の右の溝 (14 px) を外し、文字が選択の帯の右端近くまで使えるようにする。
+///
+/// `NavigationViewItemPresenter` のテンプレートは中身の枠 (`ContentGrid`) に
+/// `Margin="0,0,14,0"` を直に書いている。入れ子の項目の開閉の山形を
+/// `Margin="0,0,-14,0"` でこの溝へはみ出させて置くためのもので、naui の項目は
+/// 入れ子にしないので空きのまま残り、帯に余白が見えていても文字が省略される。
+/// 文字と帯の右端の間には `ContentPresenter` の 8 px が残る。
+///
+/// テンプレートの部品が見つからなければ何もしない (WinUI の既定のまま)。
+fn drop_chevron_gutter(entry: &NavigationViewItem) {
+    let Some(grid) = template_part(entry, "NavigationViewItemPresenter")
+        .and_then(|presenter| template_part(&presenter, "ContentGrid"))
+    else {
+        return;
+    };
+    let Ok(margin) = grid.Margin() else {
+        return;
+    };
+    if margin.Right != 0.0 {
+        let _ = grid.SetMargin(Thickness {
+            Right: 0.0,
+            ..margin
+        });
+    }
+}
+
+/// コントロールのテンプレートから名前で部品を引く。
+fn template_part<T: Interface>(control: &T, name: &str) -> Option<FrameworkElement> {
+    let _ = control.cast::<Control>().ok()?.ApplyTemplate();
+    control
+        .cast::<DependencyObject>()
+        .and_then(|control| VisualTreeHelper::GetChild(&control, 0))
+        .and_then(|root| root.cast::<FrameworkElement>())
+        .and_then(|root| root.FindName(&HSTRING::from(name)))
+        .and_then(|part| part.cast::<FrameworkElement>())
+        .ok()
 }
