@@ -124,6 +124,10 @@ pub fn build(ui: &Ui) -> Result<()> {
                 return;
             };
             if current.replace(Some(index)) == Some(index) {
+                // 同じ区分なら画面は作り直さない。ただしパンくずの先頭を
+                // 押して来たときは、押した先が現在地になっているので、
+                // いまいる場所を末尾へ戻す。
+                crumbs.set_items(&NavItem::list(["naui gallery", *title]));
                 return;
             }
             // 画面から外しても再生は止まらないので、区分を移るたびに止める。

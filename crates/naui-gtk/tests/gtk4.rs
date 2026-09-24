@@ -2648,6 +2648,11 @@ fn breadcrumbs_last_is_current(ui: &Ui) -> Result<()> {
     breadcrumbs.on_select(sink);
     let handled: bool = labels[0].emit_by_name("activate-link", &[&"0"]);
     assert!(handled, "リンクの既定の処理 (URI を開く) へは渡さない");
+    // リンクを押している最中は何も書き換えない。GTK4 がその場でラベルを
+    // 作り直されると落ちるため、選び直しは次の周回へ回している。
+    assert_eq!(breadcrumbs.selected(), Some(2), "押した時点では動かない");
+    assert!(log.borrow().is_empty(), "通知も次の周回");
+    pump();
     assert_eq!(log.borrow().as_slice(), [0]);
     assert_eq!(breadcrumbs.selected(), Some(0));
     assert_eq!(labels[0].label(), "ホーム");
@@ -2661,6 +2666,14 @@ fn breadcrumbs_last_is_current(ui: &Ui) -> Result<()> {
     breadcrumbs.select(1);
     assert_eq!(breadcrumbs.selected(), Some(0));
     assert_eq!(log.borrow().len(), 1);
+
+    // 押したあとで階層が作り直されたら、待っていた選び直しは捨てる。
+    let handled: bool = labels[4].emit_by_name("activate-link", &[&"2"]);
+    assert!(handled);
+    breadcrumbs.set_items(&NavItem::list(["ホーム", "書類", "2026"]));
+    pump();
+    assert_eq!(log.borrow().len(), 1, "作り直す前の項目は選ばれない");
+    assert_eq!(breadcrumbs.selected(), Some(2), "作り直した末尾のまま");
 
     // 記号はマークアップとして解釈しない。
     breadcrumbs.set_items(&NavItem::list(["<a>&", "末尾"]));
