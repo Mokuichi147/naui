@@ -1,43 +1,53 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use naui::{Align, Orientation, Result, TextColor, TextStyle, Theme, Ui};
+use naui::{
+    Align, Button, Checkbox, ComboBox, Orientation, RadioGroup, Result, Slider, TextColor,
+    TextStyle, Theme, Toggle, Ui,
+};
 
-use crate::parts;
+use crate::parts::{self, Disabler, Notice};
 
 /// Label、Button、Checkbox、Toggle、RadioGroup、Slider、ProgressBar、ComboBox とテーマ。
-pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
+pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
+
+    let disabler = Disabler::new(
+        ui,
+        &pane,
+        &["ボタンも選ぶ部品も、set_enabled(false) で操作を止められます。選んだ状態はそのまま残ります。"],
+    )?;
 
     parts::section(
         ui,
         &pane,
         "Label / Button",
-        &["通常・操作中・無効の状態を確認できます。"],
+        &["通常・操作中・無効の状態を確認できます。右端のボタンは常に無効です。"],
     )?;
 
     let count = Rc::new(Cell::new(0usize));
-    let button_status = parts::status(ui, "クリック回数: 0")?;
     let buttons = ui.stack(Orientation::Horizontal)?;
     buttons.set_spacing(8.0);
 
     let click = ui.button("クリック")?;
+    disabler.add(&click, Button::set_enabled);
     click.on_click({
         let count = count.clone();
-        let button_status = button_status.clone();
+        let notice = notice.clone();
         move || {
             let next = count.get() + 1;
             count.set(next);
-            button_status.set_text(&format!("クリック回数: {next}"));
+            notice.show(&format!("クリック回数: {next}"));
         }
     });
     let reset = ui.button("リセット")?;
+    disabler.add(&reset, Button::set_enabled);
     reset.on_click({
         let count = count.clone();
-        let button_status = button_status.clone();
+        let notice = notice.clone();
         move || {
             count.set(0);
-            button_status.set_text("クリック回数: 0");
+            notice.show("クリック回数を 0 に戻しました");
         }
     });
     let disabled = ui.button("無効なボタン")?;
@@ -46,7 +56,6 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
     buttons.append(&reset);
     buttons.append(&disabled);
     pane.append(&buttons);
-    pane.append(&button_status);
 
     parts::section(
         ui,
@@ -98,12 +107,12 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
         "Checkbox",
         &["入り切りを 2 択で持ちます。切り替えると通知が届きます。"],
     )?;
-    let check_status = parts::status(ui, "チェック状態: オフ")?;
     let checkbox = ui.checkbox("項目を有効にする")?;
+    disabler.add(&checkbox, Checkbox::set_enabled);
     checkbox.on_toggle({
-        let check_status = check_status.clone();
+        let notice = notice.clone();
         move |checked| {
-            check_status.set_text(if checked {
+            notice.show(if checked {
                 "チェック状態: オン"
             } else {
                 "チェック状態: オフ"
@@ -111,7 +120,6 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
         }
     });
     pane.append(&checkbox);
-    pane.append(&check_status);
 
     parts::section(
         ui,
@@ -119,31 +127,28 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
         "Toggle",
         &["チェックボックスと同じ 2 択を、スイッチの形で切り替えます。"],
     )?;
-    let toggle_status = parts::status(ui, "バックアップ: 切")?;
     let toggle = ui.toggle("バックアップを作る")?;
+    disabler.add(&toggle, Toggle::set_enabled);
     toggle.on_toggle({
-        let toggle_status = toggle_status.clone();
+        let notice = notice.clone();
         move |on| {
-            toggle_status.set_text(if on {
+            notice.show(if on {
                 "バックアップ: 入"
             } else {
                 "バックアップ: 切"
             });
         }
     });
+    // set_on はアプリ自身の操作なので on_toggle を呼ばない。
+    // 押しても何も知らせが出ないことで確かめられる。
     let toggle_reset = ui.button("切に戻す")?;
+    disabler.add(&toggle_reset, Button::set_enabled);
     toggle_reset.on_click({
         let toggle = toggle.clone();
-        let toggle_status = toggle_status.clone();
-        move || {
-            // set_on は通知しないので、表示はこちらで戻す。
-            toggle.set_on(false);
-            toggle_status.set_text("バックアップ: 切");
-        }
+        move || toggle.set_on(false)
     });
     pane.append(&toggle);
     pane.append(&toggle_reset);
-    pane.append(&toggle_status);
 
     parts::section(
         ui,
@@ -152,29 +157,25 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
         &["候補を並べて 1 つだけ選べます。選び直すと前の選択は外れます。"],
     )?;
     let plans = ["無料", "標準", "上位"];
-    let plan_status = parts::status(ui, "プラン: 未選択")?;
     let plan = ui.radio_group()?;
+    disabler.add(&plan, RadioGroup::set_enabled);
     plan.set_items(&plans);
     plan.on_select({
-        let plan_status = plan_status.clone();
+        let notice = notice.clone();
         move |index| {
             let name = plans.get(index).copied().unwrap_or("不明");
-            plan_status.set_text(&format!("プラン: {name}"));
+            notice.show(&format!("プラン: {name}"));
         }
     });
+    // clear_selection も on_select を呼ばない (set_on と同じ決まり)。
     let clear_plan = ui.button("選択を外す")?;
+    disabler.add(&clear_plan, Button::set_enabled);
     clear_plan.on_click({
         let plan = plan.clone();
-        let plan_status = plan_status.clone();
-        move || {
-            // clear_selection は通知しないので、表示はこちらで戻す。
-            plan.clear_selection();
-            plan_status.set_text("プラン: 未選択");
-        }
+        move || plan.clear_selection()
     });
     pane.append(&plan);
     pane.append(&clear_plan);
-    pane.append(&plan_status);
 
     parts::section(
         ui,
@@ -182,10 +183,11 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
         "Slider / ProgressBar",
         &["Slider の値を ProgressBar と数値表示へ反映します。"],
     )?;
-    let value_status = parts::status(ui, "値: 40%")?;
+    let value_status = parts::readout(ui, "値: 40%")?;
     let progress = ui.progress_bar()?;
     progress.set_value(0.4);
     let slider = ui.slider(0.0, 1.0)?;
+    disabler.add(&slider, Slider::set_enabled);
     slider.set_value(0.4);
     slider.on_change({
         let progress = progress.clone();
@@ -205,41 +207,30 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window) -> Result<naui::Stack> {
         "ComboBox / Theme",
         &["ドロップダウンからアプリの配色を選べます。"],
     )?;
-    let theme_status = parts::status(ui, &format!("現在: {}", theme_name(ui.theme())))?;
     let theme = ui.combo_box()?;
+    disabler.add(&theme, ComboBox::set_enabled);
     theme.set_items(&["システム", "ライト", "ダーク"]);
     theme.set_selected(theme_index(ui.theme()));
     let weak_window = window.downgrade();
     theme.on_select({
-        let theme_status = theme_status.clone();
+        let notice = notice.clone();
         move |index| {
-            let Some((name, selected)) = [
-                ("システム", Theme::System),
-                ("ライト", Theme::Light),
-                ("ダーク", Theme::Dark),
-            ]
-            .get(index)
-            .copied() else {
+            let Some(selected) = [Theme::System, Theme::Light, Theme::Dark]
+                .get(index)
+                .copied()
+            else {
                 return;
             };
+            // 切り替わったことは配色そのものでわかるので、知らせるのは失敗だけ。
             if let Some(window) = weak_window.upgrade() {
-                if window.set_theme(selected).is_ok() {
-                    theme_status.set_text(&format!("現在: {name}"));
+                if let Err(error) = window.set_theme(selected) {
+                    notice.show(&format!("配色を変えられません: {error}"));
                 }
             }
         }
     });
     pane.append(&theme);
-    pane.append(&theme_status);
     Ok(pane)
-}
-
-fn theme_name(theme: Theme) -> &'static str {
-    match theme {
-        Theme::System => "システム",
-        Theme::Light => "ライト",
-        Theme::Dark => "ダーク",
-    }
 }
 
 fn theme_index(theme: Theme) -> usize {

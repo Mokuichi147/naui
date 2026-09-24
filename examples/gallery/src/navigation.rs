@@ -1,9 +1,9 @@
 use naui::{NavItem, Result, Sizing, Ui};
 
-use crate::parts;
+use crate::parts::{self, Notice};
 
 /// 各ナビゲーション UI の形と選択通知。
-pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
+pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
     parts::section(
@@ -13,15 +13,13 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         &["Gallery 上部のタブが Tabs の例です。中身ごと切り替えます。"],
     )?;
 
-    let status = parts::status(ui, "操作結果: なし")?;
-
     parts::section(ui, &pane, "Navbar", &["見出し付きの横並びナビゲーション。"])?;
     let navbar = ui.navbar("Navbar")?;
     navbar.set_items(&NavItem::list(["項目 A", "項目 B", "項目 C"]));
     navbar.set_selected(0);
     navbar.on_select({
-        let status = status.clone();
-        move |index| status.set_text(&format!("Navbar: 項目 {}", index + 1))
+        let notice = notice.clone();
+        move |index| notice.show(&format!("Navbar: 項目 {}", index + 1))
     });
     pane.append(&navbar);
 
@@ -39,8 +37,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     ]);
     menu.set_selected(0);
     menu.on_select({
-        let status = status.clone();
-        move |index| status.set_text(&format!("Menu: 項目 {}", index + 1))
+        let notice = notice.clone();
+        move |index| notice.show(&format!("Menu: 項目 {}", index + 1))
     });
     pane.append(&menu);
 
@@ -48,16 +46,16 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     let breadcrumbs = ui.breadcrumbs()?;
     breadcrumbs.set_items(&NavItem::list(["階層 1", "階層 2", "現在地"]));
     breadcrumbs.on_select({
-        let status = status.clone();
-        move |index| status.set_text(&format!("Breadcrumbs: {} 番目", index + 1))
+        let notice = notice.clone();
+        move |index| notice.show(&format!("Breadcrumbs: {} 番目", index + 1))
     });
     pane.append(&breadcrumbs);
 
     parts::section(ui, &pane, "Pagination", &["ページ番号と前後移動。"])?;
     let pagination = ui.pagination(5)?;
     pagination.on_change({
-        let status = status.clone();
-        move |page| status.set_text(&format!("Pagination: {} ページ", page + 1))
+        let notice = notice.clone();
+        move |page| notice.show(&format!("Pagination: {} ページ", page + 1))
     });
     pane.append(&pagination);
 
@@ -66,20 +64,12 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     dock.set_items(&NavItem::list(["左", "中央", "右"]));
     dock.set_sizing(Sizing::fill_width());
     dock.on_select({
-        let status = status.clone();
-        move |index| status.set_text(&format!("Dock: {}", ["左", "中央", "右"][index]))
+        let notice = notice.clone();
+        move |index| notice.show(&format!("Dock: {}", ["左", "中央", "右"][index]))
     });
     pane.append(&dock);
 
     parts::section(ui, &pane, "Link", &["ブラウザまたは標準アプリで開きます。"])?;
     pane.append(&ui.link("naui のリポジトリ", "https://github.com/mokuichi147/naui")?);
-
-    parts::section(
-        ui,
-        &pane,
-        "操作結果",
-        &["上のどれを選んでも、最後の操作をここへ出します。"],
-    )?;
-    pane.append(&status);
     Ok(pane)
 }

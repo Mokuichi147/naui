@@ -13,7 +13,7 @@ use std::task::{Context, Poll, Waker};
 
 use naui::{Orientation, Result, Task, Ui};
 
-use crate::parts;
+use crate::parts::{self, Notice};
 
 /// ワーカーが送ってくる進捗。
 ///
@@ -96,7 +96,7 @@ impl Future for Oneshot {
 }
 
 /// 別スレッドからの受け渡しと、UI スレッドで回す非同期処理。
-pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
+pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
     parts::section(
@@ -115,7 +115,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         "※ ブラウザにはスレッドが無いため、この画面ではどれも待ち時間なしで終わります。",
     )?);
 
-    let worker_status = parts::status(ui, "待機中")?;
+    let worker_status = parts::readout(ui, "待機中")?;
     let progress = ui.progress_bar()?;
     let start = ui.button("重い処理を始める")?;
     start.on_click({
@@ -168,22 +168,17 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         "処理の間も画面は止まりません。下のボタンで確かめてください。",
     )?);
     let taps = Rc::new(Cell::new(0usize));
-    let tap_status = parts::status(ui, "押した回数: 0")?;
     let tap = ui.button("反応を確かめる")?;
     tap.on_click({
         let taps = taps.clone();
-        let tap_status = tap_status.clone();
+        let notice = notice.clone();
         move || {
             let next = taps.get() + 1;
             taps.set(next);
-            tap_status.set_text(&format!("押した回数: {next}"));
+            notice.show(&format!("押した回数: {next}"));
         }
     });
-    let tap_row = ui.stack(Orientation::Horizontal)?;
-    tap_row.set_spacing(8.0);
-    tap_row.append(&tap);
-    tap_row.append(&tap_status);
-    pane.append(&tap_row);
+    pane.append(&tap);
 
     parts::section(
         ui,
@@ -195,7 +190,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         ],
     )?;
 
-    let async_status = parts::status(ui, "待機中")?;
+    let async_status = parts::readout(ui, "待機中")?;
     // 走っているものを覚えておき、次に押されたら止める。
     let running: Rc<RefCell<Option<Task>>> = Rc::new(RefCell::new(None));
 

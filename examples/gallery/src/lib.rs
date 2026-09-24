@@ -5,6 +5,7 @@
 
 mod basics;
 mod canvas;
+mod commands;
 mod dialog;
 mod files;
 mod input;
@@ -13,67 +14,13 @@ mod list;
 mod media;
 mod navigation;
 mod parts;
+mod table;
 mod tasks;
 
 use naui::{
-    Align, FileEntry, GridCell, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
-    Result, ScrollPolicy, Settings, Sizing, Tabs, TextStyle, ToolbarIcon, ToolbarItem, Track, Ui,
-    Widget,
+    Align, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing, Tabs,
+    TextStyle, Track, Ui, Widget,
 };
-
-/// ウィンドウに取り付けるツールバーの項目。区切りは空文字で埋める。
-const COMMANDS: [&str; 4] = ["新規", "開く", "", "保存"];
-
-/// 上の項目に対応するアイコン。
-const COMMAND_ICONS: [ToolbarIcon; 4] = [
-    ToolbarIcon::New,
-    ToolbarIcon::Open,
-    ToolbarIcon::Add,
-    ToolbarIcon::Save,
-];
-
-const SECTIONS: [&str; 10] = [
-    "基本",
-    "入力",
-    "一覧",
-    "ナビゲーション",
-    "レイアウト",
-    "描画",
-    "ファイル",
-    "メディア",
-    "ダイアログ",
-    "非同期",
-];
-
-/// メニューバーの中身。
-///
-/// ショートカットは**主修飾キー + 英数字 1 文字**で指定する。主修飾キーは
-/// macOS だけ ⌘ で、Windows・Linux・Web では Ctrl になる。
-fn menus() -> Vec<MenuSpec> {
-    vec![
-        MenuSpec::new(
-            "ファイル",
-            [
-                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
-                MenuItem::new("開く").shortcut(MenuShortcut::new('o')),
-                MenuItem::separator(),
-                MenuItem::new("保存").shortcut(MenuShortcut::new('s')),
-                MenuItem::new("別名で保存").shortcut(MenuShortcut::new('s').shift(true)),
-            ],
-        ),
-        MenuSpec::new(
-            "表示",
-            [
-                MenuItem::new("拡大"),
-                MenuItem::new("縮小"),
-                MenuItem::separator(),
-                // 押せない項目は、その場ではできないことを表す。
-                MenuItem::new("全画面").enabled(false),
-            ],
-        ),
-        MenuSpec::new("ヘルプ", ["naui について"]),
-    ]
-}
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
@@ -112,77 +59,40 @@ pub fn build(ui: &Ui) -> Result<()> {
     header.append(&title);
     header.append(&parts::note(
         ui,
-        "UI の種別ごとに、特徴・状態・操作結果を確認できます。",
+        "UI の種別ごとに、特徴と状態を確認できます。操作の結果は画面の下端にトーストで出ます。",
     )?);
 
-    // Toolbar はレイアウトではなくウィンドウに取り付ける。macOS では
-    // NSToolbar、Linux では AdwHeaderBar としてタイトルバーに出る。
-    // 項目はアイコンで並び、ラベルはツールチップと読み上げに使われる。
-    let toolbar_status = parts::status(ui, "Toolbar: まだ押されていません")?;
-    let toolbar = ui.toolbar()?;
-    toolbar.set_items(&[
-        ToolbarItem::new(COMMAND_ICONS[0], COMMANDS[0]),
-        ToolbarItem::new(COMMAND_ICONS[1], COMMANDS[1]),
-        ToolbarItem::separator(),
-        // 保存できるものがまだ無い状態から始める。
-        ToolbarItem::new(COMMAND_ICONS[3], COMMANDS[3]).enabled(false),
-    ]);
-    toolbar.on_activate({
-        let status = toolbar_status.clone();
-        let toolbar = toolbar.clone();
-        move |index| {
-            status.set_text(&format!("Toolbar: {} を実行しました", COMMANDS[index]));
-            // 新規・開くの後は保存できる。
-            if index != 3 {
-                toolbar.set_item_enabled(3, true);
-            }
-        }
-    });
-    window.set_toolbar(&toolbar);
-    header.append(&toolbar_status);
+    // 操作の結果は、画面に Label を並べずトーストで知らせる。
+    let notice = parts::Notice::new(ui)?;
 
-    // MenuBar もレイアウトではなくウィンドウに取り付ける。macOS では画面
-    // 上端のメニューバー (NSApplication.mainMenu)、ほかの 3 環境では
-    // タイトルバーの下に敷かれる帯になる。
-    // ショートカットの主修飾キーは macOS だけ ⌘ で、ほかは Ctrl。
-    let menu_status = parts::status(ui, "MenuBar: まだ選ばれていません")?;
-    let menu_bar = ui.menu_bar()?;
-    let specs = menus();
-    menu_bar.set_menus(&specs);
-    menu_bar.on_activate({
-        let status = menu_status.clone();
-        // 通知はインデックスの組で来るので、渡した並びから名前を引く。
-        move |menu, item| {
-            let label = specs
-                .get(menu)
-                .and_then(|spec| spec.items.get(item))
-                .map(|entry| entry.label.as_str())
-                .unwrap_or_default();
-            status.set_text(&format!("MenuBar: {label} を選びました"));
-        }
-    });
-    window.set_menu_bar(&menu_bar);
-    header.append(&menu_status);
     root.attach(&header, GridCell::new(0, 0));
 
     let tabs = ui.tabs()?;
-    add_pane(ui, &tabs, "基本", &basics::build(ui, &window)?)?;
-    add_pane(ui, &tabs, "入力", &input::build(ui)?)?;
-    add_pane(ui, &tabs, "一覧", &list::build(ui)?)?;
-    add_pane(ui, &tabs, "ナビゲーション", &navigation::build(ui)?)?;
-    add_pane(ui, &tabs, "レイアウト", &layout::build(ui)?)?;
-    add_pane(ui, &tabs, "描画", &canvas::build(ui)?)?;
-    add_pane(ui, &tabs, "ファイル", &files::build(ui)?)?;
-    add_pane(ui, &tabs, "メディア", &media::build(ui)?)?;
-    add_pane(ui, &tabs, "ダイアログ", &dialog::build(ui)?)?;
-    add_pane(ui, &tabs, "非同期", &tasks::build(ui)?)?;
+    let panes: [(&str, naui::Stack); 11] = [
+        ("基本", basics::build(ui, &window, &notice)?),
+        ("入力", input::build(ui, &notice)?),
+        ("一覧", list::build(ui, &notice)?),
+        ("表", table::build(ui, &notice)?),
+        ("ナビゲーション", navigation::build(ui, &notice)?),
+        ("レイアウト", layout::build(ui, &notice)?),
+        ("描画", canvas::build(ui, &notice)?),
+        ("ファイル", files::build(ui, &notice)?),
+        ("メディア", media::build(ui, &notice)?),
+        ("ダイアログ", dialog::build(ui, &notice)?),
+        ("非同期", tasks::build(ui, &notice)?),
+    ];
+    for (title, pane) in &panes {
+        add_pane(ui, &tabs, title, pane)?;
+    }
     tabs.set_sizing(Sizing::fill());
     root.attach(&tabs, GridCell::new(0, 1));
 
+    let sections = panes.map(|(title, _)| title);
+    commands::attach(ui, &window, &tabs, &sections, &notice)?;
     tabs.on_select({
         let crumbs = crumbs.clone();
         move |index| {
-            let Some(section) = SECTIONS.get(index) else {
+            let Some(section) = sections.get(index) else {
                 return;
             };
             crumbs.set_items(&NavItem::list(["naui gallery", *section]));
@@ -219,18 +129,6 @@ fn add_pane(ui: &Ui, tabs: &Tabs, title: &str, pane: &dyn Widget) -> Result<()> 
     scroll.set_sizing(Sizing::fill());
     tabs.add_tab(title, &scroll);
     Ok(())
-}
-
-/// 選ばれたファイルやフォルダーを、画面内の短いステータスとして表す。
-pub(crate) fn describe_entries(entries: &[FileEntry]) -> String {
-    match entries {
-        [] => "選択されていません".to_string(),
-        [entry] => match entry.path() {
-            Some(path) => path.display().to_string(),
-            None => format!("{} (この環境ではパス非公開)", entry.name()),
-        },
-        many => format!("{} 件: {} ほか", many.len(), many[0].name()),
-    }
 }
 
 // ネイティブの `start()` と、Web のブラウザから呼ばれる入口を作る。

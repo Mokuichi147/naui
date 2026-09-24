@@ -2,11 +2,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use naui::{
-    Align, FileFilter, Fit, GridCell, NavItem, Orientation, Padding, PlaybackState, Result, Sizing,
-    Track, Ui,
+    Align, FileFilter, Fit, GridCell, Orientation, Padding, PlaybackState, Result, Sizing, Track,
+    Ui,
 };
 
-use crate::parts;
+use crate::parts::{self, Notice};
 
 /// 同梱のサンプル画像の場所。
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,7 +27,7 @@ const MEDIA_FORMS: [(&str, &[&str]); 3] = [
 const MEDIA_DISPLAY_HEIGHT: f64 = 315.0;
 
 /// Image、Video、Audio のソース切り替えと再生操作。
-pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
+pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
     parts::section(
@@ -38,8 +38,8 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     )?;
 
     let (image_pane, image) = build_image_pane(ui)?;
-    let (video_pane, video) = build_video_pane(ui)?;
-    let (audio_pane, audio) = build_audio_pane(ui)?;
+    let (video_pane, video) = build_video_pane(ui, notice)?;
+    let (audio_pane, audio) = build_audio_pane(ui, notice)?;
 
     // MediaPlayerElement をタブのコンテンツにすると環境によって初期化が不安定に
     // なるため、選択中の形式だけを同じ Grid セルへ置く。
@@ -47,8 +47,6 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     forms.set_column_track(0, Track::FILL);
     forms.set_row_track(0, Track::FILL);
     forms.attach(&image_pane, GridCell::new(0, 0));
-
-    let status = parts::status(ui, "表示形式: Image (同梱サンプル)")?;
 
     let show = Rc::new({
         let image = image.clone();
@@ -58,7 +56,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
         let image_pane = image_pane.clone();
         let video_pane = video_pane.clone();
         let audio_pane = audio_pane.clone();
-        let status = status.clone();
+        let notice = notice.clone();
         move |form: usize, source: &str| {
             match form {
                 0 => forms.replace(&image_pane, GridCell::new(0, 0)),
@@ -70,7 +68,7 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
                 1 => video.set_source(source),
                 _ => audio.set_source(source),
             }
-            status.set_text(&format!("表示形式: {}", MEDIA_FORMS[form].0));
+            notice.show(&format!("表示形式: {}", MEDIA_FORMS[form].0));
         }
     });
 
@@ -82,15 +80,15 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     load.on_click({
         let show = show.clone();
         let source = source.clone();
-        let status = status.clone();
+        let notice = notice.clone();
         move || {
             let value = source.text();
             if value.trim().is_empty() {
-                status.set_text("表示形式: パスまたは URL を入力してください");
+                notice.show("パスまたは URL を入力してください");
             } else if let Some(form) = media_form_of(&value) {
                 show(form, &value);
             } else {
-                status.set_text("表示形式: 拡張子から判定できません");
+                notice.show("拡張子から表示形式を判定できません");
             }
         }
     });
@@ -104,22 +102,19 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     pick.on_select({
         let show = show.clone();
         let source = source.clone();
-        let status = status.clone();
+        let notice = notice.clone();
         move |entries| {
             let Some(entry) = entries.first() else {
                 return;
             };
             let Some(value) = entry.source() else {
-                status.set_text(&format!(
-                    "表示形式: {} の場所を取得できません",
-                    entry.name()
-                ));
+                notice.show(&format!("{} の場所を取得できません", entry.name()));
                 return;
             };
             source.set_text(value);
             match media_form_of(entry.name()) {
                 Some(form) => show(form, value),
-                None => status.set_text(&format!("表示形式: {} は不明です", entry.name())),
+                None => notice.show(&format!("{} の表示形式は不明です", entry.name())),
             }
         }
     });
@@ -131,7 +126,6 @@ pub(crate) fn build(ui: &Ui) -> Result<naui::Stack> {
     source_row.append(&load);
     source_row.append(&pick);
     pane.append(&source_row);
-    pane.append(&status);
 
     forms.set_sizing(Sizing::fill());
     pane.append(&forms);
@@ -172,9 +166,7 @@ fn build_image_pane(ui: &Ui) -> Result<(naui::Grid, naui::Image)> {
         ("引き伸ばす", Fit::Fill),
         ("原寸", Fit::None),
     ];
-    let selector = ui.navbar("画像の収め方")?;
-    selector.set_items(&NavItem::list(fits.map(|(name, _)| name)));
-    selector.set_selected(0);
+    let (selector_row, selector) = parts::choice(ui, "画像の収め方", &fits.map(|(name, _)| name))?;
     selector.on_select({
         let image = image.clone();
         move |index| {
@@ -183,12 +175,11 @@ fn build_image_pane(ui: &Ui) -> Result<(naui::Grid, naui::Image)> {
             }
         }
     });
-    selector.set_sizing(Sizing::fill_width());
-    pane.attach(&selector, GridCell::new(0, 1));
+    pane.attach(&selector_row, GridCell::new(0, 1));
     Ok((pane, image))
 }
 
-fn build_video_pane(ui: &Ui) -> Result<(naui::Stack, naui::Video)> {
+fn build_video_pane(ui: &Ui, notice: &Notice) -> Result<(naui::Stack, naui::Video)> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(8.0);
     pane.set_padding(Padding::all(8.0));
@@ -225,12 +216,10 @@ fn build_video_pane(ui: &Ui) -> Result<(naui::Stack, naui::Video)> {
     buttons.append(&pause);
     controls.append(&buttons);
 
-    let state = parts::status(ui, "状態: 未再生")?;
     video.on_state_change({
-        let state = state.clone();
-        move |value| state.set_text(&format!("状態: {}", state_name(value)))
+        let notice = notice.clone();
+        move |value| notice.show(&format!("動画: {}", state_name(value)))
     });
-    controls.append(&state);
 
     let position = ui.label("再生位置: -")?;
     let seek = ui.slider(0.0, 1.0)?;
@@ -297,7 +286,7 @@ fn build_video_pane(ui: &Ui) -> Result<(naui::Stack, naui::Video)> {
     Ok((pane, video))
 }
 
-fn build_audio_pane(ui: &Ui) -> Result<(naui::Stack, naui::Audio)> {
+fn build_audio_pane(ui: &Ui, notice: &Notice) -> Result<(naui::Stack, naui::Audio)> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(8.0);
     pane.set_padding(Padding::all(8.0));
@@ -323,12 +312,10 @@ fn build_audio_pane(ui: &Ui) -> Result<(naui::Stack, naui::Audio)> {
     buttons.append(&pause);
     pane.append(&buttons);
 
-    let state = parts::status(ui, "状態: 未再生")?;
     audio.on_state_change({
-        let state = state.clone();
-        move |value| state.set_text(&format!("状態: {}", state_name(value)))
+        let notice = notice.clone();
+        move |value| notice.show(&format!("音声: {}", state_name(value)))
     });
-    pane.append(&state);
     Ok((pane, audio))
 }
 
