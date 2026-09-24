@@ -326,10 +326,24 @@ impl Breadcrumbs {
             let label = gtk::Label::new(None);
             without_context_menu(&label);
             let weak: Weak<BreadcrumbsInner> = Rc::downgrade(&self.0);
-            label.connect_activate_link(move |_, _| {
-                if let Some(inner) = weak.upgrade() {
-                    Breadcrumbs(inner).select(index);
-                }
+            label.connect_activate_link(move |label, _| {
+                // 選び直しは次の周回へ回す。`GtkLabel` は押下を見ている最中で、
+                // ここでリンクの無い文字にすると (`show` も、アプリの
+                // `on_select` から呼ばれる `set_items` も必ずそうする)、
+                // ラベルが押下を見ているジェスチャーごと捨てられ、戻り先の
+                // 消えた GTK4 側が落ちるため。
+                let weak = weak.clone();
+                let label = label.downgrade();
+                glib::idle_add_local_once(move || {
+                    let (Some(inner), Some(label)) = (weak.upgrade(), label.upgrade()) else {
+                        return;
+                    };
+                    let breadcrumbs = Breadcrumbs(inner);
+                    // 待っている間に階層が作り直されていたら、もう別の場所。
+                    if breadcrumbs.0.labels.borrow().get(index) == Some(&label) {
+                        breadcrumbs.select(index);
+                    }
+                });
                 // 既定の処理 (URI をブラウザで開く) には渡さない。
                 glib::Propagation::Stop
             });
