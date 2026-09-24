@@ -18,13 +18,45 @@ mod table;
 mod tasks;
 
 use naui::{
-    Align, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, Sizing, Tabs,
-    TextStyle, Track, Ui, Widget,
+    Align, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, SidebarItem,
+    SidebarSection, Sizing, Tabs, TextStyle, ToolbarIcon, Track, Ui, Widget,
 };
+
+/// ギャラリーの区分。タブとサイドバーの項目はこの順に並ぶので、どちらの
+/// 通知の通し番号も、そのままもう一方の位置として使える。
+///
+/// アイコンはサイドバーに出す。[`ToolbarIcon`] の中から近いものを選んでいる。
+const SECTIONS: [(&str, ToolbarIcon); 11] = [
+    ("基本", ToolbarIcon::Info),
+    ("入力", ToolbarIcon::Edit),
+    ("一覧", ToolbarIcon::Search),
+    ("表", ToolbarIcon::Print),
+    ("ナビゲーション", ToolbarIcon::Forward),
+    ("レイアウト", ToolbarIcon::Copy),
+    ("描画", ToolbarIcon::Cut),
+    ("ファイル", ToolbarIcon::Open),
+    ("メディア", ToolbarIcon::Share),
+    ("ダイアログ", ToolbarIcon::New),
+    ("非同期", ToolbarIcon::Refresh),
+];
+
+/// サイドバーで見出しなしの先頭にまとめる数。残りは「そのほか」へ入れる。
+const PRIMARY_SECTIONS: usize = 6;
+
+/// サイドバーの中身。見出しで区切っても通し番号は先頭から数える。
+fn sidebar_sections() -> Vec<SidebarSection> {
+    let items = SECTIONS.map(|(title, icon)| SidebarItem::new(title).icon(icon));
+    let (primary, rest) = items.split_at(PRIMARY_SECTIONS);
+    vec![
+        SidebarSection::untitled(primary.to_vec()),
+        SidebarSection::new("そのほか", rest.to_vec()),
+    ]
+}
 
 /// 共通の UI 構築。バックエンドによらず同じコードが動く。
 pub fn build(ui: &Ui) -> Result<()> {
-    let window = ui.window("naui UI gallery", 800.0, 860.0)?;
+    // 幅はサイドバー (既定 220) を付けても、中身が従来の 800 を保てる大きさ。
+    let window = ui.window("naui UI gallery", 1020.0, 860.0)?;
     let root = ui.grid()?;
     root.set_spacing(0.0, 10.0);
     // 上だけ詰める。ツールバーの帯 (WinUI では 48px の CommandBar) が
@@ -67,36 +99,53 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     root.attach(&header, GridCell::new(0, 0));
 
-    let tabs = ui.tabs()?;
-    let panes: [(&str, naui::Stack); 11] = [
-        ("基本", basics::build(ui, &window, &notice)?),
-        ("入力", input::build(ui, &notice)?),
-        ("一覧", list::build(ui, &notice)?),
-        ("表", table::build(ui, &notice)?),
-        ("ナビゲーション", navigation::build(ui, &notice)?),
-        ("レイアウト", layout::build(ui, &notice)?),
-        ("描画", canvas::build(ui, &notice)?),
-        ("ファイル", files::build(ui, &notice)?),
-        ("メディア", media::build(ui, &notice)?),
-        ("ダイアログ", dialog::build(ui, &notice)?),
-        ("非同期", tasks::build(ui, &notice)?),
+    // Sidebar もウィンドウに取り付けるもの。起動時から付けておき、取り外しと
+    // 開閉は「ナビゲーション」のタブで試せる。項目はタブと同じ並びなので、
+    // 選択を互いに映し合う。
+    let sidebar = ui.sidebar()?;
+    sidebar.set_sections(&sidebar_sections());
+    sidebar.set_selected(0);
+
+    // 並びは SECTIONS と同じ。
+    let panes = [
+        basics::build(ui, &window, &notice)?,
+        input::build(ui, &notice)?,
+        list::build(ui, &notice)?,
+        table::build(ui, &notice)?,
+        navigation::build(ui, &window, &sidebar, &notice)?,
+        layout::build(ui, &notice)?,
+        canvas::build(ui, &notice)?,
+        files::build(ui, &notice)?,
+        media::build(ui, &notice)?,
+        dialog::build(ui, &notice)?,
+        tasks::build(ui, &notice)?,
     ];
-    for (title, pane) in &panes {
+    let tabs = ui.tabs()?;
+    for ((title, _), pane) in SECTIONS.iter().zip(&panes) {
         add_pane(ui, &tabs, title, pane)?;
     }
     tabs.set_sizing(Sizing::fill());
     root.attach(&tabs, GridCell::new(0, 1));
 
-    let sections = panes.map(|(title, _)| title);
-    commands::attach(ui, &window, &tabs, &sections, &notice)?;
+    let titles = SECTIONS.map(|(title, _)| title);
+    commands::attach(ui, &window, &tabs, &titles, &notice)?;
     tabs.on_select({
         let crumbs = crumbs.clone();
+        let sidebar = sidebar.clone();
         move |index| {
-            let Some(section) = sections.get(index) else {
+            let Some(title) = titles.get(index) else {
                 return;
             };
-            crumbs.set_items(&NavItem::list(["naui gallery", *section]));
+            crumbs.set_items(&NavItem::list(["naui gallery", *title]));
+            sidebar.set_selected(index);
         }
+    });
+
+    // サイドバーで選んだらタブを移す。タブの `select` は通知するので、
+    // パンくずも上の `on_select` がそろえる。
+    sidebar.on_select({
+        let tabs = tabs.clone();
+        move |index| tabs.select(index)
     });
 
     // パンくずの先頭を選ぶと概要へ戻る。現在地側はそのままにする。
@@ -110,6 +159,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     });
 
     window.set_child(&root);
+    window.set_sidebar(&sidebar);
     window.show();
     Ok(())
 }

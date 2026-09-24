@@ -19,8 +19,9 @@ use naui_core::{
     Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
     FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
     Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
-    ScrollPolicy, SelectionMode, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
+    TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::Retained;
@@ -488,6 +489,42 @@ fn main() {
         (
             "ツールバーの通知中に内容と通知先を差し替えられる",
             toolbar_callback_is_reentrant,
+        ),
+        (
+            "サイドバーがソースリストの NSTableView に項目と見出しを並べる",
+            sidebar_rows_map_to_a_source_list,
+        ),
+        (
+            "サイドバーの選択が通し番号で往復し、利用者の選択だけを通知する",
+            sidebar_selection_round_trips,
+        ),
+        (
+            "サイドバーが NSSplitViewController として取り付き外れる",
+            sidebar_attaches_to_a_window,
+        ),
+        (
+            "サイドバーの幅と開閉が NSSplitViewItem に届く",
+            sidebar_width_and_collapse,
+        ),
+        (
+            "サイドバーを付けたウィンドウではトーストが中身の区画に重なる",
+            sidebar_toast_goes_to_the_content_pane,
+        ),
+        (
+            "サイドバーを閉じている間に置いた幅が、開き直したときに反映される",
+            sidebar_width_set_while_collapsed_applies_on_reopen,
+        ),
+        (
+            "サイドバーを付けるとツールバーの先頭にサイドバーボタンが入る",
+            sidebar_adds_the_toggle_button_to_the_toolbar,
+        ),
+        (
+            "サイドバーボタンで開閉すると on_collapse が呼ばれる",
+            sidebar_toggle_notifies_collapse,
+        ),
+        (
+            "サイドバーの通知中に内容と通知先を差し替えられる",
+            sidebar_callback_is_reentrant,
         ),
         (
             "メニューバーの見出しと項目が NSMenu になる",
@@ -7836,5 +7873,648 @@ fn menu_bar_callback_is_reentrant(ui: &Ui) -> Result<()> {
         vec![(0, 1), (10, 10)],
         "差し替えたコールバックが呼ばれる"
     );
+    Ok(())
+}
+
+/// サイドバーのまとまり。見出しの無いものと、見出し付きのものを 1 つずつ。
+fn sidebar_fixture() -> Vec<SidebarSection> {
+    vec![
+        SidebarSection::untitled([
+            SidebarItem::new("一般").icon(ToolbarIcon::Settings),
+            SidebarItem::new("検索").icon(ToolbarIcon::Search),
+        ]),
+        SidebarSection::untitled([SidebarItem::new("情報")]),
+        SidebarSection::new(
+            "場所",
+            [
+                SidebarItem::new("書類").icon(ToolbarIcon::Open),
+                SidebarItem::new("共有").enabled(false),
+            ],
+        ),
+    ]
+}
+
+/// ソースリスト様式の `NSTableView` に、項目・隙間・見出しが並ぶ。
+fn sidebar_rows_map_to_a_source_list(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    assert!(sidebar.is_empty());
+    sidebar.set_sections(&sidebar_fixture());
+    assert_eq!(sidebar.len(), 5, "見出しと隙間は数えない");
+
+    let table = sidebar.native_table_view();
+    assert_eq!(table.style(), objc2_app_kit::NSTableViewStyle::SourceList);
+    assert!(table.headerView().is_none(), "列の見出しは出さない");
+    // 一般・検索 | 隙間 | 情報 | 場所 (見出し。前の隙間は省く) | 書類・共有
+    assert_eq!(table.numberOfRows(), 7);
+
+    let delegate = unsafe { table.delegate() }.expect("デリゲートがあること");
+    let is_group = |row: isize| unsafe { delegate.tableView_isGroupRow(&table, row) };
+    assert!(!is_group(0));
+    assert!(is_group(4), "見出しはグループ行になる");
+    let height = |row: isize| unsafe { delegate.tableView_heightOfRow(&table, row) };
+    assert!(height(2) < height(0), "隙間の行は項目より低い");
+    let selectable = |row: isize| unsafe { delegate.tableView_shouldSelectRow(&table, row) };
+    assert!(selectable(0));
+    assert!(!selectable(2), "隙間は選べない");
+    assert!(!selectable(4), "見出しは選べない");
+    assert!(!selectable(6), "選べない項目は選べない");
+
+    // 項目のセルは NSTableCellView で、文字とアイコンを持つ。
+    let cell = |row: isize| {
+        table
+            .viewAtColumn_row_makeIfNecessary(0, row, true)
+            .and_then(|view| view.downcast::<objc2_app_kit::NSTableCellView>().ok())
+            .expect("セルがあること")
+    };
+    let first = cell(0);
+    assert_eq!(
+        unsafe { first.textField() }.map(|f| f.stringValue().to_string()),
+        Some("一般".to_string())
+    );
+    assert!(
+        unsafe { first.imageView() }.is_some(),
+        "アイコンを指定した項目は記号を持つ"
+    );
+    assert!(
+        unsafe { cell(3).imageView() }.is_none(),
+        "アイコンの無い項目は文字だけ"
+    );
+    assert_eq!(
+        unsafe { cell(4).textField() }.map(|f| f.stringValue().to_string()),
+        Some("場所".to_string())
+    );
+
+    sidebar.set_items(&SidebarItem::list(["春", "夏"]));
+    assert_eq!(sidebar.len(), 2);
+    assert_eq!(table.numberOfRows(), 2, "まとまり 1 つなら隙間は無い");
+    Ok(())
+}
+
+/// 選択は通し番号でやり取りし、`set_selected` は通知せず `select` と
+/// 利用者の選択は通知する。
+fn sidebar_selection_round_trips(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    sidebar.set_sections(&sidebar_fixture());
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_select({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(index)
+    });
+    assert_eq!(sidebar.selected(), None, "最初は何も選ばれていない");
+
+    sidebar.set_selected(3);
+    assert_eq!(sidebar.selected(), Some(3));
+    let table = sidebar.native_table_view();
+    assert_eq!(table.selectedRow(), 5, "書類の行 (見出しの後ろ) が選ばれる");
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+
+    sidebar.set_selected(4);
+    sidebar.set_selected(99);
+    assert_eq!(
+        sidebar.selected(),
+        Some(3),
+        "選べない項目と範囲外は無視する"
+    );
+
+    sidebar.select(2);
+    assert_eq!(sidebar.selected(), Some(2));
+    assert_eq!(*seen.borrow(), [2], "select は通知する");
+    sidebar.select(2);
+    assert_eq!(*seen.borrow(), [2, 2], "同じ項目を選び直しても通知する");
+
+    // 利用者がクリックしたときと同じく、テーブル側から選ぶ。
+    table.selectRowIndexes_byExtendingSelection(
+        &objc2_foundation::NSIndexSet::indexSetWithIndex(1),
+        false,
+    );
+    assert_eq!(sidebar.selected(), Some(1));
+    assert_eq!(*seen.borrow(), [2, 2, 1], "テーブルでの選択も通知する");
+
+    // 項目を差し替えても、同じ番号がまだ選べれば残る。
+    sidebar.set_sections(&sidebar_fixture());
+    assert_eq!(sidebar.selected(), Some(1));
+    sidebar.set_items(&SidebarItem::list(["ひとつ"]));
+    assert_eq!(sidebar.selected(), None, "無くなった番号の選択は外れる");
+    assert_eq!(seen.borrow().len(), 3, "差し替えでは通知しない");
+
+    sidebar.set_selected(0);
+    sidebar.clear_selection();
+    assert_eq!(sidebar.selected(), None);
+    assert_eq!(seen.borrow().len(), 3, "clear_selection は通知しない");
+    Ok(())
+}
+
+/// 取り付けると `contentViewController` が `NSSplitViewController` になり、
+/// 子は右の区画へ、外すとウィンドウの中身へ戻る。
+fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::{NSSplitViewController, NSSplitViewItemBehavior, NSWindowStyleMask};
+
+    let window = ui.window("サイドバー", 640.0, 400.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.append(&ui.label("本文")?);
+    window.set_child(&root);
+    let native_window = window.native_window();
+    let frame = native_window.frame();
+
+    let sidebar = ui.sidebar()?;
+    sidebar.set_sections(&sidebar_fixture());
+    window.set_sidebar(&sidebar);
+
+    let controller = native_window
+        .contentViewController()
+        .and_then(|c| c.downcast::<NSSplitViewController>().ok())
+        .expect("contentViewController が NSSplitViewController になる");
+    assert_eq!(controller, sidebar.native_split_view_controller());
+    let items = controller.splitViewItems();
+    assert_eq!(items.len(), 2);
+    let first = items.objectAtIndex(0);
+    assert_eq!(first.behavior(), NSSplitViewItemBehavior::Sidebar);
+    assert!(first.allowsFullHeightLayout(), "タイトルバーの下まで伸びる");
+    assert!(native_window
+        .styleMask()
+        .contains(NSWindowStyleMask::FullSizeContentView));
+    assert_eq!(
+        native_window.frame(),
+        frame,
+        "ウィンドウの大きさは変わらない"
+    );
+
+    let mtm = MainThreadMarker::new().unwrap();
+    let host = items.objectAtIndex(1).viewController(mtm).view();
+    let root_view = root.native_view();
+    assert!(contains_subview(&host, &root_view), "子は右の区画に移る");
+
+    // 子の上端はタイトルバーを避ける。
+    controller.view().layoutSubtreeIfNeeded();
+    let inset = host.safeAreaInsets().top;
+    assert!(inset > 0.0, "中身の区画はタイトルバーの下まで伸びている");
+    let top = root_view.frame().origin.y + root_view.frame().size.height;
+    assert!(
+        (host.frame().size.height - top - inset).abs() < 1.0,
+        "子の上端は安全領域の上端にそろう: host={:?} child={:?} inset={inset}",
+        host.frame(),
+        root_view.frame()
+    );
+
+    // 付けたまま子を差し替えても、右の区画に置かれる。
+    let other = ui.stack(Orientation::Vertical)?;
+    window.set_child(&other);
+    assert!(contains_subview(&host, &other.native_view()));
+    assert!(!contains_subview(&host, &root_view), "前の子は外れる");
+
+    window.clear_sidebar();
+    assert!(native_window.contentViewController().is_none());
+    assert!(!native_window
+        .styleMask()
+        .contains(NSWindowStyleMask::FullSizeContentView));
+    assert_eq!(
+        native_window.contentView(),
+        Some(other.native_view()),
+        "子はウィンドウの中身へ戻る"
+    );
+    assert_eq!(native_window.frame(), frame);
+    window.clear_sidebar(); // 付いていなければ何もしない
+    window.close();
+    Ok(())
+}
+
+/// 幅と開閉は `NSSplitView` の区画と `NSSplitViewItem` に届く。
+fn sidebar_width_and_collapse(ui: &Ui) -> Result<()> {
+    let window = ui.window("サイドバーの幅", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    assert_eq!(sidebar.width(), DEFAULT_SIDEBAR_WIDTH, "付ける前は覚えた幅");
+    window.set_sidebar(&sidebar);
+
+    let split = sidebar.native_split_view_controller().splitView();
+    let pane = || {
+        split.layoutSubtreeIfNeeded();
+        split.arrangedSubviews().objectAtIndex(0).frame().size.width
+    };
+    assert!(
+        (pane() - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
+        "既定の幅で出る: {}",
+        pane()
+    );
+
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
+    sidebar.set_width(260.0);
+    assert!((pane() - 260.0).abs() < 1.0, "幅が区画に届く: {}", pane());
+    assert!((sidebar.width() - 260.0).abs() < 1.0);
+    sidebar.set_width(40.0);
+    assert!(
+        (sidebar.width() - naui_core::SIDEBAR_MIN_WIDTH).abs() < 1.0,
+        "下限より狭くはならない"
+    );
+    sidebar.set_width(220.0);
+    assert!(resized.borrow().is_empty(), "set_width では通知しない");
+
+    // 利用者と同じく、仕切りをつかんで右へ 40 動かす (220 → 260 付近)。
+    window.show();
+    let app = NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
+    drag_divider(&app, &window.native_window(), &split, 40.0);
+    let dragged = pane();
+    assert!(
+        (dragged - 260.0).abs() < 3.0,
+        "仕切りで広げられる: {dragged}"
+    );
+    // 手を離したあと、AppKit は区画を画素の境目へそろえる (257.5 → 258)。
+    // その並べ直しはドラッグのイベントの外で起きるので拾わない (拾うと開閉の
+    // アニメーション中の幅まで拾ってしまう)。差は半画素までになる。
+    assert!(
+        (sidebar.width() - dragged).abs() < 1.0,
+        "動かした幅を返す: width={} pane={dragged} resized={:?}",
+        sidebar.width(),
+        resized.borrow()
+    );
+    assert!(!resized.borrow().is_empty(), "利用者が動かしたら通知する");
+    assert!((resized.borrow().last().unwrap() - dragged).abs() < 1.0);
+    let count = resized.borrow().len();
+    drag_divider(&app, &window.native_window(), &split, -80.0);
+    assert!(
+        (pane() - (dragged - 80.0)).abs() < 3.0,
+        "仕切りで狭められる: {}",
+        pane()
+    );
+    assert!(resized.borrow().len() > count);
+
+    // 下限を越えて端まで寄せると、AppKit の作法どおり閉じる。
+    let collapsed = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let collapsed = collapsed.clone();
+        move |value| collapsed.borrow_mut().push(value)
+    });
+    drag_divider(&app, &window.native_window(), &split, -400.0);
+    pump_until(3.0, || sidebar.is_collapsed());
+    assert!(sidebar.is_collapsed(), "端まで寄せると閉じる");
+    assert_eq!(*collapsed.borrow(), [true], "閉じたことが届く");
+    sidebar.set_collapsed(false);
+    pump_until(3.0, || {
+        !split.isSubviewCollapsed(&split.arrangedSubviews().objectAtIndex(0))
+    });
+    sidebar.set_width(260.0);
+    let fixed = pane();
+
+    assert!(!sidebar.is_collapsed());
+    window.show();
+    sidebar.set_collapsed(true);
+    assert!(sidebar.is_collapsed());
+    assert!(
+        (sidebar.width() - 260.0).abs() < 1.0,
+        "閉じても開いたときの幅を返す"
+    );
+    // 画面の上でも区画が畳まれ、中身の区画がウィンドウの幅いっぱいになる。
+    // 閉じる動きはアニメーションなので、終わるまでランループを回す。
+    let sidebar_view = split.arrangedSubviews().objectAtIndex(0);
+    let content = || split.arrangedSubviews().objectAtIndex(1).frame().size.width;
+    pump_until(3.0, || split.isSubviewCollapsed(&sidebar_view));
+    split.layoutSubtreeIfNeeded();
+    assert!(
+        split.isSubviewCollapsed(&sidebar_view),
+        "サイドバーの区画が畳まれる"
+    );
+    assert!(
+        (content() - split.frame().size.width).abs() < 1.0,
+        "中身がウィンドウの幅いっぱいになる: {} / {}",
+        content(),
+        split.frame().size.width
+    );
+    sidebar.set_collapsed(false);
+    assert!(!sidebar.is_collapsed());
+    pump_until(3.0, || !split.isSubviewCollapsed(&sidebar_view));
+    split.layoutSubtreeIfNeeded();
+    assert!(
+        (pane() - fixed).abs() < 1.0,
+        "開き直すと同じ幅へ戻る: {}",
+        pane()
+    );
+
+    sidebar.set_width(-1.0);
+    sidebar.set_width(f64::NAN);
+    assert!(
+        (sidebar.width() - 260.0).abs() < 1.0,
+        "おかしな幅は無視する"
+    );
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// `NSSplitView` へ直に足すと区画の 1 つとして並べられてしまうので、
+/// トーストは右の区画へ重ねる。
+fn sidebar_toast_goes_to_the_content_pane(ui: &Ui) -> Result<()> {
+    let window = ui.window("サイドバーとトースト", 640.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    window.set_sidebar(&sidebar);
+    window.show();
+
+    let toast = ui.toast("保存しました")?;
+    toast.show();
+    let view = toast.native_view().expect("出ていること");
+    let mtm = MainThreadMarker::new().unwrap();
+    let controller = sidebar.native_split_view_controller();
+    let host = controller
+        .splitViewItems()
+        .objectAtIndex(1)
+        .viewController(mtm)
+        .view();
+    assert!(contains_subview(&host, &view), "中身の区画に重なる");
+    assert_eq!(
+        controller.splitView().arrangedSubviews().len(),
+        2,
+        "区画は増えない"
+    );
+    toast.dismiss();
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// 通知の中からサイドバーを組み替えても、二重借用にならない。
+fn sidebar_callback_is_reentrant(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["春", "夏", "秋"]));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_select({
+        let sidebar = sidebar.clone();
+        let seen = seen.clone();
+        move |index| {
+            seen.borrow_mut().push(index);
+            sidebar.set_items(&SidebarItem::list(["冬"]));
+            let seen = seen.clone();
+            sidebar.on_select(move |index| seen.borrow_mut().push(100 + index));
+        }
+    });
+    sidebar.select(1);
+    assert_eq!(sidebar.len(), 1);
+    assert_eq!(sidebar.selected(), None, "組み替えで選択は外れる");
+    sidebar.select(0);
+    assert_eq!(*seen.borrow(), [1, 100], "差し替えた通知先が使われる");
+    Ok(())
+}
+
+/// ツールバーの項目の識別子を並びの順に読む。
+fn toolbar_identifiers(window: &NSWindow) -> Vec<String> {
+    window
+        .toolbar()
+        .map(|toolbar| {
+            toolbar
+                .items()
+                .iter()
+                .map(|item| item.itemIdentifier().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// アプリのツールバーが無ければボタンだけのツールバーが付き、あれば
+/// その先頭へ差し込まれる。どちらも外すと元に戻る。
+fn sidebar_adds_the_toggle_button_to_the_toolbar(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::{
+        NSToolbarSidebarTrackingSeparatorItemIdentifier, NSToolbarToggleSidebarItemIdentifier,
+    };
+    let toggle = unsafe { NSToolbarToggleSidebarItemIdentifier }.to_string();
+    let tracking = unsafe { NSToolbarSidebarTrackingSeparatorItemIdentifier }.to_string();
+
+    let window = ui.window("サイドバーボタン", 640.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let native = window.native_window();
+    let sidebar = ui.sidebar()?;
+    window.set_sidebar(&sidebar);
+    assert_eq!(
+        toolbar_identifiers(&native),
+        [toggle.clone(), tracking.clone()],
+        "ツールバーが無くてもサイドバーボタンは出る"
+    );
+    assert_eq!(
+        native.titleVisibility(),
+        NSWindowTitleVisibility::Visible,
+        "ボタンだけのときはタイトルを隠さない"
+    );
+
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[
+        ToolbarItem::new(ToolbarIcon::New, "新規"),
+        ToolbarItem::new(ToolbarIcon::Open, "開く"),
+    ]);
+    window.set_toolbar(&toolbar);
+    let ids = toolbar_identifiers(&native);
+    assert_eq!(ids.len(), 4);
+    assert_eq!(&ids[..2], [toggle.clone(), tracking.clone()], "先頭に入る");
+    assert_eq!(toolbar.len(), 2, "naui の項目の数には数えない");
+    assert!(
+        toolbar.native_item(0).is_some(),
+        "項目のインデックスはそのまま"
+    );
+
+    // アプリのツールバーを外しても、サイドバーボタンは残る。
+    window.clear_toolbar();
+    assert_eq!(
+        toolbar_identifiers(&native),
+        [toggle.clone(), tracking.clone()]
+    );
+    window.set_toolbar(&toolbar);
+
+    window.clear_sidebar();
+    assert_eq!(
+        toolbar_identifiers(&native),
+        ["naui.item.0", "naui.item.1"],
+        "サイドバーを外すとボタンも消える"
+    );
+    window.clear_toolbar();
+    assert!(native.toolbar().is_none());
+    window.close();
+    Ok(())
+}
+
+/// サイドバーボタン (`toggleSidebar:`) で閉じると `on_collapse` が呼ばれ、
+/// `set_collapsed` では呼ばれない。
+fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
+    let window = ui.window("サイドバーの開閉", 640.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    let resized = Rc::new(Cell::new(0));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |_| resized.set(resized.get() + 1)
+    });
+
+    // サイドバーボタンが送るのと同じ操作。
+    let controller = sidebar.native_split_view_controller();
+    unsafe { controller.toggleSidebar(None) };
+    pump_until(3.0, || !seen.borrow().is_empty());
+    assert!(sidebar.is_collapsed());
+    assert_eq!(*seen.borrow(), [true], "閉じたことが届く");
+
+    unsafe { controller.toggleSidebar(None) };
+    pump_until(3.0, || seen.borrow().len() >= 2);
+    assert!(!sidebar.is_collapsed());
+    assert_eq!(*seen.borrow(), [true, false], "開いたことも届く");
+    pump(0.5);
+    assert_eq!(
+        resized.get(),
+        0,
+        "開閉のアニメーションは幅の変更として通知しない"
+    );
+    assert!(
+        (sidebar.width() - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
+        "開き直すと元の幅: {}",
+        sidebar.width()
+    );
+
+    sidebar.set_collapsed(true);
+    pump(0.5);
+    sidebar.set_collapsed(false);
+    pump(0.5);
+    assert_eq!(seen.borrow().len(), 2, "set_collapsed では通知しない");
+
+    // 通知の中から開閉し直しても、入れ子の通知で落ちない。
+    sidebar.on_collapse({
+        let sidebar = sidebar.clone();
+        let seen = seen.clone();
+        move |collapsed| {
+            seen.borrow_mut().push(collapsed);
+            sidebar.set_collapsed(false);
+        }
+    });
+    unsafe { controller.toggleSidebar(None) };
+    pump_until(3.0, || seen.borrow().len() >= 3);
+    pump(0.5);
+    assert_eq!(seen.borrow()[2], true);
+    assert!(!sidebar.is_collapsed(), "通知の中で開き直せる");
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// 分割ビューの最初の仕切りをつかみ、横へ `dx` 動かして離す。
+///
+/// イベントをキューへ積んでから押下を配送するので、`NSSplitView` の
+/// 追跡ループが本物のドラッグと同じく続きのイベントを読み取る。
+fn drag_divider(
+    app: &NSApplication,
+    window: &NSWindow,
+    split: &objc2_app_kit::NSSplitView,
+    dx: f64,
+) {
+    split.layoutSubtreeIfNeeded();
+    let first = split.arrangedSubviews().objectAtIndex(0).frame();
+    let y = split.bounds().size.height / 2.0;
+    let x = first.origin.x + first.size.width + split.dividerThickness() / 2.0;
+    let start = split.convertPoint_toView(NSPoint::new(x, y), None);
+    let event = |kind, point: NSPoint| {
+        NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            point,
+            NSEventModifierFlags::empty(),
+            0.0,
+            window.windowNumber(),
+            None,
+            0,
+            1,
+            1.0,
+        )
+        .expect("マウスイベント")
+    };
+    let steps = 4;
+    for step in 1..=steps {
+        let point = NSPoint::new(start.x + dx * f64::from(step) / f64::from(steps), start.y);
+        unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseDragged, point), false) };
+    }
+    let end = NSPoint::new(start.x + dx, start.y);
+    unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseUp, end), false) };
+    app.sendEvent(&event(NSEventType::LeftMouseDown, start));
+    deliver_events(app);
+    pump(0.05);
+}
+
+/// 閉じている間に `set_width` した幅が、開き直したときに区画へ反映され、
+/// そのあとの利用者のドラッグも `on_resize` へ届くこと。
+///
+/// 開き直しは `set_collapsed(false)` とサイドバーボタン (`toggleSidebar:`) の
+/// 両方を見る。AppKit はボタンで開くとき、閉じる前に覚えた幅へ戻す。
+fn sidebar_width_set_while_collapsed_applies_on_reopen(ui: &Ui) -> Result<()> {
+    let window = ui.window("閉じている間の幅", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+
+    let controller = sidebar.native_split_view_controller();
+    let split = controller.splitView();
+    let pane = || {
+        split.layoutSubtreeIfNeeded();
+        split.arrangedSubviews().objectAtIndex(0).frame().size.width
+    };
+    let collapsed = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let collapsed = collapsed.clone();
+        move |value| collapsed.borrow_mut().push(value)
+    });
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
+
+    // set_collapsed(false) で開き直す。
+    sidebar.set_width(260.0);
+    sidebar.set_collapsed(true);
+    sidebar.set_width(300.0);
+    assert!(sidebar.is_collapsed(), "幅を置いても閉じたまま");
+    assert_eq!(sidebar.width(), 300.0);
+    sidebar.set_collapsed(false);
+    assert!(
+        (pane() - 300.0).abs() < 1.0,
+        "開き直すと新しい幅: {}",
+        pane()
+    );
+
+    // その後の利用者のドラッグも届く。
+    let app = NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
+    drag_divider(&app, &window.native_window(), &split, -40.0);
+    assert!(
+        !resized.borrow().is_empty(),
+        "開き直したあとのドラッグも通知する"
+    );
+    assert!(
+        (sidebar.width() - pane()).abs() < 1.0,
+        "動かした幅を返す (画素の境目へのそろえ分まで)"
+    );
+
+    // サイドバーボタンで開き直しても、閉じている間に置いた幅になる。
+    sidebar.set_collapsed(true);
+    sidebar.set_width(320.0);
+    unsafe { controller.toggleSidebar(None) };
+    pump_until(3.0, || !sidebar.is_collapsed());
+    pump(0.5);
+    assert!(!sidebar.is_collapsed());
+    assert!(
+        (pane() - 320.0).abs() < 1.0,
+        "ボタンで開いても新しい幅: {}",
+        pane()
+    );
+    assert_eq!(
+        *collapsed.borrow(),
+        [false],
+        "閉じている間に幅を置いても開閉は通知せず、ボタンで開いたことだけが届く"
+    );
+    window.clear_sidebar();
+    window.close();
     Ok(())
 }

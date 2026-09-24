@@ -868,6 +868,79 @@
 //! **持たない**。4 環境で同じ形にそろうところまでを共通 API にしてあるので、
 //! それ以上が要るときはネイティブオブジェクトへの脱出口を使う。
 //!
+//! ## サイドバー
+//!
+//! 「システム設定」や Finder の左側のような、**ウィンドウの高さいっぱいの
+//! サイドバー**は [`Sidebar`] を使う。[`Toolbar`] と同じくレイアウトへは
+//! 置かず、[`Window::set_sidebar`] で取り付ける ([`Widget`] ではない)。
+//! 取り付けると、[`Window::set_child`] の子はサイドバーの右の区画に置かれる。
+//!
+//! 項目は [`SidebarItem`] (文字とアイコン) で、[`SidebarSection`] で
+//! まとめる。見出しの無いまとまりは隙間 (Windows と Linux では区切り線) だけで
+//! 区切られる。選ばれた項目は**まとまりをまたいだ通し番号**で返る。
+//!
+//! ```no_run
+//! # use naui::{Result, SidebarItem, SidebarSection, ToolbarIcon, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let window = ui.window("設定", 800.0, 600.0)?;
+//! let body = ui.stack(naui::Orientation::Vertical)?;
+//! window.set_child(&body); // サイドバーの右に置かれる
+//!
+//! let sidebar = ui.sidebar()?;
+//! sidebar.set_sections(&[
+//!     SidebarSection::untitled([
+//!         SidebarItem::new("一般").icon(ToolbarIcon::Settings),
+//!         SidebarItem::new("情報").icon(ToolbarIcon::Info),
+//!     ]),
+//!     SidebarSection::new("場所", ["書類", "ダウンロード"]), // 見出し付き
+//! ]);
+//! sidebar.on_select(|index| println!("{index} 番目が選ばれた")); // 0〜3
+//! sidebar.set_selected(0);      // 通知せずに選ぶ
+//! sidebar.set_width(240.0);     // 既定は DEFAULT_SIDEBAR_WIDTH (220)
+//! window.set_sidebar(&sidebar);
+//! sidebar.set_collapsed(true);  // 閉じる (項目と選択は残る)
+//! sidebar.on_collapse(|collapsed| println!("利用者が開閉した: {collapsed}"));
+//! sidebar.on_resize(|width| println!("利用者が幅を {width} にした"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `Sidebar` | `NavigationView` (Left) | `NSSplitViewController` のサイドバー項目 | `GtkPaned` | `SplitView` の中に `<aside>` + `<nav>` |
+//! | 項目の一覧 | `NavigationViewItem` | `NSTableView` (ソースリスト) | `GtkListBox` (`.navigation-sidebar`) | `<ul>` + `<button>` |
+//! | 見出し | `NavigationViewItemHeader` | グループ行 | 淡い `GtkLabel` の行 | `<div role="heading">` |
+//!
+//! macOS では**タイトルバーの下まで伸びる** (macOS 26 では浮いたガラス、
+//! それより前はすりガラスの材質)。そのため付けている間はウィンドウに
+//! `fullSizeContentView` が付き、子の上端はタイトルバーを避けた位置になる。
+//! Linux ではサイドバーと中身がそれぞれヘッダーバーを持つ (GNOME の作法)。
+//! Windows と Web ではタイトルバー (とメニューバー) の下から始まる。
+//!
+//! ### 幅と開閉
+//!
+//! **4 環境とも、利用者は仕切りをドラッグして幅を変えられる** (下限は
+//! [`SIDEBAR_MIN_WIDTH`])。変えると [`Sidebar::on_resize`] が呼ばれる
+//! ([`Sidebar::set_width`] では呼ばれない)。macOS と Linux は標準の仕切り
+//! (`NSSplitView` / `GtkPaned`)、Windows と Web は naui の [`SplitView`] と同じ
+//! 6 px のつかみ代になる。
+//!
+//! 開閉は**その環境の標準のサイドバーボタン**で利用者も行え、そのときは
+//! [`Sidebar::on_collapse`] が呼ばれる ([`Sidebar::set_collapsed`] では呼ばれない)。
+//! ボタンの位置は 4 環境でそろえてあり、**ウィンドウの上端の左 (ツールバーと
+//! 同じ高さ)** に来る。開閉してもボタンは動かず、中身も上下しない。
+//!
+//! | 環境 | 開閉ボタン | 閉じたときの姿 |
+//! | --- | --- | --- |
+//! | macOS | ツールバー先頭のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`)。ツールバーが無ければボタンだけのツールバーを付ける | 区画ごと隠れる (仕切りを下限より左へ引いても閉じる) |
+//! | Linux | ヘッダーバーの左端の `sidebar-show-symbolic` | 区画ごと隠れる |
+//! | Windows | `NavigationView` のペインを畳むボタン | アイコンだけの細い帯 |
+//! | Web | ツールバーの行の先頭の `<button aria-expanded>` (ツールバーが無ければボタンだけの行) | 区画ごと隠れる |
+//!
+//! アイコンは [`ToolbarIcon`] と同じ種類を使い、その環境の標準アイコンへ
+//! 写す。`set_selected` / `clear_selection` は通知せず、`select` と利用者の
+//! 選択は通知する (ほかのナビゲーションと同じ)。
+//!
 //! ## ポップアップ (コンテキスト) メニュー
 //!
 //! [`PopupMenu`] は画面に並ばないので [`Widget`] ではない。項目は
@@ -1481,10 +1554,10 @@
 //!
 //! | 環境 | 状態 |
 //! | --- | --- |
-//! | macOS | 実行・自動テストあり (コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・メニューバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・描画面・ラベルの折り返し・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む 156 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、描画面の画素とポインター、メニューバーの見出しの開閉・ショートカット・ウィンドウへの取り付け、ラベルの折り返しと省略記号、ラベルの文字づかい、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
-//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・描画面・別スレッドからの受け渡しと `spawn` を含む) |
-//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・別スレッドからの受け渡しと `spawn` を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 146 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・メニューバー・ラベルの折り返しを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
+//! | macOS | 実行・自動テストあり (サイドバー・コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・メニューバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・描画面・ラベルの折り返し・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む 156 件) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、サイドバーの選択・仕切りでの幅の変更・開閉、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、描画面の画素とポインター、メニューバーの見出しの開閉・ショートカット・ウィンドウへの取り付け、ラベルの折り返しと省略記号、ラベルの文字づかい、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (サイドバー・トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・描画面・別スレッドからの受け渡しと `spawn` を含む) |
+//! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (サイドバー・トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・別スレッドからの受け渡しと `spawn` を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 146 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・メニューバー・ラベルの折り返しを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
 #![forbid(unsafe_code)]
 
@@ -1494,9 +1567,10 @@ pub use naui_core::{
     DrawCommand, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem,
     MenuItem, MenuShortcut, MenuSpec, NavItem, NumberSpec, Orientation, Padding, Painter, Path,
     PathSegment, PlaybackState, Point, PointerEvent, PointerPhase, PopupItem, Rect, Result,
-    ScrollPolicy, SelectionMode, Sender, Settings, Sizing, SortOrder, TableColumn, TableRow, Task,
-    Tasks, TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
+    ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, SortOrder,
+    TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon,
+    ToolbarItem, Track, TreeItem, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION,
+    ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -1504,27 +1578,27 @@ pub use naui_macos::{
     run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
     Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
     ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
-    TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
-    Window,
+    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView, Stack, Table, TableCells,
+    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
+    Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
     run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
     Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
     ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
-    TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
-    Window,
+    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView, Stack, Table, TableCells,
+    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
+    Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
     run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
     Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
     ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
-    TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
-    Window,
+    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView, Stack, Table, TableCells,
+    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
+    Widget, Window,
 };
 
 #[cfg(all(
@@ -1536,9 +1610,9 @@ pub use naui_gtk::{
     run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
     Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
     ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Slider, Spacer, SplitView, Stack, Table, TableCells, Tabs,
-    TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow, Widget,
-    Window,
+    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView, Stack, Table, TableCells,
+    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
+    Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1959,6 +2033,35 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     menu_bar.on_activate(|_menu: usize, _item: usize| {});
     window.set_menu_bar(&menu_bar);
     window.clear_menu_bar();
+
+    // --- サイドバー (ウィンドウに取り付ける。Widget ではない) -----------
+    let sidebar: Sidebar = ui.sidebar()?;
+    sidebar.set_sections(&[
+        SidebarSection::untitled([
+            SidebarItem::new("t").icon(ToolbarIcon::Settings),
+            SidebarItem::new("t").enabled(false),
+        ]),
+        SidebarSection::new("t", ["t", "t"]),
+    ]);
+    sidebar.set_items(&SidebarItem::list(["t", "t"]));
+    let _: usize = SidebarSection::untitled(["t"]).len();
+    let _: bool = SidebarSection::new("t", ["t"]).is_empty();
+    let _: usize = sidebar.len();
+    let _: bool = sidebar.is_empty();
+    let _: Option<usize> = sidebar.selected();
+    sidebar.set_selected(0);
+    sidebar.clear_selection();
+    sidebar.select(0);
+    sidebar.on_select(|_index: usize| {});
+    sidebar.set_width(DEFAULT_SIDEBAR_WIDTH);
+    let _: f64 = sidebar.width();
+    let _: f64 = SIDEBAR_MIN_WIDTH;
+    sidebar.on_resize(|_width: f64| {});
+    sidebar.set_collapsed(false);
+    let _: bool = sidebar.is_collapsed();
+    sidebar.on_collapse(|_collapsed: bool| {});
+    window.set_sidebar(&sidebar);
+    window.clear_sidebar();
 
     // --- リスト -----------------------------------------------------------
     let list: List = ui.list()?;

@@ -7,6 +7,10 @@
 //!
 //! 下段はさらに `AdwToastOverlay` で包む。[`Toast`](crate::Toast) はここへ
 //! 足され、ヘッダーバーより下・アプリの中身の上へ重なる (GNOME の作法)。
+//!
+//! [`Sidebar`] を付けると、ウィンドウの中身は `GtkPaned` になり、上の
+//! `AdwToolbarView` はその右の区画へ移る。左の区画はサイドバー自身の
+//! ヘッダーバーと一覧を持つ。
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -15,6 +19,7 @@ use adw::prelude::*;
 use naui_core::{Result, Theme};
 
 use crate::menu_bar::MenuBar;
+use crate::sidebar::Sidebar;
 use crate::toolbar::Toolbar;
 use crate::widgets::Widget;
 
@@ -31,6 +36,8 @@ pub(crate) struct WindowInner {
     toolbar: RefCell<Option<Toolbar>>,
     /// ヘッダーバーの下へ差し込んだメニューバー。通知先ごと生かしておく。
     menu_bar: RefCell<Option<MenuBar>>,
+    /// 取り付けたサイドバー。通知先ごと生かしておく。
+    sidebar: RefCell<Option<Sidebar>>,
 }
 
 /// トップレベルウィンドウ。
@@ -79,6 +86,7 @@ impl Window {
             child: RefCell::new(None),
             toolbar: RefCell::new(None),
             menu_bar: RefCell::new(None),
+            sidebar: RefCell::new(None),
         }))
     }
 
@@ -132,13 +140,75 @@ impl Window {
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
+    /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
+    ///
+    /// ウィンドウの中身を `GtkPaned` へ差し替え、これまでの中身
+    /// (ヘッダーバー・メニューバー・子) はその右の区画へ移す。
+    pub fn set_sidebar(&self, sidebar: &Sidebar) {
+        self.clear_sidebar();
+        let paned = sidebar.native_paned();
+        self.0.native.set_content(None::<&gtk::Widget>);
+        paned.set_end_child(Some(&self.0.view));
+        self.0.native.set_content(Some(&paned));
+        *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
+        self.mount_header_start();
+        sidebar.set_content_header(Some(&self.0.header));
+    }
+
+    /// 取り付けたサイドバーを外す。付いていなければ何もしない。
+    ///
+    /// 右の区画にあった中身は、ウィンドウの中身へ戻る。
+    pub fn clear_sidebar(&self) {
+        let Some(old) = self.0.sidebar.borrow_mut().take() else {
+            return;
+        };
+        let paned = old.native_paned();
+        self.0.native.set_content(None::<&gtk::Widget>);
+        paned.set_end_child(None::<&gtk::Widget>);
+        self.0.native.set_content(Some(&self.0.view));
+        let slot = old.content_slot();
+        if slot.parent().is_some() {
+            self.0.header.remove(&slot);
+        }
+        old.set_content_header(None);
+    }
+
+    /// ヘッダーバーの左側を、サイドバーボタンの置き場 → ツールバーの順に
+    /// 並べ直す。
+    ///
+    /// 置き場にはサイドバーを閉じている間だけサイドバーボタンが入る。
+    /// `pack_start` は後ろへ足していくので、先に付いていたほうを外してから
+    /// 並べる (置き場はいつも左端)。
+    fn mount_header_start(&self) {
+        let sidebar = self.0.sidebar.borrow().clone();
+        let toolbar = self.0.toolbar.borrow().clone();
+        if let Some(sidebar) = &sidebar {
+            let slot = sidebar.content_slot();
+            if slot.parent().is_some() {
+                self.0.header.remove(&slot);
+            }
+        }
+        if let Some(toolbar) = &toolbar {
+            let mount = toolbar.mount();
+            if mount.parent().is_some() {
+                self.0.header.remove(&mount);
+            }
+        }
+        if let Some(sidebar) = &sidebar {
+            self.0.header.pack_start(&sidebar.content_slot());
+        }
+        if let Some(toolbar) = &toolbar {
+            self.0.header.pack_start(&toolbar.mount());
+        }
+    }
+
     /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
     ///
     /// GNOME の作法どおり、項目はヘッダーバーの左側へ並ぶ。
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
         self.clear_toolbar();
-        self.0.header.pack_start(&toolbar.mount());
         *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
+        self.mount_header_start();
     }
 
     /// 取り付けたツールバーを外す。付いていなければ何もしない。
@@ -203,10 +273,14 @@ impl Window {
 /// [`Toast`](crate::Toast) は「いちばん手前のウィンドウ」へ出すので、
 /// `GtkApplication` からたどったウィンドウを、naui が組んだ構造
 /// (`AdwApplicationWindow` → `AdwToolbarView` → `AdwToastOverlay`) に沿って
-/// 下りる。
+/// 下りる。サイドバーを付けていれば、間に `GtkPaned` の右の区画が挟まる。
 pub(crate) fn toast_overlay(window: &gtk::Window) -> Option<adw::ToastOverlay> {
     let window = window.clone().downcast::<adw::ApplicationWindow>().ok()?;
-    let view = window.content()?.downcast::<adw::ToolbarView>().ok()?;
+    let mut content = window.content()?;
+    if let Some(paned) = content.downcast_ref::<gtk::Paned>() {
+        content = paned.end_child()?;
+    }
+    let view = content.downcast::<adw::ToolbarView>().ok()?;
     view.content()?.downcast::<adw::ToastOverlay>().ok()
 }
 

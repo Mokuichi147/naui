@@ -290,6 +290,40 @@ impl SplitView {
     pub fn native_divider(&self) -> HtmlElement {
         self.0.divider.clone()
     }
+
+    /// start 側の区画の `<div>`。ウィジェットではない要素を直に置くときに使う
+    /// ([`Sidebar`](crate::Sidebar) の `<aside>`)。
+    pub(crate) fn start_element(&self) -> HtmlElement {
+        self.0.start_pane.clone()
+    }
+
+    /// end 側の区画の `<div>`。
+    pub(crate) fn end_element(&self) -> HtmlElement {
+        self.0.end_pane.clone()
+    }
+
+    /// start 側の区画と仕切りを隠す (`true`) か出す (`false`)。
+    ///
+    /// 隠している間は end 側が全体を受け取る。位置は覚えたままなので、
+    /// 出し直すと元の大きさへ戻る。
+    ///
+    /// `hidden` 属性だけでは消えない。区画にはインラインで `display: flex` を
+    /// 当てていて、それがブラウザ既定の `[hidden] { display: none }` より強い
+    /// ため。属性 (読み上げ向けの意味) と一緒に `display` も切り替える。
+    pub(crate) fn set_start_hidden(&self, hidden: bool) {
+        self.0.start_pane.set_hidden(hidden);
+        style(
+            &self.0.start_pane,
+            "display",
+            if hidden { "none" } else { "flex" },
+        );
+        self.0.divider.set_hidden(hidden);
+    }
+
+    /// start 側の区画と仕切りを隠しているかどうか。
+    pub(crate) fn is_start_hidden(&self) -> bool {
+        self.0.start_pane.hidden()
+    }
 }
 
 impl SplitViewInner {

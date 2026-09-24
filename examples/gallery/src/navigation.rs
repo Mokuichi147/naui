@@ -1,10 +1,63 @@
-use naui::{NavItem, Result, Sizing, Ui};
+use naui::{NavItem, Result, Sidebar, Sizing, Ui, Window};
 
 use crate::parts::{self, Notice};
 
 /// 各ナビゲーション UI の形と選択通知。
-pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
+///
+/// `sidebar` はギャラリーのタブと連動させてあるもので、起動時からウィンドウに
+/// 付いている ([`crate::build`])。ここでは取り外しと開閉を試せるようにする。
+pub(crate) fn build(
+    ui: &Ui,
+    window: &Window,
+    sidebar: &Sidebar,
+    notice: &Notice,
+) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
+
+    parts::section(
+        ui,
+        &pane,
+        "Sidebar",
+        &[
+            "ウィンドウの左に付いているのがサイドバーです。レイアウトではなくウィンドウに取り付けます。",
+            "項目を選ぶと上のタブが切り替わり、タブを選ぶとサイドバーの選択も移ります。",
+            "開閉はその環境のサイドバーボタンでも行えます。ボタンはウィンドウの上端の左 (ツールバーと同じ高さ) にあります。",
+            "幅は仕切りをドラッグして変えられます。",
+        ],
+    )?;
+    let attach = ui.checkbox("ウィンドウに付ける")?;
+    attach.set_checked(true);
+    let collapse = ui.checkbox("閉じる")?;
+    attach.on_toggle({
+        let window = window.clone();
+        let sidebar = sidebar.clone();
+        let collapse = collapse.clone();
+        move |on| {
+            if on {
+                window.set_sidebar(&sidebar);
+            } else {
+                window.clear_sidebar();
+            }
+            // 付けていない間は開閉しても見えないので、押せなくする。
+            collapse.set_enabled(on);
+        }
+    });
+    collapse.on_toggle({
+        let sidebar = sidebar.clone();
+        move |on| sidebar.set_collapsed(on)
+    });
+    // サイドバーボタン (その環境の標準のもの) で開閉されたら、チェックも合わせる。
+    sidebar.on_collapse({
+        let collapse = collapse.clone();
+        move |collapsed| collapse.set_checked(collapsed)
+    });
+    // 仕切りで幅を変えると届く。
+    sidebar.on_resize({
+        let notice = notice.clone();
+        move |value| notice.show(&format!("Sidebar: 幅は {value:.0}"))
+    });
+    pane.append(&attach);
+    pane.append(&collapse);
 
     parts::section(
         ui,

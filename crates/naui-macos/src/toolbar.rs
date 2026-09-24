@@ -13,6 +13,12 @@
 //! 読み上げと、項目が入りきらないときの送り出しメニューに使う。
 //! `ToolbarItem::separator()` は macOS の作法にならって
 //! `NSToolbarSpaceItemIdentifier` (一定幅の空き) へ写す。
+//!
+//! ウィンドウに [`Sidebar`](crate::Sidebar) が付いている間は、先頭へ AppKit
+//! 標準のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`) と、
+//! 以降の項目を中身の区画の上へ寄せる区切り
+//! (`NSToolbarSidebarTrackingSeparatorItemIdentifier`) を差し込む。どちらも
+//! AppKit が作る項目なので、naui の項目のインデックスには数えない。
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -23,11 +29,15 @@ use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSImage, NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode, NSToolbarItem,
-    NSToolbarItemIdentifier, NSToolbarSpaceItemIdentifier,
+    NSToolbarItemIdentifier, NSToolbarSidebarTrackingSeparatorItemIdentifier,
+    NSToolbarSpaceItemIdentifier, NSToolbarToggleSidebarItemIdentifier,
 };
 use objc2_foundation::{NSArray, NSString};
 
 use crate::trampoline::{ActionTarget, SelectHandler};
+
+/// ツールバーの識別子に付ける通し番号。
+static NEXT_TOOLBAR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// 項目の識別子の頭。後ろにインデックスが付く。
 const ITEM_PREFIX: &str = "naui.item.";
@@ -44,24 +54,27 @@ struct ToolbarInner {
     enabled: Cell<bool>,
     /// `NSToolbar` の delegate は weak なので、ここで保持する。
     delegate: RefCell<Option<Retained<ToolbarDelegate>>>,
+    /// 先頭へサイドバーボタンと区切りを差し込むかどうか。
+    sidebar_controls: Cell<bool>,
 }
 
 impl ToolbarInner {
     /// 区切りを含めた並びの識別子。`NSToolbar` へ渡す順序そのもの。
     fn identifiers(&self) -> Retained<NSArray<NSToolbarItemIdentifier>> {
-        let ids: Vec<Retained<NSString>> = self
-            .items
-            .borrow()
-            .iter()
-            .enumerate()
-            .map(|(index, item)| {
-                if item.is_separator() {
-                    unsafe { NSToolbarSpaceItemIdentifier }.retain()
-                } else {
-                    NSString::from_str(&format!("{ITEM_PREFIX}{index}"))
-                }
-            })
-            .collect();
+        let mut ids: Vec<Retained<NSString>> = Vec::new();
+        if self.sidebar_controls.get() {
+            unsafe {
+                ids.push(NSToolbarToggleSidebarItemIdentifier.retain());
+                ids.push(NSToolbarSidebarTrackingSeparatorItemIdentifier.retain());
+            }
+        }
+        ids.extend(self.items.borrow().iter().enumerate().map(|(index, item)| {
+            if item.is_separator() {
+                unsafe { NSToolbarSpaceItemIdentifier }.retain()
+            } else {
+                NSString::from_str(&format!("{ITEM_PREFIX}{index}"))
+            }
+        }));
         NSArray::from_retained_slice(&ids)
     }
 
@@ -188,9 +201,14 @@ pub struct Toolbar(Rc<ToolbarInner>);
 
 impl Toolbar {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
+        // 識別子はツールバーごとに変える。AppKit は同じ識別子の `NSToolbar` を
+        // 「ファミリー」として項目の出し入れを同期するので、共有すると別の
+        // ツールバー (別のウィンドウのものや、サイドバーボタンだけのもの) の
+        // 組み替えが伝わって、項目の位置が食い違う。
+        let serial = NEXT_TOOLBAR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let native = NSToolbar::initWithIdentifier(
             NSToolbar::alloc(mtm),
-            &NSString::from_str("naui.toolbar"),
+            &NSString::from_str(&format!("naui.toolbar.{serial}")),
         );
         // naui は項目をインデックスで識別するため、利用者による並べ替えや
         // 出し入れは受け付けない (順序が変わると通知の意味が変わる)。
@@ -208,6 +226,7 @@ impl Toolbar {
             handler: SelectHandler::default(),
             enabled: Cell::new(true),
             delegate: RefCell::new(None),
+            sidebar_controls: Cell::new(false),
         });
 
         let delegate = ToolbarDelegate::new(mtm, &inner);
@@ -222,6 +241,44 @@ impl Toolbar {
     ///
     /// インデックスは区切りを含めた並びの位置。
     pub fn set_items(&self, items: &[ToolbarItem]) {
+        self.rebuild(items);
+    }
+
+    /// 先頭へサイドバーボタンと区切りを差し込むかどうかを切り替える。
+    ///
+    /// [`Window`](crate::Window) がサイドバーの取り付け・取り外しに合わせて呼ぶ。
+    ///
+    /// サイドバー用の区切り (`NSToolbarSidebarTrackingSeparatorItemIdentifier`)
+    /// は、ウィンドウに付いていないツールバーには AppKit が入れてくれない。
+    /// そのため並びが食い違っていれば、呼ばれるたびに並べ直す (ウィンドウに
+    /// 付けたあとで呼べば入る)。
+    pub(crate) fn set_sidebar_controls(&self, on: bool) {
+        self.0.sidebar_controls.set(on);
+        let expected: Vec<String> = self
+            .0
+            .identifiers()
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+        let current: Vec<String> = self
+            .0
+            .native
+            .items()
+            .iter()
+            .map(|item| item.itemIdentifier().to_string())
+            .collect();
+        if expected != current {
+            let items = self.0.items.borrow().clone();
+            self.rebuild(&items);
+        }
+    }
+
+    /// 同じツールバーのハンドルかどうか (clone したものも同じとみなす)。
+    pub(crate) fn is_same(&self, other: &Toolbar) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+
+    fn rebuild(&self, items: &[ToolbarItem]) {
         self.0.items.borrow_mut().clear();
         self.0.items.borrow_mut().extend_from_slice(items);
         *self.0.natives.borrow_mut() = vec![None; items.len()];
@@ -234,9 +291,12 @@ impl Toolbar {
         let identifiers = self.0.identifiers();
         for index in 0..identifiers.len() {
             // 挿入のたびに delegate が呼ばれ、`NSToolbarItem` が作られる。
+            // 入れる位置は「いまの末尾」。AppKit が受け付けない項目 (ウィンドウに
+            // 付いていないときのサイドバー用の区切り) があっても、後ろがずれない。
+            let end = self.0.native.items().len();
             self.0.native.insertItemWithItemIdentifier_atIndex(
                 &identifiers.objectAtIndex(index),
-                index as isize,
+                end as isize,
             );
         }
         self.collect_items();
