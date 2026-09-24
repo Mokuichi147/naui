@@ -2572,6 +2572,14 @@ fn sidebar_attaches_to_the_left_of_the_window() {
         sidebar.set_collapsed(true);
         assert!(sidebar.is_collapsed());
         assert!(start_html.hidden(), "閉じるとサイドバーの区画が隠れる");
+        // 属性だけでなく、実際に描かれなくなっていること (インラインの
+        // `display` が `[hidden]` より強いので、属性だけでは消えない)。
+        assert_eq!(computed(&start, "display"), "none", "区画が実際に消える");
+        assert_eq!(
+            computed(&divider, "display"),
+            "none",
+            "仕切りも実際に消える"
+        );
         assert!(
             divider.unchecked_ref::<HtmlElement>().hidden(),
             "仕切りも隠れる"
@@ -2579,6 +2587,11 @@ fn sidebar_attaches_to_the_left_of_the_window() {
         assert_eq!(sidebar.width(), 160.0, "閉じても幅は覚えている");
         sidebar.set_collapsed(false);
         assert!(!start_html.hidden());
+        assert_eq!(
+            computed(&start, "display"),
+            "flex",
+            "開き直すと元の並びに戻る"
+        );
 
         // 付けたまま子を差し替えても中身の側に入る。
         let other = ui.label("別の中身")?;
@@ -2649,8 +2662,16 @@ fn sidebar_toggle_button_collapses_and_notifies() {
             Some(aside.clone()),
             "開いている間はサイドバーの左上"
         );
+        // 実際に描かれるかを見るので、ページへ載せる。
+        let split_root = aside
+            .parent_element()
+            .and_then(|pane| pane.parent_element())
+            .expect("SplitView の要素");
+        let _mounted = Mounted::new_element(&split_root);
+        let start = aside.parent_element().expect("start 側の区画");
         toggle.click();
         assert!(sidebar.is_collapsed());
+        assert_eq!(computed(&start, "display"), "none", "ボタンで実際に消える");
         assert_ne!(
             toggle.parent_element(),
             Some(aside.clone()),

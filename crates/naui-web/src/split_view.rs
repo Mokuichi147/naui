@@ -306,8 +306,17 @@ impl SplitView {
     ///
     /// 隠している間は end 側が全体を受け取る。位置は覚えたままなので、
     /// 出し直すと元の大きさへ戻る。
+    ///
+    /// `hidden` 属性だけでは消えない。区画にはインラインで `display: flex` を
+    /// 当てていて、それがブラウザ既定の `[hidden] { display: none }` より強い
+    /// ため。属性 (読み上げ向けの意味) と一緒に `display` も切り替える。
     pub(crate) fn set_start_hidden(&self, hidden: bool) {
         self.0.start_pane.set_hidden(hidden);
+        style(
+            &self.0.start_pane,
+            "display",
+            if hidden { "none" } else { "flex" },
+        );
         self.0.divider.set_hidden(hidden);
     }
 
