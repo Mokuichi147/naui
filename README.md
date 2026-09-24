@@ -336,7 +336,7 @@ note.set_color(TextColor::Warning);
 | `Subtitle` | `SubtitleTextBlockStyle` | `NSFontTextStyleTitle3` | `.title-3` | `1.25em` / 600 |
 | `Heading` | `BodyStrongTextBlockStyle` | `NSFontTextStyleHeadline` | `.heading` | `1em` / 700 |
 | `Body` (既定) | `BodyTextBlockStyle` | `NSFontTextStyleBody` | (既定) | (既定) |
-| `Caption` | `CaptionTextBlockStyle` | `NSFontTextStyleCaption1` | `.caption` | `0.85em` |
+| `Caption` | `CaptionTextBlockStyle` | `NSFontTextStyleSubheadline` | `.caption` | `0.85em` |
 
 | 役割 | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
