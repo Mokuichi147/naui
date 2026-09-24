@@ -17,13 +17,15 @@ mod parts;
 mod table;
 mod tasks;
 
+use std::rc::Rc;
+
 use naui::{
-    Align, GridCell, NavItem, Orientation, Padding, Result, ScrollPolicy, Settings, SidebarItem,
-    SidebarSection, Sizing, Tabs, TextStyle, ToolbarIcon, Track, Ui, Widget,
+    Align, GridCell, NavItem, Orientation, Padding, Result, Scroll, ScrollPolicy, Settings,
+    SidebarItem, SidebarSection, Sizing, TextStyle, ToolbarIcon, Track, Ui, Widget,
 };
 
-/// ギャラリーの区分。タブとサイドバーの項目はこの順に並ぶので、どちらの
-/// 通知の通し番号も、そのままもう一方の位置として使える。
+/// ギャラリーの区分。サイドバーと「表示」メニューの項目はこの順に並ぶので、
+/// どちらの通知の通し番号も、そのまま区分の位置として使える。
 ///
 /// アイコンはサイドバーに出す。[`ToolbarIcon`] の中から近いものを選んでいる。
 const SECTIONS: [(&str, ToolbarIcon); 11] = [
@@ -72,7 +74,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     root.set_row_track(1, Track::FILL);
 
     // Windows の StackPanel は主軸方向の Fill に残りの高さを配らないため、
-    // 固定部分だけを Stack にまとめ、タブは Grid の Fill 行へ直接置く。
+    // 固定部分だけを Stack にまとめ、画面の中身は Grid の Fill 行へ直接置く。
     let header = ui.stack(Orientation::Vertical)?;
     header.set_spacing(6.0);
     // 見出しはウィンドウの幅いっぱいに広げ、中身は左端でそろえる
@@ -99,12 +101,10 @@ pub fn build(ui: &Ui) -> Result<()> {
 
     root.attach(&header, GridCell::new(0, 0));
 
-    // Sidebar もウィンドウに取り付けるもの。起動時から付けておき、取り外しと
-    // 開閉は「ナビゲーション」のタブで試せる。項目はタブと同じ並びなので、
-    // 選択を互いに映し合う。
+    // Sidebar もウィンドウに取り付けるもの。選んだ区分の画面だけを下の行へ
+    // 出す。取り外しと開閉は「ナビゲーション」の画面で試せる。
     let sidebar = ui.sidebar()?;
     sidebar.set_sections(&sidebar_sections());
-    sidebar.set_selected(0);
 
     // 並びは SECTIONS と同じ。
     let panes = [
@@ -120,43 +120,47 @@ pub fn build(ui: &Ui) -> Result<()> {
         dialog::build(ui, &notice)?,
         tasks::build(ui, &notice)?,
     ];
-    let tabs = ui.tabs()?;
-    for ((title, _), pane) in SECTIONS.iter().zip(&panes) {
-        add_pane(ui, &tabs, title, pane)?;
-    }
-    tabs.set_sizing(Sizing::fill());
-    root.attach(&tabs, GridCell::new(0, 1));
+    let screens = panes
+        .iter()
+        .map(|pane| scrollable(ui, pane))
+        .collect::<Result<Vec<_>>>()?;
 
-    let titles = SECTIONS.map(|(title, _)| title);
-    commands::attach(ui, &window, &tabs, &titles, &notice)?;
-    tabs.on_select({
+    // 区分を移る。サイドバー・「表示」メニュー・パンくずのどこから選んでも
+    // ここを通るので、ほかの 2 つの表示もここでそろえる。
+    // サイドバーの `set_selected` は通知しないので、選び直しが回り続けない。
+    let go: Rc<dyn Fn(usize)> = Rc::new({
+        let root = root.clone();
         let crumbs = crumbs.clone();
         let sidebar = sidebar.clone();
         move |index| {
-            let Some(title) = titles.get(index) else {
+            let (Some(screen), Some((title, _))) = (screens.get(index), SECTIONS.get(index)) else {
                 return;
             };
+            root.replace(screen, GridCell::new(0, 1));
             crumbs.set_items(&NavItem::list(["naui gallery", *title]));
             sidebar.set_selected(index);
         }
     });
+    go(0);
 
-    // サイドバーで選んだらタブを移す。タブの `select` は通知するので、
-    // パンくずも上の `on_select` がそろえる。
     sidebar.on_select({
-        let tabs = tabs.clone();
-        move |index| tabs.select(index)
+        let go = go.clone();
+        move |index| go(index)
     });
 
-    // パンくずの先頭を選ぶと概要へ戻る。現在地側はそのままにする。
+    // パンくずの先頭を選ぶと概要 (先頭の区分) へ戻る。現在地側はそのままにする。
     crumbs.on_select({
-        let tabs = tabs.clone();
+        let go = go.clone();
         move |index| {
             if index == 0 {
-                tabs.select(0);
+                go(0);
             }
         }
     });
+
+    // サイドバーを外している間も、「表示」メニューから区分を移れる。
+    let titles = SECTIONS.map(|(title, _)| title);
+    commands::attach(ui, &window, &titles, go, &notice)?;
 
     window.set_child(&root);
     window.set_sidebar(&sidebar);
@@ -164,21 +168,20 @@ pub fn build(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// タブの中身をスクロールに載せて貼る。
+/// 区分の画面をスクロールに載せる。
 ///
 /// ネイティブのウィンドウは、中身がはみ出しても勝手にはスクロールしない
-/// (ページごと縦に伸びるのはブラウザだけ)。ギャラリーは 1 つのタブが縦に
-/// 長いので、タブごとにスクロールへ載せて下まで見られるようにする。
+/// (ページごと縦に伸びるのはブラウザだけ)。ギャラリーは 1 つの画面が縦に
+/// 長いので、画面ごとにスクロールへ載せて下まで見られるようにする。
 ///
 /// 横は `Never` にしてある。幅はウィンドウに合わせ、縦だけを送る。
-fn add_pane(ui: &Ui, tabs: &Tabs, title: &str, pane: &dyn Widget) -> Result<()> {
+fn scrollable(ui: &Ui, pane: &dyn Widget) -> Result<Scroll> {
     let scroll = ui.scroll()?;
     scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
     scroll.set_child(pane);
-    // スクロールは中身から高さを決めないので、タブの領域いっぱいを指定する。
+    // スクロールは中身から高さを決めないので、置かれた行いっぱいを指定する。
     scroll.set_sizing(Sizing::fill());
-    tabs.add_tab(title, &scroll);
-    Ok(())
+    Ok(scroll)
 }
 
 // ネイティブの `start()` と、Web のブラウザから呼ばれる入口を作る。

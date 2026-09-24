@@ -11,8 +11,8 @@
 use std::rc::Rc;
 
 use naui::{
-    Dialog, MenuBar, MenuItem, MenuShortcut, MenuSpec, Result, Tabs, Toolbar, ToolbarIcon,
-    ToolbarItem, Ui, Window,
+    Dialog, MenuBar, MenuItem, MenuShortcut, MenuSpec, Result, Toolbar, ToolbarIcon, ToolbarItem,
+    Ui, Window,
 };
 
 use crate::parts::Notice;
@@ -52,12 +52,12 @@ const HELP: usize = 2;
 
 /// ツールバーとメニューバーを作って `window` へ取り付ける。
 ///
-/// 「表示」メニューからは `sections` の名前でタブを切り替えられる。
+/// 「表示」メニューには `sections` の名前が並び、選ぶと `go` へその位置を渡す。
 pub(crate) fn attach(
     ui: &Ui,
     window: &Window,
-    tabs: &Tabs,
     sections: &[&str],
+    go: Rc<dyn Fn(usize)>,
     notice: &Notice,
 ) -> Result<()> {
     let toolbar = ui.toolbar()?;
@@ -98,15 +98,15 @@ pub(crate) fn attach(
 
     let about = about_dialog(ui)?;
     menu_bar.on_activate({
-        let tabs = tabs.clone();
+        let sections = sections.len();
         move |menu, item| match menu {
             FILE => {
                 if let Some(Some((_, command))) = FILE_MENU.get(item) {
                     run(*command);
                 }
             }
-            // 「表示」の先頭からタブの名前が並んでいる。
-            VIEW => tabs.select(item),
+            // 「表示」の先頭から区分の名前が並んでいる。
+            VIEW if item < sections => go(item),
             HELP => about.open(),
             _ => {}
         }

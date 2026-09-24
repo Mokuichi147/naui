@@ -1,10 +1,10 @@
-use naui::{NavItem, Result, Sidebar, Sizing, Ui, Window};
+use naui::{Align, Length, NavItem, Orientation, Padding, Result, Sidebar, Sizing, Ui, Window};
 
 use crate::parts::{self, Notice};
 
 /// 各ナビゲーション UI の形と選択通知。
 ///
-/// `sidebar` はギャラリーのタブと連動させてあるもので、起動時からウィンドウに
+/// `sidebar` はギャラリーの区分を選ぶためのもので、起動時からウィンドウに
 /// 付いている ([`crate::build`])。ここでは取り外しと開閉を試せるようにする。
 pub(crate) fn build(
     ui: &Ui,
@@ -20,7 +20,7 @@ pub(crate) fn build(
         "Sidebar",
         &[
             "ウィンドウの左に付いているのがサイドバーです。レイアウトではなくウィンドウに取り付けます。",
-            "項目を選ぶと上のタブが切り替わり、タブを選ぶとサイドバーの選択も移ります。",
+            "項目を選ぶと右側の画面が切り替わります。外している間は「表示」メニューから移れます。",
             "開閉はその環境のサイドバーボタンでも行えます。ボタンはウィンドウの上端の左 (ツールバーと同じ高さ) にあります。",
             "幅は仕切りをドラッグして変えられます。",
         ],
@@ -63,8 +63,45 @@ pub(crate) fn build(
         ui,
         &pane,
         "Tabs",
-        &["Gallery 上部のタブが Tabs の例です。中身ごと切り替えます。"],
+        &["見出しを並べ、選んだものの中身だけを出します。"],
     )?;
+    const PAGES: [(&str, &str); 3] = [
+        (
+            "概要",
+            "タブごとに中身を 1 つ持ちます。選び直すと前の中身は隠れます。",
+        ),
+        (
+            "詳細",
+            "中身には Stack や Grid など、どのウィジェットでも置けます。",
+        ),
+        ("履歴", "選び直すと on_select が届きます。"),
+    ];
+    let tabs = ui.tabs()?;
+    for (title, body) in PAGES {
+        let page = ui.stack(Orientation::Vertical)?;
+        page.set_padding(Padding::all(12.0));
+        page.set_align(Align::Start);
+        let text = ui.label(body)?;
+        text.set_wrap(true);
+        text.set_sizing(Sizing::fill_width());
+        page.append(&text);
+        tabs.add_tab(title, &page);
+    }
+    // 中身の高さでは決まらないので、大きさを指定する。
+    tabs.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(140.0)),
+    );
+    tabs.on_select({
+        let notice = notice.clone();
+        move |index| {
+            if let Some((title, _)) = PAGES.get(index) {
+                notice.show(&format!("Tabs: {title}"));
+            }
+        }
+    });
+    pane.append(&tabs);
 
     parts::section(ui, &pane, "Navbar", &["見出し付きの横並びナビゲーション。"])?;
     let navbar = ui.navbar("Navbar")?;
