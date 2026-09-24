@@ -152,7 +152,10 @@ impl Bar {
                         event.prevent_default();
                         if enabled {
                             if let Some(inner) = weak.upgrade() {
-                                Bar(inner).select(index);
+                                // いまいる場所はリンクではない (`href` を外している)。
+                                if inner.selected.get() != Some(index) {
+                                    Bar(inner).select(index);
+                                }
                             }
                         }
                     }
@@ -183,7 +186,7 @@ impl Bar {
                     }
                     if self.0.shape == Shape::Crumb && index > 0 {
                         let separator = create(doc, "span")?;
-                        separator.set_text_content(Some("/"));
+                        separator.set_text_content(Some("›"));
                         let _ = separator.set_attribute("aria-hidden", "true");
                         append(&li, &separator)?;
                     }
@@ -200,19 +203,28 @@ impl Bar {
         Ok(())
     }
 
-    /// 選択状態を ARIA 属性と太字で表す。
+    /// 選択状態を ARIA 属性と見た目で表す。
+    ///
+    /// ボタンは太字にする。パンくずは太字にすると選び直すたびに文字幅が
+    /// 変わり、後ろの項目がずれるので、いまいる場所の `href` を外して
+    /// リンクでない普通の文字 (ブラウザ既定の描き方) にする。
     fn mark_selected(&self, index: Option<usize>) {
         for (i, button) in self.0.buttons.borrow().iter().enumerate() {
             let current = Some(i) == index;
-            if self.0.shape != Shape::Crumb {
-                let _ =
-                    button.set_attribute("aria-selected", if current { "true" } else { "false" });
-            }
             if current {
                 let _ = button.set_attribute("aria-current", "page");
             } else {
                 let _ = button.remove_attribute("aria-current");
             }
+            if self.0.shape == Shape::Crumb {
+                if current {
+                    let _ = button.remove_attribute("href");
+                } else {
+                    let _ = button.set_attribute("href", "#");
+                }
+                continue;
+            }
+            let _ = button.set_attribute("aria-selected", if current { "true" } else { "false" });
             style(
                 button,
                 "font-weight",

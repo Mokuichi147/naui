@@ -2611,23 +2611,61 @@ fn nav_skips_disabled_items(ui: &Ui) -> Result<()> {
 
 fn breadcrumbs_last_is_current(ui: &Ui) -> Result<()> {
     let breadcrumbs = ui.breadcrumbs()?;
-    breadcrumbs.set_items(&NavItem::list(["ホーム", "書類", "2026"]));
+    let mut items = NavItem::list(["ホーム", "書類", "2026"]);
+    items[1].enabled = false;
+    breadcrumbs.set_items(&items);
     assert_eq!(breadcrumbs.len(), 3);
     assert_eq!(breadcrumbs.selected(), Some(2), "末尾がいまいる場所");
 
+    // 項目はボタンではなくラベルで、間に区切りのラベルが入る。
+    let native: gtk::Box = breadcrumbs.native_widget().downcast().expect("GtkBox");
+    let labels: Vec<gtk::Label> = children(&native)
+        .into_iter()
+        .map(|child| child.downcast().expect("子はどれも GtkLabel"))
+        .collect();
+    let texts: Vec<String> = labels.iter().map(|l| l.text().to_string()).collect();
+    assert_eq!(texts, ["ホーム", "›", "書類", "›", "2026"]);
+    // 選べる祖先はリンク、選べない項目と現在地はリンクにしない。
+    assert!(
+        labels[0].label().contains("<a href"),
+        "{}",
+        labels[0].label()
+    );
+    assert!(
+        !labels[2].label().contains("<a href"),
+        "{}",
+        labels[2].label()
+    );
+    assert!(!labels[2].is_sensitive(), "選べない項目は無効");
+    // 現在地は太字にもしない (選び直しで文字幅が変わらないように)。
+    assert_eq!(labels[4].label(), "2026");
+
     let (log, sink) = recorder::<usize>();
     breadcrumbs.on_select(sink);
-    toggle_buttons(&breadcrumbs)[0].emit_clicked();
+    let handled: bool = labels[0].emit_by_name("activate-link", &[&"0"]);
+    assert!(handled, "リンクの既定の処理 (URI を開く) へは渡さない");
     assert_eq!(log.borrow().as_slice(), [0]);
     assert_eq!(breadcrumbs.selected(), Some(0));
+    assert_eq!(labels[0].label(), "ホーム");
+    assert!(
+        labels[4].label().contains("<a href"),
+        "{}",
+        labels[4].label()
+    );
 
-    // 区切りのラベルが項目の間に入る。
-    let native: gtk::Box = breadcrumbs.native_widget().downcast().expect("GtkBox");
-    let separators = children(&native)
-        .into_iter()
-        .filter(|child| child.is::<gtk::Label>())
-        .count();
-    assert_eq!(separators, 2);
+    // 選べない項目は選ばれない。
+    breadcrumbs.select(1);
+    assert_eq!(breadcrumbs.selected(), Some(0));
+    assert_eq!(log.borrow().len(), 1);
+
+    // 記号はマークアップとして解釈しない。
+    breadcrumbs.set_items(&NavItem::list(["<a>&", "末尾"]));
+    let first: gtk::Label = native
+        .first_child()
+        .expect("子")
+        .downcast()
+        .expect("GtkLabel");
+    assert_eq!(first.text(), "<a>&");
     Ok(())
 }
 

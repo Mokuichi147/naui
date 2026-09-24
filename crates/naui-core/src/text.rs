@@ -15,7 +15,7 @@
 /// | `Subtitle` | `NSFontTextStyleTitle3` | `SubtitleTextBlockStyle` | `.title-3` | `1.25em` / 600 |
 /// | `Heading` | `NSFontTextStyleHeadline` | `BodyStrongTextBlockStyle` | `.heading` | `1em` / 700 |
 /// | `Body` | `NSFontTextStyleBody` | `BodyTextBlockStyle` | (既定) | (既定) |
-/// | `Caption` | `NSFontTextStyleCaption1` | `CaptionTextBlockStyle` | `.caption` | `0.85em` |
+/// | `Caption` | `NSFontTextStyleSubheadline` | `CaptionTextBlockStyle` | `.caption` | `0.85em` |
 ///
 /// **Web だけは標準の段階が無い**ので、naui が CSS の相対値で他の 3 環境へ
 /// そろえている (ラベルの折り返しと同じ扱い)。相対値なので、ブラウザや
