@@ -430,9 +430,12 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()>
         let table = table.clone();
         let rows = rows.clone();
         let widget_rows = widget_rows.clone();
+        let notice = notice.clone();
         move || {
             rows.borrow_mut().clear();
             show_rows(&ui, &table, &rows, widget_rows.get());
+            // 行を差し替えても選択の通知は出ないので、ここで知らせる。
+            notice.show("表を空にしました");
         }
     });
 

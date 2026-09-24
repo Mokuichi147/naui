@@ -17,6 +17,7 @@ mod parts;
 mod table;
 mod tasks;
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use naui::{
@@ -89,6 +90,8 @@ pub fn build(ui: &Ui) -> Result<()> {
     let sidebar = ui.sidebar()?;
     sidebar.set_sections(&sidebar_sections());
 
+    let (media, stop_media) = media::build(ui, &notice)?;
+
     // 並びは SECTIONS と同じ。
     let panes = [
         basics::build(ui, &window, &notice)?,
@@ -99,7 +102,7 @@ pub fn build(ui: &Ui) -> Result<()> {
         layout::build(ui, &notice)?,
         canvas::build(ui, &notice)?,
         files::build(ui, &notice)?,
-        media::build(ui, &notice)?,
+        media,
         dialog::build(ui, &notice)?,
         tasks::build(ui, &notice)?,
     ];
@@ -115,10 +118,17 @@ pub fn build(ui: &Ui) -> Result<()> {
         let root = root.clone();
         let crumbs = crumbs.clone();
         let sidebar = sidebar.clone();
+        let current = Cell::new(None);
         move |index| {
             let (Some(screen), Some((title, _))) = (screens.get(index), SECTIONS.get(index)) else {
                 return;
             };
+            if current.replace(Some(index)) == Some(index) {
+                return;
+            }
+            // 画面から外しても再生は止まらないので、区分を移るたびに止める。
+            // 止まっているものを止めても何も起きない。
+            stop_media();
             root.replace(screen, GridCell::new(0, 1));
             crumbs.set_items(&NavItem::list(["naui gallery", *title]));
             sidebar.set_selected(index);

@@ -27,7 +27,11 @@ const MEDIA_FORMS: [(&str, &[&str]); 3] = [
 const MEDIA_DISPLAY_HEIGHT: f64 = 315.0;
 
 /// Image、Video、Audio のソース切り替えと再生操作。
-pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
+///
+/// 画面と一緒に、再生を止める関数を返す。**画面から外しても再生は止まらない**
+/// (ネイティブのプレーヤーは表示されていなくても鳴り続ける) ので、ほかの区分へ
+/// 移るときに呼ぶ。
+pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<(naui::Stack, impl Fn() + 'static)> {
     let pane = parts::pane(ui)?;
 
     parts::section(
@@ -48,16 +52,28 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     forms.set_row_track(0, Track::FILL);
     forms.attach(&image_pane, GridCell::new(0, 0));
 
+    let stop = {
+        let video = video.clone();
+        let audio = audio.clone();
+        move || {
+            video.pause();
+            audio.pause();
+        }
+    };
+
     let show = Rc::new({
         let image = image.clone();
         let video = video.clone();
         let audio = audio.clone();
+        let stop = stop.clone();
         let forms = forms.clone();
         let image_pane = image_pane.clone();
         let video_pane = video_pane.clone();
         let audio_pane = audio_pane.clone();
         let notice = notice.clone();
         move |form: usize, source: &str| {
+            // 外すほうのプレーヤーが鳴り続けないよう、差し替える前に止める。
+            stop();
             match form {
                 0 => forms.replace(&image_pane, GridCell::new(0, 0)),
                 1 => forms.replace(&video_pane, GridCell::new(0, 0)),
@@ -129,7 +145,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
 
     forms.set_sizing(Sizing::fill());
     pane.append(&forms);
-    Ok(pane)
+    Ok((pane, stop))
 }
 
 fn media_form_of(source: &str) -> Option<usize> {

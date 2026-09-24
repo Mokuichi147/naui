@@ -26,6 +26,14 @@ enum Command {
     SaveAs,
 }
 
+impl Command {
+    /// 保存するもの (新規か開くで作ったもの) が要る操作か。
+    /// 要るものは、それができるまで押せなくしておく。
+    fn needs_document(self) -> bool {
+        matches!(self, Command::Save | Command::SaveAs)
+    }
+}
+
 /// ツールバーの並び。区切りは `None` で表す。
 ///
 /// 通知は区切りも数えた位置で届くので、並びをそのまま引けるようにしておく。
@@ -63,7 +71,8 @@ pub(crate) fn attach(
     let toolbar = ui.toolbar()?;
     let menu_bar = ui.menu_bar()?;
 
-    // 保存できるものができるまで、保存の項目はどちらも押せなくしておく。
+    // 保存できるものができるまで、保存の 2 項目はツールバーとメニューのどちらでも
+    // 押せなくしておく。
     toolbar.set_items(&toolbar_items());
     menu_bar.set_menus(&menus(sections));
     let run = Rc::new({
@@ -78,7 +87,7 @@ pub(crate) fn attach(
                     "開く"
                 };
                 notice.show(&format!("{label} を実行しました"));
-                set_save_enabled(&toolbar, &menu_bar, true);
+                enable_document_commands(&toolbar, &menu_bar);
             }
             Command::Save => notice.show("保存しました"),
             Command::SaveAs => notice.show("別名で保存しました"),
@@ -120,7 +129,7 @@ fn toolbar_items() -> Vec<ToolbarItem> {
         .iter()
         .map(|entry| match entry {
             Some((icon, label, command)) => {
-                ToolbarItem::new(*icon, *label).enabled(!matches!(command, Command::Save))
+                ToolbarItem::new(*icon, *label).enabled(!command.needs_document())
             }
             None => ToolbarItem::separator(),
         })
@@ -134,13 +143,15 @@ fn toolbar_items() -> Vec<ToolbarItem> {
 fn menus(sections: &[&str]) -> Vec<MenuSpec> {
     let file = FILE_MENU.iter().map(|entry| match entry {
         Some((label, command)) => {
-            let item = MenuItem::new(*label);
-            match command {
-                Command::New => item.shortcut(MenuShortcut::new('n')),
-                Command::Open => item.shortcut(MenuShortcut::new('o')),
-                Command::Save => item.shortcut(MenuShortcut::new('s')).enabled(false),
-                Command::SaveAs => item.shortcut(MenuShortcut::new('s').shift(true)),
-            }
+            let shortcut = match command {
+                Command::New => MenuShortcut::new('n'),
+                Command::Open => MenuShortcut::new('o'),
+                Command::Save => MenuShortcut::new('s'),
+                Command::SaveAs => MenuShortcut::new('s').shift(true),
+            };
+            MenuItem::new(*label)
+                .shortcut(shortcut)
+                .enabled(!command.needs_document())
         }
         None => MenuItem::separator(),
     });
@@ -159,16 +170,20 @@ fn menus(sections: &[&str]) -> Vec<MenuSpec> {
     ]
 }
 
-/// 保存の項目を、ツールバーとメニューの両方で押せる・押せないにする。
-fn set_save_enabled(toolbar: &Toolbar, menu_bar: &MenuBar, enabled: bool) {
+/// 保存するものが要る項目を、ツールバーとメニューの両方で押せるようにする。
+fn enable_document_commands(toolbar: &Toolbar, menu_bar: &MenuBar) {
     for (index, entry) in TOOLBAR.iter().enumerate() {
-        if let Some((_, _, Command::Save)) = entry {
-            toolbar.set_item_enabled(index, enabled);
+        if let Some((_, _, command)) = entry {
+            if command.needs_document() {
+                toolbar.set_item_enabled(index, true);
+            }
         }
     }
     for (index, entry) in FILE_MENU.iter().enumerate() {
-        if let Some((_, Command::Save)) = entry {
-            menu_bar.set_item_enabled(FILE, index, enabled);
+        if let Some((_, command)) = entry {
+            if command.needs_document() {
+                menu_bar.set_item_enabled(FILE, index, true);
+            }
         }
     }
 }
