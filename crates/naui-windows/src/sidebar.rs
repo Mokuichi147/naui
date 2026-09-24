@@ -40,7 +40,9 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, Thickness, UIElement, Visibility};
+use naui_winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, TextTrimming, Thickness, UIElement, Visibility,
+};
 use windows::Foundation::{PropertyValue, TypedEventHandler};
 use windows_core::{IInspectable, IUnknown, Interface, HSTRING};
 
@@ -547,8 +549,14 @@ impl Sidebar {
 /// 項目 1 つ。アイコンがあれば Segoe Fluent Icons の字面で付ける。
 fn item_entry(item: &SidebarItem) -> Result<NavigationViewItem> {
     let entry = NavigationViewItem::new().map_err(|e| to_error("サイドバーの項目の生成", e))?;
+    // 入りきらないときは、ほかの 3 環境と同じく末尾を省略記号にする。
+    // 既定 (`TextTrimming::None`) のままだと、字の途中で断ち切られる。
+    let label = text_block(&item.label)?;
+    label
+        .SetTextTrimming(TextTrimming::CharacterEllipsis)
+        .map_err(|e| to_error("サイドバーの項目の省略の設定", e))?;
     entry
-        .SetContent(&text_block(&item.label)?)
+        .SetContent(&label)
         .map_err(|e| to_error("サイドバーの項目の設定", e))?;
     if let Some(icon) = item.icon {
         let glyph = FontIcon::new().map_err(|e| to_error("サイドバーの印の生成", e))?;

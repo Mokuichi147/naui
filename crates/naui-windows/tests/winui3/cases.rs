@@ -1372,6 +1372,16 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
     assert_eq!(title.to_string(), "場所");
 
     let first = at(0).cast::<NavigationViewItem>().expect("項目");
+    let label = first
+        .Content()
+        .expect("項目の中身")
+        .cast::<TextBlock>()
+        .expect("文字は TextBlock");
+    assert_eq!(
+        label.TextTrimming().expect("省略"),
+        naui_winui3::Microsoft::UI::Xaml::TextTrimming::CharacterEllipsis,
+        "入りきらない文字は末尾を省略記号にする (字の途中で断ち切らない)"
+    );
     // 空の参照は Err で返る。
     assert!(
         first.Icon().is_ok(),

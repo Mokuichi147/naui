@@ -286,10 +286,19 @@ impl Sidebar {
         style(&button, "width", "100%");
         style(&button, "text-align", "start");
         if let Some(icon) = item.icon {
-            append(&button, &icon_svg(doc, icon)?)?;
+            let svg = icon_svg(doc, icon)?;
+            // 文字を省略するときも、記号は縮めない。
+            let _ = svg.set_attribute("style", "flex-shrink: 0");
+            append(&button, &svg)?;
         }
-        let label = create(doc, "span")?;
+        let label: HtmlElement = create(doc, "span")?.unchecked_into();
         label.set_text_content(Some(&item.label));
+        // 入りきらないときは、ほかの 3 環境と同じく 1 行のまま末尾を省略記号に
+        // する (既定では折り返して行が高くなる)。
+        style(&label, "min-width", "0");
+        style(&label, "white-space", "nowrap");
+        style(&label, "overflow", "hidden");
+        style(&label, "text-overflow", "ellipsis");
         append(&button, &label)?;
         set_disabled(&button, !item.enabled);
 

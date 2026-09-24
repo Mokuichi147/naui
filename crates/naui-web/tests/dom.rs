@@ -2445,6 +2445,18 @@ fn sidebar_builds_a_nav_with_headed_lists() {
         assert!(buttons[0].query_selector("svg").ok().flatten().is_some());
         assert!(buttons[1].query_selector("svg").ok().flatten().is_none());
         assert!(buttons[3].has_attribute("disabled"), "選べない項目は無効");
+        let _mounted = Mounted::new_element(&aside);
+        let label = buttons[0]
+            .query_selector("span")
+            .ok()
+            .flatten()
+            .expect("文字");
+        assert_eq!(
+            computed(&label, "text-overflow"),
+            "ellipsis",
+            "入りきらない文字は末尾を省略記号にする"
+        );
+        assert_eq!(computed(&label, "white-space"), "nowrap", "折り返さない");
         Ok(())
     });
 }
