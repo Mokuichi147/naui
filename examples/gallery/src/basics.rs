@@ -8,9 +8,21 @@ use naui::{
 
 use crate::parts::{self, Disabler, Notice};
 
-/// Label、Button、Checkbox、Toggle、RadioGroup、Slider、ProgressBar、ComboBox とテーマ。
+/// ギャラリーの題と説明、Label、Button、Checkbox、Toggle、RadioGroup、Slider、
+/// ProgressBar、ComboBox とテーマ。
+///
+/// 起動したときに最初に出る画面なので、ギャラリー全体の題と説明もここに置く。
 pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
+
+    // 画面の顔になる見出しなので、節の見出しより 1 段大きい段階を指定する。
+    let title = ui.label("naui UI ギャラリー")?;
+    title.set_style(TextStyle::Title);
+    pane.append(&title);
+    pane.append(&parts::note(
+        ui,
+        "UI の種別ごとに、特徴と状態を確認できます。左のサイドバーで種別を選びます。操作の結果は画面の下端にトーストで出ます。",
+    )?);
 
     let disabler = Disabler::new(
         ui,

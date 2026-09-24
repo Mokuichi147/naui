@@ -20,8 +20,8 @@ mod tasks;
 use std::rc::Rc;
 
 use naui::{
-    Align, GridCell, NavItem, Orientation, Padding, Result, Scroll, ScrollPolicy, Settings,
-    SidebarItem, SidebarSection, Sizing, TextStyle, ToolbarIcon, Track, Ui, Widget,
+    GridCell, NavItem, Padding, Result, Scroll, ScrollPolicy, Settings, SidebarItem,
+    SidebarSection, Sizing, ToolbarIcon, Track, Ui, Widget,
 };
 
 /// ギャラリーの区分。サイドバーと「表示」メニューの項目はこの順に並ぶので、
@@ -70,36 +70,19 @@ pub fn build(ui: &Ui) -> Result<()> {
         left: 20.0,
     });
     root.set_column_track(0, Track::FILL);
+    // 画面の中身は Grid の Fill 行へ直接置く。Windows の StackPanel は主軸方向の
+    // Fill に残りの高さを配らないため、Stack へ入れると下まで伸びない。
     root.set_row_track(0, Track::Auto);
     root.set_row_track(1, Track::FILL);
 
-    // Windows の StackPanel は主軸方向の Fill に残りの高さを配らないため、
-    // 固定部分だけを Stack にまとめ、画面の中身は Grid の Fill 行へ直接置く。
-    let header = ui.stack(Orientation::Vertical)?;
-    header.set_spacing(6.0);
-    // 見出しはウィンドウの幅いっぱいに広げ、中身は左端でそろえる
-    // (交差軸の既定は中央ぞろえ)。
-    header.set_sizing(Sizing::fill_width());
-    header.set_align(Align::Start);
-
+    // パンくずは画面全体の現在地を示すため、どの区分でも左上に置く。
+    // ギャラリーの題と説明は、最初の区分 (基本) の画面の先頭にだけ出す。
     let crumbs = ui.breadcrumbs()?;
-    crumbs.set_items(&NavItem::list(["naui gallery", "基本"]));
-    // パンくずは画面全体の現在地を示すため、タイトルより先の左上へ置く。
-    header.append(&crumbs);
-
-    // 画面の顔になる見出しなので、本文より 1 段大きい段階を指定する。
-    let title = ui.label("naui UI ギャラリー")?;
-    title.set_style(TextStyle::Title);
-    header.append(&title);
-    header.append(&parts::note(
-        ui,
-        "UI の種別ごとに、特徴と状態を確認できます。操作の結果は画面の下端にトーストで出ます。",
-    )?);
+    crumbs.set_items(&NavItem::list(["naui gallery", SECTIONS[0].0]));
+    root.attach(&crumbs, GridCell::new(0, 0));
 
     // 操作の結果は、画面に Label を並べずトーストで知らせる。
     let notice = parts::Notice::new(ui)?;
-
-    root.attach(&header, GridCell::new(0, 0));
 
     // Sidebar もウィンドウに取り付けるもの。選んだ区分の画面だけを下の行へ
     // 出す。取り外しと開閉は「ナビゲーション」の画面で試せる。
