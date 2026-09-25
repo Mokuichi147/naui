@@ -1470,7 +1470,7 @@ git push origin v0.3.0
 <details>
 <summary><strong>共通</strong></summary>
 
-- 対応するのは上記の 45 コンポーネントです。
+- 対応するのは上記の 46 コンポーネントです。
 - `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
   (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
   20 種類からしか選べず、任意の画像は置けません。項目をインデックスで識別する
