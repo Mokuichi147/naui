@@ -23,7 +23,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use naui_core::media::{is_url, source_url};
+use naui_core::media::is_url;
 use naui_core::{Fit, PlaybackState, Result};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
@@ -58,6 +58,48 @@ fn stretch(fit: Fit) -> Stretch {
         Fit::Fill => Stretch::Fill,
         Fit::None => Stretch::None,
     }
+}
+
+/// メディアの場所を、`Windows.Foundation.Uri` へ渡す文字列にする。
+///
+/// すでに URL ならそのまま、そうでなければ [`file_uri`] で `file://` にする。
+fn source_uri(source: &str) -> String {
+    if is_url(source) {
+        source.to_string()
+    } else {
+        file_uri(source)
+    }
+}
+
+/// ローカルのファイルパスを、`Windows.Foundation.Uri` が読める `file://` にする。
+///
+/// [`naui_core::media::file_url`] と違い、**非 ASCII は encode せず生のまま置く**。
+/// `Windows.Foundation.Uri` は `%E5%86%99` を UTF-8 として復号せず 1 バイト
+/// 1 文字 (`å†™`) に戻すため、日本語を含むパスは別のパスになって
+/// `BitmapImage` も `MediaSource` もエラー無しに読み込みを諦める。
+/// 生の非 ASCII は IRI として受け付けられるので、URL で意味を持つ ASCII
+/// (空白・`%`・`#`・`?` など) だけを encode する。
+fn file_uri(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    // UNC パスの先頭 `//` は「ホスト名が続く」の意味なので、`file:` を足すだけ。
+    let mut uri = String::from(if normalized.starts_with("//") {
+        "file:"
+    } else if normalized.starts_with('/') {
+        "file://"
+    } else {
+        "file:///"
+    });
+    for c in normalized.chars() {
+        if !c.is_ascii()
+            || c.is_ascii_alphanumeric()
+            || matches!(c, '-' | '.' | '_' | '~' | '/' | ':' | '@')
+        {
+            uri.push(c);
+        } else {
+            uri.push_str(&format!("%{:02X}", c as u8));
+        }
+    }
+    uri
 }
 
 // ------------------------------------------------------------------ Image
@@ -161,7 +203,7 @@ impl Image {
         }
 
         // WinUI はファイルパスではなく URI を要求する。
-        let uri = match Uri::CreateUri(&HSTRING::from(source_url(&source))) {
+        let uri = match Uri::CreateUri(&HSTRING::from(source_uri(&source))) {
             Ok(uri) => uri,
             Err(error) => {
                 eprintln!("naui-windows: Image の場所を URI にできません: {error}");
@@ -449,7 +491,7 @@ impl MediaInner {
                 eprintln!("naui-windows: メディアファイルの設定に失敗 ({source}): {error}");
                 // 相対パスなど、StorageFile として開けない入力は
                 // file:// URI も試す。
-                if let Err(fallback_error) = self.set_uri_source(&source_url(source)) {
+                if let Err(fallback_error) = self.set_uri_source(&file_uri(source)) {
                     eprintln!(
                         "naui-windows: メディア URL のフォールバックにも失敗 ({source}): {fallback_error}"
                     );
@@ -698,5 +740,57 @@ impl Audio {
         let this = Self(MediaInner::new()?);
         this.set_source(source);
         Ok(this)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_uri_keeps_non_ascii_raw() {
+        assert_eq!(
+            file_uri("C:/Users/太郎/写真.png"),
+            "file:///C:/Users/太郎/写真.png"
+        );
+    }
+
+    #[test]
+    fn file_uri_encodes_reserved_ascii() {
+        assert_eq!(
+            file_uri("C:/a b/c%d#e?.png"),
+            "file:///C:/a%20b/c%25d%23e%3F.png"
+        );
+    }
+
+    #[test]
+    fn file_uri_normalises_separators() {
+        assert_eq!(file_uri(r"C:\Users\me\a.png"), "file:///C:/Users/me/a.png");
+        assert_eq!(
+            file_uri(r"\\server\share\a.png"),
+            "file://server/share/a.png"
+        );
+        assert_eq!(file_uri("/tmp/a.png"), "file:///tmp/a.png");
+    }
+
+    #[test]
+    fn source_uri_passes_urls_through() {
+        let url = "https://example.com/%E5%86%99.png";
+        assert_eq!(source_uri(url), url);
+    }
+
+    /// `Windows.Foundation.Uri` に通したあとも、日本語のパスが同じパスとして残る。
+    ///
+    /// UTF-8 で percent-encode したものを渡すと、ここで `å†™` のような
+    /// 別のパスに化ける。
+    #[test]
+    fn windows_uri_round_trips_japanese_path() {
+        let uri = Uri::CreateUri(&HSTRING::from(file_uri("C:/Users/太郎/写真 1.png")))
+            .expect("URI にできない");
+        let path = uri.Path().expect("Path が取れない").to_string();
+        let decoded = Uri::UnescapeComponent(&HSTRING::from(path))
+            .expect("復号できない")
+            .to_string();
+        assert_eq!(decoded, "/C:/Users/太郎/写真 1.png");
     }
 }
