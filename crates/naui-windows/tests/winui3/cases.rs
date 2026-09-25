@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,12 +17,14 @@ use naui_windows::{run_for_test, Ui, Widget};
 use crate::automation;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox, ComboBox as XamlComboBox,
-    Grid, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
+    Grid, Image as XamlImage, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox,
+    ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, HorizontalAlignment, UIElement, VerticalAlignment,
+    FrameworkElement, HorizontalAlignment, RoutedEventHandler, UIElement, VerticalAlignment,
 };
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows_core::{Interface, HSTRING};
@@ -122,6 +124,10 @@ const CASES: &[Case] = &[
     (
         "サイドバーの選択が通し番号で往復し、select だけが通知する",
         sidebar_selection_round_trips,
+    ),
+    (
+        "日本語を含むパスの画像がパスでも file: URL でも読み込める",
+        image_loads_from_japanese_path,
     ),
 ];
 
@@ -1617,4 +1623,114 @@ fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
     );
     window.clear_sidebar(); // 付いていなければ何もしない
     Ok(Box::new(|| Ok(())))
+}
+
+// ------------------------------------------------------------------ 画像
+
+/// 読み込みを待つ上限。1 画素の BMP なので、通常は一瞬で終わる。
+const IMAGE_LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 日本語を含むパスの実ファイルが、パスでも `file:` URL でも読み込める。
+///
+/// `BitmapImage` の読み込みは非同期で、場所が読めなくても `SetSource` は
+/// 成功する。`ImageOpened` が届き、画素の大きさが取れるところまで待つ。
+fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui 画像テスト {}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
+    let path = dir.join("写真 #1.bmp");
+    std::fs::write(&path, bmp_2x1()).expect("画像を書き出せない");
+    let path = path.to_str().expect("一時パスが UTF-8 でない").to_string();
+
+    // 画面のツリーに入っていない `BitmapImage` は読み込みを始めないので、
+    // ウィンドウに載せて出す。
+    let window = ui.window("画像", 160.0, 120.0)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        for source in [path.clone(), naui_core::media::file_url(&path)] {
+            let image = ui.image(&source)?;
+            window.set_child(&image);
+            window.show();
+            let bitmap = native::<Grid>(&image)
+                .Children()
+                .and_then(|children| children.GetAt(0))
+                .and_then(|element| element.cast::<XamlImage>())
+                .and_then(|element| element.Source())
+                .and_then(|bitmap| bitmap.cast::<BitmapImage>())
+                .expect("Image の中身が BitmapImage でない");
+            let opened = Arc::new(AtomicBool::new(false));
+            let flag = opened.clone();
+            bitmap
+                .ImageOpened(&RoutedEventHandler::new(move |_, _| {
+                    flag.store(true, Ordering::Relaxed);
+                    Ok(())
+                }))
+                .expect("ImageOpened を購読できない");
+
+            pump_until(IMAGE_LOAD_TIMEOUT, || opened.load(Ordering::Relaxed));
+            assert!(
+                opened.load(Ordering::Relaxed),
+                "{} 秒待っても ImageOpened が届かない ({source})",
+                IMAGE_LOAD_TIMEOUT.as_secs()
+            );
+            assert_eq!(
+                (bitmap.PixelWidth().ok(), bitmap.PixelHeight().ok()),
+                (Some(2), Some(1)),
+                "読めた画素の大きさ ({source})"
+            );
+        }
+        Ok(())
+    }));
+    window.close();
+    let _ = std::fs::remove_dir_all(&dir);
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// 条件が立つか時間切れになるまで、UI スレッドのメッセージを回す。
+///
+/// 画像の読み込み完了は、別スレッドから UI スレッドのキューへ積まれて届く。
+/// ケースは `OnLaunched` の中で走るので、ここで回さないと届かない。
+fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
+    };
+
+    let deadline = std::time::Instant::now() + timeout;
+    while !done() && std::time::Instant::now() < deadline {
+        let mut message = MSG::default();
+        // SAFETY: MSG はこの関数の中で生きており、UI スレッドから呼んでいる。
+        unsafe {
+            if PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            } else {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+}
+
+/// 左が赤、右が青の 2×1 の 24 ビット BMP。
+///
+/// PNG と違ってチェックサムが無いので、手で組んでも壊れない。
+fn bmp_2x1() -> Vec<u8> {
+    const HEADER: u32 = 14 + 40;
+    // 1 行 6 バイトを 4 バイト境界にそろえて 8 バイト。
+    const PIXELS: u32 = 8;
+    let mut bmp = Vec::new();
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&(HEADER + PIXELS).to_le_bytes());
+    bmp.extend_from_slice(&0u32.to_le_bytes());
+    bmp.extend_from_slice(&HEADER.to_le_bytes());
+    bmp.extend_from_slice(&40u32.to_le_bytes()); // BITMAPINFOHEADER の大きさ
+    bmp.extend_from_slice(&2i32.to_le_bytes()); // 幅
+    bmp.extend_from_slice(&1i32.to_le_bytes()); // 高さ (正なので下から上)
+    bmp.extend_from_slice(&1u16.to_le_bytes()); // プレーン数
+    bmp.extend_from_slice(&24u16.to_le_bytes()); // 1 画素のビット数
+    bmp.extend_from_slice(&0u32.to_le_bytes()); // 無圧縮
+    bmp.extend_from_slice(&PIXELS.to_le_bytes());
+    bmp.extend_from_slice(&[0; 16]); // 解像度と色数は使わない
+    bmp.extend_from_slice(&[0, 0, 255, 255, 0, 0, 0, 0]); // BGR, BGR, 詰め物
+    bmp
 }

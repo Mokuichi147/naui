@@ -23,7 +23,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use naui_core::media::{is_url, source_url};
+use naui_core::media::is_url;
 use naui_core::{Fit, PlaybackState, Result};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
@@ -58,6 +58,91 @@ fn stretch(fit: Fit) -> Stretch {
         Fit::Fill => Stretch::Fill,
         Fit::None => Stretch::None,
     }
+}
+
+/// メディアの場所を、`Windows.Foundation.Uri` へ渡す文字列にする。
+///
+/// パスは [`file_uri`] で `file://` にする。URL はそのまま渡すが、`file:` だけは
+/// [`unescape_non_ascii`] で非 ASCII の percent-encoding を生の文字に戻す。
+/// [`naui_core::media::file_url`] が作る URL や、利用者が標準どおり書いた
+/// `file:///C:/%E5%86%99.png` も、[`file_uri`] と同じ理由で読めないため。
+fn source_uri(source: &str) -> String {
+    if !is_url(source) {
+        file_uri(source)
+    } else if source
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+    {
+        unescape_non_ascii(source)
+    } else {
+        source.to_string()
+    }
+}
+
+/// UTF-8 の非 ASCII を表す `%XX` の並びを、生の文字に戻す。
+///
+/// `%20` `%23` のような ASCII の encode は、URL の区切りとしての意味を
+/// 変えないようそのまま残す。UTF-8 として読めない並びも手を付けない。
+fn unescape_non_ascii(url: &str) -> String {
+    let bytes = url.as_bytes();
+    let mut out = String::with_capacity(url.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        // `%80`〜`%FF` が続くあいだを 1 つの塊として集める。
+        let start = i;
+        let mut run = Vec::new();
+        while let Some(byte) = url
+            .get(i..i + 3)
+            .and_then(|escape| escape.strip_prefix('%'))
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+            .filter(|byte| *byte >= 0x80)
+        {
+            run.push(byte);
+            i += 3;
+        }
+        if run.is_empty() {
+            let c = url[i..].chars().next().expect("i は文字の境目にある");
+            out.push(c);
+            i += c.len_utf8();
+        } else {
+            match String::from_utf8(run) {
+                Ok(text) => out.push_str(&text),
+                Err(_) => out.push_str(&url[start..i]),
+            }
+        }
+    }
+    out
+}
+
+/// ローカルのファイルパスを、`Windows.Foundation.Uri` が読める `file://` にする。
+///
+/// [`naui_core::media::file_url`] と違い、**非 ASCII は encode せず生のまま置く**。
+/// `Windows.Foundation.Uri` は `%E5%86%99` を UTF-8 として復号せず 1 バイト
+/// 1 文字 (`å†™`) に戻すため、日本語を含むパスは別のパスになって
+/// `BitmapImage` も `MediaSource` もエラー無しに読み込みを諦める。
+/// 生の非 ASCII は IRI として受け付けられるので、URL で意味を持つ ASCII
+/// (空白・`%`・`#`・`?` など) だけを encode する。
+fn file_uri(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    // UNC パスの先頭 `//` は「ホスト名が続く」の意味なので、`file:` を足すだけ。
+    let mut uri = String::from(if normalized.starts_with("//") {
+        "file:"
+    } else if normalized.starts_with('/') {
+        "file://"
+    } else {
+        "file:///"
+    });
+    for c in normalized.chars() {
+        if !c.is_ascii()
+            || c.is_ascii_alphanumeric()
+            || matches!(c, '-' | '.' | '_' | '~' | '/' | ':' | '@')
+        {
+            uri.push(c);
+        } else {
+            uri.push_str(&format!("%{:02X}", c as u8));
+        }
+    }
+    uri
 }
 
 // ------------------------------------------------------------------ Image
@@ -161,7 +246,7 @@ impl Image {
         }
 
         // WinUI はファイルパスではなく URI を要求する。
-        let uri = match Uri::CreateUri(&HSTRING::from(source_url(&source))) {
+        let uri = match Uri::CreateUri(&HSTRING::from(source_uri(&source))) {
             Ok(uri) => uri,
             Err(error) => {
                 eprintln!("naui-windows: Image の場所を URI にできません: {error}");
@@ -433,7 +518,7 @@ impl MediaInner {
         if source.is_empty() {
             let _ = self.player.SetSource(None);
         } else if is_url(source) {
-            if let Err(error) = self.set_uri_source(source) {
+            if let Err(error) = self.set_uri_source(&source_uri(source)) {
                 eprintln!("naui-windows: メディア URL の設定に失敗 ({source}): {error}");
             }
         } else {
@@ -449,7 +534,7 @@ impl MediaInner {
                 eprintln!("naui-windows: メディアファイルの設定に失敗 ({source}): {error}");
                 // 相対パスなど、StorageFile として開けない入力は
                 // file:// URI も試す。
-                if let Err(fallback_error) = self.set_uri_source(&source_url(source)) {
+                if let Err(fallback_error) = self.set_uri_source(&file_uri(source)) {
                     eprintln!(
                         "naui-windows: メディア URL のフォールバックにも失敗 ({source}): {fallback_error}"
                     );
@@ -698,5 +783,78 @@ impl Audio {
         let this = Self(MediaInner::new()?);
         this.set_source(source);
         Ok(this)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_uri_keeps_non_ascii_raw() {
+        assert_eq!(
+            file_uri("C:/Users/太郎/写真.png"),
+            "file:///C:/Users/太郎/写真.png"
+        );
+    }
+
+    #[test]
+    fn file_uri_encodes_reserved_ascii() {
+        assert_eq!(
+            file_uri("C:/a b/c%d#e?.png"),
+            "file:///C:/a%20b/c%25d%23e%3F.png"
+        );
+    }
+
+    #[test]
+    fn file_uri_normalises_separators() {
+        assert_eq!(file_uri(r"C:\Users\me\a.png"), "file:///C:/Users/me/a.png");
+        assert_eq!(
+            file_uri(r"\\server\share\a.png"),
+            "file://server/share/a.png"
+        );
+        assert_eq!(file_uri("/tmp/a.png"), "file:///tmp/a.png");
+    }
+
+    #[test]
+    fn source_uri_passes_urls_through() {
+        let url = "https://example.com/%E5%86%99.png";
+        assert_eq!(source_uri(url), url);
+    }
+
+    /// core の `file_url` が作る URL も、Windows で読める形に直る。
+    #[test]
+    fn source_uri_unescapes_utf8_in_file_urls() {
+        let url = naui_core::media::file_url("C:/Users/太郎/写真 #1.png");
+        assert_eq!(source_uri(&url), "file:///C:/Users/太郎/写真%20%231.png");
+        assert_eq!(source_uri("FILE:///C:/%E5%86%99.png"), "FILE:///C:/写.png");
+    }
+
+    /// ASCII の encode と、UTF-8 として読めない並びには手を付けない。
+    #[test]
+    fn unescape_non_ascii_keeps_ascii_and_invalid_escapes() {
+        assert_eq!(unescape_non_ascii("file:///a%2Fb%25c"), "file:///a%2Fb%25c");
+        assert_eq!(
+            unescape_non_ascii("file:///%FF%E5.png"),
+            "file:///%FF%E5.png"
+        );
+        assert_eq!(unescape_non_ascii("file:///%E5%86"), "file:///%E5%86");
+        assert_eq!(unescape_non_ascii("file:///写%"), "file:///写%");
+    }
+
+    /// `Windows.Foundation.Uri` に通したあとも、日本語のパスが同じパスとして残る。
+    ///
+    /// UTF-8 で percent-encode したものを渡すと、ここで `å†™` のような
+    /// 別のパスに化ける。
+    #[test]
+    fn windows_uri_round_trips_japanese_path() {
+        let path = "C:/Users/太郎/写真 1.png";
+        for source in [path.to_string(), naui_core::media::file_url(path)] {
+            let uri = Uri::CreateUri(&HSTRING::from(source_uri(&source))).expect("URI にできない");
+            let decoded = Uri::UnescapeComponent(&uri.Path().expect("Path が取れない"))
+                .expect("復号できない")
+                .to_string();
+            assert_eq!(decoded, "/C:/Users/太郎/写真 1.png", "元: {source}");
+        }
     }
 }
