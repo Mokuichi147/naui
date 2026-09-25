@@ -18,6 +18,14 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 | Linux | GTK4 / libadwaita | `GtkButton` |
 | Web (wasm) | DOM | `<button>` |
 
+同じ Gallery のコードを各環境で動かした画面です。見た目はそれぞれの OS の標準に従います。
+
+| Windows 11 Pro 25H2 (Windows App SDK 2.5.1) | macOS Tahoe 26.6.2 |
+| --- | --- |
+| ![Windows (WinUI 3) で動かした Gallery](docs/screenshots/windows.webp) | ![macOS (AppKit) で動かした Gallery](docs/screenshots/macos.webp) |
+| **Ubuntu 24.04.5 LTS** | **Safari 26.6.2** |
+| ![Linux (GTK4 / libadwaita) で動かした Gallery](docs/screenshots/linux.webp) | ![Web (DOM) で動かした Gallery](docs/screenshots/web.webp) |
+
 ## 特長
 
 - 4 つのバックエンドを同じ API で利用可能
