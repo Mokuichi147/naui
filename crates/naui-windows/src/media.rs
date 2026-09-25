@@ -62,13 +62,56 @@ fn stretch(fit: Fit) -> Stretch {
 
 /// メディアの場所を、`Windows.Foundation.Uri` へ渡す文字列にする。
 ///
-/// すでに URL ならそのまま、そうでなければ [`file_uri`] で `file://` にする。
+/// パスは [`file_uri`] で `file://` にする。URL はそのまま渡すが、`file:` だけは
+/// [`unescape_non_ascii`] で非 ASCII の percent-encoding を生の文字に戻す。
+/// [`naui_core::media::file_url`] が作る URL や、利用者が標準どおり書いた
+/// `file:///C:/%E5%86%99.png` も、[`file_uri`] と同じ理由で読めないため。
 fn source_uri(source: &str) -> String {
-    if is_url(source) {
-        source.to_string()
-    } else {
+    if !is_url(source) {
         file_uri(source)
+    } else if source
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+    {
+        unescape_non_ascii(source)
+    } else {
+        source.to_string()
     }
+}
+
+/// UTF-8 の非 ASCII を表す `%XX` の並びを、生の文字に戻す。
+///
+/// `%20` `%23` のような ASCII の encode は、URL の区切りとしての意味を
+/// 変えないようそのまま残す。UTF-8 として読めない並びも手を付けない。
+fn unescape_non_ascii(url: &str) -> String {
+    let bytes = url.as_bytes();
+    let mut out = String::with_capacity(url.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        // `%80`〜`%FF` が続くあいだを 1 つの塊として集める。
+        let start = i;
+        let mut run = Vec::new();
+        while let Some(byte) = url
+            .get(i..i + 3)
+            .and_then(|escape| escape.strip_prefix('%'))
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+            .filter(|byte| *byte >= 0x80)
+        {
+            run.push(byte);
+            i += 3;
+        }
+        if run.is_empty() {
+            let c = url[i..].chars().next().expect("i は文字の境目にある");
+            out.push(c);
+            i += c.len_utf8();
+        } else {
+            match String::from_utf8(run) {
+                Ok(text) => out.push_str(&text),
+                Err(_) => out.push_str(&url[start..i]),
+            }
+        }
+    }
+    out
 }
 
 /// ローカルのファイルパスを、`Windows.Foundation.Uri` が読める `file://` にする。
@@ -475,7 +518,7 @@ impl MediaInner {
         if source.is_empty() {
             let _ = self.player.SetSource(None);
         } else if is_url(source) {
-            if let Err(error) = self.set_uri_source(source) {
+            if let Err(error) = self.set_uri_source(&source_uri(source)) {
                 eprintln!("naui-windows: メディア URL の設定に失敗 ({source}): {error}");
             }
         } else {
@@ -779,18 +822,39 @@ mod tests {
         assert_eq!(source_uri(url), url);
     }
 
+    /// core の `file_url` が作る URL も、Windows で読める形に直る。
+    #[test]
+    fn source_uri_unescapes_utf8_in_file_urls() {
+        let url = naui_core::media::file_url("C:/Users/太郎/写真 #1.png");
+        assert_eq!(source_uri(&url), "file:///C:/Users/太郎/写真%20%231.png");
+        assert_eq!(source_uri("FILE:///C:/%E5%86%99.png"), "FILE:///C:/写.png");
+    }
+
+    /// ASCII の encode と、UTF-8 として読めない並びには手を付けない。
+    #[test]
+    fn unescape_non_ascii_keeps_ascii_and_invalid_escapes() {
+        assert_eq!(unescape_non_ascii("file:///a%2Fb%25c"), "file:///a%2Fb%25c");
+        assert_eq!(
+            unescape_non_ascii("file:///%FF%E5.png"),
+            "file:///%FF%E5.png"
+        );
+        assert_eq!(unescape_non_ascii("file:///%E5%86"), "file:///%E5%86");
+        assert_eq!(unescape_non_ascii("file:///写%"), "file:///写%");
+    }
+
     /// `Windows.Foundation.Uri` に通したあとも、日本語のパスが同じパスとして残る。
     ///
     /// UTF-8 で percent-encode したものを渡すと、ここで `å†™` のような
     /// 別のパスに化ける。
     #[test]
     fn windows_uri_round_trips_japanese_path() {
-        let uri = Uri::CreateUri(&HSTRING::from(file_uri("C:/Users/太郎/写真 1.png")))
-            .expect("URI にできない");
-        let path = uri.Path().expect("Path が取れない").to_string();
-        let decoded = Uri::UnescapeComponent(&HSTRING::from(path))
-            .expect("復号できない")
-            .to_string();
-        assert_eq!(decoded, "/C:/Users/太郎/写真 1.png");
+        let path = "C:/Users/太郎/写真 1.png";
+        for source in [path.to_string(), naui_core::media::file_url(path)] {
+            let uri = Uri::CreateUri(&HSTRING::from(source_uri(&source))).expect("URI にできない");
+            let decoded = Uri::UnescapeComponent(&uri.Path().expect("Path が取れない"))
+                .expect("復号できない")
+                .to_string();
+            assert_eq!(decoded, "/C:/Users/太郎/写真 1.png", "元: {source}");
+        }
     }
 }
