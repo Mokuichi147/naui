@@ -26,7 +26,7 @@ use naui_core::{
     SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
     ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
 };
-use naui_web::{run_for_test, ListRow, TableCells, Ui, Widget};
+use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{
@@ -2893,6 +2893,43 @@ fn sidebar_divider_resizes_and_notifies() {
             count + 1,
             "開き直したあとの操作も通知する"
         );
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------------- WebWidgetExt
+
+#[wasm_bindgen_test]
+fn web_ext_adds_classes_and_attributes() {
+    with_ui(|ui| {
+        let button = ui.button("保存")?;
+        button.add_class("primary");
+        button.add_class("wide");
+        assert!(button.has_class("primary"));
+        button.remove_class("wide");
+        assert!(!button.has_class("wide"));
+        assert_eq!(
+            button.native_element().get_attribute("class").as_deref(),
+            Some("primary")
+        );
+
+        assert!(button.set_attribute("data-testid", "save"));
+        assert_eq!(button.attribute("data-testid").as_deref(), Some("save"));
+        assert!(button.remove_attribute("data-testid"));
+        assert_eq!(button.attribute("data-testid"), None);
+
+        // naui が使う属性は書き換えない。
+        button.set_sizing(Sizing::fixed(120.0, 32.0));
+        let style = button.attribute("style");
+        assert!(!button.set_attribute("style", "width: 1px"));
+        assert!(!button.remove_attribute("STYLE"));
+        assert!(!button.set_attribute("data-naui-hidden", ""));
+        assert_eq!(button.attribute("style"), style, "大きさの指定は残る");
+
+        // コンテナにも使える。
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.add_class("toolbar");
+        assert!(stack.has_class("toolbar"));
         Ok(())
     });
 }

@@ -37,6 +37,7 @@ mod toast;
 mod toggle;
 mod toolbar;
 mod tree;
+mod web_ext;
 mod widgets;
 mod window;
 
@@ -79,6 +80,7 @@ pub use toast::Toast;
 pub use toggle::Toggle;
 pub use toolbar::Toolbar;
 pub use tree::Tree;
+pub use web_ext::WebWidgetExt;
 pub use widgets::{
     Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Stack, TextArea,
     TextInput, Widget,

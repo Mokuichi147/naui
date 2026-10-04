@@ -1615,6 +1615,27 @@ pub use naui_gtk::{
     Widget, Window,
 };
 
+/// Web だけの DOM 操作 (CSS のクラスと属性)。
+///
+/// ほかの環境に対応物が無いので、Web 向けにビルドしたときだけある。
+/// 使うところは `#[cfg(target_arch = "wasm32")]` で囲う。
+///
+/// ```ignore
+/// #[cfg(target_arch = "wasm32")]
+/// {
+///     use naui::web::WebWidgetExt;
+///     button.add_class("primary");                 // 文書側の CSS で見た目を変える
+///     button.set_attribute("data-testid", "save"); // テスト用の目印
+/// }
+/// ```
+///
+/// `style` と `data-naui-*` は naui が使うので、`set_attribute` /
+/// `remove_attribute` では書き換えられない (`false` が返る)。
+#[cfg(target_arch = "wasm32")]
+pub mod web {
+    pub use naui_web::WebWidgetExt;
+}
+
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
@@ -1752,6 +1773,16 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     button.set_text("t");
     button.set_enabled(true);
     button.on_click(|| {});
+    #[cfg(target_arch = "wasm32")]
+    {
+        use crate::web::WebWidgetExt;
+        button.add_class("t");
+        button.remove_class("t");
+        let _: bool = button.has_class("t");
+        let _: bool = button.set_attribute("data-t", "t");
+        let _: bool = button.remove_attribute("data-t");
+        let _: Option<String> = button.attribute("data-t");
+    }
 
     let checkbox: Checkbox = ui.checkbox("t")?;
     let _: bool = checkbox.is_checked();
