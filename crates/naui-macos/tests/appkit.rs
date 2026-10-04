@@ -340,6 +340,22 @@ fn main() {
         ("グリッドの子を置き換える", grid_replaces_child),
         ("スクロールが中身を保持する", scroll_keeps_child),
         (
+            "スクロールの位置を測り、指定した位置と末尾へ送る",
+            scroll_measures_and_moves,
+        ),
+        (
+            "中身を足した直後でも末尾まで送れる",
+            scroll_to_end_after_appending,
+        ),
+        (
+            "表示前に頼んだ末尾送りが表示後に効く",
+            scroll_to_end_before_shown,
+        ),
+        (
+            "スクロールの通知は位置が変わったときだけ届く",
+            scroll_notifies_only_moves,
+        ),
+        (
             "折りたたみがクリックで開閉し、変わった後を通知する",
             expander_toggles_and_notifies,
         ),
@@ -3020,6 +3036,131 @@ fn split_view_drag_clamps_to_the_minimums_and_notifies(ui: &Ui) -> Result<()> {
     assert_eq!(seen.len(), 2, "動かした 2 回だけ通知されること: {seen:?}");
     assert!((seen[0] - 80.0).abs() < 1.0, "{seen:?}");
     assert!((seen[1] - (total - 120.0)).abs() < 1.0, "{seen:?}");
+    Ok(())
+}
+
+/// 縦に長い中身を載せたスクロールを、高さ 100 のウィンドウに置く。
+fn tall_scroll(
+    ui: &Ui,
+    rows: usize,
+) -> Result<(naui_macos::Window, naui_macos::Scroll, naui_macos::Stack)> {
+    let window = ui.window("t", 200.0, 100.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..rows {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+    Ok((window, scroll, pane))
+}
+
+fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    window.show();
+
+    let m = scroll.metrics();
+    assert_eq!((m.x, m.y), (0.0, 0.0), "最初は先頭: {m:?}");
+    assert!(m.viewport_height > 0.0, "{m:?}");
+    assert!(
+        m.content_height > m.viewport_height,
+        "はみ出している: {m:?}"
+    );
+    assert_eq!(m.distance_to_end(), m.max_y());
+
+    scroll.scroll_to(0.0, 30.0);
+    assert_eq!(scroll.metrics().y, 30.0);
+
+    scroll.scroll_to_end();
+    let end = scroll.metrics();
+    assert_eq!(end.y, end.max_y(), "末尾へ: {end:?}");
+    assert_eq!(end.distance_to_end(), 0.0);
+
+    // 範囲の外は丸める。
+    scroll.scroll_to(-50.0, 1e9);
+    let clamped = scroll.metrics();
+    assert_eq!((clamped.x, clamped.y), (0.0, clamped.max_y()));
+
+    // 末尾が見えていることは、ネイティブの側でも確かめる。
+    let native = scroll
+        .native_view()
+        .downcast::<NSScrollView>()
+        .expect("NSScrollView");
+    assert_eq!(native.contentView().bounds().origin.y, clamped.max_y());
+    window.close();
+    Ok(())
+}
+
+/// チャットのように「足してから末尾へ」を、レイアウトを待たずに続けて呼ぶ。
+fn scroll_to_end_after_appending(ui: &Ui) -> Result<()> {
+    let (window, scroll, pane) = tall_scroll(ui, 20)?;
+    window.show();
+    scroll.scroll_to_end();
+    let before = scroll.metrics();
+
+    for i in 0..20 {
+        pane.append(&ui.label(&format!("追加 {i}"))?);
+    }
+    scroll.scroll_to_end();
+    let after = scroll.metrics();
+    assert!(
+        after.content_height > before.content_height,
+        "中身が伸びている: {before:?} → {after:?}"
+    );
+    assert_eq!(after.distance_to_end(), 0.0, "{after:?}");
+    window.close();
+    Ok(())
+}
+
+fn scroll_to_end_before_shown(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    scroll.scroll_to_end();
+    window.show();
+    window
+        .native_window()
+        .contentView()
+        .unwrap()
+        .layoutSubtreeIfNeeded();
+    let m = scroll.metrics();
+    assert!(m.max_y() > 0.0, "{m:?}");
+    assert_eq!(m.distance_to_end(), 0.0, "表示後に末尾にいる: {m:?}");
+    window.close();
+    Ok(())
+}
+
+fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    window.show();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    scroll.on_scroll({
+        let seen = seen.clone();
+        move |m: naui_core::ScrollMetrics| seen.borrow_mut().push(m.y)
+    });
+
+    scroll.scroll_to(0.0, 25.0);
+    scroll.scroll_to(0.0, 25.0); // 同じ位置へは動かない
+    assert_eq!(*seen.borrow(), vec![25.0]);
+
+    // 幅だけ変えても、位置が変わらなければ届かない。
+    window.set_size(260.0, 100.0);
+    window
+        .native_window()
+        .contentView()
+        .unwrap()
+        .layoutSubtreeIfNeeded();
+    assert_eq!(*seen.borrow(), vec![25.0]);
+
+    // 利用者の操作 (ネイティブ側での移動) でも届く。
+    let native = scroll
+        .native_view()
+        .downcast::<NSScrollView>()
+        .expect("NSScrollView");
+    let clip = native.contentView();
+    clip.scrollToPoint(NSPoint::new(0.0, 40.0));
+    native.reflectScrolledClipView(&clip);
+    assert_eq!(*seen.borrow(), vec![25.0, 40.0]);
+    window.close();
     Ok(())
 }
 
