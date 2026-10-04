@@ -102,6 +102,18 @@ const CASES: &[Case] = &[
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
+        "隠すと Visibility が Collapsed になり、戻すと Visible",
+        set_visible_maps_to_visibility,
+    ),
+    (
+        "ツールチップが ToolTipService へ届き、None で外れる",
+        tooltip_maps_to_tool_tip_service,
+    ),
+    (
+        "ビジュアルツリーに載る前はフォーカスを移せない",
+        request_focus_needs_the_visual_tree,
+    ),
+    (
         "描画面の命令が XAML の Path と TextBlock になり、読み込める",
         canvas_commands_become_xaml_shapes,
     ),
@@ -1920,4 +1932,59 @@ fn bmp_2x1() -> Vec<u8> {
     bmp.extend_from_slice(&[0; 16]); // 解像度と色数は使わない
     bmp.extend_from_slice(&[0, 0, 255, 255, 0, 0, 0, 0]); // BGR, BGR, 詰め物
     bmp
+}
+
+fn set_visible_maps_to_visibility(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Visibility;
+
+    let button = ui.button("t")?;
+    assert!(button.is_visible(), "既定は表示");
+    button.set_visible(false);
+    assert!(!button.is_visible());
+    assert_eq!(
+        button.native_element().Visibility().expect("Visibility"),
+        Visibility::Collapsed,
+        "場所も取らない Collapsed にする"
+    );
+    button.set_visible(true);
+    assert!(button.is_visible());
+    assert_eq!(
+        button.native_element().Visibility().expect("Visibility"),
+        Visibility::Visible
+    );
+    Ok(())
+}
+
+fn tooltip_maps_to_tool_tip_service(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::ToolTipService;
+    use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+
+    let button = ui.button("保存")?;
+    let object = button
+        .native_element()
+        .cast::<DependencyObject>()
+        .expect("DependencyObject");
+    button.set_tooltip(Some("変更を保存します"));
+    let tip = ToolTipService::GetToolTip(&object)
+        .expect("ToolTip")
+        .cast::<IPropertyValue>()
+        .and_then(|value| value.GetString())
+        .expect("文字列の ToolTip");
+    assert_eq!(tip.to_string(), "変更を保存します");
+
+    button.set_tooltip(None);
+    let cleared = ToolTipService::GetToolTip(&object)
+        .ok()
+        .and_then(|value| value.cast::<IPropertyValue>().ok())
+        .and_then(|value| value.GetString().ok());
+    assert_eq!(cleared, None, "None で外れる");
+    Ok(())
+}
+
+fn request_focus_needs_the_visual_tree(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("")?;
+    assert!(!input.request_focus(), "載る前は移せない");
+    let label = ui.label("見出し")?;
+    assert!(!label.request_focus());
+    Ok(())
 }

@@ -131,6 +131,7 @@ mod expander;
 mod file_picker;
 mod file_saver;
 mod indicator;
+mod interaction;
 mod layout;
 mod list;
 mod main_thread;

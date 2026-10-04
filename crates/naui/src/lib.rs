@@ -248,6 +248,57 @@
 //! Web では大きさが整数に丸められるため、末尾まで 1 px 未満の差は末尾に
 //! いるとみなす (拡大表示中でも `distance_to_end` が 0 になる)。
 //!
+//! ## 表示・フォーカス・ツールチップ
+//!
+//! どのウィジェットにも、次の 4 つがある。
+//!
+//! ```no_run
+//! # use naui::{Orientation, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let name = ui.text_input("")?;
+//! let error = ui.label("名前を入れてください")?;
+//! error.set_visible(false);           // 隠す (Stack の中では場所も空けない)
+//! let _shown: bool = error.is_visible();
+//!
+//! let save = ui.button("保存")?;
+//! save.set_tooltip(Some("変更を保存します")); // None で外す
+//! save.on_click({
+//!     let name = name.clone();
+//!     let error = error.clone();
+//!     move || {
+//!         if name.text().is_empty() {
+//!             error.set_visible(true);
+//!             name.request_focus(); // 入力欄へ戻す
+//!         }
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `set_visible` | `Visibility` (`Collapsed`) | `hidden` | `gtk_widget_set_visible` | `display: none` |
+//! | `request_focus` | `UIElement.Focus` | `makeFirstResponder:` | `gtk_widget_grab_focus` | `focus()` |
+//! | `set_tooltip` | `ToolTipService.ToolTip` | `toolTip` | `tooltip-text` | `title` 属性 |
+//!
+//! **隠したものは `Stack` の中では場所を空けない。** `Grid` ではマスと
+//! 行・列は残り、間隔 (`set_spacing`) が残る環境もある。
+//! [`is_visible`](Label::is_visible) が返すのは `set_visible` で指定した
+//! 値で、親が隠れている・たたんだ `Expander` の中にある、といった理由で
+//! 見えていなくても `true` のまま。
+//!
+//! [`request_focus`](TextInput::request_focus) は、移せたら `true` を返す。
+//! **そのウィジェットが受け取れないとき (`Stack` などのコンテナ) は、中で
+//! 最初に受け取れるものへ移す。** ウィンドウに載る前・隠れている・無効な
+//! ときは `false`。ラベルは受け取らない。ボタンなどが受け取るかは OS の
+//! 設定に従う (macOS は「キーボードナビゲーション」の設定でボタンが
+//! フォーカスを受け取るかが変わる)。
+//!
+//! Web は、naui がウィジェットごとにインラインで書く `display` に勝つよう、
+//! `data-naui-hidden` 属性へ `display: none !important` を当てる規則を
+//! 文書へ 1 つ入れる。
+//!
 //! ## 折りたたみ
 //!
 //! ふだんは隠しておき、見出しを押したときだけ見せたいものは [`Expander`] へ
@@ -1813,6 +1864,26 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     button.set_text("t");
     button.set_enabled(true);
     button.on_click(|| {});
+
+    // どのウィジェットにもある操作。手書きの Widget 実装 (macOS の Stack /
+    // TextArea / List など) も漏れないよう、何種類かで呼ぶ。
+    button.set_visible(false);
+    let _: bool = button.is_visible();
+    let _: bool = button.request_focus();
+    button.set_tooltip(Some("t"));
+    button.set_tooltip(None);
+    let any_stack: Stack = ui.stack(Orientation::Vertical)?;
+    any_stack.set_visible(true);
+    let _: bool = any_stack.request_focus();
+    any_stack.set_tooltip(None);
+    let any_area: TextArea = ui.text_area("")?;
+    any_area.set_visible(true);
+    let _: bool = any_area.request_focus();
+    any_area.set_tooltip(None);
+    let any_list: List = ui.list()?;
+    any_list.set_visible(true);
+    let _: bool = any_list.is_visible();
+    any_list.set_tooltip(None);
 
     let checkbox: Checkbox = ui.checkbox("t")?;
     let _: bool = checkbox.is_checked();

@@ -240,6 +240,15 @@ fn main() {
             scroll_gives_the_child_its_natural_height,
         ),
         (
+            "隠したものは Stack の中で場所を空けない",
+            hidden_widget_leaves_the_stack_layout,
+        ),
+        (
+            "フォーカスが入力欄と複数行入力の中へ移る",
+            request_focus_reaches_the_editor,
+        ),
+        ("ツールチップが中身のコントロールへ届く", tooltip_reaches_the_widget),
+        (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
         ),
@@ -6131,5 +6140,95 @@ fn sidebar_toggle_button_collapses_and_notifies(ui: &Ui) -> Result<()> {
     window.clear_sidebar();
     window.clear_toolbar();
     window.close();
+    Ok(())
+}
+
+// ------------------------------------------------- 表示・フォーカス・ツールチップ
+
+fn hidden_widget_leaves_the_stack_layout(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let middle = ui.button("真ん中")?;
+    stack.append(&ui.label("1 行目")?);
+    stack.append(&middle);
+    stack.append(&ui.label("3 行目")?);
+    let root = bin_of(&stack);
+    let (_, shown) = measure_height(&root);
+    assert!(middle.is_visible(), "既定は表示");
+
+    middle.set_visible(false);
+    assert!(!middle.is_visible());
+    assert!(!bin_of(&middle).is_visible(), "入れ物ごと隠す");
+    let (_, hidden) = measure_height(&root);
+    assert!(
+        hidden + 10 < shown,
+        "隠すと場所を空けない: {shown} -> {hidden}"
+    );
+
+    middle.set_visible(true);
+    assert!(middle.is_visible());
+    assert_eq!(measure_height(&root).1, shown, "戻すと元の高さ");
+    Ok(())
+}
+
+fn request_focus_reaches_the_editor(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 320.0, 240.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let label = ui.label("見出し")?;
+    let input = ui.text_input("")?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fixed(200.0, 60.0));
+    let inner = ui.stack(Orientation::Vertical)?;
+    let nested = ui.text_input("")?;
+    inner.append(&ui.label("中")?);
+    inner.append(&nested);
+    root.append(&label);
+    root.append(&input);
+    root.append(&area);
+    root.append(&inner);
+    window.set_child(&root);
+
+    assert!(!input.request_focus(), "表示前は移せない");
+    window.show();
+    tick(&bin_of(&root));
+
+    let focused = |widget: &gtk::Widget| {
+        widget
+            .root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| focus == *widget || focus.is_ancestor(widget))
+    };
+
+    assert!(!label.request_focus(), "ラベルは受け取らない");
+    assert!(input.request_focus());
+    assert!(focused(&input.native_widget()), "入力欄が受け取る");
+    assert!(area.request_focus());
+    let focus = area
+        .native_widget()
+        .root()
+        .and_then(|root| root.focus())
+        .expect("フォーカス");
+    assert!(
+        focus.downcast_ref::<gtk::TextView>().is_some(),
+        "複数行入力は中の GtkTextView が受け取る: {}",
+        focus.type_().name()
+    );
+    assert!(inner.request_focus(), "コンテナは中の最初の入力欄へ");
+    assert!(focused(&nested.native_widget()));
+
+    input.set_visible(false);
+    assert!(!input.request_focus(), "隠れていると移せない");
+    window.close();
+    Ok(())
+}
+
+fn tooltip_reaches_the_widget(ui: &Ui) -> Result<()> {
+    let button = ui.button("保存")?;
+    button.set_tooltip(Some("変更を保存します"));
+    assert_eq!(
+        button.native_widget().tooltip_text().as_deref(),
+        Some("変更を保存します")
+    );
+    button.set_tooltip(None);
+    assert_eq!(button.native_widget().tooltip_text(), None);
     Ok(())
 }

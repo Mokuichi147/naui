@@ -525,7 +525,7 @@ impl Tree {
     /// [`Tree::restore_selection`] が書き戻す。
     fn write_native_selection(&self, path: Option<&[usize]>) {
         let node = path
-            .filter(|path| self.is_visible(path))
+            .filter(|path| self.is_path_shown(path))
             .and_then(|path| self.node_at(path));
         self.without_notifying(|this| match node {
             Some(node) => {
@@ -624,7 +624,7 @@ impl Tree {
             .selected
             .borrow()
             .clone()
-            .filter(|path| self.is_visible(path));
+            .filter(|path| self.is_path_shown(path));
         let current = self
             .0
             .tree_view
@@ -659,7 +659,7 @@ impl Tree {
     }
 
     /// そのパスが今見えているか (祖先がすべて開いているか)。
-    fn is_visible(&self, path: &[usize]) -> bool {
+    fn is_path_shown(&self, path: &[usize]) -> bool {
         let expanded = self.0.expanded.borrow();
         (1..path.len()).all(|depth| expanded.contains(&path[..depth]))
     }
@@ -691,7 +691,7 @@ impl Tree {
                 .selected
                 .borrow()
                 .as_deref()
-                .is_some_and(|path| !self.is_visible(path))
+                .is_some_and(|path| !self.is_path_shown(path))
         {
             return;
         }
