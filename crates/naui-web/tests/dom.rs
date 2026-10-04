@@ -3021,3 +3021,108 @@ fn scroll_notifies_only_moves() {
         Ok(())
     });
 }
+
+// ------------------------------------------------- 表示・フォーカス・ツールチップ
+
+fn height_of(element: &Element) -> f64 {
+    element.get_bounding_client_rect().height()
+}
+
+fn active_element() -> Option<Element> {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+}
+
+#[wasm_bindgen_test]
+fn hidden_widget_leaves_the_stack_layout() {
+    with_ui(|ui| {
+        let stack = ui.stack(Orientation::Vertical)?;
+        let middle = ui.button("真ん中")?;
+        // インラインの `display` を書くウィジェットでも隠れること。
+        let switch = ui.toggle("スイッチ")?;
+        stack.append(&ui.label("1 行目")?);
+        stack.append(&middle);
+        stack.append(&switch);
+        stack.append(&ui.label("3 行目")?);
+        let mounted = Mounted::new(&stack);
+        let shown = height_of(&mounted.0);
+        assert!(middle.is_visible(), "既定は表示");
+
+        middle.set_visible(false);
+        switch.set_visible(false);
+        assert!(!middle.is_visible());
+        assert_eq!(computed(&middle.native_element(), "display"), "none");
+        assert_eq!(computed(&switch.native_element(), "display"), "none");
+        let hidden = height_of(&mounted.0);
+        assert!(
+            hidden + 10.0 < shown,
+            "隠すと場所を空けない: {shown} -> {hidden}"
+        );
+
+        middle.set_visible(true);
+        switch.set_visible(true);
+        assert!(middle.is_visible());
+        assert_ne!(computed(&switch.native_element(), "display"), "none");
+        assert_eq!(height_of(&mounted.0), shown, "戻すと元の高さ");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn request_focus_reaches_the_editor() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let label = ui.label("見出し")?;
+        let input = ui.text_input("")?;
+        let area = ui.text_area("")?;
+        let inner = ui.stack(Orientation::Vertical)?;
+        let nested = ui.text_input("")?;
+        inner.append(&ui.label("中")?);
+        inner.append(&nested);
+        root.append(&label);
+        root.append(&input);
+        root.append(&area);
+        root.append(&inner);
+
+        assert!(!input.request_focus(), "文書に載る前は移せない");
+        let _mounted = Mounted::new(&root);
+
+        assert!(!label.request_focus(), "ラベルは受け取らない");
+
+        assert!(input.request_focus());
+        let active = active_element().expect("activeElement");
+        assert!(
+            input.native_element().contains(Some(&active)),
+            "入力欄が受け取る"
+        );
+
+        assert!(area.request_focus());
+        let active = active_element().expect("activeElement");
+        assert_eq!(active.tag_name(), "TEXTAREA");
+
+        assert!(inner.request_focus(), "コンテナは中の最初の入力欄へ");
+        let active = active_element().expect("activeElement");
+        assert!(nested.native_element().contains(Some(&active)));
+
+        // 隠した直後 (スタイルの計算を挟まない) でも移せないこと。
+        input.set_visible(false);
+        assert!(!input.request_focus(), "隠れていると移せない");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tooltip_becomes_the_title() {
+    with_ui(|ui| {
+        let button = ui.button("保存")?;
+        button.set_tooltip(Some("変更を保存します"));
+        assert_eq!(
+            button.native_element().get_attribute("title").as_deref(),
+            Some("変更を保存します")
+        );
+        button.set_tooltip(None);
+        assert_eq!(button.native_element().get_attribute("title"), None);
+        Ok(())
+    });
+}

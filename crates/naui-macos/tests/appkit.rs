@@ -340,6 +340,19 @@ fn main() {
         ("グリッドの子を置き換える", grid_replaces_child),
         ("スクロールが中身を保持する", scroll_keeps_child),
         (
+            "隠したものは Stack の中で場所を空けない",
+            hidden_widget_leaves_the_stack_layout,
+        ),
+        (
+            "折りたたみを開いてもアプリが隠した中身は隠れたまま",
+            expander_keeps_the_app_hidden_child,
+        ),
+        (
+            "フォーカスが入力欄と複数行入力の中へ移る",
+            request_focus_reaches_the_editor,
+        ),
+        ("ツールチップが NSView へ届く", tooltip_reaches_the_view),
+        (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
         ),
@@ -3161,6 +3174,145 @@ fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
     native.reflectScrolledClipView(&clip);
     assert_eq!(*seen.borrow(), vec![25.0, 40.0]);
     window.close();
+    Ok(())
+}
+
+fn hidden_widget_leaves_the_stack_layout(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let first = ui.label("1 行目")?;
+    let middle = ui.button("真ん中")?;
+    let last = ui.label("3 行目")?;
+    stack.append(&first);
+    stack.append(&middle);
+    stack.append(&last);
+    let view = stack.native_view();
+    view.layoutSubtreeIfNeeded();
+    let shown = view.fittingSize().height;
+    assert!(middle.is_visible(), "既定は表示");
+
+    middle.set_visible(false);
+    view.layoutSubtreeIfNeeded();
+    let hidden = view.fittingSize().height;
+    assert!(!middle.is_visible());
+    assert!(middle.native_view().isHidden());
+    assert!(
+        hidden + 10.0 < shown,
+        "隠すと場所を空けない: {shown} -> {hidden}"
+    );
+
+    middle.set_visible(true);
+    view.layoutSubtreeIfNeeded();
+    assert!(middle.is_visible());
+    assert!(
+        (view.fittingSize().height - shown).abs() < 1.0,
+        "戻すと元の高さ"
+    );
+    Ok(())
+}
+
+fn expander_keeps_the_app_hidden_child(ui: &Ui) -> Result<()> {
+    let expander = ui.expander("詳細")?;
+    let body = ui.label("中身")?;
+    expander.set_child(&body);
+
+    // たたんでいる間に表示へ戻しても、中身は出ない。
+    body.set_visible(false);
+    body.set_visible(true);
+    assert!(body.is_visible());
+    assert!(body.native_view().isHidden(), "たたんでいる間は隠れたまま");
+
+    body.set_visible(false);
+    expander.set_expanded(true);
+    assert!(!body.is_visible());
+    assert!(
+        body.native_view().isHidden(),
+        "開いてもアプリが隠したものは隠れたまま"
+    );
+
+    body.set_visible(true);
+    assert!(!body.native_view().isHidden(), "開いていれば出る");
+    expander.set_expanded(false);
+    assert!(body.native_view().isHidden());
+    assert!(body.is_visible(), "アプリの指定は表示のまま");
+    Ok(())
+}
+
+fn request_focus_reaches_the_editor(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 240.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let label = ui.label("見出し")?;
+    let input = ui.text_input("")?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fixed(200.0, 60.0));
+    let inner = ui.stack(Orientation::Vertical)?;
+    let nested = ui.text_input("")?;
+    inner.append(&ui.label("中")?);
+    inner.append(&nested);
+    root.append(&label);
+    root.append(&input);
+    root.append(&area);
+    root.append(&inner);
+
+    assert!(!input.request_focus(), "ウィンドウに載る前は移せない");
+    window.set_child(&root);
+    window.show();
+    let native = window.native_window();
+
+    assert!(!label.request_focus(), "ラベルは受け取らない");
+
+    assert!(input.request_focus());
+    let editor = input
+        .native_view()
+        .downcast::<NSTextField>()
+        .expect("NSTextField")
+        .currentEditor();
+    assert!(editor.is_some(), "入力欄が編集中になる");
+
+    assert!(area.request_focus());
+    let responder = native.firstResponder().expect("first responder");
+    assert!(
+        responder.downcast::<NSTextView>().is_ok(),
+        "複数行入力は中の NSTextView が受け取る"
+    );
+
+    assert!(inner.request_focus(), "コンテナは中の最初の入力欄へ");
+    assert!(nested
+        .native_view()
+        .downcast::<NSTextField>()
+        .expect("NSTextField")
+        .currentEditor()
+        .is_some());
+
+    input.set_visible(false);
+    assert!(!input.request_focus(), "隠れていると移せない");
+    window.close();
+    Ok(())
+}
+
+fn tooltip_reaches_the_view(ui: &Ui) -> Result<()> {
+    let button = ui.button("保存")?;
+    button.set_tooltip(Some("変更を保存します"));
+    assert_eq!(
+        button
+            .native_view()
+            .toolTip()
+            .map(|t| t.to_string())
+            .as_deref(),
+        Some("変更を保存します")
+    );
+    button.set_tooltip(None);
+    assert!(button.native_view().toolTip().is_none());
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_tooltip(Some("まとめ"));
+    assert_eq!(
+        stack
+            .native_view()
+            .toolTip()
+            .map(|t| t.to_string())
+            .as_deref(),
+        Some("まとめ")
+    );
     Ok(())
 }
 

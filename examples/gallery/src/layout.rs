@@ -20,12 +20,14 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     )?;
     let horizontal = ui.stack(Orientation::Horizontal)?;
     horizontal.set_spacing(8.0);
+    let middle = ui.button("中央")?;
     horizontal.append(&ui.button("左")?);
-    horizontal.append(&ui.button("中央")?);
+    horizontal.append(&middle);
     horizontal.append(&ui.button("右")?);
     pane.append(&horizontal);
 
     build_dynamic_children(ui, &pane)?;
+    build_interaction(ui, &pane, &middle)?;
 
     parts::section(
         ui,
@@ -202,6 +204,53 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     pane.append(&controls);
     pane.append(&scroll);
     Ok(pane)
+}
+
+/// 表示・非表示、フォーカス、ツールチップの例。
+fn build_interaction(ui: &Ui, pane: &naui::Stack, middle: &naui::Button) -> Result<()> {
+    parts::section(
+        ui,
+        pane,
+        "表示・フォーカス・ツールチップ",
+        &[
+            "隠したものは Stack の中で場所を空けません (上の「中央」が消えて詰まります)。",
+            "ボタンにポインターを重ねると説明が出ます。",
+        ],
+    )?;
+    let actions = ui.stack(Orientation::Horizontal)?;
+    actions.set_spacing(8.0);
+
+    let toggle = ui.button("「中央」を隠す")?;
+    toggle.set_tooltip(Some("上の Stack の「中央」ボタンを出し入れします"));
+    toggle.on_click({
+        let middle = middle.clone();
+        let toggle = toggle.clone();
+        move || {
+            let visible = !middle.is_visible();
+            middle.set_visible(visible);
+            toggle.set_text(if visible {
+                "「中央」を隠す"
+            } else {
+                "「中央」を出す"
+            });
+        }
+    });
+    actions.append(&toggle);
+
+    let field = ui.text_input("")?;
+    field.set_placeholder("ここへフォーカスを移します");
+    let focus = ui.button("入力欄へフォーカス")?;
+    focus.set_tooltip(Some("request_focus で右の入力欄へ移します"));
+    focus.on_click({
+        let field = field.clone();
+        move || {
+            field.request_focus();
+        }
+    });
+    actions.append(&focus);
+    actions.append(&field);
+    pane.append(&actions);
+    Ok(())
 }
 
 /// `Stack` の子を後から足したり外したりする例。

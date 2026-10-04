@@ -7,7 +7,9 @@
 //!
 //! たたむときは中身のビューを隠す。`NSStackView` は隠れた子を
 //! レイアウトから外す (`detachesHiddenViews` の既定) ので、たたむと
-//! 見出しの高さまで縮む。
+//! 見出しの高さまで縮む。アプリも [`set_visible`](crate::Label::set_visible)
+//! で同じ `hidden` を使うので、隠すのは `crate::interaction` を通して
+//! 両方の指定を合わせて行う。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -130,6 +132,8 @@ impl Expander {
             let view = previous.native_view();
             self.0.native.removeArrangedSubview(&view);
             view.removeFromSuperview();
+            // 外した中身は、たたんでいたことによる非表示を解く。
+            crate::interaction::set_hidden_by_container(&view, false);
         }
         let mut constraints = self.0.fill_constraints.borrow_mut();
         if !constraints.is_empty() {
@@ -159,7 +163,7 @@ impl Expander {
         constraints.push(equal);
         drop(constraints);
 
-        view.setHidden(!self.is_expanded());
+        crate::interaction::set_hidden_by_container(&view, !self.is_expanded());
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
@@ -195,7 +199,7 @@ impl ExpanderInner {
         let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&symbol, None);
         self.header.setImage(image.as_deref());
         if let Some(child) = self.child.borrow().as_ref() {
-            child.native_view().setHidden(!expanded);
+            crate::interaction::set_hidden_by_container(&child.native_view(), !expanded);
         }
         // 開閉で高さが変わる。親の連なりへ伝えないと、Grid の Auto 行が
         // たたんだときの高さのままになり、開いた中身が潰れる。

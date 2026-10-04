@@ -44,6 +44,32 @@ macro_rules! impl_widget {
                 let element = <$t as Widget>::native_element(self);
                 crate::layout::apply_sizing(&element, sizing);
             }
+
+            /// 表示するかどうか。既定は表示。
+            ///
+            /// 隠したものは `Stack` の中では場所を空けない。`Grid` ではマスが残る。
+            pub fn set_visible(&self, visible: bool) {
+                crate::interaction::set_visible(&<$t as Widget>::native_element(self), visible);
+            }
+
+            /// [`set_visible`](Self::set_visible) で指定した表示。親が隠れていても
+            /// `true` のまま。
+            pub fn is_visible(&self) -> bool {
+                crate::interaction::is_visible(&<$t as Widget>::native_element(self))
+            }
+
+            /// キーボードフォーカスを移す。移せたら `true`。
+            ///
+            /// 自分が受け取れないとき (コンテナなど) は、中で最初に受け取れるものへ
+            /// 移す。文書に載る前・隠れている・無効なときは `false`。
+            pub fn request_focus(&self) -> bool {
+                crate::interaction::request_focus(&<$t as Widget>::native_element(self))
+            }
+
+            /// ポインターを重ねたときに出す説明 (`title` 属性)。`None` で外す。
+            pub fn set_tooltip(&self, text: Option<&str>) {
+                crate::interaction::set_tooltip(&<$t as Widget>::native_element(self), text);
+            }
         }
     };
 }
