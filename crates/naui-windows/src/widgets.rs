@@ -424,6 +424,7 @@ struct TextInputInner {
 /// 1 行テキスト入力 (TextBox)。IME は Windows が処理する。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
+crate::keys::impl_key_down!(TextInput);
 impl_widget!(TextInput, native);
 
 impl TextInput {
@@ -492,6 +493,7 @@ struct PasswordInputInner {
 /// WinUI 3 にあるが、4 環境の共通部分に無いので出さない。
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
+crate::keys::impl_key_down!(PasswordInput);
 impl_widget!(PasswordInput, native);
 
 impl PasswordInput {
@@ -557,6 +559,7 @@ struct TextAreaInner {
 /// 複数行テキスト入力 (改行を受け付ける TextBox)。IME は Windows が処理する。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
+crate::keys::impl_key_down!(TextArea);
 impl_widget!(TextArea, native);
 
 impl TextArea {

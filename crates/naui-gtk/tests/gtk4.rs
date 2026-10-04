@@ -249,6 +249,18 @@ fn main() {
         ),
         ("ツールチップが中身のコントロールへ届く", tooltip_reaches_the_widget),
         (
+            "複数行入力の on_key_down が Shift なしの Enter を止める",
+            text_area_key_down_can_take_enter,
+        ),
+        (
+            "変換中のキーは on_key_down に届かない",
+            key_down_skips_composition,
+        ),
+        (
+            "ウィジェットが Continue を返したキーだけがウィンドウへ届く",
+            window_key_down_gets_what_the_widget_left,
+        ),
+        (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
         ),
@@ -6230,5 +6242,140 @@ fn tooltip_reaches_the_widget(ui: &Ui) -> Result<()> {
     );
     button.set_tooltip(None);
     assert_eq!(button.native_widget().tooltip_text(), None);
+    Ok(())
+}
+
+// ------------------------------------------------------------- on_key_down
+
+/// ウィンドウに付いたキーの受け口へ、キーを 1 つ渡す。止めたら `true`。
+///
+/// GTK4 には本物のキーイベントを作る公開 API が無いので、naui が付けた
+/// 捕捉フェーズの `GtkEventControllerKey` のシグナルを直接起こす。
+fn press_key(
+    window: &naui_gtk::Window,
+    keyval: gtk::gdk::Key,
+    state: gtk::gdk::ModifierType,
+) -> bool {
+    let native = window.native_window();
+    let controllers = native.observe_controllers();
+    let controller = (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .filter_map(|item| item.downcast::<gtk::EventControllerKey>().ok())
+        .find(|controller| controller.propagation_phase() == gtk::PropagationPhase::Capture)
+        .expect("naui のキーの受け口");
+    let stopped: bool = controller.emit_by_name("key-pressed", &[&keyval, &0u32, &state]);
+    controller.emit_by_name::<()>("key-released", &[&keyval, &0u32, &state]);
+    stopped
+}
+
+fn key_down_window(ui: &Ui) -> Result<(naui_gtk::Window, naui_gtk::TextArea)> {
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fill());
+    window.set_child(&area);
+    window.show();
+    tick(&area.native_widget());
+    assert!(area.request_focus());
+    Ok((window, area))
+}
+
+fn text_area_key_down_can_take_enter(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let (window, area) = key_down_window(ui)?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    area.on_key_down({
+        let seen = seen.clone();
+        move |event: &naui_core::KeyEvent| {
+            seen.borrow_mut().push((event.key, event.modifiers.shift));
+            if event.key == naui_core::Key::Enter && !event.modifiers.shift {
+                naui_core::EventResponse::Handled
+            } else {
+                naui_core::EventResponse::Continue
+            }
+        }
+    });
+    assert!(press_key(&window, K::Return, M::empty()), "Enter は止める");
+    assert!(
+        !press_key(&window, K::Return, M::SHIFT_MASK),
+        "Shift+Enter は通す"
+    );
+    assert!(!press_key(&window, K::A, M::SHIFT_MASK));
+    assert!(!press_key(&window, K::F5, M::empty()));
+    assert_eq!(
+        *seen.borrow(),
+        vec![
+            (naui_core::Key::Enter, false),
+            (naui_core::Key::Enter, true),
+            (naui_core::Key::Character('a'), true),
+            (naui_core::Key::F(5), false),
+        ]
+    );
+    window.close();
+    Ok(())
+}
+
+fn key_down_skips_composition(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let (window, area) = key_down_window(ui)?;
+    let count = Rc::new(Cell::new(0));
+    area.on_key_down({
+        let count = count.clone();
+        move |_| {
+            count.set(count.get() + 1);
+            naui_core::EventResponse::Handled
+        }
+    });
+    // 最初のキーで preedit-changed の購読が付く。
+    press_key(&window, K::x, M::empty());
+    assert_eq!(count.get(), 1);
+
+    let view = gtk::prelude::GtkWindowExt::focus(&window.native_window())
+        .and_downcast::<gtk::TextView>()
+        .expect("GtkTextView にフォーカス");
+    view.emit_by_name::<()>("preedit-changed", &[&"かな"]);
+    assert!(
+        !press_key(&window, K::Return, M::empty()),
+        "変換中は IME へ通す"
+    );
+    assert_eq!(count.get(), 1, "変換中の Enter は届かない");
+
+    view.emit_by_name::<()>("preedit-changed", &[&""]);
+    assert!(press_key(&window, K::Return, M::empty()));
+    assert_eq!(count.get(), 2, "確定後は届く");
+    window.close();
+    Ok(())
+}
+
+fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let input = ui.text_input("")?;
+    window.set_child(&input);
+    window.show();
+    tick(&input.native_widget());
+    assert!(input.request_focus());
+    input.on_key_down(|event: &naui_core::KeyEvent| {
+        if event.key == naui_core::Key::Enter {
+            naui_core::EventResponse::Handled
+        } else {
+            naui_core::EventResponse::Continue
+        }
+    });
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_key_down({
+        let seen = seen.clone();
+        move |event: &naui_core::KeyEvent| {
+            seen.borrow_mut().push(event.key);
+            naui_core::EventResponse::Continue
+        }
+    });
+    press_key(&window, K::x, M::empty());
+    press_key(&window, K::Return, M::empty());
+    press_key(&window, K::Escape, M::empty());
+    assert_eq!(
+        *seen.borrow(),
+        vec![naui_core::Key::Character('x'), naui_core::Key::Escape]
+    );
+    window.close();
     Ok(())
 }

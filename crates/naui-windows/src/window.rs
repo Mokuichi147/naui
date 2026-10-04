@@ -97,6 +97,8 @@ struct WindowInner {
     wheel_subclass_installed: Cell<bool>,
     /// ショートカットを拾う `KeyDown` を付けたかどうか。
     menu_key_installed: Cell<bool>,
+    /// `on_key_down` の通知先。根の `PreviewKeyDown` から呼ぶ。
+    key_down: Rc<naui_core::KeyHandler>,
     closing_token: Cell<Option<i64>>,
 }
 
@@ -148,6 +150,7 @@ impl Window {
             height: height as i32,
             wheel_subclass_installed: Cell::new(false),
             menu_key_installed: Cell::new(false),
+            key_down: Rc::default(),
             closing_token: Cell::new(None),
         }));
         Ok(this)
@@ -182,6 +185,18 @@ impl Window {
     ///
     /// サイドバーを付けているときは、その右の区画 (`NavigationView.Content`)
     /// に置かれる。
+    /// このウィンドウの中で押されたキーの通知。
+    ///
+    /// フォーカスのあるウィジェットの `on_key_down` が `Continue` を返した
+    /// キーが届く。`Handled` を返すと、そのキーはウィジェットへ渡らない。
+    /// IME で変換している間のキーは届かない。
+    pub fn on_key_down(
+        &self,
+        f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,
+    ) {
+        self.0.key_down.set(f);
+    }
+
     pub fn set_child(&self, child: &dyn Widget) {
         // 根は作り直すが、サイドバー (`NavigationView`) は同じものを使い回す。
         // XAML の要素は親を 1 つしか持てないので、古い根の層から外しておく。
@@ -230,6 +245,10 @@ impl Window {
             self.mount_menu_bar();
             self.0.menu_key_installed.set(false);
             self.install_menu_shortcuts();
+            // `on_key_down` の受け口も新しい根へ付ける。
+            if let Some(root) = self.0.theme_root.borrow().as_ref() {
+                let _ = crate::keys::install(root, self.0.key_down.clone());
+            }
             if !self.0.wheel_subclass_installed.get() {
                 self.0
                     .wheel_subclass_installed

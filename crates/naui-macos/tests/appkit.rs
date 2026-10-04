@@ -353,6 +353,18 @@ fn main() {
         ),
         ("ツールチップが NSView へ届く", tooltip_reaches_the_view),
         (
+            "複数行入力の on_key_down が Shift なしの Enter を止める",
+            text_area_key_down_can_take_enter,
+        ),
+        (
+            "変換中のキーは on_key_down に届かない",
+            key_down_skips_composition,
+        ),
+        (
+            "ウィジェットが Continue を返したキーだけがウィンドウへ届く",
+            window_key_down_gets_what_the_widget_left,
+        ),
+        (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
         ),
@@ -3313,6 +3325,151 @@ fn tooltip_reaches_the_view(ui: &Ui) -> Result<()> {
             .as_deref(),
         Some("まとめ")
     );
+    Ok(())
+}
+
+/// キーを 1 つウィンドウのキューへ積み、配送まで進める (ローカルモニターを通る)。
+fn press_key(
+    app: &NSApplication,
+    window: &NSWindow,
+    characters: &str,
+    key_code: u16,
+    flags: NSEventModifierFlags,
+) {
+    let text = NSString::from_str(characters);
+    let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+        NSEventType::KeyDown,
+        NSPoint::new(0.0, 0.0),
+        flags,
+        0.0,
+        window.windowNumber(),
+        None,
+        &text,
+        &text,
+        false,
+        key_code,
+    )
+    .expect("キーイベント");
+    unsafe { app.postEvent_atStart(&event, false) };
+    deliver_events(app);
+}
+
+fn text_area_key_down_can_take_enter(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fill());
+    window.set_child(&area);
+    window.show();
+    assert!(area.request_focus());
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    area.on_key_down({
+        let seen = seen.clone();
+        move |event: &naui_core::KeyEvent| {
+            seen.borrow_mut().push((event.key, event.modifiers.shift));
+            if event.key == naui_core::Key::Enter && !event.modifiers.shift {
+                naui_core::EventResponse::Handled
+            } else {
+                naui_core::EventResponse::Continue
+            }
+        }
+    });
+    let native = window.native_window();
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::Shift);
+    press_key(&app, &native, "A", 0, NSEventModifierFlags::Shift);
+    press_key(&app, &native, "", 122, NSEventModifierFlags::empty()); // F1
+    assert_eq!(
+        *seen.borrow(),
+        vec![
+            (naui_core::Key::Enter, false),
+            (naui_core::Key::Enter, true),
+            (naui_core::Key::Character('a'), true),
+            (naui_core::Key::F(1), false),
+        ]
+    );
+    // 止めた Enter は改行にならず、Continue のキーは入力欄が受け取る。
+    assert_eq!(area.text(), "\nA", "Shift+Enter と A だけが入る");
+    window.close();
+    Ok(())
+}
+
+fn key_down_skips_composition(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fill());
+    window.set_child(&area);
+    window.show();
+    assert!(area.request_focus());
+    let count = Rc::new(Cell::new(0));
+    area.on_key_down({
+        let count = count.clone();
+        move |_| {
+            count.set(count.get() + 1);
+            naui_core::EventResponse::Handled
+        }
+    });
+    let native = window.native_window();
+    let text_view = native
+        .firstResponder()
+        .and_then(|r| r.downcast::<NSTextView>().ok())
+        .expect("NSTextView");
+    // IME が変換中の文字 (marked text) を置いた状態にする。
+    let marked = NSString::from_str("かな");
+    unsafe {
+        text_view.setMarkedText_selectedRange_replacementRange(
+            &marked,
+            NSRange::new(2, 0),
+            NSRange::new(NSNotFound as usize, 0),
+        )
+    };
+    assert!(unsafe { text_view.hasMarkedText() });
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    assert_eq!(count.get(), 0, "変換中の Enter は届かない");
+
+    unsafe { text_view.unmarkText() };
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    assert_eq!(count.get(), 1, "確定後は届く");
+    window.close();
+    Ok(())
+}
+
+fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let input = ui.text_input("")?;
+    window.set_child(&input);
+    window.show();
+    assert!(input.request_focus());
+    input.on_key_down(|event: &naui_core::KeyEvent| {
+        if event.key == naui_core::Key::Enter {
+            naui_core::EventResponse::Handled
+        } else {
+            naui_core::EventResponse::Continue
+        }
+    });
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_key_down({
+        let seen = seen.clone();
+        move |event: &naui_core::KeyEvent| {
+            seen.borrow_mut().push(event.key);
+            naui_core::EventResponse::Continue
+        }
+    });
+    let native = window.native_window();
+    press_key(&app, &native, "x", 7, NSEventModifierFlags::empty());
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    press_key(&app, &native, "\u{1b}", 53, NSEventModifierFlags::empty());
+    assert_eq!(
+        *seen.borrow(),
+        vec![naui_core::Key::Character('x'), naui_core::Key::Escape]
+    );
+    window.close();
     Ok(())
 }
 

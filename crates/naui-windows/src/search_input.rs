@@ -73,6 +73,7 @@ struct SearchInputInner {
 /// 虫めがねの印と、打ち始めると出る取り消しボタン (✕) は WinUI が出す。
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
+crate::keys::impl_key_down!(SearchInput);
 impl_widget!(SearchInput, native);
 
 impl SearchInput {

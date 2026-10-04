@@ -111,6 +111,7 @@ struct NumberInputInner {
 /// 既定は整数 (刻み 1、小数桁 0、範囲の制限なし)。
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
+crate::keys::impl_key_down!(NumberInput);
 impl_widget!(NumberInput, native);
 
 impl NumberInput {

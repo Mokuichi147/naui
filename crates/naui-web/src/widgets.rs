@@ -13,6 +13,7 @@ use web_sys::{
     KeyboardEvent,
 };
 
+use crate::keys::{impl_key_down, KeyDown};
 use crate::to_error;
 
 /// naui のウィジェットが実装する共通インタフェース。
@@ -166,6 +167,7 @@ pub(crate) struct Listener {
     target: web_sys::EventTarget,
     event: &'static str,
     closure: Closure<dyn FnMut(web_sys::Event)>,
+    capture: bool,
 }
 
 impl Listener {
@@ -190,15 +192,40 @@ impl Listener {
             target: target.clone(),
             event,
             closure,
+            capture: false,
+        })
+    }
+
+    /// 捕捉フェーズで購読する。対象の要素の上では、通常の購読より先に呼ばれる。
+    pub(crate) fn attach_capture(
+        target: &web_sys::EventTarget,
+        event: &'static str,
+        f: impl FnMut(web_sys::Event) + 'static,
+    ) -> Result<Self> {
+        let closure = Closure::<dyn FnMut(web_sys::Event)>::new(f);
+        target
+            .add_event_listener_with_callback_and_bool(
+                event,
+                closure.as_ref().unchecked_ref(),
+                true,
+            )
+            .map_err(|e| to_error("イベントの購読", e))?;
+        Ok(Self {
+            target: target.clone(),
+            event,
+            closure,
+            capture: true,
         })
     }
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        let _ = self
-            .target
-            .remove_event_listener_with_callback(self.event, self.closure.as_ref().unchecked_ref());
+        let _ = self.target.remove_event_listener_with_callback_and_bool(
+            self.event,
+            self.closure.as_ref().unchecked_ref(),
+            self.capture,
+        );
     }
 }
 
@@ -398,11 +425,13 @@ impl Checkbox {
 struct TextInputInner {
     input: HtmlInputElement,
     on_change: RefCell<Option<Listener>>,
+    key_down: KeyDown,
 }
 
 /// 1 行テキスト入力 (`<input type="text">`)。IME はブラウザが処理する。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
+impl_key_down!(TextInput);
 impl_widget!(TextInput, input);
 
 impl TextInput {
@@ -413,6 +442,7 @@ impl TextInput {
         Ok(Self(Rc::new(TextInputInner {
             input,
             on_change: RefCell::new(None),
+            key_down: KeyDown::default(),
         })))
     }
 
@@ -448,6 +478,7 @@ impl TextInput {
 struct PasswordInputInner {
     input: HtmlInputElement,
     on_change: RefCell<Option<Listener>>,
+    key_down: KeyDown,
 }
 
 /// パスワード入力 (`<input type="password">`)。
@@ -456,6 +487,7 @@ struct PasswordInputInner {
 /// ことだけ。伏せ字を一時的に外す仕掛けは 4 環境の共通部分に無いので持たない。
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
+impl_key_down!(PasswordInput);
 impl_widget!(PasswordInput, input);
 
 impl PasswordInput {
@@ -465,6 +497,7 @@ impl PasswordInput {
         Ok(Self(Rc::new(PasswordInputInner {
             input,
             on_change: RefCell::new(None),
+            key_down: KeyDown::default(),
         })))
     }
 
@@ -503,6 +536,7 @@ struct SearchInputInner {
     input: HtmlInputElement,
     on_change: RefCell<Option<Listener>>,
     on_search: RefCell<Option<Listener>>,
+    key_down: KeyDown,
 }
 
 /// 検索の入力欄 (`<input type="search">`)。
@@ -511,6 +545,7 @@ struct SearchInputInner {
 /// ブラウザ次第で、naui は見た目を作らない)。
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
+impl_key_down!(SearchInput);
 impl_widget!(SearchInput, input);
 
 impl SearchInput {
@@ -521,6 +556,7 @@ impl SearchInput {
             input,
             on_change: RefCell::new(None),
             on_search: RefCell::new(None),
+            key_down: KeyDown::default(),
         })))
     }
 
@@ -578,11 +614,13 @@ impl SearchInput {
 struct TextAreaInner {
     element: HtmlTextAreaElement,
     on_change: RefCell<Option<Listener>>,
+    key_down: KeyDown,
 }
 
 /// 複数行テキスト入力 (`<textarea>`)。IME はブラウザが処理する。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
+impl_key_down!(TextArea);
 impl_widget!(TextArea, element);
 
 impl TextArea {
@@ -592,6 +630,7 @@ impl TextArea {
         Ok(Self(Rc::new(TextAreaInner {
             element,
             on_change: RefCell::new(None),
+            key_down: KeyDown::default(),
         })))
     }
 

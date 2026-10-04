@@ -415,6 +415,7 @@ struct TextInputInner {
 /// 1 行テキスト入力 (NSTextField)。日本語入力は AppKit の IME がそのまま効く。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
+crate::keys::impl_key_down!(TextInput);
 impl_widget!(TextInput);
 
 impl TextInput {
@@ -470,6 +471,7 @@ struct PasswordInputInner {
 /// ことだけ。伏せ字を一時的に外す仕掛けは AppKit に無いので持たない。
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
+crate::keys::impl_key_down!(PasswordInput);
 impl_widget!(PasswordInput);
 
 impl PasswordInput {
@@ -530,6 +532,7 @@ struct SearchInputInner {
 /// [`on_search`](SearchInput::on_search) は Enter で確定したときに呼ばれる。
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
+crate::keys::impl_key_down!(SearchInput);
 impl_widget!(SearchInput);
 
 impl SearchInput {
@@ -665,6 +668,7 @@ struct TextAreaInner {
 /// `set_sizing` で高さを指定すること ([`crate::Scroll`] や [`crate::List`] と同じ)。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
+crate::keys::impl_key_down!(TextArea);
 
 impl Widget for TextArea {
     fn native_view(&self) -> Retained<NSView> {

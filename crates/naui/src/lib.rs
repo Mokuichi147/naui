@@ -299,6 +299,61 @@
 //! `data-naui-hidden` 属性へ `display: none !important` を当てる規則を
 //! 文書へ 1 つ入れる。
 //!
+//! ## キーボード
+//!
+//! 文字入力のウィジェット (`TextInput` / `TextArea` / `PasswordInput` /
+//! `SearchInput` / `NumberInput` / `EditableComboBox`) と [`Window`] は、
+//! 押されたキーを `on_key_down` で通知する。[`EventResponse::Handled`] を
+//! 返すと、そのキーは入力欄 (改行の挿入や確定) にもウィンドウにも渡らない。
+//!
+//! ```no_run
+//! # use naui::{EventResponse, Key, KeyEvent, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let message = ui.text_area("")?;
+//! message.on_key_down({
+//!     let message = message.clone();
+//!     move |event: &KeyEvent| {
+//!         // Enter で送信、Shift+Enter で改行。
+//!         if event.key == Key::Enter && !event.modifiers.shift {
+//!             println!("送信: {}", message.text());
+//!             message.set_text("");
+//!             EventResponse::Handled
+//!         } else {
+//!             EventResponse::Continue
+//!         }
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! **IME で変換している間のキーは届かない。** 変換を確定する Enter は IME が
+//! 受け取るので、上の例が変換の確定で送信してしまうことはない。
+//! (`keyCode` 229 のような環境ごとの見分け方は naui の中で吸収している。)
+//! 変換を**始める**キー自体は、macOS と Linux では届くことがある (届いた時点
+//! ではまだ変換中ではないため)。文字のキーには `Continue` を返しておけば
+//! 変換は始まる。
+//!
+//! 届く順は**フォーカスのあるウィジェット → ウィンドウ**で、ウィジェットが
+//! `Handled` を返したキーはウィンドウへは届かない。ウィンドウの
+//! [`on_key_down`](Window::on_key_down) には、文字入力以外 (ボタンなど) に
+//! フォーカスがあるときのキーも届く。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 受け口 | ウィンドウの根の `PreviewKeyDown` | `NSEvent` のローカルモニター | ウィンドウの `GtkEventControllerKey` (捕捉) | 要素の `keydown` (捕捉) と `document` |
+//! | 変換中の判定 | `VK_PROCESSKEY` と `TextCompositionStarted` / `Ended` | `hasMarkedText` | `preedit-changed` | `isComposing` と `keyCode` 229 |
+//!
+//! [`Key::Character`] の英字は小文字にそろえる ([`MenuShortcut`] と同じ)。
+//! ⇧ を押していたかは [`Modifiers::shift`] で見る。記号のキーで ⇧ を押した
+//! ときにどの文字になるかは環境とキー配列によって違う。
+//! [`Modifiers::primary`] は主修飾キー (macOS は ⌘、ほかは Ctrl) を押して
+//! いたかを返す。
+//!
+//! `on_key_down` は**メニューバーのショートカットとの順序が環境によって
+//! 違う** (macOS はショートカットより先に届き、ほかの環境では後になることが
+//! ある)。同じキーをショートカットと `on_key_down` の両方に割り当てない。
+//!
 //! ## 折りたたみ
 //!
 //! ふだんは隠しておき、見出しを押したときだけ見せたいものは [`Expander`] へ
@@ -1671,13 +1726,13 @@
 pub use naui_core::{
     accept_attribute, clamp_split_position, days_in_month, default_extension, is_leap_year, media,
     with_default_extension, Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
-    DrawCommand, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem,
-    MenuItem, MenuShortcut, MenuSpec, NavItem, NumberSpec, Orientation, Padding, Painter, Path,
-    PathSegment, PlaybackState, Point, PointerEvent, PointerPhase, PopupItem, Rect, Result,
-    ScrollMetrics, ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection,
-    Sizing, SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time,
-    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, DEFAULT_SIDEBAR_WIDTH,
-    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
+    DrawCommand, Error, EventResponse, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Key,
+    KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, Modifiers, NavItem, NumberSpec,
+    Orientation, Padding, Painter, Path, PathSegment, PlaybackState, Point, PointerEvent,
+    PointerPhase, PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy, SelectionMode, Sender,
+    Settings, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, Task, Tasks,
+    TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -1790,6 +1845,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     window.close();
     let _: bool = window.is_visible();
     window.set_theme(Theme::Dark)?;
+    window.on_key_down(|_event: &KeyEvent| EventResponse::Handled);
     let weak_window = window.downgrade();
     let _: Option<Window> = weak_window.upgrade();
 
@@ -2054,6 +2110,21 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     number.set_enabled(true);
     number.on_change(|_v: f64| {});
     number.set_sizing(Sizing::fill_width());
+
+    // 文字入力系は 6 つとも on_key_down を持つ。
+    let on_key = |event: &KeyEvent| {
+        let _: Key = event.key;
+        let _: Modifiers = event.modifiers;
+        let _: bool = event.modifiers.primary();
+        let _: bool = event.repeat;
+        EventResponse::Continue
+    };
+    input.on_key_down(on_key);
+    text_area.on_key_down(on_key);
+    password.on_key_down(on_key);
+    search.on_key_down(on_key);
+    number.on_key_down(on_key);
+    editable_combo_box.on_key_down(on_key);
 
     let slider: Slider = ui.slider(0.0, 1.0)?;
     let _: f64 = slider.value();
