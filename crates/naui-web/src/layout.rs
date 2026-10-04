@@ -7,15 +7,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    GridCell, Orientation, Padding, Result, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing,
-    Track,
+    GridCell, Orientation, Padding, Result, ScrollMetrics, ScrollNotifier, ScrollPolicy,
+    ScrollTarget, Sizing, Track,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{Document, Element, HtmlElement, ResizeObserver};
+use web_sys::{Document, Element, HtmlElement, ResizeObserver, ScrollBehavior, ScrollToOptions};
 
 use crate::to_error;
-use crate::widgets::{create, impl_widget, Listener, ValueHandler, Widget};
+use crate::widgets::{create, impl_widget, Listener, Widget};
 
 /// 親コンテナが自分の種類を書いておく属性。
 ///
@@ -419,9 +419,8 @@ fn template(count: usize, tracks: &[Track]) -> String {
 struct ScrollInner {
     element: HtmlElement,
     child: RefCell<Option<Box<dyn Widget>>>,
-    on_scroll: ValueHandler<ScrollMetrics>,
-    /// 最後に通知した位置。同じ位置への `scroll` イベントでは通知しない。
-    last_offset: Cell<(f64, f64)>,
+    /// 同じ位置への `scroll` イベントでは通知しない。
+    on_scroll: ScrollNotifier,
     /// 大きさが決まる前 (文書に載る前・隠れたタブの中など) に頼まれた
     /// 行き先。大きさが付いた時点で適用する。
     pending: Cell<Option<ScrollTarget>>,
@@ -450,8 +449,7 @@ impl Scroll {
         let this = Self(Rc::new(ScrollInner {
             element,
             child: RefCell::new(None),
-            on_scroll: ValueHandler::default(),
-            last_offset: Cell::new((0.0, 0.0)),
+            on_scroll: ScrollNotifier::default(),
             pending: Cell::new(None),
             listener: RefCell::new(None),
             observer: RefCell::new(None),
@@ -511,14 +509,20 @@ impl Scroll {
         let element = &self.0.element;
         let viewport_width = element.client_width() as f64;
         let viewport_height = element.client_height() as f64;
-        ScrollMetrics {
-            x: element.scroll_left() as f64,
-            y: element.scroll_top() as f64,
+        let mut metrics = ScrollMetrics {
+            x: scroll_offset(element, "scrollLeft"),
+            y: scroll_offset(element, "scrollTop"),
             viewport_width,
             viewport_height,
             content_width: (element.scroll_width() as f64).max(viewport_width),
             content_height: (element.scroll_height() as f64).max(viewport_height),
-        }
+        };
+        // 大きさ (`clientHeight` / `scrollHeight`) は整数に丸められ、位置は
+        // 拡大率によって小数になる。末尾まで 1 px 未満の差は丸めによるもの
+        // なので、末尾にいるとみなす。
+        metrics.x = snap_to_end(metrics.x, metrics.max_x());
+        metrics.y = snap_to_end(metrics.y, metrics.max_y());
+        metrics
     }
 
     /// 指定した位置へ送る。送れる範囲に丸める。
@@ -539,8 +543,7 @@ impl Scroll {
     /// 届く。大きさだけが変わったときは届かない。ブラウザの `scroll`
     /// イベントを受けて届くので、`scroll_to` から戻った後になる。
     pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
-        self.0.last_offset.set(offset_of(&self.metrics()));
-        self.0.on_scroll.set(f);
+        self.0.on_scroll.set(&self.metrics(), f);
     }
 
     fn request(&self, target: ScrollTarget) {
@@ -560,22 +563,36 @@ impl Scroll {
         self.0.pending.set(None);
         let (x, y) = target.resolve(&metrics);
         if (x, y) != (metrics.x, metrics.y) {
-            self.0.element.scroll_to_with_x_and_y(x, y);
+            // ページの CSS に `scroll-behavior: smooth` があっても、その場で送る。
+            let options = ScrollToOptions::new();
+            options.set_left(x);
+            options.set_top(y);
+            options.set_behavior(ScrollBehavior::Instant);
+            self.0.element.scroll_to_with_scroll_to_options(&options);
         }
     }
 
     fn notify_if_moved(&self) {
-        let metrics = self.metrics();
-        let offset = offset_of(&metrics);
-        if offset == self.0.last_offset.replace(offset) {
-            return;
-        }
-        self.0.on_scroll.emit(metrics);
+        self.0.on_scroll.notify_if_moved(|| self.metrics());
     }
 }
 
-fn offset_of(metrics: &ScrollMetrics) -> (f64, f64) {
-    (metrics.x, metrics.y)
+/// `scrollTop` / `scrollLeft` を小数のまま読む。web-sys の `scroll_top()`
+/// は整数で返すため、拡大率によっては末尾まで届いていないように見える。
+fn scroll_offset(element: &HtmlElement, name: &str) -> f64 {
+    js_sys::Reflect::get(element, &JsValue::from_str(name))
+        .ok()
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0)
+}
+
+/// 末尾まで 1 px 未満なら末尾にそろえる。
+fn snap_to_end(offset: f64, max: f64) -> f64 {
+    if (max - offset).abs() < 1.0 {
+        max
+    } else {
+        offset
+    }
 }
 
 fn overflow(policy: ScrollPolicy) -> &'static str {

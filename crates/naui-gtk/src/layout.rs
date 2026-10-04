@@ -8,10 +8,11 @@ use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{GridCell, Padding, ScrollMetrics, ScrollPolicy, ScrollTarget, Track};
+use naui_core::{
+    GridCell, Padding, ScrollMetrics, ScrollNotifier, ScrollPolicy, ScrollTarget, Track,
+};
 
 use crate::bin::{apply_padding, SizeBin};
-use crate::callback::Notifier;
 use crate::widgets::{impl_widget, Widget};
 
 // ------------------------------------------------------------------- Grid
@@ -193,9 +194,7 @@ struct ScrollInner {
     native: gtk::ScrolledWindow,
     bin: SizeBin,
     child: RefCell<Option<Box<dyn Widget>>>,
-    on_scroll: Notifier<ScrollMetrics>,
-    /// 最後に通知した位置。大きさだけの変化では通知しないために比べる。
-    last_offset: Cell<(f64, f64)>,
+    on_scroll: ScrollNotifier,
     /// レイアウトが済むまで覚えておく行き先。
     pending: Cell<Option<ScrollTarget>>,
     /// 行き先を忘れるまでに残っているフレーム数。
@@ -225,8 +224,7 @@ impl Scroll {
             native,
             bin,
             child: RefCell::new(None),
-            on_scroll: Notifier::default(),
-            last_offset: Cell::new((0.0, 0.0)),
+            on_scroll: ScrollNotifier::default(),
             pending: Cell::new(None),
             frames_left: Cell::new(0),
             tick: RefCell::new(None),
@@ -285,8 +283,7 @@ impl Scroll {
     /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
     /// 届く。大きさだけが変わったときは届かない。
     pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
-        self.0.last_offset.set(offset_of(&self.metrics()));
-        self.0.on_scroll.set(f);
+        self.0.on_scroll.set(&self.metrics(), f);
     }
 
     fn request(&self, target: ScrollTarget) {
@@ -326,17 +323,18 @@ impl Scroll {
         let (x, y) = target.resolve(&metrics);
         let horizontal = self.0.native.hadjustment();
         let vertical = self.0.native.vadjustment();
-        horizontal.set_value(horizontal.lower() + x);
-        vertical.set_value(vertical.lower() + y);
+        // 縦と横は別々の `value-changed` になるので、まとめて 1 回だけ通知する。
+        self.0.on_scroll.batch(
+            || {
+                horizontal.set_value(horizontal.lower() + x);
+                vertical.set_value(vertical.lower() + y);
+            },
+            || self.metrics(),
+        );
     }
 
     fn notify_if_moved(&self) {
-        let metrics = self.metrics();
-        let offset = offset_of(&metrics);
-        if offset == self.0.last_offset.replace(offset) {
-            return;
-        }
-        self.0.on_scroll.emit(metrics);
+        self.0.on_scroll.notify_if_moved(|| self.metrics());
     }
 
     pub fn set_policy(&self, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
@@ -372,10 +370,6 @@ impl Scroll {
         viewport.set_hscroll_policy(scrollable_policy(self.0.native.hscrollbar_policy()));
         viewport.set_vscroll_policy(scrollable_policy(self.0.native.vscrollbar_policy()));
     }
-}
-
-fn offset_of(metrics: &ScrollMetrics) -> (f64, f64) {
-    (metrics.x, metrics.y)
 }
 
 /// スクロールバーの出し方から、中身の置き方を決める。
