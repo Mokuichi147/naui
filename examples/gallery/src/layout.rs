@@ -2,7 +2,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use naui::{
-    Align, GridCell, Length, Orientation, Padding, Result, ScrollPolicy, Sizing, Track, Ui,
+    Align, GridCell, Length, Orientation, Padding, Result, ScrollMetrics, ScrollPolicy, Sizing,
+    Track, Ui,
 };
 
 use crate::parts::{self, Notice};
@@ -130,7 +131,10 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         ui,
         &pane,
         "Scroll",
-        &["高さを固定し、はみ出した内容だけをスクロールします。"],
+        &[
+            "高さを固定し、はみ出した内容だけをスクロールします。",
+            "行を足すと、末尾の近くを見ていたときだけ末尾へ追従します。",
+        ],
     )?;
     let content = ui.stack(Orientation::Vertical)?;
     content.set_spacing(5.0);
@@ -146,6 +150,56 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             .width(Length::Fill)
             .height(Length::Fixed(220.0)),
     );
+
+    let position = ui.label("位置: 0 px")?;
+    scroll.on_scroll({
+        let position = position.clone();
+        move |m: ScrollMetrics| {
+            position.set_text(&format!(
+                "位置: {:.0} / {:.0} px (末尾まで {:.0} px)",
+                m.y,
+                m.max_y(),
+                m.distance_to_end()
+            ))
+        }
+    });
+
+    let controls = ui.stack(Orientation::Horizontal)?;
+    controls.set_spacing(8.0);
+    let append = ui.button("行を足す")?;
+    let count = Rc::new(Cell::new(20));
+    append.on_click({
+        let ui = ui.clone();
+        let content = content.clone();
+        let scroll = scroll.clone();
+        move || {
+            // 追従するかどうかは、足す前の位置で決める。
+            let following = scroll.metrics().distance_to_end() < 40.0;
+            count.set(count.get() + 1);
+            let Ok(label) = ui.label(&format!("スクロール項目 {}", count.get())) else {
+                return;
+            };
+            content.append(&label);
+            if following {
+                scroll.scroll_to_end();
+            }
+        }
+    });
+    let top = ui.button("先頭へ")?;
+    top.on_click({
+        let scroll = scroll.clone();
+        move || scroll.scroll_to(0.0, 0.0)
+    });
+    let end = ui.button("末尾へ")?;
+    end.on_click({
+        let scroll = scroll.clone();
+        move || scroll.scroll_to_end()
+    });
+    controls.append(&append);
+    controls.append(&top);
+    controls.append(&end);
+    controls.append(&position);
+    pane.append(&controls);
     pane.append(&scroll);
     Ok(pane)
 }

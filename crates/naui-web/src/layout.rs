@@ -6,11 +6,16 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{GridCell, Orientation, Padding, Result, ScrollPolicy, Sizing, Track};
-use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, HtmlElement};
+use naui_core::{
+    GridCell, Orientation, Padding, Result, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing,
+    Track,
+};
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::{JsCast, JsValue};
+use web_sys::{Document, Element, HtmlElement, ResizeObserver};
 
-use crate::widgets::{create, impl_widget, Widget};
+use crate::to_error;
+use crate::widgets::{create, impl_widget, Listener, ValueHandler, Widget};
 
 /// 親コンテナが自分の種類を書いておく属性。
 ///
@@ -414,6 +419,24 @@ fn template(count: usize, tracks: &[Track]) -> String {
 struct ScrollInner {
     element: HtmlElement,
     child: RefCell<Option<Box<dyn Widget>>>,
+    on_scroll: ValueHandler<ScrollMetrics>,
+    /// 最後に通知した位置。同じ位置への `scroll` イベントでは通知しない。
+    last_offset: Cell<(f64, f64)>,
+    /// 大きさが決まる前 (文書に載る前・隠れたタブの中など) に頼まれた
+    /// 行き先。大きさが付いた時点で適用する。
+    pending: Cell<Option<ScrollTarget>>,
+    listener: RefCell<Option<Listener>>,
+    /// 大きさの変化の購読。落とすと購読も外れる。
+    observer: RefCell<Option<ResizeObserver>>,
+    observer_callback: RefCell<Option<Closure<dyn FnMut(JsValue)>>>,
+}
+
+impl Drop for ScrollInner {
+    fn drop(&mut self) {
+        if let Some(observer) = self.observer.borrow_mut().take() {
+            observer.disconnect();
+        }
+    }
 }
 
 /// 中身がはみ出したらスクロールさせるコンテナ (`overflow` を付けた `<div>`)。
@@ -427,9 +450,40 @@ impl Scroll {
         let this = Self(Rc::new(ScrollInner {
             element,
             child: RefCell::new(None),
+            on_scroll: ValueHandler::default(),
+            last_offset: Cell::new((0.0, 0.0)),
+            pending: Cell::new(None),
+            listener: RefCell::new(None),
+            observer: RefCell::new(None),
+            observer_callback: RefCell::new(None),
         }));
         this.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+        this.observe()?;
         Ok(this)
+    }
+
+    fn observe(&self) -> Result<()> {
+        let weak = Rc::downgrade(&self.0);
+        let listener = Listener::attach(self.0.element.as_ref(), "scroll", move || {
+            if let Some(inner) = weak.upgrade() {
+                Scroll(inner).notify_if_moved();
+            }
+        })?;
+        *self.0.listener.borrow_mut() = Some(listener);
+
+        // 文書に載ったとき・隠れていたタブが出たときにも呼ばれる。
+        let weak = Rc::downgrade(&self.0);
+        let callback = Closure::<dyn FnMut(JsValue)>::new(move |_entries: JsValue| {
+            if let Some(inner) = weak.upgrade() {
+                Scroll(inner).apply_pending();
+            }
+        });
+        let observer = ResizeObserver::new(callback.as_ref().unchecked_ref())
+            .map_err(|e| to_error("ResizeObserver の生成", e))?;
+        observer.observe(self.0.element.as_ref());
+        *self.0.observer.borrow_mut() = Some(observer);
+        *self.0.observer_callback.borrow_mut() = Some(callback);
+        Ok(())
     }
 
     /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
@@ -448,6 +502,80 @@ impl Scroll {
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }
+
+    /// いまのスクロール位置と大きさ。
+    ///
+    /// 読むときにブラウザがレイアウトを済ませるので、直前に中身を
+    /// 変えていても新しい大きさで測れる。
+    pub fn metrics(&self) -> ScrollMetrics {
+        let element = &self.0.element;
+        let viewport_width = element.client_width() as f64;
+        let viewport_height = element.client_height() as f64;
+        ScrollMetrics {
+            x: element.scroll_left() as f64,
+            y: element.scroll_top() as f64,
+            viewport_width,
+            viewport_height,
+            content_width: (element.scroll_width() as f64).max(viewport_width),
+            content_height: (element.scroll_height() as f64).max(viewport_height),
+        }
+    }
+
+    /// 指定した位置へ送る。送れる範囲に丸める。
+    ///
+    /// まだ大きさが決まっていない (文書に載る前など) ときは、決まった時点で送る。
+    pub fn scroll_to(&self, x: f64, y: f64) {
+        self.request(ScrollTarget::To { x, y });
+    }
+
+    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    pub fn scroll_to_end(&self) {
+        self.request(ScrollTarget::End);
+    }
+
+    /// スクロール位置が変わったときの通知。
+    ///
+    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
+    /// 届く。大きさだけが変わったときは届かない。ブラウザの `scroll`
+    /// イベントを受けて届くので、`scroll_to` から戻った後になる。
+    pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
+        self.0.last_offset.set(offset_of(&self.metrics()));
+        self.0.on_scroll.set(f);
+    }
+
+    fn request(&self, target: ScrollTarget) {
+        self.0.pending.set(Some(target));
+        self.apply_pending();
+    }
+
+    /// 覚えている行き先へ送る。大きさが決まっていなければ、まだ覚えておく。
+    fn apply_pending(&self) {
+        let Some(target) = self.0.pending.get() else {
+            return;
+        };
+        let metrics = self.metrics();
+        if metrics.viewport_width <= 0.0 || metrics.viewport_height <= 0.0 {
+            return;
+        }
+        self.0.pending.set(None);
+        let (x, y) = target.resolve(&metrics);
+        if (x, y) != (metrics.x, metrics.y) {
+            self.0.element.scroll_to_with_x_and_y(x, y);
+        }
+    }
+
+    fn notify_if_moved(&self) {
+        let metrics = self.metrics();
+        let offset = offset_of(&metrics);
+        if offset == self.0.last_offset.replace(offset) {
+            return;
+        }
+        self.0.on_scroll.emit(metrics);
+    }
+}
+
+fn offset_of(metrics: &ScrollMetrics) -> (f64, f64) {
+    (metrics.x, metrics.y)
 }
 
 fn overflow(policy: ScrollPolicy) -> &'static str {

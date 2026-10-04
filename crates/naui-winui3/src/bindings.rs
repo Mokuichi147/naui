@@ -131239,6 +131239,13 @@ pub mod Microsoft {
                     ) -> windows_core::Result<()>;
                     fn RemoveAnchorRequested(&self, token: i64) -> windows_core::Result<()>;
                     fn RemoveViewChanging(&self, token: i64) -> windows_core::Result<()>;
+                    fn ViewChanged(
+                        &self,
+                        handler: windows_core::Ref<
+                            '_,
+                            windows::Foundation::EventHandler<ScrollViewerViewChangedEventArgs>,
+                        >,
+                    ) -> windows_core::Result<i64>;
                     fn RemoveViewChanged(&self, token: i64) -> windows_core::Result<()>;
                     fn DirectManipulationStarted(
                         &self,
@@ -132223,6 +132230,29 @@ pub mod Microsoft {
                                 IScrollViewer_Impl::RemoveViewChanging(this, token).into()
                             }
                         }
+                        unsafe extern "system" fn ViewChanged<
+                            Identity: IScrollViewer_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IScrollViewer_Impl::ViewChanged(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
                         unsafe extern "system" fn RemoveViewChanged<
                             Identity: IScrollViewer_Impl,
                             const OFFSET: isize,
@@ -132592,7 +132622,7 @@ pub mod Microsoft {
                             RemoveAnchorRequested: RemoveAnchorRequested::<Identity, OFFSET>,
                             ViewChanging: 0,
                             RemoveViewChanging: RemoveViewChanging::<Identity, OFFSET>,
-                            ViewChanged: 0,
+                            ViewChanged: ViewChanged::<Identity, OFFSET>,
                             RemoveViewChanged: RemoveViewChanged::<Identity, OFFSET>,
                             DirectManipulationStarted: DirectManipulationStarted::<Identity, OFFSET>,
                             RemoveDirectManipulationStarted: RemoveDirectManipulationStarted::<
@@ -132926,7 +132956,12 @@ pub mod Microsoft {
                         i64,
                     )
                         -> windows_core::HRESULT,
-                    ViewChanged: usize,
+                    pub ViewChanged: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
                     pub RemoveViewChanged: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         i64,
@@ -134071,6 +134106,71 @@ pub mod Microsoft {
                             *mut core::ffi::c_void,
                             bool,
                         ) -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    IScrollViewerViewChangedEventArgs,
+                    IScrollViewerViewChangedEventArgs_Vtbl,
+                    0xbf7bb85b_1d46_5004_a370_ecb626630588
+                );
+                impl windows_core::RuntimeType for IScrollViewerViewChangedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IScrollViewerViewChangedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.IScrollViewerViewChangedEventArgs";
+                }
+                pub trait IScrollViewerViewChangedEventArgs_Impl:
+                    windows_core::IUnknownImpl
+                {
+                    fn IsIntermediate(&self) -> windows_core::Result<bool>;
+                }
+                impl IScrollViewerViewChangedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: IScrollViewerViewChangedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn IsIntermediate<
+                            Identity: IScrollViewerViewChangedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IScrollViewerViewChangedEventArgs_Impl::IsIntermediate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                IScrollViewerViewChangedEventArgs,
+                                OFFSET,
+                            >(),
+                            IsIntermediate: IsIntermediate::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IScrollViewerViewChangedEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IScrollViewerViewChangedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub IsIntermediate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
                 }
                 windows_core::imp::define_interface!(
                     ISelectionChangedEventArgs,
@@ -232396,6 +232496,23 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ViewChanged<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::EventHandler<ScrollViewerViewChangedEventArgs>,
+                        >,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ViewChanged)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveViewChanged(&self, token: i64) -> windows_core::Result<()> {
                         let this = self;
                         unsafe {
@@ -234818,6 +234935,61 @@ pub mod Microsoft {
                 }
                 unsafe impl Send for ScrollViewer {}
                 unsafe impl Sync for ScrollViewer {}
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct ScrollViewerViewChangedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    ScrollViewerViewChangedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl ScrollViewerViewChangedEventArgs {
+                    pub fn new() -> windows_core::Result<Self> {
+                        Self::IActivationFactory(|f| f.ActivateInstance::<Self>())
+                    }
+                    fn IActivationFactory<
+                        R,
+                        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+                    >(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<
+                            ScrollViewerViewChangedEventArgs,
+                            windows_core::imp::IGenericFactory,
+                        > = windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                    pub fn IsIntermediate(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsIntermediate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for ScrollViewerViewChangedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            IScrollViewerViewChangedEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for ScrollViewerViewChangedEventArgs {
+                    type Vtable =
+                        <IScrollViewerViewChangedEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <IScrollViewerViewChangedEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for ScrollViewerViewChangedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.ScrollViewerViewChangedEventArgs";
+                }
+                unsafe impl Send for ScrollViewerViewChangedEventArgs {}
+                unsafe impl Sync for ScrollViewerViewChangedEventArgs {}
                 #[repr(transparent)]
                 #[derive(Clone, Debug, Eq, PartialEq)]
                 pub struct SelectionChangedEventArgs(windows_core::IUnknown);

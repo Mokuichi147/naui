@@ -48,7 +48,7 @@ pub use file::{
     accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
     FilePickerMode,
 };
-pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
+pub use layout::{GridCell, Length, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing, Track};
 pub use list::{ListItem, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};

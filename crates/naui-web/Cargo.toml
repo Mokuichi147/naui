@@ -66,6 +66,9 @@ web-sys = { version = "0.3", features = [
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
 wasm-bindgen = "0.2"
+# `ResizeObserver` のように次の描画で届くものを、フレームを待って確かめる。
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
 # テストはブラウザ側の実挙動 (実イベントの発火、Flexbox の実レイアウト、
 # 算出後のスタイル) を直接読むので、テスト側にも web-sys が要る。
 web-sys = { version = "0.3", features = [

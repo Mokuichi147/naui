@@ -22,9 +22,9 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, Color, DialogResponse, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    NavItem, Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, SidebarItem,
-    SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
-    ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
+    NavItem, Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, ScrollMetrics,
+    SidebarItem, SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme,
+    ToolbarIcon, ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, Widget};
 use wasm_bindgen::JsCast;
@@ -127,6 +127,22 @@ fn first_input(element: &Element) -> HtmlInputElement {
         .expect("input の検索")
         .expect("input が見つかりません")
         .unchecked_into()
+}
+
+/// 次の描画まで待つ。`ResizeObserver` はレイアウトの後に呼ばれるので、
+/// 2 フレーム待てば届いている。
+async fn next_frames() {
+    for _ in 0..2 {
+        let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+            web_sys::window()
+                .expect("window")
+                .request_animation_frame(&resolve)
+                .expect("requestAnimationFrame");
+        });
+        wasm_bindgen_futures::JsFuture::from(promise)
+            .await
+            .expect("フレーム待ち");
+    }
 }
 
 // ------------------------------------------------------------- Button
@@ -2893,6 +2909,115 @@ fn sidebar_divider_resizes_and_notifies() {
             count + 1,
             "開き直したあとの操作も通知する"
         );
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------------- Scroll
+
+/// 縦に長い中身を載せた、高さ 100 のスクロール。
+fn tall_scroll(ui: &Ui, rows: usize) -> Result<(naui_web::Scroll, naui_web::Stack)> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..rows {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fixed(200.0, 100.0));
+    Ok((scroll, pane))
+}
+
+#[wasm_bindgen_test]
+fn scroll_measures_and_moves() {
+    with_ui(|ui| {
+        let (scroll, _pane) = tall_scroll(ui, 40)?;
+        let _mounted = Mounted::new(&scroll);
+
+        let m = scroll.metrics();
+        assert_eq!((m.x, m.y), (0.0, 0.0), "最初は先頭: {m:?}");
+        assert_eq!(m.viewport_height, 100.0, "{m:?}");
+        assert!(
+            m.content_height > m.viewport_height,
+            "はみ出している: {m:?}"
+        );
+
+        scroll.scroll_to(0.0, 30.0);
+        assert_eq!(scroll.metrics().y, 30.0);
+
+        scroll.scroll_to_end();
+        let end = scroll.metrics();
+        assert_eq!(end.y, end.max_y(), "末尾へ: {end:?}");
+        assert_eq!(end.distance_to_end(), 0.0);
+
+        scroll.scroll_to(-50.0, 1e9);
+        let clamped = scroll.metrics();
+        assert_eq!((clamped.x, clamped.y), (0.0, clamped.max_y()));
+        Ok(())
+    });
+}
+
+/// チャットのように「足してから末尾へ」を続けて呼ぶ。
+#[wasm_bindgen_test]
+fn scroll_to_end_after_appending() {
+    with_ui(|ui| {
+        let (scroll, pane) = tall_scroll(ui, 20)?;
+        let _mounted = Mounted::new(&scroll);
+        scroll.scroll_to_end();
+        let before = scroll.metrics();
+        for i in 0..20 {
+            pane.append(&ui.label(&format!("追加 {i}"))?);
+        }
+        scroll.scroll_to_end();
+        let after = scroll.metrics();
+        assert!(
+            after.content_height > before.content_height,
+            "中身が伸びている: {before:?} → {after:?}"
+        );
+        assert_eq!(after.distance_to_end(), 0.0, "{after:?}");
+        Ok(())
+    });
+}
+
+/// 文書に載る前に頼んだ末尾送りは、載って大きさが付いた時点で効く。
+#[wasm_bindgen_test]
+async fn scroll_to_end_before_mounted() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let (scroll, pane) = tall_scroll(ui, 40)?;
+        scroll.scroll_to_end();
+        kept = Some((scroll, pane));
+        Ok(())
+    });
+    let (scroll, _pane) = kept.expect("組み立て");
+    let _mounted = Mounted::new(&scroll);
+    next_frames().await;
+    let m = scroll.metrics();
+    assert!(m.max_y() > 0.0, "{m:?}");
+    assert_eq!(m.distance_to_end(), 0.0, "載った後に末尾にいる: {m:?}");
+}
+
+#[wasm_bindgen_test]
+fn scroll_notifies_only_moves() {
+    with_ui(|ui| {
+        let (scroll, _pane) = tall_scroll(ui, 40)?;
+        let mounted = Mounted::new(&scroll);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        scroll.on_scroll({
+            let seen = seen.clone();
+            move |m: ScrollMetrics| seen.borrow_mut().push(m.y)
+        });
+
+        // ブラウザの `scroll` イベントは非同期なので、ここでは自分で起こす。
+        let root: HtmlElement = mounted.0.clone().unchecked_into();
+        scroll.scroll_to(0.0, 25.0);
+        dispatch(root.as_ref(), "scroll");
+        dispatch(root.as_ref(), "scroll"); // 位置が同じなら届かない
+        assert_eq!(*seen.borrow(), vec![25.0]);
+
+        // 利用者の操作 (ブラウザ側での移動) でも届く。
+        root.set_scroll_top(40);
+        dispatch(root.as_ref(), "scroll");
+        assert_eq!(*seen.borrow(), vec![25.0, 40.0]);
         Ok(())
     });
 }

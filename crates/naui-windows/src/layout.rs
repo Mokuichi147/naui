@@ -7,17 +7,24 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use naui_core::{Align, GridCell, Length, Padding, Result, ScrollPolicy, Sizing, Track};
+use naui_core::{
+    Align, GridCell, Length, Padding, Result, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing,
+    Track,
+};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ColumnDefinition, Grid as XamlGrid, RowDefinition, ScrollBarVisibility, ScrollMode,
-    ScrollViewer,
+    ScrollViewer, ScrollViewerViewChangedEventArgs,
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
-    DependencyObject, FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, Thickness,
-    UIElement, VerticalAlignment, Visibility, Window as XamlWindow,
+    DependencyObject, FrameworkElement, GridLength, GridUnitType, HorizontalAlignment,
+    SizeChangedEventHandler, Thickness, UIElement, VerticalAlignment, Visibility,
+    Window as XamlWindow,
 };
+use windows::Foundation::{EventHandler, IReference, PropertyValue};
 use windows_core::Interface;
+
+use crate::ui_thread::UiThreadCell;
 
 use crate::to_error;
 use crate::widgets::{impl_widget, Widget};
@@ -590,6 +597,9 @@ impl Grid {
 
 // ----------------------------------------------------------------- Scroll
 
+/// スクロール位置の通知先。UI スレッドの `ScrollInner` からしか触らない。
+type ScrollHandler = RefCell<Option<Box<dyn FnMut(ScrollMetrics)>>>;
+
 struct ScrollInner {
     native: ScrollViewer,
     child: RefCell<Option<Box<dyn Widget>>>,
@@ -597,6 +607,13 @@ struct ScrollInner {
     vertical_scroll_enabled: Cell<bool>,
     /// ホイール入力時に、ポインター直下の ScrollViewer だけを選ぶための状態。
     hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
+    on_scroll: ScrollHandler,
+    /// 最後に通知した位置。`ViewChanged` は途中経過でも届くので、
+    /// 同じ位置では通知しないために比べる。
+    last_offset: Cell<(f64, f64)>,
+    /// 大きさが決まる前 (画面に出る前など) に頼まれた行き先。
+    /// 大きさが決まった (`SizeChanged`) 時点で適用する。
+    pending: Cell<Option<ScrollTarget>>,
 }
 
 impl Drop for ScrollInner {
@@ -937,11 +954,133 @@ impl Scroll {
             horizontal_scroll_enabled: Cell::new(false),
             vertical_scroll_enabled: Cell::new(true),
             hovered: std::sync::Arc::new(crate::ui_thread::UiThreadCell::new(0)),
+            on_scroll: RefCell::new(None),
+            last_offset: Cell::new((0.0, 0.0)),
+            pending: Cell::new(None),
         }));
         register_scroll(&this);
         this.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
         track_scroll_pointer(&this)?;
+        this.track_view()?;
         Ok(this)
+    }
+
+    fn track_view(&self) -> Result<()> {
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let changed = EventHandler::<ScrollViewerViewChangedEventArgs>::new(move |_, _| {
+            // 借用を抱えたまま通知すると、通知の中の `scroll_to` で入れ子に
+            // なったときに借りられないので、取り出してから呼ぶ。
+            if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                Scroll(inner).notify_if_moved();
+            }
+            Ok(())
+        });
+        self.0
+            .native
+            .ViewChanged(&changed)
+            .map_err(|e| to_error("Scroll の位置の購読", e))?;
+
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let resized = SizeChangedEventHandler::new(move |_, _| {
+            if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                Scroll(inner).apply_pending();
+            }
+            Ok(())
+        });
+        self.0
+            .native
+            .SizeChanged(&resized)
+            .map_err(|e| to_error("Scroll の大きさの購読", e))?;
+        Ok(())
+    }
+
+    /// いまのスクロール位置と大きさ。
+    ///
+    /// 直前に中身を変えていても、レイアウトを済ませてから測る。
+    pub fn metrics(&self) -> ScrollMetrics {
+        let _ = self.0.native.UpdateLayout();
+        self.read_metrics()
+    }
+
+    /// 指定した位置へ送る。送れる範囲に丸める。
+    ///
+    /// まだ大きさが決まっていない (画面に出る前など) ときは、決まった時点で送る。
+    pub fn scroll_to(&self, x: f64, y: f64) {
+        self.request(ScrollTarget::To { x, y });
+    }
+
+    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    pub fn scroll_to_end(&self) {
+        self.request(ScrollTarget::End);
+    }
+
+    /// スクロール位置が変わったときの通知。
+    ///
+    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
+    /// 届く。大きさだけが変わったときは届かない。
+    pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
+        self.0.last_offset.set(offset_of(&self.read_metrics()));
+        *self.0.on_scroll.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn read_metrics(&self) -> ScrollMetrics {
+        let native = &self.0.native;
+        let viewport_width = native.ViewportWidth().unwrap_or(0.0);
+        let viewport_height = native.ViewportHeight().unwrap_or(0.0);
+        ScrollMetrics {
+            x: native.HorizontalOffset().unwrap_or(0.0),
+            y: native.VerticalOffset().unwrap_or(0.0),
+            viewport_width,
+            viewport_height,
+            content_width: native.ExtentWidth().unwrap_or(0.0).max(viewport_width),
+            content_height: native.ExtentHeight().unwrap_or(0.0).max(viewport_height),
+        }
+    }
+
+    fn request(&self, target: ScrollTarget) {
+        self.0.pending.set(Some(target));
+        self.apply_pending();
+    }
+
+    /// 覚えている行き先へ送る。大きさが決まっていなければ、まだ覚えておく。
+    fn apply_pending(&self) {
+        let Some(target) = self.0.pending.get() else {
+            return;
+        };
+        let metrics = self.metrics();
+        if metrics.viewport_width <= 0.0 || metrics.viewport_height <= 0.0 {
+            return;
+        }
+        self.0.pending.set(None);
+        let (x, y) = target.resolve(&metrics);
+        if (x, y) == (metrics.x, metrics.y) {
+            return;
+        }
+        let (Some(x), Some(y)) = (offset_value(x), offset_value(y)) else {
+            return;
+        };
+        // アニメーションさせずに、その場で送る。
+        let _ = self
+            .0
+            .native
+            .ChangeViewWithOptionalAnimation(&x, &y, None, true);
+    }
+
+    fn notify_if_moved(&self) {
+        let metrics = self.read_metrics();
+        let offset = offset_of(&metrics);
+        if offset == self.0.last_offset.replace(offset) {
+            return;
+        }
+        let Some(mut f) = self.0.on_scroll.borrow_mut().take() else {
+            return;
+        };
+        f(metrics);
+        // 呼び出し中に差し替えられていたら、新しいほうを残す。
+        let mut slot = self.0.on_scroll.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
     }
 
     /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
@@ -1012,6 +1151,17 @@ impl Scroll {
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }
+}
+
+fn offset_of(metrics: &ScrollMetrics) -> (f64, f64) {
+    (metrics.x, metrics.y)
+}
+
+/// `ChangeView` が受け取る位置 (`IReference<f64>`) を作る。
+fn offset_value(value: f64) -> Option<IReference<f64>> {
+    PropertyValue::CreateDouble(value)
+        .and_then(|value| value.cast::<IReference<f64>>())
+        .ok()
 }
 
 /// スクロールしない軸の内容を、ビューポートの大きさまで広げる。

@@ -6,16 +6,22 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{GridCell, Padding, ScrollPolicy, Sizing, Track};
+use std::rc::Weak;
+
+use naui_core::{GridCell, Padding, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing, Track};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::NSObjectProtocol;
-use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSClipView, NSGridCell, NSGridCellPlacement, NSGridView, NSLayoutConstraint,
     NSLayoutConstraintOrientation, NSLayoutPriority, NSScrollView, NSView,
+    NSViewBoundsDidChangeNotification, NSViewFrameDidChangeNotification,
 };
-use objc2_foundation::{NSArray, NSRange, NSString};
+use objc2_foundation::{
+    NSArray, NSNotification, NSNotificationCenter, NSObject, NSPoint, NSRange, NSString,
+};
 
+use crate::trampoline::ValueHandler;
 use crate::widgets::{impl_widget, Widget};
 
 /// naui が付けた制約であることの目印。
@@ -868,12 +874,64 @@ impl FlippedClipView {
     }
 }
 
+define_class!(
+    /// クリップビューの位置と大きさの変化を受け取る。
+    ///
+    /// 位置の変化 (bounds) はスクロールの通知に、大きさの変化 (frame) は
+    /// 大きさが決まる前に頼まれた `scroll_to` の適用に使う。通知センターは
+    /// observer を強く持たないので、`ScrollInner` が持ち、弱参照で戻る。
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiScrollObserver"]
+    #[ivars = Weak<ScrollInner>]
+    struct ScrollObserver;
+
+    unsafe impl NSObjectProtocol for ScrollObserver {}
+
+    impl ScrollObserver {
+        #[unsafe(method(clipBoundsDidChange:))]
+        fn clip_bounds_did_change(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                Scroll(inner).notify_if_moved();
+            }
+        }
+
+        #[unsafe(method(clipFrameDidChange:))]
+        fn clip_frame_did_change(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                Scroll(inner).apply_pending();
+            }
+        }
+    }
+);
+
+impl ScrollObserver {
+    fn new(mtm: MainThreadMarker, inner: Weak<ScrollInner>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(inner);
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 struct ScrollInner {
     native: Retained<NSScrollView>,
     child: RefCell<Option<Box<dyn Widget>>>,
     constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
     horizontal: Cell<ScrollPolicy>,
     vertical: Cell<ScrollPolicy>,
+    on_scroll: ValueHandler<ScrollMetrics>,
+    /// 最後に通知した位置。大きさだけの変化では通知しないために比べる。
+    last_offset: Cell<(f64, f64)>,
+    /// 大きさが決まる前に頼まれた行き先。決まった時点で適用する。
+    pending: Cell<Option<ScrollTarget>>,
+    observer: RefCell<Option<Retained<ScrollObserver>>>,
+}
+
+impl Drop for ScrollInner {
+    fn drop(&mut self) {
+        if let Some(observer) = self.observer.borrow_mut().take() {
+            unsafe { NSNotificationCenter::defaultCenter().removeObserver(&observer) };
+        }
+    }
 }
 
 /// 中身がはみ出したらスクロールさせるコンテナ (NSScrollView)。
@@ -892,9 +950,119 @@ impl Scroll {
             constraints: RefCell::new(Vec::new()),
             horizontal: Cell::new(ScrollPolicy::Never),
             vertical: Cell::new(ScrollPolicy::Auto),
+            on_scroll: ValueHandler::default(),
+            last_offset: Cell::new((0.0, 0.0)),
+            pending: Cell::new(None),
+            observer: RefCell::new(None),
         }));
         this.apply_policy();
+        this.observe_clip(mtm);
         this
+    }
+
+    fn observe_clip(&self, mtm: MainThreadMarker) {
+        let observer = ScrollObserver::new(mtm, Rc::downgrade(&self.0));
+        let clip = self.0.native.contentView();
+        clip.setPostsBoundsChangedNotifications(true);
+        clip.setPostsFrameChangedNotifications(true);
+        let center = NSNotificationCenter::defaultCenter();
+        unsafe {
+            center.addObserver_selector_name_object(
+                &observer,
+                sel!(clipBoundsDidChange:),
+                Some(NSViewBoundsDidChangeNotification),
+                Some(&clip),
+            );
+            center.addObserver_selector_name_object(
+                &observer,
+                sel!(clipFrameDidChange:),
+                Some(NSViewFrameDidChangeNotification),
+                Some(&clip),
+            );
+        }
+        *self.0.observer.borrow_mut() = Some(observer);
+    }
+
+    /// いまのスクロール位置と大きさ。
+    ///
+    /// 直前に中身を変えていても、レイアウトを済ませてから測る。
+    pub fn metrics(&self) -> ScrollMetrics {
+        self.0.native.layoutSubtreeIfNeeded();
+        self.read_metrics()
+    }
+
+    /// 指定した位置へ送る。送れる範囲に丸める。
+    ///
+    /// まだ大きさが決まっていない (ウィンドウに載る前など) ときは、
+    /// 決まった時点で送る。
+    pub fn scroll_to(&self, x: f64, y: f64) {
+        self.request(ScrollTarget::To { x, y });
+    }
+
+    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    pub fn scroll_to_end(&self) {
+        self.request(ScrollTarget::End);
+    }
+
+    /// スクロール位置が変わったときの通知。
+    ///
+    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
+    /// 届く。大きさだけが変わったときは届かない。
+    pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
+        self.0.last_offset.set(offset_of(&self.read_metrics()));
+        self.0.on_scroll.set(f);
+    }
+
+    fn read_metrics(&self) -> ScrollMetrics {
+        let clip = self.0.native.contentView();
+        let visible = clip.bounds();
+        let content = self
+            .0
+            .native
+            .documentView()
+            .map(|document| document.frame().size)
+            .unwrap_or(visible.size);
+        ScrollMetrics {
+            x: visible.origin.x,
+            y: visible.origin.y,
+            viewport_width: visible.size.width,
+            viewport_height: visible.size.height,
+            content_width: content.width.max(visible.size.width),
+            content_height: content.height.max(visible.size.height),
+        }
+    }
+
+    fn request(&self, target: ScrollTarget) {
+        self.0.pending.set(Some(target));
+        self.apply_pending();
+    }
+
+    /// 覚えている行き先へ送る。大きさが決まっていなければ、まだ覚えておく。
+    fn apply_pending(&self) {
+        let Some(target) = self.0.pending.get() else {
+            return;
+        };
+        let metrics = self.metrics();
+        if metrics.viewport_width <= 0.0 || metrics.viewport_height <= 0.0 {
+            return;
+        }
+        self.0.pending.set(None);
+        let (x, y) = target.resolve(&metrics);
+        if (x, y) == (metrics.x, metrics.y) {
+            return;
+        }
+        let clip = self.0.native.contentView();
+        clip.scrollToPoint(NSPoint::new(x, y));
+        self.0.native.reflectScrolledClipView(&clip);
+    }
+
+    fn notify_if_moved(&self) {
+        let metrics = self.read_metrics();
+        let offset = offset_of(&metrics);
+        if offset == self.0.last_offset.replace(offset) {
+            return;
+        }
+        self.0.on_scroll.emit(metrics);
     }
 
     /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
@@ -960,4 +1128,8 @@ impl Scroll {
         });
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
     }
+}
+
+fn offset_of(metrics: &ScrollMetrics) -> (f64, f64) {
+    (metrics.x, metrics.y)
 }

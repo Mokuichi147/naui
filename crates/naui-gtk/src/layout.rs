@@ -3,13 +3,15 @@
 //! 計算するのは GTK4 のレイアウト (`GtkGrid` / `GtkScrolledWindow`) で、
 //! naui 側はプロパティを書くだけ。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{GridCell, Padding, ScrollPolicy, Track};
+use naui_core::{GridCell, Padding, ScrollMetrics, ScrollPolicy, ScrollTarget, Track};
 
 use crate::bin::{apply_padding, SizeBin};
+use crate::callback::Notifier;
 use crate::widgets::{impl_widget, Widget};
 
 // ------------------------------------------------------------------- Grid
@@ -178,10 +180,35 @@ fn set_track(tracks: &RefCell<Vec<Track>>, index: usize, track: Track) {
 
 // ----------------------------------------------------------------- Scroll
 
+/// `scroll_to` を覚えておくフレーム数。
+///
+/// GTK4 には同期でレイアウトさせる手段が無く、中身を変えた直後の
+/// `GtkAdjustment` は前のレイアウトの大きさのまま。頼まれた行き先を
+/// 次のレイアウトまで覚えておき、大きさが変わった (`changed`) ときに
+/// 送り直す。フレームの最初 (tick) はレイアウトより前に来るので、
+/// 2 回目の tick で「次のレイアウトは済んだ」とみなして忘れる。
+const PENDING_FRAMES: u8 = 2;
+
 struct ScrollInner {
     native: gtk::ScrolledWindow,
     bin: SizeBin,
     child: RefCell<Option<Box<dyn Widget>>>,
+    on_scroll: Notifier<ScrollMetrics>,
+    /// 最後に通知した位置。大きさだけの変化では通知しないために比べる。
+    last_offset: Cell<(f64, f64)>,
+    /// レイアウトが済むまで覚えておく行き先。
+    pending: Cell<Option<ScrollTarget>>,
+    /// 行き先を忘れるまでに残っているフレーム数。
+    frames_left: Cell<u8>,
+    tick: RefCell<Option<gtk::TickCallbackId>>,
+}
+
+impl Drop for ScrollInner {
+    fn drop(&mut self) {
+        if let Some(tick) = self.tick.borrow_mut().take() {
+            tick.remove();
+        }
+    }
 }
 
 /// 中身がはみ出したらスクロールさせるコンテナ (`GtkScrolledWindow`)。
@@ -194,11 +221,122 @@ impl Scroll {
         let native = gtk::ScrolledWindow::new();
         native.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
         let bin = SizeBin::wrap(&native);
-        Self(Rc::new(ScrollInner {
+        let this = Self(Rc::new(ScrollInner {
             native,
             bin,
             child: RefCell::new(None),
-        }))
+            on_scroll: Notifier::default(),
+            last_offset: Cell::new((0.0, 0.0)),
+            pending: Cell::new(None),
+            frames_left: Cell::new(0),
+            tick: RefCell::new(None),
+        }));
+        for adjustment in [this.0.native.hadjustment(), this.0.native.vadjustment()] {
+            let weak = Rc::downgrade(&this.0);
+            adjustment.connect_value_changed(move |_| {
+                if let Some(inner) = weak.upgrade() {
+                    Scroll(inner).notify_if_moved();
+                }
+            });
+            // レイアウトで中身や見える範囲の大きさが変わった。
+            let weak = Rc::downgrade(&this.0);
+            adjustment.connect_changed(move |_| {
+                if let Some(inner) = weak.upgrade() {
+                    Scroll(inner).apply_pending();
+                }
+            });
+        }
+        this
+    }
+
+    /// いまのスクロール位置と大きさ。
+    ///
+    /// GTK4 は同期でレイアウトさせられないので、直前に中身を変えたときは
+    /// 次のフレームまで前の大きさのまま。
+    pub fn metrics(&self) -> ScrollMetrics {
+        let horizontal = self.0.native.hadjustment();
+        let vertical = self.0.native.vadjustment();
+        let viewport_width = horizontal.page_size();
+        let viewport_height = vertical.page_size();
+        ScrollMetrics {
+            x: horizontal.value() - horizontal.lower(),
+            y: vertical.value() - vertical.lower(),
+            viewport_width,
+            viewport_height,
+            content_width: (horizontal.upper() - horizontal.lower()).max(viewport_width),
+            content_height: (vertical.upper() - vertical.lower()).max(viewport_height),
+        }
+    }
+
+    /// 指定した位置へ送る。送れる範囲に丸める。
+    ///
+    /// 直前に中身を変えていても、次のレイアウトの後の大きさで送り直す。
+    pub fn scroll_to(&self, x: f64, y: f64) {
+        self.request(ScrollTarget::To { x, y });
+    }
+
+    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    pub fn scroll_to_end(&self) {
+        self.request(ScrollTarget::End);
+    }
+
+    /// スクロール位置が変わったときの通知。
+    ///
+    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
+    /// 届く。大きさだけが変わったときは届かない。
+    pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
+        self.0.last_offset.set(offset_of(&self.metrics()));
+        self.0.on_scroll.set(f);
+    }
+
+    fn request(&self, target: ScrollTarget) {
+        self.0.pending.set(Some(target));
+        self.0.frames_left.set(PENDING_FRAMES);
+        self.apply_pending();
+        if self.0.tick.borrow().is_some() {
+            return;
+        }
+        // 表示される前なら、表示されてから数え始める。
+        let weak = Rc::downgrade(&self.0);
+        let id = self.0.native.add_tick_callback(move |_, _| {
+            let Some(inner) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let left = inner.frames_left.get().saturating_sub(1);
+            inner.frames_left.set(left);
+            if left > 0 {
+                return glib::ControlFlow::Continue;
+            }
+            inner.pending.set(None);
+            inner.tick.borrow_mut().take();
+            glib::ControlFlow::Break
+        });
+        *self.0.tick.borrow_mut() = Some(id);
+    }
+
+    /// 覚えている行き先へ送る。忘れるのはフレームを数え終えたとき。
+    fn apply_pending(&self) {
+        let Some(target) = self.0.pending.get() else {
+            return;
+        };
+        let metrics = self.metrics();
+        if metrics.viewport_width <= 0.0 || metrics.viewport_height <= 0.0 {
+            return;
+        }
+        let (x, y) = target.resolve(&metrics);
+        let horizontal = self.0.native.hadjustment();
+        let vertical = self.0.native.vadjustment();
+        horizontal.set_value(horizontal.lower() + x);
+        vertical.set_value(vertical.lower() + y);
+    }
+
+    fn notify_if_moved(&self) {
+        let metrics = self.metrics();
+        let offset = offset_of(&metrics);
+        if offset == self.0.last_offset.replace(offset) {
+            return;
+        }
+        self.0.on_scroll.emit(metrics);
     }
 
     pub fn set_policy(&self, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
@@ -234,6 +372,10 @@ impl Scroll {
         viewport.set_hscroll_policy(scrollable_policy(self.0.native.hscrollbar_policy()));
         viewport.set_vscroll_policy(scrollable_policy(self.0.native.vscrollbar_policy()));
     }
+}
+
+fn offset_of(metrics: &ScrollMetrics) -> (f64, f64) {
+    (metrics.x, metrics.y)
 }
 
 /// スクロールバーの出し方から、中身の置き方を決める。

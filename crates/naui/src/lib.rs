@@ -192,6 +192,57 @@
 //! 当てにならないウィジェット (読み込み前の動画など) の表示欄は、この形で
 //! 大きさを決める。
 //!
+//! ## スクロール位置
+//!
+//! [`Scroll`] は、いまの位置と大きさを [`metrics`](Scroll::metrics) で
+//! 返し、[`scroll_to`](Scroll::scroll_to) / [`scroll_to_end`](Scroll::scroll_to_end)
+//! で送れる。単位は論理ピクセルで、行き先は送れる範囲に丸める。
+//!
+//! ```no_run
+//! # use naui::{Orientation, Result, ScrollMetrics, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let log = ui.stack(Orientation::Vertical)?;
+//! let scroll = ui.scroll()?;
+//! scroll.set_child(&log);
+//!
+//! // 末尾の近くを見ていたときだけ、足した後も末尾へ追従する。
+//! let following = scroll.metrics().distance_to_end() < 120.0;
+//! log.append(&ui.label("新しい行")?);
+//! if following {
+//!     scroll.scroll_to_end(); // 足した直後に呼んでよい
+//! }
+//!
+//! scroll.on_scroll(|m: ScrollMetrics| println!("{} / {}", m.y, m.max_y()));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 位置と大きさ | `VerticalOffset` / `ViewportHeight` / `ExtentHeight` | `NSClipView` の bounds と中身の frame | `GtkAdjustment` | `scrollTop` / `clientHeight` / `scrollHeight` |
+//! | 送る | `ChangeView` (アニメーション無し) | `scrollToPoint:` | `GtkAdjustment::set_value` | `scrollTo` |
+//! | 通知 | `ViewChanged` | `NSViewBoundsDidChangeNotification` | `value-changed` | `scroll` イベント |
+//!
+//! 「末尾から何 px 以内なら追従する」のような判断は naui では決めず、
+//! アプリが [`ScrollMetrics`] から行う。
+//!
+//! **中身を変えた直後に `scroll_to_end` を呼んでも、変えた後の末尾へ届く。**
+//! macOS・Windows・Web は送る前にレイアウトを済ませる。GTK4 には同期で
+//! レイアウトさせる手段が無いので、行き先を次のレイアウトまで覚えておき、
+//! 大きさが変わったところで送り直す。そのため **GTK だけは、中身を変えた
+//! 直後の `metrics` が前の大きさのまま**で、次のフレームで追いつく。
+//!
+//! ウィンドウへ載せる前や、隠れたタブの中のように**まだ大きさが無いときに
+//! 頼んだ行き先は、大きさが決まった時点で効く**。表示前に `scroll_to_end` を
+//! 呼んでおけば、末尾が見えた状態で出る。
+//!
+//! [`on_scroll`](Scroll::on_scroll) は**位置が変わったときだけ**呼ばれ、
+//! 大きさだけの変化では呼ばれない。ほかのウィジェットの `set_*` と違い、
+//! **`scroll_to` による移動でも呼ばれる**。中身が縮んだときの丸めやキーボード
+//! の移動など、利用者の操作と見分けられない移動がどの環境にもあるため、
+//! 誰が動かしたかは区別しない。Windows と Web はネイティブの通知が後から
+//! 届くので、`scroll_to` から戻った後に呼ばれる。
+//!
 //! ## 折りたたみ
 //!
 //! ふだんは隠しておき、見出しを押したときだけ見せたいものは [`Expander`] へ
@@ -1567,10 +1618,10 @@ pub use naui_core::{
     DrawCommand, Error, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem,
     MenuItem, MenuShortcut, MenuSpec, NavItem, NumberSpec, Orientation, Padding, Painter, Path,
     PathSegment, PlaybackState, Point, PointerEvent, PointerPhase, PopupItem, Rect, Result,
-    ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, SortOrder,
-    TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon,
-    ToolbarItem, Track, TreeItem, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION,
-    ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
+    ScrollMetrics, ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection,
+    Sizing, SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time,
+    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, DEFAULT_SIDEBAR_WIDTH,
+    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -1719,6 +1770,11 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let scroll: Scroll = ui.scroll()?;
     scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
     scroll.set_sizing(Sizing::new().width(Length::Fill).min_height(1.0));
+    let metrics: ScrollMetrics = scroll.metrics();
+    let _: f64 = metrics.distance_to_end();
+    scroll.scroll_to(0.0, 1.0);
+    scroll.scroll_to_end();
+    scroll.on_scroll(|_metrics: ScrollMetrics| {});
 
     let expander: Expander = ui.expander("t")?;
     let _: String = expander.text();
