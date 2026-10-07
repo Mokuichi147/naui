@@ -223,6 +223,19 @@ impl Tree {
     ///
     /// 選べない項目や無いパスを渡すと、選択は外れる。閉じた枝の中にある
     /// 項目は、見えるように祖先を開いてから選ぶ。
+    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
+    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
+    /// 無いパスなら何もしない。
+    pub fn scroll_to_item(&self, path: &[usize]) {
+        if TreeItem::at(&self.0.items.borrow(), path).is_none() {
+            return;
+        }
+        self.write_expanded(&path[..path.len().saturating_sub(1)], true);
+        self.reveal_path(path);
+    }
+
     pub fn set_selected(&self, path: &[usize]) {
         self.write_selected(path);
     }
@@ -654,20 +667,16 @@ impl Tree {
             .0
             .root
             .set_attribute("aria-activedescendant", &self.item_id(&active));
+        self.reveal_path(&active);
+    }
+
+    /// `path` の項目を、スクロール領域の中へ入れる。
+    fn reveal_path(&self, path: &[usize]) {
         let nodes = self.0.nodes.borrow();
-        let Some(node) = nodes.iter().find(|node| node.path == active) else {
+        let Some(node) = nodes.iter().find(|node| node.path == path) else {
             return;
         };
-        let top = node.row.offset_top();
-        let bottom = top + node.row.offset_height();
-        let view_top = self.0.root.scroll_top();
-        let view_bottom = view_top + self.0.root.client_height();
-        if top < view_top {
-            self.0.root.set_scroll_top(top);
-        } else if bottom > view_bottom {
-            self.0
-                .root
-                .set_scroll_top(bottom - self.0.root.client_height());
-        }
+        let row: HtmlElement = node.row.clone().unchecked_into();
+        crate::list::reveal_within(&self.0.root, &row);
     }
 }

@@ -135,6 +135,10 @@ const CASES: &[Case] = &[
         accessible_label_and_read_only,
     ),
     (
+        "一覧・表・ツリーの行へ送っても選択は変わらない",
+        scroll_to_row_keeps_the_selection,
+    ),
+    (
         "描画面の命令が XAML の Path と TextBlock になり、読み込める",
         canvas_commands_become_xaml_shapes,
     ),
@@ -2101,5 +2105,32 @@ fn accessible_label_and_read_only(ui: &Ui) -> Result<()> {
     let input = ui.text_input("ログ")?;
     input.set_read_only(true);
     assert!(native::<TextBox>(&input).IsReadOnly().expect("IsReadOnly"));
+    Ok(())
+}
+
+/// CI では行の実寸が付かないので、送っても壊れず選択が変わらないことだけ見る
+/// (見える位置まで送れるかは実機で確かめる)。
+fn scroll_to_row_keeps_the_selection(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, TableColumn, TableRow, TreeItem};
+    let labels: Vec<String> = (0..50).map(|i| format!("行 {i}")).collect();
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    list.scroll_to_row(40);
+    list.scroll_to_row(1000);
+    assert!(list.selected().is_none());
+
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    table.set_rows(&TableRow::list(labels.iter().map(|l| [l.as_str()])));
+    table.scroll_to_row(40);
+    assert!(table.selected().is_none());
+
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("上").children(TreeItem::list(labels.iter().map(String::as_str)))
+    ]);
+    tree.scroll_to_item(&[0, 30]);
+    assert!(tree.is_expanded(&[0]), "祖先を開く");
+    assert!(tree.selected().is_none());
     Ok(())
 }

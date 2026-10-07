@@ -99,6 +99,7 @@ Microsoft.UI.Xaml.Controls.RadioButton
 Microsoft.UI.Xaml.Controls.RowDefinition
 Microsoft.UI.Xaml.Controls.RowDefinitionCollection
 Microsoft.UI.Xaml.Controls.ScrollBarVisibility
+Microsoft.UI.Xaml.Controls.ScrollIntoViewAlignment
 Microsoft.UI.Xaml.Controls.ScrollMode
 Microsoft.UI.Xaml.Controls.ScrollViewer
 Microsoft.UI.Xaml.Controls.ScrollViewerViewChangedEventArgs

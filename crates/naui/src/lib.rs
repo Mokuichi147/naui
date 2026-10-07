@@ -1303,6 +1303,24 @@
 //! # }
 //! ```
 //!
+//! ### 指定した行まで送る
+//!
+//! [`List::scroll_to_row`]・[`Table::scroll_to_row`]・[`Tree::scroll_to_item`] は、
+//! その行が見えるところまでスクロールする (検索で見つけた行へ飛ぶ、など)。
+//! **選択は変わらない**ので、選んで見せたいときは `set_selected` と組み合わせる。
+//! すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる。
+//! 表は行を絞って組み立てているときも、まだ組み立てていない行へ送れる。
+//! ツリーは閉じた枝の中の項目なら祖先を開いてから送る (開閉は通知しない)。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 一覧 | `ListView.ScrollIntoView` | `scrollRowToVisible:` | `GtkAdjustment` (行の位置から) | `scrollTop` (行の位置から) |
+//! | 表 | `ScrollViewer.ChangeView` (行の高さから) | `scrollRowToVisible:` | `GtkAdjustment` (行の高さから) | `scrollTop` (行の高さから) |
+//! | ツリー | `TreeViewItem.StartBringIntoView` | `scrollRowToVisible:` | `GtkAdjustment` (行の位置から) | `scrollTop` (行の位置から) |
+//!
+//! GTK でツリーの閉じた枝を開いて送るときは、行の場所が配られた次の
+//! フレームで送る。
+//!
 //! ## ツリー
 //!
 //! [`Tree`] は入れ子の項目を開閉できる一覧で、自分でスクロールする。
@@ -2441,6 +2459,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     list.select(0);
     list.select_many(&[0, 1]);
     list.on_select(|_indices: &[usize]| {});
+    list.scroll_to_row(0);
     let custom_content = ui.label("任意の行内容")?;
     let custom_row = ListRow::new(&custom_content).selectable(false);
     let _: bool = custom_row.is_selectable();
@@ -2478,6 +2497,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     table.select(0);
     table.select_many(&[0]);
     table.on_select(|_indices: &[usize]| {});
+    table.scroll_to_row(0);
     table.on_sort(|_column: usize, _order: SortOrder| {});
     let _: Option<(usize, SortOrder)> = table.sort();
     table.set_sort(Some((2, SortOrder::Descending)));
@@ -2500,6 +2520,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     tree.clear_selection();
     tree.select(&[0]);
     tree.on_select(|_path: &[usize]| {});
+    tree.scroll_to_item(&[0]);
     let _: bool = tree.is_expanded(&[1]);
     tree.set_expanded(&[1], true);
     tree.expand(&[1]);

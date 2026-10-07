@@ -3442,3 +3442,106 @@ fn window_element_style(window: &naui_web::Window) -> String {
         .get_attribute("style")
         .unwrap_or_default()
 }
+
+// ------------------------------------------------------------- 行へ送る
+
+/// `row` が `container` の見えている範囲に入っているか。
+fn is_within(container: &Element, row: &Element) -> bool {
+    let view = container.get_bounding_client_rect();
+    let rect = row.get_bounding_client_rect();
+    rect.top() >= view.top() - 1.0 && rect.bottom() <= view.bottom() + 1.0
+}
+
+#[wasm_bindgen_test]
+fn list_scrolls_a_row_into_view() {
+    with_ui(|ui| {
+        let labels: Vec<String> = (0..100).map(|i| format!("行 {i}")).collect();
+        // 文字だけなら `<select size>`、ウィジェットの行なら `role="listbox"`。
+        for widget_rows in [false, true] {
+            let list = ui.list()?;
+            list.set_sizing(Sizing::fixed(160.0, 200.0));
+            if widget_rows {
+                let rows: Vec<ListRow> = labels
+                    .iter()
+                    .map(|label| ui.label(label).map(|l| ListRow::new(&l)))
+                    .collect::<Result<_>>()?;
+                list.set_rows(&rows);
+            } else {
+                list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+            }
+            let mounted = Mounted::new(&list);
+            let scroller = mounted
+                .0
+                .query_selector("select, [role=listbox]")
+                .expect("検索")
+                .expect("スクロールする要素");
+            let row = |index: usize| -> Element {
+                scroller
+                    .query_selector_all("option, [role=option]")
+                    .expect("行")
+                    .item(index as u32)
+                    .expect("行がある")
+                    .unchecked_into()
+            };
+            list.scroll_to_row(80);
+            assert!(
+                is_within(&scroller, &row(80)),
+                "80 行目が見える (widget_rows={widget_rows})"
+            );
+            let top = scroller.scroll_top();
+            list.scroll_to_row(79);
+            assert_eq!(scroller.scroll_top(), top, "見えていれば動かさない");
+            assert!(list.selected().is_none(), "選択は変わらない");
+        }
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn table_scrolls_to_a_row_it_has_not_built_yet() {
+    with_ui(|ui| {
+        let table = ui.table()?;
+        table.set_columns(&[TableColumn::new("番号")]);
+        let rows: Vec<String> = (0..20_000).map(|i| i.to_string()).collect();
+        table.set_rows(&TableRow::list(rows.iter().map(|r| [r.as_str()])));
+        table.set_sizing(Sizing::fixed(200.0, 240.0));
+        let mounted = Mounted::new(&table);
+        table.scroll_to_row(15_000);
+        let built: Vec<usize> = table_rows(&table).iter().map(table_row_index).collect();
+        assert!(
+            built.contains(&15_000),
+            "送った先の行を組み立てる: {built:?}"
+        );
+        let _ = mounted;
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tree_opens_ancestors_and_scrolls_to_an_item() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        let labels: Vec<String> = (0..100).map(|i| format!("項目 {i}")).collect();
+        tree.set_items(&[naui_core::TreeItem::new("上")
+            .children(naui_core::TreeItem::list(labels.iter().map(String::as_str)))]);
+        tree.set_sizing(Sizing::fixed(200.0, 200.0));
+        let mounted = Mounted::new(&tree);
+        let expanded = Rc::new(Cell::new(0));
+        tree.on_expand({
+            let expanded = expanded.clone();
+            move |_, _| expanded.set(expanded.get() + 1)
+        });
+        tree.scroll_to_item(&[0, 70]);
+        assert!(tree.is_expanded(&[0]), "祖先を開く");
+        assert_eq!(expanded.get(), 0, "開閉は通知しない");
+        let item = mounted
+            .0
+            .query_selector_all("[role=treeitem]")
+            .expect("項目")
+            .item(71)
+            .expect("71 番目の項目")
+            .unchecked_into::<Element>();
+        assert!(is_within(&mounted.0, &item), "項目が見える");
+        Ok(())
+    });
+}

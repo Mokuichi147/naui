@@ -379,6 +379,14 @@ impl List {
     }
 
     /// 通知せずに 1 行だけを選ぶ。
+    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
+    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    pub fn scroll_to_row(&self, index: usize) {
+        self.reveal_row(index);
+    }
+
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
@@ -827,22 +835,21 @@ impl List {
         let Some(active) = self.0.active.get() else {
             return;
         };
-        let body = self.0.body.borrow();
-        let Body::Listbox { list, options, .. } = &*body else {
-            return;
-        };
-        let _ = list.set_attribute("aria-activedescendant", &self.option_id(active));
-        let Some(option) = options.get(active) else {
-            return;
-        };
-        let top = option.offset_top();
-        let bottom = top + option.offset_height();
-        let view_top = list.scroll_top();
-        let view_bottom = view_top + list.client_height();
-        if top < view_top {
-            list.set_scroll_top(top);
-        } else if bottom > view_bottom {
-            list.set_scroll_top(bottom - list.client_height());
+        if let Body::Listbox { list, .. } = &*self.0.body.borrow() {
+            let _ = list.set_attribute("aria-activedescendant", &self.option_id(active));
+        }
+        self.reveal_row(active);
+    }
+
+    /// `index` 行目を、スクロール領域の中へ入れる。
+    fn reveal_row(&self, index: usize) {
+        match &*self.0.body.borrow() {
+            Body::Listbox { list, options, .. } => {
+                if let Some(option) = options.get(index) {
+                    reveal_within(list, option);
+                }
+            }
+            Body::Select { select, .. } => reveal_option(select, index),
         }
     }
 }
@@ -853,4 +860,65 @@ fn clicked_option_index(event: &Event) -> Option<usize> {
     let option = target.closest("option").ok()??;
     let index = option.dyn_into::<HtmlOptionElement>().ok()?.index();
     usize::try_from(index).ok()
+}
+
+/// `row` がスクロール領域 `container` の中で見えるようにする。
+///
+/// 見えていれば動かさず、上にはみ出していれば上端、下なら下端へ合わせる。
+/// 位置は描かれた矩形の差から求めるので、`offsetParent` がどこかに依らない。
+pub(crate) fn reveal_within(container: &HtmlElement, row: &HtmlElement) {
+    let view = container.get_bounding_client_rect();
+    let rect = row.get_bounding_client_rect();
+    let top = rect.top() - view.top() + f64::from(container.scroll_top());
+    reveal_range(container, top, top + rect.height());
+}
+
+/// `container` の縦のスクロールを、`top..bottom` (中身の座標) が見える位置へ動かす。
+pub(crate) fn reveal_range(container: &HtmlElement, top: f64, bottom: f64) {
+    let scroll_top = f64::from(container.scroll_top());
+    let visible = f64::from(container.client_height());
+    if top < scroll_top {
+        container.set_scroll_top(top.floor() as i32);
+    } else if bottom > scroll_top + visible {
+        container.set_scroll_top((bottom - visible).ceil() as i32);
+    }
+}
+
+/// `<select size>` の `index` 行目を見える位置へ出す。
+///
+/// WebKit は `<select>` のスクロール位置を行の境目へ切り下げるので、
+/// 矩形から求めた位置へ送ると最後の行が半分隠れる。行の高さはそろって
+/// いるので、行単位で先頭に出す行を決める。
+fn reveal_option(select: &web_sys::HtmlSelectElement, index: usize) {
+    let count = select.length();
+    if count == 0 || index >= count as usize {
+        return;
+    }
+    // 行の高さは `<option>` から測る (全体の高さを行数で割ると、上下の
+    // 余白のぶん小さくなり、切り下げで 1 行ずれる)。
+    let measured = select
+        .options()
+        .item(index as u32)
+        .map(|option| option.get_bounding_client_rect().height())
+        .unwrap_or(0.0);
+    let height = if measured > 0.0 {
+        measured
+    } else {
+        f64::from(select.scroll_height()) / f64::from(count)
+    };
+    if height <= 0.0 {
+        return;
+    }
+    let visible_rows = (f64::from(select.client_height()) / height)
+        .floor()
+        .max(1.0) as usize;
+    let first = (f64::from(select.scroll_top()) / height).ceil() as usize;
+    let target = if index < first {
+        index
+    } else if index >= first + visible_rows {
+        index + 1 - visible_rows
+    } else {
+        return;
+    };
+    select.set_scroll_top((target as f64 * height).round() as i32);
 }

@@ -123972,6 +123972,11 @@ pub mod Microsoft {
                         item: windows_core::Ref<'_, windows_core::IInspectable>,
                     ) -> windows_core::Result<()>;
                     fn SelectAll(&self) -> windows_core::Result<()>;
+                    fn ScrollIntoViewWithAlignment(
+                        &self,
+                        item: windows_core::Ref<'_, windows_core::IInspectable>,
+                        alignment: ScrollIntoViewAlignment,
+                    ) -> windows_core::Result<()>;
                     fn SetDesiredContainerUpdateDuration(
                         &self,
                         duration: &windows::Foundation::TimeSpan,
@@ -124453,6 +124458,25 @@ pub mod Microsoft {
                                 IListViewBase_Impl::SelectAll(this).into()
                             }
                         }
+                        unsafe extern "system" fn ScrollIntoViewWithAlignment<
+                            Identity: IListViewBase_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            item: *mut core::ffi::c_void,
+                            alignment: ScrollIntoViewAlignment,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IListViewBase_Impl::ScrollIntoViewWithAlignment(
+                                    this,
+                                    core::mem::transmute_copy(&item),
+                                    alignment,
+                                )
+                                .into()
+                            }
+                        }
                         unsafe extern "system" fn SetDesiredContainerUpdateDuration<
                             Identity: IListViewBase_Impl,
                             const OFFSET: isize,
@@ -124717,7 +124741,10 @@ pub mod Microsoft {
                             ScrollIntoView: ScrollIntoView::<Identity, OFFSET>,
                             SelectAll: SelectAll::<Identity, OFFSET>,
                             LoadMoreItemsAsync: 0,
-                            ScrollIntoViewWithAlignment: 0,
+                            ScrollIntoViewWithAlignment: ScrollIntoViewWithAlignment::<
+                                Identity,
+                                OFFSET,
+                            >,
                             SetDesiredContainerUpdateDuration: SetDesiredContainerUpdateDuration::<
                                 Identity,
                                 OFFSET,
@@ -124903,7 +124930,12 @@ pub mod Microsoft {
                     pub SelectAll:
                         unsafe extern "system" fn(*mut core::ffi::c_void) -> windows_core::HRESULT,
                     LoadMoreItemsAsync: usize,
-                    ScrollIntoViewWithAlignment: usize,
+                    pub ScrollIntoViewWithAlignment:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                            ScrollIntoViewAlignment,
+                        ) -> windows_core::HRESULT,
                     pub SetDesiredContainerUpdateDuration:
                         unsafe extern "system" fn(
                             *mut core::ffi::c_void,
@@ -169296,6 +169328,24 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn ScrollIntoViewWithAlignment<P0>(
+                        &self,
+                        item: P0,
+                        alignment: ScrollIntoViewAlignment,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<windows_core::IInspectable>,
+                    {
+                        let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).ScrollIntoViewWithAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                item.param().abi(),
+                                alignment,
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn SetDesiredContainerUpdateDuration(
                         &self,
                         duration: windows::Foundation::TimeSpan,
@@ -173829,6 +173879,24 @@ pub mod Microsoft {
                         unsafe {
                             (windows_core::Interface::vtable(this).SelectAll)(
                                 windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ScrollIntoViewWithAlignment<P0>(
+                        &self,
+                        item: P0,
+                        alignment: ScrollIntoViewAlignment,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<windows_core::IInspectable>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).ScrollIntoViewWithAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                item.param().abi(),
+                                alignment,
                             )
                             .ok()
                         }
@@ -233080,6 +233148,22 @@ pub mod Microsoft {
                     const SIGNATURE: windows_core::imp::ConstBuffer =
                         windows_core::imp::ConstBuffer::from_slice(
                             b"enum(Microsoft.UI.Xaml.Controls.ScrollBarVisibility;i4)",
+                        );
+                }
+                #[repr(transparent)]
+                #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+                pub struct ScrollIntoViewAlignment(pub i32);
+                impl ScrollIntoViewAlignment {
+                    pub const Default: Self = Self(0i32);
+                    pub const Leading: Self = Self(1i32);
+                }
+                impl windows_core::TypeKind for ScrollIntoViewAlignment {
+                    type TypeKind = windows_core::CopyType;
+                }
+                impl windows_core::RuntimeType for ScrollIntoViewAlignment {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::from_slice(
+                            b"enum(Microsoft.UI.Xaml.Controls.ScrollIntoViewAlignment;i4)",
                         );
                 }
                 #[repr(transparent)]

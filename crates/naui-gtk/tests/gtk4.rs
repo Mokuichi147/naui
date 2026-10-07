@@ -284,6 +284,10 @@ fn main() {
             read_only_and_min_size,
         ),
         (
+            "一覧・表・ツリーで指定した行まで送れる",
+            rows_can_be_scrolled_into_view,
+        ),
+        (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
         ),
@@ -6555,5 +6559,104 @@ fn read_only_and_min_size(ui: &Ui) -> Result<()> {
     let content = window.native_window().content().expect("中身");
     let (min_width, _, _, _) = content.measure(gtk::Orientation::Horizontal, -1);
     assert!(min_width >= 240, "中身は 240 より狭くならない: {min_width}");
+    Ok(())
+}
+
+/// ウィジェットの中にある最初のスクロール領域の、見えている範囲 (上端, 下端)。
+fn visible_range(widget: &gtk::Widget) -> (f64, f64) {
+    fn find(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
+        if let Some(scroller) = widget.downcast_ref::<gtk::ScrolledWindow>() {
+            return Some(scroller.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(found) = find(&current) {
+                return Some(found);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+    let scroller = scroller_of(widget)
+        .or_else(|| find(widget))
+        .expect("GtkScrolledWindow");
+    let adjustment = scroller.vadjustment();
+    (
+        adjustment.value(),
+        adjustment.value() + adjustment.page_size(),
+    )
+}
+
+fn rows_can_be_scrolled_into_view(ui: &Ui) -> Result<()> {
+    let window = ui.window("行へ送る", 480.0, 240.0)?;
+    let root = ui.stack(Orientation::Horizontal)?;
+    let labels: Vec<String> = (0..100).map(|i| format!("行 {i}")).collect();
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    list.set_sizing(Sizing::fixed(140.0, 200.0));
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    table.set_rows(&TableRow::list(labels.iter().map(|label| [label.as_str()])));
+    table.set_sizing(Sizing::fixed(140.0, 200.0));
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("上").children(TreeItem::list(labels.iter().map(String::as_str)))
+    ]);
+    tree.set_sizing(Sizing::fixed(140.0, 200.0));
+    root.append(&list);
+    root.append(&table);
+    root.append(&tree);
+    window.set_child(&root);
+    window.show();
+    for _ in 0..3 {
+        tick(&bin_of(&root));
+    }
+
+    let list_widget = list.native_widget();
+    assert_eq!(visible_range(&list_widget).0, 0.0, "最初は先頭");
+    list.scroll_to_row(80);
+    for _ in 0..2 {
+        tick(&bin_of(&root));
+    }
+    let row = list_widget
+        .downcast_ref::<gtk::ListBox>()
+        .and_then(|list| list.row_at_index(80))
+        .expect("80 行目");
+    // ビューポート基準の位置は、見えている範囲の中での位置。
+    let viewport = scroller_of(&list_widget)
+        .and_then(|s| s.child())
+        .expect("ビューポート");
+    let bounds = row.compute_bounds(&viewport).expect("行の位置");
+    let (top, bottom) = visible_range(&list_widget);
+    assert!(top > 0.0, "下へ送られている");
+    assert!(
+        bounds.y() >= -1.0 && f64::from(bounds.y() + bounds.height()) <= bottom - top + 1.0,
+        "80 行目が見える: {:?} / 見える高さ {}",
+        (bounds.y(), bounds.height()),
+        bottom - top
+    );
+    // もう一度送っても、見えていれば動かさない。
+    list.scroll_to_row(80);
+    assert_eq!(visible_range(&list_widget).0, top, "見えていれば動かさない");
+
+    table.scroll_to_row(90);
+    let (top, bottom) = visible_range(&table.native_widget());
+    let height = table.row_height();
+    assert!(
+        90.0 * height >= top - 1.0 && 91.0 * height <= bottom + 1.0,
+        "表の 90 行目が見える: {top}..{bottom} (行の高さ {height})"
+    );
+
+    tree.scroll_to_item(&[0, 70]);
+    assert!(tree.is_expanded(&[0]), "祖先を開いてから送る");
+    for _ in 0..2 {
+        tick(&bin_of(&root));
+    }
+    for _ in 0..5 {
+        tick(&bin_of(&root));
+    }
+    let (top, _) = visible_range(&tree.native_widget());
+    assert!(top > 0.0, "下へ送られている: {top}");
+    window.close();
     Ok(())
 }

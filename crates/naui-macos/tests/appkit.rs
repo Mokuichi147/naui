@@ -391,6 +391,10 @@ fn main() {
             accessible_label_read_only_and_min_size,
         ),
         (
+            "一覧・表・ツリーで指定した行まで送れる",
+            rows_can_be_scrolled_into_view,
+        ),
+        (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
         ),
@@ -3693,6 +3697,72 @@ fn accessible_label_read_only_and_min_size(ui: &Ui) -> Result<()> {
     window.set_min_size(240.0, 120.0);
     let min = window.native_window().contentMinSize();
     assert_eq!((min.width, min.height), (240.0, 120.0));
+    Ok(())
+}
+
+/// `table` の見えている行の範囲 (先頭, 末尾の次)。
+fn visible_rows(table: &objc2_app_kit::NSTableView) -> (usize, usize) {
+    let range = table.rowsInRect(table.visibleRect());
+    (range.location, range.location + range.length)
+}
+
+fn rows_can_be_scrolled_into_view(ui: &Ui) -> Result<()> {
+    let window = ui.window("行へ送る", 320.0, 240.0)?;
+    let root = ui.stack(Orientation::Horizontal)?;
+    let labels: Vec<String> = (0..100).map(|i| format!("行 {i}")).collect();
+
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    list.set_sizing(Sizing::fixed(100.0, 200.0));
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    table.set_rows(&TableRow::list(labels.iter().map(|label| [label.as_str()])));
+    table.set_sizing(Sizing::fixed(100.0, 200.0));
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("上").children(TreeItem::list(labels.iter().map(String::as_str)))
+    ]);
+    tree.set_sizing(Sizing::fixed(100.0, 200.0));
+    root.append(&list);
+    root.append(&table);
+    root.append(&tree);
+    window.set_child(&root);
+    window.show();
+    window
+        .native_window()
+        .contentView()
+        .unwrap()
+        .layoutSubtreeIfNeeded();
+
+    let list_view = list.native_table();
+    assert_eq!(visible_rows(&list_view).0, 0, "最初は先頭");
+    list.scroll_to_row(80);
+    let (first, end) = visible_rows(&list_view);
+    assert!(first <= 80 && 80 < end, "80 行目が見える: {first}..{end}");
+    list.scroll_to_row(first);
+    assert_eq!(visible_rows(&list_view).0, first, "見えていれば動かさない");
+    list.scroll_to_row(1000); // 範囲外は何もしない
+    assert!(list.selected().is_none(), "選択は変わらない");
+
+    let table_view = table.native_table();
+    table.scroll_to_row(90);
+    let (first, end) = visible_rows(&table_view);
+    assert!(
+        first <= 90 && 90 < end,
+        "表の 90 行目が見える: {first}..{end}"
+    );
+
+    assert!(!tree.is_expanded(&[0]));
+    tree.scroll_to_item(&[0, 70]);
+    assert!(tree.is_expanded(&[0]), "祖先を開いてから送る");
+    let outline = tree.native_outline_view();
+    let (first, end) = visible_rows(&outline);
+    // 0 行目は「上」なので、[0, 70] は 71 行目。
+    assert!(
+        first <= 71 && 71 < end,
+        "ツリーの項目が見える: {first}..{end}"
+    );
+    window.close();
     Ok(())
 }
 
