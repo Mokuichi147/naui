@@ -181,10 +181,6 @@ impl Window {
         }
     }
 
-    /// ルートに置くウィジェット。呼ぶたびに置き換わる。
-    ///
-    /// サイドバーを付けているときは、その右の区画 (`NavigationView.Content`)
-    /// に置かれる。
     /// このウィンドウの中で押されたキーの通知。
     ///
     /// フォーカスのあるウィジェットの `on_key_down` が `Continue` を返した
@@ -197,6 +193,10 @@ impl Window {
         self.0.key_down.set(f);
     }
 
+    /// ルートに置くウィジェット。呼ぶたびに置き換わる。
+    ///
+    /// サイドバーを付けているときは、その右の区画 (`NavigationView.Content`)
+    /// に置かれる。
     pub fn set_child(&self, child: &dyn Widget) {
         // 根は作り直すが、サイドバー (`NavigationView`) は同じものを使い回す。
         // XAML の要素は親を 1 つしか持てないので、古い根の層から外しておく。
