@@ -11,12 +11,15 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 
 use naui_core::{MainThread, Tasks, Work};
 
 /// 投函された仕事をため込むだけの `MainThread`。`drain` で好きなときに走らせる。
 struct Fake {
     queued: Mutex<VecDeque<Work>>,
+    /// `post_after` で積まれた仕事と、その待ち時間。`advance` で時間を進める。
+    delayed: Mutex<Vec<(Duration, Work)>>,
     posts: AtomicUsize,
     accept: AtomicBool,
 }
@@ -25,6 +28,7 @@ impl Fake {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             queued: Mutex::new(VecDeque::new()),
+            delayed: Mutex::new(Vec::new()),
             posts: AtomicUsize::new(0),
             accept: AtomicBool::new(true),
         })
@@ -53,6 +57,20 @@ impl Fake {
         panic!("投函が止まりません");
     }
 
+    /// 時間が過ぎたことにして、待っていた仕事を配送待ちへ移す。
+    /// 戻り値は移した仕事の待ち時間。
+    fn advance(&self) -> Vec<Duration> {
+        let delayed = std::mem::take(&mut *self.delayed.lock().unwrap());
+        let mut queued = self.queued.lock().unwrap();
+        delayed
+            .into_iter()
+            .map(|(delay, work)| {
+                queued.push_back(work);
+                delay
+            })
+            .collect()
+    }
+
     fn posts(&self) -> usize {
         self.posts.load(Ordering::Acquire)
     }
@@ -65,6 +83,14 @@ impl MainThread for Fake {
         }
         self.posts.fetch_add(1, Ordering::AcqRel);
         self.queued.lock().unwrap().push_back(work);
+        true
+    }
+
+    fn post_after(&self, delay: Duration, work: Work) -> bool {
+        if !self.accept.load(Ordering::Acquire) {
+            return false;
+        }
+        self.delayed.lock().unwrap().push((delay, work));
         true
     }
 }
@@ -634,4 +660,102 @@ fn 終了で残った処理が解放される() {
 
     tasks.shutdown();
     assert!(dropped.get());
+}
+
+// --- タイマー -------------------------------------------------------------
+
+#[test]
+fn after_は時間が来てから一度だけ呼ばれる() {
+    let (fake, tasks) = setup();
+    let count = Rc::new(Cell::new(0));
+    let timer = tasks.after(Duration::from_millis(300), {
+        let count = count.clone();
+        move || count.set(count.get() + 1)
+    });
+    fake.drain_all();
+    assert_eq!(count.get(), 0, "待ち時間が過ぎるまでは呼ばれない");
+    assert!(timer.is_active());
+
+    assert_eq!(fake.advance(), vec![Duration::from_millis(300)]);
+    fake.drain_all();
+    assert_eq!(count.get(), 1);
+    assert!(!timer.is_active(), "1 回きりなので終わる");
+    assert!(fake.advance().is_empty(), "次の予約は無い");
+}
+
+#[test]
+fn cancel_した_after_は呼ばれない() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let count = Rc::new(Cell::new(0));
+    let timer = tasks.after(Duration::from_secs(1), {
+        let count = count.clone();
+        move || {
+            let _keep = &tracer;
+            count.set(count.get() + 1)
+        }
+    });
+    timer.cancel();
+    assert!(!timer.is_active());
+    assert!(dropped.get(), "止めたらコールバックは捨てる");
+    fake.advance();
+    fake.drain_all();
+    assert_eq!(count.get(), 0);
+}
+
+#[test]
+fn every_は繰り返し中から止められる() {
+    let (fake, tasks) = setup();
+    let count = Rc::new(Cell::new(0));
+    let handle: Rc<RefCell<Option<naui_core::Timer>>> = Rc::default();
+    let timer = tasks.every(Duration::from_millis(100), {
+        let count = count.clone();
+        let handle = handle.clone();
+        move || {
+            count.set(count.get() + 1);
+            if count.get() == 3 {
+                if let Some(timer) = handle.borrow().as_ref() {
+                    timer.cancel();
+                }
+            }
+        }
+    });
+    *handle.borrow_mut() = Some(timer.clone());
+    for _ in 0..5 {
+        let delays = fake.advance();
+        assert!(delays.iter().all(|d| *d == Duration::from_millis(100)));
+        fake.drain_all();
+    }
+    assert_eq!(count.get(), 3, "3 回目の中で止めた");
+    assert!(!timer.is_active());
+}
+
+#[test]
+fn sleep_を待つと時間が来てから続きが走る() {
+    let (fake, tasks) = setup();
+    let steps = Rc::new(RefCell::new(Vec::new()));
+    tasks.spawn({
+        let tasks = tasks.clone();
+        let steps = steps.clone();
+        async move {
+            steps.borrow_mut().push("前");
+            tasks.sleep(Duration::from_millis(50)).await;
+            steps.borrow_mut().push("後");
+        }
+    });
+    fake.drain_all();
+    assert_eq!(*steps.borrow(), vec!["前"], "待っている間は進まない");
+    assert_eq!(fake.advance(), vec![Duration::from_millis(50)]);
+    fake.drain_all();
+    assert_eq!(*steps.borrow(), vec!["前", "後"]);
+}
+
+#[test]
+fn 終了後のタイマーは動かない() {
+    let (fake, tasks) = setup();
+    tasks.shutdown();
+    let timer = tasks.after(Duration::from_millis(10), || panic!("呼ばれない"));
+    assert!(!timer.is_active());
+    fake.advance();
+    fake.drain_all();
 }

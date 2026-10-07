@@ -3257,3 +3257,291 @@ fn window_key_down_gets_what_the_widget_left() {
         Ok(())
     });
 }
+
+// ------------------------------------------------- アプリ向けの基本機能
+
+/// `millis` だけ待つ (ブラウザの `setTimeout`)。
+async fn wait_millis(millis: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        web_sys::window()
+            .expect("window")
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis)
+            .expect("setTimeout");
+    });
+    wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .expect("待ち");
+}
+
+#[wasm_bindgen_test]
+async fn timers_fire_after_the_delay() {
+    use std::time::Duration;
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(ui.tasks());
+        Ok(())
+    });
+    let tasks = kept.expect("tasks");
+    let once = Rc::new(Cell::new(0));
+    tasks.after(Duration::from_millis(20), {
+        let once = once.clone();
+        move || once.set(once.get() + 1)
+    });
+    let ticks = Rc::new(Cell::new(0));
+    let timer = tasks.every(Duration::from_millis(10), {
+        let ticks = ticks.clone();
+        move || ticks.set(ticks.get() + 1)
+    });
+    let cancelled = Rc::new(Cell::new(false));
+    tasks
+        .after(Duration::from_millis(10), {
+            let cancelled = cancelled.clone();
+            move || cancelled.set(true)
+        })
+        .cancel();
+    assert_eq!(once.get(), 0, "その場では呼ばない");
+    wait_millis(120).await;
+    assert_eq!(once.get(), 1);
+    assert!(ticks.get() >= 3, "繰り返し呼ばれる: {}", ticks.get());
+    timer.cancel();
+    let stopped_at = ticks.get();
+    wait_millis(50).await;
+    assert_eq!(ticks.get(), stopped_at, "止めた後は呼ばれない");
+    assert!(!cancelled.get());
+}
+
+#[wasm_bindgen_test]
+fn progress_bar_switches_to_indeterminate() {
+    with_ui(|ui| {
+        let progress = ui.progress_bar()?;
+        let _mounted = Mounted::new(&progress);
+        progress.set_value(0.4);
+        progress.set_indeterminate(true);
+        let element = progress.native_element();
+        assert!(element.matches(":indeterminate").expect("matches"));
+        progress.set_value(0.7);
+        progress.set_indeterminate(false);
+        assert!(!element.matches(":indeterminate").expect("matches"));
+        assert_eq!(progress.value(), 0.7, "不確定の間に置いた値が出る");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn label_is_not_selectable_until_asked() {
+    with_ui(|ui| {
+        let label = ui.label("コピーできる文字")?;
+        let mounted = Mounted::new(&label);
+        assert!(!label.is_selectable(), "他の環境と同じく既定は選べない");
+        let user_select = |element: &Element| {
+            let value = computed(element, "user-select");
+            if value.is_empty() {
+                computed(element, "-webkit-user-select")
+            } else {
+                value
+            }
+        };
+        assert_eq!(user_select(&mounted.0), "none");
+        label.set_selectable(true);
+        assert!(label.is_selectable());
+        assert_ne!(user_select(&mounted.0), "none");
+        Ok(())
+    });
+}
+
+/// ブラウザは利用者の操作の外ではクリップボードを読ませないことがあるので、
+/// ここでは「必ず後からコールバックが呼ばれる」ことだけを確かめる。
+#[wasm_bindgen_test]
+async fn clipboard_read_calls_back_later() {
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(ui.clipboard());
+        Ok(())
+    });
+    let clipboard = kept.expect("clipboard");
+    let called = Rc::new(Cell::new(false));
+    clipboard.read_text({
+        let called = called.clone();
+        move |_text| called.set(true)
+    });
+    assert!(!called.get(), "その場では呼ばない");
+    for _ in 0..50 {
+        if called.get() {
+            break;
+        }
+        wait_millis(20).await;
+    }
+    assert!(called.get(), "読めなくてもコールバックは呼ばれる");
+}
+
+#[wasm_bindgen_test]
+async fn window_reports_its_size() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("大きさ", 400.0, 300.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        kept = Some(window);
+        Ok(())
+    });
+    let window = kept.expect("window");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_resize({
+        let seen = seen.clone();
+        move |size| seen.borrow_mut().push(size)
+    });
+    next_frames().await;
+    let (width, height) = window.size();
+    assert!(width > 0.0 && height > 0.0, "{width} x {height}");
+    assert_eq!(
+        seen.borrow().last(),
+        Some(&(width, height)),
+        "載った直後にも届く"
+    );
+    // Web では閉じる確認は呼ばれないが、受け付けはする。
+    window.on_close_request(|| naui_core::CloseResponse::KeepOpen);
+    window.close();
+}
+
+#[wasm_bindgen_test]
+fn accessible_label_read_only_and_min_size() {
+    with_ui(|ui| {
+        let button = ui.button("⚙")?;
+        button.set_accessible_label(Some("設定"));
+        assert_eq!(
+            button
+                .native_element()
+                .get_attribute("aria-label")
+                .as_deref(),
+            Some("設定")
+        );
+        button.set_accessible_label(None);
+        assert_eq!(button.native_element().get_attribute("aria-label"), None);
+
+        let input = ui.text_input("ログ")?;
+        input.set_read_only(true);
+        assert!(input.is_read_only());
+        assert!(input.native_element().has_attribute("readonly"));
+        let area = ui.text_area("ログ")?;
+        area.set_read_only(true);
+        assert!(area.native_element().has_attribute("readonly"));
+
+        let window = ui.window("最小", 320.0, 200.0)?;
+        window.set_min_size(240.0, 120.0);
+        let style = window_element_style(&window);
+        assert!(style.contains("min-width: 240px"), "{style}");
+        window.close();
+        Ok(())
+    });
+}
+
+/// ウィンドウの要素のインラインの style。
+fn window_element_style(window: &naui_web::Window) -> String {
+    window
+        .native_element()
+        .get_attribute("style")
+        .unwrap_or_default()
+}
+
+// ------------------------------------------------------------- 行へ送る
+
+/// `row` が `container` の見えている範囲に入っているか。
+fn is_within(container: &Element, row: &Element) -> bool {
+    let view = container.get_bounding_client_rect();
+    let rect = row.get_bounding_client_rect();
+    rect.top() >= view.top() - 1.0 && rect.bottom() <= view.bottom() + 1.0
+}
+
+#[wasm_bindgen_test]
+fn list_scrolls_a_row_into_view() {
+    with_ui(|ui| {
+        let labels: Vec<String> = (0..100).map(|i| format!("行 {i}")).collect();
+        // 文字だけなら `<select size>`、ウィジェットの行なら `role="listbox"`。
+        for widget_rows in [false, true] {
+            let list = ui.list()?;
+            list.set_sizing(Sizing::fixed(160.0, 200.0));
+            if widget_rows {
+                let rows: Vec<ListRow> = labels
+                    .iter()
+                    .map(|label| ui.label(label).map(|l| ListRow::new(&l)))
+                    .collect::<Result<_>>()?;
+                list.set_rows(&rows);
+            } else {
+                list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+            }
+            let mounted = Mounted::new(&list);
+            let scroller = mounted
+                .0
+                .query_selector("select, [role=listbox]")
+                .expect("検索")
+                .expect("スクロールする要素");
+            let row = |index: usize| -> Element {
+                scroller
+                    .query_selector_all("option, [role=option]")
+                    .expect("行")
+                    .item(index as u32)
+                    .expect("行がある")
+                    .unchecked_into()
+            };
+            list.scroll_to_row(80);
+            assert!(
+                is_within(&scroller, &row(80)),
+                "80 行目が見える (widget_rows={widget_rows})"
+            );
+            let top = scroller.scroll_top();
+            list.scroll_to_row(79);
+            assert_eq!(scroller.scroll_top(), top, "見えていれば動かさない");
+            assert!(list.selected().is_none(), "選択は変わらない");
+        }
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn table_scrolls_to_a_row_it_has_not_built_yet() {
+    with_ui(|ui| {
+        let table = ui.table()?;
+        table.set_columns(&[TableColumn::new("番号")]);
+        let rows: Vec<String> = (0..20_000).map(|i| i.to_string()).collect();
+        table.set_rows(&TableRow::list(rows.iter().map(|r| [r.as_str()])));
+        table.set_sizing(Sizing::fixed(200.0, 240.0));
+        let mounted = Mounted::new(&table);
+        table.scroll_to_row(15_000);
+        let built: Vec<usize> = table_rows(&table).iter().map(table_row_index).collect();
+        assert!(
+            built.contains(&15_000),
+            "送った先の行を組み立てる: {built:?}"
+        );
+        let _ = mounted;
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tree_opens_ancestors_and_scrolls_to_an_item() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        let labels: Vec<String> = (0..100).map(|i| format!("項目 {i}")).collect();
+        tree.set_items(&[naui_core::TreeItem::new("上")
+            .children(naui_core::TreeItem::list(labels.iter().map(String::as_str)))]);
+        tree.set_sizing(Sizing::fixed(200.0, 200.0));
+        let mounted = Mounted::new(&tree);
+        let expanded = Rc::new(Cell::new(0));
+        tree.on_expand({
+            let expanded = expanded.clone();
+            move |_, _| expanded.set(expanded.get() + 1)
+        });
+        tree.scroll_to_item(&[0, 70]);
+        assert!(tree.is_expanded(&[0]), "祖先を開く");
+        assert_eq!(expanded.get(), 0, "開閉は通知しない");
+        let item = mounted
+            .0
+            .query_selector_all("[role=treeitem]")
+            .expect("項目")
+            .item(71)
+            .expect("71 番目の項目")
+            .unchecked_into::<Element>();
+        assert!(is_within(&mounted.0, &item), "項目が見える");
+        Ok(())
+    });
+}

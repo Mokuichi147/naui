@@ -2,7 +2,7 @@
 //!
 //! 見た目はブラウザ既定のまま。CSS は Flexbox のレイアウトにしか使わない。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{Align, Orientation, Padding, Result, TextColor, TextStyle};
@@ -70,6 +70,17 @@ macro_rules! impl_widget {
             /// ポインターを重ねたときに出す説明 (`title` 属性)。`None` で外す。
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_element(self), text);
+            }
+
+            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            ///
+            /// アイコンだけのボタンのように、見えている文字が無いか意味を
+            /// 表しきれないときに付ける。
+            pub fn set_accessible_label(&self, text: Option<&str>) {
+                crate::interaction::set_accessible_label(
+                    &<$t as Widget>::native_element(self),
+                    text,
+                );
             }
         }
     };
@@ -246,6 +257,8 @@ impl Label {
         element.set_text_content(Some(text));
         let this = Self(Rc::new(LabelInner { element }));
         this.set_wrap(false);
+        // 他の 3 環境のラベルと同じく、既定では選べない。
+        this.set_selectable(false);
         Ok(this)
     }
 
@@ -255,6 +268,32 @@ impl Label {
 
     pub fn set_text(&self, text: &str) {
         self.0.element.set_text_content(Some(text));
+    }
+
+    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    ///
+    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
+    /// 入力欄と違い、文字は書き換えられない。
+    ///
+    /// ブラウザの文字は既定でどれも選べるので、選べないときは naui が
+    /// `user-select: none` を付けて他の 3 環境へそろえている。
+    pub fn set_selectable(&self, selectable: bool) {
+        let style = self.0.element.style();
+        if selectable {
+            let _ = style.remove_property("user-select");
+            let _ = style.remove_property("-webkit-user-select");
+        } else {
+            let _ = style.set_property("user-select", "none");
+            let _ = style.set_property("-webkit-user-select", "none");
+        }
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.0
+            .element
+            .style()
+            .get_property_value("user-select")
+            .map_or(true, |value| value != "none")
     }
 
     /// 長い文字列を折り返すかどうか。既定は折り返さない。
@@ -471,6 +510,19 @@ impl TextInput {
         .ok();
         *self.0.on_change.borrow_mut() = listener;
     }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.input.set_read_only(read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.0.input.read_only()
+    }
 }
 
 // ----------------------------------------------------------- PasswordInput
@@ -664,6 +716,19 @@ impl TextArea {
         .ok();
         *self.0.on_change.borrow_mut() = listener;
     }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.element.set_read_only(read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.0.element.read_only()
+    }
 }
 
 // ----------------------------------------------------------------- Slider
@@ -726,6 +791,9 @@ impl Slider {
 
 struct ProgressInner {
     element: HtmlProgressElement,
+    /// 置かれた値。不確定の間は `value` 属性を外すので、別に持つ。
+    value: Cell<f64>,
+    indeterminate: Cell<bool>,
 }
 
 /// 進捗バー (`<progress>`)。
@@ -738,16 +806,43 @@ impl ProgressBar {
         let element: HtmlProgressElement = create(doc, "progress")?.unchecked_into();
         element.set_max(1.0);
         element.set_value(0.0);
-        Ok(Self(Rc::new(ProgressInner { element })))
+        Ok(Self(Rc::new(ProgressInner {
+            element,
+            value: Cell::new(0.0),
+            indeterminate: Cell::new(false),
+        })))
     }
 
     /// 0.0..=1.0。
     pub fn set_value(&self, value: f64) {
-        self.0.element.set_value(value.clamp(0.0, 1.0));
+        let value = value.clamp(0.0, 1.0);
+        self.0.value.set(value);
+        if !self.0.indeterminate.get() {
+            self.0.element.set_value(value);
+        }
     }
 
     pub fn value(&self) -> f64 {
-        self.0.element.value()
+        self.0.value.get()
+    }
+
+    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    ///
+    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
+    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    ///
+    /// `<progress>` は `value` 属性が無いと不確定の表示になる。
+    pub fn set_indeterminate(&self, indeterminate: bool) {
+        self.0.indeterminate.set(indeterminate);
+        if indeterminate {
+            let _ = self.0.element.remove_attribute("value");
+        } else {
+            self.0.element.set_value(self.0.value.get());
+        }
+    }
+
+    pub fn is_indeterminate(&self) -> bool {
+        self.0.indeterminate.get()
     }
 }
 

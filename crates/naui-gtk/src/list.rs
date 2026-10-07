@@ -283,6 +283,19 @@ impl List {
     }
 
     /// 通知せずに 1 行だけ選ぶ。
+    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
+    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    pub fn scroll_to_row(&self, index: usize) {
+        let Ok(index) = i32::try_from(index) else {
+            return;
+        };
+        if let Some(row) = self.0.native.row_at_index(index) {
+            reveal_widget(&self.0._scroller, &row, false);
+        }
+    }
+
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
@@ -406,3 +419,77 @@ fn build_row(item: &ListRow) -> gtk::ListBoxRow {
     }
     row
 }
+
+/// 縦のスクロールを、`top..bottom` (中身の座標) が見える位置へ動かす。
+///
+/// 見えていれば動かさず、上にはみ出していれば上端、下なら下端へ合わせる。
+pub(crate) fn reveal_range(scroller: &gtk::ScrolledWindow, top: f64, bottom: f64) {
+    let adjustment = scroller.vadjustment();
+    let view_top = adjustment.value();
+    let page = adjustment.page_size();
+    if top < view_top {
+        adjustment.set_value(top);
+    } else if bottom > view_top + page {
+        adjustment.set_value(bottom - page);
+    }
+}
+
+/// `row` (スクロール領域の中身の子孫) が見えるようにする。
+///
+/// 行を作り直した直後や、閉じた枝を開いた直後は場所がまだ配られて
+/// いないので、そのときは次のフレームで試し直す。
+///
+/// `after_layout` が `true` なら、その場では試さず、次のレイアウトが済んで
+/// から試す。閉じていた枝を開いた直後の行は、配られる前のでたらめな場所
+/// (高さ数 px の位置) を返すので、その場の値を信じられない。
+pub(crate) fn reveal_widget(
+    scroller: &gtk::ScrolledWindow,
+    row: &impl IsA<gtk::Widget>,
+    after_layout: bool,
+) {
+    fn attempt(scroller: &gtk::ScrolledWindow, row: &gtk::Widget) -> bool {
+        // `GtkViewport` は中身をスクロールのぶんずらして置くので、ビューポート
+        // 基準では「見えている範囲の中」の位置になる。中身の座標で測るため、
+        // ビューポートの子を基準にする。
+        let Some(content) = scroller.child().and_then(|viewport| viewport.first_child()) else {
+            return false;
+        };
+        let Some(bounds) = row.compute_bounds(&content) else {
+            return false;
+        };
+        if bounds.height() <= 0.0 {
+            return false;
+        }
+        let top = f64::from(bounds.y());
+        let bottom = top + f64::from(bounds.height());
+        // 閉じていた枝の行は、前に配られた古い場所を持ったままのことがある。
+        // 中身の高さがまだ伸びていなければ、レイアウトの前とみなして待つ。
+        if bottom > scroller.vadjustment().upper() + 0.5 {
+            return false;
+        }
+        reveal_range(scroller, top, bottom);
+        true
+    }
+    let row = row.as_ref().clone();
+    if !after_layout && attempt(scroller, &row) {
+        return;
+    }
+    // フレームの最初 (tick) はレイアウトより前に来るので、1 回目の tick は
+    // まだ古い場所を見る。2 回目からは前のフレームのレイアウトが済んでいる。
+    // 数フレーム試してだめなら諦める。
+    let frames = std::cell::Cell::new(0u8);
+    scroller.add_tick_callback(move |scroller, _| {
+        frames.set(frames.get() + 1);
+        if frames.get() < 2 {
+            return glib::ControlFlow::Continue;
+        }
+        if attempt(scroller, &row) || frames.get() >= REVEAL_FRAMES {
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
+/// 行の場所が配られるのを待つフレーム数の上限。
+const REVEAL_FRAMES: u8 = 5;

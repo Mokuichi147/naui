@@ -650,6 +650,22 @@ impl Table {
     }
 
     /// 通知せずに 1 行だけを選ぶ。
+    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
+    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    ///
+    /// 行を絞って組み立てているときも、行の高さから位置を求めて送るので、
+    /// まだ組み立てていない行へも送れる (送った先の行はその場で組み立てる)。
+    pub fn scroll_to_row(&self, index: usize) {
+        if index >= self.len() {
+            return;
+        }
+        let height = self.0.row_height.get().max(1.0);
+        let top = index as f64 * height;
+        crate::list::reveal_range(&self.0.scroller, top, top + height);
+    }
+
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }

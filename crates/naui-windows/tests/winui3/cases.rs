@@ -118,6 +118,27 @@ const CASES: &[Case] = &[
         text_widgets_accept_key_handlers,
     ),
     (
+        "タイマーが DispatcherQueue で呼ばれ、止められる",
+        timers_fire_on_the_dispatcher_queue,
+    ),
+    (
+        "不確定の進捗は値を覚えたまま帯の往復に切り替わる",
+        progress_bar_switches_to_indeterminate,
+    ),
+    (
+        "ラベルを選べるようにすると IsTextSelectionEnabled が立つ",
+        label_can_be_selectable,
+    ),
+    ("URL として読めないものは開かない", open_url_rejects_garbage),
+    (
+        "読み上げ名と読み取り専用がネイティブへ届く",
+        accessible_label_and_read_only,
+    ),
+    (
+        "一覧・表・ツリーの行へ送っても選択は変わらない",
+        scroll_to_row_keeps_the_selection,
+    ),
+    (
         "描画面の命令が XAML の Path と TextBlock になり、読み込める",
         canvas_commands_become_xaml_shapes,
     ),
@@ -2004,5 +2025,112 @@ fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
     ui.search_input()?.on_key_down(handler);
     ui.number_input(1.0)?.on_key_down(handler);
     ui.editable_combo_box()?.on_key_down(handler);
+    Ok(())
+}
+
+fn timers_fire_on_the_dispatcher_queue(ui: &Ui) -> Result<()> {
+    let tasks = ui.tasks();
+    let once = Rc::new(Cell::new(0));
+    tasks.after(Duration::from_millis(20), {
+        let once = once.clone();
+        move || once.set(once.get() + 1)
+    });
+    let ticks = Rc::new(Cell::new(0));
+    let handle: Rc<RefCell<Option<naui_core::Timer>>> = Rc::default();
+    let timer = tasks.every(Duration::from_millis(10), {
+        let ticks = ticks.clone();
+        let handle = handle.clone();
+        move || {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() == 3 {
+                if let Some(timer) = handle.borrow().as_ref() {
+                    timer.cancel();
+                }
+            }
+        }
+    });
+    *handle.borrow_mut() = Some(timer.clone());
+    assert_eq!(once.get(), 0, "その場では呼ばない");
+    pump_until(Duration::from_secs(3), || {
+        once.get() == 1 && !timer.is_active()
+    });
+    assert_eq!(once.get(), 1);
+    assert_eq!(ticks.get(), 3, "3 回目で止めた");
+    Ok(())
+}
+
+fn progress_bar_switches_to_indeterminate(ui: &Ui) -> Result<()> {
+    let progress = ui.progress_bar()?;
+    progress.set_value(0.4);
+    progress.set_indeterminate(true);
+    assert!(progress.is_indeterminate());
+    progress.set_value(0.7);
+    progress.set_indeterminate(false);
+    assert!(!progress.is_indeterminate());
+    assert_eq!(progress.value(), 0.7);
+    Ok(())
+}
+
+fn label_can_be_selectable(ui: &Ui) -> Result<()> {
+    let label = ui.label("コピーできる文字")?;
+    assert!(!label.is_selectable(), "既定は選べない");
+    label.set_selectable(true);
+    let native = native::<TextBlock>(&label);
+    assert!(native
+        .IsTextSelectionEnabled()
+        .expect("IsTextSelectionEnabled"));
+    Ok(())
+}
+
+fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
+    assert!(ui.open_url("").is_err());
+    Ok(())
+}
+
+fn accessible_label_and_read_only(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+    use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+    let button = ui.button("⚙")?;
+    button.set_accessible_label(Some("設定"));
+    let object = button
+        .native_element()
+        .cast::<DependencyObject>()
+        .expect("DependencyObject");
+    assert_eq!(
+        AutomationProperties::GetName(&object)
+            .expect("Name")
+            .to_string(),
+        "設定"
+    );
+    let input = ui.text_input("ログ")?;
+    input.set_read_only(true);
+    assert!(native::<TextBox>(&input).IsReadOnly().expect("IsReadOnly"));
+    Ok(())
+}
+
+/// CI では行の実寸が付かないので、送っても壊れず選択が変わらないことだけ見る
+/// (見える位置まで送れるかは実機で確かめる)。
+fn scroll_to_row_keeps_the_selection(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, TableColumn, TableRow, TreeItem};
+    let labels: Vec<String> = (0..50).map(|i| format!("行 {i}")).collect();
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    list.scroll_to_row(40);
+    list.scroll_to_row(1000);
+    assert!(list.selected().is_none());
+
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    table.set_rows(&TableRow::list(labels.iter().map(|l| [l.as_str()])));
+    table.scroll_to_row(40);
+    assert!(table.selected().is_none());
+
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("上").children(TreeItem::list(labels.iter().map(String::as_str)))
+    ]);
+    tree.scroll_to_item(&[0, 30]);
+    assert!(tree.is_expanded(&[0]), "祖先を開く");
+    assert!(tree.selected().is_none());
     Ok(())
 }

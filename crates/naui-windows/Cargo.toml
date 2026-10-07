@@ -20,6 +20,7 @@ naui-core.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.62"
 windows = { version = "0.62", features = [
+    "ApplicationModel_DataTransfer",
     "Foundation",
     "Globalization",
     "Globalization_NumberFormatting",

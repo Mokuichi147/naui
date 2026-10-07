@@ -212,6 +212,81 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
     pane.append(&slider);
     pane.append(&progress);
     pane.append(&value_status);
+    let busy = ui.checkbox("処理中 (進み具合が分からない表示)")?;
+    busy.on_toggle({
+        let progress = progress.clone();
+        move |on| progress.set_indeterminate(on)
+    });
+    pane.append(&busy);
+
+    parts::section(
+        ui,
+        &pane,
+        "クリップボード / URL / タイマー",
+        &[
+            "下の文字は選んでコピーできます。ボタンでクリップボードへ書き込み、読み戻せます。",
+            "タイマーは 1 秒ごとに数えます。",
+        ],
+    )?;
+    let quote = ui.label("naui は各 OS のネイティブ UI を 1 つの API から扱います。")?;
+    quote.set_selectable(true);
+    quote.set_wrap(true);
+    quote.set_sizing(naui::Sizing::fill_width());
+    pane.append(&quote);
+
+    let clipboard_status = parts::readout(ui, "クリップボード: -")?;
+    let clipboard_row = ui.stack(Orientation::Horizontal)?;
+    clipboard_row.set_spacing(8.0);
+    let copy = ui.button("文をコピー")?;
+    copy.on_click({
+        let clipboard = ui.clipboard();
+        let quote = quote.clone();
+        let notice = notice.clone();
+        move || match clipboard.set_text(&quote.text()) {
+            Ok(()) => notice.show("クリップボードへ書き込みました"),
+            Err(error) => notice.show(&format!("書き込めませんでした: {error}")),
+        }
+    });
+    let paste = ui.button("クリップボードを読む")?;
+    paste.on_click({
+        let clipboard = ui.clipboard();
+        let status = clipboard_status.clone();
+        move || {
+            let status = status.clone();
+            clipboard.read_text(move |text| {
+                status.set_text(&format!(
+                    "クリップボード: {}",
+                    text.as_deref().unwrap_or("(文字なし)")
+                ));
+            });
+        }
+    });
+    let open = ui.button("naui のリポジトリを開く")?;
+    open.on_click({
+        let ui = ui.clone();
+        let notice = notice.clone();
+        move || {
+            if let Err(error) = ui.open_url("https://github.com/mokuichi147/naui") {
+                notice.show(&format!("開けませんでした: {error}"));
+            }
+        }
+    });
+    clipboard_row.append(&copy);
+    clipboard_row.append(&paste);
+    clipboard_row.append(&open);
+    pane.append(&clipboard_row);
+    pane.append(&clipboard_status);
+
+    let elapsed = parts::readout(ui, "経過: 0 秒")?;
+    let seconds = Rc::new(Cell::new(0u32));
+    ui.tasks().every(std::time::Duration::from_secs(1), {
+        let elapsed = elapsed.clone();
+        move || {
+            seconds.set(seconds.get() + 1);
+            elapsed.set_text(&format!("経過: {} 秒", seconds.get()));
+        }
+    });
+    pane.append(&elapsed);
 
     parts::section(
         ui,

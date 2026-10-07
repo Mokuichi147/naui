@@ -100,7 +100,11 @@ struct WindowInner {
     /// `on_key_down` の通知先。根の `PreviewKeyDown` から呼ぶ。
     key_down: Rc<naui_core::KeyHandler>,
     closing_token: Cell<Option<i64>>,
+    on_close_request: naui_core::CloseHandler,
+    on_resize: RefCell<Option<Box<ResizeCallback>>>,
 }
+
+type ResizeCallback = dyn FnMut((f64, f64));
 
 /// トップレベルウィンドウ。
 #[derive(Clone)]
@@ -152,8 +156,56 @@ impl Window {
             menu_key_installed: Cell::new(false),
             key_down: Rc::default(),
             closing_token: Cell::new(None),
+            on_close_request: naui_core::CloseHandler::default(),
+            on_resize: RefCell::new(None),
         }));
+        this.observe_size();
         Ok(this)
+    }
+
+    fn observe_size(&self) {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = TypedEventHandler::<
+            windows_core::IInspectable,
+            naui_winui3::Microsoft::UI::Xaml::WindowSizeChangedEventArgs,
+        >::new(move |_, _| {
+            if let Some(inner) = state.try_with_mut(|weak| weak.upgrade()).flatten() {
+                let size = Window(inner.clone()).size();
+                // 通知の中で差し替えられても二重借用にならないよう、取り出して呼ぶ。
+                let taken = inner.on_resize.borrow_mut().take();
+                if let Some(mut f) = taken {
+                    f(size);
+                    let mut slot = inner.on_resize.borrow_mut();
+                    if slot.is_none() {
+                        *slot = Some(f);
+                    }
+                }
+            }
+            Ok(())
+        });
+        let _ = self.0.native.SizeChanged(&handler);
+    }
+
+    /// 利用者がウィンドウを閉じようとしたときの確認。
+    ///
+    /// [`CloseResponse::KeepOpen`](naui_core::CloseResponse::KeepOpen) を返すと
+    /// 閉じない (保存していない変更があるときに確認のダイアログを出す、など)。
+    /// プログラムからの [`close`](Self::close) では呼ばれない (`Window::Close`
+    /// は `AppWindow` の `Closing` を通らない)。
+    pub fn on_close_request(&self, f: impl FnMut() -> naui_core::CloseResponse + 'static) {
+        self.0.on_close_request.set(f);
+    }
+
+    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル (DIP)。
+    pub fn size(&self) -> (f64, f64) {
+        self.0.native.Bounds().map_or((0.0, 0.0), |bounds| {
+            (f64::from(bounds.Width), f64::from(bounds.Height))
+        })
+    }
+
+    /// 大きさが変わったときの通知。変わった後の [`size`](Self::size) が届く。
+    pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
+        *self.0.on_resize.borrow_mut() = Some(Box::new(f));
     }
 
     pub fn set_title(&self, title: &str) {
@@ -169,6 +221,37 @@ impl Window {
             .Title()
             .map(|s| s.to_string())
             .unwrap_or_default()
+    }
+
+    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    ///
+    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    ///
+    /// `OverlappedPresenter.PreferredMinimumWidth` / `Height` を使うので、
+    /// Windows App SDK 1.7 より前のランタイムでは効かない。
+    pub fn set_min_size(&self, width: f64, height: f64) {
+        use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
+        use windows::Foundation::{IReference, PropertyValue};
+
+        let Some(presenter) = self
+            .0
+            .native
+            .AppWindow()
+            .and_then(|window| window.Presenter())
+            .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
+            .ok()
+        else {
+            return;
+        };
+        let value = |pixels: f64| {
+            PropertyValue::CreateInt32(pixels.max(0.0) as i32)
+                .and_then(|value| value.cast::<IReference<i32>>())
+                .ok()
+        };
+        if let (Some(width), Some(height)) = (value(width), value(height)) {
+            let _ = presenter.SetPreferredMinimumWidth(&width);
+            let _ = presenter.SetPreferredMinimumHeight(&height);
+        }
     }
 
     pub fn set_size(&self, width: f64, height: f64) {
@@ -669,10 +752,24 @@ impl Window {
         let Ok(app_window) = self.0.native.AppWindow() else {
             return;
         };
+        let window = UiThreadCell::new(Rc::downgrade(&self.0));
         let handler = TypedEventHandler::<
             naui_winui3::Microsoft::UI::Windowing::AppWindow,
             naui_winui3::Microsoft::UI::Windowing::AppWindowClosingEventArgs,
-        >::new(move |_sender, _args| {
+        >::new(move |_sender, args| {
+            // アプリが閉じないと答えたら、取り消して何も畳まない。
+            let keep = window
+                .try_with_mut(|weak| weak.upgrade())
+                .flatten()
+                .is_some_and(|inner| {
+                    inner.on_close_request.ask() == naui_core::CloseResponse::KeepOpen
+                });
+            if keep {
+                if let Some(args) = args.as_ref() {
+                    let _ = args.SetCancel(true);
+                }
+                return Ok(());
+            }
             state.with_mut(|slot| {
                 if let Some(ui) = slot.take() {
                     // 画面が畳まれた後は、投函しても誰も取り出さない。

@@ -240,6 +240,39 @@ impl Tree {
     ///
     /// 選べない項目や無いパスを渡すと、選択は外れる。閉じた枝の中にある
     /// 項目は、見えるように祖先を開いてから選ぶ。
+    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
+    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
+    /// 無いパスなら何もしない。
+    pub fn scroll_to_item(&self, path: &[usize]) {
+        if TreeItem::at(&self.0.items.borrow(), path).is_none() {
+            return;
+        }
+        // 開くと WinUI が開閉を知らせてくるので、ここでは通知を止める。
+        self.without_notifying(|this| {
+            this.write_expanded(&path[..path.len().saturating_sub(1)], true)
+        });
+        let node = self
+            .0
+            .nodes
+            .borrow()
+            .iter()
+            .find(|(candidate, _)| candidate.as_slice() == path)
+            .map(|(_, node)| node.clone());
+        let Some(node) = node else {
+            return;
+        };
+        // 開いた直後は行の要素がまだ無いので、レイアウトを済ませてから探す。
+        let container = self.0.tree_view.ContainerFromNode(&node).ok().or_else(|| {
+            let _ = self.0.tree_view.UpdateLayout();
+            self.0.tree_view.ContainerFromNode(&node).ok()
+        });
+        if let Some(element) = container.and_then(|c| c.cast::<UIElement>().ok()) {
+            let _ = element.StartBringIntoView();
+        }
+    }
+
     pub fn set_selected(&self, path: &[usize]) {
         self.write_selected(path);
     }

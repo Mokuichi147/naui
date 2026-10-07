@@ -627,6 +627,17 @@ impl Table {
     }
 
     /// 通知せずに 1 行だけを選ぶ。
+    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
+    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    ///
+    /// 行を絞って組み立てているとき ([`ROW_WINDOW_THRESHOLD`](naui_core::ROW_WINDOW_THRESHOLD)
+    /// 行より多いとき) も、送った先の行を組み立てる。
+    pub fn scroll_to_row(&self, index: usize) {
+        self.reveal_row(index);
+    }
+
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
@@ -1227,6 +1238,16 @@ impl Table {
             .0
             .table
             .set_attribute("aria-activedescendant", &self.row_id(active));
+        self.reveal_row(active);
+    }
+
+    /// `index` 行目をスクロール領域の中へ入れ、その辺りの行を組み立てる。
+    fn reveal_row(&self, active: usize) {
+        if active >= self.len() {
+            return;
+        }
+        // 載せた直後は 1 行の高さをまだ測っていないので、位置を出す前に測る。
+        self.measure_row_height();
         // 見出しはスクロールしても残る (`position: sticky`) ので、
         // その分だけ画面の上側は行に使えない。
         let head = self.0.head.offset_height() as f64;

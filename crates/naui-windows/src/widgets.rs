@@ -4,6 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{Align, Orientation, Padding, Result, TextColor, TextStyle};
+use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, Grid, Orientation as XamlOrientation,
     PasswordBox, ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock,
@@ -14,7 +15,7 @@ use naui_winui3::Microsoft::UI::Xaml::{
     Application, FrameworkElement, ResourceDictionary, RoutedEventHandler, Style, TextWrapping,
     Thickness, UIElement,
 };
-use windows::Foundation::{EventHandler, PropertyValue};
+use windows::Foundation::{EventHandler, PropertyValue, TypedEventHandler};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
@@ -87,6 +88,17 @@ macro_rules! impl_widget {
             /// ポインターを重ねたときに出す説明 (`ToolTipService`)。`None` で外す。
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_element(self), text);
+            }
+
+            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            ///
+            /// アイコンだけのボタンのように、見えている文字が無いか意味を
+            /// 表しきれないときに付ける。
+            pub fn set_accessible_label(&self, text: Option<&str>) {
+                crate::interaction::set_accessible_label(
+                    &<$t as Widget>::native_element(self),
+                    text,
+                );
             }
         }
     };
@@ -171,6 +183,18 @@ impl Label {
         }));
         this.set_wrap(false);
         Ok(this)
+    }
+
+    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    ///
+    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
+    /// 入力欄と違い、文字は書き換えられない。
+    pub fn set_selectable(&self, selectable: bool) {
+        let _ = self.0.native.SetIsTextSelectionEnabled(selectable);
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.0.native.IsTextSelectionEnabled().unwrap_or(false)
     }
 
     /// 長い文字列を折り返すかどうか。既定は折り返さない。
@@ -477,6 +501,19 @@ impl TextInput {
             *self.0.token.borrow_mut() = Some(token);
         }
     }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        let _ = self.0.native.SetIsReadOnly(read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.0.native.IsReadOnly().unwrap_or(false)
+    }
 }
 
 // ----------------------------------------------------------- PasswordInput
@@ -625,6 +662,19 @@ impl TextArea {
             *self.0.token.borrow_mut() = Some(token);
         }
     }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        let _ = self.0.native.SetIsReadOnly(read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.0.native.IsReadOnly().unwrap_or(false)
+    }
 }
 
 // ----------------------------------------------------------------- Slider
@@ -694,7 +744,25 @@ struct ProgressInner {
     fill: FrameworkElement,
     value: Cell<f64>,
     track_width: Cell<f64>,
+    /// 不確定の間、前景の帯を往復させるタイマー。
+    animation: RefCell<Option<DispatcherQueueTimer>>,
+    /// 往復の進み具合 (0.0..2.0。1.0 を超えたら戻る向き)。
+    phase: Cell<f64>,
 }
+
+impl Drop for ProgressInner {
+    fn drop(&mut self) {
+        if let Some(timer) = self.animation.borrow_mut().take() {
+            let _ = timer.Stop();
+        }
+    }
+}
+
+/// 不確定の帯の長さ (バーの幅に対する割合)。
+const INDETERMINATE_SEGMENT: f64 = 0.3;
+/// 不確定の帯を動かす間隔と、1 回に進む量 (往復で約 2 秒)。
+const INDETERMINATE_TICK_MILLIS: i64 = 33;
+const INDETERMINATE_STEP: f64 = 0.033;
 
 /// 進捗バー (ProgressBar)。
 #[derive(Clone)]
@@ -732,6 +800,8 @@ impl ProgressBar {
             value: Cell::new(0.0),
             // レイアウト前の一時値。LayoutUpdatedで実幅に置き換える。
             track_width: Cell::new(240.0),
+            animation: RefCell::new(None),
+            phase: Cell::new(0.0),
         }));
         let weak = Rc::downgrade(&this.0);
         let state = UiThreadCell::new(weak);
@@ -753,7 +823,9 @@ impl ProgressBar {
                 };
                 if width > 0.0 && (width - inner.track_width.get()).abs() > f64::EPSILON {
                     inner.track_width.set(width);
-                    let _ = inner.fill.SetWidth(width * inner.value.get());
+                    if inner.animation.borrow().is_none() {
+                        let _ = inner.fill.SetWidth(width * inner.value.get());
+                    }
                 }
                 Ok(())
             })
@@ -766,11 +838,85 @@ impl ProgressBar {
     pub fn set_value(&self, value: f64) {
         let value = value.clamp(0.0, 1.0);
         self.0.value.set(value);
-        let _ = self.0.fill.SetWidth(self.0.track_width.get() * value);
+        if !self.is_indeterminate() {
+            let _ = self.0.fill.SetWidth(self.0.track_width.get() * value);
+        }
     }
 
     pub fn value(&self) -> f64 {
         self.0.value.get()
+    }
+
+    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    ///
+    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
+    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    ///
+    /// WinUI の `ProgressBar` は未パッケージ起動でテンプレートを当てた瞬間に
+    /// 落ちるため、naui は同じテーマ資源で組んだ帯を使っている。不確定の
+    /// 表示も、その前景の帯を一定の間隔で往復させて表す。
+    pub fn set_indeterminate(&self, indeterminate: bool) {
+        if self.is_indeterminate() == indeterminate {
+            return;
+        }
+        if !indeterminate {
+            if let Some(timer) = self.0.animation.borrow_mut().take() {
+                let _ = timer.Stop();
+            }
+            let _ = self.0.fill.SetMargin(Thickness::default());
+            let _ = self
+                .0
+                .fill
+                .SetWidth(self.0.track_width.get() * self.0.value.get());
+            return;
+        }
+        let Ok(timer) =
+            DispatcherQueue::GetForCurrentThread().and_then(|queue| queue.CreateTimer())
+        else {
+            return;
+        };
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = TypedEventHandler::<DispatcherQueueTimer, IInspectable>::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.step_indeterminate();
+                }
+            });
+            Ok(())
+        });
+        let interval = windows::Foundation::TimeSpan {
+            Duration: INDETERMINATE_TICK_MILLIS * 10_000,
+        };
+        if timer.SetInterval(interval).is_err()
+            || timer.SetIsRepeating(true).is_err()
+            || timer.Tick(&handler).is_err()
+            || timer.Start().is_err()
+        {
+            return;
+        }
+        self.0.phase.set(0.0);
+        *self.0.animation.borrow_mut() = Some(timer);
+        self.0.step_indeterminate();
+    }
+
+    pub fn is_indeterminate(&self) -> bool {
+        self.0.animation.borrow().is_some()
+    }
+}
+
+impl ProgressInner {
+    /// 前景の帯を 1 歩進める。端まで行ったら折り返す。
+    fn step_indeterminate(&self) {
+        let phase = (self.phase.get() + INDETERMINATE_STEP) % 2.0;
+        self.phase.set(phase);
+        let along = if phase <= 1.0 { phase } else { 2.0 - phase };
+        let track = self.track_width.get();
+        let segment = track * INDETERMINATE_SEGMENT;
+        let _ = self.fill.SetWidth(segment);
+        let _ = self.fill.SetMargin(Thickness {
+            Left: (track - segment) * along,
+            ..Thickness::default()
+        });
     }
 }
 

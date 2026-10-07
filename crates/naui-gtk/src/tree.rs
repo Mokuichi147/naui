@@ -142,6 +142,25 @@ impl Tree {
     ///
     /// 選べない項目や無いパスを渡すと、選択は外れる。閉じた枝の中にある
     /// 項目は、見えるように祖先を開いてから選ぶ。
+    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
+    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
+    /// 無いパスなら何もしない。
+    pub fn scroll_to_item(&self, path: &[usize]) {
+        if TreeItem::at(&self.0.items.borrow(), path).is_none() {
+            return;
+        }
+        self.write_expanded(&path[..path.len().saturating_sub(1)], true);
+        let index = self.0.rows.borrow().iter().position(|row| row == path);
+        let row = index
+            .and_then(|index| i32::try_from(index).ok())
+            .and_then(|index| self.0.native.row_at_index(index));
+        if let Some(row) = row {
+            crate::list::reveal_widget(&self.0._scroller, &row, true);
+        }
+    }
+
     pub fn set_selected(&self, path: &[usize]) {
         self.write_selected(path);
     }

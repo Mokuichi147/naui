@@ -48,3 +48,11 @@ fn grab_first(widget: &gtk::Widget) -> bool {
 pub(crate) fn set_tooltip(widget: &gtk::Widget, text: Option<&str>) {
     widget.set_tooltip_text(text);
 }
+
+/// 読み上げソフトに伝える名前 (`GTK_ACCESSIBLE_PROPERTY_LABEL`)。`None` で外す。
+pub(crate) fn set_accessible_label(widget: &gtk::Widget, text: Option<&str>) {
+    match text {
+        Some(text) => widget.update_property(&[gtk::accessible::Property::Label(text)]),
+        None => widget.reset_property(gtk::AccessibleProperty::Label),
+    }
+}
