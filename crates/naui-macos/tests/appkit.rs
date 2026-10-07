@@ -365,6 +365,28 @@ fn main() {
             window_key_down_gets_what_the_widget_left,
         ),
         (
+            "タイマーがメインループで呼ばれ、止められる",
+            timers_fire_on_the_main_loop,
+        ),
+        (
+            "不確定の進捗は値を覚えたまま動きに切り替わる",
+            progress_bar_switches_to_indeterminate,
+        ),
+        ("ラベルを選べるようにできる", label_can_be_selectable),
+        (
+            "クリップボードへ書いた文字を読み戻せる",
+            clipboard_round_trips_text,
+        ),
+        ("URL として読めないものは開かない", open_url_rejects_garbage),
+        (
+            "ウィンドウの大きさを読み、変わったら通知する",
+            window_reports_its_size,
+        ),
+        (
+            "閉じる確認で KeepOpen を返すと閉じない",
+            window_close_request_can_keep_it_open,
+        ),
+        (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
         ),
@@ -3470,6 +3492,164 @@ fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
         vec![naui_core::Key::Character('x'), naui_core::Key::Escape]
     );
     window.close();
+    Ok(())
+}
+
+fn timers_fire_on_the_main_loop(ui: &Ui) -> Result<()> {
+    let tasks = ui.tasks();
+    let once = Rc::new(Cell::new(0));
+    tasks.after(Duration::from_millis(20), {
+        let once = once.clone();
+        move || once.set(once.get() + 1)
+    });
+    let ticks = Rc::new(Cell::new(0));
+    let handle: Rc<RefCell<Option<naui_core::Timer>>> = Rc::default();
+    let timer = tasks.every(Duration::from_millis(10), {
+        let ticks = ticks.clone();
+        let handle = handle.clone();
+        move || {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() == 3 {
+                if let Some(timer) = handle.borrow().as_ref() {
+                    timer.cancel();
+                }
+            }
+        }
+    });
+    *handle.borrow_mut() = Some(timer.clone());
+    let cancelled = Rc::new(Cell::new(false));
+    tasks
+        .after(Duration::from_millis(10), {
+            let cancelled = cancelled.clone();
+            move || cancelled.set(true)
+        })
+        .cancel();
+    assert_eq!(once.get(), 0, "その場では呼ばない");
+    pump_until(2.0, || once.get() == 1 && !timer.is_active());
+    assert_eq!(once.get(), 1);
+    assert_eq!(ticks.get(), 3, "3 回目で止めた");
+    pump(0.05);
+    assert_eq!(ticks.get(), 3, "止めた後は呼ばれない");
+    assert!(!cancelled.get(), "cancel したものは呼ばれない");
+    Ok(())
+}
+
+fn progress_bar_switches_to_indeterminate(ui: &Ui) -> Result<()> {
+    let progress = ui.progress_bar()?;
+    progress.set_value(0.4);
+    progress.set_indeterminate(true);
+    assert!(progress.is_indeterminate());
+    let native = progress
+        .native_view()
+        .downcast::<objc2_app_kit::NSProgressIndicator>()
+        .expect("NSProgressIndicator");
+    assert!(native.isIndeterminate());
+    progress.set_value(0.7);
+    progress.set_indeterminate(false);
+    assert!(!native.isIndeterminate());
+    assert_eq!(progress.value(), 0.7, "不確定の間に置いた値が出る");
+    Ok(())
+}
+
+fn label_can_be_selectable(ui: &Ui) -> Result<()> {
+    let label = ui.label("コピーできる文字")?;
+    assert!(!label.is_selectable(), "既定は選べない");
+    label.set_selectable(true);
+    let native = label
+        .native_view()
+        .downcast::<NSTextField>()
+        .expect("NSTextField");
+    assert!(native.isSelectable());
+    assert!(!native.isEditable(), "選べても書き換えられない");
+    Ok(())
+}
+
+fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    // 利用者のクリップボードを書き換えるので、終わったら戻す。
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let saved = pasteboard
+        .stringForType(unsafe { NSPasteboardTypeString })
+        .map(|text| text.to_string());
+
+    let clipboard = ui.clipboard();
+    clipboard.set_text("naui のテスト ✂")?;
+    let read = Rc::new(RefCell::new(None));
+    clipboard.read_text({
+        let read = read.clone();
+        move |text| *read.borrow_mut() = Some(text)
+    });
+    assert!(read.borrow().is_none(), "その場では呼ばない");
+    pump_until(2.0, || read.borrow().is_some());
+    let got = read.borrow().clone();
+
+    pasteboard.clearContents();
+    if let Some(saved) = saved {
+        pasteboard.setString_forType(&NSString::from_str(&saved), unsafe {
+            NSPasteboardTypeString
+        });
+    }
+    assert_eq!(got, Some(Some("naui のテスト ✂".to_string())));
+    Ok(())
+}
+
+fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
+    assert!(ui.open_url("").is_err());
+    Ok(())
+}
+
+fn window_reports_its_size(ui: &Ui) -> Result<()> {
+    let window = ui.window("大きさ", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    assert_eq!(window.size(), (320.0, 200.0));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_resize({
+        let seen = seen.clone();
+        move |size| seen.borrow_mut().push(size)
+    });
+    window.show();
+    window.set_size(400.0, 260.0);
+    pump_until(1.0, || !seen.borrow().is_empty());
+    assert_eq!(window.size(), (400.0, 260.0));
+    assert_eq!(seen.borrow().last(), Some(&(400.0, 260.0)));
+    window.close();
+    Ok(())
+}
+
+fn window_close_request_can_keep_it_open(ui: &Ui) -> Result<()> {
+    let window = ui.window("閉じる確認", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    let asked = Rc::new(Cell::new(0));
+    let keep = Rc::new(Cell::new(true));
+    window.on_close_request({
+        let asked = asked.clone();
+        let keep = keep.clone();
+        move || {
+            asked.set(asked.get() + 1);
+            if keep.get() {
+                naui_core::CloseResponse::KeepOpen
+            } else {
+                naui_core::CloseResponse::Close
+            }
+        }
+    });
+    let native = window.native_window();
+    // タイトルバーの閉じるボタンと同じ経路 (`performClose:`)。
+    native.performClose(None);
+    assert_eq!(asked.get(), 1);
+    assert!(window.is_visible(), "KeepOpen なら閉じない");
+    keep.set(false);
+    native.performClose(None);
+    assert_eq!(asked.get(), 2);
+    assert!(!window.is_visible(), "Close なら閉じる");
+
+    // プログラムからの close は確かめない。
+    window.show();
+    keep.set(true);
+    window.close();
+    assert_eq!(asked.get(), 2);
+    assert!(!window.is_visible());
     Ok(())
 }
 

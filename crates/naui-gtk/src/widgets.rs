@@ -151,6 +151,18 @@ impl Label {
         self.0.native.set_text(text);
     }
 
+    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    ///
+    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
+    /// 入力欄と違い、文字は書き換えられない。
+    pub fn set_selectable(&self, selectable: bool) {
+        self.0.native.set_selectable(selectable);
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.0.native.is_selectable()
+    }
+
     /// 長い文字列を折り返すかどうか。既定は折り返さない。
     ///
     /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
@@ -699,7 +711,22 @@ impl Slider {
 struct ProgressInner {
     native: gtk::ProgressBar,
     bin: SizeBin,
+    /// 置かれた値。不確定の間は `fraction` を `pulse` が動かすので、別に持つ。
+    value: Cell<f64>,
+    /// 不確定の間、`pulse` を回すタイマー。
+    pulse: RefCell<Option<glib::SourceId>>,
 }
+
+impl Drop for ProgressInner {
+    fn drop(&mut self) {
+        if let Some(source) = self.pulse.borrow_mut().take() {
+            source.remove();
+        }
+    }
+}
+
+/// 不確定の進捗を動かす間隔。GNOME のアプリが `pulse` を呼ぶ間隔に合わせる。
+const PULSE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// 進捗バー (`GtkProgressBar`)。
 #[derive(Clone)]
@@ -711,16 +738,59 @@ impl ProgressBar {
         let native = gtk::ProgressBar::new();
         native.set_fraction(0.0);
         let bin = SizeBin::wrap(&native);
-        Self(Rc::new(ProgressInner { native, bin }))
+        Self(Rc::new(ProgressInner {
+            native,
+            bin,
+            value: Cell::new(0.0),
+            pulse: RefCell::new(None),
+        }))
     }
 
     /// 0.0..=1.0。
     pub fn set_value(&self, value: f64) {
-        self.0.native.set_fraction(value.clamp(0.0, 1.0));
+        let value = value.clamp(0.0, 1.0);
+        self.0.value.set(value);
+        if !self.is_indeterminate() {
+            self.0.native.set_fraction(value);
+        }
     }
 
     pub fn value(&self) -> f64 {
-        self.0.native.fraction()
+        self.0.value.get()
+    }
+
+    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    ///
+    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
+    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    ///
+    /// GTK4 の進捗バーは `pulse` を呼ぶたびに動くので、その間は一定の間隔で
+    /// 呼び続ける。
+    pub fn set_indeterminate(&self, indeterminate: bool) {
+        if self.is_indeterminate() == indeterminate {
+            return;
+        }
+        if indeterminate {
+            let weak = Rc::downgrade(&self.0);
+            let source = glib::timeout_add_local(PULSE_INTERVAL, move || {
+                let Some(inner) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                inner.native.pulse();
+                glib::ControlFlow::Continue
+            });
+            *self.0.pulse.borrow_mut() = Some(source);
+            self.0.native.pulse();
+        } else {
+            if let Some(source) = self.0.pulse.borrow_mut().take() {
+                source.remove();
+            }
+            self.0.native.set_fraction(self.0.value.get());
+        }
+    }
+
+    pub fn is_indeterminate(&self) -> bool {
+        self.0.pulse.borrow().is_some()
     }
 }
 

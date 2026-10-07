@@ -158,6 +158,18 @@ impl Label {
         crate::layout::invalidate_ancestors(&self.0.native);
     }
 
+    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    ///
+    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
+    /// 入力欄と違い、文字は書き換えられない。
+    pub fn set_selectable(&self, selectable: bool) {
+        self.0.native.setSelectable(selectable);
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.0.native.isSelectable()
+    }
+
     /// 長い文字列を折り返すかどうか。既定は折り返さない。
     ///
     /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
@@ -886,6 +898,27 @@ impl ProgressBar {
 
     pub fn value(&self) -> f64 {
         self.0.native.doubleValue()
+    }
+
+    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    ///
+    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
+    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    pub fn set_indeterminate(&self, indeterminate: bool) {
+        let native = &self.0.native;
+        if native.isIndeterminate() == indeterminate {
+            return;
+        }
+        native.setIndeterminate(indeterminate);
+        if indeterminate {
+            unsafe { native.startAnimation(None) };
+        } else {
+            unsafe { native.stopAnimation(None) };
+        }
+    }
+
+    pub fn is_indeterminate(&self) -> bool {
+        self.0.native.isIndeterminate()
     }
 }
 

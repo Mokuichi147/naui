@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod canvas;
+mod clipboard;
 mod color_picker;
 mod combo_box;
 mod date_picker;
@@ -57,6 +58,7 @@ use web_sys::{Document, HtmlElement};
 pub use wasm_bindgen;
 
 pub use canvas::Canvas;
+pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
@@ -421,6 +423,28 @@ impl Ui {
     /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
     pub fn tasks(&self) -> Tasks {
         self.0.tasks.clone()
+    }
+
+    /// クリップボード。文字の読み書きができる。
+    pub fn clipboard(&self) -> Clipboard {
+        Clipboard
+    }
+
+    /// URL を既定のアプリ (`https:` ならブラウザ、`mailto:` ならメール) で開く。
+    ///
+    /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
+    /// 読めない・開く先が無いときは `Err`。開いた先で起きた失敗は分からない。
+    ///
+    /// Web では別タブで開く (`window.open` に `noopener` を付ける)。ブラウザは
+    /// 利用者の操作 (クリックなど) の中でしか新しいタブを開かないので、
+    /// ボタンの `on_click` などから呼ぶ。
+    pub fn open_url(&self, url: &str) -> Result<()> {
+        let window =
+            web_sys::window().ok_or_else(|| Error::new("URL を開く", "window がありません"))?;
+        window
+            .open_with_url_and_target_and_features(url, "_blank", "noopener")
+            .map(|_| ())
+            .map_err(|e| to_error("URL を開く", e))
     }
 
     /// ブラウザではアプリを終了する概念が無いため、何もしない。

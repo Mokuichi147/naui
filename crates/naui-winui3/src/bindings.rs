@@ -18924,6 +18924,16 @@ pub mod Microsoft {
                 fn SetExtendsContentIntoTitleBar(&self, value: bool) -> windows_core::Result<()>;
                 fn RemoveActivated(&self, token: i64) -> windows_core::Result<()>;
                 fn RemoveClosed(&self, token: i64) -> windows_core::Result<()>;
+                fn SizeChanged(
+                    &self,
+                    handler: windows_core::Ref<
+                        '_,
+                        windows::Foundation::TypedEventHandler<
+                            windows_core::IInspectable,
+                            WindowSizeChangedEventArgs,
+                        >,
+                    >,
+                ) -> windows_core::Result<i64>;
                 fn RemoveSizeChanged(&self, token: i64) -> windows_core::Result<()>;
                 fn RemoveVisibilityChanged(&self, token: i64) -> windows_core::Result<()>;
                 fn Activate(&self) -> windows_core::Result<()>;
@@ -19154,6 +19164,29 @@ pub mod Microsoft {
                             IWindow_Impl::RemoveClosed(this, token).into()
                         }
                     }
+                    unsafe extern "system" fn SizeChanged<
+                        Identity: IWindow_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        handler: *mut core::ffi::c_void,
+                        result__: *mut i64,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IWindow_Impl::SizeChanged(
+                                this,
+                                core::mem::transmute_copy(&handler),
+                            ) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
                     unsafe extern "system" fn RemoveSizeChanged<
                         Identity: IWindow_Impl,
                         const OFFSET: isize,
@@ -19236,7 +19269,7 @@ pub mod Microsoft {
                         RemoveActivated: RemoveActivated::<Identity, OFFSET>,
                         Closed: 0,
                         RemoveClosed: RemoveClosed::<Identity, OFFSET>,
-                        SizeChanged: 0,
+                        SizeChanged: SizeChanged::<Identity, OFFSET>,
                         RemoveSizeChanged: RemoveSizeChanged::<Identity, OFFSET>,
                         VisibilityChanged: 0,
                         RemoveVisibilityChanged: RemoveVisibilityChanged::<Identity, OFFSET>,
@@ -19307,7 +19340,12 @@ pub mod Microsoft {
                 Closed: usize,
                 pub RemoveClosed:
                     unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
-                SizeChanged: usize,
+                pub SizeChanged: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                    *mut i64,
+                )
+                    -> windows_core::HRESULT,
                 pub RemoveSizeChanged:
                     unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
                 VisibilityChanged: usize,
@@ -19504,6 +19542,111 @@ pub mod Microsoft {
                     *mut *mut core::ffi::c_void,
                 )
                     -> windows_core::HRESULT,
+            }
+            windows_core::imp::define_interface!(
+                IWindowSizeChangedEventArgs,
+                IWindowSizeChangedEventArgs_Vtbl,
+                0x542f6f2c_4b64_5c72_a7a5_3a7e0664b8ff
+            );
+            impl windows_core::RuntimeType for IWindowSizeChangedEventArgs {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IWindowSizeChangedEventArgs {
+                const NAME: &'static str = "Microsoft.UI.Xaml.IWindowSizeChangedEventArgs";
+            }
+            pub trait IWindowSizeChangedEventArgs_Impl: windows_core::IUnknownImpl {
+                fn Handled(&self) -> windows_core::Result<bool>;
+                fn SetHandled(&self, value: bool) -> windows_core::Result<()>;
+                fn Size(&self) -> windows_core::Result<windows::Foundation::Size>;
+            }
+            impl IWindowSizeChangedEventArgs_Vtbl {
+                pub const fn new<
+                    Identity: IWindowSizeChangedEventArgs_Impl,
+                    const OFFSET: isize,
+                >() -> Self {
+                    unsafe extern "system" fn Handled<
+                        Identity: IWindowSizeChangedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut bool,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IWindowSizeChangedEventArgs_Impl::Handled(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetHandled<
+                        Identity: IWindowSizeChangedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: bool,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IWindowSizeChangedEventArgs_Impl::SetHandled(this, value).into()
+                        }
+                    }
+                    unsafe extern "system" fn Size<
+                        Identity: IWindowSizeChangedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut windows::Foundation::Size,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IWindowSizeChangedEventArgs_Impl::Size(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IWindowSizeChangedEventArgs,
+                            OFFSET,
+                        >(),
+                        Handled: Handled::<Identity, OFFSET>,
+                        SetHandled: SetHandled::<Identity, OFFSET>,
+                        Size: Size::<Identity, OFFSET>,
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IWindowSizeChangedEventArgs as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IWindowSizeChangedEventArgs_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
+                pub Handled: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut bool,
+                ) -> windows_core::HRESULT,
+                pub SetHandled: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    bool,
+                ) -> windows_core::HRESULT,
+                pub Size: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut windows::Foundation::Size,
+                ) -> windows_core::HRESULT,
             }
             windows_core::imp::define_interface!(
                 IWindowStatics,
@@ -23021,6 +23164,26 @@ pub mod Microsoft {
                         .ok()
                     }
                 }
+                pub fn SizeChanged<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                where
+                    P0: windows_core::Param<
+                        windows::Foundation::TypedEventHandler<
+                            windows_core::IInspectable,
+                            WindowSizeChangedEventArgs,
+                        >,
+                    >,
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).SizeChanged)(
+                            windows_core::Interface::as_raw(this),
+                            handler.param().abi(),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
                 pub fn RemoveSizeChanged(&self, token: i64) -> windows_core::Result<()> {
                     let this = self;
                     unsafe {
@@ -23157,6 +23320,63 @@ pub mod Microsoft {
             }
             unsafe impl Send for Window {}
             unsafe impl Sync for Window {}
+            #[repr(transparent)]
+            #[derive(Clone, Debug, Eq, PartialEq)]
+            pub struct WindowSizeChangedEventArgs(windows_core::IUnknown);
+            windows_core::imp::interface_hierarchy!(
+                WindowSizeChangedEventArgs,
+                windows_core::IUnknown,
+                windows_core::IInspectable
+            );
+            impl WindowSizeChangedEventArgs {
+                pub fn Handled(&self) -> windows_core::Result<bool> {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).Handled)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
+                pub fn SetHandled(&self, value: bool) -> windows_core::Result<()> {
+                    let this = self;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetHandled)(
+                            windows_core::Interface::as_raw(this),
+                            value,
+                        )
+                        .ok()
+                    }
+                }
+                pub fn Size(&self) -> windows_core::Result<windows::Foundation::Size> {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).Size)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
+            }
+            impl windows_core::RuntimeType for WindowSizeChangedEventArgs {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_class::<Self, IWindowSizeChangedEventArgs>(
+                    );
+            }
+            unsafe impl windows_core::Interface for WindowSizeChangedEventArgs {
+                type Vtable = <IWindowSizeChangedEventArgs as windows_core::Interface>::Vtable;
+                const IID: windows_core::GUID =
+                    <IWindowSizeChangedEventArgs as windows_core::Interface>::IID;
+            }
+            impl windows_core::RuntimeName for WindowSizeChangedEventArgs {
+                const NAME: &'static str = "Microsoft.UI.Xaml.WindowSizeChangedEventArgs";
+            }
+            unsafe impl Send for WindowSizeChangedEventArgs {}
+            unsafe impl Sync for WindowSizeChangedEventArgs {}
             #[repr(transparent)]
             #[derive(Clone, Debug, Eq, PartialEq)]
             pub struct XamlRoot(windows_core::IUnknown);

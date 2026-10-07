@@ -10,6 +10,7 @@
 #![allow(unsafe_code)]
 
 mod canvas;
+mod clipboard;
 mod color_picker;
 mod combo_box;
 mod date_picker;
@@ -55,6 +56,7 @@ use objc2_app_kit::{
 use objc2_foundation::NSNotification;
 
 pub use canvas::Canvas;
+pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
@@ -413,6 +415,31 @@ impl Ui {
     /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
     pub fn tasks(&self) -> Tasks {
         self.0.tasks.clone()
+    }
+
+    /// クリップボード。文字の読み書きができる。
+    pub fn clipboard(&self) -> Clipboard {
+        Clipboard::new(self.0.tasks.clone())
+    }
+
+    /// URL を既定のアプリ (`https:` ならブラウザ、`mailto:` ならメール) で開く。
+    ///
+    /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
+    /// 読めない・開く先が無いときは `Err`。開いた先で起きた失敗は分からない。
+    pub fn open_url(&self, url: &str) -> Result<()> {
+        let Some(parsed) =
+            objc2_foundation::NSURL::URLWithString(&objc2_foundation::NSString::from_str(url))
+        else {
+            return Err(Error::new(
+                "URL を開く",
+                format!("URL として読めません: {url}"),
+            ));
+        };
+        if objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(&parsed) {
+            Ok(())
+        } else {
+            Err(Error::new("URL を開く", format!("開けませんでした: {url}")))
+        }
     }
 
     /// アプリを終了する。

@@ -169,6 +169,7 @@ Microsoft.UI.Xaml.UIElement
 Microsoft.UI.Xaml.VerticalAlignment
 Microsoft.UI.Xaml.Visibility
 Microsoft.UI.Xaml.Window
+Microsoft.UI.Xaml.WindowSizeChangedEventArgs
 Microsoft.UI.Xaml.XamlRoot
 Microsoft.UI.Xaml.XamlTypeInfo.XamlControlsXamlMetaDataProvider
 Windows.UI.Xaml.Interop.TypeKind

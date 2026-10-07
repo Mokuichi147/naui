@@ -260,6 +260,25 @@ fn main() {
             "ウィジェットが Continue を返したキーだけがウィンドウへ届く",
             window_key_down_gets_what_the_widget_left,
         ),
+        ("タイマーがメインループで呼ばれ、止められる", timers_fire_on_the_main_loop),
+        (
+            "不確定の進捗は値を覚えたまま pulse に切り替わる",
+            progress_bar_switches_to_indeterminate,
+        ),
+        ("ラベルを選べるようにできる", label_can_be_selectable),
+        (
+            "クリップボードへ書いた文字を読み戻せる",
+            clipboard_round_trips_text,
+        ),
+        ("URL として読めないものは開かない", open_url_rejects_garbage),
+        (
+            "ウィンドウの大きさを読み、変わったら通知する",
+            window_reports_its_size,
+        ),
+        (
+            "閉じる確認で KeepOpen を返すと閉じない",
+            window_close_request_can_keep_it_open,
+        ),
         (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
@@ -6377,5 +6396,134 @@ fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
         vec![naui_core::Key::Character('x'), naui_core::Key::Escape]
     );
     window.close();
+    Ok(())
+}
+
+// ------------------------------------------------- アプリ向けの基本機能
+
+/// 条件が満たされるまで (上限まで) メインループを回す。
+fn spin_until(limit: std::time::Duration, mut ready: impl FnMut() -> bool) {
+    let context = glib::MainContext::default();
+    let deadline = std::time::Instant::now() + limit;
+    while !ready() && std::time::Instant::now() < deadline {
+        if !context.iteration(false) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
+
+fn timers_fire_on_the_main_loop(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let tasks = ui.tasks();
+    let once = Rc::new(Cell::new(0));
+    tasks.after(Duration::from_millis(20), {
+        let once = once.clone();
+        move || once.set(once.get() + 1)
+    });
+    let ticks = Rc::new(Cell::new(0));
+    let handle: Rc<RefCell<Option<naui_core::Timer>>> = Rc::default();
+    let timer = tasks.every(Duration::from_millis(10), {
+        let ticks = ticks.clone();
+        let handle = handle.clone();
+        move || {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() == 3 {
+                if let Some(timer) = handle.borrow().as_ref() {
+                    timer.cancel();
+                }
+            }
+        }
+    });
+    *handle.borrow_mut() = Some(timer.clone());
+    assert_eq!(once.get(), 0, "その場では呼ばない");
+    spin_until(Duration::from_secs(2), || {
+        once.get() == 1 && !timer.is_active()
+    });
+    assert_eq!(once.get(), 1);
+    assert_eq!(ticks.get(), 3, "3 回目で止めた");
+    Ok(())
+}
+
+fn progress_bar_switches_to_indeterminate(ui: &Ui) -> Result<()> {
+    let progress = ui.progress_bar()?;
+    progress.set_value(0.4);
+    progress.set_indeterminate(true);
+    assert!(progress.is_indeterminate());
+    progress.set_value(0.7);
+    progress.set_indeterminate(false);
+    assert!(!progress.is_indeterminate());
+    let native: gtk::ProgressBar = progress.native_widget().downcast().expect("GtkProgressBar");
+    assert_eq!(native.fraction(), 0.7, "不確定の間に置いた値が出る");
+    Ok(())
+}
+
+fn label_can_be_selectable(ui: &Ui) -> Result<()> {
+    let label = ui.label("コピーできる文字")?;
+    assert!(!label.is_selectable(), "既定は選べない");
+    label.set_selectable(true);
+    let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
+    assert!(native.is_selectable());
+    Ok(())
+}
+
+fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
+    let clipboard = ui.clipboard();
+    clipboard.set_text("naui のテスト ✂")?;
+    let read = Rc::new(RefCell::new(None));
+    clipboard.read_text({
+        let read = read.clone();
+        move |text| *read.borrow_mut() = Some(text)
+    });
+    assert!(read.borrow().is_none(), "その場では呼ばない");
+    spin_until(std::time::Duration::from_secs(2), || {
+        read.borrow().is_some()
+    });
+    assert_eq!(*read.borrow(), Some(Some("naui のテスト ✂".to_string())));
+    Ok(())
+}
+
+fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
+    assert!(ui.open_url("これは URL ではない").is_err());
+    Ok(())
+}
+
+fn window_reports_its_size(ui: &Ui) -> Result<()> {
+    let window = ui.window("大きさ", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    assert_eq!(window.size(), (320.0, 200.0), "表示前は指定した大きさ");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_resize({
+        let seen = seen.clone();
+        move |size| seen.borrow_mut().push(size)
+    });
+    window.set_size(400.0, 260.0);
+    spin_until(std::time::Duration::from_secs(1), || {
+        !seen.borrow().is_empty()
+    });
+    assert!(!seen.borrow().is_empty(), "大きさの変化が届く");
+    window.close();
+    Ok(())
+}
+
+fn window_close_request_can_keep_it_open(ui: &Ui) -> Result<()> {
+    let window = ui.window("閉じる確認", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    let asked = Rc::new(Cell::new(0));
+    window.on_close_request({
+        let asked = asked.clone();
+        move || {
+            asked.set(asked.get() + 1);
+            naui_core::CloseResponse::KeepOpen
+        }
+    });
+    // タイトルバーの閉じるボタンと同じく `close-request` を起こす。
+    let stopped: bool = window.native_window().emit_by_name("close-request", &[]);
+    assert!(stopped, "KeepOpen なら止める");
+    assert_eq!(asked.get(), 1);
+
+    // プログラムからの close は確かめない。
+    window.close();
+    assert_eq!(asked.get(), 1);
     Ok(())
 }

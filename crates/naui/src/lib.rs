@@ -354,6 +354,64 @@
 //! 違う** (macOS はショートカットより先に届き、ほかの環境では後になることが
 //! ある)。同じキーをショートカットと `on_key_down` の両方に割り当てない。
 //!
+//! ## 処理中の表示と、選べるラベル
+//!
+//! 終わりの見えない処理 (通信の応答待ちなど) は、[`ProgressBar`] を
+//! [`set_indeterminate(true)`](ProgressBar::set_indeterminate) にして動きで示す。
+//! 戻すと [`set_value`](ProgressBar::set_value) で置いた値の表示に戻る。
+//!
+//! [`Label::set_selectable`] を `true` にすると、文字を選んでコピーできる
+//! (書き換えはできない)。チャットの発言やエラーの詳細のように、読む人が
+//! 写し取りたい文字に使う。既定は 4 環境とも選べない (Web だけはブラウザの
+//! 既定が「選べる」なので、naui が `user-select: none` でそろえている)。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 不確定の進捗 | 前景の帯を往復させる (※) | `NSProgressIndicator` の `indeterminate` | `gtk_progress_bar_pulse` を一定間隔で | `value` 属性の無い `<progress>` |
+//! | 選べるラベル | `IsTextSelectionEnabled` | `selectable` | `gtk_label_set_selectable` | `user-select` |
+//!
+//! ※ WinUI の `ProgressBar` は未パッケージ起動でテンプレートを当てると落ちる
+//! ため、naui は同じテーマ資源で組んだ帯を使っている。
+//!
+//! ## ウィンドウを閉じる前の確認と大きさ
+//!
+//! [`Window::on_close_request`] は、利用者が閉じようとしたときに呼ばれる。
+//! [`CloseResponse::KeepOpen`] を返すと閉じない。プログラムからの
+//! [`Window::close`] では呼ばれない。
+//!
+//! ```no_run
+//! # use std::cell::Cell;
+//! # use std::rc::Rc;
+//! # use naui::{CloseResponse, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let window = ui.window("エディタ", 640.0, 480.0)?;
+//! let dirty = Rc::new(Cell::new(true));
+//! window.on_close_request(move || {
+//!     if dirty.get() {
+//!         // ここで保存の確認のダイアログを出し、答えを見て `close` する。
+//!         CloseResponse::KeepOpen
+//!     } else {
+//!         CloseResponse::Close
+//!     }
+//! });
+//! window.on_resize(|(width, _height)| println!("幅 {width}"));
+//! let (_width, _height) = window.size();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`Window::size`] はタイトルバーを除いた中身の大きさで、
+//! [`Window::on_resize`] は大きさが変わるたびに変わった後の大きさで呼ばれる
+//! (`set_size` で変えたときも呼ばれる)。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 閉じる前の確認 | `AppWindow.Closing` (`Cancel`) | `windowShouldClose:` | `close-request` | (呼ばれない) |
+//! | 大きさの変化 | `Window.SizeChanged` | `windowDidResize:` | `default-width` / `default-height` | `ResizeObserver` |
+//!
+//! **Web では閉じる前の確認は呼ばれない。** ページの中のウィンドウを利用者が
+//! 閉じる操作が無く、タブを閉じるときに独自の確認を出す手段も無いため。
+//!
 //! ## 折りたたみ
 //!
 //! ふだんは隠しておき、見出しを押したときだけ見せたいものは [`Expander`] へ
@@ -1712,6 +1770,77 @@
 //! 4 環境そろえてこの形にしてある)。panic の内容そのものは、いつもどおり
 //! 標準エラー出力へ出る。
 //!
+//! ### タイマー
+//!
+//! 時間を置いて呼ぶときは [`Tasks::after`]、一定の間隔で呼ぶときは
+//! [`Tasks::every`]、future の中で待つときは [`Tasks::sleep`] を使う。
+//! どれも UI スレッドで呼ばれるので、中でウィジェットを触ってよい。
+//!
+//! ```no_run
+//! # use std::cell::RefCell;
+//! # use std::rc::Rc;
+//! # use std::time::Duration;
+//! # use naui::{Result, Timer, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! // 打ち終わって 300 ms たったら検索する (デバウンス)。
+//! let search = ui.search_input()?;
+//! let pending: Rc<RefCell<Option<Timer>>> = Rc::default();
+//! search.on_change({
+//!     let tasks = ui.tasks();
+//!     move |text: &str| {
+//!         if let Some(timer) = pending.borrow_mut().take() {
+//!             timer.cancel();
+//!         }
+//!         let text = text.to_string();
+//!         *pending.borrow_mut() =
+//!             Some(tasks.after(Duration::from_millis(300), move || println!("検索: {text}")));
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`Timer`] は [`Task`] と同じく**落としても止まらない**。止めるときは
+//! [`Timer::cancel`] を呼ぶ (`every` のコールバックの中から呼んでもよい)。
+//! `every` の次の呼び出しは前の呼び出しが終わってから数える。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 待つ仕組み | `DispatcherQueueTimer` | `dispatch_after` (main queue) | `g_timeout_add` | `setTimeout` |
+//!
+//! ## クリップボードと URL
+//!
+//! [`Ui::clipboard`] で文字を読み書きでき、[`Ui::open_url`] は URL を既定の
+//! アプリ (ブラウザやメール) で開く。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let copy = ui.button("コピー")?;
+//! copy.on_click({
+//!     let clipboard = ui.clipboard();
+//!     move || {
+//!         let _ = clipboard.set_text("共有したい文字");
+//!     }
+//! });
+//! ui.clipboard().read_text(|text| println!("貼り付け: {text:?}"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! 読むほうは環境によって非同期なので、**4 環境とも結果をコールバックで
+//! 返す** (その場では呼ばない)。文字が入っていなければ `None`。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | クリップボード | `Windows.ApplicationModel.DataTransfer.Clipboard` | `NSPasteboard` | `GdkClipboard` | `navigator.clipboard` |
+//! | `open_url` | `ShellExecuteW` | `NSWorkspace` | `GtkUriLauncher` | `window.open` (別タブ) |
+//!
+//! Web の Clipboard API は https (か localhost) でしか使えず、読むときは
+//! 利用者に許可を求められることがある。書き込みと `open_url` は、ブラウザが
+//! 利用者の操作 (クリックなど) の中でしか許さないことがあるので、ボタンの
+//! `on_click` などから呼ぶ。
+//!
 //! ## 検証状況
 //!
 //! | 環境 | 状態 |
@@ -1725,42 +1854,43 @@
 
 pub use naui_core::{
     accept_attribute, clamp_split_position, days_in_month, default_extension, is_leap_year, media,
-    with_default_extension, Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
-    DrawCommand, Error, EventResponse, FileEntry, FileFilter, FilePickerMode, Fit, GridCell, Key,
-    KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, Modifiers, NavItem, NumberSpec,
-    Orientation, Padding, Painter, Path, PathSegment, PlaybackState, Point, PointerEvent,
-    PointerPhase, PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy, SelectionMode, Sender,
-    Settings, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, Task, Tasks,
-    TextColor, TextStyle, Theme, Time, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
+    with_default_extension, Align, CloseResponse, Color, DatePickerMode, DateTime, DialogButtons,
+    DialogResponse, DrawCommand, Error, EventResponse, FileEntry, FileFilter, FilePickerMode, Fit,
+    GridCell, Key, KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, Modifiers,
+    NavItem, NumberSpec, Orientation, Padding, Painter, Path, PathSegment, PlaybackState, Point,
+    PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy,
+    SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep, SortOrder,
+    TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer, ToastSpec,
+    ToolbarIcon, ToolbarItem, Track, TreeItem, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION,
+    ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos::{
-    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
-    Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
-    ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView, Stack, Table, TableCells,
-    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
-    Widget, Window,
+    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox,
+    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image,
+    Label, Link, List, ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput,
+    PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView,
+    Stack, Table, TableCells, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree,
+    Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(target_arch = "wasm32")]
 pub use naui_web::{
-    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
-    Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
-    ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView, Stack, Table, TableCells,
-    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
-    Widget, Window,
+    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox,
+    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image,
+    Label, Link, List, ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput,
+    PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView,
+    Stack, Table, TableCells, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree,
+    Ui, Video, WeakWindow, Widget, Window,
 };
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows::{
-    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
-    Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
-    ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView, Stack, Table, TableCells,
-    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
-    Widget, Window,
+    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox,
+    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image,
+    Label, Link, List, ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput,
+    PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView,
+    Stack, Table, TableCells, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree,
+    Ui, Video, WeakWindow, Widget, Window,
 };
 
 #[cfg(all(
@@ -1769,12 +1899,12 @@ pub use naui_windows::{
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk::{
-    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, ColorPicker, ComboBox, DatePicker, Dialog,
-    Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link, List,
-    ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView, Stack, Table, TableCells,
-    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Ui, Video, WeakWindow,
-    Widget, Window,
+    run, Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox,
+    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image,
+    Label, Link, List, ListRow, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput,
+    PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView,
+    Stack, Table, TableCells, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree,
+    Ui, Video, WeakWindow, Widget, Window,
 };
 
 /// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
@@ -1846,6 +1976,9 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: bool = window.is_visible();
     window.set_theme(Theme::Dark)?;
     window.on_key_down(|_event: &KeyEvent| EventResponse::Handled);
+    window.on_close_request(|| CloseResponse::KeepOpen);
+    let _: (f64, f64) = window.size();
+    window.on_resize(|(_width, _height): (f64, f64)| {});
     let weak_window = window.downgrade();
     let _: Option<Window> = weak_window.upgrade();
 
@@ -1915,6 +2048,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     label.set_wrap(true);
     label.set_style(TextStyle::Title);
     label.set_color(TextColor::Danger);
+    label.set_selectable(true);
+    let _: bool = label.is_selectable();
 
     let button: Button = ui.button("t")?;
     button.set_text("t");
@@ -2135,6 +2270,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let progress: ProgressBar = ui.progress_bar()?;
     let _: f64 = progress.value();
     progress.set_value(0.5);
+    progress.set_indeterminate(true);
+    let _: bool = progress.is_indeterminate();
 
     // --- ナビゲーション ---------------------------------------------------
     let items = [NavItem::new("t"), NavItem::new("t").enabled(false)];
@@ -2542,6 +2679,17 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let task: Task = tasks.spawn(async {});
     let _: bool = task.is_finished();
     task.cancel();
+
+    let timer: Timer = tasks.after(std::time::Duration::from_millis(1), || {});
+    let _: bool = timer.is_active();
+    timer.cancel();
+    let _: Timer = tasks.every(std::time::Duration::from_secs(1), || {});
+    let _: Sleep = tasks.sleep(std::time::Duration::from_millis(1));
+
+    let clipboard: Clipboard = ui.clipboard();
+    let _: Result<()> = clipboard.set_text("t");
+    clipboard.read_text(|_text: Option<String>| {});
+    let _: Result<()> = ui.open_url("https://example.com/");
 
     ui.quit();
     Ok(())

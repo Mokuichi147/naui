@@ -122,6 +122,7 @@
 mod bin;
 mod callback;
 mod canvas;
+mod clipboard;
 mod color_picker;
 mod combo_box;
 mod date_picker;
@@ -163,6 +164,7 @@ use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, The
 
 pub use bin::SizeBin;
 pub use canvas::Canvas;
+pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
@@ -529,6 +531,30 @@ impl Ui {
     /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
     pub fn tasks(&self) -> Tasks {
         self.0.tasks.clone()
+    }
+
+    /// クリップボード。文字の読み書きができる。
+    pub fn clipboard(&self) -> Clipboard {
+        Clipboard
+    }
+
+    /// URL を既定のアプリ (`https:` ならブラウザ、`mailto:` ならメール) で開く。
+    ///
+    /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
+    /// 読めない・開く先が無いときは `Err`。開いた先で起きた失敗は分からない。
+    ///
+    /// GTK4 は開く処理を非同期で行う (`GtkUriLauncher`) ので、ここで返るのは
+    /// URL として読めたかどうかだけ。
+    pub fn open_url(&self, url: &str) -> Result<()> {
+        if gtk::glib::Uri::parse(url, gtk::glib::UriFlags::NONE).is_err() {
+            return Err(Error::new(
+                "URL を開く",
+                format!("URL として読めません: {url}"),
+            ));
+        }
+        let parent = self.0.app.active_window();
+        gtk::UriLauncher::new(url).launch(parent.as_ref(), None::<&gtk::gio::Cancellable>, |_| {});
+        Ok(())
     }
 
     /// アプリを終了する。

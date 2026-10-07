@@ -3257,3 +3257,148 @@ fn window_key_down_gets_what_the_widget_left() {
         Ok(())
     });
 }
+
+// ------------------------------------------------- アプリ向けの基本機能
+
+/// `millis` だけ待つ (ブラウザの `setTimeout`)。
+async fn wait_millis(millis: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        web_sys::window()
+            .expect("window")
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis)
+            .expect("setTimeout");
+    });
+    wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .expect("待ち");
+}
+
+#[wasm_bindgen_test]
+async fn timers_fire_after_the_delay() {
+    use std::time::Duration;
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(ui.tasks());
+        Ok(())
+    });
+    let tasks = kept.expect("tasks");
+    let once = Rc::new(Cell::new(0));
+    tasks.after(Duration::from_millis(20), {
+        let once = once.clone();
+        move || once.set(once.get() + 1)
+    });
+    let ticks = Rc::new(Cell::new(0));
+    let timer = tasks.every(Duration::from_millis(10), {
+        let ticks = ticks.clone();
+        move || ticks.set(ticks.get() + 1)
+    });
+    let cancelled = Rc::new(Cell::new(false));
+    tasks
+        .after(Duration::from_millis(10), {
+            let cancelled = cancelled.clone();
+            move || cancelled.set(true)
+        })
+        .cancel();
+    assert_eq!(once.get(), 0, "その場では呼ばない");
+    wait_millis(120).await;
+    assert_eq!(once.get(), 1);
+    assert!(ticks.get() >= 3, "繰り返し呼ばれる: {}", ticks.get());
+    timer.cancel();
+    let stopped_at = ticks.get();
+    wait_millis(50).await;
+    assert_eq!(ticks.get(), stopped_at, "止めた後は呼ばれない");
+    assert!(!cancelled.get());
+}
+
+#[wasm_bindgen_test]
+fn progress_bar_switches_to_indeterminate() {
+    with_ui(|ui| {
+        let progress = ui.progress_bar()?;
+        let _mounted = Mounted::new(&progress);
+        progress.set_value(0.4);
+        progress.set_indeterminate(true);
+        let element = progress.native_element();
+        assert!(element.matches(":indeterminate").expect("matches"));
+        progress.set_value(0.7);
+        progress.set_indeterminate(false);
+        assert!(!element.matches(":indeterminate").expect("matches"));
+        assert_eq!(progress.value(), 0.7, "不確定の間に置いた値が出る");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn label_is_not_selectable_until_asked() {
+    with_ui(|ui| {
+        let label = ui.label("コピーできる文字")?;
+        let mounted = Mounted::new(&label);
+        assert!(!label.is_selectable(), "他の環境と同じく既定は選べない");
+        let user_select = |element: &Element| {
+            let value = computed(element, "user-select");
+            if value.is_empty() {
+                computed(element, "-webkit-user-select")
+            } else {
+                value
+            }
+        };
+        assert_eq!(user_select(&mounted.0), "none");
+        label.set_selectable(true);
+        assert!(label.is_selectable());
+        assert_ne!(user_select(&mounted.0), "none");
+        Ok(())
+    });
+}
+
+/// ブラウザは利用者の操作の外ではクリップボードを読ませないことがあるので、
+/// ここでは「必ず後からコールバックが呼ばれる」ことだけを確かめる。
+#[wasm_bindgen_test]
+async fn clipboard_read_calls_back_later() {
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(ui.clipboard());
+        Ok(())
+    });
+    let clipboard = kept.expect("clipboard");
+    let called = Rc::new(Cell::new(false));
+    clipboard.read_text({
+        let called = called.clone();
+        move |_text| called.set(true)
+    });
+    assert!(!called.get(), "その場では呼ばない");
+    for _ in 0..50 {
+        if called.get() {
+            break;
+        }
+        wait_millis(20).await;
+    }
+    assert!(called.get(), "読めなくてもコールバックは呼ばれる");
+}
+
+#[wasm_bindgen_test]
+async fn window_reports_its_size() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("大きさ", 400.0, 300.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        kept = Some(window);
+        Ok(())
+    });
+    let window = kept.expect("window");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_resize({
+        let seen = seen.clone();
+        move |size| seen.borrow_mut().push(size)
+    });
+    next_frames().await;
+    let (width, height) = window.size();
+    assert!(width > 0.0 && height > 0.0, "{width} x {height}");
+    assert_eq!(
+        seen.borrow().last(),
+        Some(&(width, height)),
+        "載った直後にも届く"
+    );
+    // Web では閉じる確認は呼ばれないが、受け付けはする。
+    window.on_close_request(|| naui_core::CloseResponse::KeepOpen);
+    window.close();
+}

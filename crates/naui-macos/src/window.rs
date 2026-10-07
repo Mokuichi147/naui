@@ -3,19 +3,22 @@
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
-use naui_core::{Result, Theme};
+use naui_core::{CloseHandler, CloseResponse, Result, Theme};
 use objc2::rc::Retained;
-use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2::runtime::{NSObjectProtocol, ProtocolObject};
+use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2_app_kit::NSWindowDelegate;
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
     NSApplication, NSBackingStoreType, NSSplitViewController, NSView, NSWindow, NSWindowStyleMask,
     NSWindowTitleVisibility,
 };
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSNotification, NSObject, NSPoint, NSRect, NSSize, NSString};
 
 use crate::menu_bar::MenuBar;
 use crate::sidebar::Sidebar;
 use crate::toolbar::Toolbar;
+use crate::trampoline::ValueHandler;
 use crate::widgets::Widget;
 
 thread_local! {
@@ -41,6 +44,48 @@ struct WindowInner {
     /// 取り付けたサイドバー。`contentViewController` として強参照されるが、
     /// naui 側のハンドル (データソースと通知先) もここで生かしておく。
     sidebar: RefCell<Option<Sidebar>>,
+    on_close_request: CloseHandler,
+    on_resize: ValueHandler<(f64, f64)>,
+    /// `NSWindow` の delegate は弱参照なので、ここで生かしておく。
+    delegate: RefCell<Option<Retained<WindowDelegate>>>,
+}
+
+define_class!(
+    /// 利用者が閉じようとしたことと、大きさの変化を受け取る。
+    ///
+    /// `NSWindow::close` (naui の [`Window::close`]) は `windowShouldClose:`
+    /// を通らないので、確認はタイトルバーのボタンや ⌘W のときだけ起きる。
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiWindowDelegate"]
+    #[ivars = Weak<WindowInner>]
+    struct WindowDelegate;
+
+    unsafe impl NSObjectProtocol for WindowDelegate {}
+
+    unsafe impl NSWindowDelegate for WindowDelegate {
+        #[unsafe(method(windowShouldClose:))]
+        fn window_should_close(&self, _sender: &NSWindow) -> bool {
+            self.ivars()
+                .upgrade()
+                .is_none_or(|inner| inner.on_close_request.ask() == CloseResponse::Close)
+        }
+
+        #[unsafe(method(windowDidResize:))]
+        fn window_did_resize(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                let size = Window(inner.clone()).size();
+                inner.on_resize.emit(size);
+            }
+        }
+    }
+);
+
+impl WindowDelegate {
+    fn new(mtm: MainThreadMarker, inner: Weak<WindowInner>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(inner);
+        unsafe { msg_send![super(this), init] }
+    }
 }
 
 /// トップレベルウィンドウ (NSWindow)。
@@ -85,13 +130,46 @@ impl Window {
 
         WINDOWS.with(|slot| slot.borrow_mut().push(native.clone()));
 
-        Self(Rc::new(WindowInner {
+        let this = Self(Rc::new(WindowInner {
             native,
             child: RefCell::new(None),
             toolbar: RefCell::new(None),
             menu_bar: RefCell::new(None),
             sidebar: RefCell::new(None),
-        }))
+            on_close_request: CloseHandler::default(),
+            on_resize: ValueHandler::default(),
+            delegate: RefCell::new(None),
+        }));
+        let delegate = WindowDelegate::new(mtm, Rc::downgrade(&this.0));
+        this.0
+            .native
+            .setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        *this.0.delegate.borrow_mut() = Some(delegate);
+        this
+    }
+
+    /// 利用者がウィンドウを閉じようとしたときの確認。
+    ///
+    /// [`CloseResponse::KeepOpen`] を返すと閉じない (保存していない変更が
+    /// あるときに確認のダイアログを出す、など)。プログラムからの
+    /// [`close`](Self::close) では呼ばれない。
+    pub fn on_close_request(&self, f: impl FnMut() -> CloseResponse + 'static) {
+        self.0.on_close_request.set(f);
+    }
+
+    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル。タイトルバーは含まない。
+    pub fn size(&self) -> (f64, f64) {
+        let size = self
+            .0
+            .native
+            .contentView()
+            .map_or(NSSize::new(0.0, 0.0), |view| view.frame().size);
+        (size.width, size.height)
+    }
+
+    /// 大きさが変わったときの通知。変わった後の [`size`](Self::size) が届く。
+    pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
+        self.0.on_resize.set(f);
     }
 
     /// このウィンドウの中で押されたキーの通知。
