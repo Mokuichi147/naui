@@ -137722,8 +137722,28 @@ pub mod Microsoft {
                     fn RemoveSelectionChanged(&self, token: i64) -> windows_core::Result<()>;
                     fn RemoveContextMenuOpening(&self, token: i64) -> windows_core::Result<()>;
                     fn RemovePaste(&self, token: i64) -> windows_core::Result<()>;
+                    fn TextCompositionStarted(
+                        &self,
+                        handler: windows_core::Ref<
+                            '_,
+                            windows::Foundation::TypedEventHandler<
+                                TextBox,
+                                TextCompositionStartedEventArgs,
+                            >,
+                        >,
+                    ) -> windows_core::Result<i64>;
                     fn RemoveTextCompositionStarted(&self, token: i64) -> windows_core::Result<()>;
                     fn RemoveTextCompositionChanged(&self, token: i64) -> windows_core::Result<()>;
+                    fn TextCompositionEnded(
+                        &self,
+                        handler: windows_core::Ref<
+                            '_,
+                            windows::Foundation::TypedEventHandler<
+                                TextBox,
+                                TextCompositionEndedEventArgs,
+                            >,
+                        >,
+                    ) -> windows_core::Result<i64>;
                     fn RemoveTextCompositionEnded(&self, token: i64) -> windows_core::Result<()>;
                     fn RemoveCopyingToClipboard(&self, token: i64) -> windows_core::Result<()>;
                     fn RemoveCuttingToClipboard(&self, token: i64) -> windows_core::Result<()>;
@@ -138680,6 +138700,29 @@ pub mod Microsoft {
                                 ITextBox_Impl::RemovePaste(this, token).into()
                             }
                         }
+                        unsafe extern "system" fn TextCompositionStarted<
+                            Identity: ITextBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITextBox_Impl::TextCompositionStarted(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
                         unsafe extern "system" fn RemoveTextCompositionStarted<
                             Identity: ITextBox_Impl,
                             const OFFSET: isize,
@@ -138704,6 +138747,29 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 ITextBox_Impl::RemoveTextCompositionChanged(this, token).into()
+                            }
+                        }
+                        unsafe extern "system" fn TextCompositionEnded<
+                            Identity: ITextBox_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITextBox_Impl::TextCompositionEnded(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
                             }
                         }
                         unsafe extern "system" fn RemoveTextCompositionEnded<
@@ -139020,7 +139086,7 @@ pub mod Microsoft {
                             RemoveContextMenuOpening: RemoveContextMenuOpening::<Identity, OFFSET>,
                             Paste: 0,
                             RemovePaste: RemovePaste::<Identity, OFFSET>,
-                            TextCompositionStarted: 0,
+                            TextCompositionStarted: TextCompositionStarted::<Identity, OFFSET>,
                             RemoveTextCompositionStarted: RemoveTextCompositionStarted::<
                                 Identity,
                                 OFFSET,
@@ -139030,7 +139096,7 @@ pub mod Microsoft {
                                 Identity,
                                 OFFSET,
                             >,
-                            TextCompositionEnded: 0,
+                            TextCompositionEnded: TextCompositionEnded::<Identity, OFFSET>,
                             RemoveTextCompositionEnded: RemoveTextCompositionEnded::<
                                 Identity,
                                 OFFSET,
@@ -139355,7 +139421,12 @@ pub mod Microsoft {
                         i64,
                     )
                         -> windows_core::HRESULT,
-                    TextCompositionStarted: usize,
+                    pub TextCompositionStarted: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
                     pub RemoveTextCompositionStarted:
                         unsafe extern "system" fn(
                             *mut core::ffi::c_void,
@@ -139367,7 +139438,12 @@ pub mod Microsoft {
                             *mut core::ffi::c_void,
                             i64,
                         ) -> windows_core::HRESULT,
-                    TextCompositionEnded: usize,
+                    pub TextCompositionEnded: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
                     pub RemoveTextCompositionEnded:
                         unsafe extern "system" fn(
                             *mut core::ffi::c_void,
@@ -139638,6 +139714,186 @@ pub mod Microsoft {
                 #[doc(hidden)]
                 pub struct ITextChangedEventArgs_Vtbl {
                     pub base__: windows_core::IInspectable_Vtbl,
+                }
+                windows_core::imp::define_interface!(
+                    ITextCompositionEndedEventArgs,
+                    ITextCompositionEndedEventArgs_Vtbl,
+                    0x19d0a5c5_8d0f_5118_8c30_e709326f1283
+                );
+                impl windows_core::RuntimeType for ITextCompositionEndedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITextCompositionEndedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.ITextCompositionEndedEventArgs";
+                }
+                pub trait ITextCompositionEndedEventArgs_Impl: windows_core::IUnknownImpl {
+                    fn StartIndex(&self) -> windows_core::Result<i32>;
+                    fn Length(&self) -> windows_core::Result<i32>;
+                }
+                impl ITextCompositionEndedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: ITextCompositionEndedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn StartIndex<
+                            Identity: ITextCompositionEndedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut i32,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITextCompositionEndedEventArgs_Impl::StartIndex(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn Length<
+                            Identity: ITextCompositionEndedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut i32,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITextCompositionEndedEventArgs_Impl::Length(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITextCompositionEndedEventArgs,
+                                OFFSET,
+                            >(),
+                            StartIndex: StartIndex::<Identity, OFFSET>,
+                            Length: Length::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITextCompositionEndedEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITextCompositionEndedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub StartIndex: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut i32,
+                    )
+                        -> windows_core::HRESULT,
+                    pub Length: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut i32,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ITextCompositionStartedEventArgs,
+                    ITextCompositionStartedEventArgs_Vtbl,
+                    0xa604ff71_5d44_5859_8d71_72030ed78bc8
+                );
+                impl windows_core::RuntimeType for ITextCompositionStartedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ITextCompositionStartedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.ITextCompositionStartedEventArgs";
+                }
+                pub trait ITextCompositionStartedEventArgs_Impl:
+                    windows_core::IUnknownImpl
+                {
+                    fn StartIndex(&self) -> windows_core::Result<i32>;
+                    fn Length(&self) -> windows_core::Result<i32>;
+                }
+                impl ITextCompositionStartedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: ITextCompositionStartedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn StartIndex<
+                            Identity: ITextCompositionStartedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut i32,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITextCompositionStartedEventArgs_Impl::StartIndex(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn Length<
+                            Identity: ITextCompositionStartedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut i32,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITextCompositionStartedEventArgs_Impl::Length(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ITextCompositionStartedEventArgs,
+                                OFFSET,
+                            >(),
+                            StartIndex: StartIndex::<Identity, OFFSET>,
+                            Length: Length::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ITextCompositionStartedEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ITextCompositionStartedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub StartIndex: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut i32,
+                    )
+                        -> windows_core::HRESULT,
+                    pub Length: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut i32,
+                    )
+                        -> windows_core::HRESULT,
                 }
                 windows_core::imp::define_interface!(
                     ITimePicker,
@@ -249214,6 +249470,29 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn TextCompositionStarted<P0>(
+                        &self,
+                        handler: P0,
+                    ) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                TextBox,
+                                TextCompositionStartedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TextCompositionStarted)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveTextCompositionStarted(
                         &self,
                         token: i64,
@@ -249238,6 +249517,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn TextCompositionEnded<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                TextBox,
+                                TextCompositionEndedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TextCompositionEnded)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveTextCompositionEnded(
@@ -251425,6 +251724,108 @@ pub mod Microsoft {
                         }
                     }
                 }
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct TextCompositionEndedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    TextCompositionEndedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl TextCompositionEndedEventArgs {
+                    pub fn StartIndex(&self) -> windows_core::Result<i32> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).StartIndex)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn Length(&self) -> windows_core::Result<i32> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Length)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for TextCompositionEndedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            ITextCompositionEndedEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for TextCompositionEndedEventArgs {
+                    type Vtable =
+                        <ITextCompositionEndedEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <ITextCompositionEndedEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for TextCompositionEndedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.TextCompositionEndedEventArgs";
+                }
+                unsafe impl Send for TextCompositionEndedEventArgs {}
+                unsafe impl Sync for TextCompositionEndedEventArgs {}
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct TextCompositionStartedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    TextCompositionStartedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl TextCompositionStartedEventArgs {
+                    pub fn StartIndex(&self) -> windows_core::Result<i32> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).StartIndex)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn Length(&self) -> windows_core::Result<i32> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Length)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for TextCompositionStartedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            ITextCompositionStartedEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for TextCompositionStartedEventArgs {
+                    type Vtable =
+                        <ITextCompositionStartedEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <ITextCompositionStartedEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for TextCompositionStartedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.TextCompositionStartedEventArgs";
+                }
+                unsafe impl Send for TextCompositionStartedEventArgs {}
+                unsafe impl Sync for TextCompositionStartedEventArgs {}
                 #[repr(transparent)]
                 #[derive(Clone, Debug, Eq, PartialEq)]
                 pub struct TimePicker(windows_core::IUnknown);

@@ -107,6 +107,8 @@ Microsoft.UI.Xaml.Controls.StackPanel
 Microsoft.UI.Xaml.Controls.TextBlock
 Microsoft.UI.Xaml.Controls.TextBox
 Microsoft.UI.Xaml.Controls.TextChangedEventHandler
+Microsoft.UI.Xaml.Controls.TextCompositionEndedEventArgs
+Microsoft.UI.Xaml.Controls.TextCompositionStartedEventArgs
 Microsoft.UI.Xaml.Controls.TimePicker
 Microsoft.UI.Xaml.Controls.TimePickerValueChangedEventArgs
 Microsoft.UI.Xaml.Controls.ToggleSwitch

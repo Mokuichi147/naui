@@ -114,6 +114,10 @@ const CASES: &[Case] = &[
         request_focus_needs_the_visual_tree,
     ),
     (
+        "文字入力系の 6 つに on_key_down を付けられる",
+        text_widgets_accept_key_handlers,
+    ),
+    (
         "描画面の命令が XAML の Path と TextBlock になり、読み込める",
         canvas_commands_become_xaml_shapes,
     ),
@@ -1986,5 +1990,19 @@ fn request_focus_needs_the_visual_tree(ui: &Ui) -> Result<()> {
     assert!(!input.request_focus(), "載る前は移せない");
     let label = ui.label("見出し")?;
     assert!(!label.request_focus());
+    Ok(())
+}
+
+/// キーを起こす公開 API が無いので、ここでは付けられることだけを確かめる
+/// (実際の配送は実機で確かめる)。
+fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
+    use naui_core::{EventResponse, KeyEvent};
+    let handler = |_: &KeyEvent| EventResponse::Continue;
+    ui.text_input("")?.on_key_down(handler);
+    ui.text_area("")?.on_key_down(handler);
+    ui.password_input()?.on_key_down(handler);
+    ui.search_input()?.on_key_down(handler);
+    ui.number_input(1.0)?.on_key_down(handler);
+    ui.editable_combo_box()?.on_key_down(handler);
     Ok(())
 }

@@ -1,7 +1,7 @@
 use naui::{
-    Button, Color, ColorPicker, DatePicker, DatePickerMode, DateTime, EditableComboBox, Label,
-    Length, NumberInput, PasswordInput, Result, SearchInput, Sizing, TextArea, TextInput, Time,
-    TimePicker, Ui,
+    Button, Color, ColorPicker, DatePicker, DatePickerMode, DateTime, EditableComboBox,
+    EventResponse, Key, KeyEvent, Label, Length, NumberInput, PasswordInput, Result, SearchInput,
+    Sizing, TextArea, TextInput, Time, TimePicker, Ui,
 };
 
 use crate::parts::{self, Disabler, Notice};
@@ -90,6 +90,53 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     });
     pane.append(&area);
     pane.append(&area_status);
+
+    parts::section(
+        ui,
+        &pane,
+        "キーボード",
+        &[
+            "on_key_down で Enter は送信、Shift+Enter は改行にします。",
+            "IME で変換している間の Enter は届かないので、変換の確定では送信しません。",
+        ],
+    )?;
+    let sent = parts::readout(ui, "まだ送信していません")?;
+    let last_key = parts::readout(ui, "押したキー: -")?;
+    let message = ui.text_area("")?;
+    message.set_placeholder("Enter で送信 / Shift+Enter で改行");
+    message.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(80.0)),
+    );
+    message.on_key_down({
+        let message = message.clone();
+        let sent = sent.clone();
+        let last_key = last_key.clone();
+        move |event: &KeyEvent| {
+            last_key.set_text(&format!(
+                "押したキー: {:?}{}",
+                event.key,
+                if event.modifiers.shift {
+                    " + Shift"
+                } else {
+                    ""
+                }
+            ));
+            if event.key != Key::Enter || event.modifiers.shift {
+                return EventResponse::Continue;
+            }
+            let text = message.text();
+            if !text.trim().is_empty() {
+                sent.set_text(&format!("送信: {}", text.replace('\n', " ⏎ ")));
+                message.set_text("");
+            }
+            EventResponse::Handled
+        }
+    });
+    pane.append(&message);
+    pane.append(&last_key);
+    pane.append(&sent);
 
     parts::section(
         ui,
