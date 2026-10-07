@@ -387,6 +387,10 @@ fn main() {
             window_close_request_can_keep_it_open,
         ),
         (
+            "読み上げ名・読み取り専用・最小の大きさがネイティブへ届く",
+            accessible_label_read_only_and_min_size,
+        ),
+        (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
         ),
@@ -3650,6 +3654,45 @@ fn window_close_request_can_keep_it_open(ui: &Ui) -> Result<()> {
     window.close();
     assert_eq!(asked.get(), 2);
     assert!(!window.is_visible());
+    Ok(())
+}
+
+fn accessible_label_read_only_and_min_size(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::NSAccessibility;
+    let button = ui.button("⚙")?;
+    button.set_accessible_label(Some("設定"));
+    assert_eq!(
+        button
+            .native_view()
+            .accessibilityLabel()
+            .map(|t| t.to_string())
+            .as_deref(),
+        Some("設定")
+    );
+    button.set_accessible_label(None);
+    assert!(button.native_view().accessibilityLabel().is_none());
+
+    let input = ui.text_input("ログ")?;
+    input.set_read_only(true);
+    assert!(input.is_read_only());
+    let field = input
+        .native_view()
+        .downcast::<NSTextField>()
+        .expect("NSTextField");
+    assert!(
+        !field.isEditable() && field.isSelectable(),
+        "選べるが書けない"
+    );
+    let area = ui.text_area("ログ")?;
+    area.set_read_only(true);
+    assert!(area.is_read_only());
+    area.set_read_only(false);
+    assert!(!area.is_read_only());
+
+    let window = ui.window("最小", 320.0, 200.0)?;
+    window.set_min_size(240.0, 120.0);
+    let min = window.native_window().contentMinSize();
+    assert_eq!((min.width, min.height), (240.0, 120.0));
     Ok(())
 }
 

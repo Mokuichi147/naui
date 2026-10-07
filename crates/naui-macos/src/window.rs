@@ -192,6 +192,15 @@ impl Window {
         self.0.native.title().to_string()
     }
 
+    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    ///
+    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    pub fn set_min_size(&self, width: f64, height: f64) {
+        self.0
+            .native
+            .setContentMinSize(NSSize::new(width.max(0.0), height.max(0.0)));
+    }
+
     pub fn set_size(&self, width: f64, height: f64) {
         self.0.native.setContentSize(NSSize::new(width, height));
         self.0.native.center();

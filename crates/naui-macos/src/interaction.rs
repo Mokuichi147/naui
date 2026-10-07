@@ -110,3 +110,10 @@ pub(crate) fn set_tooltip(view: &NSView, text: Option<&str>) {
     let text = text.map(NSString::from_str);
     view.setToolTip(text.as_deref());
 }
+
+/// 読み上げソフトに伝える名前 (`accessibilityLabel`)。`None` で外す。
+pub(crate) fn set_accessible_label(view: &NSView, text: Option<&str>) {
+    use objc2_app_kit::NSAccessibility;
+    let text = text.map(NSString::from_str);
+    view.setAccessibilityLabel(text.as_deref());
+}

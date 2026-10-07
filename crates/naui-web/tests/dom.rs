@@ -3402,3 +3402,43 @@ async fn window_reports_its_size() {
     window.on_close_request(|| naui_core::CloseResponse::KeepOpen);
     window.close();
 }
+
+#[wasm_bindgen_test]
+fn accessible_label_read_only_and_min_size() {
+    with_ui(|ui| {
+        let button = ui.button("⚙")?;
+        button.set_accessible_label(Some("設定"));
+        assert_eq!(
+            button
+                .native_element()
+                .get_attribute("aria-label")
+                .as_deref(),
+            Some("設定")
+        );
+        button.set_accessible_label(None);
+        assert_eq!(button.native_element().get_attribute("aria-label"), None);
+
+        let input = ui.text_input("ログ")?;
+        input.set_read_only(true);
+        assert!(input.is_read_only());
+        assert!(input.native_element().has_attribute("readonly"));
+        let area = ui.text_area("ログ")?;
+        area.set_read_only(true);
+        assert!(area.native_element().has_attribute("readonly"));
+
+        let window = ui.window("最小", 320.0, 200.0)?;
+        window.set_min_size(240.0, 120.0);
+        let style = window_element_style(&window);
+        assert!(style.contains("min-width: 240px"), "{style}");
+        window.close();
+        Ok(())
+    });
+}
+
+/// ウィンドウの要素のインラインの style。
+fn window_element_style(window: &naui_web::Window) -> String {
+    window
+        .native_element()
+        .get_attribute("style")
+        .unwrap_or_default()
+}

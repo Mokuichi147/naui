@@ -182,6 +182,18 @@ impl Window {
             .set_on_window(document, self.0.element.as_ref(), f);
     }
 
+    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    ///
+    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    ///
+    /// Web ではウィンドウの要素に `min-width` / `min-height` を付ける
+    /// (ブラウザの窓そのものの大きさは決められないので、狭いときはスクロールになる)。
+    pub fn set_min_size(&self, width: f64, height: f64) {
+        let style = self.0.element.style();
+        let _ = style.set_property("min-width", &format!("{}px", width.max(0.0)));
+        let _ = style.set_property("min-height", &format!("{}px", height.max(0.0)));
+    }
+
     pub fn set_title(&self, title: &str) {
         *self.0.title.borrow_mut() = title.to_string();
         self.0.document.set_title(title);

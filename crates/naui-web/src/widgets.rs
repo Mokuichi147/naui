@@ -71,6 +71,17 @@ macro_rules! impl_widget {
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_element(self), text);
             }
+
+            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            ///
+            /// アイコンだけのボタンのように、見えている文字が無いか意味を
+            /// 表しきれないときに付ける。
+            pub fn set_accessible_label(&self, text: Option<&str>) {
+                crate::interaction::set_accessible_label(
+                    &<$t as Widget>::native_element(self),
+                    text,
+                );
+            }
         }
     };
 }
@@ -499,6 +510,19 @@ impl TextInput {
         .ok();
         *self.0.on_change.borrow_mut() = listener;
     }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.input.set_read_only(read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.0.input.read_only()
+    }
 }
 
 // ----------------------------------------------------------- PasswordInput
@@ -691,6 +715,19 @@ impl TextArea {
         })
         .ok();
         *self.0.on_change.borrow_mut() = listener;
+    }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.element.set_read_only(read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.0.element.read_only()
     }
 }
 

@@ -281,6 +281,10 @@
 //! | `set_visible` | `Visibility` (`Collapsed`) | `hidden` | `gtk_widget_set_visible` | `display: none` |
 //! | `request_focus` | `UIElement.Focus` | `makeFirstResponder:` | `gtk_widget_grab_focus` | `focus()` |
 //! | `set_tooltip` | `ToolTipService.ToolTip` | `toolTip` | `tooltip-text` | `title` 属性 |
+//! | `set_accessible_label` | `AutomationProperties.Name` | `accessibilityLabel` | `GTK_ACCESSIBLE_PROPERTY_LABEL` | `aria-label` |
+//!
+//! [`set_accessible_label`](Button::set_accessible_label) は読み上げソフトに伝える
+//! 名前で、アイコンだけのボタンのように見えている文字が無いときに付ける。
 //!
 //! **隠したものは `Stack` の中では場所を空けない。** `Grid` ではマスと
 //! 行・列は残り、間隔 (`set_spacing`) が残る環境もある。
@@ -399,6 +403,9 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! [`Window::set_min_size`] で、利用者が縮められる下限を決められる
+//! (Windows は Windows App SDK 1.7 以降のランタイムで効く)。
 //!
 //! [`Window::size`] はタイトルバーを除いた中身の大きさで、
 //! [`Window::on_resize`] は大きさが変わるたびに変わった後の大きさで呼ばれる
@@ -554,6 +561,11 @@
 //! 1 行なら [`TextInput`]、改行を含む文章なら [`TextArea`]、伏せ字にするなら
 //! [`PasswordInput`]、絞り込みや検索の欄なら [`SearchInput`] を使う。API の形は
 //! どれも同じで、IME・コピー / 貼り付け・取り消しはネイティブに任せている。
+//!
+//! `TextInput` と `TextArea` は [`set_read_only(true)`](TextArea::set_read_only)
+//! で読み取り専用にできる。`set_enabled(false)` と違って薄く表示されず、文字を
+//! 選んでコピーできるので、ログや生成結果を見せる欄に使う
+//! (`IsReadOnly` / `editable` / `gtk_editable_set_editable` / `readonly`)。
 //!
 //! ```no_run
 //! # use naui::{Length, Result, Sizing, Ui};
@@ -1977,6 +1989,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     window.set_theme(Theme::Dark)?;
     window.on_key_down(|_event: &KeyEvent| EventResponse::Handled);
     window.on_close_request(|| CloseResponse::KeepOpen);
+    window.set_min_size(1.0, 1.0);
     let _: (f64, f64) = window.size();
     window.on_resize(|(_width, _height): (f64, f64)| {});
     let weak_window = window.downgrade();
@@ -2063,6 +2076,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: bool = button.request_focus();
     button.set_tooltip(Some("t"));
     button.set_tooltip(None);
+    button.set_accessible_label(Some("t"));
+    button.set_accessible_label(None);
     let any_stack: Stack = ui.stack(Orientation::Vertical)?;
     any_stack.set_visible(true);
     let _: bool = any_stack.request_focus();
@@ -2208,6 +2223,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     input.set_placeholder("t");
     input.set_enabled(true);
     input.on_change(|_s: &str| {});
+    input.set_read_only(true);
+    let _: bool = input.is_read_only();
 
     let text_area: TextArea = ui.text_area("t")?;
     let _: String = text_area.text();
@@ -2215,6 +2232,8 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     text_area.set_placeholder("t");
     text_area.set_enabled(true);
     text_area.on_change(|_s: &str| {});
+    text_area.set_read_only(true);
+    let _: bool = text_area.is_read_only();
     text_area.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(1.0)));
 
     let password: PasswordInput = ui.password_input()?;

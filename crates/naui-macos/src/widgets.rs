@@ -88,6 +88,14 @@ macro_rules! impl_interaction {
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_view(self), text);
             }
+
+            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            ///
+            /// アイコンだけのボタンのように、見えている文字が無いか意味を
+            /// 表しきれないときに付ける。
+            pub fn set_accessible_label(&self, text: Option<&str>) {
+                crate::interaction::set_accessible_label(&<$t as Widget>::native_view(self), text);
+            }
         }
     };
 }
@@ -468,6 +476,20 @@ impl TextInput {
         };
         *self.0.observer.borrow_mut() = Some(observer);
     }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.native.setEditable(!read_only);
+        self.0.native.setSelectable(true);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        !self.0.native.isEditable()
+    }
 }
 
 // ----------------------------------------------------------- PasswordInput
@@ -812,6 +834,20 @@ impl TextArea {
     /// 中身の `NSTextView`。バックエンド固有の脱出口として公開している。
     pub fn native_text_view(&self) -> Retained<NSTextView> {
         self.0.text_view.clone()
+    }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.text_view.setEditable(!read_only);
+        self.0.text_view.setSelectable(true);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        !self.0.text_view.isEditable()
     }
 }
 

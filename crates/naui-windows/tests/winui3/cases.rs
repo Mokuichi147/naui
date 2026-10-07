@@ -131,6 +131,10 @@ const CASES: &[Case] = &[
     ),
     ("URL として読めないものは開かない", open_url_rejects_garbage),
     (
+        "読み上げ名と読み取り専用がネイティブへ届く",
+        accessible_label_and_read_only,
+    ),
+    (
         "描画面の命令が XAML の Path と TextBlock になり、読み込める",
         canvas_commands_become_xaml_shapes,
     ),
@@ -2076,5 +2080,26 @@ fn label_can_be_selectable(ui: &Ui) -> Result<()> {
 
 fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
     assert!(ui.open_url("").is_err());
+    Ok(())
+}
+
+fn accessible_label_and_read_only(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+    use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+    let button = ui.button("⚙")?;
+    button.set_accessible_label(Some("設定"));
+    let object = button
+        .native_element()
+        .cast::<DependencyObject>()
+        .expect("DependencyObject");
+    assert_eq!(
+        AutomationProperties::GetName(&object)
+            .expect("Name")
+            .to_string(),
+        "設定"
+    );
+    let input = ui.text_input("ログ")?;
+    input.set_read_only(true);
+    assert!(native::<TextBox>(&input).IsReadOnly().expect("IsReadOnly"));
     Ok(())
 }

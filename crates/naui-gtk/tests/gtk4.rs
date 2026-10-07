@@ -280,6 +280,10 @@ fn main() {
             window_close_request_can_keep_it_open,
         ),
         (
+            "読み取り専用と最小の大きさがネイティブへ届く",
+            read_only_and_min_size,
+        ),
+        (
             "スクロールの位置を測り、指定した位置と末尾へ送る",
             scroll_measures_and_moves,
         ),
@@ -6525,5 +6529,31 @@ fn window_close_request_can_keep_it_open(ui: &Ui) -> Result<()> {
     // プログラムからの close は確かめない。
     window.close();
     assert_eq!(asked.get(), 1);
+    Ok(())
+}
+
+fn read_only_and_min_size(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("ログ")?;
+    input.set_read_only(true);
+    assert!(input.is_read_only());
+    let entry: gtk::Entry = input.native_widget().downcast().expect("GtkEntry");
+    assert!(!entry.is_editable());
+    let area = ui.text_area("ログ")?;
+    area.set_read_only(true);
+    let view: gtk::TextView = area.native_widget().downcast().expect("GtkTextView");
+    assert!(!view.is_editable());
+    assert!(!view.is_cursor_visible(), "カーソルを出さない");
+
+    // 読み上げ名は GTK4 から読み戻せないので、付け外しで落ちないことだけ見る。
+    let button = ui.button("⚙")?;
+    button.set_accessible_label(Some("設定"));
+    button.set_accessible_label(None);
+
+    let window = ui.window("最小", 320.0, 200.0)?;
+    window.set_min_size(240.0, 120.0);
+    window.set_child(&ui.label("中身")?);
+    let content = window.native_window().content().expect("中身");
+    let (min_width, _, _, _) = content.measure(gtk::Orientation::Horizontal, -1);
+    assert!(min_width >= 240, "中身は 240 より狭くならない: {min_width}");
     Ok(())
 }

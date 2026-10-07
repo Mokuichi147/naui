@@ -223,6 +223,37 @@ impl Window {
             .unwrap_or_default()
     }
 
+    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    ///
+    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    ///
+    /// `OverlappedPresenter.PreferredMinimumWidth` / `Height` を使うので、
+    /// Windows App SDK 1.7 より前のランタイムでは効かない。
+    pub fn set_min_size(&self, width: f64, height: f64) {
+        use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
+        use windows::Foundation::{IReference, PropertyValue};
+
+        let Some(presenter) = self
+            .0
+            .native
+            .AppWindow()
+            .and_then(|window| window.Presenter())
+            .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
+            .ok()
+        else {
+            return;
+        };
+        let value = |pixels: f64| {
+            PropertyValue::CreateInt32(pixels.max(0.0) as i32)
+                .and_then(|value| value.cast::<IReference<i32>>())
+                .ok()
+        };
+        if let (Some(width), Some(height)) = (value(width), value(height)) {
+            let _ = presenter.SetPreferredMinimumWidth(&width);
+            let _ = presenter.SetPreferredMinimumHeight(&height);
+        }
+    }
+
     pub fn set_size(&self, width: f64, height: f64) {
         use windows::Graphics::SizeInt32;
         if let Ok(app_window) = self.0.native.AppWindow() {

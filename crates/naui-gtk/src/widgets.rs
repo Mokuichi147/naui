@@ -93,6 +93,17 @@ macro_rules! impl_sizing {
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_widget(self), text);
             }
+
+            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            ///
+            /// アイコンだけのボタンのように、見えている文字が無いか意味を
+            /// 表しきれないときに付ける。
+            pub fn set_accessible_label(&self, text: Option<&str>) {
+                crate::interaction::set_accessible_label(
+                    &<$t as Widget>::native_widget(self),
+                    text,
+                );
+            }
         }
     };
 }
@@ -377,6 +388,19 @@ impl TextInput {
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.native.set_editable(!read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        !self.0.native.is_editable()
+    }
 }
 
 // ----------------------------------------------------------- PasswordInput
@@ -630,6 +654,21 @@ impl TextArea {
     /// 利用者が打つたびに、そのときの中身で呼ばれる。
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
+    }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.native.set_editable(!read_only);
+        // 書き換えられない欄でカーソルが点滅すると、打てるように見える。
+        self.0.native.set_cursor_visible(!read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        !self.0.native.is_editable()
     }
 }
 

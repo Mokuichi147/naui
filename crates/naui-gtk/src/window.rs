@@ -209,6 +209,18 @@ impl Window {
             .unwrap_or_default()
     }
 
+    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    ///
+    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    ///
+    /// GTK4 のウィンドウは中身の最小の大きさより縮まないので、中身の入れ物に
+    /// 最小の大きさを付ける (ヘッダーバーの分はその上に足される)。
+    pub fn set_min_size(&self, width: f64, height: f64) {
+        self.0
+            .overlay
+            .set_size_request(to_px(width.max(0.0)), to_px(height.max(0.0)));
+    }
+
     pub fn set_size(&self, width: f64, height: f64) {
         self.0.native.set_default_size(to_px(width), to_px(height));
     }
