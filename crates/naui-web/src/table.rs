@@ -626,7 +626,6 @@ impl Table {
         self.0.selected.borrow().clone()
     }
 
-    /// 通知せずに 1 行だけを選ぶ。
     /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
     ///
     /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
@@ -638,6 +637,7 @@ impl Table {
         self.reveal_row(index);
     }
 
+    /// 通知せずに 1 行だけを選ぶ。
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }

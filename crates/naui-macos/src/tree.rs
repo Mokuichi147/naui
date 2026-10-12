@@ -524,10 +524,6 @@ impl Tree {
         (!path.is_empty()).then_some(path)
     }
 
-    /// 通知せずに 1 項目を選ぶ。
-    ///
-    /// 選べない項目 ([`TreeItem::selectable`]) や無いパスを渡すと、
-    /// 選択は外れる。閉じた枝の中にある項目は、見えるように祖先を開いてから選ぶ。
     /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
     ///
     /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
@@ -550,6 +546,10 @@ impl Tree {
         }
     }
 
+    /// 通知せずに 1 項目を選ぶ。
+    ///
+    /// 選べない項目 ([`TreeItem::selectable`]) や無いパスを渡すと、
+    /// 選択は外れる。閉じた枝の中にある項目は、見えるように祖先を開いてから選ぶ。
     pub fn set_selected(&self, path: &[usize]) {
         self.without_notifying(|this| this.apply_selected(path));
     }

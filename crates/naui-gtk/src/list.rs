@@ -282,7 +282,6 @@ impl List {
         indices
     }
 
-    /// 通知せずに 1 行だけ選ぶ。
     /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
     ///
     /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
@@ -296,6 +295,7 @@ impl List {
         }
     }
 
+    /// 通知せずに 1 行だけ選ぶ。
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
