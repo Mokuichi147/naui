@@ -34,6 +34,7 @@ struct WindowInner {
     sidebar: RefCell<Option<Sidebar>>,
     /// ツールバーの行。サイドバーの開閉ボタンとツールバーを横に並べる。
     toolbar_row: HtmlElement,
+    key_down: crate::keys::KeyDown,
 }
 
 /// ページ上のウィンドウ相当。
@@ -100,9 +101,26 @@ impl Window {
             menu_bar: RefCell::new(None),
             sidebar: RefCell::new(None),
             toolbar_row,
+            key_down: crate::keys::KeyDown::default(),
         }));
         this.set_title(title);
         Ok(this)
+    }
+
+    /// このウィンドウの中で押されたキーの通知。
+    ///
+    /// フォーカスのあるウィジェットの `on_key_down` が `Continue` を返した
+    /// キーが届く。`Handled` を返すと、そのキーの既定動作を止める。
+    /// IME で変換している間のキーは届かない。
+    pub fn on_key_down(
+        &self,
+        f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,
+    ) {
+        let document: &web_sys::EventTarget = self.0.document.as_ref();
+        let _ = self
+            .0
+            .key_down
+            .set_on_window(document, self.0.element.as_ref(), f);
     }
 
     pub fn set_title(&self, title: &str) {

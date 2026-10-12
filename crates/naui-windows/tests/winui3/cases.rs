@@ -114,6 +114,14 @@ const CASES: &[Case] = &[
         request_focus_needs_the_visual_tree,
     ),
     (
+        "文字入力系の 6 つに on_key_down を付けられる",
+        text_widgets_accept_key_handlers,
+    ),
+    (
+        "TextArea の改行は \\n で読める",
+        text_area_reports_newlines_as_lf,
+    ),
+    (
         "描画面の命令が XAML の Path と TextBlock になり、読み込める",
         canvas_commands_become_xaml_shapes,
     ),
@@ -1998,6 +2006,29 @@ fn request_focus_needs_the_visual_tree(ui: &Ui) -> Result<()> {
     assert!(!input.request_focus(), "載る前は移せない");
     let label = ui.label("見出し")?;
     assert!(!label.request_focus());
+    Ok(())
+}
+
+/// キーを起こす公開 API が無いので、ここでは付けられることだけを確かめる
+/// (実際の配送は実機で確かめる)。
+fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
+    use naui_core::{EventResponse, KeyEvent};
+    let handler = |_: &KeyEvent| EventResponse::Continue;
+    ui.text_input("")?.on_key_down(handler);
+    ui.text_area("")?.on_key_down(handler);
+    ui.password_input()?.on_key_down(handler);
+    ui.search_input()?.on_key_down(handler);
+    ui.number_input(1.0)?.on_key_down(handler);
+    ui.editable_combo_box()?.on_key_down(handler);
+    Ok(())
+}
+
+/// `TextBox` は改行を `\r` で持つが、`text()` はほかの環境と同じ `\n` で返す。
+fn text_area_reports_newlines_as_lf(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("一\n二")?;
+    assert_eq!(area.text(), "一\n二");
+    area.set_text("a\r\nb\rc");
+    assert_eq!(area.text(), "a\nb\nc");
     Ok(())
 }
 

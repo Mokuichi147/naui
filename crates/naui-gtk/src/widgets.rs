@@ -316,6 +316,7 @@ struct TextInputInner {
 /// 1 行のテキスト入力 (`GtkEntry`)。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
+crate::keys::impl_key_down!(TextInput);
 impl_widget!(TextInput);
 
 impl TextInput {
@@ -382,6 +383,7 @@ struct PasswordInputInner {
 /// あるが、4 環境の共通部分に無いので出さない。
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
+crate::keys::impl_key_down!(PasswordInput);
 impl_widget!(PasswordInput);
 
 impl PasswordInput {
@@ -451,6 +453,7 @@ struct SearchInputInner {
 /// 他の環境とずれるので使わない。
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
+crate::keys::impl_key_down!(SearchInput);
 impl_widget!(SearchInput);
 
 impl SearchInput {
@@ -534,6 +537,7 @@ struct TextAreaInner {
 /// [`TextArea::set_sizing`] で指定しておく。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
+crate::keys::impl_key_down!(TextArea);
 impl_widget!(TextArea);
 
 impl TextArea {

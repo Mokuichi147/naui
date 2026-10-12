@@ -20,6 +20,7 @@ mod color;
 mod datetime;
 mod dialog;
 mod file;
+mod key;
 mod layout;
 mod list;
 mod main_thread;
@@ -49,6 +50,7 @@ pub use file::{
     accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
     FilePickerMode,
 };
+pub use key::{EventResponse, Key, KeyEvent, KeyHandler, Modifiers};
 pub use layout::{GridCell, Length, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing, Track};
 pub use list::{ListItem, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};

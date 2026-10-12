@@ -14,6 +14,7 @@ use naui_core::{NumberSpec, Result};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlInputElement};
 
+use crate::keys::KeyDown;
 use crate::widgets::{create, impl_widget, Listener, ValueHandler, Widget};
 
 struct NumberInputInner {
@@ -23,6 +24,7 @@ struct NumberInputInner {
     on_change: ValueHandler<f64>,
     /// 入力中と確定時の購読。落とすと購読も外れる。
     listeners: RefCell<Vec<Listener>>,
+    key_down: KeyDown,
 }
 
 /// 数値を入力させるコントロール (`<input type="number">`)。
@@ -31,6 +33,7 @@ struct NumberInputInner {
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
 impl_widget!(NumberInput, input);
+crate::keys::impl_key_down!(NumberInput);
 
 impl NumberInput {
     pub(crate) fn new(document: &Document, value: f64) -> Result<Self> {
@@ -44,6 +47,7 @@ impl NumberInput {
             value: Cell::new(spec.clamp(value)),
             on_change: ValueHandler::default(),
             listeners: RefCell::new(Vec::new()),
+            key_down: KeyDown::default(),
         }));
         this.write_native_spec();
         this.write_native(this.value());
