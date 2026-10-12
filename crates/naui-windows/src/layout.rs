@@ -862,11 +862,19 @@ pub(crate) struct ListScrollTarget {
 /// 持つ。段数はテンプレート次第なので、名前ではなく型で探す。中身は
 /// `Loaded` まで組み上がらないので、そこまで待ってから呼ぶ。
 pub(crate) fn scroll_viewer_within<T: Interface>(root: &T) -> Option<ScrollViewer> {
+    descendant_of_type(root)
+}
+
+/// `root` 自身か子孫のうち、`D` として扱える最初の要素 (深さ優先)。
+///
+/// テンプレートの中の部品を型で探す。[`scroll_viewer_within`] と同じく、
+/// 中身は `Loaded` まで組み上がらない。
+pub(crate) fn descendant_of_type<T: Interface, D: Interface>(root: &T) -> Option<D> {
     let root = root.cast::<DependencyObject>().ok()?;
     let mut queue = vec![root];
     while let Some(element) = queue.pop() {
-        if let Ok(scroll) = element.cast::<ScrollViewer>() {
-            return Some(scroll);
+        if let Ok(found) = element.cast::<D>() {
+            return Some(found);
         }
         let count = VisualTreeHelper::GetChildrenCount(&element).unwrap_or(0);
         for index in (0..count).rev() {
