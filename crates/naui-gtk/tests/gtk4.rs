@@ -6575,7 +6575,53 @@ fn window_reports_its_size(ui: &Ui) -> Result<()> {
     spin_until(std::time::Duration::from_secs(1), || {
         !seen.borrow().is_empty()
     });
-    assert!(!seen.borrow().is_empty(), "大きさの変化が届く");
+    assert_eq!(
+        seen.borrow().last(),
+        Some(&(400.0, 260.0)),
+        "表示前は指定した大きさが届く"
+    );
+
+    // 出ているウィンドウでは、中身へ配られた後の大きさが届く。ヘッダーバーの
+    // 分だけ指定より低い。
+    window.show();
+    let settled = |seen: &RefCell<Vec<(f64, f64)>>| {
+        seen.borrow().last() == Some(&window.size()) && window.size().1 < 260.0
+    };
+    spin_until(std::time::Duration::from_secs(2), || settled(&seen));
+    assert!(
+        settled(&seen),
+        "表示後の中身の大きさが届く: {:?}",
+        seen.borrow()
+    );
+    let shown = window.size();
+
+    // ウィンドウの大きさは同じでも、メニューバーを付けると中身は低くなる。
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+    seen.borrow_mut().clear();
+    window.set_menu_bar(&menu_bar);
+    spin_until(std::time::Duration::from_secs(2), || {
+        seen.borrow().last().is_some_and(|size| size.1 < shown.1)
+    });
+    let after = seen.borrow().clone();
+    assert!(
+        after
+            .last()
+            .is_some_and(|size| size.1 < shown.1 && size.0 == shown.0),
+        "メニューバーの分だけ低くなったことが届く: {shown:?} → {after:?}"
+    );
+    assert_eq!(after.last(), Some(&window.size()), "届くのは今の大きさ");
+    assert!(
+        !after.contains(&shown),
+        "変わる前の大きさは届かない: {after:?}"
+    );
+
+    seen.borrow_mut().clear();
+    window.clear_menu_bar();
+    spin_until(std::time::Duration::from_secs(2), || {
+        seen.borrow().last() == Some(&shown)
+    });
+    assert_eq!(seen.borrow().last(), Some(&shown), "外すと元の高さに戻る");
     window.close();
     Ok(())
 }
@@ -6615,10 +6661,30 @@ fn read_only_and_min_size(ui: &Ui) -> Result<()> {
     assert!(!view.is_editable());
     assert!(!view.is_cursor_visible(), "カーソルを出さない");
 
-    // 読み上げ名は GTK4 から読み戻せないので、付け外しで落ちないことだけ見る。
+    // 読み上げ名の中身は GTK4 から読み戻せないので、付いているかどうかを見る。
+    // 文字のボタンは中のラベルへ `LABELLED_BY` を張っていて、そちらが
+    // `LABEL` より優先されるので、付けている間は外れていなければならない。
     let button = ui.button("⚙")?;
+    let native = button.native_widget();
+    let has_label =
+        |w: &gtk::Widget| gtk::test_accessible_has_property(w, gtk::AccessibleProperty::Label);
+    let labelled_by =
+        |w: &gtk::Widget| gtk::test_accessible_has_relation(w, gtk::AccessibleRelation::LabelledBy);
+    assert!(
+        labelled_by(&native),
+        "文字のボタンは中のラベルから名前を取る"
+    );
     button.set_accessible_label(Some("設定"));
+    assert!(has_label(&native));
+    assert!(!labelled_by(&native), "付けた名前が中のラベルに隠されない");
+    button.set_text("⚙ ");
+    assert!(!labelled_by(&native), "文字を変えても付けた名前のまま");
     button.set_accessible_label(None);
+    assert!(!has_label(&native));
+    assert!(labelled_by(&native), "外すと中のラベルの文字に戻る");
+    let search = ui.text_input("")?;
+    search.set_accessible_label(Some("検索語"));
+    assert!(has_label(&search.native_widget()));
 
     let window = ui.window("最小", 320.0, 200.0)?;
     window.set_min_size(240.0, 120.0);
