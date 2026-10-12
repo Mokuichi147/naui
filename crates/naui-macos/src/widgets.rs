@@ -59,9 +59,44 @@ macro_rules! impl_widget {
     };
 }
 
+/// どのウィジェットにもある操作 (表示・非表示 / フォーカス / ツールチップ)。
+macro_rules! impl_interaction {
+    ($t:ty) => {
+        impl $t {
+            /// 表示するかどうか。既定は表示。
+            ///
+            /// 隠したものは `Stack` の中では場所を空けない。`Grid` ではマスが残る。
+            pub fn set_visible(&self, visible: bool) {
+                crate::interaction::set_visible(&<$t as Widget>::native_view(self), visible);
+            }
+
+            /// [`set_visible`](Self::set_visible) で指定した表示。親が隠れていても
+            /// `true` のまま。
+            pub fn is_visible(&self) -> bool {
+                crate::interaction::is_visible(&<$t as Widget>::native_view(self))
+            }
+
+            /// キーボードフォーカスを移す。移せたら `true`。
+            ///
+            /// 自分が受け取れないとき (コンテナなど) は、中で最初に受け取れるものへ
+            /// 移す。表示前・隠れている・無効なときは `false`。
+            pub fn request_focus(&self) -> bool {
+                crate::interaction::request_focus(&<$t as Widget>::native_view(self))
+            }
+
+            /// ポインターを重ねたときに出す説明。`None` で外す。
+            pub fn set_tooltip(&self, text: Option<&str>) {
+                crate::interaction::set_tooltip(&<$t as Widget>::native_view(self), text);
+            }
+        }
+    };
+}
+
 /// `Widget` を手書きしている型に、大きさの指定だけを足す。
 macro_rules! impl_sizing {
     ($t:ty) => {
+        crate::widgets::impl_interaction!($t);
+
         impl $t {
             /// 大きさを指定する。呼ぶたびに以前の指定は外れる。
             ///
@@ -79,7 +114,7 @@ macro_rules! impl_sizing {
     };
 }
 
-pub(crate) use {impl_sizing, impl_widget};
+pub(crate) use {impl_interaction, impl_sizing, impl_widget};
 
 // ------------------------------------------------------------------ Label
 
@@ -380,6 +415,7 @@ struct TextInputInner {
 /// 1 行テキスト入力 (NSTextField)。日本語入力は AppKit の IME がそのまま効く。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
+crate::keys::impl_key_down!(TextInput);
 impl_widget!(TextInput);
 
 impl TextInput {
@@ -435,6 +471,7 @@ struct PasswordInputInner {
 /// ことだけ。伏せ字を一時的に外す仕掛けは AppKit に無いので持たない。
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
+crate::keys::impl_key_down!(PasswordInput);
 impl_widget!(PasswordInput);
 
 impl PasswordInput {
@@ -495,6 +532,7 @@ struct SearchInputInner {
 /// [`on_search`](SearchInput::on_search) は Enter で確定したときに呼ばれる。
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
+crate::keys::impl_key_down!(SearchInput);
 impl_widget!(SearchInput);
 
 impl SearchInput {
@@ -630,6 +668,7 @@ struct TextAreaInner {
 /// `set_sizing` で高さを指定すること ([`crate::Scroll`] や [`crate::List`] と同じ)。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
+crate::keys::impl_key_down!(TextArea);
 
 impl Widget for TextArea {
     fn native_view(&self) -> Retained<NSView> {
@@ -876,6 +915,8 @@ struct StackInner {
 /// 縦 / 横に子を並べるコンテナ (NSStackView)。
 #[derive(Clone)]
 pub struct Stack(Rc<StackInner>);
+
+impl_interaction!(Stack);
 
 impl Widget for Stack {
     fn native_view(&self) -> Retained<NSView> {

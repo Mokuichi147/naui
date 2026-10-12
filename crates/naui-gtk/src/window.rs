@@ -77,6 +77,8 @@ impl Window {
         let overlay = adw::ToastOverlay::new();
         view.set_content(Some(&overlay));
         native.set_content(Some(&view));
+        // `on_key_down` の受け口。通知先が無いあいだは素通りする。
+        crate::keys::install(&native);
 
         Self(Rc::new(WindowInner {
             native,
@@ -111,6 +113,18 @@ impl Window {
 
     pub fn downgrade(&self) -> WeakWindow {
         WeakWindow(Rc::downgrade(&self.0))
+    }
+
+    /// このウィンドウの中で押されたキーの通知。
+    ///
+    /// フォーカスのあるウィジェットの `on_key_down` が `Continue` を返した
+    /// キーが届く。`Handled` を返すと、そのキーはウィジェットへ渡らない。
+    /// IME で変換している間のキーは届かない。
+    pub fn on_key_down(
+        &self,
+        f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,
+    ) {
+        crate::keys::set_window_handler(self.0.native.upcast_ref(), f);
     }
 
     pub fn set_title(&self, title: &str) {

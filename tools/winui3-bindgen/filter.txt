@@ -99,6 +99,7 @@ Microsoft.UI.Xaml.Controls.RowDefinitionCollection
 Microsoft.UI.Xaml.Controls.ScrollBarVisibility
 Microsoft.UI.Xaml.Controls.ScrollMode
 Microsoft.UI.Xaml.Controls.ScrollViewer
+Microsoft.UI.Xaml.Controls.ScrollViewerViewChangedEventArgs
 Microsoft.UI.Xaml.Controls.SelectionChangedEventHandler
 Microsoft.UI.Xaml.Controls.SelectionMode
 Microsoft.UI.Xaml.Controls.Slider
@@ -106,6 +107,8 @@ Microsoft.UI.Xaml.Controls.StackPanel
 Microsoft.UI.Xaml.Controls.TextBlock
 Microsoft.UI.Xaml.Controls.TextBox
 Microsoft.UI.Xaml.Controls.TextChangedEventHandler
+Microsoft.UI.Xaml.Controls.TextCompositionEndedEventArgs
+Microsoft.UI.Xaml.Controls.TextCompositionStartedEventArgs
 Microsoft.UI.Xaml.Controls.TimePicker
 Microsoft.UI.Xaml.Controls.TimePickerValueChangedEventArgs
 Microsoft.UI.Xaml.Controls.ToggleSwitch
@@ -122,6 +125,7 @@ Microsoft.UI.Xaml.CornerRadius
 Microsoft.UI.Xaml.DataTemplate
 Microsoft.UI.Xaml.DependencyObject
 Microsoft.UI.Xaml.ElementTheme
+Microsoft.UI.Xaml.FocusState
 Microsoft.UI.Xaml.FrameworkElement
 Microsoft.UI.Xaml.FrameworkTemplate
 Microsoft.UI.Xaml.GridLength

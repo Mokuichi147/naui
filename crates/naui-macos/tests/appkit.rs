@@ -340,6 +340,47 @@ fn main() {
         ("グリッドの子を置き換える", grid_replaces_child),
         ("スクロールが中身を保持する", scroll_keeps_child),
         (
+            "隠したものは Stack の中で場所を空けない",
+            hidden_widget_leaves_the_stack_layout,
+        ),
+        (
+            "折りたたみを開いてもアプリが隠した中身は隠れたまま",
+            expander_keeps_the_app_hidden_child,
+        ),
+        (
+            "フォーカスが入力欄と複数行入力の中へ移る",
+            request_focus_reaches_the_editor,
+        ),
+        ("ツールチップが NSView へ届く", tooltip_reaches_the_view),
+        (
+            "複数行入力の on_key_down が Shift なしの Enter を止める",
+            text_area_key_down_can_take_enter,
+        ),
+        (
+            "変換中のキーは on_key_down に届かない",
+            key_down_skips_composition,
+        ),
+        (
+            "ウィジェットが Continue を返したキーだけがウィンドウへ届く",
+            window_key_down_gets_what_the_widget_left,
+        ),
+        (
+            "スクロールの位置を測り、指定した位置と末尾へ送る",
+            scroll_measures_and_moves,
+        ),
+        (
+            "中身を足した直後でも末尾まで送れる",
+            scroll_to_end_after_appending,
+        ),
+        (
+            "表示前に頼んだ末尾送りが表示後に効く",
+            scroll_to_end_before_shown,
+        ),
+        (
+            "スクロールの通知は位置が変わったときだけ届く",
+            scroll_notifies_only_moves,
+        ),
+        (
             "折りたたみがクリックで開閉し、変わった後を通知する",
             expander_toggles_and_notifies,
         ),
@@ -3020,6 +3061,415 @@ fn split_view_drag_clamps_to_the_minimums_and_notifies(ui: &Ui) -> Result<()> {
     assert_eq!(seen.len(), 2, "動かした 2 回だけ通知されること: {seen:?}");
     assert!((seen[0] - 80.0).abs() < 1.0, "{seen:?}");
     assert!((seen[1] - (total - 120.0)).abs() < 1.0, "{seen:?}");
+    Ok(())
+}
+
+/// 縦に長い中身を載せたスクロールを、高さ 100 のウィンドウに置く。
+fn tall_scroll(
+    ui: &Ui,
+    rows: usize,
+) -> Result<(naui_macos::Window, naui_macos::Scroll, naui_macos::Stack)> {
+    let window = ui.window("t", 200.0, 100.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..rows {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+    Ok((window, scroll, pane))
+}
+
+fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    window.show();
+
+    let m = scroll.metrics();
+    assert_eq!((m.x, m.y), (0.0, 0.0), "最初は先頭: {m:?}");
+    assert!(m.viewport_height > 0.0, "{m:?}");
+    assert!(
+        m.content_height > m.viewport_height,
+        "はみ出している: {m:?}"
+    );
+    assert_eq!(m.distance_to_end(), m.max_y());
+
+    scroll.scroll_to(0.0, 30.0);
+    assert_eq!(scroll.metrics().y, 30.0);
+
+    scroll.scroll_to_end();
+    let end = scroll.metrics();
+    assert_eq!(end.y, end.max_y(), "末尾へ: {end:?}");
+    assert_eq!(end.distance_to_end(), 0.0);
+
+    // 範囲の外は丸める。
+    scroll.scroll_to(-50.0, 1e9);
+    let clamped = scroll.metrics();
+    assert_eq!((clamped.x, clamped.y), (0.0, clamped.max_y()));
+
+    // 末尾が見えていることは、ネイティブの側でも確かめる。
+    let native = scroll
+        .native_view()
+        .downcast::<NSScrollView>()
+        .expect("NSScrollView");
+    assert_eq!(native.contentView().bounds().origin.y, clamped.max_y());
+    window.close();
+    Ok(())
+}
+
+/// チャットのように「足してから末尾へ」を、レイアウトを待たずに続けて呼ぶ。
+fn scroll_to_end_after_appending(ui: &Ui) -> Result<()> {
+    let (window, scroll, pane) = tall_scroll(ui, 20)?;
+    window.show();
+    scroll.scroll_to_end();
+    let before = scroll.metrics();
+
+    for i in 0..20 {
+        pane.append(&ui.label(&format!("追加 {i}"))?);
+    }
+    scroll.scroll_to_end();
+    let after = scroll.metrics();
+    assert!(
+        after.content_height > before.content_height,
+        "中身が伸びている: {before:?} → {after:?}"
+    );
+    assert_eq!(after.distance_to_end(), 0.0, "{after:?}");
+    window.close();
+    Ok(())
+}
+
+fn scroll_to_end_before_shown(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    scroll.scroll_to_end();
+    window.show();
+    window
+        .native_window()
+        .contentView()
+        .unwrap()
+        .layoutSubtreeIfNeeded();
+    let m = scroll.metrics();
+    assert!(m.max_y() > 0.0, "{m:?}");
+    assert_eq!(m.distance_to_end(), 0.0, "表示後に末尾にいる: {m:?}");
+    window.close();
+    Ok(())
+}
+
+fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    window.show();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    scroll.on_scroll({
+        let seen = seen.clone();
+        move |m: naui_core::ScrollMetrics| seen.borrow_mut().push(m.y)
+    });
+
+    scroll.scroll_to(0.0, 25.0);
+    scroll.scroll_to(0.0, 25.0); // 同じ位置へは動かない
+    assert_eq!(*seen.borrow(), vec![25.0]);
+
+    // 幅だけ変えても、位置が変わらなければ届かない。
+    window.set_size(260.0, 100.0);
+    window
+        .native_window()
+        .contentView()
+        .unwrap()
+        .layoutSubtreeIfNeeded();
+    assert_eq!(*seen.borrow(), vec![25.0]);
+
+    // 利用者の操作 (ネイティブ側での移動) でも届く。
+    let native = scroll
+        .native_view()
+        .downcast::<NSScrollView>()
+        .expect("NSScrollView");
+    let clip = native.contentView();
+    clip.scrollToPoint(NSPoint::new(0.0, 40.0));
+    native.reflectScrolledClipView(&clip);
+    assert_eq!(*seen.borrow(), vec![25.0, 40.0]);
+    window.close();
+    Ok(())
+}
+
+fn hidden_widget_leaves_the_stack_layout(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let first = ui.label("1 行目")?;
+    let middle = ui.button("真ん中")?;
+    let last = ui.label("3 行目")?;
+    stack.append(&first);
+    stack.append(&middle);
+    stack.append(&last);
+    let view = stack.native_view();
+    view.layoutSubtreeIfNeeded();
+    let shown = view.fittingSize().height;
+    assert!(middle.is_visible(), "既定は表示");
+
+    middle.set_visible(false);
+    view.layoutSubtreeIfNeeded();
+    let hidden = view.fittingSize().height;
+    assert!(!middle.is_visible());
+    assert!(middle.native_view().isHidden());
+    assert!(
+        hidden + 10.0 < shown,
+        "隠すと場所を空けない: {shown} -> {hidden}"
+    );
+
+    middle.set_visible(true);
+    view.layoutSubtreeIfNeeded();
+    assert!(middle.is_visible());
+    assert!(
+        (view.fittingSize().height - shown).abs() < 1.0,
+        "戻すと元の高さ"
+    );
+    Ok(())
+}
+
+fn expander_keeps_the_app_hidden_child(ui: &Ui) -> Result<()> {
+    let expander = ui.expander("詳細")?;
+    let body = ui.label("中身")?;
+    expander.set_child(&body);
+
+    // たたんでいる間に表示へ戻しても、中身は出ない。
+    body.set_visible(false);
+    body.set_visible(true);
+    assert!(body.is_visible());
+    assert!(body.native_view().isHidden(), "たたんでいる間は隠れたまま");
+
+    body.set_visible(false);
+    expander.set_expanded(true);
+    assert!(!body.is_visible());
+    assert!(
+        body.native_view().isHidden(),
+        "開いてもアプリが隠したものは隠れたまま"
+    );
+
+    body.set_visible(true);
+    assert!(!body.native_view().isHidden(), "開いていれば出る");
+    expander.set_expanded(false);
+    assert!(body.native_view().isHidden());
+    assert!(body.is_visible(), "アプリの指定は表示のまま");
+    Ok(())
+}
+
+fn request_focus_reaches_the_editor(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 240.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let label = ui.label("見出し")?;
+    let input = ui.text_input("")?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fixed(200.0, 60.0));
+    let inner = ui.stack(Orientation::Vertical)?;
+    let nested = ui.text_input("")?;
+    inner.append(&ui.label("中")?);
+    inner.append(&nested);
+    root.append(&label);
+    root.append(&input);
+    root.append(&area);
+    root.append(&inner);
+
+    assert!(!input.request_focus(), "ウィンドウに載る前は移せない");
+    window.set_child(&root);
+    window.show();
+    let native = window.native_window();
+
+    assert!(!label.request_focus(), "ラベルは受け取らない");
+
+    assert!(input.request_focus());
+    let editor = input
+        .native_view()
+        .downcast::<NSTextField>()
+        .expect("NSTextField")
+        .currentEditor();
+    assert!(editor.is_some(), "入力欄が編集中になる");
+
+    assert!(area.request_focus());
+    let responder = native.firstResponder().expect("first responder");
+    assert!(
+        responder.downcast::<NSTextView>().is_ok(),
+        "複数行入力は中の NSTextView が受け取る"
+    );
+
+    assert!(inner.request_focus(), "コンテナは中の最初の入力欄へ");
+    assert!(nested
+        .native_view()
+        .downcast::<NSTextField>()
+        .expect("NSTextField")
+        .currentEditor()
+        .is_some());
+
+    input.set_visible(false);
+    assert!(!input.request_focus(), "隠れていると移せない");
+    window.close();
+    Ok(())
+}
+
+fn tooltip_reaches_the_view(ui: &Ui) -> Result<()> {
+    let button = ui.button("保存")?;
+    button.set_tooltip(Some("変更を保存します"));
+    assert_eq!(
+        button
+            .native_view()
+            .toolTip()
+            .map(|t| t.to_string())
+            .as_deref(),
+        Some("変更を保存します")
+    );
+    button.set_tooltip(None);
+    assert!(button.native_view().toolTip().is_none());
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_tooltip(Some("まとめ"));
+    assert_eq!(
+        stack
+            .native_view()
+            .toolTip()
+            .map(|t| t.to_string())
+            .as_deref(),
+        Some("まとめ")
+    );
+    Ok(())
+}
+
+/// キーを 1 つウィンドウのキューへ積み、配送まで進める (ローカルモニターを通る)。
+fn press_key(
+    app: &NSApplication,
+    window: &NSWindow,
+    characters: &str,
+    key_code: u16,
+    flags: NSEventModifierFlags,
+) {
+    let text = NSString::from_str(characters);
+    let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+        NSEventType::KeyDown,
+        NSPoint::new(0.0, 0.0),
+        flags,
+        0.0,
+        window.windowNumber(),
+        None,
+        &text,
+        &text,
+        false,
+        key_code,
+    )
+    .expect("キーイベント");
+    unsafe { app.postEvent_atStart(&event, false) };
+    deliver_events(app);
+}
+
+fn text_area_key_down_can_take_enter(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fill());
+    window.set_child(&area);
+    window.show();
+    assert!(area.request_focus());
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    area.on_key_down({
+        let seen = seen.clone();
+        move |event: &naui_core::KeyEvent| {
+            seen.borrow_mut().push((event.key, event.modifiers.shift));
+            if event.key == naui_core::Key::Enter && !event.modifiers.shift {
+                naui_core::EventResponse::Handled
+            } else {
+                naui_core::EventResponse::Continue
+            }
+        }
+    });
+    let native = window.native_window();
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::Shift);
+    press_key(&app, &native, "A", 0, NSEventModifierFlags::Shift);
+    press_key(&app, &native, "", 122, NSEventModifierFlags::empty()); // F1
+    assert_eq!(
+        *seen.borrow(),
+        vec![
+            (naui_core::Key::Enter, false),
+            (naui_core::Key::Enter, true),
+            (naui_core::Key::Character('a'), true),
+            (naui_core::Key::F(1), false),
+        ]
+    );
+    // 止めた Enter は改行にならず、Continue のキーは入力欄が受け取る。
+    assert_eq!(area.text(), "\nA", "Shift+Enter と A だけが入る");
+    window.close();
+    Ok(())
+}
+
+fn key_down_skips_composition(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fill());
+    window.set_child(&area);
+    window.show();
+    assert!(area.request_focus());
+    let count = Rc::new(Cell::new(0));
+    area.on_key_down({
+        let count = count.clone();
+        move |_| {
+            count.set(count.get() + 1);
+            naui_core::EventResponse::Handled
+        }
+    });
+    let native = window.native_window();
+    let text_view = native
+        .firstResponder()
+        .and_then(|r| r.downcast::<NSTextView>().ok())
+        .expect("NSTextView");
+    // IME が変換中の文字 (marked text) を置いた状態にする。
+    let marked = NSString::from_str("かな");
+    unsafe {
+        text_view.setMarkedText_selectedRange_replacementRange(
+            &marked,
+            NSRange::new(2, 0),
+            NSRange::new(NSNotFound as usize, 0),
+        )
+    };
+    assert!(unsafe { text_view.hasMarkedText() });
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    assert_eq!(count.get(), 0, "変換中の Enter は届かない");
+
+    unsafe { text_view.unmarkText() };
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    assert_eq!(count.get(), 1, "確定後は届く");
+    window.close();
+    Ok(())
+}
+
+fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let input = ui.text_input("")?;
+    window.set_child(&input);
+    window.show();
+    assert!(input.request_focus());
+    input.on_key_down(|event: &naui_core::KeyEvent| {
+        if event.key == naui_core::Key::Enter {
+            naui_core::EventResponse::Handled
+        } else {
+            naui_core::EventResponse::Continue
+        }
+    });
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_key_down({
+        let seen = seen.clone();
+        move |event: &naui_core::KeyEvent| {
+            seen.borrow_mut().push(event.key);
+            naui_core::EventResponse::Continue
+        }
+    });
+    let native = window.native_window();
+    press_key(&app, &native, "x", 7, NSEventModifierFlags::empty());
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    press_key(&app, &native, "\u{1b}", 53, NSEventModifierFlags::empty());
+    assert_eq!(
+        *seen.borrow(),
+        vec![naui_core::Key::Character('x'), naui_core::Key::Escape]
+    );
+    window.close();
     Ok(())
 }
 

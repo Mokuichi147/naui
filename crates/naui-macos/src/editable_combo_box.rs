@@ -38,6 +38,7 @@ struct EditableComboBoxInner {
 /// 値は文字列で、作った直後は空。
 #[derive(Clone)]
 pub struct EditableComboBox(Rc<EditableComboBoxInner>);
+crate::keys::impl_key_down!(EditableComboBox);
 impl_widget!(EditableComboBox);
 
 impl EditableComboBox {

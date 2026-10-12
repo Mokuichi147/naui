@@ -240,6 +240,47 @@ fn main() {
             scroll_gives_the_child_its_natural_height,
         ),
         (
+            "隠したものは Stack の中で場所を空けない",
+            hidden_widget_leaves_the_stack_layout,
+        ),
+        (
+            "フォーカスが入力欄と複数行入力の中へ移る",
+            request_focus_reaches_the_editor,
+        ),
+        ("ツールチップが中身のコントロールへ届く", tooltip_reaches_the_widget),
+        (
+            "複数行入力の on_key_down が Shift なしの Enter を止める",
+            text_area_key_down_can_take_enter,
+        ),
+        (
+            "変換中のキーは on_key_down に届かない",
+            key_down_skips_composition,
+        ),
+        (
+            "ウィジェットが Continue を返したキーだけがウィンドウへ届く",
+            window_key_down_gets_what_the_widget_left,
+        ),
+        (
+            "スクロールの位置を測り、指定した位置と末尾へ送る",
+            scroll_measures_and_moves,
+        ),
+        (
+            "中身を足した直後でも、次のレイアウトの後に末尾まで送る",
+            scroll_to_end_after_appending,
+        ),
+        (
+            "表示前に頼んだ末尾送りが表示後に効く",
+            scroll_to_end_before_shown,
+        ),
+        (
+            "隠れたタブの中で足して頼んだ末尾送りがタブを戻すと効く",
+            scroll_to_end_in_hidden_tab,
+        ),
+        (
+            "スクロールの通知は位置が変わったときだけ届く",
+            scroll_notifies_only_moves,
+        ),
+        (
             "折りたたみが中身を持ち、開閉を通知する",
             expander_keeps_child_and_notifies,
         ),
@@ -2097,6 +2138,177 @@ fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
         natural,
         "送れる向きでは自然な高さのまま置かれること (最小は {minimum})"
     );
+    window.close();
+    Ok(())
+}
+
+/// 縦に長い中身を載せたスクロールを、高さ 100 のウィンドウに置く。
+fn tall_scroll(
+    ui: &Ui,
+    rows: usize,
+) -> Result<(naui_gtk::Window, naui_gtk::Scroll, naui_gtk::Stack)> {
+    let window = ui.window("スクロール", 200.0, 100.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..rows {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+    Ok((window, scroll, pane))
+}
+
+/// 頼んだ行き先を忘れるまで (次のレイアウトの後まで) フレームを進める。
+fn settle(scroll: &naui_gtk::Scroll) {
+    for _ in 0..3 {
+        tick(&scroll.native_widget());
+    }
+}
+
+fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    window.show();
+    settle(&scroll);
+
+    let m = scroll.metrics();
+    assert_eq!((m.x, m.y), (0.0, 0.0), "最初は先頭: {m:?}");
+    assert!(m.viewport_height > 0.0, "{m:?}");
+    assert!(
+        m.content_height > m.viewport_height,
+        "はみ出している: {m:?}"
+    );
+
+    scroll.scroll_to(0.0, 30.0);
+    assert_eq!(
+        scroll.metrics().y,
+        30.0,
+        "大きさが決まっていればその場で動く"
+    );
+
+    scroll.scroll_to_end();
+    let end = scroll.metrics();
+    assert_eq!(end.y, end.max_y(), "末尾へ: {end:?}");
+    assert_eq!(end.distance_to_end(), 0.0);
+
+    scroll.scroll_to(-50.0, 1e9);
+    let clamped = scroll.metrics();
+    assert_eq!((clamped.x, clamped.y), (0.0, clamped.max_y()));
+    window.close();
+    Ok(())
+}
+
+/// チャットのように「足してから末尾へ」を、レイアウトを待たずに続けて呼ぶ。
+fn scroll_to_end_after_appending(ui: &Ui) -> Result<()> {
+    let (window, scroll, pane) = tall_scroll(ui, 20)?;
+    window.show();
+    settle(&scroll);
+    scroll.scroll_to_end();
+    let before = scroll.metrics();
+
+    for i in 0..20 {
+        pane.append(&ui.label(&format!("追加 {i}"))?);
+    }
+    scroll.scroll_to_end();
+    settle(&scroll);
+    let after = scroll.metrics();
+    assert!(
+        after.content_height > before.content_height,
+        "中身が伸びている: {before:?} → {after:?}"
+    );
+    assert_eq!(after.distance_to_end(), 0.0, "{after:?}");
+    window.close();
+    Ok(())
+}
+
+fn scroll_to_end_before_shown(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    scroll.scroll_to_end();
+    window.show();
+    settle(&scroll);
+    let m = scroll.metrics();
+    assert!(m.max_y() > 0.0, "{m:?}");
+    assert_eq!(m.distance_to_end(), 0.0, "表示後に末尾にいる: {m:?}");
+    window.close();
+    Ok(())
+}
+
+/// 一度出したスクロールを裏のタブに回し、隠れている間に足して末尾送りを
+/// 頼む。隠れている間もフレームは進むが、行き先は戻すまで覚えている。
+fn scroll_to_end_in_hidden_tab(ui: &Ui) -> Result<()> {
+    let window = ui.window("タブ", 200.0, 140.0)?;
+    let tabs = ui.tabs()?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..40 {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    tabs.add_tab("前", &ui.label("別のタブ")?);
+    tabs.add_tab("スクロール", &scroll);
+    tabs.set_selected(1);
+    window.set_child(&tabs);
+    window.show();
+    settle(&scroll);
+    scroll.scroll_to_end();
+    settle(&scroll);
+    let before = scroll.metrics();
+
+    tabs.set_selected(0);
+    settle(&scroll);
+    for i in 0..20 {
+        pane.append(&ui.label(&format!("追加 {i}"))?);
+    }
+    scroll.scroll_to_end();
+    // 隠れている間にフレームを進める。数えていれば行き先を忘れる。
+    for _ in 0..10 {
+        tick(&tabs.native_widget());
+    }
+
+    tabs.set_selected(1);
+    settle(&scroll);
+    let after = scroll.metrics();
+    assert!(
+        after.content_height > before.content_height,
+        "中身が伸びている: {before:?} → {after:?}"
+    );
+    assert_eq!(
+        after.distance_to_end(),
+        0.0,
+        "戻したら末尾にいる: {after:?}"
+    );
+    window.close();
+    Ok(())
+}
+
+fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    window.show();
+    settle(&scroll);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    scroll.on_scroll({
+        let seen = seen.clone();
+        move |m: naui_core::ScrollMetrics| seen.borrow_mut().push(m.y)
+    });
+
+    scroll.scroll_to(0.0, 25.0);
+    scroll.scroll_to(0.0, 25.0); // 同じ位置へは動かない
+    settle(&scroll);
+    assert_eq!(*seen.borrow(), vec![25.0]);
+
+    // 幅だけ変えても、位置が変わらなければ届かない。
+    window.set_size(260.0, 100.0);
+    settle(&scroll);
+    assert_eq!(*seen.borrow(), vec![25.0]);
+
+    // 利用者の操作 (ネイティブ側での移動) でも届く。
+    let native: gtk::ScrolledWindow = scroll
+        .native_widget()
+        .downcast()
+        .expect("GtkScrolledWindow");
+    native.vadjustment().set_value(40.0);
+    assert_eq!(*seen.borrow(), vec![25.0, 40.0]);
     window.close();
     Ok(())
 }
@@ -5992,6 +6204,233 @@ fn sidebar_toggle_button_collapses_and_notifies(ui: &Ui) -> Result<()> {
 
     window.clear_sidebar();
     window.clear_toolbar();
+    window.close();
+    Ok(())
+}
+
+// ------------------------------------------------- 表示・フォーカス・ツールチップ
+
+fn hidden_widget_leaves_the_stack_layout(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let middle = ui.button("真ん中")?;
+    stack.append(&ui.label("1 行目")?);
+    stack.append(&middle);
+    stack.append(&ui.label("3 行目")?);
+    let root = bin_of(&stack);
+    let (_, shown) = measure_height(&root);
+    assert!(middle.is_visible(), "既定は表示");
+
+    middle.set_visible(false);
+    assert!(!middle.is_visible());
+    assert!(!bin_of(&middle).is_visible(), "入れ物ごと隠す");
+    let (_, hidden) = measure_height(&root);
+    assert!(
+        hidden + 10 < shown,
+        "隠すと場所を空けない: {shown} -> {hidden}"
+    );
+
+    middle.set_visible(true);
+    assert!(middle.is_visible());
+    assert_eq!(measure_height(&root).1, shown, "戻すと元の高さ");
+    Ok(())
+}
+
+fn request_focus_reaches_the_editor(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 320.0, 240.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let label = ui.label("見出し")?;
+    let input = ui.text_input("")?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fixed(200.0, 60.0));
+    let inner = ui.stack(Orientation::Vertical)?;
+    let nested = ui.text_input("")?;
+    inner.append(&ui.label("中")?);
+    inner.append(&nested);
+    root.append(&label);
+    root.append(&input);
+    root.append(&area);
+    root.append(&inner);
+    window.set_child(&root);
+
+    assert!(!input.request_focus(), "表示前は移せない");
+    window.show();
+    tick(&bin_of(&root));
+
+    let focused = |widget: &gtk::Widget| {
+        widget
+            .root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| focus == *widget || focus.is_ancestor(widget))
+    };
+
+    assert!(!label.request_focus(), "ラベルは受け取らない");
+    assert!(input.request_focus());
+    assert!(focused(&input.native_widget()), "入力欄が受け取る");
+    assert!(area.request_focus());
+    let focus = area
+        .native_widget()
+        .root()
+        .and_then(|root| root.focus())
+        .expect("フォーカス");
+    assert!(
+        focus.downcast_ref::<gtk::TextView>().is_some(),
+        "複数行入力は中の GtkTextView が受け取る: {}",
+        focus.type_().name()
+    );
+    assert!(inner.request_focus(), "コンテナは中の最初の入力欄へ");
+    assert!(focused(&nested.native_widget()));
+
+    input.set_visible(false);
+    assert!(!input.request_focus(), "隠れていると移せない");
+    window.close();
+    Ok(())
+}
+
+fn tooltip_reaches_the_widget(ui: &Ui) -> Result<()> {
+    let button = ui.button("保存")?;
+    button.set_tooltip(Some("変更を保存します"));
+    assert_eq!(
+        button.native_widget().tooltip_text().as_deref(),
+        Some("変更を保存します")
+    );
+    button.set_tooltip(None);
+    assert_eq!(button.native_widget().tooltip_text(), None);
+    Ok(())
+}
+
+// ------------------------------------------------------------- on_key_down
+
+/// ウィンドウに付いたキーの受け口へ、キーを 1 つ渡す。止めたら `true`。
+///
+/// GTK4 には本物のキーイベントを作る公開 API が無いので、naui が付けた
+/// 捕捉フェーズの `GtkEventControllerKey` のシグナルを直接起こす。
+fn press_key(
+    window: &naui_gtk::Window,
+    keyval: gtk::gdk::Key,
+    state: gtk::gdk::ModifierType,
+) -> bool {
+    let native = window.native_window();
+    let controllers = native.observe_controllers();
+    let controller = (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .filter_map(|item| item.downcast::<gtk::EventControllerKey>().ok())
+        .find(|controller| controller.propagation_phase() == gtk::PropagationPhase::Capture)
+        .expect("naui のキーの受け口");
+    let stopped: bool = controller.emit_by_name("key-pressed", &[&keyval, &0u32, &state]);
+    controller.emit_by_name::<()>("key-released", &[&keyval, &0u32, &state]);
+    stopped
+}
+
+fn key_down_window(ui: &Ui) -> Result<(naui_gtk::Window, naui_gtk::TextArea)> {
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let area = ui.text_area("")?;
+    area.set_sizing(Sizing::fill());
+    window.set_child(&area);
+    window.show();
+    tick(&area.native_widget());
+    assert!(area.request_focus());
+    Ok((window, area))
+}
+
+fn text_area_key_down_can_take_enter(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let (window, area) = key_down_window(ui)?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    area.on_key_down({
+        let seen = seen.clone();
+        move |event: &naui_core::KeyEvent| {
+            seen.borrow_mut().push((event.key, event.modifiers.shift));
+            if event.key == naui_core::Key::Enter && !event.modifiers.shift {
+                naui_core::EventResponse::Handled
+            } else {
+                naui_core::EventResponse::Continue
+            }
+        }
+    });
+    assert!(press_key(&window, K::Return, M::empty()), "Enter は止める");
+    assert!(
+        !press_key(&window, K::Return, M::SHIFT_MASK),
+        "Shift+Enter は通す"
+    );
+    // 修飾キーを単独で押しても届かない。
+    assert!(!press_key(&window, K::Shift_L, M::empty()));
+    assert!(!press_key(&window, K::A, M::SHIFT_MASK));
+    assert!(!press_key(&window, K::F5, M::empty()));
+    assert_eq!(
+        *seen.borrow(),
+        vec![
+            (naui_core::Key::Enter, false),
+            (naui_core::Key::Enter, true),
+            (naui_core::Key::Character('a'), true),
+            (naui_core::Key::F(5), false),
+        ]
+    );
+    window.close();
+    Ok(())
+}
+
+fn key_down_skips_composition(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let (window, area) = key_down_window(ui)?;
+    let count = Rc::new(Cell::new(0));
+    area.on_key_down({
+        let count = count.clone();
+        move |_| {
+            count.set(count.get() + 1);
+            naui_core::EventResponse::Handled
+        }
+    });
+    // 最初のキーで preedit-changed の購読が付く。
+    press_key(&window, K::x, M::empty());
+    assert_eq!(count.get(), 1);
+
+    let view = gtk::prelude::GtkWindowExt::focus(&window.native_window())
+        .and_downcast::<gtk::TextView>()
+        .expect("GtkTextView にフォーカス");
+    view.emit_by_name::<()>("preedit-changed", &[&"かな"]);
+    assert!(
+        !press_key(&window, K::Return, M::empty()),
+        "変換中は IME へ通す"
+    );
+    assert_eq!(count.get(), 1, "変換中の Enter は届かない");
+
+    view.emit_by_name::<()>("preedit-changed", &[&""]);
+    assert!(press_key(&window, K::Return, M::empty()));
+    assert_eq!(count.get(), 2, "確定後は届く");
+    window.close();
+    Ok(())
+}
+
+fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let window = ui.window("キー", 320.0, 200.0)?;
+    let input = ui.text_input("")?;
+    window.set_child(&input);
+    window.show();
+    tick(&input.native_widget());
+    assert!(input.request_focus());
+    input.on_key_down(|event: &naui_core::KeyEvent| {
+        if event.key == naui_core::Key::Enter {
+            naui_core::EventResponse::Handled
+        } else {
+            naui_core::EventResponse::Continue
+        }
+    });
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_key_down({
+        let seen = seen.clone();
+        move |event: &naui_core::KeyEvent| {
+            seen.borrow_mut().push(event.key);
+            naui_core::EventResponse::Continue
+        }
+    });
+    press_key(&window, K::x, M::empty());
+    press_key(&window, K::Return, M::empty());
+    press_key(&window, K::Escape, M::empty());
+    assert_eq!(
+        *seen.borrow(),
+        vec![naui_core::Key::Character('x'), naui_core::Key::Escape]
+    );
     window.close();
     Ok(())
 }

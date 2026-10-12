@@ -21,10 +21,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Color, DialogResponse, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    NavItem, Orientation, Padding, Point, PointerPhase, PopupItem, Rect, Result, SidebarItem,
-    SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
-    ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
+    Align, Color, DialogResponse, EventResponse, GridCell, Key, KeyEvent, Length, ListItem,
+    MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Point, PointerPhase,
+    PopupItem, Rect, Result, ScrollMetrics, SidebarItem, SidebarSection, Sizing, TableColumn,
+    TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::JsCast;
@@ -127,6 +127,22 @@ fn first_input(element: &Element) -> HtmlInputElement {
         .expect("input の検索")
         .expect("input が見つかりません")
         .unchecked_into()
+}
+
+/// 次の描画まで待つ。`ResizeObserver` はレイアウトの後に呼ばれるので、
+/// 2 フレーム待てば届いている。
+async fn next_frames() {
+    for _ in 0..2 {
+        let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+            web_sys::window()
+                .expect("window")
+                .request_animation_frame(&resolve)
+                .expect("requestAnimationFrame");
+        });
+        wasm_bindgen_futures::JsFuture::from(promise)
+            .await
+            .expect("フレーム待ち");
+    }
 }
 
 // ------------------------------------------------------------- Button
@@ -2893,6 +2909,353 @@ fn sidebar_divider_resizes_and_notifies() {
             count + 1,
             "開き直したあとの操作も通知する"
         );
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------------- Scroll
+
+/// 縦に長い中身を載せた、高さ 100 のスクロール。
+fn tall_scroll(ui: &Ui, rows: usize) -> Result<(naui_web::Scroll, naui_web::Stack)> {
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..rows {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fixed(200.0, 100.0));
+    Ok((scroll, pane))
+}
+
+#[wasm_bindgen_test]
+fn scroll_measures_and_moves() {
+    with_ui(|ui| {
+        let (scroll, _pane) = tall_scroll(ui, 40)?;
+        let _mounted = Mounted::new(&scroll);
+
+        let m = scroll.metrics();
+        assert_eq!((m.x, m.y), (0.0, 0.0), "最初は先頭: {m:?}");
+        assert_eq!(m.viewport_height, 100.0, "{m:?}");
+        assert!(
+            m.content_height > m.viewport_height,
+            "はみ出している: {m:?}"
+        );
+
+        scroll.scroll_to(0.0, 30.0);
+        assert_eq!(scroll.metrics().y, 30.0);
+
+        scroll.scroll_to_end();
+        let end = scroll.metrics();
+        assert_eq!(end.y, end.max_y(), "末尾へ: {end:?}");
+        assert_eq!(end.distance_to_end(), 0.0);
+
+        scroll.scroll_to(-50.0, 1e9);
+        let clamped = scroll.metrics();
+        assert_eq!((clamped.x, clamped.y), (0.0, clamped.max_y()));
+        Ok(())
+    });
+}
+
+/// チャットのように「足してから末尾へ」を続けて呼ぶ。
+#[wasm_bindgen_test]
+fn scroll_to_end_after_appending() {
+    with_ui(|ui| {
+        let (scroll, pane) = tall_scroll(ui, 20)?;
+        let _mounted = Mounted::new(&scroll);
+        scroll.scroll_to_end();
+        let before = scroll.metrics();
+        for i in 0..20 {
+            pane.append(&ui.label(&format!("追加 {i}"))?);
+        }
+        scroll.scroll_to_end();
+        let after = scroll.metrics();
+        assert!(
+            after.content_height > before.content_height,
+            "中身が伸びている: {before:?} → {after:?}"
+        );
+        assert_eq!(after.distance_to_end(), 0.0, "{after:?}");
+        Ok(())
+    });
+}
+
+/// 文書に載る前に頼んだ末尾送りは、載って大きさが付いた時点で効く。
+#[wasm_bindgen_test]
+async fn scroll_to_end_before_mounted() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let (scroll, pane) = tall_scroll(ui, 40)?;
+        scroll.scroll_to_end();
+        kept = Some((scroll, pane));
+        Ok(())
+    });
+    let (scroll, _pane) = kept.expect("組み立て");
+    let _mounted = Mounted::new(&scroll);
+    next_frames().await;
+    let m = scroll.metrics();
+    assert!(m.max_y() > 0.0, "{m:?}");
+    assert_eq!(m.distance_to_end(), 0.0, "載った後に末尾にいる: {m:?}");
+}
+
+#[wasm_bindgen_test]
+fn scroll_notifies_only_moves() {
+    with_ui(|ui| {
+        let (scroll, _pane) = tall_scroll(ui, 40)?;
+        let mounted = Mounted::new(&scroll);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        scroll.on_scroll({
+            let seen = seen.clone();
+            move |m: ScrollMetrics| seen.borrow_mut().push(m.y)
+        });
+
+        // ブラウザの `scroll` イベントは非同期なので、ここでは自分で起こす。
+        let root: HtmlElement = mounted.0.clone().unchecked_into();
+        scroll.scroll_to(0.0, 25.0);
+        dispatch(root.as_ref(), "scroll");
+        dispatch(root.as_ref(), "scroll"); // 位置が同じなら届かない
+        assert_eq!(*seen.borrow(), vec![25.0]);
+
+        // 利用者の操作 (ブラウザ側での移動) でも届く。
+        root.set_scroll_top(40);
+        dispatch(root.as_ref(), "scroll");
+        assert_eq!(*seen.borrow(), vec![25.0, 40.0]);
+        Ok(())
+    });
+}
+
+// ------------------------------------------------- 表示・フォーカス・ツールチップ
+
+fn height_of(element: &Element) -> f64 {
+    element.get_bounding_client_rect().height()
+}
+
+fn active_element() -> Option<Element> {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+}
+
+#[wasm_bindgen_test]
+fn hidden_widget_leaves_the_stack_layout() {
+    with_ui(|ui| {
+        let stack = ui.stack(Orientation::Vertical)?;
+        let middle = ui.button("真ん中")?;
+        // インラインの `display` を書くウィジェットでも隠れること。
+        let switch = ui.toggle("スイッチ")?;
+        stack.append(&ui.label("1 行目")?);
+        stack.append(&middle);
+        stack.append(&switch);
+        stack.append(&ui.label("3 行目")?);
+        let mounted = Mounted::new(&stack);
+        let shown = height_of(&mounted.0);
+        assert!(middle.is_visible(), "既定は表示");
+
+        middle.set_visible(false);
+        switch.set_visible(false);
+        assert!(!middle.is_visible());
+        assert_eq!(computed(&middle.native_element(), "display"), "none");
+        assert_eq!(computed(&switch.native_element(), "display"), "none");
+        let hidden = height_of(&mounted.0);
+        assert!(
+            hidden + 10.0 < shown,
+            "隠すと場所を空けない: {shown} -> {hidden}"
+        );
+
+        middle.set_visible(true);
+        switch.set_visible(true);
+        assert!(middle.is_visible());
+        assert_ne!(computed(&switch.native_element(), "display"), "none");
+        assert_eq!(height_of(&mounted.0), shown, "戻すと元の高さ");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn request_focus_reaches_the_editor() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let label = ui.label("見出し")?;
+        let input = ui.text_input("")?;
+        let area = ui.text_area("")?;
+        let inner = ui.stack(Orientation::Vertical)?;
+        let nested = ui.text_input("")?;
+        inner.append(&ui.label("中")?);
+        inner.append(&nested);
+        root.append(&label);
+        root.append(&input);
+        root.append(&area);
+        root.append(&inner);
+
+        assert!(!input.request_focus(), "文書に載る前は移せない");
+        let _mounted = Mounted::new(&root);
+
+        assert!(!label.request_focus(), "ラベルは受け取らない");
+
+        assert!(input.request_focus());
+        let active = active_element().expect("activeElement");
+        assert!(
+            input.native_element().contains(Some(&active)),
+            "入力欄が受け取る"
+        );
+
+        assert!(area.request_focus());
+        let active = active_element().expect("activeElement");
+        assert_eq!(active.tag_name(), "TEXTAREA");
+
+        assert!(inner.request_focus(), "コンテナは中の最初の入力欄へ");
+        let active = active_element().expect("activeElement");
+        assert!(nested.native_element().contains(Some(&active)));
+
+        // 隠した直後 (スタイルの計算を挟まない) でも移せないこと。
+        input.set_visible(false);
+        assert!(!input.request_focus(), "隠れていると移せない");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tooltip_becomes_the_title() {
+    with_ui(|ui| {
+        let button = ui.button("保存")?;
+        button.set_tooltip(Some("変更を保存します"));
+        assert_eq!(
+            button.native_element().get_attribute("title").as_deref(),
+            Some("変更を保存します")
+        );
+        button.set_tooltip(None);
+        assert_eq!(button.native_element().get_attribute("title"), None);
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------------- on_key_down
+
+/// `keydown` を起こす。**戻り値は既定動作を止められたか**。
+fn key_down(target: &EventTarget, key: &str, shift: bool, composing: bool, key_code: u32) -> bool {
+    let init = KeyboardEventInit::new();
+    init.set_key(key);
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    init.set_shift_key(shift);
+    init.set_is_composing(composing);
+    init.set_key_code(key_code);
+    let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+        .expect("キーイベントの生成");
+    !target.dispatch_event(&event).expect("イベントの配送")
+}
+
+/// チャットの入力欄のように、Shift なしの Enter だけを送信に使う。
+#[wasm_bindgen_test]
+fn text_area_key_down_can_take_enter() {
+    with_ui(|ui| {
+        let area = ui.text_area("")?;
+        let mounted = Mounted::new(&area);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        area.on_key_down({
+            let seen = seen.clone();
+            move |event: &KeyEvent| {
+                seen.borrow_mut().push((event.key, event.modifiers.shift));
+                if event.key == Key::Enter && !event.modifiers.shift {
+                    EventResponse::Handled
+                } else {
+                    EventResponse::Continue
+                }
+            }
+        });
+        let target: &EventTarget = mounted.0.as_ref();
+
+        assert!(
+            key_down(target, "Enter", false, false, 13),
+            "Enter は止める"
+        );
+        assert!(
+            !key_down(target, "Enter", true, false, 13),
+            "Shift+Enter は改行させる"
+        );
+        // 修飾キーを単独で押しても届かない。
+        assert!(!key_down(target, "Shift", true, false, 16));
+        assert!(!key_down(target, "A", true, false, 65));
+        assert_eq!(
+            *seen.borrow(),
+            vec![
+                (Key::Enter, false),
+                (Key::Enter, true),
+                (Key::Character('a'), true)
+            ]
+        );
+
+        // 変換中のキーは IME のものなので届かない。
+        assert!(!key_down(target, "Enter", false, true, 13));
+        assert!(!key_down(target, "Process", false, false, 229));
+        assert_eq!(seen.borrow().len(), 3, "変換中のキーは数えない");
+        Ok(())
+    });
+}
+
+/// `Handled` を返すと、naui 自身の Enter の扱い (検索の確定) も起きない。
+#[wasm_bindgen_test]
+fn handled_key_stops_the_search() {
+    with_ui(|ui| {
+        let search = ui.search_input()?;
+        let mounted = Mounted::new(&search);
+        let searched = Rc::new(Cell::new(0));
+        search.on_search({
+            let searched = searched.clone();
+            move |_| searched.set(searched.get() + 1)
+        });
+        let handle = Rc::new(Cell::new(true));
+        search.on_key_down({
+            let handle = handle.clone();
+            move |_| {
+                if handle.get() {
+                    EventResponse::Handled
+                } else {
+                    EventResponse::Continue
+                }
+            }
+        });
+        let input: &EventTarget = mounted.0.as_ref();
+        key_down(input, "Enter", false, false, 13);
+        assert_eq!(searched.get(), 0, "Handled なら検索しない");
+        handle.set(false);
+        key_down(input, "Enter", false, false, 13);
+        assert_eq!(searched.get(), 1, "Continue なら検索する");
+        Ok(())
+    });
+}
+
+/// ウィジェットが `Continue` を返したキーだけがウィンドウへ届く。
+#[wasm_bindgen_test]
+fn window_key_down_gets_what_the_widget_left() {
+    with_ui(|ui| {
+        let window = ui.window("キー", 400.0, 300.0)?;
+        let input = ui.text_input("")?;
+        window.set_child(&input);
+        window.show();
+        input.on_key_down(|event: &KeyEvent| {
+            if event.key == Key::Enter {
+                EventResponse::Handled
+            } else {
+                EventResponse::Continue
+            }
+        });
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        window.on_key_down({
+            let seen = seen.clone();
+            move |event: &KeyEvent| {
+                seen.borrow_mut().push(event.key);
+                EventResponse::Continue
+            }
+        });
+        let target: EventTarget = input.native_element().into();
+        key_down(&target, "x", false, false, 88);
+        key_down(&target, "Enter", false, false, 13);
+        key_down(&target, "Escape", false, false, 27);
+        assert_eq!(*seen.borrow(), vec![Key::Character('x'), Key::Escape]);
+
+        // どのウィンドウにも属さないところ (<body>) からのキーも受ける。
+        key_down(body().as_ref(), "F5", false, false, 116);
+        assert_eq!(seen.borrow().last(), Some(&Key::F(5)));
+        window.close();
         Ok(())
     });
 }

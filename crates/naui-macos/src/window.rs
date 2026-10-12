@@ -94,6 +94,18 @@ impl Window {
         }))
     }
 
+    /// このウィンドウの中で押されたキーの通知。
+    ///
+    /// フォーカスのあるウィジェットの `on_key_down` が `Continue` を返した
+    /// キーが届く。`Handled` を返すと、そのキーは AppKit へ渡らない。
+    /// IME で変換している間のキーは届かない。
+    pub fn on_key_down(
+        &self,
+        f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,
+    ) {
+        crate::keys::set_window_handler(&self.native_window(), f);
+    }
+
     pub fn set_title(&self, title: &str) {
         self.0.native.setTitle(&NSString::from_str(title));
     }

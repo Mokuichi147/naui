@@ -102,6 +102,26 @@ const CASES: &[Case] = &[
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
+        "隠すと Visibility が Collapsed になり、戻すと Visible",
+        set_visible_maps_to_visibility,
+    ),
+    (
+        "ツールチップが ToolTipService へ届き、None で外れる",
+        tooltip_maps_to_tool_tip_service,
+    ),
+    (
+        "ビジュアルツリーに載る前はフォーカスを移せない",
+        request_focus_needs_the_visual_tree,
+    ),
+    (
+        "文字入力系の 6 つに on_key_down を付けられる",
+        text_widgets_accept_key_handlers,
+    ),
+    (
+        "TextArea の改行は \\n で読める",
+        text_area_reports_newlines_as_lf,
+    ),
+    (
         "描画面の命令が XAML の Path と TextBlock になり、読み込める",
         canvas_commands_become_xaml_shapes,
     ),
@@ -128,6 +148,26 @@ const CASES: &[Case] = &[
     (
         "日本語を含むパスの画像がパスでも file: URL でも読み込める",
         image_loads_from_japanese_path,
+    ),
+    (
+        "スクロールの位置を測り、送れる範囲に丸めて送る",
+        scroll_measures_and_moves,
+    ),
+    (
+        "足した直後の scroll_to_end が新しい末尾へ届く",
+        scroll_to_end_after_appending,
+    ),
+    (
+        "表示前に頼んだ scroll_to_end が表示後に効く",
+        scroll_to_end_before_shown,
+    ),
+    (
+        "スクロールの通知は位置が変わったときだけ届き、通知の中の送りも届く",
+        scroll_notifies_only_moves,
+    ),
+    (
+        "編集できるコンボボックスの Enter で文字が残り、Esc で書いた値へ戻る",
+        editable_combo_box_commits_and_reverts_text,
     ),
 ];
 
@@ -171,12 +211,20 @@ pub(crate) fn run() {
     let counter = failed.clone();
     let outcome = run_for_test(move |ui| {
         for (name, case) in CASES {
+            if let Ok(only) = std::env::var("NAUI_ONLY") {
+                if !name.contains(only.as_str()) {
+                    continue;
+                }
+            }
             report(name, catch_unwind(AssertUnwindSafe(|| case(ui))), &counter);
         }
 
         // 2 段構えのケースは、まず仕込みだけ済ませる。
         let mut deferred = Vec::new();
         for (name, setup) in ASYNC_CASES {
+            if std::env::var("NAUI_ONLY").is_ok() {
+                continue;
+            }
             match catch_unwind(AssertUnwindSafe(|| setup(ui))) {
                 Ok(Ok(check)) => deferred.push((*name, check)),
                 other => report(name, other.map(|result| result.map(|_| ())), &counter),
@@ -1687,6 +1735,177 @@ fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
     }
 }
 
+/// 縦に長い中身を載せたスクロールを、小さなウィンドウに置く (まだ出さない)。
+fn tall_scroll(
+    ui: &Ui,
+    rows: usize,
+) -> Result<(
+    naui_windows::Window,
+    naui_windows::Scroll,
+    naui_windows::Stack,
+)> {
+    let window = ui.window("スクロール", 240.0, 160.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..rows {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+    Ok((window, scroll, pane))
+}
+
+/// ウィンドウを出し、スクロールに実寸が付くまでメッセージを回す。
+///
+/// CI の WinUI 3 では ScrollViewer にテンプレートが当たらず、実寸が 0 の
+/// まま。そのときは `false` を返し、ケースは確かめずに通す (実機では確かめる)。
+fn show_and_measure(window: &naui_windows::Window, scroll: &naui_windows::Scroll) -> bool {
+    window.show();
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        scroll.metrics().viewport_height > 0.0
+    });
+    let measured = scroll.metrics().viewport_height > 0.0;
+    if !measured {
+        println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+    }
+    measured
+}
+
+/// スクロールに実寸が付くまで待つ上限。
+const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(3);
+
+fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let m = scroll.metrics();
+        assert_eq!((m.x, m.y), (0.0, 0.0), "最初は先頭: {m:?}");
+        assert!(
+            m.content_height > m.viewport_height,
+            "はみ出している: {m:?}"
+        );
+
+        // `ChangeView` の直後でも、新しい位置を返す。
+        scroll.scroll_to(0.0, 30.0);
+        assert_eq!(scroll.metrics().y, 30.0);
+
+        scroll.scroll_to_end();
+        let end = scroll.metrics();
+        assert_eq!(end.y, end.max_y(), "末尾へ: {end:?}");
+        assert_eq!(end.distance_to_end(), 0.0);
+
+        scroll.scroll_to(-50.0, 1e9);
+        let clamped = scroll.metrics();
+        assert_eq!((clamped.x, clamped.y), (0.0, clamped.max_y()));
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// チャットのように「足してから末尾へ」を、メッセージを回さずに続けて呼ぶ。
+fn scroll_to_end_after_appending(ui: &Ui) -> Result<()> {
+    let (window, scroll, pane) = tall_scroll(ui, 20)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        if !show_and_measure(&window, &scroll) {
+            return Ok(());
+        }
+        scroll.scroll_to_end();
+        let before = scroll.metrics();
+        for round in 0..3 {
+            // Gallery の「行を足す」と同じく、足す前の位置で追従を決める。
+            assert!(
+                scroll.metrics().distance_to_end() < 1.0,
+                "{round} 回目の前に末尾から外れた"
+            );
+            for i in 0..10 {
+                pane.append(&ui.label(&format!("追加 {round}-{i}"))?);
+            }
+            scroll.scroll_to_end();
+        }
+        let after = scroll.metrics();
+        assert!(
+            after.content_height > before.content_height,
+            "中身が伸びている: {before:?} → {after:?}"
+        );
+        assert_eq!(after.distance_to_end(), 0.0, "{after:?}");
+        Ok(())
+    }));
+    window.close();
+    outcome.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn scroll_to_end_before_shown(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    scroll.scroll_to_end();
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let m = scroll.metrics();
+        assert!(m.max_y() > 0.0, "{m:?}");
+        assert_eq!(m.distance_to_end(), 0.0, "表示後に末尾にいる: {m:?}");
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// `ViewChanged` は後から届くので、メッセージを回して待つ。
+fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        scroll.on_scroll({
+            let seen = seen.clone();
+            move |m: naui_core::ScrollMetrics| seen.borrow_mut().push(m.y)
+        });
+        let settle = || pump_until(Duration::from_millis(300), || false);
+
+        scroll.scroll_to(0.0, 25.0);
+        scroll.scroll_to(0.0, 25.0); // 同じ位置へは動かない
+        settle();
+        assert_eq!(*seen.borrow(), vec![25.0]);
+
+        // 幅だけ変えても、位置が変わらなければ届かない。
+        window.set_size(300.0, 160.0);
+        settle();
+        assert_eq!(*seen.borrow(), vec![25.0]);
+
+        // 通知の中から送った先も、最後の位置として届く。
+        seen.borrow_mut().clear();
+        scroll.on_scroll({
+            let seen = seen.clone();
+            let scroll = scroll.clone();
+            move |m: naui_core::ScrollMetrics| {
+                seen.borrow_mut().push(m.y);
+                if m.y == 55.0 {
+                    scroll.scroll_to(0.0, 50.0);
+                }
+            }
+        });
+        scroll.scroll_to(0.0, 55.0);
+        settle();
+        assert_eq!(*seen.borrow(), vec![55.0, 50.0]);
+        assert_eq!(scroll.metrics().y, 50.0);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
 /// 条件が立つか時間切れになるまで、UI スレッドのメッセージを回す。
 ///
 /// 画像の読み込み完了は、別スレッドから UI スレッドのキューへ積まれて届く。
@@ -1733,4 +1952,229 @@ fn bmp_2x1() -> Vec<u8> {
     bmp.extend_from_slice(&[0; 16]); // 解像度と色数は使わない
     bmp.extend_from_slice(&[0, 0, 255, 255, 0, 0, 0, 0]); // BGR, BGR, 詰め物
     bmp
+}
+
+fn set_visible_maps_to_visibility(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Visibility;
+
+    let button = ui.button("t")?;
+    assert!(button.is_visible(), "既定は表示");
+    button.set_visible(false);
+    assert!(!button.is_visible());
+    assert_eq!(
+        button.native_element().Visibility().expect("Visibility"),
+        Visibility::Collapsed,
+        "場所も取らない Collapsed にする"
+    );
+    button.set_visible(true);
+    assert!(button.is_visible());
+    assert_eq!(
+        button.native_element().Visibility().expect("Visibility"),
+        Visibility::Visible
+    );
+    Ok(())
+}
+
+fn tooltip_maps_to_tool_tip_service(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::ToolTipService;
+    use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+
+    let button = ui.button("保存")?;
+    let object = button
+        .native_element()
+        .cast::<DependencyObject>()
+        .expect("DependencyObject");
+    button.set_tooltip(Some("変更を保存します"));
+    let tip = ToolTipService::GetToolTip(&object)
+        .expect("ToolTip")
+        .cast::<IPropertyValue>()
+        .and_then(|value| value.GetString())
+        .expect("文字列の ToolTip");
+    assert_eq!(tip.to_string(), "変更を保存します");
+
+    button.set_tooltip(None);
+    let cleared = ToolTipService::GetToolTip(&object)
+        .ok()
+        .and_then(|value| value.cast::<IPropertyValue>().ok())
+        .and_then(|value| value.GetString().ok());
+    assert_eq!(cleared, None, "None で外れる");
+    Ok(())
+}
+
+fn request_focus_needs_the_visual_tree(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("")?;
+    assert!(!input.request_focus(), "載る前は移せない");
+    let label = ui.label("見出し")?;
+    assert!(!label.request_focus());
+    Ok(())
+}
+
+/// キーを起こす公開 API が無いので、ここでは付けられることだけを確かめる
+/// (実際の配送は実機で確かめる)。
+fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
+    use naui_core::{EventResponse, KeyEvent};
+    let handler = |_: &KeyEvent| EventResponse::Continue;
+    ui.text_input("")?.on_key_down(handler);
+    ui.text_area("")?.on_key_down(handler);
+    ui.password_input()?.on_key_down(handler);
+    ui.search_input()?.on_key_down(handler);
+    ui.number_input(1.0)?.on_key_down(handler);
+    ui.editable_combo_box()?.on_key_down(handler);
+    Ok(())
+}
+
+/// `TextBox` は改行を `\r` で持つが、`text()` はほかの環境と同じ `\n` で返す。
+fn text_area_reports_newlines_as_lf(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("一\n二")?;
+    assert_eq!(area.text(), "一\n二");
+    area.set_text("a\r\nb\rc");
+    assert_eq!(area.text(), "a\nb\nc");
+    Ok(())
+}
+
+/// 候補に無い文字列を打って Enter を押しても消えず、候補と同じ文字列なら
+/// その候補が選ばれる。Esc で取り消すと、最後に確定した文字列
+/// (プログラムから書いたものを含む) へ戻る。
+///
+/// Enter や Esc での確定・取り消しは UI オートメーションからは起こせない
+/// ので、実キーを `SendInput` で送る。キーは前面のウィンドウへ届くため、
+/// 前面がこのテストのウィンドウでないとき (ほかのアプリが前に出ている、
+/// テンプレートの入力欄が無い) は送らずに通す。
+fn editable_combo_box_commits_and_reverts_text(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_ESCAPE, VK_RETURN};
+
+    let window = ui.window("編集できるコンボボックス", 240.0, 120.0)?;
+    let combo = ui.editable_combo_box()?;
+    combo.set_items(&["ab", "z"]);
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    combo.on_change({
+        let seen = seen.clone();
+        move |text: &str| seen.borrow_mut().push(text.to_string())
+    });
+    window.set_child(&combo);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let native = native::<XamlComboBox>(&combo);
+        let part = || {
+            native
+                .GetTemplateChild(&HSTRING::from("EditableText"))
+                .and_then(|part| part.cast::<TextBox>())
+        };
+        pump_until(KEY_INPUT_TIMEOUT, || part().is_ok());
+        let Ok(text_box) = part() else {
+            println!("     (テンプレートの入力欄が無い環境なので、確かめずに通す)");
+            return;
+        };
+        if !text_box.Focus(FocusState::Programmatic).unwrap_or(false) {
+            println!("     (入力欄へフォーカスを移せない環境なので、確かめずに通す)");
+            return;
+        }
+        // 1 文字目の `TextChanged` は遅れて届くことがあるので、文字列と通知の
+        // 両方がそろうまで待つ。
+        let settle = |text: &str| {
+            pump_until(KEY_INPUT_TIMEOUT, || {
+                combo.text() == text && seen.borrow().last().map(String::as_str) == Some(text)
+            });
+        };
+        let key = |c: u8| VIRTUAL_KEY(u16::from(c));
+
+        // 候補に無い文字列。WinUI が `TextSubmitted` を出す。
+        if !type_keys(&[key(b'Q')]) {
+            return;
+        }
+        settle("q");
+        assert_eq!(combo.text(), "q", "打った文字が入る");
+        if !type_keys(&[VK_RETURN]) {
+            return;
+        }
+        assert_eq!(combo.text(), "q", "Enter の後も残る");
+        assert_eq!(combo.selected(), None);
+        assert_eq!(*seen.borrow(), ["q"], "確定で余計な通知が出ない");
+
+        // プログラムから書いた文字列が、Esc の戻り先になる。
+        for written in ["foo", ""] {
+            combo.set_text(written);
+            let _ = text_box.SelectAll();
+            if !type_keys(&[key(b'W')]) {
+                return;
+            }
+            settle("w");
+            if !type_keys(&[VK_ESCAPE]) {
+                return;
+            }
+            settle(written);
+            assert_eq!(combo.text(), written, "Esc で set_text の値へ戻る");
+        }
+        assert_eq!(*seen.borrow(), ["q", "w", "foo", "w", ""]);
+
+        // 候補と同じ文字列。打ち直すと、その候補が選ばれる。
+        let _ = text_box.SelectAll();
+        if !type_keys(&[key(b'Z')]) {
+            return;
+        }
+        settle("z");
+        if !type_keys(&[VK_RETURN]) {
+            return;
+        }
+        assert_eq!(combo.text(), "z");
+        assert_eq!(combo.selected(), Some(1), "一致する候補が選ばれる");
+        assert_eq!(
+            native.SelectedIndex().unwrap_or(-1),
+            1,
+            "ネイティブの選択も候補を指す"
+        );
+        assert_eq!(*seen.borrow(), ["q", "w", "foo", "w", "", "z"]);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// キー入力が反映されるまで待つ上限。
+const KEY_INPUT_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// 実キーを順に押して離し、届くまでメッセージを回す。
+///
+/// 前面のウィンドウがこのプロセスのものでなければ送らずに `false` を返す
+/// (ほかのアプリへ打ち込まないため)。そのときケースは確かめずに通す。
+fn type_keys(keys: &[windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY]) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+    let mut owner = 0;
+    // SAFETY: `owner` はこの関数の中で生きている。
+    unsafe { GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut owner)) };
+    if owner != std::process::id() {
+        println!("     (テストのウィンドウが前面に無いので、キーを送らずに通す)");
+        return false;
+    }
+    let key = |vk, flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs: Vec<INPUT> = keys
+        .iter()
+        .flat_map(|&vk| [key(vk, KEYBD_EVENT_FLAGS(0)), key(vk, KEYEVENTF_KEYUP)])
+        .collect();
+    // SAFETY: `inputs` は送り終わるまで生きている。
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        println!("     (キーを送れない環境なので、確かめずに通す)");
+        return false;
+    }
+    pump_until(Duration::from_millis(300), || false);
+    true
 }

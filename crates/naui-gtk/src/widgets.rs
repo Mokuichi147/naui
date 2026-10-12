@@ -67,6 +67,32 @@ macro_rules! impl_sizing {
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 <$t as Widget>::size_bin(self).apply_sizing(sizing);
             }
+
+            /// 表示するかどうか。既定は表示。
+            ///
+            /// 隠したものは `Stack` の中では場所を空けない。`Grid` ではマスが残る。
+            pub fn set_visible(&self, visible: bool) {
+                crate::interaction::set_visible(&<$t as Widget>::size_bin(self), visible);
+            }
+
+            /// [`set_visible`](Self::set_visible) で指定した表示。親が隠れていても
+            /// `true` のまま。
+            pub fn is_visible(&self) -> bool {
+                crate::interaction::is_visible(&<$t as Widget>::size_bin(self))
+            }
+
+            /// キーボードフォーカスを移す。移せたら `true`。
+            ///
+            /// 自分が受け取れないとき (コンテナなど) は、中で最初に受け取れるものへ
+            /// 移す。表示前・隠れている・無効なときは `false`。
+            pub fn request_focus(&self) -> bool {
+                crate::interaction::request_focus(&<$t as Widget>::native_widget(self))
+            }
+
+            /// ポインターを重ねたときに出す説明。`None` で外す。
+            pub fn set_tooltip(&self, text: Option<&str>) {
+                crate::interaction::set_tooltip(&<$t as Widget>::native_widget(self), text);
+            }
         }
     };
 }
@@ -290,6 +316,7 @@ struct TextInputInner {
 /// 1 行のテキスト入力 (`GtkEntry`)。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
+crate::keys::impl_key_down!(TextInput);
 impl_widget!(TextInput);
 
 impl TextInput {
@@ -356,6 +383,7 @@ struct PasswordInputInner {
 /// あるが、4 環境の共通部分に無いので出さない。
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
+crate::keys::impl_key_down!(PasswordInput);
 impl_widget!(PasswordInput);
 
 impl PasswordInput {
@@ -425,6 +453,7 @@ struct SearchInputInner {
 /// 他の環境とずれるので使わない。
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
+crate::keys::impl_key_down!(SearchInput);
 impl_widget!(SearchInput);
 
 impl SearchInput {
@@ -508,6 +537,7 @@ struct TextAreaInner {
 /// [`TextArea::set_sizing`] で指定しておく。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
+crate::keys::impl_key_down!(TextArea);
 impl_widget!(TextArea);
 
 impl TextArea {
