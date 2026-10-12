@@ -410,14 +410,17 @@
 //! [`Window::set_min_size`] で、利用者が縮められる下限を決められる
 //! (Windows は Windows App SDK 1.7 以降のランタイムで効く)。
 //!
-//! [`Window::size`] はタイトルバーを除いた中身の大きさで、
+//! [`Window::size`] はタイトルバーとメニューバーを除いた中身の大きさで、
 //! [`Window::on_resize`] は大きさが変わるたびに変わった後の大きさで呼ばれる
-//! (`set_size` で変えたときも呼ばれる)。
+//! (`set_size` で変えたときも呼ばれる)。`set_min_size` の下限も同じ中身の大きさ。
+//! `set_size` の直後の `size` は、環境によってはまだ前の大きさを返す
+//! (Windows と Linux はレイアウトの後に変わる)。変わった大きさは
+//! `on_resize` で受け取る。
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
 //! | 閉じる前の確認 | `AppWindow.Closing` (`Cancel`) | `windowShouldClose:` | `close-request` | (呼ばれない) |
-//! | 大きさの変化 | `Window.SizeChanged` | `windowDidResize:` | `default-width` / `default-height` | `ResizeObserver` |
+//! | 大きさの変化 | 中身の層の `SizeChanged` | `windowDidResize:` | `default-width` / `default-height` | `ResizeObserver` |
 //!
 //! **Web では閉じる前の確認は呼ばれない。** ページの中のウィンドウを利用者が
 //! 閉じる操作が無く、タブを閉じるときに独自の確認を出す手段も無いため。

@@ -102,6 +102,11 @@ struct WindowInner {
     closing_token: Cell<Option<i64>>,
     on_close_request: naui_core::CloseHandler,
     on_resize: RefCell<Option<Box<ResizeCallback>>>,
+    /// 最後に `on_resize` へ渡した大きさ。同じ大きさで二度呼ばないために持つ。
+    last_size: Cell<Option<(f64, f64)>>,
+    /// `set_min_size` で頼まれた中身の下限。外枠の大きさへ直して
+    /// `OverlappedPresenter` へ渡すので、枠や帯の高さが変わるたびに渡し直す。
+    min_size: Cell<Option<(f64, f64)>>,
 }
 
 type ResizeCallback = dyn FnMut((f64, f64));
@@ -158,6 +163,8 @@ impl Window {
             closing_token: Cell::new(None),
             on_close_request: naui_core::CloseHandler::default(),
             on_resize: RefCell::new(None),
+            last_size: Cell::new(None),
+            min_size: Cell::new(None),
         }));
         this.observe_size();
         Ok(this)
@@ -170,20 +177,115 @@ impl Window {
             naui_winui3::Microsoft::UI::Xaml::WindowSizeChangedEventArgs,
         >::new(move |_, _| {
             if let Some(inner) = state.try_with_mut(|weak| weak.upgrade()).flatten() {
-                let size = Window(inner.clone()).size();
-                // 通知の中で差し替えられても二重借用にならないよう、取り出して呼ぶ。
-                let taken = inner.on_resize.borrow_mut().take();
-                if let Some(mut f) = taken {
-                    f(size);
-                    let mut slot = inner.on_resize.borrow_mut();
-                    if slot.is_none() {
-                        *slot = Some(f);
-                    }
+                // 中身の層があれば、並べ終わった後に層の `SizeChanged` が知らせる
+                // (ここではまだ古い大きさのまま)。
+                if inner.content_layer.borrow().is_none() {
+                    Window(inner).content_size_changed();
                 }
             }
             Ok(())
         });
         let _ = self.0.native.SizeChanged(&handler);
+    }
+
+    /// 中身の大きさが変わったかもしれないときに呼ぶ。下限を渡し直し、
+    /// 変わっていれば `on_resize` へ知らせる。
+    fn content_size_changed(&self) {
+        self.apply_min_size();
+        let size = self.size();
+        if self.0.last_size.replace(Some(size)) == Some(size) {
+            return;
+        }
+        // 通知の中で差し替えられても二重借用にならないよう、取り出して呼ぶ。
+        let taken = self.0.on_resize.borrow_mut().take();
+        if let Some(mut f) = taken {
+            f(size);
+            let mut slot = self.0.on_resize.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(f);
+            }
+        }
+    }
+
+    /// 並べ終わった中身の層の大きさ。層がまだ無いか、並べる前なら `None`。
+    fn laid_out_content_size(&self) -> Option<(f64, f64)> {
+        let layer = self.0.content_layer.borrow();
+        let layer = layer.as_ref()?;
+        let size = (layer.ActualWidth().ok()?, layer.ActualHeight().ok()?);
+        (size.0 > 0.0 || size.1 > 0.0).then_some(size)
+    }
+
+    /// `set_min_size` の下限 (中身) を外枠の大きさへ直して渡す。
+    ///
+    /// `OverlappedPresenter` の下限は `AppWindow` と同じく外枠の物理
+    /// ピクセルなので、いまの外枠と中身の差 (枠・タイトルバー・メニューバー)
+    /// を足す。中身の層が並ぶたびに呼ぶので、帯の高さが変わっても追いつく。
+    fn apply_min_size(&self) {
+        use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
+        use windows::Foundation::{IReference, PropertyValue};
+
+        let Some((width, height)) = self.0.min_size.get() else {
+            return;
+        };
+        let Ok(app_window) = self.0.native.AppWindow() else {
+            return;
+        };
+        let Ok(presenter) = app_window
+            .Presenter()
+            .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
+        else {
+            return;
+        };
+        let (Ok(outer), (content_width, content_height)) = (app_window.Size(), self.size()) else {
+            return;
+        };
+        let scale = self.rasterization_scale();
+        let extra_width = (f64::from(outer.Width) - content_width * scale).max(0.0);
+        let extra_height = (f64::from(outer.Height) - content_height * scale).max(0.0);
+        let value = |pixels: f64| {
+            PropertyValue::CreateInt32(pixels.ceil() as i32)
+                .and_then(|value| value.cast::<IReference<i32>>())
+                .ok()
+        };
+        if let (Some(width), Some(height)) = (
+            value(width.max(0.0) * scale + extra_width),
+            value(height.max(0.0) * scale + extra_height),
+        ) {
+            let _ = presenter.SetPreferredMinimumWidth(&width);
+            let _ = presenter.SetPreferredMinimumHeight(&height);
+        }
+    }
+
+    /// 論理ピクセル (DIP) 1 つが何物理ピクセルか。中身がまだ無ければ 1。
+    fn rasterization_scale(&self) -> f64 {
+        self.0
+            .theme_root
+            .borrow()
+            .as_ref()
+            .and_then(|root| root.XamlRoot().ok())
+            .and_then(|root| root.RasterizationScale().ok())
+            .filter(|scale| *scale > 0.0)
+            .unwrap_or(1.0)
+    }
+
+    /// 中身の層が並び直されて大きさが変わったら知らせる。
+    ///
+    /// ウィンドウの大きさのほか、メニューバーの付け外しでも中身は変わる。
+    /// どちらも層の `SizeChanged` に現れ、そのときには実寸が付いている。
+    /// 層は `set_child` のたびに作り直すので、そのたびに付ける。
+    fn watch_content_layer(&self) {
+        let layer = self.0.content_layer.borrow().clone();
+        let Some(layer) = layer else {
+            return;
+        };
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let changed = SizeChangedEventHandler::new(move |_, _| {
+            if let Some(inner) = state.try_with_mut(|weak| weak.upgrade()).flatten() {
+                Window(inner).content_size_changed();
+            }
+            Ok(())
+        });
+        let _ = layer.SizeChanged(&changed);
     }
 
     /// 利用者がウィンドウを閉じようとしたときの確認。
@@ -197,9 +299,29 @@ impl Window {
     }
 
     /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル (DIP)。
+    ///
+    /// ほかの環境と同じく、タイトルバーとメニューバーは含まない。naui は
+    /// 中身をタイトルバーの裏まで広げて自分で帯を描いているので、
+    /// `Window.Bounds` ではなく、子を置く層 (帯の下の行) の実寸を返す。
+    /// 層は大きさが変わった後のレイアウトで並び直るので、[`set_size`](Self::set_size)
+    /// の直後は前の大きさのまま (GTK と同じ)。変わった大きさは
+    /// [`on_resize`](Self::on_resize) で届く。
     pub fn size(&self) -> (f64, f64) {
+        if let Some(size) = self.laid_out_content_size() {
+            return size;
+        }
+        // 並べる前。中身を広げていなければ `Bounds` がそのまま中身。広げた後
+        // なら、少なくともタイトルバーの帯の分は中身ではない。
+        let caption = if self.0.title_bar.borrow().is_some() {
+            CAPTION_HEIGHT
+        } else {
+            0.0
+        };
         self.0.native.Bounds().map_or((0.0, 0.0), |bounds| {
-            (f64::from(bounds.Width), f64::from(bounds.Height))
+            (
+                f64::from(bounds.Width),
+                (f64::from(bounds.Height) - caption).max(0.0),
+            )
         })
     }
 
@@ -223,35 +345,15 @@ impl Window {
             .unwrap_or_default()
     }
 
-    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`size`](Self::size) と同じ。
     ///
     /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
     ///
     /// `OverlappedPresenter.PreferredMinimumWidth` / `Height` を使うので、
     /// Windows App SDK 1.7 より前のランタイムでは効かない。
     pub fn set_min_size(&self, width: f64, height: f64) {
-        use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
-        use windows::Foundation::{IReference, PropertyValue};
-
-        let Some(presenter) = self
-            .0
-            .native
-            .AppWindow()
-            .and_then(|window| window.Presenter())
-            .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
-            .ok()
-        else {
-            return;
-        };
-        let value = |pixels: f64| {
-            PropertyValue::CreateInt32(pixels.max(0.0) as i32)
-                .and_then(|value| value.cast::<IReference<i32>>())
-                .ok()
-        };
-        if let (Some(width), Some(height)) = (value(width), value(height)) {
-            let _ = presenter.SetPreferredMinimumWidth(&width);
-            let _ = presenter.SetPreferredMinimumHeight(&height);
-        }
+        self.0.min_size.set(Some((width, height)));
+        self.apply_min_size();
     }
 
     pub fn set_size(&self, width: f64, height: f64) {
@@ -337,6 +439,9 @@ impl Window {
                     .wheel_subclass_installed
                     .set(crate::layout::install_wheel_subclass(&self.0.native));
             }
+            // タイトルバーの帯が中身の上に乗るので、中身の大きさが変わる。
+            // 並べ終わったら層が知らせる。
+            self.watch_content_layer();
         }
     }
 

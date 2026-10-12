@@ -139,6 +139,10 @@ const CASES: &[Case] = &[
         scroll_to_row_keeps_the_selection,
     ),
     (
+        "ウィンドウの大きさはタイトルバーとメニューバーを除いた中身の行",
+        window_size_is_the_content_row,
+    ),
+    (
         "TextArea の改行は \\n で読める",
         text_area_reports_newlines_as_lf,
     ),
@@ -1216,6 +1220,79 @@ fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
         assert!(!window.is_visible(), "閉じたら見えないこと");
         Ok(())
     }))
+}
+
+/// `size` と `on_resize` は、naui が描くタイトルバーの帯とメニューバーを
+/// 除いた中身の行の大きさ (macOS の `contentView`、GTK のヘッダーバーの下と
+/// 同じ)。`Window.Bounds` はタイトルバーの裏まで含むので、そのままでは違う。
+///
+/// 行に実寸が付くまでメッセージを回す。付かない環境 (CI) では確かめずに通す。
+fn window_size_is_the_content_row(ui: &Ui) -> Result<()> {
+    let window = ui.window("大きさ", 420.0, 300.0)?;
+    let reported = Rc::new(Cell::new(None));
+    window.on_resize({
+        let reported = reported.clone();
+        move |size| reported.set(Some(size))
+    });
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&ui.label("中身")?);
+    window.set_child(&stack);
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+    window.set_menu_bar(&menu_bar);
+    window.show();
+    let content_row = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<Grid>()
+        .expect("根は Grid")
+        .Children()
+        .expect("根の子")
+        .GetAt(2)
+        .expect("中身の行")
+        .cast::<FrameworkElement>()
+        .expect("行は FrameworkElement");
+    let measure = || {
+        (
+            content_row.ActualWidth().unwrap_or(0.0),
+            content_row.ActualHeight().unwrap_or(0.0),
+        )
+    };
+    // メニューバーが並んで中身の行が縮み、その通知が届くまで待つ。
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        measure().1 > 0.0 && reported.get() == Some(window.size())
+    });
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let row = measure();
+        if row.1 <= 0.0 {
+            println!("     (中身の行に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let size = window.size();
+        let near =
+            |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0;
+        assert!(
+            near(size, row),
+            "size {size:?} が中身の行 {row:?} と同じこと"
+        );
+        let bounds = window.native_window().Bounds().expect("Bounds");
+        assert!(
+            f64::from(bounds.Height) - size.1 > 32.0,
+            "タイトルバーとメニューバーの分だけ Bounds より低いこと"
+        );
+        let last = reported.get().expect("on_resize が呼ばれていること");
+        assert!(
+            near(last, size),
+            "最後の通知 {last:?} が size {size:?} と同じこと"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
 }
 
 // -------------------------------------------------------------- メニューバー
