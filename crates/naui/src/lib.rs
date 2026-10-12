@@ -410,17 +410,35 @@
 //! [`Window::set_min_size`] で、利用者が縮められる下限を決められる
 //! (Windows は Windows App SDK 1.7 以降のランタイムで効く)。
 //!
-//! [`Window::size`] はタイトルバーとメニューバーを除いた中身の大きさで、
+//! ウィンドウの大きさは、4 環境とも**タイトルバー・メニューバー・ツールバー・
+//! ウィンドウの枠を除いた中身の大きさ**で数える (サイドバーを付けていれば、
+//! その幅は含む)。`ui.window(title, width, height)` の幅・高さ、
+//! [`Window::set_size`]、[`Window::size`]、[`Window::set_min_size`] の下限が
+//! すべて同じ意味なので、`ui.window(.., 900.0, 640.0)` の `size` は
+//! どの環境でも 900×640 になる (Web は下の注を参照)。
 //! [`Window::on_resize`] は大きさが変わるたびに変わった後の大きさで呼ばれる
-//! (`set_size` で変えたときも呼ばれる)。`set_min_size` の下限も同じ中身の大きさ。
+//! (`set_size` で変えたときも呼ばれる)。
+//!
 //! `set_size` の直後の `size` は、環境によってはまだ前の大きさを返す
 //! (Windows と Linux はレイアウトの後に変わる)。変わった大きさは
-//! `on_resize` で受け取る。
+//! `on_resize` で受け取る。表示する前の `size` は、`ui.window` か `set_size`
+//! で指定した大きさを返す。
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
 //! | 閉じる前の確認 | `AppWindow.Closing` (`Cancel`) | `windowShouldClose:` | `close-request` | (呼ばれない) |
 //! | 大きさの変化 | 中身の層の `SizeChanged` | `windowDidResize:` | `default-width` / `default-height` | `ResizeObserver` |
+//! | 大きさを変える | `AppWindow.Resize` (外枠との差を足す) | `setContentSize` (`contentLayoutRect` との差を足す) | `set_default_size` (ヘッダーバーとメニューバーの高さを足す) | ウィンドウ要素の `max-width` / `min-height` (行の高さを足す) |
+//!
+//! どの環境もネイティブの API はウィンドウ全体 (か、タイトルバーの下まで
+//! 伸びた `contentView`) の大きさを取るので、naui がいまの差を測って足す。
+//! Windows と Linux は、表示の直後でまだ中身が並んでいない間はメニューバー
+//! などの高さを見積もるしかないので、並べ終わったときに一度だけ合わせ直す。
+//! Windows の `AppWindow` は物理ピクセルを取るので、`RasterizationScale` も掛ける。
+//!
+//! **Web は大きさを決めきれない。** ブラウザの窓そのものの大きさは変えられない
+//! ので、幅は `max-width` (狭い画面では縮む)、高さは `min-height` (中身が多ければ
+//! 伸びる) として扱う。
 //!
 //! **Web では閉じる前の確認は呼ばれない。** ページの中のウィンドウを利用者が
 //! 閉じる操作が無く、タブを閉じるときに独自の確認を出す手段も無いため。

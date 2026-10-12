@@ -46,6 +46,12 @@ pub(crate) struct WindowInner {
     /// naui の [`Window::close`] の最中。GTK4 はプログラムから閉じても
     /// `close-request` を出すので、そのときは確認しない。
     closing: Cell<bool>,
+    /// 最初の [`Window::show`] で合わせる中身の大きさ。`ui.window` の
+    /// 幅・高さで始まり、表示前の `set_size` で置き換わる。表示したら空になる。
+    initial_size: Cell<Option<(f64, f64)>>,
+    /// 並ぶ前に頼まれた中身の大きさ。並ぶ前は上段の帯の高さを測って
+    /// 見積もるしかないので、並べ終わってから一度だけ実寸で合わせ直す。
+    pending_fit: Cell<Option<(f64, f64)>>,
 }
 
 /// トップレベルウィンドウ。
@@ -67,11 +73,11 @@ impl WeakWindow {
 
 impl Window {
     pub(crate) fn new(app: &adw::Application, title: &str, width: f64, height: f64) -> Self {
+        // 既定の大きさはヘッダーバーを含むウィンドウ全体なので、中身の
+        // 大きさから決め直す (下の `apply_default_size`)。
         let native = adw::ApplicationWindow::builder()
             .application(app)
             .title(title)
-            .default_width(to_px(width))
-            .default_height(to_px(height))
             .build();
 
         // ヘッダーバーは自分でタイトルを描かず、ウィンドウの `title` を映す。
@@ -100,9 +106,82 @@ impl Window {
             on_close_request: CloseHandler::default(),
             on_resize: Notifier::default(),
             closing: Cell::new(false),
+            initial_size: Cell::new(None),
+            pending_fit: Cell::new(None),
         }));
         this.observe();
+        this.apply_default_size((width.max(0.0), height.max(0.0)));
+        this.0
+            .initial_size
+            .set(Some((width.max(0.0), height.max(0.0))));
         this
+    }
+
+    /// 中身を `size` にするよう、ウィンドウの既定の大きさを決める。
+    ///
+    /// GTK4 の既定の大きさはウィンドウ全体 (影は除く) で、ヘッダーバーと
+    /// メニューバーの帯も含むので、その高さを足す。並ぶ前は帯の高さを
+    /// 測って見積もり、並べ終わってから一度だけ実寸で合わせ直す。
+    fn apply_default_size(&self, (width, height): (f64, f64)) {
+        let (bars, measured) = self.top_bars_height();
+        self.0
+            .native
+            .set_default_size(to_px(width), to_px(height + bars));
+        if !measured {
+            self.0.pending_fit.set(Some((width, height)));
+        }
+    }
+
+    /// 上段の帯 (ヘッダーバーとメニューバー) の高さと、それが実寸かどうか。
+    ///
+    /// 並べ終わっていれば、ウィンドウの中身と `AdwToastOverlay` の高さの差。
+    /// 並ぶ前は帯を 1 本ずつ測った見積もり (CSS が当たる前は低めに出る)。
+    fn top_bars_height(&self) -> (f64, bool) {
+        let content = self
+            .0
+            .native
+            .content()
+            .map_or(0, |content| content.height());
+        let overlay = self.0.overlay.height();
+        if content > 0 && overlay > 0 {
+            return (f64::from((content - overlay).max(0)), true);
+        }
+        let header: gtk::Widget = self.0.header.clone().upcast();
+        let menu_bar: Option<gtk::Widget> = self
+            .0
+            .menu_bar
+            .borrow()
+            .as_ref()
+            .map(|menu_bar| menu_bar.mount().upcast());
+        let bars = std::iter::once(header)
+            .chain(menu_bar)
+            .map(|bar| bar.measure(gtk::Orientation::Vertical, -1).1)
+            .sum::<i32>();
+        (f64::from(bars.max(0)), false)
+    }
+
+    /// 並ぶ前に頼まれた大きさへ、並べ終わった実寸で一度だけ合わせ直す。
+    ///
+    /// GTK4 には大きさが決まったことの通知が無いので、フレームごとの
+    /// 呼び出しで中身に実寸が付くのを待つ。
+    fn fit_after_layout(&self) {
+        let weak = Rc::downgrade(&self.0);
+        self.0.overlay.add_tick_callback(move |overlay, _| {
+            let Some(inner) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if overlay.height() <= 0 {
+                return glib::ControlFlow::Continue;
+            }
+            if let Some(target) = inner.pending_fit.take() {
+                let window = Window(inner);
+                let size = window.size();
+                if (size.0 - target.0).abs() >= 0.5 || (size.1 - target.1).abs() >= 0.5 {
+                    window.apply_default_size(target);
+                }
+            }
+            glib::ControlFlow::Break
+        });
     }
 
     fn observe(&self) {
@@ -145,16 +224,26 @@ impl Window {
         self.0.on_close_request.set(f);
     }
 
-    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル。ヘッダーバーは含まない。
+    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル。ヘッダーバーと
+    /// メニューバーは含まない。サイドバーを付けているときは、ほかの環境と
+    /// 同じくサイドバーの幅も含む。
     ///
-    /// 画面に出る前は、[`set_size`](Self::set_size) で指定した大きさ。
+    /// 画面に出る前は、`ui.window` か [`set_size`](Self::set_size) で指定した大きさ。
     pub fn size(&self) -> (f64, f64) {
-        let (width, height) = (self.0.overlay.width(), self.0.overlay.height());
+        if let Some(size) = self.0.initial_size.get() {
+            return size;
+        }
+        let width = self.0.native.content().map_or(0, |content| content.width());
+        let height = self.0.overlay.height();
         if width > 0 && height > 0 {
             return (f64::from(width), f64::from(height));
         }
         let (width, height) = self.0.native.default_size();
-        (f64::from(width.max(0)), f64::from(height.max(0)))
+        let (bars, _) = self.top_bars_height();
+        (
+            f64::from(width.max(0)),
+            (f64::from(height.max(0)) - bars).max(0.0),
+        )
     }
 
     /// 大きさが変わったときの通知。変わった後の [`size`](Self::size) が届く。
@@ -215,14 +304,32 @@ impl Window {
     ///
     /// GTK4 のウィンドウは中身の最小の大きさより縮まないので、中身の入れ物に
     /// 最小の大きさを付ける (ヘッダーバーの分はその上に足される)。
+    /// サイドバーを付けている間は、幅の下限はサイドバーの右の区画に効く
+    /// (サイドバーの幅だけ広いところで止まる)。
     pub fn set_min_size(&self, width: f64, height: f64) {
         self.0
             .overlay
             .set_size_request(to_px(width.max(0.0)), to_px(height.max(0.0)));
     }
 
+    /// 中身の領域の大きさを変える。単位と範囲は [`size`](Self::size) と同じで、
+    /// ヘッダーバーとメニューバーは含まない (ほかの環境と同じ)。
+    ///
+    /// GTK4 の `set_default_size` はウィンドウ全体の大きさを取るので、
+    /// ヘッダーバーとメニューバーの帯の高さを足して渡す。画面に出る前に
+    /// 呼んだときは、表示するときにこの大きさで出す。
     pub fn set_size(&self, width: f64, height: f64) {
-        self.0.native.set_default_size(to_px(width), to_px(height));
+        let size = (width.max(0.0), height.max(0.0));
+        if self.0.initial_size.get().is_some() {
+            self.0.initial_size.set(Some(size));
+        }
+        self.0.pending_fit.set(None);
+        self.apply_default_size(size);
+        // 表示した後でまだ並んでいなければ、並ぶのを待って合わせ直す
+        // (表示の前なら `show` が待つ)。
+        if self.0.initial_size.get().is_none() && self.0.pending_fit.get().is_some() {
+            self.fit_after_layout();
+        }
     }
 
     /// ウィンドウの中身を差し替える。
@@ -342,7 +449,18 @@ impl Window {
         }
     }
 
+    /// 画面に出して前面へ持ってくる。
+    ///
+    /// 最初の表示では、中身を `ui.window` (か表示前の [`set_size`](Self::set_size))
+    /// の大きさにする。
     pub fn show(&self) {
+        if let Some(size) = self.0.initial_size.take() {
+            // メニューバーは表示の前に付くことが多いので、ここで測り直す。
+            self.apply_default_size(size);
+        }
+        if self.0.pending_fit.get().is_some() {
+            self.fit_after_layout();
+        }
         self.0.native.present();
     }
 

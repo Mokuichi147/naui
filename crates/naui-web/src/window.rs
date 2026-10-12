@@ -1,7 +1,7 @@
 //! ブラウザには OS のウィンドウが無いため、`<body>` 直下のブロック要素を
 //! ウィンドウとして扱う。タイトルは `document.title` に反映する。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use naui_core::{Error, Result, Theme};
@@ -38,13 +38,26 @@ struct WindowInner {
     on_resize: Rc<crate::widgets::ValueHandler<(f64, f64)>>,
     /// 大きさの変化の購読。落とすと購読も外れる。
     resize_observer: RefCell<Option<web_sys::ResizeObserver>>,
-    resize_callback:
-        RefCell<Option<wasm_bindgen::closure::Closure<dyn FnMut(wasm_bindgen::JsValue)>>>,
+    resize_callback: RefCell<Option<ObserverCallback>>,
+    /// `ui.window` か `set_size` で頼まれた中身の大きさ。
+    size: Cell<(f64, f64)>,
+    /// `set_min_size` で頼まれた中身の下限。
+    min_size: Cell<Option<(f64, f64)>>,
+    /// メニューバーとツールバーの行の高さの変化の購読。行の高さが変わったら
+    /// ウィンドウ要素の高さの指定を足し直す。
+    bars_observer: RefCell<Option<web_sys::ResizeObserver>>,
+    bars_callback: RefCell<Option<ObserverCallback>>,
 }
+
+/// `ResizeObserver` へ渡す通知先。
+type ObserverCallback = wasm_bindgen::closure::Closure<dyn FnMut(wasm_bindgen::JsValue)>;
 
 impl Drop for WindowInner {
     fn drop(&mut self) {
         if let Some(observer) = self.resize_observer.borrow_mut().take() {
+            observer.disconnect();
+        }
+        if let Some(observer) = self.bars_observer.borrow_mut().take() {
             observer.disconnect();
         }
     }
@@ -76,9 +89,7 @@ impl Window {
         // メニューバーが「キーがどのウィンドウから上がってきたか」を見分ける印。
         let _ = element.set_attribute(WINDOW_ATTRIBUTE, "");
         let style = element.style();
-        // 指定サイズを上限としつつ、狭い画面では縮む。
-        let _ = style.set_property("max-width", &format!("{width}px"));
-        let _ = style.set_property("min-height", &format!("{height}px"));
+        // 幅と高さは `apply_size` が付ける。
         let _ = style.set_property("margin", "0 auto");
         let _ = style.set_property("box-sizing", "border-box");
         // 中身がウィンドウの高さいっぱいに広がれるようにする。
@@ -118,9 +129,66 @@ impl Window {
             on_resize: Rc::default(),
             resize_observer: RefCell::new(None),
             resize_callback: RefCell::new(None),
+            size: Cell::new((width.max(0.0), height.max(0.0))),
+            min_size: Cell::new(None),
+            bars_observer: RefCell::new(None),
+            bars_callback: RefCell::new(None),
         }));
         this.set_title(title);
+        this.observe_bars();
+        this.apply_size();
         Ok(this)
+    }
+
+    /// メニューバーとツールバーの行の高さの合計。付いていない行は数えない。
+    fn bars_height(&self) -> f64 {
+        let menu_bar = self.0.menu_bar.borrow().as_ref().map(|m| m.mount());
+        std::iter::once(self.0.toolbar_row.clone())
+            .chain(menu_bar)
+            .filter(|bar| bar.parent_element().as_ref() == Some(self.0.element.as_ref()))
+            .map(|bar| f64::from(bar.offset_height()))
+            .sum()
+    }
+
+    /// 頼まれた中身の大きさと下限を、ウィンドウ要素の CSS へ写す。
+    ///
+    /// ウィンドウ要素はメニューバーとツールバーの行も含むので、高さには
+    /// 行の高さを足す。幅は `max-width` (狭い画面では縮む)、高さは
+    /// `min-height` (中身が多ければ伸びる) で、どちらも目安になる。
+    fn apply_size(&self) {
+        let (width, height) = self.0.size.get();
+        let min = self.0.min_size.get();
+        let bars = self.bars_height();
+        let style = self.0.element.style();
+        let _ = style.set_property("max-width", &format!("{width}px"));
+        let min_height = height.max(min.map_or(0.0, |(_, height)| height)) + bars;
+        let _ = style.set_property("min-height", &format!("{min_height}px"));
+        match min {
+            Some((min_width, _)) => {
+                let _ = style.set_property("min-width", &format!("{min_width}px"));
+            }
+            None => {
+                let _ = style.remove_property("min-width");
+            }
+        }
+    }
+
+    /// 行の高さが変わったら (付け外しや、フォントの読み込みで) 高さを足し直す。
+    fn observe_bars(&self) {
+        let weak = Rc::downgrade(&self.0);
+        let callback = wasm_bindgen::closure::Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(
+            move |_entries: wasm_bindgen::JsValue| {
+                if let Some(inner) = weak.upgrade() {
+                    Window(inner).apply_size();
+                }
+            },
+        );
+        let Ok(observer) = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()) else {
+            return;
+        };
+        observer.observe(self.0.toolbar_row.as_ref());
+        *self.0.bars_observer.borrow_mut() = Some(observer);
+        *self.0.bars_callback.borrow_mut() = Some(callback);
     }
 
     /// 利用者がウィンドウを閉じようとしたときの確認。
@@ -134,10 +202,13 @@ impl Window {
     }
 
     /// 中身の領域の大きさ (幅, 高さ)。単位は CSS ピクセル。
+    ///
+    /// ほかの環境と同じく、メニューバーとツールバーの行は含まない
+    /// (ウィンドウ要素の大きさから行の高さを引く)。
     pub fn size(&self) -> (f64, f64) {
         (
             f64::from(self.0.element.client_width()),
-            f64::from(self.0.element.client_height()),
+            (f64::from(self.0.element.client_height()) - self.bars_height()).max(0.0),
         )
     }
 
@@ -188,10 +259,10 @@ impl Window {
     ///
     /// Web ではウィンドウの要素に `min-width` / `min-height` を付ける
     /// (ブラウザの窓そのものの大きさは決められないので、狭いときはスクロールになる)。
+    /// 高さにはメニューバーとツールバーの行の高さを足す。
     pub fn set_min_size(&self, width: f64, height: f64) {
-        let style = self.0.element.style();
-        let _ = style.set_property("min-width", &format!("{}px", width.max(0.0)));
-        let _ = style.set_property("min-height", &format!("{}px", height.max(0.0)));
+        self.0.min_size.set(Some((width.max(0.0), height.max(0.0))));
+        self.apply_size();
     }
 
     pub fn set_title(&self, title: &str) {
@@ -203,10 +274,15 @@ impl Window {
         self.0.title.borrow().clone()
     }
 
+    /// 中身の領域の大きさを変える。単位と範囲は [`size`](Self::size) と同じで、
+    /// メニューバーとツールバーの行は含まない (ほかの環境と同じ)。
+    ///
+    /// ブラウザの窓そのものの大きさは決められないので、ウィンドウ要素の
+    /// `max-width` (幅の上限。狭い画面では縮む) と `min-height` (高さの下限。
+    /// 中身が多ければ伸びる) に写す。高さには行の高さを足す。
     pub fn set_size(&self, width: f64, height: f64) {
-        let style = self.0.element.style();
-        let _ = style.set_property("max-width", &format!("{width}px"));
-        let _ = style.set_property("min-height", &format!("{height}px"));
+        self.0.size.set((width.max(0.0), height.max(0.0)));
+        self.apply_size();
     }
 
     /// ルートに置くウィジェット。呼ぶたびに置き換わる。
@@ -330,6 +406,9 @@ impl Window {
         self.clear_menu_bar();
         *self.0.menu_bar.borrow_mut() = Some(menu_bar.clone());
         self.mount_menu_bar();
+        if let Some(observer) = self.0.bars_observer.borrow().as_ref() {
+            observer.observe(menu_bar.mount().as_ref());
+        }
         // ショートカットの購読は、取り付けている間だけ張る。
         menu_bar.attach(self.0.element.as_ref());
     }
@@ -341,7 +420,11 @@ impl Window {
         let old = self.0.menu_bar.borrow_mut().take();
         if let Some(old) = old {
             old.detach();
+            if let Some(observer) = self.0.bars_observer.borrow().as_ref() {
+                observer.unobserve(old.mount().as_ref());
+            }
             old.mount().remove();
+            self.apply_size();
         }
     }
 

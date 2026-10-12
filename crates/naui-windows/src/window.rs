@@ -92,8 +92,13 @@ struct WindowInner {
     sidebar: RefCell<Option<Sidebar>>,
     visible: RefCell<bool>,
     theme: Cell<Theme>,
-    width: i32,
-    height: i32,
+    /// 最初の [`Window::show`] で合わせる中身の大きさ (DIP)。`ui.window` の
+    /// 幅・高さで始まり、表示前の `set_size` で置き換わる。表示したら空になる。
+    initial_size: Cell<Option<(f64, f64)>>,
+    /// 中身が並ぶ前に頼まれた中身の大きさ。並ぶ前はメニューバーの高さが
+    /// 分からず外枠を見積もるしかないので、並べ終わったときに一度だけ
+    /// 実寸で合わせ直す。
+    pending_fit: Cell<Option<(f64, f64)>>,
     wheel_subclass_installed: Cell<bool>,
     /// ショートカットを拾う `KeyDown` を付けたかどうか。
     menu_key_installed: Cell<bool>,
@@ -155,8 +160,8 @@ impl Window {
             title_label: RefCell::new(None),
             visible: RefCell::new(false),
             theme: Cell::new(theme),
-            width: width as i32,
-            height: height as i32,
+            initial_size: Cell::new(Some((width.max(0.0), height.max(0.0)))),
+            pending_fit: Cell::new(None),
             wheel_subclass_installed: Cell::new(false),
             menu_key_installed: Cell::new(false),
             key_down: Rc::default(),
@@ -192,6 +197,7 @@ impl Window {
     /// 変わっていれば `on_resize` へ知らせる。
     fn content_size_changed(&self) {
         self.apply_min_size();
+        self.finish_pending_fit();
         let size = self.size();
         if self.0.last_size.replace(Some(size)) == Some(size) {
             return;
@@ -215,16 +221,72 @@ impl Window {
         (size.0 > 0.0 || size.1 > 0.0).then_some(size)
     }
 
+    /// 中身の大きさ (DIP) を外枠の大きさ (物理ピクセル) へ直す。
+    ///
+    /// `AppWindow` も `OverlappedPresenter` の下限も外枠の物理ピクセルを
+    /// 取るので、`RasterizationScale` を掛け、いまの外枠と中身の差 (左右の枠・
+    /// タイトルバー・メニューバー) を足す。中身の層が並ぶ前は差を
+    /// [`measured_size`](Self::measured_size) の見積もりから出すので、
+    /// メニューバーの分が抜ける。
+    fn outer_size_for(
+        &self,
+        app_window: &naui_winui3::Microsoft::UI::Windowing::AppWindow,
+        (width, height): (f64, f64),
+    ) -> Option<(f64, f64)> {
+        let outer = app_window.Size().ok()?;
+        let (content_width, content_height) = self.measured_size();
+        let scale = self.rasterization_scale();
+        let extra_width = (f64::from(outer.Width) - content_width * scale).max(0.0);
+        let extra_height = (f64::from(outer.Height) - content_height * scale).max(0.0);
+        Some((
+            width.max(0.0) * scale + extra_width,
+            height.max(0.0) * scale + extra_height,
+        ))
+    }
+
+    /// 中身を `size` (DIP) にするよう、外枠を `AppWindow.Resize` で変える。
+    fn resize_content(&self, size: (f64, f64)) {
+        use windows::Graphics::SizeInt32;
+
+        let Ok(app_window) = self.0.native.AppWindow() else {
+            return;
+        };
+        let Some((width, height)) = self.outer_size_for(&app_window, size) else {
+            return;
+        };
+        let _ = app_window.Resize(SizeInt32 {
+            Width: width.round() as i32,
+            Height: height.round() as i32,
+        });
+        // 並ぶ前の見積もりは、並べ終わってから実寸で合わせ直す。層が無ければ
+        // 帯もメニューバーも無く、見積もり (`Bounds`) がそのまま中身なので要らない。
+        if self.0.content_layer.borrow().is_some() && self.laid_out_content_size().is_none() {
+            self.0.pending_fit.set(Some(size));
+        }
+    }
+
+    /// 並ぶ前に頼まれた大きさへ、並べ終わった実寸で一度だけ合わせ直す。
+    fn finish_pending_fit(&self) {
+        let Some(target) = self.0.pending_fit.get() else {
+            return;
+        };
+        let Some(size) = self.laid_out_content_size() else {
+            return;
+        };
+        self.0.pending_fit.set(None);
+        if (size.0 - target.0).abs() >= 0.5 || (size.1 - target.1).abs() >= 0.5 {
+            self.resize_content(target);
+        }
+    }
+
     /// `set_min_size` の下限 (中身) を外枠の大きさへ直して渡す。
     ///
-    /// `OverlappedPresenter` の下限は `AppWindow` と同じく外枠の物理
-    /// ピクセルなので、いまの外枠と中身の差 (枠・タイトルバー・メニューバー)
-    /// を足す。中身の層が並ぶたびに呼ぶので、帯の高さが変わっても追いつく。
+    /// 中身の層が並ぶたびに呼ぶので、帯の高さが変わっても追いつく。
     fn apply_min_size(&self) {
         use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
         use windows::Foundation::{IReference, PropertyValue};
 
-        let Some((width, height)) = self.0.min_size.get() else {
+        let Some(min_size) = self.0.min_size.get() else {
             return;
         };
         let Ok(app_window) = self.0.native.AppWindow() else {
@@ -236,27 +298,25 @@ impl Window {
         else {
             return;
         };
-        let (Ok(outer), (content_width, content_height)) = (app_window.Size(), self.size()) else {
+        let Some((width, height)) = self.outer_size_for(&app_window, min_size) else {
             return;
         };
-        let scale = self.rasterization_scale();
-        let extra_width = (f64::from(outer.Width) - content_width * scale).max(0.0);
-        let extra_height = (f64::from(outer.Height) - content_height * scale).max(0.0);
         let value = |pixels: f64| {
             PropertyValue::CreateInt32(pixels.ceil() as i32)
                 .and_then(|value| value.cast::<IReference<i32>>())
                 .ok()
         };
-        if let (Some(width), Some(height)) = (
-            value(width.max(0.0) * scale + extra_width),
-            value(height.max(0.0) * scale + extra_height),
-        ) {
+        if let (Some(width), Some(height)) = (value(width), value(height)) {
             let _ = presenter.SetPreferredMinimumWidth(&width);
             let _ = presenter.SetPreferredMinimumHeight(&height);
         }
     }
 
-    /// 論理ピクセル (DIP) 1 つが何物理ピクセルか。中身がまだ無ければ 1。
+    /// 論理ピクセル (DIP) 1 つが何物理ピクセルか。
+    ///
+    /// 中身の `XamlRoot` が決まる前 (表示の前) は、ウィンドウの DPI から出す。
+    /// プロセスが DPI に対応していなければ DPI は 96 と返り、`AppWindow` の
+    /// 大きさも 96 DPI の値へ仮想化されるので、どちらでも 1 で合う。
     fn rasterization_scale(&self) -> f64 {
         self.0
             .theme_root
@@ -265,7 +325,20 @@ impl Window {
             .and_then(|root| root.XamlRoot().ok())
             .and_then(|root| root.RasterizationScale().ok())
             .filter(|scale| *scale > 0.0)
+            .or_else(|| self.window_dpi().map(|dpi| f64::from(dpi) / 96.0))
             .unwrap_or(1.0)
+    }
+
+    /// `GetDpiForWindow` の値。HWND を取れなければ `None`。
+    fn window_dpi(&self) -> Option<u32> {
+        use windows::Win32::UI::HiDpi::GetDpiForWindow;
+
+        let native = self.0.native.cast::<naui_winui3::IWindowNative>().ok()?;
+        // SAFETY: HWND はこのウィンドウが生きている間有効で、UI スレッドから呼んでいる。
+        let hwnd = unsafe { native.WindowHandle() }.ok()?;
+        // SAFETY: 上の HWND を渡すだけ。
+        let dpi = unsafe { GetDpiForWindow(hwnd) };
+        (dpi > 0).then_some(dpi)
     }
 
     /// 中身の層が並び直されて大きさが変わったら知らせる。
@@ -306,7 +379,18 @@ impl Window {
     /// 層は大きさが変わった後のレイアウトで並び直るので、[`set_size`](Self::set_size)
     /// の直後は前の大きさのまま (GTK と同じ)。変わった大きさは
     /// [`on_resize`](Self::on_resize) で届く。
+    ///
+    /// 画面に出る前は、`ui.window` か [`set_size`](Self::set_size) で
+    /// 指定した大きさ (GTK と同じ)。
     pub fn size(&self) -> (f64, f64) {
+        self.0
+            .initial_size
+            .get()
+            .unwrap_or_else(|| self.measured_size())
+    }
+
+    /// いまの中身の大きさ。並べる前は `Bounds` からの見積もり。
+    fn measured_size(&self) -> (f64, f64) {
         if let Some(size) = self.laid_out_content_size() {
             return size;
         }
@@ -356,14 +440,22 @@ impl Window {
         self.apply_min_size();
     }
 
+    /// 中身の領域の大きさを変える。単位と範囲は [`size`](Self::size) と同じで、
+    /// タイトルバー・メニューバー・ウィンドウの枠は含まない (ほかの環境と同じ)。
+    ///
+    /// `AppWindow.Resize` は外枠の物理ピクセルを取るので、`RasterizationScale`
+    /// を掛け、いまの外枠と中身の差を足して渡す。中身が並ぶ前 (表示の直後
+    /// など) はメニューバーの高さが分からないので、並べ終わったときに
+    /// 一度だけ実寸で合わせ直す。画面に出る前に呼んだときは、表示するときに
+    /// この大きさで出す。
     pub fn set_size(&self, width: f64, height: f64) {
-        use windows::Graphics::SizeInt32;
-        if let Ok(app_window) = self.0.native.AppWindow() {
-            let _ = app_window.Resize(SizeInt32 {
-                Width: width as i32,
-                Height: height as i32,
-            });
+        let size = (width.max(0.0), height.max(0.0));
+        if self.0.initial_size.get().is_some() {
+            self.0.initial_size.set(Some(size));
+            return;
         }
+        self.0.pending_fit.set(None);
+        self.resize_content(size);
     }
 
     /// このウィンドウの中で押されたキーの通知。
@@ -792,8 +884,13 @@ impl Window {
     }
 
     /// 画面に出して前面へ持ってくる。
+    ///
+    /// 最初の表示では、中身を `ui.window` (か表示前の [`set_size`](Self::set_size))
+    /// の大きさにする。
     pub fn show(&self) {
-        self.set_size(self.0.width as f64, self.0.height as f64);
+        if let Some(size) = self.0.initial_size.take() {
+            self.resize_content(size);
+        }
         if self.0.native.Activate().is_ok() {
             *self.0.visible.borrow_mut() = true;
             remember_owner(&self.0.native);

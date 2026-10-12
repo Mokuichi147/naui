@@ -155,6 +155,9 @@ impl Ui {
     /// ウィンドウを作る。ブラウザには OS のウィンドウが無いため、
     /// `<body>` 直下のブロック要素として表現し、タイトルは
     /// `document.title` に反映する。
+    ///
+    /// `width` / `height` は中身の領域の大きさ ([`Window::set_size`] と同じ)。
+    /// メニューバーとツールバーの行は含まない。幅は上限、高さは下限の目安になる。
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
         let w = Window::new(&self.0.document, title, width, height)?;
         self.0.windows.borrow_mut().push(w.clone());

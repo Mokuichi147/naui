@@ -143,6 +143,10 @@ const CASES: &[Case] = &[
         window_size_is_the_content_row,
     ),
     (
+        "ui.window と set_size の大きさは size と同じ中身の大きさ",
+        window_set_size_is_the_content_size,
+    ),
+    (
         "TextArea の改行は \\n で読める",
         text_area_reports_newlines_as_lf,
     ),
@@ -1286,6 +1290,91 @@ fn window_size_is_the_content_row(ui: &Ui) -> Result<()> {
         assert!(
             near(last, size),
             "最後の通知 {last:?} が size {size:?} と同じこと"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// `ui.window` と `set_size` の幅・高さは、[`window_size_is_the_content_row`] の
+/// `size` と同じ中身の大きさ (タイトルバー・メニューバー・枠を除く)。
+/// `AppWindow.Resize` へは外枠を渡すので、外枠はその分だけ大きい。
+///
+/// メニューバーの高さは並べてみるまで分からないので、表示の後に一度だけ
+/// 合わせ直す。行に実寸が付くまでメッセージを回し、付かない環境 (CI) では
+/// 確かめずに通す。
+fn window_set_size_is_the_content_size(ui: &Ui) -> Result<()> {
+    let window = ui.window("大きさの指定", 900.0, 640.0)?;
+    assert_eq!(
+        window.size(),
+        (900.0, 640.0),
+        "表示の前は ui.window の大きさ"
+    );
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&ui.label("中身")?);
+    window.set_child(&stack);
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+    window.set_menu_bar(&menu_bar);
+    window.show();
+    let content_row = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<Grid>()
+        .expect("根は Grid")
+        .Children()
+        .expect("根の子")
+        .GetAt(2)
+        .expect("中身の行")
+        .cast::<FrameworkElement>()
+        .expect("行は FrameworkElement");
+    let measure = || {
+        (
+            content_row.ActualWidth().unwrap_or(0.0),
+            content_row.ActualHeight().unwrap_or(0.0),
+        )
+    };
+    let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || near(measure(), (900.0, 640.0)));
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if measure().1 <= 0.0 {
+            println!("     (中身の行に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        assert!(
+            near(window.size(), (900.0, 640.0)),
+            "表示した中身 {:?} が ui.window の 900×640 であること",
+            window.size()
+        );
+        let scale = content_row
+            .XamlRoot()
+            .and_then(|root| root.RasterizationScale())
+            .expect("RasterizationScale");
+        let outer = window
+            .native_window()
+            .AppWindow()
+            .and_then(|app_window| app_window.Size())
+            .expect("AppWindow.Size");
+        assert!(
+            f64::from(outer.Width) > 900.0 * scale
+                && f64::from(outer.Height) - 640.0 * scale > 32.0,
+            "外枠 {}×{} が中身より枠・タイトルバー・メニューバーの分だけ大きいこと",
+            outer.Width,
+            outer.Height
+        );
+
+        // 表示した後に変えても、中身の大きさになる。
+        window.set_size(500.0, 400.0);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || near(measure(), (500.0, 400.0)));
+        assert!(
+            near(window.size(), (500.0, 400.0)),
+            "set_size 後の中身 {:?} が 500×400 であること",
+            window.size()
         );
     }));
     window.close();
