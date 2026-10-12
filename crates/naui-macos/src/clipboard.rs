@@ -1,8 +1,9 @@
 //! クリップボードの文字の読み書き。
 //!
-//! 読むほうは環境によって非同期 (GTK4・WinRT・ブラウザ) なので、4 環境とも
-//! 結果をコールバックで返す。コールバックは UI スレッドで、`read_text` から
-//! 戻った後に呼ばれる (同期で読める環境でもその場では呼ばない)。
+//! 読むほうは環境によって非同期 (GTK4・WinRT・ブラウザ)、書くほうもブラウザでは
+//! 非同期なので、4 環境とも読み書きの結果をコールバックで返す。コールバックは
+//! UI スレッドで、`read_text` / `set_text` から戻った後に呼ばれる (同期で済む
+//! 環境でもその場では呼ばない)。
 
 use naui_core::{Error, Result, Tasks};
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
@@ -19,11 +20,11 @@ impl Clipboard {
         Self { tasks }
     }
 
-    /// 文字を書き込む。前の中身は消える。
-    pub fn set_text(&self, text: &str) -> Result<()> {
+    /// 文字を書き込む。前の中身は消える。書き込めたかどうかを `f` へ渡す。
+    pub fn set_text(&self, text: &str, f: impl FnOnce(Result<()>) + 'static) {
         let pasteboard = NSPasteboard::generalPasteboard();
         pasteboard.clearContents();
-        if pasteboard
+        let result = if pasteboard
             .setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString })
         {
             Ok(())
@@ -32,7 +33,8 @@ impl Clipboard {
                 "クリップボードへの書き込み",
                 "NSPasteboard が受け付けませんでした",
             ))
-        }
+        };
+        self.tasks.spawn(async move { f(result) });
     }
 
     /// 文字を読む。文字が入っていなければ `None` を渡す。

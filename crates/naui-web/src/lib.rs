@@ -98,10 +98,15 @@ pub(crate) fn document() -> Result<Document> {
 }
 
 pub(crate) fn to_error(context: &'static str, value: wasm_bindgen::JsValue) -> Error {
-    Error::new(
-        context,
-        value.as_string().unwrap_or_else(|| format!("{value:?}")),
-    )
+    use wasm_bindgen::JsCast;
+    // 例外 (`DOMException` も `Error` を継ぐ) は名前とメッセージだけを出す。
+    // `Debug` ではスタックまで重なって読みにくい。
+    let message = match (value.as_string(), value.dyn_ref::<js_sys::Error>()) {
+        (Some(text), _) => text,
+        (None, Some(error)) => format!("{}: {}", error.name(), error.message()),
+        (None, None) => format!("{value:?}"),
+    };
+    Error::new(context, message)
 }
 
 /// ウィジェットを生成するための入り口。
@@ -437,16 +442,21 @@ impl Ui {
     /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
     /// 読めない・開く先が無いときは `Err`。開いた先で起きた失敗は分からない。
     ///
-    /// Web では別タブで開く (`window.open` に `noopener` を付ける)。ブラウザは
-    /// 利用者の操作 (クリックなど) の中でしか新しいタブを開かないので、
-    /// ボタンの `on_click` などから呼ぶ。
+    /// Web では別タブで開く。ブラウザは利用者の操作 (クリックなど) の中でしか
+    /// 新しいタブを開かないので、ボタンの `on_click` などから呼ぶ。ブラウザが
+    /// タブを止めたときは `Err`。
     pub fn open_url(&self, url: &str) -> Result<()> {
         let window =
             web_sys::window().ok_or_else(|| Error::new("URL を開く", "window がありません"))?;
-        window
-            .open_with_url_and_target_and_features(url, "_blank", "noopener")
-            .map(|_| ())
-            .map_err(|e| to_error("URL を開く", e))
+        // `noopener` を付けると開けたときも `null` が返り、止められたのと
+        // 見分けられない。付けずに開き、開いた先から元のページを触れないよう
+        // `opener` を外す。
+        let opened = window
+            .open_with_url_and_target(url, "_blank")
+            .map_err(|e| to_error("URL を開く", e))?
+            .ok_or_else(|| Error::new("URL を開く", "ブラウザが新しいタブを止めました"))?;
+        let _ = opened.set_opener(&wasm_bindgen::JsValue::NULL);
+        Ok(())
     }
 
     /// ブラウザではアプリを終了する概念が無いため、何もしない。

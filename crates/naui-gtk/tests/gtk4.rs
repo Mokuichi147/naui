@@ -6531,7 +6531,19 @@ fn label_can_be_selectable(ui: &Ui) -> Result<()> {
 
 fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
     let clipboard = ui.clipboard();
-    clipboard.set_text("naui のテスト ✂")?;
+    let written = Rc::new(RefCell::new(None));
+    clipboard.set_text("naui のテスト ✂", {
+        let written = written.clone();
+        move |result| *written.borrow_mut() = Some(result.is_ok())
+    });
+    assert!(
+        written.borrow().is_none(),
+        "書き込みの結果もその場では呼ばない"
+    );
+    spin_until(std::time::Duration::from_secs(2), || {
+        written.borrow().is_some()
+    });
+    assert_eq!(*written.borrow(), Some(true), "書き込めた");
     let read = Rc::new(RefCell::new(None));
     clipboard.read_text({
         let read = read.clone();

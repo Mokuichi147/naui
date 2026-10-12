@@ -1850,10 +1850,16 @@
 //! # use naui::{Result, Ui};
 //! # fn build(ui: &Ui) -> Result<()> {
 //! let copy = ui.button("コピー")?;
+//! let status = ui.label("")?;
 //! copy.on_click({
 //!     let clipboard = ui.clipboard();
+//!     let status = status.clone();
 //!     move || {
-//!         let _ = clipboard.set_text("共有したい文字");
+//!         let status = status.clone();
+//!         clipboard.set_text("共有したい文字", move |result| match result {
+//!             Ok(()) => status.set_text("コピーしました"),
+//!             Err(error) => status.set_text(&format!("コピーできませんでした: {error}")),
+//!         });
 //!     }
 //! });
 //! ui.clipboard().read_text(|text| println!("貼り付け: {text:?}"));
@@ -1861,8 +1867,9 @@
 //! # }
 //! ```
 //!
-//! 読むほうは環境によって非同期なので、**4 環境とも結果をコールバックで
-//! 返す** (その場では呼ばない)。文字が入っていなければ `None`。
+//! 読むほうは環境によって非同期、書くほうもブラウザでは非同期なので、
+//! **4 環境とも読み書きの結果をコールバックで返す** (その場では呼ばない)。
+//! 読んだ文字が入っていなければ `None`。書き込みを断られたら `Err`。
 //!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
@@ -1872,7 +1879,8 @@
 //! Web の Clipboard API は https (か localhost) でしか使えず、読むときは
 //! 利用者に許可を求められることがある。書き込みと `open_url` は、ブラウザが
 //! 利用者の操作 (クリックなど) の中でしか許さないことがあるので、ボタンの
-//! `on_click` などから呼ぶ。
+//! `on_click` などから呼ぶ。断られたときは、書き込みはコールバックへ、
+//! `open_url` (新しいタブを止められた) は戻り値へ `Err` が届く。
 //!
 //! ## 検証状況
 //!
@@ -2762,7 +2770,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: Sleep = tasks.sleep(std::time::Duration::from_millis(1));
 
     let clipboard: Clipboard = ui.clipboard();
-    let _: Result<()> = clipboard.set_text("t");
+    clipboard.set_text("t", |_result: Result<()>| {});
     clipboard.read_text(|_text: Option<String>| {});
     let _: Result<()> = ui.open_url("https://example.com/");
 

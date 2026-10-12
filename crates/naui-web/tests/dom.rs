@@ -3352,7 +3352,7 @@ fn label_is_not_selectable_until_asked() {
 }
 
 /// ブラウザは利用者の操作の外ではクリップボードを読ませないことがあるので、
-/// ここでは「必ず後からコールバックが呼ばれる」ことだけを確かめる。
+/// 読むほうは「必ず後からコールバックが呼ばれる」ことだけを確かめる。
 #[wasm_bindgen_test]
 async fn clipboard_read_calls_back_later() {
     let mut kept = None;
@@ -3374,6 +3374,48 @@ async fn clipboard_read_calls_back_later() {
         wait_millis(20).await;
     }
     assert!(called.get(), "読めなくてもコールバックは呼ばれる");
+}
+
+/// 書き込みを断られたら `Err` が届く。手元で走らせたときに利用者の
+/// クリップボードを消さないよう、`writeText` を断る偽物へ差し替えて確かめる。
+#[wasm_bindgen_test]
+async fn clipboard_write_reports_a_refusal() {
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(ui.clipboard());
+        Ok(())
+    });
+    let clipboard = kept.expect("clipboard");
+    let native: wasm_bindgen::JsValue = web_sys::window()
+        .expect("window")
+        .navigator()
+        .clipboard()
+        .into();
+    let refuse = js_sys::Function::new_no_args(
+        "return Promise.reject(new DOMException('断りました', 'NotAllowedError'))",
+    );
+    js_sys::Reflect::set(&native, &"writeText".into(), &refuse).expect("差し替え");
+
+    let written = Rc::new(RefCell::new(None));
+    clipboard.set_text("naui のテスト ✂", {
+        let written = written.clone();
+        move |result| *written.borrow_mut() = Some(result)
+    });
+    assert!(written.borrow().is_none(), "その場では呼ばない");
+    for _ in 0..50 {
+        if written.borrow().is_some() {
+            break;
+        }
+        wait_millis(20).await;
+    }
+    js_sys::Reflect::delete_property(
+        native.unchecked_ref::<js_sys::Object>(),
+        &"writeText".into(),
+    )
+    .expect("元に戻す");
+    let result = written.borrow_mut().take().expect("コールバックが呼ばれる");
+    let error = result.expect_err("断られたら Err");
+    assert!(error.to_string().contains("断りました"), "{error}");
 }
 
 #[wasm_bindgen_test]

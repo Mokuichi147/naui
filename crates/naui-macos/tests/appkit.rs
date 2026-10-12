@@ -3581,7 +3581,17 @@ fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
         .map(|text| text.to_string());
 
     let clipboard = ui.clipboard();
-    clipboard.set_text("naui のテスト ✂")?;
+    let written = Rc::new(RefCell::new(None));
+    clipboard.set_text("naui のテスト ✂", {
+        let written = written.clone();
+        move |result| *written.borrow_mut() = Some(result.is_ok())
+    });
+    assert!(
+        written.borrow().is_none(),
+        "書き込みの結果もその場では呼ばない"
+    );
+    pump_until(2.0, || written.borrow().is_some());
+    assert_eq!(*written.borrow(), Some(true), "書き込めた");
     let read = Rc::new(RefCell::new(None));
     clipboard.read_text({
         let read = read.clone();

@@ -1,8 +1,9 @@
 //! クリップボードの文字の読み書き。
 //!
-//! 読むほうは環境によって非同期 (GTK4・WinRT・ブラウザ) なので、4 環境とも
-//! 結果をコールバックで返す。コールバックは UI スレッドで、`read_text` から
-//! 戻った後に呼ばれる (同期で読める環境でもその場では呼ばない)。
+//! 読むほうは環境によって非同期 (GTK4・WinRT・ブラウザ)、書くほうもブラウザでは
+//! 非同期なので、4 環境とも読み書きの結果をコールバックで返す。コールバックは
+//! UI スレッドで、`read_text` / `set_text` から戻った後に呼ばれる (同期で済む
+//! 環境でもその場では呼ばない)。
 
 use naui_core::{Result, Tasks};
 use windows::ApplicationModel::DataTransfer::{
@@ -24,18 +25,12 @@ impl Clipboard {
         Self { tasks }
     }
 
-    /// 文字を書き込む。前の中身は消える。
+    /// 文字を書き込む。前の中身は消える。書き込めたかどうかを `f` へ渡す。
     ///
     /// アプリを閉じた後も残るよう、書き込んだらすぐ `Flush` する。
-    pub fn set_text(&self, text: &str) -> Result<()> {
-        let package = DataPackage::new().map_err(|e| to_error("クリップボードの中身の生成", e))?;
-        package
-            .SetText(&HSTRING::from(text))
-            .map_err(|e| to_error("クリップボードの中身の設定", e))?;
-        WinClipboard::SetContent(&package)
-            .map_err(|e| to_error("クリップボードへの書き込み", e))?;
-        let _ = WinClipboard::Flush();
-        Ok(())
+    pub fn set_text(&self, text: &str, f: impl FnOnce(Result<()>) + 'static) {
+        let result = write(text);
+        self.tasks.spawn(async move { f(result) });
     }
 
     /// 文字を読む。文字が入っていなければ `None` を渡す。
@@ -44,6 +39,16 @@ impl Clipboard {
             f(read().await);
         });
     }
+}
+
+fn write(text: &str) -> Result<()> {
+    let package = DataPackage::new().map_err(|e| to_error("クリップボードの中身の生成", e))?;
+    package
+        .SetText(&HSTRING::from(text))
+        .map_err(|e| to_error("クリップボードの中身の設定", e))?;
+    WinClipboard::SetContent(&package).map_err(|e| to_error("クリップボードへの書き込み", e))?;
+    let _ = WinClipboard::Flush();
+    Ok(())
 }
 
 async fn read() -> Option<String> {

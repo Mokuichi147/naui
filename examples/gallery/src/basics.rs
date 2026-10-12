@@ -242,9 +242,12 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
         let clipboard = ui.clipboard();
         let quote = quote.clone();
         let notice = notice.clone();
-        move || match clipboard.set_text(&quote.text()) {
-            Ok(()) => notice.show("クリップボードへ書き込みました"),
-            Err(error) => notice.show(&format!("書き込めませんでした: {error}")),
+        move || {
+            let notice = notice.clone();
+            clipboard.set_text(&quote.text(), move |result| match result {
+                Ok(()) => notice.show("クリップボードへ書き込みました"),
+                Err(error) => notice.show(&format!("書き込めませんでした: {error}")),
+            });
         }
     });
     let paste = ui.button("クリップボードを読む")?;
