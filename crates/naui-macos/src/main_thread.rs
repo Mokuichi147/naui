@@ -7,7 +7,9 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use dispatch2::DispatchQueue;
+use std::time::Duration;
+
+use dispatch2::{DispatchQueue, DispatchTime};
 use naui_core::{MainThread, Work};
 
 /// メインキュー。`DispatchQueue::main()` は `&'static` を返すので、
@@ -22,5 +24,17 @@ impl MainThread for MainQueue {
             let _ = catch_unwind(AssertUnwindSafe(work));
         });
         true
+    }
+
+    fn post_after(&self, delay: Duration, work: Work) -> bool {
+        // 遠すぎて表せない時間は、事実上来ないのと同じなので積まない。
+        let Ok(when) = DispatchTime::try_from(delay) else {
+            return false;
+        };
+        DispatchQueue::main()
+            .after(when, move || {
+                let _ = catch_unwind(AssertUnwindSafe(work));
+            })
+            .is_ok()
     }
 }

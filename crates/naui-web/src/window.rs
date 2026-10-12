@@ -35,6 +35,19 @@ struct WindowInner {
     /// ツールバーの行。サイドバーの開閉ボタンとツールバーを横に並べる。
     toolbar_row: HtmlElement,
     key_down: crate::keys::KeyDown,
+    on_resize: Rc<crate::widgets::ValueHandler<(f64, f64)>>,
+    /// 大きさの変化の購読。落とすと購読も外れる。
+    resize_observer: RefCell<Option<web_sys::ResizeObserver>>,
+    resize_callback:
+        RefCell<Option<wasm_bindgen::closure::Closure<dyn FnMut(wasm_bindgen::JsValue)>>>,
+}
+
+impl Drop for WindowInner {
+    fn drop(&mut self) {
+        if let Some(observer) = self.resize_observer.borrow_mut().take() {
+            observer.disconnect();
+        }
+    }
 }
 
 /// ページ上のウィンドウ相当。
@@ -102,9 +115,55 @@ impl Window {
             sidebar: RefCell::new(None),
             toolbar_row,
             key_down: crate::keys::KeyDown::default(),
+            on_resize: Rc::default(),
+            resize_observer: RefCell::new(None),
+            resize_callback: RefCell::new(None),
         }));
         this.set_title(title);
         Ok(this)
+    }
+
+    /// 利用者がウィンドウを閉じようとしたときの確認。
+    ///
+    /// **Web では呼ばれない。** ブラウザには利用者がページの中のウィンドウを
+    /// 閉じる操作が無く、タブを閉じるときに独自の確認を出すこともできない
+    /// (`beforeunload` はブラウザ自身の文言しか出せない) ため。4 環境で同じ
+    /// コードを書けるよう、受け付けるだけは受け付ける。
+    pub fn on_close_request(&self, f: impl FnMut() -> naui_core::CloseResponse + 'static) {
+        drop(f);
+    }
+
+    /// 中身の領域の大きさ (幅, 高さ)。単位は CSS ピクセル。
+    pub fn size(&self) -> (f64, f64) {
+        (
+            f64::from(self.0.element.client_width()),
+            f64::from(self.0.element.client_height()),
+        )
+    }
+
+    /// 大きさが変わったときの通知。変わった後の [`size`](Self::size) が届く。
+    ///
+    /// `ResizeObserver` で拾うので、文書に載った直後にも 1 回届く。
+    pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
+        self.0.on_resize.set(f);
+        if self.0.resize_observer.borrow().is_some() {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        let callback = wasm_bindgen::closure::Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(
+            move |_entries: wasm_bindgen::JsValue| {
+                if let Some(inner) = weak.upgrade() {
+                    let size = Window(inner.clone()).size();
+                    inner.on_resize.emit(size);
+                }
+            },
+        );
+        let Ok(observer) = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()) else {
+            return;
+        };
+        observer.observe(self.0.element.as_ref());
+        *self.0.resize_observer.borrow_mut() = Some(observer);
+        *self.0.resize_callback.borrow_mut() = Some(callback);
     }
 
     /// このウィンドウの中で押されたキーの通知。
@@ -121,6 +180,18 @@ impl Window {
             .0
             .key_down
             .set_on_window(document, self.0.element.as_ref(), f);
+    }
+
+    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    ///
+    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    ///
+    /// Web ではウィンドウの要素に `min-width` / `min-height` を付ける
+    /// (ブラウザの窓そのものの大きさは決められないので、狭いときはスクロールになる)。
+    pub fn set_min_size(&self, width: f64, height: f64) {
+        let style = self.0.element.style();
+        let _ = style.set_property("min-width", &format!("{}px", width.max(0.0)));
+        let _ = style.set_property("min-height", &format!("{}px", height.max(0.0)));
     }
 
     pub fn set_title(&self, title: &str) {

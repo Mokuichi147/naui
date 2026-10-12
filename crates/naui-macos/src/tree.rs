@@ -524,6 +524,28 @@ impl Tree {
         (!path.is_empty()).then_some(path)
     }
 
+    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
+    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
+    /// 無いパスなら何もしない。
+    pub fn scroll_to_item(&self, path: &[usize]) {
+        if TreeItem::at(&self.0.items.borrow(), path).is_none() {
+            return;
+        }
+        // 開くと AppKit が開閉を知らせてくるので、ここでは通知を止める。
+        self.without_notifying(|this| {
+            this.apply_expanded(&path[..path.len().saturating_sub(1)], true)
+        });
+        let Some(node) = self.0.nodes.find(path) else {
+            return;
+        };
+        let row = unsafe { self.0.outline.rowForItem(Some(&node)) };
+        if row >= 0 {
+            self.0.outline.scrollRowToVisible(row);
+        }
+    }
+
     /// 通知せずに 1 項目を選ぶ。
     ///
     /// 選べない項目 ([`TreeItem::selectable`]) や無いパスを渡すと、

@@ -12,11 +12,14 @@
 //! `AdwToolbarView` はその右の区画へ移る。左の区画はサイドバー自身の
 //! ヘッダーバーと一覧を持つ。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use adw::prelude::*;
-use naui_core::{Result, Theme};
+use gtk::glib;
+use naui_core::{CloseHandler, CloseResponse, Result, Theme};
+
+use crate::callback::Notifier;
 
 use crate::menu_bar::MenuBar;
 use crate::sidebar::Sidebar;
@@ -38,6 +41,15 @@ pub(crate) struct WindowInner {
     menu_bar: RefCell<Option<MenuBar>>,
     /// 取り付けたサイドバー。通知先ごと生かしておく。
     sidebar: RefCell<Option<Sidebar>>,
+    on_close_request: CloseHandler,
+    on_resize: Notifier<(f64, f64)>,
+    /// 最後に知らせた (または最初の) [`Window::size`]。同じ大きさでは呼ばない。
+    last_size: Cell<(f64, f64)>,
+    /// 描き終わるたびに中身の大きさを比べる、フレームクロックの `after-paint`。
+    after_paint: RefCell<Option<(gtk::gdk::FrameClock, glib::SignalHandlerId)>>,
+    /// naui の [`Window::close`] の最中。GTK4 はプログラムから閉じても
+    /// `close-request` を出すので、そのときは確認しない。
+    closing: Cell<bool>,
 }
 
 /// トップレベルウィンドウ。
@@ -80,7 +92,7 @@ impl Window {
         // `on_key_down` の受け口。通知先が無いあいだは素通りする。
         crate::keys::install(&native);
 
-        Self(Rc::new(WindowInner {
+        let this = Self(Rc::new(WindowInner {
             native,
             overlay,
             view,
@@ -89,7 +101,107 @@ impl Window {
             toolbar: RefCell::new(None),
             menu_bar: RefCell::new(None),
             sidebar: RefCell::new(None),
-        }))
+            on_close_request: CloseHandler::default(),
+            on_resize: Notifier::default(),
+            last_size: Cell::new((f64::from(to_px(width)), f64::from(to_px(height)))),
+            after_paint: RefCell::new(None),
+            closing: Cell::new(false),
+        }));
+        this.observe();
+        this
+    }
+
+    fn observe(&self) {
+        let weak = Rc::downgrade(&self.0);
+        self.0.native.connect_close_request(move |_| {
+            let Some(inner) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if inner.closing.get() || inner.on_close_request.ask() == CloseResponse::Close {
+                glib::Propagation::Proceed
+            } else {
+                glib::Propagation::Stop
+            }
+        });
+        // 中身の大きさが配られるのはレイアウトの中なので、描き終わった後に
+        // 比べる。利用者のドラッグ・最大化・画面端へのスナップ・`set_size`・
+        // メニューバーやサイドバーの付け外しのどれで変わっても届く。
+        // (`default-width` は最大化やスナップでは変わらず、変わった直後には
+        // まだ中身へ配られていないので、それを合図にはしない。)
+        let weak = Rc::downgrade(&self.0);
+        self.0.native.connect_realize(move |native| {
+            let Some(clock) = native.frame_clock() else {
+                return;
+            };
+            let weak = weak.clone();
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            let handler = clock.connect_after_paint(move |_| {
+                if let Some(inner) = weak.upgrade() {
+                    Window(inner).report_size();
+                }
+            });
+            if let Some((old, id)) = inner.after_paint.replace(Some((clock, handler))) {
+                old.disconnect(id);
+            }
+        });
+        let weak = Rc::downgrade(&self.0);
+        self.0.native.connect_unrealize(move |_| {
+            if let Some((clock, id)) = weak.upgrade().and_then(|i| i.after_paint.take()) {
+                clock.disconnect(id);
+            }
+        });
+        // 画面に出ていないウィンドウは描かれないので、`set_size` で指定した
+        // 大きさ (= `size`) をループを 1 周させてから知らせる。出ているときは
+        // まだ前の大きさを返すので、ここでは何も起きず、描いた後に届く。
+        for property in ["default-width", "default-height"] {
+            let weak = Rc::downgrade(&self.0);
+            self.0
+                .native
+                .connect_notify_local(Some(property), move |_, _| {
+                    let weak = weak.clone();
+                    glib::idle_add_local_once(move || {
+                        if let Some(inner) = weak.upgrade() {
+                            Window(inner).report_size();
+                        }
+                    });
+                });
+        }
+    }
+
+    /// いまの [`size`](Self::size) が前に知らせたものと違えば `on_resize` を呼ぶ。
+    fn report_size(&self) {
+        let size = self.size();
+        if self.0.last_size.replace(size) != size {
+            self.0.on_resize.emit(size);
+        }
+    }
+
+    /// 利用者がウィンドウを閉じようとしたときの確認。
+    ///
+    /// [`CloseResponse::KeepOpen`] を返すと閉じない (保存していない変更が
+    /// あるときに確認のダイアログを出す、など)。プログラムからの
+    /// [`close`](Self::close) では呼ばれない。
+    pub fn on_close_request(&self, f: impl FnMut() -> CloseResponse + 'static) {
+        self.0.on_close_request.set(f);
+    }
+
+    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル。ヘッダーバーは含まない。
+    ///
+    /// 画面に出る前は、[`set_size`](Self::set_size) で指定した大きさ。
+    pub fn size(&self) -> (f64, f64) {
+        let (width, height) = (self.0.overlay.width(), self.0.overlay.height());
+        if width > 0 && height > 0 {
+            return (f64::from(width), f64::from(height));
+        }
+        let (width, height) = self.0.native.default_size();
+        (f64::from(width.max(0)), f64::from(height.max(0)))
+    }
+
+    /// 大きさが変わったときの通知。変わった後の [`size`](Self::size) が届く。
+    pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
+        self.0.on_resize.set(f);
     }
 
     /// 対応する GTK4 のウィンドウ。バックエンド固有の脱出口として公開している。
@@ -137,6 +249,18 @@ impl Window {
             .title()
             .map(|t| t.to_string())
             .unwrap_or_default()
+    }
+
+    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    ///
+    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    ///
+    /// GTK4 のウィンドウは中身の最小の大きさより縮まないので、中身の入れ物に
+    /// 最小の大きさを付ける (ヘッダーバーの分はその上に足される)。
+    pub fn set_min_size(&self, width: f64, height: f64) {
+        self.0
+            .overlay
+            .set_size_request(to_px(width.max(0.0)), to_px(height.max(0.0)));
     }
 
     pub fn set_size(&self, width: f64, height: f64) {
@@ -265,7 +389,9 @@ impl Window {
     }
 
     pub fn close(&self) {
+        self.0.closing.set(true);
         self.0.native.close();
+        self.0.closing.set(false);
     }
 
     pub fn is_visible(&self) -> bool {

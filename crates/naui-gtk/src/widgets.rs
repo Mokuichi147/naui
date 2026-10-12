@@ -93,6 +93,17 @@ macro_rules! impl_sizing {
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_widget(self), text);
             }
+
+            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            ///
+            /// アイコンだけのボタンのように、見えている文字が無いか意味を
+            /// 表しきれないときに付ける。
+            pub fn set_accessible_label(&self, text: Option<&str>) {
+                crate::interaction::set_accessible_label(
+                    &<$t as Widget>::native_widget(self),
+                    text,
+                );
+            }
         }
     };
 }
@@ -149,6 +160,18 @@ impl Label {
 
     pub fn set_text(&self, text: &str) {
         self.0.native.set_text(text);
+    }
+
+    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    ///
+    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
+    /// 入力欄と違い、文字は書き換えられない。
+    pub fn set_selectable(&self, selectable: bool) {
+        self.0.native.set_selectable(selectable);
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.0.native.is_selectable()
     }
 
     /// 長い文字列を折り返すかどうか。既定は折り返さない。
@@ -364,6 +387,19 @@ impl TextInput {
     /// 利用者が打つたびに、そのときの中身で呼ばれる。
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
+    }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.native.set_editable(!read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        !self.0.native.is_editable()
     }
 }
 
@@ -619,6 +655,21 @@ impl TextArea {
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.native.set_editable(!read_only);
+        // 書き換えられない欄でカーソルが点滅すると、打てるように見える。
+        self.0.native.set_cursor_visible(!read_only);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        !self.0.native.is_editable()
+    }
 }
 
 fn buffer_text(buffer: &gtk::TextBuffer) -> String {
@@ -699,7 +750,22 @@ impl Slider {
 struct ProgressInner {
     native: gtk::ProgressBar,
     bin: SizeBin,
+    /// 置かれた値。不確定の間は `fraction` を `pulse` が動かすので、別に持つ。
+    value: Cell<f64>,
+    /// 不確定の間、`pulse` を回すタイマー。
+    pulse: RefCell<Option<glib::SourceId>>,
 }
+
+impl Drop for ProgressInner {
+    fn drop(&mut self) {
+        if let Some(source) = self.pulse.borrow_mut().take() {
+            source.remove();
+        }
+    }
+}
+
+/// 不確定の進捗を動かす間隔。GNOME のアプリが `pulse` を呼ぶ間隔に合わせる。
+const PULSE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// 進捗バー (`GtkProgressBar`)。
 #[derive(Clone)]
@@ -711,16 +777,59 @@ impl ProgressBar {
         let native = gtk::ProgressBar::new();
         native.set_fraction(0.0);
         let bin = SizeBin::wrap(&native);
-        Self(Rc::new(ProgressInner { native, bin }))
+        Self(Rc::new(ProgressInner {
+            native,
+            bin,
+            value: Cell::new(0.0),
+            pulse: RefCell::new(None),
+        }))
     }
 
     /// 0.0..=1.0。
     pub fn set_value(&self, value: f64) {
-        self.0.native.set_fraction(value.clamp(0.0, 1.0));
+        let value = value.clamp(0.0, 1.0);
+        self.0.value.set(value);
+        if !self.is_indeterminate() {
+            self.0.native.set_fraction(value);
+        }
     }
 
     pub fn value(&self) -> f64 {
-        self.0.native.fraction()
+        self.0.value.get()
+    }
+
+    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    ///
+    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
+    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    ///
+    /// GTK4 の進捗バーは `pulse` を呼ぶたびに動くので、その間は一定の間隔で
+    /// 呼び続ける。
+    pub fn set_indeterminate(&self, indeterminate: bool) {
+        if self.is_indeterminate() == indeterminate {
+            return;
+        }
+        if indeterminate {
+            let weak = Rc::downgrade(&self.0);
+            let source = glib::timeout_add_local(PULSE_INTERVAL, move || {
+                let Some(inner) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                inner.native.pulse();
+                glib::ControlFlow::Continue
+            });
+            *self.0.pulse.borrow_mut() = Some(source);
+            self.0.native.pulse();
+        } else {
+            if let Some(source) = self.0.pulse.borrow_mut().take() {
+                source.remove();
+            }
+            self.0.native.set_fraction(self.0.value.get());
+        }
+    }
+
+    pub fn is_indeterminate(&self) -> bool {
+        self.0.pulse.borrow().is_some()
     }
 }
 

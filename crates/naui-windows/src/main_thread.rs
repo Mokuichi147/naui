@@ -5,10 +5,15 @@
 //! (`crate::media`) が既に同じ経路を使っている。
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use naui_core::{MainThread, Work};
-use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
+use naui_winui3::Microsoft::UI::Dispatching::{
+    DispatcherQueue, DispatcherQueueHandler, DispatcherQueueTimer,
+};
+use windows::Foundation::{TimeSpan, TypedEventHandler};
+use windows_core::IInspectable;
 
 /// UI スレッドの `DispatcherQueue`。
 ///
@@ -43,5 +48,52 @@ impl MainThread for Dispatcher {
         });
         // 終了後は `Ok(false)` が返る。`Err` と合わせて「積めなかった」とみなす。
         matches!(queue.TryEnqueue(&handler), Ok(true))
+    }
+
+    /// UI スレッドへ移ってから、1 回きりの `DispatcherQueueTimer` を張る。
+    fn post_after(&self, delay: Duration, work: Work) -> bool {
+        self.post(Box::new(move || start_timer(delay, work)))
+    }
+}
+
+/// `TimeSpan` の 1 ミリ秒 (100 ナノ秒きざみ)。
+const TICKS_PER_MILLI: i64 = 10_000;
+
+/// UI スレッドで呼ぶ。張れなかったときはその場で実行する (遅れるより
+/// 呼ばれないほうが困るため)。
+fn start_timer(delay: Duration, work: Work) {
+    let timer = DispatcherQueue::GetForCurrentThread().and_then(|queue| queue.CreateTimer());
+    let Ok(timer) = timer else {
+        let _ = catch_unwind(AssertUnwindSafe(work));
+        return;
+    };
+    let millis = i64::try_from(delay.as_millis()).unwrap_or(i64::MAX / TICKS_PER_MILLI);
+    let interval = TimeSpan {
+        Duration: millis.saturating_mul(TICKS_PER_MILLI),
+    };
+    // タイマーは鳴るまで手元で持つ必要があるので、デリゲートの中へ預け、
+    // 鳴ったら取り出して止める (循環もそこで切れる)。
+    let slot = Mutex::new(Some(work));
+    let keep: Arc<Mutex<Option<DispatcherQueueTimer>>> = Arc::new(Mutex::new(None));
+    let handler = TypedEventHandler::<DispatcherQueueTimer, IInspectable>::new({
+        let keep = keep.clone();
+        move |_, _| {
+            if let Some(timer) = keep.lock().ok().and_then(|mut keep| keep.take()) {
+                let _ = timer.Stop();
+            }
+            if let Some(work) = slot.lock().ok().and_then(|mut slot| slot.take()) {
+                let _ = catch_unwind(AssertUnwindSafe(work));
+            }
+            Ok(())
+        }
+    });
+    let started = timer.SetInterval(interval).is_ok()
+        && timer.SetIsRepeating(false).is_ok()
+        && timer.Tick(&handler).is_ok()
+        && timer.Start().is_ok();
+    if started {
+        if let Ok(mut keep) = keep.lock() {
+            *keep = Some(timer);
+        }
     }
 }

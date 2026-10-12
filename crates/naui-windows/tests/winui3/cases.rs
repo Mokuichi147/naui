@@ -118,6 +118,31 @@ const CASES: &[Case] = &[
         text_widgets_accept_key_handlers,
     ),
     (
+        "タイマーが DispatcherQueue で呼ばれ、止められる",
+        timers_fire_on_the_dispatcher_queue,
+    ),
+    (
+        "不確定の進捗は値を覚えたまま帯の往復に切り替わる",
+        progress_bar_switches_to_indeterminate,
+    ),
+    (
+        "ラベルを選べるようにすると IsTextSelectionEnabled が立つ",
+        label_can_be_selectable,
+    ),
+    ("URL として読めないものは開かない", open_url_rejects_garbage),
+    (
+        "読み上げ名と読み取り専用がネイティブへ届く",
+        accessible_label_and_read_only,
+    ),
+    (
+        "一覧・表・ツリーの行へ送っても選択は変わらない",
+        scroll_to_row_keeps_the_selection,
+    ),
+    (
+        "ウィンドウの大きさはタイトルバーとメニューバーを除いた中身の行",
+        window_size_is_the_content_row,
+    ),
+    (
         "TextArea の改行は \\n で読める",
         text_area_reports_newlines_as_lf,
     ),
@@ -1197,6 +1222,79 @@ fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
     }))
 }
 
+/// `size` と `on_resize` は、naui が描くタイトルバーの帯とメニューバーを
+/// 除いた中身の行の大きさ (macOS の `contentView`、GTK のヘッダーバーの下と
+/// 同じ)。`Window.Bounds` はタイトルバーの裏まで含むので、そのままでは違う。
+///
+/// 行に実寸が付くまでメッセージを回す。付かない環境 (CI) では確かめずに通す。
+fn window_size_is_the_content_row(ui: &Ui) -> Result<()> {
+    let window = ui.window("大きさ", 420.0, 300.0)?;
+    let reported = Rc::new(Cell::new(None));
+    window.on_resize({
+        let reported = reported.clone();
+        move |size| reported.set(Some(size))
+    });
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&ui.label("中身")?);
+    window.set_child(&stack);
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+    window.set_menu_bar(&menu_bar);
+    window.show();
+    let content_row = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<Grid>()
+        .expect("根は Grid")
+        .Children()
+        .expect("根の子")
+        .GetAt(2)
+        .expect("中身の行")
+        .cast::<FrameworkElement>()
+        .expect("行は FrameworkElement");
+    let measure = || {
+        (
+            content_row.ActualWidth().unwrap_or(0.0),
+            content_row.ActualHeight().unwrap_or(0.0),
+        )
+    };
+    // メニューバーが並んで中身の行が縮み、その通知が届くまで待つ。
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        measure().1 > 0.0 && reported.get() == Some(window.size())
+    });
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let row = measure();
+        if row.1 <= 0.0 {
+            println!("     (中身の行に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let size = window.size();
+        let near =
+            |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0;
+        assert!(
+            near(size, row),
+            "size {size:?} が中身の行 {row:?} と同じこと"
+        );
+        let bounds = window.native_window().Bounds().expect("Bounds");
+        assert!(
+            f64::from(bounds.Height) - size.1 > 32.0,
+            "タイトルバーとメニューバーの分だけ Bounds より低いこと"
+        );
+        let last = reported.get().expect("on_resize が呼ばれていること");
+        assert!(
+            near(last, size),
+            "最後の通知 {last:?} が size {size:?} と同じこと"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
 // -------------------------------------------------------------- メニューバー
 
 /// `StackPanel` に並んだ見出しの数。
@@ -2020,6 +2118,113 @@ fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
     ui.search_input()?.on_key_down(handler);
     ui.number_input(1.0)?.on_key_down(handler);
     ui.editable_combo_box()?.on_key_down(handler);
+    Ok(())
+}
+
+fn timers_fire_on_the_dispatcher_queue(ui: &Ui) -> Result<()> {
+    let tasks = ui.tasks();
+    let once = Rc::new(Cell::new(0));
+    tasks.after(Duration::from_millis(20), {
+        let once = once.clone();
+        move || once.set(once.get() + 1)
+    });
+    let ticks = Rc::new(Cell::new(0));
+    let handle: Rc<RefCell<Option<naui_core::Timer>>> = Rc::default();
+    let timer = tasks.every(Duration::from_millis(10), {
+        let ticks = ticks.clone();
+        let handle = handle.clone();
+        move || {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() == 3 {
+                if let Some(timer) = handle.borrow().as_ref() {
+                    timer.cancel();
+                }
+            }
+        }
+    });
+    *handle.borrow_mut() = Some(timer.clone());
+    assert_eq!(once.get(), 0, "その場では呼ばない");
+    pump_until(Duration::from_secs(3), || {
+        once.get() == 1 && !timer.is_active()
+    });
+    assert_eq!(once.get(), 1);
+    assert_eq!(ticks.get(), 3, "3 回目で止めた");
+    Ok(())
+}
+
+fn progress_bar_switches_to_indeterminate(ui: &Ui) -> Result<()> {
+    let progress = ui.progress_bar()?;
+    progress.set_value(0.4);
+    progress.set_indeterminate(true);
+    assert!(progress.is_indeterminate());
+    progress.set_value(0.7);
+    progress.set_indeterminate(false);
+    assert!(!progress.is_indeterminate());
+    assert_eq!(progress.value(), 0.7);
+    Ok(())
+}
+
+fn label_can_be_selectable(ui: &Ui) -> Result<()> {
+    let label = ui.label("コピーできる文字")?;
+    assert!(!label.is_selectable(), "既定は選べない");
+    label.set_selectable(true);
+    let native = native::<TextBlock>(&label);
+    assert!(native
+        .IsTextSelectionEnabled()
+        .expect("IsTextSelectionEnabled"));
+    Ok(())
+}
+
+fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
+    assert!(ui.open_url("").is_err());
+    Ok(())
+}
+
+fn accessible_label_and_read_only(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+    use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+    let button = ui.button("⚙")?;
+    button.set_accessible_label(Some("設定"));
+    let object = button
+        .native_element()
+        .cast::<DependencyObject>()
+        .expect("DependencyObject");
+    assert_eq!(
+        AutomationProperties::GetName(&object)
+            .expect("Name")
+            .to_string(),
+        "設定"
+    );
+    let input = ui.text_input("ログ")?;
+    input.set_read_only(true);
+    assert!(native::<TextBox>(&input).IsReadOnly().expect("IsReadOnly"));
+    Ok(())
+}
+
+/// CI では行の実寸が付かないので、送っても壊れず選択が変わらないことだけ見る
+/// (見える位置まで送れるかは実機で確かめる)。
+fn scroll_to_row_keeps_the_selection(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, TableColumn, TableRow, TreeItem};
+    let labels: Vec<String> = (0..50).map(|i| format!("行 {i}")).collect();
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    list.scroll_to_row(40);
+    list.scroll_to_row(1000);
+    assert!(list.selected().is_none());
+
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    table.set_rows(&TableRow::list(labels.iter().map(|l| [l.as_str()])));
+    table.scroll_to_row(40);
+    assert!(table.selected().is_none());
+
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("上").children(TreeItem::list(labels.iter().map(String::as_str)))
+    ]);
+    tree.scroll_to_item(&[0, 30]);
+    assert!(tree.is_expanded(&[0]), "祖先を開く");
+    assert!(tree.selected().is_none());
     Ok(())
 }
 

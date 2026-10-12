@@ -30,8 +30,9 @@ use std::sync::Arc;
 use naui_core::{Result, TreeItem};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Grid as XamlGrid, TreeView, TreeViewCollapsedEventArgs, TreeViewExpandingEventArgs,
-    TreeViewNode, TreeViewSelectionChangedEventArgs, TreeViewSelectionMode,
+    Border, Grid as XamlGrid, ListViewBase, TreeView, TreeViewCollapsedEventArgs,
+    TreeViewExpandingEventArgs, TreeViewNode, TreeViewSelectionChangedEventArgs,
+    TreeViewSelectionMode,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
@@ -138,6 +139,9 @@ struct TreeInner {
     /// ホイール補助への登録。テンプレートの `ScrollViewer` が現れるまで
     /// できないので、`Loaded` を待って入れる。
     wheel: RefCell<Option<Rc<ListScrollTarget>>>,
+    /// 表示前に頼まれた [`Tree::scroll_to_item`] の行き先。中の一覧が
+    /// 組み上がる `Loaded` で送る。
+    pending_scroll: RefCell<Option<Vec<usize>>>,
     items: RefCell<Vec<TreeItem>>,
     /// 項目に対応する節。パスの深さ優先 (親が先) 順、つまりパスの辞書順に
     /// 並ぶので、パスからの引きは二分探索でよい。
@@ -187,6 +191,7 @@ impl Tree {
             native,
             tree_view,
             wheel: RefCell::new(None),
+            pending_scroll: RefCell::new(None),
             items: RefCell::new(Vec::new()),
             nodes: RefCell::new(Vec::new()),
             expanded: RefCell::new(HashSet::new()),
@@ -234,6 +239,43 @@ impl Tree {
     /// 選ばれている項目のパス。何も選ばれていなければ `None`。
     pub fn selected(&self) -> Option<Vec<usize>> {
         self.0.selected.borrow().clone()
+    }
+
+    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
+    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
+    /// 無いパスなら何もしない。表示前に呼んだときは、表示されてから送る。
+    pub fn scroll_to_item(&self, path: &[usize]) {
+        if TreeItem::at(&self.0.items.borrow(), path).is_none() {
+            return;
+        }
+        // 開くと WinUI が開閉を知らせてくるので、ここでは通知を止める。
+        self.without_notifying(|this| {
+            this.write_expanded(&path[..path.len().saturating_sub(1)], true)
+        });
+        let node = self
+            .0
+            .nodes
+            .borrow()
+            .iter()
+            .find(|(candidate, _)| candidate.as_slice() == path)
+            .map(|(_, node)| node.clone());
+        let Some(node) = node else {
+            return;
+        };
+        // 行の要素は見えている辺りの分しか作られない (仮想化) ので、要素では
+        // なく、テンプレートの中の一覧 (`TreeViewList`) へ節そのものを渡して
+        // 送らせる。一覧の項目は開いている節を平らに並べたものなので、祖先を
+        // 開いた後なら節が入っている。既定の寄せ方は List と同じく「見えて
+        // いれば動かさず、近いほうの端」。
+        match crate::layout::descendant_of_type::<_, ListViewBase>(&self.0.tree_view) {
+            Some(list) => {
+                let _ = list.ScrollIntoView(&node);
+            }
+            // 中の一覧は `Loaded` まで組み上がらない。そこで送る。
+            None => *self.0.pending_scroll.borrow_mut() = Some(path.to_vec()),
+        }
     }
 
     /// 通知せずに 1 項目を選ぶ。
@@ -390,7 +432,12 @@ impl Tree {
         let loaded = RoutedEventHandler::new(move |_, _| {
             let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
-                    Tree(inner).register_wheel_target();
+                    let tree = Tree(inner);
+                    tree.register_wheel_target();
+                    let pending = tree.0.pending_scroll.borrow_mut().take();
+                    if let Some(path) = pending {
+                        tree.scroll_to_item(&path);
+                    }
                 }
             });
             Ok(())

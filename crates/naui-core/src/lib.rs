@@ -35,9 +35,11 @@ mod split;
 mod table;
 mod task;
 mod text;
+mod timer;
 mod toast;
 mod toolbar;
 mod tree;
+mod window;
 
 pub use canvas::{
     DrawCommand, Painter, Path, PathSegment, Point, PointerEvent, PointerPhase, Rect,
@@ -71,9 +73,11 @@ pub use split::{clamp_split_position, DEFAULT_SPLIT_POSITION};
 pub use table::{SortOrder, TableColumn, TableRow};
 pub use task::Task;
 pub use text::{TextColor, TextStyle};
+pub use timer::{Sleep, Timer};
 pub use toast::ToastSpec;
 pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
+pub use window::{CloseHandler, CloseResponse};
 
 use std::fmt;
 

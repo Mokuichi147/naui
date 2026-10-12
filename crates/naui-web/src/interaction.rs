@@ -99,3 +99,15 @@ pub(crate) fn set_tooltip(element: &Element, text: Option<&str>) {
         }
     }
 }
+
+/// 読み上げソフトに伝える名前 (`aria-label`)。`None` で外す。
+pub(crate) fn set_accessible_label(element: &Element, text: Option<&str>) {
+    match text {
+        Some(text) => {
+            let _ = element.set_attribute("aria-label", text);
+        }
+        None => {
+            let _ = element.remove_attribute("aria-label");
+        }
+    }
+}

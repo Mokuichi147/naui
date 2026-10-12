@@ -10,6 +10,7 @@
 //! 遅延されるので、「必ず後回し」という [`MainThread`] の約束を満たす。
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::time::Duration;
 
 use gtk::glib;
 use naui_core::{MainThread, Work};
@@ -23,6 +24,14 @@ impl MainThread for Idle {
         glib::idle_add_once(move || {
             // GLib のメインループは C なので、ここから巻き戻すと未定義動作になる。
             // 内容は既定の panic hook が stderr へ出す。
+            let _ = catch_unwind(AssertUnwindSafe(work));
+        });
+        true
+    }
+
+    fn post_after(&self, delay: Duration, work: Work) -> bool {
+        // `timeout_add_once` も既定のメインコンテキストへ積む。
+        glib::timeout_add_once(delay, move || {
             let _ = catch_unwind(AssertUnwindSafe(work));
         });
         true

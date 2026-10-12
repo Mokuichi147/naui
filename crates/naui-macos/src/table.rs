@@ -995,6 +995,16 @@ impl Table {
         selected_indices(&self.0.table, self.len())
     }
 
+    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    ///
+    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
+    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    pub fn scroll_to_row(&self, index: usize) {
+        if index < self.len() {
+            self.0.table.scrollRowToVisible(index as isize);
+        }
+    }
+
     /// 通知せずに 1 行だけを選ぶ。
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);

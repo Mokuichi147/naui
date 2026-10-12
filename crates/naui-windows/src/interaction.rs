@@ -69,3 +69,14 @@ pub(crate) fn set_tooltip(element: &UIElement, text: Option<&str>) {
         }
     }
 }
+
+/// 読み上げソフトに伝える名前 (`AutomationProperties.Name`)。`None` で外す。
+pub(crate) fn set_accessible_label(element: &UIElement, text: Option<&str>) {
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+    use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+    use windows_core::{Interface, HSTRING};
+    let Ok(object) = element.cast::<DependencyObject>() else {
+        return;
+    };
+    let _ = AutomationProperties::SetName(&object, &HSTRING::from(text.unwrap_or("")));
+}

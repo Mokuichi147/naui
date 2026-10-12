@@ -123,8 +123,9 @@ jobs:
       # Xvfb 上では GL が使えないので、GSK はソフトウェアの cairo で描く。
       GSK_RENDERER: cairo
       GDK_BACKEND: x11
-      # at-spi のバスが無い環境での警告を止める。
-      GTK_A11Y: none
+      # at-spi のバスが無い環境での警告を止める。`test` はバスへつながずに
+      # 読み上げの属性だけを持つので、`set_accessible_label` を確かめられる。
+      GTK_A11Y: test
     steps:
       - uses: actions/checkout@v4
       # 日本語フォントも入れる。`checkbox_indicator_is_aligned_to_text` は

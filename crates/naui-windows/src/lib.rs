@@ -24,6 +24,7 @@
 
 mod app;
 mod canvas;
+mod clipboard;
 mod color_picker;
 mod combo_box;
 mod date_picker;
@@ -63,6 +64,7 @@ use std::rc::Rc;
 use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
 
 pub use canvas::Canvas;
+pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
 pub use combo_box::ComboBox;
 pub use date_picker::DatePicker;
@@ -435,6 +437,36 @@ impl Ui {
     /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
     pub fn tasks(&self) -> Tasks {
         self.0.tasks.clone()
+    }
+
+    /// クリップボード。文字の読み書きができる。
+    pub fn clipboard(&self) -> Clipboard {
+        Clipboard::new(self.0.tasks.clone())
+    }
+
+    /// URL を既定のアプリ (`https:` ならブラウザ、`mailto:` ならメール) で開く。
+    ///
+    /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
+    /// 読めない・開く先が無いときは `Err`。開いた先で起きた失敗は分からない。
+    pub fn open_url(&self, url: &str) -> Result<()> {
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use windows_core::{w, HSTRING};
+
+        if url.trim().is_empty() || !url.contains(':') {
+            return Err(Error::new(
+                "URL を開く",
+                format!("URL として読めません: {url}"),
+            ));
+        }
+        let target = HSTRING::from(url);
+        // 32 以下はエラーの番号 (`ShellExecute` の古い約束)。
+        let result = unsafe { ShellExecuteW(None, w!("open"), &target, None, None, SW_SHOWNORMAL) };
+        if result.0 as isize > 32 {
+            Ok(())
+        } else {
+            Err(Error::new("URL を開く", format!("開けませんでした: {url}")))
+        }
     }
 
     /// アプリを終了する。

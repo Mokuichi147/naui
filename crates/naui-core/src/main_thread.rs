@@ -31,6 +31,12 @@ pub type Work = Box<dyn FnOnce() + Send + 'static>;
 pub trait MainThread: Send + Sync + 'static {
     /// 積めたら `true`。イベントループが終わっている等で届かないなら `false`。
     fn post(&self, work: Work) -> bool;
+
+    /// `delay` だけ待ってから UI スレッドで 1 回だけ実行する。積めたら `true`。
+    ///
+    /// 待つのはイベントループに任せる (スレッドを止めて待ってはならない)。
+    /// `delay` が 0 でも、[`post`](MainThread::post) と同じく後回しにすること。
+    fn post_after(&self, delay: std::time::Duration, work: Work) -> bool;
 }
 
 /// 投函先と「UI がまだ生きているか」をまとめたもの。
@@ -65,6 +71,14 @@ impl AppDispatch {
             return false;
         }
         self.main_thread.post(work)
+    }
+
+    /// 時間を置いて UI スレッドへ仕事を積む。終了済みなら積まずに `false`。
+    pub(crate) fn post_after(&self, delay: std::time::Duration, work: Work) -> bool {
+        if !self.is_alive() {
+            return false;
+        }
+        self.main_thread.post_after(delay, work)
     }
 
     /// 終了したことを伝えるエラー。
@@ -207,6 +221,53 @@ impl Tasks {
         F: std::future::Future<Output = ()> + 'static,
     {
         crate::task::spawn(&self.dispatch, future)
+    }
+
+    /// `delay` たってから、UI スレッドで `f` を 1 回呼ぶ。
+    ///
+    /// 戻り値を捨ててもタイマーは止まらない。止めたいときは [`Timer::cancel`]。
+    /// 入力が止まってから検索する (デバウンス) なら、打つたびに前のものを
+    /// `cancel` して作り直す。
+    ///
+    /// [`Timer::cancel`]: crate::Timer::cancel
+    pub fn after(&self, delay: std::time::Duration, f: impl FnOnce() + 'static) -> crate::Timer {
+        let mut f = Some(f);
+        crate::timer::start(
+            &self.dispatch,
+            delay,
+            None,
+            Box::new(move || {
+                if let Some(f) = f.take() {
+                    f();
+                }
+            }),
+        )
+    }
+
+    /// `interval` ごとに、UI スレッドで `f` を呼ぶ。最初の呼び出しも
+    /// `interval` たってから。
+    ///
+    /// 戻り値を捨ててもタイマーは止まらない。止めたいときは
+    /// [`Timer::cancel`](crate::Timer::cancel) (コールバックの中から呼んでもよい)。
+    /// 次の呼び出しは前の呼び出しが終わってから数えるので、重い処理でも
+    /// 呼び出しが重なることはない。
+    pub fn every(&self, interval: std::time::Duration, f: impl FnMut() + 'static) -> crate::Timer {
+        crate::timer::start(&self.dispatch, interval, Some(interval), Box::new(f))
+    }
+
+    /// `delay` たつと終わる future。[`spawn`](Tasks::spawn) の中で待つのに使う。
+    ///
+    /// ```ignore
+    /// let tasks = ui.tasks();
+    /// tasks.clone().spawn(async move {
+    ///     for attempt in 1.. {
+    ///         if connect().await.is_ok() { break; }
+    ///         tasks.sleep(Duration::from_secs(attempt.min(30))).await; // 再接続を待つ
+    ///     }
+    /// });
+    /// ```
+    pub fn sleep(&self, delay: std::time::Duration) -> crate::Sleep {
+        crate::timer::Sleep::new(&self.dispatch, delay)
     }
 }
 

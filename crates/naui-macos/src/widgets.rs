@@ -88,6 +88,14 @@ macro_rules! impl_interaction {
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_view(self), text);
             }
+
+            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            ///
+            /// アイコンだけのボタンのように、見えている文字が無いか意味を
+            /// 表しきれないときに付ける。
+            pub fn set_accessible_label(&self, text: Option<&str>) {
+                crate::interaction::set_accessible_label(&<$t as Widget>::native_view(self), text);
+            }
         }
     };
 }
@@ -156,6 +164,18 @@ impl Label {
         // 文字が変われば要る大きさも変わる (折り返していれば行数ごと)。
         // 親の連なりへ伝えないと、`Grid` の `Auto` 行が前の高さのまま残る。
         crate::layout::invalidate_ancestors(&self.0.native);
+    }
+
+    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    ///
+    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
+    /// 入力欄と違い、文字は書き換えられない。
+    pub fn set_selectable(&self, selectable: bool) {
+        self.0.native.setSelectable(selectable);
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.0.native.isSelectable()
     }
 
     /// 長い文字列を折り返すかどうか。既定は折り返さない。
@@ -455,6 +475,20 @@ impl TextInput {
                 .setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)))
         };
         *self.0.observer.borrow_mut() = Some(observer);
+    }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.native.setEditable(!read_only);
+        self.0.native.setSelectable(true);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        !self.0.native.isEditable()
     }
 }
 
@@ -801,6 +835,20 @@ impl TextArea {
     pub fn native_text_view(&self) -> Retained<NSTextView> {
         self.0.text_view.clone()
     }
+
+    /// 読み取り専用にするか。既定は書き換えられる。
+    ///
+    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
+    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
+    /// 見せる欄に使う。
+    pub fn set_read_only(&self, read_only: bool) {
+        self.0.text_view.setEditable(!read_only);
+        self.0.text_view.setSelectable(true);
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        !self.0.text_view.isEditable()
+    }
 }
 
 // ----------------------------------------------------------------- Slider
@@ -886,6 +934,27 @@ impl ProgressBar {
 
     pub fn value(&self) -> f64 {
         self.0.native.doubleValue()
+    }
+
+    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    ///
+    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
+    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    pub fn set_indeterminate(&self, indeterminate: bool) {
+        let native = &self.0.native;
+        if native.isIndeterminate() == indeterminate {
+            return;
+        }
+        native.setIndeterminate(indeterminate);
+        if indeterminate {
+            unsafe { native.startAnimation(None) };
+        } else {
+            unsafe { native.stopAnimation(None) };
+        }
+    }
+
+    pub fn is_indeterminate(&self) -> bool {
+        self.0.native.isIndeterminate()
     }
 }
 

@@ -21,4 +21,19 @@ impl MainThread for Microtask {
         js_sys::futures::spawn_local(async move { work() });
         true
     }
+
+    fn post_after(&self, delay: std::time::Duration, work: Work) -> bool {
+        use wasm_bindgen::JsCast;
+
+        let Some(window) = web_sys::window() else {
+            return false;
+        };
+        // `setTimeout` の待ち時間は i32 のミリ秒。それより長いものは丸める
+        // (ブラウザも 2^31-1 を超えると即座に呼んでしまうため)。
+        let millis = delay.as_millis().min(i32::MAX as u128) as i32;
+        let callback = wasm_bindgen::closure::Closure::once_into_js(work);
+        window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), millis)
+            .is_ok()
+    }
 }
