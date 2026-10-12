@@ -6665,26 +6665,30 @@ fn read_only_and_min_size(ui: &Ui) -> Result<()> {
     // 文字のボタンは中のラベルへ `LABELLED_BY` を張っていて (張らない版の
     // GTK 4.14 もある)、そちらが `LABEL` より優先されるので、付けている間は
     // 外れていなければならない。
-    let button = ui.button("⚙")?;
-    let native = button.native_widget();
-    let has_label =
-        |w: &gtk::Widget| gtk::test_accessible_has_property(w, gtk::AccessibleProperty::Label);
-    let labelled_by =
-        |w: &gtk::Widget| gtk::test_accessible_has_relation(w, gtk::AccessibleRelation::LabelledBy);
-    let from_child = labelled_by(&native);
-    button.set_accessible_label(Some("設定"));
-    assert!(has_label(&native));
-    assert!(!labelled_by(&native), "付けた名前が中のラベルに隠されない");
-    button.set_text("⚙ ");
-    assert!(!labelled_by(&native), "文字を変えても付けた名前のまま");
-    button.set_accessible_label(None);
-    assert!(!has_label(&native));
-    if from_child {
-        assert!(labelled_by(&native), "外すと中のラベルの文字に戻る");
+    // `GTK_A11Y=none` では読み上げの属性そのものが持たれないので確かめない。
+    if std::env::var("GTK_A11Y").as_deref() != Ok("none") {
+        let button = ui.button("⚙")?;
+        let native = button.native_widget();
+        let has_label =
+            |w: &gtk::Widget| gtk::test_accessible_has_property(w, gtk::AccessibleProperty::Label);
+        let labelled_by = |w: &gtk::Widget| {
+            gtk::test_accessible_has_relation(w, gtk::AccessibleRelation::LabelledBy)
+        };
+        let from_child = labelled_by(&native);
+        button.set_accessible_label(Some("設定"));
+        assert!(has_label(&native));
+        assert!(!labelled_by(&native), "付けた名前が中のラベルに隠されない");
+        button.set_text("⚙ ");
+        assert!(!labelled_by(&native), "文字を変えても付けた名前のまま");
+        button.set_accessible_label(None);
+        assert!(!has_label(&native));
+        if from_child {
+            assert!(labelled_by(&native), "外すと中のラベルの文字に戻る");
+        }
+        let search = ui.text_input("")?;
+        search.set_accessible_label(Some("検索語"));
+        assert!(has_label(&search.native_widget()));
     }
-    let search = ui.text_input("")?;
-    search.set_accessible_label(Some("検索語"));
-    assert!(has_label(&search.native_widget()));
 
     let window = ui.window("最小", 320.0, 200.0)?;
     window.set_min_size(240.0, 120.0);
