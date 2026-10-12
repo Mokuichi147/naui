@@ -153,6 +153,11 @@ struct WindowInner {
     /// The position (physical pixels) requested with [`Window::set_position`] while in
     /// fullscreen. Applied on leaving fullscreen.
     position_after_fullscreen: Cell<Option<(i32, i32)>>,
+    /// The `XamlRoot` whose `Changed` is subscribed to. Subscribed only once.
+    scale_root: RefCell<Option<naui_winui3::Microsoft::UI::Xaml::XamlRoot>>,
+    /// The last `RasterizationScale` seen. Kept so that the physical-pixel values (the
+    /// minimum and the drag region) are passed again only when the scale changes.
+    last_scale: Cell<f64>,
 }
 
 type ResizeCallback = dyn FnMut((f64, f64));
@@ -239,6 +244,8 @@ impl Window {
             resizable: Cell::new(true),
             fullscreen_return: Cell::new(None),
             position_after_fullscreen: Cell::new(None),
+            scale_root: RefCell::new(None),
+            last_scale: Cell::new(0.0),
         }));
         this.observe_size();
         this.observe_app_window();
@@ -315,6 +322,7 @@ impl Window {
     /// Called when the content size may have changed. Passes the minimum again and, if
     /// the size changed, reports it to `on_resize`.
     fn content_size_changed(&self) {
+        self.watch_rasterization_scale();
         self.apply_min_size();
         self.finish_pending_fit();
         let size = self.size();
@@ -454,7 +462,8 @@ impl Window {
     /// How many physical pixels one logical pixel (DIP) is.
     ///
     /// Before the content's `XamlRoot` is decided (before showing), it is derived from
-    /// the window's DPI. If the process is not DPI-aware, DPI comes back as 96 and the
+    /// the window's DPI. [`run`](crate::run) makes the process Per-Monitor V2, but if
+    /// the user's manifest chooses DPI unaware, DPI comes back as 96 and the
     /// `AppWindow`'s sizes are also virtualized to 96 DPI values, so either way it works
     /// out to 1.
     fn rasterization_scale(&self) -> f64 {
@@ -484,6 +493,90 @@ impl Window {
         let native = self.0.native.cast::<naui_winui3::IWindowNative>().ok()?;
         // SAFETY: HWND はこのウィンドウが生きている間有効で、UI スレッドから呼んでいる。
         unsafe { native.WindowHandle() }.ok()
+    }
+
+    /// Passes the physical-pixel values again when the display scale changes.
+    ///
+    /// The minimum ([`apply_min_size`](Self::apply_min_size)) and the drag region
+    /// ([`apply_drag_rectangles`](Self::apply_drag_rectangles)) are fixed
+    /// physical-pixel values, so they go wrong when the window moves to a monitor with
+    /// a different scale or the scale is changed in the settings. The OS widens the
+    /// outer frame to the new scale while the content's size in DIPs barely changes,
+    /// so the content's `SizeChanged` alone does not notice. `XamlRoot.Changed`, which
+    /// reports scale changes, is watched instead.
+    ///
+    /// The `XamlRoot` is only available once the content is laid out, so this is called
+    /// from [`content_size_changed`](Self::content_size_changed) and subscribes only the
+    /// first time it is available.
+    fn watch_rasterization_scale(&self) {
+        use naui_winui3::Microsoft::UI::Xaml::{XamlRoot, XamlRootChangedEventArgs};
+
+        if self.0.scale_root.borrow().is_some() {
+            return;
+        }
+        let root = self
+            .0
+            .theme_root
+            .borrow()
+            .as_ref()
+            .and_then(|element| element.XamlRoot().ok());
+        let Some(root) = root else {
+            return;
+        };
+        self.0
+            .last_scale
+            .set(root.RasterizationScale().unwrap_or(0.0));
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler =
+            TypedEventHandler::<XamlRoot, XamlRootChangedEventArgs>::new(move |sender, _| {
+                let Some(scale) = sender
+                    .as_ref()
+                    .and_then(|root| root.RasterizationScale().ok())
+                else {
+                    return Ok(());
+                };
+                let _ = state.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        if inner.last_scale.replace(scale) != scale {
+                            Window(inner).scale_changed();
+                        }
+                    }
+                });
+                Ok(())
+            });
+        if root.Changed(&handler).is_ok() {
+            *self.0.scale_root.borrow_mut() = Some(root);
+        }
+    }
+
+    /// Passes the minimum and the drag region again at the new scale.
+    ///
+    /// `XamlRoot.Changed` can arrive before the OS has finished resizing the outer
+    /// frame to the new scale with `WM_DPICHANGED`. So that
+    /// [`outer_size_for`](Self::outer_size_for), which derives the frame thickness
+    /// from the outer size, does not read the old frame, the computation waits for
+    /// one round of the message loop.
+    fn scale_changed(&self) {
+        use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
+
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let enqueued = DispatcherQueue::GetForCurrentThread().and_then(|queue| {
+            queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
+                let _ = target.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        let window = Window(inner);
+                        window.apply_min_size();
+                        window.apply_drag_area();
+                    }
+                });
+                Ok(())
+            }))
+        });
+        if !matches!(enqueued, Ok(true)) {
+            // 積めなければ、その場で渡し直す。
+            self.apply_min_size();
+            self.apply_drag_area();
+        }
     }
 
     /// Reports when the content layer is laid out again and its size changes.
@@ -1390,9 +1483,10 @@ impl Window {
     ///
     /// The rectangles are fixed physical-pixel values, so they must be redone when any of
     /// the window width, the number of toolbar items or the display scale changes. The
-    /// window width and scale show up in the sizes of the title bar and the slot. Changes
-    /// in the number of items are watched by [`set_toolbar`](Self::set_toolbar), which
-    /// adds the `CommandBar`.
+    /// window width shows up in the sizes of the title bar and the slot. Changes in the
+    /// number of items are watched by [`set_toolbar`](Self::set_toolbar), which adds the
+    /// `CommandBar`. The scale barely shows up in DIP sizes, so
+    /// [`watch_rasterization_scale`](Self::watch_rasterization_scale) watches it.
     fn install_drag_area_updates(&self) {
         let targets = [
             self.0

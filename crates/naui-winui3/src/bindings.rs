@@ -23074,6 +23074,13 @@ pub mod Microsoft {
                 fn Size(&self) -> windows_core::Result<windows::Foundation::Size>;
                 fn RasterizationScale(&self) -> windows_core::Result<f64>;
                 fn IsHostVisible(&self) -> windows_core::Result<bool>;
+                fn Changed(
+                    &self,
+                    handler: windows_core::Ref<
+                        '_,
+                        windows::Foundation::TypedEventHandler<XamlRoot, XamlRootChangedEventArgs>,
+                    >,
+                ) -> windows_core::Result<i64>;
                 fn RemoveChanged(&self, token: i64) -> windows_core::Result<()>;
             }
             impl IXamlRoot_Vtbl {
@@ -23155,6 +23162,27 @@ pub mod Microsoft {
                             }
                         }
                     }
+                    unsafe extern "system" fn Changed<
+                        Identity: IXamlRoot_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        handler: *mut core::ffi::c_void,
+                        result__: *mut i64,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IXamlRoot_Impl::Changed(this, core::mem::transmute_copy(&handler))
+                            {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
                     unsafe extern "system" fn RemoveChanged<
                         Identity: IXamlRoot_Impl,
                         const OFFSET: isize,
@@ -23175,7 +23203,7 @@ pub mod Microsoft {
                         Size: Size::<Identity, OFFSET>,
                         RasterizationScale: RasterizationScale::<Identity, OFFSET>,
                         IsHostVisible: IsHostVisible::<Identity, OFFSET>,
-                        Changed: 0,
+                        Changed: Changed::<Identity, OFFSET>,
                         RemoveChanged: RemoveChanged::<Identity, OFFSET>,
                     }
                 }
@@ -23205,7 +23233,11 @@ pub mod Microsoft {
                     *mut bool,
                 )
                     -> windows_core::HRESULT,
-                Changed: usize,
+                pub Changed: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                    *mut i64,
+                ) -> windows_core::HRESULT,
                 pub RemoveChanged:
                     unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
             }
@@ -23301,6 +23333,39 @@ pub mod Microsoft {
             pub struct IXamlRoot4_Vtbl {
                 pub base__: windows_core::IInspectable_Vtbl,
                 ContentIsland: usize,
+            }
+            windows_core::imp::define_interface!(
+                IXamlRootChangedEventArgs,
+                IXamlRootChangedEventArgs_Vtbl,
+                0x61d2c719_f8a1_515a_902c_cfa498ba7a7f
+            );
+            impl windows_core::RuntimeType for IXamlRootChangedEventArgs {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_interface::<Self>();
+            }
+            impl windows_core::RuntimeName for IXamlRootChangedEventArgs {
+                const NAME: &'static str = "Microsoft.UI.Xaml.IXamlRootChangedEventArgs";
+            }
+            pub trait IXamlRootChangedEventArgs_Impl: windows_core::IUnknownImpl {}
+            impl IXamlRootChangedEventArgs_Vtbl {
+                pub const fn new<Identity: IXamlRootChangedEventArgs_Impl, const OFFSET: isize>(
+                ) -> Self {
+                    Self {
+                        base__: windows_core::IInspectable_Vtbl::new::<
+                            Identity,
+                            IXamlRootChangedEventArgs,
+                            OFFSET,
+                        >(),
+                    }
+                }
+                pub fn matches(iid: &windows_core::GUID) -> bool {
+                    iid == &<IXamlRootChangedEventArgs as windows_core::Interface>::IID
+                }
+            }
+            #[repr(C)]
+            #[doc(hidden)]
+            pub struct IXamlRootChangedEventArgs_Vtbl {
+                pub base__: windows_core::IInspectable_Vtbl,
             }
             #[repr(transparent)]
             #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26875,6 +26940,23 @@ pub mod Microsoft {
                         .map(|| result__)
                     }
                 }
+                pub fn Changed<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                where
+                    P0: windows_core::Param<
+                        windows::Foundation::TypedEventHandler<XamlRoot, XamlRootChangedEventArgs>,
+                    >,
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).Changed)(
+                            windows_core::Interface::as_raw(this),
+                            handler.param().abi(),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
                 pub fn RemoveChanged(&self, token: i64) -> windows_core::Result<()> {
                     let this = self;
                     unsafe {
@@ -26899,6 +26981,29 @@ pub mod Microsoft {
             }
             unsafe impl Send for XamlRoot {}
             unsafe impl Sync for XamlRoot {}
+            #[repr(transparent)]
+            #[derive(Clone, Debug, Eq, PartialEq)]
+            pub struct XamlRootChangedEventArgs(windows_core::IUnknown);
+            windows_core::imp::interface_hierarchy!(
+                XamlRootChangedEventArgs,
+                windows_core::IUnknown,
+                windows_core::IInspectable
+            );
+            impl XamlRootChangedEventArgs {}
+            impl windows_core::RuntimeType for XamlRootChangedEventArgs {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::for_class::<Self, IXamlRootChangedEventArgs>();
+            }
+            unsafe impl windows_core::Interface for XamlRootChangedEventArgs {
+                type Vtable = <IXamlRootChangedEventArgs as windows_core::Interface>::Vtable;
+                const IID: windows_core::GUID =
+                    <IXamlRootChangedEventArgs as windows_core::Interface>::IID;
+            }
+            impl windows_core::RuntimeName for XamlRootChangedEventArgs {
+                const NAME: &'static str = "Microsoft.UI.Xaml.XamlRootChangedEventArgs";
+            }
+            unsafe impl Send for XamlRootChangedEventArgs {}
+            unsafe impl Sync for XamlRootChangedEventArgs {}
             pub mod Automation {
                 #[repr(transparent)]
                 #[derive(Clone, Debug, Eq, PartialEq)]

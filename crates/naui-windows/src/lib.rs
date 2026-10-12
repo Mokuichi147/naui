@@ -25,6 +25,12 @@
 //! Enabling the `self-contained` feature lets the runtime be bundled next to the
 //! exe. In that case only the bundled files are used, and no framework package is
 //! looked for. It is an error if the bundled files are not next to the exe.
+//!
+//! ## Display scale (DPI)
+//!
+//! Before creating the first window, [`run`] makes the process **Per-Monitor V2**
+//! DPI aware. If the app's manifest chooses a `dpiAwareness`, that one wins (the OS
+//! turns naui's request down and nothing changes).
 
 #![cfg(target_os = "windows")]
 
@@ -572,6 +578,10 @@ fn preferred_languages() -> Vec<String> {
 /// `self-contained`, otherwise trying versions newest first as described in the
 /// crate docs), it enters `Application::Start` and calls `build` once XAML
 /// initialization has finished. This function does not return until the app exits.
+///
+/// If the process's DPI awareness is not decided yet, it becomes Per-Monitor V2
+/// (so that text is not blurred on screens scaled other than 100%). A
+/// `dpiAwareness` in the app's manifest takes precedence.
 pub fn run<F>(settings: Settings, build: F) -> Result<()>
 where
     F: FnOnce(&Ui) -> Result<()> + 'static,
@@ -579,6 +589,7 @@ where
     use naui_winui3::Microsoft::UI::Xaml::{Application, ApplicationInitializationCallback};
     use naui_winui3::{init_apartment, ApartmentType};
 
+    enable_per_monitor_dpi_awareness();
     let _runtime = sdk::initialize()?;
     init_apartment(ApartmentType::SingleThreaded)
         .map_err(|e| to_error("COM アパートメントの初期化", e))?;
@@ -601,6 +612,29 @@ where
         Some(e) => Err(e),
         None => Ok(()),
     }
+}
+
+/// Makes the process Per-Monitor V2 DPI aware.
+///
+/// WinUI 3 project templates choose this in the manifest (`app.manifest`'s
+/// `<dpiAwareness>PerMonitorV2</dpiAwareness>`), but naui is a library and cannot
+/// add a manifest to the user's executable. Without a choice the process stays DPI
+/// unaware: the OS stretches a screen drawn at 96 DPI, so text is blurred on screens
+/// at 125% or 150%, and XAML's own wheel scrolling (and its animated `ChangeView`)
+/// does not run while the window has focus. So it is chosen through the API before
+/// the first window (HWND) is created.
+///
+/// If a manifest or an earlier call has already decided it, the OS refuses with
+/// `ERROR_ACCESS_DENIED` and the earlier choice stays. That is the right behavior,
+/// not overwriting what the user chose, so failure is ignored. Sizes are computed
+/// with `RasterizationScale`, so they come out right under any awareness.
+fn enable_per_monitor_dpi_awareness() {
+    use windows::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+
+    // SAFETY: 定数のハンドルを渡してプロセスの既定を選ぶだけ。
+    let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
 }
 
 /// Calls `build` exactly once when WinUI 3 initialization has finished, and ends

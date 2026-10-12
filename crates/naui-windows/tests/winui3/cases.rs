@@ -282,6 +282,10 @@ const CASES: &[Case] = &[
         window_resizable_requested_before_show,
     ),
     (
+        "プロセスとウィンドウが Per-Monitor V2 で、倍率がウィンドウの DPI と合う",
+        windows_are_per_monitor_v2_dpi_aware,
+    ),
+    (
         "TextArea の改行は \\n で読める",
         text_area_reports_newlines_as_lf,
     ),
@@ -2753,6 +2757,84 @@ fn window_resizable_round_trips(ui: &Ui) -> Result<()> {
     assert_eq!(presenter.IsResizable().ok(), Some(true));
     assert_eq!(presenter.IsMaximizable().ok(), Some(true));
     window.close();
+    Ok(())
+}
+
+/// `run` makes the process Per-Monitor V2.
+///
+/// The test executable has no DPI manifest, so unless naui chooses, it stays DPI
+/// unaware (`DPI_AWARENESS_UNAWARE`), and on a screen at 125% or so the OS stretches
+/// a screen drawn at 96 DPI and text is blurred. `RasterizationScale` and
+/// `GetDpiForWindow` then always return 1.0 / 96.
+///
+/// It also checks that the window (HWND) is created with the same awareness and that
+/// XAML's scale matches that window's DPI. Whether the scale is other than 1 depends
+/// on the screen settings, so it is not assumed here.
+fn windows_are_per_monitor_v2_dpi_aware(ui: &Ui) -> Result<()> {
+    use windows::Win32::UI::HiDpi::{
+        AreDpiAwarenessContextsEqual, GetDpiForWindow, GetThreadDpiAwarenessContext,
+        GetWindowDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+
+    // SAFETY: どちらも UI スレッドの状態を読むだけ。
+    let thread_is_v2 = unsafe {
+        AreDpiAwarenessContextsEqual(
+            GetThreadDpiAwarenessContext(),
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        )
+    };
+    assert!(
+        thread_is_v2.as_bool(),
+        "UI スレッドが Per-Monitor V2 であること"
+    );
+
+    let window = ui.window("表示倍率", 320.0, 240.0)?;
+    let label = ui.label("倍率")?;
+    window.set_child(&label);
+    window.show();
+    let native = window
+        .native_window()
+        .cast::<naui_winui3::IWindowNative>()
+        .expect("IWindowNative");
+    // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+    let hwnd = unsafe { native.WindowHandle() }.expect("HWND");
+    let element = label.native_element().cast::<FrameworkElement>().ok();
+    let scale = || {
+        element
+            .as_ref()
+            .and_then(|element| element.XamlRoot().ok())
+            .and_then(|root| root.RasterizationScale().ok())
+    };
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || scale().is_some());
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: 上の HWND の状態を読むだけ。
+        let window_is_v2 = unsafe {
+            AreDpiAwarenessContextsEqual(
+                GetWindowDpiAwarenessContext(hwnd),
+                DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+            )
+        };
+        assert!(
+            window_is_v2.as_bool(),
+            "ウィンドウが Per-Monitor V2 で作られていること"
+        );
+        let Some(scale) = scale() else {
+            println!("     (XamlRoot が付かない環境なので、倍率は確かめずに通す)");
+            return;
+        };
+        // SAFETY: 上の HWND を渡すだけ。
+        let dpi = unsafe { GetDpiForWindow(hwnd) };
+        println!("     (このウィンドウの DPI は {dpi}、倍率は {scale})");
+        assert!(
+            (scale - f64::from(dpi) / 96.0).abs() < 0.01,
+            "RasterizationScale {scale} が GetDpiForWindow {dpi} / 96 と合うこと"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 
