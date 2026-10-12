@@ -252,6 +252,10 @@ fn main() {
             scroll_to_end_before_shown,
         ),
         (
+            "隠れたタブの中で足して頼んだ末尾送りがタブを戻すと効く",
+            scroll_to_end_in_hidden_tab,
+        ),
+        (
             "スクロールの通知は位置が変わったときだけ届く",
             scroll_notifies_only_moves,
         ),
@@ -2204,6 +2208,55 @@ fn scroll_to_end_before_shown(ui: &Ui) -> Result<()> {
     let m = scroll.metrics();
     assert!(m.max_y() > 0.0, "{m:?}");
     assert_eq!(m.distance_to_end(), 0.0, "表示後に末尾にいる: {m:?}");
+    window.close();
+    Ok(())
+}
+
+/// 一度出したスクロールを裏のタブに回し、隠れている間に足して末尾送りを
+/// 頼む。隠れている間もフレームは進むが、行き先は戻すまで覚えている。
+fn scroll_to_end_in_hidden_tab(ui: &Ui) -> Result<()> {
+    let window = ui.window("タブ", 200.0, 140.0)?;
+    let tabs = ui.tabs()?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..40 {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    tabs.add_tab("前", &ui.label("別のタブ")?);
+    tabs.add_tab("スクロール", &scroll);
+    tabs.set_selected(1);
+    window.set_child(&tabs);
+    window.show();
+    settle(&scroll);
+    scroll.scroll_to_end();
+    settle(&scroll);
+    let before = scroll.metrics();
+
+    tabs.set_selected(0);
+    settle(&scroll);
+    for i in 0..20 {
+        pane.append(&ui.label(&format!("追加 {i}"))?);
+    }
+    scroll.scroll_to_end();
+    // 隠れている間にフレームを進める。数えていれば行き先を忘れる。
+    for _ in 0..10 {
+        tick(&tabs.native_widget());
+    }
+
+    tabs.set_selected(1);
+    settle(&scroll);
+    let after = scroll.metrics();
+    assert!(
+        after.content_height > before.content_height,
+        "中身が伸びている: {before:?} → {after:?}"
+    );
+    assert_eq!(
+        after.distance_to_end(),
+        0.0,
+        "戻したら末尾にいる: {after:?}"
+    );
     window.close();
     Ok(())
 }
