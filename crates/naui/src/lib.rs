@@ -285,6 +285,9 @@
 //!
 //! [`set_accessible_label`](Button::set_accessible_label) は読み上げソフトに伝える
 //! 名前で、アイコンだけのボタンのように見えている文字が無いときに付ける。
+//! 文字を持つボタンでも、付けた名前が見えている文字より優先される (GTK4 の
+//! ボタンは中のラベルから名前を取る関係 `LABELLED_BY` を張るので、付けている
+//! 間は外す)。
 //!
 //! **隠したものは `Stack` の中では場所を空けない。** `Grid` ではマスと
 //! 行・列は残り、間隔 (`set_spacing`) が残る環境もある。
@@ -427,7 +430,7 @@
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
 //! | 閉じる前の確認 | `AppWindow.Closing` (`Cancel`) | `windowShouldClose:` | `close-request` | (呼ばれない) |
-//! | 大きさの変化 | 中身の層の `SizeChanged` | `windowDidResize:` | `default-width` / `default-height` | `ResizeObserver` |
+//! | 大きさの変化 | 中身の層の `SizeChanged` | `windowDidResize:` | 描いた後に中身の大きさを比べる (`after-paint`) | `ResizeObserver` |
 //! | 大きさを変える | `AppWindow.Resize` (外枠との差を足す) | `setContentSize` (`contentLayoutRect` との差を足す) | `set_default_size` (ヘッダーバーとメニューバーの高さを足す) | ウィンドウ要素の `max-width` / `min-height` (行の高さを足す) |
 //!
 //! どの環境もネイティブの API はウィンドウ全体 (か、タイトルバーの下まで
