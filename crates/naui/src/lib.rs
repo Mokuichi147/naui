@@ -339,6 +339,9 @@
 //! [`on_key_down`](Window::on_key_down) には、文字入力以外 (ボタンなど) に
 //! フォーカスがあるときのキーも届く。
 //!
+//! 修飾キー (⇧・Ctrl・Alt・⌘ / Windows キー) は単独で押しても届かない。
+//! ほかのキーと一緒に押していたかを [`KeyEvent::modifiers`] で見る。
+//!
 //! | naui | Windows | macOS | Linux | Web |
 //! | --- | --- | --- | --- | --- |
 //! | 受け口 | ウィンドウの根の `PreviewKeyDown` | `NSEvent` のローカルモニター | ウィンドウの `GtkEventControllerKey` (捕捉) | 要素の `keydown` (捕捉) と `document` |

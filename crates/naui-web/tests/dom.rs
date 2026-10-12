@@ -3171,6 +3171,8 @@ fn text_area_key_down_can_take_enter() {
             !key_down(target, "Enter", true, false, 13),
             "Shift+Enter は改行させる"
         );
+        // 修飾キーを単独で押しても届かない。
+        assert!(!key_down(target, "Shift", true, false, 16));
         assert!(!key_down(target, "A", true, false, 65));
         assert_eq!(
             *seen.borrow(),

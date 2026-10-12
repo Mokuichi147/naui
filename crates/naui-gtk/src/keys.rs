@@ -6,6 +6,8 @@
 //! ウィンドウの順に通知する。`Handled` なら伝わりを止めるので、入力欄にも
 //! 届かない。
 //!
+//! 修飾キーを単独で押したときは届けない (macOS と同じ)。
+//!
 //! 変換中のキーは IME のものなので届けない。GTK4 には変換中かを尋ねる
 //! 手段が無いので、`GtkText` / `GtkTextView` の `preedit-changed` を見て
 //! 覚えておく。
@@ -91,6 +93,9 @@ pub(crate) fn install(window: &impl IsA<gtk::Window>) {
         let pressed = pressed.clone();
         move |_, keyval, keycode, state| {
             let repeat = !pressed.borrow_mut().insert(keycode);
+            if is_modifier(keyval) {
+                return glib::Propagation::Proceed;
+            }
             let Some(window) = window_widget.upgrade() else {
                 return glib::Propagation::Proceed;
             };
@@ -186,6 +191,27 @@ fn modifiers_of(state: gdk::ModifierType) -> Modifiers {
         alt: state.contains(gdk::ModifierType::ALT_MASK),
         meta: state.intersects(gdk::ModifierType::SUPER_MASK | gdk::ModifierType::META_MASK),
     }
+}
+
+/// ⇧・Ctrl・Alt・Meta・Super・Hyper (左右とも) と AltGr。
+fn is_modifier(keyval: gdk::Key) -> bool {
+    use gdk::Key as K;
+    matches!(
+        keyval,
+        K::Shift_L
+            | K::Shift_R
+            | K::Control_L
+            | K::Control_R
+            | K::Alt_L
+            | K::Alt_R
+            | K::Meta_L
+            | K::Meta_R
+            | K::Super_L
+            | K::Super_R
+            | K::Hyper_L
+            | K::Hyper_R
+            | K::ISO_Level3_Shift
+    )
 }
 
 /// GDK のキー値を naui のキーへ写す。

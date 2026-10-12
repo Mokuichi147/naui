@@ -585,12 +585,12 @@ impl TextArea {
         })))
     }
 
-    /// いまの文字列。改行はそのまま含まれる。
+    /// いまの文字列。改行は `\n` で含まれる (ほかの環境と同じ)。
     pub fn text(&self) -> String {
         self.0
             .native
             .Text()
-            .map(|s| s.to_string())
+            .map(|s| unix_newlines(&s.to_string()))
             .unwrap_or_default()
     }
 
@@ -616,7 +616,7 @@ impl TextArea {
         let state = UiThreadCell::new((self.0.native.clone(), f));
         let handler = TextChangedEventHandler::new(move |_sender, _args| {
             state.with_mut(|(native, f)| {
-                let text = native.Text().unwrap_or_default().to_string();
+                let text = unix_newlines(&native.Text().unwrap_or_default().to_string());
                 f(&text);
             });
             Ok(())
@@ -625,6 +625,11 @@ impl TextArea {
             *self.0.token.borrow_mut() = Some(token);
         }
     }
+}
+
+/// WinUI の `TextBox` は改行を `\r` で持つ。ほかの環境に合わせて `\n` にする。
+fn unix_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 // ----------------------------------------------------------------- Slider

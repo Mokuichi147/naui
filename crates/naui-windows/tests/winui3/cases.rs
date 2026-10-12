@@ -118,6 +118,10 @@ const CASES: &[Case] = &[
         text_widgets_accept_key_handlers,
     ),
     (
+        "TextArea の改行は \\n で読める",
+        text_area_reports_newlines_as_lf,
+    ),
+    (
         "描画面の命令が XAML の Path と TextBlock になり、読み込める",
         canvas_commands_become_xaml_shapes,
     ),
@@ -2004,5 +2008,14 @@ fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
     ui.search_input()?.on_key_down(handler);
     ui.number_input(1.0)?.on_key_down(handler);
     ui.editable_combo_box()?.on_key_down(handler);
+    Ok(())
+}
+
+/// `TextBox` は改行を `\r` で持つが、`text()` はほかの環境と同じ `\n` で返す。
+fn text_area_reports_newlines_as_lf(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("一\n二")?;
+    assert_eq!(area.text(), "一\n二");
+    area.set_text("a\r\nb\rc");
+    assert_eq!(area.text(), "a\nb\nc");
     Ok(())
 }

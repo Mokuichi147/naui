@@ -6,6 +6,8 @@
 //! 続けてウィンドウの順に通知する。`Handled` なら `Handled` を立てるので、
 //! 入力欄 (改行の挿入など) にも届かない。
 //!
+//! 修飾キーを単独で押したときは届けない (macOS と同じ)。
+//!
 //! 変換中のキーは IME のものなので届けない。IME が処理するキーは
 //! `VK_PROCESSKEY` (229) で来るほか、`TextBox` の
 //! `TextCompositionStarted` / `TextCompositionEnded` の間も変換中とみなす。
@@ -128,7 +130,7 @@ fn dispatch(
     repeat: bool,
     window: &KeyHandler,
 ) -> EventResponse {
-    if key.0 == VK_PROCESSKEY {
+    if key.0 == VK_PROCESSKEY || is_modifier(key.0) {
         return EventResponse::Continue;
     }
     let source = args
@@ -224,6 +226,11 @@ fn modifiers() -> Modifiers {
         alt: down(VK_MENU),
         meta: down(VK_LWIN) || down(VK_RWIN),
     }
+}
+
+/// ⇧・Ctrl・Alt・Windows キー (左右の区別があるものも含む)。
+fn is_modifier(code: i32) -> bool {
+    matches!(code, 16..=18 | 91 | 92 | 160..=165)
 }
 
 /// 仮想キーを naui のキーへ写す。

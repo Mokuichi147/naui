@@ -6299,6 +6299,8 @@ fn text_area_key_down_can_take_enter(ui: &Ui) -> Result<()> {
         !press_key(&window, K::Return, M::SHIFT_MASK),
         "Shift+Enter は通す"
     );
+    // 修飾キーを単独で押しても届かない。
+    assert!(!press_key(&window, K::Shift_L, M::empty()));
     assert!(!press_key(&window, K::A, M::SHIFT_MASK));
     assert!(!press_key(&window, K::F5, M::empty()));
     assert_eq!(
