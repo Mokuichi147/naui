@@ -6662,18 +6662,16 @@ fn read_only_and_min_size(ui: &Ui) -> Result<()> {
     assert!(!view.is_cursor_visible(), "カーソルを出さない");
 
     // 読み上げ名の中身は GTK4 から読み戻せないので、付いているかどうかを見る。
-    // 文字のボタンは中のラベルへ `LABELLED_BY` を張っていて、そちらが
-    // `LABEL` より優先されるので、付けている間は外れていなければならない。
+    // 文字のボタンは中のラベルへ `LABELLED_BY` を張っていて (張らない版の
+    // GTK 4.14 もある)、そちらが `LABEL` より優先されるので、付けている間は
+    // 外れていなければならない。
     let button = ui.button("⚙")?;
     let native = button.native_widget();
     let has_label =
         |w: &gtk::Widget| gtk::test_accessible_has_property(w, gtk::AccessibleProperty::Label);
     let labelled_by =
         |w: &gtk::Widget| gtk::test_accessible_has_relation(w, gtk::AccessibleRelation::LabelledBy);
-    assert!(
-        labelled_by(&native),
-        "文字のボタンは中のラベルから名前を取る"
-    );
+    let from_child = labelled_by(&native);
     button.set_accessible_label(Some("設定"));
     assert!(has_label(&native));
     assert!(!labelled_by(&native), "付けた名前が中のラベルに隠されない");
@@ -6681,7 +6679,9 @@ fn read_only_and_min_size(ui: &Ui) -> Result<()> {
     assert!(!labelled_by(&native), "文字を変えても付けた名前のまま");
     button.set_accessible_label(None);
     assert!(!has_label(&native));
-    assert!(labelled_by(&native), "外すと中のラベルの文字に戻る");
+    if from_child {
+        assert!(labelled_by(&native), "外すと中のラベルの文字に戻る");
+    }
     let search = ui.text_input("")?;
     search.set_accessible_label(Some("検索語"));
     assert!(has_label(&search.native_widget()));
