@@ -28,6 +28,7 @@ mod menu;
 mod number;
 mod popup;
 mod row_window;
+mod scroll;
 mod sidebar;
 mod split;
 mod table;
@@ -48,7 +49,7 @@ pub use file::{
     accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
     FilePickerMode,
 };
-pub use layout::{GridCell, Length, ScrollPolicy, Sizing, Track};
+pub use layout::{GridCell, Length, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing, Track};
 pub use list::{ListItem, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
@@ -59,6 +60,7 @@ pub use row_window::{
     keeps_hidden_selection, keeps_row_window, row_window, RowWindow, SelectionGesture,
     ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
+pub use scroll::ScrollNotifier;
 pub use sidebar::{
     sidebar_item, sidebar_len, sidebar_rows, SidebarItem, SidebarRow, SidebarSection,
     DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,

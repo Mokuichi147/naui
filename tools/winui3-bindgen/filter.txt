@@ -99,6 +99,7 @@ Microsoft.UI.Xaml.Controls.RowDefinitionCollection
 Microsoft.UI.Xaml.Controls.ScrollBarVisibility
 Microsoft.UI.Xaml.Controls.ScrollMode
 Microsoft.UI.Xaml.Controls.ScrollViewer
+Microsoft.UI.Xaml.Controls.ScrollViewerViewChangedEventArgs
 Microsoft.UI.Xaml.Controls.SelectionChangedEventHandler
 Microsoft.UI.Xaml.Controls.SelectionMode
 Microsoft.UI.Xaml.Controls.Slider

@@ -607,6 +607,7 @@ dependencies = [
  "js-sys",
  "naui-core",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
 ]

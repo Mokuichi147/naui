@@ -129,6 +129,22 @@ const CASES: &[Case] = &[
         "日本語を含むパスの画像がパスでも file: URL でも読み込める",
         image_loads_from_japanese_path,
     ),
+    (
+        "スクロールの位置を測り、送れる範囲に丸めて送る",
+        scroll_measures_and_moves,
+    ),
+    (
+        "足した直後の scroll_to_end が新しい末尾へ届く",
+        scroll_to_end_after_appending,
+    ),
+    (
+        "表示前に頼んだ scroll_to_end が表示後に効く",
+        scroll_to_end_before_shown,
+    ),
+    (
+        "スクロールの通知は位置が変わったときだけ届き、通知の中の送りも届く",
+        scroll_notifies_only_moves,
+    ),
 ];
 
 /// あとで確かめる仕事。イベントループを 1 周まわしてから呼ばれる。
@@ -1685,6 +1701,177 @@ fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
         Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+/// 縦に長い中身を載せたスクロールを、小さなウィンドウに置く (まだ出さない)。
+fn tall_scroll(
+    ui: &Ui,
+    rows: usize,
+) -> Result<(
+    naui_windows::Window,
+    naui_windows::Scroll,
+    naui_windows::Stack,
+)> {
+    let window = ui.window("スクロール", 240.0, 160.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..rows {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+    Ok((window, scroll, pane))
+}
+
+/// ウィンドウを出し、スクロールに実寸が付くまでメッセージを回す。
+///
+/// CI の WinUI 3 では ScrollViewer にテンプレートが当たらず、実寸が 0 の
+/// まま。そのときは `false` を返し、ケースは確かめずに通す (実機では確かめる)。
+fn show_and_measure(window: &naui_windows::Window, scroll: &naui_windows::Scroll) -> bool {
+    window.show();
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        scroll.metrics().viewport_height > 0.0
+    });
+    let measured = scroll.metrics().viewport_height > 0.0;
+    if !measured {
+        println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+    }
+    measured
+}
+
+/// スクロールに実寸が付くまで待つ上限。
+const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(3);
+
+fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let m = scroll.metrics();
+        assert_eq!((m.x, m.y), (0.0, 0.0), "最初は先頭: {m:?}");
+        assert!(
+            m.content_height > m.viewport_height,
+            "はみ出している: {m:?}"
+        );
+
+        // `ChangeView` の直後でも、新しい位置を返す。
+        scroll.scroll_to(0.0, 30.0);
+        assert_eq!(scroll.metrics().y, 30.0);
+
+        scroll.scroll_to_end();
+        let end = scroll.metrics();
+        assert_eq!(end.y, end.max_y(), "末尾へ: {end:?}");
+        assert_eq!(end.distance_to_end(), 0.0);
+
+        scroll.scroll_to(-50.0, 1e9);
+        let clamped = scroll.metrics();
+        assert_eq!((clamped.x, clamped.y), (0.0, clamped.max_y()));
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// チャットのように「足してから末尾へ」を、メッセージを回さずに続けて呼ぶ。
+fn scroll_to_end_after_appending(ui: &Ui) -> Result<()> {
+    let (window, scroll, pane) = tall_scroll(ui, 20)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        if !show_and_measure(&window, &scroll) {
+            return Ok(());
+        }
+        scroll.scroll_to_end();
+        let before = scroll.metrics();
+        for round in 0..3 {
+            // Gallery の「行を足す」と同じく、足す前の位置で追従を決める。
+            assert!(
+                scroll.metrics().distance_to_end() < 1.0,
+                "{round} 回目の前に末尾から外れた"
+            );
+            for i in 0..10 {
+                pane.append(&ui.label(&format!("追加 {round}-{i}"))?);
+            }
+            scroll.scroll_to_end();
+        }
+        let after = scroll.metrics();
+        assert!(
+            after.content_height > before.content_height,
+            "中身が伸びている: {before:?} → {after:?}"
+        );
+        assert_eq!(after.distance_to_end(), 0.0, "{after:?}");
+        Ok(())
+    }));
+    window.close();
+    outcome.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn scroll_to_end_before_shown(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    scroll.scroll_to_end();
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let m = scroll.metrics();
+        assert!(m.max_y() > 0.0, "{m:?}");
+        assert_eq!(m.distance_to_end(), 0.0, "表示後に末尾にいる: {m:?}");
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// `ViewChanged` は後から届くので、メッセージを回して待つ。
+fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
+    let (window, scroll, _pane) = tall_scroll(ui, 40)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        scroll.on_scroll({
+            let seen = seen.clone();
+            move |m: naui_core::ScrollMetrics| seen.borrow_mut().push(m.y)
+        });
+        let settle = || pump_until(Duration::from_millis(300), || false);
+
+        scroll.scroll_to(0.0, 25.0);
+        scroll.scroll_to(0.0, 25.0); // 同じ位置へは動かない
+        settle();
+        assert_eq!(*seen.borrow(), vec![25.0]);
+
+        // 幅だけ変えても、位置が変わらなければ届かない。
+        window.set_size(300.0, 160.0);
+        settle();
+        assert_eq!(*seen.borrow(), vec![25.0]);
+
+        // 通知の中から送った先も、最後の位置として届く。
+        seen.borrow_mut().clear();
+        scroll.on_scroll({
+            let seen = seen.clone();
+            let scroll = scroll.clone();
+            move |m: naui_core::ScrollMetrics| {
+                seen.borrow_mut().push(m.y);
+                if m.y == 55.0 {
+                    scroll.scroll_to(0.0, 50.0);
+                }
+            }
+        });
+        scroll.scroll_to(0.0, 55.0);
+        settle();
+        assert_eq!(*seen.borrow(), vec![55.0, 50.0]);
+        assert_eq!(scroll.metrics().y, 50.0);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
 }
 
 /// 条件が立つか時間切れになるまで、UI スレッドのメッセージを回す。

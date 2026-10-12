@@ -6,11 +6,16 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{GridCell, Orientation, Padding, Result, ScrollPolicy, Sizing, Track};
-use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, HtmlElement};
+use naui_core::{
+    GridCell, Orientation, Padding, Result, ScrollMetrics, ScrollNotifier, ScrollPolicy,
+    ScrollTarget, Sizing, Track,
+};
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::{JsCast, JsValue};
+use web_sys::{Document, Element, HtmlElement, ResizeObserver, ScrollBehavior, ScrollToOptions};
 
-use crate::widgets::{create, impl_widget, Widget};
+use crate::to_error;
+use crate::widgets::{create, impl_widget, Listener, Widget};
 
 /// 親コンテナが自分の種類を書いておく属性。
 ///
@@ -414,6 +419,23 @@ fn template(count: usize, tracks: &[Track]) -> String {
 struct ScrollInner {
     element: HtmlElement,
     child: RefCell<Option<Box<dyn Widget>>>,
+    /// 同じ位置への `scroll` イベントでは通知しない。
+    on_scroll: ScrollNotifier,
+    /// 大きさが決まる前 (文書に載る前・隠れたタブの中など) に頼まれた
+    /// 行き先。大きさが付いた時点で適用する。
+    pending: Cell<Option<ScrollTarget>>,
+    listener: RefCell<Option<Listener>>,
+    /// 大きさの変化の購読。落とすと購読も外れる。
+    observer: RefCell<Option<ResizeObserver>>,
+    observer_callback: RefCell<Option<Closure<dyn FnMut(JsValue)>>>,
+}
+
+impl Drop for ScrollInner {
+    fn drop(&mut self) {
+        if let Some(observer) = self.observer.borrow_mut().take() {
+            observer.disconnect();
+        }
+    }
 }
 
 /// 中身がはみ出したらスクロールさせるコンテナ (`overflow` を付けた `<div>`)。
@@ -427,9 +449,39 @@ impl Scroll {
         let this = Self(Rc::new(ScrollInner {
             element,
             child: RefCell::new(None),
+            on_scroll: ScrollNotifier::default(),
+            pending: Cell::new(None),
+            listener: RefCell::new(None),
+            observer: RefCell::new(None),
+            observer_callback: RefCell::new(None),
         }));
         this.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+        this.observe()?;
         Ok(this)
+    }
+
+    fn observe(&self) -> Result<()> {
+        let weak = Rc::downgrade(&self.0);
+        let listener = Listener::attach(self.0.element.as_ref(), "scroll", move || {
+            if let Some(inner) = weak.upgrade() {
+                Scroll(inner).notify_if_moved();
+            }
+        })?;
+        *self.0.listener.borrow_mut() = Some(listener);
+
+        // 文書に載ったとき・隠れていたタブが出たときにも呼ばれる。
+        let weak = Rc::downgrade(&self.0);
+        let callback = Closure::<dyn FnMut(JsValue)>::new(move |_entries: JsValue| {
+            if let Some(inner) = weak.upgrade() {
+                Scroll(inner).apply_pending();
+            }
+        });
+        let observer = ResizeObserver::new(callback.as_ref().unchecked_ref())
+            .map_err(|e| to_error("ResizeObserver の生成", e))?;
+        observer.observe(self.0.element.as_ref());
+        *self.0.observer.borrow_mut() = Some(observer);
+        *self.0.observer_callback.borrow_mut() = Some(callback);
+        Ok(())
     }
 
     /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
@@ -447,6 +499,99 @@ impl Scroll {
             apply_child_layout(&element, ParentLayout::Block);
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
+    }
+
+    /// いまのスクロール位置と大きさ。
+    ///
+    /// 読むときにブラウザがレイアウトを済ませるので、直前に中身を
+    /// 変えていても新しい大きさで測れる。
+    pub fn metrics(&self) -> ScrollMetrics {
+        let element = &self.0.element;
+        let viewport_width = element.client_width() as f64;
+        let viewport_height = element.client_height() as f64;
+        let mut metrics = ScrollMetrics {
+            x: scroll_offset(element, "scrollLeft"),
+            y: scroll_offset(element, "scrollTop"),
+            viewport_width,
+            viewport_height,
+            content_width: (element.scroll_width() as f64).max(viewport_width),
+            content_height: (element.scroll_height() as f64).max(viewport_height),
+        };
+        // 大きさ (`clientHeight` / `scrollHeight`) は整数に丸められ、位置は
+        // 拡大率によって小数になる。末尾まで 1 px 未満の差は丸めによるもの
+        // なので、末尾にいるとみなす。
+        metrics.x = snap_to_end(metrics.x, metrics.max_x());
+        metrics.y = snap_to_end(metrics.y, metrics.max_y());
+        metrics
+    }
+
+    /// 指定した位置へ送る。送れる範囲に丸める。
+    ///
+    /// まだ大きさが決まっていない (文書に載る前など) ときは、決まった時点で送る。
+    pub fn scroll_to(&self, x: f64, y: f64) {
+        self.request(ScrollTarget::To { x, y });
+    }
+
+    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    pub fn scroll_to_end(&self) {
+        self.request(ScrollTarget::End);
+    }
+
+    /// スクロール位置が変わったときの通知。
+    ///
+    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
+    /// 届く。大きさだけが変わったときは届かない。ブラウザの `scroll`
+    /// イベントを受けて届くので、`scroll_to` から戻った後になる。
+    pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
+        self.0.on_scroll.set(&self.metrics(), f);
+    }
+
+    fn request(&self, target: ScrollTarget) {
+        self.0.pending.set(Some(target));
+        self.apply_pending();
+    }
+
+    /// 覚えている行き先へ送る。大きさが決まっていなければ、まだ覚えておく。
+    fn apply_pending(&self) {
+        let Some(target) = self.0.pending.get() else {
+            return;
+        };
+        let metrics = self.metrics();
+        if metrics.viewport_width <= 0.0 || metrics.viewport_height <= 0.0 {
+            return;
+        }
+        self.0.pending.set(None);
+        let (x, y) = target.resolve(&metrics);
+        if (x, y) != (metrics.x, metrics.y) {
+            // ページの CSS に `scroll-behavior: smooth` があっても、その場で送る。
+            let options = ScrollToOptions::new();
+            options.set_left(x);
+            options.set_top(y);
+            options.set_behavior(ScrollBehavior::Instant);
+            self.0.element.scroll_to_with_scroll_to_options(&options);
+        }
+    }
+
+    fn notify_if_moved(&self) {
+        self.0.on_scroll.notify_if_moved(|| self.metrics());
+    }
+}
+
+/// `scrollTop` / `scrollLeft` を小数のまま読む。web-sys の `scroll_top()`
+/// は整数で返すため、拡大率によっては末尾まで届いていないように見える。
+fn scroll_offset(element: &HtmlElement, name: &str) -> f64 {
+    js_sys::Reflect::get(element, &JsValue::from_str(name))
+        .ok()
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0)
+}
+
+/// 末尾まで 1 px 未満なら末尾にそろえる。
+fn snap_to_end(offset: f64, max: f64) -> f64 {
+    if (max - offset).abs() < 1.0 {
+        max
+    } else {
+        offset
     }
 }
 

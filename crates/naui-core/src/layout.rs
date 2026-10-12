@@ -278,6 +278,76 @@ impl ScrollPolicy {
     }
 }
 
+/// スクロールの位置と大きさ。単位は論理ピクセル。
+///
+/// `x` / `y` は、見えている範囲の左上が中身のどこにあるか。いちばん上
+/// (左) で 0、いちばん下 (右) で [`max_y`](Self::max_y) ([`max_x`](Self::max_x))。
+/// 見えている範囲 (`viewport_*`) はスクロールバーが場所を取るときはその分を
+/// 除いた大きさで、中身 (`content_*`) は見えている範囲より小さくならない。
+///
+/// 「末尾から何 px 以内なら追従する」のような判断はアプリ側で、
+/// [`distance_to_end`](Self::distance_to_end) などを使って行う。
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ScrollMetrics {
+    pub x: f64,
+    pub y: f64,
+    pub viewport_width: f64,
+    pub viewport_height: f64,
+    pub content_width: f64,
+    pub content_height: f64,
+}
+
+impl ScrollMetrics {
+    /// 横へ送れる最大の位置。はみ出していなければ 0。
+    pub fn max_x(&self) -> f64 {
+        (self.content_width - self.viewport_width).max(0.0)
+    }
+
+    /// 縦へ送れる最大の位置。はみ出していなければ 0。
+    pub fn max_y(&self) -> f64 {
+        (self.content_height - self.viewport_height).max(0.0)
+    }
+
+    /// 見えている範囲の下端から、中身の末尾 (いちばん下) までの距離。
+    /// 末尾が見えていれば 0。
+    pub fn distance_to_end(&self) -> f64 {
+        (self.max_y() - self.y).max(0.0)
+    }
+}
+
+/// スクロールの行き先。バックエンドが `scroll_to` / `scroll_to_end` を
+/// 受けてから、レイアウトが済むまで覚えておくためのもの。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScrollTarget {
+    /// 指定した位置へ。
+    To { x: f64, y: f64 },
+    /// 縦の末尾へ (横はそのまま)。
+    End,
+}
+
+impl ScrollTarget {
+    /// いまの大きさで、実際に送る位置を決める。送れる範囲に丸める。
+    pub fn resolve(self, metrics: &ScrollMetrics) -> (f64, f64) {
+        let (x, y) = match self {
+            Self::To { x, y } => (x, y),
+            Self::End => (metrics.x, metrics.max_y()),
+        };
+        (
+            clamp_offset(x, metrics.max_x()),
+            clamp_offset(y, metrics.max_y()),
+        )
+    }
+}
+
+/// NaN は 0 として扱う (`f64::clamp` は NaN をそのまま返すため)。
+fn clamp_offset(value: f64, max: f64) -> f64 {
+    if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, max)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,6 +404,54 @@ mod tests {
         assert_eq!(spanned.row_span, 2);
         assert_eq!(spanned.columns_needed(), 3);
         assert_eq!(spanned.rows_needed(), 5);
+    }
+
+    #[test]
+    fn scroll_metrics_measure_the_hidden_part() {
+        let m = ScrollMetrics {
+            x: 0.0,
+            y: 100.0,
+            viewport_width: 200.0,
+            viewport_height: 300.0,
+            content_width: 200.0,
+            content_height: 1000.0,
+        };
+        assert_eq!(m.max_x(), 0.0);
+        assert_eq!(m.max_y(), 700.0);
+        assert_eq!(m.distance_to_end(), 600.0);
+
+        // 中身が見えている範囲より小さくても負にならない。
+        let short = ScrollMetrics {
+            content_height: 10.0,
+            ..m
+        };
+        assert_eq!(short.max_y(), 0.0);
+        assert_eq!(short.distance_to_end(), 0.0);
+    }
+
+    #[test]
+    fn scroll_target_clamps_to_the_range() {
+        let m = ScrollMetrics {
+            x: 5.0,
+            y: 0.0,
+            viewport_width: 100.0,
+            viewport_height: 100.0,
+            content_width: 150.0,
+            content_height: 400.0,
+        };
+        assert_eq!(ScrollTarget::End.resolve(&m), (5.0, 300.0));
+        assert_eq!(
+            ScrollTarget::To { x: -10.0, y: 1e9 }.resolve(&m),
+            (0.0, 300.0)
+        );
+        assert_eq!(
+            ScrollTarget::To {
+                x: f64::NAN,
+                y: 20.0
+            }
+            .resolve(&m),
+            (0.0, 20.0)
+        );
     }
 
     #[test]
