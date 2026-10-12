@@ -20,7 +20,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, UIElement};
 use windows::Foundation::{PropertyValue, TypedEventHandler};
-use windows_core::{Interface, HSTRING};
+use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
@@ -121,15 +121,18 @@ impl EditableComboBox {
             .SelectionChanged(&selected)
             .map_err(|e| to_error("ComboBox の選択購読", e))?;
 
-        // Enter で確定したとき。**受け取ったことにしないと**、WinUI は候補に
-        // 無い文字列を捨てて選択中の候補へ戻してしまう。
+        // Enter (またはフォーカスが外れたこと) で、候補に無い文字列が確定した
+        // とき。**`Handled` は立てない**。立てると WinUI は既定の処理 (その
+        // 文字列を `SelectedItem` に入れる) を飛ばし、編集欄を選択中の項目で
+        // 書き直す。打ち始めた時点で選択は外れているので、打った文字が消えて
+        // 空になる。既定の処理に任せれば `SelectedIndex` は -1 のまま文字が
+        // 残り、続く `SelectionChanged` は候補を指さないので上で無視される。
         let state = UiThreadCell::new(Rc::downgrade(&this.0));
         let submitted = TypedEventHandler::<XamlComboBox, ComboBoxTextSubmittedEventArgs>::new(
             move |_sender, args| {
                 let Some(args) = args.as_ref() else {
                     return Ok(());
                 };
-                args.SetHandled(true)?;
                 let text = args.Text()?.to_string();
                 let Some(inner) = state.try_with_mut(|weak| weak.upgrade()).flatten() else {
                     return Ok(());
@@ -323,10 +326,32 @@ impl EditableComboBox {
             .borrow()
             .iter()
             .position(|item| item == text)
-            .and_then(|index| i32::try_from(index).ok())
-            .unwrap_or(-1);
-        let _ = self.0.native.SetSelectedIndex(index);
+            .and_then(|index| i32::try_from(index).ok());
+        match index {
+            Some(index) => {
+                let _ = self.0.native.SetSelectedIndex(index);
+            }
+            None => self.write_custom_value(text),
+        }
         self.write_text(text);
+    }
+
+    /// 候補に無い文字列を、利用者が確定したときと同じ形で WinUI に持たせる。
+    ///
+    /// WinUI は Esc で編集を取り消すとき、最後に `SelectedItem` へ入った
+    /// 候補外の文字列へ戻す。`SelectedIndex` に -1 を書くだけ (あるいは
+    /// `SelectedItem` を空にするだけ) では、この戻り先は変わらない。すると
+    /// `set_text` や `clear` の後でも、以前に利用者が確定した文字列が戻って
+    /// くる。そこで、確定したときの WinUI と同じく文字列をそのまま入れる。
+    fn write_custom_value(&self, text: &str) {
+        if let Ok(value) = PropertyValue::CreateString(&HSTRING::from(text)) {
+            let _ = self.0.native.SetSelectedItem(&value);
+        }
+        // 空のときは戻り先だけ "" に変えて、選択は「なし」へ戻す。空にしても
+        // 戻り先は "" のまま残る。
+        if text.is_empty() {
+            let _ = self.0.native.SetSelectedItem(None::<&IInspectable>);
+        }
     }
 
     /// 編集欄の文字列だけを書く。

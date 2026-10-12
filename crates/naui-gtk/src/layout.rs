@@ -188,6 +188,9 @@ fn set_track(tracks: &RefCell<Vec<Track>>, index: usize, track: Track) {
 /// 次のレイアウトまで覚えておき、大きさが変わった (`changed`) ときに
 /// 送り直す。フレームの最初 (tick) はレイアウトより前に来るので、
 /// 2 回目の tick で「次のレイアウトは済んだ」とみなして忘れる。
+///
+/// 隠れている (map されていない) 間はレイアウトされないので数えない。
+/// 隠れたタブの中で頼まれた行き先は、タブが出てから数え始める。
 const PENDING_FRAMES: u8 = 2;
 
 struct ScrollInner {
@@ -244,6 +247,16 @@ impl Scroll {
                 }
             });
         }
+        // 隠れている間に頼まれた行き先を、出てからのフレームで数え直す。
+        let weak = Rc::downgrade(&this.0);
+        this.0.native.connect_map(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                if inner.pending.get().is_some() {
+                    inner.frames_left.set(PENDING_FRAMES);
+                    Scroll(inner).count_frames();
+                }
+            }
+        });
         this
     }
 
@@ -290,15 +303,27 @@ impl Scroll {
         self.0.pending.set(Some(target));
         self.0.frames_left.set(PENDING_FRAMES);
         self.apply_pending();
+        // 隠れているなら、出たとき (`map`) に数え始める。
+        if self.0.native.is_mapped() {
+            self.count_frames();
+        }
+    }
+
+    /// 行き先を忘れるまでのフレームを数える。
+    fn count_frames(&self) {
         if self.0.tick.borrow().is_some() {
             return;
         }
-        // 表示される前なら、表示されてから数え始める。
         let weak = Rc::downgrade(&self.0);
         let id = self.0.native.add_tick_callback(move |_, _| {
             let Some(inner) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
+            if !inner.native.is_mapped() {
+                // 数えている途中で隠れた。行き先は覚えたまま、出るのを待つ。
+                inner.tick.borrow_mut().take();
+                return glib::ControlFlow::Break;
+            }
             let left = inner.frames_left.get().saturating_sub(1);
             inner.frames_left.set(left);
             if left > 0 {
