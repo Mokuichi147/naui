@@ -289,11 +289,11 @@ impl Label {
     }
 
     pub fn is_selectable(&self) -> bool {
-        self.0
-            .element
-            .style()
-            .get_property_value("user-select")
-            .map_or(true, |value| value != "none")
+        // WebKit は接頭辞の無い `user-select` を style に残さないので、両方を見る。
+        let style = self.0.element.style();
+        ["user-select", "-webkit-user-select"]
+            .iter()
+            .all(|name| style.get_property_value(name).map_or(true, |v| v != "none"))
     }
 
     /// 長い文字列を折り返すかどうか。既定は折り返さない。
