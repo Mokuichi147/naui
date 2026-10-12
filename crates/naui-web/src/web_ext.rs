@@ -31,7 +31,8 @@ fn is_reserved(name: &str) -> bool {
 /// 対象は親へ置いている要素 ([`Widget::native_element`])。naui は
 /// クラスを使わないので、クラスは自由に付け外しできる。属性のうち `role` や
 /// `aria-*`・`tabindex` などは naui も書くので、上書きするとウィジェットの
-/// ふるまいや読み上げが変わることがある。
+/// ふるまいや読み上げが変わることがある。`title` は `set_tooltip` が書く
+/// 属性と同じなので、後から書いたほうが残る。
 pub trait WebWidgetExt: Widget {
     /// CSS のクラスを足す。
     fn add_class(&self, name: &str) {

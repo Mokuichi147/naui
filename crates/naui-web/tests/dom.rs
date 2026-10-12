@@ -3288,6 +3288,18 @@ fn web_ext_adds_classes_and_attributes() {
         assert!(!button.remove_attribute("STYLE"));
         assert!(!button.set_attribute("data-naui-hidden", ""));
         assert_eq!(button.attribute("style"), style, "大きさの指定は残る");
+        button.set_visible(false);
+        assert!(!button.remove_attribute("data-naui-hidden"));
+        assert!(!button.is_visible(), "隠したものは隠れたまま");
+
+        // `title` は `set_tooltip` と同じ属性で、後から書いたほうが残る。
+        button.set_tooltip(Some("変更を保存します"));
+        assert_eq!(
+            button.attribute("title").as_deref(),
+            Some("変更を保存します")
+        );
+        assert!(button.set_attribute("title", "保存"));
+        assert_eq!(button.attribute("title").as_deref(), Some("保存"));
 
         // コンテナにも使える。
         let stack = ui.stack(Orientation::Vertical)?;

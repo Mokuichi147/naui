@@ -1795,7 +1795,8 @@ pub use naui_gtk::{
 /// ```
 ///
 /// `style` と `data-naui-*` は naui が使うので、`set_attribute` /
-/// `remove_attribute` では書き換えられない (`false` が返る)。
+/// `remove_attribute` では書き換えられない (`false` が返る)。`title` は
+/// `set_tooltip` が書く属性と同じなので、後から書いたほうが残る。
 #[cfg(target_arch = "wasm32")]
 pub mod web {
     pub use naui_web::WebWidgetExt;
