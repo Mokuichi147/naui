@@ -123,6 +123,7 @@ Microsoft.UI.Xaml.CornerRadius
 Microsoft.UI.Xaml.DataTemplate
 Microsoft.UI.Xaml.DependencyObject
 Microsoft.UI.Xaml.ElementTheme
+Microsoft.UI.Xaml.FocusState
 Microsoft.UI.Xaml.FrameworkElement
 Microsoft.UI.Xaml.FrameworkTemplate
 Microsoft.UI.Xaml.GridLength
