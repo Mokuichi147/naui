@@ -10,7 +10,8 @@
 //! (メニューバーのショートカットと同じ判定)。
 //!
 //! 変換中のキー (`isComposing`、Safari が変換中に付ける `keyCode` 229) は
-//! IME のものなので届けない。
+//! IME のものなので届けない。修飾キーを単独で押したときも届けない
+//! (macOS と同じ)。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -111,9 +112,16 @@ fn comes_from(event: &web_sys::Event, window: &Element) -> bool {
     }
 }
 
-/// ブラウザのキーを naui のキーへ写す。変換中のキーは `None`。
+/// ブラウザのキーを naui のキーへ写す。変換中のキーと修飾キーは `None`。
 fn to_key_event(event: &KeyboardEvent) -> Option<KeyEvent> {
     if event.is_composing() || event.key_code() == IME_PROCESS_KEY_CODE {
+        return None;
+    }
+    let key = event.key();
+    if matches!(
+        key.as_str(),
+        "Shift" | "Control" | "Alt" | "AltGraph" | "Meta" | "OS" | "Super" | "Hyper"
+    ) {
         return None;
     }
     let modifiers = Modifiers {
@@ -122,7 +130,7 @@ fn to_key_event(event: &KeyboardEvent) -> Option<KeyEvent> {
         alt: event.alt_key(),
         meta: event.meta_key(),
     };
-    Some(KeyEvent::new(Key::from_web_key(&event.key()), modifiers).repeat(event.repeat()))
+    Some(KeyEvent::new(Key::from_web_key(&key), modifiers).repeat(event.repeat()))
 }
 
 /// 文字入力のウィジェットへ `on_key_down` を足す。`Inner` に `key_down: KeyDown`

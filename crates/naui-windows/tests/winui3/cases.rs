@@ -139,6 +139,10 @@ const CASES: &[Case] = &[
         scroll_to_row_keeps_the_selection,
     ),
     (
+        "TextArea の改行は \\n で読める",
+        text_area_reports_newlines_as_lf,
+    ),
+    (
         "描画面の命令が XAML の Path と TextBlock になり、読み込める",
         canvas_commands_become_xaml_shapes,
     ),
@@ -182,6 +186,10 @@ const CASES: &[Case] = &[
         "スクロールの通知は位置が変わったときだけ届き、通知の中の送りも届く",
         scroll_notifies_only_moves,
     ),
+    (
+        "編集できるコンボボックスの Enter で文字が残り、Esc で書いた値へ戻る",
+        editable_combo_box_commits_and_reverts_text,
+    ),
 ];
 
 /// あとで確かめる仕事。イベントループを 1 周まわしてから呼ばれる。
@@ -224,12 +232,20 @@ pub(crate) fn run() {
     let counter = failed.clone();
     let outcome = run_for_test(move |ui| {
         for (name, case) in CASES {
+            if let Ok(only) = std::env::var("NAUI_ONLY") {
+                if !name.contains(only.as_str()) {
+                    continue;
+                }
+            }
             report(name, catch_unwind(AssertUnwindSafe(|| case(ui))), &counter);
         }
 
         // 2 段構えのケースは、まず仕込みだけ済ませる。
         let mut deferred = Vec::new();
         for (name, setup) in ASYNC_CASES {
+            if std::env::var("NAUI_ONLY").is_ok() {
+                continue;
+            }
             match catch_unwind(AssertUnwindSafe(|| setup(ui))) {
                 Ok(Ok(check)) => deferred.push((*name, check)),
                 other => report(name, other.map(|result| result.map(|_| ())), &counter),
@@ -2133,4 +2149,160 @@ fn scroll_to_row_keeps_the_selection(ui: &Ui) -> Result<()> {
     assert!(tree.is_expanded(&[0]), "祖先を開く");
     assert!(tree.selected().is_none());
     Ok(())
+}
+
+/// `TextBox` は改行を `\r` で持つが、`text()` はほかの環境と同じ `\n` で返す。
+fn text_area_reports_newlines_as_lf(ui: &Ui) -> Result<()> {
+    let area = ui.text_area("一\n二")?;
+    assert_eq!(area.text(), "一\n二");
+    area.set_text("a\r\nb\rc");
+    assert_eq!(area.text(), "a\nb\nc");
+    Ok(())
+}
+
+/// 候補に無い文字列を打って Enter を押しても消えず、候補と同じ文字列なら
+/// その候補が選ばれる。Esc で取り消すと、最後に確定した文字列
+/// (プログラムから書いたものを含む) へ戻る。
+///
+/// Enter や Esc での確定・取り消しは UI オートメーションからは起こせない
+/// ので、実キーを `SendInput` で送る。キーは前面のウィンドウへ届くため、
+/// 前面がこのテストのウィンドウでないとき (ほかのアプリが前に出ている、
+/// テンプレートの入力欄が無い) は送らずに通す。
+fn editable_combo_box_commits_and_reverts_text(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_ESCAPE, VK_RETURN};
+
+    let window = ui.window("編集できるコンボボックス", 240.0, 120.0)?;
+    let combo = ui.editable_combo_box()?;
+    combo.set_items(&["ab", "z"]);
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    combo.on_change({
+        let seen = seen.clone();
+        move |text: &str| seen.borrow_mut().push(text.to_string())
+    });
+    window.set_child(&combo);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let native = native::<XamlComboBox>(&combo);
+        let part = || {
+            native
+                .GetTemplateChild(&HSTRING::from("EditableText"))
+                .and_then(|part| part.cast::<TextBox>())
+        };
+        pump_until(KEY_INPUT_TIMEOUT, || part().is_ok());
+        let Ok(text_box) = part() else {
+            println!("     (テンプレートの入力欄が無い環境なので、確かめずに通す)");
+            return;
+        };
+        if !text_box.Focus(FocusState::Programmatic).unwrap_or(false) {
+            println!("     (入力欄へフォーカスを移せない環境なので、確かめずに通す)");
+            return;
+        }
+        // 1 文字目の `TextChanged` は遅れて届くことがあるので、文字列と通知の
+        // 両方がそろうまで待つ。
+        let settle = |text: &str| {
+            pump_until(KEY_INPUT_TIMEOUT, || {
+                combo.text() == text && seen.borrow().last().map(String::as_str) == Some(text)
+            });
+        };
+        let key = |c: u8| VIRTUAL_KEY(u16::from(c));
+
+        // 候補に無い文字列。WinUI が `TextSubmitted` を出す。
+        if !type_keys(&[key(b'Q')]) {
+            return;
+        }
+        settle("q");
+        assert_eq!(combo.text(), "q", "打った文字が入る");
+        if !type_keys(&[VK_RETURN]) {
+            return;
+        }
+        assert_eq!(combo.text(), "q", "Enter の後も残る");
+        assert_eq!(combo.selected(), None);
+        assert_eq!(*seen.borrow(), ["q"], "確定で余計な通知が出ない");
+
+        // プログラムから書いた文字列が、Esc の戻り先になる。
+        for written in ["foo", ""] {
+            combo.set_text(written);
+            let _ = text_box.SelectAll();
+            if !type_keys(&[key(b'W')]) {
+                return;
+            }
+            settle("w");
+            if !type_keys(&[VK_ESCAPE]) {
+                return;
+            }
+            settle(written);
+            assert_eq!(combo.text(), written, "Esc で set_text の値へ戻る");
+        }
+        assert_eq!(*seen.borrow(), ["q", "w", "foo", "w", ""]);
+
+        // 候補と同じ文字列。打ち直すと、その候補が選ばれる。
+        let _ = text_box.SelectAll();
+        if !type_keys(&[key(b'Z')]) {
+            return;
+        }
+        settle("z");
+        if !type_keys(&[VK_RETURN]) {
+            return;
+        }
+        assert_eq!(combo.text(), "z");
+        assert_eq!(combo.selected(), Some(1), "一致する候補が選ばれる");
+        assert_eq!(
+            native.SelectedIndex().unwrap_or(-1),
+            1,
+            "ネイティブの選択も候補を指す"
+        );
+        assert_eq!(*seen.borrow(), ["q", "w", "foo", "w", "", "z"]);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// キー入力が反映されるまで待つ上限。
+const KEY_INPUT_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// 実キーを順に押して離し、届くまでメッセージを回す。
+///
+/// 前面のウィンドウがこのプロセスのものでなければ送らずに `false` を返す
+/// (ほかのアプリへ打ち込まないため)。そのときケースは確かめずに通す。
+fn type_keys(keys: &[windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY]) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+    let mut owner = 0;
+    // SAFETY: `owner` はこの関数の中で生きている。
+    unsafe { GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut owner)) };
+    if owner != std::process::id() {
+        println!("     (テストのウィンドウが前面に無いので、キーを送らずに通す)");
+        return false;
+    }
+    let key = |vk, flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs: Vec<INPUT> = keys
+        .iter()
+        .flat_map(|&vk| [key(vk, KEYBD_EVENT_FLAGS(0)), key(vk, KEYEVENTF_KEYUP)])
+        .collect();
+    // SAFETY: `inputs` は送り終わるまで生きている。
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        println!("     (キーを送れない環境なので、確かめずに通す)");
+        return false;
+    }
+    pump_until(Duration::from_millis(300), || false);
+    true
 }

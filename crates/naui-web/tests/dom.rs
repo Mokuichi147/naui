@@ -26,7 +26,7 @@ use naui_core::{
     PopupItem, Rect, Result, ScrollMetrics, SidebarItem, SidebarSection, Sizing, TableColumn,
     TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
 };
-use naui_web::{run_for_test, ListRow, TableCells, Ui, Widget};
+use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{
@@ -3171,6 +3171,8 @@ fn text_area_key_down_can_take_enter() {
             !key_down(target, "Enter", true, false, 13),
             "Shift+Enter は改行させる"
         );
+        // 修飾キーを単独で押しても届かない。
+        assert!(!key_down(target, "Shift", true, false, 16));
         assert!(!key_down(target, "A", true, false, 65));
         assert_eq!(
             *seen.borrow(),
@@ -3542,6 +3544,55 @@ fn tree_opens_ancestors_and_scrolls_to_an_item() {
             .expect("71 番目の項目")
             .unchecked_into::<Element>();
         assert!(is_within(&mounted.0, &item), "項目が見える");
+        Ok(())
+    });
+}
+
+// ------------------------------------------------------------- WebWidgetExt
+
+#[wasm_bindgen_test]
+fn web_ext_adds_classes_and_attributes() {
+    with_ui(|ui| {
+        let button = ui.button("保存")?;
+        button.add_class("primary");
+        button.add_class("wide");
+        assert!(button.has_class("primary"));
+        button.remove_class("wide");
+        assert!(!button.has_class("wide"));
+        assert_eq!(
+            button.native_element().get_attribute("class").as_deref(),
+            Some("primary")
+        );
+
+        assert!(button.set_attribute("data-testid", "save"));
+        assert_eq!(button.attribute("data-testid").as_deref(), Some("save"));
+        assert!(button.remove_attribute("data-testid"));
+        assert_eq!(button.attribute("data-testid"), None);
+
+        // naui が使う属性は書き換えない。
+        button.set_sizing(Sizing::fixed(120.0, 32.0));
+        let style = button.attribute("style");
+        assert!(!button.set_attribute("style", "width: 1px"));
+        assert!(!button.remove_attribute("STYLE"));
+        assert!(!button.set_attribute("data-naui-hidden", ""));
+        assert_eq!(button.attribute("style"), style, "大きさの指定は残る");
+        button.set_visible(false);
+        assert!(!button.remove_attribute("data-naui-hidden"));
+        assert!(!button.is_visible(), "隠したものは隠れたまま");
+
+        // `title` は `set_tooltip` と同じ属性で、後から書いたほうが残る。
+        button.set_tooltip(Some("変更を保存します"));
+        assert_eq!(
+            button.attribute("title").as_deref(),
+            Some("変更を保存します")
+        );
+        assert!(button.set_attribute("title", "保存"));
+        assert_eq!(button.attribute("title").as_deref(), Some("保存"));
+
+        // コンテナにも使える。
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.add_class("toolbar");
+        assert!(stack.has_class("toolbar"));
         Ok(())
     });
 }
