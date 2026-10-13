@@ -53,10 +53,31 @@ pub(crate) struct WindowInner {
     /// 最初の [`Window::show`] で合わせる中身の大きさ。`ui.window` の
     /// 幅・高さで始まり、表示前の `set_size` で置き換わる。表示したら空になる。
     initial_size: Cell<Option<(f64, f64)>>,
-    /// 並ぶ前に頼まれた中身の大きさ。並ぶ前は上段の帯の高さを測って
-    /// 見積もるしかないので、並べ終わってから一度だけ実寸で合わせ直す。
-    pending_fit: Cell<Option<(f64, f64)>>,
+    /// 合わせ直しの途中の中身の大きさ ([`Window::fit_after_layout`])。
+    fit: Cell<Option<Fit>>,
+    /// 合わせ直しのフレームごとの呼び出しが付いている。
+    fitting: Cell<bool>,
 }
+
+/// 中身の大きさの合わせ直しの途中の状態。
+#[derive(Clone, Copy)]
+struct Fit {
+    /// 頼まれた中身の大きさ。
+    target: (f64, f64),
+    /// 最後に既定の大きさを頼んでから回ったフレームの数。
+    ticks: u32,
+    /// 合わせ直しを始めたフレームの時刻 (マイクロ秒)。最初のフレームで決まる。
+    started: Option<i64>,
+}
+
+/// 既定の大きさを頼んでから、並び直した中身を測るまでのフレームの数。
+/// 頼んだ次のフレームのレイアウトで並ぶので、その次のフレームで測る。
+const FIT_SETTLE_TICKS: u32 = 2;
+/// 頼んだ大きさにならないまま、同じ値を頼み直すまでのフレームの数。
+const FIT_RETRY_TICKS: u32 = 6;
+/// 合わせ直しを打ち切るまでの時間 (マイクロ秒)。利用者のリサイズと
+/// 張り合い続けないよう、表示の直後だけに限る。
+const FIT_LIMIT_US: i64 = 1_000_000;
 
 /// トップレベルウィンドウ。
 ///
@@ -113,7 +134,8 @@ impl Window {
             after_paint: RefCell::new(None),
             closing: Cell::new(false),
             initial_size: Cell::new(None),
-            pending_fit: Cell::new(None),
+            fit: Cell::new(None),
+            fitting: Cell::new(false),
         }));
         this.observe();
         this.apply_default_size((width.max(0.0), height.max(0.0)));
@@ -126,68 +148,111 @@ impl Window {
     /// 中身を `size` にするよう、ウィンドウの既定の大きさを決める。
     ///
     /// GTK4 の既定の大きさはウィンドウ全体 (影は除く) で、ヘッダーバーと
-    /// メニューバーの帯も含むので、その高さを足す。並ぶ前は帯の高さを
-    /// 測って見積もり、並べ終わってから一度だけ実寸で合わせ直す。
+    /// メニューバーの帯も含むので、その高さを足す。帯の高さは見積もりの
+    /// ことがあるので、表示に関わるときは [`fit_after_layout`](Self::fit_after_layout)
+    /// で並んだ後の実寸を確かめる。
     fn apply_default_size(&self, (width, height): (f64, f64)) {
-        let (bars, measured) = self.top_bars_height();
+        let bars = self.top_bars_height();
         self.0
             .native
             .set_default_size(to_px(width), to_px(height + bars));
-        if !measured {
-            self.0.pending_fit.set(Some((width, height)));
-        }
     }
 
-    /// 上段の帯 (ヘッダーバーとメニューバー) の高さと、それが実寸かどうか。
+    /// 上段の帯 (ヘッダーバーとメニューバー) の高さ。
     ///
     /// 並べ終わっていれば、ウィンドウの中身と `AdwToastOverlay` の高さの差。
-    /// 並ぶ前は帯を 1 本ずつ測った見積もり (CSS が当たる前は低めに出る)。
-    fn top_bars_height(&self) -> (f64, bool) {
+    /// 表示中に付けたばかりのメニューバーはまだ並んでいないので、測った
+    /// 高さを足す (外した直後とツールバーでヘッダーバーの高さが変わった
+    /// 直後は、並び直すまで前の高さのまま)。並ぶ前は帯を 1 本ずつ測った
+    /// 見積もり (CSS が当たる前は低めに出る)。
+    fn top_bars_height(&self) -> f64 {
         let content = self
             .0
             .native
             .content()
             .map_or(0, |content| content.height());
         let overlay = self.0.overlay.height();
-        if content > 0 && overlay > 0 {
-            return (f64::from((content - overlay).max(0)), true);
-        }
-        let header: gtk::Widget = self.0.header.clone().upcast();
         let menu_bar: Option<gtk::Widget> = self
             .0
             .menu_bar
             .borrow()
             .as_ref()
             .map(|menu_bar| menu_bar.mount().upcast());
+        if content > 0 && overlay > 0 {
+            let unplaced = menu_bar
+                .filter(|bar| bar.height() <= 0)
+                .map_or(0, |bar| bar.measure(gtk::Orientation::Vertical, -1).1);
+            return f64::from((content - overlay).max(0) + unplaced.max(0));
+        }
+        let header: gtk::Widget = self.0.header.clone().upcast();
         let bars = std::iter::once(header)
             .chain(menu_bar)
             .map(|bar| bar.measure(gtk::Orientation::Vertical, -1).1)
             .sum::<i32>();
-        (f64::from(bars.max(0)), false)
+        f64::from(bars.max(0))
     }
 
-    /// 並ぶ前に頼まれた大きさへ、並べ終わった実寸で一度だけ合わせ直す。
+    /// 中身が `target` になるまで、並んだ後の実寸で合わせ直す。
     ///
-    /// GTK4 には大きさが決まったことの通知が無いので、フレームごとの
-    /// 呼び出しで中身に実寸が付くのを待つ。
-    fn fit_after_layout(&self) {
+    /// 既定の大きさに足した帯の高さは、並ぶ前や帯を付け外した直後には
+    /// 見積もりなので外れることがある。また Wayland では、表示の直後に
+    /// 頼んだ大きさが、後から届くコンポジタの configure (前の大きさのまま)
+    /// で上書きされることがある。GTK4 には大きさが決まったことの通知が
+    /// 無いので、フレームごとに測り、帯の高さが違えば頼み直し、頼んだ
+    /// 大きさにならなければしばらく待って同じ値を頼み直す。
+    /// [`FIT_LIMIT_US`] で打ち切る。
+    fn fit_after_layout(&self, target: (f64, f64)) {
+        self.0.fit.set(Some(Fit {
+            target,
+            ticks: 0,
+            started: None,
+        }));
+        // 呼び出しが付いていれば、それが新しい大きさを拾う。
+        if self.0.fitting.replace(true) {
+            return;
+        }
         let weak = Rc::downgrade(&self.0);
-        self.0.overlay.add_tick_callback(move |overlay, _| {
+        self.0.native.add_tick_callback(move |_, clock| {
             let Some(inner) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            if overlay.height() <= 0 {
-                return glib::ControlFlow::Continue;
+            let window = Window(inner);
+            if window.step_fit(clock.frame_time()) {
+                glib::ControlFlow::Continue
+            } else {
+                window.0.fitting.set(false);
+                glib::ControlFlow::Break
             }
-            if let Some(target) = inner.pending_fit.take() {
-                let window = Window(inner);
-                let size = window.size();
-                if (size.0 - target.0).abs() >= 0.5 || (size.1 - target.1).abs() >= 0.5 {
-                    window.apply_default_size(target);
-                }
-            }
-            glib::ControlFlow::Break
         });
+    }
+
+    /// 合わせ直しを 1 フレーム進める。続けるなら `true`。
+    fn step_fit(&self, now: i64) -> bool {
+        let Some(mut fit) = self.0.fit.take() else {
+            return false;
+        };
+        let native = &self.0.native;
+        let started = *fit.started.get_or_insert(now);
+        // 最大化・全画面の間はウィンドウの大きさを頼めない。
+        if now - started > FIT_LIMIT_US || native.is_maximized() || native.is_fullscreen() {
+            return false;
+        }
+        fit.ticks += 1;
+        if fit.ticks < FIT_SETTLE_TICKS || self.0.overlay.height() <= 0 {
+            self.0.fit.set(Some(fit));
+            return true;
+        }
+        let (width, height) = (to_px(fit.target.0), to_px(fit.target.1));
+        if self.size() == (f64::from(width), f64::from(height)) {
+            return false;
+        }
+        let want = (width, to_px(fit.target.1 + self.top_bars_height()));
+        if native.default_size() != want || fit.ticks >= FIT_RETRY_TICKS {
+            native.set_default_size(want.0, want.1);
+            fit.ticks = 0;
+        }
+        self.0.fit.set(Some(fit));
+        true
     }
 
     fn observe(&self) {
@@ -281,7 +346,7 @@ impl Window {
             return (f64::from(width), f64::from(height));
         }
         let (width, height) = self.0.native.default_size();
-        let (bars, _) = self.top_bars_height();
+        let bars = self.top_bars_height();
         (
             f64::from(width.max(0)),
             (f64::from(height.max(0)) - bars).max(0.0),
@@ -362,15 +427,14 @@ impl Window {
     /// 呼んだときは、表示するときにこの大きさで出す。
     pub fn set_size(&self, width: f64, height: f64) {
         let size = (width.max(0.0), height.max(0.0));
-        if self.0.initial_size.get().is_some() {
-            self.0.initial_size.set(Some(size));
-        }
-        self.0.pending_fit.set(None);
         self.apply_default_size(size);
-        // 表示した後でまだ並んでいなければ、並ぶのを待って合わせ直す
-        // (表示の前なら `show` が待つ)。
-        if self.0.initial_size.get().is_none() && self.0.pending_fit.get().is_some() {
-            self.fit_after_layout();
+        if self.0.initial_size.get().is_some() {
+            // 表示するときに `show` が合わせる。
+            self.0.initial_size.set(Some(size));
+        } else {
+            // 帯を付け外した直後は、足した帯の高さが前のままなので、
+            // 並び直した後の実寸で確かめる。
+            self.fit_after_layout(size);
         }
     }
 
@@ -498,10 +562,9 @@ impl Window {
     pub fn show(&self) {
         if let Some(size) = self.0.initial_size.take() {
             // メニューバーは表示の前に付くことが多いので、ここで測り直す。
+            // 並ぶ前の見積もりなので、並んだ後に合わせ直す。
             self.apply_default_size(size);
-        }
-        if self.0.pending_fit.get().is_some() {
-            self.fit_after_layout();
+            self.fit_after_layout(size);
         }
         self.0.native.present();
     }
