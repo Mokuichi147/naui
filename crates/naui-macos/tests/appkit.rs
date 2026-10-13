@@ -38,7 +38,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
-    NSNotFound, NSNotification, NSPoint, NSRange, NSRunLoop, NSSize, NSString,
+    NSNotFound, NSNotification, NSPoint, NSRange, NSRect, NSRunLoop, NSSize, NSString,
 };
 
 /// テストケース 1 件。
@@ -580,6 +580,10 @@ fn main() {
         (
             "サイドバーを付けたウィンドウではトーストが中身の区画に重なる",
             sidebar_toast_goes_to_the_content_pane,
+        ),
+        (
+            "サイドバーを付けても子の大きさへウィンドウが縮まない",
+            sidebar_child_does_not_shrink_the_window,
         ),
         (
             "サイドバーを閉じている間に置いた幅が、開き直したときに反映される",
@@ -8757,6 +8761,73 @@ fn sidebar_selection_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// 右の区画の子が縮もうとしても (ラベルや、ラベルを入れたスクロールは縦の
+/// content hugging が 750 で、ウィンドウの大きさを保つ優先度 500 より強い)、
+/// ウィンドウは縮まず、子が区画いっぱいに広がる。サイドバーが無いときと同じ。
+fn sidebar_child_does_not_shrink_the_window(ui: &Ui) -> Result<()> {
+    let label = || -> Result<Box<dyn Widget>> { Ok(Box::new(ui.label("中身")?)) };
+    let scroll = || -> Result<Box<dyn Widget>> {
+        let scroll = ui.scroll()?;
+        scroll.set_child(&ui.label("中身")?);
+        Ok(Box::new(scroll))
+    };
+    let cases: [(&str, &dyn Fn() -> Result<Box<dyn Widget>>); 2] =
+        [("ラベル", &label), ("スクロール", &scroll)];
+    for (name, make) in cases {
+        let window = ui.window(name, 640.0, 400.0)?;
+        let child = make()?;
+        window.set_child(child.as_ref());
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&[SidebarItem::new("一般")]);
+        window.set_sidebar(&sidebar);
+        let native = window.native_window();
+        let frame = native.frame();
+        window.show();
+        pump(0.8);
+        assert_eq!(
+            native.frame(),
+            frame,
+            "{name}: 表示してもウィンドウは縮まない"
+        );
+
+        // 子は区画の安全領域 (タイトルバーの下) いっぱいに広がる。
+        let view = child.native_view();
+        let fills = |when: &str| {
+            let placed = view.convertRect_toView(view.bounds(), None);
+            let layout = native.contentLayoutRect();
+            let right = |rect: NSRect| rect.origin.x + rect.size.width;
+            let top = |rect: NSRect| rect.origin.y + rect.size.height;
+            assert!(
+                (top(placed) - top(layout)).abs() < 0.5
+                    && placed.origin.y.abs() < 0.5
+                    && (right(placed) - right(layout)).abs() < 0.5
+                    && placed.size.width > 200.0,
+                "{name} ({when}): 子がタイトルバーの下の区画いっぱいに広がる: \
+                 child={placed:?} layout={layout:?}"
+            );
+        };
+        fills("表示後");
+
+        // 利用者が広げた大きさも保ち、子も付いてくる。
+        let mut larger = native.frame();
+        larger.size.height += 120.0;
+        larger.origin.y -= 120.0;
+        native.setFrame_display(larger, true);
+        pump(0.5);
+        assert_eq!(native.frame(), larger, "{name}: 広げた大きさのまま");
+        fills("広げた後");
+
+        // ツールバーでタイトルバーの帯が厚くなっても、子の上端が付いてくる。
+        let toolbar = ui.toolbar()?;
+        toolbar.set_items(&[ToolbarItem::new(ToolbarIcon::New, "新規")]);
+        window.set_toolbar(&toolbar);
+        pump(0.5);
+        fills("ツールバーを付けた後");
+        window.close();
+    }
+    Ok(())
+}
+
 /// 取り付けると `contentViewController` が `NSSplitViewController` になり、
 /// 子は右の区画へ、外すとウィンドウの中身へ戻る。
 fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
@@ -8795,25 +8866,26 @@ fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
     let mtm = MainThreadMarker::new().unwrap();
     let host = items.objectAtIndex(1).viewController(mtm).view();
     let root_view = root.native_view();
-    assert!(contains_subview(&host, &root_view), "子は右の区画に移る");
+    // 子は区画の中の台に、枠で置かれる (制約でつなぐとウィンドウが縮むため)。
+    assert!(root_view.isDescendantOf(&host), "子は右の区画に移る");
 
     // 子の上端はタイトルバーを避ける。
     controller.view().layoutSubtreeIfNeeded();
     let inset = host.safeAreaInsets().top;
     assert!(inset > 0.0, "中身の区画はタイトルバーの下まで伸びている");
-    let top = root_view.frame().origin.y + root_view.frame().size.height;
+    let placed = root_view.convertRect_toView(root_view.bounds(), Some(&host));
+    let top = placed.origin.y + placed.size.height;
     assert!(
         (host.frame().size.height - top - inset).abs() < 1.0,
-        "子の上端は安全領域の上端にそろう: host={:?} child={:?} inset={inset}",
-        host.frame(),
-        root_view.frame()
+        "子の上端は安全領域の上端にそろう: host={:?} child={placed:?} inset={inset}",
+        host.frame()
     );
 
     // 付けたまま子を差し替えても、右の区画に置かれる。
     let other = ui.stack(Orientation::Vertical)?;
     window.set_child(&other);
-    assert!(contains_subview(&host, &other.native_view()));
-    assert!(!contains_subview(&host, &root_view), "前の子は外れる");
+    assert!(other.native_view().isDescendantOf(&host));
+    assert!(!root_view.isDescendantOf(&host), "前の子は外れる");
 
     window.clear_sidebar();
     assert!(native_window.contentViewController().is_none());
