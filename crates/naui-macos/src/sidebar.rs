@@ -38,14 +38,14 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSColor, NSControlTextEditingDelegate, NSEventType, NSFont, NSImage,
-    NSImageView, NSLayoutConstraint, NSScrollView, NSSplitViewController,
+    NSApplication, NSAutoresizingMaskOptions, NSColor, NSControlTextEditingDelegate, NSEventType,
+    NSFont, NSImage, NSImageView, NSLayoutConstraint, NSScrollView, NSSplitViewController,
     NSSplitViewDidResizeSubviewsNotification, NSSplitViewItem, NSTableCellView, NSTableColumn,
     NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
     NSTableViewStyle, NSTextField, NSView, NSViewController,
 };
 use objc2_foundation::{
-    NSArray, NSIndexSet, NSInteger, NSNotification, NSNotificationCenter, NSString,
+    NSArray, NSIndexSet, NSInteger, NSNotification, NSNotificationCenter, NSSize, NSString,
 };
 
 use crate::toolbar::Toolbar;
@@ -332,13 +332,81 @@ fn pin_row_content(cell: &NSTableCellView, field: &NSTextField, image: Option<&N
     NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
 }
 
+define_class!(
+    /// 右の区画の中で、ウィンドウの子を制約ではなく枠で置く台。
+    ///
+    /// 子を区画の四辺へ制約でつなぐと、子の縦の content hugging (ラベルは 750)
+    /// が、ウィンドウの大きさを保つ優先度 (`NSLayoutPriorityWindowSizeStayPut`、
+    /// 500) にも利用者のドラッグ (510) にも勝ち、ウィンドウが子の高さまで
+    /// 縮んでしまう。サイドバーが無いときの `contentView` と同じく枠で置けば、
+    /// 子の大きさの好みはウィンドウへ伝わらない。
+    ///
+    /// 台そのものは大きさの好みを持たないので、区画へは制約でつなぐ
+    /// (上端をタイトルバーの下の安全領域に合わせるのは制約に任せる)。
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiSidebarContentFrame"]
+    #[ivars = RefCell<Option<Retained<NSView>>>]
+    struct ContentFrame;
+
+    unsafe impl NSObjectProtocol for ContentFrame {}
+
+    impl ContentFrame {
+        /// 台の大きさが変わるたびに呼ばれる (`autoresizesSubviews` が既定で真)。
+        #[unsafe(method(resizeSubviewsWithOldSize:))]
+        fn resize_subviews(&self, old_size: NSSize) {
+            let _: () = unsafe { msg_send![super(self), resizeSubviewsWithOldSize: old_size] };
+            self.place_content();
+        }
+    }
+);
+
+impl ContentFrame {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(RefCell::new(None));
+        unsafe { msg_send![super(this), init] }
+    }
+
+    /// 子を台いっぱいに置く。
+    fn place_content(&self) {
+        let Some(view) = self.ivars().borrow().clone() else {
+            return;
+        };
+        let frame = self.bounds();
+        if view.frame() != frame {
+            view.setFrame(frame);
+        }
+    }
+
+    fn set_content(&self, view: Option<Retained<NSView>>) {
+        if let Some(old) = self.ivars().borrow_mut().take() {
+            old.removeFromSuperview();
+        }
+        let Some(view) = view else {
+            return;
+        };
+        // 枠から作られる制約は、台の大きさに関わらない定数にする
+        // (伸縮を付けると台とつながり、子の hugging がまた伝わる)。
+        // 大きさは台の大きさが変わるたびに `place_content` で合わせる。
+        view.setTranslatesAutoresizingMaskIntoConstraints(true);
+        view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewNotSizable);
+        self.addSubview(&view);
+        *self.ivars().borrow_mut() = Some(view);
+        self.place_content();
+    }
+
+    fn take_content(&self) -> Option<Retained<NSView>> {
+        let view = self.ivars().borrow_mut().take()?;
+        view.removeFromSuperview();
+        Some(view)
+    }
+}
+
 struct SidebarInner {
     controller: Retained<NSSplitViewController>,
     sidebar_item: Retained<NSSplitViewItem>,
-    /// 右の区画のビュー。ウィンドウの子はここへ置く。
-    content_host: Retained<NSView>,
-    /// いま右の区画に置いている子のビュー。
-    content: RefCell<Option<Retained<NSView>>>,
+    /// 右の区画の中の、ウィンドウの子を置く台。
+    content_frame: Retained<ContentFrame>,
     table: Retained<NSTableView>,
     /// `NSTableView` の dataSource / delegate は弱参照なので持っておく。
     _source: Retained<SidebarSource>,
@@ -427,7 +495,27 @@ impl Sidebar {
         // サイドバーごと閉じる (`on_collapse` が呼ばれる)。
         sidebar_item.setMinimumThickness(SIDEBAR_MIN_WIDTH);
 
+        // 右の区画はタイトルバーの下まで伸びるので、子を置く台の上端は
+        // タイトルバー (とツールバー) を避けた安全領域へつなぐ。
         let content_host = NSView::new(mtm);
+        let content_frame = ContentFrame::new(mtm);
+        content_frame.setTranslatesAutoresizingMaskIntoConstraints(false);
+        content_host.addSubview(&content_frame);
+        let safe = content_host.safeAreaLayoutGuide();
+        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
+            content_frame
+                .leadingAnchor()
+                .constraintEqualToAnchor(&content_host.leadingAnchor()),
+            content_frame
+                .trailingAnchor()
+                .constraintEqualToAnchor(&content_host.trailingAnchor()),
+            content_frame
+                .topAnchor()
+                .constraintEqualToAnchor(&safe.topAnchor()),
+            content_frame
+                .bottomAnchor()
+                .constraintEqualToAnchor(&content_host.bottomAnchor()),
+        ]));
         let content_controller = view_controller(mtm, &content_host);
         let content_item = NSSplitViewItem::splitViewItemWithViewController(&content_controller);
 
@@ -441,8 +529,7 @@ impl Sidebar {
         let this = Self(Rc::new(SidebarInner {
             controller,
             sidebar_item,
-            content_host,
-            content: RefCell::new(None),
+            content_frame,
             table,
             _source: source,
             sections: RefCell::new(Vec::new()),
@@ -644,35 +731,15 @@ impl Sidebar {
     /// 右の区画へウィンドウの子を置く。`None` なら空にする。
     ///
     /// ウィンドウの `fullSizeContentView` でタイトルバーの下まで伸びるので、
-    /// 子の上端はタイトルバー (とツールバー) を避けた安全領域へつなぐ。
+    /// 子の上端はタイトルバー (とツールバー) を避けた安全領域に合わせる。
+    /// 子は制約ではなく枠で置く (理由は [`ContentFrame`])。
     pub(crate) fn set_content(&self, view: Option<Retained<NSView>>) {
-        if let Some(old) = self.0.content.borrow_mut().take() {
-            old.removeFromSuperview();
-        }
-        let Some(view) = view else {
-            return;
-        };
-        let host = &self.0.content_host;
-        view.setTranslatesAutoresizingMaskIntoConstraints(false);
-        host.addSubview(&view);
-        let safe = host.safeAreaLayoutGuide();
-        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
-            view.leadingAnchor()
-                .constraintEqualToAnchor(&host.leadingAnchor()),
-            view.trailingAnchor()
-                .constraintEqualToAnchor(&host.trailingAnchor()),
-            view.topAnchor().constraintEqualToAnchor(&safe.topAnchor()),
-            view.bottomAnchor()
-                .constraintEqualToAnchor(&host.bottomAnchor()),
-        ]));
-        *self.0.content.borrow_mut() = Some(view);
+        self.0.content_frame.set_content(view);
     }
 
     /// 右の区画から子を外して返す。
     pub(crate) fn take_content(&self) -> Option<Retained<NSView>> {
-        let view = self.0.content.borrow_mut().take()?;
-        view.removeFromSuperview();
-        Some(view)
+        self.0.content_frame.take_content()
     }
 
     /// 覚えている幅へ仕切りを置く。
