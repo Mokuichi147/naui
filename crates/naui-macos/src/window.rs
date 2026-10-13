@@ -477,7 +477,14 @@ impl Window {
             return;
         }
         let size = self.size();
-        self.keeping_size(|| native.makeKeyAndOrderFront(None));
+        self.keeping_size(|| {
+            native.makeKeyAndOrderFront(None);
+            // 帯の高さは、出した窓を並べて描くときに決まる。ふだんはランループの
+            // 終わりに行われ、下のメインキューの仕事より後になることがあるので、
+            // ここで済ませてから比べる。
+            native.layoutIfNeeded();
+            native.displayIfNeeded();
+        });
         // 出た後のレイアウトで変わることもあるので、メインキューを一周させて
         // からもう一度確かめる。その間に大きさを決め直したらそちらを優先する。
         self.0.shown_size.set(Some(size));

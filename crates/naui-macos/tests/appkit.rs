@@ -3662,7 +3662,16 @@ fn window_keeps_its_size_across_toolbar_and_sidebar(ui: &Ui) -> Result<()> {
     assert_eq!(window.size(), (900.0, 640.0), "サイドバーも付けた後");
     window.show();
     pump(0.3);
-    assert_eq!(window.size(), (900.0, 640.0), "表示した後");
+    let native = window.native_window();
+    assert_eq!(
+        window.size(),
+        (900.0, 640.0),
+        "表示した後: frame={:?} layout={:?} screen={:?} zoomed={}",
+        native.frame(),
+        native.contentLayoutRect(),
+        native.screen().map(|screen| screen.visibleFrame()),
+        native.isZoomed()
+    );
     window.close();
 
     // 表示中に付け外ししても変わらず、上端も動かない。
