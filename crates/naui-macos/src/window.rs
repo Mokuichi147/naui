@@ -1,6 +1,6 @@
 //! NSWindow のハンドル。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use naui_core::{CloseHandler, CloseResponse, Result, Theme};
@@ -46,6 +46,9 @@ struct WindowInner {
     sidebar: RefCell<Option<Sidebar>>,
     on_close_request: CloseHandler,
     on_resize: ValueHandler<(f64, f64)>,
+    /// `set_min_size` で頼まれた中身の下限。サイドバーやツールバーで
+    /// タイトルバーと重なる分が変わるたびに、足し直して渡す。
+    min_size: Cell<Option<(f64, f64)>>,
     /// `NSWindow` の delegate は弱参照なので、ここで生かしておく。
     delegate: RefCell<Option<Retained<WindowDelegate>>>,
 }
@@ -138,6 +141,7 @@ impl Window {
             sidebar: RefCell::new(None),
             on_close_request: CloseHandler::default(),
             on_resize: ValueHandler::default(),
+            min_size: Cell::new(None),
             delegate: RefCell::new(None),
         }));
         let delegate = WindowDelegate::new(mtm, Rc::downgrade(&this.0));
@@ -157,14 +161,68 @@ impl Window {
         self.0.on_close_request.set(f);
     }
 
-    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル。タイトルバーは含まない。
+    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル。タイトルバーとツールバーは含まない。
+    ///
+    /// サイドバーを付けている間は `fullSizeContentView` で `contentView` が
+    /// タイトルバーの下まで伸びるので、`contentView` ではなく、タイトルバーと
+    /// ツールバーに隠れない `contentLayoutRect` の大きさを返す。
     pub fn size(&self) -> (f64, f64) {
-        let size = self
-            .0
-            .native
-            .contentView()
-            .map_or(NSSize::new(0.0, 0.0), |view| view.frame().size);
+        let size = self.0.native.contentLayoutRect().size;
         (size.width, size.height)
+    }
+
+    /// `contentView` のうちタイトルバーとツールバーに重なる分 (幅, 高さ)。
+    ///
+    /// `setContentSize` などは `contentView` の大きさを取るので、中身の大きさに
+    /// これを足して渡す。`fullSizeContentView` でなければ 0。
+    fn title_bar_overlap(&self) -> (f64, f64) {
+        let native = &self.0.native;
+        let content = native.contentRectForFrameRect(native.frame()).size;
+        let layout = native.contentLayoutRect().size;
+        (
+            (content.width - layout.width).max(0.0),
+            (content.height - layout.height).max(0.0),
+        )
+    }
+
+    /// `change` の前後で中身の大きさ ([`size`](Self::size)) を保つ。上端は動かさない。
+    ///
+    /// ツールバーやサイドバーを付け外しすると、AppKit は中身の大きさを保たない。
+    /// ツールバーを付けると中身がタイトルバーの高さだけ伸び (macOS 27 で確認)、
+    /// サイドバーは枠を保つので、タイトルバーの下に隠れる分だけ中身が縮む。
+    /// `ui.window` や `set_size` で決めた大きさのままにするため、変わった分を戻す。
+    /// 最大化と全画面の間は画面に合わせた大きさなので、そのままにする。
+    fn keeping_size(&self, change: impl FnOnce()) {
+        let (width, height) = self.size();
+        change();
+        let native = &self.0.native;
+        if self.size() == (width, height)
+            || native.isZoomed()
+            || native.styleMask().contains(NSWindowStyleMask::FullScreen)
+        {
+            return;
+        }
+        let (extra_width, extra_height) = self.title_bar_overlap();
+        let frame = native.frame();
+        let mut target = native.frameRectForContentRect(NSRect::new(
+            frame.origin,
+            NSSize::new(width + extra_width, height + extra_height),
+        ));
+        // AppKit の座標は下から上へ数えるので、上端をそろえるには下端をずらす。
+        target.origin.y = frame.origin.y + frame.size.height - target.size.height;
+        native.setFrame_display(target, true);
+    }
+
+    /// `set_min_size` の下限を、タイトルバーと重なる分を足して渡す。
+    fn apply_min_size(&self) {
+        let Some((width, height)) = self.0.min_size.get() else {
+            return;
+        };
+        let (extra_width, extra_height) = self.title_bar_overlap();
+        self.0.native.setContentMinSize(NSSize::new(
+            width.max(0.0) + extra_width,
+            height.max(0.0) + extra_height,
+        ));
     }
 
     /// 大きさが変わったときの通知。変わった後の [`size`](Self::size) が届く。
@@ -196,13 +254,21 @@ impl Window {
     ///
     /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
     pub fn set_min_size(&self, width: f64, height: f64) {
-        self.0
-            .native
-            .setContentMinSize(NSSize::new(width.max(0.0), height.max(0.0)));
+        self.0.min_size.set(Some((width, height)));
+        self.apply_min_size();
     }
 
+    /// 中身の領域の大きさを変える。単位と範囲は [`size`](Self::size) と同じで、
+    /// タイトルバーとツールバーは含まない (ほかの環境と同じ)。
+    ///
+    /// `setContentSize` を使う。サイドバーを付けている間は `contentView` が
+    /// タイトルバーの下まで伸びているので、重なる分を足して渡す。
     pub fn set_size(&self, width: f64, height: f64) {
-        self.0.native.setContentSize(NSSize::new(width, height));
+        let (extra_width, extra_height) = self.title_bar_overlap();
+        self.0.native.setContentSize(NSSize::new(
+            width.max(0.0) + extra_width,
+            height.max(0.0) + extra_height,
+        ));
         self.0.native.center();
     }
 
@@ -226,8 +292,15 @@ impl Window {
     /// サイドバーをタイトルバーの下まで伸ばすため (「システム設定」と同じ形)、
     /// 付けている間はウィンドウに `fullSizeContentView` を足す。子の上端は
     /// タイトルバーを避けるので、中身の見え方は変わらない。
+    ///
+    /// 中身の大きさ ([`size`](Self::size)) は変わらず、サイドバーの幅も
+    /// その中に含む (ウィンドウの枠のほうが変わる)。
     pub fn set_sidebar(&self, sidebar: &Sidebar) {
-        self.clear_sidebar();
+        self.keeping_size(|| self.attach_sidebar(sidebar));
+    }
+
+    fn attach_sidebar(&self, sidebar: &Sidebar) {
+        self.detach_sidebar();
         let native = &self.0.native;
         // `contentViewController` を差し替えると、ウィンドウがその大きさへ
         // 合わせて縮むことがある。置く前の枠へ戻す。
@@ -252,8 +325,12 @@ impl Window {
 
     /// 取り付けたサイドバーを外す。付いていなければ何もしない。
     ///
-    /// 右の区画にあった子は、ウィンドウの中身へ戻る。
+    /// 右の区画にあった子は、ウィンドウの中身へ戻る。中身の大きさは変わらない。
     pub fn clear_sidebar(&self) {
+        self.keeping_size(|| self.detach_sidebar());
+    }
+
+    fn detach_sidebar(&self) {
         let Some(sidebar) = self.0.sidebar.borrow_mut().take() else {
             return;
         };
@@ -285,9 +362,12 @@ impl Window {
     ///
     /// サイドバーを付けているときは、先頭に AppKit 標準のサイドバーボタンが
     /// 入る (naui の項目のインデックスには数えない)。
+    ///
+    /// 中身の大きさ ([`size`](Self::size)) は変わらず、ツールバーの分だけ
+    /// ウィンドウの枠が伸びる。
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
         let old = self.0.toolbar.borrow_mut().replace(toolbar.clone());
-        self.apply_toolbar();
+        self.keeping_size(|| self.apply_toolbar());
         // 前のツールバーは、ウィンドウから外れてから元の並びへ戻す。
         if let Some(old) = old.filter(|old| !old.is_same(toolbar)) {
             old.set_sidebar_controls(false);
@@ -299,9 +379,10 @@ impl Window {
     /// 隠していたタイトル文字も出し直す。
     ///
     /// サイドバーを付けているときは、サイドバーボタンだけのツールバーが残る。
+    /// 中身の大きさは変わらない。
     pub fn clear_toolbar(&self) {
         let old = self.0.toolbar.borrow_mut().take();
-        self.apply_toolbar();
+        self.keeping_size(|| self.apply_toolbar());
         if let Some(old) = old {
             old.set_sidebar_controls(false);
         }
@@ -344,6 +425,8 @@ impl Window {
         if let Some(chosen) = &chosen {
             chosen.set_sidebar_controls(sidebar.is_some());
         }
+        // サイドバーとツールバーで、タイトルバーと重なる分が変わる。
+        self.apply_min_size();
     }
 
     /// 画面上端に出すメニューバー。呼ぶたびに置き換わる。

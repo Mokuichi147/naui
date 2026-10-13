@@ -141,6 +141,9 @@ impl Ui {
 
     /// ウィンドウを作る。フレームワークが参照を保持するので、
     /// 戻り値を捨てても閉じられることはない。
+    ///
+    /// `width` / `height` は中身の領域の大きさ ([`Window::set_size`] と同じ)。
+    /// タイトルバーとツールバーは含まない。
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
         let w = Window::new(self.0.mtm, title, width, height);
         self.0.windows.borrow_mut().push(w.clone());

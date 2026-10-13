@@ -276,6 +276,10 @@ fn main() {
             window_reports_its_size,
         ),
         (
+            "表示中に帯を付けてすぐ set_size しても中身が指定どおりになる",
+            window_set_size_right_after_adding_bars,
+        ),
+        (
             "閉じる確認で KeepOpen を返すと閉じない",
             window_close_request_can_keep_it_open,
         ),
@@ -6581,11 +6585,16 @@ fn window_reports_its_size(ui: &Ui) -> Result<()> {
         "表示前は指定した大きさが届く"
     );
 
-    // 出ているウィンドウでは、中身へ配られた後の大きさが届く。ヘッダーバーの
-    // 分だけ指定より低い。
+    // 出ているウィンドウでは、中身へ配られた後の大きさが届く。指定した
+    // 大きさはヘッダーバーを除いた中身の大きさなので、並べ終わった中身が
+    // 指定どおりになる (並ぶ前の見積もりは、並んだ後に合わせ直す)。
     window.show();
     let settled = |seen: &RefCell<Vec<(f64, f64)>>| {
-        seen.borrow().last() == Some(&window.size()) && window.size().1 < 260.0
+        let size = window.size();
+        window.native_header_bar().height() > 0
+            && seen.borrow().last() == Some(&size)
+            && (size.0 - 400.0).abs() < 1.0
+            && (size.1 - 260.0).abs() < 1.0
     };
     spin_until(std::time::Duration::from_secs(2), || settled(&seen));
     assert!(
@@ -6622,6 +6631,48 @@ fn window_reports_its_size(ui: &Ui) -> Result<()> {
         seen.borrow().last() == Some(&shown)
     });
     assert_eq!(seen.borrow().last(), Some(&shown), "外すと元の高さに戻る");
+    window.close();
+    Ok(())
+}
+
+fn window_set_size_right_after_adding_bars(ui: &Ui) -> Result<()> {
+    let window = ui.window("帯と大きさ", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    spin_until(std::time::Duration::from_secs(2), || {
+        window.native_header_bar().height() > 0 && window.size() == (320.0, 200.0)
+    });
+    assert_eq!(window.size(), (320.0, 200.0), "表示後の中身");
+
+    // 付けたばかりのメニューバーとツールバーはまだ並んでいない。同じ周回の
+    // `set_size` は、並び直した後の帯の高さで合わせ直される。
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+    window.set_menu_bar(&menu_bar);
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[ToolbarItem::new(ToolbarIcon::New, "新規")]);
+    window.set_toolbar(&toolbar);
+    window.set_size(500.0, 300.0);
+    let settled = || menu_bar.native_menu_bar().height() > 0 && window.size() == (500.0, 300.0);
+    spin_until(std::time::Duration::from_secs(2), settled);
+    assert!(
+        settled(),
+        "メニューバーとツールバーを付けても中身は指定どおり: {:?}",
+        window.size()
+    );
+
+    // 外した直後も同じ。
+    window.clear_menu_bar();
+    window.clear_toolbar();
+    window.set_size(420.0, 260.0);
+    spin_until(std::time::Duration::from_secs(2), || {
+        window.size() == (420.0, 260.0)
+    });
+    assert_eq!(
+        window.size(),
+        (420.0, 260.0),
+        "帯を外しても中身は指定どおり"
+    );
     window.close();
     Ok(())
 }

@@ -383,6 +383,10 @@ fn main() {
             window_reports_its_size,
         ),
         (
+            "ツールバーとサイドバーを付け外ししても中身の大きさは変わらない",
+            window_keeps_its_size_across_toolbar_and_sidebar,
+        ),
+        (
             "閉じる確認で KeepOpen を返すと閉じない",
             window_close_request_can_keep_it_open,
         ),
@@ -3634,6 +3638,78 @@ fn window_reports_its_size(ui: &Ui) -> Result<()> {
     pump_until(1.0, || !seen.borrow().is_empty());
     assert_eq!(window.size(), (400.0, 260.0));
     assert_eq!(seen.borrow().last(), Some(&(400.0, 260.0)));
+    window.close();
+    Ok(())
+}
+
+/// AppKit はツールバーを付けると中身をタイトルバーの高さだけ伸ばし、
+/// サイドバー (`fullSizeContentView`) では枠を保って中身を縮める。
+/// どちらも `ui.window` や `set_size` で決めた中身の大きさのまま、枠のほうが変わる。
+fn window_keeps_its_size_across_toolbar_and_sidebar(ui: &Ui) -> Result<()> {
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&[SidebarItem::new("一般")]);
+    let toolbar = ui.toolbar()?;
+    toolbar.set_items(&[ToolbarItem::new(ToolbarIcon::New, "新規")]);
+    // 子のラベルは縦に縮もうとするので、縦の Stack に入れて区画に合わせる。
+    let content = || -> Result<naui_macos::Stack> {
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.append(&ui.label("中身")?);
+        Ok(stack)
+    };
+
+    // 表示する前に付けても、ui.window で指定した大きさになる。
+    // 枠が画面に収まらないと、表示するときに AppKit が縮めてしまうので、
+    // CI の小さな画面 (1024×768、Dock とメニューバーを除くと高さ 674) にも
+    // 収まる大きさにする。
+    let window = ui.window("付けてから出す", 600.0, 400.0)?;
+    window.set_child(&content()?);
+    window.set_toolbar(&toolbar);
+    assert_eq!(window.size(), (600.0, 400.0), "ツールバーを付けた後");
+    window.set_sidebar(&sidebar);
+    assert_eq!(window.size(), (600.0, 400.0), "サイドバーも付けた後");
+    window.show();
+    pump(0.3);
+    let native = window.native_window();
+    assert_eq!(
+        window.size(),
+        (600.0, 400.0),
+        "表示した後: frame={:?} layout={:?} screen={:?} zoomed={}",
+        native.frame(),
+        native.contentLayoutRect(),
+        native.screen().map(|screen| screen.visibleFrame()),
+        native.isZoomed()
+    );
+    window.close();
+
+    // 表示中に付け外ししても変わらず、上端も動かない。
+    let window = ui.window("表示中に付け外し", 400.0, 300.0)?;
+    window.set_child(&content()?);
+    window.show();
+    pump(0.3);
+    let top = |window: &naui_macos::Window| {
+        let frame = window.native_window().frame();
+        frame.origin.y + frame.size.height
+    };
+    let first_top = top(&window);
+    let steps: [(&str, &dyn Fn()); 4] = [
+        ("ツールバーを付ける", &|| {
+            window.set_toolbar(&toolbar)
+        }),
+        ("サイドバーを付ける", &|| {
+            window.set_sidebar(&sidebar)
+        }),
+        ("サイドバーを外す", &|| window.clear_sidebar()),
+        ("ツールバーを外す", &|| window.clear_toolbar()),
+    ];
+    for (step, change) in steps {
+        change();
+        pump(0.1);
+        assert_eq!(window.size(), (400.0, 300.0), "{step}");
+        assert!(
+            (top(&window) - first_top).abs() < 0.5,
+            "{step}: 上端が動かない"
+        );
+    }
     window.close();
     Ok(())
 }
@@ -8858,9 +8934,9 @@ fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
         .styleMask()
         .contains(NSWindowStyleMask::FullSizeContentView));
     assert_eq!(
-        native_window.frame(),
-        frame,
-        "ウィンドウの大きさは変わらない"
+        window.size(),
+        (640.0, 400.0),
+        "中身の大きさは変わらない (枠はタイトルバーに重なる分だけ伸びる)"
     );
 
     let mtm = MainThreadMarker::new().unwrap();
@@ -8897,7 +8973,7 @@ fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
         Some(other.native_view()),
         "子はウィンドウの中身へ戻る"
     );
-    assert_eq!(native_window.frame(), frame);
+    assert_eq!(native_window.frame(), frame, "外すと元の枠へ戻る");
     window.clear_sidebar(); // 付いていなければ何もしない
     window.close();
     Ok(())

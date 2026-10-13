@@ -151,6 +151,10 @@ impl Ui {
         }))
     }
 
+    /// ウィンドウを作る。
+    ///
+    /// `width` / `height` は中身の領域の大きさ ([`Window::set_size`] と同じ)。
+    /// タイトルバー・メニューバー・ウィンドウの枠は含まない。
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
         let w = Window::new(title, width, height, self.0.theme.get())?;
         w.install_closing_handler(self.0.shutdown);

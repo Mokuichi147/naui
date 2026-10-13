@@ -3447,6 +3447,47 @@ async fn window_reports_its_size() {
     window.close();
 }
 
+/// `ui.window` と `set_size` の大きさは、ほかの環境と同じくメニューバーと
+/// ツールバーの行を除いた中身の大きさ。行の分はウィンドウ要素の高さに足す。
+#[wasm_bindgen_test]
+async fn window_size_excludes_the_menu_bar() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("大きさ", 400.0, 300.0)?;
+        window.set_child(&ui.label("中身")?);
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
+        window.set_menu_bar(&menu_bar);
+        window.show();
+        kept = Some((window, menu_bar));
+        Ok(())
+    });
+    let (window, menu_bar) = kept.expect("window");
+    next_frames().await;
+    let bar = menu_bar.native_element().unchecked_into::<HtmlElement>();
+    let bar_height = f64::from(bar.offset_height());
+    assert!(bar_height > 0.0, "メニューバーの行に高さが付く");
+    let element = window.native_element();
+    let (width, height) = window.size();
+    assert_eq!(
+        height,
+        f64::from(element.client_height()) - bar_height,
+        "size はメニューバーの行を除く"
+    );
+    assert!(height >= 300.0, "中身の高さは 300 以上: {height}");
+    assert!(width <= 400.0, "中身の幅は 400 まで: {width}");
+
+    window.set_size(360.0, 200.0);
+    next_frames().await;
+    let style = window_element_style(&window);
+    assert!(style.contains("max-width: 360px"), "{style}");
+    assert!(
+        style.contains(&format!("min-height: {}px", 200.0 + bar_height)),
+        "高さの下限に行の高さを足す: {style}"
+    );
+    window.close();
+}
+
 #[wasm_bindgen_test]
 fn accessible_label_read_only_and_min_size() {
     with_ui(|ui| {
