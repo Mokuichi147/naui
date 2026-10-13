@@ -3654,18 +3654,21 @@ fn window_keeps_its_size_across_toolbar_and_sidebar(ui: &Ui) -> Result<()> {
     };
 
     // 表示する前に付けても、ui.window で指定した大きさになる。
-    let window = ui.window("付けてから出す", 900.0, 640.0)?;
+    // 枠が画面に収まらないと、表示するときに AppKit が縮めてしまうので、
+    // CI の小さな画面 (1024×768、Dock とメニューバーを除くと高さ 674) にも
+    // 収まる大きさにする。
+    let window = ui.window("付けてから出す", 600.0, 400.0)?;
     window.set_child(&content()?);
     window.set_toolbar(&toolbar);
-    assert_eq!(window.size(), (900.0, 640.0), "ツールバーを付けた後");
+    assert_eq!(window.size(), (600.0, 400.0), "ツールバーを付けた後");
     window.set_sidebar(&sidebar);
-    assert_eq!(window.size(), (900.0, 640.0), "サイドバーも付けた後");
+    assert_eq!(window.size(), (600.0, 400.0), "サイドバーも付けた後");
     window.show();
     pump(0.3);
     let native = window.native_window();
     assert_eq!(
         window.size(),
-        (900.0, 640.0),
+        (600.0, 400.0),
         "表示した後: frame={:?} layout={:?} screen={:?} zoomed={}",
         native.frame(),
         native.contentLayoutRect(),

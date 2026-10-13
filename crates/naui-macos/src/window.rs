@@ -3,7 +3,6 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use dispatch2::{DispatchQueue, MainThreadBound};
 use naui_core::{CloseHandler, CloseResponse, Result, Theme};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
@@ -52,10 +51,6 @@ struct WindowInner {
     min_size: Cell<Option<(f64, f64)>>,
     /// `NSWindow` の delegate は弱参照なので、ここで生かしておく。
     delegate: RefCell<Option<Retained<WindowDelegate>>>,
-    /// 最初の [`Window::show`] の前の中身の大きさ。画面に出た後のレイアウトで
-    /// 変わったら戻すために、メインキューを一周するまで持つ。`set_size` などで
-    /// 大きさを決め直したら捨てる。
-    shown_size: Cell<Option<(f64, f64)>>,
 }
 
 define_class!(
@@ -148,7 +143,6 @@ impl Window {
             on_resize: ValueHandler::default(),
             min_size: Cell::new(None),
             delegate: RefCell::new(None),
-            shown_size: Cell::new(None),
         }));
         let delegate = WindowDelegate::new(mtm, Rc::downgrade(&this.0));
         this.0
@@ -199,15 +193,8 @@ impl Window {
     /// `ui.window` や `set_size` で決めた大きさのままにするため、変わった分を戻す。
     /// 最大化と全画面の間は画面に合わせた大きさなので、そのままにする。
     fn keeping_size(&self, change: impl FnOnce()) {
-        let size = self.size();
+        let (width, height) = self.size();
         change();
-        self.restore_size(size);
-    }
-
-    /// 中身の大きさ ([`size`](Self::size)) が `(width, height)` でなければ、
-    /// 上端を動かさずに枠を変えて戻す。最大化と全画面の間はそのままにする。
-    fn restore_size(&self, (width, height): (f64, f64)) {
-        self.0.shown_size.set(None);
         let native = &self.0.native;
         if self.size() == (width, height)
             || native.isZoomed()
@@ -277,7 +264,6 @@ impl Window {
     /// `setContentSize` を使う。サイドバーを付けている間は `contentView` が
     /// タイトルバーの下まで伸びているので、重なる分を足して渡す。
     pub fn set_size(&self, width: f64, height: f64) {
-        self.0.shown_size.set(None);
         let (extra_width, extra_height) = self.title_bar_overlap();
         self.0.native.setContentSize(NSSize::new(
             width.max(0.0) + extra_width,
@@ -465,41 +451,8 @@ impl Window {
     }
 
     /// 画面に出して前面へ持ってくる。
-    ///
-    /// 最初に出すときは、中身の大きさ ([`size`](Self::size)) を出す前のまま
-    /// 保つ。表示する前に付けたツールバーとサイドバーでは、タイトルバーと
-    /// 重なる高さを AppKit が画面に出たときに決め直し、中身が縮むことがある
-    /// (macOS 26 で 18pt)。
     pub fn show(&self) {
-        let native = &self.0.native;
-        if native.isVisible() {
-            native.makeKeyAndOrderFront(None);
-            return;
-        }
-        let size = self.size();
-        self.keeping_size(|| {
-            native.makeKeyAndOrderFront(None);
-            // 帯の高さは、出した窓を並べて描くときに決まる。ふだんはランループの
-            // 終わりに行われ、下のメインキューの仕事より後になることがあるので、
-            // ここで済ませてから比べる。
-            native.layoutIfNeeded();
-            native.displayIfNeeded();
-        });
-        // 出た後のレイアウトで変わることもあるので、メインキューを一周させて
-        // からもう一度確かめる。その間に大きさを決め直したらそちらを優先する。
-        self.0.shown_size.set(Some(size));
-        let mtm = MainThreadMarker::from(&**native);
-        let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
-        DispatchQueue::main().exec_async(move || {
-            // メインキューの仕事はメインスレッドで走る。
-            let mtm = MainThreadMarker::new().expect("メインキューの外で呼ばれた");
-            let Some(inner) = weak.into_inner(mtm).upgrade() else {
-                return;
-            };
-            if let Some(size) = inner.shown_size.take() {
-                Window(inner).restore_size(size);
-            }
-        });
+        self.0.native.makeKeyAndOrderFront(None);
     }
 
     pub fn close(&self) {
