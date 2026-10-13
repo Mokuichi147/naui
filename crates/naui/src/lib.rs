@@ -431,7 +431,7 @@
 //! | --- | --- | --- | --- | --- |
 //! | 閉じる前の確認 | `AppWindow.Closing` (`Cancel`) | `windowShouldClose:` | `close-request` | (呼ばれない) |
 //! | 大きさの変化 | 中身の層の `SizeChanged` | `windowDidResize:` | 描いた後に中身の大きさを比べる (`after-paint`) | `ResizeObserver` |
-//! | 大きさを変える | `AppWindow.Resize` (外枠との差を足す) | `setContentSize` (`contentLayoutRect` との差を足す) | `set_default_size` (ヘッダーバーとメニューバーの高さを足す) | ウィンドウ要素の `max-width` / `min-height` (行の高さを足す) |
+//! | 大きさを変える | `AppWindow.Resize` (外枠との差を足す) | `setContentSize` (`contentLayoutRect` との差を足す) | `set_default_size` (ヘッダーバー・メニューバーの高さとウィンドウの CSS の枠を足す) | ウィンドウ要素の `max-width` / `min-height` (行の高さを足す) |
 //!
 //! どの環境もネイティブの API はウィンドウ全体 (か、タイトルバーの下まで
 //! 伸びた `contentView`) の大きさを取るので、naui がいまの差を測って足す。

@@ -148,14 +148,67 @@ impl Window {
     /// 中身を `size` にするよう、ウィンドウの既定の大きさを決める。
     ///
     /// GTK4 の既定の大きさはウィンドウ全体 (影は除く) で、ヘッダーバーと
-    /// メニューバーの帯も含むので、その高さを足す。帯の高さは見積もりの
+    /// メニューバーの帯とウィンドウ自身の枠も含むので、それを足す。帯の高さは見積もりの
     /// ことがあるので、表示に関わるときは [`fit_after_layout`](Self::fit_after_layout)
     /// で並んだ後の実寸を確かめる。
-    fn apply_default_size(&self, (width, height): (f64, f64)) {
+    fn apply_default_size(&self, size: (f64, f64)) {
+        let (width, height) = self.default_size_for(size);
+        self.0.native.set_default_size(width, height);
+    }
+
+    /// 中身を `(width, height)` にするための、ウィンドウの既定の大きさ。
+    fn default_size_for(&self, (width, height): (f64, f64)) -> (i32, i32) {
         let bars = self.top_bars_height();
-        self.0
-            .native
-            .set_default_size(to_px(width), to_px(height + bars));
+        let (frame_width, frame_height) = self.frame_size();
+        (
+            to_px(width + frame_width),
+            to_px(height + bars + frame_height),
+        )
+    }
+
+    /// ウィンドウ自身の CSS の枠 (padding と border) の幅と高さ。
+    ///
+    /// 既定の大きさはウィンドウの border box で、中身はその内側に並ぶ。
+    /// コンポジタが無い X11 では、影の代わりに `solid-csd` の padding が
+    /// 付く (Adwaita では上下左右 5px)。このクラスは realize で付くので、
+    /// 並ぶ前は realize してあれば CSS から読み、それより前は 0 とする。
+    fn frame_size(&self) -> (f64, f64) {
+        let native = &self.0.native;
+        let (width, height) = (native.width(), native.height());
+        if width <= 0 || height <= 0 {
+            if !native.is_realized() {
+                return (0.0, 0.0);
+            }
+            // CSS の枠を読む API は GtkStyleContext にしか無い。
+            #[allow(deprecated)]
+            let (padding, border) = {
+                let style = native.style_context();
+                (style.padding(), style.border())
+            };
+            let sum = |a: i16, b: i16, c: i16, d: i16| {
+                f64::from(i32::from(a) + i32::from(b) + i32::from(c) + i32::from(d)).max(0.0)
+            };
+            return (
+                sum(
+                    padding.left(),
+                    padding.right(),
+                    border.left(),
+                    border.right(),
+                ),
+                sum(
+                    padding.top(),
+                    padding.bottom(),
+                    border.top(),
+                    border.bottom(),
+                ),
+            );
+        }
+        native.compute_bounds(native).map_or((0.0, 0.0), |bounds| {
+            (
+                (f64::from(bounds.width()) - f64::from(width)).max(0.0),
+                (f64::from(bounds.height()) - f64::from(height)).max(0.0),
+            )
+        })
     }
 
     /// 上段の帯 (ヘッダーバーとメニューバー) の高さ。
@@ -246,7 +299,7 @@ impl Window {
         if self.size() == (f64::from(width), f64::from(height)) {
             return false;
         }
-        let want = (width, to_px(fit.target.1 + self.top_bars_height()));
+        let want = self.default_size_for(fit.target);
         if native.default_size() != want || fit.ticks >= FIT_RETRY_TICKS {
             native.set_default_size(want.0, want.1);
             fit.ticks = 0;
@@ -347,9 +400,10 @@ impl Window {
         }
         let (width, height) = self.0.native.default_size();
         let bars = self.top_bars_height();
+        let (frame_width, frame_height) = self.frame_size();
         (
-            f64::from(width.max(0)),
-            (f64::from(height.max(0)) - bars).max(0.0),
+            (f64::from(width.max(0)) - frame_width).max(0.0),
+            (f64::from(height.max(0)) - bars - frame_height).max(0.0),
         )
     }
 
@@ -562,7 +616,10 @@ impl Window {
     pub fn show(&self) {
         if let Some(size) = self.0.initial_size.take() {
             // メニューバーは表示の前に付くことが多いので、ここで測り直す。
-            // 並ぶ前の見積もりなので、並んだ後に合わせ直す。
+            // ウィンドウの枠のクラス (`solid-csd` など) は realize で付くので
+            // 先に realize しておく。並ぶ前の見積もりなので、並んだ後に
+            // 合わせ直す。
+            WidgetExt::realize(&self.0.native);
             self.apply_default_size(size);
             self.fit_after_layout(size);
         }
