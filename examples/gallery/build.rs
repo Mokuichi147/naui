@@ -1,10 +1,10 @@
 //! `self-contained` フィーチャーのとき、同梱する Windows App SDK ランタイムの
 //! マニフェストを exe に埋め込む。
 //!
-//! 埋め込まなくても Windows 11 24H2 以降では動く。それより前の Windows では、
-//! Windows App SDK が exe に埋め込まれたマニフェストしか読まないので要る。
-//! naui を使うアプリが同じことをするときの見本も兼ねる (README の
-//! 「Windows App SDK ランタイムを同梱する」)。
+//! 埋め込まなくても Windows 10 1903 以降では動く。OS が reg-free WinRT を
+//! 持たない 1809 では、Windows App SDK が exe に埋め込まれたマニフェストしか
+//! 読まないので要る。naui を使うアプリが同じことをするときの見本も兼ねる
+//! (README の「マニフェストを exe に埋め込む」)。
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");

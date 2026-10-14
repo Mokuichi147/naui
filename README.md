@@ -95,20 +95,24 @@ exe の隣に同梱物があればそれを使い、無ければこれまでど�
 配布するときは、exe と同じフォルダーへ `target/<profile>/naui-winappsdk/` の
 中身をすべて置いてください (約 60MB)。
 
-#### Windows 11 24H2 より前も対象にする
+#### マニフェストを exe に埋め込む
 
-同梱したランタイムの見つけかたは Windows の版で変わります。
+naui は起動時に、同梱物のマニフェストを読み込んで WinUI のクラスを引けるように
+します。ほとんどの Windows ではこれで足りますが、Windows 10 1809 では足りません。
 
 | Windows | そのままの exe | マニフェストを埋め込んだ exe |
 | --- | --- | --- |
-| 11 24H2 以降 | 動く (確認済み) | 動く (確認済み) |
-| 10 1903 〜 11 23H2 | 未確認 | 動く (Windows App SDK の想定どおり) |
-| 10 1809 | 動かない | 動く (Windows App SDK の想定どおり) |
+| 11 24H2 以降 | 動く (確認済み、CI の Windows Server 2025 でも確認) | 動く (確認済み) |
+| 10 1903 〜 11 23H2 | 動く (CI の Windows Server 2022 で確認) | 動く (CI の Windows Server 2022 で確認) |
+| 10 1809 | 動かない見込み | 動く見込み (Windows App SDK の想定どおりの形) |
 
-24H2 より前の Windows では、Windows App SDK が **exe に埋め込まれたマニフェスト
-だけ**を見てランタイムを探すためです。naui は実行時にマニフェストを読み込みますが、
-それはこの仕組みからは見えません。24H2 より前も対象にするなら、アプリの
-`build.rs` でマニフェストを exe に埋め込んでください。MSVC のリンカーが要ります。
+24H2 より前の Windows では、Windows App SDK が自前の仕組みでランタイムを探し、
+そこでは **exe に埋め込まれたマニフェストだけ**を見ます。見つからなければ OS の
+仕組みへ回し、Windows 10 1903 以降の OS は naui が読み込んだマニフェストを見つけ
+ます。1809 の OS にはその仕組みが無いので、埋め込みが要ります。
+
+1809 も対象にするなら、アプリの `build.rs` でマニフェストを exe に埋め込んで
+ください。MSVC のリンカーが要ります。
 
 ```rust
 // build.rs
@@ -130,10 +134,9 @@ naui の依存クレートの側からは、アプリの exe へマニフェス�
 (Cargo は依存先のリンカー指定をアプリへ伝えない)。同梱をフィーチャーで
 切り替えるアプリの例は `examples/gallery/build.rs` にあります。
 
-埋め込まずに 24H2 より前の Windows で起動してランタイムが見つからないときは、
-`naui::run` が埋め込みを促すエラーを返します。埋め込むと、スレッドプールなど
-naui を起動したスレッドとは無関係なスレッドからも WinUI のクラスを作れるように
-なります。
+埋め込まずに起動してランタイムが見つからないときは、`naui::run` が埋め込みを
+促すエラーを返します。また埋め込むと、スレッドプールなど naui を起動した
+スレッドとは無関係なスレッドからも WinUI のクラスを作れるようになります。
 
 #### 注意
 
@@ -1518,7 +1521,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 | 整形と lint | ubuntu-latest | `cargo fmt --all --check` と `naui-core` の clippy |
 | macOS | macos-latest | ビルドと AppKit の統合テスト |
 | Windows | windows-latest | ビルド、clippy、Windows App SDK ランタイムを導入して WinUI 3 の統合テスト、同じテストをランタイム同梱 (`self-contained`) でも実行 |
-| Windows Server 2022 | windows-2022 | ランタイムを導入せず、同梱した Gallery を起動して全ページを巡回 (Windows 11 24H2 より前の経路。`.github/scripts/gallery-smoke.ps1`) |
+| Windows Server 2022 | windows-2022 | ランタイムを導入せず、同梱した Gallery (マニフェストの埋め込みあり・なし) を起動して全ページを巡回 (Windows 11 24H2 より前の経路。`.github/scripts/gallery-smoke.ps1`) |
 | Linux | ubuntu-latest | GTK4 を導入し、Xvfb 上で統合テスト |
 | Web | ubuntu-latest | wasm ターゲットの型検査、Chrome / Firefox 上の DOM テスト、Gallery の wasm ビルド |
 

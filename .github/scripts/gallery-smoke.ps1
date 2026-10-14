@@ -35,6 +35,20 @@ public static class SmokeWindows {
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder text, int max);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int max);
+    // そのプロセスの、見えているトップレベルウィンドウのうち、クラス名が一致する最初のもの。
+    public static IntPtr Find(uint processId, string className) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((hwnd, _) => {
+            uint pid;
+            GetWindowThreadProcessId(hwnd, out pid);
+            if (pid != processId || !IsWindowVisible(hwnd)) return true;
+            var cls = new StringBuilder(256); GetClassName(hwnd, cls, 256);
+            if (cls.ToString() != className) return true;
+            found = hwnd;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
     public static List<string> Describe(uint processId) {
         var found = new List<string>();
         EnumWindows((hwnd, _) => {
@@ -55,7 +69,6 @@ public static class SmokeWindows {
 function Write-Diagnostics($process, $root) {
     Write-Host '--- 診断 ---'
     try {
-        Write-Host "MainWindowHandle: 0x$('{0:X}' -f $process.MainWindowHandle.ToInt64()) title=$($process.MainWindowTitle)"
         Write-Host 'プロセスのトップレベルウィンドウ:'
         [SmokeWindows]::Describe([uint32] $process.Id) | ForEach-Object { Write-Host "  $_" }
         if ($root) {
@@ -113,22 +126,30 @@ $process = Start-Process -FilePath $exe -WorkingDirectory $env:RUNNER_TEMP -Pass
     -RedirectStandardError $stderr
 $root = $null
 
+# WinUI 3 のウィンドウのクラス名。デバッグビルドの Gallery はコンソールアプリ
+# なので、CI ではコンソールのウィンドウも開き、Process.MainWindowHandle が
+# そちらを指すことがある。名指しで探す。
+$windowClass = 'WinUIDesktopWin32WindowClass'
+
 try {
+    $window = [IntPtr]::Zero
     $deadline = (Get-Date).AddSeconds(60)
     while ((Get-Date) -lt $deadline) {
         $process.Refresh()
-        if ($process.HasExited -or $process.MainWindowHandle -ne [IntPtr]::Zero) { break }
+        if ($process.HasExited) { break }
+        $window = [SmokeWindows]::Find([uint32] $process.Id, $windowClass)
+        if ($window -ne [IntPtr]::Zero) { break }
         Start-Sleep -Milliseconds 500
     }
     if ($process.HasExited) {
         throw ("Gallery が起動直後に終了しました (終了コード 0x{0:X8})" -f $process.ExitCode)
     }
-    if ($process.MainWindowHandle -eq [IntPtr]::Zero) {
-        throw 'Gallery のウィンドウが 60 秒たっても出ません'
+    if ($window -eq [IntPtr]::Zero) {
+        throw "Gallery のウィンドウ ($windowClass) が 60 秒たっても出ません"
     }
 
     $automation = [System.Windows.Automation.AutomationElement]
-    $root = $automation::FromHandle($process.MainWindowHandle)
+    $root = $automation::FromHandle($window)
     $condition = New-Object System.Windows.Automation.PropertyCondition(
         $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)
     # ウィンドウは中身より先に出るので、サイドバーの項目が現れるまで待つ。

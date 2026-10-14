@@ -7,21 +7,22 @@
 //! **アクティベーションコンテキスト**として有効にする。すると
 //! `RoGetActivationFactory` が、exe の隣の DLL からクラスを引くようになる。
 //!
-//! Windows 11 24H2 以降なら、マニフェストを exe に埋め込む方式 (MSBuild の
-//! self-contained 配置) と違って、利用者のビルド手順に手を入れずに済む。
+//! マニフェストを exe に埋め込む方式 (MSBuild の self-contained 配置) と
+//! 違って、利用者のビルド手順に手を入れずに済む。
 //!
-//! ## Windows 11 24H2 より前
+//! ## Windows の版による違い
 //!
-//! 24H2 より前の Windows では、`Microsoft.WindowsAppRuntime.dll` が読み込まれた
+//! Windows 11 24H2 より前では、`Microsoft.WindowsAppRuntime.dll` が読み込まれた
 //! 時点で、reg-free WinRT を Windows App SDK 自前の実装へ差し替える
 //! (`dev/UndockedRegFreeWinRT/urfw.cpp`)。その実装は **exe に埋め込まれた
-//! マニフェストしか読まない**。見つからないクラスは OS の実装へ回すので、
-//! Windows 10 1903 以降ならアクティベーションコンテキストからも引ける
-//! 見込みだが、確かめていない。OS に reg-free WinRT の無い 1809 では引けない。
+//! マニフェストしか読まない**が、見つからないクラスは OS の実装へ回す。
+//! Windows 10 1903 以降の OS はアクティベーションコンテキストから引けるので
+//! 動く (CI の Windows Server 2022 で確かめている)。OS に reg-free WinRT の
+//! 無い 1809 では引けない。
 //!
 //! そこで有効にした直後に、同梱物のクラスが実際に引けるかを確かめる。
 //! 引けなければ、マニフェストを exe に埋め込むよう促すエラーを返す。
-//! 埋め込めば、どの版の Windows でも引ける。
+//! 埋め込めば、Windows App SDK 自前の実装からも引ける。
 //!
 //! ## スレッド
 //!
@@ -80,8 +81,9 @@ impl SelfContained {
     ///
     /// 同梱物が無ければ `Ok(None)` を返すので、呼び出し側はフレームワーク
     /// パッケージ ([`crate::bootstrap`]) へ回る。あるのに使えなければ
-    /// エラーにする。同梱物が壊れているか、Windows 11 24H2 より前の Windows で
-    /// マニフェストが exe に埋め込まれていない (モジュールの説明を参照)。
+    /// エラーにする。同梱物が壊れているか、Windows 10 1809 のように OS が
+    /// reg-free WinRT を持たないのに、マニフェストが exe に埋め込まれていない
+    /// (モジュールの説明を参照)。
     pub fn activate() -> Result<Option<Self>> {
         let Some(directory) = crate::bootstrap::executable_directory() else {
             return Ok(None);
@@ -125,8 +127,8 @@ impl SelfContained {
                 e.code(),
                 format!(
                     "同梱した Windows App SDK ランタイムから {PROBE_CLASS} を引けません ({})。\
-                     Windows 11 24H2 より前の Windows では、{} を exe に埋め込む必要があります \
-                     (naui の README「Windows App SDK ランタイムを同梱する」を参照)",
+                     Windows 10 1809 では、{} を exe に埋め込む必要があります \
+                     (naui の README「マニフェストを exe に埋め込む」を参照)",
                     e.message(),
                     packages::MANIFEST_FILE,
                 ),

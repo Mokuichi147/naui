@@ -132,7 +132,9 @@ jobs:
   # ランタイムを同梱した exe が、Windows 11 24H2 より前の Windows でも動くかを
   # 見る。Windows Server 2022 (ビルド 20348) は 24H2 (26100) より前なので、
   # Windows App SDK が reg-free WinRT を自前の実装へ差し替え、exe に埋め込んだ
-  # マニフェストだけを読む (crates/naui-winui3/src/self_contained.rs)。
+  # マニフェストを読み、無いクラスは OS の実装へ回す
+  # (crates/naui-winui3/src/self_contained.rs)。マニフェストを埋め込んだ exe と
+  # 埋め込まない exe の両方を確かめる。
   # Windows App SDK のランタイムは導入しない。同梱物だけで動くことも確かめる。
   windows-legacy:
     name: Windows Server 2022 (ランタイム同梱、24H2 より前)
@@ -152,22 +154,19 @@ jobs:
           Write-Host "Installed Windows App SDK runtime packages: $($packages.Count)"
           $packages | ForEach-Object { Write-Host "  $($_.PackageFullName)" }
       # Gallery の build.rs が、同梱するマニフェストを exe に埋め込む。
-      # README が 24H2 より前の Windows 向けに案内している形。
+      # README が Windows 10 1809 向けに案内している形。
       - name: ビルド (マニフェストを埋め込む)
         run: cargo build -p gallery --features self-contained
       - name: 起動 (マニフェストを埋め込む)
         shell: pwsh
         run: ./.github/scripts/gallery-smoke.ps1 -Exe target/debug/gallery.exe -Label embedded
-      # 埋め込まない exe。naui は実行時にマニフェストを読み込むが、24H2 より前の
-      # Windows で引けるかは確かめられていない。結果を見るための試行なので、
-      # 失敗してもジョブは落とさない (引けなければ naui がエラーを返す)。
-      # 埋め込んだほうが落ちても、こちらの結果は取る。
+      # 埋め込まない exe。naui が実行時に読み込んだマニフェストを、OS の
+      # reg-free WinRT が見つける。埋め込んだほうが落ちても、こちらは確かめる。
       - name: ビルド (マニフェストを埋め込まない)
         if: ${{ !cancelled() }}
         run: cargo build -p gallery --features naui/self-contained
       - name: 起動 (マニフェストを埋め込まない)
         if: ${{ !cancelled() }}
-        continue-on-error: true
         shell: pwsh
         run: ./.github/scripts/gallery-smoke.ps1 -Exe target/debug/gallery.exe -Label plain
       # 起動確認が失敗したときに撮ったスクリーンショット。
