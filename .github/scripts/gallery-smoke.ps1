@@ -43,8 +43,19 @@ try {
     $root = $automation::FromHandle($process.MainWindowHandle)
     $condition = New-Object System.Windows.Automation.PropertyCondition(
         $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)
-    $items = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
-    if ($items.Count -eq 0) { throw 'サイドバーの項目が見つかりません' }
+    # ウィンドウは中身より先に出るので、サイドバーの項目が現れるまで待つ。
+    $deadline = (Get-Date).AddSeconds(60)
+    do {
+        $items = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        if ($items.Count -gt 0) { break }
+        $process.Refresh()
+        if ($process.HasExited) {
+            Get-Content $stderr -ErrorAction SilentlyContinue | Write-Host
+            throw ("中身が出る前に終了しました (終了コード 0x{0:X8})" -f $process.ExitCode)
+        }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+    if ($items.Count -eq 0) { throw 'サイドバーの項目が 60 秒たっても見つかりません' }
 
     foreach ($item in $items) {
         $name = $item.Current.Name

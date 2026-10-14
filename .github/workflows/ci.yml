@@ -143,12 +143,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Appx モジュールは Windows Server 2022 の PowerShell 7 では読み込めないので、
       # Windows PowerShell で調べる。記録のためだけなので、調べられなくても続ける。
+      # Windows PowerShell はスクリプトを UTF-8 として読まないため、出力は英語にする。
       - name: Windows App SDK ランタイムが入っていないことを記録
         shell: powershell
         continue-on-error: true
         run: |
           $packages = @(Get-AppxPackage -Name 'Microsoft.WindowsAppRuntime*')
-          Write-Host "導入済みの Windows App SDK ランタイム: $($packages.Count) 個"
+          Write-Host "Installed Windows App SDK runtime packages: $($packages.Count)"
           $packages | ForEach-Object { Write-Host "  $($_.PackageFullName)" }
       # Gallery の build.rs が、同梱するマニフェストを exe に埋め込む。
       # README が 24H2 より前の Windows 向けに案内している形。
