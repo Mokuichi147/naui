@@ -12,6 +12,8 @@
 //!
 //! - [`bootstrap`]: 未パッケージのアプリが Windows App SDK ランタイムを
 //!   自分のプロセスへ取り付ける仕組み (動的依存)
+//! - `self_contained`: exe に同梱した Windows App SDK ランタイムを使う
+//!   仕組み (`self-contained` フィーチャー)
 //! - [`Compose`]: `Application` のような **composable なクラスを Rust 側で
 //!   継承する**ための土台。`Application::Start` には基底クラスそのもの
 //!   ではなく、`IApplicationOverrides` を実装した合成オブジェクトが要る
@@ -30,6 +32,8 @@ mod bindings;
 pub mod bootstrap;
 mod compose;
 mod native;
+#[cfg(feature = "self-contained")]
+pub mod self_contained;
 
 pub use bindings::{Microsoft, Windows};
 pub use compose::{ChildClass, Compose, CreateInstanceFn};

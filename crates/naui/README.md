@@ -57,6 +57,14 @@ fn main() -> naui::Result<()> {
 `#[wasm_bindgen(start)]` はこのマクロが作るので、アプリ側に `cfg` も
 wasm-bindgen への依存も要りません。
 
+Windows では、実行環境に Windows App SDK ランタイムが要ります。`self-contained`
+フィーチャーを有効にすると、ランタイムを exe と一緒に配れます。
+
+```toml
+[dependencies]
+naui = { version = "0.9", features = ["self-contained"] }
+```
+
 ウィジェット一覧、レイアウトの決まり、環境ごとの制限は
 [リポジトリの README](https://github.com/mokuichi147/naui#readme) を参照してください。
 

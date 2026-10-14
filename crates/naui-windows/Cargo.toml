@@ -13,6 +13,11 @@ repository.workspace = true
 default-target = "x86_64-pc-windows-msvc"
 targets = []
 
+[features]
+# Windows App SDK ランタイムを exe に同梱する。詳しくは naui-winui3 の同名の
+# フィーチャーを参照。
+self-contained = ["naui-winui3/self-contained"]
+
 [dependencies]
 naui-core.workspace = true
 

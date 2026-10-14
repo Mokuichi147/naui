@@ -17,9 +17,27 @@
 //! 世代か名前から分からない。ほかが 1 つも見つからなかったときの最後の
 //! 頼みにする。古すぎて Mica が作れない場合は背景を諦めるだけで済む
 //! ([`crate::window`] を参照)。
+//!
+//! `self-contained` フィーチャーを有効にしてビルドすると、ランタイムを exe の
+//! 隣へ同梱できる。同梱物が見つかればそれを先に使い、フレームワーク
+//! パッケージは探さない ([`naui_winui3::self_contained`])。
 
 use naui_core::{Error, Result};
 use naui_winui3::bootstrap::{PackageDependency, Version};
+#[cfg(feature = "self-contained")]
+use naui_winui3::self_contained::SelfContained;
+
+/// 取り付けた Windows App SDK ランタイム。
+///
+/// 落とすと取り付けも外れるので、アプリが終わるまで持ち続ける。
+#[derive(Debug)]
+pub(crate) enum Runtime {
+    /// OS へ導入されたフレームワークパッケージ。
+    Framework(#[allow(dead_code)] PackageDependency),
+    /// exe の隣に同梱したもの。
+    #[cfg(feature = "self-contained")]
+    SelfContained(#[allow(dead_code)] SelfContained),
+}
 
 /// 取り付けを試す版。新しいものが先。
 ///
@@ -33,12 +51,27 @@ pub(crate) const CANDIDATES: &[Version] = Version::ALL;
 
 /// 使える Windows App SDK ランタイムを 1 つ取り付ける。
 ///
+/// 同梱物があればそれを、無ければフレームワークパッケージを新しい順に試す。
 /// 返り値を落とすと取り付けも外れるので、アプリが終わるまで持ち続ける。
-pub(crate) fn initialize() -> Result<PackageDependency> {
+pub(crate) fn initialize() -> Result<Runtime> {
+    #[cfg(feature = "self-contained")]
+    match SelfContained::activate() {
+        Ok(Some(bundle)) => return Ok(Runtime::SelfContained(bundle)),
+        Ok(None) => {}
+        // 同梱物はあるのに使えない。黙ってフレームワークへ回ると、配った
+        // ものが壊れていることに気づけない。
+        Err(e) => {
+            return Err(Error::new(
+                "同梱した Windows App SDK ランタイムの初期化",
+                e.message(),
+            ))
+        }
+    }
+
     let mut last = None;
     for version in CANDIDATES {
         match PackageDependency::initialize(*version) {
-            Ok(dependency) => return Ok(dependency),
+            Ok(dependency) => return Ok(Runtime::Framework(dependency)),
             Err(e) => last = Some(e),
         }
     }

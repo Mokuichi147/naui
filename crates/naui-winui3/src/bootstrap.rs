@@ -199,7 +199,7 @@ fn load_beside_executable() -> Option<Api> {
 }
 
 /// いま動いている exe の置き場。
-fn executable_directory() -> Option<String> {
+pub(crate) fn executable_directory() -> Option<String> {
     let mut buffer = [0u16; 32768];
     let length = unsafe { GetModuleFileNameW(None, &mut buffer) } as usize;
     // 収まらなかったときは端まで書いて切り捨てるので、満杯なら諦める。

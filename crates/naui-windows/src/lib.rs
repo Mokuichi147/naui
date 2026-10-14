@@ -19,6 +19,10 @@
 //!
 //! 下限が 1.3 なのは、ウィンドウの背景に使う `MicaBackdrop` と
 //! `Window.SystemBackdrop` がそこで入ったため。
+//!
+//! `self-contained` フィーチャーを有効にすると、ランタイムを exe の隣へ同梱
+//! できる。起動時に同梱物が見つかればそれを使い、フレームワークパッケージは
+//! 探さない。見つからなければ上のとおりフレームワークパッケージを探す。
 
 #![cfg(target_os = "windows")]
 
@@ -488,8 +492,8 @@ impl Ui {
 
 /// アプリを起動し、`build` の中で UI を組み立てる。
 ///
-/// Windows App SDK のブートストラップ (版はクレートの説明のとおり新しい順に
-/// 試す) を行ってから `Application::Start` に入り、XAML の初期化が終わった
+/// Windows App SDK ランタイムの取り付け (同梱物があればそれを、無ければ
+/// クレートの説明のとおり版を新しい順に試す) を行ってから `Application::Start` に入り、XAML の初期化が終わった
 /// ところで `build` を呼ぶ。
 /// この関数はアプリが終了するまで戻らない。
 pub fn run<F>(settings: Settings, build: F) -> Result<()>
@@ -499,7 +503,7 @@ where
     use naui_winui3::Microsoft::UI::Xaml::{Application, ApplicationInitializationCallback};
     use naui_winui3::{init_apartment, ApartmentType};
 
-    let _dependency = sdk::initialize()?;
+    let _runtime = sdk::initialize()?;
     init_apartment(ApartmentType::SingleThreaded)
         .map_err(|e| to_error("COM アパートメントの初期化", e))?;
 

@@ -86,6 +86,14 @@ jobs:
       # naui-windows は WinRT の生ポインタを触るので、警告を残さない。
       - name: clippy
         run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui --all-targets -- -D warnings
+      # ランタイムを同梱する経路 (build.rs と naui-winui3::self_contained) は
+      # フィーチャーを付けたときだけ組み込まれる。
+      - name: clippy (ランタイム同梱)
+        run: cargo clippy -p naui-winui3 -p naui-windows -p naui --all-targets --features naui/self-contained -- -D warnings
+      # Gallery はランタイムのマニフェストを exe に埋め込む (examples/gallery/build.rs)。
+      # 埋め込むマニフェストが naui のビルドで出来ていなければリンクで落ちる。
+      - name: ビルド (ランタイム同梱、マニフェストの埋め込み)
+        run: cargo build -p gallery --features self-contained
       # docs.rs は Windows 向けにこのクレート群を文書化するので、ここで見る。
       - name: ドキュメント
         run: cargo doc --no-deps -p naui-core -p naui-winui3 -p naui-windows -p naui
@@ -115,6 +123,46 @@ jobs:
       # 入って本物のコントロールを作り、UI オートメーション経由で操作する。
       - name: テスト
         run: cargo test -p naui-core -p naui-winui3 -p naui-windows -p naui
+      # 同じテストを、exe の隣へ同梱したランタイムで走らせる。build.rs が
+      # nuget.org から部品を取ってきてテストの exe の隣 (`target/debug/deps/`)
+      # へ並べるので、naui はフレームワークパッケージではなくそちらを使う。
+      - name: テスト (ランタイム同梱)
+        run: cargo test -p naui-winui3 -p naui-windows --features naui-windows/self-contained
+
+  # ランタイムを同梱した exe が、Windows 11 24H2 より前の Windows でも動くかを
+  # 見る。Windows Server 2022 (ビルド 20348) は 24H2 (26100) より前なので、
+  # Windows App SDK が reg-free WinRT を自前の実装へ差し替え、exe に埋め込んだ
+  # マニフェストだけを読む (crates/naui-winui3/src/self_contained.rs)。
+  # Windows App SDK のランタイムは導入しない。同梱物だけで動くことも確かめる。
+  windows-legacy:
+    name: Windows Server 2022 (ランタイム同梱、24H2 より前)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Windows App SDK ランタイムが入っていないことを記録
+        shell: pwsh
+        run: |
+          $packages = @(Get-AppxPackage -Name 'Microsoft.WindowsAppRuntime*')
+          Write-Host "導入済みの Windows App SDK ランタイム: $($packages.Count) 個"
+          $packages | ForEach-Object { Write-Host "  $($_.PackageFullName)" }
+      # Gallery の build.rs が、同梱するマニフェストを exe に埋め込む。
+      # README が 24H2 より前の Windows 向けに案内している形。
+      - name: ビルド (マニフェストを埋め込む)
+        run: cargo build -p gallery --features self-contained
+      - name: 起動 (マニフェストを埋め込む)
+        shell: pwsh
+        run: ./.github/scripts/gallery-smoke.ps1 -Exe target/debug/gallery.exe
+      # 埋め込まない exe。naui は実行時にマニフェストを読み込むが、24H2 より前の
+      # Windows で引けるかは確かめられていない。結果を見るための試行なので、
+      # 失敗してもジョブは落とさない (引けなければ naui がエラーを返す)。
+      - name: ビルド (マニフェストを埋め込まない)
+        run: cargo build -p gallery --features naui/self-contained
+      - name: 起動 (マニフェストを埋め込まない)
+        continue-on-error: true
+        shell: pwsh
+        run: ./.github/scripts/gallery-smoke.ps1 -Exe target/debug/gallery.exe
 
   linux:
     name: Linux (GTK4 / libadwaita)
