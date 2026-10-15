@@ -60,7 +60,7 @@ cargo add naui
 
 ### 必要なもの
 
-- Rust 1.82 以降
+- Rust 1.85 以降
 - Linux: GTK4 と libadwaita の開発用ライブラリ
 - Windows: Windows App SDK 1.3 以降のフレームワークランタイム
   ([同梱する](#windows-app-sdk-ランタイムを同梱する)場合は不要)
@@ -1546,6 +1546,7 @@ cargo check --target x86_64-unknown-linux-gnu -p naui
 | 整形と lint | ubuntu-latest | `cargo fmt --all --check` と `naui-core` の clippy |
 | macOS | macos-latest | ビルドと AppKit の統合テスト |
 | Windows | windows-latest | ビルド、clippy、Windows App SDK ランタイムを導入して WinUI 3 の統合テスト、同じテストをランタイム同梱 (`self-contained`) でも実行 |
+| Windows (最低対応 Rust) | windows-latest | `Cargo.toml` の `rust-version` の Rust で、フレームワーク依存とランタイム同梱の両方を `--locked` でビルド |
 | Windows Server 2022 | windows-2022 | ランタイムを導入せず、同梱した Gallery (マニフェストの埋め込みあり・なし) を起動して全ページを巡回 (Windows 11 24H2 より前の経路。`.github/scripts/gallery-smoke.ps1`) |
 | Linux | ubuntu-latest | GTK4 を導入し、Xvfb 上で統合テスト |
 | Web | ubuntu-latest | wasm ターゲットの型検査、Chrome / Firefox 上の DOM テスト、Gallery の wasm ビルド |
