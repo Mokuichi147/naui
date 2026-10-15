@@ -9,10 +9,36 @@ use naui::{
 use crate::parts::{self, Notice};
 
 /// 同梱のサンプル画像の場所。
+///
+/// 配布物では実行ファイルからの相対位置に置く (release.yml と packaging/)。
+/// 書庫と Windows のインストーラーは exe の隣の `assets/`、macOS の `.app` は
+/// `Contents/Resources/assets/`、`.deb` は `/usr/share/naui-gallery/assets/`。
+/// どれも無ければ `cargo run` とみなし、ソースツリーのものを使う。
 #[cfg(not(target_arch = "wasm32"))]
-const SAMPLE_IMAGE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sample.png");
+fn sample_image() -> String {
+    const NAME: &str = "assets/sample.png";
+    let bundled = std::env::current_exe().ok().and_then(|exe| {
+        let dir = exe.parent()?;
+        let mut bases = vec![dir.to_path_buf()];
+        if let Some(parent) = dir.parent() {
+            bases.push(parent.join("Resources"));
+            bases.push(parent.join("share/naui-gallery"));
+        }
+        bases
+            .into_iter()
+            .map(|base| base.join(NAME))
+            .find(|path| path.is_file())
+    });
+    match bundled {
+        Some(path) => path.to_string_lossy().into_owned(),
+        None => concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sample.png").to_owned(),
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
-const SAMPLE_IMAGE: &str = "assets/sample.png";
+fn sample_image() -> String {
+    "assets/sample.png".to_owned()
+}
 
 /// 表示形式と、そこへ振り分ける拡張子。
 const MEDIA_FORMS: [(&str, &[&str]); 3] = [
@@ -171,7 +197,7 @@ fn build_image_pane(ui: &Ui) -> Result<(naui::Grid, naui::Image)> {
     pane.set_column_track(0, Track::FILL);
     pane.set_row_track(0, Track::FILL);
 
-    let image = ui.image(SAMPLE_IMAGE)?;
+    let image = ui.image(&sample_image())?;
     image.set_alt("斜めのグラデーションと市松模様のサンプル画像");
     image.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
     pane.attach(&image, GridCell::new(0, 0));

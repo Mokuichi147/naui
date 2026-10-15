@@ -1592,12 +1592,21 @@ git push origin v0.3.0
 あり、ずれていればワークフローが止まります。`v0.3.0-rc1` のようにハイフンを
 含むタグはプレリリースとして公開されます。
 
-配布物は次の 4 つです。
+配布物は次のとおりです。書庫には Gallery と counter を、パッケージには Gallery
+だけを入れます。
 
-- `naui-gallery-<タグ>-macos-universal.tar.gz` (Intel / Apple Silicon 共通)
-- `naui-gallery-<タグ>-linux-x86_64.tar.gz` (Ubuntu 24.04 でビルド)
-- `naui-gallery-<タグ>-windows-x86_64.zip` (Windows App SDK ランタイムを同梱)
-- `naui-gallery-<タグ>-web-wasm.tar.gz` (HTTP で配信して開く)
+| 環境 | 書庫 | パッケージ |
+| --- | --- | --- |
+| macOS (Intel / Apple Silicon 共通) | `naui-gallery-<タグ>-macos-universal.tar.gz` | `naui-gallery-<タグ>-macos-universal.dmg` (`.app` 入り) |
+| Windows (Windows App SDK ランタイムを同梱) | `naui-gallery-<タグ>-windows-x86_64.zip` | `naui-gallery-<タグ>-windows-x86_64.msi`、`naui-gallery-<タグ>-windows-x86_64-setup.exe` |
+| Linux (Ubuntu 24.04 でビルド) | `naui-gallery-<タグ>-linux-x86_64.tar.gz` | `naui-gallery-<タグ>-linux-x86_64.deb` |
+| Web (HTTP で配信して開く) | `naui-gallery-<タグ>-web-wasm.tar.gz` | |
+
+パッケージの作り方は `examples/gallery/packaging/` にあります。`.dmg` は
+`build-dmg.sh`、`.msi` (WiX v5) と `-setup.exe` (Inno Setup 6) は
+`build-installers.ps1`、`.deb` は `examples/gallery/Cargo.toml` の
+`[package.metadata.deb]` (cargo-deb) から作ります。どれもコード署名はしていません
+(macOS は ad-hoc 署名だけ)。
 
 タグを打たずにビルドだけ確かめたいときは、Actions から `Release` を
 `workflow_dispatch` で実行してください。Release は作られません。

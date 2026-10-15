@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Gallery の .msi (WiX v5)。build-installers.ps1 から作る。
+
+  - Source: インストールする中身を置いたディレクトリ (gallery.exe と、exe の
+    隣に置く Windows App SDK ランタイム、assets/、ライセンス)
+  - Version: 数字と点だけの版 (0.9.1 など)
+  - LicenseRtf: 使用許諾の画面に出す RTF
+
+  UpgradeCode は変えない。変えると、古い版を残したまま別のアプリとして入る。
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="naui UI gallery"
+           Manufacturer="naui"
+           Version="$(Version)"
+           UpgradeCode="8c1eb857-60c1-4077-ba40-d983cd6504d4"
+           Language="1041"
+           Codepage="932"
+           Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="より新しい版の [ProductName] がインストールされています。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="naui UI gallery">
+        <Component Id="GalleryExe">
+          <File Id="GalleryExe" Source="$(Source)\gallery.exe" KeyPath="yes" />
+        </Component>
+        <!-- ランタイムの DLL は exe の隣に無いと読み込まれない。
+             中身は版で変わるので、ディレクトリごと取り込む。 -->
+        <Files Include="$(Source)\**">
+          <Exclude Files="$(Source)\gallery.exe" />
+        </Files>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="StartMenuShortcut"
+                  Name="naui UI gallery"
+                  Target="[INSTALLFOLDER]gallery.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\naui\naui UI gallery"
+                       Name="StartMenuShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
+  </Package>
+</Wix>
