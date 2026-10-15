@@ -36,7 +36,7 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use windows::core::{h, Error, IUnknown, Result, HSTRING, PCWSTR};
-use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{ERROR_FILENAME_EXCED_RANGE, HANDLE};
 use windows::Win32::System::ApplicationInstallationAndServicing::{
     ActivateActCtx, CreateActCtxW, DeactivateActCtx, ReleaseActCtx, ACTCTXW,
 };
@@ -103,11 +103,12 @@ impl SelfContained {
             lpAssemblyDirectory: PCWSTR(assembly_directory.as_ptr()),
             ..Default::default()
         };
-        let context = unsafe { CreateActCtxW(&request) }?;
+        let context = unsafe { CreateActCtxW(&request) }
+            .map_err(|e| explain(e, "同梱物のマニフェストの読み込み", &directory))?;
         let mut cookie = 0;
         if let Err(e) = unsafe { ActivateActCtx(Some(context), &mut cookie) } {
             unsafe { ReleaseActCtx(context) };
-            return Err(e);
+            return Err(explain(e, "同梱物のマニフェストの有効化", &directory));
         }
         let this = Self {
             context,
@@ -120,7 +121,10 @@ impl SelfContained {
         // 24H2 より前の Windows では、この DLL が reg-free WinRT を受け持つ。
         // 読み込んだままにしておく (WinUI がプロセスの終わりまで使う)。
         let runtime = HSTRING::from(format!("{}\\{}", this.directory, packages::RUNTIME_DLL));
-        unsafe { LoadLibraryExW(&runtime, None, LOAD_WITH_ALTERED_SEARCH_PATH) }?;
+        unsafe { LoadLibraryExW(&runtime, None, LOAD_WITH_ALTERED_SEARCH_PATH) }.map_err(|e| {
+            let step = format!("{} の読み込み", packages::RUNTIME_DLL);
+            explain(e, &step, &this.directory)
+        })?;
 
         probe().map_err(|e| {
             Error::new(
@@ -142,6 +146,24 @@ impl SelfContained {
     pub fn directory(&self) -> &str {
         &self.directory
     }
+}
+
+/// 同梱物を取り付ける手順の失敗に、どの手順だったかを書き足す。
+///
+/// 同梱物のファイルのパスが 260 文字 (MAX_PATH) を超えると、読み込みが
+/// `ERROR_FILENAME_EXCED_RANGE` で失敗する (exe の置き場が 224 文字の
+/// ときに `Microsoft.WindowsAppRuntime.dll` の読み込みで起きた)。パスに
+/// `\\?\` を付けても避けられないので、置き場を短くするよう促す。
+fn explain(e: Error, step: &str, directory: &str) -> Error {
+    let mut message = format!("{step}に失敗しました ({})", e.message());
+    if e.code() == ERROR_FILENAME_EXCED_RANGE.to_hresult() {
+        message.push_str(&format!(
+            "。exe を置いたフォルダーのパス ({} 文字) が長すぎます。同梱物のファイルの\
+             パスが 260 文字に収まるよう、おおむね 200 文字以内のフォルダーへ置いてください",
+            directory.encode_utf16().count(),
+        ));
+    }
+    Error::new(e.code(), message)
 }
 
 /// 同梱物のクラスが実際に引けるかを確かめる。
