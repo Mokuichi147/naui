@@ -88,14 +88,34 @@ naui = { version = "0.9", features = ["self-contained"] }
 ビルド時に、Windows App SDK 2.5.1 の部品 (WinUI 2.3.9、Foundation、
 InteractiveExperiences、DWriteCore) を nuget.org から取ってきて、exe の出力先
 (`target/<profile>/` と、その下の `examples/`・`deps/`) へ並べます。取ってきた
-`.nupkg` は、naui が持っている SHA-512 と照らし合わせてから使います。起動時は、
-exe の隣に同梱物があればそれを使い、無ければこれまでどおり導入済みの
-ランタイムを探します。
+`.nupkg` は、naui が持っている SHA-512 と照らし合わせてから使います。
+
+起動時は exe の隣の同梱物だけを使います。**同梱物が無ければ、導入済みの
+ランタイムへは切り替えずにエラーを返します。** 黙って切り替えると、ビルドした
+手元ではランタイムが入っているので動いてしまい、同梱物を配り忘れたことに配布先
+で初めて気づくためです。
 
 配布するときは、exe と同じフォルダーへ `target/<profile>/naui-winappsdk/` の
 中身をすべて置いてください (約 60MB)。部品のライセンス条項
 (`WindowsAppSDK-LICENSE.txt`) とオープンソースの告知 (`WindowsAppSDK-NOTICE.txt`)
 もここに入っています。
+
+#### 出力先と CI のキャッシュ
+
+Cargo はビルドスクリプトに exe の出力先 (target-dir) を知らせません。naui は
+中間生成物の置き場 (build-dir) から求めます。既定ではこの 2 つは同じ場所なので、
+何もしなくて構いません。
+
+`build.build-dir` (`CARGO_BUILD_BUILD_DIR`) で build-dir を分けている場合は、
+target-dir を環境変数 `NAUI_WINAPPSDK_TARGET_DIR` に絶対パスで指定してください。
+環境変数で build-dir を分けていて、`CARGO_TARGET_DIR` が絶対パスなら、それを
+使います。どちらでもなければ、ビルドを止めます。設定ファイルの
+`build.build-dir` はビルドスクリプトから見えないので、指定を忘れると同梱物が
+exe の隣に届かず、起動時に上のエラーになります。
+
+組み立てた同梱物は build-dir の中に残し、そこから並べます。CI のキャッシュ
+(`Swatinem/rust-cache` など) の復元で並べたものが消えていると、次のビルドで
+並べ直します。
 
 #### マニフェストを exe に埋め込む
 

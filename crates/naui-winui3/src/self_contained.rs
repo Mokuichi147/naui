@@ -77,10 +77,15 @@ impl SelfContained {
     /// 同梱した部品の出どころになった Windows App SDK の版。
     pub const WINDOWS_APP_SDK_VERSION: &'static str = packages::WINDOWS_APP_SDK;
 
+    /// exe の隣に置く、同梱物のマニフェストの名前。これがあることが、
+    /// 同梱されていることの印になる。
+    pub const MANIFEST_FILE: &'static str = packages::MANIFEST_FILE;
+
     /// exe の隣に同梱物があれば、このスレッドで有効にする。
     ///
-    /// 同梱物が無ければ `Ok(None)` を返すので、呼び出し側はフレームワーク
-    /// パッケージ ([`crate::bootstrap`]) へ回る。あるのに使えなければ
+    /// 同梱物が無ければ `Ok(None)` を返す。そのときにフレームワーク
+    /// パッケージ ([`crate::bootstrap`]) へ回るかどうかは呼び出し側が決める
+    /// (naui は回らずにエラーにする)。あるのに使えなければ
     /// エラーにする。同梱物が壊れているか、Windows 10 1809 のように OS が
     /// reg-free WinRT を持たないのに、マニフェストが exe に埋め込まれていない
     /// (モジュールの説明を参照)。

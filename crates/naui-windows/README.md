@@ -21,8 +21,8 @@ Windows App SDK 1.3 以降のフレームワークランタイムが必要です
 行っています。
 
 `self-contained` フィーチャーを有効にすると、ランタイムを exe と一緒に配れます。
-ビルド時に部品を nuget.org から取ってきて exe の出力先へ並べ、実行時はそれを
-使います。詳しくは
+ビルド時に部品を nuget.org から取ってきて exe の出力先へ並べ、実行時はそれだけを
+使います (exe の隣に無ければエラーにします)。詳しくは
 [リポジトリの README](https://github.com/mokuichi147/naui#windows-app-sdk-ランタイムを同梱する)
 を参照してください。
 

@@ -19,8 +19,10 @@
 //! ([`crate::window`] を参照)。
 //!
 //! `self-contained` フィーチャーを有効にしてビルドすると、ランタイムを exe の
-//! 隣へ同梱できる。同梱物が見つかればそれを先に使い、フレームワーク
-//! パッケージは探さない ([`naui_winui3::self_contained`])。
+//! 隣へ同梱できる。そのときは同梱物だけを使い、フレームワークパッケージは
+//! 探さない ([`naui_winui3::self_contained`])。exe の隣に同梱物が無ければ
+//! エラーにする。導入済みのランタイムへ黙って切り替えると、ビルドの手元では
+//! 動いてしまい、同梱物を配り忘れたことに配布先で初めて気づくことになる。
 
 use naui_core::{Error, Result};
 use naui_winui3::bootstrap::{PackageDependency, Version};
@@ -33,6 +35,7 @@ use naui_winui3::self_contained::SelfContained;
 #[derive(Debug)]
 pub(crate) enum Runtime {
     /// OS へ導入されたフレームワークパッケージ。
+    #[cfg_attr(feature = "self-contained", allow(dead_code))]
     Framework(#[allow(dead_code)] PackageDependency),
     /// exe の隣に同梱したもの。
     #[cfg(feature = "self-contained")]
@@ -51,23 +54,45 @@ pub(crate) const CANDIDATES: &[Version] = Version::ALL;
 
 /// 使える Windows App SDK ランタイムを 1 つ取り付ける。
 ///
-/// 同梱物があればそれを、無ければフレームワークパッケージを新しい順に試す。
-/// 返り値を落とすと取り付けも外れるので、アプリが終わるまで持ち続ける。
+/// `self-contained` でビルドしたときは同梱物を、そうでなければフレーム
+/// ワークパッケージを新しい順に試す。返り値を落とすと取り付けも外れるので、
+/// アプリが終わるまで持ち続ける。
 pub(crate) fn initialize() -> Result<Runtime> {
     #[cfg(feature = "self-contained")]
-    match SelfContained::activate() {
-        Ok(Some(bundle)) => return Ok(Runtime::SelfContained(bundle)),
-        Ok(None) => {}
-        // 同梱物はあるのに使えない。黙ってフレームワークへ回ると、配った
-        // ものが壊れていることに気づけない。
-        Err(e) => {
-            return Err(Error::new(
-                "同梱した Windows App SDK ランタイムの初期化",
-                e.message(),
-            ))
-        }
+    {
+        initialize_self_contained()
     }
+    #[cfg(not(feature = "self-contained"))]
+    {
+        initialize_framework()
+    }
+}
 
+/// exe の隣の同梱物を取り付ける。
+#[cfg(feature = "self-contained")]
+fn initialize_self_contained() -> Result<Runtime> {
+    const CONTEXT: &str = "同梱した Windows App SDK ランタイムの初期化";
+    match SelfContained::activate() {
+        Ok(Some(bundle)) => Ok(Runtime::SelfContained(bundle)),
+        Ok(None) => Err(Error::new(
+            CONTEXT,
+            format!(
+                "self-contained でビルドした exe ですが、隣に同梱物 ({}) がありません \
+                 (導入済みのランタイムには切り替えません)。ビルドが \
+                 target/<profile>/naui-winappsdk/ に置いた中身を exe の隣へ置いてください。\
+                 Cargo の build.build-dir を設定している場合は、環境変数 \
+                 NAUI_WINAPPSDK_TARGET_DIR に target-dir を絶対パスで指定してビルドし直して\
+                 ください",
+                SelfContained::MANIFEST_FILE,
+            ),
+        )),
+        Err(e) => Err(Error::new(CONTEXT, e.message())),
+    }
+}
+
+/// 導入済みのフレームワークパッケージを、新しい版から順に取り付ける。
+#[cfg_attr(feature = "self-contained", allow(dead_code))]
+fn initialize_framework() -> Result<Runtime> {
     let mut last = None;
     for version in CANDIDATES {
         match PackageDependency::initialize(*version) {
@@ -87,6 +112,7 @@ pub(crate) fn initialize() -> Result<Runtime> {
 }
 
 /// エラーに載せる、試した版の一覧。
+#[cfg_attr(feature = "self-contained", allow(dead_code))]
 fn version_list() -> String {
     CANDIDATES
         .iter()
