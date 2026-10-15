@@ -119,14 +119,19 @@ jobs:
           mkdir -p dist
           cp target/release/gallery target/release/counter dist/
 
+      # Windows App SDK ランタイムを同梱する (README の「Windows App SDK
+      # ランタイムを同梱する」)。落とした人がランタイムを導入しなくても動く。
+      # ビルドが target/release/naui-winappsdk/ にまとめる同梱物 (DLL、
+      # マニフェスト、部品のライセンス条項と告知) を exe の隣へ置く。
       - name: ビルド (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           set -eux
-          cargo build --release -p gallery -p counter
+          cargo build --release -p gallery -p counter --features gallery/self-contained
           mkdir -p dist
           cp target/release/gallery.exe target/release/counter.exe dist/
+          cp -R target/release/naui-winappsdk/. dist/
 
       - name: 同梱物をそろえる
         shell: bash
@@ -288,7 +293,10 @@ jobs:
           ## 実行に必要なもの
 
           - macOS: そのまま実行できます (Intel / Apple Silicon 共通)。
-          - Windows: Windows App SDK 2.x のフレームワークランタイムが必要です。
+          - Windows: Windows App SDK のランタイムを同梱しているので、そのまま
+            実行できます (Windows 10 1903 以降の x64)。展開したフォルダーの中身は
+            ばらさずに置いてください。同梱した部品は Microsoft のライセンス条項
+            (`WindowsAppSDK-LICENSE.txt`) に従って利用してください。
           - Linux: GTK 4.10 以降と libadwaita 1.5 以降が必要です
             (Ubuntu 24.04 でビルドしています)。
           - Web: 展開したディレクトリを HTTP で配信してください

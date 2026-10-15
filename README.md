@@ -93,7 +93,9 @@ exe の隣に同梱物があればそれを使い、無ければこれまでど�
 ランタイムを探します。
 
 配布するときは、exe と同じフォルダーへ `target/<profile>/naui-winappsdk/` の
-中身をすべて置いてください (約 60MB)。
+中身をすべて置いてください (約 60MB)。部品のライセンス条項
+(`WindowsAppSDK-LICENSE.txt`) とオープンソースの告知 (`WindowsAppSDK-NOTICE.txt`)
+もここに入っています。
 
 #### マニフェストを exe に埋め込む
 
@@ -1570,7 +1572,7 @@ git push origin v0.3.0
 
 - `naui-gallery-<タグ>-macos-universal.tar.gz` (Intel / Apple Silicon 共通)
 - `naui-gallery-<タグ>-linux-x86_64.tar.gz` (Ubuntu 24.04 でビルド)
-- `naui-gallery-<タグ>-windows-x86_64.zip`
+- `naui-gallery-<タグ>-windows-x86_64.zip` (Windows App SDK ランタイムを同梱)
 - `naui-gallery-<タグ>-web-wasm.tar.gz` (HTTP で配信して開く)
 
 タグを打たずにビルドだけ確かめたいときは、Actions から `Release` を

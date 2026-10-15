@@ -66,6 +66,16 @@ pub(crate) const MANIFEST_FILE: &str = "naui-winappsdk.manifest";
 pub(crate) const RESOURCES_SOURCE: &str = "Microsoft.UI.Xaml.Controls.pri";
 pub(crate) const RESOURCES_FILE: &str = "resources.pri";
 
+/// 部品のライセンス条項 (各 `.nupkg` の `license.txt`) を置く名前。
+///
+/// 同梱物と一緒に配ることで、再配布の条件 (利用者に同等以上の条項へ
+/// 同意してもらう) を満たしやすくする。部品ごとに違えば、すべてを並べる。
+pub(crate) const LICENSE_FILE: &str = "WindowsAppSDK-LICENSE.txt";
+
+/// 部品に含まれるオープンソースの告知 (`.nupkg` の直下の `NOTICE.txt`) を
+/// 置く名前。
+pub(crate) const NOTICE_FILE: &str = "WindowsAppSDK-NOTICE.txt";
+
 /// 起動時に先に読み込む DLL。古い Windows 10 では、これが OS の代わりに
 /// reg-free WinRT を受け持つ。
 pub(crate) const RUNTIME_DLL: &str = "Microsoft.WindowsAppRuntime.dll";

@@ -41,8 +41,8 @@ mod bundle {
     use sha2::{Digest, Sha512};
 
     use crate::packages::{
-        Component, COMPONENTS, EXCLUDED_FILES, MANIFEST_FILE, RESOURCES_FILE, RESOURCES_SOURCE,
-        WINDOWS_APP_SDK,
+        Component, COMPONENTS, EXCLUDED_FILES, LICENSE_FILE, MANIFEST_FILE, NOTICE_FILE,
+        RESOURCES_FILE, RESOURCES_SOURCE, WINDOWS_APP_SDK,
     };
 
     /// 取ってくる代わりに使う `.nupkg` の置き場。ネットワークに出られない
@@ -134,6 +134,8 @@ mod bundle {
 
         let native = format!("runtimes-framework/win-{arch}/native/");
         let mut fragments = Vec::new();
+        let mut licenses = Vec::new();
+        let mut notices = Vec::new();
         for component in COMPONENTS {
             let bytes = obtain(component, cache)?;
             let fragments_before = fragments.len();
@@ -143,9 +145,15 @@ mod bundle {
                 let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
                 let name = entry.name().to_string();
                 if name == "runtimes-framework/package.appxfragment" {
-                    let mut text = String::new();
-                    entry.read_to_string(&mut text).map_err(|e| e.to_string())?;
-                    fragments.push(text.trim_start_matches('\u{feff}').to_string());
+                    fragments.push(read_text(&mut entry)?);
+                    continue;
+                }
+                if name == "license.txt" {
+                    collect(&mut licenses, component, read_text(&mut entry)?);
+                    continue;
+                }
+                if name == "NOTICE.txt" {
+                    collect(&mut notices, component, read_text(&mut entry)?);
                     continue;
                 }
                 let Some(relative) = name.strip_prefix(&native) else {
@@ -189,7 +197,53 @@ mod bundle {
 
         let resources = bundle.join(RESOURCES_FILE);
         fs::copy(bundle.join(RESOURCES_SOURCE), &resources).map_err(|e| describe(&resources, e))?;
+
+        if licenses.is_empty() {
+            return Err("部品のどれにも license.txt がありません".to_string());
+        }
+        for (file, texts) in [(LICENSE_FILE, &licenses), (NOTICE_FILE, &notices)] {
+            if texts.is_empty() {
+                continue;
+            }
+            let path = bundle.join(file);
+            fs::write(&path, join_texts(texts)).map_err(|e| describe(&path, e))?;
+        }
         Ok(())
+    }
+
+    /// `.nupkg` の中のテキストを読む。先頭の BOM は落とす。
+    fn read_text(entry: &mut impl Read) -> Result<String, String> {
+        let mut text = String::new();
+        entry.read_to_string(&mut text).map_err(|e| e.to_string())?;
+        Ok(text.trim_start_matches('\u{feff}').to_string())
+    }
+
+    /// 部品ごとのテキストを集める。中身が同じものは 1 つにまとめ、出どころを
+    /// 書き足す。
+    fn collect(texts: &mut Vec<(Vec<String>, String)>, component: &Component, text: String) {
+        let source = format!("{} {}", component.id, component.version);
+        match texts.iter_mut().find(|(_, existing)| *existing == text) {
+            Some((sources, _)) => sources.push(source),
+            None => texts.push((vec![source], text)),
+        }
+    }
+
+    /// 集めたテキストを 1 つのファイルにする。どの部品のものかを見出しに書く。
+    fn join_texts(texts: &[(Vec<String>, String)]) -> String {
+        texts
+            .iter()
+            .map(|(sources, text)| {
+                let mut out = String::new();
+                for source in sources {
+                    out.push_str(&format!("# {source}\n"));
+                }
+                out.push('\n');
+                out.push_str(text.trim_end());
+                out.push('\n');
+                out
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn file_name(component: &Component) -> String {
