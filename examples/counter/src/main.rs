@@ -4,6 +4,9 @@
 //! cargo run -p counter
 //! ```
 
+// Windows のリリースビルドでは、起動時にコンソール画面を出さない。
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::cell::Cell;
 use std::rc::Rc;
 
