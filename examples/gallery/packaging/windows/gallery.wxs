@@ -18,7 +18,10 @@
            Language="1041"
            Codepage="932"
            Scope="perMachine">
-    <MajorUpgrade DowngradeErrorMessage="より新しい版の [ProductName] がインストールされています。" />
+    <!-- 0.9.1-rc1 と 0.9.1 は MSI の版ではどちらも 0.9.1 になる。同じ版を
+         置き換えないと、rc の登録を残したまま正式版が重ねて入る。 -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="より新しい版の [ProductName] がインストールされています。" />
     <MediaTemplate EmbedCab="yes" />
 
     <StandardDirectory Id="ProgramFiles64Folder">

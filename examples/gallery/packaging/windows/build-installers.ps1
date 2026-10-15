@@ -33,6 +33,8 @@ try {
     }
 
     # MSI の版は数字と点だけ。0.9.1-rc1 の -rc1 は落とす。
+    # 0.9.1-rc1 と 0.9.1 は同じ版になるので、gallery.wxs の MajorUpgrade で
+    # 同じ版どうしも置き換える。
     $numeric = ($Version -split '-')[0]
 
     # 使用許諾の文面。WiX は RTF、Inno Setup は BOM 付きの UTF-8 を読む。
@@ -50,7 +52,8 @@ try {
         elseif ($code -gt 127) {
             # RTF の \u は符号付き 16 ビット。
             if ($code -gt 32767) { $code -= 65536 }
-            [void]$rtf.Append("\u$code?")
+            # "$code?" と書くと ? まで変数名になる。
+            [void]$rtf.Append("\u${code}?")
         }
         else { [void]$rtf.Append($ch) }
     }
