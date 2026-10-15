@@ -16,6 +16,13 @@ categories = ["gui"]
 default-target = "x86_64-unknown-linux-gnu"
 targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc", "wasm32-unknown-unknown"]
 
+[features]
+# Windows: Windows App SDK ランタイムを exe に同梱する。ビルド時に nuget.org から
+# 部品を取ってきて exe の出力先へ並べ、実行時はそれを使う。利用者が
+# ランタイムを導入しなくて済む代わりに、配布物が 60MB ほど増える。
+# ほかの OS では何もしない。
+self-contained = ["naui-windows/self-contained"]
+
 [dependencies]
 naui-core.workspace = true
 

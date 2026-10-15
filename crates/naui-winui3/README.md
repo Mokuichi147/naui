@@ -5,10 +5,12 @@ naui が使う分だけの **WinUI 3 (Windows App SDK) の WinRT 投影**。
 WinUI 3 のコントロールは Windows SDK ではなく Windows App SDK に入っていて、
 `windows` クレートには投影がありません。このクレートは Microsoft が配る
 `.winmd` から [`windows-bindgen`] で作った投影 (`src/bindings.rs`) と、
-生成物だけでは足りない次の 3 つを持ちます。
+生成物だけでは足りない次のものを持ちます。
 
 - `bootstrap`: 未パッケージのアプリが Windows App SDK ランタイムを自分の
   プロセスへ取り付ける仕組み (動的依存)
+- `self_contained`: exe に同梱した Windows App SDK ランタイムを使う仕組み
+  (`self-contained` フィーチャー)。ビルド時の取得と配置は `build.rs` が行う
 - `compose`: `Application` のような composable なクラスを Rust 側で継承する
   ための土台
 - `native`: XAML の `Window` から HWND を取り出す `IWindowNative`

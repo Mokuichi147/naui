@@ -86,6 +86,14 @@ jobs:
       # naui-windows は WinRT の生ポインタを触るので、警告を残さない。
       - name: clippy
         run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui --all-targets -- -D warnings
+      # ランタイムを同梱する経路 (build.rs と naui-winui3::self_contained) は
+      # フィーチャーを付けたときだけ組み込まれる。
+      - name: clippy (ランタイム同梱)
+        run: cargo clippy -p naui-winui3 -p naui-windows -p naui --all-targets --features naui/self-contained -- -D warnings
+      # Gallery はランタイムのマニフェストを exe に埋め込む (examples/gallery/build.rs)。
+      # 埋め込むマニフェストが naui のビルドで出来ていなければリンクで落ちる。
+      - name: ビルド (ランタイム同梱、マニフェストの埋め込み)
+        run: cargo build -p gallery --features self-contained
       # docs.rs は Windows 向けにこのクレート群を文書化するので、ここで見る。
       - name: ドキュメント
         run: cargo doc --no-deps -p naui-core -p naui-winui3 -p naui-windows -p naui
@@ -115,6 +123,85 @@ jobs:
       # 入って本物のコントロールを作り、UI オートメーション経由で操作する。
       - name: テスト
         run: cargo test -p naui-core -p naui-winui3 -p naui-windows -p naui
+      # 同じテストを、exe の隣へ同梱したランタイムで走らせる。build.rs が
+      # nuget.org から部品を取ってきてテストの exe の隣 (`target/debug/deps/`)
+      # へ並べるので、naui はフレームワークパッケージではなくそちらを使う。
+      - name: テスト (ランタイム同梱)
+        run: cargo test -p naui-winui3 -p naui-windows --features naui-windows/self-contained
+
+  # Cargo.toml の rust-version (最低対応 Rust) で、ロックファイルのままビルド
+  # できるかを見る。依存の版が上がって最低対応版で読めなくなっても、stable で
+  # 走るほかのジョブでは気づけない。同梱モードは build.rs の依存 (zip など) が
+  # 増えるので、そちらも見る。
+  windows-msrv:
+    name: Windows (最低対応 Rust)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 最低対応 Rust の版を読む
+        id: msrv
+        shell: bash
+        run: |
+          version="$(awk '/^\[workspace\.package\]/{f=1} f && /^rust-version =/{gsub(/[",]/,""); print $3; exit}' Cargo.toml)"
+          echo "最低対応 Rust: $version"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - name: ビルド (フレームワーク依存)
+        run: cargo check -p naui -p counter -p gallery --locked
+      - name: ビルド (ランタイム同梱)
+        run: cargo check -p naui -p counter -p gallery --features gallery/self-contained --locked
+
+  # ランタイムを同梱した exe が、Windows 11 24H2 より前の Windows でも動くかを
+  # 見る。Windows Server 2022 (ビルド 20348) は 24H2 (26100) より前なので、
+  # Windows App SDK が reg-free WinRT を自前の実装へ差し替え、exe に埋め込んだ
+  # マニフェストを読み、無いクラスは OS の実装へ回す
+  # (crates/naui-winui3/src/self_contained.rs)。マニフェストを埋め込んだ exe と
+  # 埋め込まない exe の両方を確かめる。
+  # Windows App SDK のランタイムは導入しない。同梱物だけで動くことも確かめる。
+  windows-legacy:
+    name: Windows Server 2022 (ランタイム同梱、24H2 より前)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Appx モジュールは Windows Server 2022 の PowerShell 7 では読み込めないので、
+      # Windows PowerShell で調べる。記録のためだけなので、調べられなくても続ける。
+      # Windows PowerShell はスクリプトを UTF-8 として読まないため、出力は英語にする。
+      - name: Windows App SDK ランタイムが入っていないことを記録
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $packages = @(Get-AppxPackage -Name 'Microsoft.WindowsAppRuntime*')
+          Write-Host "Installed Windows App SDK runtime packages: $($packages.Count)"
+          $packages | ForEach-Object { Write-Host "  $($_.PackageFullName)" }
+      # Gallery の build.rs が、同梱するマニフェストを exe に埋め込む。
+      # README が Windows 10 1809 向けに案内している形。
+      - name: ビルド (マニフェストを埋め込む)
+        run: cargo build -p gallery --features self-contained
+      - name: 起動 (マニフェストを埋め込む)
+        shell: pwsh
+        run: ./.github/scripts/gallery-smoke.ps1 -Exe target/debug/gallery.exe -Label embedded
+      # 埋め込まない exe。naui が実行時に読み込んだマニフェストを、OS の
+      # reg-free WinRT が見つける。埋め込んだほうが落ちても、こちらは確かめる。
+      - name: ビルド (マニフェストを埋め込まない)
+        if: ${{ !cancelled() }}
+        run: cargo build -p gallery --features naui/self-contained
+      - name: 起動 (マニフェストを埋め込まない)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./.github/scripts/gallery-smoke.ps1 -Exe target/debug/gallery.exe -Label plain
+      # 起動確認が失敗したときに撮ったスクリーンショット。
+      - name: スクリーンショットを保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-legacy-screenshots
+          path: ${{ runner.temp }}/*.png
+          if-no-files-found: ignore
 
   linux:
     name: Linux (GTK4 / libadwaita)

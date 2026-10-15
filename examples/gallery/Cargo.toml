@@ -15,5 +15,10 @@ crate-type = ["cdylib", "rlib"]
 name = "gallery"
 path = "src/main.rs"
 
+[features]
+# Windows: Windows App SDK ランタイムを同梱し、そのマニフェストを exe に
+# 埋め込む (build.rs)。ほかの OS では何もしない。
+self-contained = ["naui/self-contained"]
+
 [dependencies]
 naui.workspace = true

@@ -13,6 +13,19 @@ repository.workspace = true
 default-target = "x86_64-pc-windows-msvc"
 targets = []
 
+[features]
+# Windows App SDK ランタイムを exe に同梱する。ビルド時に nuget.org から
+# 部品を取ってきて exe の出力先へ並べ、実行時はそれを優先して使う。
+# 無効なら、OS へ導入されたフレームワークパッケージを探して使う。
+self-contained = [
+    "dep:flate2",
+    "dep:roxmltree",
+    "dep:sha2",
+    "dep:zip",
+    "windows/Win32_System_ApplicationInstallationAndServicing",
+    "windows/Win32_System_Com",
+]
+
 # Windows 以外では空のクレートになるので、依存も引き込まない。
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.62"
@@ -48,3 +61,18 @@ windows = { version = "0.62", features = [
     "Win32_System_Memory",
     "Win32_System_WinRT",
 ] }
+
+# `self-contained` のときだけ build.rs が使う。部品の `.nupkg` を確かめて
+# (SHA-512)、展開し、reg-free WinRT のマニフェストを作る。
+#
+# zip の `deflate` は圧縮用の zopfli (Rust 1.88 以降) まで引き込むので使わず、
+# 展開に要る flate2 だけを有効にする。flate2 はここで実装 (rust_backend) を選ぶ。
+[build-dependencies]
+flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
+roxmltree = { version = "0.20", optional = true }
+sha2 = { version = "0.10", optional = true }
+zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"], optional = true }
+
+# build.rs のマニフェスト生成 (`build/manifest.rs`) をテストから確かめる。
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+roxmltree = "0.20"
