@@ -82,7 +82,7 @@ OS 同梱の系統 (`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れます
 
 ```toml
 [dependencies]
-naui = { version = "0.9", features = ["self-contained"] }
+naui = { version = "0.10", features = ["self-contained"] }
 ```
 
 ビルド時に、Windows App SDK 2.5.1 の部品 (WinUI 2.3.9、Foundation、
