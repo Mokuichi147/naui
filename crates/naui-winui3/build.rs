@@ -122,7 +122,7 @@ mod bundle {
 
         // build-dir 側の naui-winappsdk/ は、アプリの build.rs が自分の OUT_DIR
         // からマニフェストを探して exe に埋め込めるようにするため
-        // (README の「マニフェストを exe に埋め込む」)。
+        // (docs/windows-self-contained.md の「マニフェストを exe に埋め込む」)。
         let mut destinations: Vec<PathBuf> = Vec::new();
         for destination in [
             artifact_profile.clone(),

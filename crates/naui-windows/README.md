@@ -23,7 +23,7 @@ Windows App SDK 1.3 以降のフレームワークランタイムが必要です
 `self-contained` フィーチャーを有効にすると、ランタイムを exe と一緒に配れます。
 ビルド時に部品を nuget.org から取ってきて exe の出力先へ並べ、実行時はそれだけを
 使います (exe の隣に無ければエラーにします)。詳しくは
-[リポジトリの README](https://github.com/mokuichi147/naui#windows-app-sdk-ランタイムを同梱する)
+[ランタイムの同梱](https://github.com/mokuichi147/naui/blob/main/docs/windows-self-contained.md)
 を参照してください。
 
 また、コントロールは `Application::Start` の後でしか生成できません。naui の
