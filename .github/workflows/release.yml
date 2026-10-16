@@ -81,7 +81,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macos-universal
+          # Apple Silicon だけ。Intel Mac は対象にしない。
+          - name: macos-arm64
             os: macos-latest
           - name: linux-x86_64
             # 配布物の glibc / GTK の下限を固定する。GTK 4.10 以降が要るので
@@ -104,21 +105,16 @@ jobs:
         with:
           key: release-${{ matrix.name }}
 
-      - name: ビルド (macOS / ユニバーサル)
+      # ランナーの CPU が変わっても arm64 で作るよう、ターゲットを明示する。
+      - name: ビルド (macOS)
         if: runner.os == 'macOS'
         run: |
           set -eux
-          # Intel / Apple Silicon の両方を作って 1 つに束ねる。
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release -p gallery -p counter --target "$target"
-          done
+          rustup target add aarch64-apple-darwin
+          cargo build --release -p gallery -p counter --target aarch64-apple-darwin
           mkdir -p dist
-          for bin in gallery counter; do
-            lipo -create -output "dist/$bin" \
-              "target/aarch64-apple-darwin/release/$bin" \
-              "target/x86_64-apple-darwin/release/$bin"
-          done
+          cp target/aarch64-apple-darwin/release/gallery \
+            target/aarch64-apple-darwin/release/counter dist/
 
       - name: ビルド (Linux)
         if: runner.os == 'Linux'
@@ -361,7 +357,7 @@ jobs:
 
           | OS | インストールする | インストールせずに試す |
           | --- | --- | --- |
-          | macOS (Intel / Apple Silicon) | `.dmg` | `macos-universal.tar.gz` |
+          | macOS (Apple Silicon) | `.dmg` | `macos-arm64.tar.gz` |
           | Windows 10 1903 以降 (x64) | `.msi` または `-setup.exe` | `windows-x86_64.zip` |
           | Linux (x86_64) | `.deb` | `linux-x86_64.tar.gz` |
           | Web | | `web-wasm.tar.gz` |

@@ -3,7 +3,6 @@
 #
 #   ./build-dmg.sh <gallery の実行ファイル> <バージョン> <出力する .dmg>
 #
-# 実行ファイルはユニバーサルでも単一アーキテクチャでもよい。
 # 署名は ad-hoc だけ (Developer ID での署名と公証はしない)。
 set -euo pipefail
 

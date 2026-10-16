@@ -1597,7 +1597,7 @@ git push origin v0.3.0
 
 | 環境 | 書庫 | パッケージ |
 | --- | --- | --- |
-| macOS (Intel / Apple Silicon 共通) | `naui-gallery-<タグ>-macos-universal.tar.gz` | `naui-gallery-<タグ>-macos-universal.dmg` (`.app` 入り) |
+| macOS (Apple Silicon) | `naui-gallery-<タグ>-macos-arm64.tar.gz` | `naui-gallery-<タグ>-macos-arm64.dmg` (`.app` 入り) |
 | Windows (Windows App SDK ランタイムを同梱) | `naui-gallery-<タグ>-windows-x86_64.zip` | `naui-gallery-<タグ>-windows-x86_64.msi`、`naui-gallery-<タグ>-windows-x86_64-setup.exe` |
 | Linux (Ubuntu 24.04 でビルド) | `naui-gallery-<タグ>-linux-x86_64.tar.gz` | `naui-gallery-<タグ>-linux-x86_64.deb` |
 | Web (HTTP で配信して開く) | `naui-gallery-<タグ>-web-wasm.tar.gz` | |
