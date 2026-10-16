@@ -22,3 +22,21 @@ self-contained = ["naui/self-contained"]
 
 [dependencies]
 naui.workspace = true
+
+# Linux の .deb (cargo-deb)。release.yml がビルド済みの実行ファイルから作る。
+[package.metadata.deb]
+name = "naui-gallery"
+maintainer = "Mokuichi147 <38586357+Mokuichi147@users.noreply.github.com>"
+copyright = "Mokuichi147"
+extended-description = "naui のウィジェットを種別ごとに試せるデモアプリ。GTK4 と libadwaita で表示する。"
+section = "misc"
+# ビルドした Ubuntu 24.04 の版ではなく、naui-gtk が要る下限を明示する。
+depends = "$auto, libgtk-4-1 (>= 4.10), libadwaita-1-0 (>= 1.5)"
+assets = [
+    ["target/release/gallery", "usr/bin/naui-gallery", "755"],
+    ["packaging/linux/org.naui.Gallery.desktop", "usr/share/applications/", "644"],
+    # 実行ファイルから見た ../share/naui-gallery/assets を探す (media.rs)。
+    ["assets/sample.png", "usr/share/naui-gallery/assets/", "644"],
+    ["../../LICENSE-MIT", "usr/share/doc/naui-gallery/", "644"],
+    ["../../LICENSE-APACHE", "usr/share/doc/naui-gallery/", "644"],
+]

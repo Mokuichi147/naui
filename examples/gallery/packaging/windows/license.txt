@@ -1,0 +1,5 @@
+naui UI gallery
+
+naui UI gallery は MIT License または Apache License 2.0 のいずれかを選んで利用できます。条文の全文は、インストール先の LICENSE-MIT と LICENSE-APACHE にあります。
+
+このアプリには、Microsoft の Windows App SDK ランタイムの一部を同梱しています。同梱した部品は、Microsoft のライセンス条項 (インストール先の WindowsAppSDK-LICENSE.txt) に従って利用してください。第三者の部品の告知は WindowsAppSDK-NOTICE.txt にあります。

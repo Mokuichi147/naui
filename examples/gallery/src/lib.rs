@@ -182,4 +182,9 @@ fn scrollable(ui: &Ui, pane: &dyn Widget) -> Result<Scroll> {
 }
 
 // ネイティブの `start()` と、Web のブラウザから呼ばれる入口を作る。
-naui::entry!(Settings::new("naui UI gallery"), build);
+// ID は配布物 (packaging/ の .desktop と Info.plist) と揃える。違うと GNOME の
+// Dock がウィンドウと .desktop を結び付けられず、汎用アイコンと ID 名で出る。
+naui::entry!(
+    Settings::new("naui UI gallery").app_id("org.naui.Gallery"),
+    build
+);

@@ -1,6 +1,15 @@
 # タグ (v0.3.0 など) を打つと、4 環境ぶんの Gallery をビルドして
 # GitHub Release へ添付し、あわせて各クレートを crates.io へ公開する。
 #
+# Gallery は書庫 (tar.gz / zip) のほかに、OS ごとのパッケージでも配る。
+# 作り方は examples/gallery/packaging/ にまとめてある。
+#
+#   macOS: .app を入れた .dmg
+#   Windows: .msi (WiX) とインストーラーの .exe (Inno Setup)
+#   Linux: .deb (cargo-deb)
+#
+# どれも未署名 (macOS は ad-hoc 署名だけ)。
+#
 #   git tag v0.3.0 && git push origin v0.3.0
 name: Release
 
@@ -72,7 +81,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macos-universal
+          # Apple Silicon だけ。Intel Mac は対象にしない。
+          - name: macos-arm64
             os: macos-latest
           - name: linux-x86_64
             # 配布物の glibc / GTK の下限を固定する。GTK 4.10 以降が要るので
@@ -95,21 +105,16 @@ jobs:
         with:
           key: release-${{ matrix.name }}
 
-      - name: ビルド (macOS / ユニバーサル)
+      # ランナーの CPU が変わっても arm64 で作るよう、ターゲットを明示する。
+      - name: ビルド (macOS)
         if: runner.os == 'macOS'
         run: |
           set -eux
-          # Intel / Apple Silicon の両方を作って 1 つに束ねる。
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release -p gallery -p counter --target "$target"
-          done
+          rustup target add aarch64-apple-darwin
+          cargo build --release -p gallery -p counter --target aarch64-apple-darwin
           mkdir -p dist
-          for bin in gallery counter; do
-            lipo -create -output "dist/$bin" \
-              "target/aarch64-apple-darwin/release/$bin" \
-              "target/x86_64-apple-darwin/release/$bin"
-          done
+          cp target/aarch64-apple-darwin/release/gallery \
+            target/aarch64-apple-darwin/release/counter dist/
 
       - name: ビルド (Linux)
         if: runner.os == 'Linux'
@@ -133,11 +138,65 @@ jobs:
           cp target/release/gallery.exe target/release/counter.exe dist/
           cp -R target/release/naui-winappsdk/. dist/
 
+      # Gallery は「メディア」画面の画像を、実行ファイルの隣の assets/ から読む。
       - name: 同梱物をそろえる
         shell: bash
         run: |
           set -eux
           cp LICENSE-MIT LICENSE-APACHE README.md dist/
+          cp -R examples/gallery/assets dist/assets
+
+      - name: パッケージを作る (macOS / .dmg)
+        if: runner.os == 'macOS'
+        run: |
+          set -eux
+          tag="${{ needs.check-version.outputs.tag }}"
+          examples/gallery/packaging/macos/build-dmg.sh dist/gallery "${tag#v}" \
+            "naui-gallery-$tag-${{ matrix.name }}.dmg"
+
+      - name: cargo-deb を導入
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+
+      - name: パッケージを作る (Linux / .deb)
+        if: runner.os == 'Linux'
+        run: |
+          set -eux
+          cargo deb -p gallery --no-build \
+            --output "naui-gallery-${{ needs.check-version.outputs.tag }}-${{ matrix.name }}.deb"
+          dpkg-deb --info naui-gallery-*.deb
+          dpkg-deb --contents naui-gallery-*.deb
+
+      - name: WiX と Inno Setup を導入
+        if: runner.os == 'Windows'
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          $tools = Join-Path $env:USERPROFILE '.dotnet\tools'
+          $tools | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          & (Join-Path $tools 'wix.exe') extension add --global WixToolset.UI.wixext/5.0.2
+          if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and
+              -not (Test-Path 'C:\Program Files*\Inno Setup 6\ISCC.exe')) {
+            choco install innosetup --no-progress -y
+          }
+
+      # インストーラーには Gallery だけを入れる (Counter は書庫にだけ入れる)。
+      - name: パッケージを作る (Windows / .msi と .exe)
+        if: runner.os == 'Windows'
+        run: |
+          $tag = "${{ needs.check-version.outputs.tag }}"
+          New-Item -ItemType Directory installer | Out-Null
+          Copy-Item target/release/gallery.exe installer/
+          Copy-Item -Recurse target/release/naui-winappsdk/* installer/
+          Copy-Item -Recurse examples/gallery/assets installer/assets
+          Copy-Item LICENSE-MIT, LICENSE-APACHE installer/
+          ./examples/gallery/packaging/windows/build-installers.ps1 `
+            -Source installer `
+            -Version $tag.TrimStart('v') `
+            -OutDir . `
+            -Name "naui-gallery-$tag-${{ matrix.name }}"
+          Get-ChildItem naui-gallery-*
 
       - name: 書庫を作る (tar.gz)
         if: runner.os != 'Windows'
@@ -166,6 +225,10 @@ jobs:
           path: |
             naui-gallery-*.tar.gz
             naui-gallery-*.zip
+            naui-gallery-*.dmg
+            naui-gallery-*.deb
+            naui-gallery-*.msi
+            naui-gallery-*-setup.exe
           if-no-files-found: error
 
   build-web:
@@ -290,20 +353,34 @@ jobs:
         run: |
           set -eux
           notes=$(cat <<'EOF'
-          ## 実行に必要なもの
+          ## ダウンロード
 
-          - macOS: そのまま実行できます (Intel / Apple Silicon 共通)。
-          - Windows: Windows App SDK のランタイムを同梱しているので、そのまま
-            実行できます (Windows 10 1903 以降の x64)。展開したフォルダーの中身は
+          | OS | インストールする | インストールせずに試す |
+          | --- | --- | --- |
+          | macOS (Apple Silicon) | `.dmg` | `macos-arm64.tar.gz` |
+          | Windows 10 1903 以降 (x64) | `.msi` または `-setup.exe` | `windows-x86_64.zip` |
+          | Linux (x86_64) | `.deb` | `linux-x86_64.tar.gz` |
+          | Web | | `web-wasm.tar.gz` |
+
+          - macOS: `.dmg` を開き、アプリを「アプリケーション」へドラッグしてください。
+          - Windows: Windows App SDK のランタイムを同梱しているので、ランタイムを
+            別に入れなくても動きます。`.msi` はすべてのユーザーへ、`-setup.exe` は
+            既定で自分だけへ入れます。`.zip` を使うときは、展開したフォルダーの中身を
             ばらさずに置いてください。同梱した部品は Microsoft のライセンス条項
             (`WindowsAppSDK-LICENSE.txt`) に従って利用してください。
-          - Linux: GTK 4.10 以降と libadwaita 1.5 以降が必要です
+          - Linux: GTK 4.10 以降と libadwaita 1.5 以降が必要です。`.deb` は
+            `sudo apt install ./naui-gallery-*.deb` で入れると、足りないものも入ります
             (Ubuntu 24.04 でビルドしています)。
           - Web: 展開したディレクトリを HTTP で配信してください
             (`python3 -m http.server 8080`)。
 
-          ネイティブ版の Gallery は画像サンプルをビルド時の絶対パスで参照するため、
-          「メディア」画面の画像だけは配布物では表示されません。
+          ## 署名について
+
+          どのパッケージもコード署名をしていないため、初回の起動で警告が出ます。
+
+          - macOS: 「開けません」と出たら、「システム設定」→「プライバシーとセキュリティ」
+            の「このまま開く」から起動してください。
+          - Windows: SmartScreen が出たら、「詳細情報」→「実行」を選んでください。
 
           EOF
           )
