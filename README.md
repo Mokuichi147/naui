@@ -47,94 +47,85 @@ naui はウィジェットを自前で描画しません。ボタン、入力欄
 
 ## クイックスタート
 
-### 導入
-
 ```sh
 cargo add naui
 ```
 
 `src/main.rs` に[基本的な使い方](#基本的な使い方)のコードを貼って `cargo run`
-すると、OS 標準のボタンを持つカウンターが立ち上がります。API の詳細は
-[docs.rs](https://docs.rs/naui) を参照してください。Web (wasm) で動かす手順は
-[Web 版の実行](#web-版の実行)にあります。
+すると、OS 標準のボタンを持つカウンターが起動します。API は
+[docs.rs](https://docs.rs/naui)、Web (wasm) での動かし方は
+[Web 版の実行](#web-版の実行)を参照してください。
 
 ### 必要なもの
 
 - Rust 1.85 以降
 - Linux: GTK4 と libadwaita の開発用ライブラリ
-- Windows: Windows App SDK 1.3 以降のフレームワークランタイム
-  ([同梱する](#windows-app-sdk-ランタイムを同梱する)場合は不要)
+- Windows: Windows App SDK 1.3 以降のランタイム (動作確認は 2.x)。
+  [同梱する](#windows-app-sdk-ランタイムを同梱する)場合は不要です
 
-Ubuntu 24.04 では、次のコマンドで Linux 向けの依存パッケージを導入できます。
+Ubuntu 24.04 では次のコマンドで導入できます。
 
 ```sh
 sudo apt install libgtk-4-dev libadwaita-1-dev build-essential pkg-config
 ```
 
-naui は 2.x から 1.3 まで新しい順に探し、最初に見つかったランタイムを使います。
-OS 同梱の系統 (`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れます。実機での
-動作確認は 2.x で行っています。
-
 ### Windows App SDK ランタイムを同梱する
 
-`self-contained` フィーチャーを有効にすると、Windows App SDK ランタイムを exe と
-一緒に配れます。利用者はランタイムを別に導入しなくて済みます。既定では無効です。
+`self-contained` フィーチャー (既定は無効) を有効にすると、ランタイムを exe と
+一緒に配れるので、利用者が別に導入する必要がなくなります。
 
 ```toml
 [dependencies]
 naui = { version = "0.9", features = ["self-contained"] }
 ```
 
-ビルド時に、Windows App SDK 2.5.1 の部品 (WinUI 2.3.9、Foundation、
-InteractiveExperiences、DWriteCore) を nuget.org から取ってきて、exe の出力先
-(`target/<profile>/` と、その下の `examples/`・`deps/`) へ並べます。取ってきた
-`.nupkg` は、naui が持っている SHA-512 と照らし合わせてから使います。
+ビルド時に Windows App SDK 2.5.1 の部品を nuget.org から取得し、SHA-512 で
+照合してから exe の出力先へ並べます。配布するときは
+`target/<profile>/naui-winappsdk/` の中身 (約 60MB、ライセンス条項と告知を含む)
+をすべて exe の隣へ置いてください。
 
-起動時は exe の隣の同梱物だけを使います。**同梱物が無ければ、導入済みの
-ランタイムへは切り替えずにエラーを返します。** 黙って切り替えると、ビルドした
-手元ではランタイムが入っているので動いてしまい、同梱物を配り忘れたことに配布先
-で初めて気づくためです。
+**同梱物が無いと、導入済みのランタイムへは切り替えずにエラーにします。**
+手元では動いてしまい、配り忘れに配布先で初めて気づく、ということを防ぐためです。
 
-配布するときは、exe と同じフォルダーへ `target/<profile>/naui-winappsdk/` の
-中身をすべて置いてください (約 60MB)。部品のライセンス条項
-(`WindowsAppSDK-LICENSE.txt`) とオープンソースの告知 (`WindowsAppSDK-NOTICE.txt`)
-もここに入っています。
+Gallery で試すには `cargo run -p gallery --features self-contained` を実行します。
 
-#### 出力先と CI のキャッシュ
+<details>
+<summary><strong>同梱の詳細 (ライセンス・制約・Windows 10 1809・build-dir)</strong></summary>
 
-Cargo はビルドスクリプトに exe の出力先 (target-dir) を知らせません。naui は
-中間生成物の置き場 (build-dir) から求めます。既定ではこの 2 つは同じ場所なので、
-何もしなくて構いません。
+#### ライセンス
 
-`build.build-dir` (`CARGO_BUILD_BUILD_DIR`) で build-dir を分けている場合は、
-target-dir を環境変数 `NAUI_WINAPPSDK_TARGET_DIR` に絶対パスで指定してください。
-環境変数で build-dir を分けていて、`CARGO_TARGET_DIR` が絶対パスなら、それを
-使います。どちらでもなければ、ビルドを止めます。設定ファイルの
-`build.build-dir` はビルドスクリプトから見えないので、指定を忘れると同梱物が
-exe の隣に届かず、起動時に上のエラーになります。
+- **このフィーチャーを有効にすると、取得する各パッケージのライセンスに同意した
+  ことになります。** naui のビルドは確認なしに取得します。条文と再配布の条件は、
+  各 `.nupkg` の `license.txt` と nuget.org の各パッケージのページにあります。
+- WinUI 2.0.12〜2.3.2 には再配布を禁じるライセンスが誤って入っていたため
+  ([microsoft/WindowsAppSDK#6654](https://github.com/microsoft/WindowsAppSDK/issues/6654))、
+  修正後の 2.3.6 以上だけを同梱します。
 
-組み立てた同梱物は build-dir の中に残し、そこから並べます。CI のキャッシュ
-(`Swatinem/rust-cache` など) の復元で並べたものが消えていると、次のビルドで
-並べ直します。
+#### 制約
 
-#### マニフェストを exe に埋め込む
+- 並べるファイルは MSBuild の self-contained 配置と同じです
+  (`DeploymentAgent.exe` は除きます)。
+- プッシュ通知など、同梱では使えない Windows App SDK の機能があります
+  (naui は使っていません)。
+- ランタイムの不具合やセキュリティの修正は、アプリの配り直しで届けます。
+- exe を置くフォルダーのパスはおおむね 200 文字以内にしてください。260 文字を
+  超えるファイルがあると起動に失敗します。
+- exe の隣に `resources.pri` を置くため、アプリ自身の `resources.pri` とは
+  両立しません。
+- オフラインでは、4 つの `.nupkg` を置いたフォルダーを環境変数
+  `NAUI_WINAPPSDK_PACKAGES` に指定します。ファイル名は
+  `microsoft.windowsappsdk.winui.2.3.9.nupkg` のような小文字の形です。
 
-naui は起動時に、同梱物のマニフェストを読み込んで WinUI のクラスを引けるように
-します。ほとんどの Windows ではこれで足りますが、Windows 10 1809 では足りません。
+#### Windows 10 1809 ではマニフェストを埋め込む
 
-| Windows | そのままの exe | マニフェストを埋め込んだ exe |
-| --- | --- | --- |
-| 11 24H2 以降 | 動く (確認済み、CI の Windows Server 2025 でも確認) | 動く (確認済み) |
-| 10 1903 〜 11 23H2 | 動く (CI の Windows Server 2022 で確認) | 動く (CI の Windows Server 2022 で確認) |
-| 10 1809 | 動かない見込み | 動く見込み (Windows App SDK の想定どおりの形) |
+naui は起動時に同梱物のマニフェストを読み込みます。Windows 10 1903 以降は
+これで動きます (CI の Windows Server 2022・2025 で確認)。1809 では Windows App
+SDK が **exe に埋め込まれたマニフェストだけ**を見るため、埋め込みが要る見込み
+です (未確認)。埋め込まずにランタイムが見つからないときは、`naui::run` が
+埋め込みを促すエラーを返します。
 
-24H2 より前の Windows では、Windows App SDK が自前の仕組みでランタイムを探し、
-そこでは **exe に埋め込まれたマニフェストだけ**を見ます。見つからなければ OS の
-仕組みへ回し、Windows 10 1903 以降の OS は naui が読み込んだマニフェストを見つけ
-ます。1809 の OS にはその仕組みが無いので、埋め込みが要ります。
-
-1809 も対象にするなら、アプリの `build.rs` でマニフェストを exe に埋め込んで
-ください。MSVC のリンカーが要ります。
+依存クレートの側からはアプリの exe へ埋め込めないので、アプリの `build.rs` で
+埋め込みます。MSVC のリンカーが要ります。
 
 ```rust
 // build.rs
@@ -152,53 +143,30 @@ fn main() {
 }
 ```
 
-naui の依存クレートの側からは、アプリの exe へマニフェストを埋め込めません
-(Cargo は依存先のリンカー指定をアプリへ伝えない)。同梱をフィーチャーで
-切り替えるアプリの例は `examples/gallery/build.rs` にあります。
+フィーチャーで同梱を切り替える例は `examples/gallery/build.rs` にあります。
+埋め込むと、スレッドプールなど naui を起動したのとは別のスレッドからも WinUI の
+クラスを作れるようになります。
 
-埋め込まずに起動してランタイムが見つからないときは、`naui::run` が埋め込みを
-促すエラーを返します。また埋め込むと、スレッドプールなど naui を起動した
-スレッドとは無関係なスレッドからも WinUI のクラスを作れるようになります。
+#### build-dir を分けている場合
 
-#### 注意
+Cargo はビルドスクリプトに exe の出力先 (target-dir) を知らせないので、naui は
+build-dir から求めます。既定では同じ場所なので何もしなくて構いません。
 
-- **このフィーチャーを有効にすることは、取得する各パッケージのライセンスに
-  同意することを意味します。** NuGet のパッケージは取り込み時にライセンスへの
-  同意を求める設定ですが、naui のビルドは確認なしに取得します。条文は各
-  `.nupkg` の `license.txt` と nuget.org の各パッケージのページにあります。
-  再配布の条件 (アプリに主要な機能を足す、利用者に同等以上の条項へ同意して
-  もらう、など) もそこに書かれています。
-- WinUI の 2.0.12〜2.3.2 には、再配布を禁じるライセンスが誤って入っていました
-  ([microsoft/WindowsAppSDK#6654](https://github.com/microsoft/WindowsAppSDK/issues/6654))。
-  naui は修正後の版 (2.3.6 以上) だけを同梱します。
-- 配置するファイルは、MSBuild の self-contained 配置が同じパッケージから
-  出力へコピーするものと同じです。ランタイムを OS へ導入するための
-  `DeploymentAgent.exe` は、MSBuild と同じく除きます。
-- ネットワークに出られない環境では、4 つの `.nupkg` を置いたフォルダーを
-  環境変数 `NAUI_WINAPPSDK_PACKAGES` に指定します。ファイル名は
-  `microsoft.windowsappsdk.winui.2.3.9.nupkg` のような小文字の形です。
-- プッシュ通知など、同梱では使えない Windows App SDK の機能があります。
-  naui はそれらを使っていません。
-- ランタイムの不具合やセキュリティの修正は、アプリを配り直して届けることに
-  なります。
-- exe を置くフォルダーのパスは、おおむね 200 文字以内にしてください。同梱物の
-  ファイルのパスが 260 文字を超えると、Windows が読み込めずに起動に失敗します
-  (naui はその旨のエラーを返します)。
-- exe の隣にあるファイルが `resources.pri` という名前で置かれます。アプリが
-  自分の `resources.pri` を持つ場合とは両立しません。
+`build.build-dir` (`CARGO_BUILD_BUILD_DIR`) で分けている場合は、target-dir を
+環境変数 `NAUI_WINAPPSDK_TARGET_DIR` に絶対パスで指定してください
+(`CARGO_TARGET_DIR` が絶対パスならそれを使います)。どちらも無ければビルドを
+止めますが、設定ファイルの `build.build-dir` はビルドスクリプトから見えないため
+止められず、起動時に上のエラーになります。
 
-Gallery を同梱したランタイムで動かすには、次のようにします。マニフェストも
-exe に埋め込まれます。
+CI のキャッシュ (`Swatinem/rust-cache` など) の復元で並べたファイルが消えても、
+次のビルドで並べ直します。
 
-```sh
-cargo run -p gallery --features self-contained
-```
+</details>
 
 ### Gallery を実行
 
-全ウィジェットを確認するには、リポジトリを取得して Gallery を起動します。
-画面は基本、入力、一覧、ナビゲーション、レイアウト、描画、ファイル、
-メディア、ダイアログ、非同期に分かれています。
+全ウィジェットは Gallery で確認できます (基本、入力、一覧、ナビゲーション、
+レイアウト、描画、ファイル、メディア、ダイアログ、非同期)。
 
 ```sh
 git clone https://github.com/mokuichi147/naui.git
@@ -210,12 +178,14 @@ cargo run -p gallery
 
 ## 対応状況
 
-| 環境 | 状態 | 確認内容 |
-| --- | --- | --- |
-| macOS | ✅ 動作確認済み | AppKit の実コントロールを使った統合テストと Gallery の実行 (サイドバー・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む) |
-| Linux | ✅ 動作確認済み | Ubuntu 24.04、GTK 4.14、libadwaita 1.5、Wayland で Gallery と統合テストを実行 (サイドバー・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・メニューバー (見出しの開閉とショートカット)・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む) |
-| Web | ✅ 動作確認済み | ブラウザ上で DOM の描画、入力、サイドバー (選択・仕切りでの幅の変更・開閉)、検索入力、自由入力コンボボックス、ナビゲーション、ファイル選択、メディア、ダイアログ (Esc での取り消しを含む)、ポップアップメニュー、メニューバー (見出しの開閉とショートカット)、トースト、折りたたみ、スイッチ、時刻ピッカー、色ピッカー、テーブル、分割ビュー、描画面 (画素の確認とポインター)、ラベルの折り返し、ラベルの文字づかい、非同期処理の実行と中断を操作 |
-| Windows | ✅ 動作確認済み | Windows App SDK 2.3.1 の x64 実機で全ウィジェットとナビゲーションを操作 (サイドバー・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・ラベルの折り返し・別スレッドからの受け渡しと `spawn` を含む)。あわせて WinUI 3 の実コントロールを使った統合テスト (ラベルの文字づかい・描画面の XAML への写しを含む) を CI で実行。ランタイムを同梱した場合 (`self-contained`) も、同じ統合テストと、ランタイムを導入していない Windows Server 2022 での Gallery の全ページ巡回を CI で実行 |
+4 環境とも動作確認済みです。
+
+| 環境 | 確認した環境と方法 |
+| --- | --- |
+| macOS | AppKit の実コントロールを使った統合テストと Gallery の実行 |
+| Linux | Ubuntu 24.04 (GTK 4.14、libadwaita 1.5、Wayland) で統合テストと Gallery を実行 |
+| Web | ブラウザ上で Gallery の各ウィジェットを操作 |
+| Windows | Windows App SDK 2.3.1 の x64 実機で Gallery を操作。WinUI 3 の統合テストを CI で実行 (`self-contained` でも実行し、ランタイム未導入の Windows Server 2022 で Gallery の全ページを巡回) |
 
 プラットフォーム固有の注意点は[既知の制限](#既知の制限)を参照してください。
 
