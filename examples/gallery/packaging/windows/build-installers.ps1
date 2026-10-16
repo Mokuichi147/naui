@@ -79,7 +79,10 @@ try {
     # インストーラーの .exe
     $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
     if (-not $iscc) {
-        $iscc = Get-ChildItem 'C:\Program Files*\Inno Setup 6\ISCC.exe' -ErrorAction SilentlyContinue |
+        # winget で入れると、自分だけ用の %LOCALAPPDATA%\Programs に入る。
+        $iscc = Get-ChildItem 'C:\Program Files*\Inno Setup 6\ISCC.exe',
+                              (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe') `
+                -ErrorAction SilentlyContinue |
             Select-Object -First 1 -ExpandProperty FullName
     }
     if (-not $iscc) { throw 'Inno Setup 6 (ISCC.exe) が見つかりません。' }
