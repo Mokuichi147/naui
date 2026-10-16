@@ -1453,7 +1453,7 @@ fn editable_combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
 }
 
 /// `NSComboBox` は一覧を絞り込まないので、絞りたいアプリは `on_change` の中で
-/// 候補を入れ替える。README で案内しているこの手順が実際に通ることを確かめる。
+/// 候補を入れ替える。docs/guide.md で案内しているこの手順が実際に通ることを確かめる。
 fn editable_combo_box_items_can_be_narrowed_while_typing(ui: &Ui) -> Result<()> {
     let combo = ui.editable_combo_box()?;
     let all = ["東京", "東大阪", "大阪", "札幌"];

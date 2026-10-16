@@ -179,7 +179,7 @@ jobs:
           Write-Host "Installed Windows App SDK runtime packages: $($packages.Count)"
           $packages | ForEach-Object { Write-Host "  $($_.PackageFullName)" }
       # Gallery の build.rs が、同梱するマニフェストを exe に埋め込む。
-      # README が Windows 10 1809 向けに案内している形。
+      # docs/windows-self-contained.md が Windows 10 1809 向けに案内している形。
       - name: ビルド (マニフェストを埋め込む)
         run: cargo build -p gallery --features self-contained
       - name: 起動 (マニフェストを埋め込む)
