@@ -1606,7 +1606,9 @@ git push origin v0.3.0
 `build-dmg.sh`、`.msi` (WiX v5) と `-setup.exe` (Inno Setup 6) は
 `build-installers.ps1`、`.deb` は `examples/gallery/Cargo.toml` の
 `[package.metadata.deb]` (cargo-deb) から作ります。どれもコード署名はしていません
-(macOS は ad-hoc 署名だけ)。
+(macOS は ad-hoc 署名だけ)。Windows の `.msi` と `-setup.exe` は同じフォルダーと
+ショートカットを使うので、どちらか一方だけを入れます。もう一方が入っていると、
+インストーラーは止まります。
 
 タグを打たずにビルドだけ確かめたいときは、Actions から `Release` を
 `workflow_dispatch` で実行してください。Release は作られません。

@@ -8,6 +8,7 @@
   - LicenseRtf: 使用許諾の画面に出す RTF
 
   UpgradeCode は変えない。変えると、古い版を残したまま別のアプリとして入る。
+  gallery.iss が UpgradeCode からこの .msi を探すので、変えるならそちらも直す。
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
@@ -23,6 +24,27 @@
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="より新しい版の [ProductName] がインストールされています。" />
     <MediaTemplate EmbedCab="yes" />
+
+    <!-- インストーラー .exe (gallery.iss) の版と同じフォルダーとショートカットを
+         使う。両方を入れると、片方のアンインストールがもう片方のファイルを
+         消すので、.exe 版の登録 (AppId に _is1 を付けたキー) があれば止める。
+         全員用は 64 ビットの HKLM、自分だけ用は HKCU に登録される。 -->
+    <Property Id="INNOMACHINE">
+      <RegistrySearch Root="HKLM"
+                      Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{8BDF724B-55BB-405D-93F3-07ABA26C558B}_is1"
+                      Name="UninstallString"
+                      Type="raw"
+                      Bitness="always64" />
+    </Property>
+    <Property Id="INNOUSER">
+      <RegistrySearch Root="HKCU"
+                      Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{8BDF724B-55BB-405D-93F3-07ABA26C558B}_is1"
+                      Name="UninstallString"
+                      Type="raw" />
+    </Property>
+    <!-- アンインストールと修復 (Installed) は止めない。 -->
+    <Launch Condition="Installed OR (NOT INNOMACHINE AND NOT INNOUSER)"
+            Message="[ProductName] のインストーラー .exe 版がインストールされています。同じフォルダーとショートカットを使うため、重ねてインストールできません。先に「設定」の「アプリ」から [ProductName] をアンインストールしてください。" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="naui UI gallery">
