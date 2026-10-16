@@ -293,3 +293,23 @@ jobs:
       - name: Gallery を wasm へビルド
         run: ./build.sh
         working-directory: examples/gallery/web
+
+  # ブランチの保護で必須にするのはこのジョブだけにする。ジョブを足すたびに
+  # 必須チェックの設定を書き換えなくても、ここの needs へ足せば済むように。
+  # needs のどれかが失敗・取り消し・飛ばしになったら落とす (if: always() が
+  # 無いと、needs の失敗でこのジョブ自体が飛ばされ、必須チェックとしては
+  # 通ったことになってしまう)。
+  ci-ok:
+    name: CI 完了
+    if: always()
+    needs: [fmt, macos, windows, windows-msrv, windows-legacy, linux, web]
+    runs-on: ubuntu-latest
+    steps:
+      - name: すべてのジョブが成功したか確かめる
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "結果: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || { echo "成功していないジョブがあります" >&2; exit 1; }
+          done
