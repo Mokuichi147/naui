@@ -124,8 +124,7 @@ jobs:
           mkdir -p dist
           cp target/release/gallery target/release/counter dist/
 
-      # Windows App SDK ランタイムを同梱する (README の「Windows App SDK
-      # ランタイムを同梱する」)。落とした人がランタイムを導入しなくても動く。
+      # Windows App SDK ランタイムを同梱する (docs/windows-self-contained.md)。落とした人がランタイムを導入しなくても動く。
       # ビルドが target/release/naui-winappsdk/ にまとめる同梱物 (DLL、
       # マニフェスト、部品のライセンス条項と告知) を exe の隣へ置く。
       - name: ビルド (Windows)

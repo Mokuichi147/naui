@@ -137,7 +137,7 @@ impl SelfContained {
                 format!(
                     "同梱した Windows App SDK ランタイムから {PROBE_CLASS} を引けません ({})。\
                      Windows 10 1809 では、{} を exe に埋め込む必要があります \
-                     (naui の README「マニフェストを exe に埋め込む」を参照)",
+                     (naui の docs/windows-self-contained.md「マニフェストを exe に埋め込む」を参照)",
                     e.message(),
                     packages::MANIFEST_FILE,
                 ),

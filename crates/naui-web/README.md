@@ -30,7 +30,7 @@ cargo install wasm-bindgen-cli --version 0.2.127
 wasm にはスレッドがないため、`std::thread::spawn` は使えません。別スレッドから
 値を送る代わりに `Tasks::spawn` の future の中で `Sender::send` を呼びます。
 その他の制限は
-[リポジトリの README](https://github.com/mokuichi147/naui#既知の制限)
+[既知の制限](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md#web)
 にまとめています。
 
 ## ライセンス
