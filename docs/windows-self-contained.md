@@ -5,7 +5,7 @@
 
 ```toml
 [dependencies]
-naui = { version = "0.9", features = ["self-contained"] }
+naui = { version = "0.10", features = ["self-contained"] }
 ```
 
 ビルド時に Windows App SDK 2.5.1 の部品を nuget.org から取得し、SHA-512 で
