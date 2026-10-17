@@ -141,6 +141,7 @@ python3 -m http.server 8080
 - [既知の制限](docs/known-limitations.md): 環境ごとの制限
 - [ランタイムの同梱](docs/windows-self-contained.md): Windows App SDK を exe と一緒に配る
 - [開発](docs/development.md): 動作確認、クレート構成、テスト、CI、リリース
+- [ロードマップ](docs/roadmap.md): まだ無い機能と優先度
 - [API リファレンス (docs.rs)](https://docs.rs/naui)
 
 ## ライセンス
