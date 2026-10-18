@@ -408,10 +408,14 @@ impl Canvas {
         self.0.pointer.set(f);
     }
 
-    /// ホイール (高精度タッチパッドの 2 本指のスクロールも含む)。量は論理ピクセル。
+    /// ホイール。量は論理ピクセル。
     ///
     /// `Handled` を返すと外側のスクロールへは回らない。`Continue` なら
     /// 外側の `ScrollViewer` がいつもどおりスクロールする。
+    ///
+    /// `Scroll` の中にある面では、高精度タッチパッドの 2 本指のスクロールは
+    /// 届かない。タッチパッドのジェスチャーは外側の `ScrollViewer` が自分で
+    /// 受け取り、`PointerWheelChanged` にもホイールのメッセージにもならない。
     pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
         self.0.wheel.set(f);
         if !self.0.wheel_registered.replace(true) {
