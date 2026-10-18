@@ -629,6 +629,31 @@
 //! `set_text` では `on_change` は呼ばれない (`TextInput` と同じく、Windows だけは
 //! ネイティブの `TextChanged` が出るため呼ばれる)。
 //!
+//! **Enter での確定は [`on_submit`](TextInput::on_submit) で受け取る**
+//! (`TextInput` / `PasswordInput` / [`NumberInput`])。フォームの送信や
+//! ログインのように、打ち終えたところで動かしたい処理に使う。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let name = ui.text_input("")?;
+//! name.on_submit(|text| println!("{text} で登録する"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! **IME で変換している間の Enter (変換の確定) では呼ばれない。** 読み取り専用の
+//! `TextInput` と、[`on_key_down`](TextInput::on_key_down) が Enter に
+//! `Handled` を返したときも呼ばれない。`NumberInput` は打ちかけの表示を値へ
+//! 読み込んで (読めなければ元の値へ戻して) から、確定した値で呼ぶ。値が
+//! 変わったなら `on_change` が先に呼ばれる。`TextArea` の Enter は改行なので
+//! 持たない (送信に使うなら `on_key_down` で拾う)。`SearchInput` では同じ通知を
+//! `on_search` と呼ぶ。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `on_submit` | Enter の `PreviewKeyDown` | `insertNewline:` (`control:textView:doCommandBySelector:`) | `activate` | Enter の `keydown` |
+//!
 //! [`PasswordInput`] は打った文字を伏せ字にするだけで、API は [`TextInput`] と
 //! 同じ。**伏せ字を一時的に外すボタンは持たない** (`NSSecureTextField` に
 //! 無いため)。入力された文字列は `text()` で読めるので、扱いはアプリの責任。
@@ -2316,6 +2341,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     input.set_placeholder("t");
     input.set_enabled(true);
     input.on_change(|_s: &str| {});
+    input.on_submit(|_s: &str| {});
     input.set_read_only(true);
     let _: bool = input.is_read_only();
 
@@ -2335,6 +2361,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     password.set_placeholder("t");
     password.set_enabled(true);
     password.on_change(|_s: &str| {});
+    password.on_submit(|_s: &str| {});
     password.set_sizing(Sizing::fill_width());
 
     let search: SearchInput = ui.search_input()?;
@@ -2356,6 +2383,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     number.set_decimals(2);
     number.set_enabled(true);
     number.on_change(|_v: f64| {});
+    number.on_submit(|_v: f64| {});
     number.set_sizing(Sizing::fill_width());
 
     // 文字入力系は 6 つとも on_key_down を持つ。

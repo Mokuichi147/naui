@@ -164,6 +164,14 @@ fn main() {
             "検索入力が Enter のときだけ確定を通知する",
             search_input_notifies_on_activate,
         ),
+        (
+            "1 行入力とパスワード入力が Enter で確定を通知する",
+            text_inputs_notify_on_activate,
+        ),
+        (
+            "数値入力が Enter で値を確定してから通知する",
+            number_input_commits_before_submitting,
+        ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         (
             "打鍵が通知され、set_text は通知しない",
@@ -1578,6 +1586,75 @@ fn search_input_notifies_on_activate(ui: &Ui) -> Result<()> {
     search.set_text("いぬ");
     native.emit_activate();
     assert_eq!(submitted.borrow().as_slice(), ["ねこ", "いぬ"]);
+    Ok(())
+}
+
+/// 1 行入力とパスワード入力も、検索欄と同じく `activate` (Enter) で確定を
+/// 知らせる。読み取り専用の間は数えない。
+fn text_inputs_notify_on_activate(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("ねこ")?;
+    let password = ui.password_input()?;
+    let input_native: gtk::Entry = input.native_widget().downcast().expect("GtkEntry");
+    let password_native: gtk::PasswordEntry = password
+        .native_widget()
+        .downcast()
+        .expect("GtkPasswordEntry");
+
+    let (submitted, sink) = recorder::<String>();
+    let sink = Rc::new(RefCell::new(sink));
+    input.on_submit({
+        let sink = sink.clone();
+        move |text: &str| (sink.borrow_mut())(format!("入力:{text}"))
+    });
+    password.on_submit({
+        let sink = sink.clone();
+        move |text: &str| (sink.borrow_mut())(format!("伏せ字:{text}"))
+    });
+    password.set_text("ひみつ");
+
+    input_native.emit_activate();
+    password_native.emit_activate();
+    assert_eq!(
+        submitted.borrow().as_slice(),
+        ["入力:ねこ", "伏せ字:ひみつ"]
+    );
+
+    input.set_read_only(true);
+    input_native.emit_activate();
+    assert_eq!(submitted.borrow().len(), 2, "読み取り専用なら確定しない");
+    Ok(())
+}
+
+/// Enter は値を確定させてから (`gtk_spin_button_update` のあとで) 知らせる。
+fn number_input_commits_before_submitting(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(5.0)?;
+    number.set_range(None, Some(100.0));
+    let native: gtk::SpinButton = number.native_widget().downcast().expect("GtkSpinButton");
+    let text: gtk::Text = native
+        .delegate()
+        .and_then(|delegate| delegate.downcast().ok())
+        .expect("GtkSpinButton の中の GtkText");
+
+    let (log, sink) = recorder::<String>();
+    let sink = Rc::new(RefCell::new(sink));
+    number.on_change({
+        let sink = sink.clone();
+        move |value| (sink.borrow_mut())(format!("変更:{value}"))
+    });
+    number.on_submit({
+        let sink = sink.clone();
+        move |value| (sink.borrow_mut())(format!("確定:{value}"))
+    });
+
+    native.set_text("12");
+    text.emit_activate();
+    assert_eq!(log.borrow().as_slice(), ["変更:12", "確定:12"]);
+
+    // 範囲の外は端へ寄せ、表示も直してから知らせる。
+    native.set_text("999");
+    text.emit_activate();
+    assert_eq!(log.borrow()[2..], ["変更:100", "確定:100"]);
+    assert_eq!(native.text().as_str(), "100");
     Ok(())
 }
 

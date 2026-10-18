@@ -23,7 +23,7 @@ GUI ツールキットで一般的に求められる機能のうち、naui (v0.1
 
 小さく、無いと困り、4 環境に対応物があるもの。
 
-- [ ] **入力欄の `on_submit`** (`TextInput`、`PasswordInput`、`NumberInput`)。
+- [x] **入力欄の `on_submit`** (`TextInput`、`PasswordInput`、`NumberInput`)。
       Enter での確定は、どのフォームでも最初に要ります。`SearchInput` で扱った
       「変換中の Enter は数えない」をそのまま使えます。
 - [ ] **フォーカスの出入りの通知** (`on_focus_change`)。入力の検証や、欄を

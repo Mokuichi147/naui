@@ -333,6 +333,7 @@ struct TextInputInner {
     native: gtk::Entry,
     bin: SizeBin,
     on_change: TextNotifier,
+    on_submit: TextNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
@@ -351,6 +352,7 @@ impl TextInput {
             native,
             bin,
             on_change: TextNotifier::default(),
+            on_submit: TextNotifier::default(),
             handler: RefCell::new(None),
         });
         let id = {
@@ -362,6 +364,15 @@ impl TextInput {
             })
         };
         *inner.handler.borrow_mut() = Some(id);
+        {
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_activate(move |native| {
+                // 読み取り専用の間は書き換えられないので、確定もしない。
+                if let Some(inner) = weak.upgrade().filter(|_| native.is_editable()) {
+                    inner.on_submit.emit(native.text().as_str());
+                }
+            });
+        }
         Self(inner)
     }
 
@@ -389,6 +400,14 @@ impl TextInput {
         self.0.on_change.set(f);
     }
 
+    /// Enter で確定したとき (`activate` シグナル) に、そのときの中身で呼ばれる。
+    ///
+    /// IME で変換している間の Enter (変換の確定) では呼ばれない。読み取り
+    /// 専用の間も呼ばれない。
+    pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
+        self.0.on_submit.set(f);
+    }
+
     /// 読み取り専用にするか。既定は書き換えられる。
     ///
     /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
@@ -409,6 +428,7 @@ struct PasswordInputInner {
     native: gtk::PasswordEntry,
     bin: SizeBin,
     on_change: TextNotifier,
+    on_submit: TextNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
@@ -430,6 +450,7 @@ impl PasswordInput {
             native,
             bin,
             on_change: TextNotifier::default(),
+            on_submit: TextNotifier::default(),
             handler: RefCell::new(None),
         });
         let id = {
@@ -441,6 +462,14 @@ impl PasswordInput {
             })
         };
         *inner.handler.borrow_mut() = Some(id);
+        {
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_activate(move |native| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.on_submit.emit(native.text().as_str());
+                }
+            });
+        }
         Self(inner)
     }
 
@@ -467,6 +496,11 @@ impl PasswordInput {
     /// 利用者が打つたびに、そのときの中身で呼ばれる。
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
+    }
+
+    /// Enter で確定したとき (`activate` シグナル) に、そのときの中身で呼ばれる。
+    pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
+        self.0.on_submit.set(f);
     }
 }
 

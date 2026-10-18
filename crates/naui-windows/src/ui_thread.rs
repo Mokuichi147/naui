@@ -17,6 +17,36 @@ use crate::Slot;
 /// 使う側が書く (`HandlerCell<dyn FnMut(&str)>` のように)。
 pub(crate) type HandlerCell<F> = std::sync::Arc<UiThreadCell<Slot<F>>>;
 
+/// 文字列を 1 つ受け取る通知先。
+///
+/// WinRT のデリゲートは `Send + Sync` を要求するので [`UiThreadCell`] に
+/// 載せる。呼び出しの間だけクロージャを取り出すため、通知の中から同じ欄を
+/// 操作しても二重借用にならない。
+#[derive(Clone)]
+pub(crate) struct TextHandler(HandlerCell<dyn FnMut(&str)>);
+
+impl TextHandler {
+    pub(crate) fn new() -> Self {
+        Self(std::sync::Arc::new(UiThreadCell::new(None)))
+    }
+
+    pub(crate) fn set(&self, f: impl FnMut(&str) + 'static) {
+        self.0.with_mut(|slot| *slot = Some(Box::new(f)));
+    }
+
+    pub(crate) fn emit(&self, text: &str) {
+        let Some(Some(mut f)) = self.0.try_with_mut(|slot| slot.take()) else {
+            return;
+        };
+        f(text);
+        let _ = self.0.try_with_mut(|slot| {
+            if slot.is_none() {
+                *slot = Some(f);
+            }
+        });
+    }
+}
+
 /// 生成したスレッドでのみ中身に触れるセル。
 pub(crate) struct UiThreadCell<T> {
     owner: ThreadId,

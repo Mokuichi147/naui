@@ -13,7 +13,6 @@ use std::rc::Rc;
 
 use naui_core::NumberSpec;
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
 use objc2::{sel, MainThreadMarker, Message};
 use objc2_app_kit::{
     NSLayoutConstraint, NSLayoutConstraintOrientation, NSLayoutPriority, NSStackView,
@@ -22,8 +21,8 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSString};
 
-use crate::trampoline::{ActionTarget, TextObserver, ValueHandler};
-use crate::widgets::{impl_widget, Widget};
+use crate::trampoline::{ActionTarget, FieldHandlers, FieldObserver, ValueHandler};
+use crate::widgets::{impl_widget, observe_field, Widget};
 
 /// 数字の欄の最小幅 (論理ピクセル)。中身に合わせると 1 桁分まで縮むため。
 const FIELD_MIN_WIDTH: f64 = 72.0;
@@ -45,10 +44,13 @@ struct NumberInputInner {
     spec: Cell<NumberSpec>,
     value: Cell<f64>,
     handler: ValueHandler<f64>,
+    submit: ValueHandler<f64>,
     /// 値を書き込んでいる間だけ、ネイティブからの通知を無視する。
     silent: Cell<bool>,
+    /// 欄の打鍵と Enter の通知先。
+    field_handlers: Rc<FieldHandlers>,
     /// AppKit の target とデリゲートは weak なので、ここで生かしておく。
-    observer: RefCell<Option<Retained<TextObserver>>>,
+    _observer: Retained<FieldObserver>,
     targets: RefCell<Vec<Retained<ActionTarget>>>,
 }
 
@@ -82,6 +84,7 @@ impl NumberInput {
         );
 
         let spec = NumberSpec::default();
+        let (field_handlers, observer) = observe_field(mtm, &field);
         let this = Self(Rc::new(NumberInputInner {
             native,
             field,
@@ -89,8 +92,10 @@ impl NumberInput {
             spec: Cell::new(spec),
             value: Cell::new(spec.clamp(value)),
             handler: ValueHandler::default(),
+            submit: ValueHandler::default(),
             silent: Cell::new(false),
-            observer: RefCell::new(None),
+            field_handlers,
+            _observer: observer,
             targets: RefCell::new(Vec::new()),
         }));
 
@@ -154,6 +159,14 @@ impl NumberInput {
         self.0.handler.set(f);
     }
 
+    /// Enter で確定したときに、確定したあとの値で呼ばれる。
+    ///
+    /// 打ちかけの表示は先に値へ読み込む (値が変われば `on_change` が先に
+    /// 呼ばれる)。数として読めない表示は元の値へ戻してから呼ぶ。
+    pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
+        self.0.submit.set(f);
+    }
+
     /// 数字を打つ欄。バックエンド固有の脱出口として公開している。
     pub fn native_field(&self) -> Retained<NSTextField> {
         self.0.field.clone()
@@ -168,7 +181,7 @@ impl NumberInput {
     fn connect(&self, mtm: MainThreadMarker) {
         // 打鍵のたびに、読める値なら受け取る。読めないもの (途中の `-` や
         // 空欄) は確定まで放っておく。
-        let observer = TextObserver::new(mtm, {
+        self.0.field_handlers.set_change({
             let weak = Rc::downgrade(&self.0);
             move |text: &str| {
                 let Some(inner) = weak.upgrade() else {
@@ -183,29 +196,28 @@ impl NumberInput {
                 }
             }
         });
-        unsafe {
-            self.0
-                .field
-                .setDelegate(Some(ProtocolObject::from_ref(&*observer)))
-        };
-        *self.0.observer.borrow_mut() = Some(observer);
+
+        // Enter。AppKit の確定 (下の action) より先に来るので、ここで値を
+        // 確定させてから知らせる。続く action は同じ値を読むだけになる。
+        self.0.field_handlers.set_submit({
+            let weak = Rc::downgrade(&self.0);
+            move |_text: &str| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let this = NumberInput(inner);
+                this.commit_field();
+                this.0.submit.emit(this.value());
+            }
+        });
 
         // 確定 (Enter・欄を離れる)。読めなかった表示はここで元へ戻す。
         let commit = ActionTarget::new(mtm, {
             let weak = Rc::downgrade(&self.0);
             move || {
-                let Some(inner) = weak.upgrade() else {
-                    return;
-                };
-                let this = NumberInput(inner);
-                let text = this.0.field.stringValue().to_string();
-                let shown = this
-                    .0
-                    .spec
-                    .get()
-                    .parse(&text)
-                    .unwrap_or_else(|| this.value());
-                this.accept(shown, true);
+                if let Some(inner) = weak.upgrade() {
+                    NumberInput(inner).commit_field();
+                }
             }
         });
         unsafe {
@@ -233,6 +245,18 @@ impl NumberInput {
             self.0.stepper.setAction(Some(sel!(invoke:)));
         }
         *self.0.targets.borrow_mut() = vec![commit, stepped];
+    }
+
+    /// 欄の表示を値として確定する。読めない表示は元の値へ戻す。
+    fn commit_field(&self) {
+        let text = self.0.field.stringValue().to_string();
+        let shown = self
+            .0
+            .spec
+            .get()
+            .parse(&text)
+            .unwrap_or_else(|| self.value());
+        self.accept(shown, true);
     }
 
     /// 決まりを差し替え、ネイティブと現在値へ反映する。

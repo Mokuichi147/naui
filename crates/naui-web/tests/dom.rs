@@ -3223,6 +3223,99 @@ fn handled_key_stops_the_search() {
     });
 }
 
+/// 1 行入力とパスワード入力は Enter で確定を知らせる。変換を確定する Enter と、
+/// 読み取り専用の間は数えない。
+#[wasm_bindgen_test]
+fn text_inputs_submit_on_enter() {
+    with_ui(|ui| {
+        let input = ui.text_input("ねこ")?;
+        let password = ui.password_input()?;
+        let _input = Mounted::new(&input);
+        let _password = Mounted::new(&password);
+        let submitted = Rc::new(RefCell::new(Vec::new()));
+        input.on_submit({
+            let submitted = submitted.clone();
+            move |text| submitted.borrow_mut().push(format!("入力:{text}"))
+        });
+        password.on_submit({
+            let submitted = submitted.clone();
+            move |text| submitted.borrow_mut().push(format!("伏せ字:{text}"))
+        });
+        password.set_text("ひみつ");
+
+        let input_target: EventTarget = input.native_element().into();
+        let password_target: EventTarget = password.native_element().into();
+        key_down(&input_target, "a", false, false, 65);
+        assert!(submitted.borrow().is_empty(), "Enter 以外では確定しない");
+        key_down(&input_target, "Enter", false, true, 13);
+        key_down(&input_target, "Process", false, false, 229);
+        key_down(&input_target, "Enter", false, false, 229);
+        assert!(submitted.borrow().is_empty(), "変換の確定は数えない");
+
+        key_down(&input_target, "Enter", false, false, 13);
+        key_down(&password_target, "Enter", false, false, 13);
+        assert_eq!(*submitted.borrow(), vec!["入力:ねこ", "伏せ字:ひみつ"]);
+
+        input.set_read_only(true);
+        key_down(&input_target, "Enter", false, false, 13);
+        assert_eq!(submitted.borrow().len(), 2, "読み取り専用なら確定しない");
+        Ok(())
+    });
+}
+
+/// `Handled` を返すと、Enter の確定も起きない。
+#[wasm_bindgen_test]
+fn handled_key_stops_the_submit() {
+    with_ui(|ui| {
+        let input = ui.text_input("")?;
+        let _mounted = Mounted::new(&input);
+        let submitted = Rc::new(Cell::new(0));
+        input.on_submit({
+            let submitted = submitted.clone();
+            move |_| submitted.set(submitted.get() + 1)
+        });
+        input.on_key_down(|_| EventResponse::Handled);
+        let target: EventTarget = input.native_element().into();
+        key_down(&target, "Enter", false, false, 13);
+        assert_eq!(submitted.get(), 0, "Handled なら確定しない");
+        Ok(())
+    });
+}
+
+/// 数値入力の Enter は、打ちかけの表示を値へ読み込んでから知らせる。
+#[wasm_bindgen_test]
+fn number_input_commits_before_submitting() {
+    with_ui(|ui| {
+        let number = ui.number_input(5.0)?;
+        number.set_range(None, Some(100.0));
+        let _mounted = Mounted::new(&number);
+        let input = number.native_input();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        number.on_change({
+            let log = log.clone();
+            move |value| log.borrow_mut().push(format!("変更:{value}"))
+        });
+        number.on_submit({
+            let log = log.clone();
+            move |value| log.borrow_mut().push(format!("確定:{value}"))
+        });
+        let target: EventTarget = input.clone().into();
+
+        // `input` を起こさずに表示だけ変えても、Enter で値になる。
+        input.set_value("999");
+        key_down(&target, "Enter", false, false, 13);
+        assert_eq!(*log.borrow(), vec!["変更:100", "確定:100"]);
+        assert_eq!(input.value(), "100", "範囲の端へ寄せた表示に直す");
+
+        // 読めない表示は元の値へ戻してから知らせる。
+        input.set_value("");
+        key_down(&target, "Enter", false, false, 13);
+        assert_eq!(log.borrow()[2..], ["確定:100"]);
+        assert_eq!(input.value(), "100");
+        Ok(())
+    });
+}
+
 /// ウィジェットが `Continue` を返したキーだけがウィンドウへ届く。
 #[wasm_bindgen_test]
 fn window_key_down_gets_what_the_widget_left() {
