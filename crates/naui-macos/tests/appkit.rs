@@ -4822,8 +4822,11 @@ fn shown_list_for_events(
     app.activateIgnoringOtherApps(true);
     window.show();
     let native = window.native_window();
-    for _ in 0..40 {
-        if native.isKeyWindow() {
+    // ウィンドウが key になっても、アプリのアクティブ化が済むまでは、最初の
+    // マウスの押下がアクティブ化に使われてビューへ届かないことがある。両方を待つ。
+    let ready = |native: &NSWindow| native.isKeyWindow() && app.isActive();
+    for _ in 0..60 {
+        if ready(&native) {
             break;
         }
         pump(0.05);
@@ -4832,7 +4835,7 @@ fn shown_list_for_events(
     let content_view = native.contentView().expect("contentView");
     content_view.layoutSubtreeIfNeeded();
     unsafe { content_view.display() };
-    let key = native.isKeyWindow();
+    let key = ready(&native);
     Ok((window, list, key))
 }
 
@@ -4978,6 +4981,28 @@ fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
             let _ = table.menuForEvent(&event);
         }
     };
+
+    if key {
+        // 最初の押下がウィンドウの前面化に使われても困らないよう、行の無い余白を
+        // 1 回押しておく (余白の左クリックは選択を外すだけで、通知も出さない)。
+        let bounds = table.visibleRect();
+        let empty = table.convertPoint_toView(
+            NSPoint::new(
+                bounds.origin.x + bounds.size.width / 2.0,
+                bounds.origin.y + bounds.size.height - 4.0,
+            ),
+            None,
+        );
+        assert!(
+            table.rowAtPoint(table.convertPoint_fromView(empty, None)) < 0,
+            "押す場所が行の無い余白であること"
+        );
+        for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
+            let event = mouse_event(&native, kind, empty, 1);
+            unsafe { app.postEvent_atStart(&event, false) };
+        }
+        deliver_events(&app);
+    }
 
     right_click(2);
     {
