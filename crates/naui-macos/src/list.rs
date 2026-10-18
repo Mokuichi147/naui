@@ -348,32 +348,44 @@ fn ensure_right_click_monitor() {
 /// 当たったビューから上へたどって `List` のテーブルを探す。行の中の
 /// 編集できる入力欄は自分のメニューを持つので、そのまま渡す。
 fn notify_right_click(event: &NSEvent) -> bool {
+    eprintln!("DIAG: monitor got {:?}", event.r#type());
     let Some(mtm) = MainThreadMarker::new() else {
         return false;
     };
     let Some(window) = event.window(mtm) else {
+        eprintln!("DIAG: no window");
         return false;
     };
     let Some(frame) = window
         .contentView()
         .and_then(|content| unsafe { content.superview() })
     else {
+        eprintln!("DIAG: no frame");
         return false;
     };
     let point = frame.convertPoint_fromView(event.locationInWindow(), None);
     let Some(hit) = frame.hitTest(point) else {
+        eprintln!("DIAG: no hit at {point:?}");
         return false;
     };
+    eprintln!("DIAG: hit {}", hit.class().name().to_string_lossy());
     if is_text_entry(&hit) {
+        eprintln!("DIAG: text entry");
         return false;
     }
     let mut view = Some(hit);
     while let Some(current) = view {
         if let Some(table) = current.downcast_ref::<ListTableView>() {
-            return table.notify_context_menu(event);
+            let done = table.notify_context_menu(event);
+            eprintln!(
+                "DIAG: table found, notified={done} row={}",
+                table.rowAtPoint(table.convertPoint_fromView(event.locationInWindow(), None))
+            );
+            return done;
         }
         view = unsafe { current.superview() };
     }
+    eprintln!("DIAG: no table");
     false
 }
 
