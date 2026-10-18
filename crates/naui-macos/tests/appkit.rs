@@ -5021,6 +5021,11 @@ fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
     }
     right_click(2);
     eprintln!("DIAG: seen after real right click = {}", seen.borrow().len());
+    pump_until(2.0, || {
+        deliver_events(&app);
+        !seen.borrow().is_empty()
+    });
+    eprintln!("DIAG: seen after pumping = {}", seen.borrow().len());
     {
         let seen = seen.borrow();
         assert_eq!(seen.len(), 1, "右クリックが 1 回だけ通知されること");
