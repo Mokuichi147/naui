@@ -16,20 +16,23 @@
 //! Return / Enter は `NSTableView` が何もしないキーなので、`keyDown:` で拾って
 //! 同じ通知へ流す。右クリックは `rightMouseDown:` で、Control + クリックなど
 //! ほかの出し方は AppKit が文脈メニューを求めるときに呼ぶ `menuForEvent:` で
-//! 受け、押された行と位置をアプリへ渡す。メニューそのものはアプリが [`crate::PopupMenu`] で出す。
+//! 受け、押された行と位置をアプリへ渡す。右クリックがセルの中のラベルへ
+//! 渡らないよう、`validateProposedFirstResponder:forEvent:` で編集できる
+//! 入力欄以外はテーブル自身が受ける。メニューそのものはアプリが [`crate::PopupMenu`] で出す。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{Align, ListItem, Orientation, Point, SelectionMode, Sizing, TextColor, TextStyle};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSColor, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSLayoutConstraint,
-    NSMenu, NSScrollView, NSTableCellView, NSTableColumn, NSTableColumnResizingOptions,
-    NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
-    NSTableViewStyle, NSTextField, NSView, NSViewNoIntrinsicMetric,
+    NSColor, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSEventType,
+    NSLayoutConstraint, NSMenu, NSResponder, NSScrollView, NSTableCellView, NSTableColumn,
+    NSTableColumnResizingOptions, NSTableView, NSTableViewColumnAutoresizingStyle,
+    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSTextView, NSView,
+    NSViewNoIntrinsicMetric,
 };
 use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSString,
@@ -233,9 +236,36 @@ define_class!(
         /// 出てしまう。
         #[unsafe(method(rightMouseDown:))]
         fn right_mouse_down(&self, event: &NSEvent) {
-            eprintln!("DIAG: ListTableView rightMouseDown");
             if !self.notify_context_menu(event) {
                 let _: () = unsafe { msg_send![super(self), rightMouseDown: event] };
+            }
+        }
+
+        /// クリックをセルの中のビューへ渡すかどうか。
+        ///
+        /// 右クリックと Control + クリックは、編集できる入力欄を除いてテーブル
+        /// 自身が受ける (`NO` を返すとテーブルが受ける)。ラベルへ渡すと、macOS 26
+        /// ではラベルが受けたまま上へ渡さず、行の文脈メニューが出ない。
+        #[unsafe(method(validateProposedFirstResponder:forEvent:))]
+        fn validate_proposed_first_responder(
+            &self,
+            responder: &NSResponder,
+            event: Option<&NSEvent>,
+        ) -> Bool {
+            if let Some(event) = event {
+                if self.ivars().context_menu.is_set()
+                    && is_context_click(event)
+                    && !is_text_entry(responder)
+                {
+                    return Bool::NO;
+                }
+            }
+            unsafe {
+                msg_send![
+                    super(self),
+                    validateProposedFirstResponder: responder,
+                    forEvent: event
+                ]
             }
         }
 
@@ -246,7 +276,6 @@ define_class!(
         /// `NSTableView` 既定のふるまい (自分の `menu`) に任せる。
         #[unsafe(method_id(menuForEvent:))]
         fn menu_for_event(&self, event: &NSEvent) -> Option<Retained<NSMenu>> {
-            eprintln!("DIAG: ListTableView menuForEvent");
             if self.notify_context_menu(event) {
                 None
             } else {
@@ -276,6 +305,26 @@ define_class!(
         }
     }
 );
+
+/// 文脈メニューを求めるクリック (右クリック、または Control + クリック) か。
+fn is_context_click(event: &NSEvent) -> bool {
+    let kind = event.r#type();
+    kind == NSEventType::RightMouseDown
+        || (kind == NSEventType::LeftMouseDown
+            && event
+                .modifierFlags()
+                .contains(NSEventModifierFlags::Control))
+}
+
+/// 自分の文脈メニュー (切り取り・貼り付けなど) を持つ、編集できる入力欄か。
+fn is_text_entry(responder: &NSResponder) -> bool {
+    if responder.downcast_ref::<NSTextView>().is_some() {
+        return true;
+    }
+    responder
+        .downcast_ref::<NSTextField>()
+        .is_some_and(|field| field.isEditable())
+}
 
 impl ListTableView {
     fn new(mtm: MainThreadMarker, state: ListTableState) -> Retained<Self> {

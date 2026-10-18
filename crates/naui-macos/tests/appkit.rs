@@ -5004,28 +5004,7 @@ fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
         deliver_events(&app);
     }
 
-    // DIAG: 一時的な診断
-    {
-        let point = row_center_in_window(&table, 2);
-        let os = objc2_foundation::NSProcessInfo::processInfo().operatingSystemVersionString();
-        eprintln!("DIAG: os={os} key={key} active={}", app.isActive());
-        let content = native.contentView().expect("contentView");
-        let local = unsafe { content.superview() }
-            .map(|frame| frame.convertPoint_fromView(point, None))
-            .unwrap_or(point);
-        let mut view = content.hitTest(local);
-        while let Some(v) = view {
-            eprintln!("DIAG: hit chain {}", v.class().name().to_string_lossy());
-            view = unsafe { v.superview() };
-        }
-    }
     right_click(2);
-    eprintln!("DIAG: seen after real right click = {}", seen.borrow().len());
-    pump_until(2.0, || {
-        deliver_events(&app);
-        !seen.borrow().is_empty()
-    });
-    eprintln!("DIAG: seen after pumping = {}", seen.borrow().len());
     {
         let seen = seen.borrow();
         assert_eq!(seen.len(), 1, "右クリックが 1 回だけ通知されること");
