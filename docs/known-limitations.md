@@ -65,6 +65,9 @@
   巻き戻しません。WinRT / GLib / libdispatch の境界を越えて巻き戻せないため、
   4 環境そろえてこの形にしてあります (panic の内容はいつもどおり標準エラー出力へ
   出ます)。`panic = "abort"` の設定では捕まえられません。
+- ウィンドウの位置が変わったことの通知はありません (Linux と Web では位置そのものが
+  取れないため)。位置を保存するときは、閉じる前 (`on_close_request` の中など) に
+  `Window::position` を読みます。
 
 ## Windows
 
@@ -213,6 +216,14 @@
   (`on_search`) は `QuerySubmitted` です。候補の一覧 (`ItemsSource`) は渡さないので、打っても
   候補は出ません。`TextChanged` は `Text` を書き換えたときにも飛ぶため、
   `Reason` がプログラムからの変更なら黙ります (`set_text` は通知しません)。
+- `Window::position` は `AppWindow.Position` で、**Windows がウィンドウの周りに
+  付ける見えない縁 (大きさを変えるつまみ) を含みます**。見えている枠の左上より
+  数ピクセル左上を指しますが、読んだ値をそのまま `set_position` へ渡せば同じ場所へ
+  戻ります。物理ピクセルをこのウィンドウの `RasterizationScale` で割るので、
+  DPI の違う画面をまたぐときはこのウィンドウの倍率で数えた値になります。
+- 全画面は `AppWindow` のプレゼンターを `FullScreenPresenter` へ差し替えて作り、
+  出るときは最初の `OverlappedPresenter` を付け直します (最小の大きさや
+  `set_resizable` の設定を残すため)。
 
 ## macOS
 
@@ -291,6 +302,13 @@
 - `ColorPicker` は `NSColorWell` そのものです。押すとシステムのカラーパネルが
   開きます。パネルはカタログ色 (`systemBlue` など) も返すので、成分を読む前に
   sRGB へ変換しています。`set_enabled(false)` ではパネルとのつながりも切ります。
+- `WindowState::Maximized` は `zoom:` (緑のボタンを Option を押しながら押したとき
+  と同じ) です。緑のボタンをそのまま押すと全画面 (`Fullscreen`) になります。
+  `isZoomed` は枠が画面の作業領域に合っているかで決まるので、利用者が手で画面
+  いっぱいに広げたときも `Maximized` を返すことがあります。
+- 全画面への出入りはアニメーションの後に済むので、`set_state` の直後の `state`
+  はまだ前の状態です。途中に頼まれた状態は、アニメーションが終わってから
+  当てます。
 
 ## Linux
 
@@ -358,6 +376,18 @@
   `GtkSpinButton` で組み立てています。`GtkCalendar` は「日を押した」と
   「月を送った」を区別しないので、**日を選んでもポップオーバーは閉じません**。
   ボタンに出る日付はロケールの書式に従います。
+- **ウィンドウの位置は取得も設定もできません。** GTK4 にはウィンドウの位置を
+  扱う API がありません。Wayland ではアプリがウィンドウの位置を知る仕組みそのものが
+  無く (置き場所はコンポジタが決めます)、GTK4 はそれに合わせて X11 でも外しました。
+  `Window::position` はいつも `None` を返し、`Window::set_position` は何もしません。
+- **Wayland では最小化を知ることができません。** xdg-shell に最小化の状態を
+  知らせる仕組みが無いため、最小化しても `state` は `WindowState::Minimized`
+  にならず、`Normal` を頼んでも戻るかどうかはコンポジタ次第です (X11 では
+  どちらもできます)。
+- 最大化・最小化・全画面はコンポジタ (ウィンドウマネージャ) への頼みごとなので、
+  `state` が変わるのはコンポジタが応えた後です。ウィンドウマネージャのいない
+  X11 (Xvfb など) では、表示した後の頼みには誰も応えず、状態は変わりません
+  (表示する前に頼んだ状態は、その状態で出ます)。
 
 ## Web
 
@@ -466,3 +496,12 @@
   自分を起こし続ける future を回すと描画に順番が回りません。
 - ブラウザにはアプリの終了が無いため、`Sender::send` が閉塞を理由に失敗することは
   ありません。
+- ページから操作できるのは Fullscreen API だけなので、**ウィンドウの状態は
+  全画面だけ**です。`Window::position` はいつも `None`、`set_position` は何もせず、
+  `WindowState::Maximized` / `Minimized` を頼んでも全画面を出るだけで、
+  `set_resizable` は値を覚えるだけです。
+- 全画面はページ全体 (`document.documentElement`) に掛けるので、ページに
+  ウィンドウが複数あれば全部が全画面の中に入ります。ブラウザは利用者の操作
+  (クリックやキー) の中からしか全画面にさせないため、起動時やタイマーからの
+  `set_state(WindowState::Fullscreen)` は断られ、状態は変わりません。
+  iPhone の Safari には Fullscreen API がありません。

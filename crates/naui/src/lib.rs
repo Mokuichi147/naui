@@ -454,6 +454,98 @@
 //! **Web では閉じる前の確認は呼ばれない。** ページの中のウィンドウを利用者が
 //! 閉じる操作が無く、タブを閉じるときに独自の確認を出す手段も無いため。
 //!
+//! ## ウィンドウの位置と状態
+//!
+//! [`Window::set_state`] で最大化・最小化・全画面にし、[`Window::state`] で
+//! いまの状態を [`WindowState`] として読む。[`Window::set_position`] と
+//! [`Window::position`] はウィンドウの左上の位置、[`Window::set_resizable`] と
+//! [`Window::is_resizable`] は利用者が縁をつかんで大きさを変えられるかどうか。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui, WindowState};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let window = ui.window("ビューア", 800.0, 600.0)?;
+//! window.set_position(80.0, 60.0); // Linux と Web では何もしない
+//! window.set_state(WindowState::Maximized); // 表示するときに最大化する
+//! window.on_state_change(|state| println!("{state:?}"));
+//! window.show();
+//!
+//! // 全画面の切り替えはボタンから (Web は利用者の操作の中でしか入れない)。
+//! let toggle = ui.button("全画面")?;
+//! let weak = window.downgrade();
+//! toggle.on_click(move || {
+//!     if let Some(window) = weak.upgrade() {
+//!         let next = if window.state() == WindowState::Fullscreen {
+//!             WindowState::Normal
+//!         } else {
+//!             WindowState::Fullscreen
+//!         };
+//!         window.set_state(next);
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! 位置は**主画面の左上を原点に、右と下へ数えた論理ピクセル**で、タイトルバーを
+//! 含むウィンドウの枠の左上を指す。画面に出す前に決めてもよい。
+//! [`set_position`](Window::set_position) で位置を決めた後は、macOS の
+//! [`set_size`](Window::set_size) も中央へ寄せ直さない。
+//!
+//! [`WindowState`] は 1 つだけ返る。環境によっては重なり得る状態 (最大化した
+//! まま最小化した、など) は、利用者から見えているほうを選ぶ
+//! (最小化 → 全画面 → 最大化 の順)。[`WindowState::Normal`] を頼むと、
+//! 最小化・全画面・最大化をすべて解く。全画面からほかの状態へ移るときは、
+//! 全画面を出終わってから当てる。
+//!
+//! 状態の変化は非同期のことが多い (macOS の全画面はアニメーションの後、
+//! Linux はコンポジタが応えた後、Web はブラウザが切り替えた後)。`set_state` の
+//! 直後の `state` はまだ前の状態を返すことがあるので、変わったことは
+//! [`Window::on_state_change`] で受け取る。利用者の操作 (タイトルバーの
+//! ボタン、Esc で全画面を出る、など) で変わったときも呼ばれる。
+//! 画面に出す前の `set_state` は覚えておき、[`Window::show`] で当てる
+//! (それまでの `state` は頼んだ状態を返す)。
+//!
+//! 位置が変わったことの通知は無い。Linux と Web では位置そのものが取れない
+//! ため。位置を保存するときは、閉じる前 ([`Window::on_close_request`] の中など)
+//! に [`Window::position`] を読む。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 位置 | `AppWindow.Position` / `Move` (物理ピクセルを `RasterizationScale` で割る) | `frame` / `setFrameTopLeftPoint:` (主画面の高さから引いて向きを変える) | (無い。いつも `None`) | (無い。いつも `None`) |
+//! | 最大化 | `OverlappedPresenter.Maximize` | `zoom:` | `gtk_window_maximize` | (無い) |
+//! | 最小化 | `OverlappedPresenter.Minimize` | `miniaturize:` | `gtk_window_minimize` | (無い) |
+//! | 全画面 | `AppWindow.SetPresenterByKind(FullScreen)` | `toggleFullScreen:` | `gtk_window_fullscreen` | `documentElement.requestFullscreen()` |
+//! | 状態を読む | `AppWindow.Presenter` の種類と `OverlappedPresenter.State` | `isMiniaturized` / `isZoomed` と全画面の通知 | `GdkToplevelState` | `document.fullscreenElement` |
+//! | 状態の変化 | `AppWindow.Changed` | `windowDidMiniaturize:` / `windowDidEnterFullScreen:` など | `GdkToplevel` の `notify::state` | `fullscreenchange` |
+//! | 大きさを変えられるか | `OverlappedPresenter.IsResizable` (`IsMaximizable` も一緒に) | styleMask の `Resizable` | `gtk_window_set_resizable` | (無い。値を覚えるだけ) |
+//!
+//! **Linux ではウィンドウの位置を扱えない。** GTK4 にはウィンドウの位置を
+//! 読む API も動かす API も無い。Wayland ではアプリがウィンドウの位置を知る
+//! 仕組みそのものが無く (置き場所はコンポジタが決める)、GTK4 はそれに合わせて
+//! X11 でも外した。[`Window::position`] はいつも `None` を返し、
+//! [`Window::set_position`] は何もしない。また **Wayland には最小化を知る
+//! 仕組みも戻す仕組みも無い**ので、最小化しても `state` は
+//! [`WindowState::Minimized`] にならず、`Normal` を頼んでも戻るかどうかは
+//! コンポジタ次第になる (X11 では両方できる)。
+//!
+//! **Web は全画面だけ。** ページから操作できるのは Fullscreen API だけなので、
+//! 位置は `None`、最大化と最小化は何もせず (全画面なら出るだけ)、
+//! `set_resizable` は値を覚えるだけになる。全画面は**ページ全体**
+//! (`document.documentElement`) に掛けるので、ウィンドウが複数あれば全部が
+//! 全画面の中に入る。ブラウザは利用者の操作 (クリックやキー) の中からしか
+//! 全画面にさせないので、ボタンの `on_click` などから呼ぶ (起動時やタイマー
+//! からは断られ、状態は変わらない)。iPhone の Safari には Fullscreen API が無い。
+//!
+//! **Windows の位置には見えない縁が入る。** `AppWindow` の外枠は、ウィンドウの
+//! 周りに Windows が付ける大きさ変更のつまみ (見えない数ピクセルの縁) を含む
+//! ので、見えている枠の左上より少し左上になる。読んだ位置をそのまま
+//! `set_position` へ渡せば同じ場所に戻る。
+//!
+//! 大きさを変えられないウィンドウも、[`Window::set_size`] では大きさを変えられる。
+//! 最大化のボタンは 3 環境とも効かなくなる (macOS は zoom できず、Linux は
+//! ボタンが消え、Windows は `IsMaximizable` も切る)。
+//!
 //! ## 折りたたみ
 //!
 //! ふだんは隠しておき、見出しを押したときだけ見せたいものは [`Expander`] へ
@@ -1934,8 +2026,8 @@ pub use naui_core::{
     PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy,
     SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep, SortOrder,
     TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer, ToastSpec,
-    ToolbarIcon, ToolbarItem, Track, TreeItem, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION,
-    ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
+    ToolbarIcon, ToolbarItem, Track, TreeItem, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -2075,6 +2167,13 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     window.set_min_size(1.0, 1.0);
     let _: (f64, f64) = window.size();
     window.on_resize(|(_width, _height): (f64, f64)| {});
+    window.set_position(1.0, 1.0);
+    let _: Option<(f64, f64)> = window.position();
+    window.set_state(WindowState::Maximized);
+    let _: WindowState = window.state();
+    window.on_state_change(|_state: WindowState| {});
+    window.set_resizable(false);
+    let _: bool = window.is_resizable();
     let weak_window = window.downgrade();
     let _: Option<Window> = weak_window.upgrade();
 

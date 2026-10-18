@@ -3,13 +3,13 @@ use std::rc::Rc;
 
 use naui::{
     Align, Button, Checkbox, ComboBox, Orientation, RadioGroup, Result, Slider, TextColor,
-    TextStyle, Theme, Toggle, Ui,
+    TextStyle, Theme, Toggle, Ui, WindowState,
 };
 
 use crate::parts::{self, Disabler, Notice};
 
 /// ギャラリーの題と説明、Label、Button、Checkbox、Toggle、RadioGroup、Slider、
-/// ProgressBar、ComboBox とテーマ。
+/// ProgressBar、ComboBox とテーマ、ウィンドウの状態。
 ///
 /// 起動したときに最初に出る画面なので、ギャラリー全体の題と説明もここに置く。
 pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<naui::Stack> {
@@ -320,7 +320,105 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
         }
     });
     pane.append(&theme);
+
+    window_controls(ui, &pane, window, notice)?;
     Ok(pane)
+}
+
+/// ウィンドウの最大化・最小化・全画面・位置・大きさを変えられるかどうか。
+fn window_controls(
+    ui: &Ui,
+    pane: &naui::Stack,
+    window: &naui::Window,
+    notice: &Notice,
+) -> Result<()> {
+    parts::section(
+        ui,
+        pane,
+        "Window",
+        &[
+            "ウィンドウを最大化・最小化・全画面にし、位置を読みます。Linux と Web は位置を扱えず、Web は全画面だけです。",
+            "タイトルバーのボタンや Esc で変えたときも、下の状態が追いかけます。",
+        ],
+    )?;
+
+    let readout = parts::readout(ui, &state_text(window.state()))?;
+    window.on_state_change({
+        let readout = readout.clone();
+        move |state| readout.set_text(&state_text(state))
+    });
+
+    let states = ui.stack(Orientation::Horizontal)?;
+    states.set_spacing(8.0);
+    for (title, state) in [
+        ("最大化", WindowState::Maximized),
+        ("最小化", WindowState::Minimized),
+        ("全画面", WindowState::Fullscreen),
+        ("元に戻す", WindowState::Normal),
+    ] {
+        let button = ui.button(title)?;
+        let weak_window = window.downgrade();
+        button.on_click(move || {
+            if let Some(window) = weak_window.upgrade() {
+                window.set_state(state);
+            }
+        });
+        states.append(&button);
+    }
+    pane.append(&states);
+    pane.append(&readout);
+
+    let places = ui.stack(Orientation::Horizontal)?;
+    places.set_spacing(8.0);
+    let read = ui.button("位置を読む")?;
+    read.on_click({
+        let weak_window = window.downgrade();
+        let notice = notice.clone();
+        move || {
+            let Some(window) = weak_window.upgrade() else {
+                return;
+            };
+            match window.position() {
+                Some((x, y)) => notice.show(&format!("左上は ({x:.0}, {y:.0})")),
+                None => notice.show("この環境ではウィンドウの位置を扱えません"),
+            }
+        }
+    });
+    places.append(&read);
+    let corner = ui.button("左上へ動かす")?;
+    corner.on_click({
+        let weak_window = window.downgrade();
+        move || {
+            if let Some(window) = weak_window.upgrade() {
+                window.set_position(40.0, 40.0);
+            }
+        }
+    });
+    places.append(&corner);
+    pane.append(&places);
+
+    let resizable = ui.checkbox("縁をつかんで大きさを変えられる")?;
+    resizable.set_checked(window.is_resizable());
+    resizable.on_toggle({
+        let weak_window = window.downgrade();
+        move |on| {
+            if let Some(window) = weak_window.upgrade() {
+                window.set_resizable(on);
+            }
+        }
+    });
+    pane.append(&resizable);
+    Ok(())
+}
+
+fn state_text(state: WindowState) -> String {
+    let name = match state {
+        WindowState::Normal => "通常",
+        WindowState::Maximized => "最大化",
+        WindowState::Minimized => "最小化",
+        WindowState::Fullscreen => "全画面",
+    };
+    format!("状態: {name}")
 }
 
 fn theme_index(theme: Theme) -> usize {

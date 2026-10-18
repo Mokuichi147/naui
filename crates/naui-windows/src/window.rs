@@ -4,10 +4,14 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use naui_core::{Result, Theme};
+use naui_core::{Result, StateHandler, Theme, WindowState};
 use naui_winui3::Microsoft::UI::Composition::ICompositionSupportsSystemBackdrop;
 use naui_winui3::Microsoft::UI::Composition::SystemBackdrops::{
     MicaController, SystemBackdropConfiguration, SystemBackdropTheme,
+};
+use naui_winui3::Microsoft::UI::Windowing::{
+    AppWindow, AppWindowChangedEventArgs, AppWindowPresenterKind, OverlappedPresenter,
+    OverlappedPresenterState,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::TextBlock;
 use naui_winui3::Microsoft::UI::Xaml::Input::KeyEventHandler;
@@ -112,6 +116,14 @@ struct WindowInner {
     /// `set_min_size` で頼まれた中身の下限。外枠の大きさへ直して
     /// `OverlappedPresenter` へ渡すので、枠や帯の高さが変わるたびに渡し直す。
     min_size: Cell<Option<(f64, f64)>>,
+    on_state_change: StateHandler,
+    /// 表示する前に頼まれた状態。最初の [`Window::show`] で当てる。
+    /// 表示したら空になる。
+    initial_state: Cell<Option<WindowState>>,
+    /// ウィンドウが最初に持っていた `OverlappedPresenter`。全画面
+    /// (`FullScreenPresenter`) から戻るときにこれを付け直すので、下限や
+    /// 大きさを変えられるかどうかの設定が残る。
+    overlapped: RefCell<Option<OverlappedPresenter>>,
 }
 
 type ResizeCallback = dyn FnMut((f64, f64));
@@ -170,8 +182,12 @@ impl Window {
             on_resize: RefCell::new(None),
             last_size: Cell::new(None),
             min_size: Cell::new(None),
+            on_state_change: StateHandler::default(),
+            initial_state: Cell::new(Some(WindowState::Normal)),
+            overlapped: RefCell::new(None),
         }));
         this.observe_size();
+        this.observe_app_window();
         Ok(this)
     }
 
@@ -191,6 +207,52 @@ impl Window {
             Ok(())
         });
         let _ = self.0.native.SizeChanged(&handler);
+    }
+
+    /// 最大化・最小化・全画面への出入りを `AppWindow.Changed` で拾う。
+    ///
+    /// 状態の変化は `DidPresenterChange` (全画面) か `DidSizeChange`
+    /// (最大化・最小化) に出るので、どちらでも状態を読み直す。
+    fn observe_app_window(&self) {
+        let Ok(app_window) = self.0.native.AppWindow() else {
+            return;
+        };
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler =
+            TypedEventHandler::<AppWindow, AppWindowChangedEventArgs>::new(move |_, _| {
+                if let Some(inner) = state.try_with_mut(|weak| weak.upgrade()).flatten() {
+                    Window(inner).report_state();
+                }
+                Ok(())
+            });
+        let _ = app_window.Changed(&handler);
+    }
+
+    /// ウィンドウの `OverlappedPresenter`。最初に読んだものを覚えておく
+    /// (全画面の間は `AppWindow.Presenter` が `FullScreenPresenter` になる)。
+    fn overlapped_presenter(&self) -> Option<OverlappedPresenter> {
+        if let Some(presenter) = self.0.overlapped.borrow().as_ref() {
+            return Some(presenter.clone());
+        }
+        let presenter = self
+            .0
+            .native
+            .AppWindow()
+            .and_then(|app_window| app_window.Presenter())
+            .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
+            .ok()?;
+        *self.0.overlapped.borrow_mut() = Some(presenter.clone());
+        Some(presenter)
+    }
+
+    /// 全画面 (`FullScreenPresenter`) を付けているか。
+    fn is_fullscreen(&self) -> bool {
+        self.0
+            .native
+            .AppWindow()
+            .and_then(|app_window| app_window.Presenter())
+            .and_then(|presenter| presenter.Kind())
+            .is_ok_and(|kind| kind == AppWindowPresenterKind::FullScreen)
     }
 
     /// 中身の大きさが変わったかもしれないときに呼ぶ。下限を渡し直し、
@@ -283,7 +345,6 @@ impl Window {
     ///
     /// 中身の層が並ぶたびに呼ぶので、帯の高さが変わっても追いつく。
     fn apply_min_size(&self) {
-        use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
         use windows::Foundation::{IReference, PropertyValue};
 
         let Some(min_size) = self.0.min_size.get() else {
@@ -292,10 +353,7 @@ impl Window {
         let Ok(app_window) = self.0.native.AppWindow() else {
             return;
         };
-        let Ok(presenter) = app_window
-            .Presenter()
-            .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
-        else {
+        let Some(presenter) = self.overlapped_presenter() else {
             return;
         };
         let Some((width, height)) = self.outer_size_for(&app_window, min_size) else {
@@ -456,6 +514,139 @@ impl Window {
         }
         self.0.pending_fit.set(None);
         self.resize_content(size);
+    }
+
+    /// ウィンドウの左上の位置 (x, y)。単位は論理ピクセル (DIP)。
+    ///
+    /// 主画面の左上を原点に、右と下へ数える (ほかの環境と同じ向き)。
+    /// `AppWindow.Position` (外枠の物理ピクセル) を `RasterizationScale` で
+    /// 割る。外枠には Windows が縁の外側に付ける見えない縁 (大きさを
+    /// 変えるつまみ) も入るので、見えている枠の左上より少し左上になる。
+    /// DPI の違う画面をまたぐと、このウィンドウの DPI で割った値になる。
+    pub fn position(&self) -> Option<(f64, f64)> {
+        let position = self.0.native.AppWindow().ok()?.Position().ok()?;
+        let scale = self.rasterization_scale();
+        Some((f64::from(position.X) / scale, f64::from(position.Y) / scale))
+    }
+
+    /// ウィンドウの左上を (x, y) へ動かす。単位と向きは [`position`](Self::position) と同じ。
+    ///
+    /// `AppWindow.Move` を使う。画面に出る前に呼んでもよい。
+    pub fn set_position(&self, x: f64, y: f64) {
+        let Ok(app_window) = self.0.native.AppWindow() else {
+            return;
+        };
+        let scale = self.rasterization_scale();
+        let _ = app_window.Move(windows::Graphics::PointInt32 {
+            X: (x * scale).round() as i32,
+            Y: (y * scale).round() as i32,
+        });
+    }
+
+    /// いまの表示の状態。
+    ///
+    /// 全画面は `AppWindow.Presenter` の種類、ほかは `OverlappedPresenter.State`
+    /// で決める。表示する前は、[`set_state`](Self::set_state) で頼んだ状態
+    /// (既定は [`WindowState::Normal`])。
+    pub fn state(&self) -> WindowState {
+        if let Some(state) = self.0.initial_state.get() {
+            return state;
+        }
+        if self.is_fullscreen() {
+            return WindowState::Fullscreen;
+        }
+        match self
+            .overlapped_presenter()
+            .and_then(|presenter| presenter.State().ok())
+        {
+            Some(OverlappedPresenterState::Maximized) => WindowState::Maximized,
+            Some(OverlappedPresenterState::Minimized) => WindowState::Minimized,
+            _ => WindowState::Normal,
+        }
+    }
+
+    /// 表示の状態を変える。表示する前に呼んだときは、表示するときに当てる。
+    ///
+    /// | 頼んだ状態 | WinUI 3 |
+    /// | --- | --- |
+    /// | `Normal` | `OverlappedPresenter.Restore` |
+    /// | `Maximized` | `OverlappedPresenter.Maximize` |
+    /// | `Minimized` | `OverlappedPresenter.Minimize` |
+    /// | `Fullscreen` | `AppWindow.SetPresenterByKind(FullScreen)` |
+    ///
+    /// 全画面から出るときは、最初の `OverlappedPresenter` を付け直してから
+    /// 当てる。
+    pub fn set_state(&self, state: WindowState) {
+        if self.0.initial_state.get().is_some() {
+            self.0.initial_state.set(Some(state));
+            return;
+        }
+        self.apply_state(state);
+    }
+
+    fn apply_state(&self, target: WindowState) {
+        let Ok(app_window) = self.0.native.AppWindow() else {
+            return;
+        };
+        if target == WindowState::Fullscreen {
+            if !self.is_fullscreen() {
+                let _ = app_window.SetPresenterByKind(AppWindowPresenterKind::FullScreen);
+            }
+            return;
+        }
+        let Some(presenter) = self.overlapped_presenter() else {
+            return;
+        };
+        if self.is_fullscreen() {
+            let _ = app_window.SetPresenter(&presenter);
+        }
+        let _ = match target {
+            WindowState::Normal => {
+                if presenter.State().ok() == Some(OverlappedPresenterState::Restored) {
+                    Ok(())
+                } else {
+                    presenter.Restore()
+                }
+            }
+            WindowState::Maximized => presenter.Maximize(),
+            WindowState::Minimized => presenter.Minimize(),
+            WindowState::Fullscreen => Ok(()),
+        };
+    }
+
+    /// 表示の状態が変わったときの通知。変わった後の [`state`](Self::state) が届く。
+    ///
+    /// 利用者の操作 (タイトルバーのボタン、画面端へのスナップ、など) でも
+    /// [`set_state`](Self::set_state) でも呼ばれる。
+    pub fn on_state_change(&self, f: impl FnMut(WindowState) + 'static) {
+        self.0.on_state_change.set(f);
+    }
+
+    /// いまの状態が前に知らせたものと違えば `on_state_change` を呼ぶ。
+    fn report_state(&self) {
+        if self.0.initial_state.get().is_none() {
+            self.0.on_state_change.update(self.state());
+        }
+    }
+
+    /// 利用者がウィンドウの縁をつかんで大きさを変えられるか。既定は `true`。
+    pub fn is_resizable(&self) -> bool {
+        self.overlapped_presenter()
+            .and_then(|presenter| presenter.IsResizable().ok())
+            .unwrap_or(true)
+    }
+
+    /// 利用者が大きさを変えられるかどうかを決める。
+    ///
+    /// `OverlappedPresenter.IsResizable` と、最大化のボタン
+    /// (`IsMaximizable`) を一緒に切り替える (GTK と macOS でも、大きさを
+    /// 変えられないウィンドウは最大化のボタンが効かない)。
+    /// [`set_size`](Self::set_size) はどちらでも効く。
+    pub fn set_resizable(&self, resizable: bool) {
+        if let Some(presenter) = self.overlapped_presenter() {
+            let _ = presenter.SetIsResizable(resizable);
+            let _ = presenter.SetIsMaximizable(resizable);
+        }
     }
 
     /// このウィンドウの中で押されたキーの通知。
@@ -886,7 +1077,7 @@ impl Window {
     /// 画面に出して前面へ持ってくる。
     ///
     /// 最初の表示では、中身を `ui.window` (か表示前の [`set_size`](Self::set_size))
-    /// の大きさにする。
+    /// の大きさにし、表示する前に [`set_state`](Self::set_state) で頼んだ状態にする。
     pub fn show(&self) {
         if let Some(size) = self.0.initial_size.take() {
             self.resize_content(size);
@@ -894,6 +1085,14 @@ impl Window {
         if self.0.native.Activate().is_ok() {
             *self.0.visible.borrow_mut() = true;
             remember_owner(&self.0.native);
+        }
+        if let Some(state) = self.0.initial_state.take() {
+            // 最大化などの前の大きさで一度出してから当てるので、元へ戻したときは
+            // `ui.window` の大きさになる。
+            self.0.on_state_change.reset(WindowState::Normal);
+            if state != WindowState::Normal {
+                self.apply_state(state);
+            }
         }
     }
 

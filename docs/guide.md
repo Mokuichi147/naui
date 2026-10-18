@@ -144,6 +144,47 @@ form.attach(&field, GridCell::new(1, 0));
 [`examples/gallery`](../examples/gallery/src/lib.rs) にあります。ここでは、共通 API
 だけでは意図や動作が分かりにくい機能を補足します。
 
+### ウィンドウの位置と状態
+
+最大化・最小化・全画面は `Window::set_state` で頼み、いまの状態は
+`Window::state` で `WindowState` として読みます。位置は `set_position` /
+`position`、利用者が縁をつかんで大きさを変えられるかどうかは `set_resizable` /
+`is_resizable` です。
+
+```rust
+let window = ui.window("ビューア", 800.0, 600.0)?;
+window.set_position(80.0, 60.0); // Linux と Web では何もしない
+window.set_state(WindowState::Maximized); // 表示するときに最大化する
+window.set_resizable(true);
+window.on_state_change(|state| println!("いまは {state:?}"));
+window.show();
+
+if let Some((x, y)) = window.position() {
+    println!("左上は ({x}, {y})"); // Linux と Web では None
+}
+```
+
+位置は**主画面の左上を原点に、右と下へ数えた論理ピクセル**で、タイトルバーを
+含むウィンドウの枠の左上です。画面に出す前の `set_state` は覚えておき、`show`
+で当てます。状態の変化は非同期のことが多い (macOS の全画面はアニメーションの後、
+Linux はコンポジタが応えた後) ので、変わったことは `on_state_change` で受け取ります。
+利用者がタイトルバーのボタンや Esc で変えたときも呼ばれます。
+
+できることは環境で違います。
+
+| | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| 位置 | ○ | ○ | × (いつも `None`) | × (いつも `None`) |
+| 最大化・最小化 | ○ | ○ | ○ (Wayland では最小化を知れない) | × |
+| 全画面 | ○ | ○ | ○ | ○ (利用者の操作の中からだけ) |
+| 大きさを変えられるか | ○ | ○ | ○ | × (値を覚えるだけ) |
+
+Linux の位置は、GTK4 にウィンドウの位置を扱う API が無いためです (Wayland では
+アプリが位置を知る仕組みそのものが無く、GTK4 は X11 でも外しました)。Web は
+Fullscreen API だけを使い、ページ全体を全画面にします。ブラウザは利用者の操作の
+中からしか全画面にさせないので、ボタンの `on_click` などから呼びます。詳しくは
+[既知の制限](known-limitations.md) を参照してください。
+
 ### 折りたたみ
 
 ふだんは隠しておき、見出しを押したときだけ見せたいものは `Expander` へ入れます。

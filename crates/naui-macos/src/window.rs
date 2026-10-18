@@ -3,15 +3,16 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use naui_core::{CloseHandler, CloseResponse, Result, Theme};
+use dispatch2::{DispatchQueue, MainThreadBound};
+use naui_core::{CloseHandler, CloseResponse, Result, StateHandler, Theme, WindowState};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::NSWindowDelegate;
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSApplication, NSBackingStoreType, NSSplitViewController, NSView, NSWindow, NSWindowStyleMask,
-    NSWindowTitleVisibility,
+    NSApplication, NSBackingStoreType, NSScreen, NSSplitViewController, NSView, NSWindow,
+    NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{NSNotification, NSObject, NSPoint, NSRect, NSSize, NSString};
 
@@ -51,6 +52,26 @@ struct WindowInner {
     min_size: Cell<Option<(f64, f64)>>,
     /// `NSWindow` の delegate は弱参照なので、ここで生かしておく。
     delegate: RefCell<Option<Retained<WindowDelegate>>>,
+    on_state_change: StateHandler,
+    /// 一度でも [`Window::show`] したか。表示する前の `set_state` は覚えて
+    /// おき、表示するときに当てる。
+    shown: Cell<bool>,
+    /// 表示する前に頼まれた状態。
+    initial_state: Cell<WindowState>,
+    /// 全画面へ入る・出るアニメーションの途中。途中で頼まれた状態は
+    /// [`after_transition`](Self::after_transition) へ回す。
+    in_transition: Cell<bool>,
+    /// 全画面に入り終わっている。styleMask の `FullScreen` はアニメーションの
+    /// 始まりで変わるので、終わりの通知で決めたこちらを `state` に使う。
+    fullscreen: Cell<bool>,
+    /// 全画面のアニメーションが終わってから当てる状態。全画面から最大化や
+    /// 最小化へ移るときは、まず全画面を出て、出終わってから当てる。
+    after_transition: Cell<Option<WindowState>>,
+    /// `set_resizable` で頼まれた値。全画面の間は styleMask を触らず、
+    /// 出たときに当て直す。
+    resizable: Cell<bool>,
+    /// `set_position` で位置を決めた。決めた後の `set_size` では中央へ寄せない。
+    positioned: Cell<bool>,
 }
 
 define_class!(
@@ -77,8 +98,67 @@ define_class!(
         #[unsafe(method(windowDidResize:))]
         fn window_did_resize(&self, _notification: &NSNotification) {
             if let Some(inner) = self.ivars().upgrade() {
-                let size = Window(inner.clone()).size();
+                let window = Window(inner.clone());
+                let size = window.size();
                 inner.on_resize.emit(size);
+                // 最大化 (zoom) は大きさの変化としてだけ届く。
+                window.report_state();
+            }
+        }
+
+        #[unsafe(method(windowDidMiniaturize:))]
+        fn window_did_miniaturize(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                Window(inner).report_state();
+            }
+        }
+
+        #[unsafe(method(windowDidDeminiaturize:))]
+        fn window_did_deminiaturize(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                Window(inner).report_state();
+            }
+        }
+
+        #[unsafe(method(windowWillEnterFullScreen:))]
+        fn window_will_enter_full_screen(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                inner.in_transition.set(true);
+            }
+        }
+
+        #[unsafe(method(windowDidEnterFullScreen:))]
+        fn window_did_enter_full_screen(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                Window(inner).finish_transition();
+            }
+        }
+
+        #[unsafe(method(windowDidFailToEnterFullScreen:))]
+        fn window_did_fail_to_enter_full_screen(&self, _window: &NSWindow) {
+            if let Some(inner) = self.ivars().upgrade() {
+                Window(inner).finish_transition();
+            }
+        }
+
+        #[unsafe(method(windowWillExitFullScreen:))]
+        fn window_will_exit_full_screen(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                inner.in_transition.set(true);
+            }
+        }
+
+        #[unsafe(method(windowDidExitFullScreen:))]
+        fn window_did_exit_full_screen(&self, _notification: &NSNotification) {
+            if let Some(inner) = self.ivars().upgrade() {
+                Window(inner).finish_transition();
+            }
+        }
+
+        #[unsafe(method(windowDidFailToExitFullScreen:))]
+        fn window_did_fail_to_exit_full_screen(&self, _window: &NSWindow) {
+            if let Some(inner) = self.ivars().upgrade() {
+                Window(inner).finish_transition();
             }
         }
     }
@@ -129,6 +209,11 @@ impl Window {
         // Rust 側が Retained を持つので、閉じたときの自動解放は切る
         // (切らないと二重解放になる)。
         unsafe { native.setReleasedWhenClosed(false) };
+        // `toggleFullScreen:` で全画面にできるよう、緑のボタンと同じ扱いの
+        // ウィンドウにする (大きさを変えられるウィンドウの既定と同じ)。
+        native.setCollectionBehavior(
+            native.collectionBehavior() | NSWindowCollectionBehavior::FullScreenPrimary,
+        );
         native.center();
 
         WINDOWS.with(|slot| slot.borrow_mut().push(native.clone()));
@@ -143,6 +228,14 @@ impl Window {
             on_resize: ValueHandler::default(),
             min_size: Cell::new(None),
             delegate: RefCell::new(None),
+            on_state_change: StateHandler::default(),
+            shown: Cell::new(false),
+            initial_state: Cell::new(WindowState::Normal),
+            in_transition: Cell::new(false),
+            fullscreen: Cell::new(false),
+            after_transition: Cell::new(None),
+            resizable: Cell::new(true),
+            positioned: Cell::new(false),
         }));
         let delegate = WindowDelegate::new(mtm, Rc::downgrade(&this.0));
         this.0
@@ -269,7 +362,193 @@ impl Window {
             width.max(0.0) + extra_width,
             height.max(0.0) + extra_height,
         ));
-        self.0.native.center();
+        if !self.0.positioned.get() {
+            self.0.native.center();
+        }
+    }
+
+    /// ウィンドウの左上の位置 (x, y)。単位は論理ピクセル (ポイント)。
+    ///
+    /// 主画面 (メニューバーのある画面) の左上を原点に、右と下へ数える
+    /// (ほかの環境と同じ向き)。AppKit の座標は主画面の左下から上へ数える
+    /// ので、主画面の高さから引いて向きを変える。タイトルバーを含む
+    /// ウィンドウの枠の左上で、`None` にはならない。
+    pub fn position(&self) -> Option<(f64, f64)> {
+        let frame = self.0.native.frame();
+        Some((
+            frame.origin.x,
+            self.primary_screen_height() - (frame.origin.y + frame.size.height),
+        ))
+    }
+
+    /// ウィンドウの左上を (x, y) へ動かす。単位と向きは [`position`](Self::position) と同じ。
+    ///
+    /// `setFrameTopLeftPoint:` を使う。位置を決めた後の
+    /// [`set_size`](Self::set_size) は、ウィンドウを画面の中央へ寄せ直さない。
+    /// 画面の外を指すと、表示するときに AppKit がタイトルバーの見える
+    /// ところまで戻すことがある。
+    pub fn set_position(&self, x: f64, y: f64) {
+        self.0.positioned.set(true);
+        self.0
+            .native
+            .setFrameTopLeftPoint(NSPoint::new(x, self.primary_screen_height() - y));
+    }
+
+    /// 主画面の高さ。画面がつながっていなければ 0 (位置は AppKit の値のまま)。
+    fn primary_screen_height(&self) -> f64 {
+        let mtm = MainThreadMarker::from(&*self.0.native);
+        NSScreen::screens(mtm)
+            .firstObject()
+            .map_or(0.0, |screen| screen.frame().size.height)
+    }
+
+    /// いまの表示の状態。
+    ///
+    /// 表示する前は、[`set_state`](Self::set_state) で頼んだ状態 (既定は
+    /// [`WindowState::Normal`])。全画面へ入る・出る途中は、まだ前の状態を返す。
+    pub fn state(&self) -> WindowState {
+        if !self.0.shown.get() {
+            return self.0.initial_state.get();
+        }
+        let native = &self.0.native;
+        WindowState::from_flags(
+            native.isMiniaturized(),
+            self.0.fullscreen.get(),
+            native.isZoomed(),
+        )
+    }
+
+    /// 表示の状態を変える。表示する前に呼んだときは、表示するときに当てる。
+    ///
+    /// | 頼んだ状態 | AppKit |
+    /// | --- | --- |
+    /// | `Normal` | 最小化・全画面・zoom をすべて解く |
+    /// | `Maximized` | `zoom:` (緑のボタンを Option を押しながら押したときと同じ) |
+    /// | `Minimized` | `miniaturize:` |
+    /// | `Fullscreen` | `toggleFullScreen:` |
+    ///
+    /// 全画面へ入る・出るのはアニメーションの後なので、`state` が変わるのも
+    /// その後になる (変わったら [`on_state_change`](Self::on_state_change) が
+    /// 呼ばれる)。全画面から最大化や最小化へ移るときは、全画面を出終わって
+    /// から当てる。
+    pub fn set_state(&self, state: WindowState) {
+        if !self.0.shown.get() {
+            self.0.initial_state.set(state);
+            return;
+        }
+        self.apply_state(state);
+    }
+
+    fn apply_state(&self, target: WindowState) {
+        if self.0.in_transition.get() {
+            self.0.after_transition.set(Some(target));
+            return;
+        }
+        let native = &self.0.native;
+        if native.isMiniaturized() && target != WindowState::Minimized {
+            native.deminiaturize(None);
+        }
+        let fullscreen = native.styleMask().contains(NSWindowStyleMask::FullScreen);
+        match target {
+            WindowState::Fullscreen => {
+                if !fullscreen {
+                    native.toggleFullScreen(None);
+                }
+            }
+            // 全画面のままでは zoom も最小化もできないので、先に出る。
+            _ if fullscreen => {
+                self.0.after_transition.set(Some(target));
+                native.toggleFullScreen(None);
+            }
+            WindowState::Maximized => {
+                if !native.isZoomed() {
+                    native.zoom(None);
+                }
+            }
+            WindowState::Normal => {
+                if native.isZoomed() {
+                    native.zoom(None);
+                }
+            }
+            WindowState::Minimized => native.miniaturize(None),
+        }
+        self.report_state();
+    }
+
+    /// 全画面へ入る・出るアニメーションが終わった (か失敗した)。
+    ///
+    /// 続けて当てる状態があれば、AppKit が通知を配り終えた後 (メインキューの
+    /// 次の周回) に当てる。通知の中から `toggleFullScreen:` を呼ぶと無視される。
+    fn finish_transition(&self) {
+        let native = &self.0.native;
+        self.0.in_transition.set(false);
+        self.0
+            .fullscreen
+            .set(native.styleMask().contains(NSWindowStyleMask::FullScreen));
+        self.apply_resizable();
+        self.report_state();
+        if self.0.after_transition.get().is_none() {
+            return;
+        }
+        let mtm = MainThreadMarker::from(&**native);
+        let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
+        DispatchQueue::main().exec_async(move || {
+            // メインキューの仕事はメインスレッドで走る。
+            let mtm = MainThreadMarker::new().expect("メインキューの外で呼ばれた");
+            let Some(inner) = weak.into_inner(mtm).upgrade() else {
+                return;
+            };
+            if let Some(next) = inner.after_transition.take() {
+                Window(inner).apply_state(next);
+            }
+        });
+    }
+
+    /// 表示の状態が変わったときの通知。変わった後の [`state`](Self::state) が届く。
+    ///
+    /// 利用者の操作 (緑のボタン、Dock へしまう、など) でも
+    /// [`set_state`](Self::set_state) でも呼ばれる。
+    pub fn on_state_change(&self, f: impl FnMut(WindowState) + 'static) {
+        self.0.on_state_change.set(f);
+    }
+
+    /// いまの状態が前に知らせたものと違えば `on_state_change` を呼ぶ。
+    ///
+    /// 全画面へ入る・出る途中は、枠が画面いっぱいに広がって zoom と見分けが
+    /// 付かないので知らせない (終わったときに知らせる)。
+    fn report_state(&self) {
+        if self.0.shown.get() && !self.0.in_transition.get() {
+            self.0.on_state_change.update(self.state());
+        }
+    }
+
+    /// 利用者がウィンドウの縁をつかんで大きさを変えられるか。既定は `true`。
+    pub fn is_resizable(&self) -> bool {
+        self.0.resizable.get()
+    }
+
+    /// 利用者が大きさを変えられるかどうかを決める。
+    ///
+    /// styleMask の `Resizable` を付け外しする。外すと緑のボタンでの zoom も
+    /// できなくなる。[`set_size`](Self::set_size) はどちらでも効く。
+    /// 全画面の間は styleMask を変えられないので、全画面を出たときに当てる。
+    pub fn set_resizable(&self, resizable: bool) {
+        self.0.resizable.set(resizable);
+        self.apply_resizable();
+    }
+
+    fn apply_resizable(&self) {
+        let native = &self.0.native;
+        let mask = native.styleMask();
+        if self.0.in_transition.get() || mask.contains(NSWindowStyleMask::FullScreen) {
+            return;
+        }
+        let mask = if self.0.resizable.get() {
+            mask | NSWindowStyleMask::Resizable
+        } else {
+            mask & !NSWindowStyleMask::Resizable
+        };
+        native.setStyleMask(mask);
     }
 
     /// ルートに置くウィジェット。呼ぶたびに置き換わる。
@@ -451,8 +730,18 @@ impl Window {
     }
 
     /// 画面に出して前面へ持ってくる。
+    ///
+    /// 最初の表示では、表示する前に [`set_state`](Self::set_state) で頼んだ
+    /// 状態にする。
     pub fn show(&self) {
         self.0.native.makeKeyAndOrderFront(None);
+        if !self.0.shown.replace(true) {
+            self.0.on_state_change.reset(WindowState::Normal);
+            let state = self.0.initial_state.get();
+            if state != WindowState::Normal {
+                self.apply_state(state);
+            }
+        }
     }
 
     pub fn close(&self) {
