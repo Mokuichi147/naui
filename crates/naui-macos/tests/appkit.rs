@@ -5004,6 +5004,13 @@ fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
         deliver_events(&app);
     }
 
+    eprintln!(
+        "DIAG: test row={:?} table={:?} visible={:?} point={:?}",
+        table.rectOfRow(2),
+        table.frame(),
+        table.visibleRect(),
+        row_center_in_window(&table, 2)
+    );
     right_click(2);
     {
         let seen = seen.borrow();

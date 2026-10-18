@@ -356,15 +356,22 @@ fn notify_right_click(event: &NSEvent) -> bool {
         eprintln!("DIAG: no window");
         return false;
     };
-    let Some(frame) = window
-        .contentView()
-        .and_then(|content| unsafe { content.superview() })
-    else {
-        eprintln!("DIAG: no frame");
+    let Some(content) = window.contentView() else {
+        eprintln!("DIAG: no content");
         return false;
     };
-    let point = frame.convertPoint_fromView(event.locationInWindow(), None);
-    let Some(hit) = frame.hitTest(point) else {
+    // `hitTest:` の点は、受け手の親の座標で渡す。
+    let location = event.locationInWindow();
+    let point = match unsafe { content.superview() } {
+        Some(parent) => parent.convertPoint_fromView(location, None),
+        None => location,
+    };
+    eprintln!(
+        "DIAG: loc={location:?} point={point:?} content={:?} window={:?}",
+        content.frame(),
+        window.frame()
+    );
+    let Some(hit) = content.hitTest(point) else {
         eprintln!("DIAG: no hit at {point:?}");
         return false;
     };
