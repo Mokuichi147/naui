@@ -428,10 +428,16 @@ impl Ui {
     /// URL を既定のアプリ (`https:` ならブラウザ、`mailto:` ならメール) で開く。
     ///
     /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
-    /// 読めない・開く先が無いときは `Err`。開いた先で起きた失敗は分からない。
+    /// 読めない (scheme が無いものを含む)・開く先が無いときは `Err`。
+    /// 開いた先で起きた失敗は分からない。
     pub fn open_url(&self, url: &str) -> Result<()> {
+        // `URLWithString:` は空文字や `example.com` のような scheme の無い文字列にも
+        // nil でない URL を返す。それを `NSWorkspace` へ渡すと、Finder が
+        // 「アプリケーションを開けません。(-50)」のダイアログを出してしまうので、
+        // scheme の無いものはここで弾く。
         let Some(parsed) =
             objc2_foundation::NSURL::URLWithString(&objc2_foundation::NSString::from_str(url))
+                .filter(|parsed| parsed.scheme().is_some_and(|scheme| scheme.length() > 0))
         else {
             return Err(Error::new(
                 "URL を開く",

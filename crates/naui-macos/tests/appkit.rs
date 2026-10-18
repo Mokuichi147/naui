@@ -3619,8 +3619,12 @@ fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// scheme の無い文字列は `NSWorkspace` へ渡さずに弾く。渡すと Finder が
+/// 「アプリケーションを開けません。(-50)」のダイアログを出し、テストを走らせる
+/// たびに 1 枚ずつ残っていた。
 fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
     assert!(ui.open_url("").is_err());
+    assert!(ui.open_url("example.com").is_err());
     Ok(())
 }
 
