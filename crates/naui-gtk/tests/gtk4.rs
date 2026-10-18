@@ -20,9 +20,9 @@ use adw::prelude::*;
 use gtk::glib;
 use gtk::pango;
 use naui_core::{
-    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
-    FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
-    Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
+    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, EventResponse,
+    FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
+    NavItem, Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
     ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
     TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
     DEFAULT_SIDEBAR_WIDTH,
@@ -67,6 +67,10 @@ fn main() {
         (
             "描画面がポインターの押下・移動・解放を面の座標で通知する",
             canvas_reports_pointer_events,
+        ),
+        (
+            "描画面がホイールを論理ピクセルで通知し、Handled なら伝播を止める",
+            canvas_reports_wheel,
         ),
         (
             "チェックボックスの印がラベルの字面にそろう",
@@ -957,9 +961,9 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     assert_eq!(
         click.button(),
         0,
-        "ボタンを区別せず、右ボタンや中ボタンでも届くこと"
+        "どのボタンでも受け、右ボタンや中ボタンでも届くこと"
     );
-    assert_eq!(drag.button(), 0, "ドラッグもボタンを区別しないこと");
+    assert_eq!(drag.button(), 0, "ドラッグもどのボタンでも受けること");
 
     // 押していない間の移動はホバーとして届く。
     motion.emit_by_name::<()>("motion", &[&5.0f64, &6.0f64]);
@@ -1001,6 +1005,93 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
             (PointerPhase::Move, Point::new(3.0, 4.0)),
         ],
         "{seen:?}"
+    );
+    Ok(())
+}
+
+/// ホイールは `GtkEventControllerScroll` から、刻みを論理ピクセルに直して届く。
+/// 位置は最後にホバーで見た位置で、`Handled` を返すと伝播を止める。
+fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    let (log, mut sink) = recorder::<naui_core::PointerEvent>();
+    let response = Rc::new(Cell::new(EventResponse::Continue));
+    canvas.on_wheel({
+        let response = response.clone();
+        move |event| {
+            sink(event);
+            response.get()
+        }
+    });
+    let pointer = Rc::new(RefCell::new(Vec::new()));
+    canvas.on_pointer({
+        let pointer = pointer.clone();
+        move |event| pointer.borrow_mut().push(event)
+    });
+
+    let area = canvas.native_area();
+    let mut scroll = None;
+    let mut motion = None;
+    let controllers = area.observe_controllers();
+    for index in 0..controllers.n_items() {
+        let Some(c) = controllers.item(index) else {
+            continue;
+        };
+        if let Ok(s) = c.clone().downcast::<gtk::EventControllerScroll>() {
+            scroll = Some(s);
+        } else if let Ok(m) = c.downcast::<gtk::EventControllerMotion>() {
+            motion = Some(m);
+        }
+    }
+    let scroll = scroll.expect("ホイールを受ける GtkEventControllerScroll が付いていること");
+    let motion = motion.expect("ホバーを受ける GtkEventControllerMotion が付いていること");
+    assert!(
+        scroll
+            .flags()
+            .contains(gtk::EventControllerScrollFlags::BOTH_AXES),
+        "縦と横の両方を受けること: {:?}",
+        scroll.flags()
+    );
+
+    // シグナルを直接起こしたときの単位は刻み (`GDK_SCROLL_UNIT_WHEEL`)。
+    motion.emit_by_name::<()>("motion", &[&5.0f64, &6.0f64]);
+    let stopped = scroll.emit_by_name::<bool>("scroll", &[&0.5f64, &1.0f64]);
+    assert!(!stopped, "Continue なら外側のスクロールへ回すこと");
+    response.set(EventResponse::Handled);
+    let stopped = scroll.emit_by_name::<bool>("scroll", &[&0.0f64, &-2.0f64]);
+    assert!(stopped, "Handled なら伝播を止めること");
+
+    let seen = log.borrow();
+    let wheels: Vec<_> = seen
+        .iter()
+        .map(|e| (e.phase, e.point, e.button, e.wheel_x, e.wheel_y))
+        .collect();
+    let step = naui_core::WHEEL_STEP;
+    assert_eq!(
+        wheels,
+        vec![
+            (
+                PointerPhase::Wheel,
+                Point::new(5.0, 6.0),
+                None,
+                0.5 * step,
+                step
+            ),
+            (
+                PointerPhase::Wheel,
+                Point::new(5.0, 6.0),
+                None,
+                0.0,
+                -2.0 * step
+            ),
+        ]
+    );
+    assert!(
+        pointer
+            .borrow()
+            .iter()
+            .all(|e| e.phase == PointerPhase::Move),
+        "ホイールは on_pointer へは届かないこと: {:?}",
+        pointer.borrow()
     );
     Ok(())
 }

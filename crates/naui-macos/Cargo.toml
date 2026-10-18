@@ -191,6 +191,14 @@ objc2-app-kit = { version = "0.3", features = [
     "NSToolbarItem",
     "NSView",
     "NSWindow",
+    "objc2-core-graphics",
+] }
+# ホイールの `NSEvent` は公開の作り方が無いので、`CGEvent` から作る。
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "std",
+    "CGDirectDisplay",
+    "CGEvent",
+    "CGEventTypes",
 ] }
 objc2-foundation = { version = "0.3", features = [
     "NSDate",

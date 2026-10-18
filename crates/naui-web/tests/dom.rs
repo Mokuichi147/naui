@@ -22,9 +22,10 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, Color, DialogResponse, EventResponse, GridCell, Key, KeyEvent, Length, ListItem,
-    MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Point, PointerPhase,
-    PopupItem, Rect, Result, ScrollMetrics, SidebarItem, SidebarSection, Sizing, TableColumn,
-    TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem, DEFAULT_SIDEBAR_WIDTH,
+    MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Point, PointerButton,
+    PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem, SidebarSection, Sizing,
+    TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem,
+    DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::JsCast;
@@ -32,6 +33,7 @@ use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{
     CanvasRenderingContext2d, Element, EventTarget, HtmlElement, HtmlInputElement,
     HtmlSelectElement, KeyboardEvent, KeyboardEventInit, PointerEvent, PointerEventInit,
+    WheelEvent, WheelEventInit,
 };
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -646,28 +648,147 @@ fn canvas_reports_pointer_events() {
 
         let element = canvas.native_element();
         let rect = element.get_bounding_client_rect();
-        let send = |kind: &str, x: f64, y: f64| {
+        // `button` は変わったボタン (動きだけなら -1)、`buttons` はいま押している組。
+        let send = |kind: &str, x: f64, y: f64, button: i16, buttons: u16| {
             let init = PointerEventInit::new();
             init.set_bubbles(true);
+            init.set_cancelable(true);
             init.set_client_x((rect.left() + x) as i32);
             init.set_client_y((rect.top() + y) as i32);
             init.set_pointer_id(1);
+            init.set_button(button);
+            init.set_buttons(buttons);
             let event = PointerEvent::new_with_event_init_dict(kind, &init)
                 .expect("ポインターイベントの生成");
             element.dispatch_event(&event).expect("イベントの配送");
         };
-        send("pointerdown", 30.0, 20.0);
-        send("pointermove", 50.0, 40.0);
-        send("pointerup", 50.0, 40.0);
+        send("pointerdown", 30.0, 20.0, 0, 1);
+        send("pointermove", 50.0, 40.0, -1, 1);
+        send("pointerup", 50.0, 40.0, 0, 0);
+
+        {
+            let seen = seen.borrow();
+            assert_eq!(seen.len(), 3);
+            assert_eq!(seen[0].phase, PointerPhase::Down);
+            assert_eq!(seen[1].phase, PointerPhase::Move);
+            assert_eq!(seen[2].phase, PointerPhase::Up);
+            let near = |a: Point, x: f64, y: f64| (a.x - x).abs() <= 1.0 && (a.y - y).abs() <= 1.0;
+            assert!(near(seen[0].point, 30.0, 20.0), "{:?}", seen[0]);
+            assert!(near(seen[2].point, 50.0, 40.0), "{:?}", seen[2]);
+            let buttons: Vec<_> = seen.iter().map(|e| e.button).collect();
+            assert_eq!(
+                buttons,
+                vec![
+                    Some(PointerButton::Primary),
+                    None,
+                    Some(PointerButton::Primary)
+                ]
+            );
+        }
+
+        // 右ボタン (`button` は 2)。左を押したまま中ボタンを押すと、ブラウザは
+        // `pointerdown` ではなく `pointermove` で知らせる (中は `button` が 1、
+        // `buttons` のビットは 4)。
+        seen.borrow_mut().clear();
+        send("pointerdown", 10.0, 10.0, 2, 2);
+        send("pointerup", 10.0, 10.0, 2, 0);
+        send("pointerdown", 10.0, 10.0, 0, 1);
+        send("pointermove", 10.0, 10.0, 1, 1 | 4);
+        send("pointermove", 10.0, 10.0, 1, 1);
+        send("pointerup", 10.0, 10.0, 0, 0);
+        let events: Vec<_> = seen.borrow().iter().map(|e| (e.phase, e.button)).collect();
+        assert_eq!(
+            events,
+            vec![
+                (PointerPhase::Down, Some(PointerButton::Secondary)),
+                (PointerPhase::Up, Some(PointerButton::Secondary)),
+                (PointerPhase::Down, Some(PointerButton::Primary)),
+                (PointerPhase::Down, Some(PointerButton::Middle)),
+                (PointerPhase::Up, Some(PointerButton::Middle)),
+                (PointerPhase::Up, Some(PointerButton::Primary)),
+            ]
+        );
+
+        // 右クリックでブラウザのコンテキストメニューを出さない。
+        let init = web_sys::MouseEventInit::new();
+        init.set_bubbles(true);
+        init.set_cancelable(true);
+        init.set_button(2);
+        let menu = web_sys::MouseEvent::new_with_mouse_event_init_dict("contextmenu", &init)
+            .expect("contextmenu の生成");
+        element.dispatch_event(&menu).expect("イベントの配送");
+        assert!(menu.default_prevented(), "既定のメニューを止めること");
+        Ok(())
+    });
+}
+
+/// ホイールは `deltaMode` をそろえて論理ピクセルで届き、`Handled` のときだけ
+/// ページのスクロールを止める。`on_pointer` には届かない。
+#[wasm_bindgen_test]
+fn canvas_reports_wheel() {
+    with_ui(|ui| {
+        let canvas = ui.canvas()?;
+        canvas.set_sizing(
+            Sizing::new()
+                .width(Length::Fixed(100.0))
+                .height(Length::Fixed(60.0)),
+        );
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let response = Rc::new(Cell::new(EventResponse::Continue));
+        canvas.on_wheel({
+            let seen = seen.clone();
+            let response = response.clone();
+            move |event| {
+                seen.borrow_mut().push(event);
+                response.get()
+            }
+        });
+        let pointer = Rc::new(Cell::new(0));
+        canvas.on_pointer({
+            let pointer = pointer.clone();
+            move |_| pointer.set(pointer.get() + 1)
+        });
+        let _mounted = Mounted::new(&canvas);
+
+        let element = canvas.native_element();
+        let rect = element.get_bounding_client_rect();
+        let send = |x: f64, y: f64, dx: f64, dy: f64, mode: u32| {
+            let init = WheelEventInit::new();
+            init.set_bubbles(true);
+            init.set_cancelable(true);
+            init.set_client_x((rect.left() + x) as i32);
+            init.set_client_y((rect.top() + y) as i32);
+            init.set_delta_x(dx);
+            init.set_delta_y(dy);
+            init.set_delta_mode(mode);
+            let event = WheelEvent::new_with_event_init_dict("wheel", &init).expect("wheel の生成");
+            element.dispatch_event(&event).expect("イベントの配送");
+            event.default_prevented()
+        };
+
+        // ピクセルはそのまま。Continue ならページのスクロールを止めない。
+        assert!(!send(30.0, 20.0, 0.0, 12.5, WheelEvent::DOM_DELTA_PIXEL));
+        // 行は 1 行を WHEEL_STEP の 1/3 に、ページは面の大きさに直す。
+        response.set(EventResponse::Handled);
+        assert!(
+            send(30.0, 20.0, 0.0, -3.0, WheelEvent::DOM_DELTA_LINE),
+            "Handled ならページのスクロールを止めること"
+        );
+        assert!(send(30.0, 20.0, 1.0, 0.0, WheelEvent::DOM_DELTA_PAGE));
 
         let seen = seen.borrow();
         assert_eq!(seen.len(), 3);
-        assert_eq!(seen[0].phase, PointerPhase::Down);
-        assert_eq!(seen[1].phase, PointerPhase::Move);
-        assert_eq!(seen[2].phase, PointerPhase::Up);
+        assert!(seen
+            .iter()
+            .all(|e| e.phase == PointerPhase::Wheel && e.button.is_none()));
         let near = |a: Point, x: f64, y: f64| (a.x - x).abs() <= 1.0 && (a.y - y).abs() <= 1.0;
         assert!(near(seen[0].point, 30.0, 20.0), "{:?}", seen[0]);
-        assert!(near(seen[2].point, 50.0, 40.0), "{:?}", seen[2]);
+        let amounts: Vec<_> = seen.iter().map(|e| (e.wheel_x, e.wheel_y)).collect();
+        assert_eq!(
+            amounts,
+            vec![(0.0, 12.5), (0.0, -naui_core::WHEEL_STEP), (100.0, 0.0)]
+        );
+        assert_eq!(pointer.get(), 0, "ホイールは on_pointer へは届かないこと");
         Ok(())
     });
 }

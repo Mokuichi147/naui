@@ -16,12 +16,26 @@
 //! `matchMedia("(resolution: …dppx)")` の `change` で拾う。描き直しの要求
 //! (`redraw`) は `requestAnimationFrame` へまとめ、その場では描かない
 //! (他の 3 環境と同じ決まり)。
+//!
+//! どのボタンかは `PointerEvent.button` で見分ける。ブラウザは 2 つ目以降の
+//! ボタンの押下と解放 (左を押したまま右を押す、など) を `pointerdown` /
+//! `pointerup` ではなく `pointermove` で知らせる (`button` が -1 でない
+//! `pointermove`) ので、それも押下・解放として届ける。右クリックで出る
+//! ブラウザのコンテキストメニューは面の上では出さない (他の 3 環境の描画面にも
+//! 無いため)。
+//!
+//! ホイールは `wheel` イベントから取る。`deltaMode` が行 (Firefox の古い
+//! 既定など) なら 1 行を [`WHEEL_STEP`] の 1/3 に、ページなら面の大きさに直す。
+//! ピクセルのときはブラウザの量をそのまま届けるので、刻みのあるホイールの
+//! 1 刻みの量はブラウザによって違う。アプリが `Handled` を返したときだけ
+//! `preventDefault` してページのスクロールを止める。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, DrawCommand, Painter, Path, PathSegment, Point, PointerEvent, PointerPhase, Result,
+    Align, DrawCommand, EventResponse, Painter, Path, PathSegment, Point, PointerButton,
+    PointerEvent, PointerPhase, Result, WheelHandler, WHEEL_STEP,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -42,6 +56,7 @@ struct CanvasInner {
     context: CanvasRenderingContext2d,
     draw: DrawSlot,
     pointer: ValueHandler<PointerEvent>,
+    wheel: WheelHandler,
     /// `requestAnimationFrame` を予約済みかどうか。
     scheduled: Cell<bool>,
     /// 予約した描画を実行するクロージャ。1 つ作って使い回す。
@@ -84,6 +99,7 @@ impl Canvas {
             context,
             draw: RefCell::new(None),
             pointer: ValueHandler::default(),
+            wheel: WheelHandler::default(),
             scheduled: Cell::new(false),
             frame: RefCell::new(None),
             observer: RefCell::new(None),
@@ -140,19 +156,57 @@ impl Canvas {
                 else {
                     return;
                 };
+                let button = event.button();
+                // 2 つ目以降のボタンは `pointermove` で届く。押されたボタンが
+                // `buttons` に残っていれば押下、消えていれば解放。
+                let bit = web_buttons_bit(button);
+                let phase = match phase {
+                    PointerPhase::Move if bit != 0 => {
+                        if event.buttons() & bit != 0 {
+                            PointerPhase::Down
+                        } else {
+                            PointerPhase::Up
+                        }
+                    }
+                    phase => phase,
+                };
                 // 押している間は面の外へ出ても動きと解放が届くようにする。
                 if phase == PointerPhase::Down {
                     let _ = inner.canvas.set_pointer_capture(event.pointer_id());
                 }
-                // `offsetX` はつかんでいる間に当てにならないので、面の位置から引く。
-                let rect = inner.canvas.get_bounding_client_rect();
-                let point = Point::new(
-                    f64::from(event.client_x()) - rect.left(),
-                    f64::from(event.client_y()) - rect.top(),
-                );
-                inner.pointer.emit(PointerEvent::new(phase, point));
+                let mut pointer = PointerEvent::new(phase, inner.local_point(&event));
+                if phase != PointerPhase::Move {
+                    pointer = pointer.button(PointerButton::from_web_button(button));
+                }
+                inner.pointer.emit(pointer);
             })?);
         }
+
+        let weak = Rc::downgrade(&self.0);
+        listeners.push(Listener::attach_event(target, "wheel", move |event| {
+            let (Some(inner), Ok(event)) =
+                (weak.upgrade(), event.dyn_into::<web_sys::WheelEvent>())
+            else {
+                return;
+            };
+            // 量を先に読む (Firefox は `deltaMode` を先に読むと行で返す)。
+            let (dx, dy) = (event.delta_x(), event.delta_y());
+            let (width, height) = inner.css_size();
+            let (scale_x, scale_y) = match event.delta_mode() {
+                web_sys::WheelEvent::DOM_DELTA_LINE => (WHEEL_STEP / 3.0, WHEEL_STEP / 3.0),
+                web_sys::WheelEvent::DOM_DELTA_PAGE => (width, height),
+                _ => (1.0, 1.0),
+            };
+            let wheel = PointerEvent::wheel(inner.local_point(&event), dx * scale_x, dy * scale_y);
+            if inner.wheel.emit(wheel) == EventResponse::Handled {
+                event.prevent_default();
+            }
+        })?);
+
+        // 右クリックでブラウザのコンテキストメニューを出さない。
+        listeners.push(Listener::attach_event(target, "contextmenu", |event| {
+            event.prevent_default();
+        })?);
         *self.0._listeners.borrow_mut() = listeners;
         Ok(())
     }
@@ -184,9 +238,18 @@ impl Canvas {
     }
 
     /// ポインター (マウス・タッチ・ペン) の押下・移動・解放。位置は面の左上を
-    /// 原点にした CSS ピクセル。移動は押していない間 (ホバー) も届く。
+    /// 原点にした CSS ピクセル。移動は押していない間 (ホバー) も届く。押下と
+    /// 解放にはどのボタンかが付く ([`PointerEvent::button`])。
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.pointer.set(f);
+    }
+
+    /// ホイール (トラックパッドの 2 本指のスクロールも含む)。量は CSS ピクセル。
+    ///
+    /// `Handled` を返すと `preventDefault` してページのスクロールを止める。
+    /// `Continue` ならページや外側の `Scroll` がいつもどおりスクロールする。
+    pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
+        self.0.wheel.set(f);
     }
 
     /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
@@ -206,7 +269,33 @@ impl Canvas {
     }
 }
 
+/// `MouseEvent.button` の番号に当たる、`MouseEvent.buttons` のビット。
+///
+/// 2 つの番号の振り方は中と右で入れ替わっている (`button` は中が 1 で右が 2、
+/// `buttons` は右が 2 で中が 4)。
+fn web_buttons_bit(button: i16) -> u16 {
+    match button {
+        0 => 1,
+        1 => 4,
+        2 => 2,
+        3 => 8,
+        4 => 16,
+        _ => 0,
+    }
+}
+
 impl CanvasInner {
+    /// マウスのイベントの位置を、面の左上を原点にした CSS ピクセルへ直す。
+    ///
+    /// `offsetX` はつかんでいる間に当てにならないので、面の位置から引く。
+    fn local_point(&self, event: &web_sys::MouseEvent) -> Point {
+        let rect = self.canvas.get_bounding_client_rect();
+        Point::new(
+            f64::from(event.client_x()) - rect.left(),
+            f64::from(event.client_y()) - rect.top(),
+        )
+    }
+
     /// CSS 上の大きさ。
     fn css_size(&self) -> (f64, f64) {
         let element: &HtmlElement = self.canvas.as_ref();

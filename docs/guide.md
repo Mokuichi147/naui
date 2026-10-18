@@ -764,8 +764,53 @@ chart.redraw();
 
 `on_pointer` にはポインター (マウス・タッチ・ペン) の押下・移動・解放が、面の
 左上を原点にした位置で届きます (`PointerEvent`)。移動は押していない間 (ホバー) も
-届き、押している間は面の外へ出ても届きます (捕捉します)。右クリックや修飾キーは
-区別しません。
+届き、押している間は面の外へ出ても届きます (捕捉します)。押下と解放には、どの
+ボタンかが `PointerButton` で付きます (`Primary`・`Secondary`・`Middle`・`Back`・
+`Forward`。タッチとペン先は `Primary`)。ボタンの番号は環境ごとに違う (GTK は右が
+3、Web は中が 1) ので、意味でそろえてあります。修飾キーはまだ区別しません。
+
+```rust
+use naui::{EventResponse, PointerButton, PointerPhase, WHEEL_STEP};
+
+chart.on_pointer(|event| {
+    if event.phase == PointerPhase::Down && event.button == Some(PointerButton::Secondary) {
+        println!("右クリック: {:?}", event.point); // PopupMenu::open_at などへ
+    }
+});
+
+let mut scale = 1.0_f64;
+chart.on_wheel(move |event| {
+    scale *= 1.2_f64.powf(-event.wheel_y / WHEEL_STEP); // 1 刻みで 1.2 倍
+    EventResponse::Handled // ページはスクロールさせない
+});
+```
+
+ホイール (トラックパッドの 2 本指のスクロールも含む) は `on_wheel` に、
+`PointerPhase::Wheel` の `PointerEvent` として届きます。量は `wheel_x` /
+`wheel_y` で、**論理ピクセルにそろえてあります**。正は右・下へ読み進める向き
+(ページのスクロールと同じ) で、OS の「ナチュラルなスクロール」の設定は反映した
+あとの向きです。
+
+| 環境 | ネイティブの量 | naui に届く量 |
+| --- | --- | --- |
+| Windows | `MouseWheelDelta` (1 刻みで 120、縦は奥へ回すと正) | 120 を `WHEEL_STEP` に直し、縦の符号を反転 |
+| macOS | `scrollingDeltaX` / `Y` (トラックパッドはピクセル、ホイールは行。中身が動く向きで正) | ピクセルはそのまま、行は `WHEEL_STEP` 倍。符号を反転 |
+| Linux | `GtkEventControllerScroll` (単位が `SURFACE` ならピクセル、`WHEEL` なら刻み) | ピクセルはそのまま、刻みは `WHEEL_STEP` 倍 |
+| Web | `WheelEvent` (`deltaMode` がピクセル・行・ページ) | ピクセルはそのまま、行は `WHEEL_STEP` の 1/3 倍、ページは面の大きさ倍 |
+
+刻みのあるホイールの 1 刻みは `WHEEL_STEP` (48 ピクセル。Windows の既定の
+「1 刻みで 3 行」に 1 行 16 ピクセルを掛けた値) になります。ただし Web で
+ブラウザがピクセルで渡すときはブラウザの量のままなので、1 刻みの量はブラウザに
+よって違います。拡大縮小のように「1 刻みでどれだけ」を決めるときは、上の例の
+ように量を `WHEEL_STEP` で割った値を指数に使うと、トラックパッドの細かい量でも
+滑らかに効きます。
+
+`on_wheel` は `EventResponse` を返します。`Handled` なら外側のスクロール
+(`Scroll` やページ) へ回さず、`Continue` なら外側がいつもどおりスクロール
+します。`on_wheel` を付けていない面は、ホイールを外側へ回します。
+
+Web では、右クリックで出るブラウザのコンテキストメニューを面の上では出しません
+(他の 3 環境の描画面にも無いため)。
 
 Windows だけは**画素を描く面が Windows App SDK にありません** (Win2D は別
 パッケージ、`SwapChainPanel` は DirectX を自前で回す口)。そこで XAML が持つ図形の

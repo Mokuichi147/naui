@@ -15,17 +15,30 @@
 //!
 //! 大きさが変わったことは `SizeChanged` で拾い、ポインターは `PointerPressed` /
 //! `PointerMoved` / `PointerReleased` から取る。
+//!
+//! どのボタンかは `PointerPointProperties` の `IsLeftButtonPressed` などで見る。
+//! WinUI は 2 つ目以降のボタンの押下と解放 (左を押したまま右を押す、など) を
+//! `PointerMoved` で知らせるので、ポインターごとに押しているボタンの組を
+//! 覚えておき、前回との差を押下・解放として届ける (どの通知で来ても同じ扱い)。
+//!
+//! ホイールは `PointerWheelChanged` から取る。`MouseWheelDelta` は 1 刻みで
+//! 120 (`WHEEL_DELTA`) なので、120 を [`WHEEL_STEP`] に直す。縦の量は
+//! 「奥へ回すと正」で他の 3 環境と逆なので符号を反転し、横
+//! (`IsHorizontalMouseWheel`) は右が正なのでそのまま届ける。アプリが
+//! `Handled` を返したときだけ `Handled` を立て、外側の `ScrollViewer` へ回さない。
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use naui_core::{
-    Align, Color, DrawCommand, Painter, Path, PathSegment, Point, PointerEvent, PointerPhase,
-    Result,
+    Align, Color, DrawCommand, EventResponse, Painter, Path, PathSegment, Point, PointerButton,
+    PointerEvent, PointerPhase, Result, WheelHandler, WHEEL_STEP,
 };
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
+use naui_winui3::Microsoft::UI::Input::PointerPointProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{Canvas as XamlCanvas, Grid as XamlGrid};
 use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
@@ -103,6 +116,9 @@ struct CanvasInner {
     native: XamlGrid,
     draw: DrawHandler,
     pointer: PointerHandler,
+    wheel: WheelHandler,
+    /// ポインターごとの、いま押しているボタンの組 ([`button_bit`] の和)。
+    pressed: RefCell<HashMap<u32, u8>>,
     /// 描き直しを `DispatcherQueue` へ積んであるかどうか。
     scheduled: Cell<bool>,
 }
@@ -123,6 +139,8 @@ impl Canvas {
             native,
             draw: DrawHandler::new(),
             pointer: PointerHandler::new(),
+            wheel: WheelHandler::default(),
+            pressed: RefCell::new(HashMap::new()),
             scheduled: Cell::new(false),
         }));
         this.track_size()?;
@@ -177,29 +195,92 @@ impl Canvas {
                             PointerPhase::Up => {
                                 let _ = root.ReleasePointerCapture(&pointer);
                             }
-                            PointerPhase::Move => {}
+                            _ => {}
                         }
                     }
-                    let Ok(position) = args
-                        .GetCurrentPoint(&root)
-                        .and_then(|point| point.Position())
-                    else {
+                    let Ok(current) = args.GetCurrentPoint(&root) else {
                         return;
                     };
-                    inner.pointer.emit(PointerEvent::new(
-                        phase,
-                        Point::new(f64::from(position.X), f64::from(position.Y)),
-                    ));
+                    let Ok(position) = current.Position() else {
+                        return;
+                    };
+                    let point = Point::new(f64::from(position.X), f64::from(position.Y));
+                    let now = current
+                        .Properties()
+                        .map(|properties| pressed_buttons(&properties))
+                        .unwrap_or(0);
+                    let id = current.PointerId().unwrap_or(0);
+                    let before = {
+                        let mut pressed = inner.pressed.borrow_mut();
+                        if now == 0 {
+                            pressed.remove(&id).unwrap_or(0)
+                        } else {
+                            pressed.insert(id, now).unwrap_or(0)
+                        }
+                    };
+                    // `PointerPressed` は何も押していない状態からの最初の押下でだけ
+                    // 届く。捕捉を失って解放を見逃したときの残りは捨てる。
+                    let before = if phase == PointerPhase::Down {
+                        0
+                    } else {
+                        before
+                    };
+                    for (phase, button) in button_changes(phase, before, now) {
+                        inner
+                            .pointer
+                            .emit(PointerEvent::new(phase, point).button(button));
+                    }
                 });
                 Ok(())
             });
             match phase {
                 PointerPhase::Down => element.PointerPressed(&handler),
-                PointerPhase::Move => element.PointerMoved(&handler),
                 PointerPhase::Up => element.PointerReleased(&handler),
+                _ => element.PointerMoved(&handler),
             }
             .map_err(|e| to_error("Canvas のポインター購読", e))?;
         }
+
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let wheel = PointerEventHandler::new(move |_, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            let _ = target.try_with_mut(|weak: &mut Weak<CanvasInner>| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let Ok(root) = inner.native.cast::<UIElement>() else {
+                    return;
+                };
+                let Ok(current) = args.GetCurrentPoint(&root) else {
+                    return;
+                };
+                let (Ok(position), Ok(properties)) = (current.Position(), current.Properties())
+                else {
+                    return;
+                };
+                let delta =
+                    f64::from(properties.MouseWheelDelta().unwrap_or(0)) / 120.0 * WHEEL_STEP;
+                let (x, y) = if properties.IsHorizontalMouseWheel().unwrap_or(false) {
+                    (delta, 0.0)
+                } else {
+                    (0.0, -delta)
+                };
+                let event = PointerEvent::wheel(
+                    Point::new(f64::from(position.X), f64::from(position.Y)),
+                    x,
+                    y,
+                );
+                if inner.wheel.emit(event) == EventResponse::Handled {
+                    let _ = args.SetHandled(true);
+                }
+            });
+            Ok(())
+        });
+        element
+            .PointerWheelChanged(&wheel)
+            .map_err(|e| to_error("Canvas のホイール購読", e))?;
         Ok(())
     }
 
@@ -239,9 +320,18 @@ impl Canvas {
     }
 
     /// ポインター (マウス・タッチ・ペン) の押下・移動・解放。位置は面の左上を
-    /// 原点にした論理ピクセル。移動は押していない間 (ホバー) も届く。
+    /// 原点にした論理ピクセル。移動は押していない間 (ホバー) も届く。押下と
+    /// 解放にはどのボタンかが付く ([`PointerEvent::button`])。
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.pointer.set(f);
+    }
+
+    /// ホイール (高精度タッチパッドの 2 本指のスクロールも含む)。量は論理ピクセル。
+    ///
+    /// `Handled` を返すと外側のスクロールへは回らない。`Continue` なら
+    /// 外側の `ScrollViewer` がいつもどおりスクロールする。
+    pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
+        self.0.wheel.set(f);
     }
 
     /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
@@ -271,6 +361,70 @@ impl Canvas {
     pub fn native_grid(&self) -> XamlGrid {
         self.0.native.clone()
     }
+}
+
+/// 見分けるボタンの並び。押下と解放を届ける順にもなる。
+const BUTTONS: [PointerButton; 5] = [
+    PointerButton::Primary,
+    PointerButton::Secondary,
+    PointerButton::Middle,
+    PointerButton::Back,
+    PointerButton::Forward,
+];
+
+/// ボタンの組の中での、そのボタンのビット。
+fn button_bit(button: PointerButton) -> u8 {
+    match button {
+        PointerButton::Primary => 1,
+        PointerButton::Secondary => 2,
+        PointerButton::Middle => 4,
+        PointerButton::Back => 8,
+        PointerButton::Forward => 16,
+        _ => 0,
+    }
+}
+
+/// いま押しているボタンの組。タッチとペン先は `IsLeftButtonPressed` になる。
+fn pressed_buttons(properties: &PointerPointProperties) -> u8 {
+    let checks = [
+        properties.IsLeftButtonPressed(),
+        properties.IsRightButtonPressed(),
+        properties.IsMiddleButtonPressed(),
+        properties.IsXButton1Pressed(),
+        properties.IsXButton2Pressed(),
+    ];
+    BUTTONS
+        .iter()
+        .zip(checks)
+        .filter(|(_, pressed)| matches!(pressed, Ok(true)))
+        .fold(0, |bits, (button, _)| bits | button_bit(*button))
+}
+
+/// 前回と今回のボタンの組の差を、届ける通知の並びにする。
+///
+/// 差が無ければ、WinUI の通知の種類をそのまま (ボタン無しで) 届ける。
+fn button_changes(
+    phase: PointerPhase,
+    before: u8,
+    now: u8,
+) -> Vec<(PointerPhase, Option<PointerButton>)> {
+    let mut changes = Vec::new();
+    for button in BUTTONS {
+        let bit = button_bit(button);
+        if before & bit != 0 && now & bit == 0 {
+            changes.push((PointerPhase::Up, Some(button)));
+        }
+    }
+    for button in BUTTONS {
+        let bit = button_bit(button);
+        if before & bit == 0 && now & bit != 0 {
+            changes.push((PointerPhase::Down, Some(button)));
+        }
+    }
+    if changes.is_empty() {
+        changes.push((phase, None));
+    }
+    changes
 }
 
 impl CanvasInner {
