@@ -4974,19 +4974,7 @@ fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
                 let event = mouse_event(&native, kind, point, 1);
                 unsafe { app.postEvent_atStart(&event, false) };
             }
-            // DIAG
-            while let Some(event) = unsafe {
-                app.nextEventMatchingMask_untilDate_inMode_dequeue(
-                    NSEventMask::Any,
-                    Some(&NSDate::distantPast()),
-                    NSDefaultRunLoopMode,
-                    true,
-                )
-            } {
-                eprintln!("DIAG: dequeued {:?} window={:?}", event.r#type(), event.window(mtm).map(|w| w.windowNumber()));
-                app.sendEvent(&event);
-                eprintln!("DIAG: sent {:?}", event.r#type());
-            }
+            deliver_events(&app);
         } else {
             // 配送できない環境では、AppKit が呼ぶ口を直接呼ぶ。
             let event = mouse_event(&native, NSEventType::RightMouseDown, point, 1);
