@@ -11,6 +11,7 @@
 //! 変えないので、そのときは通知しない (ほかの環境と同じ)。
 //!
 //! 登録表は要素を弱参照で持つ。要素が解放されれば通知先も表から外れる。
+//! 終了の経路では [`release_handlers`] で通知先を手放す ([`Registry`] を参照)。
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak as RcWeak};
@@ -22,7 +23,7 @@ use naui_winui3::Microsoft::UI::Xaml::{DependencyObject, RoutedEventHandler, UIE
 use windows_core::{Interface, Weak};
 
 use crate::keys::same;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{Registry, UiThreadCell};
 
 /// ウィンドウの根 1 つぶんの見張り。
 #[derive(Default)]
@@ -33,10 +34,10 @@ struct Tracker {
     focused: RefCell<Option<Weak<DependencyObject>>>,
 }
 
-type Entries = RefCell<Vec<(Weak<UIElement>, Rc<FocusHandler>)>>;
+type Entries = Registry<(Weak<UIElement>, Rc<FocusHandler>)>;
 
 thread_local! {
-    static WIDGETS: Entries = const { RefCell::new(Vec::new()) };
+    static WIDGETS: Entries = const { Registry::new() };
     /// 生きている見張り。見張りそのものは根の購読が持っている。
     static TRACKERS: RefCell<Vec<RcWeak<Tracker>>> = const { RefCell::new(Vec::new()) };
 }
@@ -79,6 +80,24 @@ fn adopt_current_focus(handler: &Rc<FocusHandler>) {
             tracker.owner.reset(Some(handler.clone()));
         }
     }
+}
+
+/// 通知先をすべて手放す。終了の経路で、XAML の後片づけより前に呼ぶ。
+///
+/// 見張りが覚えている持ち主も通知先を掴んでいるので、あわせて外す。
+pub(crate) fn release_handlers() {
+    let trackers: Vec<Rc<Tracker>> = TRACKERS.with(|trackers| {
+        trackers
+            .borrow()
+            .iter()
+            .filter_map(RcWeak::upgrade)
+            .collect()
+    });
+    for tracker in trackers {
+        tracker.owner.reset(None);
+    }
+    // 借用の外で捨てる。
+    drop(WIDGETS.with(Registry::take));
 }
 
 fn lookup(object: &DependencyObject) -> Option<Rc<FocusHandler>> {

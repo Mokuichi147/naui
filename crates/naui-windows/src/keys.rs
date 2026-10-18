@@ -13,6 +13,7 @@
 //! `TextCompositionStarted` / `TextCompositionEnded` の間も変換中とみなす。
 //!
 //! 登録表は要素を弱参照で持つ。要素が解放されれば通知先も表から外れる。
+//! 終了の経路では [`release_handlers`] で通知先を手放す ([`Registry`] を参照)。
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -30,15 +31,15 @@ use windows::Foundation::TypedEventHandler;
 use windows::System::VirtualKey;
 use windows_core::{IUnknown, Interface, Weak};
 
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{Registry, UiThreadCell};
 
 /// IME が処理しているキー。`Windows.System.VirtualKey` には名前が無い。
 const VK_PROCESSKEY: i32 = 229;
 
-type Entries = RefCell<Vec<(Weak<UIElement>, Rc<KeyHandler>)>>;
+type Entries = Registry<(Weak<UIElement>, Rc<KeyHandler>)>;
 
 thread_local! {
-    static WIDGETS: Entries = const { RefCell::new(Vec::new()) };
+    static WIDGETS: Entries = const { Registry::new() };
     /// 変換の始まりと終わりを購読済みの `TextBox`。
     static WATCHED: RefCell<Vec<Weak<TextBox>>> = const { RefCell::new(Vec::new()) };
     /// いま変換中の `TextBox`。
@@ -75,6 +76,12 @@ pub(crate) fn set_widget_handler(
         handler.set(f);
         entries.push((weak, handler));
     });
+}
+
+/// 通知先をすべて手放す。終了の経路で、XAML の後片づけより前に呼ぶ。
+pub(crate) fn release_handlers() {
+    // 借用の外で捨てる。
+    drop(WIDGETS.with(Registry::take));
 }
 
 fn lookup(object: &DependencyObject) -> Option<Rc<KeyHandler>> {

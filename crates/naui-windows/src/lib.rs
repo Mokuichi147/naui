@@ -171,6 +171,7 @@ impl Ui {
         for window in self.0.windows.borrow().iter() {
             window.clear_content_for_shutdown();
         }
+        release_widget_handlers();
     }
 
     pub fn stack(&self, orientation: Orientation) -> Result<Stack> {
@@ -485,10 +486,22 @@ impl Ui {
         for window in self.0.windows.borrow().iter() {
             window.release_backdrop();
         }
+        release_widget_handlers();
         if let Ok(app) = naui_winui3::Microsoft::UI::Xaml::Application::Current() {
             let _ = app.Exit();
         }
     }
+}
+
+/// `on_key_down` と `on_focus_change` の通知先を手放す。
+///
+/// 通知先は要素ではなく `thread_local!` の表が持っているので、XAML の
+/// ツリーを外しても残る。終了の経路でここを通さないと、クロージャが
+/// 掴んだウィジェットはプロセスの終わりまで手放されない
+/// ([`ui_thread::Registry`] を参照)。
+fn release_widget_handlers() {
+    keys::release_handlers();
+    focus::release_handlers();
 }
 
 /// アプリを起動し、`build` の中で UI を組み立てる。
