@@ -196,7 +196,6 @@ objc2-app-kit = { version = "0.3", features = [
 # ホイールの `NSEvent` は公開の作り方が無いので、`CGEvent` から作る。
 objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "std",
-    "CGDirectDisplay",
     "CGEvent",
     "CGEventTypes",
 ] }

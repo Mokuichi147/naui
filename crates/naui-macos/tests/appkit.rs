@@ -25,16 +25,19 @@ use naui_core::{
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::Retained;
+use objc2::runtime::NSObjectProtocol;
 use objc2::sel;
-use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
+use objc2::{
+    define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
+};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSButton, NSColor, NSColorSpace, NSComboBox,
     NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
     NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSScrollerStyle,
-    NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate,
-    NSTextField, NSTextInputClient, NSTextView, NSUserInterfaceItemIdentification, NSView,
-    NSWindow, NSWindowTitleVisibility,
+    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder, NSScrollView,
+    NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
+    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
@@ -76,7 +79,7 @@ fn main() {
             canvas_reports_pointer_events,
         ),
         (
-            "描画面がホイールを論理ピクセルで通知し、Continue なら外側がスクロールする",
+            "描画面がホイールを論理ピクセルで通知し、Continue なら外側へ回す",
             canvas_reports_wheel,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
@@ -1154,18 +1157,39 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ホイールが論理ピクセルにそろえて届き、`Continue` なら外側の
-/// `NSScrollView` がスクロールし、`Handled` なら止まる。
+define_class!(
+    /// `scrollWheel:` が届いた回数を数えるレスポンダー。描画面の次のレスポンダーに
+    /// 差して、`Continue` のホイールが外側へ回ったかを見る。
+    #[unsafe(super(NSResponder))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiTestWheelSink"]
+    #[ivars = Cell<usize>]
+    struct WheelSink;
+
+    unsafe impl NSObjectProtocol for WheelSink {}
+
+    impl WheelSink {
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, _event: &NSEvent) {
+            self.ivars().set(self.ivars().get() + 1);
+        }
+    }
+);
+
+/// ホイールが論理ピクセルにそろえて届き、`Continue` なら次のレスポンダー
+/// (ふつうは外側の `NSScrollView`) へ回り、`Handled` なら回らない。
+///
+/// 外側の `NSScrollView` が実際にスクロールするかは、合成したイベントでは
+/// 環境によって違う (手元では動き、CI のランナーでは動かなかった) ので、
+/// 回ったこと自体を記録用のレスポンダーで見る。
 fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
-    use objc2_core_graphics::{
-        CGDisplayBounds, CGEvent, CGEventField, CGMainDisplayID, CGScrollEventUnit,
-    };
+    use objc2_core_graphics::{CGEvent, CGScrollEventUnit};
 
     let canvas = ui.canvas()?;
     canvas.set_sizing(
         Sizing::new()
             .width(Length::Fixed(100.0))
-            .height(Length::Fixed(400.0)),
+            .height(Length::Fixed(60.0)),
     );
     let seen = Rc::new(RefCell::new(Vec::new()));
     let response = Rc::new(Cell::new(EventResponse::Continue));
@@ -1177,48 +1201,30 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
             response.get()
         }
     });
-    let scroll = ui.scroll()?;
-    scroll.set_child(&canvas);
-    scroll.set_sizing(Sizing::fill());
     let window = ui.window("wheel", 200.0, 100.0)?;
-    window.set_child(&scroll);
+    window.set_child(&canvas);
     window.show();
     let view = canvas.native_view();
 
-    let native_window = window.native_window();
+    // 次のレスポンダーは弱参照なので、テストの終わりまで持っておき、戻してから捨てる。
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let sink: Retained<WheelSink> =
+        unsafe { msg_send![super(WheelSink::alloc(mtm).set_ivars(Cell::new(0))), init] };
+    // 弱参照の付け替えなので unsafe。`sink` も元の値もこの関数の間は生きている。
+    let original = unsafe { view.nextResponder() };
+    unsafe { view.setNextResponder(Some(&sink)) };
 
     // 本物のホイールの NSEvent は CGEvent からしか作れない。正の量は上へ
     // (中身が下へ動く向き) なので、負の量で下へ読み進める。
-    //
-    // CGEvent の位置は指定しないと**いまのマウスカーソルの位置**になり、窓の外だと
-    // 外側の NSScrollView が受け流してしまう。面の (20, 10) をスクリーン座標
-    // (主ディスプレイの左上が原点、y は下向き) へ直して入れ、窓の番号も付ける。
-    // それでも NSEvent の `window` は空のままで `locationInWindow` がスクリーン
-    // 座標になるので、ここでは位置は確かめない (位置はマウスのテストで見ている)。
     let wheel = |unit: CGScrollEventUnit, amount: i32| {
         let cg = CGEvent::new_scroll_wheel_event2(None, unit, 1, amount, 0, 0)
             .expect("ホイールの CGEvent");
-        let in_window = view.convertPoint_toView(NSPoint::new(20.0, 10.0), None);
-        let on_screen = native_window.convertPointToScreen(in_window);
-        let main_height = CGDisplayBounds(CGMainDisplayID()).size.height;
-        CGEvent::set_location(
-            Some(&cg),
-            NSPoint::new(on_screen.x, main_height - on_screen.y),
-        );
-        let number = native_window.windowNumber() as i64;
-        for field in [
-            CGEventField::MouseEventWindowUnderMousePointer,
-            CGEventField::MouseEventWindowUnderMousePointerThatCanHandleThisEvent,
-        ] {
-            CGEvent::set_integer_value_field(Some(&cg), field, number);
-        }
         let event = NSEvent::eventWithCGEvent(&cg).expect("ホイールの NSEvent");
         view.scrollWheel(&event);
     };
 
     // 細かく測れる量 (ピクセル) はそのまま、向きは「下へ読み進めると正」。
     wheel(CGScrollEventUnit::Pixel, -30);
-    pump_until(1.0, || scroll.metrics().y != 0.0);
     {
         let seen = seen.borrow();
         assert_eq!(seen.len(), 1);
@@ -1232,15 +1238,14 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
         );
     }
     assert_eq!(
-        scroll.metrics().y,
-        30.0,
-        "Continue なら外側の NSScrollView がスクロールすること"
+        sink.ivars().get(),
+        1,
+        "Continue なら次のレスポンダーへ回すこと"
     );
 
     // 刻みのあるホイールの 1 刻み (行) は WHEEL_STEP に直す。
     response.set(EventResponse::Handled);
     wheel(CGScrollEventUnit::Line, -1);
-    pump(0.2);
     {
         let seen = seen.borrow();
         assert_eq!(seen.len(), 2);
@@ -1252,10 +1257,12 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
         );
     }
     assert_eq!(
-        scroll.metrics().y,
-        30.0,
-        "Handled なら外側はスクロールしないこと"
+        sink.ivars().get(),
+        1,
+        "Handled なら次のレスポンダーへは回さないこと"
     );
+
+    unsafe { view.setNextResponder(original.as_deref()) };
     window.close();
     Ok(())
 }
