@@ -233,6 +233,7 @@ define_class!(
         /// 出てしまう。
         #[unsafe(method(rightMouseDown:))]
         fn right_mouse_down(&self, event: &NSEvent) {
+            eprintln!("DIAG: ListTableView rightMouseDown");
             if !self.notify_context_menu(event) {
                 let _: () = unsafe { msg_send![super(self), rightMouseDown: event] };
             }
@@ -245,6 +246,7 @@ define_class!(
         /// `NSTableView` 既定のふるまい (自分の `menu`) に任せる。
         #[unsafe(method_id(menuForEvent:))]
         fn menu_for_event(&self, event: &NSEvent) -> Option<Retained<NSMenu>> {
+            eprintln!("DIAG: ListTableView menuForEvent");
             if self.notify_context_menu(event) {
                 None
             } else {
