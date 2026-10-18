@@ -118,6 +118,10 @@ const CASES: &[Case] = &[
         text_widgets_accept_key_handlers,
     ),
     (
+        "1 行入力・パスワード入力・数値入力に on_submit を付けられる",
+        text_widgets_accept_submit_handlers,
+    ),
+    (
         "タイマーが DispatcherQueue で呼ばれ、止められる",
         timers_fire_on_the_dispatcher_queue,
     ),
@@ -2207,6 +2211,22 @@ fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
     ui.search_input()?.on_key_down(handler);
     ui.number_input(1.0)?.on_key_down(handler);
     ui.editable_combo_box()?.on_key_down(handler);
+    Ok(())
+}
+
+/// Enter を起こす公開 API が無いので、ここでは付けられることと、付けても
+/// 文字列や値の扱いが変わらないことだけを確かめる (実際の配送は実機で確かめる)。
+fn text_widgets_accept_submit_handlers(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("ねこ")?;
+    input.on_submit(|_: &str| {});
+    assert_eq!(input.text(), "ねこ");
+    let password = ui.password_input()?;
+    password.on_submit(|_: &str| {});
+    password.set_text("ひみつ");
+    assert_eq!(password.text(), "ひみつ");
+    let number = ui.number_input(3.0)?;
+    number.on_submit(|_: f64| {});
+    assert_eq!(number.value(), 3.0);
     Ok(())
 }
 

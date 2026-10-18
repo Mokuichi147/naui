@@ -47,62 +47,31 @@ impl ActionTarget {
 
 type TextCallback = RefCell<Box<dyn FnMut(&str)>>;
 
-define_class!(
-    #[unsafe(super(NSObject))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "NauiTextObserver"]
-    #[ivars = TextCallback]
-    pub(crate) struct TextObserver;
-
-    unsafe impl NSObjectProtocol for TextObserver {}
-
-    unsafe impl NSControlTextEditingDelegate for TextObserver {
-        #[unsafe(method(controlTextDidChange:))]
-        fn control_text_did_change(&self, notification: &NSNotification) {
-            let Some(object) = notification.object() else {
-                return;
-            };
-            let Ok(control) = object.downcast::<NSControl>() else {
-                return;
-            };
-            let text = control.stringValue().to_string();
-            let mut cb = self.ivars().borrow_mut();
-            (cb)(&text);
-        }
-    }
-
-    unsafe impl NSTextFieldDelegate for TextObserver {}
-);
-
-impl TextObserver {
-    pub(crate) fn new(mtm: MainThreadMarker, f: impl FnMut(&str) + 'static) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(RefCell::new(Box::new(f) as Box<dyn FnMut(&str)>));
-        unsafe { msg_send![super(this), init] }
-    }
-}
-
-/// 検索欄の 2 つの通知先。
+/// 1 行の文字入力欄の 2 つの通知先。
 ///
-/// 打つたびの `on_change` と、Enter で確定したときの `on_search` を 1 つの
-/// デリゲートで受けるため、両方をまとめて持つ。呼び出しの間だけクロージャを
-/// 取り出すのは [`ValueHandler`] と同じ (通知の中で同じ欄を触っても
-/// 二重借用にならない)。
+/// 打つたびの `on_change` と、Enter で確定したときの通知 (`on_submit`、
+/// 検索欄では `on_search`) を 1 つのデリゲートで受けるため、両方をまとめて
+/// 持つ。呼び出しの間だけクロージャを取り出すのは [`ValueHandler`] と同じ
+/// (通知の中で同じ欄を触っても二重借用にならない)。
 #[derive(Default)]
-pub(crate) struct SearchHandlers {
-    change: RefCell<Option<Box<dyn FnMut(&str)>>>,
-    search: RefCell<Option<Box<dyn FnMut(&str)>>>,
+pub(crate) struct FieldHandlers {
+    change: TextSlot,
+    submit: TextSlot,
 }
 
-impl SearchHandlers {
+/// 文字列を受け取るクロージャの置き場。空のこともある。
+type TextSlot = RefCell<Option<Box<dyn FnMut(&str)>>>;
+
+impl FieldHandlers {
     pub(crate) fn set_change(&self, f: impl FnMut(&str) + 'static) {
         *self.change.borrow_mut() = Some(Box::new(f));
     }
 
-    pub(crate) fn set_search(&self, f: impl FnMut(&str) + 'static) {
-        *self.search.borrow_mut() = Some(Box::new(f));
+    pub(crate) fn set_submit(&self, f: impl FnMut(&str) + 'static) {
+        *self.submit.borrow_mut() = Some(Box::new(f));
     }
 
-    fn emit(slot: &RefCell<Option<Box<dyn FnMut(&str)>>>, text: &str) {
+    fn emit(slot: &TextSlot, text: &str) {
         let Some(mut f) = slot.borrow_mut().take() else {
             return;
         };
@@ -118,13 +87,15 @@ impl SearchHandlers {
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "NauiSearchObserver"]
-    #[ivars = Rc<SearchHandlers>]
-    pub(crate) struct SearchObserver;
+    #[name = "NauiFieldObserver"]
+    #[ivars = Rc<FieldHandlers>]
+    /// `NSTextField` (と、その派生の `NSSecureTextField` / `NSSearchField`) の
+    /// デリゲート。
+    pub(crate) struct FieldObserver;
 
-    unsafe impl NSObjectProtocol for SearchObserver {}
+    unsafe impl NSObjectProtocol for FieldObserver {}
 
-    unsafe impl NSControlTextEditingDelegate for SearchObserver {
+    unsafe impl NSControlTextEditingDelegate for FieldObserver {
         #[unsafe(method(controlTextDidChange:))]
         fn control_text_did_change(&self, notification: &NSNotification) {
             let Some(object) = notification.object() else {
@@ -134,12 +105,14 @@ define_class!(
                 return;
             };
             let text = control.stringValue().to_string();
-            SearchHandlers::emit(&self.ivars().change, &text);
+            FieldHandlers::emit(&self.ivars().change, &text);
         }
 
-        // Enter だけを拾うため、NSSearchField の action ではなく編集中の
-        // コマンドを見る。action は取り消しボタン (✕) でも飛ぶので、
-        // 「確定したとき」という意味からずれる。
+        // Enter だけを拾うため、コントロールの action ではなく編集中の
+        // コマンドを見る。action は欄を離れたときや検索欄の取り消しボタン
+        // (✕) でも飛ぶので、「確定したとき」という意味からずれる。
+        //
+        // IME で変換している間の Enter は IME が受け取るので、ここへは来ない。
         #[unsafe(method(control:textView:doCommandBySelector:))]
         fn do_command_by_selector(
             &self,
@@ -149,20 +122,20 @@ define_class!(
         ) -> bool {
             if command == sel!(insertNewline:) {
                 let text = control.stringValue().to_string();
-                SearchHandlers::emit(&self.ivars().search, &text);
+                FieldHandlers::emit(&self.ivars().submit, &text);
             }
             // 既定の動作 (編集の確定) は AppKit へ任せる。
             false
         }
     }
 
-    unsafe impl NSTextFieldDelegate for SearchObserver {}
+    unsafe impl NSTextFieldDelegate for FieldObserver {}
 
-    unsafe impl NSSearchFieldDelegate for SearchObserver {}
+    unsafe impl NSSearchFieldDelegate for FieldObserver {}
 );
 
-impl SearchObserver {
-    pub(crate) fn new(mtm: MainThreadMarker, handlers: Rc<SearchHandlers>) -> Retained<Self> {
+impl FieldObserver {
+    pub(crate) fn new(mtm: MainThreadMarker, handlers: Rc<FieldHandlers>) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(handlers);
         unsafe { msg_send![super(this), init] }
     }

@@ -23,9 +23,7 @@ use objc2_foundation::{
     NSArray, NSDictionary, NSEdgeInsets, NSNotificationCenter, NSPoint, NSRect, NSSize, NSString,
 };
 
-use crate::trampoline::{
-    ActionTarget, SearchHandlers, SearchObserver, TextObserver, TextViewObserver,
-};
+use crate::trampoline::{ActionTarget, FieldHandlers, FieldObserver, TextViewObserver};
 
 /// naui のウィジェットが実装する共通インタフェース。
 pub trait Widget: 'static {
@@ -429,7 +427,9 @@ impl Checkbox {
 
 struct TextInputInner {
     native: Retained<NSTextField>,
-    observer: RefCell<Option<Retained<TextObserver>>>,
+    handlers: Rc<FieldHandlers>,
+    // NSTextField の delegate は weak なので、こちら側で生かしておく。
+    _observer: Retained<FieldObserver>,
 }
 
 /// 1 行テキスト入力 (NSTextField)。日本語入力は AppKit の IME がそのまま効く。
@@ -441,9 +441,11 @@ impl_widget!(TextInput);
 impl TextInput {
     pub(crate) fn new(mtm: MainThreadMarker, text: &str) -> Self {
         let native = NSTextField::textFieldWithString(&NSString::from_str(text), mtm);
+        let (handlers, observer) = observe_field(mtm, &native);
         Self(Rc::new(TextInputInner {
             native,
-            observer: RefCell::new(None),
+            handlers,
+            _observer: observer,
         }))
     }
 
@@ -467,14 +469,20 @@ impl TextInput {
 
     /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
-        let mtm = MainThreadMarker::from(&*self.0.native);
-        let observer = TextObserver::new(mtm, f);
-        unsafe {
-            self.0
-                .native
-                .setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)))
-        };
-        *self.0.observer.borrow_mut() = Some(observer);
+        self.0.handlers.set_change(f);
+    }
+
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    ///
+    /// IME で変換している間の Enter (変換の確定) では呼ばれない。読み取り
+    /// 専用の間も呼ばれない。
+    pub fn on_submit(&self, mut f: impl FnMut(&str) + 'static) {
+        let native = self.0.native.clone();
+        self.0.handlers.set_submit(move |text| {
+            if native.isEditable() {
+                f(text);
+            }
+        });
     }
 
     /// 読み取り専用にするか。既定は書き換えられる。
@@ -496,7 +504,9 @@ impl TextInput {
 
 struct PasswordInputInner {
     native: Retained<NSSecureTextField>,
-    observer: RefCell<Option<Retained<TextObserver>>>,
+    handlers: Rc<FieldHandlers>,
+    // NSSecureTextField の delegate は weak なので、こちら側で生かしておく。
+    _observer: Retained<FieldObserver>,
 }
 
 /// パスワード入力 (`NSSecureTextField`)。
@@ -511,9 +521,11 @@ impl_widget!(PasswordInput);
 impl PasswordInput {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let native = NSSecureTextField::new(mtm);
+        let (handlers, observer) = observe_field(mtm, &native);
         Self(Rc::new(PasswordInputInner {
             native,
-            observer: RefCell::new(None),
+            handlers,
+            _observer: observer,
         }))
     }
 
@@ -539,14 +551,12 @@ impl PasswordInput {
 
     /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
-        let mtm = MainThreadMarker::from(&*self.0.native);
-        let observer = TextObserver::new(mtm, f);
-        unsafe {
-            self.0
-                .native
-                .setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)))
-        };
-        *self.0.observer.borrow_mut() = Some(observer);
+        self.0.handlers.set_change(f);
+    }
+
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
+        self.0.handlers.set_submit(f);
     }
 }
 
@@ -554,9 +564,9 @@ impl PasswordInput {
 
 struct SearchInputInner {
     native: Retained<NSSearchField>,
-    handlers: Rc<SearchHandlers>,
+    handlers: Rc<FieldHandlers>,
     // NSSearchField の delegate は weak なので、こちら側で生かしておく。
-    observer: RefCell<Option<Retained<SearchObserver>>>,
+    _observer: Retained<FieldObserver>,
 }
 
 /// 検索の入力欄 (`NSSearchField`)。
@@ -572,20 +582,12 @@ impl_widget!(SearchInput);
 impl SearchInput {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let native = NSSearchField::new(mtm);
-        let this = Self(Rc::new(SearchInputInner {
+        let (handlers, observer) = observe_field(mtm, &native);
+        Self(Rc::new(SearchInputInner {
             native,
-            handlers: Rc::new(SearchHandlers::default()),
-            observer: RefCell::new(None),
-        }));
-        // デリゲートは 2 つの通知で共有するので、生成のときに一度だけ張る。
-        let observer = SearchObserver::new(mtm, this.0.handlers.clone());
-        unsafe {
-            this.0
-                .native
-                .setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)))
-        };
-        *this.0.observer.borrow_mut() = Some(observer);
-        this
+            handlers,
+            _observer: observer,
+        }))
     }
 
     /// いま入力されている文字列。
@@ -615,8 +617,22 @@ impl SearchInput {
 
     /// Enter で確定したときに、その時点の文字列で呼ばれる。
     pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
-        self.0.handlers.set_search(f);
+        self.0.handlers.set_submit(f);
     }
+}
+
+/// 1 行の入力欄へデリゲートを張る。
+///
+/// 打鍵と確定の 2 つの通知で共有するので、生成のときに一度だけ張る。
+/// AppKit の delegate は weak なので、返したデリゲートは呼び出し側で持っておく。
+pub(crate) fn observe_field(
+    mtm: MainThreadMarker,
+    field: &NSTextField,
+) -> (Rc<FieldHandlers>, Retained<FieldObserver>) {
+    let handlers = Rc::new(FieldHandlers::default());
+    let observer = FieldObserver::new(mtm, handlers.clone());
+    unsafe { field.setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer))) };
+    (handlers, observer)
 }
 
 // --------------------------------------------------------------- TextArea

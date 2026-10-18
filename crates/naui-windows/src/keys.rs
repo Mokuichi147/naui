@@ -158,6 +158,39 @@ fn dispatch(
     window.emit(&event)
 }
 
+/// 入力欄で Enter が押されたら `f` を呼ぶ (要素の `PreviewKeyDown`)。
+///
+/// `TextBox` / `PasswordBox` には確定だけを知らせるイベントが無いので、
+/// キーから拾う。コントロールが自分でキーを処理して `Handled` を立てても
+/// 取りこぼさないよう、コントロールより先に届くトンネルのほうで受ける。
+/// `on_key_down` が `Handled` を返したキーは、さらに先に届くウィンドウの根の
+/// `PreviewKeyDown` で `Handled` が立つので、ここへは来ない。変換を確定する
+/// Enter (`VK_PROCESSKEY` で来るもの、`TextBox` の変換中のもの) も数えない。
+///
+/// `f` は要素のデリゲートに残り続けるので、ウィジェットは弱参照で持つこと。
+pub(crate) fn on_enter(element: &UIElement, f: impl FnMut() + 'static) -> windows_core::Result<()> {
+    let f = UiThreadCell::new(f);
+    let handler = KeyEventHandler::new(move |_, args| {
+        let Some(args) = args.as_ref() else {
+            return Ok(());
+        };
+        if args.Key().unwrap_or(VirtualKey::None) != VirtualKey::Enter {
+            return Ok(());
+        }
+        let text_box = args
+            .OriginalSource()
+            .ok()
+            .and_then(|source| source.cast::<TextBox>().ok());
+        if text_box.is_some_and(|text_box| is_composing(&text_box)) {
+            return Ok(());
+        }
+        let _ = f.try_with_mut(|f| f());
+        Ok(())
+    });
+    element.PreviewKeyDown(&handler)?;
+    Ok(())
+}
+
 /// `TextBox` の変換の始まりと終わりを覚える。
 fn watch_composition(text_box: &TextBox) {
     let already = WATCHED.with(|watched| {

@@ -19,7 +19,7 @@ use windows::Foundation::{EventHandler, PropertyValue, TypedEventHandler};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{TextHandler, UiThreadCell};
 
 /// naui のウィジェットが実装する共通インタフェース。
 pub trait Widget: 'static {
@@ -443,6 +443,7 @@ impl Checkbox {
 struct TextInputInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
+    on_submit: TextHandler,
 }
 
 /// 1 行テキスト入力 (TextBox)。IME は Windows が処理する。
@@ -457,10 +458,29 @@ impl TextInput {
         native
             .SetText(&HSTRING::from(text))
             .map_err(|e| to_error("TextBox への設定", e))?;
-        Ok(Self(Rc::new(TextInputInner {
+        let inner = Rc::new(TextInputInner {
             native,
             token: RefCell::new(None),
-        })))
+            on_submit: TextHandler::new(),
+        });
+        let element: UIElement = inner
+            .native
+            .cast()
+            .map_err(|e| to_error("TextBox の要素の取得", e))?;
+        let weak = Rc::downgrade(&inner);
+        crate::keys::on_enter(&element, move || {
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            // 読み取り専用の間は書き換えられないので、確定もしない。
+            if inner.native.IsReadOnly().unwrap_or(false) {
+                return;
+            }
+            let text = inner.native.Text().unwrap_or_default().to_string();
+            inner.on_submit.emit(&text);
+        })
+        .map_err(|e| to_error("TextBox の Enter の購読", e))?;
+        Ok(Self(inner))
     }
 
     pub fn text(&self) -> String {
@@ -502,6 +522,14 @@ impl TextInput {
         }
     }
 
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    ///
+    /// IME で変換している間の Enter (変換の確定) では呼ばれない。読み取り
+    /// 専用の間も呼ばれない。
+    pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
+        self.0.on_submit.set(f);
+    }
+
     /// 読み取り専用にするか。既定は書き換えられる。
     ///
     /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
@@ -521,6 +549,7 @@ impl TextInput {
 struct PasswordInputInner {
     native: PasswordBox,
     token: RefCell<Option<i64>>,
+    on_submit: TextHandler,
 }
 
 /// パスワード入力 (PasswordBox)。
@@ -536,10 +565,24 @@ impl_widget!(PasswordInput, native);
 impl PasswordInput {
     pub(crate) fn new() -> Result<Self> {
         let native = PasswordBox::new().map_err(|e| to_error("PasswordBox の生成", e))?;
-        Ok(Self(Rc::new(PasswordInputInner {
+        let inner = Rc::new(PasswordInputInner {
             native,
             token: RefCell::new(None),
-        })))
+            on_submit: TextHandler::new(),
+        });
+        let element: UIElement = inner
+            .native
+            .cast()
+            .map_err(|e| to_error("PasswordBox の要素の取得", e))?;
+        let weak = Rc::downgrade(&inner);
+        crate::keys::on_enter(&element, move || {
+            if let Some(inner) = weak.upgrade() {
+                let text = inner.native.Password().unwrap_or_default().to_string();
+                inner.on_submit.emit(&text);
+            }
+        })
+        .map_err(|e| to_error("PasswordBox の Enter の購読", e))?;
+        Ok(Self(inner))
     }
 
     /// いま入力されている文字列。
@@ -583,6 +626,11 @@ impl PasswordInput {
         if let Ok(token) = self.0.native.PasswordChanged(&handler) {
             *self.0.token.borrow_mut() = Some(token);
         }
+    }
+
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
+        self.0.on_submit.set(f);
     }
 }
 

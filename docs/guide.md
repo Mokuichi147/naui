@@ -309,6 +309,28 @@ password.on_change(|text| println!("{} 文字", text.chars().count()));
 部分にならないためです。入力された文字列は `text()` で読めるので、扱いはアプリの
 責任になります。
 
+### Enter での確定
+
+`TextInput`、`PasswordInput`、`NumberInput` は、Enter で確定したときに
+`on_submit` を呼びます。フォームの送信やログインのように、打ち終えたところで
+動かしたい処理に使います。
+
+```rust
+let name = ui.text_input("")?;
+name.on_change(|text| println!("入力中: {text}")); // 打つたび
+name.on_submit(|text| println!("{text} で登録する")); // Enter で確定したとき
+```
+
+**IME で変換している間の Enter (変換の確定) では呼ばれません。** 読み取り専用の
+`TextInput` と、`on_key_down` が Enter に `Handled` を返したときも呼ばれません。
+
+`NumberInput` は、打ちかけの表示を値へ読み込んでから (読めなければ元の値へ
+戻してから)、確定した値で呼びます。値が変わったなら `on_change` が先に呼ばれます。
+
+`TextArea` の Enter は改行なので `on_submit` を持ちません。Enter で送信したい
+ときは `on_key_down` で拾います。`SearchInput` では同じ通知を `on_search` と
+呼びます。
+
 ### 検索の入力
 
 絞り込みや検索の欄には `SearchInput` を使います。`TextInput` に**確定の通知**を

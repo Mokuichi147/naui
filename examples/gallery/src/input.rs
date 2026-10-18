@@ -36,7 +36,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         ui,
         &pane,
         "TextInput",
-        &["1行入力。入力内容は変更通知から取得できます。"],
+        &["1行入力。打つたびの変更通知 (on_change) と、Enter での確定 (on_submit) を受け取れます。"],
     )?;
     let input = ui.text_input("")?;
     disabler.add(&input, TextInput::set_enabled);
@@ -51,6 +51,10 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
                 notice.show(&format!("入力値: {text}"));
             }
         }
+    });
+    input.on_submit({
+        let notice = notice.clone();
+        move |text| notice.show(&format!("確定: {text}"))
     });
     pane.append(&input);
 
