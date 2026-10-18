@@ -14,28 +14,22 @@
 //!
 //! **行の起動 (ダブルクリック) も `NSTableView` の `doubleAction` で受ける。**
 //! Return / Enter は `NSTableView` が何もしないキーなので、`keyDown:` で拾って
-//! 同じ通知へ流す。右クリックは `NSApplication` のローカルモニターで、
-//! ウィンドウへ配られる前に受ける (macOS 26 のウィンドウは右クリックを行の
-//! 中のラベルへ渡し、ラベルはそれを上へ戻さないため)。Control + クリックなど
-//! ほかの出し方は、AppKit が文脈メニューを求めるときに呼ぶ `menuForEvent:` で
-//! 受ける。どちらも押された行と位置をアプリへ渡し、メニューそのものはアプリが
-//! [`crate::PopupMenu`] で出す。
+//! 同じ通知へ流す。右クリックは `rightMouseDown:` で、Control + クリックなど
+//! ほかの出し方は AppKit が文脈メニューを求めるときに呼ぶ `menuForEvent:` で
+//! 受け、押された行と位置をアプリへ渡す。メニューそのものはアプリが [`crate::PopupMenu`] で出す。
 
 use std::cell::{Cell, RefCell};
-use std::ptr::NonNull;
 use std::rc::Rc;
 
-use block2::RcBlock;
 use naui_core::{Align, ListItem, Orientation, Point, SelectionMode, Sizing, TextColor, TextStyle};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSColor, NSControlTextEditingDelegate, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType,
-    NSLayoutConstraint, NSMenu, NSResponder, NSScrollView, NSTableCellView, NSTableColumn,
-    NSTableColumnResizingOptions, NSTableView, NSTableViewColumnAutoresizingStyle,
-    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSTextView, NSView,
-    NSViewNoIntrinsicMetric,
+    NSColor, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSLayoutConstraint,
+    NSMenu, NSScrollView, NSTableCellView, NSTableColumn, NSTableColumnResizingOptions,
+    NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
+    NSTableViewStyle, NSTextField, NSView, NSViewNoIntrinsicMetric,
 };
 use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSString,
@@ -232,31 +226,15 @@ define_class!(
             }
         }
 
-        /// クリックをセルの中のビューへ渡すかどうか。
+        /// 右クリック。行の上で通知先があるなら、ここで通知して止める。
         ///
-        /// Control + クリックは、編集できる入力欄を除いてテーブル自身が受ける
-        /// (`NO` を返すとテーブルが受け、AppKit が `menuForEvent:` を呼ぶ)。
-        /// ラベルへ渡すと、ラベルが受けたまま上へ渡さない。
-        #[unsafe(method(validateProposedFirstResponder:forEvent:))]
-        fn validate_proposed_first_responder(
-            &self,
-            responder: &NSResponder,
-            event: Option<&NSEvent>,
-        ) -> Bool {
-            if let Some(event) = event {
-                if self.ivars().context_menu.is_set()
-                    && is_context_click(event)
-                    && !is_text_entry(responder)
-                {
-                    return Bool::NO;
-                }
-            }
-            unsafe {
-                msg_send![
-                    super(self),
-                    validateProposedFirstResponder: responder,
-                    forEvent: event
-                ]
+        /// `menuForEvent:` が `nil` を返すだけだと、AppKit は右クリックを
+        /// 親 (スクロールビュー) へ回し、`PopupMenu::attach` で付けたメニューまで
+        /// 出てしまう。
+        #[unsafe(method(rightMouseDown:))]
+        fn right_mouse_down(&self, event: &NSEvent) {
+            if !self.notify_context_menu(event) {
+                let _: () = unsafe { msg_send![super(self), rightMouseDown: event] };
             }
         }
 
@@ -296,115 +274,6 @@ define_class!(
         }
     }
 );
-
-/// 文脈メニューを求める左クリック (Control + クリック) か。
-fn is_context_click(event: &NSEvent) -> bool {
-    event.r#type() == NSEventType::LeftMouseDown
-        && event
-            .modifierFlags()
-            .contains(NSEventModifierFlags::Control)
-}
-
-thread_local! {
-    /// 右クリックを受けるローカルモニターの戻り値。持っている間だけ生きる。
-    static RIGHT_CLICK_MONITOR: RefCell<Option<Retained<AnyObject>>> =
-        const { RefCell::new(None) };
-}
-
-/// 右クリックを、ウィンドウへ配られる前に受けるモニターを 1 度だけ付ける。
-///
-/// macOS 26 のウィンドウは、右クリックをヒットテストで当たったビュー
-/// (行の中のラベル) へそのまま渡し、ラベルは上へ渡さない。`NSTableView` の
-/// `validateProposedFirstResponder:forEvent:` も、セルの `hitTest:` の上書きも
-/// 通らないので、ビューの側では受けられない。そこで、キー入力
-/// ([`crate::keys`]) と同じく `NSApplication` の段で受ける。
-fn ensure_right_click_monitor() {
-    RIGHT_CLICK_MONITOR.with(|monitor| {
-        if monitor.borrow().is_some() {
-            return;
-        }
-        let block = RcBlock::new(|event: NonNull<NSEvent>| -> *mut NSEvent {
-            // SAFETY: AppKit が渡す、生きている NSEvent。
-            let event_ref = unsafe { event.as_ref() };
-            if notify_right_click(event_ref) {
-                // 止める。ラベルや既定のメニューへは渡さない。
-                std::ptr::null_mut()
-            } else {
-                event.as_ptr()
-            }
-        });
-        let token = unsafe {
-            NSEvent::addLocalMonitorForEventsMatchingMask_handler(
-                NSEventMask::RightMouseDown,
-                &block,
-            )
-        };
-        *monitor.borrow_mut() = token;
-    });
-}
-
-/// 右クリックが `List` の行の上なら、その `List` へ通知して `true` を返す。
-///
-/// 当たったビューから上へたどって `List` のテーブルを探す。行の中の
-/// 編集できる入力欄は自分のメニューを持つので、そのまま渡す。
-fn notify_right_click(event: &NSEvent) -> bool {
-    eprintln!("DIAG: monitor got {:?}", event.r#type());
-    let Some(mtm) = MainThreadMarker::new() else {
-        return false;
-    };
-    let Some(window) = event.window(mtm) else {
-        eprintln!("DIAG: no window");
-        return false;
-    };
-    let Some(content) = window.contentView() else {
-        eprintln!("DIAG: no content");
-        return false;
-    };
-    // `hitTest:` の点は、受け手の親の座標で渡す。
-    let location = event.locationInWindow();
-    let point = match unsafe { content.superview() } {
-        Some(parent) => parent.convertPoint_fromView(location, None),
-        None => location,
-    };
-    eprintln!(
-        "DIAG: loc={location:?} point={point:?} content={:?} window={:?}",
-        content.frame(),
-        window.frame()
-    );
-    let Some(hit) = content.hitTest(point) else {
-        eprintln!("DIAG: no hit at {point:?}");
-        return false;
-    };
-    eprintln!("DIAG: hit {}", hit.class().name().to_string_lossy());
-    if is_text_entry(&hit) {
-        eprintln!("DIAG: text entry");
-        return false;
-    }
-    let mut view = Some(hit);
-    while let Some(current) = view {
-        if let Some(table) = current.downcast_ref::<ListTableView>() {
-            let done = table.notify_context_menu(event);
-            eprintln!(
-                "DIAG: table found, notified={done} row={}",
-                table.rowAtPoint(table.convertPoint_fromView(event.locationInWindow(), None))
-            );
-            return done;
-        }
-        view = unsafe { current.superview() };
-    }
-    eprintln!("DIAG: no table");
-    false
-}
-
-/// 自分の文脈メニュー (切り取り・貼り付けなど) を持つ、編集できる入力欄か。
-fn is_text_entry(responder: &NSResponder) -> bool {
-    if responder.downcast_ref::<NSTextView>().is_some() {
-        return true;
-    }
-    responder
-        .downcast_ref::<NSTextField>()
-        .is_some_and(|field| field.isEditable())
-}
 
 impl ListTableView {
     fn new(mtm: MainThreadMarker, state: ListTableState) -> Retained<Self> {
@@ -1004,7 +873,6 @@ impl List {
             .ivars()
             .context_menu
             .set(move |(index, point)| f(index, point));
-        ensure_right_click_monitor();
     }
 
     /// 中身の `NSTableView`。バックエンド固有の脱出口として公開している。

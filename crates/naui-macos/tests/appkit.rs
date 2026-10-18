@@ -4940,12 +4940,12 @@ fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 右クリックが `menuForEvent:` を通って `on_context_menu` へ届き、位置は
+/// 右クリックが `rightMouseDown:` を通って `on_context_menu` へ届き、位置は
 /// リストの左上から (`PopupMenu::open_at` と同じ座標系) になる。
 fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
     let mtm = MainThreadMarker::new().expect("メインスレッド");
     let app = NSApplication::sharedApplication(mtm);
-    let (window, list, key) = shown_list_for_events(ui, "文脈メニュー")?;
+    let (window, list, _key) = shown_list_for_events(ui, "文脈メニュー")?;
     let seen: Rc<RefCell<Vec<(usize, Point)>>> = Rc::new(RefCell::new(Vec::new()));
     list.on_context_menu({
         let seen = seen.clone();
@@ -4966,51 +4966,17 @@ fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
         (local.x, y)
     };
 
+    // 右クリックは、作ったイベントをテーブルの `rightMouseDown:` へ直接渡す。
+    // macOS 26 では、`mouseEventWithType:` で作った右クリックを待ち行列から
+    // 取り出すと、ウィンドウ内の位置がずれてウィンドウの外を指す (左クリック
+    // はずれない)。そのため本物の配送の経路は CI で確かめられない。
+    // (ラベルの上の右クリックがテーブルまで上がることは macOS 27 で確かめた)
     let right_click = |row: isize| {
         let point = row_center_in_window(&table, row);
-        if key {
-            // ダブルクリックと同じ理由で、押下と解放を積んでから配送する。
-            for kind in [NSEventType::RightMouseDown, NSEventType::RightMouseUp] {
-                let event = mouse_event(&native, kind, point, 1);
-                unsafe { app.postEvent_atStart(&event, false) };
-            }
-            deliver_events(&app);
-        } else {
-            // 配送できない環境では、AppKit が呼ぶ口を直接呼ぶ。
-            let event = mouse_event(&native, NSEventType::RightMouseDown, point, 1);
-            let _ = table.menuForEvent(&event);
-        }
+        let event = mouse_event(&native, NSEventType::RightMouseDown, point, 1);
+        table.rightMouseDown(&event);
     };
 
-    if key {
-        // 最初の押下がウィンドウの前面化に使われても困らないよう、行の無い余白を
-        // 1 回押しておく (余白の左クリックは選択を外すだけで、通知も出さない)。
-        let bounds = table.visibleRect();
-        let empty = table.convertPoint_toView(
-            NSPoint::new(
-                bounds.origin.x + bounds.size.width / 2.0,
-                bounds.origin.y + bounds.size.height - 4.0,
-            ),
-            None,
-        );
-        assert!(
-            table.rowAtPoint(table.convertPoint_fromView(empty, None)) < 0,
-            "押す場所が行の無い余白であること"
-        );
-        for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
-            let event = mouse_event(&native, kind, empty, 1);
-            unsafe { app.postEvent_atStart(&event, false) };
-        }
-        deliver_events(&app);
-    }
-
-    eprintln!(
-        "DIAG: test row={:?} table={:?} visible={:?} point={:?}",
-        table.rectOfRow(2),
-        table.frame(),
-        table.visibleRect(),
-        row_center_in_window(&table, 2)
-    );
     right_click(2);
     {
         let seen = seen.borrow();
