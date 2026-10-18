@@ -113,6 +113,7 @@ struct NumberInputInner {
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
 crate::keys::impl_key_down!(NumberInput);
+crate::focus::impl_focus_change!(NumberInput);
 impl_widget!(NumberInput, native);
 
 impl NumberInput {

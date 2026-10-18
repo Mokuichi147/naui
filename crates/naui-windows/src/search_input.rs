@@ -44,6 +44,7 @@ struct SearchInputInner {
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 crate::keys::impl_key_down!(SearchInput);
+crate::focus::impl_focus_change!(SearchInput);
 impl_widget!(SearchInput, native);
 
 impl SearchInput {

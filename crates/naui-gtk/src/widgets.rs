@@ -341,6 +341,7 @@ struct TextInputInner {
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
 crate::keys::impl_key_down!(TextInput);
+crate::focus::impl_focus_change!(TextInput);
 impl_widget!(TextInput);
 
 impl TextInput {
@@ -440,6 +441,7 @@ struct PasswordInputInner {
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
 crate::keys::impl_key_down!(PasswordInput);
+crate::focus::impl_focus_change!(PasswordInput);
 impl_widget!(PasswordInput);
 
 impl PasswordInput {
@@ -524,6 +526,7 @@ struct SearchInputInner {
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 crate::keys::impl_key_down!(SearchInput);
+crate::focus::impl_focus_change!(SearchInput);
 impl_widget!(SearchInput);
 
 impl SearchInput {
@@ -608,6 +611,7 @@ struct TextAreaInner {
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
 crate::keys::impl_key_down!(TextArea);
+crate::focus::impl_focus_change!(TextArea);
 impl_widget!(TextArea);
 
 impl TextArea {

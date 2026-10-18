@@ -331,6 +331,35 @@ name.on_submit(|text| println!("{text} で登録する")); // Enter で確定し
 ときは `on_key_down` で拾います。`SearchInput` では同じ通知を `on_search` と
 呼びます。
 
+### フォーカスの出入り
+
+文字入力のウィジェット (`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、
+`NumberInput`、`EditableComboBox`) は、フォーカスが入ったとき (`true`) と
+出たとき (`false`) に `on_focus_change` を呼びます。欄を離れたときの検証や
+保存に使います。
+
+```rust
+let mail = ui.text_input("")?;
+mail.on_focus_change({
+    let mail = mail.clone();
+    move |focused| {
+        if !focused && !mail.text().contains('@') {
+            println!("メールアドレスを確かめてください");
+        }
+    }
+});
+```
+
+**ウィンドウの中でフォーカスが移ったときだけ**呼ばれます。別のアプリへ
+切り替えたとき (Web ではタブやブラウザのウィンドウを切り替えたとき) は、
+ウィンドウの中のフォーカスは変わらないので呼ばれません。数値入力の欄と
+増減のボタンのように、ウィジェットの中で移っても呼ばれません。
+
+通知先を置いた時点でフォーカスがすでにその中にあっても、入ったことは
+知らせません (そこから出たときの `false` は届きます)。ウィンドウを出したときに
+最初の入力欄へフォーカスを置くかは環境が決めます (macOS、Linux、Windows は
+置くことがあり、Web は置きません)。
+
 ### 検索の入力
 
 絞り込みや検索の欄には `SearchInput` を使います。`TextInput` に**確定の通知**を

@@ -351,6 +351,10 @@ fn main() {
             "フォーカスが入力欄と複数行入力の中へ移る",
             request_focus_reaches_the_editor,
         ),
+        (
+            "フォーカスの出入りが持ち主の変わったときだけ通知される",
+            focus_change_follows_the_first_responder,
+        ),
         ("ツールチップが NSView へ届く", tooltip_reaches_the_view),
         (
             "複数行入力の on_key_down が Shift なしの Enter を止める",
@@ -3347,6 +3351,52 @@ fn request_focus_reaches_the_editor(ui: &Ui) -> Result<()> {
 
     input.set_visible(false);
     assert!(!input.request_focus(), "隠れていると移せない");
+    window.close();
+    Ok(())
+}
+
+fn focus_change_follows_the_first_responder(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let name = ui.text_input("")?;
+    let memo = ui.text_area("")?;
+    memo.set_sizing(Sizing::fixed(200.0, 60.0));
+    let count = ui.number_input(1.0)?;
+    let other = ui.text_input("")?;
+    root.append(&name);
+    root.append(&memo);
+    root.append(&count);
+    root.append(&other);
+    window.set_child(&root);
+    window.show();
+
+    // 通知先を置く前からフォーカスがある欄も、そこから出たことは伝わる。
+    assert!(name.request_focus());
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let record = |label: &'static str| {
+        let log = log.clone();
+        move |focused: bool| log.borrow_mut().push(format!("{label}:{focused}"))
+    };
+    name.on_focus_change(record("名前"));
+    memo.on_focus_change(record("メモ"));
+    count.on_focus_change(record("個数"));
+    assert!(log.borrow().is_empty(), "置いただけでは通知しない");
+
+    assert!(memo.request_focus());
+    assert!(count.request_focus());
+    assert_eq!(
+        *log.borrow(),
+        ["名前:false", "メモ:true", "メモ:false", "個数:true"]
+    );
+
+    // 通知先の無い欄へ移れば、出たことだけが伝わる。
+    assert!(other.request_focus());
+    assert_eq!(log.borrow()[4..], ["個数:false"]);
+
+    // 同じ欄へ移し直しても、持ち主は変わらない。
+    assert!(name.request_focus());
+    assert!(name.request_focus());
+    assert_eq!(log.borrow()[5..], ["名前:true"]);
     window.close();
     Ok(())
 }

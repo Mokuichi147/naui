@@ -122,6 +122,10 @@ const CASES: &[Case] = &[
         text_widgets_accept_submit_handlers,
     ),
     (
+        "文字入力系の 6 つに on_focus_change を付けられる",
+        text_widgets_accept_focus_handlers,
+    ),
+    (
         "タイマーが DispatcherQueue で呼ばれ、止められる",
         timers_fire_on_the_dispatcher_queue,
     ),
@@ -2227,6 +2231,21 @@ fn text_widgets_accept_submit_handlers(ui: &Ui) -> Result<()> {
     let number = ui.number_input(3.0)?;
     number.on_submit(|_: f64| {});
     assert_eq!(number.value(), 3.0);
+    Ok(())
+}
+
+/// フォーカスの移動 (`GotFocus`) は非同期に届くので、ここでは付けられることと、
+/// 付け直せることだけを確かめる (実際の配送は実機で確かめる)。
+fn text_widgets_accept_focus_handlers(ui: &Ui) -> Result<()> {
+    let handler = |_: bool| {};
+    let input = ui.text_input("")?;
+    input.on_focus_change(handler);
+    input.on_focus_change(handler);
+    ui.text_area("")?.on_focus_change(handler);
+    ui.password_input()?.on_focus_change(handler);
+    ui.search_input()?.on_focus_change(handler);
+    ui.number_input(1.0)?.on_focus_change(handler);
+    ui.editable_combo_box()?.on_focus_change(handler);
     Ok(())
 }
 

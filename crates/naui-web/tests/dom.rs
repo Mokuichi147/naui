@@ -3143,6 +3143,60 @@ fn key_down(target: &EventTarget, key: &str, shift: bool, composing: bool, key_c
     !target.dispatch_event(&event).expect("イベントの配送")
 }
 
+/// フォーカスの出入りは、持ち主のウィジェットが変わったときだけ届く。
+#[wasm_bindgen_test]
+fn focus_change_follows_the_owner() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let name = ui.text_input("")?;
+        let memo = ui.text_area("")?;
+        let count = ui.number_input(1.0)?;
+        let other = ui.text_input("")?;
+        root.append(&name);
+        root.append(&memo);
+        root.append(&count);
+        root.append(&other);
+        let _mounted = Mounted::new(&root);
+
+        // 通知先を置く前からフォーカスがある欄も、そこから出たことは伝わる。
+        assert!(name.request_focus());
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let record = |label: &'static str| {
+            let log = log.clone();
+            move |focused: bool| log.borrow_mut().push(format!("{label}:{focused}"))
+        };
+        name.on_focus_change(record("名前"));
+        memo.on_focus_change(record("メモ"));
+        count.on_focus_change(record("個数"));
+        assert!(log.borrow().is_empty(), "置いただけでは通知しない");
+
+        assert!(memo.request_focus());
+        assert!(count.request_focus());
+        assert_eq!(
+            *log.borrow(),
+            ["名前:false", "メモ:true", "メモ:false", "個数:true"]
+        );
+
+        // 通知先の無い欄へ移れば、出たことだけが伝わる。
+        assert!(other.request_focus());
+        assert_eq!(log.borrow()[4..], ["個数:false"]);
+
+        // 同じ欄へ移し直しても、持ち主は変わらない。
+        assert!(name.request_focus());
+        assert!(name.request_focus());
+        assert_eq!(log.borrow()[5..], ["名前:true"]);
+
+        // どこにもフォーカスが無くなっても、出たことが伝わる。
+        name.native_element()
+            .dyn_into::<HtmlElement>()
+            .expect("入力欄は HTML の要素")
+            .blur()
+            .expect("blur");
+        assert_eq!(log.borrow()[6..], ["名前:false"]);
+        Ok(())
+    });
+}
+
 /// チャットの入力欄のように、Shift なしの Enter だけを送信に使う。
 #[wasm_bindgen_test]
 fn text_area_key_down_can_take_enter() {

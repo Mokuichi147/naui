@@ -466,12 +466,14 @@ struct TextInputInner {
     on_change: RefCell<Option<Listener>>,
     on_submit: RefCell<Option<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// 1 行テキスト入力 (`<input type="text">`)。IME はブラウザが処理する。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
 impl_key_down!(TextInput);
+crate::focus::impl_focus_change!(TextInput);
 impl_widget!(TextInput, input);
 
 impl TextInput {
@@ -484,6 +486,7 @@ impl TextInput {
             on_change: RefCell::new(None),
             on_submit: RefCell::new(None),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         })))
     }
 
@@ -547,6 +550,7 @@ struct PasswordInputInner {
     on_change: RefCell<Option<Listener>>,
     on_submit: RefCell<Option<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// パスワード入力 (`<input type="password">`)。
@@ -556,6 +560,7 @@ struct PasswordInputInner {
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
 impl_key_down!(PasswordInput);
+crate::focus::impl_focus_change!(PasswordInput);
 impl_widget!(PasswordInput, input);
 
 impl PasswordInput {
@@ -567,6 +572,7 @@ impl PasswordInput {
             on_change: RefCell::new(None),
             on_submit: RefCell::new(None),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         })))
     }
 
@@ -612,6 +618,7 @@ struct SearchInputInner {
     on_change: RefCell<Option<Listener>>,
     on_search: RefCell<Option<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// 検索の入力欄 (`<input type="search">`)。
@@ -621,6 +628,7 @@ struct SearchInputInner {
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 impl_key_down!(SearchInput);
+crate::focus::impl_focus_change!(SearchInput);
 impl_widget!(SearchInput, input);
 
 impl SearchInput {
@@ -632,6 +640,7 @@ impl SearchInput {
             on_change: RefCell::new(None),
             on_search: RefCell::new(None),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         })))
     }
 
@@ -702,12 +711,14 @@ struct TextAreaInner {
     element: HtmlTextAreaElement,
     on_change: RefCell<Option<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// 複数行テキスト入力 (`<textarea>`)。IME はブラウザが処理する。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
 impl_key_down!(TextArea);
+crate::focus::impl_focus_change!(TextArea);
 impl_widget!(TextArea, element);
 
 impl TextArea {
@@ -718,6 +729,7 @@ impl TextArea {
             element,
             on_change: RefCell::new(None),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         })))
     }
 

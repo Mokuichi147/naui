@@ -364,6 +364,45 @@
 //! 違う** (macOS はショートカットより先に届き、ほかの環境では後になることが
 //! ある)。同じキーをショートカットと `on_key_down` の両方に割り当てない。
 //!
+//! ## フォーカスの出入り
+//!
+//! 文字入力のウィジェット (`on_key_down` を持つ 6 つ) は、フォーカスが
+//! 入ったとき (`true`) と出たとき (`false`) を `on_focus_change` で通知する。
+//! 欄を離れたときの検証や保存に使う。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let mail = ui.text_input("")?;
+//! mail.on_focus_change({
+//!     let mail = mail.clone();
+//!     move |focused| {
+//!         if !focused && !mail.text().contains('@') {
+//!             println!("メールアドレスを確かめてください");
+//!         }
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! **ウィンドウの中でフォーカスが移ったときだけ**呼ばれる。ウィンドウ自体が
+//! アクティブでなくなったとき (別のアプリへ切り替えたとき、Web ではタブや
+//! ブラウザのウィンドウを切り替えたとき) は、ウィンドウの中のフォーカスは
+//! 変わらないので呼ばれない。ウィジェットの中で部品から部品へ移っても
+//! (数値入力の欄と増減のボタンなど) 呼ばれない。移る先のウィジェットにも
+//! 通知先があれば、出たほうの `false` が先に届く。
+//!
+//! 通知先を置いた時点でフォーカスがすでにその中にあっても、入ったことは
+//! 知らせない (そこから出たときの `false` は届く)。ウィンドウを出したときに
+//! 最初の入力欄へフォーカスを置くかは環境が決める (macOS・Linux・Windows は
+//! 置くことがあり、Web は置かない) ので、表示より前に通知先を置くと、その
+//! ときの `true` が届く環境と届かない環境がある。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 見張る先 | ウィンドウの根の `GotFocus` | `NSWindow` の `makeFirstResponder:` | `GtkWindow` の `focus-widget` | `document` の `focusin` / `focusout` |
+//!
 //! ## 処理中の表示と、選べるラベル
 //!
 //! 終わりの見えない処理 (通信の応答待ちなど) は、[`ProgressBar`] を
@@ -2400,6 +2439,15 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     search.on_key_down(on_key);
     number.on_key_down(on_key);
     editable_combo_box.on_key_down(on_key);
+
+    // 同じ 6 つが on_focus_change も持つ。
+    let on_focus = |_focused: bool| {};
+    input.on_focus_change(on_focus);
+    text_area.on_focus_change(on_focus);
+    password.on_focus_change(on_focus);
+    search.on_focus_change(on_focus);
+    number.on_focus_change(on_focus);
+    editable_combo_box.on_focus_change(on_focus);
 
     let slider: Slider = ui.slider(0.0, 1.0)?;
     let _: f64 = slider.value();

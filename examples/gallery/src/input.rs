@@ -36,7 +36,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         ui,
         &pane,
         "TextInput",
-        &["1行入力。打つたびの変更通知 (on_change) と、Enter での確定 (on_submit) を受け取れます。"],
+        &["1行入力。打つたびの変更通知 (on_change)、Enter での確定 (on_submit)、フォーカスの出入り (on_focus_change) を受け取れます。"],
     )?;
     let input = ui.text_input("")?;
     disabler.add(&input, TextInput::set_enabled);
@@ -56,7 +56,23 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let notice = notice.clone();
         move |text| notice.show(&format!("確定: {text}"))
     });
+    // 欄を離れたときに中身を確かめる。
+    let input_status = parts::readout(ui, "フォーカス: なし")?;
+    input.on_focus_change({
+        let input = input.clone();
+        let input_status = input_status.clone();
+        move |focused| {
+            if focused {
+                input_status.set_text("フォーカス: 入力中");
+            } else if input.text().trim().is_empty() {
+                input_status.set_text("フォーカス: 離れました (空です)");
+            } else {
+                input_status.set_text("フォーカス: 離れました");
+            }
+        }
+    });
     pane.append(&input);
+    pane.append(&input_status);
 
     parts::section(
         ui,

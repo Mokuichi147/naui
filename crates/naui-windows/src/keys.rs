@@ -46,7 +46,7 @@ thread_local! {
 }
 
 /// 同じ COM オブジェクトか (インターフェースが違っても `IUnknown` は同じ)。
-fn same<A: Interface, B: Interface>(a: &A, b: &B) -> bool {
+pub(crate) fn same<A: Interface, B: Interface>(a: &A, b: &B) -> bool {
     match (a.cast::<IUnknown>(), b.cast::<IUnknown>()) {
         (Ok(a), Ok(b)) => a.as_raw() == b.as_raw(),
         _ => false,
