@@ -93,6 +93,8 @@ web-sys = { version = "0.3", features = [
     "ImageData",
     "KeyboardEvent",
     "KeyboardEventInit",
+    "MouseEvent",
+    "MouseEventInit",
     "Node",
     "NodeList",
     "PointerEvent",

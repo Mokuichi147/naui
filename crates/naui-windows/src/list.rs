@@ -16,27 +16,39 @@
 //! 並べないので、外側の `ScrollViewer` へ預けると伸びずに切れてしまう)。
 //! ウィンドウ全体のホイール補助 ([`crate::layout`]) には、テンプレートの
 //! 中にある `ScrollViewer` を見つけて登録する。
+//!
+//! 行の起動は `ListViewItem` の `DoubleTapped` と、Enter の `KeyDown` で受ける。
+//! 右クリックは `ContextRequested` で受ける。こちらは WinUI が右クリックだけで
+//! なく、タッチの長押し・Shift + F10・アプリケーションキーもまとめて出す
+//! 文脈メニューの要求で、キー操作のときは位置が無いので行の左端を渡す。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{
-    Align, ListItem, Orientation, Result, SelectionMode, Sizing, TextColor, TextStyle,
+    Align, ListItem, Orientation, Point, Result, SelectionMode, Sizing, TextColor, TextStyle,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode, ScrollBarVisibility,
     ScrollViewer, SelectionChangedEventHandler, TextBlock,
 };
-use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
+use naui_winui3::Microsoft::UI::Xaml::Input::{
+    ContextRequestedEventArgs, DoubleTappedEventHandler, KeyEventHandler, PointerEventHandler,
+    PointerRoutedEventArgs,
+};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, Thickness, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, RoutedEventHandler, Thickness, UIElement,
+};
+use windows::Foundation::{Point as XamlPoint, TypedEventHandler};
+use windows::System::VirtualKey;
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
-use crate::widgets::{impl_widget, label_style, Label, Stack, Widget};
+use crate::widgets::{impl_widget, label_style, Label, SelectHandler, Stack, Widget};
 
 /// 行がクリックされたことの通知先。
 ///
@@ -218,6 +230,39 @@ fn plain_surface() -> Result<(Border, ListView)> {
     Ok((native, list_view))
 }
 
+/// 右クリックされた行と位置を受け取る通知。
+type ContextMenuCallback = dyn FnMut(usize, Point);
+
+/// 右クリックの通知先。呼び出しの間だけクロージャを取り出す。
+#[derive(Clone)]
+struct ContextMenuHandler(HandlerCell<ContextMenuCallback>);
+
+impl ContextMenuHandler {
+    fn new() -> Self {
+        Self(Arc::new(UiThreadCell::new(None)))
+    }
+
+    fn set(&self, f: impl FnMut(usize, Point) + 'static) {
+        self.0.with_mut(|slot| *slot = Some(Box::new(f)));
+    }
+
+    fn is_set(&self) -> bool {
+        self.0.try_with_mut(|slot| slot.is_some()).unwrap_or(false)
+    }
+
+    fn emit(&self, index: usize, point: Point) {
+        let Some(Some(mut f)) = self.0.try_with_mut(|slot| slot.take()) else {
+            return;
+        };
+        f(index, point);
+        self.0.try_with_mut(|slot| {
+            if slot.is_none() {
+                *slot = Some(f);
+            }
+        });
+    }
+}
+
 /// 選ばれている行の位置を受け取る通知。
 pub(crate) type SelectionCallback = dyn FnMut(&[usize]);
 
@@ -269,6 +314,10 @@ struct ListInner {
     silent: Rc<Cell<bool>>,
     /// ウィンドウ全体のホイール補助が List の ScrollViewer を選ぶための状態。
     hovered: Arc<UiThreadCell<usize>>,
+    /// ダブルクリックと Enter の通知先。
+    row_activate: SelectHandler,
+    /// 右クリックの通知先。
+    context_menu: ContextMenuHandler,
 }
 
 /// 縦に並ぶ選択できる一覧 (`ListView`)。
@@ -302,6 +351,8 @@ impl List {
             handler: SelectionHandler::new(),
             silent: Rc::new(Cell::new(false)),
             hovered,
+            row_activate: SelectHandler::new(),
+            context_menu: ContextMenuHandler::new(),
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
@@ -433,7 +484,7 @@ impl List {
         self.0.native_rows.borrow_mut().clear();
 
         let mut native_rows = Vec::with_capacity(rows.len());
-        for row in rows {
+        for (index, row) in rows.iter().enumerate() {
             let native = ListViewItem::new().map_err(|e| to_error("ListViewItem の生成", e))?;
             let _ = native.SetPadding(ROW_PADDING);
             let host = row_host(row)?;
@@ -443,6 +494,8 @@ impl List {
             // 選べないだけの行は中のコントロールを押せる必要があるので、
             // 無効にするのは `ListItem::enabled(false)` の行だけ。
             let _ = native.SetIsEnabled(!row.is_disabled_item());
+            // 無効の行には入力が届かないので、起動も文脈メニューも出ない。
+            self.listen_row_events(&native, index)?;
 
             let element = native
                 .cast::<IInspectable>()
@@ -454,6 +507,72 @@ impl List {
         *self.0.native_rows.borrow_mut() = native_rows;
         *self.0.rows.borrow_mut() = rows.to_vec();
         self.write_selection(&[]);
+        Ok(())
+    }
+
+    /// 行の起動 (ダブルクリック・Enter) と文脈メニューの要求を受ける。
+    ///
+    /// 行は `set_rows` のたびに作り直すので、インデックスは作るときの位置でよい。
+    /// 購読は `List` を弱参照で持つ (行 → 購読 → `List` → 行 の循環を作らない)。
+    fn listen_row_events(&self, native: &ListViewItem, index: usize) -> Result<()> {
+        let activate = self.0.row_activate.clone();
+        let double = DoubleTappedEventHandler::new(move |_, _| {
+            activate.emit(index);
+            Ok(())
+        });
+        native
+            .DoubleTapped(&double)
+            .map_err(|e| to_error("行のダブルクリックの購読", e))?;
+
+        let activate = self.0.row_activate.clone();
+        let keyed = KeyEventHandler::new(move |sender, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            // 行の中の入力欄やボタンが受けた Enter は、そのコントロールのもの。
+            // 行そのものにフォーカスがあるときだけ起動にする。
+            let on_row = match (args.OriginalSource(), sender.as_ref()) {
+                (Ok(source), Some(sender)) => &source == sender,
+                _ => false,
+            };
+            let modifiers = crate::keys::modifiers();
+            let modified = modifiers.shift || modifiers.control || modifiers.alt || modifiers.meta;
+            if !on_row || args.Key().unwrap_or(VirtualKey::None) != VirtualKey::Enter || modified {
+                return Ok(());
+            }
+            let _ = args.SetHandled(true);
+            activate.emit(index);
+            Ok(())
+        });
+        native
+            .KeyDown(&keyed)
+            .map_err(|e| to_error("行のキー操作の購読", e))?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let requested = TypedEventHandler::new(
+            move |sender: windows_core::Ref<'_, UIElement>,
+                  args: windows_core::Ref<'_, ContextRequestedEventArgs>| {
+                let Some(args) = args.as_ref() else {
+                    return Ok(());
+                };
+                let _ = state.try_with_mut(|weak| {
+                    let Some(inner) = weak.upgrade() else {
+                        return;
+                    };
+                    if !inner.context_menu.is_set() {
+                        return;
+                    }
+                    let point = context_point(&inner.native, sender.as_ref(), args);
+                    // 祖先に付けた `PopupMenu` (`ContextFlyout`) と二重に出さない。
+                    let _ = args.SetHandled(true);
+                    inner.context_menu.emit(index, point);
+                });
+                Ok(())
+            },
+        );
+        native
+            .ContextRequested(&requested)
+            .map_err(|e| to_error("行の文脈メニューの購読", e))?;
         Ok(())
     }
 
@@ -578,6 +697,25 @@ impl List {
         self.0.handler.set(f);
     }
 
+    /// 行が起動されたとき (ダブルクリック、または行にフォーカスがある状態での
+    /// Enter) に、その行のインデックスで呼ばれる。
+    ///
+    /// 複数選択のすべてを開きたいときは、中で [`List::selection`] を読む。
+    /// 選べない `ListItem` (`enabled(false)`) の行では呼ばれない。
+    pub fn on_row_activate(&self, f: impl FnMut(usize) + 'static) {
+        self.0.row_activate.set(f);
+    }
+
+    /// 行が右クリック (タッチの長押し・Shift + F10・アプリケーションキーを含む)
+    /// されたときに、その行のインデックスと位置で呼ばれる。
+    ///
+    /// 位置はこのリストの左上からの論理ピクセルで、[`crate::PopupMenu::open_at`]
+    /// へそのまま渡せる。キー操作のときは行の左端 (縦は中央) になる。
+    /// 選択は変えない。行の無い余白では呼ばれない。
+    pub fn on_context_menu(&self, f: impl FnMut(usize, Point) + 'static) {
+        self.0.context_menu.set(f);
+    }
+
     /// 中身の `ListView`。バックエンド固有の脱出口として公開している。
     pub fn native_list_view(&self) -> ListView {
         self.0.list_view.clone()
@@ -612,6 +750,38 @@ impl Drop for ListInner {
     fn drop(&mut self) {
         self.hovered.with_mut(|hovered| *hovered = 0);
     }
+}
+
+/// 文脈メニューの位置を、`list` (List の外枠) の左上からの座標で求める。
+///
+/// ポインターで求められたときはその位置、キー操作で位置が無いときは
+/// 行の左端の縦の中央。
+fn context_point(
+    list: &Border,
+    row: Option<&UIElement>,
+    args: &ContextRequestedEventArgs,
+) -> Point {
+    let mut at = XamlPoint::default();
+    if args.TryGetPosition(list, &mut at).unwrap_or(false) {
+        return Point::new(f64::from(at.X), f64::from(at.Y));
+    }
+    let Some(row) = row else {
+        return Point::new(0.0, 0.0);
+    };
+    let middle = row
+        .cast::<FrameworkElement>()
+        .and_then(|element| element.ActualHeight())
+        .unwrap_or(0.0)
+        / 2.0;
+    row.TransformToVisual(list)
+        .and_then(|transform| {
+            transform.TransformPoint(XamlPoint {
+                X: 0.0,
+                Y: middle as f32,
+            })
+        })
+        .map(|at| Point::new(f64::from(at.X), f64::from(at.Y)))
+        .unwrap_or(Point::new(0.0, 0.0))
 }
 
 /// 行の中身を、押されたことを拾える器に載せる。

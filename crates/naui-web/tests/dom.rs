@@ -31,7 +31,8 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{
     CanvasRenderingContext2d, Element, EventTarget, HtmlElement, HtmlInputElement,
-    HtmlSelectElement, KeyboardEvent, KeyboardEventInit, PointerEvent, PointerEventInit,
+    HtmlSelectElement, KeyboardEvent, KeyboardEventInit, MouseEvent, MouseEventInit, PointerEvent,
+    PointerEventInit,
 };
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -1206,6 +1207,211 @@ fn list_detail_makes_a_second_line() {
             resolved(&detailed_texts[0], "color"),
             "補助の文字のほうが淡いこと"
         );
+        Ok(())
+    });
+}
+
+/// マウスのイベント (`dblclick` / `contextmenu`) を、要素の中央で起こす。
+/// **戻り値は既定動作を止められたか**。
+fn mouse_at_center(target: &Element, kind: &str, button: i16) -> bool {
+    let rect = target.get_bounding_client_rect();
+    mouse_at(
+        target,
+        kind,
+        button,
+        rect.left() + rect.width() / 2.0,
+        rect.top() + rect.height() / 2.0,
+    )
+}
+
+/// マウスのイベントを、表示領域の `(x, y)` で起こす。**戻り値は既定動作を止められたか**。
+fn mouse_at(target: &Element, kind: &str, button: i16, x: f64, y: f64) -> bool {
+    let init = MouseEventInit::new();
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    init.set_button(button);
+    init.set_client_x(x as i32);
+    init.set_client_y(y as i32);
+    let event =
+        MouseEvent::new_with_mouse_event_init_dict(kind, &init).expect("マウスイベントの生成");
+    !target.dispatch_event(&event).expect("イベントの配送")
+}
+
+/// `target` の中央を、`list` の左上からの座標で表したもの。
+fn center_within(list: &Element, target: &Element) -> (f64, f64) {
+    let outer = list.get_bounding_client_rect();
+    let rect = target.get_bounding_client_rect();
+    (
+        (rect.left() + rect.width() / 2.0).trunc() - outer.left(),
+        (rect.top() + rect.height() / 2.0).trunc() - outer.top(),
+    )
+}
+
+/// Enter の `keydown` を起こす。
+fn press_enter(target: &EventTarget, composing: bool) {
+    let init = KeyboardEventInit::new();
+    init.set_key("Enter");
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    init.set_is_composing(composing);
+    let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+        .expect("キーイベントの生成");
+    target.dispatch_event(&event).expect("イベントの配送");
+}
+
+/// 文字だけの行 (`<select size>`) で、ダブルクリックと Enter が行の起動になり、
+/// 右クリックが行と位置を渡す。選べない行では呼ばれない。
+#[wasm_bindgen_test]
+fn list_select_row_activate_and_context_menu() {
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_items(&[
+            ListItem::new("札幌"),
+            ListItem::new("仙台"),
+            ListItem::new("東京"),
+            ListItem::new("大阪").enabled(false),
+        ]);
+        let _mounted = Mounted::new(&list);
+        let activated = Rc::new(RefCell::new(Vec::new()));
+        list.on_row_activate({
+            let activated = activated.clone();
+            move |index| activated.borrow_mut().push(index)
+        });
+        let menus: Rc<RefCell<Vec<(usize, Point)>>> = Rc::new(RefCell::new(Vec::new()));
+        list.on_context_menu({
+            let menus = menus.clone();
+            move |index, at| menus.borrow_mut().push((index, at))
+        });
+
+        let select = list.native_select().expect("文字だけなら <select>");
+        let option =
+            |index: u32| -> Element { select.options().item(index).expect("行").unchecked_into() };
+
+        mouse_at_center(&option(2), "dblclick", 0);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2],
+            "ダブルクリックした行が届くこと"
+        );
+        mouse_at_center(&option(3), "dblclick", 0);
+        assert_eq!(*activated.borrow(), vec![2], "選べない行では起動しないこと");
+
+        list.set_selected(1);
+        press_enter(select.as_ref(), false);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2, 1],
+            "Enter で選ばれている行が届くこと"
+        );
+        press_enter(select.as_ref(), true);
+        assert_eq!(activated.borrow().len(), 2, "変換中の Enter は数えないこと");
+
+        // WebKit は `<option>` に矩形を持たせない (0 になる) ので、押す位置は
+        // `<select>` の左上から決める。
+        let rect = select.get_bounding_client_rect();
+        let (client_x, client_y) = (rect.left().trunc() + 12.0, rect.top().trunc() + 6.0);
+        let prevented = mouse_at(&option(0), "contextmenu", 2, client_x, client_y);
+        assert!(prevented, "行の上ではブラウザ既定のメニューを抑止すること");
+        {
+            let menus = menus.borrow();
+            assert_eq!(menus.len(), 1);
+            assert_eq!(menus[0].0, 0, "右クリックした行のインデックスが届くこと");
+            let outer = list.native_element().get_bounding_client_rect();
+            let (x, y) = (client_x - outer.left(), client_y - outer.top());
+            assert!(
+                (menus[0].1.x - x).abs() < 1.0 && (menus[0].1.y - y).abs() < 1.0,
+                "位置がリストの左上からの座標であること: {:?} / ({x}, {y})",
+                menus[0].1
+            );
+        }
+        assert_eq!(
+            list.selection(),
+            vec![1],
+            "右クリックでは選択が変わらないこと"
+        );
+        Ok(())
+    });
+}
+
+/// 合成の一覧 (`<ul role="listbox">`) でも同じに届き、行内のコントロールの上の
+/// ダブルクリックは行の起動にしない。
+#[wasm_bindgen_test]
+fn list_listbox_row_activate_and_context_menu() {
+    with_ui(|ui| {
+        let content = ui.stack(Orientation::Horizontal)?;
+        content.append(&ui.label("Wi-Fi")?);
+        let button = ui.button("設定…")?;
+        content.append(&button);
+        let list = ui.list()?;
+        list.set_rows(&[
+            ListRow::new(&ui.label("札幌")?),
+            ListRow::new(&content),
+            ListRow::new(&ui.label("東京")?),
+        ]);
+        let _mounted = Mounted::new(&list);
+        let activated = Rc::new(RefCell::new(Vec::new()));
+        list.on_row_activate({
+            let activated = activated.clone();
+            move |index| activated.borrow_mut().push(index)
+        });
+        let menus: Rc<RefCell<Vec<(usize, Point)>>> = Rc::new(RefCell::new(Vec::new()));
+        list.on_context_menu({
+            let menus = menus.clone();
+            move |index, at| menus.borrow_mut().push((index, at))
+        });
+
+        let listbox = list
+            .native_element()
+            .children()
+            .item(0)
+            .expect("listbox の枠");
+        assert_eq!(listbox.tag_name(), "UL");
+        let row = |index: u32| listbox.children().item(index).expect("行");
+
+        mouse_at_center(&row(2), "dblclick", 0);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2],
+            "ダブルクリックした行が届くこと"
+        );
+        mouse_at_center(&button.native_element(), "dblclick", 0);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2],
+            "行内のボタンのダブルクリックでは起動しないこと"
+        );
+
+        // クリックで指した行を、Enter で起動する。
+        row(0).unchecked_ref::<HtmlElement>().click();
+        press_enter(listbox.as_ref(), false);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2, 0],
+            "Enter で指している行が届くこと"
+        );
+
+        // 行内のボタンの上の右クリックも、その行の文脈メニューになる。
+        let prevented = mouse_at_center(&button.native_element(), "contextmenu", 2);
+        assert!(prevented, "行の上ではブラウザ既定のメニューを抑止すること");
+        {
+            let menus = menus.borrow();
+            assert_eq!(menus.len(), 1);
+            assert_eq!(menus[0].0, 1, "ボタンを含む行のインデックスが届くこと");
+            let (x, y) = center_within(&list.native_element(), &button.native_element());
+            assert!(
+                (menus[0].1.x - x).abs() < 1.0 && (menus[0].1.y - y).abs() < 1.0,
+                "位置がリストの左上からの座標であること: {:?} / ({x}, {y})",
+                menus[0].1
+            );
+        }
+
+        // 余白 (行の外) では通知せず、ブラウザ既定のメニューも止めない。
+        let prevented = mouse_at_center(&listbox, "contextmenu", 2);
+        assert!(
+            !prevented,
+            "行の無いところではブラウザ既定のメニューを残すこと"
+        );
+        assert_eq!(menus.borrow().len(), 1, "行の無いところでは通知しないこと");
         Ok(())
     });
 }

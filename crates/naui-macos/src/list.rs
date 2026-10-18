@@ -11,25 +11,31 @@
 //! アイコンの上を押したときのヒットテストは、セルではなくテーブルを返すため、
 //! セル側の `mouseDown:` では実際のクリックが届かない。ボタンや入力欄は
 //! 自分がヒットするので、この action は呼ばれず二重に発火しない。
+//!
+//! **行の起動 (ダブルクリック) も `NSTableView` の `doubleAction` で受ける。**
+//! Return / Enter は `NSTableView` が何もしないキーなので、`keyDown:` で拾って
+//! 同じ通知へ流す。右クリックは `rightMouseDown:` で、Control + クリックなど
+//! ほかの出し方は AppKit が文脈メニューを求めるときに呼ぶ `menuForEvent:` で
+//! 受け、押された行と位置をアプリへ渡す。メニューそのものはアプリが [`crate::PopupMenu`] で出す。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Align, ListItem, Orientation, SelectionMode, Sizing, TextColor, TextStyle};
+use naui_core::{Align, ListItem, Orientation, Point, SelectionMode, Sizing, TextColor, TextStyle};
 use objc2::rc::Retained;
-use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSColor, NSControlTextEditingDelegate, NSLayoutConstraint, NSScrollView, NSTableCellView,
-    NSTableColumn, NSTableColumnResizingOptions, NSTableView, NSTableViewColumnAutoresizingStyle,
-    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSView,
-    NSViewNoIntrinsicMetric,
+    NSColor, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSLayoutConstraint,
+    NSMenu, NSScrollView, NSTableCellView, NSTableColumn, NSTableColumnResizingOptions,
+    NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
+    NSTableViewStyle, NSTextField, NSView, NSViewNoIntrinsicMetric,
 };
 use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSString,
 };
 
-use crate::trampoline::ActionTarget;
+use crate::trampoline::{SelectHandler, ValueHandler};
 use crate::widgets::{Label, Stack, Widget};
 
 /// 1 列しか使わないので、識別子は固定でよい。
@@ -146,6 +152,171 @@ impl ListRow {
     /// 呼ばれないため、同じ操作が二重に発火しない。
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.activation.set(f);
+    }
+
+    /// 選べないうえに操作もできない行 (`ListItem::enabled(false)`)。
+    ///
+    /// ほかの 3 環境は行そのものを無効にするので、起動も文脈メニューも
+    /// 届かない。`NSTableView` には行の無効が無いので、ここで見て合わせる。
+    fn is_disabled_item(&self) -> bool {
+        matches!(&self.content, ListRowContent::Item(item) if !item.enabled)
+    }
+}
+
+/// Return と、テンキーの Enter のキーコード。
+const RETURN_KEY_CODES: [u16; 2] = [36, 76];
+
+/// 行の起動と文脈メニューを受ける `NSTableView` が見る状態。
+struct ListTableState {
+    rows: Rc<RefCell<Vec<ListRow>>>,
+    /// ダブルクリックと Return / Enter の通知先。
+    row_activate: SelectHandler,
+    /// 右クリックの通知先。
+    context_menu: ValueHandler<(usize, Point)>,
+}
+
+impl ListTableState {
+    /// `row` が起動や文脈メニューを受けられる行なら、そのインデックス。
+    fn live_row(&self, row: NSInteger) -> Option<usize> {
+        let index = usize::try_from(row).ok()?;
+        let rows = self.rows.borrow();
+        let row = rows.get(index)?;
+        (!row.is_disabled_item()).then_some(index)
+    }
+}
+
+define_class!(
+    #[unsafe(super(NSTableView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiListTableView"]
+    #[ivars = ListTableState]
+    /// 行のクリック・起動・文脈メニューを受ける `NSTableView`。
+    ///
+    /// target / action も自分で受ける (`NSTableView` は target を保持しないが、
+    /// 自分自身なら寿命の心配が無い)。
+    struct ListTableView;
+
+    unsafe impl NSObjectProtocol for ListTableView {}
+
+    impl ListTableView {
+        /// 行のクリック (action)。
+        #[unsafe(method(nauiRowClicked:))]
+        fn row_clicked(&self, _sender: Option<&AnyObject>) {
+            let Ok(index) = usize::try_from(self.clickedRow()) else {
+                return;
+            };
+            // 通知の中から `set_rows` を呼べるように、借りたまま呼ばない。
+            let activation = self
+                .ivars()
+                .rows
+                .borrow()
+                .get(index)
+                .map(|row| row.activation.clone());
+            if let Some(activation) = activation {
+                activation.emit();
+            }
+        }
+
+        /// 行のダブルクリック (doubleAction)。
+        #[unsafe(method(nauiRowDoubleClicked:))]
+        fn row_double_clicked(&self, _sender: Option<&AnyObject>) {
+            let state = self.ivars();
+            if let Some(index) = state.live_row(self.clickedRow()) {
+                state.row_activate.emit(index);
+            }
+        }
+
+        /// 右クリック。行の上で通知先があるなら、ここで通知して止める。
+        ///
+        /// `menuForEvent:` が `nil` を返すだけだと、AppKit は右クリックを
+        /// 親 (スクロールビュー) へ回し、`PopupMenu::attach` で付けたメニューまで
+        /// 出てしまう。
+        #[unsafe(method(rightMouseDown:))]
+        fn right_mouse_down(&self, event: &NSEvent) {
+            if !self.notify_context_menu(event) {
+                let _: () = unsafe { msg_send![super(self), rightMouseDown: event] };
+            }
+        }
+
+        /// AppKit が右クリック以外 (Control + クリックなど) で文脈メニューを求める口。
+        ///
+        /// 通知先があり、押されたのが行の上なら、行と位置を渡して `nil` を返す
+        /// (メニューはアプリが `PopupMenu::open_at` で出す)。それ以外は
+        /// `NSTableView` 既定のふるまい (自分の `menu`) に任せる。
+        #[unsafe(method_id(menuForEvent:))]
+        fn menu_for_event(&self, event: &NSEvent) -> Option<Retained<NSMenu>> {
+            if self.notify_context_menu(event) {
+                None
+            } else {
+                unsafe { msg_send![super(self), menuForEvent: event] }
+            }
+        }
+
+        /// Return / Enter で、選ばれている行 (最後に選んだ行) を起動する。
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, event: &NSEvent) {
+            let state = self.ivars();
+            let modifiers = event.modifierFlags()
+                & (NSEventModifierFlags::Command
+                    | NSEventModifierFlags::Option
+                    | NSEventModifierFlags::Control
+                    | NSEventModifierFlags::Shift);
+            if RETURN_KEY_CODES.contains(&event.keyCode())
+                && modifiers.is_empty()
+                && state.row_activate.is_set()
+            {
+                if let Some(index) = state.live_row(self.selectedRow()) {
+                    state.row_activate.emit(index);
+                    return;
+                }
+            }
+            let _: () = unsafe { msg_send![super(self), keyDown: event] };
+        }
+    }
+);
+
+impl ListTableView {
+    fn new(mtm: MainThreadMarker, state: ListTableState) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(state);
+        unsafe { msg_send![super(this), init] }
+    }
+
+    /// 通知先があり、押されたのが行の上なら、行と位置を通知して `true` を返す。
+    fn notify_context_menu(&self, event: &NSEvent) -> bool {
+        let state = self.ivars();
+        if !state.context_menu.is_set() {
+            return false;
+        }
+        let at_table = self.convertPoint_fromView(event.locationInWindow(), None);
+        let Some(index) = state.live_row(self.rowAtPoint(at_table)) else {
+            return false;
+        };
+        let point = self.list_point(event);
+        state.context_menu.emit((index, point));
+        true
+    }
+
+    /// イベントの位置を、`List` のビュー (外側のスクロールビュー) の
+    /// 左上からの座標で返す。`PopupMenu::open_at` にそのまま渡せる。
+    fn list_point(&self, event: &NSEvent) -> Point {
+        let outer: Retained<NSView> = match self.enclosingScrollView() {
+            Some(scroll) => {
+                let view: &NSView = &scroll;
+                view.retain()
+            }
+            None => {
+                let view: &NSView = self;
+                view.retain()
+            }
+        };
+        let local = outer.convertPoint_fromView(event.locationInWindow(), None);
+        // AppKit のビュー座標は既定で左下原点。naui は左上原点でそろえる。
+        let y = if outer.isFlipped() {
+            local.y
+        } else {
+            outer.bounds().size.height - local.y
+        };
+        Point::new(local.x, y)
     }
 }
 
@@ -460,14 +631,11 @@ impl ContentSizedScrollView {
 struct ListInner {
     /// 外から見えるビュー。リストはこのスクロールビューごと 1 つのウィジェット。
     scroll: Retained<ContentSizedScrollView>,
-    table: Retained<NSTableView>,
+    table: Retained<ListTableView>,
     rows: Rc<RefCell<Vec<ListRow>>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     silent: Rc<Cell<bool>>,
-    /// 行のクリックを受ける target。`NSTableView` は target を保持しないので、
-    /// ここで生かしておく。
-    _action: Retained<ActionTarget>,
     /// デリゲートとデータソースは weak 参照なので保持する。
     _source: Retained<ListSource>,
 }
@@ -496,7 +664,15 @@ crate::widgets::impl_sizing!(List);
 
 impl List {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
-        let table = NSTableView::new(mtm);
+        let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
+        let table = ListTableView::new(
+            mtm,
+            ListTableState {
+                rows: rows.clone(),
+                row_activate: SelectHandler::default(),
+                context_menu: ValueHandler::default(),
+            },
+        );
         table.setStyle(NSTableViewStyle::Inset);
         table.setHeaderView(None);
         table.setAllowsMultipleSelection(false);
@@ -517,7 +693,6 @@ impl List {
         column.setResizingMask(NSTableColumnResizingOptions::AutoresizingMask);
         table.addTableColumn(&column);
 
-        let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
         let handler = SelectionHandler::default();
         let silent = Rc::new(Cell::new(false));
         let source = ListSource::new(
@@ -537,28 +712,19 @@ impl List {
         // 表示専用のラベルやアイコンを押すと、AppKit のヒットテストは
         // セルではなくテーブルを返すため、セル側の `mouseDown` では届かない。
         // ボタンやチェックボックスは自分がヒットするので、この action は
-        // 呼ばれず、行の activation と二重に発火しない。
-        let action = ActionTarget::new(mtm, {
-            let rows = rows.clone();
-            let table = table.clone();
-            move || {
-                let Ok(index) = usize::try_from(table.clickedRow()) else {
-                    return;
-                };
-                let activation = rows.borrow().get(index).map(|row| row.activation.clone());
-                if let Some(activation) = activation {
-                    activation.emit();
-                }
-            }
-        });
+        // 呼ばれず、行の activation と二重に発火しない。ダブルクリックも
+        // 同じ切り分けで `doubleAction` に届く。
         unsafe {
-            table.setTarget(Some(&action));
-            table.setAction(Some(sel!(invoke:)));
+            let target: &AnyObject = &table;
+            table.setTarget(Some(target));
+            table.setAction(Some(sel!(nauiRowClicked:)));
+            table.setDoubleAction(Some(sel!(nauiRowDoubleClicked:)));
         }
 
         let scroll = ContentSizedScrollView::new(mtm);
         scroll.setHasVerticalScroller(true);
-        scroll.setDocumentView(Some(&table));
+        let document: &NSView = &table;
+        scroll.setDocumentView(Some(document));
 
         Self(Rc::new(ListInner {
             scroll,
@@ -568,7 +734,6 @@ impl List {
             handler,
             silent,
             _source: source,
-            _action: action,
         }))
     }
 
@@ -686,11 +851,36 @@ impl List {
         self.0.handler.set(f);
     }
 
+    /// 行が起動されたとき (ダブルクリック、または Return / Enter) に、
+    /// その行のインデックスで呼ばれる。
+    ///
+    /// Return / Enter では選ばれている行 (複数なら最後に選んだ行) が対象になる。
+    /// 複数選択のすべてを開きたいときは、中で [`List::selection`] を読む。
+    /// 選べない `ListItem` (`enabled(false)`) の行では呼ばれない。
+    pub fn on_row_activate(&self, f: impl FnMut(usize) + 'static) {
+        self.0.table.ivars().row_activate.set(f);
+    }
+
+    /// 行が右クリック (Control + クリックを含む) されたときに、その行の
+    /// インデックスと、押された位置で呼ばれる。
+    ///
+    /// 位置はこのリストの左上からの論理ピクセルで、[`crate::PopupMenu::open_at`]
+    /// へそのまま渡せる。設定すると、行の上では `NSTableView` 自身の `menu` は
+    /// 出なくなる。選択は変えない (AppKit と同じ)。行の無い余白では呼ばれない。
+    pub fn on_context_menu(&self, mut f: impl FnMut(usize, Point) + 'static) {
+        self.0
+            .table
+            .ivars()
+            .context_menu
+            .set(move |(index, point)| f(index, point));
+    }
+
     /// 中身の `NSTableView`。バックエンド固有の脱出口として公開している。
     ///
     /// 列の追加や並べ替えなど、共通 API に無い設定はここから行う。
     pub fn native_table(&self) -> Retained<NSTableView> {
-        self.0.table.clone()
+        let table: &NSTableView = &self.0.table;
+        table.retain()
     }
 
     fn apply_selection(&self, indices: &[usize]) {

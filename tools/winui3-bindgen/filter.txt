@@ -136,6 +136,9 @@ Microsoft.UI.Xaml.GridUnitType
 Microsoft.UI.Xaml.HorizontalAlignment
 Microsoft.UI.Xaml.IApplicationFactory
 Microsoft.UI.Xaml.IApplicationOverrides
+Microsoft.UI.Xaml.Input.ContextRequestedEventArgs
+Microsoft.UI.Xaml.Input.DoubleTappedEventHandler
+Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs
 Microsoft.UI.Xaml.Input.KeyEventHandler
 Microsoft.UI.Xaml.Input.KeyRoutedEventArgs
 Microsoft.UI.Xaml.Input.Pointer

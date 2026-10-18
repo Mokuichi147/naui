@@ -3,16 +3,24 @@
 //! 文字だけの [`ListItem`] も任意内容の [`ListRow`] も同じ行モデルへ正規化し、
 //! 同じ経路で `GtkListBoxRow` を組み立てる。選択と行 activation は
 //! Rust のクロージャへ渡す。
+//!
+//! **行の起動 (ダブルクリック) と右クリックは、行ごとの `GtkGestureClick` で
+//! 受ける。** `GtkListBox` の `row-activated` は単一選択では 1 回のクリックで
+//! 出る ([`ListRow::on_activate`] がそれを使っている) ので、ダブルクリックの
+//! 区別には使えない。ジェスチャーは行の上で泡立ち (bubble) の段に付けるので、
+//! 行内のボタンなど自分でクリックを受けるコントロールの上では届かない。
+//! Enter は `GtkListBox` の捕捉 (capture) の段のキーの受け口で、行そのものに
+//! フォーカスがあるときだけ拾う。
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
-use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{Align, ListItem, Orientation, SelectionMode, Sizing, TextColor, TextStyle};
+use gtk::{gdk, glib, graphene};
+use naui_core::{Align, ListItem, Orientation, Point, SelectionMode, Sizing, TextColor, TextStyle};
 
 use crate::bin::SizeBin;
-use crate::callback::SelectionNotifier;
+use crate::callback::{Notifier, SelectionNotifier};
 use crate::widgets::{impl_widget, without_signal, Label, Stack, Widget};
 
 /// ラベルと補助の文字の間隔。
@@ -141,6 +149,10 @@ struct ListInner {
     rows: RefCell<Vec<ListRow>>,
     on_select: SelectionNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
+    /// ダブルクリックと Enter の通知先。
+    row_activate: Notifier<usize>,
+    /// 右クリックの通知先。
+    context_menu: Notifier<(usize, Point)>,
 }
 
 /// 選択できる行の一覧。自分でスクロールする。
@@ -174,6 +186,8 @@ impl List {
             rows: RefCell::new(Vec::new()),
             on_select: SelectionNotifier::default(),
             handler: RefCell::new(None),
+            row_activate: Notifier::default(),
+            context_menu: Notifier::default(),
         });
         // 選択の通知は常時つないでおき、プログラムから変えるときだけ止める。
         let id = {
@@ -210,6 +224,9 @@ impl List {
                 }
             });
         }
+        inner
+            .native
+            .add_controller(enter_controller(Rc::downgrade(&inner)));
         Self(inner)
     }
 
@@ -228,7 +245,9 @@ impl List {
                 self.0.native.remove(&row);
             }
             for row in rows {
-                self.0.native.append(&build_row(row));
+                self.0
+                    .native
+                    .append(&build_row(row, Rc::downgrade(&self.0)));
             }
             self.0.native.unselect_all();
         });
@@ -330,6 +349,26 @@ impl List {
         self.0.on_select.set(f);
     }
 
+    /// 行が起動されたとき (ダブルクリック、または行にフォーカスがある状態での
+    /// Enter) に、その行のインデックスで呼ばれる。
+    ///
+    /// 複数選択のすべてを開きたいときは、中で [`List::selection`] を読む。
+    /// 選べない `ListItem` (`enabled(false)`) の行では呼ばれない。
+    pub fn on_row_activate(&self, f: impl FnMut(usize) + 'static) {
+        self.0.row_activate.set(f);
+    }
+
+    /// 行が右クリックされたときに、その行のインデックスと、押された位置で呼ばれる。
+    ///
+    /// 位置はこのリストの座標 (論理ピクセル、y は下向き) で、
+    /// [`crate::PopupMenu::open_at`] へそのまま渡せる。選択は変えない。
+    /// 行の無い余白では呼ばれない。
+    pub fn on_context_menu(&self, mut f: impl FnMut(usize, Point) + 'static) {
+        self.0
+            .context_menu
+            .set(move |(index, point)| f(index, point));
+    }
+
     /// 指定された選択を、この一覧で意味を持つ形にそろえる。
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
         let rows = self.0.rows.borrow();
@@ -396,7 +435,7 @@ pub(crate) fn apply_caption(label: &gtk::Label) {
 }
 
 /// 1 行を組み立てる。`ListItem` も任意内容も同じ経路を通る。
-fn build_row(item: &ListRow) -> gtk::ListBoxRow {
+fn build_row(item: &ListRow, list: Weak<ListInner>) -> gtk::ListBoxRow {
     let content: SizeBin = match &item.content {
         ListRowContent::Item(item) => item_content(&item.label, item.detail.as_deref()).size_bin(),
         ListRowContent::Custom(content) => content.size_bin(),
@@ -415,9 +454,112 @@ fn build_row(item: &ListRow) -> gtk::ListBoxRow {
     row.set_selectable(item.selectable);
     row.set_activatable(item.selectable || item.activation.is_some());
     if matches!(&item.content, ListRowContent::Item(item) if !item.enabled) {
+        // 無効の行にはジェスチャーも届かないので、起動も文脈メニューも出ない。
         row.set_sensitive(false);
     }
+    row.add_controller(row_double_click_controller(list.clone()));
+    row.add_controller(row_context_menu_controller(list));
     row
+}
+
+/// 行のダブルクリックを受けるジェスチャー。
+///
+/// シーケンスは握らない (`GtkListBox` 自身の選択のジェスチャーへそのまま流す)。
+fn row_double_click_controller(list: Weak<ListInner>) -> gtk::GestureClick {
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(gdk::BUTTON_PRIMARY);
+    gesture.connect_pressed(move |gesture, presses, _, _| {
+        if presses != 2 {
+            return;
+        }
+        let Some((inner, _, index)) = pressed_row(&list, gesture) else {
+            return;
+        };
+        inner.row_activate.emit(index);
+    });
+    gesture
+}
+
+/// 行の右クリックを受けるジェスチャー。
+fn row_context_menu_controller(list: Weak<ListInner>) -> gtk::GestureClick {
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(gdk::BUTTON_SECONDARY);
+    gesture.connect_pressed(move |gesture, _, x, y| {
+        let Some((inner, row, index)) = pressed_row(&list, gesture) else {
+            return;
+        };
+        // `PopupMenu::open_at(&list, ..)` は `GtkListBox` の座標で受けるので、
+        // 行の座標からそこへ直す。
+        let local = graphene::Point::new(x as f32, y as f32);
+        let Some(at) = row.compute_point(&inner.native, &local) else {
+            return;
+        };
+        // ほかの右クリックの受け口 (祖先に付けた `PopupMenu` など) と
+        // 二重にメニューを出さないよう、通知先があるときはここで握る。
+        if inner.context_menu.is_set() {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+        }
+        inner
+            .context_menu
+            .emit((index, Point::new(f64::from(at.x()), f64::from(at.y()))));
+    });
+    gesture
+}
+
+/// ジェスチャーが付いている行と、その行のインデックス。
+///
+/// インデックスは押された時点の位置から引く (行を作り直しても狂わない)。
+fn pressed_row(
+    list: &Weak<ListInner>,
+    gesture: &gtk::GestureClick,
+) -> Option<(Rc<ListInner>, gtk::ListBoxRow, usize)> {
+    let inner = list.upgrade()?;
+    let row = gesture
+        .widget()
+        .and_downcast::<gtk::ListBoxRow>()
+        .filter(|row| row.is_sensitive())?;
+    let index = usize::try_from(row.index()).ok()?;
+    Some((inner, row, index))
+}
+
+/// 行にフォーカスがあるときの Enter を、行の起動として拾うキーの受け口。
+///
+/// `GtkListBox` 自身の Enter (`activate-cursor-row`) はその後もそのまま動く
+/// (選択と [`ListRow::on_activate`])。行の中の入力欄やボタンにフォーカスが
+/// あるときの Enter は、そのコントロールのものなので拾わない。
+fn enter_controller(list: Weak<ListInner>) -> gtk::EventControllerKey {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    keys.connect_key_pressed(move |_, key, _, state| {
+        let enter = matches!(
+            key,
+            gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::ISO_Enter
+        );
+        let modifiers = gdk::ModifierType::SHIFT_MASK
+            | gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::SUPER_MASK
+            | gdk::ModifierType::META_MASK;
+        if !enter || state.intersects(modifiers) {
+            return glib::Propagation::Proceed;
+        }
+        let Some(inner) = list.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        let focused = inner
+            .native
+            .root()
+            .and_then(|root| root.focus())
+            .and_downcast::<gtk::ListBoxRow>()
+            .filter(|row| row.parent().as_ref() == Some(inner.native.upcast_ref()));
+        if let Some(row) = focused.filter(|row| row.is_sensitive()) {
+            if let Ok(index) = usize::try_from(row.index()) {
+                inner.row_activate.emit(index);
+            }
+        }
+        glib::Propagation::Proceed
+    });
+    keys
 }
 
 /// 縦のスクロールを、`top..bottom` (中身の座標) が見える位置へ動かす。
