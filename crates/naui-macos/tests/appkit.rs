@@ -4901,15 +4901,18 @@ fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
 
     if key {
         // 1 回目と 2 回目のクリック (clickCount 2) を本物のイベントとして配送する。
+        // 4 つとも積んでから配送する。`NSTableView` は押下を受けると、
+        // 解放が来るまで自分の追跡ループでイベントを待つので、1 つずつ
+        // 積んでは配送すると、まだ積んでいない解放を待ったまま止まる。
         let double_click = |row: isize| {
             let point = row_center_in_window(&table, row);
             for clicks in [1, 2] {
                 for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
                     let event = mouse_event(&native, kind, point, clicks);
                     unsafe { app.postEvent_atStart(&event, false) };
-                    deliver_events(&app);
                 }
             }
+            deliver_events(&app);
             pump(0.05);
             deliver_events(&app);
         };
@@ -4963,11 +4966,12 @@ fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
     let right_click = |row: isize| {
         let point = row_center_in_window(&table, row);
         if key {
+            // ダブルクリックと同じ理由で、押下と解放を積んでから配送する。
             for kind in [NSEventType::RightMouseDown, NSEventType::RightMouseUp] {
                 let event = mouse_event(&native, kind, point, 1);
                 unsafe { app.postEvent_atStart(&event, false) };
-                deliver_events(&app);
             }
+            deliver_events(&app);
         } else {
             // 配送できない環境では、AppKit が呼ぶ口を直接呼ぶ。
             let event = mouse_event(&native, NSEventType::RightMouseDown, point, 1);
