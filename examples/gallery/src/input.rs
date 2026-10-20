@@ -1,6 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use naui::{
     Button, Color, ColorPicker, DatePicker, DatePickerMode, DateTime, EditableComboBox,
     EventResponse, Key, KeyEvent, Label, Length, NumberInput, PasswordInput, Result, SearchInput,
@@ -45,14 +42,9 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     disabler.add(&input, TextInput::set_enabled);
     input.set_placeholder("プレースホルダー");
     input.set_sizing(Sizing::fill_width());
-    // 中身は on_change で受け取っておき、フォーカスの通知はこちらを見る
-    // (通知のクロージャが input 自身を捕まえると循環して解放されない)。
-    let input_text = Rc::new(RefCell::new(String::new()));
     input.on_change({
         let notice = notice.clone();
-        let input_text = input_text.clone();
         move |text| {
-            *input_text.borrow_mut() = text.to_owned();
             if text.is_empty() {
                 notice.show("入力値: (空)");
             } else {
@@ -64,15 +56,17 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let notice = notice.clone();
         move |text| notice.show(&format!("確定: {text}"))
     });
-    // 欄を離れたときに中身を確かめる。
+    // 欄を離れたときに中身を確かめる。通知の中で欄自身を読むときは、
+    // clone() ではなく弱参照で捕まえる (循環して解放されなくなるため)。
     let input_status = parts::readout(ui, "フォーカス: なし")?;
     input.on_focus_change({
-        let input_text = input_text.clone();
+        let input = input.downgrade();
         let input_status = input_status.clone();
         move |focused| {
+            let Some(input) = input.upgrade() else { return };
             if focused {
                 input_status.set_text("フォーカス: 入力中");
-            } else if input_text.borrow().trim().is_empty() {
+            } else if input.text().trim().is_empty() {
                 input_status.set_text("フォーカス: 離れました (空です)");
             } else {
                 input_status.set_text("フォーカス: 離れました");
@@ -98,10 +92,12 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             .height(Length::Fixed(150.0)),
     );
     // 欄のそばの表示は、いまの中身から作り直す。まとめて戻すときにも使う。
+    // area の通知からも呼ぶので、area は弱参照で捕まえる。
     let describe_area = {
-        let area = area.clone();
+        let area = area.downgrade();
         let area_status = area_status.clone();
         move || {
+            let Some(area) = area.upgrade() else { return };
             let text = area.text();
             let lines = if text.is_empty() {
                 0
@@ -138,7 +134,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             .height(Length::Fixed(80.0)),
     );
     message.on_key_down({
-        let message = message.clone();
+        let message = message.downgrade();
         let sent = sent.clone();
         let last_key = last_key.clone();
         move |event: &KeyEvent| {
@@ -154,6 +150,9 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             if event.key != Key::Enter || event.modifiers.shift {
                 return EventResponse::Continue;
             }
+            let Some(message) = message.upgrade() else {
+                return EventResponse::Continue;
+            };
             let text = message.text();
             if !text.trim().is_empty() {
                 sent.set_text(&format!("送信: {}", text.replace('\n', " ⏎ ")));
@@ -183,12 +182,16 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     disabler.add(&confirm, PasswordInput::set_enabled);
     confirm.set_placeholder("パスワード (確認)");
     confirm.set_sizing(password_width);
-    // 画面に出すのは長さと一致だけ。中身は表示しない。
+    // 画面に出すのは長さと一致だけ。中身は表示しない。両方の欄の通知から
+    // 呼ぶので、どちらも弱参照で捕まえる。
     let describe_password = {
-        let password = password.clone();
-        let confirm = confirm.clone();
+        let password = password.downgrade();
+        let confirm = confirm.downgrade();
         let password_status = password_status.clone();
         move || {
+            let (Some(password), Some(confirm)) = (password.upgrade(), confirm.upgrade()) else {
+                return;
+            };
             let typed = password.text();
             if typed.is_empty() {
                 password_status.set_text("パスワード: 未入力");
@@ -232,9 +235,12 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     search.set_placeholder("検索");
     search.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
     let describe_search = {
-        let search = search.clone();
+        let search = search.downgrade();
         let search_status = search_status.clone();
         move || {
+            let Some(search) = search.upgrade() else {
+                return;
+            };
             let text = search.text();
             let hits: Vec<&str> = fruits
                 .iter()
@@ -280,8 +286,9 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     city.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
     city.on_change({
         let notice = notice.clone();
-        let city = city.clone();
+        let city = city.downgrade();
         move |text| {
+            let Some(city) = city.upgrade() else { return };
             if text.is_empty() {
                 notice.show("都市: (空)");
             } else {
@@ -316,18 +323,22 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     price.set_sizing(number_width);
     let total_status = parts::readout(ui, "")?;
     show_total(&count, &price, &total_status);
+    // 2 つの欄の通知が互いを捕まえ合うので、どちらも弱参照にする。
+    let update_total = {
+        let count = count.downgrade();
+        let price = price.downgrade();
+        let total_status = total_status.clone();
+        move || {
+            if let (Some(count), Some(price)) = (count.upgrade(), price.upgrade()) {
+                show_total(&count, &price, &total_status);
+            }
+        }
+    };
     count.on_change({
-        let count = count.clone();
-        let price = price.clone();
-        let total_status = total_status.clone();
-        move |_| show_total(&count, &price, &total_status)
+        let update_total = update_total.clone();
+        move |_| update_total()
     });
-    price.on_change({
-        let count = count.clone();
-        let price = price.clone();
-        let total_status = total_status.clone();
-        move |_| show_total(&count, &price, &total_status)
-    });
+    price.on_change(move |_| update_total());
     pane.append(&ui.label("数量 (1〜99 の整数)")?);
     pane.append(&count);
     pane.append(&ui.label("単価 (小数 2 桁、0.05 刻み)")?);
@@ -461,8 +472,6 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let notice = notice.clone();
         move || {
             input.set_text("");
-            // set_text は on_change を呼ばないので、共有の中身も戻す。
-            input_text.borrow_mut().clear();
             area.set_text("");
             password.set_text("");
             confirm.set_text("");

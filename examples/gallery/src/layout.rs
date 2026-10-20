@@ -224,10 +224,13 @@ fn build_interaction(ui: &Ui, pane: &naui::Stack, middle: &naui::Button) -> Resu
     toggle.set_tooltip(Some("上の Stack の「中央」ボタンを出し入れします"));
     toggle.on_click({
         let middle = middle.clone();
-        let toggle = toggle.clone();
+        let toggle = toggle.downgrade();
         move || {
             let visible = !middle.is_visible();
             middle.set_visible(visible);
+            let Some(toggle) = toggle.upgrade() else {
+                return;
+            };
             toggle.set_text(if visible {
                 "「中央」を隠す"
             } else {

@@ -144,7 +144,8 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
 
     chart.on_pointer({
         let state = state.clone();
-        let chart = chart.clone();
+        // chart 自身は弱参照で捕まえる (clone() で捕まえると解放されない)。
+        let chart = chart.downgrade();
         let notice = notice.clone();
         move |event| {
             let hit = state
@@ -168,7 +169,9 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
                 }
             }
             if changed {
-                chart.redraw();
+                if let Some(chart) = chart.upgrade() {
+                    chart.redraw();
+                }
             }
         }
     });

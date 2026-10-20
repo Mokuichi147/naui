@@ -47,9 +47,14 @@ pub(crate) fn build(
         move |on| sidebar.set_collapsed(on)
     });
     // サイドバーボタン (その環境の標準のもの) で開閉されたら、チェックも合わせる。
+    // collapse の通知が sidebar を捕まえているので、こちらは弱参照にする。
     sidebar.on_collapse({
-        let collapse = collapse.clone();
-        move |collapsed| collapse.set_checked(collapsed)
+        let collapse = collapse.downgrade();
+        move |collapsed| {
+            if let Some(collapse) = collapse.upgrade() {
+                collapse.set_checked(collapsed);
+            }
+        }
     });
     // 仕切りで幅を変えると届く。
     sidebar.on_resize({
