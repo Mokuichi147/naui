@@ -14,7 +14,8 @@
 //! 足さなくて済むようにしている。
 //!
 //! 大きさが変わったことは `SizeChanged` で拾い、ポインターは `PointerPressed` /
-//! `PointerMoved` / `PointerReleased` から取る。
+//! `PointerMoved` / `PointerReleased` から取る。面の上にあるかどうかは
+//! それらと `PointerEntered` / `PointerExited` で覚える。
 //!
 //! どのボタンかは `PointerPointProperties` の `IsLeftButtonPressed` などで見る。
 //! WinUI は 2 つ目以降のボタンの押下と解放 (左を押したまま右を押す、など) を
@@ -129,7 +130,8 @@ struct CanvasInner {
     pressed: RefCell<HashMap<u32, u8>>,
     /// 描き直しを `DispatcherQueue` へ積んであるかどうか。
     scheduled: Cell<bool>,
-    /// 面の上にあるポインターの最後の位置。外へ出たら `None`。フックから
+    /// 面の上にあるポインターの最後の位置。入ったときと押下・移動・解放で
+    /// 覚え、外へ出たら `None`。フックから
     /// 届けるホイールの位置と、届け先の面を決めるのに使う。
     hover: Cell<Option<Point>>,
     /// [`WHEEL_CANVASES`] に載せたかどうか (`on_wheel` を付けたかどうか)。
@@ -304,6 +306,35 @@ impl Canvas {
             }
             .map_err(|e| to_error("Canvas のポインター購読", e))?;
         }
+
+        // 動かずに面の上へ来ることもある (外のスライダーを引いて面の上で離すと、
+        // 捕捉が解けたところで `PointerEntered` だけが届く)。そのまま回した
+        // ホイールをフックが届けられるよう、入ったときにも位置を覚える。
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let entered = PointerEventHandler::new(move |_, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            let _ = target.try_with_mut(|weak: &mut Weak<CanvasInner>| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let Ok(root) = inner.native.cast::<UIElement>() else {
+                    return;
+                };
+                let Ok(position) = args.GetCurrentPoint(&root).and_then(|p| p.Position()) else {
+                    return;
+                };
+                inner.hover.set(Some(Point::new(
+                    f64::from(position.X),
+                    f64::from(position.Y),
+                )));
+            });
+            Ok(())
+        });
+        element
+            .PointerEntered(&entered)
+            .map_err(|e| to_error("Canvas のポインター購読", e))?;
 
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let exited = PointerEventHandler::new(move |_, _| {
