@@ -105,6 +105,8 @@ struct NumberInputInner {
     silent: Cell<bool>,
     /// テンプレートの入力欄。見つかるまでは `None`。
     field: RefCell<Option<TextBox>>,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 数値を入力させるコントロール (`NumberBox`)。
@@ -141,6 +143,7 @@ impl NumberInput {
             submit: ChangeHandler::new(),
             silent: Cell::new(false),
             field: RefCell::new(None),
+            focus: Default::default(),
         }));
         this.write_native_spec()?;
         this.write_native(this.value());

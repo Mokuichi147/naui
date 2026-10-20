@@ -12,7 +12,8 @@
 //! アクティブでなくなったときと同じ扱いになる。
 //!
 //! 登録表は要素と、通知先の弱参照を持つ。通知先そのものはウィジェットが
-//! 持つので、ウィジェットが解放されれば表からも外れる。
+//! 持ち ([`Focus`])、ウィジェットが解放されるときに表の項目も外す。表に
+//! 残しておくと、捨てた欄の要素がいつまでも解放されない。
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -45,9 +46,9 @@ impl Focus {
             return;
         }
         ENTRIES.with(|entries| {
-            let mut entries = entries.borrow_mut();
-            entries.retain(|(_, handler)| handler.strong_count() > 0);
-            entries.push((element.clone(), Rc::downgrade(&self.handler)));
+            entries
+                .borrow_mut()
+                .push((element.clone(), Rc::downgrade(&self.handler)))
         });
         ensure_listeners();
         // フォーカスがすでにこの中にあれば、通知せずに持ち主として覚える。
@@ -59,6 +60,27 @@ impl Focus {
             OWNER.with(|owner| owner.reset(Some(self.handler.clone())));
         }
     }
+}
+
+impl Drop for Focus {
+    fn drop(&mut self) {
+        if !self.registered.get() {
+            return;
+        }
+        // 外す項目は要素と弱参照だけなので、捨てても表を触り直すことはない。
+        // スレッドの後始末で表が先に消えていれば、外すものも無い。
+        let _ = ENTRIES.try_with(|entries| {
+            entries
+                .borrow_mut()
+                .retain(|(_, handler)| !std::ptr::eq(handler.as_ptr(), Rc::as_ptr(&self.handler)))
+        });
+    }
+}
+
+/// 登録表に載っている要素の数。**自動テスト専用**。
+#[doc(hidden)]
+pub fn registered_focus_elements() -> usize {
+    ENTRIES.with(|entries| entries.borrow().len())
 }
 
 fn ensure_listeners() {

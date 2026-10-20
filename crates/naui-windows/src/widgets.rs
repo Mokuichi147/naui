@@ -451,6 +451,8 @@ struct TextInputInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 1 行テキスト入力 (TextBox)。IME は Windows が処理する。
@@ -470,6 +472,7 @@ impl TextInput {
             native,
             token: RefCell::new(None),
             on_submit: TextHandler::new(),
+            focus: Default::default(),
         });
         let element: UIElement = inner
             .native
@@ -558,6 +561,8 @@ struct PasswordInputInner {
     native: PasswordBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// パスワード入力 (PasswordBox)。
@@ -578,6 +583,7 @@ impl PasswordInput {
             native,
             token: RefCell::new(None),
             on_submit: TextHandler::new(),
+            focus: Default::default(),
         });
         let element: UIElement = inner
             .native
@@ -648,6 +654,8 @@ impl PasswordInput {
 struct TextAreaInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 複数行テキスト入力 (改行を受け付ける TextBox)。IME は Windows が処理する。
@@ -677,6 +685,7 @@ impl TextArea {
         Ok(Self(Rc::new(TextAreaInner {
             native,
             token: RefCell::new(None),
+            focus: Default::default(),
         })))
     }
 

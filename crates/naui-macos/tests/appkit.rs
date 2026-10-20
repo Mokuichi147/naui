@@ -24,7 +24,7 @@ use naui_core::{
     DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
-use objc2::rc::Retained;
+use objc2::rc::{autoreleasepool, Retained};
 use objc2::sel;
 use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
 use objc2_app_kit::{
@@ -358,6 +358,10 @@ fn main() {
         (
             "通知のクロージャが弱参照で欄自身を触れ、外して手放せば解放される",
             weak_widget_breaks_the_callback_cycle,
+        ),
+        (
+            "捨てた入力欄の on_focus_change の通知先が解放される",
+            focus_change_handler_is_freed_with_the_widget,
         ),
         ("ツールチップが NSView へ届く", tooltip_reaches_the_view),
         (
@@ -3435,6 +3439,55 @@ fn weak_widget_breaks_the_callback_cycle(ui: &Ui) -> Result<()> {
     root.remove(0);
     drop(mail);
     assert!(weak.upgrade().is_none(), "外して手放した欄が残っている");
+    window.close();
+    Ok(())
+}
+
+fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let kept = ui.text_input("")?;
+    root.append(&kept);
+    window.set_child(&root);
+    window.show();
+
+    // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+    let state = Rc::new(());
+    let capture = || {
+        let state = state.clone();
+        move |_: bool| {
+            let _ = &state;
+        }
+    };
+
+    // 表示中の木へ入れてフォーカスを持たせてから外す。自動解放に回された
+    // ぶんはプールを抜けたところで、フォーカスを持っていた欄を AppKit が
+    // 掴んでいるぶんは実行ループが回ったところで手放される。
+    autoreleasepool(|_| {
+        let input = ui.text_input("")?;
+        root.append(&input);
+        input.on_focus_change(capture());
+        // 差し替えても、前の通知先は残らない。
+        input.on_focus_change(capture());
+        assert!(input.request_focus());
+        assert_eq!(Rc::strong_count(&state), 2);
+        assert!(kept.request_focus());
+        root.remove(1);
+        drop(input);
+        Ok::<_, naui_core::Error>(())
+    })?;
+    pump_until(2.0, || Rc::strong_count(&state) == 1);
+    assert_eq!(Rc::strong_count(&state), 1, "外して捨てた欄の通知先");
+
+    // 木へ入れないまま捨てる。
+    autoreleasepool(|_| {
+        let area = ui.text_area("")?;
+        area.on_focus_change(capture());
+        drop(area);
+        Ok::<_, naui_core::Error>(())
+    })?;
+    assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
+
     window.close();
     Ok(())
 }
