@@ -87,6 +87,12 @@ form.remove(GridCell::new(0, 0));      // マスを指して外す
 
 `Grid::replace` は**そのマスだけ**を差し替えます。ほかのマスの子は残ります。
 
+外したウィジェットは、ハンドルをすべて手放したときに解放されます。ただし、
+**ウィジェットの通知 (`on_change` や `on_focus_change` など) のクロージャが
+そのウィジェット自身のハンドルを捕まえていると、循環して解放されません。**
+通知の引数で足りるならそれを使い、足りなければ中身を `Rc` などで別に持ちます
+([フォーカスの出入り](#フォーカスの出入り)の例を参照)。
+
 ## テーマ
 
 既定の `Theme::System` は OS またはブラウザの設定へ追従します。起動時に固定する
@@ -339,16 +345,28 @@ name.on_submit(|text| println!("{text} で登録する")); // Enter で確定し
 保存に使います。
 
 ```rust
+use std::cell::RefCell;
+use std::rc::Rc;
+
 let mail = ui.text_input("")?;
-mail.on_focus_change({
-    let mail = mail.clone();
-    move |focused| {
-        if !focused && !mail.text().contains('@') {
-            println!("メールアドレスを確かめてください");
-        }
+// 中身は on_change で受け取っておく (mail 自身は捕まえない)。
+let text = Rc::new(RefCell::new(String::new()));
+mail.on_change({
+    let text = text.clone();
+    move |value| *text.borrow_mut() = value.to_owned()
+});
+mail.on_focus_change(move |focused| {
+    if !focused && !text.borrow().contains('@') {
+        println!("メールアドレスを確かめてください");
     }
 });
 ```
+
+**通知のクロージャに、その欄自身のハンドルを捕まえないでください。**
+欄が通知を持ち、通知が欄を持つ循環になるので、画面から外して手放しても
+解放されません ([後からウィジェットを外す](#後からウィジェットを外す)を参照)。
+`set_text` で書き換えたときは `on_change` が呼ばれないので、共有の中身も
+一緒に書き換えます。
 
 **ウィンドウの中でフォーカスが移ったときだけ**呼ばれます。別のアプリへ
 切り替えたとき (Web ではタブやブラウザのウィンドウを切り替えたとき) は、

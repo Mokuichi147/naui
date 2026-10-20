@@ -373,18 +373,29 @@
 //! ```no_run
 //! # use naui::{Result, Ui};
 //! # fn build(ui: &Ui) -> Result<()> {
+//! use std::cell::RefCell;
+//! use std::rc::Rc;
+//!
 //! let mail = ui.text_input("")?;
-//! mail.on_focus_change({
-//!     let mail = mail.clone();
-//!     move |focused| {
-//!         if !focused && !mail.text().contains('@') {
-//!             println!("メールアドレスを確かめてください");
-//!         }
+//! // 中身は on_change で受け取っておく (mail 自身は捕まえない)。
+//! let text = Rc::new(RefCell::new(String::new()));
+//! mail.on_change({
+//!     let text = text.clone();
+//!     move |value| *text.borrow_mut() = value.to_owned()
+//! });
+//! mail.on_focus_change(move |focused| {
+//!     if !focused && !text.borrow().contains('@') {
+//!         println!("メールアドレスを確かめてください");
 //!     }
 //! });
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! **通知のクロージャに、その欄自身のハンドルを捕まえない。** 欄が通知を
+//! 持ち、通知が欄を持つ循環になるので、画面から外して手放しても解放されない
+//! (ほかのウィジェットの通知も同じ)。引数が `bool` だけなので中身が要るときは、
+//! 上のように `on_change` で受け取って別に持つ。
 //!
 //! **ウィンドウの中でフォーカスが移ったときだけ**呼ばれる。ウィンドウ自体が
 //! アクティブでなくなったとき (別のアプリへ切り替えたとき、Web ではタブや
