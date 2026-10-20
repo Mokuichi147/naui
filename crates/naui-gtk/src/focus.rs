@@ -10,42 +10,67 @@
 //! 出入りを知らせるが、`focus-widget` はウィンドウの中のフォーカスなので
 //! 変わらない。ほかの環境とそろえるため、こちらを使う。
 //!
-//! 登録表はウィジェットを弱参照で持つ。ウィジェットが解放されれば
-//! 通知先も表から外れる。
+//! 登録表はウィジェットを弱参照で持ち、ウィジェット (ウィンドウ) が
+//! 解放されたときに通知先を表から外す。表に残しておくと、通知先と
+//! それが捕まえている状態がいつまでも解放されない。
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use gtk::glib;
 use gtk::prelude::*;
 use naui_core::{FocusHandler, FocusOwner};
 
-type Entries = RefCell<Vec<(glib::WeakRef<gtk::Widget>, Rc<FocusHandler>)>>;
+/// 弱参照の GObject と、それに結び付けた値の表。
+type Table<K, V> = RefCell<Vec<(glib::WeakRef<K>, Rc<V>)>>;
 
 thread_local! {
-    static WIDGETS: Entries = const { RefCell::new(Vec::new()) };
+    static WIDGETS: Table<gtk::Widget, FocusHandler> = const { RefCell::new(Vec::new()) };
     /// ウィンドウごとのフォーカスの持ち主。
-    static OWNERS: RefCell<Vec<(glib::WeakRef<gtk::Window>, Rc<FocusOwner>)>> =
-        const { RefCell::new(Vec::new()) };
+    static OWNERS: Table<gtk::Window, FocusOwner> = const { RefCell::new(Vec::new()) };
 }
 
 /// ウィジェットへ通知先を置く。呼ぶたびに置き換わる。
 pub(crate) fn set_widget_handler(widget: &gtk::Widget, f: impl FnMut(bool) + 'static) {
-    WIDGETS.with(|entries| {
-        let mut entries = entries.borrow_mut();
-        entries.retain(|(weak, _)| weak.upgrade().is_some());
-        if let Some((_, handler)) = entries
-            .iter()
-            .find(|(weak, _)| weak.upgrade().as_ref() == Some(widget))
-        {
-            handler.set(f);
-            return;
-        }
+    let handler = lookup(widget).unwrap_or_else(|| {
         let handler = Rc::new(FocusHandler::default());
-        handler.set(f);
-        entries.push((widget.downgrade(), handler));
+        WIDGETS.with(|entries| {
+            entries
+                .borrow_mut()
+                .push((widget.downgrade(), handler.clone()))
+        });
+        let weak = Rc::downgrade(&handler);
+        widget.add_weak_ref_notify_local(move || {
+            drop(remove_entry(&WIDGETS, &weak));
+        });
+        handler
     });
+    // 前のクロージャを捨てるとき、捕まえていたウィジェットが解放されて
+    // 表を触ることがある。表を借りていない所で置き換える。
+    handler.set(f);
     adopt_current_focus(widget);
+}
+
+/// 値が `value` の項目を表から外して返す。返したものは表を借りていない所で
+/// 捨てる (捨てると別のウィジェットが解放され、また表を触ることがある)。
+///
+/// GObject が解放されるときに呼ぶ。そのときにはもう弱参照は戻せないことが
+/// あるので、値のほうで探す。
+fn remove_entry<K: ObjectType, V: 'static>(
+    table: &'static std::thread::LocalKey<Table<K, V>>,
+    value: &Weak<V>,
+) -> Option<(glib::WeakRef<K>, Rc<V>)> {
+    // スレッドの後始末で表が先に消えていれば、外すものも無い。
+    table
+        .try_with(|entries| {
+            let mut entries = entries.borrow_mut();
+            let index = entries
+                .iter()
+                .position(|(_, v)| std::ptr::eq(Rc::as_ptr(v), value.as_ptr()))?;
+            Some(entries.swap_remove(index))
+        })
+        .ok()
+        .flatten()
 }
 
 /// フォーカスがすでに `widget` の中にあれば、通知せずに持ち主として覚える
@@ -101,9 +126,13 @@ fn owner_of(widget: Option<gtk::Widget>) -> Option<Rc<FocusHandler>> {
 pub(crate) fn install(window: &impl IsA<gtk::Window>) {
     let owner = Rc::new(FocusOwner::default());
     OWNERS.with(|owners| {
-        let mut owners = owners.borrow_mut();
-        owners.retain(|(weak, _)| weak.upgrade().is_some());
-        owners.push((window.as_ref().downgrade(), owner.clone()));
+        owners
+            .borrow_mut()
+            .push((window.as_ref().downgrade(), owner.clone()))
+    });
+    let weak = Rc::downgrade(&owner);
+    window.as_ref().add_weak_ref_notify_local(move || {
+        drop(remove_entry(&OWNERS, &weak));
     });
     window.as_ref().connect_focus_widget_notify(move |window| {
         owner.move_to(owner_of(GtkWindowExt::focus(window)))

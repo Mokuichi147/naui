@@ -259,6 +259,10 @@ fn main() {
             "フォーカスの出入りが持ち主の変わったときだけ通知される",
             focus_change_follows_the_focus_widget,
         ),
+        (
+            "ウィジェットを捨てると on_focus_change の通知先も解放される",
+            focus_change_handler_is_freed_with_the_widget,
+        ),
         ("ツールチップが中身のコントロールへ届く", tooltip_reaches_the_widget),
         (
             "複数行入力の on_key_down が Shift なしの Enter を止める",
@@ -6390,6 +6394,50 @@ fn focus_change_follows_the_focus_widget(ui: &Ui) -> Result<()> {
     assert!(name.request_focus());
     assert!(name.request_focus());
     assert_eq!(log.borrow()[5..], ["名前:true"]);
+    window.close();
+    Ok(())
+}
+
+fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let kept = ui.text_input("")?;
+    root.append(&kept);
+    window.set_child(&root);
+    window.show();
+    tick(&bin_of(&root));
+
+    // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+    let state = Rc::new(());
+    let capture = || {
+        let state = state.clone();
+        move |_: bool| {
+            let _ = &state;
+        }
+    };
+
+    // 表示中の木へ入れてフォーカスを持たせてから外す。
+    let input = ui.text_input("")?;
+    root.append(&input);
+    tick(&bin_of(&root));
+    input.on_focus_change(capture());
+    // 差し替えても、前の通知先は残らない。
+    input.on_focus_change(capture());
+    assert!(input.request_focus());
+    assert_eq!(Rc::strong_count(&state), 2);
+    root.remove(1);
+    drop(input);
+    tick(&bin_of(&root));
+    // フォーカスが別の欄へ移っても、表示中の窓の持ち主から外れる。
+    assert!(kept.request_focus());
+    assert_eq!(Rc::strong_count(&state), 1, "外して捨てた欄の通知先");
+
+    // 木へ入れないまま捨てる。
+    let area = ui.text_area("")?;
+    area.on_focus_change(capture());
+    drop(area);
+    assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
+
     window.close();
     Ok(())
 }
