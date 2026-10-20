@@ -87,6 +87,12 @@ form.remove(GridCell::new(0, 0));      // マスを指して外す
 
 `Grid::replace` は**そのマスだけ**を差し替えます。ほかのマスの子は残ります。
 
+外したウィジェットは、ハンドルをすべて手放したときに解放されます。ただし、
+**ウィジェットの通知 (`on_change` や `on_focus_change` など) のクロージャが
+そのウィジェット自身のハンドルを捕まえていると、循環して解放されません。**
+通知の引数で足りるならそれを使い、足りなければ中身を `Rc` などで別に持ちます
+([フォーカスの出入り](#フォーカスの出入り)の例を参照)。
+
 ## テーマ
 
 既定の `Theme::System` は OS またはブラウザの設定へ追従します。起動時に固定する
@@ -349,6 +355,69 @@ password.on_change(|text| println!("{} 文字", text.chars().count()));
 **伏せ字を外す切り替えは持ちません**。`NSSecureTextField` に無く、4 環境の共通
 部分にならないためです。入力された文字列は `text()` で読めるので、扱いはアプリの
 責任になります。
+
+### Enter での確定
+
+`TextInput`、`PasswordInput`、`NumberInput` は、Enter で確定したときに
+`on_submit` を呼びます。フォームの送信やログインのように、打ち終えたところで
+動かしたい処理に使います。
+
+```rust
+let name = ui.text_input("")?;
+name.on_change(|text| println!("入力中: {text}")); // 打つたび
+name.on_submit(|text| println!("{text} で登録する")); // Enter で確定したとき
+```
+
+**IME で変換している間の Enter (変換の確定) では呼ばれません。** 読み取り専用の
+`TextInput` と、`on_key_down` が Enter に `Handled` を返したときも呼ばれません。
+
+`NumberInput` は、打ちかけの表示を値へ読み込んでから (読めなければ元の値へ
+戻してから)、確定した値で呼びます。値が変わったなら `on_change` が先に呼ばれます。
+
+`TextArea` の Enter は改行なので `on_submit` を持ちません。Enter で送信したい
+ときは `on_key_down` で拾います。`SearchInput` では同じ通知を `on_search` と
+呼びます。
+
+### フォーカスの出入り
+
+文字入力のウィジェット (`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、
+`NumberInput`、`EditableComboBox`) は、フォーカスが入ったとき (`true`) と
+出たとき (`false`) に `on_focus_change` を呼びます。欄を離れたときの検証や
+保存に使います。
+
+```rust
+use std::cell::RefCell;
+use std::rc::Rc;
+
+let mail = ui.text_input("")?;
+// 中身は on_change で受け取っておく (mail 自身は捕まえない)。
+let text = Rc::new(RefCell::new(String::new()));
+mail.on_change({
+    let text = text.clone();
+    move |value| *text.borrow_mut() = value.to_owned()
+});
+mail.on_focus_change(move |focused| {
+    if !focused && !text.borrow().contains('@') {
+        println!("メールアドレスを確かめてください");
+    }
+});
+```
+
+**通知のクロージャに、その欄自身のハンドルを捕まえないでください。**
+欄が通知を持ち、通知が欄を持つ循環になるので、画面から外して手放しても
+解放されません ([後からウィジェットを外す](#後からウィジェットを外す)を参照)。
+`set_text` で書き換えたときは `on_change` が呼ばれないので、共有の中身も
+一緒に書き換えます。
+
+**ウィンドウの中でフォーカスが移ったときだけ**呼ばれます。別のアプリへ
+切り替えたとき (Web ではタブやブラウザのウィンドウを切り替えたとき) は、
+ウィンドウの中のフォーカスは変わらないので呼ばれません。数値入力の欄と
+増減のボタンのように、ウィジェットの中で移っても呼ばれません。
+
+通知先を置いた時点でフォーカスがすでにその中にあっても、入ったことは
+知らせません (そこから出たときの `false` は届きます)。ウィンドウを出したときに
+最初の入力欄へフォーカスを置くかは環境が決めます (macOS、Linux、Windows は
+置くことがあり、Web は置きません)。
 
 ### 検索の入力
 
@@ -805,8 +874,53 @@ chart.redraw();
 
 `on_pointer` にはポインター (マウス・タッチ・ペン) の押下・移動・解放が、面の
 左上を原点にした位置で届きます (`PointerEvent`)。移動は押していない間 (ホバー) も
-届き、押している間は面の外へ出ても届きます (捕捉します)。右クリックや修飾キーは
-区別しません。
+届き、押している間は面の外へ出ても届きます (捕捉します)。押下と解放には、どの
+ボタンかが `PointerButton` で付きます (`Primary`・`Secondary`・`Middle`・`Back`・
+`Forward`。タッチとペン先は `Primary`)。ボタンの番号は環境ごとに違う (GTK は右が
+3、Web は中が 1) ので、意味でそろえてあります。修飾キーはまだ区別しません。
+
+```rust
+use naui::{EventResponse, PointerButton, PointerPhase, WHEEL_STEP};
+
+chart.on_pointer(|event| {
+    if event.phase == PointerPhase::Down && event.button == Some(PointerButton::Secondary) {
+        println!("右クリック: {:?}", event.point); // PopupMenu::open_at などへ
+    }
+});
+
+let mut scale = 1.0_f64;
+chart.on_wheel(move |event| {
+    scale *= 1.2_f64.powf(-event.wheel_y / WHEEL_STEP); // 1 刻みで 1.2 倍
+    EventResponse::Handled // ページはスクロールさせない
+});
+```
+
+ホイール (トラックパッドの 2 本指のスクロールも含む) は `on_wheel` に、
+`PointerPhase::Wheel` の `PointerEvent` として届きます。量は `wheel_x` /
+`wheel_y` で、**論理ピクセルにそろえてあります**。正は右・下へ読み進める向き
+(ページのスクロールと同じ) で、OS の「ナチュラルなスクロール」の設定は反映した
+あとの向きです。
+
+| 環境 | ネイティブの量 | naui に届く量 |
+| --- | --- | --- |
+| Windows | `MouseWheelDelta` (1 刻みで 120、縦は奥へ回すと正) | 120 を `WHEEL_STEP` に直し、縦の符号を反転 |
+| macOS | `scrollingDeltaX` / `Y` (トラックパッドはピクセル、ホイールは行。中身が動く向きで正) | ピクセルはそのまま、行は `WHEEL_STEP` 倍。符号を反転 |
+| Linux | `GtkEventControllerScroll` (単位が `SURFACE` ならピクセル、`WHEEL` なら刻み) | ピクセルはそのまま、刻みは `WHEEL_STEP` 倍 |
+| Web | `WheelEvent` (`deltaMode` がピクセル・行・ページ) | ピクセルはそのまま、行は `WHEEL_STEP` の 1/3 倍、ページは面の大きさ倍 |
+
+刻みのあるホイールの 1 刻みは `WHEEL_STEP` (48 ピクセル。Windows の既定の
+「1 刻みで 3 行」に 1 行 16 ピクセルを掛けた値) になります。ただし Web で
+ブラウザがピクセルで渡すときはブラウザの量のままなので、1 刻みの量はブラウザに
+よって違います。拡大縮小のように「1 刻みでどれだけ」を決めるときは、上の例の
+ように量を `WHEEL_STEP` で割った値を指数に使うと、トラックパッドの細かい量でも
+滑らかに効きます。
+
+`on_wheel` は `EventResponse` を返します。`Handled` なら外側のスクロール
+(`Scroll` やページ) へ回さず、`Continue` なら外側がいつもどおりスクロール
+します。`on_wheel` を付けていない面は、ホイールを外側へ回します。
+
+Web では、右クリックで出るブラウザのコンテキストメニューを面の上では出しません
+(他の 3 環境の描画面にも無いため)。
 
 Windows だけは**画素を描く面が Windows App SDK にありません** (Win2D は別
 パッケージ、`SwapChainPanel` は DirectX を自前で回す口)。そこで XAML が持つ図形の

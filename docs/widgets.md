@@ -105,7 +105,7 @@
 - `Color`: sRGB の 8 bit で表す色 (色の選択でやり取りする値)
 - `FileFilter` / `FilePickerMode` / `FileEntry`: ファイルの選択と保存
 - `Fit` / `PlaybackState`: メディア表示と再生状態
-- `Painter` / `Path` / `Point` / `Rect` / `PointerEvent`: 描画面に描く命令と、その座標・ポインターの通知
+- `Painter` / `Path` / `Point` / `Rect` / `PointerEvent` / `PointerButton`: 描画面に描く命令と、その座標・ポインターとホイールの通知
 - `PopupItem`: ポップアップメニュー項目
 - `ToolbarItem` / `ToolbarIcon`: ツールバー項目とアイコン
 - `MenuSpec` / `MenuItem` / `MenuShortcut`: メニューバーの見出し・項目・ショートカット

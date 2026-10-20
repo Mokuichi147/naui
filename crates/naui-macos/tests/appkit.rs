@@ -16,25 +16,29 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use naui_core::{
-    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
-    FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
-    Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
-    ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
-    TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, EventResponse,
+    FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
+    NavItem, Orientation, Padding, PlaybackState, Point, PointerButton, PointerPhase, PopupItem,
+    Rect, Result, ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder,
+    TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
+    TreeItem, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
-use objc2::rc::Retained;
+use objc2::rc::{autoreleasepool, Retained};
+use objc2::runtime::NSObjectProtocol;
 use objc2::sel;
-use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
+use objc2::{
+    define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
+};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSButton, NSColor, NSColorSpace, NSComboBox,
     NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
     NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSScrollerStyle,
-    NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate,
-    NSTextField, NSTextInputClient, NSTextView, NSUserInterfaceItemIdentification, NSView,
-    NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder, NSScrollView,
+    NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
+    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
@@ -74,6 +78,10 @@ fn main() {
         (
             "描画面がマウスの押下・移動・解放を面の座標で通知する",
             canvas_reports_pointer_events,
+        ),
+        (
+            "描画面がホイールを論理ピクセルで通知し、Continue なら外側へ回す",
+            canvas_reports_wheel,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         ("複数行入力が改行込みで往復する", text_area_round_trip),
@@ -350,6 +358,14 @@ fn main() {
         (
             "フォーカスが入力欄と複数行入力の中へ移る",
             request_focus_reaches_the_editor,
+        ),
+        (
+            "フォーカスの出入りが持ち主の変わったときだけ通知される",
+            focus_change_follows_the_first_responder,
+        ),
+        (
+            "捨てた入力欄の on_focus_change の通知先が解放される",
+            focus_change_handler_is_freed_with_the_widget,
         ),
         ("ツールチップが NSView へ届く", tooltip_reaches_the_view),
         (
@@ -696,6 +712,18 @@ fn main() {
         (
             "検索入力が Enter のときだけ確定を通知する",
             search_input_notifies_on_return,
+        ),
+        (
+            "1 行入力とパスワード入力が Enter で確定を通知する",
+            text_inputs_notify_on_return,
+        ),
+        (
+            "読み取り専用の 1 行入力は Enter で確定しない",
+            read_only_text_input_does_not_submit,
+        ),
+        (
+            "数値入力が Enter で値を確定してから通知する",
+            number_input_commits_before_submitting,
         ),
         (
             "ポップアップメニューの選択がクロージャへ届く",
@@ -1045,6 +1073,8 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
 
 /// マウスの押下・ドラッグ・解放が、ウィンドウ座標から面の座標へ直して届く。
 fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
+    use objc2_core_graphics::{CGEvent, CGEventType, CGMouseButton};
+
     let canvas = ui.canvas()?;
     canvas.set_sizing(
         Sizing::new()
@@ -1108,23 +1138,168 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
         assert!(near(seen[2].point, 50.0, 40.0), "{:?}", seen[2]);
     }
 
-    // 右ボタンと中ボタンも区別せず同じ通知になる。
+    // 左ボタンは主ボタン。動きにはボタンが付かない。
+    {
+        let seen = seen.borrow();
+        let buttons: Vec<_> = seen.iter().map(|e| e.button).collect();
+        assert_eq!(
+            buttons,
+            vec![
+                Some(PointerButton::Primary),
+                None,
+                Some(PointerButton::Primary)
+            ]
+        );
+    }
+
+    // 右ボタンは別のメソッドへ届くが、同じ通知にボタンを付けて寄せる。
     seen.borrow_mut().clear();
     send(NSEventType::RightMouseDown, 10.0, 10.0);
     send(NSEventType::RightMouseUp, 10.0, 10.0);
-    send(NSEventType::OtherMouseDown, 12.0, 12.0);
-    send(NSEventType::OtherMouseUp, 12.0, 12.0);
-    let phases: Vec<PointerPhase> = seen.borrow().iter().map(|e| e.phase).collect();
+
+    // 左右以外は `otherMouseDown:` へまとめて届くので、ボタンの番号で見分ける。
+    // `mouseEventWithType` では番号を決められないので CGEvent から作る
+    // (位置はスクリーン座標になるので、ここでは見ない)。
+    let other = |kind: CGEventType, number: u32| {
+        let cg =
+            CGEvent::new_mouse_event(None, kind, NSPoint::new(0.0, 0.0), CGMouseButton(number))
+                .expect("マウスの CGEvent");
+        let event = NSEvent::eventWithCGEvent(&cg).expect("マウスの NSEvent");
+        if kind == CGEventType::OtherMouseDown {
+            view.otherMouseDown(&event);
+        } else {
+            view.otherMouseUp(&event);
+        }
+    };
+    other(CGEventType::OtherMouseDown, 2);
+    other(CGEventType::OtherMouseUp, 2);
+    other(CGEventType::OtherMouseDown, 3);
+    other(CGEventType::OtherMouseUp, 3);
+    other(CGEventType::OtherMouseDown, 4);
+    let events: Vec<_> = seen.borrow().iter().map(|e| (e.phase, e.button)).collect();
     assert_eq!(
-        phases,
+        events,
         vec![
-            PointerPhase::Down,
-            PointerPhase::Up,
-            PointerPhase::Down,
-            PointerPhase::Up
+            (PointerPhase::Down, Some(PointerButton::Secondary)),
+            (PointerPhase::Up, Some(PointerButton::Secondary)),
+            (PointerPhase::Down, Some(PointerButton::Middle)),
+            (PointerPhase::Up, Some(PointerButton::Middle)),
+            (PointerPhase::Down, Some(PointerButton::Back)),
+            (PointerPhase::Up, Some(PointerButton::Back)),
+            (PointerPhase::Down, Some(PointerButton::Forward)),
         ],
-        "右ボタンと中ボタンも届くこと"
+        "右・中・側面のボタンも見分けて届くこと"
     );
+    window.close();
+    Ok(())
+}
+
+define_class!(
+    /// `scrollWheel:` が届いた回数を数えるレスポンダー。描画面の次のレスポンダーに
+    /// 差して、`Continue` のホイールが外側へ回ったかを見る。
+    #[unsafe(super(NSResponder))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiTestWheelSink"]
+    #[ivars = Cell<usize>]
+    struct WheelSink;
+
+    unsafe impl NSObjectProtocol for WheelSink {}
+
+    impl WheelSink {
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, _event: &NSEvent) {
+            self.ivars().set(self.ivars().get() + 1);
+        }
+    }
+);
+
+/// ホイールが論理ピクセルにそろえて届き、`Continue` なら次のレスポンダー
+/// (ふつうは外側の `NSScrollView`) へ回り、`Handled` なら回らない。
+///
+/// 外側の `NSScrollView` が実際にスクロールするかは、合成したイベントでは
+/// 環境によって違う (手元では動き、CI のランナーでは動かなかった) ので、
+/// 回ったこと自体を記録用のレスポンダーで見る。
+fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
+    use objc2_core_graphics::{CGEvent, CGScrollEventUnit};
+
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(100.0))
+            .height(Length::Fixed(60.0)),
+    );
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let response = Rc::new(Cell::new(EventResponse::Continue));
+    canvas.on_wheel({
+        let seen = seen.clone();
+        let response = response.clone();
+        move |event| {
+            seen.borrow_mut().push(event);
+            response.get()
+        }
+    });
+    let window = ui.window("wheel", 200.0, 100.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let view = canvas.native_view();
+
+    // 次のレスポンダーは弱参照なので、テストの終わりまで持っておき、戻してから捨てる。
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let sink: Retained<WheelSink> =
+        unsafe { msg_send![super(WheelSink::alloc(mtm).set_ivars(Cell::new(0))), init] };
+    // 弱参照の付け替えなので unsafe。`sink` も元の値もこの関数の間は生きている。
+    let original = unsafe { view.nextResponder() };
+    unsafe { view.setNextResponder(Some(&sink)) };
+
+    // 本物のホイールの NSEvent は CGEvent からしか作れない。正の量は上へ
+    // (中身が下へ動く向き) なので、負の量で下へ読み進める。
+    let wheel = |unit: CGScrollEventUnit, amount: i32| {
+        let cg = CGEvent::new_scroll_wheel_event2(None, unit, 1, amount, 0, 0)
+            .expect("ホイールの CGEvent");
+        let event = NSEvent::eventWithCGEvent(&cg).expect("ホイールの NSEvent");
+        view.scrollWheel(&event);
+    };
+
+    // 細かく測れる量 (ピクセル) はそのまま、向きは「下へ読み進めると正」。
+    wheel(CGScrollEventUnit::Pixel, -30);
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].phase, PointerPhase::Wheel);
+        assert_eq!(seen[0].button, None);
+        assert_eq!(
+            (seen[0].wheel_x, seen[0].wheel_y),
+            (0.0, 30.0),
+            "{:?}",
+            seen[0]
+        );
+    }
+    assert_eq!(
+        sink.ivars().get(),
+        1,
+        "Continue なら次のレスポンダーへ回すこと"
+    );
+
+    // 刻みのあるホイールの 1 刻み (行) は WHEEL_STEP に直す。
+    response.set(EventResponse::Handled);
+    wheel(CGScrollEventUnit::Line, -1);
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(
+            (seen[1].wheel_x, seen[1].wheel_y),
+            (0.0, naui_core::WHEEL_STEP),
+            "{:?}",
+            seen[1]
+        );
+    }
+    assert_eq!(
+        sink.ivars().get(),
+        1,
+        "Handled なら次のレスポンダーへは回さないこと"
+    );
+
+    unsafe { view.setNextResponder(original.as_deref()) };
     window.close();
     Ok(())
 }
@@ -3355,6 +3530,101 @@ fn request_focus_reaches_the_editor(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+fn focus_change_follows_the_first_responder(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let name = ui.text_input("")?;
+    let memo = ui.text_area("")?;
+    memo.set_sizing(Sizing::fixed(200.0, 60.0));
+    let count = ui.number_input(1.0)?;
+    let other = ui.text_input("")?;
+    root.append(&name);
+    root.append(&memo);
+    root.append(&count);
+    root.append(&other);
+    window.set_child(&root);
+    window.show();
+
+    // 通知先を置く前からフォーカスがある欄も、そこから出たことは伝わる。
+    assert!(name.request_focus());
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let record = |label: &'static str| {
+        let log = log.clone();
+        move |focused: bool| log.borrow_mut().push(format!("{label}:{focused}"))
+    };
+    name.on_focus_change(record("名前"));
+    memo.on_focus_change(record("メモ"));
+    count.on_focus_change(record("個数"));
+    assert!(log.borrow().is_empty(), "置いただけでは通知しない");
+
+    assert!(memo.request_focus());
+    assert!(count.request_focus());
+    assert_eq!(
+        *log.borrow(),
+        ["名前:false", "メモ:true", "メモ:false", "個数:true"]
+    );
+
+    // 通知先の無い欄へ移れば、出たことだけが伝わる。
+    assert!(other.request_focus());
+    assert_eq!(log.borrow()[4..], ["個数:false"]);
+
+    // 同じ欄へ移し直しても、持ち主は変わらない。
+    assert!(name.request_focus());
+    assert!(name.request_focus());
+    assert_eq!(log.borrow()[5..], ["名前:true"]);
+    window.close();
+    Ok(())
+}
+
+fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let kept = ui.text_input("")?;
+    root.append(&kept);
+    window.set_child(&root);
+    window.show();
+
+    // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+    let state = Rc::new(());
+    let capture = || {
+        let state = state.clone();
+        move |_: bool| {
+            let _ = &state;
+        }
+    };
+
+    // 表示中の木へ入れてフォーカスを持たせてから外す。自動解放に回された
+    // ぶんはプールを抜けたところで、フォーカスを持っていた欄を AppKit が
+    // 掴んでいるぶんは実行ループが回ったところで手放される。
+    autoreleasepool(|_| {
+        let input = ui.text_input("")?;
+        root.append(&input);
+        input.on_focus_change(capture());
+        // 差し替えても、前の通知先は残らない。
+        input.on_focus_change(capture());
+        assert!(input.request_focus());
+        assert_eq!(Rc::strong_count(&state), 2);
+        assert!(kept.request_focus());
+        root.remove(1);
+        drop(input);
+        Ok::<_, naui_core::Error>(())
+    })?;
+    pump_until(2.0, || Rc::strong_count(&state) == 1);
+    assert_eq!(Rc::strong_count(&state), 1, "外して捨てた欄の通知先");
+
+    // 木へ入れないまま捨てる。
+    autoreleasepool(|_| {
+        let area = ui.text_area("")?;
+        area.on_focus_change(capture());
+        drop(area);
+        Ok::<_, naui_core::Error>(())
+    })?;
+    assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
+
+    window.close();
+    Ok(())
+}
+
 fn tooltip_reaches_the_view(ui: &Ui) -> Result<()> {
     let button = ui.button("保存")?;
     button.set_tooltip(Some("変更を保存します"));
@@ -3635,8 +3905,12 @@ fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// scheme の無い文字列は `NSWorkspace` へ渡さずに弾く。渡すと Finder が
+/// 「アプリケーションを開けません。(-50)」のダイアログを出し、テストを走らせる
+/// たびに 1 枚ずつ残っていた。
 fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
     assert!(ui.open_url("").is_err());
+    assert!(ui.open_url("example.com").is_err());
     Ok(())
 }
 
@@ -7527,6 +7801,121 @@ fn search_input_notifies_on_return(ui: &Ui) -> Result<()> {
         *submitted.borrow(),
         vec!["ねこ".to_string(), "いぬ".to_string()]
     );
+    Ok(())
+}
+
+/// 1 行入力とパスワード入力も、検索欄と同じく Enter のときだけ確定を通知する。
+fn text_inputs_notify_on_return(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("")?;
+    let password = ui.password_input()?;
+    let input_view = input.native_view();
+    let password_view = password.native_view();
+    let input_field = input_view
+        .downcast_ref::<NSTextField>()
+        .expect("1 行入力の欄であること");
+    let password_field: &NSTextField = password_view
+        .downcast_ref::<NSSecureTextField>()
+        .expect("伏せ字の欄であること");
+
+    let typed = Rc::new(RefCell::new(Vec::new()));
+    let submitted = Rc::new(RefCell::new(Vec::new()));
+    input.on_change({
+        let typed = typed.clone();
+        move |text| typed.borrow_mut().push(text.to_string())
+    });
+    input.on_submit({
+        let submitted = submitted.clone();
+        move |text| submitted.borrow_mut().push(format!("入力:{text}"))
+    });
+    password.on_submit({
+        let submitted = submitted.clone();
+        move |text| submitted.borrow_mut().push(format!("伏せ字:{text}"))
+    });
+
+    type_into_field(input_field, "ねこ");
+    assert_eq!(*typed.borrow(), vec!["ねこ".to_string()]);
+    assert!(submitted.borrow().is_empty(), "打つだけでは確定しない");
+
+    press_return_in_field(input_field);
+    type_into_field(password_field, "ひみつ");
+    press_return_in_field(password_field);
+    assert_eq!(
+        *submitted.borrow(),
+        vec!["入力:ねこ".to_string(), "伏せ字:ひみつ".to_string()]
+    );
+    assert_eq!(typed.borrow().len(), 1, "確定は打鍵の通知を増やさない");
+
+    // 確定は何度でも起き、通知の中から欄を空けられる。
+    input.on_submit({
+        let submitted = submitted.clone();
+        let input = input.clone();
+        move |text| {
+            submitted.borrow_mut().push(text.to_string());
+            input.set_text("");
+        }
+    });
+    type_into_field(input_field, "いぬ");
+    press_return_in_field(input_field);
+    assert_eq!(submitted.borrow().last().map(String::as_str), Some("いぬ"));
+    assert_eq!(input.text(), "");
+    Ok(())
+}
+
+/// 読み取り専用の間は書き換えられないので、確定もしない。
+fn read_only_text_input_does_not_submit(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("ログ")?;
+    let view = input.native_view();
+    let field = view
+        .downcast_ref::<NSTextField>()
+        .expect("1 行入力の欄であること");
+    let submitted = Rc::new(Cell::new(0));
+    input.on_submit({
+        let submitted = submitted.clone();
+        move |_| submitted.set(submitted.get() + 1)
+    });
+
+    input.set_read_only(true);
+    press_return_in_field(field);
+    assert_eq!(submitted.get(), 0, "読み取り専用なら確定しない");
+
+    input.set_read_only(false);
+    press_return_in_field(field);
+    assert_eq!(submitted.get(), 1, "書き換えられるようになれば確定する");
+    Ok(())
+}
+
+/// Enter は打ちかけの表示を値へ読み込んでから、その値で知らせる。
+fn number_input_commits_before_submitting(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(5.0)?;
+    number.set_range(None, Some(100.0));
+    let field = number.native_field();
+
+    let log = Rc::new(RefCell::new(Vec::new()));
+    number.on_change({
+        let log = log.clone();
+        move |value| log.borrow_mut().push(format!("変更:{value}"))
+    });
+    number.on_submit({
+        let log = log.clone();
+        move |value| log.borrow_mut().push(format!("確定:{value}"))
+    });
+
+    // 読める表示は打った時点で値になっているので、確定はその値で知らせる。
+    type_into_field(&field, "12");
+    press_return_in_field(&field);
+    assert_eq!(*log.borrow(), vec!["変更:12", "確定:12"]);
+
+    // 範囲の外は端へ寄せ、表示も直してから知らせる。
+    type_into_field(&field, "999");
+    press_return_in_field(&field);
+    assert_eq!(field.stringValue().to_string(), "100");
+    assert_eq!(log.borrow()[2..], ["変更:100", "確定:100"]);
+
+    // 読めない表示は元の値へ戻してから、その値で知らせる。
+    type_into_field(&field, "1x");
+    press_return_in_field(&field);
+    assert_eq!(field.stringValue().to_string(), "100", "元の値へ戻す");
+    assert_eq!(log.borrow()[4..], ["確定:100"]);
     Ok(())
 }
 

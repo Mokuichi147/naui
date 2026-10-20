@@ -112,9 +112,20 @@ fn comes_from(event: &web_sys::Event, window: &Element) -> bool {
     }
 }
 
+/// IME が受け取っているキーか (変換中か、Safari が変換の確定に付ける
+/// `keyCode` 229)。
+pub(crate) fn is_ime_key(event: &KeyboardEvent) -> bool {
+    event.is_composing() || event.key_code() == IME_PROCESS_KEY_CODE
+}
+
+/// 入力欄を確定する Enter か。変換を確定する Enter は数えない。
+pub(crate) fn is_submit_key(event: &KeyboardEvent) -> bool {
+    event.key() == "Enter" && !is_ime_key(event)
+}
+
 /// ブラウザのキーを naui のキーへ写す。変換中のキーと修飾キーは `None`。
 fn to_key_event(event: &KeyboardEvent) -> Option<KeyEvent> {
-    if event.is_composing() || event.key_code() == IME_PROCESS_KEY_CODE {
+    if is_ime_key(event) {
         return None;
     }
     let key = event.key();

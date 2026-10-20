@@ -364,6 +364,56 @@
 //! 違う** (macOS はショートカットより先に届き、ほかの環境では後になることが
 //! ある)。同じキーをショートカットと `on_key_down` の両方に割り当てない。
 //!
+//! ## フォーカスの出入り
+//!
+//! 文字入力のウィジェット (`on_key_down` を持つ 6 つ) は、フォーカスが
+//! 入ったとき (`true`) と出たとき (`false`) を `on_focus_change` で通知する。
+//! 欄を離れたときの検証や保存に使う。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! use std::cell::RefCell;
+//! use std::rc::Rc;
+//!
+//! let mail = ui.text_input("")?;
+//! // 中身は on_change で受け取っておく (mail 自身は捕まえない)。
+//! let text = Rc::new(RefCell::new(String::new()));
+//! mail.on_change({
+//!     let text = text.clone();
+//!     move |value| *text.borrow_mut() = value.to_owned()
+//! });
+//! mail.on_focus_change(move |focused| {
+//!     if !focused && !text.borrow().contains('@') {
+//!         println!("メールアドレスを確かめてください");
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! **通知のクロージャに、その欄自身のハンドルを捕まえない。** 欄が通知を
+//! 持ち、通知が欄を持つ循環になるので、画面から外して手放しても解放されない
+//! (ほかのウィジェットの通知も同じ)。引数が `bool` だけなので中身が要るときは、
+//! 上のように `on_change` で受け取って別に持つ。
+//!
+//! **ウィンドウの中でフォーカスが移ったときだけ**呼ばれる。ウィンドウ自体が
+//! アクティブでなくなったとき (別のアプリへ切り替えたとき、Web ではタブや
+//! ブラウザのウィンドウを切り替えたとき) は、ウィンドウの中のフォーカスは
+//! 変わらないので呼ばれない。ウィジェットの中で部品から部品へ移っても
+//! (数値入力の欄と増減のボタンなど) 呼ばれない。移る先のウィジェットにも
+//! 通知先があれば、出たほうの `false` が先に届く。
+//!
+//! 通知先を置いた時点でフォーカスがすでにその中にあっても、入ったことは
+//! 知らせない (そこから出たときの `false` は届く)。ウィンドウを出したときに
+//! 最初の入力欄へフォーカスを置くかは環境が決める (macOS・Linux・Windows は
+//! 置くことがあり、Web は置かない) ので、表示より前に通知先を置くと、その
+//! ときの `true` が届く環境と届かない環境がある。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 見張る先 | ウィンドウの根の `GotFocus` | `NSWindow` の `makeFirstResponder:` | `GtkWindow` の `focus-widget` | `document` の `focusin` / `focusout` |
+//!
 //! ## 処理中の表示と、選べるラベル
 //!
 //! 終わりの見えない処理 (通信の応答待ちなど) は、[`ProgressBar`] を
@@ -721,6 +771,31 @@
 //! `set_text` では `on_change` は呼ばれない (`TextInput` と同じく、Windows だけは
 //! ネイティブの `TextChanged` が出るため呼ばれる)。
 //!
+//! **Enter での確定は [`on_submit`](TextInput::on_submit) で受け取る**
+//! (`TextInput` / `PasswordInput` / [`NumberInput`])。フォームの送信や
+//! ログインのように、打ち終えたところで動かしたい処理に使う。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let name = ui.text_input("")?;
+//! name.on_submit(|text| println!("{text} で登録する"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! **IME で変換している間の Enter (変換の確定) では呼ばれない。** 読み取り専用の
+//! `TextInput` と、[`on_key_down`](TextInput::on_key_down) が Enter に
+//! `Handled` を返したときも呼ばれない。`NumberInput` は打ちかけの表示を値へ
+//! 読み込んで (読めなければ元の値へ戻して) から、確定した値で呼ぶ。値が
+//! 変わったなら `on_change` が先に呼ばれる。`TextArea` の Enter は改行なので
+//! 持たない (送信に使うなら `on_key_down` で拾う)。`SearchInput` では同じ通知を
+//! `on_search` と呼ぶ。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `on_submit` | Enter の `PreviewKeyDown` | `insertNewline:` (`control:textView:doCommandBySelector:`) | `activate` | Enter の `keydown` |
+//!
 //! [`PasswordInput`] は打った文字を伏せ字にするだけで、API は [`TextInput`] と
 //! 同じ。**伏せ字を一時的に外すボタンは持たない** (`NSSecureTextField` に
 //! 無いため)。入力された文字列は `text()` で読めるので、扱いはアプリの責任。
@@ -1051,7 +1126,61 @@
 //! [`on_pointer`](Canvas::on_pointer) にはポインター (マウス・タッチ・ペン) の
 //! 押下・移動・解放が、面の左上を原点にした位置で届く
 //! ([`PointerEvent`])。移動は押していない間 (ホバー) も届き、押している間は
-//! 面の外へ出ても届く (捕捉する)。右クリックや修飾キーは区別しない。
+//! 面の外へ出ても届く (捕捉する)。押下と解放には、どのボタンかが
+//! [`PointerButton`] で付く (主・副・中・戻る・進む。タッチとペン先は主)。
+//! 環境ごとに違うボタンの番号は意味でそろえてある。修飾キーはまだ区別しない。
+//!
+//! ```no_run
+//! # use naui::{PointerButton, PointerPhase, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! # let chart = ui.canvas()?;
+//! chart.on_pointer(|event| {
+//!     if event.phase == PointerPhase::Down && event.button == Some(PointerButton::Secondary) {
+//!         println!("右クリック: {:?}", event.point); // PopupMenu::open_at などへ
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ホイール (トラックパッドの 2 本指のスクロールも含む) は
+//! [`on_wheel`](Canvas::on_wheel) に、[`PointerPhase::Wheel`] の
+//! [`PointerEvent`] として届く。量は [`wheel_x`](PointerEvent::wheel_x) /
+//! [`wheel_y`](PointerEvent::wheel_y) で、**論理ピクセルにそろえてある**。
+//! 正は右・下へ読み進める向き (ページのスクロールと同じ) で、OS の
+//! 「ナチュラルなスクロール」の設定は反映したあとの向きになる。
+//!
+//! | 環境 | ネイティブの量 | naui に届く量 |
+//! | --- | --- | --- |
+//! | Windows | `MouseWheelDelta` (1 刻みで 120、縦は奥へ回すと正) | 120 を [`WHEEL_STEP`] に直し、縦の符号を反転 |
+//! | macOS | `scrollingDeltaX` / `Y` (トラックパッドはピクセル、ホイールは行。中身が動く向きで正) | ピクセルはそのまま、行は `WHEEL_STEP` 倍。符号を反転 |
+//! | Linux | `GtkEventControllerScroll` (単位が `SURFACE` ならピクセル、`WHEEL` なら刻み) | ピクセルはそのまま、刻みは `WHEEL_STEP` 倍 |
+//! | Web | `WheelEvent` (`deltaMode` がピクセル・行・ページ) | ピクセルはそのまま、行は `WHEEL_STEP` の 1/3 倍、ページは面の大きさ倍 |
+//!
+//! 刻みのあるホイールの 1 刻みは `WHEEL_STEP` (48) になる。ただし Web で
+//! ブラウザがピクセルで渡すときはブラウザの量のままなので、1 刻みの量は
+//! ブラウザによって違う。拡大縮小のように「1 刻みでどれだけ」を決めるときは、
+//! 量を `WHEEL_STEP` で割った値を指数に使うと、細かい量でも滑らかに効く。
+//!
+//! `on_wheel` は [`EventResponse`] を返す。`Handled` なら外側のスクロール
+//! (`Scroll` やページ) へ回さず、`Continue` なら外側がいつもどおり
+//! スクロールする。`on_wheel` を付けていない面は、ホイールを外側へ回す。
+//!
+//! ```no_run
+//! # use naui::{EventResponse, Result, Ui, WHEEL_STEP};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! # let chart = ui.canvas()?;
+//! let mut scale = 1.0_f64;
+//! chart.on_wheel(move |event| {
+//!     scale *= 1.2_f64.powf(-event.wheel_y / WHEEL_STEP); // 1 刻みで 1.2 倍
+//!     EventResponse::Handled // ページはスクロールさせない
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Web では、右クリックで出るブラウザのコンテキストメニューを面の上では
+//! 出さない (他の 3 環境の描画面にも無いため)。
 //!
 //! Windows だけは**画素を描く面が Windows App SDK に無い** (Win2D は別
 //! パッケージ)。そこで XAML が持つ図形の要素 `Path` と `TextBlock` を
@@ -2023,11 +2152,11 @@ pub use naui_core::{
     DialogResponse, DrawCommand, Error, EventResponse, FileEntry, FileFilter, FilePickerMode, Fit,
     GridCell, Key, KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, Modifiers,
     NavItem, NumberSpec, Orientation, Padding, Painter, Path, PathSegment, PlaybackState, Point,
-    PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy,
-    SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep, SortOrder,
-    TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer, ToastSpec,
-    ToolbarIcon, ToolbarItem, Track, TreeItem, WindowState, DEFAULT_SIDEBAR_WIDTH,
-    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
+    PointerButton, PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollMetrics,
+    ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep,
+    SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer,
+    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -2352,7 +2481,27 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     canvas.on_pointer(|event: PointerEvent| {
         let _: PointerPhase = event.phase;
         let _: Point = event.point;
+        let _: Option<PointerButton> = event.button;
     });
+    canvas.on_wheel(|event: PointerEvent| {
+        let _: f64 = event.wheel_x;
+        let _: f64 = event.wheel_y;
+        let _ = (
+            PointerPhase::Wheel,
+            PointerButton::Primary,
+            PointerButton::Secondary,
+        );
+        let _ = (
+            PointerButton::Middle,
+            PointerButton::Back,
+            PointerButton::Forward,
+        );
+        let _: f64 = WHEEL_STEP;
+        EventResponse::Handled
+    });
+    let _: PointerEvent = PointerEvent::new(PointerPhase::Down, Point::new(0.0, 0.0))
+        .button(Some(PointerButton::Primary));
+    let _: PointerEvent = PointerEvent::wheel(Point::new(0.0, 0.0), 0.0, WHEEL_STEP);
     canvas.redraw();
     let _: (f64, f64) = canvas.size();
     canvas.set_sizing(Sizing::fill());
@@ -2415,6 +2564,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     input.set_placeholder("t");
     input.set_enabled(true);
     input.on_change(|_s: &str| {});
+    input.on_submit(|_s: &str| {});
     input.set_read_only(true);
     let _: bool = input.is_read_only();
 
@@ -2434,6 +2584,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     password.set_placeholder("t");
     password.set_enabled(true);
     password.on_change(|_s: &str| {});
+    password.on_submit(|_s: &str| {});
     password.set_sizing(Sizing::fill_width());
 
     let search: SearchInput = ui.search_input()?;
@@ -2455,6 +2606,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     number.set_decimals(2);
     number.set_enabled(true);
     number.on_change(|_v: f64| {});
+    number.on_submit(|_v: f64| {});
     number.set_sizing(Sizing::fill_width());
 
     // 文字入力系は 6 つとも on_key_down を持つ。
@@ -2471,6 +2623,15 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     search.on_key_down(on_key);
     number.on_key_down(on_key);
     editable_combo_box.on_key_down(on_key);
+
+    // 同じ 6 つが on_focus_change も持つ。
+    let on_focus = |_focused: bool| {};
+    input.on_focus_change(on_focus);
+    text_area.on_focus_change(on_focus);
+    password.on_focus_change(on_focus);
+    search.on_focus_change(on_focus);
+    number.on_focus_change(on_focus);
+    editable_combo_box.on_focus_change(on_focus);
 
     let slider: Slider = ui.slider(0.0, 1.0)?;
     let _: f64 = slider.value();

@@ -36,6 +36,7 @@ web-sys = { version = "0.3", features = [
     "EventTarget",
     "File",
     "FileList",
+    "FocusEvent",
     "HtmlButtonElement",
     "HtmlCanvasElement",
     "HtmlDataListElement",
@@ -65,6 +66,7 @@ web-sys = { version = "0.3", features = [
     "ScrollBehavior",
     "ScrollToOptions",
     "Url",
+    "WheelEvent",
     "Window",
 ] }
 
@@ -93,9 +95,13 @@ web-sys = { version = "0.3", features = [
     "ImageData",
     "KeyboardEvent",
     "KeyboardEventInit",
+    "MouseEvent",
+    "MouseEventInit",
     "Node",
     "NodeList",
     "PointerEvent",
     "PointerEventInit",
+    "WheelEvent",
+    "WheelEventInit",
     "Window",
 ] }

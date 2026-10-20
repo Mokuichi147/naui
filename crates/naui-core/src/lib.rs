@@ -20,6 +20,7 @@ mod color;
 mod datetime;
 mod dialog;
 mod file;
+mod focus;
 mod key;
 mod layout;
 mod list;
@@ -42,7 +43,8 @@ mod tree;
 mod window;
 
 pub use canvas::{
-    DrawCommand, Painter, Path, PathSegment, Point, PointerEvent, PointerPhase, Rect,
+    DrawCommand, Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase,
+    Rect, WheelHandler, WHEEL_STEP,
 };
 pub use channel::Sender;
 pub use color::Color;
@@ -52,6 +54,7 @@ pub use file::{
     accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
     FilePickerMode,
 };
+pub use focus::{FocusHandler, FocusOwner};
 pub use key::{EventResponse, Key, KeyEvent, KeyHandler, Modifiers};
 pub use layout::{GridCell, Length, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing, Track};
 pub use list::{ListItem, SelectionMode};

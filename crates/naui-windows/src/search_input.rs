@@ -22,7 +22,7 @@ use windows::Foundation::TypedEventHandler;
 use windows_core::{Interface, HSTRING};
 
 use crate::to_error;
-use crate::ui_thread::{HandlerCell, UiThreadCell};
+use crate::ui_thread::{TextHandler, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
 // 虫めがねの印は WinUI の標準アイコン (Segoe Fluent Icons の Find) を使う。
@@ -32,40 +32,12 @@ const AUTO_SUGGEST_BOX_XAML: &str = r#"<AutoSuggestBox
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     QueryIcon="Find"/>"#;
 
-/// 文字列を 1 つ受け取る通知先。
-///
-/// WinRT のデリゲートは `Send + Sync` を要求するので [`UiThreadCell`] に
-/// 載せる。呼び出しの間だけクロージャを取り出すため、通知の中から同じ欄を
-/// 操作しても二重借用にならない。
-#[derive(Clone)]
-struct TextHandler(HandlerCell<dyn FnMut(&str)>);
-
-impl TextHandler {
-    fn new() -> Self {
-        Self(Arc::new(UiThreadCell::new(None)))
-    }
-
-    fn set(&self, f: impl FnMut(&str) + 'static) {
-        self.0.with_mut(|slot| *slot = Some(Box::new(f)));
-    }
-
-    fn emit(&self, text: &str) {
-        let Some(Some(mut f)) = self.0.try_with_mut(|slot| slot.take()) else {
-            return;
-        };
-        f(text);
-        let _ = self.0.try_with_mut(|slot| {
-            if slot.is_none() {
-                *slot = Some(f);
-            }
-        });
-    }
-}
-
 struct SearchInputInner {
     native: AutoSuggestBox,
     on_change: TextHandler,
     on_search: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 検索の入力欄 (`AutoSuggestBox`)。
@@ -74,6 +46,7 @@ struct SearchInputInner {
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 crate::keys::impl_key_down!(SearchInput);
+crate::focus::impl_focus_change!(SearchInput);
 impl_widget!(SearchInput, native);
 
 impl SearchInput {
@@ -83,6 +56,7 @@ impl SearchInput {
             native,
             on_change: TextHandler::new(),
             on_search: TextHandler::new(),
+            focus: Default::default(),
         }));
         this.connect()?;
         Ok(this)
