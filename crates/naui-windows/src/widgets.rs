@@ -19,7 +19,7 @@ use windows::Foundation::{EventHandler, PropertyValue, TypedEventHandler};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{TextHandler, UiThreadCell};
 
 /// naui のウィジェットが実装する共通インタフェース。
 pub trait Widget: 'static {
@@ -443,12 +443,16 @@ impl Checkbox {
 struct TextInputInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
+    on_submit: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 1 行テキスト入力 (TextBox)。IME は Windows が処理する。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
 crate::keys::impl_key_down!(TextInput);
+crate::focus::impl_focus_change!(TextInput);
 impl_widget!(TextInput, native);
 
 impl TextInput {
@@ -457,10 +461,30 @@ impl TextInput {
         native
             .SetText(&HSTRING::from(text))
             .map_err(|e| to_error("TextBox への設定", e))?;
-        Ok(Self(Rc::new(TextInputInner {
+        let inner = Rc::new(TextInputInner {
             native,
             token: RefCell::new(None),
-        })))
+            on_submit: TextHandler::new(),
+            focus: Default::default(),
+        });
+        let element: UIElement = inner
+            .native
+            .cast()
+            .map_err(|e| to_error("TextBox の要素の取得", e))?;
+        let weak = Rc::downgrade(&inner);
+        crate::keys::on_enter(&element, move || {
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            // 読み取り専用の間は書き換えられないので、確定もしない。
+            if inner.native.IsReadOnly().unwrap_or(false) {
+                return;
+            }
+            let text = inner.native.Text().unwrap_or_default().to_string();
+            inner.on_submit.emit(&text);
+        })
+        .map_err(|e| to_error("TextBox の Enter の購読", e))?;
+        Ok(Self(inner))
     }
 
     pub fn text(&self) -> String {
@@ -502,6 +526,14 @@ impl TextInput {
         }
     }
 
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    ///
+    /// IME で変換している間の Enter (変換の確定) では呼ばれない。読み取り
+    /// 専用の間も呼ばれない。
+    pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
+        self.0.on_submit.set(f);
+    }
+
     /// 読み取り専用にするか。既定は書き換えられる。
     ///
     /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
@@ -521,6 +553,9 @@ impl TextInput {
 struct PasswordInputInner {
     native: PasswordBox,
     token: RefCell<Option<i64>>,
+    on_submit: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// パスワード入力 (PasswordBox)。
@@ -531,15 +566,31 @@ struct PasswordInputInner {
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
 crate::keys::impl_key_down!(PasswordInput);
+crate::focus::impl_focus_change!(PasswordInput);
 impl_widget!(PasswordInput, native);
 
 impl PasswordInput {
     pub(crate) fn new() -> Result<Self> {
         let native = PasswordBox::new().map_err(|e| to_error("PasswordBox の生成", e))?;
-        Ok(Self(Rc::new(PasswordInputInner {
+        let inner = Rc::new(PasswordInputInner {
             native,
             token: RefCell::new(None),
-        })))
+            on_submit: TextHandler::new(),
+            focus: Default::default(),
+        });
+        let element: UIElement = inner
+            .native
+            .cast()
+            .map_err(|e| to_error("PasswordBox の要素の取得", e))?;
+        let weak = Rc::downgrade(&inner);
+        crate::keys::on_enter(&element, move || {
+            if let Some(inner) = weak.upgrade() {
+                let text = inner.native.Password().unwrap_or_default().to_string();
+                inner.on_submit.emit(&text);
+            }
+        })
+        .map_err(|e| to_error("PasswordBox の Enter の購読", e))?;
+        Ok(Self(inner))
     }
 
     /// いま入力されている文字列。
@@ -584,6 +635,11 @@ impl PasswordInput {
             *self.0.token.borrow_mut() = Some(token);
         }
     }
+
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
+        self.0.on_submit.set(f);
+    }
 }
 
 // --------------------------------------------------------------- TextArea
@@ -591,12 +647,15 @@ impl PasswordInput {
 struct TextAreaInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 複数行テキスト入力 (改行を受け付ける TextBox)。IME は Windows が処理する。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
 crate::keys::impl_key_down!(TextArea);
+crate::focus::impl_focus_change!(TextArea);
 impl_widget!(TextArea, native);
 
 impl TextArea {
@@ -619,6 +678,7 @@ impl TextArea {
         Ok(Self(Rc::new(TextAreaInner {
             native,
             token: RefCell::new(None),
+            focus: Default::default(),
         })))
     }
 

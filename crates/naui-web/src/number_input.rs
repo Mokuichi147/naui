@@ -22,9 +22,11 @@ struct NumberInputInner {
     spec: Cell<NumberSpec>,
     value: Cell<f64>,
     on_change: ValueHandler<f64>,
+    on_submit: ValueHandler<f64>,
     /// 入力中と確定時の購読。落とすと購読も外れる。
     listeners: RefCell<Vec<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// 数値を入力させるコントロール (`<input type="number">`)。
@@ -34,6 +36,7 @@ struct NumberInputInner {
 pub struct NumberInput(Rc<NumberInputInner>);
 impl_widget!(NumberInput, input);
 crate::keys::impl_key_down!(NumberInput);
+crate::focus::impl_focus_change!(NumberInput);
 
 impl NumberInput {
     pub(crate) fn new(document: &Document, value: f64) -> Result<Self> {
@@ -46,8 +49,10 @@ impl NumberInput {
             spec: Cell::new(spec),
             value: Cell::new(spec.clamp(value)),
             on_change: ValueHandler::default(),
+            on_submit: ValueHandler::default(),
             listeners: RefCell::new(Vec::new()),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         }));
         this.write_native_spec();
         this.write_native(this.value());
@@ -68,6 +73,19 @@ impl NumberInput {
                 listeners.push(listener);
             }
         }
+        // Enter。ブラウザによっては Enter で `change` が出ないので、ここで
+        // 確定させてから知らせる (`change` が続いても同じ値を読むだけ)。
+        let submit = crate::widgets::on_enter(&this.0.input, {
+            let weak = Rc::downgrade(&this.0);
+            move |_| {
+                if let Some(inner) = weak.upgrade() {
+                    let this = NumberInput(inner);
+                    this.native_changed(true);
+                    this.0.on_submit.emit(this.value());
+                }
+            }
+        });
+        listeners.extend(submit);
         *this.0.listeners.borrow_mut() = listeners;
         Ok(this)
     }
@@ -114,6 +132,15 @@ impl NumberInput {
     /// 設定し直すと以前のコールバックは外れる。
     pub fn on_change(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_change.set(f);
+    }
+
+    /// Enter で確定したときに、確定したあとの値で呼ばれる。
+    ///
+    /// 打ちかけの表示は先に値へ読み込む (値が変われば `on_change` が先に
+    /// 呼ばれる)。数として読めない表示は元の値へ戻してから呼ぶ。IME で
+    /// 変換している間の Enter では呼ばれない。
+    pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
+        self.0.on_submit.set(f);
     }
 
     /// 対応する `<input>`。バックエンド固有の脱出口として公開している。

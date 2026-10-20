@@ -364,6 +364,56 @@
 //! 違う** (macOS はショートカットより先に届き、ほかの環境では後になることが
 //! ある)。同じキーをショートカットと `on_key_down` の両方に割り当てない。
 //!
+//! ## フォーカスの出入り
+//!
+//! 文字入力のウィジェット (`on_key_down` を持つ 6 つ) は、フォーカスが
+//! 入ったとき (`true`) と出たとき (`false`) を `on_focus_change` で通知する。
+//! 欄を離れたときの検証や保存に使う。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! use std::cell::RefCell;
+//! use std::rc::Rc;
+//!
+//! let mail = ui.text_input("")?;
+//! // 中身は on_change で受け取っておく (mail 自身は捕まえない)。
+//! let text = Rc::new(RefCell::new(String::new()));
+//! mail.on_change({
+//!     let text = text.clone();
+//!     move |value| *text.borrow_mut() = value.to_owned()
+//! });
+//! mail.on_focus_change(move |focused| {
+//!     if !focused && !text.borrow().contains('@') {
+//!         println!("メールアドレスを確かめてください");
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! **通知のクロージャに、その欄自身のハンドルを捕まえない。** 欄が通知を
+//! 持ち、通知が欄を持つ循環になるので、画面から外して手放しても解放されない
+//! (ほかのウィジェットの通知も同じ)。引数が `bool` だけなので中身が要るときは、
+//! 上のように `on_change` で受け取って別に持つ。
+//!
+//! **ウィンドウの中でフォーカスが移ったときだけ**呼ばれる。ウィンドウ自体が
+//! アクティブでなくなったとき (別のアプリへ切り替えたとき、Web ではタブや
+//! ブラウザのウィンドウを切り替えたとき) は、ウィンドウの中のフォーカスは
+//! 変わらないので呼ばれない。ウィジェットの中で部品から部品へ移っても
+//! (数値入力の欄と増減のボタンなど) 呼ばれない。移る先のウィジェットにも
+//! 通知先があれば、出たほうの `false` が先に届く。
+//!
+//! 通知先を置いた時点でフォーカスがすでにその中にあっても、入ったことは
+//! 知らせない (そこから出たときの `false` は届く)。ウィンドウを出したときに
+//! 最初の入力欄へフォーカスを置くかは環境が決める (macOS・Linux・Windows は
+//! 置くことがあり、Web は置かない) ので、表示より前に通知先を置くと、その
+//! ときの `true` が届く環境と届かない環境がある。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 見張る先 | ウィンドウの根の `GotFocus` | `NSWindow` の `makeFirstResponder:` | `GtkWindow` の `focus-widget` | `document` の `focusin` / `focusout` |
+//!
 //! ## 処理中の表示と、選べるラベル
 //!
 //! 終わりの見えない処理 (通信の応答待ちなど) は、[`ProgressBar`] を
@@ -628,6 +678,31 @@
 //!
 //! `set_text` では `on_change` は呼ばれない (`TextInput` と同じく、Windows だけは
 //! ネイティブの `TextChanged` が出るため呼ばれる)。
+//!
+//! **Enter での確定は [`on_submit`](TextInput::on_submit) で受け取る**
+//! (`TextInput` / `PasswordInput` / [`NumberInput`])。フォームの送信や
+//! ログインのように、打ち終えたところで動かしたい処理に使う。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let name = ui.text_input("")?;
+//! name.on_submit(|text| println!("{text} で登録する"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! **IME で変換している間の Enter (変換の確定) では呼ばれない。** 読み取り専用の
+//! `TextInput` と、[`on_key_down`](TextInput::on_key_down) が Enter に
+//! `Handled` を返したときも呼ばれない。`NumberInput` は打ちかけの表示を値へ
+//! 読み込んで (読めなければ元の値へ戻して) から、確定した値で呼ぶ。値が
+//! 変わったなら `on_change` が先に呼ばれる。`TextArea` の Enter は改行なので
+//! 持たない (送信に使うなら `on_key_down` で拾う)。`SearchInput` では同じ通知を
+//! `on_search` と呼ぶ。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | `on_submit` | Enter の `PreviewKeyDown` | `insertNewline:` (`control:textView:doCommandBySelector:`) | `activate` | Enter の `keydown` |
 //!
 //! [`PasswordInput`] は打った文字を伏せ字にするだけで、API は [`TextInput`] と
 //! 同じ。**伏せ字を一時的に外すボタンは持たない** (`NSSecureTextField` に
@@ -2390,6 +2465,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     input.set_placeholder("t");
     input.set_enabled(true);
     input.on_change(|_s: &str| {});
+    input.on_submit(|_s: &str| {});
     input.set_read_only(true);
     let _: bool = input.is_read_only();
 
@@ -2409,6 +2485,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     password.set_placeholder("t");
     password.set_enabled(true);
     password.on_change(|_s: &str| {});
+    password.on_submit(|_s: &str| {});
     password.set_sizing(Sizing::fill_width());
 
     let search: SearchInput = ui.search_input()?;
@@ -2430,6 +2507,7 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     number.set_decimals(2);
     number.set_enabled(true);
     number.on_change(|_v: f64| {});
+    number.on_submit(|_v: f64| {});
     number.set_sizing(Sizing::fill_width());
 
     // 文字入力系は 6 つとも on_key_down を持つ。
@@ -2446,6 +2524,15 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     search.on_key_down(on_key);
     number.on_key_down(on_key);
     editable_combo_box.on_key_down(on_key);
+
+    // 同じ 6 つが on_focus_change も持つ。
+    let on_focus = |_focused: bool| {};
+    input.on_focus_change(on_focus);
+    text_area.on_focus_change(on_focus);
+    password.on_focus_change(on_focus);
+    search.on_focus_change(on_focus);
+    number.on_focus_change(on_focus);
+    editable_combo_box.on_focus_change(on_focus);
 
     let slider: Slider = ui.slider(0.0, 1.0)?;
     let _: f64 = slider.value();

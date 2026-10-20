@@ -21,6 +21,7 @@ mod editable_combo_box;
 mod expander;
 mod file_picker;
 mod file_saver;
+mod focus;
 mod interaction;
 mod keys;
 mod layout;
@@ -57,6 +58,9 @@ use web_sys::{Document, HtmlElement};
 /// バックエンドが使っているものをそのまま渡す (版が食い違わない)。
 #[doc(hidden)]
 pub use wasm_bindgen;
+
+#[doc(hidden)]
+pub use focus::registered_focus_elements;
 
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;

@@ -13,6 +13,7 @@
 //! `TextCompositionStarted` / `TextCompositionEnded` の間も変換中とみなす。
 //!
 //! 登録表は要素を弱参照で持つ。要素が解放されれば通知先も表から外れる。
+//! 終了の経路では [`release_handlers`] で通知先を手放す ([`Registry`] を参照)。
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -30,15 +31,15 @@ use windows::Foundation::TypedEventHandler;
 use windows::System::VirtualKey;
 use windows_core::{IUnknown, Interface, Weak};
 
-use crate::ui_thread::UiThreadCell;
+use crate::ui_thread::{Registry, UiThreadCell};
 
 /// IME が処理しているキー。`Windows.System.VirtualKey` には名前が無い。
 const VK_PROCESSKEY: i32 = 229;
 
-type Entries = RefCell<Vec<(Weak<UIElement>, Rc<KeyHandler>)>>;
+type Entries = Registry<(Weak<UIElement>, Rc<KeyHandler>)>;
 
 thread_local! {
-    static WIDGETS: Entries = const { RefCell::new(Vec::new()) };
+    static WIDGETS: Entries = const { Registry::new() };
     /// 変換の始まりと終わりを購読済みの `TextBox`。
     static WATCHED: RefCell<Vec<Weak<TextBox>>> = const { RefCell::new(Vec::new()) };
     /// いま変換中の `TextBox`。
@@ -46,7 +47,7 @@ thread_local! {
 }
 
 /// 同じ COM オブジェクトか (インターフェースが違っても `IUnknown` は同じ)。
-fn same<A: Interface, B: Interface>(a: &A, b: &B) -> bool {
+pub(crate) fn same<A: Interface, B: Interface>(a: &A, b: &B) -> bool {
     match (a.cast::<IUnknown>(), b.cast::<IUnknown>()) {
         (Ok(a), Ok(b)) => a.as_raw() == b.as_raw(),
         _ => false,
@@ -75,6 +76,12 @@ pub(crate) fn set_widget_handler(
         handler.set(f);
         entries.push((weak, handler));
     });
+}
+
+/// 通知先をすべて手放す。終了の経路で、XAML の後片づけより前に呼ぶ。
+pub(crate) fn release_handlers() {
+    // 借用の外で捨てる。
+    drop(WIDGETS.with(Registry::take));
 }
 
 fn lookup(object: &DependencyObject) -> Option<Rc<KeyHandler>> {
@@ -156,6 +163,39 @@ fn dispatch(
         current = VisualTreeHelper::GetParent(&object).ok();
     }
     window.emit(&event)
+}
+
+/// 入力欄で Enter が押されたら `f` を呼ぶ (要素の `PreviewKeyDown`)。
+///
+/// `TextBox` / `PasswordBox` には確定だけを知らせるイベントが無いので、
+/// キーから拾う。コントロールが自分でキーを処理して `Handled` を立てても
+/// 取りこぼさないよう、コントロールより先に届くトンネルのほうで受ける。
+/// `on_key_down` が `Handled` を返したキーは、さらに先に届くウィンドウの根の
+/// `PreviewKeyDown` で `Handled` が立つので、ここへは来ない。変換を確定する
+/// Enter (`VK_PROCESSKEY` で来るもの、`TextBox` の変換中のもの) も数えない。
+///
+/// `f` は要素のデリゲートに残り続けるので、ウィジェットは弱参照で持つこと。
+pub(crate) fn on_enter(element: &UIElement, f: impl FnMut() + 'static) -> windows_core::Result<()> {
+    let f = UiThreadCell::new(f);
+    let handler = KeyEventHandler::new(move |_, args| {
+        let Some(args) = args.as_ref() else {
+            return Ok(());
+        };
+        if args.Key().unwrap_or(VirtualKey::None) != VirtualKey::Enter {
+            return Ok(());
+        }
+        let text_box = args
+            .OriginalSource()
+            .ok()
+            .and_then(|source| source.cast::<TextBox>().ok());
+        if text_box.is_some_and(|text_box| is_composing(&text_box)) {
+            return Ok(());
+        }
+        let _ = f.try_with_mut(|f| f());
+        Ok(())
+    });
+    element.PreviewKeyDown(&handler)?;
+    Ok(())
 }
 
 /// `TextBox` の変換の始まりと終わりを覚える。

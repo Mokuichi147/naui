@@ -24,7 +24,7 @@ use naui_core::{
     TreeItem, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
-use objc2::rc::Retained;
+use objc2::rc::{autoreleasepool, Retained};
 use objc2::runtime::NSObjectProtocol;
 use objc2::sel;
 use objc2::{
@@ -358,6 +358,14 @@ fn main() {
             "フォーカスが入力欄と複数行入力の中へ移る",
             request_focus_reaches_the_editor,
         ),
+        (
+            "フォーカスの出入りが持ち主の変わったときだけ通知される",
+            focus_change_follows_the_first_responder,
+        ),
+        (
+            "捨てた入力欄の on_focus_change の通知先が解放される",
+            focus_change_handler_is_freed_with_the_widget,
+        ),
         ("ツールチップが NSView へ届く", tooltip_reaches_the_view),
         (
             "複数行入力の on_key_down が Shift なしの Enter を止める",
@@ -687,6 +695,18 @@ fn main() {
         (
             "検索入力が Enter のときだけ確定を通知する",
             search_input_notifies_on_return,
+        ),
+        (
+            "1 行入力とパスワード入力が Enter で確定を通知する",
+            text_inputs_notify_on_return,
+        ),
+        (
+            "読み取り専用の 1 行入力は Enter で確定しない",
+            read_only_text_input_does_not_submit,
+        ),
+        (
+            "数値入力が Enter で値を確定してから通知する",
+            number_input_commits_before_submitting,
         ),
         (
             "ポップアップメニューの選択がクロージャへ届く",
@@ -3489,6 +3509,101 @@ fn request_focus_reaches_the_editor(ui: &Ui) -> Result<()> {
 
     input.set_visible(false);
     assert!(!input.request_focus(), "隠れていると移せない");
+    window.close();
+    Ok(())
+}
+
+fn focus_change_follows_the_first_responder(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let name = ui.text_input("")?;
+    let memo = ui.text_area("")?;
+    memo.set_sizing(Sizing::fixed(200.0, 60.0));
+    let count = ui.number_input(1.0)?;
+    let other = ui.text_input("")?;
+    root.append(&name);
+    root.append(&memo);
+    root.append(&count);
+    root.append(&other);
+    window.set_child(&root);
+    window.show();
+
+    // 通知先を置く前からフォーカスがある欄も、そこから出たことは伝わる。
+    assert!(name.request_focus());
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let record = |label: &'static str| {
+        let log = log.clone();
+        move |focused: bool| log.borrow_mut().push(format!("{label}:{focused}"))
+    };
+    name.on_focus_change(record("名前"));
+    memo.on_focus_change(record("メモ"));
+    count.on_focus_change(record("個数"));
+    assert!(log.borrow().is_empty(), "置いただけでは通知しない");
+
+    assert!(memo.request_focus());
+    assert!(count.request_focus());
+    assert_eq!(
+        *log.borrow(),
+        ["名前:false", "メモ:true", "メモ:false", "個数:true"]
+    );
+
+    // 通知先の無い欄へ移れば、出たことだけが伝わる。
+    assert!(other.request_focus());
+    assert_eq!(log.borrow()[4..], ["個数:false"]);
+
+    // 同じ欄へ移し直しても、持ち主は変わらない。
+    assert!(name.request_focus());
+    assert!(name.request_focus());
+    assert_eq!(log.borrow()[5..], ["名前:true"]);
+    window.close();
+    Ok(())
+}
+
+fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let kept = ui.text_input("")?;
+    root.append(&kept);
+    window.set_child(&root);
+    window.show();
+
+    // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+    let state = Rc::new(());
+    let capture = || {
+        let state = state.clone();
+        move |_: bool| {
+            let _ = &state;
+        }
+    };
+
+    // 表示中の木へ入れてフォーカスを持たせてから外す。自動解放に回された
+    // ぶんはプールを抜けたところで、フォーカスを持っていた欄を AppKit が
+    // 掴んでいるぶんは実行ループが回ったところで手放される。
+    autoreleasepool(|_| {
+        let input = ui.text_input("")?;
+        root.append(&input);
+        input.on_focus_change(capture());
+        // 差し替えても、前の通知先は残らない。
+        input.on_focus_change(capture());
+        assert!(input.request_focus());
+        assert_eq!(Rc::strong_count(&state), 2);
+        assert!(kept.request_focus());
+        root.remove(1);
+        drop(input);
+        Ok::<_, naui_core::Error>(())
+    })?;
+    pump_until(2.0, || Rc::strong_count(&state) == 1);
+    assert_eq!(Rc::strong_count(&state), 1, "外して捨てた欄の通知先");
+
+    // 木へ入れないまま捨てる。
+    autoreleasepool(|_| {
+        let area = ui.text_area("")?;
+        area.on_focus_change(capture());
+        drop(area);
+        Ok::<_, naui_core::Error>(())
+    })?;
+    assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
+
     window.close();
     Ok(())
 }
@@ -7502,6 +7617,121 @@ fn search_input_notifies_on_return(ui: &Ui) -> Result<()> {
         *submitted.borrow(),
         vec!["ねこ".to_string(), "いぬ".to_string()]
     );
+    Ok(())
+}
+
+/// 1 行入力とパスワード入力も、検索欄と同じく Enter のときだけ確定を通知する。
+fn text_inputs_notify_on_return(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("")?;
+    let password = ui.password_input()?;
+    let input_view = input.native_view();
+    let password_view = password.native_view();
+    let input_field = input_view
+        .downcast_ref::<NSTextField>()
+        .expect("1 行入力の欄であること");
+    let password_field: &NSTextField = password_view
+        .downcast_ref::<NSSecureTextField>()
+        .expect("伏せ字の欄であること");
+
+    let typed = Rc::new(RefCell::new(Vec::new()));
+    let submitted = Rc::new(RefCell::new(Vec::new()));
+    input.on_change({
+        let typed = typed.clone();
+        move |text| typed.borrow_mut().push(text.to_string())
+    });
+    input.on_submit({
+        let submitted = submitted.clone();
+        move |text| submitted.borrow_mut().push(format!("入力:{text}"))
+    });
+    password.on_submit({
+        let submitted = submitted.clone();
+        move |text| submitted.borrow_mut().push(format!("伏せ字:{text}"))
+    });
+
+    type_into_field(input_field, "ねこ");
+    assert_eq!(*typed.borrow(), vec!["ねこ".to_string()]);
+    assert!(submitted.borrow().is_empty(), "打つだけでは確定しない");
+
+    press_return_in_field(input_field);
+    type_into_field(password_field, "ひみつ");
+    press_return_in_field(password_field);
+    assert_eq!(
+        *submitted.borrow(),
+        vec!["入力:ねこ".to_string(), "伏せ字:ひみつ".to_string()]
+    );
+    assert_eq!(typed.borrow().len(), 1, "確定は打鍵の通知を増やさない");
+
+    // 確定は何度でも起き、通知の中から欄を空けられる。
+    input.on_submit({
+        let submitted = submitted.clone();
+        let input = input.clone();
+        move |text| {
+            submitted.borrow_mut().push(text.to_string());
+            input.set_text("");
+        }
+    });
+    type_into_field(input_field, "いぬ");
+    press_return_in_field(input_field);
+    assert_eq!(submitted.borrow().last().map(String::as_str), Some("いぬ"));
+    assert_eq!(input.text(), "");
+    Ok(())
+}
+
+/// 読み取り専用の間は書き換えられないので、確定もしない。
+fn read_only_text_input_does_not_submit(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("ログ")?;
+    let view = input.native_view();
+    let field = view
+        .downcast_ref::<NSTextField>()
+        .expect("1 行入力の欄であること");
+    let submitted = Rc::new(Cell::new(0));
+    input.on_submit({
+        let submitted = submitted.clone();
+        move |_| submitted.set(submitted.get() + 1)
+    });
+
+    input.set_read_only(true);
+    press_return_in_field(field);
+    assert_eq!(submitted.get(), 0, "読み取り専用なら確定しない");
+
+    input.set_read_only(false);
+    press_return_in_field(field);
+    assert_eq!(submitted.get(), 1, "書き換えられるようになれば確定する");
+    Ok(())
+}
+
+/// Enter は打ちかけの表示を値へ読み込んでから、その値で知らせる。
+fn number_input_commits_before_submitting(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(5.0)?;
+    number.set_range(None, Some(100.0));
+    let field = number.native_field();
+
+    let log = Rc::new(RefCell::new(Vec::new()));
+    number.on_change({
+        let log = log.clone();
+        move |value| log.borrow_mut().push(format!("変更:{value}"))
+    });
+    number.on_submit({
+        let log = log.clone();
+        move |value| log.borrow_mut().push(format!("確定:{value}"))
+    });
+
+    // 読める表示は打った時点で値になっているので、確定はその値で知らせる。
+    type_into_field(&field, "12");
+    press_return_in_field(&field);
+    assert_eq!(*log.borrow(), vec!["変更:12", "確定:12"]);
+
+    // 範囲の外は端へ寄せ、表示も直してから知らせる。
+    type_into_field(&field, "999");
+    press_return_in_field(&field);
+    assert_eq!(field.stringValue().to_string(), "100");
+    assert_eq!(log.borrow()[2..], ["変更:100", "確定:100"]);
+
+    // 読めない表示は元の値へ戻してから、その値で知らせる。
+    type_into_field(&field, "1x");
+    press_return_in_field(&field);
+    assert_eq!(field.stringValue().to_string(), "100", "元の値へ戻す");
+    assert_eq!(log.borrow()[4..], ["確定:100"]);
     Ok(())
 }
 

@@ -10,7 +10,7 @@ use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOn
 use objc2_app_kit::NSWindowDelegate;
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSApplication, NSBackingStoreType, NSSplitViewController, NSView, NSWindow, NSWindowStyleMask,
+    NSApplication, NSSplitViewController, NSView, NSWindow, NSWindowStyleMask,
     NSWindowTitleVisibility,
 };
 use objc2_foundation::{NSNotification, NSObject, NSPoint, NSRect, NSSize, NSString};
@@ -113,18 +113,14 @@ impl Window {
     }
 
     pub(crate) fn new(mtm: MainThreadMarker, title: &str, width: f64, height: f64) -> Self {
-        let native = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                NSWindow::alloc(mtm),
-                NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height)),
-                NSWindowStyleMask::Titled
-                    | NSWindowStyleMask::Closable
-                    | NSWindowStyleMask::Miniaturizable
-                    | NSWindowStyleMask::Resizable,
-                NSBackingStoreType::Buffered,
-                false,
-            )
-        };
+        let native = crate::focus::new_window(
+            mtm,
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height)),
+            NSWindowStyleMask::Titled
+                | NSWindowStyleMask::Closable
+                | NSWindowStyleMask::Miniaturizable
+                | NSWindowStyleMask::Resizable,
+        );
         native.setTitle(&NSString::from_str(title));
         // Rust 側が Retained を持つので、閉じたときの自動解放は切る
         // (切らないと二重解放になる)。

@@ -100,10 +100,13 @@ struct NumberInputInner {
     spec: Cell<NumberSpec>,
     value: Cell<f64>,
     handler: ChangeHandler,
+    submit: ChangeHandler,
     /// 値を書き込んでいる間だけ、WinUI からの通知を無視する。
     silent: Cell<bool>,
     /// テンプレートの入力欄。見つかるまでは `None`。
     field: RefCell<Option<TextBox>>,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 数値を入力させるコントロール (`NumberBox`)。
@@ -112,6 +115,7 @@ struct NumberInputInner {
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
 crate::keys::impl_key_down!(NumberInput);
+crate::focus::impl_focus_change!(NumberInput);
 impl_widget!(NumberInput, native);
 
 impl NumberInput {
@@ -136,8 +140,10 @@ impl NumberInput {
             spec: Cell::new(NumberSpec::default()),
             value: Cell::new(NumberSpec::default().clamp(value)),
             handler: ChangeHandler::new(),
+            submit: ChangeHandler::new(),
             silent: Cell::new(false),
             field: RefCell::new(None),
+            focus: Default::default(),
         }));
         this.write_native_spec()?;
         this.write_native(this.value());
@@ -190,6 +196,15 @@ impl NumberInput {
         self.0.handler.set(f);
     }
 
+    /// Enter で確定したときに、確定したあとの値で呼ばれる。
+    ///
+    /// 打ちかけの表示は先に値へ読み込む (値が変われば `on_change` が先に
+    /// 呼ばれる)。数として読めない表示は元の値へ戻してから呼ぶ。IME で
+    /// 変換している間の Enter では呼ばれない。
+    pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
+        self.0.submit.set(f);
+    }
+
     /// 対応する `NumberBox`。バックエンド固有の脱出口として公開している。
     pub fn native_number_box(&self) -> XamlNumberBox {
         self.0.native.clone()
@@ -223,6 +238,24 @@ impl NumberInput {
             .native
             .ValueChanged(&changed)
             .map_err(|e| to_error("数値入力の確定購読", e))?;
+
+        // Enter。`NumberBox` が値を確定するのはキーを離したとき (`KeyUp`) なので、
+        // 押した時点ではまだ古い値のまま。ここで表示を読んで確定させてから
+        // 知らせる。続く `NumberBox` の確定は同じ表示を読むだけになる。
+        let element: UIElement = self
+            .0
+            .native
+            .cast()
+            .map_err(|e| to_error("数値入力の要素の取得", e))?;
+        let weak = Rc::downgrade(&self.0);
+        crate::keys::on_enter(&element, move || {
+            if let Some(inner) = weak.upgrade() {
+                let this = NumberInput(inner);
+                this.commit_field();
+                this.0.submit.emit(this.value());
+            }
+        })
+        .map_err(|e| to_error("数値入力の Enter の購読", e))?;
 
         // テンプレートが展開されてから入力欄を探す。
         let loaded = UiThreadCell::new(Rc::downgrade(&self.0));
@@ -295,6 +328,22 @@ impl NumberInput {
         if field.TextChanged(&typed).is_ok() {
             *self.0.field.borrow_mut() = Some(field);
         }
+    }
+
+    /// 入力欄の表示を値として確定する。読めない表示は元の値へ戻す。
+    ///
+    /// 入力欄が見つかっていなければ、値は `NumberBox` が自分で確定させるので
+    /// 何もしない。
+    fn commit_field(&self) {
+        let Some(field) = self.0.field.borrow().clone() else {
+            return;
+        };
+        let shown = field
+            .Text()
+            .ok()
+            .and_then(|text| self.parse_shown(&text.to_string()))
+            .unwrap_or_else(|| self.value());
+        self.accept(shown, true);
     }
 
     /// 打っている途中の表示を数として読む。読めなければ `None`。

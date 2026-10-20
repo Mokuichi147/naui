@@ -168,6 +168,14 @@ fn main() {
             "検索入力が Enter のときだけ確定を通知する",
             search_input_notifies_on_activate,
         ),
+        (
+            "1 行入力とパスワード入力が Enter で確定を通知する",
+            text_inputs_notify_on_activate,
+        ),
+        (
+            "数値入力が Enter で値を確定してから通知する",
+            number_input_commits_before_submitting,
+        ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         (
             "打鍵が通知され、set_text は通知しない",
@@ -250,6 +258,14 @@ fn main() {
         (
             "フォーカスが入力欄と複数行入力の中へ移る",
             request_focus_reaches_the_editor,
+        ),
+        (
+            "フォーカスの出入りが持ち主の変わったときだけ通知される",
+            focus_change_follows_the_focus_widget,
+        ),
+        (
+            "ウィジェットを捨てると on_focus_change の通知先も解放される",
+            focus_change_handler_is_freed_with_the_widget,
         ),
         ("ツールチップが中身のコントロールへ届く", tooltip_reaches_the_widget),
         (
@@ -1669,6 +1685,75 @@ fn search_input_notifies_on_activate(ui: &Ui) -> Result<()> {
     search.set_text("いぬ");
     native.emit_activate();
     assert_eq!(submitted.borrow().as_slice(), ["ねこ", "いぬ"]);
+    Ok(())
+}
+
+/// 1 行入力とパスワード入力も、検索欄と同じく `activate` (Enter) で確定を
+/// 知らせる。読み取り専用の間は数えない。
+fn text_inputs_notify_on_activate(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("ねこ")?;
+    let password = ui.password_input()?;
+    let input_native: gtk::Entry = input.native_widget().downcast().expect("GtkEntry");
+    let password_native: gtk::PasswordEntry = password
+        .native_widget()
+        .downcast()
+        .expect("GtkPasswordEntry");
+
+    let (submitted, sink) = recorder::<String>();
+    let sink = Rc::new(RefCell::new(sink));
+    input.on_submit({
+        let sink = sink.clone();
+        move |text: &str| (sink.borrow_mut())(format!("入力:{text}"))
+    });
+    password.on_submit({
+        let sink = sink.clone();
+        move |text: &str| (sink.borrow_mut())(format!("伏せ字:{text}"))
+    });
+    password.set_text("ひみつ");
+
+    input_native.emit_activate();
+    password_native.emit_activate();
+    assert_eq!(
+        submitted.borrow().as_slice(),
+        ["入力:ねこ", "伏せ字:ひみつ"]
+    );
+
+    input.set_read_only(true);
+    input_native.emit_activate();
+    assert_eq!(submitted.borrow().len(), 2, "読み取り専用なら確定しない");
+    Ok(())
+}
+
+/// Enter は値を確定させてから (`gtk_spin_button_update` のあとで) 知らせる。
+fn number_input_commits_before_submitting(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(5.0)?;
+    number.set_range(None, Some(100.0));
+    let native: gtk::SpinButton = number.native_widget().downcast().expect("GtkSpinButton");
+    let text: gtk::Text = native
+        .delegate()
+        .and_then(|delegate| delegate.downcast().ok())
+        .expect("GtkSpinButton の中の GtkText");
+
+    let (log, sink) = recorder::<String>();
+    let sink = Rc::new(RefCell::new(sink));
+    number.on_change({
+        let sink = sink.clone();
+        move |value| (sink.borrow_mut())(format!("変更:{value}"))
+    });
+    number.on_submit({
+        let sink = sink.clone();
+        move |value| (sink.borrow_mut())(format!("確定:{value}"))
+    });
+
+    native.set_text("12");
+    text.emit_activate();
+    assert_eq!(log.borrow().as_slice(), ["変更:12", "確定:12"]);
+
+    // 範囲の外は端へ寄せ、表示も直してから知らせる。
+    native.set_text("999");
+    text.emit_activate();
+    assert_eq!(log.borrow()[2..], ["変更:100", "確定:100"]);
+    assert_eq!(native.text().as_str(), "100");
     Ok(())
 }
 
@@ -6354,6 +6439,97 @@ fn hidden_widget_leaves_the_stack_layout(ui: &Ui) -> Result<()> {
     middle.set_visible(true);
     assert!(middle.is_visible());
     assert_eq!(measure_height(&root).1, shown, "戻すと元の高さ");
+    Ok(())
+}
+
+fn focus_change_follows_the_focus_widget(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 320.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let name = ui.text_input("")?;
+    let memo = ui.text_area("")?;
+    memo.set_sizing(Sizing::fixed(200.0, 60.0));
+    let count = ui.number_input(1.0)?;
+    let other = ui.text_input("")?;
+    root.append(&name);
+    root.append(&memo);
+    root.append(&count);
+    root.append(&other);
+    window.set_child(&root);
+    window.show();
+    tick(&bin_of(&root));
+
+    // 通知先を置く前からフォーカスがある欄も、そこから出たことは伝わる。
+    assert!(name.request_focus());
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let record = |label: &'static str| {
+        let log = log.clone();
+        move |focused: bool| log.borrow_mut().push(format!("{label}:{focused}"))
+    };
+    name.on_focus_change(record("名前"));
+    memo.on_focus_change(record("メモ"));
+    count.on_focus_change(record("個数"));
+    assert!(log.borrow().is_empty(), "置いただけでは通知しない");
+
+    assert!(memo.request_focus());
+    assert!(count.request_focus());
+    assert_eq!(
+        *log.borrow(),
+        ["名前:false", "メモ:true", "メモ:false", "個数:true"]
+    );
+
+    // 通知先の無い欄へ移れば、出たことだけが伝わる。
+    assert!(other.request_focus());
+    assert_eq!(log.borrow()[4..], ["個数:false"]);
+
+    // 同じ欄へ移し直しても、持ち主は変わらない。
+    assert!(name.request_focus());
+    assert!(name.request_focus());
+    assert_eq!(log.borrow()[5..], ["名前:true"]);
+    window.close();
+    Ok(())
+}
+
+fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let kept = ui.text_input("")?;
+    root.append(&kept);
+    window.set_child(&root);
+    window.show();
+    tick(&bin_of(&root));
+
+    // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+    let state = Rc::new(());
+    let capture = || {
+        let state = state.clone();
+        move |_: bool| {
+            let _ = &state;
+        }
+    };
+
+    // 表示中の木へ入れてフォーカスを持たせてから外す。
+    let input = ui.text_input("")?;
+    root.append(&input);
+    tick(&bin_of(&root));
+    input.on_focus_change(capture());
+    // 差し替えても、前の通知先は残らない。
+    input.on_focus_change(capture());
+    assert!(input.request_focus());
+    assert_eq!(Rc::strong_count(&state), 2);
+    root.remove(1);
+    drop(input);
+    tick(&bin_of(&root));
+    // フォーカスが別の欄へ移っても、表示中の窓の持ち主から外れる。
+    assert!(kept.request_focus());
+    assert_eq!(Rc::strong_count(&state), 1, "外して捨てた欄の通知先");
+
+    // 木へ入れないまま捨てる。
+    let area = ui.text_area("")?;
+    area.on_focus_change(capture());
+    drop(area);
+    assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
+
+    window.close();
     Ok(())
 }
 
