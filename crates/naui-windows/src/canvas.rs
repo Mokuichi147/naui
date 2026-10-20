@@ -21,17 +21,25 @@
 //! `PointerMoved` で知らせるので、ポインターごとに押しているボタンの組を
 //! 覚えておき、前回との差を押下・解放として届ける (どの通知で来ても同じ扱い)。
 //!
-//! ホイールは `PointerWheelChanged` から取る。`MouseWheelDelta` は 1 刻みで
-//! 120 (`WHEEL_DELTA`) なので、120 を [`WHEEL_STEP`] に直す。縦の量は
-//! 「奥へ回すと正」で他の 3 環境と逆なので符号を反転し、横
-//! (`IsHorizontalMouseWheel`) は右が正なのでそのまま届ける。アプリが
-//! `Handled` を返したときだけ `Handled` を立て、外側の `ScrollViewer` へ回さない。
+//! ホイールの量は 1 刻みで 120 (`WHEEL_DELTA`) なので、120 を [`WHEEL_STEP`]
+//! に直す。縦の量は「奥へ回すと正」で他の 3 環境と逆なので符号を反転し、
+//! 横は右が正なのでそのまま届ける。
+//!
+//! ホイールは 2 つの道から届く。実マウスのホイールは XAML まで届かないことが
+//! あり、naui は前面のウィンドウへのホイールを `WH_MOUSE_LL` のフックで先に
+//! 受けて `Scroll` を動かしている (`layout.rs`)。このフックはポインターの下に
+//! `on_wheel` 付きの面があればまずそこへ届け ([`dispatch_wheel`])、`Handled`
+//! ならメッセージを捨てて外側の `Scroll` へ回さない。フックが受けない場合
+//! (ウィンドウが前面にない、など) は `PointerWheelChanged` で受け、`Handled`
+//! なら `Handled` を立てる。フックが届けて `Continue` を返したホイールが
+//! XAML からも届いたときは、2 度目なので捨てる。
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use naui_core::{
     Align, Color, DrawCommand, EventResponse, Painter, Path, PathSegment, Point, PointerButton,
@@ -121,6 +129,54 @@ struct CanvasInner {
     pressed: RefCell<HashMap<u32, u8>>,
     /// 描き直しを `DispatcherQueue` へ積んであるかどうか。
     scheduled: Cell<bool>,
+    /// 面の上にあるポインターの最後の位置。外へ出たら `None`。フックから
+    /// 届けるホイールの位置と、届け先の面を決めるのに使う。
+    hover: Cell<Option<Point>>,
+    /// [`WHEEL_CANVASES`] に載せたかどうか (`on_wheel` を付けたかどうか)。
+    wheel_registered: Cell<bool>,
+    /// フックから最後にホイールを届けて `Continue` が返った時刻。同じ
+    /// ホイールが `PointerWheelChanged` からも届いたら捨てる。
+    hook_wheel: Cell<Option<Instant>>,
+}
+
+thread_local! {
+    /// `on_wheel` を付けた面。フックで受けたホイールの届け先をここから探す。
+    static WHEEL_CANVASES: RefCell<Vec<Weak<CanvasInner>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// フックが届けたホイールと同じものとみなす、`PointerWheelChanged` までの間。
+const HOOK_WHEEL_ECHO: Duration = Duration::from_millis(250);
+
+/// `MouseWheelDelta` (1 刻みで 120) を、届ける量 (論理ピクセル) にする。
+fn wheel_amount(delta: f64, horizontal: bool) -> (f64, f64) {
+    let amount = delta / 120.0 * WHEEL_STEP;
+    if horizontal {
+        (amount, 0.0)
+    } else {
+        (0.0, -amount)
+    }
+}
+
+/// フックで受けたホイールを、ポインターの下にある `on_wheel` 付きの面へ届ける。
+///
+/// `delta` は `WM_MOUSEWHEEL` / `WM_MOUSEHWHEEL` の量 (1 刻みで 120)。
+/// 届け先が無ければ `None`、届けたらアプリが `Handled` を返したかどうか。
+pub(crate) fn dispatch_wheel(delta: f64, horizontal: bool) -> Option<bool> {
+    // アプリのクロージャを呼ぶ前に借用を返す (中で面を作るかもしれない)。
+    let (inner, point) = WHEEL_CANVASES.with(|canvases| {
+        let mut canvases = canvases.borrow_mut();
+        canvases.retain(|canvas| canvas.strong_count() != 0);
+        canvases.iter().rev().find_map(|weak| {
+            let inner = weak.upgrade()?;
+            let point = inner.hover.get()?;
+            Some((inner, point))
+        })
+    })?;
+    let (x, y) = wheel_amount(delta, horizontal);
+    let handled = inner.wheel.emit(PointerEvent::wheel(point, x, y)) == EventResponse::Handled;
+    // `Handled` ならメッセージはフックで止まり、XAML へは届かない。
+    inner.hook_wheel.set((!handled).then(Instant::now));
+    Some(handled)
 }
 
 /// アプリが自分で描く面 (`Grid` + `Canvas` + `Path` / `TextBlock`)。
@@ -142,6 +198,9 @@ impl Canvas {
             wheel: WheelHandler::default(),
             pressed: RefCell::new(HashMap::new()),
             scheduled: Cell::new(false),
+            hover: Cell::new(None),
+            wheel_registered: Cell::new(false),
+            hook_wheel: Cell::new(None),
         }));
         this.track_size()?;
         this.track_pointer()?;
@@ -205,6 +264,11 @@ impl Canvas {
                         return;
                     };
                     let point = Point::new(f64::from(position.X), f64::from(position.Y));
+                    // 捕捉中は面の外の位置も届くので、面の上のときだけ覚える。
+                    let (width, height) = inner.actual_size();
+                    let inside =
+                        (0.0..=width).contains(&point.x) && (0.0..=height).contains(&point.y);
+                    inner.hover.set(inside.then_some(point));
                     let now = current
                         .Properties()
                         .map(|properties| pressed_buttons(&properties))
@@ -242,6 +306,19 @@ impl Canvas {
         }
 
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let exited = PointerEventHandler::new(move |_, _| {
+            let _ = target.try_with_mut(|weak: &mut Weak<CanvasInner>| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.hover.set(None);
+                }
+            });
+            Ok(())
+        });
+        element
+            .PointerExited(&exited)
+            .map_err(|e| to_error("Canvas のポインター購読", e))?;
+
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let wheel = PointerEventHandler::new(move |_, args| {
             let Some(args) = args.as_ref() else {
                 return Ok(());
@@ -250,6 +327,14 @@ impl Canvas {
                 let Some(inner) = weak.upgrade() else {
                     return;
                 };
+                // フックがもう届けたホイール。`Continue` だったので Handled は立てない。
+                if inner
+                    .hook_wheel
+                    .take()
+                    .is_some_and(|at| at.elapsed() < HOOK_WHEEL_ECHO)
+                {
+                    return;
+                }
                 let Ok(root) = inner.native.cast::<UIElement>() else {
                     return;
                 };
@@ -260,13 +345,10 @@ impl Canvas {
                 else {
                     return;
                 };
-                let delta =
-                    f64::from(properties.MouseWheelDelta().unwrap_or(0)) / 120.0 * WHEEL_STEP;
-                let (x, y) = if properties.IsHorizontalMouseWheel().unwrap_or(false) {
-                    (delta, 0.0)
-                } else {
-                    (0.0, -delta)
-                };
+                let (x, y) = wheel_amount(
+                    f64::from(properties.MouseWheelDelta().unwrap_or(0)),
+                    properties.IsHorizontalMouseWheel().unwrap_or(false),
+                );
                 let event = PointerEvent::wheel(
                     Point::new(f64::from(position.X), f64::from(position.Y)),
                     x,
@@ -326,12 +408,19 @@ impl Canvas {
         self.0.pointer.set(f);
     }
 
-    /// ホイール (高精度タッチパッドの 2 本指のスクロールも含む)。量は論理ピクセル。
+    /// ホイール。量は論理ピクセル。
     ///
     /// `Handled` を返すと外側のスクロールへは回らない。`Continue` なら
     /// 外側の `ScrollViewer` がいつもどおりスクロールする。
+    ///
+    /// `Scroll` の中にある面では、高精度タッチパッドの 2 本指のスクロールは
+    /// 届かない。タッチパッドのジェスチャーは外側の `ScrollViewer` が自分で
+    /// 受け取り、`PointerWheelChanged` にもホイールのメッセージにもならない。
     pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
         self.0.wheel.set(f);
+        if !self.0.wheel_registered.replace(true) {
+            WHEEL_CANVASES.with(|canvases| canvases.borrow_mut().push(Rc::downgrade(&self.0)));
+        }
     }
 
     /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
@@ -720,5 +809,14 @@ mod tests {
         assert_eq!(number(f64::INFINITY), "0");
         assert_eq!(argb(Color::rgb(1, 2, 3), 2.0), "#FF010203");
         assert_eq!(argb(Color::rgb(1, 2, 3), 0.0), "#00010203");
+    }
+
+    #[test]
+    fn wheel_amount_reads_down_and_right_as_positive() {
+        // 奥へ 1 刻み (+120) は上へ読み戻す向きなので負。
+        assert_eq!(wheel_amount(120.0, false), (0.0, -WHEEL_STEP));
+        assert_eq!(wheel_amount(-240.0, false), (0.0, 2.0 * WHEEL_STEP));
+        // 横は右が正のまま。
+        assert_eq!(wheel_amount(120.0, true), (WHEEL_STEP, 0.0));
     }
 }
