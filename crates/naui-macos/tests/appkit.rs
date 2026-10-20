@@ -16,25 +16,28 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use naui_core::{
-    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
-    FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
-    Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
-    ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
-    TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    DEFAULT_SIDEBAR_WIDTH,
+    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, EventResponse,
+    FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
+    NavItem, Orientation, Padding, PlaybackState, Point, PointerButton, PointerPhase, PopupItem,
+    Rect, Result, ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder,
+    TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
+    TreeItem, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
+use objc2::runtime::NSObjectProtocol;
 use objc2::sel;
-use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
+use objc2::{
+    define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
+};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSButton, NSColor, NSColorSpace, NSComboBox,
     NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
     NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSScrollView, NSScrollerStyle,
-    NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch, NSTableViewDelegate,
-    NSTextField, NSTextInputClient, NSTextView, NSUserInterfaceItemIdentification, NSView,
-    NSWindow, NSWindowTitleVisibility,
+    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder, NSScrollView,
+    NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
+    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
@@ -74,6 +77,10 @@ fn main() {
         (
             "描画面がマウスの押下・移動・解放を面の座標で通知する",
             canvas_reports_pointer_events,
+        ),
+        (
+            "描画面がホイールを論理ピクセルで通知し、Continue なら外側へ回す",
+            canvas_reports_wheel,
         ),
         ("文字列がネイティブと往復する (日本語含む)", text_round_trip),
         ("複数行入力が改行込みで往復する", text_area_round_trip),
@@ -1049,6 +1056,8 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
 
 /// マウスの押下・ドラッグ・解放が、ウィンドウ座標から面の座標へ直して届く。
 fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
+    use objc2_core_graphics::{CGEvent, CGEventType, CGMouseButton};
+
     let canvas = ui.canvas()?;
     canvas.set_sizing(
         Sizing::new()
@@ -1112,23 +1121,168 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
         assert!(near(seen[2].point, 50.0, 40.0), "{:?}", seen[2]);
     }
 
-    // 右ボタンと中ボタンも区別せず同じ通知になる。
+    // 左ボタンは主ボタン。動きにはボタンが付かない。
+    {
+        let seen = seen.borrow();
+        let buttons: Vec<_> = seen.iter().map(|e| e.button).collect();
+        assert_eq!(
+            buttons,
+            vec![
+                Some(PointerButton::Primary),
+                None,
+                Some(PointerButton::Primary)
+            ]
+        );
+    }
+
+    // 右ボタンは別のメソッドへ届くが、同じ通知にボタンを付けて寄せる。
     seen.borrow_mut().clear();
     send(NSEventType::RightMouseDown, 10.0, 10.0);
     send(NSEventType::RightMouseUp, 10.0, 10.0);
-    send(NSEventType::OtherMouseDown, 12.0, 12.0);
-    send(NSEventType::OtherMouseUp, 12.0, 12.0);
-    let phases: Vec<PointerPhase> = seen.borrow().iter().map(|e| e.phase).collect();
+
+    // 左右以外は `otherMouseDown:` へまとめて届くので、ボタンの番号で見分ける。
+    // `mouseEventWithType` では番号を決められないので CGEvent から作る
+    // (位置はスクリーン座標になるので、ここでは見ない)。
+    let other = |kind: CGEventType, number: u32| {
+        let cg =
+            CGEvent::new_mouse_event(None, kind, NSPoint::new(0.0, 0.0), CGMouseButton(number))
+                .expect("マウスの CGEvent");
+        let event = NSEvent::eventWithCGEvent(&cg).expect("マウスの NSEvent");
+        if kind == CGEventType::OtherMouseDown {
+            view.otherMouseDown(&event);
+        } else {
+            view.otherMouseUp(&event);
+        }
+    };
+    other(CGEventType::OtherMouseDown, 2);
+    other(CGEventType::OtherMouseUp, 2);
+    other(CGEventType::OtherMouseDown, 3);
+    other(CGEventType::OtherMouseUp, 3);
+    other(CGEventType::OtherMouseDown, 4);
+    let events: Vec<_> = seen.borrow().iter().map(|e| (e.phase, e.button)).collect();
     assert_eq!(
-        phases,
+        events,
         vec![
-            PointerPhase::Down,
-            PointerPhase::Up,
-            PointerPhase::Down,
-            PointerPhase::Up
+            (PointerPhase::Down, Some(PointerButton::Secondary)),
+            (PointerPhase::Up, Some(PointerButton::Secondary)),
+            (PointerPhase::Down, Some(PointerButton::Middle)),
+            (PointerPhase::Up, Some(PointerButton::Middle)),
+            (PointerPhase::Down, Some(PointerButton::Back)),
+            (PointerPhase::Up, Some(PointerButton::Back)),
+            (PointerPhase::Down, Some(PointerButton::Forward)),
         ],
-        "右ボタンと中ボタンも届くこと"
+        "右・中・側面のボタンも見分けて届くこと"
     );
+    window.close();
+    Ok(())
+}
+
+define_class!(
+    /// `scrollWheel:` が届いた回数を数えるレスポンダー。描画面の次のレスポンダーに
+    /// 差して、`Continue` のホイールが外側へ回ったかを見る。
+    #[unsafe(super(NSResponder))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiTestWheelSink"]
+    #[ivars = Cell<usize>]
+    struct WheelSink;
+
+    unsafe impl NSObjectProtocol for WheelSink {}
+
+    impl WheelSink {
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, _event: &NSEvent) {
+            self.ivars().set(self.ivars().get() + 1);
+        }
+    }
+);
+
+/// ホイールが論理ピクセルにそろえて届き、`Continue` なら次のレスポンダー
+/// (ふつうは外側の `NSScrollView`) へ回り、`Handled` なら回らない。
+///
+/// 外側の `NSScrollView` が実際にスクロールするかは、合成したイベントでは
+/// 環境によって違う (手元では動き、CI のランナーでは動かなかった) ので、
+/// 回ったこと自体を記録用のレスポンダーで見る。
+fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
+    use objc2_core_graphics::{CGEvent, CGScrollEventUnit};
+
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(100.0))
+            .height(Length::Fixed(60.0)),
+    );
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let response = Rc::new(Cell::new(EventResponse::Continue));
+    canvas.on_wheel({
+        let seen = seen.clone();
+        let response = response.clone();
+        move |event| {
+            seen.borrow_mut().push(event);
+            response.get()
+        }
+    });
+    let window = ui.window("wheel", 200.0, 100.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let view = canvas.native_view();
+
+    // 次のレスポンダーは弱参照なので、テストの終わりまで持っておき、戻してから捨てる。
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let sink: Retained<WheelSink> =
+        unsafe { msg_send![super(WheelSink::alloc(mtm).set_ivars(Cell::new(0))), init] };
+    // 弱参照の付け替えなので unsafe。`sink` も元の値もこの関数の間は生きている。
+    let original = unsafe { view.nextResponder() };
+    unsafe { view.setNextResponder(Some(&sink)) };
+
+    // 本物のホイールの NSEvent は CGEvent からしか作れない。正の量は上へ
+    // (中身が下へ動く向き) なので、負の量で下へ読み進める。
+    let wheel = |unit: CGScrollEventUnit, amount: i32| {
+        let cg = CGEvent::new_scroll_wheel_event2(None, unit, 1, amount, 0, 0)
+            .expect("ホイールの CGEvent");
+        let event = NSEvent::eventWithCGEvent(&cg).expect("ホイールの NSEvent");
+        view.scrollWheel(&event);
+    };
+
+    // 細かく測れる量 (ピクセル) はそのまま、向きは「下へ読み進めると正」。
+    wheel(CGScrollEventUnit::Pixel, -30);
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].phase, PointerPhase::Wheel);
+        assert_eq!(seen[0].button, None);
+        assert_eq!(
+            (seen[0].wheel_x, seen[0].wheel_y),
+            (0.0, 30.0),
+            "{:?}",
+            seen[0]
+        );
+    }
+    assert_eq!(
+        sink.ivars().get(),
+        1,
+        "Continue なら次のレスポンダーへ回すこと"
+    );
+
+    // 刻みのあるホイールの 1 刻み (行) は WHEEL_STEP に直す。
+    response.set(EventResponse::Handled);
+    wheel(CGScrollEventUnit::Line, -1);
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(
+            (seen[1].wheel_x, seen[1].wheel_y),
+            (0.0, naui_core::WHEEL_STEP),
+            "{:?}",
+            seen[1]
+        );
+    }
+    assert_eq!(
+        sink.ivars().get(),
+        1,
+        "Handled なら次のレスポンダーへは回さないこと"
+    );
+
+    unsafe { view.setNextResponder(original.as_deref()) };
     window.close();
     Ok(())
 }

@@ -12,13 +12,25 @@
 //!
 //! ポインターの通知は `mouseDown:` / `mouseDragged:` / `mouseUp:` (右ボタンと
 //! 中ボタンの同じ組も) と、`NSTrackingArea` を通した `mouseMoved:` から取る。
-//! ボタンは区別しない (他の 3 環境と同じ)。
+//! どのボタンかは、AppKit がどのメソッドへ配ったかで見分ける (`mouseDown:` が
+//! 左、`rightMouseDown:` が右)。それ以外のボタンはまとめて `otherMouseDown:` へ
+//! 来るので、`NSEvent.buttonNumber` (中が 2、側面が 3 と 4) を見る。
+//! トラックパッドの 2 本指のクリックや、副ボタンのクリックの設定も、AppKit が
+//! `rightMouseDown:` へ配るので右ボタンとして届く。
+//!
+//! ホイールは `scrollWheel:` から取る。`scrollingDeltaX` / `scrollingDeltaY` は
+//! トラックパッドのような細かく測れる装置 (`hasPreciseScrollingDeltas`) なら
+//! 論理ピクセル、刻みのあるホイールなら行 (1 刻みでおよそ 1) なので、後者は
+//! [`WHEEL_STEP`] を掛ける。AppKit の量は「中身が動く向き」で正負が他の
+//! 3 環境と逆なので、符号を反転して届ける。アプリが `Continue` を返したら
+//! `super` へ回し、外側の `NSScrollView` がいつもどおりスクロールする。
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Color, DrawCommand, Painter, Path, PathSegment, PointerEvent, PointerPhase,
+    Align, Color, DrawCommand, EventResponse, Painter, Path, PathSegment, PointerButton,
+    PointerEvent, PointerPhase, WheelHandler, WHEEL_STEP,
 };
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol};
@@ -44,6 +56,7 @@ type DrawSlot = RefCell<Option<Box<dyn FnMut(&mut Painter)>>>;
 struct CanvasState {
     draw: DrawSlot,
     pointer: ValueHandler<PointerEvent>,
+    wheel: WheelHandler,
     /// `mouseMoved:` を受けるための追跡範囲。大きさが変わるたびに張り直す。
     tracking: RefCell<Option<Retained<NSTrackingArea>>>,
 }
@@ -111,22 +124,22 @@ define_class!(
 
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Down, event);
+            self.emit_pointer(PointerPhase::Down, event, Some(PointerButton::Primary));
         }
 
         #[unsafe(method(mouseDragged:))]
         fn mouse_dragged(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Move, event);
+            self.emit_pointer(PointerPhase::Move, event, None);
         }
 
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Up, event);
+            self.emit_pointer(PointerPhase::Up, event, Some(PointerButton::Primary));
         }
 
         #[unsafe(method(mouseMoved:))]
         fn mouse_moved(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Move, event);
+            self.emit_pointer(PointerPhase::Move, event, None);
         }
 
         // 右ボタンと中ボタンは AppKit が別のメソッドへ配るので、同じ通知へ寄せる。
@@ -135,32 +148,49 @@ define_class!(
 
         #[unsafe(method(rightMouseDown:))]
         fn right_mouse_down(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Down, event);
+            self.emit_pointer(PointerPhase::Down, event, Some(PointerButton::Secondary));
         }
 
         #[unsafe(method(rightMouseDragged:))]
         fn right_mouse_dragged(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Move, event);
+            self.emit_pointer(PointerPhase::Move, event, None);
         }
 
         #[unsafe(method(rightMouseUp:))]
         fn right_mouse_up(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Up, event);
+            self.emit_pointer(PointerPhase::Up, event, Some(PointerButton::Secondary));
         }
 
         #[unsafe(method(otherMouseDown:))]
         fn other_mouse_down(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Down, event);
+            self.emit_pointer(PointerPhase::Down, event, other_button(event));
         }
 
         #[unsafe(method(otherMouseDragged:))]
         fn other_mouse_dragged(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Move, event);
+            self.emit_pointer(PointerPhase::Move, event, None);
         }
 
         #[unsafe(method(otherMouseUp:))]
         fn other_mouse_up(&self, event: &NSEvent) {
-            self.emit_pointer(PointerPhase::Up, event);
+            self.emit_pointer(PointerPhase::Up, event, other_button(event));
+        }
+
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, event: &NSEvent) {
+            let scale = if event.hasPreciseScrollingDeltas() {
+                1.0
+            } else {
+                WHEEL_STEP
+            };
+            let wheel = PointerEvent::wheel(
+                self.local_point(event),
+                -event.scrollingDeltaX() * scale,
+                -event.scrollingDeltaY() * scale,
+            );
+            if self.ivars().wheel.emit(wheel) == EventResponse::Continue {
+                let _: () = unsafe { msg_send![super(self), scrollWheel: event] };
+            }
         }
     }
 );
@@ -170,18 +200,22 @@ impl CanvasView {
         let this = Self::alloc(mtm).set_ivars(CanvasState {
             draw: RefCell::new(None),
             pointer: ValueHandler::default(),
+            wheel: WheelHandler::default(),
             tracking: RefCell::new(None),
         });
         unsafe { msg_send![super(this), init] }
     }
 
-    fn emit_pointer(&self, phase: PointerPhase, event: &NSEvent) {
-        let window_point = event.locationInWindow();
-        let point = self.convertPoint_fromView(window_point, None);
-        self.ivars().pointer.emit(PointerEvent::new(
-            phase,
-            naui_core::Point::new(point.x, point.y),
-        ));
+    fn emit_pointer(&self, phase: PointerPhase, event: &NSEvent, button: Option<PointerButton>) {
+        self.ivars()
+            .pointer
+            .emit(PointerEvent::new(phase, self.local_point(event)).button(button));
+    }
+
+    /// イベントの位置を、面の左上を原点にした座標へ直す。
+    fn local_point(&self, event: &NSEvent) -> naui_core::Point {
+        let point = self.convertPoint_fromView(event.locationInWindow(), None);
+        naui_core::Point::new(point.x, point.y)
     }
 }
 
@@ -223,9 +257,18 @@ impl Canvas {
     }
 
     /// ポインター (マウス) の押下・移動・解放。位置は面の左上を原点にした
-    /// 論理ピクセル。移動は押していない間 (ホバー) も届く。
+    /// 論理ピクセル。移動は押していない間 (ホバー) も届く。押下と解放には
+    /// どのボタンかが付く ([`PointerEvent::button`])。
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.view.ivars().pointer.set(f);
+    }
+
+    /// ホイール (トラックパッドの 2 本指のスクロールも含む)。量は論理ピクセル。
+    ///
+    /// `Handled` を返すと外側のスクロールへは回らない。`Continue` なら
+    /// 外側の `NSScrollView` がいつもどおりスクロールする。
+    pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
+        self.0.view.ivars().wheel.set(f);
     }
 
     /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
@@ -240,6 +283,16 @@ impl Canvas {
     #[doc(hidden)]
     pub fn draw_for_test(&self) {
         self.0.native.displayIfNeeded();
+    }
+}
+
+/// `otherMouseDown:` / `otherMouseUp:` に来たボタン。左右以外がここへ来る。
+fn other_button(event: &NSEvent) -> Option<PointerButton> {
+    match event.buttonNumber() {
+        2 => Some(PointerButton::Middle),
+        3 => Some(PointerButton::Back),
+        4 => Some(PointerButton::Forward),
+        _ => None,
     }
 }
 

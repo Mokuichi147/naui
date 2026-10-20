@@ -14,7 +14,7 @@
 //! なり、`Path` の中身は直線と 3 次ベジェだけ。円と弧はここでベジェへ
 //! 直してから渡すので、どの環境でも同じ形になる。
 
-use crate::{Align, Color};
+use crate::{Align, Color, EventResponse};
 
 /// 座標 (論理ピクセル)。左上が原点で、右と下が正。
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -599,27 +599,160 @@ impl Painter {
 
 /// ポインター (マウス・タッチ・ペン) の動きの種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PointerPhase {
-    /// 押した。
+    /// 押した。どのボタンかは [`PointerEvent::button`] で見る。
     Down,
     /// 動いた。押していない間 (ホバー) も届く。
     Move,
-    /// 離した。
+    /// 離した。どのボタンかは [`PointerEvent::button`] で見る。
     Up,
+    /// ホイール (トラックパッドの 2 本指のスクロールも含む) を回した。
+    /// 量は [`PointerEvent::wheel_x`] / [`PointerEvent::wheel_y`] で見る。
+    ///
+    /// `on_pointer` には届かず、`Canvas::on_wheel` にだけ届く。
+    Wheel,
 }
+
+/// 押した・離したボタン。
+///
+/// 番号の振り方は環境ごとに違う (AppKit は左が 0、GTK は左が 1 で右が 3、
+/// Web は中が 1 で右が 2) ので、意味でそろえる。左利き向けにボタンを
+/// 入れ替える設定は OS が先に反映するので、`Primary` はいつも「主に使う
+/// ボタン」になる。タッチとペン先は `Primary`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PointerButton {
+    /// 主ボタン (ふつうは左)。タッチとペン先もこれ。
+    Primary,
+    /// 副ボタン (ふつうは右)。文脈メニューを出すボタン。
+    Secondary,
+    /// 中ボタン (ホイールを押し込む)。
+    Middle,
+    /// 戻るボタン (5 ボタンのマウスの側面の手前)。
+    Back,
+    /// 進むボタン (5 ボタンのマウスの側面の奥)。
+    Forward,
+}
+
+impl PointerButton {
+    /// Web の `MouseEvent.button` の番号から作る。知らない番号は `None`。
+    ///
+    /// ```
+    /// # use naui_core::PointerButton;
+    /// assert_eq!(PointerButton::from_web_button(0), Some(PointerButton::Primary));
+    /// assert_eq!(PointerButton::from_web_button(2), Some(PointerButton::Secondary));
+    /// assert_eq!(PointerButton::from_web_button(-1), None);
+    /// ```
+    pub fn from_web_button(button: i16) -> Option<Self> {
+        match button {
+            0 => Some(Self::Primary),
+            1 => Some(Self::Middle),
+            2 => Some(Self::Secondary),
+            3 => Some(Self::Back),
+            4 => Some(Self::Forward),
+            _ => None,
+        }
+    }
+}
+
+/// ホイールの 1 刻み (ノッチ) を何論理ピクセルとして届けるか。
+///
+/// 環境ごとの単位 (刻み・行・論理ピクセル) を、[`PointerEvent::wheel_x`] /
+/// [`PointerEvent::wheel_y`] では論理ピクセルにそろえる。刻みのあるマウスの
+/// ホイールは 1 刻みをこの値に直す (Windows の既定の「1 刻みで 3 行」に、
+/// 1 行 16 ピクセルを掛けた値)。トラックパッドのような細かく測れる装置は、
+/// OS が出す論理ピクセルの量をそのまま届ける。
+///
+/// 拡大縮小のように「1 刻みでどれだけ」を決めたいときは、量をこれで割る。
+pub const WHEEL_STEP: f64 = 48.0;
 
 /// 描画面の上でポインターが動いたこと。
 ///
 /// 位置は描画面の左上を原点にした論理ピクセルで、[`Painter`] の座標と同じ。
+/// ホイールのときはポインターがある位置 (拡大の中心に使える)。
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct PointerEvent {
     pub phase: PointerPhase,
     pub point: Point,
+    /// 押した・離したボタン。`Down` と `Up` のときだけ入る。
+    ///
+    /// `Move` と `Wheel` と、どれとも分からないボタン (6 個目以降など) は `None`。
+    /// 押したまま動かしているボタンは、`Down` で覚えておく。
+    pub button: Option<PointerButton>,
+    /// 横のスクロール量 (論理ピクセル)。`Wheel` のときだけ入り、ほかは 0。
+    ///
+    /// 正は右へ読み進める向き (中身が左へ動く向き)。
+    pub wheel_x: f64,
+    /// 縦のスクロール量 (論理ピクセル)。`Wheel` のときだけ入り、ほかは 0。
+    ///
+    /// 正は下へ読み進める向き (ホイールを手前へ回した向き。中身は上へ動く)。
+    /// macOS の「ナチュラルなスクロール」のように OS で向きを反転する設定は、
+    /// 反転したあとの向きで届く (ページのスクロールと同じ向きになる)。
+    pub wheel_y: f64,
 }
 
 impl PointerEvent {
+    /// ボタンもホイールの量も持たない通知を作る。
     pub fn new(phase: PointerPhase, point: Point) -> Self {
-        Self { phase, point }
+        Self {
+            phase,
+            point,
+            button: None,
+            wheel_x: 0.0,
+            wheel_y: 0.0,
+        }
+    }
+
+    /// 押した・離したボタンを付ける。
+    pub fn button(mut self, button: Option<PointerButton>) -> Self {
+        self.button = button;
+        self
+    }
+
+    /// ホイールの通知を作る。量は論理ピクセル (向きは [`wheel_y`](Self::wheel_y) を参照)。
+    pub fn wheel(point: Point, wheel_x: f64, wheel_y: f64) -> Self {
+        Self {
+            phase: PointerPhase::Wheel,
+            point,
+            button: None,
+            wheel_x,
+            wheel_y,
+        }
+    }
+}
+
+/// `Canvas::on_wheel` の通知先を 1 つ持つ。各バックエンドで共有する。
+///
+/// [`KeyHandler`](crate::KeyHandler) と同じ決まりで、呼んでいる間は
+/// クロージャを取り出しておく。通知先が無いときと入れ子で届いたときは
+/// `Continue` (親のスクロールへ回す) として扱う。
+#[derive(Default)]
+pub struct WheelHandler(std::cell::RefCell<crate::Slot<WheelCallback>>);
+
+type WheelCallback = dyn FnMut(PointerEvent) -> EventResponse;
+
+impl WheelHandler {
+    pub fn set(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub fn emit(&self, event: PointerEvent) -> EventResponse {
+        let Some(mut f) = self
+            .0
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut slot| slot.take())
+        else {
+            return EventResponse::Continue;
+        };
+        let response = f(event);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+        response
     }
 }
 
@@ -824,5 +957,53 @@ mod tests {
         assert!(painter.dash().is_empty(), "負の破線は無視する");
         painter.set_dash(&[0.0, 0.0]);
         assert!(painter.dash().is_empty(), "全部 0 は実線");
+    }
+
+    #[test]
+    fn pointer_events_carry_button_and_wheel() {
+        let down = PointerEvent::new(PointerPhase::Down, Point::new(1.0, 2.0))
+            .button(Some(PointerButton::Secondary));
+        assert_eq!(down.button, Some(PointerButton::Secondary));
+        assert_eq!((down.wheel_x, down.wheel_y), (0.0, 0.0));
+
+        let wheel = PointerEvent::wheel(Point::new(3.0, 4.0), -1.5, WHEEL_STEP);
+        assert_eq!(wheel.phase, PointerPhase::Wheel);
+        assert_eq!(wheel.point, Point::new(3.0, 4.0));
+        assert_eq!(wheel.button, None);
+        assert_eq!((wheel.wheel_x, wheel.wheel_y), (-1.5, 48.0));
+
+        assert_eq!(
+            PointerButton::from_web_button(1),
+            Some(PointerButton::Middle),
+            "Web は中ボタンが 1"
+        );
+        assert_eq!(PointerButton::from_web_button(3), Some(PointerButton::Back));
+        assert_eq!(
+            PointerButton::from_web_button(4),
+            Some(PointerButton::Forward)
+        );
+        assert_eq!(PointerButton::from_web_button(5), None);
+    }
+
+    #[test]
+    fn wheel_handler_continues_without_a_callback() {
+        use std::rc::Rc;
+        let handler = Rc::new(WheelHandler::default());
+        let event = PointerEvent::wheel(Point::default(), 0.0, 1.0);
+        assert_eq!(handler.emit(event), EventResponse::Continue);
+        handler.set({
+            let handler = handler.clone();
+            move |event| {
+                // 入れ子で届いた分は Continue。
+                assert_eq!(handler.emit(event), EventResponse::Continue);
+                EventResponse::Handled
+            }
+        });
+        assert_eq!(handler.emit(event), EventResponse::Handled);
+        assert_eq!(
+            handler.emit(event),
+            EventResponse::Handled,
+            "呼んだ後も残る"
+        );
     }
 }

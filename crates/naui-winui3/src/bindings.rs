@@ -3103,6 +3103,7 @@ pub mod Microsoft {
             pub trait IPointerPoint_Impl: windows_core::IUnknownImpl {
                 fn FrameId(&self) -> windows_core::Result<u32>;
                 fn IsInContact(&self) -> windows_core::Result<bool>;
+                fn PointerDeviceType(&self) -> windows_core::Result<PointerDeviceType>;
                 fn PointerId(&self) -> windows_core::Result<u32>;
                 fn Position(&self) -> windows_core::Result<windows::Foundation::Point>;
                 fn Properties(&self) -> windows_core::Result<PointerPointProperties>;
@@ -3140,6 +3141,25 @@ pub mod Microsoft {
                             let this: &Identity =
                                 &*((this as *const *const ()).offset(OFFSET) as *const Identity);
                             match IPointerPoint_Impl::IsInContact(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn PointerDeviceType<
+                        Identity: IPointerPoint_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut PointerDeviceType,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IPointerPoint_Impl::PointerDeviceType(this) {
                                 Ok(ok__) => {
                                     result__.write(core::mem::transmute_copy(&ok__));
                                     windows_core::HRESULT(0)
@@ -3233,7 +3253,7 @@ pub mod Microsoft {
                         >(),
                         FrameId: FrameId::<Identity, OFFSET>,
                         IsInContact: IsInContact::<Identity, OFFSET>,
-                        PointerDeviceType: 0,
+                        PointerDeviceType: PointerDeviceType::<Identity, OFFSET>,
                         PointerId: PointerId::<Identity, OFFSET>,
                         Position: Position::<Identity, OFFSET>,
                         Properties: Properties::<Identity, OFFSET>,
@@ -3258,7 +3278,11 @@ pub mod Microsoft {
                     *mut bool,
                 )
                     -> windows_core::HRESULT,
-                PointerDeviceType: usize,
+                pub PointerDeviceType: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut PointerDeviceType,
+                )
+                    -> windows_core::HRESULT,
                 pub PointerId: unsafe extern "system" fn(
                     *mut core::ffi::c_void,
                     *mut u32,
@@ -3888,6 +3912,24 @@ pub mod Microsoft {
                     -> windows_core::HRESULT,
             }
             #[repr(transparent)]
+            #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+            pub struct PointerDeviceType(pub i32);
+            impl PointerDeviceType {
+                pub const Touch: Self = Self(0i32);
+                pub const Pen: Self = Self(1i32);
+                pub const Mouse: Self = Self(2i32);
+                pub const Touchpad: Self = Self(3i32);
+            }
+            impl windows_core::TypeKind for PointerDeviceType {
+                type TypeKind = windows_core::CopyType;
+            }
+            impl windows_core::RuntimeType for PointerDeviceType {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::from_slice(
+                        b"enum(Microsoft.UI.Input.PointerDeviceType;i4)",
+                    );
+            }
+            #[repr(transparent)]
             #[derive(Clone, Debug, Eq, PartialEq)]
             pub struct PointerPoint(windows_core::IUnknown);
             windows_core::imp::interface_hierarchy!(
@@ -3912,6 +3954,17 @@ pub mod Microsoft {
                     unsafe {
                         let mut result__ = core::mem::zeroed();
                         (windows_core::Interface::vtable(this).IsInContact)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
+                pub fn PointerDeviceType(&self) -> windows_core::Result<PointerDeviceType> {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).PointerDeviceType)(
                             windows_core::Interface::as_raw(this),
                             &mut result__,
                         )
@@ -296517,6 +296570,9 @@ pub mod Microsoft {
                 }
                 pub trait IPointer_Impl: windows_core::IUnknownImpl {
                     fn PointerId(&self) -> windows_core::Result<u32>;
+                    fn PointerDeviceType(
+                        &self,
+                    ) -> windows_core::Result<super::super::Input::PointerDeviceType>;
                     fn IsInContact(&self) -> windows_core::Result<bool>;
                     fn IsInRange(&self) -> windows_core::Result<bool>;
                 }
@@ -296533,6 +296589,25 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 match IPointer_Impl::PointerId(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn PointerDeviceType<
+                            Identity: IPointer_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::super::Input::PointerDeviceType,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IPointer_Impl::PointerDeviceType(this) {
                                     Ok(ok__) => {
                                         result__.write(core::mem::transmute_copy(&ok__));
                                         windows_core::HRESULT(0)
@@ -296586,7 +296661,7 @@ pub mod Microsoft {
                                 OFFSET,
                             >(),
                             PointerId: PointerId::<Identity, OFFSET>,
-                            PointerDeviceType: 0,
+                            PointerDeviceType: PointerDeviceType::<Identity, OFFSET>,
                             IsInContact: IsInContact::<Identity, OFFSET>,
                             IsInRange: IsInRange::<Identity, OFFSET>,
                         }
@@ -296604,7 +296679,11 @@ pub mod Microsoft {
                         *mut u32,
                     )
                         -> windows_core::HRESULT,
-                    PointerDeviceType: usize,
+                    pub PointerDeviceType: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut super::super::Input::PointerDeviceType,
+                    )
+                        -> windows_core::HRESULT,
                     pub IsInContact: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut bool,
@@ -296864,6 +296943,9 @@ pub mod Microsoft {
                     const NAME: &'static str = "Microsoft.UI.Xaml.Input.ITappedRoutedEventArgs";
                 }
                 pub trait ITappedRoutedEventArgs_Impl: windows_core::IUnknownImpl {
+                    fn PointerDeviceType(
+                        &self,
+                    ) -> windows_core::Result<super::super::Input::PointerDeviceType>;
                     fn Handled(&self) -> windows_core::Result<bool>;
                     fn SetHandled(&self, value: bool) -> windows_core::Result<()>;
                     fn GetPosition(
@@ -296874,6 +296956,25 @@ pub mod Microsoft {
                 impl ITappedRoutedEventArgs_Vtbl {
                     pub const fn new<Identity: ITappedRoutedEventArgs_Impl, const OFFSET: isize>(
                     ) -> Self {
+                        unsafe extern "system" fn PointerDeviceType<
+                            Identity: ITappedRoutedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::super::Input::PointerDeviceType,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ITappedRoutedEventArgs_Impl::PointerDeviceType(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
                         unsafe extern "system" fn Handled<
                             Identity: ITappedRoutedEventArgs_Impl,
                             const OFFSET: isize,
@@ -296935,7 +297036,7 @@ pub mod Microsoft {
                                 ITappedRoutedEventArgs,
                                 OFFSET,
                             >(),
-                            PointerDeviceType: 0,
+                            PointerDeviceType: PointerDeviceType::<Identity, OFFSET>,
                             Handled: Handled::<Identity, OFFSET>,
                             SetHandled: SetHandled::<Identity, OFFSET>,
                             GetPosition: GetPosition::<Identity, OFFSET>,
@@ -296949,7 +297050,11 @@ pub mod Microsoft {
                 #[doc(hidden)]
                 pub struct ITappedRoutedEventArgs_Vtbl {
                     pub base__: windows_core::IInspectable_Vtbl,
-                    PointerDeviceType: usize,
+                    pub PointerDeviceType: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut super::super::Input::PointerDeviceType,
+                    )
+                        -> windows_core::HRESULT,
                     pub Handled: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut bool,
@@ -297220,6 +297325,20 @@ pub mod Microsoft {
                         unsafe {
                             let mut result__ = core::mem::zeroed();
                             (windows_core::Interface::vtable(this).PointerId)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn PointerDeviceType(
+                        &self,
+                    ) -> windows_core::Result<super::super::Input::PointerDeviceType>
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerDeviceType)(
                                 windows_core::Interface::as_raw(this),
                                 &mut result__,
                             )
@@ -297704,6 +297823,20 @@ pub mod Microsoft {
                                 &mut result__,
                             )
                             .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn PointerDeviceType(
+                        &self,
+                    ) -> windows_core::Result<super::super::Input::PointerDeviceType>
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerDeviceType)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn Handled(&self) -> windows_core::Result<bool> {
