@@ -23,6 +23,13 @@
 //! スクロールの通知は位置を持たないので、最後にホバーで見た位置を使う。
 //! アプリが `Continue` を返したら伝播を止めず、外側の `GtkScrolledWindow` が
 //! いつもどおりスクロールする。
+//!
+//! `Handled` で伝播を止めても、外側の `GtkScrolledWindow` の慣性は防げない。
+//! 外側は捕捉フェーズ (子より先) のコントローラーでも量の履歴をためていて、
+//! 指を離したとき (止まりのイベント) にその履歴から慣性スクロールを始めるため。
+//! 止まりのイベントは続けて Canvas にも届くので、最後の量を `Handled` で
+//! 受けていたら、Canvas の `scroll-end` で外側の慣性を取り消す
+//! ([`cancel_ancestor_kinetic`])。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -163,19 +170,38 @@ impl Canvas {
 
         // ホイール。縦と横の両方を受ける。慣性 (`KINETIC`) は付けず、OS が
         // 出した量だけを届ける。
+        // 最後の量を `Handled` で受けたかを覚えておき、指を離したときに
+        // 外側の慣性を取り消すのに使う。
+        let last_handled = Rc::new(Cell::new(false));
         let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
         scroll.connect_scroll({
             let wheel = wheel.clone();
             let hover = hover.clone();
+            let last_handled = last_handled.clone();
             move |controller, dx, dy| {
                 let scale = match controller.unit() {
                     gtk::gdk::ScrollUnit::Surface => 1.0,
                     _ => WHEEL_STEP,
                 };
                 let event = PointerEvent::wheel(hover.get(), dx * scale, dy * scale);
-                match wheel.emit(event) {
+                let response = wheel.emit(event);
+                last_handled.set(response == EventResponse::Handled);
+                match response {
                     EventResponse::Handled => gtk::glib::Propagation::Stop,
                     EventResponse::Continue => gtk::glib::Propagation::Proceed,
+                }
+            }
+        });
+        scroll.connect_scroll_begin({
+            let last_handled = last_handled.clone();
+            move |_| last_handled.set(false)
+        });
+        // 止まりのイベントは外側の捕捉フェーズで慣性を始めさせた後にここへ
+        // 届く。最後を `Continue` で外側へ回していたなら、慣性はそのまま残す。
+        scroll.connect_scroll_end(move |controller| {
+            if last_handled.replace(false) {
+                if let Some(widget) = controller.widget() {
+                    cancel_ancestor_kinetic(&widget);
                 }
             }
         });
@@ -213,8 +239,9 @@ impl Canvas {
 
     /// ホイール (トラックパッドの 2 本指のスクロールも含む)。量は論理ピクセル。
     ///
-    /// `Handled` を返すと外側のスクロールへは回らない。`Continue` なら
-    /// 外側の `GtkScrolledWindow` がいつもどおりスクロールする。
+    /// `Handled` を返すと外側のスクロールへは回らない (指を離した後の慣性も
+    /// 起きない)。`Continue` なら外側の `GtkScrolledWindow` がいつもどおり
+    /// スクロールする。
     pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
         self.0.wheel.set(f);
     }
@@ -230,6 +257,24 @@ impl Canvas {
     /// 描画面本体。バックエンド固有の脱出口として公開している。
     pub fn native_area(&self) -> gtk::DrawingArea {
         self.0.native.clone()
+    }
+}
+
+/// 外側の `GtkScrolledWindow` が始めた慣性スクロールを取り消す。
+///
+/// 慣性を止める公開の API は無いが、`kinetic-scrolling` を切ると進行中の
+/// 慣性 (`cancel_deceleration`) も止まる。すぐ元へ戻すので、設定は変わらない。
+/// 入れ子のスクロールはどれも履歴をためているので、祖先をすべて辿る。
+fn cancel_ancestor_kinetic(widget: &gtk::Widget) {
+    let mut next = widget.parent();
+    while let Some(ancestor) = next {
+        if let Some(scrolled) = ancestor.downcast_ref::<gtk::ScrolledWindow>() {
+            if scrolled.is_kinetic_scrolling() {
+                scrolled.set_kinetic_scrolling(false);
+                scrolled.set_kinetic_scrolling(true);
+            }
+        }
+        next = ancestor.parent();
     }
 }
 

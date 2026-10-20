@@ -73,6 +73,10 @@ fn main() {
             canvas_reports_wheel,
         ),
         (
+            "描画面が Handled で受け終えたら外側の慣性スクロールを取り消す",
+            canvas_cancels_outer_kinetic_after_handled,
+        ),
+        (
             "チェックボックスの印がラベルの字面にそろう",
             checkbox_indicator_is_aligned_to_text,
         ),
@@ -1109,6 +1113,60 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
         "ホイールは on_pointer へは届かないこと: {:?}",
         pointer.borrow()
     );
+    Ok(())
+}
+
+/// 外側の `GtkScrolledWindow` は捕捉フェーズで量の履歴をため、指を離すと
+/// 子が `Handled` で止めていても慣性スクロールを始める。最後を `Handled` で
+/// 受けていたら、`scroll-end` で `kinetic-scrolling` を切って戻し、その慣性を
+/// 取り消す (戻すので設定は変わらない)。最後を外側へ回したなら触らない。
+fn canvas_cancels_outer_kinetic_after_handled(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    let response = Rc::new(Cell::new(EventResponse::Handled));
+    canvas.on_wheel({
+        let response = response.clone();
+        move |_| response.get()
+    });
+    let scroll = ui.scroll()?;
+    scroll.set_child(&canvas);
+    let native: gtk::ScrolledWindow = scroll
+        .native_widget()
+        .downcast()
+        .expect("GtkScrolledWindow");
+    assert!(native.is_kinetic_scrolling(), "既定で慣性が有効なこと");
+    let toggles = Rc::new(Cell::new(0));
+    native.connect_kinetic_scrolling_notify({
+        let toggles = toggles.clone();
+        move |_| toggles.set(toggles.get() + 1)
+    });
+
+    let area = canvas.native_area();
+    let controllers = area.observe_controllers();
+    let controller = (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .find_map(|c| c.downcast::<gtk::EventControllerScroll>().ok())
+        .expect("ホイールを受ける GtkEventControllerScroll が付いていること");
+    let gesture = |responses: &[EventResponse]| {
+        controller.emit_by_name::<()>("scroll-begin", &[]);
+        for r in responses {
+            response.set(*r);
+            controller.emit_by_name::<bool>("scroll", &[&0.0f64, &1.0f64]);
+        }
+        controller.emit_by_name::<()>("scroll-end", &[]);
+    };
+
+    gesture(&[EventResponse::Handled, EventResponse::Handled]);
+    assert_eq!(toggles.get(), 2, "Handled で終えたら切って戻すこと");
+    assert!(native.is_kinetic_scrolling(), "設定は元へ戻ること");
+
+    gesture(&[EventResponse::Handled, EventResponse::Continue]);
+    assert_eq!(toggles.get(), 2, "最後を外側へ回したなら慣性を残すこと");
+
+    native.set_kinetic_scrolling(false);
+    toggles.set(0);
+    gesture(&[EventResponse::Handled]);
+    assert_eq!(toggles.get(), 0, "慣性を切ってある外側には触らないこと");
+    assert!(!native.is_kinetic_scrolling());
     Ok(())
 }
 
