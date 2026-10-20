@@ -522,9 +522,10 @@ impl Window {
             self.mount_menu_bar();
             self.0.menu_key_installed.set(false);
             self.install_menu_shortcuts();
-            // `on_key_down` の受け口も新しい根へ付ける。
+            // `on_key_down` の受け口と `on_focus_change` の見張りも新しい根へ付ける。
             if let Some(root) = self.0.theme_root.borrow().as_ref() {
                 let _ = crate::keys::install(root, self.0.key_down.clone());
+                let _ = crate::focus::install(root);
             }
             if !self.0.wheel_subclass_installed.get() {
                 self.0

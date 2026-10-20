@@ -26,6 +26,7 @@ struct NumberInputInner {
     /// 入力中と確定時の購読。落とすと購読も外れる。
     listeners: RefCell<Vec<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// 数値を入力させるコントロール (`<input type="number">`)。
@@ -35,6 +36,7 @@ struct NumberInputInner {
 pub struct NumberInput(Rc<NumberInputInner>);
 impl_widget!(NumberInput, input);
 crate::keys::impl_key_down!(NumberInput);
+crate::focus::impl_focus_change!(NumberInput);
 
 impl NumberInput {
     pub(crate) fn new(document: &Document, value: f64) -> Result<Self> {
@@ -50,6 +52,7 @@ impl NumberInput {
             on_submit: ValueHandler::default(),
             listeners: RefCell::new(Vec::new()),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         }));
         this.write_native_spec();
         this.write_native(this.value());

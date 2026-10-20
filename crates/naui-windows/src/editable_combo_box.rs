@@ -71,6 +71,8 @@ struct EditableComboBoxInner {
     silent: Cell<bool>,
     /// テンプレートの入力欄。見つかるまでは `None`。
     editable: RefCell<Option<TextBox>>,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 候補から選ぶことも、自由に打ち込むこともできる入力欄
@@ -80,6 +82,7 @@ struct EditableComboBoxInner {
 #[derive(Clone)]
 pub struct EditableComboBox(Rc<EditableComboBoxInner>);
 crate::keys::impl_key_down!(EditableComboBox);
+crate::focus::impl_focus_change!(EditableComboBox);
 impl_widget!(EditableComboBox, native);
 
 impl EditableComboBox {
@@ -99,6 +102,7 @@ impl EditableComboBox {
             last: RefCell::new(String::new()),
             silent: Cell::new(false),
             editable: RefCell::new(None),
+            focus: Default::default(),
         }));
 
         // 候補が選ばれたとき。編集欄への反映は WinUI より先に自分で行い、

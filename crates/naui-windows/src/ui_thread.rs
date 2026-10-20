@@ -99,3 +99,41 @@ impl<T> UiThreadCell<T> {
         unsafe { f(&mut *self.value.as_ptr()) }
     }
 }
+
+/// UI スレッドの `thread_local!` に置く、ウィジェットごとの登録表。
+///
+/// 中身には通知のクロージャ (と、それが掴んだウィジェット) が入る。
+/// プロセスの終わりに `thread_local!` が壊されるとき、中身は捨てずに
+/// 手放したままにする。そこで捨てると、ウィジェットの `Drop` がすでに
+/// 壊されたほかの `thread_local!` に触れて panic し、プロセスが落ちる
+/// (`STATUS_STACK_BUFFER_OVERRUN`)。XAML がもう畳まれていれば COM の
+/// 解放も危ない。
+///
+/// クロージャの `Drop` を走らせたいときは、終了の経路 (XAML の後片づけの前)
+/// で [`take`](Self::take) して捨てる。
+pub(crate) struct Registry<T>(RefCell<Vec<T>>);
+
+impl<T> Registry<T> {
+    pub(crate) const fn new() -> Self {
+        Self(RefCell::new(Vec::new()))
+    }
+
+    /// 中身をすべて取り出す。借用の外で捨てられるよう、表は空になって戻る。
+    pub(crate) fn take(&self) -> Vec<T> {
+        std::mem::take(&mut *self.0.borrow_mut())
+    }
+}
+
+impl<T> std::ops::Deref for Registry<T> {
+    type Target = RefCell<Vec<T>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> Drop for Registry<T> {
+    fn drop(&mut self) {
+        std::mem::forget(std::mem::take(self.0.get_mut()));
+    }
+}

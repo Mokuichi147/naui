@@ -24,7 +24,7 @@ use naui_core::{
     DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
-use objc2::rc::Retained;
+use objc2::rc::{autoreleasepool, Retained};
 use objc2::sel;
 use objc2::{msg_send, AnyThread, MainThreadMarker, Message};
 use objc2_app_kit::{
@@ -350,6 +350,14 @@ fn main() {
         (
             "フォーカスが入力欄と複数行入力の中へ移る",
             request_focus_reaches_the_editor,
+        ),
+        (
+            "フォーカスの出入りが持ち主の変わったときだけ通知される",
+            focus_change_follows_the_first_responder,
+        ),
+        (
+            "捨てた入力欄の on_focus_change の通知先が解放される",
+            focus_change_handler_is_freed_with_the_widget,
         ),
         ("ツールチップが NSView へ届く", tooltip_reaches_the_view),
         (
@@ -3347,6 +3355,101 @@ fn request_focus_reaches_the_editor(ui: &Ui) -> Result<()> {
 
     input.set_visible(false);
     assert!(!input.request_focus(), "隠れていると移せない");
+    window.close();
+    Ok(())
+}
+
+fn focus_change_follows_the_first_responder(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let name = ui.text_input("")?;
+    let memo = ui.text_area("")?;
+    memo.set_sizing(Sizing::fixed(200.0, 60.0));
+    let count = ui.number_input(1.0)?;
+    let other = ui.text_input("")?;
+    root.append(&name);
+    root.append(&memo);
+    root.append(&count);
+    root.append(&other);
+    window.set_child(&root);
+    window.show();
+
+    // 通知先を置く前からフォーカスがある欄も、そこから出たことは伝わる。
+    assert!(name.request_focus());
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let record = |label: &'static str| {
+        let log = log.clone();
+        move |focused: bool| log.borrow_mut().push(format!("{label}:{focused}"))
+    };
+    name.on_focus_change(record("名前"));
+    memo.on_focus_change(record("メモ"));
+    count.on_focus_change(record("個数"));
+    assert!(log.borrow().is_empty(), "置いただけでは通知しない");
+
+    assert!(memo.request_focus());
+    assert!(count.request_focus());
+    assert_eq!(
+        *log.borrow(),
+        ["名前:false", "メモ:true", "メモ:false", "個数:true"]
+    );
+
+    // 通知先の無い欄へ移れば、出たことだけが伝わる。
+    assert!(other.request_focus());
+    assert_eq!(log.borrow()[4..], ["個数:false"]);
+
+    // 同じ欄へ移し直しても、持ち主は変わらない。
+    assert!(name.request_focus());
+    assert!(name.request_focus());
+    assert_eq!(log.borrow()[5..], ["名前:true"]);
+    window.close();
+    Ok(())
+}
+
+fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let kept = ui.text_input("")?;
+    root.append(&kept);
+    window.set_child(&root);
+    window.show();
+
+    // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+    let state = Rc::new(());
+    let capture = || {
+        let state = state.clone();
+        move |_: bool| {
+            let _ = &state;
+        }
+    };
+
+    // 表示中の木へ入れてフォーカスを持たせてから外す。自動解放に回された
+    // ぶんはプールを抜けたところで、フォーカスを持っていた欄を AppKit が
+    // 掴んでいるぶんは実行ループが回ったところで手放される。
+    autoreleasepool(|_| {
+        let input = ui.text_input("")?;
+        root.append(&input);
+        input.on_focus_change(capture());
+        // 差し替えても、前の通知先は残らない。
+        input.on_focus_change(capture());
+        assert!(input.request_focus());
+        assert_eq!(Rc::strong_count(&state), 2);
+        assert!(kept.request_focus());
+        root.remove(1);
+        drop(input);
+        Ok::<_, naui_core::Error>(())
+    })?;
+    pump_until(2.0, || Rc::strong_count(&state) == 1);
+    assert_eq!(Rc::strong_count(&state), 1, "外して捨てた欄の通知先");
+
+    // 木へ入れないまま捨てる。
+    autoreleasepool(|_| {
+        let area = ui.text_area("")?;
+        area.on_focus_change(capture());
+        drop(area);
+        Ok::<_, naui_core::Error>(())
+    })?;
+    assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
+
     window.close();
     Ok(())
 }

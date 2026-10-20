@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use naui::{
     Button, Color, ColorPicker, DatePicker, DatePickerMode, DateTime, EditableComboBox,
     EventResponse, Key, KeyEvent, Label, Length, NumberInput, PasswordInput, Result, SearchInput,
@@ -36,15 +39,20 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         ui,
         &pane,
         "TextInput",
-        &["1行入力。打つたびの変更通知 (on_change) と、Enter での確定 (on_submit) を受け取れます。"],
+        &["1行入力。打つたびの変更通知 (on_change)、Enter での確定 (on_submit)、フォーカスの出入り (on_focus_change) を受け取れます。"],
     )?;
     let input = ui.text_input("")?;
     disabler.add(&input, TextInput::set_enabled);
     input.set_placeholder("プレースホルダー");
     input.set_sizing(Sizing::fill_width());
+    // 中身は on_change で受け取っておき、フォーカスの通知はこちらを見る
+    // (通知のクロージャが input 自身を捕まえると循環して解放されない)。
+    let input_text = Rc::new(RefCell::new(String::new()));
     input.on_change({
         let notice = notice.clone();
+        let input_text = input_text.clone();
         move |text| {
+            *input_text.borrow_mut() = text.to_owned();
             if text.is_empty() {
                 notice.show("入力値: (空)");
             } else {
@@ -56,7 +64,23 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let notice = notice.clone();
         move |text| notice.show(&format!("確定: {text}"))
     });
+    // 欄を離れたときに中身を確かめる。
+    let input_status = parts::readout(ui, "フォーカス: なし")?;
+    input.on_focus_change({
+        let input_text = input_text.clone();
+        let input_status = input_status.clone();
+        move |focused| {
+            if focused {
+                input_status.set_text("フォーカス: 入力中");
+            } else if input_text.borrow().trim().is_empty() {
+                input_status.set_text("フォーカス: 離れました (空です)");
+            } else {
+                input_status.set_text("フォーカス: 離れました");
+            }
+        }
+    });
     pane.append(&input);
+    pane.append(&input_status);
 
     parts::section(
         ui,
@@ -437,6 +461,8 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let notice = notice.clone();
         move || {
             input.set_text("");
+            // set_text は on_change を呼ばないので、共有の中身も戻す。
+            input_text.borrow_mut().clear();
             area.set_text("");
             password.set_text("");
             confirm.set_text("");

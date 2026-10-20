@@ -36,6 +36,8 @@ struct SearchInputInner {
     native: AutoSuggestBox,
     on_change: TextHandler,
     on_search: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 検索の入力欄 (`AutoSuggestBox`)。
@@ -44,6 +46,7 @@ struct SearchInputInner {
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 crate::keys::impl_key_down!(SearchInput);
+crate::focus::impl_focus_change!(SearchInput);
 impl_widget!(SearchInput, native);
 
 impl SearchInput {
@@ -53,6 +56,7 @@ impl SearchInput {
             native,
             on_change: TextHandler::new(),
             on_search: TextHandler::new(),
+            focus: Default::default(),
         }));
         this.connect()?;
         Ok(this)

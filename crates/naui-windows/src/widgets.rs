@@ -444,12 +444,15 @@ struct TextInputInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 1 行テキスト入力 (TextBox)。IME は Windows が処理する。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
 crate::keys::impl_key_down!(TextInput);
+crate::focus::impl_focus_change!(TextInput);
 impl_widget!(TextInput, native);
 
 impl TextInput {
@@ -462,6 +465,7 @@ impl TextInput {
             native,
             token: RefCell::new(None),
             on_submit: TextHandler::new(),
+            focus: Default::default(),
         });
         let element: UIElement = inner
             .native
@@ -550,6 +554,8 @@ struct PasswordInputInner {
     native: PasswordBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// パスワード入力 (PasswordBox)。
@@ -560,6 +566,7 @@ struct PasswordInputInner {
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
 crate::keys::impl_key_down!(PasswordInput);
+crate::focus::impl_focus_change!(PasswordInput);
 impl_widget!(PasswordInput, native);
 
 impl PasswordInput {
@@ -569,6 +576,7 @@ impl PasswordInput {
             native,
             token: RefCell::new(None),
             on_submit: TextHandler::new(),
+            focus: Default::default(),
         });
         let element: UIElement = inner
             .native
@@ -639,12 +647,15 @@ impl PasswordInput {
 struct TextAreaInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 複数行テキスト入力 (改行を受け付ける TextBox)。IME は Windows が処理する。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
 crate::keys::impl_key_down!(TextArea);
+crate::focus::impl_focus_change!(TextArea);
 impl_widget!(TextArea, native);
 
 impl TextArea {
@@ -667,6 +678,7 @@ impl TextArea {
         Ok(Self(Rc::new(TextAreaInner {
             native,
             token: RefCell::new(None),
+            focus: Default::default(),
         })))
     }
 
