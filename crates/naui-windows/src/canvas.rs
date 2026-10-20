@@ -14,20 +14,43 @@
 //! 足さなくて済むようにしている。
 //!
 //! 大きさが変わったことは `SizeChanged` で拾い、ポインターは `PointerPressed` /
-//! `PointerMoved` / `PointerReleased` から取る。
+//! `PointerMoved` / `PointerReleased` から取る。カーソルが面の上にあるか
+//! どうかは、それらと `PointerEntered` / `PointerExited` のうちマウスと
+//! タッチパッドの分で覚える。
+//!
+//! どのボタンかは `PointerPointProperties` の `IsLeftButtonPressed` などで見る。
+//! WinUI は 2 つ目以降のボタンの押下と解放 (左を押したまま右を押す、など) を
+//! `PointerMoved` で知らせるので、ポインターごとに押しているボタンの組を
+//! 覚えておき、前回との差を押下・解放として届ける (どの通知で来ても同じ扱い)。
+//!
+//! ホイールの量は 1 刻みで 120 (`WHEEL_DELTA`) なので、120 を [`WHEEL_STEP`]
+//! に直す。縦の量は「奥へ回すと正」で他の 3 環境と逆なので符号を反転し、
+//! 横は右が正なのでそのまま届ける。
+//!
+//! ホイールは 2 つの道から届く。実マウスのホイールは XAML まで届かないことが
+//! あり、naui は前面のウィンドウへのホイールを `WH_MOUSE_LL` のフックで先に
+//! 受けて `Scroll` を動かしている (`layout.rs`)。このフックはポインターの下に
+//! `on_wheel` 付きの面があればまずそこへ届け ([`dispatch_wheel`])、`Handled`
+//! ならメッセージを捨てて外側の `Scroll` へ回さない。フックが受けない場合
+//! (ウィンドウが前面にない、など) は `PointerWheelChanged` で受け、`Handled`
+//! なら `Handled` を立てる。フックが届けて `Continue` を返したホイールが
+//! XAML からも届いたときは、2 度目なので捨てる。
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use naui_core::{
-    Align, Color, DrawCommand, Painter, Path, PathSegment, Point, PointerEvent, PointerPhase,
-    Result,
+    Align, Color, DrawCommand, EventResponse, Painter, Path, PathSegment, Point, PointerButton,
+    PointerEvent, PointerPhase, Result, WheelHandler, WHEEL_STEP,
 };
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
+use naui_winui3::Microsoft::UI::Input::{PointerDeviceType, PointerPointProperties};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{Canvas as XamlCanvas, Grid as XamlGrid};
-use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, SizeChangedEventHandler, UIElement};
 use windows::Foundation::Size;
@@ -103,8 +126,60 @@ struct CanvasInner {
     native: XamlGrid,
     draw: DrawHandler,
     pointer: PointerHandler,
+    wheel: WheelHandler,
+    /// ポインターごとの、いま押しているボタンの組 ([`button_bit`] の和)。
+    pressed: RefCell<HashMap<u32, u8>>,
     /// 描き直しを `DispatcherQueue` へ積んであるかどうか。
     scheduled: Cell<bool>,
+    /// 面の上にあるカーソルの最後の位置 ([`moves_cursor`])。入ったときと
+    /// 押下・移動・解放で覚え、外へ出たら `None`。フックから
+    /// 届けるホイールの位置と、届け先の面を決めるのに使う。
+    hover: Cell<Option<Point>>,
+    /// [`WHEEL_CANVASES`] に載せたかどうか (`on_wheel` を付けたかどうか)。
+    wheel_registered: Cell<bool>,
+    /// フックから最後にホイールを届けて `Continue` が返った時刻。同じ
+    /// ホイールが `PointerWheelChanged` からも届いたら捨てる。
+    hook_wheel: Cell<Option<Instant>>,
+}
+
+thread_local! {
+    /// `on_wheel` を付けた面。フックで受けたホイールの届け先をここから探す。
+    static WHEEL_CANVASES: RefCell<Vec<Weak<CanvasInner>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// フックが届けたホイールと同じものとみなす、`PointerWheelChanged` までの間。
+const HOOK_WHEEL_ECHO: Duration = Duration::from_millis(250);
+
+/// `MouseWheelDelta` (1 刻みで 120) を、届ける量 (論理ピクセル) にする。
+fn wheel_amount(delta: f64, horizontal: bool) -> (f64, f64) {
+    let amount = delta / 120.0 * WHEEL_STEP;
+    if horizontal {
+        (amount, 0.0)
+    } else {
+        (0.0, -amount)
+    }
+}
+
+/// フックで受けたホイールを、ポインターの下にある `on_wheel` 付きの面へ届ける。
+///
+/// `delta` は `WM_MOUSEWHEEL` / `WM_MOUSEHWHEEL` の量 (1 刻みで 120)。
+/// 届け先が無ければ `None`、届けたらアプリが `Handled` を返したかどうか。
+pub(crate) fn dispatch_wheel(delta: f64, horizontal: bool) -> Option<bool> {
+    // アプリのクロージャを呼ぶ前に借用を返す (中で面を作るかもしれない)。
+    let (inner, point) = WHEEL_CANVASES.with(|canvases| {
+        let mut canvases = canvases.borrow_mut();
+        canvases.retain(|canvas| canvas.strong_count() != 0);
+        canvases.iter().rev().find_map(|weak| {
+            let inner = weak.upgrade()?;
+            let point = inner.hover.get()?;
+            Some((inner, point))
+        })
+    })?;
+    let (x, y) = wheel_amount(delta, horizontal);
+    let handled = inner.wheel.emit(PointerEvent::wheel(point, x, y)) == EventResponse::Handled;
+    // `Handled` ならメッセージはフックで止まり、XAML へは届かない。
+    inner.hook_wheel.set((!handled).then(Instant::now));
+    Some(handled)
 }
 
 /// アプリが自分で描く面 (`Grid` + `Canvas` + `Path` / `TextBlock`)。
@@ -123,7 +198,12 @@ impl Canvas {
             native,
             draw: DrawHandler::new(),
             pointer: PointerHandler::new(),
+            wheel: WheelHandler::default(),
+            pressed: RefCell::new(HashMap::new()),
             scheduled: Cell::new(false),
+            hover: Cell::new(None),
+            wheel_registered: Cell::new(false),
+            hook_wheel: Cell::new(None),
         }));
         this.track_size()?;
         this.track_pointer()?;
@@ -177,29 +257,143 @@ impl Canvas {
                             PointerPhase::Up => {
                                 let _ = root.ReleasePointerCapture(&pointer);
                             }
-                            PointerPhase::Move => {}
+                            _ => {}
                         }
                     }
-                    let Ok(position) = args
-                        .GetCurrentPoint(&root)
-                        .and_then(|point| point.Position())
-                    else {
+                    let Ok(current) = args.GetCurrentPoint(&root) else {
                         return;
                     };
-                    inner.pointer.emit(PointerEvent::new(
-                        phase,
-                        Point::new(f64::from(position.X), f64::from(position.Y)),
-                    ));
+                    let Ok(position) = current.Position() else {
+                        return;
+                    };
+                    let point = Point::new(f64::from(position.X), f64::from(position.Y));
+                    // 捕捉中は面の外の位置も届くので、面の上のときだけ覚える。
+                    if moves_cursor(args) {
+                        let (width, height) = inner.actual_size();
+                        let inside =
+                            (0.0..=width).contains(&point.x) && (0.0..=height).contains(&point.y);
+                        inner.hover.set(inside.then_some(point));
+                    }
+                    let now = current
+                        .Properties()
+                        .map(|properties| pressed_buttons(&properties))
+                        .unwrap_or(0);
+                    let id = current.PointerId().unwrap_or(0);
+                    let seen = {
+                        let mut pressed = inner.pressed.borrow_mut();
+                        if now == 0 {
+                            pressed.remove(&id)
+                        } else {
+                            pressed.insert(id, now)
+                        }
+                    };
+                    let before = previous_buttons(phase, seen, now);
+                    for (phase, button) in button_changes(phase, before, now) {
+                        inner
+                            .pointer
+                            .emit(PointerEvent::new(phase, point).button(button));
+                    }
                 });
                 Ok(())
             });
             match phase {
                 PointerPhase::Down => element.PointerPressed(&handler),
-                PointerPhase::Move => element.PointerMoved(&handler),
                 PointerPhase::Up => element.PointerReleased(&handler),
+                _ => element.PointerMoved(&handler),
             }
             .map_err(|e| to_error("Canvas のポインター購読", e))?;
         }
+
+        // 動かずに面の上へ来ることもある (外のスライダーを引いて面の上で離すと、
+        // 捕捉が解けたところで `PointerEntered` だけが届く)。そのまま回した
+        // ホイールをフックが届けられるよう、入ったときにも位置を覚える。
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let entered = PointerEventHandler::new(move |_, args| {
+            let Some(args) = args.as_ref().filter(|args| moves_cursor(args)) else {
+                return Ok(());
+            };
+            let _ = target.try_with_mut(|weak: &mut Weak<CanvasInner>| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let Ok(root) = inner.native.cast::<UIElement>() else {
+                    return;
+                };
+                let Ok(position) = args.GetCurrentPoint(&root).and_then(|p| p.Position()) else {
+                    return;
+                };
+                inner.hover.set(Some(Point::new(
+                    f64::from(position.X),
+                    f64::from(position.Y),
+                )));
+            });
+            Ok(())
+        });
+        element
+            .PointerEntered(&entered)
+            .map_err(|e| to_error("Canvas のポインター購読", e))?;
+
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let exited = PointerEventHandler::new(move |_, args| {
+            if !args.as_ref().is_some_and(moves_cursor) {
+                return Ok(());
+            }
+            let _ = target.try_with_mut(|weak: &mut Weak<CanvasInner>| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.hover.set(None);
+                }
+            });
+            Ok(())
+        });
+        element
+            .PointerExited(&exited)
+            .map_err(|e| to_error("Canvas のポインター購読", e))?;
+
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let wheel = PointerEventHandler::new(move |_, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            let _ = target.try_with_mut(|weak: &mut Weak<CanvasInner>| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                // フックがもう届けたホイール。`Continue` だったので Handled は立てない。
+                if inner
+                    .hook_wheel
+                    .take()
+                    .is_some_and(|at| at.elapsed() < HOOK_WHEEL_ECHO)
+                {
+                    return;
+                }
+                let Ok(root) = inner.native.cast::<UIElement>() else {
+                    return;
+                };
+                let Ok(current) = args.GetCurrentPoint(&root) else {
+                    return;
+                };
+                let (Ok(position), Ok(properties)) = (current.Position(), current.Properties())
+                else {
+                    return;
+                };
+                let (x, y) = wheel_amount(
+                    f64::from(properties.MouseWheelDelta().unwrap_or(0)),
+                    properties.IsHorizontalMouseWheel().unwrap_or(false),
+                );
+                let event = PointerEvent::wheel(
+                    Point::new(f64::from(position.X), f64::from(position.Y)),
+                    x,
+                    y,
+                );
+                if inner.wheel.emit(event) == EventResponse::Handled {
+                    let _ = args.SetHandled(true);
+                }
+            });
+            Ok(())
+        });
+        element
+            .PointerWheelChanged(&wheel)
+            .map_err(|e| to_error("Canvas のホイール購読", e))?;
         Ok(())
     }
 
@@ -239,9 +433,25 @@ impl Canvas {
     }
 
     /// ポインター (マウス・タッチ・ペン) の押下・移動・解放。位置は面の左上を
-    /// 原点にした論理ピクセル。移動は押していない間 (ホバー) も届く。
+    /// 原点にした論理ピクセル。移動は押していない間 (ホバー) も届く。押下と
+    /// 解放にはどのボタンかが付く ([`PointerEvent::button`])。
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.pointer.set(f);
+    }
+
+    /// ホイール。量は論理ピクセル。
+    ///
+    /// `Handled` を返すと外側のスクロールへは回らない。`Continue` なら
+    /// 外側の `ScrollViewer` がいつもどおりスクロールする。
+    ///
+    /// `Scroll` の中にある面では、高精度タッチパッドの 2 本指のスクロールは
+    /// 届かない。タッチパッドのジェスチャーは外側の `ScrollViewer` が自分で
+    /// 受け取り、`PointerWheelChanged` にもホイールのメッセージにもならない。
+    pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
+        self.0.wheel.set(f);
+        if !self.0.wheel_registered.replace(true) {
+            WHEEL_CANVASES.with(|canvases| canvases.borrow_mut().push(Rc::downgrade(&self.0)));
+        }
     }
 
     /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
@@ -271,6 +481,97 @@ impl Canvas {
     pub fn native_grid(&self) -> XamlGrid {
         self.0.native.clone()
     }
+}
+
+/// カーソルを動かすポインター (マウスとタッチパッド) かどうか。
+///
+/// フックが受けるホイールはカーソルの位置に届くので、`hover` はこれだけで
+/// 覚える。タッチは指を離すと `PointerExited` が届くので、数に入れると
+/// マウスが面の上にあるままでも位置が消えてしまう。
+fn moves_cursor(args: &PointerRoutedEventArgs) -> bool {
+    let kind = args
+        .Pointer()
+        .and_then(|pointer| pointer.PointerDeviceType());
+    !matches!(kind, Ok(PointerDeviceType::Touch | PointerDeviceType::Pen))
+}
+
+/// 見分けるボタンの並び。押下と解放を届ける順にもなる。
+const BUTTONS: [PointerButton; 5] = [
+    PointerButton::Primary,
+    PointerButton::Secondary,
+    PointerButton::Middle,
+    PointerButton::Back,
+    PointerButton::Forward,
+];
+
+/// ボタンの組の中での、そのボタンのビット。
+fn button_bit(button: PointerButton) -> u8 {
+    match button {
+        PointerButton::Primary => 1,
+        PointerButton::Secondary => 2,
+        PointerButton::Middle => 4,
+        PointerButton::Back => 8,
+        PointerButton::Forward => 16,
+        _ => 0,
+    }
+}
+
+/// いま押しているボタンの組。タッチとペン先は `IsLeftButtonPressed` になる。
+fn pressed_buttons(properties: &PointerPointProperties) -> u8 {
+    let checks = [
+        properties.IsLeftButtonPressed(),
+        properties.IsRightButtonPressed(),
+        properties.IsMiddleButtonPressed(),
+        properties.IsXButton1Pressed(),
+        properties.IsXButton2Pressed(),
+    ];
+    BUTTONS
+        .iter()
+        .zip(checks)
+        .filter(|(_, pressed)| matches!(pressed, Ok(true)))
+        .fold(0, |bits, (button, _)| bits | button_bit(*button))
+}
+
+/// 差を取る基準にする、前回のボタンの組。
+///
+/// `seen` は覚えていた組で、まだ覚えていないポインターなら `None`。
+fn previous_buttons(phase: PointerPhase, seen: Option<u8>, now: u8) -> u8 {
+    match (phase, seen) {
+        // `PointerPressed` は何も押していない状態からの最初の押下でだけ
+        // 届く。捕捉を失って解放を見逃したときの残りは捨てる。
+        (PointerPhase::Down, _) => 0,
+        (_, Some(before)) => before,
+        // 面の外で押したまま入ってきたポインター。そのボタンは面の上で
+        // 押したのではないので、いまの組を基準にし、この先の変化だけ届ける。
+        (_, None) => now,
+    }
+}
+
+/// 前回と今回のボタンの組の差を、届ける通知の並びにする。
+///
+/// 差が無ければ、WinUI の通知の種類をそのまま (ボタン無しで) 届ける。
+fn button_changes(
+    phase: PointerPhase,
+    before: u8,
+    now: u8,
+) -> Vec<(PointerPhase, Option<PointerButton>)> {
+    let mut changes = Vec::new();
+    for button in BUTTONS {
+        let bit = button_bit(button);
+        if before & bit != 0 && now & bit == 0 {
+            changes.push((PointerPhase::Up, Some(button)));
+        }
+    }
+    for button in BUTTONS {
+        let bit = button_bit(button);
+        if before & bit == 0 && now & bit != 0 {
+            changes.push((PointerPhase::Down, Some(button)));
+        }
+    }
+    if changes.is_empty() {
+        changes.push((phase, None));
+    }
+    changes
 }
 
 impl CanvasInner {
@@ -566,5 +867,44 @@ mod tests {
         assert_eq!(number(f64::INFINITY), "0");
         assert_eq!(argb(Color::rgb(1, 2, 3), 2.0), "#FF010203");
         assert_eq!(argb(Color::rgb(1, 2, 3), 0.0), "#00010203");
+    }
+
+    #[test]
+    fn wheel_amount_reads_down_and_right_as_positive() {
+        // 奥へ 1 刻み (+120) は上へ読み戻す向きなので負。
+        assert_eq!(wheel_amount(120.0, false), (0.0, -WHEEL_STEP));
+        assert_eq!(wheel_amount(-240.0, false), (0.0, 2.0 * WHEEL_STEP));
+        // 横は右が正のまま。
+        assert_eq!(wheel_amount(120.0, true), (WHEEL_STEP, 0.0));
+    }
+
+    #[test]
+    fn button_held_from_outside_is_not_a_press() {
+        let left = button_bit(PointerButton::Primary);
+        let right = button_bit(PointerButton::Secondary);
+        // 面の外で左を押したまま入ってきた。押下ではなく移動のまま届く。
+        let before = previous_buttons(PointerPhase::Move, None, left);
+        assert_eq!(
+            button_changes(PointerPhase::Move, before, left),
+            [(PointerPhase::Move, None)]
+        );
+        // その後に面の上で右を押した分は押下として届く。
+        let before = previous_buttons(PointerPhase::Move, Some(left), left | right);
+        assert_eq!(
+            button_changes(PointerPhase::Move, before, left | right),
+            [(PointerPhase::Down, Some(PointerButton::Secondary))]
+        );
+        // 覚えていた押下を全部離したら、解放として届く。
+        let before = previous_buttons(PointerPhase::Move, Some(left), 0);
+        assert_eq!(
+            button_changes(PointerPhase::Move, before, 0),
+            [(PointerPhase::Up, Some(PointerButton::Primary))]
+        );
+        // `PointerPressed` は覚えていた残りがあっても最初の押下として扱う。
+        let before = previous_buttons(PointerPhase::Down, Some(right), left);
+        assert_eq!(
+            button_changes(PointerPhase::Down, before, left),
+            [(PointerPhase::Down, Some(PointerButton::Primary))]
+        );
     }
 }

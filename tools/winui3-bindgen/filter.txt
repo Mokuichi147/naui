@@ -5,6 +5,7 @@ Microsoft.UI.Composition.SystemBackdrops.SystemBackdropTheme
 Microsoft.UI.Dispatching.DispatcherQueue
 Microsoft.UI.Dispatching.DispatcherQueueHandler
 Microsoft.UI.Dispatching.DispatcherQueueTimer
+Microsoft.UI.Input.PointerDeviceType
 Microsoft.UI.Input.PointerPoint
 Microsoft.UI.Input.PointerPointProperties
 Microsoft.UI.Windowing.AppWindow

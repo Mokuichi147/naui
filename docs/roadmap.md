@@ -23,10 +23,10 @@ GUI ツールキットで一般的に求められる機能のうち、naui (v0.1
 
 小さく、無いと困り、4 環境に対応物があるもの。
 
-- [ ] **入力欄の `on_submit`** (`TextInput`、`PasswordInput`、`NumberInput`)。
+- [x] **入力欄の `on_submit`** (`TextInput`、`PasswordInput`、`NumberInput`)。
       Enter での確定は、どのフォームでも最初に要ります。`SearchInput` で扱った
       「変換中の Enter は数えない」をそのまま使えます。
-- [ ] **フォーカスの出入りの通知** (`on_focus_change`)。入力の検証や、欄を
+- [x] **フォーカスの出入りの通知** (`on_focus_change`)。入力の検証や、欄を
       離れたときの保存に使います。
 - [ ] **ウィンドウの状態の操作**。位置、最大化、最小化、全画面、大きさを
       変えられるかどうか、その状態の取得です。Web は Fullscreen API だけ当て、
@@ -34,7 +34,7 @@ GUI ツールキットで一般的に求められる機能のうち、naui (v0.1
 - [x] **`List` の右クリックとダブルクリック**。右クリックは `PopupMenu::open_at`
       と組み合わせて、行ごとの文脈メニューにします。
       (`List::on_context_menu` と `List::on_row_activate`。起動は Enter でも届きます)
-- [ ] **`Canvas` のホイールと、マウスボタンの区別**。`PointerEvent` に足すだけで、
+- [x] **`Canvas` のホイールと、マウスボタンの区別**。`PointerEvent` に足すだけで、
       拡大縮小やパン操作の土台になります。
 
 ## P1: 次にやる

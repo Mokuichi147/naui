@@ -118,6 +118,8 @@ impl Window {
         native.set_content(Some(&view));
         // `on_key_down` の受け口。通知先が無いあいだは素通りする。
         crate::keys::install(&native);
+        // `on_focus_change` の見張り。
+        crate::focus::install(&native);
 
         let this = Self(Rc::new(WindowInner {
             native,

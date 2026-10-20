@@ -131,6 +131,7 @@ mod editable_combo_box;
 mod expander;
 mod file_picker;
 mod file_saver;
+mod focus;
 mod indicator;
 mod interaction;
 mod keys;

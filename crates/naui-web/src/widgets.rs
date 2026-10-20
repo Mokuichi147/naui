@@ -469,13 +469,16 @@ impl Checkbox {
 struct TextInputInner {
     input: HtmlInputElement,
     on_change: RefCell<Option<Listener>>,
+    on_submit: RefCell<Option<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// 1 行テキスト入力 (`<input type="text">`)。IME はブラウザが処理する。
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
 impl_key_down!(TextInput);
+crate::focus::impl_focus_change!(TextInput);
 impl_widget!(TextInput, input);
 
 impl TextInput {
@@ -486,7 +489,9 @@ impl TextInput {
         Ok(Self(Rc::new(TextInputInner {
             input,
             on_change: RefCell::new(None),
+            on_submit: RefCell::new(None),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         })))
     }
 
@@ -516,6 +521,19 @@ impl TextInput {
         *self.0.on_change.borrow_mut() = listener;
     }
 
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    ///
+    /// IME で変換している間の Enter (変換の確定) では呼ばれない。読み取り
+    /// 専用の間も呼ばれない。
+    pub fn on_submit(&self, mut f: impl FnMut(&str) + 'static) {
+        let listener = on_enter(&self.0.input, move |input| {
+            if !input.read_only() {
+                f(&input.value());
+            }
+        });
+        *self.0.on_submit.borrow_mut() = listener;
+    }
+
     /// 読み取り専用にするか。既定は書き換えられる。
     ///
     /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
@@ -535,7 +553,9 @@ impl TextInput {
 struct PasswordInputInner {
     input: HtmlInputElement,
     on_change: RefCell<Option<Listener>>,
+    on_submit: RefCell<Option<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// パスワード入力 (`<input type="password">`)。
@@ -545,6 +565,7 @@ struct PasswordInputInner {
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
 impl_key_down!(PasswordInput);
+crate::focus::impl_focus_change!(PasswordInput);
 impl_widget!(PasswordInput, input);
 
 impl PasswordInput {
@@ -554,7 +575,9 @@ impl PasswordInput {
         Ok(Self(Rc::new(PasswordInputInner {
             input,
             on_change: RefCell::new(None),
+            on_submit: RefCell::new(None),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         })))
     }
 
@@ -585,6 +608,12 @@ impl PasswordInput {
         .ok();
         *self.0.on_change.borrow_mut() = listener;
     }
+
+    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    pub fn on_submit(&self, mut f: impl FnMut(&str) + 'static) {
+        let listener = on_enter(&self.0.input, move |input| f(&input.value()));
+        *self.0.on_submit.borrow_mut() = listener;
+    }
 }
 
 // ------------------------------------------------------------- SearchInput
@@ -594,6 +623,7 @@ struct SearchInputInner {
     on_change: RefCell<Option<Listener>>,
     on_search: RefCell<Option<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// 検索の入力欄 (`<input type="search">`)。
@@ -603,6 +633,7 @@ struct SearchInputInner {
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 impl_key_down!(SearchInput);
+crate::focus::impl_focus_change!(SearchInput);
 impl_widget!(SearchInput, input);
 
 impl SearchInput {
@@ -614,6 +645,7 @@ impl SearchInput {
             on_change: RefCell::new(None),
             on_search: RefCell::new(None),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         })))
     }
 
@@ -648,22 +680,34 @@ impl SearchInput {
     /// Enter で確定したときに、その時点の文字列で呼ばれる。
     ///
     /// `search` イベントは対応していないブラウザがあるため、キーの押下から
-    /// 拾う。**変換中の Enter は数えない** (`isComposing` が立っている間は
-    /// IME が変換を確定しているだけで、検索の確定ではない)。
+    /// 拾う。**変換中の Enter は数えない** (IME が変換を確定しているだけで、
+    /// 検索の確定ではない)。
     pub fn on_search(&self, mut f: impl FnMut(&str) + 'static) {
-        let input = self.0.input.clone();
-        let listener = Listener::attach_event(self.0.input.as_ref(), "keydown", move |event| {
-            let Some(key) = event.dyn_ref::<KeyboardEvent>() else {
-                return;
-            };
-            if key.key() != "Enter" || key.is_composing() {
-                return;
-            }
-            f(&input.value());
-        })
-        .ok();
+        let listener = on_enter(&self.0.input, move |input| f(&input.value()));
         *self.0.on_search.borrow_mut() = listener;
     }
+}
+
+/// 1 行の入力欄で Enter が押されたら `f` を呼ぶ。
+///
+/// `<input>` に確定だけを知らせるイベントは無い (`change` は欄を離れたときにも
+/// 出る) ので、キーの押下から拾う。**変換中の Enter は数えない**
+/// ([`is_submit_key`](crate::keys::is_submit_key))。`on_key_down` が
+/// `Handled` を返したキーは、捕捉フェーズで止まるのでここへ来ない。
+pub(crate) fn on_enter(
+    input: &HtmlInputElement,
+    mut f: impl FnMut(&HtmlInputElement) + 'static,
+) -> Option<Listener> {
+    let target = input.clone();
+    Listener::attach_event(input.as_ref(), "keydown", move |event| {
+        let Some(key) = event.dyn_ref::<KeyboardEvent>() else {
+            return;
+        };
+        if crate::keys::is_submit_key(key) {
+            f(&target);
+        }
+    })
+    .ok()
 }
 
 // --------------------------------------------------------------- TextArea
@@ -672,12 +716,14 @@ struct TextAreaInner {
     element: HtmlTextAreaElement,
     on_change: RefCell<Option<Listener>>,
     key_down: KeyDown,
+    focus: crate::focus::Focus,
 }
 
 /// 複数行テキスト入力 (`<textarea>`)。IME はブラウザが処理する。
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
 impl_key_down!(TextArea);
+crate::focus::impl_focus_change!(TextArea);
 impl_widget!(TextArea, element);
 
 impl TextArea {
@@ -688,6 +734,7 @@ impl TextArea {
             element,
             on_change: RefCell::new(None),
             key_down: KeyDown::default(),
+            focus: Default::default(),
         })))
     }
 

@@ -39,6 +39,7 @@ struct EditableComboBoxInner {
 #[derive(Clone)]
 pub struct EditableComboBox(Rc<EditableComboBoxInner>);
 crate::keys::impl_key_down!(EditableComboBox);
+crate::focus::impl_focus_change!(EditableComboBox);
 impl_widget!(EditableComboBox);
 
 impl EditableComboBox {

@@ -39,6 +39,7 @@ struct NumberInputInner {
     spec: Cell<NumberSpec>,
     value: Cell<f64>,
     on_change: Notifier<f64>,
+    on_submit: Notifier<f64>,
     /// プログラムから値を書くときに止めるシグナル。
     value_handler: RefCell<Option<glib::SignalHandlerId>>,
     text_handler: RefCell<Option<glib::SignalHandlerId>>,
@@ -50,6 +51,7 @@ struct NumberInputInner {
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
 crate::keys::impl_key_down!(NumberInput);
+crate::focus::impl_focus_change!(NumberInput);
 impl_widget!(NumberInput);
 
 impl NumberInput {
@@ -71,6 +73,7 @@ impl NumberInput {
             spec: Cell::new(spec),
             value: Cell::new(spec.clamp(value)),
             on_change: Notifier::default(),
+            on_submit: Notifier::default(),
             value_handler: RefCell::new(None),
             text_handler: RefCell::new(None),
         }));
@@ -101,6 +104,7 @@ impl NumberInput {
             })
         };
         *this.0.text_handler.borrow_mut() = Some(text_handler);
+        this.connect_submit();
         this
     }
 
@@ -148,9 +152,41 @@ impl NumberInput {
         self.0.on_change.set(f);
     }
 
+    /// Enter で確定したときに、確定したあとの値で呼ばれる。
+    ///
+    /// 打ちかけの表示は先に値へ読み込む (値が変われば `on_change` が先に
+    /// 呼ばれる)。数として読めない表示は元の値へ戻してから呼ぶ。IME で
+    /// 変換している間の Enter では呼ばれない。
+    pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
+        self.0.on_submit.set(f);
+    }
+
     /// GTK4 の実コントロール。バックエンド固有の脱出口として公開している。
     pub fn native_spin_button(&self) -> gtk::SpinButton {
         self.0.native.clone()
+    }
+
+    /// Enter の確定をつなぐ。
+    ///
+    /// `GtkSpinButton` 自身の `activate` シグナルは GTK 4.14 からなので、
+    /// 中の `GtkText` (`GtkEditable` の委譲先) の `activate` を受ける。
+    /// `GtkSpinButton` は生成時に同じシグナルへ値の確定
+    /// (`gtk_spin_button_update`) をつないでいるので、後からつなぐこちらが
+    /// 呼ばれるときには値が決まっている (読めない表示は元の値へ戻っている)。
+    fn connect_submit(&self) {
+        let Some(text) = self.0.native.delegate() else {
+            return;
+        };
+        let Ok(text) = text.downcast::<gtk::Text>() else {
+            return;
+        };
+        let weak = Rc::downgrade(&self.0);
+        text.connect_activate(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                let this = NumberInput(inner);
+                this.0.on_submit.emit(this.value());
+            }
+        });
     }
 
     /// 画面に出ている値を受け取る。`commit` なら表示も書き直す。

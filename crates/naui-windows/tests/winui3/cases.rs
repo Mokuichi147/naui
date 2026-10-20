@@ -122,6 +122,18 @@ const CASES: &[Case] = &[
         text_widgets_accept_key_handlers,
     ),
     (
+        "1 行入力・パスワード入力・数値入力に on_submit を付けられる",
+        text_widgets_accept_submit_handlers,
+    ),
+    (
+        "文字入力系の 6 つに on_focus_change を付けられる",
+        text_widgets_accept_focus_handlers,
+    ),
+    (
+        "捨てた入力欄の on_focus_change の通知先が解放される",
+        focus_change_handler_is_freed_with_the_widget,
+    ),
+    (
         "タイマーが DispatcherQueue で呼ばれ、止められる",
         timers_fire_on_the_dispatcher_queue,
     ),
@@ -2256,6 +2268,77 @@ fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
     ui.search_input()?.on_key_down(handler);
     ui.number_input(1.0)?.on_key_down(handler);
     ui.editable_combo_box()?.on_key_down(handler);
+    Ok(())
+}
+
+/// Enter を起こす公開 API が無いので、ここでは付けられることと、付けても
+/// 文字列や値の扱いが変わらないことだけを確かめる (実際の配送は実機で確かめる)。
+fn text_widgets_accept_submit_handlers(ui: &Ui) -> Result<()> {
+    let input = ui.text_input("ねこ")?;
+    input.on_submit(|_: &str| {});
+    assert_eq!(input.text(), "ねこ");
+    let password = ui.password_input()?;
+    password.on_submit(|_: &str| {});
+    password.set_text("ひみつ");
+    assert_eq!(password.text(), "ひみつ");
+    let number = ui.number_input(3.0)?;
+    number.on_submit(|_: f64| {});
+    assert_eq!(number.value(), 3.0);
+    Ok(())
+}
+
+/// フォーカスの移動 (`GotFocus`) は非同期に届くので、ここでは付けられることと、
+/// 付け直せることだけを確かめる (実際の配送は実機で確かめる)。
+fn text_widgets_accept_focus_handlers(ui: &Ui) -> Result<()> {
+    let handler = |_: bool| {};
+    let input = ui.text_input("")?;
+    input.on_focus_change(handler);
+    input.on_focus_change(handler);
+    ui.text_area("")?.on_focus_change(handler);
+    ui.password_input()?.on_focus_change(handler);
+    ui.search_input()?.on_focus_change(handler);
+    ui.number_input(1.0)?.on_focus_change(handler);
+    ui.editable_combo_box()?.on_focus_change(handler);
+    Ok(())
+}
+
+/// 通知先はウィジェットが持つので、捨てれば (次の登録を待たずに) 解放される。
+fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
+    // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+    let state = Rc::new(());
+    let capture = || {
+        let state = state.clone();
+        move |_: bool| {
+            let _ = &state;
+        }
+    };
+
+    let input = ui.text_input("")?;
+    input.on_focus_change(capture());
+    // 差し替えても、前の通知先は残らない。
+    input.on_focus_change(capture());
+    assert_eq!(Rc::strong_count(&state), 2);
+    drop(input);
+    assert_eq!(Rc::strong_count(&state), 1, "1 行入力の通知先");
+
+    // 表示中の木から外して捨てる。
+    let root = ui.stack(Orientation::Vertical)?;
+    let area = ui.text_area("")?;
+    root.append(&area);
+    area.on_focus_change(capture());
+    root.remove(0);
+    drop(area);
+    assert_eq!(
+        Rc::strong_count(&state),
+        1,
+        "外して捨てた複数行入力の通知先"
+    );
+
+    ui.password_input()?.on_focus_change(capture());
+    ui.search_input()?.on_focus_change(capture());
+    ui.number_input(1.0)?.on_focus_change(capture());
+    ui.editable_combo_box()?.on_focus_change(capture());
+    assert_eq!(Rc::strong_count(&state), 1, "その場で捨てた欄の通知先");
     Ok(())
 }
 
