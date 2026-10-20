@@ -542,6 +542,13 @@
 //! [`set_position`](Window::set_position) で位置を決めた後は、macOS の
 //! [`set_size`](Window::set_size) も中央へ寄せ直さない。
 //!
+//! 最大化・最小化・全画面の間の [`Window::position`] は、**通常の状態へ戻った
+//! ときの位置**を返す。[`Window::set_position`] は状態をそのままにして、その
+//! 戻る先を決める (見えている枠は動かさない)。閉じる前に `position` と
+//! [`Window::state`] を保存しておき、次に開くときに両方を当てれば、最大化して
+//! いたウィンドウも元の配置へ戻る。macOS の最大化 (zoom) と全画面の間は、まだ
+//! この取り決めに合わせていない (docs/known-limitations.md)。
+//!
 //! [`WindowState`] は 1 つだけ返る。環境によっては重なり得る状態 (最大化した
 //! まま最小化した、など) は、利用者から見えているほうを選ぶ
 //! (最小化 → 全画面 → 最大化 の順)。[`WindowState::Normal`] を頼むと、

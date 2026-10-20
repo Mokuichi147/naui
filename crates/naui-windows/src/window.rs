@@ -124,6 +124,12 @@ struct WindowInner {
     /// (`FullScreenPresenter`) から戻るときにこれを付け直すので、下限や
     /// 大きさを変えられるかどうかの設定が残る。
     overlapped: RefCell<Option<OverlappedPresenter>>,
+    /// 全画面の間に [`Window::position`] が返す、全画面を出たときに戻る位置
+    /// (DIP)。全画面へ入るときに読んでおく。
+    fullscreen_return: Cell<Option<(f64, f64)>>,
+    /// 全画面の間に [`Window::set_position`] で頼まれた位置。全画面を出た
+    /// ところで当てる。
+    position_after_fullscreen: Cell<Option<(f64, f64)>>,
 }
 
 type ResizeCallback = dyn FnMut((f64, f64));
@@ -185,6 +191,8 @@ impl Window {
             on_state_change: StateHandler::default(),
             initial_state: Cell::new(Some(WindowState::Normal)),
             overlapped: RefCell::new(None),
+            fullscreen_return: Cell::new(None),
+            position_after_fullscreen: Cell::new(None),
         }));
         this.observe_size();
         this.observe_app_window();
@@ -391,12 +399,17 @@ impl Window {
     fn window_dpi(&self) -> Option<u32> {
         use windows::Win32::UI::HiDpi::GetDpiForWindow;
 
-        let native = self.0.native.cast::<naui_winui3::IWindowNative>().ok()?;
-        // SAFETY: HWND はこのウィンドウが生きている間有効で、UI スレッドから呼んでいる。
-        let hwnd = unsafe { native.WindowHandle() }.ok()?;
-        // SAFETY: 上の HWND を渡すだけ。
+        let hwnd = self.hwnd()?;
+        // SAFETY: このウィンドウの HWND を渡すだけ。
         let dpi = unsafe { GetDpiForWindow(hwnd) };
         (dpi > 0).then_some(dpi)
+    }
+
+    /// このウィンドウの HWND。取れなければ `None`。
+    fn hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
+        let native = self.0.native.cast::<naui_winui3::IWindowNative>().ok()?;
+        // SAFETY: HWND はこのウィンドウが生きている間有効で、UI スレッドから呼んでいる。
+        unsafe { native.WindowHandle() }.ok()
     }
 
     /// 中身の層が並び直されて大きさが変わったら知らせる。
@@ -523,24 +536,121 @@ impl Window {
     /// 割る。外枠には Windows が縁の外側に付ける見えない縁 (大きさを
     /// 変えるつまみ) も入るので、見えている枠の左上より少し左上になる。
     /// DPI の違う画面をまたぐと、このウィンドウの DPI で割った値になる。
+    ///
+    /// 最大化・最小化・全画面の間は、通常の状態へ戻ったときの位置を返す。
+    /// 最大化と最小化は `GetWindowPlacement` の `rcNormalPosition`、全画面は
+    /// 入る前に読んでおいた位置。
     pub fn position(&self) -> Option<(f64, f64)> {
-        let position = self.0.native.AppWindow().ok()?.Position().ok()?;
         let scale = self.rasterization_scale();
-        Some((f64::from(position.X) / scale, f64::from(position.Y) / scale))
+        let physical = match self.native_state() {
+            WindowState::Normal => {
+                let position = self.0.native.AppWindow().ok()?.Position().ok()?;
+                (position.X, position.Y)
+            }
+            WindowState::Fullscreen => {
+                if let Some(position) = self.0.position_after_fullscreen.get() {
+                    return Some(position);
+                }
+                if let Some(position) = self.0.fullscreen_return.get() {
+                    return Some(position);
+                }
+                let position = self.0.native.AppWindow().ok()?.Position().ok()?;
+                (position.X, position.Y)
+            }
+            WindowState::Maximized | WindowState::Minimized => {
+                let (_, placement) = self.placement()?;
+                let rect = placement.rcNormalPosition;
+                (rect.left, rect.top)
+            }
+        };
+        Some((f64::from(physical.0) / scale, f64::from(physical.1) / scale))
     }
 
     /// ウィンドウの左上を (x, y) へ動かす。単位と向きは [`position`](Self::position) と同じ。
     ///
     /// `AppWindow.Move` を使う。画面に出る前に呼んでもよい。
+    ///
+    /// 最大化・最小化・全画面の間は状態をそのままにして、通常の状態へ戻った
+    /// ときの位置を決める。最大化と最小化は `SetWindowPlacement` で
+    /// `rcNormalPosition` を書き換え、全画面は出たところで動かす。
     pub fn set_position(&self, x: f64, y: f64) {
-        let Ok(app_window) = self.0.native.AppWindow() else {
+        let scale = self.rasterization_scale();
+        let physical = ((x * scale).round() as i32, (y * scale).round() as i32);
+        match self.native_state() {
+            WindowState::Normal => {
+                let Ok(app_window) = self.0.native.AppWindow() else {
+                    return;
+                };
+                let _ = app_window.Move(windows::Graphics::PointInt32 {
+                    X: physical.0,
+                    Y: physical.1,
+                });
+            }
+            WindowState::Fullscreen => self.0.position_after_fullscreen.set(Some((x, y))),
+            WindowState::Maximized | WindowState::Minimized => {
+                self.set_normal_position(physical);
+            }
+        }
+    }
+
+    /// `GetWindowPlacement` の値を、スクリーン座標 (物理ピクセル) へ直して返す。
+    ///
+    /// `rcNormalPosition` はワークスペース座標 (タスクバーなどを除いた作業領域
+    /// の分だけずれた座標) なので、そのウィンドウのいる画面の作業領域と画面の
+    /// 左上の差を足す。
+    fn placement(
+        &self,
+    ) -> Option<(
+        windows::Win32::Foundation::HWND,
+        windows::Win32::UI::WindowsAndMessaging::WINDOWPLACEMENT,
+    )> {
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, WINDOWPLACEMENT};
+
+        let hwnd = self.hwnd()?;
+        let mut placement = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: このウィンドウの HWND と、length を入れた構造体を渡す。
+        unsafe { GetWindowPlacement(hwnd, &mut placement) }.ok()?;
+        let (dx, dy) = workspace_offset(&placement.rcNormalPosition);
+        let rect = &mut placement.rcNormalPosition;
+        rect.left += dx;
+        rect.right += dx;
+        rect.top += dy;
+        rect.bottom += dy;
+        Some((hwnd, placement))
+    }
+
+    /// 最大化・最小化のままで、通常の状態へ戻ったときの外枠の左上 (物理
+    /// ピクセルのスクリーン座標) を決める。大きさは変えない。
+    fn set_normal_position(&self, (x, y): (i32, i32)) {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPlacement, SW_SHOWMINIMIZED, SW_SHOWMINNOACTIVE,
+        };
+
+        let Some((hwnd, mut placement)) = self.placement() else {
             return;
         };
-        let scale = self.rasterization_scale();
-        let _ = app_window.Move(windows::Graphics::PointInt32 {
-            X: (x * scale).round() as i32,
-            Y: (y * scale).round() as i32,
-        });
+        let rect = &mut placement.rcNormalPosition;
+        let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+        *rect = windows::Win32::Foundation::RECT {
+            left: x,
+            top: y,
+            right: x + width,
+            bottom: y + height,
+        };
+        let (dx, dy) = workspace_offset(rect);
+        rect.left -= dx;
+        rect.right -= dx;
+        rect.top -= dy;
+        rect.bottom -= dy;
+        // 最小化のままにするとき、SW_SHOWMINIMIZED だと前面へ出てしまう。
+        if placement.showCmd == SW_SHOWMINIMIZED.0 as u32 {
+            placement.showCmd = SW_SHOWMINNOACTIVE.0 as u32;
+        }
+        // SAFETY: このウィンドウの HWND と、GetWindowPlacement で埋めた構造体を渡す。
+        let _ = unsafe { SetWindowPlacement(hwnd, &placement) };
     }
 
     /// いまの表示の状態。
@@ -552,6 +662,11 @@ impl Window {
         if let Some(state) = self.0.initial_state.get() {
             return state;
         }
+        self.native_state()
+    }
+
+    /// WinUI のウィンドウのいまの状態。表示する前に頼んだ状態は見ない。
+    fn native_state(&self) -> WindowState {
         if self.is_fullscreen() {
             return WindowState::Fullscreen;
         }
@@ -590,6 +705,7 @@ impl Window {
         };
         if target == WindowState::Fullscreen {
             if !self.is_fullscreen() {
+                self.0.fullscreen_return.set(self.position());
                 let _ = app_window.SetPresenterByKind(AppWindowPresenterKind::FullScreen);
             }
             return;
@@ -599,6 +715,12 @@ impl Window {
         };
         if self.is_fullscreen() {
             let _ = app_window.SetPresenter(&presenter);
+            self.0.fullscreen_return.set(None);
+            // 全画面の間に頼まれた位置は、元の枠へ戻ったところで当てる
+            // (最大化のまま戻ったときは、元に戻したときの位置になる)。
+            if let Some((x, y)) = self.0.position_after_fullscreen.take() {
+                self.set_position(x, y);
+            }
         }
         let _ = match target {
             WindowState::Normal => {
@@ -1455,6 +1577,32 @@ pub(crate) fn owner_hwnd() -> Option<windows::Win32::Foundation::HWND> {
     Some(windows::Win32::Foundation::HWND(
         raw as *mut std::ffi::c_void,
     ))
+}
+
+/// `rect` (スクリーン座標) のいる画面で、ワークスペース座標をスクリーン座標
+/// へ直すときに足す量 (作業領域の左上 − 画面の左上)。
+///
+/// `WINDOWPLACEMENT` の座標は、`WS_EX_TOOLWINDOW` でないウィンドウでは
+/// ワークスペース座標になる。タスクバーが下か右にあれば (0, 0)。
+fn workspace_offset(rect: &windows::Win32::Foundation::RECT) -> (i32, i32) {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    // SAFETY: 読むだけの RECT を渡す。
+    let monitor = unsafe { MonitorFromRect(rect, MONITOR_DEFAULTTONEAREST) };
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: MonitorFromRect の返した画面と、cbSize を入れた構造体を渡す。
+    if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        return (0, 0);
+    }
+    (
+        info.rcWork.left - info.rcMonitor.left,
+        info.rcWork.top - info.rcMonitor.top,
+    )
 }
 
 /// naui のテーマを XAML の `ElementTheme` へ写す。

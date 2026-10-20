@@ -167,6 +167,10 @@ const CASES: &[Case] = &[
         window_state_round_trips,
     ),
     (
+        "最大化・最小化・全画面の間の位置は通常へ戻ったときの位置",
+        window_position_while_not_normal,
+    ),
+    (
         "表示する前に頼んだ状態で表示される",
         window_state_requested_before_show,
     ),
@@ -1516,6 +1520,102 @@ fn window_state_round_trips(ui: &Ui) -> Result<()> {
         assert_eq!(
             presenter,
             naui_winui3::Microsoft::UI::Windowing::AppWindowPresenterKind::Overlapped
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// 最大化・最小化・全画面の間の `position` は通常の状態へ戻ったときの位置を
+/// 返し、`set_position` は状態も見えている枠も変えずにその位置を決める。
+fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
+    let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
+        a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
+    };
+    let window = ui.window("状態の間の位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_position(120.0, 140.0);
+    window.show();
+    pump_until(Duration::from_millis(300), || false);
+    let native_position = || {
+        window
+            .native_window()
+            .AppWindow()
+            .and_then(|app_window| app_window.Position())
+            .map(|position| (position.X, position.Y))
+            .expect("AppWindow.Position")
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let mut normal = (120.0, 140.0);
+        for (index, state) in [
+            WindowState::Maximized,
+            WindowState::Minimized,
+            WindowState::Fullscreen,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            window.set_state(state);
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || window.state() == state);
+            if index == 0 && window.state() != state {
+                println!("     (最大化が効かない環境なので、確かめずに通す)");
+                return;
+            }
+            assert_eq!(window.state(), state);
+            assert!(
+                near(window.position(), normal),
+                "{state:?} の間は元の位置: {:?}",
+                window.position()
+            );
+            let shown = native_position();
+            normal = (200.0 + 20.0 * index as f64, 160.0 + 10.0 * index as f64);
+            window.set_position(normal.0, normal.1);
+            pump_until(Duration::from_millis(200), || false);
+            assert_eq!(window.state(), state, "{state:?} のまま");
+            assert_eq!(native_position(), shown, "{state:?} の枠は動かない");
+            assert!(
+                near(window.position(), normal),
+                "{state:?} の間に決めた位置: {:?}",
+                window.position()
+            );
+            window.set_state(WindowState::Normal);
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+                window.state() == WindowState::Normal
+            });
+            assert_eq!(window.state(), WindowState::Normal);
+            assert!(
+                near(window.position(), normal),
+                "{state:?} から戻ると決めた位置: {:?}",
+                window.position()
+            );
+        }
+        // 全画面の間に決めた位置は、全画面から最大化へ移っても元に戻す先になる。
+        window.set_state(WindowState::Fullscreen);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Fullscreen
+        });
+        window.set_position(260.0, 190.0);
+        window.set_state(WindowState::Maximized);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Maximized
+        });
+        assert_eq!(window.state(), WindowState::Maximized);
+        assert!(
+            near(window.position(), (260.0, 190.0)),
+            "全画面から最大化: {:?}",
+            window.position()
+        );
+        window.set_state(WindowState::Normal);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Normal
+        });
+        assert!(
+            near(window.position(), (260.0, 190.0)),
+            "最大化から戻る: {:?}",
+            window.position()
         );
     }));
     window.close();

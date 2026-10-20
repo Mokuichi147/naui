@@ -227,6 +227,10 @@
   数ピクセル左上を指しますが、読んだ値をそのまま `set_position` へ渡せば同じ場所へ
   戻ります。物理ピクセルをこのウィンドウの `RasterizationScale` で割るので、
   DPI の違う画面をまたぐときはこのウィンドウの倍率で数えた値になります。
+- 最大化と最小化の間の `position` / `set_position` は、`GetWindowPlacement` /
+  `SetWindowPlacement` の `rcNormalPosition` (元に戻したときの枠) を読み書き
+  します。全画面の間は、入る前の位置を覚えておいて返し、頼まれた位置は全画面を
+  出たところで当てます。
 - 全画面は `AppWindow` のプレゼンターを `FullScreenPresenter` へ差し替えて作り、
   出るときは最初の `OverlappedPresenter` を付け直します (最小の大きさや
   `set_resizable` の設定を残すため)。
@@ -315,6 +319,9 @@
 - 全画面への出入りはアニメーションの後に済むので、`set_state` の直後の `state`
   はまだ前の状態です。途中に頼まれた状態は、アニメーションが終わってから
   当てます。
+- **最大化 (zoom) と全画面の間の `position` / `set_position` は、共通の取り決め
+  (通常の状態へ戻ったときの位置を読み書きする) にまだ合わせていません。**
+  いまは見えている枠をそのまま読み、そのまま動かします。
 
 ## Linux
 
