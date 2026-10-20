@@ -126,6 +126,10 @@ const CASES: &[Case] = &[
         text_widgets_accept_focus_handlers,
     ),
     (
+        "捨てた入力欄の on_focus_change の通知先が解放される",
+        focus_change_handler_is_freed_with_the_widget,
+    ),
+    (
         "タイマーが DispatcherQueue で呼ばれ、止められる",
         timers_fire_on_the_dispatcher_queue,
     ),
@@ -2246,6 +2250,46 @@ fn text_widgets_accept_focus_handlers(ui: &Ui) -> Result<()> {
     ui.search_input()?.on_focus_change(handler);
     ui.number_input(1.0)?.on_focus_change(handler);
     ui.editable_combo_box()?.on_focus_change(handler);
+    Ok(())
+}
+
+/// 通知先はウィジェットが持つので、捨てれば (次の登録を待たずに) 解放される。
+fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
+    // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+    let state = Rc::new(());
+    let capture = || {
+        let state = state.clone();
+        move |_: bool| {
+            let _ = &state;
+        }
+    };
+
+    let input = ui.text_input("")?;
+    input.on_focus_change(capture());
+    // 差し替えても、前の通知先は残らない。
+    input.on_focus_change(capture());
+    assert_eq!(Rc::strong_count(&state), 2);
+    drop(input);
+    assert_eq!(Rc::strong_count(&state), 1, "1 行入力の通知先");
+
+    // 表示中の木から外して捨てる。
+    let root = ui.stack(Orientation::Vertical)?;
+    let area = ui.text_area("")?;
+    root.append(&area);
+    area.on_focus_change(capture());
+    root.remove(0);
+    drop(area);
+    assert_eq!(
+        Rc::strong_count(&state),
+        1,
+        "外して捨てた複数行入力の通知先"
+    );
+
+    ui.password_input()?.on_focus_change(capture());
+    ui.search_input()?.on_focus_change(capture());
+    ui.number_input(1.0)?.on_focus_change(capture());
+    ui.editable_combo_box()?.on_focus_change(capture());
+    assert_eq!(Rc::strong_count(&state), 1, "その場で捨てた欄の通知先");
     Ok(())
 }
 

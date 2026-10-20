@@ -3197,6 +3197,58 @@ fn focus_change_follows_the_owner() {
     });
 }
 
+/// 捨てた欄の通知先も要素も、登録表に残らない。
+#[wasm_bindgen_test]
+fn focus_change_entry_is_freed_with_the_widget() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let kept = ui.text_input("")?;
+        root.append(&kept);
+        let _mounted = Mounted::new(&root);
+        let before = naui_web::registered_focus_elements();
+
+        // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+        let state = Rc::new(());
+        let capture = || {
+            let state = state.clone();
+            move |_: bool| {
+                let _ = &state;
+            }
+        };
+
+        // 表示中の木へ入れてフォーカスを持たせてから外す。
+        let input = ui.text_input("")?;
+        root.append(&input);
+        input.on_focus_change(capture());
+        // 差し替えても、前の通知先は残らず、表にも 1 つしか載らない。
+        input.on_focus_change(capture());
+        assert!(input.request_focus());
+        assert_eq!(Rc::strong_count(&state), 2);
+        assert_eq!(naui_web::registered_focus_elements(), before + 1);
+        assert!(kept.request_focus());
+        root.remove(1);
+        drop(input);
+        assert_eq!(Rc::strong_count(&state), 1, "外して捨てた欄の通知先");
+        assert_eq!(
+            naui_web::registered_focus_elements(),
+            before,
+            "外して捨てた欄の要素"
+        );
+
+        // 木へ入れないまま捨てる。
+        let area = ui.text_area("")?;
+        area.on_focus_change(capture());
+        drop(area);
+        assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
+        assert_eq!(
+            naui_web::registered_focus_elements(),
+            before,
+            "木へ入れていない欄の要素"
+        );
+        Ok(())
+    });
+}
+
 /// チャットの入力欄のように、Shift なしの Enter だけを送信に使う。
 #[wasm_bindgen_test]
 fn text_area_key_down_can_take_enter() {

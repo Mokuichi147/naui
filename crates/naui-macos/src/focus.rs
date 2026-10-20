@@ -10,41 +10,60 @@
 //! フィールドエディタは編集中の `NSTextField` の中に置かれるので、親を
 //! たどれば入力欄に着く (`on_key_down` と同じ)。
 //!
-//! 登録表はビューを弱参照で持つ。ビューが解放されれば通知先も表から外れる。
+//! 通知先はビューの関連オブジェクト ([`HandlerBox`]) として持たせ、登録表は
+//! 置かない。ビューが解放されれば関連オブジェクトも解放され、通知先と
+//! それが捕まえている状態も一緒に捨てられる (表に持たせると、次に
+//! 登録されるまで残ってしまう)。
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
+use std::ffi::c_void;
 use std::rc::Rc;
 
 use naui_core::{FocusHandler, FocusOwner};
-use objc2::rc::{Retained, Weak};
-use objc2::runtime::NSObjectProtocol;
-use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::rc::Retained;
+use objc2::runtime::{AnyObject, NSObjectProtocol};
+use objc2::{define_class, ffi, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSBackingStoreType, NSResponder, NSView, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{NSObject, NSRect};
 
-type Entries = RefCell<Vec<(Weak<NSView>, Rc<FocusHandler>)>>;
+/// 関連オブジェクトの鍵。中身は使わず、番地だけを使う。
+static HANDLER_KEY: u8 = 0;
 
-thread_local! {
-    static VIEWS: Entries = const { RefCell::new(Vec::new()) };
-}
+define_class!(
+    /// ビューに関連オブジェクトとして付け、通知先をビューと同じ寿命にする。
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiFocusHandlerBox"]
+    #[ivars = Rc<FocusHandler>]
+    struct HandlerBox;
+
+    unsafe impl NSObjectProtocol for HandlerBox {}
+);
 
 /// ウィジェットのビューへ通知先を置く。呼ぶたびに置き換わる。
 pub(crate) fn set_view_handler(view: &NSView, f: impl FnMut(bool) + 'static) {
-    VIEWS.with(|views| {
-        let mut views = views.borrow_mut();
-        views.retain(|(weak, _)| weak.load().is_some());
-        if let Some((_, handler)) = views
-            .iter()
-            .find(|(weak, _)| weak.load().is_some_and(|other| std::ptr::eq(&*other, view)))
-        {
-            handler.set(f);
-            return;
-        }
+    let handler = lookup(view).unwrap_or_else(|| {
+        let mtm = MainThreadMarker::from(view);
         let handler = Rc::new(FocusHandler::default());
-        handler.set(f);
-        views.push((Weak::from(view), handler));
+        let holder = HandlerBox::alloc(mtm).set_ivars(handler.clone());
+        let holder: Retained<HandlerBox> = unsafe { msg_send![super(holder), init] };
+        // 関連オブジェクトは、ビューの解放のときに手放される。
+        unsafe {
+            ffi::objc_setAssociatedObject(
+                view as *const NSView as *mut AnyObject,
+                handler_key(),
+                Retained::as_ptr(&holder) as *mut AnyObject,
+                ffi::OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+            );
+        }
+        handler
     });
+    handler.set(f);
     adopt_current_focus(view);
+}
+
+fn handler_key() -> *const c_void {
+    std::ptr::addr_of!(HANDLER_KEY).cast()
 }
 
 /// フォーカスがすでに `view` の中にあれば、通知せずに持ち主として覚える
@@ -66,14 +85,14 @@ fn adopt_current_focus(view: &NSView) {
     }
 }
 
+/// `view` に置いてある通知先。
 fn lookup(view: &NSView) -> Option<Rc<FocusHandler>> {
-    VIEWS.with(|views| {
-        views
-            .borrow()
-            .iter()
-            .find(|(weak, _)| weak.load().is_some_and(|other| std::ptr::eq(&*other, view)))
-            .map(|(_, handler)| handler.clone())
-    })
+    let holder = unsafe {
+        ffi::objc_getAssociatedObject(view as *const NSView as *const AnyObject, handler_key())
+    };
+    // この鍵で付けるのは `set_view_handler` だけで、付けるのは必ず `HandlerBox`。
+    let holder = unsafe { holder.cast::<HandlerBox>().as_ref() }?;
+    Some(holder.ivars().clone())
 }
 
 /// `responder` を含む登録済みのウィジェット。ビューでなければ (ウィンドウ自身
