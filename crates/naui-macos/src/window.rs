@@ -79,7 +79,7 @@ struct WindowInner {
     /// 全画面へ入るときに読んでおく。
     fullscreen_return: Cell<Option<(f64, f64)>>,
     /// 最大化・全画面の間に [`Window::set_position`] で頼まれた位置。最大化は
-    /// 元に戻すとき、全画面は出たところで当てる。
+    /// 元に戻した後、全画面は出たところで当てる。
     pending_position: Cell<Option<(f64, f64)>>,
 }
 
@@ -449,7 +449,7 @@ impl Window {
     ///
     /// 最大化・最小化・全画面の間は状態をそのままにして、通常の状態へ戻った
     /// ときの位置を決める。最小化の間は `frame` を動かせば戻る先になり、
-    /// 最大化は元に戻す `zoom:` で、全画面は出たところで動かす。
+    /// 最大化は元に戻した後に、全画面は出たところで動かす。
     pub fn set_position(&self, x: f64, y: f64) {
         self.0.positioned.set(true);
         if self.0.fullscreen.get() || self.0.in_transition.get() || self.zoom_frame().is_some() {
@@ -463,11 +463,14 @@ impl Window {
     }
 
     /// `zoom:` (緑のボタンやタイトルバーのダブルクリックも含む) で最大化する・
-    /// 元に戻す直前に呼ばれる。`false` を返すと AppKit は枠を変えない。
+    /// 元に戻す直前に呼ばれる。
     ///
     /// 最大化するときは、元に戻す先として今の枠を覚える。元に戻すときに
-    /// 最大化の間に頼まれた位置があれば、AppKit の戻す枠の代わりに、覚えて
-    /// おいた大きさでその位置へ動かす。
+    /// 最大化の間に頼まれた位置があれば、AppKit が元の枠へ戻し終えてから
+    /// その位置へ動かす。`false` を返して AppKit の代わりに枠を動かすと、
+    /// AppKit は最大化したままだと覚えていて、次に全画面を出たときに最大化の
+    /// 枠へ戻してしまう (macOS 15 で確認)。`zoom:` はアニメーションが終わって
+    /// から戻るので、メインキューの次の周回で動かす。
     fn should_zoom(&self) -> bool {
         let native = &self.0.native;
         if !native.isZoomed() {
@@ -475,15 +478,29 @@ impl Window {
             self.0.pending_position.set(None);
             return true;
         }
-        let (Some(frame), Some((x, y))) =
-            (self.0.zoom_frame.take(), self.0.pending_position.take())
-        else {
-            return true;
-        };
-        let top = self.primary_screen_height() - y;
-        let target = NSRect::new(NSPoint::new(x, top - frame.size.height), frame.size);
-        native.setFrame_display_animate(target, true, true);
-        false
+        self.0.zoom_frame.set(None);
+        if self.0.pending_position.get().is_some() {
+            let mtm = MainThreadMarker::from(&**native);
+            let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
+            DispatchQueue::main().exec_async(move || {
+                // メインキューの仕事はメインスレッドで走る。
+                let mtm = MainThreadMarker::new().expect("メインキューの外で呼ばれた");
+                if let Some(inner) = weak.into_inner(mtm).upgrade() {
+                    Window(inner).apply_pending_position();
+                }
+            });
+        }
+        true
+    }
+
+    /// 最大化・全画面の間に頼まれた位置を、通常の枠へ戻っていれば当てる。
+    fn apply_pending_position(&self) {
+        if self.0.fullscreen.get() || self.0.in_transition.get() || self.0.native.isZoomed() {
+            return;
+        }
+        if let Some((x, y)) = self.0.pending_position.take() {
+            self.set_position(x, y);
+        }
     }
 
     /// 主画面の高さ。画面がつながっていなければ 0 (位置は AppKit の値のまま)。
@@ -560,6 +577,9 @@ impl Window {
             WindowState::Normal => {
                 if native.isZoomed() {
                     native.zoom(None);
+                    // `zoom:` はアニメーションの後に戻るので、ここで当てておけば
+                    // `set_state` から戻ったときには頼まれた位置になっている。
+                    self.apply_pending_position();
                 }
             }
             WindowState::Minimized => native.miniaturize(None),
@@ -582,9 +602,7 @@ impl Window {
             self.0.fullscreen_return.set(None);
             // 全画面の間に頼まれた位置は、元の枠へ戻ったところで当てる
             // (最大化のまま戻ったときは、元に戻したときの位置になる)。
-            if let Some((x, y)) = self.0.pending_position.take() {
-                self.set_position(x, y);
-            }
+            self.apply_pending_position();
         }
         self.report_state();
         if self.0.after_transition.get().is_none() {
