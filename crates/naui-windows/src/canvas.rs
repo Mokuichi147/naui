@@ -14,8 +14,9 @@
 //! 足さなくて済むようにしている。
 //!
 //! 大きさが変わったことは `SizeChanged` で拾い、ポインターは `PointerPressed` /
-//! `PointerMoved` / `PointerReleased` から取る。面の上にあるかどうかは
-//! それらと `PointerEntered` / `PointerExited` で覚える。
+//! `PointerMoved` / `PointerReleased` から取る。カーソルが面の上にあるか
+//! どうかは、それらと `PointerEntered` / `PointerExited` のうちマウスと
+//! タッチパッドの分で覚える。
 //!
 //! どのボタンかは `PointerPointProperties` の `IsLeftButtonPressed` などで見る。
 //! WinUI は 2 つ目以降のボタンの押下と解放 (左を押したまま右を押す、など) を
@@ -47,9 +48,9 @@ use naui_core::{
     PointerEvent, PointerPhase, Result, WheelHandler, WHEEL_STEP,
 };
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
-use naui_winui3::Microsoft::UI::Input::PointerPointProperties;
+use naui_winui3::Microsoft::UI::Input::{PointerDeviceType, PointerPointProperties};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{Canvas as XamlCanvas, Grid as XamlGrid};
-use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, SizeChangedEventHandler, UIElement};
 use windows::Foundation::Size;
@@ -130,8 +131,8 @@ struct CanvasInner {
     pressed: RefCell<HashMap<u32, u8>>,
     /// 描き直しを `DispatcherQueue` へ積んであるかどうか。
     scheduled: Cell<bool>,
-    /// 面の上にあるポインターの最後の位置。入ったときと押下・移動・解放で
-    /// 覚え、外へ出たら `None`。フックから
+    /// 面の上にあるカーソルの最後の位置 ([`moves_cursor`])。入ったときと
+    /// 押下・移動・解放で覚え、外へ出たら `None`。フックから
     /// 届けるホイールの位置と、届け先の面を決めるのに使う。
     hover: Cell<Option<Point>>,
     /// [`WHEEL_CANVASES`] に載せたかどうか (`on_wheel` を付けたかどうか)。
@@ -267,30 +268,26 @@ impl Canvas {
                     };
                     let point = Point::new(f64::from(position.X), f64::from(position.Y));
                     // 捕捉中は面の外の位置も届くので、面の上のときだけ覚える。
-                    let (width, height) = inner.actual_size();
-                    let inside =
-                        (0.0..=width).contains(&point.x) && (0.0..=height).contains(&point.y);
-                    inner.hover.set(inside.then_some(point));
+                    if moves_cursor(args) {
+                        let (width, height) = inner.actual_size();
+                        let inside =
+                            (0.0..=width).contains(&point.x) && (0.0..=height).contains(&point.y);
+                        inner.hover.set(inside.then_some(point));
+                    }
                     let now = current
                         .Properties()
                         .map(|properties| pressed_buttons(&properties))
                         .unwrap_or(0);
                     let id = current.PointerId().unwrap_or(0);
-                    let before = {
+                    let seen = {
                         let mut pressed = inner.pressed.borrow_mut();
                         if now == 0 {
-                            pressed.remove(&id).unwrap_or(0)
+                            pressed.remove(&id)
                         } else {
-                            pressed.insert(id, now).unwrap_or(0)
+                            pressed.insert(id, now)
                         }
                     };
-                    // `PointerPressed` は何も押していない状態からの最初の押下でだけ
-                    // 届く。捕捉を失って解放を見逃したときの残りは捨てる。
-                    let before = if phase == PointerPhase::Down {
-                        0
-                    } else {
-                        before
-                    };
+                    let before = previous_buttons(phase, seen, now);
                     for (phase, button) in button_changes(phase, before, now) {
                         inner
                             .pointer
@@ -312,7 +309,7 @@ impl Canvas {
         // ホイールをフックが届けられるよう、入ったときにも位置を覚える。
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let entered = PointerEventHandler::new(move |_, args| {
-            let Some(args) = args.as_ref() else {
+            let Some(args) = args.as_ref().filter(|args| moves_cursor(args)) else {
                 return Ok(());
             };
             let _ = target.try_with_mut(|weak: &mut Weak<CanvasInner>| {
@@ -337,7 +334,10 @@ impl Canvas {
             .map_err(|e| to_error("Canvas のポインター購読", e))?;
 
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
-        let exited = PointerEventHandler::new(move |_, _| {
+        let exited = PointerEventHandler::new(move |_, args| {
+            if !args.as_ref().is_some_and(moves_cursor) {
+                return Ok(());
+            }
             let _ = target.try_with_mut(|weak: &mut Weak<CanvasInner>| {
                 if let Some(inner) = weak.upgrade() {
                     inner.hover.set(None);
@@ -483,6 +483,18 @@ impl Canvas {
     }
 }
 
+/// カーソルを動かすポインター (マウスとタッチパッド) かどうか。
+///
+/// フックが受けるホイールはカーソルの位置に届くので、`hover` はこれだけで
+/// 覚える。タッチは指を離すと `PointerExited` が届くので、数に入れると
+/// マウスが面の上にあるままでも位置が消えてしまう。
+fn moves_cursor(args: &PointerRoutedEventArgs) -> bool {
+    let kind = args
+        .Pointer()
+        .and_then(|pointer| pointer.PointerDeviceType());
+    !matches!(kind, Ok(PointerDeviceType::Touch | PointerDeviceType::Pen))
+}
+
 /// 見分けるボタンの並び。押下と解放を届ける順にもなる。
 const BUTTONS: [PointerButton; 5] = [
     PointerButton::Primary,
@@ -518,6 +530,21 @@ fn pressed_buttons(properties: &PointerPointProperties) -> u8 {
         .zip(checks)
         .filter(|(_, pressed)| matches!(pressed, Ok(true)))
         .fold(0, |bits, (button, _)| bits | button_bit(*button))
+}
+
+/// 差を取る基準にする、前回のボタンの組。
+///
+/// `seen` は覚えていた組で、まだ覚えていないポインターなら `None`。
+fn previous_buttons(phase: PointerPhase, seen: Option<u8>, now: u8) -> u8 {
+    match (phase, seen) {
+        // `PointerPressed` は何も押していない状態からの最初の押下でだけ
+        // 届く。捕捉を失って解放を見逃したときの残りは捨てる。
+        (PointerPhase::Down, _) => 0,
+        (_, Some(before)) => before,
+        // 面の外で押したまま入ってきたポインター。そのボタンは面の上で
+        // 押したのではないので、いまの組を基準にし、この先の変化だけ届ける。
+        (_, None) => now,
+    }
 }
 
 /// 前回と今回のボタンの組の差を、届ける通知の並びにする。
@@ -849,5 +876,35 @@ mod tests {
         assert_eq!(wheel_amount(-240.0, false), (0.0, 2.0 * WHEEL_STEP));
         // 横は右が正のまま。
         assert_eq!(wheel_amount(120.0, true), (WHEEL_STEP, 0.0));
+    }
+
+    #[test]
+    fn button_held_from_outside_is_not_a_press() {
+        let left = button_bit(PointerButton::Primary);
+        let right = button_bit(PointerButton::Secondary);
+        // 面の外で左を押したまま入ってきた。押下ではなく移動のまま届く。
+        let before = previous_buttons(PointerPhase::Move, None, left);
+        assert_eq!(
+            button_changes(PointerPhase::Move, before, left),
+            [(PointerPhase::Move, None)]
+        );
+        // その後に面の上で右を押した分は押下として届く。
+        let before = previous_buttons(PointerPhase::Move, Some(left), left | right);
+        assert_eq!(
+            button_changes(PointerPhase::Move, before, left | right),
+            [(PointerPhase::Down, Some(PointerButton::Secondary))]
+        );
+        // 覚えていた押下を全部離したら、解放として届く。
+        let before = previous_buttons(PointerPhase::Move, Some(left), 0);
+        assert_eq!(
+            button_changes(PointerPhase::Move, before, 0),
+            [(PointerPhase::Up, Some(PointerButton::Primary))]
+        );
+        // `PointerPressed` は覚えていた残りがあっても最初の押下として扱う。
+        let before = previous_buttons(PointerPhase::Down, Some(right), left);
+        assert_eq!(
+            button_changes(PointerPhase::Down, before, left),
+            [(PointerPhase::Down, Some(PointerButton::Primary))]
+        );
     }
 }
