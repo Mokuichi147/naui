@@ -40,6 +40,7 @@ mod timer;
 mod toast;
 mod toolbar;
 mod tree;
+mod weak;
 mod window;
 
 pub use canvas::{
@@ -79,6 +80,7 @@ pub use timer::{Sleep, Timer};
 pub use toast::ToastSpec;
 pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
+pub use weak::WeakWidget;
 pub use window::{CloseHandler, CloseResponse};
 
 use std::fmt;

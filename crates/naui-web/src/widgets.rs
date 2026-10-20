@@ -82,6 +82,13 @@ macro_rules! impl_widget {
                     text,
                 );
             }
+
+            /// 弱参照を作る。通知のクロージャからこのウィジェット自身を触るときに
+            /// 捕まえる (`clone()` で捕まえると循環して解放されない)。
+            pub fn downgrade(&self) -> naui_core::WeakWidget<Self> {
+                let weak = std::rc::Rc::downgrade(&self.0);
+                naui_core::WeakWidget::new(move || weak.upgrade().map(Self))
+            }
         }
     };
 }
