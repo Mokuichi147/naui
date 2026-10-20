@@ -415,6 +415,10 @@ fn main() {
             window_state_round_trips,
         ),
         (
+            "最大化・最小化・全画面の間の位置は通常へ戻ったときの位置",
+            window_position_while_not_normal,
+        ),
+        (
             "表示する前に頼んだ状態で表示される",
             window_state_requested_before_show,
         ),
@@ -4163,6 +4167,104 @@ fn window_state_round_trips(ui: &Ui) -> Result<()> {
         skip("全画面へ入れない環境");
     }
     window.close();
+    Ok(())
+}
+
+/// 最大化・最小化・全画面の間の `position` は通常の状態へ戻ったときの位置を
+/// 返し、`set_position` は状態を変えずにその位置を決める。最大化と全画面の
+/// 間は見えている枠も動かさない (最小化の間は `frame` が戻る先そのもの)。
+fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
+    let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
+        a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
+    };
+    let window = ui.window("状態の間の位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_position(120.0, 140.0);
+    window.show();
+    pump(0.2);
+    let native = window.native_window();
+    let mut normal = (120.0, 140.0);
+    let mut skipped = Vec::new();
+    for (index, (state, limit)) in [
+        (WindowState::Maximized, 2.0),
+        (WindowState::Minimized, 3.0),
+        (WindowState::Fullscreen, 5.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        window.set_state(state);
+        pump_until(limit, || window.state() == state);
+        if window.state() != state {
+            // Dock の無いセッションでは最小化が、画面を占有できないセッションでは
+            // 全画面が効かない。
+            skipped.push(format!("{state:?}"));
+            continue;
+        }
+        assert!(
+            near(window.position(), normal),
+            "{state:?} の間は元の位置: {:?}",
+            window.position()
+        );
+        let shown = native.frame();
+        normal = (200.0 + 20.0 * index as f64, 160.0 + 10.0 * index as f64);
+        window.set_position(normal.0, normal.1);
+        pump(0.2);
+        assert_eq!(window.state(), state, "{state:?} のまま");
+        if state != WindowState::Minimized {
+            assert_eq!(native.frame(), shown, "{state:?} の枠は動かない");
+        }
+        assert!(
+            near(window.position(), normal),
+            "{state:?} の間に決めた位置: {:?}",
+            window.position()
+        );
+        window.set_state(WindowState::Normal);
+        pump_until(limit, || window.state() == WindowState::Normal);
+        pump(0.2);
+        assert_eq!(window.state(), WindowState::Normal);
+        assert!(
+            near(window.position(), normal),
+            "{state:?} から戻ると決めた位置: {:?}",
+            window.position()
+        );
+    }
+    if !skipped.contains(&"Fullscreen".to_string()) {
+        // 全画面の間に決めた位置は、全画面から最大化へ移っても元に戻す先になる。
+        window.set_state(WindowState::Fullscreen);
+        pump_until(5.0, || window.state() == WindowState::Fullscreen);
+        window.set_position(260.0, 190.0);
+        window.set_state(WindowState::Maximized);
+        pump_until(5.0, || window.state() == WindowState::Maximized);
+        assert_eq!(window.state(), WindowState::Maximized);
+        assert!(
+            near(window.position(), (260.0, 190.0)),
+            "全画面から最大化: {:?}",
+            window.position()
+        );
+        // 最大化の間に決めた位置は、全画面を挟んでも残る。
+        window.set_position(280.0, 200.0);
+        window.set_state(WindowState::Fullscreen);
+        pump_until(5.0, || window.state() == WindowState::Fullscreen);
+        assert!(
+            near(window.position(), (280.0, 200.0)),
+            "最大化から全画面: {:?}",
+            window.position()
+        );
+        window.set_state(WindowState::Normal);
+        pump_until(5.0, || window.state() == WindowState::Normal);
+        pump(0.2);
+        assert_eq!(window.state(), WindowState::Normal);
+        assert!(
+            near(window.position(), (280.0, 200.0)),
+            "全画面から戻る: {:?}",
+            window.position()
+        );
+    }
+    window.close();
+    if !skipped.is_empty() {
+        skip(&format!("{} にできない環境", skipped.join("・")));
+    }
     Ok(())
 }
 

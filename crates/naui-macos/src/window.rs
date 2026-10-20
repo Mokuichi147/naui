@@ -72,6 +72,15 @@ struct WindowInner {
     resizable: Cell<bool>,
     /// `set_position` で位置を決めた。決めた後の `set_size` では中央へ寄せない。
     positioned: Cell<bool>,
+    /// `zoom:` で最大化する前の枠 (AppKit の座標)。最大化の間の
+    /// [`Window::position`] はこの左上を返す。`windowShouldZoom:toFrame:` で読む。
+    zoom_frame: Cell<Option<NSRect>>,
+    /// 全画面の間に [`Window::position`] が返す、全画面を出たときに戻る位置。
+    /// 全画面へ入るときに読んでおく。
+    fullscreen_return: Cell<Option<(f64, f64)>>,
+    /// 最大化・全画面の間に [`Window::set_position`] で頼まれた位置。最大化は
+    /// 元に戻すとき、全画面は出たところで当てる。
+    pending_position: Cell<Option<(f64, f64)>>,
 }
 
 define_class!(
@@ -120,9 +129,22 @@ define_class!(
             }
         }
 
+        #[unsafe(method(windowShouldZoom:toFrame:))]
+        fn window_should_zoom(&self, _window: &NSWindow, _new_frame: NSRect) -> bool {
+            self.ivars()
+                .upgrade()
+                .is_none_or(|inner| Window(inner).should_zoom())
+        }
+
         #[unsafe(method(windowWillEnterFullScreen:))]
         fn window_will_enter_full_screen(&self, _notification: &NSNotification) {
             if let Some(inner) = self.ivars().upgrade() {
+                let window = Window(inner.clone());
+                // 最大化していなければ、前に頼まれた位置は使われずに残ったもの。
+                if !inner.native.isZoomed() {
+                    inner.pending_position.set(None);
+                }
+                inner.fullscreen_return.set(Some(window.normal_position()));
                 inner.in_transition.set(true);
             }
         }
@@ -232,6 +254,9 @@ impl Window {
             after_transition: Cell::new(None),
             resizable: Cell::new(true),
             positioned: Cell::new(false),
+            zoom_frame: Cell::new(None),
+            fullscreen_return: Cell::new(None),
+            pending_position: Cell::new(None),
         }));
         let delegate = WindowDelegate::new(mtm, Rc::downgrade(&this.0));
         this.0
@@ -369,12 +394,50 @@ impl Window {
     /// (ほかの環境と同じ向き)。AppKit の座標は主画面の左下から上へ数える
     /// ので、主画面の高さから引いて向きを変える。タイトルバーを含む
     /// ウィンドウの枠の左上で、`None` にはならない。
+    ///
+    /// 最大化・最小化・全画面の間は、通常の状態へ戻ったときの位置を返す。
+    /// 最小化の間も `frame` は元の枠のまま。最大化は `zoom:` する前の枠、
+    /// 全画面は入る前に読んでおいた位置。
     pub fn position(&self) -> Option<(f64, f64)> {
-        let frame = self.0.native.frame();
-        Some((
+        if self.0.fullscreen.get() || self.0.in_transition.get() {
+            if let Some(position) = self
+                .0
+                .pending_position
+                .get()
+                .or(self.0.fullscreen_return.get())
+            {
+                return Some(position);
+            }
+        }
+        Some(self.normal_position())
+    }
+
+    /// 全画面を除いて、通常の状態へ戻ったときの位置。
+    fn normal_position(&self) -> (f64, f64) {
+        if let Some(frame) = self.zoom_frame() {
+            return self
+                .0
+                .pending_position
+                .get()
+                .unwrap_or_else(|| self.top_left(frame));
+        }
+        self.top_left(self.0.native.frame())
+    }
+
+    /// `zoom:` で最大化している間の、最大化する前の枠。
+    ///
+    /// 利用者が大きさを画面いっぱいに合わせたときなど、`zoom:` を通らずに
+    /// `isZoomed` になったときは `None` (見えている枠をそのまま扱う)。
+    fn zoom_frame(&self) -> Option<NSRect> {
+        self.0.zoom_frame.get().filter(|_| self.0.native.isZoomed())
+    }
+
+    /// AppKit の枠を、主画面の左上から数えた左上の位置へ直す。
+    fn top_left(&self, frame: NSRect) -> (f64, f64) {
+        (
             frame.origin.x,
             self.primary_screen_height() - (frame.origin.y + frame.size.height),
-        ))
+        )
     }
 
     /// ウィンドウの左上を (x, y) へ動かす。単位と向きは [`position`](Self::position) と同じ。
@@ -383,11 +446,44 @@ impl Window {
     /// [`set_size`](Self::set_size) は、ウィンドウを画面の中央へ寄せ直さない。
     /// 画面の外を指すと、表示するときに AppKit がタイトルバーの見える
     /// ところまで戻すことがある。
+    ///
+    /// 最大化・最小化・全画面の間は状態をそのままにして、通常の状態へ戻った
+    /// ときの位置を決める。最小化の間は `frame` を動かせば戻る先になり、
+    /// 最大化は元に戻す `zoom:` で、全画面は出たところで動かす。
     pub fn set_position(&self, x: f64, y: f64) {
         self.0.positioned.set(true);
+        if self.0.fullscreen.get() || self.0.in_transition.get() || self.zoom_frame().is_some() {
+            self.0.pending_position.set(Some((x, y)));
+            return;
+        }
+        self.0.pending_position.set(None);
         self.0
             .native
             .setFrameTopLeftPoint(NSPoint::new(x, self.primary_screen_height() - y));
+    }
+
+    /// `zoom:` (緑のボタンやタイトルバーのダブルクリックも含む) で最大化する・
+    /// 元に戻す直前に呼ばれる。`false` を返すと AppKit は枠を変えない。
+    ///
+    /// 最大化するときは、元に戻す先として今の枠を覚える。元に戻すときに
+    /// 最大化の間に頼まれた位置があれば、AppKit の戻す枠の代わりに、覚えて
+    /// おいた大きさでその位置へ動かす。
+    fn should_zoom(&self) -> bool {
+        let native = &self.0.native;
+        if !native.isZoomed() {
+            self.0.zoom_frame.set(Some(native.frame()));
+            self.0.pending_position.set(None);
+            return true;
+        }
+        let (Some(frame), Some((x, y))) =
+            (self.0.zoom_frame.take(), self.0.pending_position.take())
+        else {
+            return true;
+        };
+        let top = self.primary_screen_height() - y;
+        let target = NSRect::new(NSPoint::new(x, top - frame.size.height), frame.size);
+        native.setFrame_display_animate(target, true, true);
+        false
     }
 
     /// 主画面の高さ。画面がつながっていなければ 0 (位置は AppKit の値のまま)。
@@ -482,6 +578,14 @@ impl Window {
             .fullscreen
             .set(native.styleMask().contains(NSWindowStyleMask::FullScreen));
         self.apply_resizable();
+        if !self.0.fullscreen.get() {
+            self.0.fullscreen_return.set(None);
+            // 全画面の間に頼まれた位置は、元の枠へ戻ったところで当てる
+            // (最大化のまま戻ったときは、元に戻したときの位置になる)。
+            if let Some((x, y)) = self.0.pending_position.take() {
+                self.set_position(x, y);
+            }
+        }
         self.report_state();
         if self.0.after_transition.get().is_none() {
             return;
