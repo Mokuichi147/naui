@@ -11603,6 +11603,21 @@ pub mod Microsoft {
                         .ok()
                     }
                 }
+                pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                where
+                    P0: windows_core::Param<Input::DoubleTappedEventHandler>,
+                {
+                    let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).DoubleTapped)(
+                            windows_core::Interface::as_raw(this),
+                            handler.param().abi(),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
                 pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                     let this = &windows_core::Interface::cast::<IUIElement>(self)?;
                     unsafe {
@@ -11621,6 +11636,26 @@ pub mod Microsoft {
                             token,
                         )
                         .ok()
+                    }
+                }
+                pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                where
+                    P0: windows_core::Param<
+                        windows::Foundation::TypedEventHandler<
+                            UIElement,
+                            Input::ContextRequestedEventArgs,
+                        >,
+                    >,
+                {
+                    let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ContextRequested)(
+                            windows_core::Interface::as_raw(this),
+                            handler.param().abi(),
+                            &mut result__,
+                        )
+                        .map(|| result__)
                     }
                 }
                 pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -16598,8 +16633,22 @@ pub mod Microsoft {
                     handler: windows_core::Ref<'_, Input::TappedEventHandler>,
                 ) -> windows_core::Result<i64>;
                 fn RemoveTapped(&self, token: i64) -> windows_core::Result<()>;
+                fn DoubleTapped(
+                    &self,
+                    handler: windows_core::Ref<'_, Input::DoubleTappedEventHandler>,
+                ) -> windows_core::Result<i64>;
                 fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()>;
                 fn RemoveHolding(&self, token: i64) -> windows_core::Result<()>;
+                fn ContextRequested(
+                    &self,
+                    handler: windows_core::Ref<
+                        '_,
+                        windows::Foundation::TypedEventHandler<
+                            UIElement,
+                            Input::ContextRequestedEventArgs,
+                        >,
+                    >,
+                ) -> windows_core::Result<i64>;
                 fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()>;
                 fn ContextCanceled(
                     &self,
@@ -18538,6 +18587,29 @@ pub mod Microsoft {
                             IUIElement_Impl::RemoveTapped(this, token).into()
                         }
                     }
+                    unsafe extern "system" fn DoubleTapped<
+                        Identity: IUIElement_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        handler: *mut core::ffi::c_void,
+                        result__: *mut i64,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IUIElement_Impl::DoubleTapped(
+                                this,
+                                core::mem::transmute_copy(&handler),
+                            ) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
                     unsafe extern "system" fn RemoveDoubleTapped<
                         Identity: IUIElement_Impl,
                         const OFFSET: isize,
@@ -18562,6 +18634,29 @@ pub mod Microsoft {
                             let this: &Identity =
                                 &*((this as *const *const ()).offset(OFFSET) as *const Identity);
                             IUIElement_Impl::RemoveHolding(this, token).into()
+                        }
+                    }
+                    unsafe extern "system" fn ContextRequested<
+                        Identity: IUIElement_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        handler: *mut core::ffi::c_void,
+                        result__: *mut i64,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IUIElement_Impl::ContextRequested(
+                                this,
+                                core::mem::transmute_copy(&handler),
+                            ) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
                         }
                     }
                     unsafe extern "system" fn RemoveContextRequested<
@@ -19258,11 +19353,11 @@ pub mod Microsoft {
                         RemovePointerWheelChanged: RemovePointerWheelChanged::<Identity, OFFSET>,
                         Tapped: Tapped::<Identity, OFFSET>,
                         RemoveTapped: RemoveTapped::<Identity, OFFSET>,
-                        DoubleTapped: 0,
+                        DoubleTapped: DoubleTapped::<Identity, OFFSET>,
                         RemoveDoubleTapped: RemoveDoubleTapped::<Identity, OFFSET>,
                         Holding: 0,
                         RemoveHolding: RemoveHolding::<Identity, OFFSET>,
-                        ContextRequested: 0,
+                        ContextRequested: ContextRequested::<Identity, OFFSET>,
                         RemoveContextRequested: RemoveContextRequested::<Identity, OFFSET>,
                         ContextCanceled: ContextCanceled::<Identity, OFFSET>,
                         RemoveContextCanceled: RemoveContextCanceled::<Identity, OFFSET>,
@@ -19864,13 +19959,23 @@ pub mod Microsoft {
                 ) -> windows_core::HRESULT,
                 pub RemoveTapped:
                     unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
-                DoubleTapped: usize,
+                pub DoubleTapped: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                    *mut i64,
+                )
+                    -> windows_core::HRESULT,
                 pub RemoveDoubleTapped:
                     unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
                 Holding: usize,
                 pub RemoveHolding:
                     unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
-                ContextRequested: usize,
+                pub ContextRequested: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut core::ffi::c_void,
+                    *mut i64,
+                )
+                    -> windows_core::HRESULT,
                 pub RemoveContextRequested:
                     unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
                 pub ContextCanceled: unsafe extern "system" fn(
@@ -24020,6 +24125,21 @@ pub mod Microsoft {
                         .ok()
                     }
                 }
+                pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                where
+                    P0: windows_core::Param<Input::DoubleTappedEventHandler>,
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).DoubleTapped)(
+                            windows_core::Interface::as_raw(this),
+                            handler.param().abi(),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
                 pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                     let this = self;
                     unsafe {
@@ -24038,6 +24158,26 @@ pub mod Microsoft {
                             token,
                         )
                         .ok()
+                    }
+                }
+                pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                where
+                    P0: windows_core::Param<
+                        windows::Foundation::TypedEventHandler<
+                            UIElement,
+                            Input::ContextRequestedEventArgs,
+                        >,
+                    >,
+                {
+                    let this = self;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).ContextRequested)(
+                            windows_core::Interface::as_raw(this),
+                            handler.param().abi(),
+                            &mut result__,
+                        )
+                        .map(|| result__)
                     }
                 }
                 pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -28227,6 +28367,19 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn OnKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
                     where
                         P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
@@ -30627,6 +30780,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -30645,6 +30813,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -32117,6 +32305,19 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn OnKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
                     where
                         P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
@@ -34517,6 +34718,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -34535,6 +34751,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -35736,6 +35972,19 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn OnKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
                     where
                         P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
@@ -38136,6 +38385,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -38154,6 +38418,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -39612,6 +39896,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -42352,6 +42649,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -42370,6 +42682,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -45562,6 +45894,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -45580,6 +45927,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -46885,6 +47252,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -49291,6 +49671,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -49309,6 +49704,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -50918,6 +51333,19 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn OnKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
                     where
                         P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
@@ -53318,6 +53746,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -53336,6 +53779,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -56278,6 +56741,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -56296,6 +56774,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -57585,6 +58083,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -60135,6 +60646,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -60153,6 +60679,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -61738,6 +62284,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -64144,6 +64703,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -64162,6 +64736,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -66081,6 +66675,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -68967,6 +69574,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -68985,6 +69607,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -70206,6 +70848,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -72635,6 +73290,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -72653,6 +73323,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -74308,6 +74998,19 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn OnKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
                     where
                         P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
@@ -76708,6 +77411,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -76726,6 +77444,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -78002,6 +78740,19 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn OnKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
                     where
                         P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
@@ -80402,6 +81153,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -80420,6 +81186,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -82128,6 +82914,19 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn OnKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
                     where
                         P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
@@ -84528,6 +85327,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -84546,6 +85360,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -85766,6 +86600,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -88232,6 +89079,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -88250,6 +89112,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -89358,6 +90240,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -92148,6 +93043,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -92166,6 +93076,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -93429,6 +94359,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -95976,6 +96919,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -95994,6 +96952,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -99025,6 +100003,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -99043,6 +100036,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -102166,6 +103179,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -102184,6 +103212,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -103460,6 +104508,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -105902,6 +106963,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -105920,6 +106996,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -117280,6 +118376,10 @@ pub mod Microsoft {
                         &self,
                         e: windows_core::Ref<'_, super::Input::TappedRoutedEventArgs>,
                     ) -> windows_core::Result<()>;
+                    fn OnDoubleTapped(
+                        &self,
+                        e: windows_core::Ref<'_, super::Input::DoubleTappedRoutedEventArgs>,
+                    ) -> windows_core::Result<()>;
                     fn OnKeyUp(
                         &self,
                         e: windows_core::Ref<'_, super::Input::KeyRoutedEventArgs>,
@@ -117461,6 +118561,23 @@ pub mod Microsoft {
                                 .into()
                             }
                         }
+                        unsafe extern "system" fn OnDoubleTapped<
+                            Identity: IControlOverrides_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            e: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IControlOverrides_Impl::OnDoubleTapped(
+                                    this,
+                                    core::mem::transmute_copy(&e),
+                                )
+                                .into()
+                            }
+                        }
                         unsafe extern "system" fn OnKeyUp<
                             Identity: IControlOverrides_Impl,
                             const OFFSET: isize,
@@ -117575,7 +118692,7 @@ pub mod Microsoft {
                             OnPointerCanceled: OnPointerCanceled::<Identity, OFFSET>,
                             OnPointerWheelChanged: OnPointerWheelChanged::<Identity, OFFSET>,
                             OnTapped: OnTapped::<Identity, OFFSET>,
-                            OnDoubleTapped: 0,
+                            OnDoubleTapped: OnDoubleTapped::<Identity, OFFSET>,
                             OnHolding: 0,
                             OnRightTapped: 0,
                             OnManipulationStarting: 0,
@@ -117649,7 +118766,11 @@ pub mod Microsoft {
                         *mut core::ffi::c_void,
                     )
                         -> windows_core::HRESULT,
-                    OnDoubleTapped: usize,
+                    pub OnDoubleTapped: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
                     OnHolding: usize,
                     OnRightTapped: usize,
                     OnManipulationStarting: usize,
@@ -147713,6 +148834,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -147731,6 +148867,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -150653,6 +151809,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -150671,6 +151842,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -151766,6 +152957,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -154491,6 +155695,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -154509,6 +155728,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -155918,6 +157157,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -158700,6 +159952,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -158718,6 +159985,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -159833,6 +161120,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -162816,6 +164116,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -162834,6 +164149,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -164043,6 +165378,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -166484,6 +167832,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -166502,6 +167865,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -167607,6 +168990,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -171042,6 +172438,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -171060,6 +172471,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -172162,6 +173593,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -175597,6 +177041,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -175615,6 +177074,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -176828,6 +178307,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -179269,6 +180761,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -179287,6 +180794,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -180405,6 +181932,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -182991,6 +184531,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -183009,6 +184564,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -184621,6 +186196,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -187165,6 +188753,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -187183,6 +188786,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -188296,6 +189919,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -190702,6 +192338,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -190720,6 +192371,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -191810,6 +193481,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -194228,6 +195912,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -194246,6 +195945,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -195447,6 +197166,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -198792,6 +200524,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -198810,6 +200557,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -200053,6 +201820,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -202657,6 +204437,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -202675,6 +204470,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -203912,6 +205727,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -206341,6 +208169,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -206359,6 +208202,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -207562,6 +209425,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -210003,6 +211879,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -210021,6 +211912,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -211225,6 +213136,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -213666,6 +215590,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -213684,6 +215623,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -214873,6 +216832,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -217750,6 +219722,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -217768,6 +219755,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -220727,6 +222734,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -220745,6 +222767,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -221862,6 +223904,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -224618,6 +226673,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -224636,6 +226706,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -225737,6 +227827,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -228399,6 +230502,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -228417,6 +230535,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -229704,6 +231842,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -232290,6 +234441,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -232308,6 +234474,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -233962,6 +236148,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -237696,6 +239895,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -237714,6 +239928,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -239132,6 +241366,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -241908,6 +244155,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -241926,6 +244188,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -245055,6 +247337,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -245073,6 +247370,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -248464,6 +250781,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -248482,6 +250814,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -249582,6 +251934,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -252900,6 +255265,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -252918,6 +255298,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -254302,6 +256702,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -256907,6 +259320,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -256925,6 +259353,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -258103,6 +260551,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -260765,6 +263226,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -260783,6 +263259,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -261982,6 +264478,19 @@ pub mod Microsoft {
                         let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
                         unsafe {
                             (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                 windows_core::Interface::as_raw(this),
                                 e.param().abi(),
                             )
@@ -264856,6 +267365,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
                         unsafe {
@@ -264874,6 +267398,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
@@ -267206,6 +269750,22 @@ pub mod Microsoft {
                                 &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
                             unsafe {
                                 (windows_core::Interface::vtable(this).OnTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    e.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<
+                                super::super::Input::DoubleTappedRoutedEventArgs,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                     windows_core::Interface::as_raw(this),
                                     e.param().abi(),
                                 )
@@ -269925,6 +272485,22 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<super::super::Input::DoubleTappedEventHandler>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).DoubleTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
                         pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                             let this =
                                 &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
@@ -269945,6 +272521,27 @@ pub mod Microsoft {
                                     token,
                                 )
                                 .ok()
+                            }
+                        }
+                        pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::TypedEventHandler<
+                                    super::super::UIElement,
+                                    super::super::Input::ContextRequestedEventArgs,
+                                >,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ContextRequested)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
                             }
                         }
                         pub fn RemoveContextRequested(
@@ -275592,6 +278189,22 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<
+                                super::super::Input::DoubleTappedRoutedEventArgs,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnDoubleTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    e.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
                         pub fn OnKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
                         where
                             P0: windows_core::Param<super::super::Input::KeyRoutedEventArgs>,
@@ -278492,6 +281105,22 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<super::super::Input::DoubleTappedEventHandler>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).DoubleTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
                         pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                             let this =
                                 &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
@@ -278512,6 +281141,27 @@ pub mod Microsoft {
                                     token,
                                 )
                                 .ok()
+                            }
+                        }
+                        pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::TypedEventHandler<
+                                    super::super::UIElement,
+                                    super::super::Input::ContextRequestedEventArgs,
+                                >,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ContextRequested)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
                             }
                         }
                         pub fn RemoveContextRequested(
@@ -279950,6 +282600,22 @@ pub mod Microsoft {
                                 &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
                             unsafe {
                                 (windows_core::Interface::vtable(this).OnTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    e.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<
+                                super::super::Input::DoubleTappedRoutedEventArgs,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                     windows_core::Interface::as_raw(this),
                                     e.param().abi(),
                                 )
@@ -282899,6 +285565,22 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<super::super::Input::DoubleTappedEventHandler>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).DoubleTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
                         pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                             let this =
                                 &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
@@ -282919,6 +285601,27 @@ pub mod Microsoft {
                                     token,
                                 )
                                 .ok()
+                            }
+                        }
+                        pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::TypedEventHandler<
+                                    super::super::UIElement,
+                                    super::super::Input::ContextRequestedEventArgs,
+                                >,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ContextRequested)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
                             }
                         }
                         pub fn RemoveContextRequested(
@@ -284125,6 +286828,22 @@ pub mod Microsoft {
                                 &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
                             unsafe {
                                 (windows_core::Interface::vtable(this).OnTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    e.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<
+                                super::super::Input::DoubleTappedRoutedEventArgs,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                     windows_core::Interface::as_raw(this),
                                     e.param().abi(),
                                 )
@@ -287408,6 +290127,22 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<super::super::Input::DoubleTappedEventHandler>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).DoubleTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
                         pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                             let this =
                                 &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
@@ -287428,6 +290163,27 @@ pub mod Microsoft {
                                     token,
                                 )
                                 .ok()
+                            }
+                        }
+                        pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::TypedEventHandler<
+                                    super::super::UIElement,
+                                    super::super::Input::ContextRequestedEventArgs,
+                                >,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ContextRequested)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
                             }
                         }
                         pub fn RemoveContextRequested(
@@ -288742,6 +291498,22 @@ pub mod Microsoft {
                                 &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
                             unsafe {
                                 (windows_core::Interface::vtable(this).OnTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    e.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<
+                                super::super::Input::DoubleTappedRoutedEventArgs,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                     windows_core::Interface::as_raw(this),
                                     e.param().abi(),
                                 )
@@ -291494,6 +294266,22 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<super::super::Input::DoubleTappedEventHandler>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).DoubleTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
                         pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                             let this =
                                 &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
@@ -291514,6 +294302,27 @@ pub mod Microsoft {
                                     token,
                                 )
                                 .ok()
+                            }
+                        }
+                        pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::TypedEventHandler<
+                                    super::super::UIElement,
+                                    super::super::Input::ContextRequestedEventArgs,
+                                >,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ContextRequested)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
                             }
                         }
                         pub fn RemoveContextRequested(
@@ -292917,6 +295726,22 @@ pub mod Microsoft {
                                 &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
                             unsafe {
                                 (windows_core::Interface::vtable(this).OnTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    e.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<
+                                super::super::Input::DoubleTappedRoutedEventArgs,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::IControlOverrides>(self)?;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).OnDoubleTapped)(
                                     windows_core::Interface::as_raw(this),
                                     e.param().abi(),
                                 )
@@ -295781,6 +298606,22 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<super::super::Input::DoubleTappedEventHandler>,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).DoubleTapped)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
                         pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
                             let this =
                                 &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
@@ -295801,6 +298642,27 @@ pub mod Microsoft {
                                     token,
                                 )
                                 .ok()
+                            }
+                        }
+                        pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::TypedEventHandler<
+                                    super::super::UIElement,
+                                    super::super::Input::ContextRequestedEventArgs,
+                                >,
+                            >,
+                        {
+                            let this =
+                                &windows_core::Interface::cast::<super::super::IUIElement>(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ContextRequested)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
                             }
                         }
                         pub fn RemoveContextRequested(
@@ -296369,6 +299231,615 @@ pub mod Microsoft {
                 }
             }
             pub mod Input {
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct ContextRequestedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    ContextRequestedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                windows_core::imp::required_hierarchy!(
+                    ContextRequestedEventArgs,
+                    super::RoutedEventArgs
+                );
+                impl ContextRequestedEventArgs {
+                    pub fn new() -> windows_core::Result<Self> {
+                        Self::IActivationFactory(|f| f.ActivateInstance::<Self>())
+                    }
+                    fn IActivationFactory<
+                        R,
+                        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+                    >(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<
+                            ContextRequestedEventArgs,
+                            windows_core::imp::IGenericFactory,
+                        > = windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                    pub fn Handled(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Handled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetHandled(&self, value: bool) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHandled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TryGetPosition<P0>(
+                        &self,
+                        relativeto: P0,
+                        point: &mut windows::Foundation::Point,
+                    ) -> windows_core::Result<bool>
+                    where
+                        P0: windows_core::Param<super::UIElement>,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TryGetPosition)(
+                                windows_core::Interface::as_raw(this),
+                                relativeto.param().abi(),
+                                point,
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn OriginalSource(
+                        &self,
+                    ) -> windows_core::Result<windows_core::IInspectable> {
+                        let this = &windows_core::Interface::cast::<super::IRoutedEventArgs>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OriginalSource)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for ContextRequestedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<Self, IContextRequestedEventArgs>(
+                        );
+                }
+                unsafe impl windows_core::Interface for ContextRequestedEventArgs {
+                    type Vtable = <IContextRequestedEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <IContextRequestedEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for ContextRequestedEventArgs {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Input.ContextRequestedEventArgs";
+                }
+                unsafe impl Send for ContextRequestedEventArgs {}
+                unsafe impl Sync for ContextRequestedEventArgs {}
+                windows_core::imp::define_interface!(
+                    DoubleTappedEventHandler,
+                    DoubleTappedEventHandler_Vtbl,
+                    0xf7a501b9_e277_5611_87b0_0e0607622183
+                );
+                impl windows_core::RuntimeType for DoubleTappedEventHandler {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl DoubleTappedEventHandler {
+                    pub fn new<
+                        F: FnMut(
+                                windows_core::Ref<'_, windows_core::IInspectable>,
+                                windows_core::Ref<'_, DoubleTappedRoutedEventArgs>,
+                            ) -> windows_core::Result<()>
+                            + Send
+                            + 'static,
+                    >(
+                        invoke: F,
+                    ) -> Self {
+                        let com = DoubleTappedEventHandlerBox {
+                            vtable: &DoubleTappedEventHandlerBox::<F>::VTABLE,
+                            count: windows_core::imp::RefCount::new(1),
+                            invoke,
+                        };
+                        unsafe { core::mem::transmute(windows_core::imp::Box::new(com)) }
+                    }
+                    pub fn Invoke<P0, P1>(&self, sender: P0, e: P1) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<windows_core::IInspectable>,
+                        P1: windows_core::Param<DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).Invoke)(
+                                windows_core::Interface::as_raw(this),
+                                sender.param().abi(),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct DoubleTappedEventHandler_Vtbl {
+                    base__: windows_core::IUnknown_Vtbl,
+                    Invoke: unsafe extern "system" fn(
+                        this: *mut core::ffi::c_void,
+                        sender: *mut core::ffi::c_void,
+                        e: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                }
+                #[repr(C)]
+                struct DoubleTappedEventHandlerBox<
+                    F: FnMut(
+                            windows_core::Ref<'_, windows_core::IInspectable>,
+                            windows_core::Ref<'_, DoubleTappedRoutedEventArgs>,
+                        ) -> windows_core::Result<()>
+                        + Send
+                        + 'static,
+                > {
+                    vtable: *const DoubleTappedEventHandler_Vtbl,
+                    invoke: F,
+                    count: windows_core::imp::RefCount,
+                }
+                impl<
+                        F: FnMut(
+                                windows_core::Ref<'_, windows_core::IInspectable>,
+                                windows_core::Ref<'_, DoubleTappedRoutedEventArgs>,
+                            ) -> windows_core::Result<()>
+                            + Send
+                            + 'static,
+                    > DoubleTappedEventHandlerBox<F>
+                {
+                    const VTABLE: DoubleTappedEventHandler_Vtbl = DoubleTappedEventHandler_Vtbl {
+                        base__: windows_core::IUnknown_Vtbl {
+                            QueryInterface: Self::QueryInterface,
+                            AddRef: Self::AddRef,
+                            Release: Self::Release,
+                        },
+                        Invoke: Self::Invoke,
+                    };
+                    unsafe extern "system" fn QueryInterface(
+                        this: *mut core::ffi::c_void,
+                        iid: *const windows_core::GUID,
+                        interface: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this = this as *mut *mut core::ffi::c_void as *mut Self;
+                            if iid.is_null() || interface.is_null() {
+                                return windows_core::HRESULT(-2147467261);
+                            }
+                            * interface = if * iid == < DoubleTappedEventHandler as windows_core::Interface >::IID || * iid == < windows_core::IUnknown as windows_core::Interface >::IID || * iid == < windows_core::imp::IAgileObject as windows_core::Interface >::IID { & mut ( * this ) . vtable as * mut _ as _ } else if * iid == < windows_core::imp::IMarshal as windows_core::Interface >::IID { ( * this ) . count . add_ref ( ) ; return windows_core::imp::marshaler ( core::mem::transmute ( & mut ( * this ) . vtable as * mut _ as * mut core::ffi::c_void ) , interface ) ; } else { core::ptr::null_mut ( ) } ;
+                            if (*interface).is_null() {
+                                windows_core::HRESULT(-2147467262)
+                            } else {
+                                (*this).count.add_ref();
+                                windows_core::HRESULT(0)
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn AddRef(this: *mut core::ffi::c_void) -> u32 {
+                        unsafe {
+                            let this = this as *mut *mut core::ffi::c_void as *mut Self;
+                            (*this).count.add_ref()
+                        }
+                    }
+                    unsafe extern "system" fn Release(this: *mut core::ffi::c_void) -> u32 {
+                        unsafe {
+                            let this = this as *mut *mut core::ffi::c_void as *mut Self;
+                            let remaining = (*this).count.release();
+                            if remaining == 0 {
+                                let _ = windows_core::imp::Box::from_raw(this);
+                            }
+                            remaining
+                        }
+                    }
+                    unsafe extern "system" fn Invoke(
+                        this: *mut core::ffi::c_void,
+                        sender: *mut core::ffi::c_void,
+                        e: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this = &mut *(this as *mut *mut core::ffi::c_void as *mut Self);
+                            (this.invoke)(
+                                core::mem::transmute_copy(&sender),
+                                core::mem::transmute_copy(&e),
+                            )
+                            .into()
+                        }
+                    }
+                }
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct DoubleTappedRoutedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    DoubleTappedRoutedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                windows_core::imp::required_hierarchy!(
+                    DoubleTappedRoutedEventArgs,
+                    super::RoutedEventArgs
+                );
+                impl DoubleTappedRoutedEventArgs {
+                    pub fn new() -> windows_core::Result<Self> {
+                        Self::IActivationFactory(|f| f.ActivateInstance::<Self>())
+                    }
+                    fn IActivationFactory<
+                        R,
+                        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+                    >(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<
+                            DoubleTappedRoutedEventArgs,
+                            windows_core::imp::IGenericFactory,
+                        > = windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                    pub fn PointerDeviceType(
+                        &self,
+                    ) -> windows_core::Result<super::super::Input::PointerDeviceType>
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerDeviceType)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn Handled(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Handled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetHandled(&self, value: bool) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHandled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn GetPosition<P0>(
+                        &self,
+                        relativeto: P0,
+                    ) -> windows_core::Result<windows::Foundation::Point>
+                    where
+                        P0: windows_core::Param<super::UIElement>,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GetPosition)(
+                                windows_core::Interface::as_raw(this),
+                                relativeto.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn OriginalSource(
+                        &self,
+                    ) -> windows_core::Result<windows_core::IInspectable> {
+                        let this = &windows_core::Interface::cast::<super::IRoutedEventArgs>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OriginalSource)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for DoubleTappedRoutedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            IDoubleTappedRoutedEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for DoubleTappedRoutedEventArgs {
+                    type Vtable = <IDoubleTappedRoutedEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <IDoubleTappedRoutedEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for DoubleTappedRoutedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs";
+                }
+                unsafe impl Send for DoubleTappedRoutedEventArgs {}
+                unsafe impl Sync for DoubleTappedRoutedEventArgs {}
+                windows_core::imp::define_interface!(
+                    IContextRequestedEventArgs,
+                    IContextRequestedEventArgs_Vtbl,
+                    0xbcedcb98_77b5_53c0_802e_fd52f3806e51
+                );
+                impl windows_core::RuntimeType for IContextRequestedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IContextRequestedEventArgs {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Input.IContextRequestedEventArgs";
+                }
+                pub trait IContextRequestedEventArgs_Impl: windows_core::IUnknownImpl {
+                    fn Handled(&self) -> windows_core::Result<bool>;
+                    fn SetHandled(&self, value: bool) -> windows_core::Result<()>;
+                    fn TryGetPosition(
+                        &self,
+                        relativeTo: windows_core::Ref<'_, super::UIElement>,
+                        point: &mut windows::Foundation::Point,
+                    ) -> windows_core::Result<bool>;
+                }
+                impl IContextRequestedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: IContextRequestedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn Handled<
+                            Identity: IContextRequestedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IContextRequestedEventArgs_Impl::Handled(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHandled<
+                            Identity: IContextRequestedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IContextRequestedEventArgs_Impl::SetHandled(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn TryGetPosition<
+                            Identity: IContextRequestedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            relativeto: *mut core::ffi::c_void,
+                            point: *mut windows::Foundation::Point,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IContextRequestedEventArgs_Impl::TryGetPosition(
+                                    this,
+                                    core::mem::transmute_copy(&relativeto),
+                                    core::mem::transmute_copy(&point),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                IContextRequestedEventArgs,
+                                OFFSET,
+                            >(),
+                            Handled: Handled::<Identity, OFFSET>,
+                            SetHandled: SetHandled::<Identity, OFFSET>,
+                            TryGetPosition: TryGetPosition::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IContextRequestedEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IContextRequestedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub Handled: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHandled: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub TryGetPosition: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut windows::Foundation::Point,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    IDoubleTappedRoutedEventArgs,
+                    IDoubleTappedRoutedEventArgs_Vtbl,
+                    0x32b9549d_11d8_53a5_a953_02409537a11f
+                );
+                impl windows_core::RuntimeType for IDoubleTappedRoutedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IDoubleTappedRoutedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Input.IDoubleTappedRoutedEventArgs";
+                }
+                pub trait IDoubleTappedRoutedEventArgs_Impl: windows_core::IUnknownImpl {
+                    fn PointerDeviceType(
+                        &self,
+                    ) -> windows_core::Result<super::super::Input::PointerDeviceType>;
+                    fn Handled(&self) -> windows_core::Result<bool>;
+                    fn SetHandled(&self, value: bool) -> windows_core::Result<()>;
+                    fn GetPosition(
+                        &self,
+                        relativeTo: windows_core::Ref<'_, super::UIElement>,
+                    ) -> windows_core::Result<windows::Foundation::Point>;
+                }
+                impl IDoubleTappedRoutedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: IDoubleTappedRoutedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn PointerDeviceType<
+                            Identity: IDoubleTappedRoutedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::super::Input::PointerDeviceType,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IDoubleTappedRoutedEventArgs_Impl::PointerDeviceType(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn Handled<
+                            Identity: IDoubleTappedRoutedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IDoubleTappedRoutedEventArgs_Impl::Handled(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHandled<
+                            Identity: IDoubleTappedRoutedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IDoubleTappedRoutedEventArgs_Impl::SetHandled(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn GetPosition<
+                            Identity: IDoubleTappedRoutedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            relativeto: *mut core::ffi::c_void,
+                            result__: *mut windows::Foundation::Point,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IDoubleTappedRoutedEventArgs_Impl::GetPosition(
+                                    this,
+                                    core::mem::transmute_copy(&relativeto),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                IDoubleTappedRoutedEventArgs,
+                                OFFSET,
+                            >(),
+                            PointerDeviceType: PointerDeviceType::<Identity, OFFSET>,
+                            Handled: Handled::<Identity, OFFSET>,
+                            SetHandled: SetHandled::<Identity, OFFSET>,
+                            GetPosition: GetPosition::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IDoubleTappedRoutedEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IDoubleTappedRoutedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub PointerDeviceType: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut super::super::Input::PointerDeviceType,
+                    )
+                        -> windows_core::HRESULT,
+                    pub Handled: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHandled: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub GetPosition: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut windows::Foundation::Point,
+                    )
+                        -> windows_core::HRESULT,
+                }
                 windows_core::imp::define_interface!(
                     IKeyRoutedEventArgs,
                     IKeyRoutedEventArgs_Vtbl,

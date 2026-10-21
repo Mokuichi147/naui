@@ -15,12 +15,15 @@
 //! 合成のほうでも、枠と選択の色はブラウザが持つシステム色
 //! (`Field` / `SelectedItem` / `Highlight` / `GrayText`) をそのまま使い、
 //! naui は配色を決めない。
+//!
+//! 行の起動 (`dblclick` と Enter) と右クリック (`contextmenu`) は、中身が
+//! 入れ替わっても変わらない外枠でまとめて受け、押された要素から行を引く。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, ListItem, Orientation, Result, SelectionMode, Sizing, TextColor, TextStyle,
+    Align, ListItem, Orientation, Point, Result, SelectionMode, Sizing, TextColor, TextStyle,
 };
 use wasm_bindgen::JsCast;
 use web_sys::{
@@ -28,7 +31,7 @@ use web_sys::{
     MouseEvent,
 };
 
-use crate::widgets::{create, impl_widget, Label, Listener, Stack, Widget};
+use crate::widgets::{create, impl_widget, Label, Listener, Stack, ValueHandler, Widget};
 
 /// 行がクリックされたことの通知先。
 ///
@@ -152,6 +155,10 @@ impl ListRow {
 /// ここに含める。
 pub(crate) const ROW_CONTROLS: &str = "button, input, select, textarea, a[href], label, summary, \
 [role=\"button\"], [contenteditable=\"true\"]";
+
+/// 行の中でも、ブラウザ自身の文脈メニュー (切り取り・貼り付けなど) を
+/// 残す入力欄。ここを右クリックしたときは行の文脈メニューにしない。
+const TEXT_ENTRIES: &str = "input, textarea, [contenteditable=\"true\"]";
 
 /// 行の中のコントロールへ向いたイベントか。
 ///
@@ -279,6 +286,12 @@ struct ListInner {
     /// Shift での範囲選択の起点。
     anchor: Cell<Option<usize>>,
     handler: SelectionHandler,
+    /// ダブルクリックと Enter の通知先。
+    row_activate: ValueHandler<usize>,
+    /// 右クリックの通知先。
+    context_menu: ValueHandler<(usize, Point)>,
+    /// 外枠に付けた `dblclick` / `contextmenu` / `keydown` の購読。
+    _row_listeners: RefCell<Vec<Listener>>,
 }
 
 /// 縦に並ぶ選択できる一覧。
@@ -312,8 +325,12 @@ impl List {
             active: Cell::new(None),
             anchor: Cell::new(None),
             handler: SelectionHandler::default(),
+            row_activate: ValueHandler::default(),
+            context_menu: ValueHandler::default(),
+            _row_listeners: RefCell::new(Vec::new()),
         }));
         this.build_select(&[])?;
+        this.listen_row_events()?;
         Ok(this)
     }
 
@@ -424,6 +441,29 @@ impl List {
     /// 複数選択では 0 件で呼ばれることもある。
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
+    }
+
+    /// 行が起動されたとき (ダブルクリック、またはリストにフォーカスがある状態での
+    /// Enter) に、その行のインデックスで呼ばれる。
+    ///
+    /// Enter ではキーボードで指している行 (`<select>` では選ばれている先頭の行) が
+    /// 対象になる。複数選択のすべてを開きたいときは、中で [`List::selection`] を読む。
+    /// 選べない `ListItem` (`enabled(false)`) の行と、行内のコントロールの上では
+    /// 呼ばれない。
+    pub fn on_row_activate(&self, f: impl FnMut(usize) + 'static) {
+        self.0.row_activate.set(f);
+    }
+
+    /// 行が右クリックされたときに、その行のインデックスと、押された位置で呼ばれる。
+    ///
+    /// 位置はこのリストの左上からの論理ピクセルで、[`crate::PopupMenu::open_at`]
+    /// へそのまま渡せる。設定すると、行の上ではブラウザ既定のメニューを抑止する
+    /// (行内の入力欄の上では抑止せず、通知もしない)。選択は変えない。
+    /// 行の無い余白では呼ばれない。
+    pub fn on_context_menu(&self, mut f: impl FnMut(usize, Point) + 'static) {
+        self.0
+            .context_menu
+            .set(move |(index, point)| f(index, point));
     }
 
     /// 中身の `<select>`。バックエンド固有の脱出口として公開している。
@@ -627,6 +667,125 @@ impl List {
         };
         self.apply_mode();
         Ok(())
+    }
+
+    /// 行の起動と右クリックを外枠で受ける。中身を組み替えても付け直さない。
+    fn listen_row_events(&self) -> Result<()> {
+        let root: &web_sys::EventTarget = self.0.root.as_ref();
+        let mut listeners = Vec::with_capacity(3);
+        listeners.push(Listener::attach_event(root, "dblclick", {
+            let weak = Rc::downgrade(&self.0);
+            move |event| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let list = List(inner);
+                if let Some((index, row)) = list.row_of_event(&event) {
+                    if !control_was_targeted(&row, &event) {
+                        list.0.row_activate.emit(index);
+                    }
+                }
+            }
+        })?);
+        listeners.push(Listener::attach_event(root, "contextmenu", {
+            let weak = Rc::downgrade(&self.0);
+            move |event| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let list = List(inner);
+                if !list.0.context_menu.is_set() {
+                    return;
+                }
+                let Some((index, row)) = list.row_of_event(&event) else {
+                    return;
+                };
+                if entry_was_targeted(&row, &event) {
+                    return;
+                }
+                let Some(mouse) = event.dyn_ref::<MouseEvent>() else {
+                    return;
+                };
+                let rect = list.0.root.get_bounding_client_rect();
+                let point = Point::new(
+                    f64::from(mouse.client_x()) - rect.left(),
+                    f64::from(mouse.client_y()) - rect.top(),
+                );
+                // ブラウザ既定のメニューも、`PopupMenu::attach` で同じ枠や
+                // 祖先に付けたメニューも出さない (この購読は枠を作るときに
+                // 付けるので、同じ枠のほかの購読より先に呼ばれる)。
+                event.prevent_default();
+                event.stop_immediate_propagation();
+                list.0.context_menu.emit((index, point));
+            }
+        })?);
+        listeners.push(Listener::attach_event(root, "keydown", {
+            let weak = Rc::downgrade(&self.0);
+            move |event| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let Some(key) = event.dyn_ref::<KeyboardEvent>() else {
+                    return;
+                };
+                let modified = key.shift_key() || key.ctrl_key() || key.alt_key() || key.meta_key();
+                if key.key() != "Enter" || key.is_composing() || modified {
+                    return;
+                }
+                let list = List(inner);
+                if let Some(index) = list.keyboard_row(&event) {
+                    list.0.row_activate.emit(index);
+                }
+            }
+        })?);
+        *self.0._row_listeners.borrow_mut() = listeners;
+        Ok(())
+    }
+
+    /// イベントが向いた行と、その行の要素。起動も右クリックも受けない行なら `None`。
+    ///
+    /// 行の位置は押された要素からその場で引く (行を作り直しても狂わない)。
+    fn row_of_event(&self, event: &Event) -> Option<(usize, HtmlElement)> {
+        let target = event.target()?.dyn_into::<Element>().ok()?;
+        let (index, row) = match &*self.0.body.borrow() {
+            Body::Select { .. } => {
+                let option = target.closest("option").ok()??;
+                let index = option.clone().dyn_into::<HtmlOptionElement>().ok()?.index();
+                (usize::try_from(index).ok()?, option.dyn_into().ok()?)
+            }
+            Body::Listbox { options, .. } => {
+                let option = target.closest("[role=\"option\"]").ok()??;
+                let index = options
+                    .iter()
+                    .position(|row| row.is_same_node(Some(option.as_ref())))?;
+                (index, options[index].clone())
+            }
+        };
+        self.is_live(index).then_some((index, row))
+    }
+
+    /// Enter で起動する行。キーボードで指している行か、選ばれている先頭の行。
+    fn keyboard_row(&self, event: &Event) -> Option<usize> {
+        let index = match &*self.0.body.borrow() {
+            Body::Select { select, .. } => usize::try_from(select.selected_index()).ok()?,
+            Body::Listbox { list, .. } => {
+                // 行内のコントロールが受けた Enter は、そのコントロールのもの。
+                if control_was_targeted(list, event) {
+                    return None;
+                }
+                self.0.active.get().or_else(|| self.selected())?
+            }
+        };
+        self.is_live(index).then_some(index)
+    }
+
+    /// 起動と右クリックを受けられる行か (選べない `ListItem` でない)。
+    fn is_live(&self, index: usize) -> bool {
+        self.0
+            .rows
+            .borrow()
+            .get(index)
+            .is_some_and(|row| !row.is_dimmed())
     }
 
     /// 枠の中身を入れ替える。
@@ -852,6 +1011,17 @@ impl List {
             Body::Select { select, .. } => reveal_option(select, index),
         }
     }
+}
+
+/// 行の中の入力欄へ向いたイベントか。
+fn entry_was_targeted(row: &HtmlElement, event: &Event) -> bool {
+    let Some(target) = event.target().and_then(|t| t.dyn_into::<Element>().ok()) else {
+        return false;
+    };
+    let Ok(Some(entry)) = target.closest(TEXT_ENTRIES) else {
+        return false;
+    };
+    row.contains(Some(entry.as_ref()))
 }
 
 /// 押された `<option>` が何行目か。`<select>` の余白のクリックでは `None`。

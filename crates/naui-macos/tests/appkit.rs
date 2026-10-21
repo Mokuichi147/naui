@@ -176,6 +176,14 @@ fn main() {
             list_row_activation_notifies,
         ),
         (
+            "リストのダブルクリックと Return が行の起動を通知する",
+            list_row_activate_notifies,
+        ),
+        (
+            "リストの右クリックが行と位置を通知する",
+            list_context_menu_notifies,
+        ),
+        (
             "リストに任意ウィジェットの行を載せられる",
             list_accepts_composed_rows,
         ),
@@ -4998,7 +5006,7 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
     );
     assert_eq!(
         table.action(),
-        Some(sel!(invoke:)),
+        Some(sel!(nauiRowClicked:)),
         "行クリックを action で受けていること"
     );
 
@@ -5056,6 +5064,215 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
         // AppKit がクリックを配送しないので確かめられない。
         println!("(key ウィンドウにできないため、実クリックの確認は飛ばしました)");
     }
+
+    window.close();
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    Ok(())
+}
+
+/// 起動と文脈メニューを確かめるための、行が並んだリストを key ウィンドウに出す。
+///
+/// 戻り値の `bool` は、ウィンドウが key になったか (本物のイベントを配送できるか)。
+fn shown_list_for_events(
+    ui: &Ui,
+    title: &str,
+) -> Result<(naui_macos::Window, naui_macos::List, bool)> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window(title, 480.0, 320.0)?;
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("札幌"),
+        ListItem::new("仙台"),
+        ListItem::new("東京").detail("13,960,000 人"),
+        ListItem::new("大阪").enabled(false),
+    ]);
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    window.show();
+    let native = window.native_window();
+    // ウィンドウが key になっても、アプリのアクティブ化が済むまでは、最初の
+    // マウスの押下がアクティブ化に使われてビューへ届かないことがある。両方を待つ。
+    let ready = |native: &NSWindow| native.isKeyWindow() && app.isActive();
+    for _ in 0..60 {
+        if ready(&native) {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
+    let content_view = native.contentView().expect("contentView");
+    content_view.layoutSubtreeIfNeeded();
+    unsafe { content_view.display() };
+    let key = ready(&native);
+    Ok((window, list, key))
+}
+
+/// `row` 行目の中央を、ウィンドウ座標で返す。
+fn row_center_in_window(table: &objc2_app_kit::NSTableView, row: isize) -> NSPoint {
+    let rect = table.rectOfRow(row);
+    let center = NSPoint::new(
+        rect.origin.x + rect.size.width / 2.0,
+        rect.origin.y + rect.size.height / 2.0,
+    );
+    table.convertPoint_toView(center, None)
+}
+
+/// ウィンドウ座標 `point` へのマウスイベントを作る。
+fn mouse_event(
+    window: &NSWindow,
+    kind: NSEventType,
+    point: NSPoint,
+    clicks: isize,
+) -> Retained<NSEvent> {
+    NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        kind,
+        point,
+        NSEventModifierFlags::empty(),
+        0.0,
+        window.windowNumber(),
+        None,
+        0,
+        clicks,
+        1.0,
+    )
+    .expect("マウスイベント")
+}
+
+/// ダブルクリックが `doubleAction` を通って `on_row_activate` へ届き、
+/// Return でも選ばれている行が起動される。選べない行では呼ばれない。
+fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let (window, list, key) = shown_list_for_events(ui, "行の起動")?;
+    let activated: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
+    list.on_row_activate({
+        let activated = activated.clone();
+        move |index| activated.borrow_mut().push(index)
+    });
+    let table = list.native_table();
+    assert_eq!(
+        table.doubleAction(),
+        Some(sel!(nauiRowDoubleClicked:)),
+        "ダブルクリックを doubleAction で受けていること"
+    );
+    let native = window.native_window();
+
+    // Return は選ばれている行を起動する。first responder の keyDown: へ届ける。
+    list.set_selected(1);
+    native.makeFirstResponder(Some(&table));
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    assert_eq!(
+        *activated.borrow(),
+        vec![1],
+        "Return で選んだ行が起動されること"
+    );
+    // 修飾キー付きの Return は起動にしない。
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::Command);
+    assert_eq!(activated.borrow().len(), 1, "⌘Return では起動しないこと");
+
+    if key {
+        // 1 回目と 2 回目のクリック (clickCount 2) を本物のイベントとして配送する。
+        // 4 つとも積んでから配送する。`NSTableView` は押下を受けると、
+        // 解放が来るまで自分の追跡ループでイベントを待つので、1 つずつ
+        // 積んでは配送すると、まだ積んでいない解放を待ったまま止まる。
+        let double_click = |row: isize| {
+            let point = row_center_in_window(&table, row);
+            for clicks in [1, 2] {
+                for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
+                    let event = mouse_event(&native, kind, point, clicks);
+                    unsafe { app.postEvent_atStart(&event, false) };
+                }
+            }
+            deliver_events(&app);
+            pump(0.05);
+            deliver_events(&app);
+        };
+        double_click(2);
+        assert_eq!(
+            *activated.borrow(),
+            vec![1, 2],
+            "ダブルクリックした行が起動されること"
+        );
+        double_click(3);
+        assert_eq!(
+            *activated.borrow(),
+            vec![1, 2],
+            "選べない行のダブルクリックでは起動しないこと"
+        );
+    } else {
+        skip("ウィンドウが key にならず、本物のダブルクリックを配送できなかった");
+    }
+
+    window.close();
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    Ok(())
+}
+
+/// 右クリックが `rightMouseDown:` を通って `on_context_menu` へ届き、位置は
+/// リストの左上から (`PopupMenu::open_at` と同じ座標系) になる。
+fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let (window, list, _key) = shown_list_for_events(ui, "文脈メニュー")?;
+    let seen: Rc<RefCell<Vec<(usize, Point)>>> = Rc::new(RefCell::new(Vec::new()));
+    list.on_context_menu({
+        let seen = seen.clone();
+        move |index, at| seen.borrow_mut().push((index, at))
+    });
+    let table = list.native_table();
+    let native = window.native_window();
+
+    // 期待する位置: 行の中央を、リストのビューの左上からの座標へ直したもの。
+    let outer = list.native_view();
+    let expected = |row: isize| {
+        let local = outer.convertPoint_fromView(row_center_in_window(&table, row), None);
+        let y = if outer.isFlipped() {
+            local.y
+        } else {
+            outer.bounds().size.height - local.y
+        };
+        (local.x, y)
+    };
+
+    // 右クリックは、作ったイベントをテーブルの `rightMouseDown:` へ直接渡す。
+    // macOS 26 では、`mouseEventWithType:` で作った右クリックを待ち行列から
+    // 取り出すと、ウィンドウ内の位置がずれてウィンドウの外を指す (左クリック
+    // はずれない)。そのため本物の配送の経路は CI で確かめられない。
+    // (ラベルの上の右クリックがテーブルまで上がることは macOS 27 で確かめた)
+    let right_click = |row: isize| {
+        let point = row_center_in_window(&table, row);
+        let event = mouse_event(&native, NSEventType::RightMouseDown, point, 1);
+        table.rightMouseDown(&event);
+    };
+
+    right_click(2);
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 1, "右クリックが 1 回だけ通知されること");
+        let (index, at) = seen[0];
+        assert_eq!(index, 2, "右クリックした行のインデックスが届くこと");
+        let (x, y) = expected(2);
+        assert!(
+            (at.x - x).abs() < 1.0 && (at.y - y).abs() < 1.0,
+            "位置がリストの左上からの座標であること: {at:?} / ({x}, {y})"
+        );
+    }
+    assert!(
+        list.selection().is_empty(),
+        "右クリックでは選択が変わらないこと"
+    );
+
+    right_click(3);
+    assert_eq!(
+        seen.borrow().len(),
+        1,
+        "選べない行の右クリックでは通知しないこと"
+    );
 
     window.close();
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);

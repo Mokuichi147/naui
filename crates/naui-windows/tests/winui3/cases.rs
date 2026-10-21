@@ -102,6 +102,10 @@ const CASES: &[Case] = &[
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
+        "リストに行の起動と文脈メニューの受け口を付けられる",
+        list_accepts_row_activate_and_context_menu,
+    ),
+    (
         "隠すと Visibility が Collapsed になり、戻すと Visible",
         set_visible_maps_to_visibility,
     ),
@@ -2197,6 +2201,51 @@ fn tooltip_maps_to_tool_tip_service(ui: &Ui) -> Result<()> {
         .and_then(|value| value.cast::<IPropertyValue>().ok())
         .and_then(|value| value.GetString().ok());
     assert_eq!(cleared, None, "None で外れる");
+    Ok(())
+}
+
+/// ダブルタップや文脈メニューの要求を起こす公開 API が無いので、ここでは
+/// 受け口を付けたまま行を作り直せることと、選択の操作では呼ばれないことを
+/// 確かめる (実際の配送は実機で確かめる)。
+fn list_accepts_row_activate_and_context_menu(ui: &Ui) -> Result<()> {
+    use naui_core::ListItem;
+
+    let list = ui.list()?;
+    let activated = Rc::new(RefCell::new(Vec::new()));
+    let menus = Rc::new(RefCell::new(Vec::new()));
+    list.on_row_activate({
+        let activated = activated.clone();
+        move |index| activated.borrow_mut().push(index)
+    });
+    list.on_context_menu({
+        let menus = menus.clone();
+        move |index, at: Point| menus.borrow_mut().push((index, at))
+    });
+    // 受け口を付けたあとでも行を作り直せる (行ごとの購読が付き直る)。
+    list.set_items(&[
+        ListItem::new("札幌"),
+        ListItem::new("東京").detail("13,960,000 人"),
+        ListItem::new("大阪").enabled(false),
+    ]);
+    let items = list
+        .native_list_view()
+        .Items()
+        .expect("Items")
+        .Size()
+        .expect("Size");
+    assert_eq!(items, 3);
+    list.set_items(&[ListItem::new("那覇")]);
+    assert_eq!(list.len(), 1);
+
+    // 選択は起動でも文脈メニューでもない。
+    list.select(0);
+    assert_eq!(list.selection(), vec![0]);
+    assert!(activated.borrow().is_empty());
+    assert!(menus.borrow().is_empty());
+
+    // 差し替えられる。
+    list.on_row_activate(|_| {});
+    list.on_context_menu(|_, _| {});
     Ok(())
 }
 

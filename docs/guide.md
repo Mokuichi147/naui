@@ -605,6 +605,52 @@ list.set_rows(&[row]);
 そこで行を組み立てます ([後からウィジェットを作る](#後からウィジェットを作る)を
 参照)。
 
+#### 行の起動と文脈メニュー
+
+ファイル一覧のように「ダブルクリックで開く」「右クリックでその行のメニューを出す」
+一覧は、`on_row_activate` と `on_context_menu` で作ります。どちらも行の
+インデックスを受け取ります。
+
+```rust
+use naui::{ListItem, PopupItem};
+
+let list = ui.list()?;
+list.set_items(&ListItem::list(["報告書.txt", "写真.png", "メモ.md"]));
+
+// ダブルクリック、または行にフォーカスがある状態での Enter。
+list.on_row_activate(|index| println!("{index} 行目を開く"));
+
+// 右クリック。位置は `PopupMenu::open_at` にそのまま渡せる。
+let menu = ui.popup_menu()?;
+menu.set_items(&[PopupItem::new("開く"), PopupItem::new("名前を変更")]);
+list.on_context_menu({
+    let list = list.clone();
+    move |index, at| {
+        // どの行のメニューかは、ここで覚えておく。
+        println!("{index} 行目のメニュー");
+        menu.open_at(&list, at.x, at.y);
+    }
+});
+```
+
+| 操作 | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| 起動 | ダブルタップ / Enter | ダブルクリック / Return | ダブルクリック / Enter | ダブルクリック / Enter |
+| 文脈メニュー | 右クリック・長押し・Shift + F10 | 右クリック・Control + クリック | 右クリック | 右クリック |
+
+- **選択は変わりません。** 右クリックした行を選んでから操作したいときは、
+  `on_context_menu` の中で `list.select(index)` を呼びます。
+- 複数選択のすべてを開きたいときは、`on_row_activate` の中で `list.selection()`
+  を読みます。Enter で起動するのは、キーボードで指している行 (macOS は
+  最後に選んだ行、Web の `<select>` は選ばれている先頭の行) です。
+- 選べない `ListItem` (`enabled(false)`) の行と、行の無い余白では呼ばれません。
+- 行内のボタンなどを直接ダブルクリックしても起動しません。右クリックは
+  その行の文脈メニューになります (Web は行内の入力欄の上だけ、ブラウザ自身の
+  メニューを残します)。
+- `on_context_menu` を設定すると、行の上ではその環境の既定のメニュー
+  (`PopupMenu::attach` で付けたものを含む) は出なくなります。
+- `PopupMenu::open_at` は、macOS ではメニューが閉じるまで戻りません。
+
 ### テーブル
 
 列見出しを持つ表を出すには `Table` を使います。列は `TableColumn`、行は

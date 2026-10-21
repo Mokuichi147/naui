@@ -254,7 +254,7 @@ fn is_composing(text_box: &TextBox) -> bool {
     })
 }
 
-fn modifiers() -> Modifiers {
+pub(crate) fn modifiers() -> Modifiers {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetKeyState, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
     };
