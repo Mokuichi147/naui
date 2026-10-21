@@ -4188,7 +4188,7 @@ fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
     for (index, (state, limit)) in [
         (WindowState::Maximized, 2.0),
         (WindowState::Minimized, 3.0),
-        (WindowState::Fullscreen, 5.0),
+        (WindowState::Fullscreen, 10.0),
     ]
     .into_iter()
     .enumerate()
@@ -4197,7 +4197,8 @@ fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
         pump_until(limit, || window.state() == state);
         if window.state() != state {
             // Dock の無いセッションでは最小化が、画面を占有できないセッションでは
-            // 全画面が効かない。
+            // 全画面が効かない。CI のランナーでは全画面へ入り終わるのに 6 秒ほど
+            // かかることがあるので、全画面は長めに待つ。
             skipped.push(format!("{state:?}"));
             continue;
         }
@@ -4232,10 +4233,10 @@ fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
     if !skipped.contains(&"Fullscreen".to_string()) {
         // 全画面の間に決めた位置は、全画面から最大化へ移っても元に戻す先になる。
         window.set_state(WindowState::Fullscreen);
-        pump_until(5.0, || window.state() == WindowState::Fullscreen);
+        pump_until(10.0, || window.state() == WindowState::Fullscreen);
         window.set_position(260.0, 190.0);
         window.set_state(WindowState::Maximized);
-        pump_until(5.0, || window.state() == WindowState::Maximized);
+        pump_until(10.0, || window.state() == WindowState::Maximized);
         assert_eq!(window.state(), WindowState::Maximized);
         assert!(
             near(window.position(), (260.0, 190.0)),
@@ -4245,14 +4246,14 @@ fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
         // 最大化の間に決めた位置は、全画面を挟んでも残る。
         window.set_position(280.0, 200.0);
         window.set_state(WindowState::Fullscreen);
-        pump_until(5.0, || window.state() == WindowState::Fullscreen);
+        pump_until(10.0, || window.state() == WindowState::Fullscreen);
         assert!(
             near(window.position(), (280.0, 200.0)),
             "最大化から全画面: {:?}",
             window.position()
         );
         window.set_state(WindowState::Normal);
-        pump_until(5.0, || window.state() == WindowState::Normal);
+        pump_until(10.0, || window.state() == WindowState::Normal);
         pump(0.2);
         assert_eq!(window.state(), WindowState::Normal);
         assert!(

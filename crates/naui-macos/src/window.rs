@@ -76,10 +76,11 @@ struct WindowInner {
     /// [`Window::position`] はこの左上を返す。`windowShouldZoom:toFrame:` で読む。
     zoom_frame: Cell<Option<NSRect>>,
     /// 全画面の間に [`Window::position`] が返す、全画面を出たときに戻る位置。
-    /// 全画面へ入るときに読んでおく。
+    /// 全画面へ入るときに読んでおき、出終わった次の周回でこの位置へ動かして
+    /// から消す。
     fullscreen_return: Cell<Option<(f64, f64)>>,
     /// 最大化・全画面の間に [`Window::set_position`] で頼まれた位置。最大化は
-    /// 元に戻した後、全画面は出たところで当てる。
+    /// 元に戻した後、全画面は出終わった次の周回で当てる。
     pending_position: Cell<Option<(f64, f64)>>,
 }
 
@@ -399,7 +400,7 @@ impl Window {
     /// 最小化の間も `frame` は元の枠のまま。最大化は `zoom:` する前の枠、
     /// 全画面は入る前に読んでおいた位置。
     pub fn position(&self) -> Option<(f64, f64)> {
-        if self.0.fullscreen.get() || self.0.in_transition.get() {
+        if self.in_fullscreen() {
             if let Some(position) = self
                 .0
                 .pending_position
@@ -410,6 +411,13 @@ impl Window {
             }
         }
         Some(self.normal_position())
+    }
+
+    /// 全画面の間か、全画面を出てから戻る位置へ動かすまでの間。
+    fn in_fullscreen(&self) -> bool {
+        self.0.fullscreen.get()
+            || self.0.in_transition.get()
+            || self.0.fullscreen_return.get().is_some()
     }
 
     /// 全画面を除いて、通常の状態へ戻ったときの位置。
@@ -452,7 +460,7 @@ impl Window {
     /// 最大化は元に戻した後に、全画面は出たところで動かす。
     pub fn set_position(&self, x: f64, y: f64) {
         self.0.positioned.set(true);
-        if self.0.fullscreen.get() || self.0.in_transition.get() || self.zoom_frame().is_some() {
+        if self.in_fullscreen() || self.zoom_frame().is_some() {
             self.0.pending_position.set(Some((x, y)));
             return;
         }
@@ -480,27 +488,53 @@ impl Window {
         }
         self.0.zoom_frame.set(None);
         if self.0.pending_position.get().is_some() {
-            let mtm = MainThreadMarker::from(&**native);
-            let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
-            DispatchQueue::main().exec_async(move || {
-                // メインキューの仕事はメインスレッドで走る。
-                let mtm = MainThreadMarker::new().expect("メインキューの外で呼ばれた");
-                if let Some(inner) = weak.into_inner(mtm).upgrade() {
-                    Window(inner).apply_pending_position();
-                }
-            });
+            self.on_next_turn(|window| window.apply_pending_position());
         }
         true
     }
 
     /// 最大化・全画面の間に頼まれた位置を、通常の枠へ戻っていれば当てる。
     fn apply_pending_position(&self) {
-        if self.0.fullscreen.get() || self.0.in_transition.get() || self.0.native.isZoomed() {
+        if self.in_fullscreen() || self.0.native.isZoomed() {
             return;
         }
         if let Some((x, y)) = self.0.pending_position.take() {
             self.set_position(x, y);
         }
+    }
+
+    /// 全画面を出終わった次の周回で、全画面の間に約束した位置へ動かす。
+    ///
+    /// 頼まれた位置が無ければ、入る前の位置へ戻す。AppKit は入る前の枠へ
+    /// 戻すはずだが、macOS 15 では `setFrameTopLeftPoint:` で動かした分を
+    /// 忘れて、表示したときの枠へ戻すことがある。出終わりの通知の中で
+    /// 動かしても AppKit に戻されるので、次の周回で動かす。最大化の枠へ
+    /// 戻ったときは、元に戻したときの位置として取っておく。
+    fn restore_after_fullscreen(&self) {
+        if self.0.fullscreen.get() || self.0.in_transition.get() {
+            return;
+        }
+        let Some(return_position) = self.0.fullscreen_return.take() else {
+            return;
+        };
+        let (x, y) = self.0.pending_position.take().unwrap_or(return_position);
+        self.set_position(x, y);
+    }
+
+    /// AppKit が通知を配り終えた後 (メインキューの次の周回) に `f` を呼ぶ。
+    ///
+    /// 全画面の出入りや `zoom:` の通知の中から、状態を変えたり枠を動かしたり
+    /// しても AppKit に無視・上書きされることがあるので、こちらへ回す。
+    fn on_next_turn(&self, f: fn(&Window)) {
+        let mtm = MainThreadMarker::from(&*self.0.native);
+        let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
+        DispatchQueue::main().exec_async(move || {
+            // メインキューの仕事はメインスレッドで走る。
+            let mtm = MainThreadMarker::new().expect("メインキューの外で呼ばれた");
+            if let Some(inner) = weak.into_inner(mtm).upgrade() {
+                f(&Window(inner));
+            }
+        });
     }
 
     /// 主画面の高さ。画面がつながっていなければ 0 (位置は AppKit の値のまま)。
@@ -589,8 +623,9 @@ impl Window {
 
     /// 全画面へ入る・出るアニメーションが終わった (か失敗した)。
     ///
-    /// 続けて当てる状態があれば、AppKit が通知を配り終えた後 (メインキューの
-    /// 次の周回) に当てる。通知の中から `toggleFullScreen:` を呼ぶと無視される。
+    /// 戻る位置へ動かすのと、続けて当てる状態は、AppKit が通知を配り終えた後
+    /// (メインキューの次の周回) に回す。通知の中から `toggleFullScreen:` を
+    /// 呼ぶと無視される。
     fn finish_transition(&self) {
         let native = &self.0.native;
         self.0.in_transition.set(false);
@@ -599,25 +634,17 @@ impl Window {
             .set(native.styleMask().contains(NSWindowStyleMask::FullScreen));
         self.apply_resizable();
         if !self.0.fullscreen.get() {
-            self.0.fullscreen_return.set(None);
-            // 全画面の間に頼まれた位置は、元の枠へ戻ったところで当てる
-            // (最大化のまま戻ったときは、元に戻したときの位置になる)。
-            self.apply_pending_position();
+            // 続けて当てる状態より先に動かす (最大化するなら、動かした枠が
+            // 元に戻す先になる)。
+            self.on_next_turn(|window| window.restore_after_fullscreen());
         }
         self.report_state();
         if self.0.after_transition.get().is_none() {
             return;
         }
-        let mtm = MainThreadMarker::from(&**native);
-        let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
-        DispatchQueue::main().exec_async(move || {
-            // メインキューの仕事はメインスレッドで走る。
-            let mtm = MainThreadMarker::new().expect("メインキューの外で呼ばれた");
-            let Some(inner) = weak.into_inner(mtm).upgrade() else {
-                return;
-            };
-            if let Some(next) = inner.after_transition.take() {
-                Window(inner).apply_state(next);
+        self.on_next_turn(|window| {
+            if let Some(next) = window.0.after_transition.take() {
+                window.apply_state(next);
             }
         });
     }
