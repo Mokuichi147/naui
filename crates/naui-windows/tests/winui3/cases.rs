@@ -179,6 +179,10 @@ const CASES: &[Case] = &[
         window_resizable_round_trips,
     ),
     (
+        "表示する前に大きさを固定しても表示した後に効いている",
+        window_resizable_requested_before_show,
+    ),
+    (
         "TextArea の改行は \\n で読める",
         text_area_reports_newlines_as_lf,
     ),
@@ -1644,6 +1648,37 @@ fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
     if state != WindowState::Maximized {
         println!("     (最大化が効かない環境なので、確かめずに通す)");
         return Ok(());
+    }
+    Ok(())
+}
+
+/// 表示する前の `set_resizable(false)` が、表示した後も効いている。
+///
+/// 初めて表示する前は `AppWindow.Presenter` が空のことがあり、そのときも
+/// 頼んだ値を落とさず `show` で当てる。この環境で空にならなくても、表示の
+/// 前後で値が保たれることは確かめられる。
+fn window_resizable_requested_before_show(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
+    let window = ui.window("表示前の大きさの固定", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_resizable(false);
+    assert!(!window.is_resizable(), "表示の前");
+    window.show();
+    pump_until(Duration::from_millis(300), || false);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        assert!(!window.is_resizable(), "表示の後");
+        let presenter = window
+            .native_window()
+            .AppWindow()
+            .and_then(|app_window| app_window.Presenter())
+            .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
+            .expect("OverlappedPresenter");
+        assert_eq!(presenter.IsResizable().ok(), Some(false));
+        assert_eq!(presenter.IsMaximizable().ok(), Some(false));
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
     }
     Ok(())
 }
