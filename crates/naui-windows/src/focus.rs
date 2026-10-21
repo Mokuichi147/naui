@@ -10,11 +10,11 @@
 //! WinUI はウィンドウがアクティブでなくなってもフォーカスのある要素を
 //! 変えないので、そのときは通知しない (ほかの環境と同じ)。
 //!
-//! 通知先はウィジェットが持ち ([`Focus`])、登録表は要素と通知先を弱参照で
-//! 持つ。ウィジェットが解放されれば、表の項目もそのときに外れる。表が
-//! 通知先を持つと、ウィジェットを捨てても通知先とそれが捕まえている状態が
-//! 残ってしまう。終了の経路では [`release_handlers`] で見張りが覚えている
-//! 持ち主を手放す ([`Registry`] を参照)。
+//! 登録表は要素と、通知先の弱参照を持つ。通知先そのものはウィジェットが
+//! 持ち ([`Focus`])、ウィジェットが解放されるときに表の項目も外す。表が
+//! 通知先を強く持つと、捨てた欄の通知先とそれが捕まえている状態が、次に
+//! 登録されるまで残ってしまう。ウィジェットのほかの通知先と同じ寿命なので、
+//! 終了の経路でもウィジェットの木と一緒に手放される。
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak as RcWeak};
@@ -64,10 +64,9 @@ impl Focus {
         };
         self.registered.set(true);
         WIDGETS.with(|entries| {
-            let mut entries = entries.borrow_mut();
             entries
-                .retain(|(weak, handler)| handler.strong_count() > 0 && weak.upgrade().is_some());
-            entries.push((weak, Rc::downgrade(&self.handler)));
+                .borrow_mut()
+                .push((weak, Rc::downgrade(&self.handler)))
         });
         adopt_current_focus(&self.handler);
     }
@@ -78,12 +77,12 @@ impl Drop for Focus {
         if !self.registered.get() {
             return;
         }
-        let me = Rc::as_ptr(&self.handler);
+        // 外す項目は弱参照だけなので、捨てても表を触り直すことはない。
         // スレッドの後始末で表が先に消えていれば、外すものも無い。
         let _ = WIDGETS.try_with(|entries| {
-            if let Ok(mut entries) = entries.try_borrow_mut() {
-                entries.retain(|(_, handler)| handler.as_ptr() != me);
-            }
+            entries
+                .borrow_mut()
+                .retain(|(_, handler)| !std::ptr::eq(handler.as_ptr(), Rc::as_ptr(&self.handler)))
         });
     }
 }
@@ -105,8 +104,10 @@ fn adopt_current_focus(handler: &Rc<FocusHandler>) {
     }
 }
 
-/// 見張りが覚えている持ち主 (通知先を掴んでいる) と、登録表の弱参照を
-/// 手放す。終了の経路で、XAML の後片づけより前に呼ぶ。
+/// 通知先をすべて手放す。終了の経路で、XAML の後片づけより前に呼ぶ。
+///
+/// 通知先そのものはウィジェットが持つが、見張りが覚えている持ち主も
+/// 通知先を掴んでいるので外す。表に残っている要素の弱参照も捨てる。
 pub(crate) fn release_handlers() {
     let trackers: Vec<Rc<Tracker>> = TRACKERS.with(|trackers| {
         trackers

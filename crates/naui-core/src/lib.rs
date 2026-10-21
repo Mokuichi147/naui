@@ -44,7 +44,8 @@ mod weak;
 mod window;
 
 pub use canvas::{
-    DrawCommand, Painter, Path, PathSegment, Point, PointerEvent, PointerPhase, Rect,
+    DrawCommand, Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase,
+    Rect, WheelHandler, WHEEL_STEP,
 };
 pub use channel::Sender;
 pub use color::Color;

@@ -20,7 +20,6 @@ use crate::widgets::{impl_widget, Widget};
 const VISIBLE_ITEMS: isize = 8;
 
 struct EditableComboBoxInner {
-    focus: crate::focus::Focus,
     native: Retained<NSComboBox>,
     /// 候補の控え。`selected` の一致判定と `set_selected` の書き込みに使う。
     items: RefCell<Vec<String>>,
@@ -52,7 +51,6 @@ impl EditableComboBox {
         native.setCompletes(true);
 
         let inner = Rc::new(EditableComboBoxInner {
-            focus: Default::default(),
             native,
             items: RefCell::new(Vec::new()),
             on_change: TextHandler::default(),

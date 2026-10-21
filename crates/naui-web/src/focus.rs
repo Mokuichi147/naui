@@ -11,9 +11,9 @@
 //! `focus` は同じ持ち主なので通知しない)。ほかの 3 環境でウィンドウが
 //! アクティブでなくなったときと同じ扱いになる。
 //!
-//! 通知先はウィジェットが持ち ([`Focus`])、登録表は要素と通知先の弱参照を
-//! 持つ。ウィジェットが解放されれば、表の項目もそのときに外す。表に残すと、
-//! 画面から外した要素 (とそこからたどれる DOM) がページの寿命まで残る。
+//! 登録表は要素と、通知先の弱参照を持つ。通知先そのものはウィジェットが
+//! 持ち ([`Focus`])、ウィジェットが解放されるときに表の項目も外す。表に
+//! 残しておくと、捨てた欄の要素がいつまでも解放されない。
 //!
 //! 文書の購読は入れ子で呼ばれる。通知の中で別の欄へ `request_focus()` すると、
 //! `focus()` が同期で次の `focusout` / `focusin` を出すため
@@ -51,9 +51,9 @@ impl Focus {
             return;
         }
         ENTRIES.with(|entries| {
-            let mut entries = entries.borrow_mut();
-            entries.retain(|(_, handler)| handler.strong_count() > 0);
-            entries.push((element.clone(), Rc::downgrade(&self.handler)));
+            entries
+                .borrow_mut()
+                .push((element.clone(), Rc::downgrade(&self.handler)))
         });
         ensure_listeners();
         // フォーカスがすでにこの中にあれば、通知せずに持ち主として覚える。
@@ -72,14 +72,20 @@ impl Drop for Focus {
         if !self.registered.get() {
             return;
         }
-        let me = Rc::as_ptr(&self.handler);
+        // 外す項目は要素と弱参照だけなので、捨てても表を触り直すことはない。
         // スレッドの後始末で表が先に消えていれば、外すものも無い。
         let _ = ENTRIES.try_with(|entries| {
-            if let Ok(mut entries) = entries.try_borrow_mut() {
-                entries.retain(|(_, handler)| handler.as_ptr() != me);
-            }
+            entries
+                .borrow_mut()
+                .retain(|(_, handler)| !std::ptr::eq(handler.as_ptr(), Rc::as_ptr(&self.handler)))
         });
     }
+}
+
+/// 登録表に載っている要素の数。**自動テスト専用**。
+#[doc(hidden)]
+pub fn registered_focus_elements() -> usize {
+    ENTRIES.with(|entries| entries.borrow().len())
 }
 
 fn ensure_listeners() {

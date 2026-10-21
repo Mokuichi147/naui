@@ -495,10 +495,11 @@ impl Ui {
 
 /// `on_key_down` と `on_focus_change` の通知先を手放す。
 ///
-/// 通知先は要素ではなく `thread_local!` の表が持っているので、XAML の
-/// ツリーを外しても残る。終了の経路でここを通さないと、クロージャが
+/// `on_key_down` の通知先は要素ではなく `thread_local!` の表が持っているので、
+/// XAML のツリーを外しても残る。終了の経路でここを通さないと、クロージャが
 /// 掴んだウィジェットはプロセスの終わりまで手放されない
-/// ([`ui_thread::Registry`] を参照)。
+/// ([`ui_thread::Registry`] を参照)。`on_focus_change` の通知先はウィジェットが
+/// 持つが、フォーカスの見張りが最後の持ち主を掴んでいる。
 fn release_widget_handlers() {
     keys::release_handlers();
     focus::release_handlers();

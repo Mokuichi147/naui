@@ -448,10 +448,11 @@ impl Checkbox {
 // -------------------------------------------------------------- TextInput
 
 struct TextInputInner {
-    focus: crate::focus::Focus,
     native: TextBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 1 行テキスト入力 (TextBox)。IME は Windows が処理する。
@@ -468,10 +469,10 @@ impl TextInput {
             .SetText(&HSTRING::from(text))
             .map_err(|e| to_error("TextBox への設定", e))?;
         let inner = Rc::new(TextInputInner {
-            focus: Default::default(),
             native,
             token: RefCell::new(None),
             on_submit: TextHandler::new(),
+            focus: Default::default(),
         });
         let element: UIElement = inner
             .native
@@ -557,10 +558,11 @@ impl TextInput {
 // ----------------------------------------------------------- PasswordInput
 
 struct PasswordInputInner {
-    focus: crate::focus::Focus,
     native: PasswordBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// パスワード入力 (PasswordBox)。
@@ -578,10 +580,10 @@ impl PasswordInput {
     pub(crate) fn new() -> Result<Self> {
         let native = PasswordBox::new().map_err(|e| to_error("PasswordBox の生成", e))?;
         let inner = Rc::new(PasswordInputInner {
-            focus: Default::default(),
             native,
             token: RefCell::new(None),
             on_submit: TextHandler::new(),
+            focus: Default::default(),
         });
         let element: UIElement = inner
             .native
@@ -650,9 +652,10 @@ impl PasswordInput {
 // --------------------------------------------------------------- TextArea
 
 struct TextAreaInner {
-    focus: crate::focus::Focus,
     native: TextBox,
     token: RefCell<Option<i64>>,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 複数行テキスト入力 (改行を受け付ける TextBox)。IME は Windows が処理する。
@@ -680,9 +683,9 @@ impl TextArea {
             .SetText(&HSTRING::from(text))
             .map_err(|e| to_error("TextBox への設定", e))?;
         Ok(Self(Rc::new(TextAreaInner {
-            focus: Default::default(),
             native,
             token: RefCell::new(None),
+            focus: Default::default(),
         })))
     }
 

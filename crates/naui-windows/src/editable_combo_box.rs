@@ -60,7 +60,6 @@ impl TextHandler {
 }
 
 struct EditableComboBoxInner {
-    focus: crate::focus::Focus,
     native: XamlComboBox,
     /// 候補の控え。`selected` の一致判定と `set_selected` の書き込みに使う。
     items: RefCell<Vec<String>>,
@@ -72,6 +71,8 @@ struct EditableComboBoxInner {
     silent: Cell<bool>,
     /// テンプレートの入力欄。見つかるまでは `None`。
     editable: RefCell<Option<TextBox>>,
+    /// `on_focus_change` の通知先。
+    focus: crate::focus::Focus,
 }
 
 /// 候補から選ぶことも、自由に打ち込むこともできる入力欄
@@ -95,13 +96,13 @@ impl EditableComboBox {
             .map_err(|e| to_error("ComboBox の選択解除", e))?;
 
         let this = Self(Rc::new(EditableComboBoxInner {
-            focus: Default::default(),
             native,
             items: RefCell::new(Vec::new()),
             handler: TextHandler::new(),
             last: RefCell::new(String::new()),
             silent: Cell::new(false),
             editable: RefCell::new(None),
+            focus: Default::default(),
         }));
 
         // 候補が選ばれたとき。編集欄への反映は WinUI より先に自分で行い、

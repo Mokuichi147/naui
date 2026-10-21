@@ -1029,7 +1029,61 @@
 //! [`on_pointer`](Canvas::on_pointer) にはポインター (マウス・タッチ・ペン) の
 //! 押下・移動・解放が、面の左上を原点にした位置で届く
 //! ([`PointerEvent`])。移動は押していない間 (ホバー) も届き、押している間は
-//! 面の外へ出ても届く (捕捉する)。右クリックや修飾キーは区別しない。
+//! 面の外へ出ても届く (捕捉する)。押下と解放には、どのボタンかが
+//! [`PointerButton`] で付く (主・副・中・戻る・進む。タッチとペン先は主)。
+//! 環境ごとに違うボタンの番号は意味でそろえてある。修飾キーはまだ区別しない。
+//!
+//! ```no_run
+//! # use naui::{PointerButton, PointerPhase, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! # let chart = ui.canvas()?;
+//! chart.on_pointer(|event| {
+//!     if event.phase == PointerPhase::Down && event.button == Some(PointerButton::Secondary) {
+//!         println!("右クリック: {:?}", event.point); // PopupMenu::open_at などへ
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ホイール (トラックパッドの 2 本指のスクロールも含む) は
+//! [`on_wheel`](Canvas::on_wheel) に、[`PointerPhase::Wheel`] の
+//! [`PointerEvent`] として届く。量は [`wheel_x`](PointerEvent::wheel_x) /
+//! [`wheel_y`](PointerEvent::wheel_y) で、**論理ピクセルにそろえてある**。
+//! 正は右・下へ読み進める向き (ページのスクロールと同じ) で、OS の
+//! 「ナチュラルなスクロール」の設定は反映したあとの向きになる。
+//!
+//! | 環境 | ネイティブの量 | naui に届く量 |
+//! | --- | --- | --- |
+//! | Windows | `MouseWheelDelta` (1 刻みで 120、縦は奥へ回すと正) | 120 を [`WHEEL_STEP`] に直し、縦の符号を反転 |
+//! | macOS | `scrollingDeltaX` / `Y` (トラックパッドはピクセル、ホイールは行。中身が動く向きで正) | ピクセルはそのまま、行は `WHEEL_STEP` 倍。符号を反転 |
+//! | Linux | `GtkEventControllerScroll` (単位が `SURFACE` ならピクセル、`WHEEL` なら刻み) | ピクセルはそのまま、刻みは `WHEEL_STEP` 倍 |
+//! | Web | `WheelEvent` (`deltaMode` がピクセル・行・ページ) | ピクセルはそのまま、行は `WHEEL_STEP` の 1/3 倍、ページは面の大きさ倍 |
+//!
+//! 刻みのあるホイールの 1 刻みは `WHEEL_STEP` (48) になる。ただし Web で
+//! ブラウザがピクセルで渡すときはブラウザの量のままなので、1 刻みの量は
+//! ブラウザによって違う。拡大縮小のように「1 刻みでどれだけ」を決めるときは、
+//! 量を `WHEEL_STEP` で割った値を指数に使うと、細かい量でも滑らかに効く。
+//!
+//! `on_wheel` は [`EventResponse`] を返す。`Handled` なら外側のスクロール
+//! (`Scroll` やページ) へ回さず、`Continue` なら外側がいつもどおり
+//! スクロールする。`on_wheel` を付けていない面は、ホイールを外側へ回す。
+//!
+//! ```no_run
+//! # use naui::{EventResponse, Result, Ui, WHEEL_STEP};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! # let chart = ui.canvas()?;
+//! let mut scale = 1.0_f64;
+//! chart.on_wheel(move |event| {
+//!     scale *= 1.2_f64.powf(-event.wheel_y / WHEEL_STEP); // 1 刻みで 1.2 倍
+//!     EventResponse::Handled // ページはスクロールさせない
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Web では、右クリックで出るブラウザのコンテキストメニューを面の上では
+//! 出さない (他の 3 環境の描画面にも無いため)。
 //!
 //! Windows だけは**画素を描く面が Windows App SDK に無い** (Win2D は別
 //! パッケージ)。そこで XAML が持つ図形の要素 `Path` と `TextBlock` を
@@ -2001,11 +2055,11 @@ pub use naui_core::{
     DialogResponse, DrawCommand, Error, EventResponse, FileEntry, FileFilter, FilePickerMode, Fit,
     GridCell, Key, KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, Modifiers,
     NavItem, NumberSpec, Orientation, Padding, Painter, Path, PathSegment, PlaybackState, Point,
-    PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy,
-    SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep, SortOrder,
-    TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer, ToastSpec,
-    ToolbarIcon, ToolbarItem, Track, TreeItem, WeakWidget, DEFAULT_SIDEBAR_WIDTH,
-    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
+    PointerButton, PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollMetrics,
+    ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep,
+    SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer,
+    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, WeakWidget, DEFAULT_SIDEBAR_WIDTH,
+    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -2323,7 +2377,27 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     canvas.on_pointer(|event: PointerEvent| {
         let _: PointerPhase = event.phase;
         let _: Point = event.point;
+        let _: Option<PointerButton> = event.button;
     });
+    canvas.on_wheel(|event: PointerEvent| {
+        let _: f64 = event.wheel_x;
+        let _: f64 = event.wheel_y;
+        let _ = (
+            PointerPhase::Wheel,
+            PointerButton::Primary,
+            PointerButton::Secondary,
+        );
+        let _ = (
+            PointerButton::Middle,
+            PointerButton::Back,
+            PointerButton::Forward,
+        );
+        let _: f64 = WHEEL_STEP;
+        EventResponse::Handled
+    });
+    let _: PointerEvent = PointerEvent::new(PointerPhase::Down, Point::new(0.0, 0.0))
+        .button(Some(PointerButton::Primary));
+    let _: PointerEvent = PointerEvent::wheel(Point::new(0.0, 0.0), 0.0, WHEEL_STEP);
     canvas.redraw();
     let _: (f64, f64) = canvas.size();
     canvas.set_sizing(Sizing::fill());

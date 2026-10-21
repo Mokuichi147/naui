@@ -38,7 +38,6 @@ const STEPPER_LIMIT: f64 = 1.0e15;
 const STEPPER_HUGGING: NSLayoutPriority = 1000.0;
 
 struct NumberInputInner {
-    focus: crate::focus::Focus,
     native: Retained<NSStackView>,
     field: Retained<NSTextField>,
     stepper: Retained<NSStepper>,
@@ -88,7 +87,6 @@ impl NumberInput {
         let spec = NumberSpec::default();
         let (field_handlers, observer) = observe_field(mtm, &field);
         let this = Self(Rc::new(NumberInputInner {
-            focus: Default::default(),
             native,
             field,
             stepper,

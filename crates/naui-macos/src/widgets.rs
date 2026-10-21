@@ -433,7 +433,6 @@ impl Checkbox {
 // -------------------------------------------------------------- TextInput
 
 struct TextInputInner {
-    focus: crate::focus::Focus,
     native: Retained<NSTextField>,
     handlers: Rc<FieldHandlers>,
     // NSTextField の delegate は weak なので、こちら側で生かしておく。
@@ -452,7 +451,6 @@ impl TextInput {
         let native = NSTextField::textFieldWithString(&NSString::from_str(text), mtm);
         let (handlers, observer) = observe_field(mtm, &native);
         Self(Rc::new(TextInputInner {
-            focus: Default::default(),
             native,
             handlers,
             _observer: observer,
@@ -513,7 +511,6 @@ impl TextInput {
 // ----------------------------------------------------------- PasswordInput
 
 struct PasswordInputInner {
-    focus: crate::focus::Focus,
     native: Retained<NSSecureTextField>,
     handlers: Rc<FieldHandlers>,
     // NSSecureTextField の delegate は weak なので、こちら側で生かしておく。
@@ -535,7 +532,6 @@ impl PasswordInput {
         let native = NSSecureTextField::new(mtm);
         let (handlers, observer) = observe_field(mtm, &native);
         Self(Rc::new(PasswordInputInner {
-            focus: Default::default(),
             native,
             handlers,
             _observer: observer,
@@ -576,7 +572,6 @@ impl PasswordInput {
 // ------------------------------------------------------------- SearchInput
 
 struct SearchInputInner {
-    focus: crate::focus::Focus,
     native: Retained<NSSearchField>,
     handlers: Rc<FieldHandlers>,
     // NSSearchField の delegate は weak なので、こちら側で生かしておく。
@@ -599,7 +594,6 @@ impl SearchInput {
         let native = NSSearchField::new(mtm);
         let (handlers, observer) = observe_field(mtm, &native);
         Self(Rc::new(SearchInputInner {
-            focus: Default::default(),
             native,
             handlers,
             _observer: observer,
@@ -718,7 +712,6 @@ impl TextHandler {
 }
 
 struct TextAreaInner {
-    focus: crate::focus::Focus,
     /// 外から見えるビュー。複数行入力はこのスクロールビューごと 1 つ。
     scroll: Retained<NSScrollView>,
     text_view: Retained<NSTextView>,
@@ -821,7 +814,6 @@ impl TextArea {
         text_view.setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*observer)));
 
         Self(Rc::new(TextAreaInner {
-            focus: Default::default(),
             scroll,
             text_view,
             placeholder,

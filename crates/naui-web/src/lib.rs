@@ -59,6 +59,9 @@ use web_sys::{Document, HtmlElement};
 #[doc(hidden)]
 pub use wasm_bindgen;
 
+#[doc(hidden)]
+pub use focus::registered_focus_elements;
+
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
