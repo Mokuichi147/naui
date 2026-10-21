@@ -560,7 +560,8 @@
 //! [`Window::on_state_change`] で受け取る。利用者の操作 (タイトルバーの
 //! ボタン、Esc で全画面を出る、など) で変わったときも呼ばれる。
 //! 画面に出す前の `set_state` は覚えておき、[`Window::show`] で当てる
-//! (それまでの `state` は頼んだ状態を返す)。
+//! (それまでの `state` は頼んだ状態を返す。Linux では、表示してから
+//! コンポジタの最初の状態が届くまでも頼んだ状態を返す)。
 //!
 //! 位置が変わったことの通知は無い。Linux と Web では位置そのものが取れない
 //! ため。位置を保存するときは、閉じる前 ([`Window::on_close_request`] の中など)
@@ -570,7 +571,7 @@
 //! | --- | --- | --- | --- | --- |
 //! | 位置 | `AppWindow.Position` / `Move` (物理ピクセルを `RasterizationScale` で割る) | `frame` / `setFrameTopLeftPoint:` (主画面の高さから引いて向きを変える) | (無い。いつも `None`) | (無い。いつも `None`) |
 //! | 最大化 | `OverlappedPresenter.Maximize` | `zoom:` | `gtk_window_maximize` | (無い) |
-//! | 最小化 | `OverlappedPresenter.Minimize` | `miniaturize:` | `gtk_window_minimize` | (無い) |
+//! | 最小化 | `OverlappedPresenter.Minimize` | `miniaturize:` | `gtk_window_minimize` (戻すときは `gtk_window_unminimize` と `present`) | (無い) |
 //! | 全画面 | `AppWindow.SetPresenterByKind(FullScreen)` | `toggleFullScreen:` | `gtk_window_fullscreen` | `documentElement.requestFullscreen()` |
 //! | 状態を読む | `AppWindow.Presenter` の種類と `OverlappedPresenter.State` | `isMiniaturized` / `isZoomed` と全画面の通知 | `GdkToplevelState` | `document.fullscreenElement` |
 //! | 状態の変化 | `AppWindow.Changed` | `windowDidMiniaturize:` / `windowDidEnterFullScreen:` など | `GdkToplevel` の `notify::state` | `fullscreenchange` |
@@ -583,7 +584,9 @@
 //! [`Window::set_position`] は何もしない。また **Wayland には最小化を知る
 //! 仕組みも戻す仕組みも無い**ので、最小化しても `state` は
 //! [`WindowState::Minimized`] にならず、`Normal` を頼んでも戻るかどうかは
-//! コンポジタ次第になる (X11 では両方できる)。
+//! コンポジタ次第になる (X11 では両方できる)。表示する前に頼んだ最小化は、
+//! 出す前に頼んでもウィンドウマネージャが応えないので、表示してから当てる
+//! (一瞬だけ画面に出る)。
 //!
 //! **Web は全画面だけ。** ページから操作できるのは Fullscreen API だけなので、
 //! 位置は `None`、最大化と最小化は何もせず (全画面なら出るだけ)、

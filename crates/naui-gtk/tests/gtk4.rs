@@ -320,6 +320,14 @@ fn main() {
             window_state_requested_before_show,
         ),
         (
+            "最小化して元に戻せる (X11)",
+            window_minimize_round_trips,
+        ),
+        (
+            "表示する前に頼んだ最小化は表示してから当たる (X11)",
+            window_minimize_requested_before_show,
+        ),
+        (
             "大きさを変えられるかどうかがネイティブと往復する",
             window_resizable_round_trips,
         ),
@@ -7023,7 +7031,8 @@ fn window_state_round_trips(ui: &Ui) -> Result<()> {
 /// 表示する前の `set_state` は覚えておき、表示するときに当てる。
 ///
 /// GTK4 は表示する前の最大化を、面を出すときの状態として渡す (X11 では
-/// ウィンドウマネージャがいなくてもその状態で出る)。
+/// ウィンドウマネージャがいなくてもその状態で出る)。Wayland では表示した
+/// 直後の面の状態が空なので、コンポジタから届くまでも頼んだ状態を返す。
 fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
     let window = ui.window("表示前の状態", 320.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
@@ -7034,12 +7043,115 @@ fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
         "表示の前は頼んだ状態"
     );
     window.show();
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "コンポジタから届く前も頼んだ状態"
+    );
     spin_until(std::time::Duration::from_secs(2), || {
-        window.native_window().is_maximized()
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
     });
+    assert!(window.native_window().is_maximized());
     assert_eq!(window.state(), WindowState::Maximized);
     window.close();
     Ok(())
+}
+
+/// 最小化が `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+///
+/// X11 のウィンドウマネージャは `unminimize` だけでは戻さないことがあるので、
+/// 戻すときは前面へ出すよう頼む。Wayland では最小化を知る仕組みが無く、
+/// ウィンドウマネージャのいない X11 (CI の Xvfb) では誰も応えないので SKIP にする。
+fn window_minimize_round_trips(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    if is_wayland() {
+        skip("Wayland では最小化を知る仕組みが無い");
+        return Ok(());
+    }
+    let window = ui.window("最小化", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let (seen, sink) = recorder();
+    window.on_state_change(sink);
+    window.show();
+    spin_until(Duration::from_secs(1), || {
+        !toplevel_state(&window).is_empty()
+    });
+
+    window.set_state(WindowState::Minimized);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Minimized
+    });
+    if window.state() != WindowState::Minimized {
+        skip("ウィンドウマネージャが最小化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal, "最小化から戻る");
+    assert_eq!(
+        *seen.borrow(),
+        [WindowState::Minimized, WindowState::Normal]
+    );
+    window.close();
+    Ok(())
+}
+
+/// 表示する前に頼んだ最小化は、出す前に頼んでもウィンドウマネージャが
+/// 応えないので、表示してコンポジタから最初の状態が届いてから当てる。
+fn window_minimize_requested_before_show(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("表示前の最小化", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let (seen, sink) = recorder();
+    window.on_state_change(sink);
+    window.set_state(WindowState::Minimized);
+    window.show();
+    assert_eq!(
+        window.state(),
+        WindowState::Minimized,
+        "コンポジタから届く前も頼んだ状態"
+    );
+    if is_wayland() {
+        skip("Wayland では最小化を知る仕組みが無い");
+        window.close();
+        return Ok(());
+    }
+    spin_until(Duration::from_secs(3), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MINIMIZED)
+    });
+    if !toplevel_state(&window).contains(gtk::gdk::ToplevelState::MINIMIZED) {
+        skip("ウィンドウマネージャが最小化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.state(), WindowState::Minimized);
+    assert_eq!(*seen.borrow(), [WindowState::Minimized]);
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal, "最小化から戻る");
+    window.close();
+    Ok(())
+}
+
+/// ウィンドウの面にコンポジタから届いた状態。realize する前は空。
+fn toplevel_state(window: &naui_gtk::Window) -> gtk::gdk::ToplevelState {
+    window
+        .native_window()
+        .surface()
+        .and_then(|surface| surface.dynamic_cast::<gtk::gdk::Toplevel>().ok())
+        .map_or(gtk::gdk::ToplevelState::empty(), |toplevel| {
+            toplevel.state()
+        })
+}
+
+fn is_wayland() -> bool {
+    gtk::gdk::Display::default()
+        .is_some_and(|display| display.type_().name() == "GdkWaylandDisplay")
 }
 
 fn window_resizable_round_trips(ui: &Ui) -> Result<()> {

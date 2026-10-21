@@ -63,6 +63,14 @@ pub(crate) struct WindowInner {
     shown: Cell<bool>,
     /// 表示する前に頼まれた状態。
     initial_state: Cell<WindowState>,
+    /// 表示する前に頼まれ、コンポジタから最初の状態がまだ届いていない状態。
+    /// その間の [`Window::state`] はこれを返す (Wayland では表示した直後の
+    /// 面の状態が空なので、読むと `Normal` に戻って見える)。最小化だけは
+    /// 出す前に頼んでもどのコンポジタも応えないので、最初の状態が届いてから当てる。
+    pending_state: Cell<Option<WindowState>>,
+    /// [`Window::set_state`] で最小化を頼み、まだ戻すよう頼んでいない。
+    /// Wayland では最小化が `state` に出ないので、戻すときの手掛かりにする。
+    minimize_requested: Cell<bool>,
     /// 全画面を出終わってから当てる状態。全画面のまま最大化を頼んでも
     /// コンポジタによっては無視されるので、まず全画面を出る。
     after_fullscreen: Cell<Option<WindowState>>,
@@ -153,6 +161,8 @@ impl Window {
             on_state_change: StateHandler::default(),
             shown: Cell::new(false),
             initial_state: Cell::new(WindowState::Normal),
+            pending_state: Cell::new(None),
+            minimize_requested: Cell::new(false),
             after_fullscreen: Cell::new(None),
             state_handler: RefCell::new(None),
         }));
@@ -463,8 +473,9 @@ impl Window {
 
     /// いまの表示の状態。
     ///
-    /// コンポジタから届いた面の状態 (`GdkToplevelState`) を読む。表示する前は、
-    /// [`set_state`](Self::set_state) で頼んだ状態 (既定は [`WindowState::Normal`])。
+    /// コンポジタから届いた面の状態 (`GdkToplevelState`) を読む。表示する前と、
+    /// 表示してからコンポジタの最初の状態が届くまでは、[`set_state`](Self::set_state)
+    /// で頼んだ状態 (既定は [`WindowState::Normal`])。
     ///
     /// **Wayland では最小化を知る仕組みが無い**ので、最小化しても
     /// [`WindowState::Minimized`] にはならない (しまう前の状態を返す)。
@@ -473,13 +484,17 @@ impl Window {
             return self.0.initial_state.get();
         }
         let native = &self.0.native;
-        let toplevel = native
-            .surface()
-            .and_then(|surface| surface.dynamic_cast::<gtk::gdk::Toplevel>().ok());
-        match toplevel {
+        match self.toplevel() {
             Some(toplevel) => {
                 use gtk::gdk::ToplevelState;
                 let state = toplevel.state();
+                // 何も届いていない面の状態は空。そこで読むと頼んだ状態が
+                // `Normal` に戻って見えるので、頼んだ状態のままにしておく。
+                if state.is_empty() {
+                    if let Some(pending) = self.0.pending_state.get() {
+                        return pending;
+                    }
+                }
                 WindowState::from_flags(
                     state.contains(ToplevelState::MINIMIZED),
                     state.contains(ToplevelState::FULLSCREEN),
@@ -490,11 +505,19 @@ impl Window {
         }
     }
 
+    /// realize してあれば、ウィンドウの面 (`GdkToplevel`)。
+    fn toplevel(&self) -> Option<gtk::gdk::Toplevel> {
+        self.0
+            .native
+            .surface()
+            .and_then(|surface| surface.dynamic_cast::<gtk::gdk::Toplevel>().ok())
+    }
+
     /// 表示の状態を変える。表示する前に呼んだときは、表示するときに当てる。
     ///
     /// | 頼んだ状態 | GTK4 |
     /// | --- | --- |
-    /// | `Normal` | `unfullscreen` / `unmaximize` / `unminimize` |
+    /// | `Normal` | `unfullscreen` / `unmaximize` / `unminimize` と `present` |
     /// | `Maximized` | `maximize` |
     /// | `Minimized` | `minimize` |
     /// | `Fullscreen` | `fullscreen` |
@@ -502,20 +525,32 @@ impl Window {
     /// どれもコンポジタへの頼みごとで、`state` が変わるのはコンポジタが
     /// 応えた後になる (変わったら [`on_state_change`](Self::on_state_change)
     /// が呼ばれる)。全画面からほかの状態へ移るときは、全画面を出終わって
-    /// から当てる。**Wayland では最小化から戻せるとは限らない** (戻す仕組みが
-    /// 無く、`unminimize` に応えるかはコンポジタ次第)。
+    /// から当てる。最小化から戻すときは、`unminimize` に加えて `present` で
+    /// 前面へ出すよう頼む (X11 のウィンドウマネージャは `unminimize` だけでは
+    /// 戻さないことがある)。**Wayland では最小化から戻せるとは限らない**
+    /// (戻す仕組みが無く、`present` に応えるかはコンポジタ次第)。
+    ///
+    /// 表示する前の最小化だけは、出す前に頼んでもウィンドウマネージャが
+    /// 応えないので、表示してコンポジタから最初の状態が届いてから当てる
+    /// (一瞬だけ画面に出る)。
     pub fn set_state(&self, state: WindowState) {
         if !self.0.shown.get() {
             self.0.initial_state.set(state);
             return;
         }
+        // 表示する前の頼みより、後から頼まれた状態を優先する。
+        self.0.pending_state.set(None);
         self.apply_state(state);
     }
 
     fn apply_state(&self, target: WindowState) {
         let native = &self.0.native;
-        if target != WindowState::Minimized && self.state() == WindowState::Minimized {
+        if target == WindowState::Minimized {
+            self.0.minimize_requested.set(true);
+        } else if self.0.minimize_requested.replace(false) || self.state() == WindowState::Minimized
+        {
             native.unminimize();
+            native.present();
         }
         if target != WindowState::Fullscreen && native.is_fullscreen() {
             self.0.after_fullscreen.set(Some(target));
@@ -545,10 +580,17 @@ impl Window {
 
     /// いまの状態が前に知らせたものと違えば `on_state_change` を呼ぶ。
     ///
+    /// コンポジタから最初の状態が届いたら、表示する前に頼まれた最小化を当てる。
     /// 全画面を出終わったら、続けて頼まれていた状態を当てる。
     fn report_state(&self) {
         if !self.0.shown.get() {
             return;
+        }
+        let arrived = self
+            .toplevel()
+            .is_some_and(|toplevel| !toplevel.state().is_empty());
+        if arrived && self.0.pending_state.take() == Some(WindowState::Minimized) {
+            self.apply_state(WindowState::Minimized);
         }
         let state = self.state();
         self.0.on_state_change.update(state);
@@ -780,10 +822,14 @@ impl Window {
     /// の大きさにし、表示する前に [`set_state`](Self::set_state) で頼んだ状態にする。
     pub fn show(&self) {
         if !self.0.shown.replace(true) {
-            // GTK4 は表示する前に頼んだ最大化・全画面・最小化を、出すときに当てる。
+            // GTK4 は表示する前に頼んだ最大化・全画面を、出すときに当てる。
+            // 最小化は、コンポジタから最初の状態が届いたら `report_state` が当てる。
             let state = self.0.initial_state.get();
             if state != WindowState::Normal {
-                self.apply_state(state);
+                self.0.pending_state.set(Some(state));
+                if state != WindowState::Minimized {
+                    self.apply_state(state);
+                }
             }
         }
         if let Some(size) = self.0.initial_size.take() {
