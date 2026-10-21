@@ -124,6 +124,10 @@ struct WindowInner {
     /// (`FullScreenPresenter`) から戻るときにこれを付け直すので、下限や
     /// 大きさを変えられるかどうかの設定が残る。
     overlapped: RefCell<Option<OverlappedPresenter>>,
+    /// [`Window::set_resizable`] で頼まれた値。初めて表示する前は
+    /// `AppWindow.Presenter` が空のことがあるので覚えておき、
+    /// `OverlappedPresenter` を初めて取れたところで当てる。
+    resizable: Cell<bool>,
     /// 全画面の間に [`Window::position`] が返す、全画面を出たときに戻る位置
     /// (DIP)。全画面へ入るときに読んでおく。
     fullscreen_return: Cell<Option<(f64, f64)>>,
@@ -191,6 +195,7 @@ impl Window {
             on_state_change: StateHandler::default(),
             initial_state: Cell::new(Some(WindowState::Normal)),
             overlapped: RefCell::new(None),
+            resizable: Cell::new(true),
             fullscreen_return: Cell::new(None),
             position_after_fullscreen: Cell::new(None),
         }));
@@ -250,6 +255,8 @@ impl Window {
             .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
             .ok()?;
         *self.0.overlapped.borrow_mut() = Some(presenter.clone());
+        // 取れる前に頼まれた `set_resizable` をここで当てる。
+        apply_resizable(&presenter, self.0.resizable.get());
         Some(presenter)
     }
 
@@ -755,7 +762,7 @@ impl Window {
     pub fn is_resizable(&self) -> bool {
         self.overlapped_presenter()
             .and_then(|presenter| presenter.IsResizable().ok())
-            .unwrap_or(true)
+            .unwrap_or(self.0.resizable.get())
     }
 
     /// 利用者が大きさを変えられるかどうかを決める。
@@ -764,10 +771,13 @@ impl Window {
     /// (`IsMaximizable`) を一緒に切り替える (GTK と macOS でも、大きさを
     /// 変えられないウィンドウは最大化のボタンが効かない)。
     /// [`set_size`](Self::set_size) はどちらでも効く。
+    ///
+    /// 初めて表示する前で `OverlappedPresenter` がまだ取れないときは、値を
+    /// 覚えておいて [`show`](Self::show) で当てる。
     pub fn set_resizable(&self, resizable: bool) {
+        self.0.resizable.set(resizable);
         if let Some(presenter) = self.overlapped_presenter() {
-            let _ = presenter.SetIsResizable(resizable);
-            let _ = presenter.SetIsMaximizable(resizable);
+            apply_resizable(&presenter, resizable);
         }
     }
 
@@ -1209,6 +1219,9 @@ impl Window {
             *self.0.visible.borrow_mut() = true;
             remember_owner(&self.0.native);
         }
+        // 表示する前に取れなかった `OverlappedPresenter` を取り、覚えておいた
+        // `set_resizable` を当てる。
+        let _ = self.overlapped_presenter();
         if let Some(state) = self.0.initial_state.take() {
             // 最大化などの前の大きさで一度出してから当てるので、元へ戻したときは
             // `ui.window` の大きさになる。
@@ -1577,6 +1590,12 @@ pub(crate) fn owner_hwnd() -> Option<windows::Win32::Foundation::HWND> {
     Some(windows::Win32::Foundation::HWND(
         raw as *mut std::ffi::c_void,
     ))
+}
+
+/// 大きさを変えるつまみと最大化のボタンを一緒に切り替える。
+fn apply_resizable(presenter: &OverlappedPresenter, resizable: bool) {
+    let _ = presenter.SetIsResizable(resizable);
+    let _ = presenter.SetIsMaximizable(resizable);
 }
 
 /// `rect` (スクリーン座標) のいる画面で、ワークスペース座標をスクリーン座標
