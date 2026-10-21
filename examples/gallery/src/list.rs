@@ -41,17 +41,22 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             .width(Length::Fill)
             .height(Length::Fixed(180.0)),
     );
+    // GTK はダブルクリックの 2 回目でも同じ選択を通知する。そのまま出すと
+    // 直前の「起動」のトーストを上書きしてしまうので、変わったときだけ出す。
+    // 行の作り直しや select などは通知せずに選択を変えるので、そのたびに
+    // 覚えた選択を忘れる (同じ行を選び直したときにトーストが出なくなる)。
+    let last_selection: Rc<RefCell<Option<Vec<usize>>>> = Rc::new(RefCell::new(None));
     list.on_select({
         let notice = notice.clone();
         let detailed = detailed.clone();
-        // GTK はダブルクリックの 2 回目でも同じ選択を通知する。そのまま出すと
-        // 直前の「起動」のトーストを上書きしてしまうので、変わったときだけ出す。
-        let mut last: Option<Vec<usize>> = None;
+        let last_selection = last_selection.clone();
         move |indices| {
+            let mut last = last_selection.borrow_mut();
             if last.as_deref() == Some(indices) {
                 return;
             }
-            last = Some(indices.to_vec());
+            *last = Some(indices.to_vec());
+            drop(last);
             let labels: Vec<&str> = indices
                 .iter()
                 .filter_map(|&index| detailed.get(index).map(|item| item.label.as_str()))
@@ -67,12 +72,14 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let (mode_row, mode) = parts::choice(ui, "選択方法", &["単一", "複数"])?;
     mode.on_select({
         let list = list.clone();
+        let last_selection = last_selection.clone();
         move |index| {
             list.set_selection_mode(if index == 0 {
                 SelectionMode::Single
             } else {
                 SelectionMode::Multiple
             });
+            *last_selection.borrow_mut() = None;
         }
     });
     pane.append(&mode_row);
@@ -101,18 +108,25 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let notice = notice.clone();
         let detailed = detailed.clone();
         let clicked = clicked.clone();
+        let last_selection = last_selection.clone();
         move |index| {
             let Some(row) = clicked.get() else {
                 return;
             };
             match index {
-                0 => list.select(row),
+                0 => {
+                    list.select(row);
+                    *last_selection.borrow_mut() = None;
+                }
                 1 => {
                     if let Some(item) = detailed.get(row) {
                         notice.show(&format!("開く: {}", item.label));
                     }
                 }
-                2 => list.clear_selection(),
+                2 => {
+                    list.clear_selection();
+                    *last_selection.borrow_mut() = None;
+                }
                 _ => {}
             }
         }
@@ -141,14 +155,21 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let select_example = ui.button("選択例")?;
     select_example.on_click({
         let list = list.clone();
-        move || list.select_many(&[0, 2])
+        let last_selection = last_selection.clone();
+        move || {
+            list.select_many(&[0, 2]);
+            *last_selection.borrow_mut() = None;
+        }
     });
     let detail_toggle = ui.checkbox("補足を表示")?;
     detail_toggle.set_checked(true);
     detail_toggle.on_toggle({
         let list = list.clone();
         let detailed = detailed.clone();
-        move |showing| list.set_items(if showing { &detailed } else { &plain })
+        move |showing| {
+            list.set_items(if showing { &detailed } else { &plain });
+            *last_selection.borrow_mut() = None;
+        }
     });
     actions.append(&select_example);
     actions.append(&detail_toggle);
