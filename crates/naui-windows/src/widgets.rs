@@ -448,6 +448,7 @@ impl Checkbox {
 // -------------------------------------------------------------- TextInput
 
 struct TextInputInner {
+    focus: crate::focus::Focus,
     native: TextBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
@@ -467,6 +468,7 @@ impl TextInput {
             .SetText(&HSTRING::from(text))
             .map_err(|e| to_error("TextBox への設定", e))?;
         let inner = Rc::new(TextInputInner {
+            focus: Default::default(),
             native,
             token: RefCell::new(None),
             on_submit: TextHandler::new(),
@@ -555,6 +557,7 @@ impl TextInput {
 // ----------------------------------------------------------- PasswordInput
 
 struct PasswordInputInner {
+    focus: crate::focus::Focus,
     native: PasswordBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
@@ -575,6 +578,7 @@ impl PasswordInput {
     pub(crate) fn new() -> Result<Self> {
         let native = PasswordBox::new().map_err(|e| to_error("PasswordBox の生成", e))?;
         let inner = Rc::new(PasswordInputInner {
+            focus: Default::default(),
             native,
             token: RefCell::new(None),
             on_submit: TextHandler::new(),
@@ -646,6 +650,7 @@ impl PasswordInput {
 // --------------------------------------------------------------- TextArea
 
 struct TextAreaInner {
+    focus: crate::focus::Focus,
     native: TextBox,
     token: RefCell<Option<i64>>,
 }
@@ -675,6 +680,7 @@ impl TextArea {
             .SetText(&HSTRING::from(text))
             .map_err(|e| to_error("TextBox への設定", e))?;
         Ok(Self(Rc::new(TextAreaInner {
+            focus: Default::default(),
             native,
             token: RefCell::new(None),
         })))

@@ -33,6 +33,7 @@ const AUTO_SUGGEST_BOX_XAML: &str = r#"<AutoSuggestBox
     QueryIcon="Find"/>"#;
 
 struct SearchInputInner {
+    focus: crate::focus::Focus,
     native: AutoSuggestBox,
     on_change: TextHandler,
     on_search: TextHandler,
@@ -51,6 +52,7 @@ impl SearchInput {
     pub(crate) fn new() -> Result<Self> {
         let native = load_auto_suggest_box()?;
         let this = Self(Rc::new(SearchInputInner {
+            focus: Default::default(),
             native,
             on_change: TextHandler::new(),
             on_search: TextHandler::new(),

@@ -3197,6 +3197,103 @@ fn focus_change_follows_the_owner() {
     });
 }
 
+/// 出たときの検証でフォーカスを戻す。`focus()` は同期で次の `focusin` を
+/// 出すので、文書の購読が入れ子で呼ばれても通知が欠けない。
+#[wasm_bindgen_test]
+fn focus_change_may_move_the_focus_back() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let mail = ui.text_input("")?;
+        let other = ui.text_input("")?;
+        root.append(&mail);
+        root.append(&other);
+        let _mounted = Mounted::new(&root);
+
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let record = |label: &'static str| {
+            let log = log.clone();
+            move |focused: bool| log.borrow_mut().push(format!("{label}:{focused}"))
+        };
+        other.on_focus_change(record("ほか"));
+        mail.on_focus_change({
+            let mail = mail.downgrade();
+            let record = record("メール");
+            let returned = Cell::new(false);
+            move |focused| {
+                record(focused);
+                // 1 度だけ欄へ戻す。
+                if !focused && !returned.replace(true) {
+                    if let Some(mail) = mail.upgrade() {
+                        assert!(mail.request_focus());
+                    }
+                }
+            }
+        });
+
+        assert!(mail.request_focus());
+        assert!(!other.request_focus(), "通知の中で戻されたので移っていない");
+        assert_eq!(
+            *log.borrow(),
+            [
+                "メール:true",
+                "メール:false",
+                "ほか:true",
+                "ほか:false",
+                "メール:true"
+            ]
+        );
+        let active = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.active_element());
+        assert_eq!(active.as_ref(), Some(&mail.native_element()));
+
+        // 持ち主も戻っているので、次に出たときも伝わる。
+        assert!(other.request_focus());
+        assert_eq!(log.borrow()[5..], ["メール:false", "ほか:true"]);
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn focus_change_handler_is_freed_with_the_widget() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let kept = ui.text_input("")?;
+        root.append(&kept);
+        let _mounted = Mounted::new(&root);
+
+        // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+        let state = Rc::new(());
+        let capture = || {
+            let state = state.clone();
+            move |_: bool| {
+                let _ = &state;
+            }
+        };
+
+        // 表示中の木へ入れてフォーカスを持たせてから外す。
+        let input = ui.text_input("")?;
+        root.append(&input);
+        input.on_focus_change(capture());
+        // 差し替えても、前の通知先は残らない。
+        input.on_focus_change(capture());
+        assert!(input.request_focus());
+        assert_eq!(Rc::strong_count(&state), 2);
+        root.remove(1);
+        drop(input);
+        // フォーカスが別の欄へ移れば、文書の持ち主からも外れる。
+        assert!(kept.request_focus());
+        assert_eq!(Rc::strong_count(&state), 1, "外して捨てた欄の通知先");
+
+        // 木へ入れないまま捨てる。
+        let area = ui.text_area("")?;
+        area.on_focus_change(capture());
+        drop(area);
+        assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
+        Ok(())
+    });
+}
+
 /// チャットの入力欄のように、Shift なしの Enter だけを送信に使う。
 #[wasm_bindgen_test]
 fn text_area_key_down_can_take_enter() {

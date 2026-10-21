@@ -96,6 +96,7 @@ impl ChangeHandler {
 }
 
 struct NumberInputInner {
+    focus: crate::focus::Focus,
     native: XamlNumberBox,
     spec: Cell<NumberSpec>,
     value: Cell<f64>,
@@ -134,6 +135,7 @@ impl NumberInput {
             .map_err(|e| to_error("数値入力の検証方法の設定", e))?;
 
         let this = Self(Rc::new(NumberInputInner {
+            focus: Default::default(),
             native,
             spec: Cell::new(NumberSpec::default()),
             value: Cell::new(NumberSpec::default().clamp(value)),

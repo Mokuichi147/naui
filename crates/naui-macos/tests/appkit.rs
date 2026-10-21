@@ -356,6 +356,10 @@ fn main() {
             focus_change_follows_the_first_responder,
         ),
         (
+            "ウィジェットを捨てると on_focus_change の通知先も解放される",
+            focus_change_handler_is_freed_with_the_widget,
+        ),
+        (
             "通知のクロージャが弱参照で欄自身を触れ、外して手放せば解放される",
             weak_widget_breaks_the_callback_cycle,
         ),
@@ -3401,6 +3405,47 @@ fn focus_change_follows_the_first_responder(ui: &Ui) -> Result<()> {
     assert!(name.request_focus());
     assert!(name.request_focus());
     assert_eq!(log.borrow()[5..], ["名前:true"]);
+    window.close();
+    Ok(())
+}
+
+fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let kept = ui.text_input("")?;
+    root.append(&kept);
+    window.set_child(&root);
+    window.show();
+
+    // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
+    let state = Rc::new(());
+    let capture = || {
+        let state = state.clone();
+        move |_: bool| {
+            let _ = &state;
+        }
+    };
+
+    // 表示中の木へ入れてフォーカスを持たせてから外す。
+    let input = ui.text_input("")?;
+    root.append(&input);
+    input.on_focus_change(capture());
+    // 差し替えても、前の通知先は残らない。
+    input.on_focus_change(capture());
+    assert!(input.request_focus());
+    assert_eq!(Rc::strong_count(&state), 2);
+    root.remove(1);
+    drop(input);
+    // フォーカスが別の欄へ移れば、ウィンドウの持ち主からも外れる。
+    assert!(kept.request_focus());
+    assert_eq!(Rc::strong_count(&state), 1, "外して捨てた欄の通知先");
+
+    // 木へ入れないまま捨てる。
+    let area = ui.text_area("")?;
+    area.on_focus_change(capture());
+    drop(area);
+    assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
+
     window.close();
     Ok(())
 }

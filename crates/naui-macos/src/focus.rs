@@ -10,10 +10,13 @@
 //! フィールドエディタは編集中の `NSTextField` の中に置かれるので、親を
 //! たどれば入力欄に着く (`on_key_down` と同じ)。
 //!
-//! 登録表はビューを弱参照で持つ。ビューが解放されれば通知先も表から外れる。
+//! 通知先はウィジェットが持ち ([`Focus`])、登録表はビューと通知先を
+//! 弱参照で持つ。ウィジェットが解放されれば、表の項目もそのときに外れる。
+//! 表が通知先を持つと、ウィジェットを捨てても通知先とそれが捕まえている
+//! 状態が残ってしまう。
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak as RcWeak};
 
 use naui_core::{FocusHandler, FocusOwner};
 use objc2::rc::{Retained, Weak};
@@ -22,47 +25,62 @@ use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOn
 use objc2_app_kit::{NSBackingStoreType, NSResponder, NSView, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{NSObject, NSRect};
 
-type Entries = RefCell<Vec<(Weak<NSView>, Rc<FocusHandler>)>>;
+type Entries = RefCell<Vec<(Weak<NSView>, RcWeak<FocusHandler>)>>;
 
 thread_local! {
     static VIEWS: Entries = const { RefCell::new(Vec::new()) };
 }
 
-/// ウィジェットのビューへ通知先を置く。呼ぶたびに置き換わる。
-pub(crate) fn set_view_handler(view: &NSView, f: impl FnMut(bool) + 'static) {
-    VIEWS.with(|views| {
-        let mut views = views.borrow_mut();
-        views.retain(|(weak, _)| weak.load().is_some());
-        if let Some((_, handler)) = views
-            .iter()
-            .find(|(weak, _)| weak.load().is_some_and(|other| std::ptr::eq(&*other, view)))
-        {
-            handler.set(f);
+/// ウィジェットに持たせる通知先。
+#[derive(Default)]
+pub(crate) struct Focus {
+    handler: Rc<FocusHandler>,
+    registered: Cell<bool>,
+}
+
+impl Focus {
+    /// 通知先を置く。呼ぶたびに置き換わる。
+    pub(crate) fn set(&self, view: &NSView, f: impl FnMut(bool) + 'static) {
+        self.handler.set(f);
+        if self.registered.replace(true) {
             return;
         }
-        let handler = Rc::new(FocusHandler::default());
-        handler.set(f);
-        views.push((Weak::from(view), handler));
-    });
-    adopt_current_focus(view);
+        VIEWS.with(|views| {
+            let mut views = views.borrow_mut();
+            views.retain(|(weak, handler)| weak.load().is_some() && handler.strong_count() > 0);
+            views.push((Weak::from(view), Rc::downgrade(&self.handler)));
+        });
+        adopt_current_focus(view, &self.handler);
+    }
+}
+
+impl Drop for Focus {
+    fn drop(&mut self) {
+        if !self.registered.get() {
+            return;
+        }
+        let me = Rc::as_ptr(&self.handler);
+        // スレッドの後始末で表が先に消えていれば、外すものも無い。
+        let _ = VIEWS.try_with(|views| {
+            if let Ok(mut views) = views.try_borrow_mut() {
+                views.retain(|(_, handler)| handler.as_ptr() != me);
+            }
+        });
+    }
 }
 
 /// フォーカスがすでに `view` の中にあれば、通知せずに持ち主として覚える
 /// (ウィンドウを出したときに最初の入力欄へ移るなど)。そうしないと、あとで
 /// 出たときの `false` が届かない。
-fn adopt_current_focus(view: &NSView) {
+fn adopt_current_focus(view: &NSView, handler: &Rc<FocusHandler>) {
     let Some(window) = view.window() else {
         return;
     };
     let Ok(window) = window.downcast::<FocusWindow>() else {
         return;
     };
-    let mine = lookup(view);
-    let current = owner_of(window.firstResponder());
-    if let (Some(mine), Some(current)) = (&mine, &current) {
-        if Rc::ptr_eq(mine, current) {
-            window.ivars().owner.reset(Some(current.clone()));
-        }
+    if owner_of(window.firstResponder()).is_some_and(|current| Rc::ptr_eq(&current, handler)) {
+        window.ivars().owner.reset(Some(handler.clone()));
     }
 }
 
@@ -72,7 +90,7 @@ fn lookup(view: &NSView) -> Option<Rc<FocusHandler>> {
             .borrow()
             .iter()
             .find(|(weak, _)| weak.load().is_some_and(|other| std::ptr::eq(&*other, view)))
-            .map(|(_, handler)| handler.clone())
+            .and_then(|(_, handler)| handler.upgrade())
     })
 }
 
@@ -146,7 +164,8 @@ pub(crate) fn new_window(
     Retained::into_super(this)
 }
 
-/// 文字入力のウィジェットへ `on_focus_change` を足す。
+/// 文字入力のウィジェットへ `on_focus_change` を足す。`Inner` に
+/// `focus: Focus` を持たせておくこと。
 macro_rules! impl_focus_change {
     ($t:ty) => {
         impl $t {
@@ -156,7 +175,7 @@ macro_rules! impl_focus_change {
             /// 自体がアクティブでなくなっても呼ばれない。
             pub fn on_focus_change(&self, f: impl FnMut(bool) + 'static) {
                 let view = <$t as crate::widgets::Widget>::native_view(self);
-                crate::focus::set_view_handler(&view, f);
+                self.0.focus.set(&view, f);
             }
         }
     };

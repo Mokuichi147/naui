@@ -10,10 +10,13 @@
 //! WinUI はウィンドウがアクティブでなくなってもフォーカスのある要素を
 //! 変えないので、そのときは通知しない (ほかの環境と同じ)。
 //!
-//! 登録表は要素を弱参照で持つ。要素が解放されれば通知先も表から外れる。
-//! 終了の経路では [`release_handlers`] で通知先を手放す ([`Registry`] を参照)。
+//! 通知先はウィジェットが持ち ([`Focus`])、登録表は要素と通知先を弱参照で
+//! 持つ。ウィジェットが解放されれば、表の項目もそのときに外れる。表が
+//! 通知先を持つと、ウィジェットを捨てても通知先とそれが捕まえている状態が
+//! 残ってしまう。終了の経路では [`release_handlers`] で見張りが覚えている
+//! 持ち主を手放す ([`Registry`] を参照)。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak as RcWeak};
 use std::sync::Arc;
 
@@ -34,7 +37,7 @@ struct Tracker {
     focused: RefCell<Option<Weak<DependencyObject>>>,
 }
 
-type Entries = Registry<(Weak<UIElement>, Rc<FocusHandler>)>;
+type Entries = Registry<(Weak<UIElement>, RcWeak<FocusHandler>)>;
 
 thread_local! {
     static WIDGETS: Entries = const { Registry::new() };
@@ -42,26 +45,46 @@ thread_local! {
     static TRACKERS: RefCell<Vec<RcWeak<Tracker>>> = const { RefCell::new(Vec::new()) };
 }
 
-/// ウィジェットの要素へ通知先を置く。呼ぶたびに置き換わる。
-pub(crate) fn set_widget_handler(element: &UIElement, f: impl FnMut(bool) + 'static) {
-    let handler = WIDGETS.with(|entries| {
-        let mut entries = entries.borrow_mut();
-        entries.retain(|(weak, _)| weak.upgrade().is_some());
-        if let Some((_, handler)) = entries
-            .iter()
-            .find(|(weak, _)| weak.upgrade().is_some_and(|other| same(&other, element)))
-        {
-            handler.set(f);
-            return None;
+/// ウィジェットに持たせる通知先。
+#[derive(Default)]
+pub(crate) struct Focus {
+    handler: Rc<FocusHandler>,
+    registered: Cell<bool>,
+}
+
+impl Focus {
+    /// 通知先を置く。呼ぶたびに置き換わる。
+    pub(crate) fn set(&self, element: &UIElement, f: impl FnMut(bool) + 'static) {
+        self.handler.set(f);
+        if self.registered.get() {
+            return;
         }
-        let weak = element.downgrade().ok()?;
-        let handler = Rc::new(FocusHandler::default());
-        handler.set(f);
-        entries.push((weak, handler.clone()));
-        Some(handler)
-    });
-    if let Some(handler) = handler {
-        adopt_current_focus(&handler);
+        let Ok(weak) = element.downgrade() else {
+            return;
+        };
+        self.registered.set(true);
+        WIDGETS.with(|entries| {
+            let mut entries = entries.borrow_mut();
+            entries
+                .retain(|(weak, handler)| handler.strong_count() > 0 && weak.upgrade().is_some());
+            entries.push((weak, Rc::downgrade(&self.handler)));
+        });
+        adopt_current_focus(&self.handler);
+    }
+}
+
+impl Drop for Focus {
+    fn drop(&mut self) {
+        if !self.registered.get() {
+            return;
+        }
+        let me = Rc::as_ptr(&self.handler);
+        // スレッドの後始末で表が先に消えていれば、外すものも無い。
+        let _ = WIDGETS.try_with(|entries| {
+            if let Ok(mut entries) = entries.try_borrow_mut() {
+                entries.retain(|(_, handler)| handler.as_ptr() != me);
+            }
+        });
     }
 }
 
@@ -82,9 +105,8 @@ fn adopt_current_focus(handler: &Rc<FocusHandler>) {
     }
 }
 
-/// 通知先をすべて手放す。終了の経路で、XAML の後片づけより前に呼ぶ。
-///
-/// 見張りが覚えている持ち主も通知先を掴んでいるので、あわせて外す。
+/// 見張りが覚えている持ち主 (通知先を掴んでいる) と、登録表の弱参照を
+/// 手放す。終了の経路で、XAML の後片づけより前に呼ぶ。
 pub(crate) fn release_handlers() {
     let trackers: Vec<Rc<Tracker>> = TRACKERS.with(|trackers| {
         trackers
@@ -106,7 +128,7 @@ fn lookup(object: &DependencyObject) -> Option<Rc<FocusHandler>> {
             .borrow()
             .iter()
             .find(|(weak, _)| weak.upgrade().is_some_and(|other| same(&other, object)))
-            .map(|(_, handler)| handler.clone())
+            .and_then(|(_, handler)| handler.upgrade())
     })
 }
 
@@ -144,7 +166,8 @@ pub(crate) fn install(root: &UIElement) -> windows_core::Result<()> {
     Ok(())
 }
 
-/// 文字入力のウィジェットへ `on_focus_change` を足す。
+/// 文字入力のウィジェットへ `on_focus_change` を足す。`Inner` に
+/// `focus: Focus` を持たせておくこと。
 macro_rules! impl_focus_change {
     ($t:ty) => {
         impl $t {
@@ -154,7 +177,7 @@ macro_rules! impl_focus_change {
             /// 自体がアクティブでなくなっても呼ばれない。
             pub fn on_focus_change(&self, f: impl FnMut(bool) + 'static) {
                 let element = <$t as crate::widgets::Widget>::native_element(self);
-                crate::focus::set_widget_handler(&element, f);
+                self.0.focus.set(&element, f);
             }
         }
     };

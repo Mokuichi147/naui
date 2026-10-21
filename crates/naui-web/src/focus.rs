@@ -11,8 +11,14 @@
 //! `focus` は同じ持ち主なので通知しない)。ほかの 3 環境でウィンドウが
 //! アクティブでなくなったときと同じ扱いになる。
 //!
-//! 登録表は要素と、通知先の弱参照を持つ。通知先そのものはウィジェットが
-//! 持つので、ウィジェットが解放されれば表からも外れる。
+//! 通知先はウィジェットが持ち ([`Focus`])、登録表は要素と通知先の弱参照を
+//! 持つ。ウィジェットが解放されれば、表の項目もそのときに外す。表に残すと、
+//! 画面から外した要素 (とそこからたどれる DOM) がページの寿命まで残る。
+//!
+//! 文書の購読は入れ子で呼ばれる。通知の中で別の欄へ `request_focus()` すると、
+//! `focus()` が同期で次の `focusout` / `focusin` を出すため
+//! ([`Listener::attach_reentrant`])。持ち主の移動は [`FocusOwner`] が順番待ちに
+//! するので、内側の移動も取りこぼさない。
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -61,6 +67,21 @@ impl Focus {
     }
 }
 
+impl Drop for Focus {
+    fn drop(&mut self) {
+        if !self.registered.get() {
+            return;
+        }
+        let me = Rc::as_ptr(&self.handler);
+        // スレッドの後始末で表が先に消えていれば、外すものも無い。
+        let _ = ENTRIES.try_with(|entries| {
+            if let Ok(mut entries) = entries.try_borrow_mut() {
+                entries.retain(|(_, handler)| handler.as_ptr() != me);
+            }
+        });
+    }
+}
+
 fn ensure_listeners() {
     LISTENERS.with(|listeners| {
         if !listeners.borrow().is_empty() {
@@ -69,11 +90,11 @@ fn ensure_listeners() {
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {
             return;
         };
-        let focus_in = Listener::attach_event(document.as_ref(), "focusin", |event| {
+        let focus_in = Listener::attach_reentrant(document.as_ref(), "focusin", |event| {
             let target = event.target().and_then(|t| t.dyn_into::<Node>().ok());
             OWNER.with(|owner| owner.move_to(owner_of(target)));
         });
-        let focus_out = Listener::attach_event(document.as_ref(), "focusout", |event| {
+        let focus_out = Listener::attach_reentrant(document.as_ref(), "focusout", |event| {
             // 移る先があるなら、続く `focusin` が数える。
             let next = event
                 .dyn_ref::<FocusEvent>()
