@@ -423,6 +423,10 @@ fn main() {
             window_state_requested_before_show,
         ),
         (
+            "状態の通知の中から頼んだ状態も通知される",
+            window_state_change_inside_the_notification,
+        ),
+        (
             "大きさを変えられるかどうかが styleMask と往復する",
             window_resizable_round_trips,
         ),
@@ -4270,6 +4274,41 @@ fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
 }
 
 /// 表示する前の `set_state` は覚えておき、表示するときに当てる。
+/// 通知の中から同じウィンドウの状態を変えても、その変化の通知は失われない。
+///
+/// macOS 27 では、通知の中で頼んだ `zoom:` はその場では当たらず (戻った
+/// 直後も zoom のまま)、元に戻ったことは後の `windowDidResize:` で届く。
+/// 通知の中で状態が変わったときに後回しにして知らせる仕組みそのものは、
+/// naui-core の `StateHandler` の単体テストで確かめている。
+fn window_state_change_inside_the_notification(ui: &Ui) -> Result<()> {
+    let window = ui.window("通知の中の状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_state_change({
+        let seen = seen.clone();
+        let weak = window.downgrade();
+        move |state| {
+            seen.borrow_mut().push(state);
+            if state == WindowState::Maximized {
+                if let Some(window) = weak.upgrade() {
+                    window.set_state(WindowState::Normal);
+                }
+            }
+        }
+    });
+    window.show();
+    pump(0.2);
+    window.set_state(WindowState::Maximized);
+    pump_until(2.0, || seen.borrow().len() >= 2);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [WindowState::Maximized, WindowState::Normal]
+    );
+    assert_eq!(window.state(), WindowState::Normal);
+    window.close();
+    Ok(())
+}
+
 fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
     let window = ui.window("表示前の状態", 320.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
