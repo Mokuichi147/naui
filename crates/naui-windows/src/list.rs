@@ -549,6 +549,10 @@ impl List {
             if !on_row || args.Key().unwrap_or(VirtualKey::None) != VirtualKey::Enter || modified {
                 return Ok(());
             }
+            // 受け取り手がいないときは止めず、親のキー処理へ渡す。
+            if !activate.is_set() {
+                return Ok(());
+            }
             let _ = args.SetHandled(true);
             activate.emit(index);
             Ok(())
