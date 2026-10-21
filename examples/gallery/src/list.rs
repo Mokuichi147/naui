@@ -44,7 +44,14 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     list.on_select({
         let notice = notice.clone();
         let detailed = detailed.clone();
+        // GTK はダブルクリックの 2 回目でも同じ選択を通知する。そのまま出すと
+        // 直前の「起動」のトーストを上書きしてしまうので、変わったときだけ出す。
+        let mut last: Option<Vec<usize>> = None;
         move |indices| {
+            if last.as_deref() == Some(indices) {
+                return;
+            }
+            last = Some(indices.to_vec());
             let labels: Vec<&str> = indices
                 .iter()
                 .filter_map(|&index| detailed.get(index).map(|item| item.label.as_str()))
