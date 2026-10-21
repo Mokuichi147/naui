@@ -30,16 +30,17 @@ use naui_core::{
     Align, ListItem, Orientation, Point, Result, SelectionMode, Sizing, TextColor, TextStyle,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode, ScrollBarVisibility,
-    ScrollViewer, SelectionChangedEventHandler, TextBlock,
+    Border, Control, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
+    ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{
     ContextRequestedEventArgs, DoubleTappedEventHandler, KeyEventHandler, PointerEventHandler,
     PointerRoutedEventArgs,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, RoutedEventHandler, Thickness, UIElement,
+    DependencyObject, FrameworkElement, RoutedEventHandler, Thickness, UIElement,
 };
 use windows::Foundation::{Point as XamlPoint, TypedEventHandler};
 use windows::System::VirtualKey;
@@ -516,7 +517,15 @@ impl List {
     /// 購読は `List` を弱参照で持つ (行 → 購読 → `List` → 行 の循環を作らない)。
     fn listen_row_events(&self, native: &ListViewItem, index: usize) -> Result<()> {
         let activate = self.0.row_activate.clone();
-        let double = DoubleTappedEventHandler::new(move |_, _| {
+        let double = DoubleTappedEventHandler::new(move |sender, args| {
+            // ボタンは `DoubleTapped` を止めないので、行内のコントロールを
+            // ダブルクリックしても行まで上がってくる。それは起動にしない。
+            let source = args.as_ref().and_then(|args| args.OriginalSource().ok());
+            if let (Some(source), Some(sender)) = (source, sender.as_ref()) {
+                if pressed_on_control(&source, sender) {
+                    return Ok(());
+                }
+            }
             activate.emit(index);
             Ok(())
         });
@@ -815,6 +824,33 @@ fn row_host(row: &ListRow) -> Result<XamlGrid> {
     });
     let _ = host.PointerPressed(&handler);
     Ok(host)
+}
+
+/// 行の中で押された `source` が、自分で入力を受けるコントロールの上か。
+///
+/// `source` から行 (`row`) の手前まで親へたどり、有効でフォーカスを受ける
+/// `Control` (ボタン・チェックボックス・入力欄など) があれば真。
+/// `ScrollViewer` や `ProgressBar` のようにフォーカスを受けないものは行の
+/// 一部として扱う。`PointerPressed` を止めるかどうかの切り分けにそろえている。
+fn pressed_on_control(source: &IInspectable, row: &IInspectable) -> bool {
+    let mut current = source.cast::<DependencyObject>().ok();
+    while let Some(object) = current {
+        if crate::keys::same(&object, row) {
+            return false;
+        }
+        if let Ok(control) = object.cast::<Control>() {
+            let enabled = control.IsEnabled().unwrap_or(false);
+            let tab_stop = control
+                .cast::<UIElement>()
+                .and_then(|element| element.IsTabStop())
+                .unwrap_or(false);
+            if enabled && tab_stop {
+                return true;
+            }
+        }
+        current = VisualTreeHelper::GetParent(&object).ok();
+    }
+    false
 }
 
 /// 押されたのが主ボタン (左クリック・タッチ・ペン) か。
