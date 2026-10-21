@@ -34,8 +34,9 @@ GUI ツールキットで一般的に求められる機能のうち、naui (v0.1
       `on_state_change` (`WindowState`)、`set_position` / `position`、
       `set_resizable` / `is_resizable` として入れました。Linux は GTK4 に位置の
       API が無いので `position` が `None` です。
-- [ ] **`List` の右クリックとダブルクリック**。右クリックは `PopupMenu::open_at`
+- [x] **`List` の右クリックとダブルクリック**。右クリックは `PopupMenu::open_at`
       と組み合わせて、行ごとの文脈メニューにします。
+      (`List::on_context_menu` と `List::on_row_activate`。起動は Enter でも届きます)
 - [x] **`Canvas` のホイールと、マウスボタンの区別**。`PointerEvent` に足すだけで、
       拡大縮小やパン操作の土台になります。
 

@@ -125,6 +125,10 @@ impl SelectHandler {
         self.0.with_mut(|slot| *slot = Some(Box::new(f)));
     }
 
+    pub(crate) fn is_set(&self) -> bool {
+        self.0.try_with_mut(|slot| slot.is_some()).unwrap_or(false)
+    }
+
     pub(crate) fn emit(&self, index: usize) {
         let Some(Some(mut f)) = self.0.try_with_mut(|slot| slot.take()) else {
             return;

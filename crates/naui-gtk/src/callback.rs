@@ -47,6 +47,11 @@ impl<T> Notifier<T> {
     pub(crate) fn emit(&self, value: T) {
         emit(&self.0, value);
     }
+
+    /// クロージャを持っているか。
+    pub(crate) fn is_set(&self) -> bool {
+        self.0.borrow().is_some()
+    }
 }
 
 /// 借用した値を受け取るコールバック。

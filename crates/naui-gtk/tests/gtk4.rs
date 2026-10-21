@@ -513,6 +513,14 @@ fn main() {
             list_row_activation_notifies,
         ),
         (
+            "リストのダブルクリックと Enter が行の起動を通知する",
+            list_row_activate_notifies,
+        ),
+        (
+            "リストの右クリックが行と位置を通知する",
+            list_context_menu_notifies,
+        ),
+        (
             "複数選択でクリックの修飾キーが GTK4 へ届く",
             list_multiple_selection_reaches_the_modifier_keys,
         ),
@@ -3735,6 +3743,135 @@ fn ui_clone_builds_rows_from_a_callback(ui: &Ui) -> Result<()> {
 /// `GtkListBoxRow::activate` (キーボード側) は通らない。
 fn activate_row(list: &gtk::ListBox, row: &gtk::ListBoxRow) {
     list.emit_by_name::<()>("row-activated", &[row]);
+}
+
+/// 行に付いた、指定のボタンを受ける `GtkGestureClick`。
+fn row_gesture(row: &gtk::ListBoxRow, button: u32) -> gtk::GestureClick {
+    let controllers = row.observe_controllers();
+    (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .filter_map(|item| item.downcast::<gtk::GestureClick>().ok())
+        .find(|gesture| gesture.button() == button)
+        .expect("行のクリックを受けるジェスチャー")
+}
+
+/// 起動と文脈メニューを確かめるための、行が並んだリストを窓に出す。
+fn shown_list_for_events(ui: &Ui) -> Result<(naui_gtk::Window, naui_gtk::List)> {
+    let window = ui.window("行の操作", 320.0, 240.0)?;
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("札幌"),
+        ListItem::new("仙台"),
+        ListItem::new("東京").detail("13,960,000 人"),
+        ListItem::new("大阪").enabled(false),
+    ]);
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    window.show();
+    for _ in 0..3 {
+        tick(&list.native_widget());
+    }
+    Ok((window, list))
+}
+
+/// ダブルクリックと、行にフォーカスがある状態の Enter が `on_row_activate` へ届く。
+fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
+    let (window, list) = shown_list_for_events(ui)?;
+    let (log, sink) = recorder::<usize>();
+    list.on_row_activate(sink);
+    let native = list_box_of(&list);
+    let row = |index: i32| native.row_at_index(index).expect("行");
+
+    // 1 回目の押下では起動しない。2 回目 (n_press = 2) で起動する。
+    let double = row_gesture(&row(2), gtk::gdk::BUTTON_PRIMARY);
+    double.emit_by_name::<()>("pressed", &[&1i32, &10.0f64, &5.0f64]);
+    assert!(log.borrow().is_empty(), "1 回のクリックでは起動しないこと");
+    double.emit_by_name::<()>("pressed", &[&2i32, &10.0f64, &5.0f64]);
+    assert_eq!(
+        log.borrow().as_slice(),
+        [2],
+        "ダブルクリックした行が届くこと"
+    );
+
+    // 選べない行は GTK が押下を届けない。届いたとしても起動しない。
+    row_gesture(&row(3), gtk::gdk::BUTTON_PRIMARY)
+        .emit_by_name::<()>("pressed", &[&2i32, &10.0f64, &5.0f64]);
+    assert_eq!(log.borrow().as_slice(), [2], "選べない行では起動しないこと");
+
+    // Enter は、フォーカスのある行を起動する。
+    let enter = {
+        let controllers = native.observe_controllers();
+        (0..controllers.n_items())
+            .filter_map(|index| controllers.item(index))
+            .filter_map(|item| item.downcast::<gtk::EventControllerKey>().ok())
+            .find(|keys| keys.propagation_phase() == gtk::PropagationPhase::Capture)
+            .expect("Enter の受け口")
+    };
+    let press = |key: gtk::gdk::Key, state: gtk::gdk::ModifierType| {
+        let _: bool = enter.emit_by_name("key-pressed", &[&key, &0u32, &state]);
+    };
+    assert!(row(1).grab_focus(), "行にフォーカスを移せること");
+    press(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
+    assert_eq!(
+        log.borrow().as_slice(),
+        [2, 1],
+        "Enter でフォーカスの行が届くこと"
+    );
+    press(gtk::gdk::Key::Return, gtk::gdk::ModifierType::CONTROL_MASK);
+    press(gtk::gdk::Key::a, gtk::gdk::ModifierType::empty());
+    assert_eq!(
+        log.borrow().len(),
+        2,
+        "修飾キー付きの Enter や他のキーでは起動しないこと"
+    );
+
+    window.close();
+    Ok(())
+}
+
+/// 右クリックが `on_context_menu` へ届き、位置は `PopupMenu::open_at(&list, ..)`
+/// と同じ座標 (`GtkListBox` の座標) になる。
+fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
+    let (window, list) = shown_list_for_events(ui)?;
+    let (log, mut sink) = recorder::<(usize, Point)>();
+    list.on_context_menu(move |index, at| sink((index, at)));
+    let native = list_box_of(&list);
+    let row = native.row_at_index(2).expect("3 行目");
+
+    // 窓を出したときにフォーカスの行が選ばれることがあるので、前後で比べる。
+    let before = list.selection();
+    let gesture = row_gesture(&row, gtk::gdk::BUTTON_SECONDARY);
+    gesture.emit_by_name::<()>("pressed", &[&1i32, &7.0f64, &4.0f64]);
+    let expected = row
+        .compute_point(&native, &gtk::graphene::Point::new(7.0, 4.0))
+        .expect("行の位置");
+    {
+        let log = log.borrow();
+        assert_eq!(log.len(), 1, "右クリックが 1 回だけ届くこと");
+        assert_eq!(log[0].0, 2, "右クリックした行のインデックスが届くこと");
+        assert!(
+            (log[0].1.x - f64::from(expected.x())).abs() < 0.5
+                && (log[0].1.y - f64::from(expected.y())).abs() < 0.5,
+            "位置がリストの座標であること: {:?}",
+            log[0].1
+        );
+        assert!(log[0].1.y > 0.0, "3 行目は上端より下にあること");
+    }
+    assert_eq!(
+        list.selection(),
+        before,
+        "右クリックでは選択が変わらないこと"
+    );
+
+    row_gesture(
+        &native.row_at_index(3).expect("4 行目"),
+        gtk::gdk::BUTTON_SECONDARY,
+    )
+    .emit_by_name::<()>("pressed", &[&1i32, &7.0f64, &4.0f64]);
+    assert_eq!(log.borrow().len(), 1, "選べない行では届かないこと");
+
+    window.close();
+    Ok(())
 }
 
 fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
