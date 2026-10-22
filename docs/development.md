@@ -107,8 +107,10 @@ cargo check --target x86_64-pc-windows-msvc -p naui
 cargo check --target x86_64-unknown-linux-gnu -p naui
 ```
 
-`crates/naui/src/lib.rs` の `__api_contract` が公開 API を一通り型検査し、
-バックエンド間のシグネチャのずれを検出します。
+`naui` の型 (`naui::Button` など) はバックエンドの型を包み、各メソッドを
+中身へ渡しています。どのターゲットでも同じ包みをコンパイルするので、
+バックエンドにメソッドが欠けていたりシグネチャがずれていたりすると、
+そのターゲットの `cargo check` が失敗します。
 
 ## CI
 
