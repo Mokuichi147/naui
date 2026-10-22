@@ -316,6 +316,10 @@ fn main() {
             window_state_round_trips,
         ),
         (
+            "コンポジタが応える前に続けて頼んでも最後の状態になる",
+            window_state_requests_in_a_row,
+        ),
+        (
             "表示する前に頼んだ状態で表示される",
             window_state_requested_before_show,
         ),
@@ -7163,6 +7167,59 @@ fn window_state_round_trips(ui: &Ui) -> Result<()> {
     );
     window.close();
     Ok(())
+}
+
+/// コンポジタが応える前に続けて状態を頼んでも、最後に頼んだ状態になる。
+///
+/// `is_maximized` / `is_fullscreen` はコンポジタが応えるまで変わらないので、
+/// それだけを見ると、応える前の頼みを取り消せずに先の状態が後から当たる。
+fn window_state_requests_in_a_row(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let sequences: &[&[WindowState]] = &[
+        &[WindowState::Fullscreen, WindowState::Normal],
+        &[WindowState::Maximized, WindowState::Normal],
+        &[WindowState::Fullscreen, WindowState::Maximized],
+        &[
+            WindowState::Maximized,
+            WindowState::Fullscreen,
+            WindowState::Normal,
+        ],
+    ];
+    if is_unresponsive(ui)? {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        return Ok(());
+    }
+    for sequence in sequences {
+        let window = ui.window("続けて頼む", 320.0, 200.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        spin_until(Duration::from_secs(1), || {
+            !toplevel_state(&window).is_empty()
+        });
+        for &state in *sequence {
+            window.set_state(state);
+        }
+        let last = *sequence.last().unwrap();
+        // 先の頼みが後から当たっていないことも確かめるため、待ち切ってから比べる。
+        spin_until(Duration::from_secs(3), || false);
+        assert_eq!(window.state(), last, "{sequence:?}");
+        window.close();
+    }
+    Ok(())
+}
+
+/// 表示した後の最大化に誰も応えない環境 (ウィンドウマネージャのいない X11) か。
+fn is_unresponsive(ui: &Ui) -> Result<bool> {
+    let window = ui.window("応えるか", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    window.set_state(WindowState::Maximized);
+    spin_until(std::time::Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    let unresponsive = !toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED);
+    window.close();
+    Ok(unresponsive)
 }
 
 /// 表示する前の `set_state` は覚えておき、表示するときに当てる。

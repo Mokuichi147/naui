@@ -71,6 +71,12 @@ pub(crate) struct WindowInner {
     /// [`Window::set_state`] で最小化を頼み、まだ戻すよう頼んでいない。
     /// Wayland では最小化が `state` に出ないので、戻すときの手掛かりにする。
     minimize_requested: Cell<bool>,
+    /// 最大化を頼み、まだコンポジタの状態に出ておらず、元に戻すよう頼んでもいない。
+    /// `is_maximized` はコンポジタが応えるまで変わらないので、応える前に
+    /// 続けて頼まれたときに取り消す手掛かりにする。
+    maximize_requested: Cell<bool>,
+    /// 全画面を頼み、まだコンポジタの状態に出ておらず、出るよう頼んでもいない。
+    fullscreen_requested: Cell<bool>,
     /// 全画面を出終わってから当てる状態。全画面のまま最大化を頼んでも
     /// コンポジタによっては無視されるので、まず全画面を出る。
     after_fullscreen: Cell<Option<WindowState>>,
@@ -163,6 +169,8 @@ impl Window {
             initial_state: Cell::new(WindowState::Normal),
             pending_state: Cell::new(None),
             minimize_requested: Cell::new(false),
+            maximize_requested: Cell::new(false),
+            fullscreen_requested: Cell::new(false),
             after_fullscreen: Cell::new(None),
             state_handler: RefCell::new(None),
         }));
@@ -530,6 +538,9 @@ impl Window {
     /// 戻さないことがある)。**Wayland では最小化から戻せるとは限らない**
     /// (戻す仕組みが無く、`present` に応えるかはコンポジタ次第)。
     ///
+    /// コンポジタが応える前に続けて頼んだときは、まだ応えていない頼みを
+    /// 取り消してから次を頼むので、最後に頼んだ状態になる。
+    ///
     /// 表示する前の最小化だけは、出す前に頼んでもウィンドウマネージャが
     /// 応えないので、表示してコンポジタから最初の状態が届いてから当てる
     /// (一瞬だけ画面に出る)。
@@ -552,21 +563,35 @@ impl Window {
             native.unminimize();
             native.present();
         }
-        if target != WindowState::Fullscreen && native.is_fullscreen() {
-            self.0.after_fullscreen.set(Some(target));
-            native.unfullscreen();
-            return;
+        if target != WindowState::Fullscreen {
+            if native.is_fullscreen() {
+                self.0.after_fullscreen.set(Some(target));
+                self.0.fullscreen_requested.set(false);
+                native.unfullscreen();
+                return;
+            }
+            // 頼んだ全画面にコンポジタがまだ応えていなければ、応える前に
+            // 取り消す (頼みは順に届くので、出終わりを待たずに次を頼める)。
+            if self.0.fullscreen_requested.replace(false) {
+                native.unfullscreen();
+            }
         }
         self.0.after_fullscreen.set(None);
         match target {
             WindowState::Normal => {
-                if native.is_maximized() {
+                if self.0.maximize_requested.replace(false) || native.is_maximized() {
                     native.unmaximize();
                 }
             }
-            WindowState::Maximized => native.maximize(),
+            WindowState::Maximized => {
+                self.0.maximize_requested.set(true);
+                native.maximize();
+            }
             WindowState::Minimized => native.minimize(),
-            WindowState::Fullscreen => native.fullscreen(),
+            WindowState::Fullscreen => {
+                self.0.fullscreen_requested.set(true);
+                native.fullscreen();
+            }
         }
     }
 
@@ -591,6 +616,17 @@ impl Window {
             .is_some_and(|toplevel| !toplevel.state().is_empty());
         if arrived && self.0.pending_state.take() == Some(WindowState::Minimized) {
             self.apply_state(WindowState::Minimized);
+        }
+        // コンポジタが応えた頼みは、ここからは面の状態で分かる。
+        if let Some(toplevel) = self.toplevel() {
+            use gtk::gdk::ToplevelState;
+            let flags = toplevel.state();
+            if flags.contains(ToplevelState::MAXIMIZED) {
+                self.0.maximize_requested.set(false);
+            }
+            if flags.contains(ToplevelState::FULLSCREEN) {
+                self.0.fullscreen_requested.set(false);
+            }
         }
         let state = self.state();
         self.0.on_state_change.update(state);
