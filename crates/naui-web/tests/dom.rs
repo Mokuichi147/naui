@@ -3978,6 +3978,10 @@ async fn window_reports_its_size() {
 /// `set_state(Fullscreen)` は断られ、状態は変わらない。自動操作のブラウザには
 /// 許すものもある (Playwright の WebKit) ので、許されたときは往復と通知を
 /// 確かめる。どちらでも例外にはならない。
+///
+/// Playwright の WebKit が許すのは**ページごとに最初の 1 回だけ**で、2 回目
+/// からは断る。全画面へ入るのはこのテストの 1 回にまとめ、入る途中に別の
+/// 状態を頼んだときの後始末もその 1 回で確かめる。
 #[wasm_bindgen_test]
 async fn window_state_is_only_fullscreen() {
     let mut kept = None;
@@ -3989,14 +3993,19 @@ async fn window_state_is_only_fullscreen() {
         Ok(())
     });
     let window = kept.expect("window");
-    let seen = Rc::new(RefCell::new(Vec::new()));
-    window.on_state_change({
-        let seen = seen.clone();
-        move |state| seen.borrow_mut().push(state)
-    });
     let document = web_sys::window()
         .and_then(|w| w.document())
         .expect("document");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_state_change({
+        let seen = seen.clone();
+        let document = document.clone();
+        move |state| {
+            let page = document.document_element();
+            let page_is_fullscreen = page.is_some() && document.fullscreen_element() == page;
+            seen.borrow_mut().push((state, page_is_fullscreen));
+        }
+    });
 
     assert_eq!(window.position(), None);
     window.set_position(120.0, 140.0);
@@ -4010,30 +4019,38 @@ async fn window_state_is_only_fullscreen() {
     assert_eq!(window.state(), WindowState::Normal);
     assert!(document.fullscreen_element().is_none());
 
+    // 入る途中に最大化を頼む。`fullscreenElement` は入り終わるまで空なので、
+    // その場では判断できない。入り終わってから、最後の頼みどおり全画面を出る
+    // (Web の最大化は全画面を出るだけ)。
     window.set_state(WindowState::Fullscreen);
-    frames_until(|| document.fullscreen_element().is_some()).await;
-    if document.fullscreen_element().is_some() {
-        assert_eq!(
-            document.fullscreen_element(),
-            document.document_element(),
-            "ページ全体を全画面にする"
-        );
-        assert_eq!(window.state(), WindowState::Fullscreen);
-        frames_until(|| !seen.borrow().is_empty()).await;
-        assert_eq!(seen.borrow().as_slice(), [WindowState::Fullscreen]);
-        // 全画面の間に最大化を頼むと、全画面を出るだけ。
-        window.set_state(WindowState::Maximized);
-        frames_until(|| document.fullscreen_element().is_none()).await;
+    assert!(
+        document.fullscreen_element().is_none(),
+        "全画面に入るのは非同期"
+    );
+    window.set_state(WindowState::Maximized);
+    for _ in 0..10 {
+        next_frames().await;
+    }
+    frames_until(|| seen.borrow().len() >= 2).await;
+    if seen.borrow().is_empty() {
+        // 断られた。状態は変わらず、知らせもしない。
+        assert!(document.fullscreen_element().is_none());
         assert_eq!(window.state(), WindowState::Normal);
-        frames_until(|| seen.borrow().len() == 2).await;
+    } else {
+        // 許された。いったん全画面に入り (ページ全体)、続けて出る。
         assert_eq!(
             seen.borrow().as_slice(),
-            [WindowState::Fullscreen, WindowState::Normal]
+            [
+                (WindowState::Fullscreen, true),
+                (WindowState::Normal, false)
+            ],
+            "(状態, ページ全体が全画面か)"
         );
-    } else {
-        // 断られた。状態は変わらず、知らせもしない。
+        assert!(
+            document.fullscreen_element().is_none(),
+            "最後の頼みどおり全画面を出ている"
+        );
         assert_eq!(window.state(), WindowState::Normal);
-        assert!(seen.borrow().is_empty(), "{:?}", seen.borrow());
     }
 
     // 全画面の出入り (`fullscreenchange`) で状態を読み直すが、変わって

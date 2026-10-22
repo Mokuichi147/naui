@@ -50,10 +50,16 @@ struct WindowInner {
     on_state_change: StateHandler,
     /// 文書の `fullscreenchange` の購読。全画面への出入りを知らせる。
     fullscreen_change: RefCell<Option<Listener>>,
-    /// `requestFullscreen` / `exitFullscreen` の Promise が断られたときの
-    /// 受け口。断られても何もしないが、受けないとコンソールに
-    /// 「処理されなかった拒否」が出る。使い回すので、ここで生かしておく。
-    ignore_rejection: wasm_bindgen::closure::Closure<dyn FnMut(wasm_bindgen::JsValue)>,
+    /// 最後に `set_state` で頼まれた向き (全画面にするなら `true`)。まだ
+    /// 当たっていない間だけ `Some` で、当たったら (か、断られたら) `None`。
+    wanted: Cell<Option<bool>>,
+    /// いま待っている `requestFullscreen` (`true`) / `exitFullscreen`
+    /// (`false`) の向き。待っていなければ `None`。
+    in_flight: Cell<Option<bool>>,
+    /// 待っていた Promise が済んだ (成功でも拒否でも) ときの受け口。受けないと
+    /// 拒否がコンソールに「処理されなかった拒否」として出る。使い回すので、
+    /// ここで生かしておく。
+    settled: RefCell<Option<ObserverCallback>>,
     /// `set_resizable` で頼まれた値。Web では効かず、覚えるだけ。
     resizable: Cell<bool>,
 }
@@ -144,7 +150,9 @@ impl Window {
             bars_callback: RefCell::new(None),
             on_state_change: StateHandler::default(),
             fullscreen_change: RefCell::new(None),
-            ignore_rejection: wasm_bindgen::closure::Closure::new(|_: wasm_bindgen::JsValue| {}),
+            wanted: Cell::new(None),
+            in_flight: Cell::new(None),
+            settled: RefCell::new(None),
             resizable: Cell::new(true),
         }));
         this.observe_fullscreen();
@@ -197,6 +205,15 @@ impl Window {
             }
         });
         *self.0.fullscreen_change.borrow_mut() = listener.ok();
+        let weak = Rc::downgrade(&self.0);
+        let settled = wasm_bindgen::closure::Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(
+            move |_: wasm_bindgen::JsValue| {
+                if let Some(inner) = weak.upgrade() {
+                    Window(inner).finish_fullscreen_request();
+                }
+            },
+        );
+        *self.0.settled.borrow_mut() = Some(settled);
     }
 
     /// 行の高さが変わったら (付け外しや、フォントの読み込みで) 高さを足し直す。
@@ -306,21 +323,58 @@ impl Window {
     ///
     /// ページ全体を全画面にするので、ウィンドウが複数あれば全部が全画面の
     /// 中に入る (トーストやダイアログも出る)。
+    ///
+    /// 全画面へ入る・出る途中にほかの状態を頼んだときは、いま待っている
+    /// 切り替えが済んでから、最後に頼まれたほうへ切り替え直す (途中では
+    /// `fullscreenElement` がまだ変わっていないので、その場では決められない)。
     pub fn set_state(&self, state: WindowState) {
-        let fullscreen = self.state() == WindowState::Fullscreen;
-        let promise = match (state, fullscreen) {
-            (WindowState::Fullscreen, false) => self
-                .0
+        self.0.wanted.set(Some(state == WindowState::Fullscreen));
+        self.apply_wanted();
+    }
+
+    /// 頼まれた向きといまの状態が違えば、切り替えを頼む。
+    ///
+    /// 切り替えを待っている間は頼まない (済んだときにまた呼ばれる)。
+    fn apply_wanted(&self) {
+        if self.0.in_flight.get().is_some() {
+            return;
+        }
+        let Some(wanted) = self.0.wanted.get() else {
+            return;
+        };
+        if wanted == (self.state() == WindowState::Fullscreen) {
+            self.0.wanted.set(None);
+            return;
+        }
+        let promise = if wanted {
+            self.0
                 .document
                 .document_element()
-                .and_then(|page| call_promise(page.as_ref(), "requestFullscreen")),
-            (WindowState::Fullscreen, true) => None,
-            (_, true) => call_promise(self.0.document.as_ref(), "exitFullscreen"),
-            (_, false) => None,
+                .and_then(|page| call_promise(page.as_ref(), "requestFullscreen"))
+        } else {
+            call_promise(self.0.document.as_ref(), "exitFullscreen")
         };
-        if let Some(promise) = promise {
-            let _ = promise.catch(&self.0.ignore_rejection);
+        let settled = self.0.settled.borrow();
+        let (Some(promise), Some(settled)) = (promise, settled.as_ref()) else {
+            // Fullscreen API の無いブラウザ。頼みは捨てる。
+            self.0.wanted.set(None);
+            return;
+        };
+        self.0.in_flight.set(Some(wanted));
+        let _ = promise.then2(settled, settled);
+    }
+
+    /// 待っていた切り替えが済んだ (成功でも拒否でも)。
+    ///
+    /// 済んだのと同じ向きをまだ頼まれていれば、それで答えたことにする
+    /// (断られたものを頼み直し続けない)。待っている間に逆の向きを頼まれて
+    /// いれば、いまの状態と比べて切り替え直す。
+    fn finish_fullscreen_request(&self) {
+        let done = self.0.in_flight.take();
+        if done.is_some() && self.0.wanted.get() == done {
+            self.0.wanted.set(None);
         }
+        self.apply_wanted();
     }
 
     /// 表示の状態が変わったときの通知。変わった後の [`state`](Self::state) が届く。
