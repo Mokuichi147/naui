@@ -22,7 +22,7 @@ You build the UI inside the callback passed to `run`. WinUI 3 does not allow
 creating controls before `Application::Start`, so all four backends share this
 same shape.
 
-```rust
+```rust,no_run
 use naui::{Orientation, Padding, Settings};
 
 fn main() -> naui::Result<()> {
