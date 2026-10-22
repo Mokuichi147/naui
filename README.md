@@ -83,7 +83,7 @@ fn main() -> naui::Result<()> {
 ### 必要なもの
 
 - Rust 1.85 以降
-- Linux: GTK4 と libadwaita の開発用ライブラリ
+- Linux: GTK 4.10 以降と libadwaita 1.5 以降の開発用ライブラリ
 - Windows: Windows App SDK 1.3 以降のランタイム (動作確認は 2.x)。
   [同梱する](#windows-app-sdk-ランタイムを同梱する)場合は不要です
 
@@ -137,7 +137,7 @@ python3 -m http.server 8080
 ## ドキュメント
 
 - [使い方](docs/guide.md): ウィジェットの追加と削除、テーマ、配置とサイズ、機能別の補足、別スレッドと非同期
-- [ウィジェットの実装](docs/widgets.md): 環境ごとのコントロール、主なデータ型、ネイティブオブジェクトへのアクセス
+- [ウィジェットの実装](docs/widgets.md): 環境ごとのコントロールと組み立て方、主なデータ型、ネイティブオブジェクトへのアクセス
 - [既知の制限](docs/known-limitations.md): 環境ごとの制限
 - [ランタイムの同梱](docs/windows-self-contained.md): Windows App SDK を exe と一緒に配る
 - [開発](docs/development.md): 動作確認、クレート構成、テスト、CI、リリース
