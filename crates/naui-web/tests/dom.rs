@@ -3523,6 +3523,63 @@ fn focus_change_follows_the_owner() {
     });
 }
 
+/// 出たときの検証でフォーカスを戻す。`focus()` は同期で次の `focusin` を
+/// 出すので、文書の購読が入れ子で呼ばれても通知が欠けない。
+#[wasm_bindgen_test]
+fn focus_change_may_move_the_focus_back() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let mail = ui.text_input("")?;
+        let other = ui.text_input("")?;
+        root.append(&mail);
+        root.append(&other);
+        let _mounted = Mounted::new(&root);
+
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let record = |label: &'static str| {
+            let log = log.clone();
+            move |focused: bool| log.borrow_mut().push(format!("{label}:{focused}"))
+        };
+        other.on_focus_change(record("ほか"));
+        mail.on_focus_change({
+            let mail = mail.downgrade();
+            let record = record("メール");
+            let returned = Cell::new(false);
+            move |focused| {
+                record(focused);
+                // 1 度だけ欄へ戻す。
+                if !focused && !returned.replace(true) {
+                    if let Some(mail) = mail.upgrade() {
+                        assert!(mail.request_focus());
+                    }
+                }
+            }
+        });
+
+        assert!(mail.request_focus());
+        assert!(!other.request_focus(), "通知の中で戻されたので移っていない");
+        assert_eq!(
+            *log.borrow(),
+            [
+                "メール:true",
+                "メール:false",
+                "ほか:true",
+                "ほか:false",
+                "メール:true"
+            ]
+        );
+        let active = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.active_element());
+        assert_eq!(active.as_ref(), Some(&mail.native_element()));
+
+        // 持ち主も戻っているので、次に出たときも伝わる。
+        assert!(other.request_focus());
+        assert_eq!(log.borrow()[5..], ["メール:false", "ほか:true"]);
+        Ok(())
+    });
+}
+
 /// 捨てた欄の通知先も要素も、登録表に残らない。
 #[wasm_bindgen_test]
 fn focus_change_entry_is_freed_with_the_widget() {

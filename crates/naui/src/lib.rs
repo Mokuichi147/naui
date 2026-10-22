@@ -373,18 +373,12 @@
 //! ```no_run
 //! # use naui::{Result, Ui};
 //! # fn build(ui: &Ui) -> Result<()> {
-//! use std::cell::RefCell;
-//! use std::rc::Rc;
-//!
 //! let mail = ui.text_input("")?;
-//! // 中身は on_change で受け取っておく (mail 自身は捕まえない)。
-//! let text = Rc::new(RefCell::new(String::new()));
-//! mail.on_change({
-//!     let text = text.clone();
-//!     move |value| *text.borrow_mut() = value.to_owned()
-//! });
+//! // mail 自身は弱参照で捕まえる (clone() で捕まえると解放されない)。
+//! let weak = mail.downgrade();
 //! mail.on_focus_change(move |focused| {
-//!     if !focused && !text.borrow().contains('@') {
+//!     let Some(mail) = weak.upgrade() else { return };
+//!     if !focused && !mail.text().contains('@') {
 //!         println!("メールアドレスを確かめてください");
 //!     }
 //! });
@@ -392,10 +386,11 @@
 //! # }
 //! ```
 //!
-//! **通知のクロージャに、その欄自身のハンドルを捕まえない。** 欄が通知を
-//! 持ち、通知が欄を持つ循環になるので、画面から外して手放しても解放されない
-//! (ほかのウィジェットの通知も同じ)。引数が `bool` だけなので中身が要るときは、
-//! 上のように `on_change` で受け取って別に持つ。
+//! **通知のクロージャに、その欄自身のハンドルを `clone()` で捕まえない。**
+//! 欄が通知を持ち、通知が欄を持つ循環になるので、画面から外して手放しても
+//! 解放されない (ほかのウィジェットの通知も同じ)。上のように `downgrade()` で
+//! 弱参照 ([`WeakWidget`]) を作って捕まえ、通知の中で `upgrade()` する。
+//! ウィジェットが解放された後は `None` が返る。
 //!
 //! **ウィンドウの中でフォーカスが移ったときだけ**呼ばれる。ウィンドウ自体が
 //! アクティブでなくなったとき (別のアプリへ切り替えたとき、Web ではタブや
@@ -2210,8 +2205,9 @@ pub use naui_core::{
     PointerButton, PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollMetrics,
     ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep,
     SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer,
-    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, WindowState, DEFAULT_SIDEBAR_WIDTH,
-    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
+    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, WeakWidget, WindowState,
+    DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
+    WHEEL_STEP,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -3126,6 +3122,49 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     clipboard.set_text("t", |_result: Result<()>| {});
     clipboard.read_text(|_text: Option<String>| {});
     let _: Result<()> = ui.open_url("https://example.com/");
+
+    // どのウィジェットにも弱参照がある (通知のクロージャから自身を触るため)。
+    let weak_input: WeakWidget<TextInput> = input.downgrade();
+    let _: WeakWidget<TextInput> = weak_input.clone();
+    let _: Option<TextInput> = weak_input.upgrade();
+    let _: Option<Stack> = stack.downgrade().upgrade();
+    let _: Option<Grid> = grid.downgrade().upgrade();
+    let _: Option<Scroll> = scroll.downgrade().upgrade();
+    let _: Option<Expander> = expander.downgrade().upgrade();
+    let _: Option<SplitView> = split_view.downgrade().upgrade();
+    let _: Option<Spacer> = spacer.downgrade().upgrade();
+    let _: Option<Label> = label.downgrade().upgrade();
+    let _: Option<Button> = button.downgrade().upgrade();
+    let _: Option<Checkbox> = checkbox.downgrade().upgrade();
+    let _: Option<Toggle> = toggle.downgrade().upgrade();
+    let _: Option<TimePicker> = time_picker.downgrade().upgrade();
+    let _: Option<ColorPicker> = color_picker.downgrade().upgrade();
+    let _: Option<Canvas> = canvas.downgrade().upgrade();
+    let _: Option<ComboBox> = combo_box.downgrade().upgrade();
+    let _: Option<EditableComboBox> = editable_combo_box.downgrade().upgrade();
+    let _: Option<RadioGroup> = radio_group.downgrade().upgrade();
+    let _: Option<DatePicker> = date_picker.downgrade().upgrade();
+    let _: Option<TextArea> = text_area.downgrade().upgrade();
+    let _: Option<PasswordInput> = password.downgrade().upgrade();
+    let _: Option<SearchInput> = search.downgrade().upgrade();
+    let _: Option<NumberInput> = number.downgrade().upgrade();
+    let _: Option<Slider> = slider.downgrade().upgrade();
+    let _: Option<ProgressBar> = progress.downgrade().upgrade();
+    let _: Option<Tabs> = tabs.downgrade().upgrade();
+    let _: Option<Navbar> = navbar.downgrade().upgrade();
+    let _: Option<Dock> = dock.downgrade().upgrade();
+    let _: Option<Menu> = menu.downgrade().upgrade();
+    let _: Option<List> = list.downgrade().upgrade();
+    let _: Option<Table> = table.downgrade().upgrade();
+    let _: Option<Tree> = tree.downgrade().upgrade();
+    let _: Option<Breadcrumbs> = breadcrumbs.downgrade().upgrade();
+    let _: Option<Pagination> = pagination.downgrade().upgrade();
+    let _: Option<Link> = link.downgrade().upgrade();
+    let _: Option<Image> = image.downgrade().upgrade();
+    let _: Option<Video> = video.downgrade().upgrade();
+    let _: Option<Audio> = audio.downgrade().upgrade();
+    let _: Option<FilePicker> = picker.downgrade().upgrade();
+    let _: Option<FileSaver> = saver.downgrade().upgrade();
 
     ui.quit();
     Ok(())

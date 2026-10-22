@@ -82,6 +82,13 @@ macro_rules! impl_widget {
                     text,
                 );
             }
+
+            /// 弱参照を作る。通知のクロージャからこのウィジェット自身を触るときに
+            /// 捕まえる (`clone()` で捕まえると循環して解放されない)。
+            pub fn downgrade(&self) -> naui_core::WeakWidget<Self> {
+                let weak = std::rc::Rc::downgrade(&self.0);
+                naui_core::WeakWidget::new(move || weak.upgrade().map(Self))
+            }
         }
     };
 }
@@ -182,8 +189,25 @@ pub(crate) fn create(doc: &Document, tag: &str) -> Result<Element> {
 pub(crate) struct Listener {
     target: web_sys::EventTarget,
     event: &'static str,
-    closure: Closure<dyn FnMut(web_sys::Event)>,
+    closure: Callback,
     capture: bool,
+}
+
+/// 購読の中身。`FnMut` のクロージャは、呼んでいる間にもう一度呼ばれると
+/// wasm-bindgen が例外にする (`focus()` が同期で `focusin` を出すときなど)。
+/// 入れ子で呼ばれうるものは `Fn` で持つ。
+enum Callback {
+    Mut(Closure<dyn FnMut(web_sys::Event)>),
+    Shared(Closure<dyn Fn(web_sys::Event)>),
+}
+
+impl Callback {
+    fn function(&self) -> &js_sys::Function {
+        match self {
+            Self::Mut(closure) => closure.as_ref().unchecked_ref(),
+            Self::Shared(closure) => closure.as_ref().unchecked_ref(),
+        }
+    }
 }
 
 impl Listener {
@@ -200,16 +224,19 @@ impl Listener {
         event: &'static str,
         f: impl FnMut(web_sys::Event) + 'static,
     ) -> Result<Self> {
-        let closure = Closure::<dyn FnMut(web_sys::Event)>::new(f);
-        target
-            .add_event_listener_with_callback(event, closure.as_ref().unchecked_ref())
-            .map_err(|e| to_error("イベントの購読", e))?;
-        Ok(Self {
-            target: target.clone(),
-            event,
-            closure,
-            capture: false,
-        })
+        let closure = Callback::Mut(Closure::<dyn FnMut(web_sys::Event)>::new(f));
+        Self::add(target, event, closure, false)
+    }
+
+    /// 入れ子で呼ばれてもよい購読。購読の中から同じイベントが同期で出ても
+    /// (`focusin` の中で `focus()` を呼ぶなど)、内側の呼び出しも届く。
+    pub(crate) fn attach_reentrant(
+        target: &web_sys::EventTarget,
+        event: &'static str,
+        f: impl Fn(web_sys::Event) + 'static,
+    ) -> Result<Self> {
+        let closure = Callback::Shared(Closure::<dyn Fn(web_sys::Event)>::new(f));
+        Self::add(target, event, closure, false)
     }
 
     /// 捕捉フェーズで購読する。対象の要素の上では、通常の購読より先に呼ばれる。
@@ -218,19 +245,24 @@ impl Listener {
         event: &'static str,
         f: impl FnMut(web_sys::Event) + 'static,
     ) -> Result<Self> {
-        let closure = Closure::<dyn FnMut(web_sys::Event)>::new(f);
+        let closure = Callback::Mut(Closure::<dyn FnMut(web_sys::Event)>::new(f));
+        Self::add(target, event, closure, true)
+    }
+
+    fn add(
+        target: &web_sys::EventTarget,
+        event: &'static str,
+        closure: Callback,
+        capture: bool,
+    ) -> Result<Self> {
         target
-            .add_event_listener_with_callback_and_bool(
-                event,
-                closure.as_ref().unchecked_ref(),
-                true,
-            )
+            .add_event_listener_with_callback_and_bool(event, closure.function(), capture)
             .map_err(|e| to_error("イベントの購読", e))?;
         Ok(Self {
             target: target.clone(),
             event,
             closure,
-            capture: true,
+            capture,
         })
     }
 }
@@ -239,7 +271,7 @@ impl Drop for Listener {
     fn drop(&mut self) {
         let _ = self.target.remove_event_listener_with_callback_and_bool(
             self.event,
-            self.closure.as_ref().unchecked_ref(),
+            self.closure.function(),
             self.capture,
         );
     }

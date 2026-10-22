@@ -375,6 +375,10 @@ fn main() {
             "捨てた入力欄の on_focus_change の通知先が解放される",
             focus_change_handler_is_freed_with_the_widget,
         ),
+        (
+            "通知のクロージャが弱参照で欄自身を触れ、外して手放せば解放される",
+            weak_widget_breaks_the_callback_cycle,
+        ),
         ("ツールチップが NSView へ届く", tooltip_reaches_the_view),
         (
             "複数行入力の on_key_down が Shift なしの Enter を止める",
@@ -3637,6 +3641,40 @@ fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
     })?;
     assert_eq!(Rc::strong_count(&state), 1, "木へ入れていない欄の通知先");
 
+    window.close();
+    Ok(())
+}
+
+fn weak_widget_breaks_the_callback_cycle(ui: &Ui) -> Result<()> {
+    let window = ui.window("t", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let mail = ui.text_input(" a@example.com ")?;
+    let other = ui.text_input("")?;
+    root.append(&mail);
+    root.append(&other);
+    window.set_child(&root);
+    window.show();
+
+    // 通知の中で欄自身を触る。
+    let weak = mail.downgrade();
+    mail.on_focus_change({
+        let weak = weak.clone();
+        move |focused| {
+            if let Some(mail) = weak.upgrade() {
+                if !focused {
+                    mail.set_text(mail.text().trim());
+                }
+            }
+        }
+    });
+    assert!(mail.request_focus());
+    assert!(other.request_focus());
+    assert_eq!(mail.text(), "a@example.com");
+
+    // 画面から外してハンドルを手放せば、通知が弱参照を持っていても解放される。
+    root.remove(0);
+    drop(mail);
+    assert!(weak.upgrade().is_none(), "外して手放した欄が残っている");
     window.close();
     Ok(())
 }
