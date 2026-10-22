@@ -430,13 +430,18 @@ cargo doc --open -p naui
 ## ネイティブオブジェクトへのアクセス
 
 共通 API で足りない場合は、バックエンド固有のオブジェクトを取得できます。
+naui の型の `backend()` が包んでいるバックエンドの型を返すので、その
+`native_*` を呼びます。バックエンドのクレートは `naui::macos` /
+`naui::windows` / `naui::gtk` / `naui::web` として公開しています。
 
 ```rust,ignore
 // macOS
-let view = button.native_view();
+use naui::macos::Widget as _;
+let view = button.backend().native_view();
 
 // Web
-let element = button.native_element();
+use naui::web::Widget as _;
+let element = button.backend().native_element();
 ```
 
 このコードは対象プラットフォームに依存するため、必要に応じて `cfg` で分けてください。
