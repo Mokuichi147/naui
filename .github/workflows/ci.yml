@@ -25,10 +25,16 @@ env:
   # CI ではインクリメンタルビルドの生成物がキャッシュを膨らませるだけ。
   CARGO_INCREMENTAL: 0
 
+# どのジョブにも timeout-minutes を付ける。付けないと、テストがウィンドウを
+# 開いたまま戻らないときなどに、GitHub の既定の 6 時間まで止まり続ける。
+# 値は直近 100 回の成功した実行の最長 (2026-10 時点) に余裕を持たせたもの。
+# 止まりやすいテストのステップには、ジョブより短い上限も付ける (最長 1.6 分)。
 jobs:
   fmt:
     name: 整形と lint
     runs-on: ubuntu-latest
+    # 最長 1.2 分。
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -49,6 +55,8 @@ jobs:
   macos:
     name: macOS (AppKit)
     runs-on: macos-latest
+    # 最長 2.2 分。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -62,11 +70,14 @@ jobs:
       # スクローラを選ぶ。手元の Mac (重ね表示) と条件が違うが、そのまま
       # 測る。片方でしか出ない崩れを CI で拾えるようにするため。
       - name: テスト
+        timeout-minutes: 10
         run: cargo test -p naui-core -p naui-macos -p naui
 
   windows:
     name: Windows (WinUI 3)
     runs-on: windows-latest
+    # 最長 10 分。
+    timeout-minutes: 30
     env:
       # 統合テストで取り付ける Windows App SDK ランタイムの版。
       #
@@ -122,11 +133,13 @@ jobs:
       # テストが走る。こちらはランタイムを取り付け、`Application::Start` に
       # 入って本物のコントロールを作り、UI オートメーション経由で操作する。
       - name: テスト
+        timeout-minutes: 10
         run: cargo test -p naui-core -p naui-winui3 -p naui-windows -p naui
       # 同じテストを、exe の隣へ同梱したランタイムで走らせる。build.rs が
       # nuget.org から部品を取ってきてテストの exe の隣 (`target/debug/deps/`)
       # へ並べるので、naui はフレームワークパッケージではなくそちらを使う。
       - name: テスト (ランタイム同梱)
+        timeout-minutes: 10
         run: cargo test -p naui-winui3 -p naui-windows --features naui-windows/self-contained
 
   # Cargo.toml の rust-version (最低対応 Rust) で、ロックファイルのままビルド
@@ -136,6 +149,8 @@ jobs:
   windows-msrv:
     name: Windows (最低対応 Rust)
     runs-on: windows-latest
+    # 最長 3.9 分。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: 最低対応 Rust の版を読む
@@ -164,6 +179,8 @@ jobs:
   windows-legacy:
     name: Windows Server 2022 (ランタイム同梱、24H2 より前)
     runs-on: windows-2022
+    # 最長 3.9 分。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -183,6 +200,7 @@ jobs:
       - name: ビルド (マニフェストを埋め込む)
         run: cargo build -p gallery --features self-contained
       - name: 起動 (マニフェストを埋め込む)
+        timeout-minutes: 10
         shell: pwsh
         run: ./.github/scripts/gallery-smoke.ps1 -Exe target/debug/gallery.exe -Label embedded
       # 埋め込まない exe。naui が実行時に読み込んだマニフェストを、OS の
@@ -191,6 +209,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo build -p gallery --features naui/self-contained
       - name: 起動 (マニフェストを埋め込まない)
+        timeout-minutes: 10
         if: ${{ !cancelled() }}
         shell: pwsh
         run: ./.github/scripts/gallery-smoke.ps1 -Exe target/debug/gallery.exe -Label plain
@@ -206,6 +225,8 @@ jobs:
   linux:
     name: Linux (GTK4 / libadwaita)
     runs-on: ubuntu-latest
+    # ふだんは 2 分ほどだが、apt の取得が遅いと導入だけで 30 分かかったことがある。
+    timeout-minutes: 45
     env:
       # Xvfb 上では GL が使えないので、GSK はソフトウェアの cairo で描く。
       GSK_RENDERER: cairo
@@ -242,6 +263,7 @@ jobs:
       # GTK4 はディスプレイを要求する。libadwaita は D-Bus のセッションバスから
       # 配色設定を読むため、dbus-run-session も通す。
       - name: テスト
+        timeout-minutes: 10
         run: |
           xvfb-run -a --server-args="-screen 0 1280x1024x24" \
             dbus-run-session -- \
@@ -250,6 +272,8 @@ jobs:
   web:
     name: Web (wasm / DOM)
     runs-on: ubuntu-latest
+    # 最長 2.6 分。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -279,12 +303,14 @@ jobs:
       # どちらを見つけるかで決まるため、1 つずつ渡して 2 回走らせる。
       # DOM の実装差はここで拾う。
       - name: ブラウザテスト (Chrome)
+        timeout-minutes: 10
         run: |
           driver="${CHROMEWEBDRIVER:-/usr/bin}/chromedriver"
           [ -x "$driver" ] || { echo "chromedriver が見つかりません: $driver" >&2; exit 1; }
           CHROMEDRIVER="$driver" \
             cargo test --target wasm32-unknown-unknown -p naui-web
       - name: ブラウザテスト (Firefox)
+        timeout-minutes: 10
         run: |
           driver="${GECKOWEBDRIVER:-/usr/bin}/geckodriver"
           [ -x "$driver" ] || { echo "geckodriver が見つかりません: $driver" >&2; exit 1; }
@@ -304,6 +330,7 @@ jobs:
     if: always()
     needs: [fmt, macos, windows, windows-msrv, windows-legacy, linux, web]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: すべてのジョブが成功したか確かめる
         env:
