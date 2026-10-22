@@ -103,14 +103,16 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     // 項目の文言もその行に合わせてから出す。
     let popup = ui.popup_menu()?;
     let clicked: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
+    // list の通知が popup を持つので、popup の通知の側は list を弱参照で捕まえる
+    // (PopupMenu には downgrade() が無い)。
     popup.on_select({
-        let list = list.clone();
+        let list = list.downgrade();
         let notice = notice.clone();
         let detailed = detailed.clone();
         let clicked = clicked.clone();
         let last_selection = last_selection.clone();
         move |index| {
-            let Some(row) = clicked.get() else {
+            let (Some(row), Some(list)) = (clicked.get(), list.upgrade()) else {
                 return;
             };
             match index {
@@ -132,10 +134,10 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         }
     });
     list.on_context_menu({
-        let list = list.clone();
+        let list = list.downgrade();
         let detailed = detailed.clone();
         move |index, at| {
-            let Some(item) = detailed.get(index) else {
+            let (Some(item), Some(list)) = (detailed.get(index), list.upgrade()) else {
                 return;
             };
             clicked.set(Some(index));

@@ -88,11 +88,13 @@ fn build_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     });
 
     // 人口と面積は桁区切りを外し、数として比べる。
+    // table 自身は弱参照で捕まえる (clone() で捕まえると解放されない)。
     table.on_sort({
-        let table = table.clone();
+        let table = table.downgrade();
         let sorted = sorted.clone();
         let notice = notice.clone();
         move |column, order| {
+            let Some(table) = table.upgrade() else { return };
             let mut rows = sorted.borrow_mut();
             sort_rows(&mut rows, column, order);
             table.set_rows(&rows);
@@ -340,11 +342,12 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()>
     // 番号は数として比べる (文字のままだと "10" が "2" より前へ来る)。
     table.on_sort({
         let ui = ui.clone();
-        let table = table.clone();
+        let table = table.downgrade();
         let rows = rows.clone();
         let widget_rows = widget_rows.clone();
         let notice = notice.clone();
         move |column, order| {
+            let Some(table) = table.upgrade() else { return };
             let stopwatch = Stopwatch::start();
             // **借用はここで返す。** 組み立てる行では、このあとの出し直しで
             // 同じデータを読むので、borrow_mut を持ったままだと落ちる。

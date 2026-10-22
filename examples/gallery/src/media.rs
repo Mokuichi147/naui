@@ -277,12 +277,16 @@ fn build_video_pane(ui: &Ui, notice: &Notice) -> Result<(naui::Stack, naui::Vide
             }
         }
     });
+    // video 自身と、video を捕まえている seek は弱参照で捕まえる。
     video.on_position_change({
-        let video = video.clone();
-        let seek = seek.clone();
+        let video = video.downgrade();
+        let seek = seek.downgrade();
         let position = position.clone();
         let syncing = syncing.clone();
         move |seconds| {
+            let (Some(video), Some(seek)) = (video.upgrade(), seek.upgrade()) else {
+                return;
+            };
             let Some(duration) = video.duration().filter(|duration| *duration > 0.0) else {
                 return;
             };

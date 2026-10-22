@@ -122,10 +122,12 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let tasks = ui.tasks();
         let worker_status = worker_status.clone();
         let progress = progress.clone();
-        let start = start.clone();
+        let start = start.downgrade();
         move || {
             // 走っている間は押せないようにする (前の処理と混ざらないように)。
-            start.set_enabled(false);
+            if let Some(start) = start.upgrade() {
+                start.set_enabled(false);
+            }
             worker_status.set_text("実行中… 0/3");
             progress.set_value(0.0);
 
@@ -138,7 +140,9 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
                     progress.set_value(p.done as f64 / p.total as f64);
                     if p.done == p.total {
                         worker_status.set_text("完了");
-                        start.set_enabled(true);
+                        if let Some(start) = start.upgrade() {
+                            start.set_enabled(true);
+                        }
                     } else {
                         worker_status.set_text(&format!("実行中… {}/{}", p.done, p.total));
                     }
