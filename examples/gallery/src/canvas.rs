@@ -319,10 +319,14 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let view = view.clone();
         move |painter| draw_zoomable(painter, &view.borrow())
     });
+    // zoom 自身は弱参照で捕まえる (clone() で捕まえると解放されない)。
     zoom.on_wheel({
         let view = view.clone();
-        let zoom = zoom.clone();
+        let zoom = zoom.downgrade();
         move |event| {
+            let Some(zoom) = zoom.upgrade() else {
+                return EventResponse::Continue;
+            };
             let mut view = view.borrow_mut();
             // 1 刻みで ZOOM_PER_STEP 倍。トラックパッドの細かい量もそのまま効く。
             let factor = ZOOM_PER_STEP.powf(-event.wheel_y / WHEEL_STEP);
@@ -341,8 +345,9 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     });
     zoom.on_pointer({
         let view = view.clone();
-        let zoom = zoom.clone();
+        let zoom = zoom.downgrade();
         move |event| {
+            let Some(zoom) = zoom.upgrade() else { return };
             let mut view = view.borrow_mut();
             match (event.phase, event.button) {
                 (PointerPhase::Down, Some(PointerButton::Primary | PointerButton::Middle)) => {
