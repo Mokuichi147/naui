@@ -640,7 +640,8 @@ unsafe extern "system" fn low_level_mouse_hook(
     lparam: windows::Win32::Foundation::LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetAncestor, GetForegroundWindow, GA_ROOT, MSLLHOOKSTRUCT, WM_MOUSEWHEEL,
+        CallNextHookEx, GetAncestor, GetForegroundWindow, GA_ROOT, MSLLHOOKSTRUCT, WM_MOUSEHWHEEL,
+        WM_MOUSEWHEEL,
     };
 
     if code >= 0 {
@@ -653,9 +654,16 @@ unsafe extern "system" fn low_level_mouse_hook(
                 .any(|target| GetAncestor(*target, GA_ROOT) == foreground_root)
         });
 
-        if over_target_window && wparam.0 as u32 == WM_MOUSEWHEEL {
+        let message = wparam.0 as u32;
+        if over_target_window && (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL) {
             let delta = ((input.mouseData >> 16) as i16) as f64;
-            if delta != 0.0 && apply_wheel_delta(delta) {
+            let horizontal = message == WM_MOUSEHWHEEL;
+            // ポインターの下の Canvas の `on_wheel` が先。`Handled` なら外側の
+            // Scroll へは回さない。
+            let handled = delta != 0.0
+                && (crate::canvas::dispatch_wheel(delta, horizontal) == Some(true)
+                    || (!horizontal && apply_wheel_delta(delta)));
+            if handled {
                 return windows::Win32::Foundation::LRESULT(1);
             }
         }

@@ -269,6 +269,11 @@ impl SelectHandler {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
+    /// クロージャが設定されているか。
+    pub(crate) fn is_set(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+
     /// 選択を通知する。まだ設定されていなければ何もしない。
     pub(crate) fn emit(&self, index: usize) {
         let Some(mut f) = self.0.borrow_mut().take() else {
@@ -299,6 +304,11 @@ impl<T> Default for ValueHandler<T> {
 impl<T> ValueHandler<T> {
     pub(crate) fn set(&self, f: impl FnMut(T) + 'static) {
         *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// クロージャが設定されているか。
+    pub(crate) fn is_set(&self) -> bool {
+        self.0.borrow().is_some()
     }
 
     /// 通知する。まだ設定されていなければ何もしない。

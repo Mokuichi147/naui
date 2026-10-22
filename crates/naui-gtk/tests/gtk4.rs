@@ -20,12 +20,12 @@ use adw::prelude::*;
 use gtk::glib;
 use gtk::pango;
 use naui_core::{
-    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, FileFilter,
-    FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
-    Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
+    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, EventResponse,
+    FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
+    NavItem, Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
     ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
     TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    DEFAULT_SIDEBAR_WIDTH,
+    WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -67,6 +67,14 @@ fn main() {
         (
             "描画面がポインターの押下・移動・解放を面の座標で通知する",
             canvas_reports_pointer_events,
+        ),
+        (
+            "描画面がホイールを論理ピクセルで通知し、Handled なら伝播を止める",
+            canvas_reports_wheel,
+        ),
+        (
+            "描画面が Handled で受け終えたら外側の慣性スクロールを取り消す",
+            canvas_cancels_outer_kinetic_after_handled,
         ),
         (
             "チェックボックスの印がラベルの字面にそろう",
@@ -300,6 +308,34 @@ fn main() {
             window_close_request_can_keep_it_open,
         ),
         (
+            "ウィンドウの位置は取れず、動かしても何も起きない",
+            window_position_is_unavailable,
+        ),
+        (
+            "ウィンドウの最大化・全画面が往復し通知される",
+            window_state_round_trips,
+        ),
+        (
+            "コンポジタが応える前に続けて頼んでも最後の状態になる",
+            window_state_requests_in_a_row,
+        ),
+        (
+            "表示する前に頼んだ状態で表示される",
+            window_state_requested_before_show,
+        ),
+        (
+            "最小化して元に戻せる (X11)",
+            window_minimize_round_trips,
+        ),
+        (
+            "表示する前に頼んだ最小化は表示してから当たる (X11)",
+            window_minimize_requested_before_show,
+        ),
+        (
+            "大きさを変えられるかどうかがネイティブと往復する",
+            window_resizable_round_trips,
+        ),
+        (
             "読み取り専用と最小の大きさがネイティブへ届く",
             read_only_and_min_size,
         ),
@@ -481,6 +517,14 @@ fn main() {
             list_row_activation_notifies,
         ),
         (
+            "リストのダブルクリックと Enter が行の起動を通知する",
+            list_row_activate_notifies,
+        ),
+        (
+            "リストの右クリックが行と位置を通知する",
+            list_context_menu_notifies,
+        ),
+        (
             "複数選択でクリックの修飾キーが GTK4 へ届く",
             list_multiple_selection_reaches_the_modifier_keys,
         ),
@@ -622,23 +666,55 @@ fn main() {
     ];
 
     let mut failed = 0;
+    let mut skipped = 0;
     for (name, case) in cases {
+        take_skip();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run_for_test(*case).expect("テスト用の起動")
         }));
-        match result {
-            Ok(()) => println!("ok   ... {name}"),
-            Err(_) => {
+        match (result, take_skip()) {
+            (Ok(()), None) => println!("ok   ... {name}"),
+            (Ok(()), Some(reason)) => {
+                println!("SKIP ... {name} ({reason})");
+                skipped += 1;
+            }
+            (Err(_), _) => {
                 println!("FAIL ... {name}");
                 failed += 1;
             }
         }
     }
 
-    println!("\n{} 件中 {} 件成功", cases.len(), cases.len() - failed);
+    println!(
+        "\n{} 件中 {} 件成功 / {} 件スキップ / {} 件失敗",
+        cases.len(),
+        cases.len() - failed - skipped,
+        skipped,
+        failed
+    );
     if failed > 0 {
         std::process::exit(1);
     }
+}
+
+thread_local! {
+    /// そのテストで**確かめられなかったこと**の置き場 ([`skip`])。
+    static SKIP_REASON: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// 実行環境の都合で確かめられなかったことを記録する。
+///
+/// 記録したテストは「成功」ではなく SKIP として数えて出力に残すが、
+/// macOS のテストと違って終了コードは失敗にしない。CI の Xvfb には
+/// ウィンドウマネージャがおらず、表示した後の最大化や全画面の頼みに
+/// 誰も応えないので、失敗にすると CI がいつも落ちてしまうため。
+fn skip(reason: &str) {
+    SKIP_REASON.with(|slot| *slot.borrow_mut() = Some(reason.to_string()));
+}
+
+/// 記録を取り出して空へ戻す。
+fn take_skip() -> Option<String> {
+    SKIP_REASON.with(|slot| slot.borrow_mut().take())
 }
 
 // --------------------------------------------------------------- 小さな道具
@@ -973,9 +1049,9 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     assert_eq!(
         click.button(),
         0,
-        "ボタンを区別せず、右ボタンや中ボタンでも届くこと"
+        "どのボタンでも受け、右ボタンや中ボタンでも届くこと"
     );
-    assert_eq!(drag.button(), 0, "ドラッグもボタンを区別しないこと");
+    assert_eq!(drag.button(), 0, "ドラッグもどのボタンでも受けること");
 
     // 押していない間の移動はホバーとして届く。
     motion.emit_by_name::<()>("motion", &[&5.0f64, &6.0f64]);
@@ -1018,6 +1094,147 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
         ],
         "{seen:?}"
     );
+    Ok(())
+}
+
+/// ホイールは `GtkEventControllerScroll` から、刻みを論理ピクセルに直して届く。
+/// 位置は最後にホバーで見た位置で、`Handled` を返すと伝播を止める。
+fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    let (log, mut sink) = recorder::<naui_core::PointerEvent>();
+    let response = Rc::new(Cell::new(EventResponse::Continue));
+    canvas.on_wheel({
+        let response = response.clone();
+        move |event| {
+            sink(event);
+            response.get()
+        }
+    });
+    let pointer = Rc::new(RefCell::new(Vec::new()));
+    canvas.on_pointer({
+        let pointer = pointer.clone();
+        move |event| pointer.borrow_mut().push(event)
+    });
+
+    let area = canvas.native_area();
+    let mut scroll = None;
+    let mut motion = None;
+    let controllers = area.observe_controllers();
+    for index in 0..controllers.n_items() {
+        let Some(c) = controllers.item(index) else {
+            continue;
+        };
+        if let Ok(s) = c.clone().downcast::<gtk::EventControllerScroll>() {
+            scroll = Some(s);
+        } else if let Ok(m) = c.downcast::<gtk::EventControllerMotion>() {
+            motion = Some(m);
+        }
+    }
+    let scroll = scroll.expect("ホイールを受ける GtkEventControllerScroll が付いていること");
+    let motion = motion.expect("ホバーを受ける GtkEventControllerMotion が付いていること");
+    assert!(
+        scroll
+            .flags()
+            .contains(gtk::EventControllerScrollFlags::BOTH_AXES),
+        "縦と横の両方を受けること: {:?}",
+        scroll.flags()
+    );
+
+    // シグナルを直接起こしたときの単位は刻み (`GDK_SCROLL_UNIT_WHEEL`)。
+    motion.emit_by_name::<()>("motion", &[&5.0f64, &6.0f64]);
+    let stopped = scroll.emit_by_name::<bool>("scroll", &[&0.5f64, &1.0f64]);
+    assert!(!stopped, "Continue なら外側のスクロールへ回すこと");
+    response.set(EventResponse::Handled);
+    let stopped = scroll.emit_by_name::<bool>("scroll", &[&0.0f64, &-2.0f64]);
+    assert!(stopped, "Handled なら伝播を止めること");
+
+    let seen = log.borrow();
+    let wheels: Vec<_> = seen
+        .iter()
+        .map(|e| (e.phase, e.point, e.button, e.wheel_x, e.wheel_y))
+        .collect();
+    let step = naui_core::WHEEL_STEP;
+    assert_eq!(
+        wheels,
+        vec![
+            (
+                PointerPhase::Wheel,
+                Point::new(5.0, 6.0),
+                None,
+                0.5 * step,
+                step
+            ),
+            (
+                PointerPhase::Wheel,
+                Point::new(5.0, 6.0),
+                None,
+                0.0,
+                -2.0 * step
+            ),
+        ]
+    );
+    assert!(
+        pointer
+            .borrow()
+            .iter()
+            .all(|e| e.phase == PointerPhase::Move),
+        "ホイールは on_pointer へは届かないこと: {:?}",
+        pointer.borrow()
+    );
+    Ok(())
+}
+
+/// 外側の `GtkScrolledWindow` は捕捉フェーズで量の履歴をため、指を離すと
+/// 子が `Handled` で止めていても慣性スクロールを始める。最後を `Handled` で
+/// 受けていたら、`scroll-end` で `kinetic-scrolling` を切って戻し、その慣性を
+/// 取り消す (戻すので設定は変わらない)。最後を外側へ回したなら触らない。
+fn canvas_cancels_outer_kinetic_after_handled(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    let response = Rc::new(Cell::new(EventResponse::Handled));
+    canvas.on_wheel({
+        let response = response.clone();
+        move |_| response.get()
+    });
+    let scroll = ui.scroll()?;
+    scroll.set_child(&canvas);
+    let native: gtk::ScrolledWindow = scroll
+        .native_widget()
+        .downcast()
+        .expect("GtkScrolledWindow");
+    assert!(native.is_kinetic_scrolling(), "既定で慣性が有効なこと");
+    let toggles = Rc::new(Cell::new(0));
+    native.connect_kinetic_scrolling_notify({
+        let toggles = toggles.clone();
+        move |_| toggles.set(toggles.get() + 1)
+    });
+
+    let area = canvas.native_area();
+    let controllers = area.observe_controllers();
+    let controller = (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .find_map(|c| c.downcast::<gtk::EventControllerScroll>().ok())
+        .expect("ホイールを受ける GtkEventControllerScroll が付いていること");
+    let gesture = |responses: &[EventResponse]| {
+        controller.emit_by_name::<()>("scroll-begin", &[]);
+        for r in responses {
+            response.set(*r);
+            controller.emit_by_name::<bool>("scroll", &[&0.0f64, &1.0f64]);
+        }
+        controller.emit_by_name::<()>("scroll-end", &[]);
+    };
+
+    gesture(&[EventResponse::Handled, EventResponse::Handled]);
+    assert_eq!(toggles.get(), 2, "Handled で終えたら切って戻すこと");
+    assert!(native.is_kinetic_scrolling(), "設定は元へ戻ること");
+
+    gesture(&[EventResponse::Handled, EventResponse::Continue]);
+    assert_eq!(toggles.get(), 2, "最後を外側へ回したなら慣性を残すこと");
+
+    native.set_kinetic_scrolling(false);
+    toggles.set(0);
+    gesture(&[EventResponse::Handled]);
+    assert_eq!(toggles.get(), 0, "慣性を切ってある外側には触らないこと");
+    assert!(!native.is_kinetic_scrolling());
     Ok(())
 }
 
@@ -3530,6 +3747,135 @@ fn ui_clone_builds_rows_from_a_callback(ui: &Ui) -> Result<()> {
 /// `GtkListBoxRow::activate` (キーボード側) は通らない。
 fn activate_row(list: &gtk::ListBox, row: &gtk::ListBoxRow) {
     list.emit_by_name::<()>("row-activated", &[row]);
+}
+
+/// 行に付いた、指定のボタンを受ける `GtkGestureClick`。
+fn row_gesture(row: &gtk::ListBoxRow, button: u32) -> gtk::GestureClick {
+    let controllers = row.observe_controllers();
+    (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .filter_map(|item| item.downcast::<gtk::GestureClick>().ok())
+        .find(|gesture| gesture.button() == button)
+        .expect("行のクリックを受けるジェスチャー")
+}
+
+/// 起動と文脈メニューを確かめるための、行が並んだリストを窓に出す。
+fn shown_list_for_events(ui: &Ui) -> Result<(naui_gtk::Window, naui_gtk::List)> {
+    let window = ui.window("行の操作", 320.0, 240.0)?;
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("札幌"),
+        ListItem::new("仙台"),
+        ListItem::new("東京").detail("13,960,000 人"),
+        ListItem::new("大阪").enabled(false),
+    ]);
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    window.show();
+    for _ in 0..3 {
+        tick(&list.native_widget());
+    }
+    Ok((window, list))
+}
+
+/// ダブルクリックと、行にフォーカスがある状態の Enter が `on_row_activate` へ届く。
+fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
+    let (window, list) = shown_list_for_events(ui)?;
+    let (log, sink) = recorder::<usize>();
+    list.on_row_activate(sink);
+    let native = list_box_of(&list);
+    let row = |index: i32| native.row_at_index(index).expect("行");
+
+    // 1 回目の押下では起動しない。2 回目 (n_press = 2) で起動する。
+    let double = row_gesture(&row(2), gtk::gdk::BUTTON_PRIMARY);
+    double.emit_by_name::<()>("pressed", &[&1i32, &10.0f64, &5.0f64]);
+    assert!(log.borrow().is_empty(), "1 回のクリックでは起動しないこと");
+    double.emit_by_name::<()>("pressed", &[&2i32, &10.0f64, &5.0f64]);
+    assert_eq!(
+        log.borrow().as_slice(),
+        [2],
+        "ダブルクリックした行が届くこと"
+    );
+
+    // 選べない行は GTK が押下を届けない。届いたとしても起動しない。
+    row_gesture(&row(3), gtk::gdk::BUTTON_PRIMARY)
+        .emit_by_name::<()>("pressed", &[&2i32, &10.0f64, &5.0f64]);
+    assert_eq!(log.borrow().as_slice(), [2], "選べない行では起動しないこと");
+
+    // Enter は、フォーカスのある行を起動する。
+    let enter = {
+        let controllers = native.observe_controllers();
+        (0..controllers.n_items())
+            .filter_map(|index| controllers.item(index))
+            .filter_map(|item| item.downcast::<gtk::EventControllerKey>().ok())
+            .find(|keys| keys.propagation_phase() == gtk::PropagationPhase::Capture)
+            .expect("Enter の受け口")
+    };
+    let press = |key: gtk::gdk::Key, state: gtk::gdk::ModifierType| {
+        let _: bool = enter.emit_by_name("key-pressed", &[&key, &0u32, &state]);
+    };
+    assert!(row(1).grab_focus(), "行にフォーカスを移せること");
+    press(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
+    assert_eq!(
+        log.borrow().as_slice(),
+        [2, 1],
+        "Enter でフォーカスの行が届くこと"
+    );
+    press(gtk::gdk::Key::Return, gtk::gdk::ModifierType::CONTROL_MASK);
+    press(gtk::gdk::Key::a, gtk::gdk::ModifierType::empty());
+    assert_eq!(
+        log.borrow().len(),
+        2,
+        "修飾キー付きの Enter や他のキーでは起動しないこと"
+    );
+
+    window.close();
+    Ok(())
+}
+
+/// 右クリックが `on_context_menu` へ届き、位置は `PopupMenu::open_at(&list, ..)`
+/// と同じ座標 (`GtkListBox` の座標) になる。
+fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
+    let (window, list) = shown_list_for_events(ui)?;
+    let (log, mut sink) = recorder::<(usize, Point)>();
+    list.on_context_menu(move |index, at| sink((index, at)));
+    let native = list_box_of(&list);
+    let row = native.row_at_index(2).expect("3 行目");
+
+    // 窓を出したときにフォーカスの行が選ばれることがあるので、前後で比べる。
+    let before = list.selection();
+    let gesture = row_gesture(&row, gtk::gdk::BUTTON_SECONDARY);
+    gesture.emit_by_name::<()>("pressed", &[&1i32, &7.0f64, &4.0f64]);
+    let expected = row
+        .compute_point(&native, &gtk::graphene::Point::new(7.0, 4.0))
+        .expect("行の位置");
+    {
+        let log = log.borrow();
+        assert_eq!(log.len(), 1, "右クリックが 1 回だけ届くこと");
+        assert_eq!(log[0].0, 2, "右クリックした行のインデックスが届くこと");
+        assert!(
+            (log[0].1.x - f64::from(expected.x())).abs() < 0.5
+                && (log[0].1.y - f64::from(expected.y())).abs() < 0.5,
+            "位置がリストの座標であること: {:?}",
+            log[0].1
+        );
+        assert!(log[0].1.y > 0.0, "3 行目は上端より下にあること");
+    }
+    assert_eq!(
+        list.selection(),
+        before,
+        "右クリックでは選択が変わらないこと"
+    );
+
+    row_gesture(
+        &native.row_at_index(3).expect("4 行目"),
+        gtk::gdk::BUTTON_SECONDARY,
+    )
+    .emit_by_name::<()>("pressed", &[&1i32, &7.0f64, &4.0f64]);
+    assert_eq!(log.borrow().len(), 1, "選べない行では届かないこと");
+
+    window.close();
+    Ok(())
 }
 
 fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
@@ -6739,6 +7085,291 @@ fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
 
 fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
     assert!(ui.open_url("これは URL ではない").is_err());
+    Ok(())
+}
+
+/// GTK4 にはウィンドウの位置を扱う API が無い (Wayland に合わせて X11 でも外した)。
+fn window_position_is_unavailable(ui: &Ui) -> Result<()> {
+    let window = ui.window("位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    assert_eq!(window.position(), None);
+    window.set_position(120.0, 140.0);
+    window.show();
+    assert_eq!(window.position(), None, "動かしても取れないまま");
+    window.close();
+    Ok(())
+}
+
+/// 最大化と全画面が `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+///
+/// どちらもコンポジタ (ウィンドウマネージャ) への頼みごとなので、応える者の
+/// いない環境 (CI の Xvfb) では変わらない。そのときは SKIP にする。最小化は
+/// Wayland では知る仕組みも戻す仕組みも無いので、ここでは確かめない。
+fn window_state_round_trips(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let (seen, sink) = recorder();
+    window.on_state_change(sink);
+    window.show();
+    spin_until(Duration::from_secs(1), || {
+        window.native_window().is_realized()
+    });
+    assert_eq!(window.state(), WindowState::Normal);
+    let native = window.native_window();
+
+    window.set_state(WindowState::Maximized);
+    spin_until(Duration::from_secs(2), || {
+        window.state() == WindowState::Maximized
+    });
+    if window.state() != WindowState::Maximized {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert!(native.is_maximized());
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(2), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal);
+    assert!(!native.is_maximized());
+
+    window.set_state(WindowState::Fullscreen);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Fullscreen
+    });
+    assert_eq!(window.state(), WindowState::Fullscreen);
+    assert!(native.is_fullscreen());
+    // 全画面から最大化へ移ると、全画面は解ける。
+    window.set_state(WindowState::Maximized);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Maximized
+    });
+    assert_eq!(window.state(), WindowState::Maximized, "全画面から最大化へ");
+    assert!(!native.is_fullscreen());
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal);
+    assert_eq!(
+        seen.borrow().first(),
+        Some(&WindowState::Maximized),
+        "変わるたびに届く: {:?}",
+        seen.borrow()
+    );
+    assert_eq!(seen.borrow().last(), Some(&WindowState::Normal));
+    assert!(
+        seen.borrow().contains(&WindowState::Fullscreen),
+        "全画面も届く: {:?}",
+        seen.borrow()
+    );
+    window.close();
+    Ok(())
+}
+
+/// コンポジタが応える前に続けて状態を頼んでも、最後に頼んだ状態になる。
+///
+/// `is_maximized` / `is_fullscreen` はコンポジタが応えるまで変わらないので、
+/// それだけを見ると、応える前の頼みを取り消せずに先の状態が後から当たる。
+fn window_state_requests_in_a_row(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let sequences: &[&[WindowState]] = &[
+        &[WindowState::Fullscreen, WindowState::Normal],
+        &[WindowState::Maximized, WindowState::Normal],
+        &[WindowState::Fullscreen, WindowState::Maximized],
+        &[
+            WindowState::Maximized,
+            WindowState::Fullscreen,
+            WindowState::Normal,
+        ],
+    ];
+    if is_unresponsive(ui)? {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        return Ok(());
+    }
+    for sequence in sequences {
+        let window = ui.window("続けて頼む", 320.0, 200.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        spin_until(Duration::from_secs(1), || {
+            !toplevel_state(&window).is_empty()
+        });
+        for &state in *sequence {
+            window.set_state(state);
+        }
+        let last = *sequence.last().unwrap();
+        // 先の頼みが後から当たっていないことも確かめるため、待ち切ってから比べる。
+        spin_until(Duration::from_secs(3), || false);
+        assert_eq!(window.state(), last, "{sequence:?}");
+        window.close();
+    }
+    Ok(())
+}
+
+/// 表示した後の最大化に誰も応えない環境 (ウィンドウマネージャのいない X11) か。
+fn is_unresponsive(ui: &Ui) -> Result<bool> {
+    let window = ui.window("応えるか", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    window.set_state(WindowState::Maximized);
+    spin_until(std::time::Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    let unresponsive = !toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED);
+    window.close();
+    Ok(unresponsive)
+}
+
+/// 表示する前の `set_state` は覚えておき、表示するときに当てる。
+///
+/// GTK4 は表示する前の最大化を、面を出すときの状態として渡す。Wayland では
+/// 表示した直後の面の状態が空なので、コンポジタから届くまでも頼んだ状態を返す。
+///
+/// 表示した後の最大化と違い、ウィンドウマネージャのいない X11 (CI の Xvfb)
+/// でも SKIP にしない。GDK の X11 版は、まだ出していない面への `maximize` を
+/// ウィンドウマネージャへ頼まず、面の状態に MAXIMIZED を自分で立てる
+/// (出すときは `_NET_WM_STATE` に載せて出す)。そのため応える者がいなくても
+/// 最大化した状態で出る (CI の Xvfb で ok になることを確かめてある)。
+fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
+    let window = ui.window("表示前の状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_state(WindowState::Maximized);
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "表示の前は頼んだ状態"
+    );
+    window.show();
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "コンポジタから届く前も頼んだ状態"
+    );
+    spin_until(std::time::Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    assert!(window.native_window().is_maximized());
+    assert_eq!(window.state(), WindowState::Maximized);
+    window.close();
+    Ok(())
+}
+
+/// 最小化が `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+///
+/// X11 のウィンドウマネージャは `unminimize` だけでは戻さないことがあるので、
+/// 戻すときは前面へ出すよう頼む。Wayland では最小化を知る仕組みが無く、
+/// ウィンドウマネージャのいない X11 (CI の Xvfb) では誰も応えないので SKIP にする。
+fn window_minimize_round_trips(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    if is_wayland() {
+        skip("Wayland では最小化を知る仕組みが無い");
+        return Ok(());
+    }
+    let window = ui.window("最小化", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let (seen, sink) = recorder();
+    window.on_state_change(sink);
+    window.show();
+    spin_until(Duration::from_secs(1), || {
+        !toplevel_state(&window).is_empty()
+    });
+
+    window.set_state(WindowState::Minimized);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Minimized
+    });
+    if window.state() != WindowState::Minimized {
+        skip("ウィンドウマネージャが最小化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal, "最小化から戻る");
+    assert_eq!(
+        *seen.borrow(),
+        [WindowState::Minimized, WindowState::Normal]
+    );
+    window.close();
+    Ok(())
+}
+
+/// 表示する前に頼んだ最小化は、出す前に頼んでもウィンドウマネージャが
+/// 応えないので、表示してコンポジタから最初の状態が届いてから当てる。
+fn window_minimize_requested_before_show(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("表示前の最小化", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let (seen, sink) = recorder();
+    window.on_state_change(sink);
+    window.set_state(WindowState::Minimized);
+    window.show();
+    assert_eq!(
+        window.state(),
+        WindowState::Minimized,
+        "コンポジタから届く前も頼んだ状態"
+    );
+    if is_wayland() {
+        skip("Wayland では最小化を知る仕組みが無い");
+        window.close();
+        return Ok(());
+    }
+    spin_until(Duration::from_secs(3), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MINIMIZED)
+    });
+    if !toplevel_state(&window).contains(gtk::gdk::ToplevelState::MINIMIZED) {
+        skip("ウィンドウマネージャが最小化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.state(), WindowState::Minimized);
+    assert_eq!(*seen.borrow(), [WindowState::Minimized]);
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal, "最小化から戻る");
+    window.close();
+    Ok(())
+}
+
+/// ウィンドウの面にコンポジタから届いた状態。realize する前は空。
+fn toplevel_state(window: &naui_gtk::Window) -> gtk::gdk::ToplevelState {
+    window
+        .native_window()
+        .surface()
+        .and_then(|surface| surface.dynamic_cast::<gtk::gdk::Toplevel>().ok())
+        .map_or(gtk::gdk::ToplevelState::empty(), |toplevel| {
+            toplevel.state()
+        })
+}
+
+fn is_wayland() -> bool {
+    gtk::gdk::Display::default()
+        .is_some_and(|display| display.type_().name() == "GdkWaylandDisplay")
+}
+
+fn window_resizable_round_trips(ui: &Ui) -> Result<()> {
+    let window = ui.window("大きさの固定", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    assert!(window.is_resizable());
+    window.set_resizable(false);
+    assert!(!window.is_resizable());
+    assert!(!window.native_window().is_resizable());
+    window.show();
+    // 固定しても、ui.window で指定した大きさで出る。
+    spin_until(std::time::Duration::from_secs(2), || {
+        window.size() == (320.0, 200.0)
+    });
+    assert_eq!(window.size(), (320.0, 200.0));
+    window.set_resizable(true);
+    assert!(window.is_resizable());
+    assert!(window.native_window().is_resizable());
+    window.close();
     Ok(())
 }
 

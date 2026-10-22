@@ -10,7 +10,8 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use std::rc::Rc;
 
 use naui::{
-    Align, Color, Length, Orientation, Path, Point, PointerPhase, Rect, Result, Sizing, Ui,
+    Align, Color, EventResponse, Length, Orientation, Path, Point, PointerButton, PointerPhase,
+    Rect, Result, Sizing, Ui, WHEEL_STEP,
 };
 
 use crate::parts::{self, Notice};
@@ -32,6 +33,29 @@ const INK: Color = Color::rgb(0x33, 0x33, 0x33);
 const ACCENT: Color = Color::rgb(0x33, 0x66, 0xff);
 const ACCENT_STRONG: Color = Color::rgb(0xff, 0x88, 0x00);
 
+/// 拡大縮小の図の状態。図の座標 `p` は面の `p * scale + offset` に描く。
+struct ViewState {
+    scale: f64,
+    offset: Point,
+    /// つかんで動かしている間の、前回のポインターの位置。
+    dragging: Option<Point>,
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            offset: Point::new(0.0, 0.0),
+            dragging: None,
+        }
+    }
+}
+
+/// 拡大縮小の範囲と、ホイール 1 刻みでの倍率。
+const MIN_SCALE: f64 = 0.25;
+const MAX_SCALE: f64 = 8.0;
+const ZOOM_PER_STEP: f64 = 1.2;
+
 /// 棒グラフの状態。ポインターの位置から「どの棒の上か」を決め直す。
 #[derive(Default)]
 struct ChartState {
@@ -50,7 +74,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         "Canvas",
         &[
             "アプリが自分で描く面です。矩形・円・線・パス・文字の命令を Painter に積むと、その環境の 2D API が画素にします。",
-            "棒の上にポインターを置くと色が変わり、押すと選ばれて値が出ます。面の幅を変えると描き直されます。",
+            "棒の上にポインターを置くと色が変わり、主ボタンで押すと選ばれて値が出ます。面の幅を変えると描き直されます。",
         ],
     )?;
 
@@ -160,7 +184,8 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
                     state.hovered = hit;
                     changed = true;
                 }
-                if event.phase == PointerPhase::Down && state.selected != hit {
+                let primary = event.button == Some(PointerButton::Primary);
+                if event.phase == PointerPhase::Down && primary && state.selected != hit {
                     state.selected = hit;
                     changed = true;
                     if let Some(index) = hit {
@@ -273,5 +298,129 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     slider_row.append(&angle_slider);
     pane.append(&slider_row);
 
+    parts::group(
+        ui,
+        &pane,
+        "ホイールとボタン",
+        &[
+            "ホイール (トラックパッドの 2 本指のスクロール) でポインターの位置を中心に拡大縮小します。主ボタンか中ボタンでつかむと動かせて、副ボタン (右クリック) で元に戻ります。",
+            "on_wheel で Handled を返しているので、図の上ではページはスクロールしません。",
+        ],
+    )?;
+
+    let view = Rc::new(RefCell::new(ViewState::default()));
+    let zoom = ui.canvas()?;
+    zoom.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(200.0)),
+    );
+    zoom.on_draw({
+        let view = view.clone();
+        move |painter| draw_zoomable(painter, &view.borrow())
+    });
+    zoom.on_wheel({
+        let view = view.clone();
+        let zoom = zoom.clone();
+        move |event| {
+            let mut view = view.borrow_mut();
+            // 1 刻みで ZOOM_PER_STEP 倍。トラックパッドの細かい量もそのまま効く。
+            let factor = ZOOM_PER_STEP.powf(-event.wheel_y / WHEEL_STEP);
+            let scale = (view.scale * factor).clamp(MIN_SCALE, MAX_SCALE);
+            // ポインターの下にある図の点が、拡大後も同じ場所に残るように動かす。
+            let ratio = scale / view.scale;
+            let p = event.point;
+            view.offset = Point::new(
+                p.x - (p.x - view.offset.x) * ratio,
+                p.y - (p.y - view.offset.y) * ratio,
+            );
+            view.scale = scale;
+            zoom.redraw();
+            EventResponse::Handled
+        }
+    });
+    zoom.on_pointer({
+        let view = view.clone();
+        let zoom = zoom.clone();
+        move |event| {
+            let mut view = view.borrow_mut();
+            match (event.phase, event.button) {
+                (PointerPhase::Down, Some(PointerButton::Primary | PointerButton::Middle)) => {
+                    view.dragging = Some(event.point);
+                }
+                (PointerPhase::Down, Some(PointerButton::Secondary)) => {
+                    *view = ViewState::default();
+                    zoom.redraw();
+                }
+                (PointerPhase::Move, _) => {
+                    if let Some(last) = view.dragging {
+                        view.offset.x += event.point.x - last.x;
+                        view.offset.y += event.point.y - last.y;
+                        view.dragging = Some(event.point);
+                        zoom.redraw();
+                    }
+                }
+                (PointerPhase::Up, _) => view.dragging = None,
+                _ => {}
+            }
+        }
+    });
+    pane.append(&zoom);
+
     Ok(pane)
+}
+
+/// 拡大縮小の図。方眼と、いくつかの図形を、いまの倍率と位置で描く。
+fn draw_zoomable(painter: &mut naui::Painter, view: &ViewState) {
+    let bounds = painter.bounds();
+    painter.fill_rect(bounds, PAPER);
+    let to_screen = |p: Point| {
+        Point::new(
+            p.x * view.scale + view.offset.x,
+            p.y * view.scale + view.offset.y,
+        )
+    };
+
+    // 方眼。図の座標で 20 ごとに、見えている範囲だけ引く。
+    let spacing = 20.0;
+    let left = (-view.offset.x / view.scale / spacing).floor() as i64;
+    let right = ((bounds.width - view.offset.x) / view.scale / spacing).ceil() as i64;
+    let top = (-view.offset.y / view.scale / spacing).floor() as i64;
+    let bottom = ((bounds.height - view.offset.y) / view.scale / spacing).ceil() as i64;
+    for i in left..=right {
+        let x = to_screen(Point::new(i as f64 * spacing, 0.0)).x;
+        let color = if i == 0 { INK } else { FRAME };
+        painter.line(Point::new(x, 0.0), Point::new(x, bounds.height), color, 1.0);
+    }
+    for j in top..=bottom {
+        let y = to_screen(Point::new(0.0, j as f64 * spacing)).y;
+        let color = if j == 0 { INK } else { FRAME };
+        painter.line(Point::new(0.0, y), Point::new(bounds.width, y), color, 1.0);
+    }
+
+    // 図形。大きさも倍率に合わせる。
+    painter.fill_circle(to_screen(Point::new(80.0, 80.0)), 30.0 * view.scale, ACCENT);
+    let square = to_screen(Point::new(160.0, 50.0));
+    painter.fill_rect(
+        Rect::new(square.x, square.y, 60.0 * view.scale, 60.0 * view.scale),
+        ACCENT_STRONG,
+    );
+    painter.stroke_path(
+        &Path::new().polygon(&[
+            to_screen(Point::new(260.0, 120.0)),
+            to_screen(Point::new(300.0, 40.0)),
+            to_screen(Point::new(340.0, 120.0)),
+        ]),
+        INK,
+        2.0,
+    );
+
+    painter.stroke_rect(bounds.inset(0.5), FRAME, 1.0);
+    painter.set_text_align(Align::End);
+    painter.text(
+        &format!("{:.0}%", view.scale * 100.0),
+        Point::new(bounds.width - 8.0, 8.0),
+        11.0,
+        INK,
+    );
 }

@@ -11,9 +11,25 @@
 //! UI フォントで、大きさだけを命令の `size` に差し替える。
 //!
 //! ポインターの通知は 3 つのコントローラーから取る。`GtkGestureClick` が
-//! 押下・解放 (ボタンは区別しない)、`GtkGestureDrag` が**押している間の
-//! 移動** (面の外へ出ても届く)、`GtkEventControllerMotion` が押していない
-//! 間の移動 (ホバー。こちらは面の中にいる間しか出ない)。
+//! 押下・解放 (どのボタンかは `current_button` で、左が 1、中が 2、右が 3、
+//! 側面が 8 と 9)、`GtkGestureDrag` が**押している間の移動** (面の外へ出ても
+//! 届く)、`GtkEventControllerMotion` が押していない間の移動 (ホバー。こちらは
+//! 面の中にいる間しか出ない)。
+//!
+//! ホイールは `GtkEventControllerScroll` から取る。量の単位は
+//! `gtk_event_controller_scroll_get_unit` で分かり、刻みのあるホイール
+//! (`GDK_SCROLL_UNIT_WHEEL`、1 刻みで 1) は [`WHEEL_STEP`] を掛け、
+//! トラックパッド (`GDK_SCROLL_UNIT_SURFACE`) は論理ピクセルのまま届ける。
+//! スクロールの通知は位置を持たないので、最後にホバーで見た位置を使う。
+//! アプリが `Continue` を返したら伝播を止めず、外側の `GtkScrolledWindow` が
+//! いつもどおりスクロールする。
+//!
+//! `Handled` で伝播を止めても、外側の `GtkScrolledWindow` の慣性は防げない。
+//! 外側は捕捉フェーズ (子より先) のコントローラーでも量の履歴をためていて、
+//! 指を離したとき (止まりのイベント) にその履歴から慣性スクロールを始めるため。
+//! 止まりのイベントは続けて Canvas にも届くので、最後の量を `Handled` で
+//! 受けていたら、Canvas の `scroll-end` で外側の慣性を取り消す
+//! ([`cancel_ancestor_kinetic`])。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -22,7 +38,8 @@ use gtk::cairo;
 use gtk::pango;
 use gtk::prelude::*;
 use naui_core::{
-    Align, DrawCommand, Painter, Path, PathSegment, Point, PointerEvent, PointerPhase,
+    Align, DrawCommand, EventResponse, Painter, Path, PathSegment, Point, PointerButton,
+    PointerEvent, PointerPhase, WheelHandler, WHEEL_STEP,
 };
 
 use crate::bin::SizeBin;
@@ -38,6 +55,7 @@ struct CanvasInner {
     bin: SizeBin,
     draw: Rc<DrawSlot>,
     pointer: Rc<Notifier<PointerEvent>>,
+    wheel: Rc<WheelHandler>,
 }
 
 /// アプリが自分で描く面 (`GtkDrawingArea`)。
@@ -53,6 +71,7 @@ impl Canvas {
         let bin = SizeBin::wrap(&native);
         let draw: Rc<DrawSlot> = Rc::new(RefCell::new(None));
         let pointer = Rc::new(Notifier::default());
+        let wheel = Rc::new(WheelHandler::default());
 
         native.set_draw_func({
             let draw = draw.clone();
@@ -72,17 +91,27 @@ impl Canvas {
         });
 
         // 押下と解放。`pressed` は押した瞬間に届き (ドラッグの判定を待たない)、
-        // `released` は面の外で離しても届く。ボタンは区別しないので、右ボタンや
-        // 中ボタンも同じ通知になる (他の 3 環境と同じ)。
+        // `released` は面の外で離しても届く。どのボタンでも受け、`current_button`
+        // で見分ける。
         let click = gtk::GestureClick::new();
         click.set_button(0);
         click.connect_pressed({
             let pointer = pointer.clone();
-            move |_, _, x, y| pointer.emit(PointerEvent::new(PointerPhase::Down, Point::new(x, y)))
+            move |gesture, _, x, y| {
+                pointer.emit(
+                    PointerEvent::new(PointerPhase::Down, Point::new(x, y))
+                        .button(button_from_gdk(gesture.current_button())),
+                )
+            }
         });
         click.connect_released({
             let pointer = pointer.clone();
-            move |_, _, x, y| pointer.emit(PointerEvent::new(PointerPhase::Up, Point::new(x, y)))
+            move |gesture, _, x, y| {
+                pointer.emit(
+                    PointerEvent::new(PointerPhase::Up, Point::new(x, y))
+                        .button(button_from_gdk(gesture.current_button())),
+                )
+            }
         });
         native.add_controller(click);
 
@@ -119,11 +148,19 @@ impl Canvas {
 
         // 押していない間の移動 (ホバー)。`motion` は面の中にいる間しか出ないので、
         // 押している間は上の `drag-update` に任せて二重に出さない。
+        // ホイールの位置にも使うので、最後に見た位置を覚えておく。
+        let hover = Rc::new(Cell::new(Point::default()));
         let motion = gtk::EventControllerMotion::new();
+        motion.connect_enter({
+            let hover = hover.clone();
+            move |_, x, y| hover.set(Point::new(x, y))
+        });
         motion.connect_motion({
             let pointer = pointer.clone();
             let dragging = dragging.clone();
+            let hover = hover.clone();
             move |_, x, y| {
+                hover.set(Point::new(x, y));
                 if !dragging.get() {
                     pointer.emit(PointerEvent::new(PointerPhase::Move, Point::new(x, y)));
                 }
@@ -131,11 +168,51 @@ impl Canvas {
         });
         native.add_controller(motion);
 
+        // ホイール。縦と横の両方を受ける。慣性 (`KINETIC`) は付けず、OS が
+        // 出した量だけを届ける。
+        // 最後の量を `Handled` で受けたかを覚えておき、指を離したときに
+        // 外側の慣性を取り消すのに使う。
+        let last_handled = Rc::new(Cell::new(false));
+        let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+        scroll.connect_scroll({
+            let wheel = wheel.clone();
+            let hover = hover.clone();
+            let last_handled = last_handled.clone();
+            move |controller, dx, dy| {
+                let scale = match controller.unit() {
+                    gtk::gdk::ScrollUnit::Surface => 1.0,
+                    _ => WHEEL_STEP,
+                };
+                let event = PointerEvent::wheel(hover.get(), dx * scale, dy * scale);
+                let response = wheel.emit(event);
+                last_handled.set(response == EventResponse::Handled);
+                match response {
+                    EventResponse::Handled => gtk::glib::Propagation::Stop,
+                    EventResponse::Continue => gtk::glib::Propagation::Proceed,
+                }
+            }
+        });
+        scroll.connect_scroll_begin({
+            let last_handled = last_handled.clone();
+            move |_| last_handled.set(false)
+        });
+        // 止まりのイベントは外側の捕捉フェーズで慣性を始めさせた後にここへ
+        // 届く。最後を `Continue` で外側へ回していたなら、慣性はそのまま残す。
+        scroll.connect_scroll_end(move |controller| {
+            if last_handled.replace(false) {
+                if let Some(widget) = controller.widget() {
+                    cancel_ancestor_kinetic(&widget);
+                }
+            }
+        });
+        native.add_controller(scroll);
+
         Self(Rc::new(CanvasInner {
             native,
             bin,
             draw,
             pointer,
+            wheel,
         }))
     }
 
@@ -154,9 +231,19 @@ impl Canvas {
     }
 
     /// ポインター (マウス・タッチ・ペン) の押下・移動・解放。位置は面の左上を
-    /// 原点にした論理ピクセル。移動は押していない間 (ホバー) も届く。
+    /// 原点にした論理ピクセル。移動は押していない間 (ホバー) も届く。押下と
+    /// 解放にはどのボタンかが付く ([`PointerEvent::button`])。
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.pointer.set(f);
+    }
+
+    /// ホイール (トラックパッドの 2 本指のスクロールも含む)。量は論理ピクセル。
+    ///
+    /// `Handled` を返すと外側のスクロールへは回らない (指を離した後の慣性も
+    /// 起きない)。`Continue` なら外側の `GtkScrolledWindow` がいつもどおり
+    /// スクロールする。
+    pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
+        self.0.wheel.set(f);
     }
 
     /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
@@ -170,6 +257,39 @@ impl Canvas {
     /// 描画面本体。バックエンド固有の脱出口として公開している。
     pub fn native_area(&self) -> gtk::DrawingArea {
         self.0.native.clone()
+    }
+}
+
+/// 外側の `GtkScrolledWindow` が始めた慣性スクロールを取り消す。
+///
+/// 慣性を止める公開の API は無いが、`kinetic-scrolling` を切ると進行中の
+/// 慣性 (`cancel_deceleration`) も止まる。すぐ元へ戻すので、設定は変わらない。
+/// 入れ子のスクロールはどれも履歴をためているので、祖先をすべて辿る。
+fn cancel_ancestor_kinetic(widget: &gtk::Widget) {
+    let mut next = widget.parent();
+    while let Some(ancestor) = next {
+        if let Some(scrolled) = ancestor.downcast_ref::<gtk::ScrolledWindow>() {
+            if scrolled.is_kinetic_scrolling() {
+                scrolled.set_kinetic_scrolling(false);
+                scrolled.set_kinetic_scrolling(true);
+            }
+        }
+        next = ancestor.parent();
+    }
+}
+
+/// GDK のボタン番号をボタンへ直す。
+///
+/// タッチは GTK が 1 (主ボタン) として渡す。0 (どのボタンでもない) と
+/// 知らない番号は `None`。
+fn button_from_gdk(button: u32) -> Option<PointerButton> {
+    match button {
+        gtk::gdk::BUTTON_PRIMARY => Some(PointerButton::Primary),
+        gtk::gdk::BUTTON_MIDDLE => Some(PointerButton::Middle),
+        gtk::gdk::BUTTON_SECONDARY => Some(PointerButton::Secondary),
+        8 => Some(PointerButton::Back),
+        9 => Some(PointerButton::Forward),
+        _ => None,
     }
 }
 
@@ -245,5 +365,22 @@ fn trace(cr: &cairo::Context, path: &Path) {
             } => cr.curve_to(control1.x, control1.y, control2.x, control2.y, to.x, to.y),
             PathSegment::Close => cr.close_path(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gdk_buttons_map_by_meaning() {
+        // GDK は右が 3 で中が 2 (Web や AppKit と並びが違う)。
+        assert_eq!(button_from_gdk(1), Some(PointerButton::Primary));
+        assert_eq!(button_from_gdk(2), Some(PointerButton::Middle));
+        assert_eq!(button_from_gdk(3), Some(PointerButton::Secondary));
+        assert_eq!(button_from_gdk(8), Some(PointerButton::Back));
+        assert_eq!(button_from_gdk(9), Some(PointerButton::Forward));
+        assert_eq!(button_from_gdk(0), None, "どのボタンでもない");
+        assert_eq!(button_from_gdk(4), None);
     }
 }

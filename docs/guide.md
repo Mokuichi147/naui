@@ -167,6 +167,51 @@ form.attach(&field, GridCell::new(1, 0));
 [`examples/gallery`](../examples/gallery/src/lib.rs) にあります。ここでは、共通 API
 だけでは意図や動作が分かりにくい機能を補足します。
 
+### ウィンドウの位置と状態
+
+最大化・最小化・全画面は `Window::set_state` で頼み、いまの状態は
+`Window::state` で `WindowState` として読みます。位置は `set_position` /
+`position`、利用者が縁をつかんで大きさを変えられるかどうかは `set_resizable` /
+`is_resizable` です。
+
+```rust
+let window = ui.window("ビューア", 800.0, 600.0)?;
+window.set_position(80.0, 60.0); // Linux と Web では何もしない
+window.set_state(WindowState::Maximized); // 表示するときに最大化する
+window.set_resizable(true);
+window.on_state_change(|state| println!("いまは {state:?}"));
+window.show();
+
+if let Some((x, y)) = window.position() {
+    println!("左上は ({x}, {y})"); // Linux と Web では None
+}
+```
+
+位置は**主画面の左上を原点に、右と下へ数えた論理ピクセル**で、タイトルバーを
+含むウィンドウの枠の左上です。最大化・最小化・全画面の間の `position` は
+**通常の状態へ戻ったときの位置**を返し、`set_position` は状態をそのままにして
+その戻る先を決めます (見えている枠は動きません)。閉じる前に `position` と `state`
+を保存しておき、次に開くときに両方を当てれば、最大化していたウィンドウも元の
+配置へ戻ります。画面に出す前の `set_state` は覚えておき、`show` で当てます。
+状態の変化は非同期のことが多い (macOS の全画面はアニメーションの後、
+Linux はコンポジタが応えた後) ので、変わったことは `on_state_change` で受け取ります。
+利用者がタイトルバーのボタンや Esc で変えたときも呼ばれます。
+
+できることは環境で違います。
+
+| | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| 位置 | ○ | ○ | × (いつも `None`) | × (いつも `None`) |
+| 最大化・最小化 | ○ | ○ | ○ (Wayland では最小化を知れない) | × |
+| 全画面 | ○ | ○ | ○ | ○ (利用者の操作の中からだけ) |
+| 大きさを変えられるか | ○ | ○ | ○ | × (値を覚えるだけ) |
+
+Linux の位置は、GTK4 にウィンドウの位置を扱う API が無いためです (Wayland では
+アプリが位置を知る仕組みそのものが無く、GTK4 は X11 でも外しました)。Web は
+Fullscreen API だけを使い、ページ全体を全画面にします。ブラウザは利用者の操作の
+中からしか全画面にさせないので、ボタンの `on_click` などから呼びます。詳しくは
+[既知の制限](known-limitations.md) を参照してください。
+
 ### 折りたたみ
 
 ふだんは隠しておき、見出しを押したときだけ見せたいものは `Expander` へ入れます。
@@ -615,6 +660,52 @@ list.set_rows(&[row]);
 そこで行を組み立てます ([後からウィジェットを作る](#後からウィジェットを作る)を
 参照)。
 
+#### 行の起動と文脈メニュー
+
+ファイル一覧のように「ダブルクリックで開く」「右クリックでその行のメニューを出す」
+一覧は、`on_row_activate` と `on_context_menu` で作ります。どちらも行の
+インデックスを受け取ります。
+
+```rust
+use naui::{ListItem, PopupItem};
+
+let list = ui.list()?;
+list.set_items(&ListItem::list(["報告書.txt", "写真.png", "メモ.md"]));
+
+// ダブルクリック、または行にフォーカスがある状態での Enter。
+list.on_row_activate(|index| println!("{index} 行目を開く"));
+
+// 右クリック。位置は `PopupMenu::open_at` にそのまま渡せる。
+let menu = ui.popup_menu()?;
+menu.set_items(&[PopupItem::new("開く"), PopupItem::new("名前を変更")]);
+list.on_context_menu({
+    let list = list.clone();
+    move |index, at| {
+        // どの行のメニューかは、ここで覚えておく。
+        println!("{index} 行目のメニュー");
+        menu.open_at(&list, at.x, at.y);
+    }
+});
+```
+
+| 操作 | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| 起動 | ダブルタップ / Enter | ダブルクリック / Return | ダブルクリック / Enter | ダブルクリック / Enter |
+| 文脈メニュー | 右クリック・長押し・Shift + F10 | 右クリック・Control + クリック | 右クリック | 右クリック |
+
+- **選択は変わりません。** 右クリックした行を選んでから操作したいときは、
+  `on_context_menu` の中で `list.select(index)` を呼びます。
+- 複数選択のすべてを開きたいときは、`on_row_activate` の中で `list.selection()`
+  を読みます。Enter で起動するのは、キーボードで指している行 (macOS は
+  最後に選んだ行、Web の `<select>` は選ばれている先頭の行) です。
+- 選べない `ListItem` (`enabled(false)`) の行と、行の無い余白では呼ばれません。
+- 行内のボタンなどを直接ダブルクリックしても起動しません。右クリックは
+  その行の文脈メニューになります (Web は行内の入力欄の上だけ、ブラウザ自身の
+  メニューを残します)。
+- `on_context_menu` を設定すると、行の上ではその環境の既定のメニュー
+  (`PopupMenu::attach` で付けたものを含む) は出なくなります。
+- `PopupMenu::open_at` は、macOS ではメニューが閉じるまで戻りません。
+
 ### テーブル
 
 列見出しを持つ表を出すには `Table` を使います。列は `TableColumn`、行は
@@ -843,8 +934,53 @@ chart.redraw();
 
 `on_pointer` にはポインター (マウス・タッチ・ペン) の押下・移動・解放が、面の
 左上を原点にした位置で届きます (`PointerEvent`)。移動は押していない間 (ホバー) も
-届き、押している間は面の外へ出ても届きます (捕捉します)。右クリックや修飾キーは
-区別しません。
+届き、押している間は面の外へ出ても届きます (捕捉します)。押下と解放には、どの
+ボタンかが `PointerButton` で付きます (`Primary`・`Secondary`・`Middle`・`Back`・
+`Forward`。タッチとペン先は `Primary`)。ボタンの番号は環境ごとに違う (GTK は右が
+3、Web は中が 1) ので、意味でそろえてあります。修飾キーはまだ区別しません。
+
+```rust
+use naui::{EventResponse, PointerButton, PointerPhase, WHEEL_STEP};
+
+chart.on_pointer(|event| {
+    if event.phase == PointerPhase::Down && event.button == Some(PointerButton::Secondary) {
+        println!("右クリック: {:?}", event.point); // PopupMenu::open_at などへ
+    }
+});
+
+let mut scale = 1.0_f64;
+chart.on_wheel(move |event| {
+    scale *= 1.2_f64.powf(-event.wheel_y / WHEEL_STEP); // 1 刻みで 1.2 倍
+    EventResponse::Handled // ページはスクロールさせない
+});
+```
+
+ホイール (トラックパッドの 2 本指のスクロールも含む) は `on_wheel` に、
+`PointerPhase::Wheel` の `PointerEvent` として届きます。量は `wheel_x` /
+`wheel_y` で、**論理ピクセルにそろえてあります**。正は右・下へ読み進める向き
+(ページのスクロールと同じ) で、OS の「ナチュラルなスクロール」の設定は反映した
+あとの向きです。
+
+| 環境 | ネイティブの量 | naui に届く量 |
+| --- | --- | --- |
+| Windows | `MouseWheelDelta` (1 刻みで 120、縦は奥へ回すと正) | 120 を `WHEEL_STEP` に直し、縦の符号を反転 |
+| macOS | `scrollingDeltaX` / `Y` (トラックパッドはピクセル、ホイールは行。中身が動く向きで正) | ピクセルはそのまま、行は `WHEEL_STEP` 倍。符号を反転 |
+| Linux | `GtkEventControllerScroll` (単位が `SURFACE` ならピクセル、`WHEEL` なら刻み) | ピクセルはそのまま、刻みは `WHEEL_STEP` 倍 |
+| Web | `WheelEvent` (`deltaMode` がピクセル・行・ページ) | ピクセルはそのまま、行は `WHEEL_STEP` の 1/3 倍、ページは面の大きさ倍 |
+
+刻みのあるホイールの 1 刻みは `WHEEL_STEP` (48 ピクセル。Windows の既定の
+「1 刻みで 3 行」に 1 行 16 ピクセルを掛けた値) になります。ただし Web で
+ブラウザがピクセルで渡すときはブラウザの量のままなので、1 刻みの量はブラウザに
+よって違います。拡大縮小のように「1 刻みでどれだけ」を決めるときは、上の例の
+ように量を `WHEEL_STEP` で割った値を指数に使うと、トラックパッドの細かい量でも
+滑らかに効きます。
+
+`on_wheel` は `EventResponse` を返します。`Handled` なら外側のスクロール
+(`Scroll` やページ) へ回さず、`Continue` なら外側がいつもどおりスクロール
+します。`on_wheel` を付けていない面は、ホイールを外側へ回します。
+
+Web では、右クリックで出るブラウザのコンテキストメニューを面の上では出しません
+(他の 3 環境の描画面にも無いため)。
 
 Windows だけは**画素を描く面が Windows App SDK にありません** (Win2D は別
 パッケージ、`SwapChainPanel` は DirectX を自前で回す口)。そこで XAML が持つ図形の

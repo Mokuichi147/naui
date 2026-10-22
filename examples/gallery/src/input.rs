@@ -56,14 +56,16 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let notice = notice.clone();
         move |text| notice.show(&format!("確定: {text}"))
     });
-    // 欄を離れたときに中身を確かめる。通知の中で欄自身を読むときは、
-    // clone() ではなく弱参照で捕まえる (循環して解放されなくなるため)。
+    // 欄を離れたときに中身を確かめる。
     let input_status = parts::readout(ui, "フォーカス: なし")?;
+    // 通知は欄が持つので、欄自身は弱参照で捕まえる (循環させない)。
     input.on_focus_change({
         let input = input.downgrade();
         let input_status = input_status.clone();
         move |focused| {
-            let Some(input) = input.upgrade() else { return };
+            let Some(input) = input.upgrade() else {
+                return;
+            };
             if focused {
                 input_status.set_text("フォーカス: 入力中");
             } else if input.text().trim().is_empty() {
