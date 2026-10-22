@@ -1,6 +1,6 @@
 [package]
 name = "naui-winui3"
-description = "naui が使う WinUI 3 (Windows App SDK) の WinRT 投影"
+description = "WinRT projection of WinUI 3 (Windows App SDK) used by naui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

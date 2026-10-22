@@ -1,38 +1,39 @@
 # naui-web
 
-[naui](https://crates.io/crates/naui) の Web (wasm) バックエンドです。
+The Web (wasm) backend of [naui](https://crates.io/crates/naui).
 
-DOM の標準コントロール (`<button>` / `<input>` / `<progress>` …) をそのまま
-生成します。ブラウザにおける「ネイティブ UI」はフォームコントロールそのものな
-ので、見た目を作り込むことはせず、ブラウザ既定のスタイルに任せています。
-レイアウトだけは Flexbox を使います。
+It creates standard DOM controls (`<button>` / `<input>` / `<progress>` …) as
+they are. In a browser, the "native UI" is the form controls themselves, so it
+does not style them and leaves their look to the browser defaults. Only layout
+uses Flexbox.
 
-アプリから直接依存する必要はありません。`wasm32` 向けにビルドすると `naui` が
-このクレートを引き込みます。それ以外のターゲットでは中身が空になり、
-wasm-bindgen などの依存も引き込みません。共通 API で足りないときのために、
-各ウィジェットは `native_*` で `web_sys` の要素を返します。
+Apps do not need to depend on it directly; `naui` pulls this crate in when
+building for `wasm32`. On other targets the crate is empty and pulls in none of
+its dependencies, such as wasm-bindgen. For cases the common API does not cover,
+each widget returns its `web_sys` element through `native_*`.
 
-## ビルド
+## Building
 
-wasm ターゲットと、`Cargo.lock` に記録されたものと同じバージョンの
-`wasm-bindgen-cli` が必要です。
+You need the wasm target and `wasm-bindgen-cli` at the same version as the one
+recorded in `Cargo.lock`.
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.127
 ```
 
-入口は `naui::entry!` に任せると、`#[wasm_bindgen(start)]` をマクロが作るので
-アプリ側に wasm-bindgen への依存が要りません。
+If you leave the entry point to `naui::entry!`, the macro generates
+`#[wasm_bindgen(start)]`, so the app itself does not need to depend on
+wasm-bindgen.
 
-## 制限
+## Limitations
 
-wasm にはスレッドがないため、`std::thread::spawn` は使えません。別スレッドから
-値を送る代わりに `Tasks::spawn` の future の中で `Sender::send` を呼びます。
-その他の制限は
-[既知の制限](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md#web)
-にまとめています。
+wasm has no threads, so `std::thread::spawn` is not available. Instead of
+sending values from another thread, call `Sender::send` inside a future passed
+to `Tasks::spawn`. Other limitations are collected in the
+[known limitations](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md#web)
+(in Japanese).
 
-## ライセンス
+## License
 
 MIT OR Apache-2.0

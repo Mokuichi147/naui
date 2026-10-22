@@ -1,39 +1,39 @@
 # naui-gtk
 
-[naui](https://crates.io/crates/naui) の Linux バックエンドです。
+The Linux backend of [naui](https://crates.io/crates/naui).
 
-GTK4 / libadwaita の実コントロール (`AdwApplicationWindow` / `GtkButton` /
-`GtkEntry` / `GtkScale` / `GtkListBox` …) を生成し、GTK4 のシグナルを Rust の
-クロージャへ中継します。描画・レイアウト・IME・アクセシビリティ・テーマ追従は
-すべて GTK4 が行います。
+It creates real GTK4 / libadwaita controls (`AdwApplicationWindow` / `GtkButton` /
+`GtkEntry` / `GtkScale` / `GtkListBox` …) and forwards GTK4 signals to Rust
+closures. Drawing, layout, IME, accessibility, and theme changes are all
+handled by GTK4.
 
-アプリから直接依存する必要はありません。Linux 向けにビルドすると `naui` が
-このクレートを引き込みます。共通 API で足りないときのために、各ウィジェットは
-`native_*` で GTK4 / libadwaita のオブジェクトを返します。
+Apps do not need to depend on it directly; `naui` pulls this crate in when
+building for Linux. For cases the common API does not cover, each widget
+returns its GTK4 / libadwaita object through `native_*`.
 
-`naui` と GTK4 の対応表は [API ドキュメント](https://docs.rs/naui-gtk) に
-あります。
+The mapping between `naui` and GTK4 is in the
+[API documentation](https://docs.rs/naui-gtk).
 
-## ビルド要件
+## Build requirements
 
-GTK4 と libadwaita の開発用ライブラリが必要です。Ubuntu 24.04 では次の通りです。
+You need the development libraries for GTK4 and libadwaita. On Ubuntu 24.04:
 
 ```sh
 sudo apt install libgtk-4-dev libadwaita-1-dev build-essential pkg-config
 ```
 
-対象外の OS では中身が空のクレートになり、これらの依存も引き込みません
-(macOS から `cargo check --workspace` を通すため)。
+On other operating systems the crate is empty and pulls in none of these
+dependencies (so that `cargo check --workspace` passes on macOS).
 
-## テスト
+## Tests
 
-GTK4 はメインスレッドを要求するので、統合テストは標準ハーネスを使いません
-(`harness = false`)。実行にはディスプレイが必要です。
+GTK4 requires the main thread, so the integration tests do not use the standard
+harness (`harness = false`). Running them requires a display.
 
 ```sh
 cargo test -p naui-gtk
 ```
 
-## ライセンス
+## License
 
 MIT OR Apache-2.0

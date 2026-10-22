@@ -1,24 +1,25 @@
 # naui-winui3
 
-naui が使う分だけの **WinUI 3 (Windows App SDK) の WinRT 投影**。
+A **WinRT projection of WinUI 3 (Windows App SDK)**, covering only what naui uses.
 
-WinUI 3 のコントロールは Windows SDK ではなく Windows App SDK に入っていて、
-`windows` クレートには投影がありません。このクレートは Microsoft が配る
-`.winmd` から [`windows-bindgen`] で作った投影 (`src/bindings.rs`) と、
-生成物だけでは足りない次のものを持ちます。
+WinUI 3 controls live in the Windows App SDK rather than the Windows SDK, and
+the `windows` crate has no projection for them. This crate holds a projection
+(`src/bindings.rs`) generated with [`windows-bindgen`] from the `.winmd` files
+Microsoft distributes, plus the following pieces the generated code alone does
+not provide:
 
-- `bootstrap`: 未パッケージのアプリが Windows App SDK ランタイムを自分の
-  プロセスへ取り付ける仕組み (動的依存)
-- `self_contained`: exe に同梱した Windows App SDK ランタイムを使う仕組み
-  (`self-contained` フィーチャー)。ビルド時の取得と配置は `build.rs` が行う
-- `compose`: `Application` のような composable なクラスを Rust 側で継承する
-  ための土台
-- `native`: XAML の `Window` から HWND を取り出す `IWindowNative`
+- `bootstrap`: lets an unpackaged app attach the Windows App SDK runtime to its
+  own process (dynamic dependencies)
+- `self_contained`: uses a Windows App SDK runtime bundled with the exe
+  (the `self-contained` feature). `build.rs` fetches and places it at build time
+- `compose`: groundwork for subclassing composable classes such as
+  `Application` from Rust
+- `native`: `IWindowNative`, which gets the HWND out of a XAML `Window`
 
-`src/bindings.rs` を作り直す手順は `tools/winui3-bindgen/README.md` にあります。
+How to regenerate `src/bindings.rs` is described in `tools/winui3-bindgen/README.md`.
 
-**naui のための下ごしらえなので、単体で使うことは考えていません。** WinUI 3 を
-Rust から一般的に使いたい場合は、必要な型を自分で選んで
-`windows-bindgen` にかけるほうが小さく済みます。
+**This is groundwork for naui and is not meant to be used on its own.** If you
+want to use WinUI 3 from Rust in general, picking the types you need yourself
+and running them through `windows-bindgen` will give you something smaller.
 
 [`windows-bindgen`]: https://crates.io/crates/windows-bindgen

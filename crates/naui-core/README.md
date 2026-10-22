@@ -1,26 +1,25 @@
 # naui-core
 
-[naui](https://crates.io/crates/naui) の共通値型を置くクレートです。
+The crate that holds the shared value types of [naui](https://crates.io/crates/naui).
 
-バックエンド (AppKit / WinUI 3 / GTK4 / DOM) に依存せず、描画もレイアウト計算も
-持ちません。ウィジェットそのものは各バックエンドが OS のネイティブコントロール
-として実装します。
+It does not depend on any backend (AppKit / WinUI 3 / GTK4 / DOM), and it does
+no drawing or layout computation. The widgets themselves are implemented by
+each backend as the OS's native controls.
 
-含まれるもの:
+What it contains:
 
-- `Error` / `Result`、`Settings`、`Theme`、`Orientation`、`Align`、`Padding`
-- レイアウトの指定 (`Sizing`、`Length`、`Track`、`GridCell`、`ScrollPolicy`)
-- ウィジェットへ渡す値 (`Color`、`DateTime`、`Time`、`ListItem`、`TreeItem`、
-  `TableColumn`、`TableRow`、`FileFilter`、`ToolbarItem`、`ToastSpec` など)
-- 通知で受け取る値 (`KeyEvent`、`PointerEvent`、`WindowState` など)
-- バックエンドに依らない受け渡し (`Sender`、`Tasks`、`Task`、`MainThread`)
-- ウィジェットの弱参照 (`WeakWidget`)
+- `Error` / `Result`, `Settings`, `Theme`, `Orientation`, `Align`, `Padding`
+- Layout specifications (`Sizing`, `Length`, `Track`, `GridCell`, `ScrollPolicy`)
+- Values passed to widgets (`Color`, `DateTime`, `Time`, `ListItem`, `TreeItem`,
+  `TableColumn`, `TableRow`, `FileFilter`, `ToolbarItem`, `ToastSpec`, and more)
+- Values received from notifications (`KeyEvent`, `PointerEvent`, `WindowState`, and more)
+- Backend-independent message passing (`Sender`, `Tasks`, `Task`, `MainThread`)
+- Weak references to widgets (`WeakWidget`)
 
-`#![forbid(unsafe_code)]` です。
+It is `#![forbid(unsafe_code)]`.
 
-アプリから直接依存する必要はありません。これらの型は `naui` が再エクスポート
-しています。
+Apps do not need to depend on it directly; `naui` re-exports these types.
 
-## ライセンス
+## License
 
 MIT OR Apache-2.0

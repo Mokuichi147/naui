@@ -1,26 +1,26 @@
 # naui
 
-各 OS のネイティブ UI を、1 つの Rust API から扱う軽量 GUI ツールキットです。
+A lightweight GUI toolkit that drives each OS's native UI from a single Rust API.
 
-アプリが依存するのはこのクレートだけで、ビルド対象に応じたバックエンドが
-自動で選ばれます。
+This is the only crate your app depends on; the backend is chosen automatically
+based on the build target.
 
-| ビルド対象 | バックエンド | 例: ボタンの実体 |
+| Build target | Backend | Example: what a button really is |
 | --- | --- | --- |
 | Windows | `naui-windows` (WinUI 3) | `Microsoft.UI.Xaml.Controls.Button` |
 | macOS | `naui-macos` (AppKit) | `NSButton` |
 | Linux | `naui-gtk` (GTK4 / libadwaita) | `GtkButton` |
 | Web (wasm32) | `naui-web` (DOM) | `<button>` |
 
-## 使い方
+## Usage
 
 ```sh
 cargo add naui
 ```
 
-UI は `run` に渡すコールバックの中で組み立てます。WinUI 3 が
-`Application::Start` より前のコントロール生成を許さないため、4 バックエンドで
-同じ形にそろえてあります。
+You build the UI inside the callback passed to `run`. WinUI 3 does not allow
+creating controls before `Application::Start`, so all four backends share this
+same shape.
 
 ```rust
 use naui::{Orientation, Padding, Settings};
@@ -33,7 +33,7 @@ fn main() -> naui::Result<()> {
         stack.set_padding(Padding::all(20.0));
 
         let label = ui.label("0")?;
-        let button = ui.button("増やす")?;
+        let button = ui.button("Increment")?;
 
         let count = std::cell::Cell::new(0);
         button.on_click({
@@ -53,21 +53,21 @@ fn main() -> naui::Result<()> {
 }
 ```
 
-ネイティブと Web の両方へ出すときは、入口を `entry!` に任せます。Web の
-`#[wasm_bindgen(start)]` はこのマクロが作るので、アプリ側に `cfg` も
-wasm-bindgen への依存も要りません。
+When targeting both native and the Web, leave the entry point to `entry!`. The
+macro generates the Web's `#[wasm_bindgen(start)]`, so the app needs neither
+`cfg` nor a dependency on wasm-bindgen.
 
-Windows では、実行環境に Windows App SDK ランタイムが要ります。`self-contained`
-フィーチャーを有効にすると、ランタイムを exe と一緒に配れます。
+On Windows, the machine running the app needs the Windows App SDK runtime.
+Enable the `self-contained` feature to ship the runtime alongside your exe.
 
 ```toml
 [dependencies]
 naui = { version = "0.10", features = ["self-contained"] }
 ```
 
-ウィジェット一覧、レイアウトの決まり、環境ごとの制限は
-[リポジトリの README](https://github.com/mokuichi147/naui#readme) を参照してください。
+For the list of widgets, layout rules, and per-platform limitations, see the
+[repository README](https://github.com/mokuichi147/naui#readme).
 
-## ライセンス
+## License
 
 MIT OR Apache-2.0

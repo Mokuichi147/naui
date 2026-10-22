@@ -1,27 +1,27 @@
 # naui-macos
 
-[naui](https://crates.io/crates/naui) の macOS バックエンドです。
+The macOS backend of [naui](https://crates.io/crates/naui).
 
-AppKit の実コントロール (`NSWindow` / `NSButton` / `NSTextField` / `NSSlider` /
-`NSStackView` …) を生成し、target/action とデリゲートを Rust のクロージャへ
-中継します。描画・レイアウト・IME・アクセシビリティ・テーマ追従はすべて
-AppKit が行います。
+It creates real AppKit controls (`NSWindow` / `NSButton` / `NSTextField` / `NSSlider` /
+`NSStackView` …) and forwards target/action and delegates to Rust closures.
+Drawing, layout, IME, accessibility, and theme changes are all handled by
+AppKit.
 
-アプリから直接依存する必要はありません。macOS 向けにビルドすると `naui` が
-このクレートを引き込みます。共通 API で足りないときのために、各ウィジェットは
-`native_*` で AppKit のオブジェクトを返します。
+Apps do not need to depend on it directly; `naui` pulls this crate in when
+building for macOS. For cases the common API does not cover, each widget
+returns its AppKit object through `native_*`.
 
-Objective-C を呼ぶため `unsafe` を使います。
+It uses `unsafe` to call into Objective-C.
 
-## テスト
+## Tests
 
-AppKit はメインスレッドを要求するので、統合テストは標準ハーネスを使いません
-(`harness = false`)。実行には macOS の GUI セッションが必要です。
+AppKit requires the main thread, so the integration tests do not use the
+standard harness (`harness = false`). Running them requires a macOS GUI session.
 
 ```sh
 cargo test -p naui-macos
 ```
 
-## ライセンス
+## License
 
 MIT OR Apache-2.0

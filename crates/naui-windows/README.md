@@ -1,34 +1,35 @@
 # naui-windows
 
-[naui](https://crates.io/crates/naui) の Windows バックエンドです。
+The Windows backend of [naui](https://crates.io/crates/naui).
 
-WinUI 3 (Fluent 2) の実コントロール (`Microsoft.UI.Xaml.Controls.Button` など) を
-生成します。描画・レイアウト・IME・アクセシビリティ・テーマ追従はすべて
-WinUI 3 が行います。
+It creates real WinUI 3 (Fluent 2) controls (`Microsoft.UI.Xaml.Controls.Button`
+and so on). Drawing, layout, IME, accessibility, and theme changes are all
+handled by WinUI 3.
 
-アプリから直接依存する必要はありません。Windows 向けにビルドすると `naui` が
-このクレートを引き込みます。Windows 以外では中身が空になるので、依存も
-引き込みません。共通 API で足りないときのために、各ウィジェットは `native_*` で
-WinUI 3 のオブジェクトを返します。
+Apps do not need to depend on it directly; `naui` pulls this crate in when
+building for Windows. On other platforms the crate is empty and pulls in no
+dependencies. For cases the common API does not cover, each widget returns its
+WinUI 3 object through `native_*`.
 
-## 実行要件
+## Runtime requirements
 
-WinUI 3 は Windows SDK ではなく **Windows App SDK** に含まれるため、実行環境に
-Windows App SDK 1.3 以降のフレームワークランタイムが必要です。起動時に
-フレームワークパッケージの依存関係を追加しますが、版は決め打ちにせず 2.x から
-1.3 まで新しい順に試し、最初に取り付けられたものを使います。OS 同梱の系統
-(`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れます。動作確認は 2.x で
-行っています。
+WinUI 3 ships in the **Windows App SDK**, not the Windows SDK, so the machine
+running the app needs the Windows App SDK 1.3+ framework runtime. At startup
+the backend adds a dependency on the framework package. Rather than pinning a
+version, it tries versions from 2.x down to 1.3, newest first, and uses the
+first one it can attach. The OS-bundled line (`Microsoft.WindowsAppRuntime.CBS*`)
+is also a candidate. It is tested with 2.x.
 
-`self-contained` フィーチャーを有効にすると、ランタイムを exe と一緒に配れます。
-ビルド時に部品を nuget.org から取ってきて exe の出力先へ並べ、実行時はそれだけを
-使います (exe の隣に無ければエラーにします)。詳しくは
-[ランタイムの同梱](https://github.com/mokuichi147/naui/blob/main/docs/windows-self-contained.md)
-を参照してください。
+Enable the `self-contained` feature to ship the runtime alongside your exe.
+At build time the pieces are fetched from nuget.org and placed next to the exe's
+output, and at run time only those are used (it is an error if they are not next
+to the exe). See
+[bundling the runtime](https://github.com/mokuichi147/naui/blob/main/docs/windows-self-contained.md)
+(in Japanese) for details.
 
-また、コントロールは `Application::Start` の後でしか生成できません。naui の
-公開 API が「コールバックの中で UI を組み立てる」形なのはこの制約のためです。
+Also, controls can only be created after `Application::Start`. This constraint
+is why naui's public API has you build the UI inside a callback.
 
-## ライセンス
+## License
 
 MIT OR Apache-2.0
