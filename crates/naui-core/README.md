@@ -12,7 +12,9 @@
 - レイアウトの指定 (`Sizing`、`Length`、`Track`、`GridCell`、`ScrollPolicy`)
 - ウィジェットへ渡す値 (`Color`、`DateTime`、`Time`、`ListItem`、`TreeItem`、
   `TableColumn`、`TableRow`、`FileFilter`、`ToolbarItem`、`ToastSpec` など)
+- 通知で受け取る値 (`KeyEvent`、`PointerEvent`、`WindowState` など)
 - バックエンドに依らない受け渡し (`Sender`、`Tasks`、`Task`、`MainThread`)
+- ウィジェットの弱参照 (`WeakWidget`)
 
 `#![forbid(unsafe_code)]` です。
 

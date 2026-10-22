@@ -6,8 +6,8 @@
 
 | 環境 | 確認した環境と方法 |
 | --- | --- |
-| macOS | AppKit の実コントロールを使った統合テストと Gallery の実行 |
-| Linux | Ubuntu 24.04 (GTK 4.14、libadwaita 1.5、Wayland) で統合テストと Gallery を実行 |
+| macOS | macOS Golden Gate 27.0.1 で、AppKit の実コントロールを使った統合テストと Gallery を実行 |
+| Linux | Ubuntu 26.04.1 LTS (Wayland) で統合テストと Gallery を実行 |
 | Web | ブラウザ上で Gallery の各ウィジェットを操作 |
 | Windows | Windows App SDK 2.3.1 の x64 実機で Gallery を操作。WinUI 3 の統合テストを CI で実行 (`self-contained` でも実行し、ランタイム未導入の Windows Server 2022 で Gallery の全ページを巡回) |
 
