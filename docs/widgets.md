@@ -95,9 +95,12 @@
 
 ## 主なデータ型
 
+- `WindowState` / `CloseResponse`: ウィンドウの状態 (通常・最大化・最小化・全画面) と、閉じる操作への応答
 - `Sizing` / `Length` / `Track` / `GridCell`: 配置とサイズ
+- `Key` / `KeyEvent` / `Modifiers` / `EventResponse`: キー入力の通知と、そのキーを先へ渡すかどうか
 - `NavItem`: ナビゲーション項目
 - `ListItem` / `ListRow` / `SelectionMode`: 単純なリスト項目、任意内容の行、単一・複数選択
+- `TableColumn` / `TableRow` / `SortOrder`: 表の列・行と並べ替えの向き
 - `TreeItem`: ツリー項目 (入れ子・開閉・選べるかどうか)
 - `DateTime` / `DatePickerMode`: 年月日と時分の値、日付選択で何を選ばせるか
 - `Time`: 時分だけの値 (時刻の選択でやり取りする値)
@@ -112,6 +115,9 @@
 - `SidebarSection` / `SidebarItem`: サイドバーのまとまり (見出し) と項目 (文字とアイコン)
 - `DialogButtons` / `DialogResponse`: ダイアログのボタンと応答
 - `ToastSpec`: トーストの文字・操作ボタン・消えるまでの時間
+
+通知の中でウィジェット自身を触るときに使う弱参照 `WeakWidget` は、各ウィジェットの
+`downgrade()` で作ります ([使い方](guide.md#後からウィジェットを外す)を参照)。
 
 API の詳しい説明は、リポジトリ内で次のコマンドを実行して確認できます。
 

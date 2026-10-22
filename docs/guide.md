@@ -679,8 +679,10 @@ list.on_row_activate(|index| println!("{index} 行目を開く"));
 let menu = ui.popup_menu()?;
 menu.set_items(&[PopupItem::new("開く"), PopupItem::new("名前を変更")]);
 list.on_context_menu({
-    let list = list.clone();
+    // list 自身は弱参照で捕まえる (clone() で捕まえると解放されない)。
+    let list = list.downgrade();
     move |index, at| {
+        let Some(list) = list.upgrade() else { return };
         // どの行のメニューかは、ここで覚えておく。
         println!("{index} 行目のメニュー");
         menu.open_at(&list, at.x, at.y);

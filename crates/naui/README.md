@@ -62,7 +62,7 @@ Windows では、実行環境に Windows App SDK ランタイムが要ります�
 
 ```toml
 [dependencies]
-naui = { version = "0.9", features = ["self-contained"] }
+naui = { version = "0.10", features = ["self-contained"] }
 ```
 
 ウィジェット一覧、レイアウトの決まり、環境ごとの制限は

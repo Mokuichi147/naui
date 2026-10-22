@@ -318,8 +318,12 @@
 //! # fn build(ui: &Ui) -> Result<()> {
 //! let message = ui.text_area("")?;
 //! message.on_key_down({
-//!     let message = message.clone();
+//!     // 自身は弱参照で捕まえる (clone() で捕まえると循環して解放されない)。
+//!     let message = message.downgrade();
 //!     move |event: &KeyEvent| {
+//!         let Some(message) = message.upgrade() else {
+//!             return EventResponse::Continue;
+//!         };
 //!         // Enter で送信、Shift+Enter で改行。
 //!         if event.key == Key::Enter && !event.modifiers.shift {
 //!             println!("送信: {}", message.text());
@@ -1581,8 +1585,9 @@
 //! let menu = ui.popup_menu()?;
 //! menu.set_items(&[PopupItem::new("開く"), PopupItem::new("削除")]);
 //! list.on_context_menu({
-//!     let list = list.clone();
+//!     let list = list.downgrade();
 //!     move |index, at| {
+//!         let Some(list) = list.upgrade() else { return };
 //!         println!("{index} 行目のメニュー");
 //!         menu.open_at(&list, at.x, at.y);
 //!     }
@@ -1749,8 +1754,9 @@
 //! # fn build(ui: &Ui, data: Rc<RefCell<Vec<TableRow>>>) -> Result<()> {
 //! # let table = ui.table()?;
 //! table.on_sort({
-//!     let table = table.clone();
+//!     let table = table.downgrade();
 //!     move |column, _order| {
+//!         let Some(table) = table.upgrade() else { return };
 //!         {
 //!             let mut rows = data.borrow_mut();
 //!             rows.sort_by(|a, b| a.cell(column).cmp(b.cell(column)));

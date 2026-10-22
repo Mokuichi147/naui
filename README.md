@@ -136,7 +136,7 @@ python3 -m http.server 8080
 
 ## ドキュメント
 
-- [使い方](docs/guide.md): ウィジェットの追加と削除、テーマ、配置とサイズ、ウィジェットごとの補足、別スレッドと非同期
+- [使い方](docs/guide.md): ウィジェットの追加と削除、テーマ、配置とサイズ、機能別の補足、別スレッドと非同期
 - [ウィジェットの実装](docs/widgets.md): 環境ごとのコントロール、主なデータ型、ネイティブオブジェクトへのアクセス
 - [既知の制限](docs/known-limitations.md): 環境ごとの制限
 - [ランタイムの同梱](docs/windows-self-contained.md): Windows App SDK を exe と一緒に配る
