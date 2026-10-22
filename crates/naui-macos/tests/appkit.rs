@@ -21,7 +21,7 @@ use naui_core::{
     NavItem, Orientation, Padding, PlaybackState, Point, PointerButton, PointerPhase, PopupItem,
     Rect, Result, ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder,
     TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
-    TreeItem, DEFAULT_SIDEBAR_WIDTH,
+    TreeItem, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
@@ -37,7 +37,8 @@ use objc2_app_kit::{
     NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder, NSScrollView,
     NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch,
     NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
-    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowTitleVisibility,
+    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
@@ -174,6 +175,14 @@ fn main() {
         (
             "行のクリックがクロージャへ届く",
             list_row_activation_notifies,
+        ),
+        (
+            "リストのダブルクリックと Return が行の起動を通知する",
+            list_row_activate_notifies,
+        ),
+        (
+            "リストの右クリックが行と位置を通知する",
+            list_context_menu_notifies,
         ),
         (
             "リストに任意ウィジェットの行を載せられる",
@@ -408,6 +417,30 @@ fn main() {
         (
             "閉じる確認で KeepOpen を返すと閉じない",
             window_close_request_can_keep_it_open,
+        ),
+        (
+            "ウィンドウの位置がネイティブと往復する",
+            window_position_round_trips,
+        ),
+        (
+            "ウィンドウの最大化・最小化・全画面が往復し通知される",
+            window_state_round_trips,
+        ),
+        (
+            "最大化・最小化・全画面の間の位置は通常へ戻ったときの位置",
+            window_position_while_not_normal,
+        ),
+        (
+            "表示する前に頼んだ状態で表示される",
+            window_state_requested_before_show,
+        ),
+        (
+            "状態の通知の中から頼んだ状態も通知される",
+            window_state_change_inside_the_notification,
+        ),
+        (
+            "大きさを変えられるかどうかが styleMask と往復する",
+            window_resizable_round_trips,
         ),
         (
             "読み上げ名・読み取り専用・最小の大きさがネイティブへ届く",
@@ -4062,6 +4095,303 @@ fn window_close_request_can_keep_it_open(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// 位置は主画面の左上から右下へ数えたウィンドウの枠の左上。表示の前後どちらで
+/// 決めても往復し、決めた後の `set_size` は中央へ寄せ直さない。
+fn window_position_round_trips(ui: &Ui) -> Result<()> {
+    let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
+        a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
+    };
+    let window = ui.window("位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_position(120.0, 140.0);
+    assert!(
+        near(window.position(), (120.0, 140.0)),
+        "表示の前: {:?}",
+        window.position()
+    );
+    window.show();
+    pump(0.2);
+    assert!(
+        near(window.position(), (120.0, 140.0)),
+        "表示の後: {:?}",
+        window.position()
+    );
+
+    // AppKit の座標 (左下から上へ) と向きが逆になっていること。
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let screen_height = objc2_app_kit::NSScreen::screens(mtm)
+        .firstObject()
+        .map(|screen| screen.frame().size.height)
+        .expect("主画面");
+    let frame = window.native_window().frame();
+    assert!(
+        (screen_height - (frame.origin.y + frame.size.height) - 140.0).abs() < 1.0,
+        "枠の上端が主画面の上から 140: frame={frame:?} screen_height={screen_height}"
+    );
+
+    window.set_size(360.0, 220.0);
+    assert!(
+        near(window.position(), (120.0, 140.0)),
+        "set_size で中央へ寄せ直さない: {:?}",
+        window.position()
+    );
+    window.set_position(200.0, 160.0);
+    pump(0.1);
+    assert!(
+        near(window.position(), (200.0, 160.0)),
+        "表示中に動かす: {:?}",
+        window.position()
+    );
+    window.close();
+    Ok(())
+}
+
+/// 最大化 (`zoom:`)・最小化 (`miniaturize:`)・全画面 (`toggleFullScreen:`) が
+/// `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+fn window_state_round_trips(ui: &Ui) -> Result<()> {
+    let window = ui.window("状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_state_change({
+        let seen = seen.clone();
+        move |state| seen.borrow_mut().push(state)
+    });
+    window.show();
+    pump(0.2);
+    assert_eq!(window.state(), WindowState::Normal);
+    let native = window.native_window();
+
+    window.set_state(WindowState::Maximized);
+    pump_until(2.0, || window.state() == WindowState::Maximized);
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "zoom={}",
+        native.isZoomed()
+    );
+    assert!(native.isZoomed());
+    window.set_state(WindowState::Normal);
+    pump_until(2.0, || window.state() == WindowState::Normal);
+    assert_eq!(window.state(), WindowState::Normal);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [WindowState::Maximized, WindowState::Normal]
+    );
+
+    window.set_state(WindowState::Minimized);
+    pump_until(3.0, || window.state() == WindowState::Minimized);
+    if window.state() == WindowState::Minimized {
+        window.set_state(WindowState::Normal);
+        pump_until(3.0, || window.state() == WindowState::Normal);
+        assert_eq!(window.state(), WindowState::Normal, "最小化から戻す");
+        assert!(!native.isMiniaturized());
+    } else {
+        // Dock の無いセッションでは miniaturize: が効かない。
+        skip("最小化できない環境 (Dock が無い)");
+    }
+
+    seen.borrow_mut().clear();
+    window.set_state(WindowState::Fullscreen);
+    pump_until(5.0, || window.state() == WindowState::Fullscreen);
+    if window.state() == WindowState::Fullscreen {
+        assert!(native.styleMask().contains(NSWindowStyleMask::FullScreen));
+        // 全画面から最大化へは、全画面を出終わってから zoom する。
+        window.set_state(WindowState::Maximized);
+        pump_until(5.0, || window.state() == WindowState::Maximized);
+        assert_eq!(window.state(), WindowState::Maximized, "全画面から最大化へ");
+        window.set_state(WindowState::Normal);
+        pump_until(2.0, || window.state() == WindowState::Normal);
+        assert_eq!(window.state(), WindowState::Normal);
+        assert_eq!(
+            seen.borrow().as_slice(),
+            [
+                WindowState::Fullscreen,
+                WindowState::Normal,
+                WindowState::Maximized,
+                WindowState::Normal
+            ],
+            "全画面を出たところでいったん Normal が届く"
+        );
+    } else {
+        // 画面を占有できないセッション (CI の一部) では全画面へ入れない。
+        skip("全画面へ入れない環境");
+    }
+    window.close();
+    Ok(())
+}
+
+/// 最大化・最小化・全画面の間の `position` は通常の状態へ戻ったときの位置を
+/// 返し、`set_position` は状態を変えずにその位置を決める。最大化と全画面の
+/// 間は見えている枠も動かさない (最小化の間は `frame` が戻る先そのもの)。
+fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
+    let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
+        a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
+    };
+    let window = ui.window("状態の間の位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_position(120.0, 140.0);
+    window.show();
+    pump(0.2);
+    let native = window.native_window();
+    let mut normal = (120.0, 140.0);
+    let mut skipped = Vec::new();
+    for (index, (state, limit)) in [
+        (WindowState::Maximized, 2.0),
+        (WindowState::Minimized, 3.0),
+        (WindowState::Fullscreen, 10.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        window.set_state(state);
+        pump_until(limit, || window.state() == state);
+        if window.state() != state {
+            // Dock の無いセッションでは最小化が、画面を占有できないセッションでは
+            // 全画面が効かない。CI のランナーでは全画面へ入り終わるのに 6 秒ほど
+            // かかることがあるので、全画面は長めに待つ。
+            skipped.push(format!("{state:?}"));
+            continue;
+        }
+        assert!(
+            near(window.position(), normal),
+            "{state:?} の間は元の位置: {:?}",
+            window.position()
+        );
+        let shown = native.frame();
+        normal = (200.0 + 20.0 * index as f64, 160.0 + 10.0 * index as f64);
+        window.set_position(normal.0, normal.1);
+        pump(0.2);
+        assert_eq!(window.state(), state, "{state:?} のまま");
+        if state != WindowState::Minimized {
+            assert_eq!(native.frame(), shown, "{state:?} の枠は動かない");
+        }
+        assert!(
+            near(window.position(), normal),
+            "{state:?} の間に決めた位置: {:?}",
+            window.position()
+        );
+        window.set_state(WindowState::Normal);
+        pump_until(limit, || window.state() == WindowState::Normal);
+        pump(0.2);
+        assert_eq!(window.state(), WindowState::Normal);
+        assert!(
+            near(window.position(), normal),
+            "{state:?} から戻ると決めた位置: {:?}",
+            window.position()
+        );
+    }
+    if !skipped.contains(&"Fullscreen".to_string()) {
+        // 全画面の間に決めた位置は、全画面から最大化へ移っても元に戻す先になる。
+        window.set_state(WindowState::Fullscreen);
+        pump_until(10.0, || window.state() == WindowState::Fullscreen);
+        window.set_position(260.0, 190.0);
+        window.set_state(WindowState::Maximized);
+        pump_until(10.0, || window.state() == WindowState::Maximized);
+        assert_eq!(window.state(), WindowState::Maximized);
+        assert!(
+            near(window.position(), (260.0, 190.0)),
+            "全画面から最大化: {:?}",
+            window.position()
+        );
+        // 最大化の間に決めた位置は、全画面を挟んでも残る。
+        window.set_position(280.0, 200.0);
+        window.set_state(WindowState::Fullscreen);
+        pump_until(10.0, || window.state() == WindowState::Fullscreen);
+        assert!(
+            near(window.position(), (280.0, 200.0)),
+            "最大化から全画面: {:?}",
+            window.position()
+        );
+        window.set_state(WindowState::Normal);
+        pump_until(10.0, || window.state() == WindowState::Normal);
+        pump(0.2);
+        assert_eq!(window.state(), WindowState::Normal);
+        assert!(
+            near(window.position(), (280.0, 200.0)),
+            "全画面から戻る: {:?}",
+            window.position()
+        );
+    }
+    window.close();
+    if !skipped.is_empty() {
+        skip(&format!("{} にできない環境", skipped.join("・")));
+    }
+    Ok(())
+}
+
+/// 表示する前の `set_state` は覚えておき、表示するときに当てる。
+/// 通知の中から同じウィンドウの状態を変えても、その変化の通知は失われない。
+///
+/// macOS 27 では、通知の中で頼んだ `zoom:` はその場では当たらず (戻った
+/// 直後も zoom のまま)、元に戻ったことは後の `windowDidResize:` で届く。
+/// 通知の中で状態が変わったときに後回しにして知らせる仕組みそのものは、
+/// naui-core の `StateHandler` の単体テストで確かめている。
+fn window_state_change_inside_the_notification(ui: &Ui) -> Result<()> {
+    let window = ui.window("通知の中の状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_state_change({
+        let seen = seen.clone();
+        let weak = window.downgrade();
+        move |state| {
+            seen.borrow_mut().push(state);
+            if state == WindowState::Maximized {
+                if let Some(window) = weak.upgrade() {
+                    window.set_state(WindowState::Normal);
+                }
+            }
+        }
+    });
+    window.show();
+    pump(0.2);
+    window.set_state(WindowState::Maximized);
+    pump_until(2.0, || seen.borrow().len() >= 2);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [WindowState::Maximized, WindowState::Normal]
+    );
+    assert_eq!(window.state(), WindowState::Normal);
+    window.close();
+    Ok(())
+}
+
+fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
+    let window = ui.window("表示前の状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_state(WindowState::Maximized);
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "表示の前は頼んだ状態"
+    );
+    assert!(!window.native_window().isZoomed());
+    window.show();
+    pump_until(2.0, || window.native_window().isZoomed());
+    assert_eq!(window.state(), WindowState::Maximized);
+    window.close();
+    Ok(())
+}
+
+fn window_resizable_round_trips(ui: &Ui) -> Result<()> {
+    let window = ui.window("大きさの固定", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let native = window.native_window();
+    assert!(window.is_resizable());
+    assert!(native.styleMask().contains(NSWindowStyleMask::Resizable));
+    window.set_resizable(false);
+    assert!(!window.is_resizable());
+    assert!(!native.styleMask().contains(NSWindowStyleMask::Resizable));
+    window.show();
+    // 固定しても、プログラムからは大きさを変えられる。
+    window.set_size(360.0, 240.0);
+    assert_eq!(window.size(), (360.0, 240.0));
+    window.set_resizable(true);
+    assert!(window.is_resizable());
+    assert!(native.styleMask().contains(NSWindowStyleMask::Resizable));
+    window.close();
+    Ok(())
+}
+
 fn accessible_label_read_only_and_min_size(ui: &Ui) -> Result<()> {
     use objc2_app_kit::NSAccessibility;
     let button = ui.button("⚙")?;
@@ -5036,7 +5366,7 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
     );
     assert_eq!(
         table.action(),
-        Some(sel!(invoke:)),
+        Some(sel!(nauiRowClicked:)),
         "行クリックを action で受けていること"
     );
 
@@ -5094,6 +5424,215 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
         // AppKit がクリックを配送しないので確かめられない。
         println!("(key ウィンドウにできないため、実クリックの確認は飛ばしました)");
     }
+
+    window.close();
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    Ok(())
+}
+
+/// 起動と文脈メニューを確かめるための、行が並んだリストを key ウィンドウに出す。
+///
+/// 戻り値の `bool` は、ウィンドウが key になったか (本物のイベントを配送できるか)。
+fn shown_list_for_events(
+    ui: &Ui,
+    title: &str,
+) -> Result<(naui_macos::Window, naui_macos::List, bool)> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window(title, 480.0, 320.0)?;
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("札幌"),
+        ListItem::new("仙台"),
+        ListItem::new("東京").detail("13,960,000 人"),
+        ListItem::new("大阪").enabled(false),
+    ]);
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    window.show();
+    let native = window.native_window();
+    // ウィンドウが key になっても、アプリのアクティブ化が済むまでは、最初の
+    // マウスの押下がアクティブ化に使われてビューへ届かないことがある。両方を待つ。
+    let ready = |native: &NSWindow| native.isKeyWindow() && app.isActive();
+    for _ in 0..60 {
+        if ready(&native) {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
+    let content_view = native.contentView().expect("contentView");
+    content_view.layoutSubtreeIfNeeded();
+    unsafe { content_view.display() };
+    let key = ready(&native);
+    Ok((window, list, key))
+}
+
+/// `row` 行目の中央を、ウィンドウ座標で返す。
+fn row_center_in_window(table: &objc2_app_kit::NSTableView, row: isize) -> NSPoint {
+    let rect = table.rectOfRow(row);
+    let center = NSPoint::new(
+        rect.origin.x + rect.size.width / 2.0,
+        rect.origin.y + rect.size.height / 2.0,
+    );
+    table.convertPoint_toView(center, None)
+}
+
+/// ウィンドウ座標 `point` へのマウスイベントを作る。
+fn mouse_event(
+    window: &NSWindow,
+    kind: NSEventType,
+    point: NSPoint,
+    clicks: isize,
+) -> Retained<NSEvent> {
+    NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        kind,
+        point,
+        NSEventModifierFlags::empty(),
+        0.0,
+        window.windowNumber(),
+        None,
+        0,
+        clicks,
+        1.0,
+    )
+    .expect("マウスイベント")
+}
+
+/// ダブルクリックが `doubleAction` を通って `on_row_activate` へ届き、
+/// Return でも選ばれている行が起動される。選べない行では呼ばれない。
+fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let (window, list, key) = shown_list_for_events(ui, "行の起動")?;
+    let activated: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
+    list.on_row_activate({
+        let activated = activated.clone();
+        move |index| activated.borrow_mut().push(index)
+    });
+    let table = list.native_table();
+    assert_eq!(
+        table.doubleAction(),
+        Some(sel!(nauiRowDoubleClicked:)),
+        "ダブルクリックを doubleAction で受けていること"
+    );
+    let native = window.native_window();
+
+    // Return は選ばれている行を起動する。first responder の keyDown: へ届ける。
+    list.set_selected(1);
+    native.makeFirstResponder(Some(&table));
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
+    assert_eq!(
+        *activated.borrow(),
+        vec![1],
+        "Return で選んだ行が起動されること"
+    );
+    // 修飾キー付きの Return は起動にしない。
+    press_key(&app, &native, "\r", 36, NSEventModifierFlags::Command);
+    assert_eq!(activated.borrow().len(), 1, "⌘Return では起動しないこと");
+
+    if key {
+        // 1 回目と 2 回目のクリック (clickCount 2) を本物のイベントとして配送する。
+        // 4 つとも積んでから配送する。`NSTableView` は押下を受けると、
+        // 解放が来るまで自分の追跡ループでイベントを待つので、1 つずつ
+        // 積んでは配送すると、まだ積んでいない解放を待ったまま止まる。
+        let double_click = |row: isize| {
+            let point = row_center_in_window(&table, row);
+            for clicks in [1, 2] {
+                for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
+                    let event = mouse_event(&native, kind, point, clicks);
+                    unsafe { app.postEvent_atStart(&event, false) };
+                }
+            }
+            deliver_events(&app);
+            pump(0.05);
+            deliver_events(&app);
+        };
+        double_click(2);
+        assert_eq!(
+            *activated.borrow(),
+            vec![1, 2],
+            "ダブルクリックした行が起動されること"
+        );
+        double_click(3);
+        assert_eq!(
+            *activated.borrow(),
+            vec![1, 2],
+            "選べない行のダブルクリックでは起動しないこと"
+        );
+    } else {
+        skip("ウィンドウが key にならず、本物のダブルクリックを配送できなかった");
+    }
+
+    window.close();
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    Ok(())
+}
+
+/// 右クリックが `rightMouseDown:` を通って `on_context_menu` へ届き、位置は
+/// リストの左上から (`PopupMenu::open_at` と同じ座標系) になる。
+fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let (window, list, _key) = shown_list_for_events(ui, "文脈メニュー")?;
+    let seen: Rc<RefCell<Vec<(usize, Point)>>> = Rc::new(RefCell::new(Vec::new()));
+    list.on_context_menu({
+        let seen = seen.clone();
+        move |index, at| seen.borrow_mut().push((index, at))
+    });
+    let table = list.native_table();
+    let native = window.native_window();
+
+    // 期待する位置: 行の中央を、リストのビューの左上からの座標へ直したもの。
+    let outer = list.native_view();
+    let expected = |row: isize| {
+        let local = outer.convertPoint_fromView(row_center_in_window(&table, row), None);
+        let y = if outer.isFlipped() {
+            local.y
+        } else {
+            outer.bounds().size.height - local.y
+        };
+        (local.x, y)
+    };
+
+    // 右クリックは、作ったイベントをテーブルの `rightMouseDown:` へ直接渡す。
+    // macOS 26 では、`mouseEventWithType:` で作った右クリックを待ち行列から
+    // 取り出すと、ウィンドウ内の位置がずれてウィンドウの外を指す (左クリック
+    // はずれない)。そのため本物の配送の経路は CI で確かめられない。
+    // (ラベルの上の右クリックがテーブルまで上がることは macOS 27 で確かめた)
+    let right_click = |row: isize| {
+        let point = row_center_in_window(&table, row);
+        let event = mouse_event(&native, NSEventType::RightMouseDown, point, 1);
+        table.rightMouseDown(&event);
+    };
+
+    right_click(2);
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 1, "右クリックが 1 回だけ通知されること");
+        let (index, at) = seen[0];
+        assert_eq!(index, 2, "右クリックした行のインデックスが届くこと");
+        let (x, y) = expected(2);
+        assert!(
+            (at.x - x).abs() < 1.0 && (at.y - y).abs() < 1.0,
+            "位置がリストの左上からの座標であること: {at:?} / ({x}, {y})"
+        );
+    }
+    assert!(
+        list.selection().is_empty(),
+        "右クリックでは選択が変わらないこと"
+    );
+
+    right_click(3);
+    assert_eq!(
+        seen.borrow().len(),
+        1,
+        "選べない行の右クリックでは通知しないこと"
+    );
 
     window.close();
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);

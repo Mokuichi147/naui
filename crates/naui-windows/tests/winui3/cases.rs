@@ -10,7 +10,7 @@ use std::time::Duration;
 use naui_core::{
     Align, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect, Result,
     ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle, ToolbarIcon,
-    DEFAULT_SIDEBAR_WIDTH,
+    WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, Ui, Widget};
 
@@ -102,6 +102,10 @@ const CASES: &[Case] = &[
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
+        "リストに行の起動と文脈メニューの受け口を付けられる",
+        list_accepts_row_activate_and_context_menu,
+    ),
+    (
         "隠すと Visibility が Collapsed になり、戻すと Visible",
         set_visible_maps_to_visibility,
     ),
@@ -157,6 +161,30 @@ const CASES: &[Case] = &[
     (
         "ui.window と set_size の大きさは size と同じ中身の大きさ",
         window_set_size_is_the_content_size,
+    ),
+    (
+        "ウィンドウの位置が AppWindow と往復する",
+        window_position_round_trips,
+    ),
+    (
+        "ウィンドウの最大化・最小化・全画面が往復し通知される",
+        window_state_round_trips,
+    ),
+    (
+        "最大化・最小化・全画面の間の位置は通常へ戻ったときの位置",
+        window_position_while_not_normal,
+    ),
+    (
+        "表示する前に頼んだ状態で表示される",
+        window_state_requested_before_show,
+    ),
+    (
+        "大きさを変えられるかどうかが OverlappedPresenter と往復する",
+        window_resizable_round_trips,
+    ),
+    (
+        "表示する前に大きさを固定しても表示した後に効いている",
+        window_resizable_requested_before_show,
     ),
     (
         "TextArea の改行は \\n で読める",
@@ -1396,6 +1424,296 @@ fn window_set_size_is_the_content_size(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// 位置は主画面の左上から右下へ数えた外枠の左上 (DIP)。`AppWindow.Position`
+/// は物理ピクセルなので、`RasterizationScale` を掛けた値になる。
+fn window_position_round_trips(ui: &Ui) -> Result<()> {
+    let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
+        a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
+    };
+    let window = ui.window("位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_position(120.0, 140.0);
+    assert!(
+        near(window.position(), (120.0, 140.0)),
+        "表示の前: {:?}",
+        window.position()
+    );
+    window.show();
+    pump_until(Duration::from_millis(300), || false);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        assert!(
+            near(window.position(), (120.0, 140.0)),
+            "表示の後: {:?}",
+            window.position()
+        );
+        window.set_position(200.0, 160.0);
+        assert!(
+            near(window.position(), (200.0, 160.0)),
+            "表示中に動かす: {:?}",
+            window.position()
+        );
+        let native = window
+            .native_window()
+            .AppWindow()
+            .and_then(|app_window| app_window.Position())
+            .expect("AppWindow.Position");
+        let (x, _) = window.position().expect("位置");
+        assert!(
+            f64::from(native.X) >= x - 1.0,
+            "物理ピクセルは DIP 以上: {} / {x}",
+            native.X
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// 最大化・最小化 (`OverlappedPresenter`) と全画面 (`FullScreenPresenter`) が
+/// `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+///
+/// 画面を持たないセッションでは最大化が効かないことがあるので、そのときは
+/// 確かめずに通す (ほかのウィンドウのケースと同じ)。
+fn window_state_round_trips(ui: &Ui) -> Result<()> {
+    let window = ui.window("状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_state_change({
+        let seen = seen.clone();
+        move |state| seen.borrow_mut().push(state)
+    });
+    window.show();
+    pump_until(Duration::from_millis(300), || false);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        assert_eq!(window.state(), WindowState::Normal);
+        let steps = [
+            WindowState::Maximized,
+            WindowState::Normal,
+            WindowState::Minimized,
+            WindowState::Normal,
+            WindowState::Fullscreen,
+            // 全画面から出るときは、最初の OverlappedPresenter を付け直す。
+            WindowState::Maximized,
+            WindowState::Normal,
+        ];
+        for (index, step) in steps.into_iter().enumerate() {
+            window.set_state(step);
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || window.state() == step);
+            if index == 0 && window.state() != step {
+                println!("     (最大化が効かない環境なので、確かめずに通す)");
+                return;
+            }
+            assert_eq!(window.state(), step, "{index} 番目");
+        }
+        // 全画面から出るときは、OverlappedPresenter を付け直したところで
+        // いったん Normal が届くことがある。
+        let seen = seen.borrow();
+        assert_eq!(seen.first(), Some(&WindowState::Maximized), "{seen:?}");
+        assert_eq!(seen.last(), Some(&WindowState::Normal), "{seen:?}");
+        for state in [WindowState::Minimized, WindowState::Fullscreen] {
+            assert!(seen.contains(&state), "{state:?} も届く: {seen:?}");
+        }
+        assert!(
+            seen.windows(2).all(|pair| pair[0] != pair[1]),
+            "同じ状態を続けて知らせない: {seen:?}"
+        );
+        let presenter = window
+            .native_window()
+            .AppWindow()
+            .and_then(|app_window| app_window.Presenter())
+            .and_then(|presenter| presenter.Kind())
+            .expect("Presenter.Kind");
+        assert_eq!(
+            presenter,
+            naui_winui3::Microsoft::UI::Windowing::AppWindowPresenterKind::Overlapped
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// 最大化・最小化・全画面の間の `position` は通常の状態へ戻ったときの位置を
+/// 返し、`set_position` は状態も見えている枠も変えずにその位置を決める。
+fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
+    let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
+        a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
+    };
+    let window = ui.window("状態の間の位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_position(120.0, 140.0);
+    window.show();
+    pump_until(Duration::from_millis(300), || false);
+    let native_position = || {
+        window
+            .native_window()
+            .AppWindow()
+            .and_then(|app_window| app_window.Position())
+            .map(|position| (position.X, position.Y))
+            .expect("AppWindow.Position")
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let mut normal = (120.0, 140.0);
+        for (index, state) in [
+            WindowState::Maximized,
+            WindowState::Minimized,
+            WindowState::Fullscreen,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            window.set_state(state);
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || window.state() == state);
+            if index == 0 && window.state() != state {
+                println!("     (最大化が効かない環境なので、確かめずに通す)");
+                return;
+            }
+            assert_eq!(window.state(), state);
+            assert!(
+                near(window.position(), normal),
+                "{state:?} の間は元の位置: {:?}",
+                window.position()
+            );
+            let shown = native_position();
+            normal = (200.0 + 20.0 * index as f64, 160.0 + 10.0 * index as f64);
+            window.set_position(normal.0, normal.1);
+            pump_until(Duration::from_millis(200), || false);
+            assert_eq!(window.state(), state, "{state:?} のまま");
+            assert_eq!(native_position(), shown, "{state:?} の枠は動かない");
+            assert!(
+                near(window.position(), normal),
+                "{state:?} の間に決めた位置: {:?}",
+                window.position()
+            );
+            window.set_state(WindowState::Normal);
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+                window.state() == WindowState::Normal
+            });
+            assert_eq!(window.state(), WindowState::Normal);
+            assert!(
+                near(window.position(), normal),
+                "{state:?} から戻ると決めた位置: {:?}",
+                window.position()
+            );
+        }
+        // 全画面の間に決めた位置は、全画面から最大化へ移っても元に戻す先になる。
+        window.set_state(WindowState::Fullscreen);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Fullscreen
+        });
+        window.set_position(260.0, 190.0);
+        window.set_state(WindowState::Maximized);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Maximized
+        });
+        assert_eq!(window.state(), WindowState::Maximized);
+        assert!(
+            near(window.position(), (260.0, 190.0)),
+            "全画面から最大化: {:?}",
+            window.position()
+        );
+        window.set_state(WindowState::Normal);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Normal
+        });
+        assert!(
+            near(window.position(), (260.0, 190.0)),
+            "最大化から戻る: {:?}",
+            window.position()
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// 表示する前の `set_state` は覚えておき、表示するときに当てる。
+fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
+    let window = ui.window("表示前の状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_state(WindowState::Maximized);
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "表示の前は頼んだ状態"
+    );
+    window.show();
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        window.state() == WindowState::Maximized
+    });
+    let state = window.state();
+    window.close();
+    if state != WindowState::Maximized {
+        println!("     (最大化が効かない環境なので、確かめずに通す)");
+        return Ok(());
+    }
+    Ok(())
+}
+
+/// 表示する前の `set_resizable(false)` が、表示した後も効いている。
+///
+/// 初めて表示する前は `AppWindow.Presenter` が空のことがあり、そのときも
+/// 頼んだ値を落とさず `show` で当てる。この環境で空にならなくても、表示の
+/// 前後で値が保たれることは確かめられる。
+fn window_resizable_requested_before_show(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
+    let window = ui.window("表示前の大きさの固定", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_resizable(false);
+    assert!(!window.is_resizable(), "表示の前");
+    window.show();
+    pump_until(Duration::from_millis(300), || false);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        assert!(!window.is_resizable(), "表示の後");
+        let presenter = window
+            .native_window()
+            .AppWindow()
+            .and_then(|app_window| app_window.Presenter())
+            .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
+            .expect("OverlappedPresenter");
+        assert_eq!(presenter.IsResizable().ok(), Some(false));
+        assert_eq!(presenter.IsMaximizable().ok(), Some(false));
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+fn window_resizable_round_trips(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
+    let window = ui.window("大きさの固定", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let presenter = window
+        .native_window()
+        .AppWindow()
+        .and_then(|app_window| app_window.Presenter())
+        .and_then(|presenter| presenter.cast::<OverlappedPresenter>())
+        .expect("OverlappedPresenter");
+    assert!(window.is_resizable());
+    window.set_resizable(false);
+    assert!(!window.is_resizable());
+    assert_eq!(presenter.IsResizable().ok(), Some(false));
+    assert_eq!(
+        presenter.IsMaximizable().ok(),
+        Some(false),
+        "最大化のボタンも消える"
+    );
+    window.set_resizable(true);
+    assert!(window.is_resizable());
+    assert_eq!(presenter.IsResizable().ok(), Some(true));
+    assert_eq!(presenter.IsMaximizable().ok(), Some(true));
+    window.close();
+    Ok(())
+}
+
 // -------------------------------------------------------------- メニューバー
 
 /// `StackPanel` に並んだ見出しの数。
@@ -2197,6 +2515,51 @@ fn tooltip_maps_to_tool_tip_service(ui: &Ui) -> Result<()> {
         .and_then(|value| value.cast::<IPropertyValue>().ok())
         .and_then(|value| value.GetString().ok());
     assert_eq!(cleared, None, "None で外れる");
+    Ok(())
+}
+
+/// ダブルタップや文脈メニューの要求を起こす公開 API が無いので、ここでは
+/// 受け口を付けたまま行を作り直せることと、選択の操作では呼ばれないことを
+/// 確かめる (実際の配送は実機で確かめる)。
+fn list_accepts_row_activate_and_context_menu(ui: &Ui) -> Result<()> {
+    use naui_core::ListItem;
+
+    let list = ui.list()?;
+    let activated = Rc::new(RefCell::new(Vec::new()));
+    let menus = Rc::new(RefCell::new(Vec::new()));
+    list.on_row_activate({
+        let activated = activated.clone();
+        move |index| activated.borrow_mut().push(index)
+    });
+    list.on_context_menu({
+        let menus = menus.clone();
+        move |index, at: Point| menus.borrow_mut().push((index, at))
+    });
+    // 受け口を付けたあとでも行を作り直せる (行ごとの購読が付き直る)。
+    list.set_items(&[
+        ListItem::new("札幌"),
+        ListItem::new("東京").detail("13,960,000 人"),
+        ListItem::new("大阪").enabled(false),
+    ]);
+    let items = list
+        .native_list_view()
+        .Items()
+        .expect("Items")
+        .Size()
+        .expect("Size");
+    assert_eq!(items, 3);
+    list.set_items(&[ListItem::new("那覇")]);
+    assert_eq!(list.len(), 1);
+
+    // 選択は起動でも文脈メニューでもない。
+    list.select(0);
+    assert_eq!(list.selection(), vec![0]);
+    assert!(activated.borrow().is_empty());
+    assert!(menus.borrow().is_empty());
+
+    // 差し替えられる。
+    list.on_row_activate(|_| {});
+    list.on_context_menu(|_, _| {});
     Ok(())
 }
 

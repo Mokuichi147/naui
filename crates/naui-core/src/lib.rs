@@ -82,7 +82,7 @@ pub use toast::ToastSpec;
 pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
 pub use weak::WeakWidget;
-pub use window::{CloseHandler, CloseResponse};
+pub use window::{CloseHandler, CloseResponse, StateHandler, WindowState};
 
 use std::fmt;
 

@@ -163,6 +163,11 @@ impl<T> ValueHandler<T> {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
+    /// クロージャが設定されているか。
+    pub(crate) fn is_set(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+
     pub(crate) fn emit(&self, value: T) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;

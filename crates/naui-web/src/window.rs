@@ -4,7 +4,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use naui_core::{Error, Result, Theme};
+use naui_core::{Error, Result, StateHandler, Theme, WindowState};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
@@ -13,7 +13,7 @@ use crate::menu_bar::MenuBar;
 use crate::sidebar::Sidebar;
 use crate::to_error;
 use crate::toolbar::Toolbar;
-use crate::widgets::{create, Widget};
+use crate::widgets::{create, Listener, Widget};
 
 /// ウィンドウ要素に付ける印。
 const WINDOW_ATTRIBUTE: &str = "data-naui-window";
@@ -47,6 +47,21 @@ struct WindowInner {
     /// ウィンドウ要素の高さの指定を足し直す。
     bars_observer: RefCell<Option<web_sys::ResizeObserver>>,
     bars_callback: RefCell<Option<ObserverCallback>>,
+    on_state_change: StateHandler,
+    /// 文書の `fullscreenchange` の購読。全画面への出入りを知らせる。
+    fullscreen_change: RefCell<Option<Listener>>,
+    /// 最後に `set_state` で頼まれた向き (全画面にするなら `true`)。まだ
+    /// 当たっていない間だけ `Some` で、当たったら (か、断られたら) `None`。
+    wanted: Cell<Option<bool>>,
+    /// いま待っている `requestFullscreen` (`true`) / `exitFullscreen`
+    /// (`false`) の向き。待っていなければ `None`。
+    in_flight: Cell<Option<bool>>,
+    /// 待っていた Promise が済んだ (成功でも拒否でも) ときの受け口。受けないと
+    /// 拒否がコンソールに「処理されなかった拒否」として出る。使い回すので、
+    /// ここで生かしておく。
+    settled: RefCell<Option<ObserverCallback>>,
+    /// `set_resizable` で頼まれた値。Web では効かず、覚えるだけ。
+    resizable: Cell<bool>,
 }
 
 /// `ResizeObserver` へ渡す通知先。
@@ -133,7 +148,14 @@ impl Window {
             min_size: Cell::new(None),
             bars_observer: RefCell::new(None),
             bars_callback: RefCell::new(None),
+            on_state_change: StateHandler::default(),
+            fullscreen_change: RefCell::new(None),
+            wanted: Cell::new(None),
+            in_flight: Cell::new(None),
+            settled: RefCell::new(None),
+            resizable: Cell::new(true),
         }));
+        this.observe_fullscreen();
         this.set_title(title);
         this.observe_bars();
         this.apply_size();
@@ -171,6 +193,27 @@ impl Window {
                 let _ = style.remove_property("min-width");
             }
         }
+    }
+
+    /// 全画面への出入り (利用者が Esc で出たときも) を `on_state_change` へ知らせる。
+    fn observe_fullscreen(&self) {
+        let weak = Rc::downgrade(&self.0);
+        let listener = Listener::attach(self.0.document.as_ref(), "fullscreenchange", move || {
+            if let Some(inner) = weak.upgrade() {
+                let state = Window(inner.clone()).state();
+                inner.on_state_change.update(state);
+            }
+        });
+        *self.0.fullscreen_change.borrow_mut() = listener.ok();
+        let weak = Rc::downgrade(&self.0);
+        let settled = wasm_bindgen::closure::Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(
+            move |_: wasm_bindgen::JsValue| {
+                if let Some(inner) = weak.upgrade() {
+                    Window(inner).finish_fullscreen_request();
+                }
+            },
+        );
+        *self.0.settled.borrow_mut() = Some(settled);
     }
 
     /// 行の高さが変わったら (付け外しや、フォントの読み込みで) 高さを足し直す。
@@ -235,6 +278,126 @@ impl Window {
         observer.observe(self.0.element.as_ref());
         *self.0.resize_observer.borrow_mut() = Some(observer);
         *self.0.resize_callback.borrow_mut() = Some(callback);
+    }
+
+    /// ウィンドウの左上の位置。**Web では取れないので、いつも `None`。**
+    ///
+    /// ページの中のウィンドウはブラウザの窓の中に並ぶだけで、画面の上の
+    /// 位置を持たない (ブラウザの窓の位置を動かす `moveTo` も、自分で開いた
+    /// 窓にしか効かない)。
+    pub fn position(&self) -> Option<(f64, f64)> {
+        None
+    }
+
+    /// ウィンドウを動かす。**Web では何もしない** ([`position`](Self::position) を参照)。
+    pub fn set_position(&self, x: f64, y: f64) {
+        let _ = (x, y);
+    }
+
+    /// いまの表示の状態。Web では [`WindowState::Normal`] か
+    /// [`WindowState::Fullscreen`] だけ。
+    ///
+    /// ページ全体 (`document.documentElement`) が全画面のときに `Fullscreen`。
+    /// 動画など、ほかの要素だけが全画面のときは `Normal` のまま。
+    pub fn state(&self) -> WindowState {
+        let page: Option<Element> = self.0.document.document_element();
+        if page.is_some() && self.0.document.fullscreen_element() == page {
+            WindowState::Fullscreen
+        } else {
+            WindowState::Normal
+        }
+    }
+
+    /// 表示の状態を変える。**Web は全画面だけ**で、Fullscreen API を使う。
+    ///
+    /// | 頼んだ状態 | Web |
+    /// | --- | --- |
+    /// | `Fullscreen` | `document.documentElement.requestFullscreen()` |
+    /// | `Normal` | 全画面なら `document.exitFullscreen()` |
+    /// | `Maximized` / `Minimized` | 全画面なら出るだけ (ページから窓を最大化・最小化する手段が無い) |
+    ///
+    /// ブラウザは**利用者の操作 (クリックやキー) の中からしか全画面に
+    /// させない**ので、ボタンの `on_click` などから呼ぶ。起動時やタイマーから
+    /// 呼んでも断られ、状態は変わらない。全画面になるのは非同期なので、
+    /// 変わったことは [`on_state_change`](Self::on_state_change) で受け取る。
+    ///
+    /// ページ全体を全画面にするので、ウィンドウが複数あれば全部が全画面の
+    /// 中に入る (トーストやダイアログも出る)。
+    ///
+    /// 全画面へ入る・出る途中にほかの状態を頼んだときは、いま待っている
+    /// 切り替えが済んでから、最後に頼まれたほうへ切り替え直す (途中では
+    /// `fullscreenElement` がまだ変わっていないので、その場では決められない)。
+    pub fn set_state(&self, state: WindowState) {
+        self.0.wanted.set(Some(state == WindowState::Fullscreen));
+        self.apply_wanted();
+    }
+
+    /// 頼まれた向きといまの状態が違えば、切り替えを頼む。
+    ///
+    /// 切り替えを待っている間は頼まない (済んだときにまた呼ばれる)。
+    fn apply_wanted(&self) {
+        if self.0.in_flight.get().is_some() {
+            return;
+        }
+        let Some(wanted) = self.0.wanted.get() else {
+            return;
+        };
+        if wanted == (self.state() == WindowState::Fullscreen) {
+            self.0.wanted.set(None);
+            return;
+        }
+        let promise = if wanted {
+            self.0
+                .document
+                .document_element()
+                .and_then(|page| call_promise(page.as_ref(), "requestFullscreen"))
+        } else {
+            call_promise(self.0.document.as_ref(), "exitFullscreen")
+        };
+        let settled = self.0.settled.borrow();
+        let (Some(promise), Some(settled)) = (promise, settled.as_ref()) else {
+            // Fullscreen API の無いブラウザ。頼みは捨てる。
+            self.0.wanted.set(None);
+            return;
+        };
+        self.0.in_flight.set(Some(wanted));
+        let _ = promise.then2(settled, settled);
+    }
+
+    /// 待っていた切り替えが済んだ (成功でも拒否でも)。
+    ///
+    /// 済んだのと同じ向きをまだ頼まれていれば、それで答えたことにする
+    /// (断られたものを頼み直し続けない)。待っている間に逆の向きを頼まれて
+    /// いれば、いまの状態と比べて切り替え直す。
+    fn finish_fullscreen_request(&self) {
+        let done = self.0.in_flight.take();
+        if done.is_some() && self.0.wanted.get() == done {
+            self.0.wanted.set(None);
+        }
+        self.apply_wanted();
+    }
+
+    /// 表示の状態が変わったときの通知。変わった後の [`state`](Self::state) が届く。
+    ///
+    /// 全画面への出入りで呼ばれる (`fullscreenchange`)。利用者が Esc で
+    /// 全画面を出たときも届く。
+    pub fn on_state_change(&self, f: impl FnMut(WindowState) + 'static) {
+        self.0.on_state_change.set(f);
+    }
+
+    /// 利用者が大きさを変えられるか。[`set_resizable`](Self::set_resizable) で
+    /// 頼んだ値を返す (既定は `true`)。
+    pub fn is_resizable(&self) -> bool {
+        self.0.resizable.get()
+    }
+
+    /// 利用者が大きさを変えられるかどうか。**Web では効かない** (値を覚えるだけ)。
+    ///
+    /// ページの中のウィンドウには利用者がつかむ縁が無く、ブラウザの窓の
+    /// 大きさはページからは止められないため。4 環境で同じコードを書けるよう、
+    /// 受け付けるだけは受け付ける。
+    pub fn set_resizable(&self, resizable: bool) {
+        self.0.resizable.set(resizable);
     }
 
     /// このウィンドウの中で押されたキーの通知。
@@ -479,4 +642,21 @@ impl Window {
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()
     }
+}
+
+/// `target` のメソッド `name` を引数なしで呼び、返った Promise を返す。
+///
+/// web-sys の `request_fullscreen` / `exit_fullscreen` は Promise を返さない古い
+/// 形なので、断られたことを受けられない。メソッドが無いブラウザ (iPhone の
+/// Safari の `requestFullscreen` など) では `None`。
+fn call_promise(target: &wasm_bindgen::JsValue, name: &str) -> Option<js_sys::Promise> {
+    let method = js_sys::Reflect::get(target, &wasm_bindgen::JsValue::from_str(name))
+        .ok()?
+        .dyn_into::<js_sys::Function>()
+        .ok()?;
+    method
+        .call0(target)
+        .ok()?
+        .dyn_into::<js_sys::Promise>()
+        .ok()
 }

@@ -24,7 +24,7 @@ use naui_core::{
     Align, Color, DialogResponse, EventResponse, GridCell, Key, KeyEvent, Length, ListItem,
     MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Point, PointerButton,
     PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem, SidebarSection, Sizing,
-    TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem,
+    TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowState,
     DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
@@ -32,8 +32,8 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{
     CanvasRenderingContext2d, Element, EventTarget, HtmlElement, HtmlInputElement,
-    HtmlSelectElement, KeyboardEvent, KeyboardEventInit, PointerEvent, PointerEventInit,
-    WheelEvent, WheelEventInit,
+    HtmlSelectElement, KeyboardEvent, KeyboardEventInit, MouseEvent, MouseEventInit, PointerEvent,
+    PointerEventInit, WheelEvent, WheelEventInit,
 };
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -1327,6 +1327,211 @@ fn list_detail_makes_a_second_line() {
             resolved(&detailed_texts[0], "color"),
             "補助の文字のほうが淡いこと"
         );
+        Ok(())
+    });
+}
+
+/// マウスのイベント (`dblclick` / `contextmenu`) を、要素の中央で起こす。
+/// **戻り値は既定動作を止められたか**。
+fn mouse_at_center(target: &Element, kind: &str, button: i16) -> bool {
+    let rect = target.get_bounding_client_rect();
+    mouse_at(
+        target,
+        kind,
+        button,
+        rect.left() + rect.width() / 2.0,
+        rect.top() + rect.height() / 2.0,
+    )
+}
+
+/// マウスのイベントを、表示領域の `(x, y)` で起こす。**戻り値は既定動作を止められたか**。
+fn mouse_at(target: &Element, kind: &str, button: i16, x: f64, y: f64) -> bool {
+    let init = MouseEventInit::new();
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    init.set_button(button);
+    init.set_client_x(x as i32);
+    init.set_client_y(y as i32);
+    let event =
+        MouseEvent::new_with_mouse_event_init_dict(kind, &init).expect("マウスイベントの生成");
+    !target.dispatch_event(&event).expect("イベントの配送")
+}
+
+/// `target` の中央を、`list` の左上からの座標で表したもの。
+fn center_within(list: &Element, target: &Element) -> (f64, f64) {
+    let outer = list.get_bounding_client_rect();
+    let rect = target.get_bounding_client_rect();
+    (
+        (rect.left() + rect.width() / 2.0).trunc() - outer.left(),
+        (rect.top() + rect.height() / 2.0).trunc() - outer.top(),
+    )
+}
+
+/// Enter の `keydown` を起こす。
+fn press_enter(target: &EventTarget, composing: bool) {
+    let init = KeyboardEventInit::new();
+    init.set_key("Enter");
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    init.set_is_composing(composing);
+    let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+        .expect("キーイベントの生成");
+    target.dispatch_event(&event).expect("イベントの配送");
+}
+
+/// 文字だけの行 (`<select size>`) で、ダブルクリックと Enter が行の起動になり、
+/// 右クリックが行と位置を渡す。選べない行では呼ばれない。
+#[wasm_bindgen_test]
+fn list_select_row_activate_and_context_menu() {
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_items(&[
+            ListItem::new("札幌"),
+            ListItem::new("仙台"),
+            ListItem::new("東京"),
+            ListItem::new("大阪").enabled(false),
+        ]);
+        let _mounted = Mounted::new(&list);
+        let activated = Rc::new(RefCell::new(Vec::new()));
+        list.on_row_activate({
+            let activated = activated.clone();
+            move |index| activated.borrow_mut().push(index)
+        });
+        let menus: Rc<RefCell<Vec<(usize, Point)>>> = Rc::new(RefCell::new(Vec::new()));
+        list.on_context_menu({
+            let menus = menus.clone();
+            move |index, at| menus.borrow_mut().push((index, at))
+        });
+
+        let select = list.native_select().expect("文字だけなら <select>");
+        let option =
+            |index: u32| -> Element { select.options().item(index).expect("行").unchecked_into() };
+
+        mouse_at_center(&option(2), "dblclick", 0);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2],
+            "ダブルクリックした行が届くこと"
+        );
+        mouse_at_center(&option(3), "dblclick", 0);
+        assert_eq!(*activated.borrow(), vec![2], "選べない行では起動しないこと");
+
+        list.set_selected(1);
+        press_enter(select.as_ref(), false);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2, 1],
+            "Enter で選ばれている行が届くこと"
+        );
+        press_enter(select.as_ref(), true);
+        assert_eq!(activated.borrow().len(), 2, "変換中の Enter は数えないこと");
+
+        // WebKit は `<option>` に矩形を持たせない (0 になる) ので、押す位置は
+        // `<select>` の左上から決める。
+        let rect = select.get_bounding_client_rect();
+        let (client_x, client_y) = (rect.left().trunc() + 12.0, rect.top().trunc() + 6.0);
+        let prevented = mouse_at(&option(0), "contextmenu", 2, client_x, client_y);
+        assert!(prevented, "行の上ではブラウザ既定のメニューを抑止すること");
+        {
+            let menus = menus.borrow();
+            assert_eq!(menus.len(), 1);
+            assert_eq!(menus[0].0, 0, "右クリックした行のインデックスが届くこと");
+            let outer = list.native_element().get_bounding_client_rect();
+            let (x, y) = (client_x - outer.left(), client_y - outer.top());
+            assert!(
+                (menus[0].1.x - x).abs() < 1.0 && (menus[0].1.y - y).abs() < 1.0,
+                "位置がリストの左上からの座標であること: {:?} / ({x}, {y})",
+                menus[0].1
+            );
+        }
+        assert_eq!(
+            list.selection(),
+            vec![1],
+            "右クリックでは選択が変わらないこと"
+        );
+        Ok(())
+    });
+}
+
+/// 合成の一覧 (`<ul role="listbox">`) でも同じに届き、行内のコントロールの上の
+/// ダブルクリックは行の起動にしない。
+#[wasm_bindgen_test]
+fn list_listbox_row_activate_and_context_menu() {
+    with_ui(|ui| {
+        let content = ui.stack(Orientation::Horizontal)?;
+        content.append(&ui.label("Wi-Fi")?);
+        let button = ui.button("設定…")?;
+        content.append(&button);
+        let list = ui.list()?;
+        list.set_rows(&[
+            ListRow::new(&ui.label("札幌")?),
+            ListRow::new(&content),
+            ListRow::new(&ui.label("東京")?),
+        ]);
+        let _mounted = Mounted::new(&list);
+        let activated = Rc::new(RefCell::new(Vec::new()));
+        list.on_row_activate({
+            let activated = activated.clone();
+            move |index| activated.borrow_mut().push(index)
+        });
+        let menus: Rc<RefCell<Vec<(usize, Point)>>> = Rc::new(RefCell::new(Vec::new()));
+        list.on_context_menu({
+            let menus = menus.clone();
+            move |index, at| menus.borrow_mut().push((index, at))
+        });
+
+        let listbox = list
+            .native_element()
+            .children()
+            .item(0)
+            .expect("listbox の枠");
+        assert_eq!(listbox.tag_name(), "UL");
+        let row = |index: u32| listbox.children().item(index).expect("行");
+
+        mouse_at_center(&row(2), "dblclick", 0);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2],
+            "ダブルクリックした行が届くこと"
+        );
+        mouse_at_center(&button.native_element(), "dblclick", 0);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2],
+            "行内のボタンのダブルクリックでは起動しないこと"
+        );
+
+        // クリックで指した行を、Enter で起動する。
+        row(0).unchecked_ref::<HtmlElement>().click();
+        press_enter(listbox.as_ref(), false);
+        assert_eq!(
+            *activated.borrow(),
+            vec![2, 0],
+            "Enter で指している行が届くこと"
+        );
+
+        // 行内のボタンの上の右クリックも、その行の文脈メニューになる。
+        let prevented = mouse_at_center(&button.native_element(), "contextmenu", 2);
+        assert!(prevented, "行の上ではブラウザ既定のメニューを抑止すること");
+        {
+            let menus = menus.borrow();
+            assert_eq!(menus.len(), 1);
+            assert_eq!(menus[0].0, 1, "ボタンを含む行のインデックスが届くこと");
+            let (x, y) = center_within(&list.native_element(), &button.native_element());
+            assert!(
+                (menus[0].1.x - x).abs() < 1.0 && (menus[0].1.y - y).abs() < 1.0,
+                "位置がリストの左上からの座標であること: {:?} / ({x}, {y})",
+                menus[0].1
+            );
+        }
+
+        // 余白 (行の外) では通知せず、ブラウザ既定のメニューも止めない。
+        let prevented = mouse_at_center(&listbox, "contextmenu", 2);
+        assert!(
+            !prevented,
+            "行の無いところではブラウザ既定のメニューを残すこと"
+        );
+        assert_eq!(menus.borrow().len(), 1, "行の無いところでは通知しないこと");
         Ok(())
     });
 }
@@ -3822,6 +4027,111 @@ async fn window_reports_its_size() {
     // Web では閉じる確認は呼ばれないが、受け付けはする。
     window.on_close_request(|| naui_core::CloseResponse::KeepOpen);
     window.close();
+}
+
+/// Web のウィンドウは位置を持たず、状態は全画面だけ。
+///
+/// ふつうのブラウザは利用者の操作の中でしか全画面を許さないので、テストからの
+/// `set_state(Fullscreen)` は断られ、状態は変わらない。自動操作のブラウザには
+/// 許すものもある (Playwright の WebKit) ので、許されたときは往復と通知を
+/// 確かめる。どちらでも例外にはならない。
+///
+/// Playwright の WebKit が許すのは**ページごとに最初の 1 回だけ**で、2 回目
+/// からは断る。全画面へ入るのはこのテストの 1 回にまとめ、入る途中に別の
+/// 状態を頼んだときの後始末もその 1 回で確かめる。
+#[wasm_bindgen_test]
+async fn window_state_is_only_fullscreen() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("状態", 400.0, 300.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        kept = Some(window);
+        Ok(())
+    });
+    let window = kept.expect("window");
+    let document = web_sys::window()
+        .and_then(|w| w.document())
+        .expect("document");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_state_change({
+        let seen = seen.clone();
+        let document = document.clone();
+        move |state| {
+            let page = document.document_element();
+            let page_is_fullscreen = page.is_some() && document.fullscreen_element() == page;
+            seen.borrow_mut().push((state, page_is_fullscreen));
+        }
+    });
+
+    assert_eq!(window.position(), None);
+    window.set_position(120.0, 140.0);
+    assert_eq!(window.position(), None, "動かしても取れないまま");
+
+    // 全画面でなければ、最大化と最小化は何もしない。
+    assert_eq!(window.state(), WindowState::Normal);
+    window.set_state(WindowState::Maximized);
+    window.set_state(WindowState::Minimized);
+    next_frames().await;
+    assert_eq!(window.state(), WindowState::Normal);
+    assert!(document.fullscreen_element().is_none());
+
+    // 入る途中に最大化を頼む。`fullscreenElement` は入り終わるまで空なので、
+    // その場では判断できない。入り終わってから、最後の頼みどおり全画面を出る
+    // (Web の最大化は全画面を出るだけ)。
+    window.set_state(WindowState::Fullscreen);
+    assert!(
+        document.fullscreen_element().is_none(),
+        "全画面に入るのは非同期"
+    );
+    window.set_state(WindowState::Maximized);
+    for _ in 0..10 {
+        next_frames().await;
+    }
+    frames_until(|| seen.borrow().len() >= 2).await;
+    if seen.borrow().is_empty() {
+        // 断られた。状態は変わらず、知らせもしない。
+        assert!(document.fullscreen_element().is_none());
+        assert_eq!(window.state(), WindowState::Normal);
+    } else {
+        // 許された。いったん全画面に入り (ページ全体)、続けて出る。
+        assert_eq!(
+            seen.borrow().as_slice(),
+            [
+                (WindowState::Fullscreen, true),
+                (WindowState::Normal, false)
+            ],
+            "(状態, ページ全体が全画面か)"
+        );
+        assert!(
+            document.fullscreen_element().is_none(),
+            "最後の頼みどおり全画面を出ている"
+        );
+        assert_eq!(window.state(), WindowState::Normal);
+    }
+
+    // 全画面の出入り (`fullscreenchange`) で状態を読み直すが、変わって
+    // いなければ知らせない。
+    let before = seen.borrow().len();
+    let event = web_sys::Event::new("fullscreenchange").expect("イベント");
+    document.dispatch_event(&event).expect("dispatchEvent");
+    assert_eq!(seen.borrow().len(), before, "{:?}", seen.borrow());
+
+    // 大きさを変えられるかどうかは、効かないが値は往復する。
+    assert!(window.is_resizable());
+    window.set_resizable(false);
+    assert!(!window.is_resizable());
+    window.close();
+}
+
+/// 条件が満たされるまでフレームを進める (2 フレームずつ 30 回で打ち切る)。
+async fn frames_until(mut ready: impl FnMut() -> bool) {
+    for _ in 0..30 {
+        if ready() {
+            return;
+        }
+        next_frames().await;
+    }
 }
 
 /// `ui.window` と `set_size` の大きさは、ほかの環境と同じくメニューバーと

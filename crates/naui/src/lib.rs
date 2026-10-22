@@ -499,6 +499,107 @@
 //! **Web では閉じる前の確認は呼ばれない。** ページの中のウィンドウを利用者が
 //! 閉じる操作が無く、タブを閉じるときに独自の確認を出す手段も無いため。
 //!
+//! ## ウィンドウの位置と状態
+//!
+//! [`Window::set_state`] で最大化・最小化・全画面にし、[`Window::state`] で
+//! いまの状態を [`WindowState`] として読む。[`Window::set_position`] と
+//! [`Window::position`] はウィンドウの左上の位置、[`Window::set_resizable`] と
+//! [`Window::is_resizable`] は利用者が縁をつかんで大きさを変えられるかどうか。
+//!
+//! ```no_run
+//! # use naui::{Result, Ui, WindowState};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let window = ui.window("ビューア", 800.0, 600.0)?;
+//! window.set_position(80.0, 60.0); // Linux と Web では何もしない
+//! window.set_state(WindowState::Maximized); // 表示するときに最大化する
+//! window.on_state_change(|state| println!("{state:?}"));
+//! window.show();
+//!
+//! // 全画面の切り替えはボタンから (Web は利用者の操作の中でしか入れない)。
+//! let toggle = ui.button("全画面")?;
+//! let weak = window.downgrade();
+//! toggle.on_click(move || {
+//!     if let Some(window) = weak.upgrade() {
+//!         let next = if window.state() == WindowState::Fullscreen {
+//!             WindowState::Normal
+//!         } else {
+//!             WindowState::Fullscreen
+//!         };
+//!         window.set_state(next);
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! 位置は**主画面の左上を原点に、右と下へ数えた論理ピクセル**で、タイトルバーを
+//! 含むウィンドウの枠の左上を指す。画面に出す前に決めてもよい。
+//! [`set_position`](Window::set_position) で位置を決めた後は、macOS の
+//! [`set_size`](Window::set_size) も中央へ寄せ直さない。
+//!
+//! 最大化・最小化・全画面の間の [`Window::position`] は、**通常の状態へ戻った
+//! ときの位置**を返す。[`Window::set_position`] は状態をそのままにして、その
+//! 戻る先を決める (見えている枠は動かさない)。閉じる前に `position` と
+//! [`Window::state`] を保存しておき、次に開くときに両方を当てれば、最大化して
+//! いたウィンドウも元の配置へ戻る。
+//!
+//! [`WindowState`] は 1 つだけ返る。環境によっては重なり得る状態 (最大化した
+//! まま最小化した、など) は、利用者から見えているほうを選ぶ
+//! (最小化 → 全画面 → 最大化 の順)。[`WindowState::Normal`] を頼むと、
+//! 最小化・全画面・最大化をすべて解く。全画面からほかの状態へ移るときは、
+//! 全画面を出終わってから当てる。
+//!
+//! 状態の変化は非同期のことが多い (macOS の全画面はアニメーションの後、
+//! Linux はコンポジタが応えた後、Web はブラウザが切り替えた後)。`set_state` の
+//! 直後の `state` はまだ前の状態を返すことがあるので、変わったことは
+//! [`Window::on_state_change`] で受け取る。利用者の操作 (タイトルバーの
+//! ボタン、Esc で全画面を出る、など) で変わったときも呼ばれる。
+//! 画面に出す前の `set_state` は覚えておき、[`Window::show`] で当てる
+//! (それまでの `state` は頼んだ状態を返す。Linux では、表示してから
+//! コンポジタの最初の状態が届くまでも頼んだ状態を返す)。
+//!
+//! 位置が変わったことの通知は無い。Linux と Web では位置そのものが取れない
+//! ため。位置を保存するときは、閉じる前 ([`Window::on_close_request`] の中など)
+//! に [`Window::position`] を読む。
+//!
+//! | naui | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 位置 | `AppWindow.Position` / `Move` (物理ピクセルを `RasterizationScale` で割る) | `frame` / `setFrameTopLeftPoint:` (主画面の高さから引いて向きを変える) | (無い。いつも `None`) | (無い。いつも `None`) |
+//! | 最大化 | `OverlappedPresenter.Maximize` | `zoom:` | `gtk_window_maximize` | (無い) |
+//! | 最小化 | `OverlappedPresenter.Minimize` | `miniaturize:` | `gtk_window_minimize` (戻すときは `gtk_window_unminimize` と `present`) | (無い) |
+//! | 全画面 | `AppWindow.SetPresenterByKind(FullScreen)` | `toggleFullScreen:` | `gtk_window_fullscreen` | `documentElement.requestFullscreen()` |
+//! | 状態を読む | `AppWindow.Presenter` の種類と `OverlappedPresenter.State` | `isMiniaturized` / `isZoomed` と全画面の通知 | `GdkToplevelState` | `document.fullscreenElement` |
+//! | 状態の変化 | `AppWindow.Changed` | `windowDidMiniaturize:` / `windowDidEnterFullScreen:` など | `GdkToplevel` の `notify::state` | `fullscreenchange` |
+//! | 大きさを変えられるか | `OverlappedPresenter.IsResizable` (`IsMaximizable` も一緒に) | styleMask の `Resizable` | `gtk_window_set_resizable` | (無い。値を覚えるだけ) |
+//!
+//! **Linux ではウィンドウの位置を扱えない。** GTK4 にはウィンドウの位置を
+//! 読む API も動かす API も無い。Wayland ではアプリがウィンドウの位置を知る
+//! 仕組みそのものが無く (置き場所はコンポジタが決める)、GTK4 はそれに合わせて
+//! X11 でも外した。[`Window::position`] はいつも `None` を返し、
+//! [`Window::set_position`] は何もしない。また **Wayland には最小化を知る
+//! 仕組みも戻す仕組みも無い**ので、最小化しても `state` は
+//! [`WindowState::Minimized`] にならず、`Normal` を頼んでも戻るかどうかは
+//! コンポジタ次第になる (X11 では両方できる)。表示する前に頼んだ最小化は、
+//! 出す前に頼んでもウィンドウマネージャが応えないので、表示してから当てる
+//! (一瞬だけ画面に出る)。
+//!
+//! **Web は全画面だけ。** ページから操作できるのは Fullscreen API だけなので、
+//! 位置は `None`、最大化と最小化は何もせず (全画面なら出るだけ)、
+//! `set_resizable` は値を覚えるだけになる。全画面は**ページ全体**
+//! (`document.documentElement`) に掛けるので、ウィンドウが複数あれば全部が
+//! 全画面の中に入る。ブラウザは利用者の操作 (クリックやキー) の中からしか
+//! 全画面にさせないので、ボタンの `on_click` などから呼ぶ (起動時やタイマー
+//! からは断られ、状態は変わらない)。iPhone の Safari には Fullscreen API が無い。
+//!
+//! **Windows の位置には見えない縁が入る。** `AppWindow` の外枠は、ウィンドウの
+//! 周りに Windows が付ける大きさ変更のつまみ (見えない数ピクセルの縁) を含む
+//! ので、見えている枠の左上より少し左上になる。読んだ位置をそのまま
+//! `set_position` へ渡せば同じ場所に戻る。
+//!
+//! 大きさを変えられないウィンドウも、[`Window::set_size`] では大きさを変えられる。
+//! 最大化のボタンは 3 環境とも効かなくなる (macOS は zoom できず、Linux は
+//! ボタンが消え、Windows は `IsMaximizable` も切る)。
+//!
 //! ## 折りたたみ
 //!
 //! ふだんは隠しておき、見出しを押したときだけ見せたいものは [`Expander`] へ
@@ -1462,6 +1563,52 @@
 //! # }
 //! ```
 //!
+//! ### 行の起動と文脈メニュー
+//!
+//! [`List::on_row_activate`] は**行の起動** (ダブルクリック、または行に
+//! フォーカスがある状態での Enter) を、[`List::on_context_menu`] は**行の
+//! 右クリック**を、その行のインデックスで知らせる。右クリックの位置は
+//! [`PopupMenu::open_at`] にこの `List` を渡すときの座標 (論理ピクセル、
+//! y は下向き) なので、そのまま渡せば行ごとの文脈メニューになる。
+//!
+//! ```no_run
+//! # use naui::{ListItem, PopupItem, Result, Ui};
+//! # fn build(ui: &Ui) -> Result<()> {
+//! let list = ui.list()?;
+//! list.set_items(&ListItem::list(["札幌", "東京", "那覇"]));
+//! list.on_row_activate(|index| println!("{index} 行目を開く"));
+//!
+//! let menu = ui.popup_menu()?;
+//! menu.set_items(&[PopupItem::new("開く"), PopupItem::new("削除")]);
+//! list.on_context_menu({
+//!     let list = list.clone();
+//!     move |index, at| {
+//!         println!("{index} 行目のメニュー");
+//!         menu.open_at(&list, at.x, at.y);
+//!     }
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! | | Windows | macOS | Linux | Web |
+//! | --- | --- | --- | --- | --- |
+//! | 起動 | `DoubleTapped` / `KeyDown` (Enter) | `doubleAction` / `keyDown:` (Return) | 行の `GtkGestureClick` (2 回) / Enter | `dblclick` / `keydown` (Enter) |
+//! | 文脈メニュー | `ContextRequested` | `menuForEvent:` | 行の `GtkGestureClick` (副ボタン) | `contextmenu` |
+//!
+//! どちらも**選択は変えない**ので、右クリックした行を選んでから操作したいときは
+//! 中で `select` を呼ぶ。複数選択のすべてを開きたいときは、起動の中で
+//! `selection` を読む。選べない `ListItem` (`enabled(false)`) の行と、行の無い
+//! 余白では呼ばれない。行内のボタンなどを直接ダブルクリックしても起動しないが、
+//! 右クリックはその行の文脈メニューになる (Web は行内の入力欄の上だけ、
+//! ブラウザ自身のメニューを残す)。インデックスは押された時点の行の位置から
+//! 引くので、`set_rows` で行を作り直したあとも正しい行を指す。
+//!
+//! 右クリック以外の出し方は環境に従う。macOS は Control + クリック、Windows は
+//! タッチの長押しと Shift + F10 / アプリケーションキーでも出る (キー操作のときは
+//! 位置が無いので、行の左端を渡す)。`on_context_menu` を設定すると、行の上では
+//! その環境の既定のメニュー (`PopupMenu::attach` で付けたものを含む) は出なくなる。
+//!
 //! ### 指定した行まで送る
 //!
 //! [`List::scroll_to_row`]・[`Table::scroll_to_row`]・[`Tree::scroll_to_item`] は、
@@ -2043,7 +2190,7 @@
 //! | 環境 | 状態 |
 //! | --- | --- |
 //! | macOS | 実行・自動テストあり (サイドバー・コンボボックス・自由入力コンボボックス・ラジオグループ・日付ピッカー・時刻ピッカー・数値入力・パスワード入力・検索入力・ナビゲーション・リスト・テーブル・ツリー・ツールバー・メニューバー・ファイル選択・ポップアップメニュー・複数行入力・ダイアログ・トースト・折りたたみ・スイッチ・色ピッカー・分割ビュー・描画面・ラベルの折り返し・ラベルの文字づかい・別スレッドからの受け渡しと `spawn` を含む 156 件) |
-//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、サイドバーの選択・仕切りでの幅の変更・開閉、リストの `<select>` と `role="listbox"` の両方、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、描画面の画素とポインター、メニューバーの見出しの開閉・ショートカット・ウィンドウへの取り付け、ラベルの折り返しと省略記号、ラベルの文字づかい、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
+//! | Web (wasm) | ブラウザで実行確認 (ナビゲーション、サイドバーの選択・仕切りでの幅の変更・開閉、リストの `<select>` と `role="listbox"` の両方 (行の起動と右クリックを含む)、数値入力の丸め・範囲・確定、パスワード入力、自由入力コンボボックスの打鍵・候補との一致・通知、ファイル選択、メディアの表示と再生、ダイアログのボタン経由の応答、トーストの表示・操作ボタン・時間切れ・置き換え、折りたたみの開閉と通知、色ピッカーの値の往復と通知、時刻ピッカーの値の往復・範囲・通知、テーブルの列幅・文字揃え・選択・キーボード操作・列の差し替え・見出しからの並べ替え、検索入力の打鍵と Enter での確定 (変換中の Enter は数えない)、分割ビューの仕切りのドラッグ・キーボード操作・最小の大きさでの押し戻し、描画面の画素とポインター、メニューバーの見出しの開閉・ショートカット・ウィンドウへの取り付け、ラベルの折り返しと省略記号、ラベルの文字づかい、非同期処理の実行と中断を確認。スイッチは切り替えと通知をブラウザで確認 (見た目は Chromium 148 で `switch` 属性が未対応のためチェックボックス)) |
 //! | Windows | Windows App SDK 2.3.1 の実機で全ウィジェットとナビゲーションを操作して確認 (サイドバー・トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・描画面・別スレッドからの受け渡しと `spawn` を含む) |
 //! | Linux | GTK 4.14 / libadwaita 1.5 (Ubuntu 24.04 / Wayland) で `gallery` の全タブ (サイドバー・トースト・折りたたみ・スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・別スレッドからの受け渡しと `spawn` を含む) を実行確認。GTK4 の実コントロールに対する自動テスト 146 件 (スイッチ・色ピッカー・時刻ピッカー・テーブル・検索入力・自由入力コンボボックス・分割ビュー・描画面・メニューバー・ラベルの折り返しを含む)。メディアは実ファイル (H.264 + AAC) の再生・シーク・状態変化まで確認 |
 
@@ -2058,8 +2205,9 @@ pub use naui_core::{
     PointerButton, PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollMetrics,
     ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep,
     SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer,
-    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, WeakWidget, DEFAULT_SIDEBAR_WIDTH,
-    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
+    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, WeakWidget, WindowState,
+    DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
+    WHEEL_STEP,
 };
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
@@ -2199,6 +2347,13 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     window.set_min_size(1.0, 1.0);
     let _: (f64, f64) = window.size();
     window.on_resize(|(_width, _height): (f64, f64)| {});
+    window.set_position(1.0, 1.0);
+    let _: Option<(f64, f64)> = window.position();
+    window.set_state(WindowState::Maximized);
+    let _: WindowState = window.state();
+    window.on_state_change(|_state: WindowState| {});
+    window.set_resizable(false);
+    let _: bool = window.is_resizable();
     let weak_window = window.downgrade();
     let _: Option<Window> = weak_window.upgrade();
 
@@ -2696,6 +2851,12 @@ fn __api_contract(ui: &Ui) -> Result<()> {
     let _: bool = custom_row.is_selectable();
     custom_row.on_activate(|| {});
     list.set_rows(&[custom_row]);
+    list.on_row_activate(|_index: usize| {});
+    list.on_context_menu({
+        let list = list.clone();
+        let menu = ui.popup_menu()?;
+        move |_index: usize, at: Point| menu.open_at(&list, at.x, at.y)
+    });
 
     // --- テーブル ---------------------------------------------------------
     let table: Table = ui.table()?;
