@@ -28,9 +28,12 @@ GUI ツールキットで一般的に求められる機能のうち、naui (v0.1
       「変換中の Enter は数えない」をそのまま使えます。
 - [x] **フォーカスの出入りの通知** (`on_focus_change`)。入力の検証や、欄を
       離れたときの保存に使います。
-- [ ] **ウィンドウの状態の操作**。位置、最大化、最小化、全画面、大きさを
+- [x] **ウィンドウの状態の操作**。位置、最大化、最小化、全画面、大きさを
       変えられるかどうか、その状態の取得です。Web は Fullscreen API だけ当て、
-      ほかは対応しないと書きます。
+      ほかは対応しないと書きます。`Window::set_state` / `state` /
+      `on_state_change` (`WindowState`)、`set_position` / `position`、
+      `set_resizable` / `is_resizable` として入れました。Linux は GTK4 に位置の
+      API が無いので `position` が `None` です。
 - [x] **`List` の右クリックとダブルクリック**。右クリックは `PopupMenu::open_at`
       と組み合わせて、行ごとの文脈メニューにします。
       (`List::on_context_menu` と `List::on_row_activate`。起動は Enter でも届きます)

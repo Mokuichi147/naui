@@ -80,7 +80,7 @@ pub use timer::{Sleep, Timer};
 pub use toast::ToastSpec;
 pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
-pub use window::{CloseHandler, CloseResponse};
+pub use window::{CloseHandler, CloseResponse, StateHandler, WindowState};
 
 use std::fmt;
 

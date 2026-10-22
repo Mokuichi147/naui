@@ -25,7 +25,7 @@ use naui_core::{
     NavItem, Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
     ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
     TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    DEFAULT_SIDEBAR_WIDTH,
+    WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -306,6 +306,34 @@ fn main() {
         (
             "閉じる確認で KeepOpen を返すと閉じない",
             window_close_request_can_keep_it_open,
+        ),
+        (
+            "ウィンドウの位置は取れず、動かしても何も起きない",
+            window_position_is_unavailable,
+        ),
+        (
+            "ウィンドウの最大化・全画面が往復し通知される",
+            window_state_round_trips,
+        ),
+        (
+            "コンポジタが応える前に続けて頼んでも最後の状態になる",
+            window_state_requests_in_a_row,
+        ),
+        (
+            "表示する前に頼んだ状態で表示される",
+            window_state_requested_before_show,
+        ),
+        (
+            "最小化して元に戻せる (X11)",
+            window_minimize_round_trips,
+        ),
+        (
+            "表示する前に頼んだ最小化は表示してから当たる (X11)",
+            window_minimize_requested_before_show,
+        ),
+        (
+            "大きさを変えられるかどうかがネイティブと往復する",
+            window_resizable_round_trips,
         ),
         (
             "読み取り専用と最小の大きさがネイティブへ届く",
@@ -638,23 +666,55 @@ fn main() {
     ];
 
     let mut failed = 0;
+    let mut skipped = 0;
     for (name, case) in cases {
+        take_skip();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run_for_test(*case).expect("テスト用の起動")
         }));
-        match result {
-            Ok(()) => println!("ok   ... {name}"),
-            Err(_) => {
+        match (result, take_skip()) {
+            (Ok(()), None) => println!("ok   ... {name}"),
+            (Ok(()), Some(reason)) => {
+                println!("SKIP ... {name} ({reason})");
+                skipped += 1;
+            }
+            (Err(_), _) => {
                 println!("FAIL ... {name}");
                 failed += 1;
             }
         }
     }
 
-    println!("\n{} 件中 {} 件成功", cases.len(), cases.len() - failed);
+    println!(
+        "\n{} 件中 {} 件成功 / {} 件スキップ / {} 件失敗",
+        cases.len(),
+        cases.len() - failed - skipped,
+        skipped,
+        failed
+    );
     if failed > 0 {
         std::process::exit(1);
     }
+}
+
+thread_local! {
+    /// そのテストで**確かめられなかったこと**の置き場 ([`skip`])。
+    static SKIP_REASON: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// 実行環境の都合で確かめられなかったことを記録する。
+///
+/// 記録したテストは「成功」ではなく SKIP として数えて出力に残すが、
+/// macOS のテストと違って終了コードは失敗にしない。CI の Xvfb には
+/// ウィンドウマネージャがおらず、表示した後の最大化や全画面の頼みに
+/// 誰も応えないので、失敗にすると CI がいつも落ちてしまうため。
+fn skip(reason: &str) {
+    SKIP_REASON.with(|slot| *slot.borrow_mut() = Some(reason.to_string()));
+}
+
+/// 記録を取り出して空へ戻す。
+fn take_skip() -> Option<String> {
+    SKIP_REASON.with(|slot| slot.borrow_mut().take())
 }
 
 // --------------------------------------------------------------- 小さな道具
@@ -7025,6 +7085,291 @@ fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
 
 fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
     assert!(ui.open_url("これは URL ではない").is_err());
+    Ok(())
+}
+
+/// GTK4 にはウィンドウの位置を扱う API が無い (Wayland に合わせて X11 でも外した)。
+fn window_position_is_unavailable(ui: &Ui) -> Result<()> {
+    let window = ui.window("位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    assert_eq!(window.position(), None);
+    window.set_position(120.0, 140.0);
+    window.show();
+    assert_eq!(window.position(), None, "動かしても取れないまま");
+    window.close();
+    Ok(())
+}
+
+/// 最大化と全画面が `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+///
+/// どちらもコンポジタ (ウィンドウマネージャ) への頼みごとなので、応える者の
+/// いない環境 (CI の Xvfb) では変わらない。そのときは SKIP にする。最小化は
+/// Wayland では知る仕組みも戻す仕組みも無いので、ここでは確かめない。
+fn window_state_round_trips(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let (seen, sink) = recorder();
+    window.on_state_change(sink);
+    window.show();
+    spin_until(Duration::from_secs(1), || {
+        window.native_window().is_realized()
+    });
+    assert_eq!(window.state(), WindowState::Normal);
+    let native = window.native_window();
+
+    window.set_state(WindowState::Maximized);
+    spin_until(Duration::from_secs(2), || {
+        window.state() == WindowState::Maximized
+    });
+    if window.state() != WindowState::Maximized {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert!(native.is_maximized());
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(2), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal);
+    assert!(!native.is_maximized());
+
+    window.set_state(WindowState::Fullscreen);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Fullscreen
+    });
+    assert_eq!(window.state(), WindowState::Fullscreen);
+    assert!(native.is_fullscreen());
+    // 全画面から最大化へ移ると、全画面は解ける。
+    window.set_state(WindowState::Maximized);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Maximized
+    });
+    assert_eq!(window.state(), WindowState::Maximized, "全画面から最大化へ");
+    assert!(!native.is_fullscreen());
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal);
+    assert_eq!(
+        seen.borrow().first(),
+        Some(&WindowState::Maximized),
+        "変わるたびに届く: {:?}",
+        seen.borrow()
+    );
+    assert_eq!(seen.borrow().last(), Some(&WindowState::Normal));
+    assert!(
+        seen.borrow().contains(&WindowState::Fullscreen),
+        "全画面も届く: {:?}",
+        seen.borrow()
+    );
+    window.close();
+    Ok(())
+}
+
+/// コンポジタが応える前に続けて状態を頼んでも、最後に頼んだ状態になる。
+///
+/// `is_maximized` / `is_fullscreen` はコンポジタが応えるまで変わらないので、
+/// それだけを見ると、応える前の頼みを取り消せずに先の状態が後から当たる。
+fn window_state_requests_in_a_row(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let sequences: &[&[WindowState]] = &[
+        &[WindowState::Fullscreen, WindowState::Normal],
+        &[WindowState::Maximized, WindowState::Normal],
+        &[WindowState::Fullscreen, WindowState::Maximized],
+        &[
+            WindowState::Maximized,
+            WindowState::Fullscreen,
+            WindowState::Normal,
+        ],
+    ];
+    if is_unresponsive(ui)? {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        return Ok(());
+    }
+    for sequence in sequences {
+        let window = ui.window("続けて頼む", 320.0, 200.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        spin_until(Duration::from_secs(1), || {
+            !toplevel_state(&window).is_empty()
+        });
+        for &state in *sequence {
+            window.set_state(state);
+        }
+        let last = *sequence.last().unwrap();
+        // 先の頼みが後から当たっていないことも確かめるため、待ち切ってから比べる。
+        spin_until(Duration::from_secs(3), || false);
+        assert_eq!(window.state(), last, "{sequence:?}");
+        window.close();
+    }
+    Ok(())
+}
+
+/// 表示した後の最大化に誰も応えない環境 (ウィンドウマネージャのいない X11) か。
+fn is_unresponsive(ui: &Ui) -> Result<bool> {
+    let window = ui.window("応えるか", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    window.set_state(WindowState::Maximized);
+    spin_until(std::time::Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    let unresponsive = !toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED);
+    window.close();
+    Ok(unresponsive)
+}
+
+/// 表示する前の `set_state` は覚えておき、表示するときに当てる。
+///
+/// GTK4 は表示する前の最大化を、面を出すときの状態として渡す。Wayland では
+/// 表示した直後の面の状態が空なので、コンポジタから届くまでも頼んだ状態を返す。
+///
+/// 表示した後の最大化と違い、ウィンドウマネージャのいない X11 (CI の Xvfb)
+/// でも SKIP にしない。GDK の X11 版は、まだ出していない面への `maximize` を
+/// ウィンドウマネージャへ頼まず、面の状態に MAXIMIZED を自分で立てる
+/// (出すときは `_NET_WM_STATE` に載せて出す)。そのため応える者がいなくても
+/// 最大化した状態で出る (CI の Xvfb で ok になることを確かめてある)。
+fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
+    let window = ui.window("表示前の状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_state(WindowState::Maximized);
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "表示の前は頼んだ状態"
+    );
+    window.show();
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "コンポジタから届く前も頼んだ状態"
+    );
+    spin_until(std::time::Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    assert!(window.native_window().is_maximized());
+    assert_eq!(window.state(), WindowState::Maximized);
+    window.close();
+    Ok(())
+}
+
+/// 最小化が `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+///
+/// X11 のウィンドウマネージャは `unminimize` だけでは戻さないことがあるので、
+/// 戻すときは前面へ出すよう頼む。Wayland では最小化を知る仕組みが無く、
+/// ウィンドウマネージャのいない X11 (CI の Xvfb) では誰も応えないので SKIP にする。
+fn window_minimize_round_trips(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    if is_wayland() {
+        skip("Wayland では最小化を知る仕組みが無い");
+        return Ok(());
+    }
+    let window = ui.window("最小化", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let (seen, sink) = recorder();
+    window.on_state_change(sink);
+    window.show();
+    spin_until(Duration::from_secs(1), || {
+        !toplevel_state(&window).is_empty()
+    });
+
+    window.set_state(WindowState::Minimized);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Minimized
+    });
+    if window.state() != WindowState::Minimized {
+        skip("ウィンドウマネージャが最小化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal, "最小化から戻る");
+    assert_eq!(
+        *seen.borrow(),
+        [WindowState::Minimized, WindowState::Normal]
+    );
+    window.close();
+    Ok(())
+}
+
+/// 表示する前に頼んだ最小化は、出す前に頼んでもウィンドウマネージャが
+/// 応えないので、表示してコンポジタから最初の状態が届いてから当てる。
+fn window_minimize_requested_before_show(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("表示前の最小化", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let (seen, sink) = recorder();
+    window.on_state_change(sink);
+    window.set_state(WindowState::Minimized);
+    window.show();
+    assert_eq!(
+        window.state(),
+        WindowState::Minimized,
+        "コンポジタから届く前も頼んだ状態"
+    );
+    if is_wayland() {
+        skip("Wayland では最小化を知る仕組みが無い");
+        window.close();
+        return Ok(());
+    }
+    spin_until(Duration::from_secs(3), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MINIMIZED)
+    });
+    if !toplevel_state(&window).contains(gtk::gdk::ToplevelState::MINIMIZED) {
+        skip("ウィンドウマネージャが最小化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.state(), WindowState::Minimized);
+    assert_eq!(*seen.borrow(), [WindowState::Minimized]);
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal
+    });
+    assert_eq!(window.state(), WindowState::Normal, "最小化から戻る");
+    window.close();
+    Ok(())
+}
+
+/// ウィンドウの面にコンポジタから届いた状態。realize する前は空。
+fn toplevel_state(window: &naui_gtk::Window) -> gtk::gdk::ToplevelState {
+    window
+        .native_window()
+        .surface()
+        .and_then(|surface| surface.dynamic_cast::<gtk::gdk::Toplevel>().ok())
+        .map_or(gtk::gdk::ToplevelState::empty(), |toplevel| {
+            toplevel.state()
+        })
+}
+
+fn is_wayland() -> bool {
+    gtk::gdk::Display::default()
+        .is_some_and(|display| display.type_().name() == "GdkWaylandDisplay")
+}
+
+fn window_resizable_round_trips(ui: &Ui) -> Result<()> {
+    let window = ui.window("大きさの固定", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    assert!(window.is_resizable());
+    window.set_resizable(false);
+    assert!(!window.is_resizable());
+    assert!(!window.native_window().is_resizable());
+    window.show();
+    // 固定しても、ui.window で指定した大きさで出る。
+    spin_until(std::time::Duration::from_secs(2), || {
+        window.size() == (320.0, 200.0)
+    });
+    assert_eq!(window.size(), (320.0, 200.0));
+    window.set_resizable(true);
+    assert!(window.is_resizable());
+    assert!(window.native_window().is_resizable());
+    window.close();
     Ok(())
 }
 

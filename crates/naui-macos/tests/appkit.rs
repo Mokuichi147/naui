@@ -21,7 +21,7 @@ use naui_core::{
     NavItem, Orientation, Padding, PlaybackState, Point, PointerButton, PointerPhase, PopupItem,
     Rect, Result, ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder,
     TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
-    TreeItem, DEFAULT_SIDEBAR_WIDTH,
+    TreeItem, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
@@ -37,7 +37,8 @@ use objc2_app_kit::{
     NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder, NSScrollView,
     NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch,
     NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
-    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowTitleVisibility,
+    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
@@ -412,6 +413,30 @@ fn main() {
         (
             "閉じる確認で KeepOpen を返すと閉じない",
             window_close_request_can_keep_it_open,
+        ),
+        (
+            "ウィンドウの位置がネイティブと往復する",
+            window_position_round_trips,
+        ),
+        (
+            "ウィンドウの最大化・最小化・全画面が往復し通知される",
+            window_state_round_trips,
+        ),
+        (
+            "最大化・最小化・全画面の間の位置は通常へ戻ったときの位置",
+            window_position_while_not_normal,
+        ),
+        (
+            "表示する前に頼んだ状態で表示される",
+            window_state_requested_before_show,
+        ),
+        (
+            "状態の通知の中から頼んだ状態も通知される",
+            window_state_change_inside_the_notification,
+        ),
+        (
+            "大きさを変えられるかどうかが styleMask と往復する",
+            window_resizable_round_trips,
         ),
         (
             "読み上げ名・読み取り専用・最小の大きさがネイティブへ届く",
@@ -4029,6 +4054,303 @@ fn window_close_request_can_keep_it_open(ui: &Ui) -> Result<()> {
     window.close();
     assert_eq!(asked.get(), 2);
     assert!(!window.is_visible());
+    Ok(())
+}
+
+/// 位置は主画面の左上から右下へ数えたウィンドウの枠の左上。表示の前後どちらで
+/// 決めても往復し、決めた後の `set_size` は中央へ寄せ直さない。
+fn window_position_round_trips(ui: &Ui) -> Result<()> {
+    let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
+        a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
+    };
+    let window = ui.window("位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_position(120.0, 140.0);
+    assert!(
+        near(window.position(), (120.0, 140.0)),
+        "表示の前: {:?}",
+        window.position()
+    );
+    window.show();
+    pump(0.2);
+    assert!(
+        near(window.position(), (120.0, 140.0)),
+        "表示の後: {:?}",
+        window.position()
+    );
+
+    // AppKit の座標 (左下から上へ) と向きが逆になっていること。
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let screen_height = objc2_app_kit::NSScreen::screens(mtm)
+        .firstObject()
+        .map(|screen| screen.frame().size.height)
+        .expect("主画面");
+    let frame = window.native_window().frame();
+    assert!(
+        (screen_height - (frame.origin.y + frame.size.height) - 140.0).abs() < 1.0,
+        "枠の上端が主画面の上から 140: frame={frame:?} screen_height={screen_height}"
+    );
+
+    window.set_size(360.0, 220.0);
+    assert!(
+        near(window.position(), (120.0, 140.0)),
+        "set_size で中央へ寄せ直さない: {:?}",
+        window.position()
+    );
+    window.set_position(200.0, 160.0);
+    pump(0.1);
+    assert!(
+        near(window.position(), (200.0, 160.0)),
+        "表示中に動かす: {:?}",
+        window.position()
+    );
+    window.close();
+    Ok(())
+}
+
+/// 最大化 (`zoom:`)・最小化 (`miniaturize:`)・全画面 (`toggleFullScreen:`) が
+/// `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+fn window_state_round_trips(ui: &Ui) -> Result<()> {
+    let window = ui.window("状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_state_change({
+        let seen = seen.clone();
+        move |state| seen.borrow_mut().push(state)
+    });
+    window.show();
+    pump(0.2);
+    assert_eq!(window.state(), WindowState::Normal);
+    let native = window.native_window();
+
+    window.set_state(WindowState::Maximized);
+    pump_until(2.0, || window.state() == WindowState::Maximized);
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "zoom={}",
+        native.isZoomed()
+    );
+    assert!(native.isZoomed());
+    window.set_state(WindowState::Normal);
+    pump_until(2.0, || window.state() == WindowState::Normal);
+    assert_eq!(window.state(), WindowState::Normal);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [WindowState::Maximized, WindowState::Normal]
+    );
+
+    window.set_state(WindowState::Minimized);
+    pump_until(3.0, || window.state() == WindowState::Minimized);
+    if window.state() == WindowState::Minimized {
+        window.set_state(WindowState::Normal);
+        pump_until(3.0, || window.state() == WindowState::Normal);
+        assert_eq!(window.state(), WindowState::Normal, "最小化から戻す");
+        assert!(!native.isMiniaturized());
+    } else {
+        // Dock の無いセッションでは miniaturize: が効かない。
+        skip("最小化できない環境 (Dock が無い)");
+    }
+
+    seen.borrow_mut().clear();
+    window.set_state(WindowState::Fullscreen);
+    pump_until(5.0, || window.state() == WindowState::Fullscreen);
+    if window.state() == WindowState::Fullscreen {
+        assert!(native.styleMask().contains(NSWindowStyleMask::FullScreen));
+        // 全画面から最大化へは、全画面を出終わってから zoom する。
+        window.set_state(WindowState::Maximized);
+        pump_until(5.0, || window.state() == WindowState::Maximized);
+        assert_eq!(window.state(), WindowState::Maximized, "全画面から最大化へ");
+        window.set_state(WindowState::Normal);
+        pump_until(2.0, || window.state() == WindowState::Normal);
+        assert_eq!(window.state(), WindowState::Normal);
+        assert_eq!(
+            seen.borrow().as_slice(),
+            [
+                WindowState::Fullscreen,
+                WindowState::Normal,
+                WindowState::Maximized,
+                WindowState::Normal
+            ],
+            "全画面を出たところでいったん Normal が届く"
+        );
+    } else {
+        // 画面を占有できないセッション (CI の一部) では全画面へ入れない。
+        skip("全画面へ入れない環境");
+    }
+    window.close();
+    Ok(())
+}
+
+/// 最大化・最小化・全画面の間の `position` は通常の状態へ戻ったときの位置を
+/// 返し、`set_position` は状態を変えずにその位置を決める。最大化と全画面の
+/// 間は見えている枠も動かさない (最小化の間は `frame` が戻る先そのもの)。
+fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
+    let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
+        a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
+    };
+    let window = ui.window("状態の間の位置", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_position(120.0, 140.0);
+    window.show();
+    pump(0.2);
+    let native = window.native_window();
+    let mut normal = (120.0, 140.0);
+    let mut skipped = Vec::new();
+    for (index, (state, limit)) in [
+        (WindowState::Maximized, 2.0),
+        (WindowState::Minimized, 3.0),
+        (WindowState::Fullscreen, 10.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        window.set_state(state);
+        pump_until(limit, || window.state() == state);
+        if window.state() != state {
+            // Dock の無いセッションでは最小化が、画面を占有できないセッションでは
+            // 全画面が効かない。CI のランナーでは全画面へ入り終わるのに 6 秒ほど
+            // かかることがあるので、全画面は長めに待つ。
+            skipped.push(format!("{state:?}"));
+            continue;
+        }
+        assert!(
+            near(window.position(), normal),
+            "{state:?} の間は元の位置: {:?}",
+            window.position()
+        );
+        let shown = native.frame();
+        normal = (200.0 + 20.0 * index as f64, 160.0 + 10.0 * index as f64);
+        window.set_position(normal.0, normal.1);
+        pump(0.2);
+        assert_eq!(window.state(), state, "{state:?} のまま");
+        if state != WindowState::Minimized {
+            assert_eq!(native.frame(), shown, "{state:?} の枠は動かない");
+        }
+        assert!(
+            near(window.position(), normal),
+            "{state:?} の間に決めた位置: {:?}",
+            window.position()
+        );
+        window.set_state(WindowState::Normal);
+        pump_until(limit, || window.state() == WindowState::Normal);
+        pump(0.2);
+        assert_eq!(window.state(), WindowState::Normal);
+        assert!(
+            near(window.position(), normal),
+            "{state:?} から戻ると決めた位置: {:?}",
+            window.position()
+        );
+    }
+    if !skipped.contains(&"Fullscreen".to_string()) {
+        // 全画面の間に決めた位置は、全画面から最大化へ移っても元に戻す先になる。
+        window.set_state(WindowState::Fullscreen);
+        pump_until(10.0, || window.state() == WindowState::Fullscreen);
+        window.set_position(260.0, 190.0);
+        window.set_state(WindowState::Maximized);
+        pump_until(10.0, || window.state() == WindowState::Maximized);
+        assert_eq!(window.state(), WindowState::Maximized);
+        assert!(
+            near(window.position(), (260.0, 190.0)),
+            "全画面から最大化: {:?}",
+            window.position()
+        );
+        // 最大化の間に決めた位置は、全画面を挟んでも残る。
+        window.set_position(280.0, 200.0);
+        window.set_state(WindowState::Fullscreen);
+        pump_until(10.0, || window.state() == WindowState::Fullscreen);
+        assert!(
+            near(window.position(), (280.0, 200.0)),
+            "最大化から全画面: {:?}",
+            window.position()
+        );
+        window.set_state(WindowState::Normal);
+        pump_until(10.0, || window.state() == WindowState::Normal);
+        pump(0.2);
+        assert_eq!(window.state(), WindowState::Normal);
+        assert!(
+            near(window.position(), (280.0, 200.0)),
+            "全画面から戻る: {:?}",
+            window.position()
+        );
+    }
+    window.close();
+    if !skipped.is_empty() {
+        skip(&format!("{} にできない環境", skipped.join("・")));
+    }
+    Ok(())
+}
+
+/// 表示する前の `set_state` は覚えておき、表示するときに当てる。
+/// 通知の中から同じウィンドウの状態を変えても、その変化の通知は失われない。
+///
+/// macOS 27 では、通知の中で頼んだ `zoom:` はその場では当たらず (戻った
+/// 直後も zoom のまま)、元に戻ったことは後の `windowDidResize:` で届く。
+/// 通知の中で状態が変わったときに後回しにして知らせる仕組みそのものは、
+/// naui-core の `StateHandler` の単体テストで確かめている。
+fn window_state_change_inside_the_notification(ui: &Ui) -> Result<()> {
+    let window = ui.window("通知の中の状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_state_change({
+        let seen = seen.clone();
+        let weak = window.downgrade();
+        move |state| {
+            seen.borrow_mut().push(state);
+            if state == WindowState::Maximized {
+                if let Some(window) = weak.upgrade() {
+                    window.set_state(WindowState::Normal);
+                }
+            }
+        }
+    });
+    window.show();
+    pump(0.2);
+    window.set_state(WindowState::Maximized);
+    pump_until(2.0, || seen.borrow().len() >= 2);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [WindowState::Maximized, WindowState::Normal]
+    );
+    assert_eq!(window.state(), WindowState::Normal);
+    window.close();
+    Ok(())
+}
+
+fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
+    let window = ui.window("表示前の状態", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_state(WindowState::Maximized);
+    assert_eq!(
+        window.state(),
+        WindowState::Maximized,
+        "表示の前は頼んだ状態"
+    );
+    assert!(!window.native_window().isZoomed());
+    window.show();
+    pump_until(2.0, || window.native_window().isZoomed());
+    assert_eq!(window.state(), WindowState::Maximized);
+    window.close();
+    Ok(())
+}
+
+fn window_resizable_round_trips(ui: &Ui) -> Result<()> {
+    let window = ui.window("大きさの固定", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let native = window.native_window();
+    assert!(window.is_resizable());
+    assert!(native.styleMask().contains(NSWindowStyleMask::Resizable));
+    window.set_resizable(false);
+    assert!(!window.is_resizable());
+    assert!(!native.styleMask().contains(NSWindowStyleMask::Resizable));
+    window.show();
+    // 固定しても、プログラムからは大きさを変えられる。
+    window.set_size(360.0, 240.0);
+    assert_eq!(window.size(), (360.0, 240.0));
+    window.set_resizable(true);
+    assert!(window.is_resizable());
+    assert!(native.styleMask().contains(NSWindowStyleMask::Resizable));
+    window.close();
     Ok(())
 }
 

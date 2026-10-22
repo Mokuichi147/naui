@@ -24,7 +24,7 @@ use naui_core::{
     Align, Color, DialogResponse, EventResponse, GridCell, Key, KeyEvent, Length, ListItem,
     MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Point, PointerButton,
     PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem, SidebarSection, Sizing,
-    TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem,
+    TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowState,
     DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
@@ -3970,6 +3970,111 @@ async fn window_reports_its_size() {
     // Web では閉じる確認は呼ばれないが、受け付けはする。
     window.on_close_request(|| naui_core::CloseResponse::KeepOpen);
     window.close();
+}
+
+/// Web のウィンドウは位置を持たず、状態は全画面だけ。
+///
+/// ふつうのブラウザは利用者の操作の中でしか全画面を許さないので、テストからの
+/// `set_state(Fullscreen)` は断られ、状態は変わらない。自動操作のブラウザには
+/// 許すものもある (Playwright の WebKit) ので、許されたときは往復と通知を
+/// 確かめる。どちらでも例外にはならない。
+///
+/// Playwright の WebKit が許すのは**ページごとに最初の 1 回だけ**で、2 回目
+/// からは断る。全画面へ入るのはこのテストの 1 回にまとめ、入る途中に別の
+/// 状態を頼んだときの後始末もその 1 回で確かめる。
+#[wasm_bindgen_test]
+async fn window_state_is_only_fullscreen() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("状態", 400.0, 300.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        kept = Some(window);
+        Ok(())
+    });
+    let window = kept.expect("window");
+    let document = web_sys::window()
+        .and_then(|w| w.document())
+        .expect("document");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    window.on_state_change({
+        let seen = seen.clone();
+        let document = document.clone();
+        move |state| {
+            let page = document.document_element();
+            let page_is_fullscreen = page.is_some() && document.fullscreen_element() == page;
+            seen.borrow_mut().push((state, page_is_fullscreen));
+        }
+    });
+
+    assert_eq!(window.position(), None);
+    window.set_position(120.0, 140.0);
+    assert_eq!(window.position(), None, "動かしても取れないまま");
+
+    // 全画面でなければ、最大化と最小化は何もしない。
+    assert_eq!(window.state(), WindowState::Normal);
+    window.set_state(WindowState::Maximized);
+    window.set_state(WindowState::Minimized);
+    next_frames().await;
+    assert_eq!(window.state(), WindowState::Normal);
+    assert!(document.fullscreen_element().is_none());
+
+    // 入る途中に最大化を頼む。`fullscreenElement` は入り終わるまで空なので、
+    // その場では判断できない。入り終わってから、最後の頼みどおり全画面を出る
+    // (Web の最大化は全画面を出るだけ)。
+    window.set_state(WindowState::Fullscreen);
+    assert!(
+        document.fullscreen_element().is_none(),
+        "全画面に入るのは非同期"
+    );
+    window.set_state(WindowState::Maximized);
+    for _ in 0..10 {
+        next_frames().await;
+    }
+    frames_until(|| seen.borrow().len() >= 2).await;
+    if seen.borrow().is_empty() {
+        // 断られた。状態は変わらず、知らせもしない。
+        assert!(document.fullscreen_element().is_none());
+        assert_eq!(window.state(), WindowState::Normal);
+    } else {
+        // 許された。いったん全画面に入り (ページ全体)、続けて出る。
+        assert_eq!(
+            seen.borrow().as_slice(),
+            [
+                (WindowState::Fullscreen, true),
+                (WindowState::Normal, false)
+            ],
+            "(状態, ページ全体が全画面か)"
+        );
+        assert!(
+            document.fullscreen_element().is_none(),
+            "最後の頼みどおり全画面を出ている"
+        );
+        assert_eq!(window.state(), WindowState::Normal);
+    }
+
+    // 全画面の出入り (`fullscreenchange`) で状態を読み直すが、変わって
+    // いなければ知らせない。
+    let before = seen.borrow().len();
+    let event = web_sys::Event::new("fullscreenchange").expect("イベント");
+    document.dispatch_event(&event).expect("dispatchEvent");
+    assert_eq!(seen.borrow().len(), before, "{:?}", seen.borrow());
+
+    // 大きさを変えられるかどうかは、効かないが値は往復する。
+    assert!(window.is_resizable());
+    window.set_resizable(false);
+    assert!(!window.is_resizable());
+    window.close();
+}
+
+/// 条件が満たされるまでフレームを進める (2 フレームずつ 30 回で打ち切る)。
+async fn frames_until(mut ready: impl FnMut() -> bool) {
+    for _ in 0..30 {
+        if ready() {
+            return;
+        }
+        next_frames().await;
+    }
 }
 
 /// `ui.window` と `set_size` の大きさは、ほかの環境と同じくメニューバーと
