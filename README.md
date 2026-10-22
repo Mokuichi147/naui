@@ -141,7 +141,7 @@ with integration tests and the Gallery ([verification](docs/development.md#å‹•ä½
 
 The guides below are currently written in Japanese.
 
-- [Guide](docs/guide.md): adding and removing widgets, themes, placement and sizing, notes per feature, threads and async
+- [Guide](crates/naui/src/guide.md): adding and removing widgets, themes, layout and sizing, how each widget behaves on each platform, threads and async (shown as [`naui::guide`](https://docs.rs/naui/latest/naui/guide/) on docs.rs)
 - [Widget implementations](docs/widgets.md): the native control and construction per platform, key data types, access to native objects
 - [Known limitations](docs/known-limitations.md): limitations per platform
 - [Bundling the runtime](docs/windows-self-contained.md): shipping the Windows App SDK with your exe
