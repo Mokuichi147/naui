@@ -1,6 +1,6 @@
 [package]
 name = "naui"
-description = "各 OS のネイティブ UI を 1 つの API から扱う軽量 GUI (WinUI 3 / AppKit / GTK4 / DOM)"
+description = "Lightweight GUI toolkit that drives each OS's native UI from a single API (WinUI 3 / AppKit / GTK4 / DOM)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

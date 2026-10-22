@@ -1,6 +1,6 @@
 [package]
 name = "gallery"
-description = "naui の全ウィジェットを種別ごとに試すデモ"
+description = "Demo for trying every naui widget by category"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

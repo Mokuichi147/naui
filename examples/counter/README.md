@@ -1,11 +1,11 @@
 # counter
 
-naui の最小サンプルです。ネイティブのラベルとボタンだけを使ったカウンターを
-表示します。
+The minimal naui example. It shows a counter built from nothing but a native
+label and buttons.
 
 ```sh
 cargo run -p counter
 ```
 
-`run` に渡すコールバックの中で UI を組み立て、`on_click` でラベルを書き換える
-という naui の基本形をひと通り含んでいます。
+It covers the basic shape of a naui app: build the UI inside the callback passed
+to `run`, and update the label from `on_click`.

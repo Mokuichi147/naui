@@ -1,6 +1,6 @@
 [package]
 name = "naui-web"
-description = "naui の Web バックエンド。DOM の標準コントロールを使う"
+description = "Web backend for naui, using standard DOM controls"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

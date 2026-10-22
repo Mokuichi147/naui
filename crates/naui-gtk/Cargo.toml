@@ -1,6 +1,6 @@
 [package]
 name = "naui-gtk"
-description = "naui の Linux バックエンド (GTK4 / libadwaita)"
+description = "Linux backend for naui (GTK4 / libadwaita)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "naui-macos"
-description = "naui の macOS バックエンド。AppKit の実コントロールを使う"
+description = "macOS backend for naui, using real AppKit controls"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

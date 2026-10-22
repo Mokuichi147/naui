@@ -2,47 +2,49 @@
 
 [![crates.io](https://img.shields.io/crates/v/naui.svg)](https://crates.io/crates/naui)
 [![docs.rs](https://docs.rs/naui/badge.svg)](https://docs.rs/naui)
-[![License](https://img.shields.io/crates/l/naui.svg)](#ライセンス)
+[![License](https://img.shields.io/crates/l/naui.svg)](#license)
 [![CI](https://github.com/mokuichi147/naui/actions/workflows/ci.yml/badge.svg)](https://github.com/mokuichi147/naui/actions/workflows/ci.yml)
 
-各 OS のネイティブ UI を、1 つの Rust API から扱う軽量 GUI ツールキットです。
+A lightweight GUI toolkit that drives each OS's native UI from a single Rust API.
 
-naui はウィジェットを自前で描画しません。ボタン、入力欄、レイアウト、IME、
-アクセシビリティ、テーマへの追従は、それぞれのプラットフォームが提供する
-ツールキットへ任せます。
+naui does not draw its own widgets. Buttons, text fields, layout, IME,
+accessibility, and theme changes are all left to the toolkit each platform
+provides.
 
-| 対象 | バックエンド | ボタンの実体 |
+| Target | Backend | What a button really is |
 | --- | --- | --- |
 | Windows | WinUI 3 (Windows App SDK) | `Microsoft.UI.Xaml.Controls.Button` |
 | macOS | AppKit | `NSButton` |
 | Linux | GTK4 / libadwaita | `GtkButton` |
 | Web (wasm) | DOM | `<button>` |
 
-同じ Gallery のコードを各環境で動かした画面です。見た目はそれぞれの OS の標準に従います。
+The same Gallery code running on each platform. Each one looks the way its OS
+normally does.
 
 | Windows 11 Pro 25H2 (Windows App SDK 2.5.1) | macOS Tahoe 26.6.2 |
 | --- | --- |
-| ![Windows (WinUI 3) で動かした Gallery](docs/screenshots/windows.webp) | ![macOS (AppKit) で動かした Gallery](docs/screenshots/macos.webp) |
+| ![Gallery running on Windows (WinUI 3)](docs/screenshots/windows.webp) | ![Gallery running on macOS (AppKit)](docs/screenshots/macos.webp) |
 | **Ubuntu 24.04.5 LTS** | **Safari 26.6.2** |
-| ![Linux (GTK4 / libadwaita) で動かした Gallery](docs/screenshots/linux.webp) | ![Web (DOM) で動かした Gallery](docs/screenshots/web.webp) |
+| ![Gallery running on Linux (GTK4 / libadwaita)](docs/screenshots/linux.webp) | ![Gallery running on the Web (DOM)](docs/screenshots/web.webp) |
 
-## 特長
+## Features
 
-- 4 つのバックエンドを同じ API で利用可能
-- OS 標準の描画、入力、アクセシビリティ、テーマを活用
-- Rust 側でレイアウト計算やメディアのデコードを行わない軽量な設計
-  (プラットフォームを補う必要があるところは[既知の制限](docs/known-limitations.md)に明記しています)
-- 共通 API で足りない場合はネイティブオブジェクトへアクセス可能
-- 最小サンプルと、種別ごとに全ウィジェットの特徴を確認できる Gallery を同梱
+- Four backends behind one API
+- Uses the OS's own rendering, input, accessibility, and theming
+- Lightweight: no layout computation or media decoding on the Rust side
+  (where the platform needs filling in, it is spelled out in the
+  [known limitations](docs/known-limitations.md))
+- Reach the native objects directly when the common API is not enough
+- Ships with a minimal example and a Gallery that shows off every widget by category
 
-## クイックスタート
+## Quick start
 
 ```sh
 cargo add naui
 ```
 
-`src/main.rs` に次のコードを書いて `cargo run` すると、OS 標準のボタンを持つ
-カウンターが起動します。
+Put the following in `src/main.rs` and `cargo run` it to get a counter with a
+native OS button.
 
 ```rust
 use std::cell::Cell;
@@ -58,7 +60,7 @@ fn main() -> naui::Result<()> {
         stack.set_padding(Padding::all(24.0));
 
         let label = ui.label("0")?;
-        let button = ui.button("増やす")?;
+        let button = ui.button("Increment")?;
         let count = Rc::new(Cell::new(0));
 
         button.on_click({
@@ -78,28 +80,28 @@ fn main() -> naui::Result<()> {
 }
 ```
 
-全ウィジェットの使用例は [`examples/gallery`](examples/gallery/src/lib.rs) にあります。
+Examples for every widget are in [`examples/gallery`](examples/gallery/src/lib.rs).
 
-### 必要なもの
+### Requirements
 
-- Rust 1.85 以降
-- Linux: GTK 4.10 以降と libadwaita 1.5 以降の開発用ライブラリ
-- Windows: Windows App SDK 1.3 以降のランタイム (動作確認は 2.x)。
-  [同梱する](#windows-app-sdk-ランタイムを同梱する)場合は不要です
+- Rust 1.85 or later
+- Linux: development libraries for GTK 4.10+ and libadwaita 1.5+
+- Windows: the Windows App SDK 1.3+ runtime (tested with 2.x).
+  Not needed if you [bundle it](#bundling-the-windows-app-sdk-runtime)
 
-Ubuntu 24.04 では次のコマンドで導入できます。
+On Ubuntu 24.04 you can install them with:
 
 ```sh
 sudo apt install libgtk-4-dev libadwaita-1-dev build-essential pkg-config
 ```
 
-### Windows App SDK ランタイムを同梱する
+### Bundling the Windows App SDK runtime
 
-`self-contained` フィーチャーを有効にすると、ランタイムを exe と一緒に配れます。
-取得されるパッケージのライセンスや配り方は
-[ランタイムの同梱](docs/windows-self-contained.md)を参照してください。
+Enable the `self-contained` feature to ship the runtime alongside your exe.
+For the license of the downloaded packages and how to distribute them, see
+[bundling the runtime](docs/windows-self-contained.md).
 
-### Gallery を実行
+### Running the Gallery
 
 ```sh
 git clone https://github.com/mokuichi147/naui.git
@@ -107,8 +109,8 @@ cd naui
 cargo run -p gallery
 ```
 
-Web (wasm) で動かすには、`Cargo.lock` と同じ版の `wasm-bindgen-cli` (現在は 0.2.127)
-を入れてからビルドし、<http://localhost:8080/> を開きます。
+To run it on the Web (wasm), install `wasm-bindgen-cli` at the same version as
+in `Cargo.lock` (currently 0.2.127), build, and open <http://localhost:8080/>.
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -118,32 +120,35 @@ cd examples/gallery/web
 python3 -m http.server 8080
 ```
 
-## ウィジェット
+## Widgets
 
-| 分類 | API |
+| Category | API |
 | --- | --- |
-| ウィンドウ・レイアウト | `Window`、`Stack`、`Grid`、`Scroll`、`Spacer`、`Expander`、`SplitView`、`Toolbar`、`MenuBar`、`Sidebar` |
-| 基本・入力 | `Label`、`Button`、`Checkbox`、`Toggle`、`TextInput`、`TextArea`、`PasswordInput`、`SearchInput`、`NumberInput`、`Slider`、`ProgressBar` |
-| データ選択 | `ComboBox`、`EditableComboBox`、`RadioGroup`、`DatePicker`、`TimePicker`、`ColorPicker`、`List`、`Table`、`Tree` |
-| ファイル・メディア | `FilePicker`、`FileSaver`、`Image`、`Video`、`Audio` |
-| 描画 | `Canvas` |
-| オーバーレイ | `PopupMenu`、`Dialog`、`Toast` |
-| ナビゲーション | `Tabs`、`Navbar`、`Dock`、`Menu`、`Breadcrumbs`、`Pagination`、`Link` |
+| Windows & layout | `Window`, `Stack`, `Grid`, `Scroll`, `Spacer`, `Expander`, `SplitView`, `Toolbar`, `MenuBar`, `Sidebar` |
+| Basics & input | `Label`, `Button`, `Checkbox`, `Toggle`, `TextInput`, `TextArea`, `PasswordInput`, `SearchInput`, `NumberInput`, `Slider`, `ProgressBar` |
+| Data selection | `ComboBox`, `EditableComboBox`, `RadioGroup`, `DatePicker`, `TimePicker`, `ColorPicker`, `List`, `Table`, `Tree` |
+| Files & media | `FilePicker`, `FileSaver`, `Image`, `Video`, `Audio` |
+| Drawing | `Canvas` |
+| Overlays | `PopupMenu`, `Dialog`, `Toast` |
+| Navigation | `Tabs`, `Navbar`, `Dock`, `Menu`, `Breadcrumbs`, `Pagination`, `Link` |
 
-各環境で何のコントロールになるかは[ウィジェットの実装](docs/widgets.md)、
-環境ごとの注意点は[既知の制限](docs/known-limitations.md)にあります。4 環境とも、
-統合テストと Gallery で動作を確かめています ([動作確認](docs/development.md#動作確認))。
+Which control each widget becomes on each platform is listed in
+[widget implementations](docs/widgets.md), and platform-specific caveats in the
+[known limitations](docs/known-limitations.md). All four platforms are checked
+with integration tests and the Gallery ([verification](docs/development.md#動作確認)).
 
-## ドキュメント
+## Documentation
 
-- [使い方](docs/guide.md): ウィジェットの追加と削除、テーマ、配置とサイズ、機能別の補足、別スレッドと非同期
-- [ウィジェットの実装](docs/widgets.md): 環境ごとのコントロールと組み立て方、主なデータ型、ネイティブオブジェクトへのアクセス
-- [既知の制限](docs/known-limitations.md): 環境ごとの制限
-- [ランタイムの同梱](docs/windows-self-contained.md): Windows App SDK を exe と一緒に配る
-- [開発](docs/development.md): 動作確認、クレート構成、テスト、CI、リリース
-- [ロードマップ](docs/roadmap.md): まだ無い機能と優先度
-- [API リファレンス (docs.rs)](https://docs.rs/naui)
+The guides below are currently written in Japanese.
 
-## ライセンス
+- [Guide](docs/guide.md): adding and removing widgets, themes, placement and sizing, notes per feature, threads and async
+- [Widget implementations](docs/widgets.md): the native control and construction per platform, key data types, access to native objects
+- [Known limitations](docs/known-limitations.md): limitations per platform
+- [Bundling the runtime](docs/windows-self-contained.md): shipping the Windows App SDK with your exe
+- [Development](docs/development.md): verification, crate layout, tests, CI, releases
+- [Roadmap](docs/roadmap.md): missing features and priorities
+- [API reference (docs.rs)](https://docs.rs/naui)
+
+## License
 
 [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)

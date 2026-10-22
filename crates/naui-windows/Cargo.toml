@@ -1,6 +1,6 @@
 [package]
 name = "naui-windows"
-description = "naui の Windows バックエンド。WinUI 3 (Fluent 2) の実コントロールを使う"
+description = "Windows backend for naui, using real WinUI 3 (Fluent 2) controls"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

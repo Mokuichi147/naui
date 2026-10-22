@@ -1,6 +1,6 @@
 [package]
 name = "counter"
-description = "naui の最小サンプル"
+description = "Minimal naui example"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
