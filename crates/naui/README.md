@@ -22,7 +22,7 @@ You build the UI inside the callback passed to `run`. WinUI 3 does not allow
 creating controls before `Application::Start`, so all four backends share this
 same shape.
 
-```rust
+```rust,no_run
 use naui::{Orientation, Padding, Settings};
 
 fn main() -> naui::Result<()> {
@@ -65,7 +65,10 @@ Enable the `self-contained` feature to ship the runtime alongside your exe.
 naui = { version = "0.10", features = ["self-contained"] }
 ```
 
-For the list of widgets, layout rules, and per-platform limitations, see the
+The [guide](https://docs.rs/naui/latest/naui/guide/) (in Japanese) continues
+from here: adding and removing widgets, layout and sizing, how each widget
+behaves on each platform, and threads and async. For the list of widgets and
+per-platform limitations, see the
 [repository README](https://github.com/mokuichi147/naui#readme).
 
 ## License
