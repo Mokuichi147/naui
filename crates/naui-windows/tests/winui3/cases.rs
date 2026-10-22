@@ -134,6 +134,10 @@ const CASES: &[Case] = &[
         focus_change_handler_is_freed_with_the_widget,
     ),
     (
+        "通知のクロージャが弱参照で欄自身を触れ、外して手放せば解放される",
+        weak_widget_breaks_the_callback_cycle,
+    ),
+    (
         "タイマーが DispatcherQueue で呼ばれ、止められる",
         timers_fire_on_the_dispatcher_queue,
     ),
@@ -2653,6 +2657,62 @@ fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
     ui.number_input(1.0)?.on_focus_change(capture());
     ui.editable_combo_box()?.on_focus_change(capture());
     assert_eq!(Rc::strong_count(&state), 1, "その場で捨てた欄の通知先");
+    Ok(())
+}
+
+/// フォーカスの移動が届くまで待つ上限。
+const FOCUS_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// フォーカスの移動 (`GotFocus` / `LostFocus`) は非同期に届くので、
+/// メッセージを回して待つ。
+fn weak_widget_breaks_the_callback_cycle(ui: &Ui) -> Result<()> {
+    let window = ui.window("弱参照", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let mail = ui.text_input(" a@example.com ")?;
+    let other = ui.text_input("")?;
+    root.append(&mail);
+    root.append(&other);
+    window.set_child(&root);
+    window.show();
+
+    // 通知の中で欄自身を触る。
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let weak = mail.downgrade();
+    mail.on_focus_change({
+        let weak = weak.clone();
+        let seen = seen.clone();
+        move |focused| {
+            seen.borrow_mut().push(focused);
+            if let Some(mail) = weak.upgrade() {
+                if !focused {
+                    mail.set_text(mail.text().trim());
+                }
+            }
+        }
+    });
+    pump_until(FOCUS_TIMEOUT, || mail.request_focus());
+    pump_until(FOCUS_TIMEOUT, || seen.borrow().contains(&true));
+    assert!(other.request_focus());
+    pump_until(FOCUS_TIMEOUT, || seen.borrow().contains(&false));
+    assert_eq!(*seen.borrow(), [true, false]);
+    assert_eq!(mail.text(), "a@example.com");
+
+    // 画面から外してハンドルを手放せば、通知が弱参照を持っていても解放される。
+    root.remove(0);
+    drop(mail);
+    assert!(weak.upgrade().is_none(), "外して手放した欄が残っている");
+
+    // 文字入力でないウィジェットにもあり、写しも同じものを指す。
+    let label = ui.label("見出し")?;
+    label.set_selectable(true);
+    let weak_label = label.downgrade();
+    assert_eq!(
+        weak_label.clone().upgrade().map(|l| l.is_selectable()),
+        Some(true)
+    );
+    drop(label);
+    assert!(weak_label.upgrade().is_none());
+    window.close();
     Ok(())
 }
 
