@@ -1,22 +1,22 @@
-//! 分割ビュー (`NSSplitView`)。
+//! A split view (`NSSplitView`).
 //!
-//! AppKit に同じ役目のコントロールがあるので、そのまま使う。仕切りの描画も、
-//! ドラッグでの追従も、カーソルの形 (⇔) も `NSSplitView` が行う。
+//! AppKit has a control for the same job, so it is used as is. Drawing the divider,
+//! following the drag and the cursor shape (⇔) are all done by `NSSplitView`.
 //!
-//! naui 側で決めているのは次の 3 つだけで、いずれもデリゲートとして渡す。
+//! naui decides only these three things, all passed as the delegate:
 //!
-//! - 並べる向き (`setVertical`)。naui の `Orientation::Horizontal` は
-//!   「区画が横に並ぶ」= 仕切りが縦なので `setVertical(true)` になる。
-//! - 大きさが変わったときの区画の配り方
-//!   (`splitView:resizeSubviewsWithOldSize:`)。start 側は指定された大きさを
-//!   保ち、余りは end 側が受け取る。`NSSplitView` の既定は**割合**で配るので、
-//!   「サイドバーの幅は変えない」形にここで置き換えている。
-//! - 仕切りを動かせる範囲 (`splitView:constrainMinCoordinate:…` と
-//!   `…constrainMaxCoordinate:…`)。
+//! - The direction (`setVertical`). naui's `Orientation::Horizontal` means "panes
+//!   side by side" = a vertical divider, so it is `setVertical(true)`.
+//! - How panes are sized when the size changes
+//!   (`splitView:resizeSubviewsWithOldSize:`). The start side keeps its specified
+//!   size, and the end side takes the leftover. `NSSplitView` distributes **by
+//!   proportion** by default, so this replaces it with "keep the sidebar's width".
+//! - The range the divider can move in (`splitView:constrainMinCoordinate:…` and
+//!   `…constrainMaxCoordinate:…`).
 //!
-//! 区画の frame は naui が直接置くので、区画のビューは
-//! `translatesAutoresizingMaskIntoConstraints` を**切らない** (他のコンテナと
-//! 違う点)。区画の中身は、その frame の中で Auto Layout が並べる。
+//! naui places the panes' frames directly, so the pane views **do not turn off**
+//! `translatesAutoresizingMaskIntoConstraints` (unlike other containers). The
+//! pane's content is laid out by Auto Layout within that frame.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -36,22 +36,22 @@ use crate::widgets::{impl_widget, Widget};
 struct SplitViewInner {
     native: Retained<NSSplitView>,
     orientation: Orientation,
-    /// 区画のハンドル。中継ごと生かしておくために持つ。
+    /// The pane's handle. Held to keep it alive along with its trampolines.
     start: RefCell<Option<Box<dyn Widget>>>,
     end: RefCell<Option<Box<dyn Widget>>>,
-    /// アプリが指定した仕切りの位置 (start 側の大きさ)。
+    /// The divider position the app specified (the size of the start side).
     ///
-    /// せまくて入りきらないときは端へ寄せて**表示**するが、この値はそのまま
-    /// 残す。広がったときに元の位置へ戻すため。
+    /// When it is too narrow to fit, it is **shown** clamped to the end, but this value
+    /// is kept as is, so that it returns to the original position when it widens.
     position: Cell<f64>,
     min_start: Cell<f64>,
     min_end: Cell<f64>,
     handler: ValueHandler<f64>,
-    /// デリゲートは弱参照で持たれるので、ここで生かしておく。
+    /// The delegate is held weakly, so it is kept alive here.
     delegate: RefCell<Option<Retained<SplitObserver>>>,
 }
 
-/// 2 つの区画を、動かせる仕切りで分けるコンテナ (`NSSplitView`)。
+/// A container that divides two panes with a movable divider (`NSSplitView`).
 #[derive(Clone)]
 pub struct SplitView(Rc<SplitViewInner>);
 impl_widget!(SplitView);
@@ -86,33 +86,34 @@ impl SplitView {
         this
     }
 
-    /// 並べる向き。`Horizontal` なら区画が横に並ぶ (仕切りは縦)。
+    /// The layout direction. With `Horizontal`, the panes are side by side (the divider
+    /// is vertical).
     pub fn orientation(&self) -> Orientation {
         self.0.orientation
     }
 
-    /// 左 (または上) の区画。呼ぶたびに置き換わる。
+    /// The left (or top) pane. Each call replaces it.
     pub fn set_start(&self, child: &dyn Widget) {
         self.0.set_pane(0, child);
     }
 
-    /// 右 (または下) の区画。呼ぶたびに置き換わる。
+    /// The right (or bottom) pane. Each call replaces it.
     pub fn set_end(&self, child: &dyn Widget) {
         self.0.set_pane(1, child);
     }
 
-    /// いまの仕切りの位置 (start 側の大きさ、論理ピクセル)。
+    /// The current divider position (size of the start side, logical pixels).
     pub fn position(&self) -> f64 {
         self.0.position.get()
     }
 
-    /// 仕切りを動かす。`on_resize` は呼ばれない。
+    /// Moves the divider. `on_resize` is not called.
     pub fn set_position(&self, position: f64) {
         self.0.position.set(self.0.clamp(position));
         self.0.relayout();
     }
 
-    /// 利用者がドラッグしたのと同じく仕切りを動かす。`on_resize` を呼ぶ。
+    /// Moves the divider as if the user had dragged it. Calls `on_resize`.
     pub fn drag_to(&self, position: f64) {
         let clamped = self.0.clamp(position);
         self.0.position.set(clamped);
@@ -120,7 +121,7 @@ impl SplitView {
         self.0.handler.emit(clamped);
     }
 
-    /// 両側の区画の最小の大きさ。既定はどちらも 0。
+    /// The minimum sizes of the two panes. Both default to 0.
     pub fn set_min_sizes(&self, start: f64, end: f64) {
         self.0.min_start.set(start.max(0.0));
         self.0.min_end.set(end.max(0.0));
@@ -129,19 +130,19 @@ impl SplitView {
         self.0.relayout();
     }
 
-    /// 利用者が仕切りを動かすたび、動いた後の位置で呼ばれる。
+    /// Called with the new position every time the user moves the divider.
     pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 対応する `NSSplitView`。バックエンド固有の脱出口として公開している。
+    /// The corresponding `NSSplitView`. Public as a backend-specific escape hatch.
     pub fn native_split_view(&self) -> Retained<NSSplitView> {
         self.0.native.clone()
     }
 }
 
 impl SplitViewInner {
-    /// 区画を差し替える。`index` は 0 が start、1 が end。
+    /// Replaces a pane. `index` 0 is start, 1 is end.
     fn set_pane(&self, index: usize, child: &dyn Widget) {
         let slot = if index == 0 { &self.start } else { &self.end };
         if let Some(previous) = slot.borrow_mut().take() {
@@ -160,7 +161,7 @@ impl SplitViewInner {
         self.relayout();
     }
 
-    /// 2 つの区画が分け合える大きさ (仕切りの分を除く)。まだ 0 なら 0。
+    /// The size the two panes can share (excluding the divider). 0 if still 0.
     fn total(&self) -> f64 {
         let size = self.native.frame().size;
         let length = if self.orientation.is_vertical() {
@@ -174,7 +175,7 @@ impl SplitViewInner {
         (length - self.native.dividerThickness()).max(0.0)
     }
 
-    /// 位置を、いまの大きさと最小の指定に収める。
+    /// Clamps the position to the current size and the minimum settings.
     fn clamp(&self, position: f64) -> f64 {
         clamp_split_position(
             position,
@@ -184,7 +185,7 @@ impl SplitViewInner {
         )
     }
 
-    /// いま画面に出ている start 側の大きさ。
+    /// The size of the start side currently on screen.
     fn measured_position(&self) -> Option<f64> {
         let arranged = self.native.arrangedSubviews();
         if arranged.len() < 2 {
@@ -202,7 +203,7 @@ impl SplitViewInner {
         self.native.adjustSubviews();
     }
 
-    /// 区画の frame を置く (`splitView:resizeSubviewsWithOldSize:` の中身)。
+    /// Places the panes' frames (the body of `splitView:resizeSubviewsWithOldSize:`).
     fn resize_subviews(&self) {
         let arranged = self.native.arrangedSubviews();
         if arranged.len() < 2 {
@@ -234,11 +235,11 @@ impl SplitViewInner {
         arranged.objectAtIndex(1).setFrame(end);
     }
 
-    /// `NSSplitView` が区画の大きさを変え終わったときの処理。
+    /// Handling when the `NSSplitView` has finished resizing the panes.
     ///
-    /// 利用者のドラッグでも、naui が置き直したときでも届く。**いま指定されて
-    /// いる位置どおりに置かれていれば naui の仕業**なので、そうでないときだけ
-    /// 「利用者が動かした」と見なす。
+    /// It arrives both for the user's drags and when naui repositions it. **If they
+    /// are placed exactly at the currently specified position, it was naui's doing**,
+    /// so only otherwise is it taken as "the user moved it".
     fn did_resize(&self) {
         if self.total() <= 0.0 {
             return;
@@ -260,7 +261,8 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[name = "NauiSplitObserver"]
     #[ivars = Weak<SplitViewInner>]
-    /// 区画の配り方・動かせる範囲・移動の通知を受け持つデリゲート。
+    /// The delegate responsible for sizing the panes, the movable range, and move
+    /// notifications.
     struct SplitObserver;
 
     unsafe impl NSObjectProtocol for SplitObserver {}

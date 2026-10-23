@@ -1,12 +1,13 @@
-//! 画像・動画・音声。
+//! Images, video and audio.
 //!
-//! 画像は **NSImageView**、動画と音声は **AVKit の AVPlayerView** が担う。
-//! ファイルを開くのも、デコードも、再生バーの描画も AppKit / AVFoundation の
-//! 仕事で、naui 側は URL を渡してプロパティを設定するだけ。
+//! Images are handled by **NSImageView**, and video and audio by **AVKit's
+//! AVPlayerView**. Opening files, decoding and drawing the playback bar are all the
+//! job of AppKit / AVFoundation; naui only passes URLs and sets properties.
 //!
-//! 再生状態の通知は、AVPlayer の `timeControlStatus` を KVO で監視して行う。
-//! `play()` を呼んだときだけでなく、**AVPlayerView の再生バーをユーザーが
-//! 押したときにも同じ経路で届く**。
+//! Playback state notifications are made by observing AVPlayer's
+//! `timeControlStatus` with KVO. They arrive through the same path not only when
+//! `play()` is called but **also when the user clicks AVPlayerView's playback
+//! bar**.
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -37,24 +38,27 @@ use objc2_foundation::{
 
 use crate::widgets::{impl_widget, Widget};
 
-/// KVO で監視する AVPlayer のプロパティ。
+/// The AVPlayer property observed with KVO.
 const TIME_CONTROL_STATUS: &str = "timeControlStatus";
 
-/// `seek` で作る CMTime の時間分解能 (1 秒を何分割するか)。
+/// The time resolution of the CMTime created by `seek` (how many parts a second is
+/// divided into).
 ///
-/// 600 は 24 / 25 / 30 / 60 fps のいずれも割り切れる、AVFoundation で
-/// 慣例的に使われる値。
+/// 600 divides evenly by 24 / 25 / 30 / 60 fps and is the value conventionally used
+/// in AVFoundation.
 const TIMESCALE: i32 = 600;
 
-/// 再生位置を知らせる間隔 (秒)。
+/// The interval (seconds) at which the playback position is reported.
 ///
-/// 4 回/秒。HTMLMediaElement の `timeupdate` が出る間隔とおおよそそろえてある。
+/// Four times a second, roughly matching how often HTMLMediaElement's `timeupdate`
+/// fires.
 const POSITION_INTERVAL: f64 = 0.25;
 
-/// メディアの場所を NSURL にする。
+/// Turns a media location into an NSURL.
 ///
-/// `is_url` が真ならそのまま解釈し、そうでなければローカルのファイルパスと
-/// みなす。パスは `fileURLWithPath:` に渡し、エンコードは Foundation に任せる。
+/// If `is_url` is true it is interpreted as is; otherwise it is taken as a local
+/// file path. Paths are passed to `fileURLWithPath:`, leaving the encoding to
+/// Foundation.
 fn to_url(source: &str) -> Option<Retained<NSURL>> {
     if source.is_empty() {
         return None;
@@ -130,7 +134,8 @@ impl NauiImageView {
     }
 }
 
-/// 画像の縦横比を保ったまま、表示領域を覆う描画先を求める。
+/// Computes a draw rect that covers the display area while keeping the image's
+/// aspect ratio.
 fn cover_rect(bounds: NSRect, image: NSSize) -> Option<NSRect> {
     let width = bounds.size.width;
     let height = bounds.size.height;
@@ -173,11 +178,11 @@ mod tests {
     }
 }
 
-/// 画像表示 (NSImageView)。
+/// Image display (NSImageView).
 ///
-/// 読み込みは `NSImage` が行う。**同期的に読むため、リモートの URL を
-/// 指定すると読み終わるまで UI が止まる。** ローカルのファイルを渡すか、
-/// あらかじめ手元へ落としてから渡すこと。
+/// Loading is done by `NSImage`. **It loads synchronously, so specifying a remote
+/// URL freezes the UI until it has loaded.** Pass a local file, or download it
+/// beforehand and pass that.
 #[derive(Clone)]
 pub struct Image(Rc<ImageInner>);
 impl Image {
@@ -192,15 +197,15 @@ impl Image {
         this
     }
 
-    /// いま指定されている場所 (渡した文字列そのまま)。
+    /// The location currently specified (exactly the string that was passed).
     pub fn source(&self) -> String {
         self.0.source.borrow().clone()
     }
 
-    /// 表示する画像の場所。ファイルパスと URL のどちらでもよい。
+    /// The location of the image to show. Either a file path or a URL.
     ///
-    /// 空文字列を渡すと画像を外す。読み込めなかった場合も画像は外れる
-    /// (NSImage が nil を返すため)。
+    /// Passing an empty string removes the image. The image is also removed if it could
+    /// not be loaded (because NSImage returns nil).
     pub fn set_source(&self, source: &str) {
         *self.0.source.borrow_mut() = source.to_string();
         let image =
@@ -208,20 +213,20 @@ impl Image {
         self.0.native.as_super().setImage(image.as_deref());
     }
 
-    /// 読み込めているか。
+    /// Whether it has loaded.
     pub fn is_loaded(&self) -> bool {
         self.0.native.as_super().image().is_some()
     }
 
-    /// 表示領域への収め方。
+    /// How it is fitted into the display area.
     ///
-    /// NSImageView に「切り取ってでも埋める」設定が無いため、
-    /// [`Fit::Cover`] だけは `drawRect` で縦横比を保った拡大描画を行う。
+    /// NSImageView has no "fill even if cropped" setting, so only [`Fit::Cover`] draws
+    /// it scaled up in `drawRect`, keeping the aspect ratio.
     pub fn set_fit(&self, fit: Fit) {
         self.0.native.set_fit(fit);
     }
 
-    /// 画像の内容を表す文字列。VoiceOver が読み上げる。
+    /// Text describing the image's content. Read aloud by VoiceOver.
     pub fn set_alt(&self, text: &str) {
         self.0
             .native
@@ -244,19 +249,19 @@ crate::widgets::impl_sizing!(Image);
 
 // --------------------------------------------------------------- 再生の中身
 
-/// 再生状態が変わったときのクロージャ。
+/// The closure called when the playback state changes.
 ///
-/// クロージャの中から同じウィジェットを触っても二重借用にならないよう、
-/// 呼び出しの間だけ RefCell から取り出す。
+/// So that touching the same widget from inside the closure does not double-borrow,
+/// it is taken out of the RefCell only for the duration of the call.
 type StateCallback = RefCell<Option<Box<dyn FnMut(PlaybackState)>>>;
 
-/// 再生位置が進んだときのクロージャ。
+/// The closure called when the playback position advances.
 type PositionCallback = RefCell<Option<Box<dyn FnMut(f64)>>>;
 
-/// 動画と音声で共有する再生の実体。
+/// The playback object shared by video and audio.
 ///
-/// AVPlayerView (画面) と AVPlayer (再生) の組で、どちらのウィジェットも
-/// これを `Rc` で持つ。違いは映像面を使うかどうかだけ。
+/// A pair of AVPlayerView (screen) and AVPlayer (playback); both widgets hold it in
+/// an `Rc`. The only difference is whether the picture is used.
 struct PlaybackInner {
     native: Retained<AVPlayerView>,
     player: Retained<AVPlayer>,
@@ -266,12 +271,15 @@ struct PlaybackInner {
     state: Cell<PlaybackState>,
     callback: StateCallback,
     position_callback: PositionCallback,
-    /// KVO と通知の受け口。Drop で登録を外すため保持する。
+    /// The receiver of KVO and notifications. Held so that Drop can remove the
+    /// registrations.
     observer: RefCell<Option<Retained<PlaybackObserver>>>,
-    /// 定期的に再生位置を知らせる観測者。Drop で外すため保持する。
+    /// The observer that periodically reports the playback position. Held so that Drop
+    /// can remove it.
     ///
-    /// AVFoundation は「`removeTimeObserver:` を呼ばずに解放すると
-    /// 未定義動作」と明記しているので、必ず手放す前に外す。
+    /// AVFoundation states explicitly that freeing it without calling
+    /// `removeTimeObserver:` is undefined behavior, so it is always removed before
+    /// being let go.
     time_observer: RefCell<Option<Retained<AnyObject>>>,
 }
 
@@ -388,7 +396,7 @@ impl PlaybackInner {
         seconds(unsafe { item.duration() })
     }
 
-    /// KVO と通知から呼ばれ、AVPlayer の状態を naui の状態へ写す。
+    /// Called from KVO and notifications; maps AVPlayer's state onto naui's state.
     fn sync_state(&self) {
         // メディアが無いときの AVPlayer は「一時停止」を名乗るが、
         // 止めたのではなく、まだ何も渡していないだけ。
@@ -410,7 +418,8 @@ impl PlaybackInner {
         self.emit(state);
     }
 
-    /// 再生し終えた通知。いま再生している項目からのものだけを扱う。
+    /// The notification that playback reached the end. Only those from the item
+    /// currently playing are handled.
     fn item_did_play_to_end(&self, notification: &NSNotification) {
         let Some(sender) = notification.object() else {
             return;
@@ -434,7 +443,7 @@ impl PlaybackInner {
         self.emit(PlaybackState::Ended);
     }
 
-    /// 再生位置を通知する。
+    /// Notifies the playback position.
     fn emit_position(&self, seconds: f64) {
         // 状態の通知と同じく、呼び出しの間だけ取り出して再入を避ける。
         let Some(mut f) = self.position_callback.borrow_mut().take() else {
@@ -447,7 +456,8 @@ impl PlaybackInner {
         }
     }
 
-    /// 状態が変わっていれば記録して通知する。同じ状態の連続では呼ばない。
+    /// If the state changed, records and notifies it. Not called for repeats of the
+    /// same state.
     fn emit(&self, state: PlaybackState) {
         if self.state.get() == state {
             return;
@@ -483,9 +493,9 @@ impl Drop for PlaybackInner {
     }
 }
 
-/// CMTime を秒にする。時間が定まっていなければ `None`。
+/// Converts a CMTime to seconds. `None` if the time is not defined.
 ///
-/// 読み込みが終わるまで長さは `indefinite` なので、そのあいだは `None` になる。
+/// The duration is `indefinite` until loading finishes, so it is `None` meanwhile.
 fn seconds(time: CMTime) -> Option<f64> {
     if !time.flags.contains(CMTimeFlags::Valid) || time.timescale == 0 {
         return None;
@@ -502,10 +512,10 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[name = "NauiPlaybackObserver"]
     #[ivars = Weak<PlaybackInner>]
-    /// AVPlayer の KVO と再生終了通知を Rust 側へ中継する。
+    /// Relays AVPlayer's KVO and end-of-playback notifications to the Rust side.
     ///
-    /// ウィジェットを弱参照で持つ。強参照にすると、ウィジェットが
-    /// 観測者を保持しているため循環して解放されなくなる。
+    /// It holds the widget weakly. A strong reference would create a cycle, since the
+    /// widget holds the observer, and it would never be freed.
     struct PlaybackObserver;
 
     unsafe impl NSObjectProtocol for PlaybackObserver {}
@@ -540,65 +550,67 @@ impl PlaybackObserver {
     }
 }
 
-/// 動画と音声に共通の再生 API を生やす。
+/// Adds the playback API shared by video and audio.
 ///
-/// 2 つの違いは映像面を使うかどうかだけなので、操作はすべて同じ形にそろえる。
+/// The only difference between the two is whether the picture is used, so every
+/// operation has the same shape.
 macro_rules! impl_playback {
     ($t:ty) => {
         impl $t {
-            /// いま指定されている場所 (渡した文字列そのまま)。
+            /// The location currently specified (exactly the string that was passed).
             pub fn source(&self) -> String {
                 self.0.source.borrow().clone()
             }
 
-            /// 再生するメディアの場所。ファイルパスと URL のどちらでもよい。
+            /// The location of the media to play. Either a file path or a URL.
             ///
-            /// 呼ぶと再生は止まり、状態は [`PlaybackState::Idle`] に戻る。
-            /// 空文字列を渡すとメディアを外す。
+            /// Calling it stops playback, and the state returns to [`PlaybackState::Idle`].
+            /// Passing an empty string removes the media.
             pub fn set_source(&self, source: &str) {
                 self.0.set_source(source);
             }
 
-            /// 再生を始める。
+            /// Starts playback.
             ///
-            /// 最後まで再生し終えた後に呼ぶと、先頭へ戻してから再生する。
+            /// Called after playing to the end, it goes back to the start before playing.
             pub fn play(&self) {
                 self.0.play();
             }
 
-            /// 一時停止する。
+            /// Pauses.
             pub fn pause(&self) {
                 self.0.pause();
             }
 
-            /// いまの再生状態。
+            /// The current playback state.
             pub fn state(&self) -> PlaybackState {
                 self.0.state.get()
             }
 
-            /// 再生中か。
+            /// Whether it is playing.
             pub fn is_playing(&self) -> bool {
                 self.0.state.get().is_playing()
             }
 
-            /// 再生位置を秒で指定する。負の値は先頭として扱う。
+            /// Sets the playback position in seconds. Negative values are treated as the start.
             pub fn seek(&self, seconds: f64) {
                 self.0.seek(seconds);
             }
 
-            /// いまの再生位置 (秒)。
+            /// The current playback position (seconds).
             pub fn position(&self) -> f64 {
                 self.0.position()
             }
 
-            /// メディアの長さ (秒)。**読み込みが終わるまでは `None`。**
+            /// The length of the media (seconds). **`None` until loading finishes.**
             ///
-            /// 長さが決まらない配信 (ライブなど) でも `None` を返す。
+            /// Also returns `None` for streams whose length is undefined (live streams and so
+            /// on).
             pub fn duration(&self) -> Option<f64> {
                 self.0.duration()
             }
 
-            /// 音量 (0.0..=1.0)。範囲外は丸める。
+            /// The volume (0.0..=1.0). Out-of-range values are clamped.
             pub fn set_volume(&self, volume: f64) {
                 unsafe { self.0.player.setVolume(volume.clamp(0.0, 1.0) as f32) };
             }
@@ -607,7 +619,7 @@ macro_rules! impl_playback {
                 unsafe { self.0.player.volume() as f64 }
             }
 
-            /// 消音する。音量の値は保ったまま音だけ止まる。
+            /// Mutes it. Only the sound stops; the volume value is kept.
             pub fn set_muted(&self, muted: bool) {
                 unsafe { self.0.player.setMuted(muted) };
             }
@@ -616,7 +628,7 @@ macro_rules! impl_playback {
                 unsafe { self.0.player.isMuted() }
             }
 
-            /// 最後まで再生したら先頭へ戻って繰り返す。
+            /// After playing to the end, goes back to the start and repeats.
             pub fn set_loop(&self, looping: bool) {
                 self.0.looping.set(looping);
                 // 繰り返すなら末尾で止めさせない。止めてしまうと、先頭へ
@@ -634,10 +646,10 @@ macro_rules! impl_playback {
                 self.0.looping.get()
             }
 
-            /// メディアを指定したときに自動で再生を始める。
+            /// Starts playing automatically when media is specified.
             ///
-            /// すでに場所が指定されていて、まだ一度も再生していなければ、
-            /// この呼び出しで再生が始まる。
+            /// If a location is already specified and it has never played, playback starts with
+            /// this call.
             pub fn set_autoplay(&self, autoplay: bool) {
                 self.0.autoplay.set(autoplay);
                 if autoplay
@@ -648,7 +660,7 @@ macro_rules! impl_playback {
                 }
             }
 
-            /// ネイティブの再生バーを出すかどうか (既定は出す)。
+            /// Whether to show the native playback bar (shown by default).
             pub fn set_controls(&self, controls: bool) {
                 let style = if controls {
                     AVPlayerViewControlsStyle::Default
@@ -658,19 +670,20 @@ macro_rules! impl_playback {
                 unsafe { self.0.native.setControlsStyle(style) };
             }
 
-            /// 再生状態が変わったときに呼ばれる。設定し直すと以前のものは外れる。
+            /// Called when the playback state changes. Setting it again removes the previous
+            /// one.
             ///
-            /// アプリから [`play`](Self::play) を呼んだときだけでなく、
-            /// **AVPlayerView の再生バーをユーザーが操作したときにも届く**。
+            /// It arrives not only when the app calls [`play`](Self::play) but **also when the
+            /// user operates AVPlayerView's playback bar**.
             pub fn on_state_change(&self, f: impl FnMut(PlaybackState) + 'static) {
                 *self.0.callback.borrow_mut() = Some(Box::new(f));
             }
 
-            /// 再生位置が進むたびに、その位置 (秒) で呼ばれる。
+            /// Called with the position (seconds) every time the playback position advances.
             ///
-            /// シークバーの表示を再生に追従させるためのもの。間隔はネイティブ側が
-            /// 決めるが、およそ 4 回/秒で、再生の開始・停止・シークの直後にも届く。
-            /// **再生していない間は呼ばれない。**
+            /// For keeping a seek bar in step with playback. The native side decides the
+            /// interval, but it is about four times a second, and it also arrives right after
+            /// playback starts, stops or seeks. **It is not called while not playing.**
             pub fn on_position_change(&self, f: impl FnMut(f64) + 'static) {
                 *self.0.position_callback.borrow_mut() = Some(Box::new(f));
             }
@@ -680,7 +693,7 @@ macro_rules! impl_playback {
 
 // ------------------------------------------------------------------ Video
 
-/// 動画 (AVKit の AVPlayerView)。
+/// Video (AVKit's AVPlayerView).
 #[derive(Clone)]
 pub struct Video(Rc<PlaybackInner>);
 impl_widget!(Video);
@@ -695,10 +708,10 @@ impl Video {
         this
     }
 
-    /// 映像の収め方。AVPlayerLayer の videoGravity に写す。
+    /// How the picture is fitted. Mapped onto AVPlayerLayer's videoGravity.
     ///
-    /// AVFoundation に「原寸のまま置く」は無いため、[`Fit::None`] は
-    /// [`Fit::Contain`] と同じ扱いになる。
+    /// AVFoundation has no "place at actual size", so [`Fit::None`] is treated the
+    /// same as [`Fit::Contain`].
     pub fn set_fit(&self, fit: Fit) {
         let gravity: Option<&AVLayerVideoGravity> = unsafe {
             match fit {
@@ -715,17 +728,18 @@ impl Video {
 
 // ------------------------------------------------------------------ Audio
 
-/// 音声 (AVKit の AVPlayerView。映像面を持たないので再生バーだけが見える)。
+/// Audio (AVKit's AVPlayerView; with no picture, only the playback bar is visible).
 ///
-/// AppKit に「音声プレイヤー」という単独のコントロールは無い。映像トラックの
-/// 無いメディアを AVPlayerView に載せると、再生バーだけが表示される。
+/// AppKit has no standalone "audio player" control. Media without a video track
+/// placed in an AVPlayerView shows only the playback bar.
 #[derive(Clone)]
 pub struct Audio(Rc<PlaybackInner>);
 impl_widget!(Audio);
 impl_playback!(Audio);
 
 impl Audio {
-    /// 再生バーが見える最低限の高さ。AVPlayerView の inline スタイルの実測値。
+    /// The minimum height at which the playback bar is visible. Measured from
+    /// AVPlayerView's inline style.
     const CONTROLS_HEIGHT: f64 = 38.0;
 
     pub(crate) fn new(mtm: MainThreadMarker, source: &str) -> Self {

@@ -1,12 +1,12 @@
-//! 検索の入力欄 (WinUI 3 のネイティブ `AutoSuggestBox`)。
+//! Search fields (WinUI 3's native `AutoSuggestBox`).
 //!
-//! Fluent 2 で検索の欄にあたるのは `AutoSuggestBox` で、虫めがねの印は
-//! `QueryIcon`、確定は `QuerySubmitted` が受け持つ。型は [`naui_winui3`]
-//! の投影をそのまま使う。
+//! In Fluent 2, the search field is the `AutoSuggestBox`; the magnifying glass is
+//! `QueryIcon`, and confirmation is handled by `QuerySubmitted`. The types come from
+//! the [`naui_winui3`] projection as is.
 //!
-//! 候補の一覧 (`ItemsSource`) は渡さないので、打っても候補は出ない。
-//! naui の検索欄は「打鍵の通知」と「確定の通知」だけを持つ、4 環境で
-//! そろう部分に合わせてある。
+//! No suggestion list (`ItemsSource`) is given, so typing shows no suggestions.
+//! naui's search field has only "keystroke notifications" and "confirmation
+//! notifications", matching what all four platforms share.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -36,13 +36,14 @@ struct SearchInputInner {
     native: AutoSuggestBox,
     on_change: TextHandler,
     on_search: TextHandler,
-    /// `on_focus_change` の通知先。
+    /// The `on_focus_change` handler.
     focus: crate::focus::Focus,
 }
 
-/// 検索の入力欄 (`AutoSuggestBox`)。
+/// A search field (`AutoSuggestBox`).
 ///
-/// 虫めがねの印と、打ち始めると出る取り消しボタン (✕) は WinUI が出す。
+/// The magnifying glass and the clear button (✕) that appears once you start typing
+/// are shown by WinUI.
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 crate::keys::impl_key_down!(SearchInput);
@@ -62,11 +63,11 @@ impl SearchInput {
         Ok(this)
     }
 
-    /// WinUI の `TextChanged` / `QuerySubmitted` を Rust のクロージャへつなぐ。
+    /// Connects WinUI's `TextChanged` / `QuerySubmitted` to the Rust closures.
     ///
-    /// `TextChanged` は `Text` を書き換えたときにも飛ぶので、`Reason` が
-    /// プログラムからの変更なら黙る (macOS / GTK / Web と同じく、通知は
-    /// 利用者の操作のときだけ)。
+    /// `TextChanged` also fires when `Text` is rewritten, so it stays silent when the
+    /// `Reason` is a change from code (as on macOS / GTK / Web, notifications are only
+    /// for user actions).
     fn connect(&self) -> Result<()> {
         let target = Arc::new(UiThreadCell::new(Rc::downgrade(&self.0)));
         let changed = TypedEventHandler::<AutoSuggestBox, AutoSuggestBoxTextChangedEventArgs>::new(
@@ -120,7 +121,7 @@ impl SearchInput {
         Ok(())
     }
 
-    /// いま入力されている文字列。
+    /// The text currently entered.
     pub fn text(&self) -> String {
         self.0
             .native
@@ -129,7 +130,7 @@ impl SearchInput {
             .unwrap_or_default()
     }
 
-    /// 文字列を置き換える。`on_change` は呼ばれない。
+    /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         let _ = self.0.native.SetText(&HSTRING::from(text));
     }
@@ -144,12 +145,13 @@ impl SearchInput {
         }
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// Enter か虫めがねの印で確定したときに、その時点の文字列で呼ばれる。
+    /// Called with the current text when the user confirms with Enter or the magnifying
+    /// glass.
     pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_search.set(f);
     }

@@ -1,8 +1,9 @@
-//! 自由に入力できるコンボボックス (AppKit の `NSComboBox`)。
+//! A combo box that accepts free input (AppKit's `NSComboBox`).
 //!
-//! [`ComboBox`](crate::ComboBox) は `NSPopUpButton` なので候補からしか選べない。
-//! こちらは文字を打ち込める `NSComboBox` を使い、値を**文字列**で扱う。
-//! 候補はあくまで入力の補助で、一致しない文字列もそのまま値になる。
+//! [`ComboBox`](crate::ComboBox) is an `NSPopUpButton`, so it can only choose from
+//! the options. This one uses `NSComboBox`, which accepts typing, and handles its
+//! value as a **string**. The suggestions are only an input aid; strings that match
+//! none still become the value as is.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -16,26 +17,30 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use crate::trampoline::{ComboObserver, TextHandler};
 use crate::widgets::{impl_widget, Widget};
 
-/// 一覧を開いたときに一度に見える候補の数。AppKit の既定 (5) より少し多くする。
+/// The number of suggestions visible at once when the list opens. A little more
+/// than AppKit's default (5).
 const VISIBLE_ITEMS: isize = 8;
 
 struct EditableComboBoxInner {
     native: Retained<NSComboBox>,
-    /// 候補の控え。`selected` の一致判定と `set_selected` の書き込みに使う。
+    /// A copy of the suggestions. Used to check matches for `selected` and to write for
+    /// `set_selected`.
     items: RefCell<Vec<String>>,
     on_change: TextHandler,
-    /// 最後に通知した文字列。AppKit は「候補が選ばれた」と「欄が書き換わった」を
-    /// 別々に伝えてくるので、同じ値の二重通知をここで落とす。
+    /// The string last notified. AppKit reports "a suggestion was chosen" and "the
+    /// field was rewritten" separately, so duplicate notifications of the same value
+    /// are dropped here.
     last: RefCell<String>,
-    /// プログラムからの書き換えの間だけ通知を止める。
+    /// Stops notifications only while rewriting from code.
     silent: Cell<bool>,
-    /// AppKit の delegate は weak なので、ハンドル側で生かしておく。
+    /// AppKit delegates are weak, so it is kept alive on the handle side.
     observer: RefCell<Option<Retained<ComboObserver>>>,
 }
 
-/// 候補から選ぶことも、自由に打ち込むこともできる入力欄 (`NSComboBox`)。
+/// A field where the user can either choose from suggestions or type freely
+/// (`NSComboBox`).
 ///
-/// 値は文字列で、作った直後は空。
+/// The value is a string, empty right after creation.
 #[derive(Clone)]
 pub struct EditableComboBox(Rc<EditableComboBoxInner>);
 crate::keys::impl_key_down!(EditableComboBox);
@@ -78,7 +83,8 @@ impl EditableComboBox {
         Self(inner)
     }
 
-    /// 候補を作り直す。**入力されている文字列は変わらず**、通知も出ない。
+    /// Rebuilds the suggestions. **The entered text does not change**, and no
+    /// notification is sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         *self.0.items.borrow_mut() = items.iter().map(|s| s.as_ref().to_string()).collect();
         self.without_notifying(|this| {
@@ -95,7 +101,7 @@ impl EditableComboBox {
         });
     }
 
-    /// 候補の数。
+    /// The number of suggestions.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -104,12 +110,12 @@ impl EditableComboBox {
         self.len() == 0
     }
 
-    /// 入力されている文字列。
+    /// The entered text.
     pub fn text(&self) -> String {
         self.0.native.stringValue().to_string()
     }
 
-    /// プログラムから文字列を差し替える。`on_change` は呼ばれない。
+    /// Replaces the text from code. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         self.without_notifying(|this| {
             this.write_text(text);
@@ -118,15 +124,15 @@ impl EditableComboBox {
         *self.0.last.borrow_mut() = text.to_string();
     }
 
-    /// 入力されている文字列と**そのまま一致する**候補の位置。
+    /// The position of the suggestion that **exactly matches** the entered text.
     ///
-    /// 打ち込まれた文字列がどの候補とも一致しなければ `None`。
+    /// `None` if the typed text matches no suggestion.
     pub fn selected(&self) -> Option<usize> {
         let text = self.text();
         self.0.items.borrow().iter().position(|item| *item == text)
     }
 
-    /// 範囲内の候補を通知せずに選ぶ。範囲外なら何もしない。
+    /// Chooses an in-range suggestion without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         let Some(text) = self.0.items.borrow().get(index).cloned() else {
             return;
@@ -134,12 +140,12 @@ impl EditableComboBox {
         self.set_text(&text);
     }
 
-    /// 通知せずに文字列を空にする。
+    /// Empties the text without notifying.
     pub fn clear(&self) {
         self.set_text("");
     }
 
-    /// 利用者が候補を選んだのと同じように、範囲内の候補を選んで通知する。
+    /// Chooses an in-range suggestion and notifies, as if the user had chosen it.
     pub fn select(&self, index: usize) {
         let Some(text) = self.0.items.borrow().get(index).cloned() else {
             return;
@@ -158,18 +164,18 @@ impl EditableComboBox {
         self.0.native.setEnabled(enabled);
     }
 
-    /// 文字列が変わるたびに、その時点の中身で呼ばれる。
-    /// 打鍵と候補の選択のどちらでも呼ばれる。設定し直すと以前のものは外れる。
+    /// Called with the current contents every time the text changes. Called for both
+    /// typing and choosing a suggestion. Setting it again removes the previous one.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// AppKit の実コントロール。バックエンド固有の脱出口として公開している。
+    /// The real AppKit control. Public as a backend-specific escape hatch.
     pub fn native_combo_box(&self) -> Retained<NSComboBox> {
         self.0.native.clone()
     }
 
-    /// AppKit から届いた 2 種類の通知を 1 本の `on_change` にまとめる。
+    /// Merges the two kinds of notifications from AppKit into a single `on_change`.
     fn handle(&self, from_list: bool) {
         if self.0.silent.get() {
             return;
@@ -193,12 +199,12 @@ impl EditableComboBox {
         self.0.on_change.emit(&text);
     }
 
-    /// 欄の文字列だけを書く (`setStringValue:` は通知を出さない)。
+    /// Writes only the field's text (`setStringValue:` sends no notification).
     fn write_text(&self, text: &str) {
         self.0.native.setStringValue(&NSString::from_str(text));
     }
 
-    /// 今の文字列に合わせて、一覧側の選択も合わせる。
+    /// Matches the list's selection to the current text.
     fn sync_selection(&self) {
         let previous = self.0.native.indexOfSelectedItem();
         match self.selected() {
@@ -209,7 +215,7 @@ impl EditableComboBox {
         }
     }
 
-    /// AppKit から届く通知を止めたまま操作する。
+    /// Operates with notifications from AppKit stopped.
     fn without_notifying<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
         let previous = self.0.silent.replace(true);
         let result = f(self);

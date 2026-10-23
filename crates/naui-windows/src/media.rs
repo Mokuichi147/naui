@@ -1,23 +1,24 @@
-//! 画像・動画・音声。
+//! Images, video and audio.
 //!
-//! 動画と音声は WinUI 3 の **MediaPlayerElement** と
-//! **Windows.Media.Playback.MediaPlayer** がそのまま担う。
+//! Video and audio are handled directly by WinUI 3's **MediaPlayerElement** and
+//! **Windows.Media.Playback.MediaPlayer**.
 //!
-//! 画像は WinUI 標準の `Image` と `BitmapImage` で、どちらも
-//! [`naui_winui3`] の投影から直に作る。読み込みも描画も WinUI が行う。
-//! 要素はホストの `Grid` に 1 つだけ置き、場所や収め方が変わっても
-//! 作り直さずプロパティを書き換える。
+//! Images use WinUI's standard `Image` and `BitmapImage`, both created directly
+//! from the [`naui_winui3`] projection. WinUI does both loading and drawing. Exactly
+//! one element is placed in the host `Grid`, and when the location or fitting
+//! changes its properties are rewritten instead of recreating it.
 //!
-//! ## 再生状態の通知とスレッド
+//! ## Playback state notifications and threads
 //!
-//! `MediaPlaybackSession` の `PlaybackStateChanged` と `MediaPlayer` の
-//! `MediaEnded` は、**UI スレッドではなく再生パイプラインのスレッドで発生する**。
-//! そのまま Rust のクロージャを呼ぶと UI スレッド前提の構造が壊れるため、
-//! `DispatcherQueue::TryEnqueue` で UI スレッドへ渡し直してから通知する。
+//! `MediaPlaybackSession`'s `PlaybackStateChanged` and `MediaPlayer`'s
+//! `MediaEnded` **fire on the playback pipeline's thread, not the UI thread**.
+//! Calling Rust closures directly from there would break structures that assume the
+//! UI thread, so they are handed back to the UI thread with
+//! `DispatcherQueue::TryEnqueue` before notifying.
 //!
-//! そのとき `Rc` をスレッドをまたいで運ぶわけにはいかない (参照カウントが
-//! 非アトミックなため)。ウィジェットは UI スレッド側の一覧に番号で登録し、
-//! **スレッドをまたぐのは番号と状態だけ**にしている。
+//! An `Rc` cannot be carried across threads for that (its reference count is not
+//! atomic). Widgets are registered by number in a list on the UI thread side, and
+//! **only the number and the state cross threads**.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -47,10 +48,10 @@ use crate::widgets::impl_widget;
 use crate::widgets::Widget;
 use crate::Slot;
 
-/// TimeSpan の 1 秒あたりの刻み数 (100 ナノ秒単位)。
+/// Ticks per second of a TimeSpan (in 100-nanosecond units).
 const TICKS_PER_SECOND: f64 = 10_000_000.0;
 
-/// 収め方を XAML の `Stretch` にする。
+/// Turns the fitting into XAML's `Stretch`.
 fn stretch(fit: Fit) -> Stretch {
     match fit {
         Fit::Contain => Stretch::Uniform,
@@ -60,12 +61,13 @@ fn stretch(fit: Fit) -> Stretch {
     }
 }
 
-/// メディアの場所を、`Windows.Foundation.Uri` へ渡す文字列にする。
+/// Turns a media location into the string passed to `Windows.Foundation.Uri`.
 ///
-/// パスは [`file_uri`] で `file://` にする。URL はそのまま渡すが、`file:` だけは
-/// [`unescape_non_ascii`] で非 ASCII の percent-encoding を生の文字に戻す。
-/// [`naui_core::media::file_url`] が作る URL や、利用者が標準どおり書いた
-/// `file:///C:/%E5%86%99.png` も、[`file_uri`] と同じ理由で読めないため。
+/// Paths become `file://` with [`file_uri`]. URLs are passed as is, except that for
+/// `file:` only, [`unescape_non_ascii`] turns non-ASCII percent-encoding back into
+/// raw characters, because URLs made by [`naui_core::media::file_url`] and
+/// standards-conforming ones like `file:///C:/%E5%86%99.png` written by users
+/// cannot be read either, for the same reason as [`file_uri`].
 fn source_uri(source: &str) -> String {
     if !is_url(source) {
         file_uri(source)
@@ -79,10 +81,11 @@ fn source_uri(source: &str) -> String {
     }
 }
 
-/// UTF-8 の非 ASCII を表す `%XX` の並びを、生の文字に戻す。
+/// Turns runs of `%XX` representing non-ASCII UTF-8 back into raw characters.
 ///
-/// `%20` `%23` のような ASCII の encode は、URL の区切りとしての意味を
-/// 変えないようそのまま残す。UTF-8 として読めない並びも手を付けない。
+/// ASCII encodings such as `%20` and `%23` are left as they are, so as not to change
+/// their meaning as URL delimiters. Runs that cannot be read as UTF-8 are left alone
+/// too.
 fn unescape_non_ascii(url: &str) -> String {
     let bytes = url.as_bytes();
     let mut out = String::with_capacity(url.len());
@@ -114,14 +117,14 @@ fn unescape_non_ascii(url: &str) -> String {
     out
 }
 
-/// ローカルのファイルパスを、`Windows.Foundation.Uri` が読める `file://` にする。
+/// Turns a local file path into a `file://` that `Windows.Foundation.Uri` can read.
 ///
-/// [`naui_core::media::file_url`] と違い、**非 ASCII は encode せず生のまま置く**。
-/// `Windows.Foundation.Uri` は `%E5%86%99` を UTF-8 として復号せず 1 バイト
-/// 1 文字 (`å†™`) に戻すため、日本語を含むパスは別のパスになって
-/// `BitmapImage` も `MediaSource` もエラー無しに読み込みを諦める。
-/// 生の非 ASCII は IRI として受け付けられるので、URL で意味を持つ ASCII
-/// (空白・`%`・`#`・`?` など) だけを encode する。
+/// Unlike [`naui_core::media::file_url`], **non-ASCII is placed raw, not
+/// encoded**. `Windows.Foundation.Uri` does not decode `%E5%86%99` as UTF-8 but turns
+/// it back one byte per character (`å†™`), so a path containing Japanese becomes a
+/// different path, and both `BitmapImage` and `MediaSource` give up loading without
+/// an error. Raw non-ASCII is accepted as an IRI, so only ASCII with meaning in URLs
+/// (spaces, `%`, `#`, `?` and so on) is encoded.
 fn file_uri(path: &str) -> String {
     let normalized = path.replace('\\', "/");
     // UNC パスの先頭 `//` は「ホスト名が続く」の意味なので、`file:` を足すだけ。
@@ -148,19 +151,19 @@ fn file_uri(path: &str) -> String {
 // ------------------------------------------------------------------ Image
 
 struct ImageInner {
-    /// 大きさの指定を受け取り、画像を出し入れするホスト。
+    /// The host that receives the size specification and puts the image in and out.
     native: Grid,
-    /// 表示する WinUI の `Image`。場所が空のときはホストから外す。
+    /// The WinUI `Image` shown. Removed from the host when the location is empty.
     image: XamlImage,
     source: RefCell<String>,
     fit: Cell<Fit>,
     alt: RefCell<String>,
 }
 
-/// 画像表示 (WinUI の `Image`)。
+/// Image display (WinUI's `Image`).
 ///
-/// 読み込みは WinUI が非同期に行うため、[`set_source`](Self::set_source) の
-/// 直後にはまだ表示されていない。
+/// WinUI loads it asynchronously, so right after [`set_source`](Self::set_source) it
+/// is not shown yet.
 #[derive(Clone)]
 pub struct Image(Rc<ImageInner>);
 impl_widget!(Image, native);
@@ -185,23 +188,23 @@ impl Image {
         Ok(this)
     }
 
-    /// いま指定されている場所 (渡した文字列そのまま)。
+    /// The location currently specified (exactly the string that was passed).
     pub fn source(&self) -> String {
         self.0.source.borrow().clone()
     }
 
-    /// 表示する画像の場所。ファイルパスと URL のどちらでもよい。
+    /// The location of the image to show. Either a file path or a URL.
     ///
-    /// 空文字列を渡すと画像を外す。
+    /// Passing an empty string removes the image.
     pub fn set_source(&self, source: &str) {
         *self.0.source.borrow_mut() = source.to_string();
         self.apply_source();
     }
 
-    /// 読み込みを指示できているか (要素を組み立てられたか)。
+    /// Whether loading could be requested (whether the element could be built).
     ///
-    /// WinUI の `Image` は読み込みの完了を Rust 側へ返さないため、
-    /// **「読み終わったか」ではなく「表示する要素が入っているか」を返す**。
+    /// WinUI's `Image` does not report load completion back to Rust, so **this returns
+    /// "whether an element to show is in place", not "whether loading has finished"**.
     pub fn is_loaded(&self) -> bool {
         self.0
             .native
@@ -210,31 +213,33 @@ impl Image {
             .is_ok_and(|size| size > 0)
     }
 
-    /// 表示領域への収め方 (`Image` の `Stretch`)。
+    /// How it is fitted into the display area (the `Image`'s `Stretch`).
     pub fn set_fit(&self, fit: Fit) {
         self.0.fit.set(fit);
         let _ = self.0.image.SetStretch(stretch(fit));
     }
 
-    /// 画像の内容を表す文字列。ナレーターが読み上げる。
+    /// Text describing the image's content. Read aloud by Narrator.
     pub fn set_alt(&self, text: &str) {
         *self.0.alt.borrow_mut() = text.to_string();
         let _ = AutomationProperties::SetName(&self.0.image, &HSTRING::from(text));
     }
 
-    /// 画像をホストから外し、読み込みの指示も落とす。
+    /// Removes the image from the host and drops the load request too.
     ///
-    /// 場所が空のときと、読み込みを指示できなかったときの両方で通る。
-    /// [`is_loaded`](Self::is_loaded) が見ているのはこの出し入れ。
+    /// Gone through both when the location is empty and when loading could not be
+    /// requested. This putting in and out is what [`is_loaded`](Self::is_loaded) looks
+    /// at.
     fn take_down(&self, children: &UIElementCollection) {
         let _ = children.Clear();
         let _ = self.0.image.SetSource(None);
     }
 
-    /// いまの場所を `Image` へ渡し、ホストへの出し入れを合わせる。
+    /// Passes the current location to the `Image` and matches putting it in and out of
+    /// the host.
     ///
-    /// 場所が空のときと、読み込みを指示できなかったときは
-    /// [`take_down`](Self::take_down) で外す。
+    /// When the location is empty or loading could not be requested, it is removed with
+    /// [`take_down`](Self::take_down).
     fn apply_source(&self) {
         let Ok(children) = self.0.native.Children() else {
             return;
@@ -282,11 +287,11 @@ impl Image {
 
 // --------------------------------------------------------------- 再生の中身
 
-/// 動画と音声で共有する再生の実体。
+/// The playback object shared by video and audio.
 struct MediaInner {
     native: MediaPlayerElement,
     player: MediaPlayer,
-    /// UI スレッド側の一覧における自分の番号。
+    /// Its own number in the list on the UI thread side.
     id: u64,
     source: RefCell<String>,
     looping: Cell<bool>,
@@ -297,15 +302,15 @@ struct MediaInner {
 }
 
 thread_local! {
-    /// UI スレッドで生きている再生ウィジェットの一覧。
+    /// The list of playback widgets alive on the UI thread.
     ///
-    /// 再生パイプラインのスレッドから届いた通知を UI スレッドで受け直すとき、
-    /// 番号から実体を引くために使う。弱参照なので、ウィジェットが先に
-    /// 解放されていれば何も起きない。
+    /// Used to look up the object by number when notifications from the playback
+    /// pipeline's thread are received again on the UI thread. They are weak references,
+    /// so nothing happens if the widget has already been freed.
     static PLAYBACKS: RefCell<HashMap<u64, Weak<MediaInner>>> =
         RefCell::new(HashMap::new());
 
-    /// 次に配る番号。
+    /// The next number to hand out.
     static NEXT_ID: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -316,14 +321,14 @@ fn next_id() -> u64 {
     })
 }
 
-/// UI スレッドで、番号のウィジェットへ状態を届ける。
+/// Delivers the state to the widget with the number, on the UI thread.
 fn deliver(id: u64, state: PlaybackState) {
     if let Some(inner) = lookup(id) {
         inner.emit(state);
     }
 }
 
-/// UI スレッドで、番号のウィジェットへ再生位置を届ける。
+/// Delivers the playback position to the widget with the number, on the UI thread.
 fn deliver_position(id: u64, seconds: f64) {
     if let Some(inner) = lookup(id) {
         inner.emit_position(seconds);
@@ -334,7 +339,7 @@ fn lookup(id: u64) -> Option<Rc<MediaInner>> {
     PLAYBACKS.with(|map| map.borrow().get(&id).and_then(Weak::upgrade))
 }
 
-/// WinRT の再生状態を naui の再生状態に写す。
+/// Maps WinRT's playback state onto naui's playback state.
 fn map_state(state: MediaPlaybackState) -> PlaybackState {
     match state {
         MediaPlaybackState::Playing => PlaybackState::Playing,
@@ -390,7 +395,7 @@ impl MediaInner {
         Ok(this)
     }
 
-    /// 再生パイプラインからの通知を、UI スレッド経由で受け取れるようにする。
+    /// Makes notifications from the playback pipeline receivable via the UI thread.
     fn subscribe(&self) -> Result<()> {
         let queue = DispatcherQueue::GetForCurrentThread()
             .map_err(|e| to_error("UI スレッドの DispatcherQueue の取得", e))?;
@@ -564,7 +569,7 @@ impl MediaInner {
         }
     }
 
-    /// 再生位置を通知する。
+    /// Notifies the playback position.
     fn emit_position(&self, seconds: f64) {
         let Some(mut f) = self.position_callback.borrow_mut().take() else {
             return;
@@ -576,7 +581,8 @@ impl MediaInner {
         }
     }
 
-    /// 状態が変わっていれば記録して通知する。同じ状態の連続では呼ばない。
+    /// If the state changed, records and notifies it. Not called for repeats of the
+    /// same state.
     fn emit(&self, state: PlaybackState) {
         if self.state.get() == state {
             return;
@@ -603,51 +609,51 @@ impl Drop for MediaInner {
     }
 }
 
-/// 動画と音声に共通の再生 API を生やす。
+/// Adds the playback API shared by video and audio.
 macro_rules! impl_playback {
     ($t:ty) => {
         impl $t {
-            /// いま指定されている場所 (渡した文字列そのまま)。
+            /// The location currently specified (exactly the string that was passed).
             pub fn source(&self) -> String {
                 self.0.source.borrow().clone()
             }
 
-            /// 再生するメディアの場所。ファイルパスと URL のどちらでもよい。
+            /// The location of the media to play. Either a file path or a URL.
             ///
-            /// 呼ぶと再生は止まり、状態は [`PlaybackState::Idle`] に戻る。
-            /// 空文字列を渡すとメディアを外す。
+            /// Calling it stops playback, and the state returns to [`PlaybackState::Idle`].
+            /// Passing an empty string removes the media.
             pub fn set_source(&self, source: &str) {
                 self.0.set_source(source);
             }
 
-            /// 再生を始める。
+            /// Starts playback.
             ///
-            /// 最後まで再生し終えた後に呼ぶと、先頭へ戻してから再生する。
+            /// Called after playing to the end, it goes back to the start before playing.
             pub fn play(&self) {
                 self.0.play();
             }
 
-            /// 一時停止する。
+            /// Pauses.
             pub fn pause(&self) {
                 let _ = self.0.player.Pause();
             }
 
-            /// いまの再生状態。
+            /// The current playback state.
             pub fn state(&self) -> PlaybackState {
                 self.0.state.get()
             }
 
-            /// 再生中か。
+            /// Whether it is playing.
             pub fn is_playing(&self) -> bool {
                 self.0.state.get().is_playing()
             }
 
-            /// 再生位置を秒で指定する。負の値は先頭として扱う。
+            /// Sets the playback position in seconds. Negative values are treated as the start.
             pub fn seek(&self, seconds: f64) {
                 self.0.seek(seconds);
             }
 
-            /// いまの再生位置 (秒)。
+            /// The current playback position (seconds).
             pub fn position(&self) -> f64 {
                 self.0
                     .player
@@ -657,9 +663,10 @@ macro_rules! impl_playback {
                     .unwrap_or(0.0)
             }
 
-            /// メディアの長さ (秒)。**読み込みが終わるまでは `None`。**
+            /// The length of the media (seconds). **`None` until loading finishes.**
             ///
-            /// 長さが決まらない配信 (ライブなど) でも `None` を返す。
+            /// Also returns `None` for streams whose length is undefined (live streams and so
+            /// on).
             pub fn duration(&self) -> Option<f64> {
                 let duration = self
                     .0
@@ -672,7 +679,7 @@ macro_rules! impl_playback {
                 (duration > 0.0).then_some(duration)
             }
 
-            /// 音量 (0.0..=1.0)。範囲外は丸める。
+            /// The volume (0.0..=1.0). Out-of-range values are clamped.
             pub fn set_volume(&self, volume: f64) {
                 let _ = self.0.player.SetVolume(volume.clamp(0.0, 1.0));
             }
@@ -681,7 +688,7 @@ macro_rules! impl_playback {
                 self.0.player.Volume().unwrap_or(0.0)
             }
 
-            /// 消音する。音量の値は保ったまま音だけ止まる。
+            /// Mutes it. Only the sound stops; the volume value is kept.
             pub fn set_muted(&self, muted: bool) {
                 let _ = self.0.player.SetIsMuted(muted);
             }
@@ -690,7 +697,7 @@ macro_rules! impl_playback {
                 self.0.player.IsMuted().unwrap_or(false)
             }
 
-            /// 最後まで再生したら先頭へ戻って繰り返す。
+            /// After playing to the end, goes back to the start and repeats.
             pub fn set_loop(&self, looping: bool) {
                 self.0.looping.set(looping);
                 let _ = self.0.player.SetIsLoopingEnabled(looping);
@@ -700,10 +707,10 @@ macro_rules! impl_playback {
                 self.0.looping.get()
             }
 
-            /// メディアを指定したときに自動で再生を始める。
+            /// Starts playing automatically when media is specified.
             ///
-            /// すでに場所が指定されていて、まだ一度も再生していなければ、
-            /// この呼び出しで再生が始まる。
+            /// If a location is already specified and it has never played, playback starts with
+            /// this call.
             pub fn set_autoplay(&self, autoplay: bool) {
                 self.0.autoplay.set(autoplay);
                 let _ = self.0.player.SetAutoPlay(autoplay);
@@ -715,12 +722,11 @@ macro_rules! impl_playback {
                 }
             }
 
-            /// WinUI 標準の再生バーを使うかどうか。
+            /// Whether to use WinUI's standard playback bar.
             ///
-            /// Windows App SDK 2.2.4 では標準バーを有効にすると
-            /// `MediaPlayerElement` の visual tree 追加時にプロセスが
-            /// `0xc000027b` で終了するため、このバックエンドでは常に
-            /// 無効にする。アプリ側の再生 UI と組み合わせて使う。
+            /// With Windows App SDK 2.2.4, enabling the standard bar makes the process exit with
+            /// `0xc000027b` when the `MediaPlayerElement` is added to the visual tree, so this
+            /// backend always disables it. Use it together with a playback UI on the app side.
             pub fn set_controls(&self, controls: bool) {
                 if controls {
                     eprintln!("naui-windows: WinUI 標準の再生バーは安全性のため無効です");
@@ -728,19 +734,20 @@ macro_rules! impl_playback {
                 let _ = self.0.native.SetAreTransportControlsEnabled(false);
             }
 
-            /// 再生状態が変わったときに呼ばれる。設定し直すと以前のものは外れる。
+            /// Called when the playback state changes. Setting it again removes the previous
+            /// one.
             ///
-            /// アプリから [`play`](Self::play) を呼んだときだけでなく、
-            /// **再生バーをユーザーが操作したときにも届く**。
+            /// It arrives not only when the app calls [`play`](Self::play) but **also when the
+            /// user operates the playback bar**.
             pub fn on_state_change(&self, f: impl FnMut(PlaybackState) + 'static) {
                 *self.0.callback.borrow_mut() = Some(Box::new(f));
             }
 
-            /// 再生位置が進むたびに、その位置 (秒) で呼ばれる。
+            /// Called with the position (seconds) every time the playback position advances.
             ///
-            /// シークバーの表示を再生に追従させるためのもの。間隔はネイティブ側が
-            /// 決めるが、およそ 4 回/秒で、シークの直後にも届く。
-            /// **再生していない間は呼ばれない。**
+            /// For keeping a seek bar in step with playback. The native side decides the
+            /// interval, but it is about four times a second, and it also arrives right after
+            /// seeking. **It is not called while not playing.**
             pub fn on_position_change(&self, f: impl FnMut(f64) + 'static) {
                 *self.0.position_callback.borrow_mut() = Some(Box::new(f));
             }
@@ -750,7 +757,7 @@ macro_rules! impl_playback {
 
 // ------------------------------------------------------------------ Video
 
-/// 動画 (MediaPlayerElement)。
+/// Video (MediaPlayerElement).
 #[derive(Clone)]
 pub struct Video(Rc<MediaInner>);
 impl_widget!(Video, native);
@@ -764,7 +771,7 @@ impl Video {
         Ok(this)
     }
 
-    /// 映像の収め方 (MediaPlayerElement の `Stretch`)。
+    /// How the picture is fitted (the MediaPlayerElement's `Stretch`).
     pub fn set_fit(&self, fit: Fit) {
         let _ = self.0.native.SetStretch(stretch(fit));
     }
@@ -772,7 +779,8 @@ impl Video {
 
 // ------------------------------------------------------------------ Audio
 
-/// 音声 (MediaPlayerElement)。映像トラックが無いので、再生バーだけが見える。
+/// Audio (MediaPlayerElement). There is no video track, so only the playback bar is
+/// visible.
 #[derive(Clone)]
 pub struct Audio(Rc<MediaInner>);
 impl_widget!(Audio, native);
@@ -822,7 +830,7 @@ mod tests {
         assert_eq!(source_uri(url), url);
     }
 
-    /// core の `file_url` が作る URL も、Windows で読める形に直る。
+    /// URLs made by core's `file_url` are also fixed into a form Windows can read.
     #[test]
     fn source_uri_unescapes_utf8_in_file_urls() {
         let url = naui_core::media::file_url("C:/Users/太郎/写真 #1.png");
@@ -830,7 +838,7 @@ mod tests {
         assert_eq!(source_uri("FILE:///C:/%E5%86%99.png"), "FILE:///C:/写.png");
     }
 
-    /// ASCII の encode と、UTF-8 として読めない並びには手を付けない。
+    /// ASCII encodings and runs that cannot be read as UTF-8 are left alone.
     #[test]
     fn unescape_non_ascii_keeps_ascii_and_invalid_escapes() {
         assert_eq!(unescape_non_ascii("file:///a%2Fb%25c"), "file:///a%2Fb%25c");
@@ -842,10 +850,11 @@ mod tests {
         assert_eq!(unescape_non_ascii("file:///写%"), "file:///写%");
     }
 
-    /// `Windows.Foundation.Uri` に通したあとも、日本語のパスが同じパスとして残る。
+    /// A path containing Japanese stays the same path even after passing through
+    /// `Windows.Foundation.Uri`.
     ///
-    /// UTF-8 で percent-encode したものを渡すと、ここで `å†™` のような
-    /// 別のパスに化ける。
+    /// Passing it UTF-8 percent-encoded turns it into a different path here, like
+    /// `å†™`.
     #[test]
     fn windows_uri_round_trips_japanese_path() {
         let path = "C:/Users/太郎/写真 1.png";

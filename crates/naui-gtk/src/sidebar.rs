@@ -1,32 +1,33 @@
-//! サイドバー (`GtkPaned` + `GtkListBox`)。
+//! The sidebar (`GtkPaned` + `GtkListBox`).
 //!
-//! GNOME の「設定」やファイルと同じく、ウィンドウを左右の区画に分け、
-//! 左の区画にサイドバーの一覧を置く。
+//! As in GNOME's Settings and Files, the window is split into left and right panes,
+//! with the sidebar list in the left pane.
 //!
 //! | naui | GTK4 / libadwaita |
 //! | --- | --- |
-//! | サイドバー全体 | `GtkPaned` (ウィンドウの中身。naui の `SplitView` と同じ) |
-//! | 左の区画 | `AdwToolbarView` + `AdwHeaderBar` + `GtkScrolledWindow` |
-//! | 項目の一覧 | `GtkListBox` (`.navigation-sidebar`) |
-//! | 項目 | `GtkListBoxRow` (`GtkImage` + `GtkLabel`) |
-//! | まとまりの見出し | 選べない行の `GtkLabel` (`.heading` / `.dim-label`) |
-//! | まとまりの間 | 選べない行の `GtkSeparator` |
-//! | 右の区画 | ウィンドウの `AdwToolbarView` (ヘッダーバー + 子) |
+//! | The whole sidebar | `GtkPaned` (the window's content, the same as naui's `SplitView`) |
+//! | Left pane | `AdwToolbarView` + `AdwHeaderBar` + `GtkScrolledWindow` |
+//! | Item list | `GtkListBox` (`.navigation-sidebar`) |
+//! | Item | `GtkListBoxRow` (`GtkImage` + `GtkLabel`) |
+//! | Group heading | A `GtkLabel` in an unselectable row (`.heading` / `.dim-label`) |
+//! | Between groups | A `GtkSeparator` in an unselectable row |
+//! | Right pane | The window's `AdwToolbarView` (header bar + child) |
 //!
-//! libadwaita の `AdwOverlaySplitView` は幅を利用者が変えられないので使わない。
-//! ほかの 3 環境と同じく仕切りで幅を変えられるよう、GTK 標準の動かせる仕切り
-//! である `GtkPaned` で分ける。左右の区画がそれぞれヘッダーバーを持つのは
-//! GNOME の作法どおりで、`GtkPaned` の中では libadwaita がウィンドウの
-//! ボタンの出し分けをしないため、ウィンドウの端に接するほうにだけ出るよう
-//! naui が切り替える。
+//! libadwaita's `AdwOverlaySplitView` does not let the user change the width, so it
+//! is not used. To let the width be changed with a divider as on the other three
+//! platforms, the window is split with `GtkPaned`, GTK's standard movable divider.
+//! Each pane having its own header bar follows GNOME conventions; inside a
+//! `GtkPaned`, libadwaita does not decide which window buttons to show, so naui
+//! switches them so they appear only on the side touching the window edge.
 //!
-//! 開閉はサイドバーボタン (`sidebar-show-symbolic` の `GtkToggleButton`) で
-//! 行う。ほかの 3 環境とそろえて、開いている間はサイドバーのヘッダーバーの
-//! 左端、閉じている間は中身のヘッダーバーの左端に置く。
+//! It is collapsed and expanded with the sidebar button (a `GtkToggleButton` with
+//! `sidebar-show-symbolic`). As on the other three platforms, it sits at the left
+//! end of the sidebar's header bar while expanded, and at the left end of the
+//! content's header bar while collapsed.
 //!
-//! libadwaita 1.9 には一覧まで引き受ける `AdwSidebar` があるが、naui が
-//! 対象にしている 1.5 (Ubuntu 24.04) には無い。1.5 までの推奨どおり、
-//! `.navigation-sidebar` を付けた `GtkListBox` で組む。
+//! libadwaita 1.9 has `AdwSidebar`, which handles the list too, but 1.5 (Ubuntu
+//! 24.04), which naui targets, does not. As recommended up to 1.5, it is built from
+//! a `GtkListBox` with `.navigation-sidebar`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -43,38 +44,40 @@ use crate::widgets::without_signal;
 
 struct SidebarInner {
     paned: gtk::Paned,
-    /// 左の区画 (ヘッダーバーと一覧)。閉じるとこれを隠す。
+    /// The left pane (header bar and list). Hidden when collapsed.
     pane: adw::ToolbarView,
-    /// 左の区画のヘッダーバー。開いている間はサイドバーボタンがここに来る。
+    /// The left pane's header bar. The sidebar button comes here while expanded.
     header: adw::HeaderBar,
-    /// 中身のヘッダーバーの左端に置く入れ物。閉じている間はサイドバー
-    /// ボタンがここに来る。空の間は隠す。
+    /// The container placed at the left end of the content's header bar. The sidebar
+    /// button comes here while collapsed. Hidden while empty.
     content_slot: gtk::Box,
-    /// 取り付け先のウィンドウのヘッダーバー (中身の側)。
+    /// The header bar of the window it is attached to (the content side).
     content_header: RefCell<Option<adw::HeaderBar>>,
     list: gtk::ListBox,
     sections: RefCell<Vec<SidebarSection>>,
-    /// 項目の通し番号と同じ並びの行。
+    /// The rows, in the same order as the items' running numbers.
     rows: RefCell<Vec<gtk::ListBoxRow>>,
     selected: Cell<Option<usize>>,
     on_select: Notifier<usize>,
-    /// `row-selected` の購読。プログラムから選ぶ間だけ止める。
+    /// The `row-selected` subscription. Blocked only while selecting from code.
     handler: RefCell<Option<glib::SignalHandlerId>>,
     width: Cell<f64>,
     on_resize: Notifier<f64>,
-    /// naui が仕切りを置いている間は真。この間の位置の変化は通知しない。
+    /// True while naui is positioning the divider. Position changes during this are not
+    /// notified.
     applying: Cell<bool>,
-    /// サイドバーボタン。
+    /// The sidebar button.
     toggle: gtk::ToggleButton,
-    /// 最後に知っている開閉。利用者の開閉だけを通知するために比べる。
+    /// The last known collapsed state. Compared so that only the user's toggles are
+    /// notified.
     collapsed: Cell<bool>,
     on_collapse: Notifier<bool>,
 }
 
-/// ウィンドウの左に付けるサイドバー。
+/// A sidebar attached to the left of the window.
 ///
-/// [`Window::set_sidebar`](crate::Window::set_sidebar) で取り付ける。
-/// レイアウトには置かないので [`Widget`](crate::Widget) ではない。
+/// Attach it with [`Window::set_sidebar`](crate::Window::set_sidebar). It is not
+/// placed in a layout, so it is not a [`Widget`](crate::Widget).
 #[derive(Clone)]
 pub struct Sidebar(Rc<SidebarInner>);
 
@@ -196,10 +199,10 @@ impl Sidebar {
         this
     }
 
-    /// 項目をまとまりごとに並べる。呼ぶたびに置き換わる。
+    /// Lays out items by group. Each call replaces them.
     ///
-    /// 選ばれていた項目は、同じ通し番号がまだ選べるなら選ばれたまま残る
-    /// (通知はしない)。
+    /// The selected item stays selected (without notifying) if the same running number
+    /// can still be selected.
     pub fn set_sections(&self, sections: &[SidebarSection]) {
         let keep = self
             .0
@@ -244,12 +247,12 @@ impl Sidebar {
         }
     }
 
-    /// 見出しの無いまとまり 1 つだけで並べる。
+    /// Lays out items as a single group without a heading.
     pub fn set_items(&self, items: &[SidebarItem]) {
         self.set_sections(&[SidebarSection::untitled(items.iter().cloned())]);
     }
 
-    /// まとまりをまたいだ項目の数。
+    /// The number of items across groups.
     pub fn len(&self) -> usize {
         sidebar_len(&self.0.sections.borrow())
     }
@@ -258,12 +261,13 @@ impl Sidebar {
         self.len() == 0
     }
 
-    /// 選ばれている項目の通し番号。
+    /// The running number of the selected item.
     pub fn selected(&self) -> Option<usize> {
         self.0.selected.get()
     }
 
-    /// 通知せずに選択を変える。範囲外・選べない項目は無視する。
+    /// Changes the selection without notifying. Out-of-range and unselectable items are
+    /// ignored.
     pub fn set_selected(&self, index: usize) {
         let Some(row) = self.selectable_row(index) else {
             return;
@@ -274,7 +278,7 @@ impl Sidebar {
         self.0.selected.set(Some(index));
     }
 
-    /// 選択を外す (通知しない)。
+    /// Clears the selection (without notifying).
     pub fn clear_selection(&self) {
         without_signal(&self.0.list, &self.0.handler, || {
             self.0.list.unselect_all();
@@ -282,9 +286,10 @@ impl Sidebar {
         self.0.selected.set(None);
     }
 
-    /// 利用者が選んだのと同じように選び、通知する。
+    /// Selects as if the user had chosen it, and notifies.
     ///
-    /// 範囲外・選べない項目は無視する。すでに選ばれている項目でも通知する。
+    /// Out-of-range and unselectable items are ignored. Notifies even if the item is
+    /// already selected.
     pub fn select(&self, index: usize) {
         if self.selectable_row(index).is_none() {
             return;
@@ -293,17 +298,17 @@ impl Sidebar {
         self.0.on_select.emit(index);
     }
 
-    /// 項目が選ばれたときの通知先。引数は通し番号。
+    /// The handler called when an item is chosen. The argument is the running number.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select.set(f);
     }
 
-    /// サイドバーの幅 (論理ピクセル)。既定は [`DEFAULT_SIDEBAR_WIDTH`]。
+    /// The sidebar width (logical pixels). The default is [`DEFAULT_SIDEBAR_WIDTH`].
     ///
-    /// 利用者は仕切りをドラッグして幅を変えられる (下限は
-    /// [`SIDEBAR_MIN_WIDTH`])。変えたあとの幅は [`width`](Self::width) が返し、
-    /// [`on_resize`](Self::on_resize) で届く。この呼び出しでは `on_resize` を
-    /// 呼ばない。
+    /// The user can change the width by dragging the divider (the minimum is
+    /// [`SIDEBAR_MIN_WIDTH`]). The width after a change is returned by
+    /// [`width`](Self::width) and delivered through [`on_resize`](Self::on_resize).
+    /// This call does not call `on_resize`.
     pub fn set_width(&self, width: f64) {
         if !width.is_finite() || width <= 0.0 {
             return;
@@ -312,12 +317,12 @@ impl Sidebar {
         self.apply_width();
     }
 
-    /// サイドバーの幅。閉じていても開いたときの幅を返す。
+    /// The sidebar width. Even while collapsed, returns the width it has when expanded.
     pub fn width(&self) -> f64 {
         self.0.width.get()
     }
 
-    /// 利用者が仕切りで幅を変えるたび、変えた後の幅で呼ばれる。
+    /// Called with the new width every time the user changes it with the divider.
     pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_resize.set(f);
     }
@@ -328,10 +333,10 @@ impl Sidebar {
         self.0.applying.set(false);
     }
 
-    /// サイドバーを閉じる (`true`) か開く (`false`)。
+    /// Collapses (`true`) or expands (`false`) the sidebar.
     ///
-    /// 閉じても項目と選択と幅は残る。[`on_collapse`](Self::on_collapse) は
-    /// 呼ばない。
+    /// Items, selection and width are kept while collapsed.
+    /// [`on_collapse`](Self::on_collapse) is not called.
     pub fn set_collapsed(&self, collapsed: bool) {
         self.0.collapsed.set(collapsed);
         self.0.pane.set_visible(!collapsed);
@@ -341,46 +346,48 @@ impl Sidebar {
         }
     }
 
-    /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
+    /// The handler called when the user collapses or expands the sidebar. The argument
+    /// is whether it is now collapsed.
     ///
-    /// サイドバーボタンの操作で呼ばれ、[`set_collapsed`](Self::set_collapsed)
-    /// では呼ばれない。
+    /// Called when the sidebar button is used; not called by
+    /// [`set_collapsed`](Self::set_collapsed).
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse.set(f);
     }
 
-    /// サイドバーボタン。バックエンド固有の脱出口。
+    /// The sidebar button. A backend-specific escape hatch.
     pub fn native_toggle_button(&self) -> gtk::ToggleButton {
         self.0.toggle.clone()
     }
 
-    /// サイドバーが閉じているかどうか。
+    /// Whether the sidebar is collapsed.
     ///
-    /// 見るのは区画自身の表示の指定 (`get_visible`)。`is_visible` は親まで
-    /// 含めて見えているかを返すので、ウィンドウを出す前は偽になってしまう。
+    /// This looks at the pane's own visibility setting (`get_visible`). `is_visible`
+    /// reports whether it is visible including its parents, so it would be false before
+    /// the window is shown.
     pub fn is_collapsed(&self) -> bool {
         !self.0.pane.get_visible()
     }
 
-    /// 対応する `GtkPaned`。バックエンド固有の脱出口。
+    /// The corresponding `GtkPaned`. A backend-specific escape hatch.
     pub fn native_paned(&self) -> gtk::Paned {
         self.0.paned.clone()
     }
 
-    /// 左の区画のヘッダーバー。バックエンド固有の脱出口。
+    /// The left pane's header bar. A backend-specific escape hatch.
     pub fn native_header_bar(&self) -> adw::HeaderBar {
         self.0.header.clone()
     }
 
-    /// 中身のヘッダーバーの左端に置く入れ物。閉じている間のサイドバー
-    /// ボタンの置き場。
+    /// The container placed at the left end of the content's header bar. Where the
+    /// sidebar button goes while collapsed.
     pub(crate) fn content_slot(&self) -> gtk::Box {
         self.0.content_slot.clone()
     }
 
-    /// ウィンドウへ取り付けたとき・外したときに呼ぶ。
+    /// Called when attached to or detached from a window.
     ///
-    /// 中身のヘッダーバーを覚え、ウィンドウのボタンの出し分けを合わせる。
+    /// Remembers the content's header bar and adjusts which window buttons are shown.
     pub(crate) fn set_content_header(&self, header: Option<&adw::HeaderBar>) {
         if header.is_none() {
             // 外すときは、中身のヘッダーバーを元の姿 (両端にボタン) へ戻す。
@@ -393,15 +400,16 @@ impl Sidebar {
         self.arrange_for_collapse();
     }
 
-    /// 開閉に合わせて、サイドバーボタンの場所とウィンドウのボタンの出し分けを
-    /// そろえる。
+    /// Adjusts where the sidebar button is and which window buttons are shown to match
+    /// the collapsed state.
     ///
-    /// 開いている間はサイドバーの区画がウィンドウの左端に接するので、左側の
-    /// ウィンドウのボタンはサイドバーのヘッダーバーが、右側は中身のヘッダー
-    /// バーが出す。閉じたら中身のヘッダーバーが両方を出す。
+    /// While expanded, the sidebar pane touches the window's left edge, so the
+    /// sidebar's header bar shows the left-side window buttons and the content's header
+    /// bar shows the right-side ones. When collapsed, the content's header bar shows
+    /// both.
     ///
-    /// ボタンの付け替えは次の周回へ回す。押されたボタンの `toggled` の最中に
-    /// 自分自身を付け替えると、押下の後始末が迷子になるため。
+    /// Moving the button is deferred to the next iteration. Reattaching the clicked
+    /// button itself in the middle of its `toggled` would leave the press cleanup lost.
     fn arrange_for_collapse(&self) {
         let collapsed = self.is_collapsed();
         self.0.header.set_show_end_title_buttons(false);
@@ -416,8 +424,8 @@ impl Sidebar {
         });
     }
 
-    /// サイドバーボタンを、開いていればサイドバーの左上、閉じていれば中身の
-    /// 左上へ置く。
+    /// Places the sidebar button at the top left of the sidebar when expanded, or at
+    /// the top left of the content when collapsed.
     fn place_toggle(&self) {
         let toggle = &self.0.toggle;
         let collapsed = self.is_collapsed();
@@ -434,7 +442,7 @@ impl Sidebar {
         self.0.content_slot.set_visible(collapsed);
     }
 
-    /// 項目の一覧 (`GtkListBox`)。バックエンド固有の脱出口。
+    /// The item list (`GtkListBox`). A backend-specific escape hatch.
     pub fn native_list_box(&self) -> gtk::ListBox {
         self.0.list.clone()
     }
@@ -449,7 +457,7 @@ impl Sidebar {
     }
 }
 
-/// 選べも押せもしない行 (見出しと区切り)。
+/// A row that can be neither selected nor clicked (headings and separators).
 fn inert_row(child: &impl IsA<gtk::Widget>) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     row.set_selectable(false);
@@ -459,7 +467,7 @@ fn inert_row(child: &impl IsA<gtk::Widget>) -> gtk::ListBoxRow {
     row
 }
 
-/// 項目 1 行。アイコンがあれば文字の前に置く。
+/// One item row. The icon, if any, goes before the text.
 fn item_row(item: &SidebarItem) -> gtk::ListBoxRow {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     if let Some(icon) = item.icon {

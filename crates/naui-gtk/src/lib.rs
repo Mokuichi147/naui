@@ -1,116 +1,123 @@
 //! # naui-gtk
 //!
-//! naui の Linux バックエンド。**GTK4 / libadwaita の実コントロール**
+//! naui's Linux backend. It creates **real GTK4 / libadwaita controls**
 //! (`GtkApplicationWindow` / `GtkButton` / `GtkEntry` / `GtkScale` /
-//! `GtkListBox` …) を生成し、GTK4 のシグナルを Rust のクロージャへ中継する。
+//! `GtkListBox` …) and relays GTK4 signals to Rust closures.
 //!
-//! 描画・レイアウト・IME・アクセシビリティ・OS のテーマ追従はすべて GTK4 が行う。
+//! Drawing, layout, IME, accessibility and following the OS theme are all done by
+//! GTK4.
 //!
-//! ## 対応表
+//! ## Mapping
 //!
 //! | naui | GTK4 / libadwaita |
 //! | --- | --- |
-//! | `run` | `AdwApplication` + `connect_activate` (コールバック内で UI 構築) |
+//! | `run` | `AdwApplication` + `connect_activate` (the UI is built in the callback) |
 //! | `Window` | `AdwApplicationWindow` + `AdwToolbarView` + `AdwHeaderBar` |
 //! | `Stack` | `GtkBox` |
 //! | `Grid` | `GtkGrid` |
 //! | `Scroll` | `GtkScrolledWindow` |
 //! | `Expander` | `GtkExpander` |
 //! | `SplitView` | `GtkPaned` |
-//! | `Spacer` | 中身の無い `GtkBox` (`hexpand` / `vexpand`) |
-//! | 大きさの指定 | `size_request` / `hexpand` / `halign` + [`SizeBin`] の上限 |
+//! | `Spacer` | An empty `GtkBox` (`hexpand` / `vexpand`) |
+//! | Size specification | `size_request` / `hexpand` / `halign` + the maximum of [`SizeBin`] |
 //! | `Label` | `GtkLabel` |
 //! | `Button` | `GtkButton` |
 //! | `Checkbox` | `GtkCheckButton` |
-//! | `Toggle` | `GtkSwitch` + `GtkLabel` を `GtkBox` へ並べたもの |
+//! | `Toggle` | A `GtkSwitch` and a `GtkLabel` side by side in a `GtkBox` |
 //! | `ComboBox` | `GtkDropDown` + `GtkStringList` |
-//! | `EditableComboBox` | `GtkEntry` + `GtkMenuButton` (`GtkListBox` のポップオーバー) |
-//! | `RadioGroup` | 組にした `GtkCheckButton` を `GtkBox` へ並べたもの |
-//! | `DatePicker` | `GtkMenuButton` + `GtkCalendar` / `GtkSpinButton` の組 |
-//! | `TimePicker` | 時と分の `GtkSpinButton` を `:` で挟んだもの |
+//! | `EditableComboBox` | `GtkEntry` + `GtkMenuButton` (a popover with a `GtkListBox`) |
+//! | `RadioGroup` | Grouped `GtkCheckButton`s laid out in a `GtkBox` |
+//! | `DatePicker` | A `GtkMenuButton` + `GtkCalendar` / `GtkSpinButton` combination |
+//! | `TimePicker` | `GtkSpinButton`s for hours and minutes separated by `:` |
 //! | `ColorPicker` | `GtkColorDialogButton` + `GtkColorDialog` |
-//! | `Canvas` | `GtkDrawingArea` (cairo + Pango で描く) |
+//! | `Canvas` | `GtkDrawingArea` (drawn with cairo + Pango) |
 //! | `TextInput` | `GtkEntry` |
-//! | `TextArea` | `GtkTextView` を `GtkScrolledWindow` に載せたもの |
+//! | `TextArea` | A `GtkTextView` in a `GtkScrolledWindow` |
 //! | `Slider` | `GtkScale` |
 //! | `ProgressBar` | `GtkProgressBar` |
 //! | `Tabs` | `GtkNotebook` |
-//! | `Navbar` / `Dock` / `Menu` / `Pagination` | `GtkToggleButton` の並び |
-//! | `Breadcrumbs` | リンク (`<a href>`) を持つ `GtkLabel` + 区切り |
+//! | `Navbar` / `Dock` / `Menu` / `Pagination` | A row of `GtkToggleButton`s |
+//! | `Breadcrumbs` | A `GtkLabel` with links (`<a href>`) + separators |
 //! | `PopupMenu` | `GtkPopoverMenu` + `GMenu` + `GSimpleAction` |
 //! | `MenuBar` | `GtkPopoverMenuBar` + `GMenu` + `GSimpleAction` |
-//! | `List` | `GtkListBox` を `GtkScrolledWindow` に載せたもの |
+//! | `List` | A `GtkListBox` in a `GtkScrolledWindow` |
 //! | `Link` | `GtkLinkButton` |
 //! | `Image` | `GtkPicture` |
-//! | `Video` | `GtkPicture` (`GtkMediaFile` を映す) + `GtkMediaControls` |
+//! | `Video` | `GtkPicture` (showing a `GtkMediaFile`) + `GtkMediaControls` |
 //! | `Audio` | `GtkMediaControls` + `GtkMediaFile` |
 //! | `FilePicker` | `GtkButton` + `GtkFileDialog` |
 //! | `Dialog` | `AdwAlertDialog` |
 //! | `Toast` | `AdwToast` + `AdwToastOverlay` |
 //!
-//! ## 他のバックエンドとの違い
+//! ## Differences from other backends
 //!
-//! - **`Video` の再生バーは出し入れできる**が、`GtkVideo` ではなく
-//!   `GtkPicture` + `GtkMediaControls` で組んでいるためで、収め方
-//!   ([`Fit`](naui_core::Fit)) もこの形でだけ効く。
-//! - [`Fit::None`](naui_core::Fit::None) (原寸) にあたるものが GTK4 に無いため、
-//!   **拡大はしないが縮小はする** `GTK_CONTENT_FIT_SCALE_DOWN` に写す。
-//! - `Grid` の [`Track::Fill`](naui_core::Track::Fill) の**重みは効かない**。
-//!   `GtkGrid` は列や行そのものに幅を持たせられず、余りは広がる列で等分される
-//!   (macOS と同じ制限)。
-//! - 配色テーマは `AdwStyleManager` がアプリ全体に持つため、
-//!   [`Window::set_theme`] もアプリ全体に効く。
-//! - `AdwApplicationWindow` は `GtkApplicationWindow` と違い**既定の
-//!   タイトルバーを持たない**ので、`AdwHeaderBar` を自分で載せている。
-//!   最小化・最大化・閉じるのボタンはこれが出す (どちら側に並ぶかは
-//!   デスクトップの設定に従う)。
-//! - **消音を解いたときは、naui が持っている音量を入れ直している。**
-//!   `GtkMediaControls` は消音になると音量つまみを 0 へ動かし、その 0 を
-//!   `GtkMediaStream` へ書き戻すが、GTK4 は消音を解いても音量を戻さない。
-//!   そのままだと消音を外しても音が出ない。
-//! - 再生できる形式は GStreamer に入っているプラグイン次第
-//!   (`GtkMediaFile` が GStreamer に載っているため)。
-//! - `List` の複数選択では、`GtkListBox` の**「1 クリックで確定」を切っている**
-//!   (`gtk_list_box_set_activate_on_single_click`)。これが有効な間、
-//!   `GtkListBox` はクリックに付いている Ctrl / Shift を読まず、必ず
-//!   「その行だけを選ぶ」に倒すため、行を足すことも外すこともできなくなる。
-//! - `Tabs` は**タブ列を送れるようにしてある** (`gtk_notebook_set_scrollable`)。
-//!   既定の `GtkNotebook` は「全タブが横に並ぶ幅」を最小幅として申告するため、
-//!   タブが増えるとウィンドウをそれ以下に縮められなくなる。
-//! - **`DatePicker` はカレンダーを開いても、日を押した時点では閉じない。**
-//!   `GtkCalendar` は「日を押した」と「月を送った」を区別せず、どちらも
-//!   `day-selected` で届くため、押すたびに閉じると月を送れなくなる。
-//! - `Checkbox` と `RadioGroup` は、**印をラベルの字面の中心へ寄せ直している**。
-//!   GTK4 は印を行の箱 (ascent + descent) の中心に置くが、日本語を含む行は
-//!   ascent が大きく取られるぶん字面が下に寄り、印だけが浮いて見えるため
-//!   (詳しくは `indicator` モジュール)。
+//! - **The `Video` playback bar can be shown and hidden**, because it is built from
+//!   `GtkPicture` + `GtkMediaControls` rather than `GtkVideo`; fitting
+//!   ([`Fit`](naui_core::Fit)) also works only in this form.
+//! - GTK4 has no equivalent of [`Fit::None`](naui_core::Fit::None) (actual size),
+//!   so it maps to `GTK_CONTENT_FIT_SCALE_DOWN`, which **does not scale up but does
+//!   scale down**.
+//! - **Weights of [`Track::Fill`](naui_core::Track::Fill) in a `Grid` have no
+//!   effect.** `GtkGrid` cannot give columns or rows a width of their own, and
+//!   leftover space is split evenly among the growing columns (the same limitation
+//!   as macOS).
+//! - `AdwStyleManager` holds the color theme for the whole app, so
+//!   [`Window::set_theme`] also applies to the whole app.
+//! - Unlike `GtkApplicationWindow`, `AdwApplicationWindow` **has no default title
+//!   bar**, so an `AdwHeaderBar` is added by hand. It provides the minimize,
+//!   maximize and close buttons (which side they are on follows the desktop's
+//!   settings).
+//! - **When unmuting, naui writes back the volume it holds.** When muted,
+//!   `GtkMediaControls` moves the volume slider to 0 and writes that 0 back to the
+//!   `GtkMediaStream`, but GTK4 does not restore the volume on unmute. Without this,
+//!   there would be no sound even after unmuting.
+//! - Which formats can be played depends on the plugins installed for GStreamer
+//!   (because `GtkMediaFile` is built on GStreamer).
+//! - With multiple selection in a `List`, **`GtkListBox`'s "activate on single
+//!   click" is turned off** (`gtk_list_box_set_activate_on_single_click`). While it
+//!   is on, `GtkListBox` ignores Ctrl / Shift on clicks and always falls back to
+//!   "select only that row", so rows could be neither added nor removed.
+//! - **`Tabs` lets the tab strip scroll** (`gtk_notebook_set_scrollable`). By
+//!   default `GtkNotebook` reports "the width to lay out every tab side by side" as
+//!   its minimum width, so as tabs are added the window can no longer be shrunk
+//!   below it.
+//! - **`DatePicker` does not close its calendar when a day is clicked.**
+//!   `GtkCalendar` does not distinguish "clicked a day" from "moved to another
+//!   month"; both arrive as `day-selected`, so closing on every click would make
+//!   changing months impossible.
+//! - `Checkbox` and `RadioGroup` **move the indicator to the center of the label's
+//!   glyphs**. GTK4 places the indicator at the center of the line box (ascent +
+//!   descent), but lines containing Japanese get a larger ascent, pushing the glyphs
+//!   down so that only the indicator appears to float (see the `indicator` module
+//!   for details).
 //!
-//! ## ウィンドウを縮められる下限
+//! ## How small a window can be shrunk
 //!
-//! GTK4 のウィンドウは、中身が申告する**最小の大きさより小さくできない**。
-//! そのため [`Length::Fill`](naui_core::Length::Fill) を指定した軸は、
-//! `measure` の最小を 0 として申告している。`Fill` は「大きさは親が決める」
-//! という指定なので、中身の都合でウィンドウの下限を決めてしまわないようにする
-//! ため (Web バックエンドが `min-width: 0` を書いているのと同じ理由)。
+//! A GTK4 window **cannot be made smaller than the minimum size its content
+//! reports**. So axes with [`Length::Fill`](naui_core::Length::Fill) report a
+//! minimum of 0 from `measure`. `Fill` means "the parent decides the size", so the
+//! content must not decide the window's minimum for its own sake (the same reason
+//! the Web backend writes `min-width: 0`).
 //!
-//! 縮めすぎないようにするには [`Sizing::min_width`](naui_core::Sizing::min_width)
-//! などを使う。こちらは `gtk_widget_set_size_request` として GTK4 が改めて
-//! 下限に効かせる。
+//! To keep it from shrinking too far, use
+//! [`Sizing::min_width`](naui_core::Sizing::min_width) and friends, which GTK4
+//! applies again as a minimum through `gtk_widget_set_size_request`.
 //!
-//! GTK4 は既定でははみ出した中身を切り取らないので、そのままだと縮めたときに
-//! ウィンドウの外まで描かれてしまう。そこで
+//! GTK4 does not clip overflowing content by default, so shrinking would draw it
+//! beyond the window. So two places are set to `GTK_OVERFLOW_HIDDEN`:
 //!
-//! - ウィンドウの中身 (`AdwToolbarView`)
-//! - `Fill` を指定した軸を持つウィジェット
+//! - the window's content (`AdwToolbarView`)
+//! - widgets with an axis set to `Fill`
 //!
-//! の 2 か所を `GTK_OVERFLOW_HIDDEN` にしている。最小を 0 と申告する以上、
-//! 配られた場所からはみ出して描かないのが筋で、CSS の `min-width: 0` と
-//! `overflow: hidden` を組みで使うのと同じ。
+//! Having reported a minimum of 0, the proper thing is not to draw beyond the
+//! allotted space, the same as pairing CSS's `min-width: 0` with
+//! `overflow: hidden`.
 //!
-//! GTK4 のシグナルハンドラは `'static` なクロージャを受けるので、macOS / Web と
-//! 同じ `Rc<Inner>` + クロージャ保持の形がそのまま使える (Windows のような
-//! `Send + Sync` 制約は無い)。別スレッドからの受け渡しだけは例外で、
-//! `glib::idle_add_once` を通してメインループへ戻す (`crate::main_thread`)。
+//! GTK4 signal handlers take `'static` closures, so the same `Rc<Inner>` +
+//! held-closure pattern as macOS / Web works as is (there is no `Send + Sync`
+//! constraint as on Windows). The only exception is passing values from other
+//! threads, which go back to the main loop through `glib::idle_add_once`
+//! (`crate::main_thread`).
 
 #![cfg(all(
     unix,
@@ -196,9 +203,9 @@ pub use widgets::{
 };
 pub use window::{WeakWindow, Window};
 
-/// 配色テーマをアプリ全体へ適用する。
+/// Applies a color theme to the whole app.
 ///
-/// libadwaita のテーマはアプリに 1 つしか無いので、ウィンドウごとには持てない。
+/// libadwaita has only one theme per app, so it cannot be held per window.
 pub(crate) fn apply_theme(theme: Theme) {
     adw::StyleManager::default().set_color_scheme(match theme {
         Theme::System => adw::ColorScheme::Default,
@@ -207,36 +214,35 @@ pub(crate) fn apply_theme(theme: Theme) {
     });
 }
 
-/// ウィジェットを生成するための入り口。
+/// The entry point for creating widgets.
 ///
-/// GTK4 は `GtkApplication` が起動したあとでしかウィンドウを作れないため、
-/// `Ui` は [`run`] のコールバックの中でしか得られない。
+/// GTK4 can only create windows after the `GtkApplication` has started, so a `Ui`
+/// is available only inside the [`run`] callback.
 ///
-/// ウィジェットのハンドルと同じく **clone しても中身は同じ**なので、
-/// コールバックへ持ち込めば後からウィジェットを作れる。メインスレッド
-/// 専用で `Send` ではないため、別スレッドへは渡せない (そちらは
-/// [`Tasks`] を使う)。
+/// Like widget handles, **clones share the same contents**, so moving one into a
+/// callback lets you create widgets later. It is main-thread only and not `Send`,
+/// so it cannot be passed to other threads (use [`Tasks`] for that).
 #[derive(Clone)]
 pub struct Ui(Rc<UiInner>);
 
 struct UiInner {
     app: adw::Application,
     theme: Cell<Theme>,
-    /// コールバックが終わってもウィンドウを生かしておくための保持。
+    /// Keeps windows alive after the callback finishes.
     windows: RefCell<Vec<Window>>,
-    /// ダイアログはどこにも append されないので、ここで保持する。
+    /// Dialogs are never appended anywhere, so they are held here.
     dialogs: RefCell<Vec<Dialog>>,
-    /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
+    /// Popup menus are not part of the layout, so no parent holds them.
     popups: RefCell<Vec<PopupMenu>>,
-    /// ツールバーもレイアウトに載らないので、ここで保持する。
+    /// Toolbars are not part of the layout either, so they are held here.
     toolbars: RefCell<Vec<Toolbar>>,
-    /// メニューバーもレイアウトに載らないので、ここで保持する。
+    /// Menu bars are not part of the layout either, so they are held here.
     menu_bars: RefCell<Vec<MenuBar>>,
-    /// サイドバーもレイアウトに載らないので、ここで保持する。
+    /// Sidebars are not part of the layout either, so they are held here.
     sidebars: RefCell<Vec<Sidebar>>,
-    /// トーストもレイアウトに載らないので、ここで保持する。
+    /// Toasts are not part of the layout either, so they are held here.
     toasts: RefCell<Vec<Toast>>,
-    /// 別スレッドと非同期処理の入り口。
+    /// The entry point for other threads and async work.
     tasks: Tasks,
 }
 
@@ -256,16 +262,16 @@ impl Ui {
         }))
     }
 
-    /// 対応する `GtkApplication`。バックエンド固有の脱出口として公開している。
+    /// The corresponding `GtkApplication`. Public as a backend-specific escape hatch.
     pub fn native_application(&self) -> adw::Application {
         self.0.app.clone()
     }
 
-    /// ウィンドウを作る。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても閉じられることはない。
+    /// Creates a window. The framework keeps a reference to it, so dropping the return
+    /// value does not close it.
     ///
-    /// `width` / `height` は中身の領域の大きさ ([`Window::set_size`] と同じ)。
-    /// ヘッダーバーとメニューバーは含まない。
+    /// `width` / `height` are the size of the content area (the same as
+    /// [`Window::set_size`]), excluding the header bar and menu bar.
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
         let window = Window::new(&self.0.app, title, width, height);
         self.0.windows.borrow_mut().push(window.clone());
@@ -276,29 +282,31 @@ impl Ui {
         Ok(Stack::new(orientation))
     }
 
-    /// 行と列で位置を決めるコンテナ。
+    /// A container that positions children by row and column.
     pub fn grid(&self) -> Result<Grid> {
         Ok(Grid::new())
     }
 
-    /// 中身がはみ出したらスクロールさせるコンテナ。
+    /// A container that scrolls when its contents overflow.
     pub fn scroll(&self) -> Result<Scroll> {
         Ok(Scroll::new())
     }
 
-    /// 見出しを押して中身を出し入れするコンテナ。`text` は見出しの文字。
+    /// A container whose contents are shown and hidden by clicking its heading. `text`
+    /// is the heading text.
     pub fn expander(&self, text: &str) -> Result<Expander> {
         Ok(Expander::new(text))
     }
 
-    /// 2 つの区画を、動かせる仕切りで分けるコンテナ。
+    /// A container that divides two panes with a movable divider.
     ///
-    /// `Horizontal` なら区画が横に並び、仕切りは縦になる。
+    /// With `Horizontal`, the panes are side by side and the divider is vertical.
     pub fn split_view(&self, orientation: Orientation) -> Result<SplitView> {
         Ok(SplitView::new(orientation))
     }
 
-    /// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。
+    /// A widget that is just empty space. It absorbs a stack's leftover space and
+    /// pushes the others away.
     pub fn spacer(&self) -> Result<Spacer> {
         Ok(Spacer::new())
     }
@@ -315,42 +323,42 @@ impl Ui {
         Ok(Checkbox::new(label))
     }
 
-    /// 入り切りを切り替えるスイッチ。`label` はとなりへ添える文字。
+    /// An on/off switch. `label` is the text placed next to it.
     pub fn toggle(&self, label: &str) -> Result<Toggle> {
         Ok(Toggle::new(label))
     }
 
-    /// 選択肢を折りたたんで表示するコンボボックス。
+    /// A combo box that shows its options collapsed.
     pub fn combo_box(&self) -> Result<ComboBox> {
         Ok(ComboBox::new())
     }
 
-    /// 候補から選ぶことも、自由に打ち込むこともできるコンボボックス。
+    /// A combo box where the user can either choose from suggestions or type freely.
     pub fn editable_combo_box(&self) -> Result<EditableComboBox> {
         Ok(EditableComboBox::new())
     }
 
-    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    /// A radio group that lays out options and lets the user choose exactly one.
     pub fn radio_group(&self) -> Result<RadioGroup> {
         Ok(RadioGroup::new())
     }
 
-    /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
+    /// A control for picking a date or time. `mode` decides what can be picked.
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         Ok(DatePicker::new(mode))
     }
 
-    /// 時刻だけを選ばせるコントロール。初期値は現在時刻。
+    /// A control for picking only a time of day. The initial value is the current time.
     pub fn time_picker(&self) -> Result<TimePicker> {
         Ok(TimePicker::new())
     }
 
-    /// 色を選ばせるコントロール。初期値は黒。
+    /// A control for picking a color. The initial value is black.
     pub fn color_picker(&self) -> Result<ColorPicker> {
         Ok(ColorPicker::new())
     }
 
-    /// アプリが自分で描く面。大きさは `set_sizing` で指定する。
+    /// A surface the app draws on itself. Set its size with `set_sizing`.
     pub fn canvas(&self) -> Result<Canvas> {
         Ok(Canvas::new())
     }
@@ -359,22 +367,23 @@ impl Ui {
         Ok(TextInput::new(text))
     }
 
-    /// 伏せ字で入力させる欄。中身は `GtkPasswordEntry`。
+    /// A field whose input is masked. Backed by `GtkPasswordEntry`.
     pub fn password_input(&self) -> Result<PasswordInput> {
         Ok(PasswordInput::new())
     }
 
-    /// 検索の入力欄。中身は `GtkSearchEntry`。
+    /// A search field. Backed by `GtkSearchEntry`.
     pub fn search_input(&self) -> Result<SearchInput> {
         Ok(SearchInput::new())
     }
 
-    /// 数値を入力させる欄。`value` は初期値。
+    /// A field for entering a number. `value` is the initial value.
     pub fn number_input(&self, value: f64) -> Result<NumberInput> {
         Ok(NumberInput::new(value))
     }
 
-    /// 改行を含む文字列を入力できる欄。高さは `set_sizing` で指定する。
+    /// A field for entering text that includes newlines. Set its height with
+    /// `set_sizing`.
     pub fn text_area(&self, text: &str) -> Result<TextArea> {
         Ok(TextArea::new(text))
     }
@@ -387,139 +396,141 @@ impl Ui {
         Ok(ProgressBar::new())
     }
 
-    /// 画像。`source` はファイルパスか URL。
+    /// An image. `source` is a file path or a URL.
     pub fn image(&self, source: &str) -> Result<Image> {
         Ok(Image::new(source))
     }
 
-    /// 動画。`source` はファイルパスか URL。
+    /// Video. `source` is a file path or a URL.
     pub fn video(&self, source: &str) -> Result<Video> {
         Ok(Video::new(source))
     }
 
-    /// 音声。`source` はファイルパスか URL。
+    /// Audio. `source` is a file path or a URL.
     pub fn audio(&self, source: &str) -> Result<Audio> {
         Ok(Audio::new(source))
     }
 
-    /// タブ。中身のウィジェットごと持つ。
+    /// Tabs. Holds each tab's content widget.
     pub fn tabs(&self) -> Result<Tabs> {
         Ok(Tabs::new())
     }
 
-    /// 画面上部に置く横並びのナビゲーション。`title` は左端の見出し。
+    /// Horizontal navigation placed at the top of the screen. `title` is the heading
+    /// at the left end.
     pub fn navbar(&self, title: &str) -> Result<Navbar> {
         Ok(Navbar::new(title))
     }
 
-    /// 画面下部に置く横並びのナビゲーション (等幅)。
+    /// Horizontal navigation placed at the bottom of the screen (equal widths).
     pub fn dock(&self) -> Result<Dock> {
         Ok(Dock::new())
     }
 
-    /// 縦に並ぶナビゲーション一覧。
+    /// A vertical list of navigation items.
     pub fn menu(&self) -> Result<Menu> {
         Ok(Menu::new())
     }
 
-    /// ウィンドウの上端に付けるツールバー。
+    /// A toolbar attached to the top of the window.
     ///
-    /// [`Window::set_toolbar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_toolbar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     pub fn toolbar(&self) -> Result<Toolbar> {
         let toolbar = Toolbar::new();
         self.0.toolbars.borrow_mut().push(toolbar.clone());
         Ok(toolbar)
     }
 
-    /// ウィンドウの上端に付ける、OS のアプリケーションメニュー。
+    /// The OS's application menu, attached to the top of the window.
     ///
-    /// [`Window::set_menu_bar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_menu_bar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     pub fn menu_bar(&self) -> Result<MenuBar> {
         let menu_bar = MenuBar::new(&self.0.app);
         self.0.menu_bars.borrow_mut().push(menu_bar.clone());
         Ok(menu_bar)
     }
 
-    /// ウィンドウの左に付けるサイドバー。
+    /// A sidebar attached to the left of the window.
     ///
-    /// [`Window::set_sidebar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_sidebar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     pub fn sidebar(&self) -> Result<Sidebar> {
         let sidebar = Sidebar::new();
         self.0.sidebars.borrow_mut().push(sidebar.clone());
         Ok(sidebar)
     }
 
-    /// 選択できる行の一覧。自分でスクロールする。
+    /// A list of selectable rows. It scrolls by itself.
     pub fn list(&self) -> Result<List> {
         Ok(List::new())
     }
 
-    /// 列見出しを持つ表。自分でスクロールする。
+    /// A table with column headings. It scrolls by itself.
     pub fn table(&self) -> Result<Table> {
         Ok(Table::new())
     }
 
-    /// 入れ子の項目を開閉できる一覧。自分でスクロールする。
+    /// A list whose nested items can be expanded and collapsed. It scrolls by itself.
     pub fn tree(&self) -> Result<Tree> {
         Ok(Tree::new())
     }
 
-    /// 右クリックで出るポップアップ (コンテキスト) メニュー。
+    /// A popup (context) menu shown on right-click.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 取り付け先から消えることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// remove it from the widgets it is attached to.
     pub fn popup_menu(&self) -> Result<PopupMenu> {
         let popup = PopupMenu::new();
         self.0.popups.borrow_mut().push(popup.clone());
         Ok(popup)
     }
 
-    /// パンくず。
+    /// Breadcrumbs.
     pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
         Ok(Breadcrumbs::new())
     }
 
-    /// ページ送り。`page_count` はページ数。
+    /// Pagination. `page_count` is the number of pages.
     pub fn pagination(&self, page_count: usize) -> Result<Pagination> {
         Ok(Pagination::new(page_count))
     }
 
-    /// リンク。`href` が空でなければ、押したときに既定のハンドラで開く。
+    /// A link. If `href` is not empty, clicking it opens it with the default handler.
     pub fn link(&self, text: &str, href: &str) -> Result<Link> {
         Ok(Link::new(text, href))
     }
 
-    /// ファイルやフォルダーを選ばせるボタン。押すと `GtkFileDialog` が出る。
+    /// A button for picking files or folders. Clicking it shows a `GtkFileDialog`.
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         Ok(FilePicker::new(text))
     }
 
-    /// 内容をファイルへ保存させるボタン。押すと `GtkFileDialog` の保存が出る。
+    /// A button that lets the user save contents to a file. Clicking it shows the save
+    /// mode of `GtkFileDialog`.
     pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
         Ok(FileSaver::new(text))
     }
 
-    /// 一時的な通知 (トースト)。`message` は出す文字列。
+    /// A transient notification (toast). `message` is the string to show.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 通知が届かなくなることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
     pub fn toast(&self, message: &str) -> Result<Toast> {
         let toast = Toast::new(&self.0.app, message);
         self.0.toasts.borrow_mut().push(toast.clone());
         Ok(toast)
     }
 
-    /// モーダルダイアログ。フレームワークが参照を保持する。
+    /// A modal dialog. The framework keeps a reference to it.
     pub fn dialog(&self, title: &str) -> Result<Dialog> {
         let dialog = Dialog::new(&self.0.app, title);
         self.0.dialogs.borrow_mut().push(dialog.clone());
         Ok(dialog)
     }
 
-    /// 配色テーマを切り替える。
+    /// Switches the color theme.
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         self.0.theme.set(theme);
         apply_theme(theme);
@@ -530,25 +541,27 @@ impl Ui {
         self.0.theme.get()
     }
 
-    /// 別スレッドや非同期処理から画面を書き換えるための入り口。
+    /// The entry point for updating the screen from other threads or async code.
     ///
-    /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
+    /// The returned [`Tasks`] can be cloned and moved into callbacks.
     pub fn tasks(&self) -> Tasks {
         self.0.tasks.clone()
     }
 
-    /// クリップボード。文字の読み書きができる。
+    /// The clipboard. Text can be read and written.
     pub fn clipboard(&self) -> Clipboard {
         Clipboard
     }
 
-    /// URL を既定のアプリ (`https:` ならブラウザ、`mailto:` ならメール) で開く。
+    /// Opens a URL with the default app (the browser for `https:`, mail for
+    /// `mailto:`).
     ///
-    /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
-    /// 読めない・開く先が無いときは `Err`。開いた先で起きた失敗は分からない。
+    /// Opening is left to the OS, so this returns right away. Returns `Err` when the
+    /// string cannot be read as a URL or there is nothing to open it with. Failures
+    /// that happen in whatever opens it are not reported.
     ///
-    /// GTK4 は開く処理を非同期で行う (`GtkUriLauncher`) ので、ここで返るのは
-    /// URL として読めたかどうかだけ。
+    /// GTK4 opens it asynchronously (`GtkUriLauncher`), so what this returns is only
+    /// whether it could be read as a URL.
     pub fn open_url(&self, url: &str) -> Result<()> {
         if gtk::glib::Uri::parse(url, gtk::glib::UriFlags::NONE).is_err() {
             return Err(Error::new(
@@ -561,29 +574,29 @@ impl Ui {
         Ok(())
     }
 
-    /// アプリを終了する。
+    /// Quits the app.
     pub fn quit(&self) {
         self.0.app.quit();
     }
 }
 
 thread_local! {
-    /// [`run_for_test`] が使い回す `GtkApplication`。
+    /// The `GtkApplication` reused by [`run_for_test`].
     static TEST_APP: RefCell<Option<adw::Application>> = const { RefCell::new(None) };
 }
 
 thread_local! {
-    /// `run` のコールバックが終わってからも `Ui` を生かしておく。
+    /// Keeps the `Ui` alive even after the `run` callback finishes.
     ///
-    /// ウィジェットのクロージャは `Ui` が持つハンドル (ダイアログ・ポップアップ)
-    /// を参照するので、コールバックの終わりで落とすわけにはいかない。
+    /// Widget closures refer to handles held by the `Ui` (dialogs, popups), so it
+    /// cannot be dropped at the end of the callback.
     static KEEP_ALIVE: RefCell<Vec<Ui>> = const { RefCell::new(Vec::new()) };
 }
 
-/// メインループを回さずに `Ui` だけを作る。**自動テスト専用**。
+/// Creates only a `Ui` without running the main loop. **For automated tests only.**
 ///
-/// GTK4 のウィジェットは `gtk_init` のあとでないと作れないので、初期化と
-/// `GtkApplication` の登録だけを行い、`build` をそのまま呼ぶ。
+/// GTK4 widgets cannot be created before `gtk_init`, so only initialization and
+/// registration of the `GtkApplication` are done, and `build` is called directly.
 #[doc(hidden)]
 pub fn run_for_test<F>(build: F) -> Result<()>
 where
@@ -619,10 +632,10 @@ where
     build(&ui)
 }
 
-/// アプリを起動し、`build` の中で UI を組み立てる。
+/// Starts the app and builds the UI inside `build`.
 ///
-/// `build` は `GtkApplication` の `activate` の中で 1 回だけ呼ばれる。
-/// この関数はウィンドウがすべて閉じるまで戻らない。
+/// `build` is called exactly once, inside the `GtkApplication`'s `activate`. This
+/// function does not return until every window has closed.
 pub fn run<F>(settings: Settings, build: F) -> Result<()>
 where
     F: FnOnce(&Ui) -> Result<()> + 'static,

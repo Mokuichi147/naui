@@ -1,4 +1,4 @@
-//! WinUI 3 の Window ハンドル。
+//! WinUI 3 Window handles.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -41,33 +41,37 @@ enum Backdrop {
     BuiltIn {
         _mica: MicaBackdrop,
     },
-    /// Mica を取り付けられなかったとき。ウィンドウは既定の背景で出す。
+    /// When Mica could not be attached. The window is shown with the default
+    /// background.
     None,
 }
 
-/// タイトルバーの右端に空けておく幅。最小化・最大化・閉じるのボタンの場所で、
-/// タイトルバーの XAML の `Padding` と同じ値にしてある。
+/// The width left free at the right end of the title bar. It is where the minimize,
+/// maximize and close buttons go, and is the same value as the title bar XAML's
+/// `Padding`.
 const CAPTION_RESERVE: f64 = 140.0;
 
-/// タイトルバーの高さ。最小化・最大化・閉じるのボタンの高さがこれで、
-/// `SetExtendsContentIntoTitleBar(true)` でもボタンだけはこの高さのまま
-/// システムが描く (48 にする `AppWindowTitleBar::PreferredHeightOption` は
-/// [`naui_winui3`] の投影に無い)。タイトル文字とツールバーもこの中へ収めて、
-/// 3 つが同じ高さで並ぶようにする。
+/// The title bar's height. This is the height of the minimize, maximize and close
+/// buttons; even with `SetExtendsContentIntoTitleBar(true)`, the system draws just
+/// the buttons at this height (`AppWindowTitleBar::PreferredHeightOption`, which
+/// makes it 48, is not in the [`naui_winui3`] projection). The title text and the
+/// toolbar also fit inside it, so the three line up at the same height.
 pub(crate) const CAPTION_HEIGHT: f64 = 32.0;
 
-/// ウィンドウの根の `Grid` で、メニューバーの置き場が入る行。
+/// The row of the window root's `Grid` that holds the menu bar's slot.
 ///
-/// 行の並びは [`themed_content_root`] の XAML が決める。XAML は子を行の順に
-/// 並べているので、この番号はそのまま根の子の位置にもなる。根から子をたどる
-/// ところ (トーストの重ね先など) は、番号を直に書かずにこれを使う。
+/// The row order is decided by the XAML of [`themed_content_root`]. The XAML lays out
+/// its children in row order, so this number is also the child's position in the
+/// root. Code that walks the root's children (where toasts are overlaid, for
+/// example) uses this rather than writing the number directly.
 const MENU_BAR_ROW: u32 = 1;
 
-/// ウィンドウの根の `Grid` で、アプリの中身とトーストが入る行。
+/// The row of the window root's `Grid` that holds the app's content and toasts.
 const CONTENT_ROW: u32 = 2;
 
-/// タイトル文字の大きさ。WinUI 3 のキャプション文字 (`CaptionTextBlockStyle`)
-/// と同じ 12。本文と同じ 14 だと [`CAPTION_HEIGHT`] の帯に対して大きい。
+/// The title text size. 12, the same as WinUI 3's caption text
+/// (`CaptionTextBlockStyle`). The body size of 14 would be large for the
+/// [`CAPTION_HEIGHT`] band.
 const TITLE_FONT_SIZE: f64 = 12.0;
 
 struct WindowInner {
@@ -76,85 +80,90 @@ struct WindowInner {
     child: RefCell<Option<Box<dyn Widget>>>,
     theme_root: RefCell<Option<UIElement>>,
     title_label: RefCell<Option<TextBlock>>,
-    /// タイトルの右にあるツールバーの入れ物。
+    /// The container for the toolbar to the right of the title.
     toolbar_host: RefCell<Option<Grid>>,
-    /// タイトルバーの下にあるメニューバーの入れ物。
+    /// The container for the menu bar below the title bar.
     menu_bar_host: RefCell<Option<Grid>>,
-    /// アプリの中身とトーストが入る層 ([`CONTENT_ROW`])。先頭の子が中身
-    /// (サイドバーを付けていれば `NavigationView`)。
+    /// The layer holding the app's content and toasts ([`CONTENT_ROW`]). The first child
+    /// is the content (the `NavigationView` if a sidebar is attached).
     content_layer: RefCell<Option<Grid>>,
-    /// ドラッグ領域の候補。ツールバーが付いていなければタイトルバー全体を、
-    /// 付いていればツールバーより右の空きだけを使う (ボタンの上で
-    /// ウィンドウが動いてしまわないように)。
+    /// The candidate for the drag region. Without a toolbar, the whole title bar is
+    /// used; with one, only the free space to the right of the toolbar (so the window
+    /// does not move when dragging over the buttons).
     title_bar: RefCell<Option<UIElement>>,
     drag_area: RefCell<Option<UIElement>>,
-    /// 取り付けたツールバー。通知先ごと生かしておく。
+    /// The attached toolbar. Kept alive along with its handlers.
     toolbar: RefCell<Option<Toolbar>>,
-    /// 取り付けたメニューバー。通知先ごと生かしておく。
+    /// The attached menu bar. Kept alive along with its handlers.
     menu_bar: RefCell<Option<MenuBar>>,
-    /// 取り付けたサイドバー。通知先ごと生かしておく。
+    /// The attached sidebar. Kept alive along with its handlers.
     sidebar: RefCell<Option<Sidebar>>,
     visible: RefCell<bool>,
     theme: Cell<Theme>,
-    /// 最初の [`Window::show`] で合わせる中身の大きさ (DIP)。`ui.window` の
-    /// 幅・高さで始まり、表示前の `set_size` で置き換わる。表示したら空になる。
+    /// The content size (DIP) to apply on the first [`Window::show`]. It starts as the
+    /// width and height given to `ui.window` and is replaced by `set_size` before
+    /// showing. Emptied once shown.
     initial_size: Cell<Option<(f64, f64)>>,
-    /// 中身が並ぶ前に頼まれた中身の大きさ。並ぶ前はメニューバーの高さが
-    /// 分からず外枠を見積もるしかないので、並べ終わったときに一度だけ
-    /// 実寸で合わせ直す。
+    /// The content size requested before the content was laid out. Before layout the
+    /// menu bar's height is unknown and the outer frame can only be estimated, so it is
+    /// refitted once with the actual size when layout finishes.
     pending_fit: Cell<Option<(f64, f64)>>,
     wheel_subclass_installed: Cell<bool>,
-    /// ショートカットを拾う `KeyDown` を付けたかどうか。
+    /// Whether the `KeyDown` that picks up shortcuts has been attached.
     menu_key_installed: Cell<bool>,
-    /// `on_key_down` の通知先。根の `PreviewKeyDown` から呼ぶ。
+    /// The `on_key_down` handler. Called from the root's `PreviewKeyDown`.
     key_down: Rc<naui_core::KeyHandler>,
     closing_token: Cell<Option<i64>>,
     on_close_request: naui_core::CloseHandler,
     on_resize: RefCell<Option<Box<ResizeCallback>>>,
-    /// 最後に `on_resize` へ渡した大きさ。同じ大きさで二度呼ばないために持つ。
+    /// The size last passed to `on_resize`. Kept so it is not called twice for the same
+    /// size.
     last_size: Cell<Option<(f64, f64)>>,
-    /// `set_min_size` で頼まれた中身の下限。外枠の大きさへ直して
-    /// `OverlappedPresenter` へ渡すので、枠や帯の高さが変わるたびに渡し直す。
+    /// The content minimum requested with `set_min_size`. It is converted to the outer
+    /// frame's size and passed to the `OverlappedPresenter`, so it is passed again
+    /// whenever the frame or band heights change.
     min_size: Cell<Option<(f64, f64)>>,
     on_state_change: StateHandler,
-    /// 表示する前に頼まれた状態。最初の [`Window::show`] で当てる。
-    /// 表示したら空になる。
+    /// The state requested before showing. Applied on the first [`Window::show`].
+    /// Emptied once shown.
     initial_state: Cell<Option<WindowState>>,
-    /// ウィンドウが最初に持っていた `OverlappedPresenter`。全画面
-    /// (`FullScreenPresenter`) から戻るときにこれを付け直すので、下限や
-    /// 大きさを変えられるかどうかの設定が残る。
+    /// The `OverlappedPresenter` the window originally had. It is reattached when
+    /// returning from fullscreen (`FullScreenPresenter`), so the minimum and resizable
+    /// settings are preserved.
     overlapped: RefCell<Option<OverlappedPresenter>>,
-    /// [`Window::set_resizable`] で頼まれた値。初めて表示する前は
-    /// `AppWindow.Presenter` が空のことがあるので覚えておき、
-    /// `OverlappedPresenter` を初めて取れたところで当てる。
+    /// The value requested with [`Window::set_resizable`]. Before the first show,
+    /// `AppWindow.Presenter` may be empty, so it is remembered and applied when the
+    /// `OverlappedPresenter` is first obtained.
     resizable: Cell<bool>,
-    /// 全画面の間に [`Window::position`] が返す、全画面を出たときに戻る位置
-    /// (DIP)。全画面へ入るときに読んでおく。
+    /// The position [`Window::position`] returns while in fullscreen: where it goes back
+    /// to when leaving (DIP). Read when entering fullscreen.
     fullscreen_return: Cell<Option<(f64, f64)>>,
-    /// 全画面の間に [`Window::set_position`] で頼まれた位置。全画面を出た
-    /// ところで当てる。
+    /// The position requested with [`Window::set_position`] while in fullscreen. Applied
+    /// on leaving fullscreen.
     position_after_fullscreen: Cell<Option<(f64, f64)>>,
 }
 
 type ResizeCallback = dyn FnMut((f64, f64));
 
-/// トップレベルウィンドウ。
+/// A top-level window.
 #[derive(Clone)]
 pub struct Window(Rc<WindowInner>);
 
-/// `Window` を強く保持せずにイベントハンドラから参照するための弱参照。
+/// A weak reference for referring to a `Window` from event handlers without holding
+/// it strongly.
 #[derive(Clone)]
 pub struct WeakWindow(Weak<WindowInner>);
 
 impl WeakWindow {
-    /// ウィンドウがまだ生きていれば強参照へ戻す。
+    /// Turns it back into a strong reference if the window is still alive.
     pub fn upgrade(&self) -> Option<Window> {
         self.0.upgrade().map(Window)
     }
 }
 
 impl Window {
-    /// イベントハンドラなどへ渡しても所有権循環を作らない参照を返す。
+    /// Returns a reference that creates no ownership cycle when passed to event
+    /// handlers and the like.
     pub fn downgrade(&self) -> WeakWindow {
         WeakWindow(Rc::downgrade(&self.0))
     }
@@ -222,10 +231,11 @@ impl Window {
         let _ = self.0.native.SizeChanged(&handler);
     }
 
-    /// 最大化・最小化・全画面への出入りを `AppWindow.Changed` で拾う。
+    /// Picks up entering and leaving maximized, minimized and fullscreen through
+    /// `AppWindow.Changed`.
     ///
-    /// 状態の変化は `DidPresenterChange` (全画面) か `DidSizeChange`
-    /// (最大化・最小化) に出るので、どちらでも状態を読み直す。
+    /// State changes show up in `DidPresenterChange` (fullscreen) or `DidSizeChange`
+    /// (maximized, minimized), so the state is read again for either.
     fn observe_app_window(&self) {
         let Ok(app_window) = self.0.native.AppWindow() else {
             return;
@@ -241,8 +251,8 @@ impl Window {
         let _ = app_window.Changed(&handler);
     }
 
-    /// ウィンドウの `OverlappedPresenter`。最初に読んだものを覚えておく
-    /// (全画面の間は `AppWindow.Presenter` が `FullScreenPresenter` になる)。
+    /// The window's `OverlappedPresenter`. The first one read is remembered (while in
+    /// fullscreen, `AppWindow.Presenter` is a `FullScreenPresenter`).
     fn overlapped_presenter(&self) -> Option<OverlappedPresenter> {
         if let Some(presenter) = self.0.overlapped.borrow().as_ref() {
             return Some(presenter.clone());
@@ -260,7 +270,7 @@ impl Window {
         Some(presenter)
     }
 
-    /// 全画面 (`FullScreenPresenter`) を付けているか。
+    /// Whether fullscreen (`FullScreenPresenter`) is attached.
     fn is_fullscreen(&self) -> bool {
         self.0
             .native
@@ -270,8 +280,8 @@ impl Window {
             .is_ok_and(|kind| kind == AppWindowPresenterKind::FullScreen)
     }
 
-    /// 中身の大きさが変わったかもしれないときに呼ぶ。下限を渡し直し、
-    /// 変わっていれば `on_resize` へ知らせる。
+    /// Called when the content size may have changed. Passes the minimum again and, if
+    /// the size changed, reports it to `on_resize`.
     fn content_size_changed(&self) {
         self.apply_min_size();
         self.finish_pending_fit();
@@ -290,7 +300,8 @@ impl Window {
         }
     }
 
-    /// 並べ終わった中身の層の大きさ。層がまだ無いか、並べる前なら `None`。
+    /// The size of the laid-out content layer. `None` if there is no layer yet or before
+    /// layout.
     fn laid_out_content_size(&self) -> Option<(f64, f64)> {
         let layer = self.0.content_layer.borrow();
         let layer = layer.as_ref()?;
@@ -298,13 +309,14 @@ impl Window {
         (size.0 > 0.0 || size.1 > 0.0).then_some(size)
     }
 
-    /// 中身の大きさ (DIP) を外枠の大きさ (物理ピクセル) へ直す。
+    /// Converts a content size (DIP) into an outer frame size (physical pixels).
     ///
-    /// `AppWindow` も `OverlappedPresenter` の下限も外枠の物理ピクセルを
-    /// 取るので、`RasterizationScale` を掛け、いまの外枠と中身の差 (左右の枠・
-    /// タイトルバー・メニューバー) を足す。中身の層が並ぶ前は差を
-    /// [`measured_size`](Self::measured_size) の見積もりから出すので、
-    /// メニューバーの分が抜ける。
+    /// Both `AppWindow` and the `OverlappedPresenter`'s minimum take the outer frame in
+    /// physical pixels, so it is multiplied by `RasterizationScale` and the current
+    /// difference between the outer frame and the content (the left and right borders,
+    /// title bar and menu bar) is added. Before the content layer is laid out, the
+    /// difference comes from the estimate of [`measured_size`](Self::measured_size), so
+    /// the menu bar's share is missing.
     fn outer_size_for(
         &self,
         app_window: &naui_winui3::Microsoft::UI::Windowing::AppWindow,
@@ -321,7 +333,8 @@ impl Window {
         ))
     }
 
-    /// 中身を `size` (DIP) にするよう、外枠を `AppWindow.Resize` で変える。
+    /// Changes the outer frame with `AppWindow.Resize` so that the content becomes
+    /// `size` (DIP).
     fn resize_content(&self, size: (f64, f64)) {
         use windows::Graphics::SizeInt32;
 
@@ -342,7 +355,7 @@ impl Window {
         }
     }
 
-    /// 並ぶ前に頼まれた大きさへ、並べ終わった実寸で一度だけ合わせ直す。
+    /// Refits once, with the actual laid-out size, to the size requested before layout.
     fn finish_pending_fit(&self) {
         let Some(target) = self.0.pending_fit.get() else {
             return;
@@ -356,9 +369,11 @@ impl Window {
         }
     }
 
-    /// `set_min_size` の下限 (中身) を外枠の大きさへ直して渡す。
+    /// Converts the `set_min_size` minimum (content) into the outer frame's size and
+    /// passes it.
     ///
-    /// 中身の層が並ぶたびに呼ぶので、帯の高さが変わっても追いつく。
+    /// It is called every time the content layer is laid out, so it keeps up even when
+    /// band heights change.
     fn apply_min_size(&self) {
         use windows::Foundation::{IReference, PropertyValue};
 
@@ -385,11 +400,12 @@ impl Window {
         }
     }
 
-    /// 論理ピクセル (DIP) 1 つが何物理ピクセルか。
+    /// How many physical pixels one logical pixel (DIP) is.
     ///
-    /// 中身の `XamlRoot` が決まる前 (表示の前) は、ウィンドウの DPI から出す。
-    /// プロセスが DPI に対応していなければ DPI は 96 と返り、`AppWindow` の
-    /// 大きさも 96 DPI の値へ仮想化されるので、どちらでも 1 で合う。
+    /// Before the content's `XamlRoot` is decided (before showing), it is derived from
+    /// the window's DPI. If the process is not DPI-aware, DPI comes back as 96 and the
+    /// `AppWindow`'s sizes are also virtualized to 96 DPI values, so either way it works
+    /// out to 1.
     fn rasterization_scale(&self) -> f64 {
         self.0
             .theme_root
@@ -402,7 +418,7 @@ impl Window {
             .unwrap_or(1.0)
     }
 
-    /// `GetDpiForWindow` の値。HWND を取れなければ `None`。
+    /// The value of `GetDpiForWindow`. `None` if the HWND cannot be obtained.
     fn window_dpi(&self) -> Option<u32> {
         use windows::Win32::UI::HiDpi::GetDpiForWindow;
 
@@ -412,18 +428,19 @@ impl Window {
         (dpi > 0).then_some(dpi)
     }
 
-    /// このウィンドウの HWND。取れなければ `None`。
+    /// This window's HWND. `None` if it cannot be obtained.
     fn hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
         let native = self.0.native.cast::<naui_winui3::IWindowNative>().ok()?;
         // SAFETY: HWND はこのウィンドウが生きている間有効で、UI スレッドから呼んでいる。
         unsafe { native.WindowHandle() }.ok()
     }
 
-    /// 中身の層が並び直されて大きさが変わったら知らせる。
+    /// Reports when the content layer is laid out again and its size changes.
     ///
-    /// ウィンドウの大きさのほか、メニューバーの付け外しでも中身は変わる。
-    /// どちらも層の `SizeChanged` に現れ、そのときには実寸が付いている。
-    /// 層は `set_child` のたびに作り直すので、そのたびに付ける。
+    /// Besides the window's size, attaching or detaching the menu bar also changes the
+    /// content. Both show up in the layer's `SizeChanged`, by which time the actual size
+    /// is known. The layer is recreated on every `set_child`, so it is attached each
+    /// time.
     fn watch_content_layer(&self) {
         let layer = self.0.content_layer.borrow().clone();
         let Some(layer) = layer else {
@@ -439,27 +456,28 @@ impl Window {
         let _ = layer.SizeChanged(&changed);
     }
 
-    /// 利用者がウィンドウを閉じようとしたときの確認。
+    /// Confirmation when the user tries to close the window.
     ///
-    /// [`CloseResponse::KeepOpen`](naui_core::CloseResponse::KeepOpen) を返すと
-    /// 閉じない (保存していない変更があるときに確認のダイアログを出す、など)。
-    /// プログラムからの [`close`](Self::close) では呼ばれない (`Window::Close`
-    /// は `AppWindow` の `Closing` を通らない)。
+    /// Returning [`CloseResponse::KeepOpen`](naui_core::CloseResponse::KeepOpen) keeps it
+    /// open (to ask for confirmation when there are unsaved changes, for example). Not
+    /// called for [`close`](Self::close) from code (`Window::Close` does not go through
+    /// the `AppWindow`'s `Closing`).
     pub fn on_close_request(&self, f: impl FnMut() -> naui_core::CloseResponse + 'static) {
         self.0.on_close_request.set(f);
     }
 
-    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル (DIP)。
+    /// The size of the content area (width, height) in logical pixels (DIP).
     ///
-    /// ほかの環境と同じく、タイトルバーとメニューバーは含まない。naui は
-    /// 中身をタイトルバーの裏まで広げて自分で帯を描いているので、
-    /// `Window.Bounds` ではなく、子を置く層 (帯の下の行) の実寸を返す。
-    /// 層は大きさが変わった後のレイアウトで並び直るので、[`set_size`](Self::set_size)
-    /// の直後は前の大きさのまま (GTK と同じ)。変わった大きさは
-    /// [`on_resize`](Self::on_resize) で届く。
+    /// As on the other platforms, it excludes the title bar and menu bar. naui extends
+    /// the content behind the title bar and draws the bands itself, so this returns the
+    /// actual size of the layer children are placed in (the row below the bands), not
+    /// `Window.Bounds`. The layer is laid out again in the layout after the size
+    /// changes, so right after [`set_size`](Self::set_size) it still has the previous
+    /// size (the same as GTK). The changed size arrives through
+    /// [`on_resize`](Self::on_resize).
     ///
-    /// 画面に出る前は、`ui.window` か [`set_size`](Self::set_size) で
-    /// 指定した大きさ (GTK と同じ)。
+    /// Before it is on screen, this is the size given to `ui.window` or
+    /// [`set_size`](Self::set_size) (the same as GTK).
     pub fn size(&self) -> (f64, f64) {
         self.0
             .initial_size
@@ -467,7 +485,7 @@ impl Window {
             .unwrap_or_else(|| self.measured_size())
     }
 
-    /// いまの中身の大きさ。並べる前は `Bounds` からの見積もり。
+    /// The current content size. Before layout, an estimate from `Bounds`.
     fn measured_size(&self) -> (f64, f64) {
         if let Some(size) = self.laid_out_content_size() {
             return size;
@@ -487,7 +505,7 @@ impl Window {
         })
     }
 
-    /// 大きさが変わったときの通知。変わった後の [`size`](Self::size) が届く。
+    /// Notified when the size changes. Receives the new [`size`](Self::size).
     pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
         *self.0.on_resize.borrow_mut() = Some(Box::new(f));
     }
@@ -507,25 +525,28 @@ impl Window {
             .unwrap_or_default()
     }
 
-    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`size`](Self::size) と同じ。
+    /// The minimum size the user can shrink it to (content width, height). The units
+    /// are the same as [`size`](Self::size).
     ///
-    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    /// Prevents the layout from breaking when it is made too small.
     ///
-    /// `OverlappedPresenter.PreferredMinimumWidth` / `Height` を使うので、
-    /// Windows App SDK 1.7 より前のランタイムでは効かない。
+    /// It uses `OverlappedPresenter.PreferredMinimumWidth` / `Height`, so it has no
+    /// effect with runtimes older than Windows App SDK 1.7.
     pub fn set_min_size(&self, width: f64, height: f64) {
         self.0.min_size.set(Some((width, height)));
         self.apply_min_size();
     }
 
-    /// 中身の領域の大きさを変える。単位と範囲は [`size`](Self::size) と同じで、
-    /// タイトルバー・メニューバー・ウィンドウの枠は含まない (ほかの環境と同じ)。
+    /// Changes the size of the content area. The units and extent are the same as
+    /// [`size`](Self::size), excluding the title bar, menu bar and window frame (the
+    /// same as the other platforms).
     ///
-    /// `AppWindow.Resize` は外枠の物理ピクセルを取るので、`RasterizationScale`
-    /// を掛け、いまの外枠と中身の差を足して渡す。中身が並ぶ前 (表示の直後
-    /// など) はメニューバーの高さが分からないので、並べ終わったときに
-    /// 一度だけ実寸で合わせ直す。画面に出る前に呼んだときは、表示するときに
-    /// この大きさで出す。
+    /// `AppWindow.Resize` takes the outer frame in physical pixels, so it is multiplied
+    /// by `RasterizationScale` and the current difference between the outer frame and
+    /// the content is added. Before the content is laid out (right after showing, for
+    /// example) the menu bar's height is unknown, so it is refitted once with the actual
+    /// size when layout finishes. When called before it is on screen, it is shown at this
+    /// size.
     pub fn set_size(&self, width: f64, height: f64) {
         let size = (width.max(0.0), height.max(0.0));
         if self.0.initial_size.get().is_some() {
@@ -536,17 +557,18 @@ impl Window {
         self.resize_content(size);
     }
 
-    /// ウィンドウの左上の位置 (x, y)。単位は論理ピクセル (DIP)。
+    /// The position (x, y) of the window's top-left corner, in logical pixels (DIP).
     ///
-    /// 主画面の左上を原点に、右と下へ数える (ほかの環境と同じ向き)。
-    /// `AppWindow.Position` (外枠の物理ピクセル) を `RasterizationScale` で
-    /// 割る。外枠には Windows が縁の外側に付ける見えない縁 (大きさを
-    /// 変えるつまみ) も入るので、見えている枠の左上より少し左上になる。
-    /// DPI の違う画面をまたぐと、このウィンドウの DPI で割った値になる。
+    /// Counted right and down from the top left of the primary screen (the same
+    /// direction as the other platforms). It is `AppWindow.Position` (the outer frame in
+    /// physical pixels) divided by `RasterizationScale`. The outer frame includes the
+    /// invisible border Windows adds outside the edge (the resize handles), so it is a
+    /// little up and left of the visible frame's top left. Across screens with different
+    /// DPIs, it is the value divided by this window's DPI.
     ///
-    /// 最大化・最小化・全画面の間は、通常の状態へ戻ったときの位置を返す。
-    /// 最大化と最小化は `GetWindowPlacement` の `rcNormalPosition`、全画面は
-    /// 入る前に読んでおいた位置。
+    /// While maximized, minimized or in fullscreen, it returns the position it will have
+    /// when back to normal: `GetWindowPlacement`'s `rcNormalPosition` for maximized and
+    /// minimized, and the position read before entering for fullscreen.
     pub fn position(&self) -> Option<(f64, f64)> {
         let scale = self.rasterization_scale();
         let physical = match self.native_state() {
@@ -573,13 +595,15 @@ impl Window {
         Some((f64::from(physical.0) / scale, f64::from(physical.1) / scale))
     }
 
-    /// ウィンドウの左上を (x, y) へ動かす。単位と向きは [`position`](Self::position) と同じ。
+    /// Moves the window's top left to (x, y). The units and direction are the same as
+    /// [`position`](Self::position).
     ///
-    /// `AppWindow.Move` を使う。画面に出る前に呼んでもよい。
+    /// Uses `AppWindow.Move`. It may be called before it is on screen.
     ///
-    /// 最大化・最小化・全画面の間は状態をそのままにして、通常の状態へ戻った
-    /// ときの位置を決める。最大化と最小化は `SetWindowPlacement` で
-    /// `rcNormalPosition` を書き換え、全画面は出たところで動かす。
+    /// While maximized, minimized or in fullscreen, the state is left as is and the
+    /// position for returning to normal is decided. For maximized and minimized,
+    /// `SetWindowPlacement` rewrites `rcNormalPosition`; for fullscreen it is moved on
+    /// leaving.
     pub fn set_position(&self, x: f64, y: f64) {
         let scale = self.rasterization_scale();
         let physical = ((x * scale).round() as i32, (y * scale).round() as i32);
@@ -600,11 +624,12 @@ impl Window {
         }
     }
 
-    /// `GetWindowPlacement` の値を、スクリーン座標 (物理ピクセル) へ直して返す。
+    /// Returns the value of `GetWindowPlacement` converted into screen coordinates
+    /// (physical pixels).
     ///
-    /// `rcNormalPosition` はワークスペース座標 (タスクバーなどを除いた作業領域
-    /// の分だけずれた座標) なので、そのウィンドウのいる画面の作業領域と画面の
-    /// 左上の差を足す。
+    /// `rcNormalPosition` is in workspace coordinates (offset by the work area excluding
+    /// the taskbar and the like), so the difference between the work area of the screen
+    /// the window is on and that screen's top left is added.
     fn placement(
         &self,
     ) -> Option<(
@@ -629,8 +654,9 @@ impl Window {
         Some((hwnd, placement))
     }
 
-    /// 最大化・最小化のままで、通常の状態へ戻ったときの外枠の左上 (物理
-    /// ピクセルのスクリーン座標) を決める。大きさは変えない。
+    /// While staying maximized or minimized, decides the outer frame's top left
+    /// (physical-pixel screen coordinates) for returning to normal. The size does not
+    /// change.
     fn set_normal_position(&self, (x, y): (i32, i32)) {
         use windows::Win32::UI::WindowsAndMessaging::{
             SetWindowPlacement, SW_SHOWMINIMIZED, SW_SHOWMINNOACTIVE,
@@ -660,11 +686,11 @@ impl Window {
         let _ = unsafe { SetWindowPlacement(hwnd, &placement) };
     }
 
-    /// いまの表示の状態。
+    /// The current display state.
     ///
-    /// 全画面は `AppWindow.Presenter` の種類、ほかは `OverlappedPresenter.State`
-    /// で決める。表示する前は、[`set_state`](Self::set_state) で頼んだ状態
-    /// (既定は [`WindowState::Normal`])。
+    /// Fullscreen is decided by the kind of `AppWindow.Presenter`, the others by
+    /// `OverlappedPresenter.State`. Before it is shown, it is the state requested with
+    /// [`set_state`](Self::set_state) (the default is [`WindowState::Normal`]).
     pub fn state(&self) -> WindowState {
         if let Some(state) = self.0.initial_state.get() {
             return state;
@@ -672,7 +698,8 @@ impl Window {
         self.native_state()
     }
 
-    /// WinUI のウィンドウのいまの状態。表示する前に頼んだ状態は見ない。
+    /// The current state of the WinUI window. The state requested before showing is not
+    /// considered.
     fn native_state(&self) -> WindowState {
         if self.is_fullscreen() {
             return WindowState::Fullscreen;
@@ -687,17 +714,18 @@ impl Window {
         }
     }
 
-    /// 表示の状態を変える。表示する前に呼んだときは、表示するときに当てる。
+    /// Changes the display state. When called before it is shown, it is applied when
+    /// shown.
     ///
-    /// | 頼んだ状態 | WinUI 3 |
+    /// | Requested state | WinUI 3 |
     /// | --- | --- |
     /// | `Normal` | `OverlappedPresenter.Restore` |
     /// | `Maximized` | `OverlappedPresenter.Maximize` |
     /// | `Minimized` | `OverlappedPresenter.Minimize` |
     /// | `Fullscreen` | `AppWindow.SetPresenterByKind(FullScreen)` |
     ///
-    /// 全画面から出るときは、最初の `OverlappedPresenter` を付け直してから
-    /// 当てる。
+    /// When leaving fullscreen, the original `OverlappedPresenter` is reattached before
+    /// applying it.
     pub fn set_state(&self, state: WindowState) {
         if self.0.initial_state.get().is_some() {
             self.0.initial_state.set(Some(state));
@@ -743,37 +771,37 @@ impl Window {
         };
     }
 
-    /// 表示の状態が変わったときの通知。変わった後の [`state`](Self::state) が届く。
+    /// Notified when the display state changes. Receives the new
+    /// [`state`](Self::state).
     ///
-    /// 利用者の操作 (タイトルバーのボタン、画面端へのスナップ、など) でも
-    /// [`set_state`](Self::set_state) でも呼ばれる。
+    /// Called both for user actions (title bar buttons, snapping to a screen edge and so
+    /// on) and for [`set_state`](Self::set_state).
     pub fn on_state_change(&self, f: impl FnMut(WindowState) + 'static) {
         self.0.on_state_change.set(f);
     }
 
-    /// いまの状態が前に知らせたものと違えば `on_state_change` を呼ぶ。
+    /// Calls `on_state_change` if the current state differs from the one last reported.
     fn report_state(&self) {
         if self.0.initial_state.get().is_none() {
             self.0.on_state_change.update(self.state());
         }
     }
 
-    /// 利用者がウィンドウの縁をつかんで大きさを変えられるか。既定は `true`。
+    /// Whether the user can resize the window by dragging its edges. `true` by default.
     pub fn is_resizable(&self) -> bool {
         self.overlapped_presenter()
             .and_then(|presenter| presenter.IsResizable().ok())
             .unwrap_or(self.0.resizable.get())
     }
 
-    /// 利用者が大きさを変えられるかどうかを決める。
+    /// Decides whether the user can resize the window.
     ///
-    /// `OverlappedPresenter.IsResizable` と、最大化のボタン
-    /// (`IsMaximizable`) を一緒に切り替える (GTK と macOS でも、大きさを
-    /// 変えられないウィンドウは最大化のボタンが効かない)。
-    /// [`set_size`](Self::set_size) はどちらでも効く。
+    /// `OverlappedPresenter.IsResizable` and the maximize button (`IsMaximizable`) are
+    /// switched together (on GTK and macOS too, the maximize button does not work for
+    /// windows that cannot be resized). [`set_size`](Self::set_size) works either way.
     ///
-    /// 初めて表示する前で `OverlappedPresenter` がまだ取れないときは、値を
-    /// 覚えておいて [`show`](Self::show) で当てる。
+    /// When the `OverlappedPresenter` cannot be obtained yet before the first show, the
+    /// value is remembered and applied in [`show`](Self::show).
     pub fn set_resizable(&self, resizable: bool) {
         self.0.resizable.set(resizable);
         if let Some(presenter) = self.overlapped_presenter() {
@@ -781,11 +809,11 @@ impl Window {
         }
     }
 
-    /// このウィンドウの中で押されたキーの通知。
+    /// Notified of keys pressed inside this window.
     ///
-    /// フォーカスのあるウィジェットの `on_key_down` が `Continue` を返した
-    /// キーが届く。`Handled` を返すと、そのキーはウィジェットへ渡らない。
-    /// IME で変換している間のキーは届かない。
+    /// Keys for which the focused widget's `on_key_down` returned `Continue` arrive
+    /// here. Returning `Handled` keeps the key from reaching the widget. Keys pressed
+    /// while an IME is composing are not delivered.
     pub fn on_key_down(
         &self,
         f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,
@@ -793,10 +821,10 @@ impl Window {
         self.0.key_down.set(f);
     }
 
-    /// ルートに置くウィジェット。呼ぶたびに置き換わる。
+    /// The widget placed at the root. Each call replaces it.
     ///
-    /// サイドバーを付けているときは、その右の区画 (`NavigationView.Content`)
-    /// に置かれる。
+    /// With a sidebar attached, it is placed in the pane on its right
+    /// (`NavigationView.Content`).
     pub fn set_child(&self, child: &dyn Widget) {
         // 根は作り直すが、サイドバー (`NavigationView`) は同じものを使い回す。
         // XAML の要素は親を 1 つしか持てないので、古い根の層から外しておく。
@@ -861,8 +889,8 @@ impl Window {
         }
     }
 
-    /// 中身の層へ置く要素。サイドバーを付けていれば、子をその右の区画へ
-    /// 入れたうえで `NavigationView` を返す。
+    /// The element placed in the content layer. With a sidebar attached, it puts the
+    /// child in the right pane and returns the `NavigationView`.
     fn host_content(&self, element: &UIElement) -> UIElement {
         let sidebar = self.0.sidebar.borrow().clone();
         let Some(sidebar) = sidebar else {
@@ -880,21 +908,21 @@ impl Window {
         }
     }
 
-    /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
+    /// The sidebar attached to the left of the window. Each call replaces it.
     ///
-    /// 中身の層の先頭を `NavigationView` へ差し替え、
-    /// [`set_child`](Self::set_child) の子はその右の区画 (`Content`) へ移す。タイトル
-    /// バーとメニューバーは上に残るので、サイドバーはその下から始まる
-    /// (Windows の「設定」と同じ並び)。
+    /// The head of the content layer is replaced with a `NavigationView`, and the child
+    /// from [`set_child`](Self::set_child) moves to its right pane (`Content`). The
+    /// title bar and menu bar stay above, so the sidebar starts below them (the same
+    /// arrangement as Windows Settings).
     pub fn set_sidebar(&self, sidebar: &Sidebar) {
         self.clear_sidebar();
         *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
         self.remount_content();
     }
 
-    /// 取り付けたサイドバーを外す。付いていなければ何もしない。
+    /// Removes the attached sidebar. Does nothing if none is attached.
     ///
-    /// 右の区画にあった子は、ウィンドウの中身へ戻る。
+    /// The child in the right pane goes back to being the window's content.
     pub fn clear_sidebar(&self) {
         let Some(old) = self.0.sidebar.borrow_mut().take() else {
             return;
@@ -906,7 +934,7 @@ impl Window {
         self.remount_content();
     }
 
-    /// 中身の層の先頭 (子または `NavigationView`) を外す。
+    /// Removes the head of the content layer (the child or the `NavigationView`).
     fn take_content_head(&self) {
         let layer = self.0.content_layer.borrow().clone();
         if let Some(children) = layer.and_then(|layer| layer.Children().ok()) {
@@ -916,10 +944,11 @@ impl Window {
         }
     }
 
-    /// いまの子とサイドバーの組み合わせで、中身の層の先頭を置き直す。
+    /// Places the head of the content layer again for the current combination of child
+    /// and sidebar.
     ///
-    /// まだ [`set_child`](Self::set_child) を呼んでいなければ何もしない
-    /// (そちらが組み立てる)。
+    /// Does nothing if [`set_child`](Self::set_child) has not been called yet (it does
+    /// the building).
     fn remount_content(&self) {
         let layer = self.0.content_layer.borrow().clone();
         let child = self
@@ -939,11 +968,12 @@ impl Window {
         let _ = children.InsertAt(0, &element);
     }
 
-    /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
+    /// The toolbar attached to the top of the window. Each call replaces it.
     ///
-    /// タイトルの右へ置く (macOS の `NSToolbar`、Linux の `AdwHeaderBar` と
-    /// 同じ位置)。付けている間は、ボタンの上でウィンドウが動いてしまわない
-    /// ように、ドラッグ領域をボタンの左右 2 つの矩形へ分ける。
+    /// It is placed to the right of the title (the same position as macOS's `NSToolbar`
+    /// and Linux's `AdwHeaderBar`). While attached, the drag region is split into two
+    /// rectangles on either side of the buttons, so the window does not move when
+    /// dragging over the buttons.
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
         self.clear_toolbar();
         *self.0.toolbar.borrow_mut() = Some(toolbar.clone());
@@ -957,7 +987,7 @@ impl Window {
         self.apply_drag_area();
     }
 
-    /// 取り付けたツールバーを外す。付いていなければ何もしない。
+    /// Removes the attached toolbar. Does nothing if none is attached.
     pub fn clear_toolbar(&self) {
         self.0.toolbar.borrow_mut().take();
         if let Some(host) = self.0.toolbar_host.borrow().as_ref() {
@@ -966,10 +996,10 @@ impl Window {
         self.apply_drag_area();
     }
 
-    /// ウィンドウの上端に付けるメニューバー。呼ぶたびに置き換わる。
+    /// The menu bar attached to the top of the window. Each call replaces it.
     ///
-    /// Windows のメニューバーはタイトルバーの中ではなく**その下**に敷く
-    /// 帯なので、タイトルバーと中身の間へ置く。
+    /// A Windows menu bar is a band laid **below** the title bar rather than inside it,
+    /// so it is placed between the title bar and the content.
     pub fn set_menu_bar(&self, menu_bar: &MenuBar) {
         self.clear_menu_bar();
         *self.0.menu_bar.borrow_mut() = Some(menu_bar.clone());
@@ -977,7 +1007,7 @@ impl Window {
         self.install_menu_shortcuts();
     }
 
-    /// 取り付けたメニューバーを外す。付いていなければ何もしない。
+    /// Removes the attached menu bar. Does nothing if none is attached.
     pub fn clear_menu_bar(&self) {
         if let Some(old) = self.0.menu_bar.borrow_mut().take() {
             old.close();
@@ -987,7 +1017,7 @@ impl Window {
         }
     }
 
-    /// メニューバーを置き場へ載せる。どちらかが無ければ何もしない。
+    /// Puts the menu bar into its slot. Does nothing if either is missing.
     fn mount_menu_bar(&self) {
         let host = self.0.menu_bar_host.borrow();
         let menu_bar = self.0.menu_bar.borrow();
@@ -1001,11 +1031,12 @@ impl Window {
         let _ = children.Append(&menu_bar.mount());
     }
 
-    /// ショートカットを拾う `KeyDown` を、ウィンドウの根へ 1 度だけ付ける。
+    /// Attaches the `KeyDown` that picks up shortcuts to the window root, exactly once.
     ///
-    /// `KeyboardAccelerator` が投影に無いため、根まで上ってきたキーを見て
-    /// [`MenuBar`] へ渡す。どのメニューバーが付いているかは呼ばれた時点で
-    /// 見るので、取り付け・取り外しのたびに購読を張り替える必要はない。
+    /// `KeyboardAccelerator` is not in the projection, so keys that bubble up to the root
+    /// are inspected and passed to the [`MenuBar`]. Which menu bar is attached is checked
+    /// at call time, so the subscription need not be reattached on every attach or
+    /// detach.
     fn install_menu_shortcuts(&self) {
         if self.0.menu_key_installed.get() {
             return;
@@ -1038,13 +1069,14 @@ impl Window {
         }
     }
 
-    /// いまの状態に合うドラッグ領域をウィンドウへ渡す。
+    /// Passes the window a drag region matching the current state.
     ///
-    /// `SetTitleBar` に要素を渡す形だと、その中にある操作できるコントロールの
-    /// 上でもウィンドウのドラッグが始まってしまう。ツールバーを付けている間は
-    /// **タイトル文字の側**と**ツールバーより右の空き**の 2 つに分けたいので、
-    /// 矩形を複数渡せる `AppWindowTitleBar::SetDragRectangles` を使う。
-    /// 渡せなかったときだけ `SetTitleBar` の形へ落とす。
+    /// Passing an element to `SetTitleBar` would start window drags even over the
+    /// interactive controls inside it. While a toolbar is attached, the region should be
+    /// split into two — **the title text side** and **the free space right of the
+    /// toolbar** — so `AppWindowTitleBar::SetDragRectangles`, which accepts several
+    /// rectangles, is used. Only when that fails does it fall back to the `SetTitleBar`
+    /// form.
     fn apply_drag_area(&self) {
         if self.apply_drag_rectangles().is_some() {
             return;
@@ -1063,15 +1095,15 @@ impl Window {
         let _ = self.0.native.SetTitleBar(&area);
     }
 
-    /// タイトルバーのうち、つかんで動かせる範囲を矩形で渡す。
+    /// Passes the part of the title bar that can be grabbed and moved, as rectangles.
     ///
-    /// 渡す座標は**物理ピクセル**なので、論理ピクセルの配置に
-    /// `RasterizationScale` を掛ける。右端の [`CAPTION_RESERVE`] は
-    /// 最小化・最大化・閉じるのボタンの場所なので空けておく。
+    /// The coordinates passed are **physical pixels**, so the logical-pixel layout is
+    /// multiplied by `RasterizationScale`. [`CAPTION_RESERVE`] at the right end is where
+    /// the minimize, maximize and close buttons go, so it is left free.
     ///
-    /// レイアウトが決まる前 (幅が 0) は諦めて `None` を返す。
-    /// [`install_drag_area_updates`](Self::install_drag_area_updates) が
-    /// 大きさの変わるたびに呼び直す。
+    /// Before layout is decided (width 0), it gives up and returns `None`.
+    /// [`install_drag_area_updates`](Self::install_drag_area_updates) calls it again
+    /// whenever the size changes.
     fn apply_drag_rectangles(&self) -> Option<()> {
         let title_bar = self.0.title_bar.borrow().clone()?;
         let title_bar = title_bar.cast::<FrameworkElement>().ok()?;
@@ -1132,12 +1164,13 @@ impl Window {
             .ok()
     }
 
-    /// 大きさが変わるたびにドラッグ領域を計算し直すようにする。
+    /// Makes the drag region be recomputed whenever sizes change.
     ///
-    /// 矩形は物理ピクセルの固定値なので、ウィンドウの幅・ツールバーの項目数・
-    /// 表示倍率のどれが変わっても取り直しが要る。ウィンドウの幅と倍率は
-    /// タイトルバーと置き場の大きさに出る。項目数の変化は
-    /// [`set_toolbar`](Self::set_toolbar) が `CommandBar` を足して見る。
+    /// The rectangles are fixed physical-pixel values, so they must be redone when any of
+    /// the window width, the number of toolbar items or the display scale changes. The
+    /// window width and scale show up in the sizes of the title bar and the slot. Changes
+    /// in the number of items are watched by [`set_toolbar`](Self::set_toolbar), which
+    /// adds the `CommandBar`.
     fn install_drag_area_updates(&self) {
         let targets = [
             self.0
@@ -1156,7 +1189,7 @@ impl Window {
         }
     }
 
-    /// 要素の大きさが変わったらドラッグ領域を取り直す。
+    /// Redoes the drag region when the element's size changes.
     fn watch_for_drag_area(&self, target: &FrameworkElement) {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let changed = SizeChangedEventHandler::new(move |_, _| {
@@ -1170,7 +1203,8 @@ impl Window {
         let _ = target.SizeChanged(&changed);
     }
 
-    /// ツールバーを置き場へ載せ直す。置き場か中身がまだ無ければ何もしない。
+    /// Puts the toolbar back into its slot. Does nothing if the slot or the content does
+    /// not exist yet.
     fn mount_toolbar(&self) {
         let host = self.0.toolbar_host.borrow();
         let toolbar = self.0.toolbar.borrow();
@@ -1184,7 +1218,7 @@ impl Window {
         let _ = children.Append(&toolbar.mount());
     }
 
-    /// このウィンドウの配色テーマを切り替える。
+    /// Switches this window's color theme.
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         self.0.theme.set(theme);
         let theme_root = self.0.theme_root.borrow();
@@ -1207,10 +1241,11 @@ impl Window {
         Ok(())
     }
 
-    /// 画面に出して前面へ持ってくる。
+    /// Shows it on screen and brings it to the front.
     ///
-    /// 最初の表示では、中身を `ui.window` (か表示前の [`set_size`](Self::set_size))
-    /// の大きさにし、表示する前に [`set_state`](Self::set_state) で頼んだ状態にする。
+    /// On first show, the content is sized as given to `ui.window` (or to
+    /// [`set_size`](Self::set_size) before showing), and the state requested with
+    /// [`set_state`](Self::set_state) before showing is applied.
     pub fn show(&self) {
         if let Some(size) = self.0.initial_size.take() {
             self.resize_content(size);
@@ -1243,24 +1278,26 @@ impl Window {
         self.0.native.Visible().unwrap_or(*self.0.visible.borrow())
     }
 
-    /// WinUI 3 の実ウィンドウ。バックエンド固有の脱出口。
+    /// The real WinUI 3 window. A backend-specific escape hatch.
     pub fn native_window(&self) -> XamlWindow {
         self.0.native.clone()
     }
 
-    /// 自分で取り付けた Mica のコントローラーを閉じる。
+    /// Closes the Mica controller attached by naui itself.
     ///
-    /// コントローラーはウィンドウの合成面を掴んでいるので、掴んだまま
-    /// ウィンドウが壊れると落ちる (STATUS_ACCESS_VIOLATION)。畳む経路は
-    /// 3 つあり、どれからも必ず通す。
+    /// The controller holds on to the window's composition surface, so if the window is
+    /// destroyed while it still does, the process crashes (STATUS_ACCESS_VIOLATION).
+    /// There are three paths that wind things down, and every one of them goes through
+    /// this.
     ///
-    /// | 経路 | 呼ぶところ |
+    /// | Path | Where it is called |
     /// | --- | --- |
-    /// | ユーザーが閉じる | `AppWindow` の `Closing` → `clear_content_for_shutdown` |
-    /// | `Window::close` | ここ (`Window::Close` では `Closing` が上がらない) |
-    /// | `Ui::quit` | `Application::Exit` の前に全ウィンドウぶん |
+    /// | The user closes it | The `AppWindow`'s `Closing` → `clear_content_for_shutdown` |
+    /// | `Window::close` | Here (`Window::Close` does not raise `Closing`) |
+    /// | `Ui::quit` | For every window, before `Application::Exit` |
     ///
-    /// `SetSystemBackdrop` で付けた既定の Mica は WinUI の持ち物なので触らない。
+    /// The default Mica attached with `SetSystemBackdrop` belongs to WinUI, so it is not
+    /// touched.
     pub(crate) fn release_backdrop(&self) {
         if let Backdrop::Controller { controller, .. } = &self.0.backdrop {
             let _ = controller.Close();
@@ -1280,8 +1317,8 @@ impl Window {
         *self.0.title_label.borrow_mut() = None;
     }
 
-    /// WinUI の XAML ツリーが破棄される前に、Content と子ウィジェットを外す。
-    /// `Destroying` では遅すぎるため、AppWindow の `Closing` で実行する。
+    /// Removes the Content and child widgets before WinUI's XAML tree is destroyed.
+    /// `Destroying` is too late, so it runs in the AppWindow's `Closing`.
     pub(crate) fn install_closing_handler(&self, state: &'static UiThreadCell<Option<Ui>>) {
         if self.0.closing_token.get().is_some() {
             return;
@@ -1327,13 +1364,13 @@ struct ThemedContent {
     root: UIElement,
     title_bar: UIElement,
     title_label: TextBlock,
-    /// タイトルの右に置くツールバーの入れ物。
+    /// The container for the toolbar placed to the right of the title.
     toolbar_host: Grid,
-    /// タイトルバーの下に置くメニューバーの入れ物。
+    /// The container for the menu bar placed below the title bar.
     menu_bar_host: Grid,
-    /// アプリの中身とトーストが入る層。
+    /// The layer holding the app's content and toasts.
     content: Grid,
-    /// ツールバーより右の空き。ツールバーを付けている間のドラッグ領域。
+    /// The free space right of the toolbar. The drag region while a toolbar is attached.
     drag_area: UIElement,
 }
 
@@ -1345,12 +1382,11 @@ fn backdrop_theme(theme: Theme) -> SystemBackdropTheme {
     }
 }
 
-/// ウィンドウの背景に Mica を敷く。
+/// Lays Mica as the window's background.
 ///
-/// Mica は「あれば嬉しい」ものなので、失敗しても諦めるだけにする。半透明に
-/// ならないのと、ウィンドウが出ないのとでは後者のほうが困る。古い Windows
-/// App SDK や Mica を持たない Windows 10 では、ここで [`Backdrop::None`] に
-/// なる。
+/// Mica is a "nice to have", so failure just means giving it up. Not being
+/// translucent is far less of a problem than the window not appearing. With old
+/// Windows App SDKs, or on Windows 10 without Mica, this becomes [`Backdrop::None`].
 fn create_backdrop(native: &XamlWindow, theme: Theme) -> Backdrop {
     if MicaController::IsSupported().unwrap_or(false) {
         if let Ok(target) = native.cast::<ICompositionSupportsSystemBackdrop>() {
@@ -1532,16 +1568,17 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
 }
 
 thread_local! {
-    /// 最後に表示したウィンドウの HWND。モーダルダイアログの親に使う。
+    /// The HWND of the window last shown. Used as the parent of modal dialogs.
     ///
-    /// XAML の要素から自分の載っているウィンドウをたどる API が WinUI 3 に
-    /// 無いため、表示のたびに覚えておく。
+    /// WinUI 3 has no API for finding the window an XAML element is on, so it is
+    /// remembered on every show.
     static OWNER_HWND: Cell<isize> = const { Cell::new(0) };
-    /// 最後に表示したウィンドウ。`ContentDialog` を出す `XamlRoot` に使う。
+    /// The window last shown. Used for the `XamlRoot` on which `ContentDialog`s are
+    /// shown.
     static OWNER_WINDOW: RefCell<Option<XamlWindow>> = const { RefCell::new(None) };
 }
 
-/// モーダルダイアログの親にするウィンドウを覚える。
+/// Remembers the window to use as the parent of modal dialogs.
 fn remember_owner(window: &XamlWindow) {
     OWNER_WINDOW.with(|slot| *slot.borrow_mut() = Some(window.clone()));
     let Ok(native) = window.cast::<naui_winui3::IWindowNative>() else {
@@ -1552,10 +1589,11 @@ fn remember_owner(window: &XamlWindow) {
     }
 }
 
-/// `ContentDialog` を出す土台。まだウィンドウを表示していなければ `None`。
+/// The base on which `ContentDialog`s are shown. `None` if no window has been shown
+/// yet.
 ///
-/// `XamlRoot` はウィンドウが表示されてから決まるので、覚えたウィンドウから
-/// 呼ばれるたびに取り直す。
+/// The `XamlRoot` is decided only after the window is shown, so it is obtained again
+/// from the remembered window on every call.
 pub(crate) fn owner_xaml_root() -> Option<naui_winui3::Microsoft::UI::Xaml::XamlRoot> {
     OWNER_WINDOW.with(|slot| {
         let window = slot.borrow();
@@ -1564,10 +1602,11 @@ pub(crate) fn owner_xaml_root() -> Option<naui_winui3::Microsoft::UI::Xaml::Xaml
     })
 }
 
-/// トーストを重ねる層。まだウィンドウを表示していなければ `None`。
+/// The layer toasts are overlaid on. `None` if no window has been shown yet.
 ///
-/// [`themed_content_root`] が作る中身の行 ([`CONTENT_ROW`]) で、
-/// `Grid` は子を重ね順に置くため、あとから足したトーストが中身の上に出る。
+/// It is the content row ([`CONTENT_ROW`]) created by [`themed_content_root`]; a
+/// `Grid` places its children in stacking order, so a toast added later appears
+/// above the content.
 pub(crate) fn owner_content_layer() -> Option<Grid> {
     OWNER_WINDOW.with(|slot| {
         let window = slot.borrow();
@@ -1581,7 +1620,8 @@ pub(crate) fn owner_content_layer() -> Option<Grid> {
     })
 }
 
-/// モーダルダイアログの親にするウィンドウ。まだ何も表示していなければ `None`。
+/// The window to use as the parent of modal dialogs. `None` if nothing has been
+/// shown yet.
 pub(crate) fn owner_hwnd() -> Option<windows::Win32::Foundation::HWND> {
     let raw = OWNER_HWND.with(|slot| slot.get());
     if raw == 0 {
@@ -1592,17 +1632,18 @@ pub(crate) fn owner_hwnd() -> Option<windows::Win32::Foundation::HWND> {
     ))
 }
 
-/// 大きさを変えるつまみと最大化のボタンを一緒に切り替える。
+/// Switches the resize handles and the maximize button together.
 fn apply_resizable(presenter: &OverlappedPresenter, resizable: bool) {
     let _ = presenter.SetIsResizable(resizable);
     let _ = presenter.SetIsMaximizable(resizable);
 }
 
-/// `rect` (スクリーン座標) のいる画面で、ワークスペース座標をスクリーン座標
-/// へ直すときに足す量 (作業領域の左上 − 画面の左上)。
+/// For the screen `rect` (screen coordinates) is on, the amount added when
+/// converting workspace coordinates to screen coordinates (the work area's top left
+/// − the screen's top left).
 ///
-/// `WINDOWPLACEMENT` の座標は、`WS_EX_TOOLWINDOW` でないウィンドウでは
-/// ワークスペース座標になる。タスクバーが下か右にあれば (0, 0)。
+/// `WINDOWPLACEMENT` coordinates are workspace coordinates for windows that are not
+/// `WS_EX_TOOLWINDOW`. (0, 0) if the taskbar is at the bottom or right.
 fn workspace_offset(rect: &windows::Win32::Foundation::RECT) -> (i32, i32) {
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -1624,7 +1665,7 @@ fn workspace_offset(rect: &windows::Win32::Foundation::RECT) -> (i32, i32) {
     )
 }
 
-/// naui のテーマを XAML の `ElementTheme` へ写す。
+/// Maps naui's theme onto XAML's `ElementTheme`.
 fn element_theme(theme: Theme) -> ElementTheme {
     match theme {
         Theme::System => ElementTheme::Default,

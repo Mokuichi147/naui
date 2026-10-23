@@ -1,27 +1,28 @@
-//! `package.appxfragment` から reg-free WinRT のマニフェストを作る。
+//! Creates a reg-free WinRT manifest from `package.appxfragment`.
 //!
-//! フレームワークパッケージでは、どの WinRT クラスがどの DLL にあるかを
-//! パッケージのマニフェストが OS へ知らせる。同梱した DLL にはそれが無いので、
-//! 同じ対応をアプリのマニフェスト (`winrtv1:activatableClass`) で書く。
+//! In a framework package, the package manifest tells the OS which WinRT class lives
+//! in which DLL. Bundled DLLs have no such manifest, so the same mapping is written
+//! in the app's manifest (`winrtv1:activatableClass`).
 //!
-//! 変換は MSBuild の self-contained 配置が行うもの
-//! (`Microsoft.WindowsAppSDK.SelfContained.targets` の
-//! `GenerateAppManifestFromAppxFragments`) と同じにしてある。
+//! The conversion is the same as the one MSBuild's self-contained deployment
+//! performs (`GenerateAppManifestFromAppxFragments` in
+//! `Microsoft.WindowsAppSDK.SelfContained.targets`).
 
 use std::fmt::Write as _;
 
 const APPX_NAMESPACE: &str = "http://schemas.microsoft.com/appx/manifest/foundation/windows10";
 
-/// プロキシスタブのうち、マニフェストへ載せないものが入った DLL。
+/// The DLLs containing proxy stubs that are not put in the manifest.
 ///
-/// MSBuild と同じく外す。プッシュ通知は同梱では使えない常駐プロセスを要し、
-/// Widgets は Microsoft が同梱での動作を確かめていない。
+/// They are excluded, as MSBuild does. Push notifications need a resident process
+/// that cannot be used when bundled, and Widgets have not been verified by Microsoft
+/// to work when bundled.
 const SKIPPED_PROXY_STUBS: &[&str] = &[
     "PushNotificationsLongRunningTask.ProxyStub.dll",
     "Microsoft.Windows.Widgets.dll",
 ];
 
-/// フラグメント (XML の本文) を並べた順にマニフェストへまとめる。
+/// Combines the fragments (XML bodies) into a manifest in the order given.
 pub(crate) fn generate(fragments: &[&str]) -> Result<String, String> {
     let mut out = String::from(
         "<?xml version='1.0' encoding='utf-8' standalone='yes'?>\n\
@@ -111,7 +112,7 @@ fn attribute<'a>(node: &roxmltree::Node<'a, '_>, name: &str) -> Result<&'a str, 
         .ok_or_else(|| format!("package.appxfragment の {name} 属性がありません"))
 }
 
-/// 単引用符で囲む属性値として書けるようにする。
+/// Makes it writable as an attribute value enclosed in single quotes.
 fn escape(value: &str) -> String {
     value
         .replace('&', "&amp;")

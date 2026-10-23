@@ -1,49 +1,49 @@
-//! ファイルの選択と保存にかかわる値型。
+//! Value types for opening and saving files.
 //!
-//! ダイアログそのものは各バックエンドが OS のネイティブなものを出す
+//! The dialogs themselves are the OS's native ones, shown by each backend
 //! (NSOpenPanel / NSSavePanel / IFileOpenDialog / IFileSaveDialog /
-//! `<input type="file">` / `showSaveFilePicker`)。ここにあるのは
-//! 「何を選ばせるか」「何が選ばれたか」「どこへ書き出すか」を表す、
-//! 環境に依存しない型だけ。
+//! `<input type="file">` / `showSaveFilePicker`). All that is here are
+//! platform-independent types describing "what to pick", "what was picked" and
+//! "where to write".
 
 use std::path::{Path, PathBuf};
 
-/// 何を選ばせるか。
+/// What to let the user pick.
 ///
-/// 4 環境すべてで同じ意味になるものだけを持つ。「フォルダーを複数」や
-/// 「ファイルとフォルダーを混ぜて」は Windows のダイアログにも
-/// `<input type="file">` にも無いため、含めていない。
+/// Only options that mean the same on all four platforms. "Multiple folders" and
+/// "files and folders mixed" are available in neither the Windows dialog nor
+/// `<input type="file">`, so they are not included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FilePickerMode {
-    /// ファイルを 1 つだけ選ぶ (既定)。
+    /// Pick exactly one file (the default).
     #[default]
     File,
-    /// ファイルを複数選ぶ。
+    /// Pick multiple files.
     Files,
-    /// フォルダーを 1 つ選ぶ。
+    /// Pick one folder.
     Folder,
 }
 
 impl FilePickerMode {
-    /// 複数選べるかどうか。
+    /// Whether multiple items can be picked.
     pub fn allows_multiple(self) -> bool {
         matches!(self, FilePickerMode::Files)
     }
 
-    /// フォルダーを選ぶモードかどうか。
+    /// Whether this mode picks a folder.
     pub fn is_folder(self) -> bool {
         matches!(self, FilePickerMode::Folder)
     }
 }
 
-/// 拡張子による絞り込み。
+/// A filter by file extension.
 ///
-/// 拡張子は `png` の形に正規化して保持する (`.png` や `*.png` と書いても同じ)。
-/// 各環境が要求する書き方はバックエンドが組み立てる。
+/// Extensions are normalized to the form `png` (writing `.png` or `*.png` gives the
+/// same result). Backends build the notation each platform requires.
 ///
 /// ```
 /// # use naui_core::FileFilter;
-/// let filter = FileFilter::new("画像", ["*.PNG", ".jpg"]);
+/// let filter = FileFilter::new("Images", ["*.PNG", ".jpg"]);
 /// assert_eq!(filter.extensions(), ["png", "jpg"]);
 /// assert_eq!(filter.glob_pattern(), "*.png;*.jpg");
 /// assert_eq!(filter.accept_list(), ".png,.jpg");
@@ -55,7 +55,8 @@ pub struct FileFilter {
 }
 
 impl FileFilter {
-    /// 表示名と拡張子の並びから作る。空文字や `*` だけの要素は捨てる。
+    /// Creates one from a display name and a list of extensions. Empty entries and
+    /// entries that are just `*` are dropped.
     pub fn new<I, S>(label: impl Into<String>, extensions: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -70,12 +71,12 @@ impl FileFilter {
         }
     }
 
-    /// ダイアログの種類欄に出る表示名。
+    /// The display name shown in the dialog's file type field.
     pub fn label(&self) -> &str {
         &self.label
     }
 
-    /// 正規化済みの拡張子 (`png` の形)。
+    /// The normalized extensions (in the form `png`).
     pub fn extensions(&self) -> &[String] {
         &self.extensions
     }
@@ -84,7 +85,7 @@ impl FileFilter {
         self.extensions.is_empty()
     }
 
-    /// `*.png;*.jpg` の形。Windows の `COMDLG_FILTERSPEC` が要求する書き方。
+    /// The form `*.png;*.jpg`, as Windows's `COMDLG_FILTERSPEC` requires.
     pub fn glob_pattern(&self) -> String {
         self.extensions
             .iter()
@@ -93,7 +94,7 @@ impl FileFilter {
             .join(";")
     }
 
-    /// `.png,.jpg` の形。Web の `accept` 属性が要求する書き方。
+    /// The form `.png,.jpg`, as the Web's `accept` attribute requires.
     pub fn accept_list(&self) -> String {
         self.extensions
             .iter()
@@ -103,16 +104,17 @@ impl FileFilter {
     }
 }
 
-/// 絞り込みの並びを、`<input type="file">` の `accept` 属性ひとつにまとめる。
+/// Combines a list of filters into a single `accept` attribute for
+/// `<input type="file">`.
 ///
-/// ブラウザには「種類を選ぶ欄」が無く、受け付ける拡張子を 1 つの属性に
-/// 並べる形しか無いため、すべての絞り込みを連結する。
+/// Browsers have no "file type" field; the only option is to list the accepted
+/// extensions in one attribute, so all filters are concatenated.
 ///
 /// ```
 /// # use naui_core::{accept_attribute, FileFilter};
 /// let filters = [
-///     FileFilter::new("画像", ["png", "jpg"]),
-///     FileFilter::new("文書", ["txt"]),
+///     FileFilter::new("Images", ["png", "jpg"]),
+///     FileFilter::new("Documents", ["txt"]),
 /// ];
 /// assert_eq!(accept_attribute(&filters), ".png,.jpg,.txt");
 /// ```
@@ -125,15 +127,16 @@ pub fn accept_attribute(filters: &[FileFilter]) -> String {
         .join(",")
 }
 
-/// 選ばれたファイル、またはフォルダー 1 つ。
+/// One picked file or folder.
 ///
-/// `path` がある環境 (macOS / Windows / Linux) では絶対パスが入る。
-/// **Web ではブラウザがパスを渡さないため、`path` は常に `None`**。
+/// On platforms that have paths (macOS / Windows / Linux) `path` holds an absolute
+/// path. **On the Web the browser does not hand out paths, so `path` is always
+/// `None`.**
 ///
-/// 代わりに [`source`](Self::source) を使うと、どの環境でも
-/// 「そのまま [`Ui::image`] / [`Ui::video`] / [`Ui::audio`] へ渡せる場所」が
-/// 得られる。ネイティブでは絶対パス、Web ではブラウザが作る
-/// `blob:` URL になる。
+/// Use [`source`](Self::source) instead to get, on every platform, "a location you
+/// can pass straight to [`Ui::image`] / [`Ui::video`] / [`Ui::audio`]". Natively
+/// this is the absolute path; on the Web it is a `blob:` URL created by the
+/// browser.
 ///
 /// [`Ui::image`]: https://docs.rs/naui/latest/naui/struct.Ui.html#method.image
 /// [`Ui::video`]: https://docs.rs/naui/latest/naui/struct.Ui.html#method.video
@@ -142,12 +145,13 @@ pub fn accept_attribute(filters: &[FileFilter]) -> String {
 pub struct FileEntry {
     name: String,
     path: Option<PathBuf>,
-    /// メディアや画像に渡せる場所。ネイティブはパス、Web は blob URL。
+    /// A location that can be passed to media and images. A path natively, a blob URL
+    /// on the Web.
     source: Option<String>,
 }
 
 impl FileEntry {
-    /// パスから作る。表示名はパスの末尾から取る。
+    /// Creates one from a path. The display name is taken from the end of the path.
     pub fn from_path(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         let name = path
@@ -161,7 +165,8 @@ impl FileEntry {
         }
     }
 
-    /// 表示名だけから作る (パスも中身も渡さない場合)。
+    /// Creates one from just a display name (when neither a path nor contents are
+    /// passed).
     pub fn from_name(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -170,10 +175,10 @@ impl FileEntry {
         }
     }
 
-    /// 表示名と、中身を指す場所から作る。
+    /// Creates one from a display name and a location pointing at the contents.
     ///
-    /// Web バックエンドが `URL.createObjectURL` で作った `blob:` URL を
-    /// 渡すために使う。パスは持たない。
+    /// Used by the Web backend to pass `blob:` URLs created with
+    /// `URL.createObjectURL`. It has no path.
     pub fn from_name_and_source(name: impl Into<String>, source: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -182,23 +187,23 @@ impl FileEntry {
         }
     }
 
-    /// 画面に出せる名前。パスがある環境では末尾の要素。
+    /// A name that can be shown on screen. On platforms with paths, the last component.
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// 絶対パス。Web では常に `None`。
+    /// The absolute path. Always `None` on the Web.
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
 
-    /// そのまま `ui.image` / `ui.video` / `ui.audio` へ渡せる場所。
+    /// A location you can pass straight to `ui.image` / `ui.video` / `ui.audio`.
     ///
-    /// ネイティブでは絶対パス、Web ではブラウザが作る `blob:` URL。
-    /// フォルダーを選んだときや、場所を取れなかったときは `None`。
+    /// Natively the absolute path; on the Web a `blob:` URL created by the browser.
+    /// `None` when a folder was picked or the location could not be obtained.
     ///
-    /// **Web の `blob:` URL は、同じ [`FilePicker`] で次に選び直すまで
-    /// 有効**。選び直すと以前の URL は破棄される。
+    /// **A `blob:` URL on the Web stays valid until the next pick with the same
+    /// [`FilePicker`].** Picking again discards the previous URLs.
     ///
     /// [`FilePicker`]: https://docs.rs/naui/latest/naui/struct.FilePicker.html
     pub fn source(&self) -> Option<&str> {
@@ -206,17 +211,17 @@ impl FileEntry {
     }
 }
 
-/// 絞り込みの並びから、既定の拡張子を 1 つ取る。
+/// Takes one default extension from a list of filters.
 ///
-/// 保存ダイアログは「種類」を 1 つに決めて書き出すため、最初の使える
-/// 絞り込みの先頭の拡張子を既定とする。Windows の `SetDefaultExtension`
-/// と、名前に拡張子を補うときに使う。
+/// A save dialog writes with a single "file type", so the default is the first
+/// extension of the first usable filter. Used for Windows's `SetDefaultExtension`
+/// and when adding an extension to a name.
 ///
 /// ```
 /// # use naui_core::{default_extension, FileFilter};
 /// let filters = [
-///     FileFilter::new("空", [] as [&str; 0]),
-///     FileFilter::new("画像", ["png", "jpg"]),
+///     FileFilter::new("Empty", [] as [&str; 0]),
+///     FileFilter::new("Images", ["png", "jpg"]),
 /// ];
 /// assert_eq!(default_extension(&filters), Some("png"));
 /// assert_eq!(default_extension(&[]), None);
@@ -228,21 +233,21 @@ pub fn default_extension(filters: &[FileFilter]) -> Option<&str> {
         .map(String::as_str)
 }
 
-/// 既定のファイル名へ、絞り込みの拡張子を補う。
+/// Adds a filter's extension to a default file name.
 ///
-/// どの絞り込みの拡張子でも付いていればそのまま返す。付いていなければ
-/// [`default_extension`] を足す。名前が空のときは何も補わない
-/// (ダイアログ側の既定に任せる)。
+/// If the name already ends with the extension of any filter it is returned as is.
+/// Otherwise [`default_extension`] is appended. Nothing is added to an empty name
+/// (the dialog's own default is used).
 ///
-/// GTK の `set_initial_name` と、ブラウザのダウンロード名のように
-/// 「拡張子を補ってくれない」場所のために用意している。
+/// This exists for places that "don't add the extension for you", such as GTK's
+/// `set_initial_name` and browser download names.
 ///
 /// ```
 /// # use naui_core::{with_default_extension, FileFilter};
-/// let filters = [FileFilter::new("画像", ["png", "jpg"])];
-/// assert_eq!(with_default_extension("メモ", &filters), "メモ.png");
-/// assert_eq!(with_default_extension("写真.JPG", &filters), "写真.JPG");
-/// assert_eq!(with_default_extension("メモ", &[]), "メモ");
+/// let filters = [FileFilter::new("Images", ["png", "jpg"])];
+/// assert_eq!(with_default_extension("notes", &filters), "notes.png");
+/// assert_eq!(with_default_extension("photo.JPG", &filters), "photo.JPG");
+/// assert_eq!(with_default_extension("notes", &[]), "notes");
 /// assert_eq!(with_default_extension("", &filters), "");
 /// ```
 pub fn with_default_extension(name: &str, filters: &[FileFilter]) -> String {
@@ -263,7 +268,7 @@ pub fn with_default_extension(name: &str, filters: &[FileFilter]) -> String {
     format!("{name}.{default}")
 }
 
-/// `name` が `.<extension>` で終わるか (大文字小文字は区別しない)。
+/// Whether `name` ends with `.<extension>` (case-insensitive).
 fn ends_with_extension(name: &str, extension: &str) -> bool {
     let suffix = format!(".{extension}");
     let Some(head) = name.len().checked_sub(suffix.len()) else {
@@ -277,7 +282,7 @@ fn ends_with_extension(name: &str, extension: &str) -> bool {
     name.is_char_boundary(head) && name[head..].eq_ignore_ascii_case(&suffix)
 }
 
-/// `*.PNG` や `.png` を `png` にそろえる。中身が無ければ捨てる。
+/// Normalizes `*.PNG` and `.png` to `png`. Drops it if nothing is left.
 fn normalize_extension(raw: &str) -> Option<String> {
     let trimmed = raw
         .trim()

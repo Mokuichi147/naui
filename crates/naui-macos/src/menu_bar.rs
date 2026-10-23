@@ -1,25 +1,25 @@
-//! メニューバー (画面上端のアプリケーションメニュー、AppKit の `NSMenu`)。
+//! The menu bar (the application menu at the top of the screen, AppKit's
+//! `NSMenu`).
 //!
-//! macOS のメニューバーは**ウィンドウではなくアプリが持つ**
-//! (`NSApplication.mainMenu`)。そのため [`MenuBar`] は
-//! [`Widget`](crate::Widget) ではなく、
-//! [`Window::set_menu_bar`](crate::Window::set_menu_bar) で取り付ける
-//! ([`Toolbar`](crate::Toolbar) と同じ形にそろえてある)。見た目・開閉・
-//! キーボード操作・ショートカットの配送はすべて AppKit が行う。
+//! On macOS the menu bar **belongs to the app, not a window**
+//! (`NSApplication.mainMenu`). So [`MenuBar`] is not a [`Widget`](crate::Widget);
+//! it is attached with [`Window::set_menu_bar`](crate::Window::set_menu_bar) (the
+//! same shape as [`Toolbar`](crate::Toolbar)). Its look, opening and closing,
+//! keyboard navigation and shortcut dispatch are all done by AppKit.
 //!
-//! ## 標準のメニュー
+//! ## Standard menus
 //!
-//! ⌘V などの編集ショートカットは**メインメニューのキー等価**として配送される。
-//! `NSApplication` にメニューが無いと、`NSTextField` にフォーカスがあっても
-//! ⌘C / ⌘V / ⌘A が何も起こさない。そこで naui は
+//! Editing shortcuts such as ⌘V are dispatched as **key equivalents of the main
+//! menu**. If `NSApplication` has no menu, ⌘C / ⌘V / ⌘A do nothing even when an
+//! `NSTextField` has focus. So naui provides
 //!
-//! - アプリ名のメニュー (先頭。macOS はここを必ずアプリメニューとして扱う)
-//! - 「編集」メニュー (末尾)
+//! - the app-name menu (first; macOS always treats it as the app menu)
+//! - the "Edit" menu (last)
 //!
-//! を自分で用意し、アプリが渡したメニューをその間へ並べる。項目のターゲットは
-//! nil にしてあるので、AppKit がレスポンダチェーンをたどって、いま編集中の
-//! コントロールへ `paste:` などを届ける。**コピーや貼り付けを実装しているのは
-//! AppKit 自身**で、naui は何もしない。
+//! itself, and places the menus the app passes in between. The items' target is
+//! nil, so AppKit walks the responder chain and delivers `paste:` and the like to
+//! the control being edited. **Copy and paste are implemented by AppKit itself**;
+//! naui does nothing.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -33,10 +33,11 @@ use objc2_foundation::NSString;
 
 use crate::trampoline::ActionTarget;
 
-/// メインメニューをまだ持っていなければ用意する。
+/// Provides a main menu if there is none yet.
 ///
-/// 何度呼んでも 1 度しか組み立てない。アプリが自分でメニューを作っている
-/// 場合 (ネイティブへの脱出口を使った場合) は、それを尊重して何もしない。
+/// However many times it is called, it is built only once. If the app builds its
+/// own menu (using the native escape hatches), that is respected and nothing is
+/// done.
 pub(crate) fn install(mtm: MainThreadMarker, app_name: &str) {
     let app = NSApplication::sharedApplication(mtm);
     if app.mainMenu().is_some() {
@@ -45,7 +46,7 @@ pub(crate) fn install(mtm: MainThreadMarker, app_name: &str) {
     app.setMainMenu(Some(&standard_menu(mtm, app_name)));
 }
 
-/// アプリメニューと編集メニューだけを持つ、naui の既定のメインメニュー。
+/// naui's default main menu, with only the app menu and the Edit menu.
 fn standard_menu(mtm: MainThreadMarker, app_name: &str) -> Retained<NSMenu> {
     let main = NSMenu::new(mtm);
     main.addItem(&app_menu(mtm, app_name));
@@ -53,7 +54,7 @@ fn standard_menu(mtm: MainThreadMarker, app_name: &str) -> Retained<NSMenu> {
     main
 }
 
-/// アプリ名のメニュー。macOS はメインメニューの先頭をアプリメニューとして扱う。
+/// The app-name menu. macOS treats the first item of the main menu as the app menu.
 fn app_menu(mtm: MainThreadMarker, app_name: &str) -> Retained<NSMenuItem> {
     submenu(
         mtm,
@@ -62,7 +63,7 @@ fn app_menu(mtm: MainThreadMarker, app_name: &str) -> Retained<NSMenuItem> {
     )
 }
 
-/// 標準の編集メニュー。⌘C / ⌘V などの配送経路を用意するためのもの。
+/// The standard Edit menu. Provides the dispatch path for ⌘C / ⌘V and the like.
 fn edit_menu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
     // 大文字の "Z" は ⇧⌘Z (シフトを含む) を意味する。AppKit の決まり。
     submenu(
@@ -79,7 +80,7 @@ fn edit_menu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
     )
 }
 
-/// 見出しと項目からサブメニューを 1 つ作る。
+/// Creates one submenu from a heading and items.
 fn submenu(
     mtm: MainThreadMarker,
     title: &str,
@@ -102,11 +103,11 @@ fn submenu(
     holder
 }
 
-/// 押された項目の通知先。
+/// The handler for the clicked item.
 ///
-/// 呼び出しの間だけクロージャを取り出すので、通知の中から同じメニューバーを
-/// 組み替えても二重借用にならない (トランポリンの `SelectHandler` と同じ形を、
-/// 2 つの値で行う)。
+/// The closure is taken out only for the duration of the call, so rebuilding the
+/// same menu bar from inside the notification does not double-borrow (the same
+/// shape as the trampoline's `SelectHandler`, with two values).
 #[derive(Clone, Default)]
 struct ActivateHandler(Rc<RefCell<Option<Box<dyn FnMut(usize, usize)>>>>);
 
@@ -130,32 +131,32 @@ impl ActivateHandler {
 
 struct MenuBarInner {
     mtm: MainThreadMarker,
-    /// `NSApplication.mainMenu` へ渡すメニュー。
-    /// 先頭はアプリメニュー、末尾は標準の編集メニュー。
+    /// The menu passed to `NSApplication.mainMenu`. The app menu comes first and the
+    /// standard Edit menu last.
     native: Retained<NSMenu>,
     app_name: String,
     menus: RefCell<Vec<MenuSpec>>,
-    /// 見出しごとの `NSMenuItem` (submenu の持ち手)。
+    /// The `NSMenuItem` per heading (the holder of the submenu).
     holders: RefCell<Vec<Retained<NSMenuItem>>>,
-    /// 見出しと項目のインデックスから引ける `NSMenuItem`。区切り線は `None`。
+    /// The `NSMenuItem`s looked up by heading and item index. `None` for separators.
     items: RefCell<Vec<Vec<Option<Retained<NSMenuItem>>>>>,
-    /// 押されたときのトランポリン。`NSMenuItem` の target は weak なので保持する。
+    /// The trampolines for clicks. `NSMenuItem` targets are weak, so they are held.
     targets: RefCell<Vec<Retained<ActionTarget>>>,
     handler: ActivateHandler,
-    /// メニューバー全体の有効・無効。項目ごとの指定と AND を取る。
+    /// Whether the whole menu bar is enabled. ANDed with the per-item settings.
     enabled: Cell<bool>,
 }
 
-/// 画面上端に出る、OS のアプリケーションメニュー (`NSMenu`)。
+/// The OS's application menu shown at the top of the screen (`NSMenu`).
 ///
-/// [`Widget`](crate::Widget) ではない。
-/// [`Window::set_menu_bar`](crate::Window::set_menu_bar) で取り付ける。
-/// 項目が押されるたびに、その **(見出しのインデックス, 項目のインデックス)**
-/// で [`on_activate`](Self::on_activate) が呼ばれる。項目のインデックスは
-/// 区切り線を含めた並びの位置で、区切り線が返ることはない。
+/// Not a [`Widget`](crate::Widget). Attach it with
+/// [`Window::set_menu_bar`](crate::Window::set_menu_bar). Every time an item is
+/// clicked, [`on_activate`](Self::on_activate) is called with its **(heading index,
+/// item index)**. The item index is the position in the sequence including
+/// separators; separators are never returned.
 ///
-/// macOS のメニューバーはアプリに 1 つなので、取り付けはウィンドウごとでは
-/// なく**アプリ全体**に効く。
+/// macOS has one menu bar per app, so attaching it applies to **the whole app**,
+/// not per window.
 #[derive(Clone)]
 pub struct MenuBar(Rc<MenuBarInner>);
 
@@ -180,10 +181,10 @@ impl MenuBar {
         this
     }
 
-    /// メニューを作り直す。以前のメニューは取り除かれる。
+    /// Rebuilds the menus. The previous menus are removed.
     ///
-    /// 見出しのインデックスは渡した並びの位置、項目のインデックスは
-    /// 区切り線を含めた並びの位置。
+    /// The heading index is the position in the sequence passed, and the item index is
+    /// the position in the sequence including separators.
     pub fn set_menus(&self, menus: &[MenuSpec]) {
         let mut stored = self.0.menus.borrow_mut();
         stored.clear();
@@ -192,7 +193,7 @@ impl MenuBar {
         self.rebuild();
     }
 
-    /// `NSMenu` を組み直す。並びは アプリメニュー → アプリの見出し → 編集。
+    /// Rebuilds the `NSMenu`. The order is app menu → the app's headings → Edit.
     fn rebuild(&self) {
         let mtm = self.0.mtm;
         let whole = self.0.enabled.get();
@@ -274,7 +275,7 @@ impl MenuBar {
         }
     }
 
-    /// 見出しの数。
+    /// The number of headings.
     pub fn len(&self) -> usize {
         self.0.menus.borrow().len()
     }
@@ -283,7 +284,8 @@ impl MenuBar {
         self.len() == 0
     }
 
-    /// 見出し 1 つが持つ、区切り線を含めた項目数。範囲外は `0`。
+    /// The number of items under one heading, separators included. `0` if out of
+    /// range.
     pub fn menu_len(&self, menu: usize) -> usize {
         self.0
             .menus
@@ -292,7 +294,7 @@ impl MenuBar {
             .map_or(0, |spec| spec.items.len())
     }
 
-    /// 項目 1 つの有効・無効を変える。区切り線と範囲外は何もしない。
+    /// Enables or disables one item. Does nothing for separators or out of range.
     pub fn set_item_enabled(&self, menu: usize, item: usize, enabled: bool) {
         let mut menus = self.0.menus.borrow_mut();
         let Some(entry) = menus
@@ -309,7 +311,7 @@ impl MenuBar {
         self.apply_enabled();
     }
 
-    /// いま押せる項目か。区切り線と範囲外は `false`。
+    /// Whether the item can be clicked now. `false` for separators and out of range.
     pub fn is_item_enabled(&self, menu: usize, item: usize) -> bool {
         self.0.enabled.get()
             && self
@@ -321,16 +323,16 @@ impl MenuBar {
                 .is_some_and(|entry| !entry.is_separator() && entry.enabled)
     }
 
-    /// メニューバー全体の有効・無効を変える。項目ごとの指定は残る。
+    /// Enables or disables the whole menu bar. Per-item settings are kept.
     ///
-    /// naui が用意するアプリメニューと編集メニューは対象にしない
-    /// (⌘Q と ⌘V を取り上げないため)。
+    /// The app menu and Edit menu that naui provides are not affected (so that ⌘Q and
+    /// ⌘V are not taken away).
     pub fn set_enabled(&self, enabled: bool) {
         self.0.enabled.set(enabled);
         self.apply_enabled();
     }
 
-    /// 項目ごとの指定と全体の指定をネイティブへ反映する。
+    /// Applies the per-item settings and the overall setting to the native side.
     fn apply_enabled(&self) {
         let whole = self.0.enabled.get();
         let menus = self.0.menus.borrow();
@@ -347,41 +349,42 @@ impl MenuBar {
         }
     }
 
-    /// 利用者が選んだのと同じように項目を実行する。
+    /// Runs the item as if the user had chosen it.
     ///
-    /// 区切り線・押せない項目・範囲外は何もしない。
+    /// Does nothing for separators, disabled items or out of range.
     pub fn activate(&self, menu: usize, item: usize) {
         if self.is_item_enabled(menu, item) {
             self.0.handler.emit(menu, item);
         }
     }
 
-    /// 項目が押されたときに、その見出しと項目のインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the heading and item indices when an item is clicked. Setting it
+    /// again removes the previous callback.
     pub fn on_activate(&self, f: impl FnMut(usize, usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// AppKit の実メニュー (`NSApplication.mainMenu` へ渡すもの)。
-    /// バックエンド固有の脱出口として公開している。
+    /// The real AppKit menu (the one passed to `NSApplication.mainMenu`). Public as a
+    /// backend-specific escape hatch.
     pub fn native_menu(&self) -> Retained<NSMenu> {
         self.0.native.clone()
     }
 
-    /// 項目に対応する `NSMenuItem`。区切り線と範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The `NSMenuItem` for the item. `None` for separators and out of range. Public as
+    /// a backend-specific escape hatch.
     pub fn native_item(&self, menu: usize, item: usize) -> Option<Retained<NSMenuItem>> {
         self.0.items.borrow().get(menu)?.get(item)?.clone()
     }
 
-    /// アプリのメインメニューとして取り付ける。[`crate::Window`] だけが使う。
+    /// Installs it as the app's main menu. Used only by [`crate::Window`].
     pub(crate) fn install(&self) {
         NSApplication::sharedApplication(self.0.mtm).setMainMenu(Some(&self.0.native));
     }
 
-    /// いまアプリのメインメニューになっているか。
+    /// Whether it is the app's main menu now.
     ///
-    /// 同じ物かどうかを見るので、`isEqual:` ではなくポインタで突き合わせる。
+    /// This checks for the same object, so it compares pointers rather than using
+    /// `isEqual:`.
     fn is_installed(&self) -> bool {
         let mine = Retained::as_ptr(&self.0.native);
         NSApplication::sharedApplication(self.0.mtm)
@@ -389,10 +392,10 @@ impl MenuBar {
             .is_some_and(|current| Retained::as_ptr(&current) == mine)
     }
 
-    /// naui の既定のメニューへ戻す。[`crate::Window`] だけが使う。
+    /// Goes back to naui's default menu. Used only by [`crate::Window`].
     ///
-    /// 何も付けないのではなく既定へ戻すのは、⌘C / ⌘V の配送経路を
-    /// 絶やさないため。
+    /// It returns to the default rather than to no menu so that the dispatch path for
+    /// ⌘C / ⌘V never disappears.
     pub(crate) fn uninstall(&self) {
         if !self.is_installed() {
             return;

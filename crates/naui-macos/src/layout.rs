@@ -1,7 +1,7 @@
-//! 大きさの指定と、レイアウト用のコンテナ (Grid / Scroll / Spacer)。
+//! Size specifications and layout containers (Grid / Scroll / Spacer).
 //!
-//! 計算するのは AppKit の Auto Layout と NSGridView / NSScrollView で、
-//! naui 側は制約とプロパティを設定するだけ。
+//! The computing is done by AppKit's Auto Layout and NSGridView / NSScrollView;
+//! naui only sets constraints and properties.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,52 +26,61 @@ use objc2_foundation::{
 
 use crate::widgets::{impl_widget, Widget};
 
-/// naui が付けた制約であることの目印。
+/// A marker for constraints naui added.
 ///
-/// AppKit は内部で intrinsic content size 用の制約を同じビューに付ける
-/// (`NSContentSizeLayoutConstraint`)。属性だけで選ぶとそれらまで外して
-/// しまうため、自分で付けたものに識別子を入れて区別する。
+/// AppKit internally adds constraints for the intrinsic content size to the same
+/// view (`NSContentSizeLayoutConstraint`). Selecting by attribute alone would
+/// remove those too, so the ones we add carry an identifier to tell them apart.
 const SIZING_ID: &str = "naui.sizing";
 
-/// `Fill` に上限を付けたときの「上限まで広がりたい」制約の優先度。
+/// The priority of the "want to grow up to the maximum" constraint when `Fill` has
+/// a maximum.
 ///
-/// 他のどの制約よりも弱くしておき、空間があるときだけ上限まで伸ばす。
+/// It is weaker than every other constraint, so it grows to the maximum only when
+/// there is room.
 const PREFERRED_SIZE_PRIORITY: NSLayoutPriority = 1.0;
 
-/// 交差軸の `Fill` で「親の幅 / 高さに合わせたい」を表す優先度。
+/// The priority expressing "want to match the parent's width / height" for `Fill`
+/// on the cross axis.
 ///
-/// 必須にすると、同じ軸に上限 ([`Sizing::max_width`] など) があるときに
-/// 必須どうしがぶつかり、AppKit がどちらかを勝手に落とす。上限を勝たせたいので
-/// 1 段だけ下げてある (「はみ出さない」ほうは必須のまま別に張る)。
+/// If it were required, it would clash with another required constraint when the
+/// same axis has a maximum ([`Sizing::max_width`] and the like), and AppKit would
+/// drop one arbitrarily. We want the maximum to win, so it is one step lower (the
+/// "don't overflow" side stays required and is added separately).
 pub(crate) const CROSS_FILL_PRIORITY: NSLayoutPriority = 999.0;
 
-/// `Fill` のときの hugging priority。低いほど余りを受け取る。
+/// The hugging priority for `Fill`. The lower it is, the more leftover space it
+/// takes.
 const FILL_HUGGING: NSLayoutPriority = 1.0;
-/// `Auto` (中身に合わせる) のときの hugging priority。
+/// The hugging priority for `Auto` (fit the content).
 const HUG_CONTENT: NSLayoutPriority = 750.0;
-/// `Grid` / `Stack` の `Auto` 子が、親の余りを受け取らないための優先度。
+/// The priority that keeps `Auto` children of a `Grid` / `Stack` from taking the
+/// parent's leftover space.
 ///
-/// AppKit のコンテナが再レイアウト時に追加する制約より優先し、内容幅を
-/// 保つ。明示的な `Fill` はこの値を使わず、hugging を 1 に下げる。
+/// It takes precedence over constraints AppKit's containers add on relayout,
+/// keeping the content width. An explicit `Fill` does not use this value and lowers
+/// hugging to 1.
 const AUTO_HUGGING: NSLayoutPriority = 999.0;
-/// `Fill` 行・列の子に張る「グリッドいっぱいまで伸びたい」という希望の識別子。
+/// The identifier of the "want to grow to fill the grid" wish placed on children
+/// in `Fill` rows and columns.
 const GRID_GROW_ID: &str = "naui.grid.grow";
 
-/// その希望の優先度。
+/// The priority of that wish.
 ///
-/// `NSGridView` が余りを `Auto` 行へ渡してしまうときの弱い好み
-/// (`NSLayoutPriorityDefaultLow` = 250 相当) には勝ち、`Auto` の子が持つ
-/// compression resistance ([`HUG_CONTENT`]) には**負ける**値にしてある。
-/// これより強くすると `Fill` 行が余りを取りすぎ、`Auto` 行の中身が
-/// 潰れてしまう (見出しが 30pt まで縮む)。
+/// It is set to beat the weak preference with which `NSGridView` hands leftover
+/// space to `Auto` rows (equivalent to `NSLayoutPriorityDefaultLow` = 250), and to
+/// **lose** to the compression resistance of `Auto` children ([`HUG_CONTENT`]).
+/// Any stronger and `Fill` rows would take too much, squashing the content of
+/// `Auto` rows (headings shrink to 30pt).
 const GRID_GROW_PRIORITY: NSLayoutPriority = HUG_CONTENT - 1.0;
 
-/// `Fill` のときの compression resistance priority。
+/// The compression resistance priority for `Fill`.
 ///
-/// 画像や動画の intrinsic size が親の最小幅にならないようにする。
+/// Keeps the intrinsic size of images and video from becoming the parent's minimum
+/// width.
 const FILL_COMPRESSION_RESISTANCE: NSLayoutPriority = 1.0;
 
-/// 大きさの指定をビューへ反映する。呼ぶたびに以前の指定は外れる。
+/// Applies the size specification to the view. Each call discards the previous one.
 pub(crate) fn apply_sizing(view: &NSView, sizing: Sizing) {
     clear_sizing_constraints(view);
 
@@ -153,32 +162,36 @@ fn orientation(horizontal: bool) -> NSLayoutConstraintOrientation {
     }
 }
 
-/// このビューがその方向へ広がりたがっているか (= `Length::Fill` を指定されたか)。
+/// Whether this view wants to grow in that direction (= was given `Length::Fill`).
 pub(crate) fn wants_fill(view: &NSView, horizontal: bool) -> bool {
     view.contentHuggingPriorityForOrientation(orientation(horizontal)) <= FILL_HUGGING
 }
 
-/// `Auto` の子が内容幅を保つようにする。
+/// Makes an `Auto` child keep its content width.
 pub(crate) fn keep_auto_size(view: &NSView, horizontal: bool) {
     view.setContentHuggingPriority_forOrientation(AUTO_HUGGING, orientation(horizontal));
 }
 
-/// 受け皿 (tail spacer) が「余りを受け取ってよい」ときの、縮みたさの優先度。
+/// The priority of the tail spacer's desire to shrink when it "may take the
+/// leftover space".
 ///
-/// 明示的な `Fill` / `Spacer` ([`FILL_HUGGING`]) より高く、`Auto` の子より低い。
-/// 指定が無いときだけ受け皿が余りを吸う。
+/// Higher than an explicit `Fill` / `Spacer` ([`FILL_HUGGING`]) and lower than
+/// `Auto` children. The tail spacer absorbs leftover space only when nothing else
+/// asks for it.
 pub(crate) const TAIL_PRIORITY: NSLayoutPriority = 2.0;
 
-/// 入れ子になった `Stack` の受け皿が、縮みたがる強さ。
+/// How strongly the tail spacer of a nested `Stack` wants to shrink.
 ///
-/// 受け皿は中身を持たない `NSView` で intrinsic size が無く、**そのままでは
-/// 伸びるのに何の抵抗もしない**。外側と内側の受け皿が同じ扱いだと、どちらが
-/// 伸びても Auto Layout の解として等価になり、内側が伸びて節の途中に大きな
-/// 空きができる。入れ子側だけ強く縮めておくと、余りを吸うのはいちばん外側に
-/// 決まる。
+/// The tail spacer is an `NSView` with no content and no intrinsic size, so **as is
+/// it offers no resistance to growing**. If the outer and inner tail spacers were
+/// treated the same, either one growing would be an equally valid Auto Layout
+/// solution, and the inner one might grow, leaving a large gap in the middle of a
+/// section. Making only the nested ones shrink strongly settles that the outermost
+/// one absorbs the leftover space.
 pub(crate) const NESTED_TAIL_PRIORITY: NSLayoutPriority = HUG_CONTENT;
 
-/// 受け皿を「主軸で 0 にしたい」という制約を作る (まだ張らない)。
+/// Creates the constraint "want the tail spacer to be 0 on the main axis" (not
+/// activated yet).
 pub(crate) fn tail_zero_constraint(tail: &NSView, vertical: bool) -> Retained<NSLayoutConstraint> {
     let anchor = if vertical {
         tail.heightAnchor()
@@ -190,7 +203,8 @@ pub(crate) fn tail_zero_constraint(tail: &NSView, vertical: bool) -> Retained<NS
     constraint
 }
 
-/// セルごとの希望の識別子。同じセルに置き直したときだけ張り替える。
+/// The identifier of the wish per cell. It is replaced only when placed into the
+/// same cell again.
 fn grow_identifier(cell: &GridCell, horizontal: bool) -> String {
     format!(
         "{GRID_GROW_ID}.{}.{}.{}",
@@ -215,19 +229,20 @@ fn clear_sizing_constraints(view: &NSView) {
     }
 }
 
-/// コンテナへ入れる子の下ごしらえ。Auto Layout に任せる。
+/// Prepares a child to be put into a container. Leaves it to Auto Layout.
 pub(crate) fn prepare_child(view: &NSView) {
     view.setTranslatesAutoresizingMaskIntoConstraints(false);
 }
 
-/// 中身の大きさが変わったことを、親の連なりへ伝える。
+/// Tells the chain of parents that the content's size changed.
 ///
-/// **表示したあとで高さが変わる子**(開いた `Expander`、行を足した一覧、
-/// 子を足した `Stack`) は、これを呼ばないと親のレイアウトが回らない。
-/// `Grid` の `Auto` 行は自分の `layout` で行高を引き直すので、
-/// レイアウトが要ることを伝えないと行が古い高さのまま残り、中身が潰れて
-/// 後ろの行と重なる。1 つ上だけでは足りない (グリッドがさらに Stack や
-/// スクロールの中にいると、そこで止まってしまう)。
+/// **Children whose height changes after being shown** (an expanded `Expander`, a
+/// list with rows added, a `Stack` with children added) do not get the parent's
+/// layout to run without this. `Auto` rows of a `Grid` recompute their heights in
+/// their own `layout`, so unless they are told layout is needed, the rows keep
+/// their old heights, squashing the content and overlapping the rows after them.
+/// Going up just one level is not enough (if the grid is inside a further Stack or
+/// scroll view, it would stop there).
 pub(crate) fn invalidate_ancestors(view: &NSView) {
     view.invalidateIntrinsicContentSize();
     view.setNeedsLayout(true);
@@ -245,10 +260,10 @@ struct SpacerInner {
     native: Retained<NSView>,
 }
 
-/// 余白そのものになるウィジェット。
+/// A widget that is just empty space.
 ///
-/// 中身を持たず、スタックの余った空間をすべて受け取る。
-/// 縦スタックの途中に置けば、後ろの要素を下端へ寄せられる。
+/// It has no content and takes all of a stack's leftover space. Placed in the
+/// middle of a vertical stack, it pushes the elements after it to the bottom.
 #[derive(Clone)]
 pub struct Spacer(Rc<SpacerInner>);
 impl_widget!(Spacer);
@@ -261,10 +276,10 @@ impl Spacer {
     }
 }
 
-/// 中身の無いビューを、縮むことにも広がることにも抵抗しないようにする。
+/// Makes a content-less view resist neither shrinking nor growing.
 ///
-/// `Spacer` と `Canvas` のように自然な大きさを持たないビューは、これで
-/// 親の余りを受け取る側に回る。
+/// Views without a natural size, such as `Spacer` and `Canvas`, become recipients
+/// of the parent's leftover space this way.
 pub(crate) fn relax_hugging(view: &NSView) {
     for horizontal in [true, false] {
         view.setContentHuggingPriority_forOrientation(FILL_HUGGING, orientation(horizontal));
@@ -277,17 +292,20 @@ pub(crate) fn relax_hugging(view: &NSView) {
 
 // ------------------------------------------------------------------- Grid
 
-/// `NSGridView` が Auto 行の高さを決めるために使う情報。
+/// Information `NSGridView` uses to decide the height of Auto rows.
 ///
-/// AppKit は `NSStackView` の `fittingSize` を計算できても、Grid セルの
-/// 自然高としては使わず、同じ行のボタンなどに合わせて Stack を潰すことがある。
-/// 行に載せた実ビューを保持し、Auto 行だけ必要高を再計算する。
+/// Even though AppKit can compute an `NSStackView`'s `fittingSize`, it does not use
+/// it as the natural height of a Grid cell, and may squash the Stack to match a
+/// button in the same row. The real views placed in rows are kept, and the required
+/// height is recomputed only for Auto rows.
 type GridCells = Rc<RefCell<Vec<(Retained<NSView>, GridCell)>>>;
 
-/// `Fill` の子に張った「横に伸びたい」希望と、その置き場所。
+/// The "want to grow horizontally" wishes placed on `Fill` children, and where they
+/// are placed.
 ///
-/// 伸びる量はほかの列が要る幅で決まるので、レイアウトのたびに定数を
-/// 引き直す。そのために、張った制約を場所とともに持っておく。
+/// How much they grow depends on the widths other columns need, so the constants
+/// are recomputed on every layout. For that, the constraints are kept together with
+/// their positions.
 type GridGrows = Rc<RefCell<Vec<(Retained<NSLayoutConstraint>, GridCell)>>>;
 
 struct ContentSizedGridState {
@@ -340,8 +358,9 @@ impl ContentSizedGridView {
         unsafe { msg_send![super(this), init] }
     }
 
-    /// Auto 行を、その行に掛かるセル内容の fitting height 以上にする。
-    /// 複数行セルは必要高を span へ均等に配り、過大な行高を避ける。
+    /// Makes each Auto row at least the fitting height of the cell contents that span
+    /// it. Multi-row cells spread their required height evenly over their span to avoid
+    /// oversized rows.
     fn update_auto_row_heights(&self) -> bool {
         let tracks = self.ivars().row_tracks.borrow();
         let cells = self.ivars().cells.borrow();
@@ -378,10 +397,12 @@ impl ContentSizedGridView {
         changed
     }
 
-    /// `Fill` の子に張った「横に伸びたい」希望を、そのセルの取り分に合わせる。
+    /// Matches the "want to grow horizontally" wishes on `Fill` children to their
+    /// cell's share.
     ///
-    /// 希望する幅は「グリッドの幅 − ほかの列が要る幅」。ほかの列の内容幅は
-    /// レイアウトのたびに変わるので、制約の定数として引き直す。
+    /// The desired width is "the grid's width − the widths other columns need". The
+    /// content widths of the other columns change on every layout, so it is recomputed
+    /// as the constraint's constant.
     fn update_grow_widths(&self) -> bool {
         let grows = self.ivars().grows.borrow();
         if grows.is_empty() {
@@ -399,11 +420,12 @@ impl ContentSizedGridView {
         changed
     }
 
-    /// 列ごとに要る幅。
+    /// The width each column needs.
     ///
-    /// 幅を決め打ちした列 (`Track::Fixed`) は中身に関わらずその幅を占めるので、
-    /// 内容幅ではなく指定された幅を使う。それ以外は載っている中身の
-    /// `fittingSize` から決め、複数列にまたがるセルは span へ均等に配る。
+    /// Columns with a fixed width (`Track::Fixed`) take that width regardless of their
+    /// content, so the specified width is used instead of the content width. Others are
+    /// decided from the `fittingSize` of their content, and cells spanning several
+    /// columns spread it evenly over their span.
     fn column_content_widths(&self) -> Vec<f64> {
         let columns = self.numberOfColumns().max(0) as usize;
         let fixed: Vec<Option<f64>> = (0..columns)
@@ -426,7 +448,8 @@ impl ContentSizedGridView {
         widths
     }
 
-    /// 幅を決め打ちした列なら、その幅。中身に合わせる列 (`Auto` / `Fill`) は `None`。
+    /// The width, if the column has a fixed width. `None` for columns that fit their
+    /// content (`Auto` / `Fill`).
     fn fixed_column_width(&self, index: usize) -> Option<f64> {
         let width = self.columnAtIndex(index as isize).width();
         // `NSGridViewSizeForContent` は「中身に合わせる」を表す番兵値。
@@ -434,7 +457,8 @@ impl ContentSizedGridView {
         (width != content && width.is_finite() && width > 0.0).then_some(width)
     }
 
-    /// このセルが使えない幅 (ほかの列の内容と、外周・列間の余白)。
+    /// The width this cell cannot use (the other columns' content, plus the outer and
+    /// inter-column spacing).
     fn width_outside_cell(&self, cell: &GridCell, widths: &[f64]) -> f64 {
         let columns = widths.len();
         let span = cell.column_span.max(1);
@@ -461,14 +485,15 @@ struct GridInner {
     children: RefCell<Vec<Box<dyn Widget>>>,
     row_tracks: Rc<RefCell<Vec<Track>>>,
     cells: GridCells,
-    /// 横に伸びたい希望。セルの取り分に合わせて定数を引き直すため保持する。
+    /// The wishes to grow horizontally. Kept so their constants can be recomputed to
+    /// match the cell's share.
     grows: GridGrows,
-    /// `native` と同じオブジェクト。Auto 行を再計算する subclass として保持する。
+    /// The same object as `native`. Kept as the subclass that recomputes Auto rows.
     content_sized: Retained<ContentSizedGridView>,
     padding: Cell<Padding>,
 }
 
-/// 行と列で位置を決めるコンテナ (NSGridView)。
+/// A container that positions children by row and column (NSGridView).
 #[derive(Clone)]
 pub struct Grid(Rc<GridInner>);
 impl_widget!(Grid);
@@ -492,15 +517,16 @@ impl Grid {
         }))
     }
 
-    /// 列間・行間のすき間。
+    /// The spacing between columns and between rows.
     pub fn set_spacing(&self, column: f64, row: f64) {
         self.0.native.setColumnSpacing(column);
         self.0.native.setRowSpacing(row);
     }
 
-    /// 外周の余白。
+    /// The outer padding.
     ///
-    /// NSGridView に余白の指定は無いため、両端の行と列の padding として渡す。
+    /// NSGridView has no padding setting, so it is passed as padding of the rows and
+    /// columns at both ends.
     pub fn set_padding(&self, padding: Padding) {
         self.0.padding.set(padding);
         self.apply_padding();
@@ -530,12 +556,14 @@ impl Grid {
         }
     }
 
-    /// 指定した場所に子を置く。足りない行と列は自動で足される。
+    /// Places a child at the given position. Missing rows and columns are added
+    /// automatically.
     ///
-    /// **同じマスへ重ねて置くことはできない。** `NSGridCell` は中身を 1 つ
-    /// しか持てないため、すでに何かが置かれているマスへ置くと、前の子は
-    /// 外れる (他の 3 環境では重ねて置ける)。結合したマスは範囲内のどこを
-    /// 指しても同じマスなので、この決まりが範囲全体に効く。
+    /// **Children cannot be stacked in the same cell.** An `NSGridCell` can hold only
+    /// one content view, so placing something into a cell that already holds one
+    /// removes the previous child (the other three platforms allow stacking). A merged
+    /// cell is the same cell whichever position within it you point at, so this rule
+    /// applies to the whole range.
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         let view = child.native_view();
         prepare_child(&view);
@@ -601,22 +629,24 @@ impl Grid {
         self.0.content_sized.update_grow_widths();
     }
 
-    /// `Fill` 行・列の子に「余りのぶんだけ伸びたい」という弱い希望を張る。
+    /// Places a weak wish "want to grow by the leftover amount" on children in `Fill`
+    /// rows and columns.
     ///
-    /// `NSGridView` の行・列の大きさは中身から決まり、**余りをどこへ渡すかは
-    /// 決まっていない**。hugging priority だけでは足りず、`Auto` 側へ余白が
-    /// 入ることがある。
+    /// The sizes of `NSGridView` rows and columns are decided by their content, and
+    /// **where leftover space goes is undefined**. Hugging priority alone is not
+    /// enough; blank space sometimes goes to the `Auto` side.
     ///
-    /// そこで「グリッドと同じ大きさになりたい」を弱い優先度で足し、余りを
-    /// `Fill` の行・列へ誘導する。ただし**横はそのままだと、複数列のときに
-    /// 1 つのセルの子がグリッド全体の幅を要求してしまう**ので、ほかの列が
-    /// 要る幅を定数として差し引き、そのセル (結合していれば結合後の領域) の
-    /// 取り分だけを望むようにする。差し引く量は中身で変わるため、
-    /// [`ContentSizedGridView::update_grow_widths`] がレイアウトのたびに
-    /// 引き直す。
+    /// So "want to be the same size as the grid" is added at a weak priority, steering
+    /// leftover space to the `Fill` rows and columns. **Horizontally, however, with
+    /// several columns this as is would make one cell's child demand the whole grid's
+    /// width**, so the widths the other columns need are subtracted as a constant,
+    /// leaving it wanting only that cell's share (the merged area, if merged). The
+    /// amount subtracted depends on the content, so
+    /// [`ContentSizedGridView::update_grow_widths`] recomputes it on every layout.
     ///
-    /// 縦は `Auto` 行の高さを [`ContentSizedGridView::update_auto_row_heights`]
-    /// が必須の行高として決めているので、グリッドの高さのままでよい。
+    /// Vertically, [`ContentSizedGridView::update_auto_row_heights`] decides the
+    /// heights of `Auto` rows as required row heights, so the grid's height can be
+    /// used as is.
     fn set_grow_hint(&self, view: &NSView, cell: &GridCell, horizontal: bool, wanted: bool) {
         let identifier = grow_identifier(cell, horizontal);
         if horizontal {
@@ -657,23 +687,23 @@ impl Grid {
         }
     }
 
-    /// そのマスの中身を差し替える。同じマスに置かれていたものは外れる。
+    /// Replaces what is in the cell. Whatever was in the same cell is removed.
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
         self.remove(cell);
         self.attach(child, cell);
     }
 
-    /// 指定したマスに置かれているものを外す。何も無ければ何もしない。
+    /// Removes whatever is in the given cell. Does nothing if it is empty.
     ///
-    /// 見るのは `cell` の列と行だけで、span は見ない。
+    /// Only the column and row of `cell` are considered, not the span.
     ///
-    /// **結合したマス (span を持つ子) を外しても、結合そのものは残る。**
-    /// `NSGridView` に結合を解く API が無く、結合をまたぐ行・列も外せない
-    /// (試すと AppKit が例外を投げる)。naui は結合した範囲をまとめて 1 つの
-    /// マスとして扱うので、跡へ 1 マスぶんの子を置いても位置と大きさは
-    /// ふつうのマスと変わらない。違うのは、`Fill` の子が結合した範囲まで
-    /// 広がることと、範囲内の別の位置へ置くと同じマスなので前の子が外れる
-    /// ことの 2 つ。
+    /// **Removing a merged cell (a child with a span) leaves the merge itself in
+    /// place.** `NSGridView` has no API to unmerge, and rows and columns crossing a
+    /// merge cannot be removed either (AppKit throws an exception if you try). naui
+    /// treats a merged range as one cell, so a one-cell child placed in its place gets
+    /// the same position and size as an ordinary cell. There are two differences: a
+    /// `Fill` child stretches to the merged range, and placing into another position
+    /// within the range is the same cell, so the previous child is removed.
     pub fn remove(&self, cell: GridCell) {
         self.remove_at(cell);
         self.apply_padding();
@@ -681,7 +711,7 @@ impl Grid {
         self.0.content_sized.update_grow_widths();
     }
 
-    /// 子をすべて外す。行と列の指定はそのまま残る。
+    /// Removes every child. The row and column settings stay.
     pub fn clear(&self) {
         let cells: Vec<GridCell> = self
             .0
@@ -698,7 +728,8 @@ impl Grid {
         self.0.content_sized.update_grow_widths();
     }
 
-    /// 指定したマスの子を外す。同じマスに重ねて置かれていれば全部外す。
+    /// Removes the child in the given cell. If several are stacked in the same cell,
+    /// removes them all.
     fn remove_at(&self, cell: GridCell) {
         loop {
             let found = self
@@ -714,10 +745,10 @@ impl Grid {
         }
     }
 
-    /// `target` と同じ `NSGridCell` を使っている子を外す。
+    /// Removes the children using the same `NSGridCell` as `target`.
     ///
-    /// 結合したマスはどの位置から引いても同じ `NSGridCell` を返す。
-    /// 1 つのマスは中身を 1 つしか持てないので、重ねて置く前に外しておく。
+    /// A merged cell returns the same `NSGridCell` from any position. A cell can hold
+    /// only one content view, so the child is removed before placing another there.
     fn remove_sharing(&self, target: &NSGridCell) {
         loop {
             let found = self.0.cells.borrow().iter().position(|(_, placed)| {
@@ -734,7 +765,8 @@ impl Grid {
         }
     }
 
-    /// 控えの `found` 番目の子を、マスとビュー階層から外す。
+    /// Removes the `found`-th recorded child from its cell and from the view
+    /// hierarchy.
     fn detach(&self, found: usize) {
         let (view, placed) = self.0.cells.borrow_mut().remove(found);
         self.0.children.borrow_mut().remove(found);
@@ -751,7 +783,7 @@ impl Grid {
         view.removeFromSuperview();
     }
 
-    /// 列の幅の決め方。
+    /// How a column's width is determined.
     pub fn set_column_track(&self, index: usize, track: Track) {
         self.ensure_size(index + 1, 0);
         let column = self.0.native.columnAtIndex(index as isize);
@@ -772,7 +804,7 @@ impl Grid {
         }
     }
 
-    /// 行の高さの決め方。
+    /// How a row's height is determined.
     pub fn set_row_track(&self, index: usize, track: Track) {
         self.ensure_size(0, index + 1);
         self.0.row_tracks.borrow_mut()[index] = track;
@@ -795,17 +827,17 @@ impl Grid {
         self.0.content_sized.update_auto_row_heights();
     }
 
-    /// いまある列数。
+    /// The current number of columns.
     pub fn columns(&self) -> usize {
         self.0.native.numberOfColumns().max(0) as usize
     }
 
-    /// いまある行数。
+    /// The current number of rows.
     pub fn rows(&self) -> usize {
         self.0.native.numberOfRows().max(0) as usize
     }
 
-    /// 置いた子の数。
+    /// The number of children placed.
     pub fn len(&self) -> usize {
         self.0.children.borrow().len()
     }
@@ -836,7 +868,7 @@ define_class!(
     #[unsafe(super(NSClipView))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiFlippedClipView"]
-    /// スクロール内容を上端から並べるための NSClipView。
+    /// An NSClipView that lays out scroll content from the top.
     struct FlippedClipView;
 
     unsafe impl NSObjectProtocol for FlippedClipView {}
@@ -877,11 +909,12 @@ impl FlippedClipView {
 }
 
 define_class!(
-    /// クリップビューの位置と大きさの変化を受け取る。
+    /// Receives changes to the clip view's position and size.
     ///
-    /// 位置の変化 (bounds) はスクロールの通知に、大きさの変化 (frame) は
-    /// 大きさが決まる前に頼まれた `scroll_to` の適用に使う。通知センターは
-    /// observer を強く持たないので、`ScrollInner` が持ち、弱参照で戻る。
+    /// Position changes (bounds) drive scroll notifications, and size changes (frame)
+    /// are used to apply a `scroll_to` requested before the size was decided. The
+    /// notification center does not hold observers strongly, so `ScrollInner` holds
+    /// it, and it refers back weakly.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiScrollObserver"]
@@ -921,9 +954,9 @@ struct ScrollInner {
     horizontal: Cell<ScrollPolicy>,
     vertical: Cell<ScrollPolicy>,
     on_scroll: ScrollNotifier,
-    /// 大きさが決まる前に頼まれた行き先。決まった時点で適用する。
+    /// The destination requested before the size was decided. Applied once it is.
     pending: Cell<Option<ScrollTarget>>,
-    /// `pending` の適用をメインキューへ積んである。
+    /// Applying `pending` is queued on the main queue.
     pending_scheduled: Cell<bool>,
     observer: RefCell<Option<Retained<ScrollObserver>>>,
 }
@@ -936,7 +969,7 @@ impl Drop for ScrollInner {
     }
 }
 
-/// 中身がはみ出したらスクロールさせるコンテナ (NSScrollView)。
+/// A container that scrolls when its contents overflow (NSScrollView).
 #[derive(Clone)]
 pub struct Scroll(Rc<ScrollInner>);
 impl_widget!(Scroll);
@@ -985,41 +1018,43 @@ impl Scroll {
         *self.0.observer.borrow_mut() = Some(observer);
     }
 
-    /// いまのスクロール位置と大きさ。
+    /// The current scroll position and sizes.
     ///
-    /// 直前に中身を変えていても、レイアウトを済ませてから測る。大きさが
-    /// 決まる前に頼まれた行き先があれば、ここで先に適用する。
+    /// Even if the contents just changed, it measures after finishing layout. If a
+    /// destination was requested before the size was decided, it is applied here
+    /// first.
     pub fn metrics(&self) -> ScrollMetrics {
         self.0.native.layoutSubtreeIfNeeded();
         self.apply_pending();
         self.read_metrics()
     }
 
-    /// 指定した位置へ送る。送れる範囲に丸める。
+    /// Scrolls to the given position, clamped to the scrollable range.
     ///
-    /// まだ大きさが決まっていない (ウィンドウに載る前など) ときは、
-    /// 決まった時点で送る。
+    /// If the size is not decided yet (before it is in a window, for example), it
+    /// scrolls once it is.
     pub fn scroll_to(&self, x: f64, y: f64) {
         self.request(ScrollTarget::To { x, y });
     }
 
-    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    /// Scrolls to the vertical end (the very bottom). The horizontal position stays.
     pub fn scroll_to_end(&self) {
         self.request(ScrollTarget::End);
     }
 
-    /// スクロール位置が変わったときの通知。
+    /// Notified when the scroll position changes.
     ///
-    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
-    /// 届く。大きさだけが変わったときは届かない。
+    /// Besides user interaction, it also arrives for moves caused by `scroll_to` or by
+    /// the contents shrinking. It does not arrive when only the sizes change.
     pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
         self.0.on_scroll.set(&self.read_metrics(), f);
     }
 
-    /// レイアウトを待たずに、いまの値を読む。
+    /// Reads the current values without waiting for layout.
     ///
-    /// ウィンドウのタイトルバーの下まで伸びたときなど、`contentInsets` で
-    /// 隠れる分は見えている範囲に含めず、中身の先頭を 0 にそろえる。
+    /// When it extends under the window's title bar, for example, the part hidden by
+    /// `contentInsets` is not counted as visible, and the start of the content is
+    /// normalized to 0.
     fn read_metrics(&self) -> ScrollMetrics {
         let insets = self.0.native.contentInsets();
         let visible = self.0.native.contentView().bounds();
@@ -1047,11 +1082,12 @@ impl Scroll {
         self.apply_pending();
     }
 
-    /// 大きさが決まった通知 (クリップビューの frame の変化) から呼ぶ。
+    /// Called from the notification that the size has been decided (a change to the
+    /// clip view's frame).
     ///
-    /// この通知はレイアウトの途中で来るので、その場では中身の大きさが
-    /// まだ決まっていないことがあり、レイアウトをやり直させるのも危ない。
-    /// レイアウトが一段落した後 (メインキューの次の周回) で適用する。
+    /// This notification arrives in the middle of layout, so the content's size may not
+    /// be decided yet at that point, and forcing layout again is risky too. It is
+    /// applied after layout has settled (on the next iteration of the main queue).
     fn schedule_pending(&self, mtm: MainThreadMarker) {
         if self.0.pending.get().is_none() || self.0.pending_scheduled.replace(true) {
             return;
@@ -1070,9 +1106,10 @@ impl Scroll {
         });
     }
 
-    /// 覚えている行き先へ送る。大きさが決まっていなければ、まだ覚えておく。
+    /// Scrolls to the remembered destination. If the size is not decided, keeps
+    /// remembering it.
     ///
-    /// レイアウトは呼び出し側で済ませておく。
+    /// The caller finishes layout beforehand.
     fn apply_pending(&self) {
         let Some(target) = self.0.pending.get() else {
             return;
@@ -1096,7 +1133,8 @@ impl Scroll {
         self.0.on_scroll.notify_if_moved(|| self.read_metrics());
     }
 
-    /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
+    /// Whether scrolling is allowed horizontally and vertically. The default is
+    /// horizontal `Never`, vertical `Auto`.
     pub fn set_policy(&self, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
         self.0.horizontal.set(horizontal);
         self.0.vertical.set(vertical);
@@ -1120,7 +1158,7 @@ impl Scroll {
         );
     }
 
-    /// スクロールさせる中身。呼ぶたびに置き換わる。
+    /// The content to scroll. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
         let view = child.native_view();
         prepare_child(&view);

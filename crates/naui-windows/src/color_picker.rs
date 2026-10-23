@@ -1,18 +1,18 @@
-//! 色の選択 (WinUI 3 のネイティブ `ColorPicker` をボタンのフライアウトへ入れたもの)。
+//! Color picking (WinUI 3's native `ColorPicker` placed in a button's flyout).
 //!
-//! WinUI 3 の `ColorPicker` は、スペクトラム・スライダー・16 進入力を縦に
-//! 並べた**大きな面**で、他の 3 環境の「色の見本を押すと選択の UI が開く」
-//! という形とは並び方が違う。そこで naui では、WinUI 3 の作法どおり
-//! `Button` の `Flyout` へ `ColorPicker` を入れ、ボタンには選んだ色の
-//! 見本 (`Border` + `SolidColorBrush`) を出す。色を選ぶ UI そのものは
-//! WinUI の `ColorPicker` のままで、naui が描くものは無い。
+//! WinUI 3's `ColorPicker` is **a large panel** stacking a spectrum, sliders and hex
+//! input vertically, arranged differently from the other three platforms' "click a
+//! color swatch to open the picking UI". So, following WinUI 3 conventions, naui
+//! puts the `ColorPicker` in a `Button`'s `Flyout` and shows a swatch of the chosen
+//! color (`Border` + `SolidColorBrush`) on the button. The color picking UI itself
+//! remains WinUI's `ColorPicker`; naui draws nothing.
 //!
-//! 型は [`naui_winui3`] の投影をそのまま使う。組み立ては XAML に書いて
-//! `XamlReader` へ渡し (`Flyout` は投影に無い)、中の要素は `x:Name` から
-//! 引く。
+//! The types come from the [`naui_winui3`] projection as is. It is assembled in XAML
+//! passed to `XamlReader` (`Flyout` is not in the projection), and the inner
+//! elements are looked up by `x:Name`.
 //!
-//! 透明度は扱わないので `IsAlphaEnabled` を切ってある ([`Color`] が
-//! 不透明な色しか持たないため)。
+//! Transparency is not handled, so `IsAlphaEnabled` is off (since [`Color`] holds
+//! only opaque colors).
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -33,10 +33,10 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
-/// 色の見本を出すボタンと、その中に開く `ColorPicker`。
+/// The button showing the color swatch, and the `ColorPicker` that opens inside it.
 ///
-/// ボタンの `Padding` は、アプリ全体の `Button` スタイル (16,8) では
-/// 見本に対して広すぎるのでここで上書きする。
+/// The app-wide `Button` style's `Padding` (16,8) is too wide for the swatch, so it
+/// is overridden here.
 const COLOR_PICKER_XAML: &str = r##"<Button
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -57,11 +57,11 @@ const COLOR_PICKER_XAML: &str = r##"<Button
     </Button.Flyout>
 </Button>"##;
 
-/// 色が変わったことの通知先。
+/// The handler notified when the color changes.
 ///
-/// WinRT のデリゲートは `Send + Sync` を要求するので [`UiThreadCell`] に
-/// 載せる。呼び出しの間だけクロージャを取り出すため、通知の中から同じ
-/// ピッカーを操作しても二重借用にならない。
+/// WinRT delegates require `Send + Sync`, so it is placed in a [`UiThreadCell`].
+/// The closure is taken out only for the duration of the call, so operating on the
+/// same picker from inside the notification does not double-borrow.
 #[derive(Clone)]
 struct ColorHandler(HandlerCell<dyn FnMut(Color)>);
 
@@ -88,20 +88,20 @@ impl ColorHandler {
 }
 
 struct ColorPickerInner {
-    /// 見本を出すボタン。レイアウトへ載るのはこれ。
+    /// The button showing the swatch. This is what goes into the layout.
     native: FrameworkElement,
-    /// フライアウトの中身。値を持っているのはこちら。
+    /// The flyout's contents. This one holds the value.
     picker: XamlColorPicker,
-    /// ボタンの見本を塗るブラシ。
+    /// The brush that paints the button's swatch.
     swatch: SolidColorBrush,
     handler: ColorHandler,
-    /// `set_value` による変更では `on_change` を呼ばない。
+    /// Changes made by `set_value` do not call `on_change`.
     silent: Cell<bool>,
 }
 
-/// 色を選ばせるコントロール (`Button` + `Flyout` + `ColorPicker`)。
+/// A control for picking a color (`Button` + `Flyout` + `ColorPicker`).
 ///
-/// 作った直後の値は黒 ([`Color::BLACK`])。
+/// Its value right after creation is black ([`Color::BLACK`]).
 #[derive(Clone)]
 pub struct ColorPicker(Rc<ColorPickerInner>);
 impl_widget!(ColorPicker, native);
@@ -129,11 +129,11 @@ impl ColorPicker {
         Ok(this)
     }
 
-    /// WinUI の `ColorChanged` を Rust のクロージャへつなぐ。
+    /// Connects WinUI's `ColorChanged` to the Rust closure.
     ///
-    /// `ColorChanged` は `Color` を書き換えたときにも飛ぶので、`set_value`
-    /// の間は黙らせる (macOS / GTK / Web と同じく、通知は利用者の操作の
-    /// ときだけ)。見本の塗り直しは黙っている間も行う。
+    /// `ColorChanged` also fires when `Color` is written, so it is silenced during
+    /// `set_value` (as on macOS / GTK / Web, notifications are only for user actions).
+    /// The swatch is repainted even while silenced.
     fn connect(&self) -> Result<()> {
         let target = Arc::new(UiThreadCell::new(Rc::downgrade(&self.0)));
         let changed = TypedEventHandler::new(
@@ -161,7 +161,7 @@ impl ColorPicker {
         Ok(())
     }
 
-    /// いま選ばれている色。
+    /// The currently selected color.
     pub fn value(&self) -> Color {
         self.0
             .picker
@@ -170,7 +170,7 @@ impl ColorPicker {
             .unwrap_or(Color::BLACK)
     }
 
-    /// プログラムから色を差し替える。`on_change` は呼ばれない。
+    /// Replaces the color from code. `on_change` is not called.
     pub fn set_value(&self, color: Color) {
         self.0.silent.set(true);
         let _ = self.0.picker.SetColor(to_win_color(color));
@@ -179,7 +179,7 @@ impl ColorPicker {
         let _ = self.0.swatch.SetColor(to_win_color(color));
     }
 
-    /// 利用者が選んだのと同じ経路で色を決め、1 回通知する。
+    /// Sets the color through the same path as a user's pick and notifies once.
     pub fn pick(&self, color: Color) {
         self.set_value(color);
         self.0.handler.emit(self.value());
@@ -191,7 +191,7 @@ impl ColorPicker {
         }
     }
 
-    /// 色が変わるたびに、変わった後の色で呼ばれる。
+    /// Called with the new color every time the color changes.
     pub fn on_change(&self, f: impl FnMut(Color) + 'static) {
         self.0.handler.set(f);
     }
@@ -203,7 +203,7 @@ fn load_button() -> Result<FrameworkElement> {
         .map_err(|e| to_error("色ピッカーの生成", e))
 }
 
-/// XAML の `x:Name` から中の要素を引く。
+/// Looks up an inner element by its XAML `x:Name`.
 fn find<T: Interface>(root: &FrameworkElement, name: &str) -> Result<T> {
     root.FindName(&HSTRING::from(name))
         .and_then(|value| value.cast::<T>())

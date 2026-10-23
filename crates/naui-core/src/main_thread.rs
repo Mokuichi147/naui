@@ -1,11 +1,11 @@
-//! UI スレッドへ仕事を積むための土台。
+//! The foundation for queuing work onto the UI thread.
 //!
-//! バックエンドが供給するのは [`MainThread`] 1 つだけで、
-//! チャネル ([`crate::channel`]) とタスク ([`crate::task`]) はどちらもこの上に載る。
+//! The only thing a backend supplies is a single [`MainThread`]; both channels
+//! ([`crate::channel`]) and tasks ([`crate::task`]) are built on top of it.
 //!
-//! 実体 (受信クロージャや future) は `Rc` を持つので UI スレッドの
-//! `thread_local!` 登録簿に置き、スレッドをまたぐのは `u64` の番号だけにする。
-//! ネイティブのウィジェットも `!Send` な future も、一度も UI スレッドの外へ出ない。
+//! The actual objects (receiving closures and futures) hold `Rc`s, so they live in
+//! a `thread_local!` registry on the UI thread, and only `u64` ids cross threads.
+//! Neither native widgets nor `!Send` futures ever leave the UI thread.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -18,32 +18,34 @@ use crate::channel::Sender;
 use crate::task::Task;
 use crate::{Error, Slot};
 
-/// UI スレッドで 1 回だけ実行される仕事。
+/// Work that runs exactly once on the UI thread.
 pub type Work = Box<dyn FnOnce() + Send + 'static>;
 
-/// バックエンドが供給する「UI スレッドで 1 回だけ実行する」仕組み。
+/// The mechanism, supplied by a backend, for "running something once on the UI
+/// thread".
 ///
-/// **同期実行してはならない。** どの環境でも必ず後回しにすること。
-/// `send` や `spawn` がその場でコールバックや poll を起こさないという
-/// naui の約束は、この一点に依っている。
+/// **It must not run synchronously.** It must always defer, on every platform.
+/// naui's promise that `send` and `spawn` never trigger a callback or poll on the
+/// spot rests entirely on this.
 ///
-/// アプリが実装するものではない。
+/// Not something apps implement.
 pub trait MainThread: Send + Sync + 'static {
-    /// 積めたら `true`。イベントループが終わっている等で届かないなら `false`。
+    /// `true` if queued. `false` if it cannot be delivered, for example because the
+    /// event loop has finished.
     fn post(&self, work: Work) -> bool;
 
-    /// `delay` だけ待ってから UI スレッドで 1 回だけ実行する。積めたら `true`。
+    /// Runs once on the UI thread after waiting `delay`. `true` if queued.
     ///
-    /// 待つのはイベントループに任せる (スレッドを止めて待ってはならない)。
-    /// `delay` が 0 でも、[`post`](MainThread::post) と同じく後回しにすること。
+    /// Leave the waiting to the event loop (never block a thread to wait). Even when
+    /// `delay` is 0, defer it just like [`post`](MainThread::post).
     fn post_after(&self, delay: std::time::Duration, work: Work) -> bool;
 }
 
-/// 投函先と「UI がまだ生きているか」をまとめたもの。
+/// Bundles where to post and "whether the UI is still alive".
 ///
-/// `TryEnqueue` は終了後に `Ok(false)` を返すが、macOS の main queue と
-/// GTK の idle source は同じようには失敗を返さない。4 環境で意味をそろえるため、
-/// core 側で `alive` を先に見る。
+/// `TryEnqueue` returns `Ok(false)` after shutdown, but the macOS main queue and
+/// GTK idle sources do not report failure the same way. To make the meaning the
+/// same on all four platforms, core checks `alive` first.
 pub(crate) struct AppDispatch {
     alive: AtomicBool,
     main_thread: Arc<dyn MainThread>,
@@ -65,7 +67,8 @@ impl AppDispatch {
         self.alive.store(false, Ordering::Release);
     }
 
-    /// UI スレッドへ仕事を積む。終了済みなら積まずに `false`。
+    /// Queues work onto the UI thread. If already finished, does not queue and returns
+    /// `false`.
     pub(crate) fn post(&self, work: Work) -> bool {
         if !self.is_alive() {
             return false;
@@ -73,7 +76,8 @@ impl AppDispatch {
         self.main_thread.post(work)
     }
 
-    /// 時間を置いて UI スレッドへ仕事を積む。終了済みなら積まずに `false`。
+    /// Queues work onto the UI thread after a delay. If already finished, does not
+    /// queue and returns `false`.
     pub(crate) fn post_after(&self, delay: std::time::Duration, work: Work) -> bool {
         if !self.is_alive() {
             return false;
@@ -81,22 +85,22 @@ impl AppDispatch {
         self.main_thread.post_after(delay, work)
     }
 
-    /// 終了したことを伝えるエラー。
+    /// An error reporting that the UI has finished.
     pub(crate) fn closed(context: &'static str) -> Error {
         Error::new(context, "UI はもう受け取れません")
     }
 }
 
-/// UI スレッドで番号から引き直して起こせるもの。
+/// Something that can be looked up again by id and woken on the UI thread.
 ///
-/// `ChannelLocal<T>` は `T` がチャネルごとに違うので、単一の登録簿へ入れるには
-/// この形で型を消す必要がある。
+/// `ChannelLocal<T>` has a different `T` per channel, so the type must be erased in
+/// this form to put them in a single registry.
 pub(crate) trait LocalEntry {
     fn pump(&self);
 }
 
 thread_local! {
-    /// UI スレッドで生きているチャネル / タスクの登録簿。
+    /// The registry of channels / tasks alive on the UI thread.
     static REGISTRY: RefCell<HashMap<u64, Rc<dyn LocalEntry>>> =
         RefCell::new(HashMap::new());
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
@@ -114,18 +118,20 @@ pub(crate) fn register(id: u64, entry: Rc<dyn LocalEntry>) {
     let _ = REGISTRY.try_with(|r| r.borrow_mut().insert(id, entry));
 }
 
-/// 登録簿から外す。取り出した `Rc` は借用を解いてから落とす
-/// (drop の中で登録簿を触られても壊れないように)。
+/// Removes an entry from the registry. The `Rc` taken out is dropped only after the
+/// borrow is released (so the registry does not break if it is touched during the
+/// drop).
 pub(crate) fn deregister(id: u64) {
     let removed = REGISTRY.try_with(|r| r.borrow_mut().remove(&id));
     drop(removed);
 }
 
-/// 番号から実体を引いて起こす。
+/// Looks up the object by id and wakes it.
 ///
-/// **登録簿を借りたままコールバックを呼んではいけない。** コールバックの中から
-/// 別のチャネルを開く / 閉じるといった再入で `RefCell` が panic するため、
-/// `Rc` を clone して借用を解いてから呼ぶ。
+/// **Never call a callback while holding a borrow of the registry.** Re-entrancy,
+/// such as opening or closing another channel from inside the callback, would make
+/// the `RefCell` panic, so the `Rc` is cloned and the borrow released before the
+/// call.
 pub(crate) fn pump_by_id(id: u64) {
     let entry = REGISTRY
         .try_with(|r| r.borrow().get(&id).cloned())
@@ -141,12 +147,12 @@ fn clear_registry() {
     drop(entries);
 }
 
-/// クロージャを取り出して呼び、差し替えられていなければ戻す。
+/// Takes out the closure, calls it, and puts it back unless it was replaced.
 ///
-/// 呼び出し中に同じウィジェットを触られても二重借用にならないための、
-/// naui で共通のイディオム。panic はここで止める (どのバックエンドでも
-/// C / WinRT の境界を越えて巻き戻せないため)。panic の内容そのものは
-/// 既定の panic hook が stderr へ出すので、ここでは何も出力しない。
+/// A common idiom in naui to avoid double borrows when the same widget is touched
+/// during the call. Panics are stopped here (no backend can unwind across the C /
+/// WinRT boundary). The default panic hook prints the panic itself to stderr, so
+/// nothing is printed here.
 pub(crate) fn call_guarded<T>(slot: &RefCell<Slot<dyn FnMut(T)>>, value: T) {
     let taken = slot.borrow_mut().take();
     let Some(mut f) = taken else {
@@ -159,22 +165,23 @@ pub(crate) fn call_guarded<T>(slot: &RefCell<Slot<dyn FnMut(T)>>, value: T) {
     }
 }
 
-/// UI スレッドで動く仕事を積むためのハンドル。
+/// A handle for queuing work that runs on the UI thread.
 ///
-/// [`Ui::tasks`](../../naui/struct.Ui.html#method.tasks) で作る。
-/// clone してコールバックへ持ち込めるが、**別スレッドへは送れない** (`!Send`)。
+/// Created with [`Ui::tasks`](../../naui/struct.Ui.html#method.tasks). It can be
+/// cloned and moved into callbacks, but **cannot be sent to other threads**
+/// (`!Send`).
 ///
-/// 別スレッドの結果を画面へ返すには [`channel`](Tasks::channel)、
-/// UI スレッドで future を回すには [`spawn`](Tasks::spawn) を使う。
+/// Use [`channel`](Tasks::channel) to bring results from other threads back to the
+/// screen, and [`spawn`](Tasks::spawn) to run futures on the UI thread.
 #[derive(Clone)]
 pub struct Tasks {
     dispatch: Arc<AppDispatch>,
-    /// `Rc` を持たせて `!Send` にする (`Arc` だけだと `Send` が付いてしまう)。
+    /// Holding an `Rc` makes this `!Send` (with only an `Arc` it would be `Send`).
     _local: Rc<()>,
 }
 
 impl Tasks {
-    /// バックエンドが `Ui::new` から呼ぶ。アプリが使うものではない。
+    /// Called by backends from `Ui::new`. Not for use by apps.
     #[doc(hidden)]
     pub fn from_main_thread(main_thread: Arc<dyn MainThread>) -> Self {
         Self {
@@ -183,24 +190,25 @@ impl Tasks {
         }
     }
 
-    /// UI の実行環境が終わったことを伝える。バックエンドの終了処理から呼ぶ。
+    /// Reports that the UI runtime has finished. Called from a backend's shutdown.
     ///
-    /// 以降の [`Sender::send`] は失敗し、登録簿に残っている受信クロージャと
-    /// future は解放される。アプリが使うものではない。
+    /// After this, [`Sender::send`] fails, and receiving closures and futures still in
+    /// the registry are released. Not for use by apps.
     #[doc(hidden)]
     pub fn shutdown(&self) {
         self.dispatch.shutdown();
         clear_registry();
     }
 
-    /// 別スレッドから値を受け取るチャネルを開く。
+    /// Opens a channel that receives values from other threads.
     ///
-    /// `on_value` は **UI スレッドで**呼ばれるので、中でウィジェットを触ってよい。
-    /// 返る [`Sender`] は `Send + Sync + Clone` なので、好きなだけスレッドへ渡せる。
+    /// `on_value` is called **on the UI thread**, so it may touch widgets. The returned
+    /// [`Sender`] is `Send + Sync + Clone`, so it can be handed to as many threads as
+    /// you like.
     ///
-    /// 値は**送った順に**届く (チャネルが複数あるとき、チャネルをまたいだ順序は
-    /// 決まっていない)。[`send`](Sender::send) はその場でクロージャを呼ばず、
-    /// UI スレッドの手が空いてから届く。
+    /// Values arrive **in the order they were sent** (with several channels, the order
+    /// across channels is unspecified). [`send`](Sender::send) does not call the
+    /// closure on the spot; the value arrives once the UI thread is free.
     pub fn channel<T, F>(&self, on_value: F) -> Sender<T>
     where
         T: Send + 'static,
@@ -209,13 +217,14 @@ impl Tasks {
         crate::channel::open(&self.dispatch, on_value)
     }
 
-    /// UI スレッドで future を回す。
+    /// Runs a future on the UI thread.
     ///
-    /// future は `Send` でなくてよいので、ウィジェットのハンドルを持ち込める。
-    /// 進めるのは UI スレッドのイベントループなので、**中でブロッキング処理を
-    /// すると画面が止まる**。重い処理は [`channel`](Tasks::channel) へ出す。
+    /// The future need not be `Send`, so it can hold widget handles. It is driven by the
+    /// UI thread's event loop, so **blocking inside it freezes the screen**. Move heavy
+    /// work out through a [`channel`](Tasks::channel).
     ///
-    /// 戻り値を捨ててもタスクは走り続ける。止めたいときは [`Task::cancel`]。
+    /// The task keeps running even if the return value is dropped. Use
+    /// [`Task::cancel`] to stop it.
     pub fn spawn<F>(&self, future: F) -> Task
     where
         F: std::future::Future<Output = ()> + 'static,
@@ -223,11 +232,11 @@ impl Tasks {
         crate::task::spawn(&self.dispatch, future)
     }
 
-    /// `delay` たってから、UI スレッドで `f` を 1 回呼ぶ。
+    /// Calls `f` once on the UI thread after `delay` has passed.
     ///
-    /// 戻り値を捨ててもタイマーは止まらない。止めたいときは [`Timer::cancel`]。
-    /// 入力が止まってから検索する (デバウンス) なら、打つたびに前のものを
-    /// `cancel` して作り直す。
+    /// The timer does not stop when the return value is dropped. Use
+    /// [`Timer::cancel`] to stop it. To search once typing pauses (debouncing),
+    /// `cancel` the previous timer and create a new one on every keystroke.
     ///
     /// [`Timer::cancel`]: crate::Timer::cancel
     pub fn after(&self, delay: std::time::Duration, f: impl FnOnce() + 'static) -> crate::Timer {
@@ -244,25 +253,26 @@ impl Tasks {
         )
     }
 
-    /// `interval` ごとに、UI スレッドで `f` を呼ぶ。最初の呼び出しも
-    /// `interval` たってから。
+    /// Calls `f` on the UI thread every `interval`. The first call also comes after
+    /// `interval`.
     ///
-    /// 戻り値を捨ててもタイマーは止まらない。止めたいときは
-    /// [`Timer::cancel`](crate::Timer::cancel) (コールバックの中から呼んでもよい)。
-    /// 次の呼び出しは前の呼び出しが終わってから数えるので、重い処理でも
-    /// 呼び出しが重なることはない。
+    /// The timer does not stop when the return value is dropped. Use
+    /// [`Timer::cancel`](crate::Timer::cancel) to stop it (calling it from inside the
+    /// callback is fine). The next call is counted from when the previous call
+    /// finishes, so calls never overlap even with heavy work.
     pub fn every(&self, interval: std::time::Duration, f: impl FnMut() + 'static) -> crate::Timer {
         crate::timer::start(&self.dispatch, interval, Some(interval), Box::new(f))
     }
 
-    /// `delay` たつと終わる future。[`spawn`](Tasks::spawn) の中で待つのに使う。
+    /// A future that completes after `delay`. Use it to wait inside
+    /// [`spawn`](Tasks::spawn).
     ///
     /// ```ignore
     /// let tasks = ui.tasks();
     /// tasks.clone().spawn(async move {
     ///     for attempt in 1.. {
     ///         if connect().await.is_ok() { break; }
-    ///         tasks.sleep(Duration::from_secs(attempt.min(30))).await; // 再接続を待つ
+    ///         tasks.sleep(Duration::from_secs(attempt.min(30))).await; // wait before reconnecting
     ///     }
     /// });
     /// ```

@@ -1,24 +1,23 @@
-//! ツールバー (AppKit の `NSToolbar`)。
+//! The toolbar (AppKit's `NSToolbar`).
 //!
-//! `NSToolbar` は `NSView` ではなく **`NSWindow` に取り付けるもの**なので、
-//! ほかのウィジェットのようにレイアウトへ載せることはできない。そのため
-//! [`Toolbar`] は [`Widget`](crate::Widget) ではなく、
-//! [`Window::set_toolbar`](crate::Window::set_toolbar) で取り付ける。
-//! 見た目・タイトルバーとの一体化・項目が入りきらないときの送り出しは
-//! すべて AppKit が行う。
+//! `NSToolbar` is not an `NSView` but **something attached to an `NSWindow`**, so
+//! it cannot be placed in a layout like other widgets. So [`Toolbar`] is not a
+//! [`Widget`](crate::Widget); it is attached with
+//! [`Window::set_toolbar`](crate::Window::set_toolbar). Its look, merging with the
+//! title bar, and overflow when items do not fit are all done by AppKit.
 //!
-//! 項目は `NSToolbarItem` で、識別子は `naui.item.<インデックス>`。
-//! アイコンは [`ToolbarIcon`](naui_core::ToolbarIcon) を SF Symbols
-//! (`NSImage::imageWithSystemSymbolName`) へ写したもので、`label` は
-//! 読み上げと、項目が入りきらないときの送り出しメニューに使う。
-//! `ToolbarItem::separator()` は macOS の作法にならって
-//! `NSToolbarSpaceItemIdentifier` (一定幅の空き) へ写す。
+//! Items are `NSToolbarItem`s with identifiers `naui.item.<index>`. Icons are
+//! [`ToolbarIcon`](naui_core::ToolbarIcon) mapped to SF Symbols
+//! (`NSImage::imageWithSystemSymbolName`), and `label` is used for screen readers
+//! and the overflow menu when items do not fit. Following macOS conventions,
+//! `ToolbarItem::separator()` maps to `NSToolbarSpaceItemIdentifier` (a fixed-width
+//! space).
 //!
-//! ウィンドウに [`Sidebar`](crate::Sidebar) が付いている間は、先頭へ AppKit
-//! 標準のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`) と、
-//! 以降の項目を中身の区画の上へ寄せる区切り
-//! (`NSToolbarSidebarTrackingSeparatorItemIdentifier`) を差し込む。どちらも
-//! AppKit が作る項目なので、naui の項目のインデックスには数えない。
+//! While a [`Sidebar`](crate::Sidebar) is attached to the window, AppKit's standard
+//! sidebar button (`NSToolbarToggleSidebarItemIdentifier`) and a separator that
+//! moves the following items above the content pane
+//! (`NSToolbarSidebarTrackingSeparatorItemIdentifier`) are inserted at the start.
+//! Both are items AppKit creates, so they are not counted in naui's item indices.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -36,30 +35,31 @@ use objc2_foundation::{NSArray, NSString};
 
 use crate::trampoline::{ActionTarget, SelectHandler};
 
-/// ツールバーの識別子に付ける通し番号。
+/// The running number appended to toolbar identifiers.
 static NEXT_TOOLBAR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// 項目の識別子の頭。後ろにインデックスが付く。
+/// The prefix of item identifiers. The index is appended.
 const ITEM_PREFIX: &str = "naui.item.";
 
 struct ToolbarInner {
     native: Retained<NSToolbar>,
     items: RefCell<Vec<ToolbarItem>>,
-    /// 生成した `NSToolbarItem`。区切りのところは `None`。
+    /// The created `NSToolbarItem`s. `None` at separators.
     natives: RefCell<Vec<Option<Retained<NSToolbarItem>>>>,
-    /// 押されたときのトランポリン。`NSToolbarItem` の target は weak なので保持する。
+    /// The trampolines for clicks. `NSToolbarItem` targets are weak, so they are held.
     targets: RefCell<Vec<Retained<ActionTarget>>>,
     handler: SelectHandler,
-    /// ツールバー全体の有効・無効。項目ごとの指定と AND を取る。
+    /// Whether the whole toolbar is enabled. ANDed with the per-item settings.
     enabled: Cell<bool>,
-    /// `NSToolbar` の delegate は weak なので、ここで保持する。
+    /// `NSToolbar`'s delegate is weak, so it is held here.
     delegate: RefCell<Option<Retained<ToolbarDelegate>>>,
-    /// 先頭へサイドバーボタンと区切りを差し込むかどうか。
+    /// Whether to insert the sidebar button and separator at the start.
     sidebar_controls: Cell<bool>,
 }
 
 impl ToolbarInner {
-    /// 区切りを含めた並びの識別子。`NSToolbar` へ渡す順序そのもの。
+    /// The identifiers of the sequence including separators. Exactly the order passed
+    /// to `NSToolbar`.
     fn identifiers(&self) -> Retained<NSArray<NSToolbarItemIdentifier>> {
         let mut ids: Vec<Retained<NSString>> = Vec::new();
         if self.sidebar_controls.get() {
@@ -78,7 +78,8 @@ impl ToolbarInner {
         NSArray::from_retained_slice(&ids)
     }
 
-    /// 識別子から項目のインデックスへ戻す。区切りや別物なら `None`。
+    /// Maps an identifier back to an item index. `None` for separators or anything
+    /// else.
     fn index_of(identifier: &NSToolbarItemIdentifier) -> Option<usize> {
         identifier
             .to_string()
@@ -86,10 +87,11 @@ impl ToolbarInner {
             .and_then(|rest| rest.parse().ok())
     }
 
-    /// インデックスに対応する `NSToolbarItem` を作る。
+    /// Creates the `NSToolbarItem` for the index.
     ///
-    /// `NSToolbar` は「呼ばれるたびに新しい項目を返すこと」を求めるので、
-    /// ここでは覚えず、挿入後に [`Toolbar::collect_items`] で実物を拾い直す。
+    /// `NSToolbar` requires "a new item to be returned on every call", so nothing is
+    /// remembered here; the real items are picked up again with
+    /// [`Toolbar::collect_items`] after insertion.
     fn make_item(self: &Rc<Self>, index: usize) -> Option<Retained<NSToolbarItem>> {
         let mtm = MainThreadMarker::from(&*self.native);
         let item = self.items.borrow().get(index)?.clone();
@@ -189,13 +191,14 @@ impl ToolbarDelegate {
     }
 }
 
-/// ウィンドウの上端に付く、よく使う操作の並び (`NSToolbar`)。
+/// A row of frequently used actions attached to the top of the window
+/// (`NSToolbar`).
 ///
-/// [`Widget`](crate::Widget) ではない。
-/// [`Window::set_toolbar`](crate::Window::set_toolbar) で取り付ける。
-/// ナビゲーションと違い**選ばれている項目を持たず**、押されるたびに
-/// そのインデックスで [`on_activate`](Self::on_activate) が呼ばれる。
-/// インデックスは区切りを含めた並びの位置で、区切りが返ることはない。
+/// Not a [`Widget`](crate::Widget). Attach it with
+/// [`Window::set_toolbar`](crate::Window::set_toolbar). Unlike navigation, it
+/// **has no selected item**; every click calls [`on_activate`](Self::on_activate)
+/// with the index. The index is the position in the sequence including separators;
+/// separators are never returned.
 #[derive(Clone)]
 pub struct Toolbar(Rc<ToolbarInner>);
 
@@ -237,21 +240,21 @@ impl Toolbar {
         Self(inner)
     }
 
-    /// 項目を作り直す。以前の項目は取り除かれる。
+    /// Rebuilds the items. The previous items are removed.
     ///
-    /// インデックスは区切りを含めた並びの位置。
+    /// The index is the position in the sequence including separators.
     pub fn set_items(&self, items: &[ToolbarItem]) {
         self.rebuild(items);
     }
 
-    /// 先頭へサイドバーボタンと区切りを差し込むかどうかを切り替える。
+    /// Switches whether to insert the sidebar button and separator at the start.
     ///
-    /// [`Window`](crate::Window) がサイドバーの取り付け・取り外しに合わせて呼ぶ。
+    /// Called by [`Window`](crate::Window) as a sidebar is attached or detached.
     ///
-    /// サイドバー用の区切り (`NSToolbarSidebarTrackingSeparatorItemIdentifier`)
-    /// は、ウィンドウに付いていないツールバーには AppKit が入れてくれない。
-    /// そのため並びが食い違っていれば、呼ばれるたびに並べ直す (ウィンドウに
-    /// 付けたあとで呼べば入る)。
+    /// AppKit does not insert the sidebar separator
+    /// (`NSToolbarSidebarTrackingSeparatorItemIdentifier`) into a toolbar not attached
+    /// to a window. So if the sequence does not match, it is rearranged on every call
+    /// (calling it after attaching to the window inserts it).
     pub(crate) fn set_sidebar_controls(&self, on: bool) {
         self.0.sidebar_controls.set(on);
         let expected: Vec<String> = self
@@ -273,7 +276,7 @@ impl Toolbar {
         }
     }
 
-    /// 同じツールバーのハンドルかどうか (clone したものも同じとみなす)。
+    /// Whether it is a handle to the same toolbar (clones count as the same).
     pub(crate) fn is_same(&self, other: &Toolbar) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
     }
@@ -304,11 +307,12 @@ impl Toolbar {
         self.apply_enabled();
     }
 
-    /// `NSToolbar` がいま持っている項目を、インデックスごとに拾い直す。
+    /// Picks up the items the `NSToolbar` currently holds again, per index.
     ///
-    /// delegate が返したものと、ツールバーが実際に使うものは同じとは限らない
-    /// (AppKit は複製を作ることがある)。有効・無効の反映先を取り違えないよう、
-    /// 挿入が終わってから実物を覚える。
+    /// What the delegate returned and what the toolbar actually uses are not
+    /// necessarily the same (AppKit sometimes makes copies). So that enabled/disabled
+    /// is not applied to the wrong object, the real items are remembered after
+    /// insertion finishes.
     fn collect_items(&self) {
         let items = self.0.native.items();
         let mut natives = self.0.natives.borrow_mut();
@@ -324,7 +328,7 @@ impl Toolbar {
         }
     }
 
-    /// 区切りを含めた項目数。
+    /// The number of items, separators included.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -333,7 +337,7 @@ impl Toolbar {
         self.len() == 0
     }
 
-    /// 項目 1 つの有効・無効を変える。区切りと範囲外は何もしない。
+    /// Enables or disables one item. Does nothing for separators or out of range.
     pub fn set_item_enabled(&self, index: usize, enabled: bool) {
         let mut items = self.0.items.borrow_mut();
         let Some(item) = items.get_mut(index) else {
@@ -347,7 +351,7 @@ impl Toolbar {
         self.apply_enabled();
     }
 
-    /// いま押せる項目か。区切りと範囲外は `false`。
+    /// Whether the item can be clicked now. `false` for separators and out of range.
     pub fn is_item_enabled(&self, index: usize) -> bool {
         self.0.enabled.get()
             && self
@@ -358,13 +362,13 @@ impl Toolbar {
                 .is_some_and(|item| !item.is_separator() && item.enabled)
     }
 
-    /// ツールバー全体の有効・無効を変える。項目ごとの指定は残る。
+    /// Enables or disables the whole toolbar. Per-item settings are kept.
     pub fn set_enabled(&self, enabled: bool) {
         self.0.enabled.set(enabled);
         self.apply_enabled();
     }
 
-    /// 項目ごとの指定と全体の指定をネイティブへ反映する。
+    /// Applies the per-item settings and the overall setting to the native side.
     fn apply_enabled(&self) {
         let whole = self.0.enabled.get();
         let items = self.0.items.borrow();
@@ -375,28 +379,28 @@ impl Toolbar {
         }
     }
 
-    /// 利用者が押したのと同じように項目を実行する。
+    /// Runs the item as if the user had clicked it.
     ///
-    /// 区切り・押せない項目・範囲外は何もしない。
+    /// Does nothing for separators, disabled items or out of range.
     pub fn activate(&self, index: usize) {
         if self.is_item_enabled(index) {
             self.0.handler.emit(index);
         }
     }
 
-    /// 項目が押されたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the index when an item is clicked. Setting it again removes the
+    /// previous callback.
     pub fn on_activate(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// AppKit の実ツールバー。バックエンド固有の脱出口として公開している。
+    /// The real AppKit toolbar. Public as a backend-specific escape hatch.
     pub fn native_toolbar(&self) -> Retained<NSToolbar> {
         self.0.native.clone()
     }
 
-    /// 項目に対応する `NSToolbarItem`。区切りと範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The `NSToolbarItem` for the item. `None` for separators and out of range. Public
+    /// as a backend-specific escape hatch.
     pub fn native_item(&self, index: usize) -> Option<Retained<NSToolbarItem>> {
         self.0.natives.borrow().get(index)?.clone()
     }

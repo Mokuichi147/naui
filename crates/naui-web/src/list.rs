@@ -1,23 +1,25 @@
-//! リスト (DOM)。
+//! Lists (DOM).
 //!
-//! **行の中身によって作りが変わる。**
+//! **The structure depends on the rows' contents.**
 //!
-//! | 行 | 作り |
+//! | Rows | Built from |
 //! | --- | --- |
-//! | 文字だけ | `<select size>` + `<option>` — ブラウザ標準のリストボックスそのもの |
-//! | `detail` あり / 任意内容 | `<ul role="listbox">` + `<li role="option">` — 合成 |
+//! | Text only | `<select size>` + `<option>` — the browser's standard list box itself |
+//! | With `detail` / custom content | `<ul role="listbox">` + `<li role="option">` — composed |
 //!
-//! `<option>` の内容モデルは**テキストのみ**で、要素も改行も置けない。
-//! 2 行の行を出すには `<select>` を離れるしかない。とはいえ `<select>` は
-//! 選択もキーボード操作もスクロールもブラウザが面倒を見てくれる本物の
-//! コントロールなので、**その必要が無いとき (文字だけの行) は使い続ける**。
+//! The content model of `<option>` is **text only**; it can hold neither elements
+//! nor line breaks. Showing two-line rows means leaving `<select>`. Still,
+//! `<select>` is a real control whose selection, keyboard navigation and scrolling
+//! the browser takes care of, so **it keeps being used when that is not needed
+//! (text-only rows)**.
 //!
-//! 合成のほうでも、枠と選択の色はブラウザが持つシステム色
-//! (`Field` / `SelectedItem` / `Highlight` / `GrayText`) をそのまま使い、
-//! naui は配色を決めない。
+//! The composed one also uses the browser's system colors for the frame and the
+//! selection (`Field` / `SelectedItem` / `Highlight` / `GrayText`) as is; naui
+//! decides no colors.
 //!
-//! 行の起動 (`dblclick` と Enter) と右クリック (`contextmenu`) は、中身が
-//! 入れ替わっても変わらない外枠でまとめて受け、押された要素から行を引く。
+//! Row activation (`dblclick` and Enter) and right-clicks (`contextmenu`) are
+//! received together on the outer frame, which stays the same even when the
+//! contents are swapped, and the row is looked up from the clicked element.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -33,9 +35,9 @@ use web_sys::{
 
 use crate::widgets::{create, impl_widget, Label, Listener, Stack, ValueHandler, Widget};
 
-/// 行がクリックされたことの通知先。
+/// The handler notified when a row is clicked.
 ///
-/// 呼び出し中に同じ行のコールバックを差し替えても二重借用しない。
+/// Replacing the same row's callback during the call does not double-borrow.
 #[derive(Clone, Default)]
 pub(crate) struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
 
@@ -56,7 +58,8 @@ impl ActivationHandler {
     }
 }
 
-/// 1 行の内容。通常の文字行も任意ウィジェット行も同じ型へ正規化する。
+/// The content of one row. Plain text rows and custom widget rows are normalized
+/// into the same type.
 enum ListRowContent {
     Item(ListItem),
     Custom(Box<dyn Widget>),
@@ -71,17 +74,17 @@ impl Clone for ListRowContent {
     }
 }
 
-/// リストへ載せる 1 行。
+/// One row to put in a list.
 ///
-/// [`ListItem`] は文字列だけで済む一覧向けの簡便 API であり、設定画面のように
-/// アイコン、複数のラベル、チェックボックス、末尾のボタンなどを組み合わせる
-/// 行は `Grid` / `Stack` で作って `ListRow` に包む。
+/// [`ListItem`] is a convenience API for lists that need only strings. Rows that
+/// combine icons, several labels, check boxes, trailing buttons and so on, as in a
+/// settings screen, are built with `Grid` / `Stack` and wrapped in a `ListRow`.
 ///
 /// ```no_run
 /// # use naui_web::{ListRow, Widget};
 /// # fn row(content: &dyn Widget) {
 /// let row = ListRow::new(content).selectable(false);
-/// row.on_activate(|| println!("行がクリックされました"));
+/// row.on_activate(|| println!("row clicked"));
 /// # let _ = row;
 /// # }
 /// ```
@@ -102,7 +105,8 @@ impl Clone for ListRow {
 }
 
 impl ListRow {
-    /// ウィジェットを 1 行の内容として使う。既定では行全体も選択できる。
+    /// Uses a widget as the content of one row. By default the whole row can be
+    /// selected too.
     pub fn new(content: &dyn Widget) -> Self {
         Self {
             content: ListRowContent::Custom(content.boxed_clone()),
@@ -111,7 +115,8 @@ impl ListRow {
         }
     }
 
-    /// `ListItem` を通常の文字行へ変換する。`List::set_items` の正規化経路。
+    /// Converts a `ListItem` into a plain text row. The normalization path for
+    /// `List::set_items`.
     fn from_item(item: ListItem) -> Self {
         let selectable = item.enabled;
         Self {
@@ -121,7 +126,7 @@ impl ListRow {
         }
     }
 
-    /// 行内のコントロールだけを操作する行では `false` にする。
+    /// Set to `false` for rows where only the controls inside are operated.
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
         self
@@ -131,39 +136,39 @@ impl ListRow {
         self.selectable
     }
 
-    /// 行内のラベル・アイコン・余白がクリックされたときに呼ぶ処理。
+    /// What to do when a label, icon or empty space inside the row is clicked.
     ///
-    /// チェックボックス、ボタン、入力欄などのコントロールを直接押した場合は
-    /// 呼ばれないため、同じ操作が二重に発火しない。
+    /// It is not called when a control such as a check box, button or text field is
+    /// clicked directly, so the same action does not fire twice.
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.activation.set(f);
     }
 
-    /// 選べないうえに操作もできない行 (`ListItem::enabled(false)`)。
+    /// A row that can be neither selected nor operated (`ListItem::enabled(false)`).
     ///
-    /// 任意内容の行は、行全体を選べなくても中のコントロールは押せるため
-    /// 薄くしない。
+    /// Custom-content rows are not dimmed, because the controls inside can still be
+    /// clicked even when the whole row cannot be selected.
     fn is_dimmed(&self) -> bool {
         matches!(&self.content, ListRowContent::Item(item) if !item.enabled)
     }
 }
 
-/// 行そのものの操作と区別する、行内のコントロール。
+/// Controls inside a row, distinguished from operations on the row itself.
 ///
-/// ほかの環境がヒットテストやイベントのルーティングで行っている切り分けを、
-/// DOM では押された要素の祖先を辿って行う。`<label>` は中の入力を操作するので、
-/// ここに含める。
+/// The distinction the other platforms make through hit-testing and event routing
+/// is made in the DOM by walking up the ancestors of the clicked element.
+/// `<label>` operates the input inside it, so it is included here.
 pub(crate) const ROW_CONTROLS: &str = "button, input, select, textarea, a[href], label, summary, \
 [role=\"button\"], [contenteditable=\"true\"]";
 
-/// 行の中でも、ブラウザ自身の文脈メニュー (切り取り・貼り付けなど) を
-/// 残す入力欄。ここを右クリックしたときは行の文脈メニューにしない。
+/// Fields inside a row that keep the browser's own context menu (cut, paste and so
+/// on). Right-clicking them does not become the row's context menu.
 const TEXT_ENTRIES: &str = "input, textarea, [contenteditable=\"true\"]";
 
-/// 行の中のコントロールへ向いたイベントか。
+/// Whether the event was aimed at a control inside the row.
 ///
-/// クリックだけでなくキー操作にも使う。`container` には、クリックなら行、
-/// キー操作ならリストそのものを渡す。
+/// Used for key operations as well as clicks. Pass the row as `container` for
+/// clicks, and the list itself for key operations.
 pub(crate) fn control_was_targeted(container: &HtmlElement, event: &Event) -> bool {
     let Some(target) = event.target().and_then(|t| t.dyn_into::<Element>().ok()) else {
         return false;
@@ -175,11 +180,12 @@ pub(crate) fn control_was_targeted(container: &HtmlElement, event: &Event) -> bo
     !control.is_same_node(Some(container.as_ref())) && container.contains(Some(control.as_ref()))
 }
 
-/// `size` の下限。1 以下だとドロップダウンになる。
+/// The minimum `size`. 1 or less becomes a drop-down.
 const MIN_ROWS: u32 = 2;
 
 thread_local! {
-    /// `aria-activedescendant` から行を指すための、リストごとの通し番号。
+    /// A per-list running number for referring to rows from
+    /// `aria-activedescendant`.
     static NEXT_ID: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -191,13 +197,13 @@ fn next_list_id() -> u32 {
     })
 }
 
-/// ラベルと補助の文字の間隔。
+/// The spacing between the label and the secondary text.
 const DETAIL_SPACING: f64 = 2.0;
 
-/// 文字だけの行の中身。
+/// The content of a text-only row.
 ///
-/// 補助の文字の小ささと淡さは [`TextStyle::Caption`] と
-/// [`TextColor::Secondary`] が決めるので、ここに CSS は書かない。
+/// The smallness and dimness of the secondary text come from
+/// [`TextStyle::Caption`] and [`TextColor::Secondary`], so no CSS is written here.
 pub(crate) fn item_content(doc: &Document, label: &str, detail: Option<&str>) -> Result<Stack> {
     let content = Stack::new(doc, Orientation::Vertical)?;
     content.set_align(Align::Fill);
@@ -212,11 +218,12 @@ pub(crate) fn item_content(doc: &Document, label: &str, detail: Option<&str>) ->
     Ok(content)
 }
 
-/// 行に載せる 1 本の文字。
+/// One piece of text placed in a row.
 ///
-/// **行の幅いっぱいに広げる。** `Label` は既定で折り返さず末尾を省略記号で
-/// 切るが、それが効くのは幅が決まってからで、内容の幅のままだと長いラベルが
-/// 行から横へはみ出す。
+/// **It stretches to the full width of the row.** By default `Label` does not wrap
+/// and cuts the end with an ellipsis, but that works only once the width is
+/// decided; at the content's width, a long label would stick out of the row
+/// horizontally.
 fn row_label(doc: &Document, text: &str) -> Result<Label> {
     let label = Label::new(doc, text)?;
     label.set_sizing(Sizing::fill_width());
@@ -227,11 +234,11 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
     let _ = element.style().set_property(property, value);
 }
 
-/// 選択が変わったことの通知先。
+/// The handler notified when the selection changes.
 ///
-/// 単一選択でも複数選択でも同じ形にするため、選ばれている行を
-/// 昇順の並びで渡す。呼び出しの間だけクロージャを取り出すので、
-/// コールバックの中からリストを操作しても二重借用にならない。
+/// To use the same shape for single and multiple selection, the selected rows are
+/// passed in ascending order. The closure is taken out only for the duration of the
+/// call, so operating on the list from inside the callback does not double-borrow.
 #[derive(Clone, Default)]
 struct SelectionHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize])>>>>);
 
@@ -252,53 +259,57 @@ impl SelectionHandler {
     }
 }
 
-/// いま使っている中身。[`List::set_items`] が行の内容を見て選び直す。
+/// The body currently in use. [`List::set_items`] chooses again by looking at the
+/// rows' contents.
 enum Body {
-    /// ブラウザ標準のリストボックス。
+    /// The browser's standard list box.
     Select {
         select: HtmlSelectElement,
-        /// `change` と `click` の購読。落とすと購読も外れる。
+        /// The `change` and `click` subscriptions. Dropping them also unsubscribes.
         _listeners: Vec<Listener>,
     },
-    /// 2 行の行を出すための合成。
+    /// A composition for showing two-line rows.
     Listbox {
         list: HtmlElement,
         options: Vec<HtmlElement>,
-        /// 行ごとのクリックと、リスト全体のキー操作の購読。
+        /// The subscriptions for clicks on each row and key operations on the whole list.
         _listeners: Vec<Listener>,
     },
 }
 
 struct ListInner {
-    /// 外から見える枠。中身が入れ替わっても、この要素は変わらない。
+    /// The frame visible from outside. This element stays the same even when the
+    /// contents are swapped.
     root: HtmlElement,
     document: Document,
     id: u32,
     body: RefCell<Body>,
-    /// 行。選べるかどうかも activation もここから引く。
-    /// 行に含まれるイベント購読等を生かしておく役目も持つ。
+    /// The rows. Whether they can be selected and their activation are looked up from
+    /// here. It also keeps the event subscriptions and the like contained in the rows
+    /// alive.
     rows: RefCell<Vec<ListRow>>,
     mode: Cell<SelectionMode>,
-    /// 選ばれている行 (昇順)。`<select>` でも合成でもここが正。
+    /// The selected rows (ascending). This is the source of truth for both `<select>`
+    /// and the composed list.
     selected: RefCell<Vec<usize>>,
-    /// キーボードでいま指している行。合成のときだけ使う。
+    /// The row the keyboard is pointing at now. Used only for the composed list.
     active: Cell<Option<usize>>,
-    /// Shift での範囲選択の起点。
+    /// The anchor of a Shift range selection.
     anchor: Cell<Option<usize>>,
     handler: SelectionHandler,
-    /// ダブルクリックと Enter の通知先。
+    /// The handler for double-clicks and Enter.
     row_activate: ValueHandler<usize>,
-    /// 右クリックの通知先。
+    /// The handler for right-clicks.
     context_menu: ValueHandler<(usize, Point)>,
-    /// 外枠に付けた `dblclick` / `contextmenu` / `keydown` の購読。
+    /// The `dblclick` / `contextmenu` / `keydown` subscriptions on the outer frame.
     _row_listeners: RefCell<Vec<Listener>>,
 }
 
-/// 縦に並ぶ選択できる一覧。
+/// A vertical list of selectable rows.
 ///
-/// 行が文字だけなら `<select size>`、`detail` があれば
-/// `<ul role="listbox">` になる。`Auto` の高さは行数と行内容に追従し、
-/// 固定高さや `Fill` ではみ出した分をスクロールする。
+/// Text-only rows become a `<select size>`; rows with `detail` become a
+/// `<ul role="listbox">`. An `Auto` height follows the number and content of the
+/// rows; with a fixed height or `Fill`, it scrolls whatever overflows.
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
 impl_widget!(List, root);
@@ -334,19 +345,20 @@ impl List {
         Ok(this)
     }
 
-    /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     ///
-    /// `detail` を持つ行が 1 つでもあれば `<ul role="listbox">` に、
-    /// 無ければ `<select size>` に組み替える。
+    /// If even one row has `detail`, it is rebuilt as a `<ul role="listbox">`;
+    /// otherwise as a `<select size>`.
     pub fn set_items(&self, items: &[ListItem]) {
         let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
         self.set_rows(&rows);
     }
 
-    /// 行を作り直す。通常の文字行も任意内容の行もこの経路で組み立てる。
+    /// Rebuilds the rows. Both plain text rows and custom-content rows are built
+    /// through this path.
     ///
-    /// 行内のコントロールは通常どおりそれぞれのコールバックを持てる。
-    /// インデックスの意味が変わるため、選択は外れる。
+    /// Controls inside a row can have their own callbacks as usual. Indices change
+    /// meaning, so the selection is cleared.
     pub fn set_rows(&self, rows: &[ListRow]) {
         *self.0.rows.borrow_mut() = rows.to_vec();
         self.0.selected.borrow_mut().clear();
@@ -365,7 +377,7 @@ impl List {
         };
     }
 
-    /// 行数。
+    /// The number of rows.
     pub fn len(&self) -> usize {
         self.0.rows.borrow().len()
     }
@@ -374,7 +386,8 @@ impl List {
         self.len() == 0
     }
 
-    /// 選び方を変える。選択の意味が変わるため、選択は外れる。
+    /// Changes how rows are selected. The meaning of the selection changes, so the
+    /// selection is cleared.
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.mode.set(mode);
         self.apply_mode();
@@ -385,49 +398,50 @@ impl List {
         self.0.mode.get()
     }
 
-    /// 選ばれている行のうち、いちばん上のもの。
+    /// The topmost of the selected rows.
     pub fn selected(&self) -> Option<usize> {
         self.0.selected.borrow().first().copied()
     }
 
-    /// 選ばれている行 (昇順)。単一選択なら 0 件か 1 件。
+    /// The selected rows (ascending). Zero or one for single selection.
     pub fn selection(&self) -> Vec<usize> {
         self.0.selected.borrow().clone()
     }
 
-    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until row `index` is visible. The selection does not change.
     ///
-    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
-    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    /// If it is already visible nothing moves; otherwise it is aligned to the nearer
+    /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
+    /// range.
     pub fn scroll_to_row(&self, index: usize) {
         self.reveal_row(index);
     }
 
-    /// 通知せずに 1 行だけを選ぶ。
+    /// Selects exactly one row without notifying.
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
 
-    /// 通知せずに選択を置き換える。
+    /// Replaces the selection without notifying.
     ///
-    /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
-    /// ([`SelectionMode::normalize`])。
+    /// Out-of-range rows, unselectable rows and duplicates are removed, and with single
+    /// selection only the first remains ([`SelectionMode::normalize`]).
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         self.write_selection(&picked);
     }
 
-    /// 通知せずに選択をすべて外す。
+    /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
         self.write_selection(&[]);
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 行を選ぶ (通知あり)。
+    /// Selects one row through the same path as a user's selection (notifies).
     pub fn select(&self, index: usize) {
         self.select_many(&[index]);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
+    /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
         self.set_selection(indices);
         // ブラウザはプログラムからの変更でイベントを出さないため、
@@ -436,40 +450,41 @@ impl List {
         self.0.handler.emit(&actual);
     }
 
-    /// 選択が変わったときに、選ばれている行 (昇順) で呼ばれる。
+    /// Called with the selected rows (ascending) when the selection changes.
     ///
-    /// 複数選択では 0 件で呼ばれることもある。
+    /// With multiple selection it may be called with none.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 行が起動されたとき (ダブルクリック、またはリストにフォーカスがある状態での
-    /// Enter) に、その行のインデックスで呼ばれる。
+    /// Called with the row's index when a row is activated (double-clicked, or Enter
+    /// while the list has focus).
     ///
-    /// Enter ではキーボードで指している行 (`<select>` では選ばれている先頭の行) が
-    /// 対象になる。複数選択のすべてを開きたいときは、中で [`List::selection`] を読む。
-    /// 選べない `ListItem` (`enabled(false)`) の行と、行内のコントロールの上では
-    /// 呼ばれない。
+    /// With Enter, the target is the row the keyboard points at (for `<select>`, the
+    /// first selected row). To open everything in a multiple selection, read
+    /// [`List::selection`] inside it. Not called for rows of `ListItem`s that cannot be
+    /// selected (`enabled(false)`), nor over controls inside a row.
     pub fn on_row_activate(&self, f: impl FnMut(usize) + 'static) {
         self.0.row_activate.set(f);
     }
 
-    /// 行が右クリックされたときに、その行のインデックスと、押された位置で呼ばれる。
+    /// Called with the row's index and the click position when a row is right-clicked.
     ///
-    /// 位置はこのリストの左上からの論理ピクセルで、[`crate::PopupMenu::open_at`]
-    /// へそのまま渡せる。設定すると、行の上ではブラウザ既定のメニューを抑止する
-    /// (行内の入力欄の上では抑止せず、通知もしない)。選択は変えない。
-    /// 行の無い余白では呼ばれない。
+    /// The position is in logical pixels from the top left of this list and can be
+    /// passed straight to [`crate::PopupMenu::open_at`]. Once set, the browser's default
+    /// menu is suppressed over rows (not over fields inside a row, which are neither
+    /// suppressed nor notified). The selection does not change. Not called for empty
+    /// space without rows.
     pub fn on_context_menu(&self, mut f: impl FnMut(usize, Point) + 'static) {
         self.0
             .context_menu
             .set(move |(index, point)| f(index, point));
     }
 
-    /// 中身の `<select>`。バックエンド固有の脱出口として公開している。
+    /// The inner `<select>`. Public as a backend-specific escape hatch.
     ///
-    /// `detail` を持つ行があるときは `<ul role="listbox">` になっているため
-    /// `None` を返す。枠そのものは [`Widget::native_element`] から取れる。
+    /// When some row has `detail` it is a `<ul role="listbox">` instead, so this returns
+    /// `None`. The frame itself can be obtained from [`Widget::native_element`].
     pub fn native_select(&self) -> Option<HtmlSelectElement> {
         match &*self.0.body.borrow() {
             Body::Select { select, .. } => Some(select.clone()),
@@ -479,7 +494,8 @@ impl List {
 
     // ------------------------------------------------------------ 組み立て
 
-    /// ブラウザ標準の `<select size>` を作る。行が文字だけのときの作り。
+    /// Creates the browser's standard `<select size>`. The structure for text-only
+    /// rows.
     fn build_select(&self, rows: &[ListRow]) -> Result<()> {
         let select: HtmlSelectElement = create(&self.0.document, "select")?.unchecked_into();
         for row in rows {
@@ -544,7 +560,8 @@ impl List {
         Ok(())
     }
 
-    /// `role="listbox"` を組み立てる。2 行の行も任意内容の行もここを通る。
+    /// Builds the `role="listbox"`. Both two-line rows and custom-content rows go
+    /// through here.
     fn build_listbox(&self, rows: &[ListRow]) -> Result<()> {
         let list: HtmlElement = create(&self.0.document, "ul")?.unchecked_into();
         let _ = list.set_attribute("role", "listbox");
@@ -669,7 +686,8 @@ impl List {
         Ok(())
     }
 
-    /// 行の起動と右クリックを外枠で受ける。中身を組み替えても付け直さない。
+    /// Receives row activation and right-clicks on the outer frame. Not reattached when
+    /// the contents are rebuilt.
     fn listen_row_events(&self) -> Result<()> {
         let root: &web_sys::EventTarget = self.0.root.as_ref();
         let mut listeners = Vec::with_capacity(3);
@@ -742,9 +760,11 @@ impl List {
         Ok(())
     }
 
-    /// イベントが向いた行と、その行の要素。起動も右クリックも受けない行なら `None`。
+    /// The row the event was aimed at, and that row's element. `None` for rows that
+    /// receive neither activation nor right-clicks.
     ///
-    /// 行の位置は押された要素からその場で引く (行を作り直しても狂わない)。
+    /// The row's position is looked up from the clicked element on the spot (so it stays
+    /// correct even if the rows are rebuilt).
     fn row_of_event(&self, event: &Event) -> Option<(usize, HtmlElement)> {
         let target = event.target()?.dyn_into::<Element>().ok()?;
         let (index, row) = match &*self.0.body.borrow() {
@@ -764,7 +784,8 @@ impl List {
         self.is_live(index).then_some((index, row))
     }
 
-    /// Enter で起動する行。キーボードで指している行か、選ばれている先頭の行。
+    /// The row activated by Enter: the row the keyboard points at, or the first
+    /// selected row.
     fn keyboard_row(&self, event: &Event) -> Option<usize> {
         let index = match &*self.0.body.borrow() {
             Body::Select { select, .. } => usize::try_from(select.selected_index()).ok()?,
@@ -779,7 +800,8 @@ impl List {
         self.is_live(index).then_some(index)
     }
 
-    /// 起動と右クリックを受けられる行か (選べない `ListItem` でない)。
+    /// Whether the row can receive activation and right-clicks (not an unselectable
+    /// `ListItem`).
     fn is_live(&self, index: usize) -> bool {
         self.0
             .rows
@@ -788,7 +810,7 @@ impl List {
             .is_some_and(|row| !row.is_dimmed())
     }
 
-    /// 枠の中身を入れ替える。
+    /// Swaps the contents of the frame.
     fn swap_body(&self, element: &HtmlElement) -> Result<()> {
         while let Some(child) = self.0.root.last_element_child() {
             let _ = self.0.root.remove_child(&child);
@@ -806,7 +828,7 @@ impl List {
         format!("naui-list-{}-row-{index}", self.0.id)
     }
 
-    /// 単一 / 複数の指定を、いまの中身へ反映する。
+    /// Applies the single / multiple setting to the current body.
     fn apply_mode(&self) {
         let multiple = self.0.mode.get().is_multiple();
         match &*self.0.body.borrow() {
@@ -822,7 +844,7 @@ impl List {
 
     // --------------------------------------------------------------- 選択
 
-    /// `<select>` の選択を DOM から読む。
+    /// Reads the `<select>`'s selection from the DOM.
     fn read_select_selection(&self) -> Vec<usize> {
         let body = self.0.body.borrow();
         let Body::Select { select, .. } = &*body else {
@@ -847,7 +869,7 @@ impl List {
         })
     }
 
-    /// 選択を覚えて、そのまま中身へ書き込む (通知は起きない)。
+    /// Remembers the selection and writes it into the body as is (no notification).
     fn write_selection(&self, indices: &[usize]) {
         *self.0.selected.borrow_mut() = indices.to_vec();
         let body = self.0.body.borrow();
@@ -888,7 +910,7 @@ impl List {
         }
     }
 
-    /// 合成のリストで行が押されたとき。
+    /// When a row of the composed list is clicked.
     fn on_row_activated(&self, index: usize, toggle: bool, extend: bool) {
         let multiple = self.0.mode.get().is_multiple();
         let picked = if multiple && extend {
@@ -912,7 +934,8 @@ impl List {
         self.commit(&picked);
     }
 
-    /// キー操作。処理したら `true` を返す (ブラウザの既定動作を止める)。
+    /// Key operations. Returns `true` if handled (preventing the browser's default
+    /// action).
     fn on_key(&self, event: &KeyboardEvent) -> bool {
         let len = self.len();
         if len == 0 {
@@ -949,7 +972,7 @@ impl List {
         true
     }
 
-    /// `from` から `step` の向きへ、次に選べる行を探す。
+    /// Looks for the next selectable row from `from` in the direction of `step`.
     fn step(&self, from: Option<usize>, step: isize) -> Option<usize> {
         let start = match from {
             Some(index) => index as isize + step,
@@ -959,7 +982,7 @@ impl List {
         self.first_enabled(start, step)
     }
 
-    /// `start` から `step` の向きに進んで、最初に選べる行を返す。
+    /// Returns the first selectable row going from `start` in the direction of `step`.
     fn first_enabled(&self, start: isize, step: isize) -> Option<usize> {
         let rows = self.0.rows.borrow();
         let mut at = start;
@@ -972,7 +995,7 @@ impl List {
         None
     }
 
-    /// `a` から `b` までの、選べる行の並び。
+    /// The selectable rows from `a` to `b`.
     fn range(&self, a: usize, b: usize) -> Vec<usize> {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
         let rows = self.0.rows.borrow();
@@ -981,7 +1004,7 @@ impl List {
             .collect()
     }
 
-    /// ユーザー操作の結果を確定し、通知する。
+    /// Settles the result of a user action and notifies.
     fn commit(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         self.write_selection(&picked);
@@ -989,7 +1012,7 @@ impl List {
         self.0.handler.emit(&picked);
     }
 
-    /// キーボードで指している行を、スクロール領域の中へ入れる。
+    /// Brings the row the keyboard points at into the scroll area.
     fn reveal_active(&self) {
         let Some(active) = self.0.active.get() else {
             return;
@@ -1000,7 +1023,7 @@ impl List {
         self.reveal_row(active);
     }
 
-    /// `index` 行目を、スクロール領域の中へ入れる。
+    /// Brings row `index` into the scroll area.
     fn reveal_row(&self, index: usize) {
         match &*self.0.body.borrow() {
             Body::Listbox { list, options, .. } => {
@@ -1013,7 +1036,7 @@ impl List {
     }
 }
 
-/// 行の中の入力欄へ向いたイベントか。
+/// Whether the event was aimed at a field inside the row.
 fn entry_was_targeted(row: &HtmlElement, event: &Event) -> bool {
     let Some(target) = event.target().and_then(|t| t.dyn_into::<Element>().ok()) else {
         return false;
@@ -1024,7 +1047,8 @@ fn entry_was_targeted(row: &HtmlElement, event: &Event) -> bool {
     row.contains(Some(entry.as_ref()))
 }
 
-/// 押された `<option>` が何行目か。`<select>` の余白のクリックでは `None`。
+/// Which row the clicked `<option>` is. `None` for clicks on the `<select>`'s empty
+/// space.
 fn clicked_option_index(event: &Event) -> Option<usize> {
     let target = event.target()?.dyn_into::<Element>().ok()?;
     let option = target.closest("option").ok()??;
@@ -1032,10 +1056,11 @@ fn clicked_option_index(event: &Event) -> Option<usize> {
     usize::try_from(index).ok()
 }
 
-/// `row` がスクロール領域 `container` の中で見えるようにする。
+/// Makes `row` visible inside the scroll area `container`.
 ///
-/// 見えていれば動かさず、上にはみ出していれば上端、下なら下端へ合わせる。
-/// 位置は描かれた矩形の差から求めるので、`offsetParent` がどこかに依らない。
+/// If it is visible nothing moves; if it sticks out above, the top is aligned, and
+/// if below, the bottom. The position is computed from the difference of the drawn
+/// rectangles, so it does not depend on where the `offsetParent` is.
 pub(crate) fn reveal_within(container: &HtmlElement, row: &HtmlElement) {
     let view = container.get_bounding_client_rect();
     let rect = row.get_bounding_client_rect();
@@ -1043,7 +1068,8 @@ pub(crate) fn reveal_within(container: &HtmlElement, row: &HtmlElement) {
     reveal_range(container, top, top + rect.height());
 }
 
-/// `container` の縦のスクロールを、`top..bottom` (中身の座標) が見える位置へ動かす。
+/// Moves `container`'s vertical scroll to where `top..bottom` (content coordinates)
+/// is visible.
 pub(crate) fn reveal_range(container: &HtmlElement, top: f64, bottom: f64) {
     let scroll_top = f64::from(container.scroll_top());
     let visible = f64::from(container.client_height());
@@ -1054,11 +1080,11 @@ pub(crate) fn reveal_range(container: &HtmlElement, top: f64, bottom: f64) {
     }
 }
 
-/// `<select size>` の `index` 行目を見える位置へ出す。
+/// Brings row `index` of a `<select size>` into view.
 ///
-/// WebKit は `<select>` のスクロール位置を行の境目へ切り下げるので、
-/// 矩形から求めた位置へ送ると最後の行が半分隠れる。行の高さはそろって
-/// いるので、行単位で先頭に出す行を決める。
+/// WebKit rounds a `<select>`'s scroll position down to a row boundary, so scrolling
+/// to the position computed from the rectangle leaves the last row half hidden. Row
+/// heights are uniform, so the first row to show is decided in whole rows.
 fn reveal_option(select: &web_sys::HtmlSelectElement, index: usize) {
     let count = select.length();
     if count == 0 || index >= count as usize {

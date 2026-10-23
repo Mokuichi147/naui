@@ -1,7 +1,7 @@
-//! チャネルとタスクの意味論を、イベントループ抜きで確かめる。
+//! Checks the semantics of channels and tasks without an event loop.
 //!
-//! `MainThread` はトレイトなので、投函をため込むだけのダブルを差し込めば
-//! 「いつ配送されるか」まで含めて決定論的に検証できる。
+//! `MainThread` is a trait, so plugging in a double that only accumulates posts
+//! lets us verify deterministically, down to "when delivery happens".
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -15,10 +15,11 @@ use std::time::Duration;
 
 use naui_core::{MainThread, Tasks, Work};
 
-/// 投函された仕事をため込むだけの `MainThread`。`drain` で好きなときに走らせる。
+/// A `MainThread` that only accumulates posted work. `drain` runs it whenever you
+/// like.
 struct Fake {
     queued: Mutex<VecDeque<Work>>,
-    /// `post_after` で積まれた仕事と、その待ち時間。`advance` で時間を進める。
+    /// Work queued with `post_after` and its delays. `advance` moves time forward.
     delayed: Mutex<Vec<(Duration, Work)>>,
     posts: AtomicUsize,
     accept: AtomicBool,
@@ -34,7 +35,7 @@ impl Fake {
         })
     }
 
-    /// 入っている分だけ走らせる。走らせる途中で増えた分は次回へ。
+    /// Runs only what is queued now. Work added while running waits for the next call.
     fn drain(&self) -> usize {
         let works: Vec<Work> = {
             let mut queued = self.queued.lock().unwrap();
@@ -47,7 +48,7 @@ impl Fake {
         count
     }
 
-    /// 空になるまで繰り返す。
+    /// Repeats until empty.
     fn drain_all(&self) {
         for _ in 0..1000 {
             if self.drain() == 0 {
@@ -57,8 +58,8 @@ impl Fake {
         panic!("投函が止まりません");
     }
 
-    /// 時間が過ぎたことにして、待っていた仕事を配送待ちへ移す。
-    /// 戻り値は移した仕事の待ち時間。
+    /// Pretends time has passed and moves the waiting work to the delivery queue.
+    /// Returns the delays of the work moved.
     fn advance(&self) -> Vec<Duration> {
         let delayed = std::mem::take(&mut *self.delayed.lock().unwrap());
         let mut queued = self.queued.lock().unwrap();
@@ -101,7 +102,7 @@ fn setup() -> (Arc<Fake>, Tasks) {
     (fake, tasks)
 }
 
-/// 落ちたことを外から見られる目印。
+/// A marker that lets you see from outside that it was dropped.
 struct Tracer(Rc<Cell<bool>>);
 
 impl Tracer {
@@ -375,7 +376,8 @@ fn チャネルは互いに独立している() {
 
 // --- タスク ---------------------------------------------------------------
 
-/// poll のたびに自分を起こし、指定回数で終わる future。
+/// A future that wakes itself on every poll and finishes after the given number of
+/// polls.
 struct Countdown {
     left: u32,
     polls: Rc<Cell<u32>>,
@@ -396,7 +398,7 @@ impl Future for Countdown {
     }
 }
 
-/// 外から起こされるまで待つ future。
+/// A future that waits until it is woken from outside.
 struct Manual {
     waker: Rc<RefCell<Option<Waker>>>,
     ready: Rc<Cell<bool>>,

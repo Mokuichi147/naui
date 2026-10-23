@@ -1,9 +1,9 @@
-//! ポップアップ (コンテキスト) メニュー (`GtkPopoverMenu` + `GMenu`)。
+//! Popup (context) menus (`GtkPopoverMenu` + `GMenu`).
 //!
-//! GTK4 のメニューは「モデル (`GMenu`) と操作 (`GAction`)」でできている。
-//! naui の項目は「文字・選べるかどうか・区切り線」だけなので、
-//! **項目 1 つにつき `GSimpleAction` を 1 つ**作り、選べるかどうかは
-//! その操作の有効・無効で表す (`GMenuItem` 自体は有効・無効を持たない)。
+//! GTK4 menus are made of "models (`GMenu`) and actions (`GAction`)". naui's items
+//! are just "text, whether they can be chosen, separators", so **one
+//! `GSimpleAction` is created per item**, and whether it can be chosen is expressed
+//! by enabling or disabling the action (`GMenuItem` itself has no enabled state).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -15,7 +15,7 @@ use naui_core::PopupItem;
 use crate::callback::Notifier;
 use crate::widgets::Widget;
 
-/// メニューの操作をまとめて置く名前空間。
+/// The namespace that holds the menu's actions.
 const GROUP: &str = "naui-popup";
 
 struct PopupInner {
@@ -23,13 +23,13 @@ struct PopupInner {
     actions: gio::SimpleActionGroup,
     items: RefCell<Vec<PopupItem>>,
     on_select: Notifier<usize>,
-    /// 右クリックを拾うために取り付けたウィジェット。
+    /// The widgets it is attached to, for catching right-clicks.
     attached: RefCell<Vec<gtk::Widget>>,
 }
 
-/// 右クリックで出るポップアップ (コンテキスト) メニュー。
+/// A popup (context) menu shown on right-click.
 ///
-/// 画面に並ぶウィジェットではないので [`Widget`] ではない。
+/// It is not a widget laid out on screen, so it is not a [`Widget`].
 #[derive(Clone)]
 pub struct PopupMenu(Rc<PopupInner>);
 
@@ -49,12 +49,12 @@ impl PopupMenu {
         }))
     }
 
-    /// 対応する `GtkPopoverMenu`。バックエンド固有の脱出口として公開している。
+    /// The corresponding `GtkPopoverMenu`. Public as a backend-specific escape hatch.
     pub fn native_popover(&self) -> gtk::PopoverMenu {
         self.0.native.clone()
     }
 
-    /// 項目を作り直す。インデックスは**区切り線を含めた並び**で数える。
+    /// Rebuilds the items. Indices count **the sequence including separators**.
     pub fn set_items(&self, items: &[PopupItem]) {
         for name in self.0.actions.list_actions() {
             self.0.actions.remove_action(&name);
@@ -95,7 +95,7 @@ impl PopupMenu {
         stored.extend_from_slice(items);
     }
 
-    /// 区切り線を含めた項目数。
+    /// The number of items, separators included.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -104,7 +104,8 @@ impl PopupMenu {
         self.len() == 0
     }
 
-    /// 右クリックでこのメニューが出るようにする。いくつでも取り付けられる。
+    /// Makes this menu appear on right-click on the widget. It can be attached to any
+    /// number of widgets.
     pub fn attach(&self, widget: &dyn Widget) {
         let target = widget.native_widget();
         let gesture = gtk::GestureClick::new();
@@ -123,15 +124,16 @@ impl PopupMenu {
         self.0.attached.borrow_mut().push(target);
     }
 
-    /// プログラムから出す。位置は `widget` の左上からの論理ピクセル。
+    /// Shows it from code. The position is in logical pixels from the top left of
+    /// `widget`.
     pub fn open_at(&self, widget: &dyn Widget, x: f64, y: f64) {
         self.show_at(&widget.native_widget(), x, y);
     }
 
-    /// 取り付け先を差し替えてから出す。
+    /// Shows it after switching what it is attached to.
     ///
-    /// GTK4 のポップオーバーは親を 1 つしか持てないので、出すたびに
-    /// そのときのウィジェットへ付け替える。
+    /// A GTK4 popover can have only one parent, so it is reattached to the current
+    /// widget every time it is shown.
     fn show_at(&self, target: &gtk::Widget, x: f64, y: f64) {
         let native = &self.0.native;
         if native.parent().as_ref() != Some(target) {
@@ -153,9 +155,9 @@ impl PopupMenu {
         self.0.native.popdown();
     }
 
-    /// ユーザーが選んだのと同じ経路で通知する。
+    /// Notifies through the same path as a user's choice.
     ///
-    /// 区切り線と選べない項目は無視する。
+    /// Separators and items that cannot be chosen are ignored.
     pub fn select(&self, index: usize) {
         let selectable = self
             .0
@@ -168,7 +170,7 @@ impl PopupMenu {
         }
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select.set(f);
     }

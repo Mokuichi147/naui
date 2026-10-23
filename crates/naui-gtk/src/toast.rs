@@ -1,18 +1,18 @@
-//! トースト (`AdwToast`)。
+//! Toasts (`AdwToast`).
 //!
-//! **4 環境で唯一、ネイティブのトーストがあるのがここ。** 文字・操作ボタン・
-//! 消えるまでの時間という naui のトーストの形は、`AdwToast` とそのまま
-//! 対応する。出す位置 (下端の中央)、重ね方、消えるときの動き、読み上げは
-//! すべて `AdwToastOverlay` が行う。
+//! **This is the only one of the four platforms with a native toast.** naui's shape
+//! for toasts (text, action button, time until it disappears) maps directly onto
+//! `AdwToast`. Where it appears (bottom center), how they stack, how they animate
+//! out, and screen reader announcements are all done by `AdwToastOverlay`.
 //!
-//! `AdwToast` は足したあと内容を変えても差し支えないが、**出すたびに
-//! 作り直す** (`Dialog` が `AdwAlertDialog` を組み立て直すのと同じ)。
-//! `Toast` のほうは「何を出すか」だけを持つ。
+//! Changing an `AdwToast`'s contents after adding it would be fine, but it is
+//! **recreated each time it is shown** (the same as `Dialog` rebuilding its
+//! `AdwAlertDialog`). `Toast` itself holds only "what to show".
 //!
-//! ## 他の環境との違い
+//! ## Differences from other platforms
 //!
-//! `adw_toast_set_timeout` は**秒**しか受け取らないため、1 秒未満の指定は
-//! 1 秒になる ([`ToastSpec::timeout_secs`])。
+//! `adw_toast_set_timeout` accepts only **seconds**, so anything under one second
+//! becomes one second ([`ToastSpec::timeout_secs`]).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -23,24 +23,25 @@ use naui_core::ToastSpec;
 use crate::callback::Notifier;
 
 thread_local! {
-    /// いま出ているトースト。同時に出るのは 1 つで、新しいものが置き換える。
+    /// The toast showing now. Only one is shown at a time, and a new one replaces it.
     static CURRENT: RefCell<Option<Toast>> = const { RefCell::new(None) };
 }
 
 struct ToastInner {
     app: adw::Application,
     spec: RefCell<ToastSpec>,
-    /// 出している間だけ持つ実物。
+    /// The real toast, held only while it is showing.
     current: RefCell<Option<adw::Toast>>,
     on_action: Notifier<()>,
     on_dismiss: Notifier<()>,
-    /// アプリ側から消したか。消えた理由を通知しないための目印。
+    /// Whether the app closed it. A marker so that the reason for closing is not
+    /// notified.
     dismissed_by_app: Cell<bool>,
 }
 
-/// 一時的な通知 (`AdwToast`)。
+/// A transient notification (`AdwToast`).
 ///
-/// ウィジェットではないので、コンテナへは入れない (`Dialog` と同じ)。
+/// It is not a widget, so it does not go into containers (the same as `Dialog`).
 #[derive(Clone)]
 pub struct Toast(Rc<ToastInner>);
 
@@ -56,7 +57,7 @@ impl Toast {
         }))
     }
 
-    /// 出す文字列。出している間に呼ぶと、その場で書き換わる。
+    /// The string to show. Calling it while shown updates it on the spot.
     pub fn set_message(&self, message: &str) {
         self.0.spec.borrow_mut().set_message(message);
         if let Some(native) = self.0.current.borrow().as_ref() {
@@ -68,7 +69,7 @@ impl Toast {
         self.0.spec.borrow().message().to_string()
     }
 
-    /// 操作ボタンの文字列。**空文字列を渡すとボタンを外す。**
+    /// The action button's label. **Passing an empty string removes the button.**
     pub fn set_action(&self, label: &str) {
         self.0.spec.borrow_mut().set_action(label);
         if let Some(native) = self.0.current.borrow().as_ref() {
@@ -76,7 +77,7 @@ impl Toast {
         }
     }
 
-    /// 操作ボタンの文字列。置いていなければ空文字列。
+    /// The action button's label. The empty string if there is no button.
     pub fn action(&self) -> String {
         self.0
             .spec
@@ -86,9 +87,10 @@ impl Toast {
             .to_string()
     }
 
-    /// 自動で消えるまでの秒数。**0 を渡すと自動では消えない。**
+    /// Seconds until it disappears automatically. **Passing 0 means it never
+    /// disappears automatically.**
     ///
-    /// 次に [`show`](Self::show) したときから効く。
+    /// Takes effect from the next [`show`](Self::show).
     pub fn set_timeout(&self, seconds: f64) {
         self.0.spec.borrow_mut().set_timeout(seconds);
     }
@@ -97,36 +99,38 @@ impl Toast {
         self.0.spec.borrow().timeout()
     }
 
-    /// いまの設定。
+    /// The current settings.
     pub fn spec(&self) -> ToastSpec {
         self.0.spec.borrow().clone()
     }
 
-    /// 操作ボタンが押されたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called when the action button is clicked. Setting it again removes the previous
+    /// one.
     ///
-    /// 押されるとトーストは消えるので、続けて `on_dismiss` も呼ばれる。
+    /// Clicking it makes the toast disappear, so `on_dismiss` is called next.
     pub fn on_action(&self, mut f: impl FnMut() + 'static) {
         self.0.on_action.set(move |()| f());
     }
 
-    /// 消えたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called when it disappears. Setting it again removes the previous one.
     ///
-    /// 呼ばれるのは**時間で消えたとき**と**操作ボタンで消えたとき**。
-    /// [`dismiss`](Self::dismiss) で消したときと、別のトーストに
-    /// 置き換えられたときは呼ばれない (アプリ自身の操作は通知しない、
-    /// という [`Dialog::close`](crate::Dialog::close) と同じ決まり)。
+    /// It is called **when it times out** and **when it is closed by the action
+    /// button**. It is not called when it is closed with [`dismiss`](Self::dismiss) or
+    /// replaced by another toast (the same rule as
+    /// [`Dialog::close`](crate::Dialog::close): the app's own actions are not
+    /// notified).
     pub fn on_dismiss(&self, mut f: impl FnMut() + 'static) {
         self.0.on_dismiss.set(move |()| f());
     }
 
-    /// トーストを出す。
+    /// Shows the toast.
     ///
-    /// **同時に出るのは 1 つ**で、ほかのトーストが出ていれば置き換える
-    /// (置き換えられたほうの `on_dismiss` は呼ばれない)。
-    /// 出せるウィンドウがまだ無いときは何もしない。
+    /// **Only one is shown at a time**; if another toast is showing, it is replaced
+    /// (the replaced one's `on_dismiss` is not called). Does nothing if there is no
+    /// window to show it in yet.
     ///
-    /// `AdwToastOverlay` は足されたトーストを順番待ちさせる作りだが、
-    /// naui は 4 環境で同じにそろえるため、前のものを消してから足す。
+    /// `AdwToastOverlay` is designed to queue added toasts, but to behave the same on
+    /// all four platforms, naui removes the previous one before adding.
     pub fn show(&self) {
         let Some(overlay) = self.overlay() else {
             return;
@@ -165,7 +169,7 @@ impl Toast {
         overlay.add_toast(native);
     }
 
-    /// 出しているトーストを消す。`on_dismiss` は呼ばれない。
+    /// Closes the toast being shown. `on_dismiss` is not called.
     pub fn dismiss(&self) {
         if !self.is_visible() {
             return;
@@ -174,19 +178,19 @@ impl Toast {
         self.take_down();
     }
 
-    /// いま出ているか。
+    /// Whether it is showing now.
     pub fn is_visible(&self) -> bool {
         self.0.current.borrow().is_some()
     }
 
-    /// いま出ている `AdwToast`。出していなければ `None`。
+    /// The `AdwToast` showing now. `None` if none is showing.
     ///
-    /// バックエンド固有の脱出口として公開している。
+    /// Public as a backend-specific escape hatch.
     pub fn native_toast(&self) -> Option<adw::Toast> {
         self.0.current.borrow().clone()
     }
 
-    /// `AdwToast` が消えたときの後始末と通知。
+    /// Cleanup and notification when the `AdwToast` disappears.
     fn finish(&self) {
         if self.0.current.borrow_mut().take().is_none() {
             return; // すでに片付けてある。
@@ -198,7 +202,7 @@ impl Toast {
         self.0.on_dismiss.emit(());
     }
 
-    /// トーストを消す。通知はしない。
+    /// Closes the toast without notifying.
     fn take_down(&self) {
         let native = self.0.current.borrow().clone();
         let Some(native) = native else {
@@ -212,11 +216,11 @@ impl Toast {
         self.0.dismissed_by_app.set(false);
     }
 
-    /// トーストを載せる `AdwToastOverlay`。まだウィンドウが無ければ `None`。
+    /// The `AdwToastOverlay` the toast is placed on. `None` if there is no window yet.
     ///
-    /// いちばん手前のウィンドウへ出す。まだどれにも焦点が当たっていないとき
-    /// (起動直後など) は、アプリが持っているウィンドウの先頭を使う
-    /// (`Dialog` が親を選ぶのと同じ考え方)。
+    /// It is shown in the frontmost window. When no window has focus yet (right after
+    /// startup, for example), the first window the app holds is used (the same idea as
+    /// how `Dialog` picks its parent).
     fn overlay(&self) -> Option<adw::ToastOverlay> {
         let window = self
             .0
@@ -226,7 +230,7 @@ impl Toast {
         crate::window::toast_overlay(&window)
     }
 
-    /// 「いま出ているトースト」が自分なら、その座を空ける。
+    /// If "the toast showing now" is this one, vacates that slot.
     fn forget_current(&self) {
         CURRENT.with(|slot| {
             let mine = slot

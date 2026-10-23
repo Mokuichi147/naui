@@ -1,4 +1,4 @@
-//! NSWindow のハンドル。
+//! NSWindow handles.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -23,72 +23,74 @@ use crate::trampoline::ValueHandler;
 use crate::widgets::Widget;
 
 thread_local! {
-    /// naui が作ったウィンドウ。作った順に並ぶ。
-    ///
-    /// `NSApplication` の `windows` には AppKit が内部で作る、画面に出ない
-    /// ウィンドウも混ざる。[`Toast`](crate::Toast) の出し先を選ぶときに
-    /// そちらを掴まないよう、naui のぶんだけ覚えておく。
-    /// `Ui` がウィンドウを持ち続けるので、ここで保持しても寿命は変わらない。
+    /// The windows naui created, in the order they were created.
     static WINDOWS: RefCell<Vec<Retained<NSWindow>>> = const { RefCell::new(Vec::new()) };
 }
 
 struct WindowInner {
     native: Retained<NSWindow>,
-    /// ルートの子を保持し、トランポリンごと生かしておく。
+    /// Holds the root child, keeping it alive along with its trampolines.
     child: RefCell<Option<Box<dyn Widget>>>,
-    /// 取り付けたツールバー。`NSWindow` の toolbar は強参照だが、
-    /// naui 側のハンドル (トランポリンと通知先) もここで生かしておく。
+    /// The attached toolbar. `NSWindow`'s toolbar is a strong reference, but naui's
+    /// handles (trampolines and handlers) are also kept alive here.
     toolbar: RefCell<Option<Toolbar>>,
-    /// 取り付けたメニューバー。`NSApplication` が `mainMenu` を強参照するが、
-    /// naui 側のハンドル (トランポリンと通知先) もここで生かしておく。
+    /// The attached menu bar. `NSApplication` holds `mainMenu` strongly, but naui's
+    /// handles (trampolines and handlers) are also kept alive here.
     menu_bar: RefCell<Option<MenuBar>>,
-    /// 取り付けたサイドバー。`contentViewController` として強参照されるが、
-    /// naui 側のハンドル (データソースと通知先) もここで生かしておく。
+    /// The attached sidebar. It is held strongly as the `contentViewController`, but
+    /// naui's handles (data source and handlers) are also kept alive here.
     sidebar: RefCell<Option<Sidebar>>,
     on_close_request: CloseHandler,
     on_resize: ValueHandler<(f64, f64)>,
-    /// `set_min_size` で頼まれた中身の下限。サイドバーやツールバーで
-    /// タイトルバーと重なる分が変わるたびに、足し直して渡す。
+    /// The content minimum requested with `set_min_size`. Re-added and passed again
+    /// whenever the part overlapping the title bar changes because of a sidebar or
+    /// toolbar.
     min_size: Cell<Option<(f64, f64)>>,
-    /// `NSWindow` の delegate は弱参照なので、ここで生かしておく。
+    /// `NSWindow`'s delegate is a weak reference, so it is kept alive here.
     delegate: RefCell<Option<Retained<WindowDelegate>>>,
     on_state_change: StateHandler,
-    /// 一度でも [`Window::show`] したか。表示する前の `set_state` は覚えて
-    /// おき、表示するときに当てる。
+    /// Whether [`Window::show`] has ever been called. `set_state` before showing is
+    /// remembered and applied when shown.
     shown: Cell<bool>,
-    /// 表示する前に頼まれた状態。
+    /// The state requested before showing.
     initial_state: Cell<WindowState>,
-    /// 全画面へ入る・出るアニメーションの途中。途中で頼まれた状態は
-    /// [`after_transition`](Self::after_transition) へ回す。
+    /// In the middle of the animation entering or leaving fullscreen. States requested
+    /// meanwhile are passed to [`after_transition`](Self::after_transition).
     in_transition: Cell<bool>,
-    /// 全画面に入り終わっている。styleMask の `FullScreen` はアニメーションの
-    /// 始まりで変わるので、終わりの通知で決めたこちらを `state` に使う。
+    /// Finished entering fullscreen. The styleMask's `FullScreen` changes at the start
+    /// of the animation, so `state` uses this one, decided by the notification at the
+    /// end.
     fullscreen: Cell<bool>,
-    /// 全画面のアニメーションが終わってから当てる状態。全画面から最大化や
-    /// 最小化へ移るときは、まず全画面を出て、出終わってから当てる。
+    /// The state to apply after the fullscreen animation ends. When moving from
+    /// fullscreen to maximized or minimized, fullscreen is left first, and the state is
+    /// applied once that finishes.
     after_transition: Cell<Option<WindowState>>,
-    /// `set_resizable` で頼まれた値。全画面の間は styleMask を触らず、
-    /// 出たときに当て直す。
+    /// The value requested with `set_resizable`. The styleMask is not touched while in
+    /// fullscreen; it is applied again on leaving.
     resizable: Cell<bool>,
-    /// `set_position` で位置を決めた。決めた後の `set_size` では中央へ寄せない。
+    /// The position was decided with `set_position`. Later `set_size` calls do not
+    /// recenter it.
     positioned: Cell<bool>,
-    /// `zoom:` で最大化する前の枠 (AppKit の座標)。最大化の間の
-    /// [`Window::position`] はこの左上を返す。`windowShouldZoom:toFrame:` で読む。
+    /// The frame before maximizing with `zoom:` (in AppKit coordinates). While
+    /// maximized, [`Window::position`] returns its top left. Read in
+    /// `windowShouldZoom:toFrame:`.
     zoom_frame: Cell<Option<NSRect>>,
-    /// 全画面の間に [`Window::position`] が返す、全画面を出たときに戻る位置。
-    /// 全画面へ入るときに読んでおき、出終わった次の周回でこの位置へ動かして
-    /// から消す。
+    /// The position [`Window::position`] returns while in fullscreen: where it goes back
+    /// to when leaving. Read when entering fullscreen, and cleared after moving there on
+    /// the iteration after leaving finishes.
     fullscreen_return: Cell<Option<(f64, f64)>>,
-    /// 最大化・全画面の間に [`Window::set_position`] で頼まれた位置。最大化は
-    /// 元に戻した後、全画面は出終わった次の周回で当てる。
+    /// The position requested with [`Window::set_position`] while maximized or in
+    /// fullscreen. Applied after restoring from maximized, or on the iteration after
+    /// leaving fullscreen finishes.
     pending_position: Cell<Option<(f64, f64)>>,
 }
 
 define_class!(
-    /// 利用者が閉じようとしたことと、大きさの変化を受け取る。
+    /// Receives the user's attempts to close and size changes.
     ///
-    /// `NSWindow::close` (naui の [`Window::close`]) は `windowShouldClose:`
-    /// を通らないので、確認はタイトルバーのボタンや ⌘W のときだけ起きる。
+    /// `NSWindow::close` (naui's [`Window::close`]) does not go through
+    /// `windowShouldClose:`, so confirmation happens only for the title bar button and
+    /// ⌘W.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiWindowDelegate"]
@@ -194,23 +196,25 @@ impl WindowDelegate {
     }
 }
 
-/// トップレベルウィンドウ (NSWindow)。
+/// A top-level window (NSWindow).
 #[derive(Clone)]
 pub struct Window(Rc<WindowInner>);
 
-/// ウィンドウを強く保持せずにイベントハンドラから参照するための弱参照。
+/// A weak reference for referring to a window from event handlers without holding
+/// it strongly.
 #[derive(Clone)]
 pub struct WeakWindow(Weak<WindowInner>);
 
 impl WeakWindow {
-    /// ウィンドウがまだ生きていれば強参照へ戻す。
+    /// Turns it back into a strong reference if the window is still alive.
     pub fn upgrade(&self) -> Option<Window> {
         self.0.upgrade().map(Window)
     }
 }
 
 impl Window {
-    /// イベントハンドラなどへ渡しても所有権循環を作らない参照を返す。
+    /// Returns a reference that creates no ownership cycle when passed to event
+    /// handlers and the like.
     pub fn downgrade(&self) -> WeakWindow {
         WeakWindow(Rc::downgrade(&self.0))
     }
@@ -267,29 +271,31 @@ impl Window {
         this
     }
 
-    /// 利用者がウィンドウを閉じようとしたときの確認。
+    /// Confirmation when the user tries to close the window.
     ///
-    /// [`CloseResponse::KeepOpen`] を返すと閉じない (保存していない変更が
-    /// あるときに確認のダイアログを出す、など)。プログラムからの
-    /// [`close`](Self::close) では呼ばれない。
+    /// Returning [`CloseResponse::KeepOpen`] keeps it open (to ask for confirmation
+    /// when there are unsaved changes, for example). Not called for
+    /// [`close`](Self::close) from code.
     pub fn on_close_request(&self, f: impl FnMut() -> CloseResponse + 'static) {
         self.0.on_close_request.set(f);
     }
 
-    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル。タイトルバーとツールバーは含まない。
+    /// The size of the content area (width, height) in logical pixels, excluding the
+    /// title bar and toolbar.
     ///
-    /// サイドバーを付けている間は `fullSizeContentView` で `contentView` が
-    /// タイトルバーの下まで伸びるので、`contentView` ではなく、タイトルバーと
-    /// ツールバーに隠れない `contentLayoutRect` の大きさを返す。
+    /// While a sidebar is attached, `fullSizeContentView` extends the `contentView`
+    /// under the title bar, so the size of `contentLayoutRect`, which is not hidden by
+    /// the title bar and toolbar, is returned instead of the `contentView`'s.
     pub fn size(&self) -> (f64, f64) {
         let size = self.0.native.contentLayoutRect().size;
         (size.width, size.height)
     }
 
-    /// `contentView` のうちタイトルバーとツールバーに重なる分 (幅, 高さ)。
+    /// The part of the `contentView` overlapping the title bar and toolbar (width,
+    /// height).
     ///
-    /// `setContentSize` などは `contentView` の大きさを取るので、中身の大きさに
-    /// これを足して渡す。`fullSizeContentView` でなければ 0。
+    /// `setContentSize` and the like take the `contentView`'s size, so this is added to
+    /// the content size before passing it. 0 when not `fullSizeContentView`.
     fn title_bar_overlap(&self) -> (f64, f64) {
         let native = &self.0.native;
         let content = native.contentRectForFrameRect(native.frame()).size;
@@ -300,13 +306,15 @@ impl Window {
         )
     }
 
-    /// `change` の前後で中身の大きさ ([`size`](Self::size)) を保つ。上端は動かさない。
+    /// Keeps the content size ([`size`](Self::size)) the same before and after
+    /// `change`. The top edge does not move.
     ///
-    /// ツールバーやサイドバーを付け外しすると、AppKit は中身の大きさを保たない。
-    /// ツールバーを付けると中身がタイトルバーの高さだけ伸び (macOS 27 で確認)、
-    /// サイドバーは枠を保つので、タイトルバーの下に隠れる分だけ中身が縮む。
-    /// `ui.window` や `set_size` で決めた大きさのままにするため、変わった分を戻す。
-    /// 最大化と全画面の間は画面に合わせた大きさなので、そのままにする。
+    /// Attaching or detaching a toolbar or sidebar does not keep the content size in
+    /// AppKit. Attaching a toolbar grows the content by the title bar's height
+    /// (confirmed on macOS 27), and a sidebar keeps the frame, so the content shrinks by
+    /// the part hidden under the title bar. To keep the size decided with `ui.window`
+    /// or `set_size`, the difference is undone. While maximized or in fullscreen the
+    /// size matches the screen, so it is left as is.
     fn keeping_size(&self, change: impl FnOnce()) {
         let (width, height) = self.size();
         change();
@@ -328,7 +336,7 @@ impl Window {
         native.setFrame_display(target, true);
     }
 
-    /// `set_min_size` の下限を、タイトルバーと重なる分を足して渡す。
+    /// Passes the `set_min_size` minimum with the title bar overlap added.
     fn apply_min_size(&self) {
         let Some((width, height)) = self.0.min_size.get() else {
             return;
@@ -340,16 +348,16 @@ impl Window {
         ));
     }
 
-    /// 大きさが変わったときの通知。変わった後の [`size`](Self::size) が届く。
+    /// Notified when the size changes. Receives the new [`size`](Self::size).
     pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
         self.0.on_resize.set(f);
     }
 
-    /// このウィンドウの中で押されたキーの通知。
+    /// Notified of keys pressed inside this window.
     ///
-    /// フォーカスのあるウィジェットの `on_key_down` が `Continue` を返した
-    /// キーが届く。`Handled` を返すと、そのキーは AppKit へ渡らない。
-    /// IME で変換している間のキーは届かない。
+    /// Keys for which the focused widget's `on_key_down` returned `Continue` arrive
+    /// here. Returning `Handled` keeps the key from reaching AppKit. Keys pressed while
+    /// an IME is composing are not delivered.
     pub fn on_key_down(
         &self,
         f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,
@@ -365,19 +373,21 @@ impl Window {
         self.0.native.title().to_string()
     }
 
-    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    /// The minimum size the user can shrink it to (content width, height). The units
+    /// are the same as [`set_size`](Self::set_size).
     ///
-    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    /// Prevents the layout from breaking when it is made too small.
     pub fn set_min_size(&self, width: f64, height: f64) {
         self.0.min_size.set(Some((width, height)));
         self.apply_min_size();
     }
 
-    /// 中身の領域の大きさを変える。単位と範囲は [`size`](Self::size) と同じで、
-    /// タイトルバーとツールバーは含まない (ほかの環境と同じ)。
+    /// Changes the size of the content area. The units and extent are the same as
+    /// [`size`](Self::size), excluding the title bar and toolbar (the same as the other
+    /// platforms).
     ///
-    /// `setContentSize` を使う。サイドバーを付けている間は `contentView` が
-    /// タイトルバーの下まで伸びているので、重なる分を足して渡す。
+    /// Uses `setContentSize`. While a sidebar is attached, the `contentView` extends
+    /// under the title bar, so the overlap is added before passing it.
     pub fn set_size(&self, width: f64, height: f64) {
         let (extra_width, extra_height) = self.title_bar_overlap();
         self.0.native.setContentSize(NSSize::new(
@@ -389,16 +399,18 @@ impl Window {
         }
     }
 
-    /// ウィンドウの左上の位置 (x, y)。単位は論理ピクセル (ポイント)。
+    /// The position (x, y) of the window's top-left corner, in logical pixels (points).
     ///
-    /// 主画面 (メニューバーのある画面) の左上を原点に、右と下へ数える
-    /// (ほかの環境と同じ向き)。AppKit の座標は主画面の左下から上へ数える
-    /// ので、主画面の高さから引いて向きを変える。タイトルバーを含む
-    /// ウィンドウの枠の左上で、`None` にはならない。
+    /// Counted right and down from the top left of the primary screen (the screen with
+    /// the menu bar), the same direction as the other platforms. AppKit's coordinates
+    /// count up from the bottom left of the primary screen, so the direction is flipped
+    /// by subtracting from the primary screen's height. It is the top left of the
+    /// window frame including the title bar, and is never `None`.
     ///
-    /// 最大化・最小化・全画面の間は、通常の状態へ戻ったときの位置を返す。
-    /// 最小化の間も `frame` は元の枠のまま。最大化は `zoom:` する前の枠、
-    /// 全画面は入る前に読んでおいた位置。
+    /// While maximized, minimized or in fullscreen, it returns the position it will have
+    /// when back to normal. While minimized, `frame` stays the original frame. For
+    /// maximized it is the frame before `zoom:`, and for fullscreen the position read
+    /// before entering.
     pub fn position(&self) -> Option<(f64, f64)> {
         if self.in_fullscreen() {
             if let Some(position) = self
@@ -413,14 +425,14 @@ impl Window {
         Some(self.normal_position())
     }
 
-    /// 全画面の間か、全画面を出てから戻る位置へ動かすまでの間。
+    /// In fullscreen, or after leaving it until moved to the return position.
     fn in_fullscreen(&self) -> bool {
         self.0.fullscreen.get()
             || self.0.in_transition.get()
             || self.0.fullscreen_return.get().is_some()
     }
 
-    /// 全画面を除いて、通常の状態へ戻ったときの位置。
+    /// The position when back to normal, excluding fullscreen.
     fn normal_position(&self) -> (f64, f64) {
         if let Some(frame) = self.zoom_frame() {
             return self
@@ -432,15 +444,16 @@ impl Window {
         self.top_left(self.0.native.frame())
     }
 
-    /// `zoom:` で最大化している間の、最大化する前の枠。
+    /// While maximized with `zoom:`, the frame before maximizing.
     ///
-    /// 利用者が大きさを画面いっぱいに合わせたときなど、`zoom:` を通らずに
-    /// `isZoomed` になったときは `None` (見えている枠をそのまま扱う)。
+    /// `None` when it became `isZoomed` without going through `zoom:`, such as when the
+    /// user resized it to fill the screen (the visible frame is used as is).
     fn zoom_frame(&self) -> Option<NSRect> {
         self.0.zoom_frame.get().filter(|_| self.0.native.isZoomed())
     }
 
-    /// AppKit の枠を、主画面の左上から数えた左上の位置へ直す。
+    /// Converts an AppKit frame into a top-left position counted from the primary
+    /// screen's top left.
     fn top_left(&self, frame: NSRect) -> (f64, f64) {
         (
             frame.origin.x,
@@ -448,16 +461,18 @@ impl Window {
         )
     }
 
-    /// ウィンドウの左上を (x, y) へ動かす。単位と向きは [`position`](Self::position) と同じ。
+    /// Moves the window's top left to (x, y). The units and direction are the same as
+    /// [`position`](Self::position).
     ///
-    /// `setFrameTopLeftPoint:` を使う。位置を決めた後の
-    /// [`set_size`](Self::set_size) は、ウィンドウを画面の中央へ寄せ直さない。
-    /// 画面の外を指すと、表示するときに AppKit がタイトルバーの見える
-    /// ところまで戻すことがある。
+    /// Uses `setFrameTopLeftPoint:`. Once the position is decided,
+    /// [`set_size`](Self::set_size) does not recenter the window on the screen. If it
+    /// points off screen, AppKit may move it back on show until the title bar is
+    /// visible.
     ///
-    /// 最大化・最小化・全画面の間は状態をそのままにして、通常の状態へ戻った
-    /// ときの位置を決める。最小化の間は `frame` を動かせば戻る先になり、
-    /// 最大化は元に戻した後に、全画面は出たところで動かす。
+    /// While maximized, minimized or in fullscreen, the state is left as is and the
+    /// position for returning to normal is decided. While minimized, moving `frame`
+    /// makes it the return position; for maximized it is moved after restoring, and for
+    /// fullscreen on leaving.
     pub fn set_position(&self, x: f64, y: f64) {
         self.0.positioned.set(true);
         if self.in_fullscreen() || self.zoom_frame().is_some() {
@@ -470,15 +485,16 @@ impl Window {
             .setFrameTopLeftPoint(NSPoint::new(x, self.primary_screen_height() - y));
     }
 
-    /// `zoom:` (緑のボタンやタイトルバーのダブルクリックも含む) で最大化する・
-    /// 元に戻す直前に呼ばれる。
+    /// Called right before maximizing or restoring with `zoom:` (including the green
+    /// button and double-clicking the title bar).
     ///
-    /// 最大化するときは、元に戻す先として今の枠を覚える。元に戻すときに
-    /// 最大化の間に頼まれた位置があれば、AppKit が元の枠へ戻し終えてから
-    /// その位置へ動かす。`false` を返して AppKit の代わりに枠を動かすと、
-    /// AppKit は最大化したままだと覚えていて、次に全画面を出たときに最大化の
-    /// 枠へ戻してしまう (macOS 15 で確認)。`zoom:` はアニメーションが終わって
-    /// から戻るので、メインキューの次の周回で動かす。
+    /// When maximizing, the current frame is remembered as the restore target. When
+    /// restoring, if a position was requested while maximized, it moves there after
+    /// AppKit has finished restoring the original frame. Returning `false` and moving
+    /// the frame instead of AppKit leaves AppKit believing it is still maximized, and
+    /// the next time fullscreen is left it goes back to the maximized frame (confirmed
+    /// on macOS 15). `zoom:` returns after its animation ends, so it moves on the next
+    /// iteration of the main queue.
     fn should_zoom(&self) -> bool {
         let native = &self.0.native;
         if !native.isZoomed() {
@@ -493,7 +509,8 @@ impl Window {
         true
     }
 
-    /// 最大化・全画面の間に頼まれた位置を、通常の枠へ戻っていれば当てる。
+    /// Applies a position requested while maximized or in fullscreen, once it is back
+    /// to a normal frame.
     fn apply_pending_position(&self) {
         if self.in_fullscreen() || self.0.native.isZoomed() {
             return;
@@ -503,13 +520,15 @@ impl Window {
         }
     }
 
-    /// 全画面を出終わった次の周回で、全画面の間に約束した位置へ動かす。
+    /// On the iteration after leaving fullscreen finishes, moves to the position
+    /// promised during fullscreen.
     ///
-    /// 頼まれた位置が無ければ、入る前の位置へ戻す。AppKit は入る前の枠へ
-    /// 戻すはずだが、macOS 15 では `setFrameTopLeftPoint:` で動かした分を
-    /// 忘れて、表示したときの枠へ戻すことがある。出終わりの通知の中で
-    /// 動かしても AppKit に戻されるので、次の周回で動かす。最大化の枠へ
-    /// 戻ったときは、元に戻したときの位置として取っておく。
+    /// If no position was requested, it goes back to the position before entering.
+    /// AppKit should restore the frame from before entering, but on macOS 15 it
+    /// sometimes forgets moves made with `setFrameTopLeftPoint:` and restores the frame
+    /// from when it was shown. Moving inside the notification that leaving finished
+    /// gets undone by AppKit, so it moves on the next iteration. If it came back to the
+    /// maximized frame, the position is kept as the one for restoring.
     fn restore_after_fullscreen(&self) {
         if self.0.fullscreen.get() || self.0.in_transition.get() {
             return;
@@ -521,10 +540,12 @@ impl Window {
         self.set_position(x, y);
     }
 
-    /// AppKit が通知を配り終えた後 (メインキューの次の周回) に `f` を呼ぶ。
+    /// Calls `f` after AppKit has finished delivering notifications (on the next
+    /// iteration of the main queue).
     ///
-    /// 全画面の出入りや `zoom:` の通知の中から、状態を変えたり枠を動かしたり
-    /// しても AppKit に無視・上書きされることがあるので、こちらへ回す。
+    /// Changing the state or moving the frame from inside fullscreen or `zoom:`
+    /// notifications is sometimes ignored or overwritten by AppKit, so it is deferred
+    /// here.
     fn on_next_turn(&self, f: fn(&Window)) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
@@ -537,7 +558,8 @@ impl Window {
         });
     }
 
-    /// 主画面の高さ。画面がつながっていなければ 0 (位置は AppKit の値のまま)。
+    /// The height of the primary screen. 0 if no screen is connected (positions stay as
+    /// AppKit's values).
     fn primary_screen_height(&self) -> f64 {
         let mtm = MainThreadMarker::from(&*self.0.native);
         NSScreen::screens(mtm)
@@ -545,10 +567,11 @@ impl Window {
             .map_or(0.0, |screen| screen.frame().size.height)
     }
 
-    /// いまの表示の状態。
+    /// The current display state.
     ///
-    /// 表示する前は、[`set_state`](Self::set_state) で頼んだ状態 (既定は
-    /// [`WindowState::Normal`])。全画面へ入る・出る途中は、まだ前の状態を返す。
+    /// Before it is shown, it is the state requested with [`set_state`](Self::set_state)
+    /// (the default is [`WindowState::Normal`]). While entering or leaving fullscreen,
+    /// it still returns the previous state.
     pub fn state(&self) -> WindowState {
         if !self.0.shown.get() {
             return self.0.initial_state.get();
@@ -561,19 +584,20 @@ impl Window {
         )
     }
 
-    /// 表示の状態を変える。表示する前に呼んだときは、表示するときに当てる。
+    /// Changes the display state. When called before it is shown, it is applied when
+    /// shown.
     ///
-    /// | 頼んだ状態 | AppKit |
+    /// | Requested state | AppKit |
     /// | --- | --- |
-    /// | `Normal` | 最小化・全画面・zoom をすべて解く |
-    /// | `Maximized` | `zoom:` (緑のボタンを Option を押しながら押したときと同じ) |
+    /// | `Normal` | Undoes minimize, fullscreen and zoom |
+    /// | `Maximized` | `zoom:` (the same as clicking the green button with Option held) |
     /// | `Minimized` | `miniaturize:` |
     /// | `Fullscreen` | `toggleFullScreen:` |
     ///
-    /// 全画面へ入る・出るのはアニメーションの後なので、`state` が変わるのも
-    /// その後になる (変わったら [`on_state_change`](Self::on_state_change) が
-    /// 呼ばれる)。全画面から最大化や最小化へ移るときは、全画面を出終わって
-    /// から当てる。
+    /// Entering and leaving fullscreen happen after an animation, so `state` changes
+    /// after it too ([`on_state_change`](Self::on_state_change) is called when it
+    /// changes). When moving from fullscreen to maximized or minimized, it is applied
+    /// after leaving fullscreen has finished.
     pub fn set_state(&self, state: WindowState) {
         if !self.0.shown.get() {
             self.0.initial_state.set(state);
@@ -621,11 +645,11 @@ impl Window {
         self.report_state();
     }
 
-    /// 全画面へ入る・出るアニメーションが終わった (か失敗した)。
+    /// The animation entering or leaving fullscreen has ended (or failed).
     ///
-    /// 戻る位置へ動かすのと、続けて当てる状態は、AppKit が通知を配り終えた後
-    /// (メインキューの次の周回) に回す。通知の中から `toggleFullScreen:` を
-    /// 呼ぶと無視される。
+    /// Moving to the return position and applying the next state are deferred until
+    /// AppKit has finished delivering notifications (the next iteration of the main
+    /// queue). `toggleFullScreen:` called from inside the notification is ignored.
     fn finish_transition(&self) {
         let native = &self.0.native;
         self.0.in_transition.set(false);
@@ -649,34 +673,37 @@ impl Window {
         });
     }
 
-    /// 表示の状態が変わったときの通知。変わった後の [`state`](Self::state) が届く。
+    /// Notified when the display state changes. Receives the new
+    /// [`state`](Self::state).
     ///
-    /// 利用者の操作 (緑のボタン、Dock へしまう、など) でも
-    /// [`set_state`](Self::set_state) でも呼ばれる。
+    /// Called both for user actions (the green button, putting it away in the Dock and
+    /// so on) and for [`set_state`](Self::set_state).
     pub fn on_state_change(&self, f: impl FnMut(WindowState) + 'static) {
         self.0.on_state_change.set(f);
     }
 
-    /// いまの状態が前に知らせたものと違えば `on_state_change` を呼ぶ。
+    /// Calls `on_state_change` if the current state differs from the one last reported.
     ///
-    /// 全画面へ入る・出る途中は、枠が画面いっぱいに広がって zoom と見分けが
-    /// 付かないので知らせない (終わったときに知らせる)。
+    /// While entering or leaving fullscreen, the frame expands to fill the screen and
+    /// cannot be told apart from zoom, so nothing is reported (it is reported when it
+    /// ends).
     fn report_state(&self) {
         if self.0.shown.get() && !self.0.in_transition.get() {
             self.0.on_state_change.update(self.state());
         }
     }
 
-    /// 利用者がウィンドウの縁をつかんで大きさを変えられるか。既定は `true`。
+    /// Whether the user can resize the window by dragging its edges. `true` by default.
     pub fn is_resizable(&self) -> bool {
         self.0.resizable.get()
     }
 
-    /// 利用者が大きさを変えられるかどうかを決める。
+    /// Decides whether the user can resize the window.
     ///
-    /// styleMask の `Resizable` を付け外しする。外すと緑のボタンでの zoom も
-    /// できなくなる。[`set_size`](Self::set_size) はどちらでも効く。
-    /// 全画面の間は styleMask を変えられないので、全画面を出たときに当てる。
+    /// Adds or removes `Resizable` in the styleMask. Removing it also disables zooming
+    /// with the green button. [`set_size`](Self::set_size) works either way. The
+    /// styleMask cannot be changed in fullscreen, so it is applied on leaving
+    /// fullscreen.
     pub fn set_resizable(&self, resizable: bool) {
         self.0.resizable.set(resizable);
         self.apply_resizable();
@@ -696,9 +723,9 @@ impl Window {
         native.setStyleMask(mask);
     }
 
-    /// ルートに置くウィジェット。呼ぶたびに置き換わる。
+    /// The widget placed at the root. Each call replaces it.
     ///
-    /// サイドバーを付けているときは、その右の区画に置かれる。
+    /// With a sidebar attached, it is placed in the pane on its right.
     pub fn set_child(&self, child: &dyn Widget) {
         let view = child.native_view();
         let sidebar = self.0.sidebar.borrow().clone();
@@ -709,16 +736,16 @@ impl Window {
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
-    /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
+    /// The sidebar attached to the left of the window. Each call replaces it.
     ///
-    /// ウィンドウの `contentViewController` を `NSSplitViewController` へ
-    /// 差し替え、[`set_child`](Self::set_child) の子はその右の区画へ移す。
-    /// サイドバーをタイトルバーの下まで伸ばすため (「システム設定」と同じ形)、
-    /// 付けている間はウィンドウに `fullSizeContentView` を足す。子の上端は
-    /// タイトルバーを避けるので、中身の見え方は変わらない。
+    /// The window's `contentViewController` is replaced with an
+    /// `NSSplitViewController`, and the child from [`set_child`](Self::set_child) moves
+    /// to its right pane. To extend the sidebar under the title bar (the same shape as
+    /// System Settings), `fullSizeContentView` is added to the window while it is
+    /// attached. The child's top avoids the title bar, so the content looks the same.
     ///
-    /// 中身の大きさ ([`size`](Self::size)) は変わらず、サイドバーの幅も
-    /// その中に含む (ウィンドウの枠のほうが変わる)。
+    /// The content size ([`size`](Self::size)) does not change, and includes the
+    /// sidebar's width (the window frame changes instead).
     pub fn set_sidebar(&self, sidebar: &Sidebar) {
         self.keeping_size(|| self.attach_sidebar(sidebar));
     }
@@ -747,9 +774,10 @@ impl Window {
         self.apply_toolbar();
     }
 
-    /// 取り付けたサイドバーを外す。付いていなければ何もしない。
+    /// Removes the attached sidebar. Does nothing if none is attached.
     ///
-    /// 右の区画にあった子は、ウィンドウの中身へ戻る。中身の大きさは変わらない。
+    /// The child in the right pane goes back to being the window's content. The content
+    /// size does not change.
     pub fn clear_sidebar(&self) {
         self.keeping_size(|| self.detach_sidebar());
     }
@@ -773,22 +801,22 @@ impl Window {
         native.setFrame_display(frame, true);
     }
 
-    /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
+    /// The toolbar attached to the top of the window. Each call replaces it.
     ///
-    /// AppKit ではタイトルバーと一体で表示され、項目が入りきらないときは
-    /// AppKit が送り出しのメニューを出す。
+    /// In AppKit it is shown merged with the title bar, and when items do not fit,
+    /// AppKit shows an overflow menu.
     ///
-    /// **タイトル文字は隠れる。** ツールバーのあるウィンドウでタイトルを
-    /// 出さないのが macOS の作法で、出したままだとタイトルが先頭を占め、
-    /// 項目が右端へ押しやられてしまう。[`set_title`](Self::set_title) で
-    /// 設定した文字はウィンドウのタイトルとして残り (ウィンドウメニューや
-    /// Mission Control には出る)、[`title`](Self::title) も返し続ける。
+    /// **The title text is hidden.** Not showing the title in a window with a toolbar is
+    /// the macOS convention; if it stayed, the title would take the leading space and
+    /// push the items to the right edge. The text set with
+    /// [`set_title`](Self::set_title) remains as the window's title (shown in the Window
+    /// menu and Mission Control), and [`title`](Self::title) keeps returning it.
     ///
-    /// サイドバーを付けているときは、先頭に AppKit 標準のサイドバーボタンが
-    /// 入る (naui の項目のインデックスには数えない)。
+    /// With a sidebar attached, AppKit's standard sidebar button goes first (not
+    /// counted in naui's item indices).
     ///
-    /// 中身の大きさ ([`size`](Self::size)) は変わらず、ツールバーの分だけ
-    /// ウィンドウの枠が伸びる。
+    /// The content size ([`size`](Self::size)) does not change; the window frame grows
+    /// by the toolbar.
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
         let old = self.0.toolbar.borrow_mut().replace(toolbar.clone());
         self.keeping_size(|| self.apply_toolbar());
@@ -798,12 +826,12 @@ impl Window {
         }
     }
 
-    /// 取り付けたツールバーを外す。付いていなければ何もしない。
+    /// Removes the attached toolbar. Does nothing if none is attached.
     ///
-    /// 隠していたタイトル文字も出し直す。
+    /// The hidden title text is shown again.
     ///
-    /// サイドバーを付けているときは、サイドバーボタンだけのツールバーが残る。
-    /// 中身の大きさは変わらない。
+    /// With a sidebar attached, a toolbar with just the sidebar button remains. The
+    /// content size does not change.
     pub fn clear_toolbar(&self) {
         let old = self.0.toolbar.borrow_mut().take();
         self.keeping_size(|| self.apply_toolbar());
@@ -812,19 +840,19 @@ impl Window {
         }
     }
 
-    /// ツールバーとサイドバーの組み合わせから、ウィンドウのツールバーを決める。
+    /// Decides the window's toolbar from the combination of toolbar and sidebar.
     ///
-    /// | アプリのツールバー | サイドバー | ウィンドウに付くもの |
+    /// | App toolbar | Sidebar | Attached to the window |
     /// | --- | --- | --- |
-    /// | あり | あり | アプリのツールバー (先頭にサイドバーボタン) |
-    /// | あり | なし | アプリのツールバー |
-    /// | なし | あり | サイドバーボタンだけのツールバー (タイトルは出したまま) |
-    /// | なし | なし | 無し |
+    /// | Yes | Yes | The app's toolbar (with the sidebar button first) |
+    /// | Yes | No | The app's toolbar |
+    /// | No | Yes | A toolbar with just the sidebar button (the title stays shown) |
+    /// | No | No | Nothing |
     ///
-    /// サイドバー用の項目を外すのは、ツールバーをウィンドウから外している
-    /// 間に行い、入れるのはウィンドウに付けてから行う
-    /// (`NSToolbarSidebarTrackingSeparatorItemIdentifier` は、付いていない
-    /// ツールバーには入らない)。
+    /// Sidebar items are removed while the toolbar is detached from the window, and
+    /// inserted after it is attached
+    /// (`NSToolbarSidebarTrackingSeparatorItemIdentifier` does not go into a toolbar
+    /// that is not attached).
     fn apply_toolbar(&self) {
         let toolbar = self.0.toolbar.borrow().clone();
         let sidebar = self.0.sidebar.borrow().clone();
@@ -853,31 +881,31 @@ impl Window {
         self.apply_min_size();
     }
 
-    /// 画面上端に出すメニューバー。呼ぶたびに置き換わる。
+    /// The menu bar shown at the top of the screen. Each call replaces it.
     ///
-    /// **macOS のメニューバーはアプリに 1 つ**なので、
-    /// `NSApplication.mainMenu` を差し替える。どのウィンドウから呼んでも
-    /// アプリ全体に効き、ウィンドウが前面かどうかでは変わらない
-    /// (ほかの 3 環境に合わせてウィンドウの API にしてある)。
+    /// **macOS has one menu bar per app**, so `NSApplication.mainMenu` is replaced.
+    /// Whichever window it is called from, it applies to the whole app, regardless of
+    /// whether the window is frontmost (it is a window API to match the other three
+    /// platforms).
     pub fn set_menu_bar(&self, menu_bar: &MenuBar) {
         menu_bar.install();
         *self.0.menu_bar.borrow_mut() = Some(menu_bar.clone());
     }
 
-    /// 取り付けたメニューバーを外す。付いていなければ何もしない。
+    /// Removes the attached menu bar. Does nothing if none is attached.
     ///
-    /// メニューが 1 つも無いと ⌘C / ⌘V が配送されなくなるため、naui の
-    /// 既定のメニュー (アプリメニューと編集メニュー) へ戻す。
+    /// Without any menu, ⌘C / ⌘V would no longer be dispatched, so it goes back to
+    /// naui's default menu (the app menu and Edit menu).
     pub fn clear_menu_bar(&self) {
         if let Some(old) = self.0.menu_bar.borrow_mut().take() {
             old.uninstall();
         }
     }
 
-    /// 画面に出して前面へ持ってくる。
+    /// Shows it on screen and brings it to the front.
     ///
-    /// 最初の表示では、表示する前に [`set_state`](Self::set_state) で頼んだ
-    /// 状態にする。
+    /// On first show, the state requested with [`set_state`](Self::set_state) before
+    /// showing is applied.
     pub fn show(&self) {
         self.0.native.makeKeyAndOrderFront(None);
         if !self.0.shown.replace(true) {
@@ -897,7 +925,7 @@ impl Window {
         self.0.native.isVisible()
     }
 
-    /// このウィンドウの配色テーマを切り替える。
+    /// Switches this window's color theme.
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         let appearance = match theme {
             Theme::System => None,
@@ -908,18 +936,18 @@ impl Window {
         Ok(())
     }
 
-    /// AppKit の実ウィンドウ。バックエンド固有の脱出口。
+    /// The real AppKit window. A backend-specific escape hatch.
     pub fn native_window(&self) -> Retained<NSWindow> {
         self.0.native.clone()
     }
 }
 
-/// ウィンドウの中身へ重ねるビュー (トーストの載せ先)。
+/// The view overlaid on the window's content (where toasts are placed).
 ///
-/// naui のサイドバーを付けたウィンドウでは、`contentViewController` が
-/// `NSSplitViewController` になっているので、その最後の区画 (中身の側) を
-/// 返す。`contentView` そのもの (`NSSplitView`) へ足すと、区画の 1 つとして
-/// 並べられてしまう。
+/// In a window with naui's sidebar, the `contentViewController` is an
+/// `NSSplitViewController`, so its last pane (the content side) is returned. Adding
+/// to the `contentView` itself (an `NSSplitView`) would lay it out as one of the
+/// panes.
 pub(crate) fn overlay_host(window: &NSWindow) -> Option<Retained<NSView>> {
     let mtm = MainThreadMarker::from(window);
     let split = window
@@ -934,11 +962,11 @@ pub(crate) fn overlay_host(window: &NSWindow) -> Option<Retained<NSView>> {
     }
 }
 
-/// naui が作ったウィンドウのうち、いちばん手前のもの。1 つも無ければ `None`。
+/// The frontmost of the windows naui created. `None` if there are none.
 ///
-/// 焦点のあるウィンドウを使い、まだどれにも当たっていないとき (起動直後や
-/// 自動テスト) は**最後に作ったもの**にする。`Dialog` が親を選ぶのと
-/// 同じ考え方。
+/// The window with focus is used; when none has focus yet (right after startup, or
+/// in automated tests), **the last one created** is used. The same idea as how
+/// `Dialog` picks its parent.
 pub(crate) fn frontmost(mtm: MainThreadMarker) -> Option<Retained<NSWindow>> {
     let app = NSApplication::sharedApplication(mtm);
     WINDOWS.with(|slot| {

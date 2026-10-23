@@ -1,17 +1,19 @@
-//! トースト (AppKit)。
+//! Toasts (AppKit).
 //!
-//! AppKit にトーストにあたるコントロールは無い。macOS の通知センターは
-//! **アプリの外**へ出るもので、「いま見ている画面の上に短く出して自分で
-//! 消える」という naui のトーストとは別物なので、`NSVisualEffectView` を
-//! ウィンドウの中身へ重ねて組み立てる (`NSPopover` と同じ材質)。
+//! AppKit has no control equivalent to a toast. macOS's Notification Center shows
+//! things **outside the app**, which is different from naui's toast ("shown briefly
+//! over the screen you are looking at, then goes away by itself"), so it is built by
+//! overlaying an `NSVisualEffectView` on the window's content (the same material as
+//! `NSPopover`).
 //!
-//! 出すのは**いちばん手前のウィンドウ**で、載せる先はその `contentView`。
-//! 消えるまでの時間は `NSTimer` が数える。
+//! It is shown in **the frontmost window**, placed on its `contentView`. An
+//! `NSTimer` counts down until it disappears.
 //!
-//! ## 他の環境との違い
+//! ## Differences from other platforms
 //!
-//! GTK4 では `AdwToast` がそのまま対応するが、macOS では上のとおり
-//! naui が組み立てたビューになる。位置 (下端の中央) と角丸もここで決めている。
+//! On GTK4, `AdwToast` corresponds directly, but on macOS it is a view naui builds
+//! as described above. The position (bottom center) and rounded corners are also
+//! decided here.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,24 +30,27 @@ use objc2_foundation::{NSArray, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString,
 
 use crate::trampoline::ActionTarget;
 
-/// 下端からの距離。
+/// The distance from the bottom edge.
 const BOTTOM_MARGIN: f64 = 24.0;
-/// 左右の端に残す余白。ウィンドウが狭いときはトーストのほうが縮む。
+/// The margin left at the left and right edges. When the window is narrow, the toast
+/// shrinks instead.
 const SIDE_MARGIN: f64 = 24.0;
-/// 角の丸み。
+/// The corner radius.
 const CORNER_RADIUS: f64 = 10.0;
-/// 影のぼかし。重なっていることが分かるように、`NSPopover` と同じく影を落とす。
+/// The shadow blur. A shadow is cast, as with `NSPopover`, to show that it is
+/// layered on top.
 const SHADOW_BLUR: f64 = 12.0;
-/// 影を落とす向き (下へ)。
+/// The direction of the shadow (downward).
 const SHADOW_OFFSET: NSSize = NSSize {
     width: 0.0,
     height: -3.0,
 };
-/// 重ねたビューに付ける名前。ネイティブ側からトーストを見分けるために使う。
+/// The name given to the overlaid view. Used to identify the toast from the native
+/// side.
 const IDENTIFIER: &str = "naui.toast";
-/// 文字とボタンの間隔。
+/// The spacing between the text and the button.
 const SPACING: f64 = 12.0;
-/// 中身の周りの余白。
+/// The padding around the content.
 const PADDING: NSEdgeInsets = NSEdgeInsets {
     top: 10.0,
     left: 16.0,
@@ -54,14 +59,15 @@ const PADDING: NSEdgeInsets = NSEdgeInsets {
 };
 
 thread_local! {
-    /// いま出ているトースト。同時に出るのは 1 つで、新しいものが置き換える。
+    /// The toast showing now. Only one is shown at a time, and a new one replaces it.
     static CURRENT: RefCell<Option<Toast>> = const { RefCell::new(None) };
 }
 
-/// クロージャ 1 本の置き場。
+/// The slot for one closure.
 ///
-/// 呼び出しの間だけ取り出すのは、通知の中からトーストを出し直しても
-/// `RefCell` が二重借用にならないようにするため (`Dialog` と同じ作り)。
+/// It is taken out only for the duration of the call so that showing the toast again
+/// from inside the notification does not double-borrow the `RefCell` (the same
+/// design as `Dialog`).
 #[derive(Clone, Default)]
 struct Callback(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
 
@@ -82,19 +88,19 @@ impl Callback {
     }
 }
 
-/// 出している間だけ持つもの。
+/// What is held only while it is shown.
 struct Presentation {
-    /// ウィンドウへ重ねてあるビュー。影を落とすので、角を丸めて中身を
-    /// 切り取る `NSVisualEffectView` とは分けてある (同じビューで両方を
-    /// やると、切り取りに影まで巻き込まれて消える)。
+    /// The view overlaid on the window. It casts a shadow, so it is separate from the
+    /// `NSVisualEffectView` that rounds the corners and clips the content (doing both in
+    /// the same view would clip away the shadow too).
     container: Retained<NSView>,
-    /// 文字とボタンを横に並べる行。
+    /// The row laying out the text and the button horizontally.
     row: Retained<NSStackView>,
-    /// 出している文字。
+    /// The text being shown.
     label: Retained<NSTextField>,
-    /// 操作ボタン。置いていなければ持たない。
+    /// The action button. Absent if there is none.
     button: Option<Retained<NSButton>>,
-    /// 自動で消すためのタイマー。消えない指定なら持たない。
+    /// The timer for disappearing automatically. Absent if it never disappears.
     timer: Option<Retained<NSTimer>>,
 }
 
@@ -102,21 +108,22 @@ struct ToastInner {
     mtm: MainThreadMarker,
     spec: RefCell<ToastSpec>,
     shown: RefCell<Option<Presentation>>,
-    /// 操作ボタンとタイマーの中継。**トーストと同じだけ生かしておく。**
+    /// The relay for the action button and the timer. **Kept alive as long as the
+    /// toast.**
     ///
-    /// `NSControl` の target は弱参照なので、どこかで持つ必要がある。
-    /// 出すたびに作り直さないのは、中継の中から消したとき
-    /// (ボタンを押した・時間が来た) に、**実行中の中継そのものを
-    /// 解放してしまわない**ようにするため。
+    /// `NSControl` targets are weak references, so something must hold them. They are
+    /// not recreated every time it is shown so that dismissing it from inside the relay
+    /// (the button was clicked, or time ran out) **does not free the relay that is
+    /// currently running**.
     action_target: RefCell<Option<Retained<ActionTarget>>>,
     timer_target: RefCell<Option<Retained<ActionTarget>>>,
     on_action: Callback,
     on_dismiss: Callback,
 }
 
-/// 一時的な通知 (`NSVisualEffectView` を重ねたもの)。
+/// A transient notification (an overlaid `NSVisualEffectView`).
 ///
-/// ウィジェットではないので、コンテナへは入れない (`Dialog` と同じ)。
+/// It is not a widget, so it does not go into containers (the same as `Dialog`).
 #[derive(Clone)]
 pub struct Toast(Rc<ToastInner>);
 
@@ -135,7 +142,8 @@ impl Toast {
         this
     }
 
-    /// 操作ボタンとタイマーの中継を作る。以後はこれを使い回す。
+    /// Creates the relays for the action button and the timer. They are reused from then
+    /// on.
     fn install_targets(&self) {
         let mtm = self.0.mtm;
         let for_action = Rc::downgrade(&self.0);
@@ -152,8 +160,8 @@ impl Toast {
         }));
     }
 
-    /// 出す文字列。出している間に呼ぶと、その場で書き換わる
-    /// (消えるまでの時間は数え直さない)。
+    /// The string to show. Calling it while shown updates it on the spot (the time until
+    /// it disappears is not restarted).
     pub fn set_message(&self, message: &str) {
         self.0.spec.borrow_mut().set_message(message);
         if let Some(shown) = self.0.shown.borrow().as_ref() {
@@ -165,9 +173,9 @@ impl Toast {
         self.0.spec.borrow().message().to_string()
     }
 
-    /// 操作ボタンの文字列。**空文字列を渡すとボタンを外す。**
+    /// The action button's label. **Passing an empty string removes the button.**
     ///
-    /// 出している間に呼ぶと、その場で付け外しされる。
+    /// Calling it while shown adds or removes it on the spot.
     pub fn set_action(&self, label: &str) {
         self.0.spec.borrow_mut().set_action(label);
         let action = self.0.spec.borrow().action().map(str::to_string);
@@ -176,7 +184,7 @@ impl Toast {
         }
     }
 
-    /// 操作ボタンの文字列。置いていなければ空文字列。
+    /// The action button's label. The empty string if there is no button.
     pub fn action(&self) -> String {
         self.0
             .spec
@@ -186,9 +194,10 @@ impl Toast {
             .to_string()
     }
 
-    /// 自動で消えるまでの秒数。**0 を渡すと自動では消えない。**
+    /// Seconds until it disappears automatically. **Passing 0 means it never
+    /// disappears automatically.**
     ///
-    /// 次に [`show`](Self::show) したときから効く。
+    /// Takes effect from the next [`show`](Self::show).
     pub fn set_timeout(&self, seconds: f64) {
         self.0.spec.borrow_mut().set_timeout(seconds);
     }
@@ -197,33 +206,35 @@ impl Toast {
         self.0.spec.borrow().timeout()
     }
 
-    /// いまの設定。
+    /// The current settings.
     pub fn spec(&self) -> ToastSpec {
         self.0.spec.borrow().clone()
     }
 
-    /// 操作ボタンが押されたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called when the action button is clicked. Setting it again removes the previous
+    /// one.
     ///
-    /// 押されるとトーストは消えるので、続けて `on_dismiss` も呼ばれる。
+    /// Clicking it makes the toast disappear, so `on_dismiss` is called next.
     pub fn on_action(&self, f: impl FnMut() + 'static) {
         self.0.on_action.set(f);
     }
 
-    /// 消えたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called when it disappears. Setting it again removes the previous one.
     ///
-    /// 呼ばれるのは**時間で消えたとき**と**操作ボタンで消えたとき**。
-    /// [`dismiss`](Self::dismiss) で消したときと、別のトーストに
-    /// 置き換えられたときは呼ばれない (アプリ自身の操作は通知しない、
-    /// という [`Dialog::close`](crate::Dialog::close) と同じ決まり)。
+    /// It is called **when it times out** and **when it is closed by the action
+    /// button**. It is not called when it is closed with [`dismiss`](Self::dismiss) or
+    /// replaced by another toast (the same rule as
+    /// [`Dialog::close`](crate::Dialog::close): the app's own actions are not
+    /// notified).
     pub fn on_dismiss(&self, f: impl FnMut() + 'static) {
         self.0.on_dismiss.set(f);
     }
 
-    /// トーストを出す。
+    /// Shows the toast.
     ///
-    /// **同時に出るのは 1 つ**で、ほかのトーストが出ていれば置き換える
-    /// (置き換えられたほうの `on_dismiss` は呼ばれない)。
-    /// 出せるウィンドウがまだ無いときは何もしない。
+    /// **Only one is shown at a time**; if another toast is showing, it is replaced
+    /// (the replaced one's `on_dismiss` is not called). Does nothing if there is no
+    /// window to show it in yet.
     pub fn show(&self) {
         let Some(host) = host_view(self.0.mtm) else {
             return;
@@ -237,7 +248,7 @@ impl Toast {
         CURRENT.with(|slot| *slot.borrow_mut() = Some(self.clone()));
     }
 
-    /// 出しているトーストを消す。`on_dismiss` は呼ばれない。
+    /// Closes the toast being shown. `on_dismiss` is not called.
     pub fn dismiss(&self) {
         if !self.is_visible() {
             return;
@@ -246,14 +257,14 @@ impl Toast {
         self.take_down();
     }
 
-    /// いま出ているか。
+    /// Whether it is showing now.
     pub fn is_visible(&self) -> bool {
         self.0.shown.borrow().is_some()
     }
 
-    /// 重ねてあるビュー。出していなければ `None`。
+    /// The overlaid view. `None` if it is not shown.
     ///
-    /// バックエンド固有の脱出口として公開している。
+    /// Public as a backend-specific escape hatch.
     pub fn native_view(&self) -> Option<Retained<NSView>> {
         self.0
             .shown
@@ -262,7 +273,7 @@ impl Toast {
             .map(|shown| shown.container.clone())
     }
 
-    /// 操作ボタンを付け直す。`label` が `None` なら外す。
+    /// Reattaches the action button. Removes it if `label` is `None`.
     fn apply_action(&self, shown: &mut Presentation, label: Option<&str>) {
         if let Some(button) = shown.button.take() {
             shown.row.removeArrangedSubview(&button);
@@ -276,7 +287,7 @@ impl Toast {
         shown.button = Some(button);
     }
 
-    /// 押すと `on_action` を通して消えるボタン。
+    /// A button that dismisses the toast through `on_action` when clicked.
     fn action_button(&self, label: &str) -> Retained<NSButton> {
         let button = unsafe {
             NSButton::buttonWithTitle_target_action(
@@ -295,7 +306,7 @@ impl Toast {
         button
     }
 
-    /// ビューを組み立てて `host` へ重ね、時間を数え始める。
+    /// Builds the view, overlays it on `host`, and starts counting down.
     fn build(&self, host: &NSView) -> Presentation {
         let mtm = self.0.mtm;
         let spec = self.0.spec.borrow().clone();
@@ -407,7 +418,7 @@ impl Toast {
         }
     }
 
-    /// 消えたことをアプリへ知らせる。`action` は操作ボタンで消えたか。
+    /// Tells the app it disappeared. `action` is whether the action button closed it.
     fn finish(&self, action: bool) {
         if !self.is_visible() {
             return;
@@ -420,7 +431,7 @@ impl Toast {
         self.0.on_dismiss.emit();
     }
 
-    /// ビューを外し、タイマーを止める。通知はしない。
+    /// Removes the view and stops the timer. No notification.
     fn take_down(&self) {
         let Some(shown) = self.0.shown.borrow_mut().take() else {
             return;
@@ -431,7 +442,7 @@ impl Toast {
         shown.container.removeFromSuperview();
     }
 
-    /// 「いま出ているトースト」が自分なら、その座を空ける。
+    /// If "the toast showing now" is this one, vacates that slot.
     fn forget_current(&self) {
         CURRENT.with(|slot| {
             let mine = slot
@@ -445,14 +456,14 @@ impl Toast {
     }
 }
 
-/// トーストを載せるビュー。まだウィンドウが無ければ `None`。
+/// The view the toast is placed on. `None` if there is no window yet.
 ///
-/// 出し先は naui が作ったウィンドウのうちいちばん手前のもの
-/// ([`crate::window::frontmost`])。AppKit が内部で作るウィンドウを
-/// 掴まないよう、`NSApplication` の `windows` は直接見ない。
+/// It goes to the frontmost of the windows naui created
+/// ([`crate::window::frontmost`]). `NSApplication`'s `windows` is not looked at
+/// directly, so as not to grab windows AppKit creates internally.
 ///
-/// サイドバーを付けたウィンドウでは右の区画 (中身の側) へ重ねる。
-/// Linux の `AdwToastOverlay` が中身の側にあるのと同じ位置になる。
+/// In a window with a sidebar, it is overlaid on the right pane (the content side),
+/// the same position as Linux's `AdwToastOverlay`, which is on the content side.
 fn host_view(mtm: MainThreadMarker) -> Option<Retained<NSView>> {
     crate::window::overlay_host(&*crate::window::frontmost(mtm)?)
 }

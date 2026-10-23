@@ -1,13 +1,13 @@
-//! 別スレッドから UI スレッドへ仕事を投げる口。
+//! The way to post work from other threads to the UI thread.
 //!
-//! `MainContext::invoke` は使わない。glib 0.20 の doc にあるとおり、
-//! 呼び出し元がメインコンテキストの所有者のとき、**または所有者が誰もいないとき**、
-//! その場で同期実行してしまう。メインループを回していない場面 (テストなど) で
-//! ワーカースレッドから呼ぶと、そのワーカースレッド上で走ってしまい、
-//! UI スレッドの登録簿へ届かない。
+//! `MainContext::invoke` is not used. As glib 0.20's docs say, when the caller owns
+//! the main context, **or when nobody owns it**, it runs synchronously on the spot.
+//! Called from a worker thread where the main loop is not running (in tests, for
+//! example), it would run on that worker thread and never reach the UI thread's
+//! registry.
 //!
-//! `idle_add_once` は必ず既定のメインコンテキストの idle source として
-//! 遅延されるので、「必ず後回し」という [`MainThread`] の約束を満たす。
+//! `idle_add_once` is always deferred as an idle source of the default main
+//! context, which satisfies [`MainThread`]'s promise of "always deferred".
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::time::Duration;
@@ -15,8 +15,8 @@ use std::time::Duration;
 use gtk::glib;
 use naui_core::{MainThread, Work};
 
-/// 既定のメインコンテキスト = メインスレッドのメインループ。
-/// ハンドルを持ち歩く必要がないのでフィールドは無い。
+/// The default main context = the main thread's main loop. There is no handle to
+/// carry around, so it has no fields.
 pub(crate) struct Idle;
 
 impl MainThread for Idle {

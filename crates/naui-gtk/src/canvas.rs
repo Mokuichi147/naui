@@ -1,35 +1,37 @@
-//! 描画面 (`GtkDrawingArea` + cairo)。
+//! The drawing surface (`GtkDrawingArea` + cairo).
 //!
-//! GTK4 で「アプリが自分で描く面」は `GtkDrawingArea` で、描く関数へ
-//! cairo のコンテキストが渡ってくる。naui はその中でアプリの `on_draw` を
-//! 呼び、[`Painter`] に記録された命令を cairo の `move_to` / `line_to` /
-//! `curve_to` / `fill` / `stroke` と Pango のレイアウト (`show_layout`) で
-//! 再生する。ラスタライズ・アンチエイリアス・HiDPI の倍率・文字の整形は
-//! cairo と Pango が行う。
+//! In GTK4, "a surface the app draws itself" is a `GtkDrawingArea`, whose draw
+//! function receives a cairo context. naui calls the app's `on_draw` inside it and
+//! replays the commands recorded in the [`Painter`] with cairo's `move_to` /
+//! `line_to` / `curve_to` / `fill` / `stroke` and Pango layouts (`show_layout`).
+//! cairo and Pango do the rasterization, antialiasing, HiDPI scaling and text
+//! shaping.
 //!
-//! 文字はウィジェットの Pango コンテキストから作るので、書体はテーマの
-//! UI フォントで、大きさだけを命令の `size` に差し替える。
+//! Text is created from the widget's Pango context, so the typeface is the theme's
+//! UI font, with only the size replaced by the command's `size`.
 //!
-//! ポインターの通知は 3 つのコントローラーから取る。`GtkGestureClick` が
-//! 押下・解放 (どのボタンかは `current_button` で、左が 1、中が 2、右が 3、
-//! 側面が 8 と 9)、`GtkGestureDrag` が**押している間の移動** (面の外へ出ても
-//! 届く)、`GtkEventControllerMotion` が押していない間の移動 (ホバー。こちらは
-//! 面の中にいる間しか出ない)。
+//! Pointer notifications come from three controllers. `GtkGestureClick` gives
+//! presses and releases (the button comes from `current_button`: 1 for left, 2 for
+//! middle, 3 for right, 8 and 9 for the side buttons), `GtkGestureDrag` gives
+//! **movement while pressed** (delivered even outside the surface), and
+//! `GtkEventControllerMotion` gives movement while not pressed (hover, delivered
+//! only while inside the surface).
 //!
-//! ホイールは `GtkEventControllerScroll` から取る。量の単位は
-//! `gtk_event_controller_scroll_get_unit` で分かり、刻みのあるホイール
-//! (`GDK_SCROLL_UNIT_WHEEL`、1 刻みで 1) は [`WHEEL_STEP`] を掛け、
-//! トラックパッド (`GDK_SCROLL_UNIT_SURFACE`) は論理ピクセルのまま届ける。
-//! スクロールの通知は位置を持たないので、最後にホバーで見た位置を使う。
-//! アプリが `Continue` を返したら伝播を止めず、外側の `GtkScrolledWindow` が
-//! いつもどおりスクロールする。
+//! The wheel comes from `GtkEventControllerScroll`. The unit of the amount is given
+//! by `gtk_event_controller_scroll_get_unit`: notched wheels
+//! (`GDK_SCROLL_UNIT_WHEEL`, 1 per notch) are multiplied by [`WHEEL_STEP`], and
+//! trackpads (`GDK_SCROLL_UNIT_SURFACE`) are delivered in logical pixels as is.
+//! Scroll notifications carry no position, so the last position seen while
+//! hovering is used. When the app returns `Continue`, propagation is not stopped
+//! and the outer `GtkScrolledWindow` scrolls as usual.
 //!
-//! `Handled` で伝播を止めても、外側の `GtkScrolledWindow` の慣性は防げない。
-//! 外側は捕捉フェーズ (子より先) のコントローラーでも量の履歴をためていて、
-//! 指を離したとき (止まりのイベント) にその履歴から慣性スクロールを始めるため。
-//! 止まりのイベントは続けて Canvas にも届くので、最後の量を `Handled` で
-//! 受けていたら、Canvas の `scroll-end` で外側の慣性を取り消す
-//! ([`cancel_ancestor_kinetic`])。
+//! Stopping propagation with `Handled` does not prevent the outer
+//! `GtkScrolledWindow`'s momentum. The outer one also accumulates a history of
+//! amounts with a capture-phase controller (which runs before its children), and
+//! starts momentum scrolling from that history when the fingers lift (the stop
+//! event). The stop event then reaches the Canvas too, so if the last amount was
+//! received with `Handled`, the Canvas's `scroll-end` cancels the outer momentum
+//! ([`cancel_ancestor_kinetic`]).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -46,8 +48,8 @@ use crate::bin::SizeBin;
 use crate::callback::Notifier;
 use crate::widgets::{impl_widget, Widget};
 
-/// 描く内容を決めるクロージャの置き場。呼んでいる間は取り出しておく
-/// ([`Notifier`] と同じ決まり)。
+/// The slot for the closure that decides what to draw. Taken out while it is being
+/// called (the same rule as [`Notifier`]).
 type DrawSlot = RefCell<Option<Box<dyn FnMut(&mut Painter)>>>;
 
 struct CanvasInner {
@@ -58,9 +60,10 @@ struct CanvasInner {
     wheel: Rc<WheelHandler>,
 }
 
-/// アプリが自分で描く面 (`GtkDrawingArea`)。
+/// A surface the app draws on itself (`GtkDrawingArea`).
 ///
-/// 中身から大きさは決まらないので、`set_sizing` で指定する (`Scroll` と同じ)。
+/// Its size is not determined by its contents, so set it with `set_sizing` (the
+/// same as `Scroll`).
 #[derive(Clone)]
 pub struct Canvas(Rc<CanvasInner>);
 impl_widget!(Canvas);
@@ -216,37 +219,41 @@ impl Canvas {
         }))
     }
 
-    /// 描く内容を決めるクロージャ。描き直すたびに新しい [`Painter`] で呼ばれる。
+    /// The closure that decides what to draw. Called with a fresh [`Painter`] every
+    /// time it is redrawn.
     ///
-    /// 呼ばれるのは [`redraw`](Self::redraw) の後と、面の大きさが変わったとき
-    /// (と、GTK が再描画を求めたとき)。
+    /// It is called after [`redraw`](Self::redraw), when the surface changes size (and
+    /// when GTK asks for a redraw).
     pub fn on_draw(&self, f: impl FnMut(&mut Painter) + 'static) {
         *self.0.draw.borrow_mut() = Some(Box::new(f));
         self.redraw();
     }
 
-    /// 描き直しを頼む。その場では描かず、次の描画のときに `on_draw` が呼ばれる。
+    /// Requests a redraw. Nothing is drawn on the spot; `on_draw` is called at the next
+    /// draw.
     pub fn redraw(&self) {
         self.0.native.queue_draw();
     }
 
-    /// ポインター (マウス・タッチ・ペン) の押下・移動・解放。位置は面の左上を
-    /// 原点にした論理ピクセル。移動は押していない間 (ホバー) も届く。押下と
-    /// 解放にはどのボタンかが付く ([`PointerEvent::button`])。
+    /// Pointer (mouse, touch, pen) presses, moves and releases. Positions are logical
+    /// pixels with the surface's top left as origin. Moves also arrive while nothing is
+    /// pressed (hover). Presses and releases carry which button
+    /// ([`PointerEvent::button`]).
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.pointer.set(f);
     }
 
-    /// ホイール (トラックパッドの 2 本指のスクロールも含む)。量は論理ピクセル。
+    /// The wheel (including two-finger scrolling on a trackpad). Amounts are logical
+    /// pixels.
     ///
-    /// `Handled` を返すと外側のスクロールへは回らない (指を離した後の慣性も
-    /// 起きない)。`Continue` なら外側の `GtkScrolledWindow` がいつもどおり
-    /// スクロールする。
+    /// Returning `Handled` keeps it from reaching the outer scroll view (and no
+    /// momentum follows after the fingers lift). With `Continue`, the outer
+    /// `GtkScrolledWindow` scrolls as usual.
     pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
         self.0.wheel.set(f);
     }
 
-    /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
+    /// The current size of the surface (width, height). 0 if not laid out yet.
     pub fn size(&self) -> (f64, f64) {
         (
             f64::from(self.0.native.width()),
@@ -254,17 +261,18 @@ impl Canvas {
         )
     }
 
-    /// 描画面本体。バックエンド固有の脱出口として公開している。
+    /// The drawing surface itself. Public as a backend-specific escape hatch.
     pub fn native_area(&self) -> gtk::DrawingArea {
         self.0.native.clone()
     }
 }
 
-/// 外側の `GtkScrolledWindow` が始めた慣性スクロールを取り消す。
+/// Cancels momentum scrolling started by an outer `GtkScrolledWindow`.
 ///
-/// 慣性を止める公開の API は無いが、`kinetic-scrolling` を切ると進行中の
-/// 慣性 (`cancel_deceleration`) も止まる。すぐ元へ戻すので、設定は変わらない。
-/// 入れ子のスクロールはどれも履歴をためているので、祖先をすべて辿る。
+/// There is no public API to stop momentum, but turning off `kinetic-scrolling`
+/// also stops momentum in progress (`cancel_deceleration`). It is turned back on
+/// immediately, so the setting does not change. Nested scroll views all accumulate
+/// history, so every ancestor is visited.
 fn cancel_ancestor_kinetic(widget: &gtk::Widget) {
     let mut next = widget.parent();
     while let Some(ancestor) = next {
@@ -278,10 +286,10 @@ fn cancel_ancestor_kinetic(widget: &gtk::Widget) {
     }
 }
 
-/// GDK のボタン番号をボタンへ直す。
+/// Converts a GDK button number into a button.
 ///
-/// タッチは GTK が 1 (主ボタン) として渡す。0 (どのボタンでもない) と
-/// 知らない番号は `None`。
+/// GTK passes touch as 1 (the primary button). 0 (no button) and unknown numbers
+/// give `None`.
 fn button_from_gdk(button: u32) -> Option<PointerButton> {
     match button {
         gtk::gdk::BUTTON_PRIMARY => Some(PointerButton::Primary),
@@ -293,7 +301,7 @@ fn button_from_gdk(button: u32) -> Option<PointerButton> {
     }
 }
 
-/// [`Painter`] に記録された命令を cairo へ描く。
+/// Draws the commands recorded in the [`Painter`] with cairo.
 fn replay(area: &gtk::DrawingArea, cr: &cairo::Context, commands: &[DrawCommand]) {
     for command in commands {
         match command {

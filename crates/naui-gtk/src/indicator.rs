@@ -1,33 +1,37 @@
-//! `GtkCheckButton` の「印」を、ラベルの字面の中心へそろえる。
+//! Aligns the "indicator" of a `GtkCheckButton` with the center of the label's
+//! glyphs.
 //!
-//! GTK4 は印 (`check` / `radio` ノード) をラベルの**行の箱**
-//! (ascent + descent) の中心に置く。欧文のフォントはこの箱と字面の中心が
-//! ほぼ重なるので気にならないが、日本語を含む行は ascent が大きく取られる
-//! ため、字面は箱の中心より下に来る。その結果、印だけが上に浮いて見える。
+//! GTK4 places the indicator (the `check` / `radio` node) at the center of the
+//! label's **line box** (ascent + descent). For Latin fonts the box's center and the
+//! glyphs' center nearly coincide, so it is not noticeable, but lines containing
+//! Japanese get a large ascent, so the glyphs sit below the box's center. As a
+//! result, only the indicator appears to float upward.
 //!
-//! そこで印へ上マージンを足し、**ベースラインから見た字面の中心**へ寄せ直す。
-//! 字面の中心は「ベースラインから大文字の高さの半分だけ上」とみなす。欧文の
-//! 大文字と日本語の字面は、ベースラインから見てほぼ同じ高さに収まるので、
-//! この 1 つの目安で両方そろう。
+//! So a top margin is added to the indicator to move it back to **the center of the
+//! glyphs as seen from the baseline**. The glyph center is taken to be "half the
+//! cap height above the baseline". Latin capitals and Japanese glyphs fit into
+//! nearly the same height above the baseline, so this one measure aligns both.
 //!
-//! マージンは行の箱に収まる範囲でしか足さない。はみ出す量は切り捨てるので、
-//! **チェックボックスの大きさは変わらない**。
+//! The margin is added only within the line box. Any excess is cut off, so **the
+//! size of the check box does not change**.
 
 use gtk::pango;
 use gtk::prelude::*;
 
-/// 印の位置をそろえ、画面に出るたびにそろえ直す。
+/// Aligns the indicator's position, and re-aligns it every time it appears on
+/// screen.
 ///
-/// 答えはフォントによって変わる。`map` で測り直すのは、親に付く前の
-/// ウィジェットには画面のフォント設定がまだ届いていないことがあるため。
-/// アプリが動いている最中にデスクトップのフォントが変わった場合は、次に
-/// 画面へ出るまで前の位置のままになる (ずれても数ピクセル)。
+/// The answer depends on the font. It is measured again on `map` because a widget
+/// not yet attached to a parent may not have received the screen's font settings.
+/// If the desktop font changes while the app is running, the old position remains
+/// until it next appears on screen (off by a few pixels at most).
 pub(crate) fn watch(button: &gtk::CheckButton) {
     align(button);
     button.connect_map(align);
 }
 
-/// 印をラベルの字面の中心へそろえ直す。ラベルの無いものは何もしない。
+/// Re-aligns the indicator with the center of the label's glyphs. Does nothing for
+/// buttons without a label.
 fn align(button: &gtk::CheckButton) {
     let Some(indicator) = button.first_child() else {
         return;
@@ -42,10 +46,11 @@ fn align(button: &gtk::CheckButton) {
     }
 }
 
-/// 印へ足す上マージン (論理ピクセル)。
+/// The top margin added to the indicator (logical pixels).
 ///
-/// 上マージンは印の箱だけを縦に伸ばす。箱は行の中で中央に置かれるため、
-/// **印そのものはマージンの半分だけ下がる**。動かしたい量の 2 倍を返す。
+/// A top margin stretches only the indicator's box vertically. The box is centered
+/// within the line, so **the indicator itself moves down by half the margin**.
+/// Returns twice the amount to move.
 fn top_margin(label: &gtk::Label, indicator: &gtk::Widget) -> i32 {
     let layout = label.layout();
     let line_height = layout.pixel_extents().1.height();
@@ -67,9 +72,10 @@ fn top_margin(label: &gtk::Label, indicator: &gtk::Widget) -> i32 {
     (shift * 2.0).round().clamp(0.0, slack as f64) as i32
 }
 
-/// ラベルのフォントの大文字の高さ (論理ピクセル)。
+/// The cap height of the label's font (logical pixels).
 ///
-/// Pango の計量に大文字の高さは無いので、`H` を組んで字面の高さを測る。
+/// Pango's metrics have no cap height, so an `H` is laid out and the height of its
+/// glyph is measured.
 fn cap_height(label: &gtk::Label) -> f64 {
     label
         .create_pango_layout(Some("H"))

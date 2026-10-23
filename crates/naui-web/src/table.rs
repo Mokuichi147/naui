@@ -1,19 +1,20 @@
-//! テーブル (DOM)。
+//! Tables (DOM).
 //!
-//! HTML の `<table>` をそのまま使う。列見出しは `<th scope="col">`、
-//! 行は `<tr>`、セルは `<td>`。列の幅は `<colgroup>` の `<col>` に持たせ、
-//! **幅の計算はブラウザのテーブルレイアウト**に任せる。
+//! HTML's `<table>` is used as is. Column headings are `<th scope="col">`, rows
+//! `<tr>` and cells `<td>`. Column widths are held by the `<col>`s of a
+//! `<colgroup>`, and **width computation is left to the browser's table layout**.
 //!
-//! 素の `<table>` には「行を選ぶ」仕組みが無いので、そこだけを naui が足す。
+//! A plain `<table>` has no mechanism for "selecting rows", so that is the only
+//! thing naui adds.
 //!
-//! | 部分 | 作り |
+//! | Part | Built from |
 //! | --- | --- |
-//! | 役割 | `role="grid"` + `aria-multiselectable` |
-//! | 選択 | `<tr aria-selected>` と、システム色 (`SelectedItem` / `Highlight`) |
-//! | 操作 | 行のクリック (⌘ / Ctrl / Shift)、矢印・Home / End・Space |
+//! | Role | `role="grid"` + `aria-multiselectable` |
+//! | Selection | `<tr aria-selected>` and system colors (`SelectedItem` / `Highlight`) |
+//! | Interaction | Row clicks (⌘ / Ctrl / Shift), arrows, Home / End, Space |
 //!
-//! 枠・選択・無効の色は、どれもブラウザが持つシステム色をそのまま使う。
-//! naui は配色を決めない。
+//! The frame, selection and disabled colors all use the browser's system colors as
+//! is. naui decides no colors.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -29,7 +30,8 @@ use crate::list::{control_was_targeted, ActivationHandler};
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
 thread_local! {
-    /// `aria-activedescendant` から行を指すための、表ごとの通し番号。
+    /// A per-table running number for referring to rows from
+    /// `aria-activedescendant`.
     static NEXT_ID: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -45,7 +47,8 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
     let _ = element.style().set_property(property, value);
 }
 
-/// CSS の文字揃えへ写す。`Fill` は文字に意味が無いので左と同じ扱い。
+/// Maps to CSS text alignment. `Fill` means nothing for text, so it is treated the
+/// same as left.
 fn text_align(align: Align) -> &'static str {
     match align {
         Align::Center => "center",
@@ -54,11 +57,11 @@ fn text_align(align: Align) -> &'static str {
     }
 }
 
-/// 選択が変わったことの通知先。
+/// The handler notified when the selection changes.
 ///
-/// 単一選択でも複数選択でも同じ形にするため、選ばれている行を
-/// 昇順の並びで渡す。呼び出しの間だけクロージャを取り出すので、
-/// コールバックの中からテーブルを操作しても二重借用にならない。
+/// To use the same shape for single and multiple selection, the selected rows are
+/// passed in ascending order. The closure is taken out only for the duration of the
+/// call, so operating on the table from inside the callback does not double-borrow.
 #[derive(Clone, Default)]
 struct SelectionHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize])>>>>);
 
@@ -79,7 +82,7 @@ impl SelectionHandler {
     }
 }
 
-/// 並べ替えが変わったことの通知先。
+/// The handler notified when the sort changes.
 #[derive(Clone, Default)]
 struct SortHandler(Rc<RefCell<Option<Box<dyn FnMut(usize, SortOrder)>>>>);
 
@@ -100,7 +103,7 @@ impl SortHandler {
     }
 }
 
-/// セル 1 つ分の中身。
+/// The content of one cell.
 enum CellContent {
     Text(String),
     Widget(Box<dyn Widget>),
@@ -115,11 +118,12 @@ impl Clone for CellContent {
     }
 }
 
-/// 表へ載せる 1 行の中身。
+/// The contents of one row to put in a table.
 ///
-/// [`TableRow`] は文字列だけで済む表向けの簡便 API であり、セルにボタンや
-/// チェックボックス、アイコンを置きたいときは `Grid` / `Stack` で中身を
-/// 作ってこの型へ並べる。行は [`Table::set_row_builder`] から返す。
+/// [`TableRow`] is a convenience API for tables that need only strings. To put
+/// buttons, check boxes or icons in cells, build the contents with `Grid` / `Stack`
+/// and line them up in this type. Rows are returned from
+/// [`Table::set_row_builder`].
 ///
 /// ```no_run
 /// # use naui_web::{Table, TableCells};
@@ -132,7 +136,7 @@ impl Clone for CellContent {
 pub struct TableCells {
     cells: Vec<CellContent>,
     selectable: bool,
-    /// 文字だけの行で `enabled` が `false` のとき。文字を淡くする。
+    /// For text-only rows whose `enabled` is `false`. Dims the text.
     dimmed: bool,
     activation: ActivationHandler,
 }
@@ -155,7 +159,7 @@ impl Default for TableCells {
 }
 
 impl TableCells {
-    /// セルが 1 つも無い行を作る。
+    /// Creates a row with no cells.
     pub fn new() -> Self {
         Self {
             cells: Vec::new(),
@@ -165,19 +169,19 @@ impl TableCells {
         }
     }
 
-    /// 文字のセルを 1 つ足す。揃えは列の指定に従う。
+    /// Adds one text cell. Alignment follows the column's setting.
     pub fn text(mut self, text: impl Into<String>) -> Self {
         self.cells.push(CellContent::Text(text.into()));
         self
     }
 
-    /// ウィジェットのセルを 1 つ足す。
+    /// Adds one widget cell.
     pub fn cell(mut self, content: &dyn Widget) -> Self {
         self.cells.push(CellContent::Widget(content.boxed_clone()));
         self
     }
 
-    /// 行全体を選択できるようにするかどうか (既定はできる)。
+    /// Whether the whole row can be selected (it can by default).
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
         self
@@ -187,7 +191,7 @@ impl TableCells {
         self.selectable
     }
 
-    /// 列数。
+    /// The number of columns.
     pub fn len(&self) -> usize {
         self.cells.len()
     }
@@ -196,14 +200,16 @@ impl TableCells {
         self.cells.is_empty()
     }
 
-    /// 行のセルや余白がクリックされたときに呼ぶ処理。
+    /// What to do when a cell or empty space in the row is clicked.
     ///
-    /// ボタン・入力欄などのコントロールを直接押した場合は呼ばれない。
+    /// It is not called when a control such as a button or text field is clicked
+    /// directly.
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.activation.set(f);
     }
 
-    /// 文字だけの行から作る。`enabled` はそのまま「選べるか」になる。
+    /// Creates one from a text-only row. `enabled` becomes "whether it can be
+    /// selected" as is.
     fn from_row(row: &TableRow) -> Self {
         Self {
             cells: row.cells.iter().cloned().map(CellContent::Text).collect(),
@@ -218,17 +224,18 @@ impl TableCells {
     }
 }
 
-/// 行を組み立てるクロージャ。呼び出しの間だけ取り出す。
-/// 行を組み立てるクロージャの置き場。
+/// The closure that builds rows. Taken out only for the duration of the call.
+/// The slot for the closure that builds rows.
 type RowBuildCell = Rc<RefCell<Option<Box<dyn FnMut(usize) -> Result<TableCells>>>>>;
 
-/// 「その行は選べるか」を答える関数の置き場 ([`Table::set_row_selectable`])。
+/// The slot for the function answering "can this row be selected?"
+/// ([`Table::set_row_selectable`]).
 type RowSelectableCell = RefCell<Option<Rc<dyn Fn(usize) -> bool>>>;
 
-/// 行を組み立てるクロージャ。
+/// The closure that builds rows.
 ///
-/// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
-/// 二重借用にならない。
+/// It is taken out only for the duration of the call, so operating on the table
+/// from inside the build does not double-borrow.
 #[derive(Clone, Default)]
 struct RowBuilder(RowBuildCell);
 
@@ -256,13 +263,14 @@ impl RowBuilder {
     }
 }
 
-/// 行の出どころ。文字だけの行 ([`Table::set_rows`]) と、
-/// 見えたときに組み立てる行 ([`Table::set_row_builder`]) の 2 通り。
+/// Where rows come from: either text-only rows ([`Table::set_rows`]) or rows built
+/// when they become visible ([`Table::set_row_builder`]).
 #[derive(Default)]
 struct RowsState {
     rows: RefCell<Vec<TableRow>>,
     builder: RowBuilder,
-    /// 行を組み立てずに「選べるか」を答える関数 ([`Table::set_row_selectable`])。
+    /// The function that answers "can it be selected?" without building the row
+    /// ([`Table::set_row_selectable`]).
     selectable: RowSelectableCell,
     count: Cell<usize>,
 }
@@ -284,7 +292,7 @@ impl RowsState {
         self.count.set(count);
     }
 
-    /// その行の中身。無ければ `None`。
+    /// The contents of that row. `None` if there is none.
     fn cells(&self, index: usize) -> Option<TableCells> {
         if index >= self.count.get() {
             return None;
@@ -300,15 +308,15 @@ impl RowsState {
         *self.selectable.borrow_mut() = Some(Rc::new(f));
     }
 
-    /// 行を組み立てずに答えられるなら、その行が選べるか。
+    /// Whether the row can be selected, if that can be answered without building it.
     ///
-    /// 呼び出しの間は借用を持たない (この中からアプリが表を触れるため)。
+    /// No borrow is held during the call (the app may touch the table from inside it).
     fn selectable_hint(&self, index: usize) -> Option<bool> {
         let f = self.selectable.borrow().clone()?;
         Some(f(index))
     }
 
-    /// 文字だけの行で、その行が選べるか。組み立てる行では `None`。
+    /// For text-only rows, whether the row can be selected. `None` for built rows.
     fn text_row_selectable(&self, index: usize) -> Option<bool> {
         match self.builder.is_set() {
             true => None,
@@ -317,8 +325,8 @@ impl RowsState {
     }
 }
 
-/// 並べ替えの向きを表す文字。HTML に「並べ替え済み」の見た目は無いので、
-/// 読み上げには `aria-sort`、目には矢印を出す。
+/// The character indicating the sort direction. HTML has no "sorted" look, so
+/// screen readers get `aria-sort` and the eyes get an arrow.
 fn sort_arrow(order: Option<SortOrder>) -> &'static str {
     match order {
         Some(SortOrder::Ascending) => " ▲",
@@ -328,59 +336,63 @@ fn sort_arrow(order: Option<SortOrder>) -> &'static str {
 }
 
 struct TableInner {
-    /// 外から見える枠。スクロールするのはここ。
+    /// The frame visible from outside. This is what scrolls.
     root: HtmlElement,
     document: Document,
     id: u32,
     table: HtmlElement,
-    /// 列の幅を持つ `<colgroup>`。列を変えるたびに中身を作り直す。
+    /// The `<colgroup>` holding the column widths. Its content is rebuilt whenever the
+    /// columns change.
     colgroup: HtmlElement,
     head: HtmlElement,
     body: HtmlElement,
-    /// 見出しの `<th>`。並べ替えの指標はここへ書く。
+    /// The headings' `<th>`s. The sort indicator is written here.
     header_cells: RefCell<Vec<HtmlElement>>,
-    /// 見出しの中に置いた `<button>`。押せる列にだけある。
+    /// The `<button>`s placed inside the headings. Only clickable columns have one.
     sort_buttons: RefCell<Vec<Option<HtmlElement>>>,
-    /// 見出しのクリックの購読。列を作り直すたびに入れ替える。
+    /// The subscriptions to heading clicks. Replaced whenever the columns are rebuilt.
     sort_listeners: RefCell<Vec<Listener>>,
-    /// いまの並べ替え (列と向き)。
+    /// The current sort (column and direction).
     sort: Cell<Option<(usize, SortOrder)>>,
     sort_handler: SortHandler,
     columns: RefCell<Vec<TableColumn>>,
     rows: Rc<RowsState>,
-    /// いま組み立ててある行の範囲。行数が多いと画面の前後だけになる。
+    /// The range of rows currently built. With many rows, only those around the screen.
     window: Cell<RowWindow>,
-    /// 組み立ててある行の中身。`row_elements` と同じ並び。
+    /// The contents of the built rows, in the same order as `row_elements`.
     realized: RefCell<Vec<TableCells>>,
-    /// 1 行の高さ (論理ピクセル)。測った値か [`Table::set_row_height`] の指定。
+    /// The height of one row (logical pixels). Either measured or set with
+    /// [`Table::set_row_height`].
     row_height: Cell<f64>,
-    /// アプリが決めた行の高さ。無ければ組み立てた行から測る。
+    /// The row height decided by the app. If absent, it is measured from a built row.
     fixed_row_height: Cell<Option<f64>>,
-    /// 窓の外にある行の分を埋める `<tr>`。スクロールバーの長さを保つ。
+    /// A `<tr>` filling in for the rows outside the window, keeping the scroll bar
+    /// length.
     top_spacer: HtmlElement,
     bottom_spacer: HtmlElement,
-    /// 組み立ててある行の `<tr>`。並びは `window.start` から。
+    /// The `<tr>`s of the built rows, in order from `window.start`.
     row_elements: RefCell<Vec<HtmlElement>>,
     mode: Cell<SelectionMode>,
-    /// 選ばれている行 (昇順)。DOM ではなくここが正。
+    /// The selected rows (ascending). This is the source of truth, not the DOM.
     selected: RefCell<Vec<usize>>,
-    /// キーボードでいま指している行。
+    /// The row the keyboard is pointing at now.
     active: Cell<Option<usize>>,
-    /// Shift での範囲選択の起点。
+    /// The anchor of a Shift range selection.
     anchor: Cell<Option<usize>>,
     handler: SelectionHandler,
-    /// 行ごとのクリックの購読。行を作り直すたびに入れ替える。
+    /// The click subscription per row. Replaced whenever the rows are rebuilt.
     row_listeners: RefCell<Vec<Listener>>,
-    /// 表全体のキー操作の購読。`<table>` は作り直さないので 1 回だけ張る。
+    /// The subscription for key operations on the whole table. The `<table>` is never
+    /// rebuilt, so it is attached only once.
     _keys: RefCell<Option<Listener>>,
-    /// スクロールの購読。窓を動かすのに使う。
+    /// The scroll subscription. Used to move the window.
     _scroll: RefCell<Option<Listener>>,
 }
 
-/// 列見出しを持つ表 (`<table>`)。
+/// A table with column headings (`<table>`).
 ///
-/// 高さは中身から決まるので、行数に関係なく固定したいときは
-/// `set_sizing` で指定する。はみ出した分は枠の中でスクロールする。
+/// Its height is decided by its contents, so to fix it regardless of the number of
+/// rows, specify it with `set_sizing`. Whatever overflows scrolls inside the frame.
 #[derive(Clone)]
 pub struct Table(Rc<TableInner>);
 impl_widget!(Table, root);
@@ -488,9 +500,9 @@ impl Table {
         Ok(this)
     }
 
-    /// 列を作り直す。行と選択はそのまま残り、セルの並べ直しだけが起きる。
+    /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
     ///
-    /// 並べ替えの指定も、その列がまだ並べ替えられるなら残る。
+    /// The sort setting also stays if that column can still be sorted.
     pub fn set_columns(&self, columns: &[TableColumn]) {
         *self.0.columns.borrow_mut() = columns.to_vec();
         let _ = self.build_columns();
@@ -508,25 +520,28 @@ impl Table {
         self.write_selection(&picked);
     }
 
-    /// 列数。
+    /// The number of columns.
     pub fn column_count(&self) -> usize {
         self.0.columns.borrow().len()
     }
 
-    /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     ///
-    /// 行数が多いときは、`<tr>` を作るのも画面に出ている分だけになる
-    /// (残りは上下の詰め物が高さを持つので、スクロールバーは全行分のまま)。
+    /// With many rows, `<tr>`s are created only for the rows on screen (the spacers
+    /// above and below carry the height of the rest, so the scroll bar still reflects
+    /// all the rows).
     pub fn set_rows(&self, rows: &[TableRow]) {
         self.0.rows.set_rows(rows);
         self.reset_rows();
     }
 
-    /// セルにウィジェットを置ける行を、**見えたときに組み立てる**形で渡す。
+    /// Passes rows whose cells can hold widgets, in a form that **builds each row when
+    /// it becomes visible**.
     ///
-    /// `count` は行数で、`build` は 0 から `count - 1` のインデックスを受けて
-    /// その行の中身 ([`TableCells`]) を返す。呼ばれるのは画面に出ている行
-    /// (と、その少し前後) だけなので、行数が数十万になっても開くのは速い。
+    /// `count` is the number of rows, and `build` receives an index from 0 to
+    /// `count - 1` and returns that row's contents ([`TableCells`]). It is called only
+    /// for the rows on screen (and a few before and after), so opening stays fast even
+    /// with hundreds of thousands of rows.
     ///
     /// ```no_run
     /// # use naui_web::{Table, TableCells};
@@ -545,15 +560,16 @@ impl Table {
         self.reset_rows();
     }
 
-    /// 行が選べるかどうかを、**行を組み立てずに**答える関数を渡す。
+    /// Passes a function that answers whether a row can be selected **without building
+    /// the row**.
     ///
-    /// [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
-    /// 選べるかどうかを naui は知らない。これを渡しておくと、画面の外の行に
-    /// ついても [`Table::set_selection`] が「選べない行を取り除く」を守れる。
-    /// 渡さないときは、作ってある行は [`TableCells::selectable`] に従い、
-    /// まだ作っていない行は選べるものとして扱う。
+    /// For rows built with [`Table::set_row_builder`], naui does not know whether rows
+    /// not yet built can be selected. With this function, [`Table::set_selection`] can
+    /// keep its promise of "removing rows that cannot be selected" even for rows off
+    /// screen. Without it, built rows follow [`TableCells::selectable`] and rows not
+    /// yet built are treated as selectable.
     ///
-    /// 返す答えは `build` が返す [`TableCells::selectable`] と同じにすること。
+    /// Its answers must match the [`TableCells::selectable`] returned by `build`.
     ///
     /// ```no_run
     /// # use naui_web::{Table, TableCells};
@@ -566,7 +582,7 @@ impl Table {
         self.0.rows.set_selectable(selectable);
     }
 
-    /// 見えている行を組み立て直す。行数と選択はそのまま。
+    /// Rebuilds the visible rows. The row count and selection stay.
     pub fn refresh(&self) {
         let _ = self.build_window();
         let picked = self.selection();
@@ -577,11 +593,12 @@ impl Table {
         }
     }
 
-    /// 行の高さを論理ピクセルで決める。0 以下を渡すと、組み立てた行から測る。
+    /// Sets the row height in logical pixels. Passing 0 or less measures it from a
+    /// built row.
     ///
-    /// どの行も同じ高さになる。画面の外にある行の分は「行数 × この高さ」で
-    /// 詰めるので、行の高さがそろっていないと、スクロールバーの長さが
-    /// 実際と少しずれる。
+    /// Every row gets the same height. Rows off screen are filled in as "row count ×
+    /// this height", so if row heights are not uniform the scroll bar length will be
+    /// slightly off from reality.
     pub fn set_row_height(&self, height: f64) {
         self.0
             .fixed_row_height
@@ -591,12 +608,12 @@ impl Table {
         self.refresh();
     }
 
-    /// 行の高さ (論理ピクセル)。まだ 1 行も組み立てていなければ 0。
+    /// The row height (logical pixels). 0 if no row has been built yet.
     pub fn row_height(&self) -> f64 {
         self.0.row_height.get()
     }
 
-    /// 行数。
+    /// The number of rows.
     pub fn len(&self) -> usize {
         self.0.rows.len()
     }
@@ -605,7 +622,8 @@ impl Table {
         self.len() == 0
     }
 
-    /// 選び方を変える。選択の意味が変わるため、選択は外れる。
+    /// Changes how rows are selected. The meaning of the selection changes, so the
+    /// selection is cleared.
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.mode.set(mode);
         self.apply_mode();
@@ -616,52 +634,54 @@ impl Table {
         self.0.mode.get()
     }
 
-    /// 選ばれている行のうち、いちばん上のもの。
+    /// The topmost of the selected rows.
     pub fn selected(&self) -> Option<usize> {
         self.0.selected.borrow().first().copied()
     }
 
-    /// 選ばれている行 (昇順)。単一選択なら 0 件か 1 件。
+    /// The selected rows (ascending). Zero or one for single selection.
     pub fn selection(&self) -> Vec<usize> {
         self.0.selected.borrow().clone()
     }
 
-    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until row `index` is visible. The selection does not change.
     ///
-    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
-    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    /// If it is already visible nothing moves; otherwise it is aligned to the nearer
+    /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
+    /// range.
     ///
-    /// 行を絞って組み立てているとき ([`ROW_WINDOW_THRESHOLD`](naui_core::ROW_WINDOW_THRESHOLD)
-    /// 行より多いとき) も、送った先の行を組み立てる。
+    /// Even while only some rows are built (with more than
+    /// [`ROW_WINDOW_THRESHOLD`](naui_core::ROW_WINDOW_THRESHOLD) rows), the destination
+    /// row is built.
     pub fn scroll_to_row(&self, index: usize) {
         self.reveal_row(index);
     }
 
-    /// 通知せずに 1 行だけを選ぶ。
+    /// Selects exactly one row without notifying.
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
 
-    /// 通知せずに選択を置き換える。
+    /// Replaces the selection without notifying.
     ///
-    /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
-    /// ([`SelectionMode::normalize_by`])。
+    /// Out-of-range rows, unselectable rows and duplicates are removed, and with single
+    /// selection only the first remains ([`SelectionMode::normalize_by`]).
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         self.write_selection(&picked);
     }
 
-    /// 通知せずに選択をすべて外す。
+    /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
         self.write_selection(&[]);
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 行を選ぶ (通知あり)。
+    /// Selects one row through the same path as a user's selection (notifies).
     pub fn select(&self, index: usize) {
         self.select_many(&[index]);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
+    /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
         self.set_selection(indices);
         // ブラウザはプログラムからの変更でイベントを出さないため、
@@ -670,31 +690,34 @@ impl Table {
         self.0.handler.emit(&actual);
     }
 
-    /// 選択が変わったときに、選ばれている行 (昇順) で呼ばれる。
+    /// Called with the selected rows (ascending) when the selection changes.
     ///
-    /// 複数選択では 0 件で呼ばれることもある。
+    /// With multiple selection it may be called with none.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 見出しが押されて並べ替えの指定が変わったときに、
-    /// 押された列と向きで呼ばれる。
+    /// Called with the clicked column and direction when a heading is clicked and the
+    /// sort setting changes.
     ///
-    /// [`TableColumn::sortable`] を立てた列だけが押せる。**行を並べ替えるのは
-    /// アプリの仕事**で、通知を受けたら並べ替えた行を [`Table::set_rows`] で
-    /// 渡し直す (`set_rows` は選択を外すので、必要なら選び直す)。
+    /// Only columns with [`TableColumn::sortable`] set can be clicked. **Sorting the
+    /// rows is the app's job**: when notified, pass the sorted rows again with
+    /// [`Table::set_rows`] (`set_rows` clears the selection, so reselect if needed).
     pub fn on_sort(&self, f: impl FnMut(usize, SortOrder) + 'static) {
         self.0.sort_handler.set(f);
     }
 
-    /// いまの並べ替えの指定 (列と向き)。押されたことが無ければ `None`。
+    /// The current sort setting (column and direction). `None` if no heading has been
+    /// clicked.
     pub fn sort(&self) -> Option<(usize, SortOrder)> {
         self.0.sort.get()
     }
 
-    /// 通知せずに並べ替えの指定を置き換える。見出しの指標だけが変わる。
+    /// Replaces the sort setting without notifying. Only the heading's indicator
+    /// changes.
     ///
-    /// 並べ替えられない列や範囲外の列を指すと、指定は外れる。
+    /// Pointing at a column that cannot be sorted, or one out of range, clears the
+    /// setting.
     pub fn set_sort(&self, sort: Option<(usize, SortOrder)>) {
         let sort = sort.filter(|&(column, _)| {
             self.0
@@ -707,16 +730,17 @@ impl Table {
         self.apply_sort();
     }
 
-    /// 中身の `<table>`。バックエンド固有の脱出口として公開している。
+    /// The inner `<table>`. Public as a backend-specific escape hatch.
     ///
-    /// 枠 (スクロールする `<div>`) は [`Widget::native_element`] から取れる。
+    /// The frame (the scrolling `<div>`) can be obtained from
+    /// [`Widget::native_element`].
     pub fn native_table(&self) -> HtmlTableElement {
         self.0.table.clone().unchecked_into()
     }
 
     // ------------------------------------------------------------ 組み立て
 
-    /// `<colgroup>` と `<thead>` を、いまの列の定義から作り直す。
+    /// Rebuilds the `<colgroup>` and `<thead>` from the current column definitions.
     fn build_columns(&self) -> Result<()> {
         clear(&self.0.colgroup);
         clear(&self.0.head);
@@ -800,10 +824,10 @@ impl Table {
             .map_err(|e| crate::to_error("テーブルの見出しの組み立て", e))
     }
 
-    /// `<tbody>` を、いまの窓の分だけ作り直す。
+    /// Rebuilds the `<tbody>` for just the current window.
     ///
-    /// 窓の外にある行は `<tr>` を作らず、その分の高さを上下の詰め物が持つ。
-    /// 表の高さもスクロールバーの長さも全行分のまま変わらない。
+    /// Rows outside the window get no `<tr>`; the spacers above and below carry their
+    /// height. The table's height and the scroll bar length stay those of all the rows.
     fn build_window(&self) -> Result<()> {
         clear(&self.0.body);
         self.0.row_listeners.borrow_mut().clear();
@@ -917,7 +941,7 @@ impl Table {
         Ok(())
     }
 
-    /// その行の activation を出す。
+    /// Fires that row's activation.
     fn activate_row(&self, index: usize) {
         let window = self.0.window.get();
         let activation = self
@@ -933,7 +957,8 @@ impl Table {
 
     // ------------------------------------------------------- 行を絞る窓
 
-    /// 行を作り直して、窓を先頭へ戻す。選択も外れる。
+    /// Rebuilds the rows and moves the window back to the start. The selection is
+    /// cleared too.
     fn reset_rows(&self) {
         self.0.selected.borrow_mut().clear();
         self.0.active.set(None);
@@ -946,7 +971,7 @@ impl Table {
         }
     }
 
-    /// いまのスクロール位置から、組み立てておく行の範囲を求める。
+    /// Computes the range of rows to build from the current scroll position.
     fn compute_window(&self, overscan: usize) -> RowWindow {
         let head = self.0.head.offset_height() as f64;
         let viewport = self.0.root.client_height() as f64 - head;
@@ -959,10 +984,10 @@ impl Table {
         )
     }
 
-    /// スクロールに合わせて、組み立てる範囲を動かす。
+    /// Moves the built range along with scrolling.
     ///
-    /// 1 行スクロールするたびに作り直すのは重いので、余分に作ってある分
-    /// ([`ROW_WINDOW_OVERSCAN`]) の半分までは、そのまま使う。
+    /// Rebuilding for every row scrolled is heavy, so the window is reused until you
+    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]).
     fn update_window(&self) {
         let current = self.0.window.get();
         let needed = self.compute_window(ROW_WINDOW_OVERSCAN / 2);
@@ -975,10 +1000,10 @@ impl Table {
         self.measure_row_height();
     }
 
-    /// 組み立てた行から 1 行の高さを測る。変わったら `true`。
+    /// Measures the height of one row from the built rows. `true` if it changed.
     ///
-    /// 行の高さはブラウザが決めるので、作ってからでないと分からない。
-    /// これが分かって初めて、窓の外にある行の分を正しく詰められる。
+    /// The browser decides row heights, so they are not known until a row is built. Only
+    /// once it is known can the rows outside the window be filled in correctly.
     fn measure_row_height(&self) -> bool {
         if self.0.fixed_row_height.get().is_some() {
             return false;
@@ -1002,12 +1027,14 @@ impl Table {
         true
     }
 
-    /// その行の、表の中での上端 (論理ピクセル)。窓の外の行でも求まる。
+    /// The top of the row within the table (logical pixels). Can be computed even for
+    /// rows outside the window.
     fn row_top(&self, index: usize) -> f64 {
         index as f64 * self.0.row_height.get()
     }
 
-    /// 見出しが押されたとき。同じ列なら向きを反転し、違う列なら昇順から。
+    /// When a heading is clicked. The same column reverses direction; a different
+    /// column starts ascending.
     fn on_header_activated(&self, index: usize) {
         let next = match self.0.sort.get() {
             Some((column, order)) if column == index => (index, order.reversed()),
@@ -1018,7 +1045,7 @@ impl Table {
         self.0.sort_handler.emit(next.0, next.1);
     }
 
-    /// 並べ替えの指定を見出しへ書く。
+    /// Writes the sort setting into the headings.
     fn apply_sort(&self) {
         let sort = self.0.sort.get();
         let columns = self.0.columns.borrow();
@@ -1048,7 +1075,7 @@ impl Table {
         format!("naui-table-{}-row-{index}", self.0.id)
     }
 
-    /// 単一 / 複数の指定を DOM へ反映する。
+    /// Applies the single / multiple setting to the DOM.
     fn apply_mode(&self) {
         let multiple = self.0.mode.get().is_multiple();
         let _ = self.0.table.set_attribute(
@@ -1059,7 +1086,7 @@ impl Table {
 
     // --------------------------------------------------------------- 選択
 
-    /// 指定された選択を、この表で意味を持つ形にそろえる。
+    /// Normalizes the requested selection into a form meaningful for this table.
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
         self.0
             .mode
@@ -1067,10 +1094,10 @@ impl Table {
             .normalize_by(indices, |i| self.is_selectable(i))
     }
 
-    /// その行を選べるか。
+    /// Whether the row can be selected.
     ///
-    /// 組み立てる行では、まだ作っていない行は「選べる」とみなす
-    /// (作ってみないと分からないため)。
+    /// For built rows, rows not yet built are assumed "selectable" (it cannot be known
+    /// without building them).
     fn is_selectable(&self, index: usize) -> bool {
         if index >= self.len() {
             return false;
@@ -1094,17 +1121,17 @@ impl Table {
         }
     }
 
-    /// 選択を覚えて、そのまま行へ書き込む (通知は起きない)。
+    /// Remembers the selection and writes it into the rows as is (no notification).
     fn write_selection(&self, indices: &[usize]) {
         *self.0.selected.borrow_mut() = indices.to_vec();
         self.paint_selection();
     }
 
-    /// 覚えている選択を、組み立ててある行へ書き込む。
+    /// Writes the remembered selection into the built rows.
     ///
-    /// 窓の外にある行は `<tr>` が無いので、書けるのは見えている分だけ。
-    /// 正は [`TableInner::selected`] なので、窓が動いて組み立て直されたら
-    /// そのときにまた書かれる。
+    /// Rows outside the window have no `<tr>`, so only the visible ones can be written.
+    /// The source of truth is [`TableInner::selected`], so when the window moves and
+    /// rows are rebuilt, it is written again then.
     fn paint_selection(&self) {
         let indices = self.0.selected.borrow().clone();
         let start = self.0.window.get().start;
@@ -1129,7 +1156,7 @@ impl Table {
         }
     }
 
-    /// 行が押されたとき。
+    /// When a row is clicked.
     fn on_row_activated(&self, index: usize, toggle: bool, extend: bool) {
         let multiple = self.0.mode.get().is_multiple();
         let picked = if multiple && extend {
@@ -1153,7 +1180,8 @@ impl Table {
         self.commit(&picked);
     }
 
-    /// キー操作。処理したら `true` を返す (ブラウザの既定動作を止める)。
+    /// Key operations. Returns `true` if handled (preventing the browser's default
+    /// action).
     fn on_key(&self, event: &KeyboardEvent) -> bool {
         let len = self.len();
         if len == 0 {
@@ -1190,7 +1218,7 @@ impl Table {
         true
     }
 
-    /// `from` から `step` の向きへ、次に選べる行を探す。
+    /// Looks for the next selectable row from `from` in the direction of `step`.
     fn step(&self, from: Option<usize>, step: isize) -> Option<usize> {
         let start = match from {
             Some(index) => index as isize + step,
@@ -1200,7 +1228,7 @@ impl Table {
         self.first_enabled(start, step)
     }
 
-    /// `start` から `step` の向きに進んで、最初に選べる行を返す。
+    /// Returns the first selectable row going from `start` in the direction of `step`.
     fn first_enabled(&self, start: isize, step: isize) -> Option<usize> {
         let len = self.len();
         let mut at = start;
@@ -1213,7 +1241,7 @@ impl Table {
         None
     }
 
-    /// `a` から `b` までの、選べる行の並び。
+    /// The selectable rows from `a` to `b`.
     fn range(&self, a: usize, b: usize) -> Vec<usize> {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
         (lo..=hi.min(self.len().saturating_sub(1)))
@@ -1221,7 +1249,7 @@ impl Table {
             .collect()
     }
 
-    /// ユーザー操作の結果を確定し、通知する。
+    /// Settles the result of a user action and notifies.
     fn commit(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         self.write_selection(&picked);
@@ -1229,7 +1257,7 @@ impl Table {
         self.0.handler.emit(&picked);
     }
 
-    /// キーボードで指している行を、スクロール領域の中へ入れる。
+    /// Brings the row the keyboard points at into the scroll area.
     fn reveal_active(&self) {
         let Some(active) = self.0.active.get() else {
             return;
@@ -1241,7 +1269,7 @@ impl Table {
         self.reveal_row(active);
     }
 
-    /// `index` 行目をスクロール領域の中へ入れ、その辺りの行を組み立てる。
+    /// Brings row `index` into the scroll area and builds the rows around it.
     fn reveal_row(&self, active: usize) {
         if active >= self.len() {
             return;
@@ -1268,10 +1296,11 @@ impl Table {
     }
 }
 
-/// 窓の外にある行の分を埋める `<tr>` を作る。
+/// Creates a `<tr>` that fills in for the rows outside the window.
 ///
-/// 高さだけを持ち、読み上げからは外す。表の高さが全行分のままになるので、
-/// スクロールバーの長さも位置も、全行を作ったときと変わらない。
+/// It only has a height and is hidden from screen readers. The table's height stays
+/// that of all the rows, so the scroll bar's length and position are the same as if
+/// every row had been created.
 fn spacer_row(document: &Document) -> Result<HtmlElement> {
     let row: HtmlElement = create(document, "tr")?.unchecked_into();
     let _ = row.set_attribute("aria-hidden", "true");
@@ -1283,7 +1312,7 @@ fn spacer_row(document: &Document) -> Result<HtmlElement> {
     Ok(row)
 }
 
-/// 詰め物の高さを書く。0 なら行そのものを畳む。
+/// Writes the spacer's height. At 0 the row itself is collapsed.
 fn set_spacer_height(row: &HtmlElement, height: f64, columns: usize) {
     let hidden = height <= 0.0;
     style(row, "display", if hidden { "none" } else { "" });
@@ -1296,14 +1325,14 @@ fn set_spacer_height(row: &HtmlElement, height: f64, columns: usize) {
     }
 }
 
-/// 列より長い文字を、列の幅で切る。
+/// Cuts text longer than the column at the column's width.
 fn clip_text(cell: &HtmlElement) {
     style(cell, "overflow", "hidden");
     style(cell, "text-overflow", "ellipsis");
     style(cell, "white-space", "nowrap");
 }
 
-/// 要素の中身をすべて取り除く。
+/// Removes all of the element's contents.
 fn clear(element: &HtmlElement) {
     while let Some(child) = element.last_element_child() {
         let _ = element.remove_child(&child);

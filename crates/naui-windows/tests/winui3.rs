@@ -1,28 +1,31 @@
-//! WinUI 3 の実コントロールに対する動作確認。
+//! Behavior checks against real WinUI 3 controls.
 //!
-//! ネイティブ側の操作 (UI オートメーションの Invoke / Toggle / Value など) を
-//! 実際に起こし、Rust のクロージャへ届くこと・WinUI 側の状態が変わることを
-//! 確かめる。
+//! Native-side operations (UI Automation's Invoke / Toggle / Value and so on) are
+//! actually triggered to check that they reach Rust closures and that the WinUI-side
+//! state changes.
 //!
-//! WinUI 3 のコントロールは `Application::Start` より前には 1 つも作れず、
-//! `Application::Start` は 1 プロセスで 1 回しか呼べない。そのため
-//! `harness = false` にして、アプリを 1 度だけ起こし、その中で全ケースを
-//! 順に走らせる。ケースごとにアプリを作り直す macOS 版とはそこが違う。
+//! WinUI 3 cannot create a single control before `Application::Start`, and
+//! `Application::Start` can be called only once per process. So `harness = false` is
+//! set, the app is started once, and every case runs in order inside it. This is
+//! where it differs from the macOS version, which recreates the app per case.
 //!
-//! 実行には Windows App SDK ランタイムが要る (`crates/naui-windows/src/sdk.rs`)。
+//! Running it requires the Windows App SDK runtime
+//! (`crates/naui-windows/src/sdk.rs`).
 //!
-//! ## ここで確かめられないこと
+//! ## What cannot be verified here
 //!
-//! ウィジェットは作るだけで画面には出していないので、WinUI の既定テンプレート
-//! が当たっていない。テンプレート頼みのふるまいはここでは見られない。
+//! Widgets are only created, not shown on screen, so WinUI's default templates are
+//! not applied. Behavior that relies on templates cannot be seen here.
 //!
-//! - `TextBox` の `TextChanged`。書き換えても出ない (`on_change` は macOS /
-//!   GTK / Web の統合テストと、Windows は Gallery の実行で見ている)。
-//! - `TextBox` の Value パターン。`GetPattern` が空を返すので、打ち込みは
-//!   `TextBox.Text` の書き換えで代えている。
+//! - `TextBox`'s `TextChanged`. It does not fire when the text is rewritten
+//!   (`on_change` is covered by the macOS / GTK / Web integration tests, and on
+//!   Windows by running the Gallery).
+//! - `TextBox`'s Value pattern. `GetPattern` returns empty, so typing is replaced by
+//!   rewriting `TextBox.Text`.
 //!
-//! 一方 `Click` `Checked` `Toggled` `SelectionChanged` はテンプレート無しでも
-//! 出るので、通知が Rust のクロージャへ届くところまで確かめている。
+//! On the other hand, `Click`, `Checked`, `Toggled` and `SelectionChanged` fire even
+//! without templates, so these are checked all the way to the notification reaching
+//! the Rust closure.
 
 #[cfg(target_os = "windows")]
 #[path = "winui3/automation.rs"]

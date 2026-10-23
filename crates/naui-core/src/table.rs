@@ -1,29 +1,31 @@
-//! テーブルの値型。
+//! Table value types.
 //!
-//! テーブルは「列の定義 + 行の並び + いま選ばれている行」という構造を持つ。
-//! リスト ([`crate::ListItem`]) と形は似ているが、
+//! A table has the structure "column definitions + a sequence of rows + the rows
+//! currently selected". It resembles a list ([`crate::ListItem`]) in shape, but
+//! differs in that
 //!
-//! - 1 行が複数のセルに分かれ、列ごとに幅と揃えが決まる
-//! - 列の見出し (ヘッダー) がある
+//! - each row is split into several cells, and width and alignment are set per
+//!   column
+//! - it has column headings (a header)
 //!
-//! という違いがあるため、別の型として持つ。バックエンドはこれを
-//! `NSTableView` の列や `<table>` の `<th>` / `<td>` へ写す。
+//! so it is a separate type. Backends map it onto `NSTableView` columns or the
+//! `<th>` / `<td>` of a `<table>`.
 //!
-//! 行の識別はリストと同じくアプリ側が持つ順序 (インデックス) で行い、
-//! 選択の通知もインデックスで返る。選択の正規化には
-//! [`crate::SelectionMode::normalize_by`] を使う。
+//! As with lists, rows are identified by the order (index) the app owns, and
+//! selection notifications come back as indices. Use
+//! [`crate::SelectionMode::normalize_by`] to normalize the selection.
 
 use crate::Align;
 
-/// 並べ替えの向き。
+/// The sort direction.
 ///
-/// ヘッダーを押すたびに `Ascending` → `Descending` → `Ascending` と反転する。
+/// Each click on the header toggles `Ascending` → `Descending` → `Ascending`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortOrder {
-    /// 小さいものが上 (既定)。
+    /// Smallest at the top (default).
     #[default]
     Ascending,
-    /// 大きいものが上。
+    /// Largest at the top.
     Descending,
 }
 
@@ -32,7 +34,7 @@ impl SortOrder {
         matches!(self, SortOrder::Ascending)
     }
 
-    /// 向きを反転する。
+    /// Reverses the direction.
     ///
     /// ```
     /// # use naui_core::SortOrder;
@@ -47,37 +49,38 @@ impl SortOrder {
     }
 }
 
-/// テーブルの 1 列。
+/// One table column.
 ///
 /// ```
 /// # use naui_core::{Align, TableColumn};
-/// let column = TableColumn::new("人口").width(120.0).align(Align::End).sortable(true);
+/// let column = TableColumn::new("Population").width(120.0).align(Align::End).sortable(true);
 /// assert_eq!(column.width, Some(120.0));
 /// assert!(column.sortable);
 /// ```
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TableColumn {
-    /// 見出しに出る文字列。
+    /// The text shown in the heading.
     pub title: String,
-    /// 列の幅 (論理ピクセル)。`None` なら余りを分け合って広がる。
+    /// The column width (logical pixels). If `None`, it grows by sharing the leftover
+    /// space.
     pub width: Option<f64>,
-    /// セルの文字の揃え。
+    /// The alignment of the text in its cells.
     ///
-    /// 使うのは [`Align::Start`] / [`Align::Center`] / [`Align::End`] の 3 つで、
-    /// [`Align::Fill`] は `Start` と同じ扱いになる (文字に「広げる」は無いため)。
+    /// The three used are [`Align::Start`] / [`Align::Center`] / [`Align::End`];
+    /// [`Align::Fill`] is treated the same as `Start` (text has no "stretch").
     pub align: Align,
-    /// 見出しを押して並べ替えられるかどうか。
+    /// Whether clicking the heading sorts.
     ///
-    /// **並べ替えそのものは naui では行わない。** 押されたことが
-    /// 「どの列を、どちら向きに」という形で通知されるので、アプリが
-    /// 自分のデータを並べ替えて渡し直す。文字列の中身 (数値なのか日付なのか)
-    /// を知っているのはアプリだけなので、比べ方もアプリが決める。
+    /// **naui does not do the sorting itself.** The click is reported as "which column,
+    /// in which direction", and the app sorts its own data and passes it again. Only
+    /// the app knows what the strings contain (numbers or dates), so the app also
+    /// decides how to compare them.
     pub sortable: bool,
 }
 
 impl TableColumn {
-    /// 見出しの文字列から列を作る。幅は余りを分け合い、文字は左に寄る。
-    /// 並べ替えは切ってある。
+    /// Creates a column from its heading text. The width shares the leftover space,
+    /// text is aligned left, and sorting is off.
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
@@ -87,31 +90,31 @@ impl TableColumn {
         }
     }
 
-    /// 列の幅を論理ピクセルで固定する。
+    /// Fixes the column width in logical pixels.
     pub fn width(mut self, width: f64) -> Self {
         self.width = Some(width);
         self
     }
 
-    /// セルの文字の揃えを指定する (既定は左)。
+    /// Sets the alignment of the text in its cells (left by default).
     pub fn align(mut self, align: Align) -> Self {
         self.align = align;
         self
     }
 
-    /// 見出しを押して並べ替えられるようにする (既定は不可)。
+    /// Lets the column be sorted by clicking the heading (off by default).
     pub fn sortable(mut self, sortable: bool) -> Self {
         self.sortable = sortable;
         self
     }
 
-    /// 文字列の並びから列の定義を作る。
+    /// Creates column definitions from a sequence of strings.
     ///
     /// ```
     /// # use naui_core::TableColumn;
-    /// let columns = TableColumn::list(["都市", "人口"]);
+    /// let columns = TableColumn::list(["City", "Population"]);
     /// assert_eq!(columns.len(), 2);
-    /// assert!(columns[0].width.is_none(), "既定では余りを分け合う");
+    /// assert!(columns[0].width.is_none(), "by default columns share the leftover space");
     /// ```
     pub fn list<I, S>(titles: I) -> Vec<TableColumn>
     where
@@ -134,27 +137,28 @@ impl From<String> for TableColumn {
     }
 }
 
-/// テーブルの 1 行。
+/// One table row.
 ///
-/// セルは列と同じ順に並べる。**列数と食い違っていてもよい**。足りない分は
-/// 空のセルになり、余った分は表示されない ([`TableRow::cell`])。
+/// Cells are in the same order as the columns. **They need not match the number of
+/// columns.** Missing cells are empty, and extra cells are not shown
+/// ([`TableRow::cell`]).
 ///
 /// ```
 /// # use naui_core::TableRow;
-/// let row = TableRow::new(["東京", "13,960,000"]);
-/// assert_eq!(row.cell(0), "東京");
-/// assert_eq!(row.cell(5), "", "列が足りない行は空のセルになる");
+/// let row = TableRow::new(["Tokyo", "13,960,000"]);
+/// assert_eq!(row.cell(0), "Tokyo");
+/// assert_eq!(row.cell(5), "", "a row short of columns gets empty cells");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TableRow {
-    /// 左から順に並ぶセルの文字列。
+    /// The cell strings, from left to right.
     pub cells: Vec<String>,
-    /// 選べるかどうか。
+    /// Whether it can be selected.
     pub enabled: bool,
 }
 
 impl TableRow {
-    /// セルの並びから行を作る。
+    /// Creates a row from a sequence of cells.
     pub fn new<I, S>(cells: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -166,24 +170,24 @@ impl TableRow {
         }
     }
 
-    /// 選べるかどうかを指定する (既定は選べる)。
+    /// Sets whether it can be selected (selectable by default).
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// `index` 列のセル。無ければ空文字列。
+    /// The cell in column `index`. The empty string if there is none.
     pub fn cell(&self, index: usize) -> &str {
         self.cells.get(index).map(String::as_str).unwrap_or("")
     }
 
-    /// セルの並びの並びから、行の列を作る。
+    /// Creates a list of rows from a sequence of cell sequences.
     ///
     /// ```
     /// # use naui_core::TableRow;
-    /// let rows = TableRow::list([["東京", "13,960,000"], ["大阪", "8,838,000"]]);
+    /// let rows = TableRow::list([["Tokyo", "13,960,000"], ["Osaka", "8,838,000"]]);
     /// assert_eq!(rows.len(), 2);
-    /// assert_eq!(rows[1].cell(0), "大阪");
+    /// assert_eq!(rows[1].cell(0), "Osaka");
     /// ```
     pub fn list<I, R, S>(rows: I) -> Vec<TableRow>
     where

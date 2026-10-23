@@ -1,17 +1,17 @@
-//! ポップアップ (コンテキスト) メニュー (WinUI 3 のネイティブ `MenuFlyout`)。
+//! Popup (context) menus (WinUI 3's native `MenuFlyout`).
 //!
 //! | naui | WinUI 3 |
 //! | --- | --- |
 //! | `PopupMenu` | `MenuFlyout` |
-//! | 項目 | `MenuFlyoutItem` |
-//! | 区切り線 | `MenuFlyoutSeparator` |
+//! | Item | `MenuFlyoutItem` |
+//! | Separator | `MenuFlyoutSeparator` |
 //!
-//! 出す位置・影・角丸・ライトディスミス・キーボード操作 (矢印と Esc)・
-//! 画面端での回り込みは、すべて `MenuFlyout` が持つ。naui が組み立てる
-//! ものは無い。
+//! Where it appears, its shadow, rounded corners, light dismiss, keyboard
+//! navigation (arrows and Esc) and wrapping at screen edges are all owned by
+//! `MenuFlyout`. There is nothing naui builds.
 //!
-//! 右クリックで出すのは `UIElement.ContextFlyout` に預けるだけでよい。
-//! WinUI が右クリック・長押し・コンテキストキーのどれでも出してくれる。
+//! Showing it on right-click is simply left to `UIElement.ContextFlyout`. WinUI
+//! shows it for right-click, long-press and the context key alike.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -30,18 +30,19 @@ use crate::widgets::Widget;
 
 struct PopupMenuInner {
     flyout: MenuFlyout,
-    /// 項目ごとの `MenuFlyoutItem`。区切り線の位置は `None`。
+    /// The `MenuFlyoutItem` per item. `None` at separator positions.
     items: RefCell<Vec<Option<MenuFlyoutItem>>>,
-    /// 取り付けたウィジェットのハンドル。コールバックごと生かしておく。
+    /// The handles of the widgets it is attached to. Kept alive along with their
+    /// callbacks.
     attached: RefCell<Vec<Box<dyn Widget>>>,
     handler: SelectHandler,
 }
 
-/// ポップアップ (コンテキスト) メニュー。
+/// A popup (context) menu.
 ///
-/// 画面に並ぶウィジェットではないので [`Widget`] ではない。
-/// [`crate::Ui`] が生成したメニューを保持するため、戻り値を捨てても
-/// 取り付け先から消えることはない。
+/// It is not a widget laid out on screen, so it is not a [`Widget`]. [`crate::Ui`]
+/// holds the menus it creates, so dropping the return value does not remove it from
+/// the widgets it is attached to.
 #[derive(Clone)]
 pub struct PopupMenu(Rc<PopupMenuInner>);
 
@@ -56,9 +57,9 @@ impl PopupMenu {
         })))
     }
 
-    /// 項目を作り直す。以前の項目は取り除かれる。
+    /// Rebuilds the items. The previous items are removed.
     ///
-    /// インデックスは区切り線を含めた並びの位置。
+    /// The index is the position in the sequence including separators.
     pub fn set_items(&self, items: &[PopupItem]) {
         let Ok(children) = self.0.flyout.Items() else {
             return;
@@ -107,7 +108,7 @@ impl PopupMenu {
         Ok(entry)
     }
 
-    /// 区切り線を含めた項目数。
+    /// The number of items, separators included.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -116,11 +117,11 @@ impl PopupMenu {
         self.len() == 0
     }
 
-    /// ウィジェットの右クリックでこのメニューを出すようにする。
+    /// Makes this menu appear on right-click on the widget.
     ///
-    /// `ContextFlyout` へ預けるので、右クリック・長押し・コンテキストキーの
-    /// どれで呼び出すかは WinUI が決める。同じメニューを複数のウィジェットへ
-    /// 取り付けてよい (出るのは呼び出したウィジェットの上)。
+    /// It is left to `ContextFlyout`, so WinUI decides whether it is invoked by
+    /// right-click, long-press or the context key. The same menu may be attached to
+    /// several widgets (it appears over the widget that invoked it).
     pub fn attach(&self, widget: &dyn Widget) {
         let element = widget.native_element();
         if element.SetContextFlyout(&self.0.flyout).is_ok() {
@@ -128,8 +129,8 @@ impl PopupMenu {
         }
     }
 
-    /// プログラムからメニューを出す。位置は `widget` の**左上から**の
-    /// 論理ピクセル (y は下向き)。
+    /// Shows the menu from code. The position is in logical pixels **from the top
+    /// left** of `widget` (y pointing down).
     pub fn open_at(&self, widget: &dyn Widget, x: f64, y: f64) {
         let element = widget.native_element();
         let point = Point {
@@ -139,14 +140,15 @@ impl PopupMenu {
         let _ = self.0.flyout.ShowAt2(&element, point);
     }
 
-    /// 出ているメニューを閉じる。出ていなければ何もしない。
+    /// Closes the menu being shown. Does nothing if none is shown.
     pub fn close(&self) {
         let _ = self.0.flyout.Hide();
     }
 
-    /// ユーザーが選んだのと同じ経路で項目を選ぶ (テストや自動操作用)。
+    /// Chooses an item through the same path as a user's choice (for tests and
+    /// automation).
     ///
-    /// 区切り線と、選べない項目は無視する。
+    /// Separators and items that cannot be chosen are ignored.
     pub fn select(&self, index: usize) {
         let entry = self.0.items.borrow().get(index).cloned().flatten();
         let Some(entry) = entry else {
@@ -159,18 +161,18 @@ impl PopupMenu {
         self.0.handler.emit(index);
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// メニューそのもの。バックエンド固有の脱出口として公開している。
+    /// The menu itself. Public as a backend-specific escape hatch.
     pub fn native_flyout(&self) -> MenuFlyout {
         self.0.flyout.clone()
     }
 }
 
-/// WinRT のデリゲートは `Send` を要求するので、UI スレッド限定のセルに包む。
+/// WinRT delegates require `Send`, so it is wrapped in a UI-thread-only cell.
 fn weak_cell(inner: &Rc<PopupMenuInner>) -> Arc<UiThreadCell<Weak<PopupMenuInner>>> {
     Arc::new(UiThreadCell::new(Rc::downgrade(inner)))
 }

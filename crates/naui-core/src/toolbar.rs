@@ -1,12 +1,11 @@
-//! ツールバーの項目とアイコン。
+//! Toolbar items and icons.
 
-/// ツールバーに置ける操作の種類。
+/// The kinds of actions that can be placed on a toolbar.
 ///
-/// ツールバーはどのプラットフォームでもアイコンで並べるものだが、
-/// アイコンの呼び名は環境ごとに違う (macOS は SF Symbols の記号名、
-/// Linux はアイコンテーマの名前、Windows は Segoe Fluent Icons の
-/// 文字コード)。naui は**操作の種類**だけを受け取り、その環境の
-/// 標準アイコンへ写す。
+/// Toolbars show icons on every platform, but icons are named differently per
+/// platform (SF Symbols names on macOS, icon theme names on Linux, Segoe Fluent
+/// Icons code points on Windows). naui takes **only the kind of action** and maps
+/// it to the platform's standard icon.
 ///
 /// ```
 /// # use naui_core::ToolbarIcon;
@@ -15,50 +14,50 @@
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolbarIcon {
-    /// 新規作成。
+    /// New.
     New,
-    /// 開く。
+    /// Open.
     Open,
-    /// 保存。
+    /// Save.
     Save,
-    /// 追加。
+    /// Add.
     Add,
-    /// 取り除く。
+    /// Remove.
     Remove,
-    /// 削除 (ごみ箱)。
+    /// Delete (trash).
     Delete,
-    /// 編集。
+    /// Edit.
     Edit,
-    /// コピー。
+    /// Copy.
     Copy,
-    /// 切り取り。
+    /// Cut.
     Cut,
-    /// 貼り付け。
+    /// Paste.
     Paste,
-    /// 元に戻す。
+    /// Undo.
     Undo,
-    /// やり直す。
+    /// Redo.
     Redo,
-    /// 検索。
+    /// Search.
     Search,
-    /// 再読み込み。
+    /// Reload.
     Refresh,
-    /// 共有。
+    /// Share.
     Share,
-    /// 設定。
+    /// Settings.
     Settings,
-    /// 戻る。
+    /// Back.
     Back,
-    /// 進む。
+    /// Forward.
     Forward,
-    /// 印刷。
+    /// Print.
     Print,
-    /// 情報。
+    /// Info.
     Info,
 }
 
 impl ToolbarIcon {
-    /// すべての種類。対応表の網羅を確かめるために使う。
+    /// Every kind. Used to check that the mapping tables are exhaustive.
     pub const ALL: [ToolbarIcon; 20] = [
         ToolbarIcon::New,
         ToolbarIcon::Open,
@@ -82,7 +81,7 @@ impl ToolbarIcon {
         ToolbarIcon::Info,
     ];
 
-    /// macOS (AppKit) が使う SF Symbols の記号名。
+    /// The SF Symbols name used on macOS (AppKit).
     pub fn sf_symbol(self) -> &'static str {
         match self {
             ToolbarIcon::New => "doc.badge.plus",
@@ -108,7 +107,7 @@ impl ToolbarIcon {
         }
     }
 
-    /// Linux (GTK4) が使うアイコンテーマの名前 (freedesktop の標準名)。
+    /// The icon theme name used on Linux (GTK4) (a freedesktop standard name).
     pub fn icon_name(self) -> &'static str {
         match self {
             ToolbarIcon::New => "document-new-symbolic",
@@ -134,7 +133,7 @@ impl ToolbarIcon {
         }
     }
 
-    /// Windows (WinUI 3) が使う Segoe Fluent Icons の文字。
+    /// The Segoe Fluent Icons character used on Windows (WinUI 3).
     pub fn fluent_glyph(self) -> char {
         match self {
             ToolbarIcon::New => '\u{E7C3}',
@@ -160,10 +159,11 @@ impl ToolbarIcon {
         }
     }
 
-    /// Web が使う SVG の中身 (24x24 の座標系、線描き)。
+    /// The SVG contents used on the Web (24x24 coordinate space, line drawing).
     ///
-    /// ブラウザには OS のアイコンテーマが無いため、ここだけは naui が
-    /// 図形を持つ。色は `currentColor` に従うので、ブラウザの配色に馴染む。
+    /// Browsers have no OS icon theme, so this is the one place where naui owns the
+    /// shapes. The color follows `currentColor`, so it blends in with the browser's
+    /// color scheme.
     pub fn svg_path(self) -> &'static str {
         match self {
             ToolbarIcon::New => {
@@ -194,43 +194,43 @@ impl ToolbarIcon {
     }
 }
 
-/// ツールバーの 1 項目。
+/// One toolbar item.
 ///
-/// ツールバーは画面の上端に置く「よく使う操作」の並びで、
-/// ナビゲーションと違い**選ばれている項目を持たない**。押されるたびに
-/// その場でコマンドが走る。
+/// A toolbar is a row of "frequently used actions" placed at the top of the
+/// screen. Unlike navigation, it **has no selected item**. Every click runs the
+/// command right away.
 ///
-/// 見た目はアイコンで、`label` はアクセシビリティ・ツールチップ・
-/// 項目が入りきらないときのメニューに使われる。
+/// It is shown as an icon; `label` is used for accessibility, tooltips and the
+/// menu shown when items do not fit.
 ///
-/// 項目の識別はアプリ側が持つ順序 (インデックス) で行い、通知も
-/// **区切りを含めた並びの中でのインデックス**で返る。区切りは
-/// 押せないので、そのインデックスが返ることはない。
+/// Items are identified by the order (index) the app owns, and notifications come
+/// back as **the index within the sequence, separators included**. Separators
+/// cannot be clicked, so their indices never come back.
 ///
 /// ```
 /// # use naui_core::{ToolbarIcon, ToolbarItem};
 /// let items = [
-///     ToolbarItem::new(ToolbarIcon::New, "新規"),
+///     ToolbarItem::new(ToolbarIcon::New, "New"),
 ///     ToolbarItem::separator(),
-///     ToolbarItem::new(ToolbarIcon::Save, "保存").enabled(false),
+///     ToolbarItem::new(ToolbarIcon::Save, "Save").enabled(false),
 /// ];
 /// assert!(items[1].is_separator());
 /// assert!(!items[2].enabled);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolbarItem {
-    /// 表示するアイコン。区切りでは使われない。
+    /// The icon shown. Not used for separators.
     pub icon: ToolbarIcon,
-    /// 操作の名前。読み上げ・ツールチップ・送り出しメニューに使う。
+    /// The name of the action. Used for screen readers, tooltips and the overflow menu.
     pub label: String,
-    /// 押せるかどうか。
+    /// Whether it can be clicked.
     pub enabled: bool,
-    /// 区切りかどうか。
+    /// Whether this is a separator.
     pub separator: bool,
 }
 
 impl ToolbarItem {
-    /// 押せる項目を作る。
+    /// Creates a clickable item.
     pub fn new(icon: ToolbarIcon, label: impl Into<String>) -> Self {
         Self {
             icon,
@@ -240,7 +240,7 @@ impl ToolbarItem {
         }
     }
 
-    /// 項目のまとまりを分ける区切りを作る。押すことはできない。
+    /// Creates a separator that divides groups of items. It cannot be clicked.
     pub fn separator() -> Self {
         Self {
             icon: ToolbarIcon::Add,
@@ -250,13 +250,13 @@ impl ToolbarItem {
         }
     }
 
-    /// 押せるかどうかを指定する (既定は押せる)。
+    /// Sets whether it can be clicked (clickable by default).
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// 区切りかどうか。
+    /// Whether this is a separator.
     pub fn is_separator(&self) -> bool {
         self.separator
     }
@@ -288,7 +288,8 @@ mod tests {
         assert!(item.label.is_empty());
     }
 
-    /// 対応表に抜けや取り違えがあると、その環境だけアイコンが出なくなる。
+    /// A gap or mix-up in the mapping table would make the icon disappear on that
+    /// platform only.
     #[test]
     fn every_icon_maps_to_all_backends() {
         for icon in ToolbarIcon::ALL {
@@ -308,7 +309,7 @@ mod tests {
         }
     }
 
-    /// 同じアイコンを 2 つの操作へ割り当てていないか。
+    /// Checks that no icon is assigned to two actions.
     #[test]
     fn icons_do_not_collide() {
         for (i, a) in ToolbarIcon::ALL.iter().enumerate() {

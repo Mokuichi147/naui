@@ -1,13 +1,14 @@
-//! フォーカスの出入りの通知 (`on_focus_change`)。
+//! Notifications of focus entering and leaving (`on_focus_change`).
 //!
-//! 各バックエンドは、ウィンドウの中でフォーカスのある要素が変わるたびに、
-//! そこから親へたどって最初に見つかった登録済みのウィジェットを
-//! [`FocusOwner::move_to`] へ渡す。持ち主が変わったときだけ、前の持ち主へ
-//! `false`、新しい持ち主へ `true` が届く。
+//! Whenever the focused element in a window changes, each backend walks up the
+//! parents from there and passes the first registered widget it finds to
+//! [`FocusOwner::move_to`]. Only when the owner changes does the previous owner
+//! receive `false` and the new owner `true`.
 //!
-//! 持ち主で数えるので、ウィジェットの中で部品から部品へ移っても (数値入力の
-//! 欄と増減のボタンなど) 通知は出ない。ウィンドウ自体がアクティブで
-//! なくなっても、そのウィンドウの中のフォーカスは変わらないので通知しない。
+//! Because it counts by owner, moving between parts within one widget (between a
+//! number input's field and its step buttons, for example) does not notify. When
+//! the window itself becomes inactive, focus within that window does not change,
+//! so nothing is notified.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -15,10 +16,12 @@ use std::rc::Rc;
 
 use crate::Slot;
 
-/// フォーカスの出入りの通知先。`true` で入り、`false` で出る。
+/// The handler for focus entering and leaving. `true` on entering, `false` on
+/// leaving.
 ///
-/// 呼んでいる間はクロージャを取り出しておくので、通知の中から同じ
-/// ウィジェットを操作したり `on_focus_change` で差し替えたりしてもよい。
+/// The closure is taken out while it is called, so you may operate on the same
+/// widget or replace the handler with `on_focus_change` from inside the
+/// notification.
 #[derive(Default)]
 pub struct FocusHandler(RefCell<Slot<dyn FnMut(bool)>>);
 
@@ -39,11 +42,11 @@ impl FocusHandler {
     }
 }
 
-/// ウィンドウ 1 つぶんの、いまフォーカスを持っている登録済みのウィジェット。
+/// For one window, the registered widget that currently has focus.
 ///
-/// 通知の中でフォーカスを動かしても (入ったとたんに別の欄へ移すなど)、
-/// 通知は順番待ちにして 1 つずつ送るので、取りこぼしも順序の入れ替わりも
-/// 起きない。
+/// Even if focus is moved inside a notification (moving to another field as soon as
+/// one is entered, for example), notifications are queued and sent one at a time,
+/// so none are lost or reordered.
 #[derive(Default)]
 pub struct FocusOwner {
     current: RefCell<Option<Rc<FocusHandler>>>,
@@ -52,10 +55,10 @@ pub struct FocusOwner {
 }
 
 impl FocusOwner {
-    /// フォーカスが `next` の中へ移った (`None` はどの登録済みウィジェットの
-    /// 中でもない) ことを伝える。持ち主が変わったときだけ通知する。
+    /// Reports that focus moved into `next` (`None` means inside no registered
+    /// widget). Notifies only when the owner changes.
     ///
-    /// 前の持ち主への `false` を先に、新しい持ち主への `true` を後に送る。
+    /// `false` to the previous owner is sent first, then `true` to the new owner.
     pub fn move_to(&self, next: Option<Rc<FocusHandler>>) {
         {
             let mut current = self.current.borrow_mut();
@@ -85,11 +88,10 @@ impl FocusOwner {
         self.emitting.set(false);
     }
 
-    /// 通知せずに持ち主を置き直す。
+    /// Resets the owner without notifying.
     ///
-    /// 通知先を置いた時点で、フォーカスがすでにそのウィジェットの中にある
-    /// ときに使う。入ったことは知らせないが、そこから出たときには `false` が
-    /// 届くようになる。
+    /// Used when focus is already inside the widget at the moment its handler is set.
+    /// Entering is not reported, but `false` will arrive when focus leaves it.
     pub fn reset(&self, current: Option<Rc<FocusHandler>>) {
         *self.current.borrow_mut() = current;
     }

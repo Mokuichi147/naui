@@ -1,12 +1,12 @@
-//! 時刻の選択 (`GtkSpinButton` の組)。
+//! Time picking (a pair of `GtkSpinButton`s).
 //!
-//! GTK4 には時刻を選ぶ 1 つのコントロールが無い。時と分の `GtkSpinButton` を
-//! `:` で挟んで並べるのが GNOME のアプリ (時計のアラーム設定など) の形なので、
-//! `DatePicker` の時刻の部分と同じ組み方をする。
+//! GTK4 has no single control for picking a time. GNOME apps (the alarm settings in
+//! Clocks, for example) lay out `GtkSpinButton`s for hours and minutes separated by
+//! `:`, so it is built the same way as the time part of `DatePicker`.
 //!
-//! `GtkSpinButton` には「時刻としての範囲」が無いので、下限・上限は naui 側の
-//! 丸めだけで守る。時・分それぞれの端 (23 と 59) では次の桁へ繰り上がらず
-//! 0 へ戻る。
+//! `GtkSpinButton` has no "time range", so the minimum and maximum are enforced only
+//! by naui's clamping. At the ends of hours and minutes (23 and 59), they wrap back
+//! to 0 without carrying into the next field.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -25,7 +25,7 @@ struct TimePickerInner {
     bin: SizeBin,
     hour: gtk::SpinButton,
     minute: gtk::SpinButton,
-    /// プログラムから値を書くときに止めるシグナル。
+    /// The signal that is blocked while writing the value from code.
     hour_handler: RefCell<Option<glib::SignalHandlerId>>,
     minute_handler: RefCell<Option<glib::SignalHandlerId>>,
     value: Cell<Time>,
@@ -34,9 +34,9 @@ struct TimePickerInner {
     on_change: Notifier<Time>,
 }
 
-/// 時刻を選ばせるコントロール (時と分の `GtkSpinButton`)。
+/// A control for picking a time of day (`GtkSpinButton`s for hours and minutes).
 ///
-/// 作った直後の値は、その環境の現在時刻 (ローカル時刻)。
+/// Its value right after creation is the platform's current time (local time).
 #[derive(Clone)]
 pub struct TimePicker(Rc<TimePickerInner>);
 impl_widget!(TimePicker);
@@ -85,21 +85,23 @@ impl TimePicker {
         this
     }
 
-    /// いま選ばれている時刻。
+    /// The currently selected time.
     pub fn value(&self) -> Time {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。範囲外なら端へ寄せ、時計として成り立たない値は丸める。
+    /// Changes the value without notifying. Out-of-range values are clamped to the
+    /// ends, and values that are not valid times are normalized.
     pub fn set_value(&self, value: Time) {
         let value = self.clamp(value);
         self.0.value.set(value);
         self.write_native(value);
     }
 
-    /// 選べる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the selectable range. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying.
     pub fn set_range(&self, min: Option<Time>, max: Option<Time>) {
         self.0.min.set(min.map(Time::normalized));
         self.0.max.set(max.map(Time::normalized));
@@ -110,18 +112,19 @@ impl TimePicker {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     pub fn on_change(&self, f: impl FnMut(Time) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// 時と分の `GtkSpinButton`。バックエンド固有の脱出口として公開している。
+    /// The `GtkSpinButton`s for hours and minutes. Public as a backend-specific escape
+    /// hatch.
     pub fn native_spins(&self) -> (gtk::SpinButton, gtk::SpinButton) {
         (self.0.hour.clone(), self.0.minute.clone())
     }
 
-    /// どちらかのスピンボタンで表示が変わったときの処理。
+    /// Handles a change in what either spin button shows.
     fn native_changed(&self) {
         let accepted = self.clamp(self.read_native());
         // 丸めや範囲で押し戻したときのために、表示は必ず書き直す
@@ -134,7 +137,7 @@ impl TimePicker {
         self.0.on_change.emit(accepted);
     }
 
-    /// いま画面に出ている時分。
+    /// The hour and minute currently on screen.
     fn read_native(&self) -> Time {
         Time::new(self.0.hour.value() as u8, self.0.minute.value() as u8).normalized()
     }
@@ -143,7 +146,7 @@ impl TimePicker {
         value.clamped(self.0.min.get(), self.0.max.get())
     }
 
-    /// 値を 2 つのスピンボタンへ書く。この間はシグナルを止める。
+    /// Writes the value into the two spin buttons. Signals are blocked meanwhile.
     fn write_native(&self, value: Time) {
         without_signal(&self.0.hour, &self.0.hour_handler, || {
             self.0.hour.set_value(value.hour as f64);
@@ -154,7 +157,7 @@ impl TimePicker {
     }
 }
 
-/// GTK 側の現在時刻 (ローカル時刻)。
+/// The current time on the GTK side (local time).
 fn now() -> Time {
     let Ok(now) = glib::DateTime::now_local() else {
         return Time::MIDNIGHT;

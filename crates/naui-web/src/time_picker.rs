@@ -1,11 +1,11 @@
-//! 時刻の選択 (`<input type="time">`)。
+//! Time picking (`<input type="time">`).
 //!
-//! 時刻の入力 UI (スピナーや時計のポップアップ) はブラウザが出す。naui は
-//! `value` の `"09:30"` を [`Time`] と行き来させるだけで、自前で組み立てる
-//! ものは無い。12 時間制 / 24 時間制の別はブラウザのロケールに従う。
+//! The browser shows the time input UI (spinners or a clock popup). naui only
+//! converts the `value`'s `"09:30"` to and from [`Time`]; there is nothing it builds
+//! itself. Whether it is 12- or 24-hour follows the browser's locale.
 //!
-//! 秒は扱わない。`<input type="time">` は `step` を細かくしない限り分までしか
-//! 返さないので、[`Time`] の持つ範囲と同じになる。
+//! Seconds are not handled. `<input type="time">` returns only minutes unless `step`
+//! is made finer, matching the range [`Time`] holds.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -22,13 +22,14 @@ struct TimePickerInner {
     min: Cell<Option<Time>>,
     max: Cell<Option<Time>>,
     on_change: ValueHandler<Time>,
-    /// 入力中と確定時の購読。落とすと購読も外れる。
+    /// The subscriptions for input and for confirmation. Dropping them also
+    /// unsubscribes.
     listeners: RefCell<Vec<Listener>>,
 }
 
-/// 時刻を選ばせるコントロール (`<input type="time">`)。
+/// A control for picking a time of day (`<input type="time">`).
 ///
-/// 作った直後の値は、そのブラウザの現在時刻 (ローカル時刻)。
+/// Its value right after creation is the browser's current time (local time).
 #[derive(Clone)]
 pub struct TimePicker(Rc<TimePickerInner>);
 impl_widget!(TimePicker, input);
@@ -71,21 +72,23 @@ impl TimePicker {
         Ok(this)
     }
 
-    /// いま選ばれている時刻。
+    /// The currently selected time.
     pub fn value(&self) -> Time {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。範囲外なら端へ寄せ、時計として成り立たない値は丸める。
+    /// Changes the value without notifying. Out-of-range values are clamped to the
+    /// ends, and values that are not valid times are normalized.
     pub fn set_value(&self, value: Time) {
         let value = self.clamp(value);
         self.0.value.set(value);
         self.write_native(value);
     }
 
-    /// 選べる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the selectable range. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying.
     pub fn set_range(&self, min: Option<Time>, max: Option<Time>) {
         self.0.min.set(min.map(Time::normalized));
         self.0.max.set(max.map(Time::normalized));
@@ -100,21 +103,22 @@ impl TimePicker {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     pub fn on_change(&self, f: impl FnMut(Time) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// 入力欄本体。バックエンド固有の脱出口として公開している。
+    /// The input itself. Public as a backend-specific escape hatch.
     pub fn native_input(&self) -> HtmlInputElement {
         self.0.input.clone()
     }
 
-    /// ブラウザ側で値が変わったときの処理。
+    /// Handles a value change on the browser side.
     ///
-    /// `commit` は欄を離れたときの `change` かどうか。入力の途中で
-    /// 表示を書き換えると打ちづらくなるので、書き戻しは確定時だけ行う。
+    /// `commit` is whether it is the `change` from leaving the field. Rewriting the
+    /// display mid-input would make typing awkward, so writing back happens only on
+    /// confirmation.
     fn native_changed(&self, commit: bool) {
         let text = self.0.input.value();
         let Some(shown) = Time::parse(&text) else {
@@ -140,14 +144,14 @@ impl TimePicker {
         value.clamped(self.0.min.get(), self.0.max.get())
     }
 
-    /// 値を `<input>` へ書く。`value` の代入では `input` も `change` も
-    /// 起きないので、購読を止める必要はない。
+    /// Writes the value to the `<input>`. Assigning `value` fires neither `input` nor
+    /// `change`, so the subscriptions need not be stopped.
     fn write_native(&self, value: Time) {
         self.0.input.set_value(&value.to_string());
     }
 }
 
-/// ブラウザの現在時刻 (ローカル時刻)。
+/// The browser's current time (local time).
 fn now() -> Time {
     let now = js_sys::Date::new_0();
     Time::new(now.get_hours() as u8, now.get_minutes() as u8).normalized()

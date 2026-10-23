@@ -8,26 +8,25 @@ use crate::{
 };
 use naui_core::{DatePickerMode, Orientation, Result, Settings, Tasks, Theme};
 
-/// ウィジェットを生成するための入り口。
+/// The entry point for creating widgets.
 ///
-/// GTK4 は `GtkApplication` が起動したあとでしかウィンドウを作れないため、
-/// `Ui` は [`run`] のコールバックの中でしか得られない。
+/// GTK4 can only create windows after the `GtkApplication` has started, so a `Ui`
+/// is available only inside the [`run`] callback.
 ///
-/// ウィジェットのハンドルと同じく **clone しても中身は同じ**なので、
-/// コールバックへ持ち込めば後からウィジェットを作れる。メインスレッド
-/// 専用で `Send` ではないため、別スレッドへは渡せない (そちらは
-/// [`Tasks`] を使う)。
+/// Like widget handles, **clones share the same contents**, so moving one into a
+/// callback lets you create widgets later. It is main-thread only and not `Send`,
+/// so it cannot be passed to other threads (use [`Tasks`] for that).
 #[derive(Clone)]
 pub struct Ui(pub(crate) sys::Ui);
 
 impl_backend!(Ui);
 
 impl Ui {
-    /// ウィンドウを作る。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても閉じられることはない。
+    /// Creates a window. The framework keeps a reference to it, so dropping the return
+    /// value does not close it.
     ///
-    /// `width` / `height` は中身の領域の大きさ ([`Window::set_size`] と同じ)。
-    /// ヘッダーバーとメニューバーは含まない。
+    /// `width` / `height` are the size of the content area (the same as
+    /// [`Window::set_size`]), excluding the header bar and menu bar.
     #[inline]
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
         self.0.window(title, width, height).map(Window)
@@ -38,33 +37,35 @@ impl Ui {
         self.0.stack(orientation).map(Stack)
     }
 
-    /// 行と列で位置を決めるコンテナ。
+    /// A container that positions children by row and column.
     #[inline]
     pub fn grid(&self) -> Result<Grid> {
         self.0.grid().map(Grid)
     }
 
-    /// 中身がはみ出したらスクロールさせるコンテナ。
+    /// A container that scrolls when its contents overflow.
     #[inline]
     pub fn scroll(&self) -> Result<Scroll> {
         self.0.scroll().map(Scroll)
     }
 
-    /// 見出しを押して中身を出し入れするコンテナ。`text` は見出しの文字。
+    /// A container whose contents are shown and hidden by clicking its heading. `text`
+    /// is the heading text.
     #[inline]
     pub fn expander(&self, text: &str) -> Result<Expander> {
         self.0.expander(text).map(Expander)
     }
 
-    /// 2 つの区画を、動かせる仕切りで分けるコンテナ。
+    /// A container that divides two panes with a movable divider.
     ///
-    /// `Horizontal` なら区画が横に並び、仕切りは縦になる。
+    /// With `Horizontal`, the panes are side by side and the divider is vertical.
     #[inline]
     pub fn split_view(&self, orientation: Orientation) -> Result<SplitView> {
         self.0.split_view(orientation).map(SplitView)
     }
 
-    /// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。
+    /// A widget that is just empty space. It absorbs a stack's leftover space and
+    /// pushes the others away.
     #[inline]
     pub fn spacer(&self) -> Result<Spacer> {
         self.0.spacer().map(Spacer)
@@ -85,49 +86,49 @@ impl Ui {
         self.0.checkbox(label).map(Checkbox)
     }
 
-    /// 入り切りを切り替えるスイッチ。`label` はとなりへ添える文字。
+    /// An on/off switch. `label` is the text placed next to it.
     #[inline]
     pub fn toggle(&self, label: &str) -> Result<Toggle> {
         self.0.toggle(label).map(Toggle)
     }
 
-    /// 選択肢を折りたたんで表示するコンボボックス。
+    /// A combo box that shows its options collapsed.
     #[inline]
     pub fn combo_box(&self) -> Result<ComboBox> {
         self.0.combo_box().map(ComboBox)
     }
 
-    /// 候補から選ぶことも、自由に打ち込むこともできるコンボボックス。
+    /// A combo box where the user can either choose from suggestions or type freely.
     #[inline]
     pub fn editable_combo_box(&self) -> Result<EditableComboBox> {
         self.0.editable_combo_box().map(EditableComboBox)
     }
 
-    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    /// A radio group that lays out options and lets the user choose exactly one.
     #[inline]
     pub fn radio_group(&self) -> Result<RadioGroup> {
         self.0.radio_group().map(RadioGroup)
     }
 
-    /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
+    /// A control for picking a date or time. `mode` decides what can be picked.
     #[inline]
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         self.0.date_picker(mode).map(DatePicker)
     }
 
-    /// 時刻だけを選ばせるコントロール。初期値は現在時刻。
+    /// A control for picking only a time of day. The initial value is the current time.
     #[inline]
     pub fn time_picker(&self) -> Result<TimePicker> {
         self.0.time_picker().map(TimePicker)
     }
 
-    /// 色を選ばせるコントロール。初期値は黒。
+    /// A control for picking a color. The initial value is black.
     #[inline]
     pub fn color_picker(&self) -> Result<ColorPicker> {
         self.0.color_picker().map(ColorPicker)
     }
 
-    /// アプリが自分で描く面。大きさは `set_sizing` で指定する。
+    /// A surface the app draws on itself. Set its size with `set_sizing`.
     #[inline]
     pub fn canvas(&self) -> Result<Canvas> {
         self.0.canvas().map(Canvas)
@@ -138,25 +139,26 @@ impl Ui {
         self.0.text_input(text).map(TextInput)
     }
 
-    /// 伏せ字で入力させる欄。中身は `GtkPasswordEntry`。
+    /// A field whose input is masked. Backed by `GtkPasswordEntry`.
     #[inline]
     pub fn password_input(&self) -> Result<PasswordInput> {
         self.0.password_input().map(PasswordInput)
     }
 
-    /// 検索の入力欄。中身は `GtkSearchEntry`。
+    /// A search field. Backed by `GtkSearchEntry`.
     #[inline]
     pub fn search_input(&self) -> Result<SearchInput> {
         self.0.search_input().map(SearchInput)
     }
 
-    /// 数値を入力させる欄。`value` は初期値。
+    /// A field for entering a number. `value` is the initial value.
     #[inline]
     pub fn number_input(&self, value: f64) -> Result<NumberInput> {
         self.0.number_input(value).map(NumberInput)
     }
 
-    /// 改行を含む文字列を入力できる欄。高さは `set_sizing` で指定する。
+    /// A field for entering text that includes newlines. Set its height with
+    /// `set_sizing`.
     #[inline]
     pub fn text_area(&self, text: &str) -> Result<TextArea> {
         self.0.text_area(text).map(TextArea)
@@ -172,148 +174,150 @@ impl Ui {
         self.0.progress_bar().map(ProgressBar)
     }
 
-    /// 画像。`source` はファイルパスか URL。
+    /// An image. `source` is a file path or a URL.
     #[inline]
     pub fn image(&self, source: &str) -> Result<Image> {
         self.0.image(source).map(Image)
     }
 
-    /// 動画。`source` はファイルパスか URL。
+    /// Video. `source` is a file path or a URL.
     #[inline]
     pub fn video(&self, source: &str) -> Result<Video> {
         self.0.video(source).map(Video)
     }
 
-    /// 音声。`source` はファイルパスか URL。
+    /// Audio. `source` is a file path or a URL.
     #[inline]
     pub fn audio(&self, source: &str) -> Result<Audio> {
         self.0.audio(source).map(Audio)
     }
 
-    /// タブ。中身のウィジェットごと持つ。
+    /// Tabs. Holds each tab's content widget.
     #[inline]
     pub fn tabs(&self) -> Result<Tabs> {
         self.0.tabs().map(Tabs)
     }
 
-    /// 画面上部に置く横並びのナビゲーション。`title` は左端の見出し。
+    /// Horizontal navigation placed at the top of the screen. `title` is the heading
+    /// at the left end.
     #[inline]
     pub fn navbar(&self, title: &str) -> Result<Navbar> {
         self.0.navbar(title).map(Navbar)
     }
 
-    /// 画面下部に置く横並びのナビゲーション (等幅)。
+    /// Horizontal navigation placed at the bottom of the screen (equal widths).
     #[inline]
     pub fn dock(&self) -> Result<Dock> {
         self.0.dock().map(Dock)
     }
 
-    /// 縦に並ぶナビゲーション一覧。
+    /// A vertical list of navigation items.
     #[inline]
     pub fn menu(&self) -> Result<Menu> {
         self.0.menu().map(Menu)
     }
 
-    /// ウィンドウの上端に付けるツールバー。
+    /// A toolbar attached to the top of the window.
     ///
-    /// [`Window::set_toolbar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_toolbar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     #[inline]
     pub fn toolbar(&self) -> Result<Toolbar> {
         self.0.toolbar().map(Toolbar)
     }
 
-    /// ウィンドウの上端に付ける、OS のアプリケーションメニュー。
+    /// The OS's application menu, attached to the top of the window.
     ///
-    /// [`Window::set_menu_bar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_menu_bar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     #[inline]
     pub fn menu_bar(&self) -> Result<MenuBar> {
         self.0.menu_bar().map(MenuBar)
     }
 
-    /// ウィンドウの左に付けるサイドバー。
+    /// A sidebar attached to the left of the window.
     ///
-    /// [`Window::set_sidebar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_sidebar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     #[inline]
     pub fn sidebar(&self) -> Result<Sidebar> {
         self.0.sidebar().map(Sidebar)
     }
 
-    /// 選択できる行の一覧。自分でスクロールする。
+    /// A list of selectable rows. It scrolls by itself.
     #[inline]
     pub fn list(&self) -> Result<List> {
         self.0.list().map(List)
     }
 
-    /// 列見出しを持つ表。自分でスクロールする。
+    /// A table with column headings. It scrolls by itself.
     #[inline]
     pub fn table(&self) -> Result<Table> {
         self.0.table().map(Table)
     }
 
-    /// 入れ子の項目を開閉できる一覧。自分でスクロールする。
+    /// A list whose nested items can be expanded and collapsed. It scrolls by itself.
     #[inline]
     pub fn tree(&self) -> Result<Tree> {
         self.0.tree().map(Tree)
     }
 
-    /// 右クリックで出るポップアップ (コンテキスト) メニュー。
+    /// A popup (context) menu shown on right-click.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 取り付け先から消えることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// remove it from the widgets it is attached to.
     #[inline]
     pub fn popup_menu(&self) -> Result<PopupMenu> {
         self.0.popup_menu().map(PopupMenu)
     }
 
-    /// パンくず。
+    /// Breadcrumbs.
     #[inline]
     pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
         self.0.breadcrumbs().map(Breadcrumbs)
     }
 
-    /// ページ送り。`page_count` はページ数。
+    /// Pagination. `page_count` is the number of pages.
     #[inline]
     pub fn pagination(&self, page_count: usize) -> Result<Pagination> {
         self.0.pagination(page_count).map(Pagination)
     }
 
-    /// リンク。`href` が空でなければ、押したときに既定のハンドラで開く。
+    /// A link. If `href` is not empty, clicking it opens it with the default handler.
     #[inline]
     pub fn link(&self, text: &str, href: &str) -> Result<Link> {
         self.0.link(text, href).map(Link)
     }
 
-    /// ファイルやフォルダーを選ばせるボタン。押すと `GtkFileDialog` が出る。
+    /// A button for picking files or folders. Clicking it shows a `GtkFileDialog`.
     #[inline]
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         self.0.file_picker(text).map(FilePicker)
     }
 
-    /// 内容をファイルへ保存させるボタン。押すと `GtkFileDialog` の保存が出る。
+    /// A button that lets the user save contents to a file. Clicking it shows the save
+    /// mode of `GtkFileDialog`.
     #[inline]
     pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
         self.0.file_saver(text).map(FileSaver)
     }
 
-    /// 一時的な通知 (トースト)。`message` は出す文字列。
+    /// A transient notification (toast). `message` is the string to show.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 通知が届かなくなることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
     #[inline]
     pub fn toast(&self, message: &str) -> Result<Toast> {
         self.0.toast(message).map(Toast)
     }
 
-    /// モーダルダイアログ。フレームワークが参照を保持する。
+    /// A modal dialog. The framework keeps a reference to it.
     #[inline]
     pub fn dialog(&self, title: &str) -> Result<Dialog> {
         self.0.dialog(title).map(Dialog)
     }
 
-    /// 配色テーマを切り替える。
+    /// Switches the color theme.
     #[inline]
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         self.0.set_theme(theme)
@@ -324,43 +328,45 @@ impl Ui {
         self.0.theme()
     }
 
-    /// 別スレッドや非同期処理から画面を書き換えるための入り口。
+    /// The entry point for updating the screen from other threads or async code.
     ///
-    /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
+    /// The returned [`Tasks`] can be cloned and moved into callbacks.
     #[inline]
     pub fn tasks(&self) -> Tasks {
         self.0.tasks()
     }
 
-    /// クリップボード。文字の読み書きができる。
+    /// The clipboard. Text can be read and written.
     #[inline]
     pub fn clipboard(&self) -> Clipboard {
         Clipboard(self.0.clipboard())
     }
 
-    /// URL を既定のアプリ (`https:` ならブラウザ、`mailto:` ならメール) で開く。
+    /// Opens a URL with the default app (the browser for `https:`, mail for
+    /// `mailto:`).
     ///
-    /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
-    /// 読めない・開く先が無いときは `Err`。開いた先で起きた失敗は分からない。
+    /// Opening is left to the OS, so this returns right away. Returns `Err` when the
+    /// string cannot be read as a URL or there is nothing to open it with. Failures
+    /// that happen in whatever opens it are not reported.
     ///
-    /// GTK4 は開く処理を非同期で行う (`GtkUriLauncher`) ので、ここで返るのは
-    /// URL として読めたかどうかだけ。
+    /// GTK4 opens it asynchronously (`GtkUriLauncher`), so what this returns is only
+    /// whether it could be read as a URL.
     #[inline]
     pub fn open_url(&self, url: &str) -> Result<()> {
         self.0.open_url(url)
     }
 
-    /// アプリを終了する。
+    /// Quits the app.
     #[inline]
     pub fn quit(&self) {
         self.0.quit()
     }
 }
 
-/// アプリを起動し、`build` の中で UI を組み立てる。
+/// Starts the app and builds the UI inside `build`.
 ///
-/// `build` は `GtkApplication` の `activate` の中で 1 回だけ呼ばれる。
-/// この関数はウィンドウがすべて閉じるまで戻らない。
+/// `build` is called exactly once, inside the `GtkApplication`'s `activate`. This
+/// function does not return until every window has closed.
 #[inline]
 pub fn run<F>(settings: Settings, build: F) -> Result<()>
 where

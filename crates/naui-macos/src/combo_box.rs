@@ -1,8 +1,9 @@
-//! 選択肢から 1 件を選ぶコンボボックス (AppKit)。
+//! A combo box for choosing one of the options (AppKit).
 //!
-//! macOS では編集できる `NSComboBox` ではなく、選択肢だけを持つ
-//! `NSPopUpButton` を使う。項目を作り直した直後も未選択に戻すため、
-//! 他のバックエンドの `<select>` / ComboBox と同じ状態遷移になる。
+//! On macOS, an `NSPopUpButton` holding only the options is used rather than the
+//! editable `NSComboBox`. It goes back to having nothing selected right after its
+//! items are rebuilt, giving the same state transitions as the other backends'
+//! `<select>` / ComboBox.
 
 use std::rc::Rc;
 
@@ -17,13 +18,14 @@ use crate::widgets::{impl_widget, Widget};
 struct ComboBoxInner {
     native: Retained<NSPopUpButton>,
     handler: SelectHandler,
-    /// AppKit の target は weak なので、ハンドル側で生かしておく。
+    /// AppKit targets are weak, so they are kept alive on the handle side.
     _target: Retained<ActionTarget>,
 }
 
-/// 選択肢から 1 件を選ぶドロップダウン (`NSPopUpButton`)。
+/// A drop-down for choosing one of the options (`NSPopUpButton`).
 ///
-/// 作った直後と [`set_items`](Self::set_items) の直後は、何も選ばれていない。
+/// Right after creation and right after [`set_items`](Self::set_items), nothing is
+/// selected.
 #[derive(Clone)]
 pub struct ComboBox(Rc<ComboBoxInner>);
 impl_widget!(ComboBox);
@@ -56,7 +58,7 @@ impl ComboBox {
         }))
     }
 
-    /// 項目を作り直し、選択を外す。選択通知は発生しない。
+    /// Rebuilds the items and clears the selection. No selection notification is sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         self.0.native.removeAllItems();
         for item in items {
@@ -68,7 +70,7 @@ impl ComboBox {
         self.0.native.selectItem(None);
     }
 
-    /// 項目数。
+    /// The number of items.
     pub fn len(&self) -> usize {
         self.0.native.numberOfItems() as usize
     }
@@ -77,25 +79,25 @@ impl ComboBox {
         self.len() == 0
     }
 
-    /// 現在選ばれている項目。未選択なら `None`。
+    /// The currently selected item. `None` if nothing is selected.
     pub fn selected(&self) -> Option<usize> {
         let index = self.0.native.indexOfSelectedItem();
         (index >= 0 && index < self.0.native.numberOfItems()).then_some(index as usize)
     }
 
-    /// 範囲内の項目を通知せずに選ぶ。範囲外なら何もしない。
+    /// Selects an in-range item without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             self.0.native.selectItemAtIndex(index as isize);
         }
     }
 
-    /// 選択を通知せずに外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         self.0.native.selectItem(None);
     }
 
-    /// ユーザーが選んだのと同じように、範囲内の項目を選んで通知する。
+    /// Selects an in-range item and notifies, as if the user had chosen it.
     pub fn select(&self, index: usize) {
         if index < self.len() {
             self.0.native.selectItemAtIndex(index as isize);
@@ -107,13 +109,13 @@ impl ComboBox {
         self.0.native.setEnabled(enabled);
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the index when an item is chosen. Setting it again removes the
+    /// previous callback.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// AppKit の実コントロール。バックエンド固有の脱出口として公開している。
+    /// The real AppKit control. Public as a backend-specific escape hatch.
     pub fn native_combo_box(&self) -> Retained<NSPopUpButton> {
         self.0.native.clone()
     }

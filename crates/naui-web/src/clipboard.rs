@@ -1,16 +1,18 @@
-//! クリップボードの文字の読み書き。
+//! Reading and writing text on the clipboard.
 //!
-//! 読むほうは環境によって非同期 (GTK4・WinRT・ブラウザ)、書くほうもブラウザでは
-//! 非同期なので、4 環境とも読み書きの結果をコールバックで返す。コールバックは
-//! UI スレッドで、`read_text` / `set_text` から戻った後に呼ばれる (同期で済む
-//! 環境でもその場では呼ばない)。
+//! Reading is asynchronous on some platforms (GTK4, WinRT, browsers), and writing
+//! is asynchronous in browsers too, so on all four platforms the result of reading
+//! and writing is returned through a callback. The callback is called on the UI
+//! thread after `read_text` / `set_text` has returned (it is not called on the spot
+//! even on platforms where it could be synchronous).
 //!
-//! ブラウザの Clipboard API は安全な文脈 (https または localhost) でしか
-//! 使えず、読むときは利用者の許可を求められることがある。
+//! The browser's Clipboard API is available only in secure contexts (https or
+//! localhost), and reading may ask the user for permission.
 
 use naui_core::{Error, Result};
 
-/// クリップボード (`navigator.clipboard`)。[`Ui::clipboard`](crate::Ui::clipboard) で取る。
+/// The clipboard (`navigator.clipboard`). Get it with
+/// [`Ui::clipboard`](crate::Ui::clipboard).
 #[derive(Clone)]
 pub struct Clipboard;
 
@@ -19,12 +21,13 @@ impl Clipboard {
         web_sys::window().map(|window| window.navigator().clipboard())
     }
 
-    /// 文字を書き込む。前の中身は消える。書き込めたかどうかを `f` へ渡す。
+    /// Writes text, replacing the previous contents. Whether it was written is passed
+    /// to `f`.
     ///
-    /// ブラウザは利用者の操作 (クリックなど) の中でしか書き込ませないことが
-    /// あり、許可の無い `<iframe>` の中などでは断る。断られたときは `Err` が
-    /// 届くので、ボタンの `on_click` などから呼び、結果を見てから「コピー
-    /// しました」のように知らせる。
+    /// Browsers may allow writing only inside a user action (a click, for example), and
+    /// refuse inside an `<iframe>` without permission. When refused, `Err` arrives, so
+    /// call it from a button's `on_click` or similar and report something like "Copied"
+    /// only after checking the result.
     pub fn set_text(&self, text: &str, f: impl FnOnce(Result<()>) + 'static) {
         let promise = Self::native().map(|clipboard| clipboard.write_text(text));
         js_sys::futures::spawn_local(async move {
@@ -42,7 +45,8 @@ impl Clipboard {
         });
     }
 
-    /// 文字を読む。文字が入っていない・読めなかったときは `None` を渡す。
+    /// Reads text. Passes `None` if the clipboard holds no text or it could not be
+    /// read.
     pub fn read_text(&self, f: impl FnOnce(Option<String>) + 'static) {
         let promise = Self::native().map(|clipboard| clipboard.read_text());
         js_sys::futures::spawn_local(async move {

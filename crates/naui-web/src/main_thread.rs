@@ -1,19 +1,20 @@
-//! 別スレッドから UI スレッドへ仕事を投げる口。
+//! The way to post work from other threads to the UI thread.
 //!
-//! wasm にはスレッドが無いので「別スレッド」は成立しないが、
-//! 「必ず後回しにする」という約束は 4 バックエンドで共通なので、
-//! ブラウザでも microtask キューを 1 つ挟む。
+//! wasm has no threads, so "another thread" does not apply, but the promise of
+//! "always deferring" is shared by all four backends, so in the browser too one
+//! microtask queue hop is inserted.
 //!
-//! `js_sys::futures::spawn_local` は「即座に `Ready` を返す future でも
-//! 必ず次の microtask で走る」と保証されており、内部は `queueMicrotask`
-//! (無ければ Promise の解決) を使う。可用性の判定ごと任せられるので、
-//! `setTimeout` を自前で扱うより素直。
+//! `js_sys::futures::spawn_local` guarantees that "even a future that returns
+//! `Ready` immediately always runs on the next microtask", internally using
+//! `queueMicrotask` (or Promise resolution when unavailable). It can be trusted
+//! with the availability check too, which is simpler than handling `setTimeout`
+//! ourselves.
 
 use naui_core::{MainThread, Work};
 
-/// microtask キュー。ブラウザにはアプリの終了が無いので、投函は必ず成功する。
+/// The microtask queue. Browsers have no app shutdown, so posting always succeeds.
 ///
-/// wasm は既定で `panic = "abort"` なので、ここで panic を捕まえることはできない。
+/// wasm uses `panic = "abort"` by default, so panics cannot be caught here.
 pub(crate) struct Microtask;
 
 impl MainThread for Microtask {

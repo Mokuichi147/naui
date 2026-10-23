@@ -1,12 +1,13 @@
-//! 日付と時刻の選択 (`NSDatePicker`)。
+//! Date and time picking (`NSDatePicker`).
 //!
-//! AppKit には日付専用のコントロールがあるので、表示する項目
-//! (`datePickerElements`) を [`DatePickerMode`] から決めるだけで済む。
+//! AppKit has a dedicated date control, so it is enough to decide the fields to
+//! show (`datePickerElements`) from [`DatePickerMode`].
 //!
-//! 暦は**グレゴリオ暦に固定**している。`NSDatePicker` は既定でロケールの暦を
-//! 使うため、和暦のロケールでは `year` が「令和 8 年」の 8 を指してしまい、
-//! [`DateTime::year`] の意味が環境ごとに変わってしまうため。月名や並び順は
-//! ロケールのままなので、表示の言語は変わらない。
+//! The calendar is **fixed to Gregorian**. `NSDatePicker` uses the locale's
+//! calendar by default, so in a Japanese-calendar locale `year` would mean the 8 of
+//! "Reiwa 8", and the meaning of [`DateTime::year`] would vary by environment.
+//! Month names and field order follow the locale, so the display language does not
+//! change.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -25,24 +26,26 @@ use crate::widgets::{impl_widget, Widget};
 struct DatePickerInner {
     native: Retained<NSDatePicker>,
     mode: DatePickerMode,
-    /// 変換に使う暦。ピッカーへ渡したものと同じ物を使う。
+    /// The calendar used for conversion. The same object as the one passed to the
+    /// picker.
     calendar: Retained<NSCalendar>,
-    /// **選ばせていない部分も含めた**現在値。`NSDatePicker` は選ばせていない
-    /// 部分も `NSDate` の中に持つが、4 バックエンドで同じ答えを返すために
-    /// naui 側でも持つ。
+    /// The current value, **including the parts that cannot be picked**.
+    /// `NSDatePicker` also keeps those parts inside its `NSDate`, but naui keeps them
+    /// too so that all four backends return the same answer.
     value: Cell<DateTime>,
     min: Cell<Option<DateTime>>,
     max: Cell<Option<DateTime>>,
     handler: ValueHandler<DateTime>,
-    /// 値を書き込んでいる間だけ、ネイティブからの通知を無視する。
+    /// Ignores notifications from the native side only while writing the value.
     silent: Cell<bool>,
-    /// 変更を受け取る target。AppKit の target は weak なので生かしておく。
+    /// The target that receives changes. AppKit targets are weak, so it is kept alive.
     target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
-/// 日付と時刻を選ばせるコントロール (`NSDatePicker`)。
+/// A control for picking a date and time (`NSDatePicker`).
 ///
-/// 作った直後の値は、その環境の現在日時 (ローカル時刻)。
+/// Its value right after creation is the platform's current date and time (local
+/// time).
 #[derive(Clone)]
 pub struct DatePicker(Rc<DatePickerInner>);
 impl_widget!(DatePicker);
@@ -93,26 +96,28 @@ impl DatePicker {
         this
     }
 
-    /// 何を選ばせるか。生成時に決まり、あとから変わらない。
+    /// What it lets the user pick. Fixed at creation and never changes.
     pub fn mode(&self) -> DatePickerMode {
         self.0.mode
     }
 
-    /// 現在の値。選ばせていない部分も、渡された値のまま返る。
+    /// The current value. Parts that cannot be picked are returned as they were passed.
     pub fn value(&self) -> DateTime {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。範囲外なら端へ寄せ、暦として成り立たない値は丸める。
+    /// Changes the value without notifying. Out-of-range values are clamped to the
+    /// ends, and values that are not valid dates are normalized.
     pub fn set_value(&self, value: DateTime) {
         let value = self.clamp(value);
         self.0.value.set(value);
         self.write_native(value);
     }
 
-    /// 選べる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the selectable range. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying.
     pub fn set_range(&self, min: Option<DateTime>, max: Option<DateTime>) {
         self.0.min.set(min.map(DateTime::normalized));
         self.0.max.set(max.map(DateTime::normalized));
@@ -124,18 +129,18 @@ impl DatePicker {
         self.0.native.setEnabled(enabled);
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     pub fn on_change(&self, f: impl FnMut(DateTime) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// AppKit の実コントロール。バックエンド固有の脱出口として公開している。
+    /// The real AppKit control. Public as a backend-specific escape hatch.
     pub fn native_picker(&self) -> Retained<NSDatePicker> {
         self.0.native.clone()
     }
 
-    /// ネイティブ側で値が変わったときの処理。
+    /// Handles a value change on the native side.
     fn native_changed(&self) {
         if self.0.silent.get() {
             return;
@@ -158,7 +163,7 @@ impl DatePicker {
         self.0.mode.clamp(value, self.0.min.get(), self.0.max.get())
     }
 
-    /// ネイティブへ値を書く。この間の通知は無視する。
+    /// Writes the value to the native side. Notifications during this are ignored.
     fn write_native(&self, value: DateTime) {
         let Some(date) = to_ns_date(&self.0.calendar, value) else {
             return;
@@ -168,14 +173,14 @@ impl DatePicker {
         self.0.silent.set(previous);
     }
 
-    /// 下限・上限をネイティブへ渡す。
+    /// Passes the minimum and maximum to the native side.
     ///
-    /// 日付だけを選ばせるときは、下限を 0 時・上限を 23 時 59 分にそろえる。
-    /// `NSDatePicker` は `NSDate` どうしで比べるため、そろえないと
-    /// 「同じ日なのに時刻が早い」というだけで弾かれてしまう。
+    /// When only the date can be picked, the minimum is set to 00:00 and the maximum to
+    /// 23:59. `NSDatePicker` compares `NSDate`s, so without this a value on the same day
+    /// would be rejected just because its time is earlier.
     ///
-    /// 時刻だけを選ばせるときは日付の部分に意味が無いので、ネイティブへは
-    /// 渡さない (naui 側の丸めだけで範囲を守る)。
+    /// When only the time can be picked, the date part means nothing, so the bounds are
+    /// not passed to the native side (the range is enforced only by naui's clamping).
     fn write_native_range(&self) {
         if self.0.mode == DatePickerMode::Time {
             self.0.native.setMinDate(None);
@@ -204,7 +209,7 @@ impl DatePicker {
     }
 }
 
-/// 表示する項目を [`DatePickerMode`] から決める。
+/// Decides the fields to show from [`DatePickerMode`].
 fn elements(mode: DatePickerMode) -> NSDatePickerElementFlags {
     let mut flags = NSDatePickerElementFlags::empty();
     if mode.has_date() {
@@ -216,14 +221,15 @@ fn elements(mode: DatePickerMode) -> NSDatePickerElementFlags {
     flags
 }
 
-/// グレゴリオ暦。時間帯は既定 (システムの現在の時間帯) のまま。
+/// The Gregorian calendar. The time zone stays the default (the system's current
+/// time zone).
 fn gregorian_calendar() -> Retained<NSCalendar> {
     let identifier = unsafe { NSCalendarIdentifierGregorian };
     NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), identifier)
         .unwrap_or_else(NSCalendar::currentCalendar)
 }
 
-/// その暦・時間帯での現在日時。
+/// The current date and time in that calendar and time zone.
 fn now_in(calendar: &NSCalendar) -> DateTime {
     from_ns_date(calendar, &NSDate::now())
 }

@@ -1,29 +1,29 @@
-//! サイドバー (`<aside>` + `<nav>`)。
+//! The sidebar (`<aside>` + `<nav>`).
 //!
-//! ブラウザにサイドバーのコントロールは無いため、意味づけのある標準要素で
-//! 組み立てる。`<aside>` (補足のランドマーク) の中に `<nav>` を置き、
-//! まとまりごとに見出しと `<ul>` を並べる。項目は `<button>` で、選択中の
-//! ものは `aria-current="page"` と太字で表す (`Menu` と同じ)。
+//! Browsers have no sidebar control, so it is built from semantic standard
+//! elements. A `<nav>` is placed inside an `<aside>` (the complementary landmark),
+//! with a heading and a `<ul>` per group. Items are `<button>`s, and the selected
+//! one is shown with `aria-current="page"` and bold (the same as `Menu`).
 //!
 //! | naui | DOM |
 //! | --- | --- |
-//! | サイドバー全体 | naui の [`SplitView`](crate::SplitView) (start に `<aside>`、end に中身) |
-//! | 項目の一覧 | `<nav>` + まとまりごとの `<ul>` |
-//! | まとまりの見出し | `<div role="heading">` (`<ul>` の `aria-labelledby`) |
-//! | 項目 | `<li><button>` (アイコンは naui 同梱の SVG) |
+//! | The whole sidebar | naui's [`SplitView`](crate::SplitView) (`<aside>` at start, the content at end) |
+//! | Item list | `<nav>` + a `<ul>` per group |
+//! | Group heading | `<div role="heading">` (the `aria-labelledby` of the `<ul>`) |
+//! | Item | `<li><button>` (icons are SVGs bundled with naui) |
 //!
-//! 見た目はブラウザ既定のままで、CSS は並びにしか使わない。中身との境目は
-//! `SplitView` の仕切りそのもので、ドラッグ (と矢印キー) で幅を変えられる。
+//! The look stays the browser's default; CSS is used only for arrangement. The
+//! boundary with the content is the `SplitView`'s divider itself, and the width can
+//! be changed by dragging (and with the arrow keys).
 //!
-//! ブラウザには開閉のボタンも無いので、`aria-expanded` / `aria-controls` を
-//! 持つ `<button>` を置く。場所は macOS と同じくツールバーの行の先頭で
-//! ([`Window`](crate::Window) が置く。ツールバーが無ければボタンだけの行に
-//! なる)、開閉してもボタンは動かず、中身も上下しない。図形だけはツールバーと
-//! 同じく naui が持つ。
+//! Browsers have no collapse button either, so a `<button>` with `aria-expanded` /
+//! `aria-controls` is placed. As on macOS, it goes at the start of the toolbar row
+//! (placed by [`Window`](crate::Window); without a toolbar, it becomes a row with
+//! just the button), and neither the button nor the content moves when it collapses
+//! or expands. Only its shape is owned by naui, as with the toolbar.
 //!
-//! ほかのバックエンドに合わせて [`Widget`](crate::Widget) にはせず、
-//! [`Window::set_sidebar`](crate::Window::set_sidebar) でウィンドウに
-//! 取り付ける。
+//! To match the other backends it is not a [`Widget`](crate::Widget); it is
+//! attached to the window with [`Window::set_sidebar`](crate::Window::set_sidebar).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -43,10 +43,10 @@ use crate::toolbar::{icon_svg, path_svg};
 use crate::widgets::Widget;
 use crate::widgets::{create, set_disabled, Listener};
 
-/// 開閉ボタンの図形 (左に区画のある窓)。
+/// The shape of the collapse button (a window with a pane on the left).
 const TOGGLE_PATH: &str = "M4 5h16v14H4zM9 5v14";
 
-/// ページ内で見出しの id を重ねないための通し番号。
+/// A running number so that heading ids do not collide within the page.
 static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn style(element: &HtmlElement, property: &str, value: &str) {
@@ -62,19 +62,20 @@ fn append(parent: &Element, child: &Element) -> Result<()> {
 
 struct SidebarInner {
     document: Document,
-    /// サイドバーと中身を分ける仕切り。これの要素をウィンドウの中へ置く。
+    /// The divider separating the sidebar and the content. Its element is placed inside
+    /// the window.
     split: SplitView,
     aside: HtmlElement,
     nav: HtmlElement,
-    /// ウィンドウの子を入れる `<div>`。
+    /// The `<div>` holding the window's child.
     slot: HtmlElement,
-    /// 開閉ボタン。
+    /// The collapse button.
     toggle: HtmlElement,
-    /// 開閉ボタンのクリック購読。
+    /// The collapse button's click subscription.
     toggle_listener: RefCell<Option<Listener>>,
     on_collapse: crate::widgets::ValueHandler<bool>,
     sections: RefCell<Vec<SidebarSection>>,
-    /// 項目の通し番号と同じ並びのボタン。
+    /// The buttons, in the same order as the items' running numbers.
     buttons: RefCell<Vec<HtmlElement>>,
     listeners: RefCell<Vec<Listener>>,
     handler: SelectHandler,
@@ -82,10 +83,10 @@ struct SidebarInner {
     id: usize,
 }
 
-/// ウィンドウの左に付けるサイドバー。
+/// A sidebar attached to the left of the window.
 ///
-/// [`Window::set_sidebar`](crate::Window::set_sidebar) で取り付ける。
-/// レイアウトには置かないので [`Widget`](crate::Widget) ではない。
+/// Attach it with [`Window::set_sidebar`](crate::Window::set_sidebar). It is not
+/// placed in a layout, so it is not a [`Widget`](crate::Widget).
 #[derive(Clone)]
 pub struct Sidebar(Rc<SidebarInner>);
 
@@ -174,10 +175,10 @@ impl Sidebar {
         Ok(this)
     }
 
-    /// 項目をまとまりごとに並べる。呼ぶたびに置き換わる。
+    /// Lays out items by group. Each call replaces them.
     ///
-    /// 選ばれていた項目は、同じ通し番号がまだ選べるなら選ばれたまま残る
-    /// (通知はしない)。
+    /// The selected item stays selected (without notifying) if the same running number
+    /// can still be selected.
     pub fn set_sections(&self, sections: &[SidebarSection]) {
         let keep = self
             .0
@@ -189,7 +190,7 @@ impl Sidebar {
         self.mark_selected(keep);
     }
 
-    /// 見出しの無いまとまり 1 つだけで並べる。
+    /// Lays out items as a single group without a heading.
     pub fn set_items(&self, items: &[SidebarItem]) {
         self.set_sections(&[SidebarSection::untitled(items.iter().cloned())]);
     }
@@ -248,7 +249,7 @@ impl Sidebar {
         Ok(())
     }
 
-    /// まとまり 1 つぶんの `<ul>` を作って `<nav>` へ足す。
+    /// Creates the `<ul>` for one group and adds it to the `<nav>`.
     fn new_list(&self) -> Result<HtmlElement> {
         let ul: HtmlElement = create(&self.0.document, "ul")?.unchecked_into();
         style(&ul, "list-style", "none");
@@ -299,7 +300,7 @@ impl Sidebar {
         Ok((button, listener))
     }
 
-    /// 選択状態を ARIA 属性と太字で表す。
+    /// Expresses the selected state with ARIA attributes and bold.
     fn mark_selected(&self, index: Option<usize>) {
         for (i, button) in self.0.buttons.borrow().iter().enumerate() {
             let current = Some(i) == index;
@@ -321,7 +322,7 @@ impl Sidebar {
         sidebar_item(&self.0.sections.borrow(), index).is_some_and(|item| item.enabled)
     }
 
-    /// まとまりをまたいだ項目の数。
+    /// The number of items across groups.
     pub fn len(&self) -> usize {
         sidebar_len(&self.0.sections.borrow())
     }
@@ -330,26 +331,28 @@ impl Sidebar {
         self.len() == 0
     }
 
-    /// 選ばれている項目の通し番号。
+    /// The running number of the selected item.
     pub fn selected(&self) -> Option<usize> {
         self.0.selected.get()
     }
 
-    /// 通知せずに選択を変える。範囲外・選べない項目は無視する。
+    /// Changes the selection without notifying. Out-of-range and unselectable items are
+    /// ignored.
     pub fn set_selected(&self, index: usize) {
         if self.is_selectable(index) {
             self.mark_selected(Some(index));
         }
     }
 
-    /// 選択を外す (通知しない)。
+    /// Clears the selection (without notifying).
     pub fn clear_selection(&self) {
         self.mark_selected(None);
     }
 
-    /// 利用者が選んだのと同じように選び、通知する。
+    /// Selects as if the user had chosen it, and notifies.
     ///
-    /// 範囲外・選べない項目は無視する。すでに選ばれている項目でも通知する。
+    /// Out-of-range and unselectable items are ignored. Notifies even if the item is
+    /// already selected.
     pub fn select(&self, index: usize) {
         if self.is_selectable(index) {
             self.mark_selected(Some(index));
@@ -357,12 +360,12 @@ impl Sidebar {
         }
     }
 
-    /// 項目が選ばれたときの通知先。引数は通し番号。
+    /// The handler called when an item is chosen. The argument is the running number.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// サイドバーの幅 (CSS ピクセル)。既定は [`DEFAULT_SIDEBAR_WIDTH`]。
+    /// The sidebar width (CSS pixels). The default is [`DEFAULT_SIDEBAR_WIDTH`].
     pub fn set_width(&self, width: f64) {
         if !width.is_finite() || width <= 0.0 {
             return;
@@ -370,20 +373,21 @@ impl Sidebar {
         self.0.split.set_position(width.max(SIDEBAR_MIN_WIDTH));
     }
 
-    /// サイドバーの幅。閉じていても開いたときの幅を返す。
+    /// The sidebar width. Even while collapsed, returns the width it has when expanded.
     pub fn width(&self) -> f64 {
         self.0.split.position()
     }
 
-    /// 利用者が仕切りで幅を変えるたび、変えた後の幅で呼ばれる。
+    /// Called with the new width every time the user changes it with the divider.
     pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
         self.0.split.on_resize(f);
     }
 
-    /// サイドバーを閉じる (`true`) か開く (`false`)。
+    /// Collapses (`true`) or expands (`false`) the sidebar.
     ///
-    /// 閉じても項目と選択と幅は残る。閉じている間はサイドバーと仕切りを
-    /// `hidden` で隠す。[`on_collapse`](Self::on_collapse) は呼ばない。
+    /// Items, selection and width are kept while collapsed. While collapsed, the sidebar
+    /// and the divider are hidden with `hidden`. [`on_collapse`](Self::on_collapse) is
+    /// not called.
     pub fn set_collapsed(&self, collapsed: bool) {
         self.0.split.set_start_hidden(collapsed);
         let _ = self
@@ -392,45 +396,49 @@ impl Sidebar {
             .set_attribute("aria-expanded", if collapsed { "false" } else { "true" });
     }
 
-    /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
+    /// The handler called when the user collapses or expands the sidebar. The argument
+    /// is whether it is now collapsed.
     ///
-    /// 開閉ボタンの操作で呼ばれ、[`set_collapsed`](Self::set_collapsed)
-    /// では呼ばれない。
+    /// Called when the collapse button is used; not called by
+    /// [`set_collapsed`](Self::set_collapsed).
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse.set(f);
     }
 
-    /// 開閉ボタン。ウィンドウがツールバーの行の先頭へ置く。バックエンド固有の脱出口。
+    /// The collapse button. The window places it at the start of the toolbar row. A
+    /// backend-specific escape hatch.
     pub fn native_toggle_button(&self) -> Element {
         self.0.toggle.clone().unchecked_into()
     }
 
-    /// 開閉ボタン (ウィンドウがツールバーの行へ置くため)。
+    /// The collapse button (for the window to place in the toolbar row).
     pub(crate) fn toggle(&self) -> HtmlElement {
         self.0.toggle.clone()
     }
 
-    /// サイドバーが閉じているかどうか。
+    /// Whether the sidebar is collapsed.
     pub fn is_collapsed(&self) -> bool {
         self.0.split.is_start_hidden()
     }
 
-    /// サイドバーと中身の間の仕切り。バックエンド固有の脱出口。
+    /// The divider between the sidebar and the content. A backend-specific escape
+    /// hatch.
     pub fn native_divider(&self) -> HtmlElement {
         self.0.split.native_divider()
     }
 
-    /// サイドバーの `<aside>`。バックエンド固有の脱出口。
+    /// The sidebar's `<aside>`. A backend-specific escape hatch.
     pub fn native_element(&self) -> Element {
         self.0.aside.clone().unchecked_into()
     }
 
-    /// ウィンドウの中へ置く外枠 (サイドバーと中身を分ける `SplitView`)。
+    /// The outer frame placed inside the window (the `SplitView` separating the sidebar
+    /// and the content).
     pub(crate) fn mount(&self) -> HtmlElement {
         self.0.split.native_element().unchecked_into()
     }
 
-    /// 中身の側へウィンドウの子を置く。`None` なら空にする。
+    /// Places the window's child on the content side. `None` empties it.
     pub(crate) fn set_content(&self, element: Option<&Element>) {
         self.0.slot.set_inner_html("");
         if let Some(element) = element {

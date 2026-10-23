@@ -1,14 +1,15 @@
-//! 数値入力の値の決まり (下限・上限・刻み・小数桁)。
+//! Value rules for number input (minimum, maximum, step, decimal places).
 //!
-//! 数値の欄は 4 環境とも「文字列を持つ入力欄 + 上下のボタン」で、値の丸めや
-//! 範囲の当て方はコントロールごとに違う。バックエンドごとにそれを書くと
-//! 答えがずれるので、[`DatePickerMode`](crate::DatePickerMode) と同じく
-//! 値の扱いだけをここに置き、4 バックエンドで共有する。
+//! On all four platforms a number field is "a text field + up/down buttons", and
+//! how values are rounded and how ranges are applied differ per control. Writing
+//! that in each backend would make the answers drift, so, as with
+//! [`DatePickerMode`](crate::DatePickerMode), only the value handling lives here
+//! and is shared by all four backends.
 
-/// 数値入力が受け付ける値の決まり。
+/// The rules for values a number input accepts.
 ///
-/// 既定は**整数**の入力 (刻み 1、小数桁 0、範囲の制限なし)。小数を扱うときは
-/// 刻みと小数桁の両方を指定する。
+/// The default is **integer** input (step 1, 0 decimal places, no range limit). To
+/// handle decimals, set both the step and the decimal places.
 ///
 /// ```
 /// # use naui_core::NumberSpec;
@@ -19,13 +20,13 @@
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumberSpec {
-    /// 下限。`None` はその側に制限を置かない。
+    /// The minimum. `None` places no limit on that side.
     pub min: Option<f64>,
-    /// 上限。`None` はその側に制限を置かない。
+    /// The maximum. `None` places no limit on that side.
     pub max: Option<f64>,
-    /// 上下のボタンやキーで 1 回に動く量。
+    /// How much one press of the up/down buttons or keys moves the value.
     pub step: f64,
-    /// 表示する小数の桁数。
+    /// The number of decimal places shown.
     pub decimals: u32,
 }
 
@@ -41,18 +42,19 @@ impl Default for NumberSpec {
 }
 
 impl NumberSpec {
-    /// [`format`](Self::format) が扱える小数桁の上限。これを超える指定は
-    /// ここまで切り詰める (`f64` はこれ以上の桁を区別できないため)。
+    /// The maximum number of decimal places [`format`](Self::format) handles. Larger
+    /// values are truncated to this (`f64` cannot distinguish more digits).
     pub const MAX_DECIMALS: u32 = 15;
 
-    /// 範囲を差し替えた値を返す。
+    /// Returns the spec with the range replaced.
     pub fn range(mut self, min: Option<f64>, max: Option<f64>) -> Self {
         self.min = min.filter(|v| v.is_finite());
         self.max = max.filter(|v| v.is_finite());
         self
     }
 
-    /// 刻みを差し替えた値を返す。0 以下や有限でない値は 1 として扱う。
+    /// Returns the spec with the step replaced. Values of 0 or less, or non-finite
+    /// values, are treated as 1.
     pub fn step(mut self, step: f64) -> Self {
         self.step = if step.is_finite() && step > 0.0 {
             step
@@ -62,25 +64,28 @@ impl NumberSpec {
         self
     }
 
-    /// 小数桁を差し替えた値を返す。[`MAX_DECIMALS`](Self::MAX_DECIMALS) まで。
+    /// Returns the spec with the decimal places replaced. Up to
+    /// [`MAX_DECIMALS`](Self::MAX_DECIMALS).
     pub fn decimals(mut self, decimals: u32) -> Self {
         self.decimals = decimals.min(Self::MAX_DECIMALS);
         self
     }
 
-    /// 値を**小数桁へ丸めてから**下限・上限へ収める。
+    /// **Rounds the value to the decimal places first**, then clamps it between the
+    /// minimum and maximum.
     ///
-    /// 丸めを先に行うのは、表示に出る桁と `value()` の返す値を同じにするため。
-    /// 端そのものは丸めないので、範囲の端が小数桁より細かければその値が返る。
-    /// 下限が上限より大きいときは、あとから当てる上限が勝つ
-    /// ([`DatePickerMode::clamp`](crate::DatePickerMode::clamp) と同じ)。
-    /// 数として読めない値 (`NaN` や無限) は 0 として扱う。
+    /// Rounding comes first so that the digits on screen match what `value()` returns.
+    /// The bounds themselves are not rounded, so if a bound is finer than the decimal
+    /// places, that value is returned. When the minimum is larger than the maximum, the
+    /// maximum, applied last, wins (the same as
+    /// [`DatePickerMode::clamp`](crate::DatePickerMode::clamp)). Values that are not
+    /// numbers (`NaN` and infinities) are treated as 0.
     ///
     /// ```
     /// # use naui_core::NumberSpec;
     /// let spec = NumberSpec::default().decimals(1).range(Some(0.05), None);
     /// assert_eq!(spec.clamp(1.44), 1.4);
-    /// assert_eq!(spec.clamp(0.0), 0.05, "端は丸めずにそのまま返る");
+    /// assert_eq!(spec.clamp(0.0), 0.05, "bounds are returned as is, without rounding");
     /// ```
     pub fn clamp(self, value: f64) -> f64 {
         let mut out = self.round(if value.is_finite() { value } else { 0.0 });
@@ -97,17 +102,18 @@ impl NumberSpec {
         out
     }
 
-    /// 上下のボタンを `steps` 回押したときの値。範囲の外へは出ない。
+    /// The value after pressing the up/down buttons `steps` times. It never leaves the
+    /// range.
     pub fn stepped(self, value: f64, steps: f64) -> f64 {
         self.clamp(value + self.step * steps)
     }
 
-    /// 画面に出す文字列。小数桁は必ずこの桁数まで書く。
+    /// The text shown on screen. Always written with exactly this many decimal places.
     ///
     /// ```
     /// # use naui_core::NumberSpec;
     /// assert_eq!(NumberSpec::default().decimals(2).format(1.5), "1.50");
-    /// assert_eq!(NumberSpec::default().format(-0.4), "-0", "丸めは表示だけ");
+    /// assert_eq!(NumberSpec::default().format(-0.4), "-0", "rounding affects only the display");
     /// ```
     pub fn format(self, value: f64) -> String {
         let value = if value.is_finite() { value } else { 0.0 };
@@ -120,10 +126,11 @@ impl NumberSpec {
         )
     }
 
-    /// [`format`](Self::format) の逆。数として読めない文字列では `None`。
+    /// The inverse of [`format`](Self::format). `None` for strings that cannot be read
+    /// as a number.
     ///
-    /// 前後の空白は無視する。空欄や `NaN` / `inf` は読めなかった扱いにする
-    /// (入力の途中で欄が空になることがあるため)。
+    /// Leading and trailing whitespace is ignored. Empty fields and `NaN` / `inf` count
+    /// as unreadable (the field can be empty mid-edit).
     ///
     /// ```
     /// # use naui_core::NumberSpec;
@@ -136,7 +143,8 @@ impl NumberSpec {
         text.trim().parse::<f64>().ok().filter(|v| v.is_finite())
     }
 
-    /// 小数桁へ丸める。桁が大きすぎて丸められないときは元の値を返す。
+    /// Rounds to the decimal places. Returns the original value when there are too
+    /// many digits to round.
     fn round(self, value: f64) -> f64 {
         let scale = 10f64.powi(self.decimals.min(Self::MAX_DECIMALS) as i32);
         let rounded = (value * scale).round() / scale;

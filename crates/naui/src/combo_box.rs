@@ -1,14 +1,14 @@
 use crate::sys;
 
-/// 1 項目を選ぶドロップダウン。
+/// A drop-down for choosing one item.
 #[derive(Clone)]
 pub struct ComboBox(pub(crate) sys::ComboBox);
 
 impl_widget!(ComboBox);
 
 impl ComboBox {
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
-    /// 通知は行わない。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared. No
+    /// notification is sent.
     #[inline]
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         self.0.set_items(items)
@@ -29,19 +29,19 @@ impl ComboBox {
         self.0.selected()
     }
 
-    /// 範囲内なら、通知せずに選択を変える。
+    /// Changes the selection without notifying, if the index is in range.
     #[inline]
     pub fn set_selected(&self, index: usize) {
         self.0.set_selected(index)
     }
 
-    /// 通知せずに選択を外す。
+    /// Clears the selection without notifying.
     #[inline]
     pub fn clear_selection(&self) {
         self.0.clear_selection()
     }
 
-    /// ユーザーが選んだのと同じ経路で項目を選び、1 回通知する。
+    /// Selects an item through the same path as a user's choice and notifies once.
     #[inline]
     pub fn select(&self, index: usize) {
         self.0.select(index)
@@ -52,7 +52,7 @@ impl ComboBox {
         self.0.set_enabled(enabled)
     }
 
-    /// 選択が変わったときに、選ばれた項目のインデックスで呼ばれる。
+    /// Called with the index of the chosen item when the selection changes.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select(f)

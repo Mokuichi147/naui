@@ -1,16 +1,16 @@
-//! Windows App SDK ランタイムをプロセスへ取り付ける (動的依存)。
+//! Attaches the Windows App SDK runtime to the process (dynamic dependency).
 //!
-//! 未パッケージのアプリは、WinUI 3 の入ったフレームワークパッケージを
-//! **自分で**プロセスのパッケージグラフへ足さないと、WinRT のクラスを
-//! アクティベートできない。そのための API が「動的依存」
-//! (dynamic dependency) で、
+//! An unpackaged app cannot activate WinRT classes unless it **itself** adds the
+//! framework package containing WinUI 3 to the process's package graph. The API for
+//! that is the "dynamic dependency", which lives in one of:
 //!
-//! - Windows 11 以降: `kernelbase.dll` の `TryCreatePackageDependency` ほか
-//! - それ以外: Windows App SDK が入れる `Microsoft.WindowsAppRuntime.dll` の
-//!   `Mdd` 付きの同名関数
+//! - Windows 11 and later: `TryCreatePackageDependency` and friends in
+//!   `kernelbase.dll`
+//! - otherwise: the functions of the same names with `Mdd` in
+//!   `Microsoft.WindowsAppRuntime.dll`, installed by the Windows App SDK
 //!
-//! のどちらかに居る。どちらも `windows` クレートには宣言だけあって
-//! リンクできないので、`GetProcAddress` で引く。
+//! The `windows` crate has only declarations for both and cannot link them, so they
+//! are looked up with `GetProcAddress`.
 
 use std::fmt;
 use std::sync::OnceLock;
@@ -34,10 +34,10 @@ use windows::Win32::System::LibraryLoader::{
 };
 use windows::Win32::System::Memory::{GetProcessHeap, HeapFree, HEAP_FLAGS};
 
-/// Windows App SDK の版。パッケージファミリー名の一部になる。
+/// A Windows App SDK version. It becomes part of the package family name.
 ///
-/// `Cbs` の付くものは OS へ同梱される系統で、通常のフレームワーク
-/// パッケージとは別のファミリー名を持つ。
+/// Those with `Cbs` are the line shipped with the OS, with family names different
+/// from the regular framework packages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Version {
@@ -48,8 +48,8 @@ pub enum Version {
     V1_7,
     V1_8,
     V2,
-    /// 版の付かない OS 同梱の系統。Windows 11 の初期のビルドはこの名前で、
-    /// 新しいビルドでは `CBS.1.6` や `CBS.2` のように版が付く。
+    /// The unversioned line shipped with the OS. Early Windows 11 builds use this name;
+    /// newer builds add versions, as in `CBS.1.6` or `CBS.2`.
     Cbs,
     Cbs1_6,
     Cbs1_8,
@@ -57,10 +57,10 @@ pub enum Version {
 }
 
 impl Version {
-    /// 知っている版を新しい順に並べたもの。
+    /// The known versions, newest first.
     ///
-    /// ブートストラップの DLL を探すときにも使う。どの版のフレームワーク
-    /// パッケージに入っているものでも、動的依存の API としては同じ。
+    /// Also used when looking for the bootstrap DLL. Whichever version's framework
+    /// package it is in, it is the same as a dynamic dependency API.
     pub const ALL: &'static [Version] = &[
         Self::V2,
         Self::Cbs2,
@@ -76,7 +76,7 @@ impl Version {
         Self::Cbs,
     ];
 
-    /// パッケージファミリー名へ埋める文字列。
+    /// The string embedded in the package family name.
     const fn tag(self) -> &'static str {
         match self {
             Self::V1_3 => "1.3",
@@ -93,7 +93,7 @@ impl Version {
         }
     }
 
-    /// このバージョンのフレームワークパッケージのファミリー名。
+    /// The family name of this version's framework package.
     fn family_name(self) -> HSTRING {
         HSTRING::from(format!(
             "Microsoft.WindowsAppRuntime.{}_8wekyb3d8bbwe",
@@ -125,7 +125,7 @@ type RemoveFn = unsafe extern "system" fn(context: PACKAGEDEPENDENCY_CONTEXT) ->
 
 type DeleteFn = unsafe extern "system" fn(id: PCWSTR) -> HRESULT;
 
-/// 動的依存の 4 関数をまとめたもの。
+/// Bundles the four dynamic dependency functions.
 struct Api {
     library: HMODULE,
     try_create: TryCreateFn,
@@ -148,10 +148,10 @@ impl Drop for Api {
 
 static API: OnceLock<Option<Api>> = OnceLock::new();
 
-/// ブートストラップの DLL。`Mdd` の付いた 4 関数を持つ。
+/// The bootstrap DLL. It has the four functions with `Mdd`.
 const BOOTSTRAP_DLL: &str = "Microsoft.WindowsAppRuntime.dll";
 
-/// 4 つの名前を DLL から引く。1 つでも欠けたら使えない。
+/// Looks up the four names from the DLL. If even one is missing, it cannot be used.
 fn load(library: HMODULE, prefix: &str) -> Option<Api> {
     unsafe {
         let name = |suffix: &str| format!("{prefix}{suffix}\0");
@@ -175,14 +175,15 @@ fn load(library: HMODULE, prefix: &str) -> Option<Api> {
     }
 }
 
-/// exe と同じ場所に置かれた DLL を読む。自己完結配置のときに当たる。
+/// Loads the DLL placed in the same location as the exe. This is what matches for
+/// self-contained deployment.
 ///
-/// 名前だけで `LoadLibrary` すると PATH の上にある別物を掴みかねないので、
-/// exe の場所を引いてから絶対パスで読む。
+/// Calling `LoadLibrary` by name alone could grab something else earlier on PATH, so
+/// the exe's location is looked up first and the DLL is loaded by absolute path.
 ///
-/// **フレームワークパッケージの中の DLL はここでは見つからない。** パッケージの
-/// 置き場は DLL の探索経路に入っていないためで、そちらは
-/// [`load_from_framework_package`] が実パスを解決して読む。
+/// **DLLs inside framework packages are not found here.** The package's location is
+/// not on the DLL search path; for those, [`load_from_framework_package`] resolves
+/// the real path and loads it.
 fn load_beside_executable() -> Option<Api> {
     let directory = executable_directory()?;
     let path = HSTRING::from(format!("{directory}\\{BOOTSTRAP_DLL}"));
@@ -198,7 +199,7 @@ fn load_beside_executable() -> Option<Api> {
     }
 }
 
-/// いま動いている exe の置き場。
+/// Where the running exe is.
 pub(crate) fn executable_directory() -> Option<String> {
     let mut buffer = [0u16; 32768];
     let length = unsafe { GetModuleFileNameW(None, &mut buffer) } as usize;
@@ -211,12 +212,14 @@ pub(crate) fn executable_directory() -> Option<String> {
     Some(directory.to_string())
 }
 
-/// 入っているフレームワークパッケージを探し、その中の DLL を実パスで読む。
+/// Finds an installed framework package and loads the DLL inside it by its real
+/// path.
 ///
-/// 動的依存を張る前なので、パッケージの中の DLL は名前だけでは読めない。
-/// 公式のブートストラップと同じく、パッケージの置き場を先に引いてから
-/// 絶対パスで読む。`LOAD_WITH_ALTERED_SEARCH_PATH` を付けるのは、その DLL が
-/// 同じ場所にある別の DLL へ依存しているため。
+/// This is before the dynamic dependency is set up, so DLLs inside the package cannot
+/// be loaded by name. As the official bootstrapper does, the package's location is
+/// looked up first and the DLL is loaded by absolute path.
+/// `LOAD_WITH_ALTERED_SEARCH_PATH` is given because that DLL depends on another DLL
+/// in the same location.
 fn load_from_framework_package() -> Option<Api> {
     for version in Version::ALL {
         for directory in package_paths(&version.family_name()) {
@@ -238,7 +241,7 @@ fn load_from_framework_package() -> Option<Api> {
     None
 }
 
-/// そのファミリーで入っているパッケージの置き場。
+/// The locations of the installed packages of that family.
 fn package_paths(family: &HSTRING) -> Vec<String> {
     const FILTERS: u32 = PACKAGE_FILTER_HEAD | PACKAGE_FILTER_DIRECT;
     let mut count = 0;
@@ -279,12 +282,12 @@ fn package_paths(family: &HSTRING) -> Vec<String> {
     }
 }
 
-/// パッケージのフルネームから置き場を引く。
+/// Looks up the location from a package's full name.
 ///
 /// # Safety
 ///
-/// `full_name` は [`FindPackagesByPackageFamily`] が書いた、生きている
-/// NUL 終端の文字列であること。
+/// `full_name` must be a live NUL-terminated string written by
+/// [`FindPackagesByPackageFamily`].
 unsafe fn package_path(full_name: PWSTR) -> Option<String> {
     let full_name = PCWSTR(full_name.0);
     let mut length = 0;
@@ -319,7 +322,7 @@ fn api() -> Result<&'static Api> {
     .ok_or_else(|| Error::from_hresult(HRESULT::from_win32(ERROR_MOD_NOT_FOUND.0)))
 }
 
-/// 動的依存の API が返す、プロセスヒープ上の文字列。
+/// A string on the process heap, returned by the dynamic dependency API.
 struct HeapString(PWSTR);
 
 impl Drop for HeapString {
@@ -332,9 +335,9 @@ impl Drop for HeapString {
     }
 }
 
-/// 取り付けた Windows App SDK ランタイム。
+/// The attached Windows App SDK runtime.
 ///
-/// 落とすと取り付けも外れるので、アプリが終わるまで持ち続ける。
+/// Dropping it also detaches it, so it is held until the app ends.
 pub struct PackageDependency {
     context: PACKAGEDEPENDENCY_CONTEXT,
     id: HeapString,
@@ -342,9 +345,10 @@ pub struct PackageDependency {
 }
 
 impl PackageDependency {
-    /// 指定した版のランタイムを取り付ける。
+    /// Attaches the runtime of the given version.
     ///
-    /// 入っていなければ失敗するので、呼び出し側が新しい順に試す。
+    /// It fails if that version is not installed, so the caller tries them newest
+    /// first.
     pub fn initialize(version: Version) -> Result<Self> {
         let api = api()?;
         let family = version.family_name();
@@ -392,7 +396,7 @@ impl PackageDependency {
         })
     }
 
-    /// 取り付けたパッケージのフルネーム。
+    /// The full name of the attached package.
     pub fn package_full_name(&self) -> &HSTRING {
         &self.full_name
     }
@@ -422,22 +426,22 @@ impl Drop for PackageDependency {
 mod tests {
     use super::*;
 
-    /// 入っていないファミリーでは、何も返さずに済ませる。
+    /// For a family that is not installed, it returns nothing and is done with it.
     ///
-    /// `FindPackagesByPackageFamily` は 0 件のときも「足りない」とは言わない
-    /// ので、そこで打ち切れているかを見る。
+    /// `FindPackagesByPackageFamily` does not say "insufficient" even when there are 0
+    /// results, so this checks that it stops there.
     #[test]
     fn unknown_family_has_no_packages() {
         let family = HSTRING::from("Naui.ThisFamilyIsNotInstalled_8wekyb3d8bbwe");
         assert!(package_paths(&family).is_empty());
     }
 
-    /// Windows App SDK が入っている環境では、置き場が引けて、そこに
-    /// ブートストラップの DLL があり、実際に読める。
+    /// In an environment with the Windows App SDK installed, the location can be looked
+    /// up, the bootstrap DLL is there, and it can actually be loaded.
     ///
-    /// この経路は Windows 11 では使われない (`kernelbase.dll` が先に当たる)
-    /// ため、テストから直に呼んで確かめる。入っていない環境では何も主張
-    /// しないので、ランタイム抜きの CI でも通る。
+    /// This path is not used on Windows 11 (`kernelbase.dll` matches first), so the test
+    /// calls it directly to check it. In environments without it installed it asserts
+    /// nothing, so it also passes on CI without the runtime.
     #[test]
     fn installed_framework_package_carries_a_loadable_bootstrap_dll() {
         let mut installed = false;

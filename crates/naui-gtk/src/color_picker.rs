@@ -1,11 +1,11 @@
-//! 色の選択 (`GtkColorDialogButton` + `GtkColorDialog`)。
+//! Color picking (`GtkColorDialogButton` + `GtkColorDialog`).
 //!
-//! 押すと GTK4 の色選択ダイアログが開き、選ばれた色がボタンの `rgba`
-//! プロパティへ入る。パレット・カラーホイール・16 進入力はすべて
-//! `GtkColorDialog` のものをそのまま使う。
+//! Clicking it opens GTK4's color selection dialog, and the chosen color goes into
+//! the button's `rgba` property. The palette, color wheel and hex input are all
+//! `GtkColorDialog`'s own.
 //!
-//! 透明度は扱わないので `with-alpha` を切ってある ([`Color`] が不透明な色
-//! しか持たないため)。
+//! Transparency is not handled, so `with-alpha` is off (since [`Color`] holds only
+//! opaque colors).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -26,9 +26,9 @@ struct ColorPickerInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 色を選ばせるコントロール (`GtkColorDialogButton`)。
+/// A control for picking a color (`GtkColorDialogButton`).
 ///
-/// 作った直後の値は黒 ([`Color::BLACK`])。
+/// Its value right after creation is black ([`Color::BLACK`]).
 #[derive(Clone)]
 pub struct ColorPicker(Rc<ColorPickerInner>);
 impl_widget!(ColorPicker);
@@ -59,19 +59,19 @@ impl ColorPicker {
         Self(inner)
     }
 
-    /// いま選ばれている色。
+    /// The currently selected color.
     pub fn value(&self) -> Color {
         from_rgba(self.0.native.rgba())
     }
 
-    /// プログラムから色を差し替える。`on_change` は呼ばれない。
+    /// Replaces the color from code. `on_change` is not called.
     pub fn set_value(&self, color: Color) {
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.set_rgba(&to_rgba(color));
         });
     }
 
-    /// 利用者が選んだのと同じ経路で色を決め、1 回通知する。
+    /// Sets the color through the same path as a user's pick and notifies once.
     pub fn pick(&self, color: Color) {
         self.set_value(color);
         self.0.on_change.emit(self.value());
@@ -81,12 +81,12 @@ impl ColorPicker {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 色が変わるたびに、変わった後の色で呼ばれる。
+    /// Called with the new color every time the color changes.
     pub fn on_change(&self, f: impl FnMut(Color) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// ボタン本体。バックエンド固有の脱出口として公開している。
+    /// The button itself. Public as a backend-specific escape hatch.
     pub fn native_button(&self) -> gtk::ColorDialogButton {
         self.0.native.clone()
     }

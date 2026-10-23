@@ -1,42 +1,46 @@
-//! `Scroll::on_scroll` の決まりを、各バックエンドで共有する。
+//! Shares the rules of `Scroll::on_scroll` across backends.
 //!
-//! 「位置が変わったときだけ呼ぶ」「通知の中からの `scroll_to` も取りこぼさない」
-//! をここで一度だけ書き、バックエンドはネイティブの通知を受けたら
-//! [`ScrollNotifier::notify_if_moved`] を呼ぶだけにする。
+//! "Call only when the position changed" and "don't miss a `scroll_to` from inside
+//! the notification" are written once here, and backends just call
+//! [`ScrollNotifier::notify_if_moved`] when they receive a native notification.
 
 use std::cell::{Cell, RefCell};
 
 use crate::layout::ScrollMetrics;
 
-/// 通知の中で動かし続けるクロージャがあっても、止まらなくならないための上限。
+/// A cap so that a closure that keeps scrolling inside the notification cannot make
+/// it loop forever.
 const MAX_RENOTIFY: usize = 16;
 
 type Handler = RefCell<Option<Box<dyn FnMut(ScrollMetrics)>>>;
 
-/// スクロール位置の通知先と、最後に通知した位置。
+/// The scroll position handler and the position last notified.
 ///
-/// 通知の中から `scroll_to` を呼ぶと、環境によってはその移動の通知が同期で
-/// 入れ子に来る。その場では呼ばず、外側の呼び出しが戻ってから最新の位置で
-/// 呼び直す。入れ子の通知を捨てると、利用者は最後の位置を受け取れない。
+/// When `scroll_to` is called from inside the notification, some platforms deliver
+/// the notification for that move synchronously and re-entrantly. It is not called
+/// on the spot; instead it is called again with the latest position after the outer
+/// call returns. Discarding the nested notification would keep the user from
+/// receiving the final position.
 #[derive(Default)]
 pub struct ScrollNotifier {
     handler: Handler,
     last_offset: Cell<(f64, f64)>,
-    /// 通知している最中 (または [`batch`](Self::batch) の中)。
+    /// In the middle of notifying (or inside a [`batch`](Self::batch)).
     busy: Cell<bool>,
 }
 
 impl ScrollNotifier {
-    /// 通知先を差し替える。`current` の位置は通知済みとみなす。
+    /// Replaces the handler. The `current` position counts as already notified.
     pub fn set(&self, current: &ScrollMetrics, f: impl FnMut(ScrollMetrics) + 'static) {
         self.last_offset.set(offset_of(current));
         *self.handler.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 前回の通知から位置が変わっていれば通知する。大きさだけの変化では呼ばない。
+    /// Notifies if the position changed since the last notification. A change in size
+    /// alone does not call it.
     ///
-    /// `read` はいまの位置と大きさを返す。通知の中で位置が変わったときは、
-    /// 戻ってから読み直して通知し直す。
+    /// `read` returns the current position and sizes. If the position changes during
+    /// the notification, it is read again and notified again after the handler returns.
     pub fn notify_if_moved(&self, read: impl Fn() -> ScrollMetrics) {
         if self.busy.get() {
             // 外側の呼び出しが、戻ってから読み直す。
@@ -61,10 +65,11 @@ impl ScrollNotifier {
         }
     }
 
-    /// `apply` の間に来た通知をまとめ、終わってから 1 回だけ通知する。
+    /// Gathers the notifications that arrive during `apply` and notifies once
+    /// afterwards.
     ///
-    /// 縦と横を別々に動かす環境で、片方だけ動いた途中の位置を通知しない
-    /// ために使う。
+    /// Used on platforms that move the vertical and horizontal positions separately, so
+    /// that an intermediate position with only one of them moved is not notified.
     pub fn batch(&self, apply: impl FnOnce(), read: impl Fn() -> ScrollMetrics) {
         if self.busy.get() {
             apply();
@@ -82,7 +87,7 @@ fn offset_of(metrics: &ScrollMetrics) -> (f64, f64) {
     (metrics.x, metrics.y)
 }
 
-/// 通知の中で panic しても、`busy` を戻す。
+/// Restores `busy` even if the notification panics.
 struct Busy<'a>(&'a Cell<bool>);
 
 impl<'a> Busy<'a> {
@@ -132,7 +137,8 @@ mod tests {
         assert_eq!(*seen.borrow(), vec![10.0]);
     }
 
-    /// 通知の中で動かしたとき、その移動が同期で入れ子に来ても最後の位置が届く。
+    /// When the handler scrolls, the final position arrives even if that move is
+    /// delivered synchronously and re-entrantly.
     #[test]
     fn nested_move_is_notified_after_the_handler_returns() {
         let notifier = Rc::new(ScrollNotifier::default());

@@ -135,7 +135,7 @@ python3 -m http.server 8080
 Which control each widget becomes on each platform is listed in
 [widget implementations](docs/widgets.md), and platform-specific caveats in the
 [known limitations](docs/known-limitations.md). All four platforms are checked
-with integration tests and the Gallery ([verification](docs/development.md#動作確認)).
+with integration tests and the Gallery ([verification](docs/development.md#verification)).
 
 ## Documentation
 

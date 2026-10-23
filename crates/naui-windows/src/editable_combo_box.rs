@@ -1,13 +1,14 @@
-//! 自由に入力できるコンボボックス (WinUI 3 の編集できる `ComboBox`)。
+//! A combo box that accepts free input (WinUI 3's editable `ComboBox`).
 //!
-//! [`ComboBox`](crate::ComboBox) との違いは `IsEditable` だけで、コントロール
-//! そのものは同じ WinUI 3 の `ComboBox`。候補は文字列のまま入れる
-//! (`ComboBoxItem` に包むと、編集欄へ出る文字が型名になってしまう)。
+//! The only difference from [`ComboBox`](crate::ComboBox) is `IsEditable`; the
+//! control itself is the same WinUI 3 `ComboBox`. Suggestions are inserted as plain
+//! strings (wrapping them in `ComboBoxItem` makes the edit field show the type name).
 //!
-//! 1 文字ごとの通知は、テンプレートの中にある入力欄 (`EditableText`) の
-//! `TextChanged` から拾う。`ComboBox` 自身は文字の変化を表に出さないため。
-//! テンプレートが差し替えられていて入力欄が見つからないときは、候補の選択と
-//! Enter での確定だけが通知される。
+//! Per-keystroke notifications are picked up from the `TextChanged` of the input
+//! field inside the template (`EditableText`), since `ComboBox` itself does not
+//! expose text changes. If the template has been replaced and the input field
+//! cannot be found, only choosing a suggestion and confirming with Enter are
+//! notified.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,14 +27,14 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
-/// WinUI 3 の `ComboBox` テンプレートが持つ入力欄の名前。
+/// The name of the input field in WinUI 3's `ComboBox` template.
 const EDITABLE_TEXT_PART: &str = "EditableText";
 
-/// 文字列を受け取る通知先。
+/// A handler that receives a string.
 ///
-/// WinRT のデリゲートは `Send + Sync` を要求するので [`UiThreadCell`] に載せる。
-/// 呼び出しの間だけ取り出すため、通知の中から同じコンボボックスを操作しても
-/// 二重借用にならない。
+/// WinRT delegates require `Send + Sync`, so it is placed in a [`UiThreadCell`]. It
+/// is taken out only for the duration of the call, so operating on the same combo
+/// box from inside the notification does not double-borrow.
 #[derive(Clone)]
 struct TextHandler(HandlerCell<dyn FnMut(&str)>);
 
@@ -61,24 +62,25 @@ impl TextHandler {
 
 struct EditableComboBoxInner {
     native: XamlComboBox,
-    /// 候補の控え。`selected` の一致判定と `set_selected` の書き込みに使う。
+    /// A copy of the suggestions. Used to check matches for `selected` and to write for
+    /// `set_selected`.
     items: RefCell<Vec<String>>,
     handler: TextHandler,
-    /// 最後に通知した文字列。WinUI は同じ変更を複数の経路で伝えてくるので、
-    /// 同じ値の二重通知をここで落とす。
+    /// The string last notified. WinUI reports the same change through several paths,
+    /// so duplicate notifications of the same value are dropped here.
     last: RefCell<String>,
-    /// プログラムから書き換えている間だけ WinUI の通知を止める。
+    /// Stops WinUI's notifications only while rewriting from code.
     silent: Cell<bool>,
-    /// テンプレートの入力欄。見つかるまでは `None`。
+    /// The template's input field. `None` until found.
     editable: RefCell<Option<TextBox>>,
-    /// `on_focus_change` の通知先。
+    /// The `on_focus_change` handler.
     focus: crate::focus::Focus,
 }
 
-/// 候補から選ぶことも、自由に打ち込むこともできる入力欄
-/// (`IsEditable` な `ComboBox`)。
+/// A field where the user can either choose from suggestions or type freely (an
+/// `IsEditable` `ComboBox`).
 ///
-/// 値は文字列で、作った直後は空。
+/// The value is a string, empty right after creation.
 #[derive(Clone)]
 pub struct EditableComboBox(Rc<EditableComboBoxInner>);
 crate::keys::impl_key_down!(EditableComboBox);
@@ -166,7 +168,8 @@ impl EditableComboBox {
         Ok(this)
     }
 
-    /// 候補を作り直す。**入力されている文字列は変わらず**、通知も出ない。
+    /// Rebuilds the suggestions. **The entered text does not change**, and no
+    /// notification is sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         *self.0.items.borrow_mut() = items.iter().map(|s| s.as_ref().to_string()).collect();
         let _ = self.rebuild();
@@ -196,7 +199,7 @@ impl EditableComboBox {
         })
     }
 
-    /// 候補の数。
+    /// The number of suggestions.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -205,7 +208,7 @@ impl EditableComboBox {
         self.len() == 0
     }
 
-    /// 入力されている文字列。
+    /// The entered text.
     pub fn text(&self) -> String {
         self.0
             .native
@@ -214,21 +217,21 @@ impl EditableComboBox {
             .unwrap_or_default()
     }
 
-    /// プログラムから文字列を差し替える。`on_change` は呼ばれない。
+    /// Replaces the text from code. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         self.without_notifying(|this| this.write_selection(text));
         *self.0.last.borrow_mut() = text.to_string();
     }
 
-    /// 入力されている文字列と**そのまま一致する**候補の位置。
+    /// The position of the suggestion that **exactly matches** the entered text.
     ///
-    /// 打ち込まれた文字列がどの候補とも一致しなければ `None`。
+    /// `None` if the typed text matches no suggestion.
     pub fn selected(&self) -> Option<usize> {
         let text = self.text();
         self.0.items.borrow().iter().position(|item| *item == text)
     }
 
-    /// 範囲内の候補を通知せずに選ぶ。範囲外なら何もしない。
+    /// Chooses an in-range suggestion without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         let Some(text) = self.0.items.borrow().get(index).cloned() else {
             return;
@@ -236,12 +239,12 @@ impl EditableComboBox {
         self.set_text(&text);
     }
 
-    /// 通知せずに文字列を空にする。
+    /// Empties the text without notifying.
     pub fn clear(&self) {
         self.set_text("");
     }
 
-    /// 利用者が候補を選んだのと同じように、範囲内の候補を選んで通知する。
+    /// Chooses an in-range suggestion and notifies, as if the user had chosen it.
     pub fn select(&self, index: usize) {
         let Some(text) = self.0.items.borrow().get(index).cloned() else {
             return;
@@ -258,15 +261,16 @@ impl EditableComboBox {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// 文字列が変わるたびに、その時点の中身で呼ばれる。
-    /// 設定し直すと以前のコールバックは置き換わる。
+    /// Called with the current contents every time the text changes. Setting it again
+    /// replaces the previous callback.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// テンプレートの入力欄を見つけて、1 文字ごとの変化を購読する。
+    /// Finds the template's input field and subscribes to per-keystroke changes.
     ///
-    /// 見つからないときは何もしない (候補の選択と Enter は別経路で届く)。
+    /// Does nothing if it is not found (choosing suggestions and Enter arrive through
+    /// another path).
     fn watch_editable_text(&self) {
         if self.0.editable.borrow().is_some() {
             return;
@@ -304,13 +308,13 @@ impl EditableComboBox {
         }
     }
 
-    /// 選ばれている候補の文字列。
+    /// The text of the selected suggestion.
     fn selected_item_text(&self) -> Option<String> {
         let index = usize::try_from(self.0.native.SelectedIndex().ok()?).ok()?;
         self.0.items.borrow().get(index).cloned()
     }
 
-    /// 重複を落としてから 1 回だけ通知する。
+    /// Drops duplicates and notifies once.
     fn emit(&self, text: String) {
         if self.0.silent.get() || *self.0.last.borrow() == text {
             return;
@@ -319,10 +323,10 @@ impl EditableComboBox {
         self.0.handler.emit(&text);
     }
 
-    /// 文字列と、それに対応する候補の選択をまとめて書く。
+    /// Writes the text and the selection of the matching suggestion together.
     ///
-    /// `SelectedIndex` を書くと WinUI が `Text` を上書きするので、順番は
-    /// 「選択 → 文字列」で固定する。
+    /// Writing `SelectedIndex` makes WinUI overwrite `Text`, so the order is fixed as
+    /// "selection → text".
     fn write_selection(&self, text: &str) {
         let index = self
             .0
@@ -340,13 +344,14 @@ impl EditableComboBox {
         self.write_text(text);
     }
 
-    /// 候補に無い文字列を、利用者が確定したときと同じ形で WinUI に持たせる。
+    /// Gives WinUI a string not among the suggestions, in the same form as when the user
+    /// confirms it.
     ///
-    /// WinUI は Esc で編集を取り消すとき、最後に `SelectedItem` へ入った
-    /// 候補外の文字列へ戻す。`SelectedIndex` に -1 を書くだけ (あるいは
-    /// `SelectedItem` を空にするだけ) では、この戻り先は変わらない。すると
-    /// `set_text` や `clear` の後でも、以前に利用者が確定した文字列が戻って
-    /// くる。そこで、確定したときの WinUI と同じく文字列をそのまま入れる。
+    /// When WinUI cancels editing with Esc, it reverts to the last non-suggestion string
+    /// put into `SelectedItem`. Just writing -1 to `SelectedIndex` (or just emptying
+    /// `SelectedItem`) does not change this revert target, so even after `set_text` or
+    /// `clear`, a string the user confirmed earlier would come back. So the string is
+    /// put in as is, just as WinUI does on confirmation.
     fn write_custom_value(&self, text: &str) {
         if let Ok(value) = PropertyValue::CreateString(&HSTRING::from(text)) {
             let _ = self.0.native.SetSelectedItem(&value);
@@ -358,12 +363,12 @@ impl EditableComboBox {
         }
     }
 
-    /// 編集欄の文字列だけを書く。
+    /// Writes only the edit field's text.
     fn write_text(&self, text: &str) {
         let _ = self.0.native.SetText(&HSTRING::from(text));
     }
 
-    /// WinUI の通知を止めたまま操作する。
+    /// Operates with WinUI's notifications stopped.
     fn without_notifying<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
         let previous = self.0.silent.replace(true);
         let result = f(self);

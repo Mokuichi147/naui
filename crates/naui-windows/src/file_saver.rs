@@ -1,9 +1,10 @@
-//! ファイルの保存 (WinUI 3 のボタン + Windows の共通ダイアログ)。
+//! Saving files (a WinUI 3 button + Windows's common dialog).
 //!
-//! [`crate::FilePicker`] と対になるもので、`Button` を押すと
-//! **`IFileSaveDialog` (Common Item Dialog)** を開く。エクスプローラーと
-//! 同じダイアログで、フォルダーの移動・上書きの確認はすべて Windows が行う。
-//! 選ばれた場所へ [`FileSaver::set_contents`] のバイト列を書くのは naui 側。
+//! The counterpart of [`crate::FilePicker`]: clicking the `Button` opens
+//! **`IFileSaveDialog` (the Common Item Dialog)**. It is the same dialog as File
+//! Explorer's, and navigating folders and confirming overwrites are all done by
+//! Windows. Writing the bytes from [`FileSaver::set_contents`] to the chosen
+//! location is done by naui.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -27,10 +28,10 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
-/// ダイアログの設定と、最後に書き出した先。
+/// The dialog's settings and where the contents were last written.
 ///
-/// クリックのデリゲートは `Send + Sync` を要求されるため、
-/// ハンドル (`Rc`) ではなくこのセルだけをデリゲートへ渡す。
+/// The click delegate is required to be `Send + Sync`, so only this cell, not the
+/// handle (`Rc`), is passed to the delegate.
 #[derive(Default)]
 struct SaverState {
     file_name: String,
@@ -48,8 +49,8 @@ impl SharedState {
     }
 }
 
-/// 差し替え可能なクロージャ 1 本。呼び出しの間だけ取り出すので、
-/// 通知の中から設定し直しても二重借用にならない。
+/// A single replaceable closure. It is taken out only for the duration of the call,
+/// so setting it again from inside the notification does not double-borrow.
 struct Handler<T: ?Sized>(HandlerCell<dyn FnMut(&T)>);
 
 impl<T: ?Sized> Clone for Handler<T> {
@@ -89,7 +90,8 @@ struct FileSaverInner {
     token: RefCell<Option<i64>>,
 }
 
-/// 内容をファイルへ書き出させるボタン (Button + IFileSaveDialog)。
+/// A button that lets the user write contents to a file (Button +
+/// IFileSaveDialog).
 #[derive(Clone)]
 pub struct FileSaver(Rc<FileSaverInner>);
 impl_widget!(FileSaver, native);
@@ -154,7 +156,7 @@ impl FileSaver {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// ダイアログに最初から入れておく名前。空なら Windows の既定に任せる。
+    /// The name prefilled in the dialog. If empty, Windows's default is used.
     pub fn set_file_name(&self, name: &str) {
         self.0
             .state
@@ -166,7 +168,7 @@ impl FileSaver {
         self.0.state.0.with_mut(|state| state.file_name.clone())
     }
 
-    /// 種類の絞り込み。先頭の拡張子が既定の拡張子になる。
+    /// Filters by file type. The first extension becomes the default extension.
     pub fn set_filters(&self, filters: &[FileFilter]) {
         self.0
             .state
@@ -174,7 +176,7 @@ impl FileSaver {
             .with_mut(|state| state.filters = filters.to_vec());
     }
 
-    /// 書き出す内容。保存のたびに、このバイト列がそのまま書かれる。
+    /// The contents to write. Every save writes exactly these bytes.
     pub fn set_contents(&self, contents: &[u8]) {
         self.0
             .state
@@ -182,45 +184,45 @@ impl FileSaver {
             .with_mut(|state| state.contents = contents.to_vec());
     }
 
-    /// 書き出す内容の大きさ (バイト数)。
+    /// The size of the contents to write (in bytes).
     pub fn contents_len(&self) -> usize {
         self.0.state.0.with_mut(|state| state.contents.len())
     }
 
-    /// 最後に書き出した先。まだ保存していなければ `None`。
+    /// Where the contents were last written. `None` if nothing has been saved yet.
     pub fn destination(&self) -> Option<FileEntry> {
         self.0.state.0.with_mut(|state| state.destination.clone())
     }
 
-    /// 書き出しに成功したときに呼ばれる。取り消したときは呼ばれない。
+    /// Called when writing succeeds. Not called when the user cancels.
     pub fn on_save(&self, f: impl FnMut(&FileEntry) + 'static) {
         self.0.on_save.set(f);
     }
 
-    /// 書き出しに失敗したときに呼ばれる (書き込み権限が無い、など)。
+    /// Called when writing fails (no write permission, for example).
     pub fn on_error(&self, f: impl FnMut(&Error) + 'static) {
         self.0.on_error.set(f);
     }
 
-    /// ダイアログを出す。ボタンを押したときにも同じものが呼ばれる。
+    /// Shows the dialog. Clicking the button calls the same thing.
     ///
-    /// Common Item Dialog はモーダルなので、閉じられるまで戻らない。
+    /// The Common Item Dialog is modal, so this does not return until it is closed.
     pub fn open(&self) {
         show_and_report(&self.0.state, &self.0.on_save, &self.0.on_error);
     }
 }
 
-/// ダイアログの結果。取り消しは失敗と分ける。
+/// The dialog's result. Cancellation is kept separate from failure.
 enum Outcome {
     Chosen(PathBuf),
     Cancelled,
     Failed(Error),
 }
 
-/// ダイアログを出し、選ばれていれば書き出して通知する。
+/// Shows the dialog and, if a location was chosen, writes and notifies.
 ///
-/// 通知の中からこのウィジェットを触れるよう、状態の書き込みを終えて
-/// 借用を手放してから呼ぶ。
+/// The call is made after finishing writing the state and releasing the borrow, so
+/// the notification can touch this widget.
 fn show_and_report(state: &SharedState, on_save: &Handler<FileEntry>, on_error: &Handler<Error>) {
     let (file_name, filters, contents) = state.0.with_mut(|state| {
         (
@@ -244,11 +246,12 @@ fn show_and_report(state: &SharedState, on_save: &Handler<FileEntry>, on_error: 
     notify(on_save, entry);
 }
 
-/// 通知を次の UI tick へ送ってから呼ぶ。
+/// Sends the notification to the next UI tick before calling it.
 ///
-/// `IFileSaveDialog::Show` は Button.Click の処理中にモーダルで動く。その直後に
-/// 同期で WinUI を触ると再入状態になることがあるため、ダイアログと Click
-/// イベントを完全に抜けてから呼び出す (`FilePicker` と同じ)。
+/// `IFileSaveDialog::Show` runs modally while Button.Click is being handled.
+/// Touching WinUI synchronously right after it can leave things in a re-entrant
+/// state, so it is called after fully leaving the dialog and the Click event (the
+/// same as `FilePicker`).
 fn notify<T: Send + 'static>(handler: &Handler<T>, value: T) {
     let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
         handler.emit(&value);
@@ -261,7 +264,7 @@ fn notify<T: Send + 'static>(handler: &Handler<T>, value: T) {
     }));
 }
 
-/// Common Item Dialog の保存を開いて、選ばれたパスを返す。
+/// Opens the save mode of the Common Item Dialog and returns the chosen path.
 fn show_dialog(file_name: &str, filters: &[FileFilter]) -> Outcome {
     unsafe {
         let dialog: IFileSaveDialog =
@@ -326,13 +329,14 @@ fn show_dialog(file_name: &str, filters: &[FileFilter]) -> Outcome {
     }
 }
 
-/// 選ばれた場所へ書き出し、そこを指す [`FileEntry`] を返す。
+/// Writes to the chosen location and returns a [`FileEntry`] pointing at it.
 fn write_contents(path: &Path, contents: &[u8]) -> Result<FileEntry> {
     std::fs::write(path, contents).map_err(|e| Error::new("ファイルの書き出し", e.to_string()))?;
     Ok(FileEntry::from_path(path))
 }
 
-/// 末尾に終端を付けた UTF-16 にする (COM へ渡す文字列の形)。
+/// Converts to UTF-16 with a terminator at the end (the form of strings passed to
+/// COM).
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
 }

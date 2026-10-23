@@ -1,18 +1,20 @@
-//! メニューバー (OS のアプリケーションメニュー) の項目とショートカット。
+//! Items and shortcuts for the menu bar (the OS's application menu).
 //!
-//! メニューバーは「見出しの並び」と「その下にぶら下がる項目の並び」という
-//! 2 段の構造を持つ。見出し 1 つぶんが [`MenuSpec`]、その中の 1 行が
-//! [`MenuItem`] で、項目に割り当てるキー操作が [`MenuShortcut`]。
+//! A menu bar has a two-level structure: "a sequence of headings" and "the items
+//! hanging under each". One heading is a [`MenuSpec`], one row in it is a
+//! [`MenuItem`], and the key combination assigned to an item is a
+//! [`MenuShortcut`].
 //!
-//! 項目の識別はアプリ側が持つ順序で行い、通知も
-//! **(見出しのインデックス, 区切り線を含めた項目のインデックス)** で返る。
+//! Items are identified by the order the app owns, and notifications come back as
+//! **(heading index, item index counting separators)**.
 
-/// メニュー項目に割り当てるキーボードショートカット。
+/// A keyboard shortcut assigned to a menu item.
 ///
-/// 主修飾キー (macOS は ⌘、Windows・Linux・Web は Ctrl) と英数字 1 文字の
-/// 組み合わせで表す。「⌘S / Ctrl+S」のように**環境ごとに主修飾キーが違う**
-/// ので、naui は組み合わせの意味だけを受け取り、その環境の書き方へ写す。
-/// ⇧ と ⌥ (Alt) は足せる。
+/// Expressed as the primary modifier (⌘ on macOS, Ctrl on Windows, Linux and the
+/// Web) plus one alphanumeric character. **The primary modifier differs by
+/// platform**, as in "⌘S / Ctrl+S", so naui takes only the meaning of the
+/// combination and maps it to that platform's notation. ⇧ and ⌥ (Alt) can be
+/// added.
 ///
 /// ```
 /// # use naui_core::MenuShortcut;
@@ -25,19 +27,19 @@
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MenuShortcut {
-    /// 組み合わせる文字。英数字 1 文字で、小文字にそろえて持つ。
+    /// The character in the combination. One alphanumeric character, stored lowercase.
     pub key: char,
-    /// ⇧ (Shift) を含めるか。
+    /// Whether ⇧ (Shift) is included.
     pub shift: bool,
-    /// ⌥ / Alt を含めるか。
+    /// Whether ⌥ / Alt is included.
     pub alt: bool,
 }
 
 impl MenuShortcut {
-    /// 主修飾キーと `key` の組み合わせを作る。
+    /// Creates the combination of the primary modifier and `key`.
     ///
-    /// `key` は英数字 1 文字。大文字を渡しても小文字にそろえる
-    /// (⇧ を含めたいときは [`shift`](Self::shift) を使う)。
+    /// `key` is one alphanumeric character. Uppercase is normalized to lowercase (use
+    /// [`shift`](Self::shift) to include ⇧).
     pub fn new(key: char) -> Self {
         Self {
             key: key.to_ascii_lowercase(),
@@ -46,27 +48,28 @@ impl MenuShortcut {
         }
     }
 
-    /// ⇧ (Shift) を含めるかどうかを指定する (既定は含めない)。
+    /// Sets whether ⇧ (Shift) is included (not included by default).
     pub fn shift(mut self, shift: bool) -> Self {
         self.shift = shift;
         self
     }
 
-    /// ⌥ / Alt を含めるかどうかを指定する (既定は含めない)。
+    /// Sets whether ⌥ / Alt is included (not included by default).
     pub fn alt(mut self, alt: bool) -> Self {
         self.alt = alt;
         self
     }
 
-    /// 英数字 1 文字として使えるか。使えない文字は環境ごとに扱いが違う。
+    /// Whether it is usable as a single alphanumeric character. Unusable characters are
+    /// handled differently per platform.
     pub fn is_valid(self) -> bool {
         self.key.is_ascii_alphanumeric()
     }
 
-    /// macOS (AppKit) の `keyEquivalent` に渡す文字列。
+    /// The string passed to macOS (AppKit)'s `keyEquivalent`.
     ///
-    /// ⌘ と ⇧・⌥ は `keyEquivalentModifierMask` で指定するため、ここには
-    /// 文字だけが入る。
+    /// ⌘, ⇧ and ⌥ are specified with `keyEquivalentModifierMask`, so only the
+    /// character goes here.
     ///
     /// ```
     /// # use naui_core::MenuShortcut;
@@ -76,7 +79,7 @@ impl MenuShortcut {
         self.key.to_ascii_lowercase().to_string()
     }
 
-    /// Linux (GTK4) の `gtk_accelerator_parse` が読む書き方。
+    /// The notation read by Linux (GTK4)'s `gtk_accelerator_parse`.
     ///
     /// ```
     /// # use naui_core::MenuShortcut;
@@ -95,9 +98,10 @@ impl MenuShortcut {
         out
     }
 
-    /// Windows の仮想キーコード。英数字以外では `0`。
+    /// The Windows virtual-key code. `0` for anything not alphanumeric.
     ///
-    /// `VK_A`..`VK_Z` と `VK_0`..`VK_9` は ASCII の大文字・数字と同じ値。
+    /// `VK_A`..`VK_Z` and `VK_0`..`VK_9` have the same values as ASCII uppercase
+    /// letters and digits.
     ///
     /// ```
     /// # use naui_core::MenuShortcut;
@@ -112,10 +116,10 @@ impl MenuShortcut {
         }
     }
 
-    /// 画面に出す文字列 (`Ctrl+Shift+S` の形)。
+    /// The text shown on screen (in the form `Ctrl+Shift+S`).
     ///
-    /// macOS と GTK4 はメニュー項目の右端の表示を自分で作るので、これを使う
-    /// のは表示を naui が持つ環境 (Windows・Web) だけ。
+    /// macOS and GTK4 render the right edge of menu items themselves, so only the
+    /// platforms where naui owns the display (Windows and the Web) use this.
     pub fn label(self) -> String {
         let mut out = String::from("Ctrl+");
         if self.shift {
@@ -128,18 +132,18 @@ impl MenuShortcut {
         out
     }
 
-    /// 押されたキーがこのショートカットかどうか。
+    /// Whether the pressed key is this shortcut.
     ///
-    /// 主修飾キーを naui が見張る環境 (Windows・Web) で使う。`key` は
-    /// 押された文字で、大文字・小文字は問わない。`primary` は ⌘ か Ctrl の
-    /// どちらかが押されていること。
+    /// Used on platforms where naui watches the primary modifier itself (Windows and
+    /// the Web). `key` is the pressed character, case-insensitive. `primary` means that
+    /// either ⌘ or Ctrl is held.
     ///
     /// ```
     /// # use naui_core::MenuShortcut;
     /// let s = MenuShortcut::new('s');
     /// assert!(s.matches("S", true, false, false));
-    /// assert!(!s.matches("s", false, false, false)); // 修飾キーが無い
-    /// assert!(!s.matches("s", true, true, false));   // ⇧ が余っている
+    /// assert!(!s.matches("s", false, false, false)); // no modifier
+    /// assert!(!s.matches("s", true, true, false));   // extra ⇧
     /// ```
     pub fn matches(self, key: &str, primary: bool, shift: bool, alt: bool) -> bool {
         primary
@@ -153,35 +157,35 @@ impl MenuShortcut {
     }
 }
 
-/// メニューバーの 1 項目。
+/// One item in the menu bar.
 ///
-/// 押されるとその場でコマンドが走る。区切り線は選べないので、通知として
-/// そのインデックスが返ることはない。
+/// Clicking it runs the command right away. Separators cannot be chosen, so their
+/// indices never come back in notifications.
 ///
 /// ```
 /// # use naui_core::{MenuItem, MenuShortcut};
 /// let items = [
-///     MenuItem::new("開く").shortcut(MenuShortcut::new('o')),
+///     MenuItem::new("Open").shortcut(MenuShortcut::new('o')),
 ///     MenuItem::separator(),
-///     MenuItem::new("保存").enabled(false),
+///     MenuItem::new("Save").enabled(false),
 /// ];
 /// assert!(items[1].is_separator());
 /// assert!(!items[2].enabled);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MenuItem {
-    /// 画面に出る文字列。区切り線では使われない。
+    /// The text shown on screen. Not used for separators.
     pub label: String,
-    /// 選べるかどうか。
+    /// Whether it can be selected.
     pub enabled: bool,
-    /// 区切り線かどうか。
+    /// Whether this is a separator.
     pub separator: bool,
-    /// 割り当てるキーボードショートカット。区切り線では使われない。
+    /// The keyboard shortcut assigned to it. Not used for separators.
     pub shortcut: Option<MenuShortcut>,
 }
 
 impl MenuItem {
-    /// 押せる項目を作る。
+    /// Creates a clickable item.
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
@@ -191,7 +195,7 @@ impl MenuItem {
         }
     }
 
-    /// 項目のまとまりを分ける区切り線を作る。押すことはできない。
+    /// Creates a separator that divides groups of items. It cannot be clicked.
     pub fn separator() -> Self {
         Self {
             label: String::new(),
@@ -201,28 +205,28 @@ impl MenuItem {
         }
     }
 
-    /// 選べるかどうかを指定する (既定は選べる)。
+    /// Sets whether it can be selected (selectable by default).
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// キーボードショートカットを割り当てる (既定は無し)。
+    /// Assigns a keyboard shortcut (none by default).
     pub fn shortcut(mut self, shortcut: MenuShortcut) -> Self {
         self.shortcut = Some(shortcut);
         self
     }
 
-    /// 区切り線かどうか。
+    /// Whether this is a separator.
     pub fn is_separator(&self) -> bool {
         self.separator
     }
 
-    /// 文字列の並びから項目列を作る。
+    /// Creates a list of items from a sequence of strings.
     ///
     /// ```
     /// # use naui_core::MenuItem;
-    /// let items = MenuItem::list(["元に戻す", "やり直す"]);
+    /// let items = MenuItem::list(["Undo", "Redo"]);
     /// assert_eq!(items.len(), 2);
     /// ```
     pub fn list<I, S>(labels: I) -> Vec<MenuItem>
@@ -246,33 +250,33 @@ impl From<String> for MenuItem {
     }
 }
 
-/// メニューバーに並ぶ 1 つのメニュー (見出しと、その中の項目)。
+/// One menu in the menu bar (a heading and the items in it).
 ///
 /// ```
 /// # use naui_core::{MenuItem, MenuShortcut, MenuSpec};
 /// let file = MenuSpec::new(
-///     "ファイル",
+///     "File",
 ///     [
-///         MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+///         MenuItem::new("New").shortcut(MenuShortcut::new('n')),
 ///         MenuItem::separator(),
-///         MenuItem::new("閉じる"),
+///         MenuItem::new("Close"),
 ///     ],
 /// );
-/// assert_eq!(file.title, "ファイル");
+/// assert_eq!(file.title, "File");
 /// assert_eq!(file.len(), 3);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MenuSpec {
-    /// メニューバーに出る見出し。
+    /// The heading shown in the menu bar.
     pub title: String,
-    /// 見出しの下に並ぶ項目。区切り線を含めた順序がそのままインデックス。
+    /// The items under the heading. Their order, separators included, is the index.
     pub items: Vec<MenuItem>,
 }
 
 impl MenuSpec {
-    /// 見出しと項目からメニュー 1 つを作る。
+    /// Creates one menu from a heading and items.
     ///
-    /// 項目は文字列のままでも渡せる (`["元に戻す", "やり直す"]`)。
+    /// Items can also be passed as plain strings (`["Undo", "Redo"]`).
     pub fn new<I, T>(title: impl Into<String>, items: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -284,7 +288,7 @@ impl MenuSpec {
         }
     }
 
-    /// 区切り線を含めた項目数。
+    /// The number of items, separators included.
     pub fn len(&self) -> usize {
         self.items.len()
     }
@@ -335,7 +339,8 @@ mod tests {
         assert!(spec.items[1].is_separator());
     }
 
-    /// 大文字で渡しても、キーは小文字にそろえて持つ (⇧ は別に指定する)。
+    /// Even when passed in uppercase, the key is stored lowercase (⇧ is specified
+    /// separately).
     #[test]
     fn shortcut_key_is_lowercased() {
         let s = MenuShortcut::new('S');
@@ -365,7 +370,8 @@ mod tests {
         assert!(MenuShortcut::new('7').is_valid());
     }
 
-    /// 英数字以外は環境ごとに扱いが違うので、仮想キーを持たない。
+    /// Non-alphanumeric keys are handled differently per platform, so they have no
+    /// virtual key.
     #[test]
     fn non_alphanumeric_keys_are_rejected() {
         let s = MenuShortcut::new('/');
@@ -386,7 +392,8 @@ mod tests {
         assert!(!s.matches("y", true, true, false));
     }
 
-    /// `KeyboardEvent.key` は "Enter" のような名前も来る。1 文字だけを見る。
+    /// `KeyboardEvent.key` also delivers names such as "Enter". Only single characters
+    /// are considered.
     #[test]
     fn matches_ignores_named_keys() {
         let s = MenuShortcut::new('s');

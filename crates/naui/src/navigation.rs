@@ -2,21 +2,22 @@ use crate::sys;
 use crate::Widget;
 use naui_core::NavItem;
 
-/// パンくず。階層のいまいる場所を左から順に並べる。
+/// Breadcrumbs. Lays out the current position in a hierarchy from left to right.
 ///
-/// GTK4 に相当するコントロールが無いため、`GtkLabel` のマークアップが持つ
-/// リンク (`<a href>`) を区切り (`›`) で挟んで並べる。いまいる場所だけは
-/// リンクにせず普通の文字にする (Web の `<a>` や macOS の `NSPathControl` と
-/// 同じく、枠の無い文字の並びになる)。太字にしないのは、選び直すたびに
-/// 文字幅が変わって後ろの項目がずれるため。ボタンにすると libadwaita の余白
-/// (`padding: 5px 10px`) が項目ごとに付き、間延びするため使わない。
+/// GTK4 has no equivalent control, so the links (`<a href>`) supported by
+/// `GtkLabel` markup are laid out with separators (`›`) between them. Only the
+/// current position is plain text, not a link (as with the Web's `<a>` and macOS's
+/// `NSPathControl`, it is a row of text without borders). It is not bold because
+/// the text width would change on every reselection and shift the items after it.
+/// Buttons are not used because libadwaita's padding (`padding: 5px 10px`) would
+/// be added to every item and spread them out.
 #[derive(Clone)]
 pub struct Breadcrumbs(pub(crate) sys::Breadcrumbs);
 
 impl_widget!(Breadcrumbs);
 
 impl Breadcrumbs {
-    /// 階層を作り直す。**末尾がいまいる場所**になる。
+    /// Rebuilds the hierarchy. **The last item is the current position.**
     #[inline]
     pub fn set_items(&self, items: &[NavItem]) {
         self.0.set_items(items)
@@ -37,36 +38,37 @@ impl Breadcrumbs {
         self.0.selected()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     #[inline]
     pub fn set_selected(&self, index: usize) {
         self.0.set_selected(index)
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     #[inline]
     pub fn select(&self, index: usize) {
         self.0.select(index)
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select(f)
     }
 }
 
-/// 画面下部に置く横並びのナビゲーション (等幅)。
+/// Horizontal navigation placed at the bottom of the screen (equal widths).
 ///
-/// **配置はアプリの責務**。縦スタックの最後に置き、手前の要素に
-/// [`Length::Fill`](naui_core::Length::Fill) か `Spacer` を使うと下端へ寄る。
+/// **Placement is the app's job.** Put it last in a vertical stack and give the
+/// element before it [`Length::Fill`](naui_core::Length::Fill) or a `Spacer` to push
+/// it to the bottom.
 #[derive(Clone)]
 pub struct Dock(pub(crate) sys::Dock);
 
 impl_widget!(Dock);
 
 impl Dock {
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared.
     #[inline]
     pub fn set_items(&self, items: &[NavItem]) {
         self.0.set_items(items)
@@ -87,29 +89,29 @@ impl Dock {
         self.0.selected()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     #[inline]
     pub fn set_selected(&self, index: usize) {
         self.0.set_selected(index)
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     #[inline]
     pub fn select(&self, index: usize) {
         self.0.select(index)
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select(f)
     }
 }
 
-/// リンク (`GtkLinkButton`)。
+/// A link (`GtkLinkButton`).
 ///
-/// `href` が空でなければ、押したときにブラウザ (デスクトップの既定の
-/// ハンドラ) で開く。
+/// If `href` is not empty, clicking it opens it in the browser (the desktop's
+/// default handler).
 #[derive(Clone)]
 pub struct Link(pub(crate) sys::Link);
 
@@ -141,17 +143,18 @@ impl Link {
         self.0.set_enabled(enabled)
     }
 
-    /// 押されるたびに呼ばれる。`href` があるときは、開く動作も併せて起きる。
+    /// Called on every click. If there is an `href`, it is opened as well.
     #[inline]
     pub fn on_click(&self, f: impl FnMut() + 'static) {
         self.0.on_click(f)
     }
 }
 
-/// 縦に並ぶナビゲーション一覧。
+/// A vertical list of navigation items.
 ///
-/// GNOME のサイドバーと同じく、選択状態を持つ枠なしボタンを縦に並べる。
-/// **右クリックで出るポップアップではない** (それは [`PopupMenu`] のほう)。
+/// As in GNOME's sidebars, borderless buttons with a selected state are stacked
+/// vertically. **It is not the popup shown on right-click** (that is
+/// [`PopupMenu`]).
 ///
 /// [`PopupMenu`]: crate::PopupMenu
 #[derive(Clone)]
@@ -160,7 +163,7 @@ pub struct Menu(pub(crate) sys::Menu);
 impl_widget!(Menu);
 
 impl Menu {
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared.
     #[inline]
     pub fn set_items(&self, items: &[NavItem]) {
         self.0.set_items(items)
@@ -181,35 +184,36 @@ impl Menu {
         self.0.selected()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     #[inline]
     pub fn set_selected(&self, index: usize) {
         self.0.set_selected(index)
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     #[inline]
     pub fn select(&self, index: usize) {
         self.0.select(index)
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select(f)
     }
 }
 
-/// 画面上部に置く横並びのナビゲーション。
+/// Horizontal navigation placed at the top of the screen.
 ///
-/// 見出し (`GtkLabel`) と項目 (`GtkToggleButton` の横並び) を `GtkBox` に並べる。
+/// A heading (`GtkLabel`) and items (a row of `GtkToggleButton`s) are laid out in a
+/// `GtkBox`.
 #[derive(Clone)]
 pub struct Navbar(pub(crate) sys::Navbar);
 
 impl_widget!(Navbar);
 
 impl Navbar {
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared.
     #[inline]
     pub fn set_items(&self, items: &[NavItem]) {
         self.0.set_items(items)
@@ -230,25 +234,25 @@ impl Navbar {
         self.0.selected()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     #[inline]
     pub fn set_selected(&self, index: usize) {
         self.0.set_selected(index)
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     #[inline]
     pub fn select(&self, index: usize) {
         self.0.select(index)
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select(f)
     }
 
-    /// 左端の見出し。
+    /// The heading at the left end.
     #[inline]
     pub fn set_title(&self, title: &str) {
         self.0.set_title(title)
@@ -260,17 +264,17 @@ impl Navbar {
     }
 }
 
-/// ページ送り。
+/// Pagination.
 ///
-/// GTK4 に相当するコントロールが無いため、前後のボタンとページ番号の
-/// トグルボタンを横に並べて組み立てる。
+/// GTK4 has no equivalent control, so it is built from previous/next buttons and
+/// toggle buttons for the page numbers laid out in a row.
 #[derive(Clone)]
 pub struct Pagination(pub(crate) sys::Pagination);
 
 impl_widget!(Pagination);
 
 impl Pagination {
-    /// ページ数を決め直す。先頭のページが選ばれた状態になる。
+    /// Resets the number of pages. The first page becomes selected.
     #[inline]
     pub fn set_page_count(&self, count: usize) {
         self.0.set_page_count(count)
@@ -281,66 +285,66 @@ impl Pagination {
         self.0.page_count()
     }
 
-    /// いま開いているページ (0 始まり)。
+    /// The page currently open (starting at 0).
     #[inline]
     pub fn page(&self) -> usize {
         self.0.page()
     }
 
-    /// 通知せずにページを変える。
+    /// Changes the page without notifying.
     #[inline]
     pub fn set_page(&self, page: usize) {
         self.0.set_page(page)
     }
 
-    /// ユーザーが押したのと同じ経路でページを変える (通知あり)。
+    /// Changes the page through the same path as a user's click (notifies).
     #[inline]
     pub fn select(&self, page: usize) {
         self.0.select(page)
     }
 
-    /// 1 つ前のページへ (通知あり)。先頭では何もしない。
+    /// Goes to the previous page (notifies). Does nothing on the first page.
     #[inline]
     pub fn go_previous(&self) {
         self.0.go_previous()
     }
 
-    /// 1 つ後のページへ (通知あり)。末尾では何もしない。
+    /// Goes to the next page (notifies). Does nothing on the last page.
     #[inline]
     pub fn go_next(&self) {
         self.0.go_next()
     }
 
-    /// ページが変わったときに、そのページで呼ばれる。
+    /// Called with the page when the page changes.
     #[inline]
     pub fn on_change(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_change(f)
     }
 }
 
-/// タブ (`GtkNotebook`)。中身のウィジェットごと持つ。
+/// Tabs (`GtkNotebook`). Holds each tab's content widget.
 #[derive(Clone)]
 pub struct Tabs(pub(crate) sys::Tabs);
 
 impl_widget!(Tabs);
 
 impl Tabs {
-    /// タブを 1 枚追加する。`child` がそのタブの中身になる。
+    /// Adds one tab. `child` becomes that tab's content.
     #[inline]
     pub fn add_tab(&self, label: &str, child: &dyn Widget) {
         self.0.add_tab(label, child.as_backend())
     }
 
-    /// タブを 1 枚外す。範囲外のときは何もしない。
+    /// Removes one tab. Does nothing if out of range.
     ///
-    /// 選択中のタブを外したときは、環境が近くのタブを選び直す。
-    /// この移動は [`set_selected`](Tabs::set_selected) と同じく通知しない。
+    /// When the selected tab is removed, the platform selects a nearby tab instead.
+    /// Like [`set_selected`](Tabs::set_selected), this move is not notified.
     #[inline]
     pub fn remove_tab(&self, index: usize) {
         self.0.remove_tab(index)
     }
 
-    /// タブをすべて外す。
+    /// Removes every tab.
     #[inline]
     pub fn clear(&self) {
         self.0.clear()
@@ -361,19 +365,19 @@ impl Tabs {
         self.0.selected()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     #[inline]
     pub fn set_selected(&self, index: usize) {
         self.0.set_selected(index)
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     #[inline]
     pub fn select(&self, index: usize) {
         self.0.select(index)
     }
 
-    /// タブが切り替わったときに、そのインデックスで呼ばれる。
+    /// Called with the index when the tab changes.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select(f)

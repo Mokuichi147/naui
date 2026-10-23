@@ -1,20 +1,22 @@
-//! `on_key_down` (文字入力のウィジェットと `Window`)。
+//! `on_key_down` (text-input widgets and `Window`).
 //!
-//! アプリ全体で `NSEvent` のローカルモニターを 1 つ置き、`keyDown` を
-//! **AppKit が配送する前に**受け取る。キーが来たウィンドウの first responder
-//! から親のビューへたどり、最初に見つかった登録済みのウィジェット、続けて
-//! ウィンドウの順に通知する。`Handled` ならモニターがイベントを捨てるので、
-//! 入力欄 (改行の挿入など) にもメニューのショートカットにも届かない。
+//! One local `NSEvent` monitor is installed for the whole app, receiving `keyDown`
+//! **before AppKit dispatches it**. It walks up the parent views from the first
+//! responder of the window the key came to, and notifies the first registered
+//! widget found, then the window. With `Handled`, the monitor discards the event,
+//! so it reaches neither the field (inserting a newline, for example) nor menu
+//! shortcuts.
 //!
-//! 入力欄の編集はフィールドエディタ (共有の `NSTextView`) が担うが、
-//! フィールドエディタは編集中の `NSTextField` の中に置かれるので、親を
-//! たどれば入力欄に着く。
+//! Editing in text fields is done by the field editor (a shared `NSTextView`), but
+//! the field editor is placed inside the `NSTextField` being edited, so walking up
+//! the parents reaches the field.
 //!
-//! 変換中 (first responder が `hasMarkedText`) のキーは IME のものなので
-//! 届けない。
+//! Keys during composition (the first responder `hasMarkedText`) belong to the IME
+//! and are not delivered.
 //!
-//! 登録表はビューとウィンドウを弱参照で持つ。ウィジェットのハンドルが
-//! すべて落ちてビューが解放されれば、通知先も表から外れる。
+//! The registry holds views and windows by weak reference. Once all of a widget's
+//! handles are dropped and the view is freed, its handler is removed from the table
+//! too.
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
@@ -32,17 +34,17 @@ type Entries<T> = RefCell<Vec<(Weak<T>, Rc<KeyHandler>)>>;
 thread_local! {
     static VIEWS: Entries<NSView> = const { RefCell::new(Vec::new()) };
     static WINDOWS: Entries<NSWindow> = const { RefCell::new(Vec::new()) };
-    /// モニターの戻り値。持っている間だけモニターが生きる。
+    /// The monitor's return value. The monitor lives only while it is held.
     static MONITOR: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
 }
 
-/// ウィジェットのビューへ通知先を置く。呼ぶたびに置き換わる。
+/// Sets the handler on the widget's view. Each call replaces it.
 pub(crate) fn set_view_handler(view: &NSView, f: impl FnMut(&KeyEvent) -> EventResponse + 'static) {
     VIEWS.with(|views| handler_for(&mut views.borrow_mut(), view).set(f));
     ensure_monitor();
 }
 
-/// ウィンドウへ通知先を置く。呼ぶたびに置き換わる。
+/// Sets the handler on the window. Each call replaces it.
 pub(crate) fn set_window_handler(
     window: &NSWindow,
     f: impl FnMut(&KeyEvent) -> EventResponse + 'static,
@@ -51,7 +53,8 @@ pub(crate) fn set_window_handler(
     ensure_monitor();
 }
 
-/// `target` の通知先。無ければ作る。消えたものの分もここで片づける。
+/// The handler for `target`, created if absent. Entries for objects that are gone
+/// are cleaned up here too.
 fn handler_for<T: objc2::Message>(
     entries: &mut Vec<(Weak<T>, Rc<KeyHandler>)>,
     target: &T,
@@ -104,7 +107,7 @@ fn ensure_monitor() {
     });
 }
 
-/// 届いたキーを、フォーカスのあるウィジェット → ウィンドウの順に渡す。
+/// Passes the arriving key to the focused widget, then the window.
 pub(crate) fn dispatch(event: &NSEvent) -> EventResponse {
     // モニターはメインスレッドで呼ばれる。
     let Some(mtm) = MainThreadMarker::new() else {
@@ -132,7 +135,8 @@ pub(crate) fn dispatch(event: &NSEvent) -> EventResponse {
     lookup(&WINDOWS, &window).map_or(EventResponse::Continue, |handler| handler.emit(&key_event))
 }
 
-/// IME で変換している最中か (`NSTextInputClient` の `hasMarkedText`)。
+/// Whether the IME is in the middle of composing (`NSTextInputClient`'s
+/// `hasMarkedText`).
 fn is_composing(responder: &NSResponder) -> bool {
     if !responder.respondsToSelector(sel!(hasMarkedText)) {
         return false;
@@ -140,7 +144,7 @@ fn is_composing(responder: &NSResponder) -> bool {
     unsafe { msg_send![responder, hasMarkedText] }
 }
 
-/// AppKit のキーを naui のキーへ写す。
+/// Maps an AppKit key to a naui key.
 fn to_key_event(event: &NSEvent) -> KeyEvent {
     let flags = event.modifierFlags();
     let modifiers = Modifiers {
@@ -152,8 +156,8 @@ fn to_key_event(event: &NSEvent) -> KeyEvent {
     KeyEvent::new(key_of(event), modifiers).repeat(event.isARepeat())
 }
 
-/// 仮想キーコード (`kVK_*`、配列に依らない) で名前の付いたキーを、それ
-/// 以外は修飾キーを除いた文字で読む。
+/// Named keys are read by virtual key code (`kVK_*`, independent of the layout),
+/// and others by their character with modifiers removed.
 fn key_of(event: &NSEvent) -> Key {
     match event.keyCode() {
         36 | 76 => return Key::Enter, // Return / テンキーの Enter
@@ -190,14 +194,14 @@ fn function_key(code: u16) -> Option<u8> {
         .map(|index| index as u8 + 1)
 }
 
-/// 文字入力のウィジェットへ `on_key_down` を足す。
+/// Adds `on_key_down` to text-input widgets.
 macro_rules! impl_key_down {
     ($t:ty) => {
         impl $t {
-            /// キーが押されたときの通知。`Handled` を返すと、そのキーは
-            /// 入力欄にもウィンドウにも渡らない (改行や確定を止められる)。
+            /// Notified when a key is pressed. Returning `Handled` keeps the key from reaching
+            /// the field and the window (so you can stop newlines or confirmation).
             ///
-            /// IME で変換している間のキーは届かない。
+            /// Keys pressed while an IME is composing are not delivered.
             pub fn on_key_down(
                 &self,
                 f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,

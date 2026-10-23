@@ -1,18 +1,19 @@
-//! メニューバー (`GtkPopoverMenuBar` + `GMenu`)。
+//! The menu bar (`GtkPopoverMenuBar` + `GMenu`).
 //!
-//! GTK4 のメニューは「モデル (`GMenu`) と操作 (`GAction`)」でできている。
-//! メニューバーも同じで、見出しは `GMenu` の submenu、項目は
-//! **項目 1 つにつき 1 つの `GSimpleAction`** で表す (`GMenuItem` 自体は
-//! 有効・無効を持たないため、選べるかどうかは操作側が持つ)。
+//! GTK4 menus are made of "models (`GMenu`) and actions (`GAction`)". The menu bar
+//! is the same: headings are submenus of the `GMenu`, and items are represented by
+//! **one `GSimpleAction` per item** (`GMenuItem` itself has no enabled state, so
+//! whether it can be chosen is held by the action).
 //!
-//! ショートカットは `GtkApplication` のアクセラレータへ登録する。押されたキーを
-//! naui が見張るのではなく、**GTK4 が操作を呼び出す**ので、メニューを開いて
-//! いなくても効き、項目の右端の表示も GTK4 が作る。アクセラレータの表は
-//! アプリ全体で 1 つなので、登録するのは**ウィンドウへ取り付けている間だけ**。
+//! Shortcuts are registered as the `GtkApplication`'s accelerators. Instead of
+//! naui watching pressed keys, **GTK4 invokes the action**, so they work without
+//! opening the menu, and GTK4 also renders the right edge of the items. There is
+//! one accelerator table for the whole app, so they are registered **only while
+//! attached to a window**.
 //!
-//! 見出しは `AdwToolbarView` の上段 (ヘッダーバーの下) へ入る。GNOME では
-//! メニューバーよりハンバーガーメニューが好まれるが、naui は 4 環境で同じ
-//! API を出すため、GTK4 が持つ本物のメニューバーをそのまま使う。
+//! The headings go in the top row of the `AdwToolbarView` (below the header bar).
+//! GNOME prefers hamburger menus to menu bars, but naui offers the same API on all
+//! four platforms, so it uses GTK4's real menu bar as is.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -23,49 +24,51 @@ use naui_core::MenuSpec;
 
 use crate::callback::ActivateNotifier;
 
-/// メニューの操作をまとめて置く名前空間の頭。後ろにメニューバーごとの番号が付く。
+/// The prefix of the namespace that holds the menu's actions. A number per menu
+/// bar follows it.
 ///
-/// アクセラレータは `GtkApplication` に**アプリ全体で 1 つの表**として
-/// 登録されるので、名前空間を共有すると、あとから作ったメニューバーが
-/// 前のメニューバーの登録を上書きしてしまう。メニューバーごとに分けておけば、
-/// 同じキーを複数のウィンドウで使っても、GTK4 がフォーカスのあるウィンドウに
-/// 入っている操作だけを呼ぶ。
+/// Accelerators are registered with the `GtkApplication` as **one table for the
+/// whole app**, so sharing a namespace would let a later menu bar overwrite the
+/// registrations of an earlier one. With a namespace per menu bar, even when the
+/// same key is used in several windows, GTK4 invokes only the action in the focused
+/// window.
 const GROUP_PREFIX: &str = "naui-menubar-";
 
 thread_local! {
-    /// 次に作るメニューバーの番号。GTK4 はメインスレッドでしか触れない。
+    /// The number of the next menu bar to create. GTK4 can only be touched on the main
+    /// thread.
     static NEXT_GROUP: Cell<u64> = const { Cell::new(0) };
 }
 
 struct MenuBarInner {
     native: gtk::PopoverMenuBar,
     app: adw::Application,
-    /// このメニューバーの操作の名前空間 (`naui-menubar-<番号>`)。
+    /// The namespace of this menu bar's actions (`naui-menubar-<number>`).
     group: String,
     actions: gio::SimpleActionGroup,
     menus: RefCell<Vec<MenuSpec>>,
-    /// 見出しと項目のインデックスから引ける操作。区切り線のところは `None`。
+    /// Actions looked up by heading and item index. `None` at separators.
     items: RefCell<Vec<Vec<Option<gio::SimpleAction>>>>,
     on_activate: ActivateNotifier,
-    /// メニューバー全体の有効・無効。項目ごとの指定と AND を取る。
+    /// Whether the whole menu bar is enabled. ANDed with the per-item settings.
     enabled: Cell<bool>,
-    /// 取り付けているウィンドウの数。アクセラレータはこれが 1 以上の間だけ
-    /// アプリへ登録する。
+    /// The number of windows it is attached to. Accelerators are registered with the
+    /// app only while this is 1 or more.
     attachments: Cell<usize>,
 }
 
 impl MenuBarInner {
-    /// 操作の名前。`GMenu` から参照するときは名前空間を頭に付ける。
+    /// The action's name. Prefixed with the namespace when referenced from the `GMenu`.
     fn action_name(menu: usize, item: usize) -> String {
         format!("m{menu}i{item}")
     }
 
-    /// 名前空間を付けた操作の名前 (`naui-menubar-3.m0i1` の形)。
+    /// The action's name with the namespace (in the form `naui-menubar-3.m0i1`).
     fn detailed_name(&self, menu: usize, item: usize) -> String {
         format!("{}.{}", self.group, Self::action_name(menu, item))
     }
 
-    /// いまの項目のショートカットを、アプリのアクセラレータへ登録する。
+    /// Registers the current items' shortcuts as the app's accelerators.
     fn register_accels(&self) {
         for (menu, spec) in self.menus.borrow().iter().enumerate() {
             for (item, entry) in spec.items.iter().enumerate() {
@@ -83,7 +86,7 @@ impl MenuBarInner {
         }
     }
 
-    /// 登録したアクセラレータを 1 つずつ外す。
+    /// Removes the registered accelerators one by one.
     fn clear_accels(&self) {
         for (menu, spec) in self.menus.borrow().iter().enumerate() {
             for (item, entry) in spec.items.iter().enumerate() {
@@ -96,13 +99,13 @@ impl MenuBarInner {
     }
 }
 
-/// ウィンドウの上端に付く、OS のアプリケーションメニュー。
+/// The OS's application menu, attached to the top of the window.
 ///
-/// [`Widget`](crate::Widget) ではない。
-/// [`Window::set_menu_bar`](crate::Window::set_menu_bar) で取り付ける。
-/// 項目が押されるたびに、その **(見出しのインデックス, 項目のインデックス)**
-/// で [`on_activate`](Self::on_activate) が呼ばれる。項目のインデックスは
-/// 区切り線を含めた並びの位置で、区切り線が返ることはない。
+/// Not a [`Widget`](crate::Widget). Attach it with
+/// [`Window::set_menu_bar`](crate::Window::set_menu_bar). Every time an item is
+/// clicked, [`on_activate`](Self::on_activate) is called with its **(heading index,
+/// item index)**. The item index is the position in the sequence including
+/// separators; separators are never returned.
 #[derive(Clone)]
 pub struct MenuBar(Rc<MenuBarInner>);
 
@@ -132,10 +135,10 @@ impl MenuBar {
         }))
     }
 
-    /// メニューを作り直す。以前のメニューは取り除かれる。
+    /// Rebuilds the menus. The previous menus are removed.
     ///
-    /// 見出しのインデックスは渡した並びの位置、項目のインデックスは
-    /// 区切り線を含めた並びの位置。
+    /// The heading index is the position in the sequence passed, and the item index is
+    /// the position in the sequence including separators.
     pub fn set_menus(&self, menus: &[MenuSpec]) {
         self.0.clear_accels();
         for name in self.0.actions.list_actions() {
@@ -195,7 +198,7 @@ impl MenuBar {
         }
     }
 
-    /// 見出しの数。
+    /// The number of headings.
     pub fn len(&self) -> usize {
         self.0.menus.borrow().len()
     }
@@ -204,7 +207,8 @@ impl MenuBar {
         self.len() == 0
     }
 
-    /// 見出し 1 つが持つ、区切り線を含めた項目数。範囲外は `0`。
+    /// The number of items under one heading, separators included. `0` if out of
+    /// range.
     pub fn menu_len(&self, menu: usize) -> usize {
         self.0
             .menus
@@ -213,7 +217,7 @@ impl MenuBar {
             .map_or(0, |spec| spec.items.len())
     }
 
-    /// 項目 1 つの有効・無効を変える。区切り線と範囲外は何もしない。
+    /// Enables or disables one item. Does nothing for separators or out of range.
     pub fn set_item_enabled(&self, menu: usize, item: usize, enabled: bool) {
         let mut menus = self.0.menus.borrow_mut();
         let Some(entry) = menus
@@ -230,7 +234,7 @@ impl MenuBar {
         self.apply_enabled();
     }
 
-    /// いま押せる項目か。区切り線と範囲外は `false`。
+    /// Whether the item can be clicked now. `false` for separators and out of range.
     pub fn is_item_enabled(&self, menu: usize, item: usize) -> bool {
         self.0.enabled.get()
             && self
@@ -242,16 +246,16 @@ impl MenuBar {
                 .is_some_and(|entry| !entry.is_separator() && entry.enabled)
     }
 
-    /// メニューバー全体の有効・無効を変える。項目ごとの指定は残る。
+    /// Enables or disables the whole menu bar. Per-item settings are kept.
     pub fn set_enabled(&self, enabled: bool) {
         self.0.enabled.set(enabled);
         self.apply_enabled();
     }
 
-    /// 項目ごとの指定と全体の指定をネイティブへ反映する。
+    /// Applies the per-item settings and the overall setting to the native side.
     ///
-    /// 見出しを押せなくするのは `GtkWidget` の sensitive で足りるが、
-    /// アクセラレータは操作を直に呼ぶので、操作側も合わせて落とす。
+    /// Making headings unclickable only needs `GtkWidget`'s sensitive, but accelerators
+    /// invoke actions directly, so the actions are disabled too.
     fn apply_enabled(&self) {
         let whole = self.0.enabled.get();
         self.0.native.set_sensitive(whole);
@@ -265,56 +269,59 @@ impl MenuBar {
         }
     }
 
-    /// 利用者が選んだのと同じように項目を実行する。
+    /// Runs the item as if the user had chosen it.
     ///
-    /// 区切り線・押せない項目・範囲外は何もしない。
+    /// Does nothing for separators, disabled items or out of range.
     pub fn activate(&self, menu: usize, item: usize) {
         if self.is_item_enabled(menu, item) {
             self.0.on_activate.emit(menu, item);
         }
     }
 
-    /// 項目が押されたときに、その見出しと項目のインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the heading and item indices when an item is clicked. Setting it
+    /// again removes the previous callback.
     pub fn on_activate(&self, f: impl FnMut(usize, usize) + 'static) {
         self.0.on_activate.set(f);
     }
 
-    /// 対応する `GtkPopoverMenuBar`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The corresponding `GtkPopoverMenuBar`. Public as a backend-specific escape
+    /// hatch.
     pub fn native_menu_bar(&self) -> gtk::PopoverMenuBar {
         self.0.native.clone()
     }
 
-    /// 項目に対応する `GSimpleAction`。区切り線と範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The `GSimpleAction` for the item. `None` for separators and out of range. Public
+    /// as a backend-specific escape hatch.
     pub fn native_action(&self, menu: usize, item: usize) -> Option<gio::SimpleAction> {
         self.0.items.borrow().get(menu)?.get(item)?.clone()
     }
 
-    /// 項目の操作を、名前空間を付けた名前 (`naui-menubar-3.m0i1` の形) で返す。
-    /// 区切り線と範囲外は `None`。
+    /// Returns the item's action as a name with the namespace (in the form
+    /// `naui-menubar-3.m0i1`). `None` for separators and out of range.
     ///
-    /// `gtk_widget_activate_action` や `gtk_application_set_accels_for_action`
-    /// に渡す名前で、バックエンド固有の脱出口として公開している。
+    /// It is the name passed to `gtk_widget_activate_action` or
+    /// `gtk_application_set_accels_for_action`, and is public as a backend-specific
+    /// escape hatch.
     pub fn native_action_name(&self, menu: usize, item: usize) -> Option<String> {
         self.native_action(menu, item)?;
         Some(self.0.detailed_name(menu, item))
     }
 
-    /// ウィンドウの上段へ差し込む widget。[`crate::Window`] だけが使う。
+    /// The widget inserted into the window's top row. Used only by [`crate::Window`].
     pub(crate) fn mount(&self) -> gtk::PopoverMenuBar {
         self.0.native.clone()
     }
 
-    /// 取り付け先のウィンドウへ入れる操作の組。[`crate::Window`] だけが使う。
+    /// The action group added to the window it is attached to. Used only by
+    /// [`crate::Window`].
     pub(crate) fn action_group(&self) -> gio::SimpleActionGroup {
         self.0.actions.clone()
     }
 
-    /// ウィンドウへ取り付けたときに呼ぶ。[`crate::Window`] だけが使う。
+    /// Called when attached to a window. Used only by [`crate::Window`].
     ///
-    /// 最初の取り付けで、ショートカットをアプリのアクセラレータへ登録する。
+    /// On the first attachment, the shortcuts are registered as the app's
+    /// accelerators.
     pub(crate) fn attach(&self) {
         let count = self.0.attachments.get();
         self.0.attachments.set(count + 1);
@@ -323,10 +330,10 @@ impl MenuBar {
         }
     }
 
-    /// ウィンドウから外したときに呼ぶ。[`crate::Window`] だけが使う。
+    /// Called when detached from a window. Used only by [`crate::Window`].
     ///
-    /// どのウィンドウにも付いていなくなったら、アクセラレータの登録も外す。
-    /// 外したメニューバーのショートカットが、アプリの表に残らないようにする。
+    /// Once it is attached to no window, the accelerator registrations are removed too,
+    /// so that a detached menu bar's shortcuts do not linger in the app's table.
     pub(crate) fn detach(&self) {
         let count = self.0.attachments.get();
         if count == 0 {
@@ -338,7 +345,7 @@ impl MenuBar {
         }
     }
 
-    /// 操作の名前空間。[`crate::Window`] だけが使う。
+    /// The action namespace. Used only by [`crate::Window`].
     pub(crate) fn group(&self) -> String {
         self.0.group.clone()
     }

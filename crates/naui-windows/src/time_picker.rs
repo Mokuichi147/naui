@@ -1,11 +1,12 @@
-//! 時刻の選択 (WinUI 3 のネイティブ `TimePicker`)。
+//! Time picking (WinUI 3's native `TimePicker`).
 //!
-//! コントロールは [`naui_winui3`] の投影の `TimePicker` そのもので、
-//! 生成と表示の詰め方は [`crate::date_picker`] と分け合う。このモジュールは
-//! 時刻だけを扱うウィジェットを組み立てる。
+//! The control is the `TimePicker` of the [`naui_winui3`] projection itself, sharing
+//! creation and display tightening with [`crate::date_picker`]. This module builds
+//! the widget that handles only times.
 //!
-//! WinUI 3 の `TimePicker` に下限・上限は無いので、範囲は naui 側の丸めだけで
-//! 守る (`MinuteIncrement` も使わず、1 分刻みのまま)。
+//! WinUI 3's `TimePicker` has no minimum or maximum, so the range is enforced only
+//! by naui's clamping (`MinuteIncrement` is not used either; it stays at 1-minute
+//! steps).
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -30,7 +31,8 @@ use crate::widgets::{impl_widget, Widget};
 
 type ChangeCallback = Box<dyn FnMut(Time)>;
 
-/// 値が変わったことの通知先。呼ぶ間だけクロージャを取り出して再入を許す。
+/// The handler notified when the value changes. The closure is taken out only while
+/// it is called, allowing re-entrancy.
 #[derive(Clone)]
 struct ChangeHandler(Arc<UiThreadCell<Option<ChangeCallback>>>);
 
@@ -57,20 +59,21 @@ impl ChangeHandler {
 }
 
 struct TimePickerInner {
-    /// レイアウトへ載る要素。中身は `picker` と同じコントロール。
+    /// The element that goes into the layout. Its content is the same control as
+    /// `picker`.
     native: FrameworkElement,
     picker: XamlTimePicker,
     value: Cell<Time>,
     min: Cell<Option<Time>>,
     max: Cell<Option<Time>>,
     handler: ChangeHandler,
-    /// 値を書き込んでいる間だけ、ネイティブからの通知を無視する。
+    /// Ignores notifications from the native side only while writing the value.
     silent: Cell<bool>,
 }
 
-/// 時刻を選ばせるコントロール (WinUI 3 の `TimePicker`)。
+/// A control for picking a time of day (WinUI 3's `TimePicker`).
 ///
-/// 作った直後の値は、その環境の現在時刻 (ローカル時刻)。
+/// Its value right after creation is the platform's current time (local time).
 #[derive(Clone)]
 pub struct TimePicker(Rc<TimePickerInner>);
 impl_widget!(TimePicker, native);
@@ -124,23 +127,24 @@ impl TimePicker {
         Ok(this)
     }
 
-    /// いま選ばれている時刻。
+    /// The currently selected time.
     pub fn value(&self) -> Time {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。範囲外なら端へ寄せ、時計として成り立たない値は丸める。
+    /// Changes the value without notifying. Out-of-range values are clamped to the
+    /// ends, and values that are not valid times are normalized.
     pub fn set_value(&self, value: Time) {
         let value = self.clamp(value);
         self.0.value.set(value);
         self.write_native(value);
     }
 
-    /// 選べる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the selectable range. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
-    /// WinUI 3 の `TimePicker` に範囲は無いので、選ばれた時刻は変更時に
-    /// 端へ寄せる。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying. WinUI 3's `TimePicker` has no range, so a chosen time is clamped to
+    /// the ends on change.
     pub fn set_range(&self, min: Option<Time>, max: Option<Time>) {
         self.0.min.set(min.map(Time::normalized));
         self.0.max.set(max.map(Time::normalized));
@@ -153,18 +157,18 @@ impl TimePicker {
         }
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     pub fn on_change(&self, f: impl FnMut(Time) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// WinUI 3 の `TimePicker`。バックエンド固有の脱出口として公開している。
+    /// WinUI 3's `TimePicker`. Public as a backend-specific escape hatch.
     pub fn native_picker_element(&self) -> Option<UIElement> {
         self.0.native.cast().ok()
     }
 
-    /// ネイティブ側で値が変わったときの処理。
+    /// Handles a value change on the native side.
     fn native_changed(&self) {
         if self.0.silent.get() {
             return;
@@ -186,7 +190,7 @@ impl TimePicker {
         value.clamped(self.0.min.get(), self.0.max.get())
     }
 
-    /// ネイティブへ値を書く。この間の通知は無視する。
+    /// Writes the value to the native side. Notifications during this are ignored.
     fn write_native(&self, value: Time) {
         let previous = self.0.silent.replace(true);
         let _ = self.0.picker.SetTime(to_native_time(value));

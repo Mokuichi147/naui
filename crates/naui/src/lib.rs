@@ -29,20 +29,21 @@ use naui_web as sys;
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 use naui_windows as sys;
 
-/// Linux のバックエンド (`naui-gtk`)。naui の型の `backend()` が返す型と、
-/// ネイティブの部品を取り出す `native_*` はここにある。
+/// The Linux backend (`naui-gtk`). The types returned by `backend()` on naui's
+/// types, and the `native_*` functions that take out the native parts, are here.
 #[cfg(all(
     not(target_arch = "wasm32"),
     unix,
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
 pub use naui_gtk as gtk;
-/// macOS のバックエンド (`naui-macos`)。naui の型の `backend()` が返す型と、
-/// ネイティブの部品を取り出す `native_*` はここにある。
+/// The macOS backend (`naui-macos`). The types returned by `backend()` on naui's
+/// types, and the `native_*` functions that take out the native parts, are here.
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 pub use naui_macos as macos;
-/// Windows のバックエンド (`naui-windows`)。naui の型の `backend()` が返す型と、
-/// ネイティブの部品を取り出す `native_*` はここにある。
+/// The Windows backend (`naui-windows`). The types returned by `backend()` on
+/// naui's types, and the `native_*` functions that take out the native parts, are
+/// here.
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 pub use naui_windows as windows;
 
@@ -114,8 +115,8 @@ pub use widgets::{
 pub use window::{WeakWindow, Window};
 
 pub mod guide {
-    //! 使い方の手引き。レイアウト、ウィジェットごとの振る舞いと環境の違い、
-    //! 別スレッドと非同期をまとめている。
+    //! The usage guide. Covers layout, how each widget behaves and how platforms
+    //! differ, and other threads and async.
     #![doc = include_str!("guide.md")]
 
     // 手引きの中の `[`Ui`]` のようなリンクを、クレートの直下の名前で引くため。
@@ -123,67 +124,71 @@ pub mod guide {
     use crate::*;
 }
 
-/// Web のバックエンド (`naui-web`) と、Web だけの DOM 操作 (CSS のクラスと属性)。
+/// The Web backend (`naui-web`) and Web-only DOM operations (CSS classes and
+/// attributes).
 ///
-/// naui の型の `backend()` が返す型と、ネイティブの部品を取り出す `native_*` は
-/// ここにある。ほかの環境に対応物が無いので、Web 向けにビルドしたときだけある。
-/// 使うところは `#[cfg(target_arch = "wasm32")]` で囲う。
+/// The types returned by `backend()` on naui's types, and the `native_*` functions
+/// that take out the native parts, are here. Other platforms have no counterpart,
+/// so this exists only when building for the Web. Wrap code that uses it in
+/// `#[cfg(target_arch = "wasm32")]`.
 ///
 /// ```ignore
 /// #[cfg(target_arch = "wasm32")]
 /// {
 ///     use naui::web::WebWidgetExt;
-///     button.add_class("primary");                 // 文書側の CSS で見た目を変える
-///     button.set_attribute("data-testid", "save"); // テスト用の目印
+///     button.add_class("primary");                 // style it with the page's CSS
+///     button.set_attribute("data-testid", "save"); // a marker for tests
 /// }
 /// ```
 ///
-/// `style` と `data-naui-*` は naui が使うので、`set_attribute` /
-/// `remove_attribute` では書き換えられない (`false` が返る)。`title` は
-/// `set_tooltip` が書く属性と同じなので、後から書いたほうが残る。
+/// naui uses `style` and `data-naui-*`, so `set_attribute` / `remove_attribute`
+/// cannot change them (they return `false`). `title` is the same attribute that
+/// `set_tooltip` writes, so whichever is written last wins.
 #[cfg(target_arch = "wasm32")]
 pub mod web {
     #[doc(no_inline)]
     pub use naui_web::*;
 
-    /// ウィジェットの要素の CSS のクラスと属性を扱う。Web でだけ使える。
+    /// Handles the CSS classes and attributes of a widget's element. Web only.
     ///
-    /// 対象は親へ置いている要素 ([`naui_web::Widget::native_element`])。naui は
-    /// クラスを使わないので、クラスは自由に付け外しできる。属性のうち `role` や
-    /// `aria-*`・`tabindex` などは naui も書くので、上書きするとウィジェットの
-    /// ふるまいや読み上げが変わることがある。`title` は `set_tooltip` が書く
-    /// 属性と同じなので、後から書いたほうが残る。
+    /// The target is the element placed into the parent
+    /// ([`naui_web::Widget::native_element`]). naui uses no classes, so you can add and
+    /// remove classes freely. Among attributes, naui also writes `role`, `aria-*`,
+    /// `tabindex` and others, so overwriting them can change the widget's behavior or
+    /// how it is read aloud. `title` is the same attribute that `set_tooltip` writes,
+    /// so whichever is written last wins.
     pub trait WebWidgetExt: crate::Widget {
-        /// CSS のクラスを足す。
+        /// Adds a CSS class.
         fn add_class(&self, name: &str) {
             naui_web::WebWidgetExt::add_class(self.as_backend(), name)
         }
 
-        /// CSS のクラスを外す。
+        /// Removes a CSS class.
         fn remove_class(&self, name: &str) {
             naui_web::WebWidgetExt::remove_class(self.as_backend(), name)
         }
 
-        /// CSS のクラスが付いているか。
+        /// Whether a CSS class is present.
         fn has_class(&self, name: &str) -> bool {
             naui_web::WebWidgetExt::has_class(self.as_backend(), name)
         }
 
-        /// 属性を書く。書けたら `true`。
+        /// Writes an attribute. `true` if it was written.
         ///
-        /// `style` と `data-naui-*` は naui が使うので書かない (`false` を返す)。
+        /// naui uses `style` and `data-naui-*`, so they are not written (returns `false`).
         fn set_attribute(&self, name: &str, value: &str) -> bool {
             naui_web::WebWidgetExt::set_attribute(self.as_backend(), name, value)
         }
 
-        /// 属性を外す。外せたら (もともと無かったときも) `true`。
+        /// Removes an attribute. `true` if it was removed (including when it was not there
+        /// to begin with).
         ///
-        /// `style` と `data-naui-*` は naui が使うので外さない (`false` を返す)。
+        /// naui uses `style` and `data-naui-*`, so they are not removed (returns `false`).
         fn remove_attribute(&self, name: &str) -> bool {
             naui_web::WebWidgetExt::remove_attribute(self.as_backend(), name)
         }
 
-        /// 属性の値。無ければ `None`。
+        /// The attribute's value. `None` if absent.
         fn attribute(&self, name: &str) -> Option<String> {
             naui_web::WebWidgetExt::attribute(self.as_backend(), name)
         }
@@ -192,17 +197,17 @@ pub mod web {
     impl<T: crate::Widget + ?Sized> WebWidgetExt for T {}
 }
 
-/// `entry!` が使う wasm-bindgen の再公開。直接使うものではない。
+/// A re-export of wasm-bindgen for `entry!`. Not meant to be used directly.
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
 pub use naui_web::wasm_bindgen;
 
-/// ネイティブと Web の入口をまとめて作る。
+/// Creates the native and Web entry points in one go.
 ///
-/// アプリの起動処理は環境ごとに形が違う。ネイティブは `main` から呼ぶだけだが、
-/// Web はブラウザから呼ばれる関数を `#[wasm_bindgen(start)]` で公開する必要が
-/// ある。このマクロが両方を作るので、**アプリ側に `cfg` を書かずに済む**
-/// (wasm-bindgen への依存も要らない)。
+/// How an app starts differs by platform. Natively it is just called from `main`,
+/// but on the Web a function called by the browser must be exported with
+/// `#[wasm_bindgen(start)]`. This macro creates both, so **the app needs no `cfg`**
+/// (and no dependency on wasm-bindgen).
 ///
 /// ```ignore
 /// naui::entry!(naui::Settings::new("gallery"), build);
@@ -210,16 +215,16 @@ pub use naui_web::wasm_bindgen;
 /// fn build(ui: &naui::Ui) -> naui::Result<()> { /* ... */ Ok(()) }
 /// ```
 ///
-/// 展開されるのは次の 2 つ。
+/// It expands to these two:
 ///
-/// - `pub fn start() -> Result<()>` — どの環境でもある起動処理。ネイティブの
-///   `main` からはこれを呼ぶ。
-/// - Web だけ: ブラウザが読み込み後に呼ぶ入口。失敗は JS の例外として投げるので、
-///   ブラウザのコンソールに理由が出る。
+/// - `pub fn start() -> Result<()>` — the startup routine present on every
+///   platform. Call it from the native `main`.
+/// - Web only: the entry point the browser calls after loading. Failures are thrown
+///   as JS exceptions, so the reason shows up in the browser console.
 #[macro_export]
 macro_rules! entry {
     ($settings:expr, $build:expr $(,)?) => {
-        /// ネイティブ / Web 共通の起動処理。
+        /// The startup routine shared by native and Web.
         pub fn start() -> $crate::Result<()> {
             $crate::run($settings, $build)
         }
@@ -231,7 +236,7 @@ macro_rules! entry {
             // naui が再公開しているものをその名前で見えるようにする。
             use $crate::wasm_bindgen;
 
-            /// 読み込みが終わったブラウザが呼ぶ入口。
+            /// The entry point the browser calls once loading has finished.
             #[wasm_bindgen::prelude::wasm_bindgen(start)]
             pub fn start() -> ::core::result::Result<(), wasm_bindgen::JsValue> {
                 super::start().map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))

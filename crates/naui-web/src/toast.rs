@@ -1,19 +1,18 @@
-//! トースト (DOM)。
+//! Toasts (DOM).
 //!
-//! ブラウザに「しばらく出してから自分で消える通知」の標準要素は無い
-//! (`Notification` API はページの外へ出るもので、別物)。そのため
-//! [`PopupMenu`](crate::PopupMenu) と同じく、`<div role="status">` と
-//! `<button>` で組み立てる。
+//! Browsers have no standard element for "a notification shown for a while that
+//! then disappears by itself" (the `Notification` API shows things outside the
+//! page, which is different). So, as with [`PopupMenu`](crate::PopupMenu), it is
+//! built from a `<div role="status">` and a `<button>`.
 //!
-//! 色は CSS のシステムカラー (`Canvas` / `CanvasText`) を使うので、
-//! [`crate::Ui::set_theme`] が `<html>` に設定する `color-scheme` へ
-//! そのまま追従する。CSS で決めているのは位置 (下端の中央)、余白、
-//! 角の丸みだけ。
+//! Colors use CSS system colors (`Canvas` / `CanvasText`), so they follow the
+//! `color-scheme` that [`crate::Ui::set_theme`] sets on `<html>` as is. CSS decides
+//! only the position (bottom center), padding and corner radius.
 //!
-//! 読み上げは `role="status"` (`aria-live="polite"`) に任せる。文字が
-//! 入った時点で、読み上げ中の内容を遮らずに読まれる。
+//! Screen reader announcements are left to `role="status"` (`aria-live="polite"`).
+//! Once the text is in, it is read without interrupting what is being read.
 //!
-//! 消えるまでの時間は `setTimeout` が数える。
+//! `setTimeout` counts down until it disappears.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -27,7 +26,7 @@ use crate::to_error;
 use crate::widgets::{create, Listener};
 
 thread_local! {
-    /// いま出ているトースト。同時に出るのは 1 つで、新しいものが置き換える。
+    /// The toast showing now. Only one is shown at a time, and a new one replaces it.
     static CURRENT: RefCell<Option<Toast>> = const { RefCell::new(None) };
 }
 
@@ -36,31 +35,33 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
 }
 
 struct ToastInner {
-    /// トースト本体。`<body>` 直下に置き、出ていない間は `display: none`。
+    /// The toast itself. Placed directly under `<body>`, with `display: none` while not
+    /// shown.
     element: HtmlElement,
-    /// 文字を出す `<span>`。
+    /// The `<span>` showing the text.
     label: HtmlElement,
-    /// 操作ボタン。置いていない間は `hidden`。
+    /// The action button. `hidden` while there is none.
     button: HtmlElement,
     spec: RefCell<ToastSpec>,
-    /// 操作ボタンのクリック購読。
+    /// The action button's click subscription.
     _click: RefCell<Option<Listener>>,
-    /// 時間切れをブラウザから受けるクロージャ。**トーストと同じだけ
-    /// 生かしておく。**
+    /// The closure that receives the timeout from the browser. **Kept alive as long as
+    /// the toast.**
     ///
-    /// 出すたびに作り直さないのは、この中から消したときに
-    /// **実行中のクロージャそのものを解放してしまわない**ようにするため。
+    /// It is not recreated every time it is shown so that dismissing from inside it
+    /// **does not free the closure that is currently running**.
     tick: RefCell<Option<Closure<dyn FnMut()>>>,
-    /// `setTimeout` の予約。消えない指定なら持たない。
+    /// The `setTimeout` reservation. Absent if it never disappears.
     timeout: Cell<Option<i32>>,
     on_action: RefCell<Option<Box<dyn FnMut()>>>,
     on_dismiss: RefCell<Option<Box<dyn FnMut()>>>,
     visible: Cell<bool>,
 }
 
-/// 一時的な通知 (`<div role="status">`)。
+/// A transient notification (`<div role="status">`).
 ///
-/// 画面に並ぶウィジェットではないので [`Widget`](crate::Widget) ではない。
+/// It is not a widget laid out on screen, so it is not a
+/// [`Widget`](crate::Widget).
 #[derive(Clone)]
 pub struct Toast(Rc<ToastInner>);
 
@@ -120,7 +121,7 @@ impl Toast {
         Ok(this)
     }
 
-    /// 時間切れを受けるクロージャを作る。以後はこれを使い回す。
+    /// Creates the closure that receives the timeout. It is reused from then on.
     fn install_tick(&self) {
         let weak = Rc::downgrade(&self.0);
         let tick = Closure::<dyn FnMut()>::new(move || {
@@ -132,7 +133,7 @@ impl Toast {
         *self.0.tick.borrow_mut() = Some(tick);
     }
 
-    /// 操作ボタンが押されたら、通知して消えるようにする。
+    /// Makes clicking the action button notify and dismiss the toast.
     fn install_action_handler(&self) -> Result<()> {
         let weak = Rc::downgrade(&self.0);
         let listener = Listener::attach(self.0.button.as_ref(), "click", move || {
@@ -145,7 +146,7 @@ impl Toast {
         Ok(())
     }
 
-    /// 出す文字列。出している間に呼ぶと、その場で書き換わる。
+    /// The string to show. Calling it while shown updates it on the spot.
     pub fn set_message(&self, message: &str) {
         self.0.spec.borrow_mut().set_message(message);
         self.0.label.set_text_content(Some(message));
@@ -155,7 +156,7 @@ impl Toast {
         self.0.spec.borrow().message().to_string()
     }
 
-    /// 操作ボタンの文字列。**空文字列を渡すとボタンを外す。**
+    /// The action button's label. **Passing an empty string removes the button.**
     pub fn set_action(&self, label: &str) {
         self.0.spec.borrow_mut().set_action(label);
         let action = self.0.spec.borrow().action().map(str::to_string);
@@ -171,7 +172,7 @@ impl Toast {
         }
     }
 
-    /// 操作ボタンの文字列。置いていなければ空文字列。
+    /// The action button's label. The empty string if there is no button.
     pub fn action(&self) -> String {
         self.0
             .spec
@@ -181,9 +182,10 @@ impl Toast {
             .to_string()
     }
 
-    /// 自動で消えるまでの秒数。**0 を渡すと自動では消えない。**
+    /// Seconds until it disappears automatically. **Passing 0 means it never
+    /// disappears automatically.**
     ///
-    /// 次に [`show`](Self::show) したときから効く。
+    /// Takes effect from the next [`show`](Self::show).
     pub fn set_timeout(&self, seconds: f64) {
         self.0.spec.borrow_mut().set_timeout(seconds);
     }
@@ -192,32 +194,34 @@ impl Toast {
         self.0.spec.borrow().timeout()
     }
 
-    /// いまの設定。
+    /// The current settings.
     pub fn spec(&self) -> ToastSpec {
         self.0.spec.borrow().clone()
     }
 
-    /// 操作ボタンが押されたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called when the action button is clicked. Setting it again removes the previous
+    /// one.
     ///
-    /// 押されるとトーストは消えるので、続けて `on_dismiss` も呼ばれる。
+    /// Clicking it makes the toast disappear, so `on_dismiss` is called next.
     pub fn on_action(&self, f: impl FnMut() + 'static) {
         *self.0.on_action.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 消えたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called when it disappears. Setting it again removes the previous one.
     ///
-    /// 呼ばれるのは**時間で消えたとき**と**操作ボタンで消えたとき**。
-    /// [`dismiss`](Self::dismiss) で消したときと、別のトーストに
-    /// 置き換えられたときは呼ばれない (アプリ自身の操作は通知しない、
-    /// という [`Dialog::close`](crate::Dialog::close) と同じ決まり)。
+    /// It is called **when it times out** and **when it is closed by the action
+    /// button**. It is not called when it is closed with [`dismiss`](Self::dismiss) or
+    /// replaced by another toast (the same rule as
+    /// [`Dialog::close`](crate::Dialog::close): the app's own actions are not
+    /// notified).
     pub fn on_dismiss(&self, f: impl FnMut() + 'static) {
         *self.0.on_dismiss.borrow_mut() = Some(Box::new(f));
     }
 
-    /// トーストを出す。
+    /// Shows the toast.
     ///
-    /// **同時に出るのは 1 つ**で、ほかのトーストが出ていれば置き換える
-    /// (置き換えられたほうの `on_dismiss` は呼ばれない)。
+    /// **Only one is shown at a time**; if another toast is showing, it is replaced
+    /// (the replaced one's `on_dismiss` is not called).
     pub fn show(&self) {
         if let Some(previous) = CURRENT.with(|slot| slot.borrow_mut().take()) {
             previous.take_down();
@@ -228,7 +232,7 @@ impl Toast {
         CURRENT.with(|slot| *slot.borrow_mut() = Some(self.clone()));
     }
 
-    /// 出しているトーストを消す。`on_dismiss` は呼ばれない。
+    /// Closes the toast being shown. `on_dismiss` is not called.
     pub fn dismiss(&self) {
         if !self.is_visible() {
             return;
@@ -237,17 +241,17 @@ impl Toast {
         self.take_down();
     }
 
-    /// いま出ているか。
+    /// Whether it is showing now.
     pub fn is_visible(&self) -> bool {
         self.0.visible.get()
     }
 
-    /// トーストの要素。バックエンド固有の脱出口。
+    /// The toast's element. A backend-specific escape hatch.
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()
     }
 
-    /// 消えたことをアプリへ知らせる。`action` は操作ボタンで消えたか。
+    /// Tells the app it disappeared. `action` is whether the action button closed it.
     fn finish(&self, action: bool) {
         if !self.is_visible() {
             return;
@@ -260,7 +264,7 @@ impl Toast {
         emit(&self.0.on_dismiss);
     }
 
-    /// 時間を数え始める。消えない指定なら何もしない。
+    /// Starts counting down. Does nothing if it never disappears.
     fn start_timeout(&self) {
         let Some(millis) = self.0.spec.borrow().timeout_millis() else {
             return;
@@ -279,7 +283,7 @@ impl Toast {
         self.0.timeout.set(handle);
     }
 
-    /// 隠して、時間を数えるのをやめる。通知はしない。
+    /// Hides it and stops counting down. No notification.
     fn take_down(&self) {
         if let (Some(handle), Some(window)) = (self.0.timeout.take(), web_sys::window()) {
             window.clear_timeout_with_handle(handle);
@@ -288,7 +292,7 @@ impl Toast {
         self.0.visible.set(false);
     }
 
-    /// 「いま出ているトースト」が自分なら、その座を空ける。
+    /// If "the toast showing now" is this one, vacates that slot.
     fn forget_current(&self) {
         CURRENT.with(|slot| {
             let mine = slot
@@ -302,8 +306,8 @@ impl Toast {
     }
 }
 
-/// 通知。通知の中から設定し直しても二重借用にならないよう、
-/// 呼び出しの間だけクロージャを取り出す。
+/// Notification. So that setting it again from inside the notification does not
+/// double-borrow, the closure is taken out only for the duration of the call.
 fn emit(slot: &RefCell<Option<Box<dyn FnMut()>>>) {
     let Some(mut f) = slot.borrow_mut().take() else {
         return;

@@ -1,12 +1,12 @@
-//! 入り切りのスイッチ (`<input type="checkbox" switch>`)。
+//! An on/off switch (`<input type="checkbox" switch>`).
 //!
-//! HTML のスイッチは、チェックボックスへ `switch` 属性を付けたもの。
-//! ブラウザが対応していれば入り切りのつまみとして描かれ、対応していない
-//! ブラウザではチェックボックスのまま出る (値の扱いはどちらも同じ)。
+//! An HTML switch is a check box with the `switch` attribute. Browsers that support
+//! it draw an on/off knob; browsers that do not show a check box (values are
+//! handled the same either way).
 //!
-//! **対応しているのは Safari 17.4 以降だけ** (Chromium 148 で未対応を確認)
-//! だが、つまみの見た目を naui 側の CSS で作ることはしない。naui はウィジェット
-//! を自前で描画せず、ブラウザにあるものをそのまま使う方針のため。
+//! **Only Safari 17.4 and later support it** (confirmed unsupported in Chromium
+//! 148), but naui does not create the knob's look with its own CSS: naui's policy
+//! is not to draw widgets itself and to use what the browser has as is.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,13 +19,13 @@ use crate::to_error;
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
 struct ToggleInner {
-    /// `<label><input type="checkbox" switch>テキスト</label>`
+    /// `<label><input type="checkbox" switch>text</label>`
     element: HtmlElement,
     input: HtmlInputElement,
     listener: RefCell<Option<Listener>>,
 }
 
-/// 入り切りを切り替えるスイッチ (`<input type="checkbox" switch>`)。
+/// An on/off switch (`<input type="checkbox" switch>`).
 #[derive(Clone)]
 pub struct Toggle(Rc<ToggleInner>);
 impl_widget!(Toggle, element);
@@ -61,13 +61,13 @@ impl Toggle {
         })))
     }
 
-    /// 入っているかどうか。
+    /// Whether it is on.
     pub fn is_on(&self) -> bool {
         self.0.input.checked()
     }
 
-    /// プログラムから切り替える。`on_toggle` は呼ばれない
-    /// (DOM は `checked` を書いても `change` を出さない)。
+    /// Switches it from code. `on_toggle` is not called (the DOM does not fire `change`
+    /// when `checked` is written).
     pub fn set_on(&self, on: bool) {
         self.0.input.set_checked(on);
     }
@@ -76,7 +76,7 @@ impl Toggle {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// 利用者が切り替えるたびに、切り替えた後の状態で呼ばれる。
+    /// Called with the new state every time the user switches it.
     pub fn on_toggle(&self, mut f: impl FnMut(bool) + 'static) {
         let input = self.0.input.clone();
         let listener = Listener::attach(self.0.input.as_ref(), "change", move || {
@@ -86,12 +86,12 @@ impl Toggle {
         *self.0.listener.borrow_mut() = listener;
     }
 
-    /// クリックを発生させる (テストや自動操作用)。
+    /// Triggers a click (for tests and automation).
     pub fn click(&self) {
         self.0.input.click();
     }
 
-    /// スイッチ本体。バックエンド固有の脱出口として公開している。
+    /// The switch itself. Public as a backend-specific escape hatch.
     pub fn native_switch(&self) -> HtmlInputElement {
         self.0.input.clone()
     }

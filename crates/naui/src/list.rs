@@ -2,25 +2,26 @@ use crate::sys;
 use crate::Widget;
 use naui_core::{ListItem, Point, SelectionMode};
 
-/// 選択できる行の一覧。自分でスクロールする。
+/// A list of selectable rows. It scrolls by itself.
 ///
-/// 高さを指定しないときは全行の高さに追従し、固定高さや `Fill` では
-/// はみ出した分をスクロールする。
+/// Without a height set, it follows the height of all its rows; with a fixed height
+/// or `Fill`, it scrolls whatever overflows.
 #[derive(Clone)]
 pub struct List(pub(crate) sys::List);
 
 impl_widget!(List);
 
 impl List {
-    /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     #[inline]
     pub fn set_items(&self, items: &[ListItem]) {
         self.0.set_items(items)
     }
 
-    /// 行を作り直す。通常行も任意内容の行もこの経路で描画する。
+    /// Rebuilds the rows. Both plain rows and rows with custom content are drawn
+    /// through this path.
     ///
-    /// 行内のコントロールは通常どおりそれぞれのコールバックを持てる。
+    /// Controls inside a row can have their own callbacks as usual.
     #[inline]
     pub fn set_rows(&self, rows: &[ListRow]) {
         self.0
@@ -47,95 +48,96 @@ impl List {
         self.0.selection_mode()
     }
 
-    /// 選ばれている先頭の行。
+    /// The first selected row.
     #[inline]
     pub fn selected(&self) -> Option<usize> {
         self.0.selected()
     }
 
-    /// 選ばれている行を昇順で返す。
+    /// Returns the selected rows in ascending order.
     #[inline]
     pub fn selection(&self) -> Vec<usize> {
         self.0.selection()
     }
 
-    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until row `index` is visible. The selection does not change.
     ///
-    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
-    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    /// If it is already visible nothing moves; otherwise it is aligned to the nearer
+    /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
+    /// range.
     #[inline]
     pub fn scroll_to_row(&self, index: usize) {
         self.0.scroll_to_row(index)
     }
 
-    /// 通知せずに 1 行だけ選ぶ。
+    /// Selects a single row without notifying.
     #[inline]
     pub fn set_selected(&self, index: usize) {
         self.0.set_selected(index)
     }
 
-    /// 通知せずに選択を置き換える。
+    /// Replaces the selection without notifying.
     #[inline]
     pub fn set_selection(&self, indices: &[usize]) {
         self.0.set_selection(indices)
     }
 
-    /// 通知せずに選択をすべて外す。
+    /// Clears the whole selection without notifying.
     #[inline]
     pub fn clear_selection(&self) {
         self.0.clear_selection()
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 行を選ぶ (通知あり)。
+    /// Selects one row through the same path as a user's selection (notifies).
     #[inline]
     pub fn select(&self, index: usize) {
         self.0.select(index)
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
+    /// Replaces the selection through the same path as a user's selection (notifies).
     #[inline]
     pub fn select_many(&self, indices: &[usize]) {
         self.0.select_many(indices)
     }
 
-    /// 選択が変わるたびに、選ばれている行のインデックスで呼ばれる。
+    /// Called with the indices of the selected rows every time the selection changes.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.on_select(f)
     }
 
-    /// 行が起動されたとき (ダブルクリック、または行にフォーカスがある状態での
-    /// Enter) に、その行のインデックスで呼ばれる。
+    /// Called with the row's index when a row is activated (double-clicked, or Enter
+    /// while the row has focus).
     ///
-    /// 複数選択のすべてを開きたいときは、中で [`List::selection`] を読む。
-    /// 選べない `ListItem` (`enabled(false)`) の行では呼ばれない。
+    /// To open everything in a multiple selection, read [`List::selection`] inside it.
+    /// Not called for rows of `ListItem`s that cannot be selected (`enabled(false)`).
     #[inline]
     pub fn on_row_activate(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_row_activate(f)
     }
 
-    /// 行が右クリックされたときに、その行のインデックスと、押された位置で呼ばれる。
+    /// Called with the row's index and the click position when a row is right-clicked.
     ///
-    /// 位置はこのリストの座標 (論理ピクセル、y は下向き) で、
-    /// [`crate::PopupMenu::open_at`] へそのまま渡せる。選択は変えない。
-    /// 行の無い余白では呼ばれない。
+    /// The position is in this list's coordinates (logical pixels, y pointing down) and
+    /// can be passed straight to [`crate::PopupMenu::open_at`]. The selection does not
+    /// change. Not called for empty space without rows.
     #[inline]
     pub fn on_context_menu(&self, f: impl FnMut(usize, Point) + 'static) {
         self.0.on_context_menu(f)
     }
 }
 
-/// リストへ載せる 1 行。
+/// One row to put in a list.
 ///
-/// [`ListItem`] は文字列だけで済む一覧向けの簡便 API であり、設定画面のように
-/// アイコン、複数のラベル、チェックボックス、末尾のボタンなどを組み合わせる
-/// 行は `Grid` / `Stack` で作って `ListRow` に包む。
+/// [`ListItem`] is a convenience API for lists that need only strings. Rows that
+/// combine icons, several labels, check boxes, trailing buttons and so on, as in a
+/// settings screen, are built with `Grid` / `Stack` and wrapped in a `ListRow`.
 ///
 /// ```no_run
 /// # use naui::{ListRow, Widget};
 /// # fn row(content: &dyn Widget) {
 /// let row = ListRow::new(content).selectable(false);
-/// row.on_activate(|| println!("行がクリックされました"));
+/// row.on_activate(|| println!("row clicked"));
 /// # let _ = row;
 /// # }
 /// ```
@@ -145,13 +147,14 @@ pub struct ListRow(pub(crate) sys::ListRow);
 impl_backend!(ListRow);
 
 impl ListRow {
-    /// ウィジェットを 1 行の内容として使う。既定では行全体も選択できる。
+    /// Uses a widget as the content of one row. By default the whole row can be
+    /// selected too.
     #[inline]
     pub fn new(content: &dyn Widget) -> Self {
         Self(sys::ListRow::new(content.as_backend()))
     }
 
-    /// 行内のコントロールだけを操作する行では `false` にする。
+    /// Set to `false` for rows where only the controls inside are operated.
     #[inline]
     pub fn selectable(self, selectable: bool) -> Self {
         Self(self.0.selectable(selectable))
@@ -162,14 +165,14 @@ impl ListRow {
         self.0.is_selectable()
     }
 
-    /// 行内のラベル・アイコン・余白がクリックされたときに呼ぶ処理。
+    /// What to do when a label, icon or empty space inside the row is clicked.
     ///
-    /// チェックボックス、ボタン、入力欄などのコントロールを直接押した場合は
-    /// (それぞれが自分でクリックを受け取るため) 呼ばれず、同じ操作が二重に
-    /// 発火しない。
+    /// When a control such as a check box, button or text field is clicked directly, it
+    /// is not called (each control receives its own clicks), so the same action does
+    /// not fire twice.
     ///
-    /// `GtkListBoxRow` を押せるようにするかどうかは行を組み立てるときに
-    /// 決まるので、[`List::set_rows`] へ渡す前に設定する。
+    /// Whether a `GtkListBoxRow` is clickable is decided when the row is built, so set
+    /// this before passing it to [`List::set_rows`].
     #[inline]
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.0.on_activate(f)

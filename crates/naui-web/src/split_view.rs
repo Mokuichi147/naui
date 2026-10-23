@@ -1,24 +1,25 @@
-//! 分割ビュー (`<div>` + `<div role="separator">`)。
+//! A split view (`<div>` + `<div role="separator">`).
 //!
-//! **HTML に「動かせる仕切りで区画を分ける」要素は無い。** `resize` は
-//! 要素の隅につまみを出すだけで、区画の間に仕切りを立てる仕組みではないため、
-//! `Toast` と同じく naui が組み立てる数少ない例外になる。
+//! **HTML has no element that "divides panes with a movable divider".** `resize`
+//! only puts a handle in an element's corner and is not a mechanism for placing a
+//! divider between panes, so, like `Toast`, this is one of the few exceptions naui
+//! builds itself.
 //!
-//! 組み立てるのは**位置と当たり判定だけ**で、カーソルは CSS の標準の
-//! `col-resize` / `row-resize` に任せる。ブラウザに標準の見た目が無いので、
-//! naui が絵を描くことはしない。
+//! What is built is **only the position and the hit area**; the cursor is left to
+//! CSS's standard `col-resize` / `row-resize`. Browsers have no standard look for
+//! it, so naui draws no picture.
 //!
-//! **見えるのは 1 px の線だけ**で、残りは透明なつかみ代になっている
-//! (`box-sizing: border-box` の片側だけに `border` を引く)。塗りつぶしの帯に
-//! すると、区切りというより 1 つの部品のように見えて周りから浮くため。
-//! 線の色はシステムカラーの `GrayText` を使う。`ButtonBorder` と `CanvasText`
-//! はブラウザによって**地色の正反対** (ダークなら白、ライトなら黒) になり、
-//! 区切り線としては強すぎるのに対し、`GrayText` はどちらの配色でも地色と
-//! 文字色の中間に来る。
+//! **Only a 1 px line is visible**; the rest is a transparent grab area (a `border`
+//! drawn on one side only, with `box-sizing: border-box`). A filled band would look
+//! less like a separator and more like a component of its own, standing out from its
+//! surroundings. The line color is the system color `GrayText`. `ButtonBorder` and
+//! `CanvasText` are **the exact opposite of the background** in some browsers
+//! (white in dark mode, black in light mode), too strong for a separator, whereas
+//! `GrayText` falls between the background and text colors in either scheme.
 //!
-//! 仕切りは `role="separator"` + `tabindex="0"` なので、**キーボードでも
-//! 動かせる** (矢印キーで 10 px ずつ)。読み上げには `aria-valuenow` で
-//! いまの位置を伝える。
+//! The divider has `role="separator"` + `tabindex="0"`, so **it can be moved with
+//! the keyboard too** (10 px per arrow key press). `aria-valuenow` reports the
+//! current position to screen readers.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -31,13 +32,14 @@ use crate::layout::{apply_child_layout, mark_parent, ParentLayout};
 use crate::to_error;
 use crate::widgets::{create, impl_widget, Listener, ValueHandler, Widget};
 
-/// 仕切りが占める太さ (論理ピクセル)。指でもつまめる幅にしてある。
+/// The thickness the divider occupies (logical pixels). Wide enough to grab with a
+/// finger.
 ///
-/// このうち見えるのは [`DIVIDER_LINE`] の 1 px だけで、残りは透明。
+/// Of this, only the 1 px of [`DIVIDER_LINE`] is visible; the rest is transparent.
 const DIVIDER_THICKNESS: f64 = 6.0;
-/// 見えている線の太さ (論理ピクセル)。
+/// The thickness of the visible line (logical pixels).
 const DIVIDER_LINE: f64 = 1.0;
-/// 矢印キー 1 回で動く量 (論理ピクセル)。
+/// How much one arrow key press moves it (logical pixels).
 const KEY_STEP: f64 = 10.0;
 
 fn style(element: &HtmlElement, property: &str, value: &str) {
@@ -45,28 +47,30 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
 }
 
 struct SplitViewInner {
-    /// 3 つを横 (縦) に並べる Flexbox の `<div>`。
+    /// A Flexbox `<div>` laying out the three side by side (or stacked).
     element: HtmlElement,
     start_pane: HtmlElement,
     divider: HtmlElement,
     end_pane: HtmlElement,
     orientation: Orientation,
-    /// 区画のハンドルを保持し、コールバックごと生かしておく。
+    /// Holds the pane's handle, keeping it alive along with its callbacks.
     start: RefCell<Option<Box<dyn Widget>>>,
     end: RefCell<Option<Box<dyn Widget>>>,
     position: Cell<f64>,
     min_start: Cell<f64>,
     min_end: Cell<f64>,
-    /// ドラッグ中のポインター。つかんでいない間は `None`。
+    /// The pointer being dragged. `None` while not grabbed.
     dragging: Cell<Option<i32>>,
-    /// つかんだ場所と線の位置とのずれ。線を指の下へ飛ばさないために覚える。
+    /// The offset between where it was grabbed and the line's position. Remembered so
+    /// the line does not jump under the finger.
     grab: Cell<f64>,
     handler: ValueHandler<f64>,
-    /// 中継はハンドルと同じ寿命で持つ (通知の中から動かせるように)。
+    /// The relays are held with the same lifetime as the handle (so it can be moved from
+    /// inside the notification).
     listeners: RefCell<Vec<Listener>>,
 }
 
-/// 2 つの区画を、動かせる仕切りで分けるコンテナ。
+/// A container that divides two panes with a movable divider.
 #[derive(Clone)]
 pub struct SplitView(Rc<SplitViewInner>);
 impl_widget!(SplitView, element);
@@ -148,7 +152,7 @@ impl SplitView {
         Ok(this)
     }
 
-    /// 仕切りのつまみ方 (ポインターとキーボード) をつなぐ。
+    /// Connects how the divider is grabbed (pointer and keyboard).
     fn attach_listeners(&self) -> Result<()> {
         let mut listeners = Vec::new();
         let divider = self.0.divider.clone();
@@ -241,38 +245,39 @@ impl SplitView {
         Ok(())
     }
 
-    /// 並べる向き。`Horizontal` なら区画が横に並ぶ (仕切りは縦)。
+    /// The layout direction. With `Horizontal`, the panes are side by side (the divider
+    /// is vertical).
     pub fn orientation(&self) -> Orientation {
         self.0.orientation
     }
 
-    /// 左 (または上) の区画。呼ぶたびに置き換わる。
+    /// The left (or top) pane. Each call replaces it.
     pub fn set_start(&self, child: &dyn Widget) {
         self.0.set_pane(true, child);
     }
 
-    /// 右 (または下) の区画。呼ぶたびに置き換わる。
+    /// The right (or bottom) pane. Each call replaces it.
     pub fn set_end(&self, child: &dyn Widget) {
         self.0.set_pane(false, child);
     }
 
-    /// いまの仕切りの位置 (start 側の大きさ、論理ピクセル)。
+    /// The current divider position (size of the start side, logical pixels).
     pub fn position(&self) -> f64 {
         self.0.position.get()
     }
 
-    /// 仕切りを動かす。`on_resize` は呼ばれない。
+    /// Moves the divider. `on_resize` is not called.
     pub fn set_position(&self, position: f64) {
         self.0.position.set(self.0.clamp(position));
         self.0.write_position();
     }
 
-    /// 利用者がドラッグしたのと同じく仕切りを動かす。`on_resize` を呼ぶ。
+    /// Moves the divider as if the user had dragged it. Calls `on_resize`.
     pub fn drag_to(&self, position: f64) {
         self.0.move_to(position);
     }
 
-    /// 両側の区画の最小の大きさ。既定はどちらも 0。
+    /// The minimum sizes of the two panes. Both default to 0.
     pub fn set_min_sizes(&self, start: f64, end: f64) {
         self.0.min_start.set(start.max(0.0));
         self.0.min_end.set(end.max(0.0));
@@ -281,35 +286,36 @@ impl SplitView {
         self.0.write_position();
     }
 
-    /// 利用者が仕切りを動かすたび、動いた後の位置で呼ばれる。
+    /// Called with the new position every time the user moves the divider.
     pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 仕切りの `<div>`。バックエンド固有の脱出口として公開している。
+    /// The divider's `<div>`. Public as a backend-specific escape hatch.
     pub fn native_divider(&self) -> HtmlElement {
         self.0.divider.clone()
     }
 
-    /// start 側の区画の `<div>`。ウィジェットではない要素を直に置くときに使う
-    /// ([`Sidebar`](crate::Sidebar) の `<aside>`)。
+    /// The `<div>` of the start-side pane. Used to place elements that are not widgets
+    /// directly (the `<aside>` of [`Sidebar`](crate::Sidebar)).
     pub(crate) fn start_element(&self) -> HtmlElement {
         self.0.start_pane.clone()
     }
 
-    /// end 側の区画の `<div>`。
+    /// The `<div>` of the end-side pane.
     pub(crate) fn end_element(&self) -> HtmlElement {
         self.0.end_pane.clone()
     }
 
-    /// start 側の区画と仕切りを隠す (`true`) か出す (`false`)。
+    /// Hides (`true`) or shows (`false`) the start-side pane and the divider.
     ///
-    /// 隠している間は end 側が全体を受け取る。位置は覚えたままなので、
-    /// 出し直すと元の大きさへ戻る。
+    /// While hidden, the end side takes everything. The position is remembered, so
+    /// showing it again restores the original size.
     ///
-    /// `hidden` 属性だけでは消えない。区画にはインラインで `display: flex` を
-    /// 当てていて、それがブラウザ既定の `[hidden] { display: none }` より強い
-    /// ため。属性 (読み上げ向けの意味) と一緒に `display` も切り替える。
+    /// The `hidden` attribute alone does not make it disappear: the pane has an inline
+    /// `display: flex`, which is stronger than the browser's default
+    /// `[hidden] { display: none }`. So `display` is switched together with the
+    /// attribute (which carries the meaning for screen readers).
     pub(crate) fn set_start_hidden(&self, hidden: bool) {
         self.0.start_pane.set_hidden(hidden);
         style(
@@ -320,7 +326,7 @@ impl SplitView {
         self.0.divider.set_hidden(hidden);
     }
 
-    /// start 側の区画と仕切りを隠しているかどうか。
+    /// Whether the start-side pane and the divider are hidden.
     pub(crate) fn is_start_hidden(&self) -> bool {
         self.0.start_pane.hidden()
     }
@@ -343,7 +349,7 @@ impl SplitViewInner {
         }
     }
 
-    /// 2 つの区画が分け合える大きさ (仕切りの分を除く)。まだ 0 なら 0。
+    /// The size the two panes can share (excluding the divider). 0 if still 0.
     fn total(&self) -> f64 {
         let rect = self.element.get_bounding_client_rect();
         let length = if self.orientation.is_vertical() {
@@ -366,7 +372,8 @@ impl SplitViewInner {
         )
     }
 
-    /// ポインターの位置を、分割ビューの始端からの距離へ読み替える。
+    /// Reinterprets the pointer's position as the distance from the split view's start
+    /// edge.
     fn pointer_offset(&self, event: &PointerEvent) -> f64 {
         let rect = self.element.get_bounding_client_rect();
         if self.orientation.is_vertical() {
@@ -376,7 +383,7 @@ impl SplitViewInner {
         }
     }
 
-    /// 利用者が動かしたときの処理。変わったときだけ通知する。
+    /// Handling when the user moves it. Notifies only when it changed.
     fn move_to(&self, position: f64) {
         let clamped = self.clamp(position);
         if (clamped - self.position.get()).abs() < 0.5 {
@@ -387,7 +394,7 @@ impl SplitViewInner {
         self.handler.emit(clamped);
     }
 
-    /// いまの位置と最小の大きさを CSS と ARIA へ書く。
+    /// Writes the current position and the minimum sizes into CSS and ARIA.
     fn write_position(&self) {
         let position = self.position.get();
         let (size, min) = if self.orientation.is_vertical() {
@@ -408,7 +415,7 @@ impl SplitViewInner {
     }
 }
 
-/// 区画 1 つぶんの `<div>`。中は縦の Flexbox。
+/// The `<div>` for one pane. Its inside is a vertical Flexbox.
 fn pane(doc: &Document) -> Result<HtmlElement> {
     let element: HtmlElement = create(doc, "div")?.unchecked_into();
     style(&element, "display", "flex");

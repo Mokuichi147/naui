@@ -1,4 +1,4 @@
-//! ファイルとフォルダーの選択 (`GtkButton` + `GtkFileDialog`)。
+//! Picking files and folders (`GtkButton` + `GtkFileDialog`).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,7 +20,7 @@ struct FilePickerInner {
     on_select: FileNotifier,
 }
 
-/// ファイルやフォルダーを選ばせるボタン。押すと `GtkFileDialog` が出る。
+/// A button for picking files or folders. Clicking it shows a `GtkFileDialog`.
 #[derive(Clone)]
 pub struct FilePicker(Rc<FilePickerInner>);
 impl_widget!(FilePicker);
@@ -56,7 +56,7 @@ impl FilePicker {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 何を選ばせるか。既定は「ファイルを 1 つ」。
+    /// What to let the user pick. The default is "one file".
     pub fn set_mode(&self, mode: FilePickerMode) {
         self.0.mode.set(mode);
     }
@@ -65,24 +65,24 @@ impl FilePicker {
         self.0.mode.get()
     }
 
-    /// 拡張子による絞り込み。フォルダーを選ぶモードでは使われない。
+    /// Filters by file extension. Not used in folder mode.
     pub fn set_filters(&self, filters: &[FileFilter]) {
         let mut stored = self.0.filters.borrow_mut();
         stored.clear();
         stored.extend_from_slice(filters);
     }
 
-    /// 直前に選ばれたもの。
+    /// What was picked last.
     pub fn selection(&self) -> Vec<FileEntry> {
         self.0.selection.borrow().clone()
     }
 
-    /// 選ばれるたびに、選ばれたものの並びで呼ばれる。
+    /// Called with the sequence of picked items every time something is picked.
     pub fn on_select(&self, f: impl FnMut(&[FileEntry]) + 'static) {
         self.0.on_select.set(f);
     }
 
-    /// ダイアログを出す。ボタンを押したときと同じ。
+    /// Shows the dialog. The same as clicking the button.
     pub fn open(&self) {
         let dialog = gtk::FileDialog::new();
         let mode = self.0.mode.get();
@@ -134,7 +134,7 @@ impl FilePicker {
         }
     }
 
-    /// 絞り込みを `GtkFileDialog` が要求する形 (`GListModel`) に組み立てる。
+    /// Builds the filters in the form `GtkFileDialog` requires (`GListModel`).
     fn build_filters(&self) -> Option<gio::ListStore> {
         let filters = self.0.filters.borrow();
         let usable: Vec<&FileFilter> = filters.iter().filter(|f| !f.is_empty()).collect();
@@ -154,7 +154,7 @@ impl FilePicker {
     }
 }
 
-/// 選ばれた `GFile` を naui の形へ写す。パスを持たないものは捨てる。
+/// Maps a picked `GFile` into naui's form. Ones without a path are dropped.
 fn to_entry(file: &gio::File) -> Option<FileEntry> {
     file.path().map(FileEntry::from_path)
 }

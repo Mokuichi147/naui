@@ -1,12 +1,14 @@
-//! 選択肢を並べて 1 つだけ選ばせるラジオグループ (AppKit)。
+//! A radio group that lays out options and lets the user choose exactly one
+//! (AppKit).
 //!
-//! `NSButton` のラジオ型を `NSStackView` へ並べる。AppKit は「同じ superview に
-//! いて同じ action を持つラジオボタン」を 1 つの組として扱うので、グループ専用の
-//! スタックビューを持つことで、ほかのラジオグループと混ざらない。
+//! Radio-type `NSButton`s are laid out in an `NSStackView`. AppKit treats "radio
+//! buttons in the same superview with the same action" as one group, so giving the
+//! group its own stack view keeps it from mixing with other radio groups.
 //!
-//! 排他の状態は naui 側でも明示的に書く。AppKit の自動グルーピングは利用者の
-//! クリックにしか効かず、[`set_selected`](RadioGroup::set_selected) や
-//! [`clear_selection`](RadioGroup::clear_selection) は naui が面倒を見るため。
+//! naui also writes the exclusive state explicitly. AppKit's automatic grouping
+//! only works for user clicks, while
+//! [`set_selected`](RadioGroup::set_selected) and
+//! [`clear_selection`](RadioGroup::clear_selection) are taken care of by naui.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,17 +28,19 @@ use crate::widgets::{impl_widget, Widget};
 struct RadioGroupInner {
     native: Retained<NSStackView>,
     buttons: RefCell<Vec<Retained<NSButton>>>,
-    /// ボタンごとの target。AppKit の target は weak なので、ここで生かしておく。
+    /// The target per button. AppKit targets are weak, so they are kept alive here.
     targets: RefCell<Vec<Retained<ActionTarget>>>,
     handler: SelectHandler,
-    /// [`set_enabled`](RadioGroup::set_enabled) の指定。`set_items` で作り直す
-    /// ボタンにも同じ状態を引き継ぐために覚えておく。
+    /// The setting from [`set_enabled`](RadioGroup::set_enabled). Remembered so the
+    /// buttons recreated by `set_items` get the same state.
     enabled: Cell<bool>,
 }
 
-/// 選択肢を並べて 1 つだけ選ばせるラジオグループ (`NSButton` のラジオ型)。
+/// A radio group that lays out options and lets the user choose exactly one
+/// (radio-type `NSButton`s).
 ///
-/// 作った直後と [`set_items`](Self::set_items) の直後は、何も選ばれていない。
+/// Right after creation and right after [`set_items`](Self::set_items), nothing is
+/// selected.
 #[derive(Clone)]
 pub struct RadioGroup(Rc<RadioGroupInner>);
 impl_widget!(RadioGroup);
@@ -55,7 +59,8 @@ impl RadioGroup {
         }))
     }
 
-    /// 選択肢を作り直し、選択を外す。選択通知は発生しない。
+    /// Rebuilds the options and clears the selection. No selection notification is
+    /// sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         for button in self.0.buttons.borrow_mut().drain(..) {
@@ -103,7 +108,7 @@ impl RadioGroup {
         *self.0.targets.borrow_mut() = targets;
     }
 
-    /// 選択肢の数。
+    /// The number of options.
     pub fn len(&self) -> usize {
         self.0.buttons.borrow().len()
     }
@@ -112,7 +117,7 @@ impl RadioGroup {
         self.len() == 0
     }
 
-    /// 現在選ばれている選択肢。未選択なら `None`。
+    /// The currently selected option. `None` if nothing is selected.
     pub fn selected(&self) -> Option<usize> {
         self.0
             .buttons
@@ -121,19 +126,19 @@ impl RadioGroup {
             .position(|button| button.state() != NSControlStateValueOff)
     }
 
-    /// 範囲内の選択肢を通知せずに選ぶ。範囲外なら何もしない。
+    /// Selects an in-range option without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             self.write_selected(Some(index));
         }
     }
 
-    /// 選択を通知せずに外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         self.write_selected(None);
     }
 
-    /// ユーザーが選んだのと同じように、範囲内の選択肢を選んで通知する。
+    /// Selects an in-range option and notifies, as if the user had chosen it.
     pub fn select(&self, index: usize) {
         if index < self.len() {
             self.write_selected(Some(index));
@@ -141,7 +146,7 @@ impl RadioGroup {
         }
     }
 
-    /// 選択肢の並ぶ向き。既定は縦。
+    /// The direction the options are laid out in. Vertical by default.
     pub fn set_orientation(&self, orientation: Orientation) {
         apply_orientation(&self.0.native, orientation);
     }
@@ -153,18 +158,18 @@ impl RadioGroup {
         }
     }
 
-    /// 選択肢が選ばれたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the index when an option is chosen. Setting it again removes the
+    /// previous callback.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// AppKit の実コントロール。バックエンド固有の脱出口として公開している。
+    /// The real AppKit control. Public as a backend-specific escape hatch.
     pub fn native_buttons(&self) -> Vec<Retained<NSButton>> {
         self.0.buttons.borrow().clone()
     }
 
-    /// 排他の状態を書く。`None` なら全部オフ。
+    /// Writes the exclusive state. With `None`, all are off.
     fn write_selected(&self, index: Option<usize>) {
         for (position, button) in self.0.buttons.borrow().iter().enumerate() {
             button.setState(if Some(position) == index {

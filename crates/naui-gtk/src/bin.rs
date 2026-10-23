@@ -1,14 +1,15 @@
-//! 大きさの指定 ([`Sizing`]) を GTK4 のレイアウトへ写すための土台。
+//! The foundation for mapping size specifications ([`Sizing`]) onto GTK4 layout.
 //!
-//! GTK4 のウィジェットは「最小の大きさ」(`set_size_request`)・「余りを受け取るか」
-//! (`set_hexpand`)・「配られた場所での寄せ方」(`set_halign`) を持つが、
-//! **「これ以上は大きくならない」という上限を持たない**。
+//! GTK4 widgets have a "minimum size" (`set_size_request`), "whether to take
+//! leftover space" (`set_hexpand`) and "alignment within the allotted space"
+//! (`set_halign`), but **no maximum saying "grow no further than this"**.
 //!
-//! そこで naui のウィジェットは、必ず [`SizeBin`] という薄い入れ物に入れてから
-//! コンテナへ渡す。`SizeBin` は GTK4 の測り方 (`measure` と `request_mode`) だけを
-//! 差し替えたウィジェットで、中身が申告する「自然な大きさ」を上限で頭打ちにし、
-//! 測り方そのものは中身のものを親へ伝える。実際の配置は
-//! `GtkBinLayout` に任せているので、レイアウト計算は GTK4 が行う。
+//! So every naui widget is put into a thin container called [`SizeBin`] before it
+//! is handed to a container. `SizeBin` is a widget that replaces only GTK4's
+//! measuring (`measure` and `request_mode`): it caps the "natural size" the content
+//! reports at the maximum, and passes the content's own way of measuring up to the
+//! parent. The actual placement is left to `GtkBinLayout`, so GTK4 does the layout
+//! computation.
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -26,13 +27,13 @@ mod imp {
 
     #[derive(Default)]
     pub struct SizeBin {
-        /// アプリが指定した大きさ。寄せ方を決め直すときに読む。
+        /// The size the app specified. Read when alignment is recomputed.
         pub sizing: Cell<Sizing>,
-        /// 幅の上限 (論理ピクセル)。負なら上限なし。
+        /// The maximum width (logical pixels). No maximum if negative.
         pub max_width: Cell<i32>,
-        /// 高さの上限 (論理ピクセル)。負なら上限なし。
+        /// The maximum height (logical pixels). No maximum if negative.
         pub max_height: Cell<i32>,
-        /// 中身が幅を縮められないか (`GtkSpinButton` など)。
+        /// Whether the content cannot shrink its width (`GtkSpinButton` and the like).
         pub rigid_width: Cell<bool>,
     }
 
@@ -59,7 +60,8 @@ mod imp {
     }
 
     impl SizeBin {
-        /// `measure` に渡される「もう一方の軸の大きさ」の上限。無いなら `None`。
+        /// The cap on "the size of the other axis" passed to `measure`. `None` if there is
+        /// none.
         fn cross_cap(&self, orientation: gtk::Orientation) -> Option<i32> {
             let cap = if orientation == gtk::Orientation::Horizontal {
                 self.max_height.get()
@@ -71,29 +73,31 @@ mod imp {
     }
 
     impl WidgetImpl for SizeBin {
-        /// 中身の申告を通しつつ、上限のある軸の「自然な大きさ」を決め直す。
+        /// Passes through what the content reports, while recomputing the "natural size"
+        /// on axes that have a maximum.
         ///
-        /// 親は「自然な大きさまでは配る、空きが足りなければそれ以下」という
-        /// 決め方をするので、上限は自然な大きさとして渡す。
+        /// The parent decides sizes as "hand out up to the natural size, less if there is
+        /// not enough room", so the maximum is passed as the natural size.
         ///
-        /// | その軸の指定 | 自然な大きさ |
+        /// | The axis's setting | Natural size |
         /// | --- | --- |
-        /// | [`Length::Fill`] + 上限 | **上限そのもの** (空きがあれば上限まで広がる) |
-        /// | [`Length::Auto`] / [`Length::Fixed`] + 上限 | 中身と上限の小さいほう |
+        /// | [`Length::Fill`] + maximum | **The maximum itself** (grows up to it when there is room) |
+        /// | [`Length::Auto`] / [`Length::Fixed`] + maximum | The smaller of the content and the maximum |
         ///
-        /// 最小 (`minimum`) は 2 つの理由で下げる。
+        /// The minimum (`minimum`) is lowered for two reasons.
         ///
-        /// 1. 上限より下げないと、空きが上限より狭いときに中身がはみ出す。
-        /// 2. [`Length::Fill`] は「大きさを親が決める」という指定なので、
-        ///    **中身の都合で親を押し広げない**。これをしないと、`Fill` を
-        ///    指定した中身がウィンドウの縮められる下限を決めてしまう
-        ///    (Web バックエンドが `min-width: 0` を書いているのと同じ理由)。
-        ///    下限が要るときは [`Sizing::min_width`] などで指定する。
-        ///    そちらは `size_request` として GTK4 が改めて下限に効かせる。
+        /// 1. If it were not lowered below the maximum, the content would overflow when the
+        ///    room is narrower than the maximum.
+        /// 2. [`Length::Fill`] means "the parent decides the size", so **the content must
+        ///    not push the parent wider for its own sake**. Otherwise content with `Fill`
+        ///    would decide the minimum size the window can shrink to (the same reason the
+        ///    Web backend writes `min-width: 0`). When a minimum is needed, specify it with
+        ///    [`Sizing::min_width`] and friends, which GTK4 applies again as a minimum via
+        ///    `size_request`.
         ///
-        /// ただし**縮められない中身** ([`rigid_width`](Self::rigid_width)) は別で、
-        /// 中身の最小をそのまま通す。GTK4 は最小より狭い場所を配られても中身を
-        /// 縮めず、はみ出して描いてしまうため。
+        /// **Content that cannot shrink** ([`rigid_width`](Self::rigid_width)) is the
+        /// exception: its minimum is passed through as is. GTK4 does not shrink content
+        /// when given less than its minimum; it overflows and draws anyway.
         fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
             let Some(child) = self.obj().first_child() else {
                 return (0, 0, -1, -1);
@@ -134,12 +138,14 @@ mod imp {
             (minimum, natural, min_baseline, nat_baseline)
         }
 
-        /// 中身の測り方 (`GtkSizeRequestMode`) を、そのまま親へ伝える。
+        /// Passes the content's measuring mode (`GtkSizeRequestMode`) up to the parent as
+        /// is.
         ///
-        /// `GtkWidget` の既定は `ConstantSize` (幅と高さを別々に測ってよい) で、
-        /// 折り返す `GtkLabel` のような「幅が決まってから高さが決まる」中身を
-        /// 包んでも、そのままでは親に伝わらない。すると親は幅を渡さずに高さを
-        /// 尋ね、**折り返す前の 1 行ぶんの高さ**しか配らないため、中身がはみ出す。
+        /// `GtkWidget` defaults to `ConstantSize` (width and height may be measured
+        /// separately), so wrapping content like a wrapping `GtkLabel`, whose "height is
+        /// decided once the width is decided", would not be conveyed to the parent. The
+        /// parent would then ask for the height without passing a width and allot only
+        /// **the height of one unwrapped line**, so the content would overflow.
         fn request_mode(&self) -> gtk::SizeRequestMode {
             self.obj()
                 .first_child()
@@ -148,19 +154,20 @@ mod imp {
                 })
         }
 
-        /// 中身を自分と同じ場所いっぱいに置く。ただし中身の最小より狭くはしない。
+        /// Places the content filling the same space as itself, but never narrower than
+        /// the content's minimum.
         ///
-        /// `GtkBinLayout` に任せたいところだが、**レイアウトマネージャーを
-        /// 付けると GTK4 は `measure` をそちらへ回してしまい**、上限が効かなく
-        /// なる。置き方そのものは 1 行で済むので、ここで両方を受け持つ。
+        /// We would like to leave this to `GtkBinLayout`, but **attaching a layout manager
+        /// makes GTK4 route `measure` to it** and the maximum stops working. Placement
+        /// itself takes one line, so both are handled here.
         ///
-        /// [`measure`](Self::measure) は最小を 0 まで下げて申告するので、
-        /// 中身が縮めない大きさより狭い場所を配られることがある。そのまま
-        /// 渡すと GTK4 の中で負の大きさが出る (`GtkEntry` は配られた幅から
-        /// 枠の分を引いて `GtkText` へ渡すため、狭いと `-18` のような値に
-        /// なって警告が出る)。中身は最小のまま置き、はみ出した分は
-        /// `Overflow::Hidden` で隠す (CSS の `min-width: 0` と
-        /// `overflow: hidden` の組みと同じ)。
+        /// [`measure`](Self::measure) reports a minimum lowered to 0, so the content can be
+        /// allotted less space than it can shrink to. Passing that on as is produces
+        /// negative sizes inside GTK4 (`GtkEntry` subtracts its border from the allotted
+        /// width before passing it to `GtkText`, so a narrow allotment gives values like
+        /// `-18` and a warning). The content is placed at its minimum, and whatever
+        /// overflows is hidden with `Overflow::Hidden` (the same pairing as CSS's
+        /// `min-width: 0` and `overflow: hidden`).
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             let Some(child) = self.obj().first_child() else {
                 return;
@@ -180,18 +187,18 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// naui のウィジェット 1 つを包み、大きさの上限を足す入れ物。
+    /// A container that wraps one naui widget and adds a size maximum.
     pub struct SizeBin(ObjectSubclass<imp::SizeBin>)
         @extends gtk::Widget,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
 impl SizeBin {
-    /// 中身を 1 つ持つ入れ物を作る。
+    /// Creates a container holding one child.
     ///
-    /// 寄せ方の初期値は `Center` にしておく。GTK4 の既定は `Fill` (配られた場所
-    /// いっぱいに広げる) だが、naui の既定は「中身に合わせる」([`Length::Auto`])
-    /// なので、そのままでは意味がずれる。
+    /// The initial alignment is `Center`. GTK4 defaults to `Fill` (stretch to fill the
+    /// allotted space), but naui's default is "fit the content" ([`Length::Auto`]), so
+    /// leaving it would change the meaning.
     pub(crate) fn wrap(child: &impl IsA<gtk::Widget>) -> Self {
         let bin: SizeBin = glib::Object::new();
         bin.set_halign(gtk::Align::Center);
@@ -204,22 +211,23 @@ impl SizeBin {
         gtk::subclass::prelude::ObjectSubclassIsExt::imp(self)
     }
 
-    /// 中身が幅を縮められないことを伝える。
+    /// Reports that the content cannot shrink its width.
     ///
-    /// `GtkSpinButton` のように「欄とボタンが並ぶ最小の幅」を持つ中身は、
-    /// それより狭い場所を配られても縮まず、はみ出して描かれてしまう。
-    /// これを立てた入れ物は、上限より中身の最小を優先する。
+    /// Content like `GtkSpinButton`, which has a "minimum width for the field and
+    /// buttons side by side", does not shrink when allotted less and is drawn
+    /// overflowing. A container with this set favors the content's minimum over the
+    /// maximum.
     pub(crate) fn mark_rigid_width(&self) {
         self.imp().rigid_width.set(true);
         self.queue_resize();
     }
 
-    /// アプリが指定した大きさ。
+    /// The size the app specified.
     pub(crate) fn sizing(&self) -> Sizing {
         self.imp().sizing.get()
     }
 
-    /// 大きさの指定を反映する。呼ぶたびに以前の指定は外れる。
+    /// Applies the size specification. Each call discards the previous one.
     pub(crate) fn apply_sizing(&self, sizing: Sizing) {
         let imp = self.imp();
         imp.sizing.set(sizing);
@@ -245,11 +253,11 @@ impl SizeBin {
         self.queue_resize();
     }
 
-    /// 余りを受け取るかどうかを指定する。
+    /// Sets whether to take leftover space.
     ///
-    /// [`Length::Auto`] のときは自分で決めず、`hexpand-set` を下ろして
-    /// **子から伝わってくるまま**にする。`Stack` の中に `Fill` の子が
-    /// 入っているとき、その `Stack` 自身も余りを受け取れるようにするため。
+    /// For [`Length::Auto`] it does not decide by itself; it clears `hexpand-set` and
+    /// **leaves it as propagated from the children**. This lets a `Stack` containing a
+    /// `Fill` child take leftover space itself.
     fn apply_expand(&self, horizontal: bool, expand: Option<bool>) {
         let (value, is_set) = if horizontal {
             ("hexpand", "hexpand-set")
@@ -262,9 +270,9 @@ impl SizeBin {
         }
     }
 
-    /// ウィンドウ直下など、親いっぱいに広がってほしい場所へ入れる。
+    /// Puts it somewhere it should fill its parent, such as directly under a window.
     ///
-    /// 自分で大きさを指定していない軸だけを `Fill` にする。
+    /// Only axes with no size of their own become `Fill`.
     pub(crate) fn fill_parent(&self) {
         let sizing = self.sizing();
         if matches!(sizing.width, Length::Auto) && sizing.max_width.is_none() {
@@ -275,15 +283,16 @@ impl SizeBin {
         }
     }
 
-    /// 列の幅を、中身の自然な大きさで決めさせない。
+    /// Keeps the column width from being decided by the content's natural size.
     ///
-    /// 行を絞っている表では、列の幅は**組み立ててある行だけ**から決まる。
-    /// 中身の自然な幅がそのまま列の幅になると、スクロールで別の行が出る
-    /// たびに列が動いてしまう。申告する幅を 0 にして、列の幅は見出しと
-    /// 余りの分け合いだけで決まるようにする (配られた幅いっぱいには広がる)。
+    /// In a table whose rows are limited, column widths are decided **only by the rows
+    /// that are built**. If the content's natural width became the column width, the
+    /// columns would move every time scrolling shows other rows. The reported width is
+    /// set to 0 so that column widths are decided only by the headings and the sharing
+    /// of leftover space (they still fill the allotted width).
     ///
-    /// 文字のセルで `max-width-chars` を 1 にしているのと同じ扱い。
-    /// **自分で大きさを指定している中身には触れない** (アプリの指定が優先)。
+    /// The same treatment as setting `max-width-chars` to 1 on text cells. **Content
+    /// with its own size specified is left alone** (the app's setting wins).
     pub(crate) fn limit_natural_width(&self) {
         let sizing = self.sizing();
         if !matches!(sizing.width, Length::Auto) || sizing.max_width.is_some() {
@@ -295,13 +304,13 @@ impl SizeBin {
         self.set_halign(gtk::Align::Fill);
     }
 
-    /// グリッドの列 / 行の決め方を受け取る。
+    /// Receives how a grid column / row is sized.
     ///
-    /// `GtkGrid` は列や行そのものに幅を持たせられない。代わりに
-    /// **その列に入っている子**へ指定を写す。列の幅は中に入っている子の
-    /// いちばん大きいものに合わせて決まるので、これで列の幅が決まる。
+    /// `GtkGrid` cannot give columns or rows a width of their own. Instead the setting
+    /// is applied **to the children in that column**. A column's width follows its
+    /// largest child, so this decides the column width.
     ///
-    /// 自分で大きさを指定している軸には触れない (子の指定が優先)。
+    /// Axes with their own size specified are left alone (the child's setting wins).
     pub(crate) fn apply_track(&self, horizontal: bool, track: Track) {
         let sizing = self.sizing();
         let own = if horizontal {
@@ -341,11 +350,11 @@ impl SizeBin {
         self.queue_resize();
     }
 
-    /// コンテナの寄せ方を受け取る。
+    /// Receives the container's alignment.
     ///
-    /// 自分の指定が優先されるのは、その軸が上限なしの [`Length::Fill`] のときだけ。
-    /// [`Length::Fixed`] や上限付きの `Fill` は「広げてはいけない」ので、
-    /// コンテナが `Fill` を渡してきても `Center` に読み替える。
+    /// Its own setting wins only when that axis is [`Length::Fill`] without a maximum.
+    /// [`Length::Fixed`] and `Fill` with a maximum "must not stretch", so a `Fill` from
+    /// the container is read as `Center`.
     pub(crate) fn set_cross_align(&self, align: Align, vertical_container: bool) {
         let sizing = self.sizing();
         let (length, max) = if vertical_container {
@@ -368,29 +377,30 @@ impl SizeBin {
     }
 }
 
-/// 1 つの軸について、GTK4 へ渡す値の組。
+/// The set of values passed to GTK4 for one axis.
 struct AxisPlan {
-    /// `set_size_request` に渡す最小の大きさ。-1 なら指定しない。
+    /// The minimum size passed to `set_size_request`. Not set if -1.
     request: i32,
-    /// `measure` で頭打ちにする上限。-1 なら上限なし。
+    /// The maximum `measure` caps at. No maximum if -1.
     cap: i32,
-    /// 余りを受け取るか。`None` なら子から伝わってくるままにする。
+    /// Whether to take leftover space. `None` leaves it as propagated from the
+    /// children.
     expand: Option<bool>,
-    /// 配られた場所の中でのふるまい。
+    /// How it behaves within the allotted space.
     align: gtk::Align,
 }
 
-/// 1 つの軸の指定を GTK4 の値へ翻訳する。
+/// Translates one axis's specification into GTK4 values.
 ///
 /// | naui | GTK4 |
 /// | --- | --- |
-/// | [`Length::Auto`] | 何もしない (中身の自然な大きさ) |
-/// | [`Length::Fixed`] | `size_request` と上限を同じ値にし、寄せ方は `Center` |
-/// | [`Length::Fill`] (上限なし) | `expand` を立て、寄せ方は `Fill` |
-/// | [`Length::Fill`] (上限あり) | `expand` を立て、上限で頭打ち (寄せ方は `Center`) |
+/// | [`Length::Auto`] | Nothing (the content's natural size) |
+/// | [`Length::Fixed`] | `size_request` and the maximum set to the same value, alignment `Center` |
+/// | [`Length::Fill`] (no maximum) | `expand` set, alignment `Fill` |
+/// | [`Length::Fill`] (with maximum) | `expand` set, capped at the maximum (alignment `Center`) |
 ///
-/// 寄せ方を `Fill` にすると、GTK4 は配られた場所いっぱいに広げてしまい上限が
-/// 効かない。上限を指定した軸だけ `Center` にしているのはこのため。
+/// With `Fill` alignment, GTK4 stretches it to fill the allotted space and the
+/// maximum stops working. That is why only axes with a maximum use `Center`.
 fn axis(length: Length, min: Option<f64>, max: Option<f64>) -> AxisPlan {
     let min = min.map(to_px);
     let max = max.map(to_px);
@@ -427,7 +437,7 @@ fn to_px(value: f64) -> i32 {
     value.round().clamp(0.0, i32::MAX as f64) as i32
 }
 
-/// naui の寄せ方を GTK4 の `align` へ写す。
+/// Maps naui's alignment to GTK4's `align`.
 pub(crate) fn to_gtk_align(align: Align) -> gtk::Align {
     match align {
         Align::Start => gtk::Align::Start,
@@ -437,11 +447,12 @@ pub(crate) fn to_gtk_align(align: Align) -> gtk::Align {
     }
 }
 
-/// 余白を、そのウィジェットの外周のマージンとして反映する。
+/// Applies padding as margins around the outside of the widget.
 ///
-/// GTK4 のコンテナは「内側の余白」を持たない代わりに、どのウィジェットも
-/// 4 辺のマージンを持つ。コンテナ自身にマージンを付けると中身の置ける範囲が
-/// そのぶん狭くなり、naui の [`Padding`](naui_core::Padding) と同じ意味になる。
+/// GTK4 containers have no "inner padding", but every widget has margins on all
+/// four sides. Putting margins on the container itself shrinks the area its
+/// contents can occupy by that much, which means the same as naui's
+/// [`Padding`](naui_core::Padding).
 pub(crate) fn apply_padding(widget: &impl IsA<gtk::Widget>, padding: naui_core::Padding) {
     let widget = widget.as_ref();
     widget.set_margin_top(to_px(padding.top));

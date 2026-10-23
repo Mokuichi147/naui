@@ -1,38 +1,40 @@
 use crate::sys;
 use naui_core::{DatePickerMode, DateTime};
 
-/// 日付と時刻を選ばせるコントロール。
+/// A control for picking a date and time.
 ///
-/// 作った直後の値は、その環境の現在日時 (ローカル時刻)。
+/// Its value right after creation is the platform's current date and time (local
+/// time).
 #[derive(Clone)]
 pub struct DatePicker(pub(crate) sys::DatePicker);
 
 impl_widget!(DatePicker);
 
 impl DatePicker {
-    /// 何を選ばせるか。生成時に決まり、あとから変わらない。
+    /// What it lets the user pick. Fixed at creation and never changes.
     #[inline]
     pub fn mode(&self) -> DatePickerMode {
         self.0.mode()
     }
 
-    /// 現在の値。選ばせていない部分も、渡された値のまま返る。
+    /// The current value. Parts that cannot be picked are returned as they were passed.
     #[inline]
     pub fn value(&self) -> DateTime {
         self.0.value()
     }
 
-    /// 値を通知せずに変える。範囲外なら端へ寄せ、暦として成り立たない値は丸める。
+    /// Changes the value without notifying. Out-of-range values are clamped to the
+    /// ends, and values that are not valid dates are normalized.
     #[inline]
     pub fn set_value(&self, value: DateTime) {
         self.0.set_value(value)
     }
 
-    /// 選べる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the selectable range. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
-    /// `GtkCalendar` にも `GtkSpinButton` にも「暦としての範囲」は無いので、
-    /// 範囲は naui 側の丸めだけで守る。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying. Neither `GtkCalendar` nor `GtkSpinButton` has a "calendar range", so
+    /// the range is enforced only by naui's clamping.
     #[inline]
     pub fn set_range(&self, min: Option<DateTime>, max: Option<DateTime>) {
         self.0.set_range(min, max)
@@ -43,8 +45,8 @@ impl DatePicker {
         self.0.set_enabled(enabled)
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     #[inline]
     pub fn on_change(&self, f: impl FnMut(DateTime) + 'static) {
         self.0.on_change(f)

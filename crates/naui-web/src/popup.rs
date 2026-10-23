@@ -1,19 +1,19 @@
-//! ポップアップ (コンテキスト) メニュー (DOM)。
+//! Popup (context) menus (DOM).
 //!
-//! ブラウザにはメニューを出す標準 API が無い (`<menu>` 要素はただの
-//! リストで、ブラウザ既定のコンテキストメニューは JavaScript から
-//! 差し替えられない)。そのため、ここだけは
-//! **`<div role="menu">` と `<button role="menuitem">` で合成**する。
+//! Browsers have no standard API for showing menus (the `<menu>` element is just a
+//! list, and the browser's default context menu cannot be replaced from
+//! JavaScript). So this is the one place **composed from `<div role="menu">` and
+//! `<button role="menuitem">`**.
 //!
-//! 色は CSS のシステムカラー (`Canvas` / `CanvasText`) を使うので、
-//! [`crate::Ui::set_theme`] が `<html>` に設定する `color-scheme` に
-//! そのまま追従する。naui が自前で配色を決めることはない。
+//! Colors use CSS system colors (`Canvas` / `CanvasText`), so they follow the
+//! `color-scheme` that [`crate::Ui::set_theme`] sets on `<html>` as is. naui never
+//! decides colors itself.
 //!
 //! | naui | DOM |
 //! | --- | --- |
-//! | `PopupMenu` | `<div role="menu">` (`<body>` 直下・`position: fixed`) |
-//! | 項目 | `<button role="menuitem">` |
-//! | 区切り線 | `<div role="separator">` |
+//! | `PopupMenu` | `<div role="menu">` (directly under `<body>`, `position: fixed`) |
+//! | Item | `<button role="menuitem">` |
+//! | Separator | `<div role="separator">` |
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -32,25 +32,26 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
 
 struct PopupMenuInner {
     document: Document,
-    /// メニュー本体。`<body>` 直下に置き、出ていない間は `display: none`。
+    /// The menu itself. Placed directly under `<body>`, with `display: none` while not
+    /// shown.
     element: HtmlElement,
-    /// 項目ごとのボタン。区切り線の位置は `None`。
+    /// The button per item. `None` at separator positions.
     buttons: RefCell<Vec<Option<HtmlElement>>>,
-    /// 項目のクリック購読。項目を作り直すと外れる。
+    /// The click subscriptions of items. Removed when the items are rebuilt.
     item_listeners: RefCell<Vec<Listener>>,
-    /// 取り付けたウィジェットの `contextmenu` 購読とハンドル。
+    /// The `contextmenu` subscriptions and handles of the widgets it is attached to.
     attached: RefCell<Vec<(Listener, Box<dyn Widget>)>>,
-    /// メニューの外側を押したときと Escape で閉じるための購読。
+    /// The subscriptions for closing on clicks outside the menu and Escape.
     _dismiss: RefCell<Vec<Listener>>,
     handler: SelectHandler,
     open: Cell<bool>,
 }
 
-/// ポップアップ (コンテキスト) メニュー。
+/// A popup (context) menu.
 ///
-/// 画面に並ぶウィジェットではないので [`Widget`] ではない。
-/// [`crate::Ui`] が生成したメニューを保持するため、戻り値を捨てても
-/// 取り付け先から消えることはない。
+/// It is not a widget laid out on screen, so it is not a [`Widget`]. [`crate::Ui`]
+/// holds the menus it creates, so dropping the return value does not remove it from
+/// the widgets it is attached to.
 #[derive(Clone)]
 pub struct PopupMenu(Rc<PopupMenuInner>);
 
@@ -92,7 +93,7 @@ impl PopupMenu {
         Ok(this)
     }
 
-    /// メニューの外側を押したときと Escape で閉じるようにする。
+    /// Makes it close on clicks outside the menu and Escape.
     fn install_dismiss(&self, doc: &Document) -> Result<()> {
         let target: web_sys::EventTarget = doc.clone().unchecked_into();
 
@@ -139,9 +140,9 @@ impl PopupMenu {
         Ok(())
     }
 
-    /// 項目を作り直す。以前の項目は取り除かれる。
+    /// Rebuilds the items. The previous items are removed.
     ///
-    /// インデックスは区切り線を含めた並びの位置。
+    /// The index is the position in the sequence including separators.
     pub fn set_items(&self, items: &[PopupItem]) {
         self.0.element.set_inner_html("");
         self.0.item_listeners.borrow_mut().clear();
@@ -208,7 +209,7 @@ impl PopupMenu {
         *self.0.item_listeners.borrow_mut() = listeners;
     }
 
-    /// 区切り線を含めた項目数。
+    /// The number of items, separators included.
     pub fn len(&self) -> usize {
         self.0.buttons.borrow().len()
     }
@@ -217,10 +218,10 @@ impl PopupMenu {
         self.len() == 0
     }
 
-    /// ウィジェットの右クリックでこのメニューを出すようにする。
+    /// Makes this menu appear on right-click on the widget.
     ///
-    /// ブラウザ既定のコンテキストメニューは、取り付けたウィジェットの上でだけ
-    /// 抑止する (`preventDefault`)。それ以外の場所では今までどおり出る。
+    /// The browser's default context menu is suppressed (`preventDefault`) only over the
+    /// attached widgets. Elsewhere it appears as before.
     pub fn attach(&self, widget: &dyn Widget) {
         let element = widget.native_element();
         let listener = Listener::attach_event(element.as_ref(), "contextmenu", {
@@ -245,14 +246,14 @@ impl PopupMenu {
         }
     }
 
-    /// プログラムからメニューを出す。位置は `widget` の**左上から**の
-    /// 論理ピクセル (y は下向き)。
+    /// Shows the menu from code. The position is in logical pixels **from the top
+    /// left** of `widget` (y pointing down).
     pub fn open_at(&self, widget: &dyn Widget, x: f64, y: f64) {
         let rect = widget.native_element().get_bounding_client_rect();
         self.open_at_viewport(rect.left() + x, rect.top() + y);
     }
 
-    /// 表示領域 (ビューポート) の左上を原点として出す。
+    /// Shows it with the top left of the viewport as origin.
     fn open_at_viewport(&self, x: f64, y: f64) {
         let element = &self.0.element;
         style(element, "left", &format!("{x}px"));
@@ -262,7 +263,8 @@ impl PopupMenu {
         self.keep_inside_viewport(x, y);
     }
 
-    /// はみ出す位置に出すよう言われたら、画面の内側へ寄せる。
+    /// When asked to show it at a position that would overflow, moves it inside the
+    /// screen.
     fn keep_inside_viewport(&self, x: f64, y: f64) {
         let Some(window) = web_sys::window() else {
             return;
@@ -282,15 +284,16 @@ impl PopupMenu {
         }
     }
 
-    /// 出ているメニューを閉じる。出ていなければ何もしない。
+    /// Closes the menu being shown. Does nothing if none is shown.
     pub fn close(&self) {
         style(&self.0.element, "display", "none");
         self.0.open.set(false);
     }
 
-    /// ユーザーが選んだのと同じ経路で項目を選ぶ (テストや自動操作用)。
+    /// Chooses an item through the same path as a user's choice (for tests and
+    /// automation).
     ///
-    /// 区切り線と、選べない項目は無視する。
+    /// Separators and items that cannot be chosen are ignored.
     pub fn select(&self, index: usize) {
         let button = self.0.buttons.borrow().get(index).cloned().flatten();
         if let Some(button) = button {
@@ -298,12 +301,12 @@ impl PopupMenu {
         }
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// メニュー本体の DOM 要素。バックエンド固有の脱出口として公開している。
+    /// The menu's DOM element. Public as a backend-specific escape hatch.
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()
     }

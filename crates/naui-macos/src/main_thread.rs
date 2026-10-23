@@ -1,9 +1,8 @@
-//! 別スレッドから UI スレッドへ仕事を投げる口。
+//! The way to post work from other threads to the UI thread.
 //!
-//! AppKit にはメインスレッドへクロージャを投函する API が無いので、
-//! libdispatch のメインキューを使う。`dispatch_async` はメインループが
-//! 回っている間に順番に取り出されるため、「必ず後回し」という
-//! [`MainThread`] の約束をそのまま満たす。
+//! AppKit has no API for posting a closure to the main thread, so libdispatch's
+//! main queue is used. `dispatch_async` items are taken out in order while the main
+//! loop runs, which satisfies [`MainThread`]'s promise of "always deferred" as is.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -12,8 +11,8 @@ use std::time::Duration;
 use dispatch2::{DispatchQueue, DispatchTime};
 use naui_core::{MainThread, Work};
 
-/// メインキュー。`DispatchQueue::main()` は `&'static` を返すので、
-/// ハンドルを持ち歩く必要がない。
+/// The main queue. `DispatchQueue::main()` returns a `&'static`, so there is no
+/// handle to carry around.
 pub(crate) struct MainQueue;
 
 impl MainThread for MainQueue {

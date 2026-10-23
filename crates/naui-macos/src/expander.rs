@@ -1,15 +1,15 @@
-//! 折りたたみ (見出しの `NSButton` + 中身の `NSStackView`)。
+//! A collapsible section (a heading `NSButton` + an `NSStackView` for the content).
 //!
-//! AppKit に「見出しを押して中身を出し入れする」1 つのコントロールは無い。
-//! 開閉の三角 (disclosure) を持つ `NSButton` と中身を縦に並べるのが AppKit の
-//! 標準の組み方 (システム設定の「詳細」と同じ形) なので、`NSStackView` へ
-//! 見出しと中身を並べる。
+//! AppKit has no single control that "shows and hides its content when the heading
+//! is clicked". The standard AppKit arrangement is to stack an `NSButton` with a
+//! disclosure triangle above the content (the same shape as "Details" in System
+//! Settings), so the heading and content are laid out in an `NSStackView`.
 //!
-//! たたむときは中身のビューを隠す。`NSStackView` は隠れた子を
-//! レイアウトから外す (`detachesHiddenViews` の既定) ので、たたむと
-//! 見出しの高さまで縮む。アプリも [`set_visible`](crate::Label::set_visible)
-//! で同じ `hidden` を使うので、隠すのは `crate::interaction` を通して
-//! 両方の指定を合わせて行う。
+//! When collapsed, the content view is hidden. `NSStackView` removes hidden
+//! children from layout (the default of `detachesHiddenViews`), so collapsing
+//! shrinks it to the heading's height. The app also uses the same `hidden` through
+//! [`set_visible`](crate::Label::set_visible), so hiding goes through
+//! `crate::interaction`, which combines both settings.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,27 +26,28 @@ use objc2_foundation::{NSArray, NSString};
 use crate::trampoline::{ActionTarget, ValueHandler};
 use crate::widgets::{impl_widget, Widget};
 
-/// 見出しと中身のすき間。
+/// The gap between the heading and the content.
 const SPACING: f64 = 6.0;
 
-/// 開いているときと閉じているときの三角 (SF Symbols)。
+/// The triangles for expanded and collapsed (SF Symbols).
 const SYMBOL_EXPANDED: &str = "chevron.down";
 const SYMBOL_COLLAPSED: &str = "chevron.right";
 
 struct ExpanderInner {
     native: Retained<NSStackView>,
     header: Retained<NSButton>,
-    /// 中身のハンドル。トランポリンごと生かしておくために持つ。
+    /// The content's handle. Held to keep it alive along with its trampolines.
     child: RefCell<Option<Box<dyn Widget>>>,
-    /// 中身を折りたたみの幅へ結び付ける制約。置き換えるときに張り直す。
+    /// The constraints tying the content to the expander's width. Recreated when it is
+    /// replaced.
     fill_constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
     expanded: Cell<bool>,
     handler: ValueHandler<bool>,
-    /// AppKit の target は弱参照なので、ここで生かしておく。
+    /// AppKit targets are weak references, so they are kept alive here.
     target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
-/// 見出しを押して中身を出し入れするコンテナ。
+/// A container whose contents are shown and hidden by clicking its heading.
 #[derive(Clone)]
 pub struct Expander(Rc<ExpanderInner>);
 impl_widget!(Expander);
@@ -102,7 +103,7 @@ impl Expander {
         this
     }
 
-    /// 見出しの文字。
+    /// The heading text.
     pub fn text(&self) -> String {
         self.0.header.title().to_string()
     }
@@ -111,12 +112,12 @@ impl Expander {
         self.0.header.setTitle(&NSString::from_str(text));
     }
 
-    /// 開いているかどうか。
+    /// Whether it is expanded.
     pub fn is_expanded(&self) -> bool {
         self.0.expanded.get()
     }
 
-    /// プログラムから開閉する。`on_toggle` は呼ばれない。
+    /// Expands or collapses it from code. `on_toggle` is not called.
     pub fn set_expanded(&self, expanded: bool) {
         self.0.expanded.set(expanded);
         self.0.write_native(expanded);
@@ -126,7 +127,7 @@ impl Expander {
         self.0.header.setEnabled(enabled);
     }
 
-    /// 折りたたむ中身。呼ぶたびに置き換わる。
+    /// The contents to collapse. Each call replaces them.
     pub fn set_child(&self, child: &dyn Widget) {
         if let Some(previous) = self.0.child.borrow_mut().take() {
             let view = previous.native_view();
@@ -167,24 +168,24 @@ impl Expander {
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
-    /// 利用者が開閉するたびに、変わった後の状態で呼ばれる。
+    /// Called with the new state every time the user expands or collapses it.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 見出しのクリックを発生させる (テストや自動操作用)。
+    /// Triggers a click on the heading (for tests and automation).
     pub fn click(&self) {
         unsafe { self.0.header.performClick(None) };
     }
 
-    /// 見出しのボタン。バックエンド固有の脱出口として公開している。
+    /// The heading button. Public as a backend-specific escape hatch.
     pub fn native_header(&self) -> Retained<NSButton> {
         self.0.header.clone()
     }
 }
 
 impl ExpanderInner {
-    /// 開閉の状態をネイティブへ書く。
+    /// Writes the expanded state to the native side.
     fn write_native(&self, expanded: bool) {
         self.header.setState(if expanded {
             NSControlStateValueOn

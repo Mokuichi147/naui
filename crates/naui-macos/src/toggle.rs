@@ -1,10 +1,10 @@
-//! 入り切りのスイッチ (`NSSwitch` + ラベルの `NSTextField`)。
+//! An on/off switch (`NSSwitch` + an `NSTextField` for the label).
 //!
-//! `NSSwitch` は入り切りの部分だけを持ち、文字は持たない (システム設定の
-//! スイッチと同じ)。ラベルはとなりへ `NSTextField` を並べて添える。
+//! `NSSwitch` has only the on/off part and no text (like the switches in System
+//! Settings). The label is added as an `NSTextField` placed next to it.
 //!
-//! 幅の余りはラベルが受け取り、スイッチは自分の大きさのままでいる
-//! (`NumberInput` の上下ボタンと同じ扱い)。
+//! The label takes the leftover width and the switch keeps its own size (the same
+//! treatment as `NumberInput`'s up/down buttons).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -21,10 +21,10 @@ use objc2_foundation::NSString;
 use crate::trampoline::{ActionTarget, ValueHandler};
 use crate::widgets::{impl_widget, Widget};
 
-/// スイッチとラベルのすき間。
+/// The gap between the switch and the label.
 const SPACING: f64 = 8.0;
 
-/// スイッチは自分の大きさのままでいて、幅の余りはラベルへ渡す。
+/// The switch keeps its own size and hands leftover width to the label.
 const SWITCH_HUGGING: NSLayoutPriority = 1000.0;
 
 struct ToggleInner {
@@ -32,11 +32,11 @@ struct ToggleInner {
     switch: Retained<NSSwitch>,
     label: Retained<NSTextField>,
     handler: ValueHandler<bool>,
-    /// AppKit の target は弱参照なので、ここで生かしておく。
+    /// AppKit targets are weak references, so they are kept alive here.
     target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
-/// 入り切りを切り替えるスイッチ (`NSSwitch`)。
+/// An on/off switch (`NSSwitch`).
 #[derive(Clone)]
 pub struct Toggle(Rc<ToggleInner>);
 impl_widget!(Toggle);
@@ -89,12 +89,12 @@ impl Toggle {
         this
     }
 
-    /// 入っているかどうか。
+    /// Whether it is on.
     pub fn is_on(&self) -> bool {
         self.0.switch.state() != NSControlStateValueOff
     }
 
-    /// プログラムから切り替える。`on_toggle` は呼ばれない。
+    /// Switches it from code. `on_toggle` is not called.
     pub fn set_on(&self, on: bool) {
         self.0.switch.setState(if on {
             NSControlStateValueOn
@@ -110,17 +110,17 @@ impl Toggle {
         self.0.label.setEnabled(enabled);
     }
 
-    /// 利用者が切り替えるたびに、切り替えた後の状態で呼ばれる。
+    /// Called with the new state every time the user switches it.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// クリックを発生させる (テストや自動操作用)。
+    /// Triggers a click (for tests and automation).
     pub fn click(&self) {
         unsafe { self.0.switch.performClick(None) };
     }
 
-    /// スイッチ本体。バックエンド固有の脱出口として公開している。
+    /// The switch itself. Public as a backend-specific escape hatch.
     pub fn native_switch(&self) -> Retained<NSSwitch> {
         self.0.switch.clone()
     }

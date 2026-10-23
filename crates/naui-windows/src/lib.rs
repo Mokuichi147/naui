@@ -1,28 +1,30 @@
 //! # naui-windows
 //!
-//! naui の Windows バックエンド。**WinUI 3 (Fluent 2) の実コントロール**
-//! (`Microsoft.UI.Xaml.Controls.Button` など) を生成する。
+//! naui's Windows backend. It creates **real WinUI 3 (Fluent 2) controls**
+//! (`Microsoft.UI.Xaml.Controls.Button` and so on).
 //!
-//! WinUI 3 は Windows SDK ではなく **Windows App SDK** に含まれるため、
-//! - 実行環境に Windows App SDK ランタイムが必要
-//! - コントロールは `Application::Start` の後でしか生成できない
+//! WinUI 3 is part of the **Windows App SDK**, not the Windows SDK, so there are
+//! these constraints:
+//! - the Windows App SDK runtime is required at run time
+//! - controls can only be created after `Application::Start`
 //!
-//! という制約がある。後者のために naui の公開 API は
-//! 「コールバックの中で UI を組み立てる」形になっている。
+//! Because of the latter, naui's public API takes the form "build the UI inside a
+//! callback".
 //!
-//! ## 実行要件
+//! ## Requirements
 //!
-//! Windows App SDK 1.3 以降のランタイムが必要。起動時にフレームワーク
-//! パッケージの依存関係を追加するが、版は決め打ちにせず 2.x から 1.3 まで
-//! 新しい順に試し、**最初に取り付けられたもの**を使う。OS 同梱の系統
-//! (`Microsoft.WindowsAppRuntime.CBS*`) も候補に入れる。
+//! The Windows App SDK runtime 1.3 or later is required. At startup it adds the
+//! dependency on the framework package, but instead of pinning a version it tries
+//! from 2.x down to 1.3, newest first, and uses **the first one it can attach**. The
+//! line shipped with the OS (`Microsoft.WindowsAppRuntime.CBS*`) is also a
+//! candidate.
 //!
-//! 下限が 1.3 なのは、ウィンドウの背景に使う `MicaBackdrop` と
-//! `Window.SystemBackdrop` がそこで入ったため。
+//! The minimum is 1.3 because `MicaBackdrop` and `Window.SystemBackdrop`, used for
+//! the window background, were introduced there.
 //!
-//! `self-contained` フィーチャーを有効にすると、ランタイムを exe の隣へ同梱
-//! できる。そのときは同梱物だけを使い、フレームワークパッケージは探さない。
-//! exe の隣に同梱物が無ければエラーにする。
+//! Enabling the `self-contained` feature lets the runtime be bundled next to the
+//! exe. In that case only the bundled files are used, and no framework package is
+//! looked for. It is an error if the bundled files are not next to the exe.
 
 #![cfg(target_os = "windows")]
 
@@ -104,35 +106,35 @@ pub(crate) fn to_error(context: &'static str, e: windows_core::Error) -> Error {
     Error::new(context, e.message())
 }
 
-/// 通知を 1 つだけ覚えておく入れ物。`naui_core` の同名の別名と同じ役目で、
-/// `Option<Box<dyn FnMut(..)>>` の入れ子を 1 段浅くする。
+/// A container that remembers a single callback. The same role as the alias of the
+/// same name in `naui_core`, making the nesting of `Option<Box<dyn FnMut(..)>>` one
+/// level shallower.
 pub(crate) type Slot<F> = Option<Box<F>>;
 
-/// ウィジェットを生成するための入り口。
+/// The entry point for creating widgets.
 ///
-/// ウィジェットのハンドルと同じく **clone しても中身は同じ**なので、
-/// コールバックへ持ち込めば後からウィジェットを作れる。UI スレッド
-/// 専用で `Send` ではないため、別スレッドへは渡せない (そちらは
-/// [`Tasks`] を使う)。
+/// Like widget handles, **clones share the same contents**, so moving one into a
+/// callback lets you create widgets later. It is UI-thread only and not `Send`, so
+/// it cannot be passed to other threads (use [`Tasks`] for that).
 #[derive(Clone)]
 pub struct Ui(Rc<UiInner>);
 
 struct UiInner {
     theme: Cell<Theme>,
     windows: RefCell<Vec<Window>>,
-    /// ダイアログはどこにも append されないので、ここで保持する。
+    /// Dialogs are never appended anywhere, so they are held here.
     dialogs: RefCell<Vec<Dialog>>,
-    /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
+    /// Popup menus are not part of the layout, so no parent holds them.
     popups: RefCell<Vec<PopupMenu>>,
-    /// ツールバーもレイアウトに載らないので、ここで保持する。
+    /// Toolbars are not part of the layout either, so they are held here.
     toolbars: RefCell<Vec<Toolbar>>,
-    /// メニューバーもレイアウトに載らないので、ここで保持する。
+    /// Menu bars are not part of the layout either, so they are held here.
     menu_bars: RefCell<Vec<MenuBar>>,
-    /// サイドバーもレイアウトに載らないので、ここで保持する。
+    /// Sidebars are not part of the layout either, so they are held here.
     sidebars: RefCell<Vec<Sidebar>>,
-    /// トーストもレイアウトに載らないので、ここで保持する。
+    /// Toasts are not part of the layout either, so they are held here.
     toasts: RefCell<Vec<Toast>>,
-    /// 別スレッドと非同期処理の入り口。
+    /// The entry point for other threads and async work.
     tasks: Tasks,
     shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
 }
@@ -156,10 +158,10 @@ impl Ui {
         }))
     }
 
-    /// ウィンドウを作る。
+    /// Creates a window.
     ///
-    /// `width` / `height` は中身の領域の大きさ ([`Window::set_size`] と同じ)。
-    /// タイトルバー・メニューバー・ウィンドウの枠は含まない。
+    /// `width` / `height` are the size of the content area (the same as
+    /// [`Window::set_size`]), excluding the title bar, menu bar and window frame.
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
         let w = Window::new(title, width, height, self.0.theme.get())?;
         w.install_closing_handler(self.0.shutdown);
@@ -178,29 +180,31 @@ impl Ui {
         Stack::new(orientation)
     }
 
-    /// 行と列で位置を決めるコンテナ。
+    /// A container that positions children by row and column.
     pub fn grid(&self) -> Result<Grid> {
         Grid::new()
     }
 
-    /// 中身がはみ出したらスクロールさせるコンテナ。
+    /// A container that scrolls when its contents overflow.
     pub fn scroll(&self) -> Result<Scroll> {
         Scroll::new()
     }
 
-    /// 見出しを押して中身を出し入れするコンテナ。`text` は見出しの文字。
+    /// A container whose contents are shown and hidden by clicking its heading. `text`
+    /// is the heading text.
     pub fn expander(&self, text: &str) -> Result<Expander> {
         Expander::new(text)
     }
 
-    /// 2 つの区画を、動かせる仕切りで分けるコンテナ。
+    /// A container that divides two panes with a movable divider.
     ///
-    /// `Horizontal` なら区画が横に並び、仕切りは縦になる。
+    /// With `Horizontal`, the panes are side by side and the divider is vertical.
     pub fn split_view(&self, orientation: Orientation) -> Result<SplitView> {
         SplitView::new(orientation)
     }
 
-    /// 余白そのものになるウィジェット。`Grid` の `Track::Fill` と組み合わせて使う。
+    /// A widget that is just empty space. Use it together with a `Grid`'s
+    /// `Track::Fill`.
     pub fn spacer(&self) -> Result<Spacer> {
         Spacer::new()
     }
@@ -217,42 +221,42 @@ impl Ui {
         Checkbox::new(label)
     }
 
-    /// 入り切りを切り替えるスイッチ。`label` はとなりへ添える文字。
+    /// An on/off switch. `label` is the text placed next to it.
     pub fn toggle(&self, label: &str) -> Result<Toggle> {
         Toggle::new(label)
     }
 
-    /// 選択肢を折りたたんで表示するコンボボックス。
+    /// A combo box that shows its options collapsed.
     pub fn combo_box(&self) -> Result<ComboBox> {
         ComboBox::new()
     }
 
-    /// 候補から選ぶことも、自由に打ち込むこともできるコンボボックス。
+    /// A combo box where the user can either choose from suggestions or type freely.
     pub fn editable_combo_box(&self) -> Result<EditableComboBox> {
         EditableComboBox::new()
     }
 
-    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    /// A radio group that lays out options and lets the user choose exactly one.
     pub fn radio_group(&self) -> Result<RadioGroup> {
         RadioGroup::new()
     }
 
-    /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
+    /// A control for picking a date or time. `mode` decides what can be picked.
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         DatePicker::new(mode)
     }
 
-    /// 時刻だけを選ばせるコントロール。初期値は現在時刻。
+    /// A control for picking only a time of day. The initial value is the current time.
     pub fn time_picker(&self) -> Result<TimePicker> {
         TimePicker::new()
     }
 
-    /// 色を選ばせるコントロール。初期値は黒。
+    /// A control for picking a color. The initial value is black.
     pub fn color_picker(&self) -> Result<ColorPicker> {
         ColorPicker::new()
     }
 
-    /// アプリが自分で描く面。大きさは `set_sizing` で指定する。
+    /// A surface the app draws on itself. Set its size with `set_sizing`.
     pub fn canvas(&self) -> Result<Canvas> {
         Canvas::new()
     }
@@ -261,22 +265,23 @@ impl Ui {
         TextInput::new(text)
     }
 
-    /// 伏せ字で入力させる欄。中身は `PasswordBox`。
+    /// A field whose input is masked. Backed by `PasswordBox`.
     pub fn password_input(&self) -> Result<PasswordInput> {
         PasswordInput::new()
     }
 
-    /// 検索の入力欄。中身は `AutoSuggestBox`。
+    /// A search field. Backed by `AutoSuggestBox`.
     pub fn search_input(&self) -> Result<SearchInput> {
         SearchInput::new()
     }
 
-    /// 数値を入力させる欄。`value` は初期値。
+    /// A field for entering a number. `value` is the initial value.
     pub fn number_input(&self, value: f64) -> Result<NumberInput> {
         NumberInput::new(value)
     }
 
-    /// 改行を含む文字列を入力できる欄。高さは `set_sizing` で指定する。
+    /// A field for entering text that includes newlines. Set its height with
+    /// `set_sizing`.
     pub fn text_area(&self, text: &str) -> Result<TextArea> {
         TextArea::new(text)
     }
@@ -289,142 +294,144 @@ impl Ui {
         ProgressBar::new()
     }
 
-    /// タブ。中身のウィジェットごと持つ。
+    /// Tabs. Holds each tab's content widget.
     pub fn tabs(&self) -> Result<Tabs> {
         Tabs::new()
     }
 
-    /// 画面上部に置く横並びのナビゲーション。`title` は左端の見出し。
+    /// Horizontal navigation placed at the top of the screen. `title` is the heading
+    /// at the left end.
     pub fn navbar(&self, title: &str) -> Result<Navbar> {
         Navbar::new(title)
     }
 
-    /// 画面下部に置く横並びのナビゲーション。
+    /// Horizontal navigation placed at the bottom of the screen.
     pub fn dock(&self) -> Result<Dock> {
         Dock::new()
     }
 
-    /// ウィンドウの上端に付けるツールバー。
+    /// A toolbar attached to the top of the window.
     ///
-    /// [`Window::set_toolbar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_toolbar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     pub fn toolbar(&self) -> Result<Toolbar> {
         let toolbar = Toolbar::new()?;
         self.0.toolbars.borrow_mut().push(toolbar.clone());
         Ok(toolbar)
     }
 
-    /// ウィンドウの上端に付ける、OS のアプリケーションメニュー。
+    /// The OS's application menu, attached to the top of the window.
     ///
-    /// [`Window::set_menu_bar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_menu_bar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     pub fn menu_bar(&self) -> Result<MenuBar> {
         let menu_bar = MenuBar::new()?;
         self.0.menu_bars.borrow_mut().push(menu_bar.clone());
         Ok(menu_bar)
     }
 
-    /// ウィンドウの左に付けるサイドバー。
+    /// A sidebar attached to the left of the window.
     ///
-    /// [`Window::set_sidebar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_sidebar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     pub fn sidebar(&self) -> Result<Sidebar> {
         let sidebar = Sidebar::new()?;
         self.0.sidebars.borrow_mut().push(sidebar.clone());
         Ok(sidebar)
     }
 
-    /// 縦に並ぶナビゲーション一覧。
+    /// A vertical list of navigation items.
     pub fn menu(&self) -> Result<Menu> {
         Menu::new()
     }
 
-    /// 選択できる行の一覧。自分でスクロールする。
+    /// A list of selectable rows. It scrolls by itself.
     pub fn list(&self) -> Result<List> {
         List::new()
     }
 
-    /// 列見出しを持つ表。自分でスクロールする。
+    /// A table with column headings. It scrolls by itself.
     pub fn table(&self) -> Result<Table> {
         Table::new()
     }
 
-    /// 入れ子の項目を開閉できる一覧。自分でスクロールする。
+    /// A list whose nested items can be expanded and collapsed. It scrolls by itself.
     pub fn tree(&self) -> Result<Tree> {
         Tree::new()
     }
 
-    /// 右クリックで出るポップアップ (コンテキスト) メニュー。
+    /// A popup (context) menu shown on right-click.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 取り付け先から消えることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// remove it from the widgets it is attached to.
     pub fn popup_menu(&self) -> Result<PopupMenu> {
         let popup = PopupMenu::new()?;
         self.0.popups.borrow_mut().push(popup.clone());
         Ok(popup)
     }
 
-    /// パンくず。
+    /// Breadcrumbs.
     pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
         Breadcrumbs::new()
     }
 
-    /// ページ送り。`page_count` はページ数。
+    /// Pagination. `page_count` is the number of pages.
     pub fn pagination(&self, page_count: usize) -> Result<Pagination> {
         Pagination::new(page_count)
     }
 
-    /// リンク。`href` が空でなければ、押したときにブラウザで開く。
+    /// A link. If `href` is not empty, clicking it opens it in the browser.
     pub fn link(&self, text: &str, href: &str) -> Result<Link> {
         Link::new(text, href)
     }
 
-    /// 画像。`source` はファイルパスか URL。
+    /// An image. `source` is a file path or a URL.
     pub fn image(&self, source: &str) -> Result<Image> {
         Image::new(source)
     }
 
-    /// 動画。`source` はファイルパスか URL。
+    /// Video. `source` is a file path or a URL.
     pub fn video(&self, source: &str) -> Result<Video> {
         Video::new(source)
     }
 
-    /// 音声。`source` はファイルパスか URL。
+    /// Audio. `source` is a file path or a URL.
     pub fn audio(&self, source: &str) -> Result<Audio> {
         Audio::new(source)
     }
 
-    /// ファイルやフォルダーを選ばせるボタン。押すと共通ダイアログが出る。
+    /// A button for picking files or folders. Clicking it shows the common dialog.
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         FilePicker::new(text)
     }
 
-    /// 内容をファイルへ保存させるボタン。押すと共通ダイアログの保存が出る。
+    /// A button that lets the user save contents to a file. Clicking it shows the save
+    /// mode of the common dialog.
     pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
         FileSaver::new(text)
     }
 
-    /// 一時的な通知 (トースト)。`message` は出す文字列。
+    /// A transient notification (toast). `message` is the string to show.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 通知が届かなくなることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
     pub fn toast(&self, message: &str) -> Result<Toast> {
         let toast = Toast::new(message)?;
         self.0.toasts.borrow_mut().push(toast.clone());
         Ok(toast)
     }
 
-    /// モーダルダイアログ。`title` は見出し。中身は `ContentDialog`。
+    /// A modal dialog. `title` is the heading. Backed by `ContentDialog`.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 通知が届かなくなることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
     pub fn dialog(&self, title: &str) -> Result<Dialog> {
         let d = Dialog::new(title, self.0.theme.get())?;
         self.0.dialogs.borrow_mut().push(d.clone());
         Ok(d)
     }
 
-    /// 配色テーマを実行中に切り替える。
+    /// Switches the color theme at runtime.
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         for window in self.0.windows.borrow().iter() {
             window.set_theme(theme)?;
@@ -437,27 +444,29 @@ impl Ui {
         Ok(())
     }
 
-    /// 現在選択されている配色テーマを返す。
+    /// Returns the currently selected color theme.
     pub fn theme(&self) -> Theme {
         self.0.theme.get()
     }
 
-    /// 別スレッドや非同期処理から画面を書き換えるための入り口。
+    /// The entry point for updating the screen from other threads or async code.
     ///
-    /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
+    /// The returned [`Tasks`] can be cloned and moved into callbacks.
     pub fn tasks(&self) -> Tasks {
         self.0.tasks.clone()
     }
 
-    /// クリップボード。文字の読み書きができる。
+    /// The clipboard. Text can be read and written.
     pub fn clipboard(&self) -> Clipboard {
         Clipboard::new(self.0.tasks.clone())
     }
 
-    /// URL を既定のアプリ (`https:` ならブラウザ、`mailto:` ならメール) で開く。
+    /// Opens a URL with the default app (the browser for `https:`, mail for
+    /// `mailto:`).
     ///
-    /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
-    /// 読めない・開く先が無いときは `Err`。開いた先で起きた失敗は分からない。
+    /// Opening is left to the OS, so this returns right away. Returns `Err` when the
+    /// string cannot be read as a URL or there is nothing to open it with. Failures
+    /// that happen in whatever opens it are not reported.
     pub fn open_url(&self, url: &str) -> Result<()> {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -479,7 +488,7 @@ impl Ui {
         }
     }
 
-    /// アプリを終了する。
+    /// Quits the app.
     pub fn quit(&self) {
         // `Application::Exit` でもウィンドウは通知を上げずに畳まれるので、
         // 取り付けた Mica のコントローラーはここで閉じる。
@@ -493,24 +502,25 @@ impl Ui {
     }
 }
 
-/// `on_key_down` と `on_focus_change` の通知先を手放す。
+/// Releases the `on_key_down` and `on_focus_change` handlers.
 ///
-/// `on_key_down` の通知先は要素ではなく `thread_local!` の表が持っているので、
-/// XAML のツリーを外しても残る。終了の経路でここを通さないと、クロージャが
-/// 掴んだウィジェットはプロセスの終わりまで手放されない
-/// ([`ui_thread::Registry`] を参照)。`on_focus_change` の通知先はウィジェットが
-/// 持つが、フォーカスの見張りが最後の持ち主を掴んでいる。
+/// The `on_key_down` handlers are held by a `thread_local!` table rather than by the
+/// elements, so they remain even after the XAML tree is removed. Unless the shutdown
+/// path goes through here, the widgets captured by the closures are not released
+/// until the process ends (see [`ui_thread::Registry`]). The `on_focus_change`
+/// handlers are held by the widgets, but the focus watcher holds on to the last
+/// owner.
 fn release_widget_handlers() {
     keys::release_handlers();
     focus::release_handlers();
 }
 
-/// アプリを起動し、`build` の中で UI を組み立てる。
+/// Starts the app and builds the UI inside `build`.
 ///
-/// Windows App SDK ランタイムの取り付け (`self-contained` なら同梱物を、
-/// そうでなければクレートの説明のとおり版を新しい順に試す) を行ってから
-/// `Application::Start` に入り、XAML の初期化が終わったところで `build` を呼ぶ。
-/// この関数はアプリが終了するまで戻らない。
+/// After attaching the Windows App SDK runtime (the bundled files with
+/// `self-contained`, otherwise trying versions newest first as described in the
+/// crate docs), it enters `Application::Start` and calls `build` once XAML
+/// initialization has finished. This function does not return until the app exits.
 pub fn run<F>(settings: Settings, build: F) -> Result<()>
 where
     F: FnOnce(&Ui) -> Result<()> + 'static,
@@ -542,15 +552,14 @@ where
     }
 }
 
-/// `build` を WinUI 3 の初期化が終わったところで 1 度だけ呼び、戻ったら
-/// アプリを終わらせる。**自動テスト専用**。
+/// Calls `build` exactly once when WinUI 3 initialization has finished, and ends
+/// the app when it returns. **For automated tests only.**
 ///
-/// 実際のアプリでは [`run`] を使うこと。AppKit や DOM と違い、WinUI 3 の
-/// コントロールは `Application::Start` より前には 1 つも作れない。しかも
-/// `Application::Start` は 1 プロセスで 1 回しか呼べないので、テストは
-/// 「アプリを起こし、その中で全ケースを走らせ、最後に畳む」形になる。
-/// ケースごとにやり直せる macOS 版 (`naui_macos::run_for_test`) とは
-/// そこが違う。
+/// Real apps should use [`run`]. Unlike AppKit or the DOM, WinUI 3 cannot create a
+/// single control before `Application::Start`. Moreover, `Application::Start` can be
+/// called only once per process, so tests take the form "start the app, run every
+/// case inside it, then wind it down". This is where it differs from the macOS
+/// version (`naui_macos::run_for_test`), which can start over per case.
 #[doc(hidden)]
 pub fn run_for_test<F>(build: F) -> Result<()>
 where

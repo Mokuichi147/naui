@@ -1,11 +1,11 @@
-//! モーダルダイアログ (`AdwAlertDialog`)。
+//! A modal dialog (`AdwAlertDialog`).
 //!
-//! 見出し・本文・任意のウィジェット (`extra_child`)・役割つきのボタンという
-//! naui の形が、`AdwAlertDialog` とそのまま対応する。
+//! naui's shape of title, body text, optional widget (`extra_child`) and buttons
+//! with roles maps directly onto `AdwAlertDialog`.
 //!
-//! ボタンは `AdwAlertDialog` に足したあと取り除けないため、**開くたびに
-//! ダイアログを組み立てる**。`Dialog` のほうは見出しや本文といった
-//! 「何を出すか」だけを持つ。
+//! Buttons cannot be removed once added to an `AdwAlertDialog`, so **the dialog is
+//! built each time it is opened**. `Dialog` itself holds only "what to show", such
+//! as the title and body text.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -16,12 +16,13 @@ use naui_core::{DialogButtons, DialogResponse};
 use crate::callback::Notifier;
 use crate::widgets::Widget;
 
-/// 役割と `AdwAlertDialog` の応答 ID の対応。
+/// The mapping between roles and `AdwAlertDialog` response IDs.
 const PRIMARY: &str = "primary";
 const SECONDARY: &str = "secondary";
 const CANCEL: &str = "cancel";
 
-/// GNOME のガイドラインに合わせた並び。取り消しが左、主となる操作が右。
+/// The order following the GNOME guidelines: cancel on the left, the primary action
+/// on the right.
 const ORDER: [DialogResponse; 3] = [
     DialogResponse::Cancel,
     DialogResponse::Secondary,
@@ -52,14 +53,14 @@ struct DialogInner {
     buttons: RefCell<DialogButtons>,
     child: RefCell<Option<Box<dyn Widget>>>,
     on_response: Notifier<DialogResponse>,
-    /// 開いている間だけ持つ実物。
+    /// The real dialog, held only while it is open.
     current: RefCell<Option<adw::AlertDialog>>,
     open: Cell<bool>,
 }
 
-/// モーダルダイアログ。
+/// A modal dialog.
 ///
-/// ウィジェットではないので、コンテナへは入れない (`Window` と同じ)。
+/// It is not a widget, so it does not go into containers (the same as `Window`).
 #[derive(Clone)]
 pub struct Dialog(Rc<DialogInner>);
 
@@ -99,12 +100,12 @@ impl Dialog {
         self.0.message.borrow().clone()
     }
 
-    /// 本文の下に置くウィジェット。
+    /// The widget placed below the body text.
     pub fn set_child(&self, child: &dyn Widget) {
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
-    /// 出すボタン。1 つも指定しなければ「OK」だけになる。
+    /// The buttons to show. With none specified, only "OK" is shown.
     pub fn set_buttons(&self, buttons: DialogButtons) {
         *self.0.buttons.borrow_mut() = buttons;
     }
@@ -113,12 +114,12 @@ impl Dialog {
         self.0.buttons.borrow().clone()
     }
 
-    /// 閉じたときに、その理由で呼ばれる。
+    /// Called with the reason when the dialog closes.
     pub fn on_response(&self, f: impl FnMut(DialogResponse) + 'static) {
         self.0.on_response.set(f);
     }
 
-    /// 開く。すでに開いていれば何もしない。
+    /// Opens it. Does nothing if it is already open.
     pub fn open(&self) {
         if self.0.open.get() {
             return;
@@ -164,10 +165,10 @@ impl Dialog {
         native.present(self.parent().as_ref());
     }
 
-    /// ダイアログを載せるウィンドウ。
+    /// The window the dialog is placed on.
     ///
-    /// まだどのウィンドウにも焦点が当たっていないことがある (起動直後など) ので、
-    /// そのときはアプリが持っているウィンドウの先頭を使う。
+    /// Sometimes no window has focus yet (right after startup, for example), in which
+    /// case the first window the app holds is used.
     fn parent(&self) -> Option<gtk::Window> {
         self.0
             .app
@@ -175,7 +176,7 @@ impl Dialog {
             .or_else(|| self.0.app.windows().into_iter().next())
     }
 
-    /// 閉じる。開いていなければ何もしない。
+    /// Closes it. Does nothing if it is not open.
     pub fn close(&self) {
         let native = self.0.current.borrow().clone();
         let Some(native) = native else {
@@ -198,14 +199,14 @@ impl Dialog {
         self.0.open.get()
     }
 
-    /// いま開いている `AdwAlertDialog`。開いていなければ `None`。
+    /// The `AdwAlertDialog` that is open now. `None` if none is open.
     ///
-    /// バックエンド固有の脱出口として公開している。
+    /// Public as a backend-specific escape hatch.
     pub fn native_dialog(&self) -> Option<adw::AlertDialog> {
         self.0.current.borrow().clone()
     }
 
-    /// 閉じたあとの後始末。中身のウィジェットは次に開くときも使えるようにする。
+    /// Cleanup after closing. Keeps the content widget usable the next time it opens.
     fn finish(&self) {
         self.0.open.set(false);
         if let Some(native) = self.0.current.borrow_mut().take() {

@@ -1,4 +1,4 @@
-//! コンボボックス (DOM の `<select>`)。
+//! A combo box (the DOM's `<select>`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -13,14 +13,14 @@ struct ComboBoxInner {
     native: HtmlSelectElement,
     document: Document,
     on_select: SelectionHandler,
-    /// `change` の購読。落とすと購読も外れる。
+    /// The `change` subscription. Dropping it also unsubscribes.
     _listener: RefCell<Option<Listener>>,
 }
 
-/// 1 項目を選ぶドロップダウン (`<select>`)。
+/// A drop-down for choosing one item (`<select>`).
 ///
-/// リストボックスとは異なり `size` 属性を付けず、ブラウザ標準の
-/// ドロップダウンとして表示する。
+/// Unlike a list box, it has no `size` attribute and is shown as the browser's
+/// standard drop-down.
 #[derive(Clone)]
 pub struct ComboBox(Rc<ComboBoxInner>);
 impl_widget!(ComboBox, native);
@@ -54,8 +54,8 @@ impl ComboBox {
         Ok(Self(inner))
     }
 
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
-    /// 通知は行わない。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared. No
+    /// notification is sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         while let Some(child) = self.0.native.first_child() {
             let _ = self.0.native.remove_child(&child);
@@ -85,17 +85,17 @@ impl ComboBox {
         (index >= 0 && (index as usize) < self.len()).then_some(index as usize)
     }
 
-    /// 範囲内なら、通知せずに選択を変える。
+    /// Changes the selection without notifying, if the index is in range.
     pub fn set_selected(&self, index: usize) {
         let _ = self.write_selected(index);
     }
 
-    /// 通知せずに選択を外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         self.0.native.set_selected_index(-1);
     }
 
-    /// ユーザーが選んだのと同じ経路で項目を選び、1 回通知する。
+    /// Selects an item through the same path as a user's choice and notifies once.
     pub fn select(&self, index: usize) {
         if self.write_selected(index) {
             self.0.on_select.emit(index);
@@ -106,7 +106,7 @@ impl ComboBox {
         self.0.native.set_disabled(!enabled);
     }
 
-    /// 選択が変わったときに、選ばれた項目のインデックスで呼ばれる。
+    /// Called with the index of the chosen item when the selection changes.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select.set(f);
     }

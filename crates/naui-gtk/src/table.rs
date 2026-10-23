@@ -1,19 +1,19 @@
-//! テーブル (`GtkListBox` の行を横並びにしたもの)。
+//! A table (rows of a `GtkListBox` laid out horizontally).
 //!
-//! GTK4 の `GtkColumnView` は `GtkListItemFactory` と `GListModel` を組み合わせ、
-//! 行のデータを GObject にして渡す作りになっている。naui のウィジェットは
-//! 「値の並びを渡すと表示が変わる」形なので、[`crate::List`] と同じ
-//! `GtkListBox` の上に組み立てている。
+//! GTK4's `GtkColumnView` combines a `GtkListItemFactory` and a `GListModel` and
+//! expects row data to be handed over as GObjects. naui's widgets take the form
+//! "pass a sequence of values and the display changes", so it is built on the same
+//! `GtkListBox` as [`crate::List`].
 //!
-//! | 部分 | 作り |
+//! | Part | Built from |
 //! | --- | --- |
-//! | 枠 | `GtkBox` (縦) に `frame` スタイルクラス |
-//! | 見出し | `GtkBox` (横) + `GtkLabel`、下に `GtkSeparator` |
-//! | 本体 | `GtkScrolledWindow` + `GtkListBox`。行は `GtkBox` (横) + `GtkLabel` |
-//! | 列幅 | 列ごとの `GtkSizeGroup` に、見出しと全行のセルを入れてそろえる |
+//! | Frame | A vertical `GtkBox` with the `frame` style class |
+//! | Headings | A horizontal `GtkBox` + `GtkLabel`s, with a `GtkSeparator` below |
+//! | Body | `GtkScrolledWindow` + `GtkListBox`. Rows are horizontal `GtkBox` + `GtkLabel` |
+//! | Column widths | A `GtkSizeGroup` per column holding the heading and every row's cell, to align them |
 //!
-//! 列の幅をドラッグで変えることはできない (`NSTableView` と違い、
-//! `GtkListBox` にはそのための仕組みが無いため)。
+//! Column widths cannot be changed by dragging (unlike `NSTableView`, `GtkListBox`
+//! has no mechanism for it).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -31,14 +31,15 @@ use crate::callback::{SelectionNotifier, SortNotifier};
 use crate::list::ActivationHandler;
 use crate::widgets::{impl_widget, without_signal, Widget};
 
-/// セルどうしの間隔。
+/// The spacing between cells.
 const CELL_SPACING: i32 = 12;
-/// 見出しと行の、左右の余白。
+/// The left and right margins of headings and rows.
 const SIDE_MARGIN: i32 = 10;
-/// 見出しと行の、上下の余白。
+/// The top and bottom margins of headings and rows.
 const VERTICAL_MARGIN: i32 = 6;
 
-/// GTK の文字揃えへ写す。`Fill` は文字に意味が無いので左と同じ扱い。
+/// Maps to GTK's text alignment. `Fill` means nothing for text, so it is treated
+/// the same as left.
 fn xalign(align: Align) -> f32 {
     match align {
         Align::Center => 0.5,
@@ -47,7 +48,7 @@ fn xalign(align: Align) -> f32 {
     }
 }
 
-/// 並べ替えの向きを表す文字。見出しの文字の後ろへ付ける。
+/// The character indicating the sort direction. Appended after the heading text.
 fn sort_arrow(order: Option<SortOrder>) -> &'static str {
     match order {
         Some(SortOrder::Ascending) => " ▲",
@@ -56,7 +57,7 @@ fn sort_arrow(order: Option<SortOrder>) -> &'static str {
     }
 }
 
-/// セル 1 つ分のラベルを作る。列の幅の決め方もここで反映する。
+/// Creates the label for one cell. The column's width setting is applied here too.
 fn cell_label(text: &str, column: &TableColumn, uniform: bool) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.set_xalign(xalign(column.align));
@@ -72,7 +73,7 @@ fn cell_label(text: &str, column: &TableColumn, uniform: bool) -> gtk::Label {
     label
 }
 
-/// 列の幅の決め方を、セルの中身へ反映する。
+/// Applies the column's width setting to the cell's content.
 fn apply_column_width(widget: &impl IsA<gtk::Widget>, column: &TableColumn) {
     let widget = widget.as_ref();
     match column.width {
@@ -86,7 +87,7 @@ fn apply_column_width(widget: &impl IsA<gtk::Widget>, column: &TableColumn) {
     }
 }
 
-/// セル 1 つ分の中身。
+/// The content of one cell.
 enum CellContent {
     Text(String),
     Widget(Box<dyn Widget>),
@@ -101,11 +102,12 @@ impl Clone for CellContent {
     }
 }
 
-/// 表へ載せる 1 行の中身。
+/// The contents of one row to put in a table.
 ///
-/// [`TableRow`] は文字列だけで済む表向けの簡便 API であり、セルにボタンや
-/// チェックボックス、アイコンを置きたいときは `Grid` / `Stack` で中身を
-/// 作ってこの型へ並べる。行は [`Table::set_row_builder`] から返す。
+/// [`TableRow`] is a convenience API for tables that need only strings. To put
+/// buttons, check boxes or icons in cells, build the contents with `Grid` / `Stack`
+/// and line them up in this type. Rows are returned from
+/// [`Table::set_row_builder`].
 ///
 /// ```no_run
 /// # use naui_gtk::{Table, TableCells};
@@ -118,7 +120,7 @@ impl Clone for CellContent {
 pub struct TableCells {
     cells: Vec<CellContent>,
     selectable: bool,
-    /// 文字だけの行で `enabled` が `false` のとき。行ごと操作できなくする。
+    /// For text-only rows whose `enabled` is `false`. Makes the whole row inoperable.
     dimmed: bool,
     activation: ActivationHandler,
 }
@@ -141,7 +143,7 @@ impl Default for TableCells {
 }
 
 impl TableCells {
-    /// セルが 1 つも無い行を作る。
+    /// Creates a row with no cells.
     pub fn new() -> Self {
         Self {
             cells: Vec::new(),
@@ -151,19 +153,19 @@ impl TableCells {
         }
     }
 
-    /// 文字のセルを 1 つ足す。揃えは列の指定に従う。
+    /// Adds one text cell. Alignment follows the column's setting.
     pub fn text(mut self, text: impl Into<String>) -> Self {
         self.cells.push(CellContent::Text(text.into()));
         self
     }
 
-    /// ウィジェットのセルを 1 つ足す。
+    /// Adds one widget cell.
     pub fn cell(mut self, content: &dyn Widget) -> Self {
         self.cells.push(CellContent::Widget(content.boxed_clone()));
         self
     }
 
-    /// 行全体を選択できるようにするかどうか (既定はできる)。
+    /// Whether the whole row can be selected (it can by default).
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
         self
@@ -173,7 +175,7 @@ impl TableCells {
         self.selectable
     }
 
-    /// 列数。
+    /// The number of columns.
     pub fn len(&self) -> usize {
         self.cells.len()
     }
@@ -182,15 +184,16 @@ impl TableCells {
         self.cells.is_empty()
     }
 
-    /// 行のセルや余白がクリックされたときに呼ぶ処理。
+    /// What to do when a cell or empty space in the row is clicked.
     ///
-    /// ボタンや入力欄を直接押した場合は、そのコントロールがクリックを
-    /// 受け取るので呼ばれない。
+    /// When a button or text field is clicked directly, that control receives the
+    /// click, so this is not called.
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.activation.set(f);
     }
 
-    /// 文字だけの行から作る。`enabled` はそのまま「選べるか」になる。
+    /// Creates one from a text-only row. `enabled` becomes "whether it can be
+    /// selected" as is.
     fn from_row(row: &TableRow) -> Self {
         Self {
             cells: row.cells.iter().cloned().map(CellContent::Text).collect(),
@@ -205,17 +208,18 @@ impl TableCells {
     }
 }
 
-/// 行を組み立てるクロージャ。呼び出しの間だけ取り出す。
-/// 行を組み立てるクロージャの置き場。
+/// The closure that builds rows. Taken out only for the duration of the call.
+/// The slot for the closure that builds rows.
 type RowBuildCell = Rc<RefCell<Option<Box<dyn FnMut(usize) -> Result<TableCells>>>>>;
 
-/// 「その行は選べるか」を答える関数の置き場 ([`Table::set_row_selectable`])。
+/// The slot for the function answering "can this row be selected?"
+/// ([`Table::set_row_selectable`]).
 type RowSelectableCell = RefCell<Option<Rc<dyn Fn(usize) -> bool>>>;
 
-/// 行を組み立てるクロージャ。
+/// The closure that builds rows.
 ///
-/// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
-/// 二重借用にならない。
+/// It is taken out only for the duration of the call, so operating on the table
+/// from inside the build does not double-borrow.
 #[derive(Clone, Default)]
 struct RowBuilder(RowBuildCell);
 
@@ -243,13 +247,14 @@ impl RowBuilder {
     }
 }
 
-/// 行の出どころ。文字だけの行 ([`Table::set_rows`]) と、
-/// 見えたときに組み立てる行 ([`Table::set_row_builder`]) の 2 通り。
+/// Where rows come from: either text-only rows ([`Table::set_rows`]) or rows built
+/// when they become visible ([`Table::set_row_builder`]).
 #[derive(Default)]
 struct RowsState {
     rows: RefCell<Vec<TableRow>>,
     builder: RowBuilder,
-    /// 行を組み立てずに「選べるか」を答える関数 ([`Table::set_row_selectable`])。
+    /// The function that answers "can it be selected?" without building the row
+    /// ([`Table::set_row_selectable`]).
     selectable: RowSelectableCell,
     count: Cell<usize>,
 }
@@ -273,7 +278,7 @@ impl RowsState {
         self.count.set(count);
     }
 
-    /// その行の中身。無ければ `None`。
+    /// The contents of that row. `None` if there is none.
     fn cells(&self, index: usize) -> Option<TableCells> {
         if index >= self.count.get() {
             return None;
@@ -289,15 +294,15 @@ impl RowsState {
         *self.selectable.borrow_mut() = Some(Rc::new(f));
     }
 
-    /// 行を組み立てずに答えられるなら、その行が選べるか。
+    /// Whether the row can be selected, if that can be answered without building it.
     ///
-    /// 呼び出しの間は借用を持たない (この中からアプリが表を触れるため)。
+    /// No borrow is held during the call (the app may touch the table from inside it).
     fn selectable_hint(&self, index: usize) -> Option<bool> {
         let f = self.selectable.borrow().clone()?;
         Some(f(index))
     }
 
-    /// 文字だけの行で、その行が選べるか。組み立てる行では `None`。
+    /// For text-only rows, whether the row can be selected. `None` for built rows.
     fn text_row_selectable(&self, index: usize) -> Option<bool> {
         match self.builder.is_set() {
             true => None,
@@ -307,54 +312,58 @@ impl RowsState {
 }
 
 struct TableInner {
-    /// 外から見えるウィジェット。見出しと本体を縦に並べた入れ物。
+    /// The widget visible from outside: a container stacking the headings and the body
+    /// vertically.
     native: gtk::Box,
-    /// 見出しの行。列を変えるたびに中身を作り直す。
+    /// The heading row. Its content is rebuilt whenever the columns change.
     header: gtk::Box,
     list: gtk::ListBox,
-    /// `GtkListBox` は自分でスクロールしないので、スクロール領域に載せる。
+    /// `GtkListBox` does not scroll by itself, so it is placed in a scroll area.
     scroller: gtk::ScrolledWindow,
-    /// 詰め物と一覧を縦に並べた入れ物。スクロール領域の中身。
+    /// A container stacking the spacers and the list vertically. The scroll area's
+    /// content.
     _content: gtk::Box,
-    /// 窓の外にある行の分を埋める。スクロールバーの長さを保つ。
+    /// Fills in for the rows outside the window, keeping the scroll bar length.
     top_spacer: gtk::Box,
     bottom_spacer: gtk::Box,
     bin: SizeBin,
     columns: RefCell<Vec<TableColumn>>,
     rows: Rc<RowsState>,
-    /// いま組み立ててある行の範囲。行数が多いと画面の前後だけになる。
+    /// The range of rows currently built. With many rows, only those around the screen.
     window: Cell<RowWindow>,
-    /// 行を組み立てている最中か。入れ子の作り直しを防ぐ。
+    /// Whether rows are being built right now. Prevents nested rebuilds.
     rebuilding: Cell<bool>,
-    /// 直前の入力から見分けた、選択の変え方 (修飾キー)。
+    /// How the selection was changed (modifier keys), as inferred from the last input.
     gesture: Cell<SelectionGesture>,
-    /// 組み立ててある行の中身。`window.start` から順に並ぶ。
+    /// The contents of the built rows, in order from `window.start`.
     realized: RefCell<Vec<TableCells>>,
-    /// 選ばれている行 (昇順)。**窓の外の行も入る**ので、
-    /// `GtkListBox` ではなくここが正。
+    /// The selected rows (ascending). **Rows outside the window are included**, so this
+    /// is the source of truth, not the `GtkListBox`.
     selected: RefCell<Vec<usize>>,
-    /// 1 行の高さ (論理ピクセル)。測った値か [`Table::set_row_height`] の指定。
+    /// The height of one row (logical pixels). Either measured or set with
+    /// [`Table::set_row_height`].
     row_height: Cell<f64>,
-    /// アプリが決めた行の高さ。無ければ組み立てた行から測る。
+    /// The row height decided by the app. If absent, it is measured from a built row.
     fixed_row_height: Cell<Option<i32>>,
-    /// 列ごとの `GtkSizeGroup`。組み立てのたびに作り直す。
+    /// A `GtkSizeGroup` per column. Recreated on every build.
     groups: RefCell<Vec<gtk::SizeGroup>>,
-    /// 見出しに置いたラベル。並べ替えの指標の書き替えに使う。
-    /// 押せる列ではボタンの中身になっている。
+    /// The labels placed in the headings. Used to rewrite the sort indicator. In
+    /// clickable columns they are the button's content.
     header_labels: RefCell<Vec<gtk::Label>>,
-    /// 列の幅をそろえる `GtkSizeGroup` へ入れる見出し側の相手。
-    /// 押せる列ではボタン、そうでなければラベル。
+    /// The heading-side counterpart put into the `GtkSizeGroup` that aligns column
+    /// widths. A button in clickable columns, otherwise a label.
     header_slots: RefCell<Vec<gtk::Widget>>,
-    /// いまの並べ替え (列と向き)。
+    /// The current sort (column and direction).
     sort: Cell<Option<(usize, SortOrder)>>,
     on_select: SelectionNotifier,
     on_sort: SortNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 列見出しを持つ表。自分でスクロールする。
+/// A table with column headings. It scrolls by itself.
 ///
-/// 高さは中身から決まらないので、[`Table::set_sizing`] で指定しておく。
+/// Its height is not determined by its contents, so set it with
+/// [`Table::set_sizing`].
 #[derive(Clone)]
 pub struct Table(Rc<TableInner>);
 impl_widget!(Table);
@@ -491,9 +500,9 @@ impl Table {
         table
     }
 
-    /// 列を作り直す。行と選択はそのまま残り、セルの並べ直しだけが起きる。
+    /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
     ///
-    /// 並べ替えの指定も、その列がまだ並べ替えられるなら残る。
+    /// The sort setting also stays if that column can still be sorted.
     pub fn set_columns(&self, columns: &[TableColumn]) {
         // 行を作り直すと選択も落ちるので、覚えて書き戻す。
         let picked = self.selection();
@@ -512,26 +521,28 @@ impl Table {
         without_signal(&self.0.list, &self.0.handler, || self.show(&picked));
     }
 
-    /// 列数。
+    /// The number of columns.
     pub fn column_count(&self) -> usize {
         self.0.columns.borrow().len()
     }
 
-    /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     ///
-    /// 行数が多いときは、`GtkListBoxRow` を作るのも画面に出ている分だけに
-    /// なる (残りは上下の詰め物が高さを持つので、スクロールバーの長さは
-    /// 全行分のまま)。
+    /// With many rows, `GtkListBoxRow`s are created only for the rows on screen (the
+    /// spacers above and below carry the height of the rest, so the scroll bar length
+    /// still reflects all the rows).
     pub fn set_rows(&self, rows: &[TableRow]) {
         self.0.rows.set_rows(rows);
         self.reset_rows();
     }
 
-    /// セルにウィジェットを置ける行を、**見えたときに組み立てる**形で渡す。
+    /// Passes rows whose cells can hold widgets, in a form that **builds each row when
+    /// it becomes visible**.
     ///
-    /// `count` は行数で、`build` は 0 から `count - 1` のインデックスを受けて
-    /// その行の中身 ([`TableCells`]) を返す。呼ばれるのは画面に出ている行
-    /// (と、その少し前後) だけなので、行数が数十万になっても開くのは速い。
+    /// `count` is the number of rows, and `build` receives an index from 0 to
+    /// `count - 1` and returns that row's contents ([`TableCells`]). It is called only
+    /// for the rows on screen (and a few before and after), so opening stays fast even
+    /// with hundreds of thousands of rows.
     ///
     /// ```no_run
     /// # use naui_gtk::{Table, TableCells};
@@ -550,15 +561,16 @@ impl Table {
         self.reset_rows();
     }
 
-    /// 行が選べるかどうかを、**行を組み立てずに**答える関数を渡す。
+    /// Passes a function that answers whether a row can be selected **without building
+    /// the row**.
     ///
-    /// [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
-    /// 選べるかどうかを naui は知らない。これを渡しておくと、画面の外の行に
-    /// ついても [`Table::set_selection`] が「選べない行を取り除く」を守れる。
-    /// 渡さないときは、作ってある行は [`TableCells::selectable`] に従い、
-    /// まだ作っていない行は選べるものとして扱う。
+    /// For rows built with [`Table::set_row_builder`], naui does not know whether rows
+    /// not yet built can be selected. With this function, [`Table::set_selection`] can
+    /// keep its promise of "removing rows that cannot be selected" even for rows off
+    /// screen. Without it, built rows follow [`TableCells::selectable`] and rows not
+    /// yet built are treated as selectable.
     ///
-    /// 返す答えは `build` が返す [`TableCells::selectable`] と同じにすること。
+    /// Its answers must match the [`TableCells::selectable`] returned by `build`.
     ///
     /// ```no_run
     /// # use naui_gtk::{Table, TableCells};
@@ -571,7 +583,7 @@ impl Table {
         self.0.rows.set_selectable(selectable);
     }
 
-    /// 見えている行を組み立て直す。行数と選択はそのまま。
+    /// Rebuilds the visible rows. The row count and selection stay.
     pub fn refresh(&self) {
         let picked = self.selection();
         self.build_window();
@@ -582,11 +594,12 @@ impl Table {
         }
     }
 
-    /// 行の高さを論理ピクセルで決める。0 以下を渡すと、組み立てた行から測る。
+    /// Sets the row height in logical pixels. Passing 0 or less measures it from a
+    /// built row.
     ///
-    /// どの行も同じ高さになる。画面の外にある行の分は「行数 × この高さ」で
-    /// 詰めるので、行の高さがそろっていないと、スクロールバーの長さが
-    /// 実際と少しずれる。
+    /// Every row gets the same height. Rows off screen are filled in as "row count ×
+    /// this height", so if row heights are not uniform the scroll bar length will be
+    /// slightly off from reality.
     pub fn set_row_height(&self, height: f64) {
         self.0
             .fixed_row_height
@@ -596,12 +609,12 @@ impl Table {
         self.refresh();
     }
 
-    /// 行の高さ (論理ピクセル)。まだ 1 行も組み立てていなければ 0。
+    /// The row height (logical pixels). 0 if no row has been built yet.
     pub fn row_height(&self) -> f64 {
         self.0.row_height.get()
     }
 
-    /// 行数。
+    /// The number of rows.
     pub fn len(&self) -> usize {
         self.0.rows.len()
     }
@@ -610,7 +623,8 @@ impl Table {
         self.len() == 0
     }
 
-    /// 選び方を変える。選択の意味が変わるため、選択は外れる。
+    /// Changes how rows are selected. The meaning of the selection changes, so the
+    /// selection is cleared.
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.selected.borrow_mut().clear();
         let multiple = mode.is_multiple();
@@ -636,26 +650,28 @@ impl Table {
         }
     }
 
-    /// 選ばれている行のうち、いちばん上のもの。
+    /// The topmost of the selected rows.
     pub fn selected(&self) -> Option<usize> {
         self.selection().first().copied()
     }
 
-    /// 選ばれている行 (昇順)。単一選択なら 0 件か 1 件。
+    /// The selected rows (ascending). Zero or one for single selection.
     ///
-    /// 窓の外にある行も入る。`GtkListBox` が知っているのは組み立ててある行
-    /// だけなので、覚えているほうを返す。
+    /// Rows outside the window are included. `GtkListBox` knows only the rows that are
+    /// built, so the remembered selection is returned.
     pub fn selection(&self) -> Vec<usize> {
         self.0.selected.borrow().clone()
     }
 
-    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until row `index` is visible. The selection does not change.
     ///
-    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
-    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    /// If it is already visible nothing moves; otherwise it is aligned to the nearer
+    /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
+    /// range.
     ///
-    /// 行を絞って組み立てているときも、行の高さから位置を求めて送るので、
-    /// まだ組み立てていない行へも送れる (送った先の行はその場で組み立てる)。
+    /// Even while only some rows are built, the position is computed from the row
+    /// height, so it can scroll to rows not yet built (the destination row is built on
+    /// the spot).
     pub fn scroll_to_row(&self, index: usize) {
         if index >= self.len() {
             return;
@@ -665,60 +681,63 @@ impl Table {
         crate::list::reveal_range(&self.0.scroller, top, top + height);
     }
 
-    /// 通知せずに 1 行だけを選ぶ。
+    /// Selects exactly one row without notifying.
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
 
-    /// 通知せずに選択を置き換える。
+    /// Replaces the selection without notifying.
     ///
-    /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
-    /// ([`SelectionMode::normalize_by`])。
+    /// Out-of-range rows, unselectable rows and duplicates are removed, and with single
+    /// selection only the first remains ([`SelectionMode::normalize_by`]).
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         without_signal(&self.0.list, &self.0.handler, || self.show(&picked));
     }
 
-    /// 通知せずに選択をすべて外す。
+    /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
         without_signal(&self.0.list, &self.0.handler, || self.show(&[]));
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 行を選ぶ (通知あり)。
+    /// Selects one row through the same path as a user's selection (notifies).
     pub fn select(&self, index: usize) {
         self.select_many(&[index]);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
+    /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         without_signal(&self.0.list, &self.0.handler, || self.show(&picked));
         self.0.on_select.emit(&picked);
     }
 
-    /// 選択が変わるたびに、選ばれている行のインデックスで呼ばれる。
+    /// Called with the indices of the selected rows every time the selection changes.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.on_select.set(f);
     }
 
-    /// 見出しが押されて並べ替えの指定が変わったときに、
-    /// 押された列と向きで呼ばれる。
+    /// Called with the clicked column and direction when a heading is clicked and the
+    /// sort setting changes.
     ///
-    /// [`TableColumn::sortable`] を立てた列だけが押せる。**行を並べ替えるのは
-    /// アプリの仕事**で、通知を受けたら並べ替えた行を [`Table::set_rows`] で
-    /// 渡し直す (`set_rows` は選択を外すので、必要なら選び直す)。
+    /// Only columns with [`TableColumn::sortable`] set can be clicked. **Sorting the
+    /// rows is the app's job**: when notified, pass the sorted rows again with
+    /// [`Table::set_rows`] (`set_rows` clears the selection, so reselect if needed).
     pub fn on_sort(&self, f: impl FnMut(usize, SortOrder) + 'static) {
         self.0.on_sort.set(f);
     }
 
-    /// いまの並べ替えの指定 (列と向き)。押されたことが無ければ `None`。
+    /// The current sort setting (column and direction). `None` if no heading has been
+    /// clicked.
     pub fn sort(&self) -> Option<(usize, SortOrder)> {
         self.0.sort.get()
     }
 
-    /// 通知せずに並べ替えの指定を置き換える。見出しの指標だけが変わる。
+    /// Replaces the sort setting without notifying. Only the heading's indicator
+    /// changes.
     ///
-    /// 並べ替えられない列や範囲外の列を指すと、指定は外れる。
+    /// Pointing at a column that cannot be sorted, or one out of range, clears the
+    /// setting.
     pub fn set_sort(&self, sort: Option<(usize, SortOrder)>) {
         let sort = sort.filter(|&(column, _)| {
             self.0
@@ -731,17 +750,17 @@ impl Table {
         self.apply_sort();
     }
 
-    /// 中身の `GtkListBox`。バックエンド固有の脱出口として公開している。
+    /// The inner `GtkListBox`. Public as a backend-specific escape hatch.
     pub fn native_list_box(&self) -> gtk::ListBox {
         self.0.list.clone()
     }
 
     // ------------------------------------------------------------ 組み立て
 
-    /// 見出しと行を、いまの列と行から作り直す。
+    /// Rebuilds the headings and rows from the current columns and rows.
     ///
-    /// 列ごとの `GtkSizeGroup` は毎回作り直す。古いセルを持ったままだと、
-    /// 消えた行の幅が残ってしまうため。
+    /// The per-column `GtkSizeGroup`s are recreated every time. Holding on to old cells
+    /// would keep the widths of rows that are gone.
     fn rebuild(&self) {
         let columns = self.0.columns.borrow();
         while let Some(child) = self.0.header.first_child() {
@@ -798,7 +817,8 @@ impl Table {
 
     // ------------------------------------------------------- 行を絞る窓
 
-    /// 行を作り直して、窓を先頭へ戻す。選択も外れる。
+    /// Rebuilds the rows and moves the window back to the start. The selection is
+    /// cleared too.
     fn reset_rows(&self) {
         self.0.selected.borrow_mut().clear();
         self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
@@ -809,7 +829,7 @@ impl Table {
         }
     }
 
-    /// いまの窓の分だけ、`GtkListBox` の行を作り直す。
+    /// Rebuilds the `GtkListBox` rows for just the current window.
     fn build_window(&self) {
         // 組み立ての途中でアプリのコードが動くので、そこから呼ばれても
         // 二重に作り直さない。
@@ -872,7 +892,7 @@ impl Table {
         without_signal(&self.0.list, &self.0.handler, || self.show(&picked));
     }
 
-    /// いまのスクロール位置から、組み立てておく行の範囲を求める。
+    /// Computes the range of rows to build from the current scroll position.
     fn compute_window(&self, overscan: usize) -> RowWindow {
         let adjustment = self.0.scroller.vadjustment();
         // 詰め物が窓の外の行と同じ高さを持つので、スクロール位置は
@@ -886,10 +906,10 @@ impl Table {
         )
     }
 
-    /// スクロールに合わせて、組み立てる範囲を動かす。
+    /// Moves the built range along with scrolling.
     ///
-    /// 1 行スクロールするたびに作り直すのは重いので、余分に作ってある分
-    /// ([`ROW_WINDOW_OVERSCAN`]) の半分までは、そのまま使う。
+    /// Rebuilding for every row scrolled is heavy, so the window is reused until you
+    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]).
     fn update_window(&self) {
         let current = self.0.window.get();
         let needed = self.compute_window(ROW_WINDOW_OVERSCAN / 2);
@@ -902,10 +922,10 @@ impl Table {
         self.measure_row_height();
     }
 
-    /// 組み立てた行から 1 行の高さを測る。変わったら `true`。
+    /// Measures the height of one row from the built rows. `true` if it changed.
     ///
-    /// 行の高さは中身から決まるので、作ってからでないと分からない。
-    /// これが分かって初めて、窓の外にある行の分を正しく詰められる。
+    /// Row height is decided by the content, so it is not known until a row is built.
+    /// Only once it is known can the rows outside the window be filled in correctly.
     fn measure_row_height(&self) -> bool {
         if self.0.fixed_row_height.get().is_some() {
             return false;
@@ -924,7 +944,8 @@ impl Table {
         true
     }
 
-    /// 見出しが押されたとき。同じ列なら向きを反転し、違う列なら昇順から。
+    /// When a heading is clicked. The same column reverses direction; a different
+    /// column starts ascending.
     fn on_header_activated(&self, index: usize) {
         let next = match self.0.sort.get() {
             Some((column, order)) if column == index => (index, order.reversed()),
@@ -935,7 +956,7 @@ impl Table {
         self.0.on_sort.emit(next.0, next.1);
     }
 
-    /// 並べ替えの指定を見出しへ書く。
+    /// Writes the sort setting into the headings.
     fn apply_sort(&self) {
         let sort = self.0.sort.get();
         let columns = self.0.columns.borrow();
@@ -946,16 +967,16 @@ impl Table {
         }
     }
 
-    /// 指定された選択を、この表で意味を持つ形にそろえる。
+    /// Normalizes the requested selection into a form meaningful for this table.
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
         self.selection_mode()
             .normalize_by(indices, |index| self.is_selectable(index))
     }
 
-    /// その行を選べるか。
+    /// Whether the row can be selected.
     ///
-    /// 組み立てる行では、まだ作っていない行は「選べる」とみなす
-    /// (作ってみないと分からないため)。
+    /// For built rows, rows not yet built are assumed "selectable" (it cannot be known
+    /// without building them).
     fn is_selectable(&self, index: usize) -> bool {
         if index >= self.len() {
             return false;
@@ -979,10 +1000,11 @@ impl Table {
         }
     }
 
-    /// 選択を覚えて、組み立ててある行へ写す。
+    /// Remembers the selection and applies it to the built rows.
     ///
-    /// 窓の外の行は `GtkListBoxRow` が無いので写せない。窓が動いて
-    /// 組み立て直したときに、また覚えているほうから写す。
+    /// Rows outside the window have no `GtkListBoxRow`, so it cannot be applied to
+    /// them. When the window moves and rows are rebuilt, it is applied again from the
+    /// remembered selection.
     fn show(&self, picked: &[usize]) {
         *self.0.selected.borrow_mut() = picked.to_vec();
         let window = self.0.window.get();
@@ -998,7 +1020,8 @@ impl Table {
         }
     }
 
-    /// ユーザーが変えた選択を読む。窓の外の行の扱いもここで決める。
+    /// Reads the selection the user changed. How rows outside the window are treated is
+    /// decided here too.
     fn read_native_selection(&self) -> Vec<usize> {
         let window = self.0.window.get();
         let mut picked: Vec<usize> = self
@@ -1031,7 +1054,7 @@ impl Table {
     }
 }
 
-/// 1 行を組み立てる。セルは列と同じ順に並ぶ。
+/// Builds one row. Cells are in the same order as the columns.
 fn build_row(
     cells: &TableCells,
     columns: &[TableColumn],
@@ -1085,7 +1108,7 @@ fn build_row(
     native
 }
 
-/// 押されている修飾キーから、選択の変え方を見分ける。
+/// Infers how the selection is being changed from the modifier keys held.
 fn gesture_of(state: gtk::gdk::ModifierType) -> SelectionGesture {
     if state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
         // Shift は起点からの範囲。選び直しなので、窓の外の選択は落とす。
@@ -1097,7 +1120,7 @@ fn gesture_of(state: gtk::gdk::ModifierType) -> SelectionGesture {
     SelectionGesture::Plain
 }
 
-/// 窓の外にある行の分を、詰め物の高さとして持たせる。
+/// Gives the spacer the height of the rows outside the window.
 fn set_spacer_height(spacer: &gtk::Box, height: f64) {
     let height = height.max(0.0).min(i32::MAX as f64) as i32;
     spacer.set_size_request(-1, height);

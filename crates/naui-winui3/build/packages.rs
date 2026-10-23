@@ -1,30 +1,32 @@
-//! 同梱する Windows App SDK ランタイムの中身。
+//! The contents of the bundled Windows App SDK runtime.
 //!
-//! `build.rs` と、実行時に同梱物を探す `self_contained` の両方から読む。
-//! 両者で置き場の名前がずれないよう、ここにしか書かない。
+//! Read both from `build.rs` and from `self_contained`, which looks for the bundled
+//! files at run time. It is written only here, so the two never disagree on where
+//! things go.
 
-/// 部品の出どころになった Windows App SDK の版。部品の版はこの版の
-/// `Microsoft.WindowsAppSDK` NuGet パッケージが依存するものにそろえる。
+/// The Windows App SDK version the components come from. The component versions
+/// match those the `Microsoft.WindowsAppSDK` NuGet package of this version depends
+/// on.
 pub(crate) const WINDOWS_APP_SDK: &str = "2.5.1";
 
-/// 部品の NuGet パッケージ。
+/// A component's NuGet package.
 pub(crate) struct Component {
-    /// NuGet のパッケージ ID (小文字)。
+    /// The NuGet package ID (lowercase).
     pub(crate) id: &'static str,
     pub(crate) version: &'static str,
-    /// `.nupkg` の SHA-512 (16 進)。nuget.org のカタログが載せる
-    /// `packageHash` と同じもの。取ってきた中身をこれで確かめる。
+    /// The SHA-512 of the `.nupkg` (hex). The same as the `packageHash` listed in
+    /// nuget.org's catalog. The downloaded contents are verified against it.
     pub(crate) sha512: &'static str,
-    /// reg-free WinRT のマニフェストの元になる `package.appxfragment` を
-    /// 持つか。DWriteCore は WinRT クラスを持たないので無い。
+    /// Whether it has a `package.appxfragment`, the source of the reg-free WinRT
+    /// manifest. DWriteCore has no WinRT classes, so it has none.
     pub(crate) has_fragment: bool,
 }
 
-/// 同梱する部品。
+/// The bundled components.
 ///
-/// WinUI は **2.3.6 以上**にする。2.0.12 から 2.3.2 までの WinUI の
-/// パッケージには、誤って再配布を禁じるプレビュー版のライセンスが
-/// 入っていた (microsoft/WindowsAppSDK#6654、2.3.6 で修正)。
+/// WinUI must be **2.3.6 or later**. The WinUI packages from 2.0.12 through 2.3.2
+/// mistakenly contained a preview license that forbids redistribution
+/// (microsoft/WindowsAppSDK#6654, fixed in 2.3.6).
 pub(crate) const COMPONENTS: &[Component] = &[
     Component {
         id: "microsoft.windowsappsdk.foundation",
@@ -52,37 +54,39 @@ pub(crate) const COMPONENTS: &[Component] = &[
     },
 ];
 
-/// exe の隣に置く、reg-free WinRT のマニフェスト。
+/// The reg-free WinRT manifest placed next to the exe.
 ///
-/// `<exe 名>.exe.manifest` にはしない。その名前は OS が起動時に読むが、
-/// exe がマニフェストを埋め込んでいると無視されるうえ、naui からは exe の
-/// 名前を決められない。naui が実行時にアクティベーションコンテキストとして
-/// 読み込む。**このファイルがあることが、同梱されていることの印になる。**
+/// It is not named `<exe name>.exe.manifest`. The OS reads that name at startup, but
+/// ignores it when the exe has an embedded manifest, and naui cannot decide the exe's
+/// name anyway. naui loads it at run time as an activation context. **The presence
+/// of this file is the marker that the runtime is bundled.**
 pub(crate) const MANIFEST_FILE: &str = "naui-winappsdk.manifest";
 
-/// WinUI のコントロールが既定のスタイルを引くリソース。exe の隣に
-/// `resources.pri` の名前で置く。無いと `Microsoft.UI.Xaml.dll` が
-/// 起動中に例外で落ちる。
+/// The resources from which WinUI controls take their default styles. Placed next to
+/// the exe as `resources.pri`. Without it, `Microsoft.UI.Xaml.dll` crashes with an
+/// exception during startup.
 pub(crate) const RESOURCES_SOURCE: &str = "Microsoft.UI.Xaml.Controls.pri";
 pub(crate) const RESOURCES_FILE: &str = "resources.pri";
 
-/// 部品のライセンス条項 (各 `.nupkg` の `license.txt`) を置く名前。
+/// The name under which the components' license terms (each `.nupkg`'s
+/// `license.txt`) are placed.
 ///
-/// 同梱物と一緒に配ることで、再配布の条件 (利用者に同等以上の条項へ
-/// 同意してもらう) を満たしやすくする。部品ごとに違えば、すべてを並べる。
+/// Shipping them together with the bundled files makes it easier to meet the
+/// redistribution condition (having users agree to equivalent or stronger terms). If
+/// they differ per component, all of them are listed.
 pub(crate) const LICENSE_FILE: &str = "WindowsAppSDK-LICENSE.txt";
 
-/// 部品に含まれるオープンソースの告知 (`.nupkg` の直下の `NOTICE.txt`) を
-/// 置く名前。
+/// The name under which the open source notices contained in the components (the
+/// `NOTICE.txt` at the top of each `.nupkg`) are placed.
 pub(crate) const NOTICE_FILE: &str = "WindowsAppSDK-NOTICE.txt";
 
-/// 起動時に先に読み込む DLL。古い Windows 10 では、これが OS の代わりに
-/// reg-free WinRT を受け持つ。
+/// The DLL loaded first at startup. On old Windows 10, it handles reg-free WinRT in
+/// place of the OS.
 pub(crate) const RUNTIME_DLL: &str = "Microsoft.WindowsAppRuntime.dll";
 
-/// `runtimes-framework/win-<arch>/native/` のうち同梱しないもの。
+/// Files under `runtimes-framework/win-<arch>/native/` that are not bundled.
 ///
-/// MSBuild の self-contained 配置 (`Microsoft.WindowsAppSDK.SelfContained.targets`)
-/// が出力へコピーしない実行ファイル。ランタイムを OS へ導入するためのもので、
-/// 同梱した場合には使わない。
+/// Executables that MSBuild's self-contained deployment
+/// (`Microsoft.WindowsAppSDK.SelfContained.targets`) does not copy to the output.
+/// They are for installing the runtime on the OS and are not used when bundled.
 pub(crate) const EXCLUDED_FILES: &[&str] = &["DeploymentAgent.exe"];

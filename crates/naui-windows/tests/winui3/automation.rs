@@ -1,21 +1,22 @@
-//! UI オートメーションの、テストが使う分だけの手書き投影。
+//! A hand-written projection of just the UI Automation parts the tests use.
 //!
-//! ボタンを押す・チェックを反転する・項目を選ぶといった「利用者と同じ操作」は
-//! WinUI の `AutomationPeer` からしか起こせない (WinUI 3 の `Button` には
-//! プログラムから押す API が無い)。
+//! "The same actions as a user" — clicking buttons, toggling checks, choosing items
+//! — can only be triggered through WinUI's `AutomationPeer` (WinUI 3's `Button` has
+//! no API for clicking it from code).
 //!
-//! ただし `AutomationPeer` を [`naui_winui3`] の投影 (`bindings.rs`) へ足すと、
-//! それを返す `IUIElementOverrides::OnCreateAutomationPeer` が投影可能になり、
-//! 公開トレイト `IUIElementOverrides_Impl` に必須メソッドが増える。投影を
-//! 使っている下流のクレートが、それだけでコンパイルできなくなる。テストの
-//! 都合で公開 API を壊さないよう、要る数個だけをここで手書きする。
+//! However, adding `AutomationPeer` to the [`naui_winui3`] projection
+//! (`bindings.rs`) makes `IUIElementOverrides::OnCreateAutomationPeer`, which returns
+//! it, projectable, adding a required method to the public trait
+//! `IUIElementOverrides_Impl`. Downstream crates using the projection would stop
+//! compiling just from that. So as not to break the public API for the tests' sake,
+//! only the few pieces needed are hand-written here.
 //!
-//! IID と vtable の並びは `.winmd` から生成した投影を写したもの。使わない
-//! スロットは `usize` の詰め物にしてある (`windows-bindgen` が投影できない
-//! メンバーへ入れるのと同じ形)。**並びを間違えると別のメソッドを呼ぶ**ので、
-//! 足すときは `tools/winui3-bindgen` を一時的に流して突き合わせること。
-//! 受け取ったポインタを呼ぶだけで自分では vtable を作らないため、使う
-//! スロットより後ろは持たなくてよい。
+//! The IIDs and vtable order are copied from the projection generated from the
+//! `.winmd`. Unused slots are filled with `usize` padding (the same form
+//! `windows-bindgen` uses for members it cannot project). **Getting the order wrong
+//! calls a different method**, so when adding, temporarily run
+//! `tools/winui3-bindgen` and compare. It only calls through received pointers and
+//! never builds vtables itself, so slots after the last one used need not be held.
 
 // WinRT の名前は元の綴りのまま出す。
 #![allow(non_snake_case)]
@@ -25,7 +26,8 @@ use std::ffi::c_void;
 use naui_winui3::Microsoft::UI::Xaml::UIElement;
 use windows_core::{IInspectable, Interface, Result, Type, HRESULT, HSTRING};
 
-/// 取りたいパターンの番号 (`Microsoft.UI.Xaml.Automation.Peers.PatternInterface`)。
+/// The number of the pattern to get
+/// (`Microsoft.UI.Xaml.Automation.Peers.PatternInterface`).
 #[derive(Clone, Copy)]
 pub(crate) enum Pattern {
     Invoke = 0,
@@ -69,7 +71,8 @@ pub struct IAutomationPeer_Vtbl {
 }
 
 impl IAutomationPeer {
-    /// このコントロールが応じるパターン。応じないものを頼むと空が返る。
+    /// The pattern this control responds to. Asking for one it does not respond to
+    /// returns empty.
     fn pattern(&self, which: Pattern) -> Result<IInspectable> {
         unsafe {
             let mut result = std::mem::zeroed();
@@ -78,7 +81,7 @@ impl IAutomationPeer {
         }
     }
 
-    /// 支援技術へ渡る読み上げ名。
+    /// The name passed to assistive technology.
     fn name(&self) -> Result<HSTRING> {
         unsafe {
             let mut result = std::mem::zeroed();
@@ -107,18 +110,18 @@ pub struct IFrameworkElementAutomationPeerStatics_Vtbl {
         unsafe extern "system" fn(*mut c_void, *mut c_void, *mut *mut c_void) -> HRESULT,
 }
 
-/// 活性化ファクトリを引くための名前。クラス自体は投影しない。
+/// The name for looking up the activation factory. The class itself is not
+/// projected.
 struct FrameworkElementAutomationPeer;
 
 impl windows_core::RuntimeName for FrameworkElementAutomationPeer {
     const NAME: &'static str = "Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer";
 }
 
-/// ネイティブの UI オートメーションから見たこの要素。
+/// This element as seen by native UI Automation.
 ///
-/// WinUI がコントロールごとに用意する peer が返る (`Button` なら
-/// `ButtonAutomationPeer`)。画面読み上げソフトや自動操作ツールが触るのと
-/// 同じ口。
+/// The peer WinUI provides per control comes back (`ButtonAutomationPeer` for a
+/// `Button`). It is the same door screen readers and automation tools touch.
 fn peer(element: &UIElement) -> Result<IAutomationPeer> {
     static SHARED: windows_core::imp::FactoryCache<
         FrameworkElementAutomationPeer,
@@ -183,7 +186,7 @@ pub struct ISelectionItemProvider_Vtbl {
 
 // --------------------------------------------------------- テストが使う口
 
-/// 実際に押したのと同じ経路 (Invoke パターン) でクリックする。
+/// Clicks through the same path as an actual click (the Invoke pattern).
 pub(crate) fn invoke(element: &UIElement) {
     let provider: IInvokeProvider = provider(element, Pattern::Invoke);
     unsafe { (Interface::vtable(&provider).Invoke)(Interface::as_raw(&provider)) }
@@ -191,7 +194,7 @@ pub(crate) fn invoke(element: &UIElement) {
         .expect("Invoke に失敗しました");
 }
 
-/// 実際に押したのと同じ経路 (Toggle パターン) で入り切りを反転させる。
+/// Toggles on/off through the same path as an actual click (the Toggle pattern).
 pub(crate) fn toggle(element: &UIElement) {
     let provider: IToggleProvider = provider(element, Pattern::Toggle);
     unsafe { (Interface::vtable(&provider).Toggle)(Interface::as_raw(&provider)) }
@@ -199,7 +202,8 @@ pub(crate) fn toggle(element: &UIElement) {
         .expect("Toggle に失敗しました");
 }
 
-/// 実際に選んだのと同じ経路 (SelectionItem パターン) で項目を選ぶ。
+/// Selects an item through the same path as an actual selection (the SelectionItem
+/// pattern).
 pub(crate) fn select(element: &UIElement) {
     let provider: ISelectionItemProvider = provider(element, Pattern::SelectionItem);
     unsafe { (Interface::vtable(&provider).Select)(Interface::as_raw(&provider)) }
@@ -207,7 +211,7 @@ pub(crate) fn select(element: &UIElement) {
         .expect("Select に失敗しました");
 }
 
-/// 支援技術へ渡る読み上げ名。
+/// The name passed to assistive technology.
 pub(crate) fn accessible_name(element: &UIElement) -> String {
     peer(element)
         .expect("AutomationPeer を作れませんでした")
@@ -216,7 +220,8 @@ pub(crate) fn accessible_name(element: &UIElement) -> String {
         .unwrap_or_default()
 }
 
-/// peer からパターンを取り出す。応じないコントロールならテストを落とす。
+/// Takes a pattern out of the peer. Fails the test for controls that do not respond
+/// to it.
 fn provider<I: Interface>(element: &UIElement, which: Pattern) -> I {
     peer(element)
         .expect("AutomationPeer を作れませんでした")

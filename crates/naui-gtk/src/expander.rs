@@ -1,8 +1,9 @@
-//! 折りたたみ (`GtkExpander`)。
+//! A collapsible section (`GtkExpander`).
 //!
-//! GTK4 に同じ役目のコントロール (`GtkExpander`) があるので、そのまま使う。
-//! 見出しの三角も、押したときの開閉も GTK4 が行う。たたむと、GTK4 は中身を
-//! 内部の箱から外す (参照は持ったまま) ので、場所も空かない。
+//! GTK4 has a control for the same job (`GtkExpander`), so it is used as is. The
+//! heading's triangle and expanding and collapsing on click are done by GTK4. When
+//! collapsed, GTK4 removes the content from its internal box (keeping a reference),
+//! so no space is left either.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,13 +18,14 @@ use crate::widgets::{impl_widget, without_signal, Widget};
 struct ExpanderInner {
     native: gtk::Expander,
     bin: SizeBin,
-    /// 中身のハンドルを保持し、コールバックごと生かしておく。
+    /// Holds the content's handle, keeping it alive along with its callbacks.
     child: RefCell<Option<Box<dyn Widget>>>,
     on_toggle: Notifier<bool>,
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 見出しを押して中身を出し入れするコンテナ (`GtkExpander`)。
+/// A container whose contents are shown and hidden by clicking its heading
+/// (`GtkExpander`).
 #[derive(Clone)]
 pub struct Expander(Rc<ExpanderInner>);
 impl_widget!(Expander);
@@ -51,7 +53,7 @@ impl Expander {
         Self(inner)
     }
 
-    /// 見出しの文字。
+    /// The heading text.
     pub fn text(&self) -> String {
         self.0
             .native
@@ -64,12 +66,12 @@ impl Expander {
         self.0.native.set_label(Some(text));
     }
 
-    /// 開いているかどうか。
+    /// Whether it is expanded.
     pub fn is_expanded(&self) -> bool {
         self.0.native.is_expanded()
     }
 
-    /// プログラムから開閉する。`on_toggle` は呼ばれない。
+    /// Expands or collapses it from code. `on_toggle` is not called.
     pub fn set_expanded(&self, expanded: bool) {
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.set_expanded(expanded);
@@ -80,7 +82,7 @@ impl Expander {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 折りたたむ中身。呼ぶたびに置き換わる。
+    /// The contents to collapse. Each call replaces them.
     pub fn set_child(&self, child: &dyn Widget) {
         let bin = child.size_bin();
         // 中身は展開されたぶんの幅いっぱいに置く (`Scroll` と同じ扱い)。
@@ -89,7 +91,7 @@ impl Expander {
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
-    /// 利用者が開閉するたびに、変わった後の状態で呼ばれる。
+    /// Called with the new state every time the user expands or collapses it.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_toggle.set(f);
     }

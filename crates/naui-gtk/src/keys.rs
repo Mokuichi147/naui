@@ -1,19 +1,18 @@
-//! `on_key_down` (文字入力のウィジェットと `Window`)。
+//! `on_key_down` (text-input widgets and `Window`).
 //!
-//! ウィンドウごとに捕捉フェーズの `GtkEventControllerKey` を 1 つ付け、
-//! キーが入力欄 (と IME) へ届く前に受け取る。フォーカスのあるウィジェット
-//! から親へたどり、最初に見つかった登録済みのウィジェット、続けて
-//! ウィンドウの順に通知する。`Handled` なら伝わりを止めるので、入力欄にも
-//! 届かない。
+//! Each window gets one capture-phase `GtkEventControllerKey`, which receives keys
+//! before they reach the field (and the IME). It walks up the parents from the
+//! focused widget and notifies the first registered widget found, then the window.
+//! With `Handled`, propagation stops, so the key does not reach the field either.
 //!
-//! 修飾キーを単独で押したときは届けない (macOS と同じ)。
+//! Modifier keys pressed on their own are not delivered (the same as macOS).
 //!
-//! 変換中のキーは IME のものなので届けない。GTK4 には変換中かを尋ねる
-//! 手段が無いので、`GtkText` / `GtkTextView` の `preedit-changed` を見て
-//! 覚えておく。
+//! Keys during composition belong to the IME and are not delivered. GTK4 has no way
+//! to ask whether composition is in progress, so `preedit-changed` on `GtkText` /
+//! `GtkTextView` is watched and remembered.
 //!
-//! 登録表はウィジェットを弱参照で持つ。ウィジェットが解放されれば
-//! 通知先も表から外れる。
+//! The registry holds widgets by weak reference. When a widget is freed, its
+//! handler is removed from the table too.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -30,13 +29,13 @@ type Entries = RefCell<Vec<(glib::WeakRef<gtk::Widget>, Rc<KeyHandler>)>>;
 thread_local! {
     static WIDGETS: Entries = const { RefCell::new(Vec::new()) };
     static WINDOWS: Entries = const { RefCell::new(Vec::new()) };
-    /// `preedit-changed` を購読済みの文字入力。
+    /// The text inputs whose `preedit-changed` is already subscribed.
     static WATCHED: RefCell<Vec<glib::WeakRef<gtk::Widget>>> = const { RefCell::new(Vec::new()) };
-    /// いま変換中の文字入力。
+    /// The text inputs currently composing.
     static COMPOSING: RefCell<Vec<glib::WeakRef<gtk::Widget>>> = const { RefCell::new(Vec::new()) };
 }
 
-/// ウィジェットへ通知先を置く。呼ぶたびに置き換わる。
+/// Sets the handler on the widget. Each call replaces it.
 pub(crate) fn set_widget_handler(
     widget: &gtk::Widget,
     f: impl FnMut(&KeyEvent) -> EventResponse + 'static,
@@ -44,7 +43,7 @@ pub(crate) fn set_widget_handler(
     WIDGETS.with(|entries| handler_for(&mut entries.borrow_mut(), widget).set(f));
 }
 
-/// ウィンドウへ通知先を置く。呼ぶたびに置き換わる。
+/// Sets the handler on the window. Each call replaces it.
 pub(crate) fn set_window_handler(
     window: &gtk::Widget,
     f: impl FnMut(&KeyEvent) -> EventResponse + 'static,
@@ -81,7 +80,8 @@ fn lookup(
     })
 }
 
-/// ウィンドウにキーの受け口を付ける。ウィンドウを作るときに 1 度だけ呼ぶ。
+/// Attaches the key receiver to a window. Called exactly once when the window is
+/// created.
 pub(crate) fn install(window: &impl IsA<gtk::Window>) {
     let controller = gtk::EventControllerKey::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -112,7 +112,7 @@ pub(crate) fn install(window: &impl IsA<gtk::Window>) {
     window.as_ref().add_controller(controller);
 }
 
-/// フォーカスのあるウィジェット → ウィンドウの順に渡す。
+/// Passes it to the focused widget, then the window.
 fn dispatch(window: &gtk::Widget, event: &KeyEvent) -> EventResponse {
     let focus = window
         .downcast_ref::<gtk::Window>()
@@ -139,10 +139,11 @@ fn dispatch(window: &gtk::Widget, event: &KeyEvent) -> EventResponse {
     lookup(&WINDOWS, window).map_or(EventResponse::Continue, |handler| handler.emit(event))
 }
 
-/// 文字入力 (`GtkText` / `GtkTextView`) の変換の始まりと終わりを覚える。
+/// Remembers when composition starts and ends in a text input (`GtkText` /
+/// `GtkTextView`).
 ///
-/// フォーカスを受けたものから順に購読するので、変換を始めるキーそのものは
-/// (購読より前に来ると) 届くことがある。
+/// Subscriptions are made as widgets receive focus, so the very key that starts
+/// composition may still be delivered (if it arrives before the subscription).
 fn watch_preedit(widget: &gtk::Widget) {
     let already = WATCHED.with(|watched| {
         let mut watched = watched.borrow_mut();
@@ -193,7 +194,7 @@ fn modifiers_of(state: gdk::ModifierType) -> Modifiers {
     }
 }
 
-/// ⇧・Ctrl・Alt・Meta・Super・Hyper (左右とも) と AltGr。
+/// ⇧, Ctrl, Alt, Meta, Super, Hyper (left and right) and AltGr.
 fn is_modifier(keyval: gdk::Key) -> bool {
     use gdk::Key as K;
     matches!(
@@ -214,7 +215,7 @@ fn is_modifier(keyval: gdk::Key) -> bool {
     )
 }
 
-/// GDK のキー値を naui のキーへ写す。
+/// Maps a GDK key value to a naui key.
 fn key_of(keyval: gdk::Key) -> Key {
     use gdk::Key as K;
     match keyval {
@@ -246,14 +247,14 @@ fn function_key(keyval: gdk::Key) -> Option<Key> {
         .then(|| Key::F((value - first + 1) as u8))
 }
 
-/// 文字入力のウィジェットへ `on_key_down` を足す。
+/// Adds `on_key_down` to text-input widgets.
 macro_rules! impl_key_down {
     ($t:ty) => {
         impl $t {
-            /// キーが押されたときの通知。`Handled` を返すと、そのキーは
-            /// 入力欄にもウィンドウにも渡らない (改行や確定を止められる)。
+            /// Notified when a key is pressed. Returning `Handled` keeps the key from reaching
+            /// the field and the window (so you can stop newlines or confirmation).
             ///
-            /// IME で変換している間のキーは届かない。
+            /// Keys pressed while an IME is composing are not delivered.
             pub fn on_key_down(
                 &self,
                 f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,
