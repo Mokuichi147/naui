@@ -17,7 +17,11 @@ naui-core.workspace = true
 adw = { version = "0.7", package = "libadwaita", features = ["v1_5"] }
 gtk = { version = "0.9.7", package = "gtk4", features = ["v4_10"] }
 # 描画面の文字を Pango のレイアウトで cairo へ描くため。
-pangocairo = "0.20"
+# gtk4 と同じ gtk-rs-core の系列 (glib・cairo-rs・pango) に揃える。版が
+# ずれると cairo の Context の型が別物になって渡せない。範囲を上限付きで
+# 書くのは、`cargo upgrade` に pinned として扱わせ、gtk4 と別に上げさせない
+# ため (範囲は `"0.20"` と同じ)。
+pangocairo = ">=0.20, <0.21"
 
 [[test]]
 name = "gtk4"

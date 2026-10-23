@@ -65,14 +65,14 @@ windows = { version = "0.62", features = [
 # `self-contained` のときだけ build.rs が使う。部品の `.nupkg` を確かめて
 # (SHA-512)、展開し、reg-free WinRT のマニフェストを作る。
 #
-# zip の `deflate` は圧縮用の zopfli (Rust 1.88 以降) まで引き込むので使わず、
+# zip の `deflate` は圧縮用の zopfli まで引き込むので使わず、
 # 展開に要る flate2 だけを有効にする。flate2 はここで実装 (rust_backend) を選ぶ。
 [build-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
-roxmltree = { version = "0.20", optional = true }
-sha2 = { version = "0.10", optional = true }
-zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"], optional = true }
+roxmltree = { version = "0.21", optional = true }
+sha2 = { version = "0.11", optional = true }
+zip = { version = "7", default-features = false, features = ["deflate-flate2"], optional = true }
 
 # build.rs のマニフェスト生成 (`build/manifest.rs`) をテストから確かめる。
 [target.'cfg(target_os = "windows")'.dev-dependencies]
-roxmltree = "0.20"
+roxmltree = "0.21"
