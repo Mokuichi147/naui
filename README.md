@@ -84,7 +84,7 @@ Examples for every widget are in [`examples/gallery`](examples/gallery/src/lib.r
 
 ### Requirements
 
-- Rust 1.85 or later
+- Rust 1.88 or later
 - Linux: development libraries for GTK 4.10+ and libadwaita 1.5+
 - Windows: the Windows App SDK 1.3+ runtime (tested with 2.x).
   Not needed if you [bundle it](#bundling-the-windows-app-sdk-runtime)

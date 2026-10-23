@@ -36,7 +36,7 @@ jobs:
     # 最長 1.2 分。
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -58,7 +58,7 @@ jobs:
     # 最長 2.2 分。
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
@@ -86,7 +86,7 @@ jobs:
       # https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads
       WINDOWS_APP_SDK: "2.3.1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -152,7 +152,7 @@ jobs:
     # 最長 3.9 分。
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: 最低対応 Rust の版を読む
         id: msrv
         shell: bash
@@ -182,7 +182,7 @@ jobs:
     # 最長 3.9 分。
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Appx モジュールは Windows Server 2022 の PowerShell 7 では読み込めないので、
@@ -216,7 +216,7 @@ jobs:
       # 起動確認が失敗したときに撮ったスクリーンショット。
       - name: スクリーンショットを保存
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-legacy-screenshots
           path: ${{ runner.temp }}/*.png
@@ -235,7 +235,7 @@ jobs:
       # 読み上げの属性だけを持つので、`set_accessible_label` を確かめられる。
       GTK_A11Y: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # 日本語フォントも入れる。`checkbox_indicator_is_aligned_to_text` は
       # 日本語の行の ascent が大きく取られることを前提に印の位置を測るので、
       # 日本語を持つフォントが無いと欧文へ代替されて成り立たない。
@@ -275,7 +275,7 @@ jobs:
     # 最長 2.6 分。
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
