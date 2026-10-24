@@ -65,6 +65,7 @@ impl Grid {
             cell.column_span as i32,
             cell.row_span as i32,
         );
+        bin.place_in_grid();
         self.apply_tracks_to(&bin, cell);
         self.0
             .children

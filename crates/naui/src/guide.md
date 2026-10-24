@@ -189,6 +189,12 @@ fill the parent" on the cross axis. On Windows, `Stack` is a StackPanel, so
 **`Fill` on the main axis and `Spacer` have no effect**. Use [`Track::Fill`] of a
 `Grid` in that case.
 
+In a `Grid` cell, a child that fits its content (`Auto`) sits at the **start** of
+the cell horizontally and at the **center** vertically, on every backend. A
+[`Track::Fill`] column or row only widens the cell; **the child itself stretches
+only when it asks for `Fill`**, which is why the example above gives the text field
+`Sizing::fill_width()`.
+
 Adding a maximum ([`Sizing::max_width`] / [`Sizing::max_height`]) to `Fill` makes
 the maximum double as "the size you want under normal conditions". **When the
 parent can hand out space it grows up to the maximum, and when there is not

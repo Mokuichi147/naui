@@ -1180,6 +1180,79 @@ fn stack_inserts_and_removes_children() {
     });
 }
 
+/// Children of a `Grid` that fit their content stay at the start of the cell, and
+/// only `Fill` children stretch to the cell's width.
+///
+/// CSS Grid stretches children by default (`justify-items: stretch`), which on the
+/// Web alone would widen buttons and drop-downs to the whole cell. A `Fill` child
+/// must also stretch when the browser's own stylesheet gives it a width
+/// (`<progress>`).
+#[wasm_bindgen_test]
+fn grid_keeps_auto_children_at_the_start() {
+    with_ui(|ui| {
+        let grid = ui.grid()?;
+        grid.set_column_track(0, naui_core::Track::Auto);
+        grid.set_column_track(1, naui_core::Track::FILL);
+        grid.set_column_track(2, naui_core::Track::Auto);
+        grid.set_spacing(16.0, 8.0);
+        grid.set_sizing(Sizing::fixed(600.0, 200.0));
+
+        let name = ui.label("Button")?;
+        let button = ui.button("Click")?;
+        grid.attach(&name, GridCell::new(0, 0));
+        grid.attach(&button, GridCell::new(1, 0).span(2, 1));
+
+        let progress = ui.progress_bar()?;
+        progress.set_sizing(Sizing::fill_width());
+        let value = ui.label("40%")?;
+        grid.attach(&ui.label("ProgressBar")?, GridCell::new(0, 1));
+        grid.attach(&progress, GridCell::new(1, 1));
+        grid.attach(&value, GridCell::new(2, 1));
+
+        let combo = ui.combo_box()?;
+        combo.set_items(&["System", "Light", "Dark"]);
+        grid.attach(&combo, GridCell::new(1, 2));
+        let _mounted = Mounted::new(&grid);
+
+        let grid_rect = grid.native_element().get_bounding_client_rect();
+        let button_rect = button.native_element().get_bounding_client_rect();
+        let progress_rect = progress.native_element().get_bounding_client_rect();
+        let value_rect = value.native_element().get_bounding_client_rect();
+        let combo_rect = combo.native_element().get_bounding_client_rect();
+
+        assert!(
+            button_rect.width() < 200.0,
+            "中身に合わせるボタンがマスの幅まで伸びないこと: {}",
+            button_rect.width()
+        );
+        assert!(
+            combo_rect.width() < 300.0,
+            "中身に合わせる選択欄がマスの幅まで伸びないこと: {}",
+            combo_rect.width()
+        );
+        assert!(
+            (button_rect.left() - progress_rect.left()).abs() < 1.0,
+            "伸びない子もマスの先頭に置かれること: {} / {}",
+            button_rect.left(),
+            progress_rect.left()
+        );
+        // Fill の子は、名前と値の列を除いた残りを受け取る。
+        assert!(
+            progress_rect.width() > 300.0,
+            "Fill の子がマスの幅まで伸びること: {}",
+            progress_rect.width()
+        );
+        assert!(
+            progress_rect.right() <= value_rect.left() + 0.5
+                && value_rect.right() <= grid_rect.right() + 0.5,
+            "Fill の子が値の列と重ならないこと: {} / {}",
+            progress_rect.right(),
+            value_rect.left()
+        );
+        Ok(())
+    });
+}
+
 /// A `Grid` can remove children by cell.
 #[wasm_bindgen_test]
 fn grid_removes_children_by_cell() {
