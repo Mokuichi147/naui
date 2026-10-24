@@ -26,13 +26,11 @@ use std::sync::Arc;
 use naui_core::{
     keeps_hidden_selection, keeps_row_window, row_window, Align, Result, RowWindow,
     SelectionGesture, SelectionMode, SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN,
-    ROW_WINDOW_THRESHOLD,
 };
-use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button, ColumnDefinition, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
-    RowDefinition, ScrollBarVisibility, ScrollMode, ScrollViewer, SelectionChangedEventHandler,
-    StackPanel, TextBlock,
+    RowDefinition, ScrollBarVisibility, ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs,
+    SelectionChangedEventHandler, StackPanel, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, TappedEventHandler};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
@@ -41,7 +39,7 @@ use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
     TextAlignment, TextWrapping, Thickness, UIElement, VerticalAlignment,
 };
-use windows::Foundation::{PropertyValue, TimeSpan};
+use windows::Foundation::PropertyValue;
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
@@ -373,16 +371,6 @@ fn append_cell(
     Ok(())
 }
 
-/// The interval (milliseconds) for re-reading the display position.
-///
-/// `ScrollViewer.ViewChanged` is not in this projection, so while scrolling the
-/// display position is read at a short interval. It only reads, so nothing happens
-/// if the position does not change.
-const SCROLL_POLL_MILLIS: i64 = 50;
-
-/// One millisecond of `TimeSpan` (in 100-nanosecond units).
-const TICKS_PER_MILLI: i64 = 10_000;
-
 /// The content of one cell.
 enum CellContent {
     Text(String),
@@ -689,8 +677,6 @@ struct TableInner {
     /// row list).
     top_spacer: XamlGrid,
     bottom_spacer: XamlGrid,
-    /// The timer that reads the display position. Runs only while rows are limited.
-    scroll_timer: RefCell<Option<DispatcherQueueTimer>>,
     /// The scroll area bundling the row list and the spacers before and after it.
     scroll: RefCell<Option<ScrollViewer>>,
     mode: Cell<SelectionMode>,
@@ -791,7 +777,6 @@ impl Table {
             fixed_row_height: Cell::new(None),
             top_spacer,
             bottom_spacer,
-            scroll_timer: RefCell::new(None),
             scroll: RefCell::new(Some(scroll)),
             mode: Cell::new(SelectionMode::Single),
             handler: SelectionHandler::new(),
@@ -829,6 +814,7 @@ impl Table {
             .map_err(|e| to_error("ListView の購読", e))?;
         this.install_wheel_target()?;
         this.install_layout_updates()?;
+        this.install_scroll_updates()?;
 
         // ホイールの扱いはリストと同じ。ポインターがこの表の上にある間だけ、
         // ウィンドウ全体のホイール補助が表の ScrollViewer を選ぶ。
@@ -1270,8 +1256,9 @@ impl Table {
 
     // ------------------------------------------------------- 行を絞る窓
 
-    /// Gets row swaps in before drawing. With the timer alone, empty spacers would be
-    /// visible for a moment after scrolling, so it also updates when layout completes.
+    /// Gets row swaps in before drawing. With `ViewChanged` alone, empty spacers would
+    /// be visible for a moment after scrolling, so it also updates when layout
+    /// completes.
     fn install_layout_updates(&self) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let handler = windows::Foundation::EventHandler::<IInspectable>::new(move |_, _| {
@@ -1289,6 +1276,32 @@ impl Table {
         Ok(())
     }
 
+    /// Moves the built range along with scrolling.
+    ///
+    /// `ViewChanged` also arrives for intermediate progress (dragging the thumb,
+    /// inertia), so the rows follow while scrolling. With few rows the window covers
+    /// every row, so nothing is rebuilt.
+    fn install_scroll_updates(&self) -> Result<()> {
+        let Some(scroll) = self.0.scroll.borrow().clone() else {
+            return Ok(());
+        };
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = windows::Foundation::EventHandler::<ScrollViewerViewChangedEventArgs>::new(
+            move |_, _| {
+                let _ = state.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        Table(inner).update_window();
+                    }
+                });
+                Ok(())
+            },
+        );
+        scroll
+            .ViewChanged(&handler)
+            .map_err(|e| to_error("Table のスクロール位置の購読", e))?;
+        Ok(())
+    }
+
     /// Rebuilds the rows and moves the window back to the start. The selection is
     /// cleared too.
     fn reset_rows(&self) {
@@ -1298,7 +1311,6 @@ impl Table {
         if self.measure_row_height() {
             self.update_window();
         }
-        self.watch_scrolling();
     }
 
     /// Rebuilds the `ListView` rows for just the current window.
@@ -1515,51 +1527,6 @@ impl Table {
         set_spacer_height(&self.0.top_spacer, window.leading(measured));
         set_spacer_height(&self.0.bottom_spacer, window.trailing(measured));
         true
-    }
-
-    /// Runs the timer that re-reads the display position, only while rows are limited.
-    ///
-    /// `ScrollViewer.ViewChanged` is not in this projection, so this is the only way to
-    /// notice scrolling. It is stopped for tables with few rows.
-    fn watch_scrolling(&self) {
-        let needed = self.len() > ROW_WINDOW_THRESHOLD;
-        if !needed {
-            if let Some(timer) = self.0.scroll_timer.borrow_mut().take() {
-                let _ = timer.Stop();
-            }
-            return;
-        }
-        if self.0.scroll_timer.borrow().is_some() {
-            return;
-        }
-        let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
-            return;
-        };
-        let Ok(timer) = queue.CreateTimer() else {
-            return;
-        };
-        let interval = TimeSpan {
-            Duration: SCROLL_POLL_MILLIS * TICKS_PER_MILLI,
-        };
-        if timer.SetInterval(interval).is_err() || timer.SetIsRepeating(true).is_err() {
-            return;
-        }
-        let state = UiThreadCell::new(Rc::downgrade(&self.0));
-        let handler = windows::Foundation::TypedEventHandler::<
-            DispatcherQueueTimer,
-            windows_core::IInspectable,
-        >::new(move |_sender, _args| {
-            let _ = state.try_with_mut(|weak| {
-                if let Some(inner) = weak.upgrade() {
-                    Table(inner).update_window();
-                }
-            });
-            Ok(())
-        });
-        if timer.Tick(&handler).is_err() || timer.Start().is_err() {
-            return;
-        }
-        *self.0.scroll_timer.borrow_mut() = Some(timer);
     }
 
     // --------------------------------------------------------------- 選択
