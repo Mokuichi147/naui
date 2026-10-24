@@ -73,6 +73,12 @@ counterparts for, plus the foundation the adaptive layout track builds on.
       buttons to the right edge with a `Spacer` does not work on Windows today. The
       `Stack` is rebuilt on `Grid`. This removes the first row of the
       [platform differences](known-limitations.md#platform-differences-at-a-glance).
+- [ ] **Stop polling the scroll position in Windows's `Table`.** A `Table` with
+      more rows than the windowing threshold reads its scroll position every 50 ms
+      for as long as it exists, even when nothing moves, and the rows built can lag
+      behind fast scrolling by up to one interval. It was written before
+      `ScrollViewer.ViewChanged` was in the projection. It is there now (`Scroll`
+      uses it), so `Table` switches to it too.
 - [ ] *(adaptive)* **A contract for changes after adding to a container.** Settings
       made after a child is added (`set_sizing`, `set_spacing`, placement within a
       `Grid` cell) take effect, and a child moved to another container gets the
@@ -115,6 +121,15 @@ Medium weight and frequently requested, or a smaller gap between platforms.
 - [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** Today they
       are distributed evenly there. `NSGridView` and `GtkGrid` have no weights, so
       naui distributes the space itself.
+- [ ] **Make Windows's `Canvas` keep up with large drawings.** On every redraw,
+      all commands become one XAML string that `XamlReader` parses, and the result
+      replaces the whole surface, so drawings with thousands of commands are slow.
+      Candidates, investigated in this order: reusing the previous elements when
+      only some commands change (may need `PathGeometry` in the projection),
+      merging consecutive commands with the same style into one `Path`, and
+      drawing with Direct2D onto a Composition drawing surface, the way the other
+      three platforms rasterize. The last would also bring DirectWrite text
+      measurement, which broadening `Canvas`'s vocabulary waits on.
 - [ ] **Button roles** (primary buttons, destructive actions). macOS's
       `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
       WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
@@ -158,7 +173,8 @@ Heavy, or supported on a limited set of platforms.
       Community Toolkit), and AppKit has nothing besides `NSCollectionView`'s flow
       layout. Which platforms need naui to lay it out itself is investigated first.
 - [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
-      gradients). Text width measurement is hard on WinUI, so it is postponed.
+      gradients). Text width measurement on Windows waits for the `Canvas` drawing
+      item in P1.
 - [ ] **Multiple selection in `Tree`, and placing widgets in items.**
 - [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
