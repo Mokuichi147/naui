@@ -1,22 +1,24 @@
 use crate::sys;
 use naui_core::Orientation;
 
-/// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+/// A radio group that lays out options and lets the user choose exactly one.
 ///
-/// 作った直後と [`set_items`](Self::set_items) の直後は、何も選ばれていない。
+/// Right after creation and right after [`set_items`](Self::set_items), nothing is
+/// selected.
 #[derive(Clone)]
 pub struct RadioGroup(pub(crate) sys::RadioGroup);
 
 impl_widget!(RadioGroup);
 
 impl RadioGroup {
-    /// 選択肢を作り直し、選択を外す。選択通知は発生しない。
+    /// Rebuilds the options and clears the selection. No selection notification is
+    /// sent.
     #[inline]
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         self.0.set_items(items)
     }
 
-    /// 選択肢の数。
+    /// The number of options.
     #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
@@ -27,31 +29,31 @@ impl RadioGroup {
         self.0.is_empty()
     }
 
-    /// 現在選ばれている選択肢。未選択なら `None`。
+    /// The currently selected option. `None` if nothing is selected.
     #[inline]
     pub fn selected(&self) -> Option<usize> {
         self.0.selected()
     }
 
-    /// 範囲内の選択肢を通知せずに選ぶ。範囲外なら何もしない。
+    /// Selects an in-range option without notifying. Does nothing if out of range.
     #[inline]
     pub fn set_selected(&self, index: usize) {
         self.0.set_selected(index)
     }
 
-    /// 選択を通知せずに外す。
+    /// Clears the selection without notifying.
     #[inline]
     pub fn clear_selection(&self) {
         self.0.clear_selection()
     }
 
-    /// ユーザーが選んだのと同じように、範囲内の選択肢を選んで通知する。
+    /// Selects an in-range option and notifies, as if the user had chosen it.
     #[inline]
     pub fn select(&self, index: usize) {
         self.0.select(index)
     }
 
-    /// 選択肢の並ぶ向き。既定は縦。
+    /// The direction the options are laid out in. Vertical by default.
     #[inline]
     pub fn set_orientation(&self, orientation: Orientation) {
         self.0.set_orientation(orientation)
@@ -62,8 +64,8 @@ impl RadioGroup {
         self.0.set_enabled(enabled)
     }
 
-    /// 選択肢が選ばれたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the index when an option is chosen. Setting it again removes the
+    /// previous callback.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select(f)

@@ -1,8 +1,8 @@
-//! 別スレッドから UI スレッドへ仕事を投げる口。
+//! The way to post work from other threads to the UI thread.
 //!
-//! `DispatcherQueue` は agile (`unsafe impl Send/Sync`) なので、UI スレッドで
-//! 取ったものを別スレッドから `TryEnqueue` してよい。メディアの再生通知
-//! (`crate::media`) が既に同じ経路を使っている。
+//! `DispatcherQueue` is agile (`unsafe impl Send/Sync`), so one obtained on the UI
+//! thread may be `TryEnqueue`d from other threads. Media playback notifications
+//! (`crate::media`) already use the same path.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
@@ -15,14 +15,14 @@ use naui_winui3::Microsoft::UI::Dispatching::{
 use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows_core::IInspectable;
 
-/// UI スレッドの `DispatcherQueue`。
+/// The UI thread's `DispatcherQueue`.
 ///
-/// 取得に失敗したときは `None` にしておき、`post` が常に失敗を返すようにする
-/// (`Ui::new` を `Result` にしないため)。
+/// If obtaining it fails it is `None`, so that `post` always returns failure (so
+/// that `Ui::new` need not return a `Result`).
 pub(crate) struct Dispatcher(Option<DispatcherQueue>);
 
 impl Dispatcher {
-    /// **UI スレッドから呼ぶこと。**
+    /// **Call it from the UI thread.**
     pub(crate) fn for_current_thread() -> Self {
         Self(DispatcherQueue::GetForCurrentThread().ok())
     }
@@ -50,17 +50,17 @@ impl MainThread for Dispatcher {
         matches!(queue.TryEnqueue(&handler), Ok(true))
     }
 
-    /// UI スレッドへ移ってから、1 回きりの `DispatcherQueueTimer` を張る。
+    /// Moves to the UI thread, then sets a one-shot `DispatcherQueueTimer`.
     fn post_after(&self, delay: Duration, work: Work) -> bool {
         self.post(Box::new(move || start_timer(delay, work)))
     }
 }
 
-/// `TimeSpan` の 1 ミリ秒 (100 ナノ秒きざみ)。
+/// One millisecond of `TimeSpan` (in 100-nanosecond units).
 const TICKS_PER_MILLI: i64 = 10_000;
 
-/// UI スレッドで呼ぶ。張れなかったときはその場で実行する (遅れるより
-/// 呼ばれないほうが困るため)。
+/// Called on the UI thread. If the timer cannot be set, it runs on the spot (not
+/// being called at all is worse than being late).
 fn start_timer(delay: Duration, work: Work) {
     let timer = DispatcherQueue::GetForCurrentThread().and_then(|queue| queue.CreateTimer());
     let Ok(timer) = timer else {

@@ -3,7 +3,8 @@ use crate::Widget;
 use crate::{MenuBar, Sidebar, Toolbar};
 use naui_core::{CloseResponse, EventResponse, KeyEvent, Result, Theme, WindowState};
 
-/// ウィンドウを強く保持せずにイベントハンドラから参照するための弱参照。
+/// A weak reference for referring to a window from event handlers without holding
+/// it strongly.
 #[derive(Clone)]
 pub struct WeakWindow(pub(crate) sys::WeakWindow);
 
@@ -16,118 +17,125 @@ impl WeakWindow {
     }
 }
 
-/// トップレベルウィンドウ。
+/// A top-level window.
 ///
-/// `run` に渡したコールバックの中で作る。フレームワーク
-/// (`GtkApplication`) が参照を保持するので、戻り値を捨てても閉じられない。
+/// Create it inside the callback passed to `run`. The framework (`GtkApplication`)
+/// keeps a reference to it, so dropping the return value does not close it.
 #[derive(Clone)]
 pub struct Window(pub(crate) sys::Window);
 
 impl_backend!(Window);
 
 impl Window {
-    /// 利用者がウィンドウを閉じようとしたときの確認。
+    /// Confirmation when the user tries to close the window.
     ///
-    /// [`CloseResponse::KeepOpen`] を返すと閉じない (保存していない変更が
-    /// あるときに確認のダイアログを出す、など)。プログラムからの
-    /// [`close`](Self::close) では呼ばれない。
+    /// Returning [`CloseResponse::KeepOpen`] keeps it open (to ask for confirmation
+    /// when there are unsaved changes, for example). Not called for
+    /// [`close`](Self::close) from code.
     #[inline]
     pub fn on_close_request(&self, f: impl FnMut() -> CloseResponse + 'static) {
         self.0.on_close_request(f)
     }
 
-    /// 中身の領域の大きさ (幅, 高さ)。単位は論理ピクセル。ヘッダーバーと
-    /// メニューバーは含まない。サイドバーを付けているときは、ほかの環境と
-    /// 同じくサイドバーの幅も含む。
+    /// The size of the content area (width, height) in logical pixels, excluding the
+    /// header bar and menu bar. With a sidebar attached, it includes the sidebar's
+    /// width, as on the other platforms.
     ///
-    /// 画面に出る前は、`ui.window` か [`set_size`](Self::set_size) で指定した大きさ。
+    /// Before it is on screen, this is the size given to `ui.window` or
+    /// [`set_size`](Self::set_size).
     #[inline]
     pub fn size(&self) -> (f64, f64) {
         self.0.size()
     }
 
-    /// ウィンドウの左上の位置。**Linux では取れないので、いつも `None`。**
+    /// The position of the window's top-left corner. **It cannot be obtained on Linux,
+    /// so this is always `None`.**
     ///
-    /// GTK4 にはウィンドウの位置を読む API も動かす API も無い。Wayland では
-    /// アプリがウィンドウの位置を知る仕組みそのものが無く (置き場所は
-    /// コンポジタが決める)、GTK4 はそれに合わせて X11 でも外した。
+    /// GTK4 has no API to read or move a window's position. On Wayland there is no
+    /// mechanism at all for an app to know its window's position (the compositor
+    /// decides placement), and GTK4 dropped it on X11 too to match.
     #[inline]
     pub fn position(&self) -> Option<(f64, f64)> {
         self.0.position()
     }
 
-    /// ウィンドウを動かす。**Linux では何もしない** ([`position`](Self::position) を参照)。
+    /// Moves the window. **Does nothing on Linux** (see [`position`](Self::position)).
     #[inline]
     pub fn set_position(&self, x: f64, y: f64) {
         self.0.set_position(x, y)
     }
 
-    /// いまの表示の状態。
+    /// The current display state.
     ///
-    /// コンポジタから届いた面の状態 (`GdkToplevelState`) を読む。表示する前と、
-    /// 表示してからコンポジタの最初の状態が届くまでは、[`set_state`](Self::set_state)
-    /// で頼んだ状態 (既定は [`WindowState::Normal`])。
+    /// Reads the surface state delivered by the compositor (`GdkToplevelState`).
+    /// Before it is shown, and after showing until the compositor's first state
+    /// arrives, it is the state requested with [`set_state`](Self::set_state) (the
+    /// default is [`WindowState::Normal`]).
     ///
-    /// **Wayland では最小化を知る仕組みが無い**ので、最小化しても
-    /// [`WindowState::Minimized`] にはならない (しまう前の状態を返す)。
+    /// **Wayland has no way to know about minimization**, so minimizing does not make
+    /// it [`WindowState::Minimized`] (it returns the state from before it was put
+    /// away).
     #[inline]
     pub fn state(&self) -> WindowState {
         self.0.state()
     }
 
-    /// 表示の状態を変える。表示する前に呼んだときは、表示するときに当てる。
+    /// Changes the display state. When called before it is shown, it is applied when
+    /// shown.
     ///
-    /// | 頼んだ状態 | GTK4 |
+    /// | Requested state | GTK4 |
     /// | --- | --- |
-    /// | `Normal` | `unfullscreen` / `unmaximize` / `unminimize` と `present` |
+    /// | `Normal` | `unfullscreen` / `unmaximize` / `unminimize` and `present` |
     /// | `Maximized` | `maximize` |
     /// | `Minimized` | `minimize` |
     /// | `Fullscreen` | `fullscreen` |
     ///
-    /// どれもコンポジタへの頼みごとで、`state` が変わるのはコンポジタが
-    /// 応えた後になる (変わったら [`on_state_change`](Self::on_state_change)
-    /// が呼ばれる)。全画面からほかの状態へ移るときは、全画面を出終わって
-    /// から当てる。最小化から戻すときは、`unminimize` に加えて `present` で
-    /// 前面へ出すよう頼む (X11 のウィンドウマネージャは `unminimize` だけでは
-    /// 戻さないことがある)。**Wayland では最小化から戻せるとは限らない**
-    /// (戻す仕組みが無く、`present` に応えるかはコンポジタ次第)。
+    /// All of these are requests to the compositor, and `state` changes only after the
+    /// compositor responds ([`on_state_change`](Self::on_state_change) is called when
+    /// it changes). When moving from fullscreen to another state, it is applied after
+    /// leaving fullscreen has finished. When restoring from minimized, `present` is
+    /// requested in addition to `unminimize` to bring it to the front (X11 window
+    /// managers sometimes do not restore it with `unminimize` alone). **On Wayland,
+    /// restoring from minimized is not guaranteed** (there is no mechanism for it, and
+    /// whether `present` is honored is up to the compositor).
     ///
-    /// コンポジタが応える前に続けて頼んだときは、まだ応えていない頼みを
-    /// 取り消してから次を頼むので、最後に頼んだ状態になる。
+    /// If you request again before the compositor responds, the unanswered request is
+    /// withdrawn before the next one, so you end up in the last state requested.
     ///
-    /// 表示する前の最小化だけは、出す前に頼んでもウィンドウマネージャが
-    /// 応えないので、表示してコンポジタから最初の状態が届いてから当てる
-    /// (一瞬だけ画面に出る)。
+    /// Minimizing before showing is the one exception: window managers ignore it when
+    /// requested before showing, so it is applied after the window is shown and the
+    /// compositor's first state arrives (it appears on screen for a moment).
     #[inline]
     pub fn set_state(&self, state: WindowState) {
         self.0.set_state(state)
     }
 
-    /// 表示の状態が変わったときの通知。変わった後の [`state`](Self::state) が届く。
+    /// Notified when the display state changes. Receives the new
+    /// [`state`](Self::state).
     ///
-    /// 利用者の操作 (ヘッダーバーのボタン、画面端へのスナップ、など) でも
-    /// [`set_state`](Self::set_state) でも呼ばれる。
+    /// Called both for user actions (header bar buttons, snapping to a screen edge and
+    /// so on) and for [`set_state`](Self::set_state).
     #[inline]
     pub fn on_state_change(&self, f: impl FnMut(WindowState) + 'static) {
         self.0.on_state_change(f)
     }
 
-    /// 利用者がウィンドウの縁をつかんで大きさを変えられるか。既定は `true`。
+    /// Whether the user can resize the window by dragging its edges. `true` by default.
     #[inline]
     pub fn is_resizable(&self) -> bool {
         self.0.is_resizable()
     }
 
-    /// 利用者が大きさを変えられるかどうかを決める。
+    /// Decides whether the user can resize the window.
     ///
-    /// `gtk_window_set_resizable` を使う。外すとヘッダーバーの最大化の
-    /// ボタンも消える。[`set_size`](Self::set_size) はどちらでも効く。
+    /// Uses `gtk_window_set_resizable`. Turning it off also removes the header bar's
+    /// maximize button. [`set_size`](Self::set_size) works either way.
     #[inline]
     pub fn set_resizable(&self, resizable: bool) {
         self.0.set_resizable(resizable)
     }
 
-    /// 大きさが変わったときの通知。変わった後の [`size`](Self::size) が届く。
+    /// Notified when the size changes. Receives the new [`size`](Self::size).
     #[inline]
     pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
         self.0.on_resize(f)
@@ -138,11 +146,11 @@ impl Window {
         WeakWindow(self.0.downgrade())
     }
 
-    /// このウィンドウの中で押されたキーの通知。
+    /// Notified of keys pressed inside this window.
     ///
-    /// フォーカスのあるウィジェットの `on_key_down` が `Continue` を返した
-    /// キーが届く。`Handled` を返すと、そのキーはウィジェットへ渡らない。
-    /// IME で変換している間のキーは届かない。
+    /// Keys for which the focused widget's `on_key_down` returned `Continue` arrive
+    /// here. Returning `Handled` keeps the key from reaching the widget. Keys pressed
+    /// while an IME is composing are not delivered.
     #[inline]
     pub fn on_key_down(&self, f: impl FnMut(&KeyEvent) -> EventResponse + 'static) {
         self.0.on_key_down(f)
@@ -158,87 +166,91 @@ impl Window {
         self.0.title()
     }
 
-    /// 利用者が縮められる下限 (中身の幅, 高さ)。単位は [`set_size`](Self::set_size) と同じ。
+    /// The minimum size the user can shrink it to (content width, height). The units
+    /// are the same as [`set_size`](Self::set_size).
     ///
-    /// 小さくしすぎてレイアウトが崩れるのを防ぐ。
+    /// Prevents the layout from breaking when it is made too small.
     ///
-    /// GTK4 のウィンドウは中身の最小の大きさより縮まないので、中身の入れ物に
-    /// 最小の大きさを付ける (ヘッダーバーの分はその上に足される)。
-    /// サイドバーを付けている間は、幅の下限はサイドバーの右の区画に効く
-    /// (サイドバーの幅だけ広いところで止まる)。
+    /// A GTK4 window never shrinks below its content's minimum size, so the minimum is
+    /// set on the content container (the header bar is added on top of that). While a
+    /// sidebar is attached, the minimum width applies to the pane right of the sidebar
+    /// (it stops at a width larger by the sidebar's width).
     #[inline]
     pub fn set_min_size(&self, width: f64, height: f64) {
         self.0.set_min_size(width, height)
     }
 
-    /// 中身の領域の大きさを変える。単位と範囲は [`size`](Self::size) と同じで、
-    /// ヘッダーバーとメニューバーは含まない (ほかの環境と同じ)。
+    /// Changes the size of the content area. The units and extent are the same as
+    /// [`size`](Self::size), excluding the header bar and menu bar (the same as the
+    /// other platforms).
     ///
-    /// GTK4 の `set_default_size` はウィンドウ全体の大きさを取るので、
-    /// ヘッダーバーとメニューバーの帯の高さを足して渡す。画面に出る前に
-    /// 呼んだときは、表示するときにこの大きさで出す。
+    /// GTK4's `set_default_size` takes the size of the whole window, so the heights of
+    /// the header bar and menu bar strips are added. When called before it is on
+    /// screen, it is shown at this size.
     #[inline]
     pub fn set_size(&self, width: f64, height: f64) {
         self.0.set_size(width, height)
     }
 
-    /// ウィンドウの中身を差し替える。
+    /// Replaces the window's content.
     #[inline]
     pub fn set_child(&self, child: &dyn Widget) {
         self.0.set_child(child.as_backend())
     }
 
-    /// ウィンドウの左に付けるサイドバー。呼ぶたびに置き換わる。
+    /// The sidebar attached to the left of the window. Each call replaces it.
     ///
-    /// ウィンドウの中身を `GtkPaned` へ差し替え、これまでの中身
-    /// (ヘッダーバー・メニューバー・子) はその右の区画へ移す。
+    /// The window's content is replaced with a `GtkPaned`, and the previous content
+    /// (header bar, menu bar, child) moves to the pane on its right.
     #[inline]
     pub fn set_sidebar(&self, sidebar: &Sidebar) {
         self.0.set_sidebar(&sidebar.0)
     }
 
-    /// 取り付けたサイドバーを外す。付いていなければ何もしない。
+    /// Removes the attached sidebar. Does nothing if none is attached.
     ///
-    /// 右の区画にあった中身は、ウィンドウの中身へ戻る。
+    /// The content of the right pane goes back to being the window's content.
     #[inline]
     pub fn clear_sidebar(&self) {
         self.0.clear_sidebar()
     }
 
-    /// ウィンドウの上端に付けるツールバー。呼ぶたびに置き換わる。
+    /// The toolbar attached to the top of the window. Each call replaces it.
     ///
-    /// GNOME の作法どおり、項目はヘッダーバーの左側へ並ぶ。
+    /// Following GNOME conventions, items are laid out on the left side of the header
+    /// bar.
     #[inline]
     pub fn set_toolbar(&self, toolbar: &Toolbar) {
         self.0.set_toolbar(&toolbar.0)
     }
 
-    /// 取り付けたツールバーを外す。付いていなければ何もしない。
+    /// Removes the attached toolbar. Does nothing if none is attached.
     #[inline]
     pub fn clear_toolbar(&self) {
         self.0.clear_toolbar()
     }
 
-    /// ウィンドウの上端に付けるメニューバー。呼ぶたびに置き換わる。
+    /// The menu bar attached to the top of the window. Each call replaces it.
     ///
-    /// `GtkPopoverMenuBar` はヘッダーバーの下へ入る。項目の操作は
-    /// ウィンドウの操作の組として入れるので、`GtkApplication` へ登録した
-    /// アクセラレータ (ショートカット) はメニューを開かなくても効く。
+    /// The `GtkPopoverMenuBar` goes below the header bar. Item actions are added as a
+    /// group of window actions, so accelerators (shortcuts) registered with the
+    /// `GtkApplication` work without opening the menu.
     #[inline]
     pub fn set_menu_bar(&self, menu_bar: &MenuBar) {
         self.0.set_menu_bar(&menu_bar.0)
     }
 
-    /// 取り付けたメニューバーを外す。付いていなければ何もしない。
+    /// Removes the attached menu bar. Does nothing if none is attached.
     #[inline]
     pub fn clear_menu_bar(&self) {
         self.0.clear_menu_bar()
     }
 
-    /// 画面に出して前面へ持ってくる。
+    /// Shows it on screen and brings it to the front.
     ///
-    /// 最初の表示では、中身を `ui.window` (か表示前の [`set_size`](Self::set_size))
-    /// の大きさにし、表示する前に [`set_state`](Self::set_state) で頼んだ状態にする。
+    /// On first show, the content is sized as given to `ui.window` (or to
+    /// [`set_size`](Self::set_size) before showing), and the state requested with
+    /// [`set_state`](Self::set_state) before showing is applied.
     #[inline]
     pub fn show(&self) {
         self.0.show()
@@ -254,9 +266,10 @@ impl Window {
         self.0.is_visible()
     }
 
-    /// このウィンドウに配色テーマを適用する。
+    /// Applies a color theme to this window.
     ///
-    /// libadwaita のテーマはアプリ全体で 1 つなので、実際にはアプリ全体に効く。
+    /// libadwaita has one theme for the whole app, so in practice it applies to the
+    /// whole app.
     #[inline]
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         self.0.set_theme(theme)

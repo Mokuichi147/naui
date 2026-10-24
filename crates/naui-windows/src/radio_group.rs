@@ -1,8 +1,9 @@
-//! 選択肢を並べて 1 つだけ選ばせるラジオグループ (WinUI 3)。
+//! A radio group that lays out options and lets the user choose exactly one
+//! (WinUI 3).
 //!
-//! `RadioButton` を `StackPanel` へ並べ、同じ `GroupName` を持たせる。
-//! 排他は WinUI が行い、`GroupName` はグループごとに作った一意の文字列なので、
-//! 同じ画面に複数のラジオグループを置いても混ざらない。
+//! `RadioButton`s are laid out in a `StackPanel` with the same `GroupName`. WinUI
+//! handles exclusivity, and the `GroupName` is a unique string created per group, so
+//! several radio groups on the same screen do not mix.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,7 +20,7 @@ use crate::ui_thread::UiThreadCell;
 use crate::widgets::{bool_ref, impl_widget, SelectHandler, Widget};
 
 thread_local! {
-    /// グループごとに一意な `GroupName` を作るための連番。
+    /// A counter for creating a unique `GroupName` per group.
     static NEXT_GROUP: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -33,21 +34,24 @@ fn next_group_name() -> HSTRING {
 
 struct RadioGroupInner {
     native: StackPanel,
-    /// 同じ `GroupName` を共有するラジオ。WinUI はこれを見て排他にする。
+    /// The `GroupName` shared by the radios. WinUI uses it to make them exclusive.
     group_name: HSTRING,
     buttons: RefCell<Vec<RadioButton>>,
     handler: SelectHandler,
-    /// プログラムから選択や項目を変えている間だけ WinUI の通知を止める。
+    /// Stops WinUI's notifications only while the selection or items are being changed
+    /// from code.
     silent: Cell<bool>,
-    /// [`set_enabled`](RadioGroup::set_enabled) の指定。`StackPanel` は
-    /// `IsEnabled` を持たない (`Control` の持ち物) ので、ボタンごとに書き、
-    /// `set_items` で作り直すぶんにも引き継げるよう覚えておく。
+    /// The setting from [`set_enabled`](RadioGroup::set_enabled). `StackPanel` has no
+    /// `IsEnabled` (it belongs to `Control`), so it is written on each button and
+    /// remembered so the buttons recreated by `set_items` get it too.
     enabled: Cell<bool>,
 }
 
-/// 選択肢を並べて 1 つだけ選ばせるラジオグループ (`RadioButton`)。
+/// A radio group that lays out options and lets the user choose exactly one
+/// (`RadioButton`).
 ///
-/// 生成直後と [`set_items`](Self::set_items) の後は何も選ばれていない。
+/// Nothing is selected right after creation and after
+/// [`set_items`](Self::set_items).
 #[derive(Clone)]
 pub struct RadioGroup(Rc<RadioGroupInner>);
 impl_widget!(RadioGroup, native);
@@ -68,7 +72,8 @@ impl RadioGroup {
         })))
     }
 
-    /// 選択肢を作り直し、選択を外す。選択通知は発生しない。
+    /// Rebuilds the options and clears the selection. No selection notification is
+    /// sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         let _ = self.rebuild(items);
     }
@@ -138,7 +143,7 @@ impl RadioGroup {
         })
     }
 
-    /// 選択肢の数。
+    /// The number of options.
     pub fn len(&self) -> usize {
         self.0.buttons.borrow().len()
     }
@@ -147,17 +152,17 @@ impl RadioGroup {
         self.len() == 0
     }
 
-    /// 現在選ばれている選択肢。未選択なら `None`。
+    /// The currently selected option. `None` if nothing is selected.
     pub fn selected(&self) -> Option<usize> {
         self.0.buttons.borrow().iter().position(is_checked)
     }
 
-    /// 範囲内の選択肢を通知せずに選ぶ。範囲外なら何もしない。
+    /// Selects an in-range option without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         let _ = self.write_selected(index);
     }
 
-    /// 選択を通知せずに外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         self.without_notifying(|this| {
             let Ok(off) = bool_ref(false) else {
@@ -169,7 +174,7 @@ impl RadioGroup {
         });
     }
 
-    /// ユーザーが選んだのと同じように、範囲内の選択肢を選んで通知する。
+    /// Selects an in-range option and notifies, as if the user had chosen it.
     pub fn select(&self, index: usize) {
         if self.write_selected(index) {
             // 既に点いているものを選び直すと `Checked` は起きないため、通知は
@@ -178,7 +183,7 @@ impl RadioGroup {
         }
     }
 
-    /// 選択肢の並ぶ向き。既定は縦。
+    /// The direction the options are laid out in. Vertical by default.
     pub fn set_orientation(&self, orientation: Orientation) {
         let _ = self.0.native.SetOrientation(if orientation.is_vertical() {
             XamlOrientation::Vertical
@@ -194,13 +199,13 @@ impl RadioGroup {
         }
     }
 
-    /// 選択肢が選ばれたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは置き換わる。
+    /// Called with the index when an option is chosen. Setting it again replaces the
+    /// previous callback.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// WinUI の実コントロール。バックエンド固有の脱出口として公開している。
+    /// The real WinUI controls. Public as a backend-specific escape hatch.
     pub fn native_buttons(&self) -> Vec<RadioButton> {
         self.0.buttons.borrow().clone()
     }
@@ -219,7 +224,7 @@ impl RadioGroup {
         })
     }
 
-    /// WinUI の `Checked` を止めたまま操作する。
+    /// Operates with WinUI's `Checked` stopped.
     fn without_notifying<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
         let previous = self.0.silent.replace(true);
         let result = f(self);

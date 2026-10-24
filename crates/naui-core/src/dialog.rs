@@ -1,38 +1,40 @@
-//! 汎用ダイアログ (モーダル) の値型。
+//! Value types for general-purpose (modal) dialogs.
 //!
-//! ダイアログの形は、4 環境のうちいちばん狭い WinUI 3 の `ContentDialog` に
-//! そろえてある。すなわち **見出し + 本文 + 任意のウィジェット + 役割つきの
-//! ボタン 3 つまで**で、閉じた理由は役割で返る。
+//! The shape of a dialog follows the narrowest of the four platforms, WinUI 3's
+//! `ContentDialog`: **a title + body text + an optional widget + up to three
+//! buttons with roles**, and the reason it closed is returned as a role.
 //!
-//! 役割を持たせるのは、置き場所と既定のふるまいが環境ごとに違うため。
-//! 「いちばん右が既定のボタン」(macOS) と「いちばん左が既定のボタン」(WinUI)
-//! のような差は、並びではなく役割から各バックエンドが決める。
+//! Buttons have roles because their placement and default behavior differ by
+//! platform. Differences such as "the rightmost button is the default" (macOS) and
+//! "the leftmost button is the default" (WinUI) are decided by each backend from
+//! the roles, not from the order.
 
-/// ダイアログが閉じた理由。
+/// Why a dialog closed.
 ///
-/// [`DialogButtons`] で付けたボタンの役割に対応する。Esc キーや、
-/// ダイアログの外側を押して閉じたときは [`DialogResponse::Cancel`] になる
-/// (取り消しボタンを置いていなくても同じ)。
+/// Corresponds to the roles of the buttons added with [`DialogButtons`]. Closing
+/// with the Esc key or by clicking outside the dialog gives
+/// [`DialogResponse::Cancel`] (even without a cancel button).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialogResponse {
-    /// 主となる操作 (「保存」「OK」など)。
+    /// The primary action ("Save", "OK" and so on).
     Primary,
-    /// 副となる操作 (「保存しない」など)。
+    /// The secondary action ("Don't Save" and so on).
     Secondary,
-    /// 取り消し。Esc で閉じたときもこれになる。
+    /// Cancel. Closing with Esc gives this too.
     Cancel,
 }
 
-/// ダイアログに出すボタン。役割ごとに 0 個か 1 個。
+/// The buttons shown in a dialog. Zero or one per role.
 ///
 /// ```
 /// # use naui_core::{DialogButtons, DialogResponse};
-/// let buttons = DialogButtons::new().primary("保存").cancel("キャンセル");
-/// assert_eq!(buttons.label(DialogResponse::Primary), Some("保存"));
+/// let buttons = DialogButtons::new().primary("Save").cancel("Cancel");
+/// assert_eq!(buttons.label(DialogResponse::Primary), Some("Save"));
 /// assert_eq!(buttons.label(DialogResponse::Secondary), None);
 /// ```
 ///
-/// 1 つも指定しないと、閉じるための「OK」だけが出る ([`DialogButtons::resolved`])。
+/// With none specified, only an "OK" button for closing is shown
+/// ([`DialogButtons::resolved`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DialogButtons {
     primary: Option<String>,
@@ -41,7 +43,7 @@ pub struct DialogButtons {
 }
 
 impl DialogButtons {
-    /// ボタンを 1 つも持たない状態から始める。
+    /// Starts with no buttons.
     pub const fn new() -> Self {
         Self {
             primary: None,
@@ -50,30 +52,30 @@ impl DialogButtons {
         }
     }
 
-    /// 「OK」の取り消しボタンだけを持つ組み合わせ。
+    /// A set with only an "OK" cancel button.
     pub fn ok() -> Self {
         Self::new().cancel("OK")
     }
 
-    /// 主となる操作のボタン。空文字列を渡すと置かない。
+    /// The button for the primary action. An empty string means no button.
     pub fn primary(mut self, label: impl Into<String>) -> Self {
         self.primary = non_empty(label);
         self
     }
 
-    /// 副となる操作のボタン。空文字列を渡すと置かない。
+    /// The button for the secondary action. An empty string means no button.
     pub fn secondary(mut self, label: impl Into<String>) -> Self {
         self.secondary = non_empty(label);
         self
     }
 
-    /// 取り消しのボタン。空文字列を渡すと置かない。
+    /// The cancel button. An empty string means no button.
     pub fn cancel(mut self, label: impl Into<String>) -> Self {
         self.cancel = non_empty(label);
         self
     }
 
-    /// 役割に対応するボタンの文字列。置いていなければ `None`。
+    /// The label of the button for the role. `None` if there is no such button.
     pub fn label(&self, response: DialogResponse) -> Option<&str> {
         let slot = match response {
             DialogResponse::Primary => &self.primary,
@@ -83,16 +85,15 @@ impl DialogButtons {
         slot.as_deref()
     }
 
-    /// ボタンを 1 つも持たないか。
+    /// Whether there are no buttons at all.
     pub fn is_empty(&self) -> bool {
         self.primary.is_none() && self.secondary.is_none() && self.cancel.is_none()
     }
 
-    /// 実際に出すボタン。
+    /// The buttons actually shown.
     ///
-    /// 1 つも指定されていなければ「OK」の取り消しボタンだけにそろえる。
-    /// ボタンの無いダイアログは、どの環境でも閉じる手段が Esc だけになって
-    /// しまうため。
+    /// If none were specified, this becomes just an "OK" cancel button. A dialog
+    /// without buttons would leave Esc as the only way to close it on every platform.
     pub fn resolved(&self) -> DialogButtons {
         if self.is_empty() {
             DialogButtons::ok()
@@ -101,10 +102,10 @@ impl DialogButtons {
         }
     }
 
-    /// 役割と文字列を、`order` で渡した役割の順に返す。
+    /// Returns roles and labels in the order of the roles passed in `order`.
     ///
-    /// ボタンの並び順は環境ごとに違う (macOS は既定のボタンが右端、
-    /// WinUI 3 は左端) ため、順番はバックエンドが決めて渡す。
+    /// Button order differs by platform (macOS puts the default button on the right,
+    /// WinUI 3 on the left), so the backend decides the order and passes it in.
     pub fn in_order(&self, order: &[DialogResponse]) -> Vec<(DialogResponse, String)> {
         order
             .iter()

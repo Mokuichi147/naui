@@ -1,12 +1,11 @@
-//! UI スレッドの上で future を回す小さな実行器。
+//! A small executor that runs futures on the UI thread.
 //!
-//! `std::task::Wake` を使うので、`RawWakerVTable` を手書きせずに済み、
-//! このクレートの `forbid(unsafe_code)` を保ったまま書ける。
+//! It uses `std::task::Wake`, so there is no hand-written `RawWakerVTable` and the
+//! crate's `forbid(unsafe_code)` is preserved.
 //!
-//! `Waker` は `Send + Sync` でなければならない一方、future 自体は `!Send` の
-//! ままにしたい (ウィジェットを持ち込めるように)。そこで
-//! 「起こす側」([`TaskWake`]) と「実体」([`TaskLocal`]) を型として分け、
-//! スレッドをまたぐのは番号だけにしてある。
+//! A `Waker` must be `Send + Sync`, while the future itself should stay `!Send` (so
+//! it can hold widgets). So "the waking side" ([`TaskWake`]) and "the actual
+//! object" ([`TaskLocal`]) are separate types, and only an id crosses threads.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -19,19 +18,19 @@ use std::task::{Context, Poll, Wake, Waker};
 
 use crate::main_thread::{deregister, next_id, pump_by_id, register, AppDispatch, LocalEntry};
 
-/// 起こす側。`Waker` の中身なので `Send + Sync` でなければならない。
+/// The waking side. It is the contents of a `Waker`, so it must be `Send + Sync`.
 struct TaskWake {
     id: u64,
-    /// 次の poll を予約済みかどうか。多重 wake を 1 回にまとめる。
+    /// Whether the next poll is already scheduled. Collapses multiple wakes into one.
     scheduled: AtomicBool,
-    /// まだ回っているか。完了・cancel の後に古い `Waker` から起こされても、
-    /// ここが `false` なら投函しない。
+    /// Whether it is still running. Even if an old `Waker` wakes it after completion or
+    /// cancellation, nothing is posted while this is `false`.
     active: AtomicBool,
     dispatch: Arc<AppDispatch>,
 }
 
 impl TaskWake {
-    /// 次の poll を予約する。積めたら `true`。
+    /// Schedules the next poll. `true` if queued.
     fn schedule(&self) -> bool {
         if !self.active.load(Ordering::Acquire) {
             return false;
@@ -59,20 +58,22 @@ impl Wake for TaskWake {
     }
 }
 
-/// 実体。UI スレッド専用で、登録簿が保持する。
+/// The actual object. UI-thread only; held by the registry.
 struct TaskLocal {
     id: u64,
     future: RefCell<Option<Pin<Box<dyn Future<Output = ()>>>>>,
     cancelled: Cell<bool>,
     finished: Cell<bool>,
-    /// poll している最中かどうか (poll の中から cancel されたときの判別用)。
+    /// Whether it is in the middle of a poll (to tell when it is cancelled from inside
+    /// the poll).
     polling: Cell<bool>,
     wake: Arc<TaskWake>,
     waker: RefCell<Option<Waker>>,
 }
 
 impl TaskLocal {
-    /// 終わりの後始末。future を捨て、古い `Waker` からの投函を止め、登録簿から外す。
+    /// Cleanup at the end. Drops the future, stops posts from old `Waker`s, and removes
+    /// it from the registry.
     fn finish(&self) {
         self.finished.set(true);
         self.wake.active.store(false, Ordering::Release);
@@ -162,27 +163,27 @@ where
     Task { local: handle }
 }
 
-/// [`Tasks::spawn`](crate::Tasks::spawn) が返すタスクの取っ手。
+/// The task handle returned by [`Tasks::spawn`](crate::Tasks::spawn).
 ///
-/// **落としてもタスクは止まらない。** 止めたいときは [`cancel`](Task::cancel) を呼ぶ。
-/// 押すたびに前の処理を打ち切りたいときは、`Rc<RefCell<Option<Task>>>` に
-/// 取っ手を持っておいて、次に押されたときに `cancel` する。
+/// **Dropping it does not stop the task.** Call [`cancel`](Task::cancel) to stop
+/// it. To abort the previous work on every click, keep the handle in an
+/// `Rc<RefCell<Option<Task>>>` and `cancel` it on the next click.
 pub struct Task {
     local: Weak<TaskLocal>,
 }
 
 impl Task {
-    /// 次の poll をやめ、future を捨てる。
+    /// Stops further polls and drops the future.
     ///
-    /// future が今まさに poll されている最中 (自分自身から呼んだ場合) は、
-    /// その poll から戻った時点で捨てられる。
+    /// If the future is being polled right now (called from within itself), it is
+    /// dropped when that poll returns.
     pub fn cancel(self) {
         if let Some(local) = self.local.upgrade() {
             local.cancel();
         }
     }
 
-    /// 終わった (または [`cancel`](Task::cancel) された) かどうか。
+    /// Whether it has finished (or been [`cancel`](Task::cancel)led).
     pub fn is_finished(&self) -> bool {
         match self.local.upgrade() {
             Some(local) => local.finished.get(),

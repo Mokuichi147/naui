@@ -1,15 +1,14 @@
-//! ツールバー (`AdwHeaderBar` に載せる `GtkButton` の並び)。
+//! The toolbar (a row of `GtkButton`s placed on the `AdwHeaderBar`).
 //!
-//! GNOME では、よく使う操作はウィンドウ上端の `AdwHeaderBar` へ入れるのが
-//! 作法で、GTK3 の `GtkToolbar` は GTK4 で廃止された。そのため naui の
-//! ツールバーは [`Widget`](crate::Widget) ではなく、
-//! [`Window::set_toolbar`](crate::Window::set_toolbar) でヘッダーバーへ
-//! 取り付ける。macOS の `NSToolbar` がタイトルバーと一体になるのと同じ位置に
-//! 出る。
+//! In GNOME the convention is to put frequently used actions in the `AdwHeaderBar`
+//! at the top of the window, and GTK3's `GtkToolbar` was removed in GTK4. So naui's
+//! toolbar is not a [`Widget`](crate::Widget); it is attached to the header bar
+//! with [`Window::set_toolbar`](crate::Window::set_toolbar). It appears in the same
+//! place as macOS's `NSToolbar`, which merges with the title bar.
 //!
-//! アイコンは [`ToolbarIcon`](naui_core::ToolbarIcon) をアイコンテーマの
-//! 名前 (freedesktop の標準名) へ写したもので、`label` はツールチップと
-//! 読み上げに使う。区切りは `GtkSeparator` で表す。
+//! Icons are [`ToolbarIcon`](naui_core::ToolbarIcon) mapped to icon theme names
+//! (freedesktop standard names), and `label` is used for tooltips and screen
+//! readers. Separators are `GtkSeparator`s.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,23 +19,23 @@ use naui_core::ToolbarItem;
 use crate::callback::Notifier;
 
 pub(crate) struct ToolbarInner {
-    /// ヘッダーバーへ差し込む入れ物。項目はこの中に並ぶ。
+    /// The container inserted into the header bar. Items are laid out inside it.
     native: gtk::Box,
     items: RefCell<Vec<ToolbarItem>>,
-    /// 項目と同じ並び。区切りのところは `None`。
+    /// In the same order as the items. `None` at separators.
     buttons: RefCell<Vec<Option<gtk::Button>>>,
     on_activate: Notifier<usize>,
-    /// ツールバー全体の有効・無効。項目ごとの指定と AND を取る。
+    /// Whether the whole toolbar is enabled. ANDed with the per-item settings.
     enabled: Cell<bool>,
 }
 
-/// ウィンドウの上端に付く、よく使う操作の並び。
+/// A row of frequently used actions attached to the top of the window.
 ///
-/// [`Widget`](crate::Widget) ではない。
-/// [`Window::set_toolbar`](crate::Window::set_toolbar) で取り付ける。
-/// ナビゲーションと違い**選ばれている項目を持たず**、押されるたびに
-/// そのインデックスで [`on_activate`](Self::on_activate) が呼ばれる。
-/// インデックスは区切りを含めた並びの位置で、区切りが返ることはない。
+/// Not a [`Widget`](crate::Widget). Attach it with
+/// [`Window::set_toolbar`](crate::Window::set_toolbar). Unlike navigation, it
+/// **has no selected item**; every click calls [`on_activate`](Self::on_activate)
+/// with the index. The index is the position in the sequence including separators;
+/// separators are never returned.
 #[derive(Clone)]
 pub struct Toolbar(Rc<ToolbarInner>);
 
@@ -52,14 +51,14 @@ impl Toolbar {
         }))
     }
 
-    /// ヘッダーバーへ差し込む入れ物。[`crate::Window`] だけが使う。
+    /// The container inserted into the header bar. Used only by [`crate::Window`].
     pub(crate) fn mount(&self) -> gtk::Box {
         self.0.native.clone()
     }
 
-    /// 項目を作り直す。以前の項目は取り除かれる。
+    /// Rebuilds the items. The previous items are removed.
     ///
-    /// インデックスは区切りを含めた並びの位置。
+    /// The index is the position in the sequence including separators.
     pub fn set_items(&self, items: &[ToolbarItem]) {
         while let Some(child) = self.0.native.first_child() {
             self.0.native.remove(&child);
@@ -101,7 +100,7 @@ impl Toolbar {
         self.0.items.borrow_mut().extend_from_slice(items);
     }
 
-    /// 区切りを含めた項目数。
+    /// The number of items, separators included.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -110,7 +109,7 @@ impl Toolbar {
         self.len() == 0
     }
 
-    /// 項目 1 つの有効・無効を変える。区切りと範囲外は何もしない。
+    /// Enables or disables one item. Does nothing for separators or out of range.
     pub fn set_item_enabled(&self, index: usize, enabled: bool) {
         let mut items = self.0.items.borrow_mut();
         let Some(item) = items.get_mut(index) else {
@@ -124,7 +123,7 @@ impl Toolbar {
         self.apply_enabled();
     }
 
-    /// いま押せる項目か。区切りと範囲外は `false`。
+    /// Whether the item can be clicked now. `false` for separators and out of range.
     pub fn is_item_enabled(&self, index: usize) -> bool {
         self.0.enabled.get()
             && self
@@ -135,13 +134,13 @@ impl Toolbar {
                 .is_some_and(|item| !item.is_separator() && item.enabled)
     }
 
-    /// ツールバー全体の有効・無効を変える。項目ごとの指定は残る。
+    /// Enables or disables the whole toolbar. Per-item settings are kept.
     pub fn set_enabled(&self, enabled: bool) {
         self.0.enabled.set(enabled);
         self.apply_enabled();
     }
 
-    /// 項目ごとの指定と全体の指定をネイティブへ反映する。
+    /// Applies the per-item settings and the overall setting to the native side.
     fn apply_enabled(&self) {
         let whole = self.0.enabled.get();
         let items = self.0.items.borrow();
@@ -152,28 +151,28 @@ impl Toolbar {
         }
     }
 
-    /// 利用者が押したのと同じように項目を実行する。
+    /// Runs the item as if the user had clicked it.
     ///
-    /// 区切り・押せない項目・範囲外は何もしない。
+    /// Does nothing for separators, disabled items or out of range.
     pub fn activate(&self, index: usize) {
         if self.is_item_enabled(index) {
             self.0.on_activate.emit(index);
         }
     }
 
-    /// 項目が押されたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the index when an item is clicked. Setting it again removes the
+    /// previous callback.
     pub fn on_activate(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_activate.set(f);
     }
 
-    /// 項目を並べている `GtkBox`。バックエンド固有の脱出口として公開している。
+    /// The `GtkBox` laying out the items. Public as a backend-specific escape hatch.
     pub fn native_box(&self) -> gtk::Box {
         self.0.native.clone()
     }
 
-    /// 項目に対応する GTK4 のボタン。区切りと範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The GTK4 button for the item. `None` for separators and out of range. Public as
+    /// a backend-specific escape hatch.
     pub fn native_button(&self, index: usize) -> Option<gtk::Button> {
         self.0.buttons.borrow().get(index)?.clone()
     }

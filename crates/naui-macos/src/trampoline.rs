@@ -1,7 +1,7 @@
-//! AppKit の target/action とデリゲートを Rust のクロージャへ中継する。
+//! Relays AppKit target/action and delegates to Rust closures.
 //!
-//! Objective-C 側はセレクタしか受け取れないので、クロージャを ivar に持つ
-//! 小さなクラスだけを定義し、すべてのコントロールで使い回す。
+//! The Objective-C side can only receive selectors, so only small classes holding
+//! closures in ivars are defined, and they are reused for every control.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -47,19 +47,20 @@ impl ActionTarget {
 
 type TextCallback = RefCell<Box<dyn FnMut(&str)>>;
 
-/// 1 行の文字入力欄の 2 つの通知先。
+/// The two handlers of a single-line text field.
 ///
-/// 打つたびの `on_change` と、Enter で確定したときの通知 (`on_submit`、
-/// 検索欄では `on_search`) を 1 つのデリゲートで受けるため、両方をまとめて
-/// 持つ。呼び出しの間だけクロージャを取り出すのは [`ValueHandler`] と同じ
-/// (通知の中で同じ欄を触っても二重借用にならない)。
+/// `on_change` on every keystroke and the notification on confirming with Enter
+/// (`on_submit`, `on_search` for search fields) are received by one delegate, so
+/// both are held together. Taking the closure out only for the duration of the call
+/// is the same as [`ValueHandler`] (touching the same field inside the notification
+/// does not double-borrow).
 #[derive(Default)]
 pub(crate) struct FieldHandlers {
     change: TextSlot,
     submit: TextSlot,
 }
 
-/// 文字列を受け取るクロージャの置き場。空のこともある。
+/// The slot for a closure that receives a string. May be empty.
 type TextSlot = RefCell<Option<Box<dyn FnMut(&str)>>>;
 
 impl FieldHandlers {
@@ -89,8 +90,8 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[name = "NauiFieldObserver"]
     #[ivars = Rc<FieldHandlers>]
-    /// `NSTextField` (と、その派生の `NSSecureTextField` / `NSSearchField`) の
-    /// デリゲート。
+    /// The delegate for `NSTextField` (and its subclasses `NSSecureTextField` /
+    /// `NSSearchField`).
     pub(crate) struct FieldObserver;
 
     unsafe impl NSObjectProtocol for FieldObserver {}
@@ -177,11 +178,12 @@ impl TextViewObserver {
     }
 }
 
-/// コンボボックスの通知を中継するクロージャ。
+/// The closure that relays combo box notifications.
 ///
-/// 引数は「候補の一覧から選ばれたか」で、`false` は打鍵による変更。
-/// 呼び出しの間だけ取り出すのは、通知の中で候補を選び直されても
-/// (`selectItemAtIndex:` は選択の通知を出す) 二重借用にならないようにするため。
+/// The argument is "whether it was chosen from the suggestion list"; `false` means a
+/// change by typing. It is taken out only for the duration of the call so that
+/// reselecting a suggestion inside the notification (`selectItemAtIndex:` sends a
+/// selection notification) does not double-borrow.
 type ComboCallback = RefCell<Option<Box<dyn FnMut(bool)>>>;
 
 define_class!(
@@ -210,7 +212,8 @@ define_class!(
     }
 );
 
-/// 取り出して呼び、差し替えられていなければ戻す ([`SelectHandler::emit`] と同じ形)。
+/// Takes it out, calls it, and puts it back unless it was replaced (the same shape
+/// as [`SelectHandler::emit`]).
 fn invoke_combo(slot: &ComboCallback, from_list: bool) {
     let Some(mut f) = slot.borrow_mut().take() else {
         return;
@@ -230,10 +233,11 @@ impl ComboObserver {
     }
 }
 
-/// 文字列を受け取る通知先。
+/// A handler that receives a string.
 ///
-/// [`SelectHandler`] と同じ再入対応を `&str` で行う。`ValueHandler<T>` は
-/// 借用した値を受け取れない (寿命の引数が要る) ため、別に用意している。
+/// The same re-entrancy handling as [`SelectHandler`], with `&str`. `ValueHandler<T>`
+/// cannot receive borrowed values (it would need a lifetime parameter), so this is
+/// provided separately.
 #[derive(Clone, Default)]
 pub(crate) struct TextHandler(Rc<RefCell<Option<Box<dyn FnMut(&str)>>>>);
 
@@ -242,7 +246,7 @@ impl TextHandler {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 通知する。まだ設定されていなければ何もしない。
+    /// Notifies. Does nothing if not set yet.
     pub(crate) fn emit(&self, text: &str) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
@@ -256,11 +260,11 @@ impl TextHandler {
     }
 }
 
-/// ナビゲーション系ウィジェットの「選択された」通知先。
+/// The "selected" handler of navigation widgets.
 ///
-/// 差し替え可能な 1 本のクロージャを共有で持つ。タブを選んだコールバックの
-/// 中からナビバーの選択を変える、といった使い方をしても二重借用にならないよう、
-/// 呼び出しの間だけクロージャを取り出す。
+/// It shares a single replaceable closure. So that usage such as changing the nav
+/// bar's selection from inside a tab selection callback does not double-borrow, the
+/// closure is taken out only for the duration of the call.
 #[derive(Clone, Default)]
 pub(crate) struct SelectHandler(Rc<RefCell<Option<Box<dyn FnMut(usize)>>>>);
 
@@ -269,12 +273,12 @@ impl SelectHandler {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// クロージャが設定されているか。
+    /// Whether a closure is set.
     pub(crate) fn is_set(&self) -> bool {
         self.0.borrow().is_some()
     }
 
-    /// 選択を通知する。まだ設定されていなければ何もしない。
+    /// Notifies the selection. Does nothing if not set yet.
     pub(crate) fn emit(&self, index: usize) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
@@ -288,11 +292,12 @@ impl SelectHandler {
     }
 }
 
-/// 値を 1 つ受け取る通知先。
+/// A handler that receives one value.
 ///
-/// [`SelectHandler`] と同じ再入対応を、インデックス以外の値でも使うためのもの
-/// (日付ピッカーの `on_change` など)。`SelectHandler` は `define_class!` の
-/// ivars に載せる都合で型を固定しているので、別に用意している。
+/// For using the same re-entrancy handling as [`SelectHandler`] with values other
+/// than indices (the date picker's `on_change`, for example). `SelectHandler` has a
+/// fixed type because it is placed in the ivars of `define_class!`, so this is
+/// provided separately.
 pub(crate) struct ValueHandler<T>(RefCell<Option<Box<dyn FnMut(T)>>>);
 
 impl<T> Default for ValueHandler<T> {
@@ -306,12 +311,12 @@ impl<T> ValueHandler<T> {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// クロージャが設定されているか。
+    /// Whether a closure is set.
     pub(crate) fn is_set(&self) -> bool {
         self.0.borrow().is_some()
     }
 
-    /// 通知する。まだ設定されていなければ何もしない。
+    /// Notifies. Does nothing if not set yet.
     pub(crate) fn emit(&self, value: T) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;

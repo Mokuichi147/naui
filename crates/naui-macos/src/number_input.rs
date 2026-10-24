@@ -1,12 +1,14 @@
-//! 数値入力 (`NSTextField` + `NSStepper`)。
+//! Number input (`NSTextField` + `NSStepper`).
 //!
-//! AppKit に数値専用のコントロールは無い。数字を打つ欄と上下のボタンを
-//! 並べるのが AppKit の標準の組み方 (システム設定の数値欄と同じ形) なので、
-//! `NSTextField` と `NSStepper` を `NSStackView` へ並べる。
+//! AppKit has no dedicated numeric control. The standard AppKit arrangement is a
+//! field for typing digits next to up/down buttons (the same shape as numeric
+//! fields in System Settings), so an `NSTextField` and an `NSStepper` are laid out
+//! in an `NSStackView`.
 //!
-//! 値の丸めと範囲は [`NumberSpec`] が決める。打っている最中に表示を
-//! 書き換えると打ちづらいので、**書き戻しは確定時 (Enter・欄を離れたとき) と
-//! 上下のボタンを押したときだけ**行う。
+//! Rounding and range are decided by [`NumberSpec`]. Rewriting the display while the
+//! user is typing would make typing awkward, so **it is written back only on
+//! confirmation (Enter, or leaving the field) and when the up/down buttons are
+//! pressed**.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -24,17 +26,18 @@ use objc2_foundation::{NSArray, NSString};
 use crate::trampoline::{ActionTarget, FieldHandlers, FieldObserver, ValueHandler};
 use crate::widgets::{impl_widget, observe_field, Widget};
 
-/// 数字の欄の最小幅 (論理ピクセル)。中身に合わせると 1 桁分まで縮むため。
+/// The minimum width of the digit field (logical pixels). Fitting the content would
+/// shrink it to one digit.
 const FIELD_MIN_WIDTH: f64 = 72.0;
 
-/// 範囲を指定されていないときに `NSStepper` へ渡す端の値。
+/// The bound passed to `NSStepper` when no range is specified.
 ///
-/// `NSStepper` は下限・上限を必ず持つので、実用上たどり着けない大きさを
-/// 「制限なし」の代わりに使う。丸めと範囲は [`NumberSpec`] が持っているので、
-/// ここで止まっても naui の答えは変わらない。
+/// `NSStepper` always has a minimum and maximum, so a magnitude unreachable in
+/// practice is used in place of "no limit". [`NumberSpec`] holds the rounding and
+/// range, so stopping here does not change naui's answer.
 const STEPPER_LIMIT: f64 = 1.0e15;
 
-/// 上下のボタンは自分の大きさのままでいて、幅の余りは欄へ渡す。
+/// The up/down buttons keep their own size and hand leftover width to the field.
 const STEPPER_HUGGING: NSLayoutPriority = 1000.0;
 
 struct NumberInputInner {
@@ -45,18 +48,18 @@ struct NumberInputInner {
     value: Cell<f64>,
     handler: ValueHandler<f64>,
     submit: ValueHandler<f64>,
-    /// 値を書き込んでいる間だけ、ネイティブからの通知を無視する。
+    /// Ignores notifications from the native side only while writing the value.
     silent: Cell<bool>,
-    /// 欄の打鍵と Enter の通知先。
+    /// The handlers for typing and Enter in the field.
     field_handlers: Rc<FieldHandlers>,
-    /// AppKit の target とデリゲートは weak なので、ここで生かしておく。
+    /// AppKit targets and delegates are weak, so they are kept alive here.
     _observer: Retained<FieldObserver>,
     targets: RefCell<Vec<Retained<ActionTarget>>>,
 }
 
-/// 数値を入力させるコントロール (`NSTextField` + `NSStepper`)。
+/// A control for entering a number (`NSTextField` + `NSStepper`).
 ///
-/// 既定は整数 (刻み 1、小数桁 0、範囲の制限なし)。
+/// The default is integers (step 1, 0 decimal places, no range limit).
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
 crate::keys::impl_key_down!(NumberInput);
@@ -115,36 +118,38 @@ impl NumberInput {
         this
     }
 
-    /// いまの値。
+    /// The current value.
     pub fn value(&self) -> f64 {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。小数桁へ丸め、範囲の外なら端へ寄せる。
+    /// Changes the value without notifying. Rounds to the decimal places and clamps to
+    /// the range.
     pub fn set_value(&self, value: f64) {
         let value = self.0.spec.get().clamp(value);
         self.0.value.set(value);
         self.write_native(value);
     }
 
-    /// 入れられる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the range of accepted values. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying.
     pub fn set_range(&self, min: Option<f64>, max: Option<f64>) {
         self.update_spec(|spec| spec.range(min, max));
     }
 
-    /// 上下のボタンやキーで 1 回に動く量 (既定は 1)。
+    /// How much one press of the up/down buttons or keys moves the value (default 1).
     pub fn set_step(&self, step: f64) {
         self.update_spec(|spec| spec.step(step));
     }
 
-    /// 表示する小数の桁数 (既定は 0 = 整数)。
+    /// The number of decimal places shown (default 0 = integers).
     pub fn set_decimals(&self, decimals: u32) {
         self.update_spec(|spec| spec.decimals(decimals));
     }
 
-    /// いまの値の決まり (範囲・刻み・小数桁)。
+    /// The current value rules (range, step, decimal places).
     pub fn spec(&self) -> NumberSpec {
         self.0.spec.get()
     }
@@ -154,31 +159,32 @@ impl NumberInput {
         self.0.stepper.setEnabled(enabled);
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     pub fn on_change(&self, f: impl FnMut(f64) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// Enter で確定したときに、確定したあとの値で呼ばれる。
+    /// Called with the confirmed value when the user confirms with Enter.
     ///
-    /// 打ちかけの表示は先に値へ読み込む (値が変われば `on_change` が先に
-    /// 呼ばれる)。数として読めない表示は元の値へ戻してから呼ぶ。
+    /// What has been typed so far is read into the value first (if the value changes,
+    /// `on_change` is called first). Text that cannot be read as a number is reverted
+    /// to the previous value before the call.
     pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
         self.0.submit.set(f);
     }
 
-    /// 数字を打つ欄。バックエンド固有の脱出口として公開している。
+    /// The field for typing digits. Public as a backend-specific escape hatch.
     pub fn native_field(&self) -> Retained<NSTextField> {
         self.0.field.clone()
     }
 
-    /// 上下のボタン。
+    /// The up/down buttons.
     pub fn native_stepper(&self) -> Retained<NSStepper> {
         self.0.stepper.clone()
     }
 
-    /// 打鍵・確定・上下のボタンの購読をつなぐ。
+    /// Connects the subscriptions for typing, confirmation and the up/down buttons.
     fn connect(&self, mtm: MainThreadMarker) {
         // 打鍵のたびに、読める値なら受け取る。読めないもの (途中の `-` や
         // 空欄) は確定まで放っておく。
@@ -248,7 +254,8 @@ impl NumberInput {
         *self.0.targets.borrow_mut() = vec![commit, stepped];
     }
 
-    /// 欄の表示を値として確定する。読めない表示は元の値へ戻す。
+    /// Confirms the field's text as the value. Unreadable text is reverted to the
+    /// previous value.
     fn commit_field(&self) {
         let text = self.0.field.stringValue().to_string();
         let shown = self
@@ -260,14 +267,14 @@ impl NumberInput {
         self.accept(shown, true);
     }
 
-    /// 決まりを差し替え、ネイティブと現在値へ反映する。
+    /// Replaces the rules and applies them to the native side and the current value.
     fn update_spec(&self, edit: impl FnOnce(NumberSpec) -> NumberSpec) {
         self.0.spec.set(edit(self.0.spec.get()));
         self.write_native_spec();
         self.set_value(self.value());
     }
 
-    /// 画面に出ている値を受け取る。`commit` なら表示も書き直す。
+    /// Receives the value on screen. With `commit`, rewrites the display too.
     fn accept(&self, shown: f64, commit: bool) {
         let accepted = self.0.spec.get().clamp(shown);
         if commit {
@@ -283,7 +290,8 @@ impl NumberInput {
         self.0.handler.emit(accepted);
     }
 
-    /// 値を欄とボタンへ書く。この間の通知は無視する。
+    /// Writes the value into the field and buttons. Notifications during this are
+    /// ignored.
     fn write_native(&self, value: f64) {
         let previous = self.0.silent.replace(true);
         self.0
@@ -299,7 +307,7 @@ impl NumberInput {
         self.0.silent.set(previous);
     }
 
-    /// 範囲と刻みを `NSStepper` へ渡す。
+    /// Passes the range and step to the `NSStepper`.
     fn write_native_spec(&self) {
         let spec = self.0.spec.get();
         self.0

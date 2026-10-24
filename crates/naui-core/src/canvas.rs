@@ -1,22 +1,24 @@
-//! 描画面 (`Canvas`) で使う値型と、描く内容の記録。
+//! Value types for the drawing surface (`Canvas`) and the record of what to draw.
 //!
-//! グラフや図形のように**アプリが自分で描くもの**は、標準コントロールの
-//! 組み合わせでは作れない。そこで naui は描画面だけを用意し、描く内容は
-//! アプリが [`Painter`] へ書く。`Painter` は描画命令を**記録するだけ**で、
-//! 実際に画素へ落とすのは各環境の 2D API (Core Graphics / cairo /
-//! XAML の `Path` / `<canvas>` の 2D コンテキスト) の仕事。ここには
-//! ラスタライズもフォントの計量も無い。
+//! Things **the app draws itself**, such as charts and shapes, cannot be built by
+//! combining standard controls. naui therefore provides only the drawing surface,
+//! and the app writes what to draw into a [`Painter`]. A `Painter` **only records**
+//! drawing commands; turning them into pixels is the job of each platform's 2D API
+//! (Core Graphics / cairo / XAML's `Path` / the 2D context of `<canvas>`). There
+//! is no rasterization or font measurement here.
 //!
-//! 座標は左上が原点で、右と下が正の**論理ピクセル**。高解像度の表示への
-//! 倍率は各環境が掛ける。
+//! Coordinates are **logical pixels** with the origin at the top left and positive
+//! values going right and down. Each platform applies the scale factor for
+//! high-resolution displays.
 //!
-//! 4 環境でそろう最小の語彙にしぼってある。線と塗りは全部 [`Path`] に
-//! なり、`Path` の中身は直線と 3 次ベジェだけ。円と弧はここでベジェへ
-//! 直してから渡すので、どの環境でも同じ形になる。
+//! The vocabulary is kept to the minimum that all four platforms share. Every line
+//! and fill becomes a [`Path`], and a `Path` contains only straight lines and cubic
+//! Béziers. Circles and arcs are converted to Béziers here before being handed
+//! over, so they come out the same shape on every platform.
 
 use crate::{Align, Color, EventResponse};
 
-/// 座標 (論理ピクセル)。左上が原点で、右と下が正。
+/// A coordinate (logical pixels). The origin is the top left; right and down are positive.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Point {
     pub x: f64,
@@ -35,7 +37,7 @@ impl From<(f64, f64)> for Point {
     }
 }
 
-/// 矩形 (論理ピクセル)。`x` / `y` は左上の角。
+/// A rectangle (logical pixels). `x` / `y` is the top-left corner.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Rect {
     pub x: f64,
@@ -54,29 +56,29 @@ impl Rect {
         }
     }
 
-    /// 左上の角。
+    /// The top-left corner.
     pub fn origin(&self) -> Point {
         Point::new(self.x, self.y)
     }
 
-    /// 中心。
+    /// The center.
     pub fn center(&self) -> Point {
         Point::new(self.x + self.width / 2.0, self.y + self.height / 2.0)
     }
 
-    /// 右端の x 座標。
+    /// The x coordinate of the right edge.
     pub fn right(&self) -> f64 {
         self.x + self.width
     }
 
-    /// 下端の y 座標。
+    /// The y coordinate of the bottom edge.
     pub fn bottom(&self) -> f64 {
         self.y + self.height
     }
 
-    /// 点が中に入っているか (辺の上も含む)。
+    /// Whether the point lies inside (points on the edges count).
     ///
-    /// ポインターの位置が図形の上かどうかを見るのに使う。
+    /// Use it to check whether the pointer is over a shape.
     ///
     /// ```
     /// # use naui_core::{Point, Rect};
@@ -91,9 +93,10 @@ impl Rect {
             && point.y <= self.bottom()
     }
 
-    /// 四辺を `amount` だけ内側へ寄せた矩形。負なら外側へ広がる。
+    /// The rectangle with all four sides moved inward by `amount`. A negative amount
+    /// grows it outward.
     ///
-    /// 幅や高さが負になるときは 0 で止める。
+    /// The width and height stop at 0 instead of going negative.
     pub fn inset(&self, amount: f64) -> Rect {
         Rect::new(
             self.x + amount,
@@ -104,28 +107,29 @@ impl Rect {
     }
 }
 
-/// [`Path`] を組み立てる 1 手。
+/// One step in building a [`Path`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PathSegment {
-    /// ペンを持ち上げて `to` へ移す (新しい部分図形を始める)。
+    /// Lifts the pen and moves it to `to` (starts a new subpath).
     MoveTo(Point),
-    /// いまの点から `to` へ直線を引く。
+    /// Draws a straight line from the current point to `to`.
     LineTo(Point),
-    /// いまの点から `to` へ 3 次ベジェ曲線を引く。
+    /// Draws a cubic Bézier curve from the current point to `to`.
     CubicTo {
         control1: Point,
         control2: Point,
         to: Point,
     },
-    /// いまの部分図形を、始点へ戻る直線で閉じる。
+    /// Closes the current subpath with a straight line back to its start.
     Close,
 }
 
-/// 直線と 3 次ベジェでできた図形。
+/// A shape made of straight lines and cubic Béziers.
 ///
-/// 4 環境の 2 D API に共通する `moveTo` / `lineTo` / `curveTo` / `close`
-/// だけで表す。2 次ベジェ・円・弧を足すメソッドもあるが、それらは**ここで
-/// 3 次ベジェへ直して**から積むので、環境ごとに形が変わらない。
+/// It is expressed using only the `moveTo` / `lineTo` / `curveTo` / `close` that
+/// the 2D APIs of all four platforms share. There are methods that add quadratic
+/// Béziers, circles and arcs, but they are **converted to cubic Béziers here**
+/// before being stored, so the shape does not vary between platforms.
 ///
 /// ```
 /// # use naui_core::{Path, Point};
@@ -146,7 +150,7 @@ impl Path {
         Self::default()
     }
 
-    /// 積んだ手の並び。バックエンドがそのまま再生する。
+    /// The recorded steps. Backends replay them as they are.
     pub fn segments(&self) -> &[PathSegment] {
         &self.segments
     }
@@ -155,15 +159,16 @@ impl Path {
         self.segments.is_empty()
     }
 
-    /// ペンを `to` へ移して新しい部分図形を始める。
+    /// Moves the pen to `to` and starts a new subpath.
     pub fn move_to(mut self, to: Point) -> Self {
         self.segments.push(PathSegment::MoveTo(to));
         self
     }
 
-    /// いまの点から `to` へ直線を引く。
+    /// Draws a straight line from the current point to `to`.
     ///
-    /// まだ 1 手も無いときは `move_to` として扱う (ペンの場所が無いため)。
+    /// If there are no steps yet, this is treated as `move_to` (there is nowhere for
+    /// the pen to be).
     pub fn line_to(mut self, to: Point) -> Self {
         if self.segments.is_empty() {
             return self.move_to(to);
@@ -172,7 +177,7 @@ impl Path {
         self
     }
 
-    /// いまの点から `to` へ 3 次ベジェ曲線を引く。
+    /// Draws a cubic Bézier curve from the current point to `to`.
     pub fn cubic_to(mut self, control1: Point, control2: Point, to: Point) -> Self {
         if self.segments.is_empty() {
             return self.move_to(to);
@@ -185,10 +190,10 @@ impl Path {
         self
     }
 
-    /// いまの点から `to` へ 2 次ベジェ曲線を引く。
+    /// Draws a quadratic Bézier curve from the current point to `to`.
     ///
-    /// 3 次ベジェへ直して積む (制御点を 2/3 の位置へ 2 つ置く)。
-    /// 曲線の形は変わらない。
+    /// It is stored as a cubic Bézier (with two control points placed at the 2/3
+    /// positions). The shape of the curve does not change.
     pub fn quad_to(self, control: Point, to: Point) -> Self {
         let Some(from) = self.current_point() else {
             return self.move_to(to);
@@ -204,7 +209,7 @@ impl Path {
         self.cubic_to(control1, control2, to)
     }
 
-    /// いまの部分図形を閉じる。
+    /// Closes the current subpath.
     pub fn close(mut self) -> Self {
         if !self.segments.is_empty() {
             self.segments.push(PathSegment::Close);
@@ -212,7 +217,7 @@ impl Path {
         self
     }
 
-    /// 矩形を 1 つの閉じた部分図形として足す。
+    /// Adds a rectangle as one closed subpath.
     pub fn rect(self, rect: Rect) -> Self {
         self.move_to(rect.origin())
             .line_to(Point::new(rect.right(), rect.y))
@@ -221,27 +226,28 @@ impl Path {
             .close()
     }
 
-    /// 円を 1 つの閉じた部分図形として足す。
+    /// Adds a circle as one closed subpath.
     pub fn circle(self, center: Point, radius: f64) -> Self {
         self.ellipse(center, radius, radius)
     }
 
-    /// 楕円を 1 つの閉じた部分図形として足す。
+    /// Adds an ellipse as one closed subpath.
     ///
-    /// 4 本の 3 次ベジェで近似する (誤差は半径の 0.03% 以下)。
+    /// It is approximated with four cubic Béziers (error at most 0.03% of the radius).
     pub fn ellipse(self, center: Point, radius_x: f64, radius_y: f64) -> Self {
         self.move_to(Point::new(center.x + radius_x, center.y))
             .arc_segments(center, radius_x, radius_y, 0.0, std::f64::consts::TAU)
             .close()
     }
 
-    /// 円弧を足す。角度はラジアンで、0 が右、正が時計回り (y が下向きのため)。
+    /// Adds a circular arc. Angles are in radians; 0 points right and positive is
+    /// clockwise (because y points down).
     ///
-    /// ペンの場所が弧の始点と違うときは、そこまで直線を引いてから弧を描く
-    /// (まだ 1 手も無ければ始点へ移る)。扇形は
-    /// `move_to(中心).arc(...).close()` の形になる。
+    /// If the pen is not at the start of the arc, a straight line is drawn there first
+    /// (if there are no steps yet, the pen moves to the start). A pie slice looks like
+    /// `move_to(center).arc(...).close()`.
     ///
-    /// `end - start` が 1 周を超える分は 1 周で止める。
+    /// Anything beyond one full turn in `end - start` is capped at one turn.
     pub fn arc(self, center: Point, radius: f64, start: f64, end: f64) -> Self {
         let first = Point::new(
             center.x + radius * start.cos(),
@@ -255,7 +261,7 @@ impl Path {
         this.arc_segments(center, radius, radius, start, end)
     }
 
-    /// 弧をベジェで足す。ペンはすでに始点にある前提。
+    /// Adds the arc as Béziers. Assumes the pen is already at the start.
     fn arc_segments(
         mut self,
         center: Point,
@@ -302,7 +308,7 @@ impl Path {
         self
     }
 
-    /// 折れ線を足す。最初の点へ移り、残りへ直線を引く。
+    /// Adds a polyline. Moves to the first point and draws lines to the rest.
     pub fn polyline(mut self, points: &[Point]) -> Self {
         let mut points = points.iter().copied();
         let Some(first) = points.next() else {
@@ -315,7 +321,7 @@ impl Path {
         self
     }
 
-    /// 多角形を足す。折れ線を引いて閉じる。
+    /// Adds a polygon. Draws the polyline and closes it.
     pub fn polygon(self, points: &[Point]) -> Self {
         if points.is_empty() {
             return self;
@@ -323,9 +329,9 @@ impl Path {
         self.polyline(points).close()
     }
 
-    /// いまペンがある点。
+    /// The point where the pen currently is.
     ///
-    /// `Close` の直後は、閉じた部分図形の始点。
+    /// Right after `Close`, this is the start of the subpath that was closed.
     pub fn current_point(&self) -> Option<Point> {
         let mut start = None;
         let mut current = None;
@@ -342,9 +348,9 @@ impl Path {
         current
     }
 
-    /// 全部の点を含むいちばん小さい矩形。制御点も含む。
+    /// The smallest rectangle containing every point, control points included.
     ///
-    /// 1 手も無いときは `None`。
+    /// `None` when there are no steps.
     pub fn bounds(&self) -> Option<Rect> {
         let mut min = Point::new(f64::INFINITY, f64::INFINITY);
         let mut max = Point::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
@@ -377,19 +383,20 @@ impl Path {
     }
 }
 
-/// [`Painter`] が記録する描画命令。バックエンドはこれを順に再生する。
+/// A drawing command recorded by a [`Painter`]. Backends replay them in order.
 ///
-/// `opacity` は 0.0 (透明) から 1.0 (不透明)。色そのものは不透明な
-/// [`Color`] で、透け具合は命令ごとに別に持つ。
+/// `opacity` runs from 0.0 (transparent) to 1.0 (opaque). The color itself is an
+/// opaque [`Color`]; transparency is carried separately by each command.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DrawCommand {
-    /// 図形の中を塗る。塗り方は nonzero (4 環境の既定と同じ)。
+    /// Fills the inside of the shape. The fill rule is nonzero (the default on all four
+    /// platforms).
     Fill {
         path: Path,
         color: Color,
         opacity: f64,
     },
-    /// 図形の線をなぞる。`dash` が空なら実線。
+    /// Strokes the outline of the shape. A solid line when `dash` is empty.
     Stroke {
         path: Path,
         color: Color,
@@ -397,8 +404,9 @@ pub enum DrawCommand {
         dash: Vec<f64>,
         opacity: f64,
     },
-    /// 文字を 1 行描く。`at` は**文字の上端**で、横の位置は `align` で決まる
-    /// (`Start` なら左端、`Center` なら中央、`End` なら右端が `at.x`)。
+    /// Draws one line of text. `at` is **the top of the text**, and the horizontal
+    /// position depends on `align` (`at.x` is the left edge for `Start`, the center for
+    /// `Center` and the right edge for `End`).
     Text {
         text: String,
         at: Point,
@@ -409,11 +417,12 @@ pub enum DrawCommand {
     },
 }
 
-/// 描く内容の記録。`Canvas::on_draw` の中でこれへ書く。
+/// The record of what to draw. Write to it inside `Canvas::on_draw`.
 ///
-/// 描画命令を積むだけで、画素には触らない。線の幅・文字の大きさ・座標は
-/// すべて論理ピクセル。透け具合と破線と文字の寄せ方は**状態**として持ち、
-/// 変えるまで後の命令に効く (`<canvas>` の `globalAlpha` などと同じ形)。
+/// It only stores drawing commands and never touches pixels. Line widths, text
+/// sizes and coordinates are all in logical pixels. Opacity, dashes and text
+/// alignment are kept as **state** and apply to later commands until changed (the
+/// same model as `globalAlpha` and friends in `<canvas>`).
 ///
 /// ```
 /// # use naui_core::{Color, Painter, Point, Rect};
@@ -433,7 +442,7 @@ pub struct Painter {
 }
 
 impl Painter {
-    /// `width` × `height` の面に描く記録を始める。
+    /// Starts recording for a `width` × `height` surface.
     pub fn new(width: f64, height: f64) -> Self {
         Self {
             width,
@@ -445,32 +454,33 @@ impl Painter {
         }
     }
 
-    /// 描ける面の幅 (論理ピクセル)。
+    /// The width of the drawable surface (logical pixels).
     pub fn width(&self) -> f64 {
         self.width
     }
 
-    /// 描ける面の高さ (論理ピクセル)。
+    /// The height of the drawable surface (logical pixels).
     pub fn height(&self) -> f64 {
         self.height
     }
 
-    /// 描ける面全体の矩形。
+    /// The rectangle covering the whole drawable surface.
     pub fn bounds(&self) -> Rect {
         Rect::new(0.0, 0.0, self.width, self.height)
     }
 
-    /// 記録した命令。バックエンドが再生する。
+    /// The recorded commands. Backends replay them.
     pub fn commands(&self) -> &[DrawCommand] {
         &self.commands
     }
 
-    /// 記録した命令を取り出す。
+    /// Takes out the recorded commands.
     pub fn into_commands(self) -> Vec<DrawCommand> {
         self.commands
     }
 
-    /// 以後の命令の透け具合。0.0 が透明、1.0 が不透明。範囲の外は端へ寄せる。
+    /// Opacity for subsequent commands. 0.0 is transparent and 1.0 is opaque. Values
+    /// out of range are clamped.
     pub fn set_opacity(&mut self, opacity: f64) {
         self.opacity = if opacity.is_finite() {
             opacity.clamp(0.0, 1.0)
@@ -483,10 +493,10 @@ impl Painter {
         self.opacity
     }
 
-    /// 以後の線を破線にする。`pattern` は線と空きの長さの繰り返し
-    /// (`[4.0, 2.0]` なら 4 引いて 2 空ける)。空なら実線に戻る。
+    /// Makes subsequent lines dashed. `pattern` repeats the lengths of dashes and gaps
+    /// (`[4.0, 2.0]` draws 4 and skips 2). An empty pattern goes back to solid lines.
     ///
-    /// 負や無限の値が混じった指定は無視する (実線のまま)。
+    /// A pattern containing negative or infinite values is ignored (lines stay solid).
     pub fn set_dash(&mut self, pattern: &[f64]) {
         if pattern.iter().all(|v| v.is_finite() && *v >= 0.0) && pattern.iter().any(|v| *v > 0.0) {
             self.dash = pattern.to_vec();
@@ -499,7 +509,7 @@ impl Painter {
         &self.dash
     }
 
-    /// 以後の文字の横の寄せ方。`Fill` は `Start` として扱う。
+    /// Horizontal alignment for subsequent text. `Fill` is treated as `Start`.
     pub fn set_text_align(&mut self, align: Align) {
         self.text_align = match align {
             Align::Fill => Align::Start,
@@ -511,7 +521,7 @@ impl Painter {
         self.text_align
     }
 
-    /// 図形の中を塗る。
+    /// Fills the inside of the shape.
     pub fn fill_path(&mut self, path: &Path, color: Color) {
         if path.is_empty() {
             return;
@@ -523,9 +533,10 @@ impl Painter {
         });
     }
 
-    /// 図形の線をなぞる。`width` は線の太さ (論理ピクセル)。
+    /// Strokes the outline of the shape. `width` is the line thickness (logical pixels).
     ///
-    /// 0 以下・無限・NaN の太さは描かない (環境ごとに扱いが変わるため)。
+    /// Widths that are 0 or less, infinite or NaN are not drawn (platforms handle them
+    /// differently).
     pub fn stroke_path(&mut self, path: &Path, color: Color, width: f64) {
         if path.is_empty() || !width.is_finite() || width <= 0.0 {
             return;
@@ -555,12 +566,12 @@ impl Painter {
         self.stroke_path(&Path::new().circle(center, radius), color, width);
     }
 
-    /// 2 点を結ぶ直線。
+    /// A straight line between two points.
     pub fn line(&mut self, from: Point, to: Point, color: Color, width: f64) {
         self.stroke_path(&Path::new().move_to(from).line_to(to), color, width);
     }
 
-    /// 折れ線。点が 2 つ未満なら何も描かない。
+    /// A polyline. Draws nothing with fewer than two points.
     pub fn polyline(&mut self, points: &[Point], color: Color, width: f64) {
         if points.len() < 2 {
             return;
@@ -568,7 +579,7 @@ impl Painter {
         self.stroke_path(&Path::new().polyline(points), color, width);
     }
 
-    /// 多角形の中を塗る。点が 3 つ未満なら何も描かない。
+    /// Fills the inside of a polygon. Draws nothing with fewer than three points.
     pub fn fill_polygon(&mut self, points: &[Point], color: Color) {
         if points.len() < 3 {
             return;
@@ -576,12 +587,13 @@ impl Painter {
         self.fill_path(&Path::new().polygon(points), color);
     }
 
-    /// 文字を 1 行描く。`at` は文字の**上端**で、横の位置は
-    /// [`set_text_align`](Self::set_text_align) で決めた寄せ方に従う。
-    /// `size` は文字の大きさ (論理ピクセル)。書体はその環境の標準の UI フォント。
+    /// Draws one line of text. `at` is the **top** of the text, and the horizontal
+    /// position follows the alignment set with
+    /// [`set_text_align`](Self::set_text_align). `size` is the text size (logical
+    /// pixels). The typeface is the platform's standard UI font.
     ///
-    /// 改行は折り返さない (その環境の描き方に任せる)。空文字と、0 以下・
-    /// 無限・NaN の大きさは描かない。
+    /// Newlines do not wrap (that is left to how each platform draws). Empty strings
+    /// and sizes that are 0 or less, infinite or NaN are not drawn.
     pub fn text(&mut self, text: &str, at: Point, size: f64, color: Color) {
         if text.is_empty() || !size.is_finite() || size <= 0.0 {
             return;
@@ -597,46 +609,48 @@ impl Painter {
     }
 }
 
-/// ポインター (マウス・タッチ・ペン) の動きの種類。
+/// The kind of pointer (mouse, touch, pen) movement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PointerPhase {
-    /// 押した。どのボタンかは [`PointerEvent::button`] で見る。
+    /// Pressed. See [`PointerEvent::button`] for which button.
     Down,
-    /// 動いた。押していない間 (ホバー) も届く。
+    /// Moved. Also delivered while nothing is pressed (hover).
     Move,
-    /// 離した。どのボタンかは [`PointerEvent::button`] で見る。
+    /// Released. See [`PointerEvent::button`] for which button.
     Up,
-    /// ホイール (トラックパッドの 2 本指のスクロールも含む) を回した。
-    /// 量は [`PointerEvent::wheel_x`] / [`PointerEvent::wheel_y`] で見る。
+    /// The wheel was turned (including two-finger scrolling on a trackpad). See
+    /// [`PointerEvent::wheel_x`] / [`PointerEvent::wheel_y`] for the amount.
     ///
-    /// `on_pointer` には届かず、`Canvas::on_wheel` にだけ届く。
+    /// Not delivered to `on_pointer`; only to `Canvas::on_wheel`.
     Wheel,
 }
 
-/// 押した・離したボタン。
+/// The button that was pressed or released.
 ///
-/// 番号の振り方は環境ごとに違う (AppKit は左が 0、GTK は左が 1 で右が 3、
-/// Web は中が 1 で右が 2) ので、意味でそろえる。左利き向けにボタンを
-/// 入れ替える設定は OS が先に反映するので、`Primary` はいつも「主に使う
-/// ボタン」になる。タッチとペン先は `Primary`。
+/// Button numbering differs between platforms (AppKit has left as 0, GTK has left
+/// as 1 and right as 3, the Web has middle as 1 and right as 2), so buttons are
+/// matched by meaning. The OS applies left-handed button swapping first, so
+/// `Primary` is always "the button you mainly use". Touch and pen tips are
+/// `Primary`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PointerButton {
-    /// 主ボタン (ふつうは左)。タッチとペン先もこれ。
+    /// The primary button (usually left). Touch and pen tips are this too.
     Primary,
-    /// 副ボタン (ふつうは右)。文脈メニューを出すボタン。
+    /// The secondary button (usually right). The one that opens context menus.
     Secondary,
-    /// 中ボタン (ホイールを押し込む)。
+    /// The middle button (pressing the wheel).
     Middle,
-    /// 戻るボタン (5 ボタンのマウスの側面の手前)。
+    /// The back button (the front side button on a five-button mouse).
     Back,
-    /// 進むボタン (5 ボタンのマウスの側面の奥)。
+    /// The forward button (the rear side button on a five-button mouse).
     Forward,
 }
 
 impl PointerButton {
-    /// Web の `MouseEvent.button` の番号から作る。知らない番号は `None`。
+    /// Creates one from the Web's `MouseEvent.button` number. Unknown numbers give
+    /// `None`.
     ///
     /// ```
     /// # use naui_core::PointerButton;
@@ -656,45 +670,49 @@ impl PointerButton {
     }
 }
 
-/// ホイールの 1 刻み (ノッチ) を何論理ピクセルとして届けるか。
+/// How many logical pixels one wheel step (notch) is reported as.
 ///
-/// 環境ごとの単位 (刻み・行・論理ピクセル) を、[`PointerEvent::wheel_x`] /
-/// [`PointerEvent::wheel_y`] では論理ピクセルにそろえる。刻みのあるマウスの
-/// ホイールは 1 刻みをこの値に直す (Windows の既定の「1 刻みで 3 行」に、
-/// 1 行 16 ピクセルを掛けた値)。トラックパッドのような細かく測れる装置は、
-/// OS が出す論理ピクセルの量をそのまま届ける。
+/// [`PointerEvent::wheel_x`] / [`PointerEvent::wheel_y`] unify each platform's
+/// units (notches, lines, logical pixels) into logical pixels. For a mouse wheel
+/// with notches, one notch becomes this value (Windows's default of "3 lines per
+/// notch" times 16 pixels per line). Devices that measure finely, such as
+/// trackpads, deliver the logical-pixel amount the OS reports as is.
 ///
-/// 拡大縮小のように「1 刻みでどれだけ」を決めたいときは、量をこれで割る。
+/// When you want to decide "how much per notch", for example for zooming, divide
+/// the amount by this.
 pub const WHEEL_STEP: f64 = 48.0;
 
-/// 描画面の上でポインターが動いたこと。
+/// The pointer moved over the drawing surface.
 ///
-/// 位置は描画面の左上を原点にした論理ピクセルで、[`Painter`] の座標と同じ。
-/// ホイールのときはポインターがある位置 (拡大の中心に使える)。
+/// The position is in logical pixels with the surface's top left as origin, the
+/// same as [`Painter`] coordinates. For the wheel it is where the pointer is
+/// (usable as the zoom center).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct PointerEvent {
     pub phase: PointerPhase,
     pub point: Point,
-    /// 押した・離したボタン。`Down` と `Up` のときだけ入る。
+    /// The button pressed or released. Set only for `Down` and `Up`.
     ///
-    /// `Move` と `Wheel` と、どれとも分からないボタン (6 個目以降など) は `None`。
-    /// 押したまま動かしているボタンは、`Down` で覚えておく。
+    /// `None` for `Move` and `Wheel`, and for buttons that cannot be identified (the
+    /// sixth and beyond, for example). Remember the button held during a drag at
+    /// `Down`.
     pub button: Option<PointerButton>,
-    /// 横のスクロール量 (論理ピクセル)。`Wheel` のときだけ入り、ほかは 0。
+    /// Horizontal scroll amount (logical pixels). Set only for `Wheel`; 0 otherwise.
     ///
-    /// 正は右へ読み進める向き (中身が左へ動く向き)。
+    /// Positive is the direction of reading onward to the right (content moves left).
     pub wheel_x: f64,
-    /// 縦のスクロール量 (論理ピクセル)。`Wheel` のときだけ入り、ほかは 0。
+    /// Vertical scroll amount (logical pixels). Set only for `Wheel`; 0 otherwise.
     ///
-    /// 正は下へ読み進める向き (ホイールを手前へ回した向き。中身は上へ動く)。
-    /// macOS の「ナチュラルなスクロール」のように OS で向きを反転する設定は、
-    /// 反転したあとの向きで届く (ページのスクロールと同じ向きになる)。
+    /// Positive is the direction of reading onward downward (the wheel turned toward
+    /// you; content moves up). OS settings that reverse the direction, such as macOS's
+    /// "natural scrolling", are delivered after reversal (the same direction as page
+    /// scrolling).
     pub wheel_y: f64,
 }
 
 impl PointerEvent {
-    /// ボタンもホイールの量も持たない通知を作る。
+    /// Creates an event with no button and no wheel amount.
     pub fn new(phase: PointerPhase, point: Point) -> Self {
         Self {
             phase,
@@ -705,13 +723,14 @@ impl PointerEvent {
         }
     }
 
-    /// 押した・離したボタンを付ける。
+    /// Attaches the button that was pressed or released.
     pub fn button(mut self, button: Option<PointerButton>) -> Self {
         self.button = button;
         self
     }
 
-    /// ホイールの通知を作る。量は論理ピクセル (向きは [`wheel_y`](Self::wheel_y) を参照)。
+    /// Creates a wheel event. The amounts are logical pixels (see
+    /// [`wheel_y`](Self::wheel_y) for the direction).
     pub fn wheel(point: Point, wheel_x: f64, wheel_y: f64) -> Self {
         Self {
             phase: PointerPhase::Wheel,
@@ -723,11 +742,12 @@ impl PointerEvent {
     }
 }
 
-/// `Canvas::on_wheel` の通知先を 1 つ持つ。各バックエンドで共有する。
+/// Holds one handler for `Canvas::on_wheel`. Shared by all backends.
 ///
-/// [`KeyHandler`](crate::KeyHandler) と同じ決まりで、呼んでいる間は
-/// クロージャを取り出しておく。通知先が無いときと入れ子で届いたときは
-/// `Continue` (親のスクロールへ回す) として扱う。
+/// Following the same rules as [`KeyHandler`](crate::KeyHandler), the closure is
+/// taken out while it is being called. When there is no handler, or the event
+/// arrives re-entrantly, it is treated as `Continue` (passed on to the parent's
+/// scrolling).
 #[derive(Default)]
 pub struct WheelHandler(std::cell::RefCell<crate::Slot<WheelCallback>>);
 

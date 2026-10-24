@@ -1,17 +1,19 @@
-//! 汎用ダイアログ (AppKit)。
+//! General-purpose dialogs (AppKit).
 //!
-//! AppKit の「見出し・本文・ボタン・任意のビュー」を持つモーダルは
-//! **`NSAlert`** で、配置も既定ボタンの見た目も Esc / Return の割り当ても
-//! AppKit が行う。naui はここへ設定を写し、押されたボタンを役割へ戻すだけ。
+//! AppKit's modal with "a title, body text, buttons and an optional view" is
+//! **`NSAlert`**, and AppKit handles the layout, the look of the default button and
+//! the Esc / Return assignments. naui only copies the settings onto it and maps the
+//! clicked button back to a role.
 //!
-//! 任意のウィジェットは `NSAlert` の `accessoryView` に載せる。
+//! The optional widget goes into `NSAlert`'s `accessoryView`.
 //!
-//! ## 他の環境との違い
+//! ## Differences from other platforms
 //!
-//! `NSAlert` の [`runModal`](NSAlert::runModal) は**アプリモーダル**で、
-//! 閉じられるまで戻らない。そのため [`Dialog::open`] は閉じるまで戻らず、
-//! `on_response` は `open()` の中で呼ばれる (Web / Windows では `open()` は
-//! すぐ戻り、あとから通知が届く)。`FilePicker` と同じ性質。
+//! `NSAlert`'s [`runModal`](NSAlert::runModal) is **app-modal** and does not return
+//! until it is closed. So [`Dialog::open`] does not return until it is closed, and
+//! `on_response` is called inside `open()` (on the Web / Windows, `open()` returns
+//! right away and the notification arrives later). The same property as
+//! `FilePicker`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,25 +28,25 @@ use objc2_foundation::{NSSize, NSString};
 
 use crate::widgets::Widget;
 
-/// ボタンを `NSAlert` へ足す順。
+/// The order in which buttons are added to the `NSAlert`.
 ///
-/// `NSAlert` は**先に足したものほど右**へ置き、先頭を既定のボタンにする。
-/// この順で足すと、左から「副操作・取り消し・主操作」という
-/// macOS の並びになる。
+/// `NSAlert` places **earlier buttons further right** and makes the first one the
+/// default. Adding them in this order gives the macOS order of "secondary, cancel,
+/// primary" from the left.
 const BUTTON_ORDER: [DialogResponse; 3] = [
     DialogResponse::Primary,
     DialogResponse::Cancel,
     DialogResponse::Secondary,
 ];
 
-/// Esc キー。取り消しのボタンに割り当てる。
+/// The Esc key. Assigned to the cancel button.
 const ESCAPE_KEY: &str = "\u{1b}";
 
-/// 閉じたときの通知先。差し替え可能な 1 本のクロージャを共有で持つ。
+/// The handler notified on close. Shares a single replaceable closure.
 ///
-/// 通知の中からもう一度ダイアログを開くような使い方をしても二重借用に
-/// ならないよう、呼び出しの間だけクロージャを取り出す
-/// (`FilePicker` の通知と同じ作り)。
+/// So that usage such as opening the dialog again from inside the notification does
+/// not double-borrow, the closure is taken out only for the duration of the call
+/// (the same design as `FilePicker`'s notification).
 #[derive(Clone, Default)]
 struct ResponseHandler(Rc<RefCell<Option<Box<dyn FnMut(DialogResponse)>>>>);
 
@@ -69,16 +71,17 @@ struct DialogInner {
     mtm: MainThreadMarker,
     title: RefCell<String>,
     message: RefCell<String>,
-    /// 中身のウィジェット。トランポリンごと生かしておく。
+    /// The content widget. Kept alive along with its trampolines.
     child: RefCell<Option<Box<dyn Widget>>>,
     buttons: RefCell<DialogButtons>,
     on_response: ResponseHandler,
     open: Cell<bool>,
-    /// [`Dialog::close`] で閉じたか。閉じた理由を通知しないための目印。
+    /// Whether it was closed with [`Dialog::close`]. A marker so that the reason for
+    /// closing is not notified.
     closed_by_app: Cell<bool>,
 }
 
-/// モーダルダイアログ (NSAlert)。
+/// A modal dialog (NSAlert).
 #[derive(Clone)]
 pub struct Dialog(Rc<DialogInner>);
 
@@ -104,7 +107,7 @@ impl Dialog {
         self.0.title.borrow().clone()
     }
 
-    /// 見出しの下に出る本文。空にすると出ない。
+    /// The body text shown below the title. Not shown if empty.
     pub fn set_message(&self, message: &str) {
         *self.0.message.borrow_mut() = message.to_string();
     }
@@ -113,12 +116,13 @@ impl Dialog {
         self.0.message.borrow().clone()
     }
 
-    /// 本文とボタンの間に置くウィジェット。呼ぶたびに置き換わる。
+    /// The widget placed between the body text and the buttons. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
-    /// 出すボタン。既定ではボタンを持たず、そのときは「OK」だけが出る。
+    /// The buttons to show. By default there are none, in which case only "OK" is
+    /// shown.
     pub fn set_buttons(&self, buttons: DialogButtons) {
         *self.0.buttons.borrow_mut() = buttons;
     }
@@ -127,18 +131,18 @@ impl Dialog {
         self.0.buttons.borrow().clone()
     }
 
-    /// 閉じたときに、閉じた理由で呼ばれる。設定し直すと以前のものは外れる。
+    /// Called with the reason when it closes. Setting it again removes the previous
+    /// one.
     ///
-    /// [`Dialog::close`] で閉じたときは呼ばれない。
+    /// Not called when it is closed with [`Dialog::close`].
     pub fn on_response(&self, f: impl FnMut(DialogResponse) + 'static) {
         self.0.on_response.set(f);
     }
 
-    /// ダイアログを出す。
+    /// Shows the dialog.
     ///
-    /// **`NSAlert` はアプリモーダルなので、閉じられるまで戻らない。**
-    /// `on_response` はこの呼び出しの中で呼ばれる。
-    /// すでに出ているときは何もしない。
+    /// **`NSAlert` is app-modal, so this does not return until it is closed.**
+    /// `on_response` is called inside this call. Does nothing if it is already shown.
     pub fn open(&self) {
         if self.0.open.get() {
             return;
@@ -157,7 +161,7 @@ impl Dialog {
         self.0.on_response.emit(response);
     }
 
-    /// 出しているダイアログを閉じる。`on_response` は呼ばれない。
+    /// Closes the dialog being shown. `on_response` is not called.
     pub fn close(&self) {
         if !self.0.open.get() {
             return;
@@ -166,23 +170,25 @@ impl Dialog {
         NSApplication::sharedApplication(self.0.mtm).abortModal();
     }
 
-    /// いま出ているか。
+    /// Whether it is showing now.
     pub fn is_open(&self) -> bool {
         self.0.open.get()
     }
 
-    /// いまの設定を反映した `NSAlert` を組み立てて返す。**まだ表示しない。**
+    /// Builds and returns an `NSAlert` reflecting the current settings. **It is not
+    /// shown yet.**
     ///
-    /// バックエンド固有の脱出口。シートとして出したい
-    /// (`beginSheetModalForWindow:completionHandler:`)、アイコンや
-    /// `alertStyle` を変えたい、といった AppKit 固有の使い方はここから行う。
+    /// A backend-specific escape hatch. AppKit-specific uses, such as showing it as a
+    /// sheet (`beginSheetModalForWindow:completionHandler:`) or changing the icon or
+    /// `alertStyle`, start from here.
     pub fn native_alert(&self) -> Retained<NSAlert> {
         self.build().0
     }
 
-    /// `NSAlert` と、足したボタンの役割の並びを作る。
+    /// Creates the `NSAlert` and the sequence of roles of the added buttons.
     ///
-    /// 応答コードはボタンを足した順で返るので、その順を覚えておく。
+    /// Response codes come back in the order the buttons were added, so that order is
+    /// remembered.
     fn build(&self) -> (Retained<NSAlert>, Vec<DialogResponse>) {
         let alert = NSAlert::new(self.0.mtm);
         alert.setMessageText(&NSString::from_str(&self.0.title.borrow()));
@@ -214,16 +220,17 @@ impl Dialog {
     }
 }
 
-/// 幅を自分で決められない中身に渡す幅。`NSAlert` の本文欄とほぼ同じ。
+/// The width given to content that cannot decide its own width. About the same as
+/// `NSAlert`'s body text area.
 const ACCESSORY_WIDTH: f64 = 260.0;
-/// 高さを自分で決められない中身に渡す高さ (1 行ぶん)。
+/// The height given to content that cannot decide its own height (one line).
 const ACCESSORY_HEIGHT: f64 = 22.0;
 
-/// accessoryView に入れる frame の大きさ。
+/// The size of the frame put into the accessoryView.
 ///
-/// 制約から出る大きさ (`fittingSize`) を使うが、幅の決め手を持たない
-/// ウィジェット (`NSTextField` など) では 0 が返る。そのときだけ既定値を
-/// 使う。`set_sizing` で大きさを指定してあれば、そちらが優先される。
+/// The size from the constraints (`fittingSize`) is used, but widgets with nothing
+/// to decide their width (`NSTextField` and the like) return 0. Only then is the
+/// default used. A size specified with `set_sizing` takes precedence.
 fn accessory_size(view: &NSView) -> NSSize {
     let fitting = view.fittingSize();
     NSSize::new(
@@ -240,11 +247,11 @@ fn accessory_size(view: &NSView) -> NSSize {
     )
 }
 
-/// `runModal` の戻り値を、押されたボタンの役割へ戻す。
+/// Maps the return value of `runModal` back to the role of the clicked button.
 ///
-/// `NSAlert` は足した順に `NSAlertFirstButtonReturn` から番号を振る。
-/// [`Dialog::close`] による中断 (`NSModalResponseAbort`) と、範囲外の値は
-/// 「押されていない」として `None` になる。
+/// `NSAlert` numbers buttons from `NSAlertFirstButtonReturn` in the order they were
+/// added. An abort by [`Dialog::close`] (`NSModalResponseAbort`) and out-of-range
+/// values give `None`, meaning "not clicked".
 fn response_for(roles: &[DialogResponse], code: NSModalResponse) -> Option<DialogResponse> {
     if code == NSModalResponseAbort {
         return None;

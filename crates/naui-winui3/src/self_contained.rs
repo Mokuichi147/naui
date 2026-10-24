@@ -1,35 +1,36 @@
-//! exe に同梱した Windows App SDK ランタイムを使う (`self-contained` フィーチャー)。
+//! Uses a Windows App SDK runtime bundled with the exe (the `self-contained`
+//! feature).
 //!
-//! フレームワークパッケージを使うときは、どの WinRT クラスがどの DLL に
-//! あるかをパッケージが OS へ知らせる。同梱したときは代わりに、
-//! ビルド時に作った reg-free WinRT のマニフェスト
-//! (exe の隣の `naui-winappsdk.manifest`) を
-//! **アクティベーションコンテキスト**として有効にする。すると
-//! `RoGetActivationFactory` が、exe の隣の DLL からクラスを引くようになる。
+//! When using a framework package, the package tells the OS which WinRT class lives
+//! in which DLL. When bundled, the reg-free WinRT manifest created at build time
+//! (`naui-winappsdk.manifest` next to the exe) is instead enabled as an **activation
+//! context**. Then `RoGetActivationFactory` looks up classes from the DLLs next to
+//! the exe.
 //!
-//! マニフェストを exe に埋め込む方式 (MSBuild の self-contained 配置) と
-//! 違って、利用者のビルド手順に手を入れずに済む。
+//! Unlike embedding the manifest in the exe (MSBuild's self-contained deployment),
+//! it requires no changes to the user's build steps.
 //!
-//! ## Windows の版による違い
+//! ## Differences between Windows versions
 //!
-//! Windows 11 24H2 より前では、`Microsoft.WindowsAppRuntime.dll` が読み込まれた
-//! 時点で、reg-free WinRT を Windows App SDK 自前の実装へ差し替える
-//! (`dev/UndockedRegFreeWinRT/urfw.cpp`)。その実装は **exe に埋め込まれた
-//! マニフェストしか読まない**が、見つからないクラスは OS の実装へ回す。
-//! Windows 10 1903 以降の OS はアクティベーションコンテキストから引けるので
-//! 動く (CI の Windows Server 2022 で確かめている)。OS に reg-free WinRT の
-//! 無い 1809 では引けない。
+//! Before Windows 11 24H2, as soon as `Microsoft.WindowsAppRuntime.dll` is loaded,
+//! reg-free WinRT is replaced with the Windows App SDK's own implementation
+//! (`dev/UndockedRegFreeWinRT/urfw.cpp`). That implementation **reads only manifests
+//! embedded in the exe**, but passes classes it cannot find on to the OS's
+//! implementation. OSes from Windows 10 1903 on can look them up from the activation
+//! context, so it works (verified on CI's Windows Server 2022). On 1809, whose OS has
+//! no reg-free WinRT, they cannot be looked up.
 //!
-//! そこで有効にした直後に、同梱物のクラスが実際に引けるかを確かめる。
-//! 引けなければ、マニフェストを exe に埋め込むよう促すエラーを返す。
-//! 埋め込めば、Windows App SDK 自前の実装からも引ける。
+//! So right after enabling it, whether the bundled classes can actually be looked up
+//! is checked. If not, it returns an error urging you to embed the manifest in the
+//! exe. Once embedded, they can be looked up from the Windows App SDK's own
+//! implementation too.
 //!
-//! ## スレッド
+//! ## Threads
 //!
-//! アクティベーションコンテキストはスレッドごとに積まれる。有効にした
-//! スレッドから `std::thread::spawn` などで作ったスレッドは、作られた時点の
-//! ものを引き継ぐ。それ以外 (スレッドプールなど) のスレッドで WinUI の
-//! クラスを新しく作るには、マニフェストを exe に埋め込む。
+//! Activation contexts are stacked per thread. Threads created from the enabling
+//! thread with `std::thread::spawn` and the like inherit the one active at creation.
+//! To newly create WinUI classes on other threads (a thread pool, for example),
+//! embed the manifest in the exe.
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -53,19 +54,20 @@ mod packages;
 #[path = "../build/manifest.rs"]
 mod manifest;
 
-/// `lpAssemblyDirectory` を使う印 (winbase.h)。`windows` クレートでは
-/// `Win32_System_WindowsProgramming` にあり、この 1 つのために大きな機能を
-/// 引き込まない。
+/// The flag for using `lpAssemblyDirectory` (winbase.h). In the `windows` crate it
+/// is in `Win32_System_WindowsProgramming`, and a large feature is not pulled in just
+/// for this one.
 const ACTCTX_FLAG_ASSEMBLY_DIRECTORY_VALID: u32 = 0x4;
 
-/// 同梱物から引けることを確かめる WinRT クラス。OS には無く、同梱した
-/// InteractiveExperiences にだけある。
+/// The WinRT class used to check that the bundle can be looked up from. It is not in
+/// the OS, only in the bundled InteractiveExperiences.
 const PROBE_CLASS: &HSTRING = h!("Microsoft.UI.Dispatching.DispatcherQueueController");
 
-/// 同梱物から組み立てた Windows App SDK ランタイム。
+/// A Windows App SDK runtime assembled from the bundled files.
 ///
-/// 落とすとアクティベーションコンテキストも外れるので、アプリが終わるまで
-/// 持ち続ける。有効にしたスレッドで外さなければならないため、`Send` ではない。
+/// Dropping it also deactivates the activation context, so it is held until the app
+/// ends. It must be deactivated on the thread that activated it, so it is not
+/// `Send`.
 pub struct SelfContained {
     context: HANDLE,
     cookie: usize,
@@ -74,21 +76,20 @@ pub struct SelfContained {
 }
 
 impl SelfContained {
-    /// 同梱した部品の出どころになった Windows App SDK の版。
+    /// The Windows App SDK version the bundled components come from.
     pub const WINDOWS_APP_SDK_VERSION: &'static str = packages::WINDOWS_APP_SDK;
 
-    /// exe の隣に置く、同梱物のマニフェストの名前。これがあることが、
-    /// 同梱されていることの印になる。
+    /// The name of the bundle's manifest placed next to the exe. Its presence is the
+    /// marker that the runtime is bundled.
     pub const MANIFEST_FILE: &'static str = packages::MANIFEST_FILE;
 
-    /// exe の隣に同梱物があれば、このスレッドで有効にする。
+    /// If a bundle is next to the exe, activates it on this thread.
     ///
-    /// 同梱物が無ければ `Ok(None)` を返す。そのときにフレームワーク
-    /// パッケージ ([`crate::bootstrap`]) へ回るかどうかは呼び出し側が決める
-    /// (naui は回らずにエラーにする)。あるのに使えなければ
-    /// エラーにする。同梱物が壊れているか、Windows 10 1809 のように OS が
-    /// reg-free WinRT を持たないのに、マニフェストが exe に埋め込まれていない
-    /// (モジュールの説明を参照)。
+    /// Returns `Ok(None)` if there is no bundle. Whether to fall back to a framework
+    /// package ([`crate::bootstrap`]) then is up to the caller (naui does not, and errors
+    /// instead). It is an error if the bundle is there but cannot be used: either the
+    /// bundle is broken, or, as on Windows 10 1809, the OS has no reg-free WinRT and the
+    /// manifest is not embedded in the exe (see the module docs).
     pub fn activate() -> Result<Option<Self>> {
         let Some(directory) = crate::bootstrap::executable_directory() else {
             return Ok(None);
@@ -147,18 +148,18 @@ impl SelfContained {
         Ok(Some(this))
     }
 
-    /// 同梱物を置いた場所 (exe の置き場)。
+    /// Where the bundle is placed (the exe's location).
     pub fn directory(&self) -> &str {
         &self.directory
     }
 }
 
-/// 同梱物を取り付ける手順の失敗に、どの手順だったかを書き足す。
+/// Adds which step it was to a failure in the steps of attaching the bundle.
 ///
-/// 同梱物のファイルのパスが 260 文字 (MAX_PATH) を超えると、読み込みが
-/// `ERROR_FILENAME_EXCED_RANGE` で失敗する (exe の置き場が 224 文字の
-/// ときに `Microsoft.WindowsAppRuntime.dll` の読み込みで起きた)。パスに
-/// `\\?\` を付けても避けられないので、置き場を短くするよう促す。
+/// When a bundled file's path exceeds 260 characters (MAX_PATH), loading fails with
+/// `ERROR_FILENAME_EXCED_RANGE` (this happened loading
+/// `Microsoft.WindowsAppRuntime.dll` when the exe's location was 224 characters).
+/// Adding `\\?\` to the path does not avoid it, so it urges shortening the location.
 fn explain(e: Error, step: &str, directory: &str) -> Error {
     let mut message = format!("{step}に失敗しました ({})", e.message());
     if e.code() == ERROR_FILENAME_EXCED_RANGE.to_hresult() {
@@ -171,11 +172,11 @@ fn explain(e: Error, step: &str, directory: &str) -> Error {
     Error::new(e.code(), message)
 }
 
-/// 同梱物のクラスが実際に引けるかを確かめる。
+/// Checks whether the bundled classes can actually be looked up.
 ///
-/// このスレッドのアパートメントは決めない (naui はこの後で STA に入る)。
-/// MTA を生かしておけば、COM を初期化していないスレッドからも暗黙の MTA
-/// として呼べる。
+/// It does not decide this thread's apartment (naui enters the STA afterwards).
+/// Keeping an MTA alive lets threads that have not initialized COM call in as the
+/// implicit MTA.
 fn probe() -> Result<()> {
     let usage = unsafe { CoIncrementMTAUsage() }?;
     let resolved = unsafe { RoGetActivationFactory::<IUnknown>(PROBE_CLASS) }.map(drop);
@@ -218,13 +219,12 @@ mod tests {
         }
     }
 
-    /// テストの exe の隣 (`target/<profile>/deps/`) にも build.rs が同梱物を
-    /// 並べるので、有効にすれば WinUI のクラスが引ける。フレームワーク
-    /// パッケージは取り付けていないので、引けたなら同梱物から来ている。
+    /// build.rs also places the bundle next to the test exe (`target/<profile>/deps/`),
+    /// so once activated, WinUI classes can be looked up. No framework package is
+    /// attached, so if they can be looked up they come from the bundle.
     ///
-    /// `std::thread::spawn` で作ったスレッドが、作った側のアクティベーション
-    /// コンテキストを引き継ぐことも確かめる。naui の別スレッドの API は
-    /// これに頼っている。
+    /// It also checks that threads created with `std::thread::spawn` inherit the
+    /// creator's activation context. naui's other-thread API relies on this.
     #[test]
     fn bundled_classes_resolve_here_and_on_spawned_threads() {
         assert!(
@@ -245,8 +245,8 @@ mod tests {
         drop(bundle);
     }
 
-    /// WinUI は 2.3.6 以上を同梱する。それより前の 2.x のパッケージには、
-    /// 再配布を禁じるライセンスが誤って入っていた。
+    /// WinUI 2.3.6 or later is bundled. The 2.x packages before it mistakenly contained
+    /// a license forbidding redistribution.
     #[test]
     fn bundled_winui_is_redistributable() {
         let winui = packages::COMPONENTS
@@ -265,8 +265,9 @@ mod tests {
         );
     }
 
-    /// MSBuild と同じ形のマニフェストになる。クラスは DLL ごとにまとまり、
-    /// 同梱では使えないプッシュ通知のプロキシスタブは載らない。
+    /// The manifest has the same shape as MSBuild's. Classes are grouped per DLL, and
+    /// the push notification proxy stubs, which cannot be used when bundled, are not
+    /// included.
     #[test]
     fn manifest_maps_classes_to_their_dlls() {
         let fragment = r#"<?xml version="1.0" encoding="utf-8"?>

@@ -1,17 +1,18 @@
 //! # naui-core
 //!
-//! バックエンド (AppKit / WinUI 3 / GTK4 / DOM) に依存しない値型と、
-//! バックエンドに依らない受け渡し (チャネル / タスク) を置く。
-//! ウィジェットそのものは各バックエンドが OS のネイティブコントロールとして
-//! 実装するため、ここには描画もレイアウト計算も存在しない。
+//! Value types that do not depend on a backend (AppKit / WinUI 3 / GTK4 / DOM),
+//! plus backend-independent message passing (channels / tasks). The widgets
+//! themselves are implemented by each backend as the OS's native controls, so
+//! there is no drawing or layout computation here.
 
 #![forbid(unsafe_code)]
 
-/// 通知を 1 つだけ覚えておく入れ物。
+/// A container that remembers a single callback.
 ///
-/// `Option<Box<dyn FnMut(..)>>` を毎回書くと型が深くなり、読むのも
-/// `clippy::type_complexity` も辛い。中身の関数型は使う側が書く
-/// (`Slot<dyn FnMut(&str)>` のように) ので、高階の寿命はそのまま残る。
+/// Writing `Option<Box<dyn FnMut(..)>>` every time makes the types deep and is hard
+/// on both readers and `clippy::type_complexity`. The function type inside is
+/// written by the user (as in `Slot<dyn FnMut(&str)>`), so higher-ranked lifetimes
+/// are preserved.
 pub(crate) type Slot<F> = Option<Box<F>>;
 
 mod canvas;
@@ -86,10 +87,10 @@ pub use window::{CloseHandler, CloseResponse, StateHandler, WindowState};
 
 use std::fmt;
 
-/// naui の操作結果。
+/// The result of a naui operation.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// ネイティブ側の失敗を包むエラー。
+/// An error wrapping a failure on the native side.
 #[derive(Debug, Clone)]
 pub struct Error {
     context: &'static str,
@@ -104,12 +105,12 @@ impl Error {
         }
     }
 
-    /// 失敗した操作の名前。
+    /// The name of the operation that failed.
     pub fn context(&self) -> &'static str {
         self.context
     }
 
-    /// バックエンドが返した詳細。
+    /// The detail returned by the backend.
     pub fn detail(&self) -> &str {
         &self.detail
     }
@@ -123,22 +124,22 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// アプリケーションに適用する配色テーマ。
+/// The color theme applied to the application.
 ///
-/// `System` は OS やブラウザの設定に追従する。明示的に固定したい場合は
-/// `Light` または `Dark` を指定できる。
+/// `System` follows the OS or browser setting. Specify `Light` or `Dark` to pin it
+/// explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Theme {
-    /// OS / ブラウザの設定に追従する (既定値)。
+    /// Follows the OS / browser setting (default).
     #[default]
     System,
-    /// ライトテーマを使う。
+    /// Uses the light theme.
     Light,
-    /// ダークテーマを使う。
+    /// Uses the dark theme.
     Dark,
 }
 
-/// スタックの並び方向。
+/// The direction a stack lays out its children.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Orientation {
     #[default]
@@ -152,18 +153,19 @@ impl Orientation {
     }
 }
 
-/// 交差軸方向の揃え。ネイティブのコンテナが持つ最小公倍数だけを提供する。
+/// Alignment on the cross axis. Offers only the common subset the native
+/// containers have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Align {
     Start,
     #[default]
     Center,
     End,
-    /// 交差軸いっぱいに広げる。
+    /// Stretches to fill the cross axis.
     Fill,
 }
 
-/// 上下左右の余白 (論理ピクセル)。
+/// Padding on the top, bottom, left and right (logical pixels).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Padding {
     pub top: f64,
@@ -194,21 +196,21 @@ impl Padding {
     }
 }
 
-/// ナビゲーションの 1 項目。
+/// One navigation item.
 ///
-/// タブ・ナビバー・ドック・メニュー・パンくずは、どれも
-/// 「項目の並び + いま選ばれているもの」という同じ構造を持つ。
-/// その項目を表すのがこの型で、バックエンドはこれを
-/// NSSegmentedControl のセグメントや `<a>` などに写す。
+/// Tabs, nav bars, docks, menus and breadcrumbs all share the same structure: "a
+/// sequence of items + the one currently selected". This type represents those
+/// items, and backends map it to NSSegmentedControl segments, `<a>` elements and so
+/// on.
 ///
-/// 項目の識別はアプリ側が持つ順序 (インデックス) で行う。
-/// 選択の通知もインデックスで返るので、`&[NavItem]` を作った側が
-/// そのまま画面の切り替えに使える。
+/// Items are identified by their order (index), which the app owns. Selection
+/// notifications also come back as indices, so whoever built the `&[NavItem]` can
+/// use them directly to switch screens.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NavItem {
-    /// 画面に出る文字列。
+    /// The text shown on screen.
     pub label: String,
-    /// 選べるかどうか。
+    /// Whether it can be selected.
     pub enabled: bool,
 }
 
@@ -220,17 +222,17 @@ impl NavItem {
         }
     }
 
-    /// 選べるかどうかを指定する (既定は選べる)。
+    /// Sets whether it can be selected (selectable by default).
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// 文字列の並びから項目列を作る。
+    /// Creates a list of items from a sequence of strings.
     ///
     /// ```
     /// # use naui_core::NavItem;
-    /// let items = NavItem::list(["ホーム", "検索", "設定"]);
+    /// let items = NavItem::list(["Home", "Search", "Settings"]);
     /// assert_eq!(items.len(), 3);
     /// ```
     pub fn list<I, S>(labels: I) -> Vec<NavItem>
@@ -254,14 +256,15 @@ impl From<String> for NavItem {
     }
 }
 
-/// アプリ起動時の設定。
+/// Settings at app startup.
 #[derive(Debug, Clone)]
 pub struct Settings {
-    /// アプリ名 (ウィンドウタイトルの既定値、GTK のアプリ ID 表示名)。
+    /// The app name (the default window title, and the display name for GTK's app ID).
     pub name: String,
-    /// 逆ドメイン形式の識別子。GTK4 が要求するため必須扱いにしている。
+    /// An identifier in reverse-domain form. Treated as required because GTK4 requires
+    /// it.
     pub app_id: String,
-    /// 起動時に適用する配色テーマ (既定は [`Theme::System`])。
+    /// The color theme applied at startup (default [`Theme::System`]).
     pub theme: Theme,
 }
 
@@ -286,7 +289,7 @@ impl Settings {
         self
     }
 
-    /// 起動時の配色テーマを指定する。
+    /// Sets the color theme at startup.
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self

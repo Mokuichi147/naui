@@ -1,31 +1,32 @@
-//! サイドバー (AppKit)。
+//! The sidebar (AppKit).
 //!
-//! 「システム設定」や Finder の左側と同じく、`NSSplitViewController` の
-//! **サイドバー項目** (`NSSplitViewItem.sidebarWithViewController:`) を使う。
-//! ウィンドウの高さいっぱいに伸び (`allowsFullHeightLayout`)、背景の材質
-//! (macOS 26 では Liquid Glass、それより前はすりガラス) と開閉の動きは
-//! AppKit が持つ。
+//! As on the left of System Settings and Finder, it uses the **sidebar item** of an
+//! `NSSplitViewController` (`NSSplitViewItem.sidebarWithViewController:`). It
+//! extends to the full height of the window (`allowsFullHeightLayout`), and AppKit
+//! owns the background material (Liquid Glass on macOS 26, frosted glass before
+//! that) and the collapse animation.
 //!
 //! | naui | AppKit |
 //! | --- | --- |
-//! | サイドバー全体 | `NSSplitViewController` (ウィンドウの `contentViewController`) |
-//! | 左の区画 | `NSSplitViewItem` (サイドバー) + `NSScrollView` |
-//! | 項目の一覧 | `NSTableView` (`NSTableViewStyleSourceList`) |
-//! | 項目 | `NSTableCellView` (SF Symbols の `NSImageView` + `NSTextField`) |
-//! | まとまりの見出し | グループ行 (`tableView:isGroupRow:`) |
-//! | 右の区画 | `NSSplitViewItem` (中身)。ウィンドウの子をここへ置く |
+//! | The whole sidebar | `NSSplitViewController` (the window's `contentViewController`) |
+//! | Left pane | `NSSplitViewItem` (sidebar) + `NSScrollView` |
+//! | Item list | `NSTableView` (`NSTableViewStyleSourceList`) |
+//! | Item | `NSTableCellView` (an SF Symbols `NSImageView` + `NSTextField`) |
+//! | Group heading | A group row (`tableView:isGroupRow:`) |
+//! | Right pane | `NSSplitViewItem` (content). The window's child goes here |
 //!
-//! 開閉は AppKit 標準のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`)
-//! で行う。ボタンはツールバーの項目なので、アプリがツールバーを付けていれば
-//! その先頭へ差し込み、付けていなければボタンだけのツールバーをウィンドウへ
-//! 付ける ([`Window::set_sidebar`](crate::Window::set_sidebar))。利用者が
-//! 開閉したことは `NSSplitView` の
-//! 大きさの変化 (`NSSplitViewDidResizeSubviewsNotification`) から拾う。
+//! It is collapsed and expanded with AppKit's standard sidebar button
+//! (`NSToolbarToggleSidebarItemIdentifier`). The button is a toolbar item, so if
+//! the app has attached a toolbar it is inserted at its start; otherwise a toolbar
+//! with just the button is attached to the window
+//! ([`Window::set_sidebar`](crate::Window::set_sidebar)). User collapsing and
+//! expanding is picked up from the `NSSplitView`'s size changes
+//! (`NSSplitViewDidResizeSubviewsNotification`).
 //!
-//! 項目の一覧は `NSOutlineView` ではなく `NSTableView` にしてある。naui の
-//! サイドバーは 2 段 (まとまりと項目) までで開閉を持たないので、開閉の
-//! 三角や「隠す」ボタンが付く `NSOutlineView` のグループ項目は合わない。
-//! まとまりの間の隙間は、選べない空の行で空ける。
+//! The item list is an `NSTableView` rather than an `NSOutlineView`. naui's sidebar
+//! has at most two levels (groups and items) and no expansion, so
+//! `NSOutlineView`'s group items, which come with disclosure triangles and "Hide"
+//! buttons, do not fit. Gaps between groups are made with empty unselectable rows.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -51,25 +52,25 @@ use objc2_foundation::{
 use crate::toolbar::Toolbar;
 use crate::trampoline::{SelectHandler, ValueHandler};
 
-/// 1 列しか使わないので、識別子は固定でよい。
+/// Only one column is used, so the identifier can be fixed.
 const COLUMN_ID: &str = "naui.sidebar.column";
 
-/// まとまりの間に空ける隙間の高さ。
+/// The height of the gap left between groups.
 ///
-/// 「システム設定」のサイドバーで、見出しの無いまとまりの間に空いている
-/// くらいの幅にしてある。
+/// About the gap between groups without headings in the System Settings sidebar.
 const GAP_HEIGHT: f64 = 12.0;
 
-/// アイコンと文字の間隔。
+/// The spacing between the icon and the text.
 const ICON_SPACING: f64 = 6.0;
 
-/// アイコンを置く枠の幅。
+/// The width of the frame the icon is placed in.
 ///
-/// SF Symbols は記号ごとに幅が違う (はさみは広く、鉛筆は狭い) ので、
-/// そのまま並べると文字の左端がそろわない。枠の幅を決めて中央へ置く。
+/// SF Symbols vary in width per symbol (scissors are wide, a pencil is narrow), so
+/// laid out as is the text's left edges would not line up. The frame width is
+/// fixed and the icon centered in it.
 const ICON_WIDTH: f64 = 20.0;
 
-/// 画面に並ぶ 1 行。`SidebarRow` を持ち主のある形にしたもの。
+/// One row on screen. `SidebarRow` in an owned form.
 #[derive(Clone)]
 enum Row {
     Gap,
@@ -77,11 +78,12 @@ enum Row {
     Item(usize, SidebarItem),
 }
 
-/// 画面に並ぶ行。
+/// The rows on screen.
 ///
-/// 見出しの前の隙間は省く。グループ行は項目と同じ高さで文字を上下中央に
-/// 置くので、上側がそのまま隙間になる。隙間の行まで足すと、見出しの無い
-/// まとまりの間より大きく空いてしまう。
+/// The gap before a heading is omitted. Group rows are the same height as items
+/// with text centered vertically, so their top part already serves as the gap.
+/// Adding a gap row too would leave a larger space than between groups without
+/// headings.
 fn rows_of(sections: &[SidebarSection]) -> Vec<Row> {
     let flat = sidebar_rows(sections);
     flat.iter()
@@ -98,13 +100,13 @@ fn rows_of(sections: &[SidebarSection]) -> Vec<Row> {
         .collect()
 }
 
-/// データソース兼デリゲートが見る状態。ハンドルと共有する。
+/// The state seen by the data source and delegate. Shared with the handle.
 struct SourceState {
     rows: Rc<RefCell<Vec<Row>>>,
     selected: Rc<Cell<Option<usize>>>,
     handler: SelectHandler,
-    /// プログラムから選択を変えている間だけ通知を止める。
-    /// AppKit は `selectRowIndexes:` でもデリゲートを呼ぶため。
+    /// Stops notifications only while the selection is being changed from code, since
+    /// AppKit calls the delegate even for `selectRowIndexes:`.
     silent: Rc<Cell<bool>>,
 }
 
@@ -202,12 +204,13 @@ impl SidebarSource {
 }
 
 define_class!(
-    /// `NSSplitView` の大きさの変化を受け取り、開閉が変わったかを確かめる。
+    /// Receives size changes of the `NSSplitView` and checks whether the collapsed
+    /// state changed.
     ///
-    /// [`ActionTarget`](crate::trampoline::ActionTarget) は呼び出しの間
-    /// クロージャを借りたままにするので、通知の中から `set_collapsed` を呼ぶと
-    /// 同じ通知が入れ子で届いて二重借用になる。こちらは弱参照をたどるだけに
-    /// して、入れ子で呼ばれても借用が残らないようにしてある。
+    /// [`ActionTarget`](crate::trampoline::ActionTarget) keeps the closure borrowed
+    /// during the call, so calling `set_collapsed` from inside the notification would
+    /// deliver the same notification re-entrantly and double-borrow. This one only
+    /// follows a weak reference, so no borrow remains even if called re-entrantly.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiSidebarResizeObserver"]
@@ -246,10 +249,10 @@ impl ResizeObserver {
     }
 }
 
-/// まとまりの見出し。
+/// A group heading.
 ///
-/// グループ行の見た目 (小さく淡い文字) は、Finder のサイドバーの見出しに
-/// 合わせて AppKit の標準のフォントと色で付ける。
+/// The group row's look (small, dim text) uses AppKit's standard font and color to
+/// match the headings in Finder's sidebar.
 fn header_view(mtm: MainThreadMarker, title: &str) -> Retained<NSView> {
     let field = NSTextField::labelWithString(&NSString::from_str(title), mtm);
     field.setFont(Some(&NSFont::boldSystemFontOfSize(
@@ -262,11 +265,11 @@ fn header_view(mtm: MainThreadMarker, title: &str) -> Retained<NSView> {
     Retained::into_super(cell)
 }
 
-/// 項目 1 行。アイコンがあれば文字の前に置く。
+/// One item row. The icon, if any, goes before the text.
 ///
-/// `NSTableCellView` の `imageView` / `textField` に入れておくと、選択中の
-/// 行で文字と記号を白抜きにする・記号へアクセントカラーを付ける、といった
-/// ソースリストの見た目を AppKit が付ける。
+/// Putting them in the `NSTableCellView`'s `imageView` / `textField` lets AppKit
+/// apply the source list look, such as knocking out the text and symbol in white on
+/// the selected row and giving the symbol the accent color.
 fn item_view(mtm: MainThreadMarker, item: &SidebarItem) -> Retained<NSView> {
     let field = NSTextField::labelWithString(&NSString::from_str(&item.label), mtm);
     field.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
@@ -293,7 +296,7 @@ fn item_view(mtm: MainThreadMarker, item: &SidebarItem) -> Retained<NSView> {
     Retained::into_super(cell)
 }
 
-/// セルの中身を、左右いっぱい・上下中央に制約でつなぐ。
+/// Connects the cell's content with constraints: full width, vertically centered.
 fn pin_row_content(cell: &NSTableCellView, field: &NSTextField, image: Option<&NSImageView>) {
     let view: &NSView = cell;
     field.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -333,16 +336,19 @@ fn pin_row_content(cell: &NSTableCellView, field: &NSTextField, image: Option<&N
 }
 
 define_class!(
-    /// 右の区画の中で、ウィンドウの子を制約ではなく枠で置く台。
+    /// A stand inside the right pane that places the window's child by frame rather
+    /// than by constraints.
     ///
-    /// 子を区画の四辺へ制約でつなぐと、子の縦の content hugging (ラベルは 750)
-    /// が、ウィンドウの大きさを保つ優先度 (`NSLayoutPriorityWindowSizeStayPut`、
-    /// 500) にも利用者のドラッグ (510) にも勝ち、ウィンドウが子の高さまで
-    /// 縮んでしまう。サイドバーが無いときの `contentView` と同じく枠で置けば、
-    /// 子の大きさの好みはウィンドウへ伝わらない。
+    /// Connecting the child to the pane's four edges with constraints would let the
+    /// child's vertical content hugging (750 for labels) beat both the priority that
+    /// keeps the window's size (`NSLayoutPriorityWindowSizeStayPut`, 500) and the
+    /// user's drag (510), and the window would shrink to the child's height. Placing it
+    /// by frame, as the `contentView` does without a sidebar, keeps the child's size
+    /// preferences from reaching the window.
     ///
-    /// 台そのものは大きさの好みを持たないので、区画へは制約でつなぐ
-    /// (上端をタイトルバーの下の安全領域に合わせるのは制約に任せる)。
+    /// The stand itself has no size preferences, so it is connected to the pane with
+    /// constraints (aligning the top to the safe area below the title bar is left to
+    /// the constraints).
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiSidebarContentFrame"]
@@ -352,7 +358,8 @@ define_class!(
     unsafe impl NSObjectProtocol for ContentFrame {}
 
     impl ContentFrame {
-        /// 台の大きさが変わるたびに呼ばれる (`autoresizesSubviews` が既定で真)。
+        /// Called every time the stand's size changes (`autoresizesSubviews` is true by
+        /// default).
         #[unsafe(method(resizeSubviewsWithOldSize:))]
         fn resize_subviews(&self, old_size: NSSize) {
             let _: () = unsafe { msg_send![super(self), resizeSubviewsWithOldSize: old_size] };
@@ -367,7 +374,7 @@ impl ContentFrame {
         unsafe { msg_send![super(this), init] }
     }
 
-    /// 子を台いっぱいに置く。
+    /// Places the child to fill the stand.
     fn place_content(&self) {
         let Some(view) = self.ivars().borrow().clone() else {
             return;
@@ -405,29 +412,32 @@ impl ContentFrame {
 struct SidebarInner {
     controller: Retained<NSSplitViewController>,
     sidebar_item: Retained<NSSplitViewItem>,
-    /// 右の区画の中の、ウィンドウの子を置く台。
+    /// The stand inside the right pane that holds the window's child.
     content_frame: Retained<ContentFrame>,
     table: Retained<NSTableView>,
-    /// `NSTableView` の dataSource / delegate は弱参照なので持っておく。
+    /// The `NSTableView`'s dataSource / delegate are weak references, so it is held.
     _source: Retained<SidebarSource>,
     sections: RefCell<Vec<SidebarSection>>,
     rows: Rc<RefCell<Vec<Row>>>,
     selected: Rc<Cell<Option<usize>>>,
     handler: SelectHandler,
     silent: Rc<Cell<bool>>,
-    /// サイドバーの幅。`set_width` の値か、利用者が仕切りで変えた幅。
+    /// The sidebar width. Either the `set_width` value or the width the user changed
+    /// with the divider.
     width: Cell<f64>,
     on_resize: ValueHandler<f64>,
-    /// naui が仕切りを置いている間は真。この間の開閉と大きさの変化は
-    /// 利用者の操作ではない。
+    /// True while naui is positioning the divider. Collapse and size changes during
+    /// this are not user actions.
     applying: Cell<bool>,
-    /// 最後に知っている開閉。利用者の開閉だけを通知するために比べる。
+    /// The last known collapsed state. Compared so that only the user's toggles are
+    /// notified.
     collapsed: Cell<bool>,
     on_collapse: ValueHandler<bool>,
-    /// アプリがツールバーを付けていないときに使う、サイドバーボタンだけの
-    /// ツールバー。
+    /// A toolbar with just the sidebar button, used when the app has not attached a
+    /// toolbar.
     controls: Toolbar,
-    /// 大きさの変化の受け口。通知センターは observer を強く持たない。
+    /// The receiver of size changes. The notification center does not hold observers
+    /// strongly.
     observer: RefCell<Option<Retained<ResizeObserver>>>,
 }
 
@@ -439,10 +449,10 @@ impl Drop for SidebarInner {
     }
 }
 
-/// ウィンドウの左に付けるサイドバー。
+/// A sidebar attached to the left of the window.
 ///
-/// [`Window::set_sidebar`](crate::Window::set_sidebar) で取り付ける。
-/// レイアウトには置かないので [`Widget`](crate::Widget) ではない。
+/// Attach it with [`Window::set_sidebar`](crate::Window::set_sidebar). It is not
+/// placed in a layout, so it is not a [`Widget`](crate::Widget).
 #[derive(Clone)]
 pub struct Sidebar(Rc<SidebarInner>);
 
@@ -561,10 +571,10 @@ impl Sidebar {
         this
     }
 
-    /// 項目をまとまりごとに並べる。呼ぶたびに置き換わる。
+    /// Lays out items by group. Each call replaces them.
     ///
-    /// 選ばれていた項目は、同じ通し番号がまだ選べるなら選ばれたまま残る
-    /// (通知はしない)。
+    /// The selected item stays selected (without notifying) if the same running number
+    /// can still be selected.
     pub fn set_sections(&self, sections: &[SidebarSection]) {
         *self.0.sections.borrow_mut() = sections.to_vec();
         *self.0.rows.borrow_mut() = rows_of(sections);
@@ -582,12 +592,12 @@ impl Sidebar {
         });
     }
 
-    /// 見出しの無いまとまり 1 つだけで並べる。
+    /// Lays out items as a single group without a heading.
     pub fn set_items(&self, items: &[SidebarItem]) {
         self.set_sections(&[SidebarSection::untitled(items.iter().cloned())]);
     }
 
-    /// まとまりをまたいだ項目の数。
+    /// The number of items across groups.
     pub fn len(&self) -> usize {
         sidebar_len(&self.0.sections.borrow())
     }
@@ -596,12 +606,13 @@ impl Sidebar {
         self.len() == 0
     }
 
-    /// 選ばれている項目の通し番号。
+    /// The running number of the selected item.
     pub fn selected(&self) -> Option<usize> {
         self.0.selected.get()
     }
 
-    /// 通知せずに選択を変える。範囲外・選べない項目は無視する。
+    /// Changes the selection without notifying. Out-of-range and unselectable items are
+    /// ignored.
     pub fn set_selected(&self, index: usize) {
         if !self.is_selectable(index) {
             return;
@@ -609,15 +620,15 @@ impl Sidebar {
         self.without_notifying(|| self.select_row_of(index));
     }
 
-    /// 選択を外す (通知しない)。
+    /// Clears the selection (without notifying).
     pub fn clear_selection(&self) {
         self.without_notifying(|| unsafe { self.0.table.deselectAll(None) });
     }
 
-    /// 利用者が選んだのと同じように選び、通知する。
+    /// Selects as if the user had chosen it, and notifies.
     ///
-    /// 範囲外・選べない項目は無視する。すでに選ばれている項目でも通知する
-    /// (ほかのナビゲーションの `select` と同じ)。
+    /// Out-of-range and unselectable items are ignored. Notifies even if the item is
+    /// already selected (the same as `select` in other navigation widgets).
     pub fn select(&self, index: usize) {
         if !self.is_selectable(index) {
             return;
@@ -630,17 +641,17 @@ impl Sidebar {
         }
     }
 
-    /// 項目が選ばれたときの通知先。引数は通し番号。
+    /// The handler called when an item is chosen. The argument is the running number.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// サイドバーの幅 (論理ピクセル)。既定は [`DEFAULT_SIDEBAR_WIDTH`]。
+    /// The sidebar width (logical pixels). The default is [`DEFAULT_SIDEBAR_WIDTH`].
     ///
-    /// 利用者は仕切りをドラッグして幅を変えられる (下限は
-    /// [`SIDEBAR_MIN_WIDTH`](naui_core::SIDEBAR_MIN_WIDTH))。変えたあとの幅は
-    /// [`width`](Self::width) が返し、[`on_resize`](Self::on_resize) で届く。
-    /// この呼び出しでは `on_resize` を呼ばない。
+    /// The user can change the width by dragging the divider (the minimum is
+    /// [`SIDEBAR_MIN_WIDTH`](naui_core::SIDEBAR_MIN_WIDTH)). The width after a change
+    /// is returned by [`width`](Self::width) and delivered through
+    /// [`on_resize`](Self::on_resize). This call does not call `on_resize`.
     pub fn set_width(&self, width: f64) {
         if !width.is_finite() || width <= 0.0 {
             return;
@@ -649,17 +660,17 @@ impl Sidebar {
         self.apply_width();
     }
 
-    /// サイドバーの幅。閉じていても開いたときの幅を返す。
+    /// The sidebar width. Even while collapsed, returns the width it has when expanded.
     pub fn width(&self) -> f64 {
         self.0.width.get()
     }
 
-    /// 利用者が仕切りで幅を変えるたび、変えた後の幅で呼ばれる。
+    /// Called with the new width every time the user changes it with the divider.
     pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_resize.set(f);
     }
 
-    /// 区画の幅を読み、変わっていれば覚え直して通知する。
+    /// Reads the pane's width and, if it changed, records it again and notifies.
     fn sync_width(&self) {
         if self.0.applying.get() || self.is_collapsed() {
             return;
@@ -674,10 +685,11 @@ impl Sidebar {
         }
     }
 
-    /// サイドバーを閉じる (`true`) か開く (`false`)。
+    /// Collapses (`true`) or expands (`false`) the sidebar.
     ///
-    /// 閉じても項目と選択は残る。[`on_collapse`](Self::on_collapse) は
-    /// 呼ばない (利用者がサイドバーボタンで開閉したときだけ呼ぶ)。
+    /// Items and selection are kept while collapsed. [`on_collapse`](Self::on_collapse)
+    /// is not called (it is called only when the user toggles it with the sidebar
+    /// button).
     pub fn set_collapsed(&self, collapsed: bool) {
         // 先に覚えておくと、このあと届く大きさの変化を通知しないで済む。
         self.0.collapsed.set(collapsed);
@@ -688,15 +700,16 @@ impl Sidebar {
         }
     }
 
-    /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
+    /// The handler called when the user collapses or expands the sidebar. The argument
+    /// is whether it is now collapsed.
     ///
-    /// サイドバーボタンの操作で呼ばれ、
-    /// [`set_collapsed`](Self::set_collapsed) では呼ばれない。
+    /// Called when the sidebar button is used; not called by
+    /// [`set_collapsed`](Self::set_collapsed).
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse.set(f);
     }
 
-    /// 開閉が変わっていれば覚え直して通知する。
+    /// If the collapsed state changed, records it again and notifies.
     fn sync_collapsed(&self) {
         if self.0.applying.get() {
             return;
@@ -707,53 +720,57 @@ impl Sidebar {
         }
     }
 
-    /// アプリがツールバーを付けていないときに使う、サイドバーボタンだけの
-    /// ツールバー。
+    /// A toolbar with just the sidebar button, used when the app has not attached a
+    /// toolbar.
     pub(crate) fn controls_toolbar(&self) -> Toolbar {
         self.0.controls.clone()
     }
 
-    /// サイドバーが閉じているかどうか。
+    /// Whether the sidebar is collapsed.
     pub fn is_collapsed(&self) -> bool {
         self.0.sidebar_item.isCollapsed()
     }
 
-    /// AppKit の実体 (`NSSplitViewController`)。バックエンド固有の脱出口。
+    /// The real AppKit object (`NSSplitViewController`). A backend-specific escape
+    /// hatch.
     pub fn native_split_view_controller(&self) -> Retained<NSSplitViewController> {
         self.0.controller.clone()
     }
 
-    /// 項目の一覧 (`NSTableView`)。バックエンド固有の脱出口。
+    /// The item list (`NSTableView`). A backend-specific escape hatch.
     pub fn native_table_view(&self) -> Retained<NSTableView> {
         self.0.table.clone()
     }
 
-    /// 右の区画へウィンドウの子を置く。`None` なら空にする。
+    /// Places the window's child in the right pane. `None` empties it.
     ///
-    /// ウィンドウの `fullSizeContentView` でタイトルバーの下まで伸びるので、
-    /// 子の上端はタイトルバー (とツールバー) を避けた安全領域に合わせる。
-    /// 子は制約ではなく枠で置く (理由は [`ContentFrame`])。
+    /// The window's `fullSizeContentView` extends it under the title bar, so the
+    /// child's top is aligned to the safe area clear of the title bar (and toolbar).
+    /// The child is placed by frame rather than constraints (see [`ContentFrame`] for
+    /// why).
     pub(crate) fn set_content(&self, view: Option<Retained<NSView>>) {
         self.0.content_frame.set_content(view);
     }
 
-    /// 右の区画から子を外して返す。
+    /// Removes the child from the right pane and returns it.
     pub(crate) fn take_content(&self) -> Option<Retained<NSView>> {
         self.0.content_frame.take_content()
     }
 
-    /// 覚えている幅へ仕切りを置く。
+    /// Puts the divider at the remembered width.
     ///
-    /// 幅は区画のビューの幅 (macOS 26 の浮いたガラスでは、その周りの余白を
-    /// 含む)。ウィンドウへ取り付ける前は区画の大きさが 0 なので、取り付けた
-    /// あと ([`Window::set_sidebar`](crate::Window::set_sidebar)) にも呼び直す。
+    /// The width is the width of the pane's view (on macOS 26's floating glass, it
+    /// includes the margin around it). Before being attached to a window the pane's
+    /// size is 0, so this is called again after attaching
+    /// ([`Window::set_sidebar`](crate::Window::set_sidebar)).
     ///
-    /// 閉じているときは、描かれる前に黙って開いて置き、黙って閉じ直す。
-    /// 閉じた区画には仕切りを置けず、AppKit は開き直すとき (サイドバー
-    /// ボタンでも) 閉じる前に覚えた幅へ戻すので、その覚えている幅ごと
-    /// 新しい幅にしておく。この間の開閉と大きさの変化は通知しない
-    /// (`applying` の間は [`sync_collapsed`](Self::sync_collapsed) も
-    /// [`sync_width`](Self::sync_width) も何もしない)。
+    /// When collapsed, it silently expands, positions it before anything is drawn, and
+    /// silently collapses again. The divider cannot be placed on a collapsed pane, and
+    /// when expanding again (even with the sidebar button) AppKit restores the width it
+    /// remembered before collapsing, so that remembered width is replaced with the new
+    /// one too. Collapse and size changes during this are not notified (while
+    /// `applying`, neither [`sync_collapsed`](Self::sync_collapsed) nor
+    /// [`sync_width`](Self::sync_width) does anything).
     pub(crate) fn apply_width(&self) {
         let split = self.0.controller.splitView();
         self.0.applying.set(true);
@@ -780,7 +797,7 @@ impl Sidebar {
         naui_core::sidebar_item(&self.0.sections.borrow(), index).is_some_and(|item| item.enabled)
     }
 
-    /// 通し番号の項目がある行を選ぶ。
+    /// Selects the row holding the item with the running number.
     fn select_row_of(&self, index: usize) {
         let row = self
             .0
@@ -803,10 +820,10 @@ impl Sidebar {
     }
 }
 
-/// ビューを 1 つ持つだけの `NSViewController`。
+/// An `NSViewController` that just holds one view.
 ///
-/// nib を使わないので、`view` を読む前に必ず `setView:` しておく
-/// (しないと `loadView` が nib を探して落ちる)。
+/// No nib is used, so `setView:` must always be called before `view` is read
+/// (otherwise `loadView` looks for a nib and crashes).
 fn view_controller(mtm: MainThreadMarker, view: &NSView) -> Retained<NSViewController> {
     let controller =
         NSViewController::initWithNibName_bundle(NSViewController::alloc(mtm), None, None);

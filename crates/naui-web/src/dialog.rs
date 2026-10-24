@@ -1,22 +1,22 @@
-//! 汎用ダイアログ (DOM)。
+//! General-purpose dialogs (DOM).
 //!
-//! ブラウザのモーダルは **`<dialog>`** そのもので、前面へ出すのも、
-//! 背後の操作を止めるのも、Esc で閉じるのも、`showModal()` を呼んだあとは
-//! ブラウザが行う (`::backdrop` の暗幕も含む)。
+//! The browser's modal is the **`<dialog>`** itself; once `showModal()` is called,
+//! bringing it to the front, blocking interaction behind it and closing on Esc are
+//! all done by the browser (including the `::backdrop` overlay).
 //!
-//! ただし `<dialog>` は中身を持たない箱なので、見出し・本文・ボタンは
-//! naui が `<h2>` / `<p>` / `<button>` を並べて組み立てる。CSS は
-//! Flexbox の並べ方 (方向・間隔・右寄せ) にしか使わない。
+//! However, `<dialog>` is an empty box, so naui builds the title, body text and
+//! buttons by laying out `<h2>` / `<p>` / `<button>`. CSS is used only for Flexbox
+//! arrangement (direction, spacing, right alignment).
 //!
-//! ## 他の環境との違い
+//! ## Differences from other platforms
 //!
-//! [`Dialog::open`] はすぐ戻り、閉じたときの通知はあとから届く
-//! (macOS の `NSAlert` は閉じるまで戻らない)。
+//! [`Dialog::open`] returns right away, and the close notification arrives later
+//! (macOS's `NSAlert` does not return until it is closed).
 //!
-//! 閉じたことは `<dialog>` の `close` イベントではなく、**押されたボタン**と
-//! **Esc の `keydown`** から直接わかるようにしている。`close` は
-//! `close()` を呼んだ側 (アプリ自身の [`Dialog::close`] を含む) と
-//! ユーザー操作を区別できないうえ、埋め込みブラウザによっては届かない。
+//! That it closed is learned directly from **the clicked button** and **Esc's
+//! `keydown`**, not from the `<dialog>`'s `close` event. `close` cannot tell the
+//! side that called `close()` (including the app's own [`Dialog::close`]) from
+//! user actions, and some embedded browsers never deliver it.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,7 +28,8 @@ use web_sys::{Document, Element, HtmlDialogElement, HtmlElement, KeyboardEvent};
 use crate::to_error;
 use crate::widgets::{create, Listener, Widget};
 
-/// ボタンを左から並べる順。macOS の並びに合わせ、主となる操作を右端に置く。
+/// The order in which buttons are laid out from the left. Following macOS, the
+/// primary action goes at the right end.
 const BUTTON_ORDER: [DialogResponse; 3] = [
     DialogResponse::Secondary,
     DialogResponse::Cancel,
@@ -39,20 +40,20 @@ struct DialogInner {
     element: HtmlDialogElement,
     title: HtmlElement,
     message: HtmlElement,
-    /// 中身のウィジェットを入れる箱。
+    /// The box holding the content widget.
     content: HtmlElement,
-    /// ボタンを並べる箱。
+    /// The box laying out the buttons.
     actions: HtmlElement,
     child: RefCell<Option<Box<dyn Widget>>>,
     buttons: RefCell<DialogButtons>,
-    /// ボタンのクリックを受けるもの。組み立て直すたびに置き換わる。
+    /// The receivers of button clicks. Replaced each time it is rebuilt.
     listeners: RefCell<Vec<Listener>>,
-    /// Esc など、取り消しとして閉じられたことを受けるもの。
+    /// The receivers for being closed as a cancel, by Esc and the like.
     dismiss: RefCell<Vec<Listener>>,
     on_response: RefCell<Option<Box<dyn FnMut(DialogResponse)>>>,
 }
 
-/// モーダルダイアログ (`<dialog>`)。
+/// A modal dialog (`<dialog>`).
 #[derive(Clone)]
 pub struct Dialog(Rc<DialogInner>);
 
@@ -111,18 +112,19 @@ impl Dialog {
         Ok(this)
     }
 
-    /// Esc で閉じられたときに、取り消しとして通知する。
+    /// Notifies a cancel when it is closed with Esc.
     ///
-    /// 受けるのは `cancel` ではなく **Esc の `keydown`** で、キーの既定動作を
-    /// 止めてから自分で閉じる。Safari はウィンドウが全画面のとき、Esc を
-    /// まず全画面の解除に使い、**ページが既定動作を止めない限り**
-    /// ダイアログまで回さない (解除に 1 回、閉じるのにもう 1 回 Esc が要る)。
-    /// 止めておけば全画面でも 1 回で閉じられる。ブラウザ既定の「閉じる」を
-    /// 止めているので、通知の中から開き直しても、そのあと閉じられない。
+    /// What is received is **Esc's `keydown`** rather than `cancel`; the key's default
+    /// action is prevented and the dialog is closed by naui. When the window is in
+    /// fullscreen, Safari first uses Esc to leave fullscreen and **does not pass it to
+    /// the dialog unless the page prevents the default** (it takes one Esc to leave and
+    /// another to close). With it prevented, one press closes it even in fullscreen.
+    /// Since the browser's default "close" is prevented, reopening from inside the
+    /// notification does not get it closed afterwards.
     ///
-    /// `cancel` も併せて受ける。キー以外の「閉じる要求」はこちらにしか
-    /// 来ない。Esc で閉じたときは既定を止めていて `cancel` が起きないため、
-    /// 二重には通知されない。
+    /// `cancel` is received as well. "Close requests" other than the key arrive only
+    /// there. When closed with Esc, the default is prevented and `cancel` does not
+    /// occur, so it is not notified twice.
     fn install_dismiss_handlers(&self) -> Result<()> {
         let mut listeners = Vec::new();
 
@@ -163,7 +165,7 @@ impl Dialog {
         Ok(())
     }
 
-    /// 取り消しとして閉じ、通知する。すでに閉じているなら何もしない。
+    /// Closes as a cancel and notifies. Does nothing if already closed.
     fn dismiss(&self) {
         if !self.0.element.open() {
             return;
@@ -172,8 +174,8 @@ impl Dialog {
         self.emit(DialogResponse::Cancel);
     }
 
-    /// 通知。通知の中から設定し直しても二重借用にならないよう、
-    /// 呼び出しの間だけクロージャを取り出す。
+    /// Notification. So that setting it again from inside the notification does not
+    /// double-borrow, the closure is taken out only for the duration of the call.
     fn emit(&self, response: DialogResponse) {
         let Some(mut f) = self.0.on_response.borrow_mut().take() else {
             return;
@@ -194,7 +196,7 @@ impl Dialog {
         self.0.title.text_content().unwrap_or_default()
     }
 
-    /// 見出しの下に出る本文。空にすると出ない。
+    /// The body text shown below the title. Not shown if empty.
     pub fn set_message(&self, message: &str) {
         self.0.message.set_text_content(Some(message));
         self.0.message.set_hidden(message.is_empty());
@@ -204,7 +206,7 @@ impl Dialog {
         self.0.message.text_content().unwrap_or_default()
     }
 
-    /// 本文とボタンの間に置くウィジェット。呼ぶたびに置き換わる。
+    /// The widget placed between the body text and the buttons. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
         self.0.content.set_inner_html("");
         let element = child.native_element();
@@ -214,7 +216,8 @@ impl Dialog {
         }
     }
 
-    /// 出すボタン。既定ではボタンを持たず、そのときは「OK」だけが出る。
+    /// The buttons to show. By default there are none, in which case only "OK" is
+    /// shown.
     pub fn set_buttons(&self, buttons: DialogButtons) {
         *self.0.buttons.borrow_mut() = buttons;
         let _ = self.rebuild_buttons();
@@ -224,7 +227,8 @@ impl Dialog {
         self.0.buttons.borrow().clone()
     }
 
-    /// `<button>` を並べ直す。押されたら `<dialog>` を閉じ、その役割で通知する。
+    /// Lays out the `<button>`s again. When clicked, it closes the `<dialog>` and
+    /// notifies with that role.
     fn rebuild_buttons(&self) -> Result<()> {
         // 以前のボタンとその購読を外す。
         self.0.listeners.borrow_mut().clear();
@@ -256,16 +260,18 @@ impl Dialog {
         Ok(())
     }
 
-    /// 閉じたときに、閉じた理由で呼ばれる。設定し直すと以前のものは外れる。
+    /// Called with the reason when it closes. Setting it again removes the previous
+    /// one.
     ///
-    /// [`Dialog::close`] で閉じたときは呼ばれない。
+    /// Not called when it is closed with [`Dialog::close`].
     pub fn on_response(&self, f: impl FnMut(DialogResponse) + 'static) {
         *self.0.on_response.borrow_mut() = Some(Box::new(f));
     }
 
-    /// ダイアログを出す。**すぐ戻り、閉じたことは `on_response` で届く。**
+    /// Shows the dialog. **It returns right away, and closing arrives through
+    /// `on_response`.**
     ///
-    /// すでに出ているときは何もしない。
+    /// Does nothing if it is already shown.
     pub fn open(&self) {
         if self.0.element.open() {
             return;
@@ -273,7 +279,7 @@ impl Dialog {
         let _ = self.0.element.show_modal();
     }
 
-    /// 出しているダイアログを閉じる。`on_response` は呼ばれない。
+    /// Closes the dialog being shown. `on_response` is not called.
     pub fn close(&self) {
         if !self.0.element.open() {
             return;
@@ -281,12 +287,12 @@ impl Dialog {
         self.0.element.close();
     }
 
-    /// いま出ているか。
+    /// Whether it is showing now.
     pub fn is_open(&self) -> bool {
         self.0.element.open()
     }
 
-    /// `<dialog>` 要素。バックエンド固有の脱出口。
+    /// The `<dialog>` element. A backend-specific escape hatch.
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()
     }

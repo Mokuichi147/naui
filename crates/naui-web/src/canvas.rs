@@ -1,34 +1,35 @@
-//! 描画面 (`<canvas>` + 2D コンテキスト)。
+//! The drawing surface (`<canvas>` + a 2D context).
 //!
-//! ブラウザで「アプリが自分で描く面」は `<canvas>` そのもの。naui は
-//! `on_draw` が [`Painter`] に記録した命令を `CanvasRenderingContext2D` の
-//! `moveTo` / `lineTo` / `bezierCurveTo` / `fill` / `stroke` / `fillText` で
-//! 再生するだけで、ラスタライズ・アンチエイリアス・文字の描画はブラウザが
-//! 行う。
+//! In the browser, "a surface the app draws itself" is the `<canvas>` itself. naui
+//! just replays the commands `on_draw` recorded in the [`Painter`] with
+//! `CanvasRenderingContext2D`'s `moveTo` / `lineTo` / `bezierCurveTo` / `fill` /
+//! `stroke` / `fillText`; rasterization, antialiasing and text drawing are done by
+//! the browser.
 //!
-//! 高解像度の表示 (`devicePixelRatio` > 1) では、裏の画素数を倍率ぶん増やし
-//! `scale` を掛けてから描く。アプリが見る座標は CSS ピクセルのまま。
+//! On high-resolution displays (`devicePixelRatio` > 1), the backing pixel count is
+//! multiplied by the ratio and `scale` is applied before drawing. The coordinates
+//! the app sees stay in CSS pixels.
 //!
-//! 面の大きさは CSS のレイアウトで決まる (`set_sizing`)。大きさが変わったことは
-//! `ResizeObserver` で拾い、そのたびに描き直す。CSS の大きさが変わらないまま
-//! 倍率だけが変わること (別のモニターへ移す、ブラウザの拡大率を変える) は
-//! `ResizeObserver` では分からないので、いまの倍率を条件にした
-//! `matchMedia("(resolution: …dppx)")` の `change` で拾う。描き直しの要求
-//! (`redraw`) は `requestAnimationFrame` へまとめ、その場では描かない
-//! (他の 3 環境と同じ決まり)。
+//! The surface's size is decided by CSS layout (`set_sizing`). Size changes are
+//! caught with `ResizeObserver`, redrawing each time. Changes in only the ratio
+//! while the CSS size stays the same (moving to another monitor, changing the
+//! browser zoom) are not visible to `ResizeObserver`, so they are caught with the
+//! `change` of a `matchMedia("(resolution: …dppx)")` conditioned on the current
+//! ratio. Redraw requests (`redraw`) are batched into `requestAnimationFrame` and
+//! not drawn on the spot (the same rule as the other three platforms).
 //!
-//! どのボタンかは `PointerEvent.button` で見分ける。ブラウザは 2 つ目以降の
-//! ボタンの押下と解放 (左を押したまま右を押す、など) を `pointerdown` /
-//! `pointerup` ではなく `pointermove` で知らせる (`button` が -1 でない
-//! `pointermove`) ので、それも押下・解放として届ける。右クリックで出る
-//! ブラウザのコンテキストメニューは面の上では出さない (他の 3 環境の描画面にも
-//! 無いため)。
+//! The button is identified by `PointerEvent.button`. Browsers report presses and
+//! releases of second and later buttons (pressing right while holding left, for
+//! example) through `pointermove` rather than `pointerdown` / `pointerup` (a
+//! `pointermove` whose `button` is not -1), so those are delivered as presses and
+//! releases too. The browser's context menu on right-click is not shown over the
+//! surface (the drawing surfaces of the other three platforms have none either).
 //!
-//! ホイールは `wheel` イベントから取る。`deltaMode` が行 (Firefox の古い
-//! 既定など) なら 1 行を [`WHEEL_STEP`] の 1/3 に、ページなら面の大きさに直す。
-//! ピクセルのときはブラウザの量をそのまま届けるので、刻みのあるホイールの
-//! 1 刻みの量はブラウザによって違う。アプリが `Handled` を返したときだけ
-//! `preventDefault` してページのスクロールを止める。
+//! The wheel comes from `wheel` events. When `deltaMode` is lines (as in older
+//! Firefox defaults), one line becomes 1/3 of [`WHEEL_STEP`]; when pages, the
+//! surface's size. For pixels the browser's amount is delivered as is, so the amount
+//! per notch of a notched wheel differs between browsers. Only when the app returns
+//! `Handled` is `preventDefault` called to stop page scrolling.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -46,9 +47,11 @@ use web_sys::{
 use crate::to_error;
 use crate::widgets::{create, impl_widget, Listener, ValueHandler, Widget};
 
-/// 描く内容を決めるクロージャの置き場。呼んでいる間は取り出しておく。
+/// The slot for the closure that decides what to draw. Taken out while it is being
+/// called.
 type DrawSlot = RefCell<Option<Box<dyn FnMut(&mut Painter)>>>;
-/// JS 側へ渡すクロージャの置き場。ハンドルと同じ寿命で持つ。
+/// The slot for closures passed to the JS side. Held with the same lifetime as the
+/// handle.
 type JsSlot<F> = RefCell<Option<Closure<F>>>;
 
 struct CanvasInner {
@@ -57,24 +60,26 @@ struct CanvasInner {
     draw: DrawSlot,
     pointer: ValueHandler<PointerEvent>,
     wheel: WheelHandler,
-    /// `requestAnimationFrame` を予約済みかどうか。
+    /// Whether a `requestAnimationFrame` is already scheduled.
     scheduled: Cell<bool>,
-    /// 予約した描画を実行するクロージャ。1 つ作って使い回す。
+    /// The closure that runs the scheduled draw. Created once and reused.
     frame: JsSlot<dyn FnMut()>,
-    /// 大きさの変化の購読。落とすと購読も外れる。
+    /// The subscription to size changes. Dropping it also unsubscribes.
     observer: RefCell<Option<ResizeObserver>>,
     _observer_callback: JsSlot<dyn FnMut(JsValue)>,
     _listeners: RefCell<Vec<Listener>>,
-    /// 最後に描いたときの倍率と、その倍率から外れたことを知らせる購読。
+    /// The ratio at the last draw, and the subscription reporting a departure from that
+    /// ratio.
     ///
-    /// 倍率が変わると条件に合わなくなって `change` が飛ぶので、そのたびに
-    /// 新しい倍率で張り直す。
+    /// When the ratio changes the condition stops matching and `change` fires, so it is
+    /// re-attached with the new ratio each time.
     ratio_watch: RefCell<Option<(f64, Listener)>>,
 }
 
-/// アプリが自分で描く面 (`<canvas>`)。
+/// A surface the app draws on itself (`<canvas>`).
 ///
-/// 中身から大きさは決まらないので、`set_sizing` で指定する (`Scroll` と同じ)。
+/// Its size is not determined by its contents, so set it with `set_sizing` (the
+/// same as `Scroll`).
 #[derive(Clone)]
 pub struct Canvas(Rc<CanvasInner>);
 impl_widget!(Canvas, canvas);
@@ -211,15 +216,17 @@ impl Canvas {
         Ok(())
     }
 
-    /// 描く内容を決めるクロージャ。描き直すたびに新しい [`Painter`] で呼ばれる。
+    /// The closure that decides what to draw. Called with a fresh [`Painter`] every
+    /// time it is redrawn.
     ///
-    /// 呼ばれるのは [`redraw`](Self::redraw) の後と、面の大きさが変わったとき。
+    /// It is called after [`redraw`](Self::redraw) and when the surface changes size.
     pub fn on_draw(&self, f: impl FnMut(&mut Painter) + 'static) {
         *self.0.draw.borrow_mut() = Some(Box::new(f));
         self.redraw();
     }
 
-    /// 描き直しを頼む。その場では描かず、次のフレームで `on_draw` が呼ばれる。
+    /// Requests a redraw. Nothing is drawn on the spot; `on_draw` is called on the next
+    /// frame.
     pub fn redraw(&self) {
         if self.0.scheduled.replace(true) {
             return;
@@ -237,42 +244,44 @@ impl Canvas {
         }
     }
 
-    /// ポインター (マウス・タッチ・ペン) の押下・移動・解放。位置は面の左上を
-    /// 原点にした CSS ピクセル。移動は押していない間 (ホバー) も届く。押下と
-    /// 解放にはどのボタンかが付く ([`PointerEvent::button`])。
+    /// Pointer (mouse, touch, pen) presses, moves and releases. Positions are CSS
+    /// pixels with the surface's top left as origin. Moves also arrive while nothing is
+    /// pressed (hover). Presses and releases carry which button
+    /// ([`PointerEvent::button`]).
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.pointer.set(f);
     }
 
-    /// ホイール (トラックパッドの 2 本指のスクロールも含む)。量は CSS ピクセル。
+    /// The wheel (including two-finger scrolling on a trackpad). Amounts are CSS
+    /// pixels.
     ///
-    /// `Handled` を返すと `preventDefault` してページのスクロールを止める。
-    /// `Continue` ならページや外側の `Scroll` がいつもどおりスクロールする。
+    /// Returning `Handled` calls `preventDefault` to stop page scrolling. With
+    /// `Continue`, the page or an outer `Scroll` scrolls as usual.
     pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
         self.0.wheel.set(f);
     }
 
-    /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
+    /// The current size of the surface (width, height). 0 if not laid out yet.
     pub fn size(&self) -> (f64, f64) {
         self.0.css_size()
     }
 
-    /// その場で描く。**自動テスト専用**。
+    /// Draws on the spot. **For automated tests only.**
     #[doc(hidden)]
     pub fn draw_for_test(&self) {
         self.0.paint();
     }
 
-    /// `<canvas>` 本体。バックエンド固有の脱出口として公開している。
+    /// The `<canvas>` itself. Public as a backend-specific escape hatch.
     pub fn native_canvas(&self) -> HtmlCanvasElement {
         self.0.canvas.clone()
     }
 }
 
-/// `MouseEvent.button` の番号に当たる、`MouseEvent.buttons` のビット。
+/// The bit of `MouseEvent.buttons` corresponding to a `MouseEvent.button` number.
 ///
-/// 2 つの番号の振り方は中と右で入れ替わっている (`button` は中が 1 で右が 2、
-/// `buttons` は右が 2 で中が 4)。
+/// The two numberings swap middle and right (`button` has middle as 1 and right as
+/// 2; `buttons` has right as 2 and middle as 4).
 fn web_buttons_bit(button: i16) -> u16 {
     match button {
         0 => 1,
@@ -285,9 +294,11 @@ fn web_buttons_bit(button: i16) -> u16 {
 }
 
 impl CanvasInner {
-    /// マウスのイベントの位置を、面の左上を原点にした CSS ピクセルへ直す。
+    /// Converts a mouse event's position into CSS pixels with the surface's top left as
+    /// origin.
     ///
-    /// `offsetX` はつかんでいる間に当てにならないので、面の位置から引く。
+    /// `offsetX` is unreliable while dragging, so it is subtracted from the surface's
+    /// position.
     fn local_point(&self, event: &web_sys::MouseEvent) -> Point {
         let rect = self.canvas.get_bounding_client_rect();
         Point::new(
@@ -296,7 +307,7 @@ impl CanvasInner {
         )
     }
 
-    /// CSS 上の大きさ。
+    /// The size in CSS.
     fn css_size(&self) -> (f64, f64) {
         let element: &HtmlElement = self.canvas.as_ref();
         (
@@ -305,7 +316,7 @@ impl CanvasInner {
         )
     }
 
-    /// いまの表示の倍率 (`devicePixelRatio`)。読めなければ 1。
+    /// The current display ratio (`devicePixelRatio`). 1 if it cannot be read.
     fn ratio(&self) -> f64 {
         web_sys::window()
             .map(|w| w.device_pixel_ratio())
@@ -313,9 +324,10 @@ impl CanvasInner {
             .unwrap_or(1.0)
     }
 
-    /// 倍率が `ratio` から外れたら描き直すように、購読を張り直す。
+    /// Re-attaches the subscription so that it redraws when the ratio departs from
+    /// `ratio`.
     ///
-    /// すでに同じ倍率で張ってあれば何もしない。
+    /// Does nothing if it is already attached for the same ratio.
     fn watch_ratio(self: &Rc<Self>, ratio: f64) {
         if matches!(&*self.ratio_watch.borrow(), Some((watched, _)) if *watched == ratio) {
             return;
@@ -336,7 +348,8 @@ impl CanvasInner {
         *self.ratio_watch.borrow_mut() = listener.ok().map(|listener| (ratio, listener));
     }
 
-    /// 裏の画素数を CSS の大きさ × 倍率にそろえてから、`on_draw` を呼んで描く。
+    /// Sets the backing pixel count to the CSS size × the ratio, then calls `on_draw`
+    /// and draws.
     fn paint(self: &Rc<Self>) {
         let (width, height) = self.css_size();
         if width <= 0.0 || height <= 0.0 {
@@ -380,7 +393,7 @@ impl Drop for CanvasInner {
     }
 }
 
-/// [`Painter`] に記録された命令を 2D コンテキストへ描く。
+/// Draws the commands recorded in the [`Painter`] into the 2D context.
 fn replay(context: &CanvasRenderingContext2d, commands: &[DrawCommand]) {
     for command in commands {
         match command {

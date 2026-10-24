@@ -1,327 +1,357 @@
-# 既知の制限
+# Known limitations
 
-naui でできないことと、環境によって振る舞いが違うことをまとめています。
-各環境で何のコントロールをどう組み立てているか、なぜその形にしたかは
-[ウィジェットの実装](widgets.md#環境ごとの組み立て)にあります。
+This page collects what naui cannot do and what behaves differently per platform.
+Which controls are used on each platform, how they are assembled, and why they took
+that shape are covered in
+[Widget implementations](widgets.md#construction-per-platform).
 
-## 環境による違いの早見表
+## Platform differences at a glance
 
-| 項目 | Windows | macOS | Linux | Web |
+| Item | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Stack` の主軸方向の `Fill` と `Spacer` | 効かない ([代わり](#windows)) | 効く | 効く | 効く |
-| `Grid` の `Track::Fill` の重み | 効く | 均等に配る | 均等に配る | 効く |
-| `Grid` の同じマスへの重ね置き | できる | 後から置いたものだけ残る | できる | できる |
-| `Table` の列幅のドラッグ | できない | できる | できない | できない |
-| `EditableComboBox` の候補を打った文字で絞る | 絞らない | 絞らない (先頭の補完だけ) | 絞らない | ブラウザが絞る |
-| `Toolbar` の置き場所 | タイトルの右 | タイトルバー (タイトル文字は隠れる) | ヘッダーバーの左側 | ウィンドウの先頭 |
-| `MenuBar` の置き場所 | タイトルバーの下 | アプリのメニュー | ヘッダーバーの下 | ウィンドウの先頭 |
-| `Dialog::open` と `PopupMenu::open_at` | すぐ戻る | 閉じるまで戻らない | すぐ戻る | すぐ戻る |
-| ウィンドウの位置 (`position` / `set_position`) | できる | できる | できない | できない |
-| 最大化と最小化 | できる | できる | できる (Wayland は最小化を知れない) | できない |
-| 全画面 | できる | できる | できる | 利用者の操作の中からだけ |
-| `std::thread::spawn` からの `Sender::send` | できる | できる | できる | できない (スレッドが無い) |
+| `Fill` and `Spacer` along a `Stack`'s main axis | No effect ([alternative](#windows)) | Works | Works | Works |
+| Weights of `Grid`'s `Track::Fill` | Works | Distributed evenly | Distributed evenly | Works |
+| Stacking in the same `Grid` cell | Possible | Only the last placed one remains | Possible | Possible |
+| Dragging `Table` column widths | Not possible | Possible | Not possible | Not possible |
+| `EditableComboBox` narrowing options by typed text | No | No (only prefix completion) | No | The browser narrows |
+| Where `Toolbar` goes | Right of the title | Title bar (the title text is hidden) | Left side of the header bar | Start of the window |
+| Where `MenuBar` goes | Below the title bar | The app's menu | Below the header bar | Start of the window |
+| `Dialog::open` and `PopupMenu::open_at` | Return immediately | Do not return until closed | Return immediately | Return immediately |
+| Window position (`position` / `set_position`) | Possible | Possible | Not possible | Not possible |
+| Maximizing and minimizing | Possible | Possible | Possible (minimizing cannot be detected on Wayland) | Not possible |
+| Full screen | Possible | Possible | Possible | Only from within a user action |
+| `Sender::send` from `std::thread::spawn` | Possible | Possible | Possible | Not possible (no threads) |
 
-## 共通
+## Common
 
-### 対応範囲
+### Scope
 
-- 対応するのは [README](../README.md#widgets) の表にある 46 コンポーネントです。
-- 絶対配置はありません。`Stack`、`Grid`、`Spacer` で配置します。
-- メディアの対応形式は各 OS、ブラウザ、Linux の GStreamer 環境に依存します。
+- The supported components are the 46 in the table in the
+  [README](../README.md#widgets).
+- There is no absolute positioning. Layout uses `Stack`, `Grid` and `Spacer`.
+- Supported media formats depend on each OS, browser, and the GStreamer setup on
+  Linux.
 
-### ウィジェット
+### Widgets
 
-- `SplitView` の区画は 2 つだけで、仕切りも 1 本です。3 つ以上に分けるときは
-  入れ子にします。区画をたたむ (幅 0 にして隠す) 指定はありません。
-- `Toolbar` はウィンドウに取り付けるもので、レイアウトの好きな位置には置けません
-  (`NSToolbar` が `NSWindow` に付くものであるため)。アイコンは `ToolbarIcon` の
-  20 種類からしか選べず、任意の画像は置けません。
-- `MenuBar` も `Toolbar` と同じくウィンドウに取り付けるもので、レイアウトの
-  好きな位置には置けません。**入れ子のメニュー (サブメニューのさらに下) と、
-  チェックの付く項目はありません。** 見出しと項目の 2 段までです。
-- `MenuShortcut` は**主修飾キー + 英数字 1 文字**の組み合わせだけで、主修飾キーは
-  macOS が ⌘、ほかの 3 環境が Ctrl です。ファンクションキーや記号のキーは
-  指定できません。
-- `List` は 1 列です。列が要るデータ一覧には `Table` を使います。`List` には
-  `Table` のような大量の行の絞り込み (画面に出ている範囲だけを組み立てる仕組み)
-  も無いので、数万行を超える一覧も `Table` が向いています。
-- `Table` の見出しを押しての並べ替えは「どの列を、どちら向きに」を通知する
-  ところまでで、**行を並べ替えるのはアプリの仕事**です。
-- 行数が 200 を超える `Table` は、画面に出ている範囲だけを組み立てます
-  (`set_rows` / `set_row_builder` のどちらでも)。そのため次の決まりがあります。
-  - **行の高さはどれも同じ**とみなします。必要なら `set_row_height` で決めます。
-  - まだ組み立てていない行が選べるかどうかを naui は知らないので、既定では
-    「選べる」とみなします (`set_row_selectable` で渡せます)。
-  - セルにウィジェットを置く列は、幅を指定しないと**見出しの幅と余りの分け合い**
-    だけで決まります (行ごとに中身の幅が違っても列が動かないようにするためです)。
-  - Web では、行数 × 行の高さがブラウザの扱える要素の高さ (Chromium で
-    3,300 万 px ほど) を超えると、スクロールバーの位置と行の対応がずれます
-    (30px の行なら 100 万行あたり)。インデックスでの選択や `set_rows` は、
-    それより多くても動きます。
-- `Tree` は単一選択で、項目に置けるのは文字列だけです。項目はパス (`&[usize]`)
-  で指し、ドラッグでの並べ替えはできません。
-- `Dialog` は同時に 1 つだけで、ボタンは Primary、Secondary、Cancel の最大 3 個です。
-- `Toast` も同時に 1 つだけで、新しく出したものが前のものを置き換えます
-  (`AdwToastOverlay` の順番待ちも、この形にそろえています)。操作ボタンは 1 個で、
-  出る位置は下端の中央に固定です。
-- `Canvas` の語彙は塗り・線・1 行の文字だけで、画像の貼り付け・クリップ・
-  変形 (回転や拡大) ・グラデーション・文字の幅の計量はありません。中身から
-  大きさは決まらないので `set_sizing` で指定します。
-- `Canvas` のポインターの通知はボタンを見分けますが、修飾キー (⇧・Ctrl など) は
-  見ません。トラックパッドのピンチは拡大縮小としては届きません (Web の
-  Chromium 系と Firefox は、Ctrl 付きのホイールとして `on_wheel` へ届きます)。
-  ホイールの 1 刻みの量は `WHEEL_STEP` にそろえますが、Web でブラウザが
-  ピクセルで渡すときはブラウザの量のままです。
+- `SplitView` has only two panes and one divider. To split into three or more,
+  nest them. There is no setting to collapse a pane (hide it at width 0).
+- `Toolbar` is attached to a window and cannot be placed anywhere in the layout
+  (because `NSToolbar` attaches to an `NSWindow`). Icons can only be chosen from
+  the 20 kinds of `ToolbarIcon`; arbitrary images cannot be used.
+- Like `Toolbar`, `MenuBar` is attached to a window and cannot be placed anywhere
+  in the layout. **There are no nested menus (below a submenu) and no items with
+  check marks.** It is limited to two levels: headings and items.
+- `MenuShortcut` is only a combination of **the primary modifier key + one
+  alphanumeric character**; the primary modifier is ⌘ on macOS and Ctrl on the
+  other three platforms. Function keys and symbol keys cannot be specified.
+- `List` has one column. For data lists that need columns, use `Table`. `List`
+  also lacks `Table`'s row windowing for large numbers of rows (building only the
+  range shown on screen), so `Table` is also better suited for lists of more than
+  tens of thousands of rows.
+- Sorting by pressing a `Table` header only goes as far as notifying "which column,
+  in which direction"; **sorting the rows is the app's job**.
+- A `Table` with more than 200 rows builds only the range shown on screen (with
+  either `set_rows` or `set_row_builder`). This leads to the following rules.
+  - **All rows are assumed to have the same height.** If needed, set it with
+    `set_row_height`.
+  - naui does not know whether rows it has not built yet can be chosen, so by
+    default they are assumed to be choosable (this can be passed with
+    `set_row_selectable`).
+  - Columns with widgets in their cells, if no width is specified, are sized only
+    by **the header's width and their share of the leftover space** (so columns do
+    not move even when content widths differ per row).
+  - On the Web, when the number of rows × the row height exceeds the element height
+    the browser can handle (about 33 million px in Chromium), the mapping between
+    the scroll bar position and rows drifts (around 1 million rows for 30 px rows).
+    Selection by index and `set_rows` work even with more than that.
+- `Tree` has single selection, and its items can hold only strings. Items are
+  addressed by paths (`&[usize]`), and they cannot be rearranged by dragging.
+- Only one `Dialog` can be shown at a time, with at most three buttons: Primary,
+  Secondary and Cancel.
+- Only one `Toast` is shown at a time too, and a newly shown one replaces the
+  previous one (`AdwToastOverlay`'s queueing is aligned to this behavior). There is
+  one action button, and the position is fixed at the bottom center.
+- `Canvas`'s vocabulary is only fills, strokes and single lines of text; there is no
+  image drawing, clipping, transforms (rotation or scaling), gradients, or text
+  width measurement. Its size is not decided by its content, so specify it with
+  `set_sizing`.
+- `Canvas` pointer notifications distinguish buttons but not modifier keys (⇧,
+  Ctrl, and so on). Trackpad pinches do not arrive as zooming (on the Web,
+  Chromium-based browsers and Firefox deliver them to `on_wheel` as wheel events
+  with Ctrl). The amount per wheel notch is normalized to `WHEEL_STEP`, but when a
+  browser on the Web passes pixels, the browser's amount is kept.
 
-### ウィンドウ
+### Window
 
-- ウィンドウの位置が変わったことの通知はありません (Linux と Web では位置そのものが
-  取れないため)。位置を保存するときは、閉じる前 (`on_close_request` の中など) に
-  `Window::position` を読みます。
-- 位置を扱える Windows と macOS では、最大化・最小化・全画面の間の
-  `position` / `set_position` は、通常の状態へ戻ったときの位置を読み書きします。
-  頼んだ位置は、通常の状態へ戻ったところで当たります。
+- There is no notification when a window's position changes (because the position
+  itself cannot be obtained on Linux and the Web). To save the position, read
+  `Window::position` before closing (for example inside `on_close_request`).
+- On Windows and macOS, where positions are supported, `position` /
+  `set_position` while maximized, minimized or full screen read and write the
+  position for when the window returns to the normal state. A requested position
+  takes effect when it returns to the normal state.
 
-### 別スレッドと非同期
+### Other threads and async
 
-- 別スレッドからの受け渡しで順序が保たれるのは**同じチャネルの中だけ**です。
-  チャネルが複数あるとき、チャネルをまたいだ配送の順序は決まっていません。
-- チャネルに上限はありません。短い間に多くの値を送っても**値は 1 つも捨てません**が、
-  複数の通知が次の描画より先にまとめて処理されるため、**途中の状態は画面に見えず
-  最後の状態だけが描かれることがあります**。高頻度の進捗やテレメトリは、
-  アプリ側で間引いてください。
-- `Sender::send` が返す `Ok` は「値を受け取り、UI への配送が予約された」の意味で、
-  配送されたことの保証ではありません。予約の直後に画面が閉じれば実行されません。
-- `Tasks::spawn` に渡せるのは値を返さない future だけです。結果は future の中で
-  直接ウィジェットへ書きます。返る `Task` を落としてもタスクは止まりません
-  (止めるには `Task::cancel` を呼びます)。
-- 受信クロージャや future の中で panic しても、その場で止めるだけでアプリは
-  巻き戻しません。WinRT / GLib / libdispatch の境界を越えて巻き戻せないため、
-  4 環境そろえてこの形にしてあります (panic の内容はいつもどおり標準エラー出力へ
-  出ます)。`panic = "abort"` の設定では捕まえられません。
+- When handing values over from other threads, order is preserved **only within
+  the same channel**. With several channels, the delivery order across channels is
+  not defined.
+- Channels are unbounded. Sending many values in a short time **does not drop a
+  single value**, but because multiple notifications are processed together before
+  the next draw, **intermediate states may not be visible and only the last state may
+  be drawn**. Throttle high-frequency progress or telemetry on the app side.
+- The `Ok` returned by `Sender::send` means "the value was accepted and its delivery
+  to the UI was scheduled", not a guarantee that it was delivered. If the screen
+  closes right after scheduling, it does not run.
+- `Tasks::spawn` accepts only futures that return no value. Write the result to
+  widgets directly inside the future. Dropping the returned `Task` does not stop the
+  task (call `Task::cancel` to stop it).
+- A panic inside a receiving closure or future only stops that piece on the spot;
+  the app does not unwind. Unwinding across the WinRT / GLib / libdispatch
+  boundaries is not possible, so all four platforms behave this way (the panic
+  message goes to standard error as usual). With `panic = "abort"` it cannot be
+  caught.
 
 ## Windows
 
-### レイアウト
+### Layout
 
-- `StackPanel` は主軸の余りを子へ配らないため、`Stack` 内の主軸方向では
-  `Fill` と `Spacer` が効きません。代わりに `Grid` の `Track::Fill` を使います。
+- `StackPanel` does not distribute leftover main-axis space to its children, so
+  `Fill` and `Spacer` along a `Stack`'s main axis have no effect. Use `Grid`'s
+  `Track::Fill` instead.
 
-### ウィジェット
+### Widgets
 
-- `SplitView` の仕切りの上で、仕切りに合わせたカーソル (⇔) は出ません。
-- `NumberInput` は**有効数字 10 桁まで**です。`NumberBox` が表示を作る前に値を
-  有効数字 10 桁へ丸めるので、`set_decimals` に 10 桁を超える有効数字を求める
-  桁数を渡しても切れます。数字は右へそろえます (Linux と Web は左寄せです)。
-  増減ボタンと消去ボタンが並ぶぶん、幅は 1 行入力より広めに取ってください
-  (naui の Gallery は 200 px にしています)。
-- `NumberInput` と `EditableComboBox` は、1 文字ごとの通知を `NumberBox` /
-  `ComboBox` のテンプレートにある入力欄から拾います。標準のテンプレートを
-  差し替えて入力欄が見つからないときは、確定 (`EditableComboBox` では候補の
-  選択と Enter) のときだけ通知します。
-- `SearchInput` に候補の一覧は出ません。
-- `DatePicker` の暦はグレゴリオ暦に固定です。年 / 月 / 日 の並び順と表記は
-  システムのロケールに従います。`DatePicker` と `TimePicker` の `set_range` は、
-  WinUI のコントロールが年の範囲までしか持たない (`TimePicker` は範囲を
-  持たない) ため、範囲外の値を選ぶと naui が端へ寄せます。
-- `Tree` で `TreeItem::enabled(false)` にした枝も、開閉はできます。
-- `Video` / `Audio` に標準の再生バーは出ません。一部の Windows App SDK 環境で
-  異常終了を避けるためです (同じ理由で、`Tabs` は `TabView` を使いません)。
-- `Canvas` は描き直しのたびに面を丸ごと作り直すので、命令が数千を超える図では
-  ほかの 3 環境より時間がかかります。
-- `Scroll` の中にある `Canvas` の上で高精度タッチパッドを 2 本指で
-  スクロールしても `on_wheel` へは届かず、外側の `Scroll` が動きます。
-  タッチパッドのジェスチャーは `ScrollViewer` が自分で受け取り、ホイールの
-  通知にならないためです (マウスのホイールは届きます)。
-- `Dialog` と `Toast` は `window.show()` より前には出せません。
+- Over a `SplitView` divider, no divider-specific cursor (⇔) is shown.
+- `NumberInput` is limited to **10 significant digits**. `NumberBox` rounds the
+  value to 10 significant digits before building its display, so passing
+  `set_decimals` a number of digits that would require more than 10 significant
+  digits is still cut off. Numbers are right-aligned (Linux and the Web align them
+  left). Since the step buttons and clear button sit beside it, give it more width
+  than a single-line input (naui's Gallery uses 200 px).
+- `NumberInput` and `EditableComboBox` pick up per-keystroke notifications from
+  the input field in the `NumberBox` / `ComboBox` template. If the standard
+  template is replaced and the input field cannot be found, they notify only on
+  confirmation (for `EditableComboBox`, choosing an option and Enter).
+- `SearchInput` shows no suggestion list.
+- `DatePicker`'s calendar is fixed to the Gregorian calendar. The order and
+  notation of year / month / day follow the system locale. For `set_range` of
+  `DatePicker` and `TimePicker`, the WinUI controls only support a range of years
+  (`TimePicker` supports no range at all), so naui clamps out-of-range values the
+  user picks to the ends.
+- Branches set to `TreeItem::enabled(false)` in a `Tree` can still be expanded and
+  collapsed.
+- `Video` / `Audio` show no standard playback bar. This avoids crashes in some
+  Windows App SDK environments (for the same reason, `Tabs` does not use
+  `TabView`).
+- `Canvas` rebuilds the whole surface on every redraw, so drawings with more than
+  several thousand commands take longer than on the other three platforms.
+- Two-finger scrolling on a precision touchpad over a `Canvas` inside a `Scroll`
+  does not reach `on_wheel`; the outer `Scroll` moves instead. `ScrollViewer`
+  receives touchpad gestures itself, and they do not become wheel notifications
+  (mouse wheels do arrive).
+- `Dialog` and `Toast` cannot be shown before `window.show()`.
 
-### ウィンドウ
+### Window
 
-- `Window::position` は、**Windows がウィンドウの周りに付ける見えない縁
-  (大きさを変えるつまみ) を含みます**。見えている枠の左上より数ピクセル左上を
-  指しますが、読んだ値をそのまま `set_position` へ渡せば同じ場所へ戻ります。
-- 位置はこのウィンドウの表示倍率で論理ピクセルへ直すので、DPI の違う画面を
-  またぐときはこのウィンドウの倍率で数えた値になります。
+- `Window::position` **includes the invisible border Windows adds around windows
+  (the resize grips)**. It points a few pixels above and to the left of the visible
+  frame's top-left corner, but passing the value read as is to `set_position`
+  returns the window to the same place.
+- The position is converted to logical pixels with this window's display scale, so
+  when crossing screens with different DPI, the value is counted with this window's
+  scale.
 
-### 別スレッドと非同期
+### Other threads and async
 
-- naui の UI 実行環境が終わった後の `Sender::send` は失敗します
-  (`DispatcherQueue` が受け付けないため)。
+- `Sender::send` fails after naui's UI runtime has ended (because the
+  `DispatcherQueue` no longer accepts work).
 
 ## macOS
 
-### レイアウト
+### Layout
 
-- `Grid` の `Track::Fill` は重みの違いを反映しません。
-- 交差軸の `Fill` と `Grid` のセル内の配置は、コンテナへ追加する前に指定して
-  ください。
-- `Grid` の**同じマスへ子を重ねて置けません**。後から置いたものが前のものを
-  外します (`NSGridCell` は中身を 1 つしか持てないため)。
-- `Grid` で**結合したマス (span を持つ子) を外しても、結合そのものは残ります**。
-  `NSGridView` に結合を解く API が無いためです。naui は結合した範囲を
-  **まとめて 1 つのマスとして扱う**ので、跡へ 1 マスぶんの子を置いても位置と
-  大きさはふつうのマスと変わりません。違いが出るのは、`Fill` の子が結合した
-  範囲まで広がることと、範囲内の別の位置へ置くと同じマスなので前の子が外れる
-  ことの 2 つです。
-- `Grid` の `Auto` 行の高さと `Fill` の子の取り分、`Table` で幅を指定しなかった
-  列の幅は naui が計算します (「Rust 側でレイアウト計算を行わない」の**例外**
-  です)。`NSGridView` と `NSTableView` が余りの配り先を決めないためです。
-  位置と大きさを最後に決めるのは Auto Layout です
-  ([組み立て](widgets.md#macos-の組み立て))。
+- `Grid`'s `Track::Fill` does not reflect differences in weight.
+- Specify cross-axis `Fill` and placement within `Grid` cells before adding to the
+  container.
+- **Children cannot be stacked in the same `Grid` cell.** The one placed later
+  removes the earlier one (because `NSGridCell` can hold only one view).
+- **Removing a merged cell (a child with a span) from a `Grid` leaves the merge
+  itself in place**, because `NSGridView` has no API to unmerge. naui treats the
+  merged range **as one cell**, so a one-cell child placed in its spot has the same
+  position and size as in a normal cell. There are two differences: a `Fill` child
+  extends over the merged range, and placing a child at another position within the
+  range removes the previous child because it is the same cell.
+- The height of `Grid`'s `Auto` rows, the share of `Fill` children, and the widths
+  of `Table` columns without a specified width are calculated by naui (an
+  **exception** to "no layout calculation on the Rust side"), because `NSGridView`
+  and `NSTableView` do not decide where leftover space goes. Auto Layout makes the
+  final decision on positions and sizes
+  ([construction](widgets.md#macos-construction)).
 
-### ウィジェット
+### Widgets
 
-- `Toggle` は**スイッチを押したときだけ**切り替わり、ラベルの文字を押しても
-  切り替わりません。
-- `EditableComboBox` は、候補の先頭に一致する文字を打つと残りを補完しますが、
-  **候補の一覧そのものは絞り込みません**。
-- `Table` の行の高さは、システムフォントから決めた一定の値です。中身に合わせて
-  行ごとに伸びることはありません。
-- `Image` のリモート URL は同期的に読み込むため、ローカルファイルの利用を推奨します。
-- `Expander` の開閉にアニメーションはありません。
-- `Dialog::open` と `PopupMenu::open_at` は閉じるまで戻りません。
-- `Toast` は、いちばん手前のウィンドウ (まだ決まっていないときは最後に作った
-  ウィンドウ) に出ます。
-- `Toolbar` を付けるとウィンドウのタイトル文字は隠れます (macOS の作法)。
-  `set_title` の値は残り、`clear_toolbar` で外すと表示も戻ります。区切りは
-  一定幅の空き (`NSToolbarSpaceItem`) で、線は引かれません。利用者による
-  並べ替え (「ツールバーをカスタマイズ」) はできません。
-- `MenuBar` はウィンドウではなくアプリに付きます (`NSApplication.mainMenu`)。
-  **naui はアプリ名のメニューと「編集」メニューを必ず残す**ので、アプリが渡した
-  見出しはその 2 つに挟まれて並びます。⌘C / ⌘V がメインメニューのキー等価として
-  配送される以上、これを外すとテキスト入力で貼り付けができなくなるためです。
-  並びを完全に決めたいときは `menu_bar.backend().native_menu()` で `NSMenu` を取り出します。
+- `Toggle` switches **only when the switch is pressed**; pressing the label text
+  does not switch it.
+- `EditableComboBox` completes the rest when you type characters matching the start
+  of an option, but **does not narrow the option list itself**.
+- `Table` row height is a fixed value derived from the system font. Rows do not
+  grow individually to fit their content.
+- `Image` loads remote URLs synchronously, so local files are recommended.
+- `Expander` has no expand/collapse animation.
+- `Dialog::open` and `PopupMenu::open_at` do not return until closed.
+- A `Toast` appears in the frontmost window (or the most recently created window
+  when none has been decided yet).
+- Attaching a `Toolbar` hides the window's title text (the macOS convention). The
+  `set_title` value is kept, and removing the toolbar with `clear_toolbar` brings
+  the display back. Separators are fixed-width gaps (`NSToolbarSpaceItem`), with no
+  line drawn. Rearranging by the user ("Customize Toolbar") is not possible.
+- `MenuBar` attaches to the app, not the window (`NSApplication.mainMenu`).
+  **naui always keeps the app-name menu and the "Edit" menu**, so the headings the
+  app passes are placed between those two. Since ⌘C / ⌘V are delivered as key
+  equivalents of the main menu, removing them would break pasting into text input.
+  To fully control the order, take out the `NSMenu` with
+  `menu_bar.backend().native_menu()`.
 
-### ウィンドウ
+### Window
 
-- `WindowState::Maximized` は `zoom:` (緑のボタンを Option を押しながら押したとき
-  と同じ) です。緑のボタンをそのまま押すと全画面 (`Fullscreen`) になります。
-  `isZoomed` は枠が画面の作業領域に合っているかで決まるので、利用者が手で画面
-  いっぱいに広げたときも `Maximized` を返すことがあります。
-- 全画面への出入りはアニメーションの後に済むので、`set_state` の直後の `state`
-  はまだ前の状態です。途中に頼まれた状態は、アニメーションが終わってから
-  当てます。
-- 最大化の間に `set_position` で頼んだ位置は、元の大きさへ戻る途中で一度元の
-  場所を通ってから当たります。利用者が手で画面いっぱいに広げたとき (`zoom:` を
-  通らずに `isZoomed` になったとき) は戻す先が分からないので、見えている枠を
-  そのまま読み書きします。
+- `WindowState::Maximized` is `zoom:` (the same as pressing the green button while
+  holding Option). Pressing the green button as is enters full screen
+  (`Fullscreen`). `isZoomed` is decided by whether the frame matches the screen's
+  work area, so it may return `Maximized` even when the user has manually enlarged
+  the window to fill the screen.
+- Entering and leaving full screen completes after an animation, so `state` right
+  after `set_state` is still the previous state. A state requested during the
+  transition is applied after the animation ends.
+- A position requested with `set_position` while maximized takes effect after
+  passing once through the original place on the way back to the original size.
+  When the user has manually enlarged the window to fill the screen (when it became
+  `isZoomed` without going through `zoom:`), there is no known place to return to,
+  so the visible frame is read and written as is.
 
 ## Linux
 
-### レイアウト
+### Layout
 
-- `Grid` の `Track::Fill` は重みの違いを反映しません。
-- `SplitView` の区画は、中身が申告する最小の大きさより小さくできません
-  (`GtkPaned` が子の最小より仕切りを寄せないため)。
+- `Grid`'s `Track::Fill` does not reflect differences in weight.
+- `SplitView` panes cannot be made smaller than the minimum size their content
+  reports (because `GtkPaned` does not move the divider past a child's minimum).
 
-### ウィジェット
+### Widgets
 
-- テーマはウィンドウ単位ではなくアプリ全体へ適用されます。
-- `Label::set_style` の `TextStyle::Title` と `TextStyle::Subtitle` は、同じ級数で
-  太さだけが違います (`Heading` と `Body` も同じ関係です)。libadwaita が
-  `.title-2` と `.title-3` に同じ級数を与えるためで、naui が級数を決めることは
-  しません。
-- `Toggle` は**スイッチを押したときだけ**切り替わり、ラベルの文字を押しても
-  切り替わりません。
-- `EditableComboBox` は打った文字で候補を絞り込みません (矢印を押すと候補が
-  全部出ます)。
-- `DatePicker` は、**日を選んでもポップオーバーが閉じません** (`GtkCalendar` が
-  「日を押した」と「月を送った」を区別しないため)。ボタンに出る日付は
-  ロケールの書式に従います。
-- `ColorPicker` は透明度を扱いません。
-- `List` を `SelectionMode::Multiple` にすると、Ctrl / Shift での選択を GTK4 に
-  任せるため、**行のクリック (`ListRow::on_activate`) は 2 回押しで届きます**。
-- `Fit::None` は GTK4 の `SCALE_DOWN` に対応するため、「原寸」ではなく
-  「拡大しない」動作になります。
-- `Toast` の時間は**秒**単位です。1 秒未満を指定しても 1 秒になります
-  (0 に丸めると「消えない」指定に変わってしまうため)。
-- `MenuBar` はヘッダーバーの**下**に入ります。ショートカットはメニューを
-  開かなくても効き、ウィンドウが複数あるときはフォーカスのあるウィンドウの
-  項目だけが呼ばれます。
+- Themes are applied to the whole app, not per window.
+- `TextStyle::Title` and `TextStyle::Subtitle` of `Label::set_style` have the same
+  size and differ only in weight (`Heading` and `Body` have the same relationship).
+  This is because libadwaita gives `.title-2` and `.title-3` the same size, and
+  naui does not decide sizes itself.
+- `Toggle` switches **only when the switch is pressed**; pressing the label text
+  does not switch it.
+- `EditableComboBox` does not narrow options by typed text (pressing the arrow shows
+  all options).
+- In `DatePicker`, **choosing a day does not close the popover** (because
+  `GtkCalendar` does not distinguish "a day was pressed" from "the month was
+  changed"). The date shown on the button follows the locale's format.
+- `ColorPicker` does not handle opacity.
+- With `List` set to `SelectionMode::Multiple`, selection with Ctrl / Shift is left
+  to GTK4, so **row clicks (`ListRow::on_activate`) arrive on a double press**.
+- `Fit::None` corresponds to GTK4's `SCALE_DOWN`, so it behaves as "do not enlarge"
+  rather than "original size".
+- `Toast` durations are in **seconds**. Values under one second become one second
+  (rounding to 0 would turn it into "never disappear").
+- `MenuBar` goes **below** the header bar. Shortcuts work without opening the menu,
+  and when there are several windows, only the items of the focused window are
+  invoked.
 
-### ウィンドウ
+### Window
 
-- **ウィンドウの位置は取得も設定もできません。** GTK4 にはウィンドウの位置を
-  扱う API がありません。Wayland ではアプリがウィンドウの位置を知る仕組みそのものが
-  無く (置き場所はコンポジタが決めます)、GTK4 はそれに合わせて X11 でも外しました。
-  `Window::position` はいつも `None` を返し、`Window::set_position` は何もしません。
-- **Wayland では最小化を知ることができません。** xdg-shell に最小化の状態を
-  知らせる仕組みが無いため、最小化しても `state` は `WindowState::Minimized`
-  にならず、`Normal` を頼んでも戻るかどうかはコンポジタ次第です。X11 では
-  どちらもできます。
-- **表示する前に頼んだ最小化は、表示してから当てます。** 出す前に頼んでも
-  ウィンドウマネージャが応えないため、一瞬だけ画面に出ます。
-- 最大化・最小化・全画面はコンポジタ (ウィンドウマネージャ) への頼みごとなので、
-  `state` が変わるのはコンポジタが応えた後です。ウィンドウマネージャのいない
-  X11 (Xvfb など) では、表示した後の頼みには誰も応えず、状態は変わりません
-  (表示する前に頼んだ最大化と全画面は、その状態で出ます)。
+- **Window positions can be neither read nor set.** GTK4 has no API for window
+  positions. On Wayland there is no mechanism at all for an app to know its
+  window's position (the compositor decides placement), and GTK4 removed it on X11
+  as well to match. `Window::position` always returns `None`, and
+  `Window::set_position` does nothing.
+- **Minimizing cannot be detected on Wayland.** xdg-shell has no mechanism to report
+  the minimized state, so minimizing does not make `state` become
+  `WindowState::Minimized`, and whether requesting `Normal` restores it depends on
+  the compositor. On X11 both work.
+- **Minimizing requested before showing is applied after showing.** The window
+  manager does not respond to a request made before the window is shown, so it
+  appears on screen for a moment.
+- Maximizing, minimizing and full screen are requests to the compositor (window
+  manager), so `state` changes after the compositor responds. On X11 without a
+  window manager (Xvfb and so on), nobody responds to requests made after showing,
+  and the state does not change (maximizing and full screen requested before
+  showing do take effect when the window appears).
 
 ## Web
 
-### ウィジェット
+### Widgets
 
-- `Window` は OS のウィンドウではなく、`<body>` 直下の要素と
-  `document.title` で表現されます。
-- `FilePicker::open` と `FileSaver::open` は、利用者の操作のイベントの中で
-  呼ぶ必要があります。
-- `FileSaver` は `showSaveFilePicker` が無いブラウザ (Firefox / Safari) では
-  `<a download>` のダウンロードになり、保存先の確認が出ないことがあります。
-  `FileEntry::path` はどちらでも `None` です。
-- `DatePicker`、`TimePicker`、`ColorPicker` の入力 UI (カレンダー、スピナー、
-  パレットなど) はブラウザが出すため、見た目と操作はブラウザごとに違います。
-  `TimePicker` は、ブラウザが秒まで返しても分までを扱います。`ColorPicker` は
-  確定 (`change`) したときだけ通知します。
-- `EditableComboBox` は、打った文字での候補の絞り込みをブラウザが行います。
-  切ることはできず、絞り込み方 (前方一致か部分一致か)・矢印を出すかどうか・
-  一覧の開き方もブラウザごとに違います。
-- `Toggle` の `switch` 属性に対応しているのは Safari 17.4 以降だけなので、
-  Chrome や Firefox ではチェックボックスの見た目で出ます (値の扱い・通知・
-  読み上げは同じです)。
-- `Expander::set_enabled(false)` は、見出しをマウスとタブ順から外して押せなく
-  するだけです (`<details>` に `disabled` が無いため)。`aria-disabled` は
-  付きますが、ネイティブの無効なコントロールとは扱いが違います。
-- `List` の任意内容の行 (`ListRow`) は `role="option"` の中にボタンや入力欄が
-  入るため、**ARIA の「option の中に操作できるものを置かない」規定からは外れます**。
-  Tab では行の中のコントロールへ届き、それぞれの名前と役割も読まれますが、
-  読み上げソフトのブラウズモードでは行が 1 つの項目として読まれ、中の
-  コントロールが出ないことがあります。
-- `Tree` の `TreeItem::detail` は、行の高さをそろえるため `ラベル — 補助` の
-  形で 1 行に収まります。
-- `Label::set_color` の成功・注意・危険は、ブラウザに対応するシステム色が
-  無いため naui が `light-dark()` で色を決めています。また **Chromium 系は
-  `AccentColor` に OS のアクセントカラーを出さず灰色を返す**ので、
-  `TextColor::Accent` は Firefox と Safari でしか OS の色になりません。
-- `Toolbar` のアイコンは、ブラウザに標準のアイコンセットが無いため naui が
-  SVG を持ちます (ここだけは OS のものを使いません)。
-- `MenuBar` のショートカットは、**主修飾キーに Ctrl と ⌘ のどちらでも
-  通します** (macOS のブラウザでは ⌘ が主修飾キーになるため)。押されたときは
-  ブラウザの既定 (⌘S など) を止めます。隠したウィンドウのメニューバーはキーに
-  反応せず、ページにウィンドウが複数あるときは、キーが上がってきたウィンドウの
-  メニューバーだけが受け取ります。
-- ブラウザの制限により、メディアの自動再生が拒否される場合があります。
+- `Window` is not an OS window; it is represented by an element directly under
+  `<body>` and `document.title`.
+- `FilePicker::open` and `FileSaver::open` must be called inside a user-action
+  event.
+- In browsers without `showSaveFilePicker` (Firefox / Safari), `FileSaver` becomes an
+  `<a download>` download, and no destination confirmation may appear.
+  `FileEntry::path` is `None` either way.
+- The input UIs of `DatePicker`, `TimePicker` and `ColorPicker` (calendars,
+  spinners, palettes and so on) are shown by the browser, so their look and
+  operation differ per browser. `TimePicker` handles values up to minutes even when
+  the browser returns seconds. `ColorPicker` notifies only on confirmation
+  (`change`).
+- In `EditableComboBox`, the browser narrows options by typed text. It cannot be
+  turned off, and how it narrows (prefix or substring match), whether an arrow is
+  shown, and how the list opens differ per browser.
+- Only Safari 17.4 and later support `Toggle`'s `switch` attribute, so Chrome and
+  Firefox show it as a check box (value handling, notifications and screen reader
+  announcements are the same).
+- `Expander::set_enabled(false)` only removes the heading from mouse interaction and
+  the tab order so it cannot be pressed (because `<details>` has no `disabled`).
+  `aria-disabled` is set, but it is treated differently from a natively disabled
+  control.
+- Rows of arbitrary content in `List` (`ListRow`) put buttons and input fields
+  inside `role="option"`, so **they deviate from ARIA's rule against placing
+  interactive content inside an option**. Tab reaches the controls inside rows, and
+  their names and roles are announced, but in a screen reader's browse mode the row
+  may be read as a single item and the controls inside may not appear.
+- `Tree`'s `TreeItem::detail` fits on one line in the form `label — detail` to keep
+  row heights uniform.
+- For success, warning and danger in `Label::set_color`, browsers have no
+  corresponding system colors, so naui decides the colors with `light-dark()`.
+  Also, **Chromium-based browsers return gray for `AccentColor` instead of the OS
+  accent color**, so `TextColor::Accent` becomes the OS color only in Firefox and
+  Safari.
+- Browsers have no standard icon set, so naui carries SVGs for `Toolbar` icons (the
+  only place where OS assets are not used).
+- `MenuBar` shortcuts **accept either Ctrl or ⌘ as the primary modifier** (because
+  ⌘ is the primary modifier in browsers on macOS). When pressed, the browser default
+  (such as ⌘S) is prevented. The menu bar of a hidden window does not react to keys,
+  and when a page has several windows, only the menu bar of the window the key
+  bubbled up to receives it.
+- Due to browser restrictions, autoplay of media may be refused.
 
-### ウィンドウ
+### Window
 
-- ページから操作できるのは Fullscreen API だけなので、**ウィンドウの状態は
-  全画面だけ**です。`Window::position` はいつも `None`、`set_position` は何もせず、
-  `WindowState::Maximized` / `Minimized` を頼んでも全画面を出るだけで、
-  `set_resizable` は値を覚えるだけです。
-- 全画面はページ全体 (`document.documentElement`) に掛けるので、ページに
-  ウィンドウが複数あれば全部が全画面の中に入ります。ブラウザは利用者の操作
-  (クリックやキー) の中からしか全画面にさせないため、起動時やタイマーからの
-  `set_state(WindowState::Fullscreen)` は断られ、状態は変わりません。
-  iPhone の Safari には Fullscreen API がありません。
+- The only thing a page can control is the Fullscreen API, so **the only window
+  state is full screen**. `Window::position` is always `None`, `set_position` does
+  nothing, requesting `WindowState::Maximized` / `Minimized` only leaves full
+  screen, and `set_resizable` only remembers the value.
+- Full screen is applied to the whole page (`document.documentElement`), so if the
+  page has several windows, all of them go into full screen. Browsers only allow
+  full screen from within a user action (a click or key press), so
+  `set_state(WindowState::Fullscreen)` at startup or from a timer is refused, and
+  the state does not change. Safari on iPhone has no Fullscreen API.
 
-### 別スレッドと非同期
+### Other threads and async
 
-- **wasm にはスレッドがありません。** `std::thread::spawn` は使えないので、
-  `Sender` へ送る側は `Tasks::spawn` で回す future の中に置きます。`Tasks` の
-  API 自体は 4 環境で同じなので `cfg` の書き分けは要りませんが、
-  **`std::thread::spawn` を含むコードはそのままでは Web で動きません**。
-- Web Worker は別の JavaScript 実行環境なので、`Sender` が Rust の型として
-  `Send` であっても、そこへ渡すことはできません (`postMessage` で橋を架け、
-  受けた側で `send` を呼ぶ形になります)。
-- `Tasks::spawn` は microtask キューの上で進みます。譲らない future や、
-  自分を起こし続ける future を回すと描画に順番が回りません。
-- ブラウザにはアプリの終了が無いため、`Sender::send` が閉塞を理由に失敗することは
-  ありません。
+- **wasm has no threads.** `std::thread::spawn` cannot be used, so put the side
+  that sends to a `Sender` inside a future run with `Tasks::spawn`. The `Tasks` API
+  itself is the same on all four platforms, so no `cfg` branching is needed, but
+  **code that includes `std::thread::spawn` does not run on the Web as is**.
+- A Web Worker is a separate JavaScript runtime, so even though `Sender` is `Send` as
+  a Rust type, it cannot be passed there (bridge with `postMessage` and call `send`
+  on the receiving side).
+- `Tasks::spawn` advances on the microtask queue. Running a future that never
+  yields, or one that keeps waking itself, starves drawing.
+- Browsers have no app termination, so `Sender::send` never fails because the
+  channel is closed.

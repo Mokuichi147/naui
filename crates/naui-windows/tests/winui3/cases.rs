@@ -1,4 +1,5 @@
-//! 動作確認の本体。Windows でだけコンパイルされる (`tests/winui3.rs` を参照)。
+//! The body of the behavior checks. Compiled only on Windows (see
+//! `tests/winui3.rs`).
 
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -29,11 +30,12 @@ use naui_winui3::Microsoft::UI::Xaml::{
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows_core::{Interface, HSTRING};
 
-/// テストケース 1 件。
+/// One test case.
 type Case = (&'static str, fn(&Ui) -> Result<()>);
 
-/// 走らせる順。ウィンドウを作るものは、ほかのケースの結果が出そろってから
-/// 走るように最後へ置く (画面の無い環境ではここが最初に崩れるため)。
+/// The order to run in. Cases that create windows are put last, so they run after
+/// the other cases' results are in (in environments without a screen, this is where
+/// things break first).
 const CASES: &[Case] = &[
     ("ボタンのクリックがクロージャへ届く", button_click),
     (
@@ -244,14 +246,14 @@ const CASES: &[Case] = &[
     ),
 ];
 
-/// あとで確かめる仕事。イベントループを 1 周まわしてから呼ばれる。
+/// Work to verify later. Called after the event loop has gone around once.
 type Deferred = Box<dyn FnOnce() -> Result<()>>;
 
-/// 仕込みと確認が 1 周ぶん離れるケース。
+/// Cases whose setup and verification are one loop iteration apart.
 ///
-/// ウィンドウを出しても `Window.Visible` はその場では立たない。WinUI が
-/// メッセージを一巡させてからでないと、出たかどうかを見られない。仕込みで
-/// 出し、確認はループが回ってから行う。
+/// Showing a window does not set `Window.Visible` on the spot. Whether it appeared
+/// can be seen only after WinUI has gone through a round of messages. So the setup
+/// shows it, and verification happens after the loop has turned.
 type AsyncCase = (&'static str, fn(&Ui) -> Result<Deferred>);
 
 const ASYNC_CASES: &[AsyncCase] = &[
@@ -266,8 +268,8 @@ const ASYNC_CASES: &[AsyncCase] = &[
     ),
 ];
 
-/// `Application::Start` に入ったきり戻らないと、CI が打ち切るまで詰まる。
-/// 全ケースぶんの余裕を取ったうえで、必ず終わらせる。
+/// If it enters `Application::Start` and never returns, CI stays stuck until it gives
+/// up. After allowing time for every case, it always ends.
 const WATCHDOG: Duration = Duration::from_secs(180);
 
 pub(crate) fn run() {
@@ -337,10 +339,11 @@ pub(crate) fn run() {
     }
 }
 
-/// 1 件ぶんの結果を出す。落ちていたら数える。
+/// Reports one result. Counts it if it failed.
 ///
-/// ケースの `assert!` は `catch_unwind` で受け止める。1 つ落ちても残りは
-/// 走らせる (アプリを起こし直せないので、打ち切ると以降が全部未実行になる)。
+/// Cases' `assert!`s are caught with `catch_unwind`. Even if one fails, the rest still
+/// run (the app cannot be restarted, so stopping would leave everything after it
+/// unrun).
 fn report(name: &str, outcome: std::thread::Result<Result<()>>, failed: &Arc<AtomicUsize>) {
     match outcome {
         Ok(Ok(())) => println!("ok   ... {name}"),
@@ -357,30 +360,31 @@ fn report(name: &str, outcome: std::thread::Result<Result<()>>, failed: &Arc<Ato
 
 // ------------------------------------------------------------------ 補助
 
-/// 実際に押したのと同じ経路 (Invoke パターン) でクリックする。
+/// Clicks through the same path as an actual click (the Invoke pattern).
 ///
-/// 経路の中身は [`crate::automation`]。WinUI がコントロールごとに用意する
-/// peer を通すので、`Click` を上げるのは WinUI 自身になる。
+/// The details of the path are in [`crate::automation`]. It goes through the peer
+/// WinUI provides per control, so it is WinUI itself that raises `Click`.
 fn invoke(widget: &dyn Widget) {
     automation::invoke(&widget.native_element());
 }
 
-/// 実際に押したのと同じ経路 (Toggle パターン) で入り切りを反転させる。
+/// Toggles on/off through the same path as an actual click (the Toggle pattern).
 fn toggle(widget: &dyn Widget) {
     automation::toggle(&widget.native_element());
 }
 
-/// 実際に選んだのと同じ経路 (SelectionItem パターン) で項目を選ぶ。
+/// Selects an item through the same path as an actual selection (the SelectionItem
+/// pattern).
 fn select(element: &UIElement) {
     automation::select(element);
 }
 
-/// 支援技術へ渡る読み上げ名。
+/// The name passed to assistive technology.
 fn accessible_name(widget: &dyn Widget) -> String {
     automation::accessible_name(&widget.native_element())
 }
 
-/// ネイティブのコントロールとして取り出す。型が違えばテストを落とす。
+/// Takes it out as a native control. Fails the test if the type differs.
 fn native<T: Interface>(widget: &dyn Widget) -> T {
     widget
         .native_element()
@@ -417,7 +421,7 @@ fn button_label_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ボタンの中身は `TextBlock`。ネイティブ側の文字列を読む。
+/// A button's content is a `TextBlock`. Reads the native-side text.
 fn native_button_text(button: &naui_windows::Button) -> String {
     native::<XamlButton>(button)
         .Content()
@@ -457,10 +461,10 @@ fn checkbox_toggle(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 描画面は `Grid` の中に `Canvas` を置き、`on_draw` の命令を XAML の
-/// `Path` と `TextBlock` にして読み込む。画面に出していないので大きさは
-/// 決まらず、`xaml_for_test` で大きさを与えて組み立てた XAML を WinUI に
-/// 読ませ、要素の数と種類を確かめる。
+/// The drawing surface places a `Canvas` inside a `Grid` and loads the `on_draw`
+/// commands as XAML `Path`s and `TextBlock`s. It is not on screen, so its size is not
+/// decided; the XAML built by `xaml_for_test` with a given size is read by WinUI,
+/// and the number and kinds of elements are checked.
 fn canvas_commands_become_xaml_shapes(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     assert!(
@@ -603,10 +607,11 @@ fn label_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `set_style` / `set_color` は WinUI の type ramp とテーマリソースへ写る。
+/// `set_style` / `set_color` map to WinUI's type ramp and theme resources.
 ///
-/// 級数も色も naui 側では持たないので、確かめるのは「Fluent が決めた値が
-/// 入ってくるか」と「段階と役割を重ねても両方効くか」の 2 つ。
+/// naui holds neither point sizes nor colors, so what is checked is "whether the
+/// values Fluent decides come in" and "whether both take effect when a level and a
+/// role are layered".
 fn label_style_and_color_map_to_the_type_ramp(ui: &Ui) -> Result<()> {
     let label = ui.label("見出し")?;
     let native = native::<TextBlock>(&label);
@@ -804,14 +809,15 @@ fn radio_group_selects_one(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ツリーの行は、中身を行の幅いっぱいに置く `Style` を持つ。
+/// Tree rows have a `Style` that places their content across the row's full width.
 ///
-/// WinUI の `TreeViewItem` は中身の横位置を `HorizontalContentAlignment` へ
-/// 束ねている (既定のテンプレートの `ContentPresenter`)。これが無いと、文字が
-/// 中身の幅までしか広がらず、行の残り幅を使わない。
+/// WinUI's `TreeViewItem` binds the content's horizontal position to
+/// `HorizontalContentAlignment` (the default template's `ContentPresenter`). Without
+/// this, the text spreads only to the content's width and does not use the rest of
+/// the row's width.
 ///
-/// 画面へ出していないので配られた幅は測れない。行へ `Style` が当たって
-/// いることだけを見る。
+/// It is not on screen, so the allotted width cannot be measured. This checks only
+/// that the `Style` is applied to the rows.
 fn tree_rows_stretch_their_content(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     let style = tree
@@ -837,10 +843,12 @@ fn tree_rows_stretch_their_content(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Align` は StackPanel 自身ではなく、交差軸に置く子へ適用する。
+/// `Align` is applied to the children on the cross axis, not to the StackPanel
+/// itself.
 ///
-/// StackPanel 自身を `Left` にすると、`fill_width()` を指定した Stack まで
-/// 内容幅へ縮み、中の要素が Stretch でも親の幅を受け取れない。
+/// Setting the StackPanel itself to `Left` would shrink even a Stack with
+/// `fill_width()` to its content width, and the elements inside could not receive the
+/// parent's width even with Stretch.
 fn stack_alignment_keeps_fill_width(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.set_align(Align::Start);
@@ -890,9 +898,9 @@ fn stack_alignment_keeps_fill_width(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 子を追加してから寄せ方と大きさを変更しても、Stack の交差軸の寄せ方を
-/// 保持する。Sizing はネイティブの Alignment を上書きするため、呼び出し順が
-/// 逆になったときの回帰を検証する。
+/// Even when the alignment and size are changed after adding children, the Stack's
+/// cross-axis alignment is kept. Sizing overwrites the native Alignment, so this
+/// checks for regressions when the call order is reversed.
 fn stack_alignment_survives_sizing(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     let child = ui.label("後からサイズ変更")?;
@@ -919,8 +927,9 @@ fn stack_alignment_survives_sizing(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `ScrollViewer` の既定 (左上寄せ) では、横へ送らない中身がビューポートの
-/// 幅を使えない。naui の既定ポリシーでは横軸を Stretch にする。
+/// With the `ScrollViewer`'s default (top-left alignment), content that does not
+/// scroll horizontally cannot use the viewport's width. With naui's default policy,
+/// the horizontal axis is Stretch.
 fn scroll_stretches_non_scrolling_content(ui: &Ui) -> Result<()> {
     let scroll = ui.scroll()?;
     let child = ui.stack(Orientation::Vertical)?;
@@ -946,8 +955,9 @@ fn scroll_stretches_non_scrolling_content(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Scroll の中身を先に置いてから Sizing を変更しても、横スクロールを禁止した
-/// 軸の Stretch を保つ。親の状態を子の Sizing 後にも再適用できることを検証する。
+/// Even when Sizing is changed after the Scroll's content is placed, Stretch on the
+/// axis where horizontal scrolling is disabled is kept. Checks that the parent's
+/// state can be reapplied after the child's Sizing.
 fn scroll_stretch_survives_sizing(ui: &Ui) -> Result<()> {
     let scroll = ui.scroll()?;
     let child = ui.stack(Orientation::Vertical)?;
@@ -972,8 +982,9 @@ fn scroll_stretch_survives_sizing(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// すでに別の親に属している要素を追加できなくても、失敗した親の状態を
-/// 記録しない。実際の親の状態が Sizing 後にも残ることを検証する。
+/// Even when an element that already belongs to another parent cannot be added, the
+/// failed parent's state is not recorded. Checks that the actual parent's state
+/// remains after Sizing.
 fn failed_parent_operations_keep_layout_state(ui: &Ui) -> Result<()> {
     let first_stack = ui.stack(Orientation::Vertical)?;
     first_stack.set_align(Align::End);
@@ -1011,8 +1022,9 @@ fn failed_parent_operations_keep_layout_state(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// すでに別の親に属している要素を Grid へ追加できなくても、Grid の添付
-/// プロパティや既存の親が設定した Alignment を変更しない。
+/// Even when an element that already belongs to another parent cannot be added to a
+/// Grid, neither the Grid's attached properties nor the Alignment set by the
+/// existing parent change.
 fn failed_grid_attach_keeps_existing_state(ui: &Ui) -> Result<()> {
     let first_grid = ui.grid()?;
     let second_grid = ui.grid()?;
@@ -1058,7 +1070,8 @@ fn failed_grid_attach_keeps_existing_state(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// WinUI の脱出口から設定した Tag を、Sizing や親コンテナの操作で失わない。
+/// A Tag set through WinUI's escape hatch is not lost by Sizing or by parent
+/// container operations.
 fn layout_preserves_user_tag(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     let stack_child = ui.label("Tag を持つ Stack 子")?;
@@ -1110,8 +1123,9 @@ fn layout_preserves_user_tag(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Stack が交差軸へ設定した Alignment を、子を外したときに元へ戻す。そう
-/// しないと、次に Grid へ置いた要素へ前の Stack の寄せ方が残ってしまう。
+/// The Alignment a Stack set on the cross axis is restored when the child is
+/// removed. Otherwise the previous Stack's alignment would linger on the element when
+/// it is next placed in a Grid.
 fn removing_stack_child_restores_alignment(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.set_align(Align::End);
@@ -1175,15 +1189,16 @@ fn widgets_expose_accessible_names(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ウィンドウの根は「タイトルバー → メニューバー → 中身」の 3 行で、
-/// トーストは中身の行 (3 行目) に重ねる。行を足したときに重ね先が古い番号の
-/// ままだと、トーストがメニューバーの行 (`Auto`) に入って中身を押し下げる。
+/// The window root has three rows, "title bar → menu bar → content", and toasts are
+/// overlaid on the content row (the third). If the overlay target kept an old number
+/// when a row was added, the toast would go into the menu bar row (`Auto`) and push
+/// the content down.
 ///
-/// 重ね先はトーストを出したその場で決まるので、確かめるのは仕込みの中で
-/// 済ませる。ウィンドウが閉じると後片づけ (`AppWindow` の `Closing`) が
-/// 全ウィンドウの中身を外すので、一巡後 (ほかのケースがウィンドウを
-/// 閉じたあと) では根の `Grid` を読めない。同じ理由で、このウィンドウも
-/// 閉じずにアプリの終了に任せる。
+/// The overlay target is decided right when the toast is shown, so the check is done
+/// inside the setup. When a window closes, the cleanup (the `AppWindow`'s `Closing`)
+/// removes the content of every window, so the root `Grid` cannot be read after a
+/// round (after other cases close their windows). For the same reason, this window
+/// is not closed either, and is left to the app's exit.
 fn toast_overlays_the_content_below_the_menu_bar(ui: &Ui) -> Result<Deferred> {
     let window = ui.window("トースト", 320.0, 240.0)?;
     let stack = ui.stack(Orientation::Vertical)?;
@@ -1270,11 +1285,13 @@ fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
     }))
 }
 
-/// `size` と `on_resize` は、naui が描くタイトルバーの帯とメニューバーを
-/// 除いた中身の行の大きさ (macOS の `contentView`、GTK のヘッダーバーの下と
-/// 同じ)。`Window.Bounds` はタイトルバーの裏まで含むので、そのままでは違う。
+/// `size` and `on_resize` are the size of the content row, excluding the title bar
+/// band naui draws and the menu bar (the same as macOS's `contentView` and the area
+/// below GTK's header bar). `Window.Bounds` includes what is behind the title bar,
+/// so as is it differs.
 ///
-/// 行に実寸が付くまでメッセージを回す。付かない環境 (CI) では確かめずに通す。
+/// Messages are pumped until the row has an actual size. In environments where it
+/// never gets one (CI), it passes without checking.
 fn window_size_is_the_content_row(ui: &Ui) -> Result<()> {
     let window = ui.window("大きさ", 420.0, 300.0)?;
     let reported = Rc::new(Cell::new(None));
@@ -1343,13 +1360,14 @@ fn window_size_is_the_content_row(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `ui.window` と `set_size` の幅・高さは、[`window_size_is_the_content_row`] の
-/// `size` と同じ中身の大きさ (タイトルバー・メニューバー・枠を除く)。
-/// `AppWindow.Resize` へは外枠を渡すので、外枠はその分だけ大きい。
+/// The width and height given to `ui.window` and `set_size` are the same content size
+/// as the `size` of [`window_size_is_the_content_row`] (excluding the title bar, menu
+/// bar and frame). The outer frame is passed to `AppWindow.Resize`, so the outer
+/// frame is larger by that much.
 ///
-/// メニューバーの高さは並べてみるまで分からないので、表示の後に一度だけ
-/// 合わせ直す。行に実寸が付くまでメッセージを回し、付かない環境 (CI) では
-/// 確かめずに通す。
+/// The menu bar's height is not known until it is laid out, so it is refitted once
+/// after showing. Messages are pumped until the row has an actual size; in
+/// environments where it never gets one (CI), it passes without checking.
 fn window_set_size_is_the_content_size(ui: &Ui) -> Result<()> {
     let window = ui.window("大きさの指定", 900.0, 640.0)?;
     assert_eq!(
@@ -1428,8 +1446,9 @@ fn window_set_size_is_the_content_size(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 位置は主画面の左上から右下へ数えた外枠の左上 (DIP)。`AppWindow.Position`
-/// は物理ピクセルなので、`RasterizationScale` を掛けた値になる。
+/// The position is the outer frame's top left counted right and down from the
+/// primary screen's top left (DIP). `AppWindow.Position` is in physical pixels, so it
+/// is the value multiplied by `RasterizationScale`.
 fn window_position_round_trips(ui: &Ui) -> Result<()> {
     let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
         a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
@@ -1475,11 +1494,12 @@ fn window_position_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 最大化・最小化 (`OverlappedPresenter`) と全画面 (`FullScreenPresenter`) が
-/// `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+/// Maximize and minimize (`OverlappedPresenter`) and fullscreen
+/// (`FullScreenPresenter`) round-trip with `state`, and `on_state_change` is called
+/// on each change.
 ///
-/// 画面を持たないセッションでは最大化が効かないことがあるので、そのときは
-/// 確かめずに通す (ほかのウィンドウのケースと同じ)。
+/// In sessions without a screen, maximizing may not work, in which case it passes
+/// without checking (the same as the other window cases).
 fn window_state_round_trips(ui: &Ui) -> Result<()> {
     let window = ui.window("状態", 320.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
@@ -1541,8 +1561,9 @@ fn window_state_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 最大化・最小化・全画面の間の `position` は通常の状態へ戻ったときの位置を
-/// 返し、`set_position` は状態も見えている枠も変えずにその位置を決める。
+/// While maximized, minimized or in fullscreen, `position` returns the position for
+/// returning to normal, and `set_position` decides that position without changing
+/// the state or the visible frame.
 fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
     let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
         a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
@@ -1637,7 +1658,7 @@ fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 表示する前の `set_state` は覚えておき、表示するときに当てる。
+/// `set_state` before showing is remembered and applied when shown.
 fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
     let window = ui.window("表示前の状態", 320.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
@@ -1660,11 +1681,11 @@ fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 表示する前の `set_resizable(false)` が、表示した後も効いている。
+/// `set_resizable(false)` before showing still takes effect after showing.
 ///
-/// 初めて表示する前は `AppWindow.Presenter` が空のことがあり、そのときも
-/// 頼んだ値を落とさず `show` で当てる。この環境で空にならなくても、表示の
-/// 前後で値が保たれることは確かめられる。
+/// Before the first show, `AppWindow.Presenter` may be empty, and even then the
+/// requested value is not dropped but applied in `show`. Even if it is not empty in
+/// this environment, that the value is kept across showing can still be checked.
 fn window_resizable_requested_before_show(ui: &Ui) -> Result<()> {
     use naui_winui3::Microsoft::UI::Windowing::OverlappedPresenter;
     let window = ui.window("表示前の大きさの固定", 320.0, 200.0)?;
@@ -1720,7 +1741,7 @@ fn window_resizable_round_trips(ui: &Ui) -> Result<()> {
 
 // -------------------------------------------------------------- メニューバー
 
-/// `StackPanel` に並んだ見出しの数。
+/// The number of headings laid out in the `StackPanel`.
 fn title_count(menu_bar: &naui_windows::MenuBar) -> u32 {
     menu_bar
         .native_panel()
@@ -1730,7 +1751,7 @@ fn title_count(menu_bar: &naui_windows::MenuBar) -> u32 {
         .expect("見出しの数")
 }
 
-/// 見出しは `Button` + `MenuFlyout`、項目は `MenuFlyoutItem` になる。
+/// Headings become `Button` + `MenuFlyout`, and items become `MenuFlyoutItem`s.
 fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     assert!(menu_bar.is_empty());
@@ -1833,12 +1854,12 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 押された項目は (見出し, 項目) のインデックスの組で届く。
+/// The clicked item arrives as a pair of (heading, item) indices.
 ///
-/// `MenuFlyoutItem` の `Click` は、メニューを出さないと通せない (`MenuFlyout`
-/// は画面に出てはじめて項目へ peer を用意する)。ここは naui 側の経路だけを
-/// 見て、実際のクリックからの配線は macOS / GTK / Web の統合テストと、
-/// Windows は Gallery の実行で確かめている。
+/// `MenuFlyoutItem`'s `Click` cannot be triggered without showing the menu
+/// (`MenuFlyout` provides peers for its items only once it is on screen). This looks
+/// only at naui's path; the wiring from real clicks is verified by the integration
+/// tests on macOS / GTK / Web, and on Windows by running the Gallery.
 fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[
@@ -2090,10 +2111,10 @@ fn sidebar_selection_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// サイドバーは中身の行 (`CONTENT_ROW`) の先頭に入り、子はその `Content` へ
-/// 移る。外すと子が中身の行へ戻る。
+/// The sidebar goes at the head of the content row (`CONTENT_ROW`), and the child
+/// moves to its `Content`. Removing it returns the child to the content row.
 ///
-/// トーストのケースと同じく、ウィンドウは閉じずにアプリの終了に任せる。
+/// As in the toast case, the window is not closed and is left to the app's exit.
 fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
     let window = ui.window("サイドバー", 480.0, 320.0)?;
     let stack = ui.stack(Orientation::Vertical)?;
@@ -2196,13 +2217,16 @@ fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
 
 // ------------------------------------------------------------------ 画像
 
-/// 読み込みを待つ上限。1 画素の BMP なので、通常は一瞬で終わる。
+/// The maximum time to wait for loading. It is a 1-pixel BMP, so it normally
+/// finishes instantly.
 const IMAGE_LOAD_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 日本語を含むパスの実ファイルが、パスでも `file:` URL でも読み込める。
+/// A real file at a path containing Japanese can be loaded both by path and by
+/// `file:` URL.
 ///
-/// `BitmapImage` の読み込みは非同期で、場所が読めなくても `SetSource` は
-/// 成功する。`ImageOpened` が届き、画素の大きさが取れるところまで待つ。
+/// `BitmapImage` loading is asynchronous, and `SetSource` succeeds even if the
+/// location cannot be read. It waits until `ImageOpened` arrives and the pixel size
+/// can be obtained.
 fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
     let dir = std::env::temp_dir().join(format!("naui 画像テスト {}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
@@ -2256,7 +2280,7 @@ fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
     }
 }
 
-/// 縦に長い中身を載せたスクロールを、小さなウィンドウに置く (まだ出さない)。
+/// Puts a scroll view holding tall content into a small window (not shown yet).
 fn tall_scroll(
     ui: &Ui,
     rows: usize,
@@ -2277,10 +2301,11 @@ fn tall_scroll(
     Ok((window, scroll, pane))
 }
 
-/// ウィンドウを出し、スクロールに実寸が付くまでメッセージを回す。
+/// Shows the window and pumps messages until the scroll view has an actual size.
 ///
-/// CI の WinUI 3 では ScrollViewer にテンプレートが当たらず、実寸が 0 の
-/// まま。そのときは `false` を返し、ケースは確かめずに通す (実機では確かめる)。
+/// In WinUI 3 on CI, the ScrollViewer gets no template and its actual size stays 0.
+/// In that case it returns `false`, and the case passes without checking (it is
+/// checked on real machines).
 fn show_and_measure(window: &naui_windows::Window, scroll: &naui_windows::Scroll) -> bool {
     window.show();
     pump_until(SCROLL_LAYOUT_TIMEOUT, || {
@@ -2293,7 +2318,7 @@ fn show_and_measure(window: &naui_windows::Window, scroll: &naui_windows::Scroll
     measured
 }
 
-/// スクロールに実寸が付くまで待つ上限。
+/// The maximum time to wait for the scroll view to get an actual size.
 const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
@@ -2329,7 +2354,8 @@ fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// チャットのように「足してから末尾へ」を、メッセージを回さずに続けて呼ぶ。
+/// Calls "append, then scroll to the end", as in a chat, back to back without
+/// pumping messages.
 fn scroll_to_end_after_appending(ui: &Ui) -> Result<()> {
     let (window, scroll, pane) = tall_scroll(ui, 20)?;
     let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
@@ -2379,7 +2405,7 @@ fn scroll_to_end_before_shown(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `ViewChanged` は後から届くので、メッセージを回して待つ。
+/// `ViewChanged` arrives later, so messages are pumped while waiting.
 fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
     let (window, scroll, _pane) = tall_scroll(ui, 40)?;
     let outcome = catch_unwind(AssertUnwindSafe(|| {
@@ -2427,10 +2453,11 @@ fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 条件が立つか時間切れになるまで、UI スレッドのメッセージを回す。
+/// Pumps the UI thread's messages until the condition holds or time runs out.
 ///
-/// 画像の読み込み完了は、別スレッドから UI スレッドのキューへ積まれて届く。
-/// ケースは `OnLaunched` の中で走るので、ここで回さないと届かない。
+/// Image load completion arrives by being queued onto the UI thread's queue from
+/// another thread. Cases run inside `OnLaunched`, so without pumping here it would
+/// never arrive.
 fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) {
     use windows::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
@@ -2451,9 +2478,9 @@ fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) {
     }
 }
 
-/// 左が赤、右が青の 2×1 の 24 ビット BMP。
+/// A 2×1 24-bit BMP, red on the left and blue on the right.
 ///
-/// PNG と違ってチェックサムが無いので、手で組んでも壊れない。
+/// Unlike PNG it has no checksum, so building it by hand does not break it.
 fn bmp_2x1() -> Vec<u8> {
     const HEADER: u32 = 14 + 40;
     // 1 行 6 バイトを 4 バイト境界にそろえて 8 バイト。
@@ -2522,9 +2549,9 @@ fn tooltip_maps_to_tool_tip_service(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ダブルタップや文脈メニューの要求を起こす公開 API が無いので、ここでは
-/// 受け口を付けたまま行を作り直せることと、選択の操作では呼ばれないことを
-/// 確かめる (実際の配送は実機で確かめる)。
+/// There is no public API for triggering double-taps or context menu requests, so
+/// this checks that rows can be rebuilt with the receivers attached and that they are
+/// not called by selection operations (actual delivery is checked on real machines).
 fn list_accepts_row_activate_and_context_menu(ui: &Ui) -> Result<()> {
     use naui_core::ListItem;
 
@@ -2575,8 +2602,8 @@ fn request_focus_needs_the_visual_tree(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// キーを起こす公開 API が無いので、ここでは付けられることだけを確かめる
-/// (実際の配送は実機で確かめる)。
+/// There is no public API for triggering keys, so this checks only that they can be
+/// attached (actual delivery is checked on real machines).
 fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
     use naui_core::{EventResponse, KeyEvent};
     let handler = |_: &KeyEvent| EventResponse::Continue;
@@ -2589,8 +2616,9 @@ fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Enter を起こす公開 API が無いので、ここでは付けられることと、付けても
-/// 文字列や値の扱いが変わらないことだけを確かめる (実際の配送は実機で確かめる)。
+/// There is no public API for triggering Enter, so this checks only that they can be
+/// attached and that attaching them does not change how text and values are handled
+/// (actual delivery is checked on real machines).
 fn text_widgets_accept_submit_handlers(ui: &Ui) -> Result<()> {
     let input = ui.text_input("ねこ")?;
     input.on_submit(|_: &str| {});
@@ -2605,8 +2633,8 @@ fn text_widgets_accept_submit_handlers(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// フォーカスの移動 (`GotFocus`) は非同期に届くので、ここでは付けられることと、
-/// 付け直せることだけを確かめる (実際の配送は実機で確かめる)。
+/// Focus moves (`GotFocus`) arrive asynchronously, so this checks only that handlers
+/// can be attached and reattached (actual delivery is checked on real machines).
 fn text_widgets_accept_focus_handlers(ui: &Ui) -> Result<()> {
     let handler = |_: bool| {};
     let input = ui.text_input("")?;
@@ -2620,7 +2648,8 @@ fn text_widgets_accept_focus_handlers(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知先はウィジェットが持つので、捨てれば (次の登録を待たずに) 解放される。
+/// The handler is held by the widget, so dropping it frees the handler (without
+/// waiting for the next registration).
 fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
     // 通知先が捕まえている状態。解放されれば数が 1 へ戻る。
     let state = Rc::new(());
@@ -2660,11 +2689,11 @@ fn focus_change_handler_is_freed_with_the_widget(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// フォーカスの移動が届くまで待つ上限。
+/// The maximum time to wait for a focus move to arrive.
 const FOCUS_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// フォーカスの移動 (`GotFocus` / `LostFocus`) は非同期に届くので、
-/// メッセージを回して待つ。
+/// Focus moves (`GotFocus` / `LostFocus`) arrive asynchronously, so messages are
+/// pumped while waiting.
 fn weak_widget_breaks_the_callback_cycle(ui: &Ui) -> Result<()> {
     let window = ui.window("弱参照", 320.0, 200.0)?;
     let root = ui.stack(Orientation::Vertical)?;
@@ -2796,8 +2825,9 @@ fn accessible_label_and_read_only(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// CI では行の実寸が付かないので、送っても壊れず選択が変わらないことだけ見る
-/// (見える位置まで送れるかは実機で確かめる)。
+/// On CI rows get no actual size, so this only checks that scrolling does not break
+/// anything and the selection does not change (whether it scrolls to a visible
+/// position is checked on real machines).
 fn scroll_to_row_keeps_the_selection(ui: &Ui) -> Result<()> {
     use naui_core::{ListItem, TableColumn, TableRow, TreeItem};
     let labels: Vec<String> = (0..50).map(|i| format!("行 {i}")).collect();
@@ -2823,7 +2853,8 @@ fn scroll_to_row_keeps_the_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `TextBox` は改行を `\r` で持つが、`text()` はほかの環境と同じ `\n` で返す。
+/// `TextBox` stores newlines as `\r`, but `text()` returns `\n`, the same as the
+/// other platforms.
 fn text_area_reports_newlines_as_lf(ui: &Ui) -> Result<()> {
     let area = ui.text_area("一\n二")?;
     assert_eq!(area.text(), "一\n二");
@@ -2832,14 +2863,14 @@ fn text_area_reports_newlines_as_lf(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 候補に無い文字列を打って Enter を押しても消えず、候補と同じ文字列なら
-/// その候補が選ばれる。Esc で取り消すと、最後に確定した文字列
-/// (プログラムから書いたものを含む) へ戻る。
+/// Typing a string not among the suggestions and pressing Enter does not erase it,
+/// and a string matching a suggestion selects that suggestion. Cancelling with Esc
+/// returns to the last confirmed string (including ones written from code).
 ///
-/// Enter や Esc での確定・取り消しは UI オートメーションからは起こせない
-/// ので、実キーを `SendInput` で送る。キーは前面のウィンドウへ届くため、
-/// 前面がこのテストのウィンドウでないとき (ほかのアプリが前に出ている、
-/// テンプレートの入力欄が無い) は送らずに通す。
+/// Confirming and cancelling with Enter and Esc cannot be triggered through UI
+/// Automation, so real keys are sent with `SendInput`. Keys go to the foreground
+/// window, so when the foreground is not this test's window (another app is in
+/// front, or the template's input field is missing), it passes without sending.
 fn editable_combo_box_commits_and_reverts_text(ui: &Ui) -> Result<()> {
     use naui_winui3::Microsoft::UI::Xaml::FocusState;
     use windows::Win32::UI::Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_ESCAPE, VK_RETURN};
@@ -2933,13 +2964,14 @@ fn editable_combo_box_commits_and_reverts_text(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// キー入力が反映されるまで待つ上限。
+/// The maximum time to wait for key input to take effect.
 const KEY_INPUT_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// 実キーを順に押して離し、届くまでメッセージを回す。
+/// Presses and releases real keys in order, and pumps messages until they arrive.
 ///
-/// 前面のウィンドウがこのプロセスのものでなければ送らずに `false` を返す
-/// (ほかのアプリへ打ち込まないため)。そのときケースは確かめずに通す。
+/// If the foreground window does not belong to this process, it sends nothing and
+/// returns `false` (so as not to type into another app). The case then passes without
+/// checking.
 fn type_keys(keys: &[windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY]) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,

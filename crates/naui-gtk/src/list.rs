@@ -1,16 +1,16 @@
-//! 選択できる行の一覧 (`GtkListBox` を `GtkScrolledWindow` に載せたもの)。
+//! A list of selectable rows (a `GtkListBox` in a `GtkScrolledWindow`).
 //!
-//! 文字だけの [`ListItem`] も任意内容の [`ListRow`] も同じ行モデルへ正規化し、
-//! 同じ経路で `GtkListBoxRow` を組み立てる。選択と行 activation は
-//! Rust のクロージャへ渡す。
+//! Both text-only [`ListItem`]s and custom-content [`ListRow`]s are normalized into
+//! the same row model, and `GtkListBoxRow`s are built through the same path.
+//! Selection and row activation are passed to Rust closures.
 //!
-//! **行の起動 (ダブルクリック) と右クリックは、行ごとの `GtkGestureClick` で
-//! 受ける。** `GtkListBox` の `row-activated` は単一選択では 1 回のクリックで
-//! 出る ([`ListRow::on_activate`] がそれを使っている) ので、ダブルクリックの
-//! 区別には使えない。ジェスチャーは行の上で泡立ち (bubble) の段に付けるので、
-//! 行内のボタンなど自分でクリックを受けるコントロールの上では届かない。
-//! Enter は `GtkListBox` の捕捉 (capture) の段のキーの受け口で、行そのものに
-//! フォーカスがあるときだけ拾う。
+//! **Row activation (double-click) and right-clicks are received by a
+//! `GtkGestureClick` on each row.** `GtkListBox`'s `row-activated` fires on a
+//! single click in single selection (which [`ListRow::on_activate`] relies on), so
+//! it cannot be used to detect double-clicks. The gestures are attached to the
+//! rows in the bubble phase, so they are not delivered over controls inside the row
+//! that take clicks themselves, such as buttons. Enter is caught by a key receiver
+//! in `GtkListBox`'s capture phase, only when the row itself has focus.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -23,12 +23,12 @@ use crate::bin::SizeBin;
 use crate::callback::{Notifier, SelectionNotifier};
 use crate::widgets::{impl_widget, without_signal, Label, Stack, Widget};
 
-/// ラベルと補助の文字の間隔。
+/// The spacing between the label and the secondary text.
 const DETAIL_SPACING: f64 = 2.0;
 
-/// 行がクリックされたことの通知先。
+/// The handler notified when a row is clicked.
 ///
-/// 呼び出し中に同じ行のコールバックを差し替えても二重借用しない。
+/// Replacing the same row's callback during the call does not double-borrow.
 #[derive(Clone, Default)]
 pub(crate) struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
 
@@ -53,7 +53,8 @@ impl ActivationHandler {
     }
 }
 
-/// 1 行の内容。通常の文字行も任意ウィジェット行も同じ型へ正規化する。
+/// The content of one row. Plain text rows and custom widget rows are normalized
+/// into the same type.
 enum ListRowContent {
     Item(ListItem),
     Custom(Box<dyn Widget>),
@@ -68,17 +69,17 @@ impl Clone for ListRowContent {
     }
 }
 
-/// リストへ載せる 1 行。
+/// One row to put in a list.
 ///
-/// [`ListItem`] は文字列だけで済む一覧向けの簡便 API であり、設定画面のように
-/// アイコン、複数のラベル、チェックボックス、末尾のボタンなどを組み合わせる
-/// 行は `Grid` / `Stack` で作って `ListRow` に包む。
+/// [`ListItem`] is a convenience API for lists that need only strings. Rows that
+/// combine icons, several labels, check boxes, trailing buttons and so on, as in a
+/// settings screen, are built with `Grid` / `Stack` and wrapped in a `ListRow`.
 ///
 /// ```no_run
 /// # use naui_gtk::{ListRow, Widget};
 /// # fn row(content: &dyn Widget) {
 /// let row = ListRow::new(content).selectable(false);
-/// row.on_activate(|| println!("行がクリックされました"));
+/// row.on_activate(|| println!("row clicked"));
 /// # let _ = row;
 /// # }
 /// ```
@@ -99,7 +100,8 @@ impl Clone for ListRow {
 }
 
 impl ListRow {
-    /// ウィジェットを 1 行の内容として使う。既定では行全体も選択できる。
+    /// Uses a widget as the content of one row. By default the whole row can be
+    /// selected too.
     pub fn new(content: &dyn Widget) -> Self {
         Self {
             content: ListRowContent::Custom(content.boxed_clone()),
@@ -108,7 +110,8 @@ impl ListRow {
         }
     }
 
-    /// `ListItem` を通常の文字行へ変換する。`List::set_items` の正規化経路。
+    /// Converts a `ListItem` into a plain text row. The normalization path for
+    /// `List::set_items`.
     fn from_item(item: ListItem) -> Self {
         let selectable = item.enabled;
         Self {
@@ -118,7 +121,7 @@ impl ListRow {
         }
     }
 
-    /// 行内のコントロールだけを操作する行では `false` にする。
+    /// Set to `false` for rows where only the controls inside are operated.
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
         self
@@ -128,14 +131,14 @@ impl ListRow {
         self.selectable
     }
 
-    /// 行内のラベル・アイコン・余白がクリックされたときに呼ぶ処理。
+    /// What to do when a label, icon or empty space inside the row is clicked.
     ///
-    /// チェックボックス、ボタン、入力欄などのコントロールを直接押した場合は
-    /// (それぞれが自分でクリックを受け取るため) 呼ばれず、同じ操作が二重に
-    /// 発火しない。
+    /// When a control such as a check box, button or text field is clicked directly, it
+    /// is not called (each control receives its own clicks), so the same action does
+    /// not fire twice.
     ///
-    /// `GtkListBoxRow` を押せるようにするかどうかは行を組み立てるときに
-    /// 決まるので、[`List::set_rows`] へ渡す前に設定する。
+    /// Whether a `GtkListBoxRow` is clickable is decided when the row is built, so set
+    /// this before passing it to [`List::set_rows`].
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.activation.set(f);
     }
@@ -143,22 +146,22 @@ impl ListRow {
 
 struct ListInner {
     native: gtk::ListBox,
-    /// `GtkListBox` は自分でスクロールしないので、スクロール領域に載せる。
+    /// `GtkListBox` does not scroll by itself, so it is placed in a scroll area.
     _scroller: gtk::ScrolledWindow,
     bin: SizeBin,
     rows: RefCell<Vec<ListRow>>,
     on_select: SelectionNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
-    /// ダブルクリックと Enter の通知先。
+    /// The handler for double-clicks and Enter.
     row_activate: Notifier<usize>,
-    /// 右クリックの通知先。
+    /// The handler for right-clicks.
     context_menu: Notifier<(usize, Point)>,
 }
 
-/// 選択できる行の一覧。自分でスクロールする。
+/// A list of selectable rows. It scrolls by itself.
 ///
-/// 高さを指定しないときは全行の高さに追従し、固定高さや `Fill` では
-/// はみ出した分をスクロールする。
+/// Without a height set, it follows the height of all its rows; with a fixed height
+/// or `Fill`, it scrolls whatever overflows.
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
 impl_widget!(List);
@@ -230,15 +233,16 @@ impl List {
         Self(inner)
     }
 
-    /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     pub fn set_items(&self, items: &[ListItem]) {
         let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
         self.set_rows(&rows);
     }
 
-    /// 行を作り直す。通常行も任意内容の行もこの経路で描画する。
+    /// Rebuilds the rows. Both plain rows and rows with custom content are drawn
+    /// through this path.
     ///
-    /// 行内のコントロールは通常どおりそれぞれのコールバックを持てる。
+    /// Controls inside a row can have their own callbacks as usual.
     pub fn set_rows(&self, rows: &[ListRow]) {
         without_signal(&self.0.native, &self.0.handler, || {
             while let Some(row) = self.0.native.first_child() {
@@ -283,12 +287,12 @@ impl List {
         }
     }
 
-    /// 選ばれている先頭の行。
+    /// The first selected row.
     pub fn selected(&self) -> Option<usize> {
         self.selection().first().copied()
     }
 
-    /// 選ばれている行を昇順で返す。
+    /// Returns the selected rows in ascending order.
     pub fn selection(&self) -> Vec<usize> {
         let mut indices: Vec<usize> = self
             .0
@@ -301,10 +305,11 @@ impl List {
         indices
     }
 
-    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until row `index` is visible. The selection does not change.
     ///
-    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
-    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    /// If it is already visible nothing moves; otherwise it is aligned to the nearer
+    /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
+    /// range.
     pub fn scroll_to_row(&self, index: usize) {
         let Ok(index) = i32::try_from(index) else {
             return;
@@ -314,62 +319,62 @@ impl List {
         }
     }
 
-    /// 通知せずに 1 行だけ選ぶ。
+    /// Selects a single row without notifying.
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
 
-    /// 通知せずに選択を置き換える。
+    /// Replaces the selection without notifying.
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         without_signal(&self.0.native, &self.0.handler, || self.show(&picked));
     }
 
-    /// 通知せずに選択をすべて外す。
+    /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.unselect_all();
         });
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 行を選ぶ (通知あり)。
+    /// Selects one row through the same path as a user's selection (notifies).
     pub fn select(&self, index: usize) {
         self.select_many(&[index]);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
+    /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         without_signal(&self.0.native, &self.0.handler, || self.show(&picked));
         self.0.on_select.emit(&picked);
     }
 
-    /// 選択が変わるたびに、選ばれている行のインデックスで呼ばれる。
+    /// Called with the indices of the selected rows every time the selection changes.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.on_select.set(f);
     }
 
-    /// 行が起動されたとき (ダブルクリック、または行にフォーカスがある状態での
-    /// Enter) に、その行のインデックスで呼ばれる。
+    /// Called with the row's index when a row is activated (double-clicked, or Enter
+    /// while the row has focus).
     ///
-    /// 複数選択のすべてを開きたいときは、中で [`List::selection`] を読む。
-    /// 選べない `ListItem` (`enabled(false)`) の行では呼ばれない。
+    /// To open everything in a multiple selection, read [`List::selection`] inside it.
+    /// Not called for rows of `ListItem`s that cannot be selected (`enabled(false)`).
     pub fn on_row_activate(&self, f: impl FnMut(usize) + 'static) {
         self.0.row_activate.set(f);
     }
 
-    /// 行が右クリックされたときに、その行のインデックスと、押された位置で呼ばれる。
+    /// Called with the row's index and the click position when a row is right-clicked.
     ///
-    /// 位置はこのリストの座標 (論理ピクセル、y は下向き) で、
-    /// [`crate::PopupMenu::open_at`] へそのまま渡せる。選択は変えない。
-    /// 行の無い余白では呼ばれない。
+    /// The position is in this list's coordinates (logical pixels, y pointing down) and
+    /// can be passed straight to [`crate::PopupMenu::open_at`]. The selection does not
+    /// change. Not called for empty space without rows.
     pub fn on_context_menu(&self, mut f: impl FnMut(usize, Point) + 'static) {
         self.0
             .context_menu
             .set(move |(index, point)| f(index, point));
     }
 
-    /// 指定された選択を、この一覧で意味を持つ形にそろえる。
+    /// Normalizes the requested selection into a form meaningful for this list.
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
         let rows = self.0.rows.borrow();
         self.selection_mode().normalize_by(indices, |index| {
@@ -377,7 +382,7 @@ impl List {
         })
     }
 
-    /// 選択をネイティブへ写す。
+    /// Applies the selection to the native side.
     fn show(&self, picked: &[usize]) {
         self.0.native.unselect_all();
         for &index in picked {
@@ -388,10 +393,11 @@ impl List {
     }
 }
 
-/// 文字だけの行の中身。
+/// The content of a text-only row.
 ///
-/// 副次テキストの小ささと淡さは [`TextStyle::Caption`] と
-/// [`TextColor::Secondary`] が決めるので、ここにスタイルクラスは書かない。
+/// The smallness and dimness of the secondary text come from
+/// [`TextStyle::Caption`] and [`TextColor::Secondary`], so no style classes are
+/// written here.
 pub(crate) fn item_content(label: &str, detail: Option<&str>) -> Stack {
     let content = Stack::new(Orientation::Vertical);
     content.set_align(Align::Fill);
@@ -406,22 +412,23 @@ pub(crate) fn item_content(label: &str, detail: Option<&str>) -> Stack {
     content
 }
 
-/// 行に載せる 1 本の文字。
+/// One piece of text placed in a row.
 ///
-/// **行の幅いっぱいに広げる。** `GtkLabel` は `PangoEllipsizeMode::End` で
-/// 末尾を切るが、それが効くのは幅が決まってから。広げても文字は左詰めのまま
-/// (`Label` が `xalign` を 0 にしている)。
+/// **It stretches to the full width of the row.** `GtkLabel` cuts the end with
+/// `PangoEllipsizeMode::End`, but that works only once the width is decided. Even
+/// when stretched, the text stays left-aligned (`Label` sets `xalign` to 0).
 fn row_label(text: &str) -> Label {
     let label = Label::new(text);
     label.set_sizing(Sizing::fill_width());
     label
 }
 
-/// `List` の補助と同じ見た目 (小さく淡く) を、生の `GtkLabel` へ当てる。
+/// Applies the same look as a `List`'s secondary text (small and dim) to a raw
+/// `GtkLabel`.
 ///
-/// naui の `Label` を使えない場所 (表の見出しのように幅や `GtkSizeGroup` を
-/// 直に扱うところ) 向け。当てるクラスは [`TextStyle::Caption`] と
-/// [`TextColor::Secondary`] から引く。
+/// For places where naui's `Label` cannot be used (such as table headings, which
+/// deal with widths and `GtkSizeGroup` directly). The classes applied are taken
+/// from [`TextStyle::Caption`] and [`TextColor::Secondary`].
 pub(crate) fn apply_caption(label: &gtk::Label) {
     for class in [
         TextStyle::Caption.style_class(),
@@ -434,7 +441,7 @@ pub(crate) fn apply_caption(label: &gtk::Label) {
     }
 }
 
-/// 1 行を組み立てる。`ListItem` も任意内容も同じ経路を通る。
+/// Builds one row. Both `ListItem`s and custom content go through the same path.
 fn build_row(item: &ListRow, list: Weak<ListInner>) -> gtk::ListBoxRow {
     let content: SizeBin = match &item.content {
         ListRowContent::Item(item) => item_content(&item.label, item.detail.as_deref()).size_bin(),
@@ -462,9 +469,10 @@ fn build_row(item: &ListRow, list: Weak<ListInner>) -> gtk::ListBoxRow {
     row
 }
 
-/// 行のダブルクリックを受けるジェスチャー。
+/// The gesture that receives double-clicks on a row.
 ///
-/// シーケンスは握らない (`GtkListBox` 自身の選択のジェスチャーへそのまま流す)。
+/// It does not claim the sequence (passing it on to `GtkListBox`'s own selection
+/// gesture).
 fn row_double_click_controller(list: Weak<ListInner>) -> gtk::GestureClick {
     let gesture = gtk::GestureClick::new();
     gesture.set_button(gdk::BUTTON_PRIMARY);
@@ -480,7 +488,7 @@ fn row_double_click_controller(list: Weak<ListInner>) -> gtk::GestureClick {
     gesture
 }
 
-/// 行の右クリックを受けるジェスチャー。
+/// The gesture that receives right-clicks on a row.
 fn row_context_menu_controller(list: Weak<ListInner>) -> gtk::GestureClick {
     let gesture = gtk::GestureClick::new();
     gesture.set_button(gdk::BUTTON_SECONDARY);
@@ -506,9 +514,10 @@ fn row_context_menu_controller(list: Weak<ListInner>) -> gtk::GestureClick {
     gesture
 }
 
-/// ジェスチャーが付いている行と、その行のインデックス。
+/// The row the gesture is attached to, and that row's index.
 ///
-/// インデックスは押された時点の位置から引く (行を作り直しても狂わない)。
+/// The index is looked up from the position at the time of the press (so it stays
+/// correct even if the rows are rebuilt).
 fn pressed_row(
     list: &Weak<ListInner>,
     gesture: &gtk::GestureClick,
@@ -522,11 +531,11 @@ fn pressed_row(
     Some((inner, row, index))
 }
 
-/// 行にフォーカスがあるときの Enter を、行の起動として拾うキーの受け口。
+/// A key receiver that picks up Enter while a row has focus, as a row activation.
 ///
-/// `GtkListBox` 自身の Enter (`activate-cursor-row`) はその後もそのまま動く
-/// (選択と [`ListRow::on_activate`])。行の中の入力欄やボタンにフォーカスが
-/// あるときの Enter は、そのコントロールのものなので拾わない。
+/// `GtkListBox`'s own Enter (`activate-cursor-row`) still works as before
+/// (selection and [`ListRow::on_activate`]). Enter while a field or button inside
+/// the row has focus belongs to that control, so it is not picked up.
 fn enter_controller(list: Weak<ListInner>) -> gtk::EventControllerKey {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -562,9 +571,11 @@ fn enter_controller(list: Weak<ListInner>) -> gtk::EventControllerKey {
     keys
 }
 
-/// 縦のスクロールを、`top..bottom` (中身の座標) が見える位置へ動かす。
+/// Moves the vertical scroll to where `top..bottom` (content coordinates) is
+/// visible.
 ///
-/// 見えていれば動かさず、上にはみ出していれば上端、下なら下端へ合わせる。
+/// If it is visible nothing moves; if it sticks out above, the top is aligned, and
+/// if below, the bottom.
 pub(crate) fn reveal_range(scroller: &gtk::ScrolledWindow, top: f64, bottom: f64) {
     let adjustment = scroller.vadjustment();
     let view_top = adjustment.value();
@@ -576,14 +587,15 @@ pub(crate) fn reveal_range(scroller: &gtk::ScrolledWindow, top: f64, bottom: f64
     }
 }
 
-/// `row` (スクロール領域の中身の子孫) が見えるようにする。
+/// Makes `row` (a descendant of the scroll area's content) visible.
 ///
-/// 行を作り直した直後や、閉じた枝を開いた直後は場所がまだ配られて
-/// いないので、そのときは次のフレームで試し直す。
+/// Right after the rows are rebuilt, or right after a collapsed branch is
+/// expanded, no space has been allotted yet, so it tries again on the next frame.
 ///
-/// `after_layout` が `true` なら、その場では試さず、次のレイアウトが済んで
-/// から試す。閉じていた枝を開いた直後の行は、配られる前のでたらめな場所
-/// (高さ数 px の位置) を返すので、その場の値を信じられない。
+/// If `after_layout` is `true`, it does not try on the spot but after the next
+/// layout has finished. A row right after its collapsed branch is expanded reports
+/// a bogus position from before allocation (a few px high), so the immediate value
+/// cannot be trusted.
 pub(crate) fn reveal_widget(
     scroller: &gtk::ScrolledWindow,
     row: &impl IsA<gtk::Widget>,
@@ -633,5 +645,5 @@ pub(crate) fn reveal_widget(
     });
 }
 
-/// 行の場所が配られるのを待つフレーム数の上限。
+/// The maximum number of frames to wait for a row's position to be allotted.
 const REVEAL_FRAMES: u8 = 5;

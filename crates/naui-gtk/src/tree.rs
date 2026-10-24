@@ -1,19 +1,20 @@
-//! ツリー (`GtkListBox` を `GtkScrolledWindow` に載せたもの)。
+//! A tree (a `GtkListBox` in a `GtkScrolledWindow`).
 //!
-//! GTK4 の `GtkTreeExpander` は `GtkListView` + `GtkTreeListModel` と
-//! 組み合わせてしか使えず、`GtkTreeView` は 4.10 で非推奨になっている。
-//! そこで naui では、`List` と同じ `GtkListBox` の上に組み立てている。
+//! GTK4's `GtkTreeExpander` can only be used together with `GtkListView` +
+//! `GtkTreeListModel`, and `GtkTreeView` was deprecated in 4.10. So naui builds it
+//! on the same `GtkListBox` as `List`.
 //!
-//! | 部分 | 作り |
+//! | Part | Built from |
 //! | --- | --- |
-//! | 枠と行 | `List` と同じ (`GtkScrolledWindow` + `GtkListBox`) |
-//! | 段付け | 行の中身の左余白 |
-//! | 開閉 | 行の左端に置いた `GtkButton` (`pan-end` / `pan-down` のアイコン) |
+//! | Frame and rows | The same as `List` (`GtkScrolledWindow` + `GtkListBox`) |
+//! | Indentation | Left margin of the row's content |
+//! | Expand/collapse | A `GtkButton` at the left end of the row (`pan-end` / `pan-down` icons) |
 //!
-//! 行は**全項目ぶんを作り置き**し、開閉では見え隠れ (`set_visible`) だけを
-//! 切り替える。押された開閉ボタン自身が作り直しで消えないので、シグナルの
-//! 最中に行を捨てずに済む。選択・キーボード操作・スクロールは
-//! `GtkListBox` と `GtkScrolledWindow` が行う (見えない行は GTK4 が飛ばす)。
+//! Rows are **built in advance for every item**, and expanding or collapsing only
+//! toggles visibility (`set_visible`). The clicked expander button itself is never
+//! destroyed by a rebuild, so rows need not be discarded in the middle of a signal.
+//! Selection, keyboard navigation and scrolling are done by `GtkListBox` and
+//! `GtkScrolledWindow` (GTK4 skips invisible rows).
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -27,43 +28,46 @@ use crate::bin::SizeBin;
 use crate::callback::{ExpandNotifier, SelectionNotifier};
 use crate::widgets::{impl_widget, without_signal, Widget};
 
-/// 1 段ぶんの字下げ (論理ピクセル)。
+/// The indentation per level (logical pixels).
 const INDENT: i32 = 16;
 
-/// 開閉のボタンと同じ幅。葉の行で、文字の左端をそろえるために空ける。
+/// The same width as the expander button. Left empty in leaf rows to align the left
+/// edge of the text.
 const TWISTY_WIDTH: i32 = 24;
 
-/// 閉じているときのアイコン (Adwaita の標準アイコン)。
+/// The icon when collapsed (a standard Adwaita icon).
 const ICON_COLLAPSED: &str = "pan-end-symbolic";
-/// 開いているときのアイコン。
+/// The icon when expanded.
 const ICON_EXPANDED: &str = "pan-down-symbolic";
 
 struct TreeInner {
     native: gtk::ListBox,
-    /// `GtkListBox` は自分でスクロールしないので、スクロール領域に載せる。
+    /// `GtkListBox` does not scroll by itself, so it is placed in a scroll area.
     _scroller: gtk::ScrolledWindow,
     bin: SizeBin,
     items: RefCell<Vec<TreeItem>>,
-    /// 行にしてある項目のパス。深さ優先 (親が先) で、`GtkListBox` の行と
-    /// 同じ並び。見えていない行もここに残る。
+    /// The paths of the items made into rows. Depth-first (parents first), in the same
+    /// order as the `GtkListBox` rows. Invisible rows stay here too.
     rows: RefCell<Vec<Vec<usize>>>,
-    /// 行に置いた開閉ボタン。葉の行には無い。アイコンの差し替えに使う。
+    /// The expander buttons placed in rows. Leaf rows have none. Used to swap icons.
     twisties: RefCell<Vec<Option<gtk::Button>>>,
-    /// 開いた状態として覚えている項目。閉じた枝の中の分も残る。
+    /// The items remembered as expanded. Those inside collapsed branches remain too.
     expanded: RefCell<HashSet<Vec<usize>>>,
-    /// 選ばれている項目。選択なしは `None`。
+    /// The selected item. `None` for no selection.
     selected: RefCell<Option<Vec<usize>>>,
     on_select: SelectionNotifier,
     on_expand: ExpandNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 入れ子の項目を開閉できる一覧。自分でスクロールする。
+/// A list whose nested items can be expanded and collapsed. It scrolls by itself.
 ///
-/// 項目は根からの子インデックスの並び (パス) で指す。`[0, 2]` は
-/// 「1 番目の根の 3 番目の子」で、空のパスは「選択なし」を表す。
+/// Items are referred to by the sequence of child indices from the root (a path).
+/// `[0, 2]` is "the third child of the first root", and an empty path means "no
+/// selection".
 ///
-/// 高さは中身から決まらないので、[`Tree::set_sizing`] で指定しておく。
+/// Its height is not determined by its contents, so set it with
+/// [`Tree::set_sizing`].
 #[derive(Clone)]
 pub struct Tree(Rc<TreeInner>);
 impl_widget!(Tree);
@@ -104,9 +108,9 @@ impl Tree {
         Self(inner)
     }
 
-    /// 項目を作り直す。パスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Paths change meaning, so the selection is cleared.
     ///
-    /// 開閉は [`TreeItem::expanded`] のとおりに戻る。
+    /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
         {
             let mut stored = self.0.items.borrow_mut();
@@ -124,7 +128,7 @@ impl Tree {
         self.rebuild();
     }
 
-    /// 子孫まで数えた項目の総数。
+    /// The total number of items, descendants included.
     pub fn len(&self) -> usize {
         TreeItem::count(&self.0.items.borrow())
     }
@@ -133,16 +137,16 @@ impl Tree {
         self.len() == 0
     }
 
-    /// 選ばれている項目のパス。何も選ばれていなければ `None`。
+    /// The path of the selected item. `None` if nothing is selected.
     pub fn selected(&self) -> Option<Vec<usize>> {
         self.0.selected.borrow().clone()
     }
 
-    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until the item at `path` is visible. The selection does not change.
     ///
-    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
-    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
-    /// 無いパスなら何もしない。
+    /// If it is inside a collapsed branch, its ancestors are expanded first (as with
+    /// [`set_selected`](Self::set_selected), expansion is not notified). If it is
+    /// already visible nothing moves. Does nothing for a path that does not exist.
     pub fn scroll_to_item(&self, path: &[usize]) {
         if TreeItem::at(&self.0.items.borrow(), path).is_none() {
             return;
@@ -157,74 +161,75 @@ impl Tree {
         }
     }
 
-    /// 通知せずに 1 項目を選ぶ。
+    /// Selects one item without notifying.
     ///
-    /// 選べない項目や無いパスを渡すと、選択は外れる。閉じた枝の中にある
-    /// 項目は、見えるように祖先を開いてから選ぶ。
+    /// Passing an unselectable item or a path that does not exist clears the
+    /// selection. Items inside a collapsed branch are selected after their ancestors
+    /// are expanded so they become visible.
     pub fn set_selected(&self, path: &[usize]) {
         self.write_selected(path);
     }
 
-    /// 通知せずに選択を外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         self.write_selected(&[]);
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 項目を選ぶ (通知あり)。
+    /// Selects one item through the same path as a user's selection (notifies).
     pub fn select(&self, path: &[usize]) {
         self.write_selected(path);
         let actual = self.selected().unwrap_or_default();
         self.0.on_select.emit(&actual);
     }
 
-    /// 選択が変わったときに、選ばれている項目のパスで呼ばれる。
+    /// Called with the path of the selected item when the selection changes.
     ///
-    /// 選択が外れたときは空のパスで呼ばれる。
+    /// When the selection is cleared, it is called with an empty path.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.on_select.set(f);
     }
 
-    /// その項目が開いているかどうか。
+    /// Whether the item is expanded.
     ///
-    /// 閉じた枝の中にあって見えていない項目でも、開いた状態として覚えていれば
-    /// `true` を返す (親を開き直すと、そのまま開いて出てくる)。
+    /// Even an item hidden inside a collapsed branch returns `true` if it is
+    /// remembered as expanded (reopening the parent shows it expanded as before).
     pub fn is_expanded(&self, path: &[usize]) -> bool {
         self.0.expanded.borrow().contains(path)
     }
 
-    /// 通知せずに開閉を変える。開くときは祖先もまとめて開く。
+    /// Changes expansion without notifying. Expanding also expands the ancestors.
     pub fn set_expanded(&self, path: &[usize], expanded: bool) {
         self.write_expanded(path, expanded);
     }
 
-    /// ユーザーが開いたのと同じ経路で開く (通知あり)。
+    /// Expands through the same path as a user's action (notifies).
     pub fn expand(&self, path: &[usize]) {
         self.toggle(path, true);
     }
 
-    /// ユーザーが閉じたのと同じ経路で閉じる (通知あり)。
+    /// Collapses through the same path as a user's action (notifies).
     pub fn collapse(&self, path: &[usize]) {
         self.toggle(path, false);
     }
 
-    /// 通知せずにすべての枝を開く。
+    /// Expands every branch without notifying.
     pub fn expand_all(&self) {
         self.set_all(true);
     }
 
-    /// 通知せずにすべての枝を閉じる。
+    /// Collapses every branch without notifying.
     pub fn collapse_all(&self) {
         self.set_all(false);
     }
 
-    /// 開閉が変わったときに、その項目のパスと変わった後の状態で呼ばれる。
+    /// Called with the item's path and its new state when its expansion changes.
     pub fn on_expand(&self, f: impl FnMut(&[usize], bool) + 'static) {
         self.0.on_expand.set(f);
     }
 
     // ------------------------------------------------------------ 組み立て
 
-    /// 全項目ぶんの行を作る。見え隠れは [`Tree::paint`] が決める。
+    /// Builds rows for every item. [`Tree::paint`] decides which are visible.
     fn rebuild(&self) {
         let mut paths = Vec::new();
         TreeItem::walk(&self.0.items.borrow(), |path, _| paths.push(path.to_vec()));
@@ -252,7 +257,7 @@ impl Tree {
         self.paint();
     }
 
-    /// 行 1 つを組み立てる。枝なら開閉ボタンも返す。
+    /// Builds one row. For branches, also returns the expander button.
     fn build_row(&self, path: &[usize]) -> Option<(gtk::ListBoxRow, Option<gtk::Button>)> {
         let items = self.0.items.borrow();
         let item = TreeItem::at(&items, path)?;
@@ -312,9 +317,9 @@ impl Tree {
 
     // --------------------------------------------------------- 状態の反映
 
-    /// 開閉を行の見え隠れとアイコンへ写す。
+    /// Applies the expansion state to row visibility and icons.
     ///
-    /// 見えるのは、祖先がすべて開いている行だけ。
+    /// Only rows whose ancestors are all expanded are visible.
     fn paint(&self) {
         let expanded = self.0.expanded.borrow();
         let rows = self.0.rows.borrow();
@@ -337,7 +342,7 @@ impl Tree {
         }
     }
 
-    /// 選択をネイティブへ写す。
+    /// Applies the selection to the native side.
     fn show_selection(&self) {
         let selected = self.0.selected.borrow().clone();
         let index = selected.and_then(|path| {
@@ -357,7 +362,7 @@ impl Tree {
         });
     }
 
-    /// 選択を覚えて書き込む (通知は起きない)。
+    /// Remembers and writes the selection (no notification).
     fn write_selected(&self, path: &[usize]) {
         let picked = TreeItem::selectable(&self.0.items.borrow(), path).then(|| path.to_vec());
         if let Some(path) = picked.as_deref() {
@@ -369,7 +374,8 @@ impl Tree {
         self.show_selection();
     }
 
-    /// 開閉を覚えて描き直す (通知は起きない)。開くときは祖先もまとめて開く。
+    /// Remembers the expansion state and redraws (no notification). Expanding also
+    /// expands the ancestors.
     fn write_expanded(&self, path: &[usize], expanded: bool) {
         if TreeItem::at(&self.0.items.borrow(), path).is_none_or(|item| item.is_leaf()) {
             return;
@@ -390,7 +396,7 @@ impl Tree {
         self.paint();
     }
 
-    /// 開閉を変えて 1 回だけ通知する。
+    /// Changes the expansion state and notifies once.
     fn toggle(&self, path: &[usize], expanded: bool) {
         let before = self.is_expanded(path);
         self.write_expanded(path, expanded);
@@ -399,7 +405,7 @@ impl Tree {
         }
     }
 
-    /// すべての枝をまとめて開閉する (通知なし)。
+    /// Expands or collapses every branch at once (no notification).
     fn set_all(&self, expanded: bool) {
         {
             let mut set = self.0.expanded.borrow_mut();
@@ -415,7 +421,7 @@ impl Tree {
         self.paint();
     }
 
-    /// GTK 側で選択が変わったとき。
+    /// When the selection changes on the GTK side.
     fn on_native_selection(&self) {
         let picked = self.0.native.selected_row().and_then(|row| {
             let index = row.index().max(0) as usize;

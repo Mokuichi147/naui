@@ -1,11 +1,11 @@
-//! 色の選択 (`NSColorWell`)。
+//! Color picking (`NSColorWell`).
 //!
-//! 押すとシステムのカラーパネル (`NSColorPanel`) が開き、選ばれた色が
-//! target/action で戻ってくる。パネルの中身 — カラーホイール・パレット・
-//! スポイト — はすべて AppKit のものをそのまま使う。
+//! Clicking it opens the system color panel (`NSColorPanel`), and the chosen color
+//! comes back through target/action. The panel's contents — color wheel, palettes,
+//! eyedropper — are all AppKit's own.
 //!
-//! 透明度は扱わないので `supportsAlpha` を切ってある ([`Color`] が
-//! 不透明な色しか持たないため)。
+//! Transparency is not handled, so `supportsAlpha` is off (since [`Color`] holds
+//! only opaque colors).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -21,15 +21,15 @@ use crate::widgets::{impl_widget, Widget};
 struct ColorPickerInner {
     native: Retained<NSColorWell>,
     handler: ValueHandler<Color>,
-    /// `set_value` による変更では `on_change` を呼ばない。
+    /// Changes made by `set_value` do not call `on_change`.
     silent: Cell<bool>,
-    /// AppKit の target は弱参照なので、ここで生かしておく。
+    /// AppKit targets are weak references, so they are kept alive here.
     target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
-/// 色を選ばせるコントロール (`NSColorWell`)。
+/// A control for picking a color (`NSColorWell`).
 ///
-/// 作った直後の値は黒 ([`Color::BLACK`])。
+/// Its value right after creation is black ([`Color::BLACK`]).
 #[derive(Clone)]
 pub struct ColorPicker(Rc<ColorPickerInner>);
 impl_widget!(ColorPicker);
@@ -70,19 +70,19 @@ impl ColorPicker {
         this
     }
 
-    /// いま選ばれている色。
+    /// The currently selected color.
     pub fn value(&self) -> Color {
         from_ns_color(&self.0.native.color())
     }
 
-    /// プログラムから色を差し替える。`on_change` は呼ばれない。
+    /// Replaces the color from code. `on_change` is not called.
     pub fn set_value(&self, color: Color) {
         self.0.silent.set(true);
         self.0.native.setColor(&to_ns_color(color));
         self.0.silent.set(false);
     }
 
-    /// 利用者が選んだのと同じ経路で色を決め、1 回通知する。
+    /// Sets the color through the same path as a user's pick and notifies once.
     pub fn pick(&self, color: Color) {
         self.set_value(color);
         self.0.handler.emit(self.value());
@@ -97,21 +97,22 @@ impl ColorPicker {
         }
     }
 
-    /// 色が変わるたびに、変わった後の色で呼ばれる。
+    /// Called with the new color every time the color changes.
     pub fn on_change(&self, f: impl FnMut(Color) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 色ウェル本体。バックエンド固有の脱出口として公開している。
+    /// The color well itself. Public as a backend-specific escape hatch.
     pub fn native_well(&self) -> Retained<NSColorWell> {
         self.0.native.clone()
     }
 }
 
-/// `NSColor` を sRGB として読む。
+/// Reads an `NSColor` as sRGB.
 ///
-/// カラーパネルはカタログ色 (`NSColor.systemBlue` など) も返すので、
-/// 成分を読む前に必ず sRGB へ変換する。変換できない色は黒として扱う。
+/// The color panel also returns catalog colors (`NSColor.systemBlue` and so on), so
+/// it is always converted to sRGB before reading components. Colors that cannot be
+/// converted are treated as black.
 fn from_ns_color(color: &NSColor) -> Color {
     let Some(srgb) = color.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace()) else {
         return Color::BLACK;

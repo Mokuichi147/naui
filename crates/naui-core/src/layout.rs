@@ -1,41 +1,41 @@
-//! レイアウトの値型。
+//! Layout value types.
 //!
-//! ここにあるのは「どう置きたいか」を表す値だけで、レイアウト計算は行わない。
-//! 実際の配置は各バックエンドのネイティブなレイアウト機構
-//! (Auto Layout / XAML のレイアウトパス / CSS) が行う。
+//! Everything here only describes "how you want things placed"; no layout is
+//! computed. The actual placement is done by each backend's native layout system
+//! (Auto Layout / the XAML layout pass / CSS).
 
-/// 幅または高さの決め方。
+/// How a width or height is determined.
 ///
-/// | 値 | 意味 |
+/// | Value | Meaning |
 /// | --- | --- |
-/// | [`Length::Auto`] | 中身に合わせる (既定) |
-/// | [`Length::Fixed`] | 論理ピクセルで固定する |
-/// | [`Length::Fill`] | 親の余りを受け取って広がる |
+/// | [`Length::Auto`] | Fit the content (default) |
+/// | [`Length::Fixed`] | Fixed in logical pixels |
+/// | [`Length::Fill`] | Grow to take the parent's leftover space |
 ///
-/// `Fill` の意味は軸によって変わる。親の並び方向 (主軸) では
-/// **余った空間を受け取る**、それと直交する方向 (交差軸) では
-/// **親いっぱいに広がる**。
+/// What `Fill` means depends on the axis. Along the parent's stacking direction
+/// (the main axis) it **takes the leftover space**; in the perpendicular direction
+/// (the cross axis) it **stretches to fill the parent**.
 ///
-/// バックエンドごとの対応は次のとおり。
+/// Per-backend behavior:
 ///
-/// | | 主軸の `Fill` | 交差軸の `Fill` |
+/// | | `Fill` on the main axis | `Fill` on the cross axis |
 /// | --- | --- | --- |
-/// | macOS (AppKit) | hugging priority を下げて NSStackView から余りを受け取る | 親の幅 / 高さに合わせる制約 |
+/// | macOS (AppKit) | Lowers the hugging priority to take leftover space from the NSStackView | A constraint matching the parent's width / height |
 /// | Web (DOM) | `flex-grow: 1` | `align-self: stretch` |
-/// | Windows (WinUI 3) | **Stack では効かない** (StackPanel は余りを配らない)。`Grid` の [`Track::Fill`] を使う | `HorizontalAlignment`/`VerticalAlignment` の `Stretch` |
+/// | Windows (WinUI 3) | **No effect in a Stack** (StackPanel does not hand out leftover space). Use [`Track::Fill`] in a `Grid` | `Stretch` for `HorizontalAlignment`/`VerticalAlignment` |
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Length {
-    /// 中身に合わせる (既定)。
+    /// Fit the content (default).
     #[default]
     Auto,
-    /// 論理ピクセルで固定する。
+    /// Fixed in logical pixels.
     Fixed(f64),
-    /// 親の余りを受け取って広がる。
+    /// Grow to take the parent's leftover space.
     Fill,
 }
 
 impl Length {
-    /// 固定長ならその値。
+    /// The value, if this is a fixed length.
     pub fn fixed_value(self) -> Option<f64> {
         match self {
             Length::Fixed(v) => Some(v),
@@ -48,25 +48,27 @@ impl Length {
     }
 }
 
-/// ウィジェット 1 つの大きさの指定。
+/// The size specification for one widget.
 ///
-/// 既定はすべて「中身に合わせる」で、指定した項目だけがネイティブ側に反映される。
+/// Everything defaults to "fit the content", and only the fields you set are
+/// applied on the native side.
 ///
-/// [`Length::Fill`] に上限 ([`Sizing::max_width`] / [`Sizing::max_height`]) を
-/// 付けると、上限は「通常時に確保したい大きさ」も兼ねる。**親が大きさを配れる
-/// ときは上限まで広がり、配れる分が足りなければ上限より小さくなる。** 中身の
-/// intrinsic size が当てにならないウィジェット (動画など) の表示欄の大きさは、
-/// この形で決める。
+/// Adding a maximum ([`Sizing::max_width`] / [`Sizing::max_height`]) to
+/// [`Length::Fill`] makes the maximum double as "the size you want under normal
+/// conditions". **When the parent can hand out space it grows up to the maximum,
+/// and when there is not enough it becomes smaller than the maximum.** Use this
+/// form to size the display area of widgets whose intrinsic size cannot be relied
+/// on (video, for example).
 ///
 /// ```
 /// # use naui_core::Sizing;
-/// // 幅は親いっぱい、高さは空間があれば 315px、狭ければそれ以下。
+/// // Full width; 315px high when there is room, less when it is tight.
 /// let sizing = Sizing::fill().max_height(315.0);
 /// ```
 ///
 /// ```
 /// # use naui_core::{Length, Sizing};
-/// // 幅は親いっぱい、高さは 200px、ただし幅は 120px 以上。
+/// // Full width and 200px high, but at least 120px wide.
 /// let sizing = Sizing::new()
 ///     .width(Length::Fill)
 ///     .height(Length::Fixed(200.0))
@@ -84,7 +86,7 @@ pub struct Sizing {
 }
 
 impl Sizing {
-    /// すべて「中身に合わせる」。
+    /// Everything "fits the content".
     pub const AUTO: Sizing = Sizing::new();
 
     pub const fn new() -> Self {
@@ -98,24 +100,24 @@ impl Sizing {
         }
     }
 
-    /// 幅・高さとも固定する。
+    /// Fixes both width and height.
     pub const fn fixed(width: f64, height: f64) -> Self {
         Self::new()
             .width(Length::Fixed(width))
             .height(Length::Fixed(height))
     }
 
-    /// 幅・高さとも親いっぱいに広げる。
+    /// Stretches both width and height to fill the parent.
     pub const fn fill() -> Self {
         Self::new().width(Length::Fill).height(Length::Fill)
     }
 
-    /// 幅だけ親いっぱいに広げる。
+    /// Stretches only the width to fill the parent.
     pub const fn fill_width() -> Self {
         Self::new().width(Length::Fill)
     }
 
-    /// 高さだけ親いっぱいに広げる。
+    /// Stretches only the height to fill the parent.
     pub const fn fill_height() -> Self {
         Self::new().height(Length::Fill)
     }
@@ -150,46 +152,47 @@ impl Sizing {
         self
     }
 
-    /// 最小の幅と高さをまとめて指定する。
+    /// Sets the minimum width and height together.
     pub const fn min_size(self, width: f64, height: f64) -> Self {
         self.min_width(width).min_height(height)
     }
 
-    /// 最大の幅と高さをまとめて指定する。
+    /// Sets the maximum width and height together.
     pub const fn max_size(self, width: f64, height: f64) -> Self {
         self.max_width(width).max_height(height)
     }
 }
 
-/// グリッドの 1 列 (または 1 行) の幅の決め方。
+/// How the width of one grid column (or row) is determined.
 ///
-/// | 値 | Web | Windows | macOS |
+/// | Value | Web | Windows | macOS |
 /// | --- | --- | --- | --- |
-/// | [`Track::Auto`] | `auto` | `GridLength` の `Auto` | NSGridView の既定 (中身に合わせる) |
-/// | [`Track::Fixed`] | `<n>px` | `GridLength` の `Pixel` | `NSGridColumn::setWidth` |
-/// | [`Track::Fill`] | `<w>fr` | `GridLength` の `Star` | 近似 (`Fill` 配置 + hugging priority) |
+/// | [`Track::Auto`] | `auto` | `Auto` of `GridLength` | NSGridView's default (fit the content) |
+/// | [`Track::Fixed`] | `<n>px` | `Pixel` of `GridLength` | `NSGridColumn::setWidth` |
+/// | [`Track::Fill`] | `<w>fr` | `Star` of `GridLength` | Approximated (`Fill` placement + hugging priority) |
 ///
-/// `Fill` の重みは「余った空間を何対何で分けるか」を表す。macOS の NSGridView には
-/// 重みの概念が無いため、重みの違いは反映されない。
+/// The weight of `Fill` expresses "in what ratio to split the leftover space".
+/// macOS's NSGridView has no notion of weights, so differing weights have no
+/// effect there.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Track {
-    /// 中身に合わせる (既定)。
+    /// Fit the content (default).
     #[default]
     Auto,
-    /// 論理ピクセルで固定する。
+    /// Fixed in logical pixels.
     Fixed(f64),
-    /// 余った空間を重みの比で分け合う。
+    /// Shares the leftover space in proportion to the weights.
     Fill(f64),
 }
 
 impl Track {
-    /// 重み 1 で余りを受け取る。
+    /// Takes leftover space with a weight of 1.
     pub const FILL: Track = Track::Fill(1.0);
 
-    /// 余りを分けるときの重み。`Fill` 以外は 0。
+    /// The weight used when splitting leftover space. 0 for anything other than `Fill`.
     ///
-    /// 0 以下の重みは 1 として扱う (`0fr` は何も受け取らないため、
-    /// 「広がってほしい」という指定の意図から外れる)。
+    /// Weights of 0 or less are treated as 1 (`0fr` would receive nothing, which goes
+    /// against the intent of asking it to grow).
     pub fn weight(self) -> f64 {
         match self {
             Track::Fill(w) if w > 0.0 => w,
@@ -203,26 +206,27 @@ impl Track {
     }
 }
 
-/// グリッド上の置き場所。左上が `(0, 0)`。
+/// A position on the grid. The top left is `(0, 0)`.
 ///
-/// マスの中では縦が中央ぞろえになる ([`Length::Fill`] を指定した子だけ
-/// マスいっぱいに広がる)。高さの違うものを同じ行に並べても上端でずれない。
+/// Within a cell, content is centered vertically (only children with
+/// [`Length::Fill`] stretch to fill the cell). Items of different heights in the
+/// same row do not end up misaligned at the top.
 ///
 /// ```
 /// # use naui_core::GridCell;
-/// // 2 列目・1 行目に置き、横 2 マス分を占める。
+/// // Placed in the 2nd column of the 1st row, spanning two cells horizontally.
 /// let cell = GridCell::new(1, 0).span(2, 1);
 /// assert_eq!(cell.column_span, 2);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GridCell {
-    /// 左から数えた列 (0 始まり)。
+    /// The column counted from the left (starting at 0).
     pub column: usize,
-    /// 上から数えた行 (0 始まり)。
+    /// The row counted from the top (starting at 0).
     pub row: usize,
-    /// 横に占めるマス数 (1 以上)。
+    /// The number of cells spanned horizontally (1 or more).
     pub column_span: usize,
-    /// 縦に占めるマス数 (1 以上)。
+    /// The number of cells spanned vertically (1 or more).
     pub row_span: usize,
 }
 
@@ -236,19 +240,19 @@ impl GridCell {
         }
     }
 
-    /// 占めるマス数を指定する。0 は 1 として扱う。
+    /// Sets how many cells to span. 0 is treated as 1.
     pub const fn span(mut self, column_span: usize, row_span: usize) -> Self {
         self.column_span = if column_span == 0 { 1 } else { column_span };
         self.row_span = if row_span == 0 { 1 } else { row_span };
         self
     }
 
-    /// この配置が必要とする列数。
+    /// The number of columns this placement needs.
     pub const fn columns_needed(&self) -> usize {
         self.column + self.column_span
     }
 
-    /// この配置が必要とする行数。
+    /// The number of rows this placement needs.
     pub const fn rows_needed(&self) -> usize {
         self.row + self.row_span
     }
@@ -260,15 +264,15 @@ impl Default for GridCell {
     }
 }
 
-/// スクロールバーの出し方。
+/// When scroll bars are shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScrollPolicy {
-    /// はみ出したときだけスクロールできる (既定)。
+    /// Scrollable only when the content overflows (default).
     #[default]
     Auto,
-    /// 常にスクロールできる (スクロールバーを出す)。
+    /// Always scrollable (scroll bars are shown).
     Always,
-    /// スクロールさせない。
+    /// Never scrolls.
     Never,
 }
 
@@ -278,15 +282,16 @@ impl ScrollPolicy {
     }
 }
 
-/// スクロールの位置と大きさ。単位は論理ピクセル。
+/// The scroll position and sizes, in logical pixels.
 ///
-/// `x` / `y` は、見えている範囲の左上が中身のどこにあるか。いちばん上
-/// (左) で 0、いちばん下 (右) で [`max_y`](Self::max_y) ([`max_x`](Self::max_x))。
-/// 見えている範囲 (`viewport_*`) はスクロールバーが場所を取るときはその分を
-/// 除いた大きさで、中身 (`content_*`) は見えている範囲より小さくならない。
+/// `x` / `y` is where in the content the top left of the visible area is. It is 0
+/// at the very top (left) and [`max_y`](Self::max_y) ([`max_x`](Self::max_x)) at
+/// the very bottom (right). The visible area (`viewport_*`) excludes the space
+/// scroll bars take up when they take up space, and the content (`content_*`) is
+/// never smaller than the visible area.
 ///
-/// 「末尾から何 px 以内なら追従する」のような判断はアプリ側で、
-/// [`distance_to_end`](Self::distance_to_end) などを使って行う。
+/// Decisions such as "follow along if within N px of the end" are up to the app,
+/// using [`distance_to_end`](Self::distance_to_end) and friends.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ScrollMetrics {
     pub x: f64,
@@ -298,35 +303,36 @@ pub struct ScrollMetrics {
 }
 
 impl ScrollMetrics {
-    /// 横へ送れる最大の位置。はみ出していなければ 0。
+    /// The furthest horizontal position. 0 if nothing overflows.
     pub fn max_x(&self) -> f64 {
         (self.content_width - self.viewport_width).max(0.0)
     }
 
-    /// 縦へ送れる最大の位置。はみ出していなければ 0。
+    /// The furthest vertical position. 0 if nothing overflows.
     pub fn max_y(&self) -> f64 {
         (self.content_height - self.viewport_height).max(0.0)
     }
 
-    /// 見えている範囲の下端から、中身の末尾 (いちばん下) までの距離。
-    /// 末尾が見えていれば 0。
+    /// The distance from the bottom of the visible area to the end (very bottom) of the
+    /// content. 0 if the end is visible.
     pub fn distance_to_end(&self) -> f64 {
         (self.max_y() - self.y).max(0.0)
     }
 }
 
-/// スクロールの行き先。バックエンドが `scroll_to` / `scroll_to_end` を
-/// 受けてから、レイアウトが済むまで覚えておくためのもの。
+/// Where to scroll to. Lets a backend remember a `scroll_to` / `scroll_to_end`
+/// request until layout has run.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ScrollTarget {
-    /// 指定した位置へ。
+    /// To the given position.
     To { x: f64, y: f64 },
-    /// 縦の末尾へ (横はそのまま)。
+    /// To the vertical end (horizontal position unchanged).
     End,
 }
 
 impl ScrollTarget {
-    /// いまの大きさで、実際に送る位置を決める。送れる範囲に丸める。
+    /// Decides the actual position to scroll to with the current sizes, clamped to the
+    /// scrollable range.
     pub fn resolve(self, metrics: &ScrollMetrics) -> (f64, f64) {
         let (x, y) = match self {
             Self::To { x, y } => (x, y),
@@ -339,7 +345,7 @@ impl ScrollTarget {
     }
 }
 
-/// NaN は 0 として扱う (`f64::clamp` は NaN をそのまま返すため)。
+/// Treats NaN as 0 (`f64::clamp` returns NaN unchanged).
 fn clamp_offset(value: f64, max: f64) -> f64 {
     if value.is_nan() {
         0.0

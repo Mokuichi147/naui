@@ -1,14 +1,15 @@
-//! GTK4 / libadwaita の実コントロールに対する動作確認。
+//! Behavior checks against real GTK4 / libadwaita controls.
 //!
-//! `emit_clicked` や `GtkAdjustment` の値変更など**ネイティブ側の操作**を
-//! 発生させ、Rust のクロージャへ届くこと・ネイティブの状態が変わることを
-//! 確かめる。大きさの指定は `gtk_widget_measure` の結果で確かめる。
+//! They trigger **native-side operations** such as `emit_clicked` or changing a
+//! `GtkAdjustment`'s value, and check that they reach Rust closures and that the
+//! native state changes. Size specifications are checked with the results of
+//! `gtk_widget_measure`.
 //!
-//! GTK4 はメインスレッドでしか触れないが、Rust の標準テストハーネスは
-//! 各テストを別スレッドで走らせる (`--test-threads=1` でも同じ)。
-//! そのため `harness = false` にして、自前のランナーをメインスレッドで回す。
+//! GTK4 can only be touched on the main thread, but Rust's standard test harness
+//! runs each test on a separate thread (even with `--test-threads=1`). So
+//! `harness = false` is set and a custom runner runs on the main thread.
 //!
-//! ディスプレイ (Wayland か X11) が要る。無い環境では `gtk_init` に失敗する。
+//! A display (Wayland or X11) is required. Without one, `gtk_init` fails.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -29,7 +30,7 @@ use naui_core::{
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
-/// テストケース 1 件。
+/// One test case.
 type Case = (&'static str, fn(&Ui) -> Result<()>);
 
 fn main() {
@@ -698,45 +699,45 @@ fn main() {
 }
 
 thread_local! {
-    /// そのテストで**確かめられなかったこと**の置き場 ([`skip`])。
+    /// Where **what the test could not verify** is recorded ([`skip`]).
     static SKIP_REASON: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-/// 実行環境の都合で確かめられなかったことを記録する。
+/// Records something that could not be verified because of the environment.
 ///
-/// 記録したテストは「成功」ではなく SKIP として数えて出力に残すが、
-/// macOS のテストと違って終了コードは失敗にしない。CI の Xvfb には
-/// ウィンドウマネージャがおらず、表示した後の最大化や全画面の頼みに
-/// 誰も応えないので、失敗にすると CI がいつも落ちてしまうため。
+/// A test with a record is counted as SKIP rather than success and left in the
+/// output, but unlike the macOS tests it does not make the exit code fail. CI's
+/// Xvfb has no window manager, so nobody honors maximize or fullscreen requests
+/// after showing, and failing would make CI fail every time.
 fn skip(reason: &str) {
     SKIP_REASON.with(|slot| *slot.borrow_mut() = Some(reason.to_string()));
 }
 
-/// 記録を取り出して空へ戻す。
+/// Takes out the record and resets it to empty.
 fn take_skip() -> Option<String> {
     SKIP_REASON.with(|slot| slot.borrow_mut().take())
 }
 
 // --------------------------------------------------------------- 小さな道具
 
-/// 「何回呼ばれ、最後に何が届いたか」を数えるための入れ物。
+/// A container for counting "how many times it was called and what arrived last".
 fn recorder<T: Clone + 'static>() -> (Rc<RefCell<Vec<T>>>, impl FnMut(T) + 'static) {
     let log = Rc::new(RefCell::new(Vec::new()));
     let sink = log.clone();
     (log, move |value| sink.borrow_mut().push(value))
 }
 
-/// 幅の (最小, 自然な大きさ)。
+/// The (minimum, natural) width.
 fn measure_width(widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
     let (min, nat, _, _) = widget.as_ref().measure(gtk::Orientation::Horizontal, -1);
     (min, nat)
 }
 
-/// 印の位置を決めるもとになった数値。
+/// The numbers the indicator position was based on.
 ///
-/// 答えはフォントの計量で変わるので、落ちたときに環境の違い (日本語を持つ
-/// フォントが無い、既定のフォントが小さくて印を下げる余地が無い、など) を
-/// 見分けられるようにする。
+/// The answer depends on font metrics, so this helps tell environment differences
+/// apart when it fails (no font with Japanese glyphs, a default font so small there
+/// is no room to lower the indicator, and so on).
 fn indicator_metrics(button: &gtk::CheckButton, indicator: &gtk::Widget) -> String {
     let Some(label) = indicator.next_sibling().and_downcast::<gtk::Label>() else {
         return "ラベルが無い".to_owned();
@@ -764,19 +765,19 @@ fn indicator_metrics(button: &gtk::CheckButton, indicator: &gtk::Widget) -> Stri
     )
 }
 
-/// 高さの (最小, 自然な大きさ)。
+/// The (minimum, natural) height.
 fn measure_height(widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
     let (min, nat, _, _) = widget.as_ref().measure(gtk::Orientation::Vertical, -1);
     (min, nat)
 }
 
-/// 幅を決めたときの高さの (最小, 自然な大きさ)。
+/// The (minimum, natural) height for a given width.
 fn measure_height_for(widget: &impl IsA<gtk::Widget>, width: i32) -> (i32, i32) {
     let (min, nat, _, _) = widget.as_ref().measure(gtk::Orientation::Vertical, width);
     (min, nat)
 }
 
-/// ウィジェットがコンテナへ入るときの入れ物 (`SizeBin`)。
+/// The container (`SizeBin`) a widget is wrapped in when put into a container.
 fn bin_of(widget: &dyn Widget) -> gtk::Widget {
     widget
         .native_widget()
@@ -784,10 +785,11 @@ fn bin_of(widget: &dyn Widget) -> gtk::Widget {
         .expect("SizeBin に包まれている")
 }
 
-/// ウィジェットの中にある `GtkLabel` を、入れ子をたどって前から順に集める。
+/// Collects the `GtkLabel`s inside a widget in order, descending through nesting.
 ///
-/// 行の中身は naui の `Stack` と `Label` で組むので、文字は行の直下には無い。
-/// ここで見たいのは文字の並びだけなので、階層は問わない。
+/// Row contents are built from naui's `Stack` and `Label`, so the text is not
+/// directly under the row. Only the sequence of text matters here, so the depth
+/// does not.
 fn labels_in(widget: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
     let mut found = Vec::new();
     for child in children(widget) {
@@ -799,7 +801,7 @@ fn labels_in(widget: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
     found
 }
 
-/// `GtkBox` などの子を順に集める。
+/// Collects the children of a `GtkBox` and the like, in order.
 fn children(widget: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {
     let mut out = Vec::new();
     let mut child = widget.as_ref().first_child();
@@ -810,7 +812,7 @@ fn children(widget: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {
     out
 }
 
-/// 1x1 の PNG。画像の読み込みを実ファイルで確かめるために書き出す。
+/// A 1x1 PNG. Written out to check image loading with a real file.
 const PNG_1X1: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
@@ -889,7 +891,7 @@ fn checkbox_set_is_silent(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// スイッチは `GtkSwitch` そのもので、ラベルはとなりへ並ぶ。
+/// The switch is a `GtkSwitch` itself, with the label placed next to it.
 fn toggle_switches_and_notifies(ui: &Ui) -> Result<()> {
     let toggle = ui.toggle("通知を受け取る")?;
     let (log, sink) = recorder::<bool>();
@@ -936,9 +938,9 @@ fn toggle_set_is_silent(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 描画面は `GtkDrawingArea` で、`on_draw` が記録した命令を cairo で塗る。
-/// ウィジェットのスナップショットを cairo の画像へ描いて、塗った矩形の中と
-/// 外の画素を読む。
+/// The drawing surface is a `GtkDrawingArea`, and the commands recorded by
+/// `on_draw` are painted with cairo. The widget's snapshot is drawn into a cairo
+/// image, and pixels inside and outside the painted rectangle are read.
 fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     canvas.set_sizing(
@@ -1007,18 +1009,19 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ポインターの押下・移動・解放が、面の左上を原点にした位置で届く。
+/// Pointer presses, moves and releases arrive with positions relative to the
+/// surface's top left.
 ///
-/// GTK4 には、ウィジェットへポインターのイベントを流し込む公開 API が無い
-/// (`gtk_test_widget_click` は GTK4 で無くなり、`GdkEvent` はアプリからは
-/// 作れない)。そこで、付いているコントローラーの組み合わせを確かめたうえで、
-/// そのシグナルを起こして通知の写りを見る。
+/// GTK4 has no public API for feeding pointer events to a widget
+/// (`gtk_test_widget_click` is gone in GTK4, and apps cannot create `GdkEvent`s).
+/// So after checking which controllers are attached, their signals are emitted to
+/// see how the notifications are mapped.
 ///
-/// - `GtkGestureClick`: 押した瞬間に `pressed` を出す (ドラッグの判定を待たない)。
-///   ボタンを区別しない設定
-/// - `GtkGestureDrag`: 押している間の移動。面の外へ出ても届く
-/// - `GtkEventControllerMotion`: 押していない間の移動 (ホバー)。押している間は
-///   `drag-update` と二重にならないよう黙る
+/// - `GtkGestureClick`: emits `pressed` at the moment of pressing (without waiting
+///   for drag detection). Set not to distinguish buttons
+/// - `GtkGestureDrag`: movement while pressed. Delivered even outside the surface
+/// - `GtkEventControllerMotion`: movement while not pressed (hover). Silent while
+///   pressed so as not to duplicate `drag-update`
 fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     let (log, sink) = recorder::<naui_core::PointerEvent>();
@@ -1097,8 +1100,9 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ホイールは `GtkEventControllerScroll` から、刻みを論理ピクセルに直して届く。
-/// 位置は最後にホバーで見た位置で、`Handled` を返すと伝播を止める。
+/// The wheel arrives from `GtkEventControllerScroll`, with notches converted to
+/// logical pixels. The position is the one last seen while hovering, and returning
+/// `Handled` stops propagation.
 fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     let (log, mut sink) = recorder::<naui_core::PointerEvent>();
@@ -1184,10 +1188,12 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 外側の `GtkScrolledWindow` は捕捉フェーズで量の履歴をため、指を離すと
-/// 子が `Handled` で止めていても慣性スクロールを始める。最後を `Handled` で
-/// 受けていたら、`scroll-end` で `kinetic-scrolling` を切って戻し、その慣性を
-/// 取り消す (戻すので設定は変わらない)。最後を外側へ回したなら触らない。
+/// The outer `GtkScrolledWindow` accumulates a history of amounts in the capture
+/// phase and starts momentum scrolling when the fingers lift, even if the child
+/// stopped them with `Handled`. If the last one was received with `Handled`,
+/// `scroll-end` turns `kinetic-scrolling` off and back on to cancel that momentum
+/// (turning it back on leaves the setting unchanged). If the last one was passed
+/// outward, it is left alone.
 fn canvas_cancels_outer_kinetic_after_handled(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     let response = Rc::new(Cell::new(EventResponse::Handled));
@@ -1238,7 +1244,8 @@ fn canvas_cancels_outer_kinetic_after_handled(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 色ピッカーは `GtkColorDialogButton` そのもので、値はネイティブと往復する。
+/// The color picker is a `GtkColorDialogButton` itself, and its value round-trips
+/// with the native side.
 fn color_picker_round_trips(ui: &Ui) -> Result<()> {
     let picker = ui.color_picker()?;
     let (log, sink) = recorder::<Color>();
@@ -1291,10 +1298,10 @@ fn color_picker_set_is_silent(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// GTK4 は印をラベルの「行の箱」の中心へ置くが、日本語の行は ascent が
-/// 大きく取られるぶん字面が下に寄る。naui は印へ上マージンを足して字面の
-/// 中心へそろえ直す。マージンは行の箱に収まる範囲までなので、そろえても
-/// チェックボックスの高さは変わらない。
+/// GTK4 places the indicator at the center of the label's "line box", but Japanese
+/// lines get a larger ascent, which pushes the glyphs down. naui adds a top margin
+/// to the indicator to re-align it with the glyph center. The margin stays within
+/// the line box, so the check box's height does not change.
 fn checkbox_indicator_is_aligned_to_text(ui: &Ui) -> Result<()> {
     let checkbox = ui.checkbox("項目を有効にする")?;
     let native: gtk::CheckButton = checkbox.native_widget().downcast().expect("GtkCheckButton");
@@ -1562,7 +1569,7 @@ fn radio_group_items_and_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ネイティブのクリック経路でも、点くのは常に 1 つだけ。
+/// Even through the native click path, exactly one is ever on.
 fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
     let radio = ui.radio_group()?;
     radio.set_items(&["赤", "緑", "青"]);
@@ -1618,7 +1625,8 @@ fn radio_group_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 数値入力は `GtkSpinButton` と値をやり取りし、操作を通知する。
+/// Number input exchanges values with the `GtkSpinButton` and notifies on user
+/// actions.
 fn number_input_value_round_trips(ui: &Ui) -> Result<()> {
     let number = ui.number_input(3.0)?;
     assert_eq!(number.value(), 3.0);
@@ -1649,7 +1657,8 @@ fn number_input_value_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 小数桁・刻み・範囲は `GtkSpinButton` にも naui の値にも効く。
+/// Decimal places, step and range apply both to the `GtkSpinButton` and to naui's
+/// value.
 fn number_input_applies_the_spec(ui: &Ui) -> Result<()> {
     let number = ui.number_input(0.0)?;
     number.set_decimals(2);
@@ -1677,7 +1686,8 @@ fn number_input_applies_the_spec(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 打鍵の時点で読める値は通知し、確定 (`update`) で表示と値がそろう。
+/// Values readable at the time of typing are notified, and confirmation (`update`)
+/// brings the display and the value into line.
 fn number_input_notifies_on_typing(ui: &Ui) -> Result<()> {
     let number = ui.number_input(0.0)?;
     number.set_range(None, Some(100.0));
@@ -1708,9 +1718,10 @@ fn number_input_notifies_on_typing(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 数値入力は、指定された幅に収まり、欄とボタンの幅より下へは潰れない。
+/// Number input fits in the given width and is not squashed below the width of its
+/// field and buttons.
 fn number_input_keeps_its_buttons_inside(ui: &Ui) -> Result<()> {
-    /// 数値の欄によくある指定 (論理ピクセル)。
+    /// A common width for number fields (logical pixels).
     const GIVEN: i32 = 140;
 
     let number = ui.number_input(120.0)?;
@@ -1747,7 +1758,7 @@ fn number_input_keeps_its_buttons_inside(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 検索入力は `GtkSearchEntry` そのもので、文字列は往復する。
+/// Search input is a `GtkSearchEntry` itself, and text round-trips.
 fn search_input_round_trips(ui: &Ui) -> Result<()> {
     let search = ui.search_input()?;
     let native: gtk::SearchEntry = search.native_widget().downcast().expect("GtkSearchEntry");
@@ -1780,7 +1791,8 @@ fn search_input_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 確定の通知は `activate` (Enter) のときだけで、打っている間は飛ばない。
+/// The confirmation notification comes only on `activate` (Enter), not while
+/// typing.
 fn search_input_notifies_on_activate(ui: &Ui) -> Result<()> {
     let search = ui.search_input()?;
     let native: gtk::SearchEntry = search.native_widget().downcast().expect("GtkSearchEntry");
@@ -1814,8 +1826,8 @@ fn search_input_notifies_on_activate(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 1 行入力とパスワード入力も、検索欄と同じく `activate` (Enter) で確定を
-/// 知らせる。読み取り専用の間は数えない。
+/// Single-line input and password input also report confirmation on `activate`
+/// (Enter), like the search field. Not counted while read-only.
 fn text_inputs_notify_on_activate(ui: &Ui) -> Result<()> {
     let input = ui.text_input("ねこ")?;
     let password = ui.password_input()?;
@@ -1850,7 +1862,7 @@ fn text_inputs_notify_on_activate(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Enter は値を確定させてから (`gtk_spin_button_update` のあとで) 知らせる。
+/// Enter reports after the value is confirmed (after `gtk_spin_button_update`).
 fn number_input_commits_before_submitting(ui: &Ui) -> Result<()> {
     let number = ui.number_input(5.0)?;
     number.set_range(None, Some(100.0));
@@ -1883,7 +1895,7 @@ fn number_input_commits_before_submitting(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// パスワード入力は `GtkPasswordEntry` そのもので、文字列は往復する。
+/// Password input is a `GtkPasswordEntry` itself, and text round-trips.
 fn password_input_round_trips(ui: &Ui) -> Result<()> {
     let password = ui.password_input()?;
     let native: gtk::PasswordEntry = password
@@ -2236,13 +2248,14 @@ fn fill_clips_what_it_cannot_fit(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 幅いっぱいの入力欄が、入りきらない幅の行に置かれたとき。
+/// When a full-width field is placed in a row too narrow for it.
 ///
-/// `Fill` の軸は最小を 0 として申告するので、GTK4 は中身が縮められる
-/// 幅より狭い場所を配ってくる。そのまま渡すと `GtkEntry` が「配られた幅
-/// から枠の分を引いた」負の幅を中の `GtkText` へ渡してしまい、GTK4 が
-/// 警告を出して中身が描かれなくなる (ウィンドウを縮めたときに起きる)。
-/// 中身は最小のまま置き、はみ出した分は `overflow` で隠す。
+/// Axes with `Fill` report a minimum of 0, so GTK4 allots less space than the
+/// content can shrink to. Passing that on as is makes `GtkEntry` pass a negative
+/// width ("the allotted width minus its border") to the inner `GtkText`, and GTK4
+/// warns and stops drawing the content (this happens when the window is shrunk).
+/// The content is placed at its minimum, and whatever overflows is hidden with
+/// `overflow`.
 fn a_narrow_allocation_does_not_squash_the_content(ui: &Ui) -> Result<()> {
     let row = ui.stack(Orientation::Horizontal)?;
     row.set_sizing(Sizing::fill_width());
@@ -2440,9 +2453,10 @@ fn scroll_keeps_child_and_policy(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `GtkScrolledWindow` の `GtkViewport` は、既定では場所が足りないときに
-/// 中身を最小の大きさまで潰す。高さを指定しない `List` は最小 (1 行分) と
-/// 自然な大きさ (全行) が違うので、送れる向きでは自然な大きさで置く。
+/// By default, a `GtkScrolledWindow`'s `GtkViewport` squashes the content to its
+/// minimum size when there is not enough room. A `List` without a height has a
+/// minimum (one row) different from its natural size (all rows), so in scrollable
+/// directions it is placed at its natural size.
 fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_sizing(Sizing::fill_width());
@@ -2475,7 +2489,7 @@ fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 縦に長い中身を載せたスクロールを、高さ 100 のウィンドウに置く。
+/// Puts a scroll view holding tall content into a window 100 high.
 fn tall_scroll(
     ui: &Ui,
     rows: usize,
@@ -2492,7 +2506,8 @@ fn tall_scroll(
     Ok((window, scroll, pane))
 }
 
-/// 頼んだ行き先を忘れるまで (次のレイアウトの後まで) フレームを進める。
+/// Advances frames until the requested destination is forgotten (after the next
+/// layout).
 fn settle(scroll: &naui_gtk::Scroll) {
     for _ in 0..3 {
         tick(&scroll.native_widget());
@@ -2531,7 +2546,8 @@ fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// チャットのように「足してから末尾へ」を、レイアウトを待たずに続けて呼ぶ。
+/// Calls "append, then scroll to the end", as in a chat, back to back without
+/// waiting for layout.
 fn scroll_to_end_after_appending(ui: &Ui) -> Result<()> {
     let (window, scroll, pane) = tall_scroll(ui, 20)?;
     window.show();
@@ -2566,8 +2582,9 @@ fn scroll_to_end_before_shown(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 一度出したスクロールを裏のタブに回し、隠れている間に足して末尾送りを
-/// 頼む。隠れている間もフレームは進むが、行き先は戻すまで覚えている。
+/// Moves a scroll view that has been shown once into a background tab, then appends
+/// and requests scrolling to the end while hidden. Frames keep advancing while
+/// hidden, but the destination is remembered until it is shown again.
 fn scroll_to_end_in_hidden_tab(ui: &Ui) -> Result<()> {
     let window = ui.window("タブ", 200.0, 140.0)?;
     let tabs = ui.tabs()?;
@@ -2731,11 +2748,11 @@ fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `set_style` / `set_color` は libadwaita のスタイルクラスへ写り、
-/// 実際に文字の大きさが変わる。
+/// `set_style` / `set_color` map to libadwaita style classes, and the text size
+/// actually changes.
 ///
-/// naui 側で級数も色も持たないので、確かめるのは「どのクラスが付いているか」と
-/// 「テーマがそれをどう描くか」の 2 つ。
+/// naui holds neither point sizes nor colors, so what is checked is "which classes
+/// are attached" and "how the theme draws them".
 fn label_style_and_color_map_to_style_classes(ui: &Ui) -> Result<()> {
     let label = ui.label("見出し")?;
     let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
@@ -2821,11 +2838,13 @@ fn label_style_and_color_map_to_style_classes(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 折り返す中身を包んだ入れ物は、「幅が決まってから高さが決まる」と申告する。
+/// A container wrapping wrapping content reports that "the height is decided once
+/// the width is decided".
 ///
-/// これが伝わらないと、親は幅を渡さずに高さを尋ね、**折り返す前の 1 行ぶん**
-/// しか高さを配らない。狭い区画 (`SplitView` など) に入れた説明文が、折り返した
-/// 分だけはみ出して重なって見えるのはこれが原因。
+/// Without this, the parent asks for the height without passing a width and allots
+/// only **the height of one unwrapped line**. That is why descriptive text placed
+/// in a narrow pane (a `SplitView` and the like) appeared to overflow and overlap by
+/// the wrapped amount.
 fn wrapping_child_is_measured_by_width(ui: &Ui) -> Result<()> {
     let text = "これはとても長い説明の文章で、狭い幅には 1 行で収まりません。";
     let label = ui.label(text)?;
@@ -3048,7 +3067,7 @@ fn window_has_a_header_bar(ui: &Ui) -> Result<()> {
 
 // -------------------------------------------------------------- ナビゲーション
 
-/// 項目のトグルボタンだけを取り出す。
+/// Takes out only the items' toggle buttons.
 fn toggle_buttons(widget: &dyn Widget) -> Vec<gtk::ToggleButton> {
     fn walk(widget: &gtk::Widget, out: &mut Vec<gtk::ToggleButton>) {
         let mut child = widget.first_child();
@@ -3332,7 +3351,7 @@ fn tabs_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// タブは後から外せる。選択の寄せ直しは通知しない。
+/// Tabs can be removed later. Reselection is not notified.
 fn tabs_remove_and_clear(ui: &Ui) -> Result<()> {
     let tabs = ui.tabs()?;
     let first = ui.label("1 枚目")?;
@@ -3383,7 +3402,7 @@ fn tabs_remove_and_clear(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Stack` は後から子を差し込み、外し、空にできる。
+/// A `Stack` can insert, remove and clear children later.
 fn stack_inserts_and_removes_children(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     let first = ui.label("A")?;
@@ -3429,7 +3448,7 @@ fn stack_inserts_and_removes_children(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Grid` はマスを指定して子を外せる。
+/// A `Grid` can remove children by cell.
 fn grid_removes_children_by_cell(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     let name = ui.label("名前")?;
@@ -3547,11 +3566,11 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行の中身は、行の幅いっぱいに置かれる。
+/// A row's content is placed across the row's full width.
 ///
-/// 中身を包む `SizeBin` の既定は `Center` (中身の大きさに合わせる) なので、
-/// そのまま `GtkListBoxRow` へ入れると文字が行の真ん中へ寄ってしまう。
-/// 大きさを配るのは GTK4 なので、画面に出して配られた幅で見る。
+/// The `SizeBin` wrapping the content defaults to `Center` (fit the content), so
+/// putting it into a `GtkListBoxRow` as is would center the text in the row. GTK4
+/// allots the sizes, so it is shown on screen and checked with the allotted width.
 fn list_row_content_fills_the_row(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_sizing(Sizing::fill());
@@ -3579,10 +3598,12 @@ fn list_row_content_fills_the_row(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行の文字は行の幅いっぱいに広がり、あふれた分は省略記号で切られる。
+/// A row's text spreads to the full width of the row, and overflow is cut off with
+/// an ellipsis.
 ///
-/// `GtkLabel` は `PangoEllipsizeMode::End` で末尾を切るが、**それが効くのは
-/// 幅が決まってから**。内容の幅のままだと、長いラベルが行を押し広げる。
+/// `GtkLabel` cuts the end with `PangoEllipsizeMode::End`, but **that works only
+/// once the width is decided**. At the content's width, a long label would push the
+/// row wider.
 fn list_long_text_stays_inside_the_row(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     let long = "これは行の幅にはとても収まらない、ずいぶん長いラベルの文字列です";
@@ -3639,7 +3660,7 @@ fn list_auto_height_follows_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 設定画面向けの行は、ラベルだけでなく任意のレイアウトとコントロールを持てる。
+/// Rows for settings screens can hold any layout and controls, not just labels.
 fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     let content = ui.stack(Orientation::Horizontal)?;
     content.set_spacing(8.0);
@@ -3689,10 +3710,10 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Ui` は clone できるので、コールバックの中からでもウィジェットを作れる。
+/// `Ui` can be cloned, so widgets can be created even inside callbacks.
 ///
-/// 押されたときに 1 行増やす画面では、通知の中で行の中身を組み立てて
-/// `set_rows` へ渡すことになる。
+/// A screen that adds a row on each click builds the row's content inside the
+/// notification and passes it to `set_rows`.
 fn ui_clone_builds_rows_from_a_callback(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     // 行は積み上げていくので、アプリ側で並びを持つ。
@@ -3737,19 +3758,19 @@ fn ui_clone_builds_rows_from_a_callback(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行そのものが押されたことがクロージャへ届く。
+/// A click on the row itself reaches the closure.
 ///
-/// 行内のボタンやチェックボックスは自分でクリックを受け取るので、
-/// GTK 側でも行の activation とは二重に発火しない。
-/// マウスで行を押したときに `GtkListBox` が出す通知。
+/// Buttons and check boxes inside the row receive their own clicks, so on the GTK
+/// side too they do not fire twice together with the row's activation.
+/// The notification `GtkListBox` emits when a row is clicked with the mouse.
 ///
-/// GTK4 の `GtkGestureClick` は `row-activated` を出すだけで、
-/// `GtkListBoxRow::activate` (キーボード側) は通らない。
+/// GTK4's `GtkGestureClick` only emits `row-activated` and does not go through
+/// `GtkListBoxRow::activate` (the keyboard side).
 fn activate_row(list: &gtk::ListBox, row: &gtk::ListBoxRow) {
     list.emit_by_name::<()>("row-activated", &[row]);
 }
 
-/// 行に付いた、指定のボタンを受ける `GtkGestureClick`。
+/// The `GtkGestureClick` attached to the row that receives the given button.
 fn row_gesture(row: &gtk::ListBoxRow, button: u32) -> gtk::GestureClick {
     let controllers = row.observe_controllers();
     (0..controllers.n_items())
@@ -3759,7 +3780,8 @@ fn row_gesture(row: &gtk::ListBoxRow, button: u32) -> gtk::GestureClick {
         .expect("行のクリックを受けるジェスチャー")
 }
 
-/// 起動と文脈メニューを確かめるための、行が並んだリストを窓に出す。
+/// Shows a list with rows in a window, for checking activation and the context
+/// menu.
 fn shown_list_for_events(ui: &Ui) -> Result<(naui_gtk::Window, naui_gtk::List)> {
     let window = ui.window("行の操作", 320.0, 240.0)?;
     let list = ui.list()?;
@@ -3778,7 +3800,7 @@ fn shown_list_for_events(ui: &Ui) -> Result<(naui_gtk::Window, naui_gtk::List)> 
     Ok((window, list))
 }
 
-/// ダブルクリックと、行にフォーカスがある状態の Enter が `on_row_activate` へ届く。
+/// Double-clicks, and Enter while a row has focus, reach `on_row_activate`.
 fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
     let (window, list) = shown_list_for_events(ui)?;
     let (log, sink) = recorder::<usize>();
@@ -3833,8 +3855,8 @@ fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 右クリックが `on_context_menu` へ届き、位置は `PopupMenu::open_at(&list, ..)`
-/// と同じ座標 (`GtkListBox` の座標) になる。
+/// Right-clicks reach `on_context_menu`, with positions in the same coordinates as
+/// `PopupMenu::open_at(&list, ..)` (the `GtkListBox`'s coordinates).
 fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
     let (window, list) = shown_list_for_events(ui)?;
     let (log, mut sink) = recorder::<(usize, Point)>();
@@ -4064,7 +4086,7 @@ fn list_callback_can_touch_the_list(ui: &Ui) -> Result<()> {
 
 // ----------------------------------------------------------------- テーブル
 
-/// 見出しの `GtkBox` と、行が並ぶ `GtkListBox`。
+/// The headings' `GtkBox` and the `GtkListBox` the rows are in.
 fn table_parts(table: &naui_gtk::Table) -> (gtk::Box, gtk::ListBox) {
     let root: gtk::Box = table.native_widget().downcast().expect("GtkBox");
     let header = root
@@ -4075,7 +4097,7 @@ fn table_parts(table: &naui_gtk::Table) -> (gtk::Box, gtk::ListBox) {
     (header, table.native_list_box())
 }
 
-/// 中身の `GtkLabel` を並び順に集める。
+/// Collects the `GtkLabel`s inside, in order.
 fn table_labels(container: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
     children(container)
         .into_iter()
@@ -4083,8 +4105,8 @@ fn table_labels(container: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
         .collect()
 }
 
-/// 組み立てる行 (`TableCells`) でも、行数が多いときは見えている分だけを作り、
-/// 見出しの並べ替えもそのまま働く。
+/// Even with built rows (`TableCells`), only the visible rows are created when
+/// there are many, and sorting by heading still works.
 fn table_builder_rows_scale_and_sort(ui: &Ui) -> Result<()> {
     const ROWS: usize = 20_000;
     let built = Rc::new(Cell::new(0usize));
@@ -4165,7 +4187,8 @@ fn table_builder_rows_scale_and_sort(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 組み立てる行でも、選べるかどうかを行を作らずに答えられる。
+/// Even with built rows, whether a row can be selected is answered without creating
+/// it.
 fn table_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
     const ROWS: usize = 10_000;
     const LOCKED: usize = 5_000;
@@ -4213,10 +4236,12 @@ fn table_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行を絞っている表で、セルのウィジェットの幅が列の幅を動かさない。
+/// In a table whose rows are limited, the width of widgets in cells does not move
+/// the column width.
 ///
-/// 列の幅は組み立ててある行だけから決まるので、中身の自然な幅がそのまま
-/// 列の幅になると、スクロールで別の行が出るたびに列が動いてしまう。
+/// Column widths are decided only by the built rows, so if the content's natural
+/// width became the column width, the columns would move every time scrolling shows
+/// other rows.
 fn table_widget_cells_keep_the_column_width(ui: &Ui) -> Result<()> {
     const ROWS: usize = 5_000;
     let table = ui.table()?;
@@ -4267,10 +4292,10 @@ fn table_widget_cells_keep_the_column_width(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行が多い表でも、見出しを押した並べ替えはそのまま働く。
+/// Even in a table with many rows, sorting by clicking a heading still works.
 ///
-/// 並べ替えるのはアプリなので、通知を受けて `set_rows` で渡し直したものが、
-/// 画面に出ている行へ反映されることまで確かめる。
+/// Sorting is the app's job, so this checks that what is passed again with
+/// `set_rows` after the notification is reflected in the rows on screen.
 fn table_sorting_works_while_windowed(ui: &Ui) -> Result<()> {
     const ROWS: usize = 10_000;
     let table = ui.table()?;
@@ -4324,8 +4349,9 @@ fn table_sorting_works_while_windowed(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行数が多い表では、`GtkListBoxRow` を作るのは画面に出ている分だけになる。
-/// それでもスクロールできる高さは全行分あり、スクロールすると中身が入れ替わる。
+/// In a table with many rows, `GtkListBoxRow`s are created only for the rows on
+/// screen. The scrollable height still covers all rows, and scrolling swaps the
+/// contents.
 fn table_builds_only_the_visible_rows(ui: &Ui) -> Result<()> {
     const ROWS: usize = 20_000;
     let table = ui.table()?;
@@ -4397,8 +4423,8 @@ fn table_builds_only_the_visible_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// セルにウィジェットを置ける。行のクリックは activation になり、
-/// 選べない行は選択だけが起きない。
+/// Widgets can be placed in cells. Clicking a row becomes an activation, and for
+/// unselectable rows only the selection does not happen.
 fn table_widget_cells_are_native(ui: &Ui) -> Result<()> {
     let (log, sink) = recorder::<usize>();
     let pressed = Rc::new(Cell::new(0));
@@ -4459,7 +4485,7 @@ fn table_widget_cells_are_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// その widget を載せている `GtkScrolledWindow` を、親をたどって探す。
+/// Finds the `GtkScrolledWindow` holding the widget by walking up its parents.
 fn scroller_of(widget: &impl IsA<gtk::Widget>) -> Option<gtk::ScrolledWindow> {
     let mut parent = widget.as_ref().parent();
     while let Some(current) = parent {
@@ -4471,7 +4497,7 @@ fn scroller_of(widget: &impl IsA<gtk::Widget>) -> Option<gtk::ScrolledWindow> {
     None
 }
 
-/// 表の中からボタンを探す。
+/// Finds a button inside the table.
 fn find_button(widget: &gtk::Widget) -> Option<gtk::Button> {
     if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
         return Some(button);
@@ -4481,7 +4507,7 @@ fn find_button(widget: &gtk::Widget) -> Option<gtk::Button> {
         .find_map(|child| find_button(&child))
 }
 
-/// 行の高さを決めると、その高さで詰め物も引き直される。
+/// Fixing the row height redraws the spacers at that height too.
 fn table_row_height_can_be_fixed(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&TableColumn::list(["番号"]));
@@ -4507,7 +4533,7 @@ fn table_row_height_can_be_fixed(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 1 行ぶんのセルの文字。
+/// The text of the cells in one row.
 fn table_cells(row: &gtk::Widget) -> Vec<String> {
     let content = row
         .clone()
@@ -4737,11 +4763,12 @@ fn tree_box_of(tree: &naui_gtk::Tree) -> gtk::ListBox {
     tree.native_widget().downcast().expect("GtkListBox")
 }
 
-/// ツリーの行も、開閉ボタンの右をぜんぶ文字の領域として使う。
+/// Tree rows also use everything right of the expander button as the text area.
 ///
-/// `SizeBin` の既定は中身の大きさに合わせる寄せ方なので、そのままでは
-/// 文字が行の残り幅を使わない。幅が決まらないと `PangoEllipsizeMode::End` も
-/// 効かず、長いラベルが行を押し広げる (`List` と同じ理由)。
+/// `SizeBin`'s default alignment fits the content, so as is the text would not use
+/// the rest of the row's width. Without a decided width, `PangoEllipsizeMode::End`
+/// does not work either, and a long label pushes the row wider (the same reason as
+/// `List`).
 fn tree_row_content_fills_the_row(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_sizing(Sizing::fill());
@@ -4792,7 +4819,7 @@ fn tree_row_content_fills_the_row(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// テストで使う木。src (2 つの葉) と docs (guide > intro.md)。
+/// The tree used in tests: src (two leaves) and docs (guide > intro.md).
 fn sample_tree() -> Vec<TreeItem> {
     vec![
         TreeItem::new("src").children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
@@ -4800,10 +4827,10 @@ fn sample_tree() -> Vec<TreeItem> {
     ]
 }
 
-/// いま見えている行の文字を上から順に返す。
+/// Returns the text of the currently visible rows, from the top.
 ///
-/// 行は全項目ぶん作り置きしてあり、閉じた枝の中は `set_visible(false)` で
-/// 隠れている。
+/// Rows are built in advance for every item, and those inside collapsed branches are
+/// hidden with `set_visible(false)`.
 fn tree_labels(tree: &naui_gtk::Tree) -> Vec<String> {
     children(&tree_box_of(tree))
         .into_iter()
@@ -4819,9 +4846,10 @@ fn tree_labels(tree: &naui_gtk::Tree) -> Vec<String> {
         .collect()
 }
 
-/// 行に置かれた開閉ボタン。葉の行には無い。
+/// The expander button placed in a row. Leaf rows have none.
 ///
-/// `index` は**全項目**を深さ優先で並べたときの位置 (見えていない行も数える)。
+/// `index` is the position when **every item** is laid out depth-first (invisible
+/// rows count too).
 fn tree_twisty(tree: &naui_gtk::Tree, index: i32) -> Option<gtk::Button> {
     let row = tree_box_of(tree).row_at_index(index)?;
     let line = row.child()?;
@@ -5190,10 +5218,10 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 保存はボタンとして構成され、設定を保つ。
+/// Saving is set up as a button and keeps its settings.
 ///
-/// `GtkFileDialog` の保存は表示するまで中身を読めないので、
-/// **ボタンの実体と設定の保持まで**を確かめる。
+/// `GtkFileDialog`'s save cannot be inspected until shown, so this checks **up to
+/// the real button and that the settings are kept**.
 fn file_saver_configuration(ui: &Ui) -> Result<()> {
     let saver = ui.file_saver("保存する")?;
     assert_eq!(saver.file_name(), "", "既定の名前は空 (GTK に任せる)");
@@ -5228,7 +5256,7 @@ fn file_saver_configuration(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// トーストの設定が `AdwToast` へ届き、消すと外れること。
+/// The toast's settings reach the `AdwToast`, and dismissing removes it.
 fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 320.0, 200.0)?;
     let content = ui.stack(Orientation::Vertical)?;
@@ -5274,7 +5302,7 @@ fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 操作ボタンと消滅が、それぞれのクロージャへ届くこと。
+/// The action button and dismissal each reach their closures.
 fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 320.0, 200.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
@@ -5317,7 +5345,7 @@ fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 新しいトーストが前のものを置き換え、置き換えられたほうは通知しないこと。
+/// A new toast replaces the previous one, and the replaced one does not notify.
 fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 320.0, 200.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
@@ -5467,8 +5495,8 @@ fn theme_switch(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ツールバーは区切りを含めた並びで `GtkBox` に載り、区切りのところは
-/// ボタンを持たない。
+/// The toolbar is placed in a `GtkBox` in the sequence including separators, and
+/// separators have no button.
 fn toolbar_items_map_to_native(ui: &Ui) -> Result<()> {
     let toolbar = ui.toolbar()?;
     assert!(toolbar.is_empty());
@@ -5539,7 +5567,7 @@ fn toolbar_items_map_to_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 押されたインデックスは、区切りを含めた並びの位置で届く。
+/// The clicked index arrives as the position in the sequence including separators.
 fn toolbar_activation_notifies(ui: &Ui) -> Result<()> {
     let toolbar = ui.toolbar()?;
     toolbar.set_items(&[
@@ -5583,7 +5611,7 @@ fn toolbar_activation_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ツールバーはヘッダーバーへ入り、外すと消える。
+/// The toolbar goes into the header bar and disappears when detached.
 fn toolbar_attaches_to_the_header_bar(ui: &Ui) -> Result<()> {
     let window = ui.window("ツールバー", 400.0, 300.0)?;
     let header = window.native_header_bar();
@@ -5610,7 +5638,7 @@ fn toolbar_attaches_to_the_header_bar(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の中からツールバーを組み替えても、二重借用にならない。
+/// Rebuilding the toolbar from inside the notification does not double-borrow.
 fn toolbar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
     let toolbar = ui.toolbar()?;
     toolbar.set_items(&[
@@ -5648,7 +5676,7 @@ fn toolbar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 名前を間違えると、その項目だけ「画像がありません」の絵になる。
+/// A wrong name would turn just that item into the "missing image" picture.
 fn toolbar_icons_exist_in_the_theme(_ui: &Ui) -> Result<()> {
     let display = gtk::gdk::Display::default().expect("ディスプレイ");
     let theme = gtk::IconTheme::for_display(&display);
@@ -5664,7 +5692,7 @@ fn toolbar_icons_exist_in_the_theme(_ui: &Ui) -> Result<()> {
 
 // ------------------------------------------------------------ 日付ピッカー
 
-/// `GtkBox` に並んでいる子の数。
+/// The number of children laid out in a `GtkBox`.
 fn children_of(container: &gtk::Box) -> Vec<gtk::Widget> {
     let mut children = Vec::new();
     let mut child = container.first_child();
@@ -5675,7 +5703,7 @@ fn children_of(container: &gtk::Box) -> Vec<gtk::Widget> {
     children
 }
 
-/// 種別ごとに、必要なコントロールだけが並ぶ。
+/// For each kind, only the controls it needs are laid out.
 fn date_picker_shows_only_what_its_mode_needs(ui: &Ui) -> Result<()> {
     let date = ui.date_picker(DatePickerMode::Date)?;
     assert_eq!(date.mode(), DatePickerMode::Date);
@@ -5701,7 +5729,7 @@ fn date_picker_shows_only_what_its_mode_needs(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 値の書き込みと、ネイティブ側の操作の両方向。
+/// Both directions: writing the value, and operations on the native side.
 fn date_picker_value_round_trips(ui: &Ui) -> Result<()> {
     let picker = ui.date_picker(DatePickerMode::DateTime)?;
     let (log, sink) = recorder::<DateTime>();
@@ -5744,7 +5772,7 @@ fn date_picker_value_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 日付だけの表示は時刻を、時刻だけの表示は日付を保つ。
+/// A date-only display keeps the time, and a time-only display keeps the date.
 fn date_picker_keeps_the_part_it_does_not_show(ui: &Ui) -> Result<()> {
     let date_only = ui.date_picker(DatePickerMode::Date)?;
     date_only.set_value(DateTime::new(2026, 8, 22, 9, 30));
@@ -5768,7 +5796,7 @@ fn date_picker_keeps_the_part_it_does_not_show(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 下限・上限の外へは出ない。
+/// It never goes outside the minimum and maximum.
 fn date_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
     let picker = ui.date_picker(DatePickerMode::Date)?;
     picker.set_value(DateTime::new(2026, 6, 15, 9, 30));
@@ -5836,8 +5864,8 @@ fn date_picker_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 時刻ピッカーは時と分の `GtkSpinButton` を `:` で挟んだもの。値はネイティブと
-/// 往復し、`set_value` は通知しない。
+/// The time picker is `GtkSpinButton`s for hours and minutes separated by `:`. The
+/// value round-trips with the native side, and `set_value` does not notify.
 fn time_picker_value_round_trips(ui: &Ui) -> Result<()> {
     let picker = ui.time_picker()?;
     let native: gtk::Box = picker.native_widget().downcast().expect("GtkBox");
@@ -5875,8 +5903,8 @@ fn time_picker_value_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 下限・上限の外へは出ない。`GtkSpinButton` に時刻としての範囲は無いので、
-/// 押し戻した結果はスピンボタンの表示にも書き戻る。
+/// It never goes outside the minimum and maximum. `GtkSpinButton` has no time
+/// range, so the clamped result is written back to the spin buttons' display too.
 fn time_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
     let picker = ui.time_picker()?;
     picker.set_value(Time::new(12, 0));
@@ -5920,10 +5948,10 @@ fn time_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
 
 // ----------------------------------------------------------------- 非同期
 
-/// idle source を吐かせる。メインループは起動しない。
+/// Flushes idle sources. Does not start the main loop.
 ///
-/// `run_for_test` はメインループへ入らないので、投函されたものを進めるには
-/// メインコンテキストを自分で回す必要がある。
+/// `run_for_test` does not enter the main loop, so to make posted work progress the
+/// main context must be iterated by hand.
 fn pump() {
     let context = glib::MainContext::default();
     // 入っている分だけ回す。取りこぼしと無限ループの両方を避けるため上限を付ける。
@@ -5934,14 +5962,15 @@ fn pump() {
     }
 }
 
-/// CSS の解決とレイアウトが済むまで、フレームを 1 つ進める。
+/// Advances one frame, until CSS resolution and layout are done.
 ///
-/// GTK4 はスタイルクラスを付けた瞬間に級数を決めず、フレームクロックの layout
-/// フェーズでまとめて解決してから場所を配る。`pump` は溜まっている分を回すだけで
-/// フレームを進めないので、**CSS の結果や配られた大きさを測る前**はこちらを使う。
+/// GTK4 does not decide point sizes the moment a style class is added; it resolves
+/// them together in the frame clock's layout phase and then allots space. `pump`
+/// only runs what is pending and does not advance frames, so use this **before
+/// measuring CSS results or allotted sizes**.
 ///
-/// 待ちは 2 秒で打ち切る。進まないまま止まり続けるより、測った値で落ちたほうが
-/// 理由が分かるため。
+/// The wait gives up after 2 seconds. Failing with the measured values makes the
+/// reason clearer than hanging without progress.
 fn tick(widget: &impl IsA<gtk::Widget>) {
     let Some(clock) = widget.as_ref().frame_clock() else {
         pump();
@@ -5964,7 +5993,7 @@ fn tick(widget: &impl IsA<gtk::Widget>) {
     clock.disconnect(handler);
 }
 
-/// 一度だけ譲る future。次のティックで続きが走る。
+/// A future that yields once. The rest runs on the next tick.
 struct YieldOnce(bool);
 
 impl Future for YieldOnce {
@@ -5980,7 +6009,7 @@ impl Future for YieldOnce {
     }
 }
 
-/// 別スレッドから送った値が、メインコンテキスト経由でラベルへ届く。
+/// A value sent from another thread reaches a label via the main context.
 fn channel_delivers_from_a_worker_thread(ui: &Ui) -> Result<()> {
     let label = ui.label("待機中")?;
     let sender = ui.tasks().channel({
@@ -6004,7 +6033,7 @@ fn channel_delivers_from_a_worker_thread(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// spawn した処理がメインコンテキストの上で進み、完了する。
+/// Spawned work progresses on the main context and completes.
 fn spawn_runs_a_local_future(ui: &Ui) -> Result<()> {
     let label = ui.label("待機中")?;
     let task = ui.tasks().spawn({
@@ -6025,7 +6054,7 @@ fn spawn_runs_a_local_future(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// cancel した処理は一度も走らない。
+/// Cancelled work never runs.
 fn cancel_stops_a_future(ui: &Ui) -> Result<()> {
     let label = ui.label("待機中")?;
     let task = ui.tasks().spawn({
@@ -6042,7 +6071,7 @@ fn cancel_stops_a_future(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 見出しは `GMenu` の submenu、項目は `GSimpleAction` になる。
+/// Headings become submenus of the `GMenu`, and items become `GSimpleAction`s.
 fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     assert!(menu_bar.is_empty());
@@ -6117,7 +6146,7 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 押された項目は (見出し, 項目) のインデックスの組で届く。
+/// The clicked item arrives as a pair of (heading, item) indices.
 fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[
@@ -6168,11 +6197,11 @@ fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ウィンドウへ取り付くと、その操作の組がウィンドウから引けるようになる。
+/// Once attached to a window, its action group can be looked up from the window.
 ///
-/// アクセラレータは、フォーカスのあるウィジェットからたどれる操作の組の中を
-/// 探して呼ばれる。ウィンドウから引けることが、`GtkApplication` へ登録した
-/// ショートカットが効く条件そのもの。
+/// Accelerators are invoked by searching the action groups reachable from the
+/// focused widget. Being reachable from the window is exactly the condition for
+/// shortcuts registered with the `GtkApplication` to work.
 fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
     let window = ui.window("メニューバー", 400.0, 300.0)?;
     let native = window.native_window();
@@ -6254,7 +6283,7 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の中からメニューバーを組み替えても、二重借用にならない。
+/// Rebuilding the menu bar from inside the notification does not double-borrow.
 fn menu_bar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規", "開く"])]);
@@ -6289,8 +6318,9 @@ fn menu_bar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 同じショートカットを 2 つのウィンドウのメニューバーで使っても、互いの
-/// 登録を上書きせず、それぞれのウィンドウからは自分の操作だけが引ける。
+/// Even when the same shortcut is used in the menu bars of two windows, neither
+/// overwrites the other's registration, and each window can look up only its own
+/// action.
 fn menu_bar_shortcuts_are_kept_per_menu_bar(ui: &Ui) -> Result<()> {
     let spec = [MenuSpec::new(
         "ファイル",
@@ -6370,7 +6400,7 @@ fn sidebar_fixture() -> Vec<SidebarSection> {
     ]
 }
 
-/// `GtkListBox` の行を上から順に集める。
+/// Collects a `GtkListBox`'s rows from the top.
 fn list_box_rows(list: &gtk::ListBox) -> Vec<gtk::ListBoxRow> {
     let mut rows = Vec::new();
     let mut index = 0;
@@ -6381,7 +6411,7 @@ fn list_box_rows(list: &gtk::ListBox) -> Vec<gtk::ListBoxRow> {
     rows
 }
 
-/// 行の中身に並ぶ文字 (見出し・項目の名前)。
+/// The text in the row's content (heading or item name).
 fn row_text(row: &gtk::ListBoxRow) -> Option<String> {
     let child = row.child()?;
     if let Some(label) = child.downcast_ref::<gtk::Label>() {
@@ -6853,10 +6883,11 @@ fn tooltip_reaches_the_widget(ui: &Ui) -> Result<()> {
 
 // ------------------------------------------------------------- on_key_down
 
-/// ウィンドウに付いたキーの受け口へ、キーを 1 つ渡す。止めたら `true`。
+/// Passes one key to the key receiver attached to the window. `true` if it was
+/// stopped.
 ///
-/// GTK4 には本物のキーイベントを作る公開 API が無いので、naui が付けた
-/// 捕捉フェーズの `GtkEventControllerKey` のシグナルを直接起こす。
+/// GTK4 has no public API for creating real key events, so the signal of the
+/// capture-phase `GtkEventControllerKey` naui attached is emitted directly.
 fn press_key(
     window: &naui_gtk::Window,
     keyval: gtk::gdk::Key,
@@ -6990,7 +7021,7 @@ fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
 
 // ------------------------------------------------- アプリ向けの基本機能
 
-/// 条件が満たされるまで (上限まで) メインループを回す。
+/// Iterates the main loop until the condition is met (up to the limit).
 fn spin_until(limit: std::time::Duration, mut ready: impl FnMut() -> bool) {
     let context = glib::MainContext::default();
     let deadline = std::time::Instant::now() + limit;
@@ -7088,7 +7119,7 @@ fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// GTK4 にはウィンドウの位置を扱う API が無い (Wayland に合わせて X11 でも外した)。
+/// GTK4 has no API for window positions (dropped on X11 too, to match Wayland).
 fn window_position_is_unavailable(ui: &Ui) -> Result<()> {
     let window = ui.window("位置", 320.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
@@ -7100,11 +7131,13 @@ fn window_position_is_unavailable(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 最大化と全画面が `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+/// Maximize and fullscreen round-trip with `state`, and `on_state_change` is called
+/// on each change.
 ///
-/// どちらもコンポジタ (ウィンドウマネージャ) への頼みごとなので、応える者の
-/// いない環境 (CI の Xvfb) では変わらない。そのときは SKIP にする。最小化は
-/// Wayland では知る仕組みも戻す仕組みも無いので、ここでは確かめない。
+/// Both are requests to the compositor (window manager), so in an environment where
+/// nobody responds (CI's Xvfb) nothing changes. In that case it is SKIPped.
+/// Minimizing is not checked here, because Wayland has no way to know about it or
+/// to restore it.
 fn window_state_round_trips(ui: &Ui) -> Result<()> {
     use std::time::Duration;
     let window = ui.window("状態", 320.0, 200.0)?;
@@ -7169,10 +7202,12 @@ fn window_state_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// コンポジタが応える前に続けて状態を頼んでも、最後に頼んだ状態になる。
+/// Even when states are requested back to back before the compositor responds, the
+/// window ends up in the last state requested.
 ///
-/// `is_maximized` / `is_fullscreen` はコンポジタが応えるまで変わらないので、
-/// それだけを見ると、応える前の頼みを取り消せずに先の状態が後から当たる。
+/// `is_maximized` / `is_fullscreen` do not change until the compositor responds, so
+/// looking only at them would fail to withdraw unanswered requests and an earlier
+/// state would land later.
 fn window_state_requests_in_a_row(ui: &Ui) -> Result<()> {
     use std::time::Duration;
     let sequences: &[&[WindowState]] = &[
@@ -7208,7 +7243,8 @@ fn window_state_requests_in_a_row(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 表示した後の最大化に誰も応えない環境 (ウィンドウマネージャのいない X11) か。
+/// Whether this is an environment where nobody honors maximize after showing (X11
+/// without a window manager).
 fn is_unresponsive(ui: &Ui) -> Result<bool> {
     let window = ui.window("応えるか", 320.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
@@ -7222,16 +7258,17 @@ fn is_unresponsive(ui: &Ui) -> Result<bool> {
     Ok(unresponsive)
 }
 
-/// 表示する前の `set_state` は覚えておき、表示するときに当てる。
+/// `set_state` before showing is remembered and applied when shown.
 ///
-/// GTK4 は表示する前の最大化を、面を出すときの状態として渡す。Wayland では
-/// 表示した直後の面の状態が空なので、コンポジタから届くまでも頼んだ状態を返す。
+/// GTK4 passes a maximize before showing as the state to present the surface with.
+/// On Wayland the surface state right after showing is empty, so the requested
+/// state is returned until the compositor's state arrives.
 ///
-/// 表示した後の最大化と違い、ウィンドウマネージャのいない X11 (CI の Xvfb)
-/// でも SKIP にしない。GDK の X11 版は、まだ出していない面への `maximize` を
-/// ウィンドウマネージャへ頼まず、面の状態に MAXIMIZED を自分で立てる
-/// (出すときは `_NET_WM_STATE` に載せて出す)。そのため応える者がいなくても
-/// 最大化した状態で出る (CI の Xvfb で ok になることを確かめてある)。
+/// Unlike maximizing after showing, this is not SKIPped even on X11 without a
+/// window manager (CI's Xvfb). GDK's X11 backend does not ask the window manager
+/// to `maximize` a surface that has not been shown yet; it sets MAXIMIZED on the
+/// surface state itself (and puts it in `_NET_WM_STATE` when showing). So it is
+/// shown maximized even with nobody to respond (confirmed to pass on CI's Xvfb).
 fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
     let window = ui.window("表示前の状態", 320.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
@@ -7256,11 +7293,13 @@ fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 最小化が `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+/// Minimizing round-trips with `state`, and `on_state_change` is called on each
+/// change.
 ///
-/// X11 のウィンドウマネージャは `unminimize` だけでは戻さないことがあるので、
-/// 戻すときは前面へ出すよう頼む。Wayland では最小化を知る仕組みが無く、
-/// ウィンドウマネージャのいない X11 (CI の Xvfb) では誰も応えないので SKIP にする。
+/// X11 window managers sometimes do not restore with `unminimize` alone, so when
+/// restoring it is also asked to come to the front. On Wayland there is no way to
+/// know about minimization, and on X11 without a window manager (CI's Xvfb) nobody
+/// responds, so it is SKIPped.
 fn window_minimize_round_trips(ui: &Ui) -> Result<()> {
     use std::time::Duration;
     if is_wayland() {
@@ -7298,8 +7337,9 @@ fn window_minimize_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 表示する前に頼んだ最小化は、出す前に頼んでもウィンドウマネージャが
-/// 応えないので、表示してコンポジタから最初の状態が届いてから当てる。
+/// A minimize requested before showing is ignored by window managers if requested
+/// before the window is shown, so it is applied after showing, once the
+/// compositor's first state arrives.
 fn window_minimize_requested_before_show(ui: &Ui) -> Result<()> {
     use std::time::Duration;
     let window = ui.window("表示前の最小化", 320.0, 200.0)?;
@@ -7337,7 +7377,8 @@ fn window_minimize_requested_before_show(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ウィンドウの面にコンポジタから届いた状態。realize する前は空。
+/// The state the compositor delivered for the window's surface. Empty before
+/// realize.
 fn toplevel_state(window: &naui_gtk::Window) -> gtk::gdk::ToplevelState {
     window
         .native_window()
@@ -7557,7 +7598,7 @@ fn read_only_and_min_size(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ウィジェットの中にある最初のスクロール領域の、見えている範囲 (上端, 下端)。
+/// The visible range (top, bottom) of the first scroll area inside the widget.
 fn visible_range(widget: &gtk::Widget) -> (f64, f64) {
     fn find(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
         if let Some(scroller) = widget.downcast_ref::<gtk::ScrolledWindow>() {

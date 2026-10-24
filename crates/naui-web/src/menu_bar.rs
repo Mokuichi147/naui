@@ -1,31 +1,32 @@
-//! メニューバー (`<div role="menubar">` + `<div role="menu">`)。
+//! The menu bar (`<div role="menubar">` + `<div role="menu">`).
 //!
-//! ブラウザには OS のアプリケーションメニューが無く、`<menu>` 要素も
-//! ただのリストなので、ここだけは **WAI-ARIA の役割を付けた要素で合成**する。
+//! Browsers have no OS application menu, and the `<menu>` element is just a list,
+//! so this is the one place **composed from elements with WAI-ARIA roles**.
 //!
 //! | naui | DOM |
 //! | --- | --- |
 //! | `MenuBar` | `<div role="menubar">` |
-//! | 見出し | `<button role="menuitem" aria-haspopup="true">` |
-//! | メニュー | `<div role="menu">` (見出しの下・`position: absolute`) |
-//! | 項目 | `<button role="menuitem">` |
-//! | 区切り線 | `<div role="separator">` |
+//! | Heading | `<button role="menuitem" aria-haspopup="true">` |
+//! | Menu | `<div role="menu">` (below the heading, `position: absolute`) |
+//! | Item | `<button role="menuitem">` |
+//! | Separator | `<div role="separator">` |
 //!
-//! 色は CSS のシステムカラー (`Canvas` / `CanvasText`) を使うので、
-//! [`crate::Ui::set_theme`] が `<html>` へ設定する `color-scheme` に
-//! そのまま追従する ([`crate::PopupMenu`] と同じ)。
+//! Colors use CSS system colors (`Canvas` / `CanvasText`), so they follow the
+//! `color-scheme` that [`crate::Ui::set_theme`] sets on `<html>` as is (the same as
+//! [`crate::PopupMenu`]).
 //!
-//! ショートカットもブラウザには無い概念なので、`document` の `keydown` を
-//! 見張って naui が突き合わせる。主修飾キーは Ctrl と ⌘ のどちらでもよい
-//! (macOS のブラウザでは ⌘ が主修飾キーになるため)。項目の右端には
-//! [`MenuShortcut::label`](naui_core::MenuShortcut::label) を出す。
+//! Shortcuts are also a concept browsers do not have, so naui watches `document`'s
+//! `keydown` and matches them itself. The primary modifier can be either Ctrl or ⌘
+//! (since ⌘ is the primary modifier in browsers on macOS). The right edge of items
+//! shows [`MenuShortcut::label`](naui_core::MenuShortcut::label).
 //!
-//! `document` への購読は**ウィンドウへ取り付けている間だけ**張る。外した
-//! メニューバーや、閉じた (隠した) ウィンドウのメニューバーが、押されたキーに
-//! 反応し続けないようにするため。ページに複数のウィンドウがあるときは、
-//! キーが上がってきたウィンドウのメニューバーだけが受け取り、どのウィンドウ
-//! にも属さないところ (`<body>` など) からのキーは、最初に合ったものだけが
-//! 受け取る (合ったところで既定動作を止めるので、あとの購読はそれを見て引く)。
+//! The `document` subscriptions are attached **only while attached to a window**,
+//! so that a detached menu bar, or the menu bar of a closed (hidden) window, does
+//! not keep reacting to pressed keys. When the page has several windows, only the
+//! menu bar of the window the key bubbled up from receives it, and keys from places
+//! belonging to no window (`<body>` and so on) are received only by the first match
+//! (the match prevents the default action, and later subscriptions see that and
+//! back off).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -41,10 +42,10 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
     let _ = element.style().set_property(property, value);
 }
 
-/// 押された項目の通知先。
+/// The handler for the clicked item.
 ///
-/// 呼び出しの間だけクロージャを取り出すので、通知の中から同じメニューバーを
-/// 組み替えても二重借用にならない。
+/// The closure is taken out only for the duration of the call, so rebuilding the
+/// same menu bar from inside the notification does not double-borrow.
 #[derive(Clone, Default)]
 struct Handler(Rc<RefCell<Option<Box<dyn FnMut(usize, usize)>>>>);
 
@@ -66,13 +67,13 @@ impl Handler {
     }
 }
 
-/// 見出し 1 つぶんの DOM。
+/// The DOM for one heading.
 struct MenuParts {
-    /// 見出しのボタン。
+    /// The heading's button.
     title: HtmlElement,
-    /// 見出しの下に出るメニュー本体。
+    /// The menu itself, shown below the heading.
     popup: HtmlElement,
-    /// 項目ごとのボタン。区切り線の位置は `None`。
+    /// The button per item. `None` at separator positions.
     items: Vec<Option<HtmlElement>>,
 }
 
@@ -81,18 +82,19 @@ struct MenuBarInner {
     document: Document,
     menus: RefCell<Vec<MenuSpec>>,
     parts: RefCell<Vec<MenuParts>>,
-    /// 見出しと項目のクリック購読。メニューを作り直すと外れる。
+    /// The click subscriptions of headings and items. Removed when the menus are
+    /// rebuilt.
     listeners: RefCell<Vec<Listener>>,
-    /// 外側を押したとき・Escape・ショートカットのための購読。
-    /// ウィンドウへ取り付けている間だけ持つ。
+    /// The subscriptions for clicks outside, Escape and shortcuts. Held only while
+    /// attached to a window.
     document_listeners: RefCell<Vec<Listener>>,
-    /// 取り付け先のウィンドウ要素。ショートカットをどのウィンドウのものとして
-    /// 受け取るかを決める。
+    /// The element of the window it is attached to. Decides which window shortcuts are
+    /// received for.
     window: RefCell<Option<Element>>,
     handler: Handler,
-    /// いま開いている見出し。
+    /// The heading open now.
     open: Cell<Option<usize>>,
-    /// メニューバー全体の有効・無効。項目ごとの指定と AND を取る。
+    /// Whether the whole menu bar is enabled. ANDed with the per-item settings.
     enabled: Cell<bool>,
 }
 
@@ -103,13 +105,13 @@ fn append(parent: &Element, child: &Element) -> Result<()> {
         .map_err(|e| to_error("DOM への追加", e))
 }
 
-/// ウィンドウの上端に付く、OS のアプリケーションメニュー相当。
+/// The equivalent of the OS's application menu, attached to the top of the window.
 ///
-/// [`Widget`](crate::Widget) ではない。
-/// [`Window::set_menu_bar`](crate::Window::set_menu_bar) で取り付ける。
-/// 項目が押されるたびに、その **(見出しのインデックス, 項目のインデックス)**
-/// で [`on_activate`](Self::on_activate) が呼ばれる。項目のインデックスは
-/// 区切り線を含めた並びの位置で、区切り線が返ることはない。
+/// Not a [`Widget`](crate::Widget). Attach it with
+/// [`Window::set_menu_bar`](crate::Window::set_menu_bar). Every time an item is
+/// clicked, [`on_activate`](Self::on_activate) is called with its **(heading index,
+/// item index)**. The item index is the position in the sequence including
+/// separators; separators are never returned.
 #[derive(Clone)]
 pub struct MenuBar(Rc<MenuBarInner>);
 
@@ -139,9 +141,10 @@ impl MenuBar {
         Ok(this)
     }
 
-    /// ウィンドウへ取り付けたときに呼ぶ。[`crate::Window`] だけが使う。
+    /// Called when attached to a window. Used only by [`crate::Window`].
     ///
-    /// 外側を押したとき・Escape で閉じ、ショートカットを拾う購読を張る。
+    /// Attaches the subscriptions that close on outside clicks and Escape, and pick up
+    /// shortcuts.
     pub(crate) fn attach(&self, window: &Element) {
         *self.0.window.borrow_mut() = Some(window.clone());
         if self.0.document_listeners.borrow().is_empty() {
@@ -149,20 +152,20 @@ impl MenuBar {
         }
     }
 
-    /// ウィンドウから外したときに呼ぶ。[`crate::Window`] だけが使う。
+    /// Called when detached from a window. Used only by [`crate::Window`].
     ///
-    /// `document` への購読を外すので、以後ショートカットには反応しない。
+    /// The `document` subscriptions are removed, so it no longer reacts to shortcuts.
     pub(crate) fn detach(&self) {
         self.close();
         self.0.document_listeners.borrow_mut().clear();
         *self.0.window.borrow_mut() = None;
     }
 
-    /// 押されたキー (ショートカットと Escape) を、このメニューバーが
-    /// 受け取ってよいか。
+    /// Whether this menu bar may receive the pressed key (shortcuts and Escape).
     ///
-    /// 画面に出ていない (ウィンドウを閉じた) ときと、別のウィンドウの中から
-    /// 上がってきたキーは受け取らない。受け取らないキーは既定動作も止めない。
+    /// It does not receive keys while it is not on screen (its window was closed) or
+    /// keys that bubbled up from another window. Keys it does not receive do not have
+    /// their default action prevented either.
     fn accepts_keys_from(&self, event: &web_sys::Event) -> bool {
         // `display: none` の祖先を持つ要素は `offsetParent` を持たない。
         if !self.0.element.is_connected() || self.0.element.offset_parent().is_none() {
@@ -190,7 +193,7 @@ impl MenuBar {
         }
     }
 
-    /// 外側を押したとき・Escape で閉じ、ショートカットを拾うようにする。
+    /// Makes it close on outside clicks and Escape, and pick up shortcuts.
     fn install_document_listeners(&self) -> Result<()> {
         let target: web_sys::EventTarget = self.0.document.clone().unchecked_into();
 
@@ -255,10 +258,10 @@ impl MenuBar {
         Ok(())
     }
 
-    /// 押されたキーに合う、いま押せる項目を探す。
+    /// Looks for a currently clickable item matching the pressed key.
     ///
-    /// 借用を返す前に結果を取り出しておく (通知の中でメニューを
-    /// 組み替えられても二重借用にならないようにするため)。
+    /// The result is taken out before returning the borrow (so that rebuilding the
+    /// menus inside the notification does not double-borrow).
     fn find_shortcut(
         &self,
         key: &str,
@@ -286,10 +289,10 @@ impl MenuBar {
         None
     }
 
-    /// メニューを作り直す。以前のメニューは取り除かれる。
+    /// Rebuilds the menus. The previous menus are removed.
     ///
-    /// 見出しのインデックスは渡した並びの位置、項目のインデックスは
-    /// 区切り線を含めた並びの位置。
+    /// The heading index is the position in the sequence passed, and the item index is
+    /// the position in the sequence including separators.
     pub fn set_menus(&self, menus: &[MenuSpec]) {
         let _ = self.rebuild(menus);
     }
@@ -418,7 +421,7 @@ impl MenuBar {
         Ok(())
     }
 
-    /// 見出しの数。
+    /// The number of headings.
     pub fn len(&self) -> usize {
         self.0.menus.borrow().len()
     }
@@ -427,7 +430,8 @@ impl MenuBar {
         self.len() == 0
     }
 
-    /// 見出し 1 つが持つ、区切り線を含めた項目数。範囲外は `0`。
+    /// The number of items under one heading, separators included. `0` if out of
+    /// range.
     pub fn menu_len(&self, menu: usize) -> usize {
         self.0
             .menus
@@ -436,7 +440,7 @@ impl MenuBar {
             .map_or(0, |spec| spec.items.len())
     }
 
-    /// 項目 1 つの有効・無効を変える。区切り線と範囲外は何もしない。
+    /// Enables or disables one item. Does nothing for separators or out of range.
     pub fn set_item_enabled(&self, menu: usize, item: usize, enabled: bool) {
         let mut menus = self.0.menus.borrow_mut();
         let Some(entry) = menus
@@ -453,7 +457,7 @@ impl MenuBar {
         self.apply_enabled();
     }
 
-    /// いま押せる項目か。区切り線と範囲外は `false`。
+    /// Whether the item can be clicked now. `false` for separators and out of range.
     pub fn is_item_enabled(&self, menu: usize, item: usize) -> bool {
         self.0.enabled.get()
             && self
@@ -465,7 +469,7 @@ impl MenuBar {
                 .is_some_and(|entry| !entry.is_separator() && entry.enabled)
     }
 
-    /// メニューバー全体の有効・無効を変える。項目ごとの指定は残る。
+    /// Enables or disables the whole menu bar. Per-item settings are kept.
     pub fn set_enabled(&self, enabled: bool) {
         self.0.enabled.set(enabled);
         if !enabled {
@@ -474,7 +478,7 @@ impl MenuBar {
         self.apply_enabled();
     }
 
-    /// 項目ごとの指定と全体の指定を DOM へ反映する。
+    /// Applies the per-item settings and the overall setting to the DOM.
     fn apply_enabled(&self) {
         let whole = self.0.enabled.get();
         let menus = self.0.menus.borrow();
@@ -488,7 +492,7 @@ impl MenuBar {
         }
     }
 
-    /// 見出しを押したときの開閉。
+    /// Opening and closing when a heading is clicked.
     fn toggle(&self, menu: usize) {
         if self.0.open.get() == Some(menu) {
             self.close();
@@ -497,10 +501,10 @@ impl MenuBar {
         }
     }
 
-    /// 見出し 1 つのメニューを出す。範囲外と無効なときは何もしない。
+    /// Shows one heading's menu. Does nothing if out of range or disabled.
     ///
-    /// ほかの 3 環境には「メニューをプログラムから開く」手段が無いので、
-    /// 公開 API にはせず、見出しを押したときだけ使う。
+    /// The other three platforms have no way to "open a menu from code", so this is not
+    /// public API and is used only when a heading is clicked.
     fn open(&self, menu: usize) {
         if !self.0.enabled.get() || menu >= self.len() {
             return;
@@ -515,7 +519,7 @@ impl MenuBar {
         self.0.open.set(Some(menu));
     }
 
-    /// 開いているメニューを閉じる。開いていなければ何もしない。
+    /// Closes the open menu. Does nothing if none is open.
     pub(crate) fn close(&self) {
         let Some(menu) = self.0.open.take() else {
             return;
@@ -527,56 +531,56 @@ impl MenuBar {
         }
     }
 
-    /// 利用者が選んだのと同じように項目を実行する。
+    /// Runs the item as if the user had chosen it.
     ///
-    /// 区切り線・押せない項目・範囲外は何もしない。
+    /// Does nothing for separators, disabled items or out of range.
     pub fn activate(&self, menu: usize, item: usize) {
         if self.is_item_enabled(menu, item) {
             self.0.handler.emit(menu, item);
         }
     }
 
-    /// 項目が押されたときに、その見出しと項目のインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the heading and item indices when an item is clicked. Setting it
+    /// again removes the previous callback.
     pub fn on_activate(&self, f: impl FnMut(usize, usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// メニューバーの `<div role="menubar">`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The menu bar's `<div role="menubar">`. Public as a backend-specific escape
+    /// hatch.
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()
     }
 
-    /// 見出しの `<button>`。範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The heading's `<button>`. `None` if out of range. Public as a backend-specific
+    /// escape hatch.
     pub fn native_title(&self, menu: usize) -> Option<HtmlElement> {
         Some(self.0.parts.borrow().get(menu)?.title.clone())
     }
 
-    /// 項目の `<button>`。区切り線と範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The item's `<button>`. `None` for separators and out of range. Public as a
+    /// backend-specific escape hatch.
     pub fn native_item(&self, menu: usize, item: usize) -> Option<HtmlElement> {
         self.0.parts.borrow().get(menu)?.items.get(item)?.clone()
     }
 
-    /// 見出しの下に出る `<div role="menu">`。範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The `<div role="menu">` shown below the heading. `None` if out of range. Public
+    /// as a backend-specific escape hatch.
     pub fn native_menu(&self, menu: usize) -> Option<HtmlElement> {
         Some(self.0.parts.borrow().get(menu)?.popup.clone())
     }
 
-    /// ウィンドウへ差し込む要素。[`crate::Window`] だけが使う。
+    /// The element inserted into the window. Used only by [`crate::Window`].
     pub(crate) fn mount(&self) -> HtmlElement {
         self.0.element.clone()
     }
 }
 
-/// `aria-keyshortcuts` の書き方 (`Control+Shift+S`)。
+/// The notation of `aria-keyshortcuts` (`Control+Shift+S`).
 ///
-/// WAI-ARIA は修飾キーの名前を DOM の `KeyboardEvent.key` にそろえるよう
-/// 求めるので、表示用の [`MenuShortcut::label`](naui_core::MenuShortcut::label)
-/// とは別に組み立てる。
+/// WAI-ARIA requires modifier names to match the DOM's `KeyboardEvent.key`, so it is
+/// built separately from the display-oriented
+/// [`MenuShortcut::label`](naui_core::MenuShortcut::label).
 fn aria_key_shortcuts(shift: bool, alt: bool, key: char) -> String {
     let mut out = String::from("Control+");
     if shift {

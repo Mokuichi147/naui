@@ -1,56 +1,58 @@
-//! 「画面に出ている行」の求め方。
+//! How to find "the rows on screen".
 //!
-//! 行数が数万を超えると、行を 1 つずつウィジェットにしていては開くだけで
-//! 固まってしまう。`NSTableView` は自分で必要な行だけを組み立てるが、
-//! `GtkListBox` / `ListView` / `<table>` は渡した行をすべて作る。そこで
-//! **スクロール位置から見えている範囲を求め、その分だけを組み立てる**。
+//! Once there are tens of thousands of rows, turning each row into a widget makes a
+//! list freeze just by opening. `NSTableView` builds only the rows it needs by
+//! itself, but `GtkListBox` / `ListView` / `<table>` create every row they are
+//! given. So **the visible range is computed from the scroll position, and only
+//! that many rows are built**.
 //!
-//! 範囲の求め方はどのバックエンドでも同じなので、計算だけをここへ置く。
-//! ここには描画も測定も無く、入るのは数値だけである (行の高さを測るのは
-//! バックエンドの仕事)。
+//! The range is computed the same way on every backend, so only the calculation
+//! lives here. There is no drawing or measuring here, only numbers (measuring row
+//! heights is the backend's job).
 //!
 //! ```
 //! # use naui_core::{row_window, RowWindow};
-//! // 20 px の行が 100,000 行。上から 1,000 px の位置に、高さ 200 px の枠。
+//! // 100,000 rows of 20 px. A 200 px viewport, 1,000 px from the top.
 //! let window = row_window(100_000, 1_000.0, 200.0, 20.0, 5);
-//! assert_eq!(window.start, 45, "見えている 50 行目の少し手前から");
-//! assert!(window.end >= 60 && window.end < 100, "画面の少し先まで");
-//! // 見えていない行の分は、上下の詰め物の高さになる。
+//! assert_eq!(window.start, 45, "from a little before the visible 50th row");
+//! assert!(window.end >= 60 && window.end < 100, "to a little past the screen");
+//! // Rows that are not visible become the height of the top and bottom spacers.
 //! assert_eq!(window.leading(20.0), 900.0);
 //! ```
 
 use std::ops::Range;
 
-/// 行を「見えている分だけ」に絞り始める行数。
+/// The row count at which rows start being limited to "just the visible ones".
 ///
-/// これ以下なら全行を組み立てる。少ない行でわざわざ絞ると、
-/// キーボード操作やスクロールバーの挙動がネイティブのままでなくなるため、
-/// **ふつうの大きさの表は今までどおり**にしておく。
+/// At or below this, every row is built. Limiting a small number of rows would make
+/// keyboard navigation and scroll bar behavior stop being purely native, so
+/// **tables of ordinary size stay as they always were**.
 pub const ROW_WINDOW_THRESHOLD: usize = 200;
 
-/// 画面の外にも余分に組み立てておく行数。
+/// Extra rows built outside the screen.
 ///
-/// スクロールの通知が届く前に空白が見えてしまわないよう、上下に少し多めに
-/// 作っておく。大きくすると空白は出にくくなるが、組み立ての量は増える。
+/// A few more rows are built above and below so that blank space is not seen before
+/// the scroll notification arrives. A larger value makes blanks less likely but
+/// builds more.
 pub const ROW_WINDOW_OVERSCAN: usize = 12;
 
-/// いま組み立てておく行の範囲。
+/// The range of rows currently built.
 ///
-/// `start..end` の半開区間で、`end` は含まない。`count` は表の全行数で、
-/// 上下の詰め物 ([`RowWindow::leading`] / [`RowWindow::trailing`]) の
-/// 高さを求めるのに使う。
+/// A half-open range `start..end`; `end` is not included. `count` is the total
+/// number of rows in the table, used to compute the heights of the top and bottom
+/// spacers ([`RowWindow::leading`] / [`RowWindow::trailing`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RowWindow {
-    /// 組み立てる先頭の行。
+    /// The first row built.
     pub start: usize,
-    /// 組み立てる最後の行の次 (この行は含まない)。
+    /// One past the last row built (this row is not included).
     pub end: usize,
-    /// 表の全行数。
+    /// The total number of rows in the table.
     pub count: usize,
 }
 
 impl RowWindow {
-    /// 全行を組み立てる範囲。
+    /// A range that builds every row.
     pub fn all(count: usize) -> Self {
         Self {
             start: 0,
@@ -59,7 +61,7 @@ impl RowWindow {
         }
     }
 
-    /// 組み立てる行数。
+    /// The number of rows built.
     pub fn len(self) -> usize {
         self.end.saturating_sub(self.start)
     }
@@ -68,31 +70,31 @@ impl RowWindow {
         self.len() == 0
     }
 
-    /// 全行を組み立てているか。絞られていなければ `true`。
+    /// Whether every row is built. `true` if nothing is limited.
     pub fn is_complete(self) -> bool {
         self.start == 0 && self.end >= self.count
     }
 
-    /// その行を組み立てているか。
+    /// Whether the row is built.
     pub fn contains(self, index: usize) -> bool {
         self.start <= index && index < self.end
     }
 
-    /// 組み立てる行の並び。
+    /// The sequence of rows built.
     pub fn indices(self) -> Range<usize> {
         self.start..self.end
     }
 
-    /// `needed` の行がすべてこの窓の中にあるか。
+    /// Whether every row of `needed` is inside this window.
     ///
-    /// スクロールのたびに作り直さずに済ませるために使う。作るときは
-    /// [`ROW_WINDOW_OVERSCAN`] 行を余分に持たせ、確かめるときはその半分で
-    /// 見ると、余りの半分ぶんスクロールするまで作り直さなくてよくなる。
+    /// Used to avoid rebuilding on every scroll. Building with [`ROW_WINDOW_OVERSCAN`]
+    /// extra rows and checking with half of that means nothing needs rebuilding until
+    /// you have scrolled through half of the extra.
     ///
     /// ```
     /// # use naui_core::{row_window, RowWindow, ROW_WINDOW_OVERSCAN};
     /// let built = row_window(10_000, 1_000.0, 200.0, 20.0, ROW_WINDOW_OVERSCAN);
-    /// // 1 行ぶんスクロールしただけなら、まだ作り直さなくてよい。
+    /// // Scrolling by just one row does not need a rebuild yet.
     /// let needed = row_window(10_000, 1_020.0, 200.0, 20.0, ROW_WINDOW_OVERSCAN / 2);
     /// assert!(built.covers(needed));
     /// ```
@@ -100,34 +102,37 @@ impl RowWindow {
         self.count == needed.count && self.start <= needed.start && self.end >= needed.end
     }
 
-    /// 範囲より前にある行が占める高さ (上の詰め物)。
+    /// The height taken by the rows before the range (the top spacer).
     pub fn leading(self, row_height: f64) -> f64 {
         self.start as f64 * row_height.max(0.0)
     }
 
-    /// 範囲より後にある行が占める高さ (下の詰め物)。
+    /// The height taken by the rows after the range (the bottom spacer).
     pub fn trailing(self, row_height: f64) -> f64 {
         self.count.saturating_sub(self.end) as f64 * row_height.max(0.0)
     }
 }
 
-/// スクロール位置から、組み立てておく行の範囲を求める。
+/// Computes the range of rows to build from the scroll position.
 ///
-/// - `count`: 表の全行数
-/// - `scroll_top`: いちばん上の行から、枠の上端までの距離 (論理ピクセル)
-/// - `viewport`: 行が見えている高さ (論理ピクセル)
-/// - `row_height`: 1 行の高さ (論理ピクセル)。どの行も同じ高さとみなす
-/// - `overscan`: 画面の外にも作っておく行数 ([`ROW_WINDOW_OVERSCAN`])
+/// - `count`: the total number of rows in the table
+/// - `scroll_top`: the distance from the first row to the top of the viewport
+///   (logical pixels)
+/// - `viewport`: the height in which rows are visible (logical pixels)
+/// - `row_height`: the height of one row (logical pixels); every row is assumed to
+///   be the same height
+/// - `overscan`: rows to build outside the screen as well ([`ROW_WINDOW_OVERSCAN`])
 ///
-/// 行数が [`ROW_WINDOW_THRESHOLD`] 以下なら、絞らずに全行を返す。
-/// 行の高さや枠の高さがまだ分からない (0 以下や `NaN`) ときは、
-/// 測るための足がかりとして先頭から [`ROW_WINDOW_THRESHOLD`] 行を返す。
+/// If the row count is at most [`ROW_WINDOW_THRESHOLD`], every row is returned
+/// without limiting. While the row height or the viewport height is still unknown
+/// (0 or less, or `NaN`), the first [`ROW_WINDOW_THRESHOLD`] rows are returned as a
+/// foothold for measuring.
 ///
 /// ```
 /// # use naui_core::row_window;
-/// // 行数が少なければ、絞らない。
+/// // With few rows, nothing is limited.
 /// assert!(row_window(50, 0.0, 100.0, 20.0, 5).is_complete());
-/// // 高さがまだ分からないうちは、先頭だけを作って測れるようにする。
+/// // While the heights are unknown, build just the start so it can be measured.
 /// assert_eq!(row_window(10_000, 0.0, 0.0, 0.0, 5).start, 0);
 /// ```
 pub fn row_window(
@@ -169,74 +174,78 @@ pub fn row_window(
     }
 }
 
-/// いま組み立ててある窓のままでよいか。
+/// Whether the window built now can be kept.
 ///
-/// スクロールのたびに全部作り直すのは重いので、**余分に作ってある分の半分
-/// までは、そのまま使う**。`needed` は [`ROW_WINDOW_OVERSCAN`] の半分で求めた
-/// 「最低限これだけは要る」範囲、`next` は作り直すとしたときの窓。
+/// Rebuilding everything on every scroll is heavy, so **the window is reused until
+/// you have scrolled through half of the extra rows**. `needed` is the "at least
+/// this much" range computed with half of [`ROW_WINDOW_OVERSCAN`], and `next` is the
+/// window that a rebuild would produce.
 ///
-/// 作り直すのは次のどちらか。
+/// It is rebuilt in either of these cases:
 ///
-/// - いまの窓が `needed` を覆えていない (スクロールで外れた)
-/// - いまの窓が `next` より大きい (大きさが分かる前に多めに作った分を捨てる)
+/// - the current window does not cover `needed` (scrolled out of it)
+/// - the current window is larger than `next` (drops the extra built before the
+///   sizes were known)
 ///
 /// ```
 /// # use naui_core::{keeps_row_window, row_window, ROW_WINDOW_OVERSCAN};
 /// let current = row_window(10_000, 1_000.0, 200.0, 20.0, ROW_WINDOW_OVERSCAN);
 /// let needed = row_window(10_000, 1_040.0, 200.0, 20.0, ROW_WINDOW_OVERSCAN / 2);
 /// let next = row_window(10_000, 1_040.0, 200.0, 20.0, ROW_WINDOW_OVERSCAN);
-/// // 2 行ぶんのスクロールなら作り直さない。
+/// // Scrolling by two rows does not rebuild.
 /// assert!(keeps_row_window(current, needed, next));
 /// ```
 pub fn keeps_row_window(current: RowWindow, needed: RowWindow, next: RowWindow) -> bool {
     current.covers(needed) && current.len() <= next.len()
 }
 
-/// 選択を変えた操作。押されていた修飾キーから決まる。
+/// The gesture that changed the selection. Determined from the modifier keys held.
 ///
-/// 行を絞っている一覧では「窓の外の選択を残すか」を決めるのに使う
-/// ([`keeps_hidden_selection`])。足し引きなら残し、選び直しなら落とす。
+/// In lists whose rows are limited, this decides "whether to keep the selection
+/// outside the window" ([`keeps_hidden_selection`]). Adding or removing keeps it;
+/// selecting anew drops it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SelectionGesture {
-    /// 修飾キー無し。押した行だけを選び直す。
+    /// No modifier. Selects only the clicked row anew.
     Plain,
-    /// ⌘ / Ctrl を押しながら。選択を足す / 外す。
+    /// Holding ⌘ / Ctrl. Adds to / removes from the selection.
     Toggle,
-    /// Shift を押しながら。起点からの範囲を選び直す。
+    /// Holding Shift. Selects the range from the anchor anew.
     Extend,
-    /// 分からない。修飾キーを読めなかったとき (既定)。
+    /// Unknown. When the modifier keys could not be read (default).
     #[default]
     Unknown,
 }
 
-/// 窓の外にある選択を残すか。
+/// Whether to keep the selection outside the window.
 ///
-/// 行を絞っている一覧では、ネイティブのコントロールが知っているのは
-/// **組み立ててある行の選択だけ**である。ユーザーが行を押したときに
-/// 返ってくるのもその範囲なので、窓の外の選択を残してよいのか、
-/// 選び直しとして落とすのかを決める必要がある。
+/// In a list whose rows are limited, the native control knows **only the selection
+/// of the rows that are built**. What comes back when the user clicks a row is also
+/// limited to that range, so we must decide whether the selection outside the
+/// window may be kept or should be dropped as a new selection.
 ///
-/// | 操作 | 窓の外の選択 |
+/// | Gesture | Selection outside the window |
 /// | --- | --- |
-/// | [`SelectionGesture::Toggle`] (⌘ / Ctrl) | 残す |
-/// | [`SelectionGesture::Plain`] / [`SelectionGesture::Extend`] | 落とす |
-/// | [`SelectionGesture::Unknown`] | 変わり方から見分ける |
+/// | [`SelectionGesture::Toggle`] (⌘ / Ctrl) | Kept |
+/// | [`SelectionGesture::Plain`] / [`SelectionGesture::Extend`] | Dropped |
+/// | [`SelectionGesture::Unknown`] | Inferred from how it changed |
 ///
-/// **Shift の範囲選びは変わり方では見分けられない。** 起点から広げた範囲は
-/// 前の選択を含むことがあり (`[1]` → `[1, 2, 3]`)、⌘ / Ctrl で足したときと
-/// 同じ形になるためである。修飾キーが読めるバックエンドは
-/// [`SelectionGesture`] を渡すこと。
+/// **A Shift range selection cannot be told apart by how it changed.** A range
+/// extended from the anchor can include the previous selection (`[1]` →
+/// `[1, 2, 3]`), which looks the same as adding with ⌘ / Ctrl. Backends that can
+/// read modifier keys should pass a [`SelectionGesture`].
 ///
-/// `previous` は前の選択のうち窓の中にあったもの、`current` はネイティブが
-/// 返してきた選択。どちらも昇順で重複が無いこと。
+/// `previous` is the part of the previous selection that was inside the window, and
+/// `current` is the selection the native control returned. Both must be in
+/// ascending order without duplicates.
 ///
 /// ```
 /// # use naui_core::{keeps_hidden_selection, SelectionGesture};
-/// // ⌘ / Ctrl での足し引きなら、画面の外で選ばれている行はそのまま。
+/// // Adding or removing with ⌘ / Ctrl leaves rows selected off screen as they are.
 /// assert!(keeps_hidden_selection(&[1], &[1, 3], SelectionGesture::Toggle));
-/// // Shift の範囲選びは、形が同じでも選び直しなので落とす。
+/// // A Shift range selection is a new selection even with the same shape, so drop.
 /// assert!(!keeps_hidden_selection(&[1], &[1, 3], SelectionGesture::Extend));
-/// // 修飾キーが読めないときは、変わり方から見分ける。
+/// // When modifier keys cannot be read, infer from how it changed.
 /// assert!(keeps_hidden_selection(&[1], &[1, 3], SelectionGesture::Unknown));
 /// assert!(!keeps_hidden_selection(&[1, 3], &[5], SelectionGesture::Unknown));
 /// ```
@@ -314,7 +323,8 @@ mod tests {
         }
     }
 
-    /// スクロール位置から「最低限これだけ要る」窓と「作り直すなら」の窓。
+    /// From a scroll position, the "at least this much" window and the "if rebuilt"
+    /// window.
     fn windows(count: usize, top: f64) -> (RowWindow, RowWindow) {
         (
             row_window(count, top, 200.0, 20.0, ROW_WINDOW_OVERSCAN / 2),

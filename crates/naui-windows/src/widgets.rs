@@ -1,4 +1,4 @@
-//! WinUI 3 (Fluent 2) の実コントロールを包むハンドル群。
+//! Handles wrapping real WinUI 3 (Fluent 2) controls.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -21,9 +21,9 @@ use windows_core::{IInspectable, Interface, HSTRING};
 use crate::to_error;
 use crate::ui_thread::{TextHandler, UiThreadCell};
 
-/// naui のウィジェットが実装する共通インタフェース。
+/// The common interface implemented by naui's widgets.
 pub trait Widget: 'static {
-    /// 対応する WinUI 3 の要素。バックエンド固有の脱出口として公開している。
+    /// The corresponding WinUI 3 element. Public as a backend-specific escape hatch.
     fn native_element(&self) -> UIElement;
 
     #[doc(hidden)]
@@ -55,45 +55,48 @@ macro_rules! impl_widget {
         }
 
         impl $t {
-            /// 大きさを指定する。呼ぶたびに以前の指定は置き換わる。
+            /// Sets the size. Each call replaces the previous setting.
             ///
-            /// 実際の大きさを決めるのは WinUI のレイアウトパスなので、
-            /// ここで渡すのは `Width` / `MinWidth` などの指定だけ。
+            /// The actual size is decided by WinUI's layout pass, so what you pass here is only
+            /// settings such as `Width` / `MinWidth`.
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 let element = <$t as Widget>::native_element(self);
                 crate::layout::apply_sizing(&element, sizing);
             }
 
-            /// 表示するかどうか。既定は表示。
+            /// Whether it is shown. Shown by default.
             ///
-            /// 隠したものは `Stack` の中では場所を空けない。`Grid` ではマスが残る。
+            /// A hidden widget takes no space in a `Stack`. In a `Grid`, its cell remains.
             pub fn set_visible(&self, visible: bool) {
                 crate::interaction::set_visible(&<$t as Widget>::native_element(self), visible);
             }
 
-            /// [`set_visible`](Self::set_visible) で指定した表示。親が隠れていても
-            /// `true` のまま。
+            /// The visibility set with [`set_visible`](Self::set_visible). Stays `true` even
+            /// if a parent is hidden.
             pub fn is_visible(&self) -> bool {
                 crate::interaction::is_visible(&<$t as Widget>::native_element(self))
             }
 
-            /// キーボードフォーカスを移す。移せたら `true`。
+            /// Moves keyboard focus here. `true` if it moved.
             ///
-            /// 自分が受け取れないとき (コンテナなど) は、中で最初に受け取れるものへ
-            /// 移す。表示前・隠れている・無効なときは `false`。
+            /// If the widget itself cannot take focus (containers, for example), focus moves to
+            /// the first thing inside that can. `false` before it is shown, while hidden, or
+            /// while disabled.
             pub fn request_focus(&self) -> bool {
                 crate::interaction::request_focus(&<$t as Widget>::native_element(self))
             }
 
-            /// ポインターを重ねたときに出す説明 (`ToolTipService`)。`None` で外す。
+            /// The description shown when the pointer hovers over it (`ToolTipService`).
+            /// `None` removes it.
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_element(self), text);
             }
 
-            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            /// The name reported to screen readers. `None` removes it (the visible text is
+            /// used).
             ///
-            /// アイコンだけのボタンのように、見えている文字が無いか意味を
-            /// 表しきれないときに付ける。
+            /// Set it when there is no visible text, or the text does not fully convey the
+            /// meaning, as with icon-only buttons.
             pub fn set_accessible_label(&self, text: Option<&str>) {
                 crate::interaction::set_accessible_label(
                     &<$t as Widget>::native_element(self),
@@ -101,8 +104,9 @@ macro_rules! impl_widget {
                 );
             }
 
-            /// 弱参照を作る。通知のクロージャからこのウィジェット自身を触るときに
-            /// 捕まえる (`clone()` で捕まえると循環して解放されない)。
+            /// Creates a weak reference. Capture it when touching this widget from its own
+            /// notification closures (capturing a `clone()` creates a cycle and it is never
+            /// freed).
             pub fn downgrade(&self) -> naui_core::WeakWidget<Self> {
                 let weak = std::rc::Rc::downgrade(&self.0);
                 naui_core::WeakWidget::new(move || weak.upgrade().map(Self))
@@ -113,11 +117,12 @@ macro_rules! impl_widget {
 
 pub(crate) use impl_widget;
 
-/// 選択が変わったことの通知先。
+/// The handler notified when the selection changes.
 ///
-/// コールバックを呼ぶ間はセルから一度取り出す。これにより、コールバックから
-/// 同じウィジェットを操作しても再入時の借用が衝突せず、`on_select` を呼び直して
-/// コールバックを差し替えた場合も新しいものを上書きしない。
+/// The callback is taken out of the cell once while it is being called. This keeps
+/// borrows from conflicting on re-entry when the callback operates on the same
+/// widget, and if `on_select` is called again to replace the callback, the new one
+/// is not overwritten.
 type SelectCallback = Box<dyn FnMut(usize)>;
 
 #[derive(Clone)]
@@ -153,22 +158,22 @@ impl SelectHandler {
 
 struct LabelInner {
     native: TextBlock,
-    /// いま当てている段階と役割。片方だけ変えても、両方を持つ `Style` を
-    /// 組み直せるように覚えておく。
+    /// The level and role currently applied. Remembered so that a `Style` holding both
+    /// can be rebuilt even when only one of them changes.
     style: Cell<TextStyle>,
     color: Cell<TextColor>,
 }
 
-/// テキスト表示 (TextBlock)。
+/// Text display (TextBlock).
 #[derive(Clone)]
 pub struct Label(Rc<LabelInner>);
 impl_widget!(Label, native);
 
-/// ラベルの土台。
+/// The base of a label.
 ///
-/// 省略記号 (`TextTrimming`) は XAML で持たせておく。折り返さないときだけ
-/// 効く指定なので、実行時に
-/// 切り替える必要はない (切り替えるのは `TextWrapping` のほう)。
+/// The ellipsis (`TextTrimming`) is set in XAML. It is a setting that applies only
+/// when not wrapping, so it need not be switched at runtime (what is switched is
+/// `TextWrapping`).
 const LABEL_XAML: &str = r##"<TextBlock
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     TextTrimming="CharacterEllipsis"/>"##;
@@ -196,10 +201,10 @@ impl Label {
         Ok(this)
     }
 
-    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    /// Whether the text can be selected and copied. Not selectable by default.
     ///
-    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
-    /// 入力欄と違い、文字は書き換えられない。
+    /// Use it for text readers will want to copy, such as chat messages or error
+    /// details. Unlike a text field, the text cannot be edited.
     pub fn set_selectable(&self, selectable: bool) {
         let _ = self.0.native.SetIsTextSelectionEnabled(selectable);
     }
@@ -208,10 +213,10 @@ impl Label {
         self.0.native.IsTextSelectionEnabled().unwrap_or(false)
     }
 
-    /// 長い文字列を折り返すかどうか。既定は折り返さない。
+    /// Whether long text wraps. Does not wrap by default.
     ///
-    /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
-    /// 切る (`TextTrimming="CharacterEllipsis"`)。
+    /// When not wrapping, it stays on one line and whatever does not fit is cut off
+    /// with a trailing ellipsis (…) (`TextTrimming="CharacterEllipsis"`).
     pub fn set_wrap(&self, wrap: bool) {
         let _ = self.0.native.SetTextWrapping(if wrap {
             TextWrapping::Wrap
@@ -232,30 +237,30 @@ impl Label {
         let _ = self.0.native.SetText(&HSTRING::from(text));
     }
 
-    /// 文字の大きさと太さの段階。既定は [`TextStyle::Body`]。
+    /// The level of text size and weight. The default is [`TextStyle::Body`].
     ///
-    /// WinUI 3 の type ramp が持つ `Style` (`TitleTextBlockStyle` など) を
-    /// そのまま当てる。級数と太さを決めるのは Fluent のテーマのほう。
+    /// The `Style`s of WinUI 3's type ramp (`TitleTextBlockStyle` and so on) are applied
+    /// as they are. The Fluent theme decides the point size and weight.
     pub fn set_style(&self, style: TextStyle) {
         self.0.style.set(style);
         self.apply_text_style();
     }
 
-    /// 文字色の役割。既定は [`TextColor::Default`]。
+    /// The text color role. The default is [`TextColor::Default`].
     ///
-    /// 色は `{ThemeResource}` として置くので、ウィンドウの `RequestedTheme` を
-    /// 切り替えたときもそのまま追従する (`Foreground` へ直に書いた色は
-    /// 切り替えに付いてこない)。
+    /// The color is set as a `{ThemeResource}`, so it follows when the window's
+    /// `RequestedTheme` is switched (colors written directly into `Foreground` do not
+    /// follow the switch).
     pub fn set_color(&self, color: TextColor) {
         self.0.color.set(color);
         self.apply_text_style();
     }
 
-    /// 段階と役割を 1 つの `Style` にまとめて当てる。
+    /// Applies the level and role together as a single `Style`.
     ///
-    /// 要素に当てられる `Style` は 1 つだけなので、色の `Setter` だけを持つ
-    /// `Style` を type ramp の `Style` の上へ重ねる (`BasedOn`)。
-    /// どちらかが引けなければ何もしない (前の見た目のまま続ける)。
+    /// An element can have only one `Style`, so a `Style` holding just the color
+    /// `Setter` is layered on top of the type ramp's `Style` (`BasedOn`). If either
+    /// cannot be obtained, nothing is done (the previous look continues).
     fn apply_text_style(&self) {
         let Some(style) = label_style(self.0.style.get(), self.0.color.get()) else {
             eprintln!("naui-windows: ラベルのスタイルが引けませんでした");
@@ -265,9 +270,10 @@ impl Label {
     }
 }
 
-/// 色の `Setter` を持つ `Style` の土台。`{brush}` にテーマリソースの名前が入る。
+/// The base of the `Style` holding the color `Setter`. `{brush}` is replaced with
+/// the theme resource's name.
 ///
-/// `x:Key` は [`LABEL_COLOR_STYLE_KEY`] と同じ文字列にする。
+/// `x:Key` must be the same string as [`LABEL_COLOR_STYLE_KEY`].
 const LABEL_COLOR_STYLE_XAML: &str = r##"<ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -278,10 +284,10 @@ const LABEL_COLOR_STYLE_XAML: &str = r##"<ResourceDictionary
 
 const LABEL_COLOR_STYLE_KEY: &str = "NauiLabelColorStyle";
 
-/// 段階と役割に対応する `Style`。引けなければ `None`。
+/// The `Style` for the level and role. `None` if it cannot be obtained.
 ///
-/// naui の `Label` を使えない場所 (表のセルのように文字揃えを直に決める
-/// ところ) でも、同じ見た目を当てられるように公開している。
+/// Exposed so that the same look can be applied even where naui's `Label` cannot be
+/// used (such as table cells, which decide text alignment directly).
 pub(crate) fn label_style(style: TextStyle, color: TextColor) -> Option<Style> {
     let ramp = app_resource(style.xaml_style_key())?.cast::<Style>().ok()?;
     let Some(brush_key) = color.xaml_brush_key() else {
@@ -292,10 +298,10 @@ pub(crate) fn label_style(style: TextStyle, color: TextColor) -> Option<Style> {
     Some(tinted)
 }
 
-/// 文字色だけを決める `Style` を作る。
+/// Creates a `Style` that decides only the text color.
 ///
-/// `Style` は一度当てると封をされて変えられなくなるので、当てるたびに
-/// 作り直す。
+/// Once applied, a `Style` is sealed and cannot be changed, so it is recreated on
+/// every application.
 fn label_color_style(brush_key: &str) -> Option<Style> {
     let xaml = LABEL_COLOR_STYLE_XAML.replace("{brush}", brush_key);
     let dictionary = XamlReader::Load(&HSTRING::from(xaml))
@@ -307,8 +313,8 @@ fn label_color_style(brush_key: &str) -> Option<Style> {
         .ok()
 }
 
-/// アプリのリソース辞書から 1 つ引く。`XamlControlsResources` を通して
-/// Fluent の type ramp とテーマリソースがここに入っている。
+/// Looks up one entry in the app's resource dictionary. Fluent's type ramp and
+/// theme resources are there via `XamlControlsResources`.
 fn app_resource(key: &str) -> Option<IInspectable> {
     let resources = Application::Current()
         .and_then(|app| app.Resources())
@@ -323,11 +329,11 @@ fn app_resource(key: &str) -> Option<IInspectable> {
 struct ButtonInner {
     native: XamlButton,
     label: TextBlock,
-    /// 登録したイベントのトークン。付け替え時に外す。
+    /// The token of the registered event. Removed when reattaching.
     token: RefCell<Option<i64>>,
 }
 
-/// 押しボタン (Button)。
+/// A push button (Button).
 #[derive(Clone)]
 pub struct Button(Rc<ButtonInner>);
 impl_widget!(Button, native);
@@ -357,7 +363,7 @@ impl Button {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// クリックされたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called on click. Setting it again removes the previous one.
     pub fn on_click(&self, f: impl FnMut() + 'static) {
         if let Some(token) = self.0.token.borrow_mut().take() {
             let _ = self.0.native.RemoveClick(token);
@@ -380,7 +386,7 @@ struct CheckboxInner {
     tokens: RefCell<Vec<(bool, i64)>>,
 }
 
-/// チェックボックス (CheckBox)。
+/// A check box (CheckBox).
 #[derive(Clone)]
 pub struct Checkbox(Rc<CheckboxInner>);
 impl_widget!(Checkbox, native);
@@ -419,7 +425,7 @@ impl Checkbox {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// 状態が変わったときに、変更後の値で呼ばれる。
+    /// Called with the new value when the state changes.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         for (checked, token) in self.0.tokens.borrow_mut().drain(..) {
             let _ = if checked {
@@ -455,11 +461,11 @@ struct TextInputInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
-    /// `on_focus_change` の通知先。
+    /// The `on_focus_change` handler.
     focus: crate::focus::Focus,
 }
 
-/// 1 行テキスト入力 (TextBox)。IME は Windows が処理する。
+/// Single-line text input (TextBox). Windows handles the IME.
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
 crate::keys::impl_key_down!(TextInput);
@@ -518,7 +524,7 @@ impl TextInput {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         use naui_winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
         if let Some(token) = self.0.token.borrow_mut().take() {
@@ -537,19 +543,19 @@ impl TextInput {
         }
     }
 
-    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    /// Called with the current text when the user confirms with Enter.
     ///
-    /// IME で変換している間の Enter (変換の確定) では呼ばれない。読み取り
-    /// 専用の間も呼ばれない。
+    /// Not called for an Enter pressed while an IME is composing (which confirms the
+    /// conversion). Not called while read-only either.
     pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_submit.set(f);
     }
 
-    /// 読み取り専用にするか。既定は書き換えられる。
+    /// Whether it is read-only. Editable by default.
     ///
-    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
-    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
-    /// 見せる欄に使う。
+    /// While read-only, the text can still be selected and copied, and it still takes
+    /// focus (unlike `set_enabled(false)`, it is not dimmed). Use it for fields that
+    /// show logs or generated output.
     pub fn set_read_only(&self, read_only: bool) {
         let _ = self.0.native.SetIsReadOnly(read_only);
     }
@@ -565,15 +571,16 @@ struct PasswordInputInner {
     native: PasswordBox,
     token: RefCell<Option<i64>>,
     on_submit: TextHandler,
-    /// `on_focus_change` の通知先。
+    /// The `on_focus_change` handler.
     focus: crate::focus::Focus,
 }
 
-/// パスワード入力 (PasswordBox)。
+/// Password input (PasswordBox).
 ///
-/// API の形は [`TextInput`] と同じで、違うのは**打った文字が伏せ字になる**
-/// ことだけ。伏せ字を一時的に外すボタン (`IsPasswordRevealButtonEnabled`) は
-/// WinUI 3 にあるが、4 環境の共通部分に無いので出さない。
+/// The API is the same as [`TextInput`]; the only difference is that **typed
+/// characters are masked**. WinUI 3 has a button that temporarily reveals the text
+/// (`IsPasswordRevealButtonEnabled`), but it is not shown because it is not part of
+/// what all four platforms share.
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
 crate::keys::impl_key_down!(PasswordInput);
@@ -604,7 +611,7 @@ impl PasswordInput {
         Ok(Self(inner))
     }
 
-    /// いま入力されている文字列。
+    /// The text currently entered.
     pub fn text(&self) -> String {
         self.0
             .native
@@ -613,10 +620,10 @@ impl PasswordInput {
             .unwrap_or_default()
     }
 
-    /// 文字列を置き換える。
+    /// Replaces the text.
     ///
-    /// WinUI がネイティブの `PasswordChanged` を出すため、**Windows だけは
-    /// `on_change` も呼ばれる** ([`TextInput::set_text`] と同じ)。
+    /// WinUI fires the native `PasswordChanged`, so **on Windows only, `on_change` is
+    /// called too** (the same as [`TextInput::set_text`]).
     pub fn set_text(&self, text: &str) {
         let _ = self.0.native.SetPassword(&HSTRING::from(text));
     }
@@ -629,7 +636,7 @@ impl PasswordInput {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         if let Some(token) = self.0.token.borrow_mut().take() {
             let _ = self.0.native.RemovePasswordChanged(token);
@@ -647,7 +654,7 @@ impl PasswordInput {
         }
     }
 
-    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    /// Called with the current text when the user confirms with Enter.
     pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_submit.set(f);
     }
@@ -658,11 +665,11 @@ impl PasswordInput {
 struct TextAreaInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
-    /// `on_focus_change` の通知先。
+    /// The `on_focus_change` handler.
     focus: crate::focus::Focus,
 }
 
-/// 複数行テキスト入力 (改行を受け付ける TextBox)。IME は Windows が処理する。
+/// Multi-line text input (a TextBox that accepts newlines). Windows handles the IME.
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
 crate::keys::impl_key_down!(TextArea);
@@ -693,7 +700,8 @@ impl TextArea {
         })))
     }
 
-    /// いまの文字列。改行は `\n` で含まれる (ほかの環境と同じ)。
+    /// The current text. Newlines are included as `\n` (the same as the other
+    /// platforms).
     pub fn text(&self) -> String {
         self.0
             .native
@@ -706,7 +714,7 @@ impl TextArea {
         let _ = self.0.native.SetText(&HSTRING::from(text));
     }
 
-    /// 何も入力されていないときに薄く出る文字。
+    /// Text shown faintly when nothing has been entered.
     pub fn set_placeholder(&self, text: &str) {
         let _ = self.0.native.SetPlaceholderText(&HSTRING::from(text));
     }
@@ -715,7 +723,8 @@ impl TextArea {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。改行の入力でも呼ばれる。
+    /// Called with the current text every time a character is typed. Also called for
+    /// newlines.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         use naui_winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
         if let Some(token) = self.0.token.borrow_mut().take() {
@@ -734,11 +743,11 @@ impl TextArea {
         }
     }
 
-    /// 読み取り専用にするか。既定は書き換えられる。
+    /// Whether it is read-only. Editable by default.
     ///
-    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
-    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
-    /// 見せる欄に使う。
+    /// While read-only, the text can still be selected and copied, and it still takes
+    /// focus (unlike `set_enabled(false)`, it is not dimmed). Use it for fields that
+    /// show logs or generated output.
     pub fn set_read_only(&self, read_only: bool) {
         let _ = self.0.native.SetIsReadOnly(read_only);
     }
@@ -748,7 +757,8 @@ impl TextArea {
     }
 }
 
-/// WinUI の `TextBox` は改行を `\r` で持つ。ほかの環境に合わせて `\n` にする。
+/// WinUI's `TextBox` stores newlines as `\r`. They are converted to `\n` to match
+/// the other platforms.
 fn unix_newlines(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
@@ -765,7 +775,7 @@ struct SliderInner {
     max: f64,
 }
 
-/// スライダー (Slider)。
+/// A slider (Slider).
 #[derive(Clone)]
 pub struct Slider(Rc<SliderInner>);
 impl_widget!(Slider, native);
@@ -801,7 +811,7 @@ impl Slider {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// つまみが動くたびに、その値で呼ばれる。
+    /// Called with the value every time the knob moves.
     pub fn on_change(&self, f: impl FnMut(f64) + 'static) {
         use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::RangeBaseValueChangedEventHandler;
         let state = UiThreadCell::new((self.0.native.clone(), f));
@@ -820,9 +830,9 @@ struct ProgressInner {
     fill: FrameworkElement,
     value: Cell<f64>,
     track_width: Cell<f64>,
-    /// 不確定の間、前景の帯を往復させるタイマー。
+    /// The timer that moves the foreground band back and forth while indeterminate.
     animation: RefCell<Option<DispatcherQueueTimer>>,
-    /// 往復の進み具合 (0.0..2.0。1.0 を超えたら戻る向き)。
+    /// How far along the back-and-forth is (0.0..2.0; past 1.0 it is going back).
     phase: Cell<f64>,
 }
 
@@ -834,13 +844,14 @@ impl Drop for ProgressInner {
     }
 }
 
-/// 不確定の帯の長さ (バーの幅に対する割合)。
+/// The length of the indeterminate band (as a fraction of the bar's width).
 const INDETERMINATE_SEGMENT: f64 = 0.3;
-/// 不確定の帯を動かす間隔と、1 回に進む量 (往復で約 2 秒)。
+/// The interval for moving the indeterminate band, and how far it moves each time
+/// (about 2 seconds per round trip).
 const INDETERMINATE_TICK_MILLIS: i64 = 33;
 const INDETERMINATE_STEP: f64 = 0.033;
 
-/// 進捗バー (ProgressBar)。
+/// A progress bar (ProgressBar).
 #[derive(Clone)]
 pub struct ProgressBar(Rc<ProgressInner>);
 impl_widget!(ProgressBar, native);
@@ -910,7 +921,7 @@ impl ProgressBar {
         Ok(this)
     }
 
-    /// 0.0..=1.0。
+    /// 0.0..=1.0.
     pub fn set_value(&self, value: f64) {
         let value = value.clamp(0.0, 1.0);
         self.0.value.set(value);
@@ -923,14 +934,16 @@ impl ProgressBar {
         self.0.value.get()
     }
 
-    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    /// Whether to show work whose progress is unknown (indeterminate progress).
     ///
-    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
-    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    /// While `true`, motion shows "working" instead of a value. Turning it off returns
+    /// to showing the value set with [`set_value`](Self::set_value) (the value is
+    /// remembered).
     ///
-    /// WinUI の `ProgressBar` は未パッケージ起動でテンプレートを当てた瞬間に
-    /// 落ちるため、naui は同じテーマ資源で組んだ帯を使っている。不確定の
-    /// 表示も、その前景の帯を一定の間隔で往復させて表す。
+    /// WinUI's `ProgressBar` crashes the moment its template is applied when launched
+    /// unpackaged, so naui uses a band built from the same theme resources. The
+    /// indeterminate display is also expressed by moving that foreground band back and
+    /// forth at a fixed interval.
     pub fn set_indeterminate(&self, indeterminate: bool) {
         if self.is_indeterminate() == indeterminate {
             return;
@@ -981,7 +994,7 @@ impl ProgressBar {
 }
 
 impl ProgressInner {
-    /// 前景の帯を 1 歩進める。端まで行ったら折り返す。
+    /// Advances the foreground band one step. Turns around at the ends.
     fn step_indeterminate(&self) {
         let phase = (self.phase.get() + INDETERMINATE_STEP) % 2.0;
         self.phase.set(phase);
@@ -1000,7 +1013,8 @@ impl ProgressInner {
 
 struct StackInner {
     native: StackPanel,
-    /// 交差軸に置く子の既定の寄せ方。`Fill` の子は自分の指定を優先する。
+    /// The default alignment of children on the cross axis. `Fill` children follow their
+    /// own setting instead.
     align: Cell<Align>,
     children: RefCell<Vec<Box<dyn Widget>>>,
 }
@@ -1015,7 +1029,7 @@ impl Drop for StackInner {
     }
 }
 
-/// 縦 / 横に子を並べるコンテナ (StackPanel)。
+/// A container that lays out its children vertically / horizontally (StackPanel).
 #[derive(Clone)]
 pub struct Stack(Rc<StackInner>);
 impl_widget!(Stack, native);
@@ -1066,7 +1080,7 @@ impl Stack {
             .unwrap_or(true)
     }
 
-    /// 末尾に子を追加する。
+    /// Appends a child at the end.
     pub fn append(&self, child: &dyn Widget) {
         let element = child.native_element();
         let appended = self.0.native.Children().and_then(|c| c.Append(&element));
@@ -1076,7 +1090,8 @@ impl Stack {
         }
     }
 
-    /// 指定した位置へ子を差し込む。`index` が今の数以上なら末尾へ足す。
+    /// Inserts a child at the given position. If `index` is at least the current
+    /// count, it is appended at the end.
     pub fn insert(&self, index: usize, child: &dyn Widget) {
         let mut children = self.0.children.borrow_mut();
         let index = index.min(children.len());
@@ -1092,7 +1107,7 @@ impl Stack {
         }
     }
 
-    /// 指定した位置の子を外す。範囲外のときは何もしない。
+    /// Removes the child at the given position. Does nothing if out of range.
     pub fn remove(&self, index: usize) {
         let mut children = self.0.children.borrow_mut();
         if index >= children.len() {
@@ -1109,7 +1124,7 @@ impl Stack {
         }
     }
 
-    /// 子をすべて外す。
+    /// Removes every child.
     pub fn clear(&self) {
         let elements = self
             .0
@@ -1139,7 +1154,7 @@ impl Stack {
     }
 }
 
-/// `bool` を WinRT の `IReference<bool>` に包む。
+/// Wraps a `bool` in WinRT's `IReference<bool>`.
 pub(crate) fn bool_ref(value: bool) -> Result<windows::Foundation::IReference<bool>> {
     use windows_core::Interface;
     windows::Foundation::PropertyValue::CreateBoolean(value)

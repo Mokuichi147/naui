@@ -1,18 +1,18 @@
-//! ツールバー (`<div role="toolbar">` + `<button>`)。
+//! The toolbar (`<div role="toolbar">` + `<button>`).
 //!
-//! ブラウザにツールバーのコントロールは無いため、WAI-ARIA の
-//! `role="toolbar"` を付けた `<div>` にボタンを並べ、区切りは
-//! `role="separator"` の `<div>` で表す。見た目はブラウザ既定のままで、
-//! CSS は横並びと区切り線の描画にしか使わない。
+//! Browsers have no toolbar control, so buttons are laid out in a `<div>` with
+//! WAI-ARIA's `role="toolbar"`, and separators are `<div>`s with
+//! `role="separator"`. The look stays the browser's default; CSS is used only for
+//! the horizontal layout and drawing separator lines.
 //!
-//! ほかのバックエンドに合わせて [`Widget`](crate::Widget) にはせず、
-//! [`Window::set_toolbar`](crate::Window::set_toolbar) でウィンドウの
-//! 上端へ取り付ける。
+//! To match the other backends it is not a [`Widget`](crate::Widget); it is
+//! attached to the top of the window with
+//! [`Window::set_toolbar`](crate::Window::set_toolbar).
 //!
-//! **ブラウザには OS のアイコンテーマが無い**ため、アイコンだけは naui が
-//! 図形 ([`ToolbarIcon::svg_path`](naui_core::ToolbarIcon::svg_path)) を持ち、
-//! インライン SVG として描く。色は `currentColor` に従うので、ブラウザや
-//! ページの配色にはそのまま馴染む。`label` は読み上げとツールチップに使う。
+//! **Browsers have no OS icon theme**, so for icons alone naui owns the shapes
+//! ([`ToolbarIcon::svg_path`](naui_core::ToolbarIcon::svg_path)) and draws them as
+//! inline SVG. The color follows `currentColor`, so it blends in with the browser's
+//! and page's color scheme. `label` is used for screen readers and tooltips.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -28,19 +28,19 @@ struct ToolbarInner {
     element: HtmlElement,
     document: Document,
     items: RefCell<Vec<ToolbarItem>>,
-    /// 項目と同じ並び。区切りのところは `None`。
+    /// In the same order as the items. `None` at separators.
     buttons: RefCell<Vec<Option<HtmlElement>>>,
-    /// 項目ごとのクリック購読。項目を作り直すと外れる。
+    /// The click subscription per item. Removed when the items are rebuilt.
     listeners: RefCell<Vec<Listener>>,
     handler: Handler,
-    /// ツールバー全体の有効・無効。項目ごとの指定と AND を取る。
+    /// Whether the whole toolbar is enabled. ANDed with the per-item settings.
     enabled: Cell<bool>,
 }
 
-/// 押された項目の通知先。
+/// The handler for the clicked item.
 ///
-/// 呼び出しの間だけクロージャを取り出すので、通知の中から同じ
-/// ツールバーを組み替えても二重借用にならない。
+/// The closure is taken out only for the duration of the call, so rebuilding the
+/// same toolbar from inside the notification does not double-borrow.
 #[derive(Clone, Default)]
 struct Handler(Rc<RefCell<Option<Box<dyn FnMut(usize)>>>>);
 
@@ -66,12 +66,12 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
     let _ = element.style().set_property(property, value);
 }
 
-/// アイコン 1 つぶんのインライン SVG を作る。サイドバーの項目も使う。
+/// Creates the inline SVG for one icon. Sidebar items use it too.
 pub(crate) fn icon_svg(doc: &Document, icon: ToolbarIcon) -> Result<Element> {
     path_svg(doc, icon.svg_path())
 }
 
-/// 線描きの図形 1 つぶんのインライン SVG を作る (24x24 の座標系)。
+/// Creates the inline SVG for one line-drawn shape (24x24 coordinate space).
 pub(crate) fn path_svg(doc: &Document, d: &str) -> Result<Element> {
     const NS: &str = "http://www.w3.org/2000/svg";
     let svg = doc
@@ -103,13 +103,13 @@ fn append(parent: &Element, child: &Element) -> Result<()> {
         .map_err(|e| to_error("DOM への追加", e))
 }
 
-/// ウィンドウの上端に付く、よく使う操作の並び。
+/// A row of frequently used actions attached to the top of the window.
 ///
-/// [`Widget`](crate::Widget) ではない。
-/// [`Window::set_toolbar`](crate::Window::set_toolbar) で取り付ける。
-/// ナビゲーションと違い**選ばれている項目を持たず**、押されるたびに
-/// そのインデックスで [`on_activate`](Self::on_activate) が呼ばれる。
-/// インデックスは区切りを含めた並びの位置で、区切りが返ることはない。
+/// Not a [`Widget`](crate::Widget). Attach it with
+/// [`Window::set_toolbar`](crate::Window::set_toolbar). Unlike navigation, it
+/// **has no selected item**; every click calls [`on_activate`](Self::on_activate)
+/// with the index. The index is the position in the sequence including separators;
+/// separators are never returned.
 #[derive(Clone)]
 pub struct Toolbar(Rc<ToolbarInner>);
 
@@ -134,9 +134,9 @@ impl Toolbar {
         })))
     }
 
-    /// 項目を作り直す。以前の項目は取り除かれる。
+    /// Rebuilds the items. The previous items are removed.
     ///
-    /// インデックスは区切りを含めた並びの位置。
+    /// The index is the position in the sequence including separators.
     pub fn set_items(&self, items: &[ToolbarItem]) {
         let _ = self.rebuild(items);
     }
@@ -197,7 +197,7 @@ impl Toolbar {
         Ok(())
     }
 
-    /// 区切りを含めた項目数。
+    /// The number of items, separators included.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -206,7 +206,7 @@ impl Toolbar {
         self.len() == 0
     }
 
-    /// 項目 1 つの有効・無効を変える。区切りと範囲外は何もしない。
+    /// Enables or disables one item. Does nothing for separators or out of range.
     pub fn set_item_enabled(&self, index: usize, enabled: bool) {
         let mut items = self.0.items.borrow_mut();
         let Some(item) = items.get_mut(index) else {
@@ -220,7 +220,7 @@ impl Toolbar {
         self.apply_enabled();
     }
 
-    /// いま押せる項目か。区切りと範囲外は `false`。
+    /// Whether the item can be clicked now. `false` for separators and out of range.
     pub fn is_item_enabled(&self, index: usize) -> bool {
         self.0.enabled.get()
             && self
@@ -231,13 +231,13 @@ impl Toolbar {
                 .is_some_and(|item| !item.is_separator() && item.enabled)
     }
 
-    /// ツールバー全体の有効・無効を変える。項目ごとの指定は残る。
+    /// Enables or disables the whole toolbar. Per-item settings are kept.
     pub fn set_enabled(&self, enabled: bool) {
         self.0.enabled.set(enabled);
         self.apply_enabled();
     }
 
-    /// 項目ごとの指定と全体の指定を DOM へ反映する。
+    /// Applies the per-item settings and the overall setting to the DOM.
     fn apply_enabled(&self) {
         let whole = self.0.enabled.get();
         let items = self.0.items.borrow();
@@ -248,34 +248,33 @@ impl Toolbar {
         }
     }
 
-    /// 利用者が押したのと同じように項目を実行する。
+    /// Runs the item as if the user had clicked it.
     ///
-    /// 区切り・押せない項目・範囲外は何もしない。
+    /// Does nothing for separators, disabled items or out of range.
     pub fn activate(&self, index: usize) {
         if self.is_item_enabled(index) {
             self.0.handler.emit(index);
         }
     }
 
-    /// 項目が押されたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the index when an item is clicked. Setting it again removes the
+    /// previous callback.
     pub fn on_activate(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 項目に対応する `<button>`。区切りと範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The `<button>` for the item. `None` for separators and out of range. Public as a
+    /// backend-specific escape hatch.
     pub fn native_button(&self, index: usize) -> Option<HtmlElement> {
         self.0.buttons.borrow().get(index)?.clone()
     }
 
-    /// ツールバーの `<div role="toolbar">`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The toolbar's `<div role="toolbar">`. Public as a backend-specific escape hatch.
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()
     }
 
-    /// ウィンドウへ差し込む要素。[`crate::Window`] だけが使う。
+    /// The element inserted into the window. Used only by [`crate::Window`].
     pub(crate) fn mount(&self) -> HtmlElement {
         self.0.element.clone()
     }

@@ -1,57 +1,59 @@
-# Windows App SDK ランタイムを同梱する
+# Bundling the Windows App SDK runtime
 
-`self-contained` フィーチャー (既定は無効) を有効にすると、ランタイムを exe と
-一緒に配れるので、利用者が別に導入する必要がなくなります。
+Enabling the `self-contained` feature (off by default) lets you ship the runtime
+together with the exe, so users do not need to install it separately.
 
 ```toml
 [dependencies]
 naui = { version = "0.11", features = ["self-contained"] }
 ```
 
-ビルド時に Windows App SDK 2.5.1 の部品を nuget.org から取得し、SHA-512 で
-照合してから exe の出力先へ並べます。配布するときは
-`target/<profile>/naui-winappsdk/` の中身 (約 60MB、ライセンス条項と告知を含む)
-をすべて exe の隣へ置いてください。
+At build time, the Windows App SDK 2.5.1 components are fetched from nuget.org,
+verified with SHA-512, and placed in the exe's output directory. When
+distributing, put everything in `target/<profile>/naui-winappsdk/` (about 60 MB,
+including license terms and notices) next to the exe.
 
-**同梱物が無いと、導入済みのランタイムへは切り替えずにエラーにします。**
-手元では動いてしまい、配り忘れに配布先で初めて気づく、ということを防ぐためです。
+**If the bundled files are missing, naui fails with an error instead of falling
+back to an installed runtime.** This prevents the situation where it works on your
+machine and the missing files are first noticed on the user's machine.
 
-Gallery で試すには `cargo run -p gallery --features self-contained` を実行します。
+To try it with the Gallery, run `cargo run -p gallery --features self-contained`.
 
-## ライセンス
+## License
 
-- **このフィーチャーを有効にすると、取得する各パッケージのライセンスに同意した
-  ことになります。** naui のビルドは確認なしに取得します。条文と再配布の条件は、
-  各 `.nupkg` の `license.txt` と nuget.org の各パッケージのページにあります。
-- WinUI 2.0.12〜2.3.2 には再配布を禁じるライセンスが誤って入っていたため
-  ([microsoft/WindowsAppSDK#6654](https://github.com/microsoft/WindowsAppSDK/issues/6654))、
-  修正後の 2.3.6 以上だけを同梱します。
+- **Enabling this feature means agreeing to the license of each package fetched.**
+  naui's build fetches them without asking. The terms and redistribution conditions
+  are in each `.nupkg`'s `license.txt` and on each package's page on nuget.org.
+- WinUI 2.0.12 through 2.3.2 mistakenly included a license prohibiting
+  redistribution
+  ([microsoft/WindowsAppSDK#6654](https://github.com/microsoft/WindowsAppSDK/issues/6654)),
+  so only the fixed 2.3.6 and later are bundled.
 
-## 制約
+## Constraints
 
-- 並べるファイルは MSBuild の self-contained 配置と同じです
-  (`DeploymentAgent.exe` は除きます)。
-- プッシュ通知など、同梱では使えない Windows App SDK の機能があります
-  (naui は使っていません)。
-- ランタイムの不具合やセキュリティの修正は、アプリの配り直しで届けます。
-- exe を置くフォルダーのパスはおおむね 200 文字以内にしてください。260 文字を
-  超えるファイルがあると起動に失敗します。
-- exe の隣に `resources.pri` を置くため、アプリ自身の `resources.pri` とは
-  両立しません。
-- オフラインでは、4 つの `.nupkg` を置いたフォルダーを環境変数
-  `NAUI_WINAPPSDK_PACKAGES` に指定します。ファイル名は
-  `microsoft.windowsappsdk.winui.2.3.9.nupkg` のような小文字の形です。
+- The files placed are the same as MSBuild's self-contained deployment (excluding
+  `DeploymentAgent.exe`).
+- Some Windows App SDK features, such as push notifications, are not available when
+  bundled (naui does not use them).
+- Runtime bug and security fixes are delivered by redistributing the app.
+- Keep the path of the folder holding the exe to roughly 200 characters or fewer.
+  Launching fails if any file path exceeds 260 characters.
+- A `resources.pri` is placed next to the exe, so it cannot coexist with the app's
+  own `resources.pri`.
+- For offline builds, set the environment variable `NAUI_WINAPPSDK_PACKAGES` to a
+  folder containing the four `.nupkg` files. File names are lowercase, like
+  `microsoft.windowsappsdk.winui.2.3.9.nupkg`.
 
-## マニフェストを exe に埋め込む
+## Embedding the manifest in the exe
 
-naui は起動時に同梱物のマニフェストを読み込みます。Windows 10 1903 以降は
-これで動きます (CI の Windows Server 2022・2025 で確認)。1809 では Windows App
-SDK が **exe に埋め込まれたマニフェストだけ**を見るため、埋め込みが要る見込み
-です (未確認)。埋め込まずにランタイムが見つからないときは、`naui::run` が
-埋め込みを促すエラーを返します。
+naui loads the bundled manifest at startup. This works on Windows 10 1903 and later
+(verified on Windows Server 2022 and 2025 in CI). On 1809, the Windows App SDK looks
+**only at a manifest embedded in the exe**, so embedding is expected to be needed
+(unverified). If the runtime cannot be found without embedding, `naui::run` returns
+an error suggesting embedding.
 
-依存クレートの側からはアプリの exe へ埋め込めないので、アプリの `build.rs` で
-埋め込みます。MSVC のリンカーが要ります。
+A dependency crate cannot embed into the app's exe, so embed it in the app's
+`build.rs`. This requires the MSVC linker.
 
 ```rust
 // build.rs
@@ -59,7 +61,7 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {
-        // naui のビルドが target/<profile>/naui-winappsdk/ に置くマニフェスト。
+        // The manifest naui's build places in target/<profile>/naui-winappsdk/.
         let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
         let manifest = out_dir.ancestors().nth(3).unwrap()
             .join("naui-winappsdk").join("naui-winappsdk.manifest");
@@ -69,20 +71,23 @@ fn main() {
 }
 ```
 
-フィーチャーで同梱を切り替える例は [`examples/gallery/build.rs`](../examples/gallery/build.rs) にあります。
-埋め込むと、スレッドプールなど naui を起動したのとは別のスレッドからも WinUI の
-クラスを作れるようになります。
+An example of switching bundling with a feature is in
+[`examples/gallery/build.rs`](../examples/gallery/build.rs). Embedding also makes it
+possible to create WinUI classes from threads other than the one that started naui,
+such as a thread pool.
 
-## build-dir を分けている場合
+## When build-dir is separate
 
-Cargo はビルドスクリプトに exe の出力先 (target-dir) を知らせないので、naui は
-build-dir から求めます。既定では同じ場所なので何もしなくて構いません。
+Cargo does not tell build scripts the exe's output directory (target-dir), so naui
+derives it from build-dir. By default they are the same place, so nothing needs to
+be done.
 
-`build.build-dir` (`CARGO_BUILD_BUILD_DIR`) で分けている場合は、target-dir を
-環境変数 `NAUI_WINAPPSDK_TARGET_DIR` に絶対パスで指定してください
-(`CARGO_TARGET_DIR` が絶対パスならそれを使います)。どちらも無ければビルドを
-止めますが、設定ファイルの `build.build-dir` はビルドスクリプトから見えないため
-止められず、起動時に同梱物が無いというエラーになります。
+If they are separated with `build.build-dir` (`CARGO_BUILD_BUILD_DIR`), set the
+environment variable `NAUI_WINAPPSDK_TARGET_DIR` to the target-dir as an absolute
+path (if `CARGO_TARGET_DIR` is an absolute path, it is used). If neither is set, the
+build stops, but `build.build-dir` in a config file is not visible to build scripts,
+so it cannot be stopped, and the app fails at startup with an error saying the
+bundled files are missing.
 
-CI のキャッシュ (`Swatinem/rust-cache` など) の復元で並べたファイルが消えても、
-次のビルドで並べ直します。
+Even if restoring a CI cache (such as `Swatinem/rust-cache`) removes the placed
+files, the next build places them again.

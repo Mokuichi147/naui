@@ -1,8 +1,7 @@
-//! WinUI 3 の `Application` 派生オブジェクト。
+//! The WinUI 3 `Application`-derived object.
 //!
-//! `Application::Start` には基底クラスそのものではなく、
-//! `IApplicationOverrides::OnLaunched` と XAML メタデータプロバイダーを
-//! 実装した composed object が必要。
+//! `Application::Start` needs not the base class itself but a composed object
+//! implementing `IApplicationOverrides::OnLaunched` and a XAML metadata provider.
 
 use std::ptr::NonNull;
 

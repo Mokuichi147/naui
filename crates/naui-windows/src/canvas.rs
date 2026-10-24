@@ -1,40 +1,45 @@
-//! 描画面 (WinUI 3 の `Canvas` に `Path` と `TextBlock` を置いたもの)。
+//! The drawing surface (WinUI 3's `Canvas` holding `Path`s and `TextBlock`s).
 //!
-//! WinUI 3 に「アプリが画素を描く面」はない。Win2D は Windows App SDK では
-//! なく別パッケージで、`SwapChainPanel` は DirectX を自前で回す口なので、
-//! XAML が持つ**図形の要素** (`Microsoft.UI.Xaml.Shapes.Path` と
-//! `TextBlock`) を `Canvas` へ置く形で組み立てる。塗り・線・文字は
-//! すべて XAML のレンダラー (Composition) が描くので、アンチエイリアス・
-//! 表示倍率・ダークテーマの文字はほかのコントロールと同じ品質になる。
+//! WinUI 3 has no "surface the app paints pixels on". Win2D is a separate package
+//! rather than part of the Windows App SDK, and `SwapChainPanel` is a door for
+//! driving DirectX yourself, so it is built by placing XAML's **shape elements**
+//! (`Microsoft.UI.Xaml.Shapes.Path` and `TextBlock`) into a `Canvas`. Fills,
+//! strokes and text are all drawn by the XAML renderer (Composition), so
+//! antialiasing, display scaling and dark-theme text get the same quality as other
+//! controls.
 //!
-//! `on_draw` が [`Painter`] に記録した命令は、描き直しのたびに 1 つの XAML
-//! 文字列 (`<Canvas>` とその子) にして `XamlReader` へ渡し、できた要素で
-//! 前の面を丸ごと置き換える。`Path` の形は XAML のパスの記法
-//! (`M` / `L` / `C` / `Z`) で渡し、`Path` や `PathGeometry` の型を投影に
-//! 足さなくて済むようにしている。
+//! On every redraw, the commands `on_draw` recorded in the [`Painter`] become one
+//! XAML string (a `<Canvas>` and its children) passed to `XamlReader`, and the
+//! resulting elements replace the previous surface wholesale. `Path` shapes are
+//! given in XAML's path syntax (`M` / `L` / `C` / `Z`), so the `Path` and
+//! `PathGeometry` types need not be added to the projection.
 //!
-//! 大きさが変わったことは `SizeChanged` で拾い、ポインターは `PointerPressed` /
-//! `PointerMoved` / `PointerReleased` から取る。カーソルが面の上にあるか
-//! どうかは、それらと `PointerEntered` / `PointerExited` のうちマウスと
-//! タッチパッドの分で覚える。
+//! Size changes are caught with `SizeChanged`, and the pointer comes from
+//! `PointerPressed` / `PointerMoved` / `PointerReleased`. Whether the cursor is over
+//! the surface is remembered from those plus the mouse and touchpad share of
+//! `PointerEntered` / `PointerExited`.
 //!
-//! どのボタンかは `PointerPointProperties` の `IsLeftButtonPressed` などで見る。
-//! WinUI は 2 つ目以降のボタンの押下と解放 (左を押したまま右を押す、など) を
-//! `PointerMoved` で知らせるので、ポインターごとに押しているボタンの組を
-//! 覚えておき、前回との差を押下・解放として届ける (どの通知で来ても同じ扱い)。
+//! The button is identified by `PointerPointProperties`'s `IsLeftButtonPressed` and
+//! friends. WinUI reports presses and releases of second and later buttons
+//! (pressing right while holding left, for example) through `PointerMoved`, so the
+//! set of buttons held is remembered per pointer, and differences from last time
+//! are delivered as presses and releases (treated the same whichever notification
+//! they come through).
 //!
-//! ホイールの量は 1 刻みで 120 (`WHEEL_DELTA`) なので、120 を [`WHEEL_STEP`]
-//! に直す。縦の量は「奥へ回すと正」で他の 3 環境と逆なので符号を反転し、
-//! 横は右が正なのでそのまま届ける。
+//! The wheel amount is 120 per notch (`WHEEL_DELTA`), so 120 is converted to
+//! [`WHEEL_STEP`]. The vertical amount is "positive when turned away", the opposite
+//! of the other three platforms, so the sign is flipped; horizontal is positive to
+//! the right and delivered as is.
 //!
-//! ホイールは 2 つの道から届く。実マウスのホイールは XAML まで届かないことが
-//! あり、naui は前面のウィンドウへのホイールを `WH_MOUSE_LL` のフックで先に
-//! 受けて `Scroll` を動かしている (`layout.rs`)。このフックはポインターの下に
-//! `on_wheel` 付きの面があればまずそこへ届け ([`dispatch_wheel`])、`Handled`
-//! ならメッセージを捨てて外側の `Scroll` へ回さない。フックが受けない場合
-//! (ウィンドウが前面にない、など) は `PointerWheelChanged` で受け、`Handled`
-//! なら `Handled` を立てる。フックが届けて `Continue` を返したホイールが
-//! XAML からも届いたときは、2 度目なので捨てる。
+//! The wheel arrives by two routes. A real mouse wheel sometimes never reaches
+//! XAML, so naui first receives wheels to the foreground window with a
+//! `WH_MOUSE_LL` hook and moves `Scroll` (`layout.rs`). This hook first delivers to
+//! a surface with `on_wheel` under the pointer, if any ([`dispatch_wheel`]); with
+//! `Handled`, the message is discarded and not passed to the outer `Scroll`. When
+//! the hook does not receive it (the window is not in the foreground, for example),
+//! it is received through `PointerWheelChanged`, setting `Handled` for `Handled`. A
+//! wheel that the hook delivered and got `Continue` for, arriving from XAML too, is
+//! discarded as the second delivery.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -60,16 +65,17 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
-/// 面の土台。`Background="Transparent"` で、何も描いていない場所でも
-/// ポインターの当たり判定が残る (`null` だと素通りする)。
+/// The base of the surface. With `Background="Transparent"`, pointer hit-testing
+/// remains even where nothing is drawn (`null` lets it pass through).
 const HOST_XAML: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="Transparent"/>"##;
 
-/// 描く内容を決めるクロージャの置き場。
+/// The slot for the closure that decides what to draw.
 ///
-/// WinRT のイベント (`SizeChanged`) から呼ぶので [`UiThreadCell`] に載せ、
-/// 呼んでいる間は取り出しておく (`ColorHandler` などと同じ決まり)。
+/// It is called from a WinRT event (`SizeChanged`), so it is placed in a
+/// [`UiThreadCell`] and taken out while it is being called (the same rule as
+/// `ColorHandler` and others).
 #[derive(Clone)]
 struct DrawHandler(HandlerCell<dyn FnMut(&mut Painter)>);
 
@@ -82,7 +88,7 @@ impl DrawHandler {
         self.0.with_mut(|slot| *slot = Some(Box::new(f)));
     }
 
-    /// 呼んで、描いたかどうかを返す。まだ設定されていなければ `false`。
+    /// Calls it and returns whether it drew. `false` if not set yet.
     fn emit(&self, painter: &mut Painter) -> bool {
         let Some(Some(mut f)) = self.0.try_with_mut(|slot| slot.take()) else {
             return false;
@@ -127,30 +133,33 @@ struct CanvasInner {
     draw: DrawHandler,
     pointer: PointerHandler,
     wheel: WheelHandler,
-    /// ポインターごとの、いま押しているボタンの組 ([`button_bit`] の和)。
+    /// The set of buttons currently held, per pointer (a sum of [`button_bit`]s).
     pressed: RefCell<HashMap<u32, u8>>,
-    /// 描き直しを `DispatcherQueue` へ積んであるかどうか。
+    /// Whether a redraw is queued on the `DispatcherQueue`.
     scheduled: Cell<bool>,
-    /// 面の上にあるカーソルの最後の位置 ([`moves_cursor`])。入ったときと
-    /// 押下・移動・解放で覚え、外へ出たら `None`。フックから
-    /// 届けるホイールの位置と、届け先の面を決めるのに使う。
+    /// The last position of the cursor over the surface ([`moves_cursor`]). Remembered
+    /// on entering and on press, move and release; `None` once it leaves. Used to decide
+    /// the position of wheels delivered from the hook and which surface to deliver to.
     hover: Cell<Option<Point>>,
-    /// [`WHEEL_CANVASES`] に載せたかどうか (`on_wheel` を付けたかどうか)。
+    /// Whether it was added to [`WHEEL_CANVASES`] (whether `on_wheel` was set).
     wheel_registered: Cell<bool>,
-    /// フックから最後にホイールを届けて `Continue` が返った時刻。同じ
-    /// ホイールが `PointerWheelChanged` からも届いたら捨てる。
+    /// When the hook last delivered a wheel and got `Continue`. If the same wheel also
+    /// arrives through `PointerWheelChanged`, it is discarded.
     hook_wheel: Cell<Option<Instant>>,
 }
 
 thread_local! {
-    /// `on_wheel` を付けた面。フックで受けたホイールの届け先をここから探す。
+    /// The surfaces with `on_wheel` set. The destination of wheels received by the hook
+    /// is looked up here.
     static WHEEL_CANVASES: RefCell<Vec<Weak<CanvasInner>>> = const { RefCell::new(Vec::new()) };
 }
 
-/// フックが届けたホイールと同じものとみなす、`PointerWheelChanged` までの間。
+/// How long until `PointerWheelChanged` is treated as the same wheel the hook
+/// delivered.
 const HOOK_WHEEL_ECHO: Duration = Duration::from_millis(250);
 
-/// `MouseWheelDelta` (1 刻みで 120) を、届ける量 (論理ピクセル) にする。
+/// Turns `MouseWheelDelta` (120 per notch) into the amount delivered (logical
+/// pixels).
 fn wheel_amount(delta: f64, horizontal: bool) -> (f64, f64) {
     let amount = delta / 120.0 * WHEEL_STEP;
     if horizontal {
@@ -160,10 +169,12 @@ fn wheel_amount(delta: f64, horizontal: bool) -> (f64, f64) {
     }
 }
 
-/// フックで受けたホイールを、ポインターの下にある `on_wheel` 付きの面へ届ける。
+/// Delivers a wheel received by the hook to a surface with `on_wheel` under the
+/// pointer.
 ///
-/// `delta` は `WM_MOUSEWHEEL` / `WM_MOUSEHWHEEL` の量 (1 刻みで 120)。
-/// 届け先が無ければ `None`、届けたらアプリが `Handled` を返したかどうか。
+/// `delta` is the amount of `WM_MOUSEWHEEL` / `WM_MOUSEHWHEEL` (120 per notch).
+/// `None` if there is no destination; otherwise whether the app returned
+/// `Handled`.
 pub(crate) fn dispatch_wheel(delta: f64, horizontal: bool) -> Option<bool> {
     // アプリのクロージャを呼ぶ前に借用を返す (中で面を作るかもしれない)。
     let (inner, point) = WHEEL_CANVASES.with(|canvases| {
@@ -182,9 +193,10 @@ pub(crate) fn dispatch_wheel(delta: f64, horizontal: bool) -> Option<bool> {
     Some(handled)
 }
 
-/// アプリが自分で描く面 (`Grid` + `Canvas` + `Path` / `TextBlock`)。
+/// A surface the app draws on itself (`Grid` + `Canvas` + `Path` / `TextBlock`).
 ///
-/// 中身から大きさは決まらないので、`set_sizing` で指定する (`Scroll` と同じ)。
+/// Its size is not determined by its contents, so set it with `set_sizing` (the
+/// same as `Scroll`).
 #[derive(Clone)]
 pub struct Canvas(Rc<CanvasInner>);
 impl_widget!(Canvas, native);
@@ -210,7 +222,7 @@ impl Canvas {
         Ok(this)
     }
 
-    /// 大きさが決まった (変わった) ら描き直す。最初の描画もここから始まる。
+    /// Redraws when the size is decided (changes). The first draw starts here too.
     fn track_size(&self) -> Result<()> {
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let changed = SizeChangedEventHandler::new(move |_, _| {
@@ -397,16 +409,17 @@ impl Canvas {
         Ok(())
     }
 
-    /// 描く内容を決めるクロージャ。描き直すたびに新しい [`Painter`] で呼ばれる。
+    /// The closure that decides what to draw. Called with a fresh [`Painter`] every
+    /// time it is redrawn.
     ///
-    /// 呼ばれるのは [`redraw`](Self::redraw) の後と、面の大きさが変わったとき。
+    /// It is called after [`redraw`](Self::redraw) and when the surface changes size.
     pub fn on_draw(&self, f: impl FnMut(&mut Painter) + 'static) {
         self.0.draw.set(f);
         self.redraw();
     }
 
-    /// 描き直しを頼む。その場では描かず、UI スレッドの手が空いてから
-    /// `on_draw` が呼ばれる (続けて何度呼んでも 1 回にまとまる)。
+    /// Requests a redraw. Nothing is drawn on the spot; `on_draw` is called once the UI
+    /// thread is free (calling it many times in a row collapses into one).
     pub fn redraw(&self) {
         if self.0.scheduled.replace(true) {
             return;
@@ -432,21 +445,22 @@ impl Canvas {
         }
     }
 
-    /// ポインター (マウス・タッチ・ペン) の押下・移動・解放。位置は面の左上を
-    /// 原点にした論理ピクセル。移動は押していない間 (ホバー) も届く。押下と
-    /// 解放にはどのボタンかが付く ([`PointerEvent::button`])。
+    /// Pointer (mouse, touch, pen) presses, moves and releases. Positions are logical
+    /// pixels with the surface's top left as origin. Moves also arrive while nothing is
+    /// pressed (hover). Presses and releases carry which button
+    /// ([`PointerEvent::button`]).
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.pointer.set(f);
     }
 
-    /// ホイール。量は論理ピクセル。
+    /// The wheel. Amounts are logical pixels.
     ///
-    /// `Handled` を返すと外側のスクロールへは回らない。`Continue` なら
-    /// 外側の `ScrollViewer` がいつもどおりスクロールする。
+    /// Returning `Handled` keeps it from reaching the outer scroll view. With
+    /// `Continue`, the outer `ScrollViewer` scrolls as usual.
     ///
-    /// `Scroll` の中にある面では、高精度タッチパッドの 2 本指のスクロールは
-    /// 届かない。タッチパッドのジェスチャーは外側の `ScrollViewer` が自分で
-    /// 受け取り、`PointerWheelChanged` にもホイールのメッセージにもならない。
+    /// For surfaces inside a `Scroll`, two-finger scrolling on a precision touchpad
+    /// does not arrive. The outer `ScrollViewer` receives touchpad gestures itself, and
+    /// they become neither `PointerWheelChanged` nor wheel messages.
     pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
         self.0.wheel.set(f);
         if !self.0.wheel_registered.replace(true) {
@@ -454,20 +468,22 @@ impl Canvas {
         }
     }
 
-    /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
+    /// The current size of the surface (width, height). 0 if not laid out yet.
     pub fn size(&self) -> (f64, f64) {
         self.0.actual_size()
     }
 
-    /// その場で描く。**自動テスト専用**。
+    /// Draws on the spot. **For automated tests only.**
     #[doc(hidden)]
     pub fn draw_for_test(&self) {
         self.0.paint();
     }
 
-    /// `on_draw` の命令を、指定した大きさの面の XAML にして返す。**自動テスト専用**。
+    /// Returns the `on_draw` commands as XAML for a surface of the given size. **For
+    /// automated tests only.**
     ///
-    /// 画面に出さなくても、命令が XAML の図形へどう写るかを確かめられる。
+    /// Lets you check how commands map to XAML shapes without showing anything on
+    /// screen.
     #[doc(hidden)]
     pub fn xaml_for_test(&self, width: f64, height: f64) -> String {
         let mut painter = Painter::new(width, height);
@@ -475,19 +491,19 @@ impl Canvas {
         scene_xaml(width, height, painter.commands())
     }
 
-    /// 土台の `Grid`。バックエンド固有の脱出口として公開している。
+    /// The base `Grid`. Public as a backend-specific escape hatch.
     ///
-    /// 描いたものは、この中に 1 つだけ入る `Canvas` の子として置かれる。
+    /// What is drawn is placed as children of the single `Canvas` inside it.
     pub fn native_grid(&self) -> XamlGrid {
         self.0.native.clone()
     }
 }
 
-/// カーソルを動かすポインター (マウスとタッチパッド) かどうか。
+/// Whether it is a pointer that moves the cursor (mouse and touchpad).
 ///
-/// フックが受けるホイールはカーソルの位置に届くので、`hover` はこれだけで
-/// 覚える。タッチは指を離すと `PointerExited` が届くので、数に入れると
-/// マウスが面の上にあるままでも位置が消えてしまう。
+/// Wheels received by the hook go to the cursor's position, so `hover` is remembered
+/// from these alone. Touch gets `PointerExited` when the finger lifts, so counting
+/// it would erase the position even while the mouse is still over the surface.
 fn moves_cursor(args: &PointerRoutedEventArgs) -> bool {
     let kind = args
         .Pointer()
@@ -495,7 +511,8 @@ fn moves_cursor(args: &PointerRoutedEventArgs) -> bool {
     !matches!(kind, Ok(PointerDeviceType::Touch | PointerDeviceType::Pen))
 }
 
-/// 見分けるボタンの並び。押下と解放を届ける順にもなる。
+/// The buttons distinguished. Also the order in which presses and releases are
+/// delivered.
 const BUTTONS: [PointerButton; 5] = [
     PointerButton::Primary,
     PointerButton::Secondary,
@@ -504,7 +521,7 @@ const BUTTONS: [PointerButton; 5] = [
     PointerButton::Forward,
 ];
 
-/// ボタンの組の中での、そのボタンのビット。
+/// The bit of the button within a set of buttons.
 fn button_bit(button: PointerButton) -> u8 {
     match button {
         PointerButton::Primary => 1,
@@ -516,7 +533,8 @@ fn button_bit(button: PointerButton) -> u8 {
     }
 }
 
-/// いま押しているボタンの組。タッチとペン先は `IsLeftButtonPressed` になる。
+/// The set of buttons currently held. Touch and pen tips count as
+/// `IsLeftButtonPressed`.
 fn pressed_buttons(properties: &PointerPointProperties) -> u8 {
     let checks = [
         properties.IsLeftButtonPressed(),
@@ -532,9 +550,9 @@ fn pressed_buttons(properties: &PointerPointProperties) -> u8 {
         .fold(0, |bits, (button, _)| bits | button_bit(*button))
 }
 
-/// 差を取る基準にする、前回のボタンの組。
+/// The previous set of buttons to diff against.
 ///
-/// `seen` は覚えていた組で、まだ覚えていないポインターなら `None`。
+/// `seen` is the remembered set; `None` for a pointer not remembered yet.
 fn previous_buttons(phase: PointerPhase, seen: Option<u8>, now: u8) -> u8 {
     match (phase, seen) {
         // `PointerPressed` は何も押していない状態からの最初の押下でだけ
@@ -547,9 +565,11 @@ fn previous_buttons(phase: PointerPhase, seen: Option<u8>, now: u8) -> u8 {
     }
 }
 
-/// 前回と今回のボタンの組の差を、届ける通知の並びにする。
+/// Turns the difference between the previous and current button sets into the
+/// sequence of notifications to deliver.
 ///
-/// 差が無ければ、WinUI の通知の種類をそのまま (ボタン無しで) 届ける。
+/// If there is no difference, WinUI's notification kind is delivered as is (without
+/// a button).
 fn button_changes(
     phase: PointerPhase,
     before: u8,
@@ -585,7 +605,7 @@ impl CanvasInner {
         )
     }
 
-    /// `on_draw` を呼び、その結果の XAML で面を置き換える。
+    /// Calls `on_draw` and replaces the surface with the resulting XAML.
     fn paint(&self) {
         let (width, height) = self.actual_size();
         if width <= 0.0 || height <= 0.0 {
@@ -608,8 +628,9 @@ impl CanvasInner {
     }
 }
 
-/// 面全体の XAML。`Canvas` は子を置くだけで自分の大きさを持たないので、
-/// 幅と高さを与え、はみ出した分は `Clip` で切る。
+/// The XAML for the whole surface. `Canvas` only places its children and has no size
+/// of its own, so it is given a width and height, and overflow is cut off with
+/// `Clip`.
 fn scene_xaml(width: f64, height: f64, commands: &[DrawCommand]) -> String {
     let mut xaml = String::new();
     let _ = write!(
@@ -677,10 +698,10 @@ fn scene_xaml(width: f64, height: f64, commands: &[DrawCommand]) -> String {
     xaml
 }
 
-/// 中央・右寄せの文字を、測った幅のぶんだけ左へずらす。
+/// Shifts centered and right-aligned text left by its measured width.
 ///
-/// XAML の `Canvas` は左上で置くことしかできないので、読み込んだ
-/// `TextBlock` を測って `Canvas.Left` を書き直す。
+/// XAML's `Canvas` can only place things by their top left, so the loaded
+/// `TextBlock`s are measured and `Canvas.Left` is rewritten.
 fn align_text(scene: &UIElement, commands: &[DrawCommand]) {
     let Ok(root) = scene.cast::<FrameworkElement>() else {
         return;
@@ -719,7 +740,8 @@ fn text_name(index: usize) -> String {
     format!("t{index}")
 }
 
-/// XAML のパスの記法。`F1` は nonzero (他の 3 環境の既定と同じ)。
+/// XAML's path syntax. `F1` is nonzero (the same as the other three platforms'
+/// default).
 fn path_data(path: &Path) -> String {
     let mut data = String::from("F1");
     for segment in path.segments() {
@@ -752,7 +774,8 @@ fn path_data(path: &Path) -> String {
     data
 }
 
-/// XAML へ書ける数。無限や NaN はパーサーが読めないので 0 にする。
+/// A number that can be written into XAML. Infinities and NaN cannot be read by the
+/// parser, so they become 0.
 fn number(value: f64) -> String {
     if value.is_finite() {
         format!("{value}")
@@ -761,7 +784,7 @@ fn number(value: f64) -> String {
     }
 }
 
-/// `#AARRGGBB`。透け具合はアルファに写す。
+/// `#AARRGGBB`. The opacity maps to alpha.
 fn argb(color: Color, opacity: f64) -> String {
     let alpha = (opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
     format!(
@@ -770,11 +793,12 @@ fn argb(color: Color, opacity: f64) -> String {
     )
 }
 
-/// 属性値として書けるように、XML の予約文字を実体参照に直す。
+/// Converts XML's reserved characters into entity references so it can be written as
+/// an attribute value.
 ///
-/// `{` で始まる属性値は XAML がマークアップ拡張 (`{Binding}` など) として
-/// 読もうとして失敗するので、先頭に `{}` を置いて文字列のまま読ませる
-/// (XAML の決まりで、`{}` は「ここから先は文字」という印)。
+/// XAML tries to read attribute values starting with `{` as markup extensions
+/// (`{Binding}` and so on) and fails, so `{}` is put at the start to make it read
+/// as a string (by XAML's rules, `{}` marks "what follows is text").
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     if text.starts_with('{') {

@@ -1,33 +1,34 @@
-//! リストの値型。
+//! List value types.
 //!
-//! リストは「行の並び + いま選ばれている行」という構造を持つ。
-//! ナビゲーション ([`crate::NavItem`]) と形は似ているが、
+//! A list has the structure "a sequence of rows + the rows currently selected". It
+//! resembles navigation ([`crate::NavItem`]) in shape, but differs in that
 //!
-//! - 行数が多く、自前でスクロールする
-//! - 複数選択がある (選択が 0 件にもなる)
+//! - it has many rows and scrolls by itself
+//! - it supports multiple selection (and the selection can be empty)
 //!
-//! という違いがあるため、別の型として持つ。バックエンドはこれを
-//! `NSTableView` / `ListBox` / `<select>` の行へ写す。
+//! so it is a separate type. Backends map it onto rows of `NSTableView` /
+//! `ListBox` / `<select>`.
 
-/// リストの 1 行。
+/// One row of a list.
 ///
-/// 行の識別はアプリ側が持つ順序 (インデックス) で行う。
-/// 選択の通知もインデックスで返るので、`&[ListItem]` を作った側が
-/// そのまま自分のデータへ引き当てられる。
+/// Rows are identified by their order (index), which the app owns. Selection
+/// notifications also come back as indices, so whoever built the `&[ListItem]` can
+/// map them straight back to their own data.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ListItem {
-    /// 画面に出る文字列。
+    /// The text shown on screen.
     pub label: String,
-    /// 補助の文字列。指定すると 2 行目に小さく出る。
+    /// Secondary text. When set, it appears small on a second line.
     ///
-    /// 小ささと淡さは [`crate::TextStyle::Caption`] と
-    /// [`crate::TextColor::Secondary`] が決めるので、どの環境でも
-    /// その環境の「補助テキスト」の見た目になる。
+    /// Its size and dimness come from [`crate::TextStyle::Caption`] and
+    /// [`crate::TextColor::Secondary`], so on every platform it looks like that
+    /// platform's "secondary text".
     ///
-    /// Web の `<option>` は 1 行のテキストしか持てないため、補助のある行が
-    /// 1 つでもあれば、一覧ごと `<ul role="listbox">` の組み立てに切り替える。
+    /// The Web's `<option>` can hold only one line of text, so if even one row has
+    /// secondary text, the whole list switches to being built from
+    /// `<ul role="listbox">`.
     pub detail: Option<String>,
-    /// 選べるかどうか。
+    /// Whether it can be selected.
     pub enabled: bool,
 }
 
@@ -40,29 +41,29 @@ impl ListItem {
         }
     }
 
-    /// 2 行目に出す補助の文字列を指定する。
+    /// Sets the secondary text shown on the second line.
     ///
     /// ```
     /// # use naui_core::ListItem;
-    /// let item = ListItem::new("東京").detail("13,960,000 人");
-    /// assert_eq!(item.detail.as_deref(), Some("13,960,000 人"));
+    /// let item = ListItem::new("Tokyo").detail("13,960,000 people");
+    /// assert_eq!(item.detail.as_deref(), Some("13,960,000 people"));
     /// ```
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
         self
     }
 
-    /// 選べるかどうかを指定する (既定は選べる)。
+    /// Sets whether it can be selected (selectable by default).
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// 文字列の並びから行の列を作る。
+    /// Creates a list of rows from a sequence of strings.
     ///
     /// ```
     /// # use naui_core::ListItem;
-    /// let rows = ListItem::list(["東京", "大阪", "札幌"]);
+    /// let rows = ListItem::list(["Tokyo", "Osaka", "Sapporo"]);
     /// assert_eq!(rows.len(), 3);
     /// assert!(rows[0].enabled);
     /// ```
@@ -87,22 +88,22 @@ impl From<String> for ListItem {
     }
 }
 
-/// リストの選び方。
+/// How rows in a list are selected.
 ///
-/// | 値 | macOS | Windows | Web |
+/// | Value | macOS | Windows | Web |
 /// | --- | --- | --- | --- |
 /// | [`SelectionMode::Single`] | `allowsMultipleSelection = false` | `SelectionMode::Single` | `<select>` |
 /// | [`SelectionMode::Multiple`] | `allowsMultipleSelection = true` | `SelectionMode::Extended` | `<select multiple>` |
 ///
-/// `Multiple` はどの環境でも「⌘ / Ctrl や Shift を押しながら選ぶ」形になる。
-/// WinUI の `SelectionMode::Multiple` (クリックのたびに反転する) ではなく
-/// `Extended` に写しているのはこのため。
+/// On every platform `Multiple` means "select while holding ⌘ / Ctrl or Shift".
+/// That is why it maps to WinUI's `Extended` rather than `SelectionMode::Multiple`
+/// (which toggles on every click).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SelectionMode {
-    /// 1 行だけ選べる (既定)。
+    /// Only one row can be selected (default).
     #[default]
     Single,
-    /// 複数行を選べる。選択が 0 件になることもある。
+    /// Multiple rows can be selected. The selection can also be empty.
     Multiple,
 }
 
@@ -111,32 +112,33 @@ impl SelectionMode {
         matches!(self, SelectionMode::Multiple)
     }
 
-    /// 指定された選択を、そのまま渡せる形にそろえる。
+    /// Normalizes the requested selection into a form that can be passed on as is.
     ///
-    /// - 範囲外のインデックスを捨てる
-    /// - 選べない行 ([`ListItem::enabled`] が `false`) を捨てる
-    /// - 昇順に並べ、重複を取り除く
-    /// - [`SelectionMode::Single`] のときは先頭の 1 件だけにする
+    /// - Drops out-of-range indices
+    /// - Drops rows that cannot be selected ([`ListItem::enabled`] is `false`)
+    /// - Sorts in ascending order and removes duplicates
+    /// - Keeps only the first one for [`SelectionMode::Single`]
     ///
-    /// バックエンドはどれもこれを通してからネイティブへ渡すので、
-    /// 3 環境で `set_selection` の意味がそろう。
+    /// Every backend passes the selection through this before handing it to the
+    /// native side, so `set_selection` means the same on all three platforms.
     ///
     /// ```
     /// # use naui_core::{ListItem, SelectionMode};
     /// let items = ListItem::list(["a", "b", "c"]);
     /// let picked = SelectionMode::Multiple.normalize(&items, &[2, 0, 2, 9]);
     /// assert_eq!(picked, vec![0, 2]);
-    /// // 単一選択では先頭の 1 件だけが残る。
+    /// // With single selection only the first one remains.
     /// assert_eq!(SelectionMode::Single.normalize(&items, &[2, 0]), vec![0]);
     /// ```
     pub fn normalize(self, items: &[ListItem], indices: &[usize]) -> Vec<usize> {
         self.normalize_by(indices, |i| items.get(i).is_some_and(|item| item.enabled))
     }
 
-    /// 行が [`ListItem`] でない一覧 (テーブルなど) 向けの [`normalize`]。
+    /// [`normalize`] for lists whose rows are not [`ListItem`]s (tables, for example).
     ///
-    /// `enabled` は「その行が存在し、選べるか」を返す。範囲外の行は
-    /// `false` を返せばよい。そろえ方は [`normalize`] と同じ。
+    /// `enabled` returns "whether the row exists and can be selected". For
+    /// out-of-range rows it can just return `false`. The normalization is the same as
+    /// [`normalize`].
     ///
     /// [`normalize`]: SelectionMode::normalize
     ///

@@ -2,9 +2,9 @@ use crate::sys;
 use crate::Widget;
 use naui_core::{DialogButtons, DialogResponse};
 
-/// モーダルダイアログ。
+/// A modal dialog.
 ///
-/// ウィジェットではないので、コンテナへは入れない (`Window` と同じ)。
+/// It is not a widget, so it does not go into containers (the same as `Window`).
 #[derive(Clone)]
 pub struct Dialog(pub(crate) sys::Dialog);
 
@@ -31,13 +31,13 @@ impl Dialog {
         self.0.message()
     }
 
-    /// 本文の下に置くウィジェット。
+    /// The widget placed below the body text.
     #[inline]
     pub fn set_child(&self, child: &dyn Widget) {
         self.0.set_child(child.as_backend())
     }
 
-    /// 出すボタン。1 つも指定しなければ「OK」だけになる。
+    /// The buttons to show. With none specified, only "OK" is shown.
     #[inline]
     pub fn set_buttons(&self, buttons: DialogButtons) {
         self.0.set_buttons(buttons)
@@ -48,19 +48,19 @@ impl Dialog {
         self.0.buttons()
     }
 
-    /// 閉じたときに、その理由で呼ばれる。
+    /// Called with the reason when the dialog closes.
     #[inline]
     pub fn on_response(&self, f: impl FnMut(DialogResponse) + 'static) {
         self.0.on_response(f)
     }
 
-    /// 開く。すでに開いていれば何もしない。
+    /// Opens it. Does nothing if it is already open.
     #[inline]
     pub fn open(&self) {
         self.0.open()
     }
 
-    /// 閉じる。開いていなければ何もしない。
+    /// Closes it. Does nothing if it is not open.
     #[inline]
     pub fn close(&self) {
         self.0.close()

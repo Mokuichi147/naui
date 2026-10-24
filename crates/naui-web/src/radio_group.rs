@@ -1,8 +1,9 @@
-//! 選択肢を並べて 1 つだけ選ばせるラジオグループ (DOM の `<input type="radio">`)。
+//! A radio group that lays out options and lets the user choose exactly one (the
+//! DOM's `<input type="radio">`).
 //!
-//! 排他はブラウザに任せる。同じ `name` を持つラジオは、1 つ点けると残りが
-//! 自動で外れる。`name` はグループごとに作った一意の文字列なので、同じ画面に
-//! 複数のラジオグループを置いても混ざらない。
+//! Exclusivity is left to the browser. Turning on one radio with a given `name`
+//! automatically turns off the rest. The `name` is a unique string created per
+//! group, so several radio groups on the same screen do not mix.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -14,7 +15,7 @@ use web_sys::{Document, Element, HtmlElement, HtmlInputElement};
 use crate::widgets::{create, impl_widget, Listener, SelectionHandler, Widget};
 
 thread_local! {
-    /// グループごとに一意な `name` を作るための連番。
+    /// A counter for creating a unique `name` per group.
     static NEXT_GROUP: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -30,20 +31,23 @@ struct RadioGroupInner {
     /// `<div role="radiogroup">`
     element: HtmlElement,
     document: Document,
-    /// 同じ `name` を共有するラジオ。ブラウザはこれを見て排他にする。
+    /// The `name` shared by the radios. The browser uses it to make them exclusive.
     name: String,
     inputs: RefCell<Vec<HtmlInputElement>>,
-    /// 入力と同じ順に並ぶ `change` の購読。落とすと購読も外れる。
+    /// The `change` subscriptions, in the same order as the inputs. Dropping them also
+    /// unsubscribes.
     listeners: RefCell<Vec<Listener>>,
     on_select: SelectionHandler,
-    /// [`set_enabled`](RadioGroup::set_enabled) の指定。`set_items` で作り直す
-    /// 入力にも同じ状態を引き継ぐために覚えておく。
+    /// The setting from [`set_enabled`](RadioGroup::set_enabled). Remembered so the
+    /// inputs recreated by `set_items` get the same state.
     enabled: Cell<bool>,
 }
 
-/// 選択肢を並べて 1 つだけ選ばせるラジオグループ (`<input type="radio">`)。
+/// A radio group that lays out options and lets the user choose exactly one
+/// (`<input type="radio">`).
 ///
-/// 作った直後と [`set_items`](Self::set_items) の直後は、何も選ばれていない。
+/// Right after creation and right after [`set_items`](Self::set_items), nothing is
+/// selected.
 #[derive(Clone)]
 pub struct RadioGroup(Rc<RadioGroupInner>);
 impl_widget!(RadioGroup, element);
@@ -69,7 +73,8 @@ impl RadioGroup {
         })))
     }
 
-    /// 選択肢を作り直し、選択を外す。選択通知は発生しない。
+    /// Rebuilds the options and clears the selection. No selection notification is
+    /// sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         while let Some(child) = self.0.element.first_child() {
             let _ = self.0.element.remove_child(&child);
@@ -102,7 +107,7 @@ impl RadioGroup {
         *self.0.listeners.borrow_mut() = listeners;
     }
 
-    /// 選択肢の数。
+    /// The number of options.
     pub fn len(&self) -> usize {
         self.0.inputs.borrow().len()
     }
@@ -111,7 +116,7 @@ impl RadioGroup {
         self.len() == 0
     }
 
-    /// 現在選ばれている選択肢。未選択なら `None`。
+    /// The currently selected option. `None` if nothing is selected.
     pub fn selected(&self) -> Option<usize> {
         self.0
             .inputs
@@ -120,7 +125,7 @@ impl RadioGroup {
             .position(|input| input.checked())
     }
 
-    /// 範囲内の選択肢を通知せずに選ぶ。範囲外なら何もしない。
+    /// Selects an in-range option without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         // `checked` を書き換えても `change` は起きないので、購読を止める必要はない。
         if let Some(input) = self.0.inputs.borrow().get(index) {
@@ -128,14 +133,14 @@ impl RadioGroup {
         }
     }
 
-    /// 選択を通知せずに外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         for input in self.0.inputs.borrow().iter() {
             input.set_checked(false);
         }
     }
 
-    /// ユーザーが選んだのと同じように、範囲内の選択肢を選んで通知する。
+    /// Selects an in-range option and notifies, as if the user had chosen it.
     pub fn select(&self, index: usize) {
         if index < self.len() {
             self.set_selected(index);
@@ -143,7 +148,7 @@ impl RadioGroup {
         }
     }
 
-    /// 選択肢の並ぶ向き。既定は縦。
+    /// The direction the options are laid out in. Vertical by default.
     pub fn set_orientation(&self, orientation: Orientation) {
         let _ = self.0.element.style().set_property(
             "flex-direction",
@@ -162,13 +167,13 @@ impl RadioGroup {
         }
     }
 
-    /// 選択肢が選ばれたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the index when an option is chosen. Setting it again removes the
+    /// previous callback.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select.set(f);
     }
 
-    /// `<label><input type="radio">テキスト</label>` を 1 つ組み立てて並べる。
+    /// Builds one `<label><input type="radio">text</label>` and adds it.
     fn build_item(&self, text: &str, enabled: bool) -> Result<HtmlInputElement> {
         let label: HtmlElement = create(&self.0.document, "label")?.unchecked_into();
         let input: HtmlInputElement = create(&self.0.document, "input")?.unchecked_into();

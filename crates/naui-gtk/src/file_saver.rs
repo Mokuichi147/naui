@@ -1,8 +1,8 @@
-//! ファイルの保存 (`GtkButton` + `GtkFileDialog` の save)。
+//! Saving files (`GtkButton` + `GtkFileDialog`'s save).
 //!
-//! [`crate::FilePicker`] と対になるもので、開くのではなく書き出す。
-//! 場所を選ばせるのは `GtkFileDialog`、選ばれた場所へ
-//! [`FileSaver::set_contents`] のバイト列を書くのは naui 側。
+//! The counterpart of [`crate::FilePicker`]: it writes instead of opening.
+//! `GtkFileDialog` lets the user choose the location, and naui writes the bytes from
+//! [`FileSaver::set_contents`] to it.
 
 use std::cell::RefCell;
 use std::path::Path;
@@ -28,7 +28,8 @@ struct FileSaverInner {
     on_error: ErrorNotifier,
 }
 
-/// 内容をファイルへ書き出させるボタン。押すと `GtkFileDialog` の保存が出る。
+/// A button that lets the user write contents to a file. Clicking it shows the
+/// save mode of `GtkFileDialog`.
 #[derive(Clone)]
 pub struct FileSaver(Rc<FileSaverInner>);
 impl_widget!(FileSaver);
@@ -66,7 +67,7 @@ impl FileSaver {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// ダイアログに最初から入れておく名前。空なら GTK の既定に任せる。
+    /// The name prefilled in the dialog. If empty, GTK's default is used.
     pub fn set_file_name(&self, name: &str) {
         *self.0.file_name.borrow_mut() = name.to_string();
     }
@@ -75,39 +76,39 @@ impl FileSaver {
         self.0.file_name.borrow().clone()
     }
 
-    /// 種類の絞り込み。先頭の拡張子が既定の拡張子になる。
+    /// Filters by file type. The first extension becomes the default extension.
     pub fn set_filters(&self, filters: &[FileFilter]) {
         let mut stored = self.0.filters.borrow_mut();
         stored.clear();
         stored.extend_from_slice(filters);
     }
 
-    /// 書き出す内容。保存のたびに、このバイト列がそのまま書かれる。
+    /// The contents to write. Every save writes exactly these bytes.
     pub fn set_contents(&self, contents: &[u8]) {
         *self.0.contents.borrow_mut() = contents.to_vec();
     }
 
-    /// 書き出す内容の大きさ (バイト数)。
+    /// The size of the contents to write (in bytes).
     pub fn contents_len(&self) -> usize {
         self.0.contents.borrow().len()
     }
 
-    /// 最後に書き出した先。まだ保存していなければ `None`。
+    /// Where the contents were last written. `None` if nothing has been saved yet.
     pub fn destination(&self) -> Option<FileEntry> {
         self.0.destination.borrow().clone()
     }
 
-    /// 書き出しに成功したときに呼ばれる。取り消したときは呼ばれない。
+    /// Called when writing succeeds. Not called when the user cancels.
     pub fn on_save(&self, f: impl FnMut(&FileEntry) + 'static) {
         self.0.on_save.set(f);
     }
 
-    /// 書き出しに失敗したときに呼ばれる (書き込み権限が無い、など)。
+    /// Called when writing fails (no write permission, for example).
     pub fn on_error(&self, f: impl FnMut(&Error) + 'static) {
         self.0.on_error.set(f);
     }
 
-    /// ダイアログを出す。ボタンを押したときと同じ。
+    /// Shows the dialog. The same as clicking the button.
     pub fn open(&self) {
         let dialog = gtk::FileDialog::new();
         {
@@ -135,7 +136,7 @@ impl FileSaver {
         });
     }
 
-    /// ダイアログの結果を受けて、書き出しと通知を行う。
+    /// Receives the dialog's result, then writes and notifies.
     fn finish(&self, result: std::result::Result<gio::File, glib::Error>) {
         let file = match result {
             Ok(file) => file,
@@ -166,7 +167,7 @@ impl FileSaver {
     }
 }
 
-/// 絞り込みを `GtkFileDialog` が要求する形 (`GListModel`) に組み立てる。
+/// Builds the filters in the form `GtkFileDialog` requires (`GListModel`).
 fn build_filters(filters: &[FileFilter]) -> Option<gio::ListStore> {
     let usable: Vec<&FileFilter> = filters.iter().filter(|f| !f.is_empty()).collect();
     if usable.is_empty() {
@@ -184,14 +185,14 @@ fn build_filters(filters: &[FileFilter]) -> Option<gio::ListStore> {
     Some(store)
 }
 
-/// ユーザーがダイアログを閉じた (取り消した) だけかどうか。
+/// Whether the user merely closed (cancelled) the dialog.
 fn is_cancelled(error: &glib::Error) -> bool {
     error.matches(gtk::DialogError::Dismissed)
         || error.matches(gtk::DialogError::Cancelled)
         || error.matches(gio::IOErrorEnum::Cancelled)
 }
 
-/// 選ばれた場所へ書き出し、そこを指す [`FileEntry`] を返す。
+/// Writes to the chosen location and returns a [`FileEntry`] pointing at it.
 fn write_contents(path: &Path, contents: &[u8]) -> Result<FileEntry> {
     std::fs::write(path, contents).map_err(|e| Error::new("ファイルの書き出し", e.to_string()))?;
     Ok(FileEntry::from_path(path))

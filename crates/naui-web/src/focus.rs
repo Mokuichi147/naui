@@ -1,24 +1,26 @@
-//! `on_focus_change` (文字入力のウィジェット)。
+//! `on_focus_change` (text-input widgets).
 //!
-//! 文書に `focusin` と `focusout` を 1 つずつ付け、フォーカスの移った先から
-//! 親へたどって、最初に見つかった登録済みのウィジェットをフォーカスの
-//! 持ち主とする ([`FocusOwner`])。持ち主が変わったときだけ通知するので、
-//! ウィジェットの中で要素から要素へ移っても通知は出ない。
+//! One `focusin` and one `focusout` are attached to the document, and walking up
+//! the parents from where focus moved, the first registered widget found becomes
+//! the focus owner ([`FocusOwner`]). Notifications go out only when the owner
+//! changes, so moving from element to element within a widget does not notify.
 //!
-//! naui の Web のウィンドウは同じ文書の中の要素なので、持ち主は文書に 1 つ。
-//! **タブやブラウザのウィンドウ自体がフォーカスを失ったときは数えない**
-//! (要素の `blur` は出るが、`document.hasFocus()` が偽になる。戻ったときの
-//! `focus` は同じ持ち主なので通知しない)。ほかの 3 環境でウィンドウが
-//! アクティブでなくなったときと同じ扱いになる。
+//! naui's Web windows are elements in the same document, so there is one owner per
+//! document. **When the tab or the browser window itself loses focus, it is not
+//! counted** (the element's `blur` fires, but `document.hasFocus()` becomes false,
+//! and the `focus` on returning is for the same owner, so nothing is notified).
+//! This is the same treatment as when a window becomes inactive on the other three
+//! platforms.
 //!
-//! 登録表は要素と、通知先の弱参照を持つ。通知先そのものはウィジェットが
-//! 持ち ([`Focus`])、ウィジェットが解放されるときに表の項目も外す。表に
-//! 残しておくと、捨てた欄の要素がいつまでも解放されない。
+//! The registry holds elements and weak references to the handlers. The handler
+//! itself is held by the widget ([`Focus`]), and the table entry is removed when
+//! the widget is freed. Leaving it in the table would keep the element of a
+//! discarded field from ever being freed.
 //!
-//! 文書の購読は入れ子で呼ばれる。通知の中で別の欄へ `request_focus()` すると、
-//! `focus()` が同期で次の `focusout` / `focusin` を出すため
-//! ([`Listener::attach_reentrant`])。持ち主の移動は [`FocusOwner`] が順番待ちに
-//! するので、内側の移動も取りこぼさない。
+//! The document subscriptions are called re-entrantly. Calling `request_focus()` on
+//! another field inside a notification makes `focus()` synchronously fire the next
+//! `focusout` / `focusin` ([`Listener::attach_reentrant`]). [`FocusOwner`] queues
+//! owner moves, so inner moves are not lost either.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -32,11 +34,12 @@ use crate::widgets::Listener;
 thread_local! {
     static ENTRIES: RefCell<Vec<(Element, Weak<FocusHandler>)>> = const { RefCell::new(Vec::new()) };
     static OWNER: FocusOwner = FocusOwner::default();
-    /// 文書の購読。最初の登録のときに付け、そのまま持ち続ける。
+    /// The document subscriptions. Attached at the first registration and kept from
+    /// then on.
     static LISTENERS: RefCell<Vec<Listener>> = const { RefCell::new(Vec::new()) };
 }
 
-/// ウィジェットに持たせる通知先。
+/// The handler held by a widget.
 #[derive(Default)]
 pub(crate) struct Focus {
     handler: Rc<FocusHandler>,
@@ -44,7 +47,7 @@ pub(crate) struct Focus {
 }
 
 impl Focus {
-    /// 通知先を置く。呼ぶたびに置き換わる。
+    /// Sets the handler. Each call replaces it.
     pub(crate) fn set(&self, element: &Element, f: impl FnMut(bool) + 'static) {
         self.handler.set(f);
         if self.registered.replace(true) {
@@ -82,7 +85,7 @@ impl Drop for Focus {
     }
 }
 
-/// 登録表に載っている要素の数。**自動テスト専用**。
+/// The number of elements in the registry. **For automated tests only.**
 #[doc(hidden)]
 pub fn registered_focus_elements() -> usize {
     ENTRIES.with(|entries| entries.borrow().len())
@@ -123,7 +126,7 @@ fn ensure_listeners() {
     });
 }
 
-/// `node` を含む登録済みのウィジェット。
+/// The registered widget containing `node`.
 fn owner_of(node: Option<Node>) -> Option<Rc<FocusHandler>> {
     let mut current = node;
     while let Some(node) = current {
@@ -142,15 +145,15 @@ fn owner_of(node: Option<Node>) -> Option<Rc<FocusHandler>> {
     None
 }
 
-/// 文字入力のウィジェットへ `on_focus_change` を足す。`Inner` に
-/// `focus: Focus` を持たせておくこと。
+/// Adds `on_focus_change` to text-input widgets. The `Inner` must hold a
+/// `focus: Focus`.
 macro_rules! impl_focus_change {
     ($t:ty) => {
         impl $t {
-            /// フォーカスが入ったとき (`true`) と出たとき (`false`) の通知。
+            /// Notified when focus enters (`true`) and leaves (`false`).
             ///
-            /// ページの中でフォーカスが移ったときだけ呼ばれる。タブや
-            /// ブラウザのウィンドウ自体がフォーカスを失っても呼ばれない。
+            /// Called only when focus moves within the page. Not called when the tab or the
+            /// browser window itself loses focus.
             pub fn on_focus_change(&self, f: impl FnMut(bool) + 'static) {
                 let element = <$t as crate::widgets::Widget>::native_element(self);
                 self.0.focus.set(&element, f);

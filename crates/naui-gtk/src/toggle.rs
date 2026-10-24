@@ -1,7 +1,7 @@
-//! 入り切りのスイッチ (`GtkSwitch` + ラベルの `GtkLabel`)。
+//! An on/off switch (`GtkSwitch` + a `GtkLabel` for the label).
 //!
-//! `GtkSwitch` は入り切りの部分だけを持ち、文字は持たない (GNOME の設定に
-//! 並ぶスイッチと同じ)。ラベルはとなりへ `GtkLabel` を並べて添える。
+//! `GtkSwitch` has only the on/off part and no text (like the switches in GNOME
+//! Settings). The label is added as a `GtkLabel` placed next to it.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -13,7 +13,7 @@ use crate::bin::SizeBin;
 use crate::callback::Notifier;
 use crate::widgets::{impl_widget, without_signal, Widget};
 
-/// スイッチとラベルのすき間 (論理ピクセル)。
+/// The gap between the switch and the label (logical pixels).
 const SPACING: i32 = 8;
 
 struct ToggleInner {
@@ -24,7 +24,7 @@ struct ToggleInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 入り切りを切り替えるスイッチ (`GtkSwitch`)。
+/// An on/off switch (`GtkSwitch`).
 #[derive(Clone)]
 pub struct Toggle(Rc<ToggleInner>);
 impl_widget!(Toggle);
@@ -64,12 +64,12 @@ impl Toggle {
         Self(inner)
     }
 
-    /// 入っているかどうか。
+    /// Whether it is on.
     pub fn is_on(&self) -> bool {
         self.0.switch.is_active()
     }
 
-    /// プログラムから切り替える。`on_toggle` は呼ばれない。
+    /// Switches it from code. `on_toggle` is not called.
     pub fn set_on(&self, on: bool) {
         without_signal(&self.0.switch, &self.0.handler, || {
             self.0.switch.set_active(on);
@@ -81,12 +81,12 @@ impl Toggle {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 利用者が切り替えるたびに、切り替えた後の状態で呼ばれる。
+    /// Called with the new state every time the user switches it.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_toggle.set(f);
     }
 
-    /// スイッチ本体。バックエンド固有の脱出口として公開している。
+    /// The switch itself. Public as a backend-specific escape hatch.
     pub fn native_switch(&self) -> gtk::Switch {
         self.0.switch.clone()
     }

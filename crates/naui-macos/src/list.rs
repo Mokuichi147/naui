@@ -1,22 +1,26 @@
-//! リスト (AppKit)。
+//! Lists (AppKit).
 //!
-//! `NSTableView` を 1 列で使い、`NSScrollView` に載せている。macOS の
-//! ソースリストやファイル一覧と同じコントロールで、行の描画・スクロール・
-//! ⌘ / Shift を使った複数選択・キーボード操作はすべて AppKit が行う。
+//! A single-column `NSTableView` placed in an `NSScrollView`. It is the same
+//! control as macOS's source lists and file lists, and row drawing, scrolling,
+//! multiple selection with ⌘ / Shift and keyboard navigation are all done by
+//! AppKit.
 //!
-//! 文字だけの [`ListItem`] も任意内容の [`ListRow`] へ正規化し、同じ行モデルと
-//! セル生成経路で扱う。選択と行 activation は Rust のクロージャへ渡す。
+//! Text-only [`ListItem`]s are also normalized into [`ListRow`]s and handled
+//! through the same row model and cell creation path. Selection and row activation
+//! are passed to Rust closures.
 //!
-//! **行のクリックは `NSTableView` の action で受ける。** 表示専用のラベルや
-//! アイコンの上を押したときのヒットテストは、セルではなくテーブルを返すため、
-//! セル側の `mouseDown:` では実際のクリックが届かない。ボタンや入力欄は
-//! 自分がヒットするので、この action は呼ばれず二重に発火しない。
+//! **Row clicks are received through the `NSTableView`'s action.** Hit-testing a
+//! click on a display-only label or icon returns the table rather than the cell, so
+//! real clicks never reach the cell's `mouseDown:`. Buttons and fields are hit
+//! themselves, so this action is not called and nothing fires twice.
 //!
-//! **行の起動 (ダブルクリック) も `NSTableView` の `doubleAction` で受ける。**
-//! Return / Enter は `NSTableView` が何もしないキーなので、`keyDown:` で拾って
-//! 同じ通知へ流す。右クリックは `rightMouseDown:` で、Control + クリックなど
-//! ほかの出し方は AppKit が文脈メニューを求めるときに呼ぶ `menuForEvent:` で
-//! 受け、押された行と位置をアプリへ渡す。メニューそのものはアプリが [`crate::PopupMenu`] で出す。
+//! **Row activation (double-click) is also received through the `NSTableView`'s
+//! `doubleAction`.** Return / Enter are keys `NSTableView` does nothing with, so
+//! they are caught in `keyDown:` and sent to the same notification. Right-clicks
+//! come through `rightMouseDown:`, and other ways of asking for a context menu, such
+//! as Control + click, through `menuForEvent:`, which AppKit calls when it wants a
+//! context menu; the clicked row and position are passed to the app. The app shows
+//! the menu itself with [`crate::PopupMenu`].
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -38,17 +42,18 @@ use objc2_foundation::{
 use crate::trampoline::{SelectHandler, ValueHandler};
 use crate::widgets::{Label, Stack, Widget};
 
-/// 1 列しか使わないので、識別子は固定でよい。
+/// Only one column is used, so the identifier can be fixed.
 const COLUMN_ID: &str = "naui.list.column";
 
-/// 行の上下に取る余白。行の高さは AppKit が制約から求める。
+/// The padding above and below a row. AppKit computes the row height from the
+/// constraints.
 pub(crate) const ROW_PADDING: f64 = 4.0;
-/// ラベルと補助の文字の間隔。
+/// The spacing between the label and the secondary text.
 const DETAIL_SPACING: f64 = 1.0;
 
-/// 行がクリックされたことの通知先。
+/// The handler notified when a row is clicked.
 ///
-/// 呼び出し中に同じ行のコールバックを差し替えても二重借用しない。
+/// Replacing the same row's callback during the call does not double-borrow.
 #[derive(Clone, Default)]
 pub(crate) struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
 
@@ -69,7 +74,8 @@ impl ActivationHandler {
     }
 }
 
-/// 1 行の内容。通常の文字行も任意ウィジェット行も同じ型へ正規化する。
+/// The content of one row. Plain text rows and custom widget rows are normalized
+/// into the same type.
 enum ListRowContent {
     Item(ListItem),
     Custom(Box<dyn Widget>),
@@ -84,17 +90,17 @@ impl Clone for ListRowContent {
     }
 }
 
-/// リストへ載せる 1 行。
+/// One row to put in a list.
 ///
-/// [`ListItem`] は文字列だけで済む一覧向けの簡便 API であり、設定画面のように
-/// アイコン、複数のラベル、チェックボックス、末尾のボタンなどを組み合わせる
-/// ときは、`Grid` / `Stack` で内容を作ってこの型に包む。
+/// [`ListItem`] is a convenience API for lists that need only strings. To combine
+/// icons, several labels, check boxes, trailing buttons and so on, as in a settings
+/// screen, build the content with `Grid` / `Stack` and wrap it in this type.
 ///
 /// ```no_run
 /// # use naui_macos::{ListRow, Widget};
 /// # fn row(content: &dyn Widget) {
 /// let row = ListRow::new(content).selectable(false);
-/// row.on_activate(|| println!("行がクリックされました"));
+/// row.on_activate(|| println!("row clicked"));
 /// # let _ = row;
 /// # }
 /// ```
@@ -115,7 +121,8 @@ impl Clone for ListRow {
 }
 
 impl ListRow {
-    /// ウィジェットを 1 行の内容として使う。既定では行全体も選択できる。
+    /// Uses a widget as the content of one row. By default the whole row can be
+    /// selected too.
     pub fn new(content: &dyn Widget) -> Self {
         Self {
             content: ListRowContent::Custom(content.boxed_clone()),
@@ -124,7 +131,8 @@ impl ListRow {
         }
     }
 
-    /// `ListItem` を通常の文字行へ変換する。`List::set_items` の正規化経路。
+    /// Converts a `ListItem` into a plain text row. The normalization path for
+    /// `List::set_items`.
     fn from_item(item: ListItem) -> Self {
         let selectable = item.enabled;
         Self {
@@ -134,9 +142,10 @@ impl ListRow {
         }
     }
 
-    /// 行全体を選択対象にするかどうか。
+    /// Whether the whole row can be selected.
     ///
-    /// 行内のボタンやチェックボックスだけを操作する設定行では `false` にする。
+    /// Set to `false` for settings rows where only the buttons or check boxes inside
+    /// are operated.
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
         self
@@ -146,37 +155,39 @@ impl ListRow {
         self.selectable
     }
 
-    /// 行内のラベル・アイコン・余白がクリックされたときに呼ぶ処理。
+    /// What to do when a label, icon or empty space inside the row is clicked.
     ///
-    /// チェックボックス、ボタン、入力欄などのコントロールを直接押した場合は
-    /// 呼ばれないため、同じ操作が二重に発火しない。
+    /// It is not called when a control such as a check box, button or text field is
+    /// clicked directly, so the same action does not fire twice.
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.activation.set(f);
     }
 
-    /// 選べないうえに操作もできない行 (`ListItem::enabled(false)`)。
+    /// A row that can be neither selected nor operated (`ListItem::enabled(false)`).
     ///
-    /// ほかの 3 環境は行そのものを無効にするので、起動も文脈メニューも
-    /// 届かない。`NSTableView` には行の無効が無いので、ここで見て合わせる。
+    /// The other three platforms disable the row itself, so neither activation nor the
+    /// context menu reaches it. `NSTableView` has no disabled rows, so this checks it
+    /// here to match.
     fn is_disabled_item(&self) -> bool {
         matches!(&self.content, ListRowContent::Item(item) if !item.enabled)
     }
 }
 
-/// Return と、テンキーの Enter のキーコード。
+/// The key codes of Return and the keypad Enter.
 const RETURN_KEY_CODES: [u16; 2] = [36, 76];
 
-/// 行の起動と文脈メニューを受ける `NSTableView` が見る状態。
+/// The state seen by the `NSTableView` that receives row activation and context
+/// menus.
 struct ListTableState {
     rows: Rc<RefCell<Vec<ListRow>>>,
-    /// ダブルクリックと Return / Enter の通知先。
+    /// The handler for double-clicks and Return / Enter.
     row_activate: SelectHandler,
-    /// 右クリックの通知先。
+    /// The handler for right-clicks.
     context_menu: ValueHandler<(usize, Point)>,
 }
 
 impl ListTableState {
-    /// `row` が起動や文脈メニューを受けられる行なら、そのインデックス。
+    /// The index, if `row` is a row that can receive activation and context menus.
     fn live_row(&self, row: NSInteger) -> Option<usize> {
         let index = usize::try_from(row).ok()?;
         let rows = self.rows.borrow();
@@ -190,16 +201,16 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[name = "NauiListTableView"]
     #[ivars = ListTableState]
-    /// 行のクリック・起動・文脈メニューを受ける `NSTableView`。
+    /// An `NSTableView` that receives row clicks, activation and context menus.
     ///
-    /// target / action も自分で受ける (`NSTableView` は target を保持しないが、
-    /// 自分自身なら寿命の心配が無い)。
+    /// It also receives its own target / action (`NSTableView` does not retain its
+    /// target, but there is no lifetime concern when it is itself).
     struct ListTableView;
 
     unsafe impl NSObjectProtocol for ListTableView {}
 
     impl ListTableView {
-        /// 行のクリック (action)。
+        /// A row click (action).
         #[unsafe(method(nauiRowClicked:))]
         fn row_clicked(&self, _sender: Option<&AnyObject>) {
             let Ok(index) = usize::try_from(self.clickedRow()) else {
@@ -217,7 +228,7 @@ define_class!(
             }
         }
 
-        /// 行のダブルクリック (doubleAction)。
+        /// A row double-click (doubleAction).
         #[unsafe(method(nauiRowDoubleClicked:))]
         fn row_double_clicked(&self, _sender: Option<&AnyObject>) {
             let state = self.ivars();
@@ -226,11 +237,11 @@ define_class!(
             }
         }
 
-        /// 右クリック。行の上で通知先があるなら、ここで通知して止める。
+        /// Right-click. Over a row with a handler set, it notifies and stops here.
         ///
-        /// `menuForEvent:` が `nil` を返すだけだと、AppKit は右クリックを
-        /// 親 (スクロールビュー) へ回し、`PopupMenu::attach` で付けたメニューまで
-        /// 出てしまう。
+        /// If `menuForEvent:` merely returned `nil`, AppKit would pass the right-click to
+        /// the parent (the scroll view), and even a menu attached with `PopupMenu::attach`
+        /// would appear.
         #[unsafe(method(rightMouseDown:))]
         fn right_mouse_down(&self, event: &NSEvent) {
             if !self.notify_context_menu(event) {
@@ -238,11 +249,12 @@ define_class!(
             }
         }
 
-        /// AppKit が右クリック以外 (Control + クリックなど) で文脈メニューを求める口。
+        /// Where AppKit asks for a context menu by means other than right-click (Control +
+        /// click and so on).
         ///
-        /// 通知先があり、押されたのが行の上なら、行と位置を渡して `nil` を返す
-        /// (メニューはアプリが `PopupMenu::open_at` で出す)。それ以外は
-        /// `NSTableView` 既定のふるまい (自分の `menu`) に任せる。
+        /// If a handler is set and the click was over a row, it passes the row and position
+        /// and returns `nil` (the app shows the menu with `PopupMenu::open_at`). Otherwise
+        /// it leaves it to `NSTableView`'s default behavior (its own `menu`).
         #[unsafe(method_id(menuForEvent:))]
         fn menu_for_event(&self, event: &NSEvent) -> Option<Retained<NSMenu>> {
             if self.notify_context_menu(event) {
@@ -252,7 +264,7 @@ define_class!(
             }
         }
 
-        /// Return / Enter で、選ばれている行 (最後に選んだ行) を起動する。
+        /// Return / Enter activates the selected row (the most recently selected one).
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
             let state = self.ivars();
@@ -281,7 +293,8 @@ impl ListTableView {
         unsafe { msg_send![super(this), init] }
     }
 
-    /// 通知先があり、押されたのが行の上なら、行と位置を通知して `true` を返す。
+    /// If a handler is set and the click was over a row, notifies the row and position
+    /// and returns `true`.
     fn notify_context_menu(&self, event: &NSEvent) -> bool {
         let state = self.ivars();
         if !state.context_menu.is_set() {
@@ -296,8 +309,8 @@ impl ListTableView {
         true
     }
 
-    /// イベントの位置を、`List` のビュー (外側のスクロールビュー) の
-    /// 左上からの座標で返す。`PopupMenu::open_at` にそのまま渡せる。
+    /// Returns the event's position in coordinates from the top left of the `List`'s
+    /// view (the outer scroll view). Can be passed straight to `PopupMenu::open_at`.
     fn list_point(&self, event: &NSEvent) -> Point {
         let outer: Retained<NSView> = match self.enclosingScrollView() {
             Some(scroll) => {
@@ -320,10 +333,10 @@ impl ListTableView {
     }
 }
 
-/// 選択が変わったことの通知先。
+/// The handler notified when the selection changes.
 ///
-/// 単一選択でも複数選択でも同じ形にするため、選ばれている行を
-/// 昇順の並びで渡す。複数選択では 0 件にもなる。
+/// To use the same shape for single and multiple selection, the selected rows are
+/// passed in ascending order. With multiple selection it can be empty.
 #[derive(Clone, Default)]
 pub(crate) struct SelectionHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize])>>>>);
 
@@ -332,7 +345,7 @@ impl SelectionHandler {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 選択を通知する。まだ設定されていなければ何もしない。
+    /// Notifies the selection. Does nothing if not set yet.
     pub(crate) fn emit(&self, indices: &[usize]) {
         // クロージャの中からリストを操作しても二重借用にならないよう、
         // 呼び出しの間だけ取り出す (`SelectHandler` と同じ形)。
@@ -347,12 +360,12 @@ impl SelectionHandler {
     }
 }
 
-/// データソース兼デリゲートが見る状態。ハンドルと共有する。
+/// The state seen by the data source and delegate. Shared with the handle.
 struct SourceState {
     rows: Rc<RefCell<Vec<ListRow>>>,
     handler: SelectionHandler,
-    /// プログラムから選択を変えている間だけ通知を止める。
-    /// AppKit は `selectRowIndexes:` でもデリゲートを呼ぶため。
+    /// Stops notifications only while the selection is being changed from code, since
+    /// AppKit calls the delegate even for `selectRowIndexes:`.
     silent: Rc<Cell<bool>>,
 }
 
@@ -430,11 +443,11 @@ define_class!(
     }
 );
 
-/// 行 1 つ分のビューを作る。
+/// Creates the view for one row.
 ///
-/// 中身は naui の `Stack` と `Label` で組む。副次テキストの小ささと淡さは
-/// [`TextStyle::Caption`] と [`TextColor::Secondary`] が決めるので、
-/// ここに級数や色は書かない。
+/// The content is built from naui's `Stack` and `Label`. The smallness and dimness
+/// of the secondary text come from [`TextStyle::Caption`] and
+/// [`TextColor::Secondary`], so no point size or color is written here.
 pub(crate) fn cell_view(
     mtm: MainThreadMarker,
     label: &str,
@@ -450,12 +463,12 @@ pub(crate) fn cell_view(
     view.retain()
 }
 
-/// `ListItem` も `ListRow` と同じセル経路へ載せる。
+/// Puts `ListItem`s on the same cell path as `ListRow`s.
 fn list_item_cell_view(mtm: MainThreadMarker, item: &ListItem) -> Retained<NSView> {
     cell_view(mtm, &item.label, item.detail.as_deref(), item.enabled)
 }
 
-/// 文字だけの行の中身。返す `NSTextField` は 1 行目のもの。
+/// The content of a text-only row. The returned `NSTextField` is the first line's.
 fn item_content(
     mtm: MainThreadMarker,
     label: &str,
@@ -486,26 +499,27 @@ fn item_content(
     (content, native_field(&title))
 }
 
-/// 行に載せる 1 本の文字。
+/// One piece of text placed in a row.
 ///
-/// **行の幅いっぱいに広げる。** 幅が決まって初めて、入りきらない文字を
-/// 省略記号で切れる。交差軸の `Fill` はコンテナへ入れる前に指定する。
+/// **It stretches to the full width of the row.** Only once the width is decided
+/// can text that does not fit be cut off with an ellipsis. `Fill` on the cross axis
+/// is specified before putting it into the container.
 fn row_label(mtm: MainThreadMarker, text: &str) -> Label {
     let label = Label::new(mtm, text);
     label.set_sizing(Sizing::fill_width());
     label
 }
 
-/// 選べない行の文字色。
+/// The text color of rows that cannot be selected.
 ///
-/// `NSTableView` には行の無効という考えが無いので、AppKit が無効な
-/// コントロールへ使う色を文字に当てて表す (ほかの 3 環境は行そのものを
-/// 無効にできるため、この扱いは macOS だけ)。
+/// `NSTableView` has no notion of disabled rows, so the color AppKit uses for
+/// disabled controls is applied to the text (the other three platforms can disable
+/// the row itself, so this treatment is macOS only).
 fn dim_disabled(label: &Label) {
     native_field(label).setTextColor(Some(&NSColor::disabledControlTextColor()));
 }
 
-/// ラベルの実体。`NSTableCellView` へ渡すときだけ必要になる。
+/// The label's real object. Needed only when passing it to `NSTableCellView`.
 fn native_field(label: &Label) -> Retained<NSTextField> {
     label
         .native_view()
@@ -513,13 +527,14 @@ fn native_field(label: &Label) -> Retained<NSTextField> {
         .expect("ラベルは NSTextField である")
 }
 
-/// 中身を 1 つ載せた `NSTableCellView` を作る。
+/// Creates an `NSTableCellView` holding one content view.
 ///
-/// 文字だけを載せた `NSTextField` をそのまま行にすると、AppKit は枠の上端に
-/// 文字を描くため、行いっぱいに出る選択の帯と文字がずれる。AppKit 標準の
-/// `NSTableCellView` に入れ、上下の余白まで**制約でつないで**おくと、
-/// 高さを決めるのは Auto Layout (`usesAutomaticRowHeights`) になり、
-/// 1 行でも 2 行でも帯と文字がそろう。
+/// If an `NSTextField` with only text were used as the row as is, AppKit would draw
+/// the text at the top of its frame, misaligning it from the selection highlight
+/// that fills the row. Putting it inside AppKit's standard `NSTableCellView`, with
+/// the top and bottom margins **connected by constraints**, lets Auto Layout
+/// (`usesAutomaticRowHeights`) decide the height, so the highlight and the text line
+/// up with one line or two.
 fn cell_with_content(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSTableCellView> {
     let cell = NSTableCellView::new(mtm);
     let view = content.native_view();
@@ -538,7 +553,7 @@ fn cell_with_content(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NS
     cell
 }
 
-/// 任意のウィジェットを、行の高さも含めて Auto Layout へつなぐ。
+/// Connects any widget to Auto Layout, including the row height.
 fn custom_cell_view(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSView> {
     let cell = cell_with_content(mtm, content);
     let view: &NSView = cell.as_ref();
@@ -552,17 +567,18 @@ impl ListSource {
     }
 }
 
-/// テーブルの選択を昇順の並びとして読み出す。
+/// Reads the table's selection as an ascending sequence.
 pub(crate) fn selected_indices(table: &NSTableView, len: usize) -> Vec<usize> {
     let indexes = table.selectedRowIndexes();
     (0..len).filter(|&i| indexes.containsIndex(i)).collect()
 }
 
-/// `NSScrollView` が持たない「全行を表示する自然な高さ」を補う。
+/// Supplies the "natural height showing every row" that `NSScrollView` lacks.
 ///
-/// `NSTableView` 自体は自動行高を足した intrinsic size を返すので、
-/// それを外側のスクロールビューへ伝える。固定高さと `Fill` は
-/// `apply_sizing` がこの値より優先するため、従来どおりスクロール可能である。
+/// `NSTableView` itself returns an intrinsic size including the automatic row
+/// heights, so that is passed on to the outer scroll view. Fixed heights and
+/// `Fill` take precedence over this value in `apply_sizing`, so it still scrolls as
+/// before.
 struct ContentSizedScrollState {
     last_height: Cell<f64>,
 }
@@ -584,8 +600,9 @@ define_class!(
             NSSize::new(unsafe { NSViewNoIntrinsicMetric }, height)
         }
 
-        /// 親から幅が配られると、折り返しを持つ行の高さは作成時から変わる。
-        /// その変化だけを次の Auto Layout に戻す。
+        /// Once the parent hands out a width, the heights of rows that wrap change from
+        /// when they were created. Only that change is fed back into the next Auto Layout
+        /// pass.
         #[unsafe(method(layout))]
         fn layout(&self) {
             let _: () = unsafe { msg_send![super(self), layout] };
@@ -629,23 +646,24 @@ impl ContentSizedScrollView {
 }
 
 struct ListInner {
-    /// 外から見えるビュー。リストはこのスクロールビューごと 1 つのウィジェット。
+    /// The view visible from outside. The list is one widget together with this scroll
+    /// view.
     scroll: Retained<ContentSizedScrollView>,
     table: Retained<ListTableView>,
     rows: Rc<RefCell<Vec<ListRow>>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     silent: Rc<Cell<bool>>,
-    /// デリゲートとデータソースは weak 参照なので保持する。
+    /// Delegates and data sources are weak references, so they are held.
     _source: Retained<ListSource>,
 }
 
-/// 縦に並ぶ選択できる一覧 (NSTableView)。
+/// A vertical list of selectable rows (NSTableView).
 ///
-/// 中身は `NSScrollView` に載った 1 列の `NSTableView` で、
-/// [`Widget::native_view`] が返すのはそのスクロールビュー。
-/// 高さを指定しない ([`naui_core::Length::Auto`]) ときは全行の高さに追従し、
-/// 固定高さや `Fill` ではみ出した分をスクロールする。
+/// Inside is a single-column `NSTableView` in an `NSScrollView`, and
+/// [`Widget::native_view`] returns that scroll view. Without a height set
+/// ([`naui_core::Length::Auto`]), it follows the height of all its rows; with a
+/// fixed height or `Fill`, it scrolls whatever overflows.
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
 
@@ -737,16 +755,16 @@ impl List {
         }))
     }
 
-    /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     pub fn set_items(&self, items: &[ListItem]) {
         let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
         self.set_rows(&rows);
     }
 
-    /// 任意のウィジェットで作った行へ置き換える。
+    /// Replaces the rows with rows built from any widgets.
     ///
-    /// 行内の各コントロールは通常どおりそれぞれのコールバックを持てる。
-    /// インデックスの意味が変わるため、選択は外れる。
+    /// Controls inside a row can have their own callbacks as usual. Indices change
+    /// meaning, so the selection is cleared.
     pub fn set_rows(&self, rows: &[ListRow]) {
         *self.0.rows.borrow_mut() = rows.to_vec();
         self.reload_rows();
@@ -760,7 +778,7 @@ impl List {
         });
     }
 
-    /// 行数。
+    /// The number of rows.
     pub fn len(&self) -> usize {
         self.0.rows.borrow().len()
     }
@@ -769,7 +787,8 @@ impl List {
         self.len() == 0
     }
 
-    /// 選び方を変える。選択の意味が変わるため、選択は外れる。
+    /// Changes how rows are selected. The meaning of the selection changes, so the
+    /// selection is cleared.
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.mode.set(mode);
         self.0.table.setAllowsMultipleSelection(mode.is_multiple());
@@ -780,35 +799,36 @@ impl List {
         self.0.mode.get()
     }
 
-    /// 選ばれている行のうち、いちばん上のもの。
+    /// The topmost of the selected rows.
     pub fn selected(&self) -> Option<usize> {
         self.selection().first().copied()
     }
 
-    /// 選ばれている行 (昇順)。単一選択なら 0 件か 1 件。
+    /// The selected rows (ascending). Zero or one for single selection.
     pub fn selection(&self) -> Vec<usize> {
         selected_indices(&self.0.table, self.len())
     }
 
-    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until row `index` is visible. The selection does not change.
     ///
-    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
-    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    /// If it is already visible nothing moves; otherwise it is aligned to the nearer
+    /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
+    /// range.
     pub fn scroll_to_row(&self, index: usize) {
         if index < self.0.rows.borrow().len() {
             self.0.table.scrollRowToVisible(index as isize);
         }
     }
 
-    /// 通知せずに 1 行だけを選ぶ。
+    /// Selects exactly one row without notifying.
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
 
-    /// 通知せずに選択を置き換える。
+    /// Replaces the selection without notifying.
     ///
-    /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
-    /// ([`SelectionMode::normalize`])。
+    /// Out-of-range rows, unselectable rows and duplicates are removed, and with single
+    /// selection only the first remains ([`SelectionMode::normalize`]).
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = {
             let rows = self.0.rows.borrow();
@@ -819,17 +839,17 @@ impl List {
         self.without_notifying(|this| this.apply_selection(&picked));
     }
 
-    /// 通知せずに選択をすべて外す。
+    /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
         self.without_notifying(|this| unsafe { this.0.table.deselectAll(None) });
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 行を選ぶ (通知あり)。
+    /// Selects one row through the same path as a user's selection (notifies).
     pub fn select(&self, index: usize) {
         self.select_many(&[index]);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
+    /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
         let picked = {
             let rows = self.0.rows.borrow();
@@ -844,29 +864,31 @@ impl List {
         self.0.handler.emit(&actual);
     }
 
-    /// 選択が変わったときに、選ばれている行 (昇順) で呼ばれる。
+    /// Called with the selected rows (ascending) when the selection changes.
     ///
-    /// 複数選択では 0 件で呼ばれることもある。
+    /// With multiple selection it may be called with none.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 行が起動されたとき (ダブルクリック、または Return / Enter) に、
-    /// その行のインデックスで呼ばれる。
+    /// Called with the row's index when a row is activated (double-clicked, or Return
+    /// / Enter).
     ///
-    /// Return / Enter では選ばれている行 (複数なら最後に選んだ行) が対象になる。
-    /// 複数選択のすべてを開きたいときは、中で [`List::selection`] を読む。
-    /// 選べない `ListItem` (`enabled(false)`) の行では呼ばれない。
+    /// With Return / Enter, the target is the selected row (the most recently selected
+    /// one if several). To open everything in a multiple selection, read
+    /// [`List::selection`] inside it. Not called for rows of `ListItem`s that cannot be
+    /// selected (`enabled(false)`).
     pub fn on_row_activate(&self, f: impl FnMut(usize) + 'static) {
         self.0.table.ivars().row_activate.set(f);
     }
 
-    /// 行が右クリック (Control + クリックを含む) されたときに、その行の
-    /// インデックスと、押された位置で呼ばれる。
+    /// Called with the row's index and the click position when a row is right-clicked
+    /// (including Control + click).
     ///
-    /// 位置はこのリストの左上からの論理ピクセルで、[`crate::PopupMenu::open_at`]
-    /// へそのまま渡せる。設定すると、行の上では `NSTableView` 自身の `menu` は
-    /// 出なくなる。選択は変えない (AppKit と同じ)。行の無い余白では呼ばれない。
+    /// The position is in logical pixels from the top left of this list and can be
+    /// passed straight to [`crate::PopupMenu::open_at`]. Once set, the `NSTableView`'s
+    /// own `menu` no longer appears over rows. The selection does not change (the same
+    /// as AppKit). Not called for empty space without rows.
     pub fn on_context_menu(&self, mut f: impl FnMut(usize, Point) + 'static) {
         self.0
             .table
@@ -875,9 +897,10 @@ impl List {
             .set(move |(index, point)| f(index, point));
     }
 
-    /// 中身の `NSTableView`。バックエンド固有の脱出口として公開している。
+    /// The inner `NSTableView`. Public as a backend-specific escape hatch.
     ///
-    /// 列の追加や並べ替えなど、共通 API に無い設定はここから行う。
+    /// Settings not in the common API, such as adding columns or sorting, are done from
+    /// here.
     pub fn native_table(&self) -> Retained<NSTableView> {
         let table: &NSTableView = &self.0.table;
         table.retain()
@@ -898,7 +921,7 @@ impl List {
             .selectRowIndexes_byExtendingSelection(set, false);
     }
 
-    /// AppKit からの通知を止めたまま操作する。
+    /// Operates with notifications from AppKit stopped.
     fn without_notifying(&self, f: impl FnOnce(&Self)) {
         let previous = self.0.silent.replace(true);
         f(self);

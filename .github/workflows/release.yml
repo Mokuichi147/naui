@@ -352,34 +352,35 @@ jobs:
         run: |
           set -eux
           notes=$(cat <<'EOF'
-          ## ダウンロード
+          ## Downloads
 
-          | OS | インストールする | インストールせずに試す |
+          | OS | Install | Try without installing |
           | --- | --- | --- |
           | macOS (Apple Silicon) | `.dmg` | `macos-arm64.tar.gz` |
-          | Windows 10 1903 以降 (x64) | `.msi` または `-setup.exe` | `windows-x86_64.zip` |
+          | Windows 10 1903 or later (x64) | `.msi` or `-setup.exe` | `windows-x86_64.zip` |
           | Linux (x86_64) | `.deb` | `linux-x86_64.tar.gz` |
           | Web | | `web-wasm.tar.gz` |
 
-          - macOS: `.dmg` を開き、アプリを「アプリケーション」へドラッグしてください。
-          - Windows: Windows App SDK のランタイムを同梱しているので、ランタイムを
-            別に入れなくても動きます。`.msi` はすべてのユーザーへ、`-setup.exe` は
-            既定で自分だけへ入れます。`.zip` を使うときは、展開したフォルダーの中身を
-            ばらさずに置いてください。同梱した部品は Microsoft のライセンス条項
-            (`WindowsAppSDK-LICENSE.txt`) に従って利用してください。
-          - Linux: GTK 4.10 以降と libadwaita 1.5 以降が必要です。`.deb` は
-            `sudo apt install ./naui-gallery-*.deb` で入れると、足りないものも入ります
-            (Ubuntu 24.04 でビルドしています)。
-          - Web: 展開したディレクトリを HTTP で配信してください
-            (`python3 -m http.server 8080`)。
+          - macOS: Open the `.dmg` and drag the app to Applications.
+          - Windows: The Windows App SDK runtime is bundled, so it runs without
+            installing the runtime separately. The `.msi` installs for all users, and
+            `-setup.exe` installs for the current user by default. When using the `.zip`,
+            keep the contents of the extracted folder together. Use the bundled
+            components in accordance with Microsoft's license terms
+            (`WindowsAppSDK-LICENSE.txt`).
+          - Linux: Requires GTK 4.10 or later and libadwaita 1.5 or later. Installing the
+            `.deb` with `sudo apt install ./naui-gallery-*.deb` also installs anything
+            missing (built on Ubuntu 24.04).
+          - Web: Serve the extracted directory over HTTP
+            (`python3 -m http.server 8080`).
 
-          ## 署名について
+          ## About signing
 
-          どのパッケージもコード署名をしていないため、初回の起動で警告が出ます。
+          None of the packages are code-signed, so a warning appears on first launch.
 
-          - macOS: 「開けません」と出たら、「システム設定」→「プライバシーとセキュリティ」
-            の「このまま開く」から起動してください。
-          - Windows: SmartScreen が出たら、「詳細情報」→「実行」を選んでください。
+          - macOS: If you are told the app cannot be opened, launch it with
+            "Open Anyway" in System Settings → Privacy & Security.
+          - Windows: If SmartScreen appears, choose "More info" → "Run anyway".
 
           EOF
           )

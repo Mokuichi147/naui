@@ -1,12 +1,12 @@
-//! ファイルの保存 (AppKit)。
+//! Saving files (AppKit).
 //!
-//! [`crate::FilePicker`] と同じく、AppKit に「保存するコントロール」は無い。
-//! 押しボタン (`NSButton`) を置き、押されたら **`NSSavePanel`** を
-//! アプリモーダルで出す。保存先の一覧・新規フォルダー・上書きの確認は
-//! すべて AppKit が行う。
+//! As with [`crate::FilePicker`], AppKit has no "control for saving". A push button
+//! (`NSButton`) is placed, and clicking it shows an **`NSSavePanel`** app-modally.
+//! The location list, new folders and overwrite confirmation are all handled by
+//! AppKit.
 //!
-//! 選ばれた場所へ書き出すのは naui 側で、[`FileSaver::set_contents`] で
-//! 渡されたバイト列をそのまま `std::fs::write` する。
+//! Writing to the chosen location is done by naui, which `std::fs::write`s the
+//! bytes passed with [`FileSaver::set_contents`] as is.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -21,10 +21,11 @@ use objc2_foundation::{NSArray, NSString};
 use crate::trampoline::ActionTarget;
 use crate::widgets::{impl_widget, Widget};
 
-/// 差し替え可能なクロージャ 1 本。
+/// A single replaceable closure.
 ///
-/// 通知の中からもう一度保存するような使い方をしても二重借用にならないよう、
-/// 呼び出しの間だけクロージャを取り出す (`FilePicker` と同じ作り)。
+/// So that usage such as saving again from inside the notification does not
+/// double-borrow, the closure is taken out only for the duration of the call (the
+/// same design as `FilePicker`).
 struct Handler<T: ?Sized>(Rc<RefCell<Option<Box<dyn FnMut(&T)>>>>);
 
 impl<T: ?Sized> Default for Handler<T> {
@@ -61,7 +62,7 @@ struct FileSaverInner {
     on_error: Handler<Error>,
 }
 
-/// 内容をファイルへ書き出させるボタン (NSButton + NSSavePanel)。
+/// A button that lets the user write contents to a file (NSButton + NSSavePanel).
 #[derive(Clone)]
 pub struct FileSaver(Rc<FileSaverInner>);
 impl_widget!(FileSaver);
@@ -85,10 +86,10 @@ impl FileSaver {
         this
     }
 
-    /// ボタンを押したらダイアログが出るようにする。
+    /// Makes clicking the button show the dialog.
     ///
-    /// トランポリンはハンドルの中にあるので、強参照で捕まえると循環して
-    /// 解放されない。弱参照にしておく。
+    /// The trampoline lives inside the handle, so capturing it strongly would create a
+    /// cycle that is never freed. It is held weakly.
     fn install_click_handler(&self) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let weak: Weak<FileSaverInner> = Rc::downgrade(&self.0);
@@ -112,7 +113,7 @@ impl FileSaver {
         self.0.native.setEnabled(enabled);
     }
 
-    /// ダイアログに最初から入れておく名前。空なら AppKit の既定に任せる。
+    /// The name prefilled in the dialog. If empty, AppKit's default is used.
     pub fn set_file_name(&self, name: &str) {
         *self.0.file_name.borrow_mut() = name.to_string();
     }
@@ -121,40 +122,40 @@ impl FileSaver {
         self.0.file_name.borrow().clone()
     }
 
-    /// 種類の絞り込み。先頭の拡張子が既定の拡張子になる。
+    /// Filters by file type. The first extension becomes the default extension.
     pub fn set_filters(&self, filters: &[FileFilter]) {
         *self.0.filters.borrow_mut() = filters.to_vec();
     }
 
-    /// 書き出す内容。保存のたびに、このバイト列がそのまま書かれる。
+    /// The contents to write. Every save writes exactly these bytes.
     pub fn set_contents(&self, contents: &[u8]) {
         *self.0.contents.borrow_mut() = contents.to_vec();
     }
 
-    /// 書き出した内容の大きさ (バイト数)。
+    /// The size of the contents to write (in bytes).
     pub fn contents_len(&self) -> usize {
         self.0.contents.borrow().len()
     }
 
-    /// 最後に書き出した先。まだ保存していなければ `None`。
+    /// Where the contents were last written. `None` if nothing has been saved yet.
     pub fn destination(&self) -> Option<FileEntry> {
         self.0.destination.borrow().clone()
     }
 
-    /// 書き出しに成功したときに呼ばれる。取り消したときは呼ばれない。
-    /// 設定し直すと以前のものは外れる。
+    /// Called when writing succeeds. Not called when the user cancels. Setting it again
+    /// removes the previous one.
     pub fn on_save(&self, f: impl FnMut(&FileEntry) + 'static) {
         self.0.on_save.set(f);
     }
 
-    /// 書き出しに失敗したときに呼ばれる (書き込み権限が無い、など)。
+    /// Called when writing fails (no write permission, for example).
     pub fn on_error(&self, f: impl FnMut(&Error) + 'static) {
         self.0.on_error.set(f);
     }
 
-    /// ダイアログを出す。ボタンを押したときにも同じものが呼ばれる。
+    /// Shows the dialog. Clicking the button calls the same thing.
     ///
-    /// `NSSavePanel` はアプリモーダルなので、閉じられるまで戻らない。
+    /// `NSSavePanel` is app-modal, so this does not return until it is closed.
     pub fn open(&self) {
         let panel = self.native_panel();
         if panel.runModal() != NSModalResponseOK {
@@ -173,11 +174,12 @@ impl FileSaver {
         self.write_to(&path);
     }
 
-    /// いまの設定を反映した `NSSavePanel` を組み立てて返す。**まだ表示しない。**
+    /// Builds and returns an `NSSavePanel` reflecting the current settings. **It is not
+    /// shown yet.**
     ///
-    /// バックエンド固有の脱出口。シートとして出したい
-    /// (`beginSheetModalForWindow:`)、開始ディレクトリを指定したい、といった
-    /// AppKit 固有の使い方はここから行う。
+    /// A backend-specific escape hatch. AppKit-specific uses, such as showing it as a
+    /// sheet (`beginSheetModalForWindow:`) or setting the starting directory, start
+    /// from here.
     pub fn native_panel(&self) -> Retained<NSSavePanel> {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let panel = NSSavePanel::savePanel(mtm);
@@ -205,9 +207,10 @@ impl FileSaver {
         panel
     }
 
-    /// 選ばれた場所へ書き出し、結果を通知する。
+    /// Writes to the chosen location and notifies the result.
     ///
-    /// 通知の中からこのウィジェットを触れるよう、借用を手放してから呼ぶ。
+    /// The borrow is released before calling, so the notification can touch this
+    /// widget.
     fn write_to(&self, path: &Path) {
         let contents = self.0.contents.borrow().clone();
         match write_contents(path, &contents) {
@@ -220,7 +223,7 @@ impl FileSaver {
     }
 }
 
-/// 選ばれた場所へ書き出し、そこを指す [`FileEntry`] を返す。
+/// Writes to the chosen location and returns a [`FileEntry`] pointing at it.
 fn write_contents(path: &Path, contents: &[u8]) -> Result<FileEntry> {
     std::fs::write(path, contents).map_err(|e| Error::new("ファイルの書き出し", e.to_string()))?;
     Ok(FileEntry::from_path(path))

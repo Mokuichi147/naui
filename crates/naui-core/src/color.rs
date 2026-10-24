@@ -1,17 +1,17 @@
-//! 色の値 (sRGB の 8 bit)。
+//! Color values (8-bit sRGB).
 //!
-//! 色を選ばせるコントロールは 4 環境とも持ち方が違う。AppKit は `NSColor`
-//! (色空間つきの浮動小数)、GTK4 は `GdkRGBA` (f32)、WinUI 3 は
-//! `Windows.UI.Color` (u8 の ARGB)、DOM は `"#rrggbb"` の文字列。
-//! naui はこの [`Color`] を共通の受け渡し口にして、変換だけを
-//! 各バックエンドが行う。
+//! Each of the four platforms stores the color of its color picker differently.
+//! AppKit uses `NSColor` (floats with a color space), GTK4 `GdkRGBA` (f32), WinUI 3
+//! `Windows.UI.Color` (u8 ARGB) and the DOM a `"#rrggbb"` string. naui uses this
+//! [`Color`] as the common exchange format, and each backend does only the
+//! conversion.
 
 use std::fmt;
 
-/// sRGB の色。各成分は 0..=255。
+/// An sRGB color. Each component is 0..=255.
 ///
-/// 透明度は持たない。`<input type="color">` が不透明な色しか返さないため、
-/// 4 環境でそろう範囲に合わせている。
+/// It has no alpha. `<input type="color">` returns only opaque colors, so this
+/// matches what all four platforms share.
 ///
 /// ```
 /// # use naui_core::Color;
@@ -27,18 +27,19 @@ pub struct Color {
 }
 
 impl Color {
-    /// 黒 (`#000000`)。色ピッカーの初期値でもある。
+    /// Black (`#000000`). Also the color picker's initial value.
     pub const BLACK: Color = Color::rgb(0, 0, 0);
-    /// 白 (`#ffffff`)。
+    /// White (`#ffffff`).
     pub const WHITE: Color = Color::rgb(255, 255, 255);
 
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 
-    /// 16 進表記から読む。`#` は省略でき、3 桁の短縮形も受け付ける。
+    /// Parses hex notation. The `#` is optional, and the three-digit short form is
+    /// accepted.
     ///
-    /// 読めない文字列では `None` を返す (長さ違い・16 進でない文字)。
+    /// Returns `None` for strings it cannot read (wrong length, non-hex characters).
     ///
     /// ```
     /// # use naui_core::Color;
@@ -71,22 +72,22 @@ impl Color {
         }
     }
 
-    /// `#rrggbb` の小文字表記へ直す。
+    /// Converts to lowercase `#rrggbb` notation.
     ///
-    /// `<input type="color">` が返す形と同じなので、Web バックエンドは
-    /// これをそのまま値として使える。
+    /// This is the same form `<input type="color">` returns, so the Web backend can use
+    /// it as the value directly.
     pub fn to_hex(self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
     }
 
-    /// 0.0..=1.0 の 3 つ組から作る。範囲の外は端へ寄せる。
+    /// Creates one from a triple of 0.0..=1.0. Values out of range are clamped.
     ///
-    /// AppKit と GTK4 が浮動小数で色を持つため、その変換に使う。
+    /// Used for conversion, since AppKit and GTK4 store colors as floats.
     pub fn from_unit(r: f64, g: f64, b: f64) -> Color {
         Color::rgb(to_byte(r), to_byte(g), to_byte(b))
     }
 
-    /// 0.0..=1.0 の 3 つ組へ直す。
+    /// Converts to a triple of 0.0..=1.0.
     pub fn to_unit(self) -> (f64, f64, f64) {
         (
             f64::from(self.r) / 255.0,
@@ -96,7 +97,7 @@ impl Color {
     }
 }
 
-/// 0.0..=1.0 を 0..=255 へ丸める。数として読めない値は 0 として扱う。
+/// Rounds 0.0..=1.0 to 0..=255. Values that are not numbers are treated as 0.
 fn to_byte(v: f64) -> u8 {
     if !v.is_finite() {
         return 0;

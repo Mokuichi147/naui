@@ -1,41 +1,42 @@
-//! ナビゲーション系のハンドル群 (WinUI 3)。
+//! Navigation handles (WinUI 3).
 //!
 //! | naui | WinUI 3 |
 //! | --- | --- |
 //! | `Tabs` | `Grid` + `ToggleButton` |
-//! | `Navbar` | `TextBlock` (見出し) + `ToggleButton` の横並び |
-//! | `Dock` | `ToggleButton` の横並び |
-//! | `Menu` | `NavigationViewItem` の縦並び |
-//! | `Breadcrumbs` | 地色を消した `Button` + 山形の区切り |
+//! | `Navbar` | `TextBlock` (heading) + a row of `ToggleButton`s |
+//! | `Dock` | A row of `ToggleButton`s |
+//! | `Menu` | A vertical stack of `NavigationViewItem`s |
+//! | `Breadcrumbs` | `Button`s with the background removed + chevron separators |
 //! | `Pagination` | `Button` + `ToggleButton` |
 //! | `Link` | `HyperlinkButton` |
 //!
-//! 横に並べる帯は `ToggleButton` (WinUI の標準コントロール) を並べて構成して
-//! いる。選択状態は `IsChecked` で表すので、見た目は Fluent のまま。
+//! Horizontal bars are composed of `ToggleButton`s (a standard WinUI control) laid
+//! out in a row. The selected state is expressed with `IsChecked`, so the look stays
+//! Fluent.
 //!
-//! 縦に並べる `Menu` だけは `NavigationViewItem` そのものを部品として使う。
-//! この既定のテンプレートは左ペイン用 (項目を横いっぱいに広げ、選択は左端の
-//! アクセントのピルで表す) で、縦並びの見た目がそのまま合うため。横に並べる
-//! 帯で使うと左ペインの見た目のままになるので、そちらは `ToggleButton` の
-//! ままにしている (横向きの見た目は親の `NavigationView` が Top モードの
-//! ときに差し替えるもので、単体では出せない)。
+//! Only the vertical `Menu` uses `NavigationViewItem` itself as the part. Its
+//! default template is for the left pane (items stretch across, and selection is
+//! shown with an accent pill at the left edge), which suits the vertical look as is.
+//! Used in a horizontal bar it would keep the left-pane look, so those stay
+//! `ToggleButton`s (the horizontal look is swapped in by the parent
+//! `NavigationView` in Top mode and cannot be produced standalone).
 //!
-//! ## 名前の似た WinUI のコントロールを使っていない理由
+//! ## Why similarly named WinUI controls are not used
 //!
-//! naui のナビゲーションは**選ばれている位置を通知するだけの帯**で、中身は
-//! 持たない。対して WinUI の対応しそうなコントロールは、どれも中身まで
-//! 引き受ける作りになっていて、そのまま置き換えると naui の API の意味が
-//! 変わってしまう。
+//! naui's navigation widgets are **bars that only report the selected position**,
+//! and hold no content. The WinUI controls that might seem to correspond are all
+//! designed to take on the content as well, so replacing them directly would change
+//! the meaning of naui's API.
 //!
-//! | naui | 近い WinUI | 合わないところ |
+//! | naui | Closest WinUI | Where it does not fit |
 //! | --- | --- | --- |
-//! | `Tabs` | `TabView` | タブごとに中身を持たせる作り。naui はインデックスを返すだけで、中身の出し分けはアプリの側にある |
-//! | `Navbar` / `Menu` / `Dock` | `NavigationView` | ペイン・戻るボタン・見出しに加えて**中身の領域まで**持つアプリの外枠。帯として並べて置くものではない |
-//! | `Breadcrumbs` | `BreadcrumbBar` | **末尾がいまいる場所**と決まっている。naui の `set_selected` のように途中の項目へ移せない |
-//! | `Pagination` | `PipsPager` | 点で位置を示すもので、ページ番号を並べるものではない |
+//! | `Tabs` | `TabView` | Designed to give each tab its own content. naui only returns an index; switching content is the app's side |
+//! | `Navbar` / `Menu` / `Dock` | `NavigationView` | An app shell that owns the pane, back button and heading, **plus the content area**. Not something laid out as a bar |
+//! | `Breadcrumbs` | `BreadcrumbBar` | **The last item is fixed as the current position**. It cannot move to a middle item as naui's `set_selected` does |
+//! | `Pagination` | `PipsPager` | Shows position with dots; it does not lay out page numbers |
 //!
-//! どれも移すなら naui 側の API を決め直すことになるので、`ToggleButton` を
-//! 並べる形のままにしている。
+//! Moving to any of them would mean redefining naui's API, so the form of laying out
+//! `ToggleButton`s is kept.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -60,11 +61,11 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{bool_ref, impl_widget, Widget};
 
-/// ナビゲーション系ウィジェットの「選択された」通知先。
+/// The "selected" handler of navigation widgets.
 ///
-/// WinRT のデリゲートは `Send + Sync` を要求するため、`UiThreadCell` に載せる。
-/// 呼び出しの間だけクロージャを取り出すので、コールバックの中から
-/// 別のナビゲーションを操作しても二重借用にならない。
+/// WinRT delegates require `Send + Sync`, so it is placed in a `UiThreadCell`. The
+/// closure is taken out only for the duration of the call, so operating on another
+/// navigation widget from inside the callback does not double-borrow.
 #[derive(Clone)]
 pub(crate) struct SelectHandler(HandlerCell<dyn FnMut(usize)>);
 
@@ -90,7 +91,7 @@ impl SelectHandler {
     }
 }
 
-/// 文字列を載せた `TextBlock` を作る。
+/// Creates a `TextBlock` holding the string.
 pub(crate) fn text_block(text: &str) -> Result<TextBlock> {
     let block = TextBlock::new().map_err(|e| to_error("TextBlock の生成", e))?;
     block
@@ -99,7 +100,7 @@ pub(crate) fn text_block(text: &str) -> Result<TextBlock> {
     Ok(block)
 }
 
-/// 縦横どちらかに並べる `StackPanel` を作る。
+/// Creates a `StackPanel` laying out horizontally or vertically.
 pub(crate) fn panel(orientation: XamlOrientation, spacing: f64) -> Result<StackPanel> {
     let panel = StackPanel::new().map_err(|e| to_error("StackPanel の生成", e))?;
     panel
@@ -121,32 +122,36 @@ pub(crate) fn append(panel: &StackPanel, element: &UIElement) -> Result<()> {
 
 // -------------------------------------------------------------------- Bar
 
-/// 「項目の並び + いま選ばれているもの」を持つ内部ハンドル。
+/// An internal handle holding "a sequence of items + the one currently selected".
 ///
-/// ナビバー・ドック・メニュー・パンくず・ページネーションが共有する。
-/// パンくずの項目の左右の余白。押したときの淡い塗りが文字に貼り付かない
-/// ようにするためのもので、この分だけ帯を左へずらして文字の左端をそろえる。
+/// Shared by nav bars, docks, menus, breadcrumbs and pagination.
+/// The left and right padding of breadcrumb items. It keeps the light fill when
+/// pressed from hugging the text, and the bar is shifted left by this amount to
+/// align the text's left edge.
 const CRUMB_PADDING_X: f64 = 4.0;
 
-/// パンくずの項目。WinUI の `BreadcrumbBar` に合わせて、地色も枠も出さず
-/// 文字だけを見せる (押したときの淡い塗りは `Button` の標準テンプレートが持つ)。
+/// A breadcrumb item. Matching WinUI's `BreadcrumbBar`, it shows only text, with no
+/// background or border (the light fill when pressed comes from `Button`'s standard
+/// template).
 const CRUMB_BUTTON_XAML: &str = r##"<Button
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="Transparent" BorderThickness="0" Padding="{padding},2"
     VerticalAlignment="Center"/>"##;
 
-/// パンくずの区切り。`BreadcrumbBar` と同じ山形 (Segoe Fluent Icons)。
+/// The breadcrumb separator. The same chevron as `BreadcrumbBar` (Segoe Fluent
+/// Icons).
 const CRUMB_SEPARATOR_XAML: &str = r##"<FontIcon
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Glyph="&#xE76C;" FontSize="12" VerticalAlignment="Center"
     Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>"##;
 
-/// いまいる場所の文字。色はテーマに追従させたいので XAML から作る。
+/// The text of the current position. Created from XAML so the color follows the
+/// theme.
 const CRUMB_CURRENT_XAML: &str = r##"<TextBlock
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>"##;
 
-/// たどってきた場所の文字。いまいる場所より一段淡い。
+/// The text of places passed through. One step dimmer than the current position.
 const CRUMB_ANCESTOR_XAML: &str = r##"<TextBlock
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>"##;
@@ -154,17 +159,17 @@ const CRUMB_ANCESTOR_XAML: &str = r##"<TextBlock
 #[derive(Clone)]
 struct Bar(Rc<BarInner>);
 
-/// 項目に使うコントロール。並べ方によって見た目の合うものが違う。
+/// The control used for items. Which looks right depends on how they are laid out.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BarKind {
-    /// 押し込みで選択を表す `ToggleButton`。横に並べる帯 (`Navbar` /
-    /// `Dock` / `Pagination`) 向け。
+    /// A `ToggleButton` expressing selection by being pressed in. For horizontal bars
+    /// (`Navbar` / `Dock` / `Pagination`).
     Toggle,
-    /// WinUI の左ペインの項目 (`NavigationViewItem`)。縦に並べる `Menu` 向け。
+    /// An item of WinUI's left pane (`NavigationViewItem`). For the vertical `Menu`.
     Navigation,
 }
 
-/// 並べた項目 1 つ。選択の表しかたがコントロールごとに違う。
+/// One laid-out item. How selection is shown differs per control.
 enum BarItem {
     Toggle(ToggleButton),
     Navigation(NavigationViewItem),
@@ -247,19 +252,19 @@ impl Bar {
         Ok(())
     }
 
-    /// 項目 1 つを作り、押されたら選ぶようにする。
+    /// Creates one item and makes clicking it select it.
     ///
-    /// 拾うイベントは**利用者の操作でしか起きないもの**を選ぶ
-    /// (`ToggleButton` の `Click`、`NavigationViewItem` の `Tapped`)。
-    /// `IsChecked` / `IsSelected` の書き換えでは呼ばれないので、
-    /// プログラムからの選択と混ざらない。
-    /// ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+    /// The events picked up are **ones that happen only through user actions**
+    /// (`ToggleButton`'s `Click`, `NavigationViewItem`'s `Tapped`). They are not called
+    /// when `IsChecked` / `IsSelected` is rewritten, so they do not mix with selection
+    /// from code. Holding the handle strongly would create a cycle with the
+    /// subscription, so it is held weakly.
     ///
-    /// `NavigationViewItem` には `Click` に当たるものが無く、`Tapped` は
-    /// ポインターの操作でしか飛ばない。`NavigationView` の外なので
-    /// `ItemInvoked` も来ない。そこで Space と Enter を `KeyUp` から拾って
-    /// 補う (押し下げではなく離したときに確定させるのは `ButtonBase` と
-    /// 同じで、押しっぱなしの自動リピートで連発しないため)。
+    /// `NavigationViewItem` has nothing equivalent to `Click`, and `Tapped` fires only
+    /// for pointer operations. It is outside a `NavigationView`, so `ItemInvoked` does
+    /// not come either. So Space and Enter are picked up from `KeyUp` to fill the gap
+    /// (confirming on release rather than press is the same as `ButtonBase`, so holding
+    /// the key down does not fire repeatedly through auto-repeat).
     fn build_item(&self, item: &NavItem, index: usize) -> Result<BarItem> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         match self.0.kind {
@@ -323,7 +328,7 @@ impl Bar {
         }
     }
 
-    /// 選ばれた項目だけを選択状態にする。
+    /// Puts only the chosen item in the selected state.
     fn mark_selected(&self, index: Option<usize>) {
         for (i, entry) in self.0.buttons.borrow().iter().enumerate() {
             entry.set_selected(Some(i) == index);
@@ -357,11 +362,11 @@ impl Bar {
     }
 }
 
-/// 項目を持つナビゲーションの共通実装を生やす。
+/// Adds the common implementation of navigation widgets with items.
 macro_rules! impl_item_bar {
     ($t:ty) => {
         impl $t {
-            /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+            /// Rebuilds the items. Indices change meaning, so the selection is cleared.
             pub fn set_items(&self, items: &[NavItem]) {
                 let _ = self.0.bar.set_items(items);
             }
@@ -378,17 +383,17 @@ macro_rules! impl_item_bar {
                 self.0.bar.selected()
             }
 
-            /// 通知せずに選択を変える。
+            /// Changes the selection without notifying.
             pub fn set_selected(&self, index: usize) {
                 self.0.bar.set_selected(index);
             }
 
-            /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+            /// Changes the selection through the same path as a user's choice (notifies).
             pub fn select(&self, index: usize) {
                 self.0.bar.select(index);
             }
 
-            /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+            /// Called with the index when an item is chosen.
             pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
                 self.0.bar.on_select(f);
             }
@@ -402,14 +407,14 @@ struct TabsInner {
     native: XamlGrid,
     headers: StackPanel,
     content: XamlGrid,
-    /// 子のハンドルを保持し、選択中の内容を表示する。
+    /// Holds the children's handles and shows the selected content.
     children: RefCell<Vec<Box<dyn Widget>>>,
     buttons: RefCell<Vec<ToggleButton>>,
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
 }
 
-/// タブ。見出しと選択中の中身を `Grid` で表示する。
+/// Tabs. Shows the headings and the selected content with a `Grid`.
 #[derive(Clone)]
 pub struct Tabs(Rc<TabsInner>);
 impl_widget!(Tabs, native);
@@ -482,7 +487,7 @@ impl Tabs {
         })))
     }
 
-    /// タブを 1 枚追加する。`child` がそのタブの中身になる。
+    /// Adds one tab. `child` becomes that tab's content.
     pub fn add_tab(&self, label: &str, child: &dyn Widget) {
         let Ok(button) = ToggleButton::new() else {
             return;
@@ -541,11 +546,11 @@ impl Tabs {
         }
     }
 
-    /// タブを 1 枚外す。範囲外のときは何もしない。
+    /// Removes one tab. Does nothing if out of range.
     ///
-    /// 選択中のタブを外したときは、同じ位置のタブ (無ければ最後のタブ) を
-    /// 選び直す。この移動は [`set_selected`](Tabs::set_selected) と同じく
-    /// 通知しない。
+    /// When the selected tab is removed, the tab at the same position (or the last tab
+    /// if there is none) is selected instead. Like [`set_selected`](Tabs::set_selected),
+    /// this move is not notified.
     pub fn remove_tab(&self, index: usize) {
         if index >= self.len() {
             return;
@@ -572,7 +577,7 @@ impl Tabs {
         self.mark_selected(selected);
     }
 
-    /// タブをすべて外す。
+    /// Removes every tab.
     pub fn clear(&self) {
         if let Ok(children) = self.0.headers.Children() {
             let _ = children.Clear();
@@ -594,14 +599,14 @@ impl Tabs {
         self.0.selected.get()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             self.mark_selected(Some(index));
         }
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         if index < self.len() {
             self.mark_selected(Some(index));
@@ -639,7 +644,7 @@ impl Tabs {
         self.0.selected.set(index);
     }
 
-    /// タブが切り替わったときに、そのインデックスで呼ばれる。
+    /// Called with the index when the tab changes.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
@@ -653,7 +658,7 @@ struct NavbarInner {
     bar: Bar,
 }
 
-/// 画面上部に置く横並びのナビゲーション。
+/// Horizontal navigation placed at the top of the screen.
 #[derive(Clone)]
 pub struct Navbar(Rc<NavbarInner>);
 impl_widget!(Navbar, native);
@@ -681,7 +686,7 @@ impl Navbar {
         })))
     }
 
-    /// 左端の見出し。
+    /// The heading at the left end.
     pub fn set_title(&self, title: &str) {
         let _ = self.0.title.SetText(&HSTRING::from(title));
     }
@@ -702,10 +707,11 @@ struct DockInner {
     bar: Bar,
 }
 
-/// 画面下部に置く横並びのナビゲーション。
+/// Horizontal navigation placed at the bottom of the screen.
 ///
-/// **配置はアプリの責務**で、naui のレイアウトは縦横のスタックしか持たないため、
-/// ウィンドウ下端への固定はできない。縦スタックの最後に置くと下端寄りになる。
+/// **Placement is the app's job.** naui's layout has only vertical and horizontal
+/// stacks, so it cannot be pinned to the bottom of the window. Put it last in a
+/// vertical stack to move it toward the bottom.
 #[derive(Clone)]
 pub struct Dock(Rc<DockInner>);
 impl_widget!(Dock, native);
@@ -728,9 +734,9 @@ struct MenuInner {
     bar: Bar,
 }
 
-/// 縦に並ぶナビゲーション一覧。
+/// A vertical list of navigation items.
 ///
-/// ポップアップの `MenuFlyout` ではない。
+/// It is not a popup `MenuFlyout`.
 #[derive(Clone)]
 pub struct Menu(Rc<MenuInner>);
 impl_widget!(Menu, native);
@@ -753,18 +759,20 @@ struct BreadcrumbsInner {
     bar: BreadcrumbBar,
 }
 
-/// パンくず用のバー。WinUI の `BreadcrumbBar` に見た目を寄せてある
-/// (山形の区切り、いまいる場所は主色・たどってきた場所は副次色)。
+/// The bar for breadcrumbs. Its look follows WinUI's `BreadcrumbBar` (chevron
+/// separators, the current position in the primary color and places passed through
+/// in the secondary color).
 ///
-/// `BreadcrumbBar` そのものを使わないのは、あちらが**末尾をいまいる場所と
-/// 決めている**ため。naui は `set_selected` で途中の項目へも移せる。
+/// `BreadcrumbBar` itself is not used because it **fixes the last item as the
+/// current position**. naui can move to a middle item with `set_selected`.
 #[derive(Clone)]
 struct BreadcrumbBar(Rc<BreadcrumbBarInner>);
 
 struct BreadcrumbBarInner {
     panel: StackPanel,
     links: RefCell<Vec<XamlButton>>,
-    /// 項目の文字。いまいる場所が変わると色を変えるので持っておく。
+    /// The items' text. Kept because the colors change when the current position
+    /// changes.
     labels: RefCell<Vec<String>>,
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
@@ -829,11 +837,12 @@ impl BreadcrumbBar {
         Ok(())
     }
 
-    /// いまいる場所を主色に、たどってきた場所を副次色にする。
+    /// Puts the current position in the primary color and places passed through in the
+    /// secondary color.
     ///
-    /// 色はテーマに追従させたいので、`{ThemeResource}` を持つ `TextBlock` を
-    /// その都度作って差し替える (取り出したブラシを使い回すと、ライト /
-    /// ダークの切り替えに付いてこないため)。
+    /// The colors should follow the theme, so `TextBlock`s with `{ThemeResource}` are
+    /// created and swapped in each time (reusing extracted brushes would not follow
+    /// light / dark switching).
     fn mark_selected(&self, index: Option<usize>) {
         let labels = self.0.labels.borrow();
         for (i, link) in self.0.links.borrow().iter().enumerate() {
@@ -874,7 +883,7 @@ impl BreadcrumbBar {
     }
 }
 
-/// パンくず。
+/// Breadcrumbs.
 #[derive(Clone)]
 pub struct Breadcrumbs(Rc<BreadcrumbsInner>);
 impl_widget!(Breadcrumbs, native);
@@ -899,7 +908,7 @@ impl Breadcrumbs {
         })))
     }
 
-    /// 階層を作り直す。末尾がいまいる場所になる。
+    /// Rebuilds the hierarchy. The last item becomes the current position.
     pub fn set_items(&self, items: &[NavItem]) {
         let _ = self.0.bar.set_items(items);
         if let Some(last) = items.len().checked_sub(1) {
@@ -915,28 +924,29 @@ impl Breadcrumbs {
         self.len() == 0
     }
 
-    /// いまいる場所。既定では末尾の項目。
+    /// The current position. The last item by default.
     pub fn selected(&self) -> Option<usize> {
         self.0.bar.selected()
     }
 
-    /// 通知せずにいまいる場所を変える。
+    /// Changes the current position without notifying.
     pub fn set_selected(&self, index: usize) {
         self.0.bar.set_selected(index);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         self.0.bar.select(index);
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.bar.on_select(f);
     }
 }
 
-/// パンくずの項目のボタン。読めなければ素の `Button` に戻す。
+/// The button for a breadcrumb item. Falls back to a plain `Button` if it cannot be
+/// read.
 fn crumb_button() -> Result<XamlButton> {
     let xaml = CRUMB_BUTTON_XAML.replace("{padding}", &CRUMB_PADDING_X.to_string());
     match XamlReader::Load(&HSTRING::from(xaml)).and_then(|element| element.cast::<XamlButton>()) {
@@ -945,7 +955,7 @@ fn crumb_button() -> Result<XamlButton> {
     }
 }
 
-/// パンくずの区切り。読めなければ文字の「›」に戻す。
+/// The breadcrumb separator. Falls back to the character "›" if it cannot be read.
 fn crumb_separator() -> Result<UIElement> {
     if let Ok(icon) = XamlReader::Load(&HSTRING::from(CRUMB_SEPARATOR_XAML))
         .and_then(|element| element.cast::<UIElement>())
@@ -961,7 +971,8 @@ fn crumb_separator() -> Result<UIElement> {
         .map_err(|e| to_error("パンくず区切りの要素化", e))
 }
 
-/// パンくずの項目の文字。`current` ならいまいる場所の色にする。
+/// The text of a breadcrumb item. With `current`, it gets the current position's
+/// color.
 fn crumb_label(text: &str, current: bool) -> Result<TextBlock> {
     let xaml = if current {
         CRUMB_CURRENT_XAML
@@ -988,10 +999,10 @@ struct PaginationInner {
     bar: Bar,
 }
 
-/// ページ送り。
+/// Pagination.
 ///
-/// WinUI に相当するコントロールが無いため、前へ / 次への `Button` と
-/// ページ番号の `ToggleButton` を並べて構成している。
+/// WinUI has no equivalent control, so it is composed of previous / next `Button`s
+/// and `ToggleButton`s for the page numbers.
 #[derive(Clone)]
 pub struct Pagination(Rc<PaginationInner>);
 impl_widget!(Pagination, native);
@@ -1047,7 +1058,7 @@ impl Pagination {
         Ok(this)
     }
 
-    /// ページ数を変える。表示は 1 始まり、API は 0 始まり。
+    /// Changes the number of pages. The display starts at 1; the API starts at 0.
     pub fn set_page_count(&self, count: usize) {
         let items: Vec<NavItem> = (1..=count).map(|n| NavItem::new(n.to_string())).collect();
         let _ = self.0.bar.set_items(&items);
@@ -1060,22 +1071,22 @@ impl Pagination {
         self.0.bar.len()
     }
 
-    /// いまのページ (0 始まり)。
+    /// The current page (starting at 0).
     pub fn page(&self) -> usize {
         self.0.bar.selected().unwrap_or(0)
     }
 
-    /// 通知せずにページを変える。
+    /// Changes the page without notifying.
     pub fn set_page(&self, page: usize) {
         self.0.bar.set_selected(page);
     }
 
-    /// ユーザーが選んだのと同じ経路でページを変える (通知あり)。
+    /// Changes the page through the same path as a user's choice (notifies).
     pub fn select(&self, page: usize) {
         self.0.bar.select(page);
     }
 
-    /// 前のページへ。先頭にいるときは何もしない。
+    /// Goes to the previous page. Does nothing on the first page.
     pub fn go_previous(&self) {
         let page = self.page();
         if page > 0 {
@@ -1083,7 +1094,7 @@ impl Pagination {
         }
     }
 
-    /// 次のページへ。末尾にいるときは何もしない。
+    /// Goes to the next page. Does nothing on the last page.
     pub fn go_next(&self) {
         let page = self.page();
         if page + 1 < self.page_count() {
@@ -1091,7 +1102,7 @@ impl Pagination {
         }
     }
 
-    /// ページが変わったときに、その番号 (0 始まり) で呼ばれる。
+    /// Called with the page number (starting at 0) when the page changes.
     pub fn on_change(&self, f: impl FnMut(usize) + 'static) {
         self.0.bar.on_select(f);
     }
@@ -1106,9 +1117,9 @@ struct LinkInner {
     token: RefCell<Option<i64>>,
 }
 
-/// リンク (HyperlinkButton)。
+/// A link (HyperlinkButton).
 ///
-/// `href` が空でなければ、押したときに WinUI が既定のブラウザで開く。
+/// If `href` is not empty, WinUI opens it in the default browser when clicked.
 #[derive(Clone)]
 pub struct Link(Rc<LinkInner>);
 impl_widget!(Link, native);
@@ -1162,9 +1173,9 @@ impl Link {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// 押されたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called on click. Setting it again removes the previous one.
     ///
-    /// `href` を開くのは WinUI 自身が行う。
+    /// Opening `href` is done by WinUI itself.
     pub fn on_click(&self, f: impl FnMut() + 'static) {
         if let Some(token) = self.0.token.borrow_mut().take() {
             let _ = self.0.native.RemoveClick(token);

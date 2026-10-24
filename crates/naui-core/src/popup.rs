@@ -1,34 +1,34 @@
-//! ポップアップ (コンテキスト) メニューの項目。
+//! Items of popup (context) menus.
 
-/// ポップアップメニューの 1 項目。
+/// One item of a popup menu.
 ///
-/// 右クリック (副ボタン) で出るメニューの中身を表す。項目の識別は
-/// アプリ側が持つ順序 (インデックス) で行い、選択の通知も
-/// **区切り線を含めた並びの中でのインデックス**で返る。
-/// 区切り線は選べないので、そのインデックスが返ることはない。
+/// Describes the contents of the menu shown on right-click (secondary button).
+/// Items are identified by the order (index) the app owns, and selection
+/// notifications come back as **the index within the sequence, separators
+/// included**. Separators cannot be chosen, so their indices never come back.
 ///
 /// ```
 /// # use naui_core::PopupItem;
 /// let items = [
-///     PopupItem::new("コピー"),
+///     PopupItem::new("Copy"),
 ///     PopupItem::separator(),
-///     PopupItem::new("削除").enabled(false),
+///     PopupItem::new("Delete").enabled(false),
 /// ];
 /// assert!(items[1].is_separator());
 /// assert!(!items[2].enabled);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PopupItem {
-    /// 画面に出る文字列。区切り線では使われない。
+    /// The text shown on screen. Not used for separators.
     pub label: String,
-    /// 選べるかどうか。
+    /// Whether it can be selected.
     pub enabled: bool,
-    /// 区切り線かどうか。
+    /// Whether this is a separator.
     pub separator: bool,
 }
 
 impl PopupItem {
-    /// 押せる項目を作る。
+    /// Creates a clickable item.
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
@@ -37,7 +37,7 @@ impl PopupItem {
         }
     }
 
-    /// 区切り線を作る。選ぶことはできない。
+    /// Creates a separator. It cannot be chosen.
     pub fn separator() -> Self {
         Self {
             label: String::new(),
@@ -46,22 +46,22 @@ impl PopupItem {
         }
     }
 
-    /// 選べるかどうかを指定する (既定は選べる)。
+    /// Sets whether it can be selected (selectable by default).
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// 区切り線かどうか。
+    /// Whether this is a separator.
     pub fn is_separator(&self) -> bool {
         self.separator
     }
 
-    /// 文字列の並びから項目列を作る。
+    /// Creates a list of items from a sequence of strings.
     ///
     /// ```
     /// # use naui_core::PopupItem;
-    /// let items = PopupItem::list(["コピー", "貼り付け"]);
+    /// let items = PopupItem::list(["Copy", "Paste"]);
     /// assert_eq!(items.len(), 2);
     /// ```
     pub fn list<I, S>(labels: I) -> Vec<PopupItem>

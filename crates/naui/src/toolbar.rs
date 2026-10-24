@@ -1,28 +1,28 @@
 use crate::sys;
 use naui_core::ToolbarItem;
 
-/// ウィンドウの上端に付く、よく使う操作の並び。
+/// A row of frequently used actions attached to the top of the window.
 ///
-/// [`Widget`](crate::Widget) ではない。
-/// [`Window::set_toolbar`](crate::Window::set_toolbar) で取り付ける。
-/// ナビゲーションと違い**選ばれている項目を持たず**、押されるたびに
-/// そのインデックスで [`on_activate`](Self::on_activate) が呼ばれる。
-/// インデックスは区切りを含めた並びの位置で、区切りが返ることはない。
+/// Not a [`Widget`](crate::Widget). Attach it with
+/// [`Window::set_toolbar`](crate::Window::set_toolbar). Unlike navigation, it
+/// **has no selected item**; every click calls [`on_activate`](Self::on_activate)
+/// with the index. The index is the position in the sequence including separators;
+/// separators are never returned.
 #[derive(Clone)]
 pub struct Toolbar(pub(crate) sys::Toolbar);
 
 impl_backend!(Toolbar);
 
 impl Toolbar {
-    /// 項目を作り直す。以前の項目は取り除かれる。
+    /// Rebuilds the items. The previous items are removed.
     ///
-    /// インデックスは区切りを含めた並びの位置。
+    /// The index is the position in the sequence including separators.
     #[inline]
     pub fn set_items(&self, items: &[ToolbarItem]) {
         self.0.set_items(items)
     }
 
-    /// 区切りを含めた項目数。
+    /// The number of items, separators included.
     #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
@@ -33,34 +33,34 @@ impl Toolbar {
         self.0.is_empty()
     }
 
-    /// 項目 1 つの有効・無効を変える。区切りと範囲外は何もしない。
+    /// Enables or disables one item. Does nothing for separators or out of range.
     #[inline]
     pub fn set_item_enabled(&self, index: usize, enabled: bool) {
         self.0.set_item_enabled(index, enabled)
     }
 
-    /// いま押せる項目か。区切りと範囲外は `false`。
+    /// Whether the item can be clicked now. `false` for separators and out of range.
     #[inline]
     pub fn is_item_enabled(&self, index: usize) -> bool {
         self.0.is_item_enabled(index)
     }
 
-    /// ツールバー全体の有効・無効を変える。項目ごとの指定は残る。
+    /// Enables or disables the whole toolbar. Per-item settings are kept.
     #[inline]
     pub fn set_enabled(&self, enabled: bool) {
         self.0.set_enabled(enabled)
     }
 
-    /// 利用者が押したのと同じように項目を実行する。
+    /// Runs the item as if the user had clicked it.
     ///
-    /// 区切り・押せない項目・範囲外は何もしない。
+    /// Does nothing for separators, disabled items or out of range.
     #[inline]
     pub fn activate(&self, index: usize) {
         self.0.activate(index)
     }
 
-    /// 項目が押されたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the index when an item is clicked. Setting it again removes the
+    /// previous callback.
     #[inline]
     pub fn on_activate(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_activate(f)

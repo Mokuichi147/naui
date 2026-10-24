@@ -1,6 +1,6 @@
-//! DOM の標準コントロールを包むハンドル群。
+//! Handles wrapping the DOM's standard controls.
 //!
-//! 見た目はブラウザ既定のまま。CSS は Flexbox のレイアウトにしか使わない。
+//! The look stays the browser's default. CSS is used only for Flexbox layout.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -16,9 +16,9 @@ use web_sys::{
 use crate::keys::{impl_key_down, KeyDown};
 use crate::to_error;
 
-/// naui のウィジェットが実装する共通インタフェース。
+/// The common interface implemented by naui's widgets.
 pub trait Widget: 'static {
-    /// 対応する DOM 要素。バックエンド固有の脱出口として公開している。
+    /// The corresponding DOM element. Public as a backend-specific escape hatch.
     fn native_element(&self) -> Element;
 
     #[doc(hidden)]
@@ -37,45 +37,48 @@ macro_rules! impl_widget {
         }
 
         impl $t {
-            /// 大きさを指定する。呼ぶたびに以前の指定は外れる。
+            /// Sets the size. Each call discards the previous setting.
             ///
-            /// 実際の大きさを決めるのはブラウザの CSS レイアウトなので、
-            /// ここで渡すのは `width` / `min-width` などの指定だけ。
+            /// The actual size is decided by the browser's CSS layout, so what you pass here is
+            /// only settings such as `width` / `min-width`.
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 let element = <$t as Widget>::native_element(self);
                 crate::layout::apply_sizing(&element, sizing);
             }
 
-            /// 表示するかどうか。既定は表示。
+            /// Whether it is shown. Shown by default.
             ///
-            /// 隠したものは `Stack` の中では場所を空けない。`Grid` ではマスが残る。
+            /// A hidden widget takes no space in a `Stack`. In a `Grid`, its cell remains.
             pub fn set_visible(&self, visible: bool) {
                 crate::interaction::set_visible(&<$t as Widget>::native_element(self), visible);
             }
 
-            /// [`set_visible`](Self::set_visible) で指定した表示。親が隠れていても
-            /// `true` のまま。
+            /// The visibility set with [`set_visible`](Self::set_visible). Stays `true` even
+            /// if a parent is hidden.
             pub fn is_visible(&self) -> bool {
                 crate::interaction::is_visible(&<$t as Widget>::native_element(self))
             }
 
-            /// キーボードフォーカスを移す。移せたら `true`。
+            /// Moves keyboard focus here. `true` if it moved.
             ///
-            /// 自分が受け取れないとき (コンテナなど) は、中で最初に受け取れるものへ
-            /// 移す。文書に載る前・隠れている・無効なときは `false`。
+            /// If the widget itself cannot take focus (containers, for example), focus moves to
+            /// the first thing inside that can. `false` before it is in the document, while
+            /// hidden, or while disabled.
             pub fn request_focus(&self) -> bool {
                 crate::interaction::request_focus(&<$t as Widget>::native_element(self))
             }
 
-            /// ポインターを重ねたときに出す説明 (`title` 属性)。`None` で外す。
+            /// The description shown when the pointer hovers over it (the `title` attribute).
+            /// `None` removes it.
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_element(self), text);
             }
 
-            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            /// The name reported to screen readers. `None` removes it (the visible text is
+            /// used).
             ///
-            /// アイコンだけのボタンのように、見えている文字が無いか意味を
-            /// 表しきれないときに付ける。
+            /// Set it when there is no visible text, or the text does not fully convey the
+            /// meaning, as with icon-only buttons.
             pub fn set_accessible_label(&self, text: Option<&str>) {
                 crate::interaction::set_accessible_label(
                     &<$t as Widget>::native_element(self),
@@ -83,8 +86,9 @@ macro_rules! impl_widget {
                 );
             }
 
-            /// 弱参照を作る。通知のクロージャからこのウィジェット自身を触るときに
-            /// 捕まえる (`clone()` で捕まえると循環して解放されない)。
+            /// Creates a weak reference. Capture it when touching this widget from its own
+            /// notification closures (capturing a `clone()` creates a cycle and it is never
+            /// freed).
             pub fn downgrade(&self) -> naui_core::WeakWidget<Self> {
                 let weak = std::rc::Rc::downgrade(&self.0);
                 naui_core::WeakWidget::new(move || weak.upgrade().map(Self))
@@ -97,11 +101,11 @@ pub(crate) use impl_widget;
 
 type SelectCallback = Box<dyn FnMut(usize)>;
 
-/// 選択されたインデックスの通知先。
+/// The handler for the selected index.
 ///
-/// 呼び出している間だけクロージャを取り出すため、通知の中から同じ
-/// ウィジェットを操作しても `RefCell` の二重借用にならない。通知中に
-/// `on_select` を呼び直した場合は、新しいクロージャを残す。
+/// The closure is taken out only while it is being called, so operating on the same
+/// widget from inside the notification does not double-borrow the `RefCell`. If
+/// `on_select` is called again during the notification, the new closure is kept.
 #[derive(Default)]
 pub(crate) struct SelectionHandler(RefCell<Option<SelectCallback>>);
 
@@ -122,10 +126,11 @@ impl SelectionHandler {
     }
 }
 
-/// 文字列を受け取る通知先。
+/// A handler that receives a string.
 ///
-/// [`SelectionHandler`] と同じ再入対応を `&str` で行う。`ValueHandler<T>` は
-/// 借用した値を受け取れない (寿命の引数が要る) ため、別に用意している。
+/// The same re-entrancy handling as [`SelectionHandler`], with `&str`.
+/// `ValueHandler<T>` cannot receive borrowed values (it would need a lifetime
+/// parameter), so this is provided separately.
 #[derive(Default)]
 pub(crate) struct TextHandler(RefCell<Option<Box<dyn FnMut(&str)>>>);
 
@@ -146,10 +151,10 @@ impl TextHandler {
     }
 }
 
-/// 値を 1 つ受け取る通知先。
+/// A handler that receives one value.
 ///
-/// [`SelectionHandler`] と同じ再入対応を、インデックス以外の値でも使うための
-/// もの (日付ピッカーの `on_change` など)。
+/// For using the same re-entrancy handling as [`SelectionHandler`] with values other
+/// than indices (the date picker's `on_change`, for example).
 pub(crate) struct ValueHandler<T>(RefCell<Option<Box<dyn FnMut(T)>>>);
 
 impl<T> Default for ValueHandler<T> {
@@ -163,7 +168,7 @@ impl<T> ValueHandler<T> {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// クロージャが設定されているか。
+    /// Whether a closure is set.
     pub(crate) fn is_set(&self) -> bool {
         self.0.borrow().is_some()
     }
@@ -185,7 +190,7 @@ pub(crate) fn create(doc: &Document, tag: &str) -> Result<Element> {
         .map_err(|e| to_error("DOM 要素の生成", e))
 }
 
-/// クリック等のイベントを購読し、ハンドルが生きている間だけ有効にする。
+/// Subscribes to events such as clicks, valid only while the handle is alive.
 pub(crate) struct Listener {
     target: web_sys::EventTarget,
     event: &'static str,
@@ -193,9 +198,9 @@ pub(crate) struct Listener {
     capture: bool,
 }
 
-/// 購読の中身。`FnMut` のクロージャは、呼んでいる間にもう一度呼ばれると
-/// wasm-bindgen が例外にする (`focus()` が同期で `focusin` を出すときなど)。
-/// 入れ子で呼ばれうるものは `Fn` で持つ。
+/// The body of a subscription. wasm-bindgen throws if an `FnMut` closure is called
+/// again while it is being called (as when `focus()` fires `focusin`
+/// synchronously). Things that may be called re-entrantly are held as `Fn`.
 enum Callback {
     Mut(Closure<dyn FnMut(web_sys::Event)>),
     Shared(Closure<dyn Fn(web_sys::Event)>),
@@ -228,8 +233,9 @@ impl Listener {
         Self::add(target, event, closure, false)
     }
 
-    /// 入れ子で呼ばれてもよい購読。購読の中から同じイベントが同期で出ても
-    /// (`focusin` の中で `focus()` を呼ぶなど)、内側の呼び出しも届く。
+    /// A subscription that may be called re-entrantly. Even if the same event fires
+    /// synchronously from inside it (calling `focus()` inside `focusin`, for example),
+    /// the inner call is delivered too.
     pub(crate) fn attach_reentrant(
         target: &web_sys::EventTarget,
         event: &'static str,
@@ -239,7 +245,8 @@ impl Listener {
         Self::add(target, event, closure, false)
     }
 
-    /// 捕捉フェーズで購読する。対象の要素の上では、通常の購読より先に呼ばれる。
+    /// Subscribes in the capture phase. On the target element, it is called before
+    /// regular subscriptions.
     pub(crate) fn attach_capture(
         target: &web_sys::EventTarget,
         event: &'static str,
@@ -283,7 +290,7 @@ struct LabelInner {
     element: HtmlElement,
 }
 
-/// テキスト表示 (`<span>`)。
+/// Text display (`<span>`).
 #[derive(Clone)]
 pub struct Label(Rc<LabelInner>);
 impl_widget!(Label, element);
@@ -307,13 +314,13 @@ impl Label {
         self.0.element.set_text_content(Some(text));
     }
 
-    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    /// Whether the text can be selected and copied. Not selectable by default.
     ///
-    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
-    /// 入力欄と違い、文字は書き換えられない。
+    /// Use it for text readers will want to copy, such as chat messages or error
+    /// details. Unlike a text field, the text cannot be edited.
     ///
-    /// ブラウザの文字は既定でどれも選べるので、選べないときは naui が
-    /// `user-select: none` を付けて他の 3 環境へそろえている。
+    /// All text in a browser is selectable by default, so when it should not be, naui
+    /// adds `user-select: none` to match the other three platforms.
     pub fn set_selectable(&self, selectable: bool) {
         let style = self.0.element.style();
         if selectable {
@@ -333,11 +340,12 @@ impl Label {
             .all(|name| style.get_property_value(name).map_or(true, |v| v != "none"))
     }
 
-    /// 長い文字列を折り返すかどうか。既定は折り返さない。
+    /// Whether long text wraps. Does not wrap by default.
     ///
-    /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
-    /// 切る (`text-overflow: ellipsis`)。**`<span>` の既定は折り返す**ので、
-    /// ここだけは naui が CSS で他の 3 環境へそろえている。
+    /// When not wrapping, it stays on one line and whatever does not fit is cut off
+    /// with a trailing ellipsis (…) (`text-overflow: ellipsis`). **A `<span>` wraps by
+    /// default**, so this is one place where naui uses CSS to match the other three
+    /// platforms.
     pub fn set_wrap(&self, wrap: bool) {
         let style = self.0.element.style();
         if wrap {
@@ -351,29 +359,30 @@ impl Label {
         }
     }
 
-    /// 文字の大きさと太さの段階。既定は [`TextStyle::Body`]。
+    /// The level of text size and weight. The default is [`TextStyle::Body`].
     ///
-    /// **ブラウザには見出しの段階そのものが無い**ので、ここだけは naui が
-    /// CSS で他の 3 環境へそろえている (ラベルの折り返しと同じ扱い)。
-    /// 大きさは `em` の相対値なので、ブラウザとユーザーが決めた基準の
-    /// 文字サイズには追従する。
+    /// **Browsers have no heading levels as such**, so this is one place where naui uses
+    /// CSS to match the other three platforms (the same treatment as label wrapping).
+    /// Sizes are relative `em` values, so they follow the base font size set by the
+    /// browser and the user.
     pub fn set_style(&self, style: TextStyle) {
         set_or_clear(&self.0.element, "font-size", style.css_font_size());
         set_or_clear(&self.0.element, "font-weight", style.css_font_weight());
     }
 
-    /// 文字色の役割。既定は [`TextColor::Default`]。
+    /// The text color role. The default is [`TextColor::Default`].
     ///
-    /// 補足の色とアクセントカラーは CSS のシステム色 (`GrayText` /
-    /// `AccentColor`) をそのまま使うので、ブラウザと OS の設定に追従する。
-    /// 成功・注意・危険にあたるシステム色は無いため、そこだけは naui が
-    /// `light-dark()` で決めている。
+    /// The secondary and accent colors use the CSS system colors (`GrayText` /
+    /// `AccentColor`) as is, so they follow the browser and OS settings. There are no
+    /// system colors for success, warning and danger, so naui decides just those with
+    /// `light-dark()`.
     pub fn set_color(&self, color: TextColor) {
         set_or_clear(&self.0.element, "color", color.css_color());
     }
 }
 
-/// CSS のプロパティを書くか、`None` なら消してブラウザ既定へ戻す。
+/// Writes a CSS property, or with `None`, removes it to return to the browser's
+/// default.
 fn set_or_clear(element: &HtmlElement, property: &str, value: Option<&str>) {
     let style = element.style();
     match value {
@@ -393,7 +402,7 @@ struct ButtonInner {
     listener: RefCell<Option<Listener>>,
 }
 
-/// 押しボタン (`<button>`)。
+/// A push button (`<button>`).
 #[derive(Clone)]
 pub struct Button(Rc<ButtonInner>);
 impl_widget!(Button, element);
@@ -416,13 +425,13 @@ impl Button {
         set_disabled(&self.0.element, !enabled);
     }
 
-    /// クリックされたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called on click. Setting it again removes the previous one.
     pub fn on_click(&self, f: impl FnMut() + 'static) {
         let listener = Listener::attach(self.0.element.as_ref(), "click", f).ok();
         *self.0.listener.borrow_mut() = listener;
     }
 
-    /// クリックを発生させる (テストや自動操作用)。
+    /// Triggers a click (for tests and automation).
     pub fn click(&self) {
         self.0.element.click();
     }
@@ -431,13 +440,13 @@ impl Button {
 // --------------------------------------------------------------- Checkbox
 
 struct CheckboxInner {
-    /// `<label><input type="checkbox">テキスト</label>`
+    /// `<label><input type="checkbox">text</label>`
     element: HtmlElement,
     input: HtmlInputElement,
     listener: RefCell<Option<Listener>>,
 }
 
-/// チェックボックス (`<input type="checkbox">`)。
+/// A check box (`<input type="checkbox">`).
 #[derive(Clone)]
 pub struct Checkbox(Rc<CheckboxInner>);
 impl_widget!(Checkbox, element);
@@ -480,7 +489,7 @@ impl Checkbox {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// 状態が変わったときに、変更後の値で呼ばれる。
+    /// Called with the new value when the state changes.
     pub fn on_toggle(&self, mut f: impl FnMut(bool) + 'static) {
         let input = self.0.input.clone();
         let listener = Listener::attach(self.0.input.as_ref(), "change", move || {
@@ -490,7 +499,7 @@ impl Checkbox {
         *self.0.listener.borrow_mut() = listener;
     }
 
-    /// クリックを発生させる (テストや自動操作用)。
+    /// Triggers a click (for tests and automation).
     pub fn click(&self) {
         self.0.input.click();
     }
@@ -506,7 +515,7 @@ struct TextInputInner {
     focus: crate::focus::Focus,
 }
 
-/// 1 行テキスト入力 (`<input type="text">`)。IME はブラウザが処理する。
+/// Single-line text input (`<input type="text">`). The browser handles the IME.
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
 impl_key_down!(TextInput);
@@ -543,7 +552,7 @@ impl TextInput {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     pub fn on_change(&self, mut f: impl FnMut(&str) + 'static) {
         let input = self.0.input.clone();
         let listener = Listener::attach(self.0.input.as_ref(), "input", move || {
@@ -553,10 +562,10 @@ impl TextInput {
         *self.0.on_change.borrow_mut() = listener;
     }
 
-    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    /// Called with the current text when the user confirms with Enter.
     ///
-    /// IME で変換している間の Enter (変換の確定) では呼ばれない。読み取り
-    /// 専用の間も呼ばれない。
+    /// Not called for an Enter pressed while an IME is composing (which confirms the
+    /// conversion). Not called while read-only either.
     pub fn on_submit(&self, mut f: impl FnMut(&str) + 'static) {
         let listener = on_enter(&self.0.input, move |input| {
             if !input.read_only() {
@@ -566,11 +575,11 @@ impl TextInput {
         *self.0.on_submit.borrow_mut() = listener;
     }
 
-    /// 読み取り専用にするか。既定は書き換えられる。
+    /// Whether it is read-only. Editable by default.
     ///
-    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
-    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
-    /// 見せる欄に使う。
+    /// While read-only, the text can still be selected and copied, and it still takes
+    /// focus (unlike `set_enabled(false)`, it is not dimmed). Use it for fields that
+    /// show logs or generated output.
     pub fn set_read_only(&self, read_only: bool) {
         self.0.input.set_read_only(read_only);
     }
@@ -590,10 +599,11 @@ struct PasswordInputInner {
     focus: crate::focus::Focus,
 }
 
-/// パスワード入力 (`<input type="password">`)。
+/// Password input (`<input type="password">`).
 ///
-/// API の形は [`TextInput`] と同じで、違うのは**打った文字が伏せ字になる**
-/// ことだけ。伏せ字を一時的に外す仕掛けは 4 環境の共通部分に無いので持たない。
+/// The API is the same as [`TextInput`]; the only difference is that **typed
+/// characters are masked**. A mechanism to temporarily reveal the text is not part
+/// of what all four platforms share, so there is none.
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
 impl_key_down!(PasswordInput);
@@ -613,12 +623,12 @@ impl PasswordInput {
         })))
     }
 
-    /// いま入力されている文字列。
+    /// The text currently entered.
     pub fn text(&self) -> String {
         self.0.input.value()
     }
 
-    /// 文字列を置き換える。`on_change` は呼ばれない。
+    /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         self.0.input.set_value(text);
     }
@@ -631,7 +641,7 @@ impl PasswordInput {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     pub fn on_change(&self, mut f: impl FnMut(&str) + 'static) {
         let input = self.0.input.clone();
         let listener = Listener::attach(self.0.input.as_ref(), "input", move || {
@@ -641,7 +651,7 @@ impl PasswordInput {
         *self.0.on_change.borrow_mut() = listener;
     }
 
-    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    /// Called with the current text when the user confirms with Enter.
     pub fn on_submit(&self, mut f: impl FnMut(&str) + 'static) {
         let listener = on_enter(&self.0.input, move |input| f(&input.value()));
         *self.0.on_submit.borrow_mut() = listener;
@@ -658,10 +668,10 @@ struct SearchInputInner {
     focus: crate::focus::Focus,
 }
 
-/// 検索の入力欄 (`<input type="search">`)。
+/// A search field (`<input type="search">`).
 ///
-/// 虫めがねの印や取り消しボタン (✕) はブラウザが出す (出るかどうかは
-/// ブラウザ次第で、naui は見た目を作らない)。
+/// The magnifying glass and the clear button (✕) are shown by the browser (whether
+/// they appear depends on the browser; naui builds no visuals).
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 impl_key_down!(SearchInput);
@@ -681,12 +691,12 @@ impl SearchInput {
         })))
     }
 
-    /// いま入力されている文字列。
+    /// The text currently entered.
     pub fn text(&self) -> String {
         self.0.input.value()
     }
 
-    /// 文字列を置き換える。`on_change` は呼ばれない。
+    /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         self.0.input.set_value(text);
     }
@@ -699,7 +709,7 @@ impl SearchInput {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     pub fn on_change(&self, mut f: impl FnMut(&str) + 'static) {
         let input = self.0.input.clone();
         let listener = Listener::attach(self.0.input.as_ref(), "input", move || {
@@ -709,23 +719,24 @@ impl SearchInput {
         *self.0.on_change.borrow_mut() = listener;
     }
 
-    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    /// Called with the current text when the user confirms with Enter.
     ///
-    /// `search` イベントは対応していないブラウザがあるため、キーの押下から
-    /// 拾う。**変換中の Enter は数えない** (IME が変換を確定しているだけで、
-    /// 検索の確定ではない)。
+    /// Some browsers do not support the `search` event, so it is picked up from key
+    /// presses. **An Enter during composition does not count** (the IME is merely
+    /// confirming a conversion, not the search).
     pub fn on_search(&self, mut f: impl FnMut(&str) + 'static) {
         let listener = on_enter(&self.0.input, move |input| f(&input.value()));
         *self.0.on_search.borrow_mut() = listener;
     }
 }
 
-/// 1 行の入力欄で Enter が押されたら `f` を呼ぶ。
+/// Calls `f` when Enter is pressed in a single-line field.
 ///
-/// `<input>` に確定だけを知らせるイベントは無い (`change` は欄を離れたときにも
-/// 出る) ので、キーの押下から拾う。**変換中の Enter は数えない**
-/// ([`is_submit_key`](crate::keys::is_submit_key))。`on_key_down` が
-/// `Handled` を返したキーは、捕捉フェーズで止まるのでここへ来ない。
+/// `<input>` has no event that reports only confirmation (`change` also fires when
+/// leaving the field), so it is picked up from key presses. **An Enter during
+/// composition does not count** ([`is_submit_key`](crate::keys::is_submit_key)).
+/// Keys for which `on_key_down` returned `Handled` are stopped in the capture phase
+/// and never reach here.
 pub(crate) fn on_enter(
     input: &HtmlInputElement,
     mut f: impl FnMut(&HtmlInputElement) + 'static,
@@ -751,7 +762,7 @@ struct TextAreaInner {
     focus: crate::focus::Focus,
 }
 
-/// 複数行テキスト入力 (`<textarea>`)。IME はブラウザが処理する。
+/// Multi-line text input (`<textarea>`). The browser handles the IME.
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
 impl_key_down!(TextArea);
@@ -770,17 +781,17 @@ impl TextArea {
         })))
     }
 
-    /// いまの文字列。改行はそのまま含まれる。
+    /// The current text. Newlines are included as is.
     pub fn text(&self) -> String {
         self.0.element.value()
     }
 
-    /// 文字列を置き換える。`on_change` は呼ばれない。
+    /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         self.0.element.set_value(text);
     }
 
-    /// 何も入力されていないときに薄く出る文字。
+    /// Text shown faintly when nothing has been entered.
     pub fn set_placeholder(&self, text: &str) {
         self.0.element.set_placeholder(text);
     }
@@ -789,9 +800,9 @@ impl TextArea {
         self.0.element.set_disabled(!enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     ///
-    /// 改行の入力でも呼ばれる。`set_text` では呼ばれない。
+    /// Also called for newlines. Not called for `set_text`.
     pub fn on_change(&self, mut f: impl FnMut(&str) + 'static) {
         let element = self.0.element.clone();
         let listener = Listener::attach(self.0.element.as_ref(), "input", move || {
@@ -801,11 +812,11 @@ impl TextArea {
         *self.0.on_change.borrow_mut() = listener;
     }
 
-    /// 読み取り専用にするか。既定は書き換えられる。
+    /// Whether it is read-only. Editable by default.
     ///
-    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
-    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
-    /// 見せる欄に使う。
+    /// While read-only, the text can still be selected and copied, and it still takes
+    /// focus (unlike `set_enabled(false)`, it is not dimmed). Use it for fields that
+    /// show logs or generated output.
     pub fn set_read_only(&self, read_only: bool) {
         self.0.element.set_read_only(read_only);
     }
@@ -824,7 +835,7 @@ struct SliderInner {
     max: f64,
 }
 
-/// スライダー (`<input type="range">`)。
+/// A slider (`<input type="range">`).
 #[derive(Clone)]
 pub struct Slider(Rc<SliderInner>);
 impl_widget!(Slider, input);
@@ -860,7 +871,7 @@ impl Slider {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// つまみが動くたびに、その値で呼ばれる。
+    /// Called with the value every time the knob moves.
     pub fn on_change(&self, mut f: impl FnMut(f64) + 'static) {
         let input = self.0.input.clone();
         let listener = Listener::attach(self.0.input.as_ref(), "input", move || {
@@ -875,12 +886,13 @@ impl Slider {
 
 struct ProgressInner {
     element: HtmlProgressElement,
-    /// 置かれた値。不確定の間は `value` 属性を外すので、別に持つ。
+    /// The value that was set. While indeterminate the `value` attribute is removed, so
+    /// it is kept separately.
     value: Cell<f64>,
     indeterminate: Cell<bool>,
 }
 
-/// 進捗バー (`<progress>`)。
+/// A progress bar (`<progress>`).
 #[derive(Clone)]
 pub struct ProgressBar(Rc<ProgressInner>);
 impl_widget!(ProgressBar, element);
@@ -897,7 +909,7 @@ impl ProgressBar {
         })))
     }
 
-    /// 0.0..=1.0。
+    /// 0.0..=1.0.
     pub fn set_value(&self, value: f64) {
         let value = value.clamp(0.0, 1.0);
         self.0.value.set(value);
@@ -910,12 +922,13 @@ impl ProgressBar {
         self.0.value.get()
     }
 
-    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    /// Whether to show work whose progress is unknown (indeterminate progress).
     ///
-    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
-    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    /// While `true`, motion shows "working" instead of a value. Turning it off returns
+    /// to showing the value set with [`set_value`](Self::set_value) (the value is
+    /// remembered).
     ///
-    /// `<progress>` は `value` 属性が無いと不確定の表示になる。
+    /// `<progress>` shows as indeterminate when it has no `value` attribute.
     pub fn set_indeterminate(&self, indeterminate: bool) {
         self.0.indeterminate.set(indeterminate);
         if indeterminate {
@@ -938,7 +951,8 @@ struct StackInner {
     children: RefCell<Vec<Box<dyn Widget>>>,
 }
 
-/// 縦 / 横に子を並べるコンテナ (Flexbox の `<div>`)。
+/// A container that lays out its children vertically / horizontally (a Flexbox
+/// `<div>`).
 #[derive(Clone)]
 pub struct Stack(Rc<StackInner>);
 impl_widget!(Stack, element);
@@ -993,10 +1007,10 @@ impl Stack {
         let _ = self.0.element.style().set_property("align-items", value);
     }
 
-    /// 末尾に子を追加する。
+    /// Appends a child at the end.
     ///
-    /// 子が [`naui_core::Length::Fill`] を指定していれば、主軸なら
-    /// `flex-grow`、交差軸なら `align-self: stretch` をここで付ける。
+    /// If the child specifies [`naui_core::Length::Fill`], `flex-grow` is added for the
+    /// main axis, or `align-self: stretch` for the cross axis, here.
     pub fn append(&self, child: &dyn Widget) {
         let element = child.native_element();
         if self.0.element.append_child(&element).is_ok() {
@@ -1008,7 +1022,8 @@ impl Stack {
         }
     }
 
-    /// 指定した位置へ子を差し込む。`index` が今の数以上なら末尾へ足す。
+    /// Inserts a child at the given position. If `index` is at least the current
+    /// count, it is appended at the end.
     pub fn insert(&self, index: usize, child: &dyn Widget) {
         let element = child.native_element();
         let mut children = self.0.children.borrow_mut();
@@ -1027,7 +1042,7 @@ impl Stack {
         }
     }
 
-    /// 指定した位置の子を外す。範囲外のときは何もしない。
+    /// Removes the child at the given position. Does nothing if out of range.
     pub fn remove(&self, index: usize) {
         let mut children = self.0.children.borrow_mut();
         if index >= children.len() {
@@ -1037,7 +1052,7 @@ impl Stack {
         let _ = self.0.element.remove_child(&child.native_element());
     }
 
-    /// 子をすべて外す。
+    /// Removes every child.
     pub fn clear(&self) {
         for child in std::mem::take(&mut *self.0.children.borrow_mut()) {
             let _ = self.0.element.remove_child(&child.native_element());

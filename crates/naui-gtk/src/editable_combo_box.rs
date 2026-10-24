@@ -1,13 +1,14 @@
-//! 自由に入力できるコンボボックス (`GtkEntry` + `GtkMenuButton` の `GtkListBox`)。
+//! A combo box that accepts free input (`GtkEntry` + a `GtkListBox` in a
+//! `GtkMenuButton`).
 //!
-//! GTK4 には「打ち込める 1 つのコントロール」が無い。`GtkDropDown` は候補から
-//! しか選べず、入力欄を持つ `GtkComboBoxText` と `GtkEntryCompletion` は
-//! GTK 4.10 で非推奨になり、置き換え先も用意されていない。そこで
-//! `GtkEntry` と、候補の一覧を出す `GtkMenuButton` を `.linked` の `GtkBox` へ
-//! 並べて組む (`DatePicker` がカレンダーを出しているのと同じ形)。
+//! GTK4 has no "single control you can type into". `GtkDropDown` only allows
+//! choosing from the options, and `GtkComboBoxText` and `GtkEntryCompletion`, which
+//! have an entry, were deprecated in GTK 4.10 with no replacement. So a `GtkEntry`
+//! and a `GtkMenuButton` that shows the list of suggestions are put side by side in
+//! a `.linked` `GtkBox` (the same shape as the calendar shown by `DatePicker`).
 //!
-//! 描くのは GTK4 で、naui が作るのは並びだけ。候補を押すと入力欄へ書き入れて
-//! ポップオーバーを閉じる。
+//! GTK4 does the drawing; naui only arranges them. Clicking a suggestion writes it
+//! into the entry and closes the popover.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,7 +20,8 @@ use crate::bin::SizeBin;
 use crate::callback::TextNotifier;
 use crate::widgets::{impl_widget, without_signal, Widget};
 
-/// 候補の一覧に出す高さの上限 (論理ピクセル)。これを超えるとスクロールする。
+/// The maximum height of the suggestion list (logical pixels). Beyond this it
+/// scrolls.
 const MAX_LIST_HEIGHT: i32 = 300;
 
 struct EditableComboBoxInner {
@@ -29,16 +31,17 @@ struct EditableComboBoxInner {
     popover: gtk::Popover,
     list: gtk::ListBox,
     bin: SizeBin,
-    /// 候補の控え。`selected` の一致判定と、押された行の取り出しに使う。
+    /// A copy of the suggestions. Used to check matches for `selected` and to look up
+    /// the clicked row.
     items: RefCell<Vec<String>>,
     on_change: TextNotifier,
-    /// 入力欄の `changed`。プログラムから書くときに止める。
+    /// The entry's `changed`. Blocked while writing from code.
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 候補から選ぶことも、自由に打ち込むこともできる入力欄。
+/// A field where the user can either choose from suggestions or type freely.
 ///
-/// 値は文字列で、作った直後は空。
+/// The value is a string, empty right after creation.
 #[derive(Clone)]
 pub struct EditableComboBox(Rc<EditableComboBoxInner>);
 crate::keys::impl_key_down!(EditableComboBox);
@@ -125,7 +128,8 @@ impl EditableComboBox {
         Self(inner)
     }
 
-    /// 候補を作り直す。**入力されている文字列は変わらず**、通知も出ない。
+    /// Rebuilds the suggestions. **The entered text does not change**, and no
+    /// notification is sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         while let Some(row) = self.0.list.first_child() {
             self.0.list.remove(&row);
@@ -140,7 +144,7 @@ impl EditableComboBox {
         *self.0.items.borrow_mut() = items.iter().map(|s| s.as_ref().to_string()).collect();
     }
 
-    /// 候補の数。
+    /// The number of suggestions.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -149,27 +153,27 @@ impl EditableComboBox {
         self.len() == 0
     }
 
-    /// 入力されている文字列。
+    /// The entered text.
     pub fn text(&self) -> String {
         self.0.entry.text().to_string()
     }
 
-    /// プログラムから文字列を差し替える。`on_change` は呼ばれない。
+    /// Replaces the text from code. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         without_signal(&self.0.entry, &self.0.handler, || {
             self.0.entry.set_text(text);
         });
     }
 
-    /// 入力されている文字列と**そのまま一致する**候補の位置。
+    /// The position of the suggestion that **exactly matches** the entered text.
     ///
-    /// 打ち込まれた文字列がどの候補とも一致しなければ `None`。
+    /// `None` if the typed text matches no suggestion.
     pub fn selected(&self) -> Option<usize> {
         let text = self.text();
         self.0.items.borrow().iter().position(|item| *item == text)
     }
 
-    /// 範囲内の候補を通知せずに選ぶ。範囲外なら何もしない。
+    /// Chooses an in-range suggestion without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         let Some(text) = self.0.items.borrow().get(index).cloned() else {
             return;
@@ -177,12 +181,12 @@ impl EditableComboBox {
         self.set_text(&text);
     }
 
-    /// 通知せずに文字列を空にする。
+    /// Empties the text without notifying.
     pub fn clear(&self) {
         self.set_text("");
     }
 
-    /// 利用者が候補を選んだのと同じように、範囲内の候補を選んで通知する。
+    /// Chooses an in-range suggestion and notifies, as if the user had chosen it.
     pub fn select(&self, index: usize) {
         let Some(text) = self.0.items.borrow().get(index).cloned() else {
             return;
@@ -200,28 +204,30 @@ impl EditableComboBox {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 文字列が変わるたびに、その時点の中身で呼ばれる。
-    /// 打鍵と候補の選択のどちらでも呼ばれる。設定し直すと以前のものは外れる。
+    /// Called with the current contents every time the text changes. Called for both
+    /// typing and choosing a suggestion. Setting it again removes the previous one.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// 入力欄の `GtkEntry`。バックエンド固有の脱出口として公開している。
+    /// The entry's `GtkEntry`. Public as a backend-specific escape hatch.
     pub fn native_entry(&self) -> gtk::Entry {
         self.0.entry.clone()
     }
 
-    /// 候補の一覧を出すボタン。バックエンド固有の脱出口として公開している。
+    /// The button that shows the suggestion list. Public as a backend-specific escape
+    /// hatch.
     pub fn native_button(&self) -> gtk::MenuButton {
         self.0.button.clone()
     }
 
-    /// 候補が並ぶ `GtkListBox`。バックエンド固有の脱出口として公開している。
+    /// The `GtkListBox` holding the suggestions. Public as a backend-specific escape
+    /// hatch.
     pub fn native_list(&self) -> gtk::ListBox {
         self.0.list.clone()
     }
 
-    /// 一覧の行が押されたときの処理。書き入れ・閉じる・通知を 1 回ずつ行う。
+    /// Handles a click on a list row: writes it in, closes and notifies, once each.
     fn pick(&self, index: usize) {
         let Some(text) = self.0.items.borrow().get(index).cloned() else {
             return;

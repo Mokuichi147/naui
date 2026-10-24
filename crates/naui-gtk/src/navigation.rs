@@ -1,14 +1,13 @@
-//! ナビゲーション系のウィジェット。
+//! Navigation widgets.
 //!
-//! タブ・ナビバー・ドック・メニュー・ページ送りは、どれも
-//! 「項目の並び + いま選ばれているもの」という同じ構造を持つ。GTK4 には
-//! これらをそのまま表すコントロールが無いため、[`ItemBar`] という共通の
-//! 土台 (`GtkToggleButton` を `GtkBox` に並べたもの) を作り、
-//! 見た目の違いは CSS クラスと並ぶ向きで付けている。
+//! Tabs, nav bars, docks, menus and pagination all share the same structure: "a
+//! sequence of items + the one currently selected". GTK4 has no controls that
+//! express these directly, so a common foundation called [`ItemBar`]
+//! (`GtkToggleButton`s laid out in a `GtkBox`) is built, with the visual
+//! differences given by CSS classes and layout direction.
 //!
-//! `Tabs` だけは中身のウィジェットを持つので `GtkNotebook` を使う。
-//! パンくずはボタンではなく、リンクを持つ `GtkLabel` を並べる
-//! ([`Breadcrumbs`] を参照)。
+//! Only `Tabs` holds content widgets, so it uses `GtkNotebook`. Breadcrumbs are not
+//! buttons but `GtkLabel`s with links (see [`Breadcrumbs`]).
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -29,11 +28,12 @@ struct BarInner {
     items: RefCell<Vec<NavItem>>,
     selected: Cell<Option<usize>>,
     on_select: Notifier<usize>,
-    /// ボタンに付ける CSS クラス。
+    /// The CSS classes put on the buttons.
     css: &'static [&'static str],
 }
 
-/// 項目を横 / 縦に並べ、1 つだけ選ばれている状態を持つ土台。
+/// A foundation that lays out items horizontally / vertically and holds a state
+/// with exactly one selected.
 #[derive(Clone)]
 pub(crate) struct ItemBar(Rc<BarInner>);
 
@@ -55,7 +55,7 @@ impl ItemBar {
         &self.0.native
     }
 
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared.
     fn set_items(&self, items: &[NavItem]) {
         while let Some(child) = self.0.native.first_child() {
             self.0.native.remove(&child);
@@ -91,7 +91,7 @@ impl ItemBar {
         self.0.selected.get()
     }
 
-    /// ボタンの押し込み状態を選択に合わせる。
+    /// Matches the buttons' pressed state to the selection.
     fn show(&self, selected: Option<usize>) {
         self.0.selected.set(selected);
         for (index, button) in self.0.buttons.borrow().iter().enumerate() {
@@ -100,7 +100,7 @@ impl ItemBar {
         }
     }
 
-    /// 選べる項目か。
+    /// Whether the item can be selected.
     fn is_selectable(&self, index: usize) -> bool {
         self.0
             .items
@@ -109,14 +109,14 @@ impl ItemBar {
             .is_some_and(|item| item.enabled)
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     fn set_selected(&self, index: usize) {
         if self.is_selectable(index) {
             self.show(Some(index));
         }
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     fn select(&self, index: usize) {
         if self.is_selectable(index) {
             self.show(Some(index));
@@ -132,11 +132,11 @@ impl ItemBar {
     }
 }
 
-/// 項目を持つナビゲーションに共通の API を生やす。
+/// Adds the API common to navigation widgets with items.
 macro_rules! impl_item_bar {
     ($t:ty) => {
         impl $t {
-            /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+            /// Rebuilds the items. Indices change meaning, so the selection is cleared.
             pub fn set_items(&self, items: &[NavItem]) {
                 self.0.bar.set_items(items);
             }
@@ -153,17 +153,17 @@ macro_rules! impl_item_bar {
                 self.0.bar.selected()
             }
 
-            /// 通知せずに選択を変える。
+            /// Changes the selection without notifying.
             pub fn set_selected(&self, index: usize) {
                 self.0.bar.set_selected(index);
             }
 
-            /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+            /// Changes the selection through the same path as a user's choice (notifies).
             pub fn select(&self, index: usize) {
                 self.0.bar.select(index);
             }
 
-            /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+            /// Called with the index when an item is chosen.
             pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
                 self.0.bar.on_select(f);
             }
@@ -180,9 +180,10 @@ struct NavbarInner {
     bar: ItemBar,
 }
 
-/// 画面上部に置く横並びのナビゲーション。
+/// Horizontal navigation placed at the top of the screen.
 ///
-/// 見出し (`GtkLabel`) と項目 (`GtkToggleButton` の横並び) を `GtkBox` に並べる。
+/// A heading (`GtkLabel`) and items (a row of `GtkToggleButton`s) are laid out in a
+/// `GtkBox`.
 #[derive(Clone)]
 pub struct Navbar(Rc<NavbarInner>);
 impl_widget!(Navbar);
@@ -206,7 +207,7 @@ impl Navbar {
         }))
     }
 
-    /// 左端の見出し。
+    /// The heading at the left end.
     pub fn set_title(&self, title: &str) {
         self.0.title.set_text(title);
     }
@@ -224,10 +225,11 @@ struct DockInner {
     bar: ItemBar,
 }
 
-/// 画面下部に置く横並びのナビゲーション (等幅)。
+/// Horizontal navigation placed at the bottom of the screen (equal widths).
 ///
-/// **配置はアプリの責務**。縦スタックの最後に置き、手前の要素に
-/// [`Length::Fill`](naui_core::Length::Fill) か `Spacer` を使うと下端へ寄る。
+/// **Placement is the app's job.** Put it last in a vertical stack and give the
+/// element before it [`Length::Fill`](naui_core::Length::Fill) or a `Spacer` to push
+/// it to the bottom.
 #[derive(Clone)]
 pub struct Dock(Rc<DockInner>);
 impl_widget!(Dock);
@@ -251,10 +253,11 @@ struct MenuInner {
     bar: ItemBar,
 }
 
-/// 縦に並ぶナビゲーション一覧。
+/// A vertical list of navigation items.
 ///
-/// GNOME のサイドバーと同じく、選択状態を持つ枠なしボタンを縦に並べる。
-/// **右クリックで出るポップアップではない** (それは [`PopupMenu`] のほう)。
+/// As in GNOME's sidebars, borderless buttons with a selected state are stacked
+/// vertically. **It is not the popup shown on right-click** (that is
+/// [`PopupMenu`]).
 ///
 /// [`PopupMenu`]: crate::PopupMenu
 #[derive(Clone)]
@@ -277,21 +280,22 @@ impl Menu {
 struct BreadcrumbsInner {
     native: gtk::Box,
     bin: SizeBin,
-    /// 項目ごとのラベル (区切りは含まない)。
+    /// A label per item (separators not included).
     labels: RefCell<Vec<gtk::Label>>,
     items: RefCell<Vec<NavItem>>,
     selected: Cell<Option<usize>>,
     on_select: Notifier<usize>,
 }
 
-/// パンくず。階層のいまいる場所を左から順に並べる。
+/// Breadcrumbs. Lays out the current position in a hierarchy from left to right.
 ///
-/// GTK4 に相当するコントロールが無いため、`GtkLabel` のマークアップが持つ
-/// リンク (`<a href>`) を区切り (`›`) で挟んで並べる。いまいる場所だけは
-/// リンクにせず普通の文字にする (Web の `<a>` や macOS の `NSPathControl` と
-/// 同じく、枠の無い文字の並びになる)。太字にしないのは、選び直すたびに
-/// 文字幅が変わって後ろの項目がずれるため。ボタンにすると libadwaita の余白
-/// (`padding: 5px 10px`) が項目ごとに付き、間延びするため使わない。
+/// GTK4 has no equivalent control, so the links (`<a href>`) supported by
+/// `GtkLabel` markup are laid out with separators (`›`) between them. Only the
+/// current position is plain text, not a link (as with the Web's `<a>` and macOS's
+/// `NSPathControl`, it is a row of text without borders). It is not bold because
+/// the text width would change on every reselection and shift the items after it.
+/// Buttons are not used because libadwaita's padding (`padding: 5px 10px`) would
+/// be added to every item and spread them out.
 #[derive(Clone)]
 pub struct Breadcrumbs(Rc<BreadcrumbsInner>);
 impl_widget!(Breadcrumbs);
@@ -310,7 +314,7 @@ impl Breadcrumbs {
         }))
     }
 
-    /// 階層を作り直す。**末尾がいまいる場所**になる。
+    /// Rebuilds the hierarchy. **The last item is the current position.**
     pub fn set_items(&self, items: &[NavItem]) {
         let native = &self.0.native;
         while let Some(child) = native.first_child() {
@@ -370,14 +374,14 @@ impl Breadcrumbs {
         self.0.selected.get()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     pub fn set_selected(&self, index: usize) {
         if self.is_selectable(index) {
             self.show(Some(index));
         }
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         if self.is_selectable(index) {
             self.show(Some(index));
@@ -385,7 +389,7 @@ impl Breadcrumbs {
         }
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select.set(f);
     }
@@ -398,10 +402,10 @@ impl Breadcrumbs {
             .is_some_and(|item| item.enabled)
     }
 
-    /// 選ばれている項目を普通の文字に、選べるほかの項目をリンクにする。
+    /// Makes the selected item plain text and the other selectable items links.
     ///
-    /// マークアップを毎回書き直すので、押したリンクに付く「訪問済み」の色も
-    /// ここで消える。
+    /// The markup is rewritten every time, so the "visited" color that clicked links
+    /// get is also cleared here.
     fn show(&self, selected: Option<usize>) {
         self.0.selected.set(selected);
         let items = self.0.items.borrow();
@@ -418,17 +422,17 @@ impl Breadcrumbs {
     }
 }
 
-/// ラベルの右クリックのメニューを出さない。
+/// Keeps the label's right-click menu from appearing.
 ///
-/// リンクを持つ `GtkLabel` のメニューに並ぶのは「リンクを開く」と
-/// 「リンクのアドレスをコピー」だけで、前者はクリックと同じ、後者は
-/// URI の代わりに持たせた項目の番号をコピーしてしまう ([`NavItem`] は
-/// URI を持たない)。メニューは 2 か所から開くので、両方を止める。
+/// The menu of a `GtkLabel` with links offers only "Open Link" and "Copy Link
+/// Address"; the former does the same as clicking, and the latter would copy the
+/// item number stored in place of a URI ([`NavItem`] has no URI). The menu can be
+/// opened from two places, so both are stopped.
 ///
-/// - キー操作 (Shift+F10 / Menu キー): `menu.popup` アクションを無効にする。
-///   `GtkLabel` はこのアクションを自分では有効へ戻さない。
-/// - 右クリック: ラベルのジェスチャーがアクションを通さず直に開くので、
-///   捕捉段階のジェスチャーで先に取る。
+/// - Keyboard (Shift+F10 / the Menu key): the `menu.popup` action is disabled.
+///   `GtkLabel` never re-enables this action by itself.
+/// - Right-click: the label's gesture opens it directly without going through the
+///   action, so a capture-phase gesture takes it first.
 fn without_context_menu(label: &gtk::Label) {
     label.action_set_enabled("menu.popup", false);
     let secondary = gtk::GestureClick::new();
@@ -450,10 +454,10 @@ struct PaginationInner {
     next: gtk::Button,
 }
 
-/// ページ送り。
+/// Pagination.
 ///
-/// GTK4 に相当するコントロールが無いため、前後のボタンとページ番号の
-/// トグルボタンを横に並べて組み立てる。
+/// GTK4 has no equivalent control, so it is built from previous/next buttons and
+/// toggle buttons for the page numbers laid out in a row.
 #[derive(Clone)]
 pub struct Pagination(Rc<PaginationInner>);
 impl_widget!(Pagination);
@@ -498,7 +502,7 @@ impl Pagination {
         pagination
     }
 
-    /// ページ数を決め直す。先頭のページが選ばれた状態になる。
+    /// Resets the number of pages. The first page becomes selected.
     pub fn set_page_count(&self, count: usize) {
         let labels: Vec<NavItem> = (1..=count).map(|n| NavItem::new(n.to_string())).collect();
         self.0.bar.set_items(&labels);
@@ -512,24 +516,24 @@ impl Pagination {
         self.0.bar.len()
     }
 
-    /// いま開いているページ (0 始まり)。
+    /// The page currently open (starting at 0).
     pub fn page(&self) -> usize {
         self.0.bar.selected().unwrap_or(0)
     }
 
-    /// 通知せずにページを変える。
+    /// Changes the page without notifying.
     pub fn set_page(&self, page: usize) {
         self.0.bar.set_selected(page);
         self.update_arrows();
     }
 
-    /// ユーザーが押したのと同じ経路でページを変える (通知あり)。
+    /// Changes the page through the same path as a user's click (notifies).
     pub fn select(&self, page: usize) {
         self.0.bar.select(page);
         self.update_arrows();
     }
 
-    /// 1 つ前のページへ (通知あり)。先頭では何もしない。
+    /// Goes to the previous page (notifies). Does nothing on the first page.
     pub fn go_previous(&self) {
         let page = self.page();
         if page > 0 {
@@ -537,7 +541,7 @@ impl Pagination {
         }
     }
 
-    /// 1 つ後のページへ (通知あり)。末尾では何もしない。
+    /// Goes to the next page (notifies). Does nothing on the last page.
     pub fn go_next(&self) {
         let page = self.page();
         if page + 1 < self.page_count() {
@@ -545,7 +549,7 @@ impl Pagination {
         }
     }
 
-    /// 端まで来たら、その向きの矢印を押せなくする。
+    /// Disables the arrow in a direction once the end has been reached.
     fn update_arrows(&self) {
         let page = self.page();
         let count = self.page_count();
@@ -553,7 +557,7 @@ impl Pagination {
         self.0.next.set_sensitive(page + 1 < count);
     }
 
-    /// ページが変わったときに、そのページで呼ばれる。
+    /// Called with the page when the page changes.
     pub fn on_change(&self, f: impl FnMut(usize) + 'static) {
         self.0.bar.on_select(f);
     }
@@ -569,7 +573,7 @@ struct TabsInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// タブ (`GtkNotebook`)。中身のウィジェットごと持つ。
+/// Tabs (`GtkNotebook`). Holds each tab's content widget.
 #[derive(Clone)]
 pub struct Tabs(Rc<TabsInner>);
 impl_widget!(Tabs);
@@ -602,7 +606,7 @@ impl Tabs {
         Self(inner)
     }
 
-    /// タブを 1 枚追加する。`child` がそのタブの中身になる。
+    /// Adds one tab. `child` becomes that tab's content.
     pub fn add_tab(&self, label: &str, child: &dyn Widget) {
         let bin = child.size_bin();
         bin.fill_parent();
@@ -612,10 +616,10 @@ impl Tabs {
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
 
-    /// タブを 1 枚外す。範囲外のときは何もしない。
+    /// Removes one tab. Does nothing if out of range.
     ///
-    /// 選択中のタブを外したときは、環境が近くのタブを選び直す。
-    /// この移動は [`set_selected`](Tabs::set_selected) と同じく通知しない。
+    /// When the selected tab is removed, the platform selects a nearby tab instead.
+    /// Like [`set_selected`](Tabs::set_selected), this move is not notified.
     pub fn remove_tab(&self, index: usize) {
         if index >= self.len() {
             return;
@@ -640,7 +644,7 @@ impl Tabs {
         }
     }
 
-    /// タブをすべて外す。
+    /// Removes every tab.
     pub fn clear(&self) {
         without_signal(&self.0.native, &self.0.handler, || {
             while self.0.native.n_pages() > 0 {
@@ -662,7 +666,7 @@ impl Tabs {
         self.0.native.current_page().map(|page| page as usize)
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             without_signal(&self.0.native, &self.0.handler, || {
@@ -671,7 +675,7 @@ impl Tabs {
         }
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         if index < self.len() {
             // 同じタブを選び直したときは `switch-page` が出ないため、
@@ -681,7 +685,7 @@ impl Tabs {
         }
     }
 
-    /// タブが切り替わったときに、そのインデックスで呼ばれる。
+    /// Called with the index when the tab changes.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select.set(f);
     }
@@ -696,10 +700,10 @@ struct LinkInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// リンク (`GtkLinkButton`)。
+/// A link (`GtkLinkButton`).
 ///
-/// `href` が空でなければ、押したときにブラウザ (デスクトップの既定の
-/// ハンドラ) で開く。
+/// If `href` is not empty, clicking it opens it in the browser (the desktop's
+/// default handler).
 #[derive(Clone)]
 pub struct Link(Rc<LinkInner>);
 impl_widget!(Link);
@@ -758,7 +762,7 @@ impl Link {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 押されるたびに呼ばれる。`href` があるときは、開く動作も併せて起きる。
+    /// Called on every click. If there is an `href`, it is opened as well.
     pub fn on_click(&self, mut f: impl FnMut() + 'static) {
         self.0.on_click.set(move |()| f());
     }

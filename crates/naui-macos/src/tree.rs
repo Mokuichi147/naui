@@ -1,15 +1,17 @@
-//! ツリー (AppKit)。
+//! Trees (AppKit).
 //!
-//! `NSOutlineView` を 1 列で使い、`NSScrollView` に載せている。Finder の
-//! サイドバーや Xcode のナビゲーターと同じコントロールで、開閉の三角、
-//! 段付け、キーボード操作 (←→ で開閉)、スクロールはすべて AppKit が行う。
+//! A single-column `NSOutlineView` placed in an `NSScrollView`. It is the same
+//! control as Finder's sidebar and Xcode's navigators; disclosure triangles,
+//! indentation, keyboard navigation (←→ to expand and collapse) and scrolling are
+//! all done by AppKit.
 //!
-//! naui が足しているのは「子の数と中身を答える」「選べない項目を教える」
-//! 「選択と開閉を Rust のクロージャへ渡す」の 3 つだけ。
+//! naui adds only three things: "answer the number of children and their
+//! contents", "report items that cannot be selected" and "pass selection and
+//! expansion to Rust closures".
 //!
-//! `NSOutlineView` は項目を**オブジェクトの同一性**で識別するため、
-//! パス (`[0, 2]` のような子インデックスの並び) 1 つにつき `NSObject` を
-//! 1 つ作り、[`Nodes`] で両方向に引けるようにしている。
+//! `NSOutlineView` identifies items by **object identity**, so one `NSObject` is
+//! created per path (a sequence of child indices like `[0, 2]`), and [`Nodes`]
+//! allows lookups in both directions.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -29,21 +31,22 @@ use objc2_foundation::{NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification,
 use crate::list::{cell_view, SelectionHandler};
 use crate::widgets::Widget;
 
-/// 1 列しか使わないので、識別子は固定でよい。
+/// Only one column is used, so the identifier can be fixed.
 const COLUMN_ID: &str = "naui.tree.column";
 
-/// 開閉の通知が、どの項目のものかを載せてくる `userInfo` のキー
-/// (`NSOutlineViewItemDidExpandNotification` の仕様)。
+/// The `userInfo` key that expansion notifications use to carry which item they are
+/// about (per the spec of `NSOutlineViewItemDidExpandNotification`).
 const ITEM_KEY: &str = "NSObject";
 
-/// 行の高さ。ツリーの行は 1 行か、補助を添えた 2 行かのどちらかしかない。
+/// Row heights. A tree row is either one line or two lines with secondary text.
 ///
-/// **自動 (`usesAutomaticRowHeights`) にはしない。** いったん閉じた枝を
-/// 開き直すと、AppKit は**中の枝の開閉も復元する**。その復元は親の開閉の
-/// デリゲート呼び出しの中で起きるので、自動の高さのために行ビューの
-/// 組み立てまでそこで走ると、AppKit に「デリゲートの中で再入した」と
-/// 警告される (将来はアサートになる)。行は 2 通りしかないのだから、
-/// 高さはこちらで測ってしまう。
+/// **It is not automatic (`usesAutomaticRowHeights`).** When a branch that was
+/// collapsed is expanded again, AppKit **also restores the expansion of the
+/// branches inside it**. That restoration happens inside the delegate call for the
+/// parent's expansion, so if building row views for automatic heights ran there
+/// too, AppKit would warn about "re-entering inside the delegate" (it will become an
+/// assertion in the future). There are only two kinds of rows, so the heights are
+/// measured here.
 #[derive(Clone, Copy)]
 struct RowHeights {
     single: f64,
@@ -51,8 +54,9 @@ struct RowHeights {
 }
 
 impl RowHeights {
-    /// 実際のセルを 1 つずつ組み立てて測る。中身は文字だけで、折り返しも
-    /// しない ([`crate::list::cell_view`]) ので、高さは文字列に依らない。
+    /// Builds and measures one real cell of each kind. The content is just text and
+    /// does not wrap ([`crate::list::cell_view`]), so the height does not depend on the
+    /// string.
     fn measure(mtm: MainThreadMarker) -> Self {
         let probe = |detail| cell_view(mtm, "Ag", detail, true).fittingSize().height;
         Self {
@@ -69,7 +73,8 @@ impl RowHeights {
     }
 }
 
-/// 開閉が変わったことの通知先。パスと、変わった後の状態で呼ぶ。
+/// The handler notified when expansion changes. Called with the path and the new
+/// state.
 #[derive(Clone, Default)]
 struct ExpandHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize], bool)>>>>);
 
@@ -78,8 +83,9 @@ impl ExpandHandler {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 呼び出しの間だけクロージャを取り出す (`SelectionHandler` と同じ形)。
-    /// 通知の中からツリーを操作しても二重借用にならない。
+    /// Takes out the closure only for the duration of the call (the same shape as
+    /// `SelectionHandler`). Operating on the tree from inside the notification does not
+    /// double-borrow.
     fn emit(&self, path: &[usize], expanded: bool) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
@@ -92,19 +98,20 @@ impl ExpandHandler {
     }
 }
 
-/// パスと `NSOutlineView` へ渡すオブジェクトの対応表。
+/// The mapping between paths and the objects passed to `NSOutlineView`.
 ///
-/// `NSOutlineView` は「同じ項目には同じオブジェクトが返る」ことを前提に
-/// 開閉状態や選択を覚えるため、パスごとのオブジェクトは作り直さずに使い回す。
+/// `NSOutlineView` remembers expansion state and selection assuming "the same item
+/// returns the same object", so the per-path objects are reused rather than
+/// recreated.
 #[derive(Default)]
 struct Nodes {
     by_path: RefCell<HashMap<Vec<usize>, Retained<NSObject>>>,
-    /// オブジェクトのアドレスから引くパス。デリゲートが受け取る項目を戻す。
+    /// Paths looked up by object address. Maps items received by the delegate back.
     by_address: RefCell<HashMap<usize, Vec<usize>>>,
 }
 
 impl Nodes {
-    /// 木の形に合わせて作り直す。
+    /// Rebuilds it to match the shape of the tree.
     fn reset(&self, items: &[TreeItem]) {
         self.by_path.borrow_mut().clear();
         self.by_address.borrow_mut().clear();
@@ -113,7 +120,7 @@ impl Nodes {
         });
     }
 
-    /// パスに対応するオブジェクト。無ければ作る。
+    /// The object for the path, created if absent.
     fn object(&self, path: &[usize]) -> Retained<NSObject> {
         if let Some(object) = self.by_path.borrow().get(path) {
             return object.clone();
@@ -128,14 +135,14 @@ impl Nodes {
         object
     }
 
-    /// すでに作ってあるオブジェクトだけを引く。
+    /// Looks up only objects already created.
     fn find(&self, path: &[usize]) -> Option<Retained<NSObject>> {
         self.by_path.borrow().get(path).cloned()
     }
 
-    /// AppKit から渡された項目を、パスへ戻す。
+    /// Maps an item passed by AppKit back to a path.
     ///
-    /// 根 (`nil`) は空のパスになる。
+    /// The root (`nil`) becomes the empty path.
     fn path(&self, item: Option<&AnyObject>) -> Option<Vec<usize>> {
         let Some(item) = item else {
             return Some(Vec::new());
@@ -147,29 +154,31 @@ impl Nodes {
     }
 }
 
-/// データソース兼デリゲートが見る状態。ハンドルと共有する。
+/// The state seen by the data source and delegate. Shared with the handle.
 struct SourceState {
     items: Rc<RefCell<Vec<TreeItem>>>,
     nodes: Rc<Nodes>,
     handler: SelectionHandler,
     expand: ExpandHandler,
-    /// いま開閉している項目。連鎖の通知を落とすために使う。
+    /// The item being expanded or collapsed right now. Used to drop chained
+    /// notifications.
     target: RefCell<Option<Vec<usize>>>,
-    /// 開いた状態として覚えている項目。
+    /// The items remembered as expanded.
     ///
-    /// AppKit は**閉じた枝の中の開閉も覚えていて、開き直すと元へ戻す**
-    /// (Finder と同じ)。閉じている間 `isItemExpanded` は `false` を返すので、
-    /// naui が答える開閉はここで持つ。
+    /// AppKit **also remembers the expansion inside collapsed branches and restores it
+    /// when expanded again** (the same as Finder). While collapsed, `isItemExpanded`
+    /// returns `false`, so the expansion naui answers with is held here.
     expanded: Rc<RefCell<HashSet<Vec<usize>>>>,
-    /// プログラムから選択や開閉を変えている間だけ通知を止める。
-    /// AppKit は `expandItem:` や `selectRowIndexes:` でも通知を出すため。
+    /// Stops notifications only while selection or expansion is being changed from
+    /// code, since AppKit sends notifications even for `expandItem:` and
+    /// `selectRowIndexes:`.
     silent: Rc<Cell<bool>>,
-    /// 行の高さ。作るときに 1 度だけ測る。
+    /// Row heights. Measured once at creation.
     heights: RowHeights,
 }
 
 impl SourceState {
-    /// 開閉の控えを更新する。
+    /// Updates the record of expansion.
     fn mark(&self, path: &[usize], expanded: bool) {
         let mut set = self.expanded.borrow_mut();
         match expanded {
@@ -178,7 +187,8 @@ impl SourceState {
         };
     }
 
-    /// パスの指す項目の子の数。空のパスは根を指す。
+    /// The number of children of the item the path points at. The empty path points at
+    /// the root.
     fn child_count(&self, path: &[usize]) -> usize {
         let items = self.items.borrow();
         match path.is_empty() {
@@ -317,7 +327,7 @@ impl TreeSource {
         unsafe { msg_send![super(this), init] }
     }
 
-    /// 項目 1 つ分のビューを組み立てる。
+    /// Builds the view for one item.
     fn build_cell(&self, mtm: MainThreadMarker, item: &AnyObject) -> Option<Retained<NSView>> {
         let state = self.ivars();
         let path = state.nodes.path(Some(item))?;
@@ -328,7 +338,7 @@ impl TreeSource {
         Some(cell_view(mtm, &node.label, node.detail.as_deref(), enabled))
     }
 
-    /// その項目が補助の文字を持つか (= 2 行になるか)。
+    /// Whether the item has secondary text (= becomes two lines).
     fn has_detail(&self, item: &AnyObject) -> bool {
         let state = self.ivars();
         let Some(path) = state.nodes.path(Some(item)) else {
@@ -338,7 +348,8 @@ impl TreeSource {
         TreeItem::at(&items, &path).is_some_and(|item| item.detail.is_some())
     }
 
-    /// これから開閉する項目を覚える。連鎖の 1 つ目だけが操作された項目。
+    /// Remembers the item about to be expanded or collapsed. Only the first in a chain
+    /// is the item that was operated on.
     fn remember_target(&self, notification: &NSNotification) {
         let state = self.ivars();
         if state.target.borrow().is_some() {
@@ -347,10 +358,11 @@ impl TreeSource {
         *state.target.borrow_mut() = notified_path(state, notification);
     }
 
-    /// 開閉の通知を Rust のクロージャへ渡す。
+    /// Passes an expansion notification to the Rust closure.
     ///
-    /// どの項目が開いた (閉じた) かは `userInfo` に載ってくる。連鎖で来る
-    /// 中の枝の分は、覚えておいた操作対象と食い違うので落とす。
+    /// Which item was expanded (collapsed) comes in `userInfo`. The inner branches that
+    /// arrive as part of a chain do not match the remembered target, so they are
+    /// dropped.
     fn notify_expansion(&self, notification: &NSNotification, expanded: bool) {
         let state = self.ivars();
         let Some(path) = notified_path(state, notification) else {
@@ -367,7 +379,7 @@ impl TreeSource {
     }
 }
 
-/// 開閉の通知に載っている項目のパス。
+/// The path of the item carried by the expansion notification.
 fn notified_path(state: &SourceState, notification: &NSNotification) -> Option<Vec<usize>> {
     let info = notification.userInfo()?;
     let key = NSString::from_str(ITEM_KEY);
@@ -375,7 +387,7 @@ fn notified_path(state: &SourceState, notification: &NSNotification) -> Option<V
     state.nodes.path(Some(&item))
 }
 
-/// 選ばれている項目のパス。何も選ばれていなければ空。
+/// The path of the selected item. Empty if nothing is selected.
 fn selected_path(outline: &NSOutlineView, nodes: &Nodes) -> Vec<usize> {
     let row = outline.selectedRow();
     if row < 0 {
@@ -388,29 +400,30 @@ fn selected_path(outline: &NSOutlineView, nodes: &Nodes) -> Vec<usize> {
 }
 
 struct TreeInner {
-    /// 外から見えるビュー。ツリーはこのスクロールビューごと 1 つのウィジェット。
+    /// The view visible from outside. The tree is one widget together with this scroll
+    /// view.
     scroll: Retained<NSScrollView>,
     outline: Retained<NSOutlineView>,
     items: Rc<RefCell<Vec<TreeItem>>>,
     nodes: Rc<Nodes>,
     handler: SelectionHandler,
     expand: ExpandHandler,
-    /// naui から見た開閉の状態 ([`SourceState::expanded`] と同じもの)。
+    /// The expansion state as seen by naui (the same as [`SourceState::expanded`]).
     expanded: Rc<RefCell<HashSet<Vec<usize>>>>,
     silent: Rc<Cell<bool>>,
-    /// デリゲートとデータソースは weak 参照なので保持する。
+    /// Delegates and data sources are weak references, so they are held.
     _source: Retained<TreeSource>,
 }
 
-/// 入れ子の項目を開閉できる一覧 (NSOutlineView)。
+/// A list whose nested items can be expanded and collapsed (NSOutlineView).
 ///
-/// 項目は根からの子インデックスの並び (パス) で指す。`[0, 2]` は
-/// 「1 番目の根の 3 番目の子」で、空のパスは「選択なし」を表す。
+/// Items are referred to by the sequence of child indices from the root (a path).
+/// `[0, 2]` is "the third child of the first root", and an empty path means "no
+/// selection".
 ///
-/// 中身は `NSScrollView` に載った 1 列の `NSOutlineView` で、
-/// [`Widget::native_view`] が返すのはそのスクロールビュー。
-/// **スクロールビューは中身に合わせた高さを持たない**ため、
-/// `set_sizing` で高さを指定すること。
+/// Inside is a single-column `NSOutlineView` in an `NSScrollView`, and
+/// [`Widget::native_view`] returns that scroll view. **A scroll view has no height
+/// that fits its contents**, so set the height with `set_sizing`.
 #[derive(Clone)]
 pub struct Tree(Rc<TreeInner>);
 
@@ -490,9 +503,9 @@ impl Tree {
         }))
     }
 
-    /// 項目を作り直す。パスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Paths change meaning, so the selection is cleared.
     ///
-    /// 開閉は [`TreeItem::expanded`] のとおりに戻る。
+    /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
         *self.0.items.borrow_mut() = items.to_vec();
         self.0.nodes.reset(items);
@@ -509,7 +522,7 @@ impl Tree {
         });
     }
 
-    /// 子孫まで数えた項目の総数。
+    /// The total number of items, descendants included.
     pub fn len(&self) -> usize {
         TreeItem::count(&self.0.items.borrow())
     }
@@ -518,17 +531,17 @@ impl Tree {
         self.len() == 0
     }
 
-    /// 選ばれている項目のパス。何も選ばれていなければ `None`。
+    /// The path of the selected item. `None` if nothing is selected.
     pub fn selected(&self) -> Option<Vec<usize>> {
         let path = selected_path(&self.0.outline, &self.0.nodes);
         (!path.is_empty()).then_some(path)
     }
 
-    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until the item at `path` is visible. The selection does not change.
     ///
-    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
-    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
-    /// 無いパスなら何もしない。
+    /// If it is inside a collapsed branch, its ancestors are expanded first (as with
+    /// [`set_selected`](Self::set_selected), expansion is not notified). If it is
+    /// already visible nothing moves. Does nothing for a path that does not exist.
     pub fn scroll_to_item(&self, path: &[usize]) {
         if TreeItem::at(&self.0.items.borrow(), path).is_none() {
             return;
@@ -546,20 +559,21 @@ impl Tree {
         }
     }
 
-    /// 通知せずに 1 項目を選ぶ。
+    /// Selects one item without notifying.
     ///
-    /// 選べない項目 ([`TreeItem::selectable`]) や無いパスを渡すと、
-    /// 選択は外れる。閉じた枝の中にある項目は、見えるように祖先を開いてから選ぶ。
+    /// Passing an unselectable item ([`TreeItem::selectable`]) or a path that does not
+    /// exist clears the selection. Items inside a collapsed branch are selected after
+    /// their ancestors are expanded so they become visible.
     pub fn set_selected(&self, path: &[usize]) {
         self.without_notifying(|this| this.apply_selected(path));
     }
 
-    /// 通知せずに選択を外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         self.without_notifying(|this| unsafe { this.0.outline.deselectAll(None) });
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 項目を選ぶ (通知あり)。
+    /// Selects one item through the same path as a user's selection (notifies).
     pub fn select(&self, path: &[usize]) {
         // AppKit は同じ項目を選び直すとデリゲートを呼ばない。
         // 通知の回数をそろえるため、ここで 1 回だけ出す。
@@ -568,37 +582,37 @@ impl Tree {
         self.0.handler.emit(&actual);
     }
 
-    /// 選択が変わったときに、選ばれている項目のパスで呼ばれる。
+    /// Called with the path of the selected item when the selection changes.
     ///
-    /// 選択が外れたときは空のパスで呼ばれる。
+    /// When the selection is cleared, it is called with an empty path.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// その項目が開いているかどうか。
+    /// Whether the item is expanded.
     ///
-    /// 閉じた枝の中にあって見えていない項目でも、開いた状態として覚えていれば
-    /// `true` を返す (親を開き直すと、そのまま開いて出てくる)。
+    /// Even an item hidden inside a collapsed branch returns `true` if it is
+    /// remembered as expanded (reopening the parent shows it expanded as before).
     pub fn is_expanded(&self, path: &[usize]) -> bool {
         self.0.expanded.borrow().contains(path)
     }
 
-    /// 通知せずに開閉を変える。開くときは祖先もまとめて開く。
+    /// Changes expansion without notifying. Expanding also expands the ancestors.
     pub fn set_expanded(&self, path: &[usize], expanded: bool) {
         self.without_notifying(|this| this.apply_expanded(path, expanded));
     }
 
-    /// ユーザーが開いたのと同じ経路で開く (通知あり)。
+    /// Expands through the same path as a user's action (notifies).
     pub fn expand(&self, path: &[usize]) {
         self.toggle(path, true);
     }
 
-    /// ユーザーが閉じたのと同じ経路で閉じる (通知あり)。
+    /// Collapses through the same path as a user's action (notifies).
     pub fn collapse(&self, path: &[usize]) {
         self.toggle(path, false);
     }
 
-    /// 通知せずにすべての枝を開く。
+    /// Expands every branch without notifying.
     pub fn expand_all(&self) {
         self.without_notifying(|this| {
             let items = this.0.items.borrow().clone();
@@ -610,7 +624,7 @@ impl Tree {
         });
     }
 
-    /// 通知せずにすべての枝を閉じる。
+    /// Collapses every branch without notifying.
     pub fn collapse_all(&self) {
         self.without_notifying(|this| {
             let items = this.0.items.borrow().clone();
@@ -628,17 +642,17 @@ impl Tree {
         });
     }
 
-    /// 開閉が変わったときに、その項目のパスと変わった後の状態で呼ばれる。
+    /// Called with the item's path and its new state when its expansion changes.
     pub fn on_expand(&self, f: impl FnMut(&[usize], bool) + 'static) {
         self.0.expand.set(f);
     }
 
-    /// 中身の `NSOutlineView`。バックエンド固有の脱出口として公開している。
+    /// The inner `NSOutlineView`. Public as a backend-specific escape hatch.
     pub fn native_outline_view(&self) -> Retained<NSOutlineView> {
         self.0.outline.clone()
     }
 
-    /// 開閉を変えて 1 回だけ通知する。
+    /// Changes the expansion state and notifies once.
     fn toggle(&self, path: &[usize], expanded: bool) {
         self.without_notifying(|this| this.apply_expanded(path, expanded));
         if TreeItem::at(&self.0.items.borrow(), path).is_some_and(|item| !item.is_leaf()) {
@@ -646,7 +660,8 @@ impl Tree {
         }
     }
 
-    /// 開閉をネイティブへ写す。開くときは、閉じた祖先も上から順に開く。
+    /// Applies expansion to the native side. When expanding, collapsed ancestors are
+    /// also expanded, from the top down.
     fn apply_expanded(&self, path: &[usize], expanded: bool) {
         if expanded {
             for depth in 1..=path.len() {
@@ -662,7 +677,7 @@ impl Tree {
         }
     }
 
-    /// 選択をネイティブへ写す。
+    /// Applies the selection to the native side.
     fn apply_selected(&self, path: &[usize]) {
         let deselect = || unsafe { self.0.outline.deselectAll(None) };
         if !TreeItem::selectable(&self.0.items.borrow(), path) {
@@ -688,7 +703,7 @@ impl Tree {
             .selectRowIndexes_byExtendingSelection(set, false);
     }
 
-    /// AppKit からの通知を止めたまま操作する。
+    /// Operates with notifications from AppKit stopped.
     fn without_notifying(&self, f: impl FnOnce(&Self)) {
         let previous = self.0.silent.replace(true);
         f(self);

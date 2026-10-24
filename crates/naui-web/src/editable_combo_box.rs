@@ -1,8 +1,9 @@
-//! 自由に入力できるコンボボックス (DOM の `<input list>` + `<datalist>`)。
+//! A combo box that accepts free input (the DOM's `<input list>` + `<datalist>`).
 //!
-//! ブラウザ標準の「打ち込める入力欄と候補の一覧」がこの組み合わせなので、
-//! naui は見た目を作らない。候補の絞り込み方 (前方一致か部分一致か)・矢印を
-//! 出すかどうか・一覧の開き方はブラウザに任せている。
+//! This combination is the browser's standard "field you can type into plus a list
+//! of suggestions", so naui builds no visuals. How suggestions are narrowed (prefix
+//! or substring), whether an arrow is shown and how the list opens are left to the
+//! browser.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -16,7 +17,7 @@ use crate::to_error;
 use crate::widgets::{create, impl_widget, Listener, TextHandler, Widget};
 
 thread_local! {
-    /// `<datalist>` ごとに一意な `id` を作るための連番。
+    /// A counter for creating a unique `id` per `<datalist>`.
     static NEXT_LIST: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -34,19 +35,20 @@ struct EditableComboBoxInner {
     input: HtmlInputElement,
     list: HtmlDataListElement,
     document: Document,
-    /// 候補の控え。`selected` の一致判定と `set_selected` の書き込みに使う。
+    /// A copy of the suggestions. Used to check matches for `selected` and to write for
+    /// `set_selected`.
     items: RefCell<Vec<String>>,
     on_change: TextHandler,
-    /// `input` の購読。落とすと購読も外れる。
+    /// The `input` subscription. Dropping it also unsubscribes.
     _listener: RefCell<Option<Listener>>,
     key_down: KeyDown,
     focus: crate::focus::Focus,
 }
 
-/// 候補から選ぶことも、自由に打ち込むこともできる入力欄
-/// (`<input list>` + `<datalist>`)。
+/// A field where the user can either choose from suggestions or type freely
+/// (`<input list>` + `<datalist>`).
 ///
-/// 値は文字列で、作った直後は空。
+/// The value is a string, empty right after creation.
 #[derive(Clone)]
 pub struct EditableComboBox(Rc<EditableComboBoxInner>);
 impl_widget!(EditableComboBox, element);
@@ -108,7 +110,8 @@ impl EditableComboBox {
         Ok(Self(inner))
     }
 
-    /// 候補を作り直す。**入力されている文字列は変わらず**、通知も出ない。
+    /// Rebuilds the suggestions. **The entered text does not change**, and no
+    /// notification is sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         while let Some(child) = self.0.list.first_child() {
             let _ = self.0.list.remove_child(&child);
@@ -124,7 +127,7 @@ impl EditableComboBox {
         *self.0.items.borrow_mut() = items.iter().map(|s| s.as_ref().to_string()).collect();
     }
 
-    /// 候補の数。
+    /// The number of suggestions.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -133,25 +136,25 @@ impl EditableComboBox {
         self.len() == 0
     }
 
-    /// 入力されている文字列。
+    /// The entered text.
     pub fn text(&self) -> String {
         self.0.input.value()
     }
 
-    /// プログラムから文字列を差し替える。`on_change` は呼ばれない。
+    /// Replaces the text from code. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         self.0.input.set_value(text);
     }
 
-    /// 入力されている文字列と**そのまま一致する**候補の位置。
+    /// The position of the suggestion that **exactly matches** the entered text.
     ///
-    /// 打ち込まれた文字列がどの候補とも一致しなければ `None`。
+    /// `None` if the typed text matches no suggestion.
     pub fn selected(&self) -> Option<usize> {
         let text = self.text();
         self.0.items.borrow().iter().position(|item| *item == text)
     }
 
-    /// 範囲内の候補を通知せずに選ぶ。範囲外なら何もしない。
+    /// Chooses an in-range suggestion without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         let Some(text) = self.0.items.borrow().get(index).cloned() else {
             return;
@@ -159,12 +162,12 @@ impl EditableComboBox {
         self.set_text(&text);
     }
 
-    /// 通知せずに文字列を空にする。
+    /// Empties the text without notifying.
     pub fn clear(&self) {
         self.set_text("");
     }
 
-    /// 利用者が候補を選んだのと同じように、範囲内の候補を選んで通知する。
+    /// Chooses an in-range suggestion and notifies, as if the user had chosen it.
     pub fn select(&self, index: usize) {
         let Some(text) = self.0.items.borrow().get(index).cloned() else {
             return;
@@ -181,13 +184,13 @@ impl EditableComboBox {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// 文字列が変わるたびに、その時点の中身で呼ばれる。
-    /// 打鍵と候補の選択のどちらでも呼ばれる。設定し直すと以前のものは外れる。
+    /// Called with the current contents every time the text changes. Called for both
+    /// typing and choosing a suggestion. Setting it again removes the previous one.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// 入力欄の `<input>`。バックエンド固有の脱出口として公開している。
+    /// The field's `<input>`. Public as a backend-specific escape hatch.
     pub fn native_input(&self) -> HtmlInputElement {
         self.0.input.clone()
     }

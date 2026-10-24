@@ -1,30 +1,32 @@
 use crate::sys;
 use naui_core::Time;
 
-/// 時刻を選ばせるコントロール (時と分の `GtkSpinButton`)。
+/// A control for picking a time of day (`GtkSpinButton`s for hours and minutes).
 ///
-/// 作った直後の値は、その環境の現在時刻 (ローカル時刻)。
+/// Its value right after creation is the platform's current time (local time).
 #[derive(Clone)]
 pub struct TimePicker(pub(crate) sys::TimePicker);
 
 impl_widget!(TimePicker);
 
 impl TimePicker {
-    /// いま選ばれている時刻。
+    /// The currently selected time.
     #[inline]
     pub fn value(&self) -> Time {
         self.0.value()
     }
 
-    /// 値を通知せずに変える。範囲外なら端へ寄せ、時計として成り立たない値は丸める。
+    /// Changes the value without notifying. Out-of-range values are clamped to the
+    /// ends, and values that are not valid times are normalized.
     #[inline]
     pub fn set_value(&self, value: Time) {
         self.0.set_value(value)
     }
 
-    /// 選べる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the selectable range. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying.
     #[inline]
     pub fn set_range(&self, min: Option<Time>, max: Option<Time>) {
         self.0.set_range(min, max)
@@ -35,8 +37,8 @@ impl TimePicker {
         self.0.set_enabled(enabled)
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     #[inline]
     pub fn on_change(&self, f: impl FnMut(Time) + 'static) {
         self.0.on_change(f)

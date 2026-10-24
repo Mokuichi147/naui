@@ -1,4 +1,4 @@
-//! コンボボックス (`GtkDropDown` + `GtkStringList`)。
+//! A combo box (`GtkDropDown` + `GtkStringList`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,7 +18,7 @@ struct ComboBoxInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 1 項目を選ぶドロップダウン。
+/// A drop-down for choosing one item.
 #[derive(Clone)]
 pub struct ComboBox(Rc<ComboBoxInner>);
 impl_widget!(ComboBox);
@@ -53,8 +53,8 @@ impl ComboBox {
         Self(inner)
     }
 
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
-    /// 通知は行わない。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared. No
+    /// notification is sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         let additions: Vec<&str> = items.iter().map(AsRef::as_ref).collect();
         without_signal(&self.0.native, &self.0.handler, || {
@@ -77,7 +77,7 @@ impl ComboBox {
             .then_some(index as usize)
     }
 
-    /// 範囲内なら、通知せずに選択を変える。
+    /// Changes the selection without notifying, if the index is in range.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             without_signal(&self.0.native, &self.0.handler, || {
@@ -86,14 +86,14 @@ impl ComboBox {
         }
     }
 
-    /// 通知せずに選択を外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.set_selected(gtk::INVALID_LIST_POSITION);
         });
     }
 
-    /// ユーザーが選んだのと同じ経路で項目を選び、1 回通知する。
+    /// Selects an item through the same path as a user's choice and notifies once.
     pub fn select(&self, index: usize) {
         if index < self.len() {
             self.set_selected(index);
@@ -105,7 +105,7 @@ impl ComboBox {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 選択が変わったときに、選ばれた項目のインデックスで呼ばれる。
+    /// Called with the index of the chosen item when the selection changes.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select.set(f);
     }

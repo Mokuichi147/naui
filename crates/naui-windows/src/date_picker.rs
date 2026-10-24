@@ -1,7 +1,8 @@
-//! 日付と時刻の選択 (WinUI 3 のネイティブ `DatePicker` / `TimePicker`)。
+//! Date and time picking (WinUI 3's native `DatePicker` / `TimePicker`).
 //!
-//! どちらも [`naui_winui3`] の投影から直に作る。表示の詰め方だけは標準
-//! テンプレートの中身を触るので、根は `VisualTreeHelper` から引く。
+//! Both are created directly from the [`naui_winui3`] projection. Only tightening the
+//! display touches the standard template's contents, so the root is looked up via
+//! `VisualTreeHelper`.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -33,7 +34,8 @@ const TIME_PICKER_COMPACT_WIDTH: f64 = 152.0;
 
 type ChangeCallback = Box<dyn FnMut(DateTime)>;
 
-/// 値が変わったことの通知先。呼ぶ間だけクロージャを取り出して再入を許す。
+/// The handler notified when the value changes. The closure is taken out only while
+/// it is called, allowing re-entrancy.
 #[derive(Clone)]
 struct ChangeHandler(std::sync::Arc<UiThreadCell<Option<ChangeCallback>>>);
 
@@ -71,10 +73,11 @@ struct DatePickerInner {
     silent: Cell<bool>,
 }
 
-/// 日付と時刻を選ばせる WinUI 3 ネイティブコントロール。
+/// A WinUI 3 native control for picking a date and time.
 ///
-/// `DateTime` モードでは `DatePicker` と `TimePicker` を横に並べる。
-/// 作った直後の値は、その環境の現在日時 (ローカル時刻)。
+/// In `DateTime` mode, a `DatePicker` and a `TimePicker` are laid out side by side.
+/// Its value right after creation is the platform's current date and time (local
+/// time).
 #[derive(Clone)]
 pub struct DatePicker(Rc<DatePickerInner>);
 impl_widget!(DatePicker, native);
@@ -179,7 +182,8 @@ impl DatePicker {
         self.write_native(value);
     }
 
-    /// WinUI 側には年の範囲を反映し、月日・時刻の境界は変更時に端へ寄せる。
+    /// The year range is applied on the WinUI side, and month/day and time bounds are
+    /// clamped to the ends on change.
     pub fn set_range(&self, min: Option<DateTime>, max: Option<DateTime>) {
         self.0.min.set(min.map(DateTime::normalized));
         self.0.max.set(max.map(DateTime::normalized));
@@ -199,20 +203,19 @@ impl DatePicker {
         self.0.handler.set(f);
     }
 
-    /// WinUI 3 の `DatePicker`。日付を表示しないモードでは `None`。
+    /// WinUI 3's `DatePicker`. `None` in modes that do not show a date.
     pub fn native_date_picker_element(&self) -> Option<UIElement> {
         self.0.date.as_ref()?.cast().ok()
     }
 
-    /// WinUI 3 の `TimePicker`。時刻を表示しないモードでは `None`。
+    /// WinUI 3's `TimePicker`. `None` in modes that do not show a time.
     pub fn native_time_picker_element(&self) -> Option<UIElement> {
         self.0.time.as_ref()?.cast().ok()
     }
 
-    /// 以前の ComboBox 実装とのソース互換用。ネイティブ化後は常に空。
-    #[deprecated(
-        note = "native_date_picker_element / native_time_picker_element を使用してください"
-    )]
+    /// For source compatibility with the former ComboBox implementation. Always empty
+    /// since the switch to native controls.
+    #[deprecated(note = "use native_date_picker_element / native_time_picker_element instead")]
     pub fn native_combo_boxes(&self) -> Vec<ComboBox> {
         Vec::new()
     }
@@ -319,8 +322,9 @@ pub(crate) fn new_time_picker() -> Result<XamlTimePicker> {
     XamlTimePicker::new().map_err(|e| to_error("WinUI TimePicker の生成", e))
 }
 
-/// 標準テンプレートは英語の長い月名を想定して月だけ広く、かつ左揃えにする。
-/// 日本語表示では3列を等幅・中央揃えにし、既定の最小幅も縮める。
+/// The standard template assumes long English month names, making only the month
+/// wide and left-aligned. For Japanese display, the three columns are made equal
+/// width and centered, and the default minimum width is reduced.
 fn balance_date_picker_columns(picker: &XamlDatePicker) {
     let Some(root) = picker_template_root(picker) else {
         return;

@@ -1,11 +1,12 @@
-//! 数値入力 (`<input type="number">`)。
+//! Number input (`<input type="number">`).
 //!
-//! 上下のボタン (スピナー) と、数字だけを受け付ける入力はブラウザが出す。
-//! naui は [`NumberSpec`] を `min` / `max` / `step` 属性へ写し、値の文字列を
-//! `f64` と行き来させるだけ。
+//! The browser provides the up/down buttons (spinner) and input that accepts only
+//! digits. naui only maps [`NumberSpec`] onto the `min` / `max` / `step` attributes
+//! and converts the value string to and from `f64`.
 //!
-//! 打っている最中に表示を書き換えると打ちづらいので、**書き戻しは確定
-//! (`change`) のときだけ**行う ([`DatePicker`](crate::DatePicker) と同じ)。
+//! Rewriting the display while the user is typing would make typing awkward, so
+//! **it is written back only on confirmation (`change`)** (the same as
+//! [`DatePicker`](crate::DatePicker)).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -23,15 +24,16 @@ struct NumberInputInner {
     value: Cell<f64>,
     on_change: ValueHandler<f64>,
     on_submit: ValueHandler<f64>,
-    /// 入力中と確定時の購読。落とすと購読も外れる。
+    /// The subscriptions for input and for confirmation. Dropping them also
+    /// unsubscribes.
     listeners: RefCell<Vec<Listener>>,
     key_down: KeyDown,
     focus: crate::focus::Focus,
 }
 
-/// 数値を入力させるコントロール (`<input type="number">`)。
+/// A control for entering a number (`<input type="number">`).
 ///
-/// 既定は整数 (刻み 1、小数桁 0、範囲の制限なし)。
+/// The default is integers (step 1, 0 decimal places, no range limit).
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
 impl_widget!(NumberInput, input);
@@ -90,36 +92,38 @@ impl NumberInput {
         Ok(this)
     }
 
-    /// いまの値。
+    /// The current value.
     pub fn value(&self) -> f64 {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。小数桁へ丸め、範囲の外なら端へ寄せる。
+    /// Changes the value without notifying. Rounds to the decimal places and clamps to
+    /// the range.
     pub fn set_value(&self, value: f64) {
         let value = self.0.spec.get().clamp(value);
         self.0.value.set(value);
         self.write_native(value);
     }
 
-    /// 入れられる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the range of accepted values. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying.
     pub fn set_range(&self, min: Option<f64>, max: Option<f64>) {
         self.update_spec(|spec| spec.range(min, max));
     }
 
-    /// 上下のボタンやキーで 1 回に動く量 (既定は 1)。
+    /// How much one press of the up/down buttons or keys moves the value (default 1).
     pub fn set_step(&self, step: f64) {
         self.update_spec(|spec| spec.step(step));
     }
 
-    /// 表示する小数の桁数 (既定は 0 = 整数)。
+    /// The number of decimal places shown (default 0 = integers).
     pub fn set_decimals(&self, decimals: u32) {
         self.update_spec(|spec| spec.decimals(decimals));
     }
 
-    /// いまの値の決まり (範囲・刻み・小数桁)。
+    /// The current value rules (range, step, decimal places).
     pub fn spec(&self) -> NumberSpec {
         self.0.spec.get()
     }
@@ -128,29 +132,30 @@ impl NumberInput {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     pub fn on_change(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// Enter で確定したときに、確定したあとの値で呼ばれる。
+    /// Called with the confirmed value when the user confirms with Enter.
     ///
-    /// 打ちかけの表示は先に値へ読み込む (値が変われば `on_change` が先に
-    /// 呼ばれる)。数として読めない表示は元の値へ戻してから呼ぶ。IME で
-    /// 変換している間の Enter では呼ばれない。
+    /// What has been typed so far is read into the value first (if the value changes,
+    /// `on_change` is called first). Text that cannot be read as a number is reverted
+    /// to the previous value before the call. Not called for an Enter pressed while an
+    /// IME is composing.
     pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_submit.set(f);
     }
 
-    /// 対応する `<input>`。バックエンド固有の脱出口として公開している。
+    /// The corresponding `<input>`. Public as a backend-specific escape hatch.
     pub fn native_input(&self) -> HtmlInputElement {
         self.0.input.clone()
     }
 
-    /// ブラウザ側で値が変わったときの処理。
+    /// Handles a value change on the browser side.
     ///
-    /// `commit` は欄を離れたときの `change` かどうか。
+    /// `commit` is whether it is the `change` from leaving the field.
     fn native_changed(&self, commit: bool) {
         let text = self.0.input.value();
         let spec = self.0.spec.get();
@@ -178,13 +183,14 @@ impl NumberInput {
         self.set_value(self.value());
     }
 
-    /// 値を `<input>` へ書く。`value` の代入では `input` も `change` も
-    /// 起きないので、購読を止める必要はない。
+    /// Writes the value to the `<input>`. Assigning `value` fires neither `input` nor
+    /// `change`, so the subscriptions need not be stopped.
     fn write_native(&self, value: f64) {
         self.0.input.set_value(&self.0.spec.get().format(value));
     }
 
-    /// 範囲と刻みを属性へ書く。空文字を渡すと属性が外れ、制限なしに戻る。
+    /// Writes the range and step into attributes. Passing an empty string removes the
+    /// attribute, returning to no limit.
     fn write_native_spec(&self) {
         let spec = self.0.spec.get();
         let bound = |value: Option<f64>| value.map(|v| v.to_string()).unwrap_or_default();

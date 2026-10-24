@@ -1,24 +1,25 @@
-//! トースト (一時的な通知) の値型。
+//! Value types for toasts (transient notifications).
 //!
-//! トーストは「短い文字列と、任意の操作ボタンを、しばらく出してから自分で
-//! 消す」通知で、ネイティブのものがあるのは libadwaita の `AdwToast` だけ。
-//! 残る 3 環境は naui が同じ形に組み立てるため、**何をどれだけの間出すか**は
-//! [`NumberSpec`](crate::NumberSpec) と同じくここへ置き、4 バックエンドで
-//! 共有する。
+//! A toast is a notification that "shows a short string and an optional action
+//! button for a while, then goes away by itself". Only libadwaita has a native one,
+//! `AdwToast`. naui builds the same shape on the other three platforms, so **what
+//! to show and for how long** lives here, like [`NumberSpec`](crate::NumberSpec),
+//! and is shared by all four backends.
 
-/// トーストに出す内容と、消えるまでの時間。
+/// What a toast shows and how long until it disappears.
 ///
-/// 既定は「5 秒で消える、操作ボタンの無いトースト」。
+/// The default is "a toast that disappears after 5 seconds, without an action
+/// button".
 ///
 /// ```
 /// # use naui_core::ToastSpec;
-/// let mut spec = ToastSpec::new("保存しました");
+/// let mut spec = ToastSpec::new("Saved");
 /// assert_eq!(spec.timeout(), ToastSpec::DEFAULT_TIMEOUT);
 ///
-/// spec.set_action("元に戻す");
-/// assert_eq!(spec.action(), Some("元に戻す"));
+/// spec.set_action("Undo");
+/// assert_eq!(spec.action(), Some("Undo"));
 ///
-/// spec.set_timeout(0.0); // 0 は「自動では消えない」
+/// spec.set_timeout(0.0); // 0 means "never disappears automatically"
 /// assert!(spec.is_persistent());
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -39,17 +40,19 @@ impl Default for ToastSpec {
 }
 
 impl ToastSpec {
-    /// 何も指定しなかったときに消えるまでの秒数。`AdwToast` の既定と同じ。
+    /// Seconds until it disappears when nothing is specified. The same as `AdwToast`'s
+    /// default.
     pub const DEFAULT_TIMEOUT: f64 = 5.0;
 
-    /// 受け付ける最長の秒数 (1 日)。これより長い指定はここまで切り詰める。
+    /// The longest accepted duration in seconds (one day). Longer values are truncated
+    /// to this.
     ///
-    /// 上限を置くのは、ブラウザの `setTimeout` が 32 ビットのミリ秒しか
-    /// 受け取らないため。1 日出しっぱなしのトーストは、実質
-    /// [`is_persistent`](Self::is_persistent) と変わらない。
+    /// The cap exists because the browser's `setTimeout` accepts only 32-bit
+    /// milliseconds. A toast shown for a whole day is effectively the same as
+    /// [`is_persistent`](Self::is_persistent).
     pub const MAX_TIMEOUT: f64 = 86_400.0;
 
-    /// 出す文字列を決めて作る。
+    /// Creates one with the string to show.
     pub fn new(message: &str) -> Self {
         Self {
             message: message.to_string(),
@@ -57,7 +60,7 @@ impl ToastSpec {
         }
     }
 
-    /// 出す文字列。
+    /// The string to show.
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -66,13 +69,13 @@ impl ToastSpec {
         self.message = message.to_string();
     }
 
-    /// 操作ボタンの文字列。置いていなければ `None`。
+    /// The action button's label. `None` if there is no button.
     pub fn action(&self) -> Option<&str> {
         self.action.as_deref()
     }
 
-    /// 操作ボタンの文字列。**空文字列を渡すとボタンを外す**
-    /// ([`DialogButtons`](crate::DialogButtons) と同じ)。
+    /// The action button's label. **Passing an empty string removes the button** (the
+    /// same as [`DialogButtons`](crate::DialogButtons)).
     pub fn set_action(&mut self, label: &str) {
         self.action = if label.is_empty() {
             None
@@ -81,23 +84,24 @@ impl ToastSpec {
         };
     }
 
-    /// 消えるまでの秒数。0 なら自動では消えない。
+    /// Seconds until it disappears. 0 means it never disappears automatically.
     pub fn timeout(&self) -> f64 {
         self.timeout
     }
 
-    /// 消えるまでの秒数。
+    /// Seconds until it disappears.
     ///
-    /// **0 以下と、数として読めない値 (`NaN` や無限) は 0** として扱う。
-    /// 0 は「自動では消えない」で、`dismiss()` か操作ボタンでしか消えなく
-    /// なる (`AdwToast` の `timeout` と同じ決まり)。
-    /// [`MAX_TIMEOUT`](Self::MAX_TIMEOUT) より長い指定はそこまで切り詰める。
+    /// **Values of 0 or less, and values that are not numbers (`NaN` and infinities),
+    /// are treated as 0.** 0 means "never disappears automatically": it goes away only
+    /// through `dismiss()` or the action button (the same rule as `AdwToast`'s
+    /// `timeout`). Values longer than [`MAX_TIMEOUT`](Self::MAX_TIMEOUT) are truncated
+    /// to it.
     ///
     /// ```
     /// # use naui_core::ToastSpec;
-    /// let mut spec = ToastSpec::new("完了");
+    /// let mut spec = ToastSpec::new("Done");
     /// spec.set_timeout(-1.0);
-    /// assert_eq!(spec.timeout(), 0.0, "負の指定は「消えない」にそろえる");
+    /// assert_eq!(spec.timeout(), 0.0, "negative values become \"never disappears\"");
     /// spec.set_timeout(f64::INFINITY);
     /// assert_eq!(spec.timeout(), 0.0);
     /// ```
@@ -109,18 +113,18 @@ impl ToastSpec {
         };
     }
 
-    /// 自動では消えないか。
+    /// Whether it never disappears automatically.
     pub fn is_persistent(&self) -> bool {
         self.timeout <= 0.0
     }
 
-    /// 消えるまでのミリ秒。自動で消えないなら `None`。
+    /// Milliseconds until it disappears. `None` if it never disappears automatically.
     ///
-    /// ブラウザの `setTimeout` と WinUI の `DispatcherQueueTimer` へ渡す。
+    /// Passed to the browser's `setTimeout` and WinUI's `DispatcherQueueTimer`.
     ///
     /// ```
     /// # use naui_core::ToastSpec;
-    /// let mut spec = ToastSpec::new("完了");
+    /// let mut spec = ToastSpec::new("Done");
     /// assert_eq!(spec.timeout_millis(), Some(5_000));
     /// spec.set_timeout(0.0);
     /// assert_eq!(spec.timeout_millis(), None);
@@ -133,15 +137,16 @@ impl ToastSpec {
         Some((self.timeout * 1_000.0).round().max(1.0) as i32)
     }
 
-    /// 消えるまでの秒数を整数で。自動で消えないなら 0。
+    /// Seconds until it disappears, as an integer. 0 if it never disappears
+    /// automatically.
     ///
-    /// `adw_toast_set_timeout` が秒でしか受け取らないため、**1 秒未満の指定は
-    /// 1 秒になる**。0 へ丸めてしまうと、GTK では「消えないトースト」に
-    /// 変わってしまうため。
+    /// `adw_toast_set_timeout` accepts only whole seconds, so **anything under one
+    /// second becomes one second**. Rounding to 0 would turn it into a "toast that
+    /// never disappears" on GTK.
     ///
     /// ```
     /// # use naui_core::ToastSpec;
-    /// let mut spec = ToastSpec::new("完了");
+    /// let mut spec = ToastSpec::new("Done");
     /// spec.set_timeout(0.2);
     /// assert_eq!(spec.timeout_secs(), 1);
     /// ```

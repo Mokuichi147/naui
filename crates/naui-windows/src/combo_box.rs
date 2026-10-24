@@ -1,4 +1,4 @@
-//! 選択肢を折りたたんで表示する ComboBox (WinUI 3)。
+//! A ComboBox that shows its options collapsed (WinUI 3).
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -17,13 +17,14 @@ use crate::widgets::{impl_widget, SelectHandler, Widget};
 struct ComboBoxInner {
     native: XamlComboBox,
     handler: SelectHandler,
-    /// プログラムから選択や項目を変えている間だけ WinUI の通知を止める。
+    /// Stops WinUI's notifications only while the selection or items are being changed
+    /// from code.
     silent: Cell<bool>,
 }
 
-/// 選択肢を折りたたんで表示するコンボボックス (`ComboBox`)。
+/// A combo box that shows its options collapsed (`ComboBox`).
 ///
-/// 生成直後と `set_items` の後は何も選ばれていない。
+/// Nothing is selected right after creation and after `set_items`.
 #[derive(Clone)]
 pub struct ComboBox(Rc<ComboBoxInner>);
 impl_widget!(ComboBox, native);
@@ -68,7 +69,7 @@ impl ComboBox {
         Ok(this)
     }
 
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         let _ = self.rebuild(items);
     }
@@ -108,7 +109,7 @@ impl ComboBox {
         })
     }
 
-    /// 項目数。
+    /// The number of items.
     pub fn len(&self) -> usize {
         self.0
             .native
@@ -121,23 +122,23 @@ impl ComboBox {
         self.len() == 0
     }
 
-    /// 現在選ばれている項目。
+    /// The currently selected item.
     pub fn selected(&self) -> Option<usize> {
         let index = usize::try_from(self.0.native.SelectedIndex().ok()?).ok()?;
         (index < self.len()).then_some(index)
     }
 
-    /// 通知せずに項目を選ぶ。範囲外なら何もしない。
+    /// Selects an item without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         let _ = self.write_selected(index);
     }
 
-    /// 通知せずに選択を外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         let _ = self.without_notifying(|this| this.0.native.SetSelectedIndex(-1));
     }
 
-    /// ユーザーが選んだのと同じ経路で項目を選ぶ (通知あり)。
+    /// Selects an item through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         if self.write_selected(index) {
             // 同じ項目を選び直すと SelectionChanged は起きないため、通知は
@@ -150,8 +151,8 @@ impl ComboBox {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは置き換わる。
+    /// Called with the index when an item is chosen. Setting it again replaces the
+    /// previous callback.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
@@ -167,7 +168,7 @@ impl ComboBox {
             .is_ok()
     }
 
-    /// WinUI の `SelectionChanged` を止めたまま操作する。
+    /// Operates with WinUI's `SelectionChanged` stopped.
     fn without_notifying<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
         let previous = self.0.silent.replace(true);
         let result = f(self);

@@ -1,8 +1,9 @@
-//! 選択肢を並べて 1 つだけ選ばせるラジオグループ (`GtkCheckButton` の組)。
+//! A radio group that lays out options and lets the user choose exactly one (a
+//! group of `GtkCheckButton`s).
 //!
-//! GTK4 では `GtkRadioButton` が廃止され、`GtkCheckButton` を
-//! `gtk_check_button_set_group` で束ねたものがラジオになる。束ねたボタンを
-//! `GtkBox` へ並べることで、ほかのラジオグループと混ざらない。
+//! GTK4 removed `GtkRadioButton`; radio buttons are `GtkCheckButton`s grouped with
+//! `gtk_check_button_set_group`. Laying the grouped buttons out in a `GtkBox` keeps
+//! them from mixing with other radio groups.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,14 +20,16 @@ struct RadioGroupInner {
     native: gtk::Box,
     bin: SizeBin,
     buttons: RefCell<Vec<gtk::CheckButton>>,
-    /// ボタンと同じ順に並ぶ `toggled` の購読。プログラムからの変更で止める。
+    /// The `toggled` subscriptions, in the same order as the buttons. Blocked for
+    /// changes from code.
     handlers: RefCell<Vec<glib::SignalHandlerId>>,
     on_select: Notifier<usize>,
 }
 
-/// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+/// A radio group that lays out options and lets the user choose exactly one.
 ///
-/// 作った直後と [`set_items`](Self::set_items) の直後は、何も選ばれていない。
+/// Right after creation and right after [`set_items`](Self::set_items), nothing is
+/// selected.
 #[derive(Clone)]
 pub struct RadioGroup(Rc<RadioGroupInner>);
 impl_widget!(RadioGroup);
@@ -44,7 +47,8 @@ impl RadioGroup {
         }))
     }
 
-    /// 選択肢を作り直し、選択を外す。選択通知は発生しない。
+    /// Rebuilds the options and clears the selection. No selection notification is
+    /// sent.
     pub fn set_items<S: AsRef<str>>(&self, items: &[S]) {
         for button in self.0.buttons.borrow_mut().drain(..) {
             // グループから外してから捨てないと、GTK4 が残りの組を触りにいく。
@@ -87,7 +91,7 @@ impl RadioGroup {
         *self.0.handlers.borrow_mut() = handlers;
     }
 
-    /// 選択肢の数。
+    /// The number of options.
     pub fn len(&self) -> usize {
         self.0.buttons.borrow().len()
     }
@@ -96,7 +100,7 @@ impl RadioGroup {
         self.len() == 0
     }
 
-    /// 現在選ばれている選択肢。未選択なら `None`。
+    /// The currently selected option. `None` if nothing is selected.
     pub fn selected(&self) -> Option<usize> {
         self.0
             .buttons
@@ -105,14 +109,14 @@ impl RadioGroup {
             .position(|button| button.is_active())
     }
 
-    /// 範囲内の選択肢を通知せずに選ぶ。範囲外なら何もしない。
+    /// Selects an in-range option without notifying. Does nothing if out of range.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             self.without_signals(|buttons| buttons[index].set_active(true));
         }
     }
 
-    /// 選択を通知せずに外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         self.without_signals(|buttons| {
             for button in buttons {
@@ -121,7 +125,7 @@ impl RadioGroup {
         });
     }
 
-    /// ユーザーが選んだのと同じように、範囲内の選択肢を選んで通知する。
+    /// Selects an in-range option and notifies, as if the user had chosen it.
     pub fn select(&self, index: usize) {
         if index < self.len() {
             self.set_selected(index);
@@ -129,7 +133,7 @@ impl RadioGroup {
         }
     }
 
-    /// 選択肢の並ぶ向き。既定は縦。
+    /// The direction the options are laid out in. Vertical by default.
     pub fn set_orientation(&self, orientation: Orientation) {
         self.0.native.set_orientation(if orientation.is_vertical() {
             gtk::Orientation::Vertical
@@ -142,20 +146,21 @@ impl RadioGroup {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 選択肢が選ばれたときに、そのインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the index when an option is chosen. Setting it again removes the
+    /// previous callback.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select.set(f);
     }
 
-    /// 組にした `GtkCheckButton`。バックエンド固有の脱出口として公開している。
+    /// The grouped `GtkCheckButton`s. Public as a backend-specific escape hatch.
     pub fn native_buttons(&self) -> Vec<gtk::CheckButton> {
         self.0.buttons.borrow().clone()
     }
 
-    /// 組にしたボタンすべての `toggled` を止めたまま操作する。
+    /// Operates with `toggled` blocked on every button in the group.
     ///
-    /// 組の中では 1 つ点けると別の 1 つが外れるので、片方だけ止めても足りない。
+    /// Within a group, turning one on turns another off, so blocking just one is not
+    /// enough.
     fn without_signals<T>(&self, f: impl FnOnce(&[gtk::CheckButton]) -> T) -> T {
         let buttons = self.0.buttons.borrow();
         let handlers = self.0.handlers.borrow();

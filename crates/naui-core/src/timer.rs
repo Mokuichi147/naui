@@ -1,8 +1,8 @@
-//! UI スレッドで、時間を置いて (または一定の間隔で) 呼ぶ。
+//! Calls something on the UI thread after a delay (or at a fixed interval).
 //!
-//! 待つのはバックエンドのイベントループ ([`MainThread::post_after`]) で、
-//! コールバックは UI スレッドで呼ばれる。登録簿はチャネルやタスクと同じ
-//! ものを使い、スレッドをまたぐのは番号だけにする。
+//! The waiting is done by the backend's event loop ([`MainThread::post_after`]),
+//! and callbacks are called on the UI thread. It uses the same registry as
+//! channels and tasks, and only ids cross threads.
 //!
 //! [`MainThread::post_after`]: crate::MainThread::post_after
 
@@ -21,14 +21,14 @@ use crate::Slot;
 struct TimerLocal {
     id: u64,
     callback: RefCell<Slot<dyn FnMut()>>,
-    /// 繰り返す間隔。1 回きりなら `None`。
+    /// The repeat interval. `None` for a one-shot timer.
     repeat: Option<Duration>,
     active: Cell<bool>,
     dispatch: Arc<AppDispatch>,
 }
 
 impl TimerLocal {
-    /// 次の呼び出しを予約する。積めなければ止める。
+    /// Schedules the next call. Stops if it cannot be queued.
     fn schedule(&self, delay: Duration) {
         let id = self.id;
         if !self
@@ -95,26 +95,27 @@ pub(crate) fn start(
     }
 }
 
-/// [`Tasks::after`](crate::Tasks::after) / [`Tasks::every`](crate::Tasks::every)
-/// が返すタイマーの取っ手。
+/// The timer handle returned by [`Tasks::after`](crate::Tasks::after) /
+/// [`Tasks::every`](crate::Tasks::every).
 ///
-/// **落としてもタイマーは止まらない** ([`Task`](crate::Task) と同じ)。止めたい
-/// ときは [`cancel`](Timer::cancel) を呼ぶ。clone しても同じタイマーを指す。
+/// **Dropping it does not stop the timer** (the same as [`Task`](crate::Task)).
+/// Call [`cancel`](Timer::cancel) to stop it. Clones point to the same timer.
 #[derive(Clone)]
 pub struct Timer {
     local: Weak<TimerLocal>,
 }
 
 impl Timer {
-    /// 止める。まだ呼ばれていないものは呼ばれない。コールバックの中から
-    /// 呼んでもよい。
+    /// Stops it. Calls that have not happened yet will not happen. May be called from
+    /// inside the callback.
     pub fn cancel(&self) {
         if let Some(local) = self.local.upgrade() {
             local.stop();
         }
     }
 
-    /// まだ呼ばれる予定があるか。1 回きりのものは呼ばれた時点で `false`。
+    /// Whether more calls are still scheduled. A one-shot timer becomes `false` once it
+    /// has been called.
     pub fn is_active(&self) -> bool {
         self.local.upgrade().is_some_and(|local| local.active.get())
     }
@@ -134,9 +135,9 @@ struct SleepState {
     waker: RefCell<Option<Waker>>,
 }
 
-/// [`Tasks::sleep`](crate::Tasks::sleep) が返す future。
+/// The future returned by [`Tasks::sleep`](crate::Tasks::sleep).
 ///
-/// 落とすと待つのをやめる (タイマーも止める)。
+/// Dropping it stops waiting (and stops the timer).
 pub struct Sleep {
     delay: Duration,
     dispatch: Arc<AppDispatch>,

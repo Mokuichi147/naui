@@ -1,15 +1,15 @@
-//! ナビゲーション系のハンドル群 (DOM)。
+//! Navigation handles (DOM).
 //!
-//! ブラウザには「タブ」や「ナビバー」というコントロールが無いため、
-//! 意味づけのある標準要素 (`<nav>` / `<ol>` / `<a>` / `<button>`) と
-//! WAI-ARIA のロールで組み立てる。見た目はブラウザ既定のままで、
-//! CSS は Flexbox のレイアウトと「選択中」の太字にしか使わない。
+//! Browsers have no "tab" or "nav bar" controls, so they are built from semantic
+//! standard elements (`<nav>` / `<ol>` / `<a>` / `<button>`) and WAI-ARIA roles.
+//! The look stays the browser's default; CSS is used only for Flexbox layout and the
+//! bold "selected" state.
 //!
 //! | naui | DOM |
 //! | --- | --- |
 //! | `Tabs` | `<div role="tablist">` + `<button role="tab">` + `<div role="tabpanel">` |
 //! | `Navbar` | `<nav>` + `<strong>` + `<button>` |
-//! | `Dock` | `<nav>` + `<button>` (等幅) |
+//! | `Dock` | `<nav>` + `<button>` (equal widths) |
 //! | `Menu` | `<nav><ul><li><button>` |
 //! | `Breadcrumbs` | `<nav><ol><li><a href>` |
 //! | `Pagination` | `<nav>` + `<button>` |
@@ -26,11 +26,11 @@ use crate::layout::{apply_child_layout, fill_parent, mark_parent, ParentLayout};
 use crate::to_error;
 use crate::widgets::{create, impl_widget, set_disabled, Listener, Widget};
 
-/// ナビゲーション系ウィジェットの「選択された」通知先。
+/// The "selected" handler of navigation widgets.
 ///
-/// 差し替え可能な 1 本のクロージャを共有で持つ。あるナビゲーションの
-/// コールバックから別のナビゲーションを操作しても二重借用にならないよう、
-/// 呼び出しの間だけクロージャを取り出す。
+/// It shares a single replaceable closure. So that operating on another navigation
+/// widget from one navigation widget's callback does not double-borrow, the closure
+/// is taken out only for the duration of the call.
 #[derive(Clone, Default)]
 pub(crate) struct SelectHandler(Rc<RefCell<Option<Box<dyn FnMut(usize)>>>>);
 
@@ -55,7 +55,8 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
     let _ = element.style().set_property(property, value);
 }
 
-/// 横並びの要素を作る。`tag` は外枠なら `nav`、入れ子なら `div`。
+/// Creates a horizontal element. `tag` is `nav` for the outer frame and `div` when
+/// nested.
 fn row(doc: &Document, tag: &str, gap: &str) -> Result<HtmlElement> {
     let element: HtmlElement = create(doc, tag)?.unchecked_into();
     style(&element, "display", "flex");
@@ -72,32 +73,32 @@ fn append(parent: &Element, child: &Element) -> Result<()> {
         .map_err(|e| to_error("DOM への追加", e))
 }
 
-/// 項目の並べ方。
+/// How the items are laid out.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Shape {
-    /// `<nav>` の直下にボタンを並べる。
+    /// Buttons directly under `<nav>`.
     Flat,
-    /// `<li>` で包む (`<ul>` / `<ol>` の中身)。
+    /// Wrapped in `<li>` (the contents of `<ul>` / `<ol>`).
     ListItem,
-    /// `<li>` で包み、2 つ目以降に区切りを入れる。
+    /// Wrapped in `<li>`, with separators from the second one on.
     Crumb,
 }
 
 // -------------------------------------------------------------------- Bar
 
-/// 「項目の並び + いま選ばれているもの」を持つ内部ハンドル。
+/// An internal handle holding "a sequence of items + the one currently selected".
 ///
-/// ナビバー・ドック・メニュー・パンくず・ページネーションが共有する。
+/// Shared by nav bars, docks, menus, breadcrumbs and pagination.
 #[derive(Clone)]
 struct Bar(Rc<BarInner>);
 
 struct BarInner {
-    /// 項目を入れる要素 (`<nav>` か `<ul>` / `<ol>`)。
+    /// The element items go into (`<nav>` or `<ul>` / `<ol>`).
     mount: HtmlElement,
     shape: Shape,
     equal_width: bool,
     buttons: RefCell<Vec<HtmlElement>>,
-    /// 項目ごとのクリック購読。項目を作り直すと外れる。
+    /// The click subscription per item. Removed when the items are rebuilt.
     listeners: RefCell<Vec<Listener>>,
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
@@ -203,11 +204,12 @@ impl Bar {
         Ok(())
     }
 
-    /// 選択状態を ARIA 属性と見た目で表す。
+    /// Expresses the selected state with ARIA attributes and the look.
     ///
-    /// ボタンは太字にする。パンくずは太字にすると選び直すたびに文字幅が
-    /// 変わり、後ろの項目がずれるので、いまいる場所と選べない項目の
-    /// `href` を外してリンクでない普通の文字 (ブラウザ既定の描き方) にする。
+    /// Buttons are made bold. For breadcrumbs, bold would change the text width on every
+    /// reselection and shift the items after it, so the current position and items that
+    /// cannot be selected have their `href` removed, making them plain text that is not
+    /// a link (drawn the browser's default way).
     fn mark_selected(&self, index: Option<usize>) {
         for (i, button) in self.0.buttons.borrow().iter().enumerate() {
             let current = Some(i) == index;
@@ -264,11 +266,11 @@ impl Bar {
 // ------------------------------------------------------------------- Tabs
 
 struct TabsInner {
-    /// タブ全体 (`<div>`)。
+    /// The whole tabs widget (`<div>`).
     element: HtmlElement,
-    /// タブの見出し (`<div role="tablist">`)。
+    /// The tab headings (`<div role="tablist">`).
     tablist: HtmlElement,
-    /// 中身を入れる `<div>`。
+    /// The `<div>` holding the contents.
     panels: HtmlElement,
     document: Document,
     tabs: RefCell<Vec<HtmlElement>>,
@@ -279,11 +281,11 @@ struct TabsInner {
     selected: Cell<Option<usize>>,
 }
 
-/// タブ。中身のウィジェットごと持つ。
+/// Tabs. Holds each tab's content widget.
 ///
-/// ブラウザにタブのコントロールは無いため、`role="tab"` /
-/// `role="tabpanel"` を付けた標準要素で構成し、選ばれていない中身は
-/// `hidden` 属性で隠す。
+/// Browsers have no tab control, so it is composed of standard elements with
+/// `role="tab"` / `role="tabpanel"`, and unselected contents are hidden with the
+/// `hidden` attribute.
 #[derive(Clone)]
 pub struct Tabs(Rc<TabsInner>);
 impl_widget!(Tabs, element);
@@ -324,7 +326,7 @@ impl Tabs {
         })))
     }
 
-    /// タブを 1 枚追加する。`child` がそのタブの中身になる。
+    /// Adds one tab. `child` becomes that tab's content.
     pub fn add_tab(&self, label: &str, child: &dyn Widget) {
         let doc = &self.0.document;
         let Ok(tab) = create(doc, "button") else {
@@ -390,7 +392,7 @@ impl Tabs {
         }
     }
 
-    /// 選ばれているタブだけを表示する。
+    /// Shows only the selected tab.
     fn show(&self, index: Option<usize>) {
         for (i, tab) in self.0.tabs.borrow().iter().enumerate() {
             let current = Some(i) == index;
@@ -410,11 +412,11 @@ impl Tabs {
         self.0.selected.set(index);
     }
 
-    /// タブを 1 枚外す。範囲外のときは何もしない。
+    /// Removes one tab. Does nothing if out of range.
     ///
-    /// 選択中のタブを外したときは、同じ位置のタブ (無ければ最後のタブ) を
-    /// 選び直す。この移動は [`set_selected`](Tabs::set_selected) と同じく
-    /// 通知しない。
+    /// When the selected tab is removed, the tab at the same position (or the last tab
+    /// if there is none) is selected instead. Like [`set_selected`](Tabs::set_selected),
+    /// this move is not notified.
     pub fn remove_tab(&self, index: usize) {
         if index >= self.len() {
             return;
@@ -437,7 +439,7 @@ impl Tabs {
         self.show(selected);
     }
 
-    /// タブをすべて外す。
+    /// Removes every tab.
     pub fn clear(&self) {
         for tab in std::mem::take(&mut *self.0.tabs.borrow_mut()) {
             tab.remove();
@@ -462,14 +464,14 @@ impl Tabs {
         self.0.selected.get()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             self.show(Some(index));
         }
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         if index < self.len() {
             self.show(Some(index));
@@ -477,17 +479,17 @@ impl Tabs {
         }
     }
 
-    /// タブが切り替わったときに、そのインデックスで呼ばれる。
+    /// Called with the index when the tab changes.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 }
 
-/// 項目を持つナビゲーションの共通実装を生やす。
+/// Adds the common implementation of navigation widgets with items.
 macro_rules! impl_item_bar {
     ($t:ty) => {
         impl $t {
-            /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+            /// Rebuilds the items. Indices change meaning, so the selection is cleared.
             pub fn set_items(&self, items: &[NavItem]) {
                 let _ = self.0.bar.set_items(&self.0.document, items);
             }
@@ -504,17 +506,17 @@ macro_rules! impl_item_bar {
                 self.0.bar.selected()
             }
 
-            /// 通知せずに選択を変える。
+            /// Changes the selection without notifying.
             pub fn set_selected(&self, index: usize) {
                 self.0.bar.set_selected(index);
             }
 
-            /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+            /// Changes the selection through the same path as a user's choice (notifies).
             pub fn select(&self, index: usize) {
                 self.0.bar.select(index);
             }
 
-            /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+            /// Called with the index when an item is chosen.
             pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
                 self.0.bar.on_select(f);
             }
@@ -531,7 +533,7 @@ struct NavbarInner {
     bar: Bar,
 }
 
-/// 画面上部に置く横並びのナビゲーション (`<nav>`)。
+/// Horizontal navigation placed at the top of the screen (`<nav>`).
 #[derive(Clone)]
 pub struct Navbar(Rc<NavbarInner>);
 impl_widget!(Navbar, element);
@@ -558,7 +560,7 @@ impl Navbar {
         })))
     }
 
-    /// 左端の見出し。
+    /// The heading at the left end.
     pub fn set_title(&self, title: &str) {
         self.0.title.set_text_content(Some(title));
     }
@@ -576,10 +578,12 @@ struct DockInner {
     bar: Bar,
 }
 
-/// 画面下部に置く横並びのナビゲーション (等幅、`<nav>`)。
+/// Horizontal navigation placed at the bottom of the screen (equal widths,
+/// `<nav>`).
 ///
-/// **配置はアプリの責務**で、naui のレイアウトは縦横のスタックしか持たないため、
-/// ウィンドウ下端への固定はできない。縦スタックの最後に置くと下端寄りになる。
+/// **Placement is the app's job.** naui's layout has only vertical and horizontal
+/// stacks, so it cannot be pinned to the bottom of the window. Put it last in a
+/// vertical stack to move it toward the bottom.
 #[derive(Clone)]
 pub struct Dock(Rc<DockInner>);
 impl_widget!(Dock, element);
@@ -605,9 +609,9 @@ struct MenuInner {
     bar: Bar,
 }
 
-/// 縦に並ぶナビゲーション一覧 (`<nav><ul>`)。
+/// A vertical list of navigation items (`<nav><ul>`).
 ///
-/// ポップアップのメニューではない。
+/// It is not a popup menu.
 #[derive(Clone)]
 pub struct Menu(Rc<MenuInner>);
 impl_widget!(Menu, element);
@@ -644,7 +648,7 @@ struct BreadcrumbsInner {
     bar: Bar,
 }
 
-/// パンくず (`<nav><ol>`)。
+/// Breadcrumbs (`<nav><ol>`).
 #[derive(Clone)]
 pub struct Breadcrumbs(Rc<BreadcrumbsInner>);
 impl_widget!(Breadcrumbs, element);
@@ -671,7 +675,7 @@ impl Breadcrumbs {
         })))
     }
 
-    /// 階層を作り直す。末尾がいまいる場所になる。
+    /// Rebuilds the hierarchy. The last item becomes the current position.
     pub fn set_items(&self, items: &[NavItem]) {
         let _ = self.0.bar.set_items(&self.0.document, items);
         if let Some(last) = items.len().checked_sub(1) {
@@ -687,22 +691,22 @@ impl Breadcrumbs {
         self.len() == 0
     }
 
-    /// いまいる場所。既定では末尾の項目。
+    /// The current position. The last item by default.
     pub fn selected(&self) -> Option<usize> {
         self.0.bar.selected()
     }
 
-    /// 通知せずにいまいる場所を変える。
+    /// Changes the current position without notifying.
     pub fn set_selected(&self, index: usize) {
         self.0.bar.set_selected(index);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         self.0.bar.select(index);
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.bar.on_select(f);
     }
@@ -714,14 +718,14 @@ struct PaginationInner {
     element: HtmlElement,
     document: Document,
     bar: Bar,
-    /// 前へ / 次への購読。
+    /// The subscriptions for previous / next.
     _steps: RefCell<Vec<Listener>>,
 }
 
-/// ページ送り (`<nav>` + `<button>`)。
+/// Pagination (`<nav>` + `<button>`).
 ///
-/// ブラウザに相当するコントロールが無いため、前へ / 次へのボタンと
-/// ページ番号のボタンを並べて構成している。
+/// Browsers have no equivalent control, so it is composed of previous / next buttons
+/// and page number buttons laid out in a row.
 #[derive(Clone)]
 pub struct Pagination(Rc<PaginationInner>);
 impl_widget!(Pagination, element);
@@ -775,7 +779,7 @@ impl Pagination {
         Ok(this)
     }
 
-    /// ページ数を変える。表示は 1 始まり、API は 0 始まり。
+    /// Changes the number of pages. The display starts at 1; the API starts at 0.
     pub fn set_page_count(&self, count: usize) {
         let items: Vec<NavItem> = (1..=count).map(|n| NavItem::new(n.to_string())).collect();
         let _ = self.0.bar.set_items(&self.0.document, &items);
@@ -788,22 +792,22 @@ impl Pagination {
         self.0.bar.len()
     }
 
-    /// いまのページ (0 始まり)。
+    /// The current page (starting at 0).
     pub fn page(&self) -> usize {
         self.0.bar.selected().unwrap_or(0)
     }
 
-    /// 通知せずにページを変える。
+    /// Changes the page without notifying.
     pub fn set_page(&self, page: usize) {
         self.0.bar.set_selected(page);
     }
 
-    /// ユーザーが選んだのと同じ経路でページを変える (通知あり)。
+    /// Changes the page through the same path as a user's choice (notifies).
     pub fn select(&self, page: usize) {
         self.0.bar.select(page);
     }
 
-    /// 前のページへ。先頭にいるときは何もしない。
+    /// Goes to the previous page. Does nothing on the first page.
     pub fn go_previous(&self) {
         let page = self.page();
         if page > 0 {
@@ -811,7 +815,7 @@ impl Pagination {
         }
     }
 
-    /// 次のページへ。末尾にいるときは何もしない。
+    /// Goes to the next page. Does nothing on the last page.
     pub fn go_next(&self) {
         let page = self.page();
         if page + 1 < self.page_count() {
@@ -819,7 +823,7 @@ impl Pagination {
         }
     }
 
-    /// ページが変わったときに、その番号 (0 始まり) で呼ばれる。
+    /// Called with the page number (starting at 0) when the page changes.
     pub fn on_change(&self, f: impl FnMut(usize) + 'static) {
         self.0.bar.on_select(f);
     }
@@ -832,11 +836,11 @@ struct LinkInner {
     listener: RefCell<Option<Listener>>,
 }
 
-/// リンク (`<a>`)。
+/// A link (`<a>`).
 ///
-/// `href` が空でなければ別タブで開く (`target="_blank"`)。
-/// 同じタブへ遷移すると wasm のアプリごと破棄されてしまうため、
-/// macOS / Windows がブラウザで開くのに合わせている。
+/// If `href` is not empty it opens in a new tab (`target="_blank"`). Navigating in
+/// the same tab would destroy the whole wasm app, so it matches macOS / Windows,
+/// which open it in the browser.
 #[derive(Clone)]
 pub struct Link(Rc<LinkInner>);
 impl_widget!(Link, element);
@@ -886,15 +890,15 @@ impl Link {
         }
     }
 
-    /// 押されたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called on click. Setting it again removes the previous one.
     ///
-    /// `href` を開くのはブラウザ自身が行う。
+    /// Opening `href` is done by the browser itself.
     pub fn on_click(&self, f: impl FnMut() + 'static) {
         let listener = Listener::attach(self.0.element.as_ref(), "click", f).ok();
         *self.0.listener.borrow_mut() = listener;
     }
 
-    /// クリックを発生させる (テストや自動操作用)。
+    /// Triggers a click (for tests and automation).
     pub fn click(&self) {
         self.0.element.click();
     }
