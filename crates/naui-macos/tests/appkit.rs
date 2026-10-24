@@ -350,6 +350,10 @@ fn main() {
             grid_fill_column_leaves_fixed_columns,
         ),
         (
+            "グリッドの Auto 列が再レイアウトで余りを受け取らない",
+            grid_auto_column_keeps_content_width,
+        ),
+        (
             "Gallery のメディア欄が高さ変更後にラベル幅を広げない",
             gallery_media_status_does_not_expand,
         ),
@@ -8911,6 +8915,130 @@ fn grid_fill_column_leaves_fixed_columns(ui: &Ui) -> Result<()> {
         middle_frame.size.width > 300.0,
         "それでも余りは Fill の列が受け取ること: {middle_frame:?}"
     );
+    Ok(())
+}
+
+/// In an `Auto | FILL | Auto` grid, only the `Fill` column takes the leftover and the
+/// `Auto` columns keep the width of their content.
+///
+/// NSGridView has no rule for which column receives the leftover, so after a
+/// relayout (switching the theme and so on) the left `Auto` column could widen and
+/// push the second column to the right. Without a `Fill` child the whole leftover went
+/// to the left column, and even with one (such as a slider) the left column widened.
+fn grid_auto_column_keeps_content_width(ui: &Ui) -> Result<()> {
+    for with_slider in [false, true] {
+        let grid = ui.grid()?;
+        grid.set_column_track(0, Track::Auto);
+        grid.set_column_track(1, Track::FILL);
+        grid.set_column_track(2, Track::Auto);
+        grid.set_spacing(12.0, 8.0);
+        grid.set_sizing(Sizing::fill_width());
+
+        // 「名前 | ウィジェット | 値」の表。値の無い行はウィジェットが 2 列へまたがる。
+        let mut labels = Vec::new();
+        let mut second = Vec::new();
+        let name = ui.label("ボタン")?;
+        let buttons = ui.stack(Orientation::Horizontal)?;
+        buttons.set_spacing(8.0);
+        buttons.append(&ui.button("押す")?);
+        buttons.append(&ui.button("取り消す")?);
+        grid.attach(&name, GridCell::new(0, 0));
+        grid.attach(&buttons, GridCell::new(1, 0).span(2, 1));
+        labels.push(name.native_view());
+        second.push(buttons.native_view());
+        let other = ui.label("リンク")?;
+        let link = ui.button("開く")?;
+        grid.attach(&other, GridCell::new(0, 1));
+        grid.attach(&link, GridCell::new(1, 1).span(2, 1));
+        labels.push(other.native_view());
+        second.push(link.native_view());
+        let mut value = None;
+        if with_slider {
+            let name = ui.label("音量")?;
+            let slider = ui.slider(0.0, 100.0)?;
+            slider.set_sizing(Sizing::fill_width());
+            let shown = ui.label("50")?;
+            grid.attach(&name, GridCell::new(0, 2));
+            grid.attach(&slider, GridCell::new(1, 2));
+            grid.attach(&shown, GridCell::new(2, 2));
+            labels.push(name.native_view());
+            second.push(slider.native_view());
+            value = Some((slider.native_view(), shown.native_view()));
+        }
+
+        let root = ui.stack(Orientation::Vertical)?;
+        root.set_padding(Padding::all(16.0));
+        root.append(&grid);
+        let window = ui.window("grid auto column", 640.0, 240.0)?;
+        window.set_child(&root);
+        window.show();
+        let native_window = window.native_window();
+        let content = native_window
+            .contentView()
+            .expect("コンテンツビューがあること");
+        content.layoutSubtreeIfNeeded();
+        pump(0.05);
+
+        // 列の幅は枠ではなく、位置合わせの矩形 (ラベルなら左右 2pt 内側) で決まる。
+        let alignment = |view: &NSView| view.alignmentRectForFrame(view.frame());
+        let label_width = labels
+            .iter()
+            .map(|view| alignment(view).size.width)
+            .fold(0.0, f64::max);
+        let expected = label_width + 12.0;
+        let starts = || {
+            second
+                .iter()
+                .map(|view| alignment(view).origin.x)
+                .collect::<Vec<_>>()
+        };
+        let initial = starts();
+
+        // 子の大きさが変わったことにして測り直す。
+        for view in &second {
+            view.invalidateIntrinsicContentSize();
+            view.setNeedsLayout(true);
+        }
+        grid.native_view().setNeedsLayout(true);
+        content.layoutSubtreeIfNeeded();
+        pump(0.05);
+        let relaid = starts();
+
+        // テーマを切り替えて測り直す。
+        window.set_theme(Theme::Dark)?;
+        pump(0.05);
+        content.layoutSubtreeIfNeeded();
+        window.set_theme(Theme::Light)?;
+        pump(0.05);
+        content.layoutSubtreeIfNeeded();
+        let themed = starts();
+        let grid_width = grid.native_view().frame().size.width;
+        let value = value.map(|(slider, shown)| (alignment(&slider), alignment(&shown)));
+        window.close();
+
+        for (when, starts) in [
+            ("最初のレイアウト", &initial),
+            ("再レイアウトのあと", &relaid),
+            ("テーマの切り替えのあと", &themed),
+        ] {
+            assert!(
+                starts.iter().all(|x| (x - expected).abs() < 1.0),
+                "{when}も 2 列目はラベルの幅 + 列間から始まること \
+                 (スライダー: {with_slider}): {starts:?} / {expected}"
+            );
+        }
+        if let Some((slider, shown)) = value {
+            // 余りはスライダーが受け取り、値は右端に寄る。
+            assert!(
+                (slider.origin.x + slider.size.width + 12.0 - shown.origin.x).abs() < 1.0,
+                "スライダーが値の手前まで伸びること: {slider:?} / {shown:?}"
+            );
+            assert!(
+                (shown.origin.x + shown.size.width - grid_width).abs() < 1.0,
+                "値が右端に寄ること: {shown:?} / {grid_width}"
+            );
+        }
+    }
     Ok(())
 }
 

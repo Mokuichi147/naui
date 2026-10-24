@@ -21,7 +21,7 @@ use objc2_app_kit::{
     NSViewBoundsDidChangeNotification, NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
-    NSArray, NSNotification, NSNotificationCenter, NSObject, NSPoint, NSRange, NSString,
+    NSArray, NSNotification, NSNotificationCenter, NSObject, NSPoint, NSRange, NSRect, NSString,
 };
 
 use crate::widgets::{impl_widget, Widget};
@@ -310,6 +310,7 @@ type GridGrows = Rc<RefCell<Vec<(Retained<NSLayoutConstraint>, GridCell)>>>;
 
 struct ContentSizedGridState {
     row_tracks: Rc<RefCell<Vec<Track>>>,
+    column_tracks: Rc<RefCell<Vec<Track>>>,
     cells: GridCells,
     grows: GridGrows,
     updating: Cell<bool>,
@@ -332,8 +333,9 @@ define_class!(
                 return;
             }
             let rows = self.update_auto_row_heights();
+            let columns = self.update_auto_column_widths();
             let widths = self.update_grow_widths();
-            if rows || widths {
+            if rows || columns || widths {
                 let _: () = unsafe { msg_send![super(self), layout] };
                 self.invalidateIntrinsicContentSize();
             }
@@ -346,11 +348,13 @@ impl ContentSizedGridView {
     fn new(
         mtm: MainThreadMarker,
         row_tracks: Rc<RefCell<Vec<Track>>>,
+        column_tracks: Rc<RefCell<Vec<Track>>>,
         cells: GridCells,
         grows: GridGrows,
     ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(ContentSizedGridState {
             row_tracks,
+            column_tracks,
             cells,
             grows,
             updating: Cell::new(false),
@@ -392,6 +396,57 @@ impl ContentSizedGridView {
                     changed = true;
                 }
                 _ => {}
+            }
+        }
+        changed
+    }
+
+    /// Sets the width of each Auto column to the width of its content.
+    ///
+    /// NSGridView has no rule for which column receives the leftover, and the
+    /// children's hugging alone does not stop an Auto column from absorbing it after
+    /// a relayout (switching the theme and so on). Like row heights, column widths
+    /// are recomputed from the content on every layout.
+    ///
+    /// Only cells spanning Auto columns alone are counted (spread evenly over their
+    /// span). Cells that also span a `Fill` or `Fixed` column are left out, since
+    /// that column takes their width. An Auto column without content gets width 0;
+    /// left at the "fit the content" sentinel, an empty column could take the
+    /// leftover.
+    fn update_auto_column_widths(&self) -> bool {
+        let tracks = self.ivars().column_tracks.borrow();
+        let cells = self.ivars().cells.borrow();
+        let columns = (self.numberOfColumns().max(0) as usize).min(tracks.len());
+        let auto_only = |cell: &GridCell| {
+            let end = cell.column.saturating_add(cell.column_span.max(1));
+            end <= columns && tracks[cell.column..end].iter().all(|t| *t == Track::Auto)
+        };
+        let mut changed = false;
+        for index in 0..columns {
+            if tracks[index] != Track::Auto {
+                continue;
+            }
+            let desired = cells
+                .iter()
+                .filter(|(view, cell)| {
+                    !view.isHidden()
+                        && index >= cell.column
+                        && index < cell.column.saturating_add(cell.column_span.max(1))
+                        && auto_only(cell)
+                })
+                .map(|(view, cell)| {
+                    // 列の幅は枠ではなく位置合わせの矩形で決まる (ラベルなら
+                    // 左右 2pt 内側)。枠の幅で決めると列が広がってしまう。
+                    let fitting = NSRect::new(NSPoint::ZERO, view.fittingSize());
+                    let width = view.alignmentRectForFrame(fitting).size.width;
+                    let span = cell.column_span.max(1) as f64;
+                    (width / span).max(0.0)
+                })
+                .fold(0.0, f64::max);
+            let column = self.columnAtIndex(index as isize);
+            if (column.width() - desired).abs() > 0.5 {
+                column.setWidth(desired);
+                changed = true;
             }
         }
         changed
@@ -448,13 +503,19 @@ impl ContentSizedGridView {
         widths
     }
 
-    /// The width, if the column has a fixed width. `None` for columns that fit their
-    /// content (`Auto` / `Fill`).
+    /// The width, if the column's width is decided. `None` for columns that fit their
+    /// content (`Fill`).
+    ///
+    /// Besides `Fixed` columns, this includes `Auto` columns whose width
+    /// [`Self::update_auto_column_widths`] decided. Columns of width 0 (such as an
+    /// `Auto` column without content) count as decided too; otherwise the width of
+    /// cells spanning them is spread onto them, overestimating what the other columns
+    /// need.
     fn fixed_column_width(&self, index: usize) -> Option<f64> {
         let width = self.columnAtIndex(index as isize).width();
         // `NSGridViewSizeForContent` は「中身に合わせる」を表す番兵値。
         let content = unsafe { objc2_app_kit::NSGridViewSizeForContent };
-        (width != content && width.is_finite() && width > 0.0).then_some(width)
+        (width != content && width.is_finite() && width >= 0.0).then_some(width)
     }
 
     /// The width this cell cannot use (the other columns' content, plus the outer and
@@ -484,6 +545,7 @@ struct GridInner {
     native: Retained<NSGridView>,
     children: RefCell<Vec<Box<dyn Widget>>>,
     row_tracks: Rc<RefCell<Vec<Track>>>,
+    column_tracks: Rc<RefCell<Vec<Track>>>,
     cells: GridCells,
     /// The wishes to grow horizontally. Kept so their constants can be recomputed to
     /// match the cell's share.
@@ -501,15 +563,22 @@ impl_widget!(Grid);
 impl Grid {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let row_tracks = Rc::new(RefCell::new(Vec::new()));
+        let column_tracks = Rc::new(RefCell::new(Vec::new()));
         let cells = Rc::new(RefCell::new(Vec::new()));
         let grows: GridGrows = Rc::new(RefCell::new(Vec::new()));
-        let content_sized =
-            ContentSizedGridView::new(mtm, row_tracks.clone(), cells.clone(), grows.clone());
+        let content_sized = ContentSizedGridView::new(
+            mtm,
+            row_tracks.clone(),
+            column_tracks.clone(),
+            cells.clone(),
+            grows.clone(),
+        );
         let native = content_sized.clone().into_super();
         Self(Rc::new(GridInner {
             native,
             children: RefCell::new(Vec::new()),
             row_tracks,
+            column_tracks,
             cells,
             grows,
             content_sized,
@@ -626,6 +695,7 @@ impl Grid {
         self.0.cells.borrow_mut().push((view, cell));
         self.0.children.borrow_mut().push(child.boxed_clone());
         self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_auto_column_widths();
         self.0.content_sized.update_grow_widths();
     }
 
@@ -708,6 +778,7 @@ impl Grid {
         self.remove_at(cell);
         self.apply_padding();
         self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_auto_column_widths();
         self.0.content_sized.update_grow_widths();
     }
 
@@ -725,6 +796,7 @@ impl Grid {
         }
         self.apply_padding();
         self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_auto_column_widths();
         self.0.content_sized.update_grow_widths();
     }
 
@@ -786,6 +858,7 @@ impl Grid {
     /// How a column's width is determined.
     pub fn set_column_track(&self, index: usize, track: Track) {
         self.ensure_size(index + 1, 0);
+        self.0.column_tracks.borrow_mut()[index] = track;
         let column = self.0.native.columnAtIndex(index as isize);
         match track {
             // NSGridViewSizeForContent は「中身に合わせる」を表す番兵値。
@@ -802,6 +875,7 @@ impl Grid {
                 column.setXPlacement(NSGridCellPlacement::Fill);
             }
         }
+        self.0.content_sized.update_auto_column_widths();
     }
 
     /// How a row's height is determined.
@@ -850,6 +924,7 @@ impl Grid {
         let empty = NSArray::from_slice(&[]);
         while (self.0.native.numberOfColumns() as usize) < columns {
             self.0.native.addColumnWithViews(&empty);
+            self.0.column_tracks.borrow_mut().push(Track::Auto);
         }
         while (self.0.native.numberOfRows() as usize) < rows {
             self.0.native.addRowWithViews(&empty);
