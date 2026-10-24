@@ -204,13 +204,20 @@ impl EditableComboBox {
         self.0.native.setStringValue(&NSString::from_str(text));
     }
 
-    /// Matches the list's selection to the current text.
+    /// Matches the list's selection to the current text. The text itself is kept.
     fn sync_selection(&self) {
         let previous = self.0.native.indexOfSelectedItem();
         match self.selected() {
             Some(index) => self.0.native.selectItemAtIndex(index as isize),
             // 候補と一致しなくなったら、一覧の選択も外す。
-            None if previous >= 0 => self.0.native.deselectItemAtIndex(previous),
+            // macOS 27 では選択を外すと欄の文字列まで空になるので、控えて書き戻す。
+            None if previous >= 0 => {
+                let text = self.0.native.stringValue();
+                self.without_notifying(|this| {
+                    this.0.native.deselectItemAtIndex(previous);
+                    this.0.native.setStringValue(&text);
+                });
+            }
             None => {}
         }
     }
