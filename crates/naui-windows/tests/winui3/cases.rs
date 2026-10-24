@@ -165,6 +165,10 @@ const CASES: &[Case] = &[
         window_size_is_the_content_row,
     ),
     (
+        "短いラベルのスイッチとラジオが既定の最小幅を占めない",
+        short_labels_drop_the_minimum_width,
+    ),
+    (
         "ui.window と set_size の大きさは size と同じ中身の大きさ",
         window_set_size_is_the_content_size,
     ),
@@ -1352,6 +1356,74 @@ fn window_size_is_the_content_row(ui: &Ui) -> Result<()> {
             near(last, size),
             "最後の通知 {last:?} が size {size:?} と同じこと"
         );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A switch and radio buttons with short labels do not take WinUI's default minimum
+/// width (`ToggleSwitch` 154 / `RadioButton` 120).
+///
+/// With the minimum left in place, the control after a switch, and the items of a
+/// horizontal radio group, end up far apart. naui removes it with an implicit style,
+/// the same as for `CheckBox`. The style is applied once the controls are in a shown
+/// window, so messages are pumped until they are loaded. In environments where they
+/// never load (CI), it passes without checking.
+fn short_labels_drop_the_minimum_width(ui: &Ui) -> Result<()> {
+    let window = ui.window("最小幅", 420.0, 200.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let toggle = ui.toggle("On")?;
+    let radio = ui.radio_group()?;
+    radio.set_items(&["A", "B"]);
+    radio.set_orientation(Orientation::Horizontal);
+    stack.append(&toggle);
+    stack.append(&radio);
+    window.set_child(&stack);
+    window.show();
+
+    let switch = native::<ToggleSwitch>(&toggle);
+    let buttons: Vec<FrameworkElement> = {
+        let panel = native::<StackPanel>(&radio)
+            .Children()
+            .expect("ラジオグループの子");
+        (0..panel.Size().unwrap_or(0))
+            .map(|index| {
+                panel
+                    .GetAt(index)
+                    .expect("ラジオボタン")
+                    .cast::<FrameworkElement>()
+                    .expect("ラジオボタンは FrameworkElement")
+            })
+            .collect()
+    };
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        switch.IsLoaded().unwrap_or(false)
+            && buttons
+                .iter()
+                .all(|button| button.IsLoaded().unwrap_or(false))
+    });
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !switch.IsLoaded().unwrap_or(false) {
+            println!("     (コントロールが読み込まれない環境なので、確かめずに通す)");
+            return;
+        }
+        assert_eq!(buttons.len(), 2, "項目の数だけラジオボタンがあること");
+        assert_eq!(
+            switch.MinWidth().unwrap_or(-1.0),
+            0.0,
+            "ToggleSwitch の最小幅 (既定 154) が外れていること"
+        );
+        for button in &buttons {
+            assert_eq!(
+                button.MinWidth().unwrap_or(-1.0),
+                0.0,
+                "RadioButton の最小幅 (既定 120) が外れていること"
+            );
+        }
     }));
     window.close();
     if let Err(panic) = outcome {

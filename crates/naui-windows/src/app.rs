@@ -57,13 +57,21 @@ where
         // 決める。ここで上書きすると、実機の WinUI 3 アプリと見た目がずれる。
         let fluent = XamlControlsResources::new()?
             .cast::<naui_winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
-        // 例外はレイアウトに関わる下限だけ。WinUI 既定の CheckBox は
-        // MinWidth=120 で、ラベルが短くても (空でも) 120px ぶんの幅を占める。
+        // 例外はレイアウトに関わる下限だけ。WinUI 既定の CheckBox と
+        // RadioButton は MinWidth=120、ToggleSwitch は MinWidth=154
+        // (`ToggleSwitchThemeMinWidth`) で、ラベルが短くても (空でも) その幅を
+        // 占める。横に並べると、後ろの部品やラジオの項目の間が大きく空く。
         // naui は幅を親のレイアウトで決めるので、この下限は外して中身に
         // 沿わせる。
         let layout = XamlReader::Load(&HSTRING::from(
             r##"<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
                 <Style TargetType="CheckBox">
+                    <Setter Property="MinWidth" Value="0"/>
+                </Style>
+                <Style TargetType="RadioButton">
+                    <Setter Property="MinWidth" Value="0"/>
+                </Style>
+                <Style TargetType="ToggleSwitch">
                     <Setter Property="MinWidth" Value="0"/>
                 </Style>
             </ResourceDictionary>"##,
