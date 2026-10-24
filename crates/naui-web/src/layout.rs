@@ -177,7 +177,7 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
                 let _ = style.set_property("flex-grow", "1");
             }
             if fill_width {
-                let _ = style.set_property("align-self", "stretch");
+                stretch(&style, "align-self", "width");
             }
         }
         ParentLayout::Flex(Orientation::Horizontal) => {
@@ -185,15 +185,15 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
                 let _ = style.set_property("flex-grow", "1");
             }
             if fill_height {
-                let _ = style.set_property("align-self", "stretch");
+                stretch(&style, "align-self", "height");
             }
         }
         ParentLayout::Grid => {
             if fill_width {
-                let _ = style.set_property("justify-self", "stretch");
+                stretch(&style, "justify-self", "width");
             }
             if fill_height {
-                let _ = style.set_property("align-self", "stretch");
+                stretch(&style, "align-self", "height");
             }
         }
         ParentLayout::Block => {
@@ -205,6 +205,17 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
             }
         }
     }
+}
+
+/// Stretches the element to the parent's size on one axis (`stretch`).
+///
+/// `stretch` only applies while that axis's size is `auto`. Some elements get a
+/// size from the browser's own stylesheet (`<progress>` and `<select>`, for
+/// example), and the inline style removed above does not undo that, so the size is
+/// written as `auto` explicitly.
+fn stretch(style: &web_sys::CssStyleDeclaration, align: &str, size: &str) {
+    let _ = style.set_property(align, "stretch");
+    let _ = style.set_property(size, "auto");
 }
 
 // ----------------------------------------------------------------- Spacer
@@ -252,6 +263,11 @@ impl Grid {
         // 縦は中央ぞろえ。高さの違うもの (ラベルと入力欄など) を同じ行に置いても
         // 上端で揃わないようにする。`Fill` の子は align-self: stretch で上書きされる。
         let _ = element.style().set_property("align-items", "center");
+        // 横は先頭ぞろえ。CSS Grid の既定 (stretch) のままだと、中身に合わせる
+        // はずの子までマスの幅いっぱいに伸びる。ほかの環境 (NSGridView の
+        // Leading、WinUI の Left) と同じく、伸びるのは `Fill` の子
+        // (justify-self: stretch) だけにする。
+        let _ = element.style().set_property("justify-items", "start");
         mark_parent(&element, ParentLayout::Grid);
         Ok(Self(Rc::new(GridInner {
             element,
