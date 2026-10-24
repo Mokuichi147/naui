@@ -1596,6 +1596,9 @@ fn editable_combo_box_text_round_trips(ui: &Ui) -> Result<()> {
     assert!(seen.borrow().is_empty(), "set_selected は通知しない");
     combo.set_selected(99);
     assert_eq!(combo.text(), "大阪", "範囲外は無視する");
+    combo.set_text("神戸");
+    assert_eq!(combo.text(), "神戸", "選択を外しても書いた文字列は残る");
+    assert_eq!(native.indexOfSelectedItem(), -1, "一覧側の選択も外れる");
 
     combo.clear();
     assert_eq!(combo.text(), "");
