@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-use naui::{Orientation, Result, Task, Ui};
+use naui::{Result, Task, Ui};
 
 use crate::parts::{self, Notice};
 
@@ -72,7 +72,7 @@ impl Oneshot {
     /// 別スレッドから呼ぶ。待っている処理を起こす。
     fn finish(&self) {
         let waker = {
-            let mut state = self.0.lock().expect("待ち合わせ");
+            let mut state = self.0.lock().expect("oneshot lock");
             state.finished = true;
             state.waker.take()
         };
@@ -86,7 +86,7 @@ impl Future for Oneshot {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let mut state = self.0.lock().expect("待ち合わせ");
+        let mut state = self.0.lock().expect("oneshot lock");
         if state.finished {
             return Poll::Ready(());
         }
@@ -99,25 +99,22 @@ impl Future for Oneshot {
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
-    parts::section(
-        ui,
-        &pane,
-        "別スレッドからの受け渡し",
-        &[
-            "重い処理を別のスレッドへ出し、途中経過だけを画面へ返します。",
-            "3 段階に分けて進むので、進捗バーが 1 段ずつ動きます。",
-        ],
-    )?;
-    // ブラウザにはスレッドが無い。待ち時間を作れないので、そのことを画面にも書く。
+    // 重い処理を別のスレッドへ出し、途中経過だけを画面へ返す。3 段階に分けて
+    // 進むので、進捗バーが 1 段ずつ動く。
+    parts::section(ui, &pane, "Worker thread")?;
+    // ブラウザにはスレッドが無い。待ち時間を作れず、動かない画面に見えて
+    // しまうので、そのことだけは画面にも書く。
     #[cfg(target_arch = "wasm32")]
-    pane.append(&parts::note(
-        ui,
-        "※ ブラウザにはスレッドが無いため、この画面ではどれも待ち時間なしで終わります。",
-    )?);
+    {
+        let note = ui.label("Browsers have no threads, so every task here finishes at once.")?;
+        note.set_color(naui::TextColor::Secondary);
+        pane.append(&note);
+    }
 
-    let worker_status = parts::readout(ui, "待機中")?;
+    let worker_status = parts::readout(ui, "Idle")?;
     let progress = ui.progress_bar()?;
-    let start = ui.button("重い処理を始める")?;
+    progress.set_sizing(naui::Sizing::fill_width());
+    let start = ui.button("Start heavy work")?;
     start.on_click({
         let tasks = ui.tasks();
         let worker_status = worker_status.clone();
@@ -128,7 +125,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             if let Some(start) = start.upgrade() {
                 start.set_enabled(false);
             }
-            worker_status.set_text("実行中… 0/3");
+            worker_status.set_text("Running… 0/3");
             progress.set_value(0.0);
 
             // 受け取る側は UI スレッドに置く。ここでウィジェットを触ってよい。
@@ -139,12 +136,12 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
                 move |p: Progress| {
                     progress.set_value(p.done as f64 / p.total as f64);
                     if p.done == p.total {
-                        worker_status.set_text("完了");
+                        worker_status.set_text("Done");
                         if let Some(start) = start.upgrade() {
                             start.set_enabled(true);
                         }
                     } else {
-                        worker_status.set_text(&format!("実行中… {}/{}", p.done, p.total));
+                        worker_status.set_text(&format!("Running… {}/{}", p.done, p.total));
                     }
                 }
             });
@@ -159,46 +156,35 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         }
     });
 
-    let worker_row = ui.stack(Orientation::Horizontal)?;
-    worker_row.set_spacing(8.0);
-    worker_row.append(&start);
-    worker_row.append(&worker_status);
-    pane.append(&worker_row);
-    pane.append(&progress);
-
-    // 「待っている間も画面は止まっていない」ことを、その場で確かめられるようにする。
-    pane.append(&parts::note(
-        ui,
-        "処理の間も画面は止まりません。下のボタンで確かめてください。",
-    )?);
+    // 「待っている間も画面は止まっていない」ことを、その場で確かめられるよう、
+    // 始めるボタンの隣に押せるボタンを置く。
     let taps = Rc::new(Cell::new(0usize));
-    let tap = ui.button("反応を確かめる")?;
+    let tap = ui.button("Still responsive?")?;
     tap.on_click({
         let taps = taps.clone();
         let notice = notice.clone();
         move || {
             let next = taps.get() + 1;
             taps.set(next);
-            notice.show(&format!("押した回数: {next}"));
+            notice.show(&format!("Tapped {next} times"));
         }
     });
-    pane.append(&tap);
+    let worker_row = parts::row(ui)?;
+    worker_row.append(&start);
+    worker_row.append(&tap);
+    worker_row.append(&worker_status);
+    pane.append(&worker_row);
+    pane.append(&progress);
 
-    parts::section(
-        ui,
-        &pane,
-        "非同期処理",
-        &[
-            "ボタンのクロージャの中から async を始め、別スレッドの結果を待ちます。",
-            "待っている間に「止める」を押すと、続きは実行されません。",
-        ],
-    )?;
+    // ボタンのクロージャの中から async を始め、別スレッドの結果を待つ。
+    // 待っている間に「Stop」を押すと、続きは実行されない。
+    parts::section(ui, &pane, "Async task")?;
 
-    let async_status = parts::readout(ui, "待機中")?;
+    let async_status = parts::readout(ui, "Idle")?;
     // 走っているものを覚えておき、次に押されたら止める。
     let running: Rc<RefCell<Option<Task>>> = Rc::new(RefCell::new(None));
 
-    let load = ui.button("読み込みを始める")?;
+    let load = ui.button("Start loading")?;
     load.on_click({
         let tasks = ui.tasks();
         let async_status = async_status.clone();
@@ -225,31 +211,30 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             let task = tasks.spawn({
                 let async_status = async_status.clone();
                 async move {
-                    async_status.set_text("読み込み中… 1/2");
+                    async_status.set_text("Loading… 1/2");
                     first.await;
-                    async_status.set_text("読み込み中… 2/2");
+                    async_status.set_text("Loading… 2/2");
                     second.await;
-                    async_status.set_text("完了");
+                    async_status.set_text("Done");
                 }
             });
             *running.borrow_mut() = Some(task);
         }
     });
 
-    let stop = ui.button("止める")?;
+    let stop = ui.button("Stop")?;
     stop.on_click({
         let async_status = async_status.clone();
         let running = running.clone();
         move || {
             if let Some(task) = running.borrow_mut().take() {
                 task.cancel();
-                async_status.set_text("止めました");
+                async_status.set_text("Stopped");
             }
         }
     });
 
-    let async_row = ui.stack(Orientation::Horizontal)?;
-    async_row.set_spacing(8.0);
+    let async_row = parts::row(ui)?;
     async_row.append(&load);
     async_row.append(&stop);
     async_row.append(&async_status);

@@ -5,9 +5,9 @@ use crate::parts::{self, Notice};
 /// 選ばれたファイルやフォルダーを、短い知らせの文にする。
 fn describe_entries(entries: &[FileEntry]) -> String {
     match entries {
-        [] => "選択されていません".to_string(),
+        [] => "Nothing selected".to_string(),
         [entry] => describe_entry(entry),
-        many => format!("{} 件: {} ほか", many.len(), many[0].name()),
+        many => format!("{} items: {} and more", many.len(), many[0].name()),
     }
 }
 
@@ -15,7 +15,7 @@ fn describe_entries(entries: &[FileEntry]) -> String {
 fn describe_entry(entry: &FileEntry) -> String {
     match entry.path() {
         Some(path) => path.display().to_string(),
-        None => format!("{} (この環境ではパス非公開)", entry.name()),
+        None => format!("{} (path not available here)", entry.name()),
     }
 }
 
@@ -23,60 +23,53 @@ fn describe_entry(entry: &FileEntry) -> String {
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
-    parts::section(
-        ui,
-        &pane,
-        "FilePicker",
-        &["環境標準の選択ダイアログを、3つのモードで開きます。"],
-    )?;
+    // 環境標準の選択ダイアログを、3 つのモードで開く。ボタンの文字がモードを表す。
+    parts::section(ui, &pane, "FilePicker")?;
+    let pickers = parts::row(ui)?;
 
-    parts::group(ui, &pane, "ファイルを1つ選択", &["拡張子フィルターあり。"])?;
-    let single = ui.file_picker("画像を1つ選ぶ")?;
+    // 拡張子フィルターあり。
+    let single = ui.file_picker("Choose an image…")?;
     single.set_filters(&[FileFilter::new(
-        "画像",
+        "Images",
         ["png", "jpg", "jpeg", "gif", "webp"],
     )]);
     single.on_select({
         let notice = notice.clone();
-        move |entries| notice.show(&format!("選択: {}", describe_entries(entries)))
+        move |entries| notice.show(&format!("Selected: {}", describe_entries(entries)))
     });
-    pane.append(&single);
+    pickers.append(&single);
 
-    parts::group(ui, &pane, "ファイルを複数選択", &[])?;
-    let multiple = ui.file_picker("ファイルを複数選ぶ")?;
+    let multiple = ui.file_picker("Choose files…")?;
     multiple.set_mode(FilePickerMode::Files);
     multiple.on_select({
         let notice = notice.clone();
-        move |entries| notice.show(&format!("選択: {}", describe_entries(entries)))
+        move |entries| notice.show(&format!("Selected: {}", describe_entries(entries)))
     });
-    pane.append(&multiple);
+    pickers.append(&multiple);
 
-    parts::group(ui, &pane, "フォルダーを選択", &[])?;
-    let folder = ui.file_picker("フォルダーを選ぶ")?;
+    let folder = ui.file_picker("Choose a folder…")?;
     folder.set_mode(FilePickerMode::Folder);
     folder.on_select({
         let notice = notice.clone();
-        move |entries| notice.show(&format!("選択: {}", describe_entries(entries)))
+        move |entries| notice.show(&format!("Selected: {}", describe_entries(entries)))
     });
-    pane.append(&folder);
+    pickers.append(&folder);
+    pane.append(&pickers);
 
-    parts::section(
-        ui,
-        &pane,
-        "FileSaver",
-        &["入力した内容を、環境標準の保存ダイアログで書き出します。"],
-    )?;
+    // 入力した内容を、環境標準の保存ダイアログで書き出す。保存のボタンは
+    // 書き出す欄のすぐ下に置く。
+    parts::section(ui, &pane, "FileSaver")?;
 
-    let editor = ui.text_area("naui で保存したテキストです。")?;
+    let editor = ui.text_area("Text saved with naui.")?;
     editor.set_sizing(
         Sizing::new()
             .width(Length::Fill)
             .height(Length::Fixed(80.0)),
     );
 
-    let saver = ui.file_saver("テキストを保存")?;
-    saver.set_file_name("naui-メモ");
-    saver.set_filters(&[FileFilter::new("テキスト", ["txt", "md"])]);
+    let saver = ui.file_saver("Save text…")?;
+    saver.set_file_name("naui-note");
+    saver.set_filters(&[FileFilter::new("Text", ["txt", "md"])]);
     // ボタンを押した時点の内容を書き出したいので、打つたびに渡し直す。
     saver.set_contents(editor.text().as_bytes());
     editor.on_change({
@@ -85,11 +78,11 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     });
     saver.on_save({
         let notice = notice.clone();
-        move |entry| notice.show(&format!("保存しました: {}", describe_entry(entry)))
+        move |entry| notice.show(&format!("Saved: {}", describe_entry(entry)))
     });
     saver.on_error({
         let notice = notice.clone();
-        move |error| notice.show(&format!("保存できません: {error}"))
+        move |error| notice.show(&format!("Could not save: {error}"))
     });
     pane.append(&editor);
     pane.append(&saver);
