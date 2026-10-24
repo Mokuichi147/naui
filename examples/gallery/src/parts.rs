@@ -1,8 +1,13 @@
-//! 画面の組み方をそろえるための、見出しと文字づかい。
+//! 画面の組み方をそろえるための、見出しと並べ方。
 //!
-//! どの区分の画面も「見出し・説明・試せるウィジェット」の繰り返しで
-//! できている。同じ形を画面ごとに手で組むと、見出しの大きさも余白も
-//! ばらつくので、組み方をここへ 1 か所にまとめる。
+//! どの区分の画面も「見出しと、試せるウィジェット」の繰り返しでできている。
+//! 見出しの下に説明の文は置かない。何を試す所かは、並べ方で伝える。
+//!
+//! - 同じ種類の小さなウィジェットは [`Form`] で「名前 | ウィジェット | 値」の
+//!   3 列に並べる。左の名前が見出しの代わりになり、右端の値は、その行の
+//!   操作で変わるものだとわかる。
+//! - 一覧や表のような大きなウィジェットは見出しの下に置き、それを操作する
+//!   ボタンは [`row`] で 1 行にまとめて、すぐ上か下へ置く。
 //!
 //! 操作の結果 (押された・選ばれた・保存した) は画面に Label を置かず、
 //! [`Notice`] のトーストで知らせる。結果を出すためだけの行が並ばないぶん、
@@ -13,14 +18,14 @@
 //!
 //! 節はコンテナへまとめず、画面の `Stack` へ 1 段で積む。並びが 1 本だと
 //! 余った高さの行き先が「いちばん外側の末尾」に決まり、どの環境でも同じ
-//! 見え方になる。まとまりは文字の段階と色で見せる。
+//! 見え方になる。まとまりは見出しの前の空きと文字の段階で見せる。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{
-    Align, Label, Orientation, Padding, RadioGroup, Result, Sizing, Stack, TextColor, TextStyle,
-    Toast, Toggle, Ui,
+    Align, Grid, GridCell, Label, Orientation, Padding, RadioGroup, Result, Sizing, Stack,
+    TextColor, TextStyle, Toast, Toggle, Track, Ui, Widget,
 };
 
 /// 区分 1 つ分の画面の土台。
@@ -36,35 +41,47 @@ pub(crate) fn pane(ui: &Ui) -> Result<Stack> {
     Ok(pane)
 }
 
-/// 節の見出しと説明を置く。ウィジェットの種別ごとの区切りに使う。
-pub(crate) fn section(ui: &Ui, pane: &Stack, title: &str, notes: &[&str]) -> Result<()> {
-    heading(ui, pane, TextStyle::Subtitle, title, notes)
+/// 節の見出しを置く。ウィジェットの種別ごとの区切りに使う。
+pub(crate) fn section(ui: &Ui, pane: &Stack, title: &str) -> Result<()> {
+    heading(ui, pane, TextStyle::Subtitle, title)
 }
 
 /// 節の中の小見出し。段階が 1 つ下がるだけで、置き方は節と同じ。
-pub(crate) fn group(ui: &Ui, pane: &Stack, title: &str, notes: &[&str]) -> Result<()> {
-    heading(ui, pane, TextStyle::Heading, title, notes)
+pub(crate) fn group(ui: &Ui, pane: &Stack, title: &str) -> Result<()> {
+    heading(ui, pane, TextStyle::Heading, title)
 }
 
-fn heading(ui: &Ui, pane: &Stack, style: TextStyle, title: &str, notes: &[&str]) -> Result<()> {
+/// 見出しの前の空き。節の中の間隔 (画面の `Stack` の 12) より広く空けて、
+/// 前の節との切れ目を余白で見せる。
+const SECTION_GAP: f64 = 16.0;
+
+fn heading(ui: &Ui, pane: &Stack, style: TextStyle, title: &str) -> Result<()> {
     let heading = ui.label(title)?;
     heading.set_style(style);
-    pane.append(&heading);
-    for text in notes {
-        pane.append(&note(ui, text)?);
+    if pane.is_empty() {
+        pane.append(&heading);
+        return Ok(());
     }
+    // Label は余白を持てないので、1 つだけ入れた Stack の余白で空ける。
+    // 縦の Stack にする。macOS の Stack は主軸の向きにだけ中身へ縮むので、
+    // 横の Stack だと縦に伸びて、見出しの下が空きすぎることがある。
+    let gap = ui.stack(Orientation::Vertical)?;
+    gap.set_align(Align::Start);
+    gap.set_padding(Padding {
+        top: SECTION_GAP,
+        ..Padding::ZERO
+    });
+    gap.append(&heading);
+    pane.append(&gap);
     Ok(())
 }
 
-/// 説明の文。小さく淡い文字にして、見出しと操作の邪魔をしないようにする。
-pub(crate) fn note(ui: &Ui, text: &str) -> Result<Label> {
-    let note = ui.label(text)?;
-    note.set_style(TextStyle::Caption);
-    note.set_color(TextColor::Secondary);
-    // 窓を狭めても読めるように折り返す。折り返す幅は親が決めるので幅も渡す。
-    note.set_wrap(true);
-    note.set_sizing(Sizing::fill_width());
-    Ok(note)
+/// ボタンなどを横 1 行に並べる。並べた先のウィジェットを操作するものを
+/// まとめるのに使う。
+pub(crate) fn row(ui: &Ui) -> Result<Stack> {
+    let row = ui.stack(Orientation::Horizontal)?;
+    row.set_spacing(8.0);
+    Ok(row)
 }
 
 /// 見出しを付けて横に並べた `RadioGroup`。表示のしかたなどを 1 つ選ばせる所に使う。
@@ -87,12 +104,70 @@ pub(crate) fn choice(ui: &Ui, title: &str, items: &[&str]) -> Result<(Stack, Rad
 /// 入力に合わせて変わる表示 (文字数・合計・進捗など)。
 ///
 /// 操作の結果を知らせるのは [`Notice`] の役目で、こちらは実際のアプリでも
-/// 画面に置いておく値だけに使う。アクセントカラーにして、説明の文と
-/// 見分けられるようにする。
+/// 画面に置いておく値だけに使う。アクセントカラーにして、名前や
+/// ウィジェットの文字と見分けられるようにする。
 pub(crate) fn readout(ui: &Ui, text: &str) -> Result<Label> {
     let readout = ui.label(text)?;
     readout.set_color(TextColor::Accent);
     Ok(readout)
+}
+
+/// 「名前 | ウィジェット | 値」の 3 列に並べる表。
+///
+/// 名前の列は長いものに合わせ、ウィジェットの列が残りの幅を受け取る。値の列は
+/// 中身の幅だけを取る。値の無い行は、ウィジェットが値の列まで広がる。
+///
+/// 名前と値を横に並べるのは `Stack` ではなく `Grid` で組む。Windows の
+/// `Stack` (StackPanel) は主軸の `Fill` を配らないので、横 `Stack` の中の
+/// 入力欄は幅いっぱいに伸びない。
+pub(crate) struct Form {
+    grid: Grid,
+    rows: Cell<usize>,
+}
+
+impl Form {
+    /// 空の表を作り、`pane` へ置く。
+    pub(crate) fn new(ui: &Ui, pane: &Stack) -> Result<Self> {
+        let grid = ui.grid()?;
+        grid.set_spacing(16.0, 10.0);
+        grid.set_column_track(0, Track::Auto);
+        grid.set_column_track(1, Track::FILL);
+        grid.set_column_track(2, Track::Auto);
+        grid.set_sizing(Sizing::fill_width());
+        pane.append(&grid);
+        Ok(Self {
+            grid,
+            rows: Cell::new(0),
+        })
+    }
+
+    /// 名前とウィジェットの行を足す。
+    pub(crate) fn row(&self, ui: &Ui, title: &str, widget: &dyn Widget) -> Result<()> {
+        let row = self.next_row(ui, title)?;
+        self.grid.attach(widget, GridCell::new(1, row).span(2, 1));
+        Ok(())
+    }
+
+    /// 名前とウィジェットに、右端の値を添えた行を足す。
+    pub(crate) fn row_with(
+        &self,
+        ui: &Ui,
+        title: &str,
+        widget: &dyn Widget,
+        value: &dyn Widget,
+    ) -> Result<()> {
+        let row = self.next_row(ui, title)?;
+        self.grid.attach(widget, GridCell::new(1, row));
+        self.grid.attach(value, GridCell::new(2, row));
+        Ok(())
+    }
+
+    fn next_row(&self, ui: &Ui, title: &str) -> Result<usize> {
+        let row = self.rows.get();
+        self.rows.set(row + 1);
+        self.grid.attach(&ui.label(title)?, GridCell::new(0, row));
+        Ok(row)
+    }
 }
 
 /// 操作の結果を知らせるトースト。ギャラリー全体で 1 つを使い回す。
@@ -133,10 +208,10 @@ pub(crate) struct Disabler {
 type Targets = Rc<RefCell<Vec<Box<dyn Fn(bool)>>>>;
 
 impl Disabler {
-    /// 節の見出しと説明、スイッチを `pane` へ置く。
-    pub(crate) fn new(ui: &Ui, pane: &Stack, notes: &[&str]) -> Result<Self> {
-        section(ui, pane, "無効状態", notes)?;
-        let toggle = ui.toggle("この画面の操作を無効にする")?;
+    /// スイッチを `parent` へ置く。画面の先頭 (画面の `Stack` か、その先頭の行)
+    /// に置いて、画面全体に効くことを位置で見せる。
+    pub(crate) fn new(ui: &Ui, parent: &Stack) -> Result<Self> {
+        let toggle = ui.toggle("Disable controls on this page")?;
         let targets: Targets = Rc::default();
         toggle.on_toggle({
             let targets = targets.clone();
@@ -146,7 +221,7 @@ impl Disabler {
                 }
             }
         });
-        pane.append(&toggle);
+        parent.append(&toggle);
         Ok(Self { toggle, targets })
     }
 

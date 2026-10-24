@@ -4,8 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{
-    Align, Length, Orientation, Result, SelectionMode, Sizing, SortOrder, TableCells, TableColumn,
-    TableRow, Ui,
+    Align, Length, Result, SelectionMode, Sizing, SortOrder, TableCells, TableColumn, TableRow, Ui,
 };
 
 use crate::parts::{self, Notice};
@@ -23,38 +22,33 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
 /// Table の列の幅と揃え、見出しからの並べ替え、選べない行、
 /// 単一・複数選択、列の差し替え。
 fn build_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "Table",
-        &["列見出しと、幅を指定した列・右寄せの列を確認できます。見出しを押すと並べ替わります。"],
-    )?;
+    parts::section(ui, pane, "Table")?;
 
     // 幅を指定しない列 (都市) だけが、余った幅を受け取って広がる。
     let wide = vec![
-        TableColumn::new("都市").sortable(true),
-        TableColumn::new("人口")
+        TableColumn::new("City").sortable(true),
+        TableColumn::new("Population")
             .width(120.0)
             .align(Align::End)
             .sortable(true),
-        TableColumn::new("面積 km²")
+        TableColumn::new("Area km²")
             .width(100.0)
             .align(Align::End)
             .sortable(true),
     ];
     let narrow = vec![
-        TableColumn::new("都市").sortable(true),
-        TableColumn::new("人口")
+        TableColumn::new("City").sortable(true),
+        TableColumn::new("Population")
             .width(120.0)
             .align(Align::End)
             .sortable(true),
     ];
     let rows = vec![
-        TableRow::new(["東京", "13,960,000", "2,194"]),
-        TableRow::new(["大阪", "8,838,000", "1,905"]),
-        TableRow::new(["名古屋", "2,332,000", "326"]),
-        TableRow::new(["集計中", "—", "—"]).enabled(false),
-        TableRow::new(["札幌", "1,973,000", "1,121"]),
+        TableRow::new(["Tokyo", "13,960,000", "2,194"]),
+        TableRow::new(["Osaka", "8,838,000", "1,905"]),
+        TableRow::new(["Nagoya", "2,332,000", "326"]),
+        TableRow::new(["Counting…", "—", "—"]).enabled(false),
+        TableRow::new(["Sapporo", "1,973,000", "1,121"]),
     ];
 
     let table = ui.table()?;
@@ -80,9 +74,9 @@ fn build_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
                 .filter_map(|&index| rows.get(index).map(|row| row.cell(0)))
                 .collect();
             if names.is_empty() {
-                notice.show("選択: なし");
+                notice.show("Selected: none");
             } else {
-                notice.show(&format!("選択: {}", names.join(" / ")));
+                notice.show(&format!("Selected: {}", names.join(" / ")));
             }
         }
     });
@@ -102,7 +96,8 @@ fn build_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
         }
     });
 
-    let (mode_row, mode) = parts::choice(ui, "選択方法", &["単一", "複数"])?;
+    // 表を操作するものは、表のすぐ上に 1 行でまとめる。
+    let (mode_row, mode) = parts::choice(ui, "Selection", &["Single", "Multiple"])?;
     mode.on_select({
         let table = table.clone();
         move |index| {
@@ -113,29 +108,26 @@ fn build_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
             });
         }
     });
-    pane.append(&mode_row);
-    pane.append(&table);
-
-    let actions = ui.stack(Orientation::Horizontal)?;
-    actions.set_spacing(8.0);
-
-    let select_example = ui.button("選択例")?;
+    let select_example = ui.button("Select 1 and 3")?;
     select_example.on_click({
         let table = table.clone();
         move || table.select_many(&[0, 2])
     });
 
     // 列を差し替えても、行の中身はそのまま残る。
-    let column_toggle = ui.checkbox("面積の列を表示")?;
+    let column_toggle = ui.checkbox("Area column")?;
     column_toggle.set_checked(true);
     column_toggle.on_toggle({
         let table = table.clone();
         move |showing| table.set_columns(if showing { &wide } else { &narrow })
     });
 
+    let actions = parts::row(ui)?;
+    actions.append(&mode_row);
     actions.append(&select_example);
     actions.append(&column_toggle);
     pane.append(&actions);
+    pane.append(&table);
     Ok(())
 }
 
@@ -188,7 +180,7 @@ fn show_rows(ui: &Ui, table: &naui::Table, rows: &Rc<RefCell<Vec<TableRow>>>, wi
             (
                 row.cell(0).to_owned(),
                 row.cell(1).to_owned(),
-                row.cell(2) == "完了",
+                row.cell(2) == "Done",
             )
         };
         let check = ui.checkbox("")?;
@@ -198,7 +190,7 @@ fn show_rows(ui: &Ui, table: &naui::Table, rows: &Rc<RefCell<Vec<TableRow>>>, wi
             let data = data.clone();
             move |checked| {
                 if let Some(row) = data.borrow_mut().get_mut(index) {
-                    let state = if checked { "完了" } else { "確認中" };
+                    let state = if checked { "Done" } else { "Review" };
                     row.cells[2] = state.to_owned();
                 }
             }
@@ -225,13 +217,13 @@ fn sort_rows(rows: &mut [TableRow], column: usize, order: SortOrder) {
     });
 }
 
-/// 「2 列目で並べ替え (昇順)」の形にする。
+/// 「Sorted by column 2 (ascending)」の形にする。
 fn describe_sort(column: usize, order: SortOrder) -> String {
     let direction = match order {
-        SortOrder::Ascending => "昇順",
-        SortOrder::Descending => "降順",
+        SortOrder::Ascending => "ascending",
+        SortOrder::Descending => "descending",
     };
-    format!("{} 列目で並べ替え ({direction})", column + 1)
+    format!("Sorted by column {} ({direction})", column + 1)
 }
 
 /// 桁区切りを外して数として読む。数でなければ `None` (文字として比べる)。
@@ -241,22 +233,18 @@ fn number(cell: &str) -> Option<u64> {
 }
 
 /// セルにウィジェットを置く表 (`TableCells` + `set_row_builder`)。
+///
+/// set_row_builder に「行数」と「その行を組み立てる関数」を渡すと、セルに
+/// ウィジェットを置ける。行のセルや余白を押すと on_activate が出るが、
+/// 中のボタンやチェックを押したときは出ない。
 fn build_table_cells(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "TableCells",
-        &[
-            "set_row_builder に「行数」と「その行を組み立てる関数」を渡すと、セルにウィジェットを置けます。",
-            "行のセルや余白を押すと on_activate が出ますが、中のボタンやチェックを押したときは出ません。",
-        ],
-    )?;
+    parts::section(ui, pane, "TableCells")?;
 
     let table = ui.table()?;
     table.set_columns(&[
-        TableColumn::new("公開").width(60.0).align(Align::Center),
-        TableColumn::new("名前"),
-        TableColumn::new("操作").width(90.0).align(Align::End),
+        TableColumn::new("Public").width(60.0).align(Align::Center),
+        TableColumn::new("Name"),
+        TableColumn::new("Action").width(90.0).align(Align::End),
     ]);
     table.set_sizing(
         Sizing::new()
@@ -266,16 +254,16 @@ fn build_table_cells(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()>
     // セルにボタンを置くと、文字だけの行より高さが要る。
     table.set_row_height(44.0);
 
-    const NAMES: [&str; 5] = ["設計メモ", "議事録", "見積り", "写真", "録音"];
+    const NAMES: [&str; 5] = ["Design notes", "Minutes", "Estimate", "Photos", "Recording"];
     table.set_row_builder(NAMES.len(), {
         let ui = ui.clone();
         let notice = notice.clone();
         move |index| {
             let check = ui.checkbox("")?;
-            let open = ui.button("開く")?;
+            let open = ui.button("Open")?;
             open.on_click({
                 let notice = notice.clone();
-                move || notice.show(&format!("{} を開きます", NAMES[index]))
+                move || notice.show(&format!("Opening {}", NAMES[index]))
             });
             let cells = TableCells::new()
                 .cell(&check)
@@ -294,28 +282,23 @@ fn build_table_cells(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()>
 }
 
 /// 行が多い表。画面に出ている行だけが組み立てられる。
+///
+/// 10 万行を渡しても、組み立てるのは画面に出ている行だけ。スクロールバーの
+/// 長さと位置は全行分のまま、選択もインデックスで覚えている。行を絞って
+/// いても、並べ替えの扱いは小さい表と同じ。行の作り方を「Widgets」にすると、
+/// 10 万行のままセルにチェックボックスが入る。
 fn build_large_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "行が多い表",
-        &[
-            "10 万行を渡しても、組み立てるのは画面に出ている行だけです。",
-            "スクロールバーの長さと位置は全行分のまま、選択もインデックスで覚えています。",
-            "見出しを押すと並べ替わります。行を絞っていても、並べ替えの扱いは小さい表と同じです。",
-            "行の作り方を「ウィジェット」にすると、10 万行のままセルにチェックボックスが入ります。",
-        ],
-    )?;
+    parts::section(ui, pane, "100,000 rows")?;
 
     const ROWS: usize = 100_000;
     let table = ui.table()?;
     table.set_columns(&[
-        TableColumn::new("番号")
+        TableColumn::new("No.")
             .width(90.0)
             .align(Align::End)
             .sortable(true),
-        TableColumn::new("名前").sortable(true),
-        TableColumn::new("状態").width(90.0).sortable(true),
+        TableColumn::new("Name").sortable(true),
+        TableColumn::new("Status").width(90.0).sortable(true),
     ]);
     table.set_sizing(
         Sizing::new()
@@ -329,8 +312,8 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()>
     table.on_select({
         let notice = notice.clone();
         move |indices| match indices.first() {
-            Some(index) => notice.show(&format!("選択: {index} 行目")),
-            None => notice.show("選択: なし"),
+            Some(index) => notice.show(&format!("Selected: row {index}")),
+            None => notice.show("Selected: none"),
         }
     });
 
@@ -358,14 +341,14 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()>
             };
             show_rows(&ui, &table, &rows, widget_rows.get());
             notice.show(&format!(
-                "{} / {count} 行{}",
+                "{} / {count} rows{}",
                 describe_sort(column, order),
                 stopwatch.took()
             ));
         }
     });
 
-    let (mode_row, mode) = parts::choice(ui, "行の作り方", &["文字", "ウィジェット"])?;
+    let (mode_row, mode) = parts::choice(ui, "Rows", &["Text", "Widgets"])?;
     mode.on_select({
         let ui = ui.clone();
         let table = table.clone();
@@ -377,22 +360,13 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()>
             let stopwatch = Stopwatch::start();
             show_rows(&ui, &table, &rows, widget_rows.get());
             notice.show(&format!(
-                "{} の行にしました{}",
-                if widget_rows.get() {
-                    "ウィジェット"
-                } else {
-                    "文字"
-                },
+                "Switched to {} rows{}",
+                if widget_rows.get() { "widget" } else { "text" },
                 stopwatch.took()
             ));
         }
     });
-    pane.append(&mode_row);
-
-    let actions = ui.stack(Orientation::Horizontal)?;
-    actions.set_spacing(8.0);
-
-    let fill = ui.button("10 万行を入れる")?;
+    let fill = ui.button("Fill 100,000 rows")?;
     fill.on_click({
         let ui = ui.clone();
         let table = table.clone();
@@ -405,29 +379,24 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()>
                 .map(|index| {
                     TableRow::new([
                         index.to_string(),
-                        format!("項目 {index}"),
-                        if index % 3 == 0 {
-                            "確認中"
-                        } else {
-                            "完了"
-                        }
-                        .to_owned(),
+                        format!("Item {index}"),
+                        if index % 3 == 0 { "Review" } else { "Done" }.to_owned(),
                     ])
                 })
                 .collect();
             show_rows(&ui, &table, &rows, widget_rows.get());
-            notice.show(&format!("{ROWS} 行を入れました{}", stopwatch.took()));
+            notice.show(&format!("Filled {ROWS} rows{}", stopwatch.took()));
         }
     });
 
     // 画面の外にある行も、インデックスで選べる。
-    let select_far = ui.button("いちばん下の行を選ぶ")?;
+    let select_far = ui.button("Select last row")?;
     select_far.on_click({
         let table = table.clone();
         move || table.select_many(&[ROWS - 1])
     });
 
-    let clear = ui.button("空にする")?;
+    let clear = ui.button("Clear")?;
     clear.on_click({
         let ui = ui.clone();
         let table = table.clone();
@@ -438,14 +407,16 @@ fn build_large_table(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()>
             rows.borrow_mut().clear();
             show_rows(&ui, &table, &rows, widget_rows.get());
             // 行を差し替えても選択の通知は出ないので、ここで知らせる。
-            notice.show("表を空にしました");
+            notice.show("Table cleared");
         }
     });
 
+    let actions = parts::row(ui)?;
+    actions.append(&mode_row);
     actions.append(&fill);
     actions.append(&select_far);
     actions.append(&clear);
-    pane.append(&table);
     pane.append(&actions);
+    pane.append(&table);
     Ok(())
 }
