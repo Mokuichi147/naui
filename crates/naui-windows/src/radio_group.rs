@@ -19,6 +19,10 @@ use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::{bool_ref, impl_widget, SelectHandler, Widget};
 
+/// The gap between items laid out horizontally. Same as WinUI's
+/// `RadioButtonsColumnSpacing`.
+const HORIZONTAL_SPACING: f64 = 7.0;
+
 thread_local! {
     /// A counter for creating a unique `GroupName` per group.
     static NEXT_GROUP: Cell<u64> = const { Cell::new(0) };
@@ -185,11 +189,20 @@ impl RadioGroup {
 
     /// The direction the options are laid out in. Vertical by default.
     pub fn set_orientation(&self, orientation: Orientation) {
-        let _ = self.0.native.SetOrientation(if orientation.is_vertical() {
+        let vertical = orientation.is_vertical();
+        let _ = self.0.native.SetOrientation(if vertical {
             XamlOrientation::Vertical
         } else {
             XamlOrientation::Horizontal
         });
+        // RadioButton の右には余白が無いので、横に並べると項目の文字が次の
+        // 丸に付く。WinUI の RadioButtons が横の間に置く幅
+        // (`RadioButtonsColumnSpacing`) と同じだけ空ける。縦は RadioButton
+        // の MinHeight で間が空くので足さない。
+        let _ = self
+            .0
+            .native
+            .SetSpacing(if vertical { 0.0 } else { HORIZONTAL_SPACING });
     }
 
     pub fn set_enabled(&self, enabled: bool) {
