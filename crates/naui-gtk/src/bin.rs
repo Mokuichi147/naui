@@ -304,6 +304,25 @@ impl SizeBin {
         self.set_halign(gtk::Align::Fill);
     }
 
+    /// Places it in a grid cell the way the other backends do.
+    ///
+    /// Axes that fit their content ([`Length::Auto`]) go to the **start** of the
+    /// cell horizontally and to the **center** vertically (`NSGridView`'s
+    /// `Leading` / `Center`, WinUI's `Left` / `Center`, CSS Grid's
+    /// `justify-items: start` / `align-items: center`). Without this they stay at
+    /// `wrap`'s `Center`, and in a column of names of different lengths each name
+    /// would sit in the middle of the column. Axes with their own size are left
+    /// alone.
+    pub(crate) fn place_in_grid(&self) {
+        let sizing = self.sizing();
+        if matches!(sizing.width, Length::Auto) {
+            self.set_halign(gtk::Align::Start);
+        }
+        if matches!(sizing.height, Length::Auto) {
+            self.set_valign(gtk::Align::Center);
+        }
+    }
+
     /// Receives how a grid column / row is sized.
     ///
     /// `GtkGrid` cannot give columns or rows a width of their own. Instead the setting
@@ -338,12 +357,13 @@ impl SizeBin {
             }
             Track::Fill(_) => {
                 // 重みは `GtkGrid` に無い。余りは広がる列で等分される。
+                // 広がるのは列だけで、中身に合わせる子そのものは伸ばさない
+                // (`place_in_grid` と同じ寄せ方のまま)。伸ばしたい子は自分で
+                // `Fill` を指定する。
                 if horizontal {
                     self.set_hexpand(true);
-                    self.set_halign(gtk::Align::Fill);
                 } else {
                     self.set_vexpand(true);
-                    self.set_valign(gtk::Align::Fill);
                 }
             }
         }

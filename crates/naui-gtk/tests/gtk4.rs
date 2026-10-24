@@ -245,6 +245,10 @@ fn main() {
             grid_fill_track_expands_child,
         ),
         (
+            "グリッドの中身に合わせる子がマスの先頭に置かれる",
+            grid_places_auto_children_at_the_start,
+        ),
+        (
             "グリッドの固定幅の列が子の幅を決める",
             grid_fixed_track_sets_width,
         ),
@@ -2407,7 +2411,36 @@ fn grid_fill_track_expands_child(ui: &Ui) -> Result<()> {
 
     let bin = bin_of(&field);
     assert!(bin.hexpands(), "Fill の列に入った子が余りを受け取る");
-    assert_eq!(bin.halign(), gtk::Align::Fill);
+    // 広がるのは列だけで、中身に合わせる子はマスの先頭に置いたまま伸ばさない。
+    // ほかの環境 (NSGridView の Leading、WinUI の Left、CSS の start) と同じ。
+    assert_eq!(bin.halign(), gtk::Align::Start);
+
+    // 自分で Fill を指定した子は、マスの幅まで伸びる。
+    let wide = ui.text_input("")?;
+    wide.set_sizing(Sizing::fill_width());
+    grid.attach(&wide, GridCell::new(1, 1));
+    assert_eq!(bin_of(&wide).halign(), gtk::Align::Fill);
+    Ok(())
+}
+
+/// Children that fit their content go to the start of the cell horizontally and to
+/// the center vertically, the same as on the other backends. This includes
+/// children spanning several columns, which do not take a column's setting.
+fn grid_places_auto_children_at_the_start(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Auto);
+    grid.set_column_track(1, Track::FILL);
+    grid.set_column_track(2, Track::Auto);
+    let name = ui.label("Button")?;
+    let buttons = ui.stack(Orientation::Horizontal)?;
+    buttons.append(&ui.button("Click")?);
+    grid.attach(&name, GridCell::new(0, 0));
+    grid.attach(&buttons, GridCell::new(1, 0).span(2, 1));
+
+    for bin in [bin_of(&name), bin_of(&buttons)] {
+        assert_eq!(bin.halign(), gtk::Align::Start);
+        assert_eq!(bin.valign(), gtk::Align::Center);
+    }
     Ok(())
 }
 
