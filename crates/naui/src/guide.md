@@ -1,17 +1,17 @@
-# 使い方
+# Guide
 
-[トップページ](crate) のクイックスタートの続き。全ウィジェットの使用例は
-[`examples/gallery`](https://github.com/mokuichi147/naui/tree/main/examples/gallery)
-にある。環境ごとの制限は
-[既知の制限](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md)
-にまとめている。
+A continuation of the quick start on the [top page](crate). Usage examples for
+every widget are in
+[`examples/gallery`](https://github.com/mokuichi147/naui/tree/main/examples/gallery).
+Per-platform limitations are collected in the
+[known limitations](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md).
 
-## 後からウィジェットを作る
+## Creating widgets later
 
-[`Ui`] はウィジェットのハンドルと同じく **clone できる**。clone しても
-参照が増えるだけで中身は同じなので、コールバックへ持ち込めば `build` が
-終わったあとでもウィジェットを作れる。一覧へ行を足す、入力欄を増やすと
-いった、数が実行時に決まる画面はこの形で書く。
+Like widget handles, [`Ui`] **can be cloned**. Cloning only adds a reference to
+the same contents, so moving a clone into a callback lets you create widgets even
+after `build` has finished. Screens whose number of elements is decided at run
+time, such as adding rows to a list or adding input fields, are written this way.
 
 ```no_run
 # use naui::{ListRow, Orientation, Result, Ui};
@@ -19,19 +19,19 @@
 # use std::rc::Rc;
 # fn build(ui: &Ui) -> Result<()> {
 let list = ui.list()?;
-// 行は積み上げていくので、並びはアプリ側で持つ。
+// Rows accumulate, so the app keeps the sequence.
 let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
 
-let add = ui.button("行を足す")?;
+let add = ui.button("Add row")?;
 add.on_click({
-    let ui = ui.clone(); // コールバックの中で使う Ui
+    let ui = ui.clone(); // the Ui used inside the callback
     let list = list.clone();
     let rows = rows.clone();
     move || {
-        // ウィジェットを作る API は Result を返すので、ここで受ける。
+        // The APIs that create widgets return a Result, so handle it here.
         let (Ok(content), Ok(label)) = (
             ui.stack(Orientation::Horizontal),
-            ui.label("新しい行"),
+            ui.label("New row"),
         ) else {
             return;
         };
@@ -44,68 +44,69 @@ add.on_click({
 # }
 ```
 
-`Ui` は UI スレッド専用で `Send` ではないので、**別スレッドへは渡せない**。
-作れるのは `build` と同じ UI スレッドの上だけで、ウィジェットの通知と
-[`Tasks`] の受け口・`spawn` した future の中がそれにあたる
-(「[別スレッドと非同期](#別スレッドと非同期)」を参照)。
+`Ui` is UI-thread only and not `Send`, so it **cannot be passed to other
+threads**. Widgets can be created only on the same UI thread as `build`: inside
+widget notifications, [`Tasks`] receivers and spawned futures (see
+"[Other threads and async](#other-threads-and-async)").
 
-## 後からウィジェットを外す
+## Removing widgets later
 
-置いたものを減らす側も、コンテナごとに手段がある。
+Each container also has ways to reduce what has been placed.
 
-| 変えたいもの | 使う API |
+| What to change | API to use |
 | --- | --- |
-| `Stack` の子 | [`insert`](Stack::insert) / [`remove`](Stack::remove) / [`clear`](Stack::clear) |
-| `Grid` のマス | [`replace`](Grid::replace) / [`remove`](Grid::remove) / [`clear`](Grid::clear) |
-| `Tabs` のタブ | [`remove_tab`](Tabs::remove_tab) / [`clear`](Tabs::clear) |
-| 一覧・表・ツリー・ナビゲーション | `set_items` / `set_rows` で丸ごと置き換える |
-| 中身が 1 つのもの (`Scroll` / `Expander` / `SplitView` / `Window`) | `set_child` などで差し替える |
-| ウィンドウに取り付けたもの (`Toolbar` / `MenuBar` / `Sidebar`) | [`clear_toolbar`](Window::clear_toolbar) / [`clear_menu_bar`](Window::clear_menu_bar) / [`clear_sidebar`](Window::clear_sidebar) |
+| Children of a `Stack` | [`insert`](Stack::insert) / [`remove`](Stack::remove) / [`clear`](Stack::clear) |
+| Cells of a `Grid` | [`replace`](Grid::replace) / [`remove`](Grid::remove) / [`clear`](Grid::clear) |
+| Tabs of `Tabs` | [`remove_tab`](Tabs::remove_tab) / [`clear`](Tabs::clear) |
+| Lists, tables, trees, navigation | Replace everything with `set_items` / `set_rows` |
+| Single-content widgets (`Scroll` / `Expander` / `SplitView` / `Window`) | Replace with `set_child` and the like |
+| Things attached to a window (`Toolbar` / `MenuBar` / `Sidebar`) | [`clear_toolbar`](Window::clear_toolbar) / [`clear_menu_bar`](Window::clear_menu_bar) / [`clear_sidebar`](Window::clear_sidebar) |
 
 ```no_run
 # use naui::{GridCell, Orientation, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let stack = ui.stack(Orientation::Vertical)?;
-stack.append(&ui.label("1 行目")?);
-stack.insert(0, &ui.label("見出し")?); // 先頭へ差し込む
-stack.remove(1);                       // 位置を指して外す
-stack.clear();                         // 全部外す
+stack.append(&ui.label("Line 1")?);
+stack.insert(0, &ui.label("Heading")?); // insert at the start
+stack.remove(1);                        // remove by position
+stack.clear();                          // remove everything
 
 let form = ui.grid()?;
-form.attach(&ui.label("名前")?, GridCell::new(0, 0));
-form.remove(GridCell::new(0, 0));      // マスを指して外す
+form.attach(&ui.label("Name")?, GridCell::new(0, 0));
+form.remove(GridCell::new(0, 0));       // remove by cell
 # Ok(())
 # }
 ```
 
-`Stack` と `Tabs` は**位置 (インデックス) で指し**、`Grid` は**マスで指す**
-(span は見ない)。範囲外の位置や空のマスを指したときは何もしない。
-[`Tabs::remove_tab`] で選択中のタブを外したときは、同じ位置のタブ
-(無ければ最後のタブ) が選ばれ、**この移動は通知しない**
-([`Tabs::set_selected`] と同じ決まり)。
+`Stack` and `Tabs` **refer by position (index)**, and `Grid` **refers by cell**
+(the span is ignored). Pointing at an out-of-range position or an empty cell does
+nothing. When [`Tabs::remove_tab`] removes the selected tab, the tab at the same
+position (or the last tab if there is none) is selected, and **this move is not
+notified** (the same rule as [`Tabs::set_selected`]).
 
-[`Grid::replace`] は**そのマスだけ**を差し替える。ほかのマスの子は残る。
+[`Grid::replace`] replaces **only that cell**. Children in other cells remain.
 
-macOS だけ、**結合したマス (span を持つ子) を外しても結合は残る**。
-`NSGridView` に結合を解く API が無く、結合をまたぐ行・列も外せないため
-(試すと AppKit が例外を投げる)。naui はその範囲を**まとめて 1 つのマスと
-して扱う**ので、跡へ 1 マスぶんの子を置いても位置と大きさはふつうのマスと
-変わらない。違いが出るのは次の 2 つだけ。
+On macOS only, **removing a merged cell (a child with a span) leaves the merge in
+place**. `NSGridView` has no API to unmerge, and rows and columns crossing a merge
+cannot be removed either (AppKit throws an exception if you try). naui **treats
+that range as one cell**, so a one-cell child placed there gets the same position
+and size as an ordinary cell. Only two things differ:
 
-- `Fill` の子は、1 マスではなく結合した範囲いっぱいに広がる
-- 範囲内の別の位置へ置くと、同じマスなので前の子が外れる
+- A `Fill` child stretches across the whole merged range rather than one cell
+- Placing into another position within the range is the same cell, so the
+  previous child is removed
 
-なお macOS では**同じマスへ子を重ねて置けない** (`NSGridCell` が中身を
-1 つしか持てないため、後から置いたものが前のものを外す)。他の 3 環境では
-重ねて置ける。
+Also, on macOS **children cannot be stacked in the same cell** (an `NSGridCell`
+can hold only one content view, so what is placed later removes what was there).
+The other three platforms allow stacking.
 
-外したウィジェットは、ハンドルをすべて手放したときに解放される。ただし、
-**ウィジェットの通知 (`on_change` や `on_focus_change` など) のクロージャが
-そのウィジェット自身のハンドルを `clone()` で捕まえていると、循環して
-解放されない。** 通知の中で自身を触るときは、`downgrade()` で作った弱参照
-([`WeakWidget`]) を捕まえ、使うときに `upgrade()` する。ウィジェットが
-解放された後は `None` が返る。どのウィジェットにも `downgrade()` があり、
-[`Window::downgrade`] と同じ形。
+Removed widgets are freed once all their handles are dropped. However, **if a
+widget's notification closure (`on_change`, `on_focus_change` and so on) captures
+a `clone()` of the widget's own handle, it forms a cycle and is never freed.**
+To touch the widget itself inside its notification, capture a weak reference
+([`WeakWidget`]) made with `downgrade()` and `upgrade()` it when you use it. After
+the widget is freed, `None` is returned. Every widget has `downgrade()`, in the
+same form as [`Window::downgrade`].
 
 ```no_run
 # use naui::{Result, Ui};
@@ -123,14 +124,15 @@ counter.on_click(move || {
 # }
 ```
 
-ウィジェットどうしが互いの通知で捕まえ合うとき (A の通知が B を、B の通知が
-A を捕まえる) も同じく循環するので、片方を弱参照にする。
+When widgets capture each other in their notifications (A's notification captures
+B, and B's captures A), that is also a cycle, so make one of them a weak
+reference.
 
-## テーマ
+## Themes
 
-既定の [`Theme::System`] は OS またはブラウザの設定へ追従する。起動時に
-固定するときは [`Settings::theme`]、実行中に切り替えるときは
-[`Ui::set_theme`] を使う。
+The default, [`Theme::System`], follows the OS or browser setting. Use
+[`Settings::theme`] to pin it at startup, and [`Ui::set_theme`] to switch at run
+time.
 
 ```no_run
 use naui::{Settings, Theme};
@@ -138,36 +140,37 @@ use naui::{Settings, Theme};
 fn main() -> naui::Result<()> {
     let settings = Settings::new("counter").theme(Theme::Dark);
     naui::run(settings, |ui| {
-        ui.set_theme(Theme::System)?; // 実行中に OS の設定へ戻す
+        ui.set_theme(Theme::System)?; // go back to the OS setting at run time
         Ok(())
     })
 }
 ```
 
-## 配置とサイズ
+## Layout and size
 
-レイアウトには次の 6 種類を使う。
+Layout uses these six:
 
-| API | 用途 |
+| API | Purpose |
 | --- | --- |
-| [`Stack`] | 子を縦または横へ並べる |
-| [`Grid`] | 行と列を指定して配置する |
-| [`Scroll`] | はみ出した内容をスクロールする |
-| [`Spacer`] | 親の余った空間を受け取る |
-| [`Expander`] | 見出しを押したときだけ中身を見せる |
-| [`SplitView`] | 2 つの区画を、動かせる仕切りで分ける |
+| [`Stack`] | Lays out children vertically or horizontally |
+| [`Grid`] | Places children by row and column |
+| [`Scroll`] | Scrolls content that overflows |
+| [`Spacer`] | Takes the parent's leftover space |
+| [`Expander`] | Shows its content only when the heading is clicked |
+| [`SplitView`] | Divides two panes with a movable divider |
 
-どのウィジェットも [`Sizing`] で大きさを指定できる。[`Length`] は中身に
-合わせる `Auto`、固定値の `Fixed`、余った領域へ広がる `Fill` の 3 種類。
+Every widget's size can be specified with [`Sizing`]. [`Length`] has three kinds:
+`Auto`, which fits the content; `Fixed`, a fixed value; and `Fill`, which grows
+into the leftover area.
 
 ```no_run
 # use naui::{GridCell, Length, Result, ScrollPolicy, Sizing, Track, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let form = ui.grid()?;
 form.set_spacing(12.0, 8.0);
-form.set_column_track(0, Track::Fixed(96.0)); // ラベルの列は固定幅
-form.set_column_track(1, Track::FILL);        // 入力の列は残りいっぱい
-form.attach(&ui.label("名前")?, GridCell::new(0, 0));
+form.set_column_track(0, Track::Fixed(96.0)); // the label column has a fixed width
+form.set_column_track(1, Track::FILL);        // the input column takes the rest
+form.attach(&ui.label("Name")?, GridCell::new(0, 0));
 
 let field = ui.text_input("")?;
 field.set_sizing(Sizing::fill_width());
@@ -181,27 +184,29 @@ scroll.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(160.0))
 # }
 ```
 
-[`Length::Fill`] は主軸では「余りを受け取る」、交差軸では
-「親いっぱいに広がる」を意味する。Windows の `Stack` は StackPanel なので
-**主軸の `Fill` と `Spacer` が効かない**。その場合は `Grid` の
-[`Track::Fill`] を使う。
+[`Length::Fill`] means "take the leftover space" on the main axis and "stretch to
+fill the parent" on the cross axis. On Windows, `Stack` is a StackPanel, so
+**`Fill` on the main axis and `Spacer` have no effect**. Use [`Track::Fill`] of a
+`Grid` in that case.
 
-`Fill` に上限 ([`Sizing::max_width`] / [`Sizing::max_height`]) を付けると、
-上限は「通常時に確保したい大きさ」も兼ねる。**親が大きさを配れるときは
-上限まで広がり、足りなければ上限より小さくなる。** 中身の自然な大きさが
-当てにならないウィジェット (読み込み前の動画など) の表示欄は、この形で
-大きさを決める。
+Adding a maximum ([`Sizing::max_width`] / [`Sizing::max_height`]) to `Fill` makes
+the maximum double as "the size you want under normal conditions". **When the
+parent can hand out space it grows up to the maximum, and when there is not
+enough it becomes smaller than the maximum.** Use this form to size the display
+area of widgets whose natural size cannot be relied on (a video before loading,
+for example).
 
-[`List`] の `Auto` の高さは全行に追従する。行数が多く、限られた領域で
-スクロールさせたいときは `Fixed` か `Fill` を指定する。[`Tree`]・[`Table`]・
-`Scroll`・`SplitView`・[`TextArea`] は中身から高さを決めないので、ふつうは
-`set_sizing` で高さを指定する。
+An `Auto` height on a [`List`] follows all its rows. To scroll many rows within a
+limited area, specify `Fixed` or `Fill`. [`Tree`], [`Table`], `Scroll`, `SplitView`
+and [`TextArea`] do not decide their height from their content, so you normally
+specify it with `set_sizing`.
 
-## スクロール位置
+## Scroll position
 
-[`Scroll`] は、いまの位置と大きさを [`metrics`](Scroll::metrics) で
-返し、[`scroll_to`](Scroll::scroll_to) / [`scroll_to_end`](Scroll::scroll_to_end)
-で送れる。単位は論理ピクセルで、行き先は送れる範囲に丸める。
+[`Scroll`] returns its current position and sizes from
+[`metrics`](Scroll::metrics), and can be scrolled with
+[`scroll_to`](Scroll::scroll_to) / [`scroll_to_end`](Scroll::scroll_to_end). The
+unit is logical pixels, and the destination is clamped to the scrollable range.
 
 ```no_run
 # use naui::{Orientation, Result, ScrollMetrics, Ui};
@@ -210,11 +215,11 @@ let log = ui.stack(Orientation::Vertical)?;
 let scroll = ui.scroll()?;
 scroll.set_child(&log);
 
-// 末尾の近くを見ていたときだけ、足した後も末尾へ追従する。
+// Keep following the end after appending only if the user was near the end.
 let following = scroll.metrics().distance_to_end() < 120.0;
-log.append(&ui.label("新しい行")?);
+log.append(&ui.label("New line")?);
 if following {
-    scroll.scroll_to_end(); // 足した直後に呼んでよい
+    scroll.scroll_to_end(); // fine to call right after appending
 }
 
 scroll.on_scroll(|m: ScrollMetrics| println!("{} / {}", m.y, m.max_y()));
@@ -224,56 +229,59 @@ scroll.on_scroll(|m: ScrollMetrics| println!("{} / {}", m.y, m.max_y()));
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 位置と大きさ | `VerticalOffset` / `ViewportHeight` / `ExtentHeight` | `NSClipView` の bounds と中身の frame | `GtkAdjustment` | `scrollTop` / `clientHeight` / `scrollHeight` |
-| 送る | `ChangeView` (アニメーション無し) | `scrollToPoint:` | `GtkAdjustment::set_value` | `scrollTo` |
-| 通知 | `ViewChanged` | `NSViewBoundsDidChangeNotification` | `value-changed` | `scroll` イベント |
+| Position and sizes | `VerticalOffset` / `ViewportHeight` / `ExtentHeight` | The `NSClipView`'s bounds and the content's frame | `GtkAdjustment` | `scrollTop` / `clientHeight` / `scrollHeight` |
+| Scroll | `ChangeView` (no animation) | `scrollToPoint:` | `GtkAdjustment::set_value` | `scrollTo` |
+| Notification | `ViewChanged` | `NSViewBoundsDidChangeNotification` | `value-changed` | The `scroll` event |
 
-「末尾から何 px 以内なら追従する」のような判断は naui では決めず、
-アプリが [`ScrollMetrics`] から行う。
+naui does not decide things like "follow along if within N px of the end"; the
+app does that from [`ScrollMetrics`].
 
-**中身を変えた直後に `scroll_to_end` を呼んでも、変えた後の末尾へ届く。**
-macOS・Windows・Web は送る前にレイアウトを済ませる。GTK4 には同期で
-レイアウトさせる手段が無いので、行き先を次のレイアウトまで覚えておき、
-大きさが変わったところで送り直す。そのため **GTK だけは、中身を変えた
-直後の `metrics` が前の大きさのまま**で、次のフレームで追いつく。
+**Calling `scroll_to_end` right after changing the contents reaches the end of the
+changed contents.** macOS, Windows and the Web finish layout before scrolling.
+GTK4 has no way to lay out synchronously, so the destination is remembered until
+the next layout and scrolled to again when the sizes change. That is why **on GTK
+only, `metrics` right after changing the contents still has the previous sizes**,
+catching up on the next frame.
 
-ウィンドウへ載せる前や、隠れたタブの中のように**まだ大きさが無いときに
-頼んだ行き先は、大きさが決まった時点で効く**。表示前に `scroll_to_end` を
-呼んでおけば、末尾が見えた状態で出る。
+**A destination requested while there is no size yet**, such as before being
+placed in a window or inside a hidden tab, **takes effect once the size is
+decided**. Calling `scroll_to_end` before showing makes it appear with the end
+visible.
 
-[`on_scroll`](Scroll::on_scroll) は**位置が変わったときだけ**呼ばれ、
-大きさだけの変化では呼ばれない。ほかのウィジェットの `set_*` と違い、
-**`scroll_to` による移動でも呼ばれる**。中身が縮んだときの丸めやキーボード
-の移動など、利用者の操作と見分けられない移動がどの環境にもあるため、
-誰が動かしたかは区別しない。Windows と Web はネイティブの通知が後から
-届くので、`scroll_to` から戻った後に呼ばれる。通知の中で `scroll_to` を
-呼んで行の境界へ寄せるような使い方もでき、その移動は通知から戻った後に
-改めて届く。
+[`on_scroll`](Scroll::on_scroll) is called **only when the position changes**, not
+for changes in size alone. Unlike other widgets' `set_*`, **it is also called for
+moves made by `scroll_to`**. Every platform has moves that cannot be told apart
+from user actions, such as clamping when the content shrinks or keyboard
+movement, so who moved it is not distinguished. On Windows and the Web the native
+notification arrives later, so it is called after `scroll_to` returns. You can
+also call `scroll_to` inside the notification to snap to a row boundary; that
+move arrives afresh after the notification returns.
 
-Web では大きさが整数に丸められるため、末尾まで 1 px 未満の差は末尾に
-いるとみなす (拡大表示中でも `distance_to_end` が 0 になる)。
+On the Web, sizes are rounded to integers, so a difference of less than 1 px from
+the end counts as being at the end (`distance_to_end` becomes 0 even when zoomed
+in).
 
-## 表示・フォーカス・ツールチップ
+## Visibility, focus and tooltips
 
-どのウィジェットにも、次の 4 つがある。
+Every widget has these four:
 
 ```no_run
 # use naui::{Orientation, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let name = ui.text_input("")?;
-let error = ui.label("名前を入れてください")?;
-error.set_visible(false);           // 隠す (Stack の中では場所も空けない)
+let error = ui.label("Please enter a name")?;
+error.set_visible(false);           // hide (inside a Stack it takes no space either)
 let _shown: bool = error.is_visible();
 
-let save = ui.button("保存")?;
-save.set_tooltip(Some("変更を保存します")); // None で外す
+let save = ui.button("Save")?;
+save.set_tooltip(Some("Save the changes")); // None removes it
 save.on_click({
     let name = name.clone();
     let error = error.clone();
     move || {
         if name.text().is_empty() {
             error.set_visible(true);
-            name.request_focus(); // 入力欄へ戻す
+            name.request_focus(); // back to the input field
         }
     }
 });
@@ -285,53 +293,53 @@ save.on_click({
 | --- | --- | --- | --- | --- |
 | `set_visible` | `Visibility` (`Collapsed`) | `hidden` | `gtk_widget_set_visible` | `display: none` |
 | `request_focus` | `UIElement.Focus` | `makeFirstResponder:` | `gtk_widget_grab_focus` | `focus()` |
-| `set_tooltip` | `ToolTipService.ToolTip` | `toolTip` | `tooltip-text` | `title` 属性 |
+| `set_tooltip` | `ToolTipService.ToolTip` | `toolTip` | `tooltip-text` | The `title` attribute |
 | `set_accessible_label` | `AutomationProperties.Name` | `accessibilityLabel` | `GTK_ACCESSIBLE_PROPERTY_LABEL` | `aria-label` |
 
-[`set_accessible_label`](Button::set_accessible_label) は読み上げソフトに伝える
-名前で、アイコンだけのボタンのように見えている文字が無いときに付ける。
-文字を持つボタンでも、付けた名前が見えている文字より優先される (GTK4 の
-ボタンは中のラベルから名前を取る関係 `LABELLED_BY` を張るので、付けている
-間は外す)。
+[`set_accessible_label`](Button::set_accessible_label) is the name reported to
+screen readers; set it when there is no visible text, as with icon-only buttons.
+Even on buttons with text, the given name takes precedence over the visible text
+(GTK4 buttons set the `LABELLED_BY` relation to take their name from the inner
+label, so it is removed while a name is set).
 
-**隠したものは `Stack` の中では場所を空けない。** `Grid` ではマスと
-行・列は残り、間隔 (`set_spacing`) が残る環境もある。
-[`is_visible`](Label::is_visible) が返すのは `set_visible` で指定した
-値で、親が隠れている・たたんだ `Expander` の中にある、といった理由で
-見えていなくても `true` のまま。
+**Hidden widgets take no space inside a `Stack`.** In a `Grid` the cell, row and
+column remain, and on some platforms the spacing (`set_spacing`) remains too.
+[`is_visible`](Label::is_visible) returns the value set with `set_visible`, and
+stays `true` even when the widget is not visible for reasons such as a hidden
+parent or being inside a collapsed `Expander`.
 
-[`request_focus`](TextInput::request_focus) は、移せたら `true` を返す。
-**そのウィジェットが受け取れないとき (`Stack` などのコンテナ) は、中で
-最初に受け取れるものへ移す。** ウィンドウに載る前・隠れている・無効な
-ときは `false`。ラベルは受け取らない。ボタンなどが受け取るかは OS の
-設定に従う (macOS は「キーボードナビゲーション」の設定でボタンが
-フォーカスを受け取るかが変わる)。
+[`request_focus`](TextInput::request_focus) returns `true` if focus moved. **If
+the widget itself cannot take focus (containers such as `Stack`), focus moves to
+the first thing inside that can.** It is `false` before being placed in a window,
+while hidden, or while disabled. Labels do not take focus. Whether buttons and the
+like take focus follows the OS setting (on macOS, the "Keyboard navigation"
+setting changes whether buttons take focus).
 
-Web は、naui がウィジェットごとにインラインで書く `display` に勝つよう、
-`data-naui-hidden` 属性へ `display: none !important` を当てる規則を
-文書へ 1 つ入れる。
+On the Web, so that it beats the inline `display` naui writes per widget, a
+single rule applying `display: none !important` to the `data-naui-hidden`
+attribute is added to the document.
 
-## キーボード
+## Keyboard
 
-文字入力のウィジェット (`TextInput` / `TextArea` / `PasswordInput` /
-`SearchInput` / `NumberInput` / `EditableComboBox`) と [`Window`] は、
-押されたキーを `on_key_down` で通知する。[`EventResponse::Handled`] を
-返すと、そのキーは入力欄 (改行の挿入や確定) にもウィンドウにも渡らない。
+Text-input widgets (`TextInput` / `TextArea` / `PasswordInput` / `SearchInput` /
+`NumberInput` / `EditableComboBox`) and [`Window`] report pressed keys through
+`on_key_down`. Returning [`EventResponse::Handled`] keeps the key from reaching
+the field (inserting a newline or confirming) and the window.
 
 ```no_run
 # use naui::{EventResponse, Key, KeyEvent, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let message = ui.text_area("")?;
 message.on_key_down({
-    // 自身は弱参照で捕まえる (clone() で捕まえると循環して解放されない)。
+    // Capture itself weakly (capturing a clone() creates a cycle that is never freed).
     let message = message.downgrade();
     move |event: &KeyEvent| {
         let Some(message) = message.upgrade() else {
             return EventResponse::Continue;
         };
-        // Enter で送信、Shift+Enter で改行。
+        // Enter sends, Shift+Enter inserts a newline.
         if event.key == Key::Enter && !event.modifiers.shift {
-            println!("送信: {}", message.text());
+            println!("Send: {}", message.text());
             message.set_text("");
             EventResponse::Handled
         } else {
@@ -343,189 +351,198 @@ message.on_key_down({
 # }
 ```
 
-**IME で変換している間のキーは届かない。** 変換を確定する Enter は IME が
-受け取るので、上の例が変換の確定で送信してしまうことはない。
-(`keyCode` 229 のような環境ごとの見分け方は naui の中で吸収している。)
-変換を**始める**キー自体は、macOS と Linux では届くことがある (届いた時点
-ではまだ変換中ではないため)。文字のキーには `Continue` を返しておけば
-変換は始まる。
+**Keys pressed while an IME is composing are not delivered.** The IME receives
+the Enter that confirms the composition, so the example above never sends when
+the user merely confirms a conversion. (Per-platform ways of telling, such as
+`keyCode` 229, are absorbed inside naui.) The key that **starts** composition
+may itself be delivered on macOS and Linux (at that point it is not composing
+yet). Returning `Continue` for character keys lets composition start.
 
-届く順は**フォーカスのあるウィジェット → ウィンドウ**で、ウィジェットが
-`Handled` を返したキーはウィンドウへは届かない。ウィンドウの
-[`on_key_down`](Window::on_key_down) には、文字入力以外 (ボタンなど) に
-フォーカスがあるときのキーも届く。
+Keys are delivered **to the focused widget, then the window**, and keys for
+which the widget returned `Handled` do not reach the window. The window's
+[`on_key_down`](Window::on_key_down) also receives keys while something other
+than a text input (a button, for example) has focus.
 
-修飾キー (⇧・Ctrl・Alt・⌘ / Windows キー) は単独で押しても届かない。
-ほかのキーと一緒に押していたかを [`KeyEvent::modifiers`] で見る。
+Modifier keys (⇧, Ctrl, Alt, ⌘ / Windows key) are not delivered when pressed on
+their own. Check whether they were held together with another key through
+[`KeyEvent::modifiers`].
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 受け口 | ウィンドウの根の `PreviewKeyDown` | `NSEvent` のローカルモニター | ウィンドウの `GtkEventControllerKey` (捕捉) | 要素の `keydown` (捕捉) と `document` |
-| 変換中の判定 | `VK_PROCESSKEY` と `TextCompositionStarted` / `Ended` | `hasMarkedText` | `preedit-changed` | `isComposing` と `keyCode` 229 |
+| Receiver | `PreviewKeyDown` on the window root | A local `NSEvent` monitor | The window's `GtkEventControllerKey` (capture) | The element's `keydown` (capture) and `document` |
+| Detecting composition | `VK_PROCESSKEY` and `TextCompositionStarted` / `Ended` | `hasMarkedText` | `preedit-changed` | `isComposing` and `keyCode` 229 |
 
-[`Key::Character`] の英字は小文字にそろえる ([`MenuShortcut`] と同じ)。
-⇧ を押していたかは [`Modifiers::shift`] で見る。記号のキーで ⇧ を押した
-ときにどの文字になるかは環境とキー配列によって違う。
-[`Modifiers::primary`] は主修飾キー (macOS は ⌘、ほかは Ctrl) を押して
-いたかを返す。
+Letters in [`Key::Character`] are normalized to lowercase (the same as
+[`MenuShortcut`]). Check [`Modifiers::shift`] for whether ⇧ was held. Which
+character a symbol key gives with ⇧ depends on the platform and keyboard layout.
+[`Modifiers::primary`] returns whether the primary modifier (⌘ on macOS, Ctrl
+elsewhere) was held.
 
-`on_key_down` は**メニューバーのショートカットとの順序が環境によって
-違う** (macOS はショートカットより先に届き、ほかの環境では後になることが
-ある)。同じキーをショートカットと `on_key_down` の両方に割り当てない。
+**The order of `on_key_down` relative to menu bar shortcuts differs by
+platform** (on macOS it arrives before the shortcut; on other platforms it may
+come after). Do not assign the same key to both a shortcut and `on_key_down`.
 
-## フォーカスの出入り
+## Focus entering and leaving
 
-文字入力のウィジェット (`on_key_down` を持つ 6 つ) は、フォーカスが
-入ったとき (`true`) と出たとき (`false`) を `on_focus_change` で通知する。
-欄を離れたときの検証や保存に使う。
+Text-input widgets (the six with `on_key_down`) report focus entering (`true`)
+and leaving (`false`) through `on_focus_change`. Use it for validation or saving
+when the user leaves a field.
 
 ```no_run
 # use naui::{Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let mail = ui.text_input("")?;
-// mail 自身は弱参照で捕まえる (clone() で捕まえると解放されない)。
+// Capture mail itself weakly (capturing a clone() means it is never freed).
 let weak = mail.downgrade();
 mail.on_focus_change(move |focused| {
     let Some(mail) = weak.upgrade() else { return };
     if !focused && !mail.text().contains('@') {
-        println!("メールアドレスを確かめてください");
+        println!("Please check the email address");
     }
 });
 # Ok(())
 # }
 ```
 
-**通知のクロージャに、その欄自身のハンドルを `clone()` で捕まえない。**
-欄が通知を持ち、通知が欄を持つ循環になるので、画面から外して手放しても
-解放されない (ほかのウィジェットの通知も同じ)。上のように `downgrade()` で
-弱参照 ([`WeakWidget`]) を作って捕まえ、通知の中で `upgrade()` する。
-ウィジェットが解放された後は `None` が返る。
+**Do not capture a `clone()` of the field's own handle in its notification
+closure.** The field holds the notification and the notification holds the
+field, forming a cycle, so it is not freed even after it is removed from the
+screen and released (the same goes for other widgets' notifications). As above,
+create a weak reference ([`WeakWidget`]) with `downgrade()`, capture that, and
+`upgrade()` it inside the notification. After the widget is freed, `None` is
+returned.
 
-**ウィンドウの中でフォーカスが移ったときだけ**呼ばれる。ウィンドウ自体が
-アクティブでなくなったとき (別のアプリへ切り替えたとき、Web ではタブや
-ブラウザのウィンドウを切り替えたとき) は、ウィンドウの中のフォーカスは
-変わらないので呼ばれない。ウィジェットの中で部品から部品へ移っても
-(数値入力の欄と増減のボタンなど) 呼ばれない。移る先のウィジェットにも
-通知先があれば、出たほうの `false` が先に届く。
+It is called **only when focus moves within the window**. When the window itself
+becomes inactive (switching to another app, or on the Web switching tabs or
+browser windows), focus within the window does not change, so it is not called.
+Moving from part to part within a widget (between a number input's field and its
+step buttons, for example) does not call it either. If the widget focus moves to
+also has a handler, the `false` for the one left arrives first.
 
-通知先を置いた時点でフォーカスがすでにその中にあっても、入ったことは
-知らせない (そこから出たときの `false` は届く)。ウィンドウを出したときに
-最初の入力欄へフォーカスを置くかは環境が決める (macOS・Linux・Windows は
-置くことがあり、Web は置かない) ので、表示より前に通知先を置くと、その
-ときの `true` が届く環境と届かない環境がある。
-
-| naui | Windows | macOS | Linux | Web |
-| --- | --- | --- | --- | --- |
-| 見張る先 | ウィンドウの根の `GotFocus` | `NSWindow` の `makeFirstResponder:` | `GtkWindow` の `focus-widget` | `document` の `focusin` / `focusout` |
-
-## 処理中の表示と、選べるラベル
-
-終わりの見えない処理 (通信の応答待ちなど) は、[`ProgressBar`] を
-[`set_indeterminate(true)`](ProgressBar::set_indeterminate) にして動きで示す。
-戻すと [`set_value`](ProgressBar::set_value) で置いた値の表示に戻る。
-
-[`Label::set_selectable`] を `true` にすると、文字を選んでコピーできる
-(書き換えはできない)。チャットの発言やエラーの詳細のように、読む人が
-写し取りたい文字に使う。既定は 4 環境とも選べない (Web だけはブラウザの
-既定が「選べる」なので、naui が `user-select: none` でそろえている)。
+If focus is already inside the widget when its handler is set, entering is not
+reported (the `false` for leaving it does arrive). Whether focus is placed on the
+first field when a window is shown is up to the platform (macOS, Linux and
+Windows may do so; the Web does not), so setting the handler before showing means
+the `true` arrives on some platforms and not on others.
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 不確定の進捗 | 前景の帯を往復させる (※) | `NSProgressIndicator` の `indeterminate` | `gtk_progress_bar_pulse` を一定間隔で | `value` 属性の無い `<progress>` |
-| 選べるラベル | `IsTextSelectionEnabled` | `selectable` | `gtk_label_set_selectable` | `user-select` |
+| What is watched | `GotFocus` on the window root | The `NSWindow`'s `makeFirstResponder:` | The `GtkWindow`'s `focus-widget` | `focusin` / `focusout` on `document` |
 
-※ WinUI の `ProgressBar` は未パッケージ起動でテンプレートを当てると落ちる
-ため、naui は同じテーマ資源で組んだ帯を使っている。
+## Busy indicators and selectable labels
 
-## ウィンドウを閉じる前の確認と大きさ
+For work with no visible end (waiting for a network response, for example), set a
+[`ProgressBar`] to [`set_indeterminate(true)`](ProgressBar::set_indeterminate) to
+show it with motion. Turning it off returns to showing the value set with
+[`set_value`](ProgressBar::set_value).
 
-[`Window::on_close_request`] は、利用者が閉じようとしたときに呼ばれる。
-[`CloseResponse::KeepOpen`] を返すと閉じない。プログラムからの
-[`Window::close`] では呼ばれない。
+Setting [`Label::set_selectable`] to `true` lets the text be selected and copied
+(it cannot be edited). Use it for text readers will want to copy, such as chat
+messages or error details. The default is not selectable on all four platforms
+(only on the Web is the browser default "selectable", so naui aligns it with
+`user-select: none`).
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| Indeterminate progress | Moves the foreground band back and forth (※) | `indeterminate` of `NSProgressIndicator` | `gtk_progress_bar_pulse` at a fixed interval | `<progress>` without a `value` attribute |
+| Selectable labels | `IsTextSelectionEnabled` | `selectable` | `gtk_label_set_selectable` | `user-select` |
+
+※ WinUI's `ProgressBar` crashes when its template is applied in an unpackaged
+launch, so naui uses a band built from the same theme resources.
+
+## Confirming before a window closes, and window size
+
+[`Window::on_close_request`] is called when the user tries to close the window.
+Returning [`CloseResponse::KeepOpen`] keeps it open. It is not called for
+[`Window::close`] from code.
 
 ```no_run
 # use std::cell::Cell;
 # use std::rc::Rc;
 # use naui::{CloseResponse, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let window = ui.window("エディタ", 640.0, 480.0)?;
+let window = ui.window("Editor", 640.0, 480.0)?;
 let dirty = Rc::new(Cell::new(true));
 window.on_close_request(move || {
     if dirty.get() {
-        // ここで保存の確認のダイアログを出し、答えを見て `close` する。
+        // Show a dialog asking whether to save here, then `close` based on the answer.
         CloseResponse::KeepOpen
     } else {
         CloseResponse::Close
     }
 });
-window.on_resize(|(width, _height)| println!("幅 {width}"));
+window.on_resize(|(width, _height)| println!("width {width}"));
 let (_width, _height) = window.size();
 # Ok(())
 # }
 ```
 
-[`Window::set_min_size`] で、利用者が縮められる下限を決められる
-(Windows は Windows App SDK 1.7 以降のランタイムで効く)。
+[`Window::set_min_size`] sets the minimum size the user can shrink the window to
+(on Windows it takes effect with Windows App SDK runtime 1.7 or later).
 
-ウィンドウの大きさは、4 環境とも**タイトルバー・メニューバー・ツールバー・
-ウィンドウの枠を除いた中身の大きさ**で数える (サイドバーを付けていれば、
-その幅は含む)。`ui.window(title, width, height)` の幅・高さ、
-[`Window::set_size`]、[`Window::size`]、[`Window::set_min_size`] の下限が
-すべて同じ意味なので、`ui.window(.., 900.0, 640.0)` の `size` は
-どの環境でも 900×640 になる (Web は下の注を参照)。
-[`Window::on_resize`] は大きさが変わるたびに変わった後の大きさで呼ばれる
-(`set_size` で変えたときも呼ばれる)。
+On all four platforms, a window's size counts **the content size, excluding the
+title bar, menu bar, toolbar and window frame** (with a sidebar attached, its
+width is included). The width and height of `ui.window(title, width, height)`,
+[`Window::set_size`], [`Window::size`] and the minimum of
+[`Window::set_min_size`] all mean the same thing, so the `size` of
+`ui.window(.., 900.0, 640.0)` is 900×640 on every platform (for the Web, see the
+note below). [`Window::on_resize`] is called with the new size every time the
+size changes (including when it is changed with `set_size`).
 
-`set_size` の直後の `size` は、環境によってはまだ前の大きさを返す
-(Windows と Linux はレイアウトの後に変わる)。変わった大きさは
-`on_resize` で受け取る。表示する前の `size` は、`ui.window` か `set_size`
-で指定した大きさを返す。
+Right after `set_size`, `size` may still return the previous size on some
+platforms (on Windows and Linux it changes after layout). Receive the changed
+size through `on_resize`. Before the window is shown, `size` returns the size
+given to `ui.window` or `set_size`.
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 閉じる前の確認 | `AppWindow.Closing` (`Cancel`) | `windowShouldClose:` | `close-request` | (呼ばれない) |
-| 大きさの変化 | 中身の層の `SizeChanged` | `windowDidResize:` | 描いた後に中身の大きさを比べる (`after-paint`) | `ResizeObserver` |
-| 大きさを変える | `AppWindow.Resize` (外枠との差を足す) | `setContentSize` (`contentLayoutRect` との差を足す) | `set_default_size` (ヘッダーバー・メニューバーの高さとウィンドウの CSS の枠を足す) | ウィンドウ要素の `max-width` / `min-height` (行の高さを足す) |
+| Confirmation before closing | `AppWindow.Closing` (`Cancel`) | `windowShouldClose:` | `close-request` | (never called) |
+| Size changes | `SizeChanged` of the content layer | `windowDidResize:` | Compares the content size after painting (`after-paint`) | `ResizeObserver` |
+| Changing the size | `AppWindow.Resize` (adds the difference from the outer frame) | `setContentSize` (adds the difference from `contentLayoutRect`) | `set_default_size` (adds the header bar and menu bar heights and the window's CSS frame) | `max-width` / `min-height` of the window element (adds the row heights) |
 
-どの環境もネイティブの API はウィンドウ全体 (か、タイトルバーの下まで
-伸びた `contentView`) の大きさを取るので、naui がいまの差を測って足す。
-Windows と Linux は、表示の直後でまだ中身が並んでいない間はメニューバー
-などの高さを見積もるしかないので、並べ終わったときに合わせ直す。Linux は
-帯を付け外した直後の `set_size` も並び直した後に確かめ、Wayland で表示の
-直後に頼んだ大きさがコンポジタに上書きされたときは頼み直す (どちらも
-表示や `set_size` から 1 秒まで)。
-Windows の `AppWindow` は物理ピクセルを取るので、`RasterizationScale` も掛ける。
-macOS の AppKit は、ツールバーやサイドバーを付け外しすると中身の大きさを
-変える (ツールバーを付けると中身がタイトルバーの高さだけ伸びる) ので、naui が
-前の大きさへ戻し、ウィンドウの枠のほうを変える。ただし画面に収まらない
-大きさは、表示するときに AppKit が画面 (メニューバーと Dock を除く) に
-収まるよう枠を縮めるので、`size` はその分小さくなる。
+On every platform the native API takes the size of the whole window (or of a
+`contentView` extending under the title bar), so naui measures the current
+difference and adds it. On Windows and Linux, right after showing, while the
+content is not laid out yet, the heights of the menu bar and the like can only be
+estimated, so it refits once layout finishes. On Linux, a `set_size` right after
+attaching or detaching a strip is also checked after relayout, and on Wayland, if
+the compositor overwrites the size requested right after showing, it is requested
+again (both for up to 1 second after showing or `set_size`). Windows's
+`AppWindow` takes physical pixels, so `RasterizationScale` is applied too. macOS's
+AppKit changes the content size when a toolbar or sidebar is attached or detached
+(attaching a toolbar grows the content by the title bar's height), so naui
+restores the previous size and changes the window frame instead. However, for
+sizes that do not fit the screen, AppKit shrinks the frame on show to fit the
+screen (excluding the menu bar and Dock), so `size` becomes smaller by that much.
 
-**Web は大きさを決めきれない。** ブラウザの窓そのものの大きさは変えられない
-ので、幅は `max-width` (狭い画面では縮む)、高さは `min-height` (中身が多ければ
-伸びる) として扱う。
+**The Web cannot fully decide the size.** The size of the browser window itself
+cannot be changed, so the width is treated as `max-width` (shrinking on narrow
+screens) and the height as `min-height` (growing when there is more content).
 
-**Web では閉じる前の確認は呼ばれない。** ページの中のウィンドウを利用者が
-閉じる操作が無く、タブを閉じるときに独自の確認を出す手段も無いため。
+**On the Web, the confirmation before closing is never called.** There is no user
+action for closing a window inside the page, and no way to show a custom
+confirmation when the tab closes.
 
-## ウィンドウの位置と状態
+## Window position and state
 
-[`Window::set_state`] で最大化・最小化・全画面にし、[`Window::state`] で
-いまの状態を [`WindowState`] として読む。[`Window::set_position`] と
-[`Window::position`] はウィンドウの左上の位置、[`Window::set_resizable`] と
-[`Window::is_resizable`] は利用者が縁をつかんで大きさを変えられるかどうか。
+[`Window::set_state`] maximizes, minimizes or makes the window fullscreen, and
+[`Window::state`] reads the current state as a [`WindowState`].
+[`Window::set_position`] and [`Window::position`] are the position of the
+window's top-left corner, and [`Window::set_resizable`] and
+[`Window::is_resizable`] are whether the user can resize the window by dragging
+its edges.
 
 ```no_run
 # use naui::{Result, Ui, WindowState};
 # fn build(ui: &Ui) -> Result<()> {
-let window = ui.window("ビューア", 800.0, 600.0)?;
-window.set_position(80.0, 60.0); // Linux と Web では何もしない
-window.set_state(WindowState::Maximized); // 表示するときに最大化する
+let window = ui.window("Viewer", 800.0, 600.0)?;
+window.set_position(80.0, 60.0); // does nothing on Linux and the Web
+window.set_state(WindowState::Maximized); // maximized when shown
 window.on_state_change(|state| println!("{state:?}"));
 window.show();
 
-// 全画面の切り替えはボタンから (Web は利用者の操作の中でしか入れない)。
-let toggle = ui.button("全画面")?;
+// Toggle fullscreen from a button (the Web allows it only inside a user action).
+let toggle = ui.button("Fullscreen")?;
 let weak = window.downgrade();
 toggle.on_click(move || {
     if let Some(window) = weak.upgrade() {
@@ -541,252 +558,264 @@ toggle.on_click(move || {
 # }
 ```
 
-位置は**主画面の左上を原点に、右と下へ数えた論理ピクセル**で、タイトルバーを
-含むウィンドウの枠の左上を指す。画面に出す前に決めてもよい。
-[`set_position`](Window::set_position) で位置を決めた後は、macOS の
-[`set_size`](Window::set_size) も中央へ寄せ直さない。
+The position is **in logical pixels, counted right and down from the top left of
+the primary screen**, and refers to the top left of the window frame including
+the title bar. It may be set before the window is on screen. After the position
+is set with [`set_position`](Window::set_position), macOS's
+[`set_size`](Window::set_size) no longer recenters the window either.
 
-最大化・最小化・全画面の間の [`Window::position`] は、**通常の状態へ戻った
-ときの位置**を返す。[`Window::set_position`] は状態をそのままにして、その
-戻る先を決める (見えている枠は動かさない)。閉じる前に `position` と
-[`Window::state`] を保存しておき、次に開くときに両方を当てれば、最大化して
-いたウィンドウも元の配置へ戻る。
+While maximized, minimized or in fullscreen, [`Window::position`] returns **the
+position for returning to the normal state**. [`Window::set_position`] leaves the
+state as is and decides that return position (the visible frame does not move).
+Save `position` and [`Window::state`] before closing and apply both the next time
+it opens, and even a maximized window returns to its original placement.
 
-[`WindowState`] は 1 つだけ返る。環境によっては重なり得る状態 (最大化した
-まま最小化した、など) は、利用者から見えているほうを選ぶ
-(最小化 → 全画面 → 最大化 の順)。[`WindowState::Normal`] を頼むと、
-最小化・全画面・最大化をすべて解く。全画面からほかの状態へ移るときは、
-全画面を出終わってから当てる。
+Only one [`WindowState`] is returned. States that can overlap on some platforms
+(minimized while maximized, for example) resolve to the one the user sees
+(minimized → fullscreen → maximized, in that order). Requesting
+[`WindowState::Normal`] undoes minimize, fullscreen and maximize alike. When
+moving from fullscreen to another state, it is applied after leaving fullscreen
+has finished.
 
-状態の変化は非同期のことが多い (macOS の全画面はアニメーションの後、
-Linux はコンポジタが応えた後、Web はブラウザが切り替えた後)。`set_state` の
-直後の `state` はまだ前の状態を返すことがあるので、変わったことは
-[`Window::on_state_change`] で受け取る。利用者の操作 (タイトルバーの
-ボタン、Esc で全画面を出る、など) で変わったときも呼ばれる。
-画面に出す前の `set_state` は覚えておき、[`Window::show`] で当てる
-(それまでの `state` は頼んだ状態を返す。Linux では、表示してから
-コンポジタの最初の状態が届くまでも頼んだ状態を返す)。
+State changes are often asynchronous (macOS fullscreen happens after an
+animation, Linux after the compositor responds, the Web after the browser
+switches). `state` right after `set_state` may still return the previous state,
+so receive the change through [`Window::on_state_change`]. It is also called when
+the state changes through user actions (title bar buttons, leaving fullscreen
+with Esc and so on). `set_state` before the window is on screen is remembered and
+applied in [`Window::show`] (until then, `state` returns the requested state; on
+Linux it does so until the compositor's first state arrives after showing, too).
 
-位置が変わったことの通知は無い。Linux と Web では位置そのものが取れない
-ため。位置を保存するときは、閉じる前 ([`Window::on_close_request`] の中など)
-に [`Window::position`] を読む。
+There is no notification for position changes, because Linux and the Web cannot
+obtain the position at all. To save the position, read [`Window::position`]
+before closing (inside [`Window::on_close_request`], for example).
 
-できることは環境で違う。
+What can be done differs by platform.
 
 | | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 位置 | ○ | ○ | × (いつも `None`) | × (いつも `None`) |
-| 最大化・最小化 | ○ | ○ | ○ (Wayland では最小化を知れない) | × |
-| 全画面 | ○ | ○ | ○ | ○ (利用者の操作の中からだけ) |
-| 大きさを変えられるか | ○ | ○ | ○ | × (値を覚えるだけ) |
+| Position | ○ | ○ | × (always `None`) | × (always `None`) |
+| Maximize / minimize | ○ | ○ | ○ (minimization cannot be detected on Wayland) | × |
+| Fullscreen | ○ | ○ | ○ | ○ (only from inside a user action) |
+| Resizable | ○ | ○ | ○ | × (the value is just remembered) |
 
-それぞれの環境で使っている API は次のとおり。
+The APIs used on each platform are as follows.
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 位置 | `AppWindow.Position` / `Move` (物理ピクセルを `RasterizationScale` で割る) | `frame` / `setFrameTopLeftPoint:` (主画面の高さから引いて向きを変える) | (無い。いつも `None`) | (無い。いつも `None`) |
-| 最大化 | `OverlappedPresenter.Maximize` | `zoom:` | `gtk_window_maximize` | (無い) |
-| 最小化 | `OverlappedPresenter.Minimize` | `miniaturize:` | `gtk_window_minimize` (戻すときは `gtk_window_unminimize` と `present`) | (無い) |
-| 全画面 | `AppWindow.SetPresenterByKind(FullScreen)` | `toggleFullScreen:` | `gtk_window_fullscreen` | `documentElement.requestFullscreen()` |
-| 状態を読む | `AppWindow.Presenter` の種類と `OverlappedPresenter.State` | `isMiniaturized` / `isZoomed` と全画面の通知 | `GdkToplevelState` | `document.fullscreenElement` |
-| 状態の変化 | `AppWindow.Changed` | `windowDidMiniaturize:` / `windowDidEnterFullScreen:` など | `GdkToplevel` の `notify::state` | `fullscreenchange` |
-| 大きさを変えられるか | `OverlappedPresenter.IsResizable` (`IsMaximizable` も一緒に) | styleMask の `Resizable` | `gtk_window_set_resizable` | (無い。値を覚えるだけ) |
+| Position | `AppWindow.Position` / `Move` (physical pixels divided by `RasterizationScale`) | `frame` / `setFrameTopLeftPoint:` (flipped by subtracting from the primary screen's height) | (none; always `None`) | (none; always `None`) |
+| Maximize | `OverlappedPresenter.Maximize` | `zoom:` | `gtk_window_maximize` | (none) |
+| Minimize | `OverlappedPresenter.Minimize` | `miniaturize:` | `gtk_window_minimize` (restored with `gtk_window_unminimize` and `present`) | (none) |
+| Fullscreen | `AppWindow.SetPresenterByKind(FullScreen)` | `toggleFullScreen:` | `gtk_window_fullscreen` | `documentElement.requestFullscreen()` |
+| Reading the state | The kind of `AppWindow.Presenter` and `OverlappedPresenter.State` | `isMiniaturized` / `isZoomed` and fullscreen notifications | `GdkToplevelState` | `document.fullscreenElement` |
+| State changes | `AppWindow.Changed` | `windowDidMiniaturize:` / `windowDidEnterFullScreen:` and so on | `notify::state` of `GdkToplevel` | `fullscreenchange` |
+| Resizable | `OverlappedPresenter.IsResizable` (together with `IsMaximizable`) | `Resizable` in the styleMask | `gtk_window_set_resizable` | (none; the value is just remembered) |
 
-**Linux ではウィンドウの位置を扱えない。** GTK4 にはウィンドウの位置を
-読む API も動かす API も無い。Wayland ではアプリがウィンドウの位置を知る
-仕組みそのものが無く (置き場所はコンポジタが決める)、GTK4 はそれに合わせて
-X11 でも外した。[`Window::position`] はいつも `None` を返し、
-[`Window::set_position`] は何もしない。また **Wayland には最小化を知る
-仕組みも戻す仕組みも無い**ので、最小化しても `state` は
-[`WindowState::Minimized`] にならず、`Normal` を頼んでも戻るかどうかは
-コンポジタ次第になる (X11 では両方できる)。表示する前に頼んだ最小化は、
-出す前に頼んでもウィンドウマネージャが応えないので、表示してから当てる
-(一瞬だけ画面に出る)。
+**Linux cannot handle window positions.** GTK4 has no API to read or move a
+window's position. On Wayland there is no mechanism at all for an app to know its
+window's position (the compositor decides placement), and GTK4 dropped it on X11
+too to match. [`Window::position`] always returns `None`, and
+[`Window::set_position`] does nothing. Also, **Wayland has no mechanism for
+knowing about or restoring from minimization**, so minimizing does not make
+`state` [`WindowState::Minimized`], and whether requesting `Normal` restores it is
+up to the compositor (both work on X11). A minimize requested before showing is
+ignored by window managers when requested before the window is shown, so it is
+applied after showing (the window appears on screen for a moment).
 
-**Web は全画面だけ。** ページから操作できるのは Fullscreen API だけなので、
-位置は `None`、最大化と最小化は何もせず (全画面なら出るだけ)、
-`set_resizable` は値を覚えるだけになる。全画面は**ページ全体**
-(`document.documentElement`) に掛けるので、ウィンドウが複数あれば全部が
-全画面の中に入る。ブラウザは利用者の操作 (クリックやキー) の中からしか
-全画面にさせないので、ボタンの `on_click` などから呼ぶ (起動時やタイマー
-からは断られ、状態は変わらない)。iPhone の Safari には Fullscreen API が無い。
+**The Web has only fullscreen.** The only thing a page can operate is the
+Fullscreen API, so the position is `None`, maximize and minimize do nothing (they
+only leave fullscreen if in it), and `set_resizable` just remembers the value.
+Fullscreen applies to **the whole page** (`document.documentElement`), so with
+several windows they all go into the fullscreen view. Browsers allow fullscreen
+only from inside a user action (a click or key), so call it from a button's
+`on_click` or similar (calls at startup or from a timer are refused and the state
+does not change). iPhone Safari has no Fullscreen API.
 
-**Windows の位置には見えない縁が入る。** `AppWindow` の外枠は、ウィンドウの
-周りに Windows が付ける大きさ変更のつまみ (見えない数ピクセルの縁) を含む
-ので、見えている枠の左上より少し左上になる。読んだ位置をそのまま
-`set_position` へ渡せば同じ場所に戻る。
+**Windows positions include an invisible border.** The `AppWindow`'s outer frame
+includes the resize handles Windows adds around the window (an invisible border a
+few pixels wide), so it is a little up and left of the visible frame's top left.
+Passing the position you read straight back to `set_position` returns it to the
+same place.
 
-大きさを変えられないウィンドウも、[`Window::set_size`] では大きさを変えられる。
-最大化のボタンは 3 環境とも効かなくなる (macOS は zoom できず、Linux は
-ボタンが消え、Windows は `IsMaximizable` も切る)。
+Even a window that cannot be resized can still be resized with
+[`Window::set_size`]. The maximize button stops working on all three platforms
+(macOS cannot zoom, Linux removes the button, and Windows also turns off
+`IsMaximizable`).
 
-## 折りたたみ
+## Collapsible sections
 
-ふだんは隠しておき、見出しを押したときだけ見せたいものは [`Expander`] へ
-入れる。中身は 1 つなので、複数並べたいときは `Stack` などのコンテナごと
-入れる。
+Put things you want hidden normally and shown only when the heading is clicked in
+an [`Expander`]. It holds one child, so to show several things, put in a
+container such as a `Stack`.
 
 ```no_run
 # use naui::{Orientation, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let details = ui.expander("詳細設定")?;
+let details = ui.expander("Advanced settings")?;
 let body = ui.stack(Orientation::Vertical)?;
-body.append(&ui.checkbox("バックアップを作る")?);
+body.append(&ui.checkbox("Create a backup")?);
 details.set_child(&body);
-details.set_expanded(true); // 通知せずに開く
-details.on_toggle(|expanded| println!("開いている: {expanded}"));
+details.set_expanded(true); // expand without notifying
+details.on_toggle(|expanded| println!("expanded: {expanded}"));
 # Ok(())
 # }
 ```
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Expander` | `Expander` | `NSButton` (入り切り) + `NSStackView` | `GtkExpander` | `<details>` + `<summary>` |
+| `Expander` | `Expander` | `NSButton` (disclosure) + `NSStackView` | `GtkExpander` | `<details>` + `<summary>` |
 
-Windows は WinUI 3 のネイティブ `Expander` を使う。macOS は AppKit に
-単一の Expander がないため、標準の `NSButton` と `NSStackView` を組み合わせる。
+Windows uses WinUI 3's native `Expander`. AppKit has no single Expander, so macOS
+combines a standard `NSButton` and an `NSStackView`.
 
-たたんでいる間、中身はレイアウトから外れる (場所を空けない)。既定は
-閉じた状態で、[`set_expanded`](Expander::set_expanded) はプログラムからの
-操作なので `on_toggle` を呼ばない ([`Checkbox::set_checked`] と同じ決まり)。
+While collapsed, the content leaves the layout (it takes no space). It starts
+collapsed, and [`set_expanded`](Expander::set_expanded) is an operation from code,
+so it does not call `on_toggle` (the same rule as [`Checkbox::set_checked`]).
 
-## 区画の分割
+## Splitting panes
 
-画面を 2 つに分け、その境目を利用者に動かさせたいときは [`SplitView`] を
-使う。区画は start (左または上) と end (右または下) の 2 つで、
-仕切りの位置は **start 側の大きさ**を論理ピクセルで表す。
+To split the screen in two and let the user move the boundary, use
+[`SplitView`]. There are two panes, start (left or top) and end (right or bottom),
+and the divider position expresses **the size of the start side** in logical
+pixels.
 
 ```no_run
 # use naui::{Orientation, Result, Sizing, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let split = ui.split_view(Orientation::Horizontal)?; // 区画が横に並ぶ
-split.set_start(&ui.tree()?);   // サイドバー
-split.set_end(&ui.text_area("")?); // 本文
-split.set_position(220.0);      // 通知せずに仕切りを置く
-split.set_min_sizes(120.0, 200.0); // これより狭くはできない
-split.on_resize(|position| println!("サイドバーの幅は {position}"));
-split.set_sizing(Sizing::fill()); // 中身の高さでは決まらない
+let split = ui.split_view(Orientation::Horizontal)?; // panes side by side
+split.set_start(&ui.tree()?);      // sidebar
+split.set_end(&ui.text_area("")?); // body
+split.set_position(220.0);         // place the divider without notifying
+split.set_min_sizes(120.0, 200.0); // cannot be made narrower than this
+split.on_resize(|position| println!("the sidebar is {position} wide"));
+split.set_sizing(Sizing::fill()); // not decided by the content's height
 # Ok(())
 # }
 ```
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `SplitView` | `Grid` + 仕切りの `Grid` | `NSSplitView` | `GtkPaned` | `<div>` + `<div role="separator">` |
+| `SplitView` | `Grid` + a divider `Grid` | `NSSplitView` | `GtkPaned` | `<div>` + `<div role="separator">` |
 
-**余った場所は end 側が受け取る。** ウィンドウを広げても start 側は指定した
-大きさのままなので、サイドバーと本文のような組み合わせにそのまま使える。
-逆にしたいときは、狭いほうを end 側へ置く。
+**The end side takes the leftover space.** When the window grows, the start side
+keeps its specified size, so it works as is for combinations like a sidebar and a
+body. To do the opposite, put the narrower one on the end side.
 
-Windows と Web では対応するコントロールが無いので naui が組み立てるが、
-そこでも**見えるのは境目に引く 1 px の線だけ**で、残りは透明なつかみ代
-(6 px) になっている。塗りつぶしの帯にすると、区切りというより 1 つの部品の
-ように見えて周りから浮くため。色はテーマリソースと CSS のシステムカラーから
-引き、カーソルの形は CSS の `col-resize` / `row-resize` に任せている。
+Windows and the Web have no corresponding control, so naui builds one, but there
+too **only a 1 px line drawn at the boundary is visible**, and the rest is a
+transparent grab area (6 px). A filled band would look less like a separator and
+more like a component of its own, standing out from its surroundings. Colors come
+from theme resources and CSS system colors, and the cursor shape is left to CSS's
+`col-resize` / `row-resize`.
 
-作った直後の位置は [`DEFAULT_SPLIT_POSITION`] (200 px) で、4 環境で同じ。
-[`set_position`](SplitView::set_position) は通知せず、
-[`drag_to`](SplitView::drag_to) は利用者が動かしたのと同じく
-[`on_resize`](SplitView::on_resize) を呼ぶ (`ComboBox` の `set_selected` と
-`select` と同じ決まり)。
+The position right after creation is [`DEFAULT_SPLIT_POSITION`] (200 px), the
+same on all four platforms. [`set_position`](SplitView::set_position) does not
+notify, and [`drag_to`](SplitView::drag_to) calls
+[`on_resize`](SplitView::on_resize) as if the user had moved it (the same rule as
+`set_selected` and `select` of `ComboBox`).
 
-[`set_min_sizes`](SplitView::set_min_sizes) の既定はどちらも 0 だが、
-**中身のコントロール自身がそれ以上縮まないことがある**。そのときは環境が
-決める最小のほうが勝つ。画面がせまくて両方の最小を満たせないときは
-start 側が優先され、広がればまた指定した位置へ戻る。
+Both defaults of [`set_min_sizes`](SplitView::set_min_sizes) are 0, but **the
+content controls themselves may not shrink any further**. In that case the
+minimum decided by the platform wins. When the screen is too narrow to satisfy
+both minimums, the start side takes precedence, and once it widens it returns to
+the specified position.
 
-`Scroll` と同じく**中身の大きさから高さは決まらない**ので、
-大きさは [`set_sizing`](SplitView::set_sizing) で指定する。区画は 2 つ
-なので、3 つ以上に分けたいときは `SplitView` を入れ子にする。
+As with `Scroll`, **the height is not determined by the content's size**, so
+specify the size with [`set_sizing`](SplitView::set_sizing). There are two panes;
+to split into three or more, nest `SplitView`s.
 
-## ラベルの折り返し
+## Label wrapping
 
-[`Label`] は**既定では折り返さない**。1 行に収まらない分は、末尾を
-省略記号 (…) で切る。長い文章を出すときは
-[`set_wrap(true)`](Label::set_wrap) を指定する。
+[`Label`] **does not wrap by default**. Whatever does not fit on one line is cut
+off at the end with an ellipsis (…). To show long text, specify
+[`set_wrap(true)`](Label::set_wrap).
 
 ```no_run
 # use naui::{Result, Sizing, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let note = ui.label("狭いところでは折り返してほしい長い説明")?;
+let note = ui.label("A long description that should wrap in narrow places")?;
 note.set_wrap(true);
-note.set_sizing(Sizing::fill_width()); // 折り返す幅は親が決める
+note.set_sizing(Sizing::fill_width()); // the parent decides the wrapping width
 # Ok(())
 # }
 ```
 
-**折り返す幅を決めるのは親**なので、`Stack` の中では
-[`set_sizing`](Label::set_sizing) で幅も与える。幅が決まらないと、どの環境でも
-1 行ぶんの幅を要求したままになる。
+**The parent decides the wrapping width**, so inside a `Stack` also give it a
+width with [`set_sizing`](Label::set_sizing). Without a decided width, every
+platform keeps demanding the width of one line.
 
-| 環境 | 折り返さないとき | 折り返すとき |
+| Platform | Not wrapping | Wrapping |
 | --- | --- | --- |
 | Windows | `TextWrapping="NoWrap"` + `TextTrimming="CharacterEllipsis"` | `TextWrapping="Wrap"` |
 | macOS | `usesSingleLineMode` + `ByTruncatingTail` | `ByWordWrapping` + `preferredMaxLayoutWidth` |
 | Linux | `PangoEllipsizeMode::End` | `gtk_label_set_wrap` |
 | Web | `white-space: nowrap` + `text-overflow: ellipsis` | `white-space: normal` |
 
-`<span>` の既定は折り返すので、**Web だけは naui が CSS で他の 3 環境へ
-そろえている** (`Table` や `Tree` のセルと同じ扱い)。
+A `<span>` wraps by default, so **on the Web only, naui uses CSS to match the
+other three platforms** (the same treatment as the cells of `Table` and `Tree`).
 
-## ラベルの文字づかい
+## Label typography
 
-[`Label`] の大きさと色は、[`set_style`](Label::set_style) と
-[`set_color`](Label::set_color) で変えられる。渡すのは**段階と役割**で、
-級数や色の値ではない。naui はそれを、その環境が標準で持っている見出しの
-段階と意味づけされた色へ写す ([`ToolbarIcon`] と同じ決まり)。
+A [`Label`]'s size and color can be changed with
+[`set_style`](Label::set_style) and [`set_color`](Label::set_color). What you
+pass is **a level and a role**, not point sizes or color values. naui maps them
+onto the heading levels and semantic colors the platform has as standard (the
+same rule as [`ToolbarIcon`]).
 
 ```no_run
 # use naui::{Result, TextColor, TextStyle, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let title = ui.label("設定")?;
+let title = ui.label("Settings")?;
 title.set_style(TextStyle::Title);
 
-let note = ui.label("保存されていない変更があります")?;
+let note = ui.label("There are unsaved changes")?;
 note.set_style(TextStyle::Caption);
 note.set_color(TextColor::Warning);
 # Ok(())
 # }
 ```
 
-実際の級数と色を決めるのは OS なので、**文字を大きくする設定・アクセント
-カラー・ライト / ダークの切り替えにそのまま追従する**。段階は
-[`TextStyle`] の 6 つ、役割は [`TextColor`] の 6 つで、それぞれの写し先は
-各型のドキュメントに表で置いてある。
+The OS decides the actual point sizes and colors, so **they follow larger-text
+settings, the accent color and light / dark switching as is**. There are six
+levels in [`TextStyle`] and six roles in [`TextColor`], and the mapping of each is
+tabulated in that type's documentation.
 
-| 環境 | 段階の写し先 | 色の写し先 |
+| Platform | Levels map to | Colors map to |
 | --- | --- | --- |
-| macOS | `NSFontTextStyle` (`preferredFontForTextStyle:`) | `NSColor` の意味づけされた色 |
-| Windows | type ramp の `Style` | `{ThemeResource}` のブラシ |
-| Linux | libadwaita のスタイルクラス | 同じくスタイルクラス |
-| Web | naui が決めた `em` の相対値 | CSS のシステム色 (3 つだけ naui が決める) |
+| macOS | `NSFontTextStyle` (`preferredFontForTextStyle:`) | `NSColor`'s semantic colors |
+| Windows | The type ramp's `Style`s | `{ThemeResource}` brushes |
+| Linux | libadwaita style classes | Style classes as well |
+| Web | Relative `em` values decided by naui | CSS system colors (naui decides only three) |
 
-**Web だけは、ブラウザに見出しの段階そのものが無い**ので、折り返しと同じく
-naui が CSS で他の 3 環境へそろえている。色も、`Secondary` と `Accent` は
-CSS のシステム色 (`GrayText` / `AccentColor`) を使えるが、成功・注意・危険に
-あたるシステム色は無いため、そこだけ naui が `light-dark()` で値を決めている。
-また **Chromium 系は `AccentColor` に OS のアクセントカラーを出さず、灰色を
-返す** (Firefox と Safari は OS の色を返す)。
+**Only on the Web do browsers lack heading levels as such**, so, as with
+wrapping, naui uses CSS to match the other three platforms. For colors,
+`Secondary` and `Accent` can use CSS system colors (`GrayText` / `AccentColor`),
+but there are no system colors for success, warning and danger, so naui decides
+just those values with `light-dark()`. Also, **Chromium-based browsers return
+gray for `AccentColor` instead of the OS accent color** (Firefox and Safari return
+the OS color).
 
-## テキスト入力
+## Text input
 
-1 行なら [`TextInput`]、改行を含む文章なら [`TextArea`]、伏せ字にするなら
-[`PasswordInput`]、絞り込みや検索の欄なら [`SearchInput`] を使う。API の形は
-どれも同じで、IME・コピー / 貼り付け・取り消しはネイティブに任せている。
+Use [`TextInput`] for one line, [`TextArea`] for text with newlines,
+[`PasswordInput`] for masked input, and [`SearchInput`] for filter or search
+fields. Their APIs all have the same shape, and IME, copy / paste and undo are
+left to the native side.
 
-`TextInput` と `TextArea` は [`set_read_only(true)`](TextArea::set_read_only)
-で読み取り専用にできる。`set_enabled(false)` と違って薄く表示されず、文字を
-選んでコピーできるので、ログや生成結果を見せる欄に使う
-(`IsReadOnly` / `editable` / `gtk_editable_set_editable` / `readonly`)。
+`TextInput` and `TextArea` can be made read-only with
+[`set_read_only(true)`](TextArea::set_read_only). Unlike `set_enabled(false)`, it
+is not dimmed and the text can be selected and copied, so use it for fields that
+show logs or generated output (`IsReadOnly` / `editable` /
+`gtk_editable_set_editable` / `readonly`).
 
 ```no_run
 # use naui::{Length, Result, Sizing, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let memo = ui.text_area("")?;
-memo.set_placeholder("複数行のメモ (改行できます)");
-// スクロールと同じく中身に合わせた高さを持たないので、指定しておく。
+memo.set_placeholder("A multi-line memo (newlines allowed)");
+// Like a scroll view, it has no height that fits its contents, so specify one.
 memo.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(96.0)));
-memo.on_change(|text| println!("{} 文字", text.chars().count()));
+memo.on_change(|text| println!("{} characters", text.chars().count()));
 # Ok(())
 # }
 ```
@@ -798,86 +827,91 @@ memo.on_change(|text| println!("{} 文字", text.chars().count()));
 | `PasswordInput` | `PasswordBox` | `NSSecureTextField` | `GtkPasswordEntry` | `<input type="password">` |
 | `SearchInput` | `AutoSuggestBox` | `NSSearchField` | `GtkSearchEntry` | `<input type="search">` |
 
-[`TextArea`] は**長い行を折り返し、はみ出した分は縦にスクロール**する。
-折り返しの有無を選ぶ設定は、3 環境の共通部分に無いため持たない。
-macOS の `NSTextView` にはプレースホルダーが無いので、薄い色のラベルを
-重ねている (押すと当たり判定は下の `NSTextView` へ通る)。
+[`TextArea`] **wraps long lines and scrolls vertically when it overflows**. A
+setting to choose whether to wrap is not part of what the three platforms share,
+so there is none. macOS's `NSTextView` has no placeholder, so a dim label is
+overlaid (clicks hit-test through to the `NSTextView` below).
 
-`set_text` では `on_change` は呼ばれない (`TextInput` と同じく、Windows だけは
-ネイティブの `TextChanged` が出るため呼ばれる)。
+`set_text` does not call `on_change` (as with `TextInput`, Windows alone calls it
+because the native `TextChanged` fires).
 
-**Enter での確定は [`on_submit`](TextInput::on_submit) で受け取る**
-(`TextInput` / `PasswordInput` / [`NumberInput`])。フォームの送信や
-ログインのように、打ち終えたところで動かしたい処理に使う。
+**Confirmation with Enter is received through
+[`on_submit`](TextInput::on_submit)** (`TextInput` / `PasswordInput` /
+[`NumberInput`]). Use it for work that should run once the user finishes typing,
+such as submitting a form or logging in.
 
 ```no_run
 # use naui::{Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let name = ui.text_input("")?;
-name.on_change(|text| println!("入力中: {text}")); // 打つたび
-name.on_submit(|text| println!("{text} で登録する")); // Enter で確定したとき
+name.on_change(|text| println!("typing: {text}")); // on every keystroke
+name.on_submit(|text| println!("register {text}")); // when confirmed with Enter
 # Ok(())
 # }
 ```
 
-**IME で変換している間の Enter (変換の確定) では呼ばれない。** 読み取り専用の
-`TextInput` と、[`on_key_down`](TextInput::on_key_down) が Enter に
-`Handled` を返したときも呼ばれない。`NumberInput` は打ちかけの表示を値へ
-読み込んで (読めなければ元の値へ戻して) から、確定した値で呼ぶ。値が
-変わったなら `on_change` が先に呼ばれる。`TextArea` の Enter は改行なので
-持たない (送信に使うなら `on_key_down` で拾う)。`SearchInput` では同じ通知を
-`on_search` と呼ぶ。
+**It is not called for an Enter pressed while an IME is composing (which
+confirms the conversion).** It is also not called for a read-only `TextInput`, or
+when [`on_key_down`](TextInput::on_key_down) returned `Handled` for Enter.
+`NumberInput` reads what has been typed into the value first (reverting to the
+previous value if it cannot be read), then calls it with the confirmed value; if
+the value changed, `on_change` is called first. Enter in a `TextArea` is a
+newline, so it has none (pick it up in `on_key_down` if you use it for sending).
+In `SearchInput`, the same notification is called `on_search`.
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `on_submit` | Enter の `PreviewKeyDown` | `insertNewline:` (`control:textView:doCommandBySelector:`) | `activate` | Enter の `keydown` |
+| `on_submit` | `PreviewKeyDown` for Enter | `insertNewline:` (`control:textView:doCommandBySelector:`) | `activate` | `keydown` for Enter |
 
-[`PasswordInput`] は打った文字を伏せ字にするだけで、API は [`TextInput`] と
-同じ。**伏せ字を一時的に外すボタンは持たない** (`NSSecureTextField` に
-無いため)。入力された文字列は `text()` で読めるので、扱いはアプリの責任。
+[`PasswordInput`] only masks typed characters; its API is the same as
+[`TextInput`]. **It has no button to temporarily reveal the text**
+(`NSSecureTextField` has none). The entered string can be read with `text()`, so
+handling it is the app's responsibility.
 
-[`SearchInput`] は [`TextInput`] に**確定の通知**を足したもの。
-[`on_change`](SearchInput::on_change) は打つたび、
-[`on_search`](SearchInput::on_search) は **Enter で確定したとき**に呼ばれる
-(Windows は虫めがねの印を押したときも確定になる)。打ちながら絞り込むなら
-`on_change`、押されたときだけ探しに行くなら `on_search` を使う。
+[`SearchInput`] is [`TextInput`] plus **a confirmation notification**.
+[`on_change`](SearchInput::on_change) is called on every keystroke, and
+[`on_search`](SearchInput::on_search) **when the user confirms with Enter** (on
+Windows, clicking the magnifying glass also confirms). Use `on_change` to filter
+while typing, and `on_search` to search only when asked.
 
 ```no_run
 # use naui::{Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let search = ui.search_input()?;
-search.set_placeholder("検索");
-search.on_change(|text| println!("絞り込み: {text}"));
-search.on_search(|text| println!("{text} を探す"));
+search.set_placeholder("Search");
+search.on_change(|text| println!("filter: {text}"));
+search.on_search(|text| println!("search for {text}"));
 # Ok(())
 # }
 ```
 
-虫めがねの印と、打ち始めると出る**取り消しボタン (✕) はその環境が出す**
-(naui は見た目を作らない)。**取り消しボタンは確定ではない**。空になった
-ことは `on_change` で伝わり、`on_search` は呼ばれない。ブラウザによっては
-取り消しボタンが出ない (Firefox には無い)。
+The magnifying glass and the **clear button (✕) that appears once you start
+typing are shown by the platform** (naui builds no visuals). **The clear button is
+not a confirmation.** Becoming empty is reported through `on_change`, and
+`on_search` is not called. Some browsers show no clear button (Firefox has none).
 
-[`set_text`](SearchInput::set_text) は通知しない (`TextInput` と同じ)。
-候補の一覧は持たない。Windows の `AutoSuggestBox` には候補を出す仕組みが
-あるが、残る 3 環境の検索欄に無いため使っていない。
+[`set_text`](SearchInput::set_text) does not notify (the same as `TextInput`). It
+has no suggestion list. Windows's `AutoSuggestBox` has a mechanism for showing
+suggestions, but it is not used because the search fields of the other three
+platforms have none.
 
-## 数値入力
+## Number input
 
-数を入れさせるときは [`NumberInput`] を使う。値は `f64` で、範囲・刻み・
-小数桁は [`NumberSpec`] が決める。**既定は整数** (刻み 1、小数桁 0、
-範囲の制限なし) なので、小数を扱うなら両方を指定する。
+Use [`NumberInput`] to have the user enter a number. The value is an `f64`, and
+the range, step and decimal places are decided by [`NumberSpec`]. **The default is
+integers** (step 1, 0 decimal places, no range limit), so to handle decimals,
+specify both.
 
 ```no_run
 # use naui::{Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let count = ui.number_input(1.0)?;
-count.set_range(Some(1.0), Some(99.0)); // 1..=99 の外へは出られない
-count.on_change(|value| println!("{value} 個"));
+count.set_range(Some(1.0), Some(99.0)); // cannot go outside 1..=99
+count.on_change(|value| println!("{value} items"));
 
 let rate = ui.number_input(0.5)?;
-rate.set_decimals(2); // 0.50 のように 2 桁で見せる
-rate.set_step(0.05); // 上下のボタンで動く量
+rate.set_decimals(2); // show two digits, as in 0.50
+rate.set_step(0.05); // how much the up/down buttons move it
 # Ok(())
 # }
 ```
@@ -886,117 +920,123 @@ rate.set_step(0.05); // 上下のボタンで動く量
 | --- | --- | --- | --- | --- |
 | `NumberInput` | `NumberBox` | `NSTextField` + `NSStepper` | `GtkSpinButton` | `<input type="number">` |
 
-値は**小数桁へ丸めてから範囲へ収める**。範囲の外の値を
-[`set_value`](NumberInput::set_value) へ渡すと、通知せずに端へ寄る。
-打っている最中は表示を書き換えず、読めた時点で `on_change` が呼ばれる。
-中身に合わせた幅を持たないので (`TextInput` と同じ)、幅は
-[`set_sizing`](NumberInput::set_sizing) で指定する。
-表示を値へそろえ直すのは**確定したとき** (Enter・欄を離れたとき・増減の
-ボタンを押したとき) で、数として読めない文字列は確定時に元の値へ戻る。
+The value is **rounded to the decimal places first, then clamped to the range**.
+Passing an out-of-range value to [`set_value`](NumberInput::set_value) moves it to
+the end without notifying. The display is not rewritten while typing, and
+`on_change` is called once the text can be read. It has no width that fits its
+content (the same as `TextInput`), so specify the width with
+[`set_sizing`](NumberInput::set_sizing). The display is brought back in line with
+the value **on confirmation** (Enter, leaving the field, pressing the step
+buttons), and text that cannot be read as a number reverts to the previous value
+on confirmation.
 
-**Windows では有効数字が 10 桁までになる。**`NumberBox` が表示を作る前に
-有効数字 10 桁へ丸めるためで、確定するとその表示を読み直すので値もそこへ
-そろう。[`NumberSpec::decimals`] にそれを超える桁数を渡しても、Windows
-では 10 桁で切れる (残る 3 環境は `f64` の精度まで扱える)。
+**On Windows, values are limited to 10 significant digits.** `NumberBox` rounds
+to 10 significant digits before building its display, and on confirmation it
+reads that display back, so the value matches it too. Even if
+[`NumberSpec::decimals`] is given more digits than that, Windows cuts them at 10
+(the other three platforms handle the full precision of `f64`).
 
-## 入り切りの切り替え
+## On/off switches
 
-入っているか切れているかの 2 択は [`Checkbox`] か [`Toggle`] で切り替える。
-API はどちらも同じで、違うのは見せ方だけ。**印を付けるチェックボックスは
-「同意する」のようにまとめて決めるもの、つまみを動かすスイッチはその場で
-効く設定**に向く (どちらを使うかは、その環境の作法に合わせる)。
+Switch between the two choices of on and off with a [`Checkbox`] or a
+[`Toggle`]. Both have the same API; only the presentation differs. **Check boxes,
+which put a mark, suit things decided together, such as "I agree"; switches,
+which move a knob, suit settings that take effect immediately** (which to use
+follows the platform's conventions).
 
 ```no_run
 # use naui::{Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let backup = ui.toggle("バックアップを作る")?;
-backup.set_on(true); // 通知せずに入れる
-backup.on_toggle(|on| println!("バックアップ: {on}"));
+let backup = ui.toggle("Create a backup")?;
+backup.set_on(true); // turn on without notifying
+backup.on_toggle(|on| println!("backup: {on}"));
 # Ok(())
 # }
 ```
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Checkbox` | `CheckBox` | `NSButton` (チェック型) | `GtkCheckButton` | `<input type="checkbox">` |
+| `Checkbox` | `CheckBox` | `NSButton` (check type) | `GtkCheckButton` | `<input type="checkbox">` |
 | `Toggle` | `ToggleSwitch` | `NSSwitch` + `NSTextField` | `GtkSwitch` + `GtkLabel` | `<input type="checkbox" switch>` |
 
-[`set_checked`](Checkbox::set_checked) と [`set_on`](Toggle::set_on) は
-プログラムからの操作なので `on_toggle` を呼ばない。
+[`set_checked`](Checkbox::set_checked) and [`set_on`](Toggle::set_on) are
+operations from code, so they do not call `on_toggle`.
 
-`NSSwitch` と `GtkSwitch` は文字を持たないので、macOS と Linux では
-ラベルを横へ添えている。Windows は `OnContent` / `OffContent` へ同じ文字を
-入れて、入り切りで読みが変わらないようにしている。**切り替えの当たり判定は
-スイッチの部分**で、Web だけは `<label>` で組む都合上、文字を押しても
-切り替わる。
+`NSSwitch` and `GtkSwitch` have no text, so on macOS and Linux a label is placed
+next to them. On Windows the same text is put in `OnContent` / `OffContent`, so
+it reads the same whether on or off. **The hit area for switching is the switch
+part**; only on the Web, because it is built with a `<label>`, clicking the text
+also switches it.
 
-Web は `switch` 属性でブラウザへ「スイッチとして描いて」と頼むだけで、
-naui が見た目を作ることはしない。**この属性に対応しているのは Safari 17.4
-以降だけ**なので、Chrome や Firefox ではチェックボックスの見た目で出る
-(値の扱い・通知・読み上げ (`role="switch"`) は同じ)。
+On the Web, naui only asks the browser to "draw it as a switch" with the
+`switch` attribute and builds no visuals itself. **Only Safari 17.4 and later
+support this attribute**, so Chrome and Firefox show it as a check box (value
+handling, notifications and screen reader announcements (`role="switch"`) are the
+same).
 
-## 選択入力
+## Choice input
 
-1 つの候補を省スペースに選ばせるときは [`ComboBox`] を使う。候補は
-ドロップダウンで表示され、選択されたものはインデックスで返る。
+Use [`ComboBox`] to let the user choose one option in little space. The options
+are shown in a drop-down, and the chosen one is returned as an index.
 
 ```no_run
 # use naui::{Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let language = ui.combo_box()?;
 language.set_items(&["Rust", "Swift", "TypeScript"]);
-language.set_selected(0); // 通知せずに初期値を選ぶ
-language.on_select(|index| println!("{index} 番目が選ばれた"));
+language.set_selected(0); // choose the initial value without notifying
+language.on_select(|index| println!("item {index} was chosen"));
 # Ok(())
 # }
 ```
 
-候補にない値も受け付けたいときは [`EditableComboBox`] を使う。こちらは
-打ち込める入力欄で、候補は入力の補助にすぎない。**値はインデックスでは
-なく文字列**で、`on_change` は打鍵でも候補の選択でも呼ばれる。
+To also accept values that are not among the options, use [`EditableComboBox`].
+It is a field you can type into, and the options are merely an input aid. **The
+value is a string, not an index**, and `on_change` is called both for typing and
+for choosing an option.
 
 ```no_run
 # use naui::{Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let city = ui.editable_combo_box()?;
-city.set_items(&["東京", "大阪", "札幌"]);
-city.set_placeholder("都市名");
-city.set_text("京都"); // 候補に無い値も入る (通知はしない)
-city.on_change(|text| println!("{text} と入力された"));
+city.set_items(&["Tokyo", "Osaka", "Sapporo"]);
+city.set_placeholder("City");
+city.set_text("Kyoto"); // values not among the options go in too (no notification)
+city.on_change(|text| println!("{text} was entered"));
 # Ok(())
 # }
 ```
 
-[`selected`](EditableComboBox::selected) は「今の文字列とそのまま一致する
-候補」を返すので、候補外の値が入っているときは `None` になる。
-`set_text` と `set_selected` は通知せず、`select` は利用者が選んだときと
-同じく通知する。
+[`selected`](EditableComboBox::selected) returns "the option that exactly matches
+the current string", so it is `None` while a value not among the options is in
+the field. `set_text` and `set_selected` do not notify, and `select` notifies just
+as when the user chooses.
 
-**打った文字で候補の一覧が絞り込まれるかは環境によって違う。** naui は
-一覧を自分で組み立てず、それぞれのコントロールに任せているため。
+**Whether typed characters narrow down the option list differs by platform.**
+naui does not build the list itself; it leaves it to each control.
 
-| 環境 | 打った文字と候補の一覧 |
+| Platform | Typed characters and the option list |
 | --- | --- |
-| Windows | 絞り込まない (一致する候補へ選択が移るだけ) |
-| macOS | 絞り込まない (代わりに入力欄の側が補完される) |
-| Linux | 絞り込まない (矢印を押すと候補が全部出る) |
-| Web | ブラウザが絞り込む (規則はブラウザ次第で、切れない) |
+| Windows | Not narrowed (the selection just moves to a matching option) |
+| macOS | Not narrowed (the input field is completed instead) |
+| Linux | Not narrowed (pressing the arrow shows all options) |
+| Web | The browser narrows it (the rules depend on the browser and cannot be turned off) |
 
-どの環境でも絞り込みたいときは、`on_change` の中でアプリが `set_items` を
-呼び直して候補そのものを入れ替える (Web ではさらにブラウザ側の絞り込みが
-重なる)。
+To narrow it on every platform, have the app call `set_items` again inside
+`on_change` to replace the options themselves (on the Web, the browser's own
+narrowing is layered on top).
 
-候補をすべて画面に出して選ばせるなら [`RadioGroup`] を使う。API は
-`ComboBox` と同じで、違うのは候補の見せ方だけ。
+To show all options on screen and let the user choose, use [`RadioGroup`]. Its API
+is the same as `ComboBox`'s; only the presentation of the options differs.
 
 ```no_run
 # use naui::{Orientation, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let plan = ui.radio_group()?;
-plan.set_items(&["無料", "標準", "上位"]);
-plan.set_orientation(Orientation::Horizontal); // 既定は縦
+plan.set_items(&["Free", "Standard", "Premium"]);
+plan.set_orientation(Orientation::Horizontal); // vertical by default
 plan.set_selected(0);
-plan.on_select(|index| println!("{index} 番目が選ばれた"));
+plan.on_select(|index| println!("item {index} was chosen"));
 # Ok(())
 # }
 ```
@@ -1004,27 +1044,27 @@ plan.on_select(|index| println!("{index} 番目が選ばれた"));
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
 | `ComboBox` | `ComboBox` | `NSPopUpButton` | `GtkDropDown` | `<select>` |
-| `RadioGroup` | `RadioButton` の組 | `NSButton` のラジオ型 | 組にした `GtkCheckButton` | `<input type="radio">` |
+| `RadioGroup` | A set of `RadioButton`s | Radio-type `NSButton`s | Grouped `GtkCheckButton`s | `<input type="radio">` |
 
-どちらも [`set_items`](ComboBox::set_items) は候補のインデックスの意味を
-変えるため、選択を外す。`set_selected` / `clear_selection` は通知せず、
-`select` は利用者の操作と同じく `on_select` を呼ぶ。`ComboBox` は自由入力の
-できる編集可能コンボボックスではない。`RadioGroup` は 1 つのグループなので、
-排他になるのはその中だけ。
+For both, [`set_items`](ComboBox::set_items) changes what option indices mean, so
+it clears the selection. `set_selected` / `clear_selection` do not notify, and
+`select` calls `on_select` just like a user action. `ComboBox` is not an editable
+combo box that accepts free input. A `RadioGroup` is one group, so options are
+mutually exclusive only within it.
 
-## 日付と時刻
+## Dates and times
 
-日付や時刻を選ばせるときは [`DatePicker`] を使う。何を選ばせるかは
-生成時の [`DatePickerMode`] で決め、値は [`DateTime`] (年月日と時分) で
-やり取りする。
+To let the user pick a date or time, use [`DatePicker`]. What is picked is decided
+by the [`DatePickerMode`] at creation, and values are exchanged as [`DateTime`]
+(year, month, day, hour and minute).
 
 ```no_run
 # use naui::{DatePickerMode, DateTime, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let start = ui.date_picker(DatePickerMode::Date)?;
-start.set_value(DateTime::date(2026, 8, 22)); // 通知せずに値を入れる
-start.set_range(Some(DateTime::date(2026, 1, 1)), None); // 下限だけ決める
-start.on_change(|value| println!("{value} が選ばれた"));
+start.set_value(DateTime::date(2026, 8, 22)); // set the value without notifying
+start.set_range(Some(DateTime::date(2026, 1, 1)), None); // only a lower bound
+start.on_change(|value| println!("{value} was chosen"));
 
 let alarm = ui.date_picker(DatePickerMode::Time)?;
 alarm.set_value(DateTime::time(7, 30));
@@ -1034,64 +1074,68 @@ alarm.set_value(DateTime::time(7, 30));
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `DatePicker` | `DatePicker` / `TimePicker` | `NSDatePicker` | `GtkCalendar` + `GtkSpinButton` | `<input type="date">` ほか |
+| `DatePicker` | `DatePicker` / `TimePicker` | `NSDatePicker` | `GtkCalendar` + `GtkSpinButton` | `<input type="date">` and others |
 
-作った直後の値は**その環境の現在日時 (ローカル時刻)** で、空の状態は
-持たない (`NSDatePicker` に「未選択」が無いため)。秒も持たない
-([`DateTime`] 参照)。
+The value right after creation is **the platform's current date and time (local
+time)**, and there is no empty state (because `NSDatePicker` has no "nothing
+selected"). It also has no seconds (see [`DateTime`]).
 
-[`DatePickerMode::Date`] は時刻を、[`DatePickerMode::Time`] は日付を
-**選ばせないだけで、捨てはしない**。`set_value` で入れた側の値は
-[`DatePicker::value`] にそのまま残る。
+[`DatePickerMode::Date`] **only stops the user from picking** the time, and
+[`DatePickerMode::Time`] the date; **neither discards it**. The part set with
+`set_value` stays in [`DatePicker::value`] as is.
 
-[`set_value`](DatePicker::set_value) は通知せず、暦として成り立たない値
-(11 月 31 日など) は丸める。[`set_range`](DatePicker::set_range) の外へは
-出られず、範囲の比較には**選ばせている部分だけ**を使う。
+[`set_value`](DatePicker::set_value) does not notify, and values that are not
+valid calendar dates (such as November 31) are rounded. The value cannot leave
+[`set_range`](DatePicker::set_range), and range comparisons use **only the part
+being picked**.
 
-時刻だけを選ばせたいなら [`TimePicker`] のほうが扱いやすい。値が
-[`Time`] (時分だけ) なので、要らない日付を持ち回らずに済む。
+If you only want the user to pick a time, [`TimePicker`] is easier to handle. Its
+value is a [`Time`] (hours and minutes only), so you do not carry around a date
+you do not need.
 
-## 時刻の選択
+## Picking a time
 
-時刻だけを選ばせるときは [`TimePicker`] を使う。値は [`Time`] (時分) で
-やり取りし、日付は持たない。
+To let the user pick only a time, use [`TimePicker`]. Values are exchanged as
+[`Time`] (hours and minutes), with no date.
 
 ```no_run
 # use naui::{Result, Time, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let alarm = ui.time_picker()?;
-alarm.set_value(Time::new(7, 30)); // 通知せずに値を入れる
+alarm.set_value(Time::new(7, 30)); // set the value without notifying
 alarm.set_range(Some(Time::new(6, 0)), Some(Time::new(9, 0)));
-alarm.on_change(|value| println!("{value} が選ばれた")); // 07:30
+alarm.on_change(|value| println!("{value} was chosen")); // 07:30
 # Ok(())
 # }
 ```
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `TimePicker` | `TimePicker` | `NSDatePicker` の時分 | `GtkSpinButton` の組 | `<input type="time">` |
+| `TimePicker` | `TimePicker` | `NSDatePicker` (hours and minutes) | A set of `GtkSpinButton`s | `<input type="time">` |
 
-作った直後の値は**その環境の現在時刻 (ローカル時刻)** で、空の状態は
-持たない ([`DatePicker`] と同じ)。**秒は持たない** ([`Time`] 参照)。
-12 時間制 / 24 時間制の別は、その環境のロケールに従う。
+The value right after creation is **the platform's current time (local time)**,
+and there is no empty state (the same as [`DatePicker`]). **It has no seconds**
+(see [`Time`]). Whether the 12-hour or 24-hour clock is used follows the
+platform's locale.
 
-[`set_value`](TimePicker::set_value) は通知せず、時計として成り立たない値
-(25 時 70 分など) は端へ丸める。繰り上がりはしないので、`Time::new(25, 70)` は
-翌日の 2 時 10 分ではなく 23 時 59 分になる。
-[`set_range`](TimePicker::set_range) の外へは出られない。日付をまたぐ範囲 (22:00〜翌 06:00 など) は指定できない —
-[`Time`] に日付が無く、下限が上限より後ろのときは上限が勝つため。
+[`set_value`](TimePicker::set_value) does not notify, and values that are not
+valid clock times (such as 25:70) are clamped to the ends. There is no carry, so
+`Time::new(25, 70)` becomes 23:59, not 2:10 the next day. The value cannot leave
+[`set_range`](TimePicker::set_range). Ranges that cross midnight (such as 22:00
+to 06:00 the next day) cannot be specified — [`Time`] has no date, and when the
+lower bound is after the upper bound, the upper bound wins.
 
-## 色の選択
+## Picking a color
 
-色を選ばせるときは [`ColorPicker`] を使う。値は [`Color`] (sRGB の 8 bit)
-でやり取りし、色を選ぶ UI はその環境のものがそのまま開く。
+To let the user pick a color, use [`ColorPicker`]. Values are exchanged as
+[`Color`] (8-bit sRGB), and the platform's own color picking UI opens as is.
 
 ```no_run
 # use naui::{Color, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let accent = ui.color_picker()?;
-accent.set_value(Color::rgb(0x33, 0x66, 0xff)); // 通知せずに値を入れる
-accent.on_change(|value| println!("{value} が選ばれた")); // #3366ff
+accent.set_value(Color::rgb(0x33, 0x66, 0xff)); // set the value without notifying
+accent.on_change(|value| println!("{value} was chosen")); // #3366ff
 # Ok(())
 # }
 ```
@@ -1100,38 +1144,38 @@ accent.on_change(|value| println!("{value} が選ばれた")); // #3366ff
 | --- | --- | --- | --- | --- |
 | `ColorPicker` | `Button` + `Flyout` + `ColorPicker` | `NSColorWell` | `GtkColorDialogButton` | `<input type="color">` |
 
-作った直後の値は黒 ([`Color::BLACK`])。**透明度は扱わない** —
-`<input type="color">` が不透明な色しか返さないため、4 環境でそろう
-範囲に合わせている。
+The value right after creation is black ([`Color::BLACK`]). **Opacity is not
+handled** — `<input type="color">` returns only opaque colors, so naui sticks to
+the range all four platforms share.
 
-[`set_value`](ColorPicker::set_value) は通知せず、
-[`pick`](ColorPicker::pick) は利用者が選んだのと同じく `on_change` を
-呼ぶ ([`ComboBox::set_selected`] と [`ComboBox::select`] と同じ決まり)。
+[`set_value`](ColorPicker::set_value) does not notify, and
+[`pick`](ColorPicker::pick) calls `on_change` just as when the user picks (the
+same rule as [`ComboBox::set_selected`] and [`ComboBox::select`]).
 
-Windows の WinUI 3 `ColorPicker` は、スペクトラムとスライダーを縦に
-並べた**大きな面**で、他の 3 環境の「色の見本を押すと選択の UI が開く」
-という形と並び方が違う。そこで WinUI 3 の作法どおり `Button` の
-`Flyout` へ入れ、ボタンには選んだ色の見本を出している。
+WinUI 3's `ColorPicker` is a **large surface** with a spectrum and sliders stacked
+vertically, which differs in shape and layout from the other three platforms'
+"press a color swatch to open the picking UI". So, following WinUI 3 practice, it
+is put in a `Button`'s `Flyout`, and the button shows a swatch of the chosen color.
 
-macOS のカラーパネルはカタログ色 (`systemBlue` など) も返すので、
-成分を読む前に sRGB へ変換している。
+macOS's color panel also returns catalog colors (such as `systemBlue`), so they
+are converted to sRGB before the components are read.
 
-## 描画面
+## Drawing surfaces
 
-グラフ・図形・可視化のように**アプリが自分で描くもの**は [`Canvas`] に
-描く。描く内容は [`on_draw`](Canvas::on_draw) に渡すクロージャの中で
-[`Painter`] へ書き、描き直したいときは [`redraw`](Canvas::redraw) を呼ぶ。
-面の大きさが変わったときは naui が描き直す。
+**Things the app draws itself**, such as charts, shapes and visualizations, are
+drawn on a [`Canvas`]. Write what to draw to the [`Painter`] inside the closure
+passed to [`on_draw`](Canvas::on_draw), and call [`redraw`](Canvas::redraw) when
+you want it redrawn. When the surface's size changes, naui redraws it.
 
 ```no_run
 # use naui::{Color, Point, Rect, Result, Sizing, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let chart = ui.canvas()?;
-chart.set_sizing(Sizing::fill()); // 中身から大きさは決まらない
+chart.set_sizing(Sizing::fill()); // the size is not decided by the content
 chart.on_draw(|painter| {
     let bar = Rect::new(10.0, 10.0, 40.0, painter.height() - 20.0);
     painter.fill_rect(bar, Color::rgb(0x33, 0x66, 0xff));
-    painter.text("売上", Point::new(10.0, painter.height() - 16.0), 12.0, Color::BLACK);
+    painter.text("Sales", Point::new(10.0, painter.height() - 16.0), 12.0, Color::BLACK);
 });
 chart.on_pointer(|event| println!("{:?} at {:?}", event.phase, event.point));
 chart.redraw();
@@ -1141,42 +1185,46 @@ chart.redraw();
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Canvas` | `Grid` + `Canvas` + `Path` / `TextBlock` | `NSView` + `drawRect:` (`NSBezierPath`) | `GtkDrawingArea` (cairo + Pango) | `<canvas>` + 2D コンテキスト |
+| `Canvas` | `Grid` + `Canvas` + `Path` / `TextBlock` | `NSView` + `drawRect:` (`NSBezierPath`) | `GtkDrawingArea` (cairo + Pango) | `<canvas>` + 2D context |
 
-`Painter` は描画命令を**記録するだけ**で、画素に落とすのはその環境の
-2D API の仕事 (naui はラスタライズもフォントの計量も持たない)。座標は
-左上原点・右と下が正の論理ピクセルで、高解像度の倍率は環境が掛ける。
-語彙は 4 環境でそろう最小限 — 矩形・円・直線・折れ線・多角形・任意の
-[`Path`] (直線と 3 次ベジェ) の塗りと線、1 行の文字 — で、透け具合
-([`set_opacity`](Painter::set_opacity))・破線 ([`set_dash`](Painter::set_dash))・
-文字の寄せ方 ([`set_text_align`](Painter::set_text_align)) は状態として
-持ち、変えるまで後の命令に効く。円と弧は `Path` がベジェへ直してから
-渡すので、どの環境でも同じ形になる。
+The `Painter` **only records** drawing commands; turning them into pixels is the
+job of the platform's 2D API (naui has neither rasterization nor font metrics).
+Coordinates are logical pixels with the origin at the top left and right and down
+positive, and the platform applies the high-DPI scale. The vocabulary is the
+minimum shared by all four platforms — fills and strokes of rectangles, circles,
+lines, polylines, polygons and arbitrary [`Path`]s (lines and cubic Béziers), and
+single lines of text — while opacity ([`set_opacity`](Painter::set_opacity)),
+dashes ([`set_dash`](Painter::set_dash)) and text alignment
+([`set_text_align`](Painter::set_text_align)) are held as state that applies to
+later commands until changed. Circles and arcs are converted to Béziers by `Path`
+before being passed on, so they have the same shape on every platform.
 
-| 命令 | 内容 |
+| Command | What it does |
 | --- | --- |
-| `fill_rect` / `stroke_rect` | 矩形の塗りと線 |
-| `fill_circle` / `stroke_circle` | 円の塗りと線 |
-| `line` / `polyline` / `fill_polygon` | 直線・折れ線・多角形 |
-| `fill_path` / `stroke_path` | 任意の `Path` (直線と 3 次ベジェ。2 次ベジェ・楕円・弧はベジェへ直して積む) |
-| `text` | 1 行の文字 |
-| `set_opacity` / `set_dash` / `set_text_align` | 以後の命令に効く状態 (透け具合・破線・文字の寄せ方) |
+| `fill_rect` / `stroke_rect` | Fill and stroke of a rectangle |
+| `fill_circle` / `stroke_circle` | Fill and stroke of a circle |
+| `line` / `polyline` / `fill_polygon` | Line, polyline, polygon |
+| `fill_path` / `stroke_path` | An arbitrary `Path` (lines and cubic Béziers; quadratic Béziers, ellipses and arcs are converted to Béziers) |
+| `text` | A single line of text |
+| `set_opacity` / `set_dash` / `set_text_align` | State that applies to later commands (opacity, dashes, text alignment) |
 
-文字の書体はその環境の標準の UI フォントで、`size` は文字の大きさ
-(論理ピクセル)。`at` は文字の**上端**で、横は寄せ方に従う。**文字の幅を
-測る API は無い** (計量を持たないため)。
+The typeface is the platform's standard UI font, and `size` is the text size (in
+logical pixels). `at` is the **top** of the text, and horizontally it follows the
+alignment. **There is no API to measure text width** (because there are no font
+metrics).
 
-`redraw` は**その場では描かない**。次の描画のとき (macOS / Linux は
-ネイティブの描画パス、Web は次のフレーム、Windows は `DispatcherQueue` の
-次の順番) に `on_draw` が呼ばれる。続けて何度呼んでも描くのは 1 回で、
-`on_draw` の中から呼んでも再入しない。
+`redraw` **does not draw on the spot**. `on_draw` is called at the next draw (the
+native drawing pass on macOS / Linux, the next frame on the Web, and the next turn
+of the `DispatcherQueue` on Windows). Calling it many times in a row draws once,
+and calling it from inside `on_draw` does not re-enter.
 
-[`on_pointer`](Canvas::on_pointer) にはポインター (マウス・タッチ・ペン) の
-押下・移動・解放が、面の左上を原点にした位置で届く
-([`PointerEvent`])。移動は押していない間 (ホバー) も届き、押している間は
-面の外へ出ても届く (捕捉する)。押下と解放には、どのボタンかが
-[`PointerButton`] で付く (主・副・中・戻る・進む。タッチとペン先は主)。
-環境ごとに違うボタンの番号は意味でそろえてある。修飾キーはまだ区別しない。
+[`on_pointer`](Canvas::on_pointer) receives pointer (mouse, touch, pen) presses,
+moves and releases, with positions relative to the surface's top left
+([`PointerEvent`]). Moves arrive while not pressed (hover) too, and while pressed
+they arrive even outside the surface (the pointer is captured). Presses and
+releases carry which button as a [`PointerButton`] (primary, secondary, middle,
+back, forward; touch and the pen tip are primary). Button numbers that differ by
+platform are aligned by meaning. Modifier keys are not distinguished yet.
 
 ```no_run
 # use naui::{PointerButton, PointerPhase, Result, Ui};
@@ -1184,35 +1232,36 @@ chart.redraw();
 # let chart = ui.canvas()?;
 chart.on_pointer(|event| {
     if event.phase == PointerPhase::Down && event.button == Some(PointerButton::Secondary) {
-        println!("右クリック: {:?}", event.point); // PopupMenu::open_at などへ
+        println!("right click: {:?}", event.point); // e.g. to PopupMenu::open_at
     }
 });
 # Ok(())
 # }
 ```
 
-ホイール (トラックパッドの 2 本指のスクロールも含む) は
-[`on_wheel`](Canvas::on_wheel) に、[`PointerPhase::Wheel`] の
-[`PointerEvent`] として届く。量は [`wheel_x`](PointerEvent::wheel_x) /
-[`wheel_y`](PointerEvent::wheel_y) で、**論理ピクセルにそろえてある**。
-正は右・下へ読み進める向き (ページのスクロールと同じ) で、OS の
-「ナチュラルなスクロール」の設定は反映したあとの向きになる。
+The wheel (including two-finger scrolling on a trackpad) arrives at
+[`on_wheel`](Canvas::on_wheel) as a [`PointerEvent`] with
+[`PointerPhase::Wheel`]. The amounts are [`wheel_x`](PointerEvent::wheel_x) /
+[`wheel_y`](PointerEvent::wheel_y), **normalized to logical pixels**. Positive is
+the reading direction, right and down (the same as page scrolling), and the
+direction is the one after the OS "natural scrolling" setting has been applied.
 
-| 環境 | ネイティブの量 | naui に届く量 |
+| Platform | Native amount | Amount naui delivers |
 | --- | --- | --- |
-| Windows | `MouseWheelDelta` (1 刻みで 120、縦は奥へ回すと正) | 120 を [`WHEEL_STEP`] に直し、縦の符号を反転 |
-| macOS | `scrollingDeltaX` / `Y` (トラックパッドはピクセル、ホイールは行。中身が動く向きで正) | ピクセルはそのまま、行は `WHEEL_STEP` 倍。符号を反転 |
-| Linux | `GtkEventControllerScroll` (単位が `SURFACE` ならピクセル、`WHEEL` なら刻み) | ピクセルはそのまま、刻みは `WHEEL_STEP` 倍 |
-| Web | `WheelEvent` (`deltaMode` がピクセル・行・ページ) | ピクセルはそのまま、行は `WHEEL_STEP` の 1/3 倍、ページは面の大きさ倍 |
+| Windows | `MouseWheelDelta` (120 per notch; vertical is positive when rolled away) | 120 converted to [`WHEEL_STEP`], vertical sign inverted |
+| macOS | `scrollingDeltaX` / `Y` (pixels for trackpads, lines for wheels; positive in the direction the content moves) | Pixels as is, lines times `WHEEL_STEP`; sign inverted |
+| Linux | `GtkEventControllerScroll` (pixels if the unit is `SURFACE`, notches if `WHEEL`) | Pixels as is, notches times `WHEEL_STEP` |
+| Web | `WheelEvent` (`deltaMode` is pixels, lines or pages) | Pixels as is, lines times 1/3 of `WHEEL_STEP`, pages times the surface size |
 
-刻みのあるホイールの 1 刻みは `WHEEL_STEP` (48) になる。ただし Web で
-ブラウザがピクセルで渡すときはブラウザの量のままなので、1 刻みの量は
-ブラウザによって違う。拡大縮小のように「1 刻みでどれだけ」を決めるときは、
-量を `WHEEL_STEP` で割った値を指数に使うと、細かい量でも滑らかに効く。
+One notch of a notched wheel becomes `WHEEL_STEP` (48). However, when a browser on
+the Web passes pixels, the browser's amount is kept, so the amount per notch
+differs by browser. When deciding "how much per notch", as for zooming, using the
+amount divided by `WHEEL_STEP` as an exponent works smoothly even for fine
+amounts.
 
-`on_wheel` は [`EventResponse`] を返す。`Handled` なら外側のスクロール
-(`Scroll` やページ) へ回さず、`Continue` なら外側がいつもどおり
-スクロールする。`on_wheel` を付けていない面は、ホイールを外側へ回す。
+`on_wheel` returns an [`EventResponse`]. With `Handled` the outer scroll (a
+`Scroll` or the page) does not receive it, and with `Continue` the outside scrolls
+as usual. A surface without `on_wheel` passes the wheel to the outside.
 
 ```no_run
 # use naui::{EventResponse, Result, Ui, WHEEL_STEP};
@@ -1220,34 +1269,36 @@ chart.on_pointer(|event| {
 # let chart = ui.canvas()?;
 let mut scale = 1.0_f64;
 chart.on_wheel(move |event| {
-    scale *= 1.2_f64.powf(-event.wheel_y / WHEEL_STEP); // 1 刻みで 1.2 倍
-    EventResponse::Handled // ページはスクロールさせない
+    scale *= 1.2_f64.powf(-event.wheel_y / WHEEL_STEP); // 1.2x per notch
+    EventResponse::Handled // do not scroll the page
 });
 # Ok(())
 # }
 ```
 
-Web では、右クリックで出るブラウザのコンテキストメニューを面の上では
-出さない (他の 3 環境の描画面にも無いため)。
+On the Web, the browser context menu that right-clicking opens is not shown over
+the surface (because the other three platforms' drawing surfaces have none
+either).
 
-Windows だけは**画素を描く面が Windows App SDK に無い** (Win2D は別
-パッケージ)。そこで XAML が持つ図形の要素 `Path` と `TextBlock` を
-`Canvas` へ置く形にしていて、描き直しのたびに面を丸ごと組み直す。
-命令が数千を超える図では、他の 3 環境より描き直しに時間がかかる。
+Only on Windows, **the Windows App SDK has no surface for drawing pixels** (Win2D
+is a separate package). So naui places XAML's shape elements `Path` and
+`TextBlock` on a `Canvas`, and rebuilds the whole surface on every redraw. For
+drawings with more than several thousand commands, redrawing takes longer than on
+the other three platforms.
 
-## ナビゲーション
+## Navigation
 
-タブ・ナビバー・ドック・メニュー・パンくず・ページ送り・リンクは、
-どの環境でも同じ API で組み立てられる。項目は [`NavItem`] の並びで渡し、
-選ばれたものはインデックスで返る。
+Tabs, nav bars, docks, menus, breadcrumbs, pagination and links can be built with
+the same API on every platform. Items are passed as a sequence of [`NavItem`]s,
+and the chosen one is returned as an index.
 
 ```no_run
 # use naui::{NavItem, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let navbar = ui.navbar("naui")?;
-navbar.set_items(&NavItem::list(["ホーム", "検索", "設定"]));
-navbar.on_select(|index| println!("{index} 番目が選ばれた"));
-navbar.set_selected(0); // 通知せずに選択を変える
+navbar.set_items(&NavItem::list(["Home", "Search", "Settings"]));
+navbar.on_select(|index| println!("item {index} was chosen"));
+navbar.set_selected(0); // change the selection without notifying
 # Ok(())
 # }
 ```
@@ -1255,47 +1306,47 @@ navbar.set_selected(0); // 通知せずに選択を変える
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
 | `Tabs` | `Grid` + `ToggleButton` | `NSTabView` | `GtkNotebook` | `role="tablist"` |
-| `Navbar` | `ToggleButton` の横並び | `NSSegmentedControl` | `GtkLabel` + `GtkToggleButton` の横並び | `<nav>` |
-| `Dock` | `ToggleButton` の横並び | `NSSegmentedControl` | `GtkToggleButton` の横並び (等幅) | `<nav>` |
-| `Menu` | `ToggleButton` の縦並び | `NSButton` の縦並び | `GtkToggleButton` の縦並び | `<nav><ul>` |
-| `Breadcrumbs` | `HyperlinkButton` + 区切り | `NSPathControl` | `GtkLabel` のリンク + 区切り | `<nav><ol><a>` |
+| `Navbar` | A row of `ToggleButton`s | `NSSegmentedControl` | `GtkLabel` + a row of `GtkToggleButton`s | `<nav>` |
+| `Dock` | A row of `ToggleButton`s | `NSSegmentedControl` | A row of `GtkToggleButton`s (equal widths) | `<nav>` |
+| `Menu` | A column of `ToggleButton`s | A column of `NSButton`s | A column of `GtkToggleButton`s | `<nav><ul>` |
+| `Breadcrumbs` | `HyperlinkButton` + separators | `NSPathControl` | `GtkLabel` links + separators | `<nav><ol><a>` |
 | `Pagination` | `Button` + `ToggleButton` | `NSButton` + `NSSegmentedControl` | `GtkButton` + `GtkToggleButton` | `<nav>` |
-| `Link` | `HyperlinkButton` | `NSButton` (リンク色) | `GtkLinkButton` | `<a>` |
+| `Link` | `HyperlinkButton` | `NSButton` (link color) | `GtkLinkButton` | `<a>` |
 
-`Menu` は**縦に並ぶナビゲーション一覧**であって、ポップアップメニューではない。
-右クリックで出るほうは [`PopupMenu`] を使う。
-`Dock` の下端への固定は、レイアウトが縦横のスタックだけなのでアプリの責務になる。
+`Menu` is **a vertical navigation list**, not a pop-up menu. For the one opened by
+right-clicking, use [`PopupMenu`]. Since layout is only vertical and horizontal
+stacks, pinning a `Dock` to the bottom edge is the app's responsibility.
 
-## ツールバー
+## Toolbars
 
-よく使う操作をウィンドウの上端に並べるときは [`Toolbar`] を使う。
-ほかのウィジェットと違い**レイアウトへは置かない**。macOS の
-`NSToolbar` が `NSWindow` に取り付けるものだからで、naui でも
-[`Window::set_toolbar`] で取り付ける ([`Widget`] ではない)。
+To line up frequently used actions along the top edge of a window, use
+[`Toolbar`]. Unlike other widgets, **it is not placed in the layout**. That is
+because macOS's `NSToolbar` is something attached to an `NSWindow`, and naui too
+attaches it with [`Window::set_toolbar`] (it is not a [`Widget`]).
 
-ナビゲーションと違い**選ばれている項目を持たず**、押されるたびに
-その場でコマンドが走る。項目は [`ToolbarItem`] の並びで渡し、
-押されたものは**区切りを含めた並びの**インデックスで返る。
+Unlike navigation, **it has no selected item**; each press runs a command on the
+spot. Items are passed as a sequence of [`ToolbarItem`]s, and the pressed one is
+returned as an index **into the sequence including separators**.
 
-項目は**アイコン**で並ぶ。アイコンの呼び名は環境ごとに違うため
-([`ToolbarIcon`] 参照)、naui は操作の種類だけを受け取り、その環境の
-標準アイコンへ写す。`label` は読み上げ・ツールチップ・項目が入りきらない
-ときのメニューに使う。
+Items are shown as **icons**. Icon names differ by platform (see
+[`ToolbarIcon`]), so naui takes only the kind of action and maps it to the
+platform's standard icon. `label` is used for screen readers, tooltips and the
+menu shown when not all items fit.
 
 ```no_run
 # use naui::{Result, ToolbarIcon, ToolbarItem, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let window = ui.window("編集", 800.0, 600.0)?;
+let window = ui.window("Editor", 800.0, 600.0)?;
 
 let toolbar = ui.toolbar()?;
 toolbar.set_items(&[
-    ToolbarItem::new(ToolbarIcon::New, "新規"),
-    ToolbarItem::new(ToolbarIcon::Open, "開く"),
-    ToolbarItem::separator(),        // 押せないので通知も来ない
-    ToolbarItem::new(ToolbarIcon::Save, "保存").enabled(false),
+    ToolbarItem::new(ToolbarIcon::New, "New"),
+    ToolbarItem::new(ToolbarIcon::Open, "Open"),
+    ToolbarItem::separator(),        // cannot be pressed, so no notification either
+    ToolbarItem::new(ToolbarIcon::Save, "Save").enabled(false),
 ]);
-toolbar.on_activate(|index| println!("{index} 番目が押された"));
-toolbar.set_item_enabled(3, true);   // 保存できる状態になったら有効にする
+toolbar.on_activate(|index| println!("item {index} was pressed"));
+toolbar.set_item_enabled(3, true);   // enable once saving becomes possible
 window.set_toolbar(&toolbar);
 # Ok(())
 # }
@@ -1304,61 +1355,61 @@ window.set_toolbar(&toolbar);
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
 | `Toolbar` | `CommandBar` + `AppBarButton` | `NSToolbar` + `NSToolbarItem` | `AdwHeaderBar` + `GtkButton` | `<div role="toolbar">` + `<button>` |
-| アイコン | Segoe Fluent Icons | SF Symbols | アイコンテーマ | naui 同梱の SVG |
+| Icons | Segoe Fluent Icons | SF Symbols | Icon theme | SVGs bundled with naui |
 
-macOS と Linux では**ウィンドウのタイトルバーと一体**で表示される。
-Windows の `CommandBar` と Web の対応する概念は無いため、
-タイトルバーの下 (Web ではウィンドウ要素の先頭) に置く。
+On macOS and Linux it is shown **merged with the window's title bar**. Windows's
+`CommandBar` and the Web have no corresponding concept, so it is placed below the
+title bar (on the Web, at the start of the window element).
 
-macOS では、ツールバーを付けると**タイトル文字が隠れる**。ツールバーの
-あるウィンドウでタイトルを出さないのが macOS の作法で、出したままだと
-タイトルが先頭を占めて項目が右端へ押しやられてしまうため。
-[`Window::set_title`] の値はウィンドウのタイトルとして残り
-(ウィンドウメニューや Mission Control には出る)、[`Window::title`] も
-返し続ける。[`Window::clear_toolbar`] で外すと表示も戻る。
+On macOS, attaching a toolbar **hides the title text**. Not showing the title in a
+window with a toolbar is the macOS convention, and if it stayed visible the title
+would occupy the start and push the items to the right edge.
+[`Window::set_title`]'s value remains the window's title (it appears in the
+Window menu and Mission Control), and [`Window::title`] keeps returning it.
+Removing the toolbar with [`Window::clear_toolbar`] brings the display back.
 
-[`Toolbar::len`] は区切りを含めた項目数で、[`Toolbar::activate`] は
-利用者が押したのと同じように通知する (区切り・押せない項目・範囲外は
-何もしない)。[`Toolbar::set_enabled`] はツールバー全体をまとめて
-無効にするもので、項目ごとの指定は残る。
+[`Toolbar::len`] is the number of items including separators, and
+[`Toolbar::activate`] notifies just as if the user had pressed it (separators,
+disabled items and out-of-range indices do nothing). [`Toolbar::set_enabled`]
+disables the whole toolbar at once, and per-item settings are kept.
 
-ブラウザには OS のアイコンテーマが無いため、Web だけは naui が図形を持つ。
-用意しているのは [`ToolbarIcon`] に並ぶ操作だけで、任意の画像は置けない。
-また naui は項目をインデックスで識別するため、
-macOS の「ツールバーをカスタマイズ」(利用者による並べ替え) は切ってある。
-並べ替えられると通知のインデックスの意味が変わってしまうため。
+Browsers have no OS icon theme, so only on the Web does naui carry the shapes.
+Only the actions listed in [`ToolbarIcon`] are provided, and arbitrary images
+cannot be placed. Also, since naui identifies items by index, macOS's "Customize
+Toolbar" (rearranging by the user) is turned off, because rearranging would change
+the meaning of the indices in notifications.
 
-## メニューバー (OS のアプリケーションメニュー)
+## Menu bars (the OS application menu)
 
-「ファイル」「編集」のような**見出しと項目の 2 段**のメニューは
-[`MenuBar`] を使う。[`Toolbar`] と同じくレイアウトへは置かず、
-[`Window::set_menu_bar`] で取り付ける ([`Widget`] ではない)。
+For **two-level** menus of headings and items, such as "File" and "Edit", use
+[`MenuBar`]. Like [`Toolbar`], it is not placed in the layout but attached with
+[`Window::set_menu_bar`] (it is not a [`Widget`]).
 
-見出し 1 つが [`MenuSpec`]、その中の 1 行が [`MenuItem`]。押されると
-**(見出しのインデックス, 区切り線を含めた項目のインデックス)** で
-[`MenuBar::on_activate`] が呼ばれる。
+One heading is a [`MenuSpec`], and one line inside it is a [`MenuItem`]. When
+pressed, [`MenuBar::on_activate`] is called with **(the heading's index, the item's
+index including separators)**.
 
 ```no_run
 # use naui::{MenuItem, MenuShortcut, MenuSpec, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let window = ui.window("編集", 800.0, 600.0)?;
+let window = ui.window("Editor", 800.0, 600.0)?;
 
 let menu_bar = ui.menu_bar()?;
 menu_bar.set_menus(&[
     MenuSpec::new(
-        "ファイル",
+        "File",
         [
-            MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
-            MenuItem::new("開く").shortcut(MenuShortcut::new('o')),
-            MenuItem::separator(),      // 押せないので通知も来ない
-            MenuItem::new("保存").shortcut(MenuShortcut::new('s')).enabled(false),
+            MenuItem::new("New").shortcut(MenuShortcut::new('n')),
+            MenuItem::new("Open").shortcut(MenuShortcut::new('o')),
+            MenuItem::separator(),      // cannot be pressed, so no notification either
+            MenuItem::new("Save").shortcut(MenuShortcut::new('s')).enabled(false),
         ],
     ),
-    // 文字列の並びをそのまま渡すこともできる。
-    MenuSpec::new("表示", ["拡大", "縮小"]),
+    // A sequence of strings can also be passed as is.
+    MenuSpec::new("View", ["Zoom In", "Zoom Out"]),
 ]);
-menu_bar.on_activate(|menu, item| println!("{menu} 番目の {item} 番目が押された"));
-menu_bar.set_item_enabled(0, 3, true); // 保存できる状態になったら有効にする
+menu_bar.on_activate(|menu, item| println!("item {item} of menu {menu} was pressed"));
+menu_bar.set_item_enabled(0, 3, true); // enable once saving becomes possible
 window.set_menu_bar(&menu_bar);
 # Ok(())
 # }
@@ -1366,143 +1417,149 @@ window.set_menu_bar(&menu_bar);
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `MenuBar` | `Button` の横並び | `NSMenu` (`NSApplication.mainMenu`) | `GtkPopoverMenuBar` + `GMenu` | `<div role="menubar">` |
-| メニュー | `MenuFlyout` | `NSMenu` | `GMenu` の submenu | `<div role="menu">` |
-| 項目 | `MenuFlyoutItem` | `NSMenuItem` | `GMenuItem` + `GSimpleAction` | `<button role="menuitem">` |
+| `MenuBar` | A row of `Button`s | `NSMenu` (`NSApplication.mainMenu`) | `GtkPopoverMenuBar` + `GMenu` | `<div role="menubar">` |
+| Menu | `MenuFlyout` | `NSMenu` | A `GMenu` submenu | `<div role="menu">` |
+| Item | `MenuFlyoutItem` | `NSMenuItem` | `GMenuItem` + `GSimpleAction` | `<button role="menuitem">` |
 
-**macOS ではメニューバーはアプリに 1 つ**で、画面上端に出る
-(`NSApplication.mainMenu`)。[`Window::set_menu_bar`] はどのウィンドウから
-呼んでもアプリ全体に効く。ほかの 3 環境ではウィンドウの上端 (タイトルバーの
-下) に敷かれる。
+**On macOS there is one menu bar per app**, shown at the top of the screen
+(`NSApplication.mainMenu`). [`Window::set_menu_bar`] affects the whole app no
+matter which window it is called from. On the other three platforms it is laid
+along the top of the window (below the title bar).
 
-### ショートカット
+### Shortcuts
 
-[`MenuShortcut`] は**主修飾キーと英数字 1 文字**の組み合わせで、主修飾キーは
-macOS では ⌘、ほかでは Ctrl になる。⇧ と ⌥ / Alt は
-[`shift`](MenuShortcut::shift) / [`alt`](MenuShortcut::alt) で足す。
-macOS と Linux では OS (AppKit / GTK4) がキーを受け取って項目を呼び、
-項目の右端の表示も OS が作る。Windows と Web にはその仕組みが無いため、
-naui が押されたキーを見張り、右端の表示 (`Ctrl+S` の形) も自分で添える。
+A [`MenuShortcut`] is a combination of **the primary modifier key and one
+alphanumeric character**; the primary modifier is ⌘ on macOS and Ctrl elsewhere.
+⇧ and ⌥ / Alt are added with [`shift`](MenuShortcut::shift) /
+[`alt`](MenuShortcut::alt). On macOS and Linux, the OS (AppKit / GTK4) receives
+the key and invokes the item, and the OS also builds the label at the item's right
+edge. Windows and the Web have no such mechanism, so naui watches for the pressed
+keys and adds the right-edge label (in the form `Ctrl+S`) itself.
 
-### macOS の標準メニュー
+### The standard macOS menus
 
-macOS では ⌘C / ⌘V などがメインメニューのキー等価として配送されるため、
-メニューが無いと**テキスト入力で貼り付けができなくなる**。そこで naui は
-アプリ名のメニュー (先頭) と「編集」メニュー (末尾) を必ず用意し、
-アプリが渡した見出しをその間へ並べる。[`Window::clear_menu_bar`] で外すと、
-この 2 つだけの既定のメニューへ戻る。
+On macOS, ⌘C / ⌘V and so on are delivered as key equivalents of the main menu, so
+without a menu **pasting into text input stops working**. So naui always provides
+the app-name menu (first) and the "Edit" menu (last), and places the headings the
+app passed between them. Removing it with [`Window::clear_menu_bar`] returns to the
+default menu consisting only of these two.
 
-### そのほか
+### Other details
 
-[`MenuBar::len`] は見出しの数、[`MenuBar::menu_len`] は見出し 1 つが持つ
-区切り線を含めた項目数。[`MenuBar::activate`] は利用者が選んだのと同じように
-通知する (区切り線・押せない項目・範囲外は何もしない)。
-[`MenuBar::set_enabled`] はメニューバー全体をまとめて無効にするもので、
-項目ごとの指定は残る (macOS では naui の標準メニューは対象にしない)。
+[`MenuBar::len`] is the number of headings, and [`MenuBar::menu_len`] is the
+number of items in one heading including separators. [`MenuBar::activate`]
+notifies just as if the user had chosen it (separators, disabled items and
+out-of-range indices do nothing). [`MenuBar::set_enabled`] disables the whole menu
+bar at once, and per-item settings are kept (on macOS, naui's standard menus are
+not affected).
 
-入れ子のメニュー (サブメニューのさらに下) と、チェックの付く項目は
-**持たない**。4 環境で同じ形にそろうところまでを共通 API にしてあるので、
-それ以上が要るときはネイティブオブジェクトへの脱出口を使う。
+Nested menus (below a submenu) and items with check marks are **not supported**.
+The common API covers what takes the same shape on all four platforms, so when you
+need more, use the escape hatch to native objects.
 
-## サイドバー
+## Sidebars
 
-「システム設定」や Finder の左側のような、**ウィンドウの高さいっぱいの
-サイドバー**は [`Sidebar`] を使う。[`Toolbar`] と同じくレイアウトへは
-置かず、[`Window::set_sidebar`] で取り付ける ([`Widget`] ではない)。
-取り付けると、[`Window::set_child`] の子はサイドバーの右の区画に置かれる。
+For a **sidebar spanning the full height of the window**, like the left side of
+System Settings or Finder, use [`Sidebar`]. Like [`Toolbar`], it is not placed in
+the layout but attached with [`Window::set_sidebar`] (it is not a [`Widget`]).
+Once attached, the child of [`Window::set_child`] is placed in the pane to the
+right of the sidebar.
 
-項目は [`SidebarItem`] (文字とアイコン) で、[`SidebarSection`] で
-まとめる。見出しの無いまとまりは隙間 (Windows と Linux では区切り線) だけで
-区切られる。選ばれた項目は**まとまりをまたいだ通し番号**で返る。
+Items are [`SidebarItem`]s (text and an icon), grouped with [`SidebarSection`]s.
+Groups without a heading are separated only by a gap (a separator line on Windows
+and Linux). The chosen item is returned as **a running index across groups**.
 
 ```no_run
 # use naui::{Result, SidebarItem, SidebarSection, ToolbarIcon, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let window = ui.window("設定", 800.0, 600.0)?;
+let window = ui.window("Settings", 800.0, 600.0)?;
 let body = ui.stack(naui::Orientation::Vertical)?;
-window.set_child(&body); // サイドバーの右に置かれる
+window.set_child(&body); // placed to the right of the sidebar
 
 let sidebar = ui.sidebar()?;
 sidebar.set_sections(&[
     SidebarSection::untitled([
-        SidebarItem::new("一般").icon(ToolbarIcon::Settings),
-        SidebarItem::new("情報").icon(ToolbarIcon::Info),
+        SidebarItem::new("General").icon(ToolbarIcon::Settings),
+        SidebarItem::new("About").icon(ToolbarIcon::Info),
     ]),
-    SidebarSection::new("場所", ["書類", "ダウンロード"]), // 見出し付き
+    SidebarSection::new("Locations", ["Documents", "Downloads"]), // with a heading
 ]);
-sidebar.on_select(|index| println!("{index} 番目が選ばれた")); // 0〜3
-sidebar.set_selected(0);      // 通知せずに選ぶ
-sidebar.set_width(240.0);     // 既定は DEFAULT_SIDEBAR_WIDTH (220)
+sidebar.on_select(|index| println!("item {index} was chosen")); // 0 to 3
+sidebar.set_selected(0);      // choose without notifying
+sidebar.set_width(240.0);     // DEFAULT_SIDEBAR_WIDTH (220) by default
 window.set_sidebar(&sidebar);
-sidebar.set_collapsed(true);  // 閉じる (項目と選択は残る)
-sidebar.on_collapse(|collapsed| println!("利用者が開閉した: {collapsed}"));
-sidebar.on_resize(|width| println!("利用者が幅を {width} にした"));
+sidebar.set_collapsed(true);  // collapse (items and selection are kept)
+sidebar.on_collapse(|collapsed| println!("the user toggled it: {collapsed}"));
+sidebar.on_resize(|width| println!("the user set the width to {width}"));
 # Ok(())
 # }
 ```
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Sidebar` | `NavigationView` (Left) | `NSSplitViewController` のサイドバー項目 | `GtkPaned` | `SplitView` の中に `<aside>` + `<nav>` |
-| 項目の一覧 | `NavigationViewItem` | `NSTableView` (ソースリスト) | `GtkListBox` (`.navigation-sidebar`) | `<ul>` + `<button>` |
-| 見出し | `NavigationViewItemHeader` | グループ行 | 淡い `GtkLabel` の行 | `<div role="heading">` |
+| `Sidebar` | `NavigationView` (Left) | `NSSplitViewController`'s sidebar item | `GtkPaned` | `<aside>` + `<nav>` inside a `SplitView` |
+| Item list | `NavigationViewItem` | `NSTableView` (source list) | `GtkListBox` (`.navigation-sidebar`) | `<ul>` + `<button>` |
+| Heading | `NavigationViewItemHeader` | Group row | A row with a dim `GtkLabel` | `<div role="heading">` |
 
-macOS では**タイトルバーの下まで伸びる** (macOS 26 では浮いたガラス、
-それより前はすりガラスの材質)。そのため付けている間はウィンドウに
-`fullSizeContentView` が付き、子の上端はタイトルバーを避けた位置になる。
-Linux ではサイドバーと中身がそれぞれヘッダーバーを持つ (GNOME の作法)。
-Windows と Web ではタイトルバー (とメニューバー) の下から始まる。
+On macOS it **extends under the title bar** (floating glass on macOS 26, a frosted
+material before that). So while it is attached, the window gets
+`fullSizeContentView`, and the child's top edge is positioned to avoid the title
+bar. On Linux the sidebar and the content each have their own header bar (the
+GNOME convention). On Windows and the Web it starts below the title bar (and the
+menu bar).
 
-### 幅と開閉
+### Width and collapsing
 
-**4 環境とも、利用者は仕切りをドラッグして幅を変えられる** (下限は
-[`SIDEBAR_MIN_WIDTH`])。変えると [`Sidebar::on_resize`] が呼ばれる
-([`Sidebar::set_width`] では呼ばれない)。macOS と Linux は標準の仕切り
-(`NSSplitView` / `GtkPaned`)、Windows と Web は naui の [`SplitView`] と同じ
-6 px のつかみ代になる。Linux の `AdwOverlaySplitView` は幅を変えられないため、
-`GtkPaned` で分けている。
+**On all four platforms, the user can drag the divider to change the width** (the
+minimum is [`SIDEBAR_MIN_WIDTH`]). Doing so calls [`Sidebar::on_resize`] (it is not
+called by [`Sidebar::set_width`]). macOS and Linux use the standard dividers
+(`NSSplitView` / `GtkPaned`), and Windows and the Web use the same 6 px grab area
+as naui's [`SplitView`]. Linux's `AdwOverlaySplitView` cannot change its width, so
+it is split with `GtkPaned`.
 
-開閉は**その環境の標準のサイドバーボタン**で利用者も行え、そのときは
-[`Sidebar::on_collapse`] が呼ばれる ([`Sidebar::set_collapsed`] では呼ばれない)。
-ボタンの位置は 4 環境でそろえてあり、**ウィンドウの上端の左 (ツールバーと
-同じ高さ)** に来る。開閉してもボタンは動かず、中身も上下しない。
+The user can also collapse and expand it with **the platform's standard sidebar
+button**, which calls [`Sidebar::on_collapse`] (it is not called by
+[`Sidebar::set_collapsed`]). The button's position is aligned across the four
+platforms: **the left of the window's top edge (at the same height as the
+toolbar)**. The button does not move when toggling, and the content does not shift
+up or down.
 
-| 環境 | 開閉ボタン | 閉じたときの姿 |
+| Platform | Toggle button | When collapsed |
 | --- | --- | --- |
-| macOS | ツールバー先頭のサイドバーボタン (`NSToolbarToggleSidebarItemIdentifier`)。ツールバーが無ければボタンだけのツールバーを付ける | 区画ごと隠れる (仕切りを下限より左へ引いても閉じる) |
-| Linux | ヘッダーバーの左端の `sidebar-show-symbolic` | 区画ごと隠れる |
-| Windows | `NavigationView` のペインを畳むボタン | アイコンだけの細い帯 |
-| Web | ツールバーの行の先頭の `<button aria-expanded>` (ツールバーが無ければボタンだけの行) | 区画ごと隠れる |
+| macOS | The sidebar button at the start of the toolbar (`NSToolbarToggleSidebarItemIdentifier`). Without a toolbar, a toolbar with just the button is attached | The whole pane is hidden (it also collapses when the divider is dragged left past the minimum) |
+| Linux | `sidebar-show-symbolic` at the left end of the header bar | The whole pane is hidden |
+| Windows | `NavigationView`'s pane collapse button | A narrow strip of icons only |
+| Web | `<button aria-expanded>` at the start of the toolbar row (a row with just the button if there is no toolbar) | The whole pane is hidden |
 
-アイコンは [`ToolbarIcon`] と同じ種類を使い、その環境の標準アイコンへ
-写す。`set_selected` / `clear_selection` は通知せず、`select` と利用者の
-選択は通知する (ほかのナビゲーションと同じ)。
+Icons use the same kinds as [`ToolbarIcon`] and are mapped to the platform's
+standard icons. `set_selected` / `clear_selection` do not notify, while `select`
+and the user's choices do (the same as other navigation).
 
-libadwaita 1.9 にはサイドバーの一覧まで持つ `AdwSidebar` があるが、naui が
-対象にしている 1.5 には無いため、Linux は 1.5 までの推奨どおり `GtkListBox` で
-組んでいる。Web はブラウザにサイドバーのコントロールが無いので、`Menu` と
-同じく標準要素とブラウザ既定のボタンで組み立てる。
+libadwaita 1.9 has `AdwSidebar`, which includes the item list, but 1.5, which naui
+targets, does not, so Linux builds it with `GtkListBox` as recommended up to 1.5.
+Browsers have no sidebar control, so on the Web, as with `Menu`, it is assembled
+from standard elements and browser-default buttons.
 
-## ポップアップ (コンテキスト) メニュー
+## Pop-up (context) menus
 
-[`PopupMenu`] は画面に並ばないので [`Widget`] ではない。項目は
-[`PopupItem`] の並びで渡し、選ばれたものは**区切り線を含めた並びの**
-インデックスで返る。
+A [`PopupMenu`] is not laid out on screen, so it is not a [`Widget`]. Items are
+passed as a sequence of [`PopupItem`]s, and the chosen one is returned as an index
+**into the sequence including separators**.
 
 ```no_run
 # use naui::{PopupItem, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let label = ui.label("右クリックしてください")?;
+let label = ui.label("Right-click here")?;
 
 let popup = ui.popup_menu()?;
 popup.set_items(&[
-    PopupItem::new("コピー"),
-    PopupItem::separator(),          // 選べないので通知も来ない
-    PopupItem::new("削除").enabled(false),
+    PopupItem::new("Copy"),
+    PopupItem::separator(),          // cannot be chosen, so no notification either
+    PopupItem::new("Delete").enabled(false),
 ]);
-popup.on_select(|index| println!("{index} 番目が選ばれた"));
-popup.attach(&label);                // 右クリックで出る
-popup.open_at(&label, 0.0, 0.0);     // プログラムから出す (左上からの位置)
+popup.on_select(|index| println!("item {index} was chosen"));
+popup.attach(&label);                // opens on right-click
+popup.open_at(&label, 0.0, 0.0);     // open from code (position from the top left)
 # Ok(())
 # }
 ```
@@ -1511,42 +1568,42 @@ popup.open_at(&label, 0.0, 0.0);     // プログラムから出す (左上か�
 | --- | --- | --- | --- | --- |
 | `PopupMenu` | `MenuFlyout` | `NSMenu` | `GtkPopoverMenu` + `GMenu` | `<div role="menu">` |
 
-**階層 (サブメニュー)・チェック印・ショートカットの表示は持たない。**
-項目は「文字・選べるかどうか・区切り線」だけで、これは 4 環境が
-そろって同じ形で扱える範囲にそろえたため。
+**There are no hierarchies (submenus), check marks or shortcut labels.** Items
+are only "text, whether it can be chosen, and separators", matching the range all
+four platforms can handle in the same shape.
 
-ネイティブのメニューがあるのは macOS (`NSMenu`) と Linux (`GtkPopoverMenu`)
-で、**Windows と Web は合成**になる。Windows はまだ WinUI 3 の
-`MenuFlyout` へ移せておらず、ブラウザには既定のコンテキストメニューを
-差し替える API が無いため。合成のほうは
-**キーボード操作 (矢印キーでの移動) を持たない**。Web は Escape で
-閉じられるが、Windows はキー入力のバインディングが無いため閉じられない
-(メニューの外側を押せばどちらも閉じる)。
+Native menus exist on macOS (`NSMenu`) and Linux (`GtkPopoverMenu`), and **Windows
+and the Web are synthesized**. Windows has not yet been moved to WinUI 3's
+`MenuFlyout`, and browsers have no API to replace the default context menu. The
+synthesized ones **have no keyboard operation (moving with the arrow keys)**. On
+the Web it can be closed with Escape, but on Windows it cannot, because there is no
+key input binding (in both, clicking outside the menu closes it).
 
-`attach` は同じメニューをいくつのウィジェットにも取り付けられる。
-Web では**取り付けたウィジェットの上でだけ**ブラウザ既定のメニューを
-抑止する。`select` はユーザー操作と同じく通知し (テストや自動操作用)、
-区切り線と選べない項目は無視する。
+`attach` can attach the same menu to any number of widgets. On the Web, the
+browser's default menu is suppressed **only over the attached widgets**. `select`
+notifies just like a user action (for tests and automation), and ignores
+separators and items that cannot be chosen.
 
-## リスト
+## Lists
 
-[`List`] は行が縦に並ぶ一覧で、自分でスクロールする。行は [`ListItem`]、
-選び方は [`SelectionMode`] で、選択はインデックスの並びで返る。
-[`ListItem::detail`] を付けると、行に補助の文字が付く。
+A [`List`] is a list of rows stacked vertically that scrolls by itself. Rows are
+[`ListItem`]s, the way of selecting is [`SelectionMode`], and the selection is
+returned as a sequence of indices. Adding [`ListItem::detail`] gives a row
+secondary text.
 
 ```no_run
 # use naui::{ListItem, Result, SelectionMode, Sizing, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let list = ui.list()?;
 list.set_items(&[
-    ListItem::new("札幌"),
-    ListItem::new("東京").detail("13,960,000 人"), // 2 行目に小さく出る
+    ListItem::new("Sapporo"),
+    ListItem::new("Tokyo").detail("13,960,000 people"), // shown small on a second line
 ]);
-list.set_selection_mode(SelectionMode::Multiple); // 既定は Single
-list.on_select(|indices| println!("{indices:?} が選ばれた"));
-list.set_selection(&[0, 2]); // 通知せずに選択を置き換える
+list.set_selection_mode(SelectionMode::Multiple); // Single by default
+list.on_select(|indices| println!("{indices:?} were chosen"));
+list.set_selection(&[0, 2]); // replace the selection without notifying
 
-// Auto の高さは全行に追従する。高さを制限したい一覧だけ Fixed / Fill にする。
+// An Auto height follows all rows. Use Fixed / Fill only for lists whose height should be limited.
 list.set_sizing(Sizing::fill_width());
 # Ok(())
 # }
@@ -1554,51 +1611,54 @@ list.set_sizing(Sizing::fill_width());
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `List` | `ListView` + `ListViewItem` | `NSTableView` (1 列) + `NSScrollView` | `GtkListBox` + `GtkScrolledWindow` | `<select size>` / `<ul role="listbox">` |
+| `List` | `ListView` + `ListViewItem` | `NSTableView` (1 column) + `NSScrollView` | `GtkListBox` + `GtkScrolledWindow` | `<select size>` / `<ul role="listbox">` |
 
-入れ子の項目を開閉して選ぶなら [`Tree`] を使う。
+To expand and collapse nested items while choosing, use [`Tree`].
 
-`Menu` との違いは役割で、`Menu` は**画面を切り替えるナビゲーション**、
-`List` は**データを選ぶ一覧**。`List` だけが複数選択とスクロールを持つ。
+The difference from `Menu` is the role: `Menu` is **navigation that switches
+screens**, and `List` is **a list for choosing data**. Only `List` has multiple
+selection and scrolling.
 
-[`SelectionMode::Multiple`] はどの環境でも「⌘ / Ctrl や Shift を押しながら選ぶ」
-形になる (WinUI では `Multiple` ではなく `Extended` に写している)。
-複数選択では選択が 0 件になることがあるため、通知は
-`on_select(|indices: &[usize]|)` の形で、空の並びも渡される。
-`set_selection` / `set_selected` / `clear_selection` は通知せず、
-`select` / `select_many` はユーザー操作と同じく通知する。
+[`SelectionMode::Multiple`] takes the form "choose while holding ⌘ / Ctrl or
+Shift" on every platform (on WinUI it is mapped to `Extended`, not `Multiple`).
+With multiple selection the selection can become empty, so the notification takes
+the form `on_select(|indices: &[usize]|)`, and an empty sequence is passed too.
+`set_selection` / `set_selected` / `clear_selection` do not notify, and `select` /
+`select_many` notify just like user actions.
 
-[`ListItem::detail`] はどの環境でも 2 行目になる。行の中身は naui の
-`Stack` と [`Label`] で組んであり、小ささと淡さを決めるのは
-[`TextStyle::Caption`] と [`TextColor::Secondary`] なので、その環境の
-「補助テキスト」の見た目になる。**Web は行の中身で作りが変わり**、
-文字だけなら `<select size>`、`detail` があれば `<ul role="listbox">` の
-合成になる (`<option>` はテキストしか持てないため)。
+[`ListItem::detail`] becomes a second line on every platform. The row content is
+built from naui's `Stack` and [`Label`], and its smaller, dimmer look is decided by
+[`TextStyle::Caption`] and [`TextColor::Secondary`], so it looks like the
+platform's "secondary text". **On the Web the construction changes with the row
+content**: text only gives a `<select size>`, and with `detail` it is a
+synthesized `<ul role="listbox">` (because `<option>` can hold only text).
 
-行の作り方は 2 通りある。どちらも**行の識別はインデックス**。
+There are two ways to build rows. In both, **rows are identified by index**.
 
-| 行の作り方 | 使う型 | 中身 |
+| How rows are built | Type used | Content |
 | --- | --- | --- |
-| [`List::set_items`] | [`ListItem`] | 文字だけの行。`detail` を付けると補助の文字が 2 行目に添えられる |
-| [`List::set_rows`] | [`ListRow`] | 任意のウィジェットを 1 行として並べる |
+| [`List::set_items`] | [`ListItem`] | Text-only rows. Adding `detail` puts secondary text on a second line |
+| [`List::set_rows`] | [`ListRow`] | Arbitrary widgets laid out as one row each |
 
-設定画面など、先頭の画像・複数行の本文・末尾のボタンやトグルを持つ行は、
-既存の `Grid` / `Stack` で作って [`ListRow::new`] に渡し、[`List::set_rows`]
-で表示する。行内のコントロールだけを操作して行全体は選ばせない場合は
-[`ListRow::selectable(false)`](ListRow::selectable) を指定する。`ListItem` に
-アクセサリの種類を列挙しないため、アプリ固有の行構成も同じ仕組みで扱える。
+For rows with a leading image, multi-line body text, or a trailing button or
+toggle, as in settings screens, build them with the existing `Grid` / `Stack`,
+pass them to [`ListRow::new`], and show them with [`List::set_rows`]. When only the
+controls inside a row are operated and the whole row should not be selectable,
+specify [`ListRow::selectable(false)`](ListRow::selectable). `ListItem` does not
+enumerate kinds of accessories, so app-specific row layouts are handled by the
+same mechanism.
 
-行のラベルや余白を押したときの処理は
-[`ListRow::on_activate`] で受ける。**ボタン・チェックボックス・入力欄を
-直接押したときは呼ばれない**ので、行の処理と中のコントロールの処理が
-二重に起きない (macOS は `NSTableView` の action、GTK / WinUI はイベントの
-ルーティング、Web は押された要素をたどって、どれも同じ切り分けにしている)。
-押せるようにするかどうかは行を組み立てるときに決まるので、
-`set_rows` へ渡す前に指定する。
+What happens when the row's label or padding is pressed is received with
+[`ListRow::on_activate`]. **It is not called when a button, check box or input
+field is pressed directly**, so the row's handling and the inner control's
+handling do not both happen (macOS uses `NSTableView`'s action, GTK / WinUI event
+routing, and the Web walks up from the pressed element, all to the same split).
+Whether a row can be pressed is decided when it is built, so specify it before
+passing it to `set_rows`.
 
-行の数や中身が実行時に決まるときは、clone した `Ui` をコールバックへ
-持ち込んで、そこで行を組み立てる
-(「[後からウィジェットを作る](#後からウィジェットを作る)」)。
+When the number or content of rows is decided at run time, bring a cloned `Ui`
+into the callback and build the rows there
+("[Creating widgets later](#creating-widgets-later)").
 
 ```no_run
 # use naui::{ListRow, Orientation, Result, Sizing, Ui};
@@ -1607,10 +1667,10 @@ let content = ui.stack(Orientation::Horizontal)?;
 let check = ui.checkbox("")?;
 content.append(&check);
 content.append(&ui.label("Wi-Fi")?);
-content.append(&ui.button("設定…")?);
+content.append(&ui.button("Settings…")?);
 content.set_sizing(Sizing::fill_width());
 
-// 行全体は選ばせず、押されたらチェックだけを切り替える。
+// Do not let the whole row be selected; pressing it only toggles the check.
 let row = ListRow::new(&content).selectable(false);
 row.on_activate(move || check.set_checked(!check.is_checked()));
 
@@ -1620,28 +1680,28 @@ list.set_rows(&[row]);
 # }
 ```
 
-### 行の起動と文脈メニュー
+### Activating rows and context menus
 
-[`List::on_row_activate`] は**行の起動** (ダブルクリック、または行に
-フォーカスがある状態での Enter) を、[`List::on_context_menu`] は**行の
-右クリック**を、その行のインデックスで知らせる。右クリックの位置は
-[`PopupMenu::open_at`] にこの `List` を渡すときの座標 (論理ピクセル、
-y は下向き) なので、そのまま渡せば行ごとの文脈メニューになる。
+[`List::on_row_activate`] reports **row activation** (a double-click, or Enter
+while the row has focus), and [`List::on_context_menu`] reports **a right-click on
+a row**, with that row's index. The right-click position is in the coordinates
+used when passing this `List` to [`PopupMenu::open_at`] (logical pixels, y
+pointing down), so passing it as is gives a per-row context menu.
 
 ```no_run
 # use naui::{ListItem, PopupItem, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let list = ui.list()?;
-list.set_items(&ListItem::list(["札幌", "東京", "那覇"]));
-list.on_row_activate(|index| println!("{index} 行目を開く"));
+list.set_items(&ListItem::list(["Sapporo", "Tokyo", "Naha"]));
+list.on_row_activate(|index| println!("open row {index}"));
 
 let menu = ui.popup_menu()?;
-menu.set_items(&[PopupItem::new("開く"), PopupItem::new("削除")]);
+menu.set_items(&[PopupItem::new("Open"), PopupItem::new("Delete")]);
 list.on_context_menu({
     let list = list.downgrade();
     move |index, at| {
         let Some(list) = list.upgrade() else { return };
-        println!("{index} 行目のメニュー");
+        println!("menu for row {index}");
         menu.open_at(&list, at.x, at.y);
     }
 });
@@ -1651,46 +1711,51 @@ list.on_context_menu({
 
 | | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 起動 | `DoubleTapped` / `KeyDown` (Enter) | `doubleAction` / `keyDown:` (Return) | 行の `GtkGestureClick` (2 回) / Enter | `dblclick` / `keydown` (Enter) |
-| 文脈メニュー | `ContextRequested` | `menuForEvent:` | 行の `GtkGestureClick` (副ボタン) | `contextmenu` |
+| Activation | `DoubleTapped` / `KeyDown` (Enter) | `doubleAction` / `keyDown:` (Return) | The row's `GtkGestureClick` (2 presses) / Enter | `dblclick` / `keydown` (Enter) |
+| Context menu | `ContextRequested` | `menuForEvent:` | The row's `GtkGestureClick` (secondary button) | `contextmenu` |
 
-どちらも**選択は変えない**ので、右クリックした行を選んでから操作したいときは
-中で `select` を呼ぶ。複数選択のすべてを開きたいときは、起動の中で
-`selection` を読む。選べない `ListItem` (`enabled(false)`) の行と、行の無い
-余白では呼ばれない。行内のボタンなどを直接ダブルクリックしても起動しないが、
-右クリックはその行の文脈メニューになる (Web は行内の入力欄の上だけ、
-ブラウザ自身のメニューを残す)。インデックスは押された時点の行の位置から
-引くので、`set_rows` で行を作り直したあとも正しい行を指す。
+Neither **changes the selection**, so to select the right-clicked row before
+acting on it, call `select` inside. To open everything in a multiple selection,
+read `selection` inside the activation. They are not called for rows of
+`ListItem`s that cannot be chosen (`enabled(false)`) or for empty space with no
+row. Double-clicking a button or other control inside a row directly does not
+activate it, but right-clicking gives that row's context menu (on the Web, only
+over input fields inside the row, the browser's own menu is kept). The index is
+looked up from the row's position at the time it was pressed, so it points to the
+right row even after the rows have been rebuilt with `set_rows`.
 
-右クリック以外の出し方は環境に従う。macOS は Control + クリック、Windows は
-タッチの長押しと Shift + F10 / アプリケーションキーでも出る (キー操作のときは
-位置が無いので、行の左端を渡す)。`on_context_menu` を設定すると、行の上では
-その環境の既定のメニュー (`PopupMenu::attach` で付けたものを含む) は出なくなる。
-[`PopupMenu::open_at`] は、macOS ではメニューが閉じるまで戻らない。
+Other ways of opening the menu besides right-clicking follow the platform: on
+macOS Control + click, and on Windows a touch long-press and Shift + F10 / the
+application key also open it (for key operations there is no position, so the
+row's left edge is passed). Once `on_context_menu` is set, the platform's default
+menu (including one attached with `PopupMenu::attach`) no longer appears over
+rows. On macOS, [`PopupMenu::open_at`] does not return until the menu closes.
 
-### 指定した行まで送る
+### Scrolling to a given row
 
-[`List::scroll_to_row`]・[`Table::scroll_to_row`]・[`Tree::scroll_to_item`] は、
-その行が見えるところまでスクロールする (検索で見つけた行へ飛ぶ、など)。
-**選択は変わらない**ので、選んで見せたいときは `set_selected` と組み合わせる。
-すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる。
-表は行を絞って組み立てているときも、まだ組み立てていない行へ送れる。
-ツリーは閉じた枝の中の項目なら祖先を開いてから送る (開閉は通知しない)。
+[`List::scroll_to_row`], [`Table::scroll_to_row`] and [`Tree::scroll_to_item`]
+scroll until that row is visible (to jump to a row found by a search, for
+example). **The selection does not change**, so to select and show it, combine it
+with `set_selected`. If it is already visible nothing moves, and if not, it is
+aligned to the nearer edge. A table can scroll to rows it has not built yet even
+when it builds only part of its rows. A tree expands the ancestors of an item
+inside a collapsed branch before scrolling (the expansion is not notified).
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 一覧 | `ListView.ScrollIntoView` | `scrollRowToVisible:` | `GtkAdjustment` (行の位置から) | `scrollTop` (行の位置から) |
-| 表 | `ScrollViewer.ChangeView` (行の高さから) | `scrollRowToVisible:` | `GtkAdjustment` (行の高さから) | `scrollTop` (行の高さから) |
-| ツリー | `TreeViewItem.StartBringIntoView` | `scrollRowToVisible:` | `GtkAdjustment` (行の位置から) | `scrollTop` (行の位置から) |
+| List | `ListView.ScrollIntoView` | `scrollRowToVisible:` | `GtkAdjustment` (from the row's position) | `scrollTop` (from the row's position) |
+| Table | `ScrollViewer.ChangeView` (from the row height) | `scrollRowToVisible:` | `GtkAdjustment` (from the row height) | `scrollTop` (from the row height) |
+| Tree | `TreeViewItem.StartBringIntoView` | `scrollRowToVisible:` | `GtkAdjustment` (from the row's position) | `scrollTop` (from the row's position) |
 
-GTK でツリーの閉じた枝を開いて送るときは、行の場所が配られた次の
-フレームで送る。
+On GTK, when expanding a collapsed branch of a tree to scroll to it, the scroll
+happens in the frame after the row's location has been allocated.
 
-## ツリー
+## Trees
 
-[`Tree`] は入れ子の項目を開閉できる一覧で、自分でスクロールする。
-項目は [`TreeItem`] で、**根からの子インデックスの並び (パス)** で指す。
-`[0, 2]` は「1 番目の根の 3 番目の子」、空のパスは「選択なし」を表す。
+A [`Tree`] is a list whose nested items can be expanded and collapsed, and it
+scrolls by itself. Items are [`TreeItem`]s, addressed by **a sequence of child
+indices from the root (a path)**. `[0, 2]` means "the third child of the first
+root", and an empty path means "no selection".
 
 ```no_run
 # use naui::{Length, Result, Sizing, TreeItem, Ui};
@@ -1698,15 +1763,15 @@ GTK でツリーの閉じた枝を開いて送るときは、行の場所が配�
 let tree = ui.tree()?;
 tree.set_items(&[
     TreeItem::new("src")
-        .expanded(true) // 最初から開いた状態で出す
+        .expanded(true) // show it expanded from the start
         .children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
     TreeItem::new("docs").child(TreeItem::new("guide.md").detail("12 KB")),
 ]);
-tree.on_select(|path| println!("{path:?} が選ばれた"));
-tree.on_expand(|path, expanded| println!("{path:?} は {expanded}"));
-tree.set_selected(&[0, 1]); // 通知せずに選ぶ (祖先は開かれる)
+tree.on_select(|path| println!("{path:?} was chosen"));
+tree.on_expand(|path, expanded| println!("{path:?} is {expanded}"));
+tree.set_selected(&[0, 1]); // choose without notifying (ancestors are expanded)
 
-// Tree は高さを自分では決めないので、指定しておく。
+// A Tree does not decide its own height, so specify one.
 tree.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(220.0)));
 # Ok(())
 # }
@@ -1714,38 +1779,38 @@ tree.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(220.0)));
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Tree` | `TreeView` | `NSOutlineView` + `NSScrollView` | `GtkListBox` + 開閉ボタン | `<ul role="tree">` |
+| `Tree` | `TreeView` | `NSOutlineView` + `NSScrollView` | `GtkListBox` + disclosure buttons | `<ul role="tree">` |
 
-選べるのは 1 項目だけ (`List` のような複数選択は無い)。
+Only one item can be chosen (there is no multiple selection as in `List`).
 `set_selected` / `clear_selection` / `set_expanded` / `expand_all` /
-`collapse_all` は通知せず、`select` / `expand` / `collapse` は
-ユーザー操作と同じく通知する。
+`collapse_all` do not notify, and `select` / `expand` / `collapse` notify just
+like user actions.
 
-[`TreeItem::enabled`] を `false` にすると、**その子孫もまとめて選べなくなる**。
-開閉は項目ごとに覚えられるので、親を閉じてから開き直すと、中の開閉も
-元どおりに出てくる (macOS の Finder と同じ)。
+Setting [`TreeItem::enabled`] to `false` **makes all its descendants unselectable
+too**. Expansion is remembered per item, so collapsing a parent and expanding it
+again brings back the expansion inside as it was (the same as macOS's Finder).
 
-## テーブル
+## Tables
 
-[`Table`] は列見出しを持つ表で、自分でスクロールする。列は
-[`TableColumn`]、行は [`TableRow`] で、**行の識別はリストと同じく
-インデックス**。選択の通知も行のインデックスで返る。
+A [`Table`] is a table with column headers that scrolls by itself. Columns are
+[`TableColumn`]s and rows are [`TableRow`]s, and **rows are identified by index,
+as in lists**. Selection notifications also return row indices.
 
 ```no_run
 # use naui::{Align, Length, Result, Sizing, TableColumn, TableRow, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let table = ui.table()?;
 table.set_columns(&[
-    TableColumn::new("都市").sortable(true),               // 見出しを押して並べ替え
-    TableColumn::new("人口").width(120.0).align(Align::End), // 幅を固定して右寄せ
+    TableColumn::new("City").sortable(true),                     // sort by pressing the header
+    TableColumn::new("Population").width(120.0).align(Align::End), // fixed width, right-aligned
 ]);
 table.set_rows(&TableRow::list([
-    ["東京", "13,960,000"],
-    ["大阪", "8,838,000"],
+    ["Tokyo", "13,960,000"],
+    ["Osaka", "8,838,000"],
 ]));
-table.on_select(|indices| println!("{indices:?} が選ばれた"));
+table.on_select(|indices| println!("{indices:?} were chosen"));
 
-// Table は高さを自分では決めないので、指定しておく。
+// A Table does not decide its own height, so specify one.
 table.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(200.0)));
 # Ok(())
 # }
@@ -1753,53 +1818,54 @@ table.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(200.0)))
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Table` | 2 行の `Grid` + `ListView` (行は `Grid`) | `NSTableView` + `NSScrollView` | `GtkListBox` + `GtkSizeGroup` | `<table role="grid">` |
+| `Table` | A 2-row `Grid` + `ListView` (rows are `Grid`s) | `NSTableView` + `NSScrollView` | `GtkListBox` + `GtkSizeGroup` | `<table role="grid">` |
 
-選択のふるまいは `List` と同じで、[`SelectionMode`] で単一と複数を選べる。
-`set_selection` / `set_selected` / `clear_selection` は通知せず、
-`select` / `select_many` はユーザー操作と同じく通知する。
-[`TableRow::enabled`] が `false` の行は選べない。
+Selection behaves as in `List`, and [`SelectionMode`] chooses between single and
+multiple. `set_selection` / `set_selected` / `clear_selection` do not notify, and
+`select` / `select_many` notify just like user actions. Rows whose
+[`TableRow::enabled`] is `false` cannot be chosen.
 
-[`TableColumn::width`] を指定しない列だけで、余った幅を分け合う。
-**列の幅をドラッグで変えられるのは macOS だけ** (`NSTableView` が持つ
-機能で、他の環境には対応する標準コントロールが無い)。
+Only the columns without a [`TableColumn::width`] share the leftover width.
+**Only macOS lets the user drag to change column widths** (a feature of
+`NSTableView`; the other platforms have no corresponding standard control).
 
-### セルにウィジェットを置く
+### Placing widgets in cells
 
-[`TableRow`] は文字だけの表向けの簡便 API で、セルにボタンやチェック
-ボックス、アイコンを置きたいときは [`Table::set_row_builder`] を使う。
-行数と「その行の中身を返す関数」を渡すと、**画面に出る行だけ**が
-組み立てられる。`List` の [`ListRow`] と同じように、行ごとに
-[`TableCells::selectable`] と [`TableCells::on_activate`] を指定できる。
+[`TableRow`] is a convenience API for text-only tables; to put buttons, check
+boxes or icons in cells, use [`Table::set_row_builder`]. Pass the number of rows
+and "a function that returns the content of that row", and **only the rows shown
+on screen** are built. As with `List`'s [`ListRow`], [`TableCells::selectable`]
+and [`TableCells::on_activate`] can be specified per row.
 
 ```no_run
 # use naui::{Result, TableCells, TableColumn, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 # let cities: Vec<String> = Vec::new();
 let table = ui.table()?;
-table.set_columns(&TableColumn::list(["都市", "操作"]));
+table.set_columns(&TableColumn::list(["City", "Actions"]));
 
-let ui = ui.clone(); // 行はコールバックの中で組み立てる
+let ui = ui.clone(); // rows are built inside the callback
 table.set_row_builder(cities.len(), move |index| {
-    let open = ui.button("開く")?;
-    open.on_click(move || println!("{index} 行目を開く"));
-    // セルは列と同じ順に並べる。文字とウィジェットを混ぜてよい。
+    let open = ui.button("Open")?;
+    open.on_click(move || println!("open row {index}"));
+    // Cells are in the same order as the columns. Text and widgets may be mixed.
     let cells = TableCells::new().text(&cities[index]).cell(&open);
-    // 行内のボタンだけを使う行にする (行そのものは選ばせない)。
+    // A row used only through its buttons (the row itself cannot be selected).
     Ok(cells.selectable(false))
 });
 # Ok(())
 # }
 ```
 
-行の中のウィジェットは、組み立てるたびに作り直してよい。行ごとの状態は
-アプリのデータ側に持ち、関数の中でそこから作る。中身が変わったら
-[`Table::refresh`] で組み立て直す。
+The widgets in a row may be recreated every time it is built. Keep per-row state
+on the app's data side and build from it inside the function. When the content
+changes, rebuild with [`Table::refresh`].
 
-**組み立てる関数の中でアプリのデータを借りる (`RefCell::borrow`) なら、
-[`Table::refresh`] や [`Table::set_row_builder`] を呼ぶ前に借用を返しておく。**
-これらは見えている行をその場で組み立て直すので、`borrow_mut` を持ったまま
-呼ぶと二重借用で落ちる。並べ替えの通知はこの形になりやすい。
+**If the builder function borrows the app's data (`RefCell::borrow`), release the
+borrow before calling [`Table::refresh`] or [`Table::set_row_builder`].** They
+rebuild the visible rows on the spot, so calling them while holding a
+`borrow_mut` panics with a double borrow. Sort notifications tend to take this
+shape.
 
 ```no_run
 # use naui::{Result, TableRow, Ui};
@@ -1814,50 +1880,50 @@ table.on_sort({
         {
             let mut rows = data.borrow_mut();
             rows.sort_by(|a, b| a.cell(column).cmp(b.cell(column)));
-        } // ← ここで借用を返してから
-        table.refresh(); // ← 組み立て直す
+        } // ← release the borrow here first
+        table.refresh(); // ← then rebuild
     }
 });
 # Ok(())
 # }
 ```
 
-[`TableCells::on_activate`] は、行のセルや余白が押されたときだけ呼ばれる。
-**ボタン・チェックボックス・入力欄を直接押したときは呼ばれない**ので、
-行の処理と中のコントロールの処理が二重に起きない ([`ListRow::on_activate`]
-と同じ切り分け)。
+[`TableCells::on_activate`] is called only when the row's cells or padding are
+pressed. **It is not called when a button, check box or input field is pressed
+directly**, so the row's handling and the inner control's handling do not both
+happen (the same split as [`ListRow::on_activate`]).
 
-### 行が多い表
+### Tables with many rows
 
-行数が [`ROW_WINDOW_THRESHOLD`] を超えると、どの環境でも
-**画面に出ている範囲 (と、その少し前後) だけ**を組み立てる。
-[`Table::set_rows`] に数十万行を渡しても、[`Table::set_row_builder`] に
-大きな `count` を渡しても、開くのにかかる時間と使うメモリは
-画面の大きさで決まる。スクロールバーの長さと位置は全行分のままになる
-(見えていない行の分は、上下の詰め物が高さを持つ)。
+When the number of rows exceeds [`ROW_WINDOW_THRESHOLD`], every platform builds
+**only the range shown on screen (and a little before and after it)**. Whether you
+pass hundreds of thousands of rows to [`Table::set_rows`] or a large `count` to
+[`Table::set_row_builder`], the time it takes to open and the memory used are
+determined by the screen size. The scroll bar's length and position stay those of
+all rows (spacers above and below take up the height of the rows not shown).
 
-そのために、**行の高さはどれも同じ**とみなす。既定では組み立てた行から
-測るが、セルにボタンや画像を置いて高さが変わるときは
-[`Table::set_row_height`] で決めておくと、スクロールバーの長さが
-実際とずれない。
+For that, **all rows are assumed to have the same height**. By default it is
+measured from a built row, but when buttons or images in cells change the height,
+deciding it with [`Table::set_row_height`] keeps the scroll bar's length from
+drifting from reality.
 
-Web では、行数 × 行の高さがブラウザの扱える要素の高さ (Chromium で
-3,300 万 px ほど) を超えると、スクロールバーの位置と行の対応がずれる
-(30px の行なら 100 万行あたり)。インデックスでの選択や
-[`Table::set_rows`] は、それより多くても動く。
+On the Web, when the number of rows × the row height exceeds the element height
+the browser can handle (about 33 million px in Chromium), the mapping between the
+scroll bar position and rows drifts (around 1 million rows for 30 px rows).
+Selection by index and [`Table::set_rows`] work even with more than that.
 
-選択はインデックスで覚えているので、画面の外にある行も選べる
-([`Table::set_selection`]) し、[`Table::selection`] にも出てくる。
-絞っている表では、ネイティブのコントロールへ届くのが組み立ててある行の
-選択だけなので、**画面の外の選択を残すかどうかは押された修飾キーで決める**。
-⌘ / Ctrl の足し引きは残し、ふつうのクリックと Shift の範囲選びは
-選び直しとして落とす (macOS は `NSTableView` が全行の選択を持つので、
-この判断そのものが要らない)。
+Since the selection is remembered by index, rows outside the screen can be
+selected too ([`Table::set_selection`]) and also appear in [`Table::selection`].
+In a windowed table, only the selection of built rows reaches the native control,
+so **whether to keep off-screen selections is decided by the modifier keys
+pressed**. Adding and removing with ⌘ / Ctrl keeps them, and a plain click or a
+Shift range selection drops them as a fresh selection (on macOS, `NSTableView`
+holds the selection of all rows, so this decision is not needed at all).
 
-[`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
-選べるかどうかを naui は知らない。既定では「選べる」とみなすので、
-画面の外の行に [`TableCells::selectable(false)`](TableCells::selectable) を
-使うなら、同じ判断を [`Table::set_row_selectable`] にも渡しておく。
+For rows built with [`Table::set_row_builder`], naui does not know whether rows it
+has not built yet can be chosen. By default they are assumed to be choosable, so if
+you use [`TableCells::selectable(false)`](TableCells::selectable) for off-screen
+rows, pass the same decision to [`Table::set_row_selectable`] as well.
 
 ```no_run
 # use naui::{Result, TableCells, Ui};
@@ -1866,25 +1932,25 @@ Web では、行数 × 行の高さがブラウザの扱える要素の高さ (C
 let rows = locked.clone();
 table.set_row_builder(locked.len(), move |index| {
     Ok(TableCells::new()
-        .text(format!("行 {index}"))
+        .text(format!("Row {index}"))
         .selectable(!rows[index]))
 });
-// 画面の外の行についても `set_selection` が同じ判断をできるようにする。
+// Let `set_selection` make the same decision for off-screen rows.
 table.set_row_selectable(move |index| !locked[index]);
 # Ok(())
 # }
 ```
 
-### 見出しからの並べ替え
+### Sorting from headers
 
-[`TableColumn::sortable`] を立てた列は、見出しを押して並べ替えられる。
-押されると向きが `Ascending` → `Descending` → … と反転し、指標
-(macOS は `NSTableView` の ▲▼、ほかは見出しに付く矢印と `aria-sort`)
-も naui が出す。
+Columns with [`TableColumn::sortable`] set can be sorted by pressing their header.
+Each press flips the direction `Ascending` → `Descending` → …, and naui also shows
+the indicator (`NSTableView`'s ▲▼ on macOS; elsewhere an arrow on the header and
+`aria-sort`).
 
-**並べ替えそのものは naui では行わない。** セルは文字列なので、それが
-数値なのか日付なのかを知っているのはアプリだけだからだ。通知を受けたら、
-アプリが自分のデータを並べ替えて [`Table::set_rows`] で渡し直す。
+**naui does not do the sorting itself.** Cells are strings, and only the app knows
+whether they are numbers or dates. On receiving the notification, the app sorts its
+own data and passes it again with [`Table::set_rows`].
 
 ```no_run
 # use naui::{Result, SortOrder, TableRow, Ui};
@@ -1899,31 +1965,33 @@ table.on_sort(move |column, order| {
             SortOrder::Descending => ordering.reverse(),
         }
     });
-    // 並べ替えた行を渡し直す (選択は外れるので、必要なら選び直す)。
+    // Pass the sorted rows again (the selection is cleared, so reselect if needed).
     // table.set_rows(&rows);
 });
 # Ok(())
 # }
 ```
 
-[`Table::set_row_builder`] で行を組み立てている表では、行数が変わらないので
-[`Table::refresh`] を呼ぶ (アプリのデータを並べ替えてから)。行を絞っていても
-並べ替えは同じで、指標は見出しに出るのでスクロールしても消えない。
+For tables that build rows with [`Table::set_row_builder`], the number of rows does
+not change, so call [`Table::refresh`] (after sorting the app's data). Sorting
+works the same when rows are windowed, and the indicator is on the header, so it
+does not disappear when scrolling.
 
-[`Table::set_sort`] で通知せずに指標だけを動かせる (起動時の既定の
-並び順を見せるときに使う)。[`Table::sort`] でいまの指定を読める。
+[`Table::set_sort`] moves only the indicator without notifying (use it to show the
+default order at startup). [`Table::sort`] reads the current setting.
 
-## ファイルとフォルダーの選択
+## Choosing files and folders
 
-[`FilePicker`] はボタン 1 つで、押すとその環境の標準のファイル選択が開く
-(macOS は `NSOpenPanel`、Windows は Common Item Dialog、Web はブラウザのもの)。
+A [`FilePicker`] is a single button that, when pressed, opens the platform's
+standard file chooser (`NSOpenPanel` on macOS, the Common Item Dialog on Windows,
+the browser's on the Web).
 
 ```no_run
 # use naui::{FileFilter, FilePickerMode, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let picker = ui.file_picker("画像を選ぶ")?;
+let picker = ui.file_picker("Choose an image")?;
 picker.set_mode(FilePickerMode::File); // File / Files / Folder
-picker.set_filters(&[FileFilter::new("画像", ["png", "jpg"])]);
+picker.set_filters(&[FileFilter::new("Images", ["png", "jpg"])]);
 picker.on_select(|entries| {
     for entry in entries {
         println!("{}", entry.name());
@@ -1933,26 +2001,27 @@ picker.on_select(|entries| {
 # }
 ```
 
-選ばれたものは [`FileEntry`] で返る。[`FileEntry::path`] は macOS / Windows では
-絶対パスだが、**Web ではブラウザがパスを渡さないため常に `None`** になる。
-Web ではさらに、`open()` がユーザー操作のイベント内でしか効かないこと、
-フォルダー選択が中身の一覧として返るのを naui が 1 件へ畳んでいることに注意。
+What is chosen is returned as [`FileEntry`]s. [`FileEntry::path`] is an absolute
+path on macOS / Windows, but **on the Web it is always `None` because the browser
+does not pass paths**. Also note that on the Web `open()` only works inside a
+user-action event, and that folder selection, which comes back as a list of its
+contents, is folded into one entry by naui.
 
-## ファイルの保存
+## Saving files
 
-[`FileSaver`] は対になるボタンで、押すとその環境の標準の保存ダイアログが
-開く。**保存先のパスを返すのではなく、渡しておいた内容を書き出す**形にして
-ある。ブラウザに「保存先のパス」という概念が無く、パスを返す API では Web で
-何もできないため。
+A [`FileSaver`] is the matching button that, when pressed, opens the platform's
+standard save dialog. **Instead of returning the destination path, it writes out
+contents you passed beforehand.** Browsers have no concept of "the destination
+path", and an API that returns a path could do nothing on the Web.
 
 ```no_run
 # use naui::{FileFilter, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let saver = ui.file_saver("保存")?;
-saver.set_file_name("メモ"); // 拡張子は絞り込みから補われる
-saver.set_filters(&[FileFilter::new("テキスト", ["txt"])]);
-saver.set_contents("こんにちは".as_bytes());
-saver.on_save(|entry| println!("{} へ保存しました", entry.name()));
+let saver = ui.file_saver("Save")?;
+saver.set_file_name("memo"); // the extension is filled in from the filter
+saver.set_filters(&[FileFilter::new("Text", ["txt"])]);
+saver.set_contents("Hello".as_bytes());
+saver.on_save(|entry| println!("saved to {}", entry.name()));
 saver.on_error(|error| eprintln!("{error}"));
 # Ok(())
 # }
@@ -1962,40 +2031,40 @@ saver.on_error(|error| eprintln!("{error}"));
 | --- | --- | --- | --- | --- |
 | `FileSaver` | `IFileSaveDialog` | `NSSavePanel` | `GtkFileDialog` (save) | `showSaveFilePicker` / `<a download>` |
 
-[`FileSaver::set_contents`] のバイト列が、ユーザーの選んだ場所へそのまま
-書かれる。成功すると [`FileSaver::on_save`] に書き出し先が届き、取り消した
-ときは何も呼ばれない。書き込みに失敗したときだけ [`FileSaver::on_error`] が
-呼ばれる。書き出すのはボタンを押した時点の内容なので、内容が変わるたびに
-`set_contents` を呼び直す。
+The bytes of [`FileSaver::set_contents`] are written as is to the place the user
+chose. On success the destination arrives at [`FileSaver::on_save`], and nothing
+is called when the user cancels. [`FileSaver::on_error`] is called only when
+writing fails. What is written is the content at the time the button is pressed,
+so call `set_contents` again whenever the content changes.
 
-Web はここでも作りが変わる。`showSaveFilePicker` (Chromium 系) があれば OS の
-保存ダイアログが出るが、無いブラウザ (Firefox / Safari) では
-`<a download>` のダウンロードになり、**保存先はブラウザ任せで、確認なしに
-ダウンロードフォルダーへ落ちることもある**。どちらの場合も
-[`FileEntry::path`] は `None` で、名前だけが返る。
+The Web differs here too. With `showSaveFilePicker` (Chromium-based browsers), the
+OS save dialog appears, but in browsers without it (Firefox / Safari) it becomes an
+`<a download>` download, and **the destination is up to the browser; it may land in
+the downloads folder without confirmation**. In both cases [`FileEntry::path`] is
+`None`, and only the name is returned.
 
-## ダイアログ
+## Dialogs
 
-[`Dialog`] は、その環境の標準のモーダルを出す。見出し・本文・任意の
-ウィジェット・役割つきのボタン (最大 3 つ) を持ち、閉じた理由が
-[`DialogResponse`] で返る。
+A [`Dialog`] shows the platform's standard modal. It has a heading, a message, an
+arbitrary widget and buttons with roles (up to three), and the reason it closed is
+returned as a [`DialogResponse`].
 
 ```no_run
 # use naui::{DialogButtons, DialogResponse, Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let dialog = ui.dialog("保存しますか")?;
-dialog.set_message("変更が残っています。");
-dialog.set_child(&ui.checkbox("次回から確認しない")?); // 任意のウィジェット
+let dialog = ui.dialog("Save changes?")?;
+dialog.set_message("There are unsaved changes.");
+dialog.set_child(&ui.checkbox("Don't ask again")?); // an arbitrary widget
 dialog.set_buttons(
     DialogButtons::new()
-        .primary("保存")
-        .secondary("保存しない")
-        .cancel("キャンセル"),
+        .primary("Save")
+        .secondary("Don't Save")
+        .cancel("Cancel"),
 );
 dialog.on_response(|response| match response {
-    DialogResponse::Primary => println!("保存する"),
-    DialogResponse::Secondary => println!("保存しない"),
-    DialogResponse::Cancel => println!("やめる"), // Esc もここへ来る
+    DialogResponse::Primary => println!("save"),
+    DialogResponse::Secondary => println!("don't save"),
+    DialogResponse::Cancel => println!("cancel"), // Esc comes here too
 });
 dialog.open();
 # Ok(())
@@ -2006,28 +2075,29 @@ dialog.open();
 | --- | --- | --- | --- | --- |
 | `Dialog` | `ContentDialog` | `NSAlert` (+ `accessoryView`) | `AdwAlertDialog` | `<dialog>` + `showModal()` |
 
-ボタンの並びは環境の作法に従う (macOS は主となる操作が右端、WinUI 3 は
-左端)。ボタンを 1 つも指定しないと「OK」だけが出る。
+The button order follows the platform's conventions (the primary action is at the
+right end on macOS, and at the left end on WinUI 3). If no buttons are specified,
+only "OK" is shown.
 
-**macOS の [`Dialog::open`] は閉じられるまで戻らない** (`NSAlert` が
-アプリモーダルなため) 。`on_response` はその中で呼ばれる。Web と Windows の
-`open()` はすぐ戻り、通知はあとから届く。[`Dialog::close`] で閉じたときは
-`on_response` を呼ばない (`set_selected` と同じで、アプリ自身の操作は
-通知しない)。
+**On macOS, [`Dialog::open`] does not return until the dialog is closed**
+(because `NSAlert` is app-modal). `on_response` is called inside it. On the Web and
+Windows, `open()` returns immediately and the notification arrives later. Closing
+with [`Dialog::close`] does not call `on_response` (as with `set_selected`, the
+app's own operations are not notified).
 
-## トースト
+## Toasts
 
-[`Toast`] は、画面の下端へ短い知らせを出して**自分で消える**通知。
-ダイアログと違い操作を止めないので、「保存しました」のような
-済んだことの知らせに使う。
+A [`Toast`] is a notification that shows a short message at the bottom of the
+screen and **disappears by itself**. Unlike a dialog it does not block the user, so
+use it for news about something already done, such as "Saved".
 
 ```no_run
 # use naui::{Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let toast = ui.toast("保存しました")?;
-toast.set_action("元に戻す"); // 任意。空文字列で外す
-toast.set_timeout(3.0); // 秒。0 なら自分では消えない
-toast.on_action(|| println!("元に戻す"));
+let toast = ui.toast("Saved")?;
+toast.set_action("Undo"); // optional; an empty string removes it
+toast.set_timeout(3.0); // seconds; with 0 it does not disappear by itself
+toast.on_action(|| println!("undo"));
 toast.show();
 # Ok(())
 # }
@@ -2035,65 +2105,64 @@ toast.show();
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Toast` | `InfoBar` を中身へ重ねたもの | `NSVisualEffectView` を中身へ重ねたもの | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
+| `Toast` | An `InfoBar` overlaid on the content | An `NSVisualEffectView` overlaid on the content | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
 
-**ネイティブのトーストがあるのは Linux だけ** (`AdwToast`)。Windows の
-`InfoBar` / `TeachingTip` は naui が投影していないため使えず、
-macOS とブラウザにはそもそも対応するものが無いので、残る 3 環境では
-naui が同じ形に組み立てる。OS の通知センターへ出すものは、アプリの外へ
-出る別の仕組みなので扱わない。
+**Only Linux has a native toast** (`AdwToast`). Windows's `InfoBar` /
+`TeachingTip` cannot be used because naui does not project them, and macOS and
+browsers have nothing corresponding at all, so on the remaining three platforms
+naui builds the same shape. Notifications sent to the OS notification center are a
+separate mechanism that leaves the app, so they are not covered.
 
-**同時に出るのは 1 つ**で、新しく出したものが前のものを置き換える
-(`AdwToastOverlay` の順番待ちも、naui はこの形にそろえている)。
-[`Toast::dismiss`] で消したときと、置き換えられたときは `on_dismiss` を
-呼ばない (アプリ自身の操作は通知しない、という [`Dialog::close`] と
-同じ決まり)。時間の刻みは Linux だけ**秒**なので、1 秒未満の指定は
-1 秒になる。
+**Only one is shown at a time**, and a newly shown one replaces the previous one
+(naui also aligns `AdwToastOverlay`'s queueing to this behavior). Dismissing with
+[`Toast::dismiss`] and being replaced do not call `on_dismiss` (the same rule as
+[`Dialog::close`]: the app's own operations are not notified). Only on Linux is the
+time granularity **seconds**, so values under one second become one second.
 
-## 別スレッドと非同期
+## Other threads and async
 
-ウィジェットのハンドルは `Rc` を持つので**別スレッドへは送れない**
-([`Ui`] も同じ)。
-重い処理を別のスレッドでやって画面を書き換えたいときは、
-**受け取るクロージャを UI スレッド側に据え、送る側だけをスレッドへ渡す**。
-入り口は [`Ui::tasks`] で、返る [`Tasks`] は clone してコールバックへ
-持ち込める。
+Widget handles hold an `Rc`, so **they cannot be sent to other threads** (the same
+goes for [`Ui`]). When you want to do heavy work on another thread and update the
+screen, **put the receiving closure on the UI thread side and pass only the sending
+side to the thread**. The entry point is [`Ui::tasks`], and the returned [`Tasks`]
+can be cloned and brought into callbacks.
 
 ```no_run
 # use naui::{Result, Ui};
 # fn heavy_work() -> String { String::new() }
 # fn build(ui: &Ui) -> Result<()> {
-let label = ui.label("待機中")?;
+let label = ui.label("Waiting")?;
 let sender = ui.tasks().channel({
     let label = label.clone();
-    move |text: String| label.set_text(&text) // UI スレッドで呼ばれる
+    move |text: String| label.set_text(&text) // called on the UI thread
 });
 std::thread::spawn(move || {
-    let _ = sender.send(heavy_work());        // 別スレッドから
+    let _ = sender.send(heavy_work());        // from another thread
 });
 # Ok(())
 # }
 ```
 
-[`Sender`] は `Send + Sync + Clone` なので、複数のスレッドから同じ受け口へ
-送れる。同じチャネルへ送った値は**送った順に**届く (チャネルが複数あるとき、
-チャネルをまたいだ順序は決まっていない)。[`Sender::send`] はその場では
-クロージャを呼ばず、UI スレッドの手が空いてから届く。戻り値の `Ok` は
-「値を受け取り、UI への配送が予約された」の意味で、配送されたことの保証では
-ない。naui の UI 実行環境が終わった後は `Err` になる
-(ブラウザにはアプリの終了が無いので、そこでは常に `Ok`)。
+[`Sender`] is `Send + Sync + Clone`, so multiple threads can send to the same
+receiver. Values sent to the same channel arrive **in the order they were sent**
+(with several channels, the order across channels is not defined).
+[`Sender::send`] does not call the closure on the spot; the value arrives once the
+UI thread is free. The returned `Ok` means "the value was accepted and its
+delivery to the UI was scheduled", not a guarantee that it was delivered. After
+naui's UI runtime has ended it returns `Err` (browsers have no app termination,
+so there it is always `Ok`).
 
-ハンドラの中から非同期処理を始めたいときは [`Tasks::spawn`] で future を回す。
-**future は `Send` でなくてよい**ので、ウィジェットのハンドルをそのまま
-持ち込める。clone した `Ui` を持ち込めば、待ち終わったところで
-ウィジェットを作れる。
+To start asynchronous work from inside a handler, run a future with
+[`Tasks::spawn`]. **The future does not need to be `Send`**, so widget handles can
+be brought in as is. Bring in a cloned `Ui` and you can create widgets once the
+wait is over.
 
 ```no_run
 # use naui::{Result, Ui};
 # async fn fetch() -> String { String::new() }
 # fn build(ui: &Ui) -> Result<()> {
-let label = ui.label("待機中")?;
-let button = ui.button("読み込む")?;
+let label = ui.label("Waiting")?;
+let button = ui.button("Load")?;
 button.on_click({
     let tasks = ui.tasks();
     let label = label.clone();
@@ -2106,16 +2175,16 @@ button.on_click({
 # }
 ```
 
-**naui は async ランタイムを持ち込まない。** [`Tasks::spawn`] は UI スレッドの
-イベントループの上で future を進めるだけの小さな実行器で、tokio などは
-要らない。逆に言うと、**future の中でブロッキング処理をすると画面が止まる**。
-重い処理は `std::thread::spawn` と [`Tasks::channel`] へ出す。
+**naui does not bring in an async runtime.** [`Tasks::spawn`] is a small executor
+that only advances futures on the UI thread's event loop, and tokio or the like is
+not needed. Conversely, **blocking work inside a future freezes the screen**. Move
+heavy work to `std::thread::spawn` and [`Tasks::channel`].
 
-また、**[`Tasks::spawn`] は汎用ランタイムの代わりにはならない。** naui が
-引き受けるのは「future を UI スレッドで poll し、その `Waker` で再び poll する」
-ところまでで、特定のランタイムの実行器やリアクターを必要とする future
-(tokio の I/O など) が動くことは保証しない。それらは**そのランタイムで動かし、
-結果だけを [`Sender`] で画面へ戻す**。
+Also, **[`Tasks::spawn`] is not a substitute for a general-purpose runtime.** What
+naui takes on is "poll the future on the UI thread, and poll it again via its
+`Waker`"; futures that need a specific runtime's executor or reactor (such as
+tokio's I/O) are not guaranteed to work. **Run those on that runtime and send only
+the result back to the screen with a [`Sender`]**.
 
 ```ignore
 let sender = ui.tasks().channel(move |result: String| label.set_text(&result));
@@ -2125,8 +2194,8 @@ tokio::spawn(async move {
 });
 ```
 
-[`Task`] を落としてもタスクは止まらない。押すたびに前の処理を打ち切りたい
-なら、取っ手を持っておいて次のときに [`Task::cancel`] を呼ぶ。
+Dropping a [`Task`] does not stop the task. To abort the previous work on each
+press, keep the handle and call [`Task::cancel`] next time.
 
 ```no_run
 # use naui::{Result, Task, Ui};
@@ -2134,7 +2203,7 @@ tokio::spawn(async move {
 # use std::rc::Rc;
 # fn build(ui: &Ui) -> Result<()> {
 let running: Rc<RefCell<Option<Task>>> = Rc::new(RefCell::new(None));
-let button = ui.button("やり直す")?;
+let button = ui.button("Retry")?;
 button.on_click({
     let tasks = ui.tasks();
     let running = running.clone();
@@ -2149,29 +2218,30 @@ button.on_click({
 # }
 ```
 
-投函先は環境ごとに違うが、**必ず後回しになる**ところは同じ。
+Where work is posted differs by platform, but it is the same in that it is
+**always deferred**.
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 投函先 | `DispatcherQueue.TryEnqueue` | main queue | `g_idle_add` | microtask キュー |
+| Posted to | `DispatcherQueue.TryEnqueue` | main queue | `g_idle_add` | microtask queue |
 
-**Web (wasm) にはスレッドが無い。** `std::thread::spawn` は使えないので、
-送る側は [`Tasks::spawn`] で回す future の中に置く。Web Worker は別の
-JavaScript 実行環境なので、[`Sender`] をそこへ渡すことはできない
-(`postMessage` で橋を架け、受けた側で `send` を呼ぶ形になる)。
-[`Tasks`] の API 自体は 4 環境で同じなので `cfg` の書き分けは要らないが、
-`std::thread::spawn` を含むコードはそのままでは Web で動かない。
+**The Web (wasm) has no threads.** `std::thread::spawn` cannot be used, so put the
+sending side inside a future run with [`Tasks::spawn`]. A Web Worker is a separate
+JavaScript runtime, so a [`Sender`] cannot be passed to it (bridge with
+`postMessage` and call `send` on the receiving side). The [`Tasks`] API itself is
+the same on all four platforms, so no `cfg` branching is needed, but code that
+includes `std::thread::spawn` does not run on the Web as is.
 
-クロージャや future の中で panic しても、その場で止めるだけでアプリは
-巻き戻さない (WinRT / GLib / libdispatch の境界を越えて巻き戻せないため、
-4 環境そろえてこの形にしてある)。panic の内容そのものは、いつもどおり
-標準エラー出力へ出る。
+A panic inside a closure or future only stops that piece on the spot; the app does
+not unwind (unwinding across the WinRT / GLib / libdispatch boundaries is not
+possible, so all four platforms behave this way). The panic message itself goes to
+standard error as usual.
 
-### タイマー
+### Timers
 
-時間を置いて呼ぶときは [`Tasks::after`]、一定の間隔で呼ぶときは
-[`Tasks::every`]、future の中で待つときは [`Tasks::sleep`] を使う。
-どれも UI スレッドで呼ばれるので、中でウィジェットを触ってよい。
+To call something after a delay, use [`Tasks::after`]; to call it at a fixed
+interval, [`Tasks::every`]; and to wait inside a future, [`Tasks::sleep`]. All of
+them are called on the UI thread, so widgets may be touched inside.
 
 ```no_run
 # use std::cell::RefCell;
@@ -2179,7 +2249,7 @@ JavaScript 実行環境なので、[`Sender`] をそこへ渡すことはでき�
 # use std::time::Duration;
 # use naui::{Result, Timer, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-// 打ち終わって 300 ms たったら検索する (デバウンス)。
+// Search 300 ms after typing stops (debouncing).
 let search = ui.search_input()?;
 let pending: Rc<RefCell<Option<Timer>>> = Rc::default();
 search.on_change({
@@ -2190,59 +2260,59 @@ search.on_change({
         }
         let text = text.to_string();
         *pending.borrow_mut() =
-            Some(tasks.after(Duration::from_millis(300), move || println!("検索: {text}")));
+            Some(tasks.after(Duration::from_millis(300), move || println!("search: {text}")));
     }
 });
 # Ok(())
 # }
 ```
 
-[`Timer`] は [`Task`] と同じく**落としても止まらない**。止めるときは
-[`Timer::cancel`] を呼ぶ (`every` のコールバックの中から呼んでもよい)。
-`every` の次の呼び出しは前の呼び出しが終わってから数える。
+Like [`Task`], a [`Timer`] **does not stop when dropped**. To stop it, call
+[`Timer::cancel`] (calling it from inside an `every` callback is fine).
+The next call of `every` is counted from the end of the previous call.
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| 待つ仕組み | `DispatcherQueueTimer` | `dispatch_after` (main queue) | `g_timeout_add` | `setTimeout` |
+| Waiting mechanism | `DispatcherQueueTimer` | `dispatch_after` (main queue) | `g_timeout_add` | `setTimeout` |
 
-## クリップボードと URL
+## Clipboard and URLs
 
-[`Ui::clipboard`] で文字を読み書きでき、[`Ui::open_url`] は URL を既定の
-アプリ (ブラウザやメール) で開く。
+[`Ui::clipboard`] reads and writes text, and [`Ui::open_url`] opens a URL in the
+default app (a browser or mail client).
 
 ```no_run
 # use naui::{Result, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let copy = ui.button("コピー")?;
+let copy = ui.button("Copy")?;
 let status = ui.label("")?;
 copy.on_click({
     let clipboard = ui.clipboard();
     let status = status.clone();
     move || {
         let status = status.clone();
-        clipboard.set_text("共有したい文字", move |result| match result {
-            Ok(()) => status.set_text("コピーしました"),
-            Err(error) => status.set_text(&format!("コピーできませんでした: {error}")),
+        clipboard.set_text("Text to share", move |result| match result {
+            Ok(()) => status.set_text("Copied"),
+            Err(error) => status.set_text(&format!("Could not copy: {error}")),
         });
     }
 });
-ui.clipboard().read_text(|text| println!("貼り付け: {text:?}"));
+ui.clipboard().read_text(|text| println!("paste: {text:?}"));
 # Ok(())
 # }
 ```
 
-読むほうは環境によって非同期、書くほうもブラウザでは非同期なので、
-**4 環境とも読み書きの結果をコールバックで返す** (その場では呼ばない)。
-読んだ文字が入っていなければ `None`。書き込みを断られたら `Err`。
+Reading is asynchronous on some platforms, and writing is asynchronous in browsers,
+so **on all four platforms the results of reading and writing are returned through a
+callback** (not called on the spot). If there is no text to read, it is `None`. If
+writing is refused, it is `Err`.
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| クリップボード | `Windows.ApplicationModel.DataTransfer.Clipboard` | `NSPasteboard` | `GdkClipboard` | `navigator.clipboard` |
-| `open_url` | `ShellExecuteW` | `NSWorkspace` | `GtkUriLauncher` | `window.open` (別タブ) |
+| Clipboard | `Windows.ApplicationModel.DataTransfer.Clipboard` | `NSPasteboard` | `GdkClipboard` | `navigator.clipboard` |
+| `open_url` | `ShellExecuteW` | `NSWorkspace` | `GtkUriLauncher` | `window.open` (new tab) |
 
-Web の Clipboard API は https (か localhost) でしか使えず、読むときは
-利用者に許可を求められることがある。書き込みと `open_url` は、ブラウザが
-利用者の操作 (クリックなど) の中でしか許さないことがあるので、ボタンの
-`on_click` などから呼ぶ。断られたときは、書き込みはコールバックへ、
-`open_url` (新しいタブを止められた) は戻り値へ `Err` が届く。
-
+The Web's Clipboard API is available only over https (or localhost), and reading
+may ask the user for permission. Browsers may allow writing and `open_url` only
+inside a user action (such as a click), so call them from a button's `on_click` and
+the like. When refused, writing gets an `Err` in its callback, and `open_url` (when
+the new tab was blocked) gets an `Err` as its return value.

@@ -1,7 +1,7 @@
 use crate::sys;
 use naui_core::{FileEntry, FileFilter, FilePickerMode};
 
-/// ファイルやフォルダーを選ばせるボタン。押すと `GtkFileDialog` が出る。
+/// A button for picking files or folders. Clicking it shows a `GtkFileDialog`.
 #[derive(Clone)]
 pub struct FilePicker(pub(crate) sys::FilePicker);
 
@@ -18,7 +18,7 @@ impl FilePicker {
         self.0.set_enabled(enabled)
     }
 
-    /// 何を選ばせるか。既定は「ファイルを 1 つ」。
+    /// What to let the user pick. The default is "one file".
     #[inline]
     pub fn set_mode(&self, mode: FilePickerMode) {
         self.0.set_mode(mode)
@@ -29,25 +29,25 @@ impl FilePicker {
         self.0.mode()
     }
 
-    /// 拡張子による絞り込み。フォルダーを選ぶモードでは使われない。
+    /// Filters by file extension. Not used in folder mode.
     #[inline]
     pub fn set_filters(&self, filters: &[FileFilter]) {
         self.0.set_filters(filters)
     }
 
-    /// 直前に選ばれたもの。
+    /// What was picked last.
     #[inline]
     pub fn selection(&self) -> Vec<FileEntry> {
         self.0.selection()
     }
 
-    /// 選ばれるたびに、選ばれたものの並びで呼ばれる。
+    /// Called with the sequence of picked items every time something is picked.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(&[FileEntry]) + 'static) {
         self.0.on_select(f)
     }
 
-    /// ダイアログを出す。ボタンを押したときと同じ。
+    /// Shows the dialog. The same as clicking the button.
     #[inline]
     pub fn open(&self) {
         self.0.open()

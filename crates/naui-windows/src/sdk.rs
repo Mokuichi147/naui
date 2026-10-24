@@ -1,62 +1,64 @@
-//! Windows App SDK ランタイムの取り付け。
+//! Attaching the Windows App SDK runtime.
 //!
-//! WinUI 3 のコントロールは Windows SDK ではなく **Windows App SDK** の
-//! フレームワークパッケージに入っている。未パッケージのアプリは、それを
-//! 「動的依存」として自分のプロセスへ取り付けてから使う。
+//! WinUI 3 controls live in the framework package of the **Windows App SDK**, not
+//! the Windows SDK. An unpackaged app attaches it to its own process as a "dynamic
+//! dependency" before use.
 //!
-//! 相手のパッケージは版ごとに別物 (`Microsoft.WindowsAppRuntime.<版>_8wekyb3d8bbwe`)
-//! なので、naui は 1 つに決め打ちせず、**新しいほうから順に試して最初に
-//! 取り付けられたもの**を使う。利用者の環境に 2.x が入っていなくても、
-//! 1.x が入っていればそのまま動く。
+//! The target package differs per version
+//! (`Microsoft.WindowsAppRuntime.<version>_8wekyb3d8bbwe`), so instead of pinning
+//! one, naui **tries from the newest and uses the first one it can attach**. Even if
+//! the user's environment has no 2.x, it works as is if 1.x is installed.
 //!
-//! 版の付く候補の下限を 1.3 にしているのは、ウィンドウの背景に使う
-//! `MicaBackdrop` と `Window.SystemBackdrop` が 1.3 で入ったため。それより
-//! 古い版では `Window` の組み立てから成り立たない。
+//! The minimum for versioned candidates is 1.3 because `MicaBackdrop` and
+//! `Window.SystemBackdrop`, used for the window background, were introduced in 1.3.
+//! With older versions, even building a `Window` fails.
 //!
-//! 版の付かない `Microsoft.WindowsAppRuntime.CBS` は OS 同梱の系統で、どの
-//! 世代か名前から分からない。ほかが 1 つも見つからなかったときの最後の
-//! 頼みにする。古すぎて Mica が作れない場合は背景を諦めるだけで済む
-//! ([`crate::window`] を参照)。
+//! The unversioned `Microsoft.WindowsAppRuntime.CBS` is the line shipped with the
+//! OS, and its generation cannot be told from its name. It is the last resort when
+//! nothing else is found. If it is too old to create Mica, only the background is
+//! given up ([`crate::window`]).
 //!
-//! `self-contained` フィーチャーを有効にしてビルドすると、ランタイムを exe の
-//! 隣へ同梱できる。そのときは同梱物だけを使い、フレームワークパッケージは
-//! 探さない ([`naui_winui3::self_contained`])。exe の隣に同梱物が無ければ
-//! エラーにする。導入済みのランタイムへ黙って切り替えると、ビルドの手元では
-//! 動いてしまい、同梱物を配り忘れたことに配布先で初めて気づくことになる。
+//! Building with the `self-contained` feature lets the runtime be bundled next to
+//! the exe. In that case only the bundled files are used, and no framework package
+//! is looked for ([`naui_winui3::self_contained`]). It is an error if the bundled
+//! files are not next to the exe. Silently switching to an installed runtime would
+//! make it work on the build machine, and forgetting to ship the bundled files would
+//! only be noticed on the target machines.
 
 use naui_core::{Error, Result};
 use naui_winui3::bootstrap::{PackageDependency, Version};
 #[cfg(feature = "self-contained")]
 use naui_winui3::self_contained::SelfContained;
 
-/// 取り付けた Windows App SDK ランタイム。
+/// The attached Windows App SDK runtime.
 ///
-/// 落とすと取り付けも外れるので、アプリが終わるまで持ち続ける。
+/// Dropping it also detaches it, so it is held until the app ends.
 #[derive(Debug)]
 pub(crate) enum Runtime {
-    /// OS へ導入されたフレームワークパッケージ。
+    /// A framework package installed on the OS.
     #[cfg_attr(feature = "self-contained", allow(dead_code))]
     Framework(#[allow(dead_code)] PackageDependency),
-    /// exe の隣に同梱したもの。
+    /// Files bundled next to the exe.
     #[cfg(feature = "self-contained")]
     SelfContained(#[allow(dead_code)] SelfContained),
 }
 
-/// 取り付けを試す版。新しいものが先。
+/// The versions to try attaching, newest first.
 ///
-/// 並びは [`naui_winui3`] が持つものをそのまま使う。ブートストラップの DLL を
-/// 探すときと同じ一覧なので、片方だけ増えることがない。
+/// The order is exactly the one [`naui_winui3`] holds. It is the same list used when
+/// looking for the bootstrap DLL, so one cannot grow without the other.
 ///
-/// `Cbs`(OS 同梱) 系は、対応する版の通常パッケージが入っていない環境向けの
-/// 別系統。版の付く `CBS.2` などは同じ版の直後、版の付かない `CBS` は
-/// どの世代か分からないので最後に来る。
+/// The `Cbs` (shipped with the OS) line is a separate line for environments without
+/// the regular package of the corresponding version. Versioned ones such as `CBS.2`
+/// come right after the same version, and the unversioned `CBS`, whose generation is
+/// unknown, comes last.
 pub(crate) const CANDIDATES: &[Version] = Version::ALL;
 
-/// 使える Windows App SDK ランタイムを 1 つ取り付ける。
+/// Attaches one usable Windows App SDK runtime.
 ///
-/// `self-contained` でビルドしたときは同梱物を、そうでなければフレーム
-/// ワークパッケージを新しい順に試す。返り値を落とすと取り付けも外れるので、
-/// アプリが終わるまで持ち続ける。
+/// When built with `self-contained` it uses the bundled files; otherwise it tries
+/// framework packages, newest first. Dropping the return value also detaches it, so
+/// it is held until the app ends.
 pub(crate) fn initialize() -> Result<Runtime> {
     #[cfg(feature = "self-contained")]
     {
@@ -68,7 +70,7 @@ pub(crate) fn initialize() -> Result<Runtime> {
     }
 }
 
-/// exe の隣の同梱物を取り付ける。
+/// Attaches the files bundled next to the exe.
 #[cfg(feature = "self-contained")]
 fn initialize_self_contained() -> Result<Runtime> {
     const CONTEXT: &str = "同梱した Windows App SDK ランタイムの初期化";
@@ -90,7 +92,7 @@ fn initialize_self_contained() -> Result<Runtime> {
     }
 }
 
-/// 導入済みのフレームワークパッケージを、新しい版から順に取り付ける。
+/// Attaches an installed framework package, trying from the newest version.
 #[cfg_attr(feature = "self-contained", allow(dead_code))]
 fn initialize_framework() -> Result<Runtime> {
     let mut last = None;
@@ -111,7 +113,7 @@ fn initialize_framework() -> Result<Runtime> {
     ))
 }
 
-/// エラーに載せる、試した版の一覧。
+/// The list of versions tried, included in errors.
 #[cfg_attr(feature = "self-contained", allow(dead_code))]
 fn version_list() -> String {
     CANDIDATES
@@ -125,9 +127,9 @@ fn version_list() -> String {
 mod tests {
     use super::*;
 
-    /// 新しい版から順に試す。古いほうが先に当たると、2.x が入っている環境で
-    /// わざわざ 1.x を掴んでしまう。版の付かない `CBS` はどの世代か分からない
-    /// ので、いちばん後ろに置く。
+    /// Versions are tried from the newest. If older ones matched first, an environment
+    /// with 2.x would needlessly grab 1.x. The unversioned `CBS`, whose generation is
+    /// unknown, goes at the very end.
     #[test]
     fn candidates_are_newest_first() {
         let order: Vec<String> = CANDIDATES.iter().map(|v| format!("{v:?}")).collect();
@@ -138,7 +140,7 @@ mod tests {
         assert!(versioned < plain_cbs, "版の付く候補を先に試す");
     }
 
-    /// 同じ版を 2 回試しても意味が無い。
+    /// Trying the same version twice is pointless.
     #[test]
     fn candidates_have_no_duplicates() {
         let mut seen: Vec<String> = CANDIDATES.iter().map(|v| format!("{v:?}")).collect();
@@ -148,7 +150,7 @@ mod tests {
         assert_eq!(seen.len(), before, "重複した版がある");
     }
 
-    /// エラーの文面に、試した版が全部並ぶ。
+    /// The error message lists every version tried.
     #[test]
     fn version_list_names_every_candidate() {
         let list = version_list();

@@ -1,23 +1,24 @@
-//! キーボードの入力 (`on_key_down`) で受け渡す値。
+//! Values passed through keyboard input (`on_key_down`).
 //!
-//! 文字入力のウィジェットと `Window` は、押されたキーを [`KeyEvent`] で
-//! 通知し、アプリは [`EventResponse`] で「ここで処理した」かどうかを返す。
-//! `Handled` を返すと、そのキーはネイティブのコントロール (改行の挿入など)
-//! にもウィンドウにも渡らない。
+//! Text-input widgets and `Window` report pressed keys as a [`KeyEvent`], and the
+//! app returns an [`EventResponse`] saying whether it "handled it here". Returning
+//! `Handled` keeps the key from reaching the native control (inserting a newline,
+//! for example) and the window.
 //!
-//! **IME で変換している間のキーは届かない。** 変換を確定する Enter などは
-//! IME が受け取るので、`Enter` で送信するような処理を書いても変換の確定で
-//! 送ってしまうことはない。
+//! **Keys pressed while an IME is composing are not delivered.** The IME receives
+//! the Enter that confirms the composition, so a "send on `Enter`" handler will not
+//! send when the user merely confirms a conversion.
 //!
-//! 修飾キー (⇧・Ctrl・Alt・⌘ / Windows キー / Super) は、単独で押しても
-//! 届かない。押していたかは、ほかのキーの [`KeyEvent::modifiers`] で見る。
+//! Modifier keys (⇧, Ctrl, Alt, ⌘ / Windows key / Super) are not delivered when
+//! pressed on their own. Check whether they were held through
+//! [`KeyEvent::modifiers`] of other keys.
 
-/// 押されたキー。
+/// A pressed key.
 ///
-/// 文字のキーは [`Key::Character`] で、英字は**小文字にそろえる**
-/// ([`MenuShortcut`](crate::MenuShortcut) と同じ)。⇧ を押していたかは
-/// [`Modifiers::shift`] で見る。記号のキーで ⇧ を押したときにどの文字に
-/// なるかは環境 (キー配列) によって違う。
+/// Character keys are [`Key::Character`], with letters **normalized to lowercase**
+/// (the same as [`MenuShortcut`](crate::MenuShortcut)). Check
+/// [`Modifiers::shift`] for whether ⇧ was held. Which character a symbol key gives
+/// with ⇧ depends on the platform (keyboard layout).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Key {
@@ -35,16 +36,18 @@ pub enum Key {
     End,
     PageUp,
     PageDown,
-    /// ファンクションキー。`F(1)` が F1。
+    /// A function key. `F(1)` is F1.
     F(u8),
-    /// 文字を打つキー。英字は小文字。
+    /// A key that types a character. Letters are lowercase.
     Character(char),
-    /// 上のどれにも当たらないキー (修飾キーそのもの・メディアキーなど)。
+    /// A key that matches none of the above (the modifier keys themselves, media keys
+    /// and so on).
     Other,
 }
 
 impl Key {
-    /// 文字のキーを作る。英字は小文字にそろえ、空白は [`Key::Space`] にする。
+    /// Creates a character key. Letters are lowercased, and a space becomes
+    /// [`Key::Space`].
     pub fn character(c: char) -> Self {
         match c {
             ' ' => Self::Space,
@@ -55,7 +58,7 @@ impl Key {
         }
     }
 
-    /// Web の `KeyboardEvent.key` の名前から作る。
+    /// Creates one from the name in the Web's `KeyboardEvent.key`.
     ///
     /// ```
     /// # use naui_core::Key;
@@ -91,15 +94,15 @@ impl Key {
     }
 }
 
-/// `"F1"`〜`"F24"` をファンクションキーとして読む。
+/// Reads `"F1"` to `"F24"` as function keys.
 fn function_key(name: &str) -> Option<Key> {
     let number: u8 = name.strip_prefix('F')?.parse().ok()?;
     (1..=24).contains(&number).then_some(Key::F(number))
 }
 
-/// 押していた修飾キー。
+/// The modifier keys that were held.
 ///
-/// `meta` は macOS の ⌘、Windows の Windows キー、Linux の Super。
+/// `meta` is ⌘ on macOS, the Windows key on Windows and Super on Linux.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Modifiers {
     pub shift: bool,
@@ -109,10 +112,10 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
-    /// 主修飾キー (macOS は ⌘、Windows・Linux は Ctrl) を押していたか。
+    /// Whether the primary modifier (⌘ on macOS, Ctrl on Windows and Linux) was held.
     ///
-    /// Web は OS を確かめずに Ctrl と ⌘ のどちらでもよいとする
-    /// (メニューバーのショートカットと同じ扱い)。
+    /// On the Web either Ctrl or ⌘ counts, without checking the OS (the same treatment
+    /// as menu bar shortcuts).
     pub fn primary(&self) -> bool {
         if cfg!(target_arch = "wasm32") {
             self.control || self.meta
@@ -123,19 +126,19 @@ impl Modifiers {
         }
     }
 
-    /// どの修飾キーも押していないか。
+    /// Whether no modifier keys are held.
     pub fn is_empty(&self) -> bool {
         !(self.shift || self.control || self.alt || self.meta)
     }
 }
 
-/// `on_key_down` に届くキー 1 回分。
+/// One key press delivered to `on_key_down`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct KeyEvent {
     pub key: Key,
     pub modifiers: Modifiers,
-    /// 押しっぱなしによる繰り返しか。
+    /// Whether this is a repeat from holding the key down.
     pub repeat: bool,
 }
 
@@ -148,29 +151,29 @@ impl KeyEvent {
         }
     }
 
-    /// 押しっぱなしによる繰り返しかどうかを指定する。
+    /// Sets whether this is a repeat from holding the key down.
     pub fn repeat(mut self, repeat: bool) -> Self {
         self.repeat = repeat;
         self
     }
 }
 
-/// `on_key_down` からの返事。
+/// The reply from `on_key_down`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EventResponse {
-    /// ここで処理した。ネイティブのコントロールにもウィンドウにも渡さない。
+    /// Handled here. Not passed to the native control or the window.
     Handled,
-    /// 処理していない。いつもどおりネイティブのコントロールへ渡す。
+    /// Not handled. Passed to the native control as usual.
     #[default]
     Continue,
 }
 
-/// `on_key_down` の通知先を 1 つ持つ。各バックエンドで共有する。
+/// Holds one handler for `on_key_down`. Shared by all backends.
 ///
-/// 呼んでいる間はクロージャを取り出しておくので、通知の中から同じ
-/// ウィジェットを操作したり `on_key_down` で差し替えたりしてもよい。
-/// 入れ子で届いたキー (通知の中で別のキーを起こしたときなど) は
-/// `Continue` として扱う。
+/// The closure is taken out while it is called, so you may operate on the same
+/// widget or replace the handler with `on_key_down` from inside the notification.
+/// Keys that arrive re-entrantly (when the handler triggers another key, for
+/// example) are treated as `Continue`.
 #[derive(Default)]
 pub struct KeyHandler(std::cell::RefCell<crate::Slot<KeyCallback>>);
 
@@ -181,7 +184,7 @@ impl KeyHandler {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 通知先を持っているか。
+    /// Whether a handler is set.
     pub fn is_set(&self) -> bool {
         self.0.try_borrow().map_or(true, |slot| slot.is_some())
     }

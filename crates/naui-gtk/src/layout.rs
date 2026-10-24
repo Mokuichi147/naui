@@ -1,7 +1,7 @@
-//! レイアウト用のコンテナ (`Grid` / `Scroll` / `Spacer`)。
+//! Layout containers (`Grid` / `Scroll` / `Spacer`).
 //!
-//! 計算するのは GTK4 のレイアウト (`GtkGrid` / `GtkScrolledWindow`) で、
-//! naui 側はプロパティを書くだけ。
+//! The computing is done by GTK4's layout (`GtkGrid` / `GtkScrolledWindow`); naui
+//! only writes properties.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,13 +20,14 @@ use crate::widgets::{impl_widget, Widget};
 struct GridInner {
     native: gtk::Grid,
     bin: SizeBin,
-    /// 置いた子と、その置き場所。列 / 行の指定を後から変えるために持つ。
+    /// The placed children and their positions. Kept so the column / row settings can
+    /// be changed later.
     children: RefCell<Vec<(GridCell, Box<dyn Widget>)>>,
     column_tracks: RefCell<Vec<Track>>,
     row_tracks: RefCell<Vec<Track>>,
 }
 
-/// 行と列で位置を決めるコンテナ (`GtkGrid`)。
+/// A container that positions children by row and column (`GtkGrid`).
 #[derive(Clone)]
 pub struct Grid(Rc<GridInner>);
 impl_widget!(Grid);
@@ -53,7 +54,8 @@ impl Grid {
         apply_padding(&self.0.native, padding);
     }
 
-    /// マスへ置く。すでに何かが置かれているマスへ重ねて置ける。
+    /// Places a child in a cell. It can be stacked onto a cell that already holds
+    /// something.
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         let bin = child.size_bin();
         self.0.native.attach(
@@ -70,22 +72,22 @@ impl Grid {
             .push((cell, child.boxed_clone()));
     }
 
-    /// そのマスの中身を差し替える。同じマスに置かれていたものは外れる。
+    /// Replaces what is in the cell. Whatever was in the same cell is removed.
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
         self.remove(cell);
         self.attach(child, cell);
     }
 
-    /// 子をすべて外す。行と列の指定はそのまま残る。
+    /// Removes every child. The row and column settings stay.
     pub fn clear(&self) {
         for (_, child) in std::mem::take(&mut *self.0.children.borrow_mut()) {
             self.0.native.remove(&child.size_bin());
         }
     }
 
-    /// 指定したマスに置かれているものを外す。何も無ければ何もしない。
+    /// Removes whatever is in the given cell. Does nothing if it is empty.
     ///
-    /// 見るのは `cell` の列と行だけで、span は見ない。
+    /// Only the column and row of `cell` are considered, not the span.
     pub fn remove(&self, cell: GridCell) {
         let mut children = self.0.children.borrow_mut();
         let mut index = 0;
@@ -99,18 +101,20 @@ impl Grid {
         }
     }
 
-    /// 列の幅の決め方。
+    /// How a column's width is determined.
     ///
-    /// `GtkGrid` は列そのものに幅を持たせられないため、**その列に入っている
-    /// 子**へ写す。列の幅は中身のいちばん大きいものに合わせて決まるので、
-    /// 結果として列の幅が決まる。[`Track::Fill`] の重みは `GtkGrid` に無く、
-    /// 余りは広がる列で等分される (macOS と同じ制限)。
+    /// `GtkGrid` cannot give columns a width of their own, so this is applied **to the
+    /// children in that column**. A column's width follows its largest content, so
+    /// this ends up setting the column width. `GtkGrid` has no weights for
+    /// [`Track::Fill`]; leftover space is split evenly among the growing columns (the
+    /// same limitation as macOS).
     pub fn set_column_track(&self, index: usize, track: Track) {
         set_track(&self.0.column_tracks, index, track);
         self.reapply_tracks();
     }
 
-    /// 行の高さの決め方。[`Grid::set_column_track`] と同じ制限がある。
+    /// How a row's height is determined. Has the same limitations as
+    /// [`Grid::set_column_track`].
     pub fn set_row_track(&self, index: usize, track: Track) {
         set_track(&self.0.row_tracks, index, track);
         self.reapply_tracks();
@@ -122,10 +126,10 @@ impl Grid {
         }
     }
 
-    /// 1 つの子へ、置かれている列と行の指定を写す。
+    /// Applies the settings of the column and row a child is placed in to that child.
     ///
-    /// 複数マスにまたがる子は、列 / 行の幅を決める役目を負わない
-    /// (どの列の幅なのかが決まらないため)。
+    /// Children spanning several cells do not take part in deciding column / row
+    /// widths (it would be unclear which column's width they decide).
     fn apply_tracks_to(&self, bin: &SizeBin, cell: GridCell) {
         if cell.column_span == 1 {
             if let Some(track) = self.0.column_tracks.borrow().get(cell.column).copied() {
@@ -139,7 +143,7 @@ impl Grid {
         }
     }
 
-    /// 置かれているものが必要とする列数。
+    /// The number of columns the placed children need.
     pub fn columns(&self) -> usize {
         self.0
             .children
@@ -150,7 +154,7 @@ impl Grid {
             .unwrap_or(0)
     }
 
-    /// 置かれているものが必要とする行数。
+    /// The number of rows the placed children need.
     pub fn rows(&self) -> usize {
         self.0
             .children
@@ -170,7 +174,7 @@ impl Grid {
     }
 }
 
-/// 列 / 行の指定を、必要なだけ伸ばしてから書き込む。
+/// Writes a column / row setting, first extending the list as far as needed.
 fn set_track(tracks: &RefCell<Vec<Track>>, index: usize, track: Track) {
     let mut tracks = tracks.borrow_mut();
     if tracks.len() <= index {
@@ -181,16 +185,18 @@ fn set_track(tracks: &RefCell<Vec<Track>>, index: usize, track: Track) {
 
 // ----------------------------------------------------------------- Scroll
 
-/// `scroll_to` を覚えておくフレーム数。
+/// The number of frames a `scroll_to` is remembered.
 ///
-/// GTK4 には同期でレイアウトさせる手段が無く、中身を変えた直後の
-/// `GtkAdjustment` は前のレイアウトの大きさのまま。頼まれた行き先を
-/// 次のレイアウトまで覚えておき、大きさが変わった (`changed`) ときに
-/// 送り直す。フレームの最初 (tick) はレイアウトより前に来るので、
-/// 2 回目の tick で「次のレイアウトは済んだ」とみなして忘れる。
+/// GTK4 has no way to lay out synchronously, and right after the contents change,
+/// the `GtkAdjustment` still has the previous layout's sizes. The requested
+/// destination is remembered until the next layout and re-applied when the sizes
+/// change (`changed`). The start of a frame (tick) comes before layout, so on the
+/// second tick it is assumed that "the next layout has finished" and it is
+/// forgotten.
 ///
-/// 隠れている (map されていない) 間はレイアウトされないので数えない。
-/// 隠れたタブの中で頼まれた行き先は、タブが出てから数え始める。
+/// While hidden (not mapped) there is no layout, so frames are not counted. A
+/// destination requested inside a hidden tab starts counting once the tab is
+/// shown.
 const PENDING_FRAMES: u8 = 2;
 
 struct ScrollInner {
@@ -198,9 +204,9 @@ struct ScrollInner {
     bin: SizeBin,
     child: RefCell<Option<Box<dyn Widget>>>,
     on_scroll: ScrollNotifier,
-    /// レイアウトが済むまで覚えておく行き先。
+    /// The destination remembered until layout has finished.
     pending: Cell<Option<ScrollTarget>>,
-    /// 行き先を忘れるまでに残っているフレーム数。
+    /// The number of frames left before the destination is forgotten.
     frames_left: Cell<u8>,
     tick: RefCell<Option<gtk::TickCallbackId>>,
 }
@@ -213,7 +219,7 @@ impl Drop for ScrollInner {
     }
 }
 
-/// 中身がはみ出したらスクロールさせるコンテナ (`GtkScrolledWindow`)。
+/// A container that scrolls when its contents overflow (`GtkScrolledWindow`).
 #[derive(Clone)]
 pub struct Scroll(Rc<ScrollInner>);
 impl_widget!(Scroll);
@@ -260,10 +266,10 @@ impl Scroll {
         this
     }
 
-    /// いまのスクロール位置と大きさ。
+    /// The current scroll position and sizes.
     ///
-    /// GTK4 は同期でレイアウトさせられないので、直前に中身を変えたときは
-    /// 次のフレームまで前の大きさのまま。
+    /// GTK4 cannot be made to lay out synchronously, so right after the contents
+    /// change, the previous sizes remain until the next frame.
     pub fn metrics(&self) -> ScrollMetrics {
         let horizontal = self.0.native.hadjustment();
         let vertical = self.0.native.vadjustment();
@@ -279,22 +285,23 @@ impl Scroll {
         }
     }
 
-    /// 指定した位置へ送る。送れる範囲に丸める。
+    /// Scrolls to the given position, clamped to the scrollable range.
     ///
-    /// 直前に中身を変えていても、次のレイアウトの後の大きさで送り直す。
+    /// Even if the contents just changed, it scrolls again using the sizes after the
+    /// next layout.
     pub fn scroll_to(&self, x: f64, y: f64) {
         self.request(ScrollTarget::To { x, y });
     }
 
-    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    /// Scrolls to the vertical end (the very bottom). The horizontal position stays.
     pub fn scroll_to_end(&self) {
         self.request(ScrollTarget::End);
     }
 
-    /// スクロール位置が変わったときの通知。
+    /// Notified when the scroll position changes.
     ///
-    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
-    /// 届く。大きさだけが変わったときは届かない。
+    /// Besides user interaction, it also arrives for moves caused by `scroll_to` or by
+    /// the contents shrinking. It does not arrive when only the sizes change.
     pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
         self.0.on_scroll.set(&self.metrics(), f);
     }
@@ -309,7 +316,7 @@ impl Scroll {
         }
     }
 
-    /// 行き先を忘れるまでのフレームを数える。
+    /// Counts the frames until the destination is forgotten.
     fn count_frames(&self) {
         if self.0.tick.borrow().is_some() {
             return;
@@ -336,7 +343,8 @@ impl Scroll {
         *self.0.tick.borrow_mut() = Some(id);
     }
 
-    /// 覚えている行き先へ送る。忘れるのはフレームを数え終えたとき。
+    /// Scrolls to the remembered destination. It is forgotten when the frames have
+    /// been counted.
     fn apply_pending(&self) {
         let Some(target) = self.0.pending.get() else {
             return;
@@ -378,16 +386,17 @@ impl Scroll {
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
-    /// 送れる向きでは、中身を「自然な大きさ」で置く。
+    /// In scrollable directions, places the content at its "natural size".
     ///
-    /// `GtkScrolledWindow` は自分でスクロールしない中身を `GtkViewport` へ
-    /// 包む。その既定 (`Minimum`) は、場所が足りないときに中身を**最小の
-    /// 大きさまで潰す**。高さを指定していない `List` のように最小と自然な
-    /// 大きさが違うウィジェットが、1 行分まで縮んでしまう。
+    /// `GtkScrolledWindow` wraps content that does not scroll by itself in a
+    /// `GtkViewport`. Its default (`Minimum`) **squashes the content to its minimum
+    /// size** when there is not enough room. Widgets whose minimum and natural sizes
+    /// differ, such as a `List` without a height set, shrink to a single row.
     ///
-    /// 送れる向き (`Auto` / `Always`) は、はみ出してもスクロールで見られる
-    /// ので自然な大きさで置く。送れない向き (`Never`) は既定のままにする。
-    /// スクロールバーが出ない以上、はみ出した分は見えなくなるため。
+    /// In scrollable directions (`Auto` / `Always`), overflow can be seen by scrolling,
+    /// so the content is placed at its natural size. Non-scrollable directions
+    /// (`Never`) keep the default: with no scroll bar, whatever overflows would become
+    /// invisible.
     fn follow_natural_size(&self) {
         let Some(viewport) = self.0.native.child().and_downcast::<gtk::Viewport>() else {
             return;
@@ -397,7 +406,7 @@ impl Scroll {
     }
 }
 
-/// スクロールバーの出し方から、中身の置き方を決める。
+/// Decides how the content is placed from the scroll bar policy.
 fn scrollable_policy(policy: gtk::PolicyType) -> gtk::ScrollablePolicy {
     match policy {
         gtk::PolicyType::Never => gtk::ScrollablePolicy::Minimum,
@@ -420,7 +429,8 @@ struct SpacerInner {
     bin: SizeBin,
 }
 
-/// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。
+/// A widget that is just empty space. It absorbs a stack's leftover space and
+/// pushes the others away.
 #[derive(Clone)]
 pub struct Spacer(Rc<SpacerInner>);
 impl_widget!(Spacer);

@@ -1,13 +1,14 @@
-//! GTK4 の実コントロールを包むハンドル群。
+//! Handles wrapping real GTK4 controls.
 //!
-//! どのハンドルも `Rc<Inner>` で、`Inner` が GTK4 のオブジェクトとアプリの
-//! クロージャを保持する。ハンドルを clone してもネイティブは 1 つ。
+//! Every handle is an `Rc<Inner>`, and `Inner` holds the GTK4 object and the app's
+//! closures. Cloning a handle still leaves one native object.
 //!
-//! シグナルは**作った時点で 1 回だけ**つなぎ、アプリのクロージャは
-//! [`Notifier`] に差し替える形で持つ。GTK4 のシグナルハンドラは `Fn`
-//! (何度でも呼べる) を要求するのに対し、naui の API は `FnMut` を受けるため。
+//! Signals are connected **exactly once at creation**, and the app's closures are
+//! held in a [`Notifier`], swapped in and out. GTK4 signal handlers require `Fn`
+//! (callable any number of times), while naui's API takes `FnMut`.
 //!
-//! 描画・レイアウト・IME・アクセシビリティ・テーマ追従はすべて GTK4 が行う。
+//! Drawing, layout, IME, accessibility and following the theme are all done by
+//! GTK4.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,12 +21,12 @@ use naui_core::{Align, Orientation, Padding, TextColor, TextStyle};
 use crate::bin::{apply_padding, SizeBin};
 use crate::callback::{Notifier, TextNotifier};
 
-/// naui のウィジェットが実装する共通インタフェース。
+/// The common interface implemented by naui's widgets.
 pub trait Widget: 'static {
-    /// 対応する GTK4 のウィジェット。バックエンド固有の脱出口として公開している。
+    /// The corresponding GTK4 widget. Public as a backend-specific escape hatch.
     ///
-    /// 返るのは**中身のコントロール**で、コンテナへ入るのはこれを包んだ
-    /// [`SizeBin`] のほう。
+    /// What is returned is **the content control**; what goes into containers is the
+    /// [`SizeBin`] wrapping it.
     fn native_widget(&self) -> gtk::Widget;
 
     #[doc(hidden)]
@@ -53,51 +54,54 @@ macro_rules! impl_widget {
     };
 }
 
-/// `Widget` を手書きしている型に、大きさの指定だけを足す。
+/// Adds only size specification to types that implement `Widget` by hand.
 macro_rules! impl_sizing {
     ($t:ty) => {
         impl $t {
-            /// 大きさを指定する。呼ぶたびに以前の指定は外れる。
+            /// Sets the size. Each call discards the previous setting.
             ///
-            /// 実際の大きさを決めるのは GTK4 のレイアウトなので、ここで渡すのは
-            /// 「最小はここまで」「余りを受け取る」「上限で止める」という指定だけ。
+            /// The actual size is decided by GTK4's layout, so what you pass here is only
+            /// "at least this much", "take the leftover space" and "stop at this maximum".
             ///
-            /// 交差軸の寄せ方はコンテナ ([`Stack::set_align`]) も決めるため、
-            /// **コンテナへ入れる前**に呼ぶのが確実。
+            /// The container ([`Stack::set_align`](crate::Stack::set_align)) also decides
+            /// cross-axis alignment, so calling this **before putting the widget into a
+            /// container** is the safe choice.
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 <$t as Widget>::size_bin(self).apply_sizing(sizing);
             }
 
-            /// 表示するかどうか。既定は表示。
+            /// Whether it is shown. Shown by default.
             ///
-            /// 隠したものは `Stack` の中では場所を空けない。`Grid` ではマスが残る。
+            /// A hidden widget takes no space in a `Stack`. In a `Grid`, its cell remains.
             pub fn set_visible(&self, visible: bool) {
                 crate::interaction::set_visible(&<$t as Widget>::size_bin(self), visible);
             }
 
-            /// [`set_visible`](Self::set_visible) で指定した表示。親が隠れていても
-            /// `true` のまま。
+            /// The visibility set with [`set_visible`](Self::set_visible). Stays `true` even
+            /// if a parent is hidden.
             pub fn is_visible(&self) -> bool {
                 crate::interaction::is_visible(&<$t as Widget>::size_bin(self))
             }
 
-            /// キーボードフォーカスを移す。移せたら `true`。
+            /// Moves keyboard focus here. `true` if it moved.
             ///
-            /// 自分が受け取れないとき (コンテナなど) は、中で最初に受け取れるものへ
-            /// 移す。表示前・隠れている・無効なときは `false`。
+            /// If the widget itself cannot take focus (containers, for example), focus moves to
+            /// the first thing inside that can. `false` before it is shown, while hidden, or
+            /// while disabled.
             pub fn request_focus(&self) -> bool {
                 crate::interaction::request_focus(&<$t as Widget>::native_widget(self))
             }
 
-            /// ポインターを重ねたときに出す説明。`None` で外す。
+            /// The description shown when the pointer hovers over it. `None` removes it.
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_widget(self), text);
             }
 
-            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            /// The name reported to screen readers. `None` removes it (the visible text is
+            /// used).
             ///
-            /// アイコンだけのボタンのように、見えている文字が無いか意味を
-            /// 表しきれないときに付ける。
+            /// Set it when there is no visible text, or the text does not fully convey the
+            /// meaning, as with icon-only buttons.
             pub fn set_accessible_label(&self, text: Option<&str>) {
                 crate::interaction::set_accessible_label(
                     &<$t as Widget>::native_widget(self),
@@ -105,8 +109,9 @@ macro_rules! impl_sizing {
                 );
             }
 
-            /// 弱参照を作る。通知のクロージャからこのウィジェット自身を触るときに
-            /// 捕まえる (`clone()` で捕まえると循環して解放されない)。
+            /// Creates a weak reference. Capture it when touching this widget from its own
+            /// notification closures (capturing a `clone()` creates a cycle and it is never
+            /// freed).
             pub fn downgrade(&self) -> naui_core::WeakWidget<Self> {
                 let weak = std::rc::Rc::downgrade(&self.0);
                 naui_core::WeakWidget::new(move || weak.upgrade().map(Self))
@@ -117,10 +122,10 @@ macro_rules! impl_sizing {
 
 pub(crate) use {impl_sizing, impl_widget};
 
-/// シグナルを止めたまま値を書き換える。
+/// Rewrites a value with the signal blocked.
 ///
-/// GTK4 はプログラムから値を変えても `changed` を出すが、naui では
-/// **利用者の操作でだけ** `on_change` が呼ばれる (macOS / Web と同じ)。
+/// GTK4 emits `changed` even when a value is changed from code, but in naui
+/// `on_change` is called **only for user actions** (the same as macOS / Web).
 pub(crate) fn without_signal<T>(
     object: &impl IsA<glib::Object>,
     handler: &RefCell<Option<glib::SignalHandlerId>>,
@@ -145,7 +150,7 @@ struct LabelInner {
     bin: SizeBin,
 }
 
-/// 編集できないテキスト (`GtkLabel`)。
+/// Non-editable text (`GtkLabel`).
 #[derive(Clone)]
 pub struct Label(Rc<LabelInner>);
 impl_widget!(Label);
@@ -169,10 +174,10 @@ impl Label {
         self.0.native.set_text(text);
     }
 
-    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    /// Whether the text can be selected and copied. Not selectable by default.
     ///
-    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
-    /// 入力欄と違い、文字は書き換えられない。
+    /// Use it for text readers will want to copy, such as chat messages or error
+    /// details. Unlike a text field, the text cannot be edited.
     pub fn set_selectable(&self, selectable: bool) {
         self.0.native.set_selectable(selectable);
     }
@@ -181,12 +186,12 @@ impl Label {
         self.0.native.is_selectable()
     }
 
-    /// 長い文字列を折り返すかどうか。既定は折り返さない。
+    /// Whether long text wraps. Does not wrap by default.
     ///
-    /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
-    /// 切る (`PangoEllipsizeMode` の `End`)。**省略記号を付けると `GtkLabel` の
-    /// 最小幅も小さくなる**ので、狭いコンテナへ入れてもコンテナごと押し広げて
-    /// しまうことがなくなる。
+    /// When not wrapping, it stays on one line and whatever does not fit is cut off
+    /// with a trailing ellipsis (…) (`End` of `PangoEllipsizeMode`). **The ellipsis also
+    /// makes the `GtkLabel`'s minimum width smaller**, so putting it into a narrow
+    /// container no longer pushes the whole container wider.
     pub fn set_wrap(&self, wrap: bool) {
         self.0.native.set_wrap(wrap);
         self.0.native.set_wrap_mode(pango::WrapMode::WordChar);
@@ -197,11 +202,11 @@ impl Label {
         });
     }
 
-    /// 文字の大きさと太さの段階。既定は [`TextStyle::Body`]。
+    /// The level of text size and weight. The default is [`TextStyle::Body`].
     ///
-    /// libadwaita のスタイルクラス (`.title-1` など) を当てるだけなので、
-    /// 級数と太さを決めるのはテーマのほう。デスクトップのフォント設定にも
-    /// そのまま追従する。
+    /// It only applies libadwaita's style classes (`.title-1` and so on), so the theme
+    /// decides the point size and weight. It also follows the desktop's font settings
+    /// as is.
     pub fn set_style(&self, style: TextStyle) {
         // 呼ぶたびに以前の段階は外す。付けっぱなしにすると、あとから
         // 当てたクラスとどちらが勝つかがテーマの並び順で決まってしまう。
@@ -215,10 +220,10 @@ impl Label {
         }
     }
 
-    /// 文字色の役割。既定は [`TextColor::Default`]。
+    /// The text color role. The default is [`TextColor::Default`].
     ///
-    /// 色そのものはテーマが持つ (`.accent` はデスクトップのアクセントカラー)。
-    /// ライト / ダークの切り替えにもテーマ側で追従する。
+    /// The theme owns the colors themselves (`.accent` is the desktop's accent color).
+    /// The theme also follows light / dark switching.
     pub fn set_color(&self, color: TextColor) {
         for candidate in TextColor::ALL {
             if let Some(class) = candidate.style_class() {
@@ -239,7 +244,7 @@ struct ButtonInner {
     on_click: Notifier<()>,
 }
 
-/// 押しボタン (`GtkButton`)。
+/// A push button (`GtkButton`).
 #[derive(Clone)]
 pub struct Button(Rc<ButtonInner>);
 impl_widget!(Button);
@@ -270,7 +275,7 @@ impl Button {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 押されるたびに呼ばれる。呼び直すと以前のものは外れる。
+    /// Called on every click. Calling it again removes the previous one.
     pub fn on_click(&self, mut f: impl FnMut() + 'static) {
         self.0.on_click.set(move |()| f());
     }
@@ -285,7 +290,7 @@ struct CheckboxInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// チェックボックス (`GtkCheckButton`)。
+/// A check box (`GtkCheckButton`).
 #[derive(Clone)]
 pub struct Checkbox(Rc<CheckboxInner>);
 impl_widget!(Checkbox);
@@ -317,7 +322,7 @@ impl Checkbox {
         self.0.native.is_active()
     }
 
-    /// プログラムから状態を変える。`on_toggle` は呼ばれない。
+    /// Changes the state from code. `on_toggle` is not called.
     pub fn set_checked(&self, checked: bool) {
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.set_active(checked);
@@ -328,7 +333,7 @@ impl Checkbox {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 利用者が切り替えるたびに、切り替え後の状態で呼ばれる。
+    /// Called with the new state every time the user toggles it.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_toggle.set(f);
     }
@@ -344,7 +349,7 @@ struct TextInputInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 1 行のテキスト入力 (`GtkEntry`)。
+/// Single-line text input (`GtkEntry`).
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
 crate::keys::impl_key_down!(TextInput);
@@ -388,7 +393,7 @@ impl TextInput {
         self.0.native.text().to_string()
     }
 
-    /// プログラムから中身を差し替える。`on_change` は呼ばれない。
+    /// Replaces the contents from code. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.set_text(text);
@@ -403,24 +408,25 @@ impl TextInput {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 利用者が打つたびに、そのときの中身で呼ばれる。
+    /// Called with the current contents every time the user types.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// Enter で確定したとき (`activate` シグナル) に、そのときの中身で呼ばれる。
+    /// Called with the current contents when the user confirms with Enter (the
+    /// `activate` signal).
     ///
-    /// IME で変換している間の Enter (変換の確定) では呼ばれない。読み取り
-    /// 専用の間も呼ばれない。
+    /// Not called for an Enter pressed while an IME is composing (which confirms the
+    /// conversion). Not called while read-only either.
     pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_submit.set(f);
     }
 
-    /// 読み取り専用にするか。既定は書き換えられる。
+    /// Whether it is read-only. Editable by default.
     ///
-    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
-    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
-    /// 見せる欄に使う。
+    /// While read-only, the text can still be selected and copied, and it still takes
+    /// focus (unlike `set_enabled(false)`, it is not dimmed). Use it for fields that
+    /// show logs or generated output.
     pub fn set_read_only(&self, read_only: bool) {
         self.0.native.set_editable(!read_only);
     }
@@ -440,11 +446,12 @@ struct PasswordInputInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// パスワード入力 (`GtkPasswordEntry`)。
+/// Password input (`GtkPasswordEntry`).
 ///
-/// API の形は [`TextInput`] と同じで、違うのは**打った文字が伏せ字になる**
-/// ことだけ。伏せ字を一時的に外すボタン (peek icon) は `GtkPasswordEntry` に
-/// あるが、4 環境の共通部分に無いので出さない。
+/// The API is the same as [`TextInput`]; the only difference is that **typed
+/// characters are masked**. `GtkPasswordEntry` has a button that temporarily
+/// reveals the text (the peek icon), but it is not shown because it is not part of
+/// what all four platforms share.
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
 crate::keys::impl_key_down!(PasswordInput);
@@ -482,12 +489,12 @@ impl PasswordInput {
         Self(inner)
     }
 
-    /// いま入力されている文字列。
+    /// The text currently entered.
     pub fn text(&self) -> String {
         self.0.native.text().to_string()
     }
 
-    /// プログラムから中身を差し替える。`on_change` は呼ばれない。
+    /// Replaces the contents from code. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.set_text(text);
@@ -502,12 +509,13 @@ impl PasswordInput {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 利用者が打つたびに、そのときの中身で呼ばれる。
+    /// Called with the current contents every time the user types.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// Enter で確定したとき (`activate` シグナル) に、そのときの中身で呼ばれる。
+    /// Called with the current contents when the user confirms with Enter (the
+    /// `activate` signal).
     pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_submit.set(f);
     }
@@ -523,13 +531,14 @@ struct SearchInputInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 検索の入力欄 (`GtkSearchEntry`)。
+/// A search field (`GtkSearchEntry`).
 ///
-/// 虫めがねの印と、打ち始めると出る取り消しボタン (✕) は GTK が出す。
-/// `on_change` は打つたび (`changed` シグナル)、`on_search` は Enter で
-/// 確定したとき (`activate` シグナル) に呼ばれる。GtkSearchEntry には
-/// 打鍵をまとめてから出す `search-changed` もあるが、待ち時間の分だけ
-/// 他の環境とずれるので使わない。
+/// The magnifying glass and the clear button (✕) that appears once you start
+/// typing are shown by GTK. `on_change` is called on every keystroke (the
+/// `changed` signal), and `on_search` when the user confirms with Enter (the
+/// `activate` signal). GtkSearchEntry also has `search-changed`, which batches
+/// keystrokes, but its delay would put it out of step with the other platforms, so
+/// it is not used.
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 crate::keys::impl_key_down!(SearchInput);
@@ -567,12 +576,12 @@ impl SearchInput {
         Self(inner)
     }
 
-    /// いま入力されている文字列。
+    /// The text currently entered.
     pub fn text(&self) -> String {
         self.0.native.text().to_string()
     }
 
-    /// プログラムから中身を差し替える。`on_change` は呼ばれない。
+    /// Replaces the contents from code. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.set_text(text);
@@ -587,12 +596,12 @@ impl SearchInput {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 利用者が打つたびに、そのときの中身で呼ばれる。
+    /// Called with the current contents every time the user types.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// Enter で確定したときに、そのときの中身で呼ばれる。
+    /// Called with the current contents when the user confirms with Enter.
     pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_search.set(f);
     }
@@ -602,19 +611,20 @@ impl SearchInput {
 
 struct TextAreaInner {
     native: gtk::TextView,
-    /// `GtkTextView` は自分でスクロールしないので、スクロール領域に載せる。
+    /// `GtkTextView` does not scroll by itself, so it is placed in a scroll area.
     _scroller: gtk::ScrolledWindow,
-    /// `GtkTextView` に placeholder は無いため、空のときだけ重ねて出すラベル。
+    /// `GtkTextView` has no placeholder, so this label is overlaid only while it is
+    /// empty.
     placeholder: gtk::Label,
     bin: SizeBin,
     on_change: TextNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 改行を含む文字列を入力できる欄 (`GtkTextView`)。
+/// A field for entering text that includes newlines (`GtkTextView`).
 ///
-/// スクロールと同じく中身に合わせた高さを持たないので、
-/// [`TextArea::set_sizing`] で指定しておく。
+/// Like a scroll view, its height does not follow its contents, so set it with
+/// [`TextArea::set_sizing`].
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
 crate::keys::impl_key_down!(TextArea);
@@ -680,7 +690,7 @@ impl TextArea {
         buffer_text(&self.0.native.buffer())
     }
 
-    /// プログラムから中身を差し替える。`on_change` は呼ばれない。
+    /// Replaces the contents from code. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         let buffer = self.0.native.buffer();
         without_signal(&buffer, &self.0.handler, || buffer.set_text(text));
@@ -696,16 +706,16 @@ impl TextArea {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 利用者が打つたびに、そのときの中身で呼ばれる。
+    /// Called with the current contents every time the user types.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// 読み取り専用にするか。既定は書き換えられる。
+    /// Whether it is read-only. Editable by default.
     ///
-    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
-    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
-    /// 見せる欄に使う。
+    /// While read-only, the text can still be selected and copied, and it still takes
+    /// focus (unlike `set_enabled(false)`, it is not dimmed). Use it for fields that
+    /// show logs or generated output.
     pub fn set_read_only(&self, read_only: bool) {
         self.0.native.set_editable(!read_only);
         // 書き換えられない欄でカーソルが点滅すると、打てるように見える。
@@ -736,7 +746,7 @@ struct SliderInner {
     handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// スライダー (`GtkScale`)。
+/// A slider (`GtkScale`).
 #[derive(Clone)]
 pub struct Slider(Rc<SliderInner>);
 impl_widget!(Slider);
@@ -773,7 +783,7 @@ impl Slider {
         self.0.native.value()
     }
 
-    /// プログラムから値を変える。`on_change` は呼ばれない。
+    /// Changes the value from code. `on_change` is not called.
     pub fn set_value(&self, value: f64) {
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.set_value(value);
@@ -784,7 +794,7 @@ impl Slider {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// つまみが動くたびに、その値で呼ばれる。
+    /// Called with the value every time the knob moves.
     pub fn on_change(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_change.set(f);
     }
@@ -795,9 +805,10 @@ impl Slider {
 struct ProgressInner {
     native: gtk::ProgressBar,
     bin: SizeBin,
-    /// 置かれた値。不確定の間は `fraction` を `pulse` が動かすので、別に持つ。
+    /// The value that was set. While indeterminate, `pulse` moves `fraction`, so it is
+    /// kept separately.
     value: Cell<f64>,
-    /// 不確定の間、`pulse` を回すタイマー。
+    /// The timer that keeps calling `pulse` while indeterminate.
     pulse: RefCell<Option<glib::SourceId>>,
 }
 
@@ -809,10 +820,11 @@ impl Drop for ProgressInner {
     }
 }
 
-/// 不確定の進捗を動かす間隔。GNOME のアプリが `pulse` を呼ぶ間隔に合わせる。
+/// The interval for animating indeterminate progress. Matches the interval at which
+/// GNOME apps call `pulse`.
 const PULSE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// 進捗バー (`GtkProgressBar`)。
+/// A progress bar (`GtkProgressBar`).
 #[derive(Clone)]
 pub struct ProgressBar(Rc<ProgressInner>);
 impl_widget!(ProgressBar);
@@ -830,7 +842,7 @@ impl ProgressBar {
         }))
     }
 
-    /// 0.0..=1.0。
+    /// 0.0..=1.0.
     pub fn set_value(&self, value: f64) {
         let value = value.clamp(0.0, 1.0);
         self.0.value.set(value);
@@ -843,13 +855,14 @@ impl ProgressBar {
         self.0.value.get()
     }
 
-    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    /// Whether to show work whose progress is unknown (indeterminate progress).
     ///
-    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
-    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    /// While `true`, motion shows "working" instead of a value. Turning it off returns
+    /// to showing the value set with [`set_value`](Self::set_value) (the value is
+    /// remembered).
     ///
-    /// GTK4 の進捗バーは `pulse` を呼ぶたびに動くので、その間は一定の間隔で
-    /// 呼び続ける。
+    /// GTK4's progress bar moves each time `pulse` is called, so it is called at a
+    /// fixed interval in the meantime.
     pub fn set_indeterminate(&self, indeterminate: bool) {
         if self.is_indeterminate() == indeterminate {
             return;
@@ -885,11 +898,11 @@ struct StackInner {
     bin: SizeBin,
     vertical: bool,
     align: Cell<Align>,
-    /// 子のハンドルを保持し、クロージャの受け皿ごと生かしておく。
+    /// Holds the children's handles, keeping them alive along with their closures.
     children: RefCell<Vec<Box<dyn Widget>>>,
 }
 
-/// 縦 / 横に子を並べるコンテナ (`GtkBox`)。
+/// A container that lays out its children vertically / horizontally (`GtkBox`).
 #[derive(Clone)]
 pub struct Stack(Rc<StackInner>);
 impl_widget!(Stack);
@@ -925,10 +938,10 @@ impl Stack {
         apply_padding(&self.0.native, padding);
     }
 
-    /// 交差軸方向の寄せ方。既定は [`Align::Center`]。
+    /// Alignment on the cross axis. The default is [`Align::Center`].
     ///
-    /// 交差軸に [`Length::Fill`](naui_core::Length::Fill) を指定した子は、
-    /// 自分の指定を優先する。
+    /// Children with [`Length::Fill`](naui_core::Length::Fill) on the cross axis follow
+    /// their own setting instead.
     pub fn set_align(&self, align: Align) {
         self.0.align.set(align);
         for child in self.0.children.borrow().iter() {
@@ -943,7 +956,8 @@ impl Stack {
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
 
-    /// 指定した位置へ子を差し込む。`index` が今の数以上なら末尾へ足す。
+    /// Inserts a child at the given position. If `index` is at least the current
+    /// count, it is appended at the end.
     pub fn insert(&self, index: usize, child: &dyn Widget) {
         let mut children = self.0.children.borrow_mut();
         let index = index.min(children.len());
@@ -958,7 +972,7 @@ impl Stack {
         children.insert(index, child.boxed_clone());
     }
 
-    /// 指定した位置の子を外す。範囲外のときは何もしない。
+    /// Removes the child at the given position. Does nothing if out of range.
     pub fn remove(&self, index: usize) {
         let mut children = self.0.children.borrow_mut();
         if index >= children.len() {
@@ -968,7 +982,7 @@ impl Stack {
         self.0.native.remove(&child.size_bin());
     }
 
-    /// 子をすべて外す。
+    /// Removes every child.
     pub fn clear(&self) {
         for child in std::mem::take(&mut *self.0.children.borrow_mut()) {
             self.0.native.remove(&child.size_bin());

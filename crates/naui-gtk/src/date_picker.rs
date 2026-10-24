@@ -1,18 +1,19 @@
-//! 日付と時刻の選択 (`GtkMenuButton` + `GtkCalendar` / `GtkSpinButton`)。
+//! Date and time picking (`GtkMenuButton` + `GtkCalendar` / `GtkSpinButton`).
 //!
-//! GTK4 には日付を選ぶ 1 つのコントロールが無い。カレンダーの `GtkCalendar` と
-//! 数値の `GtkSpinButton` はあるので、GNOME のアプリと同じ組み方をする。
+//! GTK4 has no single control for picking a date. It does have `GtkCalendar` for
+//! calendars and `GtkSpinButton` for numbers, so they are combined the way GNOME
+//! apps do.
 //!
-//! - 日付: 現在の日付を出す `GtkMenuButton` を押すと、`GtkPopover` の中の
-//!   `GtkCalendar` が開く。
-//! - 時刻: 時と分の `GtkSpinButton` を `:` で挟んで並べる (時計アプリの
-//!   アラーム設定と同じ形)。
+//! - Date: clicking a `GtkMenuButton` showing the current date opens a
+//!   `GtkCalendar` inside a `GtkPopover`.
+//! - Time: `GtkSpinButton`s for hours and minutes, separated by `:` (the same shape
+//!   as setting an alarm in the Clocks app).
 //!
-//! **日付を選んでもポップオーバーは閉じない。** `GtkCalendar` は「日を押した」
-//! と「月を送った」を区別せず、どちらも `day-selected` で届く。押すたびに
-//! 閉じると、月を送っただけで閉じてしまうため。
+//! **Picking a date does not close the popover.** `GtkCalendar` does not
+//! distinguish "clicked a day" from "moved to another month"; both arrive as
+//! `day-selected`. Closing on every one would close it just for changing months.
 //!
-//! ボタンに出す日付はロケールの書式 (`%x`) に従う。
+//! The date shown on the button follows the locale's format (`%x`).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -29,26 +30,27 @@ struct DatePickerInner {
     native: gtk::Box,
     bin: SizeBin,
     mode: DatePickerMode,
-    /// 日付を出すボタンと、その中のカレンダー。
-    /// 時刻だけを選ばせるときは作るだけで並べない。
+    /// The button showing the date, and the calendar inside it. When only the time can
+    /// be picked, they are created but not laid out.
     button: gtk::MenuButton,
     calendar: gtk::Calendar,
     hour: gtk::SpinButton,
     minute: gtk::SpinButton,
-    /// プログラムから値を書くときに止めるシグナル。
+    /// The signal that is blocked while writing the value from code.
     calendar_handler: RefCell<Option<glib::SignalHandlerId>>,
     hour_handler: RefCell<Option<glib::SignalHandlerId>>,
     minute_handler: RefCell<Option<glib::SignalHandlerId>>,
-    /// **選ばせていない部分も含めた**現在値。
+    /// The current value, **including the parts that cannot be picked**.
     value: Cell<DateTime>,
     min: Cell<Option<DateTime>>,
     max: Cell<Option<DateTime>>,
     on_change: Notifier<DateTime>,
 }
 
-/// 日付と時刻を選ばせるコントロール。
+/// A control for picking a date and time.
 ///
-/// 作った直後の値は、その環境の現在日時 (ローカル時刻)。
+/// Its value right after creation is the platform's current date and time (local
+/// time).
 #[derive(Clone)]
 pub struct DatePicker(Rc<DatePickerInner>);
 impl_widget!(DatePicker);
@@ -124,28 +126,29 @@ impl DatePicker {
         this
     }
 
-    /// 何を選ばせるか。生成時に決まり、あとから変わらない。
+    /// What it lets the user pick. Fixed at creation and never changes.
     pub fn mode(&self) -> DatePickerMode {
         self.0.mode
     }
 
-    /// 現在の値。選ばせていない部分も、渡された値のまま返る。
+    /// The current value. Parts that cannot be picked are returned as they were passed.
     pub fn value(&self) -> DateTime {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。範囲外なら端へ寄せ、暦として成り立たない値は丸める。
+    /// Changes the value without notifying. Out-of-range values are clamped to the
+    /// ends, and values that are not valid dates are normalized.
     pub fn set_value(&self, value: DateTime) {
         let value = self.clamp(value);
         self.0.value.set(value);
         self.write_native(value);
     }
 
-    /// 選べる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the selectable range. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
-    /// `GtkCalendar` にも `GtkSpinButton` にも「暦としての範囲」は無いので、
-    /// 範囲は naui 側の丸めだけで守る。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying. Neither `GtkCalendar` nor `GtkSpinButton` has a "calendar range", so
+    /// the range is enforced only by naui's clamping.
     pub fn set_range(&self, min: Option<DateTime>, max: Option<DateTime>) {
         self.0.min.set(min.map(DateTime::normalized));
         self.0.max.set(max.map(DateTime::normalized));
@@ -156,28 +159,28 @@ impl DatePicker {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     pub fn on_change(&self, f: impl FnMut(DateTime) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// 日付を出しているボタン。バックエンド固有の脱出口として公開している。
+    /// The button showing the date. Public as a backend-specific escape hatch.
     pub fn native_button(&self) -> gtk::MenuButton {
         self.0.button.clone()
     }
 
-    /// ポップオーバーの中のカレンダー。
+    /// The calendar inside the popover.
     pub fn native_calendar(&self) -> gtk::Calendar {
         self.0.calendar.clone()
     }
 
-    /// 時と分の `GtkSpinButton`。
+    /// The `GtkSpinButton`s for hours and minutes.
     pub fn native_spins(&self) -> (gtk::SpinButton, gtk::SpinButton) {
         (self.0.hour.clone(), self.0.minute.clone())
     }
 
-    /// どれかのコントロールで表示が変わったときの処理。
+    /// Handles a change in what any of the controls shows.
     fn native_changed(&self) {
         let shown = self.read_native();
         let accepted = self.clamp(self.0.mode.apply(self.value(), shown));
@@ -191,7 +194,7 @@ impl DatePicker {
         self.0.on_change.emit(accepted);
     }
 
-    /// いま画面に出ている年月日と時分。
+    /// The year, month, day, hour and minute currently on screen.
     fn read_native(&self) -> DateTime {
         let date = self.0.calendar.date();
         DateTime {
@@ -208,7 +211,7 @@ impl DatePicker {
         self.0.mode.clamp(value, self.0.min.get(), self.0.max.get())
     }
 
-    /// 値を 3 つのコントロールへ書く。この間はシグナルを止める。
+    /// Writes the value into the three controls. Signals are blocked meanwhile.
     fn write_native(&self, value: DateTime) {
         if let Ok(date) = to_glib_date_time(value) {
             without_signal(&self.0.calendar, &self.0.calendar_handler, || {
@@ -225,8 +228,8 @@ impl DatePicker {
     }
 }
 
-/// 2 桁で表示する 0 始まりのスピンボタン。時刻の欄は `TimePicker` も
-/// 同じ形なので、そちらからも使う。
+/// A zero-based spin button showing two digits. `TimePicker` uses the same shape
+/// for its time fields, so it is used from there too.
 pub(crate) fn spin(min: f64, max: f64) -> gtk::SpinButton {
     let spin = gtk::SpinButton::with_range(min, max, 1.0);
     spin.set_numeric(true);
@@ -242,7 +245,8 @@ pub(crate) fn spin(min: f64, max: f64) -> gtk::SpinButton {
     spin
 }
 
-/// ロケールの日付書式 (`%x`)。取れなければ ISO の形にする。
+/// The locale's date format (`%x`). Falls back to ISO form if it cannot be
+/// obtained.
 fn format_date(date: &glib::DateTime) -> String {
     date.format("%x")
         .map(|text| text.to_string())
@@ -268,7 +272,7 @@ fn to_glib_date_time(value: DateTime) -> Result<glib::DateTime, glib::BoolError>
     )
 }
 
-/// GTK 側の現在日時 (ローカル時刻)。
+/// The current date and time on the GTK side (local time).
 fn now() -> DateTime {
     let Ok(now) = glib::DateTime::now_local() else {
         return DateTime::default();

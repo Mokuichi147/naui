@@ -1,7 +1,7 @@
-//! 大きさの指定と、レイアウト用のコンテナ (Grid / Scroll / Spacer)。
+//! Size specifications and layout containers (Grid / Scroll / Spacer).
 //!
-//! 計算するのはブラウザの CSS レイアウト (Flexbox / Grid / スクロール領域) で、
-//! naui 側はプロパティを書くだけ。
+//! The computing is done by the browser's CSS layout (Flexbox / Grid / scroll
+//! areas); naui only writes properties.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -17,25 +17,25 @@ use web_sys::{Document, Element, HtmlElement, ResizeObserver, ScrollBehavior, Sc
 use crate::to_error;
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
-/// 親コンテナが自分の種類を書いておく属性。
+/// The attribute in which a parent container writes its own kind.
 ///
-/// `flex-grow` と `align-self` はどちらの軸に効くかが親の並び方向で変わる。
-/// 子から親の種類を読めるようにしておくと、`set_sizing` を先に呼んでも
-/// 後から追加しても同じ結果になる。
+/// Which axis `flex-grow` and `align-self` affect depends on the parent's layout
+/// direction. Letting children read the parent's kind gives the same result whether
+/// `set_sizing` is called first or the child is added first.
 const PARENT_ATTR: &str = "data-naui-parent";
-/// 幅が `Fill` であることの目印。
+/// The marker that the width is `Fill`.
 const FILL_WIDTH_ATTR: &str = "data-naui-fill-width";
-/// 高さが `Fill` であることの目印。
+/// The marker that the height is `Fill`.
 const FILL_HEIGHT_ATTR: &str = "data-naui-fill-height";
 
-/// 親コンテナの種類。
+/// The kind of parent container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParentLayout {
-    /// Flexbox。値は並ぶ向き。
+    /// Flexbox. The value is the layout direction.
     Flex(Orientation),
-    /// CSS Grid。
+    /// CSS Grid.
     Grid,
-    /// それ以外 (ウィンドウ直下など)。
+    /// Anything else (directly under a window, for example).
     Block,
 }
 
@@ -59,12 +59,12 @@ impl ParentLayout {
     }
 }
 
-/// 自分が何のコンテナかを子に伝える。
+/// Tells the children what kind of container this is.
 pub(crate) fn mark_parent(element: &HtmlElement, layout: ParentLayout) {
     let _ = element.set_attribute(PARENT_ATTR, layout.attribute());
 }
 
-/// 大きさの指定を要素へ反映する。
+/// Applies the size specification to the element.
 pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     let element: &HtmlElement = element.unchecked_ref();
     let style = element.style();
@@ -138,19 +138,20 @@ fn parent_layout(element: &HtmlElement) -> ParentLayout {
         .unwrap_or(ParentLayout::Block)
 }
 
-/// 親いっぱいに広がる子として印を付ける。
+/// Marks it as a child that fills its parent.
 ///
-/// ウィンドウ直下のルートは、他のバックエンドではウィンドウの中身
-/// (AppKit の contentView / WinUI の Grid の行) がそのまま広がる。
-/// Web でも同じになるよう、ルートには最初から `Fill` を入れておく。
+/// On other backends, the root directly under a window grows as the window's
+/// content does (AppKit's contentView / a row of WinUI's Grid). So that the Web
+/// behaves the same, the root gets `Fill` from the start.
 pub(crate) fn fill_parent(element: &Element) {
     let _ = element.set_attribute(FILL_WIDTH_ATTR, "");
     let _ = element.set_attribute(FILL_HEIGHT_ATTR, "");
 }
 
-/// 親の並び方向に依存する指定 (`flex-grow` など) を書き直す。
+/// Rewrites the settings that depend on the parent's layout direction
+/// (`flex-grow` and so on).
 ///
-/// コンテナへ入れたときと、大きさを指定し直したときの両方から呼ぶ。
+/// Called both when put into a container and when the size is specified again.
 pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
     let element: &HtmlElement = element.unchecked_ref();
     let style = element.style();
@@ -212,7 +213,7 @@ struct SpacerInner {
     element: HtmlElement,
 }
 
-/// 余白そのものになるウィジェット (`<div>`)。
+/// A widget that is just empty space (`<div>`).
 #[derive(Clone)]
 pub struct Spacer(Rc<SpacerInner>);
 impl_widget!(Spacer, element);
@@ -231,7 +232,7 @@ impl Spacer {
 
 struct GridInner {
     element: HtmlElement,
-    /// 置いた子と、その置き場所。マス単位で外すために持つ。
+    /// The placed children and their positions. Kept to remove them by cell.
     children: RefCell<Vec<(GridCell, Box<dyn Widget>)>>,
     columns: Cell<usize>,
     rows: Cell<usize>,
@@ -239,7 +240,7 @@ struct GridInner {
     row_tracks: RefCell<Vec<Track>>,
 }
 
-/// 行と列で位置を決めるコンテナ (CSS Grid の `<div>`)。
+/// A container that positions children by row and column (a CSS Grid `<div>`).
 #[derive(Clone)]
 pub struct Grid(Rc<GridInner>);
 impl_widget!(Grid, element);
@@ -262,14 +263,14 @@ impl Grid {
         })))
     }
 
-    /// 列間・行間のすき間。
+    /// The spacing between columns and between rows.
     pub fn set_spacing(&self, column: f64, row: f64) {
         let style = self.0.element.style();
         let _ = style.set_property("column-gap", &format!("{column}px"));
         let _ = style.set_property("row-gap", &format!("{row}px"));
     }
 
-    /// 外周の余白。
+    /// The outer padding.
     pub fn set_padding(&self, padding: Padding) {
         let _ = self.0.element.style().set_property(
             "padding",
@@ -280,7 +281,8 @@ impl Grid {
         );
     }
 
-    /// 指定した場所に子を置く。足りない行と列は自動で足される。
+    /// Places a child at the given position. Missing rows and columns are added
+    /// automatically.
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         let element = child.native_element();
         if self.0.element.append_child(&element).is_err() {
@@ -305,15 +307,15 @@ impl Grid {
             .push((cell, child.boxed_clone()));
     }
 
-    /// そのマスの中身を差し替える。同じマスに置かれていたものは外れる。
+    /// Replaces what is in the cell. Whatever was in the same cell is removed.
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
         self.remove(cell);
         self.attach(child, cell);
     }
 
-    /// 指定したマスに置かれているものを外す。何も無ければ何もしない。
+    /// Removes whatever is in the given cell. Does nothing if it is empty.
     ///
-    /// 見るのは `cell` の列と行だけで、span は見ない。
+    /// Only the column and row of `cell` are considered, not the span.
     pub fn remove(&self, cell: GridCell) {
         let mut children = self.0.children.borrow_mut();
         let mut index = 0;
@@ -327,14 +329,14 @@ impl Grid {
         }
     }
 
-    /// 子をすべて外す。行と列の指定はそのまま残る。
+    /// Removes every child. The row and column settings stay.
     pub fn clear(&self) {
         for (_, child) in std::mem::take(&mut *self.0.children.borrow_mut()) {
             let _ = self.0.element.remove_child(&child.native_element());
         }
     }
 
-    /// 列の幅の決め方。
+    /// How a column's width is determined.
     pub fn set_column_track(&self, index: usize, track: Track) {
         {
             let mut tracks = self.0.column_tracks.borrow_mut();
@@ -347,7 +349,7 @@ impl Grid {
         self.apply_tracks();
     }
 
-    /// 行の高さの決め方。
+    /// How a row's height is determined.
     pub fn set_row_track(&self, index: usize, track: Track) {
         {
             let mut tracks = self.0.row_tracks.borrow_mut();
@@ -360,17 +362,17 @@ impl Grid {
         self.apply_tracks();
     }
 
-    /// いまある列数。
+    /// The current number of columns.
     pub fn columns(&self) -> usize {
         self.0.columns.get()
     }
 
-    /// いまある行数。
+    /// The current number of rows.
     pub fn rows(&self) -> usize {
         self.0.rows.get()
     }
 
-    /// 置いた子の数。
+    /// The number of children placed.
     pub fn len(&self) -> usize {
         self.0.children.borrow().len()
     }
@@ -419,13 +421,13 @@ fn template(count: usize, tracks: &[Track]) -> String {
 struct ScrollInner {
     element: HtmlElement,
     child: RefCell<Option<Box<dyn Widget>>>,
-    /// 同じ位置への `scroll` イベントでは通知しない。
+    /// Does not notify for `scroll` events to the same position.
     on_scroll: ScrollNotifier,
-    /// 大きさが決まる前 (文書に載る前・隠れたタブの中など) に頼まれた
-    /// 行き先。大きさが付いた時点で適用する。
+    /// The destination requested before the size was decided (before it is in the
+    /// document, inside a hidden tab, and so on). Applied once it has a size.
     pending: Cell<Option<ScrollTarget>>,
     listener: RefCell<Option<Listener>>,
-    /// 大きさの変化の購読。落とすと購読も外れる。
+    /// The subscription to size changes. Dropping it also unsubscribes.
     observer: RefCell<Option<ResizeObserver>>,
     observer_callback: RefCell<Option<Closure<dyn FnMut(JsValue)>>>,
 }
@@ -438,7 +440,8 @@ impl Drop for ScrollInner {
     }
 }
 
-/// 中身がはみ出したらスクロールさせるコンテナ (`overflow` を付けた `<div>`)。
+/// A container that scrolls when its contents overflow (a `<div>` with
+/// `overflow`).
 #[derive(Clone)]
 pub struct Scroll(Rc<ScrollInner>);
 impl_widget!(Scroll, element);
@@ -484,14 +487,15 @@ impl Scroll {
         Ok(())
     }
 
-    /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
+    /// Whether scrolling is allowed horizontally and vertically. The default is
+    /// horizontal `Never`, vertical `Auto`.
     pub fn set_policy(&self, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
         let style = self.0.element.style();
         let _ = style.set_property("overflow-x", overflow(horizontal));
         let _ = style.set_property("overflow-y", overflow(vertical));
     }
 
-    /// スクロールさせる中身。呼ぶたびに置き換わる。
+    /// The content to scroll. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
         self.0.element.set_inner_html("");
         let element = child.native_element();
@@ -501,10 +505,10 @@ impl Scroll {
         }
     }
 
-    /// いまのスクロール位置と大きさ。
+    /// The current scroll position and sizes.
     ///
-    /// 読むときにブラウザがレイアウトを済ませるので、直前に中身を
-    /// 変えていても新しい大きさで測れる。
+    /// The browser finishes layout when they are read, so they can be measured with the
+    /// new sizes even right after the contents change.
     pub fn metrics(&self) -> ScrollMetrics {
         let element = &self.0.element;
         let viewport_width = element.client_width() as f64;
@@ -525,23 +529,25 @@ impl Scroll {
         metrics
     }
 
-    /// 指定した位置へ送る。送れる範囲に丸める。
+    /// Scrolls to the given position, clamped to the scrollable range.
     ///
-    /// まだ大きさが決まっていない (文書に載る前など) ときは、決まった時点で送る。
+    /// If the size is not decided yet (before it is in the document, for example), it
+    /// scrolls once it is.
     pub fn scroll_to(&self, x: f64, y: f64) {
         self.request(ScrollTarget::To { x, y });
     }
 
-    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    /// Scrolls to the vertical end (the very bottom). The horizontal position stays.
     pub fn scroll_to_end(&self) {
         self.request(ScrollTarget::End);
     }
 
-    /// スクロール位置が変わったときの通知。
+    /// Notified when the scroll position changes.
     ///
-    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
-    /// 届く。大きさだけが変わったときは届かない。ブラウザの `scroll`
-    /// イベントを受けて届くので、`scroll_to` から戻った後になる。
+    /// Besides user interaction, it also arrives for moves caused by `scroll_to` or by
+    /// the contents shrinking. It does not arrive when only the sizes change. It is
+    /// delivered in response to the browser's `scroll` event, so it comes after
+    /// `scroll_to` returns.
     pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
         self.0.on_scroll.set(&self.metrics(), f);
     }
@@ -551,7 +557,8 @@ impl Scroll {
         self.apply_pending();
     }
 
-    /// 覚えている行き先へ送る。大きさが決まっていなければ、まだ覚えておく。
+    /// Scrolls to the remembered destination. If the size is not decided, keeps
+    /// remembering it.
     fn apply_pending(&self) {
         let Some(target) = self.0.pending.get() else {
             return;
@@ -577,8 +584,9 @@ impl Scroll {
     }
 }
 
-/// `scrollTop` / `scrollLeft` を小数のまま読む。web-sys の `scroll_top()`
-/// は整数で返すため、拡大率によっては末尾まで届いていないように見える。
+/// Reads `scrollTop` / `scrollLeft` as fractions. web-sys's `scroll_top()` returns
+/// an integer, so at some zoom levels it would look as if the end had not been
+/// reached.
 fn scroll_offset(element: &HtmlElement, name: &str) -> f64 {
     js_sys::Reflect::get(element, &JsValue::from_str(name))
         .ok()
@@ -586,7 +594,7 @@ fn scroll_offset(element: &HtmlElement, name: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
-/// 末尾まで 1 px 未満なら末尾にそろえる。
+/// Snaps to the end if less than 1 px from it.
 fn snap_to_end(offset: f64, max: f64) -> f64 {
     if (max - offset).abs() < 1.0 {
         max

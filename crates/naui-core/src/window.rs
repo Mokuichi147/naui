@@ -1,22 +1,22 @@
-//! ウィンドウの通知で受け渡す値と、通知先の入れ物。
+//! Values passed in window notifications, and containers for their handlers.
 
-/// [`Window::on_close_request`] からの返事。
+/// The reply from [`Window::on_close_request`].
 ///
 /// [`Window::on_close_request`]: ../../naui/struct.Window.html#method.on_close_request
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CloseResponse {
-    /// そのまま閉じる。
+    /// Close as requested.
     #[default]
     Close,
-    /// 閉じない (保存の確認を出すなど、アプリが後で決める)。
+    /// Don't close (the app decides later, for example after asking whether to save).
     KeepOpen,
 }
 
-/// `on_close_request` の通知先を 1 つ持つ。各バックエンドで共有する。
+/// Holds one handler for `on_close_request`. Shared by all backends.
 ///
-/// 呼んでいる間はクロージャを取り出しておくので、通知の中から同じ
-/// ウィンドウを操作したり、通知先を差し替えたりしてもよい。通知先が
-/// 無いとき (と、入れ子で呼ばれたとき) は閉じる。
+/// The closure is taken out while it is called, so you may operate on the same
+/// window or replace the handler from inside the notification. When there is no
+/// handler (and when it is called re-entrantly), the window closes.
 #[derive(Default)]
 pub struct CloseHandler(std::cell::RefCell<crate::Slot<CloseCallback>>);
 
@@ -40,26 +40,27 @@ impl CloseHandler {
     }
 }
 
-/// ウィンドウの表示の状態 (`Window::state` / `Window::set_state`)。
+/// The display state of a window (`Window::state` / `Window::set_state`).
 ///
-/// 環境によっては重なり得る (最大化したまま最小化した、など) が、naui は
-/// 利用者から見えているほうを 1 つだけ返す。重なったときは
-/// 最小化 → 全画面 → 最大化 の順に優先する。
+/// On some platforms states can overlap (minimized while maximized, for example),
+/// but naui returns only the one the user sees. When they overlap, the priority is
+/// minimized → fullscreen → maximized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum WindowState {
-    /// 最大化・最小化・全画面のどれでもない。利用者が動かした位置と大きさのまま。
+    /// None of maximized, minimized or fullscreen. At the position and size the user
+    /// left it.
     #[default]
     Normal,
-    /// 画面 (メニューバーやタスクバーを除く) いっぱいに広げている。
+    /// Expanded to fill the screen (excluding the menu bar and taskbar).
     Maximized,
-    /// Dock やタスクバーへしまっている。
+    /// Put away in the Dock or taskbar.
     Minimized,
-    /// タイトルバーも出さずに画面全体を使っている。
+    /// Using the whole screen without even a title bar.
     Fullscreen,
 }
 
 impl WindowState {
-    /// 重なった状態から、利用者から見えているほうを選ぶ。
+    /// Picks the state the user sees from overlapping states.
     pub fn from_flags(minimized: bool, fullscreen: bool, maximized: bool) -> Self {
         if minimized {
             Self::Minimized
@@ -73,23 +74,26 @@ impl WindowState {
     }
 }
 
-/// `on_state_change` の通知先と、最後に知らせた状態。各バックエンドで共有する。
+/// The `on_state_change` handler and the state last reported. Shared by all
+/// backends.
 ///
-/// ネイティブの通知は 1 回の変化で何度も届くことがある (大きさの変化と
-/// 状態の変化が別々に来る、など) ので、前に知らせた状態と比べて、
-/// 変わったときだけ呼ぶ。呼んでいる間はクロージャを取り出しておくので、
-/// 通知の中から同じウィンドウを操作してもよい。
+/// Native notifications can arrive several times for one change (a size change and
+/// a state change arriving separately, for example), so the handler is called only
+/// when the state differs from the one last reported. The closure is taken out
+/// while it is called, so you may operate on the same window from inside the
+/// notification.
 ///
-/// 通知の中で状態がさらに変わったとき (通知の中から `set_state` した、
-/// など) は、その場では呼ばずに覚えておき、通知先が戻ってから最後の状態を
-/// 知らせる。途中で元の状態へ戻っていれば知らせない。
+/// When the state changes again inside the notification (by calling `set_state`
+/// from it, for example), it is not reported on the spot but remembered, and the
+/// final state is reported after the handler returns. If it has returned to the
+/// original state by then, nothing is reported.
 #[derive(Default)]
 pub struct StateHandler {
-    /// 最後に届いた状態。
+    /// The state last received.
     last: std::cell::Cell<WindowState>,
-    /// 最後に通知先へ渡した (か、`reset` で決めた) 状態。
+    /// The state last passed to the handler (or set by `reset`).
     delivered: std::cell::Cell<WindowState>,
-    /// 通知先を呼んでいる最中。
+    /// In the middle of calling the handler.
     notifying: std::cell::Cell<bool>,
     callback: std::cell::RefCell<crate::Slot<StateCallback>>,
 }
@@ -101,21 +105,22 @@ impl StateHandler {
         *self.callback.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 最後に届いた状態。
+    /// The state last received.
     pub fn last(&self) -> WindowState {
         self.last.get()
     }
 
-    /// 知らせずに、いまの状態として覚える (表示する前の状態など)。
+    /// Records the current state without reporting it (the state before showing, for
+    /// example).
     pub fn reset(&self, state: WindowState) {
         self.last.set(state);
         self.delivered.set(state);
     }
 
-    /// `state` が前に知らせたものと違えば通知先を呼ぶ。
+    /// Calls the handler if `state` differs from what was last reported.
     ///
-    /// 通知先の中から呼ばれたときは覚えるだけで、外側の呼び出しが
-    /// 通知先から戻った後に知らせる。
+    /// When called from inside the handler, it only records the state and reports it
+    /// after the outer call returns from the handler.
     pub fn update(&self, state: WindowState) {
         self.last.set(state);
         if self.notifying.replace(true) {
@@ -191,7 +196,8 @@ mod tests {
         assert_eq!(handler.last(), WindowState::Normal);
     }
 
-    /// 通知の中で状態が変わったら、戻った後に知らせる (失わない)。
+    /// When the state changes inside the notification, it is reported after returning
+    /// (not lost).
     #[test]
     fn notifies_changes_made_inside_the_callback() {
         let handler = Rc::new(StateHandler::default());
@@ -217,7 +223,8 @@ mod tests {
         assert_eq!(handler.last(), WindowState::Normal);
     }
 
-    /// 通知の中で変わって元へ戻ったときは、知らせ直さない。
+    /// When it changes inside the notification and changes back, it is not reported
+    /// again.
     #[test]
     fn skips_changes_undone_inside_the_callback() {
         let handler = Rc::new(StateHandler::default());
@@ -237,7 +244,7 @@ mod tests {
         assert_eq!(seen.borrow().as_slice(), [WindowState::Fullscreen]);
     }
 
-    /// 通知先が panic しても、次の変化は知らせる。
+    /// Even if the handler panics, the next change is still reported.
     #[test]
     fn keeps_notifying_after_a_panic() {
         let handler = StateHandler::default();

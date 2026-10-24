@@ -1,9 +1,9 @@
-//! 別スレッドから UI スレッドへ値を渡すチャネル。
+//! A channel that passes values from other threads to the UI thread.
 //!
-//! 送る側 ([`Sender`] が持つ [`ChannelShared`]) と受け取る側 ([`ChannelLocal`]) を
-//! 型として分けてある。前者は `Send + Sync`、後者は受信クロージャ
-//! (`FnMut(T)`、`Send` でなくてよい) を持つので UI スレッド専用。
-//! スレッドをまたぐのは値と番号だけ。
+//! The sending side ([`ChannelShared`], held by [`Sender`]) and the receiving side
+//! ([`ChannelLocal`]) are separate types. The former is `Send + Sync`; the latter
+//! holds the receiving closure (`FnMut(T)`, which need not be `Send`) and so is
+//! UI-thread only. Only values and numbers cross threads.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -15,23 +15,25 @@ use crate::main_thread::{
 };
 use crate::{Result, Slot};
 
-/// 送る側が共有する状態。**別スレッドへ渡る唯一の部分。**
+/// State shared by the sending side. **The only part that goes to other threads.**
 pub(crate) struct ChannelShared<T> {
     id: u64,
     queue: Mutex<VecDeque<T>>,
-    /// UI スレッドへの pump を予約済みかどうか。1000 回送っても投函は 1 件で済む。
+    /// Whether a pump on the UI thread is already scheduled. Sending 1000 times still
+    /// posts only once.
     scheduled: AtomicBool,
-    /// 生きている `Sender` の数。0 になったら「閉じかけ」。
+    /// The number of live `Sender`s. At 0 the channel is "closing".
     senders: AtomicUsize,
-    /// 最後の `Sender` が落ちた。残った値を配り切ったら閉じる。
+    /// The last `Sender` was dropped. Close once the remaining values are delivered.
     closing: AtomicBool,
     dispatch: Arc<AppDispatch>,
 }
 
 impl<T: Send + 'static> ChannelShared<T> {
-    /// UI スレッドでの pump を予約する。すでに予約済みなら何もしない。
+    /// Schedules a pump on the UI thread. Does nothing if one is already scheduled.
     ///
-    /// 積めたら `true`。UI が終わっていたら `false` (予約は取り消す)。
+    /// `true` if it was queued. `false` if the UI has finished (the reservation is
+    /// withdrawn).
     fn schedule(&self) -> bool {
         if self.scheduled.swap(true, Ordering::AcqRel) {
             return true;
@@ -60,16 +62,17 @@ impl<T: Send + 'static> ChannelShared<T> {
     }
 }
 
-/// 中身が毒されていても値は無事なので、そのまま取り出す。
+/// Even if the mutex is poisoned the value is intact, so take it out anyway.
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// 受け取る側。UI スレッド専用で、登録簿が保持する。
+/// The receiving side. UI-thread only; held by the registry.
 struct ChannelLocal<T: Send + 'static> {
     shared: Arc<ChannelShared<T>>,
     handler: RefCell<Slot<dyn FnMut(T)>>,
-    /// pump の再入 (コールバックの中から同じチャネルへ送った) を弾く。
+    /// Rejects re-entering the pump (sending to the same channel from inside the
+    /// callback).
     busy: Cell<bool>,
 }
 
@@ -119,23 +122,25 @@ where
     Sender { shared }
 }
 
-/// [`Tasks::channel`](crate::Tasks::channel) が返す送信側。
+/// The sending side returned by [`Tasks::channel`](crate::Tasks::channel).
 ///
-/// **別スレッドへ送れる** (`Send + Sync + Clone`)。値は UI スレッドで
-/// 受信クロージャへ渡される。
+/// **Can be sent to other threads** (`Send + Sync + Clone`). Values are handed to
+/// the receiving closure on the UI thread.
 pub struct Sender<T: Send + 'static> {
     shared: Arc<ChannelShared<T>>,
 }
 
 impl<T: Send + 'static> Sender<T> {
-    /// UI スレッドへ値を送る。
+    /// Sends a value to the UI thread.
     ///
-    /// **この場では受信クロージャを呼ばない。** UI スレッドが次に手が空いたときに
-    /// 呼ばれる。同じチャネルへ送った値は送った順に届く。
+    /// **The receiving closure is not called on the spot.** It is called the next time
+    /// the UI thread is free. Values sent to the same channel arrive in the order they
+    /// were sent.
     ///
-    /// `Ok` は「値をチャネルが受け取り、UI への配送が予約済みになった」の意味で、
-    /// 配送されたことの保証ではない (予約の直後に画面が閉じれば呼ばれない)。
-    /// naui の UI 実行環境が終わった後は `Err` になる。
+    /// `Ok` means "the channel accepted the value and delivery to the UI is
+    /// scheduled", not that it was delivered (if the window closes right after
+    /// scheduling, the closure is not called). Returns `Err` after naui's UI runtime
+    /// has finished.
     pub fn send(&self, value: T) -> Result<()> {
         if !self.shared.dispatch.is_alive() {
             return Err(AppDispatch::closed("UI スレッドへの送信"));
@@ -147,7 +152,7 @@ impl<T: Send + 'static> Sender<T> {
         Ok(())
     }
 
-    /// UI 側がまだ受け取れる状態かどうか。
+    /// Whether the UI side can still receive.
     pub fn is_open(&self) -> bool {
         self.shared.dispatch.is_alive()
     }

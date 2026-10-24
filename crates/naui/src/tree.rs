@@ -1,27 +1,29 @@
 use crate::sys;
 use naui_core::TreeItem;
 
-/// 入れ子の項目を開閉できる一覧。自分でスクロールする。
+/// A list whose nested items can be expanded and collapsed. It scrolls by itself.
 ///
-/// 項目は根からの子インデックスの並び (パス) で指す。`[0, 2]` は
-/// 「1 番目の根の 3 番目の子」で、空のパスは「選択なし」を表す。
+/// Items are referred to by the sequence of child indices from the root (a path).
+/// `[0, 2]` is "the third child of the first root", and an empty path means "no
+/// selection".
 ///
-/// 高さは中身から決まらないので、[`Tree::set_sizing`] で指定しておく。
+/// Its height is not determined by its contents, so set it with
+/// [`Tree::set_sizing`].
 #[derive(Clone)]
 pub struct Tree(pub(crate) sys::Tree);
 
 impl_widget!(Tree);
 
 impl Tree {
-    /// 項目を作り直す。パスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Paths change meaning, so the selection is cleared.
     ///
-    /// 開閉は [`TreeItem::expanded`] のとおりに戻る。
+    /// Expansion returns to what [`TreeItem::expanded`] says.
     #[inline]
     pub fn set_items(&self, items: &[TreeItem]) {
         self.0.set_items(items)
     }
 
-    /// 子孫まで数えた項目の総数。
+    /// The total number of items, descendants included.
     #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
@@ -32,91 +34,92 @@ impl Tree {
         self.0.is_empty()
     }
 
-    /// 選ばれている項目のパス。何も選ばれていなければ `None`。
+    /// The path of the selected item. `None` if nothing is selected.
     #[inline]
     pub fn selected(&self) -> Option<Vec<usize>> {
         self.0.selected()
     }
 
-    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until the item at `path` is visible. The selection does not change.
     ///
-    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
-    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
-    /// 無いパスなら何もしない。
+    /// If it is inside a collapsed branch, its ancestors are expanded first (as with
+    /// [`set_selected`](Self::set_selected), expansion is not notified). If it is
+    /// already visible nothing moves. Does nothing for a path that does not exist.
     #[inline]
     pub fn scroll_to_item(&self, path: &[usize]) {
         self.0.scroll_to_item(path)
     }
 
-    /// 通知せずに 1 項目を選ぶ。
+    /// Selects one item without notifying.
     ///
-    /// 選べない項目や無いパスを渡すと、選択は外れる。閉じた枝の中にある
-    /// 項目は、見えるように祖先を開いてから選ぶ。
+    /// Passing an unselectable item or a path that does not exist clears the
+    /// selection. Items inside a collapsed branch are selected after their ancestors
+    /// are expanded so they become visible.
     #[inline]
     pub fn set_selected(&self, path: &[usize]) {
         self.0.set_selected(path)
     }
 
-    /// 通知せずに選択を外す。
+    /// Clears the selection without notifying.
     #[inline]
     pub fn clear_selection(&self) {
         self.0.clear_selection()
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 項目を選ぶ (通知あり)。
+    /// Selects one item through the same path as a user's selection (notifies).
     #[inline]
     pub fn select(&self, path: &[usize]) {
         self.0.select(path)
     }
 
-    /// 選択が変わったときに、選ばれている項目のパスで呼ばれる。
+    /// Called with the path of the selected item when the selection changes.
     ///
-    /// 選択が外れたときは空のパスで呼ばれる。
+    /// When the selection is cleared, it is called with an empty path.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.on_select(f)
     }
 
-    /// その項目が開いているかどうか。
+    /// Whether the item is expanded.
     ///
-    /// 閉じた枝の中にあって見えていない項目でも、開いた状態として覚えていれば
-    /// `true` を返す (親を開き直すと、そのまま開いて出てくる)。
+    /// Even an item hidden inside a collapsed branch returns `true` if it is
+    /// remembered as expanded (reopening the parent shows it expanded as before).
     #[inline]
     pub fn is_expanded(&self, path: &[usize]) -> bool {
         self.0.is_expanded(path)
     }
 
-    /// 通知せずに開閉を変える。開くときは祖先もまとめて開く。
+    /// Changes expansion without notifying. Expanding also expands the ancestors.
     #[inline]
     pub fn set_expanded(&self, path: &[usize], expanded: bool) {
         self.0.set_expanded(path, expanded)
     }
 
-    /// ユーザーが開いたのと同じ経路で開く (通知あり)。
+    /// Expands through the same path as a user's action (notifies).
     #[inline]
     pub fn expand(&self, path: &[usize]) {
         self.0.expand(path)
     }
 
-    /// ユーザーが閉じたのと同じ経路で閉じる (通知あり)。
+    /// Collapses through the same path as a user's action (notifies).
     #[inline]
     pub fn collapse(&self, path: &[usize]) {
         self.0.collapse(path)
     }
 
-    /// 通知せずにすべての枝を開く。
+    /// Expands every branch without notifying.
     #[inline]
     pub fn expand_all(&self) {
         self.0.expand_all()
     }
 
-    /// 通知せずにすべての枝を閉じる。
+    /// Collapses every branch without notifying.
     #[inline]
     pub fn collapse_all(&self) {
         self.0.collapse_all()
     }
 
-    /// 開閉が変わったときに、その項目のパスと変わった後の状態で呼ばれる。
+    /// Called with the item's path and its new state when its expansion changes.
     #[inline]
     pub fn on_expand(&self, f: impl FnMut(&[usize], bool) + 'static) {
         self.0.on_expand(f)

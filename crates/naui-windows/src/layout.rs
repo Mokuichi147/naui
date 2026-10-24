@@ -1,7 +1,7 @@
-//! 大きさの指定と、レイアウト用のコンテナ (Grid / Scroll / Spacer)。
+//! Size specifications and layout containers (Grid / Scroll / Spacer).
 //!
-//! 計算するのは WinUI 3 のレイアウトパスで、naui 側は
-//! `Width` / `MinWidth` / `RowDefinition` などのプロパティを設定するだけ。
+//! The computing is done by WinUI 3's layout pass; naui only sets properties such as
+//! `Width` / `MinWidth` / `RowDefinition`.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -29,8 +29,8 @@ use crate::ui_thread::UiThreadCell;
 use crate::to_error;
 use crate::widgets::{impl_widget, Widget};
 
-/// `Sizing` と親コンテナの情報。利用者に公開された `FrameworkElement.Tag`
-/// ではなく、UI スレッド上の状態表に保持する。
+/// The `Sizing` and the parent container's information. Held in a state table on
+/// the UI thread rather than in the user-facing `FrameworkElement.Tag`.
 #[derive(Clone, Copy)]
 enum ParentLayout {
     Stack {
@@ -137,7 +137,7 @@ fn set_sizing_state(element: &UIElement, sizing: Sizing) {
     });
 }
 
-/// この要素がその方向へ `Fill` を指定されたか。
+/// Whether this element was given `Fill` in that direction.
 pub(crate) fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
     let Some(key) = state_key(element) else {
         return false;
@@ -208,7 +208,8 @@ fn parent_state(element: &FrameworkElement) -> Option<ParentLayout> {
     LAYOUT_STATES.with(|states| states.borrow().get(&key).and_then(|state| state.parent))
 }
 
-/// Stack の親情報を子へ記録し、現在の寄せ方も適用する。
+/// Records the Stack parent's information on the child and applies the current
+/// alignment.
 pub(crate) fn set_stack_parent(element: &UIElement, align: Align, vertical_stack: bool) {
     let Ok(framework) = element.cast::<FrameworkElement>() else {
         return;
@@ -224,7 +225,8 @@ pub(crate) fn set_stack_parent(element: &UIElement, align: Align, vertical_stack
     apply_stack_alignment(&framework, align, vertical_stack);
 }
 
-/// Scroll の親情報を子へ記録し、スクロールしない軸の Stretch も適用する。
+/// Records the Scroll parent's information on the child and applies Stretch on the
+/// non-scrolling axis.
 pub(crate) fn set_scroll_parent(
     element: &UIElement,
     horizontal_scroll_enabled: bool,
@@ -248,7 +250,7 @@ pub(crate) fn set_scroll_parent(
     );
 }
 
-/// 親コンテナのレイアウトを、Sizing が上書きした後にもう一度適用する。
+/// Applies the parent container's layout again after Sizing overwrote it.
 pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
     let Some(parent) = parent_state(element) else {
         return;
@@ -270,7 +272,8 @@ pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
     }
 }
 
-/// 親コンテナの記録を外し、親が上書きしていた配置を元へ戻す。
+/// Removes the parent container's record and restores the placement the parent had
+/// overridden.
 pub(crate) fn clear_parent_layout(element: &UIElement) {
     let key = element_key(element);
     let Some(mut state) = LAYOUT_STATES.with(|states| states.borrow_mut().remove(&key)) else {
@@ -297,7 +300,7 @@ pub(crate) fn clear_parent_layout(element: &UIElement) {
     }
 }
 
-/// ウィジェット破棄時に、その要素の状態を表から外す。
+/// Removes the element's state from the table when the widget is destroyed.
 pub(crate) fn clear_layout_state(element: &UIElement) {
     let key = element_key(element);
     LAYOUT_STATES.with(|states| {
@@ -305,7 +308,8 @@ pub(crate) fn clear_layout_state(element: &UIElement) {
     });
 }
 
-/// 大きさの指定を要素へ反映する。呼ぶたびに以前の指定は置き換わる。
+/// Applies the size specification to the element. Each call replaces the previous
+/// one.
 pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
     let Ok(framework) = element.cast::<FrameworkElement>() else {
         return;
@@ -330,10 +334,11 @@ pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
     reapply_parent_layout(&framework);
 }
 
-/// `Stack::set_align` を StackPanel の子要素へ写す。
+/// Maps `Stack::set_align` onto the StackPanel's children.
 ///
-/// StackPanel 自身の配置は親の中でパネルを置く位置を変えるだけなので、
-/// 交差軸の寄せ方は子へ設定する。子自身の `Fill` がある場合はそれを優先する。
+/// The StackPanel's own alignment only changes where the panel sits within its
+/// parent, so cross-axis alignment is set on the children. A child's own `Fill`, if
+/// any, takes precedence.
 fn apply_stack_alignment(element: &FrameworkElement, align: Align, vertical_stack: bool) {
     if wants_fill(element, vertical_stack) {
         return;
@@ -380,10 +385,11 @@ struct SpacerInner {
     native: XamlGrid,
 }
 
-/// 余白そのものになるウィジェット (中身が空の Grid)。
+/// A widget that is just empty space (an empty Grid).
 ///
-/// WinUI の `StackPanel` は余りを子へ配らないため、`Stack` の中では
-/// 場所を取らない。余りを分けたいときは [`Grid`] の [`Track::Fill`] を使う。
+/// WinUI's `StackPanel` does not hand out leftover space to children, so inside a
+/// `Stack` it takes no space. To split leftover space, use [`Track::Fill`] of a
+/// [`Grid`].
 #[derive(Clone)]
 pub struct Spacer(Rc<SpacerInner>);
 impl_widget!(Spacer, native);
@@ -401,13 +407,13 @@ impl Spacer {
 
 struct GridInner {
     native: XamlGrid,
-    /// 置いた子と、その置き場所。マス単位で外すために持つ。
+    /// The placed children and their positions. Kept to remove them by cell.
     children: RefCell<Vec<(GridCell, Box<dyn Widget>)>>,
     columns: Cell<usize>,
     rows: Cell<usize>,
 }
 
-/// 行と列で位置を決めるコンテナ (WinUI 3 の Grid)。
+/// A container that positions children by row and column (WinUI 3's Grid).
 #[derive(Clone)]
 pub struct Grid(Rc<GridInner>);
 impl_widget!(Grid, native);
@@ -423,13 +429,13 @@ impl Grid {
         })))
     }
 
-    /// 列間・行間のすき間。
+    /// The spacing between columns and between rows.
     pub fn set_spacing(&self, column: f64, row: f64) {
         let _ = self.0.native.SetColumnSpacing(column);
         let _ = self.0.native.SetRowSpacing(row);
     }
 
-    /// 外周の余白。
+    /// The outer padding.
     pub fn set_padding(&self, padding: Padding) {
         let _ = self.0.native.SetPadding(Thickness {
             Left: padding.left,
@@ -439,7 +445,8 @@ impl Grid {
         });
     }
 
-    /// 指定した場所に子を置く。足りない行と列は自動で足される。
+    /// Places a child at the given position. Missing rows and columns are added
+    /// automatically.
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         self.ensure_size(cell.columns_needed(), cell.rows_needed());
         let element = child.native_element();
@@ -472,19 +479,18 @@ impl Grid {
         }
     }
 
-    /// そのマスの中身を差し替える。同じマスに置かれていたものは外れる。
+    /// Replaces what is in the cell. Whatever was in the same cell is removed.
     ///
-    /// `MediaPlayerElement` のように、TabView のコンテンツ切り替え時に
-    /// WinUI 内部でテンプレート適用が走るコントロールを安全に差し替える
-    /// ために使う。
+    /// Used to safely replace controls, such as `MediaPlayerElement`, for which WinUI
+    /// internally runs template application when the TabView switches content.
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
         self.remove(cell);
         self.attach(child, cell);
     }
 
-    /// 指定したマスに置かれているものを外す。何も無ければ何もしない。
+    /// Removes whatever is in the given cell. Does nothing if it is empty.
     ///
-    /// 見るのは `cell` の列と行だけで、span は見ない。
+    /// Only the column and row of `cell` are considered, not the span.
     pub fn remove(&self, cell: GridCell) {
         let mut children = self.0.children.borrow_mut();
         let mut index = 0;
@@ -507,7 +513,7 @@ impl Grid {
         }
     }
 
-    /// 子をすべて外す。行と列の指定はそのまま残る。
+    /// Removes every child. The row and column settings stay.
     pub fn clear(&self) {
         if let Ok(children) = self.0.native.Children() {
             let _ = children.Clear();
@@ -515,7 +521,7 @@ impl Grid {
         self.0.children.borrow_mut().clear();
     }
 
-    /// 列の幅の決め方。
+    /// How a column's width is determined.
     pub fn set_column_track(&self, index: usize, track: Track) {
         self.ensure_size(index + 1, 0);
         if let Ok(definition) = self
@@ -528,7 +534,7 @@ impl Grid {
         }
     }
 
-    /// 行の高さの決め方。
+    /// How a row's height is determined.
     pub fn set_row_track(&self, index: usize, track: Track) {
         self.ensure_size(0, index + 1);
         if let Ok(definition) = self
@@ -541,17 +547,17 @@ impl Grid {
         }
     }
 
-    /// いまある列数。
+    /// The current number of columns.
     pub fn columns(&self) -> usize {
         self.0.columns.get()
     }
 
-    /// いまある行数。
+    /// The current number of rows.
     pub fn rows(&self) -> usize {
         self.0.rows.get()
     }
 
-    /// 置いた子の数。
+    /// The number of children placed.
     pub fn len(&self) -> usize {
         self.0.children.borrow().len()
     }
@@ -602,12 +608,14 @@ struct ScrollInner {
     child: RefCell<Option<Box<dyn Widget>>>,
     horizontal_scroll_enabled: Cell<bool>,
     vertical_scroll_enabled: Cell<bool>,
-    /// ホイール入力時に、ポインター直下の ScrollViewer だけを選ぶための状態。
+    /// State for choosing only the ScrollViewer directly under the pointer on wheel
+    /// input.
     hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
-    /// `ViewChanged` は途中経過でも届くので、位置が変わったときだけ通知する。
+    /// `ViewChanged` also arrives for intermediate progress, so it notifies only when
+    /// the position changed.
     on_scroll: ScrollNotifier,
-    /// 大きさが決まる前 (画面に出る前など) に頼まれた行き先。
-    /// 大きさが決まった (`SizeChanged`) 時点で適用する。
+    /// The destination requested before the size was decided (before it is on screen,
+    /// for example). Applied once the size is decided (`SizeChanged`).
     pending: Cell<Option<ScrollTarget>>,
 }
 
@@ -703,10 +711,11 @@ fn apply_wheel_delta(delta: f64) -> bool {
     apply_scroll_wheel_delta(delta)
 }
 
-/// ポインター直下にある Scroll のうち、ビジュアルツリーで最も深いものだけを送る。
+/// Scrolls only the deepest Scroll in the visual tree among those under the pointer.
 ///
-/// スクロール可能な内側の Scroll が端に達していても入力を消費し、外側への
-/// 意図しないスクロール連鎖を防ぐ。内側にオーバーフローがない場合だけ外側へ渡す。
+/// Even when a scrollable inner Scroll has reached its end, it consumes the input,
+/// preventing unintended scroll chaining to the outer one. Only when the inner one
+/// has no overflow is it passed outward.
 fn apply_scroll_wheel_delta(delta: f64) -> bool {
     SCROLLS.with(|scrolls| {
         let mut scrolls = scrolls.borrow_mut();
@@ -864,19 +873,20 @@ pub(crate) struct ListScrollTarget {
     hovered: std::sync::Arc<crate::ui_thread::UiThreadCell<usize>>,
 }
 
-/// その要素の中にある最初の `ScrollViewer` を、深さ優先で探す。
+/// Looks for the first `ScrollViewer` inside the element, depth-first.
 ///
-/// `ListView` や `TreeView` はテンプレートの中に自分の `ScrollViewer` を
-/// 持つ。段数はテンプレート次第なので、名前ではなく型で探す。中身は
-/// `Loaded` まで組み上がらないので、そこまで待ってから呼ぶ。
+/// `ListView` and `TreeView` have their own `ScrollViewer` inside their templates.
+/// How many levels deep depends on the template, so it is found by type, not name.
+/// The contents are not assembled until `Loaded`, so call it after waiting for that.
 pub(crate) fn scroll_viewer_within<T: Interface>(root: &T) -> Option<ScrollViewer> {
     descendant_of_type(root)
 }
 
-/// `root` 自身か子孫のうち、`D` として扱える最初の要素 (深さ優先)。
+/// The first element among `root` itself and its descendants that can be treated as
+/// `D` (depth-first).
 ///
-/// テンプレートの中の部品を型で探す。[`scroll_viewer_within`] と同じく、
-/// 中身は `Loaded` まで組み上がらない。
+/// Finds parts inside templates by type. As with [`scroll_viewer_within`], the
+/// contents are not assembled until `Loaded`.
 pub(crate) fn descendant_of_type<T: Interface, D: Interface>(root: &T) -> Option<D> {
     let root = root.cast::<DependencyObject>().ok()?;
     let mut queue = vec![root];
@@ -935,16 +945,16 @@ pub(crate) fn install_wheel_subclass(window: &XamlWindow) -> bool {
     installed || low_level_hook_installed
 }
 
-/// 中身がはみ出したらスクロールさせるコンテナ (ScrollViewer)。
+/// A container that scrolls when its contents overflow (ScrollViewer).
 #[derive(Clone)]
 pub struct Scroll(Rc<ScrollInner>);
 impl_widget!(Scroll, native);
 
-/// 横 / 縦それぞれのスクロールを許すかどうか。
+/// Whether scrolling is allowed horizontally and vertically.
 ///
-/// `ScrollBarVisibility` はスクロールバーの見せかたで、スクロールそのものを
-/// 止めるのは `ScrollMode` のほう。両方そろえないと、バーが消えたまま
-/// ホイールでは動く、という食い違いが起きる。
+/// `ScrollBarVisibility` is how the scroll bar is shown; what stops scrolling itself
+/// is `ScrollMode`. Unless both match, they disagree: the bar disappears yet the
+/// wheel still scrolls.
 fn set_scroll_mode(native: &ScrollViewer, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
     fn mode(policy: ScrollPolicy) -> ScrollMode {
         match policy {
@@ -1006,30 +1016,31 @@ impl Scroll {
         Ok(())
     }
 
-    /// いまのスクロール位置と大きさ。
+    /// The current scroll position and sizes.
     ///
-    /// 直前に中身を変えていても、レイアウトを済ませてから測る。
+    /// Even if the contents just changed, it measures after finishing layout.
     pub fn metrics(&self) -> ScrollMetrics {
         let _ = self.0.native.UpdateLayout();
         self.read_metrics()
     }
 
-    /// 指定した位置へ送る。送れる範囲に丸める。
+    /// Scrolls to the given position, clamped to the scrollable range.
     ///
-    /// まだ大きさが決まっていない (画面に出る前など) ときは、決まった時点で送る。
+    /// If the size is not decided yet (before it is on screen, for example), it scrolls
+    /// once it is.
     pub fn scroll_to(&self, x: f64, y: f64) {
         self.request(ScrollTarget::To { x, y });
     }
 
-    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    /// Scrolls to the vertical end (the very bottom). The horizontal position stays.
     pub fn scroll_to_end(&self) {
         self.request(ScrollTarget::End);
     }
 
-    /// スクロール位置が変わったときの通知。
+    /// Notified when the scroll position changes.
     ///
-    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
-    /// 届く。大きさだけが変わったときは届かない。
+    /// Besides user interaction, it also arrives for moves caused by `scroll_to` or by
+    /// the contents shrinking. It does not arrive when only the sizes change.
     pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
         self.0.on_scroll.set(&self.read_metrics(), f);
     }
@@ -1053,7 +1064,8 @@ impl Scroll {
         self.apply_pending(&self.metrics());
     }
 
-    /// 覚えている行き先へ送る。大きさが決まっていなければ、まだ覚えておく。
+    /// Scrolls to the remembered destination. If the size is not decided, keeps
+    /// remembering it.
     fn apply_pending(&self, metrics: &ScrollMetrics) {
         let Some(target) = self.0.pending.get() else {
             return;
@@ -1080,7 +1092,8 @@ impl Scroll {
         self.0.on_scroll.notify_if_moved(|| self.read_metrics());
     }
 
-    /// 横 / 縦それぞれのスクロールの許可。既定は横 `Never`・縦 `Auto`。
+    /// Whether scrolling is allowed horizontally and vertically. The default is
+    /// horizontal `Never`, vertical `Auto`.
     pub fn set_policy(&self, horizontal: ScrollPolicy, vertical: ScrollPolicy) {
         self.0
             .horizontal_scroll_enabled
@@ -1125,7 +1138,7 @@ impl Scroll {
             .SetVerticalScrollBarVisibility(visibility(vertical));
     }
 
-    /// スクロールさせる中身。呼ぶたびに置き換わる。
+    /// The content to scroll. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
         let previous = self
@@ -1150,18 +1163,18 @@ impl Scroll {
     }
 }
 
-/// `ChangeView` が受け取る位置 (`IReference<f64>`) を作る。
+/// Creates the position `ChangeView` takes (`IReference<f64>`).
 fn offset_value(value: f64) -> Option<IReference<f64>> {
     PropertyValue::CreateDouble(value)
         .and_then(|value| value.cast::<IReference<f64>>())
         .ok()
 }
 
-/// スクロールしない軸の内容を、ビューポートの大きさまで広げる。
+/// Stretches the content on the non-scrolling axis to the viewport's size.
 ///
-/// 明示的な大きさや上限を付けた子はアプリの指定を優先する。`Fill` は
-/// `HorizontalAlignment` / `VerticalAlignment` が既に `Stretch` なので、
-/// ここで同じ値を書き直しても意味は変わらない。
+/// Children with an explicit size or maximum keep the app's setting. For `Fill`,
+/// `HorizontalAlignment` / `VerticalAlignment` are already `Stretch`, so writing the
+/// same value here changes nothing.
 fn stretch_non_scrolling_child(
     element: &FrameworkElement,
     horizontal_scroll_enabled: bool,

@@ -1,24 +1,24 @@
 //! # naui-winui3
 //!
-//! naui が使う分だけの **WinUI 3 (Windows App SDK) の WinRT 投影**。
+//! **A WinRT projection of WinUI 3 (Windows App SDK)**, limited to what naui uses.
 //!
-//! WinUI 3 のコントロールは Windows SDK ではなく Windows App SDK に入って
-//! いて、`windows` クレートには投影が無い。naui は Microsoft が配る
-//! `.winmd` から [`windows-bindgen`] で投影を作り、その出力を
-//! [`Microsoft`] と [`Windows`] として公開している。生成のしかたは
-//! `tools/winui3-bindgen` を参照。
+//! WinUI 3 controls are part of the Windows App SDK, not the Windows SDK, and the
+//! `windows` crate has no projection for them. naui builds a projection from the
+//! `.winmd` files Microsoft distributes using [`windows-bindgen`], and exposes the
+//! output as [`Microsoft`] and [`Windows`]. See `tools/winui3-bindgen` for how it is
+//! generated.
 //!
-//! 生成物だけでは足りないものを、このクレートが手で足す。
+//! This crate adds by hand what the generated output alone lacks:
 //!
-//! - [`bootstrap`]: 未パッケージのアプリが Windows App SDK ランタイムを
-//!   自分のプロセスへ取り付ける仕組み (動的依存)
-//! - `self_contained`: exe に同梱した Windows App SDK ランタイムを使う
-//!   仕組み (`self-contained` フィーチャー)
-//! - [`Compose`]: `Application` のような **composable なクラスを Rust 側で
-//!   継承する**ための土台。`Application::Start` には基底クラスそのもの
-//!   ではなく、`IApplicationOverrides` を実装した合成オブジェクトが要る
-//! - [`IWindowNative`]: XAML の `Window` から HWND を取り出す、WinRT の
-//!   メタデータには出てこない COM インターフェース
+//! - [`bootstrap`]: the mechanism by which an unpackaged app attaches the Windows
+//!   App SDK runtime to its own process (dynamic dependency)
+//! - `self_contained`: the mechanism for using a Windows App SDK runtime bundled with
+//!   the exe (the `self-contained` feature)
+//! - [`Compose`]: the foundation for **inheriting composable classes such as
+//!   `Application` on the Rust side**. `Application::Start` needs not the base class
+//!   itself but a composed object implementing `IApplicationOverrides`
+//! - [`IWindowNative`]: a COM interface that does not appear in WinRT metadata, for
+//!   getting the HWND out of a XAML `Window`
 //!
 //! [`windows-bindgen`]: https://crates.io/crates/windows-bindgen
 
@@ -39,18 +39,18 @@ pub use bindings::{Microsoft, Windows};
 pub use compose::{ChildClass, Compose, CreateInstanceFn};
 pub use native::IWindowNative;
 
-/// COM アパートメントの種類。
+/// The kind of COM apartment.
 pub enum ApartmentType {
-    /// スレッドごとに 1 つ。XAML はこちらでなければ動かない。
+    /// One per thread. XAML works only with this.
     SingleThreaded,
-    /// プロセスで 1 つ。
+    /// One per process.
     MultiThreaded,
 }
 
-/// このスレッドの COM アパートメントを初期化する。
+/// Initializes this thread's COM apartment.
 ///
-/// WinUI 3 のコントロールは UI スレッドの STA でしか作れないので、
-/// `Application::Start` の前に [`ApartmentType::SingleThreaded`] で呼ぶ。
+/// WinUI 3 controls can only be created in the UI thread's STA, so call this with
+/// [`ApartmentType::SingleThreaded`] before `Application::Start`.
 #[inline]
 pub fn init_apartment(apartment_type: ApartmentType) -> windows_core::Result<()> {
     use windows::Win32::System::WinRT::{

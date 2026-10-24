@@ -1,8 +1,8 @@
-//! どのウィジェットにもある操作 (表示・非表示 / フォーカス / ツールチップ)。
+//! Operations every widget has (show/hide / focus / tooltip).
 //!
-//! 表示・非表示は親へ置いている [`SizeBin`] ごと切り替える。中身だけを
-//! 隠すと、入れ物の余白や大きさの指定が場所を取り続けるため。フォーカスと
-//! ツールチップは中身のコントロールに付ける。
+//! Showing and hiding switches the whole [`SizeBin`] placed in the parent. Hiding
+//! only the content would leave the container's padding and size settings taking
+//! up space. Focus and tooltips are attached to the content control.
 
 use gtk::prelude::*;
 
@@ -16,10 +16,11 @@ pub(crate) fn is_visible(bin: &SizeBin) -> bool {
     bin.is_visible()
 }
 
-/// キーボードフォーカスを移す。移せたら `true`。
+/// Moves keyboard focus here. `true` if it moved.
 ///
-/// 自分が受け取れなければ、子孫のうち最初に受け取れるものへ移す。
-/// 表示されていない (ウィンドウが出る前・隠れている) ときは移せない。
+/// If the widget itself cannot take focus, focus moves to the first descendant
+/// that can. It cannot move while not shown (before the window appears, or while
+/// hidden).
 pub(crate) fn request_focus(widget: &gtk::Widget) -> bool {
     if !widget.is_mapped() {
         return false;
@@ -44,17 +45,19 @@ fn grab_first(widget: &gtk::Widget) -> bool {
     false
 }
 
-/// ポインターを重ねたときに出す説明。`None` で外す。
+/// The description shown when the pointer hovers over it. `None` removes it.
 pub(crate) fn set_tooltip(widget: &gtk::Widget, text: Option<&str>) {
     widget.set_tooltip_text(text);
 }
 
-/// 読み上げソフトに伝える名前 (`GTK_ACCESSIBLE_PROPERTY_LABEL`)。`None` で外す。
+/// The name reported to screen readers (`GTK_ACCESSIBLE_PROPERTY_LABEL`). `None`
+/// removes it.
 ///
-/// 文字を持つ `GtkButton` (トグルとリンクも) は、自分の名前を中のラベルから
-/// 取るよう `LABELLED_BY` を張っている。名前は `LABELLED_BY` が `LABEL` より
-/// 優先される (ARIA の aria-labelledby と aria-label と同じ) ので、付けている
-/// 間はその関係を外し、外すときに中のラベルへ張り直す。
+/// A `GtkButton` with text (toggles and links too) has `LABELLED_BY` set so that
+/// it takes its name from the label inside. For names, `LABELLED_BY` takes
+/// precedence over `LABEL` (the same as ARIA's aria-labelledby and aria-label), so
+/// while a name is set that relation is removed, and when it is removed the
+/// relation to the inner label is restored.
 pub(crate) fn set_accessible_label(widget: &gtk::Widget, text: Option<&str>) {
     let label_child = widget
         .downcast_ref::<gtk::Button>()

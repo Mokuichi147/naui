@@ -1,13 +1,12 @@
-//! ポップアップ (コンテキスト) メニュー (AppKit)。
+//! Popup (context) menus (AppKit).
 //!
-//! 実体は `NSMenu` で、項目は `NSMenuItem`。区切り線は
-//! `NSMenuItem::separatorItem` をそのまま使う。
+//! The real object is an `NSMenu`, with `NSMenuItem`s as items. Separators use
+//! `NSMenuItem::separatorItem` as is.
 //!
-//! ウィジェットへ [`PopupMenu::attach`] すると、そのビューの `menu` に
-//! なる。**右クリック (副ボタン) で出すのは AppKit 自身**で、naui は
-//! 位置決めも表示も行わない。プログラムから出したいときだけ
-//! [`PopupMenu::open_at`] が `popUpMenuPositioningItem:atLocation:inView:`
-//! を呼ぶ。
+//! [`PopupMenu::attach`]ing it to a widget makes it that view's `menu`. **AppKit
+//! itself shows it on right-click (secondary button)**; naui does neither
+//! positioning nor showing. Only when you want to show it from code does
+//! [`PopupMenu::open_at`] call `popUpMenuPositioningItem:atLocation:inView:`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -23,20 +22,20 @@ use crate::widgets::Widget;
 
 struct PopupMenuInner {
     native: Retained<NSMenu>,
-    /// 項目ごとのトランポリン。`NSMenuItem` の target は weak なので保持する。
+    /// A trampoline per item. `NSMenuItem` targets are weak, so they are held.
     targets: RefCell<Vec<Retained<ActionTarget>>>,
     handler: SelectHandler,
-    /// 区切り線を含めた項目数。
+    /// The number of items, separators included.
     count: Cell<usize>,
-    /// 取り付けたウィジェットのハンドル。ビューごと生かしておく。
+    /// The handles of the widgets it is attached to. Kept alive along with their views.
     attached: RefCell<Vec<Box<dyn Widget>>>,
 }
 
-/// ポップアップ (コンテキスト) メニュー (NSMenu)。
+/// A popup (context) menu (NSMenu).
 ///
-/// 画面に並ぶウィジェットではないので [`Widget`] ではない。
-/// [`crate::Ui`] が生成したメニューを保持するため、戻り値を捨てても
-/// 取り付け先のメニューが消えることはない。
+/// It is not a widget laid out on screen, so it is not a [`Widget`]. [`crate::Ui`]
+/// holds the menus it creates, so dropping the return value does not remove the
+/// menu from the widgets it is attached to.
 #[derive(Clone)]
 pub struct PopupMenu(Rc<PopupMenuInner>);
 
@@ -55,9 +54,9 @@ impl PopupMenu {
         }))
     }
 
-    /// 項目を作り直す。以前の項目は取り除かれる。
+    /// Rebuilds the items. The previous items are removed.
     ///
-    /// インデックスは区切り線を含めた並びの位置。
+    /// The index is the position in the sequence including separators.
     pub fn set_items(&self, items: &[PopupItem]) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         self.0.native.removeAllItems();
@@ -93,7 +92,7 @@ impl PopupMenu {
         self.0.count.set(items.len());
     }
 
-    /// 区切り線を含めた項目数。
+    /// The number of items, separators included.
     pub fn len(&self) -> usize {
         self.0.count.get()
     }
@@ -102,20 +101,20 @@ impl PopupMenu {
         self.len() == 0
     }
 
-    /// ウィジェットの右クリックでこのメニューを出すようにする。
+    /// Makes this menu appear on right-click on the widget.
     ///
-    /// 同じメニューを複数のウィジェットへ取り付けられる。
+    /// The same menu can be attached to several widgets.
     pub fn attach(&self, widget: &dyn Widget) {
         let view = widget.native_view();
         unsafe { view.setMenu(Some(&self.0.native)) };
         self.0.attached.borrow_mut().push(widget.boxed_clone());
     }
 
-    /// プログラムからメニューを出す。位置は `widget` の**左上から**の
-    /// 論理ピクセル (y は下向き)。
+    /// Shows the menu from code. The position is in logical pixels **from the top
+    /// left** of `widget` (y pointing down).
     ///
-    /// 出ている間 AppKit がイベントを取り回すため、この呼び出しは
-    /// メニューが閉じるまで戻らない。
+    /// AppKit runs the events while it is shown, so this call does not return until the
+    /// menu closes.
     pub fn open_at(&self, widget: &dyn Widget, x: f64, y: f64) {
         let view = widget.native_view();
         // AppKit のビュー座標は既定で左下原点。naui は左上原点でそろえる。
@@ -129,14 +128,15 @@ impl PopupMenu {
             .popUpMenuPositioningItem_atLocation_inView(None, point, Some(&view));
     }
 
-    /// 出ているメニューを閉じる。出ていなければ何もしない。
+    /// Closes the menu being shown. Does nothing if none is shown.
     pub fn close(&self) {
         self.0.native.cancelTracking();
     }
 
-    /// ユーザーが選んだのと同じ経路で項目を選ぶ (テストや自動操作用)。
+    /// Chooses an item through the same path as a user's choice (for tests and
+    /// automation).
     ///
-    /// 区切り線と、選べない項目は無視する。
+    /// Separators and items that cannot be chosen are ignored.
     pub fn select(&self, index: usize) {
         if index >= self.len() {
             return;
@@ -150,12 +150,12 @@ impl PopupMenu {
         self.0.native.performActionForItemAtIndex(index as isize);
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// AppKit の実メニュー。バックエンド固有の脱出口として公開している。
+    /// The real AppKit menu. Public as a backend-specific escape hatch.
     pub fn native_menu(&self) -> Retained<NSMenu> {
         self.0.native.clone()
     }

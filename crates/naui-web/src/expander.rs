@@ -1,7 +1,8 @@
-//! 折りたたみ (`<details>` + `<summary>`)。
+//! A collapsible section (`<details>` + `<summary>`).
 //!
-//! HTML に同じ役目の要素があるので、そのまま使う。三角の印も、開閉も
-//! ブラウザが出す (JavaScript による開閉の実装は要らない)。
+//! HTML has an element for the same job, so it is used as is. The triangle and
+//! expanding and collapsing are provided by the browser (no JavaScript
+//! implementation of expanding is needed).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -15,19 +16,21 @@ use crate::to_error;
 use crate::widgets::{create, impl_widget, Listener, ValueHandler, Widget};
 
 struct ExpanderInner {
-    /// `<details><summary>見出し</summary>中身</details>`
+    /// `<details><summary>heading</summary>content</details>`
     element: HtmlDetailsElement,
     summary: HtmlElement,
-    /// 中身のハンドルを保持し、コールバックごと生かしておく。
+    /// Holds the content's handle, keeping it alive along with its callbacks.
     child: RefCell<Option<Box<dyn Widget>>>,
-    /// naui が知っている開閉の状態。`toggle` が利用者の操作かを見分ける。
+    /// The expanded state naui knows. Tells whether a `toggle` is a user action.
     state: Rc<Cell<bool>>,
     handler: Rc<ValueHandler<bool>>,
-    /// 中継はハンドルと同じ寿命で持つ (通知の中から開閉できるように)。
+    /// The relay is held with the same lifetime as the handle (so it can be expanded
+    /// or collapsed from inside the notification).
     listener: RefCell<Option<Listener>>,
 }
 
-/// 見出しを押して中身を出し入れするコンテナ (`<details>`)。
+/// A container whose contents are shown and hidden by clicking its heading
+/// (`<details>`).
 #[derive(Clone)]
 pub struct Expander(Rc<ExpanderInner>);
 impl_widget!(Expander, element);
@@ -71,7 +74,7 @@ impl Expander {
         Ok(this)
     }
 
-    /// 見出しの文字。
+    /// The heading text.
     pub fn text(&self) -> String {
         self.0.summary.text_content().unwrap_or_default()
     }
@@ -80,22 +83,23 @@ impl Expander {
         self.0.summary.set_text_content(Some(text));
     }
 
-    /// 開いているかどうか。
+    /// Whether it is expanded.
     pub fn is_expanded(&self) -> bool {
         self.0.element.open()
     }
 
-    /// プログラムから開閉する。`on_toggle` は呼ばれない。
+    /// Expands or collapses it from code. `on_toggle` is not called.
     pub fn set_expanded(&self, expanded: bool) {
         self.0.state.set(expanded);
         self.0.element.set_open(expanded);
     }
 
-    /// 見出しを押せるかどうか。
+    /// Whether the heading can be clicked.
     ///
-    /// `<details>` に `disabled` は無いので、押しても開かない見出しとして
-    /// 表す。マウスは `pointer-events` で、キーボードはタブ順から外して
-    /// 止める (`<summary>` は焦点が当たっていないと Enter で開かない)。
+    /// `<details>` has no `disabled`, so it is expressed as a heading that does not
+    /// open when clicked. The mouse is stopped with `pointer-events`, and the keyboard
+    /// by removing it from the tab order (`<summary>` does not open with Enter unless
+    /// it has focus).
     pub fn set_enabled(&self, enabled: bool) {
         let style = self.0.summary.style();
         if enabled {
@@ -111,7 +115,7 @@ impl Expander {
         }
     }
 
-    /// 折りたたむ中身。呼ぶたびに置き換わる。
+    /// The contents to collapse. Each call replaces them.
     pub fn set_child(&self, child: &dyn Widget) {
         if let Some(previous) = self.0.child.borrow_mut().take() {
             let _ = self.0.element.remove_child(&previous.native_element());
@@ -123,7 +127,7 @@ impl Expander {
         }
     }
 
-    /// 利用者が開閉するたびに、変わった後の状態で呼ばれる。
+    /// Called with the new state every time the user expands or collapses it.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.handler.set(f);
     }

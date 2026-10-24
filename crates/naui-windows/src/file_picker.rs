@@ -1,13 +1,13 @@
-//! ファイル / フォルダー選択 (WinUI 3 のボタン + Windows の共通ダイアログ)。
+//! File / folder picking (a WinUI 3 button + Windows's common dialog).
 //!
-//! WinUI 3 にファイル選択のコントロールは無い。`Button` を置き、押されたら
-//! **`IFileOpenDialog` (Common Item Dialog)** を開く。エクスプローラーと
-//! 同じダイアログで、一覧・検索・クイックアクセスはすべて Windows が描く。
+//! WinUI 3 has no file picking control. A `Button` is placed, and clicking it opens
+//! **`IFileOpenDialog` (the Common Item Dialog)**. It is the same dialog as File
+//! Explorer's, and the list, search and Quick Access are all drawn by Windows.
 //!
-//! `Windows.Storage.Pickers.FileOpenPicker` (WinRT) ではなく Win32 側の
-//! ダイアログを使っているのは、`Windows.Storage.Pickers` の投影を naui が
-//! 引き込んでいないため。見た目と機能はどちらも同じ
-//! Common Item Dialog で、未パッケージ実行でも HWND を渡すだけで開ける。
+//! The Win32 dialog is used instead of `Windows.Storage.Pickers.FileOpenPicker`
+//! (WinRT) because naui does not pull in the `Windows.Storage.Pickers` projection.
+//! Both are the same Common Item Dialog in look and function, and it opens in
+//! unpackaged execution just by passing an HWND.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -29,10 +29,10 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
-/// ダイアログの設定と、最後に選ばれたもの。
+/// The dialog's settings and what was picked last.
 ///
-/// クリックのデリゲートは `Send + Sync` を要求されるため、
-/// ハンドル (`Rc`) ではなくこのセルだけをデリゲートへ渡す。
+/// The click delegate is required to be `Send + Sync`, so only this cell, not the
+/// handle (`Rc`), is passed to the delegate.
 #[derive(Default)]
 struct PickerState {
     mode: FilePickerMode,
@@ -49,11 +49,12 @@ impl SharedState {
     }
 }
 
-/// 選んだファイルの一覧を受け取る通知。
+/// The notification receiving the list of picked files.
 type SelectionCallback = dyn FnMut(&[FileEntry]);
 
-/// 選ばれたときの通知先。呼び出しの間だけクロージャを取り出すので、
-/// 通知の中から設定し直しても二重借用にならない。
+/// The handler notified when something is picked. The closure is taken out only for
+/// the duration of the call, so setting it again from inside the notification does
+/// not double-borrow.
 #[derive(Clone)]
 struct SelectionHandler(HandlerCell<SelectionCallback>);
 
@@ -87,7 +88,7 @@ struct FilePickerInner {
     token: RefCell<Option<i64>>,
 }
 
-/// ファイルやフォルダーを選ばせるボタン (Button + IFileOpenDialog)。
+/// A button for picking files or folders (Button + IFileOpenDialog).
 #[derive(Clone)]
 pub struct FilePicker(Rc<FilePickerInner>);
 impl_widget!(FilePicker, native);
@@ -149,7 +150,7 @@ impl FilePicker {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// 何を選ばせるかを決める (既定はファイル 1 つ)。
+    /// Decides what to let the user pick (one file by default).
     pub fn set_mode(&self, mode: FilePickerMode) {
         self.0.state.0.with_mut(|state| state.mode = mode);
     }
@@ -158,7 +159,7 @@ impl FilePicker {
         self.0.state.0.with_mut(|state| state.mode)
     }
 
-    /// 拡張子で絞り込む。[`FilePickerMode::Folder`] のときは無視される。
+    /// Filters by extension. Ignored for [`FilePickerMode::Folder`].
     pub fn set_filters(&self, filters: &[FileFilter]) {
         self.0
             .state
@@ -166,29 +167,29 @@ impl FilePicker {
             .with_mut(|state| state.filters = filters.to_vec());
     }
 
-    /// 最後に選ばれたもの。まだ選ばれていなければ空。
+    /// What was picked last. Empty if nothing has been picked yet.
     pub fn selection(&self) -> Vec<FileEntry> {
         self.0.state.0.with_mut(|state| state.selection.clone())
     }
 
-    /// 選ばれたときに呼ばれる。取り消したときは呼ばれない。
-    /// 設定し直すと以前のものは外れる。
+    /// Called when something is picked. Not called when the user cancels. Setting it
+    /// again removes the previous one.
     pub fn on_select(&self, f: impl FnMut(&[FileEntry]) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// ダイアログを出す。ボタンを押したときにも同じものが呼ばれる。
+    /// Shows the dialog. Clicking the button calls the same thing.
     ///
-    /// Common Item Dialog はモーダルなので、閉じられるまで戻らない。
+    /// The Common Item Dialog is modal, so this does not return until it is closed.
     pub fn open(&self) {
         show_and_report(&self.0.state, &self.0.handler);
     }
 }
 
-/// ダイアログを出し、選ばれていれば記録して通知する。
+/// Shows the dialog and, if something was picked, records and notifies it.
 ///
-/// 通知の中からこのウィジェットを触れるよう、`selection` の書き込みを
-/// 終えて借用を手放してから呼ぶ。
+/// The call is made after finishing writing `selection` and releasing the borrow, so
+/// the notification can touch this widget.
 fn show_and_report(state: &SharedState, handler: &SelectionHandler) {
     let (mode, filters) = state
         .0
@@ -214,7 +215,7 @@ fn show_and_report(state: &SharedState, handler: &SelectionHandler) {
     }));
 }
 
-/// Common Item Dialog を開いて、選ばれたパスを返す。取り消しは `None`。
+/// Opens the Common Item Dialog and returns the chosen paths. `None` if cancelled.
 fn show_dialog(mode: FilePickerMode, filters: &[FileFilter]) -> Option<Vec<FileEntry>> {
     unsafe {
         let dialog: IFileOpenDialog =
@@ -274,7 +275,8 @@ fn show_dialog(mode: FilePickerMode, filters: &[FileFilter]) -> Option<Vec<FileE
     }
 }
 
-/// 末尾に終端を付けた UTF-16 にする (COM へ渡す文字列の形)。
+/// Converts to UTF-16 with a terminator at the end (the form of strings passed to
+/// COM).
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
 }

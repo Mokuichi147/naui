@@ -1,38 +1,44 @@
-//! 数値入力 (`NumberBox`)。
+//! Number input (`NumberBox`).
 //!
-//! WinUI 3 の数値専用コントロールをそのまま使う。増減ボタンは既定で隠れて
-//! いるので、`SpinButtonPlacementMode` を `Inline` にして欄の右へ出す。
+//! WinUI 3's dedicated numeric control is used as is. The step buttons are hidden
+//! by default, so `SpinButtonPlacementMode` is set to `Inline` to show them right of
+//! the field.
 //!
-//! 値の丸めと範囲は [`NumberSpec`] が決める。範囲・刻み・小数桁は
-//! `NumberBox` 側 (`Minimum` / `Maximum` / `SmallChange` / `NumberFormatter`)
-//! にも書いて、増減ボタンや上下キーの動きと表示をそろえる。
+//! Rounding and range are decided by [`NumberSpec`]. The range, step and decimal
+//! places are also written on the `NumberBox` side (`Minimum` / `Maximum` /
+//! `SmallChange` / `NumberFormatter`), so the step buttons, up/down keys and display
+//! agree.
 //!
-//! `NumberBox` が値を決めるのは**確定したとき** (Enter・欄を離れたとき・
-//! 増減ボタン・上下キー・ホイール) だけなので、1 文字ごとの通知は
-//! テンプレートの中にある入力欄 (`InputBox`) の `TextChanged` から拾う。
-//! 標準のテンプレートが差し替えられていて入力欄が見つからないときは、
-//! 確定したときだけ通知される。
+//! `NumberBox` decides its value only **on confirmation** (Enter, leaving the field,
+//! the step buttons, up/down keys, the wheel), so per-keystroke notifications are
+//! picked up from the `TextChanged` of the input field inside the template
+//! (`InputBox`). If the standard template has been replaced and the input field
+//! cannot be found, notifications happen only on confirmation.
 //!
-//! そのため打っている間の値は naui だけが持ち、`NumberBox` の値は古いままに
-//! なる。巻き戻しと増減はどちらも `NumberBox` が自分の値を基準にするので、
-//! **表示が読めなくなった時点で受け取り済みの値を渡す**
-//! ([`sync_native`](NumberInput::sync_native))。読める表示なら `NumberBox` が
-//! 自分で読み取るので渡さなくてよい。
+//! So while typing, only naui holds the value, and the `NumberBox`'s value stays
+//! stale. Both reverting and stepping are based on the `NumberBox`'s own value, so
+//! **once the display becomes unreadable, the value already received is passed to
+//! it** ([`sync_native`](NumberInput::sync_native)). If the display is readable,
+//! the `NumberBox` reads it itself, so nothing needs to be passed.
 //!
-//! 打っている途中の表示は、`NumberBox` が確定に使うのと同じ `NumberFormatter`
-//! で読む。小数点や桁区切りは地域設定で変わるので、打鍵中と確定とで読み手が
-//! 違うと通知の出かたがずれる。
+//! Text typed so far is read with the same `NumberFormatter` the `NumberBox` uses
+//! for confirmation. The decimal point and digit grouping vary with regional
+//! settings, so if typing and confirmation used different readers, notifications
+//! would come out differently.
 //!
-//! # 有効数字は 10 桁まで
+//! # Up to 10 significant digits
 //!
-//! `NumberBox` は表示を作る前に値を**有効数字 10 桁へ丸める**
-//! (`SignificantDigits(10)` の `NumberRounder`)。この丸めは `NumberBox` が
-//! 内部で持っているもので、`NumberFormatter` を差し替えても外せない。
+//! Before building its display, `NumberBox` **rounds the value to 10 significant
+//! digits** (a `NumberRounder` with `SignificantDigits(10)`). This rounding is
+//! internal to `NumberBox` and cannot be removed by replacing the
+//! `NumberFormatter`.
 //!
-//! そのため [`NumberSpec::decimals`] に 10 桁を超える有効数字を求める桁数を
-//! 渡すと、表示は 10 桁で切れる。確定すると `NumberBox` はその表示を読み直す
-//! ので、値も 10 桁へそろう ([`value`](NumberInput::value) と表示がずれたまま
-//! にはならない)。`f64` の精度 (15〜17 桁) をそのまま見せたい用途には向かない。
+//! So passing [`NumberSpec::decimals`] a digit count that requires more than 10
+//! significant digits cuts the display at 10 digits. On confirmation, `NumberBox`
+//! reads that display back, so the value also becomes 10 digits (so
+//! [`value`](NumberInput::value) and the display do not stay out of step). It is not
+//! suitable for uses that want to show the full precision of `f64` (15 to 17
+//! digits).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -52,24 +58,25 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
-/// WinUI 3 の `NumberBox` テンプレートが持つ入力欄の名前。
+/// The name of the input field in WinUI 3's `NumberBox` template.
 const INPUT_BOX_PART: &str = "InputBox";
 
-/// 範囲を指定されていないときに `NumberBox` へ渡す端の値。
+/// The bound passed to `NumberBox` when no range is specified.
 ///
-/// `NumberBox` は下限・上限を必ず持つので、その既定値と同じものを
-/// 「制限なし」の代わりに使う。丸めと範囲は [`NumberSpec`] が持っているので、
-/// ここで止まっても naui の答えは変わらない。
+/// `NumberBox` always has a minimum and maximum, so the same value as its default is
+/// used in place of "no limit". [`NumberSpec`] holds the rounding and range, so
+/// stopping here does not change naui's answer.
 const UNBOUNDED: f64 = f64::MAX;
 
-/// PageUp / PageDown で動く量は刻みの何倍か (`NumberBox` の既定と同じ比)。
+/// How many steps PageUp / PageDown move (the same ratio as `NumberBox`'s
+/// default).
 const LARGE_CHANGE_STEPS: f64 = 10.0;
 
-/// 値が変わったことの通知先。
+/// The handler notified when the value changes.
 ///
-/// WinRT のデリゲートは `Send + Sync` を要求するので [`UiThreadCell`] に
-/// 載せる。呼ぶ間だけクロージャを取り出すので、通知の中から同じ欄を操作しても
-/// 二重借用にならない。
+/// WinRT delegates require `Send + Sync`, so it is placed in a [`UiThreadCell`].
+/// The closure is taken out only while it is called, so operating on the same field
+/// from inside the notification does not double-borrow.
 #[derive(Clone)]
 struct ChangeHandler(HandlerCell<dyn FnMut(f64)>);
 
@@ -101,17 +108,17 @@ struct NumberInputInner {
     value: Cell<f64>,
     handler: ChangeHandler,
     submit: ChangeHandler,
-    /// 値を書き込んでいる間だけ、WinUI からの通知を無視する。
+    /// Ignores notifications from WinUI only while writing the value.
     silent: Cell<bool>,
-    /// テンプレートの入力欄。見つかるまでは `None`。
+    /// The template's input field. `None` until found.
     field: RefCell<Option<TextBox>>,
-    /// `on_focus_change` の通知先。
+    /// The `on_focus_change` handler.
     focus: crate::focus::Focus,
 }
 
-/// 数値を入力させるコントロール (`NumberBox`)。
+/// A control for entering a number (`NumberBox`).
 ///
-/// 既定は整数 (刻み 1、小数桁 0、範囲の制限なし)。
+/// The default is integers (step 1, 0 decimal places, no range limit).
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
 crate::keys::impl_key_down!(NumberInput);
@@ -151,12 +158,13 @@ impl NumberInput {
         Ok(this)
     }
 
-    /// いまの値。
+    /// The current value.
     pub fn value(&self) -> f64 {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。小数桁へ丸め、範囲の外なら端へ寄せる。
+    /// Changes the value without notifying. Rounds to the decimal places and clamps to
+    /// the range.
     pub fn set_value(&self, value: f64) {
         let value = self.0.spec.get().clamp(value);
         self.0.value.set(value);
@@ -164,24 +172,25 @@ impl NumberInput {
         self.write_native_text(value);
     }
 
-    /// 入れられる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the range of accepted values. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying.
     pub fn set_range(&self, min: Option<f64>, max: Option<f64>) {
         self.update_spec(|spec| spec.range(min, max));
     }
 
-    /// 増減ボタンやキーで 1 回に動く量 (既定は 1)。
+    /// How much one press of the step buttons or keys moves the value (default 1).
     pub fn set_step(&self, step: f64) {
         self.update_spec(|spec| spec.step(step));
     }
 
-    /// 表示する小数の桁数 (既定は 0 = 整数)。
+    /// The number of decimal places shown (default 0 = integers).
     pub fn set_decimals(&self, decimals: u32) {
         self.update_spec(|spec| spec.decimals(decimals));
     }
 
-    /// いまの値の決まり (範囲・刻み・小数桁)。
+    /// The current value rules (range, step, decimal places).
     pub fn spec(&self) -> NumberSpec {
         self.0.spec.get()
     }
@@ -190,27 +199,28 @@ impl NumberInput {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     pub fn on_change(&self, f: impl FnMut(f64) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// Enter で確定したときに、確定したあとの値で呼ばれる。
+    /// Called with the confirmed value when the user confirms with Enter.
     ///
-    /// 打ちかけの表示は先に値へ読み込む (値が変われば `on_change` が先に
-    /// 呼ばれる)。数として読めない表示は元の値へ戻してから呼ぶ。IME で
-    /// 変換している間の Enter では呼ばれない。
+    /// What has been typed so far is read into the value first (if the value changes,
+    /// `on_change` is called first). Text that cannot be read as a number is reverted
+    /// to the previous value before the call. Not called for an Enter pressed while an
+    /// IME is composing.
     pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
         self.0.submit.set(f);
     }
 
-    /// 対応する `NumberBox`。バックエンド固有の脱出口として公開している。
+    /// The corresponding `NumberBox`. Public as a backend-specific escape hatch.
     pub fn native_number_box(&self) -> XamlNumberBox {
         self.0.native.clone()
     }
 
-    /// 確定と打鍵の購読をつなぐ。
+    /// Connects the subscriptions for confirmation and typing.
     fn connect(&self) -> Result<()> {
         // 確定 (Enter・欄を離れたとき・増減ボタン・上下キー・ホイール)。
         let committed = UiThreadCell::new(Rc::downgrade(&self.0));
@@ -272,11 +282,11 @@ impl NumberInput {
         Ok(())
     }
 
-    /// テンプレートの入力欄を見つけて、文字ぞろえを決め、1 文字ごとの変化を
-    /// 購読する。
+    /// Finds the template's input field, decides its text alignment, and subscribes to
+    /// per-keystroke changes.
     ///
-    /// 見つからないときは何もしない (確定は `ValueChanged` で届く)。文字は
-    /// 左へそろったままになる。
+    /// Does nothing if it is not found (confirmation arrives through `ValueChanged`).
+    /// The text stays left-aligned.
     fn watch_input_box(&self) {
         if self.0.field.borrow().is_some() {
             return;
@@ -330,10 +340,11 @@ impl NumberInput {
         }
     }
 
-    /// 入力欄の表示を値として確定する。読めない表示は元の値へ戻す。
+    /// Confirms the field's text as the value. Unreadable text is reverted to the
+    /// previous value.
     ///
-    /// 入力欄が見つかっていなければ、値は `NumberBox` が自分で確定させるので
-    /// 何もしない。
+    /// If the input field has not been found, the `NumberBox` confirms the value
+    /// itself, so nothing is done.
     fn commit_field(&self) {
         let Some(field) = self.0.field.borrow().clone() else {
             return;
@@ -346,14 +357,15 @@ impl NumberInput {
         self.accept(shown, true);
     }
 
-    /// 打っている途中の表示を数として読む。読めなければ `None`。
+    /// Reads the text typed so far as a number. `None` if it cannot be read.
     ///
-    /// 読み手は `NumberBox` が確定に使うものと同じ (`NumberFormatter` は
-    /// `INumberParser` でもある) にする。小数点や桁区切りは地域設定で変わる
-    /// ので、[`NumberSpec::parse`] (`.` しか読まない) で読むと、`1,5` のような
-    /// 表示が打っている間だけ読めず、確定して初めて通知が出ることになる。
+    /// The reader is the same one the `NumberBox` uses for confirmation (a
+    /// `NumberFormatter` is also an `INumberParser`). The decimal point and digit
+    /// grouping vary with regional settings, so reading with [`NumberSpec::parse`]
+    /// (which reads only `.`) would leave text like `1,5` unreadable only while typing,
+    /// with the notification coming out only on confirmation.
     ///
-    /// 読み手を取れないときだけ [`NumberSpec`] へ戻す。
+    /// Only when the reader cannot be obtained does it fall back to [`NumberSpec`].
     fn parse_shown(&self, text: &str) -> Option<f64> {
         let parser = self
             .0
@@ -367,15 +379,16 @@ impl NumberInput {
         parse_with(&parser, text)
     }
 
-    /// 表示がすでにその値のとおりなら、`NumberBox` へも渡しておく。
+    /// If the display already matches the value, passes it to the `NumberBox` too.
     ///
-    /// 増減ボタンを端で無効にするかどうかを決めるのは `NumberBox` が持っている
-    /// 値なので、渡しておかないと `1..=3` の欄に `3` と打った時点では上のボタン
-    /// が有効なままになる (押しても範囲の外へは出ない)。
+    /// Whether the step buttons are disabled at the ends is decided by the value the
+    /// `NumberBox` holds, so without passing it, typing `3` into a `1..=3` field would
+    /// leave the up button enabled (pressing it still does not leave the range).
     ///
-    /// 表示が変わってしまう場合 (`3.7` を小数 2 桁で見せているときなど) は渡さ
-    /// ない。打っている最中に表示を書き換えることになるためで、確定と増減の
-    /// ときは `NumberBox` が自分で表示を読むので困らない。
+    /// It is not passed when the display would change (when showing `3.7` with two
+    /// decimal places, for example), since that would rewrite the display mid-typing.
+    /// On confirmation and stepping, the `NumberBox` reads the display itself, so this
+    /// causes no trouble.
     fn sync_native_if_shown(&self, value: f64) {
         let Some(field) = self.0.field.borrow().clone() else {
             return;
@@ -394,19 +407,22 @@ impl NumberInput {
         self.write_native(value);
     }
 
-    /// 受け取り済みの値を `NumberBox` へ渡す。**表示はそのまま残す。**
+    /// Passes the value already received to the `NumberBox`. **The display is left as
+    /// is.**
     ///
-    /// 確定 (Enter・欄を離れる) の巻き戻し先も、増減 (`StepValue`) の基準も、
-    /// `NumberBox` が持っている値である。打っている間の値は naui だけが持って
-    /// いるので、表示が読めなくなった時点で渡しておかないと、`12` まで打って
-    /// から `12x` にしたときに巻き戻しも増減も古い値から始まってしまう。
+    /// Both the revert target on confirmation (Enter, leaving the field) and the base
+    /// for stepping (`StepValue`) are the value the `NumberBox` holds. Only naui holds
+    /// the value while typing, so unless it is passed once the display becomes
+    /// unreadable, typing `12` and then `12x` would start both reverting and stepping
+    /// from the old value.
     ///
-    /// 表示が読める間は渡さなくてよい。`NumberBox` は確定と増減のどちらでも
-    /// **先に表示を読んで値へ入れる** (`ValidateInput`) ので、読める表示なら
-    /// そこから同じ値にたどり着く。
+    /// While the display is readable it need not be passed: on both confirmation and
+    /// stepping, the `NumberBox` **first reads the display into its value**
+    /// (`ValidateInput`), so a readable display leads to the same value.
     ///
-    /// 値を渡すと `NumberBox` が `NumberFormatter` で表示を作り直してしまう
-    /// ので、打っている途中の表示 (`-` だけ、`12x`) と選択位置を書き戻す。
+    /// Passing a value makes the `NumberBox` rebuild the display with its
+    /// `NumberFormatter`, so the text typed so far (just `-`, or `12x`) and the
+    /// selection are written back.
     fn sync_native(&self) {
         let Some(field) = self.0.field.borrow().clone() else {
             // 入力欄が見つかっていないなら打鍵の経路も無く、値はずれない。
@@ -431,11 +447,12 @@ impl NumberInput {
         self.0.silent.set(previous);
     }
 
-    /// 決まりを差し替え、`NumberBox` と現在値へ反映する。
+    /// Replaces the rules and applies them to the `NumberBox` and the current value.
     ///
-    /// 範囲を書くと `NumberBox` は現在値を範囲の中へ寄せ、その `ValueChanged`
-    /// を出す。決まりの差し替えは**通知しない**約束なので、書いている間は
-    /// 止めておき、あとから naui 側の値をそろえ直す。
+    /// Writing the range makes the `NumberBox` clamp its current value into the range
+    /// and fire `ValueChanged` for it. Replacing the rules is promised **not to
+    /// notify**, so notifications are stopped while writing, and naui's value is
+    /// brought into line afterwards.
     fn update_spec(&self, edit: impl FnOnce(NumberSpec) -> NumberSpec) {
         self.0.spec.set(edit(self.0.spec.get()));
         let previous = self.0.silent.replace(true);
@@ -444,11 +461,12 @@ impl NumberInput {
         self.set_value(self.value());
     }
 
-    /// 範囲・刻み・小数桁を `NumberBox` へ書く。
+    /// Writes the range, step and decimal places to the `NumberBox`.
     ///
-    /// 下限を先に書くと、上限がまだ古いままなら `NumberBox` が上限を押し上げる
-    /// ことがあるが、続けて上限を書くので最後には指定どおりになる
-    /// (下限が上限より大きいときに上限が勝つのも [`NumberSpec`] と同じ)。
+    /// Writing the minimum first can make the `NumberBox` push up the maximum while it
+    /// is still old, but the maximum is written right after, so it ends up as specified
+    /// (the maximum winning when the minimum is larger is also the same as
+    /// [`NumberSpec`]).
     fn write_native_spec(&self) -> Result<()> {
         let spec = self.0.spec.get();
         self.0
@@ -474,7 +492,8 @@ impl NumberInput {
         Ok(())
     }
 
-    /// 画面に出ている値を受け取る。`commit` なら `NumberBox` へも書き戻す。
+    /// Receives the value on screen. With `commit`, writes it back to the `NumberBox`
+    /// too.
     fn accept(&self, shown: f64, commit: bool) {
         let accepted = self.0.spec.get().clamp(shown);
         if commit {
@@ -490,23 +509,25 @@ impl NumberInput {
         self.0.handler.emit(accepted);
     }
 
-    /// 値を `NumberBox` へ書く。この間の通知は無視する。
+    /// Writes the value to the `NumberBox`. Notifications during this are ignored.
     ///
-    /// 値が変われば `NumberBox` が `NumberFormatter` で表示を作り直す。
-    /// 変わらなかったときのために [`write_native_text`](Self::write_native_text)
-    /// を続けて呼ぶこと。
+    /// If the value changes, the `NumberBox` rebuilds the display with its
+    /// `NumberFormatter`. Call [`write_native_text`](Self::write_native_text) right
+    /// after, for the case where it does not change.
     fn write_native(&self, value: f64) {
         let previous = self.0.silent.replace(true);
         let _ = self.0.native.SetValue(value);
         self.0.silent.set(previous);
     }
 
-    /// 表示を値へそろえ直す。この間の通知は無視する。
+    /// Brings the display back in line with the value. Notifications during this are
+    /// ignored.
     ///
-    /// `NumberBox` が表示を作り直すのは**値が変わったとき**だけなので、値は
-    /// そのままで表示だけずれている場合 (`12` を受け取ったあとに `12x` へ
-    /// 書き換えて欄を離れたときなど) はここで直す。書式は `NumberBox` が
-    /// 使うものと同じにして、`NumberBox` が書いたときと同じ表示にする。
+    /// The `NumberBox` rebuilds the display only **when the value changes**, so cases
+    /// where the value is the same but only the display is off (receiving `12`, then
+    /// rewriting it to `12x` and leaving the field, for example) are fixed here. The
+    /// format is the same one the `NumberBox` uses, so the display is the same as if the
+    /// `NumberBox` had written it.
     fn write_native_text(&self, value: f64) {
         let Some(field) = self.0.field.borrow().clone() else {
             // 入力欄が見つかっていないなら打鍵の経路も無い。値と表示は
@@ -530,18 +551,21 @@ impl NumberInput {
     }
 }
 
-/// 小数桁ぶんを必ず書く書式。
+/// A format that always writes the full number of decimal places.
 ///
-/// 桁区切りは入れない。ほかの 3 バックエンド ([`NumberSpec::format`]・
-/// `GtkSpinButton`・`<input type="number">`) がどれも区切らないので、そこへ
-/// そろえる。小数点そのものは地域設定のままにする (`NumberBox` の既定と同じ)。
-/// 書式に付いている読み手で数を読む。読めなければ `None`。
+/// No digit grouping is added. The other three backends ([`NumberSpec::format`],
+/// `GtkSpinButton`, `<input type="number">`) all omit grouping, so this matches
+/// them. The decimal point itself follows the regional settings (the same as
+/// `NumberBox`'s default).
+/// Reads a number with the reader attached to the format. `None` if it cannot be
+/// read.
 ///
-/// **前後の空白は落としてから渡す。** `INumberParser` は空白が付いていると
-/// 読まないが、`NumberBox` は確定のときだけ落としてから読む
-/// (`ValidateInput`)。落とさずに渡すと、`" 12 "` を貼ったときだけ打っている
-/// 間は通知が出ず、確定して初めて出ることになる。[`NumberSpec::parse`] も
-/// 前後の空白を無視するので、そこへそろえる。
+/// **Leading and trailing whitespace is trimmed before passing it.**
+/// `INumberParser` does not read text with whitespace around it, but `NumberBox`
+/// trims it before reading only on confirmation (`ValidateInput`). Without
+/// trimming, pasting `" 12 "` alone would produce no notification while typing, only
+/// on confirmation. [`NumberSpec::parse`] also ignores surrounding whitespace, so
+/// this matches it.
 fn parse_with(parser: &INumberParser, text: &str) -> Option<f64> {
     parser
         .ParseDouble(&HSTRING::from(text.trim()))
@@ -568,9 +592,9 @@ fn formatter(decimals: u32) -> Result<DecimalFormatter> {
 mod tests {
     use super::*;
 
-    /// `DecimalFormatter` は OS の WinRT 型なので、Windows App SDK の
-    /// ランタイムが要らない。ネイティブのコントロールを作る統合テストと違い、
-    /// これは CI でもそのまま走る。
+    /// `DecimalFormatter` is an OS WinRT type, so the Windows App SDK runtime is not
+    /// needed. Unlike the integration tests that create native controls, this runs on CI
+    /// as is.
     fn parser() -> INumberParser {
         formatter(0)
             .expect("数の書式")
@@ -578,8 +602,8 @@ mod tests {
             .expect("書式は読み手でもある")
     }
 
-    /// 地域設定によって小数点も桁区切りも変わるので、どの地域でも同じに
-    /// 読める整数だけで見る。
+    /// The decimal point and digit grouping both vary with regional settings, so only
+    /// integers, which read the same in every region, are checked.
     #[test]
     fn the_parser_ignores_surrounding_whitespace() {
         let parser = parser();
@@ -589,8 +613,8 @@ mod tests {
         assert_eq!(parse_with(&parser, " -3 "), Some(-3.0));
     }
 
-    /// 打っている途中の、まだ数になっていない表示は読めないままにする
-    /// (確定を待つ)。
+    /// Text typed so far that is not yet a number stays unread (waiting for
+    /// confirmation).
     #[test]
     fn text_that_is_not_a_number_stays_unread() {
         let parser = parser();

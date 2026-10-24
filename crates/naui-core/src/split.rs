@@ -1,34 +1,35 @@
-//! 分割ビューの仕切りの位置。
+//! The position of a split view's divider.
 //!
-//! 位置は **start 側 (左または上) の大きさ**を論理ピクセルで表す。
-//! 実際に仕切りを動かすのは各バックエンドのネイティブなコントロール
-//! (`NSSplitView` / `GtkPaned` / WinUI の `Grid` / Flexbox) で、ここにあるのは
-//! 「どこまで動かしてよいか」を決める値と計算だけ。
+//! The position is **the size of the start side (left or top)** in logical pixels.
+//! The divider is actually moved by each backend's native control (`NSSplitView` /
+//! `GtkPaned` / WinUI's `Grid` / Flexbox); all that is here are the values and
+//! calculations deciding "how far it may move".
 
-/// 仕切りの初期位置 (start 側の大きさ、論理ピクセル)。
+/// The initial divider position (size of the start side, logical pixels).
 ///
-/// 作った直後の `SplitView` はこの位置で始まる。4 環境で同じ見え方になるよう、
-/// 環境ごとの既定 (中身の自然な大きさや等分) には任せず naui が決めている。
+/// A freshly created `SplitView` starts at this position. So that it looks the same
+/// on all four platforms, naui decides it instead of leaving it to each platform's
+/// default (the content's natural size or an even split).
 pub const DEFAULT_SPLIT_POSITION: f64 = 200.0;
 
-/// 仕切りの位置を、両側の最小の大きさに収める。
+/// Clamps the divider position to the minimum sizes of both sides.
 ///
-/// - `total` は**仕切りを除いた**、2 つの区画が分け合える大きさ。
-///   まだレイアウトされておらず分からないときは 0 以下を渡す
-///   (そのときは下限だけを見る)。
-/// - `min_start` / `min_end` は両側の最小の大きさ。
+/// - `total` is the size the two panes can share, **excluding the divider**. Pass 0
+///   or less when it is unknown because layout has not run yet (then only the lower
+///   bound is considered).
+/// - `min_start` / `min_end` are the minimum sizes of the two sides.
 ///
-/// 両方の最小を満たせないほど `total` が小さいときは **start 側の最小が勝つ**。
-/// 先に置いたもの (サイドバーなど) の形を保つほうが、両方が中途半端に潰れるより
-/// 分かりやすいため。
+/// When `total` is too small to satisfy both minimums, **the start side's minimum
+/// wins**. Keeping the shape of what was placed first (a sidebar, for example) is
+/// easier to understand than squashing both sides halfway.
 ///
 /// ```
 /// # use naui_core::clamp_split_position;
-/// // 100〜(400-120)=280 の範囲へ収まる。
+/// // Clamped to the range 100 to (400-120)=280.
 /// assert_eq!(clamp_split_position(50.0, 400.0, 100.0, 120.0), 100.0);
 /// assert_eq!(clamp_split_position(320.0, 400.0, 100.0, 120.0), 280.0);
 /// assert_eq!(clamp_split_position(200.0, 400.0, 100.0, 120.0), 200.0);
-/// // 全体が分からないときは下限だけを見る。
+/// // When the total is unknown, only the lower bound is considered.
 /// assert_eq!(clamp_split_position(50.0, 0.0, 100.0, 120.0), 100.0);
 /// ```
 pub fn clamp_split_position(position: f64, total: f64, min_start: f64, min_end: f64) -> f64 {

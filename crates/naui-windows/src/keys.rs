@@ -1,19 +1,20 @@
-//! `on_key_down` (文字入力のウィジェットと `Window`)。
+//! `on_key_down` (text-input widgets and `Window`).
 //!
-//! ウィンドウの根に `PreviewKeyDown` を 1 つ付ける。トンネル (根から葉へ)
-//! で届くので、キーが入力欄へ届く前に受け取れる。キーの出どころ
-//! (`OriginalSource`) から親へたどり、最初に見つかった登録済みのウィジェット、
-//! 続けてウィンドウの順に通知する。`Handled` なら `Handled` を立てるので、
-//! 入力欄 (改行の挿入など) にも届かない。
+//! One `PreviewKeyDown` is attached to the window's root. It is delivered by
+//! tunneling (root to leaf), so keys can be received before they reach the field.
+//! Walking up the parents from the key's source (`OriginalSource`), it notifies the
+//! first registered widget found, then the window. With `Handled`, `Handled` is set,
+//! so the key does not reach the field either (inserting a newline, for example).
 //!
-//! 修飾キーを単独で押したときは届けない (macOS と同じ)。
+//! Modifier keys pressed on their own are not delivered (the same as macOS).
 //!
-//! 変換中のキーは IME のものなので届けない。IME が処理するキーは
-//! `VK_PROCESSKEY` (229) で来るほか、`TextBox` の
-//! `TextCompositionStarted` / `TextCompositionEnded` の間も変換中とみなす。
+//! Keys during composition belong to the IME and are not delivered. Keys the IME
+//! processes arrive as `VK_PROCESSKEY` (229), and the span between a `TextBox`'s
+//! `TextCompositionStarted` / `TextCompositionEnded` is also treated as composing.
 //!
-//! 登録表は要素を弱参照で持つ。要素が解放されれば通知先も表から外れる。
-//! 終了の経路では [`release_handlers`] で通知先を手放す ([`Registry`] を参照)。
+//! The registry holds elements by weak reference. When an element is freed, its
+//! handler is removed from the table too. On the shutdown path, the handlers are
+//! released with [`release_handlers`] (see [`Registry`]).
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -33,20 +34,21 @@ use windows_core::{IUnknown, Interface, Weak};
 
 use crate::ui_thread::{Registry, UiThreadCell};
 
-/// IME が処理しているキー。`Windows.System.VirtualKey` には名前が無い。
+/// A key the IME is processing. `Windows.System.VirtualKey` has no name for it.
 const VK_PROCESSKEY: i32 = 229;
 
 type Entries = Registry<(Weak<UIElement>, Rc<KeyHandler>)>;
 
 thread_local! {
     static WIDGETS: Entries = const { Registry::new() };
-    /// 変換の始まりと終わりを購読済みの `TextBox`。
+    /// The `TextBox`es whose composition start and end are already subscribed.
     static WATCHED: RefCell<Vec<Weak<TextBox>>> = const { RefCell::new(Vec::new()) };
-    /// いま変換中の `TextBox`。
+    /// The `TextBox`es currently composing.
     static COMPOSING: RefCell<Vec<Weak<TextBox>>> = const { RefCell::new(Vec::new()) };
 }
 
-/// 同じ COM オブジェクトか (インターフェースが違っても `IUnknown` は同じ)。
+/// Whether they are the same COM object (`IUnknown` is the same even if the
+/// interfaces differ).
 pub(crate) fn same<A: Interface, B: Interface>(a: &A, b: &B) -> bool {
     match (a.cast::<IUnknown>(), b.cast::<IUnknown>()) {
         (Ok(a), Ok(b)) => a.as_raw() == b.as_raw(),
@@ -54,7 +56,7 @@ pub(crate) fn same<A: Interface, B: Interface>(a: &A, b: &B) -> bool {
     }
 }
 
-/// ウィジェットの要素へ通知先を置く。呼ぶたびに置き換わる。
+/// Sets the handler on the widget's element. Each call replaces it.
 pub(crate) fn set_widget_handler(
     element: &UIElement,
     f: impl FnMut(&KeyEvent) -> EventResponse + 'static,
@@ -78,7 +80,7 @@ pub(crate) fn set_widget_handler(
     });
 }
 
-/// 通知先をすべて手放す。終了の経路で、XAML の後片づけより前に呼ぶ。
+/// Releases every handler. Called on the shutdown path, before XAML's cleanup.
 pub(crate) fn release_handlers() {
     // 借用の外で捨てる。
     drop(WIDGETS.with(Registry::take));
@@ -94,7 +96,7 @@ fn lookup(object: &DependencyObject) -> Option<Rc<KeyHandler>> {
     })
 }
 
-/// ウィンドウの根にキーの受け口を付ける。`window` はウィンドウの通知先。
+/// Attaches the key receiver to the window's root. `window` is the window's handler.
 pub(crate) fn install(root: &UIElement, window: Rc<KeyHandler>) -> windows_core::Result<()> {
     // 押しっぱなしの繰り返しを見分けるため、押されているキーを覚える。
     let pressed = Arc::new(UiThreadCell::new(HashSet::<i32>::new()));
@@ -130,7 +132,7 @@ pub(crate) fn install(root: &UIElement, window: Rc<KeyHandler>) -> windows_core:
     Ok(())
 }
 
-/// キーの出どころ → ウィンドウの順に渡す。
+/// Passes it to the key's source, then the window.
 fn dispatch(
     args: &KeyRoutedEventArgs,
     key: VirtualKey,
@@ -165,16 +167,17 @@ fn dispatch(
     window.emit(&event)
 }
 
-/// 入力欄で Enter が押されたら `f` を呼ぶ (要素の `PreviewKeyDown`)。
+/// Calls `f` when Enter is pressed in a field (the element's `PreviewKeyDown`).
 ///
-/// `TextBox` / `PasswordBox` には確定だけを知らせるイベントが無いので、
-/// キーから拾う。コントロールが自分でキーを処理して `Handled` を立てても
-/// 取りこぼさないよう、コントロールより先に届くトンネルのほうで受ける。
-/// `on_key_down` が `Handled` を返したキーは、さらに先に届くウィンドウの根の
-/// `PreviewKeyDown` で `Handled` が立つので、ここへは来ない。変換を確定する
-/// Enter (`VK_PROCESSKEY` で来るもの、`TextBox` の変換中のもの) も数えない。
+/// `TextBox` / `PasswordBox` have no event that reports only confirmation, so it is
+/// picked up from keys. So as not to miss it when the control handles the key
+/// itself and sets `Handled`, it is received on the tunneling side, which arrives
+/// before the control. Keys for which `on_key_down` returned `Handled` have
+/// `Handled` set in the window root's `PreviewKeyDown`, which arrives even earlier,
+/// so they never reach here. Enters that confirm a conversion (those arriving as
+/// `VK_PROCESSKEY`, or during a `TextBox`'s composition) do not count either.
 ///
-/// `f` は要素のデリゲートに残り続けるので、ウィジェットは弱参照で持つこと。
+/// `f` stays in the element's delegate, so hold the widget by weak reference.
 pub(crate) fn on_enter(element: &UIElement, f: impl FnMut() + 'static) -> windows_core::Result<()> {
     let f = UiThreadCell::new(f);
     let handler = KeyEventHandler::new(move |_, args| {
@@ -198,7 +201,7 @@ pub(crate) fn on_enter(element: &UIElement, f: impl FnMut() + 'static) -> window
     Ok(())
 }
 
-/// `TextBox` の変換の始まりと終わりを覚える。
+/// Remembers when a `TextBox`'s composition starts and ends.
 fn watch_composition(text_box: &TextBox) {
     let already = WATCHED.with(|watched| {
         let mut watched = watched.borrow_mut();
@@ -268,12 +271,12 @@ pub(crate) fn modifiers() -> Modifiers {
     }
 }
 
-/// ⇧・Ctrl・Alt・Windows キー (左右の区別があるものも含む)。
+/// ⇧, Ctrl, Alt and the Windows key (including left/right variants).
 fn is_modifier(code: i32) -> bool {
     matches!(code, 16..=18 | 91 | 92 | 160..=165)
 }
 
-/// 仮想キーを naui のキーへ写す。
+/// Maps a virtual key to a naui key.
 fn key_of(key: VirtualKey) -> Key {
     let code = key.0;
     match code {
@@ -299,7 +302,8 @@ fn key_of(key: VirtualKey) -> Key {
     }
 }
 
-/// 記号のキー (VK_OEM_*) は、いまのキー配列で ⇧ を押さないときの文字で読む。
+/// Symbol keys (VK_OEM_*) are read as the character they give without ⇧ in the
+/// current keyboard layout.
 fn character_of(code: i32) -> Key {
     use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, MAPVK_VK_TO_CHAR};
     let Ok(code) = u32::try_from(code) else {
@@ -312,14 +316,14 @@ fn character_of(code: i32) -> Key {
         .map_or(Key::Other, Key::character)
 }
 
-/// 文字入力のウィジェットへ `on_key_down` を足す。
+/// Adds `on_key_down` to text-input widgets.
 macro_rules! impl_key_down {
     ($t:ty) => {
         impl $t {
-            /// キーが押されたときの通知。`Handled` を返すと、そのキーは
-            /// 入力欄にもウィンドウにも渡らない (改行や確定を止められる)。
+            /// Notified when a key is pressed. Returning `Handled` keeps the key from reaching
+            /// the field and the window (so you can stop newlines or confirmation).
             ///
-            /// IME で変換している間のキーは届かない。
+            /// Keys pressed while an IME is composing are not delivered.
             pub fn on_key_down(
                 &self,
                 f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,

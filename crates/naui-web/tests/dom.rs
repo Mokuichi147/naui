@@ -1,19 +1,20 @@
-//! ブラウザの実 DOM に対する動作確認。
+//! Behavior checks against the browser's real DOM.
 //!
-//! DOM のイベント (`click` / `input` / `change`) を**実際に起こして**、Rust の
-//! クロージャへ届くこと・ブラウザ側の状態が変わることを確かめる。大きさや
-//! 位置は `getBoundingClientRect` の結果で測る。
+//! DOM events (`click` / `input` / `change`) are **actually fired** to check that
+//! they reach Rust closures and that the browser-side state changes. Sizes and
+//! positions are measured with the results of `getBoundingClientRect`.
 //!
-//! Web バックエンドはウィジェットを自前で描かず、ブラウザの挙動 (ラベルを
-//! 押すとチェックが入る、同じ `name` のラジオは自動で排他になる、Flexbox が
-//! 子を並べる) にそのまま乗っている。そこはブラウザの上でしか確かめられない
-//! ので、`wasm_bindgen_test_configure!(run_in_browser)` で実ブラウザへ載せる。
+//! The Web backend does not draw widgets itself; it relies directly on browser
+//! behavior (clicking a label checks the box, radios with the same `name` are
+//! automatically exclusive, Flexbox lays out children). That can only be verified
+//! in a browser, so `wasm_bindgen_test_configure!(run_in_browser)` puts the tests in
+//! a real browser.
 //!
 //!   cargo test --target wasm32-unknown-unknown -p naui-web
 //!
-//! ドライバ (chromedriver / geckodriver) が要る。手元に無いときは
-//! `NO_HEADLESS=1` を付けると、ランナーが待ち受ける URL を
-//! 表示するので、任意のブラウザで開けば同じテストが走る。
+//! A driver (chromedriver / geckodriver) is required. If you do not have one
+//! locally, setting `NO_HEADLESS=1` makes the runner print the URL it is listening
+//! on, and opening it in any browser runs the same tests.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -40,17 +41,18 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 // ------------------------------------------------------------- 補助
 
-/// ウィジェットを作って調べる。組み立てに失敗したらテストを落とす。
+/// Creates widgets and inspects them. Fails the test if building fails.
 fn with_ui(build: impl FnOnce(&Ui) -> Result<()>) {
     run_for_test(build).expect("テスト用の UI を組み立てられませんでした");
 }
 
-/// `<body>` へ載せている間だけ生きるガード。
+/// A guard that lives only while placed in `<body>`.
 ///
-/// ドキュメントに載っていない要素は、ブラウザがレイアウトせず、
-/// `getComputedStyle` も空を返し、`click()` を呼んでも `change` が飛ばない
-/// (`checked` だけが変わる)。位置・算出スタイル・通知を見るテストは、
-/// 実際のアプリと同じようにページへ載せてから確かめる。
+/// Browsers do not lay out elements that are not in the document,
+/// `getComputedStyle` returns empty values for them, and calling `click()` does not
+/// fire `change` (only `checked` changes). Tests that look at positions, computed
+/// styles and notifications place the element on the page first, just as a real
+/// app does.
 struct Mounted(Element);
 
 impl Mounted {
@@ -58,7 +60,7 @@ impl Mounted {
         Self::new_element(&widget.native_element())
     }
 
-    /// [`Widget`] ではないもの (メニューバーなど) を載せる。
+    /// Places something that is not a [`Widget`] (a menu bar, for example).
     fn new_element(element: &Element) -> Self {
         body().append_child(element).expect("body への追加");
         Self(element.clone())
@@ -78,14 +80,15 @@ fn body() -> HtmlElement {
         .expect("body")
 }
 
-/// ブラウザ側で起きるのと同じイベントを起こす。
+/// Fires the same event the browser would.
 fn dispatch(target: &EventTarget, kind: &str) {
     let event = web_sys::Event::new(kind).expect("イベントの生成");
     target.dispatch_event(&event).expect("イベントの配送");
 }
 
-/// Escape の `keydown` を起こす。**戻り値は既定動作を止められたか**
-/// (`dispatchEvent` は `preventDefault()` されると `false` を返す)。
+/// Fires an Escape `keydown`. **The return value is whether the default action was
+/// prevented** (`dispatchEvent` returns `false` when `preventDefault()` was
+/// called).
 fn press_escape(target: &EventTarget, composing: bool) -> bool {
     let init = KeyboardEventInit::new();
     init.set_key("Escape");
@@ -97,7 +100,8 @@ fn press_escape(target: &EventTarget, composing: bool) -> bool {
     !target.dispatch_event(&event).expect("イベントの配送")
 }
 
-/// ショートカットの `keydown` を起こす。**戻り値は既定動作を止められたか**。
+/// Fires a shortcut `keydown`. **The return value is whether the default action was
+/// prevented.**
 fn press_shortcut(target: &EventTarget, key: &str, ctrl: bool, shift: bool, alt: bool) -> bool {
     let init = KeyboardEventInit::new();
     init.set_key(key);
@@ -111,7 +115,7 @@ fn press_shortcut(target: &EventTarget, key: &str, ctrl: bool, shift: bool, alt:
     !target.dispatch_event(&event).expect("イベントの配送")
 }
 
-/// 算出後のスタイル (ブラウザが解釈した結果)。
+/// The computed style (the result as interpreted by the browser).
 fn computed(element: &Element, property: &str) -> String {
     web_sys::window()
         .expect("window")
@@ -122,7 +126,7 @@ fn computed(element: &Element, property: &str) -> String {
         .expect("プロパティの取得")
 }
 
-/// 要素の内側にある最初の `<input>`。
+/// The first `<input>` inside the element.
 fn first_input(element: &Element) -> HtmlInputElement {
     element
         .query_selector("input")
@@ -131,8 +135,8 @@ fn first_input(element: &Element) -> HtmlInputElement {
         .unchecked_into()
 }
 
-/// 次の描画まで待つ。`ResizeObserver` はレイアウトの後に呼ばれるので、
-/// 2 フレーム待てば届いている。
+/// Waits for the next paint. `ResizeObserver` is called after layout, so it has
+/// arrived after waiting two frames.
 async fn next_frames() {
     for _ in 0..2 {
         let promise = js_sys::Promise::new(&mut |resolve, _reject| {
@@ -560,9 +564,10 @@ fn color_picker_round_trips() {
 
 // ------------------------------------------------------------- Canvas
 
-/// 描画面は `<canvas>` で、`on_draw` が記録した命令を 2D コンテキストで塗る。
-/// 裏の画素数は CSS の大きさ × `devicePixelRatio` にそろえ、座標は CSS
-/// ピクセルのまま渡せる。画素は `getImageData` で読む。
+/// The drawing surface is a `<canvas>`, and the commands recorded by `on_draw` are
+/// painted with the 2D context. The backing pixel count matches the CSS size ×
+/// `devicePixelRatio`, and coordinates can be passed in CSS pixels as is. Pixels are
+/// read with `getImageData`.
 #[wasm_bindgen_test]
 fn canvas_paints_recorded_commands() {
     with_ui(|ui| {
@@ -629,7 +634,8 @@ fn canvas_paints_recorded_commands() {
     });
 }
 
-/// ポインターの押下・移動・解放が、面の左上を原点にした位置で届く。
+/// Pointer presses, moves and releases arrive with positions relative to the
+/// surface's top left.
 #[wasm_bindgen_test]
 fn canvas_reports_pointer_events() {
     with_ui(|ui| {
@@ -722,8 +728,8 @@ fn canvas_reports_pointer_events() {
     });
 }
 
-/// ホイールは `deltaMode` をそろえて論理ピクセルで届き、`Handled` のときだけ
-/// ページのスクロールを止める。`on_pointer` には届かない。
+/// The wheel arrives in logical pixels with `deltaMode` normalized, and stops page
+/// scrolling only for `Handled`. It does not reach `on_pointer`.
 #[wasm_bindgen_test]
 fn canvas_reports_wheel() {
     with_ui(|ui| {
@@ -988,10 +994,11 @@ fn label_wraps_only_when_asked() {
     });
 }
 
-/// `set_style` / `set_color` が、実際に描かれる文字の大きさと色を変える。
+/// `set_style` / `set_color` change the size and color of the text actually drawn.
 ///
-/// Web にだけ見出しの段階が無いので、naui が CSS で他の 3 環境へそろえている。
-/// 指定した値ではなく、ブラウザが解決したあとの値を見る。
+/// Only the Web has no heading levels, so naui matches the other three platforms
+/// with CSS. This looks at the values after the browser has resolved them, not at
+/// the specified values.
 #[wasm_bindgen_test]
 fn label_style_and_color_change_the_rendered_text() {
     with_ui(|ui| {
@@ -1122,7 +1129,7 @@ fn label_text_round_trips() {
 
 // ------------------------------------------------------ Stack / Grid / Tabs
 
-/// `<div>` に並んだ子のテキストを、並び順で取り出す。
+/// Takes out the text of the children laid out in a `<div>`, in order.
 fn child_texts(widget: &dyn Widget) -> Vec<String> {
     let element = widget.native_element();
     let children = element.children();
@@ -1132,7 +1139,7 @@ fn child_texts(widget: &dyn Widget) -> Vec<String> {
         .collect()
 }
 
-/// `Stack` は後から子を差し込み、外し、空にできる。
+/// A `Stack` can insert, remove and clear children later.
 #[wasm_bindgen_test]
 fn stack_inserts_and_removes_children() {
     with_ui(|ui| {
@@ -1173,7 +1180,7 @@ fn stack_inserts_and_removes_children() {
     });
 }
 
-/// `Grid` はマスを指定して子を外せる。
+/// A `Grid` can remove children by cell.
 #[wasm_bindgen_test]
 fn grid_removes_children_by_cell() {
     with_ui(|ui| {
@@ -1206,7 +1213,8 @@ fn grid_removes_children_by_cell() {
     });
 }
 
-/// タブを外しても、残ったタブを押したときのインデックスがずれない。
+/// Removing tabs does not shift the indices reported when the remaining tabs are
+/// clicked.
 #[wasm_bindgen_test]
 fn tabs_remove_and_clear() {
     with_ui(|ui| {
@@ -1263,11 +1271,12 @@ fn tabs_remove_and_clear() {
 
 // ---------------------------------------------------------------- List
 
-/// `ListItem::detail` は 2 行目に小さく淡く出る。
+/// `ListItem::detail` appears small and dim on a second line.
 ///
-/// 行の中身は naui の `Stack` と `Label` で組むので、小ささと淡さを決めるのは
-/// [`TextStyle::Caption`] と [`TextColor::Secondary`] のほう。ここでは、
-/// ブラウザが解決したあとの値でそれが効いていることを見る。
+/// Row contents are built from naui's `Stack` and `Label`, so their smallness and
+/// dimness are decided by [`TextStyle::Caption`] and [`TextColor::Secondary`]. This
+/// checks, with the values after the browser has resolved them, that those take
+/// effect.
 #[wasm_bindgen_test]
 fn list_detail_makes_a_second_line() {
     with_ui(|ui| {
@@ -1331,8 +1340,8 @@ fn list_detail_makes_a_second_line() {
     });
 }
 
-/// マウスのイベント (`dblclick` / `contextmenu`) を、要素の中央で起こす。
-/// **戻り値は既定動作を止められたか**。
+/// Fires a mouse event (`dblclick` / `contextmenu`) at the element's center. **The
+/// return value is whether the default action was prevented.**
 fn mouse_at_center(target: &Element, kind: &str, button: i16) -> bool {
     let rect = target.get_bounding_client_rect();
     mouse_at(
@@ -1344,7 +1353,8 @@ fn mouse_at_center(target: &Element, kind: &str, button: i16) -> bool {
     )
 }
 
-/// マウスのイベントを、表示領域の `(x, y)` で起こす。**戻り値は既定動作を止められたか**。
+/// Fires a mouse event at viewport `(x, y)`. **The return value is whether the
+/// default action was prevented.**
 fn mouse_at(target: &Element, kind: &str, button: i16, x: f64, y: f64) -> bool {
     let init = MouseEventInit::new();
     init.set_bubbles(true);
@@ -1357,7 +1367,7 @@ fn mouse_at(target: &Element, kind: &str, button: i16, x: f64, y: f64) -> bool {
     !target.dispatch_event(&event).expect("イベントの配送")
 }
 
-/// `target` の中央を、`list` の左上からの座標で表したもの。
+/// `target`'s center, in coordinates from `list`'s top left.
 fn center_within(list: &Element, target: &Element) -> (f64, f64) {
     let outer = list.get_bounding_client_rect();
     let rect = target.get_bounding_client_rect();
@@ -1367,7 +1377,7 @@ fn center_within(list: &Element, target: &Element) -> (f64, f64) {
     )
 }
 
-/// Enter の `keydown` を起こす。
+/// Fires an Enter `keydown`.
 fn press_enter(target: &EventTarget, composing: bool) {
     let init = KeyboardEventInit::new();
     init.set_key("Enter");
@@ -1379,8 +1389,9 @@ fn press_enter(target: &EventTarget, composing: bool) {
     target.dispatch_event(&event).expect("イベントの配送");
 }
 
-/// 文字だけの行 (`<select size>`) で、ダブルクリックと Enter が行の起動になり、
-/// 右クリックが行と位置を渡す。選べない行では呼ばれない。
+/// With text-only rows (`<select size>`), double-clicks and Enter become row
+/// activations, and right-clicks pass the row and position. Not called for rows
+/// that cannot be selected.
 #[wasm_bindgen_test]
 fn list_select_row_activate_and_context_menu() {
     with_ui(|ui| {
@@ -1453,8 +1464,8 @@ fn list_select_row_activate_and_context_menu() {
     });
 }
 
-/// 合成の一覧 (`<ul role="listbox">`) でも同じに届き、行内のコントロールの上の
-/// ダブルクリックは行の起動にしない。
+/// The composed list (`<ul role="listbox">`) receives them the same way, and
+/// double-clicks over a control inside a row do not activate the row.
 #[wasm_bindgen_test]
 fn list_listbox_row_activate_and_context_menu() {
     with_ui(|ui| {
@@ -1536,10 +1547,12 @@ fn list_listbox_row_activate_and_context_menu() {
     });
 }
 
-/// 行の文字は行の幅いっぱいに広がり、あふれた分は省略記号で切られる。
+/// A row's text spreads to the full width of the row, and overflow is cut off with
+/// an ellipsis.
 ///
-/// `Label` は既定で `nowrap` + `ellipsis` だが、**幅が決まらないと切れない**。
-/// 内容の幅のままだと、長いラベルが行から横へはみ出す。
+/// `Label` is `nowrap` + `ellipsis` by default, but **it cannot be cut without a
+/// decided width**. At the content's width, a long label would stick out of the row
+/// horizontally.
 #[wasm_bindgen_test]
 fn list_long_text_stays_inside_the_row() {
     with_ui(|ui| {
@@ -1570,10 +1583,10 @@ fn list_long_text_stays_inside_the_row() {
     });
 }
 
-/// `Ui` は clone できるので、コールバックの中からでもウィジェットを作れる。
+/// `Ui` can be cloned, so widgets can be created even inside callbacks.
 ///
-/// 押されたときに 1 行増やす画面では、通知の中で行の中身を組み立てて
-/// `set_rows` へ渡すことになる。
+/// A screen that adds a row on each click builds the row's content inside the
+/// notification and passes it to `set_rows`.
 #[wasm_bindgen_test]
 fn ui_clone_builds_rows_from_a_callback() {
     with_ui(|ui| {
@@ -1625,7 +1638,7 @@ fn ui_clone_builds_rows_from_a_callback() {
 
 // ------------------------------------------------------------- Table
 
-/// 表の `<tbody>` にある、詰め物ではない行。
+/// The rows in the table's `<tbody>` that are not spacers.
 fn table_rows(table: &dyn Widget) -> Vec<HtmlElement> {
     let body = table
         .native_element()
@@ -1641,7 +1654,7 @@ fn table_rows(table: &dyn Widget) -> Vec<HtmlElement> {
         .collect()
 }
 
-/// 行のインデックス (`aria-rowindex` は見出しの分だけずれている)。
+/// The row's index (`aria-rowindex` is offset by the headings).
 fn table_row_index(row: &HtmlElement) -> usize {
     row.get_attribute("aria-rowindex")
         .expect("aria-rowindex")
@@ -1650,8 +1663,8 @@ fn table_row_index(row: &HtmlElement) -> usize {
         - 2
 }
 
-/// 行数が多い表では、`<tr>` を作るのは画面に出ている分だけになる。
-/// それでもスクロールできる高さは全行分あり、スクロールすると中身が入れ替わる。
+/// In a table with many rows, `<tr>`s are created only for the rows on screen. The
+/// scrollable height still covers all rows, and scrolling swaps the contents.
 #[wasm_bindgen_test]
 fn table_builds_only_the_visible_rows() {
     with_ui(|ui| {
@@ -1726,8 +1739,8 @@ fn table_builds_only_the_visible_rows() {
     });
 }
 
-/// 窓の外にある行を選んでも、選択は覚えられていて、
-/// スクロールで戻ってきたときに選ばれた見た目になる。
+/// Even when a row outside the window is selected, the selection is remembered, and
+/// the row looks selected when scrolled back into view.
 #[wasm_bindgen_test]
 fn table_keeps_the_selection_outside_the_window() {
     with_ui(|ui| {
@@ -1771,10 +1784,10 @@ fn table_keeps_the_selection_outside_the_window() {
     });
 }
 
-/// 行が多い表でも、見出しを押した並べ替えはそのまま働く。
+/// Even in a table with many rows, sorting by clicking a heading still works.
 ///
-/// 並べ替えるのはアプリなので、通知を受けて `set_rows` で渡し直したものが、
-/// 画面に出ている行へ反映されることまで確かめる。
+/// Sorting is the app's job, so this checks that what is passed again with
+/// `set_rows` after the notification is reflected in the rows on screen.
 #[wasm_bindgen_test]
 fn table_sorting_works_while_windowed() {
     with_ui(|ui| {
@@ -1856,12 +1869,13 @@ fn table_sorting_works_while_windowed() {
     });
 }
 
-/// 見出しはスクロールしても残り、行の中身が透けない。
+/// The headings stay when scrolling, and the rows' contents do not show through.
 ///
-/// 枠を重ねる (`border-collapse: collapse`) と、枠を描くのがセルではなく表に
-/// なるので、留めた見出しに枠が付いてこない。ブラウザによっては地色ごと
-/// 描かれず、行が透けて見える。行の中のボタンや入力欄は自分で重なりの層を
-/// 作るので、見出しにも層 (`z-index`) が要る。
+/// With collapsed borders (`border-collapse: collapse`), the table rather than the
+/// cells draws the borders, so the borders do not follow sticky headings. Some
+/// browsers do not draw the background either, letting the rows show through.
+/// Buttons and fields in rows create their own stacking layers, so the headings need
+/// a layer (`z-index`) too.
 #[wasm_bindgen_test]
 fn table_header_stays_above_the_rows() {
     with_ui(|ui| {
@@ -1929,7 +1943,8 @@ fn table_header_stays_above_the_rows() {
     });
 }
 
-/// 組み立てる行でも、選べるかどうかを行を作らずに答えられる。
+/// Even with built rows, whether a row can be selected is answered without creating
+/// it.
 #[wasm_bindgen_test]
 fn table_row_selectable_answers_without_building() {
     with_ui(|ui| {
@@ -1977,8 +1992,8 @@ fn table_row_selectable_answers_without_building() {
     });
 }
 
-/// 組み立てる行 (`TableCells`) でも、行数が多いときは見えている分だけを作り、
-/// 見出しの並べ替えもそのまま働く。
+/// Even with built rows (`TableCells`), only the visible rows are created when
+/// there are many, and sorting by heading still works.
 #[wasm_bindgen_test]
 fn table_builder_rows_scale_and_sort() {
     with_ui(|ui| {
@@ -2066,8 +2081,8 @@ fn table_builder_rows_scale_and_sort() {
     });
 }
 
-/// セルにウィジェットを置ける。行のクリックは activation になり、
-/// セルの中のボタンを押したときは行の activation にはならない。
+/// Widgets can be placed in cells. Clicking a row becomes an activation, and
+/// clicking a button in a cell does not become the row's activation.
 #[wasm_bindgen_test]
 fn table_widget_cells_separate_the_row_and_its_controls() {
     with_ui(|ui| {
@@ -2153,7 +2168,7 @@ fn table_widget_cells_separate_the_row_and_its_controls() {
     });
 }
 
-/// 行の高さを決めると、その高さで詰め物も引き直される。
+/// Fixing the row height redraws the spacers at that height too.
 #[wasm_bindgen_test]
 fn table_row_height_can_be_fixed() {
     with_ui(|ui| {
@@ -2446,7 +2461,7 @@ fn menu_bar_shortcuts_reach_the_closure() {
     });
 }
 
-/// ショートカットは、ウィンドウへ取り付けて画面に出ている間だけ効く。
+/// Shortcuts work only while the menu bar is attached to a window that is on screen.
 #[wasm_bindgen_test]
 fn menu_bar_shortcuts_follow_the_attachment() {
     with_ui(|ui| {
@@ -2497,8 +2512,8 @@ fn menu_bar_shortcuts_follow_the_attachment() {
     });
 }
 
-/// 隠れたウィンドウや別のウィンドウのメニューバーは、Escape の既定動作を
-/// 止めない (開いたメニューを閉じる相手ではないため)。
+/// Menu bars of hidden windows or other windows do not prevent Escape's default
+/// action (they are not the ones whose open menu should close).
 #[wasm_bindgen_test]
 fn menu_bar_escape_is_left_alone_when_it_is_not_ours() {
     with_ui(|ui| {
@@ -2544,7 +2559,7 @@ fn menu_bar_escape_is_left_alone_when_it_is_not_ours() {
     });
 }
 
-/// 同じショートカットを持つウィンドウが 2 つあっても、1 回だけ通知する。
+/// Even with two windows having the same shortcut, it notifies only once.
 #[wasm_bindgen_test]
 fn menu_bar_shortcuts_reach_only_one_window() {
     with_ui(|ui| {
@@ -2723,7 +2738,7 @@ fn checkbox_is_a_label_around_a_native_input() {
 
 // --------------------------------------------------------- Breadcrumbs
 
-/// パンくずの `<a>` を並び順で取り出す。
+/// Takes out the breadcrumbs' `<a>`s in order.
 fn crumb_links(nav: &Element) -> Vec<HtmlElement> {
     let links = nav.query_selector_all("a").expect("a の検索");
     (0..links.length())
@@ -2732,8 +2747,9 @@ fn crumb_links(nav: &Element) -> Vec<HtmlElement> {
         .collect()
 }
 
-/// 祖先だけがリンク (`href`) で、現在地と選べない項目は普通の文字になる。
-/// 区切りは `›` で、項目の文字は HTML として解釈しない。
+/// Only ancestors are links (`href`); the current position and items that cannot be
+/// selected are plain text. The separator is `›`, and item text is not interpreted
+/// as HTML.
 #[wasm_bindgen_test]
 fn breadcrumbs_link_only_the_ancestors() {
     with_ui(|ui| {
@@ -2768,8 +2784,9 @@ fn breadcrumbs_link_only_the_ancestors() {
     });
 }
 
-/// 祖先を押すと通知され、現在地と選べない項目を押しても通知されない。
-/// 現在地が移っても、各項目の幅は変わらない (太字にしない)。
+/// Clicking an ancestor notifies; clicking the current position or an item that
+/// cannot be selected does not. Even when the current position moves, each item's
+/// width does not change (it is not made bold).
 #[wasm_bindgen_test]
 fn breadcrumbs_click_moves_the_current_place() {
     with_ui(|ui| {
@@ -2828,7 +2845,7 @@ fn sidebar_fixture() -> Vec<SidebarSection> {
     ]
 }
 
-/// サイドバーの項目のボタン (通し番号の順)。
+/// The sidebar's item buttons (in running-number order).
 fn sidebar_buttons(aside: &Element) -> Vec<HtmlElement> {
     let found = aside
         .query_selector_all("li > button")
@@ -3241,7 +3258,7 @@ fn sidebar_divider_resizes_and_notifies() {
 
 // ------------------------------------------------------------- Scroll
 
-/// 縦に長い中身を載せた、高さ 100 のスクロール。
+/// A scroll view 100 high holding tall content.
 fn tall_scroll(ui: &Ui, rows: usize) -> Result<(naui_web::Scroll, naui_web::Stack)> {
     let pane = ui.stack(Orientation::Vertical)?;
     for i in 0..rows {
@@ -3282,7 +3299,7 @@ fn scroll_measures_and_moves() {
     });
 }
 
-/// チャットのように「足してから末尾へ」を続けて呼ぶ。
+/// Calls "append, then scroll to the end", as in a chat, back to back.
 #[wasm_bindgen_test]
 fn scroll_to_end_after_appending() {
     with_ui(|ui| {
@@ -3304,7 +3321,8 @@ fn scroll_to_end_after_appending() {
     });
 }
 
-/// 文書に載る前に頼んだ末尾送りは、載って大きさが付いた時点で効く。
+/// A scroll-to-end requested before being placed in the document takes effect once
+/// it is placed and has a size.
 #[wasm_bindgen_test]
 async fn scroll_to_end_before_mounted() {
     let mut kept = None;
@@ -3455,7 +3473,8 @@ fn tooltip_becomes_the_title() {
 
 // ------------------------------------------------------------- on_key_down
 
-/// `keydown` を起こす。**戻り値は既定動作を止められたか**。
+/// Fires a `keydown`. **The return value is whether the default action was
+/// prevented.**
 fn key_down(target: &EventTarget, key: &str, shift: bool, composing: bool, key_code: u32) -> bool {
     let init = KeyboardEventInit::new();
     init.set_key(key);
@@ -3469,7 +3488,7 @@ fn key_down(target: &EventTarget, key: &str, shift: bool, composing: bool, key_c
     !target.dispatch_event(&event).expect("イベントの配送")
 }
 
-/// フォーカスの出入りは、持ち主のウィジェットが変わったときだけ届く。
+/// Focus entering and leaving arrives only when the owning widget changes.
 #[wasm_bindgen_test]
 fn focus_change_follows_the_owner() {
     with_ui(|ui| {
@@ -3523,8 +3542,9 @@ fn focus_change_follows_the_owner() {
     });
 }
 
-/// 出たときの検証でフォーカスを戻す。`focus()` は同期で次の `focusin` を
-/// 出すので、文書の購読が入れ子で呼ばれても通知が欠けない。
+/// Focus is moved back during validation on leaving. `focus()` synchronously fires
+/// the next `focusin`, so even when the document subscription is called
+/// re-entrantly, no notification is lost.
 #[wasm_bindgen_test]
 fn focus_change_may_move_the_focus_back() {
     with_ui(|ui| {
@@ -3580,7 +3600,8 @@ fn focus_change_may_move_the_focus_back() {
     });
 }
 
-/// 捨てた欄の通知先も要素も、登録表に残らない。
+/// Neither the handler nor the element of a discarded field remains in the
+/// registry.
 #[wasm_bindgen_test]
 fn focus_change_entry_is_freed_with_the_widget() {
     with_ui(|ui| {
@@ -3632,7 +3653,7 @@ fn focus_change_entry_is_freed_with_the_widget() {
     });
 }
 
-/// チャットの入力欄のように、Shift なしの Enter だけを送信に使う。
+/// Uses only Enter without Shift for sending, as in a chat input.
 #[wasm_bindgen_test]
 fn text_area_key_down_can_take_enter() {
     with_ui(|ui| {
@@ -3680,7 +3701,8 @@ fn text_area_key_down_can_take_enter() {
     });
 }
 
-/// `Handled` を返すと、naui 自身の Enter の扱い (検索の確定) も起きない。
+/// Returning `Handled` also prevents naui's own Enter handling (confirming the
+/// search).
 #[wasm_bindgen_test]
 fn handled_key_stops_the_search() {
     with_ui(|ui| {
@@ -3712,8 +3734,8 @@ fn handled_key_stops_the_search() {
     });
 }
 
-/// 1 行入力とパスワード入力は Enter で確定を知らせる。変換を確定する Enter と、
-/// 読み取り専用の間は数えない。
+/// Single-line input and password input report confirmation on Enter. Enters that
+/// confirm a conversion, and those while read-only, do not count.
 #[wasm_bindgen_test]
 fn text_inputs_submit_on_enter() {
     with_ui(|ui| {
@@ -3752,7 +3774,7 @@ fn text_inputs_submit_on_enter() {
     });
 }
 
-/// `Handled` を返すと、Enter の確定も起きない。
+/// Returning `Handled` also prevents Enter's confirmation.
 #[wasm_bindgen_test]
 fn handled_key_stops_the_submit() {
     with_ui(|ui| {
@@ -3771,7 +3793,8 @@ fn handled_key_stops_the_submit() {
     });
 }
 
-/// 数値入力の Enter は、打ちかけの表示を値へ読み込んでから知らせる。
+/// Enter in number input reads what has been typed into the value first, then
+/// reports it.
 #[wasm_bindgen_test]
 fn number_input_commits_before_submitting() {
     with_ui(|ui| {
@@ -3805,7 +3828,7 @@ fn number_input_commits_before_submitting() {
     });
 }
 
-/// ウィジェットが `Continue` を返したキーだけがウィンドウへ届く。
+/// Only keys for which the widget returned `Continue` reach the window.
 #[wasm_bindgen_test]
 fn window_key_down_gets_what_the_widget_left() {
     with_ui(|ui| {
@@ -3844,7 +3867,7 @@ fn window_key_down_gets_what_the_widget_left() {
 
 // ------------------------------------------------- アプリ向けの基本機能
 
-/// `millis` だけ待つ (ブラウザの `setTimeout`)。
+/// Waits `millis` (the browser's `setTimeout`).
 async fn wait_millis(millis: i32) {
     let promise = js_sys::Promise::new(&mut |resolve, _reject| {
         web_sys::window()
@@ -3933,8 +3956,8 @@ fn label_is_not_selectable_until_asked() {
     });
 }
 
-/// ブラウザは利用者の操作の外ではクリップボードを読ませないことがあるので、
-/// 読むほうは「必ず後からコールバックが呼ばれる」ことだけを確かめる。
+/// Browsers may not allow reading the clipboard outside a user action, so for
+/// reading this only checks that "the callback is always called later".
 #[wasm_bindgen_test]
 async fn clipboard_read_calls_back_later() {
     let mut kept = None;
@@ -3958,8 +3981,8 @@ async fn clipboard_read_calls_back_later() {
     assert!(called.get(), "読めなくてもコールバックは呼ばれる");
 }
 
-/// 書き込みを断られたら `Err` が届く。手元で走らせたときに利用者の
-/// クリップボードを消さないよう、`writeText` を断る偽物へ差し替えて確かめる。
+/// When writing is refused, `Err` arrives. So as not to wipe the user's clipboard
+/// when run locally, `writeText` is replaced with a fake that refuses.
 #[wasm_bindgen_test]
 async fn clipboard_write_reports_a_refusal() {
     let mut kept = None;
@@ -4029,16 +4052,16 @@ async fn window_reports_its_size() {
     window.close();
 }
 
-/// Web のウィンドウは位置を持たず、状態は全画面だけ。
+/// Web windows have no position, and the only state is fullscreen.
 ///
-/// ふつうのブラウザは利用者の操作の中でしか全画面を許さないので、テストからの
-/// `set_state(Fullscreen)` は断られ、状態は変わらない。自動操作のブラウザには
-/// 許すものもある (Playwright の WebKit) ので、許されたときは往復と通知を
-/// 確かめる。どちらでも例外にはならない。
+/// Ordinary browsers allow fullscreen only inside a user action, so
+/// `set_state(Fullscreen)` from a test is refused and the state does not change.
+/// Some automated browsers allow it (Playwright's WebKit), in which case the round
+/// trip and notification are checked. Neither case throws.
 ///
-/// Playwright の WebKit が許すのは**ページごとに最初の 1 回だけ**で、2 回目
-/// からは断る。全画面へ入るのはこのテストの 1 回にまとめ、入る途中に別の
-/// 状態を頼んだときの後始末もその 1 回で確かめる。
+/// Playwright's WebKit allows it **only the first time per page** and refuses from
+/// the second on. So entering fullscreen is done once in this test, and the cleanup
+/// when another state is requested while entering is checked in that same once.
 #[wasm_bindgen_test]
 async fn window_state_is_only_fullscreen() {
     let mut kept = None;
@@ -4124,7 +4147,8 @@ async fn window_state_is_only_fullscreen() {
     window.close();
 }
 
-/// 条件が満たされるまでフレームを進める (2 フレームずつ 30 回で打ち切る)。
+/// Advances frames until the condition is met (giving up after 30 rounds of two
+/// frames).
 async fn frames_until(mut ready: impl FnMut() -> bool) {
     for _ in 0..30 {
         if ready() {
@@ -4134,8 +4158,9 @@ async fn frames_until(mut ready: impl FnMut() -> bool) {
     }
 }
 
-/// `ui.window` と `set_size` の大きさは、ほかの環境と同じくメニューバーと
-/// ツールバーの行を除いた中身の大きさ。行の分はウィンドウ要素の高さに足す。
+/// The size given to `ui.window` and `set_size` is the content size excluding the
+/// menu bar and toolbar rows, as on the other platforms. The rows are added to the
+/// window element's height.
 #[wasm_bindgen_test]
 async fn window_size_excludes_the_menu_bar() {
     let mut kept = None;
@@ -4207,7 +4232,7 @@ fn accessible_label_read_only_and_min_size() {
     });
 }
 
-/// ウィンドウの要素のインラインの style。
+/// The window element's inline style.
 fn window_element_style(window: &naui_web::Window) -> String {
     window
         .native_element()
@@ -4217,7 +4242,7 @@ fn window_element_style(window: &naui_web::Window) -> String {
 
 // ------------------------------------------------------------- 行へ送る
 
-/// `row` が `container` の見えている範囲に入っているか。
+/// Whether `row` is within `container`'s visible range.
 fn is_within(container: &Element, row: &Element) -> bool {
     let view = container.get_bounding_client_rect();
     let rect = row.get_bounding_client_rect();

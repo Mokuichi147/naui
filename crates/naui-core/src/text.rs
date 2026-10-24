@@ -1,25 +1,27 @@
-//! 文字づかい (大きさの段階と、色の役割)。
+//! Typography (size levels and color roles).
 //!
-//! 4 環境とも「本文を基準にした見出しの段階」と「意味を表す文字色」を
-//! 標準で持っている。naui は**段階と役割だけ**を受け取り、その環境の標準へ
-//! 写す ([`crate::ToolbarIcon`] と同じ決まり)。級数と色そのものは OS が
-//! 決めるので、文字を大きくする設定・アクセントカラー・ライト / ダークの
-//! 切り替えにそのまま追従する。
+//! All four platforms come with "heading levels relative to body text" and "text
+//! colors that carry meaning" as standard. naui takes **only the level and the
+//! role** and maps them to the platform's standard (the same rule as
+//! [`crate::ToolbarIcon`]). The OS decides the point sizes and the colors
+//! themselves, so text follows larger-text settings, the accent color and
+//! light / dark switching as is.
 
-/// 文字の大きさと太さの段階。既定は [`TextStyle::Body`]。
+/// Levels of text size and weight. The default is [`TextStyle::Body`].
 ///
-/// | 段階 | macOS | Windows | Linux | Web |
+/// | Level | macOS | Windows | Linux | Web |
 /// | --- | --- | --- | --- | --- |
 /// | `LargeTitle` | `NSFontTextStyleLargeTitle` | `TitleLargeTextBlockStyle` | `.title-1` | `2em` / 700 |
 /// | `Title` | `NSFontTextStyleTitle1` | `TitleTextBlockStyle` | `.title-2` | `1.5em` / 700 |
 /// | `Subtitle` | `NSFontTextStyleTitle3` | `SubtitleTextBlockStyle` | `.title-3` | `1.25em` / 600 |
 /// | `Heading` | `NSFontTextStyleHeadline` | `BodyStrongTextBlockStyle` | `.heading` | `1em` / 700 |
-/// | `Body` | `NSFontTextStyleBody` | `BodyTextBlockStyle` | (既定) | (既定) |
+/// | `Body` | `NSFontTextStyleBody` | `BodyTextBlockStyle` | (default) | (default) |
 /// | `Caption` | `NSFontTextStyleSubheadline` | `CaptionTextBlockStyle` | `.caption` | `0.85em` |
 ///
-/// **Web だけは標準の段階が無い**ので、naui が CSS の相対値で他の 3 環境へ
-/// そろえている (ラベルの折り返しと同じ扱い)。相対値なので、ブラウザや
-/// ユーザーが決めた基準の文字サイズには追従する。
+/// **Only the Web has no standard levels**, so naui matches the other three
+/// platforms with relative CSS values (the same treatment as label wrapping).
+/// Because they are relative, they follow the base font size set by the browser or
+/// the user.
 ///
 /// ```
 /// # use naui_core::TextStyle;
@@ -29,23 +31,23 @@
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextStyle {
-    /// 画面の顔になる、いちばん大きい見出し。
+    /// The largest heading, the face of the screen.
     LargeTitle,
-    /// 章の見出し。
+    /// A chapter heading.
     Title,
-    /// 節の見出し。
+    /// A section heading.
     Subtitle,
-    /// 本文と同じ大きさの、太い見出し。
+    /// A bold heading at body size.
     Heading,
-    /// 本文 (既定)。
+    /// Body text (default).
     #[default]
     Body,
-    /// 補足や注釈のための、小さい文字。
+    /// Small text for notes and annotations.
     Caption,
 }
 
 impl TextStyle {
-    /// すべての段階。対応表の網羅を確かめるために使う。
+    /// Every level. Used to check that the mapping tables are exhaustive.
     pub const ALL: [TextStyle; 6] = [
         TextStyle::LargeTitle,
         TextStyle::Title,
@@ -55,9 +57,9 @@ impl TextStyle {
         TextStyle::Caption,
     ];
 
-    /// Linux (GTK4 / libadwaita) が使うスタイルクラス。
+    /// The style class used on Linux (GTK4 / libadwaita).
     ///
-    /// [`TextStyle::Body`] はクラスを付けない (ウィジェットの既定がそれ)。
+    /// [`TextStyle::Body`] gets no class (it is the widget's default).
     pub fn style_class(self) -> Option<&'static str> {
         match self {
             TextStyle::LargeTitle => Some("title-1"),
@@ -69,7 +71,7 @@ impl TextStyle {
         }
     }
 
-    /// Windows (WinUI 3) の type ramp が持つ `Style` の `x:Key`。
+    /// The `x:Key` of the `Style` in Windows (WinUI 3)'s type ramp.
     pub fn xaml_style_key(self) -> &'static str {
         match self {
             TextStyle::LargeTitle => "TitleLargeTextBlockStyle",
@@ -81,9 +83,9 @@ impl TextStyle {
         }
     }
 
-    /// Web で使う `font-size`。本文は指定しない (`None`)。
+    /// The `font-size` used on the Web. Not set for body text (`None`).
     ///
-    /// 基準の文字サイズはブラウザとユーザーが決めるので、値は相対で持つ。
+    /// The browser and the user decide the base font size, so values are relative.
     pub fn css_font_size(self) -> Option<&'static str> {
         match self {
             TextStyle::LargeTitle => Some("2em"),
@@ -95,7 +97,7 @@ impl TextStyle {
         }
     }
 
-    /// Web で使う `font-weight`。太さを変えないものは `None`。
+    /// The `font-weight` used on the Web. `None` for levels that do not change weight.
     pub fn css_font_weight(self) -> Option<&'static str> {
         match self {
             TextStyle::LargeTitle => Some("700"),
@@ -108,20 +110,20 @@ impl TextStyle {
     }
 }
 
-/// 文字色の役割。既定は [`TextColor::Default`]。
+/// Text color roles. The default is [`TextColor::Default`].
 ///
-/// | 役割 | macOS | Windows | Linux | Web |
+/// | Role | macOS | Windows | Linux | Web |
 /// | --- | --- | --- | --- | --- |
-/// | `Default` | `labelColor` | (既定) | (既定) | (既定) |
+/// | `Default` | `labelColor` | (default) | (default) | (default) |
 /// | `Secondary` | `secondaryLabelColor` | `TextFillColorSecondaryBrush` | `.dim-label` | `GrayText` |
 /// | `Accent` | `controlAccentColor` | `AccentTextFillColorPrimaryBrush` | `.accent` | `AccentColor` |
-/// | `Success` | `systemGreenColor` | `SystemFillColorSuccessBrush` | `.success` | naui が決める |
-/// | `Warning` | `systemOrangeColor` | `SystemFillColorCautionBrush` | `.warning` | naui が決める |
-/// | `Danger` | `systemRedColor` | `SystemFillColorCriticalBrush` | `.error` | naui が決める |
+/// | `Success` | `systemGreenColor` | `SystemFillColorSuccessBrush` | `.success` | chosen by naui |
+/// | `Warning` | `systemOrangeColor` | `SystemFillColorCautionBrush` | `.warning` | chosen by naui |
+/// | `Danger` | `systemRedColor` | `SystemFillColorCriticalBrush` | `.error` | chosen by naui |
 ///
-/// ネイティブの 3 環境は、どれも OS が持つ色をそのまま引く。**Web だけは
-/// 成功・注意・危険にあたるシステム色がブラウザに無い**ので、そこだけ naui が
-/// `light-dark()` で決めている (それ以外の役割は CSS のシステム色を使う)。
+/// All three native platforms take the OS's colors directly. **Only on the Web do
+/// browsers lack system colors for success, warning and danger**, so naui decides
+/// just those with `light-dark()` (the other roles use CSS system colors).
 ///
 /// ```
 /// # use naui_core::TextColor;
@@ -131,23 +133,23 @@ impl TextStyle {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextColor {
-    /// 本文の色 (既定)。
+    /// The body text color (default).
     #[default]
     Default,
-    /// 補足や添え書きのための、淡い色。
+    /// A dim color for notes and supplementary text.
     Secondary,
-    /// OS のアクセントカラー。
+    /// The OS accent color.
     Accent,
-    /// 成功や完了を表す色。
+    /// A color for success or completion.
     Success,
-    /// 注意を促す色。
+    /// A color that calls for attention.
     Warning,
-    /// 失敗や危険を表す色。
+    /// A color for failure or danger.
     Danger,
 }
 
 impl TextColor {
-    /// すべての役割。対応表の網羅を確かめるために使う。
+    /// Every role. Used to check that the mapping tables are exhaustive.
     pub const ALL: [TextColor; 6] = [
         TextColor::Default,
         TextColor::Secondary,
@@ -157,9 +159,9 @@ impl TextColor {
         TextColor::Danger,
     ];
 
-    /// Linux (GTK4 / libadwaita) が使うスタイルクラス。
+    /// The style class used on Linux (GTK4 / libadwaita).
     ///
-    /// [`TextColor::Default`] はクラスを付けない (ウィジェットの既定がそれ)。
+    /// [`TextColor::Default`] gets no class (it is the widget's default).
     pub fn style_class(self) -> Option<&'static str> {
         match self {
             TextColor::Default => None,
@@ -171,10 +173,10 @@ impl TextColor {
         }
     }
 
-    /// Windows (WinUI 3) のテーマリソースが持つ `Brush` の `x:Key`。
+    /// The `x:Key` of the `Brush` in Windows (WinUI 3)'s theme resources.
     ///
-    /// [`TextColor::Default`] は `None`。type ramp の `Style` が決める色
-    /// (`TextFillColorPrimaryBrush`) をそのまま使う。
+    /// `None` for [`TextColor::Default`], which uses the color decided by the type
+    /// ramp's `Style` (`TextFillColorPrimaryBrush`) as is.
     pub fn xaml_brush_key(self) -> Option<&'static str> {
         match self {
             TextColor::Default => None,
@@ -186,12 +188,12 @@ impl TextColor {
         }
     }
 
-    /// Web で使う `color`。本文は指定しない (`None`)。
+    /// The `color` used on the Web. Not set for body text (`None`).
     ///
-    /// `GrayText` と `AccentColor` は CSS のシステム色なので、ブラウザと OS の
-    /// 設定に追従する。残りの 3 つはシステム色が無いため naui が決めた値で、
-    /// `light-dark()` で明暗それぞれに合う色を出す (`color-scheme` は
-    /// naui がテーマとして `html` へ書いている)。
+    /// `GrayText` and `AccentColor` are CSS system colors, so they follow the browser
+    /// and OS settings. The other three have no system colors, so they are values
+    /// chosen by naui, using `light-dark()` to give a suitable color for light and dark
+    /// (naui writes `color-scheme` onto `html` as the theme).
     pub fn css_color(self) -> Option<&'static str> {
         match self {
             TextColor::Default => None,
@@ -221,8 +223,8 @@ mod tests {
         );
     }
 
-    /// 段階ごとに違う写し先へ行く。同じキーへ 2 つの段階が落ちると、
-    /// 見出しの階層がその環境だけ潰れる。
+    /// Each level maps to a distinct target. If two levels land on the same key, the
+    /// heading hierarchy collapses on that platform only.
     #[test]
     fn styles_map_to_distinct_targets() {
         let classes: HashSet<_> = TextStyle::ALL.iter().map(|s| s.style_class()).collect();
@@ -231,8 +233,8 @@ mod tests {
         assert_eq!(keys.len(), TextStyle::ALL.len());
     }
 
-    /// 色も同じ。ただし Web の `Heading` は太さだけで大きさを変えないので、
-    /// `css_font_size` は本文と重なってよい。
+    /// The same for colors. On the Web, however, `Heading` changes only the weight and
+    /// not the size, so its `css_font_size` may coincide with body text.
     #[test]
     fn colors_map_to_distinct_targets() {
         let classes: HashSet<_> = TextColor::ALL.iter().map(|c| c.style_class()).collect();
@@ -243,8 +245,8 @@ mod tests {
         assert_eq!(colors.len(), TextColor::ALL.len());
     }
 
-    /// 既定の段階と役割だけが「指定なし」になる。ここが崩れると、
-    /// 何も指定していないラベルにまでクラスや色が付く。
+    /// Only the default level and role are "unset". If this breaks, labels with nothing
+    /// specified would get classes or colors too.
     #[test]
     fn only_the_defaults_are_unset() {
         for style in TextStyle::ALL {
@@ -273,8 +275,8 @@ mod tests {
         }
     }
 
-    /// Web の大きさは相対値で持つ。絶対値 (px) を書くと、ブラウザや
-    /// ユーザーが決めた基準の文字サイズに追従しなくなる。
+    /// Web sizes are relative. Absolute values (px) would stop following the base font
+    /// size set by the browser or the user.
     #[test]
     fn css_font_sizes_are_relative() {
         for style in TextStyle::ALL {

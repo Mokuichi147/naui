@@ -1,9 +1,10 @@
-//! クリップボードの文字の読み書き。
+//! Reading and writing text on the clipboard.
 //!
-//! 読むほうは環境によって非同期 (GTK4・WinRT・ブラウザ)、書くほうもブラウザでは
-//! 非同期なので、4 環境とも読み書きの結果をコールバックで返す。コールバックは
-//! UI スレッドで、`read_text` / `set_text` から戻った後に呼ばれる (同期で済む
-//! 環境でもその場では呼ばない)。
+//! Reading is asynchronous on some platforms (GTK4, WinRT, browsers), and writing
+//! is asynchronous in browsers too, so on all four platforms the result of reading
+//! and writing is returned through a callback. The callback is called on the UI
+//! thread after `read_text` / `set_text` has returned (it is not called on the spot
+//! even on platforms where it could be synchronous).
 
 use naui_core::{Result, Tasks};
 use windows::ApplicationModel::DataTransfer::{
@@ -13,8 +14,8 @@ use windows_core::HSTRING;
 
 use crate::to_error;
 
-/// クリップボード (`Windows.ApplicationModel.DataTransfer.Clipboard`)。
-/// [`Ui::clipboard`](crate::Ui::clipboard) で取る。
+/// The clipboard (`Windows.ApplicationModel.DataTransfer.Clipboard`). Get it with
+/// [`Ui::clipboard`](crate::Ui::clipboard).
 #[derive(Clone)]
 pub struct Clipboard {
     tasks: Tasks,
@@ -25,15 +26,17 @@ impl Clipboard {
         Self { tasks }
     }
 
-    /// 文字を書き込む。前の中身は消える。書き込めたかどうかを `f` へ渡す。
+    /// Writes text, replacing the previous contents. Whether it was written is passed
+    /// to `f`.
     ///
-    /// アプリを閉じた後も残るよう、書き込んだらすぐ `Flush` する。
+    /// It is `Flush`ed right after writing so that it remains even after the app
+    /// closes.
     pub fn set_text(&self, text: &str, f: impl FnOnce(Result<()>) + 'static) {
         let result = write(text);
         self.tasks.spawn(async move { f(result) });
     }
 
-    /// 文字を読む。文字が入っていなければ `None` を渡す。
+    /// Reads text. Passes `None` if the clipboard holds no text.
     pub fn read_text(&self, f: impl FnOnce(Option<String>) + 'static) {
         self.tasks.spawn(async move {
             f(read().await);

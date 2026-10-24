@@ -1,14 +1,14 @@
-//! テーブル (AppKit)。
+//! Tables (AppKit).
 //!
-//! `NSTableView` を複数列で使い、`NSScrollView` に載せている。リスト
-//! ([`crate::List`]) と同じコントロールだが、こちらは列ごとに
-//! `NSTableColumn` を作り、`NSTableHeaderView` で見出しを出す。
-//! 列幅の調整・行の描画・スクロール・⌘ / Shift を使った複数選択・
-//! キーボード操作はすべて AppKit が行う。
+//! A multi-column `NSTableView` placed in an `NSScrollView`. It is the same control
+//! as lists ([`crate::List`]), but here an `NSTableColumn` is created per column and
+//! headings are shown with an `NSTableHeaderView`. Column width adjustment, row
+//! drawing, scrolling, multiple selection with ⌘ / Shift and keyboard navigation are
+//! all done by AppKit.
 //!
-//! naui が足しているのは「セルの文字列を返す」「選べない行を教える」
-//! 「選択が変わったら Rust のクロージャへ渡す」の 3 つだけで、
-//! そのためのデータソース兼デリゲートを 1 クラス定義している。
+//! naui adds only three things — "return the cell's string", "report rows that
+//! cannot be selected" and "pass selection changes to Rust closures" — and defines
+//! one data source + delegate class for them.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -34,26 +34,29 @@ use crate::list::{selected_indices, ActivationHandler, SelectionHandler};
 use crate::trampoline::ActionTarget;
 use crate::widgets::Widget;
 
-/// 列の識別子の頭。うしろに列のインデックスを付ける。
+/// The prefix of column identifiers. The column index is appended.
 const COLUMN_ID_PREFIX: &str = "naui.table.column.";
-/// セルの左右に取る余白。
+/// The padding left and right of a cell.
 const CELL_PADDING: f64 = 4.0;
-/// 文字の上下に取る余白。行の高さは「ラベルの高さ + これ × 2」。
+/// The padding above and below the text. The row height is "the label's height +
+/// twice this".
 const ROW_SPACING: f64 = 5.0;
-/// 幅を指定しない列に与える最小幅。これより狭くはできない。
+/// The minimum width given to columns without a width. They cannot be narrower than
+/// this.
 const MIN_COLUMN_WIDTH: f64 = 40.0;
 
-/// 識別子から列のインデックスを取り出す。
+/// Extracts the column index from the identifier.
 fn column_index(column: Option<&NSTableColumn>) -> Option<usize> {
     let column = column?;
     let identifier = column.identifier().to_string();
     identifier.strip_prefix(COLUMN_ID_PREFIX)?.parse().ok()
 }
 
-/// 並べ替えが変わったことの通知先。
+/// The handler notified when the sort changes.
 ///
-/// 呼び出しの間だけクロージャを取り出すので、コールバックの中から
-/// 同じ表を操作しても二重借用にならない ([`SelectionHandler`] と同じ形)。
+/// The closure is taken out only for the duration of the call, so operating on the
+/// same table from inside the callback does not double-borrow (the same shape as
+/// [`SelectionHandler`]).
 #[derive(Clone, Default)]
 struct SortHandler(Rc<RefCell<Option<Box<dyn FnMut(usize, SortOrder)>>>>);
 
@@ -74,10 +77,10 @@ impl SortHandler {
     }
 }
 
-/// セル 1 つ分の中身。
+/// The content of one cell.
 ///
-/// 文字だけの行 ([`TableRow`]) も、組み立てた行 ([`TableCells`]) も、
-/// 表示のときはここへそろえる。
+/// Both text-only rows ([`TableRow`]) and built rows ([`TableCells`]) are
+/// normalized into this for display.
 enum CellContent {
     Text(String),
     Widget(Box<dyn Widget>),
@@ -92,24 +95,25 @@ impl Clone for CellContent {
     }
 }
 
-/// 表へ載せる 1 行の中身。
+/// The contents of one row to put in a table.
 ///
-/// [`TableRow`] は文字列だけで済む表向けの簡便 API であり、セルにボタンや
-/// チェックボックス、アイコンを置きたいときは `Grid` / `Stack` で中身を
-/// 作ってこの型へ並べる。行は [`Table::set_row_builder`] から返す。
+/// [`TableRow`] is a convenience API for tables that need only strings. To put
+/// buttons, check boxes or icons in cells, build the contents with `Grid` / `Stack`
+/// and line them up in this type. Rows are returned from
+/// [`Table::set_row_builder`].
 ///
 /// ```no_run
 /// # use naui_macos::{TableCells, Widget};
 /// # fn row(button: &dyn Widget) {
-/// let cells = TableCells::new().text("東京").cell(button).selectable(false);
-/// cells.on_activate(|| println!("行がクリックされました"));
+/// let cells = TableCells::new().text("Tokyo").cell(button).selectable(false);
+/// cells.on_activate(|| println!("row clicked"));
 /// # let _ = cells;
 /// # }
 /// ```
 pub struct TableCells {
     cells: Vec<CellContent>,
     selectable: bool,
-    /// 文字だけの行で `enabled` が `false` のとき。文字を淡くする。
+    /// For text-only rows whose `enabled` is `false`. Dims the text.
     dimmed: bool,
     activation: ActivationHandler,
 }
@@ -132,7 +136,7 @@ impl Default for TableCells {
 }
 
 impl TableCells {
-    /// セルが 1 つも無い行を作る。
+    /// Creates a row with no cells.
     pub fn new() -> Self {
         Self {
             cells: Vec::new(),
@@ -142,24 +146,25 @@ impl TableCells {
         }
     }
 
-    /// 文字のセルを 1 つ足す。揃えは列の指定に従う。
+    /// Adds one text cell. Alignment follows the column's setting.
     pub fn text(mut self, text: impl Into<String>) -> Self {
         self.cells.push(CellContent::Text(text.into()));
         self
     }
 
-    /// ウィジェットのセルを 1 つ足す。
+    /// Adds one widget cell.
     ///
-    /// 列の [`TableColumn::align`] は、セルを列の中のどこへ置くかに使う
-    /// ([`Align::Fill`] は列いっぱいに広げる)。
+    /// The column's [`TableColumn::align`] is used to decide where in the column the
+    /// cell is placed ([`Align::Fill`] stretches it to fill the column).
     pub fn cell(mut self, content: &dyn Widget) -> Self {
         self.cells.push(CellContent::Widget(content.boxed_clone()));
         self
     }
 
-    /// 行全体を選択できるようにするかどうか (既定はできる)。
+    /// Whether the whole row can be selected (it can by default).
     ///
-    /// 行内のボタンやチェックボックスだけを操作する行では `false` にする。
+    /// Set to `false` for rows where only the buttons or check boxes inside are
+    /// operated.
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
         self
@@ -169,7 +174,7 @@ impl TableCells {
         self.selectable
     }
 
-    /// 列数。
+    /// The number of columns.
     pub fn len(&self) -> usize {
         self.cells.len()
     }
@@ -178,16 +183,17 @@ impl TableCells {
         self.cells.is_empty()
     }
 
-    /// 行のセルや余白がクリックされたときに呼ぶ処理。
+    /// What to do when a cell or empty space in the row is clicked.
     ///
-    /// ボタン・チェックボックス・入力欄を直接押した場合は呼ばれないため、
-    /// 行の処理と中のコントロールの処理が二重に起きない ([`crate::ListRow`]
-    /// と同じ切り分け)。
+    /// It is not called when a button, check box or text field is clicked directly, so
+    /// the row's action and the inner control's action do not both fire (the same
+    /// division as [`crate::ListRow`]).
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.activation.set(f);
     }
 
-    /// 文字だけの行から作る。`enabled` はそのまま「選べるか」になる。
+    /// Creates one from a text-only row. `enabled` becomes "whether it can be
+    /// selected" as is.
     fn from_row(row: &TableRow) -> Self {
         Self {
             cells: row.cells.iter().cloned().map(CellContent::Text).collect(),
@@ -202,20 +208,22 @@ impl TableCells {
     }
 }
 
-/// 行を組み立てるクロージャ。
+/// The closure that builds rows.
 ///
-/// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
-/// 二重借用にならない ([`SelectionHandler`] と同じ形)。
-/// 行を組み立てるクロージャの置き場。
+/// It is taken out only for the duration of the call, so operating on the table
+/// from inside the build does not double-borrow (the same shape as
+/// [`SelectionHandler`]).
+/// The slot for the closure that builds rows.
 type RowBuildCell = Rc<RefCell<Option<Box<dyn FnMut(usize) -> Result<TableCells>>>>>;
 
-/// 「その行は選べるか」を答える関数の置き場 ([`Table::set_row_selectable`])。
+/// The slot for the function answering "can this row be selected?"
+/// ([`Table::set_row_selectable`]).
 type RowSelectableCell = RefCell<Option<Rc<dyn Fn(usize) -> bool>>>;
 
-/// 行を組み立てるクロージャ。
+/// The closure that builds rows.
 ///
-/// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
-/// 二重借用にならない。
+/// It is taken out only for the duration of the call, so operating on the table
+/// from inside the build does not double-borrow.
 #[derive(Clone, Default)]
 struct RowBuilder(RowBuildCell);
 
@@ -243,18 +251,19 @@ impl RowBuilder {
     }
 }
 
-/// 行の出どころ。文字だけの行 ([`Table::set_rows`]) と、
-/// 見えたときに組み立てる行 ([`Table::set_row_builder`]) の 2 通り。
+/// Where rows come from: either text-only rows ([`Table::set_rows`]) or rows built
+/// when they become visible ([`Table::set_row_builder`]).
 ///
-/// `NSTableView` は見えている行の分しか
-/// `tableView:viewForTableColumn:row:` を呼ばないので、行数がいくら多くても
-/// 組み立てるのは画面に出ている分だけになる。組み立てた行は、画面から
-/// 外れるまで覚えておく (同じ行の別の列を作るときに使い回すため)。
+/// `NSTableView` calls `tableView:viewForTableColumn:row:` only for visible rows,
+/// so however many rows there are, only those on screen are built. Built rows are
+/// remembered until they leave the screen (to reuse them when building other columns
+/// of the same row).
 #[derive(Default)]
 struct RowsState {
     rows: RefCell<Vec<TableRow>>,
     builder: RowBuilder,
-    /// 行を組み立てずに「選べるか」を答える関数 ([`Table::set_row_selectable`])。
+    /// The function that answers "can it be selected?" without building the row
+    /// ([`Table::set_row_selectable`]).
     selectable: RowSelectableCell,
     count: Cell<usize>,
     built: RefCell<HashMap<usize, TableCells>>,
@@ -279,12 +288,12 @@ impl RowsState {
         self.count.set(count);
     }
 
-    /// 組み立て済みの行を捨てる。次に見えたときに作り直される。
+    /// Discards the built rows. They are rebuilt the next time they become visible.
     fn forget_built(&self) {
         self.built.borrow_mut().clear();
     }
 
-    /// その行の中身。無ければ `None`。
+    /// The contents of that row. `None` if there is none.
     fn cells(&self, index: usize) -> Option<TableCells> {
         if index >= self.count.get() {
             return None;
@@ -305,19 +314,19 @@ impl RowsState {
         *self.selectable.borrow_mut() = Some(Rc::new(f));
     }
 
-    /// 行を組み立てずに答えられるなら、その行が選べるか。
+    /// Whether the row can be selected, if that can be answered without building it.
     ///
-    /// 呼び出しの間は借用を持たない (この中からアプリが表を触れるため)。
+    /// No borrow is held during the call (the app may touch the table from inside it).
     fn selectable_hint(&self, index: usize) -> Option<bool> {
         let f = self.selectable.borrow().clone()?;
         Some(f(index))
     }
 
-    /// その行を選べるか。
+    /// Whether the row can be selected.
     ///
-    /// 組み立てる行では、[`Table::set_row_selectable`] を渡していなければ
-    /// まだ作っていない行を「選べる」とみなす (作ってみないと分からないため)。
-    /// 画面に出た行はそのときの指定に従う。
+    /// For built rows, unless [`Table::set_row_selectable`] has been given, rows not
+    /// yet built are assumed "selectable" (it cannot be known without building them).
+    /// Rows that have appeared on screen follow their setting at that time.
     fn is_selectable(&self, index: usize) -> bool {
         if index >= self.count.get() {
             return false;
@@ -335,7 +344,7 @@ impl RowsState {
             .unwrap_or(true)
     }
 
-    /// その行のクリック処理。
+    /// The row's click handler.
     fn activation(&self, index: usize) -> Option<ActivationHandler> {
         self.built
             .borrow()
@@ -343,7 +352,7 @@ impl RowsState {
             .map(|cells| cells.activation.clone())
     }
 
-    /// 画面から外れた 1 行を忘れる。組み立てた行が際限なく溜まらないようにする。
+    /// Forgets a row that left the screen, so built rows do not pile up without limit.
     fn forget_row(&self, index: usize) {
         if !self.builder.is_set() {
             return;
@@ -352,7 +361,7 @@ impl RowsState {
     }
 }
 
-/// テーブルが持つ並べ替えの指定を、列と向きとして読む。
+/// Reads the table's sort setting as a column and direction.
 fn sort_from(table: &NSTableView) -> Option<(usize, SortOrder)> {
     let descriptor = table.sortDescriptors().firstObject()?;
     let key = descriptor.key()?.to_string();
@@ -366,12 +375,13 @@ fn sort_from(table: &NSTableView) -> Option<(usize, SortOrder)> {
     ))
 }
 
-/// 幅を指定していない列へ、余った幅を均等に配る。
+/// Distributes the leftover width evenly to the columns without a width.
 ///
-/// AppKit の `columnAutoresizingStyle` は**幅を固定した列があると配りきれない**。
-/// 比率で広げようとして、`minWidth == maxWidth` の列は動かせず、その分が
-/// 余ったままになる (表の右側が空く)。表の幅は naui が決めているので、
-/// 配り方もこちらで決める。
+/// AppKit's `columnAutoresizingStyle` **cannot distribute everything when some
+/// columns have a fixed width**. It tries to grow them proportionally, but columns
+/// with `minWidth == maxWidth` cannot move, and their share is left over (leaving
+/// blank space on the right of the table). naui decides the table's width, so it
+/// decides the distribution too.
 fn distribute_widths(table: &NSTableView, columns: &[TableColumn]) {
     let available = table.frame().size.width;
     if available <= 0.0 {
@@ -405,7 +415,7 @@ fn distribute_widths(table: &NSTableView, columns: &[TableColumn]) {
     }
 }
 
-/// 幅を配るために持っておく状態。ハンドルと共有する。
+/// The state kept for distributing widths. Shared with the handle.
 struct TableViewState {
     columns: Rc<RefCell<Vec<TableColumn>>>,
 }
@@ -415,7 +425,8 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[name = "NauiTableView"]
     #[ivars = TableViewState]
-    /// 幅が変わるたびに、余りを列へ配り直す `NSTableView`。
+    /// An `NSTableView` that redistributes the leftover to the columns every time its
+    /// width changes.
     struct TableView;
 
     unsafe impl NSObjectProtocol for TableView {}
@@ -436,14 +447,14 @@ impl TableView {
     }
 }
 
-/// データソース兼デリゲートが見る状態。ハンドルと共有する。
+/// The state seen by the data source and delegate. Shared with the handle.
 struct SourceState {
     columns: Rc<RefCell<Vec<TableColumn>>>,
     rows: Rc<RowsState>,
     handler: SelectionHandler,
     sort_handler: SortHandler,
-    /// プログラムから選択を変えている間だけ通知を止める。
-    /// AppKit は `selectRowIndexes:` でもデリゲートを呼ぶため。
+    /// Stops notifications only while the selection is being changed from code, since
+    /// AppKit calls the delegate even for `selectRowIndexes:`.
     silent: Rc<Cell<bool>>,
 }
 
@@ -547,7 +558,7 @@ define_class!(
     }
 );
 
-/// 列と行からセルのビューを組み立てる。どちらかが無ければ `None`。
+/// Builds a cell's view from a column and row. `None` if either is missing.
 fn view_for_cell(
     state: &SourceState,
     mtm: MainThreadMarker,
@@ -577,20 +588,21 @@ impl TableSource {
     }
 }
 
-/// 行の高さ。システムフォントで組んだラベルを 1 つ測って決める。
+/// The row height. Decided by measuring one label laid out in the system font.
 ///
-/// **自動 (`usesAutomaticRowHeights`) にはしない。** 列を足し引きすると、
-/// AppKit が行ビューとセルの間へ張る制約が、前の列で行から外れたセルを
-/// 指したまま有効化されて例外になる
-/// (`-[NSTableRowData setColumnHidden:atColumnIndex:]` から
-/// 「no common ancestor」)。表はどの行も同じ高さでよいので、
-/// 高さはこちらで決めてしまう。
+/// **It is not automatic (`usesAutomaticRowHeights`).** When columns are added or
+/// removed, the constraints AppKit places between the row view and cells are
+/// activated while still pointing at cells that left the row with the previous
+/// column, causing an exception ("no common ancestor" from
+/// `-[NSTableRowData setColumnHidden:atColumnIndex:]`). Every row of a table can
+/// be the same height, so the height is decided here.
 fn default_row_height(mtm: MainThreadMarker) -> f64 {
     let probe = NSTextField::labelWithString(&NSString::from_str("Ag"), mtm);
     probe.fittingSize().height + ROW_SPACING * 2.0
 }
 
-/// AppKit の文字揃えへ写す。`Fill` は文字に意味が無いので左と同じ扱い。
+/// Maps to AppKit's text alignment. `Fill` means nothing for text, so it is treated
+/// the same as left.
 fn text_alignment(align: Align) -> NSTextAlignment {
     match align {
         Align::Center => NSTextAlignment::Center,
@@ -599,15 +611,16 @@ fn text_alignment(align: Align) -> NSTextAlignment {
     }
 }
 
-/// セル 1 つ分のビューを作る。
+/// Creates the view for one cell.
 ///
-/// リストの行 ([`crate::list::cell_view`]) と違い、左右の端をどちらも
-/// **列の幅につないでいる**。文字揃えは `NSTextField` が自分の幅の中で
-/// 決めるので、列いっぱいに広げないと右寄せも中央ぞろえも効かない。
-/// 列より長い文字は、圧縮への抵抗を下げて AppKit に縮めさせる。
+/// Unlike list rows ([`crate::list::cell_view`]), both the left and right edges are
+/// **connected to the column's width**. `NSTextField` decides text alignment within
+/// its own width, so right and center alignment only work when it fills the column.
+/// Text longer than the column is shrunk by AppKit by lowering its compression
+/// resistance.
 ///
-/// 縦は中央ぞろえだけにする。行の高さは [`ROW_HEIGHT`] で決まっていて、
-/// 上下を端につなぐと高さの取り合いになるため。
+/// Vertically it is only centered. The row height is fixed by [`ROW_HEIGHT`], and
+/// connecting the top and bottom to the edges would make them compete for height.
 fn cell_view(mtm: MainThreadMarker, text: &str, align: Align, enabled: bool) -> Retained<NSView> {
     let cell = NSTableCellView::new(mtm);
     let field = NSTextField::labelWithString(&NSString::from_str(text), mtm);
@@ -645,12 +658,12 @@ fn cell_view(mtm: MainThreadMarker, text: &str, align: Align, enabled: bool) -> 
     view.retain()
 }
 
-/// ウィジェットのセルを、列の中へ置く。
+/// Places a widget cell in the column.
 ///
-/// 列より内側に収める制約は**必須にしない**。中身が列より広いときに
-/// 必須の制約どうしがぶつかると、AppKit がレイアウトを壊してしまうため。
-/// 列の中のどこへ置くかは [`TableColumn::align`] が決め、[`Align::Fill`]
-/// だけは列いっぱいに広げる。
+/// The constraints keeping it within the column are **not required**. If required
+/// constraints clashed when the content is wider than the column, AppKit would break
+/// the layout. Where in the column it is placed is decided by
+/// [`TableColumn::align`]; only [`Align::Fill`] stretches it to fill the column.
 fn widget_cell_view(mtm: MainThreadMarker, content: &dyn Widget, align: Align) -> Retained<NSView> {
     let cell = NSTableCellView::new(mtm);
     let view = content.native_view();
@@ -696,7 +709,8 @@ fn widget_cell_view(mtm: MainThreadMarker, content: &dyn Widget, align: Align) -
 }
 
 struct TableInner {
-    /// 外から見えるビュー。テーブルはこのスクロールビューごと 1 つのウィジェット。
+    /// The view visible from outside. The table is one widget together with this
+    /// scroll view.
     scroll: Retained<NSScrollView>,
     table: Retained<TableView>,
     columns: Rc<RefCell<Vec<TableColumn>>>,
@@ -705,19 +719,18 @@ struct TableInner {
     handler: SelectionHandler,
     sort_handler: SortHandler,
     silent: Rc<Cell<bool>>,
-    /// 行のクリックを受ける target。`NSTableView` は target を保持しないので、
-    /// ここで生かしておく。
+    /// The target that receives row clicks. `NSTableView` does not retain its target, so
+    /// it is kept alive here.
     _action: Retained<ActionTarget>,
-    /// デリゲートとデータソースは weak 参照なので保持する。
+    /// Delegates and data sources are weak references, so they are held.
     _source: Retained<TableSource>,
 }
 
-/// 列見出しを持つ表 (NSTableView)。
+/// A table with column headings (NSTableView).
 ///
-/// 中身は `NSScrollView` に載った `NSTableView` で、
-/// [`Widget::native_view`] が返すのはそのスクロールビュー。
-/// **スクロールビューは中身に合わせた高さを持たない**ため、
-/// `set_sizing` で高さを指定すること。
+/// Inside is an `NSTableView` in an `NSScrollView`, and [`Widget::native_view`]
+/// returns that scroll view. **A scroll view has no height that fits its
+/// contents**, so set the height with `set_sizing`.
 #[derive(Clone)]
 pub struct Table(Rc<TableInner>);
 
@@ -818,7 +831,7 @@ impl Table {
         }))
     }
 
-    /// 列を作り直す。行と選択はそのまま残り、セルの並べ直しだけが起きる。
+    /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
     pub fn set_columns(&self, columns: &[TableColumn]) {
         // 列を入れ替えると AppKit は選択も並べ替えの指定も落とすので、
         // どちらも覚えて書き戻す。
@@ -874,28 +887,31 @@ impl Table {
         distribute_widths(&self.0.table, &self.0.columns.borrow());
     }
 
-    /// 列数。
+    /// The number of columns.
     pub fn column_count(&self) -> usize {
         self.0.columns.borrow().len()
     }
 
-    /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     ///
-    /// 行数がいくら多くても、セルを組み立てるのは画面に出ている分だけなので
-    /// (`NSTableView` が必要な行だけを聞きに来る)、そのまま全行を渡してよい。
+    /// However many rows there are, cells are built only for those on screen
+    /// (`NSTableView` asks only for the rows it needs), so it is fine to pass all rows
+    /// as is.
     pub fn set_rows(&self, rows: &[TableRow]) {
         self.0.rows.set_rows(rows);
         self.reload();
     }
 
-    /// セルにウィジェットを置ける行を、**見えたときに組み立てる**形で渡す。
+    /// Passes rows whose cells can hold widgets, in a form that **builds each row when
+    /// it becomes visible**.
     ///
-    /// `count` は行数で、`build` は 0 から `count - 1` のインデックスを受けて
-    /// その行の中身 ([`TableCells`]) を返す。呼ばれるのは画面に出ている行
-    /// (と、その少し前後) だけなので、行数が数十万になっても開くのは速い。
+    /// `count` is the number of rows, and `build` receives an index from 0 to
+    /// `count - 1` and returns that row's contents ([`TableCells`]). It is called only
+    /// for the rows on screen (and a few before and after), so opening stays fast even
+    /// with hundreds of thousands of rows.
     ///
-    /// 行の中のウィジェットは、組み立てるたびに作り直してよい。行ごとの
-    /// 状態はアプリのデータ側に持ち、`build` の中でそこから作る。
+    /// The widgets in a row may be recreated every time it is built. Keep per-row state
+    /// in the app's data and build from it inside `build`.
     ///
     /// ```no_run
     /// # use naui_macos::{Table, TableCells};
@@ -914,15 +930,16 @@ impl Table {
         self.reload();
     }
 
-    /// 行が選べるかどうかを、**行を組み立てずに**答える関数を渡す。
+    /// Passes a function that answers whether a row can be selected **without building
+    /// the row**.
     ///
-    /// [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
-    /// 選べるかどうかを naui は知らない。これを渡しておくと、画面の外の行に
-    /// ついても [`Table::set_selection`] が「選べない行を取り除く」を守れる。
-    /// 渡さないときは、作ってある行は [`TableCells::selectable`] に従い、
-    /// まだ作っていない行は選べるものとして扱う。
+    /// For rows built with [`Table::set_row_builder`], naui does not know whether rows
+    /// not yet built can be selected. With this function, [`Table::set_selection`] can
+    /// keep its promise of "removing rows that cannot be selected" even for rows off
+    /// screen. Without it, built rows follow [`TableCells::selectable`] and rows not
+    /// yet built are treated as selectable.
     ///
-    /// 返す答えは `build` が返す [`TableCells::selectable`] と同じにすること。
+    /// Its answers must match the [`TableCells::selectable`] returned by `build`.
     ///
     /// ```no_run
     /// # use naui_macos::{Table, TableCells};
@@ -935,9 +952,10 @@ impl Table {
         self.0.rows.set_selectable(selectable);
     }
 
-    /// 見えている行を組み立て直す。行数と選択はそのまま。
+    /// Rebuilds the visible rows. The row count and selection stay.
     ///
-    /// [`Table::set_row_builder`] へ渡した関数が返す中身が変わったときに使う。
+    /// Use it when what the function passed to [`Table::set_row_builder`] returns has
+    /// changed.
     pub fn refresh(&self) {
         let picked = self.selection();
         self.0.rows.forget_built();
@@ -947,10 +965,11 @@ impl Table {
         });
     }
 
-    /// 行の高さを論理ピクセルで決める。0 以下を渡すと既定 (文字が収まる高さ)。
+    /// Sets the row height in logical pixels. Passing 0 or less uses the default (a
+    /// height that fits the text).
     ///
-    /// どの行も同じ高さになる。セルにボタンや画像を置いて既定では収まらない
-    /// ときに広げる。
+    /// Every row gets the same height. Increase it when buttons or images in cells do
+    /// not fit the default.
     pub fn set_row_height(&self, height: f64) {
         let mtm = MainThreadMarker::from(&*self.0.table);
         let height = match height > 0.0 {
@@ -960,12 +979,12 @@ impl Table {
         self.0.table.setRowHeight(height);
     }
 
-    /// 行の高さ (論理ピクセル)。
+    /// The row height (logical pixels).
     pub fn row_height(&self) -> f64 {
         self.0.table.rowHeight()
     }
 
-    /// 行数。
+    /// The number of rows.
     pub fn len(&self) -> usize {
         self.0.rows.len()
     }
@@ -974,7 +993,8 @@ impl Table {
         self.len() == 0
     }
 
-    /// 選び方を変える。選択の意味が変わるため、選択は外れる。
+    /// Changes how rows are selected. The meaning of the selection changes, so the
+    /// selection is cleared.
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.mode.set(mode);
         self.0.table.setAllowsMultipleSelection(mode.is_multiple());
@@ -985,51 +1005,52 @@ impl Table {
         self.0.mode.get()
     }
 
-    /// 選ばれている行のうち、いちばん上のもの。
+    /// The topmost of the selected rows.
     pub fn selected(&self) -> Option<usize> {
         self.selection().first().copied()
     }
 
-    /// 選ばれている行 (昇順)。単一選択なら 0 件か 1 件。
+    /// The selected rows (ascending). Zero or one for single selection.
     pub fn selection(&self) -> Vec<usize> {
         selected_indices(&self.0.table, self.len())
     }
 
-    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until row `index` is visible. The selection does not change.
     ///
-    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
-    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    /// If it is already visible nothing moves; otherwise it is aligned to the nearer
+    /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
+    /// range.
     pub fn scroll_to_row(&self, index: usize) {
         if index < self.len() {
             self.0.table.scrollRowToVisible(index as isize);
         }
     }
 
-    /// 通知せずに 1 行だけを選ぶ。
+    /// Selects exactly one row without notifying.
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
 
-    /// 通知せずに選択を置き換える。
+    /// Replaces the selection without notifying.
     ///
-    /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
-    /// ([`SelectionMode::normalize_by`])。
+    /// Out-of-range rows, unselectable rows and duplicates are removed, and with single
+    /// selection only the first remains ([`SelectionMode::normalize_by`]).
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         self.without_notifying(|this| this.apply_selection(&picked));
     }
 
-    /// 通知せずに選択をすべて外す。
+    /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
         self.without_notifying(|this| unsafe { this.0.table.deselectAll(None) });
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 行を選ぶ (通知あり)。
+    /// Selects one row through the same path as a user's selection (notifies).
     pub fn select(&self, index: usize) {
         self.select_many(&[index]);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
+    /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         // AppKit は同じ選択を選び直すとデリゲートを呼ばない。
@@ -1039,31 +1060,34 @@ impl Table {
         self.0.handler.emit(&actual);
     }
 
-    /// 選択が変わったときに、選ばれている行 (昇順) で呼ばれる。
+    /// Called with the selected rows (ascending) when the selection changes.
     ///
-    /// 複数選択では 0 件で呼ばれることもある。
+    /// With multiple selection it may be called with none.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 見出しが押されて並べ替えの指定が変わったときに、
-    /// 押された列と向きで呼ばれる。
+    /// Called with the clicked column and direction when a heading is clicked and the
+    /// sort setting changes.
     ///
-    /// [`TableColumn::sortable`] を立てた列だけが押せる。**行を並べ替えるのは
-    /// アプリの仕事**で、通知を受けたら並べ替えた行を [`Table::set_rows`] で
-    /// 渡し直す (`set_rows` は選択を外すので、必要なら選び直す)。
+    /// Only columns with [`TableColumn::sortable`] set can be clicked. **Sorting the
+    /// rows is the app's job**: when notified, pass the sorted rows again with
+    /// [`Table::set_rows`] (`set_rows` clears the selection, so reselect if needed).
     pub fn on_sort(&self, f: impl FnMut(usize, SortOrder) + 'static) {
         self.0.sort_handler.set(f);
     }
 
-    /// いまの並べ替えの指定 (列と向き)。押されたことが無ければ `None`。
+    /// The current sort setting (column and direction). `None` if no heading has been
+    /// clicked.
     pub fn sort(&self) -> Option<(usize, SortOrder)> {
         sort_from(&self.0.table)
     }
 
-    /// 通知せずに並べ替えの指定を置き換える。見出しの指標だけが変わる。
+    /// Replaces the sort setting without notifying. Only the heading's indicator
+    /// changes.
     ///
-    /// 並べ替えられない列や範囲外の列を指すと、指定は外れる。
+    /// Pointing at a column that cannot be sorted, or one out of range, clears the
+    /// setting.
     pub fn set_sort(&self, sort: Option<(usize, SortOrder)>) {
         let sort = sort.filter(|&(column, _)| {
             self.0
@@ -1075,15 +1099,16 @@ impl Table {
         self.without_notifying(|this| this.apply_sort(sort));
     }
 
-    /// 中身の `NSTableView`。バックエンド固有の脱出口として公開している。
+    /// The inner `NSTableView`. Public as a backend-specific escape hatch.
     ///
-    /// 並べ替えや列の見た目など、共通 API に無い設定はここから行う。
+    /// Settings not in the common API, such as sorting or column appearance, are done
+    /// from here.
     pub fn native_table(&self) -> Retained<NSTableView> {
         let table: &NSTableView = &self.0.table;
         table.retain()
     }
 
-    /// 指定された選択を、この表で意味を持つ形にそろえる。
+    /// Normalizes the requested selection into a form meaningful for this table.
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
         let rows = self.0.rows.clone();
         self.0
@@ -1092,7 +1117,7 @@ impl Table {
             .normalize_by(indices, |i| rows.is_selectable(i))
     }
 
-    /// 行を作り直す。選択は外れる。
+    /// Rebuilds the rows. The selection is cleared.
     fn reload(&self) {
         self.without_notifying(|this| {
             this.0.table.reloadData();
@@ -1100,7 +1125,7 @@ impl Table {
         });
     }
 
-    /// 並べ替えの指定をネイティブへ写す。
+    /// Applies the sort setting to the native side.
     fn apply_sort(&self, sort: Option<(usize, SortOrder)>) {
         let descriptors = match sort {
             None => NSArray::new(),
@@ -1131,7 +1156,7 @@ impl Table {
             .selectRowIndexes_byExtendingSelection(set, false);
     }
 
-    /// AppKit からの通知を止めたまま操作する。
+    /// Operates with notifications from AppKit stopped.
     fn without_notifying(&self, f: impl FnOnce(&Self)) {
         let previous = self.0.silent.replace(true);
         f(self);

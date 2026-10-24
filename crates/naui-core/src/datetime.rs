@@ -1,20 +1,22 @@
-//! 日付と時刻の値、および日付選択の表示種別。
+//! Date and time values, and the display kinds for date selection.
 //!
-//! naui は日付の計算をしない。ここにあるのは「年月日と時分の入れ物」
-//! ([`DateTime`]) と「時分だけの入れ物」([`Time`])、そしてバックエンドが値を
-//! 行き来させるための最小限の変換だけで、暦の計算 (曜日・加減算・タイムゾーン
-//! 変換) は持たない。実際の入力は `NSDatePicker` や `<input type="date">` と
-//! いった環境側のコントロールが行う。
+//! naui does no date arithmetic. All that is here is "a container for year, month,
+//! day, hour and minute" ([`DateTime`]), "a container for just hour and minute"
+//! ([`Time`]), and the minimal conversions backends need to pass values back and
+//! forth. There is no calendar arithmetic (weekdays, addition and subtraction, time
+//! zone conversion). The actual input is done by platform controls such as
+//! `NSDatePicker` and `<input type="date">`.
 
 use std::fmt;
 
-/// 年月日と時分。**秒は持たない**。
+/// Year, month, day, hour and minute. **No seconds.**
 ///
-/// 秒まで選ばせるコントロールが 4 環境の共通部分に無いため
-/// (`<input type="time">` は既定で分まで、WinUI 3 の `TimePicker` にも
-/// 秒が無い)、naui は分までを扱う。
+/// The part common to all four platforms has no control that lets you pick seconds
+/// (`<input type="time">` stops at minutes by default, and WinUI 3's `TimePicker`
+/// has no seconds either), so naui handles values down to the minute.
 ///
-/// 並び順は暦の順序と一致する ([`Ord`] は年 → 月 → 日 → 時 → 分の順で比べる)。
+/// The ordering matches calendar order ([`Ord`] compares year → month → day →
+/// hour → minute).
 ///
 /// ```
 /// # use naui_core::DateTime;
@@ -24,20 +26,21 @@ use std::fmt;
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DateTime {
-    /// 西暦。[`normalized`](Self::normalized) は 1..=9999 に収める。
+    /// The year (Common Era). [`normalized`](Self::normalized) keeps it within 1..=9999.
     pub year: i32,
-    /// 月 (1..=12)。
+    /// The month (1..=12).
     pub month: u8,
-    /// 日 (1..=その月の日数)。
+    /// The day (1..=the number of days in the month).
     pub day: u8,
-    /// 時 (0..=23)。
+    /// The hour (0..=23).
     pub hour: u8,
-    /// 分 (0..=59)。
+    /// The minute (0..=59).
     pub minute: u8,
 }
 
 impl DateTime {
-    /// [`DateTime::time`] が使う日付。時刻だけを指す値の年月日をそろえておく。
+    /// The date used by [`DateTime::time`]. Values that mean only a time of day share
+    /// this year, month and day.
     pub const TIME_ORIGIN: (i32, u8, u8) = (1970, 1, 1);
 
     pub const fn new(year: i32, month: u8, day: u8, hour: u8, minute: u8) -> Self {
@@ -50,21 +53,23 @@ impl DateTime {
         }
     }
 
-    /// 0 時 0 分の日付を作る。
+    /// Creates a date at 00:00.
     pub const fn date(year: i32, month: u8, day: u8) -> Self {
         Self::new(year, month, day, 0, 0)
     }
 
-    /// 時刻だけを表す値を作る。日付は [`TIME_ORIGIN`](Self::TIME_ORIGIN) になる。
+    /// Creates a value that represents only a time of day. The date is
+    /// [`TIME_ORIGIN`](Self::TIME_ORIGIN).
     ///
-    /// [`DatePickerMode::Time`] の表示では日付の部分を見ないので、
-    /// 時刻の下限・上限を渡すときにはこれを使う。
+    /// The [`DatePickerMode::Time`] display ignores the date part, so use this when
+    /// passing lower and upper bounds for a time.
     pub const fn time(hour: u8, minute: u8) -> Self {
         let (year, month, day) = Self::TIME_ORIGIN;
         Self::new(year, month, day, hour, minute)
     }
 
-    /// 暦として成り立つ値かどうか (うるう年の 2 月 29 日も含めて判定する)。
+    /// Whether the value is a valid calendar date (February 29 in leap years is taken
+    /// into account).
     pub fn is_valid(self) -> bool {
         (1..=9999).contains(&self.year)
             && (1..=12).contains(&self.month)
@@ -73,12 +78,12 @@ impl DateTime {
             && self.minute <= 59
     }
 
-    /// 暦として成り立つ値へ丸める。
+    /// Clamps the value into a valid calendar date.
     ///
-    /// 各項目をそれぞれの範囲へ収めるだけで、繰り上がりはしない。
-    /// 「11 月 31 日」は 12 月 1 日ではなく **11 月 30 日**になる。
-    /// 日付の入力欄は月をまたいで値が飛ぶより、その月の端で止まるほうが
-    /// 驚きが少ないため。
+    /// Each field is only clamped into its own range; nothing carries over.
+    /// "November 31" becomes **November 30**, not December 1. A date field that stops
+    /// at the end of the month is less surprising than one whose value jumps into the
+    /// next month.
     ///
     /// ```
     /// # use naui_core::DateTime;
@@ -88,7 +93,7 @@ impl DateTime {
     /// );
     /// assert_eq!(
     ///     DateTime::date(2025, 2, 29).normalized(),
-    ///     DateTime::date(2025, 2, 28) // 2025 年はうるう年ではない
+    ///     DateTime::date(2025, 2, 28) // 2025 is not a leap year
     /// );
     /// ```
     pub fn normalized(self) -> Self {
@@ -103,7 +108,7 @@ impl DateTime {
         }
     }
 
-    /// 時刻はそのままに、日付だけを差し替える (結果は丸められる)。
+    /// Replaces only the date, keeping the time (the result is clamped).
     pub fn with_date(self, year: i32, month: u8, day: u8) -> Self {
         Self {
             year,
@@ -114,7 +119,7 @@ impl DateTime {
         .normalized()
     }
 
-    /// 日付はそのままに、時刻だけを差し替える (結果は丸められる)。
+    /// Replaces only the time, keeping the date (the result is clamped).
     pub fn with_time(self, hour: u8, minute: u8) -> Self {
         Self {
             hour,
@@ -124,9 +129,9 @@ impl DateTime {
         .normalized()
     }
 
-    /// 時刻の部分だけを [`Time`] として取り出す (結果は丸められる)。
+    /// Takes out just the time part as a [`Time`] (the result is clamped).
     ///
-    /// 戻す向きは [`with_time`](Self::with_time) を使う。
+    /// Use [`with_time`](Self::with_time) for the opposite direction.
     ///
     /// ```
     /// # use naui_core::{DateTime, Time};
@@ -141,7 +146,7 @@ impl DateTime {
 }
 
 impl Default for DateTime {
-    /// [`TIME_ORIGIN`](DateTime::TIME_ORIGIN) の 0 時 0 分。
+    /// 00:00 on [`TIME_ORIGIN`](DateTime::TIME_ORIGIN).
     fn default() -> Self {
         let (year, month, day) = Self::TIME_ORIGIN;
         Self::date(year, month, day)
@@ -149,7 +154,7 @@ impl Default for DateTime {
 }
 
 impl fmt::Display for DateTime {
-    /// `2026-08-22 09:30` の形。
+    /// The form `2026-08-22 09:30`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -159,13 +164,13 @@ impl fmt::Display for DateTime {
     }
 }
 
-/// 時分。**秒は持たない** ([`DateTime`] と同じ理由)。
+/// Hour and minute. **No seconds** (for the same reason as [`DateTime`]).
 ///
-/// 時刻だけを選ばせるコントロール (`TimePicker`) の値。日付を持たないので、
-/// 「毎朝 7 時 30 分」のように暦から切り離した時刻を扱うときはこちらを使う。
-/// 日付と組で扱いたいときは [`DateTime`] を使う。
+/// The value of a control that picks only a time of day (`TimePicker`). It has no
+/// date, so use it for times detached from the calendar, such as "7:30 every
+/// morning". Use [`DateTime`] when you want it paired with a date.
 ///
-/// 並び順は時計の順序と一致する ([`Ord`] は時 → 分の順で比べる)。
+/// The ordering matches clock order ([`Ord`] compares hour → minute).
 ///
 /// ```
 /// # use naui_core::Time;
@@ -175,33 +180,34 @@ impl fmt::Display for DateTime {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Time {
-    /// 時 (0..=23)。
+    /// The hour (0..=23).
     pub hour: u8,
-    /// 分 (0..=59)。
+    /// The minute (0..=59).
     pub minute: u8,
 }
 
 impl Time {
-    /// 0 時 0 分。[`Default`] でもある。
+    /// 00:00. Also the [`Default`].
     pub const MIDNIGHT: Time = Time::new(0, 0);
-    /// 1 日の分数。[`minutes_since_midnight`](Self::minutes_since_midnight) の
-    /// 上限 (= 23:59) はこれより 1 小さい。
+    /// Minutes in a day. The maximum of
+    /// [`minutes_since_midnight`](Self::minutes_since_midnight) (= 23:59) is one less
+    /// than this.
     pub const MINUTES_PER_DAY: u16 = 24 * 60;
 
     pub const fn new(hour: u8, minute: u8) -> Self {
         Self { hour, minute }
     }
 
-    /// 時計として成り立つ値かどうか。
+    /// Whether the value is a valid time of day.
     pub fn is_valid(self) -> bool {
         self.hour <= 23 && self.minute <= 59
     }
 
-    /// 時計として成り立つ値へ丸める。
+    /// Clamps the value into a valid time of day.
     ///
-    /// 各項目をそれぞれの範囲へ収めるだけで、繰り上がりはしない
-    /// ([`DateTime::normalized`] と同じ決まり)。「25 時 70 分」は翌日の
-    /// 2 時 10 分ではなく **23 時 59 分**になる。
+    /// Each field is only clamped into its own range; nothing carries over (the same
+    /// rule as [`DateTime::normalized`]). "25:70" becomes **23:59**, not 02:10 the
+    /// next day.
     ///
     /// ```
     /// # use naui_core::Time;
@@ -214,10 +220,11 @@ impl Time {
         }
     }
 
-    /// 値を下限・上限へ収める。丸め ([`normalized`](Self::normalized)) も行う。
+    /// Clamps the value between the lower and upper bounds. Also normalizes it
+    /// ([`normalized`](Self::normalized)).
     ///
-    /// 下限が上限より後ろにあるときは、あとから当てる上限が勝つ
-    /// ([`DatePickerMode::clamp`] と同じ決まり)。
+    /// When the lower bound is after the upper bound, the upper bound, applied last,
+    /// wins (the same rule as [`DatePickerMode::clamp`]).
     ///
     /// ```
     /// # use naui_core::Time;
@@ -242,10 +249,11 @@ impl Time {
         out
     }
 
-    /// `09:30` の形を読む。
+    /// Parses the form `09:30`.
     ///
-    /// `<input type="time">` が秒まで返すことがあるので、`09:30:00` の形も
-    /// 受け付ける (秒は捨てる)。形が違う文字列 (空文字を含む) では `None`。
+    /// `<input type="time">` sometimes returns seconds, so the form `09:30:00` is also
+    /// accepted (the seconds are dropped). Strings of any other form (including the
+    /// empty string) give `None`.
     ///
     /// ```
     /// # use naui_core::Time;
@@ -258,19 +266,19 @@ impl Time {
         Some(Time::new(hour, minute).normalized())
     }
 
-    /// 0 時 0 分から数えた分数 (0..=1439)。丸めてから数える。
+    /// Minutes counted from 00:00 (0..=1439). Normalizes before counting.
     ///
-    /// WinUI 3 の `TimePicker` が `TimeSpan` で値を持つように、時刻を
-    /// 1 つの数として渡したいバックエンドが使う。
+    /// Used by backends that want to pass the time as a single number, such as WinUI 3's
+    /// `TimePicker`, which holds its value as a `TimeSpan`.
     pub fn minutes_since_midnight(self) -> u16 {
         let v = self.normalized();
         u16::from(v.hour) * 60 + u16::from(v.minute)
     }
 
-    /// [`minutes_since_midnight`](Self::minutes_since_midnight) の逆。
+    /// The inverse of [`minutes_since_midnight`](Self::minutes_since_midnight).
     ///
-    /// 1 日の外にある分数は端へ寄せる (負なら 0 時 0 分、24 時間以上なら
-    /// 23 時 59 分)。
+    /// Minutes outside a day are clamped to the ends (00:00 when negative, 23:59 at 24
+    /// hours or more).
     ///
     /// ```
     /// # use naui_core::Time;
@@ -284,14 +292,15 @@ impl Time {
 }
 
 impl fmt::Display for Time {
-    /// `09:30` の形。`<input type="time">` の `value` と同じ形なので、
-    /// Web バックエンドはこれをそのまま値や `min` / `max` 属性に使える。
+    /// The form `09:30`. This is the same form as the `value` of `<input type="time">`,
+    /// so the Web backend can use it directly as the value and in the `min` / `max`
+    /// attributes.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:02}:{:02}", self.hour, self.minute)
     }
 }
 
-/// その月の日数 (うるう年を含む)。
+/// The number of days in the month (leap years included).
 pub fn days_in_month(year: i32, month: u8) -> u8 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -304,45 +313,47 @@ pub fn days_in_month(year: i32, month: u8) -> u8 {
     }
 }
 
-/// うるう年かどうか (グレゴリオ暦)。
+/// Whether the year is a leap year (Gregorian calendar).
 pub fn is_leap_year(year: i32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
-/// 日付選択で何を選ばせるか。
+/// What a date picker lets the user pick.
 ///
-/// 生成時に決め、あとから変えられない。ネイティブのコントロールは
-/// 表示する項目を作るときに決まるため (`NSDatePicker` の
-/// `datePickerElements`、`<input>` の `type` など)。
+/// Decided at creation and cannot be changed later, because native controls fix
+/// the fields they show when they are created (`datePickerElements` of
+/// `NSDatePicker`, the `type` of `<input>` and so on).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DatePickerMode {
-    /// 年月日だけ。時刻の部分は触られず、そのまま保たれる。
+    /// Year, month and day only. The time part is left untouched.
     #[default]
     Date,
-    /// 時分だけ。日付の部分は触られず、そのまま保たれる。
+    /// Hour and minute only. The date part is left untouched.
     Time,
-    /// 年月日と時分の両方。
+    /// Both year/month/day and hour/minute.
     DateTime,
 }
 
 impl DatePickerMode {
-    /// 年月日を選ばせるか。
+    /// Whether the year, month and day can be picked.
     pub fn has_date(self) -> bool {
         matches!(self, DatePickerMode::Date | DatePickerMode::DateTime)
     }
 
-    /// 時分を選ばせるか。
+    /// Whether the hour and minute can be picked.
     pub fn has_time(self) -> bool {
         matches!(self, DatePickerMode::Time | DatePickerMode::DateTime)
     }
 
-    /// 値を下限・上限へ収める。丸め ([`DateTime::normalized`]) も行う。
+    /// Clamps the value between the lower and upper bounds. Also normalizes it
+    /// ([`DateTime::normalized`]).
     ///
-    /// 比べるのは**この表示で選ばせる部分だけ**で、[`Date`](Self::Date) なら
-    /// 時刻を、[`Time`](Self::Time) なら日付を見ない。選ばせていない部分は
-    /// 端へ寄せるときも書き換えない。
+    /// Only **the parts this display lets the user pick** are compared: the time is
+    /// ignored for [`Date`](Self::Date), and the date for [`Time`](Self::Time). Parts
+    /// that cannot be picked are not rewritten even when clamping to a bound.
     ///
-    /// 下限が上限より後ろにあるときは、あとから当てる上限が勝つ。
+    /// When the lower bound is after the upper bound, the upper bound, applied last,
+    /// wins.
     ///
     /// ```
     /// # use naui_core::{DatePickerMode, DateTime};
@@ -350,7 +361,7 @@ impl DatePickerMode {
     /// let value = DateTime::new(2026, 7, 20, 9, 30);
     /// assert_eq!(
     ///     DatePickerMode::Date.clamp(value, Some(min), None),
-    ///     DateTime::new(2026, 8, 1, 9, 30) // 時刻は動かない
+    ///     DateTime::new(2026, 8, 1, 9, 30) // the time does not move
     /// );
     /// ```
     pub fn clamp(self, value: DateTime, min: Option<DateTime>, max: Option<DateTime>) -> DateTime {
@@ -370,11 +381,11 @@ impl DatePickerMode {
         out
     }
 
-    /// HTML の `<input>` が使う形へ書き出す。
+    /// Writes the value in the form HTML's `<input>` uses.
     ///
-    /// [`Date`](Self::Date) は `2026-08-22`、[`Time`](Self::Time) は `09:30`、
-    /// [`DateTime`](Self::DateTime) は `2026-08-22T09:30`。`min` / `max` 属性も
-    /// 同じ形なので、範囲の指定にも使える。
+    /// [`Date`](Self::Date) gives `2026-08-22`, [`Time`](Self::Time) gives `09:30` and
+    /// [`DateTime`](Self::DateTime) gives `2026-08-22T09:30`. The `min` / `max`
+    /// attributes use the same form, so this also works for specifying a range.
     pub fn format(self, value: DateTime) -> String {
         let v = value.normalized();
         match self {
@@ -387,11 +398,13 @@ impl DatePickerMode {
         }
     }
 
-    /// [`format`](Self::format) の逆。読めた部分だけを `base` へ重ねて返す。
+    /// The inverse of [`format`](Self::format). Overlays only the parts it could read
+    /// onto `base` and returns the result.
     ///
-    /// 選ばせていない部分は `base` の値が残る。`<input type="time">` のように
-    /// 日付を持たないコントロールから読み戻すときに、元の日付を保つため。
-    /// 形が違う文字列 (空文字を含む) では `None` を返す。
+    /// Parts that are not picked keep the values from `base`. This keeps the original
+    /// date when reading back from a control without a date, such as
+    /// `<input type="time">`. Returns `None` for strings of any other form (including
+    /// the empty string).
     pub fn parse(self, text: &str, base: DateTime) -> Option<DateTime> {
         match self {
             DatePickerMode::Date => {
@@ -420,11 +433,12 @@ impl DatePickerMode {
         }
     }
 
-    /// **選ばせている部分だけ**を `edited` から取り込み、残りは `base` のまま返す。
+    /// Takes **only the parts that are picked** from `edited` and leaves the rest as in
+    /// `base`.
     ///
-    /// ネイティブのコントロールから読み戻すときに使う。日付だけの表示なら
-    /// 時刻を、時刻だけの表示なら日付を、コントロールが持っていなくても
-    /// 元の値のまま保てる。
+    /// Used when reading back from a native control. A date-only display keeps the
+    /// time, and a time-only display keeps the date, at their original values even
+    /// though the control does not hold them.
     ///
     /// ```
     /// # use naui_core::{DatePickerMode, DateTime};
@@ -443,7 +457,8 @@ impl DatePickerMode {
         }
     }
 
-    /// 比較に使う部分だけを残した値。選ばせていない側は 0 で埋める。
+    /// The value with only the parts used for comparison. The parts that are not
+    /// picked are filled with 0.
     fn key(self, value: DateTime) -> DateTime {
         match self {
             DatePickerMode::Date => DateTime::date(value.year, value.month, value.day),
@@ -453,7 +468,7 @@ impl DatePickerMode {
     }
 }
 
-/// `2026-08-22` を読む。
+/// Parses `2026-08-22`.
 fn parse_date(text: &str) -> Option<(i32, u8, u8)> {
     let mut parts = text.split('-');
     let year: i32 = parts.next()?.parse().ok()?;
@@ -462,8 +477,8 @@ fn parse_date(text: &str) -> Option<(i32, u8, u8)> {
     parts.next().is_none().then_some((year, month, day))
 }
 
-/// `09:30` を読む。`<input type="time">` が秒まで返すことがあるので、
-/// `09:30:00` の形も受ける (秒は捨てる)。
+/// Parses `09:30`. `<input type="time">` sometimes returns seconds, so the form
+/// `09:30:00` is also accepted (the seconds are dropped).
 fn parse_time(text: &str) -> Option<(u8, u8)> {
     let mut parts = text.split(':');
     let hour: u8 = parts.next()?.parse().ok()?;

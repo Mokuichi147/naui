@@ -1,12 +1,13 @@
-//! 画像・動画・音声 (`GtkPicture` / `GtkMediaFile` / `GtkMediaControls`)。
+//! Images, video and audio (`GtkPicture` / `GtkMediaFile` / `GtkMediaControls`).
 //!
-//! デコードも再生も naui は行わない。GStreamer に載った GTK4 のメディア
-//! 再生 (`GtkMediaFile`) がそのまま鳴らし、映像は `GdkPaintable` として
-//! `GtkPicture` に描かれる。
+//! naui does no decoding or playback. GTK4's GStreamer-based media playback
+//! (`GtkMediaFile`) plays it as is, and the picture is drawn into a `GtkPicture` as
+//! a `GdkPaintable`.
 //!
-//! 動画を `GtkVideo` ではなく「`GtkPicture` + `GtkMediaControls`」で組むのは、
-//! `GtkVideo` が収め方 ([`Fit`]) と再生バーの出し入れを外から変えられないため。
-//! どちらも `GtkMediaFile` を映しているので、再生そのものの扱いは変わらない。
+//! Video is built from "`GtkPicture` + `GtkMediaControls`" rather than `GtkVideo`
+//! because `GtkVideo` does not let the fitting ([`Fit`]) or showing/hiding the
+//! playback bar be changed from outside. Both show a `GtkMediaFile`, so playback
+//! itself is handled the same.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,10 +21,10 @@ use crate::bin::SizeBin;
 use crate::callback::Notifier;
 use crate::widgets::{impl_widget, Widget};
 
-/// naui の収め方を `GtkPicture` の `content-fit` へ写す。
+/// Maps naui's fitting onto `GtkPicture`'s `content-fit`.
 ///
-/// [`Fit::None`] (原寸) にぴったり合うものが GTK4 に無いため、
-/// **拡大はしないが縮小はする** `ScaleDown` を使う。
+/// GTK4 has nothing that exactly matches [`Fit::None`] (actual size), so
+/// `ScaleDown`, which **does not scale up but does scale down**, is used.
 fn to_content_fit(fit: Fit) -> gtk::ContentFit {
     match fit {
         Fit::Contain => gtk::ContentFit::Contain,
@@ -33,7 +34,7 @@ fn to_content_fit(fit: Fit) -> gtk::ContentFit {
     }
 }
 
-/// 場所の文字列から `GFile` を作る。
+/// Creates a `GFile` from a location string.
 fn to_file(source: &str) -> gio::File {
     gio::File::for_uri(&source_url(source))
 }
@@ -46,7 +47,7 @@ struct ImageInner {
     source: RefCell<String>,
 }
 
-/// 画像 (`GtkPicture`)。
+/// An image (`GtkPicture`).
 #[derive(Clone)]
 pub struct Image(Rc<ImageInner>);
 impl_widget!(Image);
@@ -69,7 +70,7 @@ impl Image {
         self.0.source.borrow().clone()
     }
 
-    /// 画像を差し替える。`source` はファイルパスか URL。
+    /// Replaces the image. `source` is a file path or a URL.
     pub fn set_source(&self, source: &str) {
         *self.0.source.borrow_mut() = source.to_string();
         if source.is_empty() {
@@ -79,7 +80,7 @@ impl Image {
         }
     }
 
-    /// 読み込めているか。読み込みに失敗したときは `false`。
+    /// Whether it has loaded. `false` if loading failed.
     pub fn is_loaded(&self) -> bool {
         self.0.native.paintable().is_some()
     }
@@ -88,7 +89,7 @@ impl Image {
         self.0.native.set_content_fit(to_content_fit(fit));
     }
 
-    /// 読み上げなどに使う代替テキスト。
+    /// Alternative text used by screen readers and the like.
     pub fn set_alt(&self, text: &str) {
         self.0.native.set_alternative_text(Some(text));
     }
@@ -96,14 +97,14 @@ impl Image {
 
 // --------------------------------------------------------------- Playback
 
-/// 動画と音声で共有する再生の中身。
+/// The playback state shared by video and audio.
 pub(crate) struct PlaybackInner {
-    /// いま鳴らしているもの。`set_source` で作り直す。
+    /// What is playing now. Recreated by `set_source`.
     stream: RefCell<Option<gtk::MediaFile>>,
-    /// 再生バー。動画では映像の下、音声ではそれ自体が本体になる。
+    /// The playback bar. Below the picture for video; for audio it is the widget itself.
     controls: gtk::MediaControls,
     source: RefCell<String>,
-    /// 一度でも再生を始めたか。まだなら [`PlaybackState::Idle`]。
+    /// Whether playback has ever started. [`PlaybackState::Idle`] if not.
     started: Cell<bool>,
     autoplay: Cell<bool>,
     looping: Cell<bool>,
@@ -111,7 +112,7 @@ pub(crate) struct PlaybackInner {
     muted: Cell<bool>,
     on_state: Notifier<PlaybackState>,
     on_position: Notifier<f64>,
-    /// 映像を映す面。音声では持たない。
+    /// The surface the picture is shown on. Audio has none.
     picture: Option<gtk::Picture>,
 }
 
@@ -133,12 +134,12 @@ impl PlaybackInner {
         })
     }
 
-    /// 音量と消音をネイティブへ反映する。
+    /// Applies volume and mute to the native side.
     ///
-    /// `GtkMediaControls` は消音になると音量つまみを 0 に動かし、その 0 を
-    /// `GtkMediaStream` へ書き戻す。**消音を解いても音量は 0 のまま**なので、
-    /// 解いた時点で naui が持っている音量を入れ直す。これをしないと、
-    /// 消音を外しても音が出ない。
+    /// When muted, `GtkMediaControls` moves the volume slider to 0 and writes that 0
+    /// back to the `GtkMediaStream`. **The volume stays at 0 even after unmuting**, so
+    /// at that point naui writes back the volume it holds. Without this, there would be
+    /// no sound even after unmuting.
     fn apply_audio(&self) {
         let Some(stream) = self.stream.borrow().clone() else {
             return;
@@ -150,10 +151,9 @@ impl PlaybackInner {
         }
     }
 
-    /// 状態にかかわるプロパティが動いたときの後始末。
+    /// Cleanup when a state-related property changes.
     ///
-    /// 自動再生は「読み込めた時点」で始めるので、用意ができるのを待って
-    /// ここから始める。
+    /// Autoplay starts "once loaded", so it waits until ready and starts from here.
     fn after_state_change(&self) {
         let stream = self.stream.borrow().clone();
         if let Some(stream) = stream {
@@ -169,7 +169,7 @@ impl PlaybackInner {
         self.on_state.emit(self.state());
     }
 
-    /// いまの状態を GTK4 のプロパティから組み立てる。
+    /// Builds the current state from GTK4's properties.
     fn state(&self) -> PlaybackState {
         let Some(stream) = self.stream.borrow().clone() else {
             return PlaybackState::Idle;
@@ -191,7 +191,7 @@ impl PlaybackInner {
     }
 }
 
-/// 再生の API を動画と音声の両方に生やす。
+/// Adds the playback API to both video and audio.
 macro_rules! impl_playback {
     ($t:ty) => {
         impl $t {
@@ -199,7 +199,7 @@ macro_rules! impl_playback {
                 self.0.playback.source.borrow().clone()
             }
 
-            /// 鳴らすものを差し替える。`source` はファイルパスか URL。
+            /// Replaces what to play. `source` is a file path or a URL.
             pub fn set_source(&self, source: &str) {
                 crate::media::set_source(&self.0.playback, source);
             }
@@ -225,14 +225,14 @@ macro_rules! impl_playback {
                 self.state().is_playing()
             }
 
-            /// 再生位置を秒で指定する。
+            /// Sets the playback position in seconds.
             pub fn seek(&self, seconds: f64) {
                 if let Some(stream) = self.0.playback.stream.borrow().clone() {
                     stream.seek(crate::media::to_micros(seconds));
                 }
             }
 
-            /// いまの再生位置 (秒)。
+            /// The current playback position (seconds).
             pub fn position(&self) -> f64 {
                 self.0
                     .playback
@@ -243,7 +243,7 @@ macro_rules! impl_playback {
                     .unwrap_or(0.0)
             }
 
-            /// 長さ (秒)。まだ分からなければ `None`。
+            /// The length (seconds). `None` if not known yet.
             pub fn duration(&self) -> Option<f64> {
                 self.0
                     .playback
@@ -255,7 +255,7 @@ macro_rules! impl_playback {
                     .map(crate::media::to_seconds)
             }
 
-            /// 0.0..=1.0。
+            /// 0.0..=1.0.
             pub fn set_volume(&self, volume: f64) {
                 self.0.playback.volume.set(volume.clamp(0.0, 1.0));
                 self.0.playback.apply_audio();
@@ -285,7 +285,7 @@ macro_rules! impl_playback {
                 self.0.playback.looping.get()
             }
 
-            /// 読み込めたら自動で再生を始めるか。
+            /// Whether to start playing automatically once loaded.
             pub fn set_autoplay(&self, autoplay: bool) {
                 self.0.playback.autoplay.set(autoplay);
                 if autoplay {
@@ -293,20 +293,20 @@ macro_rules! impl_playback {
                 }
             }
 
-            /// 再生バーを出すか (既定は出す)。
+            /// Whether to show the playback bar (shown by default).
             pub fn set_controls(&self, controls: bool) {
                 self.0.playback.controls.set_visible(controls);
             }
 
-            /// 再生の状態が変わるたびに呼ばれる。
+            /// Called every time the playback state changes.
             ///
-            /// アプリから `play()` を呼んだときだけでなく、**GTK4 の再生バーを
-            /// ユーザーが操作したときにも届く**。
+            /// It arrives not only when the app calls `play()` but **also when the user
+            /// operates GTK4's playback bar**.
             pub fn on_state_change(&self, f: impl FnMut(PlaybackState) + 'static) {
                 self.0.playback.on_state.set(f);
             }
 
-            /// 再生位置が変わるたびに、その秒数で呼ばれる。
+            /// Called with the position in seconds every time the playback position changes.
             pub fn on_position_change(&self, f: impl FnMut(f64) + 'static) {
                 self.0.playback.on_position.set(f);
             }
@@ -322,7 +322,7 @@ pub(crate) fn to_seconds(micros: i64) -> f64 {
     micros as f64 / 1_000_000.0
 }
 
-/// 鳴らすものを作り直し、状態と位置の通知をつなぎ直す。
+/// Recreates what to play, and reconnects the state and position notifications.
 pub(crate) fn set_source(playback: &Rc<PlaybackInner>, source: &str) {
     *playback.source.borrow_mut() = source.to_string();
     playback.started.set(false);
@@ -401,7 +401,7 @@ struct VideoInner {
     playback: Rc<PlaybackInner>,
 }
 
-/// 動画 (`GtkPicture` に `GtkMediaFile` を映し、下に `GtkMediaControls`)。
+/// Video (a `GtkMediaFile` shown in a `GtkPicture`, with `GtkMediaControls` below).
 #[derive(Clone)]
 pub struct Video(Rc<VideoInner>);
 impl_widget!(Video);
@@ -430,7 +430,7 @@ impl Video {
         video
     }
 
-    /// 表示領域に対する映像の収め方。
+    /// How the picture is fitted into the display area.
     pub fn set_fit(&self, fit: Fit) {
         self.0.picture.set_content_fit(to_content_fit(fit));
     }
@@ -444,7 +444,7 @@ struct AudioInner {
     playback: Rc<PlaybackInner>,
 }
 
-/// 音声 (`GtkMediaControls` + `GtkMediaFile`)。映像面を持たない。
+/// Audio (`GtkMediaControls` + `GtkMediaFile`). Has no picture.
 #[derive(Clone)]
 pub struct Audio(Rc<AudioInner>);
 impl_widget!(Audio);

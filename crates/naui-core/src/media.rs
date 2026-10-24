@@ -1,77 +1,77 @@
-//! メディア (画像・動画・音声) の値型。
+//! Value types for media (images, video, audio).
 //!
-//! ここにあるのは「どう収めたいか」「いま再生中か」を表す値と、
-//! 指定された場所を各バックエンドが解釈するための小さな判定だけ。
-//! **デコードも再生も naui は行わない。** 実際に画像を開いて描くのは
-//! NSImage / ブラウザ / WinRT で、音を鳴らすのは AVPlayer / HTMLMediaElement /
-//! Windows.Media.Playback.MediaPlayer である。
+//! All that is here are values describing "how you want it fitted" and "whether it
+//! is playing now", plus small checks each backend uses to interpret the given
+//! location. **naui does no decoding or playback.** Images are opened and drawn by
+//! NSImage / the browser / WinRT, and sound is played by AVPlayer /
+//! HTMLMediaElement / Windows.Media.Playback.MediaPlayer.
 
-/// 表示領域に対する映像の収め方。
+/// How the picture is fitted into the display area.
 ///
-/// 画像 (`Image`) と動画 (`Video`) の映像面に効く。
+/// Applies to the picture of images (`Image`) and video (`Video`).
 ///
-/// | 値 | macOS (NSImageView) | Web (CSS) | Windows (XAML) |
+/// | Value | macOS (NSImageView) | Web (CSS) | Windows (XAML) |
 /// | --- | --- | --- | --- |
 /// | [`Fit::Contain`] | `ProportionallyUpOrDown` | `object-fit: contain` | `Stretch="Uniform"` |
-/// | [`Fit::Cover`] | `ProportionallyUpOrDown` + クリップ | `object-fit: cover` | `Stretch="UniformToFill"` |
+/// | [`Fit::Cover`] | `ProportionallyUpOrDown` + clipping | `object-fit: cover` | `Stretch="UniformToFill"` |
 /// | [`Fit::Fill`] | `AxesIndependently` | `object-fit: fill` | `Stretch="Fill"` |
 /// | [`Fit::None`] | `None` | `object-fit: none` | `Stretch="None"` |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Fit {
-    /// 縦横比を保ったまま、はみ出さないように収める (既定)。
+    /// Fits without overflowing, keeping the aspect ratio (default).
     #[default]
     Contain,
-    /// 縦横比を保ったまま領域を埋める。はみ出した部分は切り取られる。
+    /// Fills the area, keeping the aspect ratio. Whatever overflows is cropped.
     Cover,
-    /// 縦横比を無視して領域いっぱいに引き伸ばす。
+    /// Stretches to fill the area, ignoring the aspect ratio.
     Fill,
-    /// 拡大も縮小もしない (原寸)。
+    /// Neither scales up nor down (actual size).
     None,
 }
 
-/// 再生の状態。
+/// The playback state.
 ///
-/// [`Video`] / [`Audio`] の `on_state_change` で通知される。
-/// アプリ側から `play()` を呼んだときだけでなく、**ネイティブの再生バーを
-/// ユーザーが操作したときにも届く**。
+/// Reported by `on_state_change` of [`Video`] / [`Audio`]. It arrives not only when
+/// the app calls `play()` but **also when the user operates the native playback
+/// bar**.
 ///
 /// [`Video`]: https://docs.rs/naui/latest/naui/struct.Video.html
 /// [`Audio`]: https://docs.rs/naui/latest/naui/struct.Audio.html
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PlaybackState {
-    /// まだ再生されていない、または読み込み前 (既定)。
+    /// Not played yet, or not loaded yet (default).
     #[default]
     Idle,
-    /// 再生しようとしているが、データが足りず待っている。
+    /// Trying to play, but waiting for more data.
     Buffering,
-    /// 再生中。
+    /// Playing.
     Playing,
-    /// 一時停止中。
+    /// Paused.
     Paused,
-    /// 最後まで再生し終えた。
+    /// Played to the end.
     Ended,
 }
 
 impl PlaybackState {
-    /// 音が出ている (映像が進んでいる) 状態か。
+    /// Whether sound is coming out (the picture is advancing).
     pub fn is_playing(self) -> bool {
         matches!(self, PlaybackState::Playing)
     }
 }
 
-/// メディアの指定文字列が、すでに URL かどうかを判定する。
+/// Determines whether a media location string is already a URL.
 ///
-/// RFC 3986 のスキーム (`ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` の後に `:`)
-/// が付いていれば URL とみなす。**ただし 1 文字のスキームは URL としない。**
-/// Windows のドライブレター (`C:\...`) をスキームと取り違えないためで、
-/// 1 文字のスキームは実在しない。
+/// It counts as a URL if it starts with an RFC 3986 scheme
+/// (`ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` followed by `:`). **However,
+/// one-letter schemes are not treated as URLs.** This keeps Windows drive letters
+/// (`C:\...`) from being mistaken for schemes; no one-letter schemes exist.
 ///
 /// ```
 /// # use naui_core::media::is_url;
 /// assert!(is_url("https://example.com/photo.jpg"));
 /// assert!(is_url("file:///Users/me/photo.jpg"));
 /// assert!(!is_url("/Users/me/photo.jpg"));
-/// // ドライブレターはスキームではない。
+/// // A drive letter is not a scheme.
 /// assert!(!is_url(r"C:\Users\me\photo.jpg"));
 /// ```
 pub fn is_url(source: &str) -> bool {
@@ -87,11 +87,11 @@ pub fn is_url(source: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-/// ローカルのファイルパスを `file://` URL にする。
+/// Turns a local file path into a `file://` URL.
 ///
-/// 区切りは `/` にそろえ、URL で意味を持つ文字と非 ASCII をパーセント
-/// エンコードする。UNC パス (`\\server\share`) はホスト名付きの
-/// `file://server/share` になる。
+/// Separators are normalized to `/`, and characters that mean something in URLs and
+/// non-ASCII are percent-encoded. UNC paths (`\\server\share`) become
+/// `file://server/share` with a host name.
 ///
 /// ```
 /// # use naui_core::media::file_url;
@@ -124,19 +124,19 @@ pub fn file_url(path: &str) -> String {
 
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
-/// URL のパス部分にそのまま置ける文字か。
+/// Whether the character can appear as is in the path part of a URL.
 ///
-/// RFC 3986 の unreserved に、パスの区切りと、セグメント内で許される
-/// `:` `@` を足したもの。残りは encode しておけば必ず正しい URL になる。
+/// RFC 3986's unreserved characters plus the path separator and the `:` and `@`
+/// allowed within a segment. Encoding everything else always yields a valid URL.
 fn is_safe_in_path(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':' | b'@')
 }
 
-/// メディアの場所を、ネイティブへ渡す URL 文字列にそろえる。
+/// Normalizes a media location into a URL string to hand to the native side.
 ///
-/// すでに URL ならそのまま、そうでなければローカルのファイルパスとみなして
-/// `file://` URL にする。ファイルパスという概念を持たない Web バックエンドは
-/// これを使わず、相対 URL としてブラウザに解決させる。
+/// URLs are returned as is; anything else is taken as a local file path and turned
+/// into a `file://` URL. The Web backend, which has no concept of file paths, does
+/// not use this and lets the browser resolve it as a relative URL.
 pub fn source_url(source: &str) -> String {
     if is_url(source) {
         source.to_string()

@@ -1,11 +1,13 @@
-//! 画像・動画・音声。
+//! Images, video and audio.
 //!
-//! `<img>` / `<video>` / `<audio>` をそのまま使う。デコードも再生も
-//! 再生バーの描画もブラウザの仕事で、naui 側は `src` と属性を書くだけ。
+//! `<img>` / `<video>` / `<audio>` are used as they are. Decoding, playback and
+//! drawing the playback bar are the browser's job; naui only writes `src` and
+//! attributes.
 //!
-//! 再生状態は HTMLMediaElement のイベント (`playing` / `waiting` / `pause` /
-//! `ended`) を購読して通知する。アプリから [`Video::play`] を呼んだときだけで
-//! なく、**ブラウザの再生バーをユーザーが操作したときにも同じ経路で届く**。
+//! The playback state is notified by subscribing to HTMLMediaElement's events
+//! (`playing` / `waiting` / `pause` / `ended`). It arrives through the same path
+//! not only when the app calls [`Video::play`] but **also when the user operates
+//! the browser's playback bar**.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -16,7 +18,7 @@ use web_sys::{Document, Element, HtmlElement, HtmlImageElement, HtmlMediaElement
 
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
-/// 収め方を CSS の `object-fit` の値にする。
+/// Turns the fitting into a CSS `object-fit` value.
 fn object_fit(fit: Fit) -> &'static str {
     match fit {
         Fit::Contain => "contain",
@@ -30,14 +32,15 @@ fn object_fit(fit: Fit) -> &'static str {
 
 struct ImageInner {
     element: HtmlImageElement,
-    /// 渡された文字列そのまま。`src` は絶対 URL に解決されてしまうため。
+    /// Exactly the string that was passed, since `src` gets resolved to an absolute
+    /// URL.
     source: RefCell<String>,
 }
 
-/// 画像表示 (`<img>`)。
+/// Image display (`<img>`).
 ///
-/// 読み込みはブラウザが非同期に行う。**指定した直後は
-/// [`is_loaded`](Self::is_loaded) がまだ偽になる。**
+/// The browser loads it asynchronously. **Right after it is set,
+/// [`is_loaded`](Self::is_loaded) is still false.**
 #[derive(Clone)]
 pub struct Image(Rc<ImageInner>);
 impl_widget!(Image, element);
@@ -54,14 +57,15 @@ impl Image {
         Ok(this)
     }
 
-    /// いま指定されている場所 (渡した文字列そのまま)。
+    /// The location currently specified (exactly the string that was passed).
     pub fn source(&self) -> String {
         self.0.source.borrow().clone()
     }
 
-    /// 表示する画像の場所。相対 URL はページからの相対として解決される。
+    /// The location of the image to show. Relative URLs are resolved relative to the
+    /// page.
     ///
-    /// 空文字列を渡すと画像を外す。
+    /// Passing an empty string removes the image.
     pub fn set_source(&self, source: &str) {
         *self.0.source.borrow_mut() = source.to_string();
         if source.is_empty() {
@@ -71,15 +75,15 @@ impl Image {
         }
     }
 
-    /// 読み込みが終わっているか。
+    /// Whether loading has finished.
     ///
-    /// ブラウザの読み込みは非同期なので、[`set_source`](Self::set_source) の
-    /// 直後は偽になる。
+    /// Browser loading is asynchronous, so it is false right after
+    /// [`set_source`](Self::set_source).
     pub fn is_loaded(&self) -> bool {
         self.0.element.complete() && self.0.element.natural_width() > 0
     }
 
-    /// 表示領域への収め方 (CSS の `object-fit`)。
+    /// How it is fitted into the display area (CSS `object-fit`).
     pub fn set_fit(&self, fit: Fit) {
         let _ = self
             .0
@@ -88,7 +92,8 @@ impl Image {
             .set_property("object-fit", object_fit(fit));
     }
 
-    /// 画像の内容を表す文字列 (`alt`)。読み上げと、読み込めなかったときの表示に使われる。
+    /// Text describing the image's content (`alt`). Used for screen readers and shown
+    /// when it could not be loaded.
     pub fn set_alt(&self, text: &str) {
         self.0.element.set_alt(text);
     }
@@ -96,9 +101,9 @@ impl Image {
 
 // --------------------------------------------------------------- 再生の中身
 
-/// 差し替えできる 1 本のクロージャと、いまの状態。
+/// A single replaceable closure and the current state.
 ///
-/// イベントごとに別のリスナーを張るので、そのすべてから共有する。
+/// Separate listeners are attached per event, so it is shared by all of them.
 #[derive(Clone, Default)]
 struct StateHandler(Rc<StateInner>);
 
@@ -117,7 +122,8 @@ impl StateHandler {
         *self.0.callback.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 状態が変わっていれば記録して通知する。同じ状態の連続では呼ばない。
+    /// If the state changed, records and notifies it. Not called for repeats of the
+    /// same state.
     fn emit(&self, state: PlaybackState) {
         if self.0.state.get() == state {
             return;
@@ -136,7 +142,7 @@ impl StateHandler {
     }
 }
 
-/// 再生位置を知らせる、差し替えできる 1 本のクロージャ。
+/// A single replaceable closure that reports the playback position.
 #[derive(Clone, Default)]
 struct PositionHandler(Rc<RefCell<Option<Box<dyn FnMut(f64)>>>>);
 
@@ -158,16 +164,17 @@ impl PositionHandler {
     }
 }
 
-/// 動画と音声で共有する再生の実体。
+/// The playback object shared by video and audio.
 ///
-/// `<video>` と `<audio>` はどちらも HTMLMediaElement なので、
-/// 映像面を持つかどうか以外はまったく同じ操作になる。
+/// `<video>` and `<audio>` are both HTMLMediaElements, so apart from whether they
+/// have a picture, every operation is exactly the same.
 struct MediaInner {
     element: HtmlMediaElement,
     source: RefCell<String>,
     handler: StateHandler,
     position: PositionHandler,
-    /// 状態を通知するためのイベント購読。ハンドルが生きている間だけ有効。
+    /// The event subscriptions for notifying the state. Valid only while the handle is
+    /// alive.
     listeners: RefCell<Vec<Listener>>,
 }
 
@@ -187,7 +194,7 @@ impl MediaInner {
         Ok(this)
     }
 
-    /// HTMLMediaElement のイベントを naui の再生状態に写す。
+    /// Maps HTMLMediaElement's events onto naui's playback state.
     fn subscribe(&self) -> Result<()> {
         let mut listeners = Vec::new();
         // `play` は「再生を始めようとした」で、まだ音は出ていない。
@@ -253,61 +260,61 @@ impl MediaInner {
     }
 }
 
-/// 動画と音声に共通の再生 API を生やす。
+/// Adds the playback API shared by video and audio.
 macro_rules! impl_playback {
     ($t:ty) => {
         impl $t {
-            /// いま指定されている場所 (渡した文字列そのまま)。
+            /// The location currently specified (exactly the string that was passed).
             pub fn source(&self) -> String {
                 self.0.source.borrow().clone()
             }
 
-            /// 再生するメディアの場所。相対 URL も使える。
+            /// The location of the media to play. Relative URLs can be used too.
             ///
-            /// 呼ぶと再生は止まり、状態は [`PlaybackState::Idle`] に戻る。
-            /// 空文字列を渡すとメディアを外す。
+            /// Calling it stops playback, and the state returns to [`PlaybackState::Idle`].
+            /// Passing an empty string removes the media.
             pub fn set_source(&self, source: &str) {
                 self.0.set_source(source);
             }
 
-            /// 再生を始める。
+            /// Starts playback.
             ///
-            /// 最後まで再生し終えた後に呼ぶと、先頭へ戻してから再生する。
-            /// **ブラウザの自動再生制限で拒否されることがある** (ユーザー操作を
-            /// 経ていない、音が出る、など)。拒否されると状態は変わらない。
+            /// Called after playing to the end, it goes back to the start before playing.
+            /// **It may be refused by the browser's autoplay restrictions** (no preceding user
+            /// action, it makes sound, and so on). When refused, the state does not change.
             pub fn play(&self) {
                 self.0.play();
             }
 
-            /// 一時停止する。
+            /// Pauses.
             pub fn pause(&self) {
                 let _ = self.0.element.pause();
             }
 
-            /// いまの再生状態。
+            /// The current playback state.
             pub fn state(&self) -> PlaybackState {
                 self.0.handler.state()
             }
 
-            /// 再生中か。
+            /// Whether it is playing.
             pub fn is_playing(&self) -> bool {
                 self.0.handler.state().is_playing()
             }
 
-            /// 再生位置を秒で指定する。負の値は先頭として扱う。
+            /// Sets the playback position in seconds. Negative values are treated as the start.
             pub fn seek(&self, seconds: f64) {
                 self.0.element.set_current_time(seconds.max(0.0));
             }
 
-            /// いまの再生位置 (秒)。
+            /// The current playback position (seconds).
             pub fn position(&self) -> f64 {
                 self.0.element.current_time()
             }
 
-            /// メディアの長さ (秒)。**読み込みが終わるまでは `None`。**
+            /// The length of the media (seconds). **`None` until loading finishes.**
             ///
-            /// 長さが決まらない配信 (ライブなど) でも `None` を返す
-            /// (HTMLMediaElement では NaN と Infinity で表される)。
+            /// Also returns `None` for streams whose length is undefined (live streams and so
+            /// on), which HTMLMediaElement represents as NaN and Infinity.
             pub fn duration(&self) -> Option<f64> {
                 let duration = self.0.element.duration();
                 if duration.is_nan() || duration.is_infinite() {
@@ -317,7 +324,7 @@ macro_rules! impl_playback {
                 }
             }
 
-            /// 音量 (0.0..=1.0)。範囲外は丸める。
+            /// The volume (0.0..=1.0). Out-of-range values are clamped.
             pub fn set_volume(&self, volume: f64) {
                 let _ = self.0.element.set_volume(volume.clamp(0.0, 1.0));
             }
@@ -326,7 +333,7 @@ macro_rules! impl_playback {
                 self.0.element.volume()
             }
 
-            /// 消音する。音量の値は保ったまま音だけ止まる。
+            /// Mutes it. Only the sound stops; the volume value is kept.
             pub fn set_muted(&self, muted: bool) {
                 self.0.element.set_muted(muted);
             }
@@ -335,7 +342,7 @@ macro_rules! impl_playback {
                 self.0.element.muted()
             }
 
-            /// 最後まで再生したら先頭へ戻って繰り返す。
+            /// After playing to the end, goes back to the start and repeats.
             pub fn set_loop(&self, looping: bool) {
                 self.0.element.set_loop(looping);
             }
@@ -344,10 +351,10 @@ macro_rules! impl_playback {
                 self.0.element.loop_()
             }
 
-            /// メディアを指定したときに自動で再生を始める。
+            /// Starts playing automatically when media is specified.
             ///
-            /// すでに場所が指定されていて、まだ一度も再生していなければ、
-            /// この呼び出しで再生が始まる。
+            /// If a location is already specified and it has never played, playback starts with
+            /// this call.
             pub fn set_autoplay(&self, autoplay: bool) {
                 self.0.element.set_autoplay(autoplay);
                 if autoplay
@@ -358,24 +365,25 @@ macro_rules! impl_playback {
                 }
             }
 
-            /// ブラウザ標準の再生バーを出すかどうか (既定は出す)。
+            /// Whether to show the browser's standard playback bar (shown by default).
             pub fn set_controls(&self, controls: bool) {
                 self.0.element.set_controls(controls);
             }
 
-            /// 再生状態が変わったときに呼ばれる。設定し直すと以前のものは外れる。
+            /// Called when the playback state changes. Setting it again removes the previous
+            /// one.
             ///
-            /// アプリから [`play`](Self::play) を呼んだときだけでなく、
-            /// **ブラウザの再生バーをユーザーが操作したときにも届く**。
+            /// It arrives not only when the app calls [`play`](Self::play) but **also when the
+            /// user operates the browser's playback bar**.
             pub fn on_state_change(&self, f: impl FnMut(PlaybackState) + 'static) {
                 self.0.handler.set(f);
             }
 
-            /// 再生位置が進むたびに、その位置 (秒) で呼ばれる。
+            /// Called with the position (seconds) every time the playback position advances.
             ///
-            /// シークバーの表示を再生に追従させるためのもの。間隔はブラウザが
-            /// 決めるが、およそ 4 回/秒で、シークの直後にも届く。
-            /// **再生していない間は呼ばれない。**
+            /// For keeping a seek bar in step with playback. The browser decides the interval,
+            /// but it is about four times a second, and it also arrives right after seeking.
+            /// **It is not called while not playing.**
             pub fn on_position_change(&self, f: impl FnMut(f64) + 'static) {
                 self.0.position.set(f);
             }
@@ -385,7 +393,7 @@ macro_rules! impl_playback {
 
 // ------------------------------------------------------------------ Video
 
-/// 動画 (`<video>`)。
+/// Video (`<video>`).
 #[derive(Clone)]
 pub struct Video(Rc<MediaInner>);
 impl_widget!(Video, element);
@@ -399,7 +407,7 @@ impl Video {
         Ok(this)
     }
 
-    /// 映像の収め方 (CSS の `object-fit`)。
+    /// How the picture is fitted (CSS `object-fit`).
     pub fn set_fit(&self, fit: Fit) {
         let element: &HtmlElement = self.0.element.as_ref();
         let _ = element.style().set_property("object-fit", object_fit(fit));
@@ -408,7 +416,7 @@ impl Video {
 
 // ------------------------------------------------------------------ Audio
 
-/// 音声 (`<audio>`)。映像面を持たないので、再生バーだけが見える。
+/// Audio (`<audio>`). It has no picture, so only the playback bar is visible.
 #[derive(Clone)]
 pub struct Audio(Rc<MediaInner>);
 impl_widget!(Audio, element);

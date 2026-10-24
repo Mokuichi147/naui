@@ -1,30 +1,32 @@
-//! メニューバー (`Button` + `MenuFlyout` の横並び)。
+//! The menu bar (a row of `Button` + `MenuFlyout`).
 //!
 //! | naui | WinUI 3 |
 //! | --- | --- |
-//! | `MenuBar` | 地色を消した `Button` を並べた `StackPanel` |
-//! | メニュー | `MenuFlyout` (見出しの `Button.Flyout`) |
-//! | 項目 | `MenuFlyoutItem` |
-//! | 区切り線 | `MenuFlyoutSeparator` |
+//! | `MenuBar` | A `StackPanel` of `Button`s with the background removed |
+//! | Menu | `MenuFlyout` (the heading's `Button.Flyout`) |
+//! | Item | `MenuFlyoutItem` |
+//! | Separator | `MenuFlyoutSeparator` |
 //!
-//! メニューを出す・閉じる・影・角丸・ライトディスミス・キーボード操作 (矢印と
-//! Esc)・画面端での回り込みは、すべて `MenuFlyout` が持つ。見出しを押したら
-//! 開く動きも `Button.Flyout` に預けるだけでよい。
+//! Showing and closing the menu, its shadow, rounded corners, light dismiss,
+//! keyboard navigation (arrows and Esc) and wrapping at screen edges are all owned
+//! by `MenuFlyout`. Opening when a heading is clicked is also simply left to
+//! `Button.Flyout`.
 //!
-//! ## `MenuBar` を使っていない理由
+//! ## Why `MenuBar` is not used
 //!
-//! WinUI 3 には `MenuBar` / `MenuBarItem` があるが、[`naui_winui3`] の投影に
-//! 含めていない。投影はコミットしてある生成物で、型を増やすと全体を作り直す
-//! ことになるため、naui は**すでに投影してある標準コントロールの組み合わせ**で
-//! 同じものを組む (ナビゲーションや `Tabs` と同じ方針)。
+//! WinUI 3 has `MenuBar` / `MenuBarItem`, but they are not included in the
+//! [`naui_winui3`] projection. The projection is a committed generated artifact, and
+//! adding types means regenerating all of it, so naui builds the same thing from
+//! **a combination of standard controls already in the projection** (the same
+//! policy as navigation and `Tabs`).
 //!
-//! ## ショートカット
+//! ## Shortcuts
 //!
-//! `KeyboardAccelerator` も投影に無いので、押されたキーは
-//! [`crate::Window`] が根の `KeyDown` で拾い、メニューバーへ渡す。
-//! 修飾キーはその場で `GetKeyState` から読む
-//! (`KeyRoutedEventArgs` に修飾キーが乗らないため)。項目の右端の表示は
-//! `MenuFlyoutItem.KeyboardAcceleratorTextOverride` に入れる。
+//! `KeyboardAccelerator` is not in the projection either, so pressed keys are
+//! picked up by [`crate::Window`] in the root's `KeyDown` and passed to the menu
+//! bar. Modifier keys are read on the spot from `GetKeyState` (since
+//! `KeyRoutedEventArgs` does not carry them). The right edge of items is shown with
+//! `MenuFlyoutItem.KeyboardAcceleratorTextOverride`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -43,18 +45,18 @@ use crate::navigation::{panel, text_block};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 
-/// 見出しのボタン。メニューバーらしく、地色も枠も出さず文字だけを見せる
-/// (押したときの淡い塗りは `Button` の標準テンプレートが持つ)。
+/// The heading button. As befits a menu bar, it shows only text, with no background
+/// or border (the light fill when pressed comes from `Button`'s standard template).
 const TITLE_BUTTON_XAML: &str = r##"<Button
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="Transparent" BorderThickness="0" Padding="10,4"
     VerticalAlignment="Center"/>"##;
 
-/// 押された項目の通知先。
+/// The handler for the clicked item.
 ///
-/// WinRT のデリゲートは `Send + Sync` を要求するため、`UiThreadCell` に載せる。
-/// 呼び出しの間だけクロージャを取り出すので、通知の中から同じメニューバーを
-/// 組み替えても二重借用にならない。
+/// WinRT delegates require `Send + Sync`, so it is placed in a `UiThreadCell`. The
+/// closure is taken out only for the duration of the call, so rebuilding the same
+/// menu bar from inside the notification does not double-borrow.
 #[derive(Clone)]
 struct ActivateHandler(HandlerCell<dyn FnMut(usize, usize)>);
 
@@ -81,13 +83,13 @@ impl ActivateHandler {
     }
 }
 
-/// 見出し 1 つぶんのコントロール。
+/// The controls for one heading.
 struct MenuParts {
-    /// 見出しのボタン。
+    /// The heading's button.
     title: XamlButton,
-    /// 見出しの下に出るメニュー。
+    /// The menu shown below the heading.
     flyout: MenuFlyout,
-    /// 項目ごとの `MenuFlyoutItem`。区切り線の位置は `None`。
+    /// The `MenuFlyoutItem` per item. `None` at separator positions.
     items: Vec<Option<MenuFlyoutItem>>,
 }
 
@@ -96,17 +98,18 @@ struct MenuBarInner {
     menus: RefCell<Vec<MenuSpec>>,
     parts: RefCell<Vec<MenuParts>>,
     handler: ActivateHandler,
-    /// メニューバー全体の有効・無効。項目ごとの指定と AND を取る。
+    /// Whether the whole menu bar is enabled. ANDed with the per-item settings.
     enabled: Cell<bool>,
 }
 
-/// ウィンドウの上端に付く、OS のアプリケーションメニュー。
+/// The OS's application menu, attached to the top of the window.
 ///
-/// 画面に並ぶウィジェットではないので [`Widget`](crate::Widget) ではない。
-/// [`Window::set_menu_bar`](crate::Window::set_menu_bar) で取り付ける。
-/// 項目が押されるたびに、その **(見出しのインデックス, 項目のインデックス)**
-/// で [`on_activate`](Self::on_activate) が呼ばれる。項目のインデックスは
-/// 区切り線を含めた並びの位置で、区切り線が返ることはない。
+/// It is not a widget laid out on screen, so it is not a
+/// [`Widget`](crate::Widget). Attach it with
+/// [`Window::set_menu_bar`](crate::Window::set_menu_bar). Every time an item is
+/// clicked, [`on_activate`](Self::on_activate) is called with its **(heading index,
+/// item index)**. The item index is the position in the sequence including
+/// separators; separators are never returned.
 #[derive(Clone)]
 pub struct MenuBar(Rc<MenuBarInner>);
 
@@ -123,10 +126,10 @@ impl MenuBar {
         })))
     }
 
-    /// メニューを作り直す。以前のメニューは取り除かれる。
+    /// Rebuilds the menus. The previous menus are removed.
     ///
-    /// 見出しのインデックスは渡した並びの位置、項目のインデックスは
-    /// 区切り線を含めた並びの位置。
+    /// The heading index is the position in the sequence passed, and the item index is
+    /// the position in the sequence including separators.
     pub fn set_menus(&self, menus: &[MenuSpec]) {
         let Ok(children) = self.0.native.Children() else {
             return;
@@ -213,7 +216,7 @@ impl MenuBar {
         Ok(native)
     }
 
-    /// 見出しの数。
+    /// The number of headings.
     pub fn len(&self) -> usize {
         self.0.menus.borrow().len()
     }
@@ -222,7 +225,8 @@ impl MenuBar {
         self.len() == 0
     }
 
-    /// 見出し 1 つが持つ、区切り線を含めた項目数。範囲外は `0`。
+    /// The number of items under one heading, separators included. `0` if out of
+    /// range.
     pub fn menu_len(&self, menu: usize) -> usize {
         self.0
             .menus
@@ -231,7 +235,7 @@ impl MenuBar {
             .map_or(0, |spec| spec.items.len())
     }
 
-    /// 項目 1 つの有効・無効を変える。区切り線と範囲外は何もしない。
+    /// Enables or disables one item. Does nothing for separators or out of range.
     pub fn set_item_enabled(&self, menu: usize, item: usize, enabled: bool) {
         let mut menus = self.0.menus.borrow_mut();
         let Some(entry) = menus
@@ -248,7 +252,7 @@ impl MenuBar {
         self.apply_enabled();
     }
 
-    /// いま押せる項目か。区切り線と範囲外は `false`。
+    /// Whether the item can be clicked now. `false` for separators and out of range.
     pub fn is_item_enabled(&self, menu: usize, item: usize) -> bool {
         self.0.enabled.get()
             && self
@@ -260,7 +264,7 @@ impl MenuBar {
                 .is_some_and(|entry| !entry.is_separator() && entry.enabled)
     }
 
-    /// メニューバー全体の有効・無効を変える。項目ごとの指定は残る。
+    /// Enables or disables the whole menu bar. Per-item settings are kept.
     pub fn set_enabled(&self, enabled: bool) {
         self.0.enabled.set(enabled);
         if !enabled {
@@ -269,7 +273,7 @@ impl MenuBar {
         self.apply_enabled();
     }
 
-    /// 項目ごとの指定と全体の指定をネイティブへ反映する。
+    /// Applies the per-item settings and the overall setting to the native side.
     fn apply_enabled(&self) {
         let whole = self.0.enabled.get();
         let menus = self.0.menus.borrow();
@@ -283,57 +287,58 @@ impl MenuBar {
         }
     }
 
-    /// 出ているメニューを閉じる。出ていなければ何もしない。
+    /// Closes the menu being shown. Does nothing if none is shown.
     ///
-    /// ほかの 3 環境には「メニューをプログラムから閉じる」手段が無いので、
-    /// 公開 API にはしない。
+    /// The other three platforms have no way to "close a menu from code", so this is not
+    /// public API.
     pub(crate) fn close(&self) {
         for parts in self.0.parts.borrow().iter() {
             let _ = parts.flyout.Hide();
         }
     }
 
-    /// 利用者が選んだのと同じように項目を実行する。
+    /// Runs the item as if the user had chosen it.
     ///
-    /// 区切り線・押せない項目・範囲外は何もしない。
+    /// Does nothing for separators, disabled items or out of range.
     pub fn activate(&self, menu: usize, item: usize) {
         if self.is_item_enabled(menu, item) {
             self.0.handler.emit(menu, item);
         }
     }
 
-    /// 項目が押されたときに、その見出しと項目のインデックスで呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the heading and item indices when an item is clicked. Setting it
+    /// again removes the previous callback.
     pub fn on_activate(&self, f: impl FnMut(usize, usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 見出しを並べている `StackPanel`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The `StackPanel` laying out the headings. Public as a backend-specific escape
+    /// hatch.
     pub fn native_panel(&self) -> StackPanel {
         self.0.native.clone()
     }
 
-    /// 見出しの下に出る `MenuFlyout`。範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The `MenuFlyout` shown below the heading. `None` if out of range. Public as a
+    /// backend-specific escape hatch.
     pub fn native_flyout(&self, menu: usize) -> Option<MenuFlyout> {
         Some(self.0.parts.borrow().get(menu)?.flyout.clone())
     }
 
-    /// 項目に対応する `MenuFlyoutItem`。区切り線と範囲外は `None`。
-    /// バックエンド固有の脱出口として公開している。
+    /// The `MenuFlyoutItem` for the item. `None` for separators and out of range.
+    /// Public as a backend-specific escape hatch.
     pub fn native_item(&self, menu: usize, item: usize) -> Option<MenuFlyoutItem> {
         self.0.parts.borrow().get(menu)?.items.get(item)?.clone()
     }
 
-    /// ウィンドウへ差し込む要素。[`crate::Window`] だけが使う。
+    /// The element inserted into the window. Used only by [`crate::Window`].
     pub(crate) fn mount(&self) -> StackPanel {
         self.0.native.clone()
     }
 
-    /// 押されたキーがショートカットなら実行し、`true` を返す。
+    /// If the pressed key is a shortcut, runs it and returns `true`.
     ///
-    /// [`crate::Window`] が根の `KeyDown` から呼ぶ。`key` は仮想キーコード。
+    /// Called by [`crate::Window`] from the root's `KeyDown`. `key` is the virtual-key
+    /// code.
     pub(crate) fn handle_key(&self, key: i32) -> bool {
         if !self.0.enabled.get() {
             return false;
@@ -369,11 +374,12 @@ impl MenuBar {
     }
 }
 
-/// いま押されている修飾キー (主修飾キー, ⇧, Alt)。
+/// The modifier keys held now (primary modifier, ⇧, Alt).
 ///
-/// `KeyRoutedEventArgs` に修飾キーが乗らないため、その場のキーの状態を読む。
-/// `GetKeyState` はスレッドが処理したところまでの状態を返すので、いま
-/// 配送されているキー操作と同じ時点の状態になる (`Table` の選択と同じ)。
+/// `KeyRoutedEventArgs` does not carry modifier keys, so the key state is read on
+/// the spot. `GetKeyState` returns the state as far as the thread has processed, so
+/// it is the state at the same moment as the key operation being dispatched (the
+/// same as `Table`'s selection).
 fn modifiers() -> (bool, bool, bool) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetKeyState, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT,
@@ -387,7 +393,7 @@ fn modifiers() -> (bool, bool, bool) {
     (down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU))
 }
 
-/// 見出しのボタン。XAML を読めなければ素の `Button` に戻す。
+/// The heading button. Falls back to a plain `Button` if the XAML cannot be read.
 fn title_button(title: &str) -> Result<XamlButton> {
     let button = match XamlReader::Load(&HSTRING::from(TITLE_BUTTON_XAML))
         .and_then(|element| element.cast::<XamlButton>())
@@ -401,7 +407,7 @@ fn title_button(title: &str) -> Result<XamlButton> {
     Ok(button)
 }
 
-/// WinRT のデリゲートは `Send` を要求するので、UI スレッド限定のセルに包む。
+/// WinRT delegates require `Send`, so it is wrapped in a UI-thread-only cell.
 fn weak_cell(inner: &Rc<MenuBarInner>) -> Arc<UiThreadCell<Weak<MenuBarInner>>> {
     Arc::new(UiThreadCell::new(Rc::downgrade(inner)))
 }

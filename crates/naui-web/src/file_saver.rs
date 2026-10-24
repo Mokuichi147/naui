@@ -1,24 +1,28 @@
-//! ファイルの保存 (DOM)。
+//! Saving files (DOM).
 //!
-//! ブラウザには「保存先のパス」という概念が無いため、他の環境と同じ形にする
-//! には**内容を渡して書き出させる**しかない。そこで [`FileSaver`] は
-//! [`FileSaver::set_contents`] のバイト列を、次の 2 つのどちらかで届ける。
+//! Browsers have no concept of "a destination path", so to match the other
+//! platforms the only option is **to hand over the contents and have them written
+//! out**. So [`FileSaver`] delivers the bytes from [`FileSaver::set_contents`] in
+//! one of two ways:
 //!
-//! - **`showSaveFilePicker`** (File System Access API) があるとき。
-//!   OS の保存ダイアログがそのまま出て、選ばれた場所へ書き込む。
-//!   ネイティブの 3 環境と同じ体験になる。Chromium 系のみが持つ。
-//! - **無いとき (Firefox / Safari)** は `<a download>` のダウンロード。
-//!   保存先はブラウザの設定次第で、確認なしにダウンロードフォルダーへ
-//!   落ちることもある。
+//! - When **`showSaveFilePicker`** (the File System Access API) is available, the
+//!   OS's save dialog appears as is and the contents are written to the chosen
+//!   location. This gives the same experience as the three native platforms. Only
+//!   Chromium-based browsers have it.
+//! - **Otherwise (Firefox / Safari)**, a download via `<a download>`. Where it goes
+//!   depends on the browser's settings, and it may land in the downloads folder
+//!   without asking.
 //!
-//! ## 他の環境との違い
+//! ## Differences from other platforms
 //!
-//! - **パスは取れない。** [`FileEntry::path`](naui_core::FileEntry::path) は
-//!   常に `None` で、[`FileEntry::name`](naui_core::FileEntry::name) だけが入る。
-//! - **ユーザー操作の中でしか開けない。** [`FileSaver::open`] をクリック等の
-//!   イベント外から呼ぶと、ブラウザに拒否される (`on_error` へ届く)。
-//! - **ダウンロードになったときは、書き込みの完了を待てない。**
-//!   ブラウザが引き取った時点で `on_save` を呼ぶ。
+//! - **Paths cannot be obtained.** [`FileEntry::path`](naui_core::FileEntry::path)
+//!   is always `None`, and only [`FileEntry::name`](naui_core::FileEntry::name) is
+//!   set.
+//! - **It can only be opened inside a user action.** Calling [`FileSaver::open`]
+//!   outside an event such as a click is refused by the browser (delivered to
+//!   `on_error`).
+//! - **When it becomes a download, completion of the write cannot be awaited.**
+//!   `on_save` is called once the browser has taken it over.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -42,10 +46,10 @@ struct FileSaverInner {
     on_save: RefCell<Option<Box<dyn FnMut(&FileEntry)>>>,
     on_error: RefCell<Option<Box<dyn FnMut(&Error)>>>,
     click: RefCell<Option<Listener>>,
-    /// ダウンロードのために配った `blob:` URL。
+    /// The `blob:` URLs handed out for downloads.
     ///
-    /// ダウンロードが始まる前に取り消すと中身が失われるため、次の保存か
-    /// ハンドルの破棄まで生かしておく。
+    /// Revoking them before the download starts would lose the contents, so they are
+    /// kept alive until the next save or until the handle is dropped.
     object_urls: RefCell<Vec<String>>,
 }
 
@@ -55,14 +59,15 @@ impl Drop for FileSaverInner {
     }
 }
 
-/// 配ってあった `blob:` URL をまとめて取り消す。
+/// Revokes all the `blob:` URLs handed out.
 fn revoke_all(urls: &mut Vec<String>) {
     for url in urls.drain(..) {
         let _ = web_sys::Url::revoke_object_url(&url);
     }
 }
 
-/// 内容をファイルへ書き出させるボタン (`<button>` + `showSaveFilePicker`)。
+/// A button that lets the user write contents to a file (`<button>` +
+/// `showSaveFilePicker`).
 #[derive(Clone)]
 pub struct FileSaver(Rc<FileSaverInner>);
 impl_widget!(FileSaver, element);
@@ -105,11 +110,11 @@ impl FileSaver {
         set_disabled(&self.0.element, !enabled);
     }
 
-    /// ダイアログに最初から入れておく名前。
+    /// The name prefilled in the dialog.
     ///
-    /// `showSaveFilePicker` では `suggestedName`、ダウンロードでは
-    /// `download` 属性になる。空のままダウンロードになった場合は
-    /// ブラウザの既定 (`download`) が使われる。
+    /// It becomes `suggestedName` for `showSaveFilePicker`, and the `download`
+    /// attribute for downloads. If it stays empty and it becomes a download, the
+    /// browser's default (`download`) is used.
     pub fn set_file_name(&self, name: &str) {
         *self.0.file_name.borrow_mut() = name.to_string();
     }
@@ -118,54 +123,55 @@ impl FileSaver {
         self.0.file_name.borrow().clone()
     }
 
-    /// 種類の絞り込み。先頭の拡張子が既定の拡張子になる。
+    /// Filters by file type. The first extension becomes the default extension.
     ///
-    /// `showSaveFilePicker` の `types` になる。ダウンロードでは種類を選ばせる
-    /// 仕組みが無いため、名前へ拡張子を補うためだけに使われる。
+    /// It becomes the `types` of `showSaveFilePicker`. Downloads have no way to choose
+    /// a type, so there it is used only to add an extension to the name.
     pub fn set_filters(&self, filters: &[FileFilter]) {
         *self.0.filters.borrow_mut() = filters.to_vec();
     }
 
-    /// 書き出す内容。保存のたびに、このバイト列がそのまま書かれる。
+    /// The contents to write. Every save writes exactly these bytes.
     pub fn set_contents(&self, contents: &[u8]) {
         *self.0.contents.borrow_mut() = contents.to_vec();
     }
 
-    /// 書き出す内容の大きさ (バイト数)。
+    /// The size of the contents to write (in bytes).
     pub fn contents_len(&self) -> usize {
         self.0.contents.borrow().len()
     }
 
-    /// 最後に書き出した先。まだ保存していなければ `None`。
+    /// Where the contents were last written. `None` if nothing has been saved yet.
     ///
-    /// **パスは入らない** (ブラウザが渡さないため)。名前だけが入る。
+    /// **No path is included** (the browser does not provide one); only the name is.
     pub fn destination(&self) -> Option<FileEntry> {
         self.0.destination.borrow().clone()
     }
 
-    /// 書き出しに成功したときに呼ばれる。取り消したときは呼ばれない。
+    /// Called when writing succeeds. Not called when the user cancels.
     pub fn on_save(&self, f: impl FnMut(&FileEntry) + 'static) {
         *self.0.on_save.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 書き出しに失敗したときに呼ばれる。
+    /// Called when writing fails.
     ///
-    /// ユーザー操作の外から [`FileSaver::open`] を呼んだときもここへ届く。
+    /// Calling [`FileSaver::open`] outside a user action also arrives here.
     pub fn on_error(&self, f: impl FnMut(&Error) + 'static) {
         *self.0.on_error.borrow_mut() = Some(Box::new(f));
     }
 
-    /// ダイアログを出す。ボタンを押したときにも同じものが呼ばれる。
+    /// Shows the dialog. Clicking the button calls the same thing.
     ///
-    /// **ブラウザはユーザー操作の中でしか保存を始められない。**
-    /// クリックのコールバックなどから呼ぶこと。
+    /// **Browsers can start saving only inside a user action.** Call it from a click
+    /// callback or similar.
     pub fn open(&self) {
         if let Err(e) = self.start() {
             emit_error(&self.0, &e);
         }
     }
 
-    /// 内容を Blob にして、使える方の仕組みへ渡す。
+    /// Turns the contents into a Blob and hands it to whichever mechanism is
+    /// available.
     fn start(&self) -> Result<()> {
         let name = with_default_extension(&self.0.file_name.borrow(), &self.0.filters.borrow());
         let blob = blob_from(&self.0.contents.borrow())?;
@@ -181,7 +187,7 @@ impl FileSaver {
         }
     }
 
-    /// `<a download>` を作って押す。ブラウザのダウンロードになる。
+    /// Creates and clicks an `<a download>`. It becomes a browser download.
     fn download(&self, name: &str, blob: &Blob) -> Result<()> {
         // 以前配った URL はここで取り消す。以降は使えなくなる。
         let mut urls = self.0.object_urls.borrow_mut();
@@ -217,17 +223,17 @@ impl FileSaver {
     }
 }
 
-/// `window.showSaveFilePicker` があれば返す。無ければ `None`。
+/// Returns `window.showSaveFilePicker` if it exists. `None` otherwise.
 fn save_file_picker(window: &web_sys::Window) -> Option<Function> {
     let value = Reflect::get(window, &JsValue::from_str("showSaveFilePicker")).ok()?;
     value.dyn_into::<Function>().ok()
 }
 
-/// File System Access API で、選ばれた場所へ書き込む。
+/// Writes to the chosen location with the File System Access API.
 ///
-/// `showSaveFilePicker()` → `createWritable()` → `write()` → `close()` の順に
-/// 待つ必要があるので、続きは Promise を待つタスクとして進める。
-/// ダイアログを開くところまでは、この場 (ユーザー操作の中) で行う。
+/// It must await `showSaveFilePicker()` → `createWritable()` → `write()` →
+/// `close()` in order, so the rest proceeds as a task awaiting Promises. Opening
+/// the dialog is done right here (inside the user action).
 fn save_through_picker(
     inner: &Rc<FileSaverInner>,
     window: &web_sys::Window,
@@ -265,7 +271,7 @@ fn save_through_picker(
     Ok(())
 }
 
-/// 選ばれたファイルへ書き込み、その名前を返す。取り消しは `None`。
+/// Writes to the chosen file and returns its name. `None` if cancelled.
 async fn write_through_handle(promise: Promise, blob: Blob) -> Result<Option<String>> {
     let handle = match promise.await {
         Ok(handle) => handle,
@@ -285,12 +291,12 @@ async fn write_through_handle(promise: Promise, blob: Blob) -> Result<Option<Str
     Ok(Some(name))
 }
 
-/// Promise を待って、失敗を naui のエラーへ写す。
+/// Awaits a Promise and maps failures to naui errors.
 async fn await_promise(promise: Promise) -> Result<JsValue> {
     promise.await.map_err(|e| to_error("ファイルの書き出し", e))
 }
 
-/// `target.method(arg)` を呼んで、返る Promise を取り出す。
+/// Calls `target.method(arg)` and takes out the returned Promise.
 fn call_promise(target: &JsValue, method: &str, arg: Option<&JsValue>) -> Result<Promise> {
     let function: Function = Reflect::get(target, &JsValue::from_str(method))
         .map_err(|e| to_error("ファイルの書き出し", e))?
@@ -309,7 +315,7 @@ fn call_promise(target: &JsValue, method: &str, arg: Option<&JsValue>) -> Result
     })
 }
 
-/// 書き出せたことを記録して通知する。
+/// Records that the contents were written and notifies.
 fn finish(inner: &Rc<FileSaverInner>, name: &str) {
     // ブラウザはパスを渡さないので、名前だけを持つ。
     let entry = FileEntry::from_name(name);
@@ -317,8 +323,8 @@ fn finish(inner: &Rc<FileSaverInner>, name: &str) {
     emit_save(inner, &entry);
 }
 
-/// 通知の中から設定し直しても二重借用にならないよう、
-/// 呼び出しの間だけクロージャを取り出す。
+/// So that setting it again from inside the notification does not double-borrow,
+/// the closure is taken out only for the duration of the call.
 macro_rules! emit_fn {
     ($name:ident, $slot:ident, $arg:ty) => {
         fn $name(inner: &Rc<FileSaverInner>, value: $arg) {
@@ -337,7 +343,7 @@ macro_rules! emit_fn {
 emit_fn!(emit_save, on_save, &FileEntry);
 emit_fn!(emit_error, on_error, &Error);
 
-/// 取り消し (ダイアログを閉じた) かどうか。
+/// Whether it was a cancel (the dialog was closed).
 fn is_abort(reason: &JsValue) -> bool {
     Reflect::get(reason, &JsValue::from_str("name"))
         .ok()
@@ -345,13 +351,13 @@ fn is_abort(reason: &JsValue) -> bool {
         .is_some_and(|name| name == "AbortError")
 }
 
-/// 書き出す内容を `Blob` にする。
+/// Turns the contents to write into a `Blob`.
 fn blob_from(contents: &[u8]) -> Result<Blob> {
     let parts = Array::of1(&Uint8Array::from(contents));
     Blob::new_with_u8_array_sequence(&parts).map_err(|e| to_error("保存する内容の組み立て", e))
 }
 
-/// 絞り込みを `showSaveFilePicker` の `types` へ写す。
+/// Maps the filters onto the `types` of `showSaveFilePicker`.
 fn build_types(filters: &[FileFilter]) -> Result<Option<JsValue>> {
     let usable: Vec<&FileFilter> = filters.iter().filter(|f| !f.is_empty()).collect();
     if usable.is_empty() {
@@ -375,7 +381,7 @@ fn build_types(filters: &[FileFilter]) -> Result<Option<JsValue>> {
     Ok(Some(types.into()))
 }
 
-/// JS のオブジェクトへ値を書く。
+/// Writes a value into a JS object.
 fn set(target: &Object, key: &str, value: &JsValue) -> Result<()> {
     Reflect::set(target, &JsValue::from_str(key), value)
         .map(|_| ())

@@ -1,27 +1,29 @@
-//! WinRT のデリゲートは `Send + Sync` を要求するが、XAML のイベントは
-//! 必ず UI スレッドで呼ばれる。そこで「UI スレッド以外から触れたら panic する」
-//! セルを用意し、シングルスレッド前提の Rust クロージャを載せられるようにする。
+//! WinRT delegates require `Send + Sync`, but XAML events are always called on the
+//! UI thread. So a cell that "panics if touched from anything other than the UI
+//! thread" is provided, letting Rust closures that assume a single thread be placed
+//! in them.
 //!
-//! naui の公開 API を 4 バックエンドで同じ形 (`impl FnMut() + 'static`) に
-//! 保つために必要な、Windows だけの受け皿。
+//! A Windows-only receptacle needed to keep naui's public API in the same shape
+//! (`impl FnMut() + 'static`) across all four backends.
 
 use std::cell::RefCell;
 use std::thread::ThreadId;
 
 use crate::Slot;
 
-/// WinRT のデリゲートへ載せる、通知 1 つぶんの置き場。
+/// The slot for one notification, placed in a WinRT delegate.
 ///
-/// デリゲートは `Send + Sync` を要求するので [`UiThreadCell`] で包み、
-/// 購読を解いたあとも生き残る参照があるので `Arc` で数える。中身の関数型は
-/// 使う側が書く (`HandlerCell<dyn FnMut(&str)>` のように)。
+/// Delegates require `Send + Sync`, so it is wrapped in a [`UiThreadCell`], and
+/// references survive even after unsubscribing, so it is counted with an `Arc`. The
+/// function type inside is written by the user (as in
+/// `HandlerCell<dyn FnMut(&str)>`).
 pub(crate) type HandlerCell<F> = std::sync::Arc<UiThreadCell<Slot<F>>>;
 
-/// 文字列を 1 つ受け取る通知先。
+/// A handler that receives one string.
 ///
-/// WinRT のデリゲートは `Send + Sync` を要求するので [`UiThreadCell`] に
-/// 載せる。呼び出しの間だけクロージャを取り出すため、通知の中から同じ欄を
-/// 操作しても二重借用にならない。
+/// WinRT delegates require `Send + Sync`, so it is placed in a [`UiThreadCell`].
+/// The closure is taken out only for the duration of the call, so operating on the
+/// same field from inside the notification does not double-borrow.
 #[derive(Clone)]
 pub(crate) struct TextHandler(HandlerCell<dyn FnMut(&str)>);
 
@@ -47,7 +49,7 @@ impl TextHandler {
     }
 }
 
-/// 生成したスレッドでのみ中身に触れるセル。
+/// A cell whose contents can be touched only on the thread that created it.
 pub(crate) struct UiThreadCell<T> {
     owner: ThreadId,
     value: RefCell<T>,
@@ -67,7 +69,7 @@ impl<T> UiThreadCell<T> {
         }
     }
 
-    /// UI スレッドから中身を可変で借りる。別スレッドなら panic する。
+    /// Borrows the contents mutably from the UI thread. Panics on any other thread.
     pub(crate) fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         assert_eq!(
             std::thread::current().id(),
@@ -77,11 +79,11 @@ impl<T> UiThreadCell<T> {
         f(&mut self.value.borrow_mut())
     }
 
-    /// WinRT コールバックから安全に中身へ触れる。UI スレッド違い、または
-    /// 再入で既に借用されている場合は `None` を返す。
+    /// Touches the contents safely from a WinRT callback. Returns `None` when on the
+    /// wrong thread, or when it is already borrowed because of re-entrancy.
     ///
-    /// WinRT のデリゲートから panic を巻き戻すと、ABI の境界を越えて
-    /// Windows 側のアクセス違反になるため、イベント処理ではこちらを使う。
+    /// Unwinding a panic out of a WinRT delegate crosses the ABI boundary and becomes an
+    /// access violation on the Windows side, so use this one in event handling.
     pub(crate) fn try_with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         if std::thread::current().id() != self.owner {
             return None;
@@ -90,9 +92,9 @@ impl<T> UiThreadCell<T> {
         Some(f(&mut value))
     }
 
-    /// 起動時の一回限りの状態受け渡し用。UI オブジェクトではなく、
-    /// `Application::Start` と `OnLaunched` の間で移動する状態だけに使う。
-    /// 呼び出し側は同時アクセスがないことを保証する。
+    /// For the one-time handoff of state at startup. Use it only for state moving
+    /// between `Application::Start` and `OnLaunched`, not for UI objects. The caller
+    /// guarantees there is no concurrent access.
     pub(crate) fn with_mut_cross_thread<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         // SAFETY: この経路は起動時の直列な hand-off 専用で、通常の UI
         // イベントから同時にアクセスされないことを呼び出し側が保証する。
@@ -100,17 +102,17 @@ impl<T> UiThreadCell<T> {
     }
 }
 
-/// UI スレッドの `thread_local!` に置く、ウィジェットごとの登録表。
+/// A per-widget registry placed in the UI thread's `thread_local!`.
 ///
-/// 中身には通知のクロージャ (と、それが掴んだウィジェット) が入る。
-/// プロセスの終わりに `thread_local!` が壊されるとき、中身は捨てずに
-/// 手放したままにする。そこで捨てると、ウィジェットの `Drop` がすでに
-/// 壊されたほかの `thread_local!` に触れて panic し、プロセスが落ちる
-/// (`STATUS_STACK_BUFFER_OVERRUN`)。XAML がもう畳まれていれば COM の
-/// 解放も危ない。
+/// It holds notification closures (and the widgets they capture). When the
+/// `thread_local!` is destroyed at the end of the process, the contents are not
+/// dropped but left leaked. Dropping them there would make the widgets' `Drop` touch
+/// other `thread_local!`s that are already destroyed and panic, crashing the process
+/// (`STATUS_STACK_BUFFER_OVERRUN`). If XAML has already been wound down, releasing
+/// COM objects is risky too.
 ///
-/// クロージャの `Drop` を走らせたいときは、終了の経路 (XAML の後片づけの前)
-/// で [`take`](Self::take) して捨てる。
+/// When you want the closures' `Drop` to run, [`take`](Self::take) them and drop
+/// them on the shutdown path (before XAML's cleanup).
 pub(crate) struct Registry<T>(RefCell<Vec<T>>);
 
 impl<T> Registry<T> {
@@ -118,7 +120,8 @@ impl<T> Registry<T> {
         Self(RefCell::new(Vec::new()))
     }
 
-    /// 中身をすべて取り出す。借用の外で捨てられるよう、表は空になって戻る。
+    /// Takes out all the contents. The table comes back empty, so they can be dropped
+    /// outside the borrow.
     pub(crate) fn take(&self) -> Vec<T> {
         std::mem::take(&mut *self.0.borrow_mut())
     }

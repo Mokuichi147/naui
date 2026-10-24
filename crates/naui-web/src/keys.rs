@@ -1,17 +1,18 @@
-//! `on_key_down` (文字入力のウィジェットと `Window`)。
+//! `on_key_down` (text-input widgets and `Window`).
 //!
-//! ウィジェットは自分の要素に**捕捉フェーズ**で `keydown` を付ける。対象の
-//! 要素の上では捕捉の購読が通常の購読より先に呼ばれるので、naui 自身の
-//! `keydown` (検索入力の Enter など) より前にアプリが判断できる。
-//! `Handled` なら既定動作を止め、ほかの購読へも親へも伝えない。
+//! Widgets attach `keydown` to their own element **in the capture phase**. On the
+//! target element, capture listeners are called before regular ones, so the app can
+//! decide before naui's own `keydown` (Enter in search input, for example). With
+//! `Handled`, the default action is prevented and the event goes to neither other
+//! listeners nor the parents.
 //!
-//! ウィンドウは `document` で受け、キーが上がってきた元のウィンドウ
-//! (どのウィンドウにも属さないところからなら、どれでも) だけが受け取る
-//! (メニューバーのショートカットと同じ判定)。
+//! Windows receive it on `document`, and only the window the key bubbled up from
+//! receives it (from places belonging to no window, any of them) — the same check
+//! as menu bar shortcuts.
 //!
-//! 変換中のキー (`isComposing`、Safari が変換中に付ける `keyCode` 229) は
-//! IME のものなので届けない。修飾キーを単独で押したときも届けない
-//! (macOS と同じ)。
+//! Keys during composition (`isComposing`, and the `keyCode` 229 Safari attaches
+//! during composition) belong to the IME and are not delivered. Modifier keys
+//! pressed on their own are not delivered either (the same as macOS).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,10 +23,11 @@ use web_sys::{Element, EventTarget, KeyboardEvent};
 
 use crate::widgets::Listener;
 
-/// IME が処理しているキーに付く `keyCode`。
+/// The `keyCode` attached to keys the IME is processing.
 const IME_PROCESS_KEY_CODE: u32 = 229;
 
-/// `on_key_down` の通知先と、その購読。購読は最初に通知先を置いたときに付ける。
+/// The `on_key_down` handler and its subscription. The subscription is attached the
+/// first time a handler is set.
 #[derive(Default)]
 pub(crate) struct KeyDown {
     handler: Rc<KeyHandler>,
@@ -33,7 +35,7 @@ pub(crate) struct KeyDown {
 }
 
 impl KeyDown {
-    /// ウィジェットの要素で受ける。
+    /// Receives it on the widget's element.
     pub(crate) fn set_on_element(
         &self,
         target: &EventTarget,
@@ -58,7 +60,7 @@ impl KeyDown {
         *self.listener.borrow_mut() = listener.ok();
     }
 
-    /// ウィンドウとして `document` で受ける。`window` はそのウィンドウの要素。
+    /// Receives it on `document` as a window. `window` is that window's element.
     pub(crate) fn set_on_window(
         &self,
         document: &EventTarget,
@@ -90,9 +92,9 @@ impl KeyDown {
     }
 }
 
-/// キーが `window` から上がってきたか。どのウィンドウにも属さないところ
-/// (`<body>` にフォーカスがあるときなど) からのキーは、まだ誰も既定動作を
-/// 止めていなければ受け取る。
+/// Whether the key bubbled up from `window`. Keys from places belonging to no
+/// window (when `<body>` has focus, for example) are received if nobody has
+/// prevented the default action yet.
 fn comes_from(event: &web_sys::Event, window: &Element) -> bool {
     if !window.is_connected() {
         return false;
@@ -112,18 +114,20 @@ fn comes_from(event: &web_sys::Event, window: &Element) -> bool {
     }
 }
 
-/// IME が受け取っているキーか (変換中か、Safari が変換の確定に付ける
-/// `keyCode` 229)。
+/// Whether the IME is receiving the key (composing, or the `keyCode` 229 Safari
+/// attaches when confirming a conversion).
 pub(crate) fn is_ime_key(event: &KeyboardEvent) -> bool {
     event.is_composing() || event.key_code() == IME_PROCESS_KEY_CODE
 }
 
-/// 入力欄を確定する Enter か。変換を確定する Enter は数えない。
+/// Whether it is an Enter that confirms the field. An Enter that confirms a
+/// conversion does not count.
 pub(crate) fn is_submit_key(event: &KeyboardEvent) -> bool {
     event.key() == "Enter" && !is_ime_key(event)
 }
 
-/// ブラウザのキーを naui のキーへ写す。変換中のキーと修飾キーは `None`。
+/// Maps a browser key to a naui key. `None` for keys during composition and for
+/// modifier keys.
 fn to_key_event(event: &KeyboardEvent) -> Option<KeyEvent> {
     if is_ime_key(event) {
         return None;
@@ -144,15 +148,15 @@ fn to_key_event(event: &KeyboardEvent) -> Option<KeyEvent> {
     Some(KeyEvent::new(Key::from_web_key(&key), modifiers).repeat(event.repeat()))
 }
 
-/// 文字入力のウィジェットへ `on_key_down` を足す。`Inner` に `key_down: KeyDown`
-/// を持たせておくこと。
+/// Adds `on_key_down` to text-input widgets. The `Inner` must hold a
+/// `key_down: KeyDown`.
 macro_rules! impl_key_down {
     ($t:ty) => {
         impl $t {
-            /// キーが押されたときの通知。`Handled` を返すと、そのキーは
-            /// 入力欄にもウィンドウにも渡らない (改行や確定を止められる)。
+            /// Notified when a key is pressed. Returning `Handled` keeps the key from reaching
+            /// the field and the window (so you can stop newlines or confirmation).
             ///
-            /// IME で変換している間のキーは届かない。
+            /// Keys pressed while an IME is composing are not delivered.
             pub fn on_key_down(
                 &self,
                 f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,

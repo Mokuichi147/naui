@@ -1,21 +1,22 @@
-//! アプリのクロージャを保持し、必要なときに 1 回だけ呼ぶための入れ物。
+//! A container that holds an app closure and calls it once when needed.
 //!
-//! GTK4 のシグナルハンドラは `Fn` (何度でも呼べる) を要求するが、naui の API は
-//! `FnMut` を受ける。そこでシグナルは作った時点で 1 回だけつなぎ、アプリの
-//! クロージャはここへ差し替える形で持つ。
+//! GTK4 signal handlers require `Fn` (callable any number of times), but naui's API
+//! takes `FnMut`. So the signal is connected exactly once at creation, and the
+//! app's closure is kept here, swapped in and out.
 //!
-//! もう 1 つの役目は再入への備えで、**呼び出している間はクロージャを取り出して
-//! おく**。通知の中から同じウィジェットを触られても `RefCell` が二重借用に
-//! ならない (macOS バックエンドが AppKit の再入で行っているのと同じ)。
+//! Its other role is guarding against re-entrancy: **the closure is taken out while
+//! it is being called**. Even if the same widget is touched from inside the
+//! notification, the `RefCell` is not double-borrowed (the same as what the macOS
+//! backend does for AppKit re-entrancy).
 
 use std::cell::RefCell;
 
 use naui_core::{Error, FileEntry, SortOrder};
 
-/// クロージャ 1 つぶんの置き場。
+/// The slot for one closure.
 type Slot<F> = RefCell<Option<Box<F>>>;
 
-/// 取り出して呼び、差し替えられていなければ戻す。
+/// Takes it out, calls it, and puts it back unless it was replaced.
 fn emit<F: ?Sized + FnMut(T), T>(slot: &Slot<F>, value: T) {
     let Some(mut f) = slot.borrow_mut().take() else {
         return;
@@ -28,7 +29,7 @@ fn emit<F: ?Sized + FnMut(T), T>(slot: &Slot<F>, value: T) {
     }
 }
 
-/// 値を 1 つ受け取るコールバック。
+/// A callback that receives one value.
 pub(crate) struct Notifier<T>(Slot<dyn FnMut(T)>);
 
 impl<T> Default for Notifier<T> {
@@ -38,26 +39,26 @@ impl<T> Default for Notifier<T> {
 }
 
 impl<T> Notifier<T> {
-    /// 以前のものを捨てて、新しいクロージャを持つ。
+    /// Discards the previous closure and holds the new one.
     pub(crate) fn set(&self, f: impl FnMut(T) + 'static) {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 呼ぶ。持っていなければ何もしない。
+    /// Calls it. Does nothing if none is held.
     pub(crate) fn emit(&self, value: T) {
         emit(&self.0, value);
     }
 
-    /// クロージャを持っているか。
+    /// Whether a closure is held.
     pub(crate) fn is_set(&self) -> bool {
         self.0.borrow().is_some()
     }
 }
 
-/// 借用した値を受け取るコールバック。
+/// A callback that receives a borrowed value.
 ///
-/// [`Notifier`] を `&[usize]` などで使うには寿命の引数が要るので、
-/// 受け取る型ごとに用意する。
+/// Using [`Notifier`] with `&[usize]` and the like needs a lifetime parameter, so
+/// one is provided per received type.
 macro_rules! borrowed_notifier {
     ($(#[$meta:meta])* $name:ident, $arg:ty) => {
         $(#[$meta])*
@@ -77,34 +78,35 @@ macro_rules! borrowed_notifier {
 }
 
 borrowed_notifier!(
-    /// 選ばれた行のインデックスを受け取るコールバック。
+    /// A callback that receives the indices of the selected rows.
     SelectionNotifier,
     &[usize]
 );
 borrowed_notifier!(
-    /// 選ばれたファイルを受け取るコールバック。
+    /// A callback that receives the picked files.
     FileNotifier,
     &[FileEntry]
 );
 borrowed_notifier!(
-    /// 書き出した先を受け取るコールバック。
+    /// A callback that receives where the contents were written.
     SavedNotifier,
     &FileEntry
 );
 borrowed_notifier!(
-    /// 失敗の内容を受け取るコールバック。
+    /// A callback that receives the details of a failure.
     ErrorNotifier,
     &Error
 );
 borrowed_notifier!(
-    /// 入力された文字列を受け取るコールバック。
+    /// A callback that receives the entered text.
     TextNotifier,
     &str
 );
 
-/// 並べ替えが変わった列と、その向きを受け取るコールバック。
+/// A callback that receives the column whose sort changed and its direction.
 ///
-/// 値を 2 つ受け取るので、[`borrowed_notifier!`] ではなく手で書いている。
+/// It receives two values, so it is written by hand instead of with
+/// [`borrowed_notifier!`].
 #[derive(Default)]
 pub(crate) struct SortNotifier(Slot<dyn FnMut(usize, SortOrder)>);
 
@@ -113,7 +115,8 @@ impl SortNotifier {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 呼び出しの間だけクロージャを取り出す ([`emit`] と同じ形)。
+    /// Takes out the closure only for the duration of the call (the same shape as
+    /// [`emit`]).
     pub(crate) fn emit(&self, column: usize, order: SortOrder) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
@@ -126,9 +129,10 @@ impl SortNotifier {
     }
 }
 
-/// 押された項目の、見出しと項目のインデックスを受け取るコールバック。
+/// A callback that receives the heading and item indices of the clicked item.
 ///
-/// 値を 2 つ受け取るので、[`borrowed_notifier!`] ではなく手で書いている。
+/// It receives two values, so it is written by hand instead of with
+/// [`borrowed_notifier!`].
 #[derive(Default)]
 pub(crate) struct ActivateNotifier(Slot<dyn FnMut(usize, usize)>);
 
@@ -137,7 +141,8 @@ impl ActivateNotifier {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 呼び出しの間だけクロージャを取り出す ([`emit`] と同じ形)。
+    /// Takes out the closure only for the duration of the call (the same shape as
+    /// [`emit`]).
     pub(crate) fn emit(&self, menu: usize, item: usize) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
@@ -150,9 +155,11 @@ impl ActivateNotifier {
     }
 }
 
-/// 開閉が変わった項目のパスと、変わった後の状態を受け取るコールバック。
+/// A callback that receives the path of the item whose expansion changed and its
+/// new state.
 ///
-/// 値を 2 つ受け取るので、[`borrowed_notifier!`] ではなく手で書いている。
+/// It receives two values, so it is written by hand instead of with
+/// [`borrowed_notifier!`].
 #[derive(Default)]
 pub(crate) struct ExpandNotifier(Slot<dyn FnMut(&[usize], bool)>);
 
@@ -161,7 +168,8 @@ impl ExpandNotifier {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 呼び出しの間だけクロージャを取り出す ([`emit`] と同じ形)。
+    /// Takes out the closure only for the duration of the call (the same shape as
+    /// [`emit`]).
     pub(crate) fn emit(&self, path: &[usize], expanded: bool) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;

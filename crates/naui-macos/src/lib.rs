@@ -1,10 +1,10 @@
 //! # naui-macos
 //!
-//! naui の macOS バックエンド。**AppKit の実コントロール**
-//! (NSWindow / NSButton / NSTextField / NSSlider / NSStackView …) を生成し、
-//! target/action とデリゲートを Rust のクロージャへ中継する。
+//! naui's macOS backend. It creates **real AppKit controls** (NSWindow / NSButton /
+//! NSTextField / NSSlider / NSStackView …) and relays target/action and delegates
+//! to Rust closures.
 //!
-//! 描画・レイアウト・IME・アクセシビリティはすべて AppKit が行う。
+//! Drawing, layout, IME and accessibility are all done by AppKit.
 
 // Objective-C 呼び出しのため unsafe が必要。
 #![allow(unsafe_code)]
@@ -88,38 +88,38 @@ pub use widgets::{
 };
 pub use window::{WeakWindow, Window};
 
-/// ウィジェットを生成するための入り口。
+/// The entry point for creating widgets.
 ///
-/// AppKit はメインスレッドでしか UI を触れないため、`Ui` は
-/// [`MainThreadMarker`] を持ち、`run` のコールバック内でのみ得られる。
+/// AppKit can only touch the UI on the main thread, so `Ui` holds a
+/// [`MainThreadMarker`] and is available only inside the `run` callback.
 ///
-/// ウィジェットのハンドルと同じく **clone しても中身は同じ**なので、
-/// コールバックへ持ち込めば後からウィジェットを作れる。メインスレッド
-/// 専用で `Send` ではないため、別スレッドへは渡せない (そちらは
-/// [`Tasks`] を使う)。
+/// Like widget handles, **clones share the same contents**, so moving one into a
+/// callback lets you create widgets later. It is main-thread only and not `Send`,
+/// so it cannot be passed to other threads (use [`Tasks`] for that).
 #[derive(Clone)]
 pub struct Ui(Rc<UiInner>);
 
 struct UiInner {
     mtm: MainThreadMarker,
-    /// アプリ名。メニューバーの先頭 (アプリメニュー) の見出しに使う。
+    /// The app name. Used for the heading of the first menu in the menu bar (the app
+    /// menu).
     app_name: String,
     theme: Cell<Theme>,
-    /// コールバックが終わってもウィンドウを生かしておくための保持。
+    /// Keeps windows alive after the callback finishes.
     windows: RefCell<Vec<Window>>,
-    /// ダイアログはどこにも append されないので、ここで保持する。
+    /// Dialogs are never appended anywhere, so they are held here.
     dialogs: RefCell<Vec<Dialog>>,
-    /// ポップアップメニューはレイアウトに載らないので、親が保持してくれない。
+    /// Popup menus are not part of the layout, so no parent holds them.
     popups: RefCell<Vec<PopupMenu>>,
-    /// ツールバーもレイアウトに載らないので、ここで保持する。
+    /// Toolbars are not part of the layout either, so they are held here.
     toolbars: RefCell<Vec<Toolbar>>,
-    /// メニューバーもレイアウトに載らないので、ここで保持する。
+    /// Menu bars are not part of the layout either, so they are held here.
     menu_bars: RefCell<Vec<MenuBar>>,
-    /// サイドバーもレイアウトに載らないので、ここで保持する。
+    /// Sidebars are not part of the layout either, so they are held here.
     sidebars: RefCell<Vec<Sidebar>>,
-    /// トーストもレイアウトに載らないので、ここで保持する。
+    /// Toasts are not part of the layout either, so they are held here.
     toasts: RefCell<Vec<Toast>>,
-    /// 別スレッドと非同期処理の入り口。
+    /// The entry point for other threads and async work.
     tasks: Tasks,
 }
 
@@ -140,11 +140,11 @@ impl Ui {
         }))
     }
 
-    /// ウィンドウを作る。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても閉じられることはない。
+    /// Creates a window. The framework keeps a reference to it, so dropping the return
+    /// value does not close it.
     ///
-    /// `width` / `height` は中身の領域の大きさ ([`Window::set_size`] と同じ)。
-    /// タイトルバーとツールバーは含まない。
+    /// `width` / `height` are the size of the content area (the same as
+    /// [`Window::set_size`]), excluding the title bar and toolbar.
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
         let w = Window::new(self.0.mtm, title, width, height);
         self.0.windows.borrow_mut().push(w.clone());
@@ -155,29 +155,31 @@ impl Ui {
         Ok(Stack::new(self.0.mtm, orientation))
     }
 
-    /// 行と列で位置を決めるコンテナ。
+    /// A container that positions children by row and column.
     pub fn grid(&self) -> Result<Grid> {
         Ok(Grid::new(self.0.mtm))
     }
 
-    /// 中身がはみ出したらスクロールさせるコンテナ。
+    /// A container that scrolls when its contents overflow.
     pub fn scroll(&self) -> Result<Scroll> {
         Ok(Scroll::new(self.0.mtm))
     }
 
-    /// 見出しを押して中身を出し入れするコンテナ。`text` は見出しの文字。
+    /// A container whose contents are shown and hidden by clicking its heading. `text`
+    /// is the heading text.
     pub fn expander(&self, text: &str) -> Result<Expander> {
         Ok(Expander::new(self.0.mtm, text))
     }
 
-    /// 2 つの区画を、動かせる仕切りで分けるコンテナ。
+    /// A container that divides two panes with a movable divider.
     ///
-    /// `Horizontal` なら区画が横に並び、仕切りは縦になる。
+    /// With `Horizontal`, the panes are side by side and the divider is vertical.
     pub fn split_view(&self, orientation: Orientation) -> Result<SplitView> {
         Ok(SplitView::new(self.0.mtm, orientation))
     }
 
-    /// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。
+    /// A widget that is just empty space. It absorbs a stack's leftover space and
+    /// pushes the others away.
     pub fn spacer(&self) -> Result<Spacer> {
         Ok(Spacer::new(self.0.mtm))
     }
@@ -194,42 +196,42 @@ impl Ui {
         Ok(Checkbox::new(self.0.mtm, label))
     }
 
-    /// 入り切りを切り替えるスイッチ。`label` はとなりへ添える文字。
+    /// An on/off switch. `label` is the text placed next to it.
     pub fn toggle(&self, label: &str) -> Result<Toggle> {
         Ok(Toggle::new(self.0.mtm, label))
     }
 
-    /// 選択肢を折りたたんで表示するコンボボックス。
+    /// A combo box that shows its options collapsed.
     pub fn combo_box(&self) -> Result<ComboBox> {
         Ok(ComboBox::new(self.0.mtm))
     }
 
-    /// 候補から選ぶことも、自由に打ち込むこともできるコンボボックス。
+    /// A combo box where the user can either choose from suggestions or type freely.
     pub fn editable_combo_box(&self) -> Result<EditableComboBox> {
         Ok(EditableComboBox::new(self.0.mtm))
     }
 
-    /// 選択肢を並べて 1 つだけ選ばせるラジオグループ。
+    /// A radio group that lays out options and lets the user choose exactly one.
     pub fn radio_group(&self) -> Result<RadioGroup> {
         Ok(RadioGroup::new(self.0.mtm))
     }
 
-    /// 日付や時刻を選ばせるコントロール。何を選ばせるかは `mode` で決める。
+    /// A control for picking a date or time. `mode` decides what can be picked.
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         Ok(DatePicker::new(self.0.mtm, mode))
     }
 
-    /// 時刻だけを選ばせるコントロール。初期値は現在時刻。
+    /// A control for picking only a time of day. The initial value is the current time.
     pub fn time_picker(&self) -> Result<TimePicker> {
         Ok(TimePicker::new(self.0.mtm))
     }
 
-    /// 色を選ばせるコントロール。初期値は黒。
+    /// A control for picking a color. The initial value is black.
     pub fn color_picker(&self) -> Result<ColorPicker> {
         Ok(ColorPicker::new(self.0.mtm))
     }
 
-    /// アプリが自分で描く面。大きさは `set_sizing` で指定する。
+    /// A surface the app draws on itself. Set its size with `set_sizing`.
     pub fn canvas(&self) -> Result<Canvas> {
         Ok(Canvas::new(self.0.mtm))
     }
@@ -238,22 +240,23 @@ impl Ui {
         Ok(TextInput::new(self.0.mtm, text))
     }
 
-    /// 伏せ字で入力させる欄。中身は `NSSecureTextField`。
+    /// A field whose input is masked. Backed by `NSSecureTextField`.
     pub fn password_input(&self) -> Result<PasswordInput> {
         Ok(PasswordInput::new(self.0.mtm))
     }
 
-    /// 検索の入力欄。中身は `NSSearchField`。
+    /// A search field. Backed by `NSSearchField`.
     pub fn search_input(&self) -> Result<SearchInput> {
         Ok(SearchInput::new(self.0.mtm))
     }
 
-    /// 数値を入力させる欄。`value` は初期値。
+    /// A field for entering a number. `value` is the initial value.
     pub fn number_input(&self, value: f64) -> Result<NumberInput> {
         Ok(NumberInput::new(self.0.mtm, value))
     }
 
-    /// 改行を含む文字列を入力できる欄。高さは `set_sizing` で指定する。
+    /// A field for entering text that includes newlines. Set its height with
+    /// `set_sizing`.
     pub fn text_area(&self, text: &str) -> Result<TextArea> {
         Ok(TextArea::new(self.0.mtm, text))
     }
@@ -266,142 +269,144 @@ impl Ui {
         Ok(ProgressBar::new(self.0.mtm))
     }
 
-    /// タブ。中身のウィジェットごと持つ。
+    /// Tabs. Holds each tab's content widget.
     pub fn tabs(&self) -> Result<Tabs> {
         Ok(Tabs::new(self.0.mtm))
     }
 
-    /// 画面上部に置く横並びのナビゲーション。`title` は左端の見出し。
+    /// Horizontal navigation placed at the top of the screen. `title` is the heading
+    /// at the left end.
     pub fn navbar(&self, title: &str) -> Result<Navbar> {
         Ok(Navbar::new(self.0.mtm, title))
     }
 
-    /// 画面下部に置く横並びのナビゲーション (等幅)。
+    /// Horizontal navigation placed at the bottom of the screen (equal widths).
     pub fn dock(&self) -> Result<Dock> {
         Ok(Dock::new(self.0.mtm))
     }
 
-    /// 縦に並ぶナビゲーション一覧。
+    /// A vertical list of navigation items.
     pub fn menu(&self) -> Result<Menu> {
         Ok(Menu::new(self.0.mtm))
     }
 
-    /// ウィンドウの上端に付けるツールバー。
+    /// A toolbar attached to the top of the window.
     ///
-    /// [`Window::set_toolbar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_toolbar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     pub fn toolbar(&self) -> Result<Toolbar> {
         let toolbar = Toolbar::new(self.0.mtm);
         self.0.toolbars.borrow_mut().push(toolbar.clone());
         Ok(toolbar)
     }
 
-    /// 画面上端に出す、OS のアプリケーションメニュー。
+    /// The OS's application menu, shown at the top of the screen.
     ///
-    /// [`Window::set_menu_bar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_menu_bar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     pub fn menu_bar(&self) -> Result<MenuBar> {
         let menu_bar = MenuBar::new(self.0.mtm, &self.0.app_name);
         self.0.menu_bars.borrow_mut().push(menu_bar.clone());
         Ok(menu_bar)
     }
 
-    /// ウィンドウの左に付けるサイドバー。
+    /// A sidebar attached to the left of the window.
     ///
-    /// [`Window::set_sidebar`] で取り付ける。フレームワークが参照を保持するので、
-    /// 戻り値を捨てても通知が届かなくなることはない。
+    /// Attach it with [`Window::set_sidebar`]. The framework keeps a reference to it,
+    /// so dropping the return value does not stop notifications.
     pub fn sidebar(&self) -> Result<Sidebar> {
         let sidebar = Sidebar::new(self.0.mtm);
         self.0.sidebars.borrow_mut().push(sidebar.clone());
         Ok(sidebar)
     }
 
-    /// 選択できる行の一覧。自分でスクロールする。
+    /// A list of selectable rows. It scrolls by itself.
     pub fn list(&self) -> Result<List> {
         Ok(List::new(self.0.mtm))
     }
 
-    /// 列見出しを持つ表。自分でスクロールする。
+    /// A table with column headings. It scrolls by itself.
     pub fn table(&self) -> Result<Table> {
         Ok(Table::new(self.0.mtm))
     }
 
-    /// 入れ子の項目を開閉できる一覧。自分でスクロールする。
+    /// A list whose nested items can be expanded and collapsed. It scrolls by itself.
     pub fn tree(&self) -> Result<Tree> {
         Ok(Tree::new(self.0.mtm))
     }
 
-    /// 右クリックで出るポップアップ (コンテキスト) メニュー。
+    /// A popup (context) menu shown on right-click.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 取り付け先から消えることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// remove it from the widgets it is attached to.
     pub fn popup_menu(&self) -> Result<PopupMenu> {
         let popup = PopupMenu::new(self.0.mtm);
         self.0.popups.borrow_mut().push(popup.clone());
         Ok(popup)
     }
 
-    /// パンくず。
+    /// Breadcrumbs.
     pub fn breadcrumbs(&self) -> Result<Breadcrumbs> {
         Ok(Breadcrumbs::new(self.0.mtm))
     }
 
-    /// ページ送り。`page_count` はページ数。
+    /// Pagination. `page_count` is the number of pages.
     pub fn pagination(&self, page_count: usize) -> Result<Pagination> {
         Ok(Pagination::new(self.0.mtm, page_count))
     }
 
-    /// リンク。`href` が空でなければ、押したときにブラウザで開く。
+    /// A link. If `href` is not empty, clicking it opens it in the browser.
     pub fn link(&self, text: &str, href: &str) -> Result<Link> {
         Ok(Link::new(self.0.mtm, text, href))
     }
 
-    /// 画像。`source` はファイルパスか URL。
+    /// An image. `source` is a file path or a URL.
     pub fn image(&self, source: &str) -> Result<Image> {
         Ok(Image::new(self.0.mtm, source))
     }
 
-    /// 動画。`source` はファイルパスか URL。
+    /// Video. `source` is a file path or a URL.
     pub fn video(&self, source: &str) -> Result<Video> {
         Ok(Video::new(self.0.mtm, source))
     }
 
-    /// 音声。`source` はファイルパスか URL。
+    /// Audio. `source` is a file path or a URL.
     pub fn audio(&self, source: &str) -> Result<Audio> {
         Ok(Audio::new(self.0.mtm, source))
     }
 
-    /// ファイルやフォルダーを選ばせるボタン。押すと `NSOpenPanel` が出る。
+    /// A button for picking files or folders. Clicking it shows an `NSOpenPanel`.
     pub fn file_picker(&self, text: &str) -> Result<FilePicker> {
         Ok(FilePicker::new(self.0.mtm, text))
     }
 
-    /// 内容をファイルへ保存させるボタン。押すと `NSSavePanel` が出る。
+    /// A button that lets the user save contents to a file. Clicking it shows an
+    /// `NSSavePanel`.
     pub fn file_saver(&self, text: &str) -> Result<FileSaver> {
         Ok(FileSaver::new(self.0.mtm, text))
     }
 
-    /// 一時的な通知 (トースト)。`message` は出す文字列。
+    /// A transient notification (toast). `message` is the string to show.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 通知が届かなくなることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
     pub fn toast(&self, message: &str) -> Result<Toast> {
         let toast = Toast::new(self.0.mtm, message);
         self.0.toasts.borrow_mut().push(toast.clone());
         Ok(toast)
     }
 
-    /// モーダルダイアログ。`title` は見出し。中身は `NSAlert`。
+    /// A modal dialog. `title` is the heading. Backed by `NSAlert`.
     ///
-    /// フレームワークが参照を保持するので、戻り値を捨てても
-    /// 通知が届かなくなることはない。
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
     pub fn dialog(&self, title: &str) -> Result<Dialog> {
         let d = Dialog::new(self.0.mtm, title);
         self.0.dialogs.borrow_mut().push(d.clone());
         Ok(d)
     }
 
-    /// 配色テーマを実行中に切り替える。
+    /// Switches the color theme at runtime.
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         let appearance = appearance_for_theme(theme);
         NSApplication::sharedApplication(self.0.mtm).setAppearance(appearance.as_deref());
@@ -409,28 +414,30 @@ impl Ui {
         Ok(())
     }
 
-    /// 現在選択されている配色テーマを返す。
+    /// Returns the currently selected color theme.
     pub fn theme(&self) -> Theme {
         self.0.theme.get()
     }
 
-    /// 別スレッドや非同期処理から画面を書き換えるための入り口。
+    /// The entry point for updating the screen from other threads or async code.
     ///
-    /// 返る [`Tasks`] は clone してコールバックへ持ち込める。
+    /// The returned [`Tasks`] can be cloned and moved into callbacks.
     pub fn tasks(&self) -> Tasks {
         self.0.tasks.clone()
     }
 
-    /// クリップボード。文字の読み書きができる。
+    /// The clipboard. Text can be read and written.
     pub fn clipboard(&self) -> Clipboard {
         Clipboard::new(self.0.tasks.clone())
     }
 
-    /// URL を既定のアプリ (`https:` ならブラウザ、`mailto:` ならメール) で開く。
+    /// Opens a URL with the default app (the browser for `https:`, mail for
+    /// `mailto:`).
     ///
-    /// 開くのは OS に任せるので、すぐに戻る。渡した文字列を URL として
-    /// 読めない (scheme が無いものを含む)・開く先が無いときは `Err`。
-    /// 開いた先で起きた失敗は分からない。
+    /// Opening is left to the OS, so this returns right away. Returns `Err` when the
+    /// string cannot be read as a URL (including when it has no scheme) or there is
+    /// nothing to open it with. Failures that happen in whatever opens it are not
+    /// reported.
     pub fn open_url(&self, url: &str) -> Result<()> {
         // `URLWithString:` は空文字や `example.com` のような scheme の無い文字列にも
         // nil でない URL を返す。それを `NSWorkspace` へ渡すと、Finder が
@@ -452,7 +459,7 @@ impl Ui {
         }
     }
 
-    /// アプリを終了する。
+    /// Quits the app.
     pub fn quit(&self) {
         NSApplication::sharedApplication(self.0.mtm).terminate(None);
     }
@@ -496,13 +503,13 @@ define_class!(
     }
 );
 
-/// アプリを起動し、`build` の中で UI を組み立てる。
+/// Starts the app and builds the UI inside `build`.
 ///
-/// `build` はアプリの初期化が終わってから呼ばれる。ここでしかウィジェットを
-/// 作れないのは、WinUI 3 が `Application::Start` 前のコントロール生成を
-/// 許さないためで、4 バックエンドで同じ形にそろえてある。
+/// `build` is called after the app has finished initializing. Widgets can be
+/// created only here because WinUI 3 does not allow creating controls before
+/// `Application::Start`, and all four backends follow the same shape.
 ///
-/// この関数はウィンドウがすべて閉じられるまで戻らない。
+/// This function does not return until every window has been closed.
 pub fn run<F>(settings: Settings, build: F) -> Result<()>
 where
     F: FnOnce(&Ui) -> Result<()> + 'static,
@@ -541,11 +548,12 @@ where
     }
 }
 
-/// イベントループへ入らずに `build` だけを実行して戻る。**自動テスト専用**。
+/// Runs only `build` and returns, without entering the event loop. **For automated
+/// tests only.**
 ///
-/// 実際のアプリでは [`run`] を使うこと。AppKit は
-/// `NSApplication` さえ初期化されていればコントロールを生成できるため、
-/// この形でウィジェットの生成・操作・状態変化を検証できる。
+/// Real apps should use [`run`]. AppKit can create controls as long as
+/// `NSApplication` is initialized, so this form can verify creating, operating and
+/// changing the state of widgets.
 pub fn run_for_test<F>(build: F) -> Result<()>
 where
     F: FnOnce(&Ui) -> Result<()>,
@@ -559,9 +567,9 @@ where
     build(&ui)
 }
 
-/// メインメニューを組み立てる。**自動テスト専用**。
+/// Builds the main menu. **For automated tests only.**
 ///
-/// 実際のアプリでは [`run`] が起動時に呼ぶ。
+/// In real apps, [`run`] calls it at startup.
 #[doc(hidden)]
 pub fn install_menu_bar_for_test(mtm: MainThreadMarker, app_name: &str) {
     menu_bar::install(mtm, app_name);

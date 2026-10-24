@@ -1,11 +1,12 @@
-//! 数値入力 (`GtkSpinButton`)。
+//! Number input (`GtkSpinButton`).
 //!
-//! GTK4 には数値専用のコントロールがあるので、[`NumberSpec`] を
-//! 範囲 (`GtkAdjustment`)・刻み・桁数へ写すだけで済む。
+//! GTK4 has a dedicated numeric control, so it is enough to map [`NumberSpec`] onto
+//! the range (`GtkAdjustment`), step and digits.
 //!
-//! 値の丸めと範囲は naui 側でも持つ。`GtkSpinButton` は表示だけを桁数で
-//! 丸め、値そのものは丸めないため、4 バックエンドで同じ答えを返すには
-//! [`NumberSpec`] を通した値を持っておく必要がある。
+//! Rounding and range are also kept on naui's side. `GtkSpinButton` rounds only the
+//! display to the digits and does not round the value itself, so to return the same
+//! answer on all four backends, the value passed through [`NumberSpec`] must be
+//! kept.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -18,19 +19,19 @@ use crate::bin::SizeBin;
 use crate::callback::Notifier;
 use crate::widgets::{impl_widget, without_signal, Widget};
 
-/// 範囲を指定されていないときに `GtkAdjustment` へ渡す端の値。
+/// The bound passed to `GtkAdjustment` when no range is specified.
 ///
-/// `GtkSpinButton` は下限・上限を必ず持つので、実用上たどり着けない大きさを
-/// 「制限なし」の代わりに使う。丸めと範囲は [`NumberSpec`] が持っているので、
-/// ここで止まっても naui の答えは変わらない。
+/// `GtkSpinButton` always has a minimum and maximum, so a magnitude unreachable in
+/// practice is used in place of "no limit". [`NumberSpec`] holds the rounding and
+/// range, so stopping here does not change naui's answer.
 const RANGE_LIMIT: f64 = 1.0e15;
 
-/// 数字の欄に見せておく桁数。
+/// The number of digits the field is sized to show.
 ///
-/// `GtkSpinButton` は幅を決めるとき、範囲に入る数の桁数を数える。範囲を
-/// 指定していない欄は [`RANGE_LIMIT`] の 16 桁ぶんを欲しがってしまうので、
-/// 「自然な大きさ」はここで決め直す。最小のほうは欄を 0 桁まで許して
-/// (`set_width_chars(0)`)、幅を決めるのはアプリに任せる。
+/// When deciding its width, `GtkSpinButton` counts the digits of numbers within the
+/// range. A field without a range would want the 16 digits of [`RANGE_LIMIT`], so
+/// the "natural size" is decided again here. The minimum allows the field down to
+/// 0 digits (`set_width_chars(0)`) and leaves the width to the app.
 const FIELD_CHARS: i32 = 8;
 
 struct NumberInputInner {
@@ -40,14 +41,14 @@ struct NumberInputInner {
     value: Cell<f64>,
     on_change: Notifier<f64>,
     on_submit: Notifier<f64>,
-    /// プログラムから値を書くときに止めるシグナル。
+    /// The signal that is blocked while writing the value from code.
     value_handler: RefCell<Option<glib::SignalHandlerId>>,
     text_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-/// 数値を入力させるコントロール (`GtkSpinButton`)。
+/// A control for entering a number (`GtkSpinButton`).
 ///
-/// 既定は整数 (刻み 1、小数桁 0、範囲の制限なし)。
+/// The default is integers (step 1, 0 decimal places, no range limit).
 #[derive(Clone)]
 pub struct NumberInput(Rc<NumberInputInner>);
 crate::keys::impl_key_down!(NumberInput);
@@ -108,36 +109,38 @@ impl NumberInput {
         this
     }
 
-    /// いまの値。
+    /// The current value.
     pub fn value(&self) -> f64 {
         self.0.value.get()
     }
 
-    /// 値を通知せずに変える。小数桁へ丸め、範囲の外なら端へ寄せる。
+    /// Changes the value without notifying. Rounds to the decimal places and clamps to
+    /// the range.
     pub fn set_value(&self, value: f64) {
         let value = self.0.spec.get().clamp(value);
         self.0.value.set(value);
         self.write_native(value);
     }
 
-    /// 入れられる範囲を決める。`None` はその側に制限を置かない。
+    /// Sets the range of accepted values. `None` places no limit on that side.
     ///
-    /// いまの値が範囲から外れていれば、通知せずに端へ寄せる。
+    /// If the current value falls outside the range, it is clamped to the end without
+    /// notifying.
     pub fn set_range(&self, min: Option<f64>, max: Option<f64>) {
         self.update_spec(|spec| spec.range(min, max));
     }
 
-    /// 上下のボタンやキーで 1 回に動く量 (既定は 1)。
+    /// How much one press of the up/down buttons or keys moves the value (default 1).
     pub fn set_step(&self, step: f64) {
         self.update_spec(|spec| spec.step(step));
     }
 
-    /// 表示する小数の桁数 (既定は 0 = 整数)。
+    /// The number of decimal places shown (default 0 = integers).
     pub fn set_decimals(&self, decimals: u32) {
         self.update_spec(|spec| spec.decimals(decimals));
     }
 
-    /// いまの値の決まり (範囲・刻み・小数桁)。
+    /// The current value rules (range, step, decimal places).
     pub fn spec(&self) -> NumberSpec {
         self.0.spec.get()
     }
@@ -146,33 +149,34 @@ impl NumberInput {
         self.0.native.set_sensitive(enabled);
     }
 
-    /// 値が変わったときに、変わったあとの値で呼ばれる。
-    /// 設定し直すと以前のコールバックは外れる。
+    /// Called with the new value when the value changes. Setting it again removes the
+    /// previous callback.
     pub fn on_change(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_change.set(f);
     }
 
-    /// Enter で確定したときに、確定したあとの値で呼ばれる。
+    /// Called with the confirmed value when the user confirms with Enter.
     ///
-    /// 打ちかけの表示は先に値へ読み込む (値が変われば `on_change` が先に
-    /// 呼ばれる)。数として読めない表示は元の値へ戻してから呼ぶ。IME で
-    /// 変換している間の Enter では呼ばれない。
+    /// What has been typed so far is read into the value first (if the value changes,
+    /// `on_change` is called first). Text that cannot be read as a number is reverted
+    /// to the previous value before the call. Not called for an Enter pressed while an
+    /// IME is composing.
     pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_submit.set(f);
     }
 
-    /// GTK4 の実コントロール。バックエンド固有の脱出口として公開している。
+    /// The real GTK4 control. Public as a backend-specific escape hatch.
     pub fn native_spin_button(&self) -> gtk::SpinButton {
         self.0.native.clone()
     }
 
-    /// Enter の確定をつなぐ。
+    /// Connects Enter confirmation.
     ///
-    /// `GtkSpinButton` 自身の `activate` シグナルは GTK 4.14 からなので、
-    /// 中の `GtkText` (`GtkEditable` の委譲先) の `activate` を受ける。
-    /// `GtkSpinButton` は生成時に同じシグナルへ値の確定
-    /// (`gtk_spin_button_update`) をつないでいるので、後からつなぐこちらが
-    /// 呼ばれるときには値が決まっている (読めない表示は元の値へ戻っている)。
+    /// `GtkSpinButton`'s own `activate` signal exists only since GTK 4.14, so the
+    /// `activate` of the inner `GtkText` (the delegate of `GtkEditable`) is received.
+    /// `GtkSpinButton` connects value confirmation (`gtk_spin_button_update`) to the
+    /// same signal at creation, so by the time this later-connected handler is called,
+    /// the value is settled (unreadable text has been reverted to the previous value).
     fn connect_submit(&self) {
         let Some(text) = self.0.native.delegate() else {
             return;
@@ -189,7 +193,7 @@ impl NumberInput {
         });
     }
 
-    /// 画面に出ている値を受け取る。`commit` なら表示も書き直す。
+    /// Receives the value on screen. With `commit`, rewrites the display too.
     fn native_changed(&self, shown: f64, commit: bool) {
         let accepted = self.0.spec.get().clamp(shown);
         if commit {
@@ -210,7 +214,7 @@ impl NumberInput {
         self.set_value(self.value());
     }
 
-    /// 値をコントロールへ書く。この間はシグナルを止める。
+    /// Writes the value into the control. Signals are blocked meanwhile.
     fn write_native(&self, value: f64) {
         without_signal(&self.0.native, &self.0.value_handler, || {
             without_signal(&self.0.native, &self.0.text_handler, || {
@@ -219,7 +223,7 @@ impl NumberInput {
         });
     }
 
-    /// 範囲・刻み・桁数を `GtkSpinButton` へ渡す。
+    /// Passes the range, step and digits to the `GtkSpinButton`.
     fn write_native_spec(&self) {
         let spec = self.0.spec.get();
         without_signal(&self.0.native, &self.0.value_handler, || {

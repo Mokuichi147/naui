@@ -1,23 +1,23 @@
-//! テーブル (WinUI 3)。
+//! Tables (WinUI 3).
 //!
-//! WinUI 3 に `DataGrid` は無い (Community Toolkit のもの) ので、リスト
-//! ([`crate::List`]) と同じ `ListView` を土台にして、**行の中身を `Grid` に
-//! した**形で組んでいる。
+//! WinUI 3 has no `DataGrid` (it belongs to the Community Toolkit), so it is built
+//! on the same `ListView` as lists ([`crate::List`]), **with each row's content made
+//! a `Grid`**.
 //!
-//! | 部分 | 作り |
+//! | Part | Built from |
 //! | --- | --- |
-//! | 枠 | 2 行の `Grid` (見出し / 本体) に背景・境界線・角丸を持たせる |
-//! | 見出し | 列と同じ `ColumnDefinition` を持つ `Grid` + `TextBlock` |
-//! | 本体 | `ListView`。行は `ListViewItem` + `Grid` |
-//! | 選択 | `ListView` の標準テンプレート (淡い塗り + 左端の指標) |
+//! | Frame | A two-row `Grid` (headings / body) with background, border and rounded corners |
+//! | Headings | A `Grid` with the same `ColumnDefinition`s as the columns + `TextBlock`s |
+//! | Body | `ListView`. Rows are `ListViewItem` + `Grid` |
+//! | Selection | `ListView`'s standard template (light fill + indicator at the left edge) |
 //!
-//! 見出しと行は**同じ列定義を配る**ことで幅をそろえる。列の幅を
-//! ドラッグで変えることはできない (`NSTableView` と違い、WinUI には
-//! そのための標準コントロールが無いため)。
+//! Headings and rows align their widths by **being given the same column
+//! definitions**. Column widths cannot be changed by dragging (unlike `NSTableView`,
+//! WinUI has no standard control for it).
 //!
-//! 色・角丸はすべて `{ThemeResource ...}` で引くので、ライト / ダークの
-//! 切り替えにそのまま追従する。テーマリソースが引けない環境では、
-//! 素の `Grid` + `ListView` に戻して動作を優先する。
+//! Colors and rounded corners are all taken with `{ThemeResource ...}`, so they
+//! follow light / dark switching as is. Where theme resources cannot be obtained, it
+//! falls back to a plain `Grid` + `ListView`, prioritizing function.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -50,10 +50,12 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
-/// 表の枠。見出しと本体を縦に分けた `Grid` で、境界線と角丸はここが持つ。
+/// The table's frame: a `Grid` splitting headings and body vertically, which holds
+/// the border and rounded corners.
 ///
-/// 行 (`ListViewItem`) の余白。見出しの `Padding` と**左右をそろえる**ことで
-/// 列の位置が合う。`ListView` の既定の余白は見出しと違うので、行ごとに書く。
+/// The padding of rows (`ListViewItem`s). **Aligning left and right** with the
+/// headings' `Padding` makes the column positions match. `ListView`'s default
+/// padding differs from the headings', so it is written per row.
 const ROW_PADDING: Thickness = Thickness {
     Left: 12.0,
     Top: 8.0,
@@ -61,12 +63,12 @@ const ROW_PADDING: Thickness = Thickness {
     Bottom: 8.0,
 };
 
-/// 行の高さの下限。`List` の行と同じ。
+/// The minimum row height. The same as `List` rows.
 const ROW_MIN_HEIGHT: f64 = 36.0;
 
-/// 見出しの `Padding` は、行の `Padding` ([`ROW_PADDING`]) と同じ横位置に
-/// なるようにそろえてある。本体へ `Padding` を置くと見出しとずれるため、
-/// そちらは 0 のままにしている。
+/// The headings' `Padding` is aligned so that it has the same horizontal position as
+/// the rows' `Padding` ([`ROW_PADDING`]). Putting `Padding` on the body would shift
+/// it from the headings, so that stays 0.
 const SURFACE_XAML: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
@@ -104,10 +106,10 @@ const PLAIN_LIST_XAML: &str = r#"<ListView
     </ListView.ItemsPanel>
 </ListView>"#;
 
-/// 並べ替えできる見出しのボタン。地色も枠も出さず、見出しの文字のまま
-/// 押せるようにする (WinUI に列見出し用のコントロールが無いため)。
+/// The button of a sortable heading. With no background or border, it stays
+/// clickable as the heading text (WinUI has no control for column headings).
 ///
-/// `HEADER_STYLE_KEY` は `HEADER_STYLE_XAML` の `x:Key` と同じ文字列にする。
+/// `HEADER_STYLE_KEY` must be the same string as the `x:Key` of `HEADER_STYLE_XAML`.
 const HEADER_STYLE_KEY: &str = "NauiTableHeaderStyle";
 const HEADER_STYLE_XAML: &str = r##"<ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -124,7 +126,8 @@ const HEADER_STYLE_XAML: &str = r##"<ResourceDictionary
     </Style>
 </ResourceDictionary>"##;
 
-/// 見出しのボタンに当てる `Style`。読めなければ `None` (既定の見た目)。
+/// The `Style` applied to heading buttons. `None` (the default look) if it cannot be
+/// read.
 fn header_style() -> Option<Style> {
     let dictionary = XamlReader::Load(&HSTRING::from(HEADER_STYLE_XAML))
         .and_then(|element| element.cast::<ResourceDictionary>());
@@ -141,8 +144,8 @@ fn header_style() -> Option<Style> {
         .ok()
 }
 
-/// 並べ替えの向きを表す文字。WinUI に列見出しの指標が無いので、
-/// 見出しの文字の後ろへ付ける。
+/// The character indicating the sort direction. WinUI has no column heading
+/// indicator, so it is appended after the heading text.
 fn sort_arrow(order: Option<SortOrder>) -> &'static str {
     match order {
         Some(SortOrder::Ascending) => " ▲",
@@ -151,10 +154,10 @@ fn sort_arrow(order: Option<SortOrder>) -> &'static str {
     }
 }
 
-/// 並べ替えが変わったことの通知先。
+/// The handler notified when the sort changes.
 ///
-/// WinRT のデリゲートは `Send + Sync` を要求するため `UiThreadCell` に載せる
-/// ([`SelectionHandler`] と同じ形)。
+/// WinRT delegates require `Send + Sync`, so it is placed in a `UiThreadCell` (the
+/// same shape as [`SelectionHandler`]).
 #[derive(Clone)]
 struct SortHandler(HandlerCell<dyn FnMut(usize, SortOrder)>);
 
@@ -180,14 +183,14 @@ impl SortHandler {
     }
 }
 
-/// 見出しと本体をまとめた枠。
+/// The frame bundling the headings and the body.
 struct Surface {
     root: XamlGrid,
     header: XamlGrid,
     list_view: ListView,
 }
 
-/// テーマ付きの枠を読み込む。読めなければ素の `Grid` で組み直す。
+/// Loads the themed frame. Rebuilds it with a plain `Grid` if it cannot be read.
 fn build_surface() -> Result<Surface> {
     match load_surface() {
         Ok(surface) => Ok(surface),
@@ -285,7 +288,8 @@ fn plain_surface() -> Result<Surface> {
     })
 }
 
-/// WinUI の文字揃えへ写す。`Fill` は文字に意味が無いので左と同じ扱い。
+/// Maps to WinUI's text alignment. `Fill` means nothing for text, so it is treated
+/// the same as left.
 fn text_alignment(align: Align) -> TextAlignment {
     match align {
         Align::Center => TextAlignment::Center,
@@ -294,9 +298,9 @@ fn text_alignment(align: Align) -> TextAlignment {
     }
 }
 
-/// 列の定義を `Grid` の `ColumnDefinition` として配る。
+/// Hands out the column definitions as the `Grid`'s `ColumnDefinition`s.
 ///
-/// 見出しにも行にも同じものを配ることで、幅がそろう。
+/// Giving the same ones to both headings and rows aligns the widths.
 fn apply_columns(grid: &XamlGrid, columns: &[TableColumn]) -> Result<()> {
     grid.SetColumnSpacing(12.0)
         .map_err(|e| to_error("列間隔の設定", e))?;
@@ -329,7 +333,7 @@ fn apply_columns(grid: &XamlGrid, columns: &[TableColumn]) -> Result<()> {
     Ok(())
 }
 
-/// セル 1 つ分の `TextBlock` を、列の位置へ置く。
+/// Places one cell's `TextBlock` at the column's position.
 fn append_cell(
     grid: &XamlGrid,
     index: usize,
@@ -369,16 +373,17 @@ fn append_cell(
     Ok(())
 }
 
-/// 表示位置を読み直す間隔 (ミリ秒)。
+/// The interval (milliseconds) for re-reading the display position.
 ///
-/// `ScrollViewer.ViewChanged` はこの投影に入っていないので、スクロール中は
-/// 短い間隔で表示位置を読む。読むだけなので、位置が変わらなければ何もしない。
+/// `ScrollViewer.ViewChanged` is not in this projection, so while scrolling the
+/// display position is read at a short interval. It only reads, so nothing happens
+/// if the position does not change.
 const SCROLL_POLL_MILLIS: i64 = 50;
 
-/// `TimeSpan` の 1 ミリ秒 (100 ナノ秒きざみ)。
+/// One millisecond of `TimeSpan` (in 100-nanosecond units).
 const TICKS_PER_MILLI: i64 = 10_000;
 
-/// セル 1 つ分の中身。
+/// The content of one cell.
 enum CellContent {
     Text(String),
     Widget(Box<dyn Widget>),
@@ -393,11 +398,12 @@ impl Clone for CellContent {
     }
 }
 
-/// 表へ載せる 1 行の中身。
+/// The contents of one row to put in a table.
 ///
-/// [`TableRow`] は文字列だけで済む表向けの簡便 API であり、セルにボタンや
-/// チェックボックス、アイコンを置きたいときは `Grid` / `Stack` で中身を
-/// 作ってこの型へ並べる。行は [`Table::set_row_builder`] から返す。
+/// [`TableRow`] is a convenience API for tables that need only strings. To put
+/// buttons, check boxes or icons in cells, build the contents with `Grid` / `Stack`
+/// and line them up in this type. Rows are returned from
+/// [`Table::set_row_builder`].
 ///
 /// ```no_run
 /// # use naui_windows::{Table, TableCells};
@@ -410,7 +416,7 @@ impl Clone for CellContent {
 pub struct TableCells {
     cells: Vec<CellContent>,
     selectable: bool,
-    /// 文字だけの行で `enabled` が `false` のとき。行ごと操作できなくする。
+    /// For text-only rows whose `enabled` is `false`. Makes the whole row inoperable.
     dimmed: bool,
     activation: ActivationHandler,
 }
@@ -433,7 +439,7 @@ impl Default for TableCells {
 }
 
 impl TableCells {
-    /// セルが 1 つも無い行を作る。
+    /// Creates a row with no cells.
     pub fn new() -> Self {
         Self {
             cells: Vec::new(),
@@ -443,19 +449,19 @@ impl TableCells {
         }
     }
 
-    /// 文字のセルを 1 つ足す。揃えは列の指定に従う。
+    /// Adds one text cell. Alignment follows the column's setting.
     pub fn text(mut self, text: impl Into<String>) -> Self {
         self.cells.push(CellContent::Text(text.into()));
         self
     }
 
-    /// ウィジェットのセルを 1 つ足す。
+    /// Adds one widget cell.
     pub fn cell(mut self, content: &dyn Widget) -> Self {
         self.cells.push(CellContent::Widget(content.boxed_clone()));
         self
     }
 
-    /// 行全体を選択できるようにするかどうか (既定はできる)。
+    /// Whether the whole row can be selected (it can by default).
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
         self
@@ -465,7 +471,7 @@ impl TableCells {
         self.selectable
     }
 
-    /// 列数。
+    /// The number of columns.
     pub fn len(&self) -> usize {
         self.cells.len()
     }
@@ -474,15 +480,16 @@ impl TableCells {
         self.cells.is_empty()
     }
 
-    /// 行のセルや余白がクリックされたときに呼ぶ処理。
+    /// What to do when a cell or empty space in the row is clicked.
     ///
-    /// ボタンや入力欄を直接押した場合は、そのコントロールがクリックを
-    /// 受け取るので呼ばれない。
+    /// When a button or text field is clicked directly, that control receives the
+    /// click, so this is not called.
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.activation.set(f);
     }
 
-    /// 文字だけの行から作る。`enabled` はそのまま「選べるか」になる。
+    /// Creates one from a text-only row. `enabled` becomes "whether it can be
+    /// selected" as is.
     fn from_row(row: &TableRow) -> Self {
         Self {
             cells: row.cells.iter().cloned().map(CellContent::Text).collect(),
@@ -497,17 +504,18 @@ impl TableCells {
     }
 }
 
-/// 行を組み立てるクロージャ。呼び出しの間だけ取り出す。
-/// 行を組み立てるクロージャの置き場。
+/// The closure that builds rows. Taken out only for the duration of the call.
+/// The slot for the closure that builds rows.
 type RowBuildCell = Rc<RefCell<Option<Box<dyn FnMut(usize) -> Result<TableCells>>>>>;
 
-/// 「その行は選べるか」を答える関数の置き場 ([`Table::set_row_selectable`])。
+/// The slot for the function answering "can this row be selected?"
+/// ([`Table::set_row_selectable`]).
 type RowSelectableCell = RefCell<Option<Rc<dyn Fn(usize) -> bool>>>;
 
-/// 行を組み立てるクロージャ。
+/// The closure that builds rows.
 ///
-/// 呼び出しの間だけ取り出すので、組み立ての中から表を操作しても
-/// 二重借用にならない。
+/// It is taken out only for the duration of the call, so operating on the table
+/// from inside the build does not double-borrow.
 #[derive(Clone, Default)]
 struct RowBuilder(RowBuildCell);
 
@@ -535,13 +543,14 @@ impl RowBuilder {
     }
 }
 
-/// 行の出どころ。文字だけの行 ([`Table::set_rows`]) と、
-/// 見えたときに組み立てる行 ([`Table::set_row_builder`]) の 2 通り。
+/// Where rows come from: either text-only rows ([`Table::set_rows`]) or rows built
+/// when they become visible ([`Table::set_row_builder`]).
 #[derive(Default)]
 struct RowsState {
     rows: RefCell<Vec<TableRow>>,
     builder: RowBuilder,
-    /// 行を組み立てずに「選べるか」を答える関数 ([`Table::set_row_selectable`])。
+    /// The function that answers "can it be selected?" without building the row
+    /// ([`Table::set_row_selectable`]).
     selectable: RowSelectableCell,
     count: Cell<usize>,
 }
@@ -563,7 +572,7 @@ impl RowsState {
         self.count.set(count);
     }
 
-    /// その行の中身。無ければ `None`。
+    /// The contents of that row. `None` if there is none.
     fn cells(&self, index: usize) -> Option<TableCells> {
         if index >= self.count.get() {
             return None;
@@ -579,15 +588,15 @@ impl RowsState {
         *self.selectable.borrow_mut() = Some(Rc::new(f));
     }
 
-    /// 行を組み立てずに答えられるなら、その行が選べるか。
+    /// Whether the row can be selected, if that can be answered without building it.
     ///
-    /// 呼び出しの間は借用を持たない (この中からアプリが表を触れるため)。
+    /// No borrow is held during the call (the app may touch the table from inside it).
     fn selectable_hint(&self, index: usize) -> Option<bool> {
         let f = self.selectable.borrow().clone()?;
         Some(f(index))
     }
 
-    /// 文字だけの行で、その行が選べるか。組み立てる行では `None`。
+    /// For text-only rows, whether the row can be selected. `None` for built rows.
     fn text_row_selectable(&self, index: usize) -> Option<bool> {
         match self.builder.is_set() {
             true => None,
@@ -596,7 +605,7 @@ impl RowsState {
     }
 }
 
-/// ウィジェットのセルを、列の位置へ置く。
+/// Places a widget cell at the column's position.
 fn append_widget_cell(
     grid: &XamlGrid,
     index: usize,
@@ -622,11 +631,12 @@ fn append_widget_cell(
     Ok(())
 }
 
-/// いま押されている修飾キーから、選択の変え方を見分ける。
+/// Infers how the selection is being changed from the modifier keys held now.
 ///
-/// `SelectionChanged` には修飾キーが乗らないので、その場のキーの状態を読む。
-/// `GetKeyState` はスレッドが処理したところまでの状態を返すので、選択を
-/// 起こしたクリックやキー操作と同じ時点の状態になる。
+/// `SelectionChanged` does not carry modifier keys, so the key state is read on the
+/// spot. `GetKeyState` returns the state as far as the thread has processed, so it
+/// is the state at the same moment as the click or key operation that caused the
+/// selection.
 fn selection_gesture() -> SelectionGesture {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SHIFT};
 
@@ -645,7 +655,7 @@ fn selection_gesture() -> SelectionGesture {
     SelectionGesture::Plain
 }
 
-/// 窓の外にある行の分を、詰め物の高さとして持たせる。
+/// Gives the spacer the height of the rows outside the window.
 fn set_spacer_height(spacer: &XamlGrid, height: f64) {
     let _ = spacer.SetHeight(height.max(0.0));
 }
@@ -654,53 +664,56 @@ struct TableInner {
     native: XamlGrid,
     header: XamlGrid,
     list_view: ListView,
-    /// ホイール補助への登録。テンプレートの `ScrollViewer` が現れるまで
-    /// 決まらないので、`Loaded` のあとで入る。
+    /// The registration with the wheel helper. It cannot be decided until the
+    /// template's `ScrollViewer` appears, so it is made after `Loaded`.
     wheel: RefCell<Option<Rc<ListScrollTarget>>>,
-    /// 組み立ててある行そのもの。並びは `window.start` から。
+    /// The built rows themselves, in order from `window.start`.
     row_items: RefCell<Vec<ListViewItem>>,
-    /// 組み立ててある行の中身。`row_items` と同じ並び。
+    /// The contents of the built rows, in the same order as `row_items`.
     realized: RefCell<Vec<TableCells>>,
     columns: RefCell<Vec<TableColumn>>,
     rows: Rc<RowsState>,
-    /// いま組み立ててある行の範囲。行数が多いと画面の前後だけになる。
+    /// The range of rows currently built. With many rows, only those around the screen.
     window: Cell<RowWindow>,
-    /// 行を組み立てている最中か。入れ子の作り直しを防ぐ。
+    /// Whether rows are being built right now. Prevents nested rebuilds.
     rebuilding: Cell<bool>,
-    /// 選ばれている行 (昇順)。窓の外の行も入るので、`ListView` ではなく
-    /// ここが正。
+    /// The selected rows (ascending). Rows outside the window are included, so this is
+    /// the source of truth, not the `ListView`.
     selected: RefCell<Vec<usize>>,
-    /// 1 行の高さ (論理ピクセル)。測った値か [`Table::set_row_height`] の指定。
+    /// The height of one row (logical pixels). Either measured or set with
+    /// [`Table::set_row_height`].
     row_height: Cell<f64>,
-    /// アプリが決めた行の高さ。無ければ組み立てた行から測る。
+    /// The row height decided by the app. If absent, it is measured from a built row.
     fixed_row_height: Cell<Option<f64>>,
-    /// 窓の外にある行の分を埋める枠 (行リストの前後に置く)。
+    /// A frame filling in for the rows outside the window (placed before and after the
+    /// row list).
     top_spacer: XamlGrid,
     bottom_spacer: XamlGrid,
-    /// 表示位置を読むタイマー。行を絞っている間だけ動かす。
+    /// The timer that reads the display position. Runs only while rows are limited.
     scroll_timer: RefCell<Option<DispatcherQueueTimer>>,
-    /// 行リストと前後の詰め物をまとめたスクロール領域。
+    /// The scroll area bundling the row list and the spacers before and after it.
     scroll: RefCell<Option<ScrollViewer>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
-    /// いまの並べ替え (列と向き)。
+    /// The current sort (column and direction).
     sort: Cell<Option<(usize, SortOrder)>>,
     sort_handler: SortHandler,
-    /// 見出しのボタン。並べ替えできる列にだけある。指標の書き替えに使う。
+    /// The heading buttons. Only sortable columns have one. Used to rewrite the
+    /// indicator.
     header_buttons: RefCell<Vec<Option<Button>>>,
-    /// 見出しのボタンに当てる見た目。読めなかったときだけ `None`。
+    /// The look applied to heading buttons. `None` only when it could not be read.
     header_style: Option<Style>,
-    /// プログラムから選択を変えている間だけ通知を止める。
-    /// `IsSelected` の書き換えでも `SelectionChanged` が起きるため。
+    /// Stops notifications only while the selection is being changed from code, since
+    /// rewriting `IsSelected` also fires `SelectionChanged`.
     silent: Rc<Cell<bool>>,
-    /// ウィンドウ全体のホイール補助が、この表の ScrollViewer を選ぶための状態。
+    /// State for the window-wide wheel helper to choose this table's ScrollViewer.
     hovered: Arc<UiThreadCell<usize>>,
 }
 
-/// 列見出しを持つ表 (Grid + ListBox)。
+/// A table with column headings (Grid + ListBox).
 ///
-/// 高さは中身から決まるので、行数に関係なく固定したいときは
-/// `set_sizing` で指定する。
+/// Its height is decided by its contents, so to fix it regardless of the number of
+/// rows, specify it with `set_sizing`.
 #[derive(Clone)]
 pub struct Table(Rc<TableInner>);
 impl_widget!(Table, native);
@@ -857,9 +870,9 @@ impl Table {
         Ok(this)
     }
 
-    /// 列を作り直す。行と選択はそのまま残り、セルの並べ直しだけが起きる。
+    /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
     ///
-    /// 並べ替えの指定も、その列がまだ並べ替えられるなら残る。
+    /// The sort setting also stays if that column can still be sorted.
     pub fn set_columns(&self, columns: &[TableColumn]) {
         // 行を組み直すと `IsSelected` が落ちるので、選択は覚えて書き戻す。
         let picked = self.selection();
@@ -876,26 +889,28 @@ impl Table {
         self.write_selection(&picked);
     }
 
-    /// 列数。
+    /// The number of columns.
     pub fn column_count(&self) -> usize {
         self.0.columns.borrow().len()
     }
 
-    /// 行を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     ///
-    /// 行数が多いときは、`ListViewItem` を作るのも画面に出ている分だけに
-    /// なる (残りは前後の詰め物が高さを持つので、
-    /// スクロールバーの長さは全行分のまま)。
+    /// With many rows, `ListViewItem`s are created only for the rows on screen (the
+    /// spacers before and after carry the height of the rest, so the scroll bar length
+    /// still reflects all the rows).
     pub fn set_rows(&self, rows: &[TableRow]) {
         self.0.rows.set_rows(rows);
         self.reset_rows();
     }
 
-    /// セルにウィジェットを置ける行を、**見えたときに組み立てる**形で渡す。
+    /// Passes rows whose cells can hold widgets, in a form that **builds each row when
+    /// it becomes visible**.
     ///
-    /// `count` は行数で、`build` は 0 から `count - 1` のインデックスを受けて
-    /// その行の中身 ([`TableCells`]) を返す。呼ばれるのは画面に出ている行
-    /// (と、その少し前後) だけなので、行数が数十万になっても開くのは速い。
+    /// `count` is the number of rows, and `build` receives an index from 0 to
+    /// `count - 1` and returns that row's contents ([`TableCells`]). It is called only
+    /// for the rows on screen (and a few before and after), so opening stays fast even
+    /// with hundreds of thousands of rows.
     ///
     /// ```no_run
     /// # use naui_windows::{Table, TableCells};
@@ -914,15 +929,16 @@ impl Table {
         self.reset_rows();
     }
 
-    /// 行が選べるかどうかを、**行を組み立てずに**答える関数を渡す。
+    /// Passes a function that answers whether a row can be selected **without building
+    /// the row**.
     ///
-    /// [`Table::set_row_builder`] で組み立てる行では、まだ作っていない行が
-    /// 選べるかどうかを naui は知らない。これを渡しておくと、画面の外の行に
-    /// ついても [`Table::set_selection`] が「選べない行を取り除く」を守れる。
-    /// 渡さないときは、作ってある行は [`TableCells::selectable`] に従い、
-    /// まだ作っていない行は選べるものとして扱う。
+    /// For rows built with [`Table::set_row_builder`], naui does not know whether rows
+    /// not yet built can be selected. With this function, [`Table::set_selection`] can
+    /// keep its promise of "removing rows that cannot be selected" even for rows off
+    /// screen. Without it, built rows follow [`TableCells::selectable`] and rows not
+    /// yet built are treated as selectable.
     ///
-    /// 返す答えは `build` が返す [`TableCells::selectable`] と同じにすること。
+    /// Its answers must match the [`TableCells::selectable`] returned by `build`.
     ///
     /// ```no_run
     /// # use naui_windows::{Table, TableCells};
@@ -935,7 +951,7 @@ impl Table {
         self.0.rows.set_selectable(selectable);
     }
 
-    /// 見えている行を組み立て直す。行数と選択はそのまま。
+    /// Rebuilds the visible rows. The row count and selection stay.
     pub fn refresh(&self) {
         let picked = self.selection();
         self.build_window();
@@ -946,11 +962,12 @@ impl Table {
         }
     }
 
-    /// 行の高さを論理ピクセルで決める。0 以下を渡すと、組み立てた行から測る。
+    /// Sets the row height in logical pixels. Passing 0 or less measures it from a
+    /// built row.
     ///
-    /// どの行も同じ高さになる。画面の外にある行の分は「行数 × この高さ」で
-    /// 詰めるので、行の高さがそろっていないと、スクロールバーの長さが
-    /// 実際と少しずれる。
+    /// Every row gets the same height. Rows off screen are filled in as "row count ×
+    /// this height", so if row heights are not uniform the scroll bar length will be
+    /// slightly off from reality.
     pub fn set_row_height(&self, height: f64) {
         self.0
             .fixed_row_height
@@ -960,12 +977,12 @@ impl Table {
         self.refresh();
     }
 
-    /// 行の高さ (論理ピクセル)。まだ 1 行も組み立てていなければ 0。
+    /// The row height (logical pixels). 0 if no row has been built yet.
     pub fn row_height(&self) -> f64 {
         self.0.row_height.get()
     }
 
-    /// 行数。
+    /// The number of rows.
     pub fn len(&self) -> usize {
         self.0.rows.len()
     }
@@ -974,9 +991,11 @@ impl Table {
         self.len() == 0
     }
 
-    /// 選び方を変える。選択の意味が変わるため、選択は外れる。
+    /// Changes how rows are selected. The meaning of the selection changes, so the
+    /// selection is cleared.
     ///
-    /// 複数選択は WinUI の `Extended` (Ctrl / Shift を押しながら選ぶ) に写す。
+    /// Multiple selection maps to WinUI's `Extended` (select while holding Ctrl /
+    /// Shift).
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.mode.set(mode);
         let native = if mode.is_multiple() {
@@ -992,26 +1011,28 @@ impl Table {
         self.0.mode.get()
     }
 
-    /// 選ばれている行のうち、いちばん上のもの。
+    /// The topmost of the selected rows.
     pub fn selected(&self) -> Option<usize> {
         self.selection().first().copied()
     }
 
-    /// 選ばれている行 (昇順)。単一選択なら 0 件か 1 件。
+    /// The selected rows (ascending). Zero or one for single selection.
     ///
-    /// 窓の外にある行も入る。`ListView` が知っているのは組み立ててある行
-    /// だけなので、覚えているほうを返す。
+    /// Rows outside the window are included. The `ListView` knows only the rows that are
+    /// built, so the remembered selection is returned.
     pub fn selection(&self) -> Vec<usize> {
         self.0.selected.borrow().clone()
     }
 
-    /// `index` 行目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until row `index` is visible. The selection does not change.
     ///
-    /// すでに見えていれば動かさず、見えていなければ近いほうの端に合わせる
-    /// (上にあれば上端、下にあれば下端)。範囲外なら何もしない。
+    /// If it is already visible nothing moves; otherwise it is aligned to the nearer
+    /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
+    /// range.
     ///
-    /// 行を絞って組み立てているときも、行の高さから位置を求めて送るので、
-    /// まだ組み立てていない行へも送れる (送った先の行はその場で組み立てる)。
+    /// Even while only some rows are built, the position is computed from the row
+    /// height, so it can scroll to rows not yet built (the destination row is built on
+    /// the spot).
     pub fn scroll_to_row(&self, index: usize) {
         if index >= self.len() {
             return;
@@ -1039,31 +1060,31 @@ impl Table {
         self.update_window();
     }
 
-    /// 通知せずに 1 行だけを選ぶ。
+    /// Selects exactly one row without notifying.
     pub fn set_selected(&self, index: usize) {
         self.set_selection(&[index]);
     }
 
-    /// 通知せずに選択を置き換える。
+    /// Replaces the selection without notifying.
     ///
-    /// 範囲外・選べない行・重複は取り除かれ、単一選択なら先頭の 1 件だけが残る
-    /// ([`SelectionMode::normalize_by`])。
+    /// Out-of-range rows, unselectable rows and duplicates are removed, and with single
+    /// selection only the first remains ([`SelectionMode::normalize_by`]).
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
         self.write_selection(&picked);
     }
 
-    /// 通知せずに選択をすべて外す。
+    /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
         self.write_selection(&[]);
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 行を選ぶ (通知あり)。
+    /// Selects one row through the same path as a user's selection (notifies).
     pub fn select(&self, index: usize) {
         self.select_many(&[index]);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を置き換える (通知あり)。
+    /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
         self.set_selection(indices);
         // 同じ選択を選び直すと `SelectionChanged` は起きないため、
@@ -1072,31 +1093,34 @@ impl Table {
         self.0.handler.emit(&actual);
     }
 
-    /// 選択が変わったときに、選ばれている行 (昇順) で呼ばれる。
+    /// Called with the selected rows (ascending) when the selection changes.
     ///
-    /// 複数選択では 0 件で呼ばれることもある。
+    /// With multiple selection it may be called with none.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 見出しが押されて並べ替えの指定が変わったときに、
-    /// 押された列と向きで呼ばれる。
+    /// Called with the clicked column and direction when a heading is clicked and the
+    /// sort setting changes.
     ///
-    /// [`TableColumn::sortable`] を立てた列だけが押せる。**行を並べ替えるのは
-    /// アプリの仕事**で、通知を受けたら並べ替えた行を [`Table::set_rows`] で
-    /// 渡し直す (`set_rows` は選択を外すので、必要なら選び直す)。
+    /// Only columns with [`TableColumn::sortable`] set can be clicked. **Sorting the
+    /// rows is the app's job**: when notified, pass the sorted rows again with
+    /// [`Table::set_rows`] (`set_rows` clears the selection, so reselect if needed).
     pub fn on_sort(&self, f: impl FnMut(usize, SortOrder) + 'static) {
         self.0.sort_handler.set(f);
     }
 
-    /// いまの並べ替えの指定 (列と向き)。押されたことが無ければ `None`。
+    /// The current sort setting (column and direction). `None` if no heading has been
+    /// clicked.
     pub fn sort(&self) -> Option<(usize, SortOrder)> {
         self.0.sort.get()
     }
 
-    /// 通知せずに並べ替えの指定を置き換える。見出しの指標だけが変わる。
+    /// Replaces the sort setting without notifying. Only the heading's indicator
+    /// changes.
     ///
-    /// 並べ替えられない列や範囲外の列を指すと、指定は外れる。
+    /// Pointing at a column that cannot be sorted, or one out of range, clears the
+    /// setting.
     pub fn set_sort(&self, sort: Option<(usize, SortOrder)>) {
         let sort = sort.filter(|&(column, _)| {
             self.0
@@ -1109,14 +1133,14 @@ impl Table {
         self.apply_sort();
     }
 
-    /// 中身の `ListBox`。バックエンド固有の脱出口として公開している。
+    /// The inner `ListBox`. Public as a backend-specific escape hatch.
     pub fn native_list_view(&self) -> ListView {
         self.0.list_view.clone()
     }
 
     // ------------------------------------------------------------ 組み立て
 
-    /// 見出しを、いまの列の定義から作り直す。
+    /// Rebuilds the headings from the current column definitions.
     fn rebuild_header(&self) -> Result<()> {
         let columns = self.0.columns.borrow();
         let children = self
@@ -1178,7 +1202,8 @@ impl Table {
         Ok(())
     }
 
-    /// 見出しが押されたとき。同じ列なら向きを反転し、違う列なら昇順から。
+    /// When a heading is clicked. The same column reverses direction; a different
+    /// column starts ascending.
     fn on_header_activated(&self, index: usize) {
         let next = match self.0.sort.get() {
             Some((column, order)) if column == index => (index, order.reversed()),
@@ -1189,7 +1214,7 @@ impl Table {
         self.0.sort_handler.emit(next.0, next.1);
     }
 
-    /// 並べ替えの指定を見出しへ書く。
+    /// Writes the sort setting into the headings.
     fn apply_sort(&self) {
         let sort = self.0.sort.get();
         let columns = self.0.columns.borrow();
@@ -1209,9 +1234,9 @@ impl Table {
         }
     }
 
-    /// 表の `ScrollViewer` を、ホイール補助の行き先として登録する。
+    /// Registers the table's `ScrollViewer` as a destination of the wheel helper.
     ///
-    /// `Loaded` で表示サイズが決まってから、表示範囲も更新する。
+    /// After the display size is decided on `Loaded`, the visible range is updated too.
     fn install_wheel_target(&self) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let loaded = RoutedEventHandler::new(move |_, _| {
@@ -1229,7 +1254,7 @@ impl Table {
         Ok(())
     }
 
-    /// ホイール補助への登録を 1 回だけ行う。
+    /// Registers with the wheel helper, exactly once.
     fn register_wheel_target(&self) {
         if self.0.wheel.borrow().is_some() {
             return;
@@ -1245,8 +1270,8 @@ impl Table {
 
     // ------------------------------------------------------- 行を絞る窓
 
-    /// 行の差し替えを描画に間に合わせる。タイマーだけではスクロール後に
-    /// 空の詰め物が見える時間が生じるため、レイアウトの完了時にも更新する。
+    /// Gets row swaps in before drawing. With the timer alone, empty spacers would be
+    /// visible for a moment after scrolling, so it also updates when layout completes.
     fn install_layout_updates(&self) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let handler = windows::Foundation::EventHandler::<IInspectable>::new(move |_, _| {
@@ -1264,7 +1289,8 @@ impl Table {
         Ok(())
     }
 
-    /// 行を作り直して、窓を先頭へ戻す。選択も外れる。
+    /// Rebuilds the rows and moves the window back to the start. The selection is
+    /// cleared too.
     fn reset_rows(&self) {
         self.0.selected.borrow_mut().clear();
         self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
@@ -1275,7 +1301,7 @@ impl Table {
         self.watch_scrolling();
     }
 
-    /// いまの窓の分だけ、`ListView` の行を作り直す。
+    /// Rebuilds the `ListView` rows for just the current window.
     fn build_window(&self) {
         // 組み立ての途中でアプリのコードが動くので、そこから呼ばれても
         // 二重に作り直さない。
@@ -1393,10 +1419,10 @@ impl Table {
         Ok(())
     }
 
-    /// 行が押されたときに activation を出す購読を付ける。
+    /// Attaches the subscription that fires the activation when a row is clicked.
     ///
-    /// セルのボタンや入力欄はそれ自身がクリックを受け取り、`Tapped` は
-    /// そこで止まるので、行の activation とは二重にならない。
+    /// Buttons and fields in cells receive the click themselves and `Tapped` stops
+    /// there, so it does not double up with the row's activation.
     fn attach_row_click(&self, item: &ListViewItem, index: usize) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let handler = TappedEventHandler::new(move |_sender, _args| {
@@ -1411,7 +1437,7 @@ impl Table {
         Ok(())
     }
 
-    /// その行の activation を出す。
+    /// Fires that row's activation.
     fn activate_row(&self, index: usize) {
         let window = self.0.window.get();
         let activation = self
@@ -1425,7 +1451,7 @@ impl Table {
         }
     }
 
-    /// いまのスクロール位置から、組み立てておく行の範囲を求める。
+    /// Computes the range of rows to build from the current scroll position.
     fn compute_window(&self, overscan: usize) -> RowWindow {
         let scroll = self.0.scroll.borrow().clone();
         let (offset, viewport) = match scroll {
@@ -1446,10 +1472,10 @@ impl Table {
         )
     }
 
-    /// スクロールに合わせて、組み立てる範囲を動かす。
+    /// Moves the built range along with scrolling.
     ///
-    /// 1 行スクロールするたびに作り直すのは重いので、余分に作ってある分
-    /// ([`ROW_WINDOW_OVERSCAN`]) の半分までは、そのまま使う。
+    /// Rebuilding for every row scrolled is heavy, so the window is reused until you
+    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]).
     fn update_window(&self) {
         // UpdateLayout 中の再入では、差し替え途中の位置を読まない。
         if self.0.rebuilding.get() {
@@ -1469,7 +1495,7 @@ impl Table {
         self.measure_row_height();
     }
 
-    /// 組み立てた行から 1 行の高さを測る。変わったら `true`。
+    /// Measures the height of one row from the built rows. `true` if it changed.
     fn measure_row_height(&self) -> bool {
         if self.0.fixed_row_height.get().is_some() {
             return false;
@@ -1491,10 +1517,10 @@ impl Table {
         true
     }
 
-    /// 行を絞っている間だけ、表示位置を読み直すタイマーを動かす。
+    /// Runs the timer that re-reads the display position, only while rows are limited.
     ///
-    /// `ScrollViewer.ViewChanged` はこの投影に入っていないので、
-    /// スクロールに気づく手立てがこれしかない。行が少ない表では止めておく。
+    /// `ScrollViewer.ViewChanged` is not in this projection, so this is the only way to
+    /// notice scrolling. It is stopped for tables with few rows.
     fn watch_scrolling(&self) {
         let needed = self.len() > ROW_WINDOW_THRESHOLD;
         if !needed {
@@ -1538,7 +1564,7 @@ impl Table {
 
     // --------------------------------------------------------------- 選択
 
-    /// 指定された選択を、この表で意味を持つ形にそろえる。
+    /// Normalizes the requested selection into a form meaningful for this table.
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
         self.0
             .mode
@@ -1546,10 +1572,10 @@ impl Table {
             .normalize_by(indices, |index| self.is_selectable(index))
     }
 
-    /// その行を選べるか。
+    /// Whether the row can be selected.
     ///
-    /// 組み立てる行では、まだ作っていない行は「選べる」とみなす
-    /// (作ってみないと分からないため)。
+    /// For built rows, rows not yet built are assumed "selectable" (it cannot be known
+    /// without building them).
     fn is_selectable(&self, index: usize) -> bool {
         if index >= self.len() {
             return false;
@@ -1573,10 +1599,11 @@ impl Table {
         }
     }
 
-    /// 選択を覚えて、組み立ててある行へ書き込む (通知は起きない)。
+    /// Remembers the selection and writes it into the built rows (no notification).
     ///
-    /// 窓の外の行には `ListViewItem` が無いので書けない。窓が動いて
-    /// 組み立て直したときに、また覚えているほうから書く。
+    /// Rows outside the window have no `ListViewItem`, so they cannot be written. When
+    /// the window moves and rows are rebuilt, it is written again from the remembered
+    /// selection.
     fn write_selection(&self, indices: &[usize]) {
         *self.0.selected.borrow_mut() = indices.to_vec();
         let start = self.0.window.get().start;
@@ -1587,7 +1614,8 @@ impl Table {
         });
     }
 
-    /// ユーザーが変えた選択を読む。窓の外の行の扱いもここで決める。
+    /// Reads the selection the user changed. How rows outside the window are treated is
+    /// decided here too.
     fn read_native_selection(&self) -> Vec<usize> {
         let window = self.0.window.get();
         let mut picked: Vec<usize> = self
@@ -1626,7 +1654,7 @@ impl Table {
         picked
     }
 
-    /// WinUI からの通知を止めたまま操作する。
+    /// Operates with notifications from WinUI stopped.
     fn without_notifying<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
         let previous = self.0.silent.replace(true);
         let result = f(self);

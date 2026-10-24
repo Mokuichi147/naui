@@ -1,8 +1,8 @@
-//! WinRT のメタデータに出てこない COM インターフェース。
+//! COM interfaces that do not appear in WinRT metadata.
 //!
-//! XAML の `Window` から HWND を取り出す `IWindowNative` は、`.winmd` では
-//! なく Windows App SDK の C++ ヘッダー (`microsoft.ui.xaml.window.h`) で
-//! 宣言されている。生成した投影には入らないので、ここで手で書く。
+//! `IWindowNative`, which gets the HWND out of a XAML `Window`, is declared not in a
+//! `.winmd` but in a Windows App SDK C++ header (`microsoft.ui.xaml.window.h`). It is
+//! not in the generated projection, so it is written by hand here.
 
 // WinRT / COM の名前は元の綴りのまま出す。
 #![allow(non_snake_case)]
@@ -17,12 +17,11 @@ windows_core::imp::define_interface!(
 windows_core::imp::interface_hierarchy!(IWindowNative, windows_core::IUnknown);
 
 impl IWindowNative {
-    /// このウィンドウの HWND。
+    /// This window's HWND.
     ///
     /// # Safety
     ///
-    /// 呼び出し側は、この `IWindowNative` が生きているウィンドウのもので
-    /// あることを保証する。
+    /// The caller guarantees that this `IWindowNative` belongs to a live window.
     pub unsafe fn WindowHandle(&self) -> windows_core::Result<HWND> {
         unsafe {
             let mut handle = core::mem::zeroed();

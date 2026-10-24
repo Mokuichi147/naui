@@ -1,19 +1,20 @@
-//! トースト (WinUI 3)。
+//! Toasts (WinUI 3).
 //!
-//! 通知の見た目は WinUI 3 の `InfoBar` そのもの。`Windows.UI.Notifications`
-//! のトーストは**アプリの外** (通知センター) へ出るもので別物なので使わない。
+//! The notification's look is WinUI 3's `InfoBar` itself. `Windows.UI.Notifications`
+//! toasts appear **outside the app** (in the notification center), which is
+//! different, so they are not used.
 //!
-//! `InfoBar` は本来ページの中へ並べて使う帯だが、naui のトーストは重ねて
-//! 出すものなので、下端の中央へ寄せてウィンドウの中身の層へ重ねる。
-//! 重ねる先はタイトルバーの下、アプリの中身と同じ層
-//! ([`crate::window`] が作る 2 行目)。`Grid` は子を重ね順に置くので、
-//! あとから足したトーストが中身の上に出る。
+//! `InfoBar` is meant to be a band laid out inside the page, but naui's toast is
+//! overlaid, so it is moved to the bottom center and overlaid on the window
+//! content's layer. It is overlaid below the title bar, in the same layer as the
+//! app's content (the second row created by [`crate::window`]). A `Grid` places its
+//! children in stacking order, so a toast added later appears above the content.
 //!
-//! 閉じるボタン (×) は出さない (`IsClosable` を切る)。naui のトーストが
-//! 消えるのは時間切れ・操作ボタン・[`Toast::dismiss`] の 3 つで、
-//! ほかの 3 環境にも × は無いため。
+//! The close button (×) is not shown (`IsClosable` is off). naui's toast disappears
+//! through three things — timeout, the action button and [`Toast::dismiss`] — and
+//! the other three platforms have no × either.
 //!
-//! 消えるまでの時間は `DispatcherQueueTimer` が数える。
+//! `DispatcherQueueTimer` counts down until it disappears.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -33,38 +34,38 @@ use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::window::owner_content_layer;
 
-/// 重ねる位置。下端の中央から 24 だけ離す。
+/// The overlay position: 24 away from the bottom center.
 const TOAST_MARGIN: f64 = 24.0;
 
-/// `TimeSpan` の 1 ミリ秒 (100 ナノ秒きざみ)。
+/// One millisecond of `TimeSpan` (in 100-nanosecond units).
 const TICKS_PER_MILLI: i64 = 10_000;
 
 thread_local! {
-    /// いま出ているトースト。同時に出るのは 1 つで、新しいものが置き換える。
+    /// The toast showing now. Only one is shown at a time, and a new one replaces it.
     static CURRENT: RefCell<Option<Toast>> = const { RefCell::new(None) };
 }
 
 struct ToastInner {
-    /// 重ねる本体。
+    /// The overlaid body.
     native: InfoBar,
-    /// 操作ボタン。文字を入れたときだけ `ActionButton` へ取り付ける。
+    /// The action button. Attached to `ActionButton` only when it has text.
     button: Button,
-    /// 操作ボタンの文字。`Button` の中身は `TextBlock` にしてある
-    /// (ほかのボタンと同じ作り)。
+    /// The action button's text. The `Button`'s content is a `TextBlock` (the same
+    /// construction as other buttons).
     button_label: TextBlock,
     spec: RefCell<ToastSpec>,
-    /// 重ねた先。出している間だけ持つ。
+    /// Where it is overlaid. Held only while shown.
     layer: RefCell<Option<Grid>>,
-    /// 自動で消すためのタイマー。消えない指定なら持たない。
+    /// The timer for disappearing automatically. Absent if it never disappears.
     timer: RefCell<Option<DispatcherQueueTimer>>,
     on_action: RefCell<Option<Box<dyn FnMut()>>>,
     on_dismiss: RefCell<Option<Box<dyn FnMut()>>>,
     visible: Cell<bool>,
 }
 
-/// 一時的な通知 (`InfoBar` を重ねたもの)。
+/// A transient notification (an overlaid `InfoBar`).
 ///
-/// ウィジェットではないので、コンテナへは入れない (`Dialog` と同じ)。
+/// It is not a widget, so it does not go into containers (the same as `Dialog`).
 #[derive(Clone)]
 pub struct Toast(Rc<ToastInner>);
 
@@ -90,7 +91,7 @@ impl Toast {
         Ok(this)
     }
 
-    /// 操作ボタンが押されたら、通知して消えるようにする。
+    /// Makes clicking the action button notify and dismiss the toast.
     fn install_action_handler(&self) -> Result<()> {
         let weak = UiThreadCell::new(Rc::downgrade(&self.0));
         let handler = RoutedEventHandler::new(move |_sender, _args| {
@@ -108,7 +109,7 @@ impl Toast {
         Ok(())
     }
 
-    /// 出す文字列。出している間に呼ぶと、その場で書き換わる。
+    /// The string to show. Calling it while shown updates it on the spot.
     pub fn set_message(&self, message: &str) {
         self.0.spec.borrow_mut().set_message(message);
         let _ = self.0.native.SetMessage(&HSTRING::from(message));
@@ -118,7 +119,7 @@ impl Toast {
         self.0.spec.borrow().message().to_string()
     }
 
-    /// 操作ボタンの文字列。**空文字列を渡すとボタンを外す。**
+    /// The action button's label. **Passing an empty string removes the button.**
     pub fn set_action(&self, label: &str) {
         self.0.spec.borrow_mut().set_action(label);
         let action = self.0.spec.borrow().action().map(str::to_string);
@@ -133,7 +134,7 @@ impl Toast {
         }
     }
 
-    /// 操作ボタンの文字列。置いていなければ空文字列。
+    /// The action button's label. The empty string if there is no button.
     pub fn action(&self) -> String {
         self.0
             .spec
@@ -143,9 +144,10 @@ impl Toast {
             .to_string()
     }
 
-    /// 自動で消えるまでの秒数。**0 を渡すと自動では消えない。**
+    /// Seconds until it disappears automatically. **Passing 0 means it never
+    /// disappears automatically.**
     ///
-    /// 次に [`show`](Self::show) したときから効く。
+    /// Takes effect from the next [`show`](Self::show).
     pub fn set_timeout(&self, seconds: f64) {
         self.0.spec.borrow_mut().set_timeout(seconds);
     }
@@ -154,34 +156,35 @@ impl Toast {
         self.0.spec.borrow().timeout()
     }
 
-    /// いまの設定。
+    /// The current settings.
     pub fn spec(&self) -> ToastSpec {
         self.0.spec.borrow().clone()
     }
 
-    /// 操作ボタンが押されたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called when the action button is clicked. Setting it again removes the previous
+    /// one.
     ///
-    /// 押されるとトーストは消えるので、続けて `on_dismiss` も呼ばれる。
+    /// Clicking it makes the toast disappear, so `on_dismiss` is called next.
     pub fn on_action(&self, f: impl FnMut() + 'static) {
         *self.0.on_action.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 消えたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called when it disappears. Setting it again removes the previous one.
     ///
-    /// 呼ばれるのは**時間で消えたとき**と**操作ボタンで消えたとき**。
-    /// [`dismiss`](Self::dismiss) で消したときと、別のトーストに
-    /// 置き換えられたときは呼ばれない (アプリ自身の操作は通知しない、
-    /// という [`Dialog::close`](crate::Dialog::close) と同じ決まり)。
+    /// It is called **when it times out** and **when it is closed by the action
+    /// button**. It is not called when it is closed with [`dismiss`](Self::dismiss) or
+    /// replaced by another toast (the same rule as
+    /// [`Dialog::close`](crate::Dialog::close): the app's own actions are not
+    /// notified).
     pub fn on_dismiss(&self, f: impl FnMut() + 'static) {
         *self.0.on_dismiss.borrow_mut() = Some(Box::new(f));
     }
 
-    /// トーストを出す。
+    /// Shows the toast.
     ///
-    /// **同時に出るのは 1 つ**で、ほかのトーストが出ていれば置き換える
-    /// (置き換えられたほうの `on_dismiss` は呼ばれない)。
-    /// まだウィンドウを表示していないときは何もしない
-    /// (重ねる先が決まらないため。`Dialog` と同じ)。
+    /// **Only one is shown at a time**; if another toast is showing, it is replaced
+    /// (the replaced one's `on_dismiss` is not called). Does nothing if no window has
+    /// been shown yet (there is nowhere to overlay it, the same as `Dialog`).
     pub fn show(&self) {
         let Some(layer) = owner_content_layer() else {
             return;
@@ -207,7 +210,7 @@ impl Toast {
         CURRENT.with(|slot| *slot.borrow_mut() = Some(self.clone()));
     }
 
-    /// 出しているトーストを消す。`on_dismiss` は呼ばれない。
+    /// Closes the toast being shown. `on_dismiss` is not called.
     pub fn dismiss(&self) {
         if !self.is_visible() {
             return;
@@ -216,12 +219,12 @@ impl Toast {
         self.take_down();
     }
 
-    /// いま出ているか。
+    /// Whether it is showing now.
     pub fn is_visible(&self) -> bool {
         self.0.visible.get()
     }
 
-    /// 重ねている要素。バックエンド固有の脱出口。
+    /// The overlaid element. A backend-specific escape hatch.
     pub fn native_element(&self) -> UIElement {
         self.0
             .native
@@ -229,7 +232,7 @@ impl Toast {
             .expect("InfoBar は UIElement")
     }
 
-    /// 時間を数え始める。消えない指定なら何もしない。
+    /// Starts counting down. Does nothing if it never disappears.
     fn start_timer(&self) {
         let Some(millis) = self.0.spec.borrow().timeout_millis() else {
             return;
@@ -264,7 +267,7 @@ impl Toast {
         *self.0.timer.borrow_mut() = Some(timer);
     }
 
-    /// 消えたことをアプリへ知らせる。`action` は操作ボタンで消えたか。
+    /// Tells the app it disappeared. `action` is whether the action button closed it.
     fn finish(&self, action: bool) {
         if !self.is_visible() {
             return;
@@ -277,7 +280,7 @@ impl Toast {
         emit(&self.0.on_dismiss);
     }
 
-    /// 重ねた要素を外し、タイマーを止める。通知はしない。
+    /// Removes the overlaid element and stops the timer. No notification.
     fn take_down(&self) {
         if let Some(timer) = self.0.timer.borrow_mut().take() {
             let _ = timer.Stop();
@@ -301,7 +304,7 @@ impl Toast {
         }
     }
 
-    /// 「いま出ているトースト」が自分なら、その座を空ける。
+    /// If "the toast showing now" is this one, vacates that slot.
     fn forget_current(&self) {
         CURRENT.with(|slot| {
             let mine = slot
@@ -315,8 +318,8 @@ impl Toast {
     }
 }
 
-/// 通知。通知の中から設定し直しても二重借用にならないよう、
-/// 呼び出しの間だけクロージャを取り出す。
+/// Notification. So that setting it again from inside the notification does not
+/// double-borrow, the closure is taken out only for the duration of the call.
 fn emit(slot: &RefCell<Option<Box<dyn FnMut()>>>) {
     let Some(mut f) = slot.borrow_mut().take() else {
         return;
@@ -328,11 +331,11 @@ fn emit(slot: &RefCell<Option<Box<dyn FnMut()>>>) {
     }
 }
 
-/// 重ねる `InfoBar` と、操作ボタンを作る。
+/// Creates the overlaid `InfoBar` and the action button.
 ///
-/// 操作ボタンは `ActionButton` に置くので、`InfoBar` の中の並べ方 (文字の
-/// 右か、狭いときは下か) は WinUI が決める。中身を `TextBlock` にするのは
-/// ほかのボタンと同じ作り。
+/// The action button goes in `ActionButton`, so WinUI decides its layout inside the
+/// `InfoBar` (right of the text, or below when narrow). Making its content a
+/// `TextBlock` is the same construction as other buttons.
 fn build_surface() -> Result<(InfoBar, Button, TextBlock)> {
     let native = InfoBar::new().map_err(|e| to_error("トーストの生成", e))?;
     native

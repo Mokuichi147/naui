@@ -1,29 +1,31 @@
-//! サイドバー (WinUI 3 の `NavigationView`)。
+//! The sidebar (WinUI 3's `NavigationView`).
 //!
-//! Windows の「設定」と同じ、左ペイン (`PaneDisplayMode::Left`) の
-//! `NavigationView` を使う。ペインの材質・選択のピル・項目の並び・キーボード
-//! 操作は WinUI が持つ。
+//! A left-pane (`PaneDisplayMode::Left`) `NavigationView` is used, the same as
+//! Windows Settings. The pane's material, the selection pill, item layout and
+//! keyboard navigation are owned by WinUI.
 //!
 //! | naui | WinUI 3 |
 //! | --- | --- |
-//! | サイドバー全体 | `NavigationView` (`PaneDisplayMode::Left`) |
-//! | 項目 | `NavigationViewItem` + `FontIcon` (Segoe Fluent Icons) |
-//! | まとまりの見出し | `NavigationViewItemHeader` |
-//! | まとまりの間 | `NavigationViewItemSeparator` |
-//! | 右の区画 | `NavigationView.Content`。ウィンドウの子をここへ置く |
-//! | 仕切り | ペインの右端に重ねた透明な `Grid` (naui の `SplitView` と同じつかみ代) |
+//! | The whole sidebar | `NavigationView` (`PaneDisplayMode::Left`) |
+//! | Item | `NavigationViewItem` + `FontIcon` (Segoe Fluent Icons) |
+//! | Group heading | `NavigationViewItemHeader` |
+//! | Between groups | `NavigationViewItemSeparator` |
+//! | Right pane | `NavigationView.Content`. The window's child goes here |
+//! | Divider | A transparent `Grid` overlaid on the pane's right edge (the same grab area as naui's `SplitView`) |
 //!
-//! `NavigationView` のペインの幅 (`OpenPaneLength`) は利用者が変えられる
-//! 作りになっていないが、ほかの 3 環境のサイドバーはどれも仕切りで幅を変え
-//! られる。そこで naui の `SplitView` と同じ 6 px の透明なつかみ代をペインの
-//! 右端へ重ね、ドラッグで `OpenPaneLength` を動かす。境目の線は
-//! `NavigationView` 自身が描くので、つかみ代は透明のまま (線を足さない)。
-//! カーソルの形は `SplitView` と同じく変えない (`ProtectedCursor` が投影に無い)。
+//! The width of a `NavigationView`'s pane (`OpenPaneLength`) is not designed to be
+//! changed by the user, but the sidebars of the other three platforms can all be
+//! resized with a divider. So the same 6 px transparent grab area as naui's
+//! `SplitView` is overlaid on the pane's right edge, and dragging it moves
+//! `OpenPaneLength`. The boundary line is drawn by the `NavigationView` itself, so
+//! the grab area stays transparent (no line is added). As with `SplitView`, the
+//! cursor shape is not changed (`ProtectedCursor` is not in the projection).
 //!
-//! 開閉は `NavigationView` 標準のペインを畳むボタン (ハンバーガー) で行う。
-//! Windows の作法どおり、畳むとペインは**アイコンだけの細い帯**になる
-//! (`IsPaneOpen` が偽。帯にボタンが残るので開き直せる)。アイコンの無い項目は
-//! 畳んでいる間は何も出ない。戻るボタンと設定項目は出さない。
+//! It is collapsed and expanded with the `NavigationView`'s standard pane toggle
+//! button (hamburger). Following Windows conventions, collapsing turns the pane into
+//! **a thin strip of icons only** (`IsPaneOpen` false; the button stays in the strip
+//! so it can be reopened). Items without icons show nothing while collapsed. The
+//! back button and the settings item are not shown.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -52,11 +54,12 @@ use crate::navigation::{text_block, SelectHandler};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 
-/// 仕切りのつかみ代の幅 (論理ピクセル)。naui の `SplitView` と同じ。
+/// The width of the divider's grab area (logical pixels). The same as naui's
+/// `SplitView`.
 const GRIP_THICKNESS: f64 = 6.0;
 
-/// ペインの右端に重ねるつかみ代。`Transparent` は `null` と違って当たり判定が
-/// 残るので、見えないままつかめる。
+/// The grab area overlaid on the pane's right edge. Unlike `null`, `Transparent`
+/// keeps hit-testing, so it can be grabbed while invisible.
 const GRIP_XAML: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="Transparent"
@@ -67,29 +70,32 @@ const GRIP_XAML: &str = r##"<Grid
 struct SidebarInner {
     native: NavigationView,
     sections: RefCell<Vec<SidebarSection>>,
-    /// 項目の通し番号と同じ並びの `NavigationViewItem`。
+    /// The `NavigationViewItem`s, in the same order as the items' running numbers.
     items: RefCell<Vec<NavigationViewItem>>,
     selected: Cell<Option<usize>>,
     handler: SelectHandler,
-    /// プログラムから選択を変えている間だけ通知を止める。
-    /// `SelectedItem` の書き換えでも `SelectionChanged` が起きるため。
+    /// Stops notifications only while the selection is being changed from code, since
+    /// rewriting `SelectedItem` also fires `SelectionChanged`.
     silent: Cell<bool>,
     width: Cell<f64>,
     on_resize: ValueHandler<f64>,
-    /// 最後に知っている開閉。利用者の開閉だけを通知するために比べる。
+    /// The last known collapsed state. Compared so that only the user's toggles are
+    /// notified.
     collapsed: Cell<bool>,
     on_collapse: ValueHandler<bool>,
-    /// `NavigationView` と仕切りを重ねる `Grid`。ウィンドウの中へ置くのはこれ。
+    /// The `Grid` overlaying the `NavigationView` and the divider. This is what is
+    /// placed inside the window.
     host: XamlGrid,
-    /// ペインの右端に重ねる透明なつかみ代。
+    /// The transparent grab area overlaid on the pane's right edge.
     grip: XamlGrid,
-    /// つかんでいる間は真。
+    /// True while grabbed.
     dragging: Cell<bool>,
-    /// つかんだ場所とペインの右端とのずれ。
+    /// The offset between where it was grabbed and the pane's right edge.
     grab: Cell<f64>,
 }
 
-/// 値を 1 つ受け取る通知先。呼び出しの間だけクロージャを取り出す (再入に備える)。
+/// A handler that receives one value. The closure is taken out only for the duration
+/// of the call (to allow re-entrancy).
 #[derive(Clone)]
 struct ValueHandler<T: 'static>(HandlerCell<dyn FnMut(T)>);
 
@@ -115,10 +121,10 @@ impl<T: 'static> ValueHandler<T> {
     }
 }
 
-/// ウィンドウの左に付けるサイドバー。
+/// A sidebar attached to the left of the window.
 ///
-/// [`Window::set_sidebar`](crate::Window::set_sidebar) で取り付ける。
-/// レイアウトには置かないので [`Widget`](crate::Widget) ではない。
+/// Attach it with [`Window::set_sidebar`](crate::Window::set_sidebar). It is not
+/// placed in a layout, so it is not a [`Widget`](crate::Widget).
 #[derive(Clone)]
 pub struct Sidebar(Rc<SidebarInner>);
 
@@ -206,7 +212,7 @@ impl Sidebar {
         Ok(this)
     }
 
-    /// ペインが開いた・畳まれたときに、変わっていれば覚え直して通知する。
+    /// When the pane opens or collapses, records it again and notifies if it changed.
     fn pane_changed(&self, collapsed: bool) {
         self.show_grip(!collapsed);
         if self.0.collapsed.replace(collapsed) != collapsed {
@@ -214,7 +220,7 @@ impl Sidebar {
         }
     }
 
-    /// 仕切りのつまみ方 (ポインター) をつなぐ。`SplitView` と同じ形。
+    /// Connects how the divider is grabbed (pointer). The same shape as `SplitView`.
     fn track_grip(&self) -> Result<()> {
         let grip = self.0.grip.clone();
         let with = |f: fn(&Sidebar, &PointerRoutedEventArgs)| {
@@ -276,14 +282,15 @@ impl Sidebar {
         Ok(())
     }
 
-    /// ポインターの横位置 (サイドバーの左端から)。
+    /// The pointer's horizontal position (from the sidebar's left edge).
     fn pointer_x(&self, args: &PointerRoutedEventArgs) -> Option<f64> {
         let host = self.0.host.cast::<UIElement>().ok()?;
         let point = args.GetCurrentPoint(&host).ok()?.Position().ok()?;
         Some(f64::from(point.X))
     }
 
-    /// 仕切りを出す (ペインが開いている間だけ。畳んだ帯の幅は変えられない)。
+    /// Shows the divider (only while the pane is open; the collapsed strip's width
+    /// cannot be changed).
     fn show_grip(&self, show: bool) {
         let _ = self.0.grip.SetVisibility(if show {
             Visibility::Visible
@@ -292,11 +299,12 @@ impl Sidebar {
         });
     }
 
-    /// `SelectionChanged` を受けて、選ばれた番号を覚え、変わっていれば通知する。
+    /// Receives `SelectionChanged`, remembers the selected number, and notifies if it
+    /// changed.
     ///
-    /// 番号が変わらないときは通知しない。`NavigationView` はテンプレートを
-    /// 読み込んだときにも、プログラムから置いた選択をもう一度流してくる
-    /// (そのときは `silent` の外で届く)。
+    /// Nothing is notified when the number does not change. The `NavigationView` also
+    /// re-sends a selection set from code when it loads its template (arriving outside
+    /// `silent`).
     fn selection_changed(&self, selected: Option<IInspectable>) {
         let index = selected.and_then(|item| self.index_of(&item));
         let changed = self.0.selected.replace(index) != index;
@@ -308,10 +316,10 @@ impl Sidebar {
         }
     }
 
-    /// 項目をまとまりごとに並べる。呼ぶたびに置き換わる。
+    /// Lays out items by group. Each call replaces them.
     ///
-    /// 選ばれていた項目は、同じ通し番号がまだ選べるなら選ばれたまま残る
-    /// (通知はしない)。
+    /// The selected item stays selected (without notifying) if the same running number
+    /// can still be selected.
     pub fn set_sections(&self, sections: &[SidebarSection]) {
         let keep = self
             .0
@@ -330,7 +338,7 @@ impl Sidebar {
         }
     }
 
-    /// 見出しの無いまとまり 1 つだけで並べる。
+    /// Lays out items as a single group without a heading.
     pub fn set_items(&self, items: &[SidebarItem]) {
         self.set_sections(&[SidebarSection::untitled(items.iter().cloned())]);
     }
@@ -380,10 +388,10 @@ impl Sidebar {
         Ok(())
     }
 
-    /// `SelectedItem` が何番目の項目か。
+    /// Which item the `SelectedItem` is.
     ///
-    /// COM で同じオブジェクトだと言えるのは `IUnknown` のポインターが
-    /// 等しいときだけなので、そろえてから比べる。
+    /// In COM, objects can be called the same only when their `IUnknown` pointers are
+    /// equal, so they are normalized before comparing.
     fn index_of(&self, selected: &IInspectable) -> Option<usize> {
         let target = selected.cast::<IUnknown>().ok()?;
         self.0.items.borrow().iter().position(|item| {
@@ -392,7 +400,7 @@ impl Sidebar {
         })
     }
 
-    /// まとまりをまたいだ項目の数。
+    /// The number of items across groups.
     pub fn len(&self) -> usize {
         sidebar_len(&self.0.sections.borrow())
     }
@@ -401,12 +409,13 @@ impl Sidebar {
         self.len() == 0
     }
 
-    /// 選ばれている項目の通し番号。
+    /// The running number of the selected item.
     pub fn selected(&self) -> Option<usize> {
         self.0.selected.get()
     }
 
-    /// 通知せずに選択を変える。範囲外・選べない項目は無視する。
+    /// Changes the selection without notifying. Out-of-range and unselectable items are
+    /// ignored.
     pub fn set_selected(&self, index: usize) {
         let Some(item) = self.selectable_item(index) else {
             return;
@@ -417,7 +426,7 @@ impl Sidebar {
         self.0.selected.set(Some(index));
     }
 
-    /// 選択を外す (通知しない)。
+    /// Clears the selection (without notifying).
     pub fn clear_selection(&self) {
         self.without_notifying(|| {
             let _ = self.0.native.SetSelectedItem(None::<&IInspectable>);
@@ -425,9 +434,10 @@ impl Sidebar {
         self.0.selected.set(None);
     }
 
-    /// 利用者が選んだのと同じように選び、通知する。
+    /// Selects as if the user had chosen it, and notifies.
     ///
-    /// 範囲外・選べない項目は無視する。すでに選ばれている項目でも通知する。
+    /// Out-of-range and unselectable items are ignored. Notifies even if the item is
+    /// already selected.
     pub fn select(&self, index: usize) {
         if self.selectable_item(index).is_none() {
             return;
@@ -436,17 +446,17 @@ impl Sidebar {
         self.0.handler.emit(index);
     }
 
-    /// 項目が選ばれたときの通知先。引数は通し番号。
+    /// The handler called when an item is chosen. The argument is the running number.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// サイドバーの幅 (論理ピクセル)。既定は [`DEFAULT_SIDEBAR_WIDTH`]。
+    /// The sidebar width (logical pixels). The default is [`DEFAULT_SIDEBAR_WIDTH`].
     ///
-    /// 利用者は仕切りをドラッグして幅を変えられる (下限は
-    /// [`SIDEBAR_MIN_WIDTH`])。変えたあとの幅は [`width`](Self::width) が返し、
-    /// [`on_resize`](Self::on_resize) で届く。この呼び出しでは `on_resize` を
-    /// 呼ばない。
+    /// The user can change the width by dragging the divider (the minimum is
+    /// [`SIDEBAR_MIN_WIDTH`]). The width after a change is returned by
+    /// [`width`](Self::width) and delivered through [`on_resize`](Self::on_resize).
+    /// This call does not call `on_resize`.
     pub fn set_width(&self, width: f64) {
         if !width.is_finite() || width <= 0.0 {
             return;
@@ -455,17 +465,18 @@ impl Sidebar {
         self.apply_width();
     }
 
-    /// サイドバーの幅。閉じていても開いたときの幅を返す。
+    /// The sidebar width. Even while collapsed, returns the width it has when expanded.
     pub fn width(&self) -> f64 {
         self.0.width.get()
     }
 
-    /// 利用者が仕切りで幅を変えるたび、変えた後の幅で呼ばれる。
+    /// Called with the new width every time the user changes it with the divider.
     pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_resize.set(f);
     }
 
-    /// 幅をペインへ書き、仕切りをペインの右端 (つかみ代の真ん中が境目) へ置く。
+    /// Writes the width to the pane and places the divider at the pane's right edge (the
+    /// middle of the grab area is the boundary).
     fn apply_width(&self) {
         let width = self.0.width.get();
         let _ = self.0.native.SetOpenPaneLength(width);
@@ -477,41 +488,43 @@ impl Sidebar {
         });
     }
 
-    /// サイドバーを閉じる (`true`) か開く (`false`)。
+    /// Collapses (`true`) or expands (`false`) the sidebar.
     ///
-    /// 閉じても項目と選択は残る。Windows ではアイコンだけの細い帯に畳まれる
-    /// (畳むボタンを押したときと同じ)。[`on_collapse`](Self::on_collapse) は
-    /// 呼ばない。
+    /// Items and selection are kept while collapsed. On Windows it collapses into a thin
+    /// strip of icons only (the same as clicking the toggle button).
+    /// [`on_collapse`](Self::on_collapse) is not called.
     pub fn set_collapsed(&self, collapsed: bool) {
         self.0.collapsed.set(collapsed);
         let _ = self.0.native.SetIsPaneOpen(!collapsed);
         self.show_grip(!collapsed);
     }
 
-    /// サイドバーが閉じているかどうか。
+    /// Whether the sidebar is collapsed.
     pub fn is_collapsed(&self) -> bool {
         !self.0.native.IsPaneOpen().unwrap_or(true)
     }
 
-    /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
+    /// The handler called when the user collapses or expands the sidebar. The argument
+    /// is whether it is now collapsed.
     ///
-    /// 畳むボタンの操作で呼ばれ、[`set_collapsed`](Self::set_collapsed)
-    /// では呼ばれない。
+    /// Called when the toggle button is used; not called by
+    /// [`set_collapsed`](Self::set_collapsed).
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse.set(f);
     }
 
-    /// WinUI 3 の実体 (`NavigationView`)。バックエンド固有の脱出口。
+    /// The real WinUI 3 object (`NavigationView`). A backend-specific escape hatch.
     pub fn native_navigation_view(&self) -> NavigationView {
         self.0.native.clone()
     }
 
-    /// ペインの右端に重ねた仕切り。バックエンド固有の脱出口。
+    /// The divider overlaid on the pane's right edge. A backend-specific escape hatch.
     pub fn native_divider(&self) -> XamlGrid {
         self.0.grip.clone()
     }
 
-    /// ウィンドウの中へ置く要素 (`NavigationView` と仕切りを重ねた `Grid`)。
+    /// The element placed inside the window (a `Grid` overlaying the `NavigationView`
+    /// and the divider).
     pub(crate) fn element(&self) -> Result<UIElement> {
         self.0
             .host
@@ -519,7 +532,7 @@ impl Sidebar {
             .map_err(|e| to_error("サイドバーの要素化", e))
     }
 
-    /// 右の区画へウィンドウの子を置く。`None` なら空にする。
+    /// Places the window's child in the right pane. `None` empties it.
     pub(crate) fn set_content(&self, element: Option<&UIElement>) {
         let result = match element {
             Some(element) => element
@@ -548,7 +561,7 @@ impl Sidebar {
     }
 }
 
-/// 項目 1 つ。アイコンがあれば Segoe Fluent Icons の字面で付ける。
+/// One item. The icon, if any, is attached as a Segoe Fluent Icons glyph.
 fn item_entry(item: &SidebarItem) -> Result<NavigationViewItem> {
     let entry = NavigationViewItem::new().map_err(|e| to_error("サイドバーの項目の生成", e))?;
     // 入りきらないときは、ほかの 3 環境と同じく末尾を省略記号にする。
@@ -590,15 +603,17 @@ fn item_entry(item: &SidebarItem) -> Result<NavigationViewItem> {
     Ok(entry)
 }
 
-/// 項目の右の溝 (14 px) を外し、文字が選択の帯の右端近くまで使えるようにする。
+/// Removes the gutter (14 px) to the item's right, so the text can use space almost
+/// up to the right edge of the selection band.
 ///
-/// `NavigationViewItemPresenter` のテンプレートは中身の枠 (`ContentGrid`) に
-/// `Margin="0,0,14,0"` を直に書いている。入れ子の項目の開閉の山形を
-/// `Margin="0,0,-14,0"` でこの溝へはみ出させて置くためのもので、naui の項目は
-/// 入れ子にしないので空きのまま残り、帯に余白が見えていても文字が省略される。
-/// 文字と帯の右端の間には `ContentPresenter` の 8 px が残る。
+/// The `NavigationViewItemPresenter` template writes `Margin="0,0,14,0"` directly on
+/// the content frame (`ContentGrid`). It exists to place the chevron for expanding
+/// nested items, sticking out into this gutter with `Margin="0,0,-14,0"`; naui's
+/// items are never nested, so it stays empty, and text gets truncated even though
+/// the band shows space. Between the text and the band's right edge, the 8 px of the
+/// `ContentPresenter` remains.
 ///
-/// テンプレートの部品が見つからなければ何もしない (WinUI の既定のまま)。
+/// If the template part cannot be found, nothing is done (WinUI's default stays).
 fn drop_chevron_gutter(entry: &NavigationViewItem) {
     let Some(grid) = template_part(entry, "NavigationViewItemPresenter")
         .and_then(|presenter| template_part(&presenter, "ContentGrid"))
@@ -616,7 +631,7 @@ fn drop_chevron_gutter(entry: &NavigationViewItem) {
     }
 }
 
-/// コントロールのテンプレートから名前で部品を引く。
+/// Looks up a part from a control's template by name.
 fn template_part<T: Interface>(control: &T, name: &str) -> Option<FrameworkElement> {
     let _ = control.cast::<Control>().ok()?.ApplyTemplate();
     control

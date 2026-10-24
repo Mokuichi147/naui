@@ -1,22 +1,24 @@
-//! どのウィジェットにもある操作 (表示・非表示 / フォーカス / ツールチップ)。
+//! Operations every widget has (show/hide / focus / tooltip).
 //!
-//! 対象は親へ置いている要素 ([`Widget::native_element`](crate::Widget::native_element))。
+//! The target is the element placed in the parent
+//! ([`Widget::native_element`](crate::Widget::native_element)).
 
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
-/// アプリが隠した要素の目印。
+/// The marker on elements the app hid.
 ///
-/// naui はウィジェットごとにインラインの `display` (`flex` など) を書くので、
-/// `hidden` 属性は負ける。この属性に `!important` 付きの `display: none` を
-/// 当てる規則を文書へ 1 つだけ入れておき、インラインの指定より強くする。
-/// naui が内部で使う `hidden` 属性 (タブの中身など) とも別にしておける。
+/// naui writes an inline `display` (`flex` and so on) per widget, so the `hidden`
+/// attribute loses to it. A single rule applying `display: none` with `!important`
+/// to this attribute is added to the document, making it stronger than the inline
+/// setting. It also keeps it separate from the `hidden` attribute naui uses
+/// internally (tab contents and so on).
 const HIDDEN_ATTR: &str = "data-naui-hidden";
-/// その規則を入れた `<style>` の id。
+/// The id of the `<style>` holding that rule.
 const STYLE_ID: &str = "naui-interaction-style";
 const STYLE_RULES: &str = "[data-naui-hidden] { display: none !important; }";
 
-/// フォーカスを受け取れる子孫。最初に受け取れたものへ移す。
+/// Descendants that can take focus. Focus moves to the first one that accepts it.
 const FOCUSABLE: &str = "input:not([type=hidden]), select, textarea, button, a[href], \
                          summary, [contenteditable=true], [tabindex]:not([tabindex='-1'])";
 
@@ -53,7 +55,7 @@ fn ensure_style(document: &Document) {
     }
 }
 
-/// キーボードフォーカスを移す。移せたら `true`。
+/// Moves keyboard focus here. `true` if it moved.
 pub(crate) fn request_focus(element: &Element) -> bool {
     if !element.is_connected() {
         return false;
@@ -73,8 +75,8 @@ pub(crate) fn request_focus(element: &Element) -> bool {
         .any(|candidate| try_focus(&document, &candidate))
 }
 
-/// 移せたかは、ブラウザがその要素を `activeElement` にしたかで見る
-/// (隠れている・無効な要素の `focus()` は何も起こさない)。
+/// Whether it moved is judged by whether the browser made that element the
+/// `activeElement` (`focus()` on hidden or disabled elements does nothing).
 fn try_focus(document: &Document, element: &Element) -> bool {
     let Some(html) = element.dyn_ref::<HtmlElement>() else {
         return false;
@@ -100,7 +102,7 @@ pub(crate) fn set_tooltip(element: &Element, text: Option<&str>) {
     }
 }
 
-/// 読み上げソフトに伝える名前 (`aria-label`)。`None` で外す。
+/// The name reported to screen readers (`aria-label`). `None` removes it.
 pub(crate) fn set_accessible_label(element: &Element, text: Option<&str>) {
     match text {
         Some(text) => {

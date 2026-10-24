@@ -1,25 +1,25 @@
-//! 分割ビュー (WinUI 3 の `Grid` + つまめる仕切り)。
+//! A split view (WinUI 3's `Grid` + a grabbable divider).
 //!
-//! **WinUI 3 に「動かせる仕切りで区画を分ける」コントロールは無い。**
-//! 名前の似た `SplitView` は開閉するナビゲーションのペインで、仕切りを
-//! ドラッグして幅を変えるものではなく、`GridSplitter` は Windows App SDK
-//! ではなく Community Toolkit の側にある。そこで Fluent のアプリが同じことを
-//! するときと同じ形 — 3 つの列 (行) を持つ `Grid` の真ん中に仕切りを置く形 —
-//! で組み立てる。
+//! **WinUI 3 has no control that "divides panes with a movable divider".** The
+//! similarly named `SplitView` is a navigation pane that opens and closes, not
+//! something whose width changes by dragging a divider, and `GridSplitter` is in the
+//! Community Toolkit, not the Windows App SDK. So it is built in the same form
+//! Fluent apps use for the same thing: a divider in the middle of a `Grid` with
+//! three columns (rows).
 //!
-//! 組み立てるのは**位置と当たり判定だけ**で、仕切りの色はテーマリソース
-//! (`ControlStrokeColorDefaultBrush`) から引くので、ライト / ダークの
-//! 切り替えにそのまま追従する。
+//! What is built is **only the position and the hit area**; the divider's color is
+//! taken from a theme resource (`ControlStrokeColorDefaultBrush`), so it follows
+//! light / dark switching as is.
 //!
-//! **見えるのは 1 px の線だけ**で、残りは透明なつかみ代になっている
-//! (`Background="Transparent"` + 片側だけの `BorderThickness`)。塗りつぶしの
-//! 帯にすると、区切りというより 1 つの部品のように見えて周りから浮くため。
-//! `Transparent` は `null` と違って当たり判定が残るので、つかみ代としては
-//! そのまま働く。
+//! **Only a 1 px line is visible**; the rest is a transparent grab area
+//! (`Background="Transparent"` + a `BorderThickness` on one side only). A filled
+//! band would look less like a separator and more like a component of its own,
+//! standing out from its surroundings. Unlike `null`, `Transparent` keeps
+//! hit-testing, so it still works as a grab area.
 //!
-//! 列 (行) の幅は `Pixel` / `Star` で決める。start 側は指定した大きさの
-//! `Pixel`、end 側は残りを受け取る `Star` なので、ウィンドウが広がった分は
-//! end 側が受け取る。
+//! Column (row) widths are decided with `Pixel` / `Star`. The start side is a
+//! `Pixel` of the specified size and the end side a `Star` taking the rest, so when
+//! the window grows, the end side takes the extra.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -41,29 +41,34 @@ use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::{impl_widget, Widget};
 
-/// 仕切りが占める太さ (論理ピクセル)。マウスでつまめる幅にしてある。
+/// The thickness the divider occupies (logical pixels). Wide enough to grab with a
+/// mouse.
 ///
-/// このうち見えるのは境目に引く 1 px の線だけで、残りは透明。
+/// Of this, only the 1 px line drawn at the boundary is visible; the rest is
+/// transparent.
 const DIVIDER_THICKNESS: f64 = 6.0;
 
-/// 区画が横に並ぶときの仕切り。境目 (左端) にだけ線を引く。
+/// The divider when the panes are side by side. Draws a line only at the boundary
+/// (left edge).
 const DIVIDER_XAML_HORIZONTAL: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="Transparent"
     BorderThickness="1,0,0,0"
     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"/>"##;
 
-/// 区画が縦に並ぶときの仕切り。境目 (上端) にだけ線を引く。
+/// The divider when the panes are stacked vertically. Draws a line only at the
+/// boundary (top edge).
 const DIVIDER_XAML_VERTICAL: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="Transparent"
     BorderThickness="0,1,0,0"
     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"/>"##;
 
-/// 仕切りが動いたことの通知先。
+/// The handler notified when the divider moves.
 ///
-/// 呼ぶ間はセルから取り出しておく ([`SelectHandler`](crate::widgets) と同じ)。
-/// 通知の中から同じ分割ビューを操作しても、借用が衝突しない。
+/// It is taken out of the cell while it is called (the same as
+/// [`SelectHandler`](crate::widgets)). Operating on the same split view from inside
+/// the notification does not cause borrow conflicts.
 type ResizeCallback = Box<dyn FnMut(f64)>;
 
 #[derive(Clone)]
@@ -91,28 +96,30 @@ impl ResizeHandler {
     }
 }
 
-/// 仕切りをドラッグするのに要る、イベントから触る状態だけをまとめたもの。
+/// Collects only the state touched from events, needed to drag the divider.
 struct Geometry {
     native: XamlGrid,
     divider: XamlGrid,
     orientation: Orientation,
-    /// アプリが指定した仕切りの位置 (start 側の大きさ)。
+    /// The divider position the app specified (the size of the start side).
     ///
-    /// せまくて入りきらないときは端へ寄せて**表示**するが、この値はそのまま
-    /// 残す。広がったときに元の位置へ戻すため。
+    /// When it is too narrow to fit, it is **shown** clamped to the end, but this value
+    /// is kept as is, so that it returns to the original position when it widens.
     position: f64,
     min_start: f64,
     min_end: f64,
-    /// いま画面に出ている位置。同じなら列の幅を書き直さない
-    /// (`LayoutUpdated` の中から書くとレイアウトが回り続けるため)。
+    /// The position on screen now. If it is the same, the column widths are not
+    /// rewritten (writing from inside `LayoutUpdated` would keep layout running
+    /// forever).
     shown: f64,
     dragging: bool,
-    /// つかんだ場所と線の位置とのずれ。線をポインターの下へ飛ばさないために覚える。
+    /// The offset between where it was grabbed and the line's position. Remembered so
+    /// the line does not jump under the pointer.
     grab: f64,
 }
 
 impl Geometry {
-    /// 2 つの区画が分け合える大きさ (仕切りの分を除く)。まだ 0 なら 0。
+    /// The size the two panes can share (excluding the divider). 0 if still 0.
     fn total(&self) -> f64 {
         let Ok(element) = self.native.cast::<FrameworkElement>() else {
             return 0.0;
@@ -133,7 +140,8 @@ impl Geometry {
         clamp_split_position(position, self.total(), self.min_start, self.min_end)
     }
 
-    /// 指定された位置を、いまの大きさに収めて列 (行) の幅へ書く。
+    /// Clamps the specified position to the current size and writes it into the column
+    /// (row) widths.
     fn apply(&mut self) {
         let shown = self.clamp(self.position);
         if (shown - self.shown).abs() < 0.5 {
@@ -157,7 +165,8 @@ impl Geometry {
         }
     }
 
-    /// ポインターの位置を、分割ビューの始端からの距離へ読み替える。
+    /// Reinterprets the pointer's position as the distance from the split view's start
+    /// edge.
     fn pointer_offset(&self, x: f64, y: f64) -> f64 {
         if self.orientation.is_vertical() {
             y
@@ -172,16 +181,16 @@ struct SplitViewInner {
     start_pane: XamlGrid,
     end_pane: XamlGrid,
     orientation: Orientation,
-    /// 区画のハンドルを保持し、コールバックごと生かしておく。
+    /// Holds the pane's handle, keeping it alive along with its callbacks.
     start: RefCell<Option<Box<dyn Widget>>>,
     end: RefCell<Option<Box<dyn Widget>>>,
-    /// 表示上の位置とは別に、naui が覚えている位置。
+    /// The position naui remembers, separately from the displayed position.
     position: Cell<f64>,
     geometry: Arc<UiThreadCell<Geometry>>,
     handler: ResizeHandler,
 }
 
-/// 2 つの区画を、動かせる仕切りで分けるコンテナ。
+/// A container that divides two panes with a movable divider.
 #[derive(Clone)]
 pub struct SplitView(Rc<SplitViewInner>);
 impl_widget!(SplitView, native);
@@ -240,7 +249,7 @@ impl SplitView {
         Ok(this)
     }
 
-    /// 仕切りのつまみ方 (ポインター) をつなぐ。
+    /// Connects how the divider is grabbed (pointer).
     fn track_pointer(&self, divider: &XamlGrid) -> Result<()> {
         let pressed = {
             let geometry = self.0.geometry.clone();
@@ -339,12 +348,12 @@ impl SplitView {
         Ok(())
     }
 
-    /// 大きさが決まった (変わった) ときに、位置を収め直す。
+    /// Re-clamps the position when the size is decided (changes).
     ///
-    /// 大きさが変わったことは `LayoutUpdated` で拾う (`SizeChanged` でも
-    /// 拾えるが、仕切りを動かした直後の更新まで拾いたいのでこちら)。
-    /// 表示中の位置が変わらないときは何も書かないので、
-    /// レイアウトが回り続けることはない。
+    /// Size changes are caught with `LayoutUpdated` (`SizeChanged` would also catch them,
+    /// but this one is used to catch the update right after moving the divider too).
+    /// Nothing is written when the displayed position does not change, so layout never
+    /// loops forever.
     fn track_layout(&self) -> Result<()> {
         let geometry = self.0.geometry.clone();
         let updated = EventHandler::<IInspectable>::new(move |_, _| {
@@ -359,27 +368,28 @@ impl SplitView {
         Ok(())
     }
 
-    /// 並べる向き。`Horizontal` なら区画が横に並ぶ (仕切りは縦)。
+    /// The layout direction. With `Horizontal`, the panes are side by side (the divider
+    /// is vertical).
     pub fn orientation(&self) -> Orientation {
         self.0.orientation
     }
 
-    /// 左 (または上) の区画。呼ぶたびに置き換わる。
+    /// The left (or top) pane. Each call replaces it.
     pub fn set_start(&self, child: &dyn Widget) {
         self.0.set_pane(true, child);
     }
 
-    /// 右 (または下) の区画。呼ぶたびに置き換わる。
+    /// The right (or bottom) pane. Each call replaces it.
     pub fn set_end(&self, child: &dyn Widget) {
         self.0.set_pane(false, child);
     }
 
-    /// いまの仕切りの位置 (start 側の大きさ、論理ピクセル)。
+    /// The current divider position (size of the start side, logical pixels).
     pub fn position(&self) -> f64 {
         self.0.position.get()
     }
 
-    /// 仕切りを動かす。`on_resize` は呼ばれない。
+    /// Moves the divider. `on_resize` is not called.
     pub fn set_position(&self, position: f64) {
         let clamped = self.0.geometry.with_mut(|geometry| {
             let clamped = geometry.clamp(position);
@@ -390,13 +400,13 @@ impl SplitView {
         self.0.position.set(clamped);
     }
 
-    /// 利用者がドラッグしたのと同じく仕切りを動かす。`on_resize` を呼ぶ。
+    /// Moves the divider as if the user had dragged it. Calls `on_resize`.
     pub fn drag_to(&self, position: f64) {
         self.set_position(position);
         self.0.handler.emit(self.0.position.get());
     }
 
-    /// 両側の区画の最小の大きさ。既定はどちらも 0。
+    /// The minimum sizes of the two panes. Both default to 0.
     pub fn set_min_sizes(&self, start: f64, end: f64) {
         let clamped = self.0.geometry.with_mut(|geometry| {
             geometry.min_start = start.max(0.0);
@@ -409,7 +419,7 @@ impl SplitView {
         self.0.position.set(clamped);
     }
 
-    /// 利用者が仕切りを動かすたび、動いた後の位置で呼ばれる。
+    /// Called with the new position every time the user moves the divider.
     pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
         self.0.handler.set(f);
     }
@@ -436,7 +446,7 @@ impl SplitViewInner {
     }
 }
 
-/// 区画 1 つぶんの入れ物。中身は配られた場所いっぱいに置く。
+/// The container for one pane. Its content is placed to fill the allotted space.
 fn pane() -> Result<XamlGrid> {
     let pane = XamlGrid::new().map_err(|e| to_error("SplitView の区画の生成", e))?;
     let element = pane
@@ -447,7 +457,8 @@ fn pane() -> Result<XamlGrid> {
     Ok(pane)
 }
 
-/// 仕切り。テーマリソースが引けない環境では、色なしの `Grid` に落とす。
+/// The divider. Where theme resources cannot be obtained, it falls back to a
+/// colorless `Grid`.
 fn divider(orientation: Orientation) -> Result<XamlGrid> {
     let xaml = if orientation.is_vertical() {
         DIVIDER_XAML_VERTICAL
@@ -471,7 +482,7 @@ fn divider(orientation: Orientation) -> Result<XamlGrid> {
     Ok(divider)
 }
 
-/// start / 仕切り / end の 3 つの列 (行) を作る。
+/// Creates the three columns (rows): start / divider / end.
 fn define_tracks(native: &XamlGrid, orientation: Orientation) -> Result<()> {
     let lengths = [
         GridLength {
@@ -511,7 +522,7 @@ fn define_tracks(native: &XamlGrid, orientation: Orientation) -> Result<()> {
     Ok(())
 }
 
-/// 要素を `index` 番目の列 (行) へ置く。
+/// Places the element in column (row) `index`.
 fn place(element: &UIElement, index: i32, orientation: Orientation) -> Result<()> {
     let framework = element
         .cast::<FrameworkElement>()

@@ -1,26 +1,27 @@
-//! ツリー (WinUI 3)。
+//! Trees (WinUI 3).
 //!
-//! WinUI 標準の `TreeView` をそのまま使う。項目は `TreeViewNode` に写して
-//! 木のまま渡すので、段付け・開閉の山形・キーボード操作・選択の見た目は
-//! すべて WinUI が持つ。
+//! WinUI's standard `TreeView` is used as is. Items are mapped to `TreeViewNode`s
+//! and handed over as a tree, so indentation, expander chevrons, keyboard navigation
+//! and the selection look are all owned by WinUI.
 //!
-//! | 部分 | 作り |
+//! | Part | Built from |
 //! | --- | --- |
-//! | 枠 | `List` と同じ色・角丸を持たせた `Border` |
-//! | 行の中身 | `TreeViewNode.Content` に組み立てた要素を載せ、`ItemTemplate` で出す |
-//! | 段付け・開閉 | `TreeView` (`Expanding` / `Collapsed` で通知を受ける) |
-//! | 選択 | `TreeView` の `SelectedNode` (`SelectionChanged` で通知を受ける) |
+//! | Frame | A `Border` with the same color and rounded corners as `List` |
+//! | Row content | Built elements put in `TreeViewNode.Content`, shown with an `ItemTemplate` |
+//! | Indentation and expansion | `TreeView` (notified through `Expanding` / `Collapsed`) |
+//! | Selection | The `TreeView`'s `SelectedNode` (notified through `SelectionChanged`) |
 //!
-//! スクロールは `TreeView` が自分で持つ (`List` のように外側の `ScrollViewer`
-//! へ預けることはできない。中の一覧は与えられた高さぶんしか並べないので、
-//! 外へ預けると伸びずに切れてしまう)。ウィンドウ全体のホイール補助
-//! (`crate::layout`) には、テンプレートの中にある `ScrollViewer` を
-//! 見つけて登録する。
+//! Scrolling is owned by the `TreeView` itself (unlike `List`, it cannot be
+//! entrusted to an outer `ScrollViewer`: the inner list lays out only as many rows
+//! as fit its given height, so entrusting it outward would cut it off instead of
+//! growing). For the window-wide wheel helper (`crate::layout`), the `ScrollViewer`
+//! inside the template is found and registered.
 //!
-//! naui の [`TreeItem::enabled`] は WinUI に対応するものが無い
-//! (`TreeViewItem` を無効にすると、枝では開閉もできなくなる)。そこで
-//! **文字を薄くしたうえで、行の中身に押下を受け止める覆いをかぶせる**。
-//! 覆いがかかるのは開閉の山形より右だけなので、選べない枝も開閉はできる。
+//! naui's [`TreeItem::enabled`] has no WinUI counterpart (disabling a
+//! `TreeViewItem` also prevents expanding it for branches). So **the text is dimmed
+//! and a cover that absorbs presses is laid over the row's content**. The cover
+//! covers only what is right of the expander chevron, so branches that cannot be
+//! selected can still be expanded.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -48,7 +49,8 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
-/// テーマ付きの枠。色と角丸は `List` の枠と同じ (`crate::list`)。
+/// The themed frame. The color and rounded corners are the same as `List`'s frame
+/// (`crate::list`).
 const SURFACE_XAML: &str = r##"<Border
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
@@ -59,15 +61,15 @@ const SURFACE_XAML: &str = r##"<Border
     <TreeView Background="Transparent"/>
 </Border>"##;
 
-/// 行の中身を、行の幅いっぱいに置くための `Style`。
+/// A `Style` for placing a row's content across the row's full width.
 ///
-/// WinUI の `TreeViewItem` は、中身の横位置を `HorizontalContentAlignment` へ
-/// 束ねている (既定のテンプレートの `ContentPresenter` が
-/// `HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"`)。
-/// 既定のままだと中身の幅までしか広がらず、文字が行の残り幅を使わない。
-/// `List` と `Table` の行と同じく `Stretch` にする。
+/// WinUI's `TreeViewItem` binds the content's horizontal position to
+/// `HorizontalContentAlignment` (the default template's `ContentPresenter` has
+/// `HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"`). By default
+/// it spreads only to the content's width, and the text does not use the rest of the
+/// row's width. As with `List` and `Table` rows, it is set to `Stretch`.
 ///
-/// `x:Key` は [`ITEM_STYLE_KEY`] と同じ文字列にする。
+/// `x:Key` must be the same string as [`ITEM_STYLE_KEY`].
 const ITEM_STYLE_XAML: &str = r##"<ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -78,36 +80,38 @@ const ITEM_STYLE_XAML: &str = r##"<ResourceDictionary
 
 const ITEM_STYLE_KEY: &str = "NauiTreeItemStyle";
 
-/// 行に当てる `DataTemplate`。
+/// The `DataTemplate` applied to rows.
 ///
-/// 節に載せた要素 ([`TreeViewNode::Content`]) をそのまま出すだけ。これが
-/// 無いと、WinUI は節そのものを文字にしようとして型名を並べてしまう。
+/// It just shows the element put on the node ([`TreeViewNode::Content`]) as is.
+/// Without it, WinUI would try to turn the node itself into text and list type names.
 const ITEM_TEMPLATE_XAML: &str = r##"<DataTemplate
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
     <ContentPresenter Content="{Binding Content}"/>
 </DataTemplate>"##;
 
-/// 選べない行の文字の濃さ。`List` の無効な行と同じ。
+/// The opacity of the text of rows that cannot be selected. The same as `List`'s
+/// disabled rows.
 const DISABLED_OPACITY: f64 = 0.4;
 
-/// 選べない行の中身を包む覆い。
+/// The cover wrapping the content of rows that cannot be selected.
 ///
-/// 透明でも塗ってあれば当たり判定が出るので、行の幅いっぱいで押下を
-/// 受け止められる。山形は `TreeViewItem` 側にあってこの覆いの外なので、
-/// 選べない枝でも開閉はできる。
+/// Even when transparent, being filled gives it a hit area, so it absorbs presses
+/// across the full row width. The chevron is on the `TreeViewItem` side, outside
+/// this cover, so branches that cannot be selected can still be expanded.
 const BLOCKER_XAML: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="Transparent"
     HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>"##;
 
-/// 開閉した枝の道筋と、開いたかどうかを受け取る通知。
+/// The notification receiving the path of the expanded or collapsed branch and
+/// whether it expanded.
 type ExpandCallback = dyn FnMut(&[usize], bool);
 
-/// 開閉が変わったことの通知先。
+/// The handler notified when expansion changes.
 ///
-/// WinRT のデリゲートは `Send + Sync` を要求するため `UiThreadCell` に載せる。
-/// 呼び出しの間だけクロージャを取り出すので、通知の中から同じツリーを
-/// 操作しても二重借用にならない。
+/// WinRT delegates require `Send + Sync`, so it is placed in a `UiThreadCell`. The
+/// closure is taken out only for the duration of the call, so operating on the same
+/// tree from inside the notification does not double-borrow.
 #[derive(Clone)]
 struct ExpandHandler(HandlerCell<ExpandCallback>);
 
@@ -136,38 +140,41 @@ impl ExpandHandler {
 struct TreeInner {
     native: Border,
     tree_view: TreeView,
-    /// ホイール補助への登録。テンプレートの `ScrollViewer` が現れるまで
-    /// できないので、`Loaded` を待って入れる。
+    /// The registration with the wheel helper. It cannot be made until the template's
+    /// `ScrollViewer` appears, so it waits for `Loaded`.
     wheel: RefCell<Option<Rc<ListScrollTarget>>>,
-    /// 表示前に頼まれた [`Tree::scroll_to_item`] の行き先。中の一覧が
-    /// 組み上がる `Loaded` で送る。
+    /// The destination of a [`Tree::scroll_to_item`] requested before showing. Scrolled
+    /// to on `Loaded`, when the inner list is assembled.
     pending_scroll: RefCell<Option<Vec<usize>>>,
     items: RefCell<Vec<TreeItem>>,
-    /// 項目に対応する節。パスの深さ優先 (親が先) 順、つまりパスの辞書順に
-    /// 並ぶので、パスからの引きは二分探索でよい。
+    /// The nodes for the items. In depth-first order by path (parents first), that is,
+    /// lexicographic order of paths, so lookups by path can use binary search.
     nodes: RefCell<Vec<(Vec<usize>, TreeViewNode)>>,
-    /// 開いた状態として覚えている項目。閉じた枝の中の分も残る。
+    /// The items remembered as expanded. Those inside collapsed branches remain too.
     ///
-    /// WinUI 側にも同じ状態があるが、こちらは**通知を出すかどうかの判断**に
-    /// 使う。自分で書き換えた分と、利用者の操作で届いた分を突き合わせると、
-    /// 同じ開閉で二重に通知するのを防げる。
+    /// WinUI holds the same state, but this one is used **to decide whether to send a
+    /// notification**. Matching what we wrote ourselves against what arrived from user
+    /// actions prevents notifying twice for the same expansion.
     expanded: RefCell<HashSet<Vec<usize>>>,
-    /// 選ばれている項目。選択なしは `None`。
+    /// The selected item. `None` for no selection.
     selected: RefCell<Option<Vec<usize>>>,
     handler: SelectionHandler,
     expand: ExpandHandler,
-    /// プログラムから選択や開閉を変えている間だけ通知を止める。
+    /// Stops notifications only while selection or expansion is being changed from
+    /// code.
     silent: Rc<Cell<bool>>,
-    /// ウィンドウ全体のホイール補助がこの ScrollViewer を選ぶための状態。
+    /// State for the window-wide wheel helper to choose this ScrollViewer.
     hovered: Arc<UiThreadCell<usize>>,
 }
 
-/// 入れ子の項目を開閉できる一覧 (TreeView)。
+/// A list whose nested items can be expanded and collapsed (TreeView).
 ///
-/// 項目は根からの子インデックスの並び (パス) で指す。`[0, 2]` は
-/// 「1 番目の根の 3 番目の子」で、空のパスは「選択なし」を表す。
+/// Items are referred to by the sequence of child indices from the root (a path).
+/// `[0, 2]` is "the third child of the first root", and an empty path means "no
+/// selection".
 ///
-/// 高さは行数に関係なく固定したいときに `set_sizing` で指定する。
+/// To fix its height regardless of the number of rows, specify it with
+/// `set_sizing`.
 #[derive(Clone)]
 pub struct Tree(Rc<TreeInner>);
 impl_widget!(Tree, native);
@@ -209,9 +216,9 @@ impl Tree {
         Ok(this)
     }
 
-    /// 項目を作り直す。パスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Paths change meaning, so the selection is cleared.
     ///
-    /// 開閉は [`TreeItem::expanded`] のとおりに戻る。
+    /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
         *self.0.items.borrow_mut() = items.to_vec();
         *self.0.selected.borrow_mut() = None;
@@ -227,7 +234,7 @@ impl Tree {
         }
     }
 
-    /// 子孫まで数えた項目の総数。
+    /// The total number of items, descendants included.
     pub fn len(&self) -> usize {
         TreeItem::count(&self.0.items.borrow())
     }
@@ -236,16 +243,17 @@ impl Tree {
         self.len() == 0
     }
 
-    /// 選ばれている項目のパス。何も選ばれていなければ `None`。
+    /// The path of the selected item. `None` if nothing is selected.
     pub fn selected(&self) -> Option<Vec<usize>> {
         self.0.selected.borrow().clone()
     }
 
-    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until the item at `path` is visible. The selection does not change.
     ///
-    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
-    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
-    /// 無いパスなら何もしない。表示前に呼んだときは、表示されてから送る。
+    /// If it is inside a collapsed branch, its ancestors are expanded first (as with
+    /// [`set_selected`](Self::set_selected), expansion is not notified). If it is
+    /// already visible nothing moves. Does nothing for a path that does not exist. When
+    /// called before showing, it scrolls once shown.
     pub fn scroll_to_item(&self, path: &[usize]) {
         if TreeItem::at(&self.0.items.borrow(), path).is_none() {
             return;
@@ -278,20 +286,21 @@ impl Tree {
         }
     }
 
-    /// 通知せずに 1 項目を選ぶ。
+    /// Selects one item without notifying.
     ///
-    /// 選べない項目や無いパスを渡すと、選択は外れる。閉じた枝の中にある
-    /// 項目は、見えるように祖先を開いてから選ぶ。
+    /// Passing an unselectable item or a path that does not exist clears the
+    /// selection. Items inside a collapsed branch are selected after their ancestors
+    /// are expanded so they become visible.
     pub fn set_selected(&self, path: &[usize]) {
         self.write_selected(path);
     }
 
-    /// 通知せずに選択を外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         self.write_selected(&[]);
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 項目を選ぶ (通知あり)。
+    /// Selects one item through the same path as a user's selection (notifies).
     pub fn select(&self, path: &[usize]) {
         self.write_selected(path);
         // 同じ行を選び直すと `SelectionChanged` は起きないため、
@@ -300,65 +309,66 @@ impl Tree {
         self.0.handler.emit(&actual);
     }
 
-    /// 選択が変わったときに、選ばれている項目のパスで呼ばれる。
+    /// Called with the path of the selected item when the selection changes.
     ///
-    /// 選択が外れたときは空のパスで呼ばれる。
+    /// When the selection is cleared, it is called with an empty path.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// その項目が開いているかどうか。
+    /// Whether the item is expanded.
     ///
-    /// 閉じた枝の中にあって見えていない項目でも、開いた状態として覚えていれば
-    /// `true` を返す (親を開き直すと、そのまま開いて出てくる)。
+    /// Even an item hidden inside a collapsed branch returns `true` if it is
+    /// remembered as expanded (reopening the parent shows it expanded as before).
     pub fn is_expanded(&self, path: &[usize]) -> bool {
         self.0.expanded.borrow().contains(path)
     }
 
-    /// 通知せずに開閉を変える。開くときは祖先もまとめて開く。
+    /// Changes expansion without notifying. Expanding also expands the ancestors.
     pub fn set_expanded(&self, path: &[usize], expanded: bool) {
         self.write_expanded(path, expanded);
     }
 
-    /// ユーザーが開いたのと同じ経路で開く (通知あり)。
+    /// Expands through the same path as a user's action (notifies).
     pub fn expand(&self, path: &[usize]) {
         self.toggle(path, true);
     }
 
-    /// ユーザーが閉じたのと同じ経路で閉じる (通知あり)。
+    /// Collapses through the same path as a user's action (notifies).
     pub fn collapse(&self, path: &[usize]) {
         self.toggle(path, false);
     }
 
-    /// 通知せずにすべての枝を開く。
+    /// Expands every branch without notifying.
     pub fn expand_all(&self) {
         self.set_all(true);
     }
 
-    /// 通知せずにすべての枝を閉じる。
+    /// Collapses every branch without notifying.
     pub fn collapse_all(&self) {
         self.set_all(false);
     }
 
-    /// 開閉が変わったときに、その項目のパスと変わった後の状態で呼ばれる。
+    /// Called with the item's path and its new state when its expansion changes.
     pub fn on_expand(&self, f: impl FnMut(&[usize], bool) + 'static) {
         self.0.expand.set(f);
     }
 
-    /// 中身の `TreeView`。バックエンド固有の脱出口として公開している。
+    /// The inner `TreeView`. Public as a backend-specific escape hatch.
     pub fn native_tree_view(&self) -> TreeView {
         self.0.tree_view.clone()
     }
 
     // -------------------------------------------------------------- 購読
 
-    /// 選択の購読。
+    /// The selection subscription.
     ///
-    /// ハンドルを強く持つと購読との間で循環するため、弱参照にする。
-    /// 通知の中から選択を書き換えると `SelectionChanged` がその場でもう一度
-    /// 起きるため、`with_mut` では二重借用の panic が WinRT の境界を越えて
-    /// クラッシュになる。再入を取りこぼしとして扱える `try_with_mut` を使う
-    /// (再入時は `silent` が立っていて、どのみち捨てる通知になる)。
+    /// Holding the handle strongly would create a cycle with the subscription, so it is
+    /// held weakly. Rewriting the selection inside the notification fires
+    /// `SelectionChanged` again on the spot, so with `with_mut` a double-borrow panic
+    /// would cross the WinRT boundary and crash. `try_with_mut`, which can treat
+    /// re-entrancy as a miss, is used (on re-entry `silent` is set, so it is a
+    /// notification to be discarded anyway).
     fn install_selection_handler(&self) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let handler = TypedEventHandler::<TreeView, TreeViewSelectionChangedEventArgs>::new(
@@ -381,7 +391,7 @@ impl Tree {
         Ok(())
     }
 
-    /// 開閉の購読。開くときと閉じるときで別のイベントが来る。
+    /// The expansion subscriptions. Expanding and collapsing come as different events.
     fn install_expand_handlers(&self) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let expanding =
@@ -423,10 +433,12 @@ impl Tree {
         Ok(())
     }
 
-    /// テンプレートの中の `ScrollViewer` を、ホイール補助の行き先として登録する。
+    /// Registers the `ScrollViewer` inside the template as a destination of the wheel
+    /// helper.
     ///
-    /// `TreeView` の中身は `Loaded` まで組み上がらないので、そこまで待つ。
-    /// 見つからなければ登録しないだけで、コントロール自身のスクロールは動く。
+    /// The `TreeView`'s contents are not assembled until `Loaded`, so it waits for that.
+    /// If it is not found it simply does not register; the control's own scrolling still
+    /// works.
     fn install_wheel_target(&self) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let loaded = RoutedEventHandler::new(move |_, _| {
@@ -449,7 +461,7 @@ impl Tree {
         Ok(())
     }
 
-    /// ホイール補助への登録を 1 回だけ行う。
+    /// Registers with the wheel helper, exactly once.
     fn register_wheel_target(&self) {
         if self.0.wheel.borrow().is_some() {
             return;
@@ -461,7 +473,7 @@ impl Tree {
         *self.0.wheel.borrow_mut() = Some(target);
     }
 
-    /// ホイールの行き先を選ばせるためのホバー状態 (`List` と同じ)。
+    /// The hover state used to choose the wheel's destination (the same as `List`).
     fn install_pointer_handlers(&self) -> Result<()> {
         let entered_state = self.0.hovered.clone();
         let entered = PointerEventHandler::new(move |_, _| {
@@ -503,7 +515,7 @@ impl Tree {
 
     // ------------------------------------------------------------ 組み立て
 
-    /// 項目を `TreeViewNode` の木へ写す。
+    /// Maps the items onto a tree of `TreeViewNode`s.
     fn rebuild(&self) -> Result<()> {
         let mut nodes = Vec::new();
         {
@@ -530,7 +542,7 @@ impl Tree {
         Ok(())
     }
 
-    /// パスの指す節。無ければ `None`。
+    /// The node the path points at. `None` if there is none.
     fn node_at(&self, path: &[usize]) -> Option<TreeViewNode> {
         let nodes = self.0.nodes.borrow();
         let index = nodes
@@ -539,8 +551,8 @@ impl Tree {
         nodes.get(index).map(|(_, node)| node.clone())
     }
 
-    /// その節を指すパス。作り直しの途中で届いた通知など、こちらの表に
-    /// 無い節なら `None`。
+    /// The path pointing at the node. `None` for nodes not in our table, such as those
+    /// in notifications that arrive in the middle of a rebuild.
     fn path_of(&self, node: &TreeViewNode) -> Option<Vec<usize>> {
         self.0
             .nodes
@@ -552,7 +564,7 @@ impl Tree {
 
     // --------------------------------------------------------- 状態の反映
 
-    /// 選択を覚えて書き込む (通知は起きない)。
+    /// Remembers and writes the selection (no notification).
     fn write_selected(&self, path: &[usize]) {
         let picked = TreeItem::selectable(&self.0.items.borrow(), path).then(|| path.to_vec());
         if let Some(path) = picked.as_deref() {
@@ -564,12 +576,12 @@ impl Tree {
         *self.0.selected.borrow_mut() = picked;
     }
 
-    /// WinUI 側の選択だけを書き換える (通知は止める)。
+    /// Rewrites only the selection on the WinUI side (notifications are stopped).
     ///
-    /// 閉じた枝の中にある節は渡さない。WinUI の `SelectedNode` は見えている
-    /// 節しか扱えず、隠れている節を渡すと内側で再帰してスタックを溢れさせる。
-    /// naui 側の記憶は別に持っているので、開き直したときに
-    /// [`Tree::restore_selection`] が書き戻す。
+    /// Nodes inside collapsed branches are not passed. WinUI's `SelectedNode` handles
+    /// only visible nodes, and passing a hidden node makes it recurse internally until
+    /// the stack overflows. naui keeps its own record separately, so
+    /// [`Tree::restore_selection`] writes it back when the branch is reopened.
     fn write_native_selection(&self, path: Option<&[usize]>) {
         let node = path
             .filter(|path| self.is_path_shown(path))
@@ -587,7 +599,8 @@ impl Tree {
         });
     }
 
-    /// 開閉を覚えて反映する (通知は起きない)。開くときは祖先もまとめて開く。
+    /// Remembers and applies the expansion state (no notification). Expanding also
+    /// expands the ancestors.
     fn write_expanded(&self, path: &[usize], expanded: bool) {
         if TreeItem::at(&self.0.items.borrow(), path).is_none_or(|item| item.is_leaf()) {
             return;
@@ -614,7 +627,7 @@ impl Tree {
         self.restore_selection();
     }
 
-    /// WinUI 側の開閉だけを書き換える (通知は止める)。
+    /// Rewrites only the expansion on the WinUI side (notifications are stopped).
     fn write_native_expanded(&self, path: &[usize], expanded: bool) {
         let Some(node) = self.node_at(path) else {
             return;
@@ -624,7 +637,7 @@ impl Tree {
         });
     }
 
-    /// 開閉を変えて 1 回だけ通知する。
+    /// Changes the expansion state and notifies once.
     fn toggle(&self, path: &[usize], expanded: bool) {
         let before = self.is_expanded(path);
         self.write_expanded(path, expanded);
@@ -633,7 +646,7 @@ impl Tree {
         }
     }
 
-    /// すべての枝をまとめて開閉する (通知なし)。
+    /// Expands or collapses every branch at once (no notification).
     fn set_all(&self, expanded: bool) {
         let mut branches = Vec::new();
         TreeItem::walk(&self.0.items.borrow(), |path, item| {
@@ -655,15 +668,15 @@ impl Tree {
         self.restore_selection();
     }
 
-    /// 覚えている選択を WinUI 側へ書き戻す (通知は起きない)。
+    /// Writes the remembered selection back to the WinUI side (no notification).
     ///
-    /// WinUI は枝を閉じると、その中にある選択を捨てる。naui では
-    /// 「隠れているだけ」として覚えたままにするので、開き直したときに
-    /// ここで選択の見た目を戻す。
+    /// When a branch is collapsed, WinUI discards the selection inside it. naui keeps it
+    /// as "merely hidden", so the selection's look is restored here when the branch is
+    /// reopened.
     ///
-    /// **食い違っているときだけ書く。** 選択の書き込みは焦点とスクロール位置
-    /// まで動かすので、同じ選択を書き直すと、関係のない枝を開いただけで
-    /// 選ばれている行へ画面が飛んでしまう。
+    /// **It writes only when they disagree.** Writing the selection also moves focus and
+    /// the scroll position, so rewriting the same selection would make the screen jump
+    /// to the selected row just from expanding an unrelated branch.
     fn restore_selection(&self) {
         // 見えていない選択は、WinUI 側では「選択なし」として表す。
         let wanted = self
@@ -684,11 +697,12 @@ impl Tree {
         self.write_native_selection(wanted.as_deref());
     }
 
-    /// 覚えている選択を、いまのイベントから抜けてから書き戻す。
+    /// Writes the remembered selection back after leaving the current event.
     ///
-    /// 選択のイベントの中で選択を書き換えると、WinUI が押された行を選び直して
-    /// またイベントを出す、という往復が止まらずスタックを溢れさせる。
-    /// `DispatcherQueue` に積んで、イベントの外で書き戻す。
+    /// Rewriting the selection inside a selection event makes WinUI reselect the
+    /// clicked row and fire the event again, a back-and-forth that never stops until the
+    /// stack overflows. So it is queued on the `DispatcherQueue` and written back
+    /// outside the event.
     fn restore_selection_later(&self) {
         let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
             return;
@@ -705,13 +719,13 @@ impl Tree {
         let _ = queue.TryEnqueue(&work);
     }
 
-    /// そのパスが今見えているか (祖先がすべて開いているか)。
+    /// Whether the path is visible now (whether all its ancestors are expanded).
     fn is_path_shown(&self, path: &[usize]) -> bool {
         let expanded = self.0.expanded.borrow();
         (1..path.len()).all(|depth| expanded.contains(&path[..depth]))
     }
 
-    /// WinUI 側で選択が変わったとき。
+    /// When the selection changes on the WinUI side.
     fn on_native_selection(&self) {
         let picked = self
             .0
@@ -752,7 +766,7 @@ impl Tree {
         self.0.handler.emit(&actual);
     }
 
-    /// WinUI 側で開閉が変わったとき。
+    /// When expansion changes on the WinUI side.
     fn on_native_expand(&self, node: &TreeViewNode, expanded: bool) {
         let Some(path) = self.path_of(node) else {
             return;
@@ -779,7 +793,7 @@ impl Tree {
         }
     }
 
-    /// WinUI からの通知を止めたまま操作する。
+    /// Operates with notifications from WinUI stopped.
     fn without_notifying<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
         let previous = self.0.silent.replace(true);
         let result = f(self);
@@ -794,10 +808,11 @@ impl Drop for TreeInner {
     }
 }
 
-/// 項目を `TreeViewNode` に写して木へ足す。
+/// Maps items onto `TreeViewNode`s and adds them to the tree.
 ///
-/// 深さ優先 (親が先) にたどるので、`out` はパスの辞書順に並ぶ。`enabled` は
-/// 祖先がすべて有効かどうかで、[`TreeItem::selectable`] と同じ判定になる。
+/// It walks depth-first (parents first), so `out` ends up in lexicographic order of
+/// paths. `enabled` is whether all ancestors are enabled, the same check as
+/// [`TreeItem::selectable`].
 fn append_nodes(
     tree_view: &TreeView,
     parent: Option<&TreeViewNode>,
@@ -837,7 +852,8 @@ fn append_nodes(
     Ok(())
 }
 
-/// 行の中身を組み立てる。文字は `List` と同じ組み方 (補助があれば 2 行)。
+/// Builds a row's content. The text is built the same way as in `List` (two lines
+/// if there is secondary text).
 fn row_content(item: &TreeItem, selectable: bool) -> Result<UIElement> {
     let content = item_content(&item.label, item.detail.as_deref())?.native_element();
     if selectable {
@@ -856,11 +872,11 @@ fn row_content(item: &TreeItem, selectable: bool) -> Result<UIElement> {
         .map_err(|e| to_error("行の要素化", e))
 }
 
-/// 選べない行を包む覆いを作る。
+/// Creates the cover that wraps rows that cannot be selected.
 ///
-/// 押下をここで握りつぶすので、`TreeViewItem` まで届かず行が選ばれない。
-/// WinUI に選ばせてから選択を戻すやりかたでは、戻すあいだに選択と焦点が
-/// 目に見えて動いてしまう。
+/// Presses are swallowed here, so they never reach the `TreeViewItem` and the row is
+/// not selected. Letting WinUI select it and then undoing the selection would visibly
+/// move the selection and focus while undoing.
 fn pointer_blocker() -> Result<XamlGrid> {
     let blocker = XamlReader::Load(&HSTRING::from(BLOCKER_XAML))
         .and_then(|element| element.cast::<XamlGrid>())
@@ -881,7 +897,8 @@ fn pointer_blocker() -> Result<XamlGrid> {
     Ok(blocker)
 }
 
-/// テーマ付きの枠を読み込む。読めなければ素の `Border` + `TreeView` に戻す。
+/// Loads the themed frame. Falls back to a plain `Border` + `TreeView` if it cannot
+/// be read.
 fn build_surface() -> Result<(Border, TreeView)> {
     let surface = match load_surface() {
         Ok(surface) => surface,
@@ -897,7 +914,8 @@ fn build_surface() -> Result<(Border, TreeView)> {
     Ok(surface)
 }
 
-/// 行に当てる `Style`。読めなければ `None` (WinUI 既定の寄せ方のまま)。
+/// The `Style` applied to rows. `None` if it cannot be read (WinUI's default
+/// alignment stays).
 fn item_style() -> Option<Style> {
     let dictionary = match XamlReader::Load(&HSTRING::from(ITEM_STYLE_XAML))
         .and_then(|element| element.cast::<ResourceDictionary>())
@@ -937,7 +955,7 @@ fn plain_surface() -> Result<(Border, TreeView)> {
     Ok((native, tree_view))
 }
 
-/// 行に当てる `DataTemplate`。
+/// The `DataTemplate` applied to rows.
 fn item_template() -> Result<DataTemplate> {
     XamlReader::Load(&HSTRING::from(ITEM_TEMPLATE_XAML))
         .and_then(|element| element.cast::<DataTemplate>())

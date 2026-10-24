@@ -28,7 +28,7 @@ naui.workspace = true
 name = "naui-gallery"
 maintainer = "Mokuichi147 <38586357+Mokuichi147@users.noreply.github.com>"
 copyright = "Mokuichi147"
-extended-description = "naui のウィジェットを種別ごとに試せるデモアプリ。GTK4 と libadwaita で表示する。"
+extended-description = "A demo app for trying naui widgets by kind. Displayed with GTK4 and libadwaita."
 section = "misc"
 # ビルドした Ubuntu 24.04 の版ではなく、naui-gtk が要る下限を明示する。
 depends = "$auto, libgtk-4-1 (>= 4.10), libadwaita-1-0 (>= 1.5)"

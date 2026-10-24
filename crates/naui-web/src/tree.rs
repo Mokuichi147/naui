@@ -1,20 +1,21 @@
-//! ツリー (DOM)。
+//! Trees (DOM).
 //!
-//! ブラウザには「ツリー」の標準コントロールが無いので、WAI-ARIA の
-//! `role="tree"` に沿って組み立てる。
+//! Browsers have no standard "tree" control, so it is built following WAI-ARIA's
+//! `role="tree"`.
 //!
-//! | 部分 | 要素 |
+//! | Part | Element |
 //! | --- | --- |
-//! | 全体 | `<ul role="tree" tabindex="0">` |
-//! | 項目 | `<li role="treeitem" aria-expanded aria-selected>` |
-//! | 子の並び | `<ul role="group">` (親の中に入れ子で置く) |
+//! | The whole | `<ul role="tree" tabindex="0">` |
+//! | Item | `<li role="treeitem" aria-expanded aria-selected>` |
+//! | Sequence of children | `<ul role="group">` (nested inside the parent) |
 //!
-//! 入れ子の `<ul>` をそのまま作り、開閉は `display` の切り替えで行う。
-//! 閉じた枝の中の開閉がそのまま残る (開き直すと元どおりに出る) のは
-//! この作りによるもので、macOS の `NSOutlineView` と同じ動きになる。
+//! Nested `<ul>`s are created as they are, and expanding and collapsing is done by
+//! switching `display`. That the expansion inside a collapsed branch stays as is
+//! (showing as before when expanded again) comes from this structure, giving the
+//! same behavior as macOS's `NSOutlineView`.
 //!
-//! 枠と選択の色はブラウザが持つシステム色 (`Field` / `SelectedItem` /
-//! `Highlight` / `GrayText`) をそのまま使い、naui は配色を決めない。
+//! The frame and selection colors use the browser's system colors (`Field` /
+//! `SelectedItem` / `Highlight` / `GrayText`) as is; naui decides no colors.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -26,11 +27,12 @@ use web_sys::{Document, Element, HtmlElement, KeyboardEvent};
 
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
-/// 1 段ぶんの字下げ (px)。
+/// The indentation per level (px).
 const INDENT: f64 = 16.0;
 
 thread_local! {
-    /// `aria-activedescendant` から項目を指すための、ツリーごとの通し番号。
+    /// A per-tree running number for referring to items from
+    /// `aria-activedescendant`.
     static NEXT_ID: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -46,8 +48,8 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
     let _ = element.style().set_property(property, value);
 }
 
-/// 選択が変わったことの通知先。選ばれている項目のパスで呼ぶ
-/// (選択が外れたときは空のパス)。
+/// The handler notified when the selection changes. Called with the path of the
+/// selected item (an empty path when the selection is cleared).
 #[derive(Clone, Default)]
 struct SelectionHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize])>>>>);
 
@@ -56,8 +58,8 @@ impl SelectionHandler {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    /// 呼び出しの間だけクロージャを取り出すので、通知の中から
-    /// ツリーを操作しても二重借用にならない。
+    /// The closure is taken out only for the duration of the call, so operating on the
+    /// tree from inside the notification does not double-borrow.
     fn emit(&self, path: &[usize]) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
@@ -70,7 +72,7 @@ impl SelectionHandler {
     }
 }
 
-/// 開閉が変わったことの通知先。
+/// The handler notified when expansion changes.
 #[derive(Clone, Default)]
 struct ExpandHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize], bool)>>>>);
 
@@ -91,46 +93,48 @@ impl ExpandHandler {
     }
 }
 
-/// 画面に出ている項目 1 つぶん。並びは深さ優先 (親が先)。
+/// One item on screen. In depth-first order (parents first).
 struct Node {
     path: Vec<usize>,
-    /// `role="treeitem"`。開閉と選択の状態はここに載る。
+    /// The `role="treeitem"`. The expansion and selection states are put on it.
     item: HtmlElement,
-    /// 文字と開閉の印を載せた 1 行。押すと選ぶ。
+    /// One row holding the text and the expander mark. Clicking it selects.
     row: HtmlElement,
-    /// 子の `role="group"`。葉なら `None`。
+    /// The children's `role="group"`. `None` for leaves.
     group: Option<HtmlElement>,
-    /// 開閉の印。葉なら `None`。
+    /// The expander mark. `None` for leaves.
     twisty: Option<HtmlElement>,
 }
 
 struct TreeInner {
-    /// 外から見える `role="tree"`。項目を作り直しても、この要素は変わらない。
+    /// The `role="tree"` visible from outside. This element stays the same even when
+    /// the items are rebuilt.
     root: HtmlElement,
     document: Document,
     id: u32,
     items: RefCell<Vec<TreeItem>>,
     nodes: RefCell<Vec<Node>>,
-    /// 開いた状態として覚えている項目。閉じた枝の中の分も残る。
+    /// The items remembered as expanded. Those inside collapsed branches remain too.
     expanded: RefCell<HashSet<Vec<usize>>>,
-    /// 選ばれている項目。選択なしは `None`。
+    /// The selected item. `None` for no selection.
     selected: RefCell<Option<Vec<usize>>>,
-    /// キーボードでいま指している項目。
+    /// The item the keyboard is pointing at now.
     active: RefCell<Option<Vec<usize>>>,
     handler: SelectionHandler,
     expand: ExpandHandler,
-    /// 行と開閉の印の購読。作り直すと外れる。
+    /// The subscriptions of rows and expander marks. Removed on rebuild.
     listeners: RefCell<Vec<Listener>>,
-    /// ツリー全体のキー操作の購読。
+    /// The subscription for key operations on the whole tree.
     _keys: RefCell<Option<Listener>>,
 }
 
-/// 入れ子の項目を開閉できる一覧 (`role="tree"`)。
+/// A list whose nested items can be expanded and collapsed (`role="tree"`).
 ///
-/// 項目は根からの子インデックスの並び (パス) で指す。`[0, 2]` は
-/// 「1 番目の根の 3 番目の子」で、空のパスは「選択なし」を表す。
+/// Items are referred to by the sequence of child indices from the root (a path).
+/// `[0, 2]` is "the third child of the first root", and an empty path means "no
+/// selection".
 ///
-/// 高さは中身から決まらないので、`set_sizing` で指定する。
+/// Its height is not determined by its contents, so set it with `set_sizing`.
 #[derive(Clone)]
 pub struct Tree(Rc<TreeInner>);
 impl_widget!(Tree, root);
@@ -188,9 +192,9 @@ impl Tree {
         Ok(this)
     }
 
-    /// 項目を作り直す。パスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Paths change meaning, so the selection is cleared.
     ///
-    /// 開閉は [`TreeItem::expanded`] のとおりに戻る。
+    /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
         *self.0.items.borrow_mut() = items.to_vec();
         *self.0.selected.borrow_mut() = None;
@@ -205,7 +209,7 @@ impl Tree {
         let _ = self.rebuild();
     }
 
-    /// 子孫まで数えた項目の総数。
+    /// The total number of items, descendants included.
     pub fn len(&self) -> usize {
         TreeItem::count(&self.0.items.borrow())
     }
@@ -214,16 +218,16 @@ impl Tree {
         self.len() == 0
     }
 
-    /// 選ばれている項目のパス。何も選ばれていなければ `None`。
+    /// The path of the selected item. `None` if nothing is selected.
     pub fn selected(&self) -> Option<Vec<usize>> {
         self.0.selected.borrow().clone()
     }
 
-    /// `path` の項目が見えるところまでスクロールする。選択は変わらない。
+    /// Scrolls until the item at `path` is visible. The selection does not change.
     ///
-    /// 閉じた枝の中にあるときは、祖先を開いてから送る ([`set_selected`](Self::set_selected)
-    /// と同じく、開閉は通知しない)。すでに見えていれば動かさない。
-    /// 無いパスなら何もしない。
+    /// If it is inside a collapsed branch, its ancestors are expanded first (as with
+    /// [`set_selected`](Self::set_selected), expansion is not notified). If it is
+    /// already visible nothing moves. Does nothing for a path that does not exist.
     pub fn scroll_to_item(&self, path: &[usize]) {
         if TreeItem::at(&self.0.items.borrow(), path).is_none() {
             return;
@@ -232,20 +236,21 @@ impl Tree {
         self.reveal_path(path);
     }
 
-    /// 通知せずに 1 項目を選ぶ。
+    /// Selects one item without notifying.
     ///
-    /// 選べない項目や無いパスを渡すと、選択は外れる。閉じた枝の中にある
-    /// 項目は、見えるように祖先を開いてから選ぶ。
+    /// Passing an unselectable item or a path that does not exist clears the
+    /// selection. Items inside a collapsed branch are selected after their ancestors
+    /// are expanded so they become visible.
     pub fn set_selected(&self, path: &[usize]) {
         self.write_selected(path);
     }
 
-    /// 通知せずに選択を外す。
+    /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
         self.write_selected(&[]);
     }
 
-    /// ユーザーが選んだのと同じ経路で 1 項目を選ぶ (通知あり)。
+    /// Selects one item through the same path as a user's selection (notifies).
     pub fn select(&self, path: &[usize]) {
         self.write_selected(path);
         // ブラウザはプログラムからの変更でイベントを出さないため、
@@ -254,59 +259,59 @@ impl Tree {
         self.0.handler.emit(&actual);
     }
 
-    /// 選択が変わったときに、選ばれている項目のパスで呼ばれる。
+    /// Called with the path of the selected item when the selection changes.
     ///
-    /// 選択が外れたときは空のパスで呼ばれる。
+    /// When the selection is cleared, it is called with an empty path.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// その項目が開いているかどうか。
+    /// Whether the item is expanded.
     ///
-    /// 閉じた枝の中にあって見えていない項目でも、開いた状態として覚えていれば
-    /// `true` を返す (親を開き直すと、そのまま開いて出てくる)。
+    /// Even an item hidden inside a collapsed branch returns `true` if it is
+    /// remembered as expanded (reopening the parent shows it expanded as before).
     pub fn is_expanded(&self, path: &[usize]) -> bool {
         self.0.expanded.borrow().contains(path)
     }
 
-    /// 通知せずに開閉を変える。開くときは祖先もまとめて開く。
+    /// Changes expansion without notifying. Expanding also expands the ancestors.
     pub fn set_expanded(&self, path: &[usize], expanded: bool) {
         self.write_expanded(path, expanded);
     }
 
-    /// ユーザーが開いたのと同じ経路で開く (通知あり)。
+    /// Expands through the same path as a user's action (notifies).
     pub fn expand(&self, path: &[usize]) {
         self.toggle(path, true);
     }
 
-    /// ユーザーが閉じたのと同じ経路で閉じる (通知あり)。
+    /// Collapses through the same path as a user's action (notifies).
     pub fn collapse(&self, path: &[usize]) {
         self.toggle(path, false);
     }
 
-    /// 通知せずにすべての枝を開く。
+    /// Expands every branch without notifying.
     pub fn expand_all(&self) {
         self.set_all(true);
     }
 
-    /// 通知せずにすべての枝を閉じる。
+    /// Collapses every branch without notifying.
     pub fn collapse_all(&self) {
         self.set_all(false);
     }
 
-    /// 開閉が変わったときに、その項目のパスと変わった後の状態で呼ばれる。
+    /// Called with the item's path and its new state when its expansion changes.
     pub fn on_expand(&self, f: impl FnMut(&[usize], bool) + 'static) {
         self.0.expand.set(f);
     }
 
-    /// 中身の `role="tree"` の要素。バックエンド固有の脱出口として公開している。
+    /// The inner `role="tree"` element. Public as a backend-specific escape hatch.
     pub fn native_tree(&self) -> HtmlElement {
         self.0.root.clone()
     }
 
     // ------------------------------------------------------------ 組み立て
 
-    /// 項目の入れ子を DOM へ作り直す。
+    /// Rebuilds the nesting of items in the DOM.
     fn rebuild(&self) -> Result<()> {
         while let Some(child) = self.0.root.last_element_child() {
             let _ = self.0.root.remove_child(&child);
@@ -321,7 +326,7 @@ impl Tree {
         Ok(())
     }
 
-    /// 同じ深さの項目を 1 段ぶん組み立てる。
+    /// Builds one level of items at the same depth.
     fn build_level(
         &self,
         items: &[TreeItem],
@@ -342,7 +347,7 @@ impl Tree {
         Ok(())
     }
 
-    /// 項目 1 つぶんの要素を作る。
+    /// Creates the elements for one item.
     fn build_item(&self, item: &TreeItem, path: &[usize]) -> Result<Node> {
         let doc = &self.0.document;
         let element: HtmlElement = create(doc, "li")?.unchecked_into();
@@ -464,7 +469,7 @@ impl Tree {
 
     // --------------------------------------------------------- 状態の反映
 
-    /// 開閉と選択を、いまの状態どおりに描き直す。
+    /// Redraws the expansion and selection according to the current state.
     fn paint(&self) {
         let expanded = self.0.expanded.borrow();
         let selected = self.0.selected.borrow();
@@ -498,7 +503,7 @@ impl Tree {
         }
     }
 
-    /// 選択を覚えて描き直す (通知は起きない)。
+    /// Remembers the selection and redraws (no notification).
     fn write_selected(&self, path: &[usize]) {
         let picked = TreeItem::selectable(&self.0.items.borrow(), path).then(|| path.to_vec());
         if let Some(path) = picked.as_deref() {
@@ -514,7 +519,8 @@ impl Tree {
         self.reveal_active();
     }
 
-    /// 開閉を覚えて描き直す (通知は起きない)。開くときは祖先もまとめて開く。
+    /// Remembers the expansion state and redraws (no notification). Expanding also
+    /// expands the ancestors.
     fn write_expanded(&self, path: &[usize], expanded: bool) {
         if TreeItem::at(&self.0.items.borrow(), path).is_none_or(|item| item.is_leaf()) {
             return;
@@ -535,7 +541,7 @@ impl Tree {
         self.paint();
     }
 
-    /// 開閉を変えて 1 回だけ通知する。
+    /// Changes the expansion state and notifies once.
     fn toggle(&self, path: &[usize], expanded: bool) {
         let before = self.is_expanded(path);
         self.write_expanded(path, expanded);
@@ -544,7 +550,7 @@ impl Tree {
         }
     }
 
-    /// すべての枝をまとめて開閉する (通知なし)。
+    /// Expands or collapses every branch at once (no notification).
     fn set_all(&self, expanded: bool) {
         let mut set = self.0.expanded.borrow_mut();
         set.clear();
@@ -561,17 +567,18 @@ impl Tree {
 
     // --------------------------------------------------------- 操作の受け口
 
-    /// 行が押されたとき。
+    /// When a row is clicked.
     fn on_row_clicked(&self, path: &[usize]) {
         self.write_selected(path);
         let actual = self.selected().unwrap_or_default();
         self.0.handler.emit(&actual);
     }
 
-    /// キー操作。処理したら `true` を返す (ブラウザの既定動作を止める)。
+    /// Key operations. Returns `true` if handled (preventing the browser's default
+    /// action).
     ///
-    /// WAI-ARIA の Tree View パターンに合わせ、↑↓ で行を移動し、
-    /// → で開く / 子へ、← で閉じる / 親へ動く。
+    /// Following WAI-ARIA's Tree View pattern, ↑↓ move between rows, → expands / moves
+    /// to the child, and ← collapses / moves to the parent.
     fn on_key(&self, event: &KeyboardEvent) -> bool {
         let rows = self.visible_paths();
         if rows.is_empty() {
@@ -641,7 +648,7 @@ impl Tree {
         true
     }
 
-    /// キーボードで指す項目を移して、選べるならそのまま選ぶ。
+    /// Moves the item the keyboard points at, and selects it if it can be selected.
     fn focus(&self, path: &[usize]) {
         *self.0.active.borrow_mut() = Some(path.to_vec());
         self.reveal_active();
@@ -652,13 +659,13 @@ impl Tree {
         }
     }
 
-    /// いま見えている項目のパスを上から順に返す。
+    /// Returns the paths of the currently visible items, from the top.
     fn visible_paths(&self) -> Vec<Vec<usize>> {
         let expanded = self.0.expanded.borrow();
         TreeItem::visible(&self.0.items.borrow(), |path| expanded.contains(path))
     }
 
-    /// キーボードで指している項目を、スクロール領域の中へ入れる。
+    /// Brings the item the keyboard points at into the scroll area.
     fn reveal_active(&self) {
         let Some(active) = self.0.active.borrow().clone() else {
             return;
@@ -670,7 +677,7 @@ impl Tree {
         self.reveal_path(&active);
     }
 
-    /// `path` の項目を、スクロール領域の中へ入れる。
+    /// Brings the item at `path` into the scroll area.
     fn reveal_path(&self, path: &[usize]) {
         let nodes = self.0.nodes.borrow();
         let Some(node) = nodes.iter().find(|node| node.path == path) else {

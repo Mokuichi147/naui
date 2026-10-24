@@ -1,44 +1,48 @@
-//! サイドバーの項目とまとまり。
+//! Sidebar items and sections.
 
 use crate::ToolbarIcon;
 
-/// サイドバーの既定の幅 (論理ピクセル)。
+/// The default sidebar width (logical pixels).
 ///
-/// 環境ごとの既定 (macOS はおよそ 200、WinUI 3 の `OpenPaneLength` は 320、
-/// libadwaita は幅の 25% で 180〜280) に任せると、同じアプリが環境ごとに
-/// 違う幅で出てしまうので、naui が 4 環境でそろえる。
+/// Leaving it to each platform's default (about 200 on macOS, 320 for WinUI 3's
+/// `OpenPaneLength`, 25% of the width clamped to 180–280 in libadwaita) would make
+/// the same app appear at different widths per platform, so naui unifies it across
+/// all four.
 pub const DEFAULT_SIDEBAR_WIDTH: f64 = 220.0;
 
-/// 利用者が仕切りでサイドバーを狭められる下限 (論理ピクセル)。
+/// The minimum width the user can shrink the sidebar to with the divider (logical
+/// pixels).
 ///
-/// 仕切りで幅を変えられるのは 4 環境とも同じで、狭めすぎて項目の文字が
-/// 読めなくならないよう、naui がそろえて下限を置く。
+/// On all four platforms the width can be changed with the divider, and naui
+/// uniformly sets a minimum so it cannot be shrunk until the item text becomes
+/// unreadable.
 pub const SIDEBAR_MIN_WIDTH: f64 = 140.0;
 
-/// サイドバーの 1 項目。
+/// One sidebar item.
 ///
-/// 見た目は「アイコン + 文字」の 1 行で、アイコンは省ける。アイコンの
-/// 種類は [`ToolbarIcon`] と同じもので、その環境の標準アイコンへ写す。
+/// It looks like a single row of "icon + text", and the icon can be omitted. Icons
+/// come from the same set as [`ToolbarIcon`] and map to the platform's standard
+/// icons.
 ///
 /// ```
 /// # use naui_core::{SidebarItem, ToolbarIcon};
-/// let item = SidebarItem::new("一般").icon(ToolbarIcon::Settings);
-/// assert_eq!(item.label, "一般");
+/// let item = SidebarItem::new("General").icon(ToolbarIcon::Settings);
+/// assert_eq!(item.label, "General");
 /// assert_eq!(item.icon, Some(ToolbarIcon::Settings));
 /// assert!(item.enabled);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarItem {
-    /// 画面に出る文字列。
+    /// The text shown on screen.
     pub label: String,
-    /// 文字の前に出すアイコン。`None` なら文字だけ。
+    /// The icon shown before the text. Text only if `None`.
     pub icon: Option<ToolbarIcon>,
-    /// 選べるかどうか。
+    /// Whether it can be selected.
     pub enabled: bool,
 }
 
 impl SidebarItem {
-    /// 選べる項目を作る。アイコンは無し。
+    /// Creates a selectable item without an icon.
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
@@ -47,23 +51,23 @@ impl SidebarItem {
         }
     }
 
-    /// 文字の前に出すアイコンを指定する (既定は無し)。
+    /// Sets the icon shown before the text (none by default).
     pub fn icon(mut self, icon: ToolbarIcon) -> Self {
         self.icon = Some(icon);
         self
     }
 
-    /// 選べるかどうかを指定する (既定は選べる)。
+    /// Sets whether it can be selected (selectable by default).
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// 文字列の並びから項目列を作る。
+    /// Creates a list of items from a sequence of strings.
     ///
     /// ```
     /// # use naui_core::SidebarItem;
-    /// let items = SidebarItem::list(["ホーム", "検索", "設定"]);
+    /// let items = SidebarItem::list(["Home", "Search", "Settings"]);
     /// assert_eq!(items.len(), 3);
     /// ```
     pub fn list<I, S>(labels: I) -> Vec<SidebarItem>
@@ -87,32 +91,32 @@ impl From<String> for SidebarItem {
     }
 }
 
-/// サイドバーの項目のまとまり。
+/// A group of sidebar items.
 ///
-/// まとまりの間には隙間が空き、見出しがあればその上に小さく出る
-/// (macOS の「システム設定」や Finder のサイドバーと同じ形)。
-/// 見出しは選べない。
+/// Groups are separated by a gap, and a heading, if any, appears small above the
+/// group (the same shape as the sidebars of macOS's System Settings and Finder).
+/// Headings cannot be selected.
 ///
 /// ```
 /// # use naui_core::{SidebarItem, SidebarSection};
-/// let places = SidebarSection::new("場所", ["書類", "ダウンロード"]);
-/// assert_eq!(places.title.as_deref(), Some("場所"));
+/// let places = SidebarSection::new("Places", ["Documents", "Downloads"]);
+/// assert_eq!(places.title.as_deref(), Some("Places"));
 /// assert_eq!(places.len(), 2);
 ///
-/// // 見出しの無いまとまりは、隙間だけで区切られる。
-/// let plain = SidebarSection::untitled(["一般", "外観"]);
+/// // A group without a heading is separated by the gap alone.
+/// let plain = SidebarSection::untitled(["General", "Appearance"]);
 /// assert_eq!(plain.title, None);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SidebarSection {
-    /// まとまりの見出し。`None` なら見出しを出さない。
+    /// The group's heading. No heading is shown if `None`.
     pub title: Option<String>,
-    /// まとまりに属する項目。
+    /// The items in the group.
     pub items: Vec<SidebarItem>,
 }
 
 impl SidebarSection {
-    /// 見出し付きのまとまりを作る。項目は文字列のままでも渡せる。
+    /// Creates a group with a heading. Items can be passed as plain strings.
     pub fn new<I, T>(title: impl Into<String>, items: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -124,7 +128,7 @@ impl SidebarSection {
         }
     }
 
-    /// 見出しの無いまとまりを作る。
+    /// Creates a group without a heading.
     pub fn untitled<I, T>(items: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -136,7 +140,7 @@ impl SidebarSection {
         }
     }
 
-    /// 項目数。
+    /// The number of items.
     pub fn len(&self) -> usize {
         self.items.len()
     }
@@ -146,22 +150,22 @@ impl SidebarSection {
     }
 }
 
-/// サイドバーに並ぶ 1 行。バックエンドが一覧を組み立てるときに使う。
+/// One row in the sidebar. Used by backends when building the list.
 ///
-/// まとまりを平らに並べ直したもので、項目には**まとまりをまたいで数えた
-/// 通し番号**が付く。naui の通知と選択はこの番号でやり取りする。
+/// The groups flattened into a single sequence; items carry **a running number
+/// counted across groups**. naui's notifications and selection use this number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarRow<'a> {
-    /// まとまりの間の隙間。2 つ目以降のまとまりの前にだけ入る。
+    /// The gap between groups. Inserted only before the second and later groups.
     Gap,
-    /// まとまりの見出し。
+    /// A group heading.
     Header(&'a str),
-    /// 項目と、その通し番号。
+    /// An item and its running number.
     Item(usize, &'a SidebarItem),
 }
 
 impl SidebarRow<'_> {
-    /// 項目の行なら通し番号。
+    /// The running number, if this is an item row.
     pub fn item_index(&self) -> Option<usize> {
         match self {
             SidebarRow::Item(index, _) => Some(*index),
@@ -170,22 +174,22 @@ impl SidebarRow<'_> {
     }
 }
 
-/// まとまりを、画面に並ぶ順の行へ平らにする。
+/// Flattens the groups into rows in on-screen order.
 ///
-/// 2 つ目以降のまとまりの前には [`SidebarRow::Gap`] が入る。見出しがあれば
-/// 隙間の後ろに [`SidebarRow::Header`] が続く。項目の無いまとまりも見出しは
-/// 出す (中身を後から足す画面のため)。
+/// A [`SidebarRow::Gap`] goes before the second and later groups. If there is a
+/// heading, a [`SidebarRow::Header`] follows the gap. Groups without items still
+/// show their heading (for screens that add content later).
 ///
 /// ```
 /// # use naui_core::{sidebar_rows, SidebarRow, SidebarSection};
 /// let sections = [
-///     SidebarSection::untitled(["一般"]),
-///     SidebarSection::new("場所", ["書類"]),
+///     SidebarSection::untitled(["General"]),
+///     SidebarSection::new("Places", ["Documents"]),
 /// ];
 /// let rows = sidebar_rows(&sections);
 /// assert!(matches!(rows[0], SidebarRow::Item(0, _)));
 /// assert_eq!(rows[1], SidebarRow::Gap);
-/// assert_eq!(rows[2], SidebarRow::Header("場所"));
+/// assert_eq!(rows[2], SidebarRow::Header("Places"));
 /// assert!(matches!(rows[3], SidebarRow::Item(1, _)));
 /// ```
 pub fn sidebar_rows(sections: &[SidebarSection]) -> Vec<SidebarRow<'_>> {
@@ -206,12 +210,12 @@ pub fn sidebar_rows(sections: &[SidebarSection]) -> Vec<SidebarRow<'_>> {
     rows
 }
 
-/// まとまりをまたいだ項目の総数。
+/// The total number of items across groups.
 pub fn sidebar_len(sections: &[SidebarSection]) -> usize {
     sections.iter().map(SidebarSection::len).sum()
 }
 
-/// 通し番号の項目。範囲外なら `None`。
+/// The item with the running number. `None` if out of range.
 pub fn sidebar_item(sections: &[SidebarSection], index: usize) -> Option<&SidebarItem> {
     sections.iter().flat_map(|s| s.items.iter()).nth(index)
 }

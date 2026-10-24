@@ -1,11 +1,11 @@
-//! AppKit の実コントロールに対する動作確認。
+//! Behavior checks against real AppKit controls.
 //!
-//! `performClick` などネイティブ側の操作を発生させ、Rust のクロージャへ
-//! 届くこと・ネイティブの状態が変わることを確かめる。
+//! They trigger native-side operations such as `performClick`, and check that they
+//! reach Rust closures and that the native state changes.
 //!
-//! AppKit はメインスレッドでしか触れないが、Rust の標準テストハーネスは
-//! 各テストを別スレッドで走らせる (`--test-threads=1` でも同じ)。
-//! そのため `harness = false` にして、自前のランナーをメインスレッドで回す。
+//! AppKit can only be touched on the main thread, but Rust's standard test harness
+//! runs each test on a separate thread (even with `--test-threads=1`). So
+//! `harness = false` is set and a custom runner runs on the main thread.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -45,7 +45,7 @@ use objc2_foundation::{
     NSNotFound, NSNotification, NSPoint, NSRange, NSRect, NSRunLoop, NSSize, NSString,
 };
 
-/// テストケース 1 件。
+/// One test case.
 type Case = (&'static str, fn(&Ui) -> Result<()>);
 
 fn main() {
@@ -798,24 +798,25 @@ fn main() {
 }
 
 thread_local! {
-    /// そのテストで**確かめられなかったこと**の置き場 ([`skip`])。
+    /// Where **what the test could not verify** is recorded ([`skip`]).
     static SKIP_REASON: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-/// 実行環境の都合で確かめられなかったことを記録する。
+/// Records something that could not be verified because of the environment.
 ///
-/// 記録したテストは「成功」ではなく SKIP として数え、**終了コードも 0 に
-/// しない**。黙って通ると、何も確かめていないのに緑になり、CI から気付けない。
+/// A test with a record is counted as SKIP rather than success, and **the exit code
+/// is not 0 either**. Passing silently would turn green without verifying anything,
+/// and CI would never notice.
 fn skip(reason: &str) {
     SKIP_REASON.with(|slot| *slot.borrow_mut() = Some(reason.to_string()));
 }
 
-/// 記録を取り出して空へ戻す。
+/// Takes out the record and resets it to empty.
 fn take_skip() -> Option<String> {
     SKIP_REASON.with(|slot| slot.borrow_mut().take())
 }
 
-/// ボタンのクリックが Rust のクロージャへ届く。
+/// A button click reaches the Rust closure.
 fn button_click(ui: &Ui) -> Result<()> {
     let button = ui.button("押す")?;
     let hits = Rc::new(RefCell::new(0));
@@ -830,7 +831,7 @@ fn button_click(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// チェックボックスはネイティブの状態が変わり、変更後の値が通知される。
+/// A check box changes its native state and notifies the new value.
 fn checkbox_toggle(ui: &Ui) -> Result<()> {
     let checkbox = ui.checkbox("有効")?;
     assert!(!checkbox.is_checked());
@@ -852,7 +853,7 @@ fn checkbox_toggle(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// スイッチはネイティブの状態が変わり、変更後の値が通知される。
+/// A switch changes its native state and notifies the new value.
 fn toggle_switches_and_notifies(ui: &Ui) -> Result<()> {
     let toggle = ui.toggle("通知を受け取る")?;
     assert!(!toggle.is_on(), "既定は切れていること");
@@ -881,8 +882,8 @@ fn toggle_switches_and_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// スイッチは `NSSwitch` そのもので、ラベルはとなりへ並ぶ。
-/// 幅の余りはラベルが受け取り、スイッチは自分の大きさのままでいる。
+/// The switch is an `NSSwitch` itself, with the label placed next to it. The label
+/// takes the leftover width, and the switch keeps its own size.
 fn toggle_places_a_native_switch_beside_its_label(ui: &Ui) -> Result<()> {
     let toggle = ui.toggle("通知を受け取る")?;
     let view = toggle.native_view();
@@ -916,8 +917,9 @@ fn toggle_places_a_native_switch_beside_its_label(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 色ピッカーは `NSColorWell` そのもので、値はネイティブと往復する。
-/// `set_value` は通知せず、`pick` は利用者の操作と同じく 1 回だけ通知する。
+/// The color picker is an `NSColorWell` itself, and its value round-trips with the
+/// native side. `set_value` does not notify, and `pick` notifies exactly once, like
+/// a user action.
 fn color_picker_round_trips(ui: &Ui) -> Result<()> {
     let picker = ui.color_picker()?;
     assert_eq!(picker.value(), Color::BLACK, "既定は黒であること");
@@ -969,8 +971,9 @@ fn color_picker_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// カラーパネルはカタログ色 (`systemBlue` など) も返す。成分を読む前に
-/// sRGB へ変換しているので、そのまま [`Color`] として受け取れる。
+/// The color panel also returns catalog colors (`systemBlue` and so on). They are
+/// converted to sRGB before reading components, so they can be received as a
+/// [`Color`] as is.
 fn color_picker_reads_catalog_colors_as_srgb(ui: &Ui) -> Result<()> {
     let picker = ui.color_picker()?;
     let well = picker.native_well();
@@ -994,9 +997,9 @@ fn color_picker_reads_catalog_colors_as_srgb(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 描画面は `NSView` の `drawRect:` で、`on_draw` が記録した命令を
-/// `NSBezierPath` で塗る。ビューの描画をビットマップへ写して、塗った矩形の
-/// 中と外の画素を読む。
+/// The drawing surface is an `NSView`'s `drawRect:`, and the commands recorded by
+/// `on_draw` are painted with `NSBezierPath`. The view's drawing is copied into a
+/// bitmap, and pixels inside and outside the painted rectangle are read.
 fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     canvas.set_sizing(
@@ -1095,7 +1098,8 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// マウスの押下・ドラッグ・解放が、ウィンドウ座標から面の座標へ直して届く。
+/// Mouse presses, drags and releases arrive converted from window coordinates to
+/// surface coordinates.
 fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     use objc2_core_graphics::{CGEvent, CGEventType, CGMouseButton};
 
@@ -1219,8 +1223,9 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
 }
 
 define_class!(
-    /// `scrollWheel:` が届いた回数を数えるレスポンダー。描画面の次のレスポンダーに
-    /// 差して、`Continue` のホイールが外側へ回ったかを見る。
+    /// A responder that counts how many times `scrollWheel:` arrived. Inserted as the
+    /// drawing surface's next responder to see whether a `Continue` wheel was passed
+    /// outward.
     #[unsafe(super(NSResponder))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiTestWheelSink"]
@@ -1237,12 +1242,13 @@ define_class!(
     }
 );
 
-/// ホイールが論理ピクセルにそろえて届き、`Continue` なら次のレスポンダー
-/// (ふつうは外側の `NSScrollView`) へ回り、`Handled` なら回らない。
+/// The wheel arrives normalized to logical pixels; with `Continue` it is passed to
+/// the next responder (usually the outer `NSScrollView`), and with `Handled` it is
+/// not.
 ///
-/// 外側の `NSScrollView` が実際にスクロールするかは、合成したイベントでは
-/// 環境によって違う (手元では動き、CI のランナーでは動かなかった) ので、
-/// 回ったこと自体を記録用のレスポンダーで見る。
+/// Whether the outer `NSScrollView` actually scrolls with synthesized events
+/// depends on the environment (it moved locally but not on the CI runner), so
+/// whether it was passed on is observed with a recording responder.
 fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
     use objc2_core_graphics::{CGEvent, CGScrollEventUnit};
 
@@ -1328,7 +1334,7 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ラベルとテキスト入力の文字列がネイティブへ反映される。
+/// The text of labels and text inputs is reflected to the native side.
 fn text_round_trip(ui: &Ui) -> Result<()> {
     let label = ui.label("初期値")?;
     assert_eq!(label.text(), "初期値");
@@ -1343,7 +1349,7 @@ fn text_round_trip(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 複数行入力は改行を含む文字列をそのまま保つ。
+/// Multi-line input keeps text including newlines as is.
 fn text_area_round_trip(ui: &Ui) -> Result<()> {
     let area = ui.text_area("あ\nい")?;
     assert_eq!(area.text(), "あ\nい");
@@ -1372,7 +1378,8 @@ fn text_area_round_trip(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 打鍵のたびに通知が届き、プレースホルダーは中身の有無で出入りする。
+/// A notification arrives on every keystroke, and the placeholder appears and
+/// disappears depending on whether there is content.
 fn text_area_notifies_while_typing(ui: &Ui) -> Result<()> {
     let area = ui.text_area("")?;
     area.set_placeholder("本文");
@@ -1408,7 +1415,7 @@ fn text_area_notifies_while_typing(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// プレースホルダーの上をクリックしても、当たり判定は下の NSTextView へ通る。
+/// Clicking on the placeholder still hit-tests through to the NSTextView below.
 fn text_area_placeholder_passes_clicks(ui: &Ui) -> Result<()> {
     let area = ui.text_area("")?;
     area.set_placeholder("本文");
@@ -1430,7 +1437,7 @@ fn text_area_placeholder_passes_clicks(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 高さは `set_sizing` の指定どおりになり、折り返しの幅は親に追従する。
+/// The height follows `set_sizing`, and the wrapping width follows the parent.
 fn text_area_follows_the_given_size(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.set_sizing(Sizing::fill());
@@ -1470,7 +1477,7 @@ fn text_area_follows_the_given_size(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 複数行入力に重ねたプレースホルダーのラベルを取り出す。
+/// Takes out the placeholder label overlaid on multi-line input.
 fn placeholder_label(text_view: &NSTextView) -> Option<Retained<NSTextField>> {
     let view: &NSView = text_view.as_ref();
     let subviews = view.subviews();
@@ -1479,7 +1486,7 @@ fn placeholder_label(text_view: &NSTextView) -> Option<Retained<NSTextField>> {
         .find_map(|subview| subview.downcast::<NSTextField>().ok())
 }
 
-/// IME や物理キーボードと同じ経路で文字を入れる。
+/// Inserts text through the same path as an IME or a physical keyboard.
 fn type_into(text_view: &NSTextView, text: &str) {
     let string = NSString::from_str(text);
     unsafe {
@@ -1487,7 +1494,7 @@ fn type_into(text_view: &NSTextView, text: &str) {
     }
 }
 
-/// スライダーは範囲でクランプされる。
+/// A slider is clamped to its range.
 fn slider_clamp(ui: &Ui) -> Result<()> {
     let slider = ui.slider(0.0, 10.0)?;
     slider.set_value(4.0);
@@ -1502,7 +1509,7 @@ fn slider_clamp(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 進捗バーは 0.0..=1.0 に収まる。
+/// A progress bar stays within 0.0..=1.0.
 fn progress_clamp(ui: &Ui) -> Result<()> {
     let bar = ui.progress_bar()?;
     bar.set_value(0.25);
@@ -1512,7 +1519,8 @@ fn progress_clamp(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 項目・未選択状態・通知の有無が NSPopUpButton と一致する。
+/// Items, the unselected state and whether notifications happen match the
+/// NSPopUpButton.
 fn combo_box_selection_round_trips(ui: &Ui) -> Result<()> {
     let combo = ui.combo_box()?;
     assert!(combo.is_empty());
@@ -1561,7 +1569,7 @@ fn combo_box_selection_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 文字列・候補・通知の有無が NSComboBox と一致する。
+/// Text, suggestions and whether notifications happen match the NSComboBox.
 fn editable_combo_box_text_round_trips(ui: &Ui) -> Result<()> {
     let combo = ui.editable_combo_box()?;
     assert!(combo.is_empty());
@@ -1634,7 +1642,8 @@ fn editable_combo_box_text_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の最中でも同じ入力欄を操作し、コールバックを差し替えられる。
+/// Even in the middle of a notification, the same field can be operated on and the
+/// callback replaced.
 fn editable_combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
     let combo = ui.editable_combo_box()?;
     combo.set_items(&["春", "夏", "秋"]);
@@ -1667,8 +1676,9 @@ fn editable_combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `NSComboBox` は一覧を絞り込まないので、絞りたいアプリは `on_change` の中で
-/// 候補を入れ替える。docs/guide.md で案内しているこの手順が実際に通ることを確かめる。
+/// `NSComboBox` does not narrow its list, so apps that want to narrow it swap the
+/// suggestions inside `on_change`. Checks that this procedure described in the
+/// guide actually works.
 fn editable_combo_box_items_can_be_narrowed_while_typing(ui: &Ui) -> Result<()> {
     let combo = ui.editable_combo_box()?;
     let all = ["東京", "東大阪", "大阪", "札幌"];
@@ -1706,7 +1716,8 @@ fn editable_combo_box_items_can_be_narrowed_while_typing(ui: &Ui) -> Result<()> 
     Ok(())
 }
 
-/// 通知の最中でも同じコンボボックスを操作し、コールバックを差し替えられる。
+/// Even in the middle of a notification, the same combo box can be operated on and
+/// the callback replaced.
 fn combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
     let combo = ui.combo_box()?;
     combo.set_items(&["春", "夏", "秋"]);
@@ -1739,7 +1750,8 @@ fn combo_box_callback_is_reentrant(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 項目・未選択状態・通知の有無が NSButton のラジオ型と一致する。
+/// Items, the unselected state and whether notifications happen match radio-type
+/// NSButtons.
 fn radio_group_selection_round_trips(ui: &Ui) -> Result<()> {
     let radio = ui.radio_group()?;
     assert!(radio.is_empty());
@@ -1784,7 +1796,7 @@ fn radio_group_selection_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// AppKit の target/action から届く経路でも、点くのは 1 つだけ。
+/// Even through AppKit's target/action path, exactly one is on.
 fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
     let radio = ui.radio_group()?;
     radio.set_items(&["赤", "緑", "青"]);
@@ -1813,7 +1825,8 @@ fn radio_group_click_selects_one(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の最中でも同じラジオグループを操作し、コールバックを差し替えられる。
+/// Even in the middle of a notification, the same radio group can be operated on and
+/// the callback replaced.
 fn radio_group_callback_is_reentrant(ui: &Ui) -> Result<()> {
     let radio = ui.radio_group()?;
     radio.set_items(&["春", "夏", "秋"]);
@@ -1846,8 +1859,8 @@ fn radio_group_callback_is_reentrant(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// スタックへ追加した子は、ハンドルを捨ててもコールバックが生き続ける。
-/// `Stack` は後から子を差し込み、外し、空にできる。
+/// Children added to a stack keep their callbacks alive even after the handles are
+/// dropped. A `Stack` can insert, remove and clear children later.
 fn stack_inserts_and_removes_children(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     let first = ui.label("A")?;
@@ -1911,7 +1924,7 @@ fn stack_inserts_and_removes_children(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `NSStackView` に並んでいるラベルの文字を、並び順で取り出す。
+/// Takes out the text of the labels laid out in an `NSStackView`, in order.
 fn arranged_labels(stack: &naui_macos::Stack) -> Vec<String> {
     let native: Retained<objc2_app_kit::NSStackView> = stack
         .native_view()
@@ -1924,7 +1937,7 @@ fn arranged_labels(stack: &naui_macos::Stack) -> Vec<String> {
         .collect()
 }
 
-/// `Grid` はマスを指定して子を外せる。
+/// A `Grid` can remove children by cell.
 fn grid_removes_children_by_cell(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     let name = ui.label("名前")?;
@@ -1971,11 +1984,12 @@ fn grid_removes_children_by_cell(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 結合したマス (span を持つ子) を外しても、結合そのものは残る。
+/// Removing a merged cell (a child with a span) leaves the merge itself in place.
 ///
-/// `NSGridView` に結合を解く API は無く、行や列ごと外すこともできない
-/// (結合をまたぐ行・列の削除は AppKit が例外を投げる)。そこで naui は
-/// **結合した範囲を「1 つのマス」として扱いきる**ことで、見え方を決めている。
+/// `NSGridView` has no API to unmerge, and rows or columns cannot be removed either
+/// (AppKit throws an exception when removing rows or columns crossing a merge). So
+/// naui decides how it looks by **treating a merged range as "one cell" all the
+/// way**.
 fn grid_keeps_merges_after_the_child_is_removed(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     grid.set_column_track(0, Track::Fixed(120.0));
@@ -2043,7 +2057,7 @@ fn grid_keeps_merges_after_the_child_is_removed(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 2 つの場所が同じ `NSGridCell` を指しているか (= 結合されているか)。
+/// Whether two positions point at the same `NSGridCell` (= are merged).
 fn shares_cell(grid: &naui_macos::Grid, left: (isize, isize), right: (isize, isize)) -> bool {
     let native: Retained<objc2_app_kit::NSGridView> = grid
         .native_view()
@@ -2054,7 +2068,7 @@ fn shares_cell(grid: &naui_macos::Grid, left: (isize, isize), right: (isize, isi
     Retained::as_ptr(&first) == Retained::as_ptr(&second)
 }
 
-/// タブは後から外せる。選択の寄せ直しは通知しない。
+/// Tabs can be removed later. Reselection is not notified.
 fn tabs_remove_and_clear(ui: &Ui) -> Result<()> {
     let tabs = ui.tabs()?;
     let first = ui.label("1 枚目")?;
@@ -2143,7 +2157,8 @@ fn stack_keeps_children(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ナビバーは NSSegmentedControl の選択と往復し、選択を通知する。
+/// The nav bar round-trips with the NSSegmentedControl's selection and notifies
+/// selections.
 fn navbar_selection(ui: &Ui) -> Result<()> {
     let navbar = ui.navbar("naui")?;
     assert_eq!(navbar.title(), "naui");
@@ -2196,7 +2211,7 @@ fn navbar_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ドックは項目を持ち、無効な項目も並べられる。
+/// The dock holds items, and disabled items can be laid out too.
 fn dock_items(ui: &Ui) -> Result<()> {
     let dock = ui.dock()?;
     assert!(dock.is_empty());
@@ -2225,7 +2240,7 @@ fn dock_items(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// タブは中身のウィジェットを保持し、選択で切り替わる。
+/// Tabs hold their content widgets and switch on selection.
 fn tabs_selection(ui: &Ui) -> Result<()> {
     let tabs = ui.tabs()?;
     let hits = Rc::new(RefCell::new(0));
@@ -2259,7 +2274,7 @@ fn tabs_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// メニューは選択したボタンだけが押し込まれる。
+/// In a menu, only the selected button is pressed in.
 fn menu_selection(ui: &Ui) -> Result<()> {
     let menu = ui.menu()?;
     menu.set_items(&NavItem::list(["受信箱", "送信済み", "ゴミ箱"]));
@@ -2298,7 +2313,8 @@ fn menu_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// パンくずは末尾を現在地とし、クリックでその位置を通知する。
+/// Breadcrumbs treat the last item as the current position, and notify the position
+/// on click.
 fn breadcrumbs_path(ui: &Ui) -> Result<()> {
     let crumbs = ui.breadcrumbs()?;
     assert!(crumbs.is_empty());
@@ -2323,7 +2339,7 @@ fn breadcrumbs_path(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ページ送りは端で止まる。
+/// Pagination stops at the ends.
 fn pagination_steps(ui: &Ui) -> Result<()> {
     let pager = ui.pagination(3)?;
     assert_eq!(pager.page_count(), 3);
@@ -2352,7 +2368,7 @@ fn pagination_steps(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// リンクはネイティブのクリックでクロージャが呼ばれる。
+/// A link calls its closure on a native click.
 fn link_click(ui: &Ui) -> Result<()> {
     // href を空にしておく (テスト中にブラウザを開かないため)。
     let link = ui.link("naui", "")?;
@@ -2374,7 +2390,8 @@ fn link_click(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// テーマはシステム追従を既定とし、実行中に固定テーマへ切り替えられる。
+/// The theme follows the system by default and can be switched to a fixed theme at
+/// runtime.
 fn theme_switch(ui: &Ui) -> Result<()> {
     assert_eq!(ui.theme(), Theme::System);
     ui.set_theme(Theme::Dark)?;
@@ -2386,7 +2403,8 @@ fn theme_switch(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ウィンドウは生成・設定・クローズまで通る (二重解放しない)。
+/// A window goes through creation, configuration and closing (without double
+/// frees).
 fn window_lifecycle(ui: &Ui) -> Result<()> {
     let window = ui.window("タイトル", 420.0, 260.0)?;
     assert_eq!(window.title(), "タイトル");
@@ -2404,7 +2422,7 @@ fn window_lifecycle(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 大きさの指定が AppKit の制約になり、値まで届く。
+/// Size specifications become AppKit constraints, values included.
 fn sizing_constraints(ui: &Ui) -> Result<()> {
     let button = ui.button("固定")?;
     button.set_sizing(Sizing::fixed(160.0, 44.0).min_width(80.0));
@@ -2426,7 +2444,8 @@ fn sizing_constraints(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 指定し直しても制約は積み上がらず、AppKit 内部の制約も壊さない。
+/// Specifying again does not pile up constraints, nor break AppKit's internal
+/// constraints.
 fn sizing_is_replaced(ui: &Ui) -> Result<()> {
     let label = ui.label("文字")?;
     let view = label.native_view();
@@ -2460,7 +2479,8 @@ fn sizing_is_replaced(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 縦スタックの中で幅 Fill を指定した子は、余白を除いた親の幅まで広がる。
+/// In a vertical stack, a child with width Fill stretches to the parent's width
+/// minus padding.
 fn stack_fill_cross(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.set_padding(Padding::all(10.0));
@@ -2495,7 +2515,8 @@ fn stack_fill_cross(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 横スタックの `Auto` の子は、余った主軸の空間を勝手に受け取らない。
+/// An `Auto` child in a horizontal stack does not take the leftover main-axis space
+/// on its own.
 fn stack_auto_does_not_fill(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Horizontal)?;
     stack.set_spacing(12.0);
@@ -2529,7 +2550,7 @@ fn stack_auto_does_not_fill(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 横スタックで幅 `Fill` を指定した子は、明示的に余りを受け取る。
+/// In a horizontal stack, a child with width `Fill` explicitly takes the leftover.
 fn stack_fill_main(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Horizontal)?;
     stack.set_spacing(12.0);
@@ -2552,10 +2573,10 @@ fn stack_fill_main(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 交差軸の `Fill` に上限を付けても、親の幅と衝突しない。
+/// A maximum on cross-axis `Fill` does not clash with the parent's width.
 ///
-/// 交差軸の `Fill` は「親の幅に合わせる」だが、上限があるならそちらが優先。
-/// 必須制約どうしがぶつかると、AppKit がどちらかを勝手に落としてしまう。
+/// Cross-axis `Fill` means "match the parent's width", but a maximum takes
+/// precedence. If required constraints clashed, AppKit would arbitrarily drop one.
 fn stack_fill_cross_respects_max(ui: &Ui) -> Result<()> {
     // 縦並びの交差軸は横。
     let vertical = ui.stack(Orientation::Vertical)?;
@@ -2601,10 +2622,12 @@ fn stack_fill_cross_respects_max(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 上限付きの `Fill` は、空間があれば上限まで広がり、狭ければそれ以下になる。
+/// `Fill` with a maximum grows up to the maximum when there is room, and is smaller
+/// when it is tight.
 ///
-/// CSS や WinUI の `Stretch` と同じ意味になるよう、上限を「通常時に確保したい
-/// 大きさ」としても扱う。横も縦も同じ扱いで、指定は `Sizing` だけで済む。
+/// To mean the same as CSS and WinUI's `Stretch`, the maximum is also treated as
+/// "the size you want under normal conditions". Horizontal and vertical are treated
+/// the same, and `Sizing` alone is enough to specify it.
 fn fill_with_max_prefers_the_max(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Horizontal)?;
     let capped = ui.button("上限まで")?;
@@ -2639,7 +2662,8 @@ fn fill_with_max_prefers_the_max(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// スペーサーが縦の余りをすべて受け取り、後ろの子を下端へ寄せる。
+/// A spacer takes all the vertical leftover and pushes the children after it to the
+/// bottom.
 fn spacer_pushes(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     let top = ui.label("上")?;
@@ -2666,7 +2690,7 @@ fn spacer_pushes(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// グリッドは必要な行と列を自分で増やし、子を保持する。
+/// A grid adds the rows and columns it needs and holds its children.
 fn grid_places_children(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     grid.set_spacing(8.0, 4.0);
@@ -2705,7 +2729,8 @@ fn grid_places_children(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Track::Fill` の列に置いた `Auto` の子は、再レイアウト後も内容幅を保つ。
+/// An `Auto` child placed in a `Track::Fill` column keeps its content width even
+/// after relayout.
 fn grid_auto_does_not_fill(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     grid.set_column_track(0, Track::FILL);
@@ -2740,7 +2765,8 @@ fn grid_auto_does_not_fill(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Gallery と同じ Stack -> Tabs -> Stack -> Grid の階層で、高さの縮小・拡大を行う。
+/// Shrinks and grows the height in the same Stack -> Tabs -> Stack -> Grid hierarchy
+/// as the Gallery.
 fn gallery_media_status_does_not_expand(ui: &Ui) -> Result<()> {
     let media = ui.stack(Orientation::Vertical)?;
     media.set_spacing(12.0);
@@ -2895,7 +2921,7 @@ fn gallery_media_status_does_not_expand(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// グリッドの差し替えで、前の子が親に残らない。
+/// Replacing in a grid leaves no previous child in the parent.
 fn grid_replaces_child(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     let photo = ui.label("写真")?;
@@ -2913,7 +2939,8 @@ fn grid_replaces_child(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 折りたたみは見出しを押すたびに開閉し、変わった後の状態を通知する。
+/// An expander expands or collapses each time the heading is clicked and notifies
+/// the new state.
 fn expander_toggles_and_notifies(ui: &Ui) -> Result<()> {
     let expander = ui.expander("詳細設定")?;
     assert_eq!(expander.text(), "詳細設定");
@@ -2959,7 +2986,7 @@ fn expander_toggles_and_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// たたんでいる間、中身はレイアウトから外れて場所を空けない。
+/// While collapsed, the content leaves the layout and takes no space.
 fn expander_collapsed_child_leaves_the_layout(ui: &Ui) -> Result<()> {
     let expander = ui.expander("詳細")?;
     let body = ui.text_area("あ\nい\nう")?;
@@ -2992,10 +3019,11 @@ fn expander_collapsed_child_leaves_the_layout(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 中身は指定が無くても、折りたたみの幅いっぱいに置かれる (`Scroll` と同じ)。
+/// Even without a setting, the content is placed across the expander's full width
+/// (the same as `Scroll`).
 ///
-/// 中身の幅が中身自身の内容で決まると、中で左右のどこへ寄せても場所が
-/// ずれて見える (4 環境で見え方がそろわない)。
+/// If the content's width were decided by its own content, aligning it left or right
+/// inside would look shifted (it would not look the same on the four platforms).
 fn expander_child_fills_the_width(ui: &Ui) -> Result<()> {
     let window = ui.window("折りたたみ", 400.0, 300.0)?;
     let root = ui.stack(Orientation::Vertical)?;
@@ -3034,7 +3062,7 @@ fn expander_child_fills_the_width(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Label` の既定は 1 行で、`set_wrap(true)` のときだけ折り返す。
+/// A `Label` is one line by default and wraps only with `set_wrap(true)`.
 fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
     let window = ui.window("折り返し", 200.0, 240.0)?;
     let stack = ui.stack(Orientation::Vertical)?;
@@ -3096,8 +3124,8 @@ fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `set_style` / `set_color` は AppKit のフォントと色へ写る。naui 側で
-/// 級数や色の値を持たないことを、実物のフォントと `NSColor` で確かめる。
+/// `set_style` / `set_color` map to AppKit fonts and colors. Checks with the real
+/// fonts and `NSColor`s that naui holds no point sizes or color values itself.
 fn label_style_and_color_map_to_appkit(ui: &Ui) -> Result<()> {
     let label = ui.label("見出し")?;
     let native: Retained<NSTextField> = label
@@ -3181,7 +3209,7 @@ fn label_style_and_color_map_to_appkit(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 分割ビューは NSSplitView そのもので、2 つの区画を並べる。
+/// The split view is an NSSplitView itself, laying out two panes.
 fn split_view_arranges_two_panes_in_a_native_split_view(ui: &Ui) -> Result<()> {
     let split = ui.split_view(Orientation::Horizontal)?;
     let start = ui.label("左")?;
@@ -3225,7 +3253,8 @@ fn split_view_arranges_two_panes_in_a_native_split_view(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 指定した位置で仕切りが置かれ、広がった分は end 側が受け取る。
+/// The divider is placed at the specified position, and the end side takes the
+/// extra space when it grows.
 fn split_view_keeps_the_start_size_when_the_window_grows(ui: &Ui) -> Result<()> {
     let window = ui.window("分割", 400.0, 300.0)?;
     let split = ui.split_view(Orientation::Horizontal)?;
@@ -3269,7 +3298,8 @@ fn split_view_keeps_the_start_size_when_the_window_grows(ui: &Ui) -> Result<()> 
     Ok(())
 }
 
-/// 仕切りは最小の大きさの内側にだけ動き、動いたら通知が届く。
+/// The divider moves only within the minimum sizes, and a notification arrives when
+/// it moves.
 fn split_view_drag_clamps_to_the_minimums_and_notifies(ui: &Ui) -> Result<()> {
     let window = ui.window("分割", 400.0, 300.0)?;
     let split = ui.split_view(Orientation::Horizontal)?;
@@ -3317,7 +3347,7 @@ fn split_view_drag_clamps_to_the_minimums_and_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 縦に長い中身を載せたスクロールを、高さ 100 のウィンドウに置く。
+/// Puts a scroll view holding tall content into a window 100 high.
 fn tall_scroll(
     ui: &Ui,
     rows: usize,
@@ -3370,7 +3400,8 @@ fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// チャットのように「足してから末尾へ」を、レイアウトを待たずに続けて呼ぶ。
+/// Calls "append, then scroll to the end", as in a chat, back to back without
+/// waiting for layout.
 fn scroll_to_end_after_appending(ui: &Ui) -> Result<()> {
     let (window, scroll, pane) = tall_scroll(ui, 20)?;
     window.show();
@@ -3710,7 +3741,8 @@ fn tooltip_reaches_the_view(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// キーを 1 つウィンドウのキューへ積み、配送まで進める (ローカルモニターを通る)。
+/// Queues one key in the window's queue and advances until it is delivered (going
+/// through the local monitor).
 fn press_key(
     app: &NSApplication,
     window: &NSWindow,
@@ -3963,9 +3995,9 @@ fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// scheme の無い文字列は `NSWorkspace` へ渡さずに弾く。渡すと Finder が
-/// 「アプリケーションを開けません。(-50)」のダイアログを出し、テストを走らせる
-/// たびに 1 枚ずつ残っていた。
+/// Strings without a scheme are rejected without being passed to `NSWorkspace`.
+/// Passing them made Finder show a "The application can't be opened. (-50)" dialog,
+/// leaving one behind every time the tests ran.
 fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
     assert!(ui.open_url("").is_err());
     assert!(ui.open_url("example.com").is_err());
@@ -3990,9 +4022,10 @@ fn window_reports_its_size(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// AppKit はツールバーを付けると中身をタイトルバーの高さだけ伸ばし、
-/// サイドバー (`fullSizeContentView`) では枠を保って中身を縮める。
-/// どちらも `ui.window` や `set_size` で決めた中身の大きさのまま、枠のほうが変わる。
+/// Attaching a toolbar makes AppKit grow the content by the title bar's height, and
+/// a sidebar (`fullSizeContentView`) keeps the frame and shrinks the content. In
+/// both cases the content keeps the size decided with `ui.window` or `set_size`,
+/// and the frame changes instead.
 fn window_keeps_its_size_across_toolbar_and_sidebar(ui: &Ui) -> Result<()> {
     let sidebar = ui.sidebar()?;
     sidebar.set_items(&[SidebarItem::new("一般")]);
@@ -4099,8 +4132,9 @@ fn window_close_request_can_keep_it_open(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 位置は主画面の左上から右下へ数えたウィンドウの枠の左上。表示の前後どちらで
-/// 決めても往復し、決めた後の `set_size` は中央へ寄せ直さない。
+/// The position is the top left of the window frame, counted right and down from
+/// the primary screen's top left. It round-trips whether set before or after
+/// showing, and later `set_size` calls do not recenter it.
 fn window_position_round_trips(ui: &Ui) -> Result<()> {
     let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
         a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
@@ -4150,8 +4184,9 @@ fn window_position_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 最大化 (`zoom:`)・最小化 (`miniaturize:`)・全画面 (`toggleFullScreen:`) が
-/// `state` と往復し、変わるたびに `on_state_change` が呼ばれる。
+/// Maximize (`zoom:`), minimize (`miniaturize:`) and fullscreen
+/// (`toggleFullScreen:`) round-trip with `state`, and `on_state_change` is called on
+/// each change.
 fn window_state_round_trips(ui: &Ui) -> Result<()> {
     let window = ui.window("状態", 320.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
@@ -4224,9 +4259,10 @@ fn window_state_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 最大化・最小化・全画面の間の `position` は通常の状態へ戻ったときの位置を
-/// 返し、`set_position` は状態を変えずにその位置を決める。最大化と全画面の
-/// 間は見えている枠も動かさない (最小化の間は `frame` が戻る先そのもの)。
+/// While maximized, minimized or in fullscreen, `position` returns the position for
+/// returning to normal, and `set_position` decides that position without changing
+/// the state. While maximized or in fullscreen the visible frame does not move
+/// either (while minimized, `frame` is the return target itself).
 fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
     let near = |a: Option<(f64, f64)>, b: (f64, f64)| {
         a.is_some_and(|a| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0)
@@ -4323,13 +4359,15 @@ fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 表示する前の `set_state` は覚えておき、表示するときに当てる。
-/// 通知の中から同じウィンドウの状態を変えても、その変化の通知は失われない。
+/// `set_state` before showing is remembered and applied when shown. Changing the
+/// same window's state from inside the notification does not lose that change's
+/// notification.
 ///
-/// macOS 27 では、通知の中で頼んだ `zoom:` はその場では当たらず (戻った
-/// 直後も zoom のまま)、元に戻ったことは後の `windowDidResize:` で届く。
-/// 通知の中で状態が変わったときに後回しにして知らせる仕組みそのものは、
-/// naui-core の `StateHandler` の単体テストで確かめている。
+/// On macOS 27, a `zoom:` requested inside the notification is not applied on the
+/// spot (it is still zoomed right after returning), and the restoration arrives
+/// later through `windowDidResize:`. The mechanism of deferring and reporting state
+/// changes made inside the notification is itself verified by the unit tests of
+/// naui-core's `StateHandler`.
 fn window_state_change_inside_the_notification(ui: &Ui) -> Result<()> {
     let window = ui.window("通知の中の状態", 320.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
@@ -4435,7 +4473,7 @@ fn accessible_label_read_only_and_min_size(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `table` の見えている行の範囲 (先頭, 末尾の次)。
+/// The range of visible rows of `table` (first, one past the last).
 fn visible_rows(table: &objc2_app_kit::NSTableView) -> (usize, usize) {
     let range = table.rowsInRect(table.visibleRect());
     (range.location, range.location + range.length)
@@ -4501,7 +4539,7 @@ fn rows_can_be_scrolled_into_view(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// スクロールは中身のハンドルを捨てても保持し続ける。
+/// A scroll view keeps holding its content even after the handle is dropped.
 fn scroll_keeps_child(ui: &Ui) -> Result<()> {
     let scroll = ui.scroll()?;
     scroll.set_sizing(Sizing::fixed(200.0, 100.0));
@@ -4536,7 +4574,7 @@ fn scroll_keeps_child(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// naui が付けた大きさの制約だけを取り出す。
+/// Takes out only the size constraints naui added.
 fn naui_constraints(view: &NSView) -> Vec<Retained<NSLayoutConstraint>> {
     let all = view.constraints();
     (0..all.len())
@@ -4548,10 +4586,10 @@ fn naui_constraints(view: &NSView) -> Vec<Retained<NSLayoutConstraint>> {
         .collect()
 }
 
-/// 同じ行に高さの違うものを置いても、縦中央でそろう。
+/// Items of different heights in the same row are aligned at the vertical center.
 ///
-/// NSGridView の既定は上ぞろえなので、ラベル (16pt) と入力欄 (24pt) を
-/// 並べるとラベルだけが上にずれる。
+/// NSGridView defaults to top alignment, so placing a label (16pt) next to a text
+/// field (24pt) shifts only the label upward.
 fn grid_row_alignment(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     grid.set_spacing(12.0, 8.0);
@@ -4582,10 +4620,11 @@ fn grid_row_alignment(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ファイル選択は AppKit のボタンとして構成され、設定を保つ。
+/// File picking is set up as an AppKit button and keeps its settings.
 ///
-/// `NSOpenPanel` はアプリモーダルで、出すと閉じられるまで戻らない。
-/// 自動テストからは開けないので、**ボタンの実体と設定の保持まで**を確かめる。
+/// `NSOpenPanel` is app-modal and does not return until it is closed once shown. It
+/// cannot be opened from automated tests, so this checks **up to the real button
+/// and that the settings are kept**.
 fn file_picker_configuration(ui: &Ui) -> Result<()> {
     let picker = ui.file_picker("ファイルを選ぶ")?;
 
@@ -4619,10 +4658,11 @@ fn file_picker_configuration(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 保存はボタンとして構成され、設定が `NSSavePanel` へ届く。
+/// Saving is set up as a button, and the settings reach the `NSSavePanel`.
 ///
-/// `NSSavePanel` もアプリモーダルで、出すと閉じられるまで戻らない。
-/// 自動テストからは開けないので、**表示前のパネルの中身**を確かめる。
+/// `NSSavePanel` is also app-modal and does not return until it is closed once
+/// shown. It cannot be opened from automated tests, so this checks **the panel's
+/// contents before it is shown**.
 fn file_saver_configuration_reaches_the_panel(ui: &Ui) -> Result<()> {
     let saver = ui.file_saver("保存する")?;
 
@@ -4674,7 +4714,7 @@ fn file_saver_configuration_reaches_the_panel(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 拡張子の無い既定名には、絞り込みの先頭の拡張子が付く。
+/// A default name without an extension gets the first extension of the filters.
 fn file_saver_adds_the_default_extension(ui: &Ui) -> Result<()> {
     let saver = ui.file_saver("保存")?;
     saver.set_filters(&[FileFilter::new("文書", ["txt", "md"])]);
@@ -4700,10 +4740,10 @@ fn file_saver_adds_the_default_extension(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// メインメニューに編集項目があり、⌘V がレスポンダチェーンへ流れる。
+/// The main menu has Edit items, and ⌘V flows into the responder chain.
 ///
-/// macOS では ⌘C / ⌘V はメインメニューのキー等価として配送される。
-/// メニューが無いと、テキスト入力にフォーカスがあっても貼り付けができない。
+/// On macOS, ⌘C / ⌘V are dispatched as key equivalents of the main menu. Without a
+/// menu, pasting does not work even when a text field has focus.
 fn menu_bar_provides_edit_shortcuts(_ui: &Ui) -> Result<()> {
     let mtm = objc2::MainThreadMarker::new().expect("メインスレッド");
     naui_macos::install_menu_bar_for_test(mtm, "naui test");
@@ -4742,7 +4782,7 @@ fn menu_bar_provides_edit_shortcuts(_ui: &Ui) -> Result<()> {
 
 // --------------------------------------------------------------- メディア
 
-/// 2x2 の PNG。画像の読み込みを、実ファイルを介して確かめるために埋め込む。
+/// A 2x2 PNG. Embedded to check image loading through a real file.
 const PNG_2X2: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x02, 0x00, 0x00, 0x00, 0xfd, 0xd4, 0x9a,
@@ -4751,13 +4791,14 @@ const PNG_2X2: &[u8] = &[
     0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
 ];
 
-/// テストが使う一時ファイル。落ちても残らないよう Drop で消す。
+/// Temporary files used by a test. Removed on Drop so nothing is left behind even
+/// on failure.
 struct Fixture {
     dir: std::path::PathBuf,
 }
 
 impl Fixture {
-    /// テストごとに別のディレクトリを作る。
+    /// Creates a separate directory per test.
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("naui-{}-{}", std::process::id(), name));
         std::fs::create_dir_all(&dir).expect("一時ディレクトリの作成");
@@ -4770,7 +4811,7 @@ impl Fixture {
         path.to_str().expect("UTF-8 のパス").to_string()
     }
 
-    /// 0.5 秒の無音 WAV。AVFoundation が実際に再生できる最小のメディア。
+    /// A 0.5-second silent WAV. The smallest media AVFoundation can actually play.
     fn silent_wav(&self, name: &str) -> String {
         const RATE: u32 = 8000;
         const SAMPLES: u32 = RATE / 2;
@@ -4799,20 +4840,21 @@ impl Drop for Fixture {
     }
 }
 
-/// ランループを回して、AVFoundation の非同期な読み込みと再生を進める。
+/// Runs the run loop to advance AVFoundation's asynchronous loading and playback.
 ///
-/// アセットの読み込みも再生位置の更新もランループの上で起きるため、
-/// これを回さないと長さは決まらず、再生も進まない。
+/// Both asset loading and playback position updates happen on the run loop, so
+/// without running it the duration is never decided and playback does not advance.
 fn pump(seconds: f64) {
     let until = NSDate::dateWithTimeIntervalSinceNow(seconds);
     NSRunLoop::currentRunLoop().runUntilDate(&until);
 }
 
-/// 条件が満たされるまで、上限までランループを回す。
+/// Runs the run loop until the condition is met, up to the limit.
 ///
-/// 読み込み・再生・タイマーの進み方はマシンの速さに左右されるので、固定時間の
-/// `pump` では遅い CI ランナーで足りないことがある。待ちたいものはこちらで待つ。
-/// 上限まで待っても満たされないときはそのまま返るので、呼び出し側で確かめる。
+/// How fast loading, playback and timers progress depends on the machine, so a
+/// fixed-time `pump` can fall short on a slow CI runner. Wait for things with this
+/// instead. If the condition is not met by the limit it simply returns, so the
+/// caller checks.
 fn pump_until(limit: f64, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs_f64(limit);
     while !ready() && Instant::now() < deadline {
@@ -4820,13 +4862,13 @@ fn pump_until(limit: f64, mut ready: impl FnMut() -> bool) {
     }
 }
 
-/// 状態の変化を記録するクロージャを付ける。
+/// Attaches a closure that records state changes.
 fn record_states(seen: &Rc<RefCell<Vec<PlaybackState>>>) -> impl FnMut(PlaybackState) + 'static {
     let seen = seen.clone();
     move |state| seen.borrow_mut().push(state)
 }
 
-/// 画像がローカルのファイルから NSImage として読み込まれる。
+/// An image is loaded from a local file as an NSImage.
 fn image_loads_a_local_file(ui: &Ui) -> Result<()> {
     let fixture = Fixture::new("image");
     let path = fixture.write("a.png", PNG_2X2);
@@ -4854,7 +4896,7 @@ fn image_loads_a_local_file(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 収め方の指定が NSImageView の imageScaling になる。
+/// The fitting setting becomes the NSImageView's imageScaling.
 fn image_fit_maps_to_native_scaling(ui: &Ui) -> Result<()> {
     let image = ui.image("")?;
     let view = image.native_view();
@@ -4884,11 +4926,12 @@ fn image_fit_maps_to_native_scaling(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// AVPlayerView に動画の intrinsic size がまだ無くても、表示領域を確保する。
+/// Even before the AVPlayerView has the video's intrinsic size, the display area is
+/// reserved.
 ///
-/// 上限付きの `Fill` は「空間があれば上限まで、狭ければそれ以下」を表す。
-/// Gallery 側に macOS だけの指定を書かずに済むよう、この意味は `Sizing` から
-/// 導く (バックエンド共通の約束)。
+/// `Fill` with a maximum means "up to the maximum when there is room, less when it
+/// is tight". So that the Gallery need not contain macOS-only settings, this meaning
+/// is derived from `Sizing` (a promise shared by every backend).
 fn video_display_reserves_height(ui: &Ui) -> Result<()> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(8.0);
@@ -4945,7 +4988,7 @@ fn video_display_reserves_height(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 音声を最後まで再生し、状態と長さが AVPlayer から届く。
+/// Audio plays to the end, and the state and duration arrive from the AVPlayer.
 fn audio_plays_to_the_end(ui: &Ui) -> Result<()> {
     let fixture = Fixture::new("audio");
     let audio = ui.audio(&fixture.silent_wav("a.wav"))?;
@@ -4995,7 +5038,7 @@ fn audio_plays_to_the_end(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 繰り返しを指定すると、末尾で止まらずに先頭へ戻る。
+/// With looping, it goes back to the start instead of stopping at the end.
 fn audio_loops_back_to_the_start(ui: &Ui) -> Result<()> {
     let fixture = Fixture::new("loop");
     let audio = ui.audio(&fixture.silent_wav("a.wav"))?;
@@ -5037,7 +5080,7 @@ fn audio_loops_back_to_the_start(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 再生位置を指定すると、AVPlayer の現在位置が動く。
+/// Setting the playback position moves the AVPlayer's current position.
 fn media_seek_moves_the_position(ui: &Ui) -> Result<()> {
     let fixture = Fixture::new("seek");
     let video = ui.video(&fixture.silent_wav("a.wav"))?;
@@ -5062,7 +5105,8 @@ fn media_seek_moves_the_position(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 音量と消音が AVPlayer と往復し、範囲外は丸められる。
+/// Volume and mute round-trip with the AVPlayer, and out-of-range values are
+/// clamped.
 fn media_volume_round_trips(ui: &Ui) -> Result<()> {
     let video = ui.video("")?;
     video.set_volume(0.25);
@@ -5081,10 +5125,11 @@ fn media_volume_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ハンドルを捨てても、KVO を張ったままの AVPlayer で異常終了しない。
+/// Dropping the handles does not crash with an AVPlayer that still has KVO
+/// attached.
 ///
-/// KVO の観測者を登録したまま AVPlayer を解放すると AppKit が落ちる。
-/// Drop で確実に外していることを、実際に解放して確かめる。
+/// Freeing an AVPlayer while a KVO observer is still registered makes AppKit crash.
+/// This actually frees it to check that Drop reliably removes the observer.
 fn media_handles_can_be_dropped(ui: &Ui) -> Result<()> {
     let fixture = Fixture::new("drop");
     let path = fixture.silent_wav("a.wav");
@@ -5100,10 +5145,10 @@ fn media_handles_can_be_dropped(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 再生中、再生位置が定期的にクロージャへ届く。
+/// While playing, the playback position periodically reaches the closure.
 ///
-/// シークバーを再生に追従させるための通知。AVPlayer の
-/// `addPeriodicTimeObserverForInterval:` から来る。
+/// The notification for keeping a seek bar in step with playback. It comes from the
+/// AVPlayer's `addPeriodicTimeObserverForInterval:`.
 fn media_reports_position_while_playing(ui: &Ui) -> Result<()> {
     let fixture = Fixture::new("position");
     let audio = ui.audio(&fixture.silent_wav("a.wav"))?;
@@ -5143,7 +5188,8 @@ fn media_reports_position_while_playing(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// リストの選択が NSTableView と往復し、`set_selected` は通知しない。
+/// A list's selection round-trips with the NSTableView, and `set_selected` does not
+/// notify.
 fn list_selection_round_trips(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_items(&ListItem::list(["東京", "大阪", "札幌"]));
@@ -5187,7 +5233,8 @@ fn list_selection_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 複数選択では複数行が選ばれ、選択が 0 件にもなる。
+/// With multiple selection several rows are selected, and the selection can be
+/// empty.
 fn list_multiple_selection(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_items(&ListItem::list(["赤", "青", "緑", "黄"]));
@@ -5234,7 +5281,7 @@ fn list_multiple_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 選べない行は、プログラムからもネイティブからも選ばれない。
+/// Rows that cannot be selected are selected neither from code nor natively.
 fn list_skips_disabled_rows(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_items(&[
@@ -5264,11 +5311,12 @@ fn list_skips_disabled_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ウィンドウのイベントキューへ本物のクリックを積み、配送まで進める。
+/// Queues a real click in the window's event queue and advances until it is
+/// delivered.
 ///
-/// `mouseDown:` を直接呼ぶのとは違い、AppKit のヒットテストと追跡ループを
-/// そのまま通る。`NSTableView` のように「どのビューが受け取るか」で
-/// ふるまいが変わるものは、この経路でないと確かめられない。
+/// Unlike calling `mouseDown:` directly, it goes through AppKit's hit-testing and
+/// tracking loop as is. Things whose behavior depends on "which view receives it",
+/// like `NSTableView`, can only be verified through this path.
 fn click_view(app: &NSApplication, window: &NSWindow, view: &NSView) {
     let bounds = view.bounds();
     let center = NSPoint::new(bounds.size.width / 2.0, bounds.size.height / 2.0);
@@ -5293,7 +5341,7 @@ fn click_view(app: &NSApplication, window: &NSWindow, view: &NSView) {
     deliver_events(app);
 }
 
-/// キューに溜まっているイベントをすべて配送する。
+/// Delivers every event pending in the queue.
 fn deliver_events(app: &NSApplication) {
     while let Some(event) = unsafe {
         app.nextEventMatchingMask_untilDate_inMode_dequeue(
@@ -5307,13 +5355,13 @@ fn deliver_events(app: &NSApplication) {
     }
 }
 
-/// 行そのもののクリックが `on_activate` へ届き、行内のコントロールを
-/// 直接押したときは二重に発火しない。
+/// A click on the row itself reaches `on_activate`, and clicking a control inside
+/// the row directly does not fire twice.
 ///
-/// AppKit は表示専用のラベルやアイコンの上のクリックを `NSTableView` へ渡す
-/// (ヒットテストがセルではなくテーブルを返す) ため、naui はテーブルの action で
-/// 行クリックを受けている。セル側の `mouseDown:` では実際のクリックが届かない
-/// ので、ここでは本物のイベントを配送して確かめる。
+/// AppKit passes clicks on display-only labels and icons to the `NSTableView`
+/// (hit-testing returns the table rather than the cell), so naui receives row clicks
+/// through the table's action. Real clicks never reach the cell's `mouseDown:`, so
+/// here real events are delivered to check it.
 fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
     let mtm = MainThreadMarker::new().expect("メインスレッド");
     let app = NSApplication::sharedApplication(mtm);
@@ -5434,9 +5482,11 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 起動と文脈メニューを確かめるための、行が並んだリストを key ウィンドウに出す。
+/// Shows a list with rows in the key window, for checking activation and the
+/// context menu.
 ///
-/// 戻り値の `bool` は、ウィンドウが key になったか (本物のイベントを配送できるか)。
+/// The returned `bool` is whether the window became key (whether real events can be
+/// delivered).
 fn shown_list_for_events(
     ui: &Ui,
     title: &str,
@@ -5476,7 +5526,7 @@ fn shown_list_for_events(
     Ok((window, list, key))
 }
 
-/// `row` 行目の中央を、ウィンドウ座標で返す。
+/// Returns the center of row `row` in window coordinates.
 fn row_center_in_window(table: &objc2_app_kit::NSTableView, row: isize) -> NSPoint {
     let rect = table.rectOfRow(row);
     let center = NSPoint::new(
@@ -5486,7 +5536,7 @@ fn row_center_in_window(table: &objc2_app_kit::NSTableView, row: isize) -> NSPoi
     table.convertPoint_toView(center, None)
 }
 
-/// ウィンドウ座標 `point` へのマウスイベントを作る。
+/// Creates a mouse event at window coordinate `point`.
 fn mouse_event(
     window: &NSWindow,
     kind: NSEventType,
@@ -5507,8 +5557,8 @@ fn mouse_event(
     .expect("マウスイベント")
 }
 
-/// ダブルクリックが `doubleAction` を通って `on_row_activate` へ届き、
-/// Return でも選ばれている行が起動される。選べない行では呼ばれない。
+/// A double-click reaches `on_row_activate` through `doubleAction`, and Return also
+/// activates the selected row. Not called for rows that cannot be selected.
 fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
     let mtm = MainThreadMarker::new().expect("メインスレッド");
     let app = NSApplication::sharedApplication(mtm);
@@ -5577,8 +5627,9 @@ fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 右クリックが `rightMouseDown:` を通って `on_context_menu` へ届き、位置は
-/// リストの左上から (`PopupMenu::open_at` と同じ座標系) になる。
+/// A right-click reaches `on_context_menu` through `rightMouseDown:`, with the
+/// position from the list's top left (the same coordinates as
+/// `PopupMenu::open_at`).
 fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
     let mtm = MainThreadMarker::new().expect("メインスレッド");
     let app = NSApplication::sharedApplication(mtm);
@@ -5643,7 +5694,7 @@ fn list_context_menu_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 設定画面向けの行は、ラベルだけでなく任意のレイアウトとコントロールを持てる。
+/// Rows for settings screens can hold any layout and controls, not just labels.
 fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     let content = ui.grid()?;
     content.set_column_track(0, Track::Auto);
@@ -5834,11 +5885,11 @@ fn list_accepts_composed_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Ui` は clone できるので、コールバックの中からでもウィジェットを作れる。
+/// `Ui` can be cloned, so widgets can be created even inside callbacks.
 ///
-/// 行の中身は `build` の中で全部そろうとは限らない。押されたときに
-/// 1 行増やすような画面では、通知の中で新しいウィジェットを作って
-/// [`List::set_rows`] へ渡す必要がある。
+/// Row contents are not always all ready inside `build`. A screen that adds a row
+/// on each click needs to create new widgets inside the notification and pass them
+/// to [`List::set_rows`].
 fn ui_clone_builds_rows_from_a_callback(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_sizing(Sizing::fill_width());
@@ -5887,7 +5938,7 @@ fn ui_clone_builds_rows_from_a_callback(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行の中身は AppKit がデリゲートに作らせた NSTextField になる。
+/// Row contents become NSTextFields that AppKit had the delegate create.
 fn list_rows_are_native_views(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_items(&ListItem::list(["日本語の行", "ASCII row"]));
@@ -5923,7 +5974,8 @@ fn list_rows_are_native_views(ui: &Ui) -> Result<()> {
 }
 
 // ------------------------------------------------------------------ Table
-/// 列の合計幅 (列の間の余白こみ) と、表そのものの幅。
+/// The total width of the columns (including the spacing between them) and the
+/// width of the table itself.
 fn table_widths(table: &naui_macos::Table) -> (f64, f64) {
     let native = table.native_table();
     let columns = native.tableColumns();
@@ -5934,10 +5986,12 @@ fn table_widths(table: &naui_macos::Table) -> (f64, f64) {
     (total + spacing, native.frame().size.width)
 }
 
-/// 列を減らして戻しても、幅を指定していない列が余りを受け取り続ける。
+/// Even after removing columns and adding them back, the columns without a width
+/// keep taking the leftover.
 ///
-/// AppKit の列の自動調整は、幅を固定した列があると余りを配りきれない
-/// (表の右側が空いたままになる)。naui が配り直していることを確かめる。
+/// AppKit's automatic column resizing cannot distribute all of the leftover when
+/// some columns have a fixed width (leaving blank space on the table's right). This
+/// checks that naui redistributes it.
 fn table_columns_keep_filling_the_width(ui: &Ui) -> Result<()> {
     let wide = vec![
         TableColumn::new("都市"),
@@ -6000,7 +6054,7 @@ fn table_columns_keep_filling_the_width(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 見出しを押した並べ替えが、AppKit と往復する。
+/// Sorting by clicking a heading round-trips with AppKit.
 fn table_sorting_round_trips(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&[
@@ -6070,12 +6124,13 @@ fn table_sorting_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 画面に出ている表の列を、ギャラリーの「面積を隠す / 表示」と同じように
-/// 何度も入れ替える。
+/// Swaps the columns of a table on screen many times, as the Gallery's "hide / show
+/// area" does.
 ///
-/// **セルのビューを作らせてから列を入れ替えるのが肝。** 行の高さを AppKit に
-/// 求めさせる (`usesAutomaticRowHeights`) と、次の `addTableColumn:` で
-/// 「no common ancestor」の例外になり、表がそこで壊れる。
+/// **The key is to have the cell views created before swapping columns.** Letting
+/// AppKit compute row heights (`usesAutomaticRowHeights`) makes the next
+/// `addTableColumn:` throw a "no common ancestor" exception, breaking the table
+/// there.
 fn table_survives_repeated_column_changes(ui: &Ui) -> Result<()> {
     let wide = vec![
         TableColumn::new("都市"),
@@ -6148,7 +6203,7 @@ fn table_survives_repeated_column_changes(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 列と行が、そのまま `NSTableView` の列と行になる。
+/// Columns and rows become the `NSTableView`'s columns and rows as is.
 fn table_columns_and_rows_are_native(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&TableColumn::list(["都市", "人口"]));
@@ -6190,8 +6245,8 @@ fn table_columns_and_rows_are_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 幅を指定した列は固定され、指定の無い列だけが余りを分け合う。
-/// 文字の揃えは、セルと見出しの両方に効く。
+/// Columns with a width are fixed, and only those without share the leftover. Text
+/// alignment applies to both cells and headings.
 fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&[
@@ -6249,10 +6304,10 @@ fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行数がいくら多くても、組み立てるのは画面に出ている行だけ。
+/// However many rows there are, only the rows on screen are built.
 ///
-/// `set_row_builder` に渡した関数が何行目で呼ばれたかを数え、
-/// 全行分は呼ばれないこと・同じ行は列の数だけ呼ばれないことを確かめる。
+/// Counts which rows the function passed to `set_row_builder` is called for, and
+/// checks that it is not called for every row, nor once per column for the same row.
 fn table_builds_only_the_rows_it_shows(ui: &Ui) -> Result<()> {
     const ROWS: usize = 500_000;
     let built: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
@@ -6319,8 +6374,8 @@ fn table_builds_only_the_rows_it_shows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// セルにウィジェットを置くと、そのままネイティブのビューとして入る。
-/// `selectable(false)` の行は、プログラムからも選べない。
+/// Widgets placed in cells go in as native views as is. Rows with
+/// `selectable(false)` cannot be selected from code either.
 fn table_widget_cells_are_native(ui: &Ui) -> Result<()> {
     let pressed = Rc::new(Cell::new(0));
     let table = ui.table()?;
@@ -6360,7 +6415,7 @@ fn table_widget_cells_are_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行の高さを決められる。0 以下を渡すと既定へ戻る。
+/// The row height can be set. Passing 0 or less returns to the default.
 fn table_row_height_follows_the_setting(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&TableColumn::list(["都市"]));
@@ -6377,10 +6432,12 @@ fn table_row_height_follows_the_setting(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行が多い表でも、組み立てる行でも、見出しの並べ替えはそのまま働く。
+/// Even in tables with many rows, or with built rows, sorting by heading still
+/// works.
 ///
-/// 並べ替えるのはアプリなので、通知を受けて `set_rows` / `refresh` で
-/// 渡し直したものが、画面に出ている行へ反映されることまで確かめる。
+/// Sorting is the app's job, so this checks that what is passed again with
+/// `set_rows` / `refresh` after the notification is reflected in the rows on
+/// screen.
 fn table_sorting_works_while_windowed(ui: &Ui) -> Result<()> {
     const ROWS: usize = 50_000;
     let table = ui.table()?;
@@ -6466,10 +6523,11 @@ fn table_sorting_works_while_windowed(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 組み立てる行でも、選べるかどうかを行を作らずに答えられる。
+/// Even with built rows, whether a row can be selected is answered without creating
+/// it.
 ///
-/// 渡さないうちは「まだ作っていない行は選べる」とみなすので、
-/// 画面の外の行を指した `set_selection` はそのまま残る。
+/// Until the function is given, "rows not yet built can be selected" is assumed, so
+/// a `set_selection` pointing at rows off screen stays as is.
 fn table_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
     const ROWS: usize = 10_000;
     const LOCKED: usize = 5_000;
@@ -6513,7 +6571,7 @@ fn table_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 選択は行のインデックスで往復し、通知もそのまま届く。
+/// The selection round-trips by row index, and notifications arrive as they are.
 fn table_selection_round_trips(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&TableColumn::list(["名前", "係"]));
@@ -6564,7 +6622,7 @@ fn table_selection_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 選べない行は、naui からも AppKit からも選べない。
+/// Rows that cannot be selected can be selected neither by naui nor by AppKit.
 fn table_skips_disabled_rows(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&TableColumn::list(["状態", "件数"]));
@@ -6594,7 +6652,7 @@ fn table_skips_disabled_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 列だけを差し替えても、行の中身は残ったまま並べ直される。
+/// Replacing only the columns keeps the rows' contents and just rearranges them.
 fn table_keeps_rows_when_columns_change(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&TableColumn::list(["都市", "人口", "面積"]));
@@ -6618,7 +6676,7 @@ fn table_keeps_rows_when_columns_change(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// AppKit 側で選択が変わったときも、そのままクロージャへ届く。
+/// When the selection changes on the AppKit side, it reaches the closure as is.
 fn table_native_selection_notifies(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&TableColumn::list(["時間帯"]));
@@ -6646,10 +6704,11 @@ fn table_native_selection_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// AppKit 側で選択が変わったときも、そのままクロージャへ届く。
+/// When the selection changes on the AppKit side, it reaches the closure as is.
 ///
-/// `select` は naui が通知を出す経路なので、ここでは naui を通さずに
-/// `NSTableView` を直接動かし、デリゲート経由の通知を確かめる。
+/// `select` is the path where naui sends the notification, so here the
+/// `NSTableView` is moved directly without going through naui, checking the
+/// notification via the delegate.
 fn list_native_selection_notifies(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_items(&ListItem::list(["朝", "昼", "夜"]));
@@ -6676,11 +6735,12 @@ fn list_native_selection_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の中から同じリストを触っても、AppKit ごと壊れない。
+/// Touching the same list from inside the notification does not break it, AppKit
+/// included.
 ///
-/// `on_select` の中で行を作り直すと、AppKit がデリゲートを呼んでいる最中に
-/// `reloadData` が走る。ギャラリーの「選択に合わせて表示を変える」形が
-/// まさにこれなので、実際にやって確かめる。
+/// Rebuilding the rows inside `on_select` runs `reloadData` while AppKit is in the
+/// middle of calling the delegate. The Gallery's "change the display to match the
+/// selection" is exactly this, so it is actually done to check.
 fn list_callback_can_touch_the_list(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_items(&ListItem::list(["春", "夏", "秋", "冬"]));
@@ -6711,11 +6771,12 @@ fn list_callback_can_touch_the_list(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行の文字が、行の高さの縦中央に来る。
+/// A row's text sits at the vertical center of the row's height.
 ///
-/// 文字だけの `NSTextField` を行にすると、行の高さ (Inset スタイルでは 24pt) に
-/// 対して文字の高さ (16pt 前後) が足りず、AppKit が上寄せで描いてしまう。
-/// 選択の帯は行いっぱいに出るので、そのままだと帯と文字がずれる。
+/// If a text-only `NSTextField` were the row, the text height (around 16pt) would
+/// fall short of the row height (24pt in the Inset style), and AppKit would draw it
+/// top-aligned. The selection highlight fills the row, so the highlight and the text
+/// would be misaligned.
 fn list_rows_are_vertically_centered(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_items(&ListItem::list(["札幌", "仙台", "東京"]));
@@ -6748,12 +6809,13 @@ fn list_rows_are_vertically_centered(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `detail` を付けた行だけが 2 行になり、そのぶん高くなる。
+/// Only rows with `detail` become two lines and correspondingly taller.
 ///
-/// ビューの中にある `NSTextField` を、入れ子をたどって前から順に集める。
+/// Collects the `NSTextField`s inside a view in order, descending through nesting.
 ///
-/// 行の中身は naui の `Stack` と `Label` で組むので、文字はセルの直下には
-/// 無い。ここで見たいのは文字の数と並びだけなので、階層は問わない。
+/// Row contents are built from naui's `Stack` and `Label`, so the text is not
+/// directly under the cell. Only the number and order of the text matter here, so
+/// the depth does not.
 fn text_fields(view: &NSView) -> Vec<Retained<NSTextField>> {
     let mut found = Vec::new();
     for subview in view.subviews().iter() {
@@ -6765,8 +6827,8 @@ fn text_fields(view: &NSView) -> Vec<Retained<NSTextField>> {
     found
 }
 
-/// 行の高さを決めるのは AppKit (`usesAutomaticRowHeights`) なので、
-/// naui 側は制約を張るだけ。高さの数値ではなく「1 行より高い」ことを見る。
+/// AppKit (`usesAutomaticRowHeights`) decides the row height, so naui only places
+/// constraints. This checks "taller than one line" rather than a height value.
 fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_items(&[
@@ -6823,11 +6885,12 @@ fn list_detail_makes_a_second_line(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 行の文字は行の幅いっぱいに広がり、あふれた分は省略記号で切られる。
+/// A row's text spreads to the full width of the row, and overflow is cut off with
+/// an ellipsis.
 ///
-/// 幅が決まらないと `NSTextField` は自然な幅を要求したままになり、長い
-/// ラベルが行からはみ出す。文字を入れる `Stack` へ渡す `Sizing` が効いて
-/// いることを、実際の frame で見る。
+/// Without a decided width, `NSTextField` keeps demanding its natural width, and a
+/// long label sticks out of the row. This checks with the real frame that the
+/// `Sizing` passed to the `Stack` holding the text takes effect.
 fn list_long_text_stays_inside_the_row(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     let long = "これは行の幅にはとても収まらない、ずいぶん長いラベルの文字列です";
@@ -6865,11 +6928,13 @@ fn list_long_text_stays_inside_the_row(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 選べない行は、本文も補助もまとめて無効な色で描く。
+/// Rows that cannot be selected draw both the main and secondary text in the
+/// disabled color.
 ///
-/// `NSTableView` には行の無効という考えが無いので、色でしか表せない。補助の
-/// 文字は役割としては `Secondary` だが、**選べない行ではそちらより無効の色が
-/// 勝つ**。当てる順番を間違えると、補助だけ普通の色に戻ってしまう。
+/// `NSTableView` has no notion of disabled rows, so it can only be expressed by
+/// color. The secondary text's role is `Secondary`, but **in rows that cannot be
+/// selected the disabled color wins over it**. Applying them in the wrong order
+/// would bring only the secondary text back to a normal color.
 fn list_disabled_row_dims_both_lines(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     list.set_items(&[
@@ -6917,7 +6982,7 @@ fn list_disabled_row_dims_both_lines(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 項目と区切り線が、そのまま NSMenu の中身になる。
+/// Items and separators become the NSMenu's contents as is.
 fn popup_menu_items_map_to_native(ui: &Ui) -> Result<()> {
     let popup = ui.popup_menu()?;
     assert!(popup.is_empty());
@@ -6950,7 +7015,8 @@ fn popup_menu_items_map_to_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 項目を選ぶと、区切り線を含めた並びの位置がクロージャへ届く。
+/// Choosing an item delivers its position in the sequence including separators to
+/// the closure.
 fn popup_menu_selection_notifies(ui: &Ui) -> Result<()> {
     let popup = ui.popup_menu()?;
     popup.set_items(&[
@@ -6977,7 +7043,7 @@ fn popup_menu_selection_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 取り付けたウィジェットのビューが、そのメニューを持つようになる。
+/// The view of the widget it is attached to comes to hold the menu.
 fn popup_menu_attaches_to_a_view(ui: &Ui) -> Result<()> {
     let label = ui.label("右クリックしてください")?;
     let popup = ui.popup_menu()?;
@@ -6996,10 +7062,10 @@ fn popup_menu_attaches_to_a_view(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 見出し・本文・中身のウィジェットが `NSAlert` へそのまま渡ること。
+/// The title, body text and content widget are passed to the `NSAlert` as is.
 ///
-/// `open()` は `runModal` に入って戻らなくなるため、テストでは
-/// `native_alert()` で組み立てだけを確かめる (表示はしない)。
+/// `open()` enters `runModal` and never returns, so the test only checks the
+/// building with `native_alert()` (without showing it).
 fn dialog_configuration_reaches_the_alert(ui: &Ui) -> Result<()> {
     let dialog = ui.dialog("削除しますか")?;
     assert_eq!(dialog.title(), "削除しますか");
@@ -7059,10 +7125,10 @@ fn dialog_configuration_reaches_the_alert(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// macOS の並び (左から 副操作・取り消し・主操作) になること。
+/// The macOS order (from the left: secondary, cancel, primary).
 ///
-/// `NSAlert` は先に足したものを右端かつ既定のボタンにするので、
-/// 足す順は 主操作・取り消し・副操作 になる。
+/// `NSAlert` makes the button added first the rightmost and the default, so they
+/// are added in the order primary, cancel, secondary.
 fn dialog_buttons_follow_the_macos_order(ui: &Ui) -> Result<()> {
     let dialog = ui.dialog("保存しますか")?;
     dialog.set_buttons(
@@ -7101,7 +7167,7 @@ fn dialog_buttons_follow_the_macos_order(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ボタンを 1 つも指定しないと「OK」だけが出ること。
+/// With no buttons specified, only "OK" is shown.
 fn dialog_without_buttons_shows_ok(ui: &Ui) -> Result<()> {
     let dialog = ui.dialog("完了しました")?;
     assert!(dialog.buttons().is_empty(), "既定ではボタンを持たないこと");
@@ -7116,10 +7182,10 @@ fn dialog_without_buttons_shows_ok(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 出していないダイアログへの `close()` が何も壊さないこと。
+/// `close()` on a dialog that is not shown breaks nothing.
 ///
-/// `close()` は modal を中断するので、出していないときに呼ぶと
-/// AppKit 側が例外を投げうる。呼ばないことを確かめる。
+/// `close()` aborts the modal, so calling it when nothing is shown could make
+/// AppKit throw. This checks that it is not called.
 fn dialog_is_closed_until_opened(ui: &Ui) -> Result<()> {
     let dialog = ui.dialog("何か")?;
     assert!(!dialog.is_open());
@@ -7141,7 +7207,7 @@ fn dialog_is_closed_until_opened(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// トーストがウィンドウの `contentView` へ重なり、消すと外れること。
+/// The toast is overlaid on the window's `contentView` and removed when dismissed.
 fn toast_is_placed_over_the_window(ui: &Ui) -> Result<()> {
     let window = ui.window("トースト", 360.0, 240.0)?;
     let root = ui.stack(Orientation::Vertical)?;
@@ -7210,7 +7276,8 @@ fn toast_is_placed_over_the_window(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 操作ボタンを押すと `on_action` と `on_dismiss` が呼ばれ、消えること。
+/// Clicking the action button calls `on_action` and `on_dismiss`, and it
+/// disappears.
 fn toast_action_notifies_and_dismisses(ui: &Ui) -> Result<()> {
     let window = ui.window("トースト", 360.0, 240.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
@@ -7247,7 +7314,7 @@ fn toast_action_notifies_and_dismisses(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 新しいトーストが前のものを置き換え、置き換えられたほうは通知しないこと。
+/// A new toast replaces the previous one, and the replaced one does not notify.
 fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
     let window = ui.window("トースト", 360.0, 240.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
@@ -7287,7 +7354,8 @@ fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 指定した時間が過ぎるとトーストが自分から消え、`on_dismiss` が届くこと。
+/// After the specified time passes, the toast disappears by itself and
+/// `on_dismiss` arrives.
 fn toast_dismisses_itself_after_the_timeout(ui: &Ui) -> Result<()> {
     let window = ui.window("トースト", 360.0, 240.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
@@ -7312,13 +7380,13 @@ fn toast_dismisses_itself_after_the_timeout(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// トーストとして重ねてあるビューか。naui が付けた名前で見分ける。
+/// Whether the view is overlaid as a toast. Identified by the name naui gave it.
 fn is_toast_view(view: &NSView) -> bool {
     view.identifier()
         .is_some_and(|id| id.to_string() == "naui.toast")
 }
 
-/// `parent` の子に `view` があるか。
+/// Whether `view` is among `parent`'s children.
 fn contains_subview(parent: &NSView, view: &NSView) -> bool {
     parent
         .subviews()
@@ -7326,7 +7394,7 @@ fn contains_subview(parent: &NSView, view: &NSView) -> bool {
         .any(|sub| std::ptr::eq(&*sub as *const NSView, view as *const NSView))
 }
 
-/// `parent` に重なっているトーストの数。
+/// The number of toasts overlaid on `parent`.
 fn count_toasts(parent: &NSView) -> usize {
     parent
         .subviews()
@@ -7335,7 +7403,7 @@ fn count_toasts(parent: &NSView) -> usize {
         .count()
 }
 
-/// トーストに並んでいる文字。
+/// The text laid out in the toast.
 fn toast_labels(view: &NSView) -> Vec<String> {
     toast_row(view)
         .iter()
@@ -7346,23 +7414,25 @@ fn toast_labels(view: &NSView) -> Vec<String> {
         .collect()
 }
 
-/// トーストの操作ボタン。置いていなければ `None`。
+/// The toast's action button. `None` if there is none.
 fn toast_button(view: &NSView) -> Option<Retained<NSButton>> {
     toast_row(view)
         .iter()
         .find_map(|item| item.downcast_ref::<NSButton>().map(|b| b.retain()))
 }
 
-/// トーストの中で文字とボタンを並べている行。
+/// The row laying out the text and the button inside the toast.
 ///
-/// 重ねてあるビュー (影) → 背景 (角丸) → 行、の順に入っている。
+/// They are nested in the order: overlaid view (shadow) → background (rounded
+/// corners) → row.
 fn toast_row(view: &NSView) -> Retained<objc2_foundation::NSArray<NSView>> {
     let surface = view.subviews().objectAtIndex(0);
     let row = surface.subviews().objectAtIndex(0);
     row.subviews()
 }
 
-/// `NSToolbar` に項目が並び、区切りは AppKit の space 項目へ写る。
+/// Items are laid out in the `NSToolbar`, and separators map to AppKit's space
+/// items.
 fn toolbar_items_map_to_native(ui: &Ui) -> Result<()> {
     let toolbar = ui.toolbar()?;
     assert!(toolbar.is_empty());
@@ -7424,7 +7494,7 @@ fn toolbar_items_map_to_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 押されたインデックスは、区切りを含めた並びの位置で届く。
+/// The clicked index arrives as the position in the sequence including separators.
 fn toolbar_activation_notifies(ui: &Ui) -> Result<()> {
     let toolbar = ui.toolbar()?;
     toolbar.set_items(&[
@@ -7478,7 +7548,7 @@ fn toolbar_activation_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ツールバーは `NSWindow` に取り付き、外すと消える。
+/// The toolbar attaches to the `NSWindow` and disappears when detached.
 fn toolbar_attaches_to_a_window(ui: &Ui) -> Result<()> {
     let window = ui.window("ツールバー", 400.0, 300.0)?;
     let native_window = window.native_window();
@@ -7518,7 +7588,7 @@ fn toolbar_attaches_to_a_window(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の中からツールバーを組み替えても、二重借用にならない。
+/// Rebuilding the toolbar from inside the notification does not double-borrow.
 fn toolbar_callback_is_reentrant(ui: &Ui) -> Result<()> {
     let toolbar = ui.toolbar()?;
     toolbar.set_items(&[
@@ -7556,7 +7626,8 @@ fn toolbar_callback_is_reentrant(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 記号名を間違えると `NSImage` が nil になり、その項目だけ絵が出なくなる。
+/// A wrong symbol name makes `NSImage` nil, leaving just that item without a
+/// picture.
 fn toolbar_icons_exist_as_sf_symbols(_ui: &Ui) -> Result<()> {
     let mut missing = Vec::new();
     for icon in ToolbarIcon::ALL {
@@ -7569,7 +7640,8 @@ fn toolbar_icons_exist_as_sf_symbols(_ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ツリーが NSOutlineView の行として並び、開くと子の行が増える。
+/// A tree is laid out as NSOutlineView rows, and expanding adds the children's
+/// rows.
 fn tree_rows_follow_the_expansion(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_items(&sample_tree());
@@ -7608,7 +7680,8 @@ fn tree_rows_follow_the_expansion(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ツリーの選択が NSOutlineView と往復し、`set_selected` は通知しない。
+/// A tree's selection round-trips with the NSOutlineView, and `set_selected` does
+/// not notify.
 fn tree_selection_round_trips(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_items(&sample_tree());
@@ -7653,7 +7726,7 @@ fn tree_selection_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 選べない枝は、その子孫までまとめて選べない。
+/// A branch that cannot be selected makes all its descendants unselectable too.
 fn tree_skips_disabled_branches(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_items(&[
@@ -7691,7 +7764,8 @@ fn tree_skips_disabled_branches(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 開閉の通知は、ネイティブ側の操作でも naui の `expand` でも届く。
+/// Expansion notifications arrive both for native operations and for naui's
+/// `expand`.
 fn tree_expansion_notifies(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_items(&sample_tree());
@@ -7733,7 +7807,7 @@ fn tree_expansion_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 項目の中身は、AppKit がデリゲートに作らせた NSTextField になる。
+/// Item contents become NSTextFields that AppKit had the delegate create.
 fn tree_rows_are_native_views(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_items(&[TreeItem::new("プロジェクト")
@@ -7799,7 +7873,8 @@ fn tree_rows_are_native_views(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の中から同じツリーを触っても壊れない (リストと同じ形)。
+/// Touching the same tree from inside the notification does not break it (the same
+/// shape as lists).
 fn tree_callback_can_touch_the_tree(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_items(&sample_tree());
@@ -7831,7 +7906,7 @@ fn tree_callback_can_touch_the_tree(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// テストで使う木。src (2 つの葉) と docs (guide > intro)。
+/// The tree used in tests: src (two leaves) and docs (guide > intro).
 fn sample_tree() -> Vec<TreeItem> {
     vec![
         TreeItem::new("src").children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
@@ -7839,10 +7914,12 @@ fn sample_tree() -> Vec<TreeItem> {
     ]
 }
 
-/// 親を閉じても、その中の開閉は覚えられていて、開き直すと元に戻る。
+/// Even when the parent is collapsed, the expansion inside it is remembered and
+/// restored when expanded again.
 ///
-/// AppKit (Finder と同じ) の動きに合わせている。開き直したときに AppKit が
-/// もう一度出す通知は、naui から見た状態が変わっていないので出さない。
+/// This matches AppKit's behavior (the same as Finder). The notifications AppKit
+/// sends again on re-expanding are not passed on, since the state as seen by naui
+/// has not changed.
 fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_items(&sample_tree());
@@ -7879,10 +7956,10 @@ fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
 
 // ------------------------------------------------------------ 日付ピッカー
 
-/// ネイティブ側の編集を真似る。
+/// Imitates editing on the native side.
 ///
-/// `NSDatePicker` には `performClick` にあたるものが無いので、AppKit が
-/// 利用者の操作でするのと同じ「値を書いてから action を送る」を手で行う。
+/// `NSDatePicker` has nothing like `performClick`, so "write the value, then send
+/// the action", which AppKit does for user actions, is done by hand.
 fn edit_natively(picker: &NSDatePicker, value: DateTime) {
     let calendar = NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), unsafe {
         NSCalendarIdentifierGregorian
@@ -7904,8 +7981,8 @@ fn edit_natively(picker: &NSDatePicker, value: DateTime) {
     unsafe { picker.sendAction_to(action, target.as_deref()) };
 }
 
-/// 時刻ピッカーのスピナーを回したときと同じ経路。日付は naui が使うものと
-/// 同じ 1970-01-01 へそろえる。
+/// The same path as turning the time picker's spinner. The date is set to the same
+/// 1970-01-01 naui uses.
 fn edit_time_natively(picker: &NSDatePicker, value: Time) {
     let (year, month, day) = DateTime::TIME_ORIGIN;
     edit_natively(
@@ -7914,8 +7991,8 @@ fn edit_time_natively(picker: &NSDatePicker, value: Time) {
     );
 }
 
-/// 数字の欄へ打ち込む。`controlTextDidChange:` は AppKit が編集中に送るので、
-/// テストからは同じ通知をデリゲートへ直接渡す。
+/// Types into the digit field. AppKit sends `controlTextDidChange:` during editing,
+/// so the test passes the same notification to the delegate directly.
 fn type_into_field(field: &NSTextField, text: &str) {
     field.setStringValue(&NSString::from_str(text));
     let Some(delegate) = field.delegate() else {
@@ -7929,8 +8006,8 @@ fn type_into_field(field: &NSTextField, text: &str) {
     }
 }
 
-/// 検索欄で Enter を押す (AppKit が編集中のフィールドエディタへ投げる
-/// `insertNewline:` と同じ経路)。
+/// Presses Enter in the search field (the same path as the `insertNewline:` AppKit
+/// sends to the field editor being edited).
 fn press_return_in_field(field: &NSTextField) {
     let Some(delegate) = field.delegate() else {
         return;
@@ -7949,8 +8026,9 @@ fn press_return_in_field(field: &NSTextField) {
     assert!(!handled, "既定の確定は AppKit へ任せること");
 }
 
-/// 一覧から候補を選ぶ。`selectItemAtIndex:` が出す通知に加え、届かなかった
-/// 場合に備えて同じ通知をデリゲートへ直接渡す (二重に届いても 1 回にまとまる)。
+/// Chooses a suggestion from the list. In addition to the notification
+/// `selectItemAtIndex:` sends, the same notification is passed to the delegate
+/// directly in case it does not arrive (if it arrives twice it is merged into one).
 fn pick_natively(combo: &NSComboBox, index: isize) {
     combo.selectItemAtIndex(index);
     let Some(delegate) = combo.delegate() else {
@@ -7964,14 +8042,14 @@ fn pick_natively(combo: &NSComboBox, index: isize) {
     }
 }
 
-/// 欄を確定する (Enter・欄を離れたときと同じ経路)。
+/// Confirms the field (the same path as Enter or leaving the field).
 fn commit_field(control: &NSTextField) {
     let action = control.action();
     let target = control.target();
     unsafe { control.sendAction_to(action, target.as_deref()) };
 }
 
-/// 上下のボタンを動かす (`NSStepper` が値を動かしてから action を送る)。
+/// Moves the up/down buttons (`NSStepper` moves the value, then sends the action).
 fn step_natively(stepper: &NSStepper, value: f64) {
     stepper.setDoubleValue(value);
     let action = stepper.action();
@@ -7979,7 +8057,8 @@ fn step_natively(stepper: &NSStepper, value: f64) {
     unsafe { stepper.sendAction_to(action, target.as_deref()) };
 }
 
-/// 数値入力は欄と上下のボタンの両方へ値を書き、ボタンの操作を通知する。
+/// Number input writes the value into both the field and the up/down buttons, and
+/// notifies button operations.
 fn number_input_value_round_trips(ui: &Ui) -> Result<()> {
     let number = ui.number_input(3.0)?;
     assert_eq!(number.value(), 3.0);
@@ -8017,7 +8096,8 @@ fn number_input_value_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 小数桁・刻み・範囲は `NSStepper` にも naui の値にも効く。
+/// Decimal places, step and range apply both to the `NSStepper` and to naui's
+/// value.
 fn number_input_applies_the_spec(ui: &Ui) -> Result<()> {
     let number = ui.number_input(0.0)?;
     number.set_decimals(2);
@@ -8052,7 +8132,7 @@ fn number_input_applies_the_spec(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 打っている間は通知だけ、確定で表示が値へそろう。
+/// While typing it only notifies; on confirmation the display matches the value.
 fn number_input_notifies_while_typing(ui: &Ui) -> Result<()> {
     let number = ui.number_input(0.0)?;
     number.set_range(None, Some(100.0));
@@ -8096,7 +8176,7 @@ fn number_input_notifies_while_typing(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// パスワード入力は `NSSecureTextField` そのもので、文字列は往復する。
+/// Password input is an `NSSecureTextField` itself, and text round-trips.
 fn password_input_round_trips(ui: &Ui) -> Result<()> {
     let password = ui.password_input()?;
     let view = password.native_view();
@@ -8129,7 +8209,7 @@ fn password_input_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 検索入力は `NSSearchField` そのもので、文字列は往復する。
+/// Search input is an `NSSearchField` itself, and text round-trips.
 fn search_input_round_trips(ui: &Ui) -> Result<()> {
     let search = ui.search_input()?;
     let view = search.native_view();
@@ -8168,7 +8248,7 @@ fn search_input_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 確定の通知は Enter のときだけで、打っている間は飛ばない。
+/// The confirmation notification comes only on Enter, not while typing.
 fn search_input_notifies_on_return(ui: &Ui) -> Result<()> {
     let search = ui.search_input()?;
     let view = search.native_view();
@@ -8205,7 +8285,8 @@ fn search_input_notifies_on_return(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 1 行入力とパスワード入力も、検索欄と同じく Enter のときだけ確定を通知する。
+/// Single-line input and password input also report confirmation only on Enter,
+/// like the search field.
 fn text_inputs_notify_on_return(ui: &Ui) -> Result<()> {
     let input = ui.text_input("")?;
     let password = ui.password_input()?;
@@ -8262,7 +8343,7 @@ fn text_inputs_notify_on_return(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 読み取り専用の間は書き換えられないので、確定もしない。
+/// While read-only it cannot be edited, so it does not confirm either.
 fn read_only_text_input_does_not_submit(ui: &Ui) -> Result<()> {
     let input = ui.text_input("ログ")?;
     let view = input.native_view();
@@ -8285,7 +8366,7 @@ fn read_only_text_input_does_not_submit(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Enter は打ちかけの表示を値へ読み込んでから、その値で知らせる。
+/// Enter reads what has been typed into the value first, then reports that value.
 fn number_input_commits_before_submitting(ui: &Ui) -> Result<()> {
     let number = ui.number_input(5.0)?;
     number.set_range(None, Some(100.0));
@@ -8320,7 +8401,7 @@ fn number_input_commits_before_submitting(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 種別ごとに `datePickerElements` が変わる。
+/// `datePickerElements` changes with each kind.
 fn date_picker_shows_the_elements_of_its_mode(ui: &Ui) -> Result<()> {
     let date = ui.date_picker(DatePickerMode::Date)?;
     assert_eq!(date.mode(), DatePickerMode::Date);
@@ -8359,7 +8440,7 @@ fn date_picker_shows_the_elements_of_its_mode(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 値の書き込みと、ネイティブ側の編集の両方向。
+/// Both directions: writing the value, and editing on the native side.
 fn date_picker_value_round_trips(ui: &Ui) -> Result<()> {
     let picker = ui.date_picker(DatePickerMode::DateTime)?;
     let seen = Rc::new(RefCell::new(Vec::new()));
@@ -8389,7 +8470,7 @@ fn date_picker_value_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 日付だけの表示は時刻を、時刻だけの表示は日付を保つ。
+/// A date-only display keeps the time, and a time-only display keeps the date.
 fn date_picker_keeps_the_part_it_does_not_show(ui: &Ui) -> Result<()> {
     let date_only = ui.date_picker(DatePickerMode::Date)?;
     date_only.set_value(DateTime::new(2026, 8, 22, 9, 30));
@@ -8414,7 +8495,7 @@ fn date_picker_keeps_the_part_it_does_not_show(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 下限・上限の外へは出ない。
+/// It never goes outside the minimum and maximum.
 fn date_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
     let picker = ui.date_picker(DatePickerMode::Date)?;
     picker.set_value(DateTime::new(2026, 6, 15, 9, 30));
@@ -8467,7 +8548,8 @@ fn date_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の最中に同じピッカーを操作し、通知先も差し替えられる。
+/// In the middle of a notification the same picker can be operated on, and the
+/// handler replaced too.
 fn date_picker_callback_is_reentrant(ui: &Ui) -> Result<()> {
     let picker = ui.date_picker(DatePickerMode::DateTime)?;
     picker.set_value(DateTime::new(2026, 8, 22, 9, 30));
@@ -8503,8 +8585,8 @@ fn date_picker_callback_is_reentrant(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 時刻ピッカーは `NSDatePicker` の時分だけを出したもの。値はネイティブと
-/// 往復し、`set_value` は通知しない。
+/// The time picker is an `NSDatePicker` showing only hours and minutes. The value
+/// round-trips with the native side, and `set_value` does not notify.
 fn time_picker_value_round_trips(ui: &Ui) -> Result<()> {
     let picker = ui.time_picker()?;
     let native = picker.native_picker();
@@ -8548,8 +8630,8 @@ fn time_picker_value_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 下限・上限の外へは出ない。日付を 1970-01-01 へ固定しているので、
-/// `NSDatePicker` にも範囲をそのまま渡せる。
+/// It never goes outside the minimum and maximum. The date is fixed to 1970-01-01,
+/// so the range can be passed to `NSDatePicker` as is.
 fn time_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
     let picker = ui.time_picker()?;
     picker.set_value(Time::new(12, 0));
@@ -8601,8 +8683,8 @@ fn time_picker_stays_inside_the_range(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ギャラリーのように、縦に長い中身をスクロールへ載せてタブに入れると、
-/// 下まで送れる (ウィンドウの高さで切れて終わりにならない)。
+/// As in the Gallery, putting tall content in a scroll view inside a tab lets it
+/// scroll to the bottom (instead of being cut off at the window's height).
 fn tall_tab_content_scrolls(ui: &Ui) -> Result<()> {
     let window = ui.window("t", 320.0, 240.0)?;
     let pane = ui.stack(Orientation::Vertical)?;
@@ -8652,14 +8734,15 @@ fn tall_tab_content_scrolls(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// スクローラが場所を取っても、中身の幅は「見えている幅」に収まる。
+/// Even when the scroller takes up space, the content's width fits within "the
+/// visible width".
 ///
-/// 重ね表示 (overlay) のスクローラは中身に重なるだけで場所を取らないが、
-/// 「常に表示」の設定や、ポインティングデバイスの無い環境では場所を取る
-/// 様式 (legacy) が選ばれる。そのとき中身がスクローラのぶんはみ出すと、
-/// 横へ送らない設定では二度と見えない。
+/// Overlay scrollers just sit on top of the content and take no space, but the
+/// "always show" setting, or environments without a pointing device, choose the
+/// style that takes space (legacy). If the content then overflowed by the
+/// scroller's width, it could never be seen when horizontal scrolling is off.
 ///
-/// 利用者の設定に左右されずに確かめたいので、様式をこの場で指定する。
+/// To check this regardless of the user's settings, the style is set right here.
 fn scroll_content_fits_beside_a_legacy_scroller(ui: &Ui) -> Result<()> {
     let window = ui.window("t", 320.0, 240.0)?;
     let pane = ui.stack(Orientation::Vertical)?;
@@ -8701,10 +8784,10 @@ fn scroll_content_fits_beside_a_legacy_scroller(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 複数列のグリッドでは、`Fill` の子はそのセルの取り分だけを望む。
+/// In a multi-column grid, a `Fill` child wants only its cell's share.
 ///
-/// グリッド全体の幅をそのまま望むと、同じ行にあるほかのセルの中身
-/// (compression resistance がこの希望より弱いもの) を押し潰しかねない。
+/// If it wanted the whole grid's width, it could squash the contents of other cells
+/// in the same row (those whose compression resistance is weaker than this wish).
 fn grid_fill_column_takes_only_its_share(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     grid.set_column_track(0, Track::Auto);
@@ -8763,10 +8846,12 @@ fn grid_fill_column_takes_only_its_share(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 幅を決め打ちした列は、中身が短くても `Fill` の子に食われない。
+/// Columns with a fixed width are not eaten by `Fill` children, even when their
+/// content is short.
 ///
-/// 取り分を中身の幅だけで見積もると、固定幅の列に載せたものが短いときに
-/// `Fill` の列へ余分な幅を渡してしまい、後続の列と重なる。
+/// Estimating the share from content widths alone would give extra width to the
+/// `Fill` column when what sits in a fixed-width column is short, overlapping the
+/// columns after it.
 fn grid_fill_column_leaves_fixed_columns(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     grid.set_column_track(0, Track::Fixed(120.0));
@@ -8833,12 +8918,13 @@ fn grid_fill_column_leaves_fixed_columns(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Auto | FILL | Auto` の表で、余りは `Fill` 列だけが受け取り、`Auto` 列は中身の幅を保つ。
+/// In an `Auto | FILL | Auto` grid, only the `Fill` column takes the leftover and the
+/// `Auto` columns keep the width of their content.
 ///
-/// NSGridView には余りをどの列へ渡すかの決まりが無く、再レイアウト (テーマの
-/// 切り替えなど) のあとに左の `Auto` 列が広がり、2 列目が右へずれることがある。
-/// `Fill` の子が無い表では余りがまるごと左の列へ入り、スライダーのように
-/// `Fill` の子がある表でも左の列が広がっていた。
+/// NSGridView has no rule for which column receives the leftover, so after a
+/// relayout (switching the theme and so on) the left `Auto` column could widen and
+/// push the second column to the right. Without a `Fill` child the whole leftover went
+/// to the left column, and even with one (such as a slider) the left column widened.
 fn grid_auto_column_keeps_content_width(ui: &Ui) -> Result<()> {
     for with_slider in [false, true] {
         let grid = ui.grid()?;
@@ -8956,11 +9042,11 @@ fn grid_auto_column_keeps_content_width(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Auto` の行に置いた子は、縦の余りを受け取らない。
+/// Children placed in `Auto` rows do not take the vertical leftover.
 ///
-/// NSStackView のようにコンテナ自身の hugging priority が低い子は、これが
-/// 無いと `Fill` 行より先に余りを吸ってしまい、`Fill` 行が中身の高さ
-/// (タブなら見出しだけ) まで潰れる。
+/// Without this, children whose container has a low hugging priority, like
+/// NSStackView, would absorb the leftover before the `Fill` row, squashing the
+/// `Fill` row to its content height (just the headings, for tabs).
 fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     grid.set_column_track(0, Track::FILL);
@@ -9036,7 +9122,7 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
 
 // ----------------------------------------------------------------- 非同期
 
-/// 一度だけ譲る future。次のティックで続きが走る。
+/// A future that yields once. The rest runs on the next tick.
 struct YieldOnce(bool);
 
 impl Future for YieldOnce {
@@ -9052,7 +9138,7 @@ impl Future for YieldOnce {
     }
 }
 
-/// 別スレッドから送った値が、メインキュー経由でラベルへ届く。
+/// A value sent from another thread reaches a label via the main queue.
 fn channel_delivers_from_a_worker_thread(ui: &Ui) -> Result<()> {
     let label = ui.label("待機中")?;
     let sender = ui.tasks().channel({
@@ -9076,7 +9162,7 @@ fn channel_delivers_from_a_worker_thread(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// spawn した処理がランループの上で進み、完了する。
+/// Spawned work progresses on the run loop and completes.
 fn spawn_runs_a_local_future(ui: &Ui) -> Result<()> {
     let label = ui.label("待機中")?;
     let task = ui.tasks().spawn({
@@ -9097,7 +9183,7 @@ fn spawn_runs_a_local_future(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// cancel した処理は一度も走らない。
+/// Cancelled work never runs.
 fn cancel_stops_a_future(ui: &Ui) -> Result<()> {
     let label = ui.label("待機中")?;
     let task = ui.tasks().spawn({
@@ -9114,10 +9200,11 @@ fn cancel_stops_a_future(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 縦 `Stack` の中の縦 `Stack` は、余った高さを吸わない。
+/// A vertical `Stack` inside a vertical `Stack` does not absorb the leftover height.
 ///
-/// 吸ってしまうと、画面より中身が短いときに節の途中へ大きな空きができる。
-/// 余りは常にいちばん外側の末尾へ残す。
+/// If it did, a large gap would appear in the middle of a section when the content
+/// is shorter than the screen. The leftover always stays at the end of the
+/// outermost one.
 fn nested_stack_does_not_take_the_slack(ui: &Ui) -> Result<()> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(10.0);
@@ -9149,11 +9236,11 @@ fn nested_stack_does_not_take_the_slack(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Grid` の `Auto` 行は、表示のあとで中身が高くなっても追従する。
+/// A `Grid`'s `Auto` row follows its content growing taller after being shown.
 ///
-/// 追従しないと、Expander を開いたときや一覧へ行を足したときに、行の中身が
-/// 潰れて後ろと重なる。Gallery と同じ入れ子 (ウィンドウ > スクロール >
-/// 縦 Stack > グリッド) で確かめる。
+/// Without it, expanding an Expander or adding rows to a list would squash the
+/// row's content into the rows after it. Checked with the same nesting as the
+/// Gallery (window > scroll > vertical Stack > grid).
 fn grid_auto_row_follows_later_growth(ui: &Ui) -> Result<()> {
     let window = ui.window("追従", 400.0, 400.0)?;
     let grid = ui.grid()?;
@@ -9213,7 +9300,8 @@ fn grid_auto_row_follows_later_growth(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 表示のあとで一覧へ行を足しても、`Grid` の `Auto` 行が高さを取り直す。
+/// Even when rows are added to a list after showing, the `Grid`'s `Auto` row
+/// recomputes its height.
 fn grid_auto_row_follows_added_list_rows(ui: &Ui) -> Result<()> {
     let window = ui.window("一覧の追加", 400.0, 400.0)?;
     let grid = ui.grid()?;
@@ -9272,7 +9360,8 @@ fn grid_auto_row_follows_added_list_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 折り返すラベルの文字を差し替えると、`Grid` の `Auto` 行が行数に追従する。
+/// When a wrapping label's text is replaced, the `Grid`'s `Auto` row follows the
+/// number of lines.
 fn grid_auto_row_follows_wrapped_label(ui: &Ui) -> Result<()> {
     let window = ui.window("折り返しの追従", 300.0, 300.0)?;
     let grid = ui.grid()?;
@@ -9322,10 +9411,11 @@ fn grid_auto_row_follows_wrapped_label(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 入れ子でも、主軸に `Fill` を指定した `Stack` は今までどおり余りを受け取る。
+/// Even when nested, a `Stack` with `Fill` on the main axis takes the leftover as
+/// before.
 ///
-/// [`nested_stack_does_not_take_the_slack`] で「勝手には伸びない」ようにした
-/// 裏返し。頼まれたときだけ伸びる。
+/// The flip side of making it "not grow on its own" in
+/// [`nested_stack_does_not_take_the_slack`]. It grows only when asked.
 fn nested_stack_with_fill_takes_the_slack(ui: &Ui) -> Result<()> {
     let pane = ui.stack(Orientation::Vertical)?;
     pane.set_spacing(10.0);
@@ -9354,14 +9444,16 @@ fn nested_stack_with_fill_takes_the_slack(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// パンくずは、枠ではなく**文字の左端**で同じ列のラベルとそろう。
+/// Breadcrumbs line up with the labels in the same column by **the text's left
+/// edge**, not the frame.
 ///
-/// 標準スタイルの `NSPathControl` は枠の内側へ余白を取って文字を描くので、
-/// そのままだと同じ列のラベルより右へずれて見える。
+/// A standard-style `NSPathControl` draws its text with padding inside its frame,
+/// so as is it looks shifted right of the labels in the same column.
 ///
-/// 位置合わせの値どうしを突き合わせても「同じ計算をなぞる」だけなので、
-/// **実際に描かれた文字**を画像に焼いて左端を測る。OS の版や外観、文字サイズで
-/// 余白が変われば、ここで気付ける。
+/// Comparing alignment values with each other would only "retrace the same
+/// calculation", so **the text actually drawn** is rendered into an image and its
+/// left edge measured. If the padding changes with the OS version, appearance or
+/// text size, this is where it gets noticed.
 fn breadcrumbs_align_with_labels(ui: &Ui) -> Result<()> {
     // 描かせるために、表示はしないウィンドウへ入れておく。
     let window = ui.window("パンくずの位置合わせ", 400.0, 200.0)?;
@@ -9394,10 +9486,12 @@ fn breadcrumbs_align_with_labels(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ビューを画像に焼いて、何かが描かれているいちばん左の位置を返す (pt)。
+/// Renders the view into an image and returns the leftmost position where anything
+/// is drawn (pt).
 ///
-/// ラベルもパンくずも背景を描かないので、透明でない画素の左端がそのまま
-/// 文字の左端になる。明暗どちらの外観でも同じように測れる。
+/// Neither labels nor breadcrumbs draw a background, so the left edge of the
+/// non-transparent pixels is the text's left edge. It measures the same way in both
+/// light and dark appearances.
 fn first_ink_x(view: &NSView) -> f64 {
     let bounds = view.bounds();
     let rep = view
@@ -9423,12 +9517,12 @@ fn first_ink_x(view: &NSView) -> f64 {
     panic!("文字が描かれていること");
 }
 
-/// パンくずは、クリックだけではキーボードフォーカスを取らない。
+/// Breadcrumbs do not take keyboard focus from a click alone.
 ///
-/// `NSPathControl` は既定でフォーカスを受けるので、一度クリックすると青い
-/// フォーカスリングが出たまま消えない。押すと画面が変わるだけのナビゲーション
-/// なので、キーボード操作の設定 (システム設定 > キーボード) が入のときだけ
-/// フォーカスを受けるようにしてある。
+/// `NSPathControl` accepts focus by default, so once clicked a blue focus ring stays
+/// and never goes away. It is navigation that just changes the screen when clicked,
+/// so it accepts focus only when the keyboard navigation setting (System Settings >
+/// Keyboard) is on.
 fn breadcrumbs_take_focus_like_a_button(ui: &Ui) -> Result<()> {
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["階層 1", "現在地"]));
@@ -9442,11 +9536,11 @@ fn breadcrumbs_take_focus_like_a_button(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// パンくずをクリックしても、青いフォーカスの枠が出たまま残らない。
+/// Clicking breadcrumbs does not leave a blue focus ring behind.
 ///
-/// [`breadcrumbs_take_focus_like_a_button`] の実地版。本物のクリックを配送し、
-/// パンくずがウィンドウの first responder になっていないことを確かめる
-/// (フォーカスの枠は first responder にだけ描かれる)。
+/// The hands-on version of [`breadcrumbs_take_focus_like_a_button`]. It delivers a
+/// real click and checks that the breadcrumbs did not become the window's first
+/// responder (the focus ring is drawn only on the first responder).
 fn breadcrumbs_click_leaves_no_focus_ring(ui: &Ui) -> Result<()> {
     let mtm = MainThreadMarker::new().expect("メインスレッド");
     let app = NSApplication::sharedApplication(mtm);
@@ -9508,9 +9602,11 @@ fn breadcrumbs_click_leaves_no_focus_ring(ui: &Ui) -> Result<()> {
 
 // -------------------------------------------------------------- メニューバー
 
-/// アプリが渡した見出しの `NSMenu` を、naui の標準メニューの間から取り出す。
+/// Takes out the `NSMenu`s of the headings the app passed, from between naui's
+/// standard menus.
 ///
-/// 先頭はアプリメニュー、末尾は編集メニュー。その間がアプリのぶん。
+/// The first is the app menu and the last the Edit menu; the ones in between are the
+/// app's.
 fn app_menus(bar: &naui_macos::MenuBar) -> Vec<Retained<objc2_app_kit::NSMenu>> {
     let main = bar.native_menu();
     let count = main.numberOfItems();
@@ -9519,7 +9615,7 @@ fn app_menus(bar: &naui_macos::MenuBar) -> Vec<Retained<objc2_app_kit::NSMenu>> 
         .collect()
 }
 
-/// 見出しは `NSMenu`、項目は `NSMenuItem` になる。
+/// Headings become `NSMenu`s and items become `NSMenuItem`s.
 fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     assert!(menu_bar.is_empty());
@@ -9612,10 +9708,10 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// naui の標準メニュー (アプリメニューと編集メニュー) は必ず残る。
+/// naui's standard menus (the app menu and Edit menu) always remain.
 ///
-/// ⌘C / ⌘V はメインメニューのキー等価として配送されるので、アプリが
-/// メニューバーを差し替えても、この 2 つが消えると貼り付けができなくなる。
+/// ⌘C / ⌘V are dispatched as key equivalents of the main menu, so even if the app
+/// replaces the menu bar, pasting would stop working if these two disappeared.
 fn menu_bar_keeps_the_standard_menus(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規"])]);
@@ -9670,7 +9766,7 @@ fn menu_bar_keeps_the_standard_menus(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 押された項目は (見出し, 項目) のインデックスの組で届く。
+/// The clicked item arrives as a pair of (heading, item) indices.
 fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[
@@ -9730,7 +9826,8 @@ fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 取り付けると `NSApplication.mainMenu` になり、外すと既定へ戻る。
+/// Attaching makes it `NSApplication.mainMenu`, and detaching goes back to the
+/// default.
 fn menu_bar_attaches_to_the_application(ui: &Ui) -> Result<()> {
     let mtm = objc2::MainThreadMarker::new().expect("メインスレッド");
     let app = NSApplication::sharedApplication(mtm);
@@ -9766,7 +9863,7 @@ fn menu_bar_attaches_to_the_application(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の中からメニューバーを組み替えても、二重借用にならない。
+/// Rebuilding the menu bar from inside the notification does not double-borrow.
 fn menu_bar_callback_is_reentrant(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[MenuSpec::new("ファイル", ["新規", "開く"])]);
@@ -9801,7 +9898,7 @@ fn menu_bar_callback_is_reentrant(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// サイドバーのまとまり。見出しの無いものと、見出し付きのものを 1 つずつ。
+/// Sidebar groups: one without a heading and one with a heading.
 fn sidebar_fixture() -> Vec<SidebarSection> {
     vec![
         SidebarSection::untitled([
@@ -9819,7 +9916,7 @@ fn sidebar_fixture() -> Vec<SidebarSection> {
     ]
 }
 
-/// ソースリスト様式の `NSTableView` に、項目・隙間・見出しが並ぶ。
+/// Items, gaps and headings are laid out in a source-list-style `NSTableView`.
 fn sidebar_rows_map_to_a_source_list(ui: &Ui) -> Result<()> {
     let sidebar = ui.sidebar()?;
     assert!(sidebar.is_empty());
@@ -9875,8 +9972,8 @@ fn sidebar_rows_map_to_a_source_list(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 選択は通し番号でやり取りし、`set_selected` は通知せず `select` と
-/// 利用者の選択は通知する。
+/// The selection is exchanged by running number; `set_selected` does not notify,
+/// while `select` and the user's selection do.
 fn sidebar_selection_round_trips(ui: &Ui) -> Result<()> {
     let sidebar = ui.sidebar()?;
     sidebar.set_sections(&sidebar_fixture());
@@ -9929,9 +10026,10 @@ fn sidebar_selection_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 右の区画の子が縮もうとしても (ラベルや、ラベルを入れたスクロールは縦の
-/// content hugging が 750 で、ウィンドウの大きさを保つ優先度 500 より強い)、
-/// ウィンドウは縮まず、子が区画いっぱいに広がる。サイドバーが無いときと同じ。
+/// Even when the right pane's child tries to shrink (labels, and scroll views
+/// containing labels, have a vertical content hugging of 750, stronger than the
+/// window size priority of 500), the window does not shrink and the child fills the
+/// pane. The same as without a sidebar.
 fn sidebar_child_does_not_shrink_the_window(ui: &Ui) -> Result<()> {
     let label = || -> Result<Box<dyn Widget>> { Ok(Box::new(ui.label("中身")?)) };
     let scroll = || -> Result<Box<dyn Widget>> {
@@ -9996,8 +10094,8 @@ fn sidebar_child_does_not_shrink_the_window(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 取り付けると `contentViewController` が `NSSplitViewController` になり、
-/// 子は右の区画へ、外すとウィンドウの中身へ戻る。
+/// Attaching makes the `contentViewController` an `NSSplitViewController` and moves
+/// the child to the right pane; detaching moves it back to the window's content.
 fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
     use objc2_app_kit::{NSSplitViewController, NSSplitViewItemBehavior, NSWindowStyleMask};
 
@@ -10071,7 +10169,7 @@ fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 幅と開閉は `NSSplitView` の区画と `NSSplitViewItem` に届く。
+/// Width and collapse reach the `NSSplitView`'s pane and the `NSSplitViewItem`.
 fn sidebar_width_and_collapse(ui: &Ui) -> Result<()> {
     let window = ui.window("サイドバーの幅", 800.0, 400.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
@@ -10198,8 +10296,8 @@ fn sidebar_width_and_collapse(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `NSSplitView` へ直に足すと区画の 1 つとして並べられてしまうので、
-/// トーストは右の区画へ重ねる。
+/// Adding directly to the `NSSplitView` would lay it out as one of the panes, so the
+/// toast is overlaid on the right pane.
 fn sidebar_toast_goes_to_the_content_pane(ui: &Ui) -> Result<()> {
     let window = ui.window("サイドバーとトースト", 640.0, 400.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
@@ -10229,7 +10327,7 @@ fn sidebar_toast_goes_to_the_content_pane(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 通知の中からサイドバーを組み替えても、二重借用にならない。
+/// Rebuilding the sidebar from inside the notification does not double-borrow.
 fn sidebar_callback_is_reentrant(ui: &Ui) -> Result<()> {
     let sidebar = ui.sidebar()?;
     sidebar.set_items(&SidebarItem::list(["春", "夏", "秋"]));
@@ -10252,7 +10350,7 @@ fn sidebar_callback_is_reentrant(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// ツールバーの項目の識別子を並びの順に読む。
+/// Reads the identifiers of the toolbar items in order.
 fn toolbar_identifiers(window: &NSWindow) -> Vec<String> {
     window
         .toolbar()
@@ -10266,8 +10364,8 @@ fn toolbar_identifiers(window: &NSWindow) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// アプリのツールバーが無ければボタンだけのツールバーが付き、あれば
-/// その先頭へ差し込まれる。どちらも外すと元に戻る。
+/// Without an app toolbar a toolbar with just the button is attached; with one, the
+/// button is inserted at its start. Detaching either restores the original.
 fn sidebar_adds_the_toggle_button_to_the_toolbar(ui: &Ui) -> Result<()> {
     use objc2_app_kit::{
         NSToolbarSidebarTrackingSeparatorItemIdentifier, NSToolbarToggleSidebarItemIdentifier,
@@ -10326,8 +10424,8 @@ fn sidebar_adds_the_toggle_button_to_the_toolbar(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// サイドバーボタン (`toggleSidebar:`) で閉じると `on_collapse` が呼ばれ、
-/// `set_collapsed` では呼ばれない。
+/// Collapsing with the sidebar button (`toggleSidebar:`) calls `on_collapse`, and
+/// `set_collapsed` does not.
 fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
     let window = ui.window("サイドバーの開閉", 640.0, 400.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
@@ -10394,10 +10492,11 @@ fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// 分割ビューの最初の仕切りをつかみ、横へ `dx` 動かして離す。
+/// Grabs the split view's first divider, moves it `dx` horizontally and releases
+/// it.
 ///
-/// イベントをキューへ積んでから押下を配送するので、`NSSplitView` の
-/// 追跡ループが本物のドラッグと同じく続きのイベントを読み取る。
+/// The events are queued before the press is delivered, so the `NSSplitView`'s
+/// tracking loop reads the following events just as in a real drag.
 fn drag_divider(
     app: &NSApplication,
     window: &NSWindow,
@@ -10435,11 +10534,12 @@ fn drag_divider(
     pump(0.05);
 }
 
-/// 閉じている間に `set_width` した幅が、開き直したときに区画へ反映され、
-/// そのあとの利用者のドラッグも `on_resize` へ届くこと。
+/// A width set with `set_width` while collapsed is applied to the pane on
+/// re-expanding, and the user's later drags also reach `on_resize`.
 ///
-/// 開き直しは `set_collapsed(false)` とサイドバーボタン (`toggleSidebar:`) の
-/// 両方を見る。AppKit はボタンで開くとき、閉じる前に覚えた幅へ戻す。
+/// Re-expanding is checked both with `set_collapsed(false)` and the sidebar button
+/// (`toggleSidebar:`). When expanding via the button, AppKit restores the width it
+/// remembered before collapsing.
 fn sidebar_width_set_while_collapsed_applies_on_reopen(ui: &Ui) -> Result<()> {
     let window = ui.window("閉じている間の幅", 800.0, 400.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);

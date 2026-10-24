@@ -1,26 +1,26 @@
-//! ファイル / フォルダー選択 (DOM)。
+//! File / folder picking (DOM).
 //!
-//! ブラウザで「選ばせる」のは `<input type="file">` そのもので、
-//! ダイアログを出すのも一覧を描くのもブラウザ (と OS) が行う。
-//! ただし `<input type="file">` のボタン文字列はブラウザ所有で差し替えられない
-//! ため、**表に出すのは `<button>`、`<input>` は隠して押しを転送する**という
-//! 組み立てにしてある。
+//! In the browser, "letting the user pick" is the `<input type="file">` itself, and
+//! the browser (and OS) shows the dialog and draws the list. However, the button
+//! text of `<input type="file">` belongs to the browser and cannot be changed, so it
+//! is built as **a visible `<button>`, with the `<input>` hidden and the click
+//! forwarded to it**.
 //!
-//! ## 他の環境との違い
+//! ## Differences from other platforms
 //!
-//! - **パスは取れない。** ブラウザは絶対パスを渡さないので
-//!   [`FileEntry::path`](naui_core::FileEntry::path) は常に `None` になる。
-//!   代わりに [`FileEntry::source`](naui_core::FileEntry::source) が
-//!   `URL.createObjectURL` の作る `blob:` URL を返すので、選んだファイルを
-//!   そのまま `ui.video()` などへ渡せる。**この URL は次に選び直すまで有効**で、
-//!   選び直すと以前のものは `URL.revokeObjectURL` で破棄される。
-//! - **ユーザー操作の中でしか開けない。** [`FilePicker::open`] を
-//!   クリック等のイベント外から呼ぶと、ブラウザに無視される。
-//! - **フォルダーを選ぶと、ブラウザはその中のファイル一覧を返す。**
-//!   他の環境はフォルダー 1 つを返すので、`webkitRelativePath` の先頭から
-//!   フォルダー名を取り出し、**1 件だけ**返すようにそろえている。
-//!   中のファイルが要るときは [`FilePicker::native_element`] から
-//!   `<input>` を取り出して `FileList` を読む。
+//! - **Paths cannot be obtained.** Browsers do not hand out absolute paths, so
+//!   [`FileEntry::path`](naui_core::FileEntry::path) is always `None`. Instead,
+//!   [`FileEntry::source`](naui_core::FileEntry::source) returns a `blob:` URL
+//!   created by `URL.createObjectURL`, so the picked file can be passed straight to
+//!   `ui.video()` and the like. **This URL stays valid until the next pick**; picking
+//!   again discards the previous ones with `URL.revokeObjectURL`.
+//! - **It can only be opened inside a user action.** Calling [`FilePicker::open`]
+//!   outside an event such as a click is ignored by the browser.
+//! - **When a folder is picked, the browser returns the list of files in it.** The
+//!   other platforms return one folder, so the folder name is taken from the start
+//!   of `webkitRelativePath` and **only one entry** is returned to match. When you
+//!   need the files inside, take the `<input>` from
+//!   [`FilePicker::native_element`] and read its `FileList`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -33,19 +33,20 @@ use crate::to_error;
 use crate::widgets::{create, impl_widget, set_disabled, Listener, Widget};
 
 struct FilePickerInner {
-    /// `<span>` に `<button>` と隠した `<input type="file">` を入れたもの。
+    /// A `<span>` holding a `<button>` and a hidden `<input type="file">`.
     element: HtmlElement,
     button: HtmlElement,
     input: HtmlInputElement,
     mode: Cell<FilePickerMode>,
     selection: RefCell<Vec<FileEntry>>,
     on_select: RefCell<Option<Box<dyn FnMut(&[FileEntry])>>>,
-    /// ボタンの押しを `<input>` へ転送するもの。
+    /// The thing that forwards the button's click to the `<input>`.
     click: RefCell<Option<Listener>>,
     change: RefCell<Option<Listener>>,
-    /// いま配っている `blob:` URL。選び直しと破棄のときに取り消す。
+    /// The `blob:` URLs currently handed out. Revoked on repicking and on drop.
     ///
-    /// 取り消さないと、選んだファイルの中身がページの寿命まで解放されない。
+    /// Without revoking, the picked files' contents would not be freed until the page's
+    /// lifetime ends.
     object_urls: RefCell<Vec<String>>,
 }
 
@@ -55,14 +56,14 @@ impl Drop for FilePickerInner {
     }
 }
 
-/// 配ってあった `blob:` URL をまとめて取り消す。
+/// Revokes all the `blob:` URLs handed out.
 fn revoke_all(urls: &mut Vec<String>) {
     for url in urls.drain(..) {
         let _ = web_sys::Url::revoke_object_url(&url);
     }
 }
 
-/// ファイルやフォルダーを選ばせるボタン (`<button>` + `<input type="file">`)。
+/// A button for picking files or folders (`<button>` + `<input type="file">`).
 #[derive(Clone)]
 pub struct FilePicker(Rc<FilePickerInner>);
 impl_widget!(FilePicker, element);
@@ -129,8 +130,9 @@ impl FilePicker {
         Ok(())
     }
 
-    /// 選択の通知。通知の中から設定し直しても二重借用にならないよう、
-    /// 呼び出しの間だけクロージャを取り出す。
+    /// The selection notification. So that setting it again from inside the
+    /// notification does not double-borrow, the closure is taken out only for the
+    /// duration of the call.
     fn emit(&self, entries: &[FileEntry]) {
         let Some(mut f) = self.0.on_select.borrow_mut().take() else {
             return;
@@ -142,7 +144,7 @@ impl FilePicker {
         }
     }
 
-    /// `<input>` の `FileList` を [`FileEntry`] の並びへ写す。
+    /// Maps the `<input>`'s `FileList` into a sequence of [`FileEntry`].
     fn read_selection(&self) -> Vec<FileEntry> {
         let Some(files) = self.0.input.files() else {
             return Vec::new();
@@ -184,7 +186,7 @@ impl FilePicker {
         self.0.input.set_disabled(!enabled);
     }
 
-    /// 何を選ばせるかを決める (既定はファイル 1 つ)。
+    /// Decides what to let the user pick (one file by default).
     pub fn set_mode(&self, mode: FilePickerMode) {
         self.0.mode.set(mode);
         self.0.input.set_multiple(mode.allows_multiple());
@@ -195,37 +197,37 @@ impl FilePicker {
         self.0.mode.get()
     }
 
-    /// 拡張子で絞り込む。[`FilePickerMode::Folder`] のときは無視される。
+    /// Filters by extension. Ignored for [`FilePickerMode::Folder`].
     pub fn set_filters(&self, filters: &[FileFilter]) {
         self.0.input.set_accept(&accept_attribute(filters));
     }
 
-    /// 最後に選ばれたもの。まだ選ばれていなければ空。
+    /// What was picked last. Empty if nothing has been picked yet.
     pub fn selection(&self) -> Vec<FileEntry> {
         self.0.selection.borrow().clone()
     }
 
-    /// 選ばれたときに呼ばれる。取り消したときは呼ばれない。
-    /// 設定し直すと以前のものは外れる。
+    /// Called when something is picked. Not called when the user cancels. Setting it
+    /// again removes the previous one.
     pub fn on_select(&self, f: impl FnMut(&[FileEntry]) + 'static) {
         *self.0.on_select.borrow_mut() = Some(Box::new(f));
     }
 
-    /// ダイアログを出す。
+    /// Shows the dialog.
     ///
-    /// **ブラウザはユーザー操作の中でしかファイル選択を開かない。**
-    /// クリックのコールバックなどから呼ぶこと。それ以外の場所から呼んでも
-    /// 無視される (エラーにもならない)。
+    /// **Browsers open file selection only inside a user action.** Call it from a click
+    /// callback or similar. Calling it from anywhere else is ignored (without an error,
+    /// either).
     pub fn open(&self) {
         self.0.input.set_value("");
         self.0.input.click();
     }
 }
 
-/// `webkitRelativePath` (`写真/a.png`) の先頭からフォルダー名を取る。
+/// Takes the folder name from the start of `webkitRelativePath` (`photos/a.png`).
 ///
-/// web-sys は `File::webkitRelativePath` を束ねていないため、
-/// プロパティを直接読む。
+/// web-sys does not bind `File::webkitRelativePath`, so the property is read
+/// directly.
 fn folder_name(file: &web_sys::File) -> Option<String> {
     let value = js_sys::Reflect::get(file, &JsValue::from_str("webkitRelativePath")).ok()?;
     let path = value.as_string()?;

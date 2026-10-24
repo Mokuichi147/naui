@@ -1,20 +1,18 @@
-//! ナビゲーション系のハンドル群 (AppKit)。
+//! Navigation handles (AppKit).
 //!
-//! タブ・ナビバー・ドック・メニュー・パンくず・ページネーション・リンクは、
-//! どれも「項目の並び + いま選ばれているもの」という同じ構造を持つ。
-//! そのため公開 API の形をそろえてあり、AppKit 側では
+//! Tabs, nav bars, docks, menus, breadcrumbs, pagination and links all share the
+//! same structure: "a sequence of items + the one currently selected". So their
+//! public APIs have the same shape, and on the AppKit side they map as follows:
 //!
 //! | naui | AppKit |
 //! | --- | --- |
 //! | `Tabs` | `NSTabView` + `NSTabViewItem` |
-//! | `Navbar` | `NSTextField` (見出し) + `NSSegmentedControl` |
-//! | `Dock` | `NSSegmentedControl` (等幅) |
-//! | `Menu` | `NSButton` (AccessoryBar) の縦並び |
+//! | `Navbar` | `NSTextField` (heading) + `NSSegmentedControl` |
+//! | `Dock` | `NSSegmentedControl` (equal widths) |
+//! | `Menu` | A vertical stack of `NSButton`s (AccessoryBar) |
 //! | `Breadcrumbs` | `NSPathControl` + `NSPathControlItem` |
 //! | `Pagination` | `NSButton` + `NSSegmentedControl` |
-//! | `Link` | `NSButton` (枠なし・リンク色) + `NSWorkspace` |
-//!
-//! に対応させている。
+//! | `Link` | `NSButton` (borderless, link color) + `NSWorkspace` |
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -35,7 +33,7 @@ use objc2_foundation::{NSArray, NSEdgeInsets, NSString, NSURL};
 use crate::trampoline::{ActionTarget, SelectHandler, TabObserver};
 use crate::widgets::{impl_sizing, impl_widget, Widget};
 
-/// 横並びのスタックを作る。ナビゲーション系の合成に使う。
+/// Creates a horizontal stack. Used to compose navigation widgets.
 fn row(mtm: MainThreadMarker, spacing: f64) -> Retained<NSStackView> {
     let stack = NSStackView::new(mtm);
     stack.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
@@ -45,7 +43,8 @@ fn row(mtm: MainThreadMarker, spacing: f64) -> Retained<NSStackView> {
     stack
 }
 
-/// 内部行の Auto の子へ余りを配らず、末尾へ逃がす。
+/// Hands no leftover space to the Auto children of the inner row, letting it
+/// escape to the end.
 fn finish_row(stack: &NSStackView, mtm: MainThreadMarker) {
     let tail = NSView::new(mtm);
     crate::layout::prepare_child(&tail);
@@ -73,10 +72,10 @@ fn finish_row(stack: &NSStackView, mtm: MainThreadMarker) {
 
 // --------------------------------------------------------------- Segments
 
-/// `NSSegmentedControl` を包む内部ハンドル。
+/// An internal handle wrapping `NSSegmentedControl`.
 ///
-/// ナビバー・ドック・ページネーションが共有する。`Rc` なので
-/// ボタンのクロージャへ clone して渡せる。
+/// Shared by nav bars, docks and pagination. It is an `Rc`, so it can be cloned into
+/// button closures.
 #[derive(Clone)]
 struct Segments(Rc<SegmentsInner>);
 
@@ -84,7 +83,7 @@ struct SegmentsInner {
     native: Retained<NSSegmentedControl>,
     handler: SelectHandler,
     count: Cell<usize>,
-    /// クリックを受けるトランポリン。AppKit の target は weak なので保持する。
+    /// The trampoline that receives clicks. AppKit targets are weak, so it is held.
     _target: Retained<ActionTarget>,
 }
 
@@ -146,14 +145,14 @@ impl Segments {
         (index >= 0).then_some(index as usize)
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     fn set_selected(&self, index: usize) {
         if index < self.len() {
             self.0.native.setSelectedSegment(index as isize);
         }
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     fn select(&self, index: usize) {
         if index < self.len() {
             self.0.native.setSelectedSegment(index as isize);
@@ -170,17 +169,17 @@ impl Segments {
 
 struct TabsInner {
     native: Retained<NSTabView>,
-    /// 子のハンドルを保持し、トランポリンごと生かしておく。
+    /// Holds the children's handles, keeping them alive along with their trampolines.
     children: RefCell<Vec<Box<dyn Widget>>>,
     handler: SelectHandler,
-    /// `set_selected` の間だけ通知を止める。AppKit は
-    /// プログラムからの選択でもデリゲートを呼ぶため。
+    /// Stops notifications only during `set_selected`, since AppKit calls the delegate
+    /// even for selection from code.
     silent: Rc<Cell<bool>>,
-    /// デリゲートは weak 参照なので保持する。
+    /// The delegate is a weak reference, so it is held.
     _observer: Retained<TabObserver>,
 }
 
-/// タブ (NSTabView)。中身のウィジェットごと持つ。
+/// Tabs (NSTabView). Holds each tab's content widget.
 #[derive(Clone)]
 pub struct Tabs(Rc<TabsInner>);
 impl_widget!(Tabs);
@@ -214,7 +213,7 @@ impl Tabs {
         }))
     }
 
-    /// タブを 1 枚追加する。`child` がそのタブの中身になる。
+    /// Adds one tab. `child` becomes that tab's content.
     pub fn add_tab(&self, label: &str, child: &dyn Widget) {
         let item = NSTabViewItem::new();
         item.setLabel(&NSString::from_str(label));
@@ -223,10 +222,10 @@ impl Tabs {
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
 
-    /// タブを 1 枚外す。範囲外のときは何もしない。
+    /// Removes one tab. Does nothing if out of range.
     ///
-    /// 選択中のタブを外したときは、環境が近くのタブを選び直す。
-    /// この移動は [`set_selected`](Tabs::set_selected) と同じく通知しない。
+    /// When the selected tab is removed, the platform selects a nearby tab instead.
+    /// Like [`set_selected`](Tabs::set_selected), this move is not notified.
     pub fn remove_tab(&self, index: usize) {
         if index >= self.len() {
             return;
@@ -250,7 +249,7 @@ impl Tabs {
         self.0.silent.set(previous);
     }
 
-    /// タブをすべて外す。
+    /// Removes every tab.
     pub fn clear(&self) {
         let previous = self.0.silent.replace(true);
         while self.0.native.numberOfTabViewItems() > 0 {
@@ -275,7 +274,7 @@ impl Tabs {
         (index >= 0).then_some(index as usize)
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             self.0.silent.set(true);
@@ -284,7 +283,7 @@ impl Tabs {
         }
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         if index < self.len() {
             // 同じタブを選び直したときは AppKit がデリゲートを呼ばないため、
@@ -296,7 +295,7 @@ impl Tabs {
         }
     }
 
-    /// タブが切り替わったときに、そのインデックスで呼ばれる。
+    /// Called with the index when the tab changes.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
@@ -310,9 +309,10 @@ struct NavbarInner {
     segments: Segments,
 }
 
-/// 画面上部に置く横並びのナビゲーション。
+/// Horizontal navigation placed at the top of the screen.
 ///
-/// 見出し (`NSTextField`) と項目 (`NSSegmentedControl`) を横スタックに並べる。
+/// A heading (`NSTextField`) and items (`NSSegmentedControl`) are laid out in a
+/// horizontal stack.
 #[derive(Clone)]
 pub struct Navbar(Rc<NavbarInner>);
 impl_widget!(Navbar);
@@ -332,7 +332,7 @@ impl Navbar {
         }))
     }
 
-    /// 左端の見出し。
+    /// The heading at the left end.
     pub fn set_title(&self, title: &str) {
         self.0.title.setStringValue(&NSString::from_str(title));
     }
@@ -341,7 +341,7 @@ impl Navbar {
         self.0.title.stringValue().to_string()
     }
 
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared.
     pub fn set_items(&self, items: &[NavItem]) {
         self.0.segments.set_items(items);
     }
@@ -358,17 +358,17 @@ impl Navbar {
         self.0.segments.selected()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     pub fn set_selected(&self, index: usize) {
         self.0.segments.set_selected(index);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         self.0.segments.select(index);
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.segments.on_select(f);
     }
@@ -380,10 +380,11 @@ struct DockInner {
     segments: Segments,
 }
 
-/// 画面下部に置く横並びのナビゲーション (等幅)。
+/// Horizontal navigation placed at the bottom of the screen (equal widths).
 ///
-/// **配置はアプリの責務**。縦スタックの最後に置き、手前の要素に
-/// [`naui_core::Length::Fill`] か `Spacer` を使うと下端へ寄る。
+/// **Placement is the app's job.** Put it last in a vertical stack and give the
+/// element before it [`naui_core::Length::Fill`] or a `Spacer` to push it to the
+/// bottom.
 #[derive(Clone)]
 pub struct Dock(Rc<DockInner>);
 
@@ -404,7 +405,7 @@ impl Dock {
         Self(Rc::new(DockInner { segments }))
     }
 
-    /// 項目を作り直す。インデックスの意味が変わるため、選択は外れる。
+    /// Rebuilds the items. Indices change meaning, so the selection is cleared.
     pub fn set_items(&self, items: &[NavItem]) {
         self.0.segments.set_items(items);
     }
@@ -421,17 +422,17 @@ impl Dock {
         self.0.segments.selected()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     pub fn set_selected(&self, index: usize) {
         self.0.segments.set_selected(index);
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         self.0.segments.select(index);
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.segments.on_select(f);
     }
@@ -447,11 +448,11 @@ struct MenuInner {
     selected: Cell<Option<usize>>,
 }
 
-/// 縦に並ぶナビゲーション一覧。
+/// A vertical list of navigation items.
 ///
-/// macOS のサイドバーと同じく、選択状態を持つ枠なしボタン
-/// (`NSButton` の AccessoryBar) を `NSStackView` に縦に並べる。
-/// ポップアップの `NSMenu` ではない点に注意。
+/// As in macOS sidebars, borderless buttons with a selected state (`NSButton`
+/// AccessoryBar) are stacked vertically in an `NSStackView`. Note that it is not a
+/// popup `NSMenu`.
 #[derive(Clone)]
 pub struct Menu(Rc<MenuInner>);
 impl_widget!(Menu);
@@ -472,7 +473,7 @@ impl Menu {
         }))
     }
 
-    /// 項目を作り直す。以前の項目は取り除かれ、選択も外れる。
+    /// Rebuilds the items. The previous items are removed and the selection is cleared.
     pub fn set_items(&self, items: &[NavItem]) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         for button in self.0.buttons.borrow_mut().drain(..) {
@@ -524,7 +525,7 @@ impl Menu {
         self.mark_selected(None);
     }
 
-    /// ボタンの押し込み状態を選択に合わせる。
+    /// Matches the buttons' pressed state to the selection.
     fn mark_selected(&self, index: Option<usize>) {
         for (i, button) in self.0.buttons.borrow().iter().enumerate() {
             let state = if Some(i) == index {
@@ -549,14 +550,14 @@ impl Menu {
         self.0.selected.get()
     }
 
-    /// 通知せずに選択を変える。
+    /// Changes the selection without notifying.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             self.mark_selected(Some(index));
         }
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         if index < self.len() {
             self.mark_selected(Some(index));
@@ -564,7 +565,7 @@ impl Menu {
         }
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
@@ -572,14 +573,16 @@ impl Menu {
 
 // ------------------------------------------------------------ Breadcrumbs
 
-/// 標準スタイルの `NSPathControl` が、枠の左端から文字を描き始めるまでの余白。
+/// The inset from the left edge of a standard-style `NSPathControl`'s frame to
+/// where it starts drawing text.
 ///
-/// この幅だけ `alignmentRectInsets` へ返し、Auto Layout には**文字の位置**で
-/// そろえてもらう (`NSTextField` のラベルが 2pt ずらしているのと同じ仕組み)。
-/// 返さないと、同じ列に並ぶラベルより右へずれて見える。
+/// This width is returned in `alignmentRectInsets`, so that Auto Layout aligns by
+/// **the text's position** (the same mechanism by which `NSTextField` labels shift
+/// by 2pt). Without it, it looks shifted right of the labels in the same column.
 ///
-/// 値は AppKit が公開していないので、Gallery を撮って文字の左端を数えて
-/// 決めた (ずれていた 8px = 4pt)。ずれが出たら同じやり方で測り直す。
+/// AppKit does not publish the value, so it was decided by capturing the Gallery
+/// and counting to the text's left edge (an 8px = 4pt shift). If it drifts, measure
+/// again the same way.
 const TEXT_INSET: f64 = 4.0;
 
 define_class!(
@@ -592,7 +595,7 @@ define_class!(
     unsafe impl NSObjectProtocol for BreadcrumbsControl {}
 
     impl BreadcrumbsControl {
-        /// 位置合わせは枠ではなく文字の左端で行う ([`TEXT_INSET`])。
+        /// Alignment uses the text's left edge, not the frame ([`TEXT_INSET`]).
         #[unsafe(method(alignmentRectInsets))]
         fn alignment_rect_insets(&self) -> NSEdgeInsets {
             NSEdgeInsets {
@@ -603,12 +606,12 @@ define_class!(
             }
         }
 
-        /// クリックではキーボードフォーカスを取らない。
+        /// Does not take keyboard focus on click.
         ///
-        /// `NSPathControl` は `acceptsFirstResponder` が常に真なので、一度
-        /// クリックすると青いフォーカスリングが出たまま消えない。パンくずは
-        /// 押すと画面が変わるだけのナビゲーションなので、`NSButton` と同じく
-        /// **キーボード操作の設定が入のときだけ**フォーカスを受ける。
+        /// `NSPathControl`'s `acceptsFirstResponder` is always true, so once clicked a blue
+        /// focus ring stays and never goes away. Breadcrumbs are navigation that just
+        /// changes the screen when clicked, so like `NSButton` they take focus **only when
+        /// the keyboard navigation setting is on**.
         #[unsafe(method(acceptsFirstResponder))]
         fn accepts_first_responder(&self) -> bool {
             let mtm = MainThreadMarker::from(self);
@@ -626,17 +629,17 @@ impl BreadcrumbsControl {
 
 struct BreadcrumbsInner {
     native: Retained<BreadcrumbsControl>,
-    /// クリックされた項目の位置を求めるため、トランポリンと共有する。
+    /// Shared with the trampoline to find the position of the clicked item.
     items: Rc<RefCell<Vec<Retained<NSPathControlItem>>>>,
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
     _target: Retained<ActionTarget>,
 }
 
-/// パンくず (NSPathControl)。
+/// Breadcrumbs (NSPathControl).
 ///
-/// 階層のいまいる場所を左から順に並べる。項目をクリックすると、
-/// そのインデックスで [`Breadcrumbs::on_select`] が呼ばれる。
+/// Lays out the current position in a hierarchy from left to right. Clicking an
+/// item calls [`Breadcrumbs::on_select`] with its index.
 #[derive(Clone)]
 pub struct Breadcrumbs(Rc<BreadcrumbsInner>);
 
@@ -693,7 +696,7 @@ impl Breadcrumbs {
         }))
     }
 
-    /// 階層を作り直す。末尾がいまいる場所になる。
+    /// Rebuilds the hierarchy. The last item becomes the current position.
     pub fn set_items(&self, items: &[NavItem]) {
         let built: Vec<Retained<NSPathControlItem>> = items
             .iter()
@@ -719,19 +722,19 @@ impl Breadcrumbs {
         self.len() == 0
     }
 
-    /// いまいる場所。既定では末尾の項目。
+    /// The current position. The last item by default.
     pub fn selected(&self) -> Option<usize> {
         self.0.selected.get()
     }
 
-    /// 通知せずにいまいる場所を変える。
+    /// Changes the current position without notifying.
     pub fn set_selected(&self, index: usize) {
         if index < self.len() {
             self.0.selected.set(Some(index));
         }
     }
 
-    /// ユーザーが選んだのと同じ経路で選択を変える (通知あり)。
+    /// Changes the selection through the same path as a user's choice (notifies).
     pub fn select(&self, index: usize) {
         if index < self.len() {
             self.0.selected.set(Some(index));
@@ -739,7 +742,7 @@ impl Breadcrumbs {
         }
     }
 
-    /// 項目が選ばれたときに、そのインデックスで呼ばれる。
+    /// Called with the index when an item is chosen.
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.handler.set(f);
     }
@@ -750,14 +753,14 @@ impl Breadcrumbs {
 struct PaginationInner {
     native: Retained<NSStackView>,
     segments: Segments,
-    /// 前へ / 次へのトランポリン。
+    /// The trampolines for previous / next.
     _targets: Vec<Retained<ActionTarget>>,
 }
 
-/// ページ送り。
+/// Pagination.
 ///
-/// ネイティブに相当するコントロールが無いため、前へ / 次への `NSButton` と
-/// ページ番号の `NSSegmentedControl` を横に並べて構成している。
+/// There is no equivalent native control, so it is composed of previous / next
+/// `NSButton`s and an `NSSegmentedControl` for the page numbers laid out in a row.
 #[derive(Clone)]
 pub struct Pagination(Rc<PaginationInner>);
 impl_widget!(Pagination);
@@ -809,7 +812,7 @@ impl Pagination {
         this
     }
 
-    /// ページ数を変える。表示は 1 始まり、API は 0 始まり。
+    /// Changes the number of pages. The display starts at 1; the API starts at 0.
     pub fn set_page_count(&self, count: usize) {
         let items: Vec<NavItem> = (1..=count).map(|n| NavItem::new(n.to_string())).collect();
         self.0.segments.set_items(&items);
@@ -822,22 +825,22 @@ impl Pagination {
         self.0.segments.len()
     }
 
-    /// いまのページ (0 始まり)。
+    /// The current page (starting at 0).
     pub fn page(&self) -> usize {
         self.0.segments.selected().unwrap_or(0)
     }
 
-    /// 通知せずにページを変える。
+    /// Changes the page without notifying.
     pub fn set_page(&self, page: usize) {
         self.0.segments.set_selected(page);
     }
 
-    /// ユーザーが選んだのと同じ経路でページを変える (通知あり)。
+    /// Changes the page through the same path as a user's choice (notifies).
     pub fn select(&self, page: usize) {
         self.0.segments.select(page);
     }
 
-    /// 前のページへ。先頭にいるときは何もしない。
+    /// Goes to the previous page. Does nothing on the first page.
     pub fn go_previous(&self) {
         let page = self.page();
         if page > 0 {
@@ -845,7 +848,7 @@ impl Pagination {
         }
     }
 
-    /// 次のページへ。末尾にいるときは何もしない。
+    /// Goes to the next page. Does nothing on the last page.
     pub fn go_next(&self) {
         let page = self.page();
         if page + 1 < self.page_count() {
@@ -853,7 +856,7 @@ impl Pagination {
         }
     }
 
-    /// ページが変わったときに、その番号 (0 始まり) で呼ばれる。
+    /// Called with the page number (starting at 0) when the page changes.
     pub fn on_change(&self, f: impl FnMut(usize) + 'static) {
         self.0.segments.on_select(f);
     }
@@ -863,16 +866,17 @@ impl Pagination {
 
 struct LinkInner {
     native: Retained<NSButton>,
-    /// トランポリンと共有する。`set_href` の結果がクリック時に効くようにするため。
+    /// Shared with the trampoline, so that the result of `set_href` takes effect on
+    /// click.
     href: Rc<RefCell<String>>,
     target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
-/// リンク。
+/// A link.
 ///
-/// AppKit にリンク専用のコントロールは無いため、枠なしの `NSButton` を
-/// リンク色 (`NSColor::linkColor`) にしている。押すと `href` を
-/// `NSWorkspace` で開き、そのあと [`Link::on_click`] が呼ばれる。
+/// AppKit has no dedicated link control, so it is a borderless `NSButton` in the
+/// link color (`NSColor::linkColor`). Clicking it opens `href` with `NSWorkspace`,
+/// and then [`Link::on_click`] is called.
 #[derive(Clone)]
 pub struct Link(Rc<LinkInner>);
 impl_widget!(Link);
@@ -915,9 +919,9 @@ impl Link {
         self.0.native.setEnabled(enabled);
     }
 
-    /// 押されたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called on click. Setting it again removes the previous one.
     ///
-    /// `href` が空でなければ、コールバックの前にブラウザで開く。
+    /// If `href` is not empty, it is opened in the browser before the callback.
     pub fn on_click(&self, mut f: impl FnMut() + 'static) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let href = self.0.href.clone();
@@ -932,7 +936,7 @@ impl Link {
         *self.0.target.borrow_mut() = Some(target);
     }
 
-    /// クリックを発生させる (テストや自動操作用)。
+    /// Triggers a click (for tests and automation).
     pub fn click(&self) {
         unsafe { self.0.native.performClick(None) };
     }

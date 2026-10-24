@@ -1,9 +1,9 @@
-//! Web だけの DOM 操作 (CSS のクラスと属性)。
+//! Web-only DOM operations (CSS classes and attributes).
 //!
-//! 見た目の作り込みや、テスト用の目印 (`data-testid` など) のように、
-//! **Web でしか意味の無いもの**をアプリが付けるための口。ほかの環境に
-//! 対応物が無いので naui の共通 API には入れず、このトレイトに分けてある。
-//! どのウィジェットにも使える。
+//! The way for apps to add **things that only mean something on the Web**, such as
+//! custom styling or markers for tests (`data-testid` and the like). Other platforms
+//! have no counterpart, so it is not in naui's common API but in this separate
+//! trait. It works with any widget.
 //!
 //! ```ignore
 //! #[cfg(target_arch = "wasm32")]
@@ -16,42 +16,42 @@
 
 use crate::widgets::Widget;
 
-/// naui が書くので、アプリからは書き換えられない属性。
+/// Attributes naui writes, which the app cannot change.
 ///
-/// - `style`: 大きさの指定 (`set_sizing`) などをインラインのスタイルで書く。
-///   見た目はクラスと文書側の CSS で変える。
-/// - `data-naui-*`: 親コンテナの種類や非表示の目印として naui が使う。
+/// - `style`: size specifications (`set_sizing`) and the like are written as inline
+///   styles. Change the look with classes and the page's CSS.
+/// - `data-naui-*`: used by naui for the parent container's kind and hidden markers.
 fn is_reserved(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name == "style" || name.starts_with("data-naui-")
 }
 
-/// ウィジェットの要素の CSS のクラスと属性を扱う。Web でだけ使える。
+/// Handles the CSS classes and attributes of a widget's element. Web only.
 ///
-/// 対象は親へ置いている要素 ([`Widget::native_element`])。naui は
-/// クラスを使わないので、クラスは自由に付け外しできる。属性のうち `role` や
-/// `aria-*`・`tabindex` などは naui も書くので、上書きするとウィジェットの
-/// ふるまいや読み上げが変わることがある。`title` は `set_tooltip` が書く
-/// 属性と同じなので、後から書いたほうが残る。
+/// The target is the element placed into the parent ([`Widget::native_element`]).
+/// naui uses no classes, so you can add and remove classes freely. Among attributes,
+/// naui also writes `role`, `aria-*`, `tabindex` and others, so overwriting them can
+/// change the widget's behavior or how it is read aloud. `title` is the same
+/// attribute that `set_tooltip` writes, so whichever is written last wins.
 pub trait WebWidgetExt: Widget {
-    /// CSS のクラスを足す。
+    /// Adds a CSS class.
     fn add_class(&self, name: &str) {
         let _ = self.native_element().class_list().add_1(name);
     }
 
-    /// CSS のクラスを外す。
+    /// Removes a CSS class.
     fn remove_class(&self, name: &str) {
         let _ = self.native_element().class_list().remove_1(name);
     }
 
-    /// CSS のクラスが付いているか。
+    /// Whether a CSS class is present.
     fn has_class(&self, name: &str) -> bool {
         self.native_element().class_list().contains(name)
     }
 
-    /// 属性を書く。書けたら `true`。
+    /// Writes an attribute. `true` if it was written.
     ///
-    /// `style` と `data-naui-*` は naui が使うので書かない (`false` を返す)。
+    /// naui uses `style` and `data-naui-*`, so they are not written (returns `false`).
     fn set_attribute(&self, name: &str, value: &str) -> bool {
         if is_reserved(name) {
             return false;
@@ -59,9 +59,10 @@ pub trait WebWidgetExt: Widget {
         self.native_element().set_attribute(name, value).is_ok()
     }
 
-    /// 属性を外す。外せたら (もともと無かったときも) `true`。
+    /// Removes an attribute. `true` if it was removed (including when it was not there
+    /// to begin with).
     ///
-    /// `style` と `data-naui-*` は naui が使うので外さない (`false` を返す)。
+    /// naui uses `style` and `data-naui-*`, so they are not removed (returns `false`).
     fn remove_attribute(&self, name: &str) -> bool {
         if is_reserved(name) {
             return false;
@@ -69,7 +70,7 @@ pub trait WebWidgetExt: Widget {
         self.native_element().remove_attribute(name).is_ok()
     }
 
-    /// 属性の値。無ければ `None`。
+    /// The attribute's value. `None` if absent.
     fn attribute(&self, name: &str) -> Option<String> {
         self.native_element().get_attribute(name)
     }

@@ -1,8 +1,9 @@
-//! どのウィジェットにもある操作 (表示・非表示 / フォーカス / ツールチップ)。
+//! Operations every widget has (show/hide / focus / tooltip).
 //!
-//! 対象は親へ置いている要素 ([`Widget::native_element`](crate::Widget::native_element))。
-//! 中身を別の要素で包んでいるウィジェットでも、フォーカスは中の入力欄へ
-//! 届くようにビジュアルツリーをたどる。
+//! The target is the element placed in the parent
+//! ([`Widget::native_element`](crate::Widget::native_element)). Even for widgets that
+//! wrap their content in another element, the visual tree is walked so that focus
+//! reaches the inner field.
 
 use naui_winui3::Microsoft::UI::Xaml::Controls::ToolTipService;
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
@@ -10,7 +11,7 @@ use naui_winui3::Microsoft::UI::Xaml::{DependencyObject, FocusState, UIElement, 
 use windows::Foundation::PropertyValue;
 use windows_core::{IInspectable, Interface, HSTRING};
 
-/// 表示するかどうか。`Collapsed` にした要素はレイアウトで場所を取らない。
+/// Whether it is shown. An element set to `Collapsed` takes no space in layout.
 pub(crate) fn set_visible(element: &UIElement, visible: bool) {
     let _ = element.SetVisibility(if visible {
         Visibility::Visible
@@ -25,10 +26,11 @@ pub(crate) fn is_visible(element: &UIElement) -> bool {
         .map_or(true, |v| v == Visibility::Visible)
 }
 
-/// キーボードフォーカスを移す。移せたら `true`。
+/// Moves keyboard focus here. `true` if it moved.
 ///
-/// 自分が受け取れなければ、子孫のうち最初に受け取れるものへ移す。
-/// 画面に出る前・隠れている・無効なときは `UIElement.Focus` が断る。
+/// If the widget itself cannot take focus, focus moves to the first descendant that
+/// can. `UIElement.Focus` refuses before it is on screen, while hidden, or while
+/// disabled.
 pub(crate) fn request_focus(element: &UIElement) -> bool {
     // ビジュアルツリーに載っていない要素は `XamlRoot` を持たない。
     if element.XamlRoot().is_err() {
@@ -54,7 +56,7 @@ fn focus_first(object: &DependencyObject) -> bool {
         .any(|child| focus_first(&child))
 }
 
-/// ポインターを重ねたときに出す説明。`None` で外す。
+/// The description shown when the pointer hovers over it. `None` removes it.
 pub(crate) fn set_tooltip(element: &UIElement, text: Option<&str>) {
     let Ok(object) = element.cast::<DependencyObject>() else {
         return;
@@ -70,7 +72,8 @@ pub(crate) fn set_tooltip(element: &UIElement, text: Option<&str>) {
     }
 }
 
-/// 読み上げソフトに伝える名前 (`AutomationProperties.Name`)。`None` で外す。
+/// The name reported to screen readers (`AutomationProperties.Name`). `None` removes
+/// it.
 pub(crate) fn set_accessible_label(element: &UIElement, text: Option<&str>) {
     use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
     use naui_winui3::Microsoft::UI::Xaml::DependencyObject;

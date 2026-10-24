@@ -1,18 +1,18 @@
-//! `on_focus_change` (文字入力のウィジェット)。
+//! `on_focus_change` (text-input widgets).
 //!
-//! ウィンドウごとに `focus-widget` の変化を購読し、フォーカスのある
-//! ウィジェットから親へたどって、最初に見つかった登録済みのウィジェットを
-//! そのウィンドウのフォーカスの持ち主とする ([`FocusOwner`])。持ち主が
-//! 変わったときだけ通知するので、入力欄の中の `GtkText` へ移るときのように
-//! ウィジェットの中で移っても通知は出ない。
+//! Each window's `focus-widget` changes are watched, and walking up the parents
+//! from the focused widget, the first registered widget found becomes that window's
+//! focus owner ([`FocusOwner`]). Notifications go out only when the owner changes,
+//! so moving within a widget, such as into the `GtkText` inside an entry, does not
+//! notify.
 //!
-//! `GtkEventControllerFocus` はウィンドウがアクティブでなくなったときにも
-//! 出入りを知らせるが、`focus-widget` はウィンドウの中のフォーカスなので
-//! 変わらない。ほかの環境とそろえるため、こちらを使う。
+//! `GtkEventControllerFocus` also reports entering and leaving when the window
+//! becomes inactive, but `focus-widget` is the focus inside the window and does not
+//! change. This one is used to match the other platforms.
 //!
-//! 登録表はウィジェットを弱参照で持ち、ウィジェット (ウィンドウ) が
-//! 解放されたときに通知先を表から外す。表に残しておくと、通知先と
-//! それが捕まえている状態がいつまでも解放されない。
+//! The registry holds widgets by weak reference, and removes the handler from the
+//! table when the widget (window) is freed. Leaving it in the table would keep the
+//! handler and the state it captures alive forever.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -21,16 +21,16 @@ use gtk::glib;
 use gtk::prelude::*;
 use naui_core::{FocusHandler, FocusOwner};
 
-/// 弱参照の GObject と、それに結び付けた値の表。
+/// A table of weakly referenced GObjects and the values tied to them.
 type Table<K, V> = RefCell<Vec<(glib::WeakRef<K>, Rc<V>)>>;
 
 thread_local! {
     static WIDGETS: Table<gtk::Widget, FocusHandler> = const { RefCell::new(Vec::new()) };
-    /// ウィンドウごとのフォーカスの持ち主。
+    /// The focus owner for each window.
     static OWNERS: Table<gtk::Window, FocusOwner> = const { RefCell::new(Vec::new()) };
 }
 
-/// ウィジェットへ通知先を置く。呼ぶたびに置き換わる。
+/// Sets the handler on the widget. Each call replaces it.
 pub(crate) fn set_widget_handler(widget: &gtk::Widget, f: impl FnMut(bool) + 'static) {
     let handler = lookup(widget).unwrap_or_else(|| {
         let handler = Rc::new(FocusHandler::default());
@@ -51,11 +51,12 @@ pub(crate) fn set_widget_handler(widget: &gtk::Widget, f: impl FnMut(bool) + 'st
     adopt_current_focus(widget);
 }
 
-/// 値が `value` の項目を表から外して返す。返したものは表を借りていない所で
-/// 捨てる (捨てると別のウィジェットが解放され、また表を触ることがある)。
+/// Removes the entry whose value is `value` from the table and returns it. Drop
+/// what is returned somewhere the table is not borrowed (dropping it can free
+/// another widget, which may touch the table again).
 ///
-/// GObject が解放されるときに呼ぶ。そのときにはもう弱参照は戻せないことが
-/// あるので、値のほうで探す。
+/// Called when the GObject is freed. By then the weak reference may no longer be
+/// upgradable, so the entry is found by its value.
 fn remove_entry<K: ObjectType, V: 'static>(
     table: &'static std::thread::LocalKey<Table<K, V>>,
     value: &Weak<V>,
@@ -73,9 +74,9 @@ fn remove_entry<K: ObjectType, V: 'static>(
         .flatten()
 }
 
-/// フォーカスがすでに `widget` の中にあれば、通知せずに持ち主として覚える
-/// (ウィンドウを出したときに最初の入力欄へ移るなど)。そうしないと、あとで
-/// 出たときの `false` が届かない。
+/// If focus is already inside `widget`, records it as the owner without notifying
+/// (such as focus moving to the first field when the window is shown). Otherwise
+/// the `false` for leaving later would never arrive.
 fn adopt_current_focus(widget: &gtk::Widget) {
     let Some(window) = widget.root().and_downcast::<gtk::Window>() else {
         return;
@@ -110,7 +111,7 @@ fn lookup(widget: &gtk::Widget) -> Option<Rc<FocusHandler>> {
     })
 }
 
-/// `widget` を含む登録済みのウィジェット。
+/// The registered widget containing `widget`.
 fn owner_of(widget: Option<gtk::Widget>) -> Option<Rc<FocusHandler>> {
     let mut current = widget;
     while let Some(widget) = current {
@@ -122,7 +123,8 @@ fn owner_of(widget: Option<gtk::Widget>) -> Option<Rc<FocusHandler>> {
     None
 }
 
-/// ウィンドウにフォーカスの見張りを付ける。ウィンドウを作るときに 1 度だけ呼ぶ。
+/// Attaches the focus watcher to a window. Called exactly once when the window is
+/// created.
 pub(crate) fn install(window: &impl IsA<gtk::Window>) {
     let owner = Rc::new(FocusOwner::default());
     OWNERS.with(|owners| {
@@ -139,14 +141,14 @@ pub(crate) fn install(window: &impl IsA<gtk::Window>) {
     });
 }
 
-/// 文字入力のウィジェットへ `on_focus_change` を足す。
+/// Adds `on_focus_change` to text-input widgets.
 macro_rules! impl_focus_change {
     ($t:ty) => {
         impl $t {
-            /// フォーカスが入ったとき (`true`) と出たとき (`false`) の通知。
+            /// Notified when focus enters (`true`) and leaves (`false`).
             ///
-            /// ウィンドウの中でフォーカスが移ったときだけ呼ばれる。ウィンドウ
-            /// 自体がアクティブでなくなっても呼ばれない。
+            /// Called only when focus moves within the window. Not called when the window
+            /// itself becomes inactive.
             pub fn on_focus_change(&self, f: impl FnMut(bool) + 'static) {
                 let widget = <$t as crate::widgets::Widget>::native_widget(self);
                 crate::focus::set_widget_handler(&widget, f);

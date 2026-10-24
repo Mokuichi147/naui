@@ -1,7 +1,7 @@
 use crate::sys;
 use naui_core::{Fit, PlaybackState};
 
-/// 音声 (`GtkMediaControls` + `GtkMediaFile`)。映像面を持たない。
+/// Audio (`GtkMediaControls` + `GtkMediaFile`). Has no picture.
 #[derive(Clone)]
 pub struct Audio(pub(crate) sys::Audio);
 
@@ -13,7 +13,7 @@ impl Audio {
         self.0.source()
     }
 
-    /// 鳴らすものを差し替える。`source` はファイルパスか URL。
+    /// Replaces what to play. `source` is a file path or a URL.
     #[inline]
     pub fn set_source(&self, source: &str) {
         self.0.set_source(source)
@@ -39,25 +39,25 @@ impl Audio {
         self.0.is_playing()
     }
 
-    /// 再生位置を秒で指定する。
+    /// Sets the playback position in seconds.
     #[inline]
     pub fn seek(&self, seconds: f64) {
         self.0.seek(seconds)
     }
 
-    /// いまの再生位置 (秒)。
+    /// The current playback position (seconds).
     #[inline]
     pub fn position(&self) -> f64 {
         self.0.position()
     }
 
-    /// 長さ (秒)。まだ分からなければ `None`。
+    /// The length (seconds). `None` if not known yet.
     #[inline]
     pub fn duration(&self) -> Option<f64> {
         self.0.duration()
     }
 
-    /// 0.0..=1.0。
+    /// 0.0..=1.0.
     #[inline]
     pub fn set_volume(&self, volume: f64) {
         self.0.set_volume(volume)
@@ -88,35 +88,35 @@ impl Audio {
         self.0.is_loop()
     }
 
-    /// 読み込めたら自動で再生を始めるか。
+    /// Whether to start playing automatically once loaded.
     #[inline]
     pub fn set_autoplay(&self, autoplay: bool) {
         self.0.set_autoplay(autoplay)
     }
 
-    /// 再生バーを出すか (既定は出す)。
+    /// Whether to show the playback bar (shown by default).
     #[inline]
     pub fn set_controls(&self, controls: bool) {
         self.0.set_controls(controls)
     }
 
-    /// 再生の状態が変わるたびに呼ばれる。
+    /// Called every time the playback state changes.
     ///
-    /// アプリから `play()` を呼んだときだけでなく、**GTK4 の再生バーを
-    /// ユーザーが操作したときにも届く**。
+    /// It arrives not only when the app calls `play()` but **also when the user
+    /// operates GTK4's playback bar**.
     #[inline]
     pub fn on_state_change(&self, f: impl FnMut(PlaybackState) + 'static) {
         self.0.on_state_change(f)
     }
 
-    /// 再生位置が変わるたびに、その秒数で呼ばれる。
+    /// Called with the position in seconds every time the playback position changes.
     #[inline]
     pub fn on_position_change(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_position_change(f)
     }
 }
 
-/// 画像 (`GtkPicture`)。
+/// An image (`GtkPicture`).
 #[derive(Clone)]
 pub struct Image(pub(crate) sys::Image);
 
@@ -128,13 +128,13 @@ impl Image {
         self.0.source()
     }
 
-    /// 画像を差し替える。`source` はファイルパスか URL。
+    /// Replaces the image. `source` is a file path or a URL.
     #[inline]
     pub fn set_source(&self, source: &str) {
         self.0.set_source(source)
     }
 
-    /// 読み込めているか。読み込みに失敗したときは `false`。
+    /// Whether it has loaded. `false` if loading failed.
     #[inline]
     pub fn is_loaded(&self) -> bool {
         self.0.is_loaded()
@@ -145,14 +145,14 @@ impl Image {
         self.0.set_fit(fit)
     }
 
-    /// 読み上げなどに使う代替テキスト。
+    /// Alternative text used by screen readers and the like.
     #[inline]
     pub fn set_alt(&self, text: &str) {
         self.0.set_alt(text)
     }
 }
 
-/// 動画 (`GtkPicture` に `GtkMediaFile` を映し、下に `GtkMediaControls`)。
+/// Video (a `GtkMediaFile` shown in a `GtkPicture`, with `GtkMediaControls` below).
 #[derive(Clone)]
 pub struct Video(pub(crate) sys::Video);
 
@@ -164,7 +164,7 @@ impl Video {
         self.0.source()
     }
 
-    /// 鳴らすものを差し替える。`source` はファイルパスか URL。
+    /// Replaces what to play. `source` is a file path or a URL.
     #[inline]
     pub fn set_source(&self, source: &str) {
         self.0.set_source(source)
@@ -190,25 +190,25 @@ impl Video {
         self.0.is_playing()
     }
 
-    /// 再生位置を秒で指定する。
+    /// Sets the playback position in seconds.
     #[inline]
     pub fn seek(&self, seconds: f64) {
         self.0.seek(seconds)
     }
 
-    /// いまの再生位置 (秒)。
+    /// The current playback position (seconds).
     #[inline]
     pub fn position(&self) -> f64 {
         self.0.position()
     }
 
-    /// 長さ (秒)。まだ分からなければ `None`。
+    /// The length (seconds). `None` if not known yet.
     #[inline]
     pub fn duration(&self) -> Option<f64> {
         self.0.duration()
     }
 
-    /// 0.0..=1.0。
+    /// 0.0..=1.0.
     #[inline]
     pub fn set_volume(&self, volume: f64) {
         self.0.set_volume(volume)
@@ -239,34 +239,34 @@ impl Video {
         self.0.is_loop()
     }
 
-    /// 読み込めたら自動で再生を始めるか。
+    /// Whether to start playing automatically once loaded.
     #[inline]
     pub fn set_autoplay(&self, autoplay: bool) {
         self.0.set_autoplay(autoplay)
     }
 
-    /// 再生バーを出すか (既定は出す)。
+    /// Whether to show the playback bar (shown by default).
     #[inline]
     pub fn set_controls(&self, controls: bool) {
         self.0.set_controls(controls)
     }
 
-    /// 再生の状態が変わるたびに呼ばれる。
+    /// Called every time the playback state changes.
     ///
-    /// アプリから `play()` を呼んだときだけでなく、**GTK4 の再生バーを
-    /// ユーザーが操作したときにも届く**。
+    /// It arrives not only when the app calls `play()` but **also when the user
+    /// operates GTK4's playback bar**.
     #[inline]
     pub fn on_state_change(&self, f: impl FnMut(PlaybackState) + 'static) {
         self.0.on_state_change(f)
     }
 
-    /// 再生位置が変わるたびに、その秒数で呼ばれる。
+    /// Called with the position in seconds every time the playback position changes.
     #[inline]
     pub fn on_position_change(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_position_change(f)
     }
 
-    /// 表示領域に対する映像の収め方。
+    /// How the picture is fitted into the display area.
     #[inline]
     pub fn set_fit(&self, fit: Fit) {
         self.0.set_fit(fit)

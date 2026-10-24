@@ -1,29 +1,32 @@
-//! 描画面 (`NSView` のサブクラス + `drawRect:`)。
+//! The drawing surface (an `NSView` subclass + `drawRect:`).
 //!
-//! AppKit で「アプリが自分で描く面」は、`NSView` を継承して `drawRect:` を
-//! 書くのが標準の形。naui はその形をそのまま使い、`drawRect:` の中で
-//! アプリの `on_draw` を呼んで [`Painter`] に記録された命令を
-//! `NSBezierPath` と `NSString` の描画 (`drawAtPoint:withAttributes:`) で
-//! 再生する。ラスタライズ・アンチエイリアス・Retina の倍率・文字の描画は
-//! すべて AppKit (Core Graphics / Core Text) が行う。
+//! In AppKit, the standard form of "a surface the app draws itself" is subclassing
+//! `NSView` and writing `drawRect:`. naui uses that form as is: inside `drawRect:`
+//! it calls the app's `on_draw` and replays the commands recorded in the
+//! [`Painter`] with `NSBezierPath` and `NSString` drawing
+//! (`drawAtPoint:withAttributes:`). Rasterization, antialiasing, Retina scaling and
+//! text drawing are all done by AppKit (Core Graphics / Core Text).
 //!
-//! 座標は `isFlipped` を `true` にして**左上原点・下向き**にそろえる
-//! (他の 3 環境と同じ)。フォントはシステムフォント (`systemFontOfSize:`)。
+//! Coordinates are made **top-left origin, pointing down** by setting `isFlipped`
+//! to `true` (the same as the other three platforms). The font is the system font
+//! (`systemFontOfSize:`).
 //!
-//! ポインターの通知は `mouseDown:` / `mouseDragged:` / `mouseUp:` (右ボタンと
-//! 中ボタンの同じ組も) と、`NSTrackingArea` を通した `mouseMoved:` から取る。
-//! どのボタンかは、AppKit がどのメソッドへ配ったかで見分ける (`mouseDown:` が
-//! 左、`rightMouseDown:` が右)。それ以外のボタンはまとめて `otherMouseDown:` へ
-//! 来るので、`NSEvent.buttonNumber` (中が 2、側面が 3 と 4) を見る。
-//! トラックパッドの 2 本指のクリックや、副ボタンのクリックの設定も、AppKit が
-//! `rightMouseDown:` へ配るので右ボタンとして届く。
+//! Pointer notifications come from `mouseDown:` / `mouseDragged:` / `mouseUp:`
+//! (and the same set for the right and middle buttons) and from `mouseMoved:`
+//! through an `NSTrackingArea`. The button is identified by which method AppKit
+//! dispatched to (`mouseDown:` is left, `rightMouseDown:` is right). Other buttons
+//! all come to `otherMouseDown:`, so `NSEvent.buttonNumber` is checked (2 for
+//! middle, 3 and 4 for the side buttons). Two-finger clicks on a trackpad and the
+//! secondary-click setting are also dispatched by AppKit to `rightMouseDown:`, so
+//! they arrive as the right button.
 //!
-//! ホイールは `scrollWheel:` から取る。`scrollingDeltaX` / `scrollingDeltaY` は
-//! トラックパッドのような細かく測れる装置 (`hasPreciseScrollingDeltas`) なら
-//! 論理ピクセル、刻みのあるホイールなら行 (1 刻みでおよそ 1) なので、後者は
-//! [`WHEEL_STEP`] を掛ける。AppKit の量は「中身が動く向き」で正負が他の
-//! 3 環境と逆なので、符号を反転して届ける。アプリが `Continue` を返したら
-//! `super` へ回し、外側の `NSScrollView` がいつもどおりスクロールする。
+//! The wheel comes from `scrollWheel:`. `scrollingDeltaX` / `scrollingDeltaY` are
+//! logical pixels for finely measuring devices such as trackpads
+//! (`hasPreciseScrollingDeltas`) and lines for notched wheels (about 1 per notch),
+//! so the latter are multiplied by [`WHEEL_STEP`]. AppKit's amounts are signed by
+//! "the direction the content moves", the opposite of the other three platforms, so
+//! the sign is flipped. When the app returns `Continue`, it is passed to `super`,
+//! and the outer `NSScrollView` scrolls as usual.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -47,17 +50,18 @@ use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
 use crate::trampoline::ValueHandler;
 use crate::widgets::{impl_widget, Widget};
 
-/// 描く内容を決めるクロージャの置き場。
+/// The slot for the closure that decides what to draw.
 ///
-/// 呼んでいる間は取り出しておく (`ValueHandler` と同じ決まり)。描いている
-/// 最中に `on_draw` を呼び直しても二重借用にならない。
+/// Taken out while it is being called (the same rule as `ValueHandler`). Calling
+/// `on_draw` again mid-draw does not double-borrow.
 type DrawSlot = RefCell<Option<Box<dyn FnMut(&mut Painter)>>>;
 
 struct CanvasState {
     draw: DrawSlot,
     pointer: ValueHandler<PointerEvent>,
     wheel: WheelHandler,
-    /// `mouseMoved:` を受けるための追跡範囲。大きさが変わるたびに張り直す。
+    /// The tracking area for receiving `mouseMoved:`. Recreated whenever the size
+    /// changes.
     tracking: RefCell<Option<Retained<NSTrackingArea>>>,
 }
 
@@ -71,14 +75,16 @@ define_class!(
     unsafe impl NSObjectProtocol for CanvasView {}
 
     impl CanvasView {
-        /// 左上原点・下向き。他の 3 環境の座標と同じにする。
+        /// Top-left origin, pointing down. The same coordinates as the other three
+        /// platforms.
         #[unsafe(method(isFlipped))]
         fn is_flipped(&self) -> bool {
             true
         }
 
-        /// ウィンドウが手前でなくても最初のクリックを受ける
-        /// (図の上を押して選ぶ操作で、1 回目が「手前へ出す」に食われないように)。
+        /// Accepts the first click even when the window is not frontmost (so that, when
+        /// clicking on a drawing to select, the first click is not eaten by "bring to
+        /// front").
         #[unsafe(method(acceptsFirstMouse:))]
         fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
             true
@@ -212,7 +218,8 @@ impl CanvasView {
             .emit(PointerEvent::new(phase, self.local_point(event)).button(button));
     }
 
-    /// イベントの位置を、面の左上を原点にした座標へ直す。
+    /// Converts an event's position into coordinates with the surface's top left as
+    /// origin.
     fn local_point(&self, event: &NSEvent) -> naui_core::Point {
         let point = self.convertPoint_fromView(event.locationInWindow(), None);
         naui_core::Point::new(point.x, point.y)
@@ -221,14 +228,14 @@ impl CanvasView {
 
 struct CanvasInner {
     native: Retained<NSView>,
-    /// `native` と同じオブジェクト。クロージャの置き場へ触るために持つ。
+    /// The same object as `native`. Held to reach the closure slots.
     view: Retained<CanvasView>,
 }
 
-/// アプリが自分で描く面 (`NSView` + `drawRect:`)。
+/// A surface the app draws on itself (`NSView` + `drawRect:`).
 ///
-/// 中身から大きさは決まらないので、`set_sizing` で指定する
-/// (`Scroll` と同じ)。
+/// Its size is not determined by its contents, so set it with `set_sizing` (the
+/// same as `Scroll`).
 #[derive(Clone)]
 pub struct Canvas(Rc<CanvasInner>);
 impl_widget!(Canvas);
@@ -242,51 +249,55 @@ impl Canvas {
         Self(Rc::new(CanvasInner { native, view }))
     }
 
-    /// 描く内容を決めるクロージャ。描き直すたびに新しい [`Painter`] で呼ばれる。
+    /// The closure that decides what to draw. Called with a fresh [`Painter`] every
+    /// time it is redrawn.
     ///
-    /// 呼ばれるのは [`redraw`](Self::redraw) の後と、面の大きさが変わったとき
-    /// (と、AppKit が再描画を求めたとき)。
+    /// It is called after [`redraw`](Self::redraw), when the surface changes size (and
+    /// when AppKit asks for a redraw).
     pub fn on_draw(&self, f: impl FnMut(&mut Painter) + 'static) {
         *self.0.view.ivars().draw.borrow_mut() = Some(Box::new(f));
         self.redraw();
     }
 
-    /// 描き直しを頼む。その場では描かず、次の描画のときに `on_draw` が呼ばれる。
+    /// Requests a redraw. Nothing is drawn on the spot; `on_draw` is called at the next
+    /// draw.
     pub fn redraw(&self) {
         self.0.native.setNeedsDisplay(true);
     }
 
-    /// ポインター (マウス) の押下・移動・解放。位置は面の左上を原点にした
-    /// 論理ピクセル。移動は押していない間 (ホバー) も届く。押下と解放には
-    /// どのボタンかが付く ([`PointerEvent::button`])。
+    /// Pointer (mouse) presses, moves and releases. Positions are logical pixels with
+    /// the surface's top left as origin. Moves also arrive while nothing is pressed
+    /// (hover). Presses and releases carry which button ([`PointerEvent::button`]).
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.view.ivars().pointer.set(f);
     }
 
-    /// ホイール (トラックパッドの 2 本指のスクロールも含む)。量は論理ピクセル。
+    /// The wheel (including two-finger scrolling on a trackpad). Amounts are logical
+    /// pixels.
     ///
-    /// `Handled` を返すと外側のスクロールへは回らない。`Continue` なら
-    /// 外側の `NSScrollView` がいつもどおりスクロールする。
+    /// Returning `Handled` keeps it from reaching the outer scroll view. With
+    /// `Continue`, the outer `NSScrollView` scrolls as usual.
     pub fn on_wheel(&self, f: impl FnMut(PointerEvent) -> EventResponse + 'static) {
         self.0.view.ivars().wheel.set(f);
     }
 
-    /// いまの面の大きさ (幅, 高さ)。まだレイアウトされていなければ 0。
+    /// The current size of the surface (width, height). 0 if not laid out yet.
     pub fn size(&self) -> (f64, f64) {
         let bounds = self.0.native.bounds();
         (bounds.size.width, bounds.size.height)
     }
 
-    /// その場で描く。**自動テスト専用**。
+    /// Draws on the spot. **For automated tests only.**
     ///
-    /// 実際のアプリでは AppKit が描画のタイミングを決めるので使わない。
+    /// Real apps do not use it, because AppKit decides when to draw.
     #[doc(hidden)]
     pub fn draw_for_test(&self) {
         self.0.native.displayIfNeeded();
     }
 }
 
-/// `otherMouseDown:` / `otherMouseUp:` に来たボタン。左右以外がここへ来る。
+/// The button that came to `otherMouseDown:` / `otherMouseUp:`. Anything other than
+/// left and right comes here.
 fn other_button(event: &NSEvent) -> Option<PointerButton> {
     match event.buttonNumber() {
         2 => Some(PointerButton::Middle),
@@ -296,7 +307,8 @@ fn other_button(event: &NSEvent) -> Option<PointerButton> {
     }
 }
 
-/// [`Painter`] に記録された命令を、いまのグラフィックスコンテキストへ描く。
+/// Draws the commands recorded in the [`Painter`] into the current graphics
+/// context.
 fn replay(commands: &[DrawCommand]) {
     for command in commands {
         match command {
@@ -362,10 +374,11 @@ fn to_bezier(path: &Path) -> Retained<NSBezierPath> {
     bezier
 }
 
-/// 文字を 1 行描く。`at` は上端で、横は `align` に従う。
+/// Draws one line of text. `at` is the top, and the horizontal position follows
+/// `align`.
 ///
-/// `isFlipped` なビューでは `drawAtPoint:` の点が文字の左上になるので、
-/// 幅だけ測って寄せる。
+/// In an `isFlipped` view, the point given to `drawAtPoint:` is the text's top left,
+/// so only the width is measured for alignment.
 fn draw_text(
     text: &str,
     at: naui_core::Point,

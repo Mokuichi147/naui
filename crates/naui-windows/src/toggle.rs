@@ -1,10 +1,11 @@
-//! 入り切りのスイッチ (WinUI 3 のネイティブ `ToggleSwitch`)。
+//! On/off switches (WinUI 3's native `ToggleSwitch`).
 //!
-//! コントロールは [`naui_winui3`] の投影から直に作る。つまみの描画・
-//! アニメーション・キーボード操作は WinUI の標準テンプレートが行う。
+//! The control is created directly from the [`naui_winui3`] projection. Drawing the
+//! knob, the animation and keyboard navigation are done by WinUI's standard
+//! template.
 //!
-//! ラベルは `OnContent` と `OffContent` へ同じ文字を入れて、スイッチの
-//! となりへ出す (WinUI の既定は「オン」「オフ」の切り替わる文字)。
+//! The label is shown next to the switch by putting the same text in `OnContent` and
+//! `OffContent` (WinUI's default is text that switches between "On" and "Off").
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -19,11 +20,11 @@ use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
 
-/// 切り替わったことの通知先。
+/// The handler notified when it is switched.
 ///
-/// WinRT のデリゲートは `Send + Sync` を要求するので [`UiThreadCell`] に
-/// 載せる。呼び出しの間だけクロージャを取り出すため、通知の中から同じ
-/// スイッチを操作しても二重借用にならない。
+/// WinRT delegates require `Send + Sync`, so it is placed in a [`UiThreadCell`].
+/// The closure is taken out only for the duration of the call, so operating on the
+/// same switch from inside the notification does not double-borrow.
 #[derive(Clone)]
 struct ToggleHandler(HandlerCell<dyn FnMut(bool)>);
 
@@ -52,11 +53,11 @@ impl ToggleHandler {
 struct ToggleInner {
     native: ToggleSwitch,
     handler: ToggleHandler,
-    /// `set_on` による変更では `on_toggle` を呼ばない。
+    /// Changes made by `set_on` do not call `on_toggle`.
     silent: Cell<bool>,
 }
 
-/// 入り切りを切り替えるスイッチ (`ToggleSwitch`)。
+/// An on/off switch (`ToggleSwitch`).
 #[derive(Clone)]
 pub struct Toggle(Rc<ToggleInner>);
 impl_widget!(Toggle, native);
@@ -91,10 +92,10 @@ impl Toggle {
         Ok(this)
     }
 
-    /// WinUI の `Toggled` を Rust のクロージャへつなぐ。
+    /// Connects WinUI's `Toggled` to the Rust closure.
     ///
-    /// `Toggled` は `IsOn` を書き換えたときにも飛ぶので、`set_on` の間は
-    /// 黙らせる (macOS / GTK / Web と同じく、通知は利用者の操作のときだけ)。
+    /// `Toggled` also fires when `IsOn` is rewritten, so it is silenced during `set_on`
+    /// (as on macOS / GTK / Web, notifications are only for user actions).
     fn connect(&self) -> Result<()> {
         let target = Arc::new(UiThreadCell::new(Rc::downgrade(&self.0)));
         let toggled = RoutedEventHandler::new(move |_sender, _args| {
@@ -115,12 +116,12 @@ impl Toggle {
         Ok(())
     }
 
-    /// 入っているかどうか。
+    /// Whether it is on.
     pub fn is_on(&self) -> bool {
         self.0.native.IsOn().unwrap_or(false)
     }
 
-    /// プログラムから切り替える。`on_toggle` は呼ばれない。
+    /// Switches it from code. `on_toggle` is not called.
     pub fn set_on(&self, on: bool) {
         self.0.silent.set(true);
         let _ = self.0.native.SetIsOn(on);
@@ -133,7 +134,7 @@ impl Toggle {
         }
     }
 
-    /// 利用者が切り替えるたびに、切り替えた後の状態で呼ばれる。
+    /// Called with the new state every time the user switches it.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.handler.set(f);
     }

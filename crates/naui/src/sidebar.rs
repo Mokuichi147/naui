@@ -1,32 +1,32 @@
 use crate::sys;
 use naui_core::{SidebarItem, SidebarSection};
 
-/// ウィンドウの左に付けるサイドバー。
+/// A sidebar attached to the left of the window.
 ///
-/// [`Window::set_sidebar`](crate::Window::set_sidebar) で取り付ける。
-/// レイアウトには置かないので [`Widget`](crate::Widget) ではない。
+/// Attach it with [`Window::set_sidebar`](crate::Window::set_sidebar). It is not
+/// placed in a layout, so it is not a [`Widget`](crate::Widget).
 #[derive(Clone)]
 pub struct Sidebar(pub(crate) sys::Sidebar);
 
 impl_backend!(Sidebar);
 
 impl Sidebar {
-    /// 項目をまとまりごとに並べる。呼ぶたびに置き換わる。
+    /// Lays out items by group. Each call replaces them.
     ///
-    /// 選ばれていた項目は、同じ通し番号がまだ選べるなら選ばれたまま残る
-    /// (通知はしない)。
+    /// The selected item stays selected (without notifying) if the same running number
+    /// can still be selected.
     #[inline]
     pub fn set_sections(&self, sections: &[SidebarSection]) {
         self.0.set_sections(sections)
     }
 
-    /// 見出しの無いまとまり 1 つだけで並べる。
+    /// Lays out items as a single group without a heading.
     #[inline]
     pub fn set_items(&self, items: &[SidebarItem]) {
         self.0.set_items(items)
     }
 
-    /// まとまりをまたいだ項目の数。
+    /// The number of items across groups.
     #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
@@ -37,83 +37,88 @@ impl Sidebar {
         self.0.is_empty()
     }
 
-    /// 選ばれている項目の通し番号。
+    /// The running number of the selected item.
     #[inline]
     pub fn selected(&self) -> Option<usize> {
         self.0.selected()
     }
 
-    /// 通知せずに選択を変える。範囲外・選べない項目は無視する。
+    /// Changes the selection without notifying. Out-of-range and unselectable items are
+    /// ignored.
     #[inline]
     pub fn set_selected(&self, index: usize) {
         self.0.set_selected(index)
     }
 
-    /// 選択を外す (通知しない)。
+    /// Clears the selection (without notifying).
     #[inline]
     pub fn clear_selection(&self) {
         self.0.clear_selection()
     }
 
-    /// 利用者が選んだのと同じように選び、通知する。
+    /// Selects as if the user had chosen it, and notifies.
     ///
-    /// 範囲外・選べない項目は無視する。すでに選ばれている項目でも通知する。
+    /// Out-of-range and unselectable items are ignored. Notifies even if the item is
+    /// already selected.
     #[inline]
     pub fn select(&self, index: usize) {
         self.0.select(index)
     }
 
-    /// 項目が選ばれたときの通知先。引数は通し番号。
+    /// The handler called when an item is chosen. The argument is the running number.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_select(f)
     }
 
-    /// サイドバーの幅 (論理ピクセル)。既定は [`DEFAULT_SIDEBAR_WIDTH`](crate::DEFAULT_SIDEBAR_WIDTH)。
+    /// The sidebar width (logical pixels). The default is
+    /// [`DEFAULT_SIDEBAR_WIDTH`](crate::DEFAULT_SIDEBAR_WIDTH).
     ///
-    /// 利用者は仕切りをドラッグして幅を変えられる (下限は
-    /// [`SIDEBAR_MIN_WIDTH`](crate::SIDEBAR_MIN_WIDTH))。変えたあとの幅は [`width`](Self::width) が返し、
-    /// [`on_resize`](Self::on_resize) で届く。この呼び出しでは `on_resize` を
-    /// 呼ばない。
+    /// The user can change the width by dragging the divider (the minimum is
+    /// [`SIDEBAR_MIN_WIDTH`](crate::SIDEBAR_MIN_WIDTH)). The width after a change is
+    /// returned by [`width`](Self::width) and delivered through
+    /// [`on_resize`](Self::on_resize). This call does not call `on_resize`.
     #[inline]
     pub fn set_width(&self, width: f64) {
         self.0.set_width(width)
     }
 
-    /// サイドバーの幅。閉じていても開いたときの幅を返す。
+    /// The sidebar width. Even while collapsed, returns the width it has when expanded.
     #[inline]
     pub fn width(&self) -> f64 {
         self.0.width()
     }
 
-    /// 利用者が仕切りで幅を変えるたび、変えた後の幅で呼ばれる。
+    /// Called with the new width every time the user changes it with the divider.
     #[inline]
     pub fn on_resize(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_resize(f)
     }
 
-    /// サイドバーを閉じる (`true`) か開く (`false`)。
+    /// Collapses (`true`) or expands (`false`) the sidebar.
     ///
-    /// 閉じても項目と選択と幅は残る。[`on_collapse`](Self::on_collapse) は
-    /// 呼ばない。
+    /// Items, selection and width are kept while collapsed.
+    /// [`on_collapse`](Self::on_collapse) is not called.
     #[inline]
     pub fn set_collapsed(&self, collapsed: bool) {
         self.0.set_collapsed(collapsed)
     }
 
-    /// 利用者がサイドバーを開閉したときの通知先。引数は閉じたかどうか。
+    /// The handler called when the user collapses or expands the sidebar. The argument
+    /// is whether it is now collapsed.
     ///
-    /// サイドバーボタンの操作で呼ばれ、[`set_collapsed`](Self::set_collapsed)
-    /// では呼ばれない。
+    /// Called when the sidebar button is used; not called by
+    /// [`set_collapsed`](Self::set_collapsed).
     #[inline]
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse(f)
     }
 
-    /// サイドバーが閉じているかどうか。
+    /// Whether the sidebar is collapsed.
     ///
-    /// 見るのは区画自身の表示の指定 (`get_visible`)。`is_visible` は親まで
-    /// 含めて見えているかを返すので、ウィンドウを出す前は偽になってしまう。
+    /// This looks at the pane's own visibility setting (`get_visible`). `is_visible`
+    /// reports whether it is visible including its parents, so it would be false before
+    /// the window is shown.
     #[inline]
     pub fn is_collapsed(&self) -> bool {
         self.0.is_collapsed()

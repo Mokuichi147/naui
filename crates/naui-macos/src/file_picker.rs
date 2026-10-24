@@ -1,9 +1,9 @@
-//! ファイル / フォルダー選択 (AppKit)。
+//! File / folder picking (AppKit).
 //!
-//! AppKit に「選択して結果を表示するコントロール」は無い。押しボタン
-//! (`NSButton`) を置き、押されたら **`NSOpenPanel`** をアプリモーダルで出す。
-//! ダイアログそのものは AppKit のもので、一覧・検索・サイドバー・
-//! アクセス権限の扱いはすべて AppKit が行う。
+//! AppKit has no "control that picks and shows the result". A push button
+//! (`NSButton`) is placed, and clicking it shows an **`NSOpenPanel`** app-modally.
+//! The dialog itself is AppKit's; the list, search, sidebar and access permissions
+//! are all handled by AppKit.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -17,11 +17,12 @@ use objc2_foundation::{NSArray, NSString};
 use crate::trampoline::ActionTarget;
 use crate::widgets::{impl_widget, Widget};
 
-/// 選択されたときの通知先。差し替え可能な 1 本のクロージャを共有で持つ。
+/// The handler notified when something is picked. Shares a single replaceable
+/// closure.
 ///
-/// 通知の中からもう一度ダイアログを開くような使い方をしても二重借用に
-/// ならないよう、呼び出しの間だけクロージャを取り出す
-/// ([`crate::trampoline::SelectHandler`] と同じ作り)。
+/// So that usage such as opening the dialog again from inside the notification does
+/// not double-borrow, the closure is taken out only for the duration of the call
+/// (the same design as [`crate::trampoline::SelectHandler`]).
 #[derive(Clone, Default)]
 struct SelectionHandler(Rc<RefCell<Option<Box<dyn FnMut(&[FileEntry])>>>>);
 
@@ -67,7 +68,7 @@ impl PanelOptions {
     }
 }
 
-/// ファイルやフォルダーを選ばせるボタン (NSButton + NSOpenPanel)。
+/// A button for picking files or folders (NSButton + NSOpenPanel).
 #[derive(Clone)]
 pub struct FilePicker(Rc<FilePickerInner>);
 impl_widget!(FilePicker);
@@ -89,10 +90,10 @@ impl FilePicker {
         this
     }
 
-    /// ボタンを押したらダイアログが出るようにする。
+    /// Makes clicking the button show the dialog.
     ///
-    /// トランポリンはハンドルの中にあるので、強参照で捕まえると
-    /// 循環して解放されない。弱参照にしておく。
+    /// The trampoline lives inside the handle, so capturing it strongly would create a
+    /// cycle that is never freed. It is held weakly.
     fn install_click_handler(&self) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let weak: Weak<FilePickerInner> = Rc::downgrade(&self.0);
@@ -116,7 +117,7 @@ impl FilePicker {
         self.0.native.setEnabled(enabled);
     }
 
-    /// 何を選ばせるかを決める (既定はファイル 1 つ)。
+    /// Decides what to let the user pick (one file by default).
     pub fn set_mode(&self, mode: FilePickerMode) {
         self.0.mode.set(mode);
     }
@@ -125,25 +126,25 @@ impl FilePicker {
         self.0.mode.get()
     }
 
-    /// 拡張子で絞り込む。[`FilePickerMode::Folder`] のときは無視される。
+    /// Filters by extension. Ignored for [`FilePickerMode::Folder`].
     pub fn set_filters(&self, filters: &[FileFilter]) {
         *self.0.filters.borrow_mut() = filters.to_vec();
     }
 
-    /// 最後に選ばれたもの。まだ選ばれていなければ空。
+    /// What was picked last. Empty if nothing has been picked yet.
     pub fn selection(&self) -> Vec<FileEntry> {
         self.0.selection.borrow().clone()
     }
 
-    /// 選ばれたときに呼ばれる。取り消したときは呼ばれない。
-    /// 設定し直すと以前のものは外れる。
+    /// Called when something is picked. Not called when the user cancels. Setting it
+    /// again removes the previous one.
     pub fn on_select(&self, f: impl FnMut(&[FileEntry]) + 'static) {
         self.0.on_select.set(f);
     }
 
-    /// ダイアログを出す。ボタンを押したときにも同じものが呼ばれる。
+    /// Shows the dialog. Clicking the button calls the same thing.
     ///
-    /// `NSOpenPanel` はアプリモーダルなので、閉じられるまで戻らない。
+    /// `NSOpenPanel` is app-modal, so this does not return until it is closed.
     pub fn open(&self) {
         let Some(entries) = self.run_panel() else {
             return; // 取り消された。
@@ -152,10 +153,12 @@ impl FilePicker {
         self.0.on_select.emit(&entries);
     }
 
-    /// いまの設定を反映した `NSOpenPanel` を組み立てて返す。**まだ表示しない。**
+    /// Builds and returns an `NSOpenPanel` reflecting the current settings. **It is not
+    /// shown yet.**
     ///
-    /// バックエンド固有の脱出口。シートとして出したい (`beginSheetModalForWindow:`)、
-    /// 開始ディレクトリを指定したい、といった AppKit 固有の使い方はここから行う。
+    /// A backend-specific escape hatch. AppKit-specific uses, such as showing it as a
+    /// sheet (`beginSheetModalForWindow:`) or setting the starting directory, start
+    /// from here.
     pub fn native_panel(&self) -> Retained<NSOpenPanel> {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let panel = NSOpenPanel::openPanel(mtm);
@@ -182,7 +185,7 @@ impl FilePicker {
         panel
     }
 
-    /// パネルを出して、選ばれた URL をパスへ写す。取り消されたら `None`。
+    /// Shows the panel and maps the chosen URLs to paths. `None` if cancelled.
     fn run_panel(&self) -> Option<Vec<FileEntry>> {
         let panel = self.native_panel();
         if panel.runModal() != NSModalResponseOK {

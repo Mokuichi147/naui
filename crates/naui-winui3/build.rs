@@ -1,25 +1,28 @@
-//! `self-contained` フィーチャーのときだけ、Windows App SDK ランタイムを
-//! nuget.org から取ってきて、exe の出力先へ並べる。
+//! Only with the `self-contained` feature, downloads the Windows App SDK runtime
+//! from nuget.org and places it in the exe's output directory.
 //!
-//! フィーチャーが無いときは何もしない。naui はこれまでどおり、OS へ
-//! 導入されたフレームワークパッケージを実行時に探して使う。
+//! Without the feature it does nothing. naui then, as before, looks for and uses the
+//! framework package installed on the OS at run time.
 //!
-//! 組み立てた同梱物の正本は `OUT_DIR` に置き、そこから exe が置かれる場所
-//! へ並べる。
+//! The master copy of the assembled bundle is kept in `OUT_DIR`, and from there it
+//! is placed where exes go:
 //!
-//! - `<target-dir>/[<triple>/]<profile>/` と、その下の `examples/`
-//!   (cargo run・サンプルの exe が置かれる場所)
-//! - `<build-dir>/[<triple>/]<profile>/deps/` (テストの exe が置かれる場所)
-//! - 配布用に、exe の隣へ置くものをまとめた `<profile>/naui-winappsdk/`
+//! - `<target-dir>/[<triple>/]<profile>/` and `examples/` below it (where cargo run
+//!   and sample exes go)
+//! - `<build-dir>/[<triple>/]<profile>/deps/` (where test exes go)
+//! - `<profile>/naui-winappsdk/`, collecting what goes next to the exe for
+//!   distribution
 //!
-//! Cargo はビルドスクリプトに target-dir を知らせない。`OUT_DIR` は build-dir
-//! の中にあり、既定では両者が同じ場所なので、そこから求める。build-dir を
-//! 分けているときは、環境変数から target-dir を求める ([`artifact_profile`])。
+//! Cargo does not tell build scripts the target-dir. `OUT_DIR` is inside the
+//! build-dir, and by default the two are the same place, so it is derived from
+//! there. When the build-dir is separate, the target-dir is derived from environment
+//! variables ([`artifact_profile`]).
 //!
-//! 並べたものは、CI のキャッシュの復元などで消えることがある
-//! (Swatinem/rust-cache は profile ディレクトリ直下を消し、依存クレートの
-//! ビルド結果だけを残す)。並べた先のマニフェストを再実行の条件にして、
-//! 消えていれば `OUT_DIR` の正本から並べ直す。
+//! What is placed can disappear, for example when CI restores a cache
+//! (Swatinem/rust-cache deletes the top of the profile directory, keeping only the
+//! dependency crates' build results). The placed manifests are made a condition for
+//! rerunning, and if they are gone, they are placed again from the master copy in
+//! `OUT_DIR`.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -59,18 +62,21 @@ mod bundle {
         RESOURCES_FILE, RESOURCES_SOURCE, WINDOWS_APP_SDK,
     };
 
-    /// 取ってくる代わりに使う `.nupkg` の置き場。ネットワークに出られない
-    /// ビルド向け。`<id>.<version>.nupkg` (小文字) の名前で置く。
+    /// The location of `.nupkg`s to use instead of downloading. For builds that cannot
+    /// reach the network. Place them named `<id>.<version>.nupkg` (lowercase).
     const PACKAGES_ENV: &str = "NAUI_WINAPPSDK_PACKAGES";
 
-    /// exe の出力先 (target-dir) を明示する環境変数。Cargo の build-dir を
-    /// 分けていて、target-dir を環境変数から求められないとき向け。
+    /// The environment variable that states the exe output directory (target-dir)
+    /// explicitly. For when Cargo's build-dir is separate and the target-dir cannot be
+    /// derived from environment variables.
     const TARGET_DIR_ENV: &str = "NAUI_WINAPPSDK_TARGET_DIR";
 
-    /// 配布用にまとめる置き場の名前 (`<profile>/` の下)。
+    /// The name of the directory collecting files for distribution (under
+    /// `<profile>/`).
     const BUNDLE_DIR: &str = "naui-winappsdk";
 
-    /// 作ったマニフェストに付ける更新時刻 (2000-01-01、UNIX 時刻の秒)。
+    /// The modification time given to the created manifests (2000-01-01, in UNIX
+    /// seconds).
     const PLACED_MTIME: u64 = 946_684_800;
 
     pub(crate) fn run() -> Result<(), String> {
@@ -151,14 +157,14 @@ mod bundle {
         Ok(())
     }
 
-    /// exe が置かれる profile ディレクトリ (`<target-dir>/[<triple>/]<profile>`)。
+    /// The profile directory where exes go (`<target-dir>/[<triple>/]<profile>`).
     ///
-    /// Cargo はビルドスクリプトに target-dir を知らせない。既定では build-dir と
-    /// 同じなので `OUT_DIR` から求めた `build_profile` をそのまま使う。build-dir
-    /// を分けている (`CARGO_BUILD_BUILD_DIR`) ときは、target-dir を環境変数から
-    /// 求め、求められなければ止める。設定ファイルの `build.build-dir` は
-    /// ビルドスクリプトからは見えないので、そのときは実行時に naui が
-    /// 同梱物の欠落をエラーにする。
+    /// Cargo does not tell build scripts the target-dir. By default it is the same as
+    /// the build-dir, so `build_profile`, derived from `OUT_DIR`, is used as is. When
+    /// the build-dir is separate (`CARGO_BUILD_BUILD_DIR`), the target-dir is derived
+    /// from environment variables, and if it cannot be, the build stops. A config file's
+    /// `build.build-dir` is invisible to build scripts, so in that case naui reports the
+    /// missing bundle as an error at run time.
     fn artifact_profile(build_profile: &Path) -> Result<PathBuf, String> {
         // build-dir からの相対 ([<triple>/]<profile>)。--target を付けたときは
         // profile の上に対象のトリプルの階層が入る。
@@ -200,9 +206,9 @@ mod bundle {
         Ok(build_profile.to_path_buf())
     }
 
-    /// 中身が変わったかを見分ける印。部品の版とアーキテクチャに加えて、
-    /// 組み立てるコードそのもの (マニフェストの作りかたなど) が変わったときも
-    /// 作り直す。
+    /// A marker for telling whether the contents changed. Besides the component versions
+    /// and the architecture, it is also rebuilt when the assembling code itself (how
+    /// manifests are made and so on) changes.
     fn stamp(arch: &str) -> String {
         let mut stamp = format!("Windows App SDK {WINDOWS_APP_SDK} {arch}\n");
         for component in COMPONENTS {
@@ -222,7 +228,8 @@ mod bundle {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
-    /// 部品を展開し、マニフェストとリソースを足して `bundle` にまとめる。
+    /// Extracts the components, adds the manifest and resources, and collects them in
+    /// `bundle`.
     fn assemble(bundle: &Path, cache: &Path, arch: &str) -> Result<(), String> {
         if bundle.exists() {
             fs::remove_dir_all(bundle).map_err(|e| {
@@ -321,15 +328,15 @@ mod bundle {
         Ok(())
     }
 
-    /// `.nupkg` の中のテキストを読む。先頭の BOM は落とす。
+    /// Reads text inside a `.nupkg`. A leading BOM is dropped.
     fn read_text(entry: &mut impl Read) -> Result<String, String> {
         let mut text = String::new();
         entry.read_to_string(&mut text).map_err(|e| e.to_string())?;
         Ok(text.trim_start_matches('\u{feff}').to_string())
     }
 
-    /// 部品ごとのテキストを集める。中身が同じものは 1 つにまとめ、出どころを
-    /// 書き足す。
+    /// Collects the text per component. Identical contents are merged into one, with
+    /// their sources appended.
     fn collect(texts: &mut Vec<(Vec<String>, String)>, component: &Component, text: String) {
         let source = format!("{} {}", component.id, component.version);
         match texts.iter_mut().find(|(_, existing)| *existing == text) {
@@ -338,7 +345,8 @@ mod bundle {
         }
     }
 
-    /// 集めたテキストを 1 つのファイルにする。どの部品のものかを見出しに書く。
+    /// Turns the collected texts into one file, with headings saying which component
+    /// each came from.
     fn join_texts(texts: &[(Vec<String>, String)]) -> String {
         texts
             .iter()
@@ -360,8 +368,9 @@ mod bundle {
         format!("{}.{}.nupkg", component.id, component.version)
     }
 
-    /// `.nupkg` の中身を得る。置き場の指定、キャッシュ、nuget.org の順に当たり、
-    /// どれから得たものも SHA-512 を確かめてから使う。
+    /// Obtains a `.nupkg`'s contents. It tries the specified location, the cache and
+    /// nuget.org in that order, and whatever it gets is used only after verifying its
+    /// SHA-512.
     fn obtain(component: &Component, cache: &Path) -> Result<Vec<u8>, String> {
         let name = file_name(component);
 
@@ -426,12 +435,12 @@ mod bundle {
         }
     }
 
-    /// `bundle` の中身を `destination` へ並べる。
+    /// Places the contents of `bundle` into `destination`.
     ///
-    /// 同じボリュームなのでハードリンクで済ませ、張れなければコピーする。
-    /// 中身が変わっていない (`replace` が偽) ときは、同じ大きさのファイルが
-    /// もうあれば触らない。動いている exe が読み込んだ DLL は置き換えられない
-    /// ため。
+    /// It is the same volume, so hard links do; if they cannot be made, it copies. When
+    /// the contents have not changed (`replace` is false), files of the same size that
+    /// already exist are left alone, because DLLs loaded by a running exe cannot be
+    /// replaced.
     fn place(bundle: &Path, destination: &Path, replace: bool) -> Result<(), String> {
         for source in files(bundle)? {
             let relative = source.strip_prefix(bundle).map_err(|e| e.to_string())?;

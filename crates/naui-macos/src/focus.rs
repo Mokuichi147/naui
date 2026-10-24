@@ -1,19 +1,19 @@
-//! `on_focus_change` (文字入力のウィジェット)。
+//! `on_focus_change` (text-input widgets).
 //!
-//! AppKit にはフォーカスが移ったことを知らせる通知が無い。フォーカスの移動は
-//! どれもウィンドウの `makeFirstResponder:` を通るので、naui のウィンドウを
-//! それを上書きした `NSWindow` の派生クラスで作り、移ったあとの first
-//! responder から親のビューへたどって、最初に見つかった登録済みのウィジェットを
-//! そのウィンドウのフォーカスの持ち主とする ([`FocusOwner`])。
+//! AppKit has no notification that focus moved. Every focus move goes through the
+//! window's `makeFirstResponder:`, so naui's windows are created from an `NSWindow`
+//! subclass that overrides it; after the move, it walks up the parent views from the
+//! first responder, and the first registered widget found becomes that window's
+//! focus owner ([`FocusOwner`]).
 //!
-//! 入力欄の編集はフィールドエディタ (共有の `NSTextView`) が担うが、
-//! フィールドエディタは編集中の `NSTextField` の中に置かれるので、親を
-//! たどれば入力欄に着く (`on_key_down` と同じ)。
+//! Editing in text fields is done by the field editor (a shared `NSTextView`), but
+//! the field editor is placed inside the `NSTextField` being edited, so walking up
+//! the parents reaches the field (the same as `on_key_down`).
 //!
-//! 通知先はビューの関連オブジェクト ([`HandlerBox`]) として持たせ、登録表は
-//! 置かない。ビューが解放されれば関連オブジェクトも解放され、通知先と
-//! それが捕まえている状態も一緒に捨てられる (表に持たせると、次に
-//! 登録されるまで残ってしまう)。
+//! The handler is held as an associated object of the view ([`HandlerBox`]), and
+//! there is no registry. When the view is freed, the associated object is freed
+//! too, and the handler and the state it captures are discarded together (a table
+//! would keep them until the next registration).
 
 use std::cell::Cell;
 use std::ffi::c_void;
@@ -26,11 +26,12 @@ use objc2::{define_class, ffi, msg_send, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{NSBackingStoreType, NSResponder, NSView, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{NSObject, NSRect};
 
-/// 関連オブジェクトの鍵。中身は使わず、番地だけを使う。
+/// The associated object's key. Its contents are unused; only its address is.
 static HANDLER_KEY: u8 = 0;
 
 define_class!(
-    /// ビューに関連オブジェクトとして付け、通知先をビューと同じ寿命にする。
+    /// Attached to the view as an associated object, giving the handler the same
+    /// lifetime as the view.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiFocusHandlerBox"]
@@ -40,7 +41,7 @@ define_class!(
     unsafe impl NSObjectProtocol for HandlerBox {}
 );
 
-/// ウィジェットのビューへ通知先を置く。呼ぶたびに置き換わる。
+/// Sets the handler on the widget's view. Each call replaces it.
 pub(crate) fn set_view_handler(view: &NSView, f: impl FnMut(bool) + 'static) {
     let handler = lookup(view).unwrap_or_else(|| {
         let mtm = MainThreadMarker::from(view);
@@ -66,9 +67,9 @@ fn handler_key() -> *const c_void {
     std::ptr::addr_of!(HANDLER_KEY).cast()
 }
 
-/// フォーカスがすでに `view` の中にあれば、通知せずに持ち主として覚える
-/// (ウィンドウを出したときに最初の入力欄へ移るなど)。そうしないと、あとで
-/// 出たときの `false` が届かない。
+/// If focus is already inside `view`, records it as the owner without notifying
+/// (such as focus moving to the first field when the window is shown). Otherwise
+/// the `false` for leaving later would never arrive.
 fn adopt_current_focus(view: &NSView) {
     let Some(window) = view.window() else {
         return;
@@ -85,7 +86,7 @@ fn adopt_current_focus(view: &NSView) {
     }
 }
 
-/// `view` に置いてある通知先。
+/// The handler set on `view`.
 fn lookup(view: &NSView) -> Option<Rc<FocusHandler>> {
     let holder = unsafe {
         ffi::objc_getAssociatedObject(view as *const NSView as *const AnyObject, handler_key())
@@ -95,8 +96,8 @@ fn lookup(view: &NSView) -> Option<Rc<FocusHandler>> {
     Some(holder.ivars().clone())
 }
 
-/// `responder` を含む登録済みのウィジェット。ビューでなければ (ウィンドウ自身
-/// など) どれにも含まれない。
+/// The registered widget containing `responder`. If it is not a view (the window
+/// itself, for example), it is contained in none.
 fn owner_of(responder: Option<Retained<NSResponder>>) -> Option<Rc<FocusHandler>> {
     let mut view = responder.and_then(|responder| responder.downcast::<NSView>().ok());
     while let Some(current) = view {
@@ -111,12 +112,12 @@ fn owner_of(responder: Option<Retained<NSResponder>>) -> Option<Rc<FocusHandler>
 #[derive(Default)]
 struct FocusState {
     owner: FocusOwner,
-    /// 入れ子になっている `makeFirstResponder:` の深さ。
+    /// The depth of nested `makeFirstResponder:` calls.
     depth: Cell<u32>,
 }
 
 define_class!(
-    /// フォーカスの移動を見張る `NSWindow`。
+    /// An `NSWindow` that watches focus moves.
     #[unsafe(super(NSWindow, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiWindow"]
@@ -126,10 +127,10 @@ define_class!(
     unsafe impl NSObjectProtocol for FocusWindow {}
 
     impl FocusWindow {
-        /// 入力欄へ移すときは、AppKit がこの中からさらに
-        /// `makeFirstResponder:` を呼ぶ (編集中の欄を閉じるためにいったん
-        /// ウィンドウ自身へ移し、続けてフィールドエディタへ移す)。途中の
-        /// 状態は数えず、いちばん外側の呼び出しが終わったところで数える。
+        /// When moving into a text field, AppKit calls `makeFirstResponder:` again from
+        /// inside this one (to end editing in the current field it first moves to the
+        /// window itself, then to the field editor). Intermediate states are not counted;
+        /// counting happens when the outermost call finishes.
         #[unsafe(method(makeFirstResponder:))]
         fn make_first_responder(&self, responder: Option<&NSResponder>) -> bool {
             let state = self.ivars();
@@ -146,7 +147,7 @@ define_class!(
     }
 );
 
-/// フォーカスの移動を見張るウィンドウを作る。
+/// Creates a window that watches focus moves.
 pub(crate) fn new_window(
     mtm: MainThreadMarker,
     frame: NSRect,
@@ -165,14 +166,14 @@ pub(crate) fn new_window(
     Retained::into_super(this)
 }
 
-/// 文字入力のウィジェットへ `on_focus_change` を足す。
+/// Adds `on_focus_change` to text-input widgets.
 macro_rules! impl_focus_change {
     ($t:ty) => {
         impl $t {
-            /// フォーカスが入ったとき (`true`) と出たとき (`false`) の通知。
+            /// Notified when focus enters (`true`) and leaves (`false`).
             ///
-            /// ウィンドウの中でフォーカスが移ったときだけ呼ばれる。ウィンドウ
-            /// 自体がアクティブでなくなっても呼ばれない。
+            /// Called only when focus moves within the window. Not called when the window
+            /// itself becomes inactive.
             pub fn on_focus_change(&self, f: impl FnMut(bool) + 'static) {
                 let view = <$t as crate::widgets::Widget>::native_view(self);
                 crate::focus::set_view_handler(&view, f);

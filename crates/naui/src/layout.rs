@@ -2,7 +2,7 @@ use crate::sys;
 use crate::Widget;
 use naui_core::{GridCell, Padding, ScrollMetrics, ScrollPolicy, Track};
 
-/// 行と列で位置を決めるコンテナ (`GtkGrid`)。
+/// A container that positions children by row and column (`GtkGrid`).
 #[derive(Clone)]
 pub struct Grid(pub(crate) sys::Grid);
 
@@ -19,56 +19,59 @@ impl Grid {
         self.0.set_padding(padding)
     }
 
-    /// マスへ置く。すでに何かが置かれているマスへ重ねて置ける。
+    /// Places a child in a cell. It can be stacked onto a cell that already holds
+    /// something.
     #[inline]
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         self.0.attach(child.as_backend(), cell)
     }
 
-    /// そのマスの中身を差し替える。同じマスに置かれていたものは外れる。
+    /// Replaces what is in the cell. Whatever was in the same cell is removed.
     #[inline]
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
         self.0.replace(child.as_backend(), cell)
     }
 
-    /// 子をすべて外す。行と列の指定はそのまま残る。
+    /// Removes every child. The row and column settings stay.
     #[inline]
     pub fn clear(&self) {
         self.0.clear()
     }
 
-    /// 指定したマスに置かれているものを外す。何も無ければ何もしない。
+    /// Removes whatever is in the given cell. Does nothing if it is empty.
     ///
-    /// 見るのは `cell` の列と行だけで、span は見ない。
+    /// Only the column and row of `cell` are considered, not the span.
     #[inline]
     pub fn remove(&self, cell: GridCell) {
         self.0.remove(cell)
     }
 
-    /// 列の幅の決め方。
+    /// How a column's width is determined.
     ///
-    /// `GtkGrid` は列そのものに幅を持たせられないため、**その列に入っている
-    /// 子**へ写す。列の幅は中身のいちばん大きいものに合わせて決まるので、
-    /// 結果として列の幅が決まる。[`Track::Fill`] の重みは `GtkGrid` に無く、
-    /// 余りは広がる列で等分される (macOS と同じ制限)。
+    /// `GtkGrid` cannot give columns a width of their own, so this is applied **to the
+    /// children in that column**. A column's width follows its largest content, so
+    /// this ends up setting the column width. `GtkGrid` has no weights for
+    /// [`Track::Fill`]; leftover space is split evenly among the growing columns (the
+    /// same limitation as macOS).
     #[inline]
     pub fn set_column_track(&self, index: usize, track: Track) {
         self.0.set_column_track(index, track)
     }
 
-    /// 行の高さの決め方。[`Grid::set_column_track`] と同じ制限がある。
+    /// How a row's height is determined. Has the same limitations as
+    /// [`Grid::set_column_track`].
     #[inline]
     pub fn set_row_track(&self, index: usize, track: Track) {
         self.0.set_row_track(index, track)
     }
 
-    /// 置かれているものが必要とする列数。
+    /// The number of columns the placed children need.
     #[inline]
     pub fn columns(&self) -> usize {
         self.0.columns()
     }
 
-    /// 置かれているものが必要とする行数。
+    /// The number of rows the placed children need.
     #[inline]
     pub fn rows(&self) -> usize {
         self.0.rows()
@@ -85,40 +88,41 @@ impl Grid {
     }
 }
 
-/// 中身がはみ出したらスクロールさせるコンテナ (`GtkScrolledWindow`)。
+/// A container that scrolls when its contents overflow (`GtkScrolledWindow`).
 #[derive(Clone)]
 pub struct Scroll(pub(crate) sys::Scroll);
 
 impl_widget!(Scroll);
 
 impl Scroll {
-    /// いまのスクロール位置と大きさ。
+    /// The current scroll position and sizes.
     ///
-    /// GTK4 は同期でレイアウトさせられないので、直前に中身を変えたときは
-    /// 次のフレームまで前の大きさのまま。
+    /// GTK4 cannot be made to lay out synchronously, so right after the contents
+    /// change, the previous sizes remain until the next frame.
     #[inline]
     pub fn metrics(&self) -> ScrollMetrics {
         self.0.metrics()
     }
 
-    /// 指定した位置へ送る。送れる範囲に丸める。
+    /// Scrolls to the given position, clamped to the scrollable range.
     ///
-    /// 直前に中身を変えていても、次のレイアウトの後の大きさで送り直す。
+    /// Even if the contents just changed, it scrolls again using the sizes after the
+    /// next layout.
     #[inline]
     pub fn scroll_to(&self, x: f64, y: f64) {
         self.0.scroll_to(x, y)
     }
 
-    /// 縦の末尾 (いちばん下) へ送る。横の位置はそのまま。
+    /// Scrolls to the vertical end (the very bottom). The horizontal position stays.
     #[inline]
     pub fn scroll_to_end(&self) {
         self.0.scroll_to_end()
     }
 
-    /// スクロール位置が変わったときの通知。
+    /// Notified when the scroll position changes.
     ///
-    /// 利用者の操作に加え、`scroll_to` や中身が縮んだことによる移動でも
-    /// 届く。大きさだけが変わったときは届かない。
+    /// Besides user interaction, it also arrives for moves caused by `scroll_to` or by
+    /// the contents shrinking. It does not arrive when only the sizes change.
     #[inline]
     pub fn on_scroll(&self, f: impl FnMut(ScrollMetrics) + 'static) {
         self.0.on_scroll(f)
@@ -135,7 +139,8 @@ impl Scroll {
     }
 }
 
-/// 余白そのものになるウィジェット。スタックの余りを吸って他を押しやる。
+/// A widget that is just empty space. It absorbs a stack's leftover space and
+/// pushes the others away.
 #[derive(Clone)]
 pub struct Spacer(pub(crate) sys::Spacer);
 

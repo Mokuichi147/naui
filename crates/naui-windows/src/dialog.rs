@@ -1,19 +1,19 @@
-//! 汎用ダイアログ (WinUI 3)。
+//! General-purpose dialogs (WinUI 3).
 //!
-//! WinUI 3 のモーダルは **`ContentDialog`** そのもので、暗幕・配置・
-//! ボタン列・Esc での取り消しはすべて WinUI が行う。naui はここへ
-//! 見出し・本文・中身のウィジェット・ボタンの文字列を渡すだけ。
+//! WinUI 3's modal is the **`ContentDialog`** itself; the overlay, placement, button
+//! row and cancelling with Esc are all done by WinUI. naui only passes it the title,
+//! body text, content widget and button labels.
 //!
-//! naui のダイアログが「見出し + 本文 + 任意のウィジェット + 役割つきの
-//! ボタン 3 つまで」という形なのは、この `ContentDialog` に合わせたため。
+//! naui's dialog has the shape "a title + body text + an optional widget + up to
+//! three buttons with roles" in order to match this `ContentDialog`.
 //!
-//! ## 他の環境との違い
+//! ## Differences from other platforms
 //!
-//! - [`Dialog::open`] はすぐ戻り、閉じたことは `on_response` で届く
-//!   (macOS の `NSAlert` は閉じるまで戻らない)。
-//! - `ContentDialog` は `XamlRoot` の上に出るため、**ウィンドウを 1 つ
-//!   表示してから**でないと出せない。
-//! - 同じ `XamlRoot` に 2 つのダイアログは出せない (WinUI の制約)。
+//! - [`Dialog::open`] returns right away, and closing arrives through
+//!   `on_response` (macOS's `NSAlert` does not return until it is closed).
+//! - `ContentDialog` appears over a `XamlRoot`, so it cannot be shown **until a
+//!   window has been shown**.
+//! - Two dialogs cannot be shown on the same `XamlRoot` (a WinUI restriction).
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -36,7 +36,7 @@ use crate::Slot;
 struct DialogInner {
     native: ContentDialog,
     title: TextBlock,
-    /// 本文と中身のウィジェットを縦に積む箱。
+    /// The box stacking the body text and the content widget vertically.
     content: StackPanel,
     message: TextBlock,
     child: RefCell<Option<Box<dyn Widget>>>,
@@ -44,11 +44,12 @@ struct DialogInner {
     on_response: RefCell<Slot<dyn FnMut(DialogResponse)>>,
     theme: Cell<Theme>,
     open: Cell<bool>,
-    /// [`Dialog::close`] で閉じたか。閉じた理由を通知しないための目印。
+    /// Whether it was closed with [`Dialog::close`]. A marker so that the reason for
+    /// closing is not notified.
     closed_by_app: Cell<bool>,
 }
 
-/// モーダルダイアログ (ContentDialog)。
+/// A modal dialog (ContentDialog).
 #[derive(Clone)]
 pub struct Dialog(Rc<DialogInner>);
 
@@ -100,12 +101,12 @@ impl Dialog {
         Ok(this)
     }
 
-    /// 閉じることをまとめて受ける。
+    /// Receives closing in one place.
     ///
-    /// `ContentDialog` の `Closed` は [`naui_winui3`] の投影に無い
-    /// (イベント引数の型が生成されていない)。閉じる直前の `Closing` は
-    /// あり、押されたボタンが `Result` で分かるので、こちらを使う。
-    /// 取り消し (`Cancel`) はしないので、閉じるのを妨げない。
+    /// `ContentDialog`'s `Closed` is not in the [`naui_winui3`] projection (its event
+    /// argument type is not generated). `Closing`, right before it closes, is, and the
+    /// clicked button is known from its `Result`, so that one is used. It never cancels
+    /// (`Cancel`), so it does not prevent closing.
     fn install_closing_handler(&self) -> Result<()> {
         // WinRT のデリゲートは Send + Sync を要求するが、XAML のイベントは
         // 必ず UI スレッドで呼ばれる。UiThreadCell に載せて渡す。
@@ -131,7 +132,7 @@ impl Dialog {
         Ok(())
     }
 
-    /// 閉じたときの後始末と通知。
+    /// Cleanup and notification on close.
     fn finish(&self, result: ContentDialogResult) {
         self.0.open.set(false);
         if self.0.closed_by_app.replace(false) {
@@ -140,8 +141,8 @@ impl Dialog {
         self.emit(response_for(result));
     }
 
-    /// 通知。通知の中から設定し直しても二重借用にならないよう、
-    /// 呼び出しの間だけクロージャを取り出す。
+    /// Notification. So that setting it again from inside the notification does not
+    /// double-borrow, the closure is taken out only for the duration of the call.
     fn emit(&self, response: DialogResponse) {
         let Some(mut f) = self.0.on_response.borrow_mut().take() else {
             return;
@@ -165,7 +166,7 @@ impl Dialog {
             .unwrap_or_default()
     }
 
-    /// 見出しの下に出る本文。空にすると出ない。
+    /// The body text shown below the title. Not shown if empty.
     pub fn set_message(&self, message: &str) {
         let _ = self.0.message.SetText(&HSTRING::from(message));
         let _ = self.0.message.SetVisibility(if message.is_empty() {
@@ -183,7 +184,7 @@ impl Dialog {
             .unwrap_or_default()
     }
 
-    /// 本文とボタンの間に置くウィジェット。呼ぶたびに置き換わる。
+    /// The widget placed between the body text and the buttons. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
         let Ok(children) = self.0.content.Children() else {
             return;
@@ -197,7 +198,8 @@ impl Dialog {
         }
     }
 
-    /// 出すボタン。既定ではボタンを持たず、そのときは「OK」だけが出る。
+    /// The buttons to show. By default there are none, in which case only "OK" is
+    /// shown.
     pub fn set_buttons(&self, buttons: DialogButtons) {
         *self.0.buttons.borrow_mut() = buttons;
         let _ = self.apply_buttons();
@@ -207,9 +209,9 @@ impl Dialog {
         self.0.buttons.borrow().clone()
     }
 
-    /// 役割ごとのボタンを `ContentDialog` の 3 つの枠へ写す。
+    /// Maps the buttons for each role onto the `ContentDialog`'s three slots.
     ///
-    /// 取り消しは Close ボタンになる。WinUI はここへ Esc を割り当てる。
+    /// Cancel becomes the Close button. WinUI assigns Esc to it.
     fn apply_buttons(&self) -> Result<()> {
         let buttons = self.0.buttons.borrow().resolved();
         let text = |response| HSTRING::from(buttons.label(response).unwrap_or(""));
@@ -237,18 +239,19 @@ impl Dialog {
             .map_err(|e| to_error("ダイアログの既定ボタン設定", e))
     }
 
-    /// 閉じたときに、閉じた理由で呼ばれる。設定し直すと以前のものは外れる。
+    /// Called with the reason when it closes. Setting it again removes the previous
+    /// one.
     ///
-    /// [`Dialog::close`] で閉じたときは呼ばれない。
+    /// Not called when it is closed with [`Dialog::close`].
     pub fn on_response(&self, f: impl FnMut(DialogResponse) + 'static) {
         *self.0.on_response.borrow_mut() = Some(Box::new(f));
     }
 
-    /// ダイアログを出す。**すぐ戻り、閉じたことは `on_response` で届く。**
+    /// Shows the dialog. **It returns right away, and closing arrives through
+    /// `on_response`.**
     ///
-    /// `ContentDialog` はウィンドウの `XamlRoot` の上に出るため、
-    /// **まだウィンドウを表示していないと出せない**。すでに出ているときは
-    /// 何もしない。
+    /// `ContentDialog` appears over the window's `XamlRoot`, so **it cannot be shown
+    /// before the window is shown**. Does nothing if it is already shown.
     pub fn open(&self) {
         if self.0.open.get() {
             return;
@@ -288,7 +291,7 @@ impl Dialog {
         Ok(())
     }
 
-    /// 出しているダイアログを閉じる。`on_response` は呼ばれない。
+    /// Closes the dialog being shown. `on_response` is not called.
     pub fn close(&self) {
         if !self.0.open.get() {
             return;
@@ -299,26 +302,26 @@ impl Dialog {
         }
     }
 
-    /// いま出ているか。
+    /// Whether it is showing now.
     pub fn is_open(&self) -> bool {
         self.0.open.get()
     }
 
-    /// このダイアログの配色テーマを指定する。
+    /// Sets this dialog's color theme.
     pub(crate) fn set_theme(&self, theme: Theme) {
         self.0.theme.set(theme);
     }
 
-    /// WinUI 3 の実ダイアログ。バックエンド固有の脱出口。
+    /// The real WinUI 3 dialog. A backend-specific escape hatch.
     pub fn native_dialog(&self) -> ContentDialog {
         self.0.native.clone()
     }
 }
 
-/// `ContentDialog` の結果を、押されたボタンの役割へ戻す。
+/// Maps the `ContentDialog`'s result back to the role of the clicked button.
 ///
-/// Close ボタン・Esc・領域外の押しはどれも `None` で返るので、
-/// まとめて取り消し扱いにする。
+/// The Close button, Esc and clicks outside all come back as `None`, so they are
+/// all treated as cancel.
 fn response_for(result: ContentDialogResult) -> DialogResponse {
     match result {
         ContentDialogResult::Primary => DialogResponse::Primary,

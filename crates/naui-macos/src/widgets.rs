@@ -1,7 +1,7 @@
-//! AppKit の実コントロールを包むハンドル群。
+//! Handles wrapping real AppKit controls.
 //!
-//! どのハンドルも `Rc<Inner>` で、`Inner` が Retained なネイティブオブジェクトと
-//! トランポリンを保持する。ハンドルを clone してもネイティブは 1 つ。
+//! Every handle is an `Rc<Inner>`, and `Inner` holds the Retained native object and
+//! its trampolines. Cloning a handle still leaves one native object.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -25,18 +25,19 @@ use objc2_foundation::{
 
 use crate::trampoline::{ActionTarget, FieldHandlers, FieldObserver, TextViewObserver};
 
-/// naui のウィジェットが実装する共通インタフェース。
+/// The common interface implemented by naui's widgets.
 pub trait Widget: 'static {
-    /// 対応する AppKit のビュー。バックエンド固有の脱出口として公開している。
+    /// The corresponding AppKit view. Public as a backend-specific escape hatch.
     fn native_view(&self) -> Retained<NSView>;
 
     #[doc(hidden)]
     fn boxed_clone(&self) -> Box<dyn Widget>;
 
-    /// `Stack` の中へ入れられたときに、その向き (縦なら `true`) で呼ばれる。
+    /// Called with the direction (`true` for vertical) when put into a `Stack`.
     ///
-    /// 入れ子になった `Stack` だけが使う。余りを吸うのを外側に決めるため、
-    /// 同じ向きのときは自分の受け皿を固くする。ほかのウィジェットは何もしない。
+    /// Used only by nested `Stack`s. To settle that the outer one absorbs leftover
+    /// space, a stack stiffens its own tail spacer when the direction is the same.
+    /// Other widgets do nothing.
     #[doc(hidden)]
     fn nested_in_stack(&self, _vertical: bool) {}
 }
@@ -57,46 +58,49 @@ macro_rules! impl_widget {
     };
 }
 
-/// どのウィジェットにもある操作 (表示・非表示 / フォーカス / ツールチップ)。
+/// Operations every widget has (show/hide / focus / tooltip).
 macro_rules! impl_interaction {
     ($t:ty) => {
         impl $t {
-            /// 表示するかどうか。既定は表示。
+            /// Whether it is shown. Shown by default.
             ///
-            /// 隠したものは `Stack` の中では場所を空けない。`Grid` ではマスが残る。
+            /// A hidden widget takes no space in a `Stack`. In a `Grid`, its cell remains.
             pub fn set_visible(&self, visible: bool) {
                 crate::interaction::set_visible(&<$t as Widget>::native_view(self), visible);
             }
 
-            /// [`set_visible`](Self::set_visible) で指定した表示。親が隠れていても
-            /// `true` のまま。
+            /// The visibility set with [`set_visible`](Self::set_visible). Stays `true` even
+            /// if a parent is hidden.
             pub fn is_visible(&self) -> bool {
                 crate::interaction::is_visible(&<$t as Widget>::native_view(self))
             }
 
-            /// キーボードフォーカスを移す。移せたら `true`。
+            /// Moves keyboard focus here. `true` if it moved.
             ///
-            /// 自分が受け取れないとき (コンテナなど) は、中で最初に受け取れるものへ
-            /// 移す。表示前・隠れている・無効なときは `false`。
+            /// If the widget itself cannot take focus (containers, for example), focus moves to
+            /// the first thing inside that can. `false` before it is shown, while hidden, or
+            /// while disabled.
             pub fn request_focus(&self) -> bool {
                 crate::interaction::request_focus(&<$t as Widget>::native_view(self))
             }
 
-            /// ポインターを重ねたときに出す説明。`None` で外す。
+            /// The description shown when the pointer hovers over it. `None` removes it.
             pub fn set_tooltip(&self, text: Option<&str>) {
                 crate::interaction::set_tooltip(&<$t as Widget>::native_view(self), text);
             }
 
-            /// 読み上げソフトに伝える名前。`None` で外す (見えている文字が使われる)。
+            /// The name reported to screen readers. `None` removes it (the visible text is
+            /// used).
             ///
-            /// アイコンだけのボタンのように、見えている文字が無いか意味を
-            /// 表しきれないときに付ける。
+            /// Set it when there is no visible text, or the text does not fully convey the
+            /// meaning, as with icon-only buttons.
             pub fn set_accessible_label(&self, text: Option<&str>) {
                 crate::interaction::set_accessible_label(&<$t as Widget>::native_view(self), text);
             }
 
-            /// 弱参照を作る。通知のクロージャからこのウィジェット自身を触るときに
-            /// 捕まえる (`clone()` で捕まえると循環して解放されない)。
+            /// Creates a weak reference. Capture it when touching this widget from its own
+            /// notification closures (capturing a `clone()` creates a cycle and it is never
+            /// freed).
             pub fn downgrade(&self) -> naui_core::WeakWidget<Self> {
                 let weak = std::rc::Rc::downgrade(&self.0);
                 naui_core::WeakWidget::new(move || weak.upgrade().map(Self))
@@ -105,20 +109,20 @@ macro_rules! impl_interaction {
     };
 }
 
-/// `Widget` を手書きしている型に、大きさの指定だけを足す。
+/// Adds only size specification to types that implement `Widget` by hand.
 macro_rules! impl_sizing {
     ($t:ty) => {
         crate::widgets::impl_interaction!($t);
 
         impl $t {
-            /// 大きさを指定する。呼ぶたびに以前の指定は外れる。
+            /// Sets the size. Each call discards the previous setting.
             ///
-            /// 実際の大きさを決めるのは Auto Layout なので、ここで渡すのは
-            /// 「固定する」「親の余りを受け取る」といった制約だけ。
+            /// The actual size is decided by Auto Layout, so what you pass here is only
+            /// constraints such as "fix it" or "take the parent's leftover space".
             ///
-            /// 交差軸の `Fill` と、グリッドのマス内で広がる指定は、
-            /// コンテナへ入れる**前**に呼ぶこと。AppKit では制約とセルの配置を
-            /// `append` / `attach` の時点で張るため、後から変えても反映されない。
+            /// Call it **before** putting the widget into a container when using `Fill` on the
+            /// cross axis or growing within a grid cell. AppKit places constraints and cell
+            /// placement at the time of `append` / `attach`, so later changes are not applied.
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 let view = <$t as Widget>::native_view(self);
                 crate::layout::apply_sizing(&view, sizing);
@@ -134,15 +138,17 @@ pub(crate) use {impl_interaction, impl_sizing, impl_widget};
 struct LabelInner {
     native: Retained<NSTextField>,
     mtm: MainThreadMarker,
-    /// 折り返しているかどうか。
+    /// Whether it wraps.
     wraps: Cell<bool>,
-    /// 折り返す幅を frame に追従させる中継。折り返していない間は `None`。
+    /// The relay that makes the wrapping width follow the frame. `None` while not
+    /// wrapping.
     ///
-    /// 中継はハンドルと同じ寿命で持つ (`Toast` と同じ決まり)。
+    /// The relay is held with the same lifetime as the handle (the same rule as
+    /// `Toast`).
     width_target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
-/// 編集できないテキスト (NSTextField のラベル構成)。
+/// Non-editable text (an NSTextField in label configuration).
 #[derive(Clone)]
 pub struct Label(Rc<LabelInner>);
 impl_widget!(Label);
@@ -171,10 +177,10 @@ impl Label {
         crate::layout::invalidate_ancestors(&self.0.native);
     }
 
-    /// 文字を選んでコピーできるようにするか。既定は 選べない。
+    /// Whether the text can be selected and copied. Not selectable by default.
     ///
-    /// チャットの発言やエラーの詳細のように、読む人が写し取りたい文字に使う。
-    /// 入力欄と違い、文字は書き換えられない。
+    /// Use it for text readers will want to copy, such as chat messages or error
+    /// details. Unlike a text field, the text cannot be edited.
     pub fn set_selectable(&self, selectable: bool) {
         self.0.native.setSelectable(selectable);
     }
@@ -183,16 +189,15 @@ impl Label {
         self.0.native.isSelectable()
     }
 
-    /// 長い文字列を折り返すかどうか。既定は折り返さない。
+    /// Whether long text wraps. Does not wrap by default.
     ///
-    /// 折り返さないときは 1 行のまま、入りきらない分を末尾の省略記号 (…) で
-    /// 切る (`NSLineBreakMode` の `ByTruncatingTail`)。
+    /// When not wrapping, it stays on one line and whatever does not fit is cut off
+    /// with a trailing ellipsis (…) (`ByTruncatingTail` of `NSLineBreakMode`).
     ///
-    /// 折り返す幅を決めるのは親なので、`Stack` の中では
-    /// [`set_sizing`](Self::set_sizing) で幅を与える
-    /// (`Sizing::fill_width()` など)。`NSTextField` は自分の幅が決まって
-    /// 初めて高さを返せるため、naui は frame の変化を見て
-    /// `preferredMaxLayoutWidth` を追従させている。
+    /// The parent decides the wrapping width, so inside a `Stack` give it a width with
+    /// [`set_sizing`](Self::set_sizing) (`Sizing::fill_width()` and the like).
+    /// `NSTextField` can return a height only once its own width is decided, so naui
+    /// watches frame changes and keeps `preferredMaxLayoutWidth` in step.
     pub fn set_wrap(&self, wrap: bool) {
         self.0.wraps.set(wrap);
         self.0.native.setUsesSingleLineMode(!wrap);
@@ -241,11 +246,11 @@ impl Label {
         *self.0.width_target.borrow_mut() = Some(target);
     }
 
-    /// 文字の大きさと太さの段階。既定は [`TextStyle::Body`]。
+    /// The level of text size and weight. The default is [`TextStyle::Body`].
     ///
-    /// AppKit が段階ごとに用意しているフォントをそのまま使う
-    /// (`preferredFontForTextStyle:`)。級数を決めるのは OS なので、
-    /// システム側の文字サイズの設定にそのまま追従する。
+    /// The fonts AppKit provides for each level are used as is
+    /// (`preferredFontForTextStyle:`). The OS decides the point sizes, so they follow
+    /// the system's text size setting as is.
     pub fn set_style(&self, style: TextStyle) {
         self.0.native.setFont(Some(&preferred_font(style)));
         // フォントが変われば行の高さも変わる。折り返し中なら、いまの幅で
@@ -253,23 +258,24 @@ impl Label {
         self.0.sync_preferred_width();
     }
 
-    /// 文字色の役割。既定は [`TextColor::Default`]。
+    /// The text color role. The default is [`TextColor::Default`].
     ///
-    /// AppKit の意味づけされた色 (`labelColor` など) をそのまま使うので、
-    /// ライト / ダークの切り替えとアクセントカラーの設定に追従する。
+    /// AppKit's semantic colors (`labelColor` and so on) are used as is, so they follow
+    /// light / dark switching and the accent color setting.
     pub fn set_color(&self, color: TextColor) {
         self.0.native.setTextColor(Some(&label_color(color)));
     }
 }
 
-/// 段階に対応する AppKit のフォント。
+/// The AppKit font for the level.
 ///
-/// `NSFontTextStyle` は macOS 11 で入ったもので、それぞれの級数と太さは
-/// システムが決める。
+/// `NSFontTextStyle` was introduced in macOS 11, and the system decides the point
+/// size and weight of each.
 ///
-/// `Caption` に `Caption1` を使わないのは、macOS では 10pt と本文 (13pt) の
-/// 0.77 倍しかなく、補足の文字として読みづらいため。`Subheadline` (11pt) は
-/// 0.85 倍で、Windows (12 / 14px)・Web (`0.85em`) の比とそろう。
+/// `Caption1` is not used for `Caption` because on macOS it is 10pt, only 0.77 times
+/// the body text (13pt), which is hard to read as supplementary text.
+/// `Subheadline` (11pt) is 0.85 times, matching the ratios on Windows (12 / 14px)
+/// and the Web (`0.85em`).
 fn preferred_font(style: TextStyle) -> Retained<NSFont> {
     // SAFETY: 定数はどれも AppKit が持つ `NSFontTextStyle`。options は
     // 型どおりの空辞書 (指定できるのは表示サイズの上限だけで、既定に任せる)。
@@ -286,7 +292,7 @@ fn preferred_font(style: TextStyle) -> Retained<NSFont> {
     }
 }
 
-/// 役割に対応する AppKit の色。
+/// The AppKit color for the role.
 fn label_color(color: TextColor) -> Retained<NSColor> {
     match color {
         TextColor::Default => NSColor::labelColor(),
@@ -299,10 +305,11 @@ fn label_color(color: TextColor) -> Retained<NSColor> {
 }
 
 impl LabelInner {
-    /// 折り返す幅を、いまの frame の幅へそろえる。
+    /// Matches the wrapping width to the current frame's width.
     ///
-    /// 値が変わったときだけ書く。`preferredMaxLayoutWidth` を書くと intrinsic
-    /// size が無効になって次のレイアウトが走るので、毎回書くと回り続ける。
+    /// It is written only when the value changes. Writing `preferredMaxLayoutWidth`
+    /// invalidates the intrinsic size and triggers the next layout, so writing it every
+    /// time would loop forever.
     fn sync_preferred_width(&self) {
         if !self.wraps.get() {
             return;
@@ -322,11 +329,11 @@ impl LabelInner {
 
 struct ButtonInner {
     native: Retained<NSButton>,
-    /// クリック時のクロージャを保持するオブジェクト。
+    /// The object holding the closure for clicks.
     target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
-/// 押しボタン (NSButton)。
+/// A push button (NSButton).
 #[derive(Clone)]
 pub struct Button(Rc<ButtonInner>);
 impl_widget!(Button);
@@ -350,7 +357,7 @@ impl Button {
         self.0.native.setEnabled(enabled);
     }
 
-    /// クリックされたときに呼ばれる。設定し直すと以前のものは外れる。
+    /// Called on click. Setting it again removes the previous one.
     pub fn on_click(&self, f: impl FnMut() + 'static) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let target = ActionTarget::new(mtm, f);
@@ -361,7 +368,7 @@ impl Button {
         *self.0.target.borrow_mut() = Some(target);
     }
 
-    /// クリックを発生させる (テストや自動操作用)。
+    /// Triggers a click (for tests and automation).
     pub fn click(&self) {
         unsafe { self.0.native.performClick(None) };
     }
@@ -374,7 +381,7 @@ struct CheckboxInner {
     target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
-/// チェックボックス (NSButton の Switch タイプ)。
+/// A check box (an NSButton of the Switch type).
 #[derive(Clone)]
 pub struct Checkbox(Rc<CheckboxInner>);
 impl_widget!(Checkbox);
@@ -409,7 +416,7 @@ impl Checkbox {
         self.0.native.setEnabled(enabled);
     }
 
-    /// 状態が変わったときに、変更後の値で呼ばれる。
+    /// Called with the new value when the state changes.
     pub fn on_toggle(&self, mut f: impl FnMut(bool) + 'static) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let native = self.0.native.clone();
@@ -424,7 +431,7 @@ impl Checkbox {
         *self.0.target.borrow_mut() = Some(target);
     }
 
-    /// クリックを発生させる (テストや自動操作用)。
+    /// Triggers a click (for tests and automation).
     pub fn click(&self) {
         unsafe { self.0.native.performClick(None) };
     }
@@ -439,7 +446,8 @@ struct TextInputInner {
     _observer: Retained<FieldObserver>,
 }
 
-/// 1 行テキスト入力 (NSTextField)。日本語入力は AppKit の IME がそのまま効く。
+/// Single-line text input (NSTextField). Japanese input works through AppKit's IME
+/// as is.
 #[derive(Clone)]
 pub struct TextInput(Rc<TextInputInner>);
 crate::keys::impl_key_down!(TextInput);
@@ -475,15 +483,15 @@ impl TextInput {
         self.0.native.setEnabled(enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.handlers.set_change(f);
     }
 
-    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    /// Called with the current text when the user confirms with Enter.
     ///
-    /// IME で変換している間の Enter (変換の確定) では呼ばれない。読み取り
-    /// 専用の間も呼ばれない。
+    /// Not called for an Enter pressed while an IME is composing (which confirms the
+    /// conversion). Not called while read-only either.
     pub fn on_submit(&self, mut f: impl FnMut(&str) + 'static) {
         let native = self.0.native.clone();
         self.0.handlers.set_submit(move |text| {
@@ -493,11 +501,11 @@ impl TextInput {
         });
     }
 
-    /// 読み取り専用にするか。既定は書き換えられる。
+    /// Whether it is read-only. Editable by default.
     ///
-    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
-    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
-    /// 見せる欄に使う。
+    /// While read-only, the text can still be selected and copied, and it still takes
+    /// focus (unlike `set_enabled(false)`, it is not dimmed). Use it for fields that
+    /// show logs or generated output.
     pub fn set_read_only(&self, read_only: bool) {
         self.0.native.setEditable(!read_only);
         self.0.native.setSelectable(true);
@@ -517,10 +525,11 @@ struct PasswordInputInner {
     _observer: Retained<FieldObserver>,
 }
 
-/// パスワード入力 (`NSSecureTextField`)。
+/// Password input (`NSSecureTextField`).
 ///
-/// API の形は [`TextInput`] と同じで、違うのは**打った文字が伏せ字になる**
-/// ことだけ。伏せ字を一時的に外す仕掛けは AppKit に無いので持たない。
+/// The API is the same as [`TextInput`]; the only difference is that **typed
+/// characters are masked**. AppKit has no mechanism to temporarily reveal the text,
+/// so there is none.
 #[derive(Clone)]
 pub struct PasswordInput(Rc<PasswordInputInner>);
 crate::keys::impl_key_down!(PasswordInput);
@@ -538,12 +547,12 @@ impl PasswordInput {
         }))
     }
 
-    /// いま入力されている文字列。
+    /// The text currently entered.
     pub fn text(&self) -> String {
         self.0.native.stringValue().to_string()
     }
 
-    /// 文字列を置き換える。`on_change` は呼ばれない。
+    /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         self.0.native.setStringValue(&NSString::from_str(text));
     }
@@ -558,12 +567,12 @@ impl PasswordInput {
         self.0.native.setEnabled(enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.handlers.set_change(f);
     }
 
-    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    /// Called with the current text when the user confirms with Enter.
     pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
         self.0.handlers.set_submit(f);
     }
@@ -578,11 +587,12 @@ struct SearchInputInner {
     _observer: Retained<FieldObserver>,
 }
 
-/// 検索の入力欄 (`NSSearchField`)。
+/// A search field (`NSSearchField`).
 ///
-/// 虫めがねの印と、打ち始めると出る取り消しボタン (✕) は AppKit が出す。
-/// [`on_change`](SearchInput::on_change) は打つたび、
-/// [`on_search`](SearchInput::on_search) は Enter で確定したときに呼ばれる。
+/// The magnifying glass and the clear button (✕) that appears once you start
+/// typing are shown by AppKit. [`on_change`](SearchInput::on_change) is called on
+/// every keystroke, and [`on_search`](SearchInput::on_search) when the user
+/// confirms with Enter.
 #[derive(Clone)]
 pub struct SearchInput(Rc<SearchInputInner>);
 crate::keys::impl_key_down!(SearchInput);
@@ -600,12 +610,12 @@ impl SearchInput {
         }))
     }
 
-    /// いま入力されている文字列。
+    /// The text currently entered.
     pub fn text(&self) -> String {
         self.0.native.stringValue().to_string()
     }
 
-    /// 文字列を置き換える。`on_change` は呼ばれない。
+    /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         self.0.native.setStringValue(&NSString::from_str(text));
     }
@@ -620,21 +630,22 @@ impl SearchInput {
         self.0.native.setEnabled(enabled);
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.handlers.set_change(f);
     }
 
-    /// Enter で確定したときに、その時点の文字列で呼ばれる。
+    /// Called with the current text when the user confirms with Enter.
     pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
         self.0.handlers.set_submit(f);
     }
 }
 
-/// 1 行の入力欄へデリゲートを張る。
+/// Sets a delegate on a single-line field.
 ///
-/// 打鍵と確定の 2 つの通知で共有するので、生成のときに一度だけ張る。
-/// AppKit の delegate は weak なので、返したデリゲートは呼び出し側で持っておく。
+/// It is shared by the two notifications for typing and confirming, so it is set
+/// exactly once at creation. AppKit delegates are weak, so the caller holds the
+/// returned delegate.
 pub(crate) fn observe_field(
     mtm: MainThreadMarker,
     field: &NSTextField,
@@ -656,7 +667,7 @@ define_class!(
     #[unsafe(super(NSTextField))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiPlaceholderLabel"]
-    /// クリックを下のビューへ通すラベル。
+    /// A label that passes clicks through to the view below.
     struct PlaceholderLabel;
 
     unsafe impl NSObjectProtocol for PlaceholderLabel {}
@@ -685,12 +696,13 @@ impl PlaceholderLabel {
     }
 }
 
-/// 差し替えできる 1 本の「文字が変わった」通知先。
+/// A single replaceable "text changed" handler.
 ///
-/// プレースホルダーの出し入れは naui 側でも購読する必要があるため、
-/// デリゲートは生成時から常に付けておき、アプリのクロージャはここへ入れる。
-/// 通知の最中に `on_change` を呼び直しても二重借用にならないよう、
-/// 呼び出しの間だけ取り出す ([`crate::trampoline::SelectHandler`] と同じ形)。
+/// naui also needs to subscribe to show and hide the placeholder, so the delegate
+/// is attached from creation and the app's closure goes here. So that calling
+/// `on_change` again mid-notification does not double-borrow, it is taken out only
+/// for the duration of the call (the same shape as
+/// [`crate::trampoline::SelectHandler`]).
 #[derive(Clone, Default)]
 struct TextHandler(Rc<RefCell<Option<Box<dyn FnMut(&str)>>>>);
 
@@ -712,20 +724,22 @@ impl TextHandler {
 }
 
 struct TextAreaInner {
-    /// 外から見えるビュー。複数行入力はこのスクロールビューごと 1 つ。
+    /// The view visible from outside. Multi-line input is one widget together with this
+    /// scroll view.
     scroll: Retained<NSScrollView>,
     text_view: Retained<NSTextView>,
     placeholder: Retained<PlaceholderLabel>,
     handler: TextHandler,
-    /// デリゲートは weak 参照なので保持する。
+    /// The delegate is a weak reference, so it is held.
     _observer: Retained<TextViewObserver>,
 }
 
-/// 複数行テキスト入力 (NSScrollView に載せた NSTextView)。
+/// Multi-line text input (an NSTextView in an NSScrollView).
 ///
-/// 改行を含む文字列をそのまま扱い、折り返し・スクロール・IME・取り消しは
-/// AppKit が行う。**スクロールビューは中身に合わせた高さを持たない**ため、
-/// `set_sizing` で高さを指定すること ([`crate::Scroll`] や [`crate::List`] と同じ)。
+/// It handles text including newlines as is, and wrapping, scrolling, IME and undo
+/// are done by AppKit. **A scroll view has no height that fits its contents**, so
+/// set the height with `set_sizing` (the same as [`crate::Scroll`] and
+/// [`crate::List`]).
 #[derive(Clone)]
 pub struct TextArea(Rc<TextAreaInner>);
 crate::keys::impl_key_down!(TextArea);
@@ -822,19 +836,19 @@ impl TextArea {
         }))
     }
 
-    /// いまの文字列。改行はそのまま含まれる。
+    /// The current text. Newlines are included as is.
     pub fn text(&self) -> String {
         self.0.text_view.string().to_string()
     }
 
-    /// 文字列を置き換える。`on_change` は呼ばれない。
+    /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
         self.0.text_view.setString(&NSString::from_str(text));
         // setString: は textDidChange: を出さないので、ここで合わせる。
         self.0.placeholder.setHidden(!text.is_empty());
     }
 
-    /// 何も入力されていないときに薄く出る文字。
+    /// Text shown faintly when nothing has been entered.
     pub fn set_placeholder(&self, text: &str) {
         self.0.placeholder.setStringValue(&NSString::from_str(text));
     }
@@ -851,23 +865,23 @@ impl TextArea {
         self.0.text_view.setTextColor(Some(&color));
     }
 
-    /// 1 文字入力するたびに、その時点の文字列で呼ばれる。
+    /// Called with the current text every time a character is typed.
     ///
-    /// 改行の入力でも呼ばれる。`set_text` では呼ばれない。
+    /// Also called for newlines. Not called for `set_text`.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.handler.set(f);
     }
 
-    /// 中身の `NSTextView`。バックエンド固有の脱出口として公開している。
+    /// The inner `NSTextView`. Public as a backend-specific escape hatch.
     pub fn native_text_view(&self) -> Retained<NSTextView> {
         self.0.text_view.clone()
     }
 
-    /// 読み取り専用にするか。既定は書き換えられる。
+    /// Whether it is read-only. Editable by default.
     ///
-    /// 読み取り専用の間も文字は選んでコピーでき、フォーカスも受け取る
-    /// (`set_enabled(false)` と違い、薄く表示されない)。ログや生成結果を
-    /// 見せる欄に使う。
+    /// While read-only, the text can still be selected and copied, and it still takes
+    /// focus (unlike `set_enabled(false)`, it is not dimmed). Use it for fields that
+    /// show logs or generated output.
     pub fn set_read_only(&self, read_only: bool) {
         self.0.text_view.setEditable(!read_only);
         self.0.text_view.setSelectable(true);
@@ -885,7 +899,7 @@ struct SliderInner {
     target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
-/// スライダー (NSSlider)。
+/// A slider (NSSlider).
 #[derive(Clone)]
 pub struct Slider(Rc<SliderInner>);
 impl_widget!(Slider);
@@ -916,7 +930,7 @@ impl Slider {
         self.0.native.setEnabled(enabled);
     }
 
-    /// つまみが動くたびに、その値で呼ばれる。
+    /// Called with the value every time the knob moves.
     pub fn on_change(&self, mut f: impl FnMut(f64) + 'static) {
         let mtm = MainThreadMarker::from(&*self.0.native);
         let native = self.0.native.clone();
@@ -937,7 +951,7 @@ struct ProgressInner {
     native: Retained<NSProgressIndicator>,
 }
 
-/// 進捗バー (NSProgressIndicator)。
+/// A progress bar (NSProgressIndicator).
 #[derive(Clone)]
 pub struct ProgressBar(Rc<ProgressInner>);
 impl_widget!(ProgressBar);
@@ -954,7 +968,7 @@ impl ProgressBar {
         Self(Rc::new(ProgressInner { native }))
     }
 
-    /// 0.0..=1.0。
+    /// 0.0..=1.0.
     pub fn set_value(&self, value: f64) {
         self.0.native.setDoubleValue(value.clamp(0.0, 1.0));
     }
@@ -963,10 +977,11 @@ impl ProgressBar {
         self.0.native.doubleValue()
     }
 
-    /// 進み具合が分からない処理中の表示 (不確定の進捗) にするか。
+    /// Whether to show work whose progress is unknown (indeterminate progress).
     ///
-    /// `true` の間は値の代わりに動きで「処理中」を示す。戻すと
-    /// [`set_value`](Self::set_value) で置いた値の表示に戻る (値は覚えている)。
+    /// While `true`, motion shows "working" instead of a value. Turning it off returns
+    /// to showing the value set with [`set_value`](Self::set_value) (the value is
+    /// remembered).
     pub fn set_indeterminate(&self, indeterminate: bool) {
         let native = &self.0.native;
         if native.isIndeterminate() == indeterminate {
@@ -989,26 +1004,27 @@ impl ProgressBar {
 
 struct StackInner {
     native: Retained<NSStackView>,
-    /// Auto の子が余りを受け取らないよう、末尾で余りを受けるビュー。
+    /// A view at the end that takes the leftover space, so that Auto children do not.
     tail_spacer: Retained<NSView>,
     tail_spacer_active: Cell<bool>,
-    /// 受け皿を主軸で 0 に留めたい、という制約。優先度で「余りを吸ってよいか」を
-    /// 決める (入れ子のときだけ強くする)。
+    /// The constraint "keep the tail spacer at 0 on the main axis". Its priority decides
+    /// "whether it may absorb leftover space" (strong only when nested).
     tail_zero: Retained<NSLayoutConstraint>,
-    /// 同じ向きの `Stack` の中に入っているか。
+    /// Whether it is inside a `Stack` of the same direction.
     nested: Cell<bool>,
-    /// 主軸に `Fill` を指定されたか。指定されていれば、入れ子でも伸びてよい。
+    /// Whether `Fill` was specified on the main axis. If so, it may grow even when
+    /// nested.
     fill_main: Cell<bool>,
-    /// 子のハンドルを保持し、トランポリンごと生かしておく。
+    /// Holds the children's handles, keeping them alive along with their trampolines.
     children: RefCell<Vec<Box<dyn Widget>>>,
-    /// 交差軸に `Fill` を指定された子を、スタックの幅 / 高さへ結び付ける制約。
-    /// 余白が変わると定数も変わるので保持しておく。
+    /// The constraints tying children with `Fill` on the cross axis to the stack's width
+    /// / height. Kept because the constants change when the padding changes.
     fill_constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
     padding: Cell<Padding>,
     spacing: Cell<f64>,
 }
 
-/// 縦 / 横に子を並べるコンテナ (NSStackView)。
+/// A container that lays out its children vertically / horizontally (NSStackView).
 #[derive(Clone)]
 pub struct Stack(Rc<StackInner>);
 
@@ -1024,11 +1040,12 @@ impl Widget for Stack {
         Box::new(self.clone())
     }
 
-    /// 同じ向きの `Stack` の中に入ったら、受け皿を強く縮める。
+    /// When put into a `Stack` of the same direction, makes its tail spacer shrink
+    /// strongly.
     ///
-    /// そうしないと、外側と内側のどちらが伸びても Auto Layout の解として
-    /// 等価になり、内側が伸びて節の途中に大きな空きができる
-    /// ([`crate::layout::NESTED_TAIL_PRIORITY`])。
+    /// Otherwise, either the outer or the inner one growing would be an equally valid
+    /// Auto Layout solution, and the inner one might grow, leaving a large gap in the
+    /// middle of a section ([`crate::layout::NESTED_TAIL_PRIORITY`]).
     fn nested_in_stack(&self, vertical: bool) {
         if self.is_vertical() == vertical {
             self.0.nested.set(true);
@@ -1038,10 +1055,10 @@ impl Widget for Stack {
 }
 
 impl Stack {
-    /// 大きさを指定する。呼ぶたびに以前の指定は外れる。
+    /// Sets the size. Each call discards the previous setting.
     ///
-    /// 主軸に `Fill` を指定された `Stack` は、入れ子でも余りを受け取ってよい
-    /// (「伸びたい」と言っているのはこちらなので)。
+    /// A `Stack` with `Fill` specified on the main axis may take leftover space even
+    /// when nested (it is the one saying "I want to grow").
     pub fn set_sizing(&self, sizing: naui_core::Sizing) {
         let view = <Self as Widget>::native_view(self);
         crate::layout::apply_sizing(&view, sizing);
@@ -1054,7 +1071,8 @@ impl Stack {
         self.update_tail_priority();
     }
 
-    /// 受け皿が余りを吸ってよいかを、いまの状態から決め直す。
+    /// Decides again from the current state whether the tail spacer may absorb leftover
+    /// space.
     fn update_tail_priority(&self) {
         let hold = self.0.nested.get() && !self.0.fill_main.get();
         self.0.tail_zero.setPriority(if hold {
@@ -1143,7 +1161,7 @@ impl Stack {
         self.invalidate_natural_size();
     }
 
-    /// 交差軸方向に取られる余白の合計。
+    /// The total padding taken in the cross-axis direction.
     fn cross_inset(&self) -> f64 {
         let padding = self.0.padding.get();
         if self.is_vertical() {
@@ -1157,8 +1175,8 @@ impl Stack {
         self.0.native.orientation() == NSUserInterfaceLayoutOrientation::Vertical
     }
 
-    /// NSStackView 自身は intrinsic size を公開しないため、子や余白の変更を
-    /// Grid の Auto 行へ明示的に伝える。
+    /// NSStackView does not expose an intrinsic size itself, so changes to children or
+    /// padding are reported explicitly to a Grid's Auto rows.
     fn invalidate_natural_size(&self) {
         crate::layout::invalidate_ancestors(&self.0.native);
     }
@@ -1177,11 +1195,11 @@ impl Stack {
         self.0.native.setAlignment(attr);
     }
 
-    /// 末尾に子を追加する。
+    /// Appends a child at the end.
     ///
-    /// 子が交差軸に [`naui_core::Length::Fill`] を指定していれば、
-    /// スタックの幅 (縦並びのとき) または高さに合わせて広げる。
-    /// 主軸方向の `Fill` は hugging priority を通じて NSStackView が扱う。
+    /// If the child specifies [`naui_core::Length::Fill`] on the cross axis, it is
+    /// stretched to the stack's width (for vertical stacks) or height. `Fill` on the
+    /// main axis is handled by NSStackView through the hugging priority.
     pub fn append(&self, child: &dyn Widget) {
         let view = child.native_view();
         crate::layout::prepare_child(&view);
@@ -1237,7 +1255,8 @@ impl Stack {
         self.invalidate_natural_size();
     }
 
-    /// 指定した位置へ子を差し込む。`index` が今の数以上なら末尾へ足す。
+    /// Inserts a child at the given position. If `index` is at least the current
+    /// count, it is appended at the end.
     pub fn insert(&self, index: usize, child: &dyn Widget) {
         let mut children = self.take_children();
         let index = index.min(children.len());
@@ -1245,7 +1264,7 @@ impl Stack {
         self.refill(children);
     }
 
-    /// 指定した位置の子を外す。範囲外のときは何もしない。
+    /// Removes the child at the given position. Does nothing if out of range.
     pub fn remove(&self, index: usize) {
         let mut children = self.take_children();
         if index >= children.len() {
@@ -1256,17 +1275,17 @@ impl Stack {
         self.refill(children);
     }
 
-    /// 子をすべて外す。
+    /// Removes every child.
     pub fn clear(&self) {
         drop(self.take_children());
         self.invalidate_natural_size();
     }
 
-    /// 並んでいる子をいったん全部外して返す。
+    /// Removes all the children laid out and returns them.
     ///
-    /// [`append`](Stack::append) は末尾の受け皿・行間・`Fill` の制約を
-    /// 「そのときの並び」に対して張るので、順番が変わる操作は
-    /// 外して積み直す形で行う。
+    /// [`append`](Stack::append) places the tail spacer, spacing and `Fill` constraints
+    /// against "the sequence at that time", so operations that change the order remove
+    /// and re-stack.
     fn take_children(&self) -> Vec<Box<dyn Widget>> {
         let children = std::mem::take(&mut *self.0.children.borrow_mut());
         for child in &children {
@@ -1289,7 +1308,7 @@ impl Stack {
         children
     }
 
-    /// [`take_children`](Stack::take_children) で外した子を積み直す。
+    /// Re-stacks the children removed with [`take_children`](Stack::take_children).
     fn refill(&self, children: Vec<Box<dyn Widget>>) {
         for child in &children {
             self.append(&**child);
@@ -1297,7 +1316,7 @@ impl Stack {
         self.invalidate_natural_size();
     }
 
-    /// 追加済みの子の数。
+    /// The number of children added.
     pub fn len(&self) -> usize {
         self.0.children.borrow().len()
     }

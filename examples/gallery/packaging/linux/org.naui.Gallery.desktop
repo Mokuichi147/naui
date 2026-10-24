@@ -1,7 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=naui UI gallery
-Comment=naui の全ウィジェットを種別ごとに試すデモ
+Comment=A demo for trying every naui widget by kind
+Comment[ja]=naui の全ウィジェットを種別ごとに試すデモ
 Exec=naui-gallery
 Icon=application-x-executable
 Terminal=false

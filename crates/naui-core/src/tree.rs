@@ -1,45 +1,46 @@
-//! ツリーの値型。
+//! Tree value types.
 //!
-//! ツリーは「入れ子になった項目 + 展開状態 + いま選ばれている項目」という
-//! 構造を持つ。リスト ([`crate::ListItem`]) と形は似ているが、
+//! A tree has the structure "nested items + expansion state + the items currently
+//! selected". It resembles a list ([`crate::ListItem`]) in shape, but differs in
+//! that
 //!
-//! - 項目が子を持ち、深さが決まっていない
-//! - 枝を開いたり閉じたりできる (見えている行が変わる)
+//! - items have children, with no fixed depth
+//! - branches can be expanded and collapsed (which changes the visible rows)
 //!
-//! という違いがあるため、別の型として持つ。バックエンドはこれを
-//! `NSOutlineView` の項目や `<li role="treeitem">` へ写す。
+//! so it is a separate type. Backends map it onto `NSOutlineView` items or
+//! `<li role="treeitem">`.
 //!
-//! 項目の識別は**根からの子インデックスの並び (パス)** で行う。
-//! `[0, 2]` は「1 番目の根の 3 番目の子」を指す。空のパスはどの項目も
-//! 指さないので、「選択なし」を表すのに使う。
+//! Items are identified by **the sequence of child indices from the root (a
+//! path)**. `[0, 2]` means "the third child of the first root". An empty path
+//! points at no item, so it is used to mean "no selection".
 
-/// ツリーの 1 項目。
+/// One tree item.
 ///
 /// ```
 /// # use naui_core::TreeItem;
 /// let tree = TreeItem::new("src")
 ///     .expanded(true)
-///     .children([TreeItem::new("main.rs").detail("120 行"), TreeItem::new("lib.rs")]);
+///     .children([TreeItem::new("main.rs").detail("120 lines"), TreeItem::new("lib.rs")]);
 /// assert_eq!(TreeItem::at(&[tree], &[0, 1]).map(|i| i.label.as_str()), Some("lib.rs"));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TreeItem {
-    /// 画面に出る文字列。
+    /// The text shown on screen.
     pub label: String,
-    /// 補助の文字列。指定すると 2 行目に小さく出る。
+    /// Secondary text. When set, it appears small on a second line.
     ///
-    /// **Web だけは 1 行に収まる。** 行の高さをそろえるため、
-    /// `ラベル — 補助` の形で同じ行に続けて出る。
+    /// **Only on the Web does it fit on one line.** To keep row heights uniform, it
+    /// follows on the same row in the form `label — detail`.
     pub detail: Option<String>,
-    /// 選べるかどうか。`false` にすると、**その子孫もまとめて選べなくなる**
-    /// ([`TreeItem::selectable`])。
+    /// Whether it can be selected. Setting `false` **also makes all its descendants
+    /// unselectable** ([`TreeItem::selectable`]).
     pub enabled: bool,
-    /// 最初に開いた状態で出すかどうか。
+    /// Whether it is initially shown expanded.
     ///
-    /// これが効くのは `Tree::set_items` を呼んだ時点だけで、
-    /// その後の開閉はウィジェット側が持つ。
+    /// This takes effect only when `Tree::set_items` is called; after that, the widget
+    /// owns the expansion state.
     pub expanded: bool,
-    /// 子の項目。空なら葉。
+    /// The child items. A leaf if empty.
     pub children: Vec<TreeItem>,
 }
 
@@ -54,25 +55,25 @@ impl TreeItem {
         }
     }
 
-    /// 2 行目に出す補助の文字列を指定する。
+    /// Sets the secondary text shown on the second line.
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
         self
     }
 
-    /// 選べるかどうかを指定する (既定は選べる)。
+    /// Sets whether it can be selected (selectable by default).
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// 最初から開いた状態で出すかどうかを指定する (既定は閉じている)。
+    /// Sets whether it is shown expanded from the start (collapsed by default).
     pub fn expanded(mut self, expanded: bool) -> Self {
         self.expanded = expanded;
         self
     }
 
-    /// 子の項目を差し替える。
+    /// Replaces the child items.
     ///
     /// ```
     /// # use naui_core::TreeItem;
@@ -88,18 +89,18 @@ impl TreeItem {
         self
     }
 
-    /// 子の項目を 1 つ足す。
+    /// Adds one child item.
     pub fn child(mut self, child: impl Into<TreeItem>) -> Self {
         self.children.push(child.into());
         self
     }
 
-    /// 子を持たない (開けない) 項目かどうか。
+    /// Whether the item has no children (cannot be expanded).
     pub fn is_leaf(&self) -> bool {
         self.children.is_empty()
     }
 
-    /// 文字列の並びから、子を持たない項目の列を作る。
+    /// Creates a list of childless items from a sequence of strings.
     ///
     /// ```
     /// # use naui_core::TreeItem;
@@ -114,14 +115,14 @@ impl TreeItem {
         labels.into_iter().map(TreeItem::new).collect()
     }
 
-    /// パスの指す項目を返す。無ければ `None`。
+    /// Returns the item the path points at. `None` if there is none.
     ///
     /// ```
     /// # use naui_core::TreeItem;
-    /// let items = vec![TreeItem::new("親").child(TreeItem::new("子"))];
-    /// assert_eq!(TreeItem::at(&items, &[0, 0]).unwrap().label, "子");
+    /// let items = vec![TreeItem::new("parent").child(TreeItem::new("child"))];
+    /// assert_eq!(TreeItem::at(&items, &[0, 0]).unwrap().label, "child");
     /// assert!(TreeItem::at(&items, &[0, 9]).is_none());
-    /// // 空のパスはどの項目も指さない。
+    /// // An empty path points at no item.
     /// assert!(TreeItem::at(&items, &[]).is_none());
     /// ```
     pub fn at<'a>(items: &'a [TreeItem], path: &[usize]) -> Option<&'a TreeItem> {
@@ -133,11 +134,11 @@ impl TreeItem {
         }
     }
 
-    /// 子孫まで数えた項目の総数。
+    /// The total number of items, descendants included.
     ///
     /// ```
     /// # use naui_core::TreeItem;
-    /// let items = vec![TreeItem::new("親").children(TreeItem::list(["子", "子"]))];
+    /// let items = vec![TreeItem::new("parent").children(TreeItem::list(["child", "child"]))];
     /// assert_eq!(TreeItem::count(&items), 3);
     /// ```
     pub fn count(items: &[TreeItem]) -> usize {
@@ -147,17 +148,17 @@ impl TreeItem {
             .sum()
     }
 
-    /// そのパスの項目を選べるかどうか。
+    /// Whether the item at the path can be selected.
     ///
-    /// 選べるのは、**その項目と、根までのすべての祖先**が
-    /// [`TreeItem::enabled`] のときだけ。枝を無効にすると、その中身も
-    /// まとめて選べなくなる (どのバックエンドでも同じ)。
+    /// It can be selected only when **the item and all its ancestors up to the root**
+    /// are [`TreeItem::enabled`]. Disabling a branch makes its contents unselectable
+    /// too (the same on every backend).
     ///
     /// ```
     /// # use naui_core::TreeItem;
-    /// let items = vec![TreeItem::new("親").enabled(false).child(TreeItem::new("子"))];
+    /// let items = vec![TreeItem::new("parent").enabled(false).child(TreeItem::new("child"))];
     /// assert!(!TreeItem::selectable(&items, &[0]));
-    /// assert!(!TreeItem::selectable(&items, &[0, 0]), "祖先が無効なら子も選べない");
+    /// assert!(!TreeItem::selectable(&items, &[0, 0]), "a disabled ancestor makes the child unselectable");
     /// ```
     pub fn selectable(items: &[TreeItem], path: &[usize]) -> bool {
         let Some((&first, rest)) = path.split_first() else {
@@ -171,13 +172,14 @@ impl TreeItem {
         }
     }
 
-    /// 木を上から順 (深さ優先・親が先) にたどる。
+    /// Walks the tree from the top (depth-first, parents first).
     ///
-    /// 親が子より先に来るので、そのまま「祖先から順に開く」処理に使える。
+    /// Parents come before their children, so it can be used directly for "expand
+    /// starting from the ancestors".
     ///
     /// ```
     /// # use naui_core::TreeItem;
-    /// let items = vec![TreeItem::new("親").child(TreeItem::new("子")), TreeItem::new("隣")];
+    /// let items = vec![TreeItem::new("parent").child(TreeItem::new("child")), TreeItem::new("sibling")];
     /// let mut seen = Vec::new();
     /// TreeItem::walk(&items, |path, item| seen.push((path.to_vec(), item.label.clone())));
     /// assert_eq!(seen[0].0, vec![0]);
@@ -189,14 +191,16 @@ impl TreeItem {
         walk_inner(items, &mut path, &mut f);
     }
 
-    /// 展開状態にしたがって、いま見えている項目のパスを上から順に返す。
+    /// Returns the paths of the currently visible items from the top, according to the
+    /// expansion state.
     ///
-    /// 根の項目は常に見えている。子が見えるのは、親が開いているときだけ。
+    /// Root items are always visible. Children are visible only when their parent is
+    /// expanded.
     ///
     /// ```
     /// # use naui_core::TreeItem;
-    /// let items = vec![TreeItem::new("親").child(TreeItem::new("子"))];
-    /// // どこも開いていなければ、根だけが見える。
+    /// let items = vec![TreeItem::new("parent").child(TreeItem::new("child"))];
+    /// // With nothing expanded, only the roots are visible.
     /// assert_eq!(TreeItem::visible(&items, |_| false), vec![vec![0]]);
     /// assert_eq!(TreeItem::visible(&items, |_| true), vec![vec![0], vec![0, 0]]);
     /// ```

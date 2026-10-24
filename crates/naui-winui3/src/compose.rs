@@ -1,21 +1,21 @@
-//! composable な WinRT クラスを Rust 側で継承するための土台。
+//! The foundation for inheriting composable WinRT classes on the Rust side.
 //!
-//! `Application::Start` に渡せるのは `Application` そのものではなく、
-//! `IApplicationOverrides::OnLaunched` を実装した**合成オブジェクト**
-//! (composed object) である。WinRT では、これを COM の集約 (aggregation) で
-//! 作る。
+//! What can be passed to `Application::Start` is not `Application` itself but a
+//! **composed object** implementing `IApplicationOverrides::OnLaunched`. In WinRT,
+//! it is created through COM aggregation.
 //!
-//! 手順は 3 つ。
+//! There are three steps:
 //!
-//! 1. 基底クラスのアクティベーションファクトリから `IApplicationFactory` の
-//!    ような **合成用ファクトリ**を得る
-//! 2. `CreateInstance(outer, &mut inner, &mut result)` を呼ぶ。`outer` は
-//!    こちらの COM オブジェクト、`inner` は基底クラスの「委譲しない
-//!    IUnknown」、`result` は出来上がった基底クラスのハンドル
-//! 3. `outer` の `QueryInterface` は、自分が実装している分を先に見て、
-//!    知らない IID は `inner` へ回す
+//! 1. Get a **composition factory** such as `IApplicationFactory` from the base
+//!    class's activation factory
+//! 2. Call `CreateInstance(outer, &mut inner, &mut result)`. `outer` is our COM
+//!    object, `inner` the base class's "non-delegating IUnknown", and `result` the
+//!    resulting base class handle
+//! 3. `outer`'s `QueryInterface` checks what it implements itself first, and passes
+//!    unknown IIDs on to `inner`
 //!
-//! [`Compose`] はこの 3 つを包む。継承したい型は [`ChildClass`] を実装する。
+//! [`Compose`] wraps these three. Types that want to inherit implement
+//! [`ChildClass`].
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -26,10 +26,11 @@ use windows_core::{
     IUnknownImpl, Interface, InterfaceRef, Result, RuntimeName, Type, TypeKind, GUID, HRESULT,
 };
 
-/// `IXxxFactory::CreateInstance` の ABI。
+/// The ABI of `IXxxFactory::CreateInstance`.
 ///
-/// 合成用ファクトリはどれもこの形をしている (基底クラスにコンストラクタ
-/// 引数があるときは前に足されるが、naui が継承する `Application` には無い)。
+/// Every composition factory has this shape (when the base class has constructor
+/// arguments they are added in front, but `Application`, which naui inherits, has
+/// none).
 pub type CreateInstanceFn = unsafe extern "system" fn(
     this: *mut c_void,
     outer: *mut c_void,
@@ -37,36 +38,35 @@ pub type CreateInstanceFn = unsafe extern "system" fn(
     result: *mut *mut c_void,
 ) -> HRESULT;
 
-/// 継承する側の型。
+/// The inheriting type.
 ///
-/// 実装する型は `windows_core` の COM オブジェクト
-/// ([`ComObjectInner`]) でもある。`Outer` に置いた vtable の並びと参照数を
-/// [`Compose`] が借りるため、その 2 つを取り出す関数を要求する。
+/// The implementing type is also a `windows_core` COM object ([`ComObjectInner`]).
+/// [`Compose`] borrows the vtable layout and reference count placed in `Outer`, so
+/// functions to take those two out are required.
 pub trait ChildClass: ComObjectInner {
-    /// 継承する基底クラス (`Application` など)。
+    /// The base class being inherited (`Application` and so on).
     type BaseType: RuntimeName + TypeKind + Type<Self::BaseType, Abi = *mut c_void>;
-    /// 基底クラスの合成用ファクトリ (`IApplicationFactory` など)。
+    /// The base class's composition factory (`IApplicationFactory` and so on).
     type FactoryInterface: Interface;
 
-    /// ファクトリの vtable から `CreateInstance` のスロットを取り出す。
+    /// Takes the `CreateInstance` slot out of the factory's vtable.
     fn create_interface_fn(
         vtable: &<Self::FactoryInterface as Interface>::Vtable,
     ) -> CreateInstanceFn;
 
-    /// `Outer` の先頭に置いた識別 vtable への参照。
+    /// A reference to the identity vtable placed at the head of `Outer`.
     ///
-    /// [`Compose`] は、ここを自分の vtable で差し替えて
-    /// `QueryInterface` に割り込む。
+    /// [`Compose`] replaces this with its own vtable to intercept `QueryInterface`.
     fn identity_vtable(outer: &mut Self::Outer) -> &mut &'static IInspectable_Vtbl;
 
-    /// `Outer` が持つ参照数。
+    /// The reference count held by `Outer`.
     fn ref_count(outer: &Self::Outer) -> &WeakRefCount;
 
-    /// COM オブジェクトの形にする。
+    /// Turns it into COM object form.
     fn into_outer(self) -> Self::Outer;
 }
 
-/// 継承した型を基底クラスと合成する。
+/// Composes the inheriting type with the base class.
 #[repr(transparent)]
 pub struct Compose<T> {
     child: T,
@@ -76,15 +76,15 @@ impl<T: ChildClass> Compose<T>
 where
     T::Outer: ComObjectInterface<IInspectable>,
 {
-    /// `child` を基底クラスと合成し、基底クラスのハンドルを返す。
+    /// Composes `child` with the base class and returns the base class handle.
     ///
-    /// 返ったハンドルは合成オブジェクト全体を指す。`child` の寿命は COM の
-    /// 参照数が持つので、呼び出し側が別に保持する必要は無い。
+    /// The returned handle points at the whole composed object. `child`'s lifetime is
+    /// held by the COM reference count, so the caller need not keep it separately.
     pub fn compose(child: T) -> Result<T::BaseType> {
         Self::compose_with(child, &factory::<T::BaseType, T::FactoryInterface>()?)
     }
 
-    /// ファクトリを自分で用意して合成する。
+    /// Composes with a factory prepared by the caller.
     pub fn compose_with(child: T, factory: &T::FactoryInterface) -> Result<T::BaseType> {
         // `IInspectable` へ変換した時点で Box され、参照数 1 で生きる。
         let outer: IInspectable = Self { child }.into();
@@ -106,11 +106,11 @@ where
     }
 }
 
-/// 合成オブジェクトの実体。
+/// The composed object itself.
 ///
-/// 先頭に継承する側の COM オブジェクトを置き、そのうしろに基底クラスの
-/// 「委譲しない IUnknown」を持つ。前半のアドレスがそのままオブジェクトの
-/// アドレスになるので、COM から見ると継承する側そのものに見える。
+/// The inheriting side's COM object is placed at the head, followed by the base
+/// class's "non-delegating IUnknown". The address of the first half is the object's
+/// address, so from COM's point of view it looks like the inheriting side itself.
 #[repr(C)]
 #[doc(hidden)]
 pub struct Composed<T: ComObjectInner> {
