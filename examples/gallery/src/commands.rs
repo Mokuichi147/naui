@@ -38,19 +38,19 @@ impl Command {
 ///
 /// 通知は区切りも数えた位置で届くので、並びをそのまま引けるようにしておく。
 const TOOLBAR: [Option<(ToolbarIcon, &str, Command)>; 4] = [
-    Some((ToolbarIcon::New, "新規", Command::New)),
-    Some((ToolbarIcon::Open, "開く", Command::Open)),
+    Some((ToolbarIcon::New, "New", Command::New)),
+    Some((ToolbarIcon::Open, "Open", Command::Open)),
     None,
-    Some((ToolbarIcon::Save, "保存", Command::Save)),
+    Some((ToolbarIcon::Save, "Save", Command::Save)),
 ];
 
-/// 「ファイル」メニューの並び。区切りは `None` で表す。
+/// 「File」メニューの並び。区切りは `None` で表す。
 const FILE_MENU: [Option<(&str, Command)>; 5] = [
-    Some(("新規", Command::New)),
-    Some(("開く", Command::Open)),
+    Some(("New", Command::New)),
+    Some(("Open", Command::Open)),
     None,
-    Some(("保存", Command::Save)),
-    Some(("別名で保存", Command::SaveAs)),
+    Some(("Save", Command::Save)),
+    Some(("Save As…", Command::SaveAs)),
 ];
 
 /// メニューの位置。
@@ -60,7 +60,7 @@ const HELP: usize = 2;
 
 /// ツールバーとメニューバーを作って `window` へ取り付ける。
 ///
-/// 「表示」メニューには `sections` の名前が並び、選ぶと `go` へその位置を渡す。
+/// 「View」メニューには `sections` の名前が並び、選ぶと `go` へその位置を渡す。
 pub(crate) fn attach(
     ui: &Ui,
     window: &Window,
@@ -81,16 +81,15 @@ pub(crate) fn attach(
         let notice = notice.clone();
         move |command: Command| match command {
             Command::New | Command::Open => {
-                let label = if matches!(command, Command::New) {
-                    "新規"
+                notice.show(if matches!(command, Command::New) {
+                    "Created a new document"
                 } else {
-                    "開く"
-                };
-                notice.show(&format!("{label} を実行しました"));
+                    "Opened a document"
+                });
                 enable_document_commands(&toolbar, &menu_bar);
             }
-            Command::Save => notice.show("保存しました"),
-            Command::SaveAs => notice.show("別名で保存しました"),
+            Command::Save => notice.show("Saved"),
+            Command::SaveAs => notice.show("Saved as a new file"),
         }
     });
 
@@ -114,7 +113,7 @@ pub(crate) fn attach(
                     run(*command);
                 }
             }
-            // 「表示」の先頭から区分の名前が並んでいる。
+            // 「View」の先頭から区分の名前が並んでいる。
             VIEW if item < sections => go(item),
             HELP => about.open(),
             _ => {}
@@ -161,12 +160,12 @@ fn menus(sections: &[&str]) -> Vec<MenuSpec> {
         .chain([
             MenuItem::separator(),
             // 押せない項目は、その場ではできないことを表す。
-            MenuItem::new("全画面").enabled(false),
+            MenuItem::new("Full Screen").enabled(false),
         ]);
     vec![
-        MenuSpec::new("ファイル", file),
-        MenuSpec::new("表示", view),
-        MenuSpec::new("ヘルプ", ["naui について"]),
+        MenuSpec::new("File", file),
+        MenuSpec::new("View", view),
+        MenuSpec::new("Help", ["About naui"]),
     ]
 }
 
@@ -189,9 +188,9 @@ fn enable_document_commands(toolbar: &Toolbar, menu_bar: &MenuBar) {
 }
 
 fn about_dialog(ui: &Ui) -> Result<Dialog> {
-    let about = ui.dialog("naui について")?;
+    let about = ui.dialog("About naui")?;
     about.set_message(
-        "naui は、各 OS (とブラウザ) の実ウィジェットを同じ Rust の API で扱う UI ライブラリです。",
+        "naui is a UI library that drives each platform's native widgets (and the browser's) from one Rust API.",
     );
     Ok(about)
 }

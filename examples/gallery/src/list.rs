@@ -13,21 +13,16 @@ use crate::parts::{self, Notice};
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
-    parts::section(
-        ui,
-        &pane,
-        "List",
-        &["ListItem を set_items で並べます。補足表示の有無、選べない行、単一・複数選択、行の起動 (ダブルクリック / Enter) を確認できます。"],
-    )?;
+    // ListItem を set_items で並べる。行の起動はダブルクリックか Enter、
+    // 行を右クリックすると、その行についての PopupMenu が開く。
+    parts::section(ui, &pane, "List")?;
 
     let detailed = vec![
-        ListItem::new("項目 A").detail("補足テキスト A"),
-        ListItem::new("項目 B").detail("補足テキスト B"),
-        ListItem::new("項目 C").detail("補足テキスト C"),
-        ListItem::new("無効な項目")
-            .detail("この行は選択できません")
-            .enabled(false),
-        ListItem::new("項目 D"),
+        ListItem::new("Inbox").detail("3 unread"),
+        ListItem::new("Drafts").detail("1 draft"),
+        ListItem::new("Sent").detail("Updated today"),
+        ListItem::new("Archive").detail("128 items").enabled(false),
+        ListItem::new("Trash"),
     ];
     let plain: Vec<ListItem> = detailed
         .iter()
@@ -62,14 +57,15 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
                 .filter_map(|&index| detailed.get(index).map(|item| item.label.as_str()))
                 .collect();
             if labels.is_empty() {
-                notice.show("選択: なし");
+                notice.show("Selected: none");
             } else {
-                notice.show(&format!("選択: {}", labels.join(" / ")));
+                notice.show(&format!("Selected: {}", labels.join(" / ")));
             }
         }
     });
 
-    let (mode_row, mode) = parts::choice(ui, "選択方法", &["単一", "複数"])?;
+    // 一覧を操作するものは、一覧のすぐ上に 1 行でまとめる。
+    let (mode_row, mode) = parts::choice(ui, "Selection", &["Single", "Multiple"])?;
     mode.on_select({
         let list = list.clone();
         let last_selection = last_selection.clone();
@@ -82,19 +78,13 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             *last_selection.borrow_mut() = None;
         }
     });
-    pane.append(&mode_row);
-    pane.append(&list);
-    pane.append(&parts::note(
-        ui,
-        "行を右クリックすると、その行についての PopupMenu が開きます。",
-    )?);
 
     list.on_row_activate({
         let notice = notice.clone();
         let detailed = detailed.clone();
         move |index| {
             if let Some(item) = detailed.get(index) {
-                notice.show(&format!("起動: {}", item.label));
+                notice.show(&format!("Activated: {}", item.label));
             }
         }
     });
@@ -122,7 +112,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
                 }
                 1 => {
                     if let Some(item) = detailed.get(row) {
-                        notice.show(&format!("開く: {}", item.label));
+                        notice.show(&format!("Open: {}", item.label));
                     }
                 }
                 2 => {
@@ -142,19 +132,17 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             };
             clicked.set(Some(index));
             popup.set_items(&[
-                PopupItem::new(format!("「{}」を選択", item.label)),
-                PopupItem::new(format!("「{}」を開く", item.label)),
-                PopupItem::new("選択を解除"),
+                PopupItem::new(format!("Select “{}”", item.label)),
+                PopupItem::new(format!("Open “{}”", item.label)),
+                PopupItem::new("Clear selection"),
                 PopupItem::separator(),
-                PopupItem::new("無効なメニュー項目").enabled(false),
+                PopupItem::new("Disabled item").enabled(false),
             ]);
             popup.open_at(&list, at.x, at.y);
         }
     });
 
-    let actions = ui.stack(Orientation::Horizontal)?;
-    actions.set_spacing(8.0);
-    let select_example = ui.button("選択例")?;
+    let select_example = ui.button("Select 1 and 3")?;
     select_example.on_click({
         let list = list.clone();
         let last_selection = last_selection.clone();
@@ -163,7 +151,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             *last_selection.borrow_mut() = None;
         }
     });
-    let detail_toggle = ui.checkbox("補足を表示")?;
+    let detail_toggle = ui.checkbox("Details")?;
     detail_toggle.set_checked(true);
     detail_toggle.on_toggle({
         let list = list.clone();
@@ -173,9 +161,12 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             *last_selection.borrow_mut() = None;
         }
     });
+    let actions = parts::row(ui)?;
+    actions.append(&mode_row);
     actions.append(&select_example);
     actions.append(&detail_toggle);
     pane.append(&actions);
+    pane.append(&list);
 
     build_composed_list(ui, &pane)?;
     build_dynamic_rows(ui, &pane)?;
@@ -185,19 +176,17 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
 }
 
 /// 設定画面のような、先頭・本文・末尾を自由に組んだ行 (`ListRow`)。
+///
+/// 組み立てたウィジェットを set_rows で並べる。行を押すと on_activate で
+/// チェックが切り替わる。
 fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "ListRow",
-        &["組み立てたウィジェットを set_rows で並べます。行を押すと on_activate でチェックが切り替わります。"],
-    )?;
+    parts::section(ui, pane, "ListRow")?;
 
     let mut rows = Vec::new();
     for (checked, title, detail, action) in [
-        (true, "Wi-Fi", "メニューバーに表示", "オプション…"),
-        (false, "Bluetooth", "近くのデバイスを管理", "詳細…"),
-        (true, "バッテリー", "残量を表示", "設定…"),
+        (true, "Wi-Fi", "Show in menu bar", "Options…"),
+        (false, "Bluetooth", "Manage nearby devices", "Details…"),
+        (true, "Battery", "Show percentage", "Settings…"),
     ] {
         let row = ui.grid()?;
         row.set_column_track(0, Track::Auto);
@@ -237,22 +226,18 @@ fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
 }
 
 /// コールバックの中で `Ui` を clone し、行を後から組み立てる。
+///
+/// 押されたところで行の中身を組み立て、set_rows へ渡す。
 fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "後から作る行",
-        &["Ui は clone できます。押されたところで行の中身を組み立て、set_rows へ渡しています。"],
-    )?;
+    parts::section(ui, pane, "Rows built later")?;
 
     let list = ui.list()?;
     list.set_sizing(Sizing::fill_width());
     // 行は積み上げていくので、並びはアプリ側で持つ。
     let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
 
-    let actions = ui.stack(Orientation::Horizontal)?;
-    actions.set_spacing(8.0);
-    let add = ui.button("行を足す")?;
+    let actions = parts::row(ui)?;
+    let add = ui.button("Add row")?;
     add.on_click({
         // コールバックへ持ち込むのは clone した Ui。中身は同じ。
         let ui = ui.clone();
@@ -264,7 +249,7 @@ fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
             let (Ok(content), Ok(check), Ok(label)) = (
                 ui.grid(),
                 ui.checkbox(""),
-                ui.label(&format!("あとから作った行 {index}")),
+                ui.label(&format!("Row {index}")),
             ) else {
                 return;
             };
@@ -285,7 +270,7 @@ fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
     });
     actions.append(&add);
 
-    let clear = ui.button("空にする")?;
+    let clear = ui.button("Clear")?;
     clear.on_click({
         let list = list.clone();
         let rows = rows.clone();
@@ -303,26 +288,21 @@ fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
 
 /// Tree の入れ子・開閉・選べない枝・通知。
 fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "Tree",
-        &["入れ子の項目の開閉と、選べない枝を確認できます。"],
-    )?;
+    parts::section(ui, pane, "Tree")?;
 
     let items = vec![
         TreeItem::new("src").expanded(true).children([
-            TreeItem::new("main.rs").detail("エントリーポイント"),
+            TreeItem::new("main.rs").detail("Entry point"),
             TreeItem::new("lib.rs"),
             TreeItem::new("ui").children([
                 TreeItem::new("list.rs"),
-                TreeItem::new("tree.rs").detail("この画面"),
+                TreeItem::new("tree.rs").detail("This page"),
             ]),
         ]),
         TreeItem::new("docs").child(TreeItem::new("guide.md").detail("12 KB")),
         TreeItem::new("target")
             .enabled(false)
-            .detail("この枝は中身ごと選べません")
+            .detail("Build output")
             .child(TreeItem::new("debug")),
     ];
 
@@ -338,8 +318,8 @@ fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
         let notice = notice.clone();
         let items = items.clone();
         move |path| match TreeItem::at(&items, path) {
-            Some(item) => notice.show(&format!("選択: {} {path:?}", item.label)),
-            None => notice.show("選択: なし"),
+            Some(item) => notice.show(&format!("Selected: {} {path:?}", item.label)),
+            None => notice.show("Selected: none"),
         }
     });
     tree.on_expand({
@@ -349,27 +329,24 @@ fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
             let Some(item) = TreeItem::at(&items, path) else {
                 return;
             };
-            let state = if expanded { "開いた" } else { "閉じた" };
-            notice.show(&format!("{} を{state}", item.label));
+            let state = if expanded { "Expanded" } else { "Collapsed" };
+            notice.show(&format!("{state} {}", item.label));
         }
     });
-    pane.append(&tree);
 
-    let actions = ui.stack(Orientation::Horizontal)?;
-    actions.set_spacing(8.0);
-
-    let expand_all = ui.button("すべて開く")?;
+    let actions = parts::row(ui)?;
+    let expand_all = ui.button("Expand all")?;
     expand_all.on_click({
         let tree = tree.clone();
         move || tree.expand_all()
     });
-    let collapse_all = ui.button("すべて閉じる")?;
+    let collapse_all = ui.button("Collapse all")?;
     collapse_all.on_click({
         let tree = tree.clone();
         move || tree.collapse_all()
     });
     // 閉じた枝の中でも、祖先ごと開いてから選ばれる。
-    let select_deep = ui.button("深い項目を選ぶ")?;
+    let select_deep = ui.button("Select tree.rs")?;
     select_deep.on_click({
         let tree = tree.clone();
         move || tree.select(&[0, 2, 1])
@@ -379,5 +356,6 @@ fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     actions.append(&collapse_all);
     actions.append(&select_deep);
     pane.append(&actions);
+    pane.append(&tree);
     Ok(())
 }

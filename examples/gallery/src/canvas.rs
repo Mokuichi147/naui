@@ -10,20 +10,20 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use std::rc::Rc;
 
 use naui::{
-    Align, Color, EventResponse, Length, Orientation, Path, Point, PointerButton, PointerPhase,
-    Rect, Result, Sizing, Ui, WHEEL_STEP,
+    Align, Color, EventResponse, Length, Path, Point, PointerButton, PointerPhase, Rect, Result,
+    Sizing, Ui, WHEEL_STEP,
 };
 
 use crate::parts::{self, Notice};
 
 /// 棒グラフに出す値。
 const SALES: [(&str, f64); 6] = [
-    ("4 月", 42.0),
-    ("5 月", 58.0),
-    ("6 月", 35.0),
-    ("7 月", 71.0),
-    ("8 月", 64.0),
-    ("9 月", 80.0),
+    ("Apr", 42.0),
+    ("May", 58.0),
+    ("Jun", 35.0),
+    ("Jul", 71.0),
+    ("Aug", 64.0),
+    ("Sep", 80.0),
 ];
 
 /// 図の地色と枠。テーマに関係なく同じ見え方にするため、面の中はアプリが塗る。
@@ -68,15 +68,10 @@ struct ChartState {
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
-    parts::section(
-        ui,
-        &pane,
-        "Canvas",
-        &[
-            "アプリが自分で描く面です。矩形・円・線・パス・文字の命令を Painter に積むと、その環境の 2D API が画素にします。",
-            "棒の上にポインターを置くと色が変わり、主ボタンで押すと選ばれて値が出ます。面の幅を変えると描き直されます。",
-        ],
-    )?;
+    // アプリが自分で描く面。矩形・円・線・パス・文字の命令を Painter に積むと、
+    // その環境の 2D API が画素にする。棒の上にポインターを置くと色が変わり、
+    // 主ボタンで押すと選ばれて値が出る。面の幅を変えると描き直される。
+    parts::section(ui, &pane, "Canvas")?;
 
     let chart = ui.canvas()?;
     chart.set_sizing(
@@ -202,14 +197,9 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     });
     pane.append(&chart);
 
-    parts::group(
-        ui,
-        &pane,
-        "図形",
-        &[
-            "円・楕円・扇形・ベジェ曲線・多角形・破線・透け具合。スライダーで扇形の角度を変えると描き直します。",
-        ],
-    )?;
+    // 円・楕円・扇形・ベジェ曲線・多角形・破線・透け具合。すぐ下のスライダーで
+    // 扇形の角度を変えると描き直す。
+    parts::group(ui, &pane, "Shapes")?;
 
     let angle = Rc::new(Cell::new(0.65));
     let shapes = ui.canvas()?;
@@ -292,21 +282,16 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             shapes.redraw();
         }
     });
-    let slider_row = ui.stack(Orientation::Horizontal)?;
-    slider_row.set_spacing(8.0);
-    slider_row.append(&ui.label("扇形の角度")?);
+    let slider_row = parts::row(ui)?;
+    slider_row.append(&ui.label("Pie")?);
     slider_row.append(&angle_slider);
     pane.append(&slider_row);
 
-    parts::group(
-        ui,
-        &pane,
-        "ホイールとボタン",
-        &[
-            "ホイール (トラックパッドの 2 本指のスクロール) でポインターの位置を中心に拡大縮小します。主ボタンか中ボタンでつかむと動かせて、副ボタン (右クリック) で元に戻ります。",
-            "on_wheel で Handled を返しているので、図の上ではページはスクロールしません。",
-        ],
-    )?;
+    // ホイール (トラックパッドの 2 本指のスクロール) でポインターの位置を中心に
+    // 拡大縮小する。主ボタンか中ボタンでつかむと動かせて、副ボタン (右クリック)
+    // で元に戻る。on_wheel で Handled を返しているので、図の上ではページは
+    // スクロールしない。
+    parts::group(ui, &pane, "Zoom and pan")?;
 
     let view = Rc::new(RefCell::new(ViewState::default()));
     let zoom = ui.canvas()?;

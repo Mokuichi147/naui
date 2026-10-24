@@ -25,25 +25,25 @@ use naui::{
     SidebarSection, Sizing, ToolbarIcon, Track, Ui, Widget,
 };
 
-/// ギャラリーの区分。サイドバーと「表示」メニューの項目はこの順に並ぶので、
+/// ギャラリーの区分。サイドバーと「View」メニューの項目はこの順に並ぶので、
 /// どちらの通知の通し番号も、そのまま区分の位置として使える。
 ///
 /// アイコンはサイドバーに出す。[`ToolbarIcon`] の中から近いものを選んでいる。
 const SECTIONS: [(&str, ToolbarIcon); 11] = [
-    ("基本", ToolbarIcon::Info),
-    ("入力", ToolbarIcon::Edit),
-    ("一覧", ToolbarIcon::Search),
-    ("表", ToolbarIcon::Print),
-    ("ナビゲーション", ToolbarIcon::Forward),
-    ("レイアウト", ToolbarIcon::Copy),
-    ("描画", ToolbarIcon::Cut),
-    ("ファイル", ToolbarIcon::Open),
-    ("メディア", ToolbarIcon::Share),
-    ("ダイアログ", ToolbarIcon::New),
-    ("非同期", ToolbarIcon::Refresh),
+    ("Basics", ToolbarIcon::Info),
+    ("Input", ToolbarIcon::Edit),
+    ("Lists", ToolbarIcon::Search),
+    ("Tables", ToolbarIcon::Print),
+    ("Navigation", ToolbarIcon::Forward),
+    ("Layout", ToolbarIcon::Copy),
+    ("Drawing", ToolbarIcon::Cut),
+    ("Files", ToolbarIcon::Open),
+    ("Media", ToolbarIcon::Share),
+    ("Dialogs", ToolbarIcon::New),
+    ("Async", ToolbarIcon::Refresh),
 ];
 
-/// サイドバーで見出しなしの先頭にまとめる数。残りは「そのほか」へ入れる。
+/// サイドバーで見出しなしの先頭にまとめる数。残りは「More」へ入れる。
 const PRIMARY_SECTIONS: usize = 6;
 
 /// サイドバーの中身。見出しで区切っても通し番号は先頭から数える。
@@ -52,7 +52,7 @@ fn sidebar_sections() -> Vec<SidebarSection> {
     let (primary, rest) = items.split_at(PRIMARY_SECTIONS);
     vec![
         SidebarSection::untitled(primary.to_vec()),
-        SidebarSection::new("そのほか", rest.to_vec()),
+        SidebarSection::new("More", rest.to_vec()),
     ]
 }
 
@@ -77,7 +77,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     root.set_row_track(1, Track::FILL);
 
     // パンくずは画面全体の現在地を示すため、どの区分でも左上に置く。
-    // ギャラリーの題と説明は、最初の区分 (基本) の画面の先頭にだけ出す。
+    // 区分の名前はここに出るので、各画面には題を置かない。
     let crumbs = ui.breadcrumbs()?;
     crumbs.set_items(&NavItem::list(["naui gallery", SECTIONS[0].0]));
     root.attach(&crumbs, GridCell::new(0, 0));
@@ -86,7 +86,7 @@ pub fn build(ui: &Ui) -> Result<()> {
     let notice = parts::Notice::new(ui)?;
 
     // Sidebar もウィンドウに取り付けるもの。選んだ区分の画面だけを下の行へ
-    // 出す。取り外しと開閉は「ナビゲーション」の画面で試せる。
+    // 出す。取り外しと開閉は「Navigation」の画面で試せる。
     let sidebar = ui.sidebar()?;
     sidebar.set_sections(&sidebar_sections());
 
@@ -111,7 +111,7 @@ pub fn build(ui: &Ui) -> Result<()> {
         .map(|pane| scrollable(ui, pane))
         .collect::<Result<Vec<_>>>()?;
 
-    // 区分を移る。サイドバー・「表示」メニュー・パンくずのどこから選んでも
+    // 区分を移る。サイドバー・「View」メニュー・パンくずのどこから選んでも
     // ここを通るので、ほかの 2 つの表示もここでそろえる。
     // サイドバーの `set_selected` は通知しないので、選び直しが回り続けない。
     let go: Rc<dyn Fn(usize)> = Rc::new({
@@ -155,7 +155,7 @@ pub fn build(ui: &Ui) -> Result<()> {
         }
     });
 
-    // サイドバーを外している間も、「表示」メニューから区分を移れる。
+    // サイドバーを外している間も、「View」メニューから区分を移れる。
     let titles = SECTIONS.map(|(title, _)| title);
     commands::attach(ui, &window, &titles, go, &notice)?;
 
