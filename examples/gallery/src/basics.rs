@@ -6,42 +6,20 @@ use naui::{
     TextStyle, Theme, Toggle, Ui, WindowState,
 };
 
-use crate::parts::{self, Disabler, Notice};
+use crate::parts::{self, Disabler, Form, Notice};
 
-/// ギャラリーの題と説明、Label、Button、Checkbox、Toggle、RadioGroup、Slider、
-/// ProgressBar、ComboBox とテーマ、ウィンドウの状態。
-///
-/// 起動したときに最初に出る画面なので、ギャラリー全体の題と説明もここに置く。
+/// Button、Checkbox、Toggle、RadioGroup、Slider、ProgressBar、ComboBox とテーマ、
+/// Label の文字づかい、クリップボード・URL・タイマー、ウィンドウの状態。
 pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
+    let disabler = Disabler::new(ui, &pane)?;
 
-    // 画面の顔になる見出しなので、節の見出しより 1 段大きい段階を指定する。
-    let title = ui.label("naui UI ギャラリー")?;
-    title.set_style(TextStyle::Title);
-    pane.append(&title);
-    pane.append(&parts::note(
-        ui,
-        "UI の種別ごとに、特徴と状態を確認できます。左のサイドバーで種別を選びます。操作の結果は画面の下端にトーストで出ます。",
-    )?);
-
-    let disabler = Disabler::new(
-        ui,
-        &pane,
-        &["ボタンも選ぶ部品も、set_enabled(false) で操作を止められます。選んだ状態はそのまま残ります。"],
-    )?;
-
-    parts::section(
-        ui,
-        &pane,
-        "Label / Button",
-        &["通常・操作中・無効の状態を確認できます。右端のボタンは常に無効です。"],
-    )?;
+    parts::section(ui, &pane, "Controls")?;
+    let form = Form::new(ui, &pane)?;
 
     let count = Rc::new(Cell::new(0usize));
-    let buttons = ui.stack(Orientation::Horizontal)?;
-    buttons.set_spacing(8.0);
-
-    let click = ui.button("クリック")?;
+    let buttons = parts::row(ui)?;
+    let click = ui.button("Click")?;
     disabler.add(&click, Button::set_enabled);
     click.on_click({
         let count = count.clone();
@@ -49,36 +27,139 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
         move || {
             let next = count.get() + 1;
             count.set(next);
-            notice.show(&format!("クリック回数: {next}"));
+            notice.show(&format!("Clicked {next} times"));
         }
     });
-    let reset = ui.button("リセット")?;
+    let reset = ui.button("Reset")?;
     disabler.add(&reset, Button::set_enabled);
     reset.on_click({
         let count = count.clone();
         let notice = notice.clone();
         move || {
             count.set(0);
-            notice.show("クリック回数を 0 に戻しました");
+            notice.show("Click count reset to 0");
         }
     });
-    let disabled = ui.button("無効なボタン")?;
+    // 右端のボタンは、画面のスイッチに関係なくいつも無効。
+    let disabled = ui.button("Disabled")?;
     disabled.set_enabled(false);
     buttons.append(&click);
     buttons.append(&reset);
     buttons.append(&disabled);
-    pane.append(&buttons);
+    form.row(ui, "Button", &buttons)?;
 
-    parts::section(
-        ui,
-        &pane,
-        "Label の文字づかい",
-        &[
-            "大きさは段階で、色は役割で指定します。級数と色そのものは OS が決めるので、\
-             テーマや文字サイズの設定に追従します。",
-        ],
-    )?;
+    let checkbox = ui.checkbox("Enable item")?;
+    disabler.add(&checkbox, Checkbox::set_enabled);
+    checkbox.on_toggle({
+        let notice = notice.clone();
+        move |checked| notice.show(if checked { "Checked" } else { "Unchecked" })
+    });
+    form.row(ui, "Checkbox", &checkbox)?;
 
+    let toggle = ui.toggle("Back up")?;
+    disabler.add(&toggle, Toggle::set_enabled);
+    toggle.on_toggle({
+        let notice = notice.clone();
+        move |on| notice.show(if on { "Backup: on" } else { "Backup: off" })
+    });
+    // set_on はアプリ自身の操作なので on_toggle を呼ばない。
+    // 押しても何も知らせが出ないことで確かめられる。
+    let toggle_reset = ui.button("Turn off")?;
+    disabler.add(&toggle_reset, Button::set_enabled);
+    toggle_reset.on_click({
+        let toggle = toggle.clone();
+        move || toggle.set_on(false)
+    });
+    let toggle_row = parts::row(ui)?;
+    toggle_row.append(&toggle);
+    toggle_row.append(&toggle_reset);
+    form.row(ui, "Toggle", &toggle_row)?;
+
+    let plans = ["Free", "Standard", "Pro"];
+    let plan = ui.radio_group()?;
+    disabler.add(&plan, RadioGroup::set_enabled);
+    plan.set_items(&plans);
+    plan.set_orientation(Orientation::Horizontal);
+    plan.on_select({
+        let notice = notice.clone();
+        move |index| {
+            let name = plans.get(index).copied().unwrap_or("unknown");
+            notice.show(&format!("Plan: {name}"));
+        }
+    });
+    // clear_selection も on_select を呼ばない (set_on と同じ決まり)。
+    let clear_plan = ui.button("Clear")?;
+    disabler.add(&clear_plan, Button::set_enabled);
+    clear_plan.on_click({
+        let plan = plan.clone();
+        move || plan.clear_selection()
+    });
+    let plan_row = parts::row(ui)?;
+    plan_row.append(&plan);
+    plan_row.append(&clear_plan);
+    form.row(ui, "RadioGroup", &plan_row)?;
+
+    // Slider の値を、すぐ下の ProgressBar と右端の値へ映す。
+    let value = parts::readout(ui, "40%")?;
+    let progress = ui.progress_bar()?;
+    progress.set_value(0.4);
+    progress.set_sizing(naui::Sizing::fill_width());
+    let slider = ui.slider(0.0, 1.0)?;
+    disabler.add(&slider, Slider::set_enabled);
+    slider.set_value(0.4);
+    slider.set_sizing(naui::Sizing::fill_width());
+    slider.on_change({
+        let progress = progress.clone();
+        let value = value.clone();
+        move |ratio| {
+            progress.set_value(ratio);
+            value.set_text(&format!("{:.0}%", ratio * 100.0));
+        }
+    });
+    form.row_with(ui, "Slider", &slider, &value)?;
+    let busy = ui.checkbox("Indeterminate")?;
+    busy.on_toggle({
+        let progress = progress.clone();
+        move |on| progress.set_indeterminate(on)
+    });
+    form.row_with(ui, "ProgressBar", &progress, &busy)?;
+
+    let theme = ui.combo_box()?;
+    disabler.add(&theme, ComboBox::set_enabled);
+    theme.set_items(&["System", "Light", "Dark"]);
+    theme.set_selected(theme_index(ui.theme()));
+    let weak_window = window.downgrade();
+    theme.on_select({
+        let notice = notice.clone();
+        move |index| {
+            let Some(selected) = [Theme::System, Theme::Light, Theme::Dark]
+                .get(index)
+                .copied()
+            else {
+                return;
+            };
+            // 切り替わったことは配色そのものでわかるので、知らせるのは失敗だけ。
+            if let Some(window) = weak_window.upgrade() {
+                if let Err(error) = window.set_theme(selected) {
+                    notice.show(&format!("Could not change the theme: {error}"));
+                }
+            }
+        }
+    });
+    form.row(ui, "Theme", &theme)?;
+
+    text_styles(ui, &pane)?;
+    system(ui, &pane, notice)?;
+    window_controls(ui, &pane, window, notice)?;
+    Ok(pane)
+}
+
+/// Label の段階と色。見本の文字そのものが、指定した段階と役割の名前になっている。
+///
+/// 大きさは段階で、色は役割で指定する。級数と色そのものは OS が決めるので、
+/// テーマや文字サイズの設定に追従する。
+fn text_styles(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+    parts::section(ui, pane, "Label")?;
     let styles = ui.stack(Orientation::Vertical)?;
     styles.set_spacing(4.0);
     for (style, name) in [
@@ -86,7 +167,7 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
         (TextStyle::Title, "Title"),
         (TextStyle::Subtitle, "Subtitle"),
         (TextStyle::Heading, "Heading"),
-        (TextStyle::Body, "Body (既定)"),
+        (TextStyle::Body, "Body"),
         (TextStyle::Caption, "Caption"),
     ] {
         let sample = ui.label(name)?;
@@ -112,132 +193,24 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
         colors.append(&sample);
     }
     pane.append(&colors);
+    Ok(())
+}
 
-    parts::section(
-        ui,
-        &pane,
-        "Checkbox",
-        &["入り切りを 2 択で持ちます。切り替えると通知が届きます。"],
-    )?;
-    let checkbox = ui.checkbox("項目を有効にする")?;
-    disabler.add(&checkbox, Checkbox::set_enabled);
-    checkbox.on_toggle({
-        let notice = notice.clone();
-        move |checked| {
-            notice.show(if checked {
-                "チェック状態: オン"
-            } else {
-                "チェック状態: オフ"
-            });
-        }
-    });
-    pane.append(&checkbox);
+/// クリップボード・URL・1 秒ごとのタイマー。
+fn system(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
+    parts::section(ui, pane, "System")?;
+    let form = Form::new(ui, pane)?;
 
-    parts::section(
-        ui,
-        &pane,
-        "Toggle",
-        &["チェックボックスと同じ 2 択を、スイッチの形で切り替えます。"],
-    )?;
-    let toggle = ui.toggle("バックアップを作る")?;
-    disabler.add(&toggle, Toggle::set_enabled);
-    toggle.on_toggle({
-        let notice = notice.clone();
-        move |on| {
-            notice.show(if on {
-                "バックアップ: 入"
-            } else {
-                "バックアップ: 切"
-            });
-        }
-    });
-    // set_on はアプリ自身の操作なので on_toggle を呼ばない。
-    // 押しても何も知らせが出ないことで確かめられる。
-    let toggle_reset = ui.button("切に戻す")?;
-    disabler.add(&toggle_reset, Button::set_enabled);
-    toggle_reset.on_click({
-        let toggle = toggle.clone();
-        move || toggle.set_on(false)
-    });
-    pane.append(&toggle);
-    pane.append(&toggle_reset);
-
-    parts::section(
-        ui,
-        &pane,
-        "RadioGroup",
-        &["候補を並べて 1 つだけ選べます。選び直すと前の選択は外れます。"],
-    )?;
-    let plans = ["無料", "標準", "上位"];
-    let plan = ui.radio_group()?;
-    disabler.add(&plan, RadioGroup::set_enabled);
-    plan.set_items(&plans);
-    plan.on_select({
-        let notice = notice.clone();
-        move |index| {
-            let name = plans.get(index).copied().unwrap_or("不明");
-            notice.show(&format!("プラン: {name}"));
-        }
-    });
-    // clear_selection も on_select を呼ばない (set_on と同じ決まり)。
-    let clear_plan = ui.button("選択を外す")?;
-    disabler.add(&clear_plan, Button::set_enabled);
-    clear_plan.on_click({
-        let plan = plan.clone();
-        move || plan.clear_selection()
-    });
-    pane.append(&plan);
-    pane.append(&clear_plan);
-
-    parts::section(
-        ui,
-        &pane,
-        "Slider / ProgressBar",
-        &["Slider の値を ProgressBar と数値表示へ反映します。"],
-    )?;
-    let value_status = parts::readout(ui, "値: 40%")?;
-    let progress = ui.progress_bar()?;
-    progress.set_value(0.4);
-    let slider = ui.slider(0.0, 1.0)?;
-    disabler.add(&slider, Slider::set_enabled);
-    slider.set_value(0.4);
-    slider.on_change({
-        let progress = progress.clone();
-        let value_status = value_status.clone();
-        move |value| {
-            progress.set_value(value);
-            value_status.set_text(&format!("値: {:.0}%", value * 100.0));
-        }
-    });
-    pane.append(&slider);
-    pane.append(&progress);
-    pane.append(&value_status);
-    let busy = ui.checkbox("処理中 (進み具合が分からない表示)")?;
-    busy.on_toggle({
-        let progress = progress.clone();
-        move |on| progress.set_indeterminate(on)
-    });
-    pane.append(&busy);
-
-    parts::section(
-        ui,
-        &pane,
-        "クリップボード / URL / タイマー",
-        &[
-            "下の文字は選んでコピーできます。ボタンでクリップボードへ書き込み、読み戻せます。",
-            "タイマーは 1 秒ごとに数えます。",
-        ],
-    )?;
-    let quote = ui.label("naui は各 OS のネイティブ UI を 1 つの API から扱います。")?;
+    // 選んでコピーできる文。ボタンからも同じ文を書き込む。
+    let quote = ui.label("naui drives each platform's native UI from one API.")?;
     quote.set_selectable(true);
     quote.set_wrap(true);
     quote.set_sizing(naui::Sizing::fill_width());
-    pane.append(&quote);
+    form.row(ui, "Selectable", &quote)?;
 
-    let clipboard_status = parts::readout(ui, "クリップボード: -")?;
-    let clipboard_row = ui.stack(Orientation::Horizontal)?;
-    clipboard_row.set_spacing(8.0);
-    let copy = ui.button("文をコピー")?;
+    let pasted = parts::readout(ui, "")?;
+    let clipboard_row = parts::row(ui)?;
+    let copy = ui.button("Copy text")?;
     copy.on_click({
         let clipboard = ui.clipboard();
         let quote = quote.clone();
@@ -245,132 +218,94 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
         move || {
             let notice = notice.clone();
             clipboard.set_text(&quote.text(), move |result| match result {
-                Ok(()) => notice.show("クリップボードへ書き込みました"),
-                Err(error) => notice.show(&format!("書き込めませんでした: {error}")),
+                Ok(()) => notice.show("Copied to the clipboard"),
+                Err(error) => notice.show(&format!("Could not copy: {error}")),
             });
         }
     });
-    let paste = ui.button("クリップボードを読む")?;
+    let paste = ui.button("Read clipboard")?;
     paste.on_click({
         let clipboard = ui.clipboard();
-        let status = clipboard_status.clone();
+        let pasted = pasted.clone();
         move || {
-            let status = status.clone();
+            let pasted = pasted.clone();
             clipboard.read_text(move |text| {
-                status.set_text(&format!(
-                    "クリップボード: {}",
-                    text.as_deref().unwrap_or("(文字なし)")
-                ));
+                pasted.set_text(text.as_deref().unwrap_or("(no text)"));
             });
         }
     });
-    let open = ui.button("naui のリポジトリを開く")?;
+    clipboard_row.append(&copy);
+    clipboard_row.append(&paste);
+    clipboard_row.append(&pasted);
+    form.row(ui, "Clipboard", &clipboard_row)?;
+
+    let open = ui.button("Open the naui repository")?;
     open.on_click({
         let ui = ui.clone();
         let notice = notice.clone();
         move || {
             if let Err(error) = ui.open_url("https://github.com/mokuichi147/naui") {
-                notice.show(&format!("開けませんでした: {error}"));
+                notice.show(&format!("Could not open: {error}"));
             }
         }
     });
-    clipboard_row.append(&copy);
-    clipboard_row.append(&paste);
-    clipboard_row.append(&open);
-    pane.append(&clipboard_row);
-    pane.append(&clipboard_status);
+    form.row(ui, "URL", &open)?;
 
-    let elapsed = parts::readout(ui, "経過: 0 秒")?;
+    let elapsed = parts::readout(ui, "0 s")?;
     let seconds = Rc::new(Cell::new(0u32));
     ui.tasks().every(std::time::Duration::from_secs(1), {
         let elapsed = elapsed.clone();
         move || {
             seconds.set(seconds.get() + 1);
-            elapsed.set_text(&format!("経過: {} 秒", seconds.get()));
+            elapsed.set_text(&format!("{} s", seconds.get()));
         }
     });
-    pane.append(&elapsed);
-
-    parts::section(
-        ui,
-        &pane,
-        "ComboBox / Theme",
-        &["ドロップダウンからアプリの配色を選べます。"],
-    )?;
-    let theme = ui.combo_box()?;
-    disabler.add(&theme, ComboBox::set_enabled);
-    theme.set_items(&["システム", "ライト", "ダーク"]);
-    theme.set_selected(theme_index(ui.theme()));
-    let weak_window = window.downgrade();
-    theme.on_select({
-        let notice = notice.clone();
-        move |index| {
-            let Some(selected) = [Theme::System, Theme::Light, Theme::Dark]
-                .get(index)
-                .copied()
-            else {
-                return;
-            };
-            // 切り替わったことは配色そのものでわかるので、知らせるのは失敗だけ。
-            if let Some(window) = weak_window.upgrade() {
-                if let Err(error) = window.set_theme(selected) {
-                    notice.show(&format!("配色を変えられません: {error}"));
-                }
-            }
-        }
-    });
-    pane.append(&theme);
-
-    window_controls(ui, &pane, window, notice)?;
-    Ok(pane)
+    form.row(ui, "Timer", &elapsed)?;
+    Ok(())
 }
 
 /// ウィンドウの最大化・最小化・全画面・位置・大きさを変えられるかどうか。
+///
+/// タイトルバーのボタンや Esc で変えたときも、右端の状態が追いかける。
+/// Linux と Web は位置を扱えず、Web は全画面だけ。扱えないことは押したときに
+/// トーストで知らせる。
 fn window_controls(
     ui: &Ui,
     pane: &naui::Stack,
     window: &naui::Window,
     notice: &Notice,
 ) -> Result<()> {
-    parts::section(
-        ui,
-        pane,
-        "Window",
-        &[
-            "ウィンドウを最大化・最小化・全画面にし、位置を読みます。Linux と Web は位置を扱えず、Web は全画面だけです。",
-            "タイトルバーのボタンや Esc で変えたときも、下の状態が追いかけます。",
-        ],
-    )?;
+    parts::section(ui, pane, "Window")?;
+    let form = Form::new(ui, pane)?;
 
-    let readout = parts::readout(ui, &state_text(window.state()))?;
+    let state = parts::readout(ui, state_name(window.state()))?;
     window.on_state_change({
-        let readout = readout.clone();
-        move |state| readout.set_text(&state_text(state))
+        let state = state.clone();
+        move |value| state.set_text(state_name(value))
     });
 
-    let states = ui.stack(Orientation::Horizontal)?;
-    states.set_spacing(8.0);
-    for (title, state) in [
-        ("最大化", WindowState::Maximized),
-        ("最小化", WindowState::Minimized),
-        ("全画面", WindowState::Fullscreen),
-        ("元に戻す", WindowState::Normal),
+    let states = parts::row(ui)?;
+    for (title, value) in [
+        ("Maximize", WindowState::Maximized),
+        ("Minimize", WindowState::Minimized),
+        ("Full screen", WindowState::Fullscreen),
+        ("Restore", WindowState::Normal),
     ] {
         let button = ui.button(title)?;
         let weak_window = window.downgrade();
         button.on_click(move || {
             if let Some(window) = weak_window.upgrade() {
-                window.set_state(state);
+                window.set_state(value);
             }
         });
         states.append(&button);
     }
-    pane.append(&states);
-    pane.append(&readout);
+    // 状態はボタンの並びの続きに置く。値の列へ置くと、ボタンから離れた右端へ行く。
+    states.append(&state);
+    form.row(ui, "State", &states)?;
 
-    let places = ui.stack(Orientation::Horizontal)?;
-    places.set_spacing(8.0);
-    let read = ui.button("位置を読む")?;
+    let places = parts::row(ui)?;
+    let read = ui.button("Read")?;
     read.on_click({
         let weak_window = window.downgrade();
         let notice = notice.clone();
@@ -379,13 +314,13 @@ fn window_controls(
                 return;
             };
             match window.position() {
-                Some((x, y)) => notice.show(&format!("左上は ({x:.0}, {y:.0})")),
-                None => notice.show("この環境ではウィンドウの位置を扱えません"),
+                Some((x, y)) => notice.show(&format!("Top left is at ({x:.0}, {y:.0})")),
+                None => notice.show("Window position is not available here"),
             }
         }
     });
     places.append(&read);
-    let corner = ui.button("左上へ動かす")?;
+    let corner = ui.button("Move to top left")?;
     corner.on_click({
         let weak_window = window.downgrade();
         move || {
@@ -395,9 +330,9 @@ fn window_controls(
         }
     });
     places.append(&corner);
-    pane.append(&places);
+    form.row(ui, "Position", &places)?;
 
-    let resizable = ui.checkbox("縁をつかんで大きさを変えられる")?;
+    let resizable = ui.checkbox("Resizable")?;
     resizable.set_checked(window.is_resizable());
     resizable.on_toggle({
         let weak_window = window.downgrade();
@@ -407,18 +342,17 @@ fn window_controls(
             }
         }
     });
-    pane.append(&resizable);
+    form.row(ui, "Size", &resizable)?;
     Ok(())
 }
 
-fn state_text(state: WindowState) -> String {
-    let name = match state {
-        WindowState::Normal => "通常",
-        WindowState::Maximized => "最大化",
-        WindowState::Minimized => "最小化",
-        WindowState::Fullscreen => "全画面",
-    };
-    format!("状態: {name}")
+fn state_name(state: WindowState) -> &'static str {
+    match state {
+        WindowState::Normal => "Normal",
+        WindowState::Maximized => "Maximized",
+        WindowState::Minimized => "Minimized",
+        WindowState::Fullscreen => "Full screen",
+    }
 }
 
 fn theme_index(theme: Theme) -> usize {
