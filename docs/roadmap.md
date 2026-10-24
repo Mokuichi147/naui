@@ -17,6 +17,9 @@ they are checked again on all four platforms (including OS and toolkit versions)
 4. **How heavy the implementation is, and whether it forms the basis for other
    items.**
 
+Within each priority, items are listed in the order they are to be done. Items
+already implemented are removed from this page.
+
 Items marked *(adaptive)* belong to the [adaptive layout](#adaptive-layout) track.
 That track has its own order and proceeds alongside the other items, rather than
 waiting until every P1 item is done.
@@ -47,10 +50,11 @@ one or two panes.
 
 Each step builds on the ones before it.
 
-1. **Contract for changes after adding to a container** (P0). The base for moving
+1. **Main-axis `Fill` and `Spacer` in Windows's `Stack`** (P0). Without it, the
+   same layout does not come out the same on Windows.
+2. **Contract for changes after adding to a container** (P0). The base for moving
    children around safely.
-2. **`Stack::set_orientation`** (P0).
-3. **Main-axis `Fill` and `Spacer` in Windows's `Stack`** (P0).
+3. **`Stack::set_orientation`** (P0).
 4. **Automatic collapsing of `Sidebar`** (P1). Uses only the native mechanisms, so
    it does not wait for step 5.
 5. **Size-based arrangements** (P1).
@@ -61,27 +65,14 @@ decided after investigating.
 
 ## P0: Do now
 
-Small, painful to lack, and with counterparts on all four platforms, or the
-foundation the adaptive layout track builds on.
+Gaps that ordinary apps run into right away and that all four platforms have native
+counterparts for, plus the foundation the adaptive layout track builds on.
 
-- [x] **`on_submit` for input fields** (`TextInput`, `PasswordInput`,
-      `NumberInput`). Confirming with Enter is the first thing any form needs. The
-      rule from `SearchInput`, "Enter during IME composition is not counted", can be
-      reused as is.
-- [x] **Notifications for focus entering and leaving** (`on_focus_change`). Used
-      for input validation and saving when leaving a field.
-- [x] **Controlling window state.** Position, maximizing, minimizing, full
-      screen, whether the window can be resized, and reading that state. The Web
-      only gets the Fullscreen API, and the rest is documented as unsupported.
-      Added as `Window::set_state` / `state` / `on_state_change` (`WindowState`),
-      `set_position` / `position`, and `set_resizable` / `is_resizable`. On Linux,
-      GTK4 has no position API, so `position` is `None`.
-- [x] **Right-click and double-click on `List`.** Combined with
-      `PopupMenu::open_at`, right-click gives per-row context menus.
-      (`List::on_context_menu` and `List::on_row_activate`; activation also arrives
-      with Enter.)
-- [x] **The wheel on `Canvas`, and distinguishing mouse buttons.** Just additions
-      to `PointerEvent`, forming the basis for zooming and panning.
+- [ ] *(adaptive)* **Make main-axis `Fill` and `Spacer` work in Windows's
+      `Stack`.** `StackPanel` does not distribute leftover space, so even pushing
+      buttons to the right edge with a `Spacer` does not work on Windows today. The
+      `Stack` is rebuilt on `Grid`. This removes the first row of the
+      [platform differences](known-limitations.md#platform-differences-at-a-glance).
 - [ ] *(adaptive)* **A contract for changes after adding to a container.** Settings
       made after a child is added (`set_sizing`, `set_spacing`, placement within a
       `Grid` cell) take effect, and a child moved to another container gets the
@@ -91,19 +82,48 @@ foundation the adaptive layout track builds on.
 - [ ] *(adaptive)* **`Stack::set_orientation`.** Switching between vertical and
       horizontal after creation. `NSStackView.orientation`, `GtkOrientable`,
       `Orientation` on WinUI panels, CSS `flex-direction`.
-- [ ] *(adaptive)* **Make main-axis `Fill` and `Spacer` work in Windows's
-      `Stack`.** `StackPanel` does not distribute leftover space, so the `Stack` is
-      rebuilt on `Grid`. This removes the first row of the
-      [platform differences](known-limitations.md#platform-differences-at-a-glance).
+- [ ] **Nested menus, menu items with check marks, and function-key shortcuts**
+      (`MenuBar` and `PopupMenu`). Needed for even an ordinary View menu. All four
+      platforms have them natively; for now this is a limitation on naui's side
+      only.
+- [ ] **Spinning indicators** (Spinner). Small, and needed wherever something
+      loads. `NSProgressIndicator`, `AdwSpinner`, `ProgressRing`. The DOM has no
+      counterpart, so the Web shows an indeterminate `<progress>` and the difference
+      is documented.
 
 ## P1: Do next
 
-Medium weight and frequently requested.
+Medium weight and frequently requested, or a smaller gap between platforms.
 
+- [ ] **Receiving file drops** (from the OS onto widgets and windows).
+      `registerForDraggedTypes`, `GtkDropTarget`, `AllowDrop`, the DOM's `drop`.
 - [ ] *(adaptive)* **Automatic collapsing of `Sidebar`** when the window narrows.
       `NavigationView`'s `PaneDisplayMode::Auto`, `NSSplitViewItem`'s
       `canCollapseFromWindowResize`, `AdwBreakpoint` (with `AdwOverlaySplitView`),
       CSS container queries.
+- [ ] **Saving and restoring window position and size.** Window state control
+      (`Window::set_state`, `set_position` and so on) is already in, so this is
+      small now. Linux and the Web restore only the size and state.
+- [ ] **Popovers** (attached to a widget, showing arbitrary content). `NSPopover`,
+      `GtkPopover`, `Flyout`, HTML's `popover` attribute. Showing one beside a
+      widget on the Web needs CSS anchor positioning, so the decision waits until
+      browser support has been checked.
+- [ ] **Dialogs with arbitrary content.** `ContentDialog`, `AdwDialog`, sheets,
+      `<dialog>`. Much of the construction can be shared with popovers.
+- [ ] **Row windowing for large `List`s.** Extend `Table`'s mechanism
+      (`row_window` in naui-core) to `List`.
+- [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** Today they
+      are distributed evenly there. `NSGridView` and `GtkGrid` have no weights, so
+      naui distributes the space itself.
+- [ ] **Button roles** (primary buttons, destructive actions). macOS's
+      `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
+      WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
+      counterpart, so the differences are documented.
+- [ ] **Separators and framed groups.** `NSBox`, `GtkSeparator` / `GtkFrame`.
+      WinUI has no standalone separator, so what to substitute is investigated
+      first.
+- [ ] **More image sources** (bytes in memory, SVG, pixel buffers). For now only
+      paths and URLs. The Web can use Blob URLs.
 - [ ] *(adaptive)* **Size-based arrangements.** Declaring in advance which layout
       to use above and below a width threshold. naui-core computes the thresholds,
       and the switching is left to `TwoPaneView`, `AdwBreakpointBin` and CSS
@@ -114,34 +134,8 @@ Medium weight and frequently requested.
       list is needed. `TwoPaneView`, `AdwNavigationSplitView`, `NSSplitView`, CSS
       container queries. The native ones are mostly two-pane, so how far three
       panes can go is checked when work starts.
-
-- [ ] **Nested menus, menu items with check marks, and function-key shortcuts**
-      (`MenuBar` and `PopupMenu`). All four platforms have them natively; for now
-      this is a limitation on naui's side only.
-- [ ] **Receiving file drops** (from the OS onto widgets and windows).
-      `registerForDraggedTypes`, `GtkDropTarget`, `AllowDrop`, the DOM's `drop`.
-- [ ] **Popovers** (attached to a widget, showing arbitrary content). `NSPopover`,
-      `GtkPopover`, `Flyout`, HTML's `popover` attribute. Showing one beside a
-      widget on the Web needs CSS anchor positioning, so the decision waits until
-      browser support has been checked.
-- [ ] **Dialogs with arbitrary content.** `ContentDialog`, `AdwDialog`, sheets,
-      `<dialog>`. Much of the construction can be shared with popovers.
-- [ ] **More image sources** (bytes in memory, SVG, pixel buffers). For now only
-      paths and URLs. The Web can use Blob URLs.
 - [ ] **Rich text** (mixing bold, colors and links within a line).
       `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`.
-- [ ] **Row windowing for large `List`s.** Extend `Table`'s mechanism
-      (`row_window`) to `List`.
-- [ ] **Spinning indicators** (Spinner). `NSProgressIndicator`, `AdwSpinner`,
-      `ProgressRing`. The DOM has no counterpart, so the Web shows an indeterminate
-      `<progress>` and the difference is documented.
-- [ ] **Separators and framed groups.** `NSBox`, `GtkSeparator` / `GtkFrame`.
-      WinUI has no standalone separator, so what to substitute is investigated
-      first.
-- [ ] **Button roles** (primary buttons, destructive actions). macOS's
-      `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
-      WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
-      counterpart, so the differences are documented.
 
 ## P2: Do if there is time
 
@@ -151,6 +145,13 @@ Heavy, or supported on a limited set of platforms.
       testing APIs (`click`, `activate`, and so on) for app developers. Also
       provide a way to resize windows in tests, so apps can check their adaptive
       layouts.
+- [ ] **Relax the limits on dialogs and toasts** (number of buttons, toast queueing,
+      position). Decided after dialogs with arbitrary content, which may cover part
+      of it.
+- [ ] **Images on the clipboard.**
+- [ ] **Desktop notifications.** macOS needs a bundle, Linux a `.desktop` file, and
+      Windows registration, so the conditions for each distribution method need to
+      be documented.
 - [ ] *(adaptive)* **`Flow`** (a container that wraps its children onto new lines).
       `GtkFlowBox` and CSS `flex-wrap` exist, but WinUI only has
       `VariableSizedWrapGrid` with fixed-size cells (`WrapPanel` is in the
@@ -158,37 +159,30 @@ Heavy, or supported on a limited set of platforms.
       layout. Which platforms need naui to lay it out itself is investigated first.
 - [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
       gradients). Text width measurement is hard on WinUI, so it is postponed.
+- [ ] **Multiple selection in `Tree`, and placing widgets in items.**
 - [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
       so it is heavy.
-- [ ] **Multiple selection in `Tree`, and placing widgets in items.**
-- [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.**
-      `NSGridView` and `GtkGrid` have no weights, so naui distributes the space
-      itself.
-- [ ] **Desktop notifications.** macOS needs a bundle, Linux a `.desktop` file, and
-      Windows registration, so the conditions for each distribution method need to
-      be documented.
-- [ ] **Images on the clipboard.**
-- [ ] **Saving and restoring window position and size.** The P0 window state
-      control it builds on is in, so this builds on top of it.
-- [ ] **Relax the limits on dialogs and toasts** (number of buttons, toast queueing,
-      position).
 
 ## P3: Decide after investigating
 
 Not yet clear whether they fit the approach, or whether they are needed.
 
-- [ ] **Tray icons.** GTK4 has none and needs DBus StatusNotifierItem. WinUI has
-      none either, so it would be built with Win32, and the Web has no counterpart.
-- [ ] **Drag and drop between widgets** (rearranging `List` or `Tree`).
-- [ ] **Printing.**
-- [ ] **Single instance, file associations, URL schemes.** Strongly tied to
-      distribution and packaging.
-- [ ] **Font choosers, and an always-visible calendar widget.**
+- [ ] **Drag and drop between widgets** (rearranging `List` or `Tree`). Builds on
+      receiving file drops.
 - [ ] **Layout for right-to-left languages, and a translation mechanism.** First
       check how much the native toolkits fix automatically.
+- [ ] **Single instance, file associations, URL schemes.** Strongly tied to
+      distribution and packaging.
+- [ ] **Tray icons.** GTK4 has none and needs DBus StatusNotifierItem. WinUI has
+      none either, so it would be built with Win32, and the Web has no counterpart.
+- [ ] **Printing.**
+- [ ] **Font choosers, and an always-visible calendar widget.**
 - [ ] **WebView, a code editor, Markdown rendering, charts.** These seem better
       suited to separate crates than to the core.
+- [ ] *(adaptive)* **Swapping whole compositions by size** (a different widget tree
+      per size class). First check whether size-based arrangements and
+      `AdaptivePanes` leave real cases uncovered.
 - [ ] *(adaptive)* **Switching navigation by size** (`Sidebar`, a narrow rail,
       a bottom bar). The rail is covered on Windows by `Sidebar`'s automatic
       collapsing (`LeftCompact`). The bottom bar is a phone pattern, so it waits
@@ -197,9 +191,6 @@ Not yet clear whether they fit the approach, or whether they are needed.
       exposes this (the Viewport Segments API), and it cannot be checked in CI, so
       for now this is limited to investigating how the information could be
       obtained.
-- [ ] *(adaptive)* **Swapping whole compositions by size** (a different widget tree
-      per size class). First check whether size-based arrangements and
-      `AdaptivePanes` leave real cases uncovered.
 
 ## Not planned
 
