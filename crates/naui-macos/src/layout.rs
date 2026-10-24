@@ -21,7 +21,7 @@ use objc2_app_kit::{
     NSViewBoundsDidChangeNotification, NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
-    NSArray, NSNotification, NSNotificationCenter, NSObject, NSPoint, NSRange, NSString,
+    NSArray, NSNotification, NSNotificationCenter, NSObject, NSPoint, NSRange, NSRect, NSString,
 };
 
 use crate::widgets::{impl_widget, Widget};
@@ -292,6 +292,7 @@ type GridGrows = Rc<RefCell<Vec<(Retained<NSLayoutConstraint>, GridCell)>>>;
 
 struct ContentSizedGridState {
     row_tracks: Rc<RefCell<Vec<Track>>>,
+    column_tracks: Rc<RefCell<Vec<Track>>>,
     cells: GridCells,
     grows: GridGrows,
     updating: Cell<bool>,
@@ -314,8 +315,9 @@ define_class!(
                 return;
             }
             let rows = self.update_auto_row_heights();
+            let columns = self.update_auto_column_widths();
             let widths = self.update_grow_widths();
-            if rows || widths {
+            if rows || columns || widths {
                 let _: () = unsafe { msg_send![super(self), layout] };
                 self.invalidateIntrinsicContentSize();
             }
@@ -328,11 +330,13 @@ impl ContentSizedGridView {
     fn new(
         mtm: MainThreadMarker,
         row_tracks: Rc<RefCell<Vec<Track>>>,
+        column_tracks: Rc<RefCell<Vec<Track>>>,
         cells: GridCells,
         grows: GridGrows,
     ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(ContentSizedGridState {
             row_tracks,
+            column_tracks,
             cells,
             grows,
             updating: Cell::new(false),
@@ -373,6 +377,55 @@ impl ContentSizedGridView {
                     changed = true;
                 }
                 _ => {}
+            }
+        }
+        changed
+    }
+
+    /// Auto 列の幅を、その列に載せた中身の幅に合わせる。
+    ///
+    /// NSGridView には余りをどの列へ渡すかの決まりが無く、子の hugging だけでは
+    /// 再レイアウト (テーマの切り替えなど) のあとに Auto 列が余りを吸うことがある。
+    /// 行の高さと同じく、列の幅もレイアウトのたびに中身から引き直して決める。
+    ///
+    /// 数えるのは、Auto 列だけにまたがるセル (span へ均等に配る)。`Fill` や
+    /// `Fixed` の列にもまたがるセルは、そちらの列が幅を受け持つので数えない。
+    /// 中身の無い Auto 列は幅 0 にする。「中身に合わせる」の番兵値のままだと、
+    /// 空の列が余りを受け取れてしまう。
+    fn update_auto_column_widths(&self) -> bool {
+        let tracks = self.ivars().column_tracks.borrow();
+        let cells = self.ivars().cells.borrow();
+        let columns = (self.numberOfColumns().max(0) as usize).min(tracks.len());
+        let auto_only = |cell: &GridCell| {
+            let end = cell.column.saturating_add(cell.column_span.max(1));
+            end <= columns && tracks[cell.column..end].iter().all(|t| *t == Track::Auto)
+        };
+        let mut changed = false;
+        for index in 0..columns {
+            if tracks[index] != Track::Auto {
+                continue;
+            }
+            let desired = cells
+                .iter()
+                .filter(|(view, cell)| {
+                    !view.isHidden()
+                        && index >= cell.column
+                        && index < cell.column.saturating_add(cell.column_span.max(1))
+                        && auto_only(cell)
+                })
+                .map(|(view, cell)| {
+                    // 列の幅は枠ではなく位置合わせの矩形で決まる (ラベルなら
+                    // 左右 2pt 内側)。枠の幅で決めると列が広がってしまう。
+                    let fitting = NSRect::new(NSPoint::ZERO, view.fittingSize());
+                    let width = view.alignmentRectForFrame(fitting).size.width;
+                    let span = cell.column_span.max(1) as f64;
+                    (width / span).max(0.0)
+                })
+                .fold(0.0, f64::max);
+            let column = self.columnAtIndex(index as isize);
+            if (column.width() - desired).abs() > 0.5 {
+                column.setWidth(desired);
+                changed = true;
             }
         }
         changed
@@ -426,12 +479,17 @@ impl ContentSizedGridView {
         widths
     }
 
-    /// 幅を決め打ちした列なら、その幅。中身に合わせる列 (`Auto` / `Fill`) は `None`。
+    /// 幅を決めた列なら、その幅。中身に合わせる列 (`Fill`) は `None`。
+    ///
+    /// `Fixed` の列のほか、[`Self::update_auto_column_widths`] が幅を決めた
+    /// `Auto` の列もここに入る。幅 0 の列 (中身の無い `Auto` 列など) も幅を
+    /// 決めた列として扱う。そうしないと、またがるセルの幅がその列へ配られ、
+    /// ほかの列が要る幅を多めに見積もってしまう。
     fn fixed_column_width(&self, index: usize) -> Option<f64> {
         let width = self.columnAtIndex(index as isize).width();
         // `NSGridViewSizeForContent` は「中身に合わせる」を表す番兵値。
         let content = unsafe { objc2_app_kit::NSGridViewSizeForContent };
-        (width != content && width.is_finite() && width > 0.0).then_some(width)
+        (width != content && width.is_finite() && width >= 0.0).then_some(width)
     }
 
     /// このセルが使えない幅 (ほかの列の内容と、外周・列間の余白)。
@@ -460,6 +518,7 @@ struct GridInner {
     native: Retained<NSGridView>,
     children: RefCell<Vec<Box<dyn Widget>>>,
     row_tracks: Rc<RefCell<Vec<Track>>>,
+    column_tracks: Rc<RefCell<Vec<Track>>>,
     cells: GridCells,
     /// 横に伸びたい希望。セルの取り分に合わせて定数を引き直すため保持する。
     grows: GridGrows,
@@ -476,15 +535,22 @@ impl_widget!(Grid);
 impl Grid {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let row_tracks = Rc::new(RefCell::new(Vec::new()));
+        let column_tracks = Rc::new(RefCell::new(Vec::new()));
         let cells = Rc::new(RefCell::new(Vec::new()));
         let grows: GridGrows = Rc::new(RefCell::new(Vec::new()));
-        let content_sized =
-            ContentSizedGridView::new(mtm, row_tracks.clone(), cells.clone(), grows.clone());
+        let content_sized = ContentSizedGridView::new(
+            mtm,
+            row_tracks.clone(),
+            column_tracks.clone(),
+            cells.clone(),
+            grows.clone(),
+        );
         let native = content_sized.clone().into_super();
         Self(Rc::new(GridInner {
             native,
             children: RefCell::new(Vec::new()),
             row_tracks,
+            column_tracks,
             cells,
             grows,
             content_sized,
@@ -598,6 +664,7 @@ impl Grid {
         self.0.cells.borrow_mut().push((view, cell));
         self.0.children.borrow_mut().push(child.boxed_clone());
         self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_auto_column_widths();
         self.0.content_sized.update_grow_widths();
     }
 
@@ -678,6 +745,7 @@ impl Grid {
         self.remove_at(cell);
         self.apply_padding();
         self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_auto_column_widths();
         self.0.content_sized.update_grow_widths();
     }
 
@@ -695,6 +763,7 @@ impl Grid {
         }
         self.apply_padding();
         self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_auto_column_widths();
         self.0.content_sized.update_grow_widths();
     }
 
@@ -754,6 +823,7 @@ impl Grid {
     /// 列の幅の決め方。
     pub fn set_column_track(&self, index: usize, track: Track) {
         self.ensure_size(index + 1, 0);
+        self.0.column_tracks.borrow_mut()[index] = track;
         let column = self.0.native.columnAtIndex(index as isize);
         match track {
             // NSGridViewSizeForContent は「中身に合わせる」を表す番兵値。
@@ -770,6 +840,7 @@ impl Grid {
                 column.setXPlacement(NSGridCellPlacement::Fill);
             }
         }
+        self.0.content_sized.update_auto_column_widths();
     }
 
     /// 行の高さの決め方。
@@ -818,6 +889,7 @@ impl Grid {
         let empty = NSArray::from_slice(&[]);
         while (self.0.native.numberOfColumns() as usize) < columns {
             self.0.native.addColumnWithViews(&empty);
+            self.0.column_tracks.borrow_mut().push(Track::Auto);
         }
         while (self.0.native.numberOfRows() as usize) < rows {
             self.0.native.addRowWithViews(&empty);
