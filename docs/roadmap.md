@@ -22,7 +22,8 @@ already implemented are removed from this page.
 
 Items marked *(adaptive)* belong to the [adaptive layout](#adaptive-layout) track.
 That track has its own order and proceeds alongside the other items, rather than
-waiting until every P1 item is done.
+waiting until every P1 item is done. Items marked *(i18n)* belong to
+[internationalization](#internationalization).
 
 ## Adaptive layout
 
@@ -63,10 +64,41 @@ Each step builds on the ones before it.
 `Flow` (P2) does not depend on these and can start at any time. The items in P3 are
 decided after investigating.
 
+## Internationalization
+
+Making apps that show text in the user's language and follow its writing
+direction.
+
+### Approach
+
+- **naui handles only what needs the native side.** That is the OS's preferred
+  languages and their changes, the writing direction, and naui's own strings.
+  Translating the app's strings is left to existing libraries (Fluent, gettext,
+  ICU4X for dates and numbers), so apps that do not translate gain no dependencies.
+- **No binding mechanism in the core.** Updating widget strings when the language
+  changes is done by the app (or an optional crate) holding widgets with
+  `downgrade()` and calling `set_text`. This keeps the core free of a reactive
+  system, in line with keeping declarative UI out of it.
+- **Native strings follow the OS language.** Strings the native controls carry
+  themselves (file dialogs, date pickers, text field context menus) use the OS's UI
+  language, and most platforms cannot switch it per app while running. Switching
+  languages inside a running app therefore leaves those in the OS language, so the
+  default is to follow the OS language, and the differences are documented.
+
 ## P0: Do now
 
 Gaps that ordinary apps run into right away and that all four platforms have native
 counterparts for, plus the foundation the adaptive layout track builds on.
+
+- [ ] *(i18n)* **Make naui's own strings follow the OS language.** naui shows a
+      few strings it chose itself, and they are fixed in Japanese or English
+      regardless of the user: the default macOS main menu ("編集", "取り消す",
+      "{app} を終了" and so on), the `Sidebar` toggle's tooltip and label on the Web
+      and Linux ("サイドバー"), the accessible names of `Breadcrumbs` and
+      `Pagination` on the Web, and the "OK" of `DialogButtons::ok()`. naui-core
+      gets a small table of these strings, chosen by the OS's preferred languages
+      and falling back to English. Where the native side already provides a
+      translated string, that is used instead.
 
 - [ ] *(adaptive)* **Make main-axis `Fill` and `Spacer` work in Windows's
       `Stack`.** `StackPanel` does not distribute leftover space, so even pushing
@@ -130,6 +162,10 @@ Medium weight and frequently requested, or a smaller gap between platforms.
       drawing with Direct2D onto a Composition drawing surface, the way the other
       three platforms rasterize. The last would also bring DirectWrite text
       measurement, which broadening `Canvas`'s vocabulary waits on.
+- [ ] *(i18n)* **Write naui's error messages in English.** `Error`'s display
+      ("… に失敗しました") and the context strings passed to it are Japanese, while
+      the documentation is in English. These are messages for developers, so they
+      are not translated, only made English (like `#[deprecated]` notes).
 - [ ] **Button roles** (primary buttons, destructive actions). macOS's
       `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
       WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
@@ -151,6 +187,13 @@ Medium weight and frequently requested, or a smaller gap between platforms.
       panes can go is checked when work starts.
 - [ ] **Rich text** (mixing bold, colors and links within a line).
       `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`.
+- [ ] *(i18n)* **The OS's preferred languages, and notification when they
+      change.** The basis for an app choosing which translation to show.
+      `NSLocale.preferredLanguages` (`NSCurrentLocaleDidChangeNotification`),
+      `GetUserPreferredUILanguages` (`WM_SETTINGCHANGE` with `intl`),
+      `navigator.languages` (`languagechange`). Linux decides the language from
+      environment variables at startup (`g_get_language_names`), so there is no
+      change notification there.
 
 ## P2: Do if there is time
 
@@ -180,14 +223,26 @@ Heavy, or supported on a limited set of platforms.
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
       so it is heavy.
 
+- [ ] *(i18n)* **Writing direction** (`LayoutDirection` with `Auto`, `Ltr` and
+      `Rtl`). `userInterfaceLayoutDirection`, `gtk_widget_set_default_direction`,
+      `FlowDirection`, the `dir` attribute. First check how much each native
+      toolkit mirrors automatically, and which widgets must not be mirrored
+      (`Canvas`, number inputs, media controls).
+- [ ] *(i18n)* **Telling the native side the app's language.** The language
+      affects which glyphs are chosen for CJK text and how screen readers
+      pronounce it (`lang` on the Web, `FrameworkElement.Language` on WinUI).
+      Which platforms can take it per window or per widget is investigated first.
+- [ ] *(i18n)* **A guide for translating apps.** Show how to combine Fluent with
+      naui (loading translations, re-setting strings via `downgrade()` when the
+      language changes). Whether an optional `naui-i18n` crate is needed is
+      decided after writing it.
+
 ## P3: Decide after investigating
 
 Not yet clear whether they fit the approach, or whether they are needed.
 
 - [ ] **Drag and drop between widgets** (rearranging `List` or `Tree`). Builds on
       receiving file drops.
-- [ ] **Layout for right-to-left languages, and a translation mechanism.** First
-      check how much the native toolkits fix automatically.
 - [ ] **Single instance, file associations, URL schemes.** Strongly tied to
       distribution and packaging.
 - [ ] **Tray icons.** GTK4 has none and needs DBus StatusNotifierItem. WinUI has
