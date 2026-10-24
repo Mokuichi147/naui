@@ -21,10 +21,10 @@ provides.
 The same Gallery code running on each platform. Each one looks the way its OS
 normally does.
 
-| Windows 11 Pro 25H2 (Windows App SDK 2.5.1) | macOS Tahoe 26.6.2 |
+| Windows 11 Pro 26H2 (Windows App SDK 2.5.1) | macOS Golden Gate 27.0.1 |
 | --- | --- |
 | ![Gallery running on Windows (WinUI 3)](docs/screenshots/windows.webp) | ![Gallery running on macOS (AppKit)](docs/screenshots/macos.webp) |
-| **Ubuntu 24.04.5 LTS** | **Safari 26.6.2** |
+| **Ubuntu 26.04.1 LTS** | **Safari 27.0.1** |
 | ![Gallery running on Linux (GTK4 / libadwaita)](docs/screenshots/linux.webp) | ![Gallery running on the Web (DOM)](docs/screenshots/web.webp) |
 
 ## Features
