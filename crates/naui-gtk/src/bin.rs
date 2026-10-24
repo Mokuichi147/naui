@@ -250,6 +250,10 @@ impl SizeBin {
         self.apply_expand(false, height.expand);
         self.set_halign(width.align);
         self.set_valign(height.align);
+        // Grid へ置いた後に大きさを変えても、マスでの寄せ方は保つ。
+        if self.parent().is_some_and(|parent| parent.is::<gtk::Grid>()) {
+            self.place_in_grid();
+        }
         self.queue_resize();
     }
 
@@ -306,19 +310,19 @@ impl SizeBin {
 
     /// Places it in a grid cell the way the other backends do.
     ///
-    /// Axes that fit their content ([`Length::Auto`]) go to the **start** of the
-    /// cell horizontally and to the **center** vertically (`NSGridView`'s
-    /// `Leading` / `Center`, WinUI's `Left` / `Center`, CSS Grid's
-    /// `justify-items: start` / `align-items: center`). Without this they stay at
-    /// `wrap`'s `Center`, and in a column of names of different lengths each name
-    /// would sit in the middle of the column. Axes with their own size are left
-    /// alone.
+    /// Axes that do not stretch to the cell go to the **start** of the cell
+    /// horizontally and to the **center** vertically (`NSGridView`'s `Leading` /
+    /// `Center`, WinUI's `Left` / `Center`, CSS Grid's `justify-items: start` /
+    /// `align-items: center`). Without this they stay at `Center` (from `wrap`, or
+    /// from [`Length::Fixed`] and capped [`Length::Fill`]), and in a column of
+    /// names of different lengths each name would sit in the middle of the column.
+    /// Only [`Length::Fill`] without a maximum stretches and is left alone.
     pub(crate) fn place_in_grid(&self) {
         let sizing = self.sizing();
-        if matches!(sizing.width, Length::Auto) {
+        if !(sizing.width.is_fill() && sizing.max_width.is_none()) {
             self.set_halign(gtk::Align::Start);
         }
-        if matches!(sizing.height, Length::Auto) {
+        if !(sizing.height.is_fill() && sizing.max_height.is_none()) {
             self.set_valign(gtk::Align::Center);
         }
     }

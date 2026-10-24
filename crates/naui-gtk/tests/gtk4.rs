@@ -249,6 +249,10 @@ fn main() {
             grid_places_auto_children_at_the_start,
         ),
         (
+            "グリッドの大きさを決めた子もマスの先頭に置かれる",
+            grid_places_sized_children_at_the_start,
+        ),
+        (
             "グリッドの固定幅の列が子の幅を決める",
             grid_fixed_track_sets_width,
         ),
@@ -2441,6 +2445,35 @@ fn grid_places_auto_children_at_the_start(ui: &Ui) -> Result<()> {
         assert_eq!(bin.halign(), gtk::Align::Start);
         assert_eq!(bin.valign(), gtk::Align::Center);
     }
+    Ok(())
+}
+
+/// Children with a size of their own (`Fixed`, or `Fill` with a maximum) also go
+/// to the start of the cell, as on the other backends. Only `Fill` without a
+/// maximum stretches. The placement holds when the size is set after attaching.
+fn grid_places_sized_children_at_the_start(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+
+    let fixed = ui.text_input("")?;
+    fixed.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
+    grid.attach(&fixed, GridCell::new(0, 0));
+    let capped = ui.text_input("")?;
+    capped.set_sizing(Sizing::fill_width().max_width(300.0));
+    grid.attach(&capped, GridCell::new(0, 1));
+    for bin in [bin_of(&fixed), bin_of(&capped)] {
+        assert_eq!(bin.halign(), gtk::Align::Start);
+        assert_eq!(bin.valign(), gtk::Align::Center);
+    }
+
+    // 置いた後に大きさを決めても、マスの先頭のまま。
+    let later = ui.text_input("")?;
+    grid.attach(&later, GridCell::new(0, 2));
+    later.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
+    assert_eq!(bin_of(&later).halign(), gtk::Align::Start);
+    // 置いた後に Fill にすれば、マスの幅まで伸びる。
+    later.set_sizing(Sizing::fill_width());
+    assert_eq!(bin_of(&later).halign(), gtk::Align::Fill);
     Ok(())
 }
 
