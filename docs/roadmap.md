@@ -18,7 +18,8 @@ they are checked again on all four platforms (including OS and toolkit versions)
    items.**
 
 Within each priority, items are listed in the order they are to be done. Items
-already implemented are removed from this page.
+implemented but not yet released are checked, and they are removed from this page
+once a release includes them.
 
 Items marked *(adaptive)* belong to the [adaptive layout](#adaptive-layout) track.
 That track has its own order and proceeds alongside the other items, rather than
@@ -105,12 +106,11 @@ counterparts for, plus the foundation the adaptive layout track builds on.
       buttons to the right edge with a `Spacer` does not work on Windows today. The
       `Stack` is rebuilt on `Grid`. This removes the first row of the
       [platform differences](known-limitations.md#platform-differences-at-a-glance).
-- [ ] **Stop polling the scroll position in Windows's `Table`.** A `Table` with
-      more rows than the windowing threshold reads its scroll position every 50 ms
-      for as long as it exists, even when nothing moves, and the rows built can lag
-      behind fast scrolling by up to one interval. It was written before
-      `ScrollViewer.ViewChanged` was in the projection. It is there now (`Scroll`
-      uses it), so `Table` switches to it too.
+- [x] **Stop polling the scroll position in Windows's `Table`.** A `Table` with
+      more rows than the windowing threshold read its scroll position every 50 ms
+      for as long as it existed, even when nothing moved, and the rows built could
+      lag behind fast scrolling by up to one interval. It now follows
+      `ScrollViewer.ViewChanged`, the same as `Scroll`.
 - [ ] *(adaptive)* **A contract for changes after adding to a container.** Settings
       made after a child is added (`set_sizing`, `set_spacing`, placement within a
       `Grid` cell) take effect, and a child moved to another container gets the
