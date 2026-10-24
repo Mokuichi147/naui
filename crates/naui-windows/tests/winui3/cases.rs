@@ -165,6 +165,10 @@ const CASES: &[Case] = &[
         window_size_is_the_content_row,
     ),
     (
+        "短いラベルのスイッチとラジオが既定の最小幅を占めない",
+        short_labels_drop_the_minimum_width,
+    ),
+    (
         "ui.window と set_size の大きさは size と同じ中身の大きさ",
         window_set_size_is_the_content_size,
     ),
@@ -1351,6 +1355,96 @@ fn window_size_is_the_content_row(ui: &Ui) -> Result<()> {
         assert!(
             near(last, size),
             "最後の通知 {last:?} が size {size:?} と同じこと"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A switch and radio buttons with short labels do not take WinUI's default minimum
+/// width (`ToggleSwitch` 154 / `RadioButton` 120).
+///
+/// With the minimum left in place, the control after a switch, and the items of a
+/// horizontal radio group, end up far apart. naui removes it with an implicit style
+/// based on Fluent's default style, the same as for `CheckBox`. Without the base, the
+/// switch falls back to a template that keeps 154 even with `MinWidth` = 0, so the
+/// laid-out width is checked rather than the property. Horizontal radio items are
+/// separated by WinUI's `RadioButtonsColumnSpacing` (7).
+///
+/// The style is applied once the controls are in a shown window, so messages are
+/// pumped until they are laid out. In environments where they never load (CI), it
+/// passes without checking.
+fn short_labels_drop_the_minimum_width(ui: &Ui) -> Result<()> {
+    let window = ui.window("最小幅", 420.0, 200.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let toggle = ui.toggle("On")?;
+    let radio = ui.radio_group()?;
+    radio.set_items(&["A", "B"]);
+    radio.set_orientation(Orientation::Horizontal);
+    stack.append(&toggle);
+    stack.append(&radio);
+    window.set_child(&stack);
+    window.show();
+
+    let switch = native::<ToggleSwitch>(&toggle);
+    let buttons: Vec<FrameworkElement> = {
+        let panel = native::<StackPanel>(&radio)
+            .Children()
+            .expect("ラジオグループの子");
+        (0..panel.Size().unwrap_or(0))
+            .map(|index| {
+                panel
+                    .GetAt(index)
+                    .expect("ラジオボタン")
+                    .cast::<FrameworkElement>()
+                    .expect("ラジオボタンは FrameworkElement")
+            })
+            .collect()
+    };
+    let laid_out = |element: &FrameworkElement| {
+        element.IsLoaded().unwrap_or(false) && element.ActualWidth().unwrap_or(0.0) > 0.0
+    };
+    let switch_element: FrameworkElement = switch.cast().expect("ToggleSwitch は FrameworkElement");
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        laid_out(&switch_element) && buttons.iter().all(laid_out)
+    });
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out(&switch_element) {
+            println!("     (コントロールが読み込まれない環境なので、確かめずに通す)");
+            return;
+        }
+        assert_eq!(buttons.len(), 2, "項目の数だけラジオボタンがあること");
+        // MinWidth の値でなく、実際に占める幅で確かめる。Fluent の既定スタイル
+        // を引き継げていないと、MinWidth が 0 でもテンプレートが 154 を取る。
+        let switch_width = switch.ActualWidth().unwrap_or(f64::NAN);
+        assert!(
+            switch_width > 0.0 && switch_width < 154.0,
+            "ToggleSwitch が既定の最小幅 154 より狭いこと: {switch_width}"
+        );
+        for button in &buttons {
+            let width = button.ActualWidth().unwrap_or(f64::NAN);
+            assert!(
+                width > 0.0 && width < 120.0,
+                "RadioButton が既定の最小幅 120 より狭いこと: {width}"
+            );
+        }
+        // 横に並べた項目の間は、WinUI の RadioButtons と同じ 7 だけ空く。
+        let left = |element: &FrameworkElement| {
+            element
+                .cast::<UIElement>()
+                .and_then(|element| element.ActualOffset())
+                .map(|offset| f64::from(offset.X))
+                .unwrap_or(f64::NAN)
+        };
+        let first_end = left(&buttons[0]) + buttons[0].ActualWidth().unwrap_or(f64::NAN);
+        let gap = left(&buttons[1]) - first_end;
+        assert!(
+            (gap - 7.0).abs() < 0.5,
+            "横に並べたラジオの項目の間が 7 空くこと: {gap}"
         );
     }));
     window.close();

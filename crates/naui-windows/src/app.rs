@@ -15,9 +15,10 @@ use naui_winui3::Microsoft::UI::Xaml::Markup::{
 use naui_winui3::Microsoft::UI::Xaml::XamlTypeInfo::XamlControlsXamlMetaDataProvider;
 use naui_winui3::Microsoft::UI::Xaml::{
     Application, IApplicationFactory, IApplicationOverrides, IApplicationOverrides_Impl,
-    IApplicationOverrides_Vtbl, LaunchActivatedEventArgs,
+    IApplicationOverrides_Vtbl, LaunchActivatedEventArgs, Style,
 };
 use naui_winui3::{ChildClass, Compose, CreateInstanceFn};
+use windows::Foundation::PropertyValue;
 use windows_core::{
     Array, ComObject, ComObjectInner, ComObjectInterface, IInspectable, IInspectable_Vtbl,
     IUnknown, IUnknownImpl, Interface, InterfaceRef, Ref, GUID, HRESULT, HSTRING,
@@ -57,8 +58,10 @@ where
         // 決める。ここで上書きすると、実機の WinUI 3 アプリと見た目がずれる。
         let fluent = XamlControlsResources::new()?
             .cast::<naui_winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
-        // 例外はレイアウトに関わる下限だけ。WinUI 既定の CheckBox は
-        // MinWidth=120 で、ラベルが短くても (空でも) 120px ぶんの幅を占める。
+        // 例外はレイアウトに関わる下限だけ。WinUI 既定の CheckBox と
+        // RadioButton は MinWidth=120、ToggleSwitch は MinWidth=154
+        // (`ToggleSwitchThemeMinWidth`) で、ラベルが短くても (空でも) その幅を
+        // 占める。横に並べると、後ろの部品やラジオの項目の間が大きく空く。
         // naui は幅を親のレイアウトで決めるので、この下限は外して中身に
         // 沿わせる。
         let layout = XamlReader::Load(&HSTRING::from(
@@ -66,9 +69,32 @@ where
                 <Style TargetType="CheckBox">
                     <Setter Property="MinWidth" Value="0"/>
                 </Style>
+                <Style TargetType="RadioButton">
+                    <Setter Property="MinWidth" Value="0"/>
+                </Style>
+                <Style TargetType="ToggleSwitch">
+                    <Setter Property="MinWidth" Value="0"/>
+                </Style>
             </ResourceDictionary>"##,
         ))?
         .cast::<naui_winui3::Microsoft::UI::Xaml::ResourceDictionary>()?;
+        // Fluent の既定スタイルは、XamlControlsResources が同じ型の暗黙
+        // スタイルとして持っている。BasedOn の無い上書きはそれを丸ごと
+        // 置き換え、WinUI に組み込みの古いテンプレートへ戻してしまう。
+        // ToggleSwitch はそのテンプレートが自分で 154px を確保するので、
+        // MinWidth を 0 にしても幅が縮まない。そこで各上書きの土台に、
+        // Fluent の既定スタイル (`Default{型名}Style`) を据える。
+        for pair in &layout {
+            let Ok(style) = pair.Value()?.cast::<Style>() else {
+                continue;
+            };
+            let target = style.TargetType()?.Name.to_string();
+            let name = target.rsplit('.').next().unwrap_or(&target);
+            let key = PropertyValue::CreateString(&HSTRING::from(format!("Default{name}Style")))?;
+            if let Ok(base) = fluent.Lookup(&key).and_then(|base| base.cast::<Style>()) {
+                style.SetBasedOn(&base)?;
+            }
+        }
         // 後から足したものが勝つ。naui の上書きは Fluent の後に置く。
         let merged = current.Resources()?.MergedDictionaries()?;
         merged.Append(&fluent)?;
