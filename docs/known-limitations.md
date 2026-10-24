@@ -31,6 +31,14 @@ that shape are covered in
 - There is no absolute positioning. Layout uses `Stack`, `Grid` and `Spacer`.
 - Supported media formats depend on each OS, browser, and the GStreamer setup on
   Linux.
+- The few strings naui shows itself (the default macOS main menu, the `Sidebar`
+  toggle on the Web and Linux, the accessible names of `Breadcrumbs` and
+  `Pagination` on the Web, the "OK" of `DialogButtons::ok()`) come in English and
+  Japanese only. Other languages get English. The language is chosen once when the
+  app starts, from the OS's preferred languages (`NSLocale.preferredLanguages`,
+  `GetUserPreferredUILanguages`, `navigator.languages`, and on Linux the
+  `LANGUAGE` / `LC_ALL` / `LC_MESSAGES` / `LANG` environment variables), so
+  changing it while the app runs takes effect on the next launch.
 
 ### Widgets
 
@@ -213,6 +221,9 @@ that shape are covered in
   equivalents of the main menu, removing them would break pasting into text input.
   To fully control the order, take out the `NSMenu` with
   `menu_bar.backend().native_menu()`.
+- AppKit's own strings (such as the default button of an `NSAlert`) follow the
+  localizations of the app's bundle, not the OS language. An app run without a
+  bundle, or with a bundle that declares no localizations, gets them in English.
 
 ### Window
 

@@ -248,6 +248,9 @@ struct UiInner {
 
 impl Ui {
     fn new(app: adw::Application, theme: Theme) -> Self {
+        // LANGUAGE・LC_ALL・LC_MESSAGES・LANG の順に読んだ言語名
+        // ("ja_JP.UTF-8", "ja_JP", "ja", "C" など)。gettext と同じ決め方。
+        naui_core::set_ui_languages(glib::language_names());
         Self(Rc::new(UiInner {
             app,
             theme: Cell::new(theme),

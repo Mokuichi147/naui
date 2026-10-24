@@ -52,9 +52,10 @@ impl DialogButtons {
         }
     }
 
-    /// A set with only an "OK" cancel button.
+    /// A set with only an "OK" cancel button, in the OS's language
+    /// ([`ui_strings`](crate::ui_strings)).
     pub fn ok() -> Self {
-        Self::new().cancel("OK")
+        Self::new().cancel(crate::ui_strings().ok)
     }
 
     /// The button for the primary action. An empty string means no button.
@@ -149,7 +150,10 @@ mod tests {
     #[test]
     fn no_button_resolves_to_a_single_ok() {
         let resolved = DialogButtons::new().resolved();
-        assert_eq!(resolved.label(DialogResponse::Cancel), Some("OK"));
+        assert_eq!(
+            resolved.label(DialogResponse::Cancel),
+            Some(crate::ui_strings().ok)
+        );
         assert_eq!(resolved.label(DialogResponse::Primary), None);
         assert_eq!(DialogButtons::ok(), resolved);
     }

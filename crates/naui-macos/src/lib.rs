@@ -54,7 +54,7 @@ use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate,
 };
-use objc2_foundation::NSNotification;
+use objc2_foundation::{NSLocale, NSNotification};
 
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
@@ -125,6 +125,7 @@ struct UiInner {
 
 impl Ui {
     fn new(mtm: MainThreadMarker, app_name: &str, theme: Theme) -> Self {
+        naui_core::set_ui_languages(preferred_languages());
         Self(Rc::new(UiInner {
             mtm,
             app_name: app_name.to_string(),
@@ -520,12 +521,12 @@ where
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let appearance = appearance_for_theme(settings.theme);
     app.setAppearance(appearance.as_deref());
-    // ⌘C / ⌘V などはメインメニューのキー等価として配送される。
-    // メニューが無いと、テキスト入力で貼り付けができない。
-    menu_bar::install(mtm, &settings.name);
-
     let error = Rc::new(RefCell::new(None));
     let ui = Ui::new(mtm, &settings.name, settings.theme);
+    // ⌘C / ⌘V などはメインメニューのキー等価として配送される。
+    // メニューが無いと、テキスト入力で貼り付けができない。
+    // 項目名は Ui::new で選んだ言語で作るので、その後に置く。
+    menu_bar::install(mtm, &settings.name);
     let delegate = AppDelegate::alloc(mtm).set_ivars(DelegateState {
         build: RefCell::new(Some(Box::new(build))),
         ui: ui.clone(),
@@ -573,6 +574,18 @@ where
 #[doc(hidden)]
 pub fn install_menu_bar_for_test(mtm: MainThreadMarker, app_name: &str) {
     menu_bar::install(mtm, app_name);
+}
+
+/// The OS's preferred languages, most preferred first (`"ja-JP"` and so on).
+///
+/// `NSLocale.preferredLanguages` follows the per-app language in System Settings
+/// too. AppKit's own strings follow the app bundle's localizations instead, so an
+/// app without a bundle gets them in English.
+fn preferred_languages() -> Vec<String> {
+    NSLocale::preferredLanguages()
+        .iter()
+        .map(|tag| tag.to_string())
+        .collect()
 }
 
 fn appearance_for_theme(theme: Theme) -> Option<Retained<NSAppearance>> {

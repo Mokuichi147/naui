@@ -560,6 +560,10 @@ fn main() {
             menu_bar_provides_edit_shortcuts,
         ),
         (
+            "標準メニューの項目名が OS の言語に従う",
+            menu_bar_follows_the_os_language,
+        ),
+        (
             "画像がローカルのファイルから読み込まれる",
             image_loads_a_local_file,
         ),
@@ -4755,7 +4759,7 @@ fn menu_bar_provides_edit_shortcuts(_ui: &Ui) -> Result<()> {
     let main = app.mainMenu().expect("メインメニューがあること");
     let edit = (0..main.numberOfItems())
         .filter_map(|i| main.itemAtIndex(i).and_then(|item| item.submenu()))
-        .find(|menu| menu.title().to_string() == "編集")
+        .find(|menu| menu.title().to_string() == naui_core::ui_strings().edit_menu)
         .expect("編集メニューがあること");
 
     let paste = (0..edit.numberOfItems())
@@ -4779,6 +4783,53 @@ fn menu_bar_provides_edit_shortcuts(_ui: &Ui) -> Result<()> {
     assert!(
         app.mainMenu().is_some_and(|m| m == again),
         "既にメニューがあれば作り直さないこと"
+    );
+    Ok(())
+}
+
+/// The standard menus' titles come from the table chosen by
+/// `NSLocale.preferredLanguages`, not from a fixed language.
+fn menu_bar_follows_the_os_language(_ui: &Ui) -> Result<()> {
+    let mtm = objc2::MainThreadMarker::new().expect("メインスレッド");
+    naui_macos::install_menu_bar_for_test(mtm, "naui test");
+
+    let preferred: Vec<String> = objc2_foundation::NSLocale::preferredLanguages()
+        .iter()
+        .map(|tag| tag.to_string())
+        .collect();
+    let text = naui_core::UiStrings::for_languages(&preferred);
+    assert_eq!(
+        naui_core::ui_strings(),
+        text,
+        "起動時に OS の優先言語 {preferred:?} から表を選んでいること"
+    );
+
+    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+    let main = app.mainMenu().expect("メインメニューがあること");
+    let titles = |menu: &objc2_app_kit::NSMenu| -> Vec<String> {
+        (0..menu.numberOfItems())
+            .filter_map(|i| menu.itemAtIndex(i))
+            .map(|item| item.title().to_string())
+            .collect()
+    };
+    let submenu = |index: isize| {
+        main.itemAtIndex(index)
+            .and_then(|item| item.submenu())
+            .expect("サブメニューがあること")
+    };
+    assert_eq!(titles(&submenu(0)), [text.quit("naui test")]);
+    let edit = submenu(main.numberOfItems() - 1);
+    assert_eq!(edit.title().to_string(), text.edit_menu);
+    assert_eq!(
+        titles(&edit),
+        [
+            text.undo,
+            text.redo,
+            text.cut,
+            text.copy,
+            text.paste,
+            text.select_all
+        ]
     );
     Ok(())
 }
@@ -7181,7 +7232,7 @@ fn dialog_without_buttons_shows_ok(ui: &Ui) -> Result<()> {
         .iter()
         .map(|button| button.title().to_string())
         .collect();
-    assert_eq!(titles, ["OK"]);
+    assert_eq!(titles, [naui_core::ui_strings().ok]);
     Ok(())
 }
 
@@ -9739,7 +9790,11 @@ fn menu_bar_keeps_the_standard_menus(ui: &Ui) -> Result<()> {
         "先頭はアプリメニュー (run_for_test の名前)"
     );
     assert_eq!(titles[1], "ファイル");
-    assert_eq!(titles[2], "編集", "末尾は標準の編集メニュー");
+    assert_eq!(
+        titles[2],
+        naui_core::ui_strings().edit_menu,
+        "末尾は標準の編集メニュー"
+    );
 
     // 編集メニューはレスポンダチェーンへ流す (ターゲットを固定しない)。
     let edit = main

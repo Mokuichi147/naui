@@ -18,7 +18,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{NavItem, Result};
+use naui_core::{ui_strings, NavItem, Result};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
@@ -656,7 +656,7 @@ impl_widget!(Breadcrumbs, element);
 impl Breadcrumbs {
     pub(crate) fn new(doc: &Document) -> Result<Self> {
         let element: HtmlElement = create(doc, "nav")?.unchecked_into();
-        let _ = element.set_attribute("aria-label", "パンくず");
+        let _ = element.set_attribute("aria-label", ui_strings().breadcrumbs);
         let list: HtmlElement = create(doc, "ol")?.unchecked_into();
         style(&list, "list-style", "none");
         style(&list, "margin", "0");
@@ -733,7 +733,7 @@ impl_widget!(Pagination, element);
 impl Pagination {
     pub(crate) fn new(doc: &Document, page_count: usize) -> Result<Self> {
         let element = row(doc, "nav", "4px")?;
-        let _ = element.set_attribute("aria-label", "ページ送り");
+        let _ = element.set_attribute("aria-label", ui_strings().pagination);
 
         let prev: HtmlElement = create(doc, "button")?.unchecked_into();
         prev.set_text_content(Some("‹"));

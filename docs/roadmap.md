@@ -91,15 +91,15 @@ direction.
 Gaps that ordinary apps run into right away and that all four platforms have native
 counterparts for, plus the foundation the adaptive layout track builds on.
 
-- [ ] *(i18n)* **Make naui's own strings follow the OS language.** naui shows a
-      few strings it chose itself, and they are fixed in Japanese or English
-      regardless of the user: the default macOS main menu ("編集", "取り消す",
-      "{app} を終了" and so on), the `Sidebar` toggle's tooltip and label on the Web
-      and Linux ("サイドバー"), the accessible names of `Breadcrumbs` and
-      `Pagination` on the Web, and the "OK" of `DialogButtons::ok()`. naui-core
-      gets a small table of these strings, chosen by the OS's preferred languages
-      and falling back to English. Where the native side already provides a
-      translated string, that is used instead.
+- [x] *(i18n)* **Make naui's own strings follow the OS language.** The default
+      macOS main menu, the `Sidebar` toggle's tooltip and label on the Web and
+      Linux, the accessible names of `Breadcrumbs` and `Pagination` on the Web, and
+      the "OK" of `DialogButtons::ok()` were fixed in Japanese or English
+      regardless of the user. They now come from a small table in naui-core
+      (`ui_strings`), chosen at startup from the OS's preferred languages and
+      falling back to English. The table has English and Japanese for now. Toggles
+      the native side labels itself (WinUI's `NavigationView`, AppKit's sidebar
+      button) are left as they are.
 
 - [ ] *(adaptive)* **Make main-axis `Fill` and `Spacer` work in Windows's
       `Stack`.** `StackPanel` does not distribute leftover space, so even pushing

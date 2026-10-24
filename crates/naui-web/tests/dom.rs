@@ -2929,6 +2929,46 @@ fn sidebar_buttons(aside: &Element) -> Vec<HtmlElement> {
         .collect()
 }
 
+/// The labels naui chooses itself come from the table for `navigator.languages`.
+#[wasm_bindgen_test]
+fn own_labels_follow_the_browser_language() {
+    with_ui(|ui| {
+        let navigator = web_sys::window().expect("window").navigator();
+        let preferred: Vec<String> = navigator
+            .languages()
+            .iter()
+            .filter_map(|tag| tag.as_string())
+            .collect();
+        let text = naui_core::UiStrings::for_languages(&preferred);
+        assert_eq!(
+            naui_core::ui_strings(),
+            text,
+            "起動時にブラウザの言語 {preferred:?} から表を選んでいること"
+        );
+
+        let label = |element: &web_sys::Element| element.get_attribute("aria-label");
+        let breadcrumbs = ui.breadcrumbs()?;
+        assert_eq!(
+            label(&breadcrumbs.native_element()).as_deref(),
+            Some(text.breadcrumbs)
+        );
+        let pagination = ui.pagination(3)?;
+        assert_eq!(
+            label(&pagination.native_element()).as_deref(),
+            Some(text.pagination)
+        );
+        let sidebar = ui.sidebar()?;
+        let nav = sidebar
+            .native_element()
+            .query_selector("nav")
+            .ok()
+            .flatten()
+            .expect("<nav>");
+        assert_eq!(label(&nav).as_deref(), Some(text.sidebar));
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn sidebar_builds_a_nav_with_headed_lists() {
     with_ui(|ui| {
