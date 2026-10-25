@@ -50,8 +50,6 @@ const MEDIA_FORMS: [(&str, &[&str]); 3] = [
     ("Audio", &["m4a", "mp3", "aac", "wav", "flac", "ogg"]),
 ];
 
-const MEDIA_DISPLAY_HEIGHT: f64 = 315.0;
-
 /// Image、Video、Audio のソース切り替えと再生操作。
 ///
 /// 画面と一緒に、再生を止める関数を返す。**画面から外しても再生は止まらない**
@@ -197,7 +195,7 @@ fn build_image_pane(ui: &Ui) -> Result<(naui::Grid, naui::Image)> {
 
     let image = ui.image(&sample_image())?;
     image.set_alt("Sample image with a diagonal gradient and a checkerboard");
-    image.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
+    image.set_sizing(Sizing::fill());
     pane.attach(&image, GridCell::new(0, 0));
 
     let fits = [
@@ -229,10 +227,10 @@ fn build_video_pane(ui: &Ui, notice: &Notice) -> Result<(naui::Stack, naui::Vide
     let frame = ui.grid()?;
     frame.set_column_track(0, Track::FILL);
     frame.set_row_track(0, Track::FILL);
-    frame.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
+    frame.set_sizing(Sizing::fill());
 
     let video = ui.video("")?;
-    video.set_sizing(Sizing::fill().max_height(MEDIA_DISPLAY_HEIGHT));
+    video.set_sizing(Sizing::fill());
     frame.attach(&video, GridCell::new(0, 0));
     pane.append(&frame);
 

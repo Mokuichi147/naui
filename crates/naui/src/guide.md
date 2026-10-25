@@ -200,7 +200,15 @@ the maximum double as "the size you want under normal conditions". **When the
 parent can hand out space it grows up to the maximum, and when there is not
 enough it becomes smaller than the maximum.** Use this form to size the display
 area of widgets whose natural size cannot be relied on (a video before loading,
-for example).
+for example). In a `Grid`, [`Track::Fill`] rows and columns still take the
+leftover space around such a child, and once it stops at its maximum it sits where
+an `Auto` child would: at the start of the cell horizontally and in the middle
+vertically.
+
+The content of a [`Scroll`] is **never smaller than the visible area**: it
+matches the visible area in a direction that does not scroll, and grows past it in
+one that does. So while the content fits, a `Fill` child inside takes the leftover
+space, as it would outside a `Scroll`.
 
 An `Auto` height on a [`List`] follows all its rows. To scroll many rows within a
 limited area, specify `Fixed` or `Fill`. [`Tree`], [`Table`], `Scroll`, `SplitView`

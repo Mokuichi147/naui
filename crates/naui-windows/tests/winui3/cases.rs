@@ -169,6 +169,10 @@ const CASES: &[Case] = &[
         short_labels_drop_the_minimum_width,
     ),
     (
+        "上限付き Fill の子はマスの横は先頭・縦は中央に置かれる",
+        grid_places_a_capped_fill_child_like_an_auto_one,
+    ),
+    (
         "ui.window と set_size の大きさは size と同じ中身の大きさ",
         window_set_size_is_the_content_size,
     ),
@@ -1455,6 +1459,73 @@ fn short_labels_drop_the_minimum_width(ui: &Ui) -> Result<()> {
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+    Ok(())
+}
+
+/// A `Fill` child with a maximum grows up to it and then sits where an `Auto` child
+/// would: at the start of the cell horizontally, in the middle vertically. This is
+/// how GTK, macOS and the Web place it. WinUI alone would center a `Stretch` element
+/// stopped by `MaxWidth`, so naui puts it into a one-column Grid.
+///
+/// Removing it from the cell also takes it out of that Grid, so it can be placed
+/// again. Messages are pumped until it is laid out; in environments where it never
+/// is (CI), the sizes and positions pass without checking.
+fn grid_places_a_capped_fill_child_like_an_auto_one(ui: &Ui) -> Result<()> {
+    let window = ui.window("上限付きの Fill", 600.0, 400.0)?;
+    let grid = ui.grid()?;
+    grid.set_column_track(0, naui_core::Track::FILL);
+    grid.set_row_track(0, naui_core::Track::FILL);
+    grid.set_sizing(Sizing::fill());
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_width(200.0).max_height(100.0));
+    let cell = GridCell::new(0, 0);
+    grid.attach(&capped, cell);
+    window.set_child(&grid);
+    window.show();
+
+    let child = native::<FrameworkElement>(&capped);
+    let root = native::<Grid>(&grid);
+    let laid_out = || child.ActualWidth().unwrap_or(0.0) > 0.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out() {
+            println!("     (実寸が付かない環境なので、大きさと位置は確かめずに通す)");
+            return;
+        }
+        let size = (
+            child.ActualWidth().unwrap_or(f64::NAN),
+            child.ActualHeight().unwrap_or(f64::NAN),
+        );
+        assert_eq!(size, (200.0, 100.0), "上限まで広がる");
+        let origin = child
+            .TransformToVisual(&root)
+            .and_then(|transform| {
+                transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+            })
+            .expect("グリッドから見た位置");
+        assert!(
+            f64::from(origin.X).abs() < 0.5,
+            "横はマスの先頭: {origin:?}"
+        );
+        let middle = (root.ActualHeight().unwrap_or(f64::NAN) - 100.0) / 2.0;
+        assert!(
+            (f64::from(origin.Y) - middle).abs() < 0.5,
+            "縦はマスの中央 ({middle}): {origin:?}"
+        );
+    }));
+
+    grid.remove(cell);
+    let released = child.Parent().ok().is_none();
+    let other = ui.grid()?;
+    other.attach(&capped, cell);
+    let placed_again = other.len() == 1 && child.Parent().ok().is_some();
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    assert!(released, "外すと包みからも出る");
+    assert!(placed_again, "外したあとは別のグリッドへ置ける");
     Ok(())
 }
 

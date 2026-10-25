@@ -189,11 +189,25 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
             }
         }
         ParentLayout::Grid => {
+            // 上限で止まった `stretch` はマスの先頭に寄る。横はほかの環境
+            // (GTK の Start、NSGridView の Leading、WinUI の包み) と同じなので
+            // そのままでよい。
             if fill_width {
                 stretch(&style, "justify-self", "width");
             }
             if fill_height {
-                stretch(&style, "align-self", "height");
+                if style
+                    .get_property_value("max-height")
+                    .is_ok_and(|value| !value.is_empty())
+                {
+                    // 縦はほかの環境ではマスの中央に来るので、高さをマスの
+                    // 100% (上限まで) にして中央に置く。グリッドの子の割合は
+                    // マスの大きさに対して決まる。
+                    let _ = style.set_property("align-self", "center");
+                    let _ = style.set_property("height", "100%");
+                } else {
+                    stretch(&style, "align-self", "height");
+                }
             }
         }
         ParentLayout::Block => {
@@ -465,6 +479,8 @@ impl_widget!(Scroll, element);
 impl Scroll {
     pub(crate) fn new(document: &Document) -> Result<Self> {
         let element: HtmlElement = create(document, "div")?.unchecked_into();
+        // 中身を表示領域の大きさに合わせるため、1 マスの Grid にする (set_policy)。
+        let _ = element.style().set_property("display", "grid");
         let this = Self(Rc::new(ScrollInner {
             element,
             child: RefCell::new(None),
@@ -509,6 +525,8 @@ impl Scroll {
         let style = self.0.element.style();
         let _ = style.set_property("overflow-x", overflow(horizontal));
         let _ = style.set_property("overflow-y", overflow(vertical));
+        let _ = style.set_property("grid-template-columns", content_track(horizontal));
+        let _ = style.set_property("grid-template-rows", content_track(vertical));
     }
 
     /// The content to scroll. Each call replaces it.
@@ -616,6 +634,27 @@ fn snap_to_end(offset: f64, max: f64) -> f64 {
         max
     } else {
         offset
+    }
+}
+
+/// The size of the single cell that holds the content.
+///
+/// Like the other backends (GtkViewport, WinUI's ScrollViewer, the clip-view
+/// constraints on macOS), the content is never smaller than the visible area: it
+/// matches it in a direction that does not scroll, and grows past it in one that
+/// does. So a `Fill` child inside takes the leftover space while the content fits.
+///
+/// An `auto` track takes the content's size and is then stretched to the visible
+/// area (the default `align-content` / `justify-content`). `minmax(100%,
+/// max-content)` would not do: a track only grows past its minimum into free space,
+/// so tall content would stay at the visible area. A percentage against an
+/// undecided size counts as `auto`, so a `Scroll` without a height still follows
+/// its content.
+fn content_track(policy: ScrollPolicy) -> &'static str {
+    if policy.is_enabled() {
+        "auto"
+    } else {
+        "100%"
     }
 }
 

@@ -405,10 +405,20 @@ impl Spacer {
 
 // ------------------------------------------------------------------- Grid
 
+/// A child placed in a [`Grid`].
+struct PlacedChild {
+    cell: GridCell,
+    /// Kept so that the widget lives while it is placed.
+    _widget: Box<dyn Widget>,
+    /// The one-column Grid that holds the child, when its `Fill` width has a maximum
+    /// (see [`wrap_at_start`]).
+    wrapper: Option<XamlGrid>,
+}
+
 struct GridInner {
     native: XamlGrid,
     /// The placed children and their positions. Kept to remove them by cell.
-    children: RefCell<Vec<(GridCell, Box<dyn Widget>)>>,
+    children: RefCell<Vec<PlacedChild>>,
     columns: Cell<usize>,
     rows: Cell<usize>,
 }
@@ -450,32 +460,57 @@ impl Grid {
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         self.ensure_size(cell.columns_needed(), cell.rows_needed());
         let element = child.native_element();
+        let Ok(child_framework) = element.cast::<FrameworkElement>() else {
+            return;
+        };
+        let wrapper = match capped_fill_width(&child_framework) {
+            Some(max_width) => match wrap_at_start(&element, max_width) {
+                Some(wrapper) => Some(wrapper),
+                // 包めないのは、すでに別の親に属しているとき。そのまま置いても
+                // 同じ理由で失敗する。
+                None => return,
+            },
+            None => None,
+        };
+        let placed: UIElement = match &wrapper {
+            Some(wrapper) => match wrapper.cast() {
+                Ok(placed) => placed,
+                Err(_) => {
+                    release(wrapper);
+                    return;
+                }
+            },
+            None => element.clone(),
+        };
         let appended = self
             .0
             .native
             .Children()
-            .and_then(|children| children.Append(&element));
+            .and_then(|children| children.Append(&placed));
         if appended.is_ok() {
             // 置き場所は添付プロパティなので、FrameworkElement として設定する。
             // Append に成功してから設定することで、すでに別の親に属している
             // 要素の追加に失敗しても、既存の配置を変更しない。
-            if let Ok(framework) = element.cast::<FrameworkElement>() {
+            if let Ok(framework) = placed.cast::<FrameworkElement>() {
                 let _ = XamlGrid::SetColumn(&framework, cell.column as i32);
                 let _ = XamlGrid::SetRow(&framework, cell.row as i32);
                 let _ = XamlGrid::SetColumnSpan(&framework, cell.column_span as i32);
                 let _ = XamlGrid::SetRowSpan(&framework, cell.row_span as i32);
                 // 縦は中央ぞろえ。既定の Stretch のままだと、同じ行に置いた
                 // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
-                let _ = framework.SetVerticalAlignment(if wants_fill(&framework, false) {
+                let _ = framework.SetVerticalAlignment(if wants_fill(&child_framework, false) {
                     VerticalAlignment::Stretch
                 } else {
                     VerticalAlignment::Center
                 });
             }
-            self.0
-                .children
-                .borrow_mut()
-                .push((cell, child.boxed_clone()));
+            self.0.children.borrow_mut().push(PlacedChild {
+                cell,
+                _widget: child.boxed_clone(),
+                wrapper,
+            });
+        } else if let Some(wrapper) = &wrapper {
+            release(wrapper);
         }
     }
 
@@ -495,7 +530,8 @@ impl Grid {
         let mut children = self.0.children.borrow_mut();
         let mut index = 0;
         while index < children.len() {
-            if children[index].0.column != cell.column || children[index].0.row != cell.row {
+            let placed = &children[index].cell;
+            if placed.column != cell.column || placed.row != cell.row {
                 index += 1;
                 continue;
             }
@@ -509,7 +545,9 @@ impl Grid {
                 index += 1;
                 continue;
             }
-            children.remove(index);
+            if let Some(wrapper) = &children.remove(index).wrapper {
+                release(wrapper);
+            }
         }
     }
 
@@ -518,7 +556,11 @@ impl Grid {
         if let Ok(children) = self.0.native.Children() {
             let _ = children.Clear();
         }
-        self.0.children.borrow_mut().clear();
+        for placed in self.0.children.borrow_mut().drain(..) {
+            if let Some(wrapper) = &placed.wrapper {
+                release(wrapper);
+            }
+        }
     }
 
     /// How a column's width is determined.
@@ -598,6 +640,46 @@ impl Grid {
             }
             self.0.rows.set(self.0.rows.get() + 1);
         }
+    }
+}
+
+/// The maximum width of a child whose width is `Fill` with a maximum.
+fn capped_fill_width(element: &FrameworkElement) -> Option<f64> {
+    let max_width = element.MaxWidth().ok()?;
+    (wants_fill(element, true) && max_width.is_finite()).then_some(max_width)
+}
+
+/// Puts a child whose `Fill` width has a maximum into a one-column Grid, so that it
+/// sits at the start of a wider cell.
+///
+/// WinUI centers a `Stretch` element that its `MaxWidth` stops short of the slot.
+/// The other backends put such a child where an `Auto` child would go, at the start
+/// of the cell (GTK's `Start`, `NSGridView`'s `Leading`, CSS Grid's `start`). `Left`
+/// alignment alone would not do: the child would shrink to its content instead of
+/// growing up to the maximum. A `Star` column with the same `MaxWidth` takes
+/// `min(cell, maximum)` and leaves the rest of the cell empty after it, and the
+/// child stretches to that column.
+fn wrap_at_start(element: &UIElement, max_width: f64) -> Option<XamlGrid> {
+    let wrapper = XamlGrid::new().ok()?;
+    let column = ColumnDefinition::new().ok()?;
+    column.SetWidth(grid_length(Track::FILL)).ok()?;
+    column.SetMaxWidth(max_width).ok()?;
+    wrapper
+        .ColumnDefinitions()
+        .and_then(|definitions| definitions.Append(&column))
+        .ok()?;
+    wrapper
+        .Children()
+        .and_then(|children| children.Append(element))
+        .ok()?;
+    Some(wrapper)
+}
+
+/// Takes the child out of the Grid made by [`wrap_at_start`], so that it can be put
+/// into another container.
+fn release(wrapper: &XamlGrid) {
+    if let Ok(children) = wrapper.Children() {
+        let _ = children.Clear();
     }
 }
 

@@ -16,8 +16,8 @@ use objc2::rc::{Allocated, Retained};
 use objc2::runtime::NSObjectProtocol;
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSClipView, NSGridCell, NSGridCellPlacement, NSGridView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSLayoutPriority, NSScrollView, NSView,
+    NSClipView, NSGridCell, NSGridCellPlacement, NSGridView, NSLayoutAttribute, NSLayoutConstraint,
+    NSLayoutConstraintOrientation, NSLayoutPriority, NSLayoutRelation, NSScrollView, NSView,
     NSViewBoundsDidChangeNotification, NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
@@ -73,6 +73,15 @@ const GRID_GROW_ID: &str = "naui.grid.grow";
 /// Any stronger and `Fill` rows would take too much, squashing the content of
 /// `Auto` rows (headings shrink to 30pt).
 const GRID_GROW_PRIORITY: NSLayoutPriority = HUG_CONTENT - 1.0;
+
+/// The priority of the wish "want to grow up to the maximum" placed on a grid child
+/// whose `Fill` has a maximum, in place of [`GRID_GROW_PRIORITY`].
+///
+/// It has to beat what keeps the child itself small: its `Fill` hugging
+/// ([`FILL_HUGGING`]) and, for a `Stack`, the tail spacer ([`TAIL_PRIORITY`]).
+/// Anything stronger would push the grid out against its parent (a window keeps its
+/// size at 500), so the child would stay at its maximum when space is tight.
+const GRID_CAPPED_GROW_PRIORITY: NSLayoutPriority = TAIL_PRIORITY + 0.5;
 
 /// The compression resistance priority for `Fill`.
 ///
@@ -165,6 +174,27 @@ fn orientation(horizontal: bool) -> NSLayoutConstraintOrientation {
 /// Whether this view wants to grow in that direction (= was given `Length::Fill`).
 pub(crate) fn wants_fill(view: &NSView, horizontal: bool) -> bool {
     view.contentHuggingPriorityForOrientation(orientation(horizontal)) <= FILL_HUGGING
+}
+
+/// The maximum `set_sizing` gave this view in that direction
+/// ([`Sizing::max_width`] / [`Sizing::max_height`]).
+pub(crate) fn max_size(view: &NSView, horizontal: bool) -> Option<f64> {
+    let attribute = if horizontal {
+        NSLayoutAttribute::Width
+    } else {
+        NSLayoutAttribute::Height
+    };
+    let constraints = view.constraints();
+    (0..constraints.len())
+        .map(|index| constraints.objectAtIndex(index))
+        .find(|constraint| {
+            constraint.relation() == NSLayoutRelation::LessThanOrEqual
+                && constraint.firstAttribute() == attribute
+                && constraint
+                    .identifier()
+                    .is_some_and(|id| id.to_string() == SIZING_ID)
+        })
+        .map(|constraint| constraint.constant())
 }
 
 /// Makes an `Auto` child keep its content width.
@@ -656,6 +686,12 @@ impl Grid {
         // `Inherited` のままだと、再レイアウト時に NSGridView の列配置を
         // 継承してラベルまで列いっぱいになることがある。
         let fill_width = wants_fill(&view, true);
+        // 上限付きの `Fill` は、セルいっぱいには広げずに Auto と同じ位置へ置く。
+        // 配置を `Fill` にするとセルの端と子の端が必須で結ばれ、子の上限が
+        // そのまま行や列の上限になる。そうなると `Fill` の行が余りを受け取れず、
+        // 上限のぶんまで縮んでしまう (GTK や WinUI では行が余りを受け取り、
+        // 子はその中で上限まで広がる)。子を上限まで広げるのは set_grow_hint。
+        let stretch_width = fill_width && max_size(&view, true).is_none();
         if !fill_width {
             // Leading だけでは、NSGridView が再レイアウト時に作る幅の
             // 制約に intrinsic size が負けることがある。Auto の意味を
@@ -669,7 +705,7 @@ impl Grid {
                 .columnAtIndex(column)
                 .setXPlacement(NSGridCellPlacement::Leading);
         }
-        target.setXPlacement(if fill_width {
+        target.setXPlacement(if stretch_width {
             NSGridCellPlacement::Fill
         } else {
             NSGridCellPlacement::Leading
@@ -678,6 +714,7 @@ impl Grid {
         // 縦は中央ぞろえ。NSGridView の既定 (上ぞろえ) だと、同じ行に置いた
         // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
         let fill_height = wants_fill(&view, false);
+        let stretch_height = fill_height && max_size(&view, false).is_none();
         if !fill_height {
             // 横と同じ理由で、`Auto` の子は行の余りを受け取らない。
             // NSStackView のようにコンテナ自身の hugging priority が低い子は、
@@ -686,7 +723,7 @@ impl Grid {
             keep_auto_size(&view, false);
         }
         self.set_grow_hint(&view, &cell, false, fill_height);
-        target.setYPlacement(if fill_height {
+        target.setYPlacement(if stretch_height {
             NSGridCellPlacement::Fill
         } else {
             NSGridCellPlacement::Center
@@ -717,6 +754,13 @@ impl Grid {
     /// Vertically, [`ContentSizedGridView::update_auto_row_heights`] decides the
     /// heights of `Auto` rows as required row heights, so the grid's height can be
     /// used as is.
+    ///
+    /// **A child whose `Fill` has a maximum wishes for its maximum instead.** It stops
+    /// there, so "the same size as the grid" cannot hold, and the solver would shrink
+    /// the grid toward the child to make up for it, leaving the `Fill` row no
+    /// leftover. Such a child is not tied to the cell's edges (see `attach`), so the
+    /// row grows past it and the child sits where an `Auto` child would (at the start
+    /// horizontally, in the middle vertically).
     fn set_grow_hint(&self, view: &NSView, cell: &GridCell, horizontal: bool, wanted: bool) {
         let identifier = grow_identifier(cell, horizontal);
         if horizontal {
@@ -726,33 +770,45 @@ impl Grid {
                 .borrow_mut()
                 .retain(|(_, old)| old.column != cell.column || old.row != cell.row);
         }
-        // 同じセルに前へ張った希望があれば外す。
-        let constraints = self.0.native.constraints();
-        let previous: Vec<Retained<NSLayoutConstraint>> = (0..constraints.len())
-            .map(|index| constraints.objectAtIndex(index))
-            .filter(|constraint| {
-                constraint
-                    .identifier()
-                    .is_some_and(|id| id.to_string() == identifier)
-            })
-            .collect();
+        // 同じセルに前へ張った希望があれば外す。上限への希望は子のビュー自身に、
+        // グリッドと結ぶ希望はグリッドに付いている。
+        let previous: Vec<Retained<NSLayoutConstraint>> =
+            [self.0.native.constraints(), view.constraints()]
+                .iter()
+                .flat_map(|constraints| {
+                    (0..constraints.len()).map(|index| constraints.objectAtIndex(index))
+                })
+                .filter(|constraint| {
+                    constraint
+                        .identifier()
+                        .is_some_and(|id| id.to_string() == identifier)
+                })
+                .collect();
         if !previous.is_empty() {
             NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&previous));
         }
         if !wanted {
             return;
         }
-        let grow = if horizontal {
-            view.widthAnchor()
-                .constraintEqualToAnchor(&self.0.native.widthAnchor())
+        let (child, grid) = if horizontal {
+            (view.widthAnchor(), self.0.native.widthAnchor())
         } else {
-            view.heightAnchor()
-                .constraintEqualToAnchor(&self.0.native.heightAnchor())
+            (view.heightAnchor(), self.0.native.heightAnchor())
         };
-        grow.setPriority(GRID_GROW_PRIORITY);
+        let max = max_size(view, horizontal);
+        let grow = match max {
+            Some(max) => child.constraintGreaterThanOrEqualToConstant(max),
+            None => child.constraintEqualToAnchor(&grid),
+        };
+        grow.setPriority(if max.is_some() {
+            GRID_CAPPED_GROW_PRIORITY
+        } else {
+            GRID_GROW_PRIORITY
+        });
         grow.setIdentifier(Some(&NSString::from_str(&identifier)));
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[grow.clone()]));
-        if horizontal {
+        // 上限への希望は定数が決まっているので、引き直す対象にしない。
+        if horizontal && max.is_none() {
             self.0.grows.borrow_mut().push((grow, *cell));
         }
     }

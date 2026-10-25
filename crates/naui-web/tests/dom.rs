@@ -1254,6 +1254,39 @@ fn grid_keeps_auto_children_at_the_start() {
 }
 
 /// A `Grid` can remove children by cell.
+/// A `Fill` child with a maximum grows up to it and sits in the middle of a taller
+/// cell vertically, as on GTK, WinUI and macOS. A `stretch` stopped by `max-height`
+/// would sit at the top. Horizontally it stays at the start, as on the others.
+#[wasm_bindgen_test]
+fn grid_places_a_capped_fill_child_in_the_middle() {
+    with_ui(|ui| {
+        let grid = ui.grid()?;
+        grid.set_column_track(0, naui_core::Track::FILL);
+        grid.set_row_track(0, naui_core::Track::FILL);
+        grid.set_sizing(Sizing::fixed(400.0, 300.0));
+        let capped = ui.stack(Orientation::Vertical)?;
+        capped.set_sizing(Sizing::fill().max_width(200.0).max_height(100.0));
+        grid.attach(&capped, GridCell::new(0, 0));
+        let _mounted = Mounted::new(&grid);
+
+        let grid_rect = grid.native_element().get_bounding_client_rect();
+        let rect = capped.native_element().get_bounding_client_rect();
+        assert_eq!(
+            (rect.width(), rect.height()),
+            (200.0, 100.0),
+            "上限まで広がる"
+        );
+        assert_eq!(rect.left(), grid_rect.left(), "横はマスの先頭");
+        assert_eq!(rect.top() - grid_rect.top(), 100.0, "縦はマスの中央");
+
+        // マスが上限より低ければ、マスに合わせて縮む。
+        grid.set_sizing(Sizing::fixed(400.0, 60.0));
+        let rect = capped.native_element().get_bounding_client_rect();
+        assert_eq!(rect.height(), 60.0, "マスより大きくならない");
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn grid_removes_children_by_cell() {
     with_ui(|ui| {
@@ -3408,6 +3441,43 @@ fn scroll_measures_and_moves() {
         scroll.scroll_to(-50.0, 1e9);
         let clamped = scroll.metrics();
         assert_eq!((clamped.x, clamped.y), (0.0, clamped.max_y()));
+        Ok(())
+    });
+}
+
+/// Short content still covers the visible area, so a `Fill` child takes the
+/// leftover; tall content grows past it and scrolls. Matches GtkViewport, WinUI's
+/// ScrollViewer and the clip-view constraints on macOS.
+#[wasm_bindgen_test]
+fn scroll_content_covers_the_viewport() {
+    with_ui(|ui| {
+        let pane = ui.stack(Orientation::Vertical)?;
+        pane.append(&ui.label("見出し")?);
+        let filler = ui.stack(Orientation::Vertical)?;
+        filler.set_sizing(Sizing::fill());
+        pane.append(&filler);
+        let scroll = ui.scroll()?;
+        scroll.set_child(&pane);
+        scroll.set_sizing(Sizing::fixed(200.0, 300.0));
+        let _mounted = Mounted::new(&scroll);
+
+        let height =
+            |widget: &dyn Widget| widget.native_element().get_bounding_client_rect().height();
+        assert_eq!(height(&pane), 300.0, "短い中身も表示領域の高さになる");
+        assert!(
+            height(&filler) > 250.0,
+            "Fill の子が余りを受け取る: {}",
+            height(&filler)
+        );
+        let m = scroll.metrics();
+        assert_eq!(m.max_y(), 0.0, "はみ出さないので送れない: {m:?}");
+
+        for i in 0..40 {
+            pane.append(&ui.label(&format!("行 {i}"))?);
+        }
+        assert!(height(&pane) > 300.0, "長い中身は表示領域を越えて伸びる");
+        let m = scroll.metrics();
+        assert!(m.max_y() > 0.0, "はみ出した分を送れる: {m:?}");
         Ok(())
     });
 }

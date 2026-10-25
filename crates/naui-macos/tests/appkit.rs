@@ -322,6 +322,10 @@ fn main() {
             grid_fill_row_keeps_the_rest,
         ),
         (
+            "上限付きの子がいても Grid の Fill 行は余りを受け取る",
+            grid_fill_row_takes_the_rest_around_a_capped_child,
+        ),
+        (
             "入れ子の縦 Stack が余りの高さを吸わない",
             nested_stack_does_not_take_the_slack,
         ),
@@ -9170,6 +9174,62 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
     assert!(
         scroll_height > 400.0,
         "Fill 行が残りの高さを受け取る: {scroll_height}"
+    );
+    Ok(())
+}
+
+/// A `Fill` row takes the leftover even when its child's `Fill` has a maximum. The
+/// child grows up to its maximum and sits in the middle of the row, as on GTK and
+/// WinUI.
+///
+/// Placing such a child with `NSGridCellPlacement::Fill` ties the row to the child,
+/// so its maximum became the row's maximum. The "want to grow to fill the grid" wish
+/// at its usual priority also pulled the grid down to the child.
+fn grid_fill_row_takes_the_rest_around_a_capped_child(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::FILL);
+    grid.set_row_track(1, Track::Auto);
+    grid.set_sizing(Sizing::fill());
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_width(200.0).max_height(100.0));
+    grid.attach(&capped, GridCell::new(0, 0));
+    let footer = ui.label("下端")?;
+    grid.attach(&footer, GridCell::new(0, 1));
+
+    // gallery の画面と同じく、余りを末尾の受け皿へ回せる縦 Stack に入れる。
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_align(Align::Start);
+    pane.append(&ui.label("見出し")?);
+    pane.append(&grid);
+
+    let root = pane.native_view();
+    root.setFrameSize(NSSize::new(400.0, 500.0));
+    root.layoutSubtreeIfNeeded();
+    let grid_frame = grid.native_view().frame();
+    let capped_frame = capped.native_view().frame();
+    let footer_frame = footer.native_view().frame();
+    assert!(
+        grid_frame.size.height > 400.0,
+        "Fill の行が余りを受け取る: {grid_frame:?}"
+    );
+    assert_eq!(
+        (capped_frame.size.width, capped_frame.size.height),
+        (200.0, 100.0),
+        "子は上限まで広がる: {capped_frame:?}"
+    );
+    let gap = (capped_frame.mid().y - footer_frame.mid().y).abs();
+    assert!(
+        gap > 150.0,
+        "子は行の中央に置かれ、下の行へ寄らない: {capped_frame:?} / {footer_frame:?}"
+    );
+
+    root.setFrameSize(NSSize::new(400.0, 80.0));
+    root.layoutSubtreeIfNeeded();
+    let narrow = capped.native_view().frame();
+    assert!(
+        narrow.size.height < 100.0,
+        "狭いときは上限より小さくなる: {narrow:?}"
     );
     Ok(())
 }
