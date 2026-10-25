@@ -173,6 +173,10 @@ const CASES: &[Case] = &[
         grid_places_a_capped_fill_child_like_an_auto_one,
     ),
     (
+        "Grid に置いたあとで上限を変えても、外しても、付けても追従する",
+        grid_follows_a_changed_maximum_width,
+    ),
+    (
         "ui.window と set_size の大きさは size と同じ中身の大きさ",
         window_set_size_is_the_content_size,
     ),
@@ -1547,6 +1551,84 @@ fn grid_places_a_capped_fill_child_like_an_auto_one(ui: &Ui) -> Result<()> {
     }
     assert!(released, "外すと包みからも出る");
     assert!(placed_again, "外したあとは別のグリッドへ置ける");
+    Ok(())
+}
+
+/// `set_sizing` after the child is placed in a Grid replaces the maximum width it
+/// was placed with: a new maximum, no maximum, and a maximum given to a child placed
+/// without one.
+///
+/// Whether the child is wrapped is checked everywhere. Messages are pumped until it
+/// is laid out; in environments where it never is (CI), the widths and positions
+/// pass without checking.
+fn grid_follows_a_changed_maximum_width(ui: &Ui) -> Result<()> {
+    let window = ui.window("上限の変更", 600.0, 400.0)?;
+    let grid = ui.grid()?;
+    grid.set_column_track(0, naui_core::Track::FILL);
+    grid.set_row_track(0, naui_core::Track::FILL);
+    grid.set_sizing(Sizing::fill());
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_width(200.0));
+    grid.attach(&capped, GridCell::new(0, 0));
+    window.set_child(&grid);
+    window.show();
+
+    let child = native::<FrameworkElement>(&capped);
+    let element = native::<UIElement>(&capped);
+    let root = native::<Grid>(&grid);
+    let identity = |element: &UIElement| element.cast::<windows_core::IUnknown>().ok();
+    let wrapped = || {
+        root.Children()
+            .and_then(|children| children.GetAt(0))
+            .is_ok_and(|placed| identity(&placed) != identity(&element))
+    };
+    let width = || child.ActualWidth().unwrap_or(0.0);
+    let left = || {
+        child
+            .TransformToVisual(&root)
+            .and_then(|transform| {
+                transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+            })
+            .map(|origin| f64::from(origin.X))
+            .unwrap_or(f64::NAN)
+    };
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || width() > 0.0);
+    let laid_out = width() > 0.0;
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out {
+            println!("     (実寸が付かない環境なので、幅と位置は確かめずに通す)");
+        }
+        assert!(wrapped(), "上限付きで置くと包まれる");
+
+        capped.set_sizing(Sizing::fill().max_width(400.0));
+        assert!(wrapped(), "上限を変えても包まれたまま");
+        if laid_out {
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || width() == 400.0);
+            assert_eq!(width(), 400.0, "新しい上限まで広がる");
+            assert!(left().abs() < 0.5, "横はマスの先頭: {}", left());
+        }
+
+        capped.set_sizing(Sizing::fill());
+        assert!(!wrapped(), "上限を外すと包みから出る");
+        if laid_out {
+            let cell = root.ActualWidth().unwrap_or(f64::NAN);
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || width() == cell);
+            assert_eq!(width(), cell, "上限を外すとマスいっぱいに広がる");
+        }
+
+        capped.set_sizing(Sizing::fill().max_width(150.0));
+        assert!(wrapped(), "置いたあとで上限を付けると包まれる");
+        if laid_out {
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || width() == 150.0);
+            assert_eq!(width(), 150.0, "付けた上限まで広がる");
+            assert!(left().abs() < 0.5, "横はマスの先頭: {}", left());
+        }
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 
