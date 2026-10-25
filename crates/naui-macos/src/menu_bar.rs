@@ -16,15 +16,16 @@
 //! - the app-name menu (first; macOS always treats it as the app menu)
 //! - the "Edit" menu (last)
 //!
-//! itself, and places the menus the app passes in between. The items' target is
-//! nil, so AppKit walks the responder chain and delivers `paste:` and the like to
-//! the control being edited. **Copy and paste are implemented by AppKit itself**;
+//! itself, and places the menus the app passes in between. Their titles follow the
+//! OS's preferred languages ([`naui_core::ui_strings`]). The items' target is nil,
+//! so AppKit walks the responder chain and delivers `paste:` and the like to the
+//! control being edited. **Copy and paste are implemented by AppKit itself**;
 //! naui does nothing.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::MenuSpec;
+use naui_core::{ui_strings, MenuSpec};
 use objc2::rc::Retained;
 use objc2::runtime::Sel;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
@@ -59,23 +60,24 @@ fn app_menu(mtm: MainThreadMarker, app_name: &str) -> Retained<NSMenuItem> {
     submenu(
         mtm,
         app_name,
-        &[(&format!("{app_name} を終了"), sel!(terminate:), "q")],
+        &[(&ui_strings().quit(app_name), sel!(terminate:), "q")],
     )
 }
 
 /// The standard Edit menu. Provides the dispatch path for ⌘C / ⌘V and the like.
 fn edit_menu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
+    let text = ui_strings();
     // 大文字の "Z" は ⇧⌘Z (シフトを含む) を意味する。AppKit の決まり。
     submenu(
         mtm,
-        "編集",
+        text.edit_menu,
         &[
-            ("取り消す", sel!(undo:), "z"),
-            ("やり直す", sel!(redo:), "Z"),
-            ("カット", sel!(cut:), "x"),
-            ("コピー", sel!(copy:), "c"),
-            ("ペースト", sel!(paste:), "v"),
-            ("すべてを選択", sel!(selectAll:), "a"),
+            (text.undo, sel!(undo:), "z"),
+            (text.redo, sel!(redo:), "Z"),
+            (text.cut, sel!(cut:), "x"),
+            (text.copy, sel!(copy:), "c"),
+            (text.paste, sel!(paste:), "v"),
+            (text.select_all, sel!(selectAll:), "a"),
         ],
     )
 }

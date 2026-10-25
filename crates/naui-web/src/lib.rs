@@ -143,6 +143,7 @@ struct UiInner {
 
 impl Ui {
     fn new(document: Document, theme: Theme) -> Self {
+        naui_core::set_ui_languages(preferred_languages());
         Self(Rc::new(UiInner {
             document,
             theme: Cell::new(theme),
@@ -515,6 +516,25 @@ where
 
 thread_local! {
     static KEEP: RefCell<Vec<Ui>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The browser's preferred languages, most preferred first (`navigator.languages`).
+///
+/// Some browsers leave `languages` empty, so `navigator.language` is used then.
+fn preferred_languages() -> Vec<String> {
+    let Some(navigator) = web_sys::window().map(|window| window.navigator()) else {
+        return Vec::new();
+    };
+    let languages: Vec<String> = navigator
+        .languages()
+        .iter()
+        .filter_map(|tag| tag.as_string())
+        .collect();
+    if languages.is_empty() {
+        navigator.language().into_iter().collect()
+    } else {
+        languages
+    }
 }
 
 pub(crate) fn apply_theme(document: &Document, theme: Theme) -> Result<()> {

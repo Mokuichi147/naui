@@ -118,7 +118,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "counter"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "naui",
 ]
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "gallery"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "naui",
 ]
@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "naui"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "naui-core",
  "naui-gtk",
@@ -660,11 +660,11 @@ dependencies = [
 
 [[package]]
 name = "naui-core"
-version = "0.11.0"
+version = "0.11.1"
 
 [[package]]
 name = "naui-gtk"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "gtk4",
  "libadwaita",
@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "naui-macos"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "block2",
  "dispatch2",
@@ -691,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "naui-web"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "js-sys",
  "naui-core",
@@ -703,7 +703,7 @@ dependencies = [
 
 [[package]]
 name = "naui-windows"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "naui-core",
  "naui-winui3",
@@ -713,7 +713,7 @@ dependencies = [
 
 [[package]]
 name = "naui-winui3"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "flate2",
  "roxmltree",

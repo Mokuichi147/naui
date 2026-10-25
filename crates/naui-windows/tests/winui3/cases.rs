@@ -245,6 +245,10 @@ const CASES: &[Case] = &[
         scroll_notifies_only_moves,
     ),
     (
+        "行の多い表は、スクロールした先の行を組み立てる",
+        table_rows_follow_scrolling,
+    ),
+    (
         "編集できるコンボボックスの Enter で文字が残り、Esc で書いた値へ戻る",
         editable_combo_box_commits_and_reverts_text,
     ),
@@ -2539,6 +2543,69 @@ fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
         settle();
         assert_eq!(*seen.borrow(), vec![55.0, 50.0]);
         assert_eq!(scroll.metrics().y, 50.0);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A `Table` with many rows builds only the rows around the screen, and the built
+/// range follows scrolling.
+///
+/// The table's `ScrollViewer` is moved directly (not with `scroll_to_row`, which
+/// moves the range itself), so this checks that the range follows `ViewChanged`.
+fn table_rows_follow_scrolling(ui: &Ui) -> Result<()> {
+    use naui_core::{TableColumn, TableRow};
+
+    let window = ui.window("表のスクロール", 240.0, 160.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    let labels: Vec<String> = (0..1000).map(|i| format!("行 {i}")).collect();
+    table.set_rows(&TableRow::list(labels.iter().map(|l| [l.as_str()])));
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let children = native::<Grid>(&table).Children().expect("表の子");
+        let scroll = (0..children.Size().expect("表の子の数"))
+            .find_map(|i| children.GetAt(i).ok()?.cast::<ScrollViewer>().ok())
+            .expect("表の ScrollViewer");
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let body = scroll
+            .Content()
+            .and_then(|content| content.cast::<StackPanel>())
+            .expect("表の本体");
+        let top_spacer = body
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .and_then(|spacer| spacer.cast::<FrameworkElement>())
+            .expect("先頭の詰め物");
+        let leading = || top_spacer.Height().unwrap_or(0.0);
+        assert_eq!(leading(), 0.0, "最初は先頭から組み立てている");
+
+        let target = scroll.ExtentHeight().expect("表の全体の高さ") / 2.0;
+        let offset = PropertyValue::CreateDouble(target)
+            .and_then(|value| value.cast::<windows::Foundation::IReference<f64>>())
+            .expect("送り先");
+        scroll
+            .ChangeViewWithOptionalAnimation(None, &offset, None, true)
+            .expect("表のスクロール");
+        pump_until(Duration::from_secs(2), || leading() > 0.0);
+        let offset = scroll.VerticalOffset().expect("表の位置");
+        assert!(offset > 0.0, "表が送られている");
+        assert!(
+            leading() > 0.0 && leading() <= offset,
+            "組み立てる範囲が表示位置へ付いてくる (詰め物 {}, 位置 {offset})",
+            leading()
+        );
     }));
     window.close();
     if let Err(panic) = outcome {

@@ -35,7 +35,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::glib;
 use naui_core::{
-    sidebar_item, sidebar_len, sidebar_rows, SidebarItem, SidebarRow, SidebarSection,
+    sidebar_item, sidebar_len, sidebar_rows, ui_strings, SidebarItem, SidebarRow, SidebarSection,
     DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 
@@ -112,7 +112,7 @@ impl Sidebar {
 
         let toggle = gtk::ToggleButton::new();
         toggle.set_icon_name("sidebar-show-symbolic");
-        toggle.set_tooltip_text(Some("サイドバー"));
+        toggle.set_tooltip_text(Some(ui_strings().sidebar));
         // 押し込まれている = 開いている。区画の表示と双方向につなぐ。
         pane.bind_property("visible", &toggle, "active")
             .bidirectional()

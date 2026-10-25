@@ -6693,6 +6693,11 @@ fn sidebar_toggle_button_collapses_and_notifies(ui: &Ui) -> Result<()> {
     let side_header = sidebar.native_header_bar();
     let content_header = window.native_header_bar();
     assert_eq!(toggle.icon_name().as_deref(), Some("sidebar-show-symbolic"));
+    // ツールチップは起動時に選んだ表に従う (表の選び方は naui-gtk の単体テスト)。
+    assert_eq!(
+        toggle.tooltip_text().as_deref(),
+        Some(naui_core::ui_strings().sidebar)
+    );
     assert!(
         toggle.is_ancestor(&side_header),
         "開いている間はサイドバーのヘッダーバーの左端"

@@ -141,6 +141,7 @@ struct UiInner {
 
 impl Ui {
     fn new(theme: Theme, shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>) -> Self {
+        naui_core::set_ui_languages(preferred_languages());
         Self(Rc::new(UiInner {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
@@ -513,6 +514,42 @@ impl Ui {
 fn release_widget_handlers() {
     keys::release_handlers();
     focus::release_handlers();
+}
+
+/// The user's preferred UI languages, most preferred first (`"ja-JP"` and so on).
+///
+/// Read with `GetUserPreferredUILanguages`, which works for unpackaged apps too.
+/// Empty if it fails, which leaves naui's strings in English.
+fn preferred_languages() -> Vec<String> {
+    use windows::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+
+    let mut count = 0u32;
+    let mut len = 0u32;
+    // 1 回目で必要な長さを聞き、2 回目で受け取る。中身は NUL 区切りで、
+    // 最後に NUL が 2 つ続く。
+    if unsafe { GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, None, &mut len) }
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut buffer = vec![0u16; len as usize];
+    if unsafe {
+        GetUserPreferredUILanguages(
+            MUI_LANGUAGE_NAME,
+            &mut count,
+            Some(windows_core::PWSTR(buffer.as_mut_ptr())),
+            &mut len,
+        )
+    }
+    .is_err()
+    {
+        return Vec::new();
+    }
+    buffer
+        .split(|&c| c == 0)
+        .filter(|tag| !tag.is_empty())
+        .map(String::from_utf16_lossy)
+        .collect()
 }
 
 /// Starts the app and builds the UI inside `build`.
