@@ -330,6 +330,10 @@ fn main() {
             grid_capped_and_plain_fill_tracks_share_the_room,
         ),
         (
+            "上限付きと上限なしの Fill の行・列は、狭いときウィンドウを押し広げない",
+            grid_capped_and_plain_fill_tracks_fit_a_small_window,
+        ),
+        (
             "入れ子の縦 Stack が余りの高さを吸わない",
             nested_stack_does_not_take_the_slack,
         ),
@@ -9357,6 +9361,115 @@ fn grid_capped_and_plain_fill_tracks_share_the_room(ui: &Ui) -> Result<()> {
             "上限なしは残りを受け取る (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
         );
     }
+    Ok(())
+}
+
+/// The same tracks in a window (or a vertical `Scroll`) smaller than the maximum: the
+/// capped child shrinks to what there is, and the window keeps its size (the
+/// `Scroll`'s content stays as tall as its visible area).
+///
+/// The plain child wished for "the grid − what the other tracks need" with the
+/// capped track's whole maximum counted as needed. In a window lower than that it
+/// wished for a negative size, and the wish (far stronger than a window keeping its
+/// size) grew the window instead. The room kept for a capped track is held to what
+/// the grid has.
+fn grid_capped_and_plain_fill_tracks_fit_a_small_window(ui: &Ui) -> Result<()> {
+    for vertical in [true, false] {
+        let grid = ui.grid()?;
+        grid.set_sizing(Sizing::fill());
+        let plain = ui.stack(Orientation::Vertical)?;
+        plain.set_sizing(Sizing::fill());
+        let capped = ui.stack(Orientation::Vertical)?;
+        capped.set_sizing(if vertical {
+            Sizing::fill().max_height(100.0)
+        } else {
+            Sizing::fill().max_width(100.0)
+        });
+        let second = if vertical {
+            grid.set_column_track(0, Track::FILL);
+            grid.set_row_track(0, Track::FILL);
+            grid.set_row_track(1, Track::FILL);
+            GridCell::new(0, 1)
+        } else {
+            grid.set_row_track(0, Track::FILL);
+            grid.set_column_track(0, Track::FILL);
+            grid.set_column_track(1, Track::FILL);
+            GridCell::new(1, 0)
+        };
+        grid.attach(&plain, GridCell::new(0, 0));
+        grid.attach(&capped, second);
+
+        let (width, height) = if vertical {
+            (400.0, 80.0)
+        } else {
+            (80.0, 400.0)
+        };
+        let window = ui.window("狭い", width, height)?;
+        window.set_child(&grid);
+        window.show();
+        let content = window
+            .native_window()
+            .contentView()
+            .expect("コンテンツビューがあること");
+        content.layoutSubtreeIfNeeded();
+        pump(0.05);
+        content.layoutSubtreeIfNeeded();
+        let size = content.frame().size;
+        let capped_frame = capped.native_view().frame();
+        let plain_frame = plain.native_view().frame();
+        window.close();
+        let (window_size, room, capped_size) = if vertical {
+            (size.height, height, capped_frame.size.height)
+        } else {
+            (size.width, width, capped_frame.size.width)
+        };
+        assert!(
+            (window_size - room).abs() < 0.5,
+            "ウィンドウは広がらない (縦 {vertical}): {size:?} / {capped_frame:?} / {plain_frame:?}"
+        );
+        assert!(
+            capped_size <= room + 0.5,
+            "上限付きは空いている分まで縮む (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
+        );
+    }
+
+    // 縦の Scroll の中でも、中身を伸ばさずに縮む。
+    let grid = ui.grid()?;
+    grid.set_sizing(Sizing::fill());
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::FILL);
+    grid.set_row_track(1, Track::FILL);
+    let plain = ui.stack(Orientation::Vertical)?;
+    plain.set_sizing(Sizing::fill());
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_height(100.0));
+    grid.attach(&plain, GridCell::new(0, 0));
+    grid.attach(&capped, GridCell::new(0, 1));
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&grid);
+    scroll.set_sizing(Sizing::fill());
+    let window = ui.window("狭い Scroll", 400.0, 80.0)?;
+    window.set_child(&scroll);
+    window.show();
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("コンテンツビューがあること");
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    content.layoutSubtreeIfNeeded();
+    let metrics = scroll.metrics();
+    let capped_frame = capped.native_view().frame();
+    window.close();
+    assert_eq!(
+        metrics.content_height, metrics.viewport_height,
+        "Scroll の中身は伸びない: {metrics:?} / {capped_frame:?}"
+    );
+    assert!(
+        capped_frame.size.height < 80.0,
+        "上限付きは表示領域に収まるまで縮む: {capped_frame:?}"
+    );
     Ok(())
 }
 
