@@ -47,6 +47,13 @@ struct ExpanderInner {
     target: RefCell<Option<Retained<ActionTarget>>>,
 }
 
+impl Drop for ExpanderInner {
+    fn drop(&mut self) {
+        let view: &NSView = self.native.as_ref();
+        crate::layout::unregister_container(view);
+    }
+}
+
 /// A container whose contents are shown and hidden by clicking its heading.
 #[derive(Clone)]
 pub struct Expander(Rc<ExpanderInner>);
@@ -100,6 +107,15 @@ impl Expander {
             this.0.header.setAction(Some(sel!(invoke:)));
         }
         *this.0.target.borrow_mut() = Some(target);
+
+        // 中身の指定があとから変わったときも、縦の扱いを合わせ直す。横は指定に
+        // よらず開いた場所の幅いっぱいなので、張り直すものは無い。
+        let view: &NSView = this.0.native.as_ref();
+        crate::layout::register_container(view, |child| {
+            if !crate::layout::wants_fill(child, false) {
+                crate::layout::keep_auto_size(child, false);
+            }
+        });
         this
     }
 

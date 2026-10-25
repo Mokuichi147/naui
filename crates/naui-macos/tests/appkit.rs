@@ -304,6 +304,34 @@ fn main() {
         ),
         ("Stack の主軸の Fill は余白を受け取る", stack_fill_main),
         (
+            "追加したあとの set_sizing も交差軸の Fill に効く",
+            stack_fill_cross_after_append,
+        ),
+        (
+            "追加したあとの set_sizing も主軸の Fill に効く",
+            stack_fill_main_after_append,
+        ),
+        (
+            "置いたあとの set_sizing もグリッドのマスに効く",
+            grid_fill_after_attach,
+        ),
+        (
+            "積んだあとで間隔を変えても子どうしの間に効く",
+            stack_spacing_after_append,
+        ),
+        (
+            "Stack へ差し込んでも外しても入力欄のフォーカスと変換中の文字が残る",
+            stack_insert_keeps_focus,
+        ),
+        (
+            "別の Stack へ移した子は新しい親に合わせて広がる",
+            moved_child_follows_the_new_stack,
+        ),
+        (
+            "移した子はスクロール位置を保ち、フォーカスは外れて変換中の文字は確定する",
+            moved_widget_keeps_scroll_but_not_focus,
+        ),
+        (
             "上限付きの Fill が空間のあるときは上限まで広がる",
             fill_with_max_prefers_the_max,
         ),
@@ -2539,6 +2567,313 @@ fn stack_fill_cross(ui: &Ui) -> Result<()> {
         "余白の変更に追従すること: {:?}",
         wide.native_view().frame()
     );
+    Ok(())
+}
+
+/// Cross-axis `Fill` works even when `set_sizing` is called after appending.
+///
+/// A child whose width comes from its content (a button) grows through hugging alone,
+/// but a nested `Stack` or a `Scroll` grows only through the cross-axis constraint,
+/// which used to be placed only at `append`.
+fn stack_fill_cross_after_append(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_padding(Padding::all(10.0));
+    let inner = ui.stack(Orientation::Vertical)?;
+    inner.append(&ui.label("あとから広げる")?);
+    let scroll = ui.scroll()?;
+    scroll.set_child(&ui.label("中身")?);
+    scroll.set_sizing(Sizing::new().height(Length::Fixed(50.0)));
+    stack.append(&inner);
+    stack.append(&scroll);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(300.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+    let before = inner.native_view().frame().size.width;
+    assert!(before < 280.0, "指定前は中身の幅であること: {before}");
+
+    inner.set_sizing(Sizing::fill_width());
+    scroll.set_sizing(Sizing::fill_width().height(Length::Fixed(50.0)));
+    root.layoutSubtreeIfNeeded();
+    for (name, width) in [
+        ("Stack", inner.native_view().frame().size.width),
+        ("Scroll", scroll.native_view().frame().size.width),
+    ] {
+        assert!(
+            (width - 280.0).abs() < 1e-6,
+            "あとから指定しても {name} が左右の余白を除いた幅になること: {width}"
+        );
+    }
+
+    // `Fill` をやめれば中身の幅へ戻る。
+    inner.set_sizing(Sizing::AUTO);
+    root.layoutSubtreeIfNeeded();
+    let restored = inner.native_view().frame().size.width;
+    assert!(
+        (restored - before).abs() < 1e-6,
+        "指定を戻せば中身の幅へ戻ること: {before} / {restored}"
+    );
+    Ok(())
+}
+
+/// Main-axis `Fill` takes the leftover space even when `set_sizing` is called after
+/// appending.
+fn stack_fill_main_after_append(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Horizontal)?;
+    stack.set_spacing(12.0);
+    let fill = ui.button("伸びる")?;
+    let fixed = ui.button("固定")?;
+    stack.append(&fill);
+    stack.append(&fixed);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(500.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+    let before = fill.native_view().frame().size.width;
+
+    fill.set_sizing(Sizing::fill_width());
+    root.layoutSubtreeIfNeeded();
+    let fill_frame = fill.native_view().frame();
+    let fixed_frame = fixed.native_view().frame();
+    assert!(
+        fill_frame.size.width > fixed_frame.size.width + 150.0,
+        "あとから指定した主軸の Fill が余白を受け取ること: {fill_frame:?} / {fixed_frame:?}"
+    );
+
+    fill.set_sizing(Sizing::AUTO);
+    root.layoutSubtreeIfNeeded();
+    let restored = fill.native_view().frame().size.width;
+    assert!(
+        (restored - before).abs() < 1e-6,
+        "指定を戻せば余白を受け取らなくなること: {before} / {restored}"
+    );
+    Ok(())
+}
+
+/// A child grows within its grid cell even when `set_sizing` is called after
+/// attaching.
+fn grid_fill_after_attach(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+    let inner = ui.stack(Orientation::Vertical)?;
+    inner.append(&ui.label("あとから広げる")?);
+    grid.attach(&inner, GridCell::new(0, 0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(400.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+    let before = inner.native_view().frame().size.width;
+    assert!(before < 300.0, "指定前は中身の幅であること: {before}");
+
+    inner.set_sizing(Sizing::fill_width());
+    root.layoutSubtreeIfNeeded();
+    let filled = inner.native_view().frame().size.width;
+    assert!(
+        (filled - 400.0).abs() < 1e-6,
+        "あとから指定してもマスいっぱいに広がること: {filled}"
+    );
+
+    inner.set_sizing(Sizing::AUTO);
+    root.layoutSubtreeIfNeeded();
+    let restored = inner.native_view().frame().size.width;
+    assert!(
+        (restored - before).abs() < 1e-6,
+        "指定を戻せば中身の幅へ戻ること: {before} / {restored}"
+    );
+    Ok(())
+}
+
+/// Calling `set_spacing` after appending changes the gaps between the children
+/// already there.
+fn stack_spacing_after_append(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let first = ui.label("1")?;
+    let second = ui.label("2")?;
+    let third = ui.label("3")?;
+    stack.append(&first);
+    stack.append(&second);
+    stack.append(&third);
+    stack.set_spacing(20.0);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(200.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+    let gap = |upper: &naui_macos::Label, lower: &naui_macos::Label| {
+        let a = upper.native_view().frame();
+        let b = lower.native_view().frame();
+        // 反転していない座標系でも反転した座標系でも、間の長さを取る。
+        let (top, bottom) = if a.origin.y < b.origin.y {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        bottom.origin.y - (top.origin.y + top.size.height)
+    };
+    for (name, value) in [
+        ("1 と 2", gap(&first, &second)),
+        ("2 と 3", gap(&second, &third)),
+    ] {
+        assert!(
+            (value - 20.0).abs() < 1e-6,
+            "{name} の間が指定した間隔になること: {value}"
+        );
+    }
+    Ok(())
+}
+
+/// Inserting into or removing from a `Stack` leaves the other children in the view
+/// hierarchy. Taking them out would cost a field being typed into its focus and its
+/// IME composition.
+fn stack_insert_keeps_focus(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカスの保持", 320.0, 160.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    let field = ui.text_input("")?;
+    field.set_sizing(Sizing::fill_width());
+    root.append(&field);
+    window.set_child(&root);
+    window.show();
+
+    let field_view: Retained<NSTextField> = field
+        .native_view()
+        .downcast()
+        .expect("NSTextField であること");
+    assert!(field.request_focus());
+    let editor = field_view
+        .currentEditor()
+        .and_then(|editor| editor.downcast::<NSTextView>().ok())
+        .expect("入力欄が編集中になること");
+    // IME が変換中の文字 (marked text) を置いた状態にする。
+    unsafe {
+        editor.setMarkedText_selectedRange_replacementRange(
+            &NSString::from_str("かな"),
+            NSRange::new(2, 0),
+            NSRange::new(NSNotFound as usize, 0),
+        )
+    };
+    assert!(unsafe { editor.hasMarkedText() });
+
+    root.insert(0, &ui.label("見出し")?);
+    assert!(
+        field_view.currentEditor().is_some(),
+        "前へ差し込んでも入力欄のフォーカスが外れないこと"
+    );
+    root.append(&ui.label("末尾")?);
+    root.remove(0);
+    assert!(
+        field_view.currentEditor().is_some(),
+        "ほかの子を外しても入力欄のフォーカスが外れないこと"
+    );
+    assert!(
+        unsafe { editor.hasMarkedText() },
+        "ほかの子を出し入れしても変換中の文字が残ること"
+    );
+    window.close();
+    Ok(())
+}
+
+/// A child taken out of one `Stack` and appended to another follows the new parent:
+/// cross-axis `Fill` stretches it to the new stack, and later `set_sizing` calls reach
+/// the new stack rather than the old one.
+fn moved_child_follows_the_new_stack(ui: &Ui) -> Result<()> {
+    let first = ui.stack(Orientation::Vertical)?;
+    let second = ui.stack(Orientation::Vertical)?;
+    second.set_padding(Padding::all(20.0));
+    let inner = ui.stack(Orientation::Vertical)?;
+    inner.append(&ui.label("移る")?);
+    inner.set_sizing(Sizing::fill_width());
+    first.append(&inner);
+
+    let first_root = first.native_view();
+    first_root.setFrameSize(NSSize::new(300.0, 100.0));
+    first_root.layoutSubtreeIfNeeded();
+    assert!(
+        (inner.native_view().frame().size.width - 300.0).abs() < 1e-6,
+        "移す前は前の親の幅になること"
+    );
+
+    first.remove(0);
+    second.append(&inner);
+    let second_root = second.native_view();
+    second_root.setFrameSize(NSSize::new(200.0, 100.0));
+    second_root.layoutSubtreeIfNeeded();
+    let moved = inner.native_view().frame().size.width;
+    assert!(
+        (moved - 160.0).abs() < 1e-6,
+        "移した先の幅から左右の余白を除いた幅になること: {moved}"
+    );
+    assert!(first.is_empty(), "前の親には残らないこと");
+
+    inner.set_sizing(Sizing::AUTO);
+    second_root.layoutSubtreeIfNeeded();
+    let restored = inner.native_view().frame().size.width;
+    assert!(
+        restored < 150.0,
+        "移したあとの set_sizing が新しい親に効くこと: {restored}"
+    );
+    Ok(())
+}
+
+/// What a widget moved to another container keeps: a `Scroll` keeps its position,
+/// while a field loses the focus, and AppKit commits the text being composed when it
+/// does (the documented behavior; the other platforms differ only in what happens to
+/// the composition).
+fn moved_widget_keeps_scroll_but_not_focus(ui: &Ui) -> Result<()> {
+    let window = ui.window("移動", 320.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    let first = ui.stack(Orientation::Vertical)?;
+    let second = ui.stack(Orientation::Vertical)?;
+    first.set_sizing(Sizing::fill_width());
+    second.set_sizing(Sizing::fill_width());
+    root.append(&first);
+    root.append(&second);
+    let field = ui.text_input("")?;
+    field.set_sizing(Sizing::fill_width());
+    first.append(&field);
+    let scroll = ui.scroll()?;
+    scroll.set_sizing(Sizing::fill_width().height(Length::Fixed(80.0)));
+    let tall = ui.stack(Orientation::Vertical)?;
+    for index in 0..30 {
+        tall.append(&ui.label(&format!("行 {index}"))?);
+    }
+    scroll.set_child(&tall);
+    first.append(&scroll);
+    window.set_child(&root);
+    window.show();
+    root.native_view().layoutSubtreeIfNeeded();
+
+    assert!(field.request_focus());
+    let field_view: Retained<NSTextField> = field
+        .native_view()
+        .downcast()
+        .expect("NSTextField であること");
+    let editor = field_view
+        .currentEditor()
+        .and_then(|editor| editor.downcast::<NSTextView>().ok())
+        .expect("入力欄が編集中になること");
+    unsafe {
+        editor.setMarkedText_selectedRange_replacementRange(
+            &NSString::from_str("かな"),
+            NSRange::new(2, 0),
+            NSRange::new(NSNotFound as usize, 0),
+        )
+    };
+    scroll.scroll_to(0.0, 200.0);
+    assert_eq!(scroll.metrics().y, 200.0);
+
+    first.remove(1);
+    first.remove(0);
+    second.append(&field);
+    second.append(&scroll);
+    root.native_view().layoutSubtreeIfNeeded();
+    assert_eq!(scroll.metrics().y, 200.0, "スクロール位置が残ること");
+    assert!(
+        field_view.currentEditor().is_none(),
+        "移した入力欄からはフォーカスが外れること"
+    );
+    assert_eq!(field.text(), "かな", "変換中の文字は確定して残ること");
+    window.close();
     Ok(())
 }
 

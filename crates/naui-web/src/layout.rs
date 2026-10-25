@@ -111,7 +111,7 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     }
 
     // 親が分かっていれば、その並び方向に合わせた指定もここで済ませる。
-    apply_child_layout(element.unchecked_ref(), parent_layout(element));
+    layout_for_parent(element.unchecked_ref(), parent_layout(element));
 }
 
 fn set_length(element: &HtmlElement, horizontal: bool, length: naui_core::Length) {
@@ -184,11 +184,47 @@ pub(crate) fn fill_parent(element: &Element) {
     }
 }
 
+/// Prepares an element just put into a container.
+///
+/// Rewrites the settings that depend on the parent's layout direction (`flex-grow`
+/// and so on), and tells the `Scroll`s inside that they were put back into the
+/// document: the browser forgets the scroll position of an element taken out of it,
+/// so a widget moved from another container would otherwise show its `Scroll`s from
+/// the top.
+pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
+    layout_for_parent(element, parent);
+    tell_scrolls_reattached(element);
+}
+
+/// The attribute marking a `Scroll`'s element.
+const SCROLL_ATTR: &str = "data-naui-scroll";
+/// The event telling a `Scroll` that it was put into a container again.
+const REATTACHED_EVENT: &str = "naui-reattached";
+
+fn tell_scrolls_reattached(element: &Element) {
+    let mut scrolls = Vec::new();
+    if element.has_attribute(SCROLL_ATTR) {
+        scrolls.push(element.clone());
+    }
+    if let Ok(found) = element.query_selector_all(&format!("[{SCROLL_ATTR}]")) {
+        scrolls.extend(
+            (0..found.length())
+                .filter_map(|index| found.item(index))
+                .filter_map(|node| node.dyn_into::<Element>().ok()),
+        );
+    }
+    for scroll in scrolls {
+        if let Ok(event) = web_sys::Event::new(REATTACHED_EVENT) {
+            let _ = scroll.dispatch_event(&event);
+        }
+    }
+}
+
 /// Rewrites the settings that depend on the parent's layout direction
 /// (`flex-grow` and so on).
 ///
 /// Called both when put into a container and when the size is specified again.
-pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
+fn layout_for_parent(element: &Element, parent: ParentLayout) {
     let element: &HtmlElement = element.unchecked_ref();
     let style = element.style();
     let fill_width = element.has_attribute(FILL_WIDTH_ATTR);
@@ -499,7 +535,12 @@ struct ScrollInner {
     /// The destination requested before the size was decided (before it is in the
     /// document, inside a hidden tab, and so on). Applied once it has a size.
     pending: Cell<Option<ScrollTarget>>,
+    /// The position while it was last shown. The browser forgets the position of an
+    /// element taken out of the document, so it is scrolled back here once it is put
+    /// into a container again.
+    shown_offset: Cell<(f64, f64)>,
     listener: RefCell<Option<Listener>>,
+    reattached_listener: RefCell<Option<Listener>>,
     /// The subscription to size changes. Dropping it also unsubscribes.
     observer: RefCell<Option<ResizeObserver>>,
     observer_callback: RefCell<Option<Closure<dyn FnMut(JsValue)>>>,
@@ -524,12 +565,15 @@ impl Scroll {
         let element: HtmlElement = create(document, "div")?.unchecked_into();
         // 中身を表示領域の大きさに合わせるため、1 マスの Grid にする (set_policy)。
         let _ = element.style().set_property("display", "grid");
+        let _ = element.set_attribute(SCROLL_ATTR, "");
         let this = Self(Rc::new(ScrollInner {
             element,
             child: RefCell::new(None),
             on_scroll: ScrollNotifier::default(),
             pending: Cell::new(None),
+            shown_offset: Cell::new((0.0, 0.0)),
             listener: RefCell::new(None),
+            reattached_listener: RefCell::new(None),
             observer: RefCell::new(None),
             observer_callback: RefCell::new(None),
         }));
@@ -546,6 +590,13 @@ impl Scroll {
             }
         })?;
         *self.0.listener.borrow_mut() = Some(listener);
+        let weak = Rc::downgrade(&self.0);
+        let listener = Listener::attach(self.0.element.as_ref(), REATTACHED_EVENT, move || {
+            if let Some(inner) = weak.upgrade() {
+                Scroll(inner).restore_shown_offset();
+            }
+        })?;
+        *self.0.reattached_listener.borrow_mut() = Some(listener);
 
         // 文書に載ったとき・隠れていたタブが出たときにも呼ばれる。
         let weak = Rc::downgrade(&self.0);
@@ -641,11 +692,12 @@ impl Scroll {
             return;
         };
         let metrics = self.metrics();
-        if metrics.viewport_width <= 0.0 || metrics.viewport_height <= 0.0 {
+        if !has_viewport(&metrics) {
             return;
         }
         self.0.pending.set(None);
         let (x, y) = target.resolve(&metrics);
+        self.0.shown_offset.set((x, y));
         if (x, y) != (metrics.x, metrics.y) {
             // ページの CSS に `scroll-behavior: smooth` があっても、その場で送る。
             let options = ScrollToOptions::new();
@@ -657,8 +709,34 @@ impl Scroll {
     }
 
     fn notify_if_moved(&self) {
+        let metrics = self.metrics();
+        if has_viewport(&metrics) {
+            self.0.shown_offset.set((metrics.x, metrics.y));
+        }
         self.0.on_scroll.notify_if_moved(|| self.metrics());
     }
+
+    /// Scrolls back to the position from while it was shown, after being put into a
+    /// container again ([`apply_child_layout`]).
+    ///
+    /// The browser drops the scroll position of an element taken out of the document
+    /// and shows it again from the top, while the other platforms keep it. Taking it
+    /// out and putting it back within one task shows no size change, so
+    /// `ResizeObserver` cannot tell; the container does. If it has no size yet, the
+    /// position waits like a `scroll_to` before it is shown.
+    fn restore_shown_offset(&self) {
+        let (x, y) = self.0.shown_offset.get();
+        let metrics = self.metrics();
+        if self.0.pending.get().is_some() || (metrics.x, metrics.y) == (x, y) {
+            return;
+        }
+        self.request(ScrollTarget::To { x, y });
+    }
+}
+
+/// Whether it has a visible area (it is in the document and shown).
+fn has_viewport(metrics: &ScrollMetrics) -> bool {
+    metrics.viewport_width > 0.0 && metrics.viewport_height > 0.0
 }
 
 /// Reads `scrollTop` / `scrollLeft` as fractions. web-sys's `scroll_top()` returns

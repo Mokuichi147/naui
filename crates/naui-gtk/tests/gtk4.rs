@@ -261,6 +261,26 @@ fn main() {
             grid_fixed_track_sets_width,
         ),
         (
+            "追加したあとの set_sizing でもスタックの寄せ方が残る",
+            stack_align_survives_later_sizing,
+        ),
+        (
+            "置いたあとの set_sizing や列の変更でもグリッドの列の設定が残る",
+            grid_track_survives_later_changes,
+        ),
+        (
+            "別のコンテナへ移した子は前の親の設定を持ち越さない",
+            moved_child_drops_the_old_placement,
+        ),
+        (
+            "ウィンドウに入れたあとの set_sizing でも中身が窓いっぱいに残る",
+            window_child_fills_after_later_sizing,
+        ),
+        (
+            "移した子はスクロール位置を保ち、フォーカスは外れる",
+            moved_widget_keeps_scroll_but_not_focus,
+        ),
+        (
             "スクロールが中身とポリシーを保つ",
             scroll_keeps_child_and_policy,
         ),
@@ -2549,6 +2569,96 @@ fn grid_fixed_track_sets_width(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// Specifying the size after appending keeps the stack's alignment. `set_sizing`
+/// sets the same `halign` as the stack does, and used to put back its own.
+fn stack_align_survives_later_sizing(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::Start);
+    let label = ui.label("あ")?;
+    stack.append(&label);
+
+    label.set_sizing(Sizing::new().height(Length::Fixed(30.0)));
+    assert_eq!(bin_of(&label).halign(), gtk::Align::Start);
+    label.set_sizing(Sizing::fill_width());
+    assert_eq!(bin_of(&label).halign(), gtk::Align::Fill);
+    label.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        bin_of(&label).halign(),
+        gtk::Align::Start,
+        "Fill をやめればスタックの寄せ方へ戻る"
+    );
+    Ok(())
+}
+
+/// A grid column's settings stay on its children when their size is specified
+/// after attaching, and changing the column replaces the old setting rather than
+/// piling onto it.
+fn grid_track_survives_later_changes(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fixed(96.0));
+    let label = ui.label("名前")?;
+    grid.attach(&label, GridCell::new(0, 0));
+    let natural = measure_width(&ui.label("名前")?.native_widget());
+
+    label.set_sizing(Sizing::new().height(Length::Fixed(30.0)));
+    assert_eq!(
+        measure_width(&bin_of(&label)),
+        (96, 96),
+        "あとから高さを決めても列の固定幅のまま"
+    );
+
+    grid.set_column_track(0, Track::Auto);
+    assert_eq!(
+        measure_width(&bin_of(&label)),
+        natural,
+        "列を Auto に戻せば中身の幅へ戻る"
+    );
+
+    grid.set_column_track(0, Track::FILL);
+    label.set_sizing(Sizing::new().height(Length::Fixed(30.0)));
+    assert!(
+        bin_of(&label).hexpands(),
+        "あとから大きさを決めても Fill の列は広がる"
+    );
+    assert_eq!(bin_of(&label).halign(), gtk::Align::Start);
+    Ok(())
+}
+
+/// A child moved from a `Grid` into a `Stack` takes the stack's alignment and leaves
+/// the grid column's width behind.
+fn moved_child_drops_the_old_placement(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fixed(96.0));
+    let label = ui.label("移る")?;
+    grid.attach(&label, GridCell::new(0, 0));
+    assert_eq!(measure_width(&bin_of(&label)), (96, 96));
+    let natural = measure_width(&ui.label("移る")?.native_widget());
+
+    grid.remove(GridCell::new(0, 0));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::End);
+    stack.append(&label);
+    let bin = bin_of(&label);
+    assert_eq!(measure_width(&bin), natural, "列の固定幅を持ち越さない");
+    assert_eq!(bin.halign(), gtk::Align::End, "新しい親の寄せ方になる");
+    assert_eq!(bin.valign(), gtk::Align::Center);
+    Ok(())
+}
+
+/// The window's content still fills the window when its size is specified after
+/// `set_child`.
+fn window_child_fills_after_later_sizing(ui: &Ui) -> Result<()> {
+    let window = ui.window("中身", 320.0, 240.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    window.set_child(&root);
+    root.set_sizing(Sizing::new().min_height(100.0));
+    let bin = bin_of(&root);
+    assert_eq!(bin.halign(), gtk::Align::Fill);
+    assert_eq!(bin.valign(), gtk::Align::Fill);
+    window.close();
+    Ok(())
+}
+
 fn scroll_keeps_child_and_policy(ui: &Ui) -> Result<()> {
     let scroll = ui.scroll()?;
     let stack = ui.stack(Orientation::Vertical)?;
@@ -2607,6 +2717,61 @@ fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
         natural,
         "送れる向きでは自然な高さのまま置かれること (最小は {minimum})"
     );
+    window.close();
+    Ok(())
+}
+
+/// What a widget moved to another container keeps: a `Scroll` keeps its position,
+/// while a field loses the focus (GTK4 moves it out of a widget that is unparented).
+fn moved_widget_keeps_scroll_but_not_focus(ui: &Ui) -> Result<()> {
+    let window = ui.window("移動", 240.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let first = ui.stack(Orientation::Vertical)?;
+    let second = ui.stack(Orientation::Vertical)?;
+    root.append(&first);
+    root.append(&second);
+    let field = ui.text_input("")?;
+    first.append(&field);
+    let pane = ui.stack(Orientation::Vertical)?;
+    for index in 0..40 {
+        pane.append(&ui.label(&format!("行 {index}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(200.0))
+            .height(Length::Fixed(80.0)),
+    );
+    first.append(&scroll);
+    window.set_child(&root);
+    window.show();
+    settle(&scroll);
+    assert!(field.request_focus());
+    pump();
+    // フォーカスはウィンドウが持つ「いま入力を受ける子」で見る。
+    let focused = || {
+        let field = field.native_widget();
+        field
+            .root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| focus == field || focus.is_ancestor(&field))
+    };
+    let had_focus = focused();
+    scroll.scroll_to(0.0, 120.0);
+    settle(&scroll);
+    assert_eq!(scroll.metrics().y, 120.0);
+
+    first.remove(1);
+    first.remove(0);
+    second.append(&field);
+    second.append(&scroll);
+    settle(&scroll);
+    assert_eq!(scroll.metrics().y, 120.0, "スクロール位置が残ること");
+    // ウィンドウがフォーカスを持てない環境では、移す前から持っていない。
+    if had_focus {
+        assert!(!focused(), "移した入力欄からはフォーカスが外れること");
+    }
     window.close();
     Ok(())
 }

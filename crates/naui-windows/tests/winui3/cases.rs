@@ -117,6 +117,10 @@ const CASES: &[Case] = &[
         grid_span_does_not_follow_into_a_stack,
     ),
     (
+        "Grid のマスの縦の寄せ方は set_sizing のあとも残り、外すと残らない",
+        grid_cell_placement_follows_the_child,
+    ),
+    (
         "リストに行の起動と文脈メニューの受け口を付けられる",
         list_accepts_row_activate_and_context_menu,
     ),
@@ -276,6 +280,10 @@ const CASES: &[Case] = &[
     (
         "スクロールの位置を測り、送れる範囲に丸めて送る",
         scroll_measures_and_moves,
+    ),
+    (
+        "別の Stack へ移した Scroll がスクロール位置を保つ",
+        moved_scroll_keeps_its_position,
     ),
     (
         "足した直後の scroll_to_end が新しい末尾へ届く",
@@ -1392,6 +1400,39 @@ fn grid_span_does_not_follow_into_a_stack(ui: &Ui) -> Result<()> {
         ),
         (0, 1),
         "移した子と後ろの子が別の列に入ること"
+    );
+    Ok(())
+}
+
+/// A grid cell centers an `Auto` child vertically. That holds when the child's size
+/// is specified after attaching (`apply_sizing` sets the alignment too), and is not
+/// carried along when the child leaves the grid: in a `Scroll` or a window it would
+/// stay centered instead of taking the top.
+fn grid_cell_placement_follows_the_child(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    let child = ui.label("マスの中")?;
+    grid.attach(&child, GridCell::new(1, 1));
+    let element = native::<FrameworkElement>(&child);
+    child.set_sizing(Sizing::fixed(80.0, 20.0));
+    assert_eq!(
+        element.VerticalAlignment().expect("縦の寄せ方"),
+        VerticalAlignment::Center,
+        "置いたあとに大きさを決めてもマスの中央に置くこと"
+    );
+
+    grid.remove(GridCell::new(1, 1));
+    assert_eq!(
+        element.VerticalAlignment().expect("外したあとの縦の寄せ方"),
+        VerticalAlignment::Top,
+        "外したらマスのための寄せ方を残さないこと"
+    );
+    assert_eq!(
+        (
+            Grid::GetColumn(&element).expect("列"),
+            Grid::GetRow(&element).expect("行"),
+        ),
+        (0, 0),
+        "外したらマスの位置を残さないこと"
     );
     Ok(())
 }
@@ -3079,6 +3120,49 @@ fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
         scroll.scroll_to(-50.0, 1e9);
         let clamped = scroll.metrics();
         assert_eq!((clamped.x, clamped.y), (0.0, clamped.max_y()));
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A `Scroll` moved to another `Stack` keeps its position, as on the other
+/// platforms (where the tests check it). On CI the ScrollViewer gets no size, so this
+/// is checked on real machines only.
+fn moved_scroll_keeps_its_position(ui: &Ui) -> Result<()> {
+    let window = ui.window("移動", 240.0, 320.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let first = ui.stack(Orientation::Vertical)?;
+    let second = ui.stack(Orientation::Vertical)?;
+    root.append(&first);
+    root.append(&second);
+    let pane = ui.stack(Orientation::Vertical)?;
+    for i in 0..40 {
+        pane.append(&ui.label(&format!("行 {i}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fixed(200.0, 100.0));
+    first.append(&scroll);
+    window.set_child(&root);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        scroll.scroll_to(0.0, 120.0);
+        assert_eq!(scroll.metrics().y, 120.0);
+        first.remove(0);
+        second.append(&scroll);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.metrics().viewport_height > 0.0
+        });
+        assert_eq!(
+            scroll.metrics().y,
+            120.0,
+            "移してもスクロール位置が残ること"
+        );
     }));
     window.close();
     if let Err(panic) = outcome {

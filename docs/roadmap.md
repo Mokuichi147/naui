@@ -114,12 +114,16 @@ counterparts for, plus the foundation the adaptive layout track builds on.
       for as long as it existed, even when nothing moved, and the rows built could
       lag behind fast scrolling by up to one interval. It now follows
       `ScrollViewer.ViewChanged`, the same as `Scroll`.
-- [ ] *(adaptive)* **A contract for changes after adding to a container.** Settings
+- [x] *(adaptive)* **A contract for changes after adding to a container.** Settings
       made after a child is added (`set_sizing`, `set_spacing`, placement within a
-      `Grid` cell) take effect, and a child moved to another container gets the
-      constraints that depend on its new parent. Today macOS requires these to be
-      set before adding. Also check that focus, scroll position and IME composition
-      survive the move, and fix or document what does not.
+      `Grid` cell) now take effect on every platform, and a child moved to another
+      container (removed first, then added) gets what its new parent decides with
+      nothing left over from the old one. macOS used to require these before adding,
+      and GTK lost a `Stack`'s alignment and a `Grid` column's width to a later
+      `set_sizing`. Inserting into or removing from a `Stack` on macOS no longer takes
+      the other children out, so a field keeps its focus and IME composition. The
+      moved widget keeps its `Scroll` positions (the Web now restores them) and loses
+      the focus, which the guide documents.
 - [ ] *(adaptive)* **`Stack::set_orientation`.** Switching between vertical and
       horizontal after creation. `NSStackView.orientation`, `GtkOrientable`,
       `Orientation` on WinUI panels, CSS `flex-direction`.

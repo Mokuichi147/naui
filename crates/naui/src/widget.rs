@@ -54,9 +54,9 @@ macro_rules! impl_widget {
             /// The actual size is decided by GTK4's layout, so what you pass here is only
             /// "at least this much", "take the leftover space" and "stop at this maximum".
             ///
-            /// The container ([`Stack::set_align`](crate::Stack::set_align)) also decides
-            /// cross-axis alignment, so calling this **before putting the widget into a
-            /// container** is the safe choice.
+            /// It can be called before or after putting the widget into a container, with
+            /// the same result (see
+            /// [changing widgets after adding](crate::guide#changing-and-moving-widgets-after-adding)).
             #[inline]
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 self.0.set_sizing(sizing)
