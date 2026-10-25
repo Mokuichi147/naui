@@ -3566,14 +3566,14 @@ fn fill_video_does_not_ask_for_its_size() {
     });
 }
 
-/// A `Fill` image with a maximum asks for its maximum (the maximum doubles as the
-/// size wanted under normal conditions), so in an `Auto` row it keeps that height
-/// even when a `Fill` row takes the rest. With its natural size contained to zero, it
-/// collapsed there and could not be seen.
+/// A `Fill` image with a maximum keeps a size in an `Auto` row even when a `Fill`
+/// row takes the rest: its pixel size, held to the maximum. With its natural size
+/// contained to zero, it collapsed there and could not be seen (in Firefox even
+/// when the maximum was given with `contain-intrinsic-height`).
 ///
-/// The height is the maximum itself, which every browser counts when sizing the
-/// row. Firefox counted a percentage height, or a contained natural size given with
-/// `contain-intrinsic-height`, as zero.
+/// In a `Fill` row it grows up to the maximum in the middle of the cell, and in a
+/// cell lower than the maximum it shrinks to the cell. A height fixed at the maximum
+/// would keep the row from shrinking.
 #[wasm_bindgen_test]
 async fn capped_fill_image_asks_for_its_maximum() {
     let canvas: web_sys::HtmlCanvasElement = web_sys::window()
@@ -3582,8 +3582,9 @@ async fn capped_fill_image_asks_for_its_maximum() {
         .create_element("canvas")
         .expect("canvas の生成")
         .unchecked_into();
-    canvas.set_width(40);
-    canvas.set_height(20);
+    // 画素の大きさが上限を超える画像。Auto の行では上限で抑えた高さになる。
+    canvas.set_width(400);
+    canvas.set_height(300);
     let source = canvas.to_data_url().expect("PNG への書き出し");
     let mut kept = None;
     with_ui(|ui| {
@@ -3630,6 +3631,20 @@ async fn capped_fill_image_asks_for_its_maximum() {
     let rect = element.get_bounding_client_rect();
     assert_eq!(rect.height(), 100.0, "上限まで広がる");
     assert_eq!(rect.top() - grid_rect.top(), 100.0, "縦はマスの中央");
+
+    // マスが上限より低ければ、マスに合わせて縮む。
+    grid.set_sizing(Sizing::fixed(300.0, 60.0));
+    next_frames().await;
+    assert_eq!(
+        element.get_bounding_client_rect().height(),
+        60.0,
+        "マスより大きくならない"
+    );
+    assert_eq!(
+        grid.native_element().get_bounding_client_rect().height(),
+        60.0,
+        "行もマスの高さに収まる"
+    );
 }
 
 /// Calls "append, then scroll to the end", as in a chat, back to back.
