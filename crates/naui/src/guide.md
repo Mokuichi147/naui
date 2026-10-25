@@ -207,7 +207,9 @@ vertically.
 
 An [`Image`] asks for its pixel size on an `Auto` axis. On a `Fill` axis it asks
 for nothing and fits into the leftover space, so a large image inside a vertical
-`Scroll` does not push the content out to the image's height.
+`Scroll` does not push the content out to the image's height. A [`Video`] does the
+same, so it gets shorter with the window instead of pushing its controls out of
+view.
 
 The content of a [`Scroll`] is **never smaller than the visible area**: it
 matches the visible area in a direction that does not scroll, and grows past it in

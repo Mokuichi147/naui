@@ -3538,6 +3538,34 @@ async fn fill_image_does_not_push_a_scroll() {
     assert_eq!(computed(element.as_ref(), "contain"), "none");
 }
 
+/// A `Fill` video does not ask for the height its width and aspect ratio give,
+/// the same as an image, so it fits into the leftover space of a vertical `Scroll`.
+#[wasm_bindgen_test]
+fn fill_video_does_not_ask_for_its_size() {
+    with_ui(|ui| {
+        let video = ui.video("")?;
+        let element = video.native_element();
+        let _mounted = Mounted::new(&video);
+        assert_eq!(
+            computed(&element, "contain"),
+            "none",
+            "Auto は大きさを求める"
+        );
+
+        video.set_sizing(Sizing::fill());
+        assert_eq!(
+            computed(&element, "contain"),
+            "size",
+            "Fill は大きさを求めない"
+        );
+
+        // `Auto` の軸が残るときは、縦横比から大きさを決めるので封じ込めない。
+        video.set_sizing(Sizing::fill_width());
+        assert_eq!(computed(&element, "contain"), "none");
+        Ok(())
+    });
+}
+
 /// Calls "append, then scroll to the end", as in a chat, back to back.
 #[wasm_bindgen_test]
 fn scroll_to_end_after_appending() {

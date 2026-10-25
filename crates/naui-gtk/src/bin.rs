@@ -35,7 +35,7 @@ mod imp {
         pub max_height: Cell<i32>,
         /// Whether the content cannot shrink its width (`GtkSpinButton` and the like).
         pub rigid_width: Cell<bool>,
-        /// Whether the content's natural size is left out on `Fill` axes (images).
+        /// Whether the content's natural size is left out on `Fill` axes (images and videos).
         pub fill_ignores_natural: Cell<bool>,
     }
 
@@ -85,7 +85,7 @@ mod imp {
         /// | --- | --- |
         /// | [`Length::Fill`] + maximum | **The maximum itself** (grows up to it when there is room) |
         /// | [`Length::Auto`] / [`Length::Fixed`] + maximum | The smaller of the content and the maximum |
-        /// | [`Length::Fill`] without a maximum, for content marked with [`fill_ignores_natural`](Self::fill_ignores_natural) (images) | 0 (fits into the leftover space) |
+        /// | [`Length::Fill`] without a maximum, for content marked with [`fill_ignores_natural`](Self::fill_ignores_natural) (images and videos) | 0 (fits into the leftover space) |
         ///
         /// The minimum (`minimum`) is lowered for two reasons.
         ///
@@ -230,10 +230,11 @@ impl SizeBin {
 
     /// Reports that the content's natural size is not asked for on `Fill` axes.
     ///
-    /// For an image, the natural size is its pixel size. Asking for it on a `Fill`
-    /// axis, a large image pushes a parent that can grow (a vertical `Scroll`, which
-    /// places its content at the natural size) out to the image's height, instead of
-    /// fitting into the leftover space. A maximum still counts as the natural size.
+    /// For an image, the natural size is its pixel size, and for a video, the height
+    /// that keeps the aspect ratio at the given width. Asking for it on a `Fill` axis,
+    /// the picture pushes a parent that can grow (a vertical `Scroll`, which places its
+    /// content at the natural size) out to its own height, instead of fitting into the
+    /// leftover space. A maximum still counts as the natural size.
     pub(crate) fn mark_fill_ignores_natural(&self) {
         self.imp().fill_ignores_natural.set(true);
         self.queue_resize();

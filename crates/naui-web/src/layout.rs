@@ -88,12 +88,14 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     if sizing.height.is_fill() && sizing.min_height.is_none() {
         let _ = style.set_property("min-height", "0");
     }
-    // `Fill` の画像は、画素の大きさを自然な大きさとして親へ求めない。求めたままだと、
-    // 縦の Scroll の中のように親が伸びられる所では、大きな画像が余りを受け取る
-    // どころか画素の高さまで親を押し広げる。大きさの封じ込め (`contain: size`)
-    // で自然な大きさを 0 として扱わせる。ただし縦横比も一緒に消えるので、
-    // `Auto` の軸 (画素の大きさや縦横比から決まる軸) が残るときは封じ込めない。
-    if element.tag_name().eq_ignore_ascii_case("img") {
+    // `Fill` の画像と動画は、画素の大きさを自然な大きさとして親へ求めない。
+    // 求めたままだと、縦の Scroll の中のように親が伸びられる所では、余りを受け取る
+    // どころか画素の高さ (動画は幅と縦横比から決まる高さ) まで親を押し広げる。
+    // 大きさの封じ込め (`contain: size`) で自然な大きさを 0 として扱わせる。
+    // ただし縦横比も一緒に消えるので、`Auto` の軸 (画素の大きさや縦横比から
+    // 決まる軸) が残るときは封じ込めない。
+    let tag = element.tag_name();
+    if tag.eq_ignore_ascii_case("img") || tag.eq_ignore_ascii_case("video") {
         let has_auto = matches!(sizing.width, naui_core::Length::Auto)
             || matches!(sizing.height, naui_core::Length::Auto);
         if (sizing.width.is_fill() || sizing.height.is_fill()) && !has_auto {

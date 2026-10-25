@@ -421,6 +421,7 @@ impl Video {
         native.append(&playback.controls);
 
         let bin = SizeBin::wrap(&native);
+        bin.mark_fill_ignores_natural();
         let video = Self(Rc::new(VideoInner {
             native,
             bin,

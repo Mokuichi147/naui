@@ -627,6 +627,10 @@ fn main() {
             fill_image_does_not_ask_for_its_size,
         ),
         (
+            "Fill の動画はその軸で映像の大きさを求めない",
+            fill_video_does_not_ask_for_its_size,
+        ),
+        (
             "収め方が GtkPicture の content-fit になる",
             image_fit_maps_to_content_fit,
         ),
@@ -5218,6 +5222,42 @@ fn fill_image_does_not_ask_for_its_size(ui: &Ui) -> Result<()> {
     );
 
     image.set_sizing(Sizing::fill().max_height(315.0));
+    assert_eq!(measure_height(&bin).1, 315, "上限は自然な大きさを兼ねる");
+    Ok(())
+}
+
+fn fill_video_does_not_ask_for_its_size(ui: &Ui) -> Result<()> {
+    let video = ui.video("")?;
+    let native: gtk::Box = video.native_widget().downcast().expect("GtkBox");
+    let picture: gtk::Picture = native
+        .first_child()
+        .and_then(|child| child.downcast().ok())
+        .expect("GtkPicture");
+    // 開いた動画の代わりに、同じ縦横比の絵を映像面へ置く。
+    let (width, height) = (1600, 900);
+    let pixels = glib::Bytes::from_owned(vec![0u8; (width * height * 3) as usize]);
+    let texture = gtk::gdk::MemoryTexture::new(
+        width,
+        height,
+        gtk::gdk::MemoryFormat::R8g8b8,
+        &pixels,
+        (width * 3) as usize,
+    );
+    picture.set_paintable(Some(&texture));
+    let bin = bin_of(&video);
+    assert!(
+        measure_height(&bin).1 >= height,
+        "Auto は映像の高さを求める"
+    );
+
+    video.set_sizing(Sizing::fill());
+    assert_eq!(
+        measure_height(&bin),
+        (0, 0),
+        "Fill の高さは大きさを求めない"
+    );
+
+    video.set_sizing(Sizing::fill().max_height(315.0));
     assert_eq!(measure_height(&bin).1, 315, "上限は自然な大きさを兼ねる");
     Ok(())
 }
