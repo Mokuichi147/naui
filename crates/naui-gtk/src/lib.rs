@@ -214,6 +214,37 @@ pub(crate) fn apply_theme(theme: Theme) {
     });
 }
 
+/// The languages for naui's own strings, most preferred first.
+///
+/// Chosen the way gettext chooses GTK's own strings, so the two agree: `LANGUAGE`,
+/// `LC_ALL`, `LC_MESSAGES` and `LANG` in that order, except that `LANGUAGE` is
+/// ignored while the message locale is C.
+fn preferred_languages() -> Vec<String> {
+    // メッセージのロケールは LC_ALL・LC_MESSAGES・LANG のうち最初の空でないもの。
+    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find(|value| !value.is_empty())
+        .unwrap_or_default();
+    languages_for_locale(&locale, glib::language_names().iter().map(|n| n.as_str()))
+}
+
+/// `language_names` (glib's "ja_JP.UTF-8", "ja_JP", "ja", "C" and so on) unless
+/// the message locale `locale` is C, in which case only "C".
+fn languages_for_locale<'a>(
+    locale: &str,
+    language_names: impl Iterator<Item = &'a str>,
+) -> Vec<String> {
+    // glib は C ロケールでも LANGUAGE を読むが、gettext は読まずに翻訳しない。
+    // "C.UTF-8" も gettext は C として扱う。
+    let is_c = locale.is_empty() || locale == "POSIX" || locale.split('.').next() == Some("C");
+    if is_c {
+        vec!["C".to_string()]
+    } else {
+        language_names.map(str::to_string).collect()
+    }
+}
+
 /// The entry point for creating widgets.
 ///
 /// GTK4 can only create windows after the `GtkApplication` has started, so a `Ui`
@@ -248,9 +279,7 @@ struct UiInner {
 
 impl Ui {
     fn new(app: adw::Application, theme: Theme) -> Self {
-        // LANGUAGE・LC_ALL・LC_MESSAGES・LANG の順に読んだ言語名
-        // ("ja_JP.UTF-8", "ja_JP", "ja", "C" など)。gettext と同じ決め方。
-        naui_core::set_ui_languages(glib::language_names());
+        naui_core::set_ui_languages(preferred_languages());
         Self(Rc::new(UiInner {
             app,
             theme: Cell::new(theme),
@@ -703,4 +732,37 @@ where
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn c_locale_ignores_language() {
+        // LANGUAGE=ja LANG=C のとき glib は ["ja", "C"] を返す。
+        for locale in ["C", "C.UTF-8", "C.utf8", "POSIX", ""] {
+            assert_eq!(
+                languages_for_locale(locale, ["ja", "C"].into_iter()),
+                ["C"],
+                "{locale:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_locales_keep_glibs_order() {
+        assert_eq!(
+            languages_for_locale("en_US.UTF-8", ["fr", "ja", "C"].into_iter()),
+            ["fr", "ja", "C"],
+            "LANGUAGE があればロケールより先"
+        );
+        assert_eq!(
+            languages_for_locale(
+                "ja_JP.UTF-8",
+                ["ja_JP.UTF-8", "ja_JP", "ja", "C"].into_iter()
+            ),
+            ["ja_JP.UTF-8", "ja_JP", "ja", "C"]
+        );
+    }
 }

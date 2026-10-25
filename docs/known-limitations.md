@@ -37,8 +37,9 @@ that shape are covered in
   Japanese only. Other languages get English. The language is chosen once when the
   app starts, from the OS's preferred languages (`NSLocale.preferredLanguages`,
   `GetUserPreferredUILanguages`, `navigator.languages`, and on Linux the
-  `LANGUAGE` / `LC_ALL` / `LC_MESSAGES` / `LANG` environment variables), so
-  changing it while the app runs takes effect on the next launch.
+  `LANGUAGE` / `LC_ALL` / `LC_MESSAGES` / `LANG` environment variables, read the
+  way gettext reads them for GTK's own strings, so `LANGUAGE` is ignored under the
+  C locale), so changing it while the app runs takes effect on the next launch.
 
 ### Widgets
 
