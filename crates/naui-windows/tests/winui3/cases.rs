@@ -266,6 +266,10 @@ const CASES: &[Case] = &[
         fill_image_does_not_push_a_scroll,
     ),
     (
+        "画像の高さを Auto から Fill に変えると、画素の高さを求めるのをすぐやめる",
+        image_from_auto_to_fill_drops_the_pixel_height,
+    ),
+    (
         "スクロールの位置を測り、送れる範囲に丸めて送る",
         scroll_measures_and_moves,
     ),
@@ -3341,6 +3345,58 @@ fn fill_image_does_not_push_a_scroll(ui: &Ui) -> Result<()> {
             host.ActualHeight().unwrap_or(f64::NAN),
             viewport,
             "画像は表示領域の余りを受け取る"
+        );
+    }));
+    window.close();
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Changing an opened image's height from `Auto` to `Fill` stops asking for its
+/// pixel height at once. The host keeps its size until it is measured again, so
+/// waiting for `SizeChanged` to drop the pixel height would wait forever, and the
+/// image would keep pushing the content of a vertical `Scroll` out.
+///
+/// Messages are pumped until it is laid out; in environments where it never is
+/// (CI), the sizes pass without checking.
+fn image_from_auto_to_fill_drops_the_pixel_height(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui 高さの切り替え {}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
+    let path = dir.join("300x1000.bmp");
+    std::fs::write(&path, bmp_solid(300, 1000)).expect("画像を書き出せない");
+    let path = path.to_str().expect("一時パスが UTF-8 でない").to_string();
+
+    let window = ui.window("高さの切り替え", 300.0, 240.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_sizing(Sizing::fill());
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill_width());
+    pane.append(&image);
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<FrameworkElement>(&image);
+    let height = || host.ActualHeight().unwrap_or(f64::NAN);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        pump_until(IMAGE_LOAD_TIMEOUT, || height() == 1000.0);
+        assert_eq!(height(), 1000.0, "Auto の高さは画素の高さ");
+
+        image.set_sizing(Sizing::fill());
+        let viewport = scroll.metrics().viewport_height;
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || height() == viewport);
+        assert_eq!(height(), viewport, "Fill にすると表示領域の余りに収まる");
+        let metrics = scroll.metrics();
+        assert_eq!(
+            metrics.content_height, metrics.viewport_height,
+            "中身は表示領域に収まる: {metrics:?}"
         );
     }));
     window.close();

@@ -472,6 +472,33 @@ pub(crate) fn clear_layout_state(element: &UIElement) {
     LAYOUT_STATES.with(|states| {
         states.borrow_mut().remove(&key);
     });
+    SIZING_LISTENERS.with(|listeners| {
+        listeners.borrow_mut().remove(&key);
+    });
+}
+
+/// Has `f` called at the end of every `apply_sizing` on the element, once the new
+/// `Sizing` is in effect.
+///
+/// For widgets whose own size depends on the `Sizing` (an image or a video asks for
+/// its pixel size only on axes that are not `Fill`). Waiting for `SizeChanged`
+/// instead would miss changes that leave the actual size as it is. Removed with the
+/// element's state ([`clear_layout_state`]).
+pub(crate) fn on_sizing_change(element: &UIElement, f: impl Fn() + 'static) {
+    let key = element_key(element);
+    SIZING_LISTENERS.with(|listeners| {
+        listeners.borrow_mut().insert(key, Rc::new(f));
+    });
+}
+
+/// Calls what [`on_sizing_change`] registered for the element.
+fn notify_sizing_change(element: &UIElement) {
+    let key = element_key(element);
+    // 呼んでいる間に表を触れるよう、取り出してから呼ぶ。
+    let listener = SIZING_LISTENERS.with(|listeners| listeners.borrow().get(&key).cloned());
+    if let Some(listener) = listener {
+        listener();
+    }
 }
 
 /// Applies the size specification to the element. Each call replaces the previous
@@ -499,6 +526,7 @@ pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
     });
     reapply_parent_layout(&framework);
     refit_in_grid(element);
+    notify_sizing_change(element);
 }
 
 /// Maps `Stack::set_align` onto the Stack's children.
@@ -1016,6 +1044,9 @@ thread_local! {
     /// The Grid each placed child is in, so that `apply_sizing` can have it placed
     /// again.
     static GRID_PARENTS: RefCell<HashMap<usize, Weak<GridInner>>> =
+        RefCell::new(HashMap::new());
+    /// What to call after `apply_sizing`, by element key (see [`on_sizing_change`]).
+    static SIZING_LISTENERS: RefCell<HashMap<usize, Rc<dyn Fn()>>> =
         RefCell::new(HashMap::new());
     /// The `Grid`s of the Stacks still alive on the Rust side, by element key.
     static STACKS: RefCell<HashMap<usize, XamlGrid>> = RefCell::new(HashMap::new());

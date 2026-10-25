@@ -26,6 +26,10 @@
 //! **On a `Fill` axis the picture asks for nothing** and fits into the space it is
 //! given, as on the other backends. Asking for its pixel size there, a large picture
 //! would push a parent that can grow (a vertical `Scroll`) out to its own height.
+//! Which axes are `Fill` is looked at again on every `set_sizing`
+//! ([`on_sizing_change`](crate::layout::on_sizing_change)), not on `SizeChanged`:
+//! from `Auto` to `Fill`, the host keeps the size the pixels gave it, so its actual
+//! size does not change and `SizeChanged` never comes.
 //!
 //! ## Playback state notifications and threads
 //!
@@ -303,6 +307,16 @@ impl Image {
             .image
             .ImageOpened(&opened)
             .map_err(|e| to_error("Image の読み込みの購読", e))?;
+
+        // `Fill` かどうかで求める大きさが変わるので、`set_sizing` のたびに求め直す。
+        // 実寸が変わらない切り替えもあるので、SizeChanged は待たない。
+        let target = Rc::downgrade(&self.0);
+        crate::layout::on_sizing_change(&self.native_element(), move || {
+            // 画像が開く前は何もしない (前の画像の大きさを求めないため)。
+            if let Some(inner) = target.upgrade().filter(|inner| inner.opened.get()) {
+                Image(inner).take_natural_size();
+            }
+        });
         Ok(())
     }
 
@@ -310,11 +324,6 @@ impl Image {
     fn fit_to_host(&self) {
         if let Ok(image) = self.0.image.cast::<FrameworkElement>() {
             self.0.frame.fit(&self.0.native, &image);
-        }
-        // `set_sizing` で `Fill` が変わると大きさも変わるので、ここで求め直す。
-        // 画像が開く前は何もしない (前の画像の大きさを求めないため)。
-        if self.0.opened.get() {
-            self.take_natural_size();
         }
     }
 
@@ -1039,6 +1048,15 @@ impl Video {
                 Video(inner).take_natural_size();
             }
         }));
+
+        // `Fill` かどうかで求める大きさが変わるので、`set_sizing` のたびに求め直す。
+        // 実寸が変わらない切り替えもあるので、SizeChanged は待たない。
+        let target = Rc::downgrade(&self.0);
+        crate::layout::on_sizing_change(&self.native_element(), move || {
+            if let Some(inner) = target.upgrade() {
+                Video(inner).take_natural_size();
+            }
+        });
         Ok(())
     }
 
@@ -1047,8 +1065,6 @@ impl Video {
         if let Ok(element) = self.0.native.cast::<FrameworkElement>() {
             self.0.frame.fit(&self.0.host, &element);
         }
-        // `set_sizing` で `Fill` が変わると大きさも変わるので、ここで求め直す。
-        self.take_natural_size();
     }
 
     /// Makes the video's pixel size the host's natural size, except on `Fill` axes
