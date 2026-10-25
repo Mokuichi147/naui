@@ -326,6 +326,10 @@ fn main() {
             grid_fill_row_takes_the_rest_around_a_capped_child,
         ),
         (
+            "上限付きと上限なしの Fill の行・列が並んでも、上限付きは上限まで広がる",
+            grid_capped_and_plain_fill_tracks_share_the_room,
+        ),
+        (
             "入れ子の縦 Stack が余りの高さを吸わない",
             nested_stack_does_not_take_the_slack,
         ),
@@ -9247,6 +9251,62 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
         scroll_height > 400.0,
         "Fill 行が残りの高さを受け取る: {scroll_height}"
     );
+    Ok(())
+}
+
+/// `Fill` rows (and columns) with a capped child and with a plain `Fill` child side
+/// by side: when there is room, the capped one still grows up to its maximum and
+/// the plain one takes the rest.
+///
+/// The plain child's "want to grow to fill the grid" wish is far stronger than the
+/// capped child's "want to grow up to the maximum". Asking for the whole grid, it
+/// squashed the capped track. So, as across columns, it asks only for what the
+/// other tracks do not need.
+fn grid_capped_and_plain_fill_tracks_share_the_room(ui: &Ui) -> Result<()> {
+    for vertical in [true, false] {
+        let grid = ui.grid()?;
+        grid.set_sizing(Sizing::fill());
+        let plain = ui.stack(Orientation::Vertical)?;
+        plain.set_sizing(Sizing::fill());
+        let capped = ui.stack(Orientation::Vertical)?;
+        capped.set_sizing(if vertical {
+            Sizing::fill().max_height(100.0)
+        } else {
+            Sizing::fill().max_width(100.0)
+        });
+        let second = if vertical {
+            grid.set_column_track(0, Track::FILL);
+            grid.set_row_track(0, Track::FILL);
+            grid.set_row_track(1, Track::FILL);
+            GridCell::new(0, 1)
+        } else {
+            grid.set_row_track(0, Track::FILL);
+            grid.set_column_track(0, Track::FILL);
+            grid.set_column_track(1, Track::FILL);
+            GridCell::new(1, 0)
+        };
+        grid.attach(&plain, GridCell::new(0, 0));
+        grid.attach(&capped, second);
+
+        let root = grid.native_view();
+        root.setFrameSize(NSSize::new(400.0, 500.0));
+        root.layoutSubtreeIfNeeded();
+        let plain_frame = plain.native_view().frame();
+        let capped_frame = capped.native_view().frame();
+        let (capped_size, plain_size, room) = if vertical {
+            (capped_frame.size.height, plain_frame.size.height, 500.0)
+        } else {
+            (capped_frame.size.width, plain_frame.size.width, 400.0)
+        };
+        assert_eq!(
+            capped_size, 100.0,
+            "上限付きは上限まで広がる (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
+        );
+        assert!(
+            plain_size > room - 150.0,
+            "上限なしは残りを受け取る (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
+        );
+    }
     Ok(())
 }
 
