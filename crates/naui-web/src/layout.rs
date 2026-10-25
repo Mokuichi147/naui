@@ -724,13 +724,21 @@ impl Scroll {
     /// out and putting it back within one task shows no size change, so
     /// `ResizeObserver` cannot tell; the container does. If it has no size yet, the
     /// position waits like a `scroll_to` before it is shown.
+    ///
+    /// A destination already waiting is applied too. Put into a container that is
+    /// not in the document yet, the position waits; when that container is then put
+    /// into the document with the same size, `ResizeObserver` stays silent again, so
+    /// this is the only chance to apply it.
     fn restore_shown_offset(&self) {
-        let (x, y) = self.0.shown_offset.get();
-        let metrics = self.metrics();
-        if self.0.pending.get().is_some() || (metrics.x, metrics.y) == (x, y) {
-            return;
+        if self.0.pending.get().is_none() {
+            let (x, y) = self.0.shown_offset.get();
+            let metrics = self.metrics();
+            if (metrics.x, metrics.y) == (x, y) {
+                return;
+            }
+            self.0.pending.set(Some(ScrollTarget::To { x, y }));
         }
-        self.request(ScrollTarget::To { x, y });
+        self.apply_pending();
     }
 }
 

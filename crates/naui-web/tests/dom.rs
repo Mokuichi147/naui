@@ -1314,6 +1314,17 @@ fn moved_widget_keeps_its_scroll_position() {
             200.0,
             "Scroll そのものを移してもスクロール位置が残ること"
         );
+        // 文書に載っていない入れ物を経由しても、載った時点で位置が戻る。
+        // 大きさは移す前と同じなので、ResizeObserver は呼ばれない。
+        second.remove(1);
+        let detached = ui.stack(Orientation::Vertical)?;
+        detached.append(&scroll);
+        second.append(&detached);
+        assert_eq!(
+            scroll.metrics().y,
+            200.0,
+            "載っていない入れ物を経由して戻してもスクロール位置が残ること"
+        );
         let focused =
             active_element().is_some_and(|active| field.native_element().contains(Some(&active)));
         assert!(!focused, "移した入力欄からはフォーカスが外れること");
