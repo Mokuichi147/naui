@@ -280,6 +280,10 @@ pub(crate) fn arrange_stack(stack: &XamlGrid, vertical: bool) {
         let (row, column) = if vertical { (track, 0) } else { (0, track) };
         let _ = XamlGrid::SetRow(&framework, row);
         let _ = XamlGrid::SetColumn(&framework, column);
+        // `Grid` から移ってきた子は結合を持ったままなので、1 本ずつに戻す。
+        // 残すと後ろの子の行 (列) まで覆って重なる。
+        let _ = XamlGrid::SetRowSpan(&framework, 1);
+        let _ = XamlGrid::SetColumnSpan(&framework, 1);
     }
 
     // 交差軸は暗黙の 1 本 (Star) に任せる。向きが変わったときに残らないよう、

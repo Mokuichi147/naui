@@ -113,6 +113,10 @@ const CASES: &[Case] = &[
         removing_stack_child_resets_its_track,
     ),
     (
+        "Grid で結合していた子をスタックへ移すと結合が外れる",
+        grid_span_does_not_follow_into_a_stack,
+    ),
+    (
         "リストに行の起動と文脈メニューの受け口を付けられる",
         list_accepts_row_activate_and_context_menu,
     ),
@@ -1327,6 +1331,39 @@ fn removing_stack_child_resets_its_track(ui: &Ui) -> Result<()> {
         stack_tracks(&native::<Grid>(&stack), true),
         [],
         "clear で行の定義も無くなること"
+    );
+    Ok(())
+}
+
+/// A child that spanned cells in a `Grid` takes one track in a Stack. `Grid::remove`
+/// leaves the spans on the element, and a span of 2 would also cover the next child's
+/// column, so the two would overlap.
+fn grid_span_does_not_follow_into_a_stack(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    let child = ui.button("2 列にまたがる")?;
+    grid.attach(&child, GridCell::new(0, 0).span(2, 2));
+    grid.remove(GridCell::new(0, 0));
+
+    let stack = ui.stack(Orientation::Horizontal)?;
+    let next = ui.button("後ろ")?;
+    stack.append(&child);
+    stack.append(&next);
+    let element = native::<FrameworkElement>(&child);
+    assert_eq!(
+        (
+            Grid::GetColumnSpan(&element).expect("列の結合"),
+            Grid::GetRowSpan(&element).expect("行の結合"),
+        ),
+        (1, 1),
+        "Grid の結合を Stack へ持ち込まないこと"
+    );
+    assert_eq!(
+        (
+            Grid::GetColumn(&element).expect("移した子の列"),
+            Grid::GetColumn(&native::<FrameworkElement>(&next)).expect("後ろの子の列"),
+        ),
+        (0, 1),
+        "移した子と後ろの子が別の列に入ること"
     );
     Ok(())
 }
