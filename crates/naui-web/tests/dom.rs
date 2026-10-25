@@ -3570,6 +3570,10 @@ fn fill_video_does_not_ask_for_its_size() {
 /// size wanted under normal conditions), so in an `Auto` row it keeps that height
 /// even when a `Fill` row takes the rest. With its natural size contained to zero, it
 /// collapsed there and could not be seen.
+///
+/// The height is the maximum itself, which every browser counts when sizing the
+/// row. Firefox counted a percentage height, or a contained natural size given with
+/// `contain-intrinsic-height`, as zero.
 #[wasm_bindgen_test]
 async fn capped_fill_image_asks_for_its_maximum() {
     let canvas: web_sys::HtmlCanvasElement = web_sys::window()
@@ -3607,13 +3611,17 @@ async fn capped_fill_image_asks_for_its_maximum() {
         wait_millis(50).await;
     }
     next_frames().await;
+    assert_eq!(
+        computed(element.as_ref(), "contain"),
+        "none",
+        "上限が自然な大きさを抑えるので封じ込めない"
+    );
     let height = element.get_bounding_client_rect().height();
     assert_eq!(height, 100.0, "Auto 行でも上限の高さを保つ");
     let rest_height = rest.native_element().get_bounding_client_rect().height();
     assert_eq!(rest_height, 200.0, "残りは Fill の行が受け取る");
 
-    // Fill の行に置けば、上限まで広がってマスの縦中央に来る。マスが上限より
-    // 低ければ、マスに合わせて縮む。
+    // Fill の行に置けば、上限まで広がってマスの縦中央に来る。
     grid.set_row_track(0, naui_core::Track::FILL);
     grid.set_row_track(1, naui_core::Track::Auto);
     grid.remove(GridCell::new(0, 1));
@@ -3622,13 +3630,6 @@ async fn capped_fill_image_asks_for_its_maximum() {
     let rect = element.get_bounding_client_rect();
     assert_eq!(rect.height(), 100.0, "上限まで広がる");
     assert_eq!(rect.top() - grid_rect.top(), 100.0, "縦はマスの中央");
-    grid.set_sizing(Sizing::fixed(300.0, 60.0));
-    next_frames().await;
-    assert_eq!(
-        element.get_bounding_client_rect().height(),
-        60.0,
-        "マスより大きくならない"
-    );
 }
 
 /// Calls "append, then scroll to the end", as in a chat, back to back.

@@ -107,32 +107,21 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     // 求めたままだと、縦の Scroll の中のように親が伸びられる所では、余りを受け取る
     // どころか画素の高さ (動画は幅と縦横比から決まる高さ) まで親を押し広げる。
     // 大きさの封じ込め (`contain: size`) で自然な大きさを 0 として扱わせる。
-    // 上限付きの `Fill` は、上限を「通常時に確保したい大きさ」として求める
-    // (`contain-intrinsic-*`)。0 のままだと、Auto の行のように自然な大きさで
-    // 決まる所で潰れて見えなくなる。
     // ただし縦横比も一緒に消えるので、`Auto` の軸 (画素の大きさや縦横比から
     // 決まる軸) が残るときは封じ込めない。
+    // 上限付きの `Fill` の軸があるときも封じ込めない。上限が自然な大きさを抑える
+    // ので親を押し広げず、封じ込めると Auto の行のように自然な大きさで決まる所で
+    // 0 に潰れて見えなくなる (`contain-intrinsic-*` で上限を渡しても、Firefox では
+    // 0 のままだった)。
     if is_picture(element) {
         let has_auto = matches!(sizing.width, naui_core::Length::Auto)
             || matches!(sizing.height, naui_core::Length::Auto);
-        let contained = (sizing.width.is_fill() || sizing.height.is_fill()) && !has_auto;
-        if contained {
+        let capped_fill = (sizing.width.is_fill() && sizing.max_width.is_some())
+            || (sizing.height.is_fill() && sizing.max_height.is_some());
+        if (sizing.width.is_fill() || sizing.height.is_fill()) && !has_auto && !capped_fill {
             let _ = style.set_property("contain", "size");
         } else {
             let _ = style.remove_property("contain");
-        }
-        for (property, length, max) in [
-            ("contain-intrinsic-width", sizing.width, sizing.max_width),
-            ("contain-intrinsic-height", sizing.height, sizing.max_height),
-        ] {
-            match max {
-                Some(max) if contained && length.is_fill() => {
-                    let _ = style.set_property(property, &format!("{max}px"));
-                }
-                _ => {
-                    let _ = style.remove_property(property);
-                }
-            }
         }
     }
 
@@ -274,15 +263,17 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
                     // マスの大きさに対して決まる。
                     let _ = style.set_property("align-self", "center");
                     match &picture_max {
-                        // 画像と動画 (置き換え要素) は、割合の高さだと Firefox が
-                        // 行の高さを決めるときに 0 と数え、Auto の行で潰れる。
-                        // 高さは決めずに自然な高さ (`Fill` なら上限、
-                        // `contain-intrinsic-height`) に任せ、割合はマスを超えない
-                        // ための上限にだけ使う。高さを上限の値に固定すると、
-                        // 行の最小の高さもその値になり、マスが低いときに縮めない。
+                        // 画像と動画 (置き換え要素) は、高さを上限の値に固定する。
+                        // 上限は「通常時に確保したい大きさ」も兼ねるので、Auto の
+                        // 行ではこの高さを求める。割合の高さや、封じ込めた自然な
+                        // 大きさ (`contain-intrinsic-*`) に頼ると、Firefox では行の
+                        // 高さを決めるときに 0 と数えられ、Auto の行で潰れた。
+                        // 割合はマスを超えないための上限にだけ使う。ただし固定の
+                        // 高さは行の最小の高さにもなるので、上限より低い `Fill` の
+                        // マスでは縮まない (Chrome と WebKit)。
                         Some(max) => {
-                            let _ =
-                                style.set_property("max-height", &format!("min({max}px, 100%)"));
+                            let _ = style.set_property("height", &format!("{max}px"));
+                            let _ = style.set_property("max-height", "100%");
                         }
                         None => {
                             let _ = style.set_property("height", "100%");
