@@ -41,6 +41,7 @@ mod timer;
 mod toast;
 mod toolbar;
 mod tree;
+mod ui_text;
 mod weak;
 mod window;
 
@@ -82,6 +83,7 @@ pub use timer::{Sleep, Timer};
 pub use toast::ToastSpec;
 pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
+pub use ui_text::{set_ui_languages, ui_strings, UiStrings};
 pub use weak::WeakWidget;
 pub use window::{CloseHandler, CloseResponse, StateHandler, WindowState};
 

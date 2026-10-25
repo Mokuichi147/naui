@@ -29,8 +29,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    sidebar_item, sidebar_len, sidebar_rows, Result, SidebarItem, SidebarRow, SidebarSection,
-    DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
+    sidebar_item, sidebar_len, sidebar_rows, ui_strings, Result, SidebarItem, SidebarRow,
+    SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
@@ -109,7 +109,7 @@ impl Sidebar {
         style(&aside, "padding", "8px");
 
         let nav: HtmlElement = create(doc, "nav")?.unchecked_into();
-        let _ = nav.set_attribute("aria-label", "サイドバー");
+        let _ = nav.set_attribute("aria-label", ui_strings().sidebar);
         style(&nav, "display", "flex");
         style(&nav, "flex-direction", "column");
         style(&nav, "gap", "12px");
@@ -124,8 +124,8 @@ impl Sidebar {
 
         let toggle: HtmlElement = create(doc, "button")?.unchecked_into();
         let _ = toggle.set_attribute("type", "button");
-        let _ = toggle.set_attribute("aria-label", "サイドバー");
-        let _ = toggle.set_attribute("title", "サイドバー");
+        let _ = toggle.set_attribute("aria-label", ui_strings().sidebar);
+        let _ = toggle.set_attribute("title", ui_strings().sidebar);
         let _ = toggle.set_attribute("aria-controls", &format!("naui-sidebar-{id}"));
         let _ = toggle.set_attribute("aria-expanded", "true");
         style(&toggle, "display", "inline-flex");

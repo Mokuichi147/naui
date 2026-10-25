@@ -29,6 +29,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSIndexSet",
     "NSString",
     "NSKeyValueObserving",
+    "NSLocale",
     "NSNotification",
     "NSGeometry",
     "NSObjCRuntime",
@@ -202,6 +203,7 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
 objc2-foundation = { version = "0.3", features = [
     "NSDate",
     "NSGeometry",
+    "NSLocale",
     "NSObjCRuntime",
     "NSSortDescriptor",
     "NSRange",
