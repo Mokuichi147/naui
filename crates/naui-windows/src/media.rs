@@ -8,21 +8,23 @@
 //! one `Image` is placed in the host `Grid`, and when the location or fitting
 //! changes its properties are rewritten instead of recreating it.
 //!
-//! ## The natural size of an image
+//! ## The natural size of an image or a video
 //!
-//! The image's natural size is its pixel size, as with GTK's `GtkPicture`, AppKit's
-//! `NSImageView` and the Web's `<img>`. It can be made larger or smaller by the
-//! `Sizing`. WinUI's `Image` alone would report a different one: with `Uniform` and
-//! an unbounded height (inside a vertical `Scroll`), it asks for the available width
-//! and the height that keeps the aspect ratio, so a small image in a wide pane grows
-//! out of the viewport.
+//! The natural size of an image or a video is its pixel size, as with GTK's
+//! `GtkPicture`, AppKit's `NSImageView` and the Web's `<img>`. It can be made larger
+//! or smaller by the `Sizing`. WinUI's `Image` and `MediaPlayerElement` alone would
+//! report a different one: with `Uniform` and an unbounded height (inside a vertical
+//! `Scroll`), they ask for the available width and the height that keeps the aspect
+//! ratio, so a small image in a wide pane grows out of the viewport, and a video
+//! does not get shorter than its width allows when the window is made shorter.
 //!
-//! So the `Image` is put on a `Canvas`, which leaves it out of measuring, and is
-//! given the host's size whenever that changes. An empty `Border` beside it is given
-//! the pixel size once the image is opened, and that is what the host asks for.
+//! So the `Image` or `MediaPlayerElement` is put on a `Canvas`, which leaves it out
+//! of measuring, and is given the host's size whenever that changes (a [`Frame`]).
+//! An empty `Border` beside it is given the pixel size once the image or the video
+//! is opened, and that is what the host asks for.
 //!
-//! **On a `Fill` axis the image asks for nothing** and fits into the space it is
-//! given, as on the other backends. Asking for its pixel size there, a large image
+//! **On a `Fill` axis the picture asks for nothing** and fits into the space it is
+//! given, as on the other backends. Asking for its pixel size there, a large picture
 //! would push a parent that can grow (a vertical `Scroll`) out to its own height.
 //!
 //! ## Playback state notifications and threads
@@ -35,10 +37,12 @@
 //!
 //! An `Rc` cannot be carried across threads for that (its reference count is not
 //! atomic). Widgets are registered by number in a list on the UI thread side, and
-//! **only the number and the state cross threads**.
+//! **only the number and the state cross threads**. The video's pixel size
+//! (`NaturalVideoSizeChanged`) comes back the same way.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::rc::{Rc, Weak};
 
 use naui_core::media::is_url;
@@ -168,20 +172,74 @@ fn file_uri(path: &str) -> String {
     uri
 }
 
+// ------------------------------------------------------------------ Frame
+
+/// What a host `Grid` holds so that an image or a video asks for its pixel size
+/// rather than WinUI's (see the module documentation).
+struct Frame {
+    /// An empty element as large as the picture's pixels, so that the host asks for
+    /// the natural size. Sized automatically (zero) until the picture is opened.
+    natural: Border,
+    /// Holds the picture without letting it take part in measuring.
+    stage: Canvas,
+}
+
+impl Frame {
+    /// Builds the parts and puts them into `host`.
+    fn new(host: &Grid) -> Result<Self> {
+        let natural = Border::new().map_err(|e| to_error("大きさの要素の生成", e))?;
+        let stage = Canvas::new().map_err(|e| to_error("台の生成", e))?;
+        natural
+            .SetIsHitTestVisible(false)
+            .map_err(|e| to_error("大きさの要素の設定", e))?;
+        host.Children()
+            .and_then(|children| {
+                children.Append(&natural.cast::<UIElement>()?)?;
+                children.Append(&stage.cast::<UIElement>()?)
+            })
+            .map_err(|e| to_error("ホストの組み立て", e))?;
+        Ok(Self { natural, stage })
+    }
+
+    /// Gives the picture on the `Canvas` the host's size.
+    fn fit(&self, host: &Grid, picture: &FrameworkElement) {
+        let _ = picture.SetWidth(host.ActualWidth().unwrap_or(0.0));
+        let _ = picture.SetHeight(host.ActualHeight().unwrap_or(0.0));
+    }
+
+    /// Makes `width` × `height` pixels the host's natural size, except on `Fill`
+    /// axes, where it asks for nothing.
+    fn ask_for(&self, host: &Grid, width: u32, height: u32) {
+        let Ok(host) = host.cast::<FrameworkElement>() else {
+            return;
+        };
+        // WinUI では NaN が「中身に合わせる」を表す。空の Border なので 0 になる。
+        let natural = |fill: bool, pixels: u32| if fill { f64::NAN } else { f64::from(pixels) };
+        let _ = self
+            .natural
+            .SetWidth(natural(crate::layout::wants_fill(&host, true), width));
+        let _ = self
+            .natural
+            .SetHeight(natural(crate::layout::wants_fill(&host, false), height));
+    }
+
+    /// Forgets the natural size of the picture that was shown.
+    fn forget(&self) {
+        let _ = self.natural.SetWidth(f64::NAN);
+        let _ = self.natural.SetHeight(f64::NAN);
+    }
+}
+
 // ------------------------------------------------------------------ Image
 
 struct ImageInner {
-    /// The host that receives the size specification. Holds `natural` and `stage`.
+    /// The host that receives the size specification. Holds the [`Frame`].
     native: Grid,
-    /// An empty element as large as the image's pixels, so that the host asks for
-    /// the natural size (see the module documentation). Sized automatically (zero)
-    /// until the image is opened.
-    natural: Border,
+    frame: Frame,
     /// Whether the image shown has been opened (its pixel size is known).
     opened: Cell<bool>,
-    /// Holds the `Image` without letting it take part in measuring.
-    stage: Canvas,
-    /// The WinUI `Image` shown. Removed from `stage` when the location is empty.
+    /// The WinUI `Image` shown. Removed from the frame's `stage` when the location is
+    /// empty.
     image: XamlImage,
     source: RefCell<String>,
     fit: Cell<Fit>,
@@ -199,25 +257,15 @@ impl_widget!(Image, native);
 impl Image {
     pub(crate) fn new(source: &str) -> Result<Self> {
         let native = Grid::new().map_err(|e| to_error("Image ホストの生成", e))?;
-        let natural = Border::new().map_err(|e| to_error("Image の大きさの生成", e))?;
-        let stage = Canvas::new().map_err(|e| to_error("Image の台の生成", e))?;
+        let frame = Frame::new(&native)?;
         let image = XamlImage::new().map_err(|e| to_error("Image の生成", e))?;
-        natural
-            .SetIsHitTestVisible(false)
-            .and_then(|()| image.SetStretch(stretch(Fit::default())))
+        image
+            .SetStretch(stretch(Fit::default()))
             .map_err(|e| to_error("Image の配置設定", e))?;
-        native
-            .Children()
-            .and_then(|children| {
-                children.Append(&natural.cast::<UIElement>()?)?;
-                children.Append(&stage.cast::<UIElement>()?)
-            })
-            .map_err(|e| to_error("Image の組み立て", e))?;
         let this = Self(Rc::new(ImageInner {
             native,
-            natural,
+            frame,
             opened: Cell::new(false),
-            stage,
             image,
             source: RefCell::new(String::new()),
             fit: Cell::new(Fit::default()),
@@ -260,10 +308,9 @@ impl Image {
 
     /// Gives the `Image` on the `Canvas` the host's size.
     fn fit_to_host(&self) {
-        let width = self.0.native.ActualWidth().unwrap_or(0.0);
-        let height = self.0.native.ActualHeight().unwrap_or(0.0);
-        let _ = self.0.image.SetWidth(width);
-        let _ = self.0.image.SetHeight(height);
+        if let Ok(image) = self.0.image.cast::<FrameworkElement>() {
+            self.0.frame.fit(&self.0.native, &image);
+        }
         // `set_sizing` で `Fill` が変わると大きさも変わるので、ここで求め直す。
         // 画像が開く前は何もしない (前の画像の大きさを求めないため)。
         if self.0.opened.get() {
@@ -283,29 +330,18 @@ impl Image {
         else {
             return;
         };
-        let width = bitmap.PixelWidth().unwrap_or(0);
-        let height = bitmap.PixelHeight().unwrap_or(0);
-        let Ok(host) = self.0.native.cast::<FrameworkElement>() else {
-            return;
-        };
-        // WinUI では NaN が「中身に合わせる」を表す。空の Border なので 0 になる。
-        let natural = |fill: bool, pixels: i32| if fill { f64::NAN } else { f64::from(pixels) };
-        let _ = self
-            .0
-            .natural
-            .SetWidth(natural(crate::layout::wants_fill(&host, true), width));
-        let _ = self
-            .0
-            .natural
-            .SetHeight(natural(crate::layout::wants_fill(&host, false), height));
+        let pixels = |value: windows_core::Result<i32>| value.unwrap_or(0).max(0) as u32;
+        self.0.frame.ask_for(
+            &self.0.native,
+            pixels(bitmap.PixelWidth()),
+            pixels(bitmap.PixelHeight()),
+        );
     }
 
     /// Forgets the natural size of the image that was shown.
     fn forget_natural_size(&self) {
         self.0.opened.set(false);
-        // WinUI では NaN が「中身に合わせる」を表す。空の Border なので 0 になる。
-        let _ = self.0.natural.SetWidth(f64::NAN);
-        let _ = self.0.natural.SetHeight(f64::NAN);
+        self.0.frame.forget();
     }
 
     /// The location currently specified (exactly the string that was passed).
@@ -327,6 +363,7 @@ impl Image {
     /// "whether an element to show is in place", not "whether loading has finished"**.
     pub fn is_loaded(&self) -> bool {
         self.0
+            .frame
             .stage
             .Children()
             .and_then(|children| children.Size())
@@ -361,7 +398,7 @@ impl Image {
     /// When the location is empty or loading could not be requested, it is removed with
     /// [`take_down`](Self::take_down).
     fn apply_source(&self) {
-        let Ok(children) = self.0.stage.Children() else {
+        let Ok(children) = self.0.frame.stage.Children() else {
             return;
         };
         // 新しい画像が開くまでは、前の画像の大きさを求めない。
@@ -425,6 +462,9 @@ struct MediaInner {
     state: Cell<PlaybackState>,
     callback: RefCell<Slot<dyn FnMut(PlaybackState)>>,
     position_callback: RefCell<Slot<dyn FnMut(f64)>>,
+    /// Told the video's pixel size (width, height) when it changes, and `(0, 0)`
+    /// when the location changes. Set by [`Video`] only.
+    natural_size_callback: RefCell<Slot<dyn FnMut(u32, u32)>>,
 }
 
 thread_local! {
@@ -458,6 +498,13 @@ fn deliver(id: u64, state: PlaybackState) {
 fn deliver_position(id: u64, seconds: f64) {
     if let Some(inner) = lookup(id) {
         inner.emit_position(seconds);
+    }
+}
+
+/// Delivers the video's pixel size to the widget with the number, on the UI thread.
+fn deliver_natural_size(id: u64, width: u32, height: u32) {
+    if let Some(inner) = lookup(id) {
+        inner.emit_natural_size(width, height);
     }
 }
 
@@ -515,6 +562,7 @@ impl MediaInner {
             state: Cell::new(PlaybackState::Idle),
             callback: RefCell::new(None),
             position_callback: RefCell::new(None),
+            natural_size_callback: RefCell::new(None),
         });
         PLAYBACKS.with(|map| map.borrow_mut().insert(this.id, Rc::downgrade(&this)));
         this.subscribe()?;
@@ -578,6 +626,25 @@ impl MediaInner {
         session
             .PositionChanged(&position)
             .map_err(|e| to_error("再生位置の購読", e))?;
+
+        // 動画の画素の大きさも同じ経路で渡す。運ぶのは番号と大きさだけ。
+        let size_queue = queue.clone();
+        let natural_size =
+            TypedEventHandler::<MediaPlaybackSession, IInspectable>::new(move |session, _args| {
+                let Ok(session) = session.ok() else {
+                    return Ok(());
+                };
+                let width = session.NaturalVideoWidth().unwrap_or(0);
+                let height = session.NaturalVideoHeight().unwrap_or(0);
+                let _ = size_queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
+                    deliver_natural_size(id, width, height);
+                    Ok(())
+                }));
+                Ok(())
+            });
+        session
+            .NaturalVideoSizeChanged(&natural_size)
+            .map_err(|e| to_error("動画の大きさの購読", e))?;
 
         // MediaPlaybackState に「最後まで再生した」は無いので、別の通知で補う。
         let ended = TypedEventHandler::<MediaPlayer, IInspectable>::new(move |_player, _args| {
@@ -673,6 +740,8 @@ impl MediaInner {
             }
         }
         self.emit(PlaybackState::Idle);
+        // 新しい動画が開くまでは、前の動画の大きさを求めない。
+        self.emit_natural_size(0, 0);
         if self.autoplay.get() && !source.is_empty() {
             self.play();
         }
@@ -702,6 +771,18 @@ impl MediaInner {
         };
         f(seconds);
         let mut slot = self.position_callback.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+
+    /// Notifies the video's pixel size (`(0, 0)` while none is known).
+    fn emit_natural_size(&self, width: u32, height: u32) {
+        let Some(mut f) = self.natural_size_callback.borrow_mut().take() else {
+            return;
+        };
+        f(width, height);
+        let mut slot = self.natural_size_callback.borrow_mut();
         if slot.is_none() {
             *slot = Some(f);
         }
@@ -883,15 +964,49 @@ macro_rules! impl_playback {
 
 // ------------------------------------------------------------------ Video
 
+struct VideoInner {
+    /// The host that receives the size specification. Holds the [`Frame`], whose
+    /// `stage` holds the `MediaPlayerElement`.
+    host: Grid,
+    frame: Frame,
+    /// The video's pixel size, `(0, 0)` while none is known.
+    natural_size: Cell<(u32, u32)>,
+    media: Rc<MediaInner>,
+}
+
+/// The playback methods ([`impl_playback`]) reach the shared playback object
+/// through this.
+impl Deref for VideoInner {
+    type Target = MediaInner;
+
+    fn deref(&self) -> &MediaInner {
+        &self.media
+    }
+}
+
 /// Video (MediaPlayerElement).
 #[derive(Clone)]
-pub struct Video(Rc<MediaInner>);
-impl_widget!(Video, native);
+pub struct Video(Rc<VideoInner>);
+impl_widget!(Video, host);
 impl_playback!(Video);
 
 impl Video {
     pub(crate) fn new(source: &str) -> Result<Self> {
-        let this = Self(MediaInner::new()?);
+        let media = MediaInner::new()?;
+        let host = Grid::new().map_err(|e| to_error("Video ホストの生成", e))?;
+        let frame = Frame::new(&host)?;
+        frame
+            .stage
+            .Children()
+            .and_then(|children| children.Append(&media.native.cast::<UIElement>()?))
+            .map_err(|e| to_error("MediaPlayerElement の配置", e))?;
+        let this = Self(Rc::new(VideoInner {
+            host,
+            frame,
+            natural_size: Cell::new((0, 0)),
+            media,
+        }));
+        this.track_size()?;
         this.set_fit(Fit::default());
         this.set_source(source);
         Ok(this)
@@ -900,6 +1015,49 @@ impl Video {
     /// How the picture is fitted (the MediaPlayerElement's `Stretch`).
     pub fn set_fit(&self, fit: Fit) {
         let _ = self.0.native.SetStretch(stretch(fit));
+    }
+
+    /// Keeps the `MediaPlayerElement` as large as the host, and the host's natural
+    /// size as large as the video's pixels.
+    fn track_size(&self) -> Result<()> {
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let resized = SizeChangedEventHandler::new(move |_, _| {
+            if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                Video(inner).fit_to_host();
+            }
+            Ok(())
+        });
+        self.0
+            .host
+            .SizeChanged(&resized)
+            .map_err(|e| to_error("Video の大きさの購読", e))?;
+
+        let target = Rc::downgrade(&self.0);
+        *self.0.natural_size_callback.borrow_mut() = Some(Box::new(move |width, height| {
+            if let Some(inner) = target.upgrade() {
+                inner.natural_size.set((width, height));
+                Video(inner).take_natural_size();
+            }
+        }));
+        Ok(())
+    }
+
+    /// Gives the `MediaPlayerElement` on the `Canvas` the host's size.
+    fn fit_to_host(&self) {
+        if let Ok(element) = self.0.native.cast::<FrameworkElement>() {
+            self.0.frame.fit(&self.0.host, &element);
+        }
+        // `set_sizing` で `Fill` が変わると大きさも変わるので、ここで求め直す。
+        self.take_natural_size();
+    }
+
+    /// Makes the video's pixel size the host's natural size, except on `Fill` axes
+    /// (see the module documentation).
+    fn take_natural_size(&self) {
+        match self.0.natural_size.get() {
+            (0, _) | (_, 0) => self.0.frame.forget(),
+            (width, height) => self.0.frame.ask_for(&self.0.host, width, height),
+        }
     }
 }
 

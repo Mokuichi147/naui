@@ -258,6 +258,10 @@ const CASES: &[Case] = &[
         image_natural_size_is_its_pixels,
     ),
     (
+        "Fill の動画は Scroll の中でも表示領域の余りに収まり、縮めると付いていく",
+        video_fits_the_leftover_and_follows_it,
+    ),
+    (
         "Fill の画像は大きくても縦の Scroll を押し広げない",
         fill_image_does_not_push_a_scroll,
     ),
@@ -2924,6 +2928,77 @@ fn image_natural_size_is_its_pixels(ui: &Ui) -> Result<()> {
     }));
     window.close();
     let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A `Fill` video sits in the space a vertical `Scroll` leaves it, and follows when
+/// the window gets shorter, instead of keeping the height its width allows.
+///
+/// The `MediaPlayerElement` sits on a `Canvas` in the host `Grid` and is given the
+/// host's size. No video is loaded (CI has none to play), so the pixel size is not
+/// involved; the Gallery's Media page is where a real video was checked. Sizes pass
+/// without checking where nothing is laid out (CI).
+fn video_fits_the_leftover_and_follows_it(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::MediaPlayerElement;
+
+    let window = ui.window("動画の大きさ", 320.0, 300.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_sizing(Sizing::fill());
+    let video = ui.video("")?;
+    video.set_sizing(Sizing::fill());
+    pane.append(&video);
+    pane.append(&ui.label("操作の行")?);
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<Grid>(&video);
+    let children = host.Children().expect("ホストの子");
+    let player = (0..children.Size().expect("ホストの子の数"))
+        .filter_map(|index| children.GetAt(index).ok())
+        .find_map(|element| element.cast::<XamlCanvas>().ok())
+        .and_then(|stage| stage.Children().and_then(|c| c.GetAt(0)).ok())
+        .and_then(|element| element.cast::<MediaPlayerElement>().ok())
+        .expect("MediaPlayerElement が Canvas に載っていない");
+    let host = host.cast::<FrameworkElement>().expect("ホストは要素");
+    let player = player.cast::<FrameworkElement>().expect("動画は要素");
+    let size = |element: &FrameworkElement| {
+        (
+            element.ActualWidth().unwrap_or(f64::NAN),
+            element.ActualHeight().unwrap_or(f64::NAN),
+        )
+    };
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let fits = || {
+            let viewport = scroll.metrics();
+            let content = native::<FrameworkElement>(&pane)
+                .ActualHeight()
+                .unwrap_or(f64::NAN);
+            (content - viewport.viewport_height).abs() < 0.5
+                && size(&player) == size(&host)
+                && size(&host).1 > 0.0
+        };
+        pump_until(SCROLL_LAYOUT_TIMEOUT, fits);
+        assert!(fits(), "動画は表示領域の余りに収まる: {:?}", size(&host));
+        let tall = size(&host).1;
+
+        window.set_size(320.0, 200.0);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || fits() && size(&host).1 < tall);
+        assert!(
+            fits() && size(&host).1 < tall,
+            "縮めると動画も低くなる: {tall} → {:?}",
+            size(&host)
+        );
+    }));
+    window.close();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
