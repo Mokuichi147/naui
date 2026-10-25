@@ -254,6 +254,10 @@ const CASES: &[Case] = &[
         image_loads_from_japanese_path,
     ),
     (
+        "画像の自然な大きさは画素の大きさで、Scroll の中でも幅に合わせて大きくならない",
+        image_natural_size_is_its_pixels,
+    ),
+    (
         "スクロールの位置を測り、送れる範囲に丸めて送る",
         scroll_measures_and_moves,
     ),
@@ -2799,11 +2803,8 @@ fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
             let image = ui.image(&source)?;
             window.set_child(&image);
             window.show();
-            let bitmap = native::<Grid>(&image)
-                .Children()
-                .and_then(|children| children.GetAt(0))
-                .and_then(|element| element.cast::<XamlImage>())
-                .and_then(|element| element.Source())
+            let bitmap = xaml_image(&image)
+                .Source()
                 .and_then(|bitmap| bitmap.cast::<BitmapImage>())
                 .expect("Image の中身が BitmapImage でない");
             let opened = Arc::new(AtomicBool::new(false));
@@ -2835,6 +2836,94 @@ fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
         Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+/// The WinUI `Image` inside naui's `Image`. It sits on a `Canvas` in the host `Grid`.
+fn xaml_image(image: &naui_windows::Image) -> XamlImage {
+    let children = native::<Grid>(image).Children().expect("ホストの子");
+    (0..children.Size().expect("ホストの子の数"))
+        .filter_map(|index| children.GetAt(index).ok())
+        .find_map(|element| element.cast::<XamlCanvas>().ok())
+        .and_then(|stage| stage.Children().and_then(|c| c.GetAt(0)).ok())
+        .and_then(|element| element.cast::<XamlImage>().ok())
+        .expect("Image の中身が WinUI の Image でない")
+}
+
+/// An image's natural size is its pixel size, as on the other backends. In a
+/// vertical `Scroll`, a `Fill`-width image keeps its pixel height instead of growing
+/// to the width with the aspect ratio, and a `Fill` image takes the viewport's
+/// leftover height.
+///
+/// Messages are pumped until it is laid out; in environments where it never is
+/// (CI), the sizes pass without checking.
+fn image_natural_size_is_its_pixels(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui 画像の大きさ {}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
+    let path = dir.join("40x20.bmp");
+    std::fs::write(&path, bmp_solid(40, 20)).expect("画像を書き出せない");
+    let path = path.to_str().expect("一時パスが UTF-8 でない").to_string();
+
+    let window = ui.window("画像の大きさ", 300.0, 240.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_sizing(Sizing::fill());
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill_width());
+    pane.append(&image);
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<FrameworkElement>(&image);
+    let inner = xaml_image(&image);
+    let size = |element: &FrameworkElement| {
+        (
+            element.ActualWidth().unwrap_or(f64::NAN),
+            element.ActualHeight().unwrap_or(f64::NAN),
+        )
+    };
+    let inner_element = inner.cast::<FrameworkElement>().expect("Image は要素");
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let opened = || size(&host).1 == 20.0;
+        pump_until(IMAGE_LOAD_TIMEOUT, opened);
+        let viewport = scroll.metrics();
+        assert_eq!(
+            size(&host),
+            (viewport.viewport_width, 20.0),
+            "横は Fill、縦は画素の高さ"
+        );
+        assert_eq!(
+            size(&inner_element),
+            size(&host),
+            "WinUI の Image はホストと同じ大きさ"
+        );
+
+        image.set_sizing(Sizing::fill());
+        let tall = || size(&host).1 == viewport.viewport_height;
+        pump_until(SCROLL_LAYOUT_TIMEOUT, tall);
+        assert_eq!(
+            size(&host),
+            (viewport.viewport_width, viewport.viewport_height),
+            "縦も Fill なら表示領域の余りを受け取る"
+        );
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            size(&inner_element) == size(&host)
+        });
+        assert_eq!(
+            size(&inner_element),
+            size(&host),
+            "WinUI の Image はホストの大きさに付いていく"
+        );
+    }));
+    window.close();
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
 }
 
 /// Puts a scroll view holding tall content into a small window (not shown yet).
@@ -3119,6 +3208,29 @@ fn bmp_2x1() -> Vec<u8> {
     bmp.extend_from_slice(&PIXELS.to_le_bytes());
     bmp.extend_from_slice(&[0; 16]); // 解像度と色数は使わない
     bmp.extend_from_slice(&[0, 0, 255, 255, 0, 0, 0, 0]); // BGR, BGR, 詰め物
+    bmp
+}
+
+/// An uncompressed 24-bit BMP of the given size, all one gray.
+fn bmp_solid(width: u32, height: u32) -> Vec<u8> {
+    const HEADER: u32 = 14 + 40;
+    // 1 行を 4 バイト境界にそろえる。
+    let row = (width * 3).div_ceil(4) * 4;
+    let pixels = row * height;
+    let mut bmp = Vec::new();
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&(HEADER + pixels).to_le_bytes());
+    bmp.extend_from_slice(&0u32.to_le_bytes());
+    bmp.extend_from_slice(&HEADER.to_le_bytes());
+    bmp.extend_from_slice(&40u32.to_le_bytes()); // BITMAPINFOHEADER の大きさ
+    bmp.extend_from_slice(&(width as i32).to_le_bytes());
+    bmp.extend_from_slice(&(height as i32).to_le_bytes());
+    bmp.extend_from_slice(&1u16.to_le_bytes()); // プレーン数
+    bmp.extend_from_slice(&24u16.to_le_bytes()); // 1 画素のビット数
+    bmp.extend_from_slice(&0u32.to_le_bytes()); // 無圧縮
+    bmp.extend_from_slice(&pixels.to_le_bytes());
+    bmp.extend_from_slice(&[0; 16]); // 解像度と色数は使わない
+    bmp.resize(bmp.len() + pixels as usize, 0x80);
     bmp
 }
 

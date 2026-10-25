@@ -5,8 +5,21 @@
 //!
 //! Images use WinUI's standard `Image` and `BitmapImage`, both created directly
 //! from the [`naui_winui3`] projection. WinUI does both loading and drawing. Exactly
-//! one element is placed in the host `Grid`, and when the location or fitting
+//! one `Image` is placed in the host `Grid`, and when the location or fitting
 //! changes its properties are rewritten instead of recreating it.
+//!
+//! ## The natural size of an image
+//!
+//! The image's natural size is its pixel size, as with GTK's `GtkPicture`, AppKit's
+//! `NSImageView` and the Web's `<img>`. It can be made larger or smaller by the
+//! `Sizing`. WinUI's `Image` alone would report a different one: with `Uniform` and
+//! an unbounded height (inside a vertical `Scroll`), it asks for the available width
+//! and the height that keeps the aspect ratio, so a small image in a wide pane grows
+//! out of the viewport.
+//!
+//! So the `Image` is put on a `Canvas`, which leaves it out of measuring, and is
+//! given the host's size whenever that changes. An empty `Border` beside it is given
+//! the pixel size once the image is opened, and that is what the host asks for.
 //!
 //! ## Playback state notifications and threads
 //!
@@ -29,11 +42,11 @@ use naui_core::{Fit, PlaybackState, Result};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Grid, Image as XamlImage, MediaPlayerElement, UIElementCollection,
+    Border, Canvas, Grid, Image as XamlImage, MediaPlayerElement, UIElementCollection,
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
 use naui_winui3::Microsoft::UI::Xaml::Media::Stretch;
-use naui_winui3::Microsoft::UI::Xaml::{HorizontalAlignment, UIElement, VerticalAlignment};
+use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, SizeChangedEventHandler, UIElement};
 use windows::Foundation::{TimeSpan, TypedEventHandler, Uri};
 use windows::Media::Core::MediaSource;
 use windows::Media::Playback::{
@@ -44,6 +57,7 @@ use windows::Storage::StorageFile;
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
+use crate::ui_thread::UiThreadCell;
 use crate::widgets::impl_widget;
 use crate::widgets::Widget;
 use crate::Slot;
@@ -151,9 +165,15 @@ fn file_uri(path: &str) -> String {
 // ------------------------------------------------------------------ Image
 
 struct ImageInner {
-    /// The host that receives the size specification and puts the image in and out.
+    /// The host that receives the size specification. Holds `natural` and `stage`.
     native: Grid,
-    /// The WinUI `Image` shown. Removed from the host when the location is empty.
+    /// An empty element as large as the image's pixels, so that the host asks for
+    /// the natural size (see the module documentation). Sized automatically (zero)
+    /// until the image is opened.
+    natural: Border,
+    /// Holds the `Image` without letting it take part in measuring.
+    stage: Canvas,
+    /// The WinUI `Image` shown. Removed from `stage` when the location is empty.
     image: XamlImage,
     source: RefCell<String>,
     fit: Cell<Fit>,
@@ -171,21 +191,93 @@ impl_widget!(Image, native);
 impl Image {
     pub(crate) fn new(source: &str) -> Result<Self> {
         let native = Grid::new().map_err(|e| to_error("Image ホストの生成", e))?;
+        let natural = Border::new().map_err(|e| to_error("Image の大きさの生成", e))?;
+        let stage = Canvas::new().map_err(|e| to_error("Image の台の生成", e))?;
         let image = XamlImage::new().map_err(|e| to_error("Image の生成", e))?;
-        image
-            .SetHorizontalAlignment(HorizontalAlignment::Stretch)
-            .and_then(|()| image.SetVerticalAlignment(VerticalAlignment::Stretch))
+        natural
+            .SetIsHitTestVisible(false)
             .and_then(|()| image.SetStretch(stretch(Fit::default())))
             .map_err(|e| to_error("Image の配置設定", e))?;
+        native
+            .Children()
+            .and_then(|children| {
+                children.Append(&natural.cast::<UIElement>()?)?;
+                children.Append(&stage.cast::<UIElement>()?)
+            })
+            .map_err(|e| to_error("Image の組み立て", e))?;
         let this = Self(Rc::new(ImageInner {
             native,
+            natural,
+            stage,
             image,
             source: RefCell::new(String::new()),
             fit: Cell::new(Fit::default()),
             alt: RefCell::new(String::new()),
         }));
+        this.track_size()?;
         this.set_source(source);
         Ok(this)
+    }
+
+    /// Keeps the `Image` as large as the host, and the host's natural size as large
+    /// as the image's pixels.
+    fn track_size(&self) -> Result<()> {
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let resized = SizeChangedEventHandler::new(move |_, _| {
+            if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                Image(inner).fit_to_host();
+            }
+            Ok(())
+        });
+        self.0
+            .native
+            .SizeChanged(&resized)
+            .map_err(|e| to_error("Image の大きさの購読", e))?;
+
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let opened = RoutedEventHandler::new(move |_, _| {
+            if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                Image(inner).take_natural_size();
+            }
+            Ok(())
+        });
+        self.0
+            .image
+            .ImageOpened(&opened)
+            .map_err(|e| to_error("Image の読み込みの購読", e))?;
+        Ok(())
+    }
+
+    /// Gives the `Image` on the `Canvas` the host's size.
+    fn fit_to_host(&self) {
+        let width = self.0.native.ActualWidth().unwrap_or(0.0);
+        let height = self.0.native.ActualHeight().unwrap_or(0.0);
+        let _ = self.0.image.SetWidth(width);
+        let _ = self.0.image.SetHeight(height);
+    }
+
+    /// Makes the opened image's pixel size the host's natural size.
+    fn take_natural_size(&self) {
+        let Some(bitmap) = self
+            .0
+            .image
+            .Source()
+            .ok()
+            .and_then(|source| source.cast::<BitmapImage>().ok())
+        else {
+            return;
+        };
+        let width = bitmap.PixelWidth().unwrap_or(0);
+        let height = bitmap.PixelHeight().unwrap_or(0);
+        let _ = self.0.natural.SetWidth(f64::from(width));
+        let _ = self.0.natural.SetHeight(f64::from(height));
+    }
+
+    /// Forgets the natural size of the image that was shown.
+    fn forget_natural_size(&self) {
+        // WinUI では NaN が「中身に合わせる」を表す。空の Border なので 0 になる。
+        let _ = self.0.natural.SetWidth(f64::NAN);
+        let _ = self.0.natural.SetHeight(f64::NAN);
     }
 
     /// The location currently specified (exactly the string that was passed).
@@ -207,7 +299,7 @@ impl Image {
     /// "whether an element to show is in place", not "whether loading has finished"**.
     pub fn is_loaded(&self) -> bool {
         self.0
-            .native
+            .stage
             .Children()
             .and_then(|children| children.Size())
             .is_ok_and(|size| size > 0)
@@ -225,7 +317,7 @@ impl Image {
         let _ = AutomationProperties::SetName(&self.0.image, &HSTRING::from(text));
     }
 
-    /// Removes the image from the host and drops the load request too.
+    /// Removes the image from the `Canvas` and drops the load request too.
     ///
     /// Gone through both when the location is empty and when loading could not be
     /// requested. This putting in and out is what [`is_loaded`](Self::is_loaded) looks
@@ -236,14 +328,16 @@ impl Image {
     }
 
     /// Passes the current location to the `Image` and matches putting it in and out of
-    /// the host.
+    /// the `Canvas`.
     ///
     /// When the location is empty or loading could not be requested, it is removed with
     /// [`take_down`](Self::take_down).
     fn apply_source(&self) {
-        let Ok(children) = self.0.native.Children() else {
+        let Ok(children) = self.0.stage.Children() else {
             return;
         };
+        // 新しい画像が開くまでは、前の画像の大きさを求めない。
+        self.forget_natural_size();
         let source = self.0.source.borrow();
         if source.is_empty() {
             self.take_down(&children);
@@ -281,7 +375,11 @@ impl Image {
         };
         if let Err(error) = children.Append(&element) {
             eprintln!("naui-windows: Image の配置に失敗: {error}");
+            return;
         }
+        // ホストの大きさが決まったあとで置いたときは SizeChanged が来ないので、
+        // ここで合わせる。
+        self.fit_to_host();
     }
 }
 
