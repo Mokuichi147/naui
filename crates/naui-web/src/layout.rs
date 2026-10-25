@@ -157,9 +157,24 @@ fn parent_layout(element: &HtmlElement) -> ParentLayout {
 /// On other backends, the root directly under a window grows as the window's
 /// content does (AppKit's contentView / a row of WinUI's Grid). So that the Web
 /// behaves the same, the root gets `Fill` from the start.
+///
+/// Like `Fill` given with [`apply_sizing`], it may become smaller than its content
+/// (`min-width` / `min-height: 0`), unless the app set a minimum. Otherwise the
+/// Flexbox default minimum (the content's size) would keep a root holding a `Scroll`
+/// as tall as everything in it, and the window, whose height follows the browser,
+/// would cut it off instead of letting the `Scroll` scroll.
 pub(crate) fn fill_parent(element: &Element) {
     let _ = element.set_attribute(FILL_WIDTH_ATTR, "");
     let _ = element.set_attribute(FILL_HEIGHT_ATTR, "");
+    let style = element.unchecked_ref::<HtmlElement>().style();
+    for property in ["min-width", "min-height"] {
+        if style
+            .get_property_value(property)
+            .is_ok_and(|value| value.is_empty())
+        {
+            let _ = style.set_property(property, "0");
+        }
+    }
 }
 
 /// Rewrites the settings that depend on the parent's layout direction

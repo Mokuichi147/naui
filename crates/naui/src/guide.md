@@ -516,7 +516,7 @@ given to `ui.window` or `set_size`.
 | --- | --- | --- | --- | --- |
 | Confirmation before closing | `AppWindow.Closing` (`Cancel`) | `windowShouldClose:` | `close-request` | (never called) |
 | Size changes | `SizeChanged` of the content layer | `windowDidResize:` | Compares the content size after painting (`after-paint`) | `ResizeObserver` |
-| Changing the size | `AppWindow.Resize` (adds the difference from the outer frame) | `setContentSize` (adds the difference from `contentLayoutRect`) | `set_default_size` (adds the header bar and menu bar heights and the window's CSS frame) | `max-width` / `min-height` of the window element (adds the row heights) |
+| Changing the size | `AppWindow.Resize` (adds the difference from the outer frame) | `setContentSize` (adds the difference from `contentLayoutRect`) | `set_default_size` (adds the header bar and menu bar heights and the window's CSS frame) | `max-width` of the window element (the height follows the browser) |
 
 On every platform the native API takes the size of the whole window (or of a
 `contentView` extending under the title bar), so naui measures the current
@@ -534,8 +534,11 @@ sizes that do not fit the screen, AppKit shrinks the frame on show to fit the
 screen (excluding the menu bar and Dock), so `size` becomes smaller by that much.
 
 **The Web cannot fully decide the size.** The size of the browser window itself
-cannot be changed, so the width is treated as `max-width` (shrinking on narrow
-screens) and the height as `min-height` (growing when there is more content).
+cannot be changed, and it plays the part of the window the user resizes. So the
+height follows the browser's visible area, and the width is treated as `max-width`
+(shrinking on narrow screens). The requested height is not used; `set_min_size`
+still applies as `min-width` / `min-height`, and the page scrolls when the browser
+is smaller.
 
 **On the Web, the confirmation before closing is never called.** There is no user
 action for closing a window inside the page, and no way to show a custom

@@ -4397,9 +4397,11 @@ async fn frames_until(mut ready: impl FnMut() -> bool) {
     }
 }
 
-/// The size given to `ui.window` and `set_size` is the content size excluding the
-/// menu bar and toolbar rows, as on the other platforms. The rows are added to the
-/// window element's height.
+/// The content size excludes the menu bar and toolbar rows, as on the other
+/// platforms. The window's height follows the browser's visible area (the browser
+/// window plays the part of the window the user resizes), and the width given to
+/// `ui.window` and `set_size` is its maximum. The rows are added to the minimum
+/// height given to `set_min_size`.
 #[wasm_bindgen_test]
 async fn window_size_excludes_the_menu_bar() {
     let mut kept = None;
@@ -4425,16 +4427,79 @@ async fn window_size_excludes_the_menu_bar() {
         f64::from(element.client_height()) - bar_height,
         "size はメニューバーの行を除く"
     );
-    assert!(height >= 300.0, "中身の高さは 300 以上: {height}");
+    let viewport = web_sys::window()
+        .and_then(|window| window.inner_height().ok())
+        .and_then(|height| height.as_f64())
+        .expect("表示領域の高さ");
+    assert_eq!(
+        f64::from(element.client_height()),
+        viewport,
+        "ウィンドウの高さはブラウザの表示領域に合わせる"
+    );
     assert!(width <= 400.0, "中身の幅は 400 まで: {width}");
 
     window.set_size(360.0, 200.0);
     next_frames().await;
     let style = window_element_style(&window);
     assert!(style.contains("max-width: 360px"), "{style}");
+    assert!(style.contains("height: 100dvh"), "高さは表示領域: {style}");
     assert!(
-        style.contains(&format!("min-height: {}px", 200.0 + bar_height)),
+        !style.contains("min-height"),
+        "高さの指定は下限にしない: {style}"
+    );
+
+    window.set_min_size(240.0, 120.0);
+    next_frames().await;
+    let style = window_element_style(&window);
+    assert!(
+        style.contains(&format!("min-height: {}px", 120.0 + bar_height)),
         "高さの下限に行の高さを足す: {style}"
+    );
+    window.close();
+}
+
+/// The window's height follows the browser, so content taller than it scrolls in
+/// the `Scroll` under the root instead of stretching the window. The root (a `Fill`
+/// given by the window) may become smaller than its content; with the Flexbox
+/// default minimum it stayed as tall as the `Scroll`'s content and was cut off.
+#[wasm_bindgen_test]
+async fn window_root_scroll_fits_the_window() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("中で送る", 400.0, 300.0)?;
+        let pane = ui.stack(Orientation::Vertical)?;
+        for i in 0..200 {
+            pane.append(&ui.label(&format!("行 {i}"))?);
+        }
+        let scroll = ui.scroll()?;
+        scroll.set_child(&pane);
+        scroll.set_sizing(Sizing::fill());
+        let root = ui.grid()?;
+        root.set_column_track(0, naui_core::Track::FILL);
+        root.set_row_track(1, naui_core::Track::FILL);
+        root.attach(&ui.label("見出し")?, GridCell::new(0, 0));
+        root.attach(&scroll, GridCell::new(0, 1));
+        window.set_child(&root);
+        window.show();
+        kept = Some((window, scroll));
+        Ok(())
+    });
+    let (window, scroll) = kept.expect("window");
+    next_frames().await;
+    let viewport = web_sys::window()
+        .and_then(|window| window.inner_height().ok())
+        .and_then(|height| height.as_f64())
+        .expect("表示領域の高さ");
+    let element = window.native_element();
+    assert_eq!(
+        f64::from(element.client_height()),
+        viewport,
+        "ウィンドウは表示領域の高さのまま"
+    );
+    let m = scroll.metrics();
+    assert!(
+        m.viewport_height < viewport && m.max_y() > 0.0,
+        "中身は Scroll の中で送れる: {m:?}"
     );
     window.close();
 }

@@ -180,23 +180,29 @@ impl Window {
 
     /// Maps the requested content size and minimum onto the window element's CSS.
     ///
-    /// The window element also contains the menu bar and toolbar rows, so their heights
-    /// are added to the height. The width is `max-width` (shrinks on narrow screens) and
-    /// the height `min-height` (grows when there is more content); both are guides.
+    /// The user resizes a desktop window; on the Web the browser window plays that
+    /// part. So the height follows the browser's visible area (`100dvh`), and the
+    /// width is the requested width as `max-width` (shrinks on narrow screens). The
+    /// requested height is not used. The minimum becomes `min-width` / `min-height`;
+    /// the window element also contains the menu bar and toolbar rows, so their
+    /// heights are added to the minimum height.
     fn apply_size(&self) {
-        let (width, height) = self.0.size.get();
+        let (width, _) = self.0.size.get();
         let min = self.0.min_size.get();
         let bars = self.bars_height();
         let style = self.0.element.style();
         let _ = style.set_property("max-width", &format!("{width}px"));
-        let min_height = height.max(min.map_or(0.0, |(_, height)| height)) + bars;
-        let _ = style.set_property("min-height", &format!("{min_height}px"));
+        // `dvh` の無いブラウザでは後の指定が無視され、`vh` が残る。
+        let _ = style.set_property("height", "100vh");
+        let _ = style.set_property("height", "100dvh");
         match min {
-            Some((min_width, _)) => {
+            Some((min_width, min_height)) => {
                 let _ = style.set_property("min-width", &format!("{min_width}px"));
+                let _ = style.set_property("min-height", &format!("{}px", min_height + bars));
             }
             None => {
                 let _ = style.remove_property("min-width");
+                let _ = style.remove_property("min-height");
             }
         }
     }
@@ -438,8 +444,8 @@ impl Window {
     /// Prevents the layout from breaking when it is made too small.
     ///
     /// On the Web, `min-width` / `min-height` are put on the window element (the size of
-    /// the browser window itself cannot be decided, so when it is narrow, it scrolls).
-    /// The heights of the menu bar and toolbar rows are added to the height.
+    /// the browser window itself cannot be decided, so when it is smaller, the page
+    /// scrolls). The heights of the menu bar and toolbar rows are added to the height.
     pub fn set_min_size(&self, width: f64, height: f64) {
         self.0.min_size.set(Some((width.max(0.0), height.max(0.0))));
         self.apply_size();
@@ -458,10 +464,10 @@ impl Window {
     /// [`size`](Self::size), excluding the menu bar and toolbar rows (the same as the
     /// other platforms).
     ///
-    /// The size of the browser window itself cannot be decided, so it maps onto the
-    /// window element's `max-width` (a maximum width that shrinks on narrow screens) and
-    /// `min-height` (a minimum height that grows when there is more content). The rows'
-    /// heights are added to the height.
+    /// The size of the browser window itself cannot be decided, so only the width is
+    /// used, as the window element's `max-width` (a maximum width that shrinks on
+    /// narrow screens). The height follows the browser's visible area, as a desktop
+    /// window follows the size the user gives it.
     pub fn set_size(&self, width: f64, height: f64) {
         self.0.size.set((width.max(0.0), height.max(0.0)));
         self.apply_size();
