@@ -17,10 +17,10 @@ Legend:
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
 | `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | ✅ `AdwApplicationWindow` | 🔴 `<div>` + `document.title` |
-| `Stack` | ✅ `StackPanel` | ✅ `NSStackView` | ✅ `GtkBox` | 🟡 `<div>` + CSS Flexbox |
+| `Stack` | 🟡 `Grid` (a track per child) | ✅ `NSStackView` | ✅ `GtkBox` | 🟡 `<div>` + CSS Flexbox |
 | `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🟡 `GtkGrid` | 🟡 `<div>` + CSS Grid |
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
-| `Spacer` | 🔴 An empty `Grid` | 🟡 An empty `NSView` | 🟡 An empty `GtkBox` | 🟡 `<div>` + `flex-grow` |
+| `Spacer` | 🟡 An empty `Grid` | 🟡 An empty `NSView` | 🟡 An empty `GtkBox` | 🟡 `<div>` + `flex-grow` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (disclosure) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
 | `SplitView` | 🔴 `Grid` + a divider `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
 | `Toolbar` | ✅ `CommandBar` + `AppBarButton` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
@@ -101,6 +101,14 @@ collected in [Known limitations](known-limitations.md).
 
 ### Windows construction
 
+- **`Stack`**: A `Grid` with one row (column) per child, not a `StackPanel`.
+  `StackPanel` never hands out leftover space, so `Fill` and `Spacer` along the
+  main axis would do nothing. A child with `Fill` on the main axis gets a `Star`
+  track, the others `Auto`, and the spacing is `RowSpacing` / `ColumnSpacing`. A
+  hidden child is given no track of its own and shares the one before it:
+  `RowSpacing` falls between tracks, so an empty track would still leave a gap on
+  each side. The tracks are redone when a child is added, removed, shown or hidden,
+  or given a new `Sizing`.
 - **`MenuBar`**: Rather than WinUI 3's `MenuBar`, it is a row of `Button`s with
   their background removed, each holding a `MenuFlyout`. This is because
   `MenuBar` / `MenuBarItem` / `KeyboardAccelerator` are not in `naui-winui3`'s

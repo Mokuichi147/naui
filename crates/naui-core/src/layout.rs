@@ -22,7 +22,7 @@
 /// | --- | --- | --- |
 /// | macOS (AppKit) | Lowers the hugging priority to take leftover space from the NSStackView | A constraint matching the parent's width / height |
 /// | Web (DOM) | `flex-grow: 1` | `align-self: stretch` |
-/// | Windows (WinUI 3) | **No effect in a Stack** (StackPanel does not hand out leftover space). Use [`Track::Fill`] in a `Grid` | `Stretch` for `HorizontalAlignment`/`VerticalAlignment` |
+/// | Windows (WinUI 3) | A `Star` track in the `Grid` the Stack is built on | `Stretch` for `HorizontalAlignment`/`VerticalAlignment` |
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Length {
     /// Fit the content (default).

@@ -7,7 +7,9 @@
 
 use naui_winui3::Microsoft::UI::Xaml::Controls::ToolTipService;
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
-use naui_winui3::Microsoft::UI::Xaml::{DependencyObject, FocusState, UIElement, Visibility};
+use naui_winui3::Microsoft::UI::Xaml::{
+    DependencyObject, FocusState, FrameworkElement, UIElement, Visibility,
+};
 use windows::Foundation::PropertyValue;
 use windows_core::{IInspectable, Interface, HSTRING};
 
@@ -18,6 +20,10 @@ pub(crate) fn set_visible(element: &UIElement, visible: bool) {
     } else {
         Visibility::Collapsed
     });
+    // Stack は隠れた子に行 (列) を持たせないので、並べ直す。
+    if let Ok(framework) = element.cast::<FrameworkElement>() {
+        crate::layout::rearrange_parent_stack(&framework);
+    }
 }
 
 pub(crate) fn is_visible(element: &UIElement) -> bool {

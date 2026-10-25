@@ -1,4 +1,5 @@
-//! Size specifications and layout containers (Grid / Scroll / Spacer).
+//! Size specifications and layout containers (Grid / Scroll / Spacer), and how a
+//! `Stack` hands its tracks to its children.
 //!
 //! The computing is done by WinUI 3's layout pass; naui only sets properties such as
 //! `Width` / `MinWidth` / `RowDefinition`.
@@ -34,6 +35,9 @@ use crate::widgets::{impl_widget, Widget};
 #[derive(Clone, Copy)]
 enum ParentLayout {
     Stack {
+        /// The key of the Stack's `Grid`, to tell it from whatever the element was
+        /// moved into through the escape hatch.
+        stack: usize,
         align: Align,
         vertical: bool,
     },
@@ -210,19 +214,177 @@ fn parent_state(element: &FrameworkElement) -> Option<ParentLayout> {
 
 /// Records the Stack parent's information on the child and applies the current
 /// alignment.
-pub(crate) fn set_stack_parent(element: &UIElement, align: Align, vertical_stack: bool) {
+pub(crate) fn set_stack_parent(
+    element: &UIElement,
+    stack: &XamlGrid,
+    align: Align,
+    vertical_stack: bool,
+) {
     let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return;
+    };
+    let Some(stack) = grid_key(stack) else {
         return;
     };
     set_parent_state(
         element,
         &framework,
         ParentLayout::Stack {
+            stack,
             align,
             vertical: vertical_stack,
         },
     );
     apply_stack_alignment(&framework, align, vertical_stack);
+}
+
+fn grid_key(grid: &XamlGrid) -> Option<usize> {
+    grid.cast::<UIElement>().ok().map(|grid| element_key(&grid))
+}
+
+/// Gives a Stack's children their tracks along the main axis.
+///
+/// Each shown child gets a row (vertical) or column (horizontal) of its own: `Star`
+/// when it has `Fill` on the main axis, `Auto` otherwise. That is how leftover space
+/// reaches `Fill` and `Spacer`, which `StackPanel` never hands out.
+///
+/// A hidden child shares the track of the shown child before it instead of having one.
+/// `RowSpacing` falls between tracks, so an empty track of its own would still leave a
+/// gap on each side, and a `Star` one would still take leftover space.
+pub(crate) fn arrange_stack(stack: &XamlGrid, vertical: bool) {
+    let Ok(children) = stack.Children() else {
+        return;
+    };
+    let count = children.Size().unwrap_or(0);
+    let mut tracks = Vec::with_capacity(count as usize);
+    for index in 0..count {
+        let Ok(framework) = children
+            .GetAt(index)
+            .and_then(|child| child.cast::<FrameworkElement>())
+        else {
+            continue;
+        };
+        let shown = framework
+            .Visibility()
+            .map_or(true, |v| v == Visibility::Visible);
+        let track = if shown {
+            tracks.push(if wants_fill(&framework, !vertical) {
+                Track::Fill(1.0)
+            } else {
+                Track::Auto
+            });
+            tracks.len() - 1
+        } else {
+            tracks.len().saturating_sub(1)
+        } as i32;
+        let (row, column) = if vertical { (track, 0) } else { (0, track) };
+        let _ = XamlGrid::SetRow(&framework, row);
+        let _ = XamlGrid::SetColumn(&framework, column);
+        // `Grid` から移ってきた子は結合を持ったままなので、1 本ずつに戻す。
+        // 残すと後ろの子の行 (列) まで覆って重なる。
+        let _ = XamlGrid::SetRowSpan(&framework, 1);
+        let _ = XamlGrid::SetColumnSpan(&framework, 1);
+    }
+
+    // 交差軸は暗黙の 1 本 (Star) に任せる。向きが変わったときに残らないよう、
+    // そちらの定義は空にする。
+    if vertical {
+        if let Ok(definitions) = stack.ColumnDefinitions() {
+            let _ = definitions.Clear();
+        }
+        let Ok(definitions) = stack.RowDefinitions() else {
+            return;
+        };
+        let mut length = definitions.Size().unwrap_or(0) as usize;
+        while length > tracks.len() && definitions.RemoveAtEnd().is_ok() {
+            length -= 1;
+        }
+        for (index, track) in tracks.iter().enumerate() {
+            let height = grid_length(*track);
+            if index < length {
+                if let Ok(definition) = definitions.GetAt(index as u32) {
+                    if definition.Height().ok() != Some(height) {
+                        let _ = definition.SetHeight(height);
+                    }
+                }
+            } else if let Ok(definition) = RowDefinition::new() {
+                let _ = definition.SetHeight(height);
+                let _ = definitions.Append(&definition);
+            }
+        }
+    } else {
+        if let Ok(definitions) = stack.RowDefinitions() {
+            let _ = definitions.Clear();
+        }
+        let Ok(definitions) = stack.ColumnDefinitions() else {
+            return;
+        };
+        let mut length = definitions.Size().unwrap_or(0) as usize;
+        while length > tracks.len() && definitions.RemoveAtEnd().is_ok() {
+            length -= 1;
+        }
+        for (index, track) in tracks.iter().enumerate() {
+            let width = grid_length(*track);
+            if index < length {
+                if let Ok(definition) = definitions.GetAt(index as u32) {
+                    if definition.Width().ok() != Some(width) {
+                        let _ = definition.SetWidth(width);
+                    }
+                }
+            } else if let Ok(definition) = ColumnDefinition::new() {
+                let _ = definition.SetWidth(width);
+                let _ = definitions.Append(&definition);
+            }
+        }
+    }
+}
+
+/// Registers a Stack's `Grid`, so its children can find it again. Removed with
+/// [`unregister_stack`] when the Stack is dropped.
+pub(crate) fn register_stack(stack: &XamlGrid) {
+    if let Some(key) = grid_key(stack) {
+        STACKS.with(|stacks| stacks.borrow_mut().insert(key, stack.clone()));
+    }
+}
+
+pub(crate) fn unregister_stack(stack: &XamlGrid) {
+    if let Some(key) = grid_key(stack) {
+        STACKS.with(|stacks| stacks.borrow_mut().remove(&key));
+    }
+}
+
+/// Lays the Stack out again after one of its children changed its `Fill` or its
+/// visibility. Does nothing for an element that is not in a Stack.
+pub(crate) fn rearrange_parent_stack(element: &FrameworkElement) {
+    let Some(ParentLayout::Stack {
+        stack, vertical, ..
+    }) = parent_state(element)
+    else {
+        return;
+    };
+    // `Parent` は画面のツリーに載るまで空なので、まず登録から引く。Rust 側の
+    // Stack が落ちた後は、載っていれば `Parent` から引ける。
+    let registered = STACKS.with(|stacks| stacks.borrow().get(&stack).cloned());
+    let parent = registered.or_else(|| {
+        element
+            .Parent()
+            .ok()
+            .and_then(|parent| parent.cast::<XamlGrid>().ok())
+            .filter(|parent| grid_key(parent) == Some(stack))
+    });
+    if let Some(parent) = parent {
+        arrange_stack(&parent, vertical);
+    }
+}
+
+/// Undoes what a Stack set on a child it no longer holds: the alignment it overrode,
+/// and its track, so the element does not land in some other row of the next `Grid`.
+pub(crate) fn release_stack_child(element: &UIElement) {
+    clear_parent_layout(element);
+    if let Ok(framework) = element.cast::<FrameworkElement>() {
+        let _ = XamlGrid::SetRow(&framework, 0);
+        let _ = XamlGrid::SetColumn(&framework, 0);
+    }
 }
 
 /// Records the Scroll parent's information on the child and applies Stretch on the
@@ -256,8 +418,12 @@ pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
         return;
     };
     match parent {
-        ParentLayout::Stack { align, vertical } => {
+        ParentLayout::Stack {
+            align, vertical, ..
+        } => {
             apply_stack_alignment(element, align, vertical);
+            // 主軸の Fill が変わったなら、その子の行 (列) も Star と Auto を替える。
+            rearrange_parent_stack(element);
         }
         ParentLayout::Scroll {
             horizontal_scroll_enabled,
@@ -334,11 +500,11 @@ pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
     reapply_parent_layout(&framework);
 }
 
-/// Maps `Stack::set_align` onto the StackPanel's children.
+/// Maps `Stack::set_align` onto the Stack's children.
 ///
-/// The StackPanel's own alignment only changes where the panel sits within its
-/// parent, so cross-axis alignment is set on the children. A child's own `Fill`, if
-/// any, takes precedence.
+/// The Stack's `Grid` has its own alignment, but that only changes where the `Grid`
+/// sits within its parent, so cross-axis alignment is set on the children. A child's
+/// own `Fill`, if any, takes precedence.
 fn apply_stack_alignment(element: &FrameworkElement, align: Align, vertical_stack: bool) {
     if wants_fill(element, vertical_stack) {
         return;
@@ -387,9 +553,8 @@ struct SpacerInner {
 
 /// A widget that is just empty space (an empty Grid).
 ///
-/// WinUI's `StackPanel` does not hand out leftover space to children, so inside a
-/// `Stack` it takes no space. To split leftover space, use [`Track::Fill`] of a
-/// [`Grid`].
+/// It has `Fill` in both directions, so inside a `Stack` it gets a `Star` track and
+/// takes the leftover space (shared evenly with the other `Fill` children).
 #[derive(Clone)]
 pub struct Spacer(Rc<SpacerInner>);
 impl_widget!(Spacer, native);
@@ -632,6 +797,8 @@ impl Drop for ScrollInner {
 thread_local! {
     static LAYOUT_STATES: RefCell<HashMap<usize, LayoutState>> =
         RefCell::new(HashMap::new());
+    /// The `Grid`s of the Stacks still alive on the Rust side, by element key.
+    static STACKS: RefCell<HashMap<usize, XamlGrid>> = RefCell::new(HashMap::new());
     static SCROLLS: RefCell<Vec<Weak<ScrollInner>>> = const { RefCell::new(Vec::new()) };
     static LIST_SCROLLS: RefCell<Vec<Weak<ListScrollTarget>>> = const { RefCell::new(Vec::new()) };
     static WHEEL_TARGETS: RefCell<Vec<windows::Win32::Foundation::HWND>> =

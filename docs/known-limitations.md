@@ -9,7 +9,6 @@ that shape are covered in
 
 | Item | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Fill` and `Spacer` along a `Stack`'s main axis | No effect ([alternative](#windows)) | Works | Works | Works |
 | Weights of `Grid`'s `Track::Fill` | Works | Distributed evenly | Distributed evenly | Works |
 | Stacking in the same `Grid` cell | Possible | Only the last placed one remains | Possible | Possible |
 | Dragging `Table` column widths | Not possible | Possible | Not possible | Not possible |
@@ -126,9 +125,10 @@ that shape are covered in
 
 ### Layout
 
-- `StackPanel` does not distribute leftover main-axis space to its children, so
-  `Fill` and `Spacer` along a `Stack`'s main axis have no effect. Use `Grid`'s
-  `Track::Fill` instead.
+- When several children along a `Stack`'s main axis have `Fill`, they come out the
+  same size (`Grid`'s `Star` tracks share out the whole leftover area). Linux and
+  the Web instead give each its content size plus an equal share of what is left,
+  and macOS does not define how the space is split.
 
 ### Widgets
 
