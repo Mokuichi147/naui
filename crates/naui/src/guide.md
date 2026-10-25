@@ -205,6 +205,10 @@ leftover space around such a child, and once it stops at its maximum it sits whe
 an `Auto` child would: at the start of the cell horizontally and in the middle
 vertically.
 
+An [`Image`] asks for its pixel size on an `Auto` axis. On a `Fill` axis it asks
+for nothing and fits into the leftover space, so a large image inside a vertical
+`Scroll` does not push the content out to the image's height.
+
 The content of a [`Scroll`] is **never smaller than the visible area**: it
 matches the visible area in a direction that does not scroll, and grows past it in
 one that does. So while the content fits, a `Fill` child inside takes the leftover

@@ -35,6 +35,8 @@ mod imp {
         pub max_height: Cell<i32>,
         /// Whether the content cannot shrink its width (`GtkSpinButton` and the like).
         pub rigid_width: Cell<bool>,
+        /// Whether the content's natural size is left out on `Fill` axes (images).
+        pub fill_ignores_natural: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -83,6 +85,7 @@ mod imp {
         /// | --- | --- |
         /// | [`Length::Fill`] + maximum | **The maximum itself** (grows up to it when there is room) |
         /// | [`Length::Auto`] / [`Length::Fixed`] + maximum | The smaller of the content and the maximum |
+        /// | [`Length::Fill`] without a maximum, for content marked with [`fill_ignores_natural`](Self::fill_ignores_natural) (images) | 0 (fits into the leftover space) |
         ///
         /// The minimum (`minimum`) is lowered for two reasons.
         ///
@@ -121,6 +124,9 @@ mod imp {
             };
             if length.is_fill() {
                 minimum = 0;
+                if self.fill_ignores_natural.get() {
+                    natural = 0;
+                }
             }
             if cap >= 0 {
                 natural = if length.is_fill() {
@@ -219,6 +225,17 @@ impl SizeBin {
     /// maximum.
     pub(crate) fn mark_rigid_width(&self) {
         self.imp().rigid_width.set(true);
+        self.queue_resize();
+    }
+
+    /// Reports that the content's natural size is not asked for on `Fill` axes.
+    ///
+    /// For an image, the natural size is its pixel size. Asking for it on a `Fill`
+    /// axis, a large image pushes a parent that can grow (a vertical `Scroll`, which
+    /// places its content at the natural size) out to the image's height, instead of
+    /// fitting into the leftover space. A maximum still counts as the natural size.
+    pub(crate) fn mark_fill_ignores_natural(&self) {
+        self.imp().fill_ignores_natural.set(true);
         self.queue_resize();
     }
 

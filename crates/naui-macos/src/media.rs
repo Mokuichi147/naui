@@ -23,6 +23,7 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAccessibility, NSCompositingOperation, NSImage, NSImageScaling, NSImageView, NSView,
+    NSViewNoIntrinsicMetric,
 };
 use objc2_av_foundation::{
     AVLayerVideoGravity, AVLayerVideoGravityResize, AVLayerVideoGravityResizeAspect,
@@ -78,6 +79,7 @@ struct ImageInner {
 }
 
 // `NSImageView` に無い `Fit::Cover` を、表示領域いっぱいに拡大して描く画像ビュー。
+// `Fill` の軸では画像の大きさを求めない (`intrinsicContentSize`)。
 define_class!(
     #[unsafe(super(NSImageView))]
     #[thread_kind = MainThreadOnly]
@@ -88,6 +90,30 @@ define_class!(
     unsafe impl NSObjectProtocol for NauiImageView {}
 
     impl NauiImageView {
+        // `Fill` の軸では、画像の画素の大きさを自然な大きさとして求めない。
+        // 求めたままだと、縦の Scroll の中のように親が伸びられる所では、
+        // 大きな画像が余りを受け取るどころか画素の高さまで親を押し広げる。
+        // `Fill` は「与えられた余りに収まる」なので、その軸の大きさは親に任せる。
+        // `Auto` の軸は今までどおり画素の大きさになる。
+        #[unsafe(method(intrinsicContentSize))]
+        fn intrinsic_content_size(&self) -> NSSize {
+            let size: NSSize = unsafe { msg_send![super(self), intrinsicContentSize] };
+            let view: &NSView = self.as_super().as_super().as_super();
+            let none = unsafe { NSViewNoIntrinsicMetric };
+            NSSize::new(
+                if crate::layout::wants_fill(view, true) {
+                    none
+                } else {
+                    size.width
+                },
+                if crate::layout::wants_fill(view, false) {
+                    none
+                } else {
+                    size.height
+                },
+            )
+        }
+
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, dirty_rect: NSRect) {
             if self.ivars().get() != Fit::Cover {
@@ -233,6 +259,22 @@ impl Image {
             .as_super()
             .setAccessibilityLabel(Some(&NSString::from_str(text)));
     }
+
+    /// Sets the size. Each call discards the previous setting.
+    ///
+    /// On an `Auto` axis the image asks for its pixel size. On a `Fill` axis it asks
+    /// for nothing and fits into the space it is given, so a large image does not
+    /// push its parent out (inside a vertical `Scroll`, for example).
+    ///
+    /// Call it **before** putting the widget into a container when using `Fill` on the
+    /// cross axis or growing within a grid cell. AppKit places constraints and cell
+    /// placement at the time of `append` / `attach`, so later changes are not applied.
+    pub fn set_sizing(&self, sizing: Sizing) {
+        let view = self.native_view();
+        crate::layout::apply_sizing(&view, sizing);
+        // 自然な大きさが `Fill` かどうかで変わるので、測り直させる。
+        view.invalidateIntrinsicContentSize();
+    }
 }
 
 impl Widget for Image {
@@ -245,7 +287,7 @@ impl Widget for Image {
     }
 }
 
-crate::widgets::impl_sizing!(Image);
+crate::widgets::impl_interaction!(Image);
 
 // --------------------------------------------------------------- 再生の中身
 

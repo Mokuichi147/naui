@@ -572,6 +572,10 @@ fn main() {
             image_loads_a_local_file,
         ),
         (
+            "Fill の画像は大きくても縦の Scroll を押し広げない",
+            fill_image_does_not_push_a_scroll,
+        ),
+        (
             "収め方が NSImageView の imageScaling になる",
             image_fit_maps_to_native_scaling,
         ),
@@ -4951,6 +4955,74 @@ fn image_loads_a_local_file(ui: &Ui) -> Result<()> {
     // 空文字列でも落ちない。
     image.set_source("");
     assert!(!image.is_loaded());
+    Ok(())
+}
+
+/// A `Fill` image asks for no size on that axis and fits into what it is given; an
+/// `Auto` axis still asks for the image's size.
+///
+/// Asking for its pixel size, a large image inside a vertical `Scroll` pushed the
+/// content to its own height, and the rows after it left the visible area.
+fn fill_image_does_not_push_a_scroll(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("large-image");
+    let path = fixture.write("a.png", PNG_2X2);
+    let large = NSSize::new(3000.0, 2000.0);
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill());
+    let view = image.native_view();
+    let native = view
+        .downcast_ref::<NSImageView>()
+        .expect("実体が NSImageView であること");
+    // NSImageView は画像の大きさ (ポイント) を自然な大きさにする。
+    native.image().expect("NSImage があること").setSize(large);
+    view.invalidateIntrinsicContentSize();
+    let none = unsafe { objc2_app_kit::NSViewNoIntrinsicMetric };
+    let fill = view.intrinsicContentSize();
+    assert_eq!(
+        (fill.width, fill.height),
+        (none, none),
+        "Fill の軸は大きさを求めない"
+    );
+    image.set_sizing(Sizing::fill_width());
+    let auto_height = view.intrinsicContentSize();
+    assert_eq!(
+        (auto_height.width, auto_height.height),
+        (none, 2000.0),
+        "Auto の軸は画像の大きさを求める"
+    );
+    image.set_sizing(Sizing::fill());
+
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_align(Align::Start);
+    pane.append(&ui.label("見出し")?);
+    pane.append(&image);
+    let footer = ui.label("下端")?;
+    pane.append(&footer);
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    let window = ui.window("大きな画像", 400.0, 300.0)?;
+    window.set_child(&scroll);
+    window.show();
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("コンテンツビューがあること");
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    content.layoutSubtreeIfNeeded();
+    let metrics = scroll.metrics();
+    let frame = view.frame();
+    window.close();
+    assert_eq!(
+        metrics.content_height, metrics.viewport_height,
+        "中身は表示領域に収まる: {metrics:?}"
+    );
+    assert!(
+        frame.size.height > 100.0 && frame.size.height < 300.0,
+        "画像は余りを受け取る: {frame:?}"
+    );
     Ok(())
 }
 

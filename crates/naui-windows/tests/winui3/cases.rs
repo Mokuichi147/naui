@@ -258,6 +258,10 @@ const CASES: &[Case] = &[
         image_natural_size_is_its_pixels,
     ),
     (
+        "Fill の画像は大きくても縦の Scroll を押し広げない",
+        fill_image_does_not_push_a_scroll,
+    ),
+    (
         "スクロールの位置を測り、送れる範囲に丸めて送る",
         scroll_measures_and_moves,
     ),
@@ -3209,6 +3213,67 @@ fn bmp_2x1() -> Vec<u8> {
     bmp.extend_from_slice(&[0; 16]); // 解像度と色数は使わない
     bmp.extend_from_slice(&[0, 0, 255, 255, 0, 0, 0, 0]); // BGR, BGR, 詰め物
     bmp
+}
+
+/// A `Fill` image asks for no size and fits into the viewport's leftover height, even
+/// when its pixels are taller than the viewport. Asking for its pixel size, it pushed
+/// the content of a vertical `Scroll` out to its own height.
+///
+/// Messages are pumped until it is laid out; in environments where it never is
+/// (CI), the sizes pass without checking.
+fn fill_image_does_not_push_a_scroll(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui 大きな画像 {}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
+    let path = dir.join("300x1000.bmp");
+    std::fs::write(&path, bmp_solid(300, 1000)).expect("画像を書き出せない");
+    let path = path.to_str().expect("一時パスが UTF-8 でない").to_string();
+
+    let window = ui.window("大きな画像", 300.0, 240.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_sizing(Sizing::fill());
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill());
+    pane.append(&image);
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<FrameworkElement>(&image);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let opened = || {
+            xaml_image(&image)
+                .Source()
+                .ok()
+                .and_then(|source| source.cast::<BitmapImage>().ok())
+                .and_then(|bitmap| bitmap.PixelHeight().ok())
+                .is_some_and(|height| height == 1000)
+        };
+        pump_until(IMAGE_LOAD_TIMEOUT, opened);
+        assert!(opened(), "画像が開くこと");
+        let viewport = scroll.metrics().viewport_height;
+        let fits = || host.ActualHeight().unwrap_or(f64::NAN) == viewport;
+        pump_until(SCROLL_LAYOUT_TIMEOUT, fits);
+        let metrics = scroll.metrics();
+        assert_eq!(
+            metrics.content_height, metrics.viewport_height,
+            "中身は表示領域に収まる: {metrics:?}"
+        );
+        assert_eq!(
+            host.ActualHeight().unwrap_or(f64::NAN),
+            viewport,
+            "画像は表示領域の余りを受け取る"
+        );
+    }));
+    window.close();
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
 }
 
 /// An uncompressed 24-bit BMP of the given size, all one gray.

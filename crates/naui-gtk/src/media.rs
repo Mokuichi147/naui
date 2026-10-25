@@ -57,6 +57,7 @@ impl Image {
         let native = gtk::Picture::new();
         native.set_content_fit(gtk::ContentFit::Contain);
         let bin = SizeBin::wrap(&native);
+        bin.mark_fill_ignores_natural();
         let image = Self(Rc::new(ImageInner {
             native,
             bin,

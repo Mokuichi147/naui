@@ -3482,6 +3482,62 @@ fn scroll_content_covers_the_viewport() {
     });
 }
 
+/// A `Fill` image asks for no size and fits into what it is given, so a large one
+/// does not push a vertical `Scroll` out. Asking for its pixel size, it pushed the
+/// content (and the rows after it) to the image's height.
+#[wasm_bindgen_test]
+async fn fill_image_does_not_push_a_scroll() {
+    // 3000x2000 の PNG。SVG だと自然な大きさが画素の大きさにならない (WebKit)。
+    let canvas: web_sys::HtmlCanvasElement = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("document")
+        .create_element("canvas")
+        .expect("canvas の生成")
+        .unchecked_into();
+    canvas.set_width(3000);
+    canvas.set_height(2000);
+    let source = canvas.to_data_url().expect("PNG への書き出し");
+    let mut kept = None;
+    with_ui(|ui| {
+        let pane = ui.stack(Orientation::Vertical)?;
+        pane.append(&ui.label("見出し")?);
+        let image = ui.image(&source)?;
+        image.set_sizing(Sizing::fill());
+        pane.append(&image);
+        pane.append(&ui.label("下端")?);
+        let scroll = ui.scroll()?;
+        scroll.set_child(&pane);
+        scroll.set_sizing(Sizing::fixed(200.0, 300.0));
+        kept = Some((scroll, pane, image));
+        Ok(())
+    });
+    let (scroll, _pane, image) = kept.expect("組み立て");
+    let _mounted = Mounted::new(&scroll);
+    let element: web_sys::HtmlImageElement = image.native_element().unchecked_into();
+    for _ in 0..40 {
+        if element.complete() && element.natural_height() > 0 {
+            break;
+        }
+        wait_millis(50).await;
+    }
+    next_frames().await;
+    assert_eq!(element.natural_height(), 2000, "画像が読み込まれていること");
+    let m = scroll.metrics();
+    assert_eq!(
+        m.content_height, m.viewport_height,
+        "中身は表示領域に収まる: {m:?}"
+    );
+    let height = element.get_bounding_client_rect().height();
+    assert!(
+        height > 100.0 && height < 300.0,
+        "画像は余りを受け取る: {height}"
+    );
+
+    // `Auto` の軸が残るときは、縦横比から大きさを決めるので封じ込めない。
+    image.set_sizing(Sizing::fill_width());
+    assert_eq!(computed(element.as_ref(), "contain"), "none");
+}
+
 /// Calls "append, then scroll to the end", as in a chat, back to back.
 #[wasm_bindgen_test]
 fn scroll_to_end_after_appending() {

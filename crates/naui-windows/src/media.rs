@@ -21,6 +21,10 @@
 //! given the host's size whenever that changes. An empty `Border` beside it is given
 //! the pixel size once the image is opened, and that is what the host asks for.
 //!
+//! **On a `Fill` axis the image asks for nothing** and fits into the space it is
+//! given, as on the other backends. Asking for its pixel size there, a large image
+//! would push a parent that can grow (a vertical `Scroll`) out to its own height.
+//!
 //! ## Playback state notifications and threads
 //!
 //! `MediaPlaybackSession`'s `PlaybackStateChanged` and `MediaPlayer`'s
@@ -46,7 +50,9 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
 use naui_winui3::Microsoft::UI::Xaml::Media::Stretch;
-use naui_winui3::Microsoft::UI::Xaml::{RoutedEventHandler, SizeChangedEventHandler, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, RoutedEventHandler, SizeChangedEventHandler, UIElement,
+};
 use windows::Foundation::{TimeSpan, TypedEventHandler, Uri};
 use windows::Media::Core::MediaSource;
 use windows::Media::Playback::{
@@ -171,6 +177,8 @@ struct ImageInner {
     /// the natural size (see the module documentation). Sized automatically (zero)
     /// until the image is opened.
     natural: Border,
+    /// Whether the image shown has been opened (its pixel size is known).
+    opened: Cell<bool>,
     /// Holds the `Image` without letting it take part in measuring.
     stage: Canvas,
     /// The WinUI `Image` shown. Removed from `stage` when the location is empty.
@@ -208,6 +216,7 @@ impl Image {
         let this = Self(Rc::new(ImageInner {
             native,
             natural,
+            opened: Cell::new(false),
             stage,
             image,
             source: RefCell::new(String::new()),
@@ -237,6 +246,7 @@ impl Image {
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let opened = RoutedEventHandler::new(move |_, _| {
             if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                inner.opened.set(true);
                 Image(inner).take_natural_size();
             }
             Ok(())
@@ -254,9 +264,15 @@ impl Image {
         let height = self.0.native.ActualHeight().unwrap_or(0.0);
         let _ = self.0.image.SetWidth(width);
         let _ = self.0.image.SetHeight(height);
+        // `set_sizing` で `Fill` が変わると大きさも変わるので、ここで求め直す。
+        // 画像が開く前は何もしない (前の画像の大きさを求めないため)。
+        if self.0.opened.get() {
+            self.take_natural_size();
+        }
     }
 
-    /// Makes the opened image's pixel size the host's natural size.
+    /// Makes the opened image's pixel size the host's natural size, except on `Fill`
+    /// axes (see the module documentation).
     fn take_natural_size(&self) {
         let Some(bitmap) = self
             .0
@@ -269,12 +285,24 @@ impl Image {
         };
         let width = bitmap.PixelWidth().unwrap_or(0);
         let height = bitmap.PixelHeight().unwrap_or(0);
-        let _ = self.0.natural.SetWidth(f64::from(width));
-        let _ = self.0.natural.SetHeight(f64::from(height));
+        let Ok(host) = self.0.native.cast::<FrameworkElement>() else {
+            return;
+        };
+        // WinUI では NaN が「中身に合わせる」を表す。空の Border なので 0 になる。
+        let natural = |fill: bool, pixels: i32| if fill { f64::NAN } else { f64::from(pixels) };
+        let _ = self
+            .0
+            .natural
+            .SetWidth(natural(crate::layout::wants_fill(&host, true), width));
+        let _ = self
+            .0
+            .natural
+            .SetHeight(natural(crate::layout::wants_fill(&host, false), height));
     }
 
     /// Forgets the natural size of the image that was shown.
     fn forget_natural_size(&self) {
+        self.0.opened.set(false);
         // WinUI では NaN が「中身に合わせる」を表す。空の Border なので 0 になる。
         let _ = self.0.natural.SetWidth(f64::NAN);
         let _ = self.0.natural.SetHeight(f64::NAN);

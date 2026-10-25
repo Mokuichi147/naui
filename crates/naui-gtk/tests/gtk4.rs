@@ -623,6 +623,10 @@ fn main() {
             image_loads_a_local_file,
         ),
         (
+            "Fill の画像はその軸で画素の大きさを求めない",
+            fill_image_does_not_ask_for_its_size,
+        ),
+        (
             "収め方が GtkPicture の content-fit になる",
             image_fit_maps_to_content_fit,
         ),
@@ -5174,6 +5178,47 @@ fn image_loads_a_local_file(ui: &Ui) -> Result<()> {
 
     image.set_source("");
     assert!(!image.is_loaded());
+    Ok(())
+}
+
+/// A `Fill` image asks for no natural size on that axis and fits into the leftover
+/// space; an `Auto` axis still asks for the pixel size, and a maximum still counts.
+///
+/// A vertical `Scroll` places its content at the natural size, so asking for the
+/// pixel size, a large image pushed the content to the image's height.
+fn fill_image_does_not_ask_for_its_size(ui: &Ui) -> Result<()> {
+    let image = ui.image("")?;
+    let native: gtk::Picture = image.native_widget().downcast().expect("GtkPicture");
+    let (width, height) = (1500, 1000);
+    let pixels = glib::Bytes::from_owned(vec![0u8; (width * height * 3) as usize]);
+    let texture = gtk::gdk::MemoryTexture::new(
+        width,
+        height,
+        gtk::gdk::MemoryFormat::R8g8b8,
+        &pixels,
+        (width * 3) as usize,
+    );
+    native.set_paintable(Some(&texture));
+    let bin = bin_of(&image);
+    assert_eq!(measure_height(&bin).1, height, "Auto は画素の高さを求める");
+
+    image.set_sizing(Sizing::fill());
+    assert_eq!(measure_width(&bin), (0, 0), "Fill の幅は大きさを求めない");
+    assert_eq!(
+        measure_height(&bin),
+        (0, 0),
+        "Fill の高さは大きさを求めない"
+    );
+
+    image.set_sizing(Sizing::fill_width());
+    assert_eq!(
+        measure_height(&bin).1,
+        height,
+        "Auto の高さは画素の高さを求める"
+    );
+
+    image.set_sizing(Sizing::fill().max_height(315.0));
+    assert_eq!(measure_height(&bin).1, 315, "上限は自然な大きさを兼ねる");
     Ok(())
 }
 
