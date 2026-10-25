@@ -1508,18 +1508,39 @@ fn grid_places_a_capped_fill_child_like_an_auto_one(ui: &Ui) -> Result<()> {
             f64::from(origin.X).abs() < 0.5,
             "横はマスの先頭: {origin:?}"
         );
+        // The cell's height can be odd, and layout rounding then moves the middle to a
+        // whole pixel (149.5 becomes 150), so allow up to one pixel.
         let middle = (root.ActualHeight().unwrap_or(f64::NAN) - 100.0) / 2.0;
         assert!(
-            (f64::from(origin.Y) - middle).abs() < 0.5,
+            (f64::from(origin.Y) - middle).abs() <= 1.0,
             "縦はマスの中央 ({middle}): {origin:?}"
         );
     }));
 
     grid.remove(cell);
-    let released = child.Parent().ok().is_none();
+    // 包みから出ていれば、ほかのパネルへそのまま足せる。
+    let element = native::<UIElement>(&capped);
+    let released = StackPanel::new()
+        .and_then(|panel| panel.Children())
+        .map(|children| {
+            let appended = children.Append(&element).is_ok();
+            let _ = children.Clear();
+            appended
+        })
+        .unwrap_or(false);
     let other = ui.grid()?;
     other.attach(&capped, cell);
-    let placed_again = other.len() == 1 && child.Parent().ok().is_some();
+    // ウィンドウに載っていないグリッドの中では Parent が null を返すので、
+    // 包みの Grid の中身を直接見る。
+    let identity = |element: &UIElement| element.cast::<windows_core::IUnknown>().ok();
+    let placed_again = other.len() == 1
+        && native::<Grid>(&other)
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .and_then(|wrapper| wrapper.cast::<Grid>())
+            .and_then(|wrapper| wrapper.Children())
+            .and_then(|children| children.GetAt(0))
+            .is_ok_and(|inner| identity(&inner) == identity(&element));
     window.close();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
