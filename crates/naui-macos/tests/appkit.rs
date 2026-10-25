@@ -580,6 +580,10 @@ fn main() {
             fill_image_does_not_push_a_scroll,
         ),
         (
+            "上限付き Fill の画像は上限の大きさを求める",
+            capped_fill_image_asks_for_its_maximum,
+        ),
+        (
             "収め方が NSImageView の imageScaling になる",
             image_fit_maps_to_native_scaling,
         ),
@@ -5026,6 +5030,52 @@ fn fill_image_does_not_push_a_scroll(ui: &Ui) -> Result<()> {
     assert!(
         frame.size.height > 100.0 && frame.size.height < 300.0,
         "画像は余りを受け取る: {frame:?}"
+    );
+    Ok(())
+}
+
+/// A `Fill` image with a maximum asks for its maximum (the maximum doubles as the
+/// size wanted under normal conditions), so in an `Auto` row it keeps that height
+/// even when a `Fill` row takes the rest. Asking for nothing on a `Fill` axis, it
+/// collapsed to zero there.
+fn capped_fill_image_asks_for_its_maximum(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("capped-image");
+    let path = fixture.write("a.png", PNG_2X2);
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill().max_height(100.0));
+    let rest = ui.stack(Orientation::Vertical)?;
+    rest.set_sizing(Sizing::fill());
+
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::Auto);
+    grid.set_row_track(1, Track::FILL);
+    grid.attach(&image, GridCell::new(0, 0));
+    grid.attach(&rest, GridCell::new(0, 1));
+    grid.set_sizing(Sizing::fixed(300.0, 300.0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(300.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    root.layoutSubtreeIfNeeded();
+    let frame = image.native_view().frame();
+    let rest_frame = rest.native_view().frame();
+    assert_eq!(
+        frame.size.height, 100.0,
+        "Auto 行でも上限の高さを保つ: {frame:?} / {rest_frame:?}"
+    );
+    assert!(
+        rest_frame.size.height > 150.0,
+        "残りは Fill の行が受け取る: {rest_frame:?}"
+    );
+    let (top, bottom) = if frame.origin.y < rest_frame.origin.y {
+        (frame, rest_frame)
+    } else {
+        (rest_frame, frame)
+    };
+    assert!(
+        top.origin.y + top.size.height <= bottom.origin.y + 0.5,
+        "行どうしが重ならない: {frame:?} / {rest_frame:?}"
     );
     Ok(())
 }

@@ -266,6 +266,10 @@ const CASES: &[Case] = &[
         fill_image_does_not_push_a_scroll,
     ),
     (
+        "上限付き Fill の画像は上限の大きさを求める",
+        capped_fill_image_asks_for_its_maximum,
+    ),
+    (
         "画像の高さを Auto から Fill に変えると、画素の高さを求めるのをすぐやめる",
         image_from_auto_to_fill_drops_the_pixel_height,
     ),
@@ -3398,6 +3402,56 @@ fn image_from_auto_to_fill_drops_the_pixel_height(ui: &Ui) -> Result<()> {
             metrics.content_height, metrics.viewport_height,
             "中身は表示領域に収まる: {metrics:?}"
         );
+    }));
+    window.close();
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A `Fill` image with a maximum asks for its maximum (the maximum doubles as the
+/// size wanted under normal conditions), so in an `Auto` row it keeps that height
+/// even when a `Fill` row takes the rest. Asking for nothing on a `Fill` axis, it
+/// collapsed to zero there.
+///
+/// Messages are pumped until it is laid out; in environments where it never is
+/// (CI), the sizes pass without checking.
+fn capped_fill_image_asks_for_its_maximum(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui 上限付きの画像 {}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
+    let path = dir.join("40x20.bmp");
+    std::fs::write(&path, bmp_solid(40, 20)).expect("画像を書き出せない");
+    let path = path.to_str().expect("一時パスが UTF-8 でない").to_string();
+
+    let window = ui.window("上限付きの画像", 400.0, 400.0)?;
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill().max_height(100.0));
+    let rest = ui.stack(Orientation::Vertical)?;
+    rest.set_sizing(Sizing::fill());
+    let grid = ui.grid()?;
+    grid.set_column_track(0, naui_core::Track::FILL);
+    grid.set_row_track(0, naui_core::Track::Auto);
+    grid.set_row_track(1, naui_core::Track::FILL);
+    grid.attach(&image, GridCell::new(0, 0));
+    grid.attach(&rest, GridCell::new(0, 1));
+    grid.set_sizing(Sizing::fixed(300.0, 300.0));
+    let scroll = ui.scroll()?;
+    scroll.set_child(&grid);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<FrameworkElement>(&image);
+    let rest_element = native::<FrameworkElement>(&rest);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let height = |element: &FrameworkElement| element.ActualHeight().unwrap_or(f64::NAN);
+        pump_until(IMAGE_LOAD_TIMEOUT, || height(&host) == 100.0);
+        assert_eq!(height(&host), 100.0, "Auto 行でも上限の高さを保つ");
+        assert_eq!(height(&rest_element), 200.0, "残りは Fill の行が受け取る");
     }));
     window.close();
     let _ = std::fs::remove_dir_all(&dir);

@@ -23,8 +23,8 @@
 //! An empty `Border` beside it is given the pixel size once the image or the video
 //! is opened, and that is what the host asks for.
 //!
-//! **On a `Fill` axis the picture asks for nothing** and fits into the space it is
-//! given, as on the other backends. Asking for its pixel size there, a large picture
+//! **On a `Fill` axis the picture asks for nothing** (for its maximum, if it has
+//! one) and fits into the space it is given, as on the other backends. Asking for its pixel size there, a large picture
 //! would push a parent that can grow (a vertical `Scroll`) out to its own height.
 //! Which axes are `Fill` is looked at again on every `set_sizing`
 //! ([`on_sizing_change`](crate::layout::on_sizing_change)), not on `SizeChanged`:
@@ -211,26 +211,36 @@ impl Frame {
         let _ = picture.SetHeight(host.ActualHeight().unwrap_or(0.0));
     }
 
-    /// Makes `width` × `height` pixels the host's natural size, except on `Fill`
-    /// axes, where it asks for nothing.
-    fn ask_for(&self, host: &Grid, width: u32, height: u32) {
+    /// Makes the host ask for the picture's pixel size (`None` until it is opened),
+    /// except on `Fill` axes.
+    ///
+    /// A `Fill` axis asks for its maximum if it has one, since the maximum doubles as
+    /// the size wanted under normal conditions (as on the other backends), and for
+    /// nothing otherwise. Asking for nothing with a maximum too, the picture
+    /// collapsed to zero where the natural size decides (an `Auto` row, for example).
+    fn ask_for(&self, host: &Grid, pixels: Option<(u32, u32)>) {
         let Ok(host) = host.cast::<FrameworkElement>() else {
             return;
         };
         // WinUI では NaN が「中身に合わせる」を表す。空の Border なので 0 になる。
-        let natural = |fill: bool, pixels: u32| if fill { f64::NAN } else { f64::from(pixels) };
+        let natural = |horizontal: bool, pixels: Option<u32>| {
+            if crate::layout::wants_fill(&host, horizontal) {
+                let max = if horizontal {
+                    host.MaxWidth()
+                } else {
+                    host.MaxHeight()
+                };
+                max.ok().filter(|max| max.is_finite()).unwrap_or(f64::NAN)
+            } else {
+                pixels.map_or(f64::NAN, f64::from)
+            }
+        };
         let _ = self
             .natural
-            .SetWidth(natural(crate::layout::wants_fill(&host, true), width));
+            .SetWidth(natural(true, pixels.map(|(width, _)| width)));
         let _ = self
             .natural
-            .SetHeight(natural(crate::layout::wants_fill(&host, false), height));
-    }
-
-    /// Forgets the natural size of the picture that was shown.
-    fn forget(&self) {
-        let _ = self.natural.SetWidth(f64::NAN);
-        let _ = self.natural.SetHeight(f64::NAN);
+            .SetHeight(natural(false, pixels.map(|(_, height)| height)));
     }
 }
 
@@ -310,10 +320,10 @@ impl Image {
 
         // `Fill` かどうかで求める大きさが変わるので、`set_sizing` のたびに求め直す。
         // 実寸が変わらない切り替えもあるので、SizeChanged は待たない。
+        // 画像が開く前でも、上限付きの `Fill` は上限を求める。
         let target = Rc::downgrade(&self.0);
         crate::layout::on_sizing_change(&self.native_element(), move || {
-            // 画像が開く前は何もしない (前の画像の大きさを求めないため)。
-            if let Some(inner) = target.upgrade().filter(|inner| inner.opened.get()) {
+            if let Some(inner) = target.upgrade() {
                 Image(inner).take_natural_size();
             }
         });
@@ -328,29 +338,25 @@ impl Image {
     }
 
     /// Makes the opened image's pixel size the host's natural size, except on `Fill`
-    /// axes (see the module documentation).
+    /// axes (see [`Frame::ask_for`]). Before it is opened, no pixel size is asked
+    /// for (not the previous image's either).
     fn take_natural_size(&self) {
-        let Some(bitmap) = self
+        let pixels = |value: windows_core::Result<i32>| value.unwrap_or(0).max(0) as u32;
+        let size = self
             .0
             .image
             .Source()
             .ok()
             .and_then(|source| source.cast::<BitmapImage>().ok())
-        else {
-            return;
-        };
-        let pixels = |value: windows_core::Result<i32>| value.unwrap_or(0).max(0) as u32;
-        self.0.frame.ask_for(
-            &self.0.native,
-            pixels(bitmap.PixelWidth()),
-            pixels(bitmap.PixelHeight()),
-        );
+            .filter(|_| self.0.opened.get())
+            .map(|bitmap| (pixels(bitmap.PixelWidth()), pixels(bitmap.PixelHeight())));
+        self.0.frame.ask_for(&self.0.native, size);
     }
 
     /// Forgets the natural size of the image that was shown.
     fn forget_natural_size(&self) {
         self.0.opened.set(false);
-        self.0.frame.forget();
+        self.take_natural_size();
     }
 
     /// The location currently specified (exactly the string that was passed).
@@ -1070,10 +1076,11 @@ impl Video {
     /// Makes the video's pixel size the host's natural size, except on `Fill` axes
     /// (see the module documentation).
     fn take_natural_size(&self) {
-        match self.0.natural_size.get() {
-            (0, _) | (_, 0) => self.0.frame.forget(),
-            (width, height) => self.0.frame.ask_for(&self.0.host, width, height),
-        }
+        let size = match self.0.natural_size.get() {
+            (0, _) | (_, 0) => None,
+            size => Some(size),
+        };
+        self.0.frame.ask_for(&self.0.host, size);
     }
 }
 

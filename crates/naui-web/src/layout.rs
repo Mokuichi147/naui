@@ -92,16 +92,33 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     // 求めたままだと、縦の Scroll の中のように親が伸びられる所では、余りを受け取る
     // どころか画素の高さ (動画は幅と縦横比から決まる高さ) まで親を押し広げる。
     // 大きさの封じ込め (`contain: size`) で自然な大きさを 0 として扱わせる。
+    // 上限付きの `Fill` は、上限を「通常時に確保したい大きさ」として求める
+    // (`contain-intrinsic-*`)。0 のままだと、Auto の行のように自然な大きさで
+    // 決まる所で潰れて見えなくなる。
     // ただし縦横比も一緒に消えるので、`Auto` の軸 (画素の大きさや縦横比から
     // 決まる軸) が残るときは封じ込めない。
     let tag = element.tag_name();
     if tag.eq_ignore_ascii_case("img") || tag.eq_ignore_ascii_case("video") {
         let has_auto = matches!(sizing.width, naui_core::Length::Auto)
             || matches!(sizing.height, naui_core::Length::Auto);
-        if (sizing.width.is_fill() || sizing.height.is_fill()) && !has_auto {
+        let contained = (sizing.width.is_fill() || sizing.height.is_fill()) && !has_auto;
+        if contained {
             let _ = style.set_property("contain", "size");
         } else {
             let _ = style.remove_property("contain");
+        }
+        for (property, length, max) in [
+            ("contain-intrinsic-width", sizing.width, sizing.max_width),
+            ("contain-intrinsic-height", sizing.height, sizing.max_height),
+        ] {
+            match max {
+                Some(max) if contained && length.is_fill() => {
+                    let _ = style.set_property(property, &format!("{max}px"));
+                }
+                _ => {
+                    let _ = style.remove_property(property);
+                }
+            }
         }
     }
 

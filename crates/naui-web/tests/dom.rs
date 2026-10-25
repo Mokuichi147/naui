@@ -3566,6 +3566,53 @@ fn fill_video_does_not_ask_for_its_size() {
     });
 }
 
+/// A `Fill` image with a maximum asks for its maximum (the maximum doubles as the
+/// size wanted under normal conditions), so in an `Auto` row it keeps that height
+/// even when a `Fill` row takes the rest. With its natural size contained to zero, it
+/// collapsed there and could not be seen.
+#[wasm_bindgen_test]
+async fn capped_fill_image_asks_for_its_maximum() {
+    let canvas: web_sys::HtmlCanvasElement = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("document")
+        .create_element("canvas")
+        .expect("canvas の生成")
+        .unchecked_into();
+    canvas.set_width(40);
+    canvas.set_height(20);
+    let source = canvas.to_data_url().expect("PNG への書き出し");
+    let mut kept = None;
+    with_ui(|ui| {
+        let image = ui.image(&source)?;
+        image.set_sizing(Sizing::fill().max_height(100.0));
+        let rest = ui.stack(Orientation::Vertical)?;
+        rest.set_sizing(Sizing::fill());
+        let grid = ui.grid()?;
+        grid.set_column_track(0, naui_core::Track::FILL);
+        grid.set_row_track(0, naui_core::Track::Auto);
+        grid.set_row_track(1, naui_core::Track::FILL);
+        grid.attach(&image, GridCell::new(0, 0));
+        grid.attach(&rest, GridCell::new(0, 1));
+        grid.set_sizing(Sizing::fixed(300.0, 300.0));
+        kept = Some((grid, image, rest));
+        Ok(())
+    });
+    let (grid, image, rest) = kept.expect("組み立て");
+    let _mounted = Mounted::new(&grid);
+    let element: web_sys::HtmlImageElement = image.native_element().unchecked_into();
+    for _ in 0..40 {
+        if element.complete() && element.natural_height() > 0 {
+            break;
+        }
+        wait_millis(50).await;
+    }
+    next_frames().await;
+    let height = element.get_bounding_client_rect().height();
+    assert_eq!(height, 100.0, "Auto 行でも上限の高さを保つ");
+    let rest_height = rest.native_element().get_bounding_client_rect().height();
+    assert_eq!(rest_height, 200.0, "残りは Fill の行が受け取る");
+}
+
 /// Calls "append, then scroll to the end", as in a chat, back to back.
 #[wasm_bindgen_test]
 fn scroll_to_end_after_appending() {
