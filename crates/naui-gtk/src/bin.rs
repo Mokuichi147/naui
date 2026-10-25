@@ -112,10 +112,24 @@ mod imp {
                 (for_size, Some(cap)) if for_size >= 0 => for_size.min(cap),
                 (for_size, _) => for_size,
             };
+            let horizontal = orientation == gtk::Orientation::Horizontal;
+            // `Fill` の最小を 0 にしているので、もう一方の軸には中身の最小より
+            // 小さい大きさが来ることがある。中身はそれより縮まず、そのまま渡すと
+            // GTK4 が警告する ("needs at least")。size_allocate と同じく、中身は
+            // 最小の大きさで測る。
+            let for_size = if for_size >= 0 {
+                let opposite = if horizontal {
+                    gtk::Orientation::Vertical
+                } else {
+                    gtk::Orientation::Horizontal
+                };
+                for_size.max(child.measure(opposite, -1).0)
+            } else {
+                for_size
+            };
             let (child_minimum, child_natural, min_baseline, nat_baseline) =
                 child.measure(orientation, for_size);
             let (mut minimum, mut natural) = (child_minimum, child_natural);
-            let horizontal = orientation == gtk::Orientation::Horizontal;
             let sizing = self.sizing.get();
             let (cap, length, rigid) = if horizontal {
                 (self.max_width.get(), sizing.width, self.rigid_width.get())
@@ -141,6 +155,13 @@ mod imp {
                 minimum = child_minimum;
                 natural = natural.max(child_minimum);
             }
+            // 最小や自然な大きさを下げると、中身のベースラインが大きさの外に
+            // 出ることがある。GTK4 はそれを警告するので、そのときは持たない。
+            let (min_baseline, nat_baseline) = if min_baseline > minimum || nat_baseline > natural {
+                (-1, -1)
+            } else {
+                (min_baseline, nat_baseline)
+            };
             (minimum, natural, min_baseline, nat_baseline)
         }
 

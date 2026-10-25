@@ -241,6 +241,10 @@ fn main() {
         ("グリッドが行と列を広げて子を置く", grid_places_children),
         ("グリッドの子を置き換える", grid_replaces_child),
         (
+            "Fill で最小より細くされても中身を最小より細く測らない",
+            fill_does_not_measure_content_below_its_minimum,
+        ),
+        (
             "グリッドの Fill の列が余りを受け取る",
             grid_fill_track_expands_child,
         ),
@@ -2412,6 +2416,50 @@ fn grid_replaces_child(ui: &Ui) -> Result<()> {
     let placed = children(&native);
     assert_eq!(placed.len(), 1);
     assert_eq!(placed[0], bin_of(&second));
+    Ok(())
+}
+
+/// `Fill` lowers the minimum to 0, so a parent may ask for the height at a width
+/// below the content's minimum (a window made narrower than a row of radio buttons).
+/// The content is measured at its minimum instead, as GTK4 warns otherwise
+/// ("Trying to measure … but it needs at least …"). Baselines that fall outside the
+/// lowered minimum are dropped for the same reason.
+fn fill_does_not_measure_content_below_its_minimum(ui: &Ui) -> Result<()> {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    static WATCHING: AtomicBool = AtomicBool::new(false);
+    static WARNINGS: AtomicUsize = AtomicUsize::new(0);
+
+    let grid = ui.grid()?;
+    grid.set_sizing(Sizing::fill());
+    let row = ui.stack(Orientation::Horizontal)?;
+    for title in ["Contain", "Cover", "Fill", "None"] {
+        row.append(&ui.button(title)?);
+    }
+    grid.attach(&row, GridCell::new(0, 0));
+    let bin = bin_of(&grid);
+    let native = grid.native_widget();
+    let content_minimum = measure_width(&native).0;
+    assert!(content_minimum > 0);
+    assert_eq!(measure_width(&bin).0, 0, "Fill の最小は 0");
+
+    // 警告は構造化ログで出るので、書き出し先を差し替えて数える。書き出し先は
+    // 1 つのプロセスで 1 度しか設定できないので、ほかの記録はそのまま流す。
+    glib::log_set_writer_func(|level, fields| {
+        if WATCHING.load(Ordering::SeqCst) && level == glib::LogLevel::Warning {
+            WARNINGS.fetch_add(1, Ordering::SeqCst);
+        }
+        glib::log_writer_default(level, fields)
+    });
+    WATCHING.store(true, Ordering::SeqCst);
+    let narrow = measure_height_for(&bin, content_minimum / 2);
+    WATCHING.store(false, Ordering::SeqCst);
+
+    assert_eq!(WARNINGS.load(Ordering::SeqCst), 0, "GTK4 が警告しない");
+    assert_eq!(
+        narrow.1,
+        measure_height_for(&native, content_minimum).1,
+        "中身は最小の幅で測る"
+    );
     Ok(())
 }
 
