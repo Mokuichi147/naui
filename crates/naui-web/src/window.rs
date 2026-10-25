@@ -181,11 +181,12 @@ impl Window {
     /// Maps the requested content size and minimum onto the window element's CSS.
     ///
     /// The user resizes a desktop window; on the Web the browser window plays that
-    /// part. So the height follows the browser's visible area (`100dvh`), and the
-    /// width is the requested width as `max-width` (shrinks on narrow screens). The
-    /// requested height is not used. The minimum becomes `min-width` / `min-height`;
-    /// the window element also contains the menu bar and toolbar rows, so their
-    /// heights are added to the minimum height.
+    /// part. So the height follows the browser's visible area (`100dvh`), less what
+    /// the page itself takes around it ([`page_inset`]), and the width is the
+    /// requested width as `max-width` (shrinks on narrow screens). The requested
+    /// height is not used. The minimum becomes `min-width` / `min-height`; the window
+    /// element also contains the menu bar and toolbar rows, so their heights are
+    /// added to the minimum height.
     fn apply_size(&self) {
         let (width, _) = self.0.size.get();
         let min = self.0.min_size.get();
@@ -193,8 +194,15 @@ impl Window {
         let style = self.0.element.style();
         let _ = style.set_property("max-width", &format!("{width}px"));
         // `dvh` の無いブラウザでは後の指定が無視され、`vh` が残る。
-        let _ = style.set_property("height", "100vh");
-        let _ = style.set_property("height", "100dvh");
+        let inset = page_inset(&self.0.document);
+        for unit in ["vh", "dvh"] {
+            let height = if inset > 0.0 {
+                format!("calc(100{unit} - {inset}px)")
+            } else {
+                format!("100{unit}")
+            };
+            let _ = style.set_property("height", &height);
+        }
         match min {
             Some((min_width, min_height)) => {
                 let _ = style.set_property("min-width", &format!("{min_width}px"));
@@ -687,4 +695,44 @@ fn call_promise(target: &wasm_bindgen::JsValue, name: &str) -> Option<js_sys::Pr
         .ok()?
         .dyn_into::<js_sys::Promise>()
         .ok()
+}
+
+/// The vertical space the page takes around its windows: the margins, borders and
+/// padding of `<html>` and `<body>` (a page without a style sheet has an 8 px margin
+/// on `<body>`).
+///
+/// Without subtracting it, a window as tall as the browser's visible area would
+/// stick out at the bottom by that much, and the whole page would scroll even when
+/// the content fits in the window. Read when the size is applied, so a page whose
+/// own style changes these later gets them on the next `set_size`.
+fn page_inset(document: &Document) -> f64 {
+    let Some(window) = web_sys::window() else {
+        return 0.0;
+    };
+    let elements = [
+        document.document_element(),
+        document.body().map(|body| body.unchecked_into::<Element>()),
+    ];
+    let properties = [
+        "margin-top",
+        "margin-bottom",
+        "border-top-width",
+        "border-bottom-width",
+        "padding-top",
+        "padding-bottom",
+    ];
+    elements
+        .into_iter()
+        .flatten()
+        .filter_map(|element| window.get_computed_style(&element).ok().flatten())
+        .flat_map(|style| {
+            properties.map(|property| {
+                style
+                    .get_property_value(property)
+                    .ok()
+                    .and_then(|value| value.trim_end_matches("px").parse::<f64>().ok())
+                    .unwrap_or(0.0)
+            })
+        })
+        .sum()
 }

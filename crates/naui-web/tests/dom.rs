@@ -4542,8 +4542,8 @@ async fn window_size_excludes_the_menu_bar() {
         .expect("表示領域の高さ");
     assert_eq!(
         f64::from(element.client_height()),
-        viewport,
-        "ウィンドウの高さはブラウザの表示領域に合わせる"
+        viewport - page_inset(),
+        "ウィンドウの高さはブラウザの表示領域 (ページの余白を除く) に合わせる"
     );
     assert!(width <= 400.0, "中身の幅は 400 まで: {width}");
 
@@ -4551,7 +4551,10 @@ async fn window_size_excludes_the_menu_bar() {
     next_frames().await;
     let style = window_element_style(&window);
     assert!(style.contains("max-width: 360px"), "{style}");
-    assert!(style.contains("height: 100dvh"), "高さは表示領域: {style}");
+    assert!(
+        style.contains("height: 100dvh") || style.contains("height: calc(100dvh - "),
+        "高さは表示領域: {style}"
+    );
     assert!(
         !style.contains("min-height"),
         "高さの指定は下限にしない: {style}"
@@ -4602,8 +4605,8 @@ async fn window_root_scroll_fits_the_window() {
     let element = window.native_element();
     assert_eq!(
         f64::from(element.client_height()),
-        viewport,
-        "ウィンドウは表示領域の高さのまま"
+        viewport - page_inset(),
+        "ウィンドウは表示領域の高さ (ページの余白を除く) のまま"
     );
     let m = scroll.metrics();
     assert!(
@@ -4611,6 +4614,75 @@ async fn window_root_scroll_fits_the_window() {
         "中身は Scroll の中で送れる: {m:?}"
     );
     window.close();
+}
+
+/// The vertical margins, borders and padding of `<html>` and `<body>`.
+fn page_inset() -> f64 {
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("document");
+    [
+        document.document_element(),
+        document.body().map(|body| body.unchecked_into::<Element>()),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|element| {
+        [
+            "margin-top",
+            "margin-bottom",
+            "border-top-width",
+            "border-bottom-width",
+            "padding-top",
+            "padding-bottom",
+        ]
+        .iter()
+        .map(|property| {
+            computed(&element, property)
+                .trim_end_matches("px")
+                .parse::<f64>()
+                .unwrap_or(0.0)
+        })
+        .sum::<f64>()
+    })
+    .sum()
+}
+
+/// A page that keeps the browser's 8 px margin on `<body>` (one without a style
+/// sheet) does not make the window stick out at the bottom: its height is the
+/// visible area less the page's margins. Otherwise the whole page would scroll even
+/// when the content fits in the window.
+#[wasm_bindgen_test]
+async fn window_leaves_room_for_the_page_margin() {
+    let body = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.body())
+        .expect("body");
+    let saved = body
+        .style()
+        .get_property_value("margin")
+        .unwrap_or_default();
+    let _ = body.style().set_property("margin", "8px");
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("余白", 400.0, 300.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        kept = Some(window);
+        Ok(())
+    });
+    let window = kept.expect("window");
+    next_frames().await;
+    let viewport = web_sys::window()
+        .and_then(|window| window.inner_height().ok())
+        .and_then(|height| height.as_f64())
+        .expect("表示領域の高さ");
+    let inset = page_inset();
+    let height = f64::from(window.native_element().client_height());
+    window.close();
+    let _ = body.style().set_property("margin", &saved);
+    assert!(inset >= 16.0, "body の上下の余白を数える: {inset}");
+    assert_eq!(height, viewport - inset, "ページの余白の分だけ低くなる");
 }
 
 #[wasm_bindgen_test]
