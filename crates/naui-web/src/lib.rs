@@ -5,8 +5,8 @@
 //! controls themselves, so no custom look is built; the browser's default styles
 //! are used.
 //!
-//! Only the layout uses Flexbox (corresponding to AppKit's NSStackView, WinUI 3's
-//! StackPanel and GTK4's GtkBox).
+//! Only the layout uses Flexbox (corresponding to AppKit's NSStackView, GTK4's
+//! GtkBox and the `Grid` WinUI 3's `Stack` is built on).
 
 #![cfg(target_arch = "wasm32")]
 #![forbid(unsafe_code)]

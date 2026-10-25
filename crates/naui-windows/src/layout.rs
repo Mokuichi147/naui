@@ -496,11 +496,11 @@ pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
     reapply_parent_layout(&framework);
 }
 
-/// Maps `Stack::set_align` onto the StackPanel's children.
+/// Maps `Stack::set_align` onto the Stack's children.
 ///
-/// The StackPanel's own alignment only changes where the panel sits within its
-/// parent, so cross-axis alignment is set on the children. A child's own `Fill`, if
-/// any, takes precedence.
+/// The Stack's `Grid` has its own alignment, but that only changes where the `Grid`
+/// sits within its parent, so cross-axis alignment is set on the children. A child's
+/// own `Fill`, if any, takes precedence.
 fn apply_stack_alignment(element: &FrameworkElement, align: Align, vertical_stack: bool) {
     if wants_fill(element, vertical_stack) {
         return;
