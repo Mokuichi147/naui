@@ -1034,7 +1034,7 @@ impl Drop for StackInner {
 ///
 /// Built on a `Grid` with one row (column) per child rather than on `StackPanel`,
 /// which never hands out leftover space: `Fill` children and `Spacer`s get `Star`
-/// tracks (see [`arrange_stack`](crate::layout::arrange_stack)).
+/// tracks (see `layout::arrange_stack`).
 #[derive(Clone)]
 pub struct Stack(Rc<StackInner>);
 impl_widget!(Stack, native);
