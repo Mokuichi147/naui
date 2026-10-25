@@ -27,6 +27,11 @@ const PARENT_ATTR: &str = "data-naui-parent";
 const FILL_WIDTH_ATTR: &str = "data-naui-fill-width";
 /// The marker that the height is `Fill`.
 const FILL_HEIGHT_ATTR: &str = "data-naui-fill-height";
+/// The maximum height the app gave an image or a video, in CSS pixels.
+///
+/// In a `Grid`, [`apply_child_layout`] moves it from `max-height` to `height`, so it
+/// is kept here to put it back when the element moves to another parent.
+const MAX_HEIGHT_ATTR: &str = "data-naui-max-height";
 
 /// The kind of parent container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +84,16 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     set_limit(element, "max-width", sizing.max_width);
     set_limit(element, "min-height", sizing.min_height);
     set_limit(element, "max-height", sizing.max_height);
+    if is_picture(element) {
+        match sizing.max_height {
+            Some(value) => {
+                let _ = element.set_attribute(MAX_HEIGHT_ATTR, &value.to_string());
+            }
+            None => {
+                let _ = element.remove_attribute(MAX_HEIGHT_ATTR);
+            }
+        }
+    }
 
     // Flex/Grid の既定の min-size は中身の intrinsic size になるため、
     // Fill の画像や動画が自然サイズを親の最小幅にしてしまわないようにする。
@@ -97,8 +112,7 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     // 決まる所で潰れて見えなくなる。
     // ただし縦横比も一緒に消えるので、`Auto` の軸 (画素の大きさや縦横比から
     // 決まる軸) が残るときは封じ込めない。
-    let tag = element.tag_name();
-    if tag.eq_ignore_ascii_case("img") || tag.eq_ignore_ascii_case("video") {
+    if is_picture(element) {
         let has_auto = matches!(sizing.width, naui_core::Length::Auto)
             || matches!(sizing.height, naui_core::Length::Auto);
         let contained = (sizing.width.is_fill() || sizing.height.is_fill()) && !has_auto;
@@ -217,6 +231,13 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
     if fill_height {
         let _ = style.remove_property("height");
     }
+    // 前の親 (Grid) 向けに `height` へ移した上限を `max-height` へ戻す。
+    let picture_max = is_picture(element)
+        .then(|| element.get_attribute(MAX_HEIGHT_ATTR))
+        .flatten();
+    if let Some(max) = &picture_max {
+        let _ = style.set_property("max-height", &format!("{max}px"));
+    }
 
     match parent {
         // 主軸は flex-grow で余りを受け取り、交差軸は stretch で親に合わせる。
@@ -252,7 +273,21 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
                     // 100% (上限まで) にして中央に置く。グリッドの子の割合は
                     // マスの大きさに対して決まる。
                     let _ = style.set_property("align-self", "center");
-                    let _ = style.set_property("height", "100%");
+                    match &picture_max {
+                        // 画像と動画 (置き換え要素) は、割合の高さだと Firefox が
+                        // 行の高さを決めるときに 0 と数え、Auto の行で潰れる。
+                        // 高さは決めずに自然な高さ (`Fill` なら上限、
+                        // `contain-intrinsic-height`) に任せ、割合はマスを超えない
+                        // ための上限にだけ使う。高さを上限の値に固定すると、
+                        // 行の最小の高さもその値になり、マスが低いときに縮めない。
+                        Some(max) => {
+                            let _ =
+                                style.set_property("max-height", &format!("min({max}px, 100%)"));
+                        }
+                        None => {
+                            let _ = style.set_property("height", "100%");
+                        }
+                    }
                 } else {
                     stretch(&style, "align-self", "height");
                 }
@@ -267,6 +302,13 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
             }
         }
     }
+}
+
+/// Whether it is an image or a video (`<img>` / `<video>`), a replaced element whose
+/// natural size comes from its pixels.
+fn is_picture(element: &HtmlElement) -> bool {
+    let tag = element.tag_name();
+    tag.eq_ignore_ascii_case("img") || tag.eq_ignore_ascii_case("video")
 }
 
 /// Stretches the element to the parent's size on one axis (`stretch`).

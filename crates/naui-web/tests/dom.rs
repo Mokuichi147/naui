@@ -3611,6 +3611,24 @@ async fn capped_fill_image_asks_for_its_maximum() {
     assert_eq!(height, 100.0, "Auto 行でも上限の高さを保つ");
     let rest_height = rest.native_element().get_bounding_client_rect().height();
     assert_eq!(rest_height, 200.0, "残りは Fill の行が受け取る");
+
+    // Fill の行に置けば、上限まで広がってマスの縦中央に来る。マスが上限より
+    // 低ければ、マスに合わせて縮む。
+    grid.set_row_track(0, naui_core::Track::FILL);
+    grid.set_row_track(1, naui_core::Track::Auto);
+    grid.remove(GridCell::new(0, 1));
+    next_frames().await;
+    let grid_rect = grid.native_element().get_bounding_client_rect();
+    let rect = element.get_bounding_client_rect();
+    assert_eq!(rect.height(), 100.0, "上限まで広がる");
+    assert_eq!(rect.top() - grid_rect.top(), 100.0, "縦はマスの中央");
+    grid.set_sizing(Sizing::fixed(300.0, 60.0));
+    next_frames().await;
+    assert_eq!(
+        element.get_bounding_client_rect().height(),
+        60.0,
+        "マスより大きくならない"
+    );
 }
 
 /// Calls "append, then scroll to the end", as in a chat, back to back.
