@@ -35,6 +35,8 @@ mod imp {
         pub max_height: Cell<i32>,
         /// Whether the content cannot shrink its width (`GtkSpinButton` and the like).
         pub rigid_width: Cell<bool>,
+        /// Whether the content's natural size is left out on `Fill` axes (images and videos).
+        pub fill_ignores_natural: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -83,6 +85,7 @@ mod imp {
         /// | --- | --- |
         /// | [`Length::Fill`] + maximum | **The maximum itself** (grows up to it when there is room) |
         /// | [`Length::Auto`] / [`Length::Fixed`] + maximum | The smaller of the content and the maximum |
+        /// | [`Length::Fill`] without a maximum, for content marked with [`fill_ignores_natural`](Self::fill_ignores_natural) (images and videos) | 0 (fits into the leftover space) |
         ///
         /// The minimum (`minimum`) is lowered for two reasons.
         ///
@@ -109,10 +112,24 @@ mod imp {
                 (for_size, Some(cap)) if for_size >= 0 => for_size.min(cap),
                 (for_size, _) => for_size,
             };
+            let horizontal = orientation == gtk::Orientation::Horizontal;
+            // `Fill` の最小を 0 にしているので、もう一方の軸には中身の最小より
+            // 小さい大きさが来ることがある。中身はそれより縮まず、そのまま渡すと
+            // GTK4 が警告する ("needs at least")。size_allocate と同じく、中身は
+            // 最小の大きさで測る。
+            let for_size = if for_size >= 0 {
+                let opposite = if horizontal {
+                    gtk::Orientation::Vertical
+                } else {
+                    gtk::Orientation::Horizontal
+                };
+                for_size.max(child.measure(opposite, -1).0)
+            } else {
+                for_size
+            };
             let (child_minimum, child_natural, min_baseline, nat_baseline) =
                 child.measure(orientation, for_size);
             let (mut minimum, mut natural) = (child_minimum, child_natural);
-            let horizontal = orientation == gtk::Orientation::Horizontal;
             let sizing = self.sizing.get();
             let (cap, length, rigid) = if horizontal {
                 (self.max_width.get(), sizing.width, self.rigid_width.get())
@@ -121,6 +138,9 @@ mod imp {
             };
             if length.is_fill() {
                 minimum = 0;
+                if self.fill_ignores_natural.get() {
+                    natural = 0;
+                }
             }
             if cap >= 0 {
                 natural = if length.is_fill() {
@@ -135,6 +155,13 @@ mod imp {
                 minimum = child_minimum;
                 natural = natural.max(child_minimum);
             }
+            // 最小や自然な大きさを下げると、中身のベースラインが大きさの外に
+            // 出ることがある。GTK4 はそれを警告するので、そのときは持たない。
+            let (min_baseline, nat_baseline) = if min_baseline > minimum || nat_baseline > natural {
+                (-1, -1)
+            } else {
+                (min_baseline, nat_baseline)
+            };
             (minimum, natural, min_baseline, nat_baseline)
         }
 
@@ -219,6 +246,18 @@ impl SizeBin {
     /// maximum.
     pub(crate) fn mark_rigid_width(&self) {
         self.imp().rigid_width.set(true);
+        self.queue_resize();
+    }
+
+    /// Reports that the content's natural size is not asked for on `Fill` axes.
+    ///
+    /// For an image, the natural size is its pixel size, and for a video, the height
+    /// that keeps the aspect ratio at the given width. Asking for it on a `Fill` axis,
+    /// the picture pushes a parent that can grow (a vertical `Scroll`, which places its
+    /// content at the natural size) out to its own height, instead of fitting into the
+    /// leftover space. A maximum still counts as the natural size.
+    pub(crate) fn mark_fill_ignores_natural(&self) {
+        self.imp().fill_ignores_natural.set(true);
         self.queue_resize();
     }
 

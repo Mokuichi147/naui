@@ -1254,6 +1254,39 @@ fn grid_keeps_auto_children_at_the_start() {
 }
 
 /// A `Grid` can remove children by cell.
+/// A `Fill` child with a maximum grows up to it and sits in the middle of a taller
+/// cell vertically, as on GTK, WinUI and macOS. A `stretch` stopped by `max-height`
+/// would sit at the top. Horizontally it stays at the start, as on the others.
+#[wasm_bindgen_test]
+fn grid_places_a_capped_fill_child_in_the_middle() {
+    with_ui(|ui| {
+        let grid = ui.grid()?;
+        grid.set_column_track(0, naui_core::Track::FILL);
+        grid.set_row_track(0, naui_core::Track::FILL);
+        grid.set_sizing(Sizing::fixed(400.0, 300.0));
+        let capped = ui.stack(Orientation::Vertical)?;
+        capped.set_sizing(Sizing::fill().max_width(200.0).max_height(100.0));
+        grid.attach(&capped, GridCell::new(0, 0));
+        let _mounted = Mounted::new(&grid);
+
+        let grid_rect = grid.native_element().get_bounding_client_rect();
+        let rect = capped.native_element().get_bounding_client_rect();
+        assert_eq!(
+            (rect.width(), rect.height()),
+            (200.0, 100.0),
+            "上限まで広がる"
+        );
+        assert_eq!(rect.left(), grid_rect.left(), "横はマスの先頭");
+        assert_eq!(rect.top() - grid_rect.top(), 100.0, "縦はマスの中央");
+
+        // マスが上限より低ければ、マスに合わせて縮む。
+        grid.set_sizing(Sizing::fixed(400.0, 60.0));
+        let rect = capped.native_element().get_bounding_client_rect();
+        assert_eq!(rect.height(), 60.0, "マスより大きくならない");
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn grid_removes_children_by_cell() {
     with_ui(|ui| {
@@ -3412,6 +3445,208 @@ fn scroll_measures_and_moves() {
     });
 }
 
+/// Short content still covers the visible area, so a `Fill` child takes the
+/// leftover; tall content grows past it and scrolls. Matches GtkViewport, WinUI's
+/// ScrollViewer and the clip-view constraints on macOS.
+#[wasm_bindgen_test]
+fn scroll_content_covers_the_viewport() {
+    with_ui(|ui| {
+        let pane = ui.stack(Orientation::Vertical)?;
+        pane.append(&ui.label("見出し")?);
+        let filler = ui.stack(Orientation::Vertical)?;
+        filler.set_sizing(Sizing::fill());
+        pane.append(&filler);
+        let scroll = ui.scroll()?;
+        scroll.set_child(&pane);
+        scroll.set_sizing(Sizing::fixed(200.0, 300.0));
+        let _mounted = Mounted::new(&scroll);
+
+        let height =
+            |widget: &dyn Widget| widget.native_element().get_bounding_client_rect().height();
+        assert_eq!(height(&pane), 300.0, "短い中身も表示領域の高さになる");
+        assert!(
+            height(&filler) > 250.0,
+            "Fill の子が余りを受け取る: {}",
+            height(&filler)
+        );
+        let m = scroll.metrics();
+        assert_eq!(m.max_y(), 0.0, "はみ出さないので送れない: {m:?}");
+
+        for i in 0..40 {
+            pane.append(&ui.label(&format!("行 {i}"))?);
+        }
+        assert!(height(&pane) > 300.0, "長い中身は表示領域を越えて伸びる");
+        let m = scroll.metrics();
+        assert!(m.max_y() > 0.0, "はみ出した分を送れる: {m:?}");
+        Ok(())
+    });
+}
+
+/// A `Fill` image asks for no size and fits into what it is given, so a large one
+/// does not push a vertical `Scroll` out. Asking for its pixel size, it pushed the
+/// content (and the rows after it) to the image's height.
+#[wasm_bindgen_test]
+async fn fill_image_does_not_push_a_scroll() {
+    // 3000x2000 の PNG。SVG だと自然な大きさが画素の大きさにならない (WebKit)。
+    let canvas: web_sys::HtmlCanvasElement = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("document")
+        .create_element("canvas")
+        .expect("canvas の生成")
+        .unchecked_into();
+    canvas.set_width(3000);
+    canvas.set_height(2000);
+    let source = canvas.to_data_url().expect("PNG への書き出し");
+    let mut kept = None;
+    with_ui(|ui| {
+        let pane = ui.stack(Orientation::Vertical)?;
+        pane.append(&ui.label("見出し")?);
+        let image = ui.image(&source)?;
+        image.set_sizing(Sizing::fill());
+        pane.append(&image);
+        pane.append(&ui.label("下端")?);
+        let scroll = ui.scroll()?;
+        scroll.set_child(&pane);
+        scroll.set_sizing(Sizing::fixed(200.0, 300.0));
+        kept = Some((scroll, pane, image));
+        Ok(())
+    });
+    let (scroll, _pane, image) = kept.expect("組み立て");
+    let _mounted = Mounted::new(&scroll);
+    let element: web_sys::HtmlImageElement = image.native_element().unchecked_into();
+    for _ in 0..40 {
+        if element.complete() && element.natural_height() > 0 {
+            break;
+        }
+        wait_millis(50).await;
+    }
+    next_frames().await;
+    assert_eq!(element.natural_height(), 2000, "画像が読み込まれていること");
+    let m = scroll.metrics();
+    assert_eq!(
+        m.content_height, m.viewport_height,
+        "中身は表示領域に収まる: {m:?}"
+    );
+    let height = element.get_bounding_client_rect().height();
+    assert!(
+        height > 100.0 && height < 300.0,
+        "画像は余りを受け取る: {height}"
+    );
+
+    // `Auto` の軸が残るときは、縦横比から大きさを決めるので封じ込めない。
+    image.set_sizing(Sizing::fill_width());
+    assert_eq!(computed(element.as_ref(), "contain"), "none");
+}
+
+/// A `Fill` video does not ask for the height its width and aspect ratio give,
+/// the same as an image, so it fits into the leftover space of a vertical `Scroll`.
+#[wasm_bindgen_test]
+fn fill_video_does_not_ask_for_its_size() {
+    with_ui(|ui| {
+        let video = ui.video("")?;
+        let element = video.native_element();
+        let _mounted = Mounted::new(&video);
+        assert_eq!(
+            computed(&element, "contain"),
+            "none",
+            "Auto は大きさを求める"
+        );
+
+        video.set_sizing(Sizing::fill());
+        assert_eq!(
+            computed(&element, "contain"),
+            "size",
+            "Fill は大きさを求めない"
+        );
+
+        // `Auto` の軸が残るときは、縦横比から大きさを決めるので封じ込めない。
+        video.set_sizing(Sizing::fill_width());
+        assert_eq!(computed(&element, "contain"), "none");
+        Ok(())
+    });
+}
+
+/// A `Fill` image with a maximum keeps a size in an `Auto` row even when a `Fill`
+/// row takes the rest: its pixel size, held to the maximum. With its natural size
+/// contained to zero, it collapsed there and could not be seen (in Firefox even
+/// when the maximum was given with `contain-intrinsic-height`).
+///
+/// In a `Fill` row it grows up to the maximum in the middle of the cell, and in a
+/// cell lower than the maximum it shrinks to the cell. A height fixed at the maximum
+/// would keep the row from shrinking.
+#[wasm_bindgen_test]
+async fn capped_fill_image_asks_for_its_maximum() {
+    let canvas: web_sys::HtmlCanvasElement = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("document")
+        .create_element("canvas")
+        .expect("canvas の生成")
+        .unchecked_into();
+    // 画素の大きさが上限を超える画像。Auto の行では上限で抑えた高さになる。
+    canvas.set_width(400);
+    canvas.set_height(300);
+    let source = canvas.to_data_url().expect("PNG への書き出し");
+    let mut kept = None;
+    with_ui(|ui| {
+        let image = ui.image(&source)?;
+        image.set_sizing(Sizing::fill().max_height(100.0));
+        let rest = ui.stack(Orientation::Vertical)?;
+        rest.set_sizing(Sizing::fill());
+        let grid = ui.grid()?;
+        grid.set_column_track(0, naui_core::Track::FILL);
+        grid.set_row_track(0, naui_core::Track::Auto);
+        grid.set_row_track(1, naui_core::Track::FILL);
+        grid.attach(&image, GridCell::new(0, 0));
+        grid.attach(&rest, GridCell::new(0, 1));
+        grid.set_sizing(Sizing::fixed(300.0, 300.0));
+        kept = Some((grid, image, rest));
+        Ok(())
+    });
+    let (grid, image, rest) = kept.expect("組み立て");
+    let _mounted = Mounted::new(&grid);
+    let element: web_sys::HtmlImageElement = image.native_element().unchecked_into();
+    for _ in 0..40 {
+        if element.complete() && element.natural_height() > 0 {
+            break;
+        }
+        wait_millis(50).await;
+    }
+    next_frames().await;
+    assert_eq!(
+        computed(element.as_ref(), "contain"),
+        "none",
+        "上限が自然な大きさを抑えるので封じ込めない"
+    );
+    let height = element.get_bounding_client_rect().height();
+    assert_eq!(height, 100.0, "Auto 行でも上限の高さを保つ");
+    let rest_height = rest.native_element().get_bounding_client_rect().height();
+    assert_eq!(rest_height, 200.0, "残りは Fill の行が受け取る");
+
+    // Fill の行に置けば、上限まで広がってマスの縦中央に来る。
+    grid.set_row_track(0, naui_core::Track::FILL);
+    grid.set_row_track(1, naui_core::Track::Auto);
+    grid.remove(GridCell::new(0, 1));
+    next_frames().await;
+    let grid_rect = grid.native_element().get_bounding_client_rect();
+    let rect = element.get_bounding_client_rect();
+    assert_eq!(rect.height(), 100.0, "上限まで広がる");
+    assert_eq!(rect.top() - grid_rect.top(), 100.0, "縦はマスの中央");
+
+    // マスが上限より低ければ、マスに合わせて縮む。
+    grid.set_sizing(Sizing::fixed(300.0, 60.0));
+    next_frames().await;
+    assert_eq!(
+        element.get_bounding_client_rect().height(),
+        60.0,
+        "マスより大きくならない"
+    );
+    assert_eq!(
+        grid.native_element().get_bounding_client_rect().height(),
+        60.0,
+        "行もマスの高さに収まる"
+    );
+}
+
 /// Calls "append, then scroll to the end", as in a chat, back to back.
 #[wasm_bindgen_test]
 fn scroll_to_end_after_appending() {
@@ -4271,9 +4506,11 @@ async fn frames_until(mut ready: impl FnMut() -> bool) {
     }
 }
 
-/// The size given to `ui.window` and `set_size` is the content size excluding the
-/// menu bar and toolbar rows, as on the other platforms. The rows are added to the
-/// window element's height.
+/// The content size excludes the menu bar and toolbar rows, as on the other
+/// platforms. The window's height follows the browser's visible area (the browser
+/// window plays the part of the window the user resizes), and the width given to
+/// `ui.window` and `set_size` is its maximum. The rows are added to the minimum
+/// height given to `set_min_size`.
 #[wasm_bindgen_test]
 async fn window_size_excludes_the_menu_bar() {
     let mut kept = None;
@@ -4299,7 +4536,15 @@ async fn window_size_excludes_the_menu_bar() {
         f64::from(element.client_height()) - bar_height,
         "size はメニューバーの行を除く"
     );
-    assert!(height >= 300.0, "中身の高さは 300 以上: {height}");
+    let viewport = web_sys::window()
+        .and_then(|window| window.inner_height().ok())
+        .and_then(|height| height.as_f64())
+        .expect("表示領域の高さ");
+    assert_eq!(
+        f64::from(element.client_height()),
+        viewport - page_inset(),
+        "ウィンドウの高さはブラウザの表示領域 (ページの余白を除く) に合わせる"
+    );
     assert!(width <= 400.0, "中身の幅は 400 まで: {width}");
 
     window.set_size(360.0, 200.0);
@@ -4307,10 +4552,137 @@ async fn window_size_excludes_the_menu_bar() {
     let style = window_element_style(&window);
     assert!(style.contains("max-width: 360px"), "{style}");
     assert!(
-        style.contains(&format!("min-height: {}px", 200.0 + bar_height)),
+        style.contains("height: 100dvh") || style.contains("height: calc(100dvh - "),
+        "高さは表示領域: {style}"
+    );
+    assert!(
+        !style.contains("min-height"),
+        "高さの指定は下限にしない: {style}"
+    );
+
+    window.set_min_size(240.0, 120.0);
+    next_frames().await;
+    let style = window_element_style(&window);
+    assert!(
+        style.contains(&format!("min-height: {}px", 120.0 + bar_height)),
         "高さの下限に行の高さを足す: {style}"
     );
     window.close();
+}
+
+/// The window's height follows the browser, so content taller than it scrolls in
+/// the `Scroll` under the root instead of stretching the window. The root (a `Fill`
+/// given by the window) may become smaller than its content; with the Flexbox
+/// default minimum it stayed as tall as the `Scroll`'s content and was cut off.
+#[wasm_bindgen_test]
+async fn window_root_scroll_fits_the_window() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("中で送る", 400.0, 300.0)?;
+        let pane = ui.stack(Orientation::Vertical)?;
+        for i in 0..200 {
+            pane.append(&ui.label(&format!("行 {i}"))?);
+        }
+        let scroll = ui.scroll()?;
+        scroll.set_child(&pane);
+        scroll.set_sizing(Sizing::fill());
+        let root = ui.grid()?;
+        root.set_column_track(0, naui_core::Track::FILL);
+        root.set_row_track(1, naui_core::Track::FILL);
+        root.attach(&ui.label("見出し")?, GridCell::new(0, 0));
+        root.attach(&scroll, GridCell::new(0, 1));
+        window.set_child(&root);
+        window.show();
+        kept = Some((window, scroll));
+        Ok(())
+    });
+    let (window, scroll) = kept.expect("window");
+    next_frames().await;
+    let viewport = web_sys::window()
+        .and_then(|window| window.inner_height().ok())
+        .and_then(|height| height.as_f64())
+        .expect("表示領域の高さ");
+    let element = window.native_element();
+    assert_eq!(
+        f64::from(element.client_height()),
+        viewport - page_inset(),
+        "ウィンドウは表示領域の高さ (ページの余白を除く) のまま"
+    );
+    let m = scroll.metrics();
+    assert!(
+        m.viewport_height < viewport && m.max_y() > 0.0,
+        "中身は Scroll の中で送れる: {m:?}"
+    );
+    window.close();
+}
+
+/// The vertical margins, borders and padding of `<html>` and `<body>`.
+fn page_inset() -> f64 {
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("document");
+    [
+        document.document_element(),
+        document.body().map(|body| body.unchecked_into::<Element>()),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|element| {
+        [
+            "margin-top",
+            "margin-bottom",
+            "border-top-width",
+            "border-bottom-width",
+            "padding-top",
+            "padding-bottom",
+        ]
+        .iter()
+        .map(|property| {
+            computed(&element, property)
+                .trim_end_matches("px")
+                .parse::<f64>()
+                .unwrap_or(0.0)
+        })
+        .sum::<f64>()
+    })
+    .sum()
+}
+
+/// A page that keeps the browser's 8 px margin on `<body>` (one without a style
+/// sheet) does not make the window stick out at the bottom: its height is the
+/// visible area less the page's margins. Otherwise the whole page would scroll even
+/// when the content fits in the window.
+#[wasm_bindgen_test]
+async fn window_leaves_room_for_the_page_margin() {
+    let body = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.body())
+        .expect("body");
+    let saved = body
+        .style()
+        .get_property_value("margin")
+        .unwrap_or_default();
+    let _ = body.style().set_property("margin", "8px");
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("余白", 400.0, 300.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        kept = Some(window);
+        Ok(())
+    });
+    let window = kept.expect("window");
+    next_frames().await;
+    let viewport = web_sys::window()
+        .and_then(|window| window.inner_height().ok())
+        .and_then(|height| height.as_f64())
+        .expect("表示領域の高さ");
+    let inset = page_inset();
+    let height = f64::from(window.native_element().client_height());
+    window.close();
+    let _ = body.style().set_property("margin", &saved);
+    assert!(inset >= 16.0, "body の上下の余白を数える: {inset}");
+    assert_eq!(height, viewport - inset, "ページの余白の分だけ低くなる");
 }
 
 #[wasm_bindgen_test]

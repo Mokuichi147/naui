@@ -16,8 +16,8 @@ use objc2::rc::{Allocated, Retained};
 use objc2::runtime::NSObjectProtocol;
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSClipView, NSGridCell, NSGridCellPlacement, NSGridView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSLayoutPriority, NSScrollView, NSView,
+    NSClipView, NSGridCell, NSGridCellPlacement, NSGridView, NSLayoutAttribute, NSLayoutConstraint,
+    NSLayoutConstraintOrientation, NSLayoutPriority, NSLayoutRelation, NSScrollView, NSView,
     NSViewBoundsDidChangeNotification, NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
@@ -73,6 +73,15 @@ const GRID_GROW_ID: &str = "naui.grid.grow";
 /// Any stronger and `Fill` rows would take too much, squashing the content of
 /// `Auto` rows (headings shrink to 30pt).
 const GRID_GROW_PRIORITY: NSLayoutPriority = HUG_CONTENT - 1.0;
+
+/// The priority of the wish "want to grow up to the maximum" placed on a grid child
+/// whose `Fill` has a maximum, in place of [`GRID_GROW_PRIORITY`].
+///
+/// It has to beat what keeps the child itself small: its `Fill` hugging
+/// ([`FILL_HUGGING`]) and, for a `Stack`, the tail spacer ([`TAIL_PRIORITY`]).
+/// Anything stronger would push the grid out against its parent (a window keeps its
+/// size at 500), so the child would stay at its maximum when space is tight.
+const GRID_CAPPED_GROW_PRIORITY: NSLayoutPriority = TAIL_PRIORITY + 0.5;
 
 /// The compression resistance priority for `Fill`.
 ///
@@ -165,6 +174,27 @@ fn orientation(horizontal: bool) -> NSLayoutConstraintOrientation {
 /// Whether this view wants to grow in that direction (= was given `Length::Fill`).
 pub(crate) fn wants_fill(view: &NSView, horizontal: bool) -> bool {
     view.contentHuggingPriorityForOrientation(orientation(horizontal)) <= FILL_HUGGING
+}
+
+/// The maximum `set_sizing` gave this view in that direction
+/// ([`Sizing::max_width`] / [`Sizing::max_height`]).
+pub(crate) fn max_size(view: &NSView, horizontal: bool) -> Option<f64> {
+    let attribute = if horizontal {
+        NSLayoutAttribute::Width
+    } else {
+        NSLayoutAttribute::Height
+    };
+    let constraints = view.constraints();
+    (0..constraints.len())
+        .map(|index| constraints.objectAtIndex(index))
+        .find(|constraint| {
+            constraint.relation() == NSLayoutRelation::LessThanOrEqual
+                && constraint.firstAttribute() == attribute
+                && constraint
+                    .identifier()
+                    .is_some_and(|id| id.to_string() == SIZING_ID)
+        })
+        .map(|constraint| constraint.constant())
 }
 
 /// Makes an `Auto` child keep its content width.
@@ -300,13 +330,13 @@ pub(crate) fn relax_hugging(view: &NSView) {
 /// height is recomputed only for Auto rows.
 type GridCells = Rc<RefCell<Vec<(Retained<NSView>, GridCell)>>>;
 
-/// The "want to grow horizontally" wishes placed on `Fill` children, and where they
-/// are placed.
+/// The "want to grow" wishes placed on `Fill` children, where they are placed, and
+/// whether they are horizontal.
 ///
-/// How much they grow depends on the widths other columns need, so the constants
-/// are recomputed on every layout. For that, the constraints are kept together with
-/// their positions.
-type GridGrows = Rc<RefCell<Vec<(Retained<NSLayoutConstraint>, GridCell)>>>;
+/// How much they grow depends on the sizes the other columns (rows) need, so the
+/// constants are recomputed on every layout. For that, the constraints are kept
+/// together with their positions.
+type GridGrows = Rc<RefCell<Vec<(Retained<NSLayoutConstraint>, GridCell, bool)>>>;
 
 struct ContentSizedGridState {
     row_tracks: Rc<RefCell<Vec<Track>>>,
@@ -334,8 +364,8 @@ define_class!(
             }
             let rows = self.update_auto_row_heights();
             let columns = self.update_auto_column_widths();
-            let widths = self.update_grow_widths();
-            if rows || columns || widths {
+            let grows = self.update_grow_sizes();
+            if rows || columns || grows {
                 let _: () = unsafe { msg_send![super(self), layout] };
                 self.invalidateIntrinsicContentSize();
             }
@@ -452,21 +482,40 @@ impl ContentSizedGridView {
         changed
     }
 
-    /// Matches the "want to grow horizontally" wishes on `Fill` children to their
-    /// cell's share.
+    /// Matches the "want to grow" wishes on `Fill` children to their cell's share.
     ///
-    /// The desired width is "the grid's width − the widths other columns need". The
-    /// content widths of the other columns change on every layout, so it is recomputed
-    /// as the constraint's constant.
-    fn update_grow_widths(&self) -> bool {
+    /// The desired size is "the grid's size − the sizes the other columns (rows)
+    /// need", where a capped track counts its maximum only as far as the grid has
+    /// room beyond what the tracks need. The other tracks' needs change on every layout, so it is recomputed as
+    /// the constraint's constant. Vertically too: other `Fill` rows are not decided
+    /// by required heights the way `Auto` rows are, so wishing for the whole grid's
+    /// height would squash them (a row whose child stops at a maximum only wishes
+    /// weakly for it).
+    fn update_grow_sizes(&self) -> bool {
         let grows = self.ivars().grows.borrow();
         if grows.is_empty() {
             return false;
         }
-        let widths = self.column_content_widths();
+        let widths = (self.track_needs(true, false), self.track_needs(true, true));
+        let heights = (
+            self.track_needs(false, false),
+            self.track_needs(false, true),
+        );
+        let size = self.frame().size;
         let mut changed = false;
-        for (constraint, cell) in grows.iter() {
-            let outside = self.width_outside_cell(cell, &widths);
+        for (constraint, cell, horizontal) in grows.iter() {
+            let (needs, room) = if *horizontal {
+                (&widths, size.width)
+            } else {
+                (&heights, size.height)
+            };
+            // 上限付きのトラックに残す分 (望む分から必須の分を引いたもの) は、
+            // グリッドの今の大きさのうち必須の分を除いた残りまでに抑える。抑えないと、
+            // 上限より狭いときにこの子が負の大きさを望み、その差を埋めようと
+            // グリッド (ひいてはウィンドウ) を押し広げる。
+            let required = self.outside_cell(cell, *horizontal, &needs.0);
+            let wished = self.outside_cell(cell, *horizontal, &needs.1);
+            let outside = required + (wished - required).min((room - required).max(0.0));
             if (constraint.constant() + outside).abs() > 0.5 {
                 constraint.setConstant(-outside);
                 changed = true;
@@ -475,69 +524,111 @@ impl ContentSizedGridView {
         changed
     }
 
-    /// The width each column needs.
+    /// The size each column (row) needs, or wishes for with `wished`.
     ///
-    /// Columns with a fixed width (`Track::Fixed`) take that width regardless of their
-    /// content, so the specified width is used instead of the content width. Others are
-    /// decided from the `fittingSize` of their content, and cells spanning several
-    /// columns spread it evenly over their span.
-    fn column_content_widths(&self) -> Vec<f64> {
-        let columns = self.numberOfColumns().max(0) as usize;
-        let fixed: Vec<Option<f64>> = (0..columns)
-            .map(|index| self.fixed_column_width(index))
+    /// Tracks with a decided size ([`Self::decided_track_size`]) take that size
+    /// regardless of their content. Others are decided from what their content needs
+    /// ([`needed_size`]), and cells spanning several tracks spread it evenly over
+    /// their span.
+    fn track_needs(&self, horizontal: bool, wished: bool) -> Vec<f64> {
+        let tracks = if horizontal {
+            self.numberOfColumns()
+        } else {
+            self.numberOfRows()
+        }
+        .max(0) as usize;
+        let decided: Vec<Option<f64>> = (0..tracks)
+            .map(|index| self.decided_track_size(index, horizontal))
             .collect();
-        let mut widths: Vec<f64> = fixed.iter().map(|width| width.unwrap_or(0.0)).collect();
+        let mut needs: Vec<f64> = decided.iter().map(|size| size.unwrap_or(0.0)).collect();
         for (view, cell) in self.ivars().cells.borrow().iter() {
             if view.isHidden() {
                 continue;
             }
-            let span = cell.column_span.max(1);
-            let each = (view.fittingSize().width / span as f64).max(0.0);
-            for index in cell.column..(cell.column + span).min(columns) {
-                if fixed[index].is_some() {
+            let (start, span) = if horizontal {
+                (cell.column, cell.column_span.max(1))
+            } else {
+                (cell.row, cell.row_span.max(1))
+            };
+            let each = (needed_size(view, horizontal, wished) / span as f64).max(0.0);
+            for index in start..(start + span).min(tracks) {
+                if decided[index].is_some() {
                     continue;
                 }
-                widths[index] = f64::max(widths[index], each);
+                needs[index] = f64::max(needs[index], each);
             }
         }
-        widths
+        needs
     }
 
-    /// The width, if the column's width is decided. `None` for columns that fit their
-    /// content (`Fill`).
+    /// The size, if the column's (row's) size is decided. `None` for tracks that fit
+    /// their content (`Fill`).
     ///
-    /// Besides `Fixed` columns, this includes `Auto` columns whose width
-    /// [`Self::update_auto_column_widths`] decided. Columns of width 0 (such as an
-    /// `Auto` column without content) count as decided too; otherwise the width of
-    /// cells spanning them is spread onto them, overestimating what the other columns
-    /// need.
-    fn fixed_column_width(&self, index: usize) -> Option<f64> {
-        let width = self.columnAtIndex(index as isize).width();
+    /// Besides `Fixed` tracks, this includes `Auto` tracks whose size
+    /// [`Self::update_auto_column_widths`] / [`Self::update_auto_row_heights`]
+    /// decided. Tracks of size 0 (such as an `Auto` column without content) count as
+    /// decided too; otherwise the size of cells spanning them is spread onto them,
+    /// overestimating what the other tracks need.
+    fn decided_track_size(&self, index: usize, horizontal: bool) -> Option<f64> {
+        let size = if horizontal {
+            self.columnAtIndex(index as isize).width()
+        } else {
+            self.rowAtIndex(index as isize).height()
+        };
         // `NSGridViewSizeForContent` は「中身に合わせる」を表す番兵値。
         let content = unsafe { objc2_app_kit::NSGridViewSizeForContent };
-        (width != content && width.is_finite() && width >= 0.0).then_some(width)
+        (size != content && size.is_finite() && size >= 0.0).then_some(size)
     }
 
-    /// The width this cell cannot use (the other columns' content, plus the outer and
-    /// inter-column spacing).
-    fn width_outside_cell(&self, cell: &GridCell, widths: &[f64]) -> f64 {
-        let columns = widths.len();
-        let span = cell.column_span.max(1);
-        let end = (cell.column + span).min(columns);
-        let mut outside: f64 = widths
+    /// The size this cell cannot use (the other tracks' needs, plus the outer padding
+    /// and the spacing between tracks).
+    fn outside_cell(&self, cell: &GridCell, horizontal: bool, needs: &[f64]) -> f64 {
+        let tracks = needs.len();
+        let (start, span, spacing) = if horizontal {
+            (cell.column, cell.column_span.max(1), self.columnSpacing())
+        } else {
+            (cell.row, cell.row_span.max(1), self.rowSpacing())
+        };
+        let end = (start + span).min(tracks);
+        let mut outside: f64 = needs
             .iter()
             .enumerate()
-            .filter(|(index, _)| *index < cell.column || *index >= end)
-            .map(|(_, width)| *width)
+            .filter(|(index, _)| *index < start || *index >= end)
+            .map(|(_, size)| *size)
             .sum();
-        // 列間のすき間。セルがまたぐぶんはセルの取り分なので数えない。
-        outside += self.columnSpacing() * columns.saturating_sub(span) as f64;
-        // 外周の余白 (apply_padding が両端の列へ入れる)。
-        for index in 0..columns {
-            let column = self.columnAtIndex(index as isize);
-            outside += column.leadingPadding() + column.trailingPadding();
+        // トラック間のすき間。セルがまたぐぶんはセルの取り分なので数えない。
+        outside += spacing * tracks.saturating_sub(span) as f64;
+        // 外周の余白 (apply_padding が両端のトラックへ入れる)。
+        for index in 0..tracks {
+            outside += if horizontal {
+                let column = self.columnAtIndex(index as isize);
+                column.leadingPadding() + column.trailingPadding()
+            } else {
+                let row = self.rowAtIndex(index as isize);
+                row.topPadding() + row.bottomPadding()
+            };
         }
         outside
+    }
+}
+
+/// The size a grid child needs in that direction, or wishes for with `wished`.
+///
+/// What it needs is its `fittingSize`. A `Fill` child with a maximum also wishes for
+/// its maximum, only weakly ([`GRID_CAPPED_GROW_PRIORITY`]), which `fittingSize`
+/// compresses away. So with `wished` its maximum counts too: the other tracks then
+/// leave it that much while the grid has room for it
+/// ([`ContentSizedGridView::update_grow_sizes`]).
+fn needed_size(view: &NSView, horizontal: bool, wished: bool) -> f64 {
+    let fitting = view.fittingSize();
+    let fitting = if horizontal {
+        fitting.width
+    } else {
+        fitting.height
+    };
+    match max_size(view, horizontal) {
+        Some(max) if wished && wants_fill(view, horizontal) => fitting.max(max),
+        _ => fitting,
     }
 }
 
@@ -656,6 +747,12 @@ impl Grid {
         // `Inherited` のままだと、再レイアウト時に NSGridView の列配置を
         // 継承してラベルまで列いっぱいになることがある。
         let fill_width = wants_fill(&view, true);
+        // 上限付きの `Fill` は、セルいっぱいには広げずに Auto と同じ位置へ置く。
+        // 配置を `Fill` にするとセルの端と子の端が必須で結ばれ、子の上限が
+        // そのまま行や列の上限になる。そうなると `Fill` の行が余りを受け取れず、
+        // 上限のぶんまで縮んでしまう (GTK や WinUI では行が余りを受け取り、
+        // 子はその中で上限まで広がる)。子を上限まで広げるのは set_grow_hint。
+        let stretch_width = fill_width && max_size(&view, true).is_none();
         if !fill_width {
             // Leading だけでは、NSGridView が再レイアウト時に作る幅の
             // 制約に intrinsic size が負けることがある。Auto の意味を
@@ -669,7 +766,7 @@ impl Grid {
                 .columnAtIndex(column)
                 .setXPlacement(NSGridCellPlacement::Leading);
         }
-        target.setXPlacement(if fill_width {
+        target.setXPlacement(if stretch_width {
             NSGridCellPlacement::Fill
         } else {
             NSGridCellPlacement::Leading
@@ -678,6 +775,7 @@ impl Grid {
         // 縦は中央ぞろえ。NSGridView の既定 (上ぞろえ) だと、同じ行に置いた
         // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
         let fill_height = wants_fill(&view, false);
+        let stretch_height = fill_height && max_size(&view, false).is_none();
         if !fill_height {
             // 横と同じ理由で、`Auto` の子は行の余りを受け取らない。
             // NSStackView のようにコンテナ自身の hugging priority が低い子は、
@@ -686,7 +784,7 @@ impl Grid {
             keep_auto_size(&view, false);
         }
         self.set_grow_hint(&view, &cell, false, fill_height);
-        target.setYPlacement(if fill_height {
+        target.setYPlacement(if stretch_height {
             NSGridCellPlacement::Fill
         } else {
             NSGridCellPlacement::Center
@@ -696,7 +794,7 @@ impl Grid {
         self.0.children.borrow_mut().push(child.boxed_clone());
         self.0.content_sized.update_auto_row_heights();
         self.0.content_sized.update_auto_column_widths();
-        self.0.content_sized.update_grow_widths();
+        self.0.content_sized.update_grow_sizes();
     }
 
     /// Places a weak wish "want to grow by the leftover amount" on children in `Fill`
@@ -707,53 +805,68 @@ impl Grid {
     /// enough; blank space sometimes goes to the `Auto` side.
     ///
     /// So "want to be the same size as the grid" is added at a weak priority, steering
-    /// leftover space to the `Fill` rows and columns. **Horizontally, however, with
-    /// several columns this as is would make one cell's child demand the whole grid's
-    /// width**, so the widths the other columns need are subtracted as a constant,
-    /// leaving it wanting only that cell's share (the merged area, if merged). The
-    /// amount subtracted depends on the content, so
-    /// [`ContentSizedGridView::update_grow_widths`] recomputes it on every layout.
+    /// leftover space to the `Fill` rows and columns. **With several tracks, however,
+    /// this as is would make one cell's child demand the whole grid**, so the sizes
+    /// the other columns (rows) need are subtracted as a constant, leaving it wanting
+    /// only that cell's share (the merged area, if merged). The amount subtracted
+    /// depends on the content, so [`ContentSizedGridView::update_grow_sizes`]
+    /// recomputes it on every layout.
     ///
-    /// Vertically, [`ContentSizedGridView::update_auto_row_heights`] decides the
-    /// heights of `Auto` rows as required row heights, so the grid's height can be
-    /// used as is.
+    /// **A child whose `Fill` has a maximum wishes for its maximum instead.** It stops
+    /// there, so "the same size as the grid" cannot hold, and the solver would shrink
+    /// the grid toward the child to make up for it, leaving the `Fill` row no
+    /// leftover. Such a child is not tied to the cell's edges (see `attach`), so the
+    /// row grows past it and the child sits where an `Auto` child would (at the start
+    /// horizontally, in the middle vertically).
     fn set_grow_hint(&self, view: &NSView, cell: &GridCell, horizontal: bool, wanted: bool) {
         let identifier = grow_identifier(cell, horizontal);
-        if horizontal {
-            // 同じセルの古い希望は、定数を引き直す対象から外す。
-            self.0
-                .grows
-                .borrow_mut()
-                .retain(|(_, old)| old.column != cell.column || old.row != cell.row);
-        }
-        // 同じセルに前へ張った希望があれば外す。
-        let constraints = self.0.native.constraints();
-        let previous: Vec<Retained<NSLayoutConstraint>> = (0..constraints.len())
-            .map(|index| constraints.objectAtIndex(index))
-            .filter(|constraint| {
-                constraint
-                    .identifier()
-                    .is_some_and(|id| id.to_string() == identifier)
-            })
-            .collect();
+        // 同じセルの古い希望は、定数を引き直す対象から外す。
+        self.0
+            .grows
+            .borrow_mut()
+            .retain(|(_, old, old_horizontal)| {
+                *old_horizontal != horizontal || old.column != cell.column || old.row != cell.row
+            });
+        // 同じセルに前へ張った希望があれば外す。上限への希望は子のビュー自身に、
+        // グリッドと結ぶ希望はグリッドに付いている。
+        let previous: Vec<Retained<NSLayoutConstraint>> =
+            [self.0.native.constraints(), view.constraints()]
+                .iter()
+                .flat_map(|constraints| {
+                    (0..constraints.len()).map(|index| constraints.objectAtIndex(index))
+                })
+                .filter(|constraint| {
+                    constraint
+                        .identifier()
+                        .is_some_and(|id| id.to_string() == identifier)
+                })
+                .collect();
         if !previous.is_empty() {
             NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&previous));
         }
         if !wanted {
             return;
         }
-        let grow = if horizontal {
-            view.widthAnchor()
-                .constraintEqualToAnchor(&self.0.native.widthAnchor())
+        let (child, grid) = if horizontal {
+            (view.widthAnchor(), self.0.native.widthAnchor())
         } else {
-            view.heightAnchor()
-                .constraintEqualToAnchor(&self.0.native.heightAnchor())
+            (view.heightAnchor(), self.0.native.heightAnchor())
         };
-        grow.setPriority(GRID_GROW_PRIORITY);
+        let max = max_size(view, horizontal);
+        let grow = match max {
+            Some(max) => child.constraintGreaterThanOrEqualToConstant(max),
+            None => child.constraintEqualToAnchor(&grid),
+        };
+        grow.setPriority(if max.is_some() {
+            GRID_CAPPED_GROW_PRIORITY
+        } else {
+            GRID_GROW_PRIORITY
+        });
         grow.setIdentifier(Some(&NSString::from_str(&identifier)));
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[grow.clone()]));
-        if horizontal {
-            self.0.grows.borrow_mut().push((grow, *cell));
+        // 上限への希望は定数が決まっているので、引き直す対象にしない。
+        if max.is_none() {
+            self.0.grows.borrow_mut().push((grow, *cell, horizontal));
         }
     }
 
@@ -779,7 +892,7 @@ impl Grid {
         self.apply_padding();
         self.0.content_sized.update_auto_row_heights();
         self.0.content_sized.update_auto_column_widths();
-        self.0.content_sized.update_grow_widths();
+        self.0.content_sized.update_grow_sizes();
     }
 
     /// Removes every child. The row and column settings stay.
@@ -797,7 +910,7 @@ impl Grid {
         self.apply_padding();
         self.0.content_sized.update_auto_row_heights();
         self.0.content_sized.update_auto_column_widths();
-        self.0.content_sized.update_grow_widths();
+        self.0.content_sized.update_grow_sizes();
     }
 
     /// Removes the child in the given cell. If several are stacked in the same cell,

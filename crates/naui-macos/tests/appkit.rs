@@ -322,6 +322,18 @@ fn main() {
             grid_fill_row_keeps_the_rest,
         ),
         (
+            "上限付きの子がいても Grid の Fill 行は余りを受け取る",
+            grid_fill_row_takes_the_rest_around_a_capped_child,
+        ),
+        (
+            "上限付きと上限なしの Fill の行・列が並んでも、上限付きは上限まで広がる",
+            grid_capped_and_plain_fill_tracks_share_the_room,
+        ),
+        (
+            "上限付きと上限なしの Fill の行・列は、狭いときウィンドウを押し広げない",
+            grid_capped_and_plain_fill_tracks_fit_a_small_window,
+        ),
+        (
             "入れ子の縦 Stack が余りの高さを吸わない",
             nested_stack_does_not_take_the_slack,
         ),
@@ -566,6 +578,14 @@ fn main() {
         (
             "画像がローカルのファイルから読み込まれる",
             image_loads_a_local_file,
+        ),
+        (
+            "Fill の画像は大きくても縦の Scroll を押し広げない",
+            fill_image_does_not_push_a_scroll,
+        ),
+        (
+            "上限付き Fill の画像は上限の大きさを求める",
+            capped_fill_image_asks_for_its_maximum,
         ),
         (
             "収め方が NSImageView の imageScaling になる",
@@ -4950,6 +4970,120 @@ fn image_loads_a_local_file(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// A `Fill` image asks for no size on that axis and fits into what it is given; an
+/// `Auto` axis still asks for the image's size.
+///
+/// Asking for its pixel size, a large image inside a vertical `Scroll` pushed the
+/// content to its own height, and the rows after it left the visible area.
+fn fill_image_does_not_push_a_scroll(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("large-image");
+    let path = fixture.write("a.png", PNG_2X2);
+    let large = NSSize::new(3000.0, 2000.0);
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill());
+    let view = image.native_view();
+    let native = view
+        .downcast_ref::<NSImageView>()
+        .expect("実体が NSImageView であること");
+    // NSImageView は画像の大きさ (ポイント) を自然な大きさにする。
+    native.image().expect("NSImage があること").setSize(large);
+    view.invalidateIntrinsicContentSize();
+    let none = unsafe { objc2_app_kit::NSViewNoIntrinsicMetric };
+    let fill = view.intrinsicContentSize();
+    assert_eq!(
+        (fill.width, fill.height),
+        (none, none),
+        "Fill の軸は大きさを求めない"
+    );
+    image.set_sizing(Sizing::fill_width());
+    let auto_height = view.intrinsicContentSize();
+    assert_eq!(
+        (auto_height.width, auto_height.height),
+        (none, 2000.0),
+        "Auto の軸は画像の大きさを求める"
+    );
+    image.set_sizing(Sizing::fill());
+
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_align(Align::Start);
+    pane.append(&ui.label("見出し")?);
+    pane.append(&image);
+    let footer = ui.label("下端")?;
+    pane.append(&footer);
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    let window = ui.window("大きな画像", 400.0, 300.0)?;
+    window.set_child(&scroll);
+    window.show();
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("コンテンツビューがあること");
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    content.layoutSubtreeIfNeeded();
+    let metrics = scroll.metrics();
+    let frame = view.frame();
+    window.close();
+    assert_eq!(
+        metrics.content_height, metrics.viewport_height,
+        "中身は表示領域に収まる: {metrics:?}"
+    );
+    assert!(
+        frame.size.height > 100.0 && frame.size.height < 300.0,
+        "画像は余りを受け取る: {frame:?}"
+    );
+    Ok(())
+}
+
+/// A `Fill` image with a maximum asks for its maximum (the maximum doubles as the
+/// size wanted under normal conditions), so in an `Auto` row it keeps that height
+/// even when a `Fill` row takes the rest. Asking for nothing on a `Fill` axis, it
+/// collapsed to zero there.
+fn capped_fill_image_asks_for_its_maximum(ui: &Ui) -> Result<()> {
+    let fixture = Fixture::new("capped-image");
+    let path = fixture.write("a.png", PNG_2X2);
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill().max_height(100.0));
+    let rest = ui.stack(Orientation::Vertical)?;
+    rest.set_sizing(Sizing::fill());
+
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::Auto);
+    grid.set_row_track(1, Track::FILL);
+    grid.attach(&image, GridCell::new(0, 0));
+    grid.attach(&rest, GridCell::new(0, 1));
+    grid.set_sizing(Sizing::fixed(300.0, 300.0));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(300.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    root.layoutSubtreeIfNeeded();
+    let frame = image.native_view().frame();
+    let rest_frame = rest.native_view().frame();
+    assert_eq!(
+        frame.size.height, 100.0,
+        "Auto 行でも上限の高さを保つ: {frame:?} / {rest_frame:?}"
+    );
+    assert!(
+        rest_frame.size.height > 150.0,
+        "残りは Fill の行が受け取る: {rest_frame:?}"
+    );
+    let (top, bottom) = if frame.origin.y < rest_frame.origin.y {
+        (frame, rest_frame)
+    } else {
+        (rest_frame, frame)
+    };
+    assert!(
+        top.origin.y + top.size.height <= bottom.origin.y + 0.5,
+        "行どうしが重ならない: {frame:?} / {rest_frame:?}"
+    );
+    Ok(())
+}
+
 /// The fitting setting becomes the NSImageView's imageScaling.
 fn image_fit_maps_to_native_scaling(ui: &Ui) -> Result<()> {
     let image = ui.image("")?;
@@ -9170,6 +9304,227 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
     assert!(
         scroll_height > 400.0,
         "Fill 行が残りの高さを受け取る: {scroll_height}"
+    );
+    Ok(())
+}
+
+/// `Fill` rows (and columns) with a capped child and with a plain `Fill` child side
+/// by side: when there is room, the capped one still grows up to its maximum and
+/// the plain one takes the rest.
+///
+/// The plain child's "want to grow to fill the grid" wish is far stronger than the
+/// capped child's "want to grow up to the maximum". Asking for the whole grid, it
+/// squashed the capped track. So, as across columns, it asks only for what the
+/// other tracks do not need.
+fn grid_capped_and_plain_fill_tracks_share_the_room(ui: &Ui) -> Result<()> {
+    for vertical in [true, false] {
+        let grid = ui.grid()?;
+        grid.set_sizing(Sizing::fill());
+        let plain = ui.stack(Orientation::Vertical)?;
+        plain.set_sizing(Sizing::fill());
+        let capped = ui.stack(Orientation::Vertical)?;
+        capped.set_sizing(if vertical {
+            Sizing::fill().max_height(100.0)
+        } else {
+            Sizing::fill().max_width(100.0)
+        });
+        let second = if vertical {
+            grid.set_column_track(0, Track::FILL);
+            grid.set_row_track(0, Track::FILL);
+            grid.set_row_track(1, Track::FILL);
+            GridCell::new(0, 1)
+        } else {
+            grid.set_row_track(0, Track::FILL);
+            grid.set_column_track(0, Track::FILL);
+            grid.set_column_track(1, Track::FILL);
+            GridCell::new(1, 0)
+        };
+        grid.attach(&plain, GridCell::new(0, 0));
+        grid.attach(&capped, second);
+
+        let root = grid.native_view();
+        root.setFrameSize(NSSize::new(400.0, 500.0));
+        root.layoutSubtreeIfNeeded();
+        let plain_frame = plain.native_view().frame();
+        let capped_frame = capped.native_view().frame();
+        let (capped_size, plain_size, room) = if vertical {
+            (capped_frame.size.height, plain_frame.size.height, 500.0)
+        } else {
+            (capped_frame.size.width, plain_frame.size.width, 400.0)
+        };
+        assert_eq!(
+            capped_size, 100.0,
+            "上限付きは上限まで広がる (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
+        );
+        assert!(
+            plain_size > room - 150.0,
+            "上限なしは残りを受け取る (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
+        );
+    }
+    Ok(())
+}
+
+/// The same tracks in a window (or a vertical `Scroll`) smaller than the maximum: the
+/// capped child shrinks to what there is, and the window keeps its size (the
+/// `Scroll`'s content stays as tall as its visible area).
+///
+/// The plain child wished for "the grid − what the other tracks need" with the
+/// capped track's whole maximum counted as needed. In a window lower than that it
+/// wished for a negative size, and the wish (far stronger than a window keeping its
+/// size) grew the window instead. The room kept for a capped track is held to what
+/// the grid has.
+fn grid_capped_and_plain_fill_tracks_fit_a_small_window(ui: &Ui) -> Result<()> {
+    for vertical in [true, false] {
+        let grid = ui.grid()?;
+        grid.set_sizing(Sizing::fill());
+        let plain = ui.stack(Orientation::Vertical)?;
+        plain.set_sizing(Sizing::fill());
+        let capped = ui.stack(Orientation::Vertical)?;
+        capped.set_sizing(if vertical {
+            Sizing::fill().max_height(100.0)
+        } else {
+            Sizing::fill().max_width(100.0)
+        });
+        let second = if vertical {
+            grid.set_column_track(0, Track::FILL);
+            grid.set_row_track(0, Track::FILL);
+            grid.set_row_track(1, Track::FILL);
+            GridCell::new(0, 1)
+        } else {
+            grid.set_row_track(0, Track::FILL);
+            grid.set_column_track(0, Track::FILL);
+            grid.set_column_track(1, Track::FILL);
+            GridCell::new(1, 0)
+        };
+        grid.attach(&plain, GridCell::new(0, 0));
+        grid.attach(&capped, second);
+
+        let (width, height) = if vertical {
+            (400.0, 80.0)
+        } else {
+            (80.0, 400.0)
+        };
+        let window = ui.window("狭い", width, height)?;
+        window.set_child(&grid);
+        window.show();
+        let content = window
+            .native_window()
+            .contentView()
+            .expect("コンテンツビューがあること");
+        content.layoutSubtreeIfNeeded();
+        pump(0.05);
+        content.layoutSubtreeIfNeeded();
+        let size = content.frame().size;
+        let capped_frame = capped.native_view().frame();
+        let plain_frame = plain.native_view().frame();
+        window.close();
+        let (window_size, room, capped_size) = if vertical {
+            (size.height, height, capped_frame.size.height)
+        } else {
+            (size.width, width, capped_frame.size.width)
+        };
+        assert!(
+            (window_size - room).abs() < 0.5,
+            "ウィンドウは広がらない (縦 {vertical}): {size:?} / {capped_frame:?} / {plain_frame:?}"
+        );
+        assert!(
+            capped_size <= room + 0.5,
+            "上限付きは空いている分まで縮む (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
+        );
+    }
+
+    // 縦の Scroll の中でも、中身を伸ばさずに縮む。
+    let grid = ui.grid()?;
+    grid.set_sizing(Sizing::fill());
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::FILL);
+    grid.set_row_track(1, Track::FILL);
+    let plain = ui.stack(Orientation::Vertical)?;
+    plain.set_sizing(Sizing::fill());
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_height(100.0));
+    grid.attach(&plain, GridCell::new(0, 0));
+    grid.attach(&capped, GridCell::new(0, 1));
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&grid);
+    scroll.set_sizing(Sizing::fill());
+    let window = ui.window("狭い Scroll", 400.0, 80.0)?;
+    window.set_child(&scroll);
+    window.show();
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("コンテンツビューがあること");
+    content.layoutSubtreeIfNeeded();
+    pump(0.05);
+    content.layoutSubtreeIfNeeded();
+    let metrics = scroll.metrics();
+    let capped_frame = capped.native_view().frame();
+    window.close();
+    assert_eq!(
+        metrics.content_height, metrics.viewport_height,
+        "Scroll の中身は伸びない: {metrics:?} / {capped_frame:?}"
+    );
+    assert!(
+        capped_frame.size.height < 80.0,
+        "上限付きは表示領域に収まるまで縮む: {capped_frame:?}"
+    );
+    Ok(())
+}
+
+/// A `Fill` row takes the leftover even when its child's `Fill` has a maximum. The
+/// child grows up to its maximum and sits in the middle of the row, as on GTK and
+/// WinUI.
+///
+/// Placing such a child with `NSGridCellPlacement::Fill` ties the row to the child,
+/// so its maximum became the row's maximum. The "want to grow to fill the grid" wish
+/// at its usual priority also pulled the grid down to the child.
+fn grid_fill_row_takes_the_rest_around_a_capped_child(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+    grid.set_row_track(0, Track::FILL);
+    grid.set_row_track(1, Track::Auto);
+    grid.set_sizing(Sizing::fill());
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_width(200.0).max_height(100.0));
+    grid.attach(&capped, GridCell::new(0, 0));
+    let footer = ui.label("下端")?;
+    grid.attach(&footer, GridCell::new(0, 1));
+
+    // gallery の画面と同じく、余りを末尾の受け皿へ回せる縦 Stack に入れる。
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_align(Align::Start);
+    pane.append(&ui.label("見出し")?);
+    pane.append(&grid);
+
+    let root = pane.native_view();
+    root.setFrameSize(NSSize::new(400.0, 500.0));
+    root.layoutSubtreeIfNeeded();
+    let grid_frame = grid.native_view().frame();
+    let capped_frame = capped.native_view().frame();
+    let footer_frame = footer.native_view().frame();
+    assert!(
+        grid_frame.size.height > 400.0,
+        "Fill の行が余りを受け取る: {grid_frame:?}"
+    );
+    assert_eq!(
+        (capped_frame.size.width, capped_frame.size.height),
+        (200.0, 100.0),
+        "子は上限まで広がる: {capped_frame:?}"
+    );
+    let gap = (capped_frame.mid().y - footer_frame.mid().y).abs();
+    assert!(
+        gap > 150.0,
+        "子は行の中央に置かれ、下の行へ寄らない: {capped_frame:?} / {footer_frame:?}"
+    );
+
+    root.setFrameSize(NSSize::new(400.0, 80.0));
+    root.layoutSubtreeIfNeeded();
+    let narrow = capped.native_view().frame();
+    assert!(
+        narrow.size.height < 100.0,
+        "狭いときは上限より小さくなる: {narrow:?}"
     );
     Ok(())
 }

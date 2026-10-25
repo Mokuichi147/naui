@@ -472,6 +472,33 @@ pub(crate) fn clear_layout_state(element: &UIElement) {
     LAYOUT_STATES.with(|states| {
         states.borrow_mut().remove(&key);
     });
+    SIZING_LISTENERS.with(|listeners| {
+        listeners.borrow_mut().remove(&key);
+    });
+}
+
+/// Has `f` called at the end of every `apply_sizing` on the element, once the new
+/// `Sizing` is in effect.
+///
+/// For widgets whose own size depends on the `Sizing` (an image or a video asks for
+/// its pixel size only on axes that are not `Fill`). Waiting for `SizeChanged`
+/// instead would miss changes that leave the actual size as it is. Removed with the
+/// element's state ([`clear_layout_state`]).
+pub(crate) fn on_sizing_change(element: &UIElement, f: impl Fn() + 'static) {
+    let key = element_key(element);
+    SIZING_LISTENERS.with(|listeners| {
+        listeners.borrow_mut().insert(key, Rc::new(f));
+    });
+}
+
+/// Calls what [`on_sizing_change`] registered for the element.
+fn notify_sizing_change(element: &UIElement) {
+    let key = element_key(element);
+    // 呼んでいる間に表を触れるよう、取り出してから呼ぶ。
+    let listener = SIZING_LISTENERS.with(|listeners| listeners.borrow().get(&key).cloned());
+    if let Some(listener) = listener {
+        listener();
+    }
 }
 
 /// Applies the size specification to the element. Each call replaces the previous
@@ -498,6 +525,8 @@ pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
         _ => VerticalAlignment::Top,
     });
     reapply_parent_layout(&framework);
+    refit_in_grid(element);
+    notify_sizing_change(element);
 }
 
 /// Maps `Stack::set_align` onto the Stack's children.
@@ -570,12 +599,43 @@ impl Spacer {
 
 // ------------------------------------------------------------------- Grid
 
+/// A child placed in a [`Grid`].
+struct PlacedChild {
+    cell: GridCell,
+    /// Kept so that the widget lives while it is placed.
+    widget: Box<dyn Widget>,
+    /// The one-column Grid that holds the child, when its `Fill` width has a maximum
+    /// (see [`wrap_at_start`]).
+    wrapper: Option<XamlGrid>,
+}
+
 struct GridInner {
     native: XamlGrid,
     /// The placed children and their positions. Kept to remove them by cell.
-    children: RefCell<Vec<(GridCell, Box<dyn Widget>)>>,
+    children: RefCell<Vec<PlacedChild>>,
     columns: Cell<usize>,
     rows: Cell<usize>,
+}
+
+impl Drop for GridInner {
+    fn drop(&mut self) {
+        let this: *const GridInner = self;
+        let Ok(children) = self.children.try_borrow() else {
+            return;
+        };
+        let _ = GRID_PARENTS.try_with(|parents| {
+            let mut parents = parents.borrow_mut();
+            for placed in children.iter() {
+                let key = element_key(&placed.widget.native_element());
+                if parents
+                    .get(&key)
+                    .is_some_and(|grid| std::ptr::eq(grid.as_ptr(), this))
+                {
+                    parents.remove(&key);
+                }
+            }
+        });
+    }
 }
 
 /// A container that positions children by row and column (WinUI 3's Grid).
@@ -615,32 +675,52 @@ impl Grid {
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         self.ensure_size(cell.columns_needed(), cell.rows_needed());
         let element = child.native_element();
+        let Ok(child_framework) = element.cast::<FrameworkElement>() else {
+            return;
+        };
+        let wrapper = match capped_fill_width(&child_framework) {
+            Some(max_width) => match wrap_at_start(&element, max_width) {
+                Some(wrapper) => Some(wrapper),
+                // 包めないのは、すでに別の親に属しているとき。そのまま置いても
+                // 同じ理由で失敗する。
+                None => return,
+            },
+            None => None,
+        };
+        let placed: UIElement = match &wrapper {
+            Some(wrapper) => match wrapper.cast() {
+                Ok(placed) => placed,
+                Err(_) => {
+                    release(wrapper);
+                    return;
+                }
+            },
+            None => element.clone(),
+        };
         let appended = self
             .0
             .native
             .Children()
-            .and_then(|children| children.Append(&element));
+            .and_then(|children| children.Append(&placed));
         if appended.is_ok() {
             // 置き場所は添付プロパティなので、FrameworkElement として設定する。
             // Append に成功してから設定することで、すでに別の親に属している
             // 要素の追加に失敗しても、既存の配置を変更しない。
-            if let Ok(framework) = element.cast::<FrameworkElement>() {
-                let _ = XamlGrid::SetColumn(&framework, cell.column as i32);
-                let _ = XamlGrid::SetRow(&framework, cell.row as i32);
-                let _ = XamlGrid::SetColumnSpan(&framework, cell.column_span as i32);
-                let _ = XamlGrid::SetRowSpan(&framework, cell.row_span as i32);
-                // 縦は中央ぞろえ。既定の Stretch のままだと、同じ行に置いた
-                // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
-                let _ = framework.SetVerticalAlignment(if wants_fill(&framework, false) {
-                    VerticalAlignment::Stretch
-                } else {
-                    VerticalAlignment::Center
-                });
+            if let Ok(framework) = placed.cast::<FrameworkElement>() {
+                place_in_cell(&framework, &child_framework, cell);
             }
-            self.0
-                .children
-                .borrow_mut()
-                .push((cell, child.boxed_clone()));
+            self.0.children.borrow_mut().push(PlacedChild {
+                cell,
+                widget: child.boxed_clone(),
+                wrapper,
+            });
+            GRID_PARENTS.with(|parents| {
+                parents
+                    .borrow_mut()
+                    .insert(element_key(&element), Rc::downgrade(&self.0));
+            });
+        } else if let Some(wrapper) = &wrapper {
+            release(wrapper);
         }
     }
 
@@ -660,7 +740,8 @@ impl Grid {
         let mut children = self.0.children.borrow_mut();
         let mut index = 0;
         while index < children.len() {
-            if children[index].0.column != cell.column || children[index].0.row != cell.row {
+            let placed = &children[index].cell;
+            if placed.column != cell.column || placed.row != cell.row {
                 index += 1;
                 continue;
             }
@@ -674,7 +755,7 @@ impl Grid {
                 index += 1;
                 continue;
             }
-            children.remove(index);
+            self.forget(children.remove(index));
         }
     }
 
@@ -683,7 +764,94 @@ impl Grid {
         if let Ok(children) = self.0.native.Children() {
             let _ = children.Clear();
         }
-        self.0.children.borrow_mut().clear();
+        let removed: Vec<PlacedChild> = self.0.children.borrow_mut().drain(..).collect();
+        for placed in removed {
+            self.forget(placed);
+        }
+    }
+
+    /// Lets go of a child already taken out of `native`: takes it out of its wrapper
+    /// and forgets that it was placed here.
+    fn forget(&self, placed: PlacedChild) {
+        if let Some(wrapper) = &placed.wrapper {
+            release(wrapper);
+        }
+        let key = element_key(&placed.widget.native_element());
+        GRID_PARENTS.with(|parents| {
+            let mut parents = parents.borrow_mut();
+            if parents
+                .get(&key)
+                .is_some_and(|grid| std::ptr::eq(grid.as_ptr(), Rc::as_ptr(&self.0)))
+            {
+                parents.remove(&key);
+            }
+        });
+    }
+
+    /// Places a child again after its `Sizing` changed (see [`refit_in_grid`]).
+    ///
+    /// A child that now has a `Fill` width with a maximum goes into the wrapper of
+    /// [`wrap_at_start`], one that no longer has it comes out, and a wrapped child's
+    /// new maximum is copied to the wrapper's column. The cell's vertical alignment
+    /// is set again too, since `apply_sizing` overwrote it.
+    fn refit(&self, element: &UIElement) {
+        let Ok(child_framework) = element.cast::<FrameworkElement>() else {
+            return;
+        };
+        let Ok(native_children) = self.0.native.Children() else {
+            return;
+        };
+        let key = element_key(element);
+        let mut children = self.0.children.borrow_mut();
+        let Some(position) = children
+            .iter()
+            .position(|placed| element_key(&placed.widget.native_element()) == key)
+        else {
+            return;
+        };
+        // `attach` は Children へ順に足すので、位置はここの並びと同じ。
+        let index = position as u32;
+        let placed = &mut children[position];
+        match (placed.wrapper.clone(), capped_fill_width(&child_framework)) {
+            (Some(wrapper), Some(max_width)) => {
+                if let Ok(column) = wrapper
+                    .ColumnDefinitions()
+                    .and_then(|definitions| definitions.GetAt(0))
+                {
+                    let _ = column.SetMaxWidth(max_width);
+                }
+            }
+            (Some(wrapper), None) => {
+                release(&wrapper);
+                if native_children.SetAt(index, element).is_ok() {
+                    placed.wrapper = None;
+                } else {
+                    let _ = wrapper.Children().and_then(|c| c.Append(element));
+                }
+            }
+            (None, Some(max_width)) => {
+                // 包みを先にマスへ置いて子を外してから、子を包みへ入れる。
+                if let Some((wrapper, placed_wrapper)) = empty_wrapper(max_width)
+                    .and_then(|wrapper| Some((wrapper.clone(), wrapper.cast::<UIElement>().ok()?)))
+                {
+                    if native_children.SetAt(index, &placed_wrapper).is_ok() {
+                        if wrapper.Children().and_then(|c| c.Append(element)).is_ok() {
+                            placed.wrapper = Some(wrapper);
+                        } else {
+                            let _ = native_children.SetAt(index, element);
+                        }
+                    }
+                }
+            }
+            (None, None) => {}
+        }
+        let framework = match &placed.wrapper {
+            Some(wrapper) => wrapper.cast::<FrameworkElement>().ok(),
+            None => Some(child_framework.clone()),
+        };
+        if let Some(framework) = framework {
+            place_in_cell(&framework, &child_framework, placed.cell);
+        }
     }
 
     /// How a column's width is determined.
@@ -766,6 +934,82 @@ impl Grid {
     }
 }
 
+/// Sets the cell on what is put into the Grid (the child, or its wrapper) and its
+/// vertical alignment, from the child's `Sizing`.
+fn place_in_cell(placed: &FrameworkElement, child: &FrameworkElement, cell: GridCell) {
+    let _ = XamlGrid::SetColumn(placed, cell.column as i32);
+    let _ = XamlGrid::SetRow(placed, cell.row as i32);
+    let _ = XamlGrid::SetColumnSpan(placed, cell.column_span as i32);
+    let _ = XamlGrid::SetRowSpan(placed, cell.row_span as i32);
+    // 縦は中央ぞろえ。既定の Stretch のままだと、同じ行に置いた
+    // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
+    let _ = placed.SetVerticalAlignment(if wants_fill(child, false) {
+        VerticalAlignment::Stretch
+    } else {
+        VerticalAlignment::Center
+    });
+}
+
+/// Lets the Grid the element is placed in, if any, place it again after
+/// `apply_sizing` (see [`Grid::refit`]).
+fn refit_in_grid(element: &UIElement) {
+    let grid = GRID_PARENTS.with(|parents| {
+        parents
+            .borrow()
+            .get(&element_key(element))
+            .and_then(Weak::upgrade)
+    });
+    if let Some(grid) = grid {
+        Grid(grid).refit(element);
+    }
+}
+
+/// The maximum width of a child whose width is `Fill` with a maximum.
+fn capped_fill_width(element: &FrameworkElement) -> Option<f64> {
+    let max_width = element.MaxWidth().ok()?;
+    (wants_fill(element, true) && max_width.is_finite()).then_some(max_width)
+}
+
+/// Puts a child whose `Fill` width has a maximum into a one-column Grid, so that it
+/// sits at the start of a wider cell.
+///
+/// WinUI centers a `Stretch` element that its `MaxWidth` stops short of the slot.
+/// The other backends put such a child where an `Auto` child would go, at the start
+/// of the cell (GTK's `Start`, `NSGridView`'s `Leading`, CSS Grid's `start`). `Left`
+/// alignment alone would not do: the child would shrink to its content instead of
+/// growing up to the maximum. A `Star` column with the same `MaxWidth` takes
+/// `min(cell, maximum)` and leaves the rest of the cell empty after it, and the
+/// child stretches to that column.
+fn wrap_at_start(element: &UIElement, max_width: f64) -> Option<XamlGrid> {
+    let wrapper = empty_wrapper(max_width)?;
+    wrapper
+        .Children()
+        .and_then(|children| children.Append(element))
+        .ok()?;
+    Some(wrapper)
+}
+
+/// The one-column Grid of [`wrap_at_start`], with nothing in it yet.
+fn empty_wrapper(max_width: f64) -> Option<XamlGrid> {
+    let wrapper = XamlGrid::new().ok()?;
+    let column = ColumnDefinition::new().ok()?;
+    column.SetWidth(grid_length(Track::FILL)).ok()?;
+    column.SetMaxWidth(max_width).ok()?;
+    wrapper
+        .ColumnDefinitions()
+        .and_then(|definitions| definitions.Append(&column))
+        .ok()?;
+    Some(wrapper)
+}
+
+/// Takes the child out of the Grid made by [`wrap_at_start`], so that it can be put
+/// into another container.
+fn release(wrapper: &XamlGrid) {
+    if let Ok(children) = wrapper.Children() {
+        let _ = children.Clear();
+    }
+}
+
 // ----------------------------------------------------------------- Scroll
 
 struct ScrollInner {
@@ -796,6 +1040,13 @@ impl Drop for ScrollInner {
 
 thread_local! {
     static LAYOUT_STATES: RefCell<HashMap<usize, LayoutState>> =
+        RefCell::new(HashMap::new());
+    /// The Grid each placed child is in, so that `apply_sizing` can have it placed
+    /// again.
+    static GRID_PARENTS: RefCell<HashMap<usize, Weak<GridInner>>> =
+        RefCell::new(HashMap::new());
+    /// What to call after `apply_sizing`, by element key (see [`on_sizing_change`]).
+    static SIZING_LISTENERS: RefCell<HashMap<usize, Rc<dyn Fn()>>> =
         RefCell::new(HashMap::new());
     /// The `Grid`s of the Stacks still alive on the Rust side, by element key.
     static STACKS: RefCell<HashMap<usize, XamlGrid>> = RefCell::new(HashMap::new());

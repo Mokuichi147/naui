@@ -200,7 +200,21 @@ the maximum double as "the size you want under normal conditions". **When the
 parent can hand out space it grows up to the maximum, and when there is not
 enough it becomes smaller than the maximum.** Use this form to size the display
 area of widgets whose natural size cannot be relied on (a video before loading,
-for example).
+for example). In a `Grid`, [`Track::Fill`] rows and columns still take the
+leftover space around such a child, and once it stops at its maximum it sits where
+an `Auto` child would: at the start of the cell horizontally and in the middle
+vertically.
+
+An [`Image`] asks for its pixel size on an `Auto` axis. On a `Fill` axis it asks
+for nothing and fits into the leftover space, so a large image inside a vertical
+`Scroll` does not push the content out to the image's height. A [`Video`] does the
+same, so it gets shorter with the window instead of pushing its controls out of
+view.
+
+The content of a [`Scroll`] is **never smaller than the visible area**: it
+matches the visible area in a direction that does not scroll, and grows past it in
+one that does. So while the content fits, a `Fill` child inside takes the leftover
+space, as it would outside a `Scroll`.
 
 An `Auto` height on a [`List`] follows all its rows. To scroll many rows within a
 limited area, specify `Fixed` or `Fill`. [`Tree`], [`Table`], `Scroll`, `SplitView`
@@ -504,7 +518,7 @@ given to `ui.window` or `set_size`.
 | --- | --- | --- | --- | --- |
 | Confirmation before closing | `AppWindow.Closing` (`Cancel`) | `windowShouldClose:` | `close-request` | (never called) |
 | Size changes | `SizeChanged` of the content layer | `windowDidResize:` | Compares the content size after painting (`after-paint`) | `ResizeObserver` |
-| Changing the size | `AppWindow.Resize` (adds the difference from the outer frame) | `setContentSize` (adds the difference from `contentLayoutRect`) | `set_default_size` (adds the header bar and menu bar heights and the window's CSS frame) | `max-width` / `min-height` of the window element (adds the row heights) |
+| Changing the size | `AppWindow.Resize` (adds the difference from the outer frame) | `setContentSize` (adds the difference from `contentLayoutRect`) | `set_default_size` (adds the header bar and menu bar heights and the window's CSS frame) | `max-width` of the window element (the height follows the browser) |
 
 On every platform the native API takes the size of the whole window (or of a
 `contentView` extending under the title bar), so naui measures the current
@@ -522,8 +536,11 @@ sizes that do not fit the screen, AppKit shrinks the frame on show to fit the
 screen (excluding the menu bar and Dock), so `size` becomes smaller by that much.
 
 **The Web cannot fully decide the size.** The size of the browser window itself
-cannot be changed, so the width is treated as `max-width` (shrinking on narrow
-screens) and the height as `min-height` (growing when there is more content).
+cannot be changed, and it plays the part of the window the user resizes. So the
+height follows the browser's visible area, and the width is treated as `max-width`
+(shrinking on narrow screens). The requested height is not used; `set_min_size`
+still applies as `min-width` / `min-height`, and the page scrolls when the browser
+is smaller.
 
 **On the Web, the confirmation before closing is never called.** There is no user
 action for closing a window inside the page, and no way to show a custom

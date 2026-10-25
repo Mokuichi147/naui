@@ -88,6 +88,27 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     if sizing.height.is_fill() && sizing.min_height.is_none() {
         let _ = style.set_property("min-height", "0");
     }
+    // `Fill` の画像と動画は、画素の大きさを自然な大きさとして親へ求めない。
+    // 求めたままだと、縦の Scroll の中のように親が伸びられる所では、余りを受け取る
+    // どころか画素の高さ (動画は幅と縦横比から決まる高さ) まで親を押し広げる。
+    // 大きさの封じ込め (`contain: size`) で自然な大きさを 0 として扱わせる。
+    // ただし縦横比も一緒に消えるので、`Auto` の軸 (画素の大きさや縦横比から
+    // 決まる軸) が残るときは封じ込めない。
+    // 上限付きの `Fill` の軸があるときも封じ込めない。上限が自然な大きさを抑える
+    // ので親を押し広げず、封じ込めると Auto の行のように自然な大きさで決まる所で
+    // 0 に潰れて見えなくなる (`contain-intrinsic-*` で上限を渡しても、Firefox では
+    // 0 のままだった)。Auto の行では、画素の大きさを上限で抑えた大きさになる。
+    if is_picture(element) {
+        let has_auto = matches!(sizing.width, naui_core::Length::Auto)
+            || matches!(sizing.height, naui_core::Length::Auto);
+        let capped_fill = (sizing.width.is_fill() && sizing.max_width.is_some())
+            || (sizing.height.is_fill() && sizing.max_height.is_some());
+        if (sizing.width.is_fill() || sizing.height.is_fill()) && !has_auto && !capped_fill {
+            let _ = style.set_property("contain", "size");
+        } else {
+            let _ = style.remove_property("contain");
+        }
+    }
 
     // 親が分かっていれば、その並び方向に合わせた指定もここで済ませる。
     apply_child_layout(element.unchecked_ref(), parent_layout(element));
@@ -143,9 +164,24 @@ fn parent_layout(element: &HtmlElement) -> ParentLayout {
 /// On other backends, the root directly under a window grows as the window's
 /// content does (AppKit's contentView / a row of WinUI's Grid). So that the Web
 /// behaves the same, the root gets `Fill` from the start.
+///
+/// Like `Fill` given with [`apply_sizing`], it may become smaller than its content
+/// (`min-width` / `min-height: 0`), unless the app set a minimum. Otherwise the
+/// Flexbox default minimum (the content's size) would keep a root holding a `Scroll`
+/// as tall as everything in it, and the window, whose height follows the browser,
+/// would cut it off instead of letting the `Scroll` scroll.
 pub(crate) fn fill_parent(element: &Element) {
     let _ = element.set_attribute(FILL_WIDTH_ATTR, "");
     let _ = element.set_attribute(FILL_HEIGHT_ATTR, "");
+    let style = element.unchecked_ref::<HtmlElement>().style();
+    for property in ["min-width", "min-height"] {
+        if style
+            .get_property_value(property)
+            .is_ok_and(|value| value.is_empty())
+        {
+            let _ = style.set_property(property, "0");
+        }
+    }
 }
 
 /// Rewrites the settings that depend on the parent's layout direction
@@ -189,11 +225,25 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
             }
         }
         ParentLayout::Grid => {
+            // 上限で止まった `stretch` はマスの先頭に寄る。横はほかの環境
+            // (GTK の Start、NSGridView の Leading、WinUI の包み) と同じなので
+            // そのままでよい。
             if fill_width {
                 stretch(&style, "justify-self", "width");
             }
             if fill_height {
-                stretch(&style, "align-self", "height");
+                if style
+                    .get_property_value("max-height")
+                    .is_ok_and(|value| !value.is_empty())
+                {
+                    // 縦はほかの環境ではマスの中央に来るので、高さをマスの
+                    // 100% (上限まで) にして中央に置く。グリッドの子の割合は
+                    // マスの大きさに対して決まる。
+                    let _ = style.set_property("align-self", "center");
+                    let _ = style.set_property("height", "100%");
+                } else {
+                    stretch(&style, "align-self", "height");
+                }
             }
         }
         ParentLayout::Block => {
@@ -205,6 +255,13 @@ pub(crate) fn apply_child_layout(element: &Element, parent: ParentLayout) {
             }
         }
     }
+}
+
+/// Whether it is an image or a video (`<img>` / `<video>`), a replaced element whose
+/// natural size comes from its pixels.
+fn is_picture(element: &HtmlElement) -> bool {
+    let tag = element.tag_name();
+    tag.eq_ignore_ascii_case("img") || tag.eq_ignore_ascii_case("video")
 }
 
 /// Stretches the element to the parent's size on one axis (`stretch`).
@@ -465,6 +522,8 @@ impl_widget!(Scroll, element);
 impl Scroll {
     pub(crate) fn new(document: &Document) -> Result<Self> {
         let element: HtmlElement = create(document, "div")?.unchecked_into();
+        // 中身を表示領域の大きさに合わせるため、1 マスの Grid にする (set_policy)。
+        let _ = element.style().set_property("display", "grid");
         let this = Self(Rc::new(ScrollInner {
             element,
             child: RefCell::new(None),
@@ -509,6 +568,8 @@ impl Scroll {
         let style = self.0.element.style();
         let _ = style.set_property("overflow-x", overflow(horizontal));
         let _ = style.set_property("overflow-y", overflow(vertical));
+        let _ = style.set_property("grid-template-columns", content_track(horizontal));
+        let _ = style.set_property("grid-template-rows", content_track(vertical));
     }
 
     /// The content to scroll. Each call replaces it.
@@ -616,6 +677,27 @@ fn snap_to_end(offset: f64, max: f64) -> f64 {
         max
     } else {
         offset
+    }
+}
+
+/// The size of the single cell that holds the content.
+///
+/// Like the other backends (GtkViewport, WinUI's ScrollViewer, the clip-view
+/// constraints on macOS), the content is never smaller than the visible area: it
+/// matches it in a direction that does not scroll, and grows past it in one that
+/// does. So a `Fill` child inside takes the leftover space while the content fits.
+///
+/// An `auto` track takes the content's size and is then stretched to the visible
+/// area (the default `align-content` / `justify-content`). `minmax(100%,
+/// max-content)` would not do: a track only grows past its minimum into free space,
+/// so tall content would stay at the visible area. A percentage against an
+/// undecided size counts as `auto`, so a `Scroll` without a height still follows
+/// its content.
+fn content_track(policy: ScrollPolicy) -> &'static str {
+    if policy.is_enabled() {
+        "auto"
+    } else {
+        "100%"
     }
 }
 

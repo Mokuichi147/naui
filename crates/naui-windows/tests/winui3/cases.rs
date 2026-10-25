@@ -182,6 +182,14 @@ const CASES: &[Case] = &[
         short_labels_drop_the_minimum_width,
     ),
     (
+        "上限付き Fill の子はマスの横は先頭・縦は中央に置かれる",
+        grid_places_a_capped_fill_child_like_an_auto_one,
+    ),
+    (
+        "Grid に置いたあとで上限を変えても、外しても、付けても追従する",
+        grid_follows_a_changed_maximum_width,
+    ),
+    (
         "スタックの主軸の Fill と Spacer が余りを受け取り、隠した子は間を空けない",
         stack_hands_leftover_space_to_fill_and_spacer,
     ),
@@ -244,6 +252,26 @@ const CASES: &[Case] = &[
     (
         "日本語を含むパスの画像がパスでも file: URL でも読み込める",
         image_loads_from_japanese_path,
+    ),
+    (
+        "画像の自然な大きさは画素の大きさで、Scroll の中でも幅に合わせて大きくならない",
+        image_natural_size_is_its_pixels,
+    ),
+    (
+        "Fill の動画は Scroll の中でも表示領域の余りに収まり、縮めると付いていく",
+        video_fits_the_leftover_and_follows_it,
+    ),
+    (
+        "Fill の画像は大きくても縦の Scroll を押し広げない",
+        fill_image_does_not_push_a_scroll,
+    ),
+    (
+        "上限付き Fill の画像は上限の大きさを求める",
+        capped_fill_image_asks_for_its_maximum,
+    ),
+    (
+        "画像の高さを Auto から Fill に変えると、画素の高さを求めるのをすぐやめる",
+        image_from_auto_to_fill_drops_the_pixel_height,
     ),
     (
         "スクロールの位置を測り、送れる範囲に丸めて送る",
@@ -1743,6 +1771,172 @@ fn short_labels_drop_the_minimum_width(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// A `Fill` child with a maximum grows up to it and then sits where an `Auto` child
+/// would: at the start of the cell horizontally, in the middle vertically. This is
+/// how GTK, macOS and the Web place it. WinUI alone would center a `Stretch` element
+/// stopped by `MaxWidth`, so naui puts it into a one-column Grid.
+///
+/// Removing it from the cell also takes it out of that Grid, so it can be placed
+/// again. Messages are pumped until it is laid out; in environments where it never
+/// is (CI), the sizes and positions pass without checking.
+fn grid_places_a_capped_fill_child_like_an_auto_one(ui: &Ui) -> Result<()> {
+    let window = ui.window("上限付きの Fill", 600.0, 400.0)?;
+    let grid = ui.grid()?;
+    grid.set_column_track(0, naui_core::Track::FILL);
+    grid.set_row_track(0, naui_core::Track::FILL);
+    grid.set_sizing(Sizing::fill());
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_width(200.0).max_height(100.0));
+    let cell = GridCell::new(0, 0);
+    grid.attach(&capped, cell);
+    window.set_child(&grid);
+    window.show();
+
+    let child = native::<FrameworkElement>(&capped);
+    let root = native::<Grid>(&grid);
+    let laid_out = || child.ActualWidth().unwrap_or(0.0) > 0.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out() {
+            println!("     (実寸が付かない環境なので、大きさと位置は確かめずに通す)");
+            return;
+        }
+        let size = (
+            child.ActualWidth().unwrap_or(f64::NAN),
+            child.ActualHeight().unwrap_or(f64::NAN),
+        );
+        assert_eq!(size, (200.0, 100.0), "上限まで広がる");
+        let origin = child
+            .TransformToVisual(&root)
+            .and_then(|transform| {
+                transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+            })
+            .expect("グリッドから見た位置");
+        assert!(
+            f64::from(origin.X).abs() < 0.5,
+            "横はマスの先頭: {origin:?}"
+        );
+        // The cell's height can be odd, and layout rounding then moves the middle to a
+        // whole pixel (149.5 becomes 150), so allow up to one pixel.
+        let middle = (root.ActualHeight().unwrap_or(f64::NAN) - 100.0) / 2.0;
+        assert!(
+            (f64::from(origin.Y) - middle).abs() <= 1.0,
+            "縦はマスの中央 ({middle}): {origin:?}"
+        );
+    }));
+
+    grid.remove(cell);
+    // 包みから出ていれば、ほかのパネルへそのまま足せる。
+    let element = native::<UIElement>(&capped);
+    let released = StackPanel::new()
+        .and_then(|panel| panel.Children())
+        .map(|children| {
+            let appended = children.Append(&element).is_ok();
+            let _ = children.Clear();
+            appended
+        })
+        .unwrap_or(false);
+    let other = ui.grid()?;
+    other.attach(&capped, cell);
+    // ウィンドウに載っていないグリッドの中では Parent が null を返すので、
+    // 包みの Grid の中身を直接見る。
+    let identity = |element: &UIElement| element.cast::<windows_core::IUnknown>().ok();
+    let placed_again = other.len() == 1
+        && native::<Grid>(&other)
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .and_then(|wrapper| wrapper.cast::<Grid>())
+            .and_then(|wrapper| wrapper.Children())
+            .and_then(|children| children.GetAt(0))
+            .is_ok_and(|inner| identity(&inner) == identity(&element));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    assert!(released, "外すと包みからも出る");
+    assert!(placed_again, "外したあとは別のグリッドへ置ける");
+    Ok(())
+}
+
+/// `set_sizing` after the child is placed in a Grid replaces the maximum width it
+/// was placed with: a new maximum, no maximum, and a maximum given to a child placed
+/// without one.
+///
+/// Whether the child is wrapped is checked everywhere. Messages are pumped until it
+/// is laid out; in environments where it never is (CI), the widths and positions
+/// pass without checking.
+fn grid_follows_a_changed_maximum_width(ui: &Ui) -> Result<()> {
+    let window = ui.window("上限の変更", 600.0, 400.0)?;
+    let grid = ui.grid()?;
+    grid.set_column_track(0, naui_core::Track::FILL);
+    grid.set_row_track(0, naui_core::Track::FILL);
+    grid.set_sizing(Sizing::fill());
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_width(200.0));
+    grid.attach(&capped, GridCell::new(0, 0));
+    window.set_child(&grid);
+    window.show();
+
+    let child = native::<FrameworkElement>(&capped);
+    let element = native::<UIElement>(&capped);
+    let root = native::<Grid>(&grid);
+    let identity = |element: &UIElement| element.cast::<windows_core::IUnknown>().ok();
+    let wrapped = || {
+        root.Children()
+            .and_then(|children| children.GetAt(0))
+            .is_ok_and(|placed| identity(&placed) != identity(&element))
+    };
+    let width = || child.ActualWidth().unwrap_or(0.0);
+    let left = || {
+        child
+            .TransformToVisual(&root)
+            .and_then(|transform| {
+                transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+            })
+            .map(|origin| f64::from(origin.X))
+            .unwrap_or(f64::NAN)
+    };
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || width() > 0.0);
+    let laid_out = width() > 0.0;
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out {
+            println!("     (実寸が付かない環境なので、幅と位置は確かめずに通す)");
+        }
+        assert!(wrapped(), "上限付きで置くと包まれる");
+
+        capped.set_sizing(Sizing::fill().max_width(400.0));
+        assert!(wrapped(), "上限を変えても包まれたまま");
+        if laid_out {
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || width() == 400.0);
+            assert_eq!(width(), 400.0, "新しい上限まで広がる");
+            assert!(left().abs() < 0.5, "横はマスの先頭: {}", left());
+        }
+
+        capped.set_sizing(Sizing::fill());
+        assert!(!wrapped(), "上限を外すと包みから出る");
+        if laid_out {
+            let cell = root.ActualWidth().unwrap_or(f64::NAN);
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || width() == cell);
+            assert_eq!(width(), cell, "上限を外すとマスいっぱいに広がる");
+        }
+
+        capped.set_sizing(Sizing::fill().max_width(150.0));
+        assert!(wrapped(), "置いたあとで上限を付けると包まれる");
+        if laid_out {
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || width() == 150.0);
+            assert_eq!(width(), 150.0, "付けた上限まで広がる");
+            assert!(left().abs() < 0.5, "横はマスの先頭: {}", left());
+        }
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
 /// The width and height given to `ui.window` and `set_size` are the same content size
 /// as the `size` of [`window_size_is_the_content_row`] (excluding the title bar, menu
 /// bar and frame). The outer frame is passed to `AppWindow.Resize`, so the outer
@@ -2625,11 +2819,8 @@ fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
             let image = ui.image(&source)?;
             window.set_child(&image);
             window.show();
-            let bitmap = native::<Grid>(&image)
-                .Children()
-                .and_then(|children| children.GetAt(0))
-                .and_then(|element| element.cast::<XamlImage>())
-                .and_then(|element| element.Source())
+            let bitmap = xaml_image(&image)
+                .Source()
                 .and_then(|bitmap| bitmap.cast::<BitmapImage>())
                 .expect("Image の中身が BitmapImage でない");
             let opened = Arc::new(AtomicBool::new(false));
@@ -2661,6 +2852,165 @@ fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
         Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+/// The WinUI `Image` inside naui's `Image`. It sits on a `Canvas` in the host `Grid`.
+fn xaml_image(image: &naui_windows::Image) -> XamlImage {
+    let children = native::<Grid>(image).Children().expect("ホストの子");
+    (0..children.Size().expect("ホストの子の数"))
+        .filter_map(|index| children.GetAt(index).ok())
+        .find_map(|element| element.cast::<XamlCanvas>().ok())
+        .and_then(|stage| stage.Children().and_then(|c| c.GetAt(0)).ok())
+        .and_then(|element| element.cast::<XamlImage>().ok())
+        .expect("Image の中身が WinUI の Image でない")
+}
+
+/// An image's natural size is its pixel size, as on the other backends. In a
+/// vertical `Scroll`, a `Fill`-width image keeps its pixel height instead of growing
+/// to the width with the aspect ratio, and a `Fill` image takes the viewport's
+/// leftover height.
+///
+/// Messages are pumped until it is laid out; in environments where it never is
+/// (CI), the sizes pass without checking.
+fn image_natural_size_is_its_pixels(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui 画像の大きさ {}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
+    let path = dir.join("40x20.bmp");
+    std::fs::write(&path, bmp_solid(40, 20)).expect("画像を書き出せない");
+    let path = path.to_str().expect("一時パスが UTF-8 でない").to_string();
+
+    let window = ui.window("画像の大きさ", 300.0, 240.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_sizing(Sizing::fill());
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill_width());
+    pane.append(&image);
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<FrameworkElement>(&image);
+    let inner = xaml_image(&image);
+    let size = |element: &FrameworkElement| {
+        (
+            element.ActualWidth().unwrap_or(f64::NAN),
+            element.ActualHeight().unwrap_or(f64::NAN),
+        )
+    };
+    let inner_element = inner.cast::<FrameworkElement>().expect("Image は要素");
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let opened = || size(&host).1 == 20.0;
+        pump_until(IMAGE_LOAD_TIMEOUT, opened);
+        let viewport = scroll.metrics();
+        assert_eq!(
+            size(&host),
+            (viewport.viewport_width, 20.0),
+            "横は Fill、縦は画素の高さ"
+        );
+        assert_eq!(
+            size(&inner_element),
+            size(&host),
+            "WinUI の Image はホストと同じ大きさ"
+        );
+
+        image.set_sizing(Sizing::fill());
+        let tall = || size(&host).1 == viewport.viewport_height;
+        pump_until(SCROLL_LAYOUT_TIMEOUT, tall);
+        assert_eq!(
+            size(&host),
+            (viewport.viewport_width, viewport.viewport_height),
+            "縦も Fill なら表示領域の余りを受け取る"
+        );
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            size(&inner_element) == size(&host)
+        });
+        assert_eq!(
+            size(&inner_element),
+            size(&host),
+            "WinUI の Image はホストの大きさに付いていく"
+        );
+    }));
+    window.close();
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A `Fill` video sits in the space a vertical `Scroll` leaves it, and follows when
+/// the window gets shorter, instead of keeping the height its width allows.
+///
+/// The `MediaPlayerElement` sits on a `Canvas` in the host `Grid` and is given the
+/// host's size. No video is loaded (CI has none to play), so the pixel size is not
+/// involved; the Gallery's Media page is where a real video was checked. Sizes pass
+/// without checking where nothing is laid out (CI).
+fn video_fits_the_leftover_and_follows_it(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::MediaPlayerElement;
+
+    let window = ui.window("動画の大きさ", 320.0, 300.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_sizing(Sizing::fill());
+    let video = ui.video("")?;
+    video.set_sizing(Sizing::fill());
+    pane.append(&video);
+    pane.append(&ui.label("操作の行")?);
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<Grid>(&video);
+    let children = host.Children().expect("ホストの子");
+    let player = (0..children.Size().expect("ホストの子の数"))
+        .filter_map(|index| children.GetAt(index).ok())
+        .find_map(|element| element.cast::<XamlCanvas>().ok())
+        .and_then(|stage| stage.Children().and_then(|c| c.GetAt(0)).ok())
+        .and_then(|element| element.cast::<MediaPlayerElement>().ok())
+        .expect("MediaPlayerElement が Canvas に載っていない");
+    let host = host.cast::<FrameworkElement>().expect("ホストは要素");
+    let player = player.cast::<FrameworkElement>().expect("動画は要素");
+    let size = |element: &FrameworkElement| {
+        (
+            element.ActualWidth().unwrap_or(f64::NAN),
+            element.ActualHeight().unwrap_or(f64::NAN),
+        )
+    };
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let fits = || {
+            let viewport = scroll.metrics();
+            let content = native::<FrameworkElement>(&pane)
+                .ActualHeight()
+                .unwrap_or(f64::NAN);
+            (content - viewport.viewport_height).abs() < 0.5
+                && size(&player) == size(&host)
+                && size(&host).1 > 0.0
+        };
+        pump_until(SCROLL_LAYOUT_TIMEOUT, fits);
+        assert!(fits(), "動画は表示領域の余りに収まる: {:?}", size(&host));
+        let tall = size(&host).1;
+
+        window.set_size(320.0, 200.0);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || fits() && size(&host).1 < tall);
+        assert!(
+            fits() && size(&host).1 < tall,
+            "縮めると動画も低くなる: {tall} → {:?}",
+            size(&host)
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
 }
 
 /// Puts a scroll view holding tall content into a small window (not shown yet).
@@ -2945,6 +3295,192 @@ fn bmp_2x1() -> Vec<u8> {
     bmp.extend_from_slice(&PIXELS.to_le_bytes());
     bmp.extend_from_slice(&[0; 16]); // 解像度と色数は使わない
     bmp.extend_from_slice(&[0, 0, 255, 255, 0, 0, 0, 0]); // BGR, BGR, 詰め物
+    bmp
+}
+
+/// A `Fill` image asks for no size and fits into the viewport's leftover height, even
+/// when its pixels are taller than the viewport. Asking for its pixel size, it pushed
+/// the content of a vertical `Scroll` out to its own height.
+///
+/// Messages are pumped until it is laid out; in environments where it never is
+/// (CI), the sizes pass without checking.
+fn fill_image_does_not_push_a_scroll(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui 大きな画像 {}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
+    let path = dir.join("300x1000.bmp");
+    std::fs::write(&path, bmp_solid(300, 1000)).expect("画像を書き出せない");
+    let path = path.to_str().expect("一時パスが UTF-8 でない").to_string();
+
+    let window = ui.window("大きな画像", 300.0, 240.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_sizing(Sizing::fill());
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill());
+    pane.append(&image);
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<FrameworkElement>(&image);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let opened = || {
+            xaml_image(&image)
+                .Source()
+                .ok()
+                .and_then(|source| source.cast::<BitmapImage>().ok())
+                .and_then(|bitmap| bitmap.PixelHeight().ok())
+                .is_some_and(|height| height == 1000)
+        };
+        pump_until(IMAGE_LOAD_TIMEOUT, opened);
+        assert!(opened(), "画像が開くこと");
+        let viewport = scroll.metrics().viewport_height;
+        let fits = || host.ActualHeight().unwrap_or(f64::NAN) == viewport;
+        pump_until(SCROLL_LAYOUT_TIMEOUT, fits);
+        let metrics = scroll.metrics();
+        assert_eq!(
+            metrics.content_height, metrics.viewport_height,
+            "中身は表示領域に収まる: {metrics:?}"
+        );
+        assert_eq!(
+            host.ActualHeight().unwrap_or(f64::NAN),
+            viewport,
+            "画像は表示領域の余りを受け取る"
+        );
+    }));
+    window.close();
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Changing an opened image's height from `Auto` to `Fill` stops asking for its
+/// pixel height at once. The host keeps its size until it is measured again, so
+/// waiting for `SizeChanged` to drop the pixel height would wait forever, and the
+/// image would keep pushing the content of a vertical `Scroll` out.
+///
+/// Messages are pumped until it is laid out; in environments where it never is
+/// (CI), the sizes pass without checking.
+fn image_from_auto_to_fill_drops_the_pixel_height(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui 高さの切り替え {}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
+    let path = dir.join("300x1000.bmp");
+    std::fs::write(&path, bmp_solid(300, 1000)).expect("画像を書き出せない");
+    let path = path.to_str().expect("一時パスが UTF-8 でない").to_string();
+
+    let window = ui.window("高さの切り替え", 300.0, 240.0)?;
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.set_sizing(Sizing::fill());
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill_width());
+    pane.append(&image);
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<FrameworkElement>(&image);
+    let height = || host.ActualHeight().unwrap_or(f64::NAN);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        pump_until(IMAGE_LOAD_TIMEOUT, || height() == 1000.0);
+        assert_eq!(height(), 1000.0, "Auto の高さは画素の高さ");
+
+        image.set_sizing(Sizing::fill());
+        let viewport = scroll.metrics().viewport_height;
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || height() == viewport);
+        assert_eq!(height(), viewport, "Fill にすると表示領域の余りに収まる");
+        let metrics = scroll.metrics();
+        assert_eq!(
+            metrics.content_height, metrics.viewport_height,
+            "中身は表示領域に収まる: {metrics:?}"
+        );
+    }));
+    window.close();
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A `Fill` image with a maximum asks for its maximum (the maximum doubles as the
+/// size wanted under normal conditions), so in an `Auto` row it keeps that height
+/// even when a `Fill` row takes the rest. Asking for nothing on a `Fill` axis, it
+/// collapsed to zero there.
+///
+/// Messages are pumped until it is laid out; in environments where it never is
+/// (CI), the sizes pass without checking.
+fn capped_fill_image_asks_for_its_maximum(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui 上限付きの画像 {}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダを作れない");
+    let path = dir.join("40x20.bmp");
+    std::fs::write(&path, bmp_solid(40, 20)).expect("画像を書き出せない");
+    let path = path.to_str().expect("一時パスが UTF-8 でない").to_string();
+
+    let window = ui.window("上限付きの画像", 400.0, 400.0)?;
+    let image = ui.image(&path)?;
+    image.set_sizing(Sizing::fill().max_height(100.0));
+    let rest = ui.stack(Orientation::Vertical)?;
+    rest.set_sizing(Sizing::fill());
+    let grid = ui.grid()?;
+    grid.set_column_track(0, naui_core::Track::FILL);
+    grid.set_row_track(0, naui_core::Track::Auto);
+    grid.set_row_track(1, naui_core::Track::FILL);
+    grid.attach(&image, GridCell::new(0, 0));
+    grid.attach(&rest, GridCell::new(0, 1));
+    grid.set_sizing(Sizing::fixed(300.0, 300.0));
+    let scroll = ui.scroll()?;
+    scroll.set_child(&grid);
+    scroll.set_sizing(Sizing::fill());
+    window.set_child(&scroll);
+
+    let host = native::<FrameworkElement>(&image);
+    let rest_element = native::<FrameworkElement>(&rest);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !show_and_measure(&window, &scroll) {
+            return;
+        }
+        let height = |element: &FrameworkElement| element.ActualHeight().unwrap_or(f64::NAN);
+        pump_until(IMAGE_LOAD_TIMEOUT, || height(&host) == 100.0);
+        assert_eq!(height(&host), 100.0, "Auto 行でも上限の高さを保つ");
+        assert_eq!(height(&rest_element), 200.0, "残りは Fill の行が受け取る");
+    }));
+    window.close();
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// An uncompressed 24-bit BMP of the given size, all one gray.
+fn bmp_solid(width: u32, height: u32) -> Vec<u8> {
+    const HEADER: u32 = 14 + 40;
+    // 1 行を 4 バイト境界にそろえる。
+    let row = (width * 3).div_ceil(4) * 4;
+    let pixels = row * height;
+    let mut bmp = Vec::new();
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&(HEADER + pixels).to_le_bytes());
+    bmp.extend_from_slice(&0u32.to_le_bytes());
+    bmp.extend_from_slice(&HEADER.to_le_bytes());
+    bmp.extend_from_slice(&40u32.to_le_bytes()); // BITMAPINFOHEADER の大きさ
+    bmp.extend_from_slice(&(width as i32).to_le_bytes());
+    bmp.extend_from_slice(&(height as i32).to_le_bytes());
+    bmp.extend_from_slice(&1u16.to_le_bytes()); // プレーン数
+    bmp.extend_from_slice(&24u16.to_le_bytes()); // 1 画素のビット数
+    bmp.extend_from_slice(&0u32.to_le_bytes()); // 無圧縮
+    bmp.extend_from_slice(&pixels.to_le_bytes());
+    bmp.extend_from_slice(&[0; 16]); // 解像度と色数は使わない
+    bmp.resize(bmp.len() + pixels as usize, 0x80);
     bmp
 }
 
