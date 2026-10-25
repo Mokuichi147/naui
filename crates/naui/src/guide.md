@@ -185,9 +185,9 @@ scroll.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(160.0))
 ```
 
 [`Length::Fill`] means "take the leftover space" on the main axis and "stretch to
-fill the parent" on the cross axis. On Windows, `Stack` is a StackPanel, so
-**`Fill` on the main axis and `Spacer` have no effect**. Use [`Track::Fill`] of a
-`Grid` in that case.
+fill the parent" on the cross axis. A [`Spacer`] is `Fill` in both directions, so
+in a stack it pushes the children after it to the far end. How several `Fill`
+children in one stack split the space differs a little per platform.
 
 In a `Grid` cell, a child that fits its content (`Auto`) sits at the **start** of
 the cell horizontally and at the **center** vertically, on every backend. A

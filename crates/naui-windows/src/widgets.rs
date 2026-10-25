@@ -6,9 +6,8 @@ use std::rc::Rc;
 use naui_core::{Align, Orientation, Padding, Result, TextColor, TextStyle};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, CheckBox as XamlCheckBox, Grid, Orientation as XamlOrientation,
-    PasswordBox, ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock,
-    TextBox,
+    Button as XamlButton, CheckBox as XamlCheckBox, Grid, PasswordBox, ScrollBarVisibility,
+    ScrollViewer, Slider as XamlSlider, TextBlock, TextBox,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
@@ -1012,7 +1011,8 @@ impl ProgressInner {
 // ------------------------------------------------------------------ Stack
 
 struct StackInner {
-    native: StackPanel,
+    native: Grid,
+    vertical: bool,
     /// The default alignment of children on the cross axis. `Fill` children follow their
     /// own setting instead.
     align: Cell<Align>,
@@ -1021,6 +1021,7 @@ struct StackInner {
 
 impl Drop for StackInner {
     fn drop(&mut self) {
+        crate::layout::unregister_stack(&self.native);
         if let Ok(children) = self.children.try_borrow() {
             for child in children.iter() {
                 crate::layout::clear_parent_layout(&child.native_element());
@@ -1029,30 +1030,31 @@ impl Drop for StackInner {
     }
 }
 
-/// A container that lays out its children vertically / horizontally (StackPanel).
+/// A container that lays out its children vertically / horizontally.
+///
+/// Built on a `Grid` with one row (column) per child rather than on `StackPanel`,
+/// which never hands out leftover space: `Fill` children and `Spacer`s get `Star`
+/// tracks (see `layout::arrange_stack`).
 #[derive(Clone)]
 pub struct Stack(Rc<StackInner>);
 impl_widget!(Stack, native);
 
 impl Stack {
     pub(crate) fn new(orientation: Orientation) -> Result<Self> {
-        let native = StackPanel::new().map_err(|e| to_error("StackPanel の生成", e))?;
-        native
-            .SetOrientation(if orientation.is_vertical() {
-                XamlOrientation::Vertical
-            } else {
-                XamlOrientation::Horizontal
-            })
-            .map_err(|e| to_error("StackPanel の向き設定", e))?;
+        let native = Grid::new().map_err(|e| to_error("Stack の Grid の生成", e))?;
+        crate::layout::register_stack(&native);
         Ok(Self(Rc::new(StackInner {
             native,
+            vertical: orientation.is_vertical(),
             align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
         })))
     }
 
     pub fn set_spacing(&self, spacing: f64) {
-        let _ = self.0.native.SetSpacing(spacing);
+        // 交差軸は 1 本なので、両方に入れても主軸の間隔にしか効かない。
+        let _ = self.0.native.SetRowSpacing(spacing);
+        let _ = self.0.native.SetColumnSpacing(spacing);
     }
 
     pub fn set_padding(&self, padding: Padding) {
@@ -1066,18 +1068,23 @@ impl Stack {
 
     pub fn set_align(&self, align: Align) {
         self.0.align.set(align);
-        let vertical = self.is_vertical();
         for child in self.0.children.borrow().iter() {
-            crate::layout::set_stack_parent(&child.native_element(), align, vertical);
+            self.adopt(&child.native_element());
         }
     }
 
-    fn is_vertical(&self) -> bool {
-        self.0
-            .native
-            .Orientation()
-            .map(|o| o == XamlOrientation::Vertical)
-            .unwrap_or(true)
+    /// Records this Stack as the child's parent and applies its alignment.
+    fn adopt(&self, element: &UIElement) {
+        crate::layout::set_stack_parent(
+            element,
+            &self.0.native,
+            self.0.align.get(),
+            self.0.vertical,
+        );
+    }
+
+    fn arrange(&self) {
+        crate::layout::arrange_stack(&self.0.native, self.0.vertical);
     }
 
     /// Appends a child at the end.
@@ -1085,8 +1092,9 @@ impl Stack {
         let element = child.native_element();
         let appended = self.0.native.Children().and_then(|c| c.Append(&element));
         if appended.is_ok() {
-            crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
+            self.adopt(&element);
             self.0.children.borrow_mut().push(child.boxed_clone());
+            self.arrange();
         }
     }
 
@@ -1102,8 +1110,10 @@ impl Stack {
             .Children()
             .and_then(|c| c.InsertAt(index as u32, &element));
         if inserted.is_ok() {
-            crate::layout::set_stack_parent(&element, self.0.align.get(), self.is_vertical());
+            self.adopt(&element);
             children.insert(index, child.boxed_clone());
+            drop(children);
+            self.arrange();
         }
     }
 
@@ -1119,8 +1129,10 @@ impl Stack {
             .Children()
             .and_then(|c| c.RemoveAt(index as u32));
         if removed.is_ok() {
-            crate::layout::clear_parent_layout(&children[index].native_element());
+            crate::layout::release_stack_child(&children[index].native_element());
             children.remove(index);
+            drop(children);
+            self.arrange();
         }
     }
 
@@ -1140,9 +1152,10 @@ impl Stack {
             return;
         }
         for element in elements {
-            crate::layout::clear_parent_layout(&element);
+            crate::layout::release_stack_child(&element);
         }
         self.0.children.borrow_mut().clear();
+        self.arrange();
     }
 
     pub fn len(&self) -> usize {

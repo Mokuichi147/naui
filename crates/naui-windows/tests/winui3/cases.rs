@@ -25,7 +25,8 @@ use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, HorizontalAlignment, RoutedEventHandler, UIElement, VerticalAlignment,
+    FrameworkElement, GridUnitType, HorizontalAlignment, RoutedEventHandler, UIElement,
+    VerticalAlignment,
 };
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows_core::{Interface, HSTRING};
@@ -104,6 +105,18 @@ const CASES: &[Case] = &[
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
+        "スタックの主軸の Fill は Star の行、それ以外と隠した子は行を持たない",
+        stack_gives_fill_children_star_tracks,
+    ),
+    (
+        "スタックから外した子は行の番号を次の親へ持ち越さない",
+        removing_stack_child_resets_its_track,
+    ),
+    (
+        "Grid で結合していた子をスタックへ移すと結合が外れる",
+        grid_span_does_not_follow_into_a_stack,
+    ),
+    (
         "リストに行の起動と文脈メニューの受け口を付けられる",
         list_accepts_row_activate_and_context_menu,
     ),
@@ -175,6 +188,10 @@ const CASES: &[Case] = &[
     (
         "Grid に置いたあとで上限を変えても、外しても、付けても追従する",
         grid_follows_a_changed_maximum_width,
+    ),
+    (
+        "スタックの主軸の Fill と Spacer が余りを受け取り、隠した子は間を空けない",
+        stack_hands_leftover_space_to_fill_and_spacer,
     ),
     (
         "ui.window と set_size の大きさは size と同じ中身の大きさ",
@@ -859,10 +876,10 @@ fn tree_rows_stretch_their_content(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `Align` is applied to the children on the cross axis, not to the StackPanel
+/// `Align` is applied to the children on the cross axis, not to the Stack's `Grid`
 /// itself.
 ///
-/// Setting the StackPanel itself to `Left` would shrink even a Stack with
+/// Setting the `Grid` itself to `Left` would shrink even a Stack with
 /// `fill_width()` to its content width, and the elements inside could not receive the
 /// parent's width even with Stretch.
 fn stack_alignment_keeps_fill_width(ui: &Ui) -> Result<()> {
@@ -875,11 +892,11 @@ fn stack_alignment_keeps_fill_width(ui: &Ui) -> Result<()> {
     stack.append(&normal);
     stack.append(&fill);
 
-    let panel = native::<StackPanel>(&stack);
+    let panel = native::<Grid>(&stack);
     assert_eq!(
-        panel.HorizontalAlignment().expect("StackPanel の横配置"),
+        panel.HorizontalAlignment().expect("Stack の Grid の横配置"),
         HorizontalAlignment::Stretch,
-        "StackPanel 自身は親の幅を受け取ること"
+        "Stack の Grid 自身は親の幅を受け取ること"
     );
     assert_eq!(
         native::<TextBlock>(&normal)
@@ -962,7 +979,7 @@ fn scroll_stretches_non_scrolling_content(ui: &Ui) -> Result<()> {
         "横へ送らない内容はビューポート幅へ広がること"
     );
     assert_eq!(
-        native::<StackPanel>(&child)
+        native::<Grid>(&child)
             .HorizontalAlignment()
             .expect("スクロール内容の横配置"),
         HorizontalAlignment::Stretch,
@@ -989,7 +1006,7 @@ fn scroll_stretch_survives_sizing(ui: &Ui) -> Result<()> {
         "横へ送らない内容はビューポート幅へ広がること"
     );
     assert_eq!(
-        native::<StackPanel>(&child)
+        native::<Grid>(&child)
             .HorizontalAlignment()
             .expect("サイズ変更後のスクロール内容の横配置"),
         HorizontalAlignment::Stretch,
@@ -1029,7 +1046,7 @@ fn failed_parent_operations_keep_layout_state(ui: &Ui) -> Result<()> {
     second_scroll.set_child(&scroll_child);
     scroll_child.set_sizing(Sizing::AUTO);
     assert_eq!(
-        native::<StackPanel>(&scroll_child)
+        native::<Grid>(&scroll_child)
             .HorizontalAlignment()
             .expect("追加失敗後の Scroll 内容の横配置"),
         HorizontalAlignment::Stretch,
@@ -1115,7 +1132,7 @@ fn layout_preserves_user_tag(ui: &Ui) -> Result<()> {
 
     let scroll = ui.scroll()?;
     let scroll_child = ui.stack(Orientation::Vertical)?;
-    let scroll_native = native::<StackPanel>(&scroll_child)
+    let scroll_native = native::<Grid>(&scroll_child)
         .cast::<FrameworkElement>()
         .expect("Scroll 内容の FrameworkElement 変換");
     let user_tag =
@@ -1172,7 +1189,7 @@ fn stack_keeps_children(ui: &Ui) -> Result<()> {
     }
     assert_eq!(stack.len(), 3);
 
-    let children = native::<StackPanel>(&stack).Children().expect("子の一覧");
+    let children = native::<Grid>(&stack).Children().expect("子の一覧");
     assert_eq!(children.Size().unwrap_or(0), 3, "ネイティブ側にも 3 つ");
     let first = children
         .GetAt(0)
@@ -1184,6 +1201,274 @@ fn stack_keeps_children(ui: &Ui) -> Result<()> {
         "残る",
         "ハンドルを落としても中身が生きていること"
     );
+    Ok(())
+}
+
+/// The kinds of a Stack's main-axis tracks, in order.
+fn stack_tracks(stack: &Grid, vertical: bool) -> Vec<GridUnitType> {
+    if vertical {
+        let definitions = stack.RowDefinitions().expect("行の定義");
+        (0..definitions.Size().expect("行の数"))
+            .map(|i| {
+                definitions
+                    .GetAt(i)
+                    .expect("行")
+                    .Height()
+                    .expect("高さ")
+                    .GridUnitType
+            })
+            .collect()
+    } else {
+        let definitions = stack.ColumnDefinitions().expect("列の定義");
+        (0..definitions.Size().expect("列の数"))
+            .map(|i| {
+                definitions
+                    .GetAt(i)
+                    .expect("列")
+                    .Width()
+                    .expect("幅")
+                    .GridUnitType
+            })
+            .collect()
+    }
+}
+
+/// A Stack is a `Grid` with one track per shown child: `Star` for `Fill` on the main
+/// axis (a `Spacer` included), `Auto` otherwise. A hidden child shares the track
+/// before it, so it takes neither leftover space nor the spacing around a track. A
+/// `Fill` given after adding, showing a child again and removing one all lay it out
+/// again.
+fn stack_gives_fill_children_star_tracks(ui: &Ui) -> Result<()> {
+    const AUTO: GridUnitType = GridUnitType::Auto;
+    const STAR: GridUnitType = GridUnitType::Star;
+
+    let stack = ui.stack(Orientation::Horizontal)?;
+    let first = ui.label("先頭")?;
+    let spacer = ui.spacer()?;
+    let hidden = ui.button("隠す")?;
+    hidden.set_sizing(Sizing::fill());
+    hidden.set_visible(false);
+    let last = ui.button("末尾")?;
+    stack.append(&first);
+    stack.append(&spacer);
+    stack.append(&hidden);
+    stack.append(&last);
+
+    let grid = native::<Grid>(&stack);
+    let columns = || {
+        [&first as &dyn Widget, &spacer, &hidden, &last]
+            .map(|widget| Grid::GetColumn(&native::<FrameworkElement>(widget)).expect("列"))
+    };
+    assert_eq!(
+        stack_tracks(&grid, false),
+        [AUTO, STAR, AUTO],
+        "Spacer だけが Star で、隠した子は列を持たないこと"
+    );
+    assert_eq!(columns(), [0, 1, 1, 2], "隠した子は前の子の列に入ること");
+    assert_eq!(
+        stack_tracks(&grid, true),
+        [],
+        "交差軸は暗黙の 1 本のままのこと"
+    );
+
+    hidden.set_visible(true);
+    assert_eq!(
+        stack_tracks(&grid, false),
+        [AUTO, STAR, STAR, AUTO],
+        "見せ直すと Fill の子が自分の Star の列を持つこと"
+    );
+    assert_eq!(columns(), [0, 1, 2, 3]);
+
+    first.set_sizing(Sizing::fill_width());
+    last.set_sizing(Sizing::fill_height());
+    assert_eq!(
+        stack_tracks(&grid, false),
+        [STAR, STAR, STAR, AUTO],
+        "追加の後の主軸の Fill は Star にし、交差軸だけの Fill は Auto のままのこと"
+    );
+
+    stack.remove(1);
+    assert_eq!(
+        stack_tracks(&grid, false),
+        [STAR, STAR, AUTO],
+        "外すと列を詰めること"
+    );
+
+    let column = ui.stack(Orientation::Vertical)?;
+    let body = ui.label("本文")?;
+    body.set_sizing(Sizing::fill_height());
+    column.append(&ui.label("見出し")?);
+    column.append(&body);
+    let column_grid = native::<Grid>(&column);
+    assert_eq!(
+        stack_tracks(&column_grid, true),
+        [AUTO, STAR],
+        "縦のスタックでは高さの Fill が Star の行になること"
+    );
+    assert_eq!(stack_tracks(&column_grid, false), []);
+    Ok(())
+}
+
+/// A child taken out of a Stack does not keep its row number. Otherwise, in a `Grid`
+/// that places its children without setting a row (a window's content row, for
+/// example), it would land in a row that is not there.
+fn removing_stack_child_resets_its_track(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&ui.label("一")?);
+    let child = ui.label("二")?;
+    stack.append(&child);
+    let element = native::<FrameworkElement>(&child);
+    assert_eq!(Grid::GetRow(&element).expect("行"), 1);
+
+    stack.remove(1);
+    assert_eq!(
+        Grid::GetRow(&element).expect("外した後の行"),
+        0,
+        "remove で行を戻すこと"
+    );
+
+    stack.append(&child);
+    assert_eq!(Grid::GetRow(&element).expect("戻した後の行"), 1);
+    stack.clear();
+    assert_eq!(
+        Grid::GetRow(&element).expect("clear の後の行"),
+        0,
+        "clear で行を戻すこと"
+    );
+    assert_eq!(
+        stack_tracks(&native::<Grid>(&stack), true),
+        [],
+        "clear で行の定義も無くなること"
+    );
+    Ok(())
+}
+
+/// A child that spanned cells in a `Grid` takes one track in a Stack. `Grid::remove`
+/// leaves the spans on the element, and a span of 2 would also cover the next child's
+/// column, so the two would overlap.
+fn grid_span_does_not_follow_into_a_stack(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    let child = ui.button("2 列にまたがる")?;
+    grid.attach(&child, GridCell::new(0, 0).span(2, 2));
+    grid.remove(GridCell::new(0, 0));
+
+    let stack = ui.stack(Orientation::Horizontal)?;
+    let next = ui.button("後ろ")?;
+    stack.append(&child);
+    stack.append(&next);
+    let element = native::<FrameworkElement>(&child);
+    assert_eq!(
+        (
+            Grid::GetColumnSpan(&element).expect("列の結合"),
+            Grid::GetRowSpan(&element).expect("行の結合"),
+        ),
+        (1, 1),
+        "Grid の結合を Stack へ持ち込まないこと"
+    );
+    assert_eq!(
+        (
+            Grid::GetColumn(&element).expect("移した子の列"),
+            Grid::GetColumn(&native::<FrameworkElement>(&next)).expect("後ろの子の列"),
+        ),
+        (0, 1),
+        "移した子と後ろの子が別の列に入ること"
+    );
+    Ok(())
+}
+
+/// The space actually handed out: a `Spacer` pushes the button after it to the
+/// right edge, a vertical `Spacer` pushes the last label to the bottom, and a hidden
+/// child leaves no doubled spacing.
+///
+/// Messages are pumped until it is laid out. In environments where it never is (CI),
+/// it passes without checking.
+fn stack_hands_leftover_space_to_fill_and_spacer(ui: &Ui) -> Result<()> {
+    const SPACING: f64 = 10.0;
+
+    let window = ui.window("余り", 400.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    root.set_spacing(SPACING);
+
+    let bar = ui.stack(Orientation::Horizontal)?;
+    bar.set_sizing(Sizing::fill_width());
+    let start = ui.button("左")?;
+    let end = ui.button("右")?;
+    bar.append(&start);
+    bar.append(&ui.spacer()?);
+    bar.append(&end);
+
+    let above = ui.label("上")?;
+    let hidden = ui.label("隠す")?;
+    hidden.set_visible(false);
+    let below = ui.label("下")?;
+    let footer = ui.label("足")?;
+    root.append(&bar);
+    root.append(&above);
+    root.append(&hidden);
+    root.append(&below);
+    root.append(&ui.spacer()?);
+    root.append(&footer);
+    window.set_child(&root);
+    window.show();
+
+    let element = |widget: &dyn Widget| native::<FrameworkElement>(widget);
+    let (bar_element, end_element) = (element(&bar), element(&end));
+    let (root_element, footer_element) = (element(&root), element(&footer));
+    let (above_element, below_element) = (element(&above), element(&below));
+    // 親の中での位置 (x, y) と大きさ (幅, 高さ)。
+    let bounds = |element: &FrameworkElement| {
+        let offset = element
+            .cast::<UIElement>()
+            .and_then(|element| element.ActualOffset())
+            .expect("位置");
+        (
+            f64::from(offset.X),
+            f64::from(offset.Y),
+            element.ActualWidth().unwrap_or(0.0),
+            element.ActualHeight().unwrap_or(0.0),
+        )
+    };
+    let laid_out = || {
+        [&root_element, &end_element, &footer_element]
+            .iter()
+            .all(|element| element.ActualWidth().unwrap_or(0.0) > 0.0)
+    };
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out() {
+            println!("     (中身に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let (end_x, _, end_width, _) = bounds(&end_element);
+        let bar_width = bar_element.ActualWidth().unwrap_or(0.0);
+        assert!(
+            (end_x + end_width - bar_width).abs() < 1.0,
+            "Spacer の後のボタンが右端に付くこと: {} / {bar_width}",
+            end_x + end_width
+        );
+
+        let (_, footer_y, _, footer_height) = bounds(&footer_element);
+        let root_height = root_element.ActualHeight().unwrap_or(0.0);
+        assert!(
+            (footer_y + footer_height - root_height).abs() < 1.0,
+            "縦の Spacer の後のラベルが下端に付くこと: {} / {root_height}",
+            footer_y + footer_height
+        );
+
+        let (_, above_y, _, above_height) = bounds(&above_element);
+        let (_, below_y, _, _) = bounds(&below_element);
+        let gap = below_y - (above_y + above_height);
+        assert!(
+            (gap - SPACING).abs() < 0.5,
+            "隠した子の両側に間隔を重ねないこと: {gap}"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 

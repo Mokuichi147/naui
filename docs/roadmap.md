@@ -101,11 +101,14 @@ counterparts for, plus the foundation the adaptive layout track builds on.
       the native side labels itself (WinUI's `NavigationView`, AppKit's sidebar
       button) are left as they are.
 
-- [ ] *(adaptive)* **Make main-axis `Fill` and `Spacer` work in Windows's
+- [x] *(adaptive)* **Make main-axis `Fill` and `Spacer` work in Windows's
       `Stack`.** `StackPanel` does not distribute leftover space, so even pushing
-      buttons to the right edge with a `Spacer` does not work on Windows today. The
-      `Stack` is rebuilt on `Grid`. This removes the first row of the
-      [platform differences](known-limitations.md#platform-differences-at-a-glance).
+      buttons to the right edge with a `Spacer` did not work on Windows. The
+      `Stack` is now a `Grid` with one track per child, `Star` for main-axis
+      `Fill`, and hidden children take neither a track nor spacing. The first row
+      of the
+      [platform differences](known-limitations.md#platform-differences-at-a-glance)
+      is gone.
 - [x] **Stop polling the scroll position in Windows's `Table`.** A `Table` with
       more rows than the windowing threshold read its scroll position every 50 ms
       for as long as it existed, even when nothing moved, and the rows built could
