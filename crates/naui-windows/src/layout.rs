@@ -774,23 +774,21 @@ impl Grid {
     /// and forgets that it was placed here.
     fn forget(&self, placed: PlacedChild) {
         let element = placed.widget.native_element();
-        match &placed.wrapper {
-            Some(wrapper) => release(wrapper),
-            None => {
-                // マスのために付けた置き場所と縦の寄せ方を、`apply_sizing` の決めた
-                // 形へ戻す。残すと、次の親 (Scroll やウィンドウ) で中央に寄ったままになる。
-                if let Ok(framework) = element.cast::<FrameworkElement>() {
-                    let _ = XamlGrid::SetRow(&framework, 0);
-                    let _ = XamlGrid::SetColumn(&framework, 0);
-                    let _ = XamlGrid::SetRowSpan(&framework, 1);
-                    let _ = XamlGrid::SetColumnSpan(&framework, 1);
-                    let _ = framework.SetVerticalAlignment(if wants_fill(&framework, false) {
-                        VerticalAlignment::Stretch
-                    } else {
-                        VerticalAlignment::Top
-                    });
-                }
-            }
+        if let Some(wrapper) = &placed.wrapper {
+            release(wrapper);
+        }
+        // マスのために付けた置き場所と縦の寄せ方を、`apply_sizing` の決めた
+        // 形へ戻す。追加後に包んだ子自身にも、包む前のマスの指定が残っている。
+        if let Ok(framework) = element.cast::<FrameworkElement>() {
+            let _ = XamlGrid::SetRow(&framework, 0);
+            let _ = XamlGrid::SetColumn(&framework, 0);
+            let _ = XamlGrid::SetRowSpan(&framework, 1);
+            let _ = XamlGrid::SetColumnSpan(&framework, 1);
+            let _ = framework.SetVerticalAlignment(if wants_fill(&framework, false) {
+                VerticalAlignment::Stretch
+            } else {
+                VerticalAlignment::Top
+            });
         }
         let key = element_key(&element);
         GRID_PARENTS.with(|parents| {

@@ -121,6 +121,10 @@ const CASES: &[Case] = &[
         grid_cell_placement_follows_the_child,
     ),
     (
+        "Grid から外した上限付き Fill の子もマスの配置を残さない",
+        removing_capped_grid_child_resets_placement,
+    ),
+    (
         "リストに行の起動と文脈メニューの受け口を付けられる",
         list_accepts_row_activate_and_context_menu,
     ),
@@ -1371,9 +1375,8 @@ fn removing_stack_child_resets_its_track(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// A child that spanned cells in a `Grid` takes one track in a Stack. `Grid::remove`
-/// leaves the spans on the element, and a span of 2 would also cover the next child's
-/// column, so the two would overlap.
+/// A child that spanned cells in a `Grid` takes one track in a Stack. A span of 2
+/// would also cover the next child's column, so the two would overlap.
 fn grid_span_does_not_follow_into_a_stack(ui: &Ui) -> Result<()> {
     let grid = ui.grid()?;
     let child = ui.button("2 列にまたがる")?;
@@ -1434,6 +1437,68 @@ fn grid_cell_placement_follows_the_child(ui: &Ui) -> Result<()> {
         (0, 0),
         "外したらマスの位置を残さないこと"
     );
+    Ok(())
+}
+
+/// Adding a maximum after attaching wraps the child, but its old cell properties
+/// are still on the child itself. Both removal paths must reset those properties
+/// even when the child has to be released from a wrapper first.
+fn removing_capped_grid_child_resets_placement(ui: &Ui) -> Result<()> {
+    for clear in [false, true] {
+        for capped in [false, true] {
+            for fill_height in [false, true] {
+                let grid = ui.grid()?;
+                let child = ui.label("移す子")?;
+                let cell = GridCell::new(1, 2).span(2, 3);
+                grid.attach(&child, cell);
+                let sizing = if fill_height {
+                    Sizing::fill()
+                } else {
+                    Sizing::fill_width()
+                };
+                child.set_sizing(if capped {
+                    sizing.max_width(80.0)
+                } else {
+                    sizing
+                });
+
+                if clear {
+                    grid.clear();
+                } else {
+                    grid.remove(cell);
+                }
+                let element = native::<FrameworkElement>(&child);
+                assert_eq!(
+                    (
+                        Grid::GetColumn(&element).expect("列"),
+                        Grid::GetRow(&element).expect("行"),
+                        Grid::GetColumnSpan(&element).expect("列の結合"),
+                        Grid::GetRowSpan(&element).expect("行の結合"),
+                    ),
+                    (0, 0, 1, 1),
+                    "外した子にマスの配置を残さない: clear={clear}, capped={capped}, fill_height={fill_height}"
+                );
+                assert_eq!(
+                    element.VerticalAlignment().expect("縦の寄せ方"),
+                    if fill_height {
+                        VerticalAlignment::Stretch
+                    } else {
+                        VerticalAlignment::Top
+                    },
+                    "外した子自身の Sizing を保つこと"
+                );
+                assert!(grid.is_empty(), "元の Grid から外れていること");
+                // A raw panel does not repair the cell properties for us. Appending
+                // also proves that the former wrapper no longer owns the child.
+                let other = Grid::new().expect("移動先の Grid");
+                let children = other.Children().expect("移動先の子一覧");
+                children
+                    .Append(&child.native_element())
+                    .expect("外した子をほかの親へ追加できること");
+                children.Clear().expect("移動先から外す");
+            }
+        }
+    }
     Ok(())
 }
 
