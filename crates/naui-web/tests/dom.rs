@@ -4304,29 +4304,61 @@ fn label_is_not_selectable_until_asked() {
     });
 }
 
-/// Browsers may not allow reading the clipboard outside a user action, so for
-/// reading this only checks that "the callback is always called later".
+/// Permission prompts can leave a real read pending indefinitely. Use a resolved
+/// promise to check callback timing without reading the user's clipboard.
 #[wasm_bindgen_test]
 async fn clipboard_read_calls_back_later() {
+    clipboard_read_with_response(
+        "return Promise.resolve('naui のテスト')",
+        Some("naui のテスト"),
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn clipboard_read_reports_a_refusal() {
+    clipboard_read_with_response(
+        "return Promise.reject(new DOMException('断りました', 'NotAllowedError'))",
+        None,
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn clipboard_read_empty_text_is_none() {
+    clipboard_read_with_response("return Promise.resolve('')", None).await;
+}
+
+async fn clipboard_read_with_response(body: &str, expected: Option<&str>) {
     let mut kept = None;
     with_ui(|ui| {
         kept = Some(ui.clipboard());
         Ok(())
     });
     let clipboard = kept.expect("clipboard");
-    let called = Rc::new(Cell::new(false));
+    let native: wasm_bindgen::JsValue = web_sys::window()
+        .expect("window")
+        .navigator()
+        .clipboard()
+        .into();
+    let response = js_sys::Function::new_no_args(body);
+    js_sys::Reflect::set(&native, &"readText".into(), &response).expect("差し替え");
+    let seen = Rc::new(RefCell::new(None));
     clipboard.read_text({
-        let called = called.clone();
-        move |_text| called.set(true)
+        let seen = seen.clone();
+        move |text| *seen.borrow_mut() = Some(text)
     });
-    assert!(!called.get(), "その場では呼ばない");
+    assert!(seen.borrow().is_none(), "その場では呼ばない");
     for _ in 0..50 {
-        if called.get() {
+        if seen.borrow().is_some() {
             break;
         }
         wait_millis(20).await;
     }
-    assert!(called.get(), "読めなくてもコールバックは呼ばれる");
+    js_sys::Reflect::delete_property(native.unchecked_ref::<js_sys::Object>(), &"readText".into())
+        .expect("元に戻す");
+    let text = seen.borrow_mut().take().expect("コールバックが呼ばれる");
+    assert_eq!(text.as_deref(), expected);
 }
 
 /// When writing is refused, `Err` arrives. So as not to wipe the user's clipboard
