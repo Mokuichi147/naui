@@ -352,10 +352,6 @@ impl Tabs {
         }
         // タブの中身は、タブの表示領域いっぱいに広がる。
         fill_parent(&content);
-        apply_child_layout(
-            &content,
-            ParentLayout::Flex(naui_core::Orientation::Vertical),
-        );
 
         let index = self.0.tabs.borrow().len();
         // 押されたタブの位置は、並びが変わることがあるので押されてから調べる
@@ -390,6 +386,13 @@ impl Tabs {
         } else {
             self.show(self.0.selected.get());
         }
+        // 区画を文書へ入れて開いてから整える。先に整えると、ほかの入れ物から
+        // 移した中身の Scroll が、表示領域の無いうちに位置を戻そうとして待った
+        // まま残る (大きさが同じなら、そのあと ResizeObserver も呼ばれない)。
+        apply_child_layout(
+            &content,
+            ParentLayout::Flex(naui_core::Orientation::Vertical),
+        );
     }
 
     /// Shows only the selected tab.

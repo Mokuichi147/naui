@@ -212,6 +212,8 @@ impl Dialog {
         let element = child.native_element();
         if self.0.content.append_child(&element).is_ok() {
             self.0.content.set_hidden(false);
+            // あとから `set_sizing` したときと同じ扱いにし、前の親のための指定を残さない。
+            crate::layout::apply_child_layout(&element, crate::layout::ParentLayout::Block);
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }

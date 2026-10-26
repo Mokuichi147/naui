@@ -1332,6 +1332,35 @@ fn moved_widget_keeps_its_scroll_position() {
     });
 }
 
+/// A pane moved into a tab keeps the scroll position of the `Scroll` inside. The
+/// tab's area is put into the document after the pane is placed in it, so the
+/// position has to be restored once the tab is in the document; with the same size
+/// before and after, `ResizeObserver` does not report anything.
+#[wasm_bindgen_test]
+fn moved_into_a_tab_keeps_its_scroll_position() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let pane = ui.stack(Orientation::Vertical)?;
+        let (scroll, _content) = tall_scroll(ui, 40)?;
+        pane.append(&scroll);
+        root.append(&pane);
+        let tabs = ui.tabs()?;
+        let _root = Mounted::new(&root);
+        let _tabs = Mounted::new(&tabs);
+        scroll.scroll_to(0.0, 200.0);
+        assert_eq!(scroll.metrics().y, 200.0);
+
+        root.remove(0);
+        tabs.add_tab("移した", &pane);
+        assert_eq!(
+            scroll.metrics().y,
+            200.0,
+            "タブへ移してもスクロール位置が残ること"
+        );
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn stack_inserts_and_removes_children() {
     with_ui(|ui| {
