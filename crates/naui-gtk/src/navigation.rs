@@ -625,6 +625,8 @@ impl Tabs {
             return;
         }
         let selected = self.selected();
+        let bin = self.0.children.borrow()[index].size_bin();
+        crate::interaction::clear_focus(&bin);
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.remove_page(Some(index as u32));
         });
@@ -646,6 +648,16 @@ impl Tabs {
 
     /// Removes every tab.
     pub fn clear(&self) {
+        let bins: Vec<_> = self
+            .0
+            .children
+            .borrow()
+            .iter()
+            .map(|child| child.size_bin())
+            .collect();
+        for bin in bins {
+            crate::interaction::clear_focus(&bin);
+        }
         without_signal(&self.0.native, &self.0.handler, || {
             while self.0.native.n_pages() > 0 {
                 self.0.native.remove_page(Some(0));

@@ -80,8 +80,10 @@ impl Grid {
 
     /// Removes every child. The row and column settings stay.
     pub fn clear(&self) {
-        for (_, child) in std::mem::take(&mut *self.0.children.borrow_mut()) {
+        let children = std::mem::take(&mut *self.0.children.borrow_mut());
+        for (_, child) in children {
             let bin = child.size_bin();
+            crate::interaction::clear_focus(&bin);
             self.0.native.remove(&bin);
             bin.set_placement(Placement::Loose);
         }
@@ -91,17 +93,24 @@ impl Grid {
     ///
     /// Only the column and row of `cell` are considered, not the span.
     pub fn remove(&self, cell: GridCell) {
-        let mut children = self.0.children.borrow_mut();
-        let mut index = 0;
-        while index < children.len() {
-            if children[index].0.column == cell.column && children[index].0.row == cell.row {
-                let (_, child) = children.remove(index);
-                let bin = child.size_bin();
-                self.0.native.remove(&bin);
-                bin.set_placement(Placement::Loose);
-            } else {
-                index += 1;
+        let removed = {
+            let mut children = self.0.children.borrow_mut();
+            let mut removed = Vec::new();
+            let mut index = 0;
+            while index < children.len() {
+                if children[index].0.column == cell.column && children[index].0.row == cell.row {
+                    removed.push(children.remove(index).1);
+                } else {
+                    index += 1;
+                }
             }
+            removed
+        };
+        for child in removed {
+            let bin = child.size_bin();
+            crate::interaction::clear_focus(&bin);
+            self.0.native.remove(&bin);
+            bin.set_placement(Placement::Loose);
         }
     }
 
@@ -380,6 +389,12 @@ impl Scroll {
 
     pub fn set_child(&self, child: &dyn Widget) {
         let bin = child.size_bin();
+        let previous = self.0.child.borrow().as_ref().map(|child| child.size_bin());
+        if let Some(previous) = previous {
+            if previous != bin {
+                crate::interaction::clear_focus(&previous);
+            }
+        }
         // スクロールの中では、中身は自分の大きさのまま置かれる。
         bin.fill_parent();
         self.0.native.set_child(Some(&bin));

@@ -280,6 +280,7 @@ fn main() {
             "移した子はスクロール位置を保ち、フォーカスは外れる",
             moved_widget_keeps_scroll_but_not_focus,
         ),
+        ("どのコンテナから外しても再追加でフォーカスを持ち越さない", containers_release_focus_before_detaching),
         (
             "スクロールが中身とポリシーを保つ",
             scroll_keeps_child_and_policy,
@@ -2724,13 +2725,17 @@ fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
 /// What a widget moved to another container keeps: a `Scroll` keeps its position,
 /// while a field loses the focus (GTK4 moves it out of a widget that is unparented).
 fn moved_widget_keeps_scroll_but_not_focus(ui: &Ui) -> Result<()> {
+    // Keep a visible destination and change its alignment before moving the field.
     let window = ui.window("移動", 240.0, 300.0)?;
     let root = ui.stack(Orientation::Vertical)?;
     let first = ui.stack(Orientation::Vertical)?;
     let second = ui.stack(Orientation::Vertical)?;
+    root.set_align(Align::Start);
+    second.set_align(Align::End);
+    second.append(&ui.label("移動先")?);
     root.append(&first);
     root.append(&second);
-    let field = ui.text_input("")?;
+    let field = ui.text_input("入力中の文字")?;
     first.append(&field);
     let pane = ui.stack(Orientation::Vertical)?;
     for index in 0..40 {
@@ -2758,6 +2763,24 @@ fn moved_widget_keeps_scroll_but_not_focus(ui: &Ui) -> Result<()> {
             .is_some_and(|focus| focus == field || focus.is_ancestor(&field))
     };
     let had_focus = focused();
+    let lost_focus = Rc::new(Cell::new(0));
+    field.on_focus_change({
+        let lost_focus = lost_focus.clone();
+        let first = first.downgrade();
+        let notice = ui.label("フォーカスが外れた")?;
+        move |has_focus| {
+            if !has_focus {
+                lost_focus.set(lost_focus.get() + 1);
+                if let Some(first) = first.upgrade() {
+                    first.append(&notice);
+                }
+            }
+        }
+    });
+    // Unrelated insertions and removals must leave the field focused.
+    first.insert(0, &ui.label("見出し")?);
+    first.remove(0);
+    assert_eq!(focused(), had_focus);
     scroll.scroll_to(0.0, 120.0);
     settle(&scroll);
     assert_eq!(scroll.metrics().y, 120.0);
@@ -2766,13 +2789,125 @@ fn moved_widget_keeps_scroll_but_not_focus(ui: &Ui) -> Result<()> {
     first.remove(0);
     second.append(&field);
     second.append(&scroll);
+    if had_focus {
+        assert!(!focused(), "再追加の直後からフォーカスを失うこと");
+        assert!(lost_focus.get() > 0, "フォーカスを失った通知が届くこと");
+        assert_eq!(first.len(), 1, "通知内でも元のコンテナを操作できること");
+    }
     settle(&scroll);
+    assert_eq!(field.text(), "入力中の文字");
     assert_eq!(scroll.metrics().y, 120.0, "スクロール位置が残ること");
     // ウィンドウがフォーカスを持てない環境では、移す前から持っていない。
     if had_focus {
         assert!(!focused(), "移した入力欄からはフォーカスが外れること");
     }
     window.close();
+    Ok(())
+}
+
+/// Cover direct fields and nested fields across every container removal path.
+fn containers_release_focus_before_detaching(ui: &Ui) -> Result<()> {
+    for mode in 0..10 {
+        let window = ui.window("取り外し", 440.0, 260.0)?;
+        let root = ui.stack(Orientation::Vertical)?;
+        let destination = ui.stack(Orientation::Vertical)?;
+        destination.append(&ui.label("移動先")?);
+        let pane = ui.stack(Orientation::Vertical)?;
+        let field = ui.text_input("保持する文字列")?;
+        pane.append(&field);
+        let replacement = ui.label("差し替え")?;
+        let detach: Box<dyn Fn()> = match mode {
+            0 | 1 => {
+                let source = ui.stack(Orientation::Vertical)?;
+                source.append(&pane);
+                root.append(&source);
+                Box::new(move || {
+                    if mode == 0 {
+                        source.remove(0)
+                    } else {
+                        source.clear()
+                    }
+                })
+            }
+            2 | 3 => {
+                let source = ui.grid()?;
+                source.attach(&pane, GridCell::new(0, 0));
+                root.append(&source);
+                Box::new(move || {
+                    if mode == 2 {
+                        source.remove(GridCell::new(0, 0))
+                    } else {
+                        source.clear()
+                    }
+                })
+            }
+            4 => {
+                let source = ui.scroll()?;
+                source.set_child(&pane);
+                root.append(&source);
+                Box::new(move || source.set_child(&replacement))
+            }
+            5 => {
+                let source = ui.expander("開閉")?;
+                source.set_expanded(true);
+                source.set_child(&pane);
+                root.append(&source);
+                Box::new(move || source.set_child(&replacement))
+            }
+            6 => {
+                let source = ui.split_view(Orientation::Horizontal)?;
+                source.set_start(&pane);
+                source.set_end(&replacement);
+                root.append(&source);
+                let replacement = ui.label("新しい区画")?;
+                Box::new(move || source.set_start(&replacement))
+            }
+            7 | 8 => {
+                let source = ui.tabs()?;
+                source.add_tab("入力", &pane);
+                root.append(&source);
+                Box::new(move || {
+                    if mode == 7 {
+                        source.remove_tab(0)
+                    } else {
+                        source.clear()
+                    }
+                })
+            }
+            _ => {
+                window.set_child(&pane);
+                let window = window.clone();
+                let root = root.clone();
+                Box::new(move || window.set_child(&root))
+            }
+        };
+        root.append(&destination);
+        if mode != 9 {
+            window.set_child(&root);
+        }
+        window.show();
+        tick(&field.native_widget());
+        assert!(field.request_focus(), "shown mode {mode}");
+        let focused = || {
+            field
+                .native_widget()
+                .root()
+                .and_then(|root| root.focus())
+                .is_some_and(|focus| {
+                    focus == field.native_widget() || focus.is_ancestor(&field.native_widget())
+                })
+        };
+        assert!(focused(), "focused before mode {mode}");
+        detach();
+        destination.append(&pane);
+        assert!(!focused(), "immediately after mode {mode}");
+        tick(&field.native_widget());
+        assert!(!focused(), "after layout mode {mode}");
+        assert_eq!(field.text(), "保持する文字列");
+        assert!(field.request_focus(), "explicit refocus mode {mode}");
+        assert!(focused());
+        window.close();
+    }
     Ok(())
 }
 

@@ -16,6 +16,20 @@ pub(crate) fn is_visible(bin: &SizeBin) -> bool {
     bin.is_visible()
 }
 
+/// End focus before unparenting. GTK defers its own focus cleanup until painting;
+/// reattaching the subtree in the same turn can otherwise keep the old focus.
+pub(crate) fn clear_focus(widget: &impl IsA<gtk::Widget>) {
+    let widget = widget.as_ref();
+    if let Some(root) = widget.root() {
+        if root
+            .focus()
+            .is_some_and(|focus| focus == *widget || focus.is_ancestor(widget))
+        {
+            root.set_focus(None::<&gtk::Widget>);
+        }
+    }
+}
+
 /// Moves keyboard focus here. `true` if it moved.
 ///
 /// If the widget itself cannot take focus, focus moves to the first descendant

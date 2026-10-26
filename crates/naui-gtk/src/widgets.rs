@@ -974,20 +974,25 @@ impl Stack {
 
     /// Removes the child at the given position. Does nothing if out of range.
     pub fn remove(&self, index: usize) {
-        let mut children = self.0.children.borrow_mut();
-        if index >= children.len() {
-            return;
-        }
-        let child = children.remove(index);
+        let child = {
+            let mut children = self.0.children.borrow_mut();
+            if index >= children.len() {
+                return;
+            }
+            children.remove(index)
+        };
         let bin = child.size_bin();
+        crate::interaction::clear_focus(&bin);
         self.0.native.remove(&bin);
         bin.set_placement(crate::bin::Placement::Loose);
     }
 
     /// Removes every child.
     pub fn clear(&self) {
-        for child in std::mem::take(&mut *self.0.children.borrow_mut()) {
+        let children = std::mem::take(&mut *self.0.children.borrow_mut());
+        for child in children {
             let bin = child.size_bin();
+            crate::interaction::clear_focus(&bin);
             self.0.native.remove(&bin);
             bin.set_placement(crate::bin::Placement::Loose);
         }

@@ -766,6 +766,12 @@ impl Window {
     /// Replaces the window's content.
     pub fn set_child(&self, child: &dyn Widget) {
         let bin = child.size_bin();
+        let previous = self.0.child.borrow().as_ref().map(|child| child.size_bin());
+        if let Some(previous) = previous {
+            if previous != bin {
+                crate::interaction::clear_focus(&previous);
+            }
+        }
         // ウィンドウの中身は、他のバックエンドと同じく窓いっぱいに広がる。
         bin.fill_parent();
         // ヘッダーバーの下が、アプリの中身の置き場になる。
