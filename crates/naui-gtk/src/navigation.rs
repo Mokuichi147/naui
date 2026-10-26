@@ -624,13 +624,26 @@ impl Tabs {
         if index >= self.len() {
             return;
         }
-        let selected = self.selected();
         let bin = self.0.children.borrow()[index].size_bin();
         crate::interaction::clear_focus(&bin);
+        // Focus callbacks can remove or replace pages, including this one. Find
+        // the same child again and use the selection left by those callbacks.
+        let index = self
+            .0
+            .children
+            .borrow()
+            .iter()
+            .position(|child| child.size_bin() == bin);
+        let Some(index) = index else {
+            return;
+        };
+        let selected = self.selected();
+        // Keep the child alive, but remove it from our state before GTK can send
+        // any further notifications while detaching its native page.
+        let _child = self.0.children.borrow_mut().remove(index);
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.remove_page(Some(index as u32));
         });
-        self.0.children.borrow_mut().remove(index);
         // 選択の寄せ先は環境任せにせず、4 バックエンドで同じ形にそろえる。
         let left = self.len();
         let selected = match selected {

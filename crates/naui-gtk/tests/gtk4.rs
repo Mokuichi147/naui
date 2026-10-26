@@ -507,6 +507,7 @@ fn main() {
         ("ページ送りが範囲内に収まる", pagination_steps),
         ("タブが中身ごと切り替わる", tabs_selection),
         ("タブを外して空にできる", tabs_remove_and_clear),
+        ("タブを閉じるフォーカス通知内でタブ一覧を変更できる", tabs_remove_after_focus_callback),
         (
             "スタックが子を差し込み・外し・空にできる",
             stack_inserts_and_removes_children,
@@ -3821,6 +3822,116 @@ fn tabs_remove_and_clear(ui: &Ui) -> Result<()> {
     tabs.add_tab("え", &ui.label("新しい 1 枚目")?);
     assert_eq!(tabs.len(), 1);
     assert_eq!(tabs.selected(), Some(0));
+    Ok(())
+}
+
+/// Focus loss is synchronous: callbacks can clear, replace or reorder pages
+/// before the outer removal resumes. Follow the page, not its old index.
+fn tabs_remove_after_focus_callback(ui: &Ui) -> Result<()> {
+    for mode in 0..5 {
+        let window = ui.window("タブの再入", 480.0, 240.0)?;
+        let tabs = ui.tabs()?;
+        let before = ui.label("前")?;
+        let field = ui.text_input("削除する入力欄")?;
+        let after = ui.label("後")?;
+        let last = ui.label("最後")?;
+        let replacement = ui.label("新しいページ")?;
+        tabs.add_tab("前", &before);
+        tabs.add_tab("入力", &field);
+        tabs.add_tab("後", &after);
+        tabs.add_tab("最後", &last);
+        tabs.set_selected(1);
+        window.set_child(&tabs);
+        window.show();
+        tick(&field.native_widget());
+        assert!(field.request_focus());
+        let called = Rc::new(Cell::new(0));
+        field.on_focus_change({
+            let tabs = tabs.downgrade();
+            let replacement = replacement.clone();
+            let called = called.clone();
+            move |focused| {
+                if focused {
+                    return;
+                }
+                called.set(called.get() + 1);
+                let tabs = tabs.upgrade().expect("タブが生存");
+                match mode {
+                    0 => tabs.clear(),
+                    1 => tabs.remove_tab(0),
+                    2 => {
+                        tabs.remove_tab(1);
+                        tabs.add_tab("新規", &replacement);
+                    }
+                    3 => {
+                        tabs.set_selected(3);
+                        tabs.remove_tab(0);
+                    }
+                    _ => {
+                        tabs.clear();
+                        tabs.add_tab("新規", &replacement);
+                    }
+                }
+            }
+        });
+        let (log, sink) = recorder::<usize>();
+        tabs.on_select(sink);
+        // Close the real window even when the old implementation panics, so the
+        // failure does not leave a window interfering with subsequent tests.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tabs.remove_tab(1);
+            assert_eq!(called.get(), 1, "focus callback mode {mode}");
+            let native: gtk::Notebook = tabs.native_widget().downcast().expect("GtkNotebook");
+            let expected: Vec<gtk::Widget> = match mode {
+                0 => vec![],
+                1 | 3 => vec![bin_of(&after), bin_of(&last)],
+                2 => vec![
+                    bin_of(&before),
+                    bin_of(&after),
+                    bin_of(&last),
+                    bin_of(&replacement),
+                ],
+                _ => vec![bin_of(&replacement)],
+            };
+            assert_eq!(tabs.len(), expected.len(), "page count mode {mode}");
+            for (index, page) in expected.iter().enumerate() {
+                assert_eq!(
+                    native.nth_page(Some(index as u32)).as_ref(),
+                    Some(page),
+                    "page identity mode {mode}"
+                );
+            }
+            let selected = match mode {
+                0 => None,
+                1 | 4 => Some(0),
+                _ => Some(1),
+            };
+            assert_eq!(
+                tabs.selected(),
+                selected,
+                "selection after callback mode {mode}"
+            );
+            // Rebuilding an empty notebook adds and selects a new first page.
+            // Keep that callback intact; removal itself must not add a notice.
+            let notices: &[usize] = if mode == 4 { &[0] } else { &[] };
+            assert_eq!(
+                log.borrow().as_slice(),
+                notices,
+                "selection notices mode {mode}"
+            );
+            assert!(bin_of(&field).parent().is_none());
+            // Exercise the Rust child list again, as well as checking native pages.
+            field.on_focus_change(|_| {});
+            tabs.clear();
+            tabs.add_tab("再利用", &field);
+            tabs.remove_tab(0);
+            assert!(tabs.is_empty());
+        }));
+        window.close();
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
+    }
     Ok(())
 }
 
