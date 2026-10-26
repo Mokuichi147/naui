@@ -1373,7 +1373,7 @@ fn combo_box_items_and_selection(ui: &Ui) -> Result<()> {
     assert_eq!(combo.selected(), None, "項目の作り直し後も未選択");
 
     let native: gtk::DropDown = combo.native_widget().downcast().expect("GtkDropDown");
-    assert_eq!(native.selected(), gtk::INVALID_LIST_POSITION);
+    assert_eq!(native.selected(), 3, "末尾の非表示の未選択項目");
     let model = native.model().expect("GtkStringList のモデル");
     let green: gtk::StringObject = model
         .item(1)
@@ -1389,6 +1389,15 @@ fn combo_box_items_and_selection(ui: &Ui) -> Result<()> {
     assert_eq!(combo.selected(), Some(2), "範囲外は無視する");
 
     combo.clear_selection();
+    assert_eq!(combo.selected(), None);
+    assert_eq!(native.selected(), 3);
+    combo.set_items(&["", "別"]);
+    assert_eq!(combo.len(), 2);
+    assert_eq!(combo.selected(), None);
+    combo.set_selected(0);
+    assert_eq!(combo.selected(), Some(0), "空文字の項目も未選択と区別する");
+    combo.set_items::<&str>(&[]);
+    assert!(combo.is_empty());
     assert_eq!(combo.selected(), None);
     combo.set_enabled(false);
     assert!(!native.is_sensitive());
@@ -1413,6 +1422,10 @@ fn combo_box_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
     combo.select(0);
     combo.select(99);
     assert_eq!(log.borrow().as_slice(), [2, 0]);
+    combo.clear_selection();
+    native.set_selected(0);
+    assert_eq!(combo.selected(), Some(0), "解除後も先頭の項目を選べる");
+    assert_eq!(log.borrow().as_slice(), [2, 0, 0]);
     Ok(())
 }
 
@@ -7688,13 +7701,15 @@ fn window_reports_its_size(ui: &Ui) -> Result<()> {
 }
 
 fn window_set_size_right_after_adding_bars(ui: &Ui) -> Result<()> {
-    let window = ui.window("帯と大きさ", 320.0, 200.0)?;
+    // The header (title and window buttons) can itself need more than 320px.
+    // This test checks refitting after bar changes, above that native minimum.
+    let window = ui.window("帯と大きさ", 400.0, 200.0)?;
     window.set_child(&ui.label("中身")?);
     window.show();
     spin_until(std::time::Duration::from_secs(2), || {
-        window.native_header_bar().height() > 0 && window.size() == (320.0, 200.0)
+        window.native_header_bar().height() > 0 && window.size() == (400.0, 200.0)
     });
-    assert_eq!(window.size(), (320.0, 200.0), "表示後の中身");
+    assert_eq!(window.size(), (400.0, 200.0), "表示後の中身");
 
     // 付けたばかりのメニューバーとツールバーはまだ並んでいない。同じ周回の
     // `set_size` は、並び直した後の帯の高さで合わせ直される。
