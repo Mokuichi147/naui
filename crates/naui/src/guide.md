@@ -128,6 +128,50 @@ When widgets capture each other in their notifications (A's notification capture
 B, and B's captures A), that is also a cycle, so make one of them a weak
 reference.
 
+## Changing and moving widgets after adding
+
+Settings can be changed after a widget is in a container, in any order. The result
+is the same as making them before adding it:
+
+- [`set_sizing`](Button::set_sizing) on the child, including `Fill` on the cross
+  axis and how it sits in a `Grid` cell
+- [`set_spacing`](Stack::set_spacing), [`set_padding`](Stack::set_padding) and
+  [`set_align`](Stack::set_align) on the container
+- [`set_column_track`](Grid::set_column_track) and
+  [`set_row_track`](Grid::set_row_track) on a `Grid`
+
+To **move a widget to another container, remove it from the one it is in first**,
+then add it. It then behaves as if it had been made for the new container: nothing
+the previous one decided (a `Grid` column's width, a `Stack`'s alignment) carries
+over. Adding a widget that is still in another container is not supported: GTK and
+WinUI refuse it, while macOS and the Web move it but the previous container still
+counts it as a child.
+
+```no_run
+# use naui::{Orientation, Result, Sizing, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let left = ui.stack(Orientation::Vertical)?;
+let right = ui.stack(Orientation::Vertical)?;
+let field = ui.text_input("")?;
+left.append(&field);
+field.set_sizing(Sizing::fill_width()); // fine after adding, too
+
+left.remove(0);        // take it out first
+right.append(&field);  // then add it to the new container
+field.request_focus(); // moving takes the focus away
+# Ok(())
+# }
+```
+
+[`Stack::insert`] and [`Stack::remove`] leave the other children where they are, so
+a field being typed into keeps its focus and the text being composed with an IME.
+
+The moved widget itself keeps its contents (text, values, choices) and the scroll
+position of the [`Scroll`]s inside it (checked on macOS, Linux and the Web; not yet
+on Windows). **It loses the keyboard focus**, and text being composed with an IME
+ends with it (on macOS it is committed into the field). Call `request_focus` after
+adding it again if it should keep the focus.
+
 ## Themes
 
 The default, [`Theme::System`], follows the OS or browser setting. Use

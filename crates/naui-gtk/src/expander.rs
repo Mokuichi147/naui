@@ -85,6 +85,12 @@ impl Expander {
     /// The contents to collapse. Each call replaces them.
     pub fn set_child(&self, child: &dyn Widget) {
         let bin = child.size_bin();
+        let previous = self.0.child.borrow().as_ref().map(|child| child.size_bin());
+        if let Some(previous) = previous {
+            if previous != bin {
+                crate::interaction::clear_focus(&previous);
+            }
+        }
         // 中身は展開されたぶんの幅いっぱいに置く (`Scroll` と同じ扱い)。
         bin.fill_parent();
         self.0.native.set_child(Some(&bin));

@@ -4,6 +4,7 @@
 //! its trampolines. Cloning a handle still leaves one native object.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use naui_core::{Align, Orientation, Padding, TextColor, TextStyle};
@@ -40,6 +41,13 @@ pub trait Widget: 'static {
     /// Other widgets do nothing.
     #[doc(hidden)]
     fn nested_in_stack(&self, _vertical: bool) {}
+
+    /// Called when taken out of a `Stack`, undoing [`nested_in_stack`](Self::nested_in_stack).
+    ///
+    /// A `Stack` moved into a `Grid` or a `Scroll` absorbs leftover space again, as a
+    /// stack that was never nested does.
+    #[doc(hidden)]
+    fn left_stack(&self) {}
 }
 
 macro_rules! impl_widget {
@@ -120,9 +128,9 @@ macro_rules! impl_sizing {
             /// The actual size is decided by Auto Layout, so what you pass here is only
             /// constraints such as "fix it" or "take the parent's leftover space".
             ///
-            /// Call it **before** putting the widget into a container when using `Fill` on the
-            /// cross axis or growing within a grid cell. AppKit places constraints and cell
-            /// placement at the time of `append` / `attach`, so later changes are not applied.
+            /// It can be called before or after putting the widget into a container. Called
+            /// after, the parent also redoes its side (the cross-axis `Fill` constraints of a
+            /// `Stack`, the placement within a `Grid` cell).
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 let view = <$t as Widget>::native_view(self);
                 crate::layout::apply_sizing(&view, sizing);
@@ -1018,10 +1026,21 @@ struct StackInner {
     /// Holds the children's handles, keeping them alive along with their trampolines.
     children: RefCell<Vec<Box<dyn Widget>>>,
     /// The constraints tying children with `Fill` on the cross axis to the stack's width
-    /// / height. Kept because the constants change when the padding changes.
-    fill_constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
+    /// / height, looked up by the child's view (its address). Kept because the
+    /// constants change when the padding changes.
+    fill_constraints: RefCell<HashMap<usize, [Retained<NSLayoutConstraint>; 2]>>,
     padding: Cell<Padding>,
     spacing: Cell<f64>,
+}
+
+impl Drop for StackInner {
+    fn drop(&mut self) {
+        crate::layout::unregister_container(&self.native);
+    }
+}
+
+fn view_key(view: &NSView) -> usize {
+    view as *const NSView as usize
 }
 
 /// A container that lays out its children vertically / horizontally (NSStackView).
@@ -1047,10 +1066,13 @@ impl Widget for Stack {
     /// Auto Layout solution, and the inner one might grow, leaving a large gap in the
     /// middle of a section ([`crate::layout::NESTED_TAIL_PRIORITY`]).
     fn nested_in_stack(&self, vertical: bool) {
-        if self.is_vertical() == vertical {
-            self.0.nested.set(true);
-            self.update_tail_priority();
-        }
+        self.0.nested.set(self.is_vertical() == vertical);
+        self.update_tail_priority();
+    }
+
+    fn left_stack(&self) {
+        self.0.nested.set(false);
+        self.update_tail_priority();
     }
 }
 
@@ -1121,7 +1143,7 @@ impl Stack {
         let tail_zero =
             crate::layout::tail_zero_constraint(&tail_spacer, orientation.is_vertical());
         tail_zero.setActive(true);
-        Self(Rc::new(StackInner {
+        let this = Self(Rc::new(StackInner {
             native,
             tail_spacer,
             tail_spacer_active: Cell::new(true),
@@ -1129,18 +1151,26 @@ impl Stack {
             nested: Cell::new(false),
             fill_main: Cell::new(false),
             children: RefCell::new(Vec::new()),
-            fill_constraints: RefCell::new(Vec::new()),
+            fill_constraints: RefCell::new(HashMap::new()),
             padding: Cell::new(Padding::ZERO),
             spacing: Cell::new(spacing),
-        }))
+        }));
+        let view: &NSView = this.0.native.as_ref();
+        let weak = Rc::downgrade(&this.0);
+        crate::layout::register_container(view, move |child| {
+            if let Some(inner) = weak.upgrade() {
+                Stack(inner).refresh_child(child);
+            }
+        });
+        this
     }
 
     pub fn set_spacing(&self, spacing: f64) {
         self.0.spacing.set(spacing);
         self.0.native.setSpacing(spacing);
-        if let Some(last) = self.0.children.borrow().last() {
-            let view = last.native_view();
-            self.0.native.setCustomSpacing_afterView(0.0, &view);
+        // 子どうしの間隔は子ごとに張っているので、積んだあとの変更も全部へ写す。
+        for index in 0..self.len() {
+            self.update_spacing_after(index);
         }
         self.invalidate_natural_size();
     }
@@ -1155,8 +1185,10 @@ impl Stack {
         });
         // 交差軸いっぱいに広げている子は、余白のぶんだけ狭くなる。
         let inset = self.cross_inset();
-        for constraint in self.0.fill_constraints.borrow().iter() {
-            constraint.setConstant(-inset);
+        for pair in self.0.fill_constraints.borrow().values() {
+            for constraint in pair {
+                constraint.setConstant(-inset);
+            }
         }
         self.invalidate_natural_size();
     }
@@ -1199,121 +1231,195 @@ impl Stack {
     ///
     /// If the child specifies [`naui_core::Length::Fill`] on the cross axis, it is
     /// stretched to the stack's width (for vertical stacks) or height. `Fill` on the
-    /// main axis is handled by NSStackView through the hugging priority.
+    /// main axis is handled by NSStackView through the hugging priority. Specifying
+    /// it after appending works too.
     pub fn append(&self, child: &dyn Widget) {
-        let view = child.native_view();
-        crate::layout::prepare_child(&view);
-        let index = self.0.children.borrow().len();
-        let vertical = self.is_vertical();
-        // 入れ子の `Stack` は、余りを吸うのを外側へ譲る。
-        child.nested_in_stack(vertical);
-        let wants_main_fill = crate::layout::wants_fill(&view, !vertical);
-        if !wants_main_fill {
-            crate::layout::keep_auto_size(&view, !vertical);
-        }
-        if wants_main_fill && self.0.tail_spacer_active.replace(false) {
-            self.0.tail_zero.setActive(false);
-            self.0.native.removeArrangedSubview(&self.0.tail_spacer);
-            self.0.tail_spacer.removeFromSuperview();
-        }
-        if let Some(last) = self.0.children.borrow().last() {
-            let previous = last.native_view();
-            self.0
-                .native
-                .setCustomSpacing_afterView(self.0.spacing.get(), &previous);
-        }
-        self.0
-            .native
-            .insertArrangedSubview_atIndex(&view, index as isize);
-        if self.0.tail_spacer_active.get() {
-            self.0.native.setCustomSpacing_afterView(0.0, &view);
-        }
-
-        // 縦並びの交差軸は横方向。
-        let cross_is_horizontal = vertical;
-        if crate::layout::wants_fill(&view, cross_is_horizontal) {
-            let inset = self.cross_inset();
-            let (child, parent) = if vertical {
-                (view.widthAnchor(), self.0.native.widthAnchor())
-            } else {
-                (view.heightAnchor(), self.0.native.heightAnchor())
-            };
-            // 「はみ出さない」は必須、「親に合わせる」は 1 段下。上限
-            // (`max_width` など) を付けた子は、上限のほうが勝つ。
-            let at_most = child.constraintLessThanOrEqualToAnchor_constant(&parent, -inset);
-            let equal = child.constraintEqualToAnchor_constant(&parent, -inset);
-            equal.setPriority(crate::layout::CROSS_FILL_PRIORITY);
-            for constraint in [&at_most, &equal] {
-                constraint.setActive(true);
-            }
-            let mut constraints = self.0.fill_constraints.borrow_mut();
-            constraints.push(at_most);
-            constraints.push(equal);
-        }
-
-        self.0.children.borrow_mut().push(child.boxed_clone());
-        self.invalidate_natural_size();
+        self.mount(self.len(), child);
     }
 
     /// Inserts a child at the given position. If `index` is at least the current
     /// count, it is appended at the end.
+    ///
+    /// The other children stay in the view hierarchy, so a field being typed into
+    /// keeps its focus and IME composition.
     pub fn insert(&self, index: usize, child: &dyn Widget) {
-        let mut children = self.take_children();
-        let index = index.min(children.len());
-        children.insert(index, child.boxed_clone());
-        self.refill(children);
+        self.mount(index.min(self.len()), child);
     }
 
     /// Removes the child at the given position. Does nothing if out of range.
+    ///
+    /// Only that child leaves the view hierarchy; the others keep their focus and IME
+    /// composition.
     pub fn remove(&self, index: usize) {
-        let mut children = self.take_children();
-        if index >= children.len() {
-            self.refill(children);
+        if index >= self.len() {
             return;
         }
-        children.remove(index);
-        self.refill(children);
+        let child = self.0.children.borrow_mut().remove(index);
+        self.unmount(&*child);
+        self.update_tail();
+        // 末尾が変わったら、新しい末尾と受け皿の間を詰め直す。
+        if index == self.len() && index > 0 {
+            self.update_spacing_after(index - 1);
+        }
+        self.invalidate_natural_size();
     }
 
     /// Removes every child.
     pub fn clear(&self) {
-        drop(self.take_children());
-        self.invalidate_natural_size();
-    }
-
-    /// Removes all the children laid out and returns them.
-    ///
-    /// [`append`](Stack::append) places the tail spacer, spacing and `Fill` constraints
-    /// against "the sequence at that time", so operations that change the order remove
-    /// and re-stack.
-    fn take_children(&self) -> Vec<Box<dyn Widget>> {
         let children = std::mem::take(&mut *self.0.children.borrow_mut());
         for child in &children {
-            let view = child.native_view();
-            self.0.native.removeArrangedSubview(&view);
-            view.removeFromSuperview();
+            self.unmount(&**child);
         }
-        {
-            let mut constraints = self.0.fill_constraints.borrow_mut();
-            for constraint in constraints.iter() {
-                constraint.setActive(false);
-            }
-            constraints.clear();
-        }
-        // 主軸に `Fill` の子がいて外していた受け皿を、空の状態へ戻す。
-        if !self.0.tail_spacer_active.replace(true) {
-            self.0.native.addArrangedSubview(&self.0.tail_spacer);
-            self.0.tail_zero.setActive(true);
-        }
-        children
+        self.update_tail();
+        self.invalidate_natural_size();
     }
 
-    /// Re-stacks the children removed with [`take_children`](Stack::take_children).
-    fn refill(&self, children: Vec<Box<dyn Widget>>) {
-        for child in &children {
-            self.append(&**child);
+    /// Places a child at `index` and sets up the constraints its specification needs.
+    fn mount(&self, index: usize, child: &dyn Widget) {
+        let view = child.native_view();
+        crate::layout::prepare_child(&view);
+        // 入れ子の `Stack` は、余りを吸うのを外側へ譲る。
+        child.nested_in_stack(self.is_vertical());
+        // 受け皿は常に末尾にいるので、子の数以下の位置はその手前になる。
+        self.0
+            .native
+            .insertArrangedSubview_atIndex(&view, index as isize);
+        self.0
+            .children
+            .borrow_mut()
+            .insert(index, child.boxed_clone());
+        self.apply_child_layout(&view);
+        self.update_tail();
+        if index > 0 {
+            self.update_spacing_after(index - 1);
         }
+        self.update_spacing_after(index);
         self.invalidate_natural_size();
+    }
+
+    /// Takes a child out of the view hierarchy, along with the constraints placed for
+    /// it.
+    fn unmount(&self, child: &dyn Widget) {
+        let view = child.native_view();
+        self.0.native.removeArrangedSubview(&view);
+        view.removeFromSuperview();
+        let removed = self
+            .0
+            .fill_constraints
+            .borrow_mut()
+            .remove(&view_key(&view));
+        if let Some(pair) = removed {
+            for constraint in &pair {
+                constraint.setActive(false);
+            }
+        }
+        child.left_stack();
+    }
+
+    /// Redoes the constraints of a child whose specification changed.
+    ///
+    /// Called from [`crate::layout::apply_sizing`] through
+    /// [`crate::layout::register_container`]. The child stays in the view hierarchy.
+    fn refresh_child(&self, view: &NSView) {
+        let placed = self
+            .0
+            .children
+            .borrow()
+            .iter()
+            .any(|child| std::ptr::eq::<NSView>(&*child.native_view(), view));
+        if !placed {
+            return;
+        }
+        self.apply_child_layout(view);
+        self.update_tail();
+        self.invalidate_natural_size();
+    }
+
+    /// Decides the main-axis hugging and the cross-axis `Fill` constraints from the
+    /// child's specification.
+    fn apply_child_layout(&self, view: &NSView) {
+        let vertical = self.is_vertical();
+        if !crate::layout::wants_fill(view, !vertical) {
+            crate::layout::keep_auto_size(view, !vertical);
+        }
+
+        let previous = self.0.fill_constraints.borrow_mut().remove(&view_key(view));
+        if let Some(pair) = previous {
+            for constraint in &pair {
+                constraint.setActive(false);
+            }
+        }
+        // 縦並びの交差軸は横方向。
+        if !crate::layout::wants_fill(view, vertical) {
+            return;
+        }
+        let inset = self.cross_inset();
+        let (child, parent) = if vertical {
+            (view.widthAnchor(), self.0.native.widthAnchor())
+        } else {
+            (view.heightAnchor(), self.0.native.heightAnchor())
+        };
+        // 「はみ出さない」は必須、「親に合わせる」は 1 段下。上限
+        // (`max_width` など) を付けた子は、上限のほうが勝つ。
+        let at_most = child.constraintLessThanOrEqualToAnchor_constant(&parent, -inset);
+        let equal = child.constraintEqualToAnchor_constant(&parent, -inset);
+        equal.setPriority(crate::layout::CROSS_FILL_PRIORITY);
+        for constraint in [&at_most, &equal] {
+            constraint.setActive(true);
+        }
+        self.0
+            .fill_constraints
+            .borrow_mut()
+            .insert(view_key(view), [at_most, equal]);
+    }
+
+    /// Places the tail spacer when no child has `Fill` on the main axis, and removes it
+    /// when one does.
+    ///
+    /// With the tail spacer present, it would compete with the `Fill` children for the
+    /// leftover space.
+    fn update_tail(&self) {
+        let vertical = self.is_vertical();
+        let wants_tail = !self
+            .0
+            .children
+            .borrow()
+            .iter()
+            .any(|child| crate::layout::wants_fill(&child.native_view(), !vertical));
+        if self.0.tail_spacer_active.replace(wants_tail) == wants_tail {
+            return;
+        }
+        if wants_tail {
+            self.0.native.addArrangedSubview(&self.0.tail_spacer);
+            self.0.tail_zero.setActive(true);
+            if let Some(last) = self.len().checked_sub(1) {
+                self.update_spacing_after(last);
+            }
+        } else {
+            self.0.tail_zero.setActive(false);
+            self.0.native.removeArrangedSubview(&self.0.tail_spacer);
+            self.0.tail_spacer.removeFromSuperview();
+        }
+    }
+
+    /// Decides the spacing after the `index`-th child.
+    ///
+    /// Between children it is the specified spacing; between the last child and the
+    /// tail spacer it is 0 (spacing in front of the tail spacer would add that much
+    /// blank space).
+    fn update_spacing_after(&self, index: usize) {
+        let children = self.0.children.borrow();
+        let Some(child) = children.get(index) else {
+            return;
+        };
+        let spacing = if index + 1 < children.len() {
+            self.0.spacing.get()
+        } else {
+            0.0
+        };
+        self.0
+            .native
+            .setCustomSpacing_afterView(spacing, &child.native_view());
     }
 
     /// The number of children added.

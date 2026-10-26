@@ -261,6 +261,27 @@ fn main() {
             grid_fixed_track_sets_width,
         ),
         (
+            "追加したあとの set_sizing でもスタックの寄せ方が残る",
+            stack_align_survives_later_sizing,
+        ),
+        (
+            "置いたあとの set_sizing や列の変更でもグリッドの列の設定が残る",
+            grid_track_survives_later_changes,
+        ),
+        (
+            "別のコンテナへ移した子は前の親の設定を持ち越さない",
+            moved_child_drops_the_old_placement,
+        ),
+        (
+            "ウィンドウに入れたあとの set_sizing でも中身が窓いっぱいに残る",
+            window_child_fills_after_later_sizing,
+        ),
+        (
+            "移した子はスクロール位置を保ち、フォーカスは外れる",
+            moved_widget_keeps_scroll_but_not_focus,
+        ),
+        ("どのコンテナから外しても再追加でフォーカスを持ち越さない", containers_release_focus_before_detaching),
+        (
             "スクロールが中身とポリシーを保つ",
             scroll_keeps_child_and_policy,
         ),
@@ -486,6 +507,7 @@ fn main() {
         ("ページ送りが範囲内に収まる", pagination_steps),
         ("タブが中身ごと切り替わる", tabs_selection),
         ("タブを外して空にできる", tabs_remove_and_clear),
+        ("タブを閉じるフォーカス通知内でタブ一覧を変更できる", tabs_remove_after_focus_callback),
         (
             "スタックが子を差し込み・外し・空にできる",
             stack_inserts_and_removes_children,
@@ -2562,6 +2584,96 @@ fn grid_fixed_track_sets_width(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// Specifying the size after appending keeps the stack's alignment. `set_sizing`
+/// sets the same `halign` as the stack does, and used to put back its own.
+fn stack_align_survives_later_sizing(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::Start);
+    let label = ui.label("あ")?;
+    stack.append(&label);
+
+    label.set_sizing(Sizing::new().height(Length::Fixed(30.0)));
+    assert_eq!(bin_of(&label).halign(), gtk::Align::Start);
+    label.set_sizing(Sizing::fill_width());
+    assert_eq!(bin_of(&label).halign(), gtk::Align::Fill);
+    label.set_sizing(Sizing::AUTO);
+    assert_eq!(
+        bin_of(&label).halign(),
+        gtk::Align::Start,
+        "Fill をやめればスタックの寄せ方へ戻る"
+    );
+    Ok(())
+}
+
+/// A grid column's settings stay on its children when their size is specified
+/// after attaching, and changing the column replaces the old setting rather than
+/// piling onto it.
+fn grid_track_survives_later_changes(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fixed(96.0));
+    let label = ui.label("名前")?;
+    grid.attach(&label, GridCell::new(0, 0));
+    let natural = measure_width(&ui.label("名前")?.native_widget());
+
+    label.set_sizing(Sizing::new().height(Length::Fixed(30.0)));
+    assert_eq!(
+        measure_width(&bin_of(&label)),
+        (96, 96),
+        "あとから高さを決めても列の固定幅のまま"
+    );
+
+    grid.set_column_track(0, Track::Auto);
+    assert_eq!(
+        measure_width(&bin_of(&label)),
+        natural,
+        "列を Auto に戻せば中身の幅へ戻る"
+    );
+
+    grid.set_column_track(0, Track::FILL);
+    label.set_sizing(Sizing::new().height(Length::Fixed(30.0)));
+    assert!(
+        bin_of(&label).hexpands(),
+        "あとから大きさを決めても Fill の列は広がる"
+    );
+    assert_eq!(bin_of(&label).halign(), gtk::Align::Start);
+    Ok(())
+}
+
+/// A child moved from a `Grid` into a `Stack` takes the stack's alignment and leaves
+/// the grid column's width behind.
+fn moved_child_drops_the_old_placement(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fixed(96.0));
+    let label = ui.label("移る")?;
+    grid.attach(&label, GridCell::new(0, 0));
+    assert_eq!(measure_width(&bin_of(&label)), (96, 96));
+    let natural = measure_width(&ui.label("移る")?.native_widget());
+
+    grid.remove(GridCell::new(0, 0));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::End);
+    stack.append(&label);
+    let bin = bin_of(&label);
+    assert_eq!(measure_width(&bin), natural, "列の固定幅を持ち越さない");
+    assert_eq!(bin.halign(), gtk::Align::End, "新しい親の寄せ方になる");
+    assert_eq!(bin.valign(), gtk::Align::Center);
+    Ok(())
+}
+
+/// The window's content still fills the window when its size is specified after
+/// `set_child`.
+fn window_child_fills_after_later_sizing(ui: &Ui) -> Result<()> {
+    let window = ui.window("中身", 320.0, 240.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    window.set_child(&root);
+    root.set_sizing(Sizing::new().min_height(100.0));
+    let bin = bin_of(&root);
+    assert_eq!(bin.halign(), gtk::Align::Fill);
+    assert_eq!(bin.valign(), gtk::Align::Fill);
+    window.close();
+    Ok(())
+}
+
 fn scroll_keeps_child_and_policy(ui: &Ui) -> Result<()> {
     let scroll = ui.scroll()?;
     let stack = ui.stack(Orientation::Vertical)?;
@@ -2621,6 +2733,195 @@ fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
         "送れる向きでは自然な高さのまま置かれること (最小は {minimum})"
     );
     window.close();
+    Ok(())
+}
+
+/// What a widget moved to another container keeps: a `Scroll` keeps its position,
+/// while a field loses the focus (GTK4 moves it out of a widget that is unparented).
+fn moved_widget_keeps_scroll_but_not_focus(ui: &Ui) -> Result<()> {
+    // Keep a visible destination and change its alignment before moving the field.
+    let window = ui.window("移動", 240.0, 300.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let first = ui.stack(Orientation::Vertical)?;
+    let second = ui.stack(Orientation::Vertical)?;
+    root.set_align(Align::Start);
+    second.set_align(Align::End);
+    second.append(&ui.label("移動先")?);
+    root.append(&first);
+    root.append(&second);
+    let field = ui.text_input("入力中の文字")?;
+    first.append(&field);
+    let pane = ui.stack(Orientation::Vertical)?;
+    for index in 0..40 {
+        pane.append(&ui.label(&format!("行 {index}"))?);
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&pane);
+    scroll.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(200.0))
+            .height(Length::Fixed(80.0)),
+    );
+    first.append(&scroll);
+    window.set_child(&root);
+    window.show();
+    settle(&scroll);
+    assert!(field.request_focus());
+    pump();
+    // フォーカスはウィンドウが持つ「いま入力を受ける子」で見る。
+    let focused = || {
+        let field = field.native_widget();
+        field
+            .root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| focus == field || focus.is_ancestor(&field))
+    };
+    let had_focus = focused();
+    let lost_focus = Rc::new(Cell::new(0));
+    field.on_focus_change({
+        let lost_focus = lost_focus.clone();
+        let first = first.downgrade();
+        let notice = ui.label("フォーカスが外れた")?;
+        move |has_focus| {
+            if !has_focus {
+                lost_focus.set(lost_focus.get() + 1);
+                if let Some(first) = first.upgrade() {
+                    first.append(&notice);
+                }
+            }
+        }
+    });
+    // Unrelated insertions and removals must leave the field focused.
+    first.insert(0, &ui.label("見出し")?);
+    first.remove(0);
+    assert_eq!(focused(), had_focus);
+    scroll.scroll_to(0.0, 120.0);
+    settle(&scroll);
+    assert_eq!(scroll.metrics().y, 120.0);
+
+    first.remove(1);
+    first.remove(0);
+    second.append(&field);
+    second.append(&scroll);
+    if had_focus {
+        assert!(!focused(), "再追加の直後からフォーカスを失うこと");
+        assert!(lost_focus.get() > 0, "フォーカスを失った通知が届くこと");
+        assert_eq!(first.len(), 1, "通知内でも元のコンテナを操作できること");
+    }
+    settle(&scroll);
+    assert_eq!(field.text(), "入力中の文字");
+    assert_eq!(scroll.metrics().y, 120.0, "スクロール位置が残ること");
+    // ウィンドウがフォーカスを持てない環境では、移す前から持っていない。
+    if had_focus {
+        assert!(!focused(), "移した入力欄からはフォーカスが外れること");
+    }
+    window.close();
+    Ok(())
+}
+
+/// Cover direct fields and nested fields across every container removal path.
+fn containers_release_focus_before_detaching(ui: &Ui) -> Result<()> {
+    for mode in 0..10 {
+        let window = ui.window("取り外し", 440.0, 260.0)?;
+        let root = ui.stack(Orientation::Vertical)?;
+        let destination = ui.stack(Orientation::Vertical)?;
+        destination.append(&ui.label("移動先")?);
+        let pane = ui.stack(Orientation::Vertical)?;
+        let field = ui.text_input("保持する文字列")?;
+        pane.append(&field);
+        let replacement = ui.label("差し替え")?;
+        let detach: Box<dyn Fn()> = match mode {
+            0 | 1 => {
+                let source = ui.stack(Orientation::Vertical)?;
+                source.append(&pane);
+                root.append(&source);
+                Box::new(move || {
+                    if mode == 0 {
+                        source.remove(0)
+                    } else {
+                        source.clear()
+                    }
+                })
+            }
+            2 | 3 => {
+                let source = ui.grid()?;
+                source.attach(&pane, GridCell::new(0, 0));
+                root.append(&source);
+                Box::new(move || {
+                    if mode == 2 {
+                        source.remove(GridCell::new(0, 0))
+                    } else {
+                        source.clear()
+                    }
+                })
+            }
+            4 => {
+                let source = ui.scroll()?;
+                source.set_child(&pane);
+                root.append(&source);
+                Box::new(move || source.set_child(&replacement))
+            }
+            5 => {
+                let source = ui.expander("開閉")?;
+                source.set_expanded(true);
+                source.set_child(&pane);
+                root.append(&source);
+                Box::new(move || source.set_child(&replacement))
+            }
+            6 => {
+                let source = ui.split_view(Orientation::Horizontal)?;
+                source.set_start(&pane);
+                source.set_end(&replacement);
+                root.append(&source);
+                let replacement = ui.label("新しい区画")?;
+                Box::new(move || source.set_start(&replacement))
+            }
+            7 | 8 => {
+                let source = ui.tabs()?;
+                source.add_tab("入力", &pane);
+                root.append(&source);
+                Box::new(move || {
+                    if mode == 7 {
+                        source.remove_tab(0)
+                    } else {
+                        source.clear()
+                    }
+                })
+            }
+            _ => {
+                window.set_child(&pane);
+                let window = window.clone();
+                let root = root.clone();
+                Box::new(move || window.set_child(&root))
+            }
+        };
+        root.append(&destination);
+        if mode != 9 {
+            window.set_child(&root);
+        }
+        window.show();
+        tick(&field.native_widget());
+        assert!(field.request_focus(), "shown mode {mode}");
+        let focused = || {
+            field
+                .native_widget()
+                .root()
+                .and_then(|root| root.focus())
+                .is_some_and(|focus| {
+                    focus == field.native_widget() || focus.is_ancestor(&field.native_widget())
+                })
+        };
+        assert!(focused(), "focused before mode {mode}");
+        detach();
+        destination.append(&pane);
+        assert!(!focused(), "immediately after mode {mode}");
+        tick(&field.native_widget());
+        assert!(!focused(), "after layout mode {mode}");
+        assert_eq!(field.text(), "保持する文字列");
+        assert!(field.request_focus(), "explicit refocus mode {mode}");
+        assert!(focused());
+        window.close();
+    }
     Ok(())
 }
 
@@ -3534,6 +3835,116 @@ fn tabs_remove_and_clear(ui: &Ui) -> Result<()> {
     tabs.add_tab("え", &ui.label("新しい 1 枚目")?);
     assert_eq!(tabs.len(), 1);
     assert_eq!(tabs.selected(), Some(0));
+    Ok(())
+}
+
+/// Focus loss is synchronous: callbacks can clear, replace or reorder pages
+/// before the outer removal resumes. Follow the page, not its old index.
+fn tabs_remove_after_focus_callback(ui: &Ui) -> Result<()> {
+    for mode in 0..5 {
+        let window = ui.window("タブの再入", 480.0, 240.0)?;
+        let tabs = ui.tabs()?;
+        let before = ui.label("前")?;
+        let field = ui.text_input("削除する入力欄")?;
+        let after = ui.label("後")?;
+        let last = ui.label("最後")?;
+        let replacement = ui.label("新しいページ")?;
+        tabs.add_tab("前", &before);
+        tabs.add_tab("入力", &field);
+        tabs.add_tab("後", &after);
+        tabs.add_tab("最後", &last);
+        tabs.set_selected(1);
+        window.set_child(&tabs);
+        window.show();
+        tick(&field.native_widget());
+        assert!(field.request_focus());
+        let called = Rc::new(Cell::new(0));
+        field.on_focus_change({
+            let tabs = tabs.downgrade();
+            let replacement = replacement.clone();
+            let called = called.clone();
+            move |focused| {
+                if focused {
+                    return;
+                }
+                called.set(called.get() + 1);
+                let tabs = tabs.upgrade().expect("タブが生存");
+                match mode {
+                    0 => tabs.clear(),
+                    1 => tabs.remove_tab(0),
+                    2 => {
+                        tabs.remove_tab(1);
+                        tabs.add_tab("新規", &replacement);
+                    }
+                    3 => {
+                        tabs.set_selected(3);
+                        tabs.remove_tab(0);
+                    }
+                    _ => {
+                        tabs.clear();
+                        tabs.add_tab("新規", &replacement);
+                    }
+                }
+            }
+        });
+        let (log, sink) = recorder::<usize>();
+        tabs.on_select(sink);
+        // Close the real window even when the old implementation panics, so the
+        // failure does not leave a window interfering with subsequent tests.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tabs.remove_tab(1);
+            assert_eq!(called.get(), 1, "focus callback mode {mode}");
+            let native: gtk::Notebook = tabs.native_widget().downcast().expect("GtkNotebook");
+            let expected: Vec<gtk::Widget> = match mode {
+                0 => vec![],
+                1 | 3 => vec![bin_of(&after), bin_of(&last)],
+                2 => vec![
+                    bin_of(&before),
+                    bin_of(&after),
+                    bin_of(&last),
+                    bin_of(&replacement),
+                ],
+                _ => vec![bin_of(&replacement)],
+            };
+            assert_eq!(tabs.len(), expected.len(), "page count mode {mode}");
+            for (index, page) in expected.iter().enumerate() {
+                assert_eq!(
+                    native.nth_page(Some(index as u32)).as_ref(),
+                    Some(page),
+                    "page identity mode {mode}"
+                );
+            }
+            let selected = match mode {
+                0 => None,
+                1 | 4 => Some(0),
+                _ => Some(1),
+            };
+            assert_eq!(
+                tabs.selected(),
+                selected,
+                "selection after callback mode {mode}"
+            );
+            // Rebuilding an empty notebook adds and selects a new first page.
+            // Keep that callback intact; removal itself must not add a notice.
+            let notices: &[usize] = if mode == 4 { &[0] } else { &[] };
+            assert_eq!(
+                log.borrow().as_slice(),
+                notices,
+                "selection notices mode {mode}"
+            );
+            assert!(bin_of(&field).parent().is_none());
+            // Exercise the Rust child list again, as well as checking native pages.
+            field.on_focus_change(|_| {});
+            tabs.clear();
+            tabs.add_tab("再利用", &field);
+            tabs.remove_tab(0);
+            assert!(tabs.is_empty());
+        }));
+        window.close();
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
+    }
     Ok(())
 }
 

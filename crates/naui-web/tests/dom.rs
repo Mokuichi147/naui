@@ -1140,6 +1140,227 @@ fn child_texts(widget: &dyn Widget) -> Vec<String> {
 }
 
 /// A `Stack` can insert, remove and clear children later.
+/// `set_sizing` after appending reaches the stack's layout, on both axes.
+#[wasm_bindgen_test]
+fn sizing_after_append_reaches_the_stack() {
+    with_ui(|ui| {
+        let column = ui.stack(Orientation::Vertical)?;
+        column.set_sizing(Sizing::fixed(400.0, 100.0));
+        let wide = ui.button("広がる")?;
+        column.append(&wide);
+        let row = ui.stack(Orientation::Horizontal)?;
+        row.set_sizing(Sizing::fixed(400.0, 40.0));
+        let grow = ui.button("伸びる")?;
+        row.append(&grow);
+        row.append(&ui.button("固定")?);
+        let _column = Mounted::new(&column);
+        let _row = Mounted::new(&row);
+
+        wide.set_sizing(Sizing::fill_width());
+        grow.set_sizing(Sizing::fill_width());
+        let wide_width = wide.native_element().get_bounding_client_rect().width();
+        let grow_width = grow.native_element().get_bounding_client_rect().width();
+        assert!(
+            (wide_width - 400.0).abs() < 0.5,
+            "あとからの交差軸の Fill がスタックの幅になること: {wide_width}"
+        );
+        assert!(
+            grow_width > 250.0,
+            "あとからの主軸の Fill が余りを受け取ること: {grow_width}"
+        );
+
+        wide.set_sizing(Sizing::AUTO);
+        let restored = wide.native_element().get_bounding_client_rect().width();
+        assert!(
+            restored < 200.0,
+            "指定を戻せば中身の幅へ戻ること: {restored}"
+        );
+        Ok(())
+    });
+}
+
+/// `set_sizing` after attaching reaches the placement within the grid cell.
+#[wasm_bindgen_test]
+fn sizing_after_attach_reaches_the_grid() {
+    with_ui(|ui| {
+        let grid = ui.grid()?;
+        grid.set_column_track(0, naui_core::Track::FILL);
+        grid.set_sizing(Sizing::fixed(400.0, 100.0));
+        let button = ui.button("広がる")?;
+        grid.attach(&button, GridCell::new(0, 0));
+        let _mounted = Mounted::new(&grid);
+
+        let before = button.native_element().get_bounding_client_rect().width();
+        assert!(before < 200.0, "指定前は中身の幅であること: {before}");
+        button.set_sizing(Sizing::fill_width());
+        let filled = button.native_element().get_bounding_client_rect().width();
+        assert!(
+            (filled - 400.0).abs() < 0.5,
+            "あとから指定してもマスいっぱいに広がること: {filled}"
+        );
+        button.set_sizing(Sizing::AUTO);
+        let restored = button.native_element().get_bounding_client_rect().width();
+        assert!(
+            (restored - before).abs() < 0.5,
+            "指定を戻せば中身の幅へ戻ること: {before} / {restored}"
+        );
+        Ok(())
+    });
+}
+
+/// A child moved from a `Grid` into a `Stack` follows the stack, with nothing left
+/// over from the grid cell.
+#[wasm_bindgen_test]
+fn moved_child_follows_the_new_parent() {
+    with_ui(|ui| {
+        let grid = ui.grid()?;
+        let child = ui.button("移る")?;
+        child.set_sizing(Sizing::fill().max_height(30.0));
+        grid.attach(&child, GridCell::new(0, 0));
+        grid.remove(GridCell::new(0, 0));
+
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.set_sizing(Sizing::fixed(300.0, 200.0));
+        stack.append(&child);
+        stack.append(&ui.button("下")?);
+        let _mounted = Mounted::new(&stack);
+
+        let style = child
+            .native_element()
+            .unchecked_into::<HtmlElement>()
+            .style();
+        for property in ["justify-self", "height"] {
+            assert_eq!(
+                style.get_property_value(property).ok().as_deref(),
+                Some(""),
+                "グリッドのための {property} を持ち越さないこと"
+            );
+        }
+        let rect = child.native_element().get_bounding_client_rect();
+        assert!(
+            (rect.width() - 300.0).abs() < 0.5,
+            "新しい親の幅になること: {}",
+            rect.width()
+        );
+        Ok(())
+    });
+}
+
+/// Inserting into or removing from a `Stack` does not move the focus out of a field
+/// that has it.
+#[wasm_bindgen_test]
+fn stack_insert_keeps_focus() {
+    with_ui(|ui| {
+        let stack = ui.stack(Orientation::Vertical)?;
+        let input = ui.text_input("")?;
+        stack.append(&input);
+        let _mounted = Mounted::new(&stack);
+        assert!(input.request_focus());
+
+        stack.insert(0, &ui.label("見出し")?);
+        stack.append(&ui.label("末尾")?);
+        stack.remove(0);
+        let active = active_element().expect("activeElement");
+        assert!(
+            input.native_element().contains(Some(&active)),
+            "ほかの子を出し入れしても入力欄がフォーカスを持つこと"
+        );
+        Ok(())
+    });
+}
+
+/// A widget moved to another container keeps the scroll position of the `Scroll`s
+/// inside, as on the other platforms (the browser alone would show them from the
+/// top again), while the focus leaves it.
+#[wasm_bindgen_test]
+fn moved_widget_keeps_its_scroll_position() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let first = ui.stack(Orientation::Vertical)?;
+        let second = ui.stack(Orientation::Vertical)?;
+        root.append(&first);
+        root.append(&second);
+        let field = ui.text_input("")?;
+        first.append(&field);
+        let scroll = ui.scroll()?;
+        scroll.set_sizing(Sizing::fixed(200.0, 80.0));
+        let tall = ui.stack(Orientation::Vertical)?;
+        for index in 0..30 {
+            tall.append(&ui.label(&format!("行 {index}"))?);
+        }
+        scroll.set_child(&tall);
+        let pane = ui.stack(Orientation::Vertical)?;
+        pane.append(&scroll);
+        first.append(&pane);
+        let _mounted = Mounted::new(&root);
+        assert!(field.request_focus());
+        scroll.scroll_to(0.0, 200.0);
+        assert_eq!(scroll.metrics().y, 200.0);
+
+        // Scroll そのものと、Scroll を含む入れ物の両方を移す。
+        first.remove(1);
+        first.remove(0);
+        second.append(&field);
+        second.append(&pane);
+        assert_eq!(
+            scroll.metrics().y,
+            200.0,
+            "入れ物ごと移してもスクロール位置が残ること"
+        );
+        pane.remove(0);
+        second.append(&scroll);
+        assert_eq!(
+            scroll.metrics().y,
+            200.0,
+            "Scroll そのものを移してもスクロール位置が残ること"
+        );
+        // 文書に載っていない入れ物を経由しても、載った時点で位置が戻る。
+        // 大きさは移す前と同じなので、ResizeObserver は呼ばれない。
+        second.remove(1);
+        let detached = ui.stack(Orientation::Vertical)?;
+        detached.append(&scroll);
+        second.append(&detached);
+        assert_eq!(
+            scroll.metrics().y,
+            200.0,
+            "載っていない入れ物を経由して戻してもスクロール位置が残ること"
+        );
+        let focused =
+            active_element().is_some_and(|active| field.native_element().contains(Some(&active)));
+        assert!(!focused, "移した入力欄からはフォーカスが外れること");
+        Ok(())
+    });
+}
+
+/// A pane moved into a tab keeps the scroll position of the `Scroll` inside. The
+/// tab's area is put into the document after the pane is placed in it, so the
+/// position has to be restored once the tab is in the document; with the same size
+/// before and after, `ResizeObserver` does not report anything.
+#[wasm_bindgen_test]
+fn moved_into_a_tab_keeps_its_scroll_position() {
+    with_ui(|ui| {
+        let root = ui.stack(Orientation::Vertical)?;
+        let pane = ui.stack(Orientation::Vertical)?;
+        let (scroll, _content) = tall_scroll(ui, 40)?;
+        pane.append(&scroll);
+        root.append(&pane);
+        let tabs = ui.tabs()?;
+        let _root = Mounted::new(&root);
+        let _tabs = Mounted::new(&tabs);
+        scroll.scroll_to(0.0, 200.0);
+        assert_eq!(scroll.metrics().y, 200.0);
+
+        root.remove(0);
+        tabs.add_tab("移した", &pane);
+        assert_eq!(
+            scroll.metrics().y,
+            200.0,
+            "タブへ移してもスクロール位置が残ること"
+        );
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn stack_inserts_and_removes_children() {
     with_ui(|ui| {
@@ -3686,6 +3907,40 @@ async fn scroll_to_end_before_mounted() {
     let m = scroll.metrics();
     assert!(m.max_y() > 0.0, "{m:?}");
     assert_eq!(m.distance_to_end(), 0.0, "載った後に末尾にいる: {m:?}");
+}
+
+/// Switching tabs keeps the scroll position of a `Scroll` in a tab, as on the other
+/// platforms. The browser forgets the position of a hidden (`display: none`)
+/// element.
+#[wasm_bindgen_test]
+async fn hidden_tab_keeps_its_scroll_position() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let (scroll, _pane) = tall_scroll(ui, 40)?;
+        // タブの中身はタブいっぱいに広がるので、Scroll の大きさは入れ物の中で保つ。
+        let page = ui.stack(Orientation::Vertical)?;
+        page.append(&scroll);
+        let tabs = ui.tabs()?;
+        tabs.add_tab("一覧", &page);
+        tabs.add_tab("別", &ui.label("別のタブ")?);
+        kept = Some((scroll, page, tabs));
+        Ok(())
+    });
+    let (scroll, _pane, tabs) = kept.expect("組み立て");
+    let _mounted = Mounted::new(&tabs);
+    next_frames().await;
+    scroll.scroll_to(0.0, 120.0);
+    assert_eq!(scroll.metrics().y, 120.0);
+
+    tabs.set_selected(1);
+    next_frames().await;
+    tabs.set_selected(0);
+    frames_until(|| scroll.metrics().y == 120.0).await;
+    assert_eq!(
+        scroll.metrics().y,
+        120.0,
+        "タブを切り替えて戻ってもスクロール位置が残ること"
+    );
 }
 
 #[wasm_bindgen_test]

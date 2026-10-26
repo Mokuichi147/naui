@@ -37,6 +37,8 @@ mod imp {
         pub rigid_width: Cell<bool>,
         /// Whether the content's natural size is left out on `Fill` axes (images and videos).
         pub fill_ignores_natural: Cell<bool>,
+        /// Where it is placed. Read when the size specification changes.
+        pub(crate) placement: Cell<super::Placement>,
     }
 
     #[glib::object_subclass]
@@ -213,6 +215,29 @@ mod imp {
     }
 }
 
+/// Where a [`SizeBin`] is placed, as far as it changes how the bin is set up.
+///
+/// A container's own say (a `Stack`'s alignment, a `Grid` column's width) is set on
+/// the child's bin, the same properties that [`Sizing`] sets. The bin remembers where
+/// it is, so that specifying the size after adding it to a container, or the container
+/// changing its settings, gives the same result as doing it in the other order.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum Placement {
+    /// Not in a container that adjusts its children (or taken out of one).
+    #[default]
+    Loose,
+    /// Fills its parent (directly under a window, the content of a `Scroll` and so on).
+    FillParent,
+    /// In a `Stack`, which aligns it on the cross axis.
+    Stack { align: Align, vertical: bool },
+    /// In a `Grid` cell. The tracks are those of the column and row the cell alone
+    /// occupies (`None` when it spans several).
+    Grid {
+        column: Option<Track>,
+        row: Option<Track>,
+    },
+}
+
 glib::wrapper! {
     /// A container that wraps one naui widget and adds a size maximum.
     pub struct SizeBin(ObjectSubclass<imp::SizeBin>)
@@ -268,8 +293,24 @@ impl SizeBin {
 
     /// Applies the size specification. Each call discards the previous one.
     pub(crate) fn apply_sizing(&self, sizing: Sizing) {
+        self.imp().sizing.set(sizing);
+        self.relayout();
+    }
+
+    /// Records where it is placed and applies what that placement asks for.
+    pub(crate) fn set_placement(&self, placement: Placement) {
+        self.imp().placement.set(placement);
+        self.relayout();
+    }
+
+    /// Sets everything up again from the size specification and the placement.
+    ///
+    /// The placement's settings go on top of the size specification's, so the order
+    /// in which they were given does not matter, and nothing from a previous
+    /// placement (a `Grid` column's fixed width, say) is left over.
+    fn relayout(&self) {
         let imp = self.imp();
-        imp.sizing.set(sizing);
+        let sizing = imp.sizing.get();
 
         let width = axis(sizing.width, sizing.min_width, sizing.max_width);
         let height = axis(sizing.height, sizing.min_height, sizing.max_height);
@@ -289,9 +330,19 @@ impl SizeBin {
         self.apply_expand(false, height.expand);
         self.set_halign(width.align);
         self.set_valign(height.align);
-        // Grid へ置いた後に大きさを変えても、マスでの寄せ方は保つ。
-        if self.parent().is_some_and(|parent| parent.is::<gtk::Grid>()) {
-            self.place_in_grid();
+        match imp.placement.get() {
+            Placement::Loose => {}
+            Placement::FillParent => self.fill_parent_axes(),
+            Placement::Stack { align, vertical } => self.cross_align(align, vertical),
+            Placement::Grid { column, row } => {
+                self.place_in_grid();
+                if let Some(track) = column {
+                    self.apply_track(true, track);
+                }
+                if let Some(track) = row {
+                    self.apply_track(false, track);
+                }
+            }
         }
         self.queue_resize();
     }
@@ -317,6 +368,10 @@ impl SizeBin {
     ///
     /// Only axes with no size of their own become `Fill`.
     pub(crate) fn fill_parent(&self) {
+        self.set_placement(Placement::FillParent);
+    }
+
+    fn fill_parent_axes(&self) {
         let sizing = self.sizing();
         if matches!(sizing.width, Length::Auto) && sizing.max_width.is_none() {
             self.set_halign(gtk::Align::Fill);
@@ -356,7 +411,7 @@ impl SizeBin {
     /// from [`Length::Fixed`] and capped [`Length::Fill`]), and in a column of
     /// names of different lengths each name would sit in the middle of the column.
     /// Only [`Length::Fill`] without a maximum stretches and is left alone.
-    pub(crate) fn place_in_grid(&self) {
+    fn place_in_grid(&self) {
         let sizing = self.sizing();
         if !(sizing.width.is_fill() && sizing.max_width.is_none()) {
             self.set_halign(gtk::Align::Start);
@@ -373,7 +428,7 @@ impl SizeBin {
     /// largest child, so this decides the column width.
     ///
     /// Axes with their own size specified are left alone (the child's setting wins).
-    pub(crate) fn apply_track(&self, horizontal: bool, track: Track) {
+    fn apply_track(&self, horizontal: bool, track: Track) {
         let sizing = self.sizing();
         let own = if horizontal {
             sizing.width
@@ -410,7 +465,6 @@ impl SizeBin {
                 }
             }
         }
-        self.queue_resize();
     }
 
     /// Receives the container's alignment.
@@ -419,6 +473,13 @@ impl SizeBin {
     /// [`Length::Fixed`] and `Fill` with a maximum "must not stretch", so a `Fill` from
     /// the container is read as `Center`.
     pub(crate) fn set_cross_align(&self, align: Align, vertical_container: bool) {
+        self.set_placement(Placement::Stack {
+            align,
+            vertical: vertical_container,
+        });
+    }
+
+    fn cross_align(&self, align: Align, vertical_container: bool) {
         let sizing = self.sizing();
         let (length, max) = if vertical_container {
             (sizing.width, sizing.max_width)

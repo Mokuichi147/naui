@@ -182,8 +182,6 @@ that shape are covered in
 ### Layout
 
 - `Grid`'s `Track::Fill` does not reflect differences in weight.
-- Specify cross-axis `Fill` and placement within `Grid` cells before adding to the
-  container.
 - **Children cannot be stacked in the same `Grid` cell.** The one placed later
   removes the earlier one (because `NSGridCell` can hold only one view).
 - **Removing a merged cell (a child with a span) from a `Grid` leaves the merge

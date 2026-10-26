@@ -12,7 +12,7 @@ use naui_core::{
     GridCell, Padding, ScrollMetrics, ScrollNotifier, ScrollPolicy, ScrollTarget, Track,
 };
 
-use crate::bin::{apply_padding, SizeBin};
+use crate::bin::{apply_padding, Placement, SizeBin};
 use crate::widgets::{impl_widget, Widget};
 
 // ------------------------------------------------------------------- Grid
@@ -65,7 +65,6 @@ impl Grid {
             cell.column_span as i32,
             cell.row_span as i32,
         );
-        bin.place_in_grid();
         self.apply_tracks_to(&bin, cell);
         self.0
             .children
@@ -81,8 +80,12 @@ impl Grid {
 
     /// Removes every child. The row and column settings stay.
     pub fn clear(&self) {
-        for (_, child) in std::mem::take(&mut *self.0.children.borrow_mut()) {
-            self.0.native.remove(&child.size_bin());
+        let children = std::mem::take(&mut *self.0.children.borrow_mut());
+        for (_, child) in children {
+            let bin = child.size_bin();
+            crate::interaction::clear_focus(&bin);
+            self.0.native.remove(&bin);
+            bin.set_placement(Placement::Loose);
         }
     }
 
@@ -90,15 +93,24 @@ impl Grid {
     ///
     /// Only the column and row of `cell` are considered, not the span.
     pub fn remove(&self, cell: GridCell) {
-        let mut children = self.0.children.borrow_mut();
-        let mut index = 0;
-        while index < children.len() {
-            if children[index].0.column == cell.column && children[index].0.row == cell.row {
-                let (_, child) = children.remove(index);
-                self.0.native.remove(&child.size_bin());
-            } else {
-                index += 1;
+        let removed = {
+            let mut children = self.0.children.borrow_mut();
+            let mut removed = Vec::new();
+            let mut index = 0;
+            while index < children.len() {
+                if children[index].0.column == cell.column && children[index].0.row == cell.row {
+                    removed.push(children.remove(index).1);
+                } else {
+                    index += 1;
+                }
             }
+            removed
+        };
+        for child in removed {
+            let bin = child.size_bin();
+            crate::interaction::clear_focus(&bin);
+            self.0.native.remove(&bin);
+            bin.set_placement(Placement::Loose);
         }
     }
 
@@ -132,16 +144,13 @@ impl Grid {
     /// Children spanning several cells do not take part in deciding column / row
     /// widths (it would be unclear which column's width they decide).
     fn apply_tracks_to(&self, bin: &SizeBin, cell: GridCell) {
-        if cell.column_span == 1 {
-            if let Some(track) = self.0.column_tracks.borrow().get(cell.column).copied() {
-                bin.apply_track(true, track);
-            }
-        }
-        if cell.row_span == 1 {
-            if let Some(track) = self.0.row_tracks.borrow().get(cell.row).copied() {
-                bin.apply_track(false, track);
-            }
-        }
+        let column = (cell.column_span == 1)
+            .then(|| self.0.column_tracks.borrow().get(cell.column).copied())
+            .flatten();
+        let row = (cell.row_span == 1)
+            .then(|| self.0.row_tracks.borrow().get(cell.row).copied())
+            .flatten();
+        bin.set_placement(Placement::Grid { column, row });
     }
 
     /// The number of columns the placed children need.
@@ -380,6 +389,12 @@ impl Scroll {
 
     pub fn set_child(&self, child: &dyn Widget) {
         let bin = child.size_bin();
+        let previous = self.0.child.borrow().as_ref().map(|child| child.size_bin());
+        if let Some(previous) = previous {
+            if previous != bin {
+                crate::interaction::clear_focus(&previous);
+            }
+        }
         // スクロールの中では、中身は自分の大きさのまま置かれる。
         bin.fill_parent();
         self.0.native.set_child(Some(&bin));

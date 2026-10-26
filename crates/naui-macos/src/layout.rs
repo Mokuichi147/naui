@@ -4,6 +4,7 @@
 //! naui only sets constraints and properties.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use std::rc::Weak;
@@ -147,6 +148,9 @@ pub(crate) fn apply_sizing(view: &NSView, sizing: Sizing) {
     // `Fill` は中身の intrinsic size より狭くなってもよい。
     set_compression_resistance(view, true, sizing.width.is_fill());
     set_compression_resistance(view, false, sizing.height.is_fill());
+
+    // すでにコンテナへ入っていれば、親の側の制約と配置も張り直してもらう。
+    refresh_in_container(view);
 }
 
 fn set_hugging(view: &NSView, horizontal: bool, fill: bool) {
@@ -281,6 +285,61 @@ pub(crate) fn invalidate_ancestors(view: &NSView) {
         parent.invalidateIntrinsicContentSize();
         parent.setNeedsLayout(true);
         current = unsafe { parent.superview() };
+    }
+}
+
+// ------------------------------------------------- Telling the container
+
+/// What a container does to redo its own side when a child's specification changes.
+type Refresh = Rc<dyn Fn(&NSView)>;
+
+thread_local! {
+    /// Looks up, by the container's view (its address), what redoes its side.
+    static CONTAINERS: RefCell<HashMap<usize, Refresh>> = RefCell::new(HashMap::new());
+}
+
+fn view_key(view: &NSView) -> usize {
+    view as *const NSView as usize
+}
+
+/// Registers a container whose own constraints or placement depend on its children's
+/// specifications.
+///
+/// In AppKit, cross-axis `Fill` and placement within a grid cell are expressed by
+/// constraints and settings **on the parent's side**. [`apply_sizing`] on the child
+/// alone does not change them, so `apply_sizing` looks up the child's `superview` in
+/// this table and has the parent redo them (the counterpart of Windows's
+/// `LayoutState` and the Web's `ParentLayout`).
+///
+/// This way the result does not depend on whether `set_sizing` is called before or
+/// after adding to the container. A registered container is removed with
+/// [`unregister_container`] when it is dropped.
+pub(crate) fn register_container(native: &NSView, refresh: impl Fn(&NSView) + 'static) {
+    CONTAINERS.with(|containers| {
+        containers
+            .borrow_mut()
+            .insert(view_key(native), Rc::new(refresh));
+    });
+}
+
+/// Removes what [`register_container`] registered.
+pub(crate) fn unregister_container(native: &NSView) {
+    // スレッドの終了中は表そのものが先に破棄されていることがある。
+    let _ = CONTAINERS.try_with(|containers| {
+        containers.borrow_mut().remove(&view_key(native));
+    });
+}
+
+/// If `view`'s parent is a registered container, has it redo its side for `view`.
+fn refresh_in_container(view: &NSView) {
+    let Some(parent) = (unsafe { view.superview() }) else {
+        return;
+    };
+    // 表を借りたまま呼ぶと、張り直しの中で登録・解除が起きたときにぶつかる。
+    let refresh =
+        CONTAINERS.with(|containers| containers.borrow().get(&view_key(&parent)).cloned());
+    if let Some(refresh) = refresh {
+        refresh(view);
     }
 }
 
@@ -646,6 +705,12 @@ struct GridInner {
     padding: Cell<Padding>,
 }
 
+impl Drop for GridInner {
+    fn drop(&mut self) {
+        unregister_container(&self.native);
+    }
+}
+
 /// A container that positions children by row and column (NSGridView).
 #[derive(Clone)]
 pub struct Grid(Rc<GridInner>);
@@ -665,7 +730,7 @@ impl Grid {
             grows.clone(),
         );
         let native = content_sized.clone().into_super();
-        Self(Rc::new(GridInner {
+        let this = Self(Rc::new(GridInner {
             native,
             children: RefCell::new(Vec::new()),
             row_tracks,
@@ -674,7 +739,41 @@ impl Grid {
             grows,
             content_sized,
             padding: Cell::new(Padding::ZERO),
-        }))
+        }));
+        let weak = Rc::downgrade(&this.0);
+        register_container(&this.0.native, move |view| {
+            if let Some(inner) = weak.upgrade() {
+                Grid(inner).refresh_child(view);
+            }
+        });
+        this
+    }
+
+    /// Redoes the placement in the cell of a child whose specification changed.
+    ///
+    /// Called from [`apply_sizing`] through [`register_container`].
+    fn refresh_child(&self, view: &NSView) {
+        let cell = self
+            .0
+            .cells
+            .borrow()
+            .iter()
+            .find(|(placed, _)| std::ptr::eq::<NSView>(&**placed, view))
+            .map(|(_, cell)| *cell);
+        let Some(cell) = cell else {
+            return;
+        };
+        self.apply_cell_layout(view, &cell);
+        self.update_tracks();
+        invalidate_ancestors(&self.0.native);
+    }
+
+    /// Recomputes the sizes naui decides (Auto rows and columns, and the share of
+    /// `Fill` children).
+    fn update_tracks(&self) {
+        self.0.content_sized.update_auto_row_heights();
+        self.0.content_sized.update_auto_column_widths();
+        self.0.content_sized.update_grow_sizes();
     }
 
     /// The spacing between columns and between rows.
@@ -743,21 +842,39 @@ impl Grid {
         // どの位置を指しても同じマスになる)。
         self.remove_sharing(&target);
         target.setContentView(Some(&view));
+        self.apply_cell_layout(&view, &cell);
+        self.apply_padding();
+        self.0.cells.borrow_mut().push((view, cell));
+        self.0.children.borrow_mut().push(child.boxed_clone());
+        self.update_tracks();
+    }
+
+    /// Decides the placement within the cell and the wish to grow from the child's
+    /// specification (whether it is `Fill`).
+    ///
+    /// Called when the child is placed, and again when its specification changes
+    /// after that.
+    fn apply_cell_layout(&self, view: &NSView, cell: &GridCell) {
+        let column = cell.column as isize;
+        let target: Retained<NSGridCell> = self
+            .0
+            .native
+            .cellAtColumnIndex_rowIndex(column, cell.row as isize);
         // 列が `Fill` でも、子が `Auto` なら列の幅を継承して広げない。
         // `Inherited` のままだと、再レイアウト時に NSGridView の列配置を
         // 継承してラベルまで列いっぱいになることがある。
-        let fill_width = wants_fill(&view, true);
+        let fill_width = wants_fill(view, true);
         // 上限付きの `Fill` は、セルいっぱいには広げずに Auto と同じ位置へ置く。
         // 配置を `Fill` にするとセルの端と子の端が必須で結ばれ、子の上限が
         // そのまま行や列の上限になる。そうなると `Fill` の行が余りを受け取れず、
         // 上限のぶんまで縮んでしまう (GTK や WinUI では行が余りを受け取り、
         // 子はその中で上限まで広がる)。子を上限まで広げるのは set_grow_hint。
-        let stretch_width = fill_width && max_size(&view, true).is_none();
+        let stretch_width = fill_width && max_size(view, true).is_none();
         if !fill_width {
             // Leading だけでは、NSGridView が再レイアウト時に作る幅の
             // 制約に intrinsic size が負けることがある。Auto の意味を
             // hugging priority でも固定しておく。
-            keep_auto_size(&view, true);
+            keep_auto_size(view, true);
             // 列の `Fill` も残すと、AppKit の再レイアウトでセルの配置が
             // `Inherited` 相当に戻る環境がある。Fill の子はセル側で明示
             // しているので、列の既定を先頭寄せにして継承経路も断つ。
@@ -771,30 +888,24 @@ impl Grid {
         } else {
             NSGridCellPlacement::Leading
         });
-        self.set_grow_hint(&view, &cell, true, fill_width);
+        self.set_grow_hint(view, cell, true, fill_width);
         // 縦は中央ぞろえ。NSGridView の既定 (上ぞろえ) だと、同じ行に置いた
         // ラベルと入力欄のように高さの違うものが上端で揃ってしまう。
-        let fill_height = wants_fill(&view, false);
-        let stretch_height = fill_height && max_size(&view, false).is_none();
+        let fill_height = wants_fill(view, false);
+        let stretch_height = fill_height && max_size(view, false).is_none();
         if !fill_height {
             // 横と同じ理由で、`Auto` の子は行の余りを受け取らない。
             // NSStackView のようにコンテナ自身の hugging priority が低い子は、
             // これが無いと `Fill` 行より先に余りを吸ってしまい、`Fill` 行が
             // 中身の高さ (タブなら見出しだけ) まで潰れる。
-            keep_auto_size(&view, false);
+            keep_auto_size(view, false);
         }
-        self.set_grow_hint(&view, &cell, false, fill_height);
+        self.set_grow_hint(view, cell, false, fill_height);
         target.setYPlacement(if stretch_height {
             NSGridCellPlacement::Fill
         } else {
             NSGridCellPlacement::Center
         });
-        self.apply_padding();
-        self.0.cells.borrow_mut().push((view, cell));
-        self.0.children.borrow_mut().push(child.boxed_clone());
-        self.0.content_sized.update_auto_row_heights();
-        self.0.content_sized.update_auto_column_widths();
-        self.0.content_sized.update_grow_sizes();
     }
 
     /// Places a weak wish "want to grow by the leftover amount" on children in `Fill`
@@ -890,9 +1001,7 @@ impl Grid {
     pub fn remove(&self, cell: GridCell) {
         self.remove_at(cell);
         self.apply_padding();
-        self.0.content_sized.update_auto_row_heights();
-        self.0.content_sized.update_auto_column_widths();
-        self.0.content_sized.update_grow_sizes();
+        self.update_tracks();
     }
 
     /// Removes every child. The row and column settings stay.
@@ -908,9 +1017,7 @@ impl Grid {
             self.remove_at(cell);
         }
         self.apply_padding();
-        self.0.content_sized.update_auto_row_heights();
-        self.0.content_sized.update_auto_column_widths();
-        self.0.content_sized.update_grow_sizes();
+        self.update_tracks();
     }
 
     /// Removes the child in the given cell. If several are stacked in the same cell,

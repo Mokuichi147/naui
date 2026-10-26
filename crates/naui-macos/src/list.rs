@@ -502,8 +502,7 @@ fn item_content(
 /// One piece of text placed in a row.
 ///
 /// **It stretches to the full width of the row.** Only once the width is decided
-/// can text that does not fit be cut off with an ellipsis. `Fill` on the cross axis
-/// is specified before putting it into the container.
+/// can text that does not fit be cut off with an ellipsis.
 fn row_label(mtm: MainThreadMarker, text: &str) -> Label {
     let label = Label::new(mtm, text);
     label.set_sizing(Sizing::fill_width());

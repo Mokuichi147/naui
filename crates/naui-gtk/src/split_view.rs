@@ -167,6 +167,7 @@ impl SplitViewInner {
             &self.end_pane
         };
         while let Some(previous) = container.first_child() {
+            crate::interaction::clear_focus(&previous);
             previous.unparent();
         }
         let bin = child.size_bin();

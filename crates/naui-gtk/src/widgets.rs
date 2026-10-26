@@ -63,9 +63,9 @@ macro_rules! impl_sizing {
             /// The actual size is decided by GTK4's layout, so what you pass here is only
             /// "at least this much", "take the leftover space" and "stop at this maximum".
             ///
-            /// The container ([`Stack::set_align`](crate::Stack::set_align)) also decides
-            /// cross-axis alignment, so calling this **before putting the widget into a
-            /// container** is the safe choice.
+            /// It can be called before or after putting the widget into a container. What
+            /// the container decides ([`Stack::set_align`](crate::Stack::set_align), a
+            /// `Grid` column's width) is kept either way.
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 <$t as Widget>::size_bin(self).apply_sizing(sizing);
             }
@@ -974,18 +974,27 @@ impl Stack {
 
     /// Removes the child at the given position. Does nothing if out of range.
     pub fn remove(&self, index: usize) {
-        let mut children = self.0.children.borrow_mut();
-        if index >= children.len() {
-            return;
-        }
-        let child = children.remove(index);
-        self.0.native.remove(&child.size_bin());
+        let child = {
+            let mut children = self.0.children.borrow_mut();
+            if index >= children.len() {
+                return;
+            }
+            children.remove(index)
+        };
+        let bin = child.size_bin();
+        crate::interaction::clear_focus(&bin);
+        self.0.native.remove(&bin);
+        bin.set_placement(crate::bin::Placement::Loose);
     }
 
     /// Removes every child.
     pub fn clear(&self) {
-        for child in std::mem::take(&mut *self.0.children.borrow_mut()) {
-            self.0.native.remove(&child.size_bin());
+        let children = std::mem::take(&mut *self.0.children.borrow_mut());
+        for child in children {
+            let bin = child.size_bin();
+            crate::interaction::clear_focus(&bin);
+            self.0.native.remove(&bin);
+            bin.set_placement(crate::bin::Placement::Loose);
         }
     }
 
