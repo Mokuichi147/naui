@@ -896,7 +896,7 @@ impl ProgressBar {
 struct StackInner {
     native: gtk::Box,
     bin: SizeBin,
-    vertical: bool,
+    vertical: Cell<bool>,
     align: Cell<Align>,
     /// Holds the children's handles, keeping them alive along with their closures.
     children: RefCell<Vec<Box<dyn Widget>>>,
@@ -910,22 +910,42 @@ impl_widget!(Stack);
 impl Stack {
     pub(crate) fn new(orientation: Orientation) -> Self {
         let vertical = orientation.is_vertical();
-        let native = gtk::Box::new(
-            if vertical {
-                gtk::Orientation::Vertical
-            } else {
-                gtk::Orientation::Horizontal
-            },
-            0,
-        );
+        let native = gtk::Box::new(to_gtk_orientation(orientation), 0);
         let bin = SizeBin::wrap(&native);
         Self(Rc::new(StackInner {
             native,
             bin,
-            vertical,
+            vertical: Cell::new(vertical),
             align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
         }))
+    }
+
+    /// Switches between laying out vertically and horizontally (`GtkOrientable`).
+    ///
+    /// The children stay in the box. Each one is placed again for the new cross axis,
+    /// so the alignment the previous direction gave it does not carry over.
+    pub fn set_orientation(&self, orientation: Orientation) {
+        let vertical = orientation.is_vertical();
+        if self.0.vertical.replace(vertical) == vertical {
+            return;
+        }
+        self.0
+            .native
+            .set_orientation(to_gtk_orientation(orientation));
+        for child in self.0.children.borrow().iter() {
+            child
+                .size_bin()
+                .set_cross_align(self.0.align.get(), vertical);
+        }
+    }
+
+    pub fn orientation(&self) -> Orientation {
+        if self.0.vertical.get() {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        }
     }
 
     pub fn set_spacing(&self, spacing: f64) {
@@ -945,13 +965,15 @@ impl Stack {
     pub fn set_align(&self, align: Align) {
         self.0.align.set(align);
         for child in self.0.children.borrow().iter() {
-            child.size_bin().set_cross_align(align, self.0.vertical);
+            child
+                .size_bin()
+                .set_cross_align(align, self.0.vertical.get());
         }
     }
 
     pub fn append(&self, child: &dyn Widget) {
         let bin = child.size_bin();
-        bin.set_cross_align(self.0.align.get(), self.0.vertical);
+        bin.set_cross_align(self.0.align.get(), self.0.vertical.get());
         self.0.native.append(&bin);
         self.0.children.borrow_mut().push(child.boxed_clone());
     }
@@ -962,7 +984,7 @@ impl Stack {
         let mut children = self.0.children.borrow_mut();
         let index = index.min(children.len());
         let bin = child.size_bin();
-        bin.set_cross_align(self.0.align.get(), self.0.vertical);
+        bin.set_cross_align(self.0.align.get(), self.0.vertical.get());
         // `GtkBox` は「この子の後ろへ」で場所を指す。先頭は `None`。
         let after = index
             .checked_sub(1)
@@ -1004,5 +1026,13 @@ impl Stack {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+fn to_gtk_orientation(orientation: Orientation) -> gtk::Orientation {
+    if orientation.is_vertical() {
+        gtk::Orientation::Vertical
+    } else {
+        gtk::Orientation::Horizontal
     }
 }

@@ -166,6 +166,25 @@ field.request_focus(); // moving takes the focus away
 [`Stack::insert`] and [`Stack::remove`] leave the other children where they are, so
 a field being typed into keeps its focus and the text being composed with an IME.
 
+[`Stack::set_orientation`] switches a stack between vertical and horizontal the same
+way: the children stay where they are, and the result is the same as a stack made
+in that direction. [`Sizing`] refers to the width and height, not to the main and
+cross axes, so a child with `Fill` on the width that stretched across a vertical
+stack takes the leftover width once the stack is horizontal. Spacing, padding and
+[`set_align`](Stack::set_align) carry over, the alignment now applying to the new
+cross axis.
+
+```no_run
+# use naui::{Orientation, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let actions = ui.stack(Orientation::Horizontal)?;
+actions.append(&ui.button("Save")?);
+actions.append(&ui.button("Cancel")?);
+actions.set_orientation(Orientation::Vertical); // one above the other from now on
+# Ok(())
+# }
+```
+
 The moved widget itself keeps its contents (text, values, choices) and the scroll
 position of the [`Scroll`]s inside it (checked on macOS, Linux and the Web; not yet
 on Windows). **It loses the keyboard focus**, and text being composed with an IME

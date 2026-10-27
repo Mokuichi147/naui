@@ -113,6 +113,10 @@ const CASES: &[Case] = &[
         removing_stack_child_resets_its_track,
     ),
     (
+        "スタックの向きを変えると最初からその向きで作ったのと同じ行と配置になる",
+        stack_switches_orientation,
+    ),
+    (
         "Grid で結合していた子をスタックへ移すと結合が外れる",
         grid_span_does_not_follow_into_a_stack,
     ),
@@ -1344,6 +1348,77 @@ fn stack_gives_fill_children_star_tracks(ui: &Ui) -> Result<()> {
 /// A child taken out of a Stack does not keep its row number. Otherwise, in a `Grid`
 /// that places its children without setting a row (a window's content row, for
 /// example), it would land in a row that is not there.
+/// Switching a Stack's orientation moves its tracks to the other axis, gives back
+/// the alignment the previous cross axis overrode and applies `Align` to the new one,
+/// ending up as a Stack made in that direction would.
+fn stack_switches_orientation(ui: &Ui) -> Result<()> {
+    const AUTO: GridUnitType = GridUnitType::Auto;
+    const STAR: GridUnitType = GridUnitType::Star;
+
+    let build = |orientation: Orientation| -> Result<_> {
+        let stack = ui.stack(orientation)?;
+        stack.set_align(Align::End);
+        let label = ui.label("前")?;
+        let wide = ui.button("広がる")?;
+        wide.set_sizing(Sizing::fill_width());
+        stack.append(&label);
+        stack.append(&wide);
+        Ok((stack, label, wide))
+    };
+    let placement = |widget: &dyn Widget| {
+        let element = native::<FrameworkElement>(widget);
+        (
+            element.HorizontalAlignment().expect("横配置"),
+            element.VerticalAlignment().expect("縦配置"),
+            Grid::GetRow(&element).expect("行"),
+            Grid::GetColumn(&element).expect("列"),
+        )
+    };
+
+    let (stack, label, wide) = build(Orientation::Vertical)?;
+    let grid = native::<Grid>(&stack);
+    assert_eq!(
+        stack_tracks(&grid, true),
+        [AUTO, AUTO],
+        "縦並びでは幅の Fill は行を Star にしないこと"
+    );
+
+    stack.set_orientation(Orientation::Horizontal);
+    assert_eq!(stack.orientation(), Orientation::Horizontal);
+    assert_eq!(
+        stack_tracks(&grid, false),
+        [AUTO, STAR],
+        "横並びでは幅の Fill が Star の列を持つこと"
+    );
+    assert_eq!(stack_tracks(&grid, true), [], "前の主軸の行を残さないこと");
+    let (_, made_label, made_wide) = build(Orientation::Horizontal)?;
+    assert_eq!(
+        placement(&label),
+        placement(&made_label),
+        "横で作ったのと同じ配置になること"
+    );
+    assert_eq!(placement(&wide), placement(&made_wide));
+    assert_eq!(
+        native::<FrameworkElement>(&label)
+            .VerticalAlignment()
+            .expect("縦配置"),
+        VerticalAlignment::Bottom,
+        "揃えが新しい交差軸に効くこと"
+    );
+
+    stack.set_orientation(Orientation::Vertical);
+    assert_eq!(stack_tracks(&grid, true), [AUTO, AUTO]);
+    assert_eq!(stack_tracks(&grid, false), [], "前の主軸の列を残さないこと");
+    let (_, made_label, made_wide) = build(Orientation::Vertical)?;
+    assert_eq!(
+        placement(&label),
+        placement(&made_label),
+        "縦へ戻せば縦で作ったのと同じ配置になること"
+    );
+    assert_eq!(placement(&wide), placement(&made_wide));
+    Ok(())
+}
+
 fn removing_stack_child_resets_its_track(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.append(&ui.label("一")?);

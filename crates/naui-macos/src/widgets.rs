@@ -34,7 +34,8 @@ pub trait Widget: 'static {
     #[doc(hidden)]
     fn boxed_clone(&self) -> Box<dyn Widget>;
 
-    /// Called with the direction (`true` for vertical) when put into a `Stack`.
+    /// Called with the direction (`true` for vertical) when put into a `Stack`, and
+    /// again when that stack changes direction.
     ///
     /// Used only by nested `Stack`s. To settle that the outer one absorbs leftover
     /// space, a stack stiffens its own tail spacer when the direction is the same.
@@ -1016,13 +1017,17 @@ struct StackInner {
     tail_spacer: Retained<NSView>,
     tail_spacer_active: Cell<bool>,
     /// The constraint "keep the tail spacer at 0 on the main axis". Its priority decides
-    /// "whether it may absorb leftover space" (strong only when nested).
-    tail_zero: Retained<NSLayoutConstraint>,
-    /// Whether it is inside a `Stack` of the same direction.
-    nested: Cell<bool>,
-    /// Whether `Fill` was specified on the main axis. If so, it may grow even when
-    /// nested.
-    fill_main: Cell<bool>,
+    /// "whether it may absorb leftover space" (strong only when nested). Made again
+    /// when the orientation changes.
+    tail_zero: RefCell<Retained<NSLayoutConstraint>>,
+    /// The direction of the `Stack` it is in (`true` for vertical), if any. Nested in
+    /// one of the same direction, it leaves the leftover space to the outer one.
+    parent_vertical: Cell<Option<bool>>,
+    /// Its own size specification. `Fill` on the main axis lets it grow even when
+    /// nested; which axis that is depends on the orientation.
+    sizing: Cell<naui_core::Sizing>,
+    /// The cross-axis alignment, applied again when the orientation changes.
+    align: Cell<Align>,
     /// Holds the children's handles, keeping them alive along with their trampolines.
     children: RefCell<Vec<Box<dyn Widget>>>,
     /// The constraints tying children with `Fill` on the cross axis to the stack's width
@@ -1066,12 +1071,12 @@ impl Widget for Stack {
     /// Auto Layout solution, and the inner one might grow, leaving a large gap in the
     /// middle of a section ([`crate::layout::NESTED_TAIL_PRIORITY`]).
     fn nested_in_stack(&self, vertical: bool) {
-        self.0.nested.set(self.is_vertical() == vertical);
+        self.0.parent_vertical.set(Some(vertical));
         self.update_tail_priority();
     }
 
     fn left_stack(&self) {
-        self.0.nested.set(false);
+        self.0.parent_vertical.set(None);
         self.update_tail_priority();
     }
 }
@@ -1084,20 +1089,23 @@ impl Stack {
     pub fn set_sizing(&self, sizing: naui_core::Sizing) {
         let view = <Self as Widget>::native_view(self);
         crate::layout::apply_sizing(&view, sizing);
-        let fill_main = if self.is_vertical() {
-            sizing.height.is_fill()
-        } else {
-            sizing.width.is_fill()
-        };
-        self.0.fill_main.set(fill_main);
+        self.0.sizing.set(sizing);
         self.update_tail_priority();
     }
 
     /// Decides again from the current state whether the tail spacer may absorb leftover
     /// space.
     fn update_tail_priority(&self) {
-        let hold = self.0.nested.get() && !self.0.fill_main.get();
-        self.0.tail_zero.setPriority(if hold {
+        let vertical = self.is_vertical();
+        let nested = self.0.parent_vertical.get() == Some(vertical);
+        let sizing = self.0.sizing.get();
+        let fill_main = if vertical {
+            sizing.height.is_fill()
+        } else {
+            sizing.width.is_fill()
+        };
+        let hold = nested && !fill_main;
+        self.0.tail_zero.borrow().setPriority(if hold {
             crate::layout::NESTED_TAIL_PRIORITY
         } else {
             crate::layout::TAIL_PRIORITY
@@ -1147,9 +1155,10 @@ impl Stack {
             native,
             tail_spacer,
             tail_spacer_active: Cell::new(true),
-            tail_zero,
-            nested: Cell::new(false),
-            fill_main: Cell::new(false),
+            tail_zero: RefCell::new(tail_zero),
+            parent_vertical: Cell::new(None),
+            sizing: Cell::new(naui_core::Sizing::AUTO),
+            align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
             fill_constraints: RefCell::new(HashMap::new()),
             padding: Cell::new(Padding::ZERO),
@@ -1163,6 +1172,63 @@ impl Stack {
             }
         });
         this
+    }
+
+    /// Switches between laying out vertically and horizontally
+    /// (`NSStackView.orientation`).
+    ///
+    /// The children stay in the view hierarchy, so a field being typed into keeps its
+    /// focus and IME composition. What depends on the direction is placed again: the
+    /// cross-axis alignment and `Fill` constraints, the main-axis hugging, the tail
+    /// spacer, and whether nested `Stack`s leave the leftover space to their parent.
+    pub fn set_orientation(&self, orientation: Orientation) {
+        let vertical = orientation.is_vertical();
+        if self.is_vertical() == vertical {
+            return;
+        }
+        // 前の主軸で Auto の子に付けた強い hugging を外し、最初から新しい
+        // 向きで入れた子と同じ優先度にする。
+        for child in self.0.children.borrow().iter() {
+            crate::layout::release_auto_size(&child.native_view(), vertical);
+        }
+        self.0.native.setOrientation(if vertical {
+            NSUserInterfaceLayoutOrientation::Vertical
+        } else {
+            NSUserInterfaceLayoutOrientation::Horizontal
+        });
+        self.set_align(self.0.align.get());
+
+        // 受け皿を 0 に保つ制約は軸ごとのものなので、作り直す。
+        let tail_zero = crate::layout::tail_zero_constraint(&self.0.tail_spacer, vertical);
+        let previous = self.0.tail_zero.replace(tail_zero);
+        previous.setActive(false);
+        self.update_tail_priority();
+        if self.0.tail_spacer_active.get() {
+            self.0.tail_zero.borrow().setActive(true);
+        }
+
+        // 子の側は、入れたときと同じ手順で新しい向きに合わせる。
+        let children: Vec<Box<dyn Widget>> = self
+            .0
+            .children
+            .borrow()
+            .iter()
+            .map(|child| child.boxed_clone())
+            .collect();
+        for child in &children {
+            child.nested_in_stack(vertical);
+            self.apply_child_layout(&child.native_view());
+        }
+        self.update_tail();
+        self.invalidate_natural_size();
+    }
+
+    pub fn orientation(&self) -> Orientation {
+        if self.is_vertical() {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        }
     }
 
     pub fn set_spacing(&self, spacing: f64) {
@@ -1214,6 +1280,7 @@ impl Stack {
     }
 
     pub fn set_align(&self, align: Align) {
+        self.0.align.set(align);
         let vertical = self.is_vertical();
         let attr = match (align, vertical) {
             (Align::Fill, _) => NSLayoutAttribute::NotAnAttribute,
@@ -1391,12 +1458,12 @@ impl Stack {
         }
         if wants_tail {
             self.0.native.addArrangedSubview(&self.0.tail_spacer);
-            self.0.tail_zero.setActive(true);
+            self.0.tail_zero.borrow().setActive(true);
             if let Some(last) = self.len().checked_sub(1) {
                 self.update_spacing_after(last);
             }
         } else {
-            self.0.tail_zero.setActive(false);
+            self.0.tail_zero.borrow().setActive(false);
             self.0.native.removeArrangedSubview(&self.0.tail_spacer);
             self.0.tail_spacer.removeFromSuperview();
         }

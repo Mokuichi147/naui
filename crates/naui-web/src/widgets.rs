@@ -947,7 +947,7 @@ impl ProgressBar {
 
 struct StackInner {
     element: HtmlElement,
-    orientation: Orientation,
+    orientation: Cell<Orientation>,
     children: RefCell<Vec<Box<dyn Widget>>>,
 }
 
@@ -962,21 +962,51 @@ impl Stack {
         let element: HtmlElement = create(doc, "div")?.unchecked_into();
         let style = element.style();
         let _ = style.set_property("display", "flex");
-        let _ = style.set_property(
-            "flex-direction",
-            if orientation.is_vertical() {
-                "column"
-            } else {
-                "row"
-            },
-        );
         let _ = style.set_property("align-items", "center");
-        crate::layout::mark_parent(&element, crate::layout::ParentLayout::Flex(orientation));
-        Ok(Self(Rc::new(StackInner {
+        let this = Self(Rc::new(StackInner {
             element,
-            orientation,
+            orientation: Cell::new(orientation),
             children: RefCell::new(Vec::new()),
-        })))
+        }));
+        this.apply_direction();
+        Ok(this)
+    }
+
+    /// Switches between laying out vertically and horizontally (`flex-direction`).
+    ///
+    /// The children stay in the element. Their `flex-grow` and `align-self` are
+    /// rewritten for the new main axis, the same as when they are put into a `Stack`.
+    pub fn set_orientation(&self, orientation: Orientation) {
+        if self.0.orientation.replace(orientation) == orientation {
+            return;
+        }
+        self.apply_direction();
+        let parent = self.parent_layout();
+        for child in self.0.children.borrow().iter() {
+            crate::layout::layout_for_parent(&child.native_element(), parent);
+        }
+    }
+
+    pub fn orientation(&self) -> Orientation {
+        self.0.orientation.get()
+    }
+
+    fn apply_direction(&self) {
+        let direction = if self.0.orientation.get().is_vertical() {
+            "column"
+        } else {
+            "row"
+        };
+        let _ = self
+            .0
+            .element
+            .style()
+            .set_property("flex-direction", direction);
+        crate::layout::mark_parent(&self.0.element, self.parent_layout());
+    }
+
+    fn parent_layout(&self) -> crate::layout::ParentLayout {
+        crate::layout::ParentLayout::Flex(self.0.orientation.get())
     }
 
     pub fn set_spacing(&self, spacing: f64) {
@@ -1014,10 +1044,7 @@ impl Stack {
     pub fn append(&self, child: &dyn Widget) {
         let element = child.native_element();
         if self.0.element.append_child(&element).is_ok() {
-            crate::layout::apply_child_layout(
-                &element,
-                crate::layout::ParentLayout::Flex(self.0.orientation),
-            );
+            crate::layout::apply_child_layout(&element, self.parent_layout());
             self.0.children.borrow_mut().push(child.boxed_clone());
         }
     }
@@ -1034,10 +1061,7 @@ impl Stack {
             .element
             .insert_before(&element, anchor.as_ref().map(|next| &**next));
         if inserted.is_ok() {
-            crate::layout::apply_child_layout(
-                &element,
-                crate::layout::ParentLayout::Flex(self.0.orientation),
-            );
+            crate::layout::apply_child_layout(&element, self.parent_layout());
             children.insert(index, child.boxed_clone());
         }
     }

@@ -17,7 +17,8 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
     // Horizontal は横へ順番に並べる。隠したものは Stack の中で場所を空けない
-    // ので、「中央」を隠すと右が詰まる。
+    // ので、「中央」を隠すと右が詰まる。向きはあとから変えられ、子はそのまま
+    // 縦に並び直す。
     parts::section(ui, &pane, "Stack")?;
     let horizontal = parts::row(ui)?;
     let middle = ui.button("Middle")?;
@@ -44,7 +45,33 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             });
         }
     });
-    pane.append(&hide);
+
+    let turn = ui.button("Stack vertically")?;
+    turn.set_tooltip(Some("set_orientation on the stack above"));
+    turn.on_click({
+        let horizontal = horizontal.clone();
+        let turn = turn.downgrade();
+        move || {
+            let vertical = !horizontal.orientation().is_vertical();
+            horizontal.set_orientation(if vertical {
+                Orientation::Vertical
+            } else {
+                Orientation::Horizontal
+            });
+            let Some(turn) = turn.upgrade() else {
+                return;
+            };
+            turn.set_text(if vertical {
+                "Stack horizontally"
+            } else {
+                "Stack vertically"
+            });
+        }
+    });
+    let controls = parts::row(ui)?;
+    controls.append(&hide);
+    controls.append(&turn);
+    pane.append(&controls);
 
     build_dynamic_children(ui, &pane)?;
     build_focus(ui, &pane)?;

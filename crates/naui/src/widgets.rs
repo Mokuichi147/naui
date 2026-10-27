@@ -1,6 +1,6 @@
 use crate::sys;
 use crate::Widget;
-use naui_core::{Align, EventResponse, KeyEvent, Padding, TextColor, TextStyle};
+use naui_core::{Align, EventResponse, KeyEvent, Orientation, Padding, TextColor, TextStyle};
 
 /// A push button (`GtkButton`).
 #[derive(Clone)]
@@ -325,6 +325,25 @@ pub struct Stack(pub(crate) sys::Stack);
 impl_widget!(Stack);
 
 impl Stack {
+    /// Switches between laying out vertically and horizontally.
+    ///
+    /// The children stay where they are (a field being typed into keeps its focus
+    /// and IME composition), and the result is the same as having made the stack
+    /// with this orientation: each child's [`Sizing`](naui_core::Sizing) keeps
+    /// referring to its width and height, so `Fill` on the width that stretched a
+    /// child across a vertical stack now hands it the leftover space of a
+    /// horizontal one. Spacing, padding and [`set_align`](Self::set_align) carry
+    /// over, the alignment now applying to the new cross axis.
+    #[inline]
+    pub fn set_orientation(&self, orientation: Orientation) {
+        self.0.set_orientation(orientation)
+    }
+
+    #[inline]
+    pub fn orientation(&self) -> Orientation {
+        self.0.orientation()
+    }
+
     #[inline]
     pub fn set_spacing(&self, spacing: f64) {
         self.0.set_spacing(spacing)

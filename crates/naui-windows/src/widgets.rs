@@ -1012,7 +1012,7 @@ impl ProgressInner {
 
 struct StackInner {
     native: Grid,
-    vertical: bool,
+    vertical: Cell<bool>,
     /// The default alignment of children on the cross axis. `Fill` children follow their
     /// own setting instead.
     align: Cell<Align>,
@@ -1045,10 +1045,34 @@ impl Stack {
         crate::layout::register_stack(&native);
         Ok(Self(Rc::new(StackInner {
             native,
-            vertical: orientation.is_vertical(),
+            vertical: Cell::new(orientation.is_vertical()),
             align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
         })))
+    }
+
+    /// Switches between laying out vertically and horizontally.
+    ///
+    /// The children stay in the `Grid`. Each one is told the new direction (giving
+    /// back the alignment the previous cross axis overrode) and gets a track on the
+    /// new main axis; `arrange_stack` empties the definitions of the other axis.
+    pub fn set_orientation(&self, orientation: Orientation) {
+        let vertical = orientation.is_vertical();
+        if self.0.vertical.replace(vertical) == vertical {
+            return;
+        }
+        for child in self.0.children.borrow().iter() {
+            self.adopt(&child.native_element());
+        }
+        self.arrange();
+    }
+
+    pub fn orientation(&self) -> Orientation {
+        if self.0.vertical.get() {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        }
     }
 
     pub fn set_spacing(&self, spacing: f64) {
@@ -1079,12 +1103,12 @@ impl Stack {
             element,
             &self.0.native,
             self.0.align.get(),
-            self.0.vertical,
+            self.0.vertical.get(),
         );
     }
 
     fn arrange(&self) {
-        crate::layout::arrange_stack(&self.0.native, self.0.vertical);
+        crate::layout::arrange_stack(&self.0.native, self.0.vertical.get());
     }
 
     /// Appends a child at the end.
