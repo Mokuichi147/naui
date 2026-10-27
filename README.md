@@ -125,7 +125,7 @@ python3 -m http.server 8080
 | Category | API |
 | --- | --- |
 | Windows & layout | `Window`, `Stack`, `Grid`, `Scroll`, `Spacer`, `Expander`, `SplitView`, `Toolbar`, `MenuBar`, `Sidebar` |
-| Basics & input | `Label`, `Button`, `Checkbox`, `Toggle`, `TextInput`, `TextArea`, `PasswordInput`, `SearchInput`, `NumberInput`, `Slider`, `ProgressBar` |
+| Basics & input | `Label`, `Button`, `Checkbox`, `Toggle`, `TextInput`, `TextArea`, `PasswordInput`, `SearchInput`, `NumberInput`, `Slider`, `ProgressBar`, `Spinner` |
 | Data selection | `ComboBox`, `EditableComboBox`, `RadioGroup`, `DatePicker`, `TimePicker`, `ColorPicker`, `List`, `Table`, `Tree` |
 | Files & media | `FilePicker`, `FileSaver`, `Image`, `Video`, `Audio` |
 | Drawing | `Canvas` |

@@ -328,6 +328,10 @@ fn main() {
             "不確定の進捗は値を覚えたまま pulse に切り替わる",
             progress_bar_switches_to_indeterminate,
         ),
+        (
+            "スピナーは AdwSpinner (1.6 より前は GtkSpinner) で、止めると描かずに場所を残す",
+            spinner_stops_without_giving_up_its_space,
+        ),
         ("ラベルを選べるようにできる", label_can_be_selectable),
         (
             "クリップボードへ書いた文字を読み戻せる",
@@ -7983,6 +7987,45 @@ fn progress_bar_switches_to_indeterminate(ui: &Ui) -> Result<()> {
     assert!(!progress.is_indeterminate());
     let native: gtk::ProgressBar = progress.native_widget().downcast().expect("GtkProgressBar");
     assert_eq!(native.fraction(), 0.7, "不確定の間に置いた値が出る");
+    Ok(())
+}
+
+fn spinner_stops_without_giving_up_its_space(ui: &Ui) -> Result<()> {
+    let spinner = ui.spinner()?;
+    assert!(spinner.is_spinning(), "作った時点で回っている");
+    let native = spinner.native_widget();
+    let adw_spinner = (adw::major_version(), adw::minor_version()) >= (1, 6);
+    let expected = if adw_spinner {
+        "AdwSpinner"
+    } else {
+        "GtkSpinner"
+    };
+    assert_eq!(native.type_().name(), expected);
+    let size = native.measure(gtk::Orientation::Horizontal, -1);
+    assert_eq!((size.0, size.1), (16, 16), "既定は 16 x 16");
+
+    spinner.set_spinning(false);
+    assert!(!spinner.is_spinning());
+    match native.downcast_ref::<gtk::Spinner>() {
+        Some(gtk_spinner) => assert!(!gtk_spinner.is_spinning()),
+        None => assert!(!native.is_child_visible(), "AdwSpinner は写さずに止める"),
+    }
+    assert!(native.is_visible(), "場所は残る");
+    assert_eq!(
+        spinner
+            .size_bin()
+            .measure(gtk::Orientation::Horizontal, -1)
+            .1,
+        16,
+        "止めても大きさは変わらない"
+    );
+
+    spinner.set_spinning(true);
+    assert!(spinner.is_spinning());
+    match native.downcast_ref::<gtk::Spinner>() {
+        Some(gtk_spinner) => assert!(gtk_spinner.is_spinning()),
+        None => assert!(native.is_child_visible()),
+    }
     Ok(())
 }
 

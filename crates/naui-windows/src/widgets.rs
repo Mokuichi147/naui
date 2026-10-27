@@ -6,8 +6,8 @@ use std::rc::Rc;
 use naui_core::{Align, Orientation, Padding, Result, TextColor, TextStyle};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, CheckBox as XamlCheckBox, Grid, PasswordBox, ScrollBarVisibility,
-    ScrollViewer, Slider as XamlSlider, TextBlock, TextBox,
+    Button as XamlButton, CheckBox as XamlCheckBox, Grid, PasswordBox, ProgressRing,
+    ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, TextBlock, TextBox,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
@@ -1005,6 +1005,69 @@ impl ProgressInner {
             Left: (track - segment) * along,
             ..Thickness::default()
         });
+    }
+}
+
+// ---------------------------------------------------------------- Spinner
+
+/// The size of `ProgressRing` in WinUI's default style (`DefaultProgressRingStyle`).
+const SPINNER_SIZE: f64 = 32.0;
+
+struct SpinnerInner {
+    native: ProgressRing,
+}
+
+/// A spinning indicator (ProgressRing).
+#[derive(Clone)]
+pub struct Spinner(Rc<SpinnerInner>);
+impl_widget!(Spinner, native);
+
+impl Spinner {
+    pub(crate) fn new() -> Result<Self> {
+        let native = ProgressRing::new().map_err(|e| to_error("ProgressRing の生成", e))?;
+        native
+            .SetIsActive(true)
+            .map_err(|e| to_error("ProgressRing の開始", e))?;
+        let this = Self(Rc::new(SpinnerInner { native }));
+        this.0.keep_default_size();
+        // `set_sizing` は軸ごとに Width / Height を NaN (中身に合わせる) へ戻す。
+        // ProgressRing の中身 (AnimatedVisualPlayer) は大きさを持たないので、
+        // 既定スタイルが与えていた大きさを `Fill` 以外の軸へ戻す。
+        let target = Rc::downgrade(&this.0);
+        crate::layout::on_sizing_change(&this.native_element(), move || {
+            if let Some(inner) = target.upgrade() {
+                inner.keep_default_size();
+            }
+        });
+        Ok(this)
+    }
+
+    /// Whether it spins. Spins from creation.
+    ///
+    /// While stopped it is not drawn but keeps its space (`IsActive` is off). Use
+    /// `set_visible(false)` to give the space up as well.
+    pub fn set_spinning(&self, spinning: bool) {
+        let _ = self.0.native.SetIsActive(spinning);
+    }
+
+    pub fn is_spinning(&self) -> bool {
+        self.0.native.IsActive().unwrap_or(false)
+    }
+}
+
+impl SpinnerInner {
+    /// Gives axes without a size of their own (neither a fixed size nor `Fill`) the
+    /// default size.
+    fn keep_default_size(&self) {
+        let Ok(element) = self.native.cast::<FrameworkElement>() else {
+            return;
+        };
+        if element.Width().is_ok_and(f64::is_nan) && !crate::layout::wants_fill(&element, true) {
+            let _ = element.SetWidth(SPINNER_SIZE);
+        }
+        if element.Height().is_ok_and(f64::is_nan) && !crate::layout::wants_fill(&element, false) {
+            let _ = element.SetHeight(SPINNER_SIZE);
+        }
     }
 }
 

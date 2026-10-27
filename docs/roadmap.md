@@ -141,10 +141,13 @@ counterparts for, plus the foundation the adaptive layout track builds on.
       `GMenu` submenus with `submenu-action` and boolean actions,
       `MenuFlyoutSubItem` / `ToggleMenuFlyoutItem`, and nested `role="menu"` with
       `menuitemcheckbox` on the Web.
-- [ ] **Spinning indicators** (Spinner). Small, and needed wherever something
-      loads. `NSProgressIndicator`, `AdwSpinner`, `ProgressRing`. The DOM has no
-      counterpart, so the Web shows an indeterminate `<progress>` and the difference
-      is documented.
+- [x] **Spinning indicators** (`Spinner`). Spins from creation, and
+      `set_spinning(false)` stops it without giving up its space, so the layout does
+      not move. `NSProgressIndicator` (spinning style, `displayedWhenStopped` off),
+      `AdwSpinner` (looked up at run time, falling back to `GtkSpinner` with
+      libadwaita 1.5), `ProgressRing` (`IsActive`). The DOM has no counterpart, so
+      the Web shows an indeterminate `<progress>` (a bar) and the difference is
+      documented.
 
 ## P1: Do next
 

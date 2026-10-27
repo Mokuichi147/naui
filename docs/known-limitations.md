@@ -20,6 +20,7 @@ that shape are covered in
 | Maximizing and minimizing | Possible | Possible | Possible (minimizing cannot be detected on Wayland) | Not possible |
 | Full screen | Possible | Possible | Possible | Only from within a user action |
 | `Sender::send` from `std::thread::spawn` | Possible | Possible | Possible | Not possible (no threads) |
+| `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
 
@@ -268,6 +269,8 @@ that shape are covered in
   does not switch it.
 - `EditableComboBox` does not narrow options by typed text (pressing the arrow shows
   all options).
+- `Spinner` is `AdwSpinner`, which arrived in libadwaita 1.6. With libadwaita 1.5 it
+  falls back to `GtkSpinner`, which has the same size but the older look.
 - In `DatePicker`, **choosing a day does not close the popover** (because
   `GtkCalendar` does not distinguish "a day was pressed" from "the month was
   changed"). The date shown on the button follows the locale's format.
@@ -321,6 +324,9 @@ that shape are covered in
 - In `EditableComboBox`, the browser narrows options by typed text. It cannot be
   turned off, and how it narrows (prefix or substring match), whether an arrow is
   shown, and how the list opens differ per browser.
+- The DOM has no spinner, so `Spinner` is an indeterminate `<progress>` and **is
+  drawn as a bar** (its look and width follow the browser). Stopping it hides it
+  with `visibility: hidden`, keeping its space as on the other platforms.
 - Only Safari 17.4 and later support `Toggle`'s `switch` attribute, so Chrome and
   Firefox show it as a check box (value handling, notifications and screen reader
   announcements are the same).

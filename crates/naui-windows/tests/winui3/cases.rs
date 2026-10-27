@@ -18,8 +18,8 @@ use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 use crate::automation;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox, ComboBox as XamlComboBox,
-    Grid, Image as XamlImage, MenuFlyoutItem, ScrollViewer, Slider as XamlSlider, StackPanel,
-    TextBlock, TextBox, ToggleSwitch,
+    Grid, Image as XamlImage, MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider,
+    StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
@@ -171,6 +171,10 @@ const CASES: &[Case] = &[
     (
         "不確定の進捗は値を覚えたまま帯の往復に切り替わる",
         progress_bar_switches_to_indeterminate,
+    ),
+    (
+        "スピナーは ProgressRing で、IsActive で止まり既定の大きさを保つ",
+        spinner_is_a_progress_ring,
     ),
     (
         "ラベルを選べるようにすると IsTextSelectionEnabled が立つ",
@@ -4088,6 +4092,41 @@ fn progress_bar_switches_to_indeterminate(ui: &Ui) -> Result<()> {
     progress.set_indeterminate(false);
     assert!(!progress.is_indeterminate());
     assert_eq!(progress.value(), 0.7);
+    Ok(())
+}
+
+fn spinner_is_a_progress_ring(ui: &Ui) -> Result<()> {
+    let spinner = ui.spinner()?;
+    assert!(spinner.is_spinning(), "作った時点で回っている");
+    let ring = native::<ProgressRing>(&spinner);
+    assert!(ring.IsActive().expect("IsActive"));
+    let element: FrameworkElement = ring.cast().expect("FrameworkElement");
+    let size = |element: &FrameworkElement| {
+        (
+            element.Width().expect("Width"),
+            element.Height().expect("Height"),
+        )
+    };
+    assert_eq!(size(&element), (32.0, 32.0), "既定スタイルと同じ 32 x 32");
+
+    spinner.set_spinning(false);
+    assert!(!spinner.is_spinning());
+    assert!(!ring.IsActive().expect("IsActive"));
+    spinner.set_spinning(true);
+    assert!(ring.IsActive().expect("IsActive"));
+
+    spinner.set_sizing(Sizing::fixed(16.0, 16.0));
+    assert_eq!(size(&element), (16.0, 16.0), "固定の大きさに従う");
+    spinner.set_sizing(Sizing::new());
+    assert_eq!(
+        size(&element),
+        (32.0, 32.0),
+        "指定を外すと既定の大きさに戻る"
+    );
+    spinner.set_sizing(Sizing::fill_width());
+    let (width, height) = size(&element);
+    assert!(width.is_nan(), "Fill の軸は親に合わせる: {width}");
+    assert_eq!(height, 32.0, "Fill でない軸は既定のまま");
     Ok(())
 }
 

@@ -1009,6 +1009,53 @@ impl ProgressBar {
     }
 }
 
+// ---------------------------------------------------------------- Spinner
+
+struct SpinnerInner {
+    native: Retained<NSProgressIndicator>,
+    /// NSProgressIndicator has no getter for whether it is animating, so it is kept.
+    spinning: Cell<bool>,
+}
+
+/// A spinning indicator (NSProgressIndicator, spinning style).
+#[derive(Clone)]
+pub struct Spinner(Rc<SpinnerInner>);
+impl_widget!(Spinner);
+
+impl Spinner {
+    pub(crate) fn new(mtm: MainThreadMarker) -> Self {
+        let native = NSProgressIndicator::new(mtm);
+        native.setStyle(NSProgressIndicatorStyle::Spinning);
+        native.setIndeterminate(true);
+        // 止めている間は描かない (WinUI の ProgressRing・GTK と同じ)。場所は残る。
+        native.setDisplayedWhenStopped(false);
+        unsafe { native.startAnimation(None) };
+        Self(Rc::new(SpinnerInner {
+            native,
+            spinning: Cell::new(true),
+        }))
+    }
+
+    /// Whether it spins. Spins from creation.
+    ///
+    /// While stopped it is not drawn but keeps its space (`displayedWhenStopped` is
+    /// off). Use `set_visible(false)` to give the space up as well.
+    pub fn set_spinning(&self, spinning: bool) {
+        if self.0.spinning.replace(spinning) == spinning {
+            return;
+        }
+        if spinning {
+            unsafe { self.0.native.startAnimation(None) };
+        } else {
+            unsafe { self.0.native.stopAnimation(None) };
+        }
+    }
+
+    pub fn is_spinning(&self) -> bool {
+        self.0.spinning.get()
+    }
+}
+
 // ------------------------------------------------------------------ Stack
 
 struct StackInner {

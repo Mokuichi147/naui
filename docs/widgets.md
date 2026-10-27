@@ -42,6 +42,7 @@ Legend:
 | `NumberInput` | ✅ `NumberBox` | 🟡 `NSTextField` + `NSStepper` | ✅ `GtkSpinButton` | ✅ `<input type="number">` |
 | `Slider` | ✅ `Slider` | ✅ `NSSlider` | ✅ `GtkScale` | ✅ `<input type="range">` |
 | `ProgressBar` | 🟡 `Grid` + `Border` | ✅ `NSProgressIndicator` | ✅ `GtkProgressBar` | ✅ `<progress>` |
+| `Spinner` | ✅ `ProgressRing` | ✅ `NSProgressIndicator` (spinning) | ✅ `AdwSpinner` (`GtkSpinner` before libadwaita 1.6) | 🔴 `<progress>` (indeterminate) |
 
 ### Choosing data
 

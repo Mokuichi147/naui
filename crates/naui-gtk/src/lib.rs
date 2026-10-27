@@ -35,6 +35,7 @@
 //! | `TextArea` | A `GtkTextView` in a `GtkScrolledWindow` |
 //! | `Slider` | `GtkScale` |
 //! | `ProgressBar` | `GtkProgressBar` |
+//! | `Spinner` | `AdwSpinner` (`GtkSpinner` with libadwaita older than 1.6) |
 //! | `Tabs` | `GtkNotebook` |
 //! | `Navbar` / `Dock` / `Menu` / `Pagination` | A row of `GtkToggleButton`s |
 //! | `Breadcrumbs` | A `GtkLabel` with links (`<a href>`) + separators |
@@ -198,8 +199,8 @@ pub use toggle::Toggle;
 pub use toolbar::Toolbar;
 pub use tree::Tree;
 pub use widgets::{
-    Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Stack, TextArea,
-    TextInput, Widget,
+    Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Spinner, Stack,
+    TextArea, TextInput, Widget,
 };
 pub use window::{WeakWindow, Window};
 
@@ -426,6 +427,11 @@ impl Ui {
 
     pub fn progress_bar(&self) -> Result<ProgressBar> {
         Ok(ProgressBar::new())
+    }
+
+    /// A spinning indicator for work in progress. Spins from creation.
+    pub fn spinner(&self) -> Result<Spinner> {
+        Ok(Spinner::new())
     }
 
     /// An image. `source` is a file path or a URL.

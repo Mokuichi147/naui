@@ -891,6 +891,63 @@ impl ProgressBar {
     }
 }
 
+// ---------------------------------------------------------------- Spinner
+
+struct SpinnerInner {
+    /// `AdwSpinner`, or `GtkSpinner` when libadwaita is older than 1.6.
+    native: gtk::Widget,
+    bin: SizeBin,
+    spinning: Cell<bool>,
+}
+
+/// A spinning indicator (`AdwSpinner`, or `GtkSpinner` with libadwaita older than
+/// 1.6).
+#[derive(Clone)]
+pub struct Spinner(Rc<SpinnerInner>);
+impl_widget!(Spinner);
+
+impl Spinner {
+    pub(crate) fn new() -> Self {
+        // AdwSpinner は libadwaita 1.6 から。naui が求めるのは 1.5 なので、
+        // コンパイル時の機能ではなく実行時に型を名前で引く (`adw::init` が
+        // 公開型をすべて登録している)。
+        let native = glib::Type::from_name("AdwSpinner")
+            .filter(|ty| ty.is_a(gtk::Widget::static_type()))
+            .and_then(|ty| glib::Object::with_type(ty).downcast::<gtk::Widget>().ok())
+            .unwrap_or_else(|| {
+                let spinner = gtk::Spinner::new();
+                spinner.set_spinning(true);
+                spinner.upcast()
+            });
+        let bin = SizeBin::wrap(&native);
+        Self(Rc::new(SpinnerInner {
+            native,
+            bin,
+            spinning: Cell::new(true),
+        }))
+    }
+
+    /// Whether it spins. Spins from creation.
+    ///
+    /// While stopped it is not drawn but keeps its space. `GtkSpinner` turns off
+    /// `spinning`; `AdwSpinner` has no such switch and spins whenever it is mapped, so
+    /// it is unmapped with `child-visible` (its size still counts in the layout). Use
+    /// `set_visible(false)` to give the space up as well.
+    pub fn set_spinning(&self, spinning: bool) {
+        if self.0.spinning.replace(spinning) == spinning {
+            return;
+        }
+        match self.0.native.downcast_ref::<gtk::Spinner>() {
+            Some(spinner) => spinner.set_spinning(spinning),
+            None => self.0.native.set_child_visible(spinning),
+        }
+    }
+
+    pub fn is_spinning(&self) -> bool {
+        self.0.spinning.get()
+    }
+}
+
 // ------------------------------------------------------------------ Stack
 
 struct StackInner {

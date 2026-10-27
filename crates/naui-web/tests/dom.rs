@@ -4888,6 +4888,36 @@ fn progress_bar_switches_to_indeterminate() {
 }
 
 #[wasm_bindgen_test]
+fn spinner_is_an_indeterminate_progress() {
+    with_ui(|ui| {
+        let spinner = ui.spinner()?;
+        let _mounted = Mounted::new(&spinner);
+        assert!(spinner.is_spinning(), "作った時点で回っている");
+        let element = spinner.native_element();
+        assert_eq!(element.tag_name(), "PROGRESS");
+        assert!(element.matches(":indeterminate").expect("matches"));
+        let width = element.get_bounding_client_rect().width();
+        assert!(width > 0.0);
+
+        spinner.set_spinning(false);
+        assert!(!spinner.is_spinning());
+        assert_eq!(
+            computed(&element, "visibility"),
+            "hidden",
+            "止めたら描かない"
+        );
+        assert_eq!(
+            element.get_bounding_client_rect().width(),
+            width,
+            "場所は残る"
+        );
+        spinner.set_spinning(true);
+        assert_eq!(computed(&element, "visibility"), "visible");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
 fn label_is_not_selectable_until_asked() {
     with_ui(|ui| {
         let label = ui.label("コピーできる文字")?;

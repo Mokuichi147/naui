@@ -114,11 +114,15 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let worker_status = parts::readout(ui, "Idle")?;
     let progress = ui.progress_bar()?;
     progress.set_sizing(naui::Sizing::fill_width());
+    // 走っている間だけ回す。止めている間も場所は残るので、行の並びは動かない。
+    let busy = ui.spinner()?;
+    busy.set_spinning(false);
     let start = ui.button("Start heavy work")?;
     start.on_click({
         let tasks = ui.tasks();
         let worker_status = worker_status.clone();
         let progress = progress.clone();
+        let busy = busy.clone();
         let start = start.downgrade();
         move || {
             // 走っている間は押せないようにする (前の処理と混ざらないように)。
@@ -127,16 +131,19 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             }
             worker_status.set_text("Running… 0/3");
             progress.set_value(0.0);
+            busy.set_spinning(true);
 
             // 受け取る側は UI スレッドに置く。ここでウィジェットを触ってよい。
             let sender = tasks.channel({
                 let worker_status = worker_status.clone();
                 let progress = progress.clone();
+                let busy = busy.clone();
                 let start = start.clone();
                 move |p: Progress| {
                     progress.set_value(p.done as f64 / p.total as f64);
                     if p.done == p.total {
                         worker_status.set_text("Done");
+                        busy.set_spinning(false);
                         if let Some(start) = start.upgrade() {
                             start.set_enabled(true);
                         }
@@ -172,6 +179,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let worker_row = parts::row(ui)?;
     worker_row.append(&start);
     worker_row.append(&tap);
+    worker_row.append(&busy);
     worker_row.append(&worker_status);
     pane.append(&worker_row);
     pane.append(&progress);
