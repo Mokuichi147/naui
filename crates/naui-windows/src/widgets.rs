@@ -1029,6 +1029,9 @@ impl Spinner {
             .SetIsActive(true)
             .map_err(|e| to_error("ProgressRing の開始", e))?;
         let this = Self(Rc::new(SpinnerInner { native }));
+        // A fixed width with WinUI's default Stretch alignment is centered in a
+        // wider Grid cell. Auto-sized widgets start at the left on other backends.
+        this.set_sizing(naui_core::Sizing::new());
         this.0.keep_default_size();
         // `set_sizing` は軸ごとに Width / Height を NaN (中身に合わせる) へ戻す。
         // ProgressRing の中身 (AnimatedVisualPlayer) は大きさを持たないので、

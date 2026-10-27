@@ -177,6 +177,10 @@ const CASES: &[Case] = &[
         spinner_is_a_progress_ring,
     ),
     (
+        "スピナーは広い Grid の先頭に置かれ、サイズ変更に追従する",
+        spinner_starts_at_grid_cell,
+    ),
+    (
         "ラベルを選べるようにすると IsTextSelectionEnabled が立つ",
         label_can_be_selectable,
     ),
@@ -4127,6 +4131,73 @@ fn spinner_is_a_progress_ring(ui: &Ui) -> Result<()> {
     let (width, height) = size(&element);
     assert!(width.is_nan(), "Fill の軸は親に合わせる: {width}");
     assert_eq!(height, 32.0, "Fill でない軸は既定のまま");
+    Ok(())
+}
+
+/// An auto-sized spinner starts at the left of a wide cell. A change of sizing
+/// after attaching must preserve that placement, and Fill must still stretch.
+fn spinner_starts_at_grid_cell(ui: &Ui) -> Result<()> {
+    let window = ui.window("Spinner placement", 400.0, 150.0)?;
+    let grid = ui.grid()?;
+    grid.set_column_track(0, naui_core::Track::FILL);
+    grid.set_sizing(Sizing::fill());
+    let spinner = ui.spinner()?;
+    grid.attach(&spinner, GridCell::new(0, 0));
+    let child = native::<FrameworkElement>(&spinner);
+    let root = native::<Grid>(&grid);
+
+    // This also catches the regression on machines where windows cannot be laid out.
+    assert_eq!(
+        child.HorizontalAlignment().expect("横の寄せ方"),
+        HorizontalAlignment::Left,
+        "既定のスピナーはマスの先頭に置く"
+    );
+    window.set_child(&grid);
+    window.show();
+    let width = || child.ActualWidth().unwrap_or(0.0);
+    let origin = || {
+        child
+            .TransformToVisual(&root)
+            .and_then(|transform| {
+                transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+            })
+            .map(|point| f64::from(point.X))
+            .unwrap_or(f64::NAN)
+    };
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || width() > 0.0);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if width() <= 0.0 {
+            println!("     (実寸が付かない環境なので、大きさと位置は確かめずに通す)");
+            return;
+        }
+        assert!((width() - 32.0).abs() < 0.5, "既定の幅: {}", width());
+        assert!(origin().abs() < 0.5, "既定の位置: {}", origin());
+
+        spinner.set_sizing(Sizing::fixed(16.0, 16.0));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || (width() - 16.0).abs() < 0.5);
+        assert!((width() - 16.0).abs() < 0.5, "固定幅: {}", width());
+        assert!(origin().abs() < 0.5, "固定幅の位置: {}", origin());
+
+        spinner.set_sizing(Sizing::fill_width());
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            (width() - root.ActualWidth().unwrap_or(0.0)).abs() < 0.5
+        });
+        assert!(
+            (width() - root.ActualWidth().unwrap_or(0.0)).abs() < 0.5,
+            "Fill はマスいっぱい: {}",
+            width()
+        );
+        assert!(origin().abs() < 0.5, "Fill の位置: {}", origin());
+
+        spinner.set_sizing(Sizing::new());
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || (width() - 32.0).abs() < 0.5);
+        assert!((width() - 32.0).abs() < 0.5, "Auto に戻した幅: {}", width());
+        assert!(origin().abs() < 0.5, "Auto に戻した位置: {}", origin());
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 
