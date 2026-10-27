@@ -223,8 +223,9 @@ fn tell_scrolls_reattached(element: &Element) {
 /// Rewrites the settings that depend on the parent's layout direction
 /// (`flex-grow` and so on).
 ///
-/// Called both when put into a container and when the size is specified again.
-fn layout_for_parent(element: &Element, parent: ParentLayout) {
+/// Called when put into a container, when the size is specified again, and when a
+/// `Stack` changes direction.
+pub(crate) fn layout_for_parent(element: &Element, parent: ParentLayout) {
     let element: &HtmlElement = element.unchecked_ref();
     let style = element.style();
     let fill_width = element.has_attribute(FILL_WIDTH_ATTR);

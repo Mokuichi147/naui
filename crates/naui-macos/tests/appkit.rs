@@ -320,8 +320,16 @@ fn main() {
             stack_spacing_after_append,
         ),
         (
-            "Stack へ差し込んでも外しても入力欄のフォーカスと変換中の文字が残る",
+            "Stack へ差し込んでも外しても向きを変えても入力欄のフォーカスと変換中の文字が残る",
             stack_insert_keeps_focus,
+        ),
+        (
+            "Stack の向きを変えると最初からその向きで作ったのと同じ並びになる",
+            stack_switches_orientation,
+        ),
+        (
+            "向きを変えて同じ向きの Stack に入った Stack は余白を外側へ譲る",
+            nested_stack_switched_to_the_same_direction,
         ),
         (
             "別の Stack へ移した子は新しい親に合わせて広がる",
@@ -2768,7 +2776,102 @@ fn stack_insert_keeps_focus(ui: &Ui) -> Result<()> {
         unsafe { editor.hasMarkedText() },
         "ほかの子を出し入れしても変換中の文字が残ること"
     );
+
+    root.set_orientation(Orientation::Horizontal);
+    root.native_view().layoutSubtreeIfNeeded();
+    assert!(
+        field_view.currentEditor().is_some(),
+        "向きを変えても入力欄のフォーカスが外れないこと"
+    );
+    assert!(
+        unsafe { editor.hasMarkedText() },
+        "向きを変えても変換中の文字が残ること"
+    );
     window.close();
+    Ok(())
+}
+
+/// Switching a `Stack` between vertical and horizontal gives the layout of one made
+/// that way: `Fill` on the width stretches a child across a vertical stack and hands
+/// it the leftover width of a horizontal one, and the alignment applies to the new
+/// cross axis. Switching back restores every frame.
+fn stack_switches_orientation(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_padding(Padding::all(10.0));
+    stack.set_spacing(8.0);
+    stack.set_align(Align::Start);
+    let first = ui.button("前")?;
+    let wide = ui.button("広がる")?;
+    wide.set_sizing(Sizing::fill_width());
+    let last = ui.button("後")?;
+    stack.append(&first);
+    stack.append(&wide);
+    stack.append(&last);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+    let frames = || {
+        [
+            &first.native_view(),
+            &wide.native_view(),
+            &last.native_view(),
+        ]
+        .map(|view| view.frame())
+    };
+    let vertical = frames();
+    assert!(
+        (vertical[1].size.width - 380.0).abs() < 1e-6,
+        "縦並びでは幅の Fill が左右の余白を除いた幅になること: {:?}",
+        vertical[1]
+    );
+
+    stack.set_orientation(Orientation::Horizontal);
+    assert_eq!(stack.orientation(), Orientation::Horizontal);
+    root.layoutSubtreeIfNeeded();
+    let [a, b, c] = frames();
+    for (name, left, right) in [("前と広がる", a, b), ("広がると後", b, c)] {
+        let gap = right.origin.x - (left.origin.x + left.size.width);
+        assert!(
+            (gap - 8.0).abs() < 1e-6,
+            "{name} が間隔を空けて横に並ぶこと: {left:?} / {right:?}"
+        );
+    }
+    assert!(
+        (a.origin.x - 10.0).abs() < 1e-6 && (c.origin.x + c.size.width - 390.0).abs() < 1e-6,
+        "幅の Fill が横の余りを受け取って端まで埋めること: {a:?} / {c:?}"
+    );
+    assert!(
+        (a.size.width - vertical[0].size.width).abs() < 1e-6,
+        "Auto の子は中身の幅のままであること: {a:?}"
+    );
+    // `Align::Start` は横並びでは上端。
+    let top = |frame: NSRect| {
+        if root.isFlipped() {
+            frame.origin.y
+        } else {
+            200.0 - (frame.origin.y + frame.size.height)
+        }
+    };
+    for frame in [a, b, c] {
+        assert!(
+            (top(frame) - 10.0).abs() < 1e-6,
+            "揃えが新しい交差軸 (縦) に効くこと: {frame:?}"
+        );
+    }
+
+    stack.set_orientation(Orientation::Vertical);
+    root.layoutSubtreeIfNeeded();
+    let restored = frames();
+    for (before, after) in vertical.iter().zip(restored.iter()) {
+        assert!(
+            (before.origin.x - after.origin.x).abs() < 1e-6
+                && (before.origin.y - after.origin.y).abs() < 1e-6
+                && (before.size.width - after.size.width).abs() < 1e-6
+                && (before.size.height - after.size.height).abs() < 1e-6,
+            "縦へ戻すと元の位置と大きさへ戻ること: {before:?} / {after:?}"
+        );
+    }
     Ok(())
 }
 
@@ -9977,6 +10080,54 @@ fn nested_stack_does_not_take_the_slack(ui: &Ui) -> Result<()> {
         (gap - 10.0).abs() < 1.0,
         "次の子が内側の Stack のすぐ下へ来ること: 空き {gap}"
     );
+    Ok(())
+}
+
+/// A `Stack` that becomes the same direction as the `Stack` it is in, by switching
+/// either of them, leaves the leftover space to the outer one, as in
+/// [`nested_stack_does_not_take_the_slack`].
+fn nested_stack_switched_to_the_same_direction(ui: &Ui) -> Result<()> {
+    for switch_inner in [true, false] {
+        let pane = ui.stack(if switch_inner {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        })?;
+        pane.set_spacing(10.0);
+        let group = ui.stack(if switch_inner {
+            Orientation::Horizontal
+        } else {
+            Orientation::Vertical
+        })?;
+        group.set_spacing(4.0);
+        group.append(&ui.label("見出し")?);
+        group.append(&ui.label("説明")?);
+        group.set_sizing(Sizing::fill_width());
+        pane.append(&group);
+        let after = ui.label("次の節")?;
+        pane.append(&after);
+        if switch_inner {
+            group.set_orientation(Orientation::Vertical);
+        } else {
+            pane.set_orientation(Orientation::Vertical);
+        }
+        let which = if switch_inner { "内側" } else { "外側" };
+
+        let root = pane.native_view();
+        root.setFrameSize(NSSize::new(400.0, 600.0));
+        root.layoutSubtreeIfNeeded();
+        let group_frame = group.native_view().frame();
+        assert!(
+            group_frame.size.height < 100.0,
+            "{which}の向きを変えても内側の Stack は中身の高さのままであること: {group_frame:?}"
+        );
+        let after_frame = after.native_view().frame();
+        let gap = group_frame.origin.y - (after_frame.origin.y + after_frame.size.height);
+        assert!(
+            (gap - 10.0).abs() < 1.0,
+            "{which}の向きを変えても次の子が内側の Stack のすぐ下へ来ること: 空き {gap}"
+        );
+    }
     Ok(())
 }
 

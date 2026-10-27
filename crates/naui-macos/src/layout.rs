@@ -206,6 +206,16 @@ pub(crate) fn keep_auto_size(view: &NSView, horizontal: bool) {
     view.setContentHuggingPriority_forOrientation(AUTO_HUGGING, orientation(horizontal));
 }
 
+/// Undoes [`keep_auto_size`] on an axis that is no longer a `Stack`'s main axis.
+///
+/// Only the value `keep_auto_size` set is put back; `Fill` and what a widget chose for
+/// itself are left alone.
+pub(crate) fn release_auto_size(view: &NSView, horizontal: bool) {
+    if view.contentHuggingPriorityForOrientation(orientation(horizontal)) == AUTO_HUGGING {
+        set_hugging(view, horizontal, false);
+    }
+}
+
 /// The priority of the tail spacer's desire to shrink when it "may take the
 /// leftover space".
 ///

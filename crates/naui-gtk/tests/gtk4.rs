@@ -265,6 +265,10 @@ fn main() {
             stack_align_survives_later_sizing,
         ),
         (
+            "スタックの向きを変えると最初からその向きで作ったのと同じ置き方になる",
+            stack_switches_orientation,
+        ),
+        (
             "置いたあとの set_sizing や列の変更でもグリッドの列の設定が残る",
             grid_track_survives_later_changes,
         ),
@@ -2602,6 +2606,55 @@ fn stack_align_survives_later_sizing(ui: &Ui) -> Result<()> {
         gtk::Align::Start,
         "Fill をやめればスタックの寄せ方へ戻る"
     );
+    Ok(())
+}
+
+/// Switching a `Stack`'s orientation turns the `GtkBox` and places each child again
+/// for the new cross axis, ending up the same as a stack made in that direction:
+/// the alignment moves from `halign` to `valign`, and nothing the previous direction
+/// set is left over.
+fn stack_switches_orientation(ui: &Ui) -> Result<()> {
+    let build = |orientation: Orientation| -> Result<(naui_gtk::Stack, gtk::Widget, gtk::Widget)> {
+        let stack = ui.stack(orientation)?;
+        stack.set_align(Align::End);
+        let label = ui.label("あ")?;
+        let wide = ui.button("広がる")?;
+        wide.set_sizing(Sizing::fill_width());
+        stack.append(&label);
+        stack.append(&wide);
+        Ok((stack, bin_of(&label), bin_of(&wide)))
+    };
+    let placement = |bin: &gtk::Widget| (bin.halign(), bin.valign(), bin.hexpands());
+
+    let (stack, label, wide) = build(Orientation::Vertical)?;
+    let native: gtk::Box = stack.native_widget().downcast().expect("GtkBox");
+    assert_eq!(label.halign(), gtk::Align::End);
+
+    stack.set_orientation(Orientation::Horizontal);
+    assert_eq!(stack.orientation(), Orientation::Horizontal);
+    assert_eq!(native.orientation(), gtk::Orientation::Horizontal);
+    assert_eq!(
+        label.valign(),
+        gtk::Align::End,
+        "寄せ方が新しい交差軸に効く"
+    );
+    let (_, made_label, made_wide) = build(Orientation::Horizontal)?;
+    assert_eq!(
+        placement(&label),
+        placement(&made_label),
+        "横で作ったのと同じ置き方になる"
+    );
+    assert_eq!(placement(&wide), placement(&made_wide));
+
+    stack.set_orientation(Orientation::Vertical);
+    assert_eq!(native.orientation(), gtk::Orientation::Vertical);
+    let (_, made_label, made_wide) = build(Orientation::Vertical)?;
+    assert_eq!(
+        placement(&label),
+        placement(&made_label),
+        "縦へ戻せば縦で作ったのと同じ置き方になる"
+    );
+    assert_eq!(placement(&wide), placement(&made_wide));
     Ok(())
 }
 

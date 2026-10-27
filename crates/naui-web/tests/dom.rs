@@ -1208,6 +1208,88 @@ fn sizing_after_attach_reaches_the_grid() {
     });
 }
 
+/// Switching a `Stack`'s orientation rewrites `flex-direction` and what each child
+/// set for the previous main axis: `Fill` on the width stretches a child across a
+/// column and hands it the leftover width of a row. Later `set_sizing` calls follow
+/// the new direction.
+#[wasm_bindgen_test]
+fn stack_switches_orientation() {
+    with_ui(|ui| {
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.set_sizing(Sizing::fixed(400.0, 200.0));
+        stack.set_spacing(8.0);
+        let first = ui.button("前")?;
+        let wide = ui.button("広がる")?;
+        wide.set_sizing(Sizing::fill_width());
+        stack.append(&first);
+        stack.append(&wide);
+        let _mounted = Mounted::new(&stack);
+        let rect = |widget: &dyn Widget| widget.native_element().get_bounding_client_rect();
+        let style = |widget: &dyn Widget| {
+            widget
+                .native_element()
+                .unchecked_into::<HtmlElement>()
+                .style()
+        };
+        let outer = rect(&stack);
+        assert!(
+            (rect(&wide).width() - 400.0).abs() < 0.5,
+            "縦並びでは幅の Fill がスタックの幅になること"
+        );
+
+        stack.set_orientation(Orientation::Horizontal);
+        assert_eq!(stack.orientation(), Orientation::Horizontal);
+        let (a, b) = (rect(&first), rect(&wide));
+        assert!(
+            (b.left() - a.right() - 8.0).abs() < 0.5 && (a.top() - b.top()).abs() < 1.0,
+            "間隔を空けて横に並ぶこと: {} / {}",
+            a.right(),
+            b.left()
+        );
+        assert!(
+            (b.right() - outer.right()).abs() < 0.5,
+            "幅の Fill が横の余りを受け取ること: {} / {}",
+            b.right(),
+            outer.right()
+        );
+        assert_eq!(
+            style(&wide)
+                .get_property_value("align-self")
+                .ok()
+                .as_deref(),
+            Some(""),
+            "前の交差軸のための stretch を持ち越さないこと"
+        );
+        first.set_sizing(Sizing::fill_height());
+        let tall = rect(&first).height();
+        assert!(
+            (tall - 200.0).abs() < 0.5,
+            "向きを変えたあとの set_sizing が新しい交差軸に効くこと: {tall}"
+        );
+        first.set_sizing(Sizing::AUTO);
+
+        stack.set_orientation(Orientation::Vertical);
+        let (a, b) = (rect(&first), rect(&wide));
+        assert!(
+            (b.top() - a.bottom() - 8.0).abs() < 0.5,
+            "縦へ戻すと間隔を空けて縦に並ぶこと: {} / {}",
+            a.bottom(),
+            b.top()
+        );
+        assert!(
+            (b.width() - 400.0).abs() < 0.5,
+            "縦へ戻すと幅の Fill がスタックの幅へ戻ること: {}",
+            b.width()
+        );
+        assert_eq!(
+            style(&wide).get_property_value("flex-grow").ok().as_deref(),
+            Some(""),
+            "前の主軸のための flex-grow を持ち越さないこと"
+        );
+        Ok(())
+    });
+}
+
 /// A child moved from a `Grid` into a `Stack` follows the stack, with nothing left
 /// over from the grid cell.
 #[wasm_bindgen_test]
@@ -1264,6 +1346,12 @@ fn stack_insert_keeps_focus() {
         assert!(
             input.native_element().contains(Some(&active)),
             "ほかの子を出し入れしても入力欄がフォーカスを持つこと"
+        );
+        stack.set_orientation(Orientation::Horizontal);
+        let active = active_element().expect("activeElement");
+        assert!(
+            input.native_element().contains(Some(&active)),
+            "向きを変えても入力欄がフォーカスを持つこと"
         );
         Ok(())
     });

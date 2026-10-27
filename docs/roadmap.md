@@ -124,9 +124,13 @@ counterparts for, plus the foundation the adaptive layout track builds on.
       the other children out, so a field keeps its focus and IME composition. The
       moved widget keeps its `Scroll` positions (the Web now restores them) and loses
       the focus, which the guide documents.
-- [ ] *(adaptive)* **`Stack::set_orientation`.** Switching between vertical and
-      horizontal after creation. `NSStackView.orientation`, `GtkOrientable`,
-      `Orientation` on WinUI panels, CSS `flex-direction`.
+- [x] *(adaptive)* **`Stack::set_orientation`.** A `Stack` can now switch between
+      vertical and horizontal after creation, ending up the same as one made in the
+      new direction. The children stay in place, so a field keeps its focus and IME
+      composition; what depends on the direction (cross-axis alignment and `Fill`,
+      main-axis tracks and hugging, and whether a nested `Stack` leaves the leftover
+      space to its parent) is placed again. `NSStackView.orientation`,
+      `GtkOrientable`, the tracks of Windows's `Grid`, CSS `flex-direction`.
 - [ ] **Nested menus, menu items with check marks, and function-key shortcuts**
       (`MenuBar` and `PopupMenu`). Needed for even an ordinary View menu. All four
       platforms have them natively; for now this is a limitation on naui's side
