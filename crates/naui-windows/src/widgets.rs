@@ -1015,6 +1015,8 @@ const SPINNER_SIZE: f64 = 32.0;
 
 struct SpinnerInner {
     native: ProgressRing,
+    auto_width: Cell<bool>,
+    auto_height: Cell<bool>,
 }
 
 /// A spinning indicator (ProgressRing).
@@ -1028,16 +1030,25 @@ impl Spinner {
         native
             .SetIsActive(true)
             .map_err(|e| to_error("ProgressRing の開始", e))?;
-        let this = Self(Rc::new(SpinnerInner { native }));
-        // A fixed width with WinUI's default Stretch alignment is centered in a
-        // wider Grid cell. Auto-sized widgets start at the left on other backends.
+        let this = Self(Rc::new(SpinnerInner {
+            native,
+            auto_width: Cell::new(true),
+            auto_height: Cell::new(true),
+        }));
+        // Auto-sized widgets start at the left of a Grid cell, as on other backends.
         this.set_sizing(naui_core::Sizing::new());
         this.0.keep_default_size();
-        // `set_sizing` は軸ごとに Width / Height を NaN (中身に合わせる) へ戻す。
-        // ProgressRing の中身 (AnimatedVisualPlayer) は大きさを持たないので、
-        // 既定スタイルが与えていた大きさを `Fill` 以外の軸へ戻す。
+        // ProgressRing の中身は自然な大きさを持たない。Auto の軸には既定の
+        // 大きさを与え、親が Fill で広げる軸では固定の大きさを外す。
         let target = Rc::downgrade(&this.0);
         crate::layout::on_sizing_change(&this.native_element(), move || {
+            if let Some(inner) = target.upgrade() {
+                inner.record_auto_axes();
+                inner.keep_default_size();
+            }
+        });
+        let target = Rc::downgrade(&this.0);
+        crate::layout::on_parent_layout_change(&this.native_element(), move || {
             if let Some(inner) = target.upgrade() {
                 inner.keep_default_size();
             }
@@ -1059,17 +1070,39 @@ impl Spinner {
 }
 
 impl SpinnerInner {
-    /// Gives axes without a size of their own (neither a fixed size nor `Fill`) the
-    /// default size.
+    /// Records which axes are Auto before the default size is applied.
+    fn record_auto_axes(&self) {
+        let Ok(element) = self.native.cast::<FrameworkElement>() else {
+            return;
+        };
+        self.auto_width.set(
+            element.Width().is_ok_and(f64::is_nan) && !crate::layout::wants_fill(&element, true),
+        );
+        self.auto_height.set(
+            element.Height().is_ok_and(f64::is_nan) && !crate::layout::wants_fill(&element, false),
+        );
+    }
+
+    /// Gives Auto axes the default size unless their parent stretches them.
     fn keep_default_size(&self) {
         let Ok(element) = self.native.cast::<FrameworkElement>() else {
             return;
         };
-        if element.Width().is_ok_and(f64::is_nan) && !crate::layout::wants_fill(&element, true) {
-            let _ = element.SetWidth(SPINNER_SIZE);
+        if self.auto_width.get() {
+            let width = if crate::layout::parent_stretches_auto(&element, true) {
+                f64::NAN
+            } else {
+                SPINNER_SIZE
+            };
+            let _ = element.SetWidth(width);
         }
-        if element.Height().is_ok_and(f64::is_nan) && !crate::layout::wants_fill(&element, false) {
-            let _ = element.SetHeight(SPINNER_SIZE);
+        if self.auto_height.get() {
+            let height = if crate::layout::parent_stretches_auto(&element, false) {
+                f64::NAN
+            } else {
+                SPINNER_SIZE
+            };
+            let _ = element.SetHeight(height);
         }
     }
 }

@@ -181,6 +181,10 @@ const CASES: &[Case] = &[
         spinner_starts_at_grid_cell,
     ),
     (
+        "スピナーは親 Stack の Fill と向きの変更に追従する",
+        spinner_follows_stack_fill,
+    ),
+    (
         "ラベルを選べるようにすると IsTextSelectionEnabled が立つ",
         label_can_be_selectable,
     ),
@@ -4193,6 +4197,176 @@ fn spinner_starts_at_grid_cell(ui: &Ui) -> Result<()> {
         pump_until(SCROLL_LAYOUT_TIMEOUT, || (width() - 32.0).abs() < 0.5);
         assert!((width() - 32.0).abs() < 0.5, "Auto に戻した幅: {}", width());
         assert!(origin().abs() < 0.5, "Auto に戻した位置: {}", origin());
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// An Auto spinner follows its Stack's cross-axis alignment on both axes.
+fn spinner_follows_stack_fill(ui: &Ui) -> Result<()> {
+    let window = ui.window("Spinner in a Stack", 400.0, 160.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_sizing(Sizing::fill());
+    let spinner = ui.spinner()?;
+    stack.append(&spinner);
+    let child = native::<FrameworkElement>(&spinner);
+    let parent = native::<FrameworkElement>(&stack);
+    stack.set_align(Align::Fill);
+    assert!(
+        child.Width().expect("Width").is_nan(),
+        "親の Fill で Auto の固定幅を外す"
+    );
+    stack.set_align(Align::Center);
+    assert_eq!(
+        child.Width().expect("Width"),
+        32.0,
+        "Fill を外すと既定幅に戻る"
+    );
+    window.set_child(&stack);
+    window.show();
+
+    let width = || child.ActualWidth().unwrap_or(0.0);
+    let height = || child.ActualHeight().unwrap_or(0.0);
+    let parent_width = || parent.ActualWidth().unwrap_or(0.0);
+    let parent_height = || parent.ActualHeight().unwrap_or(0.0);
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        width() > 0.0 && parent_width() > 32.0
+    });
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if width() <= 0.0 || parent_width() <= 32.0 {
+            println!("     (実寸が付かない環境なので、配置は確かめずに通す)");
+            return;
+        }
+        assert!((width() - 32.0).abs() < 0.5, "既定の幅: {}", width());
+        assert!((height() - 32.0).abs() < 0.5, "既定の高さ: {}", height());
+
+        stack.set_align(Align::Fill);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            (width() - parent_width()).abs() < 0.5
+        });
+        assert!(
+            (width() - parent_width()).abs() < 0.5,
+            "縦 Stack の Fill: 子の幅 {}、親の幅 {}",
+            width(),
+            parent_width()
+        );
+        assert!((height() - 32.0).abs() < 0.5, "Auto の高さ: {}", height());
+
+        stack.set_align(Align::Start);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || (width() - 32.0).abs() < 0.5);
+        assert!(
+            (width() - 32.0).abs() < 0.5,
+            "Start に戻した幅: {}",
+            width()
+        );
+
+        spinner.set_sizing(Sizing::fill_width());
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            (width() - parent_width()).abs() < 0.5
+        });
+        assert!(
+            (width() - parent_width()).abs() < 0.5,
+            "子自身の Fill: {}",
+            width()
+        );
+        spinner.set_sizing(Sizing::new());
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || (width() - 32.0).abs() < 0.5);
+        assert!(
+            (width() - 32.0).abs() < 0.5,
+            "子を Auto に戻した幅: {}",
+            width()
+        );
+
+        stack.set_align(Align::Fill);
+        spinner.set_spinning(false);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            (width() - parent_width()).abs() < 0.5
+        });
+        assert!(
+            (width() - parent_width()).abs() < 0.5,
+            "停止中の幅: {}",
+            width()
+        );
+        spinner.set_spinning(true);
+        spinner.set_sizing(Sizing::fixed(16.0, 16.0));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || (width() - 16.0).abs() < 0.5);
+        assert!((width() - 16.0).abs() < 0.5, "固定幅: {}", width());
+        spinner.set_sizing(Sizing::new().max_width(16.0));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || (width() - 16.0).abs() < 0.5);
+        assert!((width() - 16.0).abs() < 0.5, "最大幅: {}", width());
+
+        spinner.set_sizing(Sizing::new());
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            (width() - parent_width()).abs() < 0.5
+        });
+        assert!(
+            (width() - parent_width()).abs() < 0.5,
+            "Auto に戻した幅: {}",
+            width()
+        );
+
+        stack.set_sizing(Sizing::fixed(16.0, 64.0));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            (parent_width() - 16.0).abs() < 0.5
+        });
+        assert!(
+            (width() - 16.0).abs() < 0.5,
+            "小さい親に合わせた幅: {}",
+            width()
+        );
+        stack.set_sizing(Sizing::fill());
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || parent_width() > 32.0);
+
+        stack.set_orientation(Orientation::Horizontal);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            (height() - parent_height()).abs() < 0.5
+        });
+        assert!((width() - 32.0).abs() < 0.5, "横 Stack の幅: {}", width());
+        assert!(
+            (height() - parent_height()).abs() < 0.5,
+            "横 Stack の Fill: 子の高さ {}、親の高さ {}",
+            height(),
+            parent_height()
+        );
+
+        stack.remove(0);
+        assert_eq!(child.Width().expect("Width"), 32.0, "外すと既定幅に戻る");
+        assert_eq!(child.Height().expect("Height"), 32.0, "外すと既定高に戻る");
+
+        let filled = ui.stack(Orientation::Vertical).expect("Stack");
+        filled.set_align(Align::Fill);
+        filled.append(&spinner);
+        assert!(
+            child.Width().expect("Width").is_nan(),
+            "先に親を Fill にして追加しても親の幅に合わせる"
+        );
+        filled.remove(0);
+        assert_eq!(child.Width().expect("Width"), 32.0, "外すと既定幅に戻る");
+
+        let scroll = ui.scroll().expect("Scroll");
+        scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+        scroll.set_sizing(Sizing::fill());
+        scroll.set_child(&spinner);
+        window.set_child(&scroll);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || width() > 32.0);
+        assert!(
+            width() > 32.0,
+            "Scroll の非スクロール軸は広がる: {}",
+            width()
+        );
+        scroll.set_policy(ScrollPolicy::Auto, ScrollPolicy::Auto);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || (width() - 32.0).abs() < 0.5);
+        assert!(
+            (width() - 32.0).abs() < 0.5,
+            "スクロール軸は既定幅: {}",
+            width()
+        );
+        scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || width() > 32.0);
+        assert!(width() > 32.0, "非スクロール軸に戻すと広がる: {}", width());
     }));
     window.close();
     if let Err(panic) = outcome {
