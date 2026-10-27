@@ -4,6 +4,8 @@
 //! | --- | --- |
 //! | `PopupMenu` | `MenuFlyout` |
 //! | Item | `MenuFlyoutItem` |
+//! | Item with a check mark | `ToggleMenuFlyoutItem` |
+//! | Submenu | `MenuFlyoutSubItem` |
 //! | Separator | `MenuFlyoutSeparator` |
 //!
 //! Where it appears, its shadow, rounded corners, light dismiss, keyboard
@@ -14,28 +16,53 @@
 //! shows it for right-click, long-press and the context key alike.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use naui_core::{PopupItem, Result};
-use naui_winui3::Microsoft::UI::Xaml::Controls::{MenuFlyout, MenuFlyoutItem, MenuFlyoutSeparator};
+use naui_core::{MenuHandler, MenuItem, PopupItem, Result};
+use naui_winui3::Microsoft::UI::Xaml::Controls::MenuFlyout;
 use naui_winui3::Microsoft::UI::Xaml::RoutedEventHandler;
 use windows::Foundation::Point;
-use windows_core::HSTRING;
 
-use crate::navigation::SelectHandler;
+use crate::menu_bar::{build_entries, MenuEntry};
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::Widget;
 
 struct PopupMenuInner {
     flyout: MenuFlyout,
-    /// The `MenuFlyoutItem` per item. `None` at separator positions.
-    items: RefCell<Vec<Option<MenuFlyoutItem>>>,
+    /// The items as passed, with the current check states.
+    items: RefCell<Vec<PopupItem>>,
+    /// The controls looked up by path. Separators are not in it.
+    natives: RefCell<HashMap<Vec<usize>, MenuEntry>>,
     /// The handles of the widgets it is attached to. Kept alive along with their
     /// callbacks.
     attached: RefCell<Vec<Box<dyn Widget>>>,
-    handler: SelectHandler,
+    handler: MenuHandler,
+}
+
+impl PopupMenuInner {
+    /// Flips a check item, then notifies. When the user clicks,
+    /// `ToggleMenuFlyoutItem` has already flipped itself.
+    fn choose(&self, path: &[usize]) {
+        let flipped = {
+            let mut items = self.items.borrow_mut();
+            PopupItem::at_mut(&mut items, path)
+                .filter(|item| item.is_checkable())
+                .map(|item| {
+                    let on = !item.checked.unwrap_or(false);
+                    item.checked = Some(on);
+                    on
+                })
+        };
+        if let Some(on) = flipped {
+            if let Some(native) = self.natives.borrow().get(path) {
+                native.set_checked(on);
+            }
+        }
+        self.handler.emit(path);
+    }
 }
 
 /// A popup (context) menu.
@@ -52,63 +79,48 @@ impl PopupMenu {
         Ok(Self(Rc::new(PopupMenuInner {
             flyout,
             items: RefCell::new(Vec::new()),
+            natives: RefCell::new(HashMap::new()),
             attached: RefCell::new(Vec::new()),
-            handler: SelectHandler::new(),
+            handler: MenuHandler::default(),
         })))
     }
 
     /// Rebuilds the items. The previous items are removed.
-    ///
-    /// The index is the position in the sequence including separators.
     pub fn set_items(&self, items: &[PopupItem]) {
         let Ok(children) = self.0.flyout.Items() else {
             return;
         };
         let _ = children.Clear();
-        self.0.items.borrow_mut().clear();
-
-        let mut built = Vec::with_capacity(items.len());
-        for (index, item) in items.iter().enumerate() {
-            if item.is_separator() {
-                if let Ok(separator) = MenuFlyoutSeparator::new() {
-                    let _ = children.Append(&separator);
-                }
-                built.push(None);
-                continue;
-            }
-            match self.build_item(&item.label, item.enabled, index) {
-                Ok(entry) => {
-                    let _ = children.Append(&entry);
-                    built.push(Some(entry));
-                }
-                Err(_) => built.push(None),
-            }
-        }
-        *self.0.items.borrow_mut() = built;
-    }
-
-    fn build_item(&self, label: &str, enabled: bool, index: usize) -> Result<MenuFlyoutItem> {
-        let entry = MenuFlyoutItem::new().map_err(|e| to_error("メニュー項目の生成", e))?;
-        entry
-            .SetText(&HSTRING::from(label))
-            .map_err(|e| to_error("メニュー項目の文字設定", e))?;
-        let _ = entry.SetIsEnabled(enabled);
 
         let weak = weak_cell(&self.0);
-        let handler = RoutedEventHandler::new(move |_sender, _args| {
-            if let Some(inner) = weak.try_with_mut(|weak| weak.upgrade()).flatten() {
-                // 閉じるのは `MenuFlyout` が自分で行う。
-                PopupMenu(inner).0.handler.emit(index);
-            }
-            Ok(())
-        });
-        entry
-            .Click(&handler)
-            .map_err(|e| to_error("メニュー項目の購読", e))?;
-        Ok(entry)
+        let on_click = |path: Vec<usize>| {
+            let weak = weak.clone();
+            RoutedEventHandler::new(move |_sender, _args| {
+                if let Some(inner) = weak.try_with_mut(|weak| weak.upgrade()).flatten() {
+                    // 閉じるのは `MenuFlyout` が自分で行う。
+                    inner.choose(&path);
+                }
+                Ok(())
+            })
+        };
+        let mut natives = HashMap::new();
+        build_entries(
+            &children,
+            &items
+                .iter()
+                .cloned()
+                .map(MenuItem::from)
+                .collect::<Vec<_>>(),
+            &mut Vec::new(),
+            true,
+            &on_click,
+            &mut natives,
+        );
+        *self.0.natives.borrow_mut() = natives;
+        *self.0.items.borrow_mut() = items.to_vec();
     }
 
-    /// The number of items, separators included.
+    /// The number of top-level items, separators included.
     pub fn len(&self) -> usize {
         self.0.items.borrow().len()
     }
@@ -145,25 +157,59 @@ impl PopupMenu {
         let _ = self.0.flyout.Hide();
     }
 
+    /// Turns the check mark of the item at `path` on or off, without notifying. Does
+    /// nothing for items without a check mark.
+    pub fn set_item_checked(&self, path: &[usize], checked: bool) {
+        let mut items = self.0.items.borrow_mut();
+        let Some(item) = PopupItem::at_mut(&mut items, path) else {
+            return;
+        };
+        if !item.is_checkable() {
+            return;
+        }
+        item.checked = Some(checked);
+        drop(items);
+        if let Some(native) = self.0.natives.borrow().get(path) {
+            native.set_checked(checked);
+        }
+    }
+
+    /// Whether the check mark of the item at `path` is on.
+    pub fn is_item_checked(&self, path: &[usize]) -> bool {
+        PopupItem::at(&self.0.items.borrow(), path)
+            .is_some_and(|item| item.is_checkable() && item.checked == Some(true))
+    }
+
     /// Chooses an item through the same path as a user's choice (for tests and
     /// automation).
     ///
-    /// Separators and items that cannot be chosen are ignored.
-    pub fn select(&self, index: usize) {
-        let entry = self.0.items.borrow().get(index).cloned().flatten();
-        let Some(entry) = entry else {
+    /// Separators, submenu headings and items that cannot be chosen are ignored.
+    pub fn select(&self, path: &[usize]) {
+        if !PopupItem::can_choose(&self.0.items.borrow(), path) {
             return;
-        };
-        if !entry.IsEnabled().unwrap_or(false) {
+        }
+        let enabled = self
+            .0
+            .natives
+            .borrow()
+            .get(path)
+            .is_some_and(MenuEntry::is_enabled);
+        if !enabled {
             return;
         }
         self.close();
-        self.0.handler.emit(index);
+        self.0.choose(path);
     }
 
-    /// Called with the index when an item is chosen.
-    pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
+    /// Called with the item's path when an item is chosen.
+    pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
+    }
+
+    /// The control for the item at `path` (submenu headings included). `None` for
+    /// separators and out of range. Public as a backend-specific escape hatch.
+    pub fn native_item(&self, path: &[usize]) -> Option<MenuEntry> {
+        self.0.natives.borrow().get(path).cloned()
     }
 
     /// The menu itself. Public as a backend-specific escape hatch.

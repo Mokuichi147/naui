@@ -48,11 +48,16 @@ that shape are covered in
   (because `NSToolbar` attaches to an `NSWindow`). Icons can only be chosen from
   the 20 kinds of `ToolbarIcon`; arbitrary images cannot be used.
 - Like `Toolbar`, `MenuBar` is attached to a window and cannot be placed anywhere
-  in the layout. **There are no nested menus (below a submenu) and no items with
-  check marks.** It is limited to two levels: headings and items.
-- `MenuShortcut` is only a combination of **the primary modifier key + one
-  alphanumeric character**; the primary modifier is ⌘ on macOS and Ctrl on the
-  other three platforms. Function keys and symbol keys cannot be specified.
+  in the layout. Items can open submenus and show check marks, but **there are no
+  radio items** (use check items and turn the others off with
+  `set_item_checked`) and no icons in items. `PopupMenu` items show no shortcuts.
+- `MenuShortcut` is either **the primary modifier key + one alphanumeric
+  character** (the primary modifier is ⌘ on macOS and Ctrl on the other three
+  platforms) or **a function key from F1 to F24**, on its own or with modifiers.
+  Symbol keys and named keys (Delete, the arrow keys and so on) cannot be
+  specified. Some function keys reach the OS or the browser first: macOS assigns
+  F11 to Show Desktop by default and laptops may need fn, and browsers may keep F11
+  (full screen) or F12 (developer tools) for themselves.
 - `List` has one column. For data lists that need columns, use `Table`. `List`
   also lacks `Table`'s row windowing for large numbers of rows (building only the
   range shown on screen), so `Table` is also better suited for lists of more than
@@ -161,6 +166,10 @@ that shape are covered in
   receives touchpad gestures itself, and they do not become wheel notifications
   (mouse wheels do arrive).
 - `Dialog` and `Toast` cannot be shown before `window.show()`.
+- `MenuBar` shortcuts are picked up from the window's `KeyDown`, so a key that the
+  focused control handles itself does not reach them. Whether F10 and Alt
+  combinations, which Windows uses for its own menu keys, arrive has not been
+  checked on a real device.
 
 ### Window
 
@@ -335,9 +344,14 @@ that shape are covered in
   only place where OS assets are not used).
 - `MenuBar` shortcuts **accept either Ctrl or ⌘ as the primary modifier** (because
   ⌘ is the primary modifier in browsers on macOS). When pressed, the browser default
-  (such as ⌘S) is prevented. The menu bar of a hidden window does not react to keys,
+  (such as ⌘S or F5's reload) is prevented. The menu bar of a hidden window does not react to keys,
   and when a page has several windows, only the menu bar of the window the key
   bubbled up to receives it.
+- In `MenuBar` and `PopupMenu`, submenus open on click or hover and close with
+  Escape or a click outside, but **the arrow keys do not move between items**.
+  Browsers draw no check marks or submenu arrows for menu roles, so naui puts `✓`
+  and `▸` as text beside the label (hidden from screen readers, which read
+  `aria-checked` and `aria-haspopup`).
 - Due to browser restrictions, autoplay of media may be refused.
 
 ### Window

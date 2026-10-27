@@ -114,7 +114,9 @@ collected in [Known limitations](known-limitations.md).
   `MenuBar` / `MenuBarItem` / `KeyboardAccelerator` are not in `naui-winui3`'s
   projection (the projection is a committed generated file, and adding types means
   regenerating all of it). In exchange, naui watches `KeyDown` events that bubble up
-  to the window root and invokes shortcuts itself.
+  to the window root and invokes shortcuts itself (function keys and items inside
+  submenus too). Submenus are `MenuFlyoutSubItem`s and check items
+  `ToggleMenuFlyoutItem`s, the same as in `PopupMenu`.
 - **`Toolbar`**: A `CommandBar`, with `AppBarButton` items and `AppBarSeparator`
   separators. It is placed **to the right of the title** (the same position as
   macOS's `NSToolbar` and Linux's `AdwHeaderBar`). Passing an element to
@@ -231,7 +233,8 @@ collected in [Known limitations](known-limitations.md).
 - **`PopupMenu`**: A `MenuFlyout`. Positioning, shadow, rounded corners, light
   dismiss, keyboard operation (arrows and Esc) and wrapping at screen edges all come
   from WinUI. Right-click is delegated to `UIElement.ContextFlyout`, so long press
-  and the context key open the same menu.
+  and the context key open the same menu. Submenus are `MenuFlyoutSubItem`s and
+  check items `ToggleMenuFlyoutItem`s, which flip their own check mark.
 - **`Toast`**: It looks like an `InfoBar`. However, `InfoBar` is meant to be a band
   laid out inside a page, so it is moved to the bottom center and overlaid on the
   content layer. The action button goes in `ActionButton`, so WinUI decides whether
@@ -334,7 +337,9 @@ collected in [Known limitations](known-limitations.md).
 - **`MenuBar`**: A `GtkPopoverMenuBar`, placed below the header bar. GNOME
   recommends hamburger menus over menu bars, but naui offers the same API on all
   four platforms, so it uses the menu bar GTK4 provides as is. Items are represented
-  by a `GMenu` model paired with `GSimpleAction`s, and shortcuts are registered as
+  by a `GMenu` model paired with `GSimpleAction`s (a check item is an action with a
+  boolean state, and a submenu has a `submenu-action` that decides whether it
+  opens), and shortcuts are registered as
   `GtkApplication` accelerators. There is one accelerator table for the whole app,
   so they are registered only while attached to a window and unregistered when
   removed with `clear_menu_bar`. Action namespaces are separate per menu bar, so
@@ -398,7 +403,9 @@ collected in [Known limitations](known-limitations.md).
   elements with WAI-ARIA roles (`role="menubar"` / `"menu"` / `"menuitem"`). naui
   watches `keydown` on `document` to match shortcuts, and also adds the `Ctrl+S`
   label at the right edge of items. The subscription on `document` is held only
-  while attached to a window.
+  while attached to a window. Check items are `role="menuitemcheckbox"` with a `✓`
+  in front, and submenus are nested `role="menu"` boxes beside their heading,
+  opening on click or hover; `PopupMenu` builds its items the same way.
 - **`EditableComboBox`**: `<input list>` and `<datalist>`. naui builds neither the
   visuals nor the narrowing.
 - **`DatePicker`**: Uses `datetime-local` so as not to bring in time zones.

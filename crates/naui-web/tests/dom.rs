@@ -2681,6 +2681,59 @@ fn popup_menu_escape_closes_and_stops_the_browser_default() {
     });
 }
 
+/// A popup's submenu opens beside its heading, and a check item flips before the
+/// notification.
+#[wasm_bindgen_test]
+fn popup_menu_submenus_and_checks() {
+    with_ui(|ui| {
+        let menu = ui.popup_menu()?;
+        menu.set_items(&[
+            PopupItem::new("折り返す").checked(true),
+            PopupItem::separator(),
+            PopupItem::submenu("並べ替え", [PopupItem::new("名前"), PopupItem::new("日付")]),
+        ]);
+        assert_eq!(menu.len(), 3);
+        let anchor = ui.label("ここを右クリック")?;
+        let _mounted = Mounted::new(&anchor);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        menu.on_select({
+            let seen = seen.clone();
+            let menu = menu.clone();
+            move |path| {
+                seen.borrow_mut()
+                    .push((path.to_vec(), menu.is_item_checked(path)))
+            }
+        });
+
+        menu.open_at(&anchor, 10.0, 10.0);
+        let sort = menu.native_item(&[2]).expect("サブメニューの見出し");
+        let submenu = menu.native_submenu(&[2]).expect("サブメニュー");
+        assert_eq!(computed(&submenu, "display"), "none");
+        hover(&sort);
+        assert_ne!(computed(&submenu, "display"), "none", "乗ると開く");
+        menu.native_item(&[2, 1]).expect("日付").click();
+        assert_eq!(*seen.borrow(), vec![(vec![2, 1], false)]);
+        assert_eq!(
+            computed(&menu.native_element(), "display"),
+            "none",
+            "選ぶと閉じる"
+        );
+        assert_eq!(computed(&submenu, "display"), "none");
+
+        menu.select(&[0]);
+        menu.select(&[2]);
+        assert_eq!(
+            *seen.borrow(),
+            vec![(vec![2, 1], false), (vec![0], false)],
+            "印は通知の前に反転し、見出しは選べない"
+        );
+        let wrap = menu.native_item(&[0]).expect("項目");
+        assert_eq!(wrap.get_attribute("aria-checked").as_deref(), Some("false"));
+        Ok(())
+    });
+}
+
 // ------------------------------------------------------------- MenuBar
 
 #[wasm_bindgen_test]
@@ -2719,7 +2772,7 @@ fn menu_bar_builds_aria_roles_for_each_menu() {
         let menu = menu_bar.native_menu(0).expect("メニュー");
         assert_eq!(menu.get_attribute("role").as_deref(), Some("menu"));
 
-        let first = menu_bar.native_item(0, 0).expect("先頭は項目");
+        let first = menu_bar.native_item(&[0, 0]).expect("先頭は項目");
         assert_eq!(first.get_attribute("role").as_deref(), Some("menuitem"));
         assert_eq!(
             first.get_attribute("aria-keyshortcuts").as_deref(),
@@ -2731,40 +2784,40 @@ fn menu_bar_builds_aria_roles_for_each_menu() {
             "ブラウザは右端の表示を持たないので naui が添える"
         );
         assert!(
-            menu_bar.native_item(0, 1).is_none(),
+            menu_bar.native_item(&[0, 1]).is_none(),
             "区切り線にボタンは無い"
         );
         assert!(menu_bar
-            .native_item(0, 2)
+            .native_item(&[0, 2])
             .expect("3 番目は項目")
             .has_attribute("disabled"));
-        assert!(menu_bar.native_item(9, 0).is_none(), "範囲外は None");
+        assert!(menu_bar.native_item(&[9, 0]).is_none(), "範囲外は None");
 
-        assert!(menu_bar.is_item_enabled(0, 0));
-        assert!(!menu_bar.is_item_enabled(0, 1), "区切り線は押せない");
-        assert!(!menu_bar.is_item_enabled(0, 2));
+        assert!(menu_bar.is_item_enabled(&[0, 0]));
+        assert!(!menu_bar.is_item_enabled(&[0, 1]), "区切り線は押せない");
+        assert!(!menu_bar.is_item_enabled(&[0, 2]));
 
         // 項目ごとの指定と全体の指定は AND を取る。
-        menu_bar.set_item_enabled(0, 2, true);
+        menu_bar.set_item_enabled(&[0, 2], true);
         assert!(!menu_bar
-            .native_item(0, 2)
+            .native_item(&[0, 2])
             .expect("項目")
             .has_attribute("disabled"));
         menu_bar.set_enabled(false);
-        assert!(!menu_bar.is_item_enabled(0, 0));
+        assert!(!menu_bar.is_item_enabled(&[0, 0]));
         assert!(menu_bar
             .native_title(0)
             .expect("見出し")
             .has_attribute("disabled"));
         menu_bar.set_enabled(true);
         assert!(
-            menu_bar.is_item_enabled(0, 2),
+            menu_bar.is_item_enabled(&[0, 2]),
             "全体を戻すと項目ごとの指定が残る"
         );
 
         // 区切り線への set_item_enabled は無視する。
-        menu_bar.set_item_enabled(0, 1, true);
-        assert!(!menu_bar.is_item_enabled(0, 1));
+        menu_bar.set_item_enabled(&[0, 1], true);
+        assert!(!menu_bar.is_item_enabled(&[0, 1]));
 
         menu_bar.set_menus(&[]);
         assert!(menu_bar.is_empty());
@@ -2784,7 +2837,7 @@ fn menu_bar_opens_on_the_title_and_closes_after_choosing() {
         let seen = Rc::new(RefCell::new(Vec::new()));
         menu_bar.on_activate({
             let seen = seen.clone();
-            move |menu, item| seen.borrow_mut().push((menu, item))
+            move |path| seen.borrow_mut().push(path.to_vec())
         });
 
         let title = menu_bar.native_title(0).expect("見出し");
@@ -2799,8 +2852,8 @@ fn menu_bar_opens_on_the_title_and_closes_after_choosing() {
         );
 
         // 項目を押すと通知が届き、メニューは閉じる。
-        menu_bar.native_item(0, 1).expect("項目").click();
-        assert_eq!(*seen.borrow(), vec![(0, 1)]);
+        menu_bar.native_item(&[0, 1]).expect("項目").click();
+        assert_eq!(*seen.borrow(), vec![vec![0, 1]]);
         assert_eq!(computed(&menu, "display"), "none");
         assert_eq!(
             title.get_attribute("aria-expanded").as_deref(),
@@ -2840,33 +2893,33 @@ fn menu_bar_shortcuts_reach_the_closure() {
         let seen = Rc::new(RefCell::new(Vec::new()));
         menu_bar.on_activate({
             let seen = seen.clone();
-            move |menu, item| seen.borrow_mut().push((menu, item))
+            move |path| seen.borrow_mut().push(path.to_vec())
         });
 
         let prevented = press_shortcut(body().as_ref(), "s", true, false, false);
-        assert_eq!(*seen.borrow(), vec![(0, 0)]);
+        assert_eq!(*seen.borrow(), vec![vec![0, 0]]);
         assert!(prevented, "ブラウザの既定のショートカットは起こさない");
 
         // ⇧ の有無で別の項目になる。
         press_shortcut(body().as_ref(), "S", true, true, false);
-        assert_eq!(*seen.borrow(), vec![(0, 0), (0, 1)]);
+        assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![0, 1]]);
 
         // 修飾キーが足りない・余っているときは合わない。
         press_shortcut(body().as_ref(), "s", false, false, false);
         press_shortcut(body().as_ref(), "s", true, false, true);
         // 押せない項目のショートカットは効かない。
         press_shortcut(body().as_ref(), "w", true, false, false);
-        assert_eq!(*seen.borrow(), vec![(0, 0), (0, 1)]);
+        assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![0, 1]]);
 
-        menu_bar.set_item_enabled(0, 2, true);
+        menu_bar.set_item_enabled(&[0, 2], true);
         press_shortcut(body().as_ref(), "w", true, false, false);
-        assert_eq!(*seen.borrow(), vec![(0, 0), (0, 1), (0, 2)]);
+        assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![0, 1], vec![0, 2]]);
 
         menu_bar.set_enabled(false);
         press_shortcut(body().as_ref(), "s", true, false, false);
         assert_eq!(
             *seen.borrow(),
-            vec![(0, 0), (0, 1), (0, 2)],
+            vec![vec![0, 0], vec![0, 1], vec![0, 2]],
             "無効なメニューバーは通知しない"
         );
 
@@ -2888,7 +2941,7 @@ fn menu_bar_shortcuts_follow_the_attachment() {
         let seen = Rc::new(Cell::new(0));
         menu_bar.on_activate({
             let seen = seen.clone();
-            move |_menu, _item| seen.set(seen.get() + 1)
+            move |_path| seen.set(seen.get() + 1)
         });
 
         // 取り付ける前は、キーを見張っていない。
@@ -3000,11 +3053,11 @@ fn menu_bar_shortcuts_reach_only_one_window() {
         let seen = Rc::new(RefCell::new(Vec::new()));
         first.on_activate({
             let seen = seen.clone();
-            move |_menu, _item| seen.borrow_mut().push(1)
+            move |_path| seen.borrow_mut().push(1)
         });
         second.on_activate({
             let seen = seen.clone();
-            move |_menu, _item| seen.borrow_mut().push(2)
+            move |_path| seen.borrow_mut().push(2)
         });
 
         // キーが上がってきたウィンドウのメニューバーだけが受け取る。
@@ -3033,6 +3086,212 @@ fn menu_bar_shortcuts_reach_only_one_window() {
         second_window.clear_menu_bar();
         first_window.close();
         second_window.close();
+        Ok(())
+    });
+}
+
+/// Fires `pointerenter` on an element (the pointer moving onto it).
+fn hover(element: &HtmlElement) {
+    let event = PointerEvent::new("pointerenter").expect("ポインタイベントの生成");
+    element.dispatch_event(&event).expect("イベントの配送");
+}
+
+/// A check item becomes `menuitemcheckbox` with a visible ✓, and a submenu opens
+/// beside its heading on click or hover.
+#[wasm_bindgen_test]
+fn menu_bar_submenus_and_checks() {
+    with_ui(|ui| {
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new(
+            "表示",
+            [
+                MenuItem::new("サイドバー").checked(true),
+                MenuItem::submenu(
+                    "拡大",
+                    [MenuItem::new("拡大"), MenuItem::submenu("深い", ["さらに"])],
+                ),
+                MenuItem::new("全画面"),
+                MenuItem::submenu("閉じた", ["中"]).enabled(false),
+            ],
+        )]);
+        window.set_menu_bar(&menu_bar);
+
+        let sidebar = menu_bar.native_item(&[0, 0]).expect("項目");
+        assert_eq!(
+            sidebar.get_attribute("role").as_deref(),
+            Some("menuitemcheckbox")
+        );
+        assert_eq!(
+            sidebar.get_attribute("aria-checked").as_deref(),
+            Some("true")
+        );
+        assert!(sidebar.text_content().unwrap_or_default().starts_with('✓'));
+        let full = menu_bar.native_item(&[0, 2]).expect("項目");
+        assert_eq!(full.get_attribute("role").as_deref(), Some("menuitem"));
+        assert_eq!(
+            full.first_element_child()
+                .and_then(|m| m.text_content())
+                .as_deref(),
+            Some(""),
+            "印の無い項目にも印の列を空けて、文字の頭をそろえる"
+        );
+
+        let zoom = menu_bar.native_item(&[0, 1]).expect("サブメニューの見出し");
+        assert_eq!(zoom.get_attribute("aria-haspopup").as_deref(), Some("menu"));
+        let submenu = menu_bar.native_submenu(&[0, 1]).expect("サブメニュー");
+        assert_eq!(submenu.get_attribute("role").as_deref(), Some("menu"));
+        let deep = menu_bar.native_submenu(&[0, 1, 1]).expect("3 段目");
+        assert!(menu_bar.native_submenu(&[0, 0]).is_none());
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        menu_bar.on_activate({
+            let seen = seen.clone();
+            let menu_bar = menu_bar.clone();
+            move |path| {
+                seen.borrow_mut()
+                    .push((path.to_vec(), menu_bar.is_item_checked(path)))
+            }
+        });
+
+        let title = menu_bar.native_title(0).expect("見出し");
+        title.click();
+        assert_eq!(
+            computed(&submenu, "display"),
+            "none",
+            "開いた直後は閉じている"
+        );
+        zoom.click();
+        assert_ne!(computed(&submenu, "display"), "none", "見出しを押すと開く");
+        assert_eq!(zoom.get_attribute("aria-expanded").as_deref(), Some("true"));
+        let zoom_rect = zoom.get_bounding_client_rect();
+        let submenu_rect = submenu.get_bounding_client_rect();
+        assert!(
+            submenu_rect.left() >= zoom_rect.right() - 1.0
+                || submenu_rect.right() <= zoom_rect.left() + 1.0,
+            "見出しの横に出る"
+        );
+        hover(&menu_bar.native_item(&[0, 1, 1]).expect("深い"));
+        assert_ne!(computed(&deep, "display"), "none", "乗るだけでも開く");
+
+        // 兄弟の普通の項目に乗ると、サブメニューは閉じる。
+        hover(&full);
+        assert_eq!(computed(&submenu, "display"), "none");
+        assert_eq!(computed(&deep, "display"), "none");
+        assert_eq!(
+            zoom.get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        // 押せないサブメニューは開かない。
+        hover(&menu_bar.native_item(&[0, 3]).expect("閉じた"));
+        let closed = menu_bar.native_submenu(&[0, 3]).expect("サブメニュー");
+        assert_eq!(computed(&closed, "display"), "none");
+        assert!(menu_bar
+            .native_item(&[0, 3, 0])
+            .expect("中")
+            .has_attribute("disabled"));
+
+        // 奥の項目を押すと、経路で届き、メニューは全部閉じる。
+        zoom.click();
+        hover(&menu_bar.native_item(&[0, 1, 1]).expect("深い"));
+        menu_bar.native_item(&[0, 1, 1, 0]).expect("さらに").click();
+        assert_eq!(*seen.borrow(), vec![(vec![0, 1, 1, 0], false)]);
+        assert_eq!(
+            computed(&menu_bar.native_menu(0).expect("メニュー"), "display"),
+            "none"
+        );
+        assert_eq!(computed(&submenu, "display"), "none");
+        assert_eq!(computed(&deep, "display"), "none");
+
+        // 印のある項目を押すと、通知の前に反転する。
+        title.click();
+        sidebar.click();
+        assert_eq!(seen.borrow()[1], (vec![0, 0], false));
+        assert_eq!(
+            sidebar.get_attribute("aria-checked").as_deref(),
+            Some("false")
+        );
+        assert!(!sidebar.text_content().unwrap_or_default().contains('✓'));
+        menu_bar.set_item_checked(&[0, 0], true);
+        assert_eq!(
+            sidebar.get_attribute("aria-checked").as_deref(),
+            Some("true")
+        );
+        assert_eq!(seen.borrow().len(), 2, "set_item_checked は通知しない");
+
+        // サブメニューを止めると中も止まる。
+        menu_bar.set_item_enabled(&[0, 1], false);
+        assert!(zoom.has_attribute("disabled"));
+        assert!(menu_bar
+            .native_item(&[0, 1, 1, 0])
+            .expect("さらに")
+            .has_attribute("disabled"));
+
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+/// Function keys work on their own, inside submenus too, and show their names.
+#[wasm_bindgen_test]
+fn menu_bar_function_keys_reach_the_closure() {
+    with_ui(|ui| {
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new(
+            "表示",
+            [
+                MenuItem::new("再読み込み").shortcut(MenuShortcut::function(5)),
+                MenuItem::submenu(
+                    "開発",
+                    [MenuItem::new("調べる")
+                        .shortcut(MenuShortcut::function(12).primary(true).shift(true))],
+                ),
+                MenuItem::new("記号").shortcut(MenuShortcut::new('/')),
+            ],
+        )]);
+        let window = ui.window("メニューバー", 400.0, 300.0)?;
+        window.set_menu_bar(&menu_bar);
+
+        let reload = menu_bar.native_item(&[0, 0]).expect("項目");
+        assert_eq!(
+            reload.get_attribute("aria-keyshortcuts").as_deref(),
+            Some("F5")
+        );
+        assert!(reload.text_content().unwrap_or_default().contains("F5"));
+        assert_eq!(
+            menu_bar
+                .native_item(&[0, 1, 0])
+                .expect("項目")
+                .get_attribute("aria-keyshortcuts")
+                .as_deref(),
+            Some("Control+Shift+F12")
+        );
+        let symbol = menu_bar.native_item(&[0, 2]).expect("項目");
+        assert!(
+            !symbol.has_attribute("aria-keyshortcuts"),
+            "記号のショートカットはどの環境でも登録しない"
+        );
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        menu_bar.on_activate({
+            let seen = seen.clone();
+            move |path| seen.borrow_mut().push(path.to_vec())
+        });
+
+        let prevented = press_shortcut(body().as_ref(), "F5", false, false, false);
+        assert_eq!(*seen.borrow(), vec![vec![0, 0]]);
+        assert!(prevented, "F5 の再読み込みは起こさない");
+        // 主修飾キーが余っていれば合わない。
+        let prevented = press_shortcut(body().as_ref(), "F5", true, false, false);
+        assert!(!prevented);
+        press_shortcut(body().as_ref(), "F12", true, true, false);
+        assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![0, 1, 0]]);
+        press_shortcut(body().as_ref(), "/", true, false, false);
+        assert_eq!(seen.borrow().len(), 2);
+
+        window.clear_menu_bar();
+        window.close();
         Ok(())
     });
 }
@@ -3084,25 +3343,28 @@ fn menu_bar_callback_is_reentrant_and_replaceable() {
         menu_bar.on_activate({
             let seen = seen.clone();
             let menu_bar = menu_bar.clone();
-            move |menu, item| {
-                seen.borrow_mut().push((menu, item));
+            move |path| {
+                seen.borrow_mut().push(path.to_vec());
                 // 通知の中でメニューを組み替え、コールバックも差し替える。
                 menu_bar.set_menus(&[MenuSpec::new("編集", ["元に戻す"])]);
                 menu_bar.on_activate({
                     let seen = seen.clone();
-                    move |menu, item| seen.borrow_mut().push((menu + 10, item + 10))
+                    move |path| {
+                        seen.borrow_mut()
+                            .push(path.iter().map(|i| i + 10).collect())
+                    }
                 });
             }
         });
 
-        menu_bar.activate(0, 1);
-        assert_eq!(*seen.borrow(), vec![(0, 1)]);
+        menu_bar.activate(&[0, 1]);
+        assert_eq!(*seen.borrow(), vec![vec![0, 1]]);
         assert_eq!(menu_bar.len(), 1);
 
-        menu_bar.activate(0, 0);
+        menu_bar.activate(&[0, 0]);
         assert_eq!(
             *seen.borrow(),
-            vec![(0, 1), (10, 10)],
+            vec![vec![0, 1], vec![10, 10]],
             "差し替えたコールバックが呼ばれる"
         );
         Ok(())

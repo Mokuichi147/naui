@@ -32,11 +32,11 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSButton, NSColor, NSColorSpace, NSComboBox,
-    NSControlStateValueOff, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
-    NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder, NSScrollView,
-    NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper, NSSwitch,
-    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
+    NSControlStateValueOff, NSControlStateValueOn, NSDatePicker, NSDatePickerElementFlags, NSEvent,
+    NSEventMask, NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView,
+    NSLayoutConstraint, NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder,
+    NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper,
+    NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
     NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
     NSWindowTitleVisibility,
 };
@@ -730,8 +730,16 @@ fn main() {
             menu_bar_keeps_the_standard_menus,
         ),
         (
-            "メニューバーの項目がインデックスの組で通知する",
+            "メニューバーの項目が経路で通知する",
             menu_bar_activation_notifies,
+        ),
+        (
+            "メニューバーのサブメニューとチェックが NSMenu へ届く",
+            menu_bar_submenus_and_checks_map_to_native,
+        ),
+        (
+            "メニューバーのファンクションキーがキー等価として働く",
+            menu_bar_function_keys_are_key_equivalents,
         ),
         (
             "メニューバーがアプリのメインメニューになる",
@@ -812,6 +820,10 @@ fn main() {
         (
             "ポップアップメニューの選択がクロージャへ届く",
             popup_menu_selection_notifies,
+        ),
+        (
+            "ポップアップメニューのサブメニューとチェックが NSMenu へ届く",
+            popup_menu_submenus_and_checks,
         ),
         (
             "ポップアップメニューが取り付け先のビューのメニューになる",
@@ -7655,17 +7667,94 @@ fn popup_menu_selection_notifies(ui: &Ui) -> Result<()> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     popup.on_select({
         let seen = seen.clone();
-        move |index| seen.borrow_mut().push(index)
+        move |path| seen.borrow_mut().push(path.to_vec())
     });
 
-    popup.select(2);
-    assert_eq!(*seen.borrow(), vec![2], "区切り線を数えた位置で届くこと");
+    popup.select(&[2]);
+    assert_eq!(
+        *seen.borrow(),
+        vec![vec![2]],
+        "区切り線を数えた位置で届くこと"
+    );
 
     // 区切り線・選べない項目・範囲外は通知しない。
-    popup.select(1);
-    popup.select(3);
-    popup.select(9);
-    assert_eq!(*seen.borrow(), vec![2]);
+    popup.select(&[1]);
+    popup.select(&[3]);
+    popup.select(&[9]);
+    popup.select(&[]);
+    assert_eq!(*seen.borrow(), vec![vec![2]]);
+    Ok(())
+}
+
+/// A submenu becomes an `NSMenuItem` holding another `NSMenu`, and choosing a check
+/// item flips its `state` before the notification.
+fn popup_menu_submenus_and_checks(ui: &Ui) -> Result<()> {
+    let popup = ui.popup_menu()?;
+    popup.set_items(&[
+        PopupItem::new("折り返す").checked(true),
+        PopupItem::separator(),
+        PopupItem::submenu(
+            "並べ替え",
+            [
+                PopupItem::new("名前"),
+                PopupItem::new("日付").checked(false),
+            ],
+        ),
+        PopupItem::submenu("閉じた", ["中"]).enabled(false),
+    ]);
+    assert_eq!(popup.len(), 4, "上の段だけを数える");
+
+    let wrap = popup.native_item(&[0]).expect("項目");
+    assert_eq!(wrap.state(), NSControlStateValueOn);
+    let sort = popup.native_item(&[2]).expect("サブメニューの見出し");
+    let submenu = sort.submenu().expect("NSMenu を持つこと");
+    assert_eq!(submenu.numberOfItems(), 2);
+    assert!(!submenu.autoenablesItems());
+    assert_eq!(
+        popup.native_item(&[2, 1]).expect("項目").state(),
+        NSControlStateValueOff
+    );
+    assert!(
+        !popup.native_item(&[3, 0]).expect("項目").isEnabled(),
+        "押せないサブメニューの中も止める"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    popup.on_select({
+        let seen = seen.clone();
+        let popup = popup.clone();
+        move |path| {
+            seen.borrow_mut()
+                .push((path.to_vec(), popup.is_item_checked(path)))
+        }
+    });
+
+    popup.select(&[2, 1]);
+    popup.select(&[0]);
+    popup.select(&[2, 0]);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(vec![2, 1], true), (vec![0], false), (vec![2, 0], false)],
+        "印は通知の前に反転している"
+    );
+    assert_eq!(wrap.state(), NSControlStateValueOff);
+    assert_eq!(
+        popup.native_item(&[2, 1]).expect("項目").state(),
+        NSControlStateValueOn
+    );
+
+    // 見出し・押せないサブメニューの中は選べない。
+    popup.select(&[2]);
+    popup.select(&[3, 0]);
+    assert_eq!(seen.borrow().len(), 3);
+
+    popup.set_item_checked(&[0], true);
+    assert!(popup.is_item_checked(&[0]));
+    assert_eq!(wrap.state(), NSControlStateValueOn);
+    assert_eq!(seen.borrow().len(), 3, "set_item_checked は通知しない");
+    // 印の無い項目には付かない。
+    popup.set_item_checked(&[2, 0], true);
+    assert!(!popup.is_item_checked(&[2, 0]));
     Ok(())
 }
 
@@ -10543,7 +10632,7 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         "有効・無効はアプリの指定をそのまま使う"
     );
 
-    let first = menu_bar.native_item(0, 0).expect("先頭は項目");
+    let first = menu_bar.native_item(&[0, 0]).expect("先頭は項目");
     assert_eq!(first.title().to_string(), "新規");
     assert!(first.isEnabled());
     assert_eq!(first.keyEquivalent().to_string(), "n");
@@ -10552,10 +10641,13 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         NSEventModifierFlags::Command,
         "主修飾キーは ⌘"
     );
-    assert!(menu_bar.native_item(0, 1).is_none(), "区切り線に項目は無い");
+    assert!(
+        menu_bar.native_item(&[0, 1]).is_none(),
+        "区切り線に項目は無い"
+    );
     assert!(menus[0].itemAtIndex(1).expect("2 番目").isSeparatorItem());
 
-    let save = menu_bar.native_item(0, 2).expect("3 番目は項目");
+    let save = menu_bar.native_item(&[0, 2]).expect("3 番目は項目");
     assert!(!save.isEnabled());
     assert_eq!(save.keyEquivalent().to_string(), "s");
     assert_eq!(
@@ -10563,42 +10655,42 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         "⇧ を足すと ⇧⌘ になる"
     );
-    assert!(menu_bar.native_item(9, 0).is_none(), "範囲外は None");
-    assert!(menu_bar.native_item(0, 9).is_none(), "範囲外は None");
+    assert!(menu_bar.native_item(&[9, 0]).is_none(), "範囲外は None");
+    assert!(menu_bar.native_item(&[0, 9]).is_none(), "範囲外は None");
 
     // ショートカットを指定しなければキー等価は付かない。
     assert_eq!(
         menu_bar
-            .native_item(1, 0)
+            .native_item(&[1, 0])
             .expect("項目")
             .keyEquivalent()
             .to_string(),
         ""
     );
 
-    assert!(menu_bar.is_item_enabled(0, 0));
-    assert!(!menu_bar.is_item_enabled(0, 1), "区切り線は押せない");
-    assert!(!menu_bar.is_item_enabled(0, 2));
+    assert!(menu_bar.is_item_enabled(&[0, 0]));
+    assert!(!menu_bar.is_item_enabled(&[0, 1]), "区切り線は押せない");
+    assert!(!menu_bar.is_item_enabled(&[0, 2]));
 
     // 項目ごとの指定と全体の指定は AND を取る。
-    menu_bar.set_item_enabled(0, 2, true);
-    assert!(menu_bar.native_item(0, 2).expect("項目").isEnabled());
+    menu_bar.set_item_enabled(&[0, 2], true);
+    assert!(menu_bar.native_item(&[0, 2]).expect("項目").isEnabled());
     menu_bar.set_enabled(false);
-    assert!(!menu_bar.is_item_enabled(0, 0));
-    assert!(!menu_bar.native_item(0, 0).expect("項目").isEnabled());
+    assert!(!menu_bar.is_item_enabled(&[0, 0]));
+    assert!(!menu_bar.native_item(&[0, 0]).expect("項目").isEnabled());
     menu_bar.set_enabled(true);
     assert!(
-        menu_bar.is_item_enabled(0, 2),
+        menu_bar.is_item_enabled(&[0, 2]),
         "全体を戻すと項目ごとの指定が残る"
     );
 
     // 区切り線への set_item_enabled は無視する。
-    menu_bar.set_item_enabled(0, 1, true);
-    assert!(!menu_bar.is_item_enabled(0, 1));
+    menu_bar.set_item_enabled(&[0, 1], true);
+    assert!(!menu_bar.is_item_enabled(&[0, 1]));
 
     menu_bar.set_menus(&[]);
     assert!(menu_bar.is_empty());
-    assert!(menu_bar.native_item(0, 0).is_none());
+    assert!(menu_bar.native_item(&[0, 0]).is_none());
     assert!(app_menus(&menu_bar).is_empty());
     Ok(())
 }
@@ -10665,7 +10757,7 @@ fn menu_bar_keeps_the_standard_menus(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// The clicked item arrives as a pair of (heading, item) indices.
+/// The clicked item arrives as its path (heading, item).
 fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[
@@ -10683,23 +10775,23 @@ fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     menu_bar.on_activate({
         let seen = seen.clone();
-        move |menu, item| seen.borrow_mut().push((menu, item))
+        move |path| seen.borrow_mut().push(path.to_vec())
     });
 
-    menu_bar.activate(0, 0);
-    assert_eq!(*seen.borrow(), vec![(0, 0)]);
-    menu_bar.activate(0, 1);
-    menu_bar.activate(0, 2);
-    menu_bar.activate(9, 0);
-    menu_bar.activate(0, 9);
+    menu_bar.activate(&[0, 0]);
+    assert_eq!(*seen.borrow(), vec![vec![0, 0]]);
+    menu_bar.activate(&[0, 1]);
+    menu_bar.activate(&[0, 2]);
+    menu_bar.activate(&[9, 0]);
+    menu_bar.activate(&[0, 9]);
     assert_eq!(
         *seen.borrow(),
-        vec![(0, 0)],
+        vec![vec![0, 0]],
         "区切り線・押せない項目・範囲外は通知しない"
     );
 
     // AppKit が使うのと同じ target/action の経路も確かめる。
-    let item = menu_bar.native_item(1, 0).expect("項目");
+    let item = menu_bar.native_item(&[1, 0]).expect("項目");
     let target = unsafe { item.target() }.expect("target が設定されていること");
     assert_eq!(
         item.action(),
@@ -10709,19 +10801,182 @@ fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     unsafe {
         let _: () = msg_send![&*target, invoke: &*item];
     }
-    assert_eq!(*seen.borrow(), vec![(0, 0), (1, 0)]);
+    assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![1, 0]]);
 
-    menu_bar.set_item_enabled(0, 2, true);
-    menu_bar.activate(0, 2);
-    assert_eq!(*seen.borrow(), vec![(0, 0), (1, 0), (0, 2)]);
+    menu_bar.set_item_enabled(&[0, 2], true);
+    menu_bar.activate(&[0, 2]);
+    assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![1, 0], vec![0, 2]]);
 
     menu_bar.set_enabled(false);
-    menu_bar.activate(0, 0);
+    menu_bar.activate(&[0, 0]);
     assert_eq!(
         *seen.borrow(),
-        vec![(0, 0), (1, 0), (0, 2)],
+        vec![vec![0, 0], vec![1, 0], vec![0, 2]],
         "無効なメニューバーは通知しない"
     );
+    Ok(())
+}
+
+/// A submenu becomes an `NSMenuItem` holding another `NSMenu`, and a check item's
+/// `state` follows the user's choice, `activate` and `set_item_checked`.
+fn menu_bar_submenus_and_checks_map_to_native(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "表示",
+        [
+            MenuItem::new("サイドバー").checked(true),
+            MenuItem::submenu(
+                "拡大",
+                [
+                    MenuItem::new("拡大").shortcut(MenuShortcut::new('i')),
+                    MenuItem::submenu("深い", ["さらに"]),
+                ],
+            ),
+        ],
+    )]);
+    assert_eq!(menu_bar.menu_len(0), 2);
+
+    let sidebar = menu_bar.native_item(&[0, 0]).expect("項目");
+    assert_eq!(sidebar.state(), NSControlStateValueOn);
+    let zoom = menu_bar.native_item(&[0, 1]).expect("サブメニューの見出し");
+    let submenu = zoom.submenu().expect("NSMenu を持つこと");
+    assert_eq!(submenu.title().to_string(), "拡大");
+    assert_eq!(submenu.numberOfItems(), 2);
+    assert!(!submenu.autoenablesItems());
+    let deep = menu_bar.native_item(&[0, 1, 1, 0]).expect("3 段目の項目");
+    assert_eq!(deep.title().to_string(), "さらに");
+    assert_eq!(
+        menu_bar
+            .native_item(&[0, 1, 0])
+            .expect("項目")
+            .keyEquivalent()
+            .to_string(),
+        "i",
+        "サブメニューの中にもショートカットが付く"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    menu_bar.on_activate({
+        let seen = seen.clone();
+        let menu_bar = menu_bar.clone();
+        move |path| {
+            seen.borrow_mut()
+                .push((path.to_vec(), menu_bar.is_item_checked(path)))
+        }
+    });
+
+    // AppKit と同じ target/action の経路で選ぶ。
+    let target = unsafe { sidebar.target() }.expect("target");
+    unsafe {
+        let _: () = msg_send![&*target, invoke: &*sidebar];
+    }
+    assert_eq!(
+        *seen.borrow(),
+        vec![(vec![0, 0], false)],
+        "通知の前に反転する"
+    );
+    assert_eq!(sidebar.state(), NSControlStateValueOff);
+
+    menu_bar.activate(&[0, 0]);
+    assert_eq!(sidebar.state(), NSControlStateValueOn);
+    menu_bar.activate(&[0, 1, 1, 0]);
+    menu_bar.activate(&[0, 1]);
+    assert_eq!(
+        *seen.borrow(),
+        vec![
+            (vec![0, 0], false),
+            (vec![0, 0], true),
+            (vec![0, 1, 1, 0], false)
+        ],
+        "サブメニューの見出しは選べない"
+    );
+
+    menu_bar.set_item_checked(&[0, 0], false);
+    assert!(!menu_bar.is_item_checked(&[0, 0]));
+    assert_eq!(sidebar.state(), NSControlStateValueOff);
+    assert_eq!(seen.borrow().len(), 3, "set_item_checked は通知しない");
+    menu_bar.set_item_checked(&[0, 1, 0], true);
+    assert!(
+        !menu_bar.is_item_checked(&[0, 1, 0]),
+        "印の無い項目には付かない"
+    );
+
+    // サブメニューを止めると、中の項目もキー等価ごと止まる。
+    menu_bar.set_item_enabled(&[0, 1], false);
+    assert!(!zoom.isEnabled());
+    assert!(!menu_bar.native_item(&[0, 1, 0]).expect("項目").isEnabled());
+    assert!(!deep.isEnabled());
+    assert!(!menu_bar.is_item_enabled(&[0, 1, 1, 0]));
+    menu_bar.activate(&[0, 1, 1, 0]);
+    assert_eq!(seen.borrow().len(), 3);
+    menu_bar.set_item_enabled(&[0, 1], true);
+    assert!(deep.isEnabled(), "戻すと中の指定どおりに戻る");
+    assert!(menu_bar.is_item_enabled(&[0, 1, 1, 0]));
+    Ok(())
+}
+
+/// Function keys become AppKit's function-key characters, with ⌘ only when asked,
+/// and AppKit matches them as key equivalents.
+fn menu_bar_function_keys_are_key_equivalents(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "表示",
+        [
+            MenuItem::new("再読み込み").shortcut(MenuShortcut::function(5)),
+            MenuItem::new("開発").shortcut(MenuShortcut::function(12).primary(true).shift(true)),
+            MenuItem::new("記号").shortcut(MenuShortcut::new('/')),
+        ],
+    )]);
+
+    let reload = menu_bar.native_item(&[0, 0]).expect("項目");
+    assert_eq!(reload.keyEquivalent().to_string(), "\u{F708}");
+    assert_eq!(
+        reload.keyEquivalentModifierMask(),
+        NSEventModifierFlags::empty(),
+        "主修飾キーを含めないファンクションキーは単独で効く"
+    );
+    let develop = menu_bar.native_item(&[0, 1]).expect("項目");
+    assert_eq!(develop.keyEquivalent().to_string(), "\u{F70F}");
+    assert_eq!(
+        develop.keyEquivalentModifierMask(),
+        NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+    );
+    assert_eq!(
+        menu_bar
+            .native_item(&[0, 2])
+            .expect("項目")
+            .keyEquivalent()
+            .to_string(),
+        "",
+        "記号のショートカットはどの環境でも登録しない"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    menu_bar.on_activate({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+
+    // F5 を押したときと同じキーイベントを NSMenu に照らし合わせる。
+    let f5 = NSString::from_str("\u{F708}");
+    let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+        NSEventType::KeyDown,
+        NSPoint::new(0.0, 0.0),
+        NSEventModifierFlags::Function,
+        0.0,
+        0,
+        None,
+        &f5,
+        &f5,
+        false,
+        0x60, // kVK_F5
+    )
+    .expect("キーイベント");
+    assert!(
+        menu_bar.native_menu().performKeyEquivalent(&event),
+        "AppKit が F5 をキー等価として受け取ること"
+    );
+    assert_eq!(*seen.borrow(), vec![vec![0, 0]]);
     Ok(())
 }
 
@@ -10771,27 +11026,30 @@ fn menu_bar_callback_is_reentrant(ui: &Ui) -> Result<()> {
     menu_bar.on_activate({
         let seen = seen.clone();
         let menu_bar = menu_bar.clone();
-        move |menu, item| {
-            seen.borrow_mut().push((menu, item));
+        move |path| {
+            seen.borrow_mut().push(path.to_vec());
             // 通知の中でメニューを組み替え、コールバックも差し替える。
             menu_bar.set_menus(&[MenuSpec::new("編集", ["元に戻す"])]);
-            menu_bar.set_item_enabled(0, 0, true);
+            menu_bar.set_item_enabled(&[0, 0], true);
             menu_bar.on_activate({
                 let seen = seen.clone();
-                move |menu, item| seen.borrow_mut().push((menu + 10, item + 10))
+                move |path| {
+                    seen.borrow_mut()
+                        .push(path.iter().map(|i| i + 10).collect())
+                }
             });
         }
     });
 
-    menu_bar.activate(0, 1);
-    assert_eq!(*seen.borrow(), vec![(0, 1)]);
+    menu_bar.activate(&[0, 1]);
+    assert_eq!(*seen.borrow(), vec![vec![0, 1]]);
     assert_eq!(menu_bar.len(), 1);
     assert_eq!(menu_bar.menu_len(0), 1);
 
-    menu_bar.activate(0, 0);
+    menu_bar.activate(&[0, 0]);
     assert_eq!(
         *seen.borrow(),
-        vec![(0, 1), (10, 10)],
+        vec![vec![0, 1], vec![10, 10]],
         "差し替えたコールバックが呼ばれる"
     );
     Ok(())

@@ -13,37 +13,68 @@
 //! | --- | --- |
 //! | `PopupMenu` | `<div role="menu">` (directly under `<body>`, `position: fixed`) |
 //! | Item | `<button role="menuitem">` |
+//! | Item with a check mark | `<button role="menuitemcheckbox">` |
+//! | Submenu | `<div role="menu">` beside its heading |
 //! | Separator | `<div role="separator">` |
+//!
+//! The items, check marks and submenus are built by `crate::menu_dom`, the same as
+//! [`crate::MenuBar`]'s.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Error, PopupItem, Result};
+use naui_core::{Error, MenuHandler, MenuItem, PopupItem, Result};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement, KeyboardEvent, MouseEvent, Node};
 
-use crate::navigation::SelectHandler;
+use crate::menu_dom::{style, Actions, Look, MenuDom};
 use crate::to_error;
-use crate::widgets::{create, set_disabled, Listener, Widget};
+use crate::widgets::{create, Listener, Widget};
 
-fn style(element: &HtmlElement, property: &str, value: &str) {
-    let _ = element.style().set_property(property, value);
-}
+/// The look of the menu and its submenus.
+const LOOK: Look = Look {
+    surface: |menu| {
+        // 位置決めと重なりだけを CSS で作る。色はシステムカラーに任せる。
+        style(menu, "z-index", "1000");
+        style(menu, "min-width", "10em");
+        style(menu, "padding", "4px");
+        style(menu, "background", "Canvas");
+        style(menu, "color", "CanvasText");
+        style(menu, "border", "1px solid CanvasText");
+        style(menu, "border-radius", "6px");
+        style(menu, "box-shadow", "0 4px 12px rgba(0, 0, 0, 0.25)");
+    },
+    item: |button| {
+        // 行として並ぶよう、ボタンの既定の見た目だけを外す。
+        style(button, "padding", "6px 12px");
+        style(button, "border", "none");
+        style(button, "border-radius", "4px");
+        style(button, "background", "transparent");
+        style(button, "color", "inherit");
+        style(button, "font", "inherit");
+    },
+    separator: |separator| {
+        style(separator, "height", "1px");
+        style(separator, "margin", "4px 0");
+        style(separator, "background", "currentColor");
+        style(separator, "opacity", "0.25");
+    },
+};
 
 struct PopupMenuInner {
     document: Document,
     /// The menu itself. Placed directly under `<body>`, with `display: none` while not
     /// shown.
     element: HtmlElement,
-    /// The button per item. `None` at separator positions.
-    buttons: RefCell<Vec<Option<HtmlElement>>>,
-    /// The click subscriptions of items. Removed when the items are rebuilt.
-    item_listeners: RefCell<Vec<Listener>>,
+    /// The items as passed, with the current check states.
+    items: RefCell<Vec<PopupItem>>,
+    /// The items and submenus, looked up by path. Rebuilt with the items.
+    dom: RefCell<MenuDom>,
     /// The `contextmenu` subscriptions and handles of the widgets it is attached to.
     attached: RefCell<Vec<(Listener, Box<dyn Widget>)>>,
     /// The subscriptions for closing on clicks outside the menu and Escape.
     _dismiss: RefCell<Vec<Listener>>,
-    handler: SelectHandler,
+    handler: MenuHandler,
     open: Cell<bool>,
 }
 
@@ -61,17 +92,9 @@ impl PopupMenu {
         element
             .set_attribute("role", "menu")
             .map_err(|e| to_error("メニューの組み立て", e))?;
-        // 位置決めと重なりだけを CSS で作る。色はシステムカラーに任せる。
+        (LOOK.surface)(&element);
         style(&element, "position", "fixed");
         style(&element, "display", "none");
-        style(&element, "z-index", "1000");
-        style(&element, "min-width", "10em");
-        style(&element, "padding", "4px");
-        style(&element, "background", "Canvas");
-        style(&element, "color", "CanvasText");
-        style(&element, "border", "1px solid CanvasText");
-        style(&element, "border-radius", "6px");
-        style(&element, "box-shadow", "0 4px 12px rgba(0, 0, 0, 0.25)");
 
         let body = doc
             .body()
@@ -82,11 +105,11 @@ impl PopupMenu {
         let this = Self(Rc::new(PopupMenuInner {
             document: doc.clone(),
             element,
-            buttons: RefCell::new(Vec::new()),
-            item_listeners: RefCell::new(Vec::new()),
+            items: RefCell::new(Vec::new()),
+            dom: RefCell::new(MenuDom::default()),
             attached: RefCell::new(Vec::new()),
             _dismiss: RefCell::new(Vec::new()),
-            handler: SelectHandler::default(),
+            handler: MenuHandler::default(),
             open: Cell::new(false),
         }));
         this.install_dismiss(doc)?;
@@ -141,77 +164,68 @@ impl PopupMenu {
     }
 
     /// Rebuilds the items. The previous items are removed.
-    ///
-    /// The index is the position in the sequence including separators.
     pub fn set_items(&self, items: &[PopupItem]) {
         self.0.element.set_inner_html("");
-        self.0.item_listeners.borrow_mut().clear();
+        *self.0.dom.borrow_mut() = MenuDom::default();
 
-        let doc = &self.0.document;
-        let mut buttons = Vec::with_capacity(items.len());
-        let mut listeners = Vec::new();
-        for (index, item) in items.iter().enumerate() {
-            if item.is_separator() {
-                if let Ok(separator) = create(doc, "div") {
-                    let separator: HtmlElement = separator.unchecked_into();
-                    let _ = separator.set_attribute("role", "separator");
-                    style(&separator, "height", "1px");
-                    style(&separator, "margin", "4px 0");
-                    style(&separator, "background", "currentColor");
-                    style(&separator, "opacity", "0.25");
-                    let _ = self.0.element.append_child(&separator);
-                }
-                buttons.push(None);
-                continue;
-            }
-
-            let Ok(button) = create(doc, "button") else {
-                buttons.push(None);
-                continue;
-            };
-            let button: HtmlElement = button.unchecked_into();
-            let _ = button.set_attribute("type", "button");
-            let _ = button.set_attribute("role", "menuitem");
-            button.set_text_content(Some(&item.label));
-            // 行として並ぶよう、ボタンの既定の見た目だけを外す。
-            style(&button, "display", "block");
-            style(&button, "width", "100%");
-            style(&button, "padding", "6px 12px");
-            style(&button, "border", "none");
-            style(&button, "border-radius", "4px");
-            style(&button, "background", "transparent");
-            style(&button, "color", "inherit");
-            style(&button, "font", "inherit");
-            style(&button, "text-align", "start");
-            if !item.enabled {
-                set_disabled(&button, true);
-                style(&button, "opacity", "0.5");
-            }
-
-            if let Ok(listener) = Listener::attach(button.as_ref(), "click", {
-                let weak = Rc::downgrade(&self.0);
-                move || {
-                    let Some(inner) = weak.upgrade() else {
-                        return;
-                    };
+        // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+        let choose = |path: Vec<usize>| -> Box<dyn FnMut()> {
+            let weak = Rc::downgrade(&self.0);
+            Box::new(move || {
+                if let Some(inner) = weak.upgrade() {
                     let menu = PopupMenu(inner);
                     menu.close();
-                    menu.0.handler.emit(index);
+                    menu.choose(&path);
                 }
-            }) {
-                listeners.push(listener);
-            }
-            let _ = self.0.element.append_child(&button);
-            buttons.push(Some(button));
-        }
-
-        *self.0.buttons.borrow_mut() = buttons;
-        *self.0.item_listeners.borrow_mut() = listeners;
+            })
+        };
+        let open = |path: Vec<usize>| -> Box<dyn FnMut()> {
+            let weak = Rc::downgrade(&self.0);
+            Box::new(move || {
+                if let Some(inner) = weak.upgrade() {
+                    inner.dom.borrow().open_to(&path);
+                }
+            })
+        };
+        let mut dom = MenuDom::default();
+        let as_menu: Vec<MenuItem> = items.iter().cloned().map(MenuItem::from).collect();
+        let _ = dom.build(
+            &self.0.document,
+            &self.0.element,
+            &as_menu,
+            &mut Vec::new(),
+            true,
+            &LOOK,
+            &Actions {
+                choose: &choose,
+                open: &open,
+            },
+        );
+        *self.0.dom.borrow_mut() = dom;
+        *self.0.items.borrow_mut() = items.to_vec();
     }
 
-    /// The number of items, separators included.
+    /// Flips a check item, then notifies.
+    fn choose(&self, path: &[usize]) {
+        let flipped = {
+            let mut items = self.0.items.borrow_mut();
+            PopupItem::at_mut(&mut items, path)
+                .filter(|item| item.is_checkable())
+                .map(|item| {
+                    let on = !item.checked.unwrap_or(false);
+                    item.checked = Some(on);
+                    on
+                })
+        };
+        if let Some(on) = flipped {
+            self.0.dom.borrow().set_checked(path, on);
+        }
+        self.0.handler.emit(path);
+    }
+
+    /// The number of top-level items, separators included.
     pub fn len(&self) -> usize {
-        self.0.buttons.borrow().len()
+        self.0.items.borrow().len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -287,23 +301,60 @@ impl PopupMenu {
     /// Closes the menu being shown. Does nothing if none is shown.
     pub fn close(&self) {
         style(&self.0.element, "display", "none");
+        self.0.dom.borrow().open_to(&[]);
         self.0.open.set(false);
+    }
+
+    /// Turns the check mark of the item at `path` on or off, without notifying. Does
+    /// nothing for items without a check mark.
+    pub fn set_item_checked(&self, path: &[usize], checked: bool) {
+        let mut items = self.0.items.borrow_mut();
+        let Some(item) = PopupItem::at_mut(&mut items, path) else {
+            return;
+        };
+        if !item.is_checkable() {
+            return;
+        }
+        item.checked = Some(checked);
+        drop(items);
+        self.0.dom.borrow().set_checked(path, checked);
+    }
+
+    /// Whether the check mark of the item at `path` is on.
+    pub fn is_item_checked(&self, path: &[usize]) -> bool {
+        PopupItem::at(&self.0.items.borrow(), path)
+            .is_some_and(|item| item.is_checkable() && item.checked == Some(true))
     }
 
     /// Chooses an item through the same path as a user's choice (for tests and
     /// automation).
     ///
-    /// Separators and items that cannot be chosen are ignored.
-    pub fn select(&self, index: usize) {
-        let button = self.0.buttons.borrow().get(index).cloned().flatten();
+    /// Separators, submenu headings and items that cannot be chosen are ignored.
+    pub fn select(&self, path: &[usize]) {
+        if !PopupItem::can_choose(&self.0.items.borrow(), path) {
+            return;
+        }
+        let button = self.0.dom.borrow().buttons.get(path).cloned();
         if let Some(button) = button {
             button.click();
         }
     }
 
-    /// Called with the index when an item is chosen.
-    pub fn on_select(&self, f: impl FnMut(usize) + 'static) {
+    /// Called with the item's path when an item is chosen.
+    pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
+    }
+
+    /// The `<button>` of the item at `path` (submenu headings included). `None` for
+    /// separators and out of range. Public as a backend-specific escape hatch.
+    pub fn native_item(&self, path: &[usize]) -> Option<HtmlElement> {
+        self.0.dom.borrow().buttons.get(path).cloned()
+    }
+
+    /// The `<div role="menu">` of the submenu whose heading is at `path`. `None` if it
+    /// is not a submenu. Public as a backend-specific escape hatch.
+    pub fn native_submenu(&self, path: &[usize]) -> Option<HtmlElement> {
+        self.0.dom.borrow().submenus.get(path).cloned()
     }
 
     /// The menu's DOM element. Public as a backend-specific escape hatch.
