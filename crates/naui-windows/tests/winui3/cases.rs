@@ -1345,9 +1345,6 @@ fn stack_gives_fill_children_star_tracks(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// A child taken out of a Stack does not keep its row number. Otherwise, in a `Grid`
-/// that places its children without setting a row (a window's content row, for
-/// example), it would land in a row that is not there.
 /// Switching a Stack's orientation moves its tracks to the other axis, gives back
 /// the alignment the previous cross axis overrode and applies `Align` to the new one,
 /// ending up as a Stack made in that direction would.
@@ -1391,7 +1388,9 @@ fn stack_switches_orientation(ui: &Ui) -> Result<()> {
         "横並びでは幅の Fill が Star の列を持つこと"
     );
     assert_eq!(stack_tracks(&grid, true), [], "前の主軸の行を残さないこと");
-    let (_, made_label, made_wide) = build(Orientation::Horizontal)?;
+    // Keep the reference Stack alive: dropping it restores its children's alignment
+    // and clears their parent layout, so they would no longer be a valid reference.
+    let (_horizontal_stack, made_label, made_wide) = build(Orientation::Horizontal)?;
     assert_eq!(
         placement(&label),
         placement(&made_label),
@@ -1409,7 +1408,7 @@ fn stack_switches_orientation(ui: &Ui) -> Result<()> {
     stack.set_orientation(Orientation::Vertical);
     assert_eq!(stack_tracks(&grid, true), [AUTO, AUTO]);
     assert_eq!(stack_tracks(&grid, false), [], "前の主軸の列を残さないこと");
-    let (_, made_label, made_wide) = build(Orientation::Vertical)?;
+    let (_vertical_stack, made_label, made_wide) = build(Orientation::Vertical)?;
     assert_eq!(
         placement(&label),
         placement(&made_label),
@@ -1419,6 +1418,9 @@ fn stack_switches_orientation(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// A child taken out of a Stack does not keep its row number. Otherwise, in a `Grid`
+/// that places its children without setting a row (a window's content row, for
+/// example), it would land in a row that is not there.
 fn removing_stack_child_resets_its_track(ui: &Ui) -> Result<()> {
     let stack = ui.stack(Orientation::Vertical)?;
     stack.append(&ui.label("一")?);
