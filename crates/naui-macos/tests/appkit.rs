@@ -11396,6 +11396,12 @@ fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
 ///
 /// The events are queued before the press is delivered, so the `NSSplitView`'s
 /// tracking loop reads the following events just as in a real drag.
+///
+/// The press goes straight to the view under the divider rather than through
+/// `NSApplication::sendEvent`. `NSWindow` drops a press on a window that is not on
+/// screen, and the test's window is not when another app holds a fullscreen Space
+/// in front (or the window itself opens into a fullscreen Space), so the drag would
+/// silently do nothing depending on what else is on the screen.
 fn drag_divider(
     app: &NSApplication,
     window: &NSWindow,
@@ -11428,7 +11434,16 @@ fn drag_divider(
     }
     let end = NSPoint::new(start.x + dx, start.y);
     unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseUp, end), false) };
-    app.sendEvent(&event(NSEventType::LeftMouseDown, start));
+    // ウィンドウの枠のビューから当てて、本物の押下と同じ受け口を選ぶ。
+    let frame_view = unsafe { window.contentView().expect("contentView").superview() }
+        .expect("ウィンドウの枠のビュー");
+    let target = frame_view.hitTest(start).expect("仕切りの上のビュー");
+    assert!(
+        target.isDescendantOf(split),
+        "仕切りの上は NSSplitView: {:?}",
+        target.class().name()
+    );
+    target.mouseDown(&event(NSEventType::LeftMouseDown, start));
     deliver_events(app);
     pump(0.05);
 }
