@@ -45,6 +45,9 @@ enum ParentLayout {
         horizontal_scroll_enabled: bool,
         vertical_scroll_enabled: bool,
     },
+    Window {
+        window: usize,
+    },
 }
 
 impl ParentLayout {
@@ -55,6 +58,7 @@ impl ParentLayout {
                 horizontal_scroll_enabled,
                 ..
             } => !horizontal_scroll_enabled,
+            Self::Window { .. } => true,
         }
     }
 
@@ -65,14 +69,17 @@ impl ParentLayout {
                 vertical_scroll_enabled,
                 ..
             } => !vertical_scroll_enabled,
+            Self::Window { .. } => true,
         }
     }
 
     fn same_kind(self, other: Self) -> bool {
-        matches!(
-            (self, other),
-            (Self::Stack { .. }, Self::Stack { .. }) | (Self::Scroll { .. }, Self::Scroll { .. })
-        )
+        match (self, other) {
+            (Self::Stack { .. }, Self::Stack { .. })
+            | (Self::Scroll { .. }, Self::Scroll { .. }) => true,
+            (Self::Window { window: first }, Self::Window { window: second }) => first == second,
+            _ => false,
+        }
     }
 }
 
@@ -175,6 +182,13 @@ pub(crate) fn parent_stretches_auto(element: &FrameworkElement, horizontal: bool
                 !horizontal_scroll_enabled && element.MaxWidth().is_ok_and(f64::is_infinite)
             } else {
                 !vertical_scroll_enabled && element.MaxHeight().is_ok_and(f64::is_infinite)
+            }
+        }
+        Some(ParentLayout::Window { .. }) => {
+            if horizontal {
+                element.MaxWidth().is_ok_and(f64::is_infinite)
+            } else {
+                element.MaxHeight().is_ok_and(f64::is_infinite)
             }
         }
         _ => false,
@@ -435,6 +449,32 @@ pub(crate) fn set_scroll_parent(
     );
 }
 
+/// Records a window's content placement and stretches unconstrained Auto axes.
+pub(crate) fn set_window_parent(element: &UIElement, window: &XamlWindow) {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return;
+    };
+    set_parent_state(
+        element,
+        &framework,
+        ParentLayout::Window {
+            window: Interface::as_raw(window) as usize,
+        },
+    );
+    stretch_non_scrolling_child(&framework, false, false);
+}
+
+/// Removes a window's placement only if it still owns the child.
+pub(crate) fn clear_window_parent(element: &UIElement, window: &XamlWindow) {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return;
+    };
+    if matches!(parent_state(&framework), Some(ParentLayout::Window { window: owner }) if owner == Interface::as_raw(window) as usize)
+    {
+        clear_parent_layout(element);
+    }
+}
+
 /// Applies the parent container's layout again after Sizing overwrote it.
 pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
     let Some(parent) = parent_state(element) else {
@@ -458,6 +498,7 @@ pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
                 vertical_scroll_enabled,
             );
         }
+        ParentLayout::Window { .. } => stretch_non_scrolling_child(element, false, false),
     }
 }
 

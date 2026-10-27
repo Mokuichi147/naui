@@ -185,6 +185,22 @@ const CASES: &[Case] = &[
         spinner_follows_stack_fill,
     ),
     (
+        "ウィンドウ直下のスピナーは中身の領域に追従する",
+        spinner_fills_window_content,
+    ),
+    (
+        "ウィンドウへの追加失敗はスピナーの親を変えない",
+        failed_window_attach_keeps_spinner_parent,
+    ),
+    (
+        "ウィンドウの子の Auto と固定サイズは差し替え後も保たれる",
+        window_child_sizing_survives_replacement,
+    ),
+    (
+        "別のウィンドウへ移った子の配置は古い窓を閉じても残る",
+        moved_window_child_keeps_new_parent,
+    ),
+    (
         "ラベルを選べるようにすると IsTextSelectionEnabled が立つ",
         label_can_be_selectable,
     ),
@@ -4372,6 +4388,386 @@ fn spinner_follows_stack_fill(ui: &Ui) -> Result<()> {
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+    Ok(())
+}
+
+/// An Auto spinner as window content fills the content area, including after a
+/// size change or sidebar transition. Fixed and capped sizes remain explicit.
+fn spinner_fills_window_content(ui: &Ui) -> Result<()> {
+    let window = ui.window("Spinner as window content", 420.0, 200.0)?;
+    let spinner = ui.spinner()?;
+    let element = native::<FrameworkElement>(&spinner);
+    window.set_child(&spinner);
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        assert!(
+            element.Width().expect("Width").is_nan(),
+            "ウィンドウの幅に合わせる"
+        );
+        assert!(
+            element.Height().expect("Height").is_nan(),
+            "ウィンドウの高さに合わせる"
+        );
+        assert_eq!(
+            element.HorizontalAlignment().unwrap(),
+            HorizontalAlignment::Stretch
+        );
+        assert_eq!(
+            element.VerticalAlignment().unwrap(),
+            VerticalAlignment::Stretch
+        );
+        window.show();
+        let content = window
+            .native_window()
+            .Content()
+            .expect("ウィンドウの中身")
+            .cast::<Grid>()
+            .expect("根は Grid")
+            .Children()
+            .expect("根の子")
+            .GetAt(2)
+            .expect("中身の行")
+            .cast::<FrameworkElement>()
+            .expect("行は FrameworkElement");
+        let size = || {
+            (
+                element.ActualWidth().unwrap_or(0.0),
+                element.ActualHeight().unwrap_or(0.0),
+            )
+        };
+        let content_size = || {
+            (
+                content.ActualWidth().unwrap_or(0.0),
+                content.ActualHeight().unwrap_or(0.0),
+            )
+        };
+        let near =
+            |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0;
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            content_size().0 > 32.0 && content_size().1 > 32.0
+        });
+        if content_size().0 <= 32.0 || content_size().1 <= 32.0 {
+            println!("     (実寸が付かない環境なので、表示後の配置は確かめずに通す)");
+            return;
+        }
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || near(size(), content_size()));
+        assert!(
+            near(size(), content_size()),
+            "中身の領域 {:?} にスピナー {:?} が収まる",
+            content_size(),
+            size()
+        );
+
+        window.set_size(320.0, 140.0);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            near(size(), content_size()) && (content_size().0 - 320.0).abs() < 1.0
+        });
+        assert!(
+            near(size(), content_size()),
+            "窓のサイズ変更に追従: {:?} / {:?}",
+            size(),
+            content_size()
+        );
+        assert!(
+            (content_size().0 - 320.0).abs() < 1.0,
+            "窓の幅も指定どおり変わる: {:?}",
+            content_size()
+        );
+
+        spinner.set_sizing(Sizing::fixed(16.0, 24.0));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || near(size(), (16.0, 24.0)));
+        assert!(
+            near(size(), (16.0, 24.0)),
+            "明示した固定サイズ: {:?}",
+            size()
+        );
+        spinner.set_sizing(Sizing::new().width(naui_core::Length::Fixed(16.0)));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            near(size(), (16.0, content_size().1))
+        });
+        assert!(
+            near(size(), (16.0, content_size().1)),
+            "幅だけ固定: {:?}",
+            size()
+        );
+        spinner.set_sizing(Sizing::new().height(naui_core::Length::Fixed(24.0)));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            near(size(), (content_size().0, 24.0))
+        });
+        assert!(
+            near(size(), (content_size().0, 24.0)),
+            "高さだけ固定: {:?}",
+            size()
+        );
+        spinner.set_sizing(Sizing::new().max_width(16.0).max_height(20.0));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || near(size(), (16.0, 20.0)));
+        assert!(
+            near(size(), (16.0, 20.0)),
+            "上限のある Auto サイズ: {:?}",
+            size()
+        );
+        spinner.set_sizing(Sizing::new());
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || near(size(), content_size()));
+        assert!(
+            near(size(), content_size()),
+            "Auto を指定し直しても中身いっぱい: {:?}",
+            size()
+        );
+
+        window.set_child(&spinner);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            element.ActualWidth().unwrap_or(0.0) > 32.0
+        });
+        assert!(element.Width().unwrap().is_nan(), "同じ子の再設定後も Fill");
+
+        window.set_size(600.0, 200.0);
+        let sidebar = ui.sidebar().expect("Sidebar");
+        window.set_sidebar(&sidebar);
+        window.set_child(&spinner);
+        let content = window
+            .native_window()
+            .Content()
+            .unwrap()
+            .cast::<Grid>()
+            .unwrap()
+            .Children()
+            .unwrap()
+            .GetAt(2)
+            .unwrap()
+            .cast::<FrameworkElement>()
+            .unwrap();
+        let left = || {
+            element
+                .TransformToVisual(&content)
+                .and_then(|transform| {
+                    transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+                })
+                .map(|point| f64::from(point.X))
+                .unwrap_or(f64::NAN)
+        };
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || left() > 32.0 && size().0 > 32.0);
+        assert!(left() > 32.0, "サイドバーの右側に置かれる: {}", left());
+        assert!(
+            (left() + size().0 - content.ActualWidth().unwrap()).abs() < 1.0,
+            "サイドバーの右側の幅を埋める: 左 {}、子 {:?}",
+            left(),
+            size()
+        );
+        // NavigationView's border can take one logical pixel from the content pane.
+        assert!(
+            (size().1 - content.ActualHeight().unwrap()).abs() <= 1.0,
+            "サイドバーの右側の高さを埋める: {:?}",
+            size()
+        );
+        window.clear_sidebar();
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            near(
+                size(),
+                (
+                    content.ActualWidth().unwrap(),
+                    content.ActualHeight().unwrap(),
+                ),
+            )
+        });
+        assert!(
+            near(
+                size(),
+                (
+                    content.ActualWidth().unwrap(),
+                    content.ActualHeight().unwrap()
+                )
+            ),
+            "サイドバーを外すと中身いっぱい: {:?}",
+            size()
+        );
+
+        let replacement = ui.label("Replacement").expect("Label");
+        window.set_child(&replacement);
+        assert_eq!(element.Width().unwrap(), 32.0, "差し替えると既定幅に戻る");
+        assert_eq!(element.Height().unwrap(), 32.0, "差し替えると既定高に戻る");
+        assert_eq!(
+            element.HorizontalAlignment().unwrap(),
+            HorizontalAlignment::Left
+        );
+        assert_eq!(element.VerticalAlignment().unwrap(), VerticalAlignment::Top);
+        let stack = ui.stack(Orientation::Vertical).expect("Stack");
+        stack.set_align(Align::Fill);
+        stack.append(&spinner);
+        assert_eq!(stack.len(), 1, "差し替えたスピナーを別の親へ置ける");
+        assert!(element.Width().unwrap().is_nan(), "新しい親の Fill に従う");
+        stack.remove(0);
+        window.set_child(&spinner);
+        assert!(
+            element.Width().unwrap().is_nan(),
+            "再びウィンドウの幅に合わせる"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    assert_eq!(element.Width().unwrap(), 32.0, "窓を閉じると既定幅に戻る");
+    assert_eq!(element.Height().unwrap(), 32.0, "窓を閉じると既定高に戻る");
+    Ok(())
+}
+
+fn failed_window_attach_keeps_spinner_parent(ui: &Ui) -> Result<()> {
+    for with_sidebar in [false, true] {
+        let window = ui.window("Failed window attachment", 420.0, 200.0)?;
+        let sidebar = ui.sidebar()?;
+        if with_sidebar {
+            window.set_sidebar(&sidebar);
+        }
+        let original = ui.spinner()?;
+        window.set_child(&original);
+        let original_element = native::<FrameworkElement>(&original);
+
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.set_align(Align::End);
+        let spinner = ui.spinner()?;
+        stack.append(&spinner);
+        let child = native::<FrameworkElement>(&spinner);
+        window.set_child(&spinner);
+        spinner.set_sizing(Sizing::new());
+        assert_eq!(child.Width().unwrap(), 32.0, "別の親にいる子の幅を変えない");
+        assert_eq!(
+            child.HorizontalAlignment().unwrap(),
+            HorizontalAlignment::Right,
+            "別の親の配置を変えない"
+        );
+        assert!(
+            original_element.Width().unwrap().is_nan(),
+            "元のウィンドウの子を維持する"
+        );
+        let mounted = if with_sidebar {
+            sidebar
+                .native_navigation_view()
+                .Content()
+                .unwrap()
+                .cast::<UIElement>()
+                .unwrap()
+        } else {
+            window
+                .native_window()
+                .Content()
+                .unwrap()
+                .cast::<Grid>()
+                .unwrap()
+                .Children()
+                .unwrap()
+                .GetAt(2)
+                .unwrap()
+                .cast::<Grid>()
+                .unwrap()
+                .Children()
+                .unwrap()
+                .GetAt(0)
+                .unwrap()
+        };
+        assert_eq!(
+            mounted,
+            original.native_element(),
+            "元の子はウィンドウ内に残る"
+        );
+        window.close();
+    }
+    Ok(())
+}
+
+fn window_child_sizing_survives_replacement(ui: &Ui) -> Result<()> {
+    let window = ui.window("Window content sizing", 420.0, 200.0)?;
+    let label = ui.label("Window content")?;
+    label.set_sizing(Sizing::new());
+    let element = native::<FrameworkElement>(&label);
+    window.set_child(&label);
+    assert_eq!(
+        element.HorizontalAlignment().unwrap(),
+        HorizontalAlignment::Stretch
+    );
+    assert_eq!(
+        element.VerticalAlignment().unwrap(),
+        VerticalAlignment::Stretch
+    );
+
+    label.set_sizing(Sizing::fixed(50.0, 30.0));
+    assert_eq!(
+        element.HorizontalAlignment().unwrap(),
+        HorizontalAlignment::Left
+    );
+    assert_eq!(element.VerticalAlignment().unwrap(), VerticalAlignment::Top);
+    label.set_sizing(Sizing::new().max_width(100.0));
+    assert_eq!(
+        element.HorizontalAlignment().unwrap(),
+        HorizontalAlignment::Left
+    );
+    assert_eq!(
+        element.VerticalAlignment().unwrap(),
+        VerticalAlignment::Stretch
+    );
+    label.set_sizing(Sizing::new());
+    assert_eq!(
+        element.HorizontalAlignment().unwrap(),
+        HorizontalAlignment::Stretch
+    );
+    assert_eq!(
+        element.VerticalAlignment().unwrap(),
+        VerticalAlignment::Stretch
+    );
+
+    window.set_child(&ui.label("Replacement")?);
+    assert_eq!(
+        element.HorizontalAlignment().unwrap(),
+        HorizontalAlignment::Left
+    );
+    assert_eq!(element.VerticalAlignment().unwrap(), VerticalAlignment::Top);
+    window.set_child(&label);
+    assert_eq!(
+        element.HorizontalAlignment().unwrap(),
+        HorizontalAlignment::Stretch
+    );
+    window.close();
+    assert_eq!(
+        element.HorizontalAlignment().unwrap(),
+        HorizontalAlignment::Left
+    );
+    assert_eq!(element.VerticalAlignment().unwrap(), VerticalAlignment::Top);
+    Ok(())
+}
+
+fn moved_window_child_keeps_new_parent(ui: &Ui) -> Result<()> {
+    let first = ui.window("First window", 300.0, 200.0)?;
+    let second = ui.window("Second window", 300.0, 200.0)?;
+    let spinner = ui.spinner()?;
+    first.set_child(&spinner);
+    // The native escape hatch can detach a child without changing naui's old handle.
+    let root = first
+        .native_window()
+        .Content()
+        .unwrap()
+        .cast::<Grid>()
+        .unwrap();
+    let content = root
+        .Children()
+        .unwrap()
+        .GetAt(2)
+        .unwrap()
+        .cast::<Grid>()
+        .unwrap();
+    content.Children().unwrap().Clear().unwrap();
+    second.set_child(&spinner);
+    let element = native::<FrameworkElement>(&spinner);
+    assert!(element.Width().unwrap().is_nan());
+    first.close();
+    assert!(
+        element.Width().unwrap().is_nan(),
+        "古い窓は新しい親の配置を解除しない"
+    );
+    second.close();
+    assert_eq!(
+        element.Width().unwrap(),
+        32.0,
+        "新しい窓を閉じたら既定幅に戻る"
+    );
     Ok(())
 }
 

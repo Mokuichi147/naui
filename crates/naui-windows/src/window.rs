@@ -145,6 +145,16 @@ struct WindowInner {
 
 type ResizeCallback = dyn FnMut((f64, f64));
 
+impl Drop for WindowInner {
+    fn drop(&mut self) {
+        if let Ok(child) = self.child.try_borrow() {
+            if let Some(child) = child.as_ref() {
+                crate::layout::clear_window_parent(&child.native_element(), &self.native);
+            }
+        }
+    }
+}
+
 /// A top-level window.
 #[derive(Clone)]
 pub struct Window(Rc<WindowInner>);
@@ -828,8 +838,17 @@ impl Window {
     pub fn set_child(&self, child: &dyn Widget) {
         // 根は作り直すが、サイドバー (`NavigationView`) は同じものを使い回す。
         // XAML の要素は親を 1 つしか持てないので、古い根の層から外しておく。
+        let child_element = child.native_element();
+        let previous = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
+        let Some(element) = self.host_content(&child_element) else {
+            return;
+        };
         self.take_content_head();
-        let element = self.host_content(&child.native_element());
         let themed = themed_content_root(&element, &self.title());
         let (theme_root, title_bar, title_label, toolbar_host, menu_bar_host, drag_area, layer) =
             match themed {
@@ -848,6 +867,12 @@ impl Window {
                 }
             };
         if self.0.native.SetContent(&theme_root).is_ok() {
+            if let Some(previous) = previous {
+                if previous != child_element {
+                    crate::layout::clear_window_parent(&previous, &self.0.native);
+                }
+            }
+            crate::layout::set_window_parent(&child_element, &self.0.native);
             if title_bar.is_some() {
                 // Mica をタイトルバーまで連続させる。ドラッグ領域は
                 // `apply_drag_area` が選ぶ。
@@ -886,24 +911,24 @@ impl Window {
             // タイトルバーの帯が中身の上に乗るので、中身の大きさが変わる。
             // 並べ終わったら層が知らせる。
             self.watch_content_layer();
+        } else {
+            // 新しい子を付けられなかったときは、外した元の中身を戻す。
+            self.remount_content();
         }
     }
 
     /// The element placed in the content layer. With a sidebar attached, it puts the
     /// child in the right pane and returns the `NavigationView`.
-    fn host_content(&self, element: &UIElement) -> UIElement {
+    fn host_content(&self, element: &UIElement) -> Option<UIElement> {
         let sidebar = self.0.sidebar.borrow().clone();
         let Some(sidebar) = sidebar else {
-            return element.clone();
+            return Some(element.clone());
         };
         match sidebar.element() {
-            Ok(navigation) => {
-                sidebar.set_content(Some(element));
-                navigation
-            }
+            Ok(navigation) => sidebar.set_content(Some(element)).then_some(navigation),
             Err(error) => {
                 eprintln!("naui-windows: サイドバーを置けませんでした: {error}");
-                element.clone()
+                Some(element.clone())
             }
         }
     }
@@ -964,8 +989,9 @@ impl Window {
             return;
         };
         self.take_content_head();
-        let element = self.host_content(&child);
-        let _ = children.InsertAt(0, &element);
+        if let Some(element) = self.host_content(&child) {
+            let _ = children.InsertAt(0, &element);
+        }
     }
 
     /// The toolbar attached to the top of the window. Each call replaces it.
@@ -1271,6 +1297,9 @@ impl Window {
         self.release_backdrop();
         if self.0.native.Close().is_ok() {
             *self.0.visible.borrow_mut() = false;
+            if let Some(child) = self.0.child.borrow().as_ref() {
+                crate::layout::clear_window_parent(&child.native_element(), &self.0.native);
+            }
         }
     }
 
@@ -1310,6 +1339,9 @@ impl Window {
         // サイドバーは `Ui` が持ち続けるので、右の区画の子もここで手放す。
         if let Some(sidebar) = self.0.sidebar.borrow().as_ref() {
             sidebar.set_content(None);
+        }
+        if let Some(child) = self.0.child.borrow().as_ref() {
+            crate::layout::clear_window_parent(&child.native_element(), &self.0.native);
         }
         *self.0.child.borrow_mut() = None;
         *self.0.theme_root.borrow_mut() = None;

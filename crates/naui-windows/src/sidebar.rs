@@ -533,15 +533,19 @@ impl Sidebar {
     }
 
     /// Places the window's child in the right pane. `None` empties it.
-    pub(crate) fn set_content(&self, element: Option<&UIElement>) {
+    pub(crate) fn set_content(&self, element: Option<&UIElement>) -> bool {
         let result = match element {
             Some(element) => element
                 .cast::<IInspectable>()
                 .and_then(|element| self.0.native.SetContent(&element)),
             None => self.0.native.SetContent(None::<&IInspectable>),
         };
-        if let Err(error) = result {
-            eprintln!("naui-windows: サイドバーの中身を置けませんでした: {error}");
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("naui-windows: サイドバーの中身を置けませんでした: {error}");
+                false
+            }
         }
     }
 
