@@ -1467,13 +1467,16 @@ the meaning of the indices in notifications.
 
 ## Menu bars (the OS application menu)
 
-For **two-level** menus of headings and items, such as "File" and "Edit", use
+For menus of headings and items, such as "File", "Edit" and "View", use
 [`MenuBar`]. Like [`Toolbar`], it is not placed in the layout but attached with
 [`Window::set_menu_bar`] (it is not a [`Widget`]).
 
-One heading is a [`MenuSpec`], and one line inside it is a [`MenuItem`]. When
-pressed, [`MenuBar::on_activate`] is called with **(the heading's index, the item's
-index including separators)**.
+One heading is a [`MenuSpec`], and one line inside it is a [`MenuItem`]. An item
+can open a submenu of further items ([`MenuItem::submenu`], to any depth) or show
+a check mark ([`MenuItem::checked`]). Items are identified by **a path**: the
+heading's index followed by the item's index at each level, counting separators.
+When an item is pressed, [`MenuBar::on_activate`] is called with its path, which
+slice patterns take apart nicely.
 
 ```no_run
 # use naui::{MenuItem, MenuShortcut, MenuSpec, Result, Ui};
@@ -1491,11 +1494,28 @@ menu_bar.set_menus(&[
             MenuItem::new("Save").shortcut(MenuShortcut::new('s')).enabled(false),
         ],
     ),
-    // A sequence of strings can also be passed as is.
-    MenuSpec::new("View", ["Zoom In", "Zoom Out"]),
+    MenuSpec::new(
+        "View",
+        [
+            MenuItem::new("Show Sidebar").checked(true),
+            // A sequence of strings can also be passed as is.
+            MenuItem::submenu("Zoom", ["Zoom In", "Zoom Out"]),
+            MenuItem::new("Full Screen").shortcut(MenuShortcut::function(11)),
+        ],
+    ),
 ]);
-menu_bar.on_activate(|menu, item| println!("item {item} of menu {menu} was pressed"));
-menu_bar.set_item_enabled(0, 3, true); // enable once saving becomes possible
+menu_bar.on_activate({
+    let menu_bar = menu_bar.clone();
+    move |path| match *path {
+        [0, item] => println!("file item {item}"),
+        // The check mark has already flipped when the notification arrives.
+        [1, 0] => println!("sidebar shown: {}", menu_bar.is_item_checked(path)),
+        [1, 1, zoom] => println!("zoom item {zoom}"),
+        [1, 2] => println!("full screen"),
+        _ => {}
+    }
+});
+menu_bar.set_item_enabled(&[0, 3], true); // enable once saving becomes possible
 window.set_menu_bar(&menu_bar);
 # Ok(())
 # }
@@ -1506,21 +1526,42 @@ window.set_menu_bar(&menu_bar);
 | `MenuBar` | A row of `Button`s | `NSMenu` (`NSApplication.mainMenu`) | `GtkPopoverMenuBar` + `GMenu` | `<div role="menubar">` |
 | Menu | `MenuFlyout` | `NSMenu` | A `GMenu` submenu | `<div role="menu">` |
 | Item | `MenuFlyoutItem` | `NSMenuItem` | `GMenuItem` + `GSimpleAction` | `<button role="menuitem">` |
+| Item with a check mark | `ToggleMenuFlyoutItem` | `NSMenuItem.state` | A `GSimpleAction` with a boolean state | `<button role="menuitemcheckbox">` |
+| Submenu | `MenuFlyoutSubItem` | `NSMenuItem.submenu` | A `GMenu` submenu with `submenu-action` | A nested `<div role="menu">` |
 
 **On macOS there is one menu bar per app**, shown at the top of the screen
 (`NSApplication.mainMenu`). [`Window::set_menu_bar`] affects the whole app no
 matter which window it is called from. On the other three platforms it is laid
 along the top of the window (below the title bar).
 
+### Check marks
+
+Choosing an item made with [`MenuItem::checked`] **flips its check mark before
+[`MenuBar::on_activate`] is called**, by the user, by a shortcut or by
+[`MenuBar::activate`] alike (WinUI's `ToggleMenuFlyoutItem` and GTK4's boolean
+actions flip by themselves, and naui does the same on macOS and the Web). Read the
+new state with [`MenuBar::is_item_checked`] inside the notification. To change it
+from the app's side (for example when the sidebar is closed some other way), use
+[`MenuBar::set_item_checked`], which does not notify.
+
 ### Shortcuts
 
-A [`MenuShortcut`] is a combination of **the primary modifier key and one
-alphanumeric character**; the primary modifier is ⌘ on macOS and Ctrl elsewhere.
-⇧ and ⌥ / Alt are added with [`shift`](MenuShortcut::shift) /
-[`alt`](MenuShortcut::alt). On macOS and Linux, the OS (AppKit / GTK4) receives
-the key and invokes the item, and the OS also builds the label at the item's right
-edge. Windows and the Web have no such mechanism, so naui watches for the pressed
-keys and adds the right-edge label (in the form `Ctrl+S`) itself.
+A [`MenuShortcut`] is either **the primary modifier key and one alphanumeric
+character** ([`MenuShortcut::new`]; the primary modifier is ⌘ on macOS and Ctrl
+elsewhere) or **a function key** from F1 to F24 ([`MenuShortcut::function`]),
+which works on its own. ⇧, ⌥ / Alt and the primary modifier are added with
+[`shift`](MenuShortcut::shift), [`alt`](MenuShortcut::alt) and
+[`primary`](MenuShortcut::primary). Symbol keys and character keys without the
+primary modifier are not registered anywhere ([`MenuShortcut::is_valid`]).
+Shortcuts work for items inside submenus too, but not while the submenu leading
+to them is disabled.
+
+On macOS and Linux, the OS (AppKit / GTK4) receives the key and invokes the item,
+and the OS also builds the label at the item's right edge. Windows and the Web have
+no such mechanism, so naui watches for the pressed keys and adds the right-edge
+label (in the form `Ctrl+S` or `F5`) itself. Some function keys are taken by the OS
+or the browser before the app sees them (see
+[Known limitations](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md)).
 
 ### The standard macOS menus
 
@@ -1534,14 +1575,15 @@ default menu consisting only of these two.
 
 [`MenuBar::len`] is the number of headings, and [`MenuBar::menu_len`] is the
 number of items in one heading including separators. [`MenuBar::activate`]
-notifies just as if the user had chosen it (separators, disabled items and
-out-of-range indices do nothing). [`MenuBar::set_enabled`] disables the whole menu
-bar at once, and per-item settings are kept (on macOS, naui's standard menus are
-not affected).
+notifies just as if the user had chosen it (separators, submenu headings, disabled
+items and out-of-range paths do nothing). Disabling a submenu with
+[`MenuBar::set_item_enabled`] keeps it from opening, and the items inside keep
+their own settings for when it is enabled again. [`MenuBar::set_enabled`] disables
+the whole menu bar at once, and per-item settings are kept (on macOS, naui's
+standard menus are not affected).
 
-Nested menus (below a submenu) and items with check marks are **not supported**.
-The common API covers what takes the same shape on all four platforms, so when you
-need more, use the escape hatch to native objects.
+Radio items (one choice out of a group) are not provided; use check items and
+turn the others off with [`MenuBar::set_item_checked`].
 
 ## Sidebars
 
@@ -1629,8 +1671,10 @@ from standard elements and browser-default buttons.
 ## Pop-up (context) menus
 
 A [`PopupMenu`] is not laid out on screen, so it is not a [`Widget`]. Items are
-passed as a sequence of [`PopupItem`]s, and the chosen one is returned as an index
-**into the sequence including separators**.
+passed as a sequence of [`PopupItem`]s, which can open submenus
+([`PopupItem::submenu`]) and show check marks ([`PopupItem::checked`]) the same
+way as menu bar items. The chosen one is returned as **a path**: the index at each
+level, separators included.
 
 ```no_run
 # use naui::{PopupItem, Result, Ui};
@@ -1642,8 +1686,15 @@ popup.set_items(&[
     PopupItem::new("Copy"),
     PopupItem::separator(),          // cannot be chosen, so no notification either
     PopupItem::new("Delete").enabled(false),
+    PopupItem::new("Wrap Lines").checked(true),
+    PopupItem::submenu("Sort By", ["Name", "Date"]),
 ]);
-popup.on_select(|index| println!("item {index} was chosen"));
+popup.on_select(|path| match *path {
+    [0] => println!("copy"),
+    [3] => println!("wrap lines toggled"),
+    [4, by] => println!("sort by {by}"),
+    _ => {}
+});
 popup.attach(&label);                // opens on right-click
 popup.open_at(&label, 0.0, 0.0);     // open from code (position from the top left)
 # Ok(())
@@ -1654,21 +1705,19 @@ popup.open_at(&label, 0.0, 0.0);     // open from code (position from the top le
 | --- | --- | --- | --- | --- |
 | `PopupMenu` | `MenuFlyout` | `NSMenu` | `GtkPopoverMenu` + `GMenu` | `<div role="menu">` |
 
-**There are no hierarchies (submenus), check marks or shortcut labels.** Items
-are only "text, whether it can be chosen, and separators", matching the range all
-four platforms can handle in the same shape.
+Choosing a check item flips it before [`PopupMenu::on_select`] is called (read it
+with [`PopupMenu::is_item_checked`]). Popup menus show no shortcuts.
 
-Native menus exist on macOS (`NSMenu`) and Linux (`GtkPopoverMenu`), and **Windows
-and the Web are synthesized**. Windows has not yet been moved to WinUI 3's
-`MenuFlyout`, and browsers have no API to replace the default context menu. The
-synthesized ones **have no keyboard operation (moving with the arrow keys)**. On
-the Web it can be closed with Escape, but on Windows it cannot, because there is no
-key input binding (in both, clicking outside the menu closes it).
+Native menus are used on Windows (`MenuFlyout`), macOS (`NSMenu`) and Linux
+(`GtkPopoverMenu`), which also own keyboard operation. Browsers have no API to
+replace the default context menu, so **the Web is synthesized**: it closes with
+Escape or a click outside, and submenus open on click or hover, but there is no
+moving with the arrow keys.
 
 `attach` can attach the same menu to any number of widgets. On the Web, the
 browser's default menu is suppressed **only over the attached widgets**. `select`
 notifies just like a user action (for tests and automation), and ignores
-separators and items that cannot be chosen.
+separators, submenu headings and items that cannot be chosen.
 
 ## Lists
 

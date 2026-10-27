@@ -131,10 +131,16 @@ counterparts for, plus the foundation the adaptive layout track builds on.
       main-axis tracks and hugging, and whether a nested `Stack` leaves the leftover
       space to its parent) is placed again. `NSStackView.orientation`,
       `GtkOrientable`, the tracks of Windows's `Grid`, CSS `flex-direction`.
-- [ ] **Nested menus, menu items with check marks, and function-key shortcuts**
-      (`MenuBar` and `PopupMenu`). Needed for even an ordinary View menu. All four
-      platforms have them natively; for now this is a limitation on naui's side
-      only.
+- [x] **Nested menus, menu items with check marks, and function-key shortcuts**
+      (`MenuBar` and `PopupMenu`). Items can now open submenus to any depth
+      (`MenuItem::submenu`) and show check marks that flip before the notification
+      (`MenuItem::checked`), and `MenuShortcut::function` assigns F1 to F24, on
+      their own or with modifiers. Items are identified by a path (`&[usize]`, like
+      `Tree`), so `on_activate`, `activate`, `set_item_enabled`, `on_select` and
+      `select` take paths instead of indices. `NSMenuItem.submenu` / `state`,
+      `GMenu` submenus with `submenu-action` and boolean actions,
+      `MenuFlyoutSubItem` / `ToggleMenuFlyoutItem`, and nested `role="menu"` with
+      `menuitemcheckbox` on the Web.
 - [ ] **Spinning indicators** (Spinner). Small, and needed wherever something
       loads. `NSProgressIndicator`, `AdwSpinner`, `ProgressRing`. The DOM has no
       counterpart, so the Web shows an indeterminate `<progress>` and the difference

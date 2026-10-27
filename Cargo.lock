@@ -708,6 +708,7 @@ dependencies = [
  "naui-core",
  "naui-winui3",
  "windows",
+ "windows-collections",
  "windows-core",
 ]
 

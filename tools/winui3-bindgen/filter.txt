@@ -76,6 +76,7 @@ Microsoft.UI.Xaml.Controls.MenuFlyout
 Microsoft.UI.Xaml.Controls.MenuFlyoutItem
 Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase
 Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator
+Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem
 Microsoft.UI.Xaml.Controls.NavigationView
 Microsoft.UI.Xaml.Controls.NavigationViewBackButtonVisible
 Microsoft.UI.Xaml.Controls.NavigationViewItem
@@ -119,6 +120,7 @@ Microsoft.UI.Xaml.Controls.TextCompositionEndedEventArgs
 Microsoft.UI.Xaml.Controls.TextCompositionStartedEventArgs
 Microsoft.UI.Xaml.Controls.TimePicker
 Microsoft.UI.Xaml.Controls.TimePickerValueChangedEventArgs
+Microsoft.UI.Xaml.Controls.ToggleMenuFlyoutItem
 Microsoft.UI.Xaml.Controls.ToggleSwitch
 Microsoft.UI.Xaml.Controls.ToolTipService
 Microsoft.UI.Xaml.Controls.TreeView

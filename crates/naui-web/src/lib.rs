@@ -29,6 +29,7 @@ mod list;
 mod main_thread;
 mod media;
 mod menu_bar;
+mod menu_dom;
 mod navigation;
 mod number_input;
 mod popup;

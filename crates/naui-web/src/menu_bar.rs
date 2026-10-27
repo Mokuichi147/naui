@@ -9,16 +9,22 @@
 //! | Heading | `<button role="menuitem" aria-haspopup="true">` |
 //! | Menu | `<div role="menu">` (below the heading, `position: absolute`) |
 //! | Item | `<button role="menuitem">` |
+//! | Item with a check mark | `<button role="menuitemcheckbox">` |
+//! | Submenu | `<div role="menu">` beside its heading |
 //! | Separator | `<div role="separator">` |
+//!
+//! The items, check marks and submenus are built by `crate::menu_dom`, the same as
+//! [`crate::PopupMenu`]'s.
 //!
 //! Colors use CSS system colors (`Canvas` / `CanvasText`), so they follow the
 //! `color-scheme` that [`crate::Ui::set_theme`] sets on `<html>` as is (the same as
 //! [`crate::PopupMenu`]).
 //!
 //! Shortcuts are also a concept browsers do not have, so naui watches `document`'s
-//! `keydown` and matches them itself. The primary modifier can be either Ctrl or ⌘
-//! (since ⌘ is the primary modifier in browsers on macOS). The right edge of items
-//! shows [`MenuShortcut::label`](naui_core::MenuShortcut::label).
+//! `keydown` and matches them itself, including function keys and items inside
+//! submenus. The primary modifier can be either Ctrl or ⌘ (since ⌘ is the primary
+//! modifier in browsers on macOS). The right edge of items shows
+//! [`MenuShortcut::label`](naui_core::MenuShortcut::label).
 //!
 //! The `document` subscriptions are attached **only while attached to a window**,
 //! so that a detached menu bar, or the menu bar of a closed (hidden) window, does
@@ -31,41 +37,35 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{MenuSpec, Result};
+use naui_core::{MenuHandler, MenuSpec, Result};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement, KeyboardEvent, Node};
 
+use crate::menu_dom::{style, Actions, Look, MenuDom};
 use crate::to_error;
 use crate::widgets::{create, set_disabled, Listener};
 
-fn style(element: &HtmlElement, property: &str, value: &str) {
-    let _ = element.style().set_property(property, value);
-}
-
-/// The handler for the clicked item.
-///
-/// The closure is taken out only for the duration of the call, so rebuilding the
-/// same menu bar from inside the notification does not double-borrow.
-#[derive(Clone, Default)]
-struct Handler(Rc<RefCell<Option<Box<dyn FnMut(usize, usize)>>>>);
-
-impl Handler {
-    fn set(&self, f: impl FnMut(usize, usize) + 'static) {
-        *self.0.borrow_mut() = Some(Box::new(f));
-    }
-
-    fn emit(&self, menu: usize, item: usize) {
-        let Some(mut f) = self.0.borrow_mut().take() else {
-            return;
-        };
-        f(menu, item);
-        let mut slot = self.0.borrow_mut();
-        // 呼び出しの中で差し替えられていたら、新しいほうを残す。
-        if slot.is_none() {
-            *slot = Some(f);
-        }
-    }
-}
+/// The look of the menus under the headings.
+const LOOK: Look = Look {
+    surface: |menu| {
+        // 位置決めと重なりだけを CSS で作る。色はシステムカラーに任せる。
+        style(menu, "z-index", "1000");
+        style(menu, "min-width", "12em");
+        style(menu, "padding", "4px");
+        style(menu, "background", "Canvas");
+        style(menu, "color", "CanvasText");
+        style(menu, "border", "1px solid CanvasText");
+        style(menu, "border-radius", "6px");
+        style(menu, "box-shadow", "0 4px 12px rgba(0, 0, 0, 0.25)");
+    },
+    item: |_| {},
+    separator: |separator| {
+        style(separator, "height", "1px");
+        style(separator, "margin", "4px 0");
+        style(separator, "background", "currentColor");
+        style(separator, "opacity", "0.3");
+    },
+};
 
 /// The DOM for one heading.
 struct MenuParts {
@@ -73,8 +73,6 @@ struct MenuParts {
     title: HtmlElement,
     /// The menu itself, shown below the heading.
     popup: HtmlElement,
-    /// The button per item. `None` at separator positions.
-    items: Vec<Option<HtmlElement>>,
 }
 
 struct MenuBarInner {
@@ -82,8 +80,9 @@ struct MenuBarInner {
     document: Document,
     menus: RefCell<Vec<MenuSpec>>,
     parts: RefCell<Vec<MenuParts>>,
-    /// The click subscriptions of headings and items. Removed when the menus are
-    /// rebuilt.
+    /// The items and submenus, looked up by path (heading index first).
+    dom: RefCell<MenuDom>,
+    /// The click subscriptions of headings. Removed when the menus are rebuilt.
     listeners: RefCell<Vec<Listener>>,
     /// The subscriptions for clicks outside, Escape and shortcuts. Held only while
     /// attached to a window.
@@ -91,7 +90,7 @@ struct MenuBarInner {
     /// The element of the window it is attached to. Decides which window shortcuts are
     /// received for.
     window: RefCell<Option<Element>>,
-    handler: Handler,
+    handler: MenuHandler,
     /// The heading open now.
     open: Cell<Option<usize>>,
     /// Whether the whole menu bar is enabled. ANDed with the per-item settings.
@@ -108,10 +107,11 @@ fn append(parent: &Element, child: &Element) -> Result<()> {
 /// The equivalent of the OS's application menu, attached to the top of the window.
 ///
 /// Not a [`Widget`](crate::Widget). Attach it with
-/// [`Window::set_menu_bar`](crate::Window::set_menu_bar). Every time an item is
-/// clicked, [`on_activate`](Self::on_activate) is called with its **(heading index,
-/// item index)**. The item index is the position in the sequence including
-/// separators; separators are never returned.
+/// [`Window::set_menu_bar`](crate::Window::set_menu_bar). Items are identified by
+/// **a path** (the heading index, then the item index at each level of submenus,
+/// counting separators). Every time an item is clicked,
+/// [`on_activate`](Self::on_activate) is called with its path. Separators and
+/// submenu headings are never returned.
 #[derive(Clone)]
 pub struct MenuBar(Rc<MenuBarInner>);
 
@@ -131,10 +131,11 @@ impl MenuBar {
             document: doc.clone(),
             menus: RefCell::new(Vec::new()),
             parts: RefCell::new(Vec::new()),
+            dom: RefCell::new(MenuDom::default()),
             listeners: RefCell::new(Vec::new()),
             document_listeners: RefCell::new(Vec::new()),
             window: RefCell::new(None),
-            handler: Handler::default(),
+            handler: MenuHandler::default(),
             open: Cell::new(None),
             enabled: Cell::new(true),
         }));
@@ -240,16 +241,16 @@ impl MenuBar {
                 }
                 // 主修飾キーは Ctrl と ⌘ のどちらでもよい。
                 let primary = key.ctrl_key() || key.meta_key();
-                if !primary || !bar.accepts_keys_from(&event) {
+                if !bar.accepts_keys_from(&event) {
                     return;
                 }
-                if let Some((menu, item)) =
+                if let Some(path) =
                     bar.find_shortcut(&key.key(), primary, key.shift_key(), key.alt_key())
                 {
-                    // ブラウザの既定のショートカット (⌘S など) は起こさない。
+                    // ブラウザの既定のショートカット (⌘S や F5 など) は起こさない。
                     event.prevent_default();
                     bar.close();
-                    bar.0.handler.emit(menu, item);
+                    bar.choose(&path);
                 }
             }
         })?;
@@ -268,31 +269,16 @@ impl MenuBar {
         primary: bool,
         shift: bool,
         alt: bool,
-    ) -> Option<(usize, usize)> {
+    ) -> Option<Vec<usize>> {
         if !self.0.enabled.get() {
             return None;
         }
-        let menus = self.0.menus.borrow();
-        for (menu, spec) in menus.iter().enumerate() {
-            for (item, entry) in spec.items.iter().enumerate() {
-                if entry.is_separator() || !entry.enabled {
-                    continue;
-                }
-                if entry
-                    .shortcut
-                    .is_some_and(|s| s.matches(key, primary, shift, alt))
-                {
-                    return Some((menu, item));
-                }
-            }
-        }
-        None
+        MenuSpec::find_shortcut(&self.0.menus.borrow(), |s| {
+            s.matches(key, primary, shift, alt)
+        })
     }
 
     /// Rebuilds the menus. The previous menus are removed.
-    ///
-    /// The heading index is the position in the sequence passed, and the item index is
-    /// the position in the sequence including separators.
     pub fn set_menus(&self, menus: &[MenuSpec]) {
         let _ = self.rebuild(menus);
     }
@@ -302,11 +288,36 @@ impl MenuBar {
         self.0.element.set_inner_html("");
         self.0.parts.borrow_mut().clear();
         self.0.listeners.borrow_mut().clear();
+        *self.0.dom.borrow_mut() = MenuDom::default();
         self.0.open.set(None);
 
         let whole = self.0.enabled.get();
         let mut parts = Vec::with_capacity(menus.len());
         let mut listeners = Vec::new();
+        let mut dom = MenuDom::default();
+        // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
+        let choose = |path: Vec<usize>| -> Box<dyn FnMut()> {
+            let weak = Rc::downgrade(&self.0);
+            Box::new(move || {
+                if let Some(inner) = weak.upgrade() {
+                    let bar = MenuBar(inner);
+                    bar.close();
+                    bar.choose(&path);
+                }
+            })
+        };
+        let open = |path: Vec<usize>| -> Box<dyn FnMut()> {
+            let weak = Rc::downgrade(&self.0);
+            Box::new(move || {
+                if let Some(inner) = weak.upgrade() {
+                    inner.dom.borrow().open_to(&path);
+                }
+            })
+        };
+        let actions = Actions {
+            choose: &choose,
+            open: &open,
+        };
         for (menu_index, spec) in menus.iter().enumerate() {
             // 見出しとメニュー本体を、位置決めの基準になる入れ物へ入れる。
             let holder: HtmlElement = create(&doc, "div")?.unchecked_into();
@@ -333,92 +344,52 @@ impl MenuBar {
             let popup: HtmlElement = create(&doc, "div")?.unchecked_into();
             let _ = popup.set_attribute("role", "menu");
             let _ = popup.set_attribute("aria-label", &spec.title);
-            // 位置決めと重なりだけを CSS で作る。色はシステムカラーに任せる。
+            (LOOK.surface)(&popup);
             style(&popup, "position", "absolute");
             style(&popup, "top", "100%");
             style(&popup, "left", "0");
             style(&popup, "display", "none");
-            style(&popup, "z-index", "1000");
-            style(&popup, "min-width", "12em");
-            style(&popup, "padding", "4px");
-            style(&popup, "background", "Canvas");
-            style(&popup, "color", "CanvasText");
-            style(&popup, "border", "1px solid CanvasText");
-            style(&popup, "border-radius", "6px");
-            style(&popup, "box-shadow", "0 4px 12px rgba(0, 0, 0, 0.25)");
-
-            let mut items = Vec::with_capacity(spec.items.len());
-            for (item_index, entry) in spec.items.iter().enumerate() {
-                if entry.is_separator() {
-                    let separator: HtmlElement = create(&doc, "div")?.unchecked_into();
-                    let _ = separator.set_attribute("role", "separator");
-                    style(&separator, "height", "1px");
-                    style(&separator, "margin", "4px 0");
-                    style(&separator, "background", "currentColor");
-                    style(&separator, "opacity", "0.3");
-                    append(&popup, &separator)?;
-                    items.push(None);
-                    continue;
-                }
-
-                let button: HtmlElement = create(&doc, "button")?.unchecked_into();
-                let _ = button.set_attribute("type", "button");
-                let _ = button.set_attribute("role", "menuitem");
-                style(&button, "display", "flex");
-                style(&button, "width", "100%");
-                style(&button, "align-items", "center");
-                style(&button, "justify-content", "space-between");
-                style(&button, "gap", "2em");
-                style(&button, "text-align", "left");
-
-                let label: HtmlElement = create(&doc, "span")?.unchecked_into();
-                label.set_text_content(Some(&entry.label));
-                append(&button, &label)?;
-                if let Some(shortcut) = entry.shortcut {
-                    // ブラウザはショートカットの表示を持たないので、naui が添える。
-                    let hint: HtmlElement = create(&doc, "span")?.unchecked_into();
-                    hint.set_text_content(Some(&shortcut.label()));
-                    // 読み上げでは操作名のあとに続けて読ませる。
-                    let _ = hint.set_attribute("aria-hidden", "true");
-                    style(&hint, "opacity", "0.6");
-                    append(&button, &hint)?;
-                    let _ = button.set_attribute(
-                        "aria-keyshortcuts",
-                        &aria_key_shortcuts(shortcut.shift, shortcut.alt, shortcut.key),
-                    );
-                }
-                set_disabled(&button, !(entry.enabled && whole));
-
-                listeners.push(Listener::attach(button.as_ref(), "click", {
-                    let weak = Rc::downgrade(&self.0);
-                    move || {
-                        let Some(inner) = weak.upgrade() else {
-                            return;
-                        };
-                        let bar = MenuBar(inner);
-                        bar.close();
-                        bar.0.handler.emit(menu_index, item_index);
-                    }
-                })?);
-                append(&popup, &button)?;
-                items.push(Some(button));
-            }
+            dom.build(
+                &doc,
+                &popup,
+                &spec.items,
+                &mut vec![menu_index],
+                whole,
+                &LOOK,
+                &actions,
+            )?;
 
             append(&holder, &popup)?;
             append(&self.0.element, &holder)?;
-            parts.push(MenuParts {
-                title,
-                popup,
-                items,
-            });
+            parts.push(MenuParts { title, popup });
         }
 
         *self.0.parts.borrow_mut() = parts;
         *self.0.listeners.borrow_mut() = listeners;
+        *self.0.dom.borrow_mut() = dom;
         let mut stored = self.0.menus.borrow_mut();
         stored.clear();
         stored.extend_from_slice(menus);
         Ok(())
+    }
+
+    /// Flips a check item, then notifies. The same path for the user's choice,
+    /// shortcuts and `activate`.
+    fn choose(&self, path: &[usize]) {
+        let flipped = {
+            let mut menus = self.0.menus.borrow_mut();
+            MenuSpec::item_at_mut(&mut menus, path)
+                .filter(|item| item.is_checkable())
+                .map(|item| {
+                    let on = !item.checked.unwrap_or(false);
+                    item.checked = Some(on);
+                    on
+                })
+        };
+        if let Some(on) = flipped {
+            self.0.dom.borrow().set_checked(path, on);
+        }
+        self.0.handler.emit(path);
     }
 
     /// The number of headings.
@@ -440,13 +411,11 @@ impl MenuBar {
             .map_or(0, |spec| spec.items.len())
     }
 
-    /// Enables or disables one item. Does nothing for separators or out of range.
-    pub fn set_item_enabled(&self, menu: usize, item: usize, enabled: bool) {
+    /// Enables or disables the item at `path`. Does nothing for separators or out of
+    /// range.
+    pub fn set_item_enabled(&self, path: &[usize], enabled: bool) {
         let mut menus = self.0.menus.borrow_mut();
-        let Some(entry) = menus
-            .get_mut(menu)
-            .and_then(|spec| spec.items.get_mut(item))
-        else {
+        let Some(entry) = MenuSpec::item_at_mut(&mut menus, path) else {
             return;
         };
         if entry.is_separator() {
@@ -457,16 +426,31 @@ impl MenuBar {
         self.apply_enabled();
     }
 
-    /// Whether the item can be clicked now. `false` for separators and out of range.
-    pub fn is_item_enabled(&self, menu: usize, item: usize) -> bool {
-        self.0.enabled.get()
-            && self
-                .0
-                .menus
-                .borrow()
-                .get(menu)
-                .and_then(|spec| spec.items.get(item))
-                .is_some_and(|entry| !entry.is_separator() && entry.enabled)
+    /// Whether the item at `path` can be clicked now. `false` for separators, submenu
+    /// headings and out of range.
+    pub fn is_item_enabled(&self, path: &[usize]) -> bool {
+        self.0.enabled.get() && MenuSpec::can_choose(&self.0.menus.borrow(), path)
+    }
+
+    /// Turns the check mark of the item at `path` on or off, without notifying. Does
+    /// nothing for items without a check mark.
+    pub fn set_item_checked(&self, path: &[usize], checked: bool) {
+        let mut menus = self.0.menus.borrow_mut();
+        let Some(entry) = MenuSpec::item_at_mut(&mut menus, path) else {
+            return;
+        };
+        if !entry.is_checkable() {
+            return;
+        }
+        entry.checked = Some(checked);
+        drop(menus);
+        self.0.dom.borrow().set_checked(path, checked);
+    }
+
+    /// Whether the check mark of the item at `path` is on.
+    pub fn is_item_checked(&self, path: &[usize]) -> bool {
+        MenuSpec::item_at(&self.0.menus.borrow(), path)
+            .is_some_and(|entry| entry.is_checkable() && entry.checked == Some(true))
     }
 
     /// Enables or disables the whole menu bar. Per-item settings are kept.
@@ -481,15 +465,16 @@ impl MenuBar {
     /// Applies the per-item settings and the overall setting to the DOM.
     fn apply_enabled(&self) {
         let whole = self.0.enabled.get();
-        let menus = self.0.menus.borrow();
-        for (spec, parts) in menus.iter().zip(self.0.parts.borrow().iter()) {
+        for parts in self.0.parts.borrow().iter() {
             set_disabled(&parts.title, !whole);
-            for (entry, button) in spec.items.iter().zip(parts.items.iter()) {
-                if let Some(button) = button {
-                    set_disabled(button, !(entry.enabled && whole));
-                }
-            }
         }
+        let menus = self.0.menus.borrow();
+        let dom = self.0.dom.borrow();
+        MenuSpec::walk(&menus, |path, _| {
+            if let Some(button) = dom.buttons.get(path) {
+                set_disabled(button, !(whole && MenuSpec::enabled_at(&menus, path)));
+            }
+        });
     }
 
     /// Opening and closing when a heading is clicked.
@@ -517,6 +502,7 @@ impl MenuBar {
         style(&parts.popup, "display", "block");
         let _ = parts.title.set_attribute("aria-expanded", "true");
         self.0.open.set(Some(menu));
+        self.0.dom.borrow().open_to(&[menu]);
     }
 
     /// Closes the open menu. Does nothing if none is open.
@@ -524,6 +510,7 @@ impl MenuBar {
         let Some(menu) = self.0.open.take() else {
             return;
         };
+        self.0.dom.borrow().open_to(&[]);
         let parts = self.0.parts.borrow();
         if let Some(parts) = parts.get(menu) {
             style(&parts.popup, "display", "none");
@@ -531,18 +518,18 @@ impl MenuBar {
         }
     }
 
-    /// Runs the item as if the user had chosen it.
+    /// Runs the item at `path` as if the user had chosen it.
     ///
-    /// Does nothing for separators, disabled items or out of range.
-    pub fn activate(&self, menu: usize, item: usize) {
-        if self.is_item_enabled(menu, item) {
-            self.0.handler.emit(menu, item);
+    /// Does nothing for separators, submenu headings, disabled items or out of range.
+    pub fn activate(&self, path: &[usize]) {
+        if self.is_item_enabled(path) {
+            self.choose(path);
         }
     }
 
-    /// Called with the heading and item indices when an item is clicked. Setting it
-    /// again removes the previous callback.
-    pub fn on_activate(&self, f: impl FnMut(usize, usize) + 'static) {
+    /// Called with the item's path when an item is clicked. Setting it again removes
+    /// the previous callback.
+    pub fn on_activate(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
@@ -558,10 +545,16 @@ impl MenuBar {
         Some(self.0.parts.borrow().get(menu)?.title.clone())
     }
 
-    /// The item's `<button>`. `None` for separators and out of range. Public as a
-    /// backend-specific escape hatch.
-    pub fn native_item(&self, menu: usize, item: usize) -> Option<HtmlElement> {
-        self.0.parts.borrow().get(menu)?.items.get(item)?.clone()
+    /// The `<button>` of the item at `path` (submenu headings included). `None` for
+    /// separators and out of range. Public as a backend-specific escape hatch.
+    pub fn native_item(&self, path: &[usize]) -> Option<HtmlElement> {
+        self.0.dom.borrow().buttons.get(path).cloned()
+    }
+
+    /// The `<div role="menu">` of the submenu whose heading is at `path`. `None` if it
+    /// is not a submenu. Public as a backend-specific escape hatch.
+    pub fn native_submenu(&self, path: &[usize]) -> Option<HtmlElement> {
+        self.0.dom.borrow().submenus.get(path).cloned()
     }
 
     /// The `<div role="menu">` shown below the heading. `None` if out of range. Public
@@ -574,21 +567,4 @@ impl MenuBar {
     pub(crate) fn mount(&self) -> HtmlElement {
         self.0.element.clone()
     }
-}
-
-/// The notation of `aria-keyshortcuts` (`Control+Shift+S`).
-///
-/// WAI-ARIA requires modifier names to match the DOM's `KeyboardEvent.key`, so it is
-/// built separately from the display-oriented
-/// [`MenuShortcut::label`](naui_core::MenuShortcut::label).
-fn aria_key_shortcuts(shift: bool, alt: bool, key: char) -> String {
-    let mut out = String::from("Control+");
-    if shift {
-        out.push_str("Shift+");
-    }
-    if alt {
-        out.push_str("Alt+");
-    }
-    out.push(key.to_ascii_uppercase());
-    out
 }

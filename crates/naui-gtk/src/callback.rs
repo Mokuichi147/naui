@@ -129,32 +129,6 @@ impl SortNotifier {
     }
 }
 
-/// A callback that receives the heading and item indices of the clicked item.
-///
-/// It receives two values, so it is written by hand instead of with
-/// [`borrowed_notifier!`].
-#[derive(Default)]
-pub(crate) struct ActivateNotifier(Slot<dyn FnMut(usize, usize)>);
-
-impl ActivateNotifier {
-    pub(crate) fn set(&self, f: impl FnMut(usize, usize) + 'static) {
-        *self.0.borrow_mut() = Some(Box::new(f));
-    }
-
-    /// Takes out the closure only for the duration of the call (the same shape as
-    /// [`emit`]).
-    pub(crate) fn emit(&self, menu: usize, item: usize) {
-        let Some(mut f) = self.0.borrow_mut().take() else {
-            return;
-        };
-        f(menu, item);
-        let mut slot = self.0.borrow_mut();
-        if slot.is_none() {
-            *slot = Some(f);
-        }
-    }
-}
-
 /// A callback that receives the path of the item whose expansion changed and its
 /// new state.
 ///

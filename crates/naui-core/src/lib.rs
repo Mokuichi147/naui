@@ -63,7 +63,7 @@ pub use layout::{GridCell, Length, ScrollMetrics, ScrollPolicy, ScrollTarget, Si
 pub use list::{ListItem, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
-pub use menu::{MenuItem, MenuShortcut, MenuSpec};
+pub use menu::{MenuHandler, MenuItem, MenuShortcut, MenuSpec};
 pub use number::NumberSpec;
 pub use popup::PopupItem;
 pub use row_window::{

@@ -18,6 +18,7 @@ use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use adw::prelude::*;
+use gtk::gio;
 use gtk::glib;
 use gtk::pango;
 use naui_core::{
@@ -486,8 +487,16 @@ fn main() {
             menu_bar_menus_map_to_native,
         ),
         (
-            "メニューバーの項目がインデックスの組で通知する",
+            "メニューバーの項目が経路で通知する",
             menu_bar_activation_notifies,
+        ),
+        (
+            "メニューバーのサブメニューとチェックが GMenu と操作になる",
+            menu_bar_submenus_and_checks_map_to_native,
+        ),
+        (
+            "メニューバーのファンクションキーがアクセラレータになる",
+            menu_bar_function_keys_become_accelerators,
         ),
         (
             "メニューバーがウィンドウに取り付き、操作が引ける",
@@ -647,6 +656,10 @@ fn main() {
         (
             "ポップアップは区切り線と無効な項目を飛ばす",
             popup_skips_separator_and_disabled,
+        ),
+        (
+            "ポップアップのサブメニューとチェックが GMenu と操作になる",
+            popup_submenus_and_checks,
         ),
         (
             "画像がローカルのファイルから読み込まれる",
@@ -5659,15 +5672,16 @@ fn popup_action_notifies(ui: &Ui) -> Result<()> {
     let popup = ui.popup_menu()?;
     popup.set_items(&PopupItem::list(["コピー", "貼り付け"]));
 
-    let (log, sink) = recorder::<usize>();
-    popup.on_select(sink);
+    let (log, sink) = recorder::<Vec<usize>>();
+    let mut sink = sink;
+    popup.on_select(move |path| sink(path.to_vec()));
 
     // GTK4 のメニューは操作 (GAction) で動く。項目を選んだのと同じ経路。
     popup
         .native_popover()
         .activate_action("naui-popup.item1", None)
         .expect("メニューの操作");
-    assert_eq!(log.borrow().as_slice(), [1]);
+    assert_eq!(log.borrow().as_slice(), [vec![1]]);
     Ok(())
 }
 
@@ -5678,19 +5692,95 @@ fn popup_skips_separator_and_disabled(ui: &Ui) -> Result<()> {
         PopupItem::separator(),
         PopupItem::new("削除").enabled(false),
     ]);
-    let (log, sink) = recorder::<usize>();
-    popup.on_select(sink);
+    let (log, sink) = recorder::<Vec<usize>>();
+    let mut sink = sink;
+    popup.on_select(move |path| sink(path.to_vec()));
 
-    popup.select(1);
-    popup.select(2);
-    popup.select(9);
+    popup.select(&[1]);
+    popup.select(&[2]);
+    popup.select(&[9]);
+    popup.select(&[]);
     assert!(
         log.borrow().is_empty(),
         "区切り線と選べない項目は通知しない"
     );
 
-    popup.select(0);
-    assert_eq!(log.borrow().as_slice(), [0]);
+    popup.select(&[0]);
+    assert_eq!(log.borrow().as_slice(), [vec![0]]);
+    Ok(())
+}
+
+/// A submenu becomes a submenu link with a `submenu-action`, and a check item an
+/// action with a boolean state that flips before the notification.
+fn popup_submenus_and_checks(ui: &Ui) -> Result<()> {
+    let popup = ui.popup_menu()?;
+    popup.set_items(&[
+        PopupItem::new("折り返す").checked(true),
+        PopupItem::submenu(
+            "並べ替え",
+            [
+                PopupItem::new("名前"),
+                PopupItem::new("日付").checked(false),
+            ],
+        ),
+        PopupItem::submenu("閉じた", ["中"]).enabled(false),
+    ]);
+    assert_eq!(popup.len(), 3);
+
+    let wrap = popup.native_action(&[0]).expect("操作");
+    assert_eq!(wrap.state().and_then(|v| v.get::<bool>()), Some(true));
+    assert!(popup
+        .native_action(&[1, 0])
+        .expect("操作")
+        .state()
+        .is_none());
+    assert!(!popup
+        .native_action(&[2])
+        .expect("submenu-action")
+        .is_enabled());
+    assert!(
+        !popup.native_action(&[2, 0]).expect("操作").is_enabled(),
+        "押せないサブメニューの中も止める"
+    );
+
+    // 節の中の 2 番目がサブメニューへのリンクと submenu-action を持つ。
+    let model = popup.native_popover().menu_model().expect("GMenu");
+    let section = model
+        .item_link(0, gio::MENU_LINK_SECTION)
+        .expect("最初の節");
+    assert!(section.item_link(1, gio::MENU_LINK_SUBMENU).is_some());
+    let action = section
+        .item_attribute_value(1, "submenu-action", None)
+        .and_then(|v| v.get::<String>());
+    assert_eq!(action.as_deref(), Some("naui-popup.item1"));
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    popup.on_select({
+        let seen = seen.clone();
+        let popup = popup.clone();
+        move |path| {
+            seen.borrow_mut()
+                .push((path.to_vec(), popup.is_item_checked(path)))
+        }
+    });
+    popup
+        .native_popover()
+        .activate_action("naui-popup.item1-1", None)
+        .expect("メニューの操作");
+    popup.select(&[0]);
+    popup.select(&[1]);
+    popup.select(&[2, 0]);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(vec![1, 1], true), (vec![0], false)],
+        "印は通知の前に反転し、見出しと押せない中身は選べない"
+    );
+    assert_eq!(wrap.state().and_then(|v| v.get::<bool>()), Some(false));
+
+    popup.set_item_checked(&[0], true);
+    assert!(popup.is_item_checked(&[0]));
+    assert_eq!(wrap.state().and_then(|v| v.get::<bool>()), Some(true));
+    assert_eq!(seen.borrow().len(), 2, "set_item_checked は通知しない");
     Ok(())
 }
 
@@ -6778,51 +6868,51 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         .expect("メニューモデル");
     assert_eq!(model.n_items(), 2);
 
-    let first = menu_bar.native_action(0, 0).expect("先頭は操作を持つ");
-    assert_eq!(first.name(), "m0i0");
+    let first = menu_bar.native_action(&[0, 0]).expect("先頭は操作を持つ");
+    assert_eq!(first.name(), "m0-0");
     assert!(first.is_enabled());
     assert!(
-        menu_bar.native_action(0, 1).is_none(),
+        menu_bar.native_action(&[0, 1]).is_none(),
         "区切り線に操作は無い"
     );
     assert!(!menu_bar
-        .native_action(0, 2)
+        .native_action(&[0, 2])
         .expect("3 番目は操作を持つ")
         .is_enabled());
-    assert!(menu_bar.native_action(9, 0).is_none(), "範囲外は None");
-    assert!(menu_bar.native_action(0, 9).is_none(), "範囲外は None");
+    assert!(menu_bar.native_action(&[9, 0]).is_none(), "範囲外は None");
+    assert!(menu_bar.native_action(&[0, 9]).is_none(), "範囲外は None");
 
-    assert!(menu_bar.is_item_enabled(0, 0));
-    assert!(!menu_bar.is_item_enabled(0, 1), "区切り線は押せない");
-    assert!(!menu_bar.is_item_enabled(0, 2));
+    assert!(menu_bar.is_item_enabled(&[0, 0]));
+    assert!(!menu_bar.is_item_enabled(&[0, 1]), "区切り線は押せない");
+    assert!(!menu_bar.is_item_enabled(&[0, 2]));
 
     // 項目ごとの指定と全体の指定は AND を取る。
-    menu_bar.set_item_enabled(0, 2, true);
-    assert!(menu_bar.native_action(0, 2).expect("操作").is_enabled());
+    menu_bar.set_item_enabled(&[0, 2], true);
+    assert!(menu_bar.native_action(&[0, 2]).expect("操作").is_enabled());
     menu_bar.set_enabled(false);
-    assert!(!menu_bar.is_item_enabled(0, 0));
+    assert!(!menu_bar.is_item_enabled(&[0, 0]));
     assert!(
-        !menu_bar.native_action(0, 0).expect("操作").is_enabled(),
+        !menu_bar.native_action(&[0, 0]).expect("操作").is_enabled(),
         "全体を無効にすると、アクセラレータも効かないように操作ごと落とす"
     );
     assert!(!menu_bar.native_menu_bar().is_sensitive());
     menu_bar.set_enabled(true);
     assert!(
-        menu_bar.is_item_enabled(0, 2),
+        menu_bar.is_item_enabled(&[0, 2]),
         "全体を戻すと項目ごとの指定が残る"
     );
 
     // 区切り線への set_item_enabled は無視する。
-    menu_bar.set_item_enabled(0, 1, true);
-    assert!(!menu_bar.is_item_enabled(0, 1));
+    menu_bar.set_item_enabled(&[0, 1], true);
+    assert!(!menu_bar.is_item_enabled(&[0, 1]));
 
     menu_bar.set_menus(&[]);
     assert!(menu_bar.is_empty());
-    assert!(menu_bar.native_action(0, 0).is_none());
+    assert!(menu_bar.native_action(&[0, 0]).is_none());
     Ok(())
 }
 
-/// The clicked item arrives as a pair of (heading, item) indices.
+/// The clicked item arrives as its path (heading, item).
 fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[
@@ -6840,36 +6930,171 @@ fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     menu_bar.on_activate({
         let seen = seen.clone();
-        move |menu, item| seen.borrow_mut().push((menu, item))
+        move |path| seen.borrow_mut().push(path.to_vec())
     });
 
-    menu_bar.activate(0, 0);
-    assert_eq!(*seen.borrow(), vec![(0, 0)]);
-    menu_bar.activate(0, 1);
-    menu_bar.activate(0, 2);
-    menu_bar.activate(9, 0);
-    menu_bar.activate(0, 9);
+    menu_bar.activate(&[0, 0]);
+    assert_eq!(*seen.borrow(), vec![vec![0, 0]]);
+    menu_bar.activate(&[0, 1]);
+    menu_bar.activate(&[0, 2]);
+    menu_bar.activate(&[9, 0]);
+    menu_bar.activate(&[0, 9]);
     assert_eq!(
         *seen.borrow(),
-        vec![(0, 0)],
+        vec![vec![0, 0]],
         "区切り線・押せない項目・範囲外は通知しない"
     );
 
     // GTK4 側の操作から届く実際の通知経路も確かめる。
-    menu_bar.native_action(1, 0).expect("操作").activate(None);
-    assert_eq!(*seen.borrow(), vec![(0, 0), (1, 0)]);
+    menu_bar
+        .native_action(&[1, 0])
+        .expect("操作")
+        .activate(None);
+    assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![1, 0]]);
 
-    menu_bar.set_item_enabled(0, 2, true);
-    menu_bar.activate(0, 2);
-    assert_eq!(*seen.borrow(), vec![(0, 0), (1, 0), (0, 2)]);
+    menu_bar.set_item_enabled(&[0, 2], true);
+    menu_bar.activate(&[0, 2]);
+    assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![1, 0], vec![0, 2]]);
 
     menu_bar.set_enabled(false);
-    menu_bar.activate(0, 0);
+    menu_bar.activate(&[0, 0]);
     assert_eq!(
         *seen.borrow(),
-        vec![(0, 0), (1, 0), (0, 2)],
+        vec![vec![0, 0], vec![1, 0], vec![0, 2]],
         "無効なメニューバーは通知しない"
     );
+    Ok(())
+}
+
+/// A submenu becomes a submenu link whose `submenu-action` decides whether it opens,
+/// and a check item an action with a boolean state.
+fn menu_bar_submenus_and_checks_map_to_native(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "表示",
+        [
+            MenuItem::new("サイドバー").checked(true),
+            MenuItem::submenu(
+                "拡大",
+                [MenuItem::new("拡大"), MenuItem::submenu("深い", ["さらに"])],
+            ),
+        ],
+    )]);
+
+    let sidebar = menu_bar.native_action(&[0, 0]).expect("操作");
+    assert_eq!(sidebar.state().and_then(|v| v.get::<bool>()), Some(true));
+    let zoom = menu_bar.native_action(&[0, 1]).expect("submenu-action");
+    assert!(zoom.is_enabled());
+    assert_eq!(
+        menu_bar
+            .native_action_name(&[0, 1, 1, 0])
+            .map(|n| n.ends_with(".m0-1-1-0")),
+        Some(true)
+    );
+
+    // 見出しの下の節の 2 番目がサブメニューへのリンクになっている。
+    let model = menu_bar
+        .native_menu_bar()
+        .menu_model()
+        .expect("メニューモデル");
+    let view = model.item_link(0, gio::MENU_LINK_SUBMENU).expect("見出し");
+    let section = view.item_link(0, gio::MENU_LINK_SECTION).expect("節");
+    assert!(section.item_link(1, gio::MENU_LINK_SUBMENU).is_some());
+    let action = section
+        .item_attribute_value(1, "submenu-action", None)
+        .and_then(|v| v.get::<String>())
+        .expect("submenu-action");
+    assert!(action.ends_with(".m0-1"), "{action}");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    menu_bar.on_activate({
+        let seen = seen.clone();
+        let menu_bar = menu_bar.clone();
+        move |path| {
+            seen.borrow_mut()
+                .push((path.to_vec(), menu_bar.is_item_checked(path)))
+        }
+    });
+    // GTK4 から届くのと同じ経路。
+    sidebar.activate(None);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(vec![0, 0], false)],
+        "通知の前に反転する"
+    );
+    assert_eq!(sidebar.state().and_then(|v| v.get::<bool>()), Some(false));
+    menu_bar.activate(&[0, 0]);
+    menu_bar.activate(&[0, 1]);
+    menu_bar.activate(&[0, 1, 1, 0]);
+    assert_eq!(
+        *seen.borrow(),
+        vec![
+            (vec![0, 0], false),
+            (vec![0, 0], true),
+            (vec![0, 1, 1, 0], false)
+        ],
+        "サブメニューの見出しは選べない"
+    );
+
+    menu_bar.set_item_checked(&[0, 0], false);
+    assert_eq!(sidebar.state().and_then(|v| v.get::<bool>()), Some(false));
+    assert_eq!(seen.borrow().len(), 3, "set_item_checked は通知しない");
+
+    // サブメニューを止めると、開けなくなり、中の操作もアクセラレータごと止まる。
+    menu_bar.set_item_enabled(&[0, 1], false);
+    assert!(!zoom.is_enabled());
+    assert!(!menu_bar
+        .native_action(&[0, 1, 1, 0])
+        .expect("操作")
+        .is_enabled());
+    assert!(!menu_bar.is_item_enabled(&[0, 1, 0]));
+    menu_bar.set_item_enabled(&[0, 1], true);
+    assert!(menu_bar
+        .native_action(&[0, 1, 1, 0])
+        .expect("操作")
+        .is_enabled());
+    Ok(())
+}
+
+/// Function keys are registered as GTK4 accelerators, with Ctrl only when asked.
+/// Invalid shortcuts are not registered.
+fn menu_bar_function_keys_become_accelerators(ui: &Ui) -> Result<()> {
+    let window = ui.window("ファンクションキー", 400.0, 300.0)?;
+    let app = window
+        .native_window()
+        .application()
+        .expect("GtkApplication");
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "表示",
+        [
+            MenuItem::new("再読み込み").shortcut(MenuShortcut::function(5)),
+            MenuItem::submenu(
+                "開発",
+                [MenuItem::new("調べる")
+                    .shortcut(MenuShortcut::function(12).primary(true).shift(true))],
+            ),
+            MenuItem::new("記号").shortcut(MenuShortcut::new('/')),
+        ],
+    )]);
+    window.set_menu_bar(&menu_bar);
+
+    let name = |path: &[usize]| menu_bar.native_action_name(path).expect("操作の名前");
+    assert_eq!(app.accels_for_action(&name(&[0, 0])), vec!["F5"]);
+    assert_eq!(
+        app.accels_for_action(&name(&[0, 1, 0])),
+        // GTK4 は修飾キーを自分の順に並べ直して返す。
+        vec!["<Shift><Control>F12"],
+        "サブメニューの中の項目も登録する"
+    );
+    assert!(
+        app.accels_for_action(&name(&[0, 2])).is_empty(),
+        "記号のショートカットはどの環境でも登録しない"
+    );
+
+    window.clear_menu_bar();
+    assert!(app.accels_for_action(&name(&[0, 1, 0])).is_empty());
+    window.close();
     Ok(())
 }
 
@@ -6888,9 +7113,9 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
         "ファイル",
         [MenuItem::new("開く").shortcut(MenuShortcut::new('o'))],
     )]);
-    let name = menu_bar.native_action_name(0, 0).expect("操作の名前");
+    let name = menu_bar.native_action_name(&[0, 0]).expect("操作の名前");
     assert!(
-        name.starts_with("naui-menubar-") && name.ends_with(".m0i0"),
+        name.starts_with("naui-menubar-") && name.ends_with(".m0-0"),
         "メニューバーごとの名前空間に入る: {name}"
     );
     assert!(
@@ -6916,7 +7141,7 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
     let seen = Rc::new(Cell::new(0));
     menu_bar.on_activate({
         let seen = seen.clone();
-        move |_menu, _item| seen.set(seen.get() + 1)
+        move |_path| seen.set(seen.get() + 1)
     });
     WidgetExt::activate_action(&native, &name, None).expect("ウィンドウから操作を引けること");
     assert_eq!(seen.get(), 1);
@@ -6968,27 +7193,30 @@ fn menu_bar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
     menu_bar.on_activate({
         let seen = seen.clone();
         let menu_bar = menu_bar.clone();
-        move |menu, item| {
-            seen.borrow_mut().push((menu, item));
+        move |path| {
+            seen.borrow_mut().push(path.to_vec());
             // 通知の中でメニューを組み替え、コールバックも差し替える。
             menu_bar.set_menus(&[MenuSpec::new("編集", ["元に戻す"])]);
-            menu_bar.set_item_enabled(0, 0, true);
+            menu_bar.set_item_enabled(&[0, 0], true);
             menu_bar.on_activate({
                 let seen = seen.clone();
-                move |menu, item| seen.borrow_mut().push((menu + 10, item + 10))
+                move |path| {
+                    seen.borrow_mut()
+                        .push(path.iter().map(|i| i + 10).collect())
+                }
             });
         }
     });
 
-    menu_bar.activate(0, 1);
-    assert_eq!(*seen.borrow(), vec![(0, 1)]);
+    menu_bar.activate(&[0, 1]);
+    assert_eq!(*seen.borrow(), vec![vec![0, 1]]);
     assert_eq!(menu_bar.len(), 1);
     assert_eq!(menu_bar.menu_len(0), 1);
 
-    menu_bar.activate(0, 0);
+    menu_bar.activate(&[0, 0]);
     assert_eq!(
         *seen.borrow(),
-        vec![(0, 1), (10, 10)],
+        vec![vec![0, 1], vec![10, 10]],
         "差し替えたコールバックが呼ばれる"
     );
     Ok(())
@@ -7013,8 +7241,8 @@ fn menu_bar_shortcuts_are_kept_per_menu_bar(ui: &Ui) -> Result<()> {
     second.set_menus(&spec);
     second_window.set_menu_bar(&second);
 
-    let first_name = first.native_action_name(0, 0).expect("操作の名前");
-    let second_name = second.native_action_name(0, 0).expect("操作の名前");
+    let first_name = first.native_action_name(&[0, 0]).expect("操作の名前");
+    let second_name = second.native_action_name(&[0, 0]).expect("操作の名前");
     assert_ne!(first_name, second_name, "メニューバーごとに名前空間が違う");
 
     let app = first_window
@@ -7031,11 +7259,11 @@ fn menu_bar_shortcuts_are_kept_per_menu_bar(ui: &Ui) -> Result<()> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     first.on_activate({
         let seen = seen.clone();
-        move |_menu, _item| seen.borrow_mut().push(1)
+        move |_path| seen.borrow_mut().push(1)
     });
     second.on_activate({
         let seen = seen.clone();
-        move |_menu, _item| seen.borrow_mut().push(2)
+        move |_path| seen.borrow_mut().push(2)
     });
 
     // それぞれのウィンドウから引けるのは、自分のメニューバーの操作だけ。

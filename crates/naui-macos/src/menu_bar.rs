@@ -21,15 +21,26 @@
 //! so AppKit walks the responder chain and delivers `paste:` and the like to the
 //! control being edited. **Copy and paste are implemented by AppKit itself**;
 //! naui does nothing.
+//!
+//! ## Submenus and check marks
+//!
+//! A submenu is an `NSMenuItem` holding another `NSMenu` (`submenu`), and a check
+//! mark is `NSMenuItem.state`. AppKit does not flip the state when an item is
+//! chosen, so naui flips it before notifying, the same as WinUI's
+//! `ToggleMenuFlyoutItem` and GTK4's boolean actions.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use naui_core::{ui_strings, MenuSpec};
+use naui_core::{ui_strings, MenuHandler, MenuItem, MenuShortcut, MenuSpec};
 use objc2::rc::Retained;
 use objc2::runtime::Sel;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
+use objc2_app_kit::{
+    NSApplication, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSMenu,
+    NSMenuItem,
+};
 use objc2_foundation::NSString;
 
 use crate::trampoline::ActionTarget;
@@ -105,30 +116,33 @@ fn submenu(
     holder
 }
 
-/// The handler for the clicked item.
-///
-/// The closure is taken out only for the duration of the call, so rebuilding the
-/// same menu bar from inside the notification does not double-borrow (the same
-/// shape as the trampoline's `SelectHandler`, with two values).
-#[derive(Clone, Default)]
-struct ActivateHandler(Rc<RefCell<Option<Box<dyn FnMut(usize, usize)>>>>);
-
-impl ActivateHandler {
-    fn set(&self, f: impl FnMut(usize, usize) + 'static) {
-        *self.0.borrow_mut() = Some(Box::new(f));
+/// Applies a shortcut to an `NSMenuItem`. Invalid shortcuts are left out.
+pub(crate) fn apply_shortcut(native: &NSMenuItem, shortcut: MenuShortcut) {
+    if !shortcut.is_valid() {
+        return;
     }
-
-    fn emit(&self, menu: usize, item: usize) {
-        let Some(mut f) = self.0.borrow_mut().take() else {
-            return;
-        };
-        f(menu, item);
-        let mut slot = self.0.borrow_mut();
-        // 呼び出しの中で差し替えられていたら、新しいほうを残す。
-        if slot.is_none() {
-            *slot = Some(f);
-        }
+    // ⌘ は主修飾キー。⇧ と ⌥ は指定があるときだけ足す。
+    let mut mask = NSEventModifierFlags::empty();
+    if shortcut.primary {
+        mask |= NSEventModifierFlags::Command;
     }
+    if shortcut.shift {
+        mask |= NSEventModifierFlags::Shift;
+    }
+    if shortcut.alt {
+        mask |= NSEventModifierFlags::Option;
+    }
+    native.setKeyEquivalent(&NSString::from_str(&shortcut.key_equivalent()));
+    native.setKeyEquivalentModifierMask(mask);
+}
+
+/// Shows the check mark (`NSMenuItem.state`).
+pub(crate) fn apply_checked(native: &NSMenuItem, checked: bool) {
+    native.setState(if checked {
+        NSControlStateValueOn
+    } else {
+        NSControlStateValueOff
+    });
 }
 
 struct MenuBarInner {
@@ -140,22 +154,47 @@ struct MenuBarInner {
     menus: RefCell<Vec<MenuSpec>>,
     /// The `NSMenuItem` per heading (the holder of the submenu).
     holders: RefCell<Vec<Retained<NSMenuItem>>>,
-    /// The `NSMenuItem`s looked up by heading and item index. `None` for separators.
-    items: RefCell<Vec<Vec<Option<Retained<NSMenuItem>>>>>,
+    /// The `NSMenuItem`s looked up by path (heading index first). Separators are not
+    /// in it; submenu headings are.
+    items: RefCell<HashMap<Vec<usize>, Retained<NSMenuItem>>>,
     /// The trampolines for clicks. `NSMenuItem` targets are weak, so they are held.
     targets: RefCell<Vec<Retained<ActionTarget>>>,
-    handler: ActivateHandler,
+    handler: MenuHandler,
     /// Whether the whole menu bar is enabled. ANDed with the per-item settings.
     enabled: Cell<bool>,
+}
+
+impl MenuBarInner {
+    /// Flips a check item, then notifies. The same path for the user's choice and
+    /// `activate`.
+    fn choose(&self, path: &[usize]) {
+        let flipped = {
+            let mut menus = self.menus.borrow_mut();
+            MenuSpec::item_at_mut(&mut menus, path)
+                .filter(|item| item.is_checkable())
+                .map(|item| {
+                    let on = !item.checked.unwrap_or(false);
+                    item.checked = Some(on);
+                    on
+                })
+        };
+        if let Some(on) = flipped {
+            if let Some(native) = self.items.borrow().get(path) {
+                apply_checked(native, on);
+            }
+        }
+        self.handler.emit(path);
+    }
 }
 
 /// The OS's application menu shown at the top of the screen (`NSMenu`).
 ///
 /// Not a [`Widget`](crate::Widget). Attach it with
-/// [`Window::set_menu_bar`](crate::Window::set_menu_bar). Every time an item is
-/// clicked, [`on_activate`](Self::on_activate) is called with its **(heading index,
-/// item index)**. The item index is the position in the sequence including
-/// separators; separators are never returned.
+/// [`Window::set_menu_bar`](crate::Window::set_menu_bar). Items are identified by
+/// **a path** (the heading index, then the item index at each level of submenus,
+/// counting separators). Every time an item is clicked,
+/// [`on_activate`](Self::on_activate) is called with its path. Separators and
+/// submenu headings are never returned.
 ///
 /// macOS has one menu bar per app, so attaching it applies to **the whole app**,
 /// not per window.
@@ -174,9 +213,9 @@ impl MenuBar {
             app_name: app_name.to_string(),
             menus: RefCell::new(Vec::new()),
             holders: RefCell::new(Vec::new()),
-            items: RefCell::new(Vec::new()),
+            items: RefCell::new(HashMap::new()),
             targets: RefCell::new(Vec::new()),
-            handler: ActivateHandler::default(),
+            handler: MenuHandler::default(),
             enabled: Cell::new(true),
         }));
         this.rebuild();
@@ -184,9 +223,6 @@ impl MenuBar {
     }
 
     /// Rebuilds the menus. The previous menus are removed.
-    ///
-    /// The heading index is the position in the sequence passed, and the item index is
-    /// the position in the sequence including separators.
     pub fn set_menus(&self, menus: &[MenuSpec]) {
         let mut stored = self.0.menus.borrow_mut();
         stored.clear();
@@ -206,63 +242,21 @@ impl MenuBar {
 
         let menus = self.0.menus.borrow();
         let mut holders = Vec::with_capacity(menus.len());
-        let mut built = Vec::with_capacity(menus.len());
+        let mut built = HashMap::new();
         for (menu_index, spec) in menus.iter().enumerate() {
             let holder = NSMenuItem::new(mtm);
             holder.setTitle(&NSString::from_str(&spec.title));
             holder.setEnabled(whole);
-            let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(&spec.title));
-            // 項目の有効・無効もアプリの指定をそのまま使う。
-            menu.setAutoenablesItems(false);
-
-            let mut items = Vec::with_capacity(spec.items.len());
-            for (item_index, entry) in spec.items.iter().enumerate() {
-                if entry.is_separator() {
-                    menu.addItem(&NSMenuItem::separatorItem(mtm));
-                    items.push(None);
-                    continue;
-                }
-
-                let native = NSMenuItem::new(mtm);
-                native.setTitle(&NSString::from_str(&entry.label));
-                native.setEnabled(entry.enabled && whole);
-                if let Some(shortcut) = entry.shortcut {
-                    // ⌘ は主修飾キー。⇧ と ⌥ は指定があるときだけ足す。
-                    let mut mask = NSEventModifierFlags::Command;
-                    if shortcut.shift {
-                        mask |= NSEventModifierFlags::Shift;
-                    }
-                    if shortcut.alt {
-                        mask |= NSEventModifierFlags::Option;
-                    }
-                    native.setKeyEquivalent(&NSString::from_str(&shortcut.key_equivalent()));
-                    native.setKeyEquivalentModifierMask(mask);
-                }
-
-                // ハンドルを強く持つとトランポリンとの間で循環するため、
-                // 弱参照にする。
-                let target = ActionTarget::new(mtm, {
-                    let weak = Rc::downgrade(&self.0);
-                    move || {
-                        if let Some(inner) = weak.upgrade() {
-                            inner.handler.emit(menu_index, item_index);
-                        }
-                    }
-                });
-                unsafe {
-                    native.setTarget(Some(&target));
-                    native.setAction(Some(sel!(invoke:)));
-                }
-                self.0.targets.borrow_mut().push(target);
-
-                menu.addItem(&native);
-                items.push(Some(native));
-            }
-
+            let menu = self.build_menu(
+                &spec.title,
+                &spec.items,
+                &mut vec![menu_index],
+                whole,
+                &mut built,
+            );
             holder.setSubmenu(Some(&menu));
             self.0.native.addItem(&holder);
             holders.push(holder);
-            built.push(items);
         }
         drop(menus);
 
@@ -275,6 +269,76 @@ impl MenuBar {
         if self.is_installed() {
             self.install();
         }
+    }
+
+    /// Builds one `NSMenu` from `items`, recursing into submenus.
+    ///
+    /// `path` is the path of the menu itself; `enabled` is whether everything leading
+    /// to it is enabled.
+    fn build_menu(
+        &self,
+        title: &str,
+        items: &[MenuItem],
+        path: &mut Vec<usize>,
+        enabled: bool,
+        built: &mut HashMap<Vec<usize>, Retained<NSMenuItem>>,
+    ) -> Retained<NSMenu> {
+        let mtm = self.0.mtm;
+        let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(title));
+        // 項目の有効・無効もアプリの指定をそのまま使う。
+        menu.setAutoenablesItems(false);
+
+        for (index, entry) in items.iter().enumerate() {
+            if entry.is_separator() {
+                menu.addItem(&NSMenuItem::separatorItem(mtm));
+                continue;
+            }
+            path.push(index);
+            let native = NSMenuItem::new(mtm);
+            native.setTitle(&NSString::from_str(&entry.label));
+            // 親のサブメニューが押せないときは、ショートカットも効かないよう
+            // 中の項目も止める。
+            native.setEnabled(entry.enabled && enabled);
+
+            if let Some(children) = &entry.submenu {
+                let submenu = self.build_menu(
+                    &entry.label,
+                    children,
+                    path,
+                    entry.enabled && enabled,
+                    built,
+                );
+                native.setSubmenu(Some(&submenu));
+            } else {
+                if let Some(shortcut) = entry.shortcut {
+                    apply_shortcut(&native, shortcut);
+                }
+                if let Some(checked) = entry.checked {
+                    apply_checked(&native, checked);
+                }
+                // ハンドルを強く持つとトランポリンとの間で循環するため、
+                // 弱参照にする。
+                let target = ActionTarget::new(mtm, {
+                    let weak = Rc::downgrade(&self.0);
+                    let path = path.clone();
+                    move || {
+                        if let Some(inner) = weak.upgrade() {
+                            inner.choose(&path);
+                        }
+                    }
+                });
+                unsafe {
+                    native.setTarget(Some(&target));
+                    native.setAction(Some(sel!(invoke:)));
+                }
+                self.0.targets.borrow_mut().push(target);
+            }
+
+            menu.addItem(&native);
+            built.insert(path.clone(), native);
+            path.pop();
+        }
+        menu
     }
 
     /// The number of headings.
@@ -296,13 +360,11 @@ impl MenuBar {
             .map_or(0, |spec| spec.items.len())
     }
 
-    /// Enables or disables one item. Does nothing for separators or out of range.
-    pub fn set_item_enabled(&self, menu: usize, item: usize, enabled: bool) {
+    /// Enables or disables the item at `path`. Does nothing for separators or out of
+    /// range.
+    pub fn set_item_enabled(&self, path: &[usize], enabled: bool) {
         let mut menus = self.0.menus.borrow_mut();
-        let Some(entry) = menus
-            .get_mut(menu)
-            .and_then(|spec| spec.items.get_mut(item))
-        else {
+        let Some(entry) = MenuSpec::item_at_mut(&mut menus, path) else {
             return;
         };
         if entry.is_separator() {
@@ -313,16 +375,33 @@ impl MenuBar {
         self.apply_enabled();
     }
 
-    /// Whether the item can be clicked now. `false` for separators and out of range.
-    pub fn is_item_enabled(&self, menu: usize, item: usize) -> bool {
-        self.0.enabled.get()
-            && self
-                .0
-                .menus
-                .borrow()
-                .get(menu)
-                .and_then(|spec| spec.items.get(item))
-                .is_some_and(|entry| !entry.is_separator() && entry.enabled)
+    /// Whether the item at `path` can be clicked now. `false` for separators, submenu
+    /// headings and out of range.
+    pub fn is_item_enabled(&self, path: &[usize]) -> bool {
+        self.0.enabled.get() && MenuSpec::can_choose(&self.0.menus.borrow(), path)
+    }
+
+    /// Turns the check mark of the item at `path` on or off, without notifying. Does
+    /// nothing for items without a check mark.
+    pub fn set_item_checked(&self, path: &[usize], checked: bool) {
+        let mut menus = self.0.menus.borrow_mut();
+        let Some(entry) = MenuSpec::item_at_mut(&mut menus, path) else {
+            return;
+        };
+        if !entry.is_checkable() {
+            return;
+        }
+        entry.checked = Some(checked);
+        drop(menus);
+        if let Some(native) = self.0.items.borrow().get(path) {
+            apply_checked(native, checked);
+        }
+    }
+
+    /// Whether the check mark of the item at `path` is on.
+    pub fn is_item_checked(&self, path: &[usize]) -> bool {
+        MenuSpec::item_at(&self.0.menus.borrow(), path)
+            .is_some_and(|entry| entry.is_checkable() && entry.checked == Some(true))
     }
 
     /// Enables or disables the whole menu bar. Per-item settings are kept.
@@ -335,34 +414,35 @@ impl MenuBar {
     }
 
     /// Applies the per-item settings and the overall setting to the native side.
+    ///
+    /// An item inside a disabled submenu is disabled too, so its key equivalent does
+    /// not fire.
     fn apply_enabled(&self) {
         let whole = self.0.enabled.get();
+        for holder in self.0.holders.borrow().iter() {
+            holder.setEnabled(whole);
+        }
         let menus = self.0.menus.borrow();
-        let holders = self.0.holders.borrow();
-        for (index, (spec, items)) in menus.iter().zip(self.0.items.borrow().iter()).enumerate() {
-            if let Some(holder) = holders.get(index) {
-                holder.setEnabled(whole);
+        let items = self.0.items.borrow();
+        MenuSpec::walk(&menus, |path, _| {
+            if let Some(native) = items.get(path) {
+                native.setEnabled(whole && MenuSpec::enabled_at(&menus, path));
             }
-            for (entry, native) in spec.items.iter().zip(items.iter()) {
-                if let Some(native) = native {
-                    native.setEnabled(entry.enabled && whole);
-                }
-            }
-        }
+        });
     }
 
-    /// Runs the item as if the user had chosen it.
+    /// Runs the item at `path` as if the user had chosen it.
     ///
-    /// Does nothing for separators, disabled items or out of range.
-    pub fn activate(&self, menu: usize, item: usize) {
-        if self.is_item_enabled(menu, item) {
-            self.0.handler.emit(menu, item);
+    /// Does nothing for separators, submenu headings, disabled items or out of range.
+    pub fn activate(&self, path: &[usize]) {
+        if self.is_item_enabled(path) {
+            self.0.choose(path);
         }
     }
 
-    /// Called with the heading and item indices when an item is clicked. Setting it
-    /// again removes the previous callback.
-    pub fn on_activate(&self, f: impl FnMut(usize, usize) + 'static) {
+    /// Called with the item's path when an item is clicked. Setting it again removes
+    /// the previous callback.
+    pub fn on_activate(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.handler.set(f);
     }
 
@@ -372,10 +452,10 @@ impl MenuBar {
         self.0.native.clone()
     }
 
-    /// The `NSMenuItem` for the item. `None` for separators and out of range. Public as
-    /// a backend-specific escape hatch.
-    pub fn native_item(&self, menu: usize, item: usize) -> Option<Retained<NSMenuItem>> {
-        self.0.items.borrow().get(menu)?.get(item)?.clone()
+    /// The `NSMenuItem` for the item at `path` (submenu headings included). `None` for
+    /// separators and out of range. Public as a backend-specific escape hatch.
+    pub fn native_item(&self, path: &[usize]) -> Option<Retained<NSMenuItem>> {
+        self.0.items.borrow().get(path).cloned()
     }
 
     /// Installs it as the app's main menu. Used only by [`crate::Window`].

@@ -83,7 +83,7 @@ pub use file_saver::FileSaver;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
-pub use menu_bar::MenuBar;
+pub use menu_bar::{MenuBar, MenuEntry};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popup::PopupMenu;

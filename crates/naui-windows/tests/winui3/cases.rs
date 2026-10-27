@@ -13,13 +13,13 @@ use naui_core::{
     ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle, ToolbarIcon,
     WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
-use naui_windows::{run_for_test, Ui, Widget};
+use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 
 use crate::automation;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox, ComboBox as XamlComboBox,
-    Grid, Image as XamlImage, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox,
-    ToggleSwitch,
+    Grid, Image as XamlImage, MenuFlyoutItem, ScrollViewer, Slider as XamlSlider, StackPanel,
+    TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
@@ -250,8 +250,12 @@ const CASES: &[Case] = &[
         menu_bar_menus_map_to_native,
     ),
     (
-        "メニューバーの項目がインデックスの組で通知する",
+        "メニューバーの項目が経路で通知する",
         menu_bar_activation_notifies,
+    ),
+    (
+        "メニューバーのサブメニューとチェックが MenuFlyoutSubItem と ToggleMenuFlyoutItem になる",
+        menu_bar_submenus_and_checks_map_to_native,
     ),
     (
         "サイドバーが NavigationView の項目・見出し・区切りになる",
@@ -2511,6 +2515,15 @@ fn title_count(menu_bar: &naui_windows::MenuBar) -> u32 {
         .expect("見出しの数")
 }
 
+/// The `MenuFlyoutItem` of an ordinary item. `None` for separators, out of range
+/// and the other kinds.
+fn flyout_item(menu_bar: &naui_windows::MenuBar, path: &[usize]) -> Option<MenuFlyoutItem> {
+    match menu_bar.native_item(path)? {
+        MenuEntry::Item(item) => Some(item),
+        _ => None,
+    }
+}
+
 /// Headings become `Button` + `MenuFlyout`, and items become `MenuFlyoutItem`s.
 fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
@@ -2543,7 +2556,7 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         "区切り線も 1 つとして並ぶ"
     );
 
-    let first = menu_bar.native_item(0, 0).expect("先頭は項目");
+    let first = flyout_item(&menu_bar, &[0, 0]).expect("先頭は項目");
     assert_eq!(first.Text().expect("文字").to_string(), "新規");
     assert!(first.IsEnabled().expect("有効かどうか"));
     assert_eq!(
@@ -2554,9 +2567,12 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         "Ctrl+N",
         "ショートカットの表示は naui が添える"
     );
-    assert!(menu_bar.native_item(0, 1).is_none(), "区切り線に項目は無い");
+    assert!(
+        menu_bar.native_item(&[0, 1]).is_none(),
+        "区切り線に項目は無い"
+    );
 
-    let save = menu_bar.native_item(0, 2).expect("3 番目は項目");
+    let save = flyout_item(&menu_bar, &[0, 2]).expect("3 番目は項目");
     assert!(!save.IsEnabled().expect("有効かどうか"));
     assert_eq!(
         save.KeyboardAcceleratorTextOverride()
@@ -2564,14 +2580,13 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
             .to_string(),
         "Ctrl+Shift+S"
     );
-    assert!(menu_bar.native_item(9, 0).is_none(), "範囲外は None");
-    assert!(menu_bar.native_item(0, 9).is_none(), "範囲外は None");
+    assert!(menu_bar.native_item(&[9, 0]).is_none(), "範囲外は None");
+    assert!(menu_bar.native_item(&[0, 9]).is_none(), "範囲外は None");
     assert!(menu_bar.native_flyout(9).is_none(), "範囲外は None");
 
     // ショートカットを指定しなければ右端には何も出ない。
     assert_eq!(
-        menu_bar
-            .native_item(1, 0)
+        flyout_item(&menu_bar, &[1, 0])
             .expect("項目")
             .KeyboardAcceleratorTextOverride()
             .expect("右端の表示")
@@ -2579,37 +2594,35 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         ""
     );
 
-    assert!(menu_bar.is_item_enabled(0, 0));
-    assert!(!menu_bar.is_item_enabled(0, 1), "区切り線は押せない");
-    assert!(!menu_bar.is_item_enabled(0, 2));
+    assert!(menu_bar.is_item_enabled(&[0, 0]));
+    assert!(!menu_bar.is_item_enabled(&[0, 1]), "区切り線は押せない");
+    assert!(!menu_bar.is_item_enabled(&[0, 2]));
 
     // 項目ごとの指定と全体の指定は AND を取る。
-    menu_bar.set_item_enabled(0, 2, true);
-    assert!(menu_bar
-        .native_item(0, 2)
+    menu_bar.set_item_enabled(&[0, 2], true);
+    assert!(flyout_item(&menu_bar, &[0, 2])
         .expect("項目")
         .IsEnabled()
         .expect("有効かどうか"));
     menu_bar.set_enabled(false);
-    assert!(!menu_bar.is_item_enabled(0, 0));
-    assert!(!menu_bar
-        .native_item(0, 0)
+    assert!(!menu_bar.is_item_enabled(&[0, 0]));
+    assert!(!flyout_item(&menu_bar, &[0, 0])
         .expect("項目")
         .IsEnabled()
         .expect("有効かどうか"));
     menu_bar.set_enabled(true);
     assert!(
-        menu_bar.is_item_enabled(0, 2),
+        menu_bar.is_item_enabled(&[0, 2]),
         "全体を戻すと項目ごとの指定が残る"
     );
 
     // 区切り線への set_item_enabled は無視する。
-    menu_bar.set_item_enabled(0, 1, true);
-    assert!(!menu_bar.is_item_enabled(0, 1));
+    menu_bar.set_item_enabled(&[0, 1], true);
+    assert!(!menu_bar.is_item_enabled(&[0, 1]));
 
     menu_bar.set_menus(&[]);
     assert!(menu_bar.is_empty());
-    assert!(menu_bar.native_item(0, 0).is_none());
+    assert!(menu_bar.native_item(&[0, 0]).is_none());
     assert_eq!(title_count(&menu_bar), 0);
     Ok(())
 }
@@ -2636,37 +2649,119 @@ fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
 
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    menu_bar.on_activate(move |menu, item| sink.borrow_mut().push((menu, item)));
+    menu_bar.on_activate(move |path| sink.borrow_mut().push(path.to_vec()));
 
-    menu_bar.activate(0, 0);
-    assert_eq!(seen.borrow().as_slice(), [(0, 0)].as_slice());
-    menu_bar.activate(0, 1);
-    menu_bar.activate(0, 2);
-    menu_bar.activate(9, 0);
-    menu_bar.activate(0, 9);
+    menu_bar.activate(&[0, 0]);
+    assert_eq!(seen.borrow().as_slice(), [vec![0, 0]].as_slice());
+    menu_bar.activate(&[0, 1]);
+    menu_bar.activate(&[0, 2]);
+    menu_bar.activate(&[9, 0]);
+    menu_bar.activate(&[0, 9]);
     assert_eq!(
         seen.borrow().as_slice(),
-        [(0, 0)].as_slice(),
+        [vec![0, 0]].as_slice(),
         "区切り線・押せない項目・範囲外は通知しない"
     );
 
-    menu_bar.activate(1, 0);
-    assert_eq!(seen.borrow().as_slice(), [(0, 0), (1, 0)].as_slice());
-
-    menu_bar.set_item_enabled(0, 2, true);
-    menu_bar.activate(0, 2);
+    menu_bar.activate(&[1, 0]);
     assert_eq!(
         seen.borrow().as_slice(),
-        [(0, 0), (1, 0), (0, 2)].as_slice()
+        [vec![0, 0], vec![1, 0]].as_slice()
+    );
+
+    menu_bar.set_item_enabled(&[0, 2], true);
+    menu_bar.activate(&[0, 2]);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [vec![0, 0], vec![1, 0], vec![0, 2]].as_slice()
     );
 
     menu_bar.set_enabled(false);
-    menu_bar.activate(0, 0);
+    menu_bar.activate(&[0, 0]);
     assert_eq!(
         seen.borrow().as_slice(),
-        [(0, 0), (1, 0), (0, 2)].as_slice(),
+        [vec![0, 0], vec![1, 0], vec![0, 2]].as_slice(),
         "無効なメニューバーは通知しない"
     );
+    Ok(())
+}
+
+/// A check item becomes a `ToggleMenuFlyoutItem` and a submenu a `MenuFlyoutSubItem`
+/// holding its items. Function keys show their own names at the right edge.
+fn menu_bar_submenus_and_checks_map_to_native(ui: &Ui) -> Result<()> {
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "表示",
+        [
+            MenuItem::new("サイドバー").checked(true),
+            MenuItem::submenu(
+                "拡大",
+                [
+                    MenuItem::new("拡大"),
+                    MenuItem::new("開発")
+                        .shortcut(MenuShortcut::function(12).primary(true).shift(true)),
+                ],
+            ),
+            MenuItem::new("全画面").shortcut(MenuShortcut::function(11)),
+        ],
+    )]);
+
+    let Some(MenuEntry::Toggle(sidebar)) = menu_bar.native_item(&[0, 0]) else {
+        panic!("印のある項目は ToggleMenuFlyoutItem になること");
+    };
+    assert!(sidebar.IsChecked().expect("印"));
+    let Some(MenuEntry::Submenu(zoom)) = menu_bar.native_item(&[0, 1]) else {
+        panic!("サブメニューは MenuFlyoutSubItem になること");
+    };
+    assert_eq!(zoom.Text().expect("文字").to_string(), "拡大");
+    assert_eq!(zoom.Items().expect("項目").Size().expect("数"), 2);
+    let develop = flyout_item(&menu_bar, &[0, 1, 1]).expect("サブメニューの中の項目");
+    assert_eq!(
+        develop
+            .KeyboardAcceleratorTextOverride()
+            .expect("右端の表示")
+            .to_string(),
+        "Ctrl+Shift+F12"
+    );
+    assert_eq!(
+        flyout_item(&menu_bar, &[0, 2])
+            .expect("項目")
+            .KeyboardAcceleratorTextOverride()
+            .expect("右端の表示")
+            .to_string(),
+        "F11"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    menu_bar.on_activate({
+        let seen = seen.clone();
+        let menu_bar = menu_bar.clone();
+        move |path| {
+            seen.borrow_mut()
+                .push((path.to_vec(), menu_bar.is_item_checked(path)))
+        }
+    });
+    menu_bar.activate(&[0, 0]);
+    assert!(!sidebar.IsChecked().expect("印"), "選ぶと印が反転する");
+    menu_bar.activate(&[0, 1]);
+    menu_bar.activate(&[0, 1, 0]);
+    assert_eq!(
+        *seen.borrow(),
+        vec![(vec![0, 0], false), (vec![0, 1, 0], false)],
+        "サブメニューの見出しは選べない"
+    );
+
+    menu_bar.set_item_checked(&[0, 0], true);
+    assert!(sidebar.IsChecked().expect("印"));
+    assert_eq!(seen.borrow().len(), 2, "set_item_checked は通知しない");
+
+    // サブメニューを止めると、中の項目も止まる。
+    menu_bar.set_item_enabled(&[0, 1], false);
+    assert!(!zoom.IsEnabled().expect("有効かどうか"));
+    assert!(!develop.IsEnabled().expect("有効かどうか"));
+    assert!(!menu_bar.is_item_enabled(&[0, 1, 0]));
+    menu_bar.set_item_enabled(&[0, 1], true);
+    assert!(develop.IsEnabled().expect("有効かどうか"));
     Ok(())
 }
 

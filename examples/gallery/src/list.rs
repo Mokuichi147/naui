@@ -101,21 +101,21 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let detailed = detailed.clone();
         let clicked = clicked.clone();
         let last_selection = last_selection.clone();
-        move |index| {
+        move |path| {
             let (Some(row), Some(list)) = (clicked.get(), list.upgrade()) else {
                 return;
             };
-            match index {
-                0 => {
+            match *path {
+                [0] => {
                     list.select(row);
                     *last_selection.borrow_mut() = None;
                 }
-                1 => {
+                [1] => {
                     if let Some(item) = detailed.get(row) {
                         notice.show(&format!("Open: {}", item.label));
                     }
                 }
-                2 => {
+                [2] => {
                     list.clear_selection();
                     *last_selection.borrow_mut() = None;
                 }

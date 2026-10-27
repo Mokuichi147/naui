@@ -7,12 +7,15 @@
 //!
 //! 同じ操作はツールバーとメニューのどちらから選んでも同じ処理へ届け、
 //! 押せる・押せないも両方で合わせる。実際のアプリと同じ作りにしておく。
+//!
+//! 「View」メニューには、ふつうのアプリの表示メニューにあるもの (区分を並べた
+//! サブメニュー、印の付く項目、ファンクションキーで動く項目) を並べる。
 
 use std::rc::Rc;
 
 use naui::{
     Dialog, MenuBar, MenuItem, MenuShortcut, MenuSpec, Result, Toolbar, ToolbarIcon, ToolbarItem,
-    Ui, Window,
+    Ui, Window, WindowState,
 };
 
 use crate::parts::Notice;
@@ -57,6 +60,11 @@ const FILE_MENU: [Option<(&str, Command)>; 5] = [
 const FILE: usize = 0;
 const VIEW: usize = 1;
 const HELP: usize = 2;
+
+/// 「View」メニューの中の位置。区分は先頭のサブメニューにまとめてある。
+const SECTIONS: usize = 0;
+const SHOW_TOOLBAR: usize = 2;
+const FULL_SCREEN: usize = 3;
 
 /// ツールバーとメニューバーを作って `window` へ取り付ける。
 ///
@@ -106,16 +114,37 @@ pub(crate) fn attach(
 
     let about = about_dialog(ui)?;
     menu_bar.on_activate({
-        let sections = sections.len();
-        move |menu, item| match menu {
-            FILE => {
+        // 通知はメニューバーが持つので、ウィンドウは弱参照で捕まえる。
+        let window = window.downgrade();
+        let menu_bar_handle = menu_bar.clone();
+        move |path| match *path {
+            [FILE, item] => {
                 if let Some(Some((_, command))) = FILE_MENU.get(item) {
                     run(*command);
                 }
             }
-            // 「View」の先頭から区分の名前が並んでいる。
-            VIEW if item < sections => go(item),
-            HELP => about.open(),
+            [VIEW, SECTIONS, section] => go(section),
+            // 印は通知の前に反転しているので、いまの印に合わせる。
+            [VIEW, SHOW_TOOLBAR] => {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                if menu_bar_handle.is_item_checked(path) {
+                    window.set_toolbar(&toolbar);
+                } else {
+                    window.clear_toolbar();
+                }
+            }
+            [VIEW, FULL_SCREEN] => {
+                if let Some(window) = window.upgrade() {
+                    window.set_state(if window.state() == WindowState::Fullscreen {
+                        WindowState::Normal
+                    } else {
+                        WindowState::Fullscreen
+                    });
+                }
+            }
+            [HELP, _] => about.open(),
             _ => {}
         }
     });
@@ -137,8 +166,9 @@ fn toolbar_items() -> Vec<ToolbarItem> {
 
 /// メニューバーの中身。
 ///
-/// ショートカットは**主修飾キー + 英数字 1 文字**で指定する。主修飾キーは
-/// macOS だけ ⌘ で、Windows・Linux・Web では Ctrl になる。
+/// 文字のショートカットは**主修飾キー + 英数字 1 文字**で指定する。主修飾キーは
+/// macOS だけ ⌘ で、Windows・Linux・Web では Ctrl になる。ファンクションキーは
+/// 単独でも使える。
 fn menus(sections: &[&str]) -> Vec<MenuSpec> {
     let file = FILE_MENU.iter().map(|entry| match entry {
         Some((label, command)) => {
@@ -154,14 +184,12 @@ fn menus(sections: &[&str]) -> Vec<MenuSpec> {
         }
         None => MenuItem::separator(),
     });
-    let view = sections
-        .iter()
-        .map(|section| MenuItem::new(*section))
-        .chain([
-            MenuItem::separator(),
-            // 押せない項目は、その場ではできないことを表す。
-            MenuItem::new("Full Screen").enabled(false),
-        ]);
+    let view = [
+        MenuItem::submenu("Sections", sections.iter().copied()),
+        MenuItem::separator(),
+        MenuItem::new("Show Toolbar").checked(true),
+        MenuItem::new("Full Screen").shortcut(MenuShortcut::function(11)),
+    ];
     vec![
         MenuSpec::new("File", file),
         MenuSpec::new("View", view),
@@ -181,7 +209,7 @@ fn enable_document_commands(toolbar: &Toolbar, menu_bar: &MenuBar) {
     for (index, entry) in FILE_MENU.iter().enumerate() {
         if let Some((_, command)) = entry {
             if command.needs_document() {
-                menu_bar.set_item_enabled(FILE, index, true);
+                menu_bar.set_item_enabled(&[FILE, index], true);
             }
         }
     }

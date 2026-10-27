@@ -24,6 +24,9 @@ naui-core.workspace = true
 # Windows 以外では空のクレートになるので、依存も引き込まない。
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.62"
+# メニューの項目の並び (`IVector<MenuFlyoutItemBase>`) を受け渡すため。投影
+# (naui-winui3) と同じ版にそろえる。
+windows-collections = "0.3"
 windows = { version = "0.62", features = [
     "ApplicationModel_DataTransfer",
     "Foundation",
