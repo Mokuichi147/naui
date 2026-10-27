@@ -920,6 +920,7 @@ impl Spinner {
                 spinner.upcast()
             });
         let bin = SizeBin::wrap(&native);
+        bin.mark_scale_below_minimum();
         Self(Rc::new(SpinnerInner {
             native,
             bin,
