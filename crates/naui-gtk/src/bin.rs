@@ -39,6 +39,8 @@ mod imp {
         pub fill_ignores_natural: Cell<bool>,
         /// Scale content down when the allocation is smaller than its native minimum.
         pub scale_below_minimum: Cell<bool>,
+        /// Maximum size of the native spinner, without limiting its layout space.
+        pub spinner_maximum: Cell<i32>,
         /// Where it is placed. Read when the size specification changes.
         pub(crate) placement: Cell<super::Placement>,
     }
@@ -204,6 +206,12 @@ mod imp {
                 return;
             };
             let (allocated_width, allocated_height) = (width, height);
+            let maximum = self.spinner_maximum.get();
+            let (width, height) = if maximum > 0 {
+                (width.min(maximum), height.min(maximum))
+            } else {
+                (width, height)
+            };
             let (horizontal, vertical) = (gtk::Orientation::Horizontal, gtk::Orientation::Vertical);
             // 「もう一方が決まってから測る」中身があるので、測る順を守る。
             let (width, height) = if child.request_mode() == gtk::SizeRequestMode::WidthForHeight {
@@ -213,8 +221,8 @@ mod imp {
                 let width = width.max(child.measure(horizontal, -1).0);
                 (width, height.max(child.measure(vertical, width).0))
             };
-            // Spinner can draw at its native minimum without asking GTK to allocate
-            // less than it supports. Scale its rendering into the allotted space.
+            // A spinner can draw at its native minimum and be scaled down, while
+            // the GtkSpinner fallback is capped and centered in larger allocations.
             let transform = if self.scale_below_minimum.get() && width > 0 && height > 0 {
                 let scale = if allocated_width > 0 && allocated_height > 0 {
                     (allocated_width as f32 / width as f32)
@@ -224,9 +232,9 @@ mod imp {
                     // A zero allocation is clipped by the bin; a zero scale is not invertible.
                     1.0
                 };
-                (scale < 1.0).then(|| {
-                    let x = (allocated_width as f32 - width as f32 * scale) / 2.0;
-                    let y = (allocated_height as f32 - height as f32 * scale) / 2.0;
+                let x = (allocated_width as f32 - width as f32 * scale) / 2.0;
+                let y = (allocated_height as f32 - height as f32 * scale) / 2.0;
+                (scale < 1.0 || (maximum > 0 && (x != 0.0 || y != 0.0))).then(|| {
                     gtk::gsk::Transform::new()
                         .translate(&gtk::graphene::Point::new(x, y))
                         .scale(scale, scale)
@@ -315,6 +323,12 @@ impl SizeBin {
     pub(crate) fn mark_scale_below_minimum(&self) {
         self.imp().scale_below_minimum.set(true);
         self.relayout();
+    }
+
+    /// Caps the fallback spinner's drawing size without capping its layout space.
+    pub(crate) fn cap_spinner_size(&self, size: i32) {
+        self.imp().spinner_maximum.set(size);
+        self.queue_resize();
     }
 
     /// The size the app specified.

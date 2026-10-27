@@ -8005,6 +8005,18 @@ fn spinner_stops_without_giving_up_its_space(ui: &Ui) -> Result<()> {
         "GtkSpinner"
     };
     assert_eq!(native.type_().name(), expected);
+    assert_eq!(native.accessible_role(), gtk::AccessibleRole::ProgressBar);
+    spinner.set_accessible_label(Some("Loading"));
+    if std::env::var("GTK_A11Y").as_deref() != Ok("none") {
+        assert!(gtk::test_accessible_has_property(
+            &native,
+            gtk::AccessibleProperty::Label
+        ));
+        assert!(gtk::test_accessible_has_state(
+            &native,
+            gtk::AccessibleState::Busy
+        ));
+    }
     let size = native.measure(gtk::Orientation::Horizontal, -1);
     assert_eq!((size.0, size.1), (16, 16), "既定は 16 x 16");
 

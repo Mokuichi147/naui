@@ -270,7 +270,8 @@ that shape are covered in
 - `EditableComboBox` does not narrow options by typed text (pressing the arrow shows
   all options).
 - `Spinner` is `AdwSpinner`, which arrived in libadwaita 1.6. With libadwaita 1.5 it
-  falls back to `GtkSpinner`, which has the same size but the older look.
+  falls back to `GtkSpinner`, which has the same default size and 64 × 64 drawing
+  limit but the older look.
 - In `DatePicker`, **choosing a day does not close the popover** (because
   `GtkCalendar` does not distinguish "a day was pressed" from "the month was
   changed"). The date shown on the button follows the locale's format.
