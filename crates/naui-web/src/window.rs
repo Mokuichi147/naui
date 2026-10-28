@@ -277,6 +277,16 @@ impl Window {
         )
     }
 
+    /// Called with the files dropped onto the window from the OS.
+    ///
+    /// A widget under the pointer with its own `on_file_drop` takes the drop
+    /// instead. As with widgets, the entries carry `blob:` URLs instead of paths,
+    /// valid until the next drop onto the window. Setting it again replaces the
+    /// previous closure.
+    pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
+        crate::file_drop::set_handler(&self.0.element, f);
+    }
+
     /// Notified when the size changes. Receives the new [`size`](Self::size).
     ///
     /// It is picked up with `ResizeObserver`, so it also arrives once right after the

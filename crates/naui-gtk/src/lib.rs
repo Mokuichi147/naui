@@ -137,6 +137,7 @@ mod date_picker;
 mod dialog;
 mod editable_combo_box;
 mod expander;
+mod file_drop;
 mod file_picker;
 mod file_saver;
 mod focus;

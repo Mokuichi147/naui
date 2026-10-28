@@ -29,7 +29,7 @@ use naui_core::{
     DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{
     CanvasRenderingContext2d, Element, EventTarget, HtmlElement, HtmlInputElement,
@@ -5542,4 +5542,133 @@ fn web_ext_adds_classes_and_attributes() {
         assert!(stack.has_class("toolbar"));
         Ok(())
     });
+}
+
+// ------------------------------------------------------------- ファイルの受け取り
+
+/// Makes the drag event the browser fires when files from the OS are dragged in.
+/// `files` is a list of names; each file holds its own name as its contents. With
+/// no names, it is a drag of selected text instead.
+fn file_drag_event(kind: &str, files: &[&str]) -> web_sys::Event {
+    let make = js_sys::Function::new_with_args(
+        "kind, names",
+        "const data = new DataTransfer();
+         if (names.length === 0) data.setData('text/plain', '文字');
+         for (const name of names) data.items.add(new File([name], name, { type: 'text/plain' }));
+         return new DragEvent(kind, { dataTransfer: data, bubbles: true, cancelable: true });",
+    );
+    let names: js_sys::Array = files.iter().map(|name| JsValue::from_str(name)).collect();
+    make.call2(&JsValue::NULL, &JsValue::from_str(kind), &names)
+        .expect("ドラッグのイベントの生成")
+        .unchecked_into()
+}
+
+/// Fires a drag event. **The return value is whether the default action was
+/// prevented**, which for `dragover` means the element accepts the drop.
+fn fire_drag(target: &EventTarget, kind: &str, files: &[&str]) -> bool {
+    !target
+        .dispatch_event(&file_drag_event(kind, files))
+        .expect("イベントの配送")
+}
+
+/// Files dropped from the OS go to the innermost widget with `on_file_drop`, and
+/// otherwise to the window's. The browser hands over contents, so they arrive as
+/// `blob:` URLs without paths.
+#[wasm_bindgen_test]
+async fn file_drop_reaches_the_innermost_target() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("ファイルの受け取り", 400.0, 300.0)?;
+        let stack = ui.stack(Orientation::Vertical)?;
+        let outer = ui.stack(Orientation::Vertical)?;
+        let target = ui.label("ここへ落とす")?;
+        let plain = ui.button("受け取らない")?;
+        outer.append(&target);
+        stack.append(&outer);
+        stack.append(&plain);
+        window.set_child(&stack);
+        window.show();
+        kept = Some((window, outer, target, plain));
+        Ok(())
+    });
+    let (window, outer, target, plain) = kept.expect("widgets");
+
+    let to_target = Rc::new(RefCell::new(Vec::new()));
+    let to_outer = Rc::new(Cell::new(0));
+    target.on_file_drop({
+        let seen = to_target.clone();
+        move |files| seen.borrow_mut().extend(files.iter().cloned())
+    });
+    outer.on_file_drop({
+        let seen = to_outer.clone();
+        move |_| seen.set(seen.get() + 1)
+    });
+
+    let on_target = target.native_element();
+    let on_plain = plain.native_element();
+    assert!(
+        fire_drag(&on_target, "dragover", &["メモ.txt"]),
+        "受け取るウィジェットの上では落とせる"
+    );
+    assert!(
+        !fire_drag(&on_target, "dragover", &[]),
+        "ファイルでないドラッグには応えない"
+    );
+    assert!(
+        fire_drag(&on_plain, "dragover", &["メモ.txt"]),
+        "受け取り手のいない所では、文書が既定の動作 (ファイルを開く) を止める"
+    );
+
+    assert!(fire_drag(&on_target, "drop", &["メモ.txt", "写真.png"]));
+    let names: Vec<String> = to_target
+        .borrow()
+        .iter()
+        .map(|f| f.name().to_string())
+        .collect();
+    assert_eq!(names, ["メモ.txt", "写真.png"]);
+    let first = to_target.borrow()[0].clone();
+    assert_eq!(first.path(), None, "ブラウザはパスを渡さない");
+    let url = first.source().expect("中身を指す URL").to_string();
+    assert!(url.starts_with("blob:"), "{url}");
+    assert_eq!(to_outer.get(), 0, "内側が受け取ったら外側へは届かない");
+
+    // 渡した URL から中身を読める。
+    let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(
+        web_sys::window().expect("window").fetch_with_str(&url),
+    )
+    .await
+    .expect("blob URL を読む")
+    .unchecked_into();
+    let text = wasm_bindgen_futures::JsFuture::from(response.text().expect("text"))
+        .await
+        .expect("中身");
+    assert_eq!(text.as_string().as_deref(), Some("メモ.txt"));
+
+    // 受け取り手のいない所へ落としたものは、窓へ届く。
+    let to_window = Rc::new(RefCell::new(Vec::new()));
+    window.on_file_drop({
+        let seen = to_window.clone();
+        move |files| {
+            seen.borrow_mut()
+                .extend(files.iter().map(|f| f.name().to_string()))
+        }
+    });
+    assert!(fire_drag(&on_plain, "drop", &["別.txt"]));
+    assert_eq!(*to_window.borrow(), ["別.txt"]);
+    assert_eq!(
+        to_target.borrow().len(),
+        2,
+        "ほかのウィジェットへは届かない"
+    );
+
+    // 設定し直すと前のクロージャは外れる。
+    let replaced = Rc::new(Cell::new(0));
+    target.on_file_drop({
+        let replaced = replaced.clone();
+        move |_| replaced.set(replaced.get() + 1)
+    });
+    assert!(fire_drag(&on_target, "drop", &["メモ.txt"]));
+    assert_eq!(replaced.get(), 1);
+    assert_eq!(to_target.borrow().len(), 2, "前のクロージャは呼ばれない");
+    window.close();
 }

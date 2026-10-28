@@ -89,11 +89,12 @@ Gaps that ordinary apps run into right away and that all four platforms have nat
 counterparts for, plus the next steps of the adaptive layout and
 internationalization tracks.
 
-- [ ] **Receiving file drops** (from the OS onto widgets and windows). Opening a
+- [x] **Receiving file drops** (from the OS onto widgets and windows). Opening a
       file by dropping it is expected of any app that edits files, and all four
       platforms have it natively. `registerForDraggedTypes`, `GtkDropTarget`,
-      `AllowDrop`, the DOM's `drop`. The Web receives file contents rather than
-      paths, so how the dropped files are handed over is decided when work starts.
+      `AllowDrop`, the DOM's `drop`. Every widget and `Window` have
+      `on_file_drop`, and the files arrive as the same `FileEntry`s `FilePicker`
+      returns: absolute paths natively, `blob:` URLs on the Web.
 - [ ] *(adaptive)* **Automatic collapsing of `Sidebar`** when the window narrows.
       `NavigationView`'s `PaneDisplayMode::Auto`, `NSSplitViewItem`'s
       `canCollapseFromWindowResize`, CSS container queries. On Linux the `Sidebar`

@@ -33,7 +33,7 @@ macro_rules! impl_backend {
     };
 }
 
-/// The shared part of widgets: the [`Widget`] implementation and the seven methods
+/// The shared part of widgets: the [`Widget`] implementation and the eight methods
 /// every widget has.
 macro_rules! impl_widget {
     ($t:ident) => {
@@ -101,6 +101,24 @@ macro_rules! impl_widget {
             #[inline]
             pub fn set_accessible_label(&self, text: Option<&str>) {
                 self.0.set_accessible_label(text)
+            }
+
+            /// Called with the files dropped onto this widget from the OS (Finder,
+            /// Explorer, a file manager).
+            ///
+            /// When widgets with this closure are nested, the innermost one under the
+            /// pointer takes the drop, and the window's
+            /// [`on_file_drop`](crate::Window::on_file_drop) gets only drops no widget
+            /// takes. Setting it again replaces the previous closure.
+            ///
+            /// On the Web the entries carry no path; [`FileEntry::source`] is a `blob:`
+            /// URL that stays valid until the next drop onto the same widget. See
+            /// [Receiving dropped files](crate::guide#receiving-dropped-files).
+            ///
+            /// [`FileEntry::source`]: naui_core::FileEntry::source
+            #[inline]
+            pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
+                self.0.on_file_drop(f)
             }
 
             /// Creates a weak reference. Capture it when touching this widget from its own

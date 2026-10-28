@@ -723,6 +723,10 @@ fn main() {
         ),
         ("テーマを実行中に切り替えられる", theme_switch),
         (
+            "落とされたファイルがウィジェットと窓の受け口へ届く",
+            file_drop_reaches_the_drop_targets,
+        ),
+        (
             "別スレッドから送った値がラベルへ届く",
             channel_delivers_from_a_worker_thread,
         ),
@@ -8737,6 +8741,73 @@ fn rows_can_be_scrolled_into_view(ui: &Ui) -> Result<()> {
     }
     let (top, _) = visible_range(&tree.native_widget());
     assert!(top > 0.0, "下へ送られている: {top}");
+    window.close();
+    Ok(())
+}
+
+/// The `GtkDropTarget` naui put on a widget. Only one, even after setting the
+/// closure again.
+fn file_drop_target(widget: &gtk::Widget) -> gtk::DropTarget {
+    let controllers = widget.observe_controllers();
+    let targets: Vec<gtk::DropTarget> = (0..controllers.n_items())
+        .filter_map(|i| controllers.item(i))
+        .filter_map(|object| object.downcast::<gtk::DropTarget>().ok())
+        .collect();
+    assert_eq!(targets.len(), 1, "受け口は 1 つだけ");
+    targets[0].clone()
+}
+
+/// Drops files as GTK does: the drop target's `drop` with a `GdkFileList`.
+fn drop_files(target: &gtk::DropTarget, paths: &[&str]) -> bool {
+    let files: Vec<gio::File> = paths.iter().map(gio::File::for_path).collect();
+    let list = gtk::gdk::FileList::from_array(&files);
+    // シグナルの引数は、値そのものを包んだ GValue。
+    let value = glib::BoxedValue(list.to_value());
+    target.emit_by_name::<bool>("drop", &[&value, &10.0f64, &10.0f64])
+}
+
+/// Files dropped from a file manager reach the closure as absolute paths. GTK itself
+/// picks the innermost target under the pointer, so what is checked here is that
+/// widgets and the window get a target for file lists that hands them over.
+fn file_drop_reaches_the_drop_targets(ui: &Ui) -> Result<()> {
+    let window = ui.window("ファイルの受け取り", 320.0, 200.0)?;
+    let label = ui.label("ここへ落とす")?;
+    window.set_child(&label);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    label.on_file_drop(|_| panic!("差し替えたので呼ばれない"));
+    label.on_file_drop({
+        let seen = seen.clone();
+        move |files| seen.borrow_mut().extend(files.iter().cloned())
+    });
+    let bin = label.native_widget().parent().expect("SizeBin");
+    let target = file_drop_target(&bin);
+    assert!(target
+        .formats()
+        .is_some_and(|formats| formats.contains_type(gtk::gdk::FileList::static_type())));
+    assert_eq!(target.actions(), gtk::gdk::DragAction::COPY);
+
+    assert!(drop_files(
+        &target,
+        &["/tmp/naui 写真.png", "/tmp/メモ.txt"]
+    ));
+    let names: Vec<String> = seen.borrow().iter().map(|f| f.name().to_string()).collect();
+    assert_eq!(names, ["naui 写真.png", "メモ.txt"]);
+    assert_eq!(
+        seen.borrow()[0].path().and_then(|p| p.to_str()),
+        Some("/tmp/naui 写真.png"),
+        "絶対パスを渡す"
+    );
+
+    let to_window = Rc::new(Cell::new(0));
+    window.on_file_drop({
+        let to_window = to_window.clone();
+        move |files| to_window.set(to_window.get() + files.len())
+    });
+    let window_target = file_drop_target(window.native_window().upcast_ref());
+    assert!(drop_files(&window_target, &["/tmp/別.txt"]));
+    assert_eq!(to_window.get(), 1);
+    assert_eq!(seen.borrow().len(), 2, "ほかの受け口へは届かない");
     window.close();
     Ok(())
 }

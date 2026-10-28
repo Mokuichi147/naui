@@ -135,6 +135,9 @@ Microsoft.UI.Xaml.Controls.XamlControlsResources
 Microsoft.UI.Xaml.CornerRadius
 Microsoft.UI.Xaml.DataTemplate
 Microsoft.UI.Xaml.DependencyObject
+Microsoft.UI.Xaml.DragEventArgs
+Microsoft.UI.Xaml.DragEventHandler
+Microsoft.UI.Xaml.DragOperationDeferral
 Microsoft.UI.Xaml.ElementTheme
 Microsoft.UI.Xaml.FocusState
 Microsoft.UI.Xaml.FrameworkElement

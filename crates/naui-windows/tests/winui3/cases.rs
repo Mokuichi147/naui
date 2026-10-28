@@ -149,6 +149,10 @@ const CASES: &[Case] = &[
         text_widgets_accept_key_handlers,
     ),
     (
+        "ファイルを落とせるよう窓の根が AllowDrop になる",
+        file_drop_makes_the_root_a_drop_target,
+    ),
+    (
         "1 行入力・パスワード入力・数値入力に on_submit を付けられる",
         text_widgets_accept_submit_handlers,
     ),
@@ -3944,6 +3948,21 @@ fn text_widgets_accept_key_handlers(ui: &Ui) -> Result<()> {
     ui.search_input()?.on_key_down(handler);
     ui.number_input(1.0)?.on_key_down(handler);
     ui.editable_combo_box()?.on_key_down(handler);
+    Ok(())
+}
+
+/// A drag cannot be started from code, so this checks only that the window's root
+/// becomes a drop target and that closures can be attached (delivery is checked on
+/// real machines).
+fn file_drop_makes_the_root_a_drop_target(ui: &Ui) -> Result<()> {
+    let window = ui.window("ファイルの受け取り", 320.0, 200.0)?;
+    let label = ui.label("ここへ落とす")?;
+    label.on_file_drop(|_| {});
+    label.on_file_drop(|_| {});
+    window.on_file_drop(|_| {});
+    window.set_child(&label);
+    let root = window.native_window().Content().expect("ウィンドウの中身");
+    assert!(root.AllowDrop().expect("AllowDrop"), "根がドロップを受ける");
     Ok(())
 }
 

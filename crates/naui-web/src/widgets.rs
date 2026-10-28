@@ -86,6 +86,22 @@ macro_rules! impl_widget {
                 );
             }
 
+            /// Called with the files dropped onto this widget from the OS.
+            ///
+            /// When widgets with this closure are nested, the innermost one under the
+            /// pointer takes the drop, and the window's
+            /// [`on_file_drop`](crate::Window::on_file_drop) gets only drops no widget
+            /// takes. Setting it again replaces the previous closure.
+            ///
+            /// The browser hands over contents, not paths:
+            /// [`FileEntry::path`](naui_core::FileEntry::path) is `None`, and
+            /// [`FileEntry::source`](naui_core::FileEntry::source) is a `blob:` URL that
+            /// stays valid until the next drop onto this widget. A dropped folder comes
+            /// with only its name.
+            pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
+                crate::file_drop::set_handler(&<$t as Widget>::native_element(self), f);
+            }
+
             /// Creates a weak reference. Capture it when touching this widget from its own
             /// notification closures (capturing a `clone()` creates a cycle and it is never
             /// freed).
