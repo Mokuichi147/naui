@@ -519,6 +519,14 @@ For work with no visible end (waiting for a network response, for example), set 
 show it with motion. Turning it off returns to showing the value set with
 [`set_value`](ProgressBar::set_value).
 
+Where something small loads (beside a button or a status text, or in place of
+content that is not there yet), use a [`Spinner`]. It spins from creation, and
+[`set_spinning(false)`](Spinner::set_spinning) stops it. A stopped spinner is not
+drawn but keeps its space, so the widgets around it do not move; use
+[`set_visible(false)`](Spinner::set_visible) to give the space up as well. The DOM has
+no spinner, so the Web shows an indeterminate `<progress>`, which browsers draw as a
+bar.
+
 Setting [`Label::set_selectable`] to `true` lets the text be selected and copied
 (it cannot be edited). Use it for text readers will want to copy, such as chat
 messages or error details. The default is not selectable on all four platforms
@@ -528,6 +536,8 @@ messages or error details. The default is not selectable on all four platforms
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
 | Indeterminate progress | Moves the foreground band back and forth (※) | `indeterminate` of `NSProgressIndicator` | `gtk_progress_bar_pulse` at a fixed interval | `<progress>` without a `value` attribute |
+| Spinner | `ProgressRing` (`IsActive`) | `NSProgressIndicator` in the spinning style | `AdwSpinner` (`GtkSpinner` before libadwaita 1.6) | `<progress>` without a `value` attribute |
+| Stopped spinner | `IsActive` off | `stopAnimation` with `displayedWhenStopped` off | `child-visible` off (`spinning` off for `GtkSpinner`) | `visibility: hidden` |
 | Selectable labels | `IsTextSelectionEnabled` | `selectable` | `gtk_label_set_selectable` | `user-select` |
 
 ※ WinUI's `ProgressBar` crashes when its template is applied in an unpackaged

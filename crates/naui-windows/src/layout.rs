@@ -45,6 +45,9 @@ enum ParentLayout {
         horizontal_scroll_enabled: bool,
         vertical_scroll_enabled: bool,
     },
+    Window {
+        window: usize,
+    },
 }
 
 impl ParentLayout {
@@ -55,6 +58,7 @@ impl ParentLayout {
                 horizontal_scroll_enabled,
                 ..
             } => !horizontal_scroll_enabled,
+            Self::Window { .. } => true,
         }
     }
 
@@ -65,14 +69,17 @@ impl ParentLayout {
                 vertical_scroll_enabled,
                 ..
             } => !vertical_scroll_enabled,
+            Self::Window { .. } => true,
         }
     }
 
     fn same_kind(self, other: Self) -> bool {
-        matches!(
-            (self, other),
-            (Self::Stack { .. }, Self::Stack { .. }) | (Self::Scroll { .. }, Self::Scroll { .. })
-        )
+        match (self, other) {
+            (Self::Stack { .. }, Self::Stack { .. })
+            | (Self::Scroll { .. }, Self::Scroll { .. }) => true,
+            (Self::Window { window: first }, Self::Window { window: second }) => first == second,
+            _ => false,
+        }
     }
 }
 
@@ -159,6 +166,35 @@ pub(crate) fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
     })
 }
 
+/// Whether the parent stretches an Auto-sized child on this axis.
+pub(crate) fn parent_stretches_auto(element: &FrameworkElement, horizontal: bool) -> bool {
+    match parent_state(element) {
+        Some(ParentLayout::Stack {
+            align: Align::Fill,
+            vertical,
+            ..
+        }) => horizontal == vertical,
+        Some(ParentLayout::Scroll {
+            horizontal_scroll_enabled,
+            vertical_scroll_enabled,
+        }) => {
+            if horizontal {
+                !horizontal_scroll_enabled && element.MaxWidth().is_ok_and(f64::is_infinite)
+            } else {
+                !vertical_scroll_enabled && element.MaxHeight().is_ok_and(f64::is_infinite)
+            }
+        }
+        Some(ParentLayout::Window { .. }) => {
+            if horizontal {
+                element.MaxWidth().is_ok_and(f64::is_infinite)
+            } else {
+                element.MaxHeight().is_ok_and(f64::is_infinite)
+            }
+        }
+        _ => false,
+    }
+}
+
 fn set_parent_state(element: &UIElement, framework: &FrameworkElement, parent: ParentLayout) {
     if let Some(previous) = parent_state(framework) {
         if !previous.same_kind(parent) {
@@ -205,6 +241,7 @@ fn set_parent_state(element: &UIElement, framework: &FrameworkElement, parent: P
     if let Some(value) = restore_vertical {
         let _ = framework.SetVerticalAlignment(value);
     }
+    notify_parent_layout_change(element);
 }
 
 fn parent_state(element: &FrameworkElement) -> Option<ParentLayout> {
@@ -412,6 +449,32 @@ pub(crate) fn set_scroll_parent(
     );
 }
 
+/// Records a window's content placement and stretches unconstrained Auto axes.
+pub(crate) fn set_window_parent(element: &UIElement, window: &XamlWindow) {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return;
+    };
+    set_parent_state(
+        element,
+        &framework,
+        ParentLayout::Window {
+            window: Interface::as_raw(window) as usize,
+        },
+    );
+    stretch_non_scrolling_child(&framework, false, false);
+}
+
+/// Removes a window's placement only if it still owns the child.
+pub(crate) fn clear_window_parent(element: &UIElement, window: &XamlWindow) {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return;
+    };
+    if matches!(parent_state(&framework), Some(ParentLayout::Window { window: owner }) if owner == Interface::as_raw(window) as usize)
+    {
+        clear_parent_layout(element);
+    }
+}
+
 /// Applies the parent container's layout again after Sizing overwrote it.
 pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
     let Some(parent) = parent_state(element) else {
@@ -435,6 +498,7 @@ pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
                 vertical_scroll_enabled,
             );
         }
+        ParentLayout::Window { .. } => stretch_non_scrolling_child(element, false, false),
     }
 }
 
@@ -464,6 +528,7 @@ pub(crate) fn clear_parent_layout(element: &UIElement) {
             states.borrow_mut().insert(key, state);
         });
     }
+    notify_parent_layout_change(element);
 }
 
 /// Removes the element's state from the table when the widget is destroyed.
@@ -475,6 +540,25 @@ pub(crate) fn clear_layout_state(element: &UIElement) {
     SIZING_LISTENERS.with(|listeners| {
         listeners.borrow_mut().remove(&key);
     });
+    PARENT_LAYOUT_LISTENERS.with(|listeners| {
+        listeners.borrow_mut().remove(&key);
+    });
+}
+
+/// Has `f` called when the parent starts, changes, or stops controlling layout.
+pub(crate) fn on_parent_layout_change(element: &UIElement, f: impl Fn() + 'static) {
+    let key = element_key(element);
+    PARENT_LAYOUT_LISTENERS.with(|listeners| {
+        listeners.borrow_mut().insert(key, Rc::new(f));
+    });
+}
+
+fn notify_parent_layout_change(element: &UIElement) {
+    let key = element_key(element);
+    let listener = PARENT_LAYOUT_LISTENERS.with(|listeners| listeners.borrow().get(&key).cloned());
+    if let Some(listener) = listener {
+        listener();
+    }
 }
 
 /// Has `f` called at the end of every `apply_sizing` on the element, once the new
@@ -1061,6 +1145,9 @@ thread_local! {
         RefCell::new(HashMap::new());
     /// What to call after `apply_sizing`, by element key (see [`on_sizing_change`]).
     static SIZING_LISTENERS: RefCell<HashMap<usize, Rc<dyn Fn()>>> =
+        RefCell::new(HashMap::new());
+    /// What to call after the parent layout changes, by element key.
+    static PARENT_LAYOUT_LISTENERS: RefCell<HashMap<usize, Rc<dyn Fn()>>> =
         RefCell::new(HashMap::new());
     /// The `Grid`s of the Stacks still alive on the Rust side, by element key.
     static STACKS: RefCell<HashMap<usize, XamlGrid>> = RefCell::new(HashMap::new());

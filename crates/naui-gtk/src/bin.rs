@@ -37,6 +37,10 @@ mod imp {
         pub rigid_width: Cell<bool>,
         /// Whether the content's natural size is left out on `Fill` axes (images and videos).
         pub fill_ignores_natural: Cell<bool>,
+        /// Scale content down when the allocation is smaller than its native minimum.
+        pub scale_below_minimum: Cell<bool>,
+        /// Maximum size of the native spinner, without limiting its layout space.
+        pub spinner_maximum: Cell<i32>,
         /// Where it is placed. Read when the size specification changes.
         pub(crate) placement: Cell<super::Placement>,
     }
@@ -201,6 +205,13 @@ mod imp {
             let Some(child) = self.obj().first_child() else {
                 return;
             };
+            let (allocated_width, allocated_height) = (width, height);
+            let maximum = self.spinner_maximum.get();
+            let (width, height) = if maximum > 0 {
+                (width.min(maximum), height.min(maximum))
+            } else {
+                (width, height)
+            };
             let (horizontal, vertical) = (gtk::Orientation::Horizontal, gtk::Orientation::Vertical);
             // 「もう一方が決まってから測る」中身があるので、測る順を守る。
             let (width, height) = if child.request_mode() == gtk::SizeRequestMode::WidthForHeight {
@@ -210,7 +221,28 @@ mod imp {
                 let width = width.max(child.measure(horizontal, -1).0);
                 (width, height.max(child.measure(vertical, width).0))
             };
-            child.allocate(width, height, baseline, None);
+            // A spinner can draw at its native minimum and be scaled down, while
+            // the GtkSpinner fallback is capped and centered in larger allocations.
+            let transform = if self.scale_below_minimum.get() && width > 0 && height > 0 {
+                let scale = if allocated_width > 0 && allocated_height > 0 {
+                    (allocated_width as f32 / width as f32)
+                        .min(allocated_height as f32 / height as f32)
+                        .min(1.0)
+                } else {
+                    // A zero allocation is clipped by the bin; a zero scale is not invertible.
+                    1.0
+                };
+                let x = (allocated_width as f32 - width as f32 * scale) / 2.0;
+                let y = (allocated_height as f32 - height as f32 * scale) / 2.0;
+                (scale < 1.0 || (maximum > 0 && (x != 0.0 || y != 0.0))).then(|| {
+                    gtk::gsk::Transform::new()
+                        .translate(&gtk::graphene::Point::new(x, y))
+                        .scale(scale, scale)
+                })
+            } else {
+                None
+            };
+            child.allocate(width, height, baseline, transform);
         }
     }
 }
@@ -286,6 +318,19 @@ impl SizeBin {
         self.queue_resize();
     }
 
+    /// Scales content into allocations smaller than its native minimum.
+    /// Used for spinners, which have no interactive content or focus ring.
+    pub(crate) fn mark_scale_below_minimum(&self) {
+        self.imp().scale_below_minimum.set(true);
+        self.relayout();
+    }
+
+    /// Caps the fallback spinner's drawing size without capping its layout space.
+    pub(crate) fn cap_spinner_size(&self, size: i32) {
+        self.imp().spinner_maximum.set(size);
+        self.queue_resize();
+    }
+
     /// The size the app specified.
     pub(crate) fn sizing(&self) -> Sizing {
         self.imp().sizing.get()
@@ -320,11 +365,13 @@ impl SizeBin {
         // `Fill` の軸は最小を 0 として申告する (大きさは親が決める) 以上、
         // 配られた場所からはみ出して描いてはいけない。CSS の
         // `min-width: 0` と `overflow: hidden` を組みで使うのと同じ。
-        self.set_overflow(if sizing.width.is_fill() || sizing.height.is_fill() {
-            gtk::Overflow::Hidden
-        } else {
-            gtk::Overflow::Visible
-        });
+        self.set_overflow(
+            if imp.scale_below_minimum.get() || sizing.width.is_fill() || sizing.height.is_fill() {
+                gtk::Overflow::Hidden
+            } else {
+                gtk::Overflow::Visible
+            },
+        );
         self.set_size_request(width.request, height.request);
         self.apply_expand(true, width.expand);
         self.apply_expand(false, height.expand);

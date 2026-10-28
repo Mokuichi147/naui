@@ -891,6 +891,80 @@ impl ProgressBar {
     }
 }
 
+// ---------------------------------------------------------------- Spinner
+
+struct SpinnerInner {
+    /// `AdwSpinner`, or `GtkSpinner` when libadwaita is older than 1.6.
+    native: gtk::Widget,
+    bin: SizeBin,
+    spinning: Cell<bool>,
+}
+
+/// A spinning indicator (`AdwSpinner`, or `GtkSpinner` with libadwaita older than
+/// 1.6).
+#[derive(Clone)]
+pub struct Spinner(Rc<SpinnerInner>);
+impl_widget!(Spinner);
+
+impl Spinner {
+    pub(crate) fn new() -> Self {
+        // AdwSpinner is available from libadwaita 1.6; naui also supports 1.5.
+        let native_type = glib::Type::from_name("AdwSpinner")
+            .filter(|ty| ty.is_a(gtk::Widget::static_type()))
+            .unwrap_or_else(gtk::Spinner::static_type);
+        Self::from_type(native_type)
+    }
+
+    fn from_type(native_type: glib::Type) -> Self {
+        // Older GTK / libadwaita versions do not give their spinner this role.
+        // Set it at construction so set_accessible_label names this same control.
+        let native = glib::Object::builder_with_type(native_type)
+            .property("accessible-role", gtk::AccessibleRole::ProgressBar)
+            .build()
+            .downcast::<gtk::Widget>()
+            .expect("spinner must be a GTK widget");
+        let fallback = native.downcast_ref::<gtk::Spinner>();
+        if let Some(spinner) = fallback {
+            spinner.set_spinning(true);
+        }
+        native.update_state(&[gtk::accessible::State::Busy(true)]);
+        let bin = SizeBin::wrap(&native);
+        bin.mark_scale_below_minimum();
+        if fallback.is_some() {
+            // AdwSpinner draws at most 64×64 even when its allocation is larger.
+            bin.cap_spinner_size(64);
+        }
+        Self(Rc::new(SpinnerInner {
+            native,
+            bin,
+            spinning: Cell::new(true),
+        }))
+    }
+
+    /// Whether it spins. Spins from creation.
+    ///
+    /// While stopped it is not drawn but keeps its space. `GtkSpinner` turns off
+    /// `spinning`; `AdwSpinner` has no such switch and spins whenever it is mapped, so
+    /// it is unmapped with `child-visible` (its size still counts in the layout). Use
+    /// `set_visible(false)` to give the space up as well.
+    pub fn set_spinning(&self, spinning: bool) {
+        if self.0.spinning.replace(spinning) == spinning {
+            return;
+        }
+        match self.0.native.downcast_ref::<gtk::Spinner>() {
+            Some(spinner) => spinner.set_spinning(spinning),
+            None => self.0.native.set_child_visible(spinning),
+        }
+        self.0
+            .native
+            .update_state(&[gtk::accessible::State::Busy(spinning)]);
+    }
+
+    pub fn is_spinning(&self) -> bool {
+        self.0.spinning.get()
+    }
+}
+
 // ------------------------------------------------------------------ Stack
 
 struct StackInner {
@@ -1034,5 +1108,50 @@ fn to_gtk_orientation(orientation: Orientation) -> gtk::Orientation {
         gtk::Orientation::Vertical
     } else {
         gtk::Orientation::Horizontal
+    }
+}
+
+#[cfg(test)]
+mod spinner_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn fallback_keeps_its_role_and_caps_drawing_without_capping_layout() {
+        crate::run_for_test(|_| {
+            let spinner = Spinner::from_type(gtk::Spinner::static_type());
+            let native = spinner.native_widget();
+            let bin = spinner.size_bin();
+            assert_eq!(native.accessible_role(), gtk::AccessibleRole::ProgressBar);
+            spinner.set_accessible_label(Some("Loading"));
+            if std::env::var("GTK_A11Y").as_deref() != Ok("none") {
+                assert!(gtk::test_accessible_has_property(
+                    &native,
+                    gtk::AccessibleProperty::Label
+                ));
+                assert!(gtk::test_accessible_has_state(
+                    &native,
+                    gtk::AccessibleState::Busy
+                ));
+            }
+            spinner.set_spinning(false);
+            assert!(!spinner.is_spinning());
+            spinner.set_spinning(true);
+            assert!(spinner.is_spinning());
+
+            spinner.set_sizing(naui_core::Sizing::fixed(128.0, 128.0));
+            bin.allocate(128, 128, -1, None);
+            let bounds = native.compute_bounds(&bin).expect("fallback bounds");
+            assert_eq!((bin.width(), bin.height()), (128, 128));
+            assert_eq!(
+                (bounds.x(), bounds.y(), bounds.width(), bounds.height()),
+                (32.0, 32.0, 64.0, 64.0)
+            );
+            spinner.set_sizing(naui_core::Sizing::fixed(8.0, 8.0));
+            bin.allocate(8, 8, -1, None);
+            let bounds = native.compute_bounds(&bin).expect("small fallback bounds");
+            assert_eq!((bounds.width(), bounds.height()), (8.0, 8.0));
+            Ok(())
+        })
+        .unwrap();
     }
 }

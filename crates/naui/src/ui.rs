@@ -3,8 +3,8 @@ use crate::{
     Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox, DatePicker,
     Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link,
     List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, SplitView, Stack, Table, Tabs,
-    TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Video, Window,
+    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, Spinner, SplitView, Stack, Table,
+    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Video, Window,
 };
 use naui_core::{DatePickerMode, Orientation, Result, Settings, Tasks, Theme};
 
@@ -172,6 +172,12 @@ impl Ui {
     #[inline]
     pub fn progress_bar(&self) -> Result<ProgressBar> {
         self.0.progress_bar().map(ProgressBar)
+    }
+
+    /// A spinning indicator for work in progress. Spins from creation.
+    #[inline]
+    pub fn spinner(&self) -> Result<Spinner> {
+        self.0.spinner().map(Spinner)
     }
 
     /// An image. `source` is a file path or a URL.

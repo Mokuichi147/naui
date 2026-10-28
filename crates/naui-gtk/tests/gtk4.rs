@@ -328,6 +328,14 @@ fn main() {
             "不確定の進捗は値を覚えたまま pulse に切り替わる",
             progress_bar_switches_to_indeterminate,
         ),
+        (
+            "スピナーは AdwSpinner (1.6 より前は GtkSpinner) で、止めると描かずに場所を残す",
+            spinner_stops_without_giving_up_its_space,
+        ),
+        (
+            "スピナーはネイティブの最小より小さい場所にも収まる",
+            spinner_fits_below_native_minimum,
+        ),
         ("ラベルを選べるようにできる", label_can_be_selectable),
         (
             "クリップボードへ書いた文字を読み戻せる",
@@ -7983,6 +7991,131 @@ fn progress_bar_switches_to_indeterminate(ui: &Ui) -> Result<()> {
     assert!(!progress.is_indeterminate());
     let native: gtk::ProgressBar = progress.native_widget().downcast().expect("GtkProgressBar");
     assert_eq!(native.fraction(), 0.7, "不確定の間に置いた値が出る");
+    Ok(())
+}
+
+fn spinner_stops_without_giving_up_its_space(ui: &Ui) -> Result<()> {
+    let spinner = ui.spinner()?;
+    assert!(spinner.is_spinning(), "作った時点で回っている");
+    let native = spinner.native_widget();
+    let adw_spinner = (adw::major_version(), adw::minor_version()) >= (1, 6);
+    let expected = if adw_spinner {
+        "AdwSpinner"
+    } else {
+        "GtkSpinner"
+    };
+    assert_eq!(native.type_().name(), expected);
+    assert_eq!(native.accessible_role(), gtk::AccessibleRole::ProgressBar);
+    spinner.set_accessible_label(Some("Loading"));
+    if std::env::var("GTK_A11Y").as_deref() != Ok("none") {
+        assert!(gtk::test_accessible_has_property(
+            &native,
+            gtk::AccessibleProperty::Label
+        ));
+        assert!(gtk::test_accessible_has_state(
+            &native,
+            gtk::AccessibleState::Busy
+        ));
+    }
+    let size = native.measure(gtk::Orientation::Horizontal, -1);
+    assert_eq!((size.0, size.1), (16, 16), "既定は 16 x 16");
+
+    spinner.set_spinning(false);
+    assert!(!spinner.is_spinning());
+    match native.downcast_ref::<gtk::Spinner>() {
+        Some(gtk_spinner) => assert!(!gtk_spinner.is_spinning()),
+        None => assert!(!native.is_child_visible(), "AdwSpinner は写さずに止める"),
+    }
+    assert!(native.is_visible(), "場所は残る");
+    assert_eq!(
+        spinner
+            .size_bin()
+            .measure(gtk::Orientation::Horizontal, -1)
+            .1,
+        16,
+        "止めても大きさは変わらない"
+    );
+
+    spinner.set_spinning(true);
+    assert!(spinner.is_spinning());
+    match native.downcast_ref::<gtk::Spinner>() {
+        Some(gtk_spinner) => assert!(gtk_spinner.is_spinning()),
+        None => assert!(native.is_child_visible()),
+    }
+    Ok(())
+}
+
+fn spinner_fits_below_native_minimum(ui: &Ui) -> Result<()> {
+    let spinner = ui.spinner()?;
+    let native = spinner.native_widget();
+    let bin = spinner.size_bin();
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    let next = gtk::Label::new(Some("next"));
+    spinner.set_sizing(Sizing::fixed(8.0, 8.0));
+    row.append(&bin);
+    row.append(&next);
+    let window = gtk::Window::builder()
+        .title("spinner")
+        .default_width(200)
+        .default_height(80)
+        .child(&row)
+        .build();
+    window.present();
+    tick(&native);
+    let bounds = native.compute_bounds(&row).expect("spinner bounds");
+    let next_bounds = next.compute_bounds(&row).expect("neighbor bounds");
+    assert_eq!((bin.width(), bin.height()), (8, 8));
+    assert!(
+        (bounds.width() - 8.0).abs() < 0.01 && (bounds.height() - 8.0).abs() < 0.01,
+        "native bounds: {bounds:?}"
+    );
+    assert!(
+        bounds.x() + bounds.width() <= next_bounds.x(),
+        "spinner {bounds:?} overlaps neighbor {next_bounds:?}"
+    );
+    // Check the rendered pixels as well as the transformed allocation: merely
+    // clipping the original 16×16 spinner would discard part of its shape.
+    let snapshot = gtk::Snapshot::new();
+    bin.snapshot_child(&native, &snapshot);
+    let node = snapshot.to_node().expect("spinner is drawn");
+    let mut surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 16, 16)
+        .expect("image surface");
+    let cr = gtk::cairo::Context::new(&surface).expect("cairo context");
+    node.draw(&cr);
+    drop(cr);
+    surface.flush();
+    let stride = surface.stride() as usize;
+    let pixels = surface.data().expect("image pixels");
+    let alpha = |x: usize, y: usize| pixels[y * stride + x * 4 + 3];
+    assert!(
+        (0..8).any(|x| (0..8).any(|y| alpha(x, y) > 0)),
+        "spinner draws inside its allocation"
+    );
+    assert!(
+        (0..16).all(|x| (0..16).all(|y| (x < 8 && y < 8) || alpha(x, y) == 0)),
+        "spinner draws outside its allocation"
+    );
+    drop(pixels);
+    spinner.set_sizing(Sizing::fixed(8.0, 20.0));
+    tick(&native);
+    let bounds = native.compute_bounds(&bin).expect("narrow bounds");
+    assert!(
+        (bounds.width() - 8.0).abs() < 0.01 && bounds.height() <= 20.0,
+        "narrow bounds: {bounds:?}"
+    );
+    spinner.set_sizing(Sizing::fixed(0.0, 8.0));
+    tick(&native);
+    assert_eq!(bin.width(), 0, "zero width is kept");
+    assert_eq!(
+        bin.overflow(),
+        gtk::Overflow::Hidden,
+        "zero allocation clips the child"
+    );
+    spinner.set_sizing(Sizing::new());
+    tick(&native);
+    let bounds = native.compute_bounds(&bin).expect("default bounds");
+    assert_eq!((bounds.width(), bounds.height()), (16.0, 16.0));
+    window.close();
     Ok(())
 }
 

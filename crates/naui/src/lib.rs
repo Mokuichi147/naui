@@ -109,8 +109,8 @@ pub use tree::Tree;
 pub use ui::{run, Ui};
 pub use widget::Widget;
 pub use widgets::{
-    Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Stack, TextArea,
-    TextInput,
+    Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Spinner, Stack,
+    TextArea, TextInput,
 };
 pub use window::{WeakWindow, Window};
 

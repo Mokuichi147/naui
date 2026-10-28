@@ -92,8 +92,8 @@ pub use toolbar::Toolbar;
 pub use tree::Tree;
 pub use web_ext::WebWidgetExt;
 pub use widgets::{
-    Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Stack, TextArea,
-    TextInput, Widget,
+    Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Spinner, Stack,
+    TextArea, TextInput, Widget,
 };
 pub use window::{WeakWindow, Window};
 
@@ -288,6 +288,14 @@ impl Ui {
 
     pub fn progress_bar(&self) -> Result<ProgressBar> {
         ProgressBar::new(&self.0.document)
+    }
+
+    /// A spinning indicator for work in progress. Spins from creation.
+    ///
+    /// The DOM has no spinner, so it is an indeterminate `<progress>`, which browsers
+    /// draw as a bar.
+    pub fn spinner(&self) -> Result<Spinner> {
+        Spinner::new(&self.0.document)
     }
 
     /// Tabs. Holds each tab's content widget.

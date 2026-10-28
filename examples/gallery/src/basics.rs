@@ -8,7 +8,7 @@ use naui::{
 
 use crate::parts::{self, Disabler, Form, Notice};
 
-/// Button、Checkbox、Toggle、RadioGroup、Slider、ProgressBar、ComboBox とテーマ、
+/// Button、Checkbox、Toggle、RadioGroup、Slider、ProgressBar、Spinner、ComboBox とテーマ、
 /// Label の文字づかい、クリップボード・URL・タイマー、ウィンドウの状態。
 pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
@@ -123,6 +123,16 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
         move |on| progress.set_indeterminate(on)
     });
     form.row_with(ui, "ProgressBar", &progress, &busy)?;
+
+    // 回っているかどうかを、隣のチェックボックスで切り替える。止めても場所は残る。
+    let spinner = ui.spinner()?;
+    let spinning = ui.checkbox("Spinning")?;
+    spinning.set_checked(true);
+    spinning.on_toggle({
+        let spinner = spinner.clone();
+        move |on| spinner.set_spinning(on)
+    });
+    form.row_with(ui, "Spinner", &spinner, &spinning)?;
 
     let theme = ui.combo_box()?;
     disabler.add(&theme, ComboBox::set_enabled);

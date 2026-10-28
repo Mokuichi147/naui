@@ -943,6 +943,48 @@ impl ProgressBar {
     }
 }
 
+// ---------------------------------------------------------------- Spinner
+
+struct SpinnerInner {
+    element: HtmlProgressElement,
+    spinning: Cell<bool>,
+}
+
+/// A spinning indicator. The DOM has no spinner, so it is an indeterminate
+/// `<progress>` (a bar).
+#[derive(Clone)]
+pub struct Spinner(Rc<SpinnerInner>);
+impl_widget!(Spinner, element);
+
+impl Spinner {
+    pub(crate) fn new(doc: &Document) -> Result<Self> {
+        // `value` 属性を持たない `<progress>` は不確定の表示になる。
+        let element: HtmlProgressElement = create(doc, "progress")?.unchecked_into();
+        Ok(Self(Rc::new(SpinnerInner {
+            element,
+            spinning: Cell::new(true),
+        })))
+    }
+
+    /// Whether it spins. Spins from creation.
+    ///
+    /// While stopped it is not drawn but keeps its space (`visibility: hidden`). Use
+    /// `set_visible(false)` to give the space up as well.
+    pub fn set_spinning(&self, spinning: bool) {
+        self.0.spinning.set(spinning);
+        let style = self.0.element.style();
+        let _ = if spinning {
+            style.remove_property("visibility").map(drop)
+        } else {
+            style.set_property("visibility", "hidden")
+        };
+    }
+
+    pub fn is_spinning(&self) -> bool {
+        self.0.spinning.get()
+    }
+}
+
 // ------------------------------------------------------------------ Stack
 
 struct StackInner {

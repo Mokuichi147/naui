@@ -221,6 +221,37 @@ impl ProgressBar {
     }
 }
 
+/// A spinning indicator for work whose progress is unknown (`AdwSpinner`).
+///
+/// Use it where something loads or waits (a network response, for example). It spins
+/// from creation. [`set_spinning(false)`](Self::set_spinning) stops it; a stopped
+/// spinner is not drawn but keeps its space, so the layout does not move. Use
+/// [`set_visible(false)`](Self::set_visible) to give the space up as well. To show
+/// how far along the work is, use [`ProgressBar`] instead.
+///
+/// The default size follows each platform: 32 × 32 on macOS (the regular control
+/// size) and Windows (`ProgressRing`'s default), and 16 × 16 on Linux, where
+/// `AdwSpinner` grows with the space it is given up to 64 × 64 (with `Fill`, for
+/// example). A fixed size from `set_sizing` scales it on all three. The DOM has no
+/// spinner, so the Web shows an indeterminate `<progress>` (a bar).
+#[derive(Clone)]
+pub struct Spinner(pub(crate) sys::Spinner);
+
+impl_widget!(Spinner);
+
+impl Spinner {
+    /// Whether it spins. Spins from creation.
+    #[inline]
+    pub fn set_spinning(&self, spinning: bool) {
+        self.0.set_spinning(spinning)
+    }
+
+    #[inline]
+    pub fn is_spinning(&self) -> bool {
+        self.0.is_spinning()
+    }
+}
+
 /// A search field (`GtkSearchEntry`).
 ///
 /// The magnifying glass and the clear button (✕) that appears once you start

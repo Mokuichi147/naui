@@ -98,7 +98,8 @@ pub use toggle::Toggle;
 pub use toolbar::Toolbar;
 pub use tree::Tree;
 pub use widgets::{
-    Button, Checkbox, Label, PasswordInput, ProgressBar, Slider, Stack, TextArea, TextInput, Widget,
+    Button, Checkbox, Label, PasswordInput, ProgressBar, Slider, Spinner, Stack, TextArea,
+    TextInput, Widget,
 };
 pub use window::{WeakWindow, Window};
 
@@ -293,6 +294,11 @@ impl Ui {
 
     pub fn progress_bar(&self) -> Result<ProgressBar> {
         ProgressBar::new()
+    }
+
+    /// A spinning indicator for work in progress. Spins from creation.
+    pub fn spinner(&self) -> Result<Spinner> {
+        Spinner::new()
     }
 
     /// Tabs. Holds each tab's content widget.

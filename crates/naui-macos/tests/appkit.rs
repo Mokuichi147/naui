@@ -452,6 +452,10 @@ fn main() {
             "不確定の進捗は値を覚えたまま動きに切り替わる",
             progress_bar_switches_to_indeterminate,
         ),
+        (
+            "スピナーは回る形の NSProgressIndicator で、止めると描かずに場所を残す",
+            spinner_is_a_spinning_indicator,
+        ),
         ("ラベルを選べるようにできる", label_can_be_selectable),
         (
             "クリップボードへ書いた文字を読み戻せる",
@@ -4417,6 +4421,50 @@ fn progress_bar_switches_to_indeterminate(ui: &Ui) -> Result<()> {
     progress.set_indeterminate(false);
     assert!(!native.isIndeterminate());
     assert_eq!(progress.value(), 0.7, "不確定の間に置いた値が出る");
+    Ok(())
+}
+
+fn spinner_is_a_spinning_indicator(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::{NSProgressIndicator, NSProgressIndicatorStyle};
+    let stack = ui.stack(Orientation::Vertical)?;
+    let spinner = ui.spinner()?;
+    assert!(spinner.is_spinning(), "作った時点で回っている");
+    stack.append(&spinner);
+    let native = spinner
+        .native_view()
+        .downcast::<NSProgressIndicator>()
+        .expect("NSProgressIndicator");
+    assert_eq!(native.style(), NSProgressIndicatorStyle::Spinning);
+    assert!(native.isIndeterminate());
+    assert!(!native.isDisplayedWhenStopped(), "止めたら描かない");
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(200.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+    let size = native.frame().size;
+    assert!(
+        (size.width - 32.0).abs() < 1e-6 && (size.height - 32.0).abs() < 1e-6,
+        "既定は 32 x 32 (通常の大きさ): {size:?}"
+    );
+
+    spinner.set_spinning(false);
+    assert!(!spinner.is_spinning());
+    root.layoutSubtreeIfNeeded();
+    assert_eq!(native.frame().size, size, "止めても場所は残る");
+    spinner.set_spinning(true);
+    assert!(spinner.is_spinning());
+
+    spinner.set_sizing(
+        Sizing::new()
+            .width(naui_core::Length::Fixed(16.0))
+            .height(naui_core::Length::Fixed(16.0)),
+    );
+    root.layoutSubtreeIfNeeded();
+    let small = native.frame().size;
+    assert!(
+        (small.width - 16.0).abs() < 1e-6 && (small.height - 16.0).abs() < 1e-6,
+        "固定の大きさに従う: {small:?}"
+    );
     Ok(())
 }
 
