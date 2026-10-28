@@ -3963,6 +3963,8 @@ fn file_drop_makes_the_root_a_drop_target(ui: &Ui) -> Result<()> {
     window.set_child(&label);
     let root = window.native_window().Content().expect("ウィンドウの中身");
     assert!(root.AllowDrop().expect("AllowDrop"), "根がドロップを受ける");
+    // 閉じずに残すと、終わりの `Application::Exit` のあともアプリが終わらない。
+    window.close();
     Ok(())
 }
 
