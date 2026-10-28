@@ -927,11 +927,14 @@ impl Window {
             if let Some(root) = self.0.theme_root.borrow().as_ref() {
                 let _ = crate::keys::install(root, self.0.key_down.clone());
                 let _ = crate::focus::install(root);
-                let _ = crate::file_drop::install(
-                    root,
-                    self.0.on_file_drop.clone(),
-                    self.0.tasks.clone(),
-                );
+                if let Some(hwnd) = self.hwnd() {
+                    let _ = crate::file_drop::install(
+                        root,
+                        hwnd,
+                        self.0.on_file_drop.clone(),
+                        self.0.tasks.clone(),
+                    );
+                }
             }
             if !self.0.wheel_subclass_installed.get() {
                 self.0
