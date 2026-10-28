@@ -1,6 +1,6 @@
 # Roadmap
 
-This lists features commonly expected of a GUI toolkit that naui (as of v0.11.1)
+This lists features commonly expected of a GUI toolkit that naui (as of v0.12.0)
 does not have yet, with priorities.
 
 The native counterparts written for each item are estimates. When work starts,
@@ -50,14 +50,11 @@ one or two panes.
 
 ### Order
 
-Each step builds on the ones before it.
+Each step builds on the ones before it. Steps 1 to 3 (main-axis `Fill` and
+`Spacer` in Windows's `Stack`, the contract for changes after adding to a
+container, and `Stack::set_orientation`) were released in v0.12.0.
 
-1. **Main-axis `Fill` and `Spacer` in Windows's `Stack`** (P0). Without it, the
-   same layout does not come out the same on Windows.
-2. **Contract for changes after adding to a container** (P0). The base for moving
-   children around safely.
-3. **`Stack::set_orientation`** (P0).
-4. **Automatic collapsing of `Sidebar`** (P1). Uses only the native mechanisms, so
+4. **Automatic collapsing of `Sidebar`** (P0). Uses only the native mechanisms, so
    it does not wait for step 5.
 5. **Size-based arrangements** (P1).
 6. **`AdaptivePanes`** (P1).
@@ -89,79 +86,42 @@ direction.
 ## P0: Do now
 
 Gaps that ordinary apps run into right away and that all four platforms have native
-counterparts for, plus the foundation the adaptive layout track builds on.
+counterparts for, plus the next steps of the adaptive layout and
+internationalization tracks.
 
-- [x] *(i18n)* **Make naui's own strings follow the OS language.** The default
-      macOS main menu, the `Sidebar` toggle's tooltip and label on the Web and
-      Linux, the accessible names of `Breadcrumbs` and `Pagination` on the Web, and
-      the "OK" of `DialogButtons::ok()` were fixed in Japanese or English
-      regardless of the user. They now come from a small table in naui-core
-      (`ui_strings`), chosen at startup from the OS's preferred languages and
-      falling back to English. The table has English and Japanese for now. Toggles
-      the native side labels itself (WinUI's `NavigationView`, AppKit's sidebar
-      button) are left as they are.
-
-- [x] *(adaptive)* **Make main-axis `Fill` and `Spacer` work in Windows's
-      `Stack`.** `StackPanel` does not distribute leftover space, so even pushing
-      buttons to the right edge with a `Spacer` did not work on Windows. The
-      `Stack` is now a `Grid` with one track per child, `Star` for main-axis
-      `Fill`, and hidden children take neither a track nor spacing. The first row
-      of the
-      [platform differences](known-limitations.md#platform-differences-at-a-glance)
-      is gone.
-- [x] **Stop polling the scroll position in Windows's `Table`.** A `Table` with
-      more rows than the windowing threshold read its scroll position every 50 ms
-      for as long as it existed, even when nothing moved, and the rows built could
-      lag behind fast scrolling by up to one interval. It now follows
-      `ScrollViewer.ViewChanged`, the same as `Scroll`.
-- [x] *(adaptive)* **A contract for changes after adding to a container.** Settings
-      made after a child is added (`set_sizing`, `set_spacing`, placement within a
-      `Grid` cell) now take effect on every platform, and a child moved to another
-      container (removed first, then added) gets what its new parent decides with
-      nothing left over from the old one. macOS used to require these before adding,
-      and GTK lost a `Stack`'s alignment and a `Grid` column's width to a later
-      `set_sizing`. Inserting into or removing from a `Stack` on macOS no longer takes
-      the other children out, so a field keeps its focus and IME composition. The
-      moved widget keeps its `Scroll` positions (the Web now restores them) and loses
-      the focus, which the guide documents.
-- [x] *(adaptive)* **`Stack::set_orientation`.** A `Stack` can now switch between
-      vertical and horizontal after creation, ending up the same as one made in the
-      new direction. The children stay in place, so a field keeps its focus and IME
-      composition; what depends on the direction (cross-axis alignment and `Fill`,
-      main-axis tracks and hugging, and whether a nested `Stack` leaves the leftover
-      space to its parent) is placed again. `NSStackView.orientation`,
-      `GtkOrientable`, the tracks of Windows's `Grid`, CSS `flex-direction`.
-- [x] **Nested menus, menu items with check marks, and function-key shortcuts**
-      (`MenuBar` and `PopupMenu`). Items can now open submenus to any depth
-      (`MenuItem::submenu`) and show check marks that flip before the notification
-      (`MenuItem::checked`), and `MenuShortcut::function` assigns F1 to F24, on
-      their own or with modifiers. Items are identified by a path (`&[usize]`, like
-      `Tree`), so `on_activate`, `activate`, `set_item_enabled`, `on_select` and
-      `select` take paths instead of indices. `NSMenuItem.submenu` / `state`,
-      `GMenu` submenus with `submenu-action` and boolean actions,
-      `MenuFlyoutSubItem` / `ToggleMenuFlyoutItem`, and nested `role="menu"` with
-      `menuitemcheckbox` on the Web.
-- [x] **Spinning indicators** (`Spinner`). Spins from creation, and
-      `set_spinning(false)` stops it without giving up its space, so the layout does
-      not move. `NSProgressIndicator` (spinning style, `displayedWhenStopped` off),
-      `AdwSpinner` (looked up at run time, falling back to `GtkSpinner` with
-      libadwaita 1.5), `ProgressRing` (`IsActive`). The DOM has no counterpart, so
-      the Web shows an indeterminate `<progress>` (a bar) and the difference is
-      documented.
+- [ ] **Receiving file drops** (from the OS onto widgets and windows). Opening a
+      file by dropping it is expected of any app that edits files, and all four
+      platforms have it natively. `registerForDraggedTypes`, `GtkDropTarget`,
+      `AllowDrop`, the DOM's `drop`. The Web receives file contents rather than
+      paths, so how the dropped files are handed over is decided when work starts.
+- [ ] *(adaptive)* **Automatic collapsing of `Sidebar`** when the window narrows.
+      `NavigationView`'s `PaneDisplayMode::Auto`, `NSSplitViewItem`'s
+      `canCollapseFromWindowResize`, CSS container queries. On Linux the `Sidebar`
+      is built on `GtkPaned` (so its width can be dragged), not
+      `AdwOverlaySplitView`, so whether an `AdwBreakpoint` on the window can drive
+      it is checked first.
+- [ ] **Saving and restoring window position and size.** Window state control
+      (`Window::set_state`, `set_position` and so on) is already in, so this is
+      small now. Linux and the Web restore only the size and state.
+- [ ] *(i18n)* **Write naui's error messages in English.** `Error`'s display
+      ("… に失敗しました") and the context strings passed to it are Japanese, while
+      the documentation is in English. These are messages for developers, so they
+      are not translated, only made English (like `#[deprecated]` notes).
+- [ ] *(i18n)* **The OS's preferred languages, and notification when they
+      change.** The basis for an app choosing which translation to show. Every
+      backend already reads them at startup to choose naui's own strings
+      (`ui_text`), so what remains is making them public and following changes.
+      `NSLocale.preferredLanguages` (`NSCurrentLocaleDidChangeNotification`),
+      `GetUserPreferredUILanguages` (`WM_SETTINGCHANGE` with `intl`),
+      `navigator.languages` (`languagechange`). Linux decides the language from
+      environment variables at startup (`g_get_language_names`), so there is no
+      change notification there. Whether naui's own strings switch along with a
+      change is decided at the same time.
 
 ## P1: Do next
 
 Medium weight and frequently requested, or a smaller gap between platforms.
 
-- [ ] **Receiving file drops** (from the OS onto widgets and windows).
-      `registerForDraggedTypes`, `GtkDropTarget`, `AllowDrop`, the DOM's `drop`.
-- [ ] *(adaptive)* **Automatic collapsing of `Sidebar`** when the window narrows.
-      `NavigationView`'s `PaneDisplayMode::Auto`, `NSSplitViewItem`'s
-      `canCollapseFromWindowResize`, `AdwBreakpoint` (with `AdwOverlaySplitView`),
-      CSS container queries.
-- [ ] **Saving and restoring window position and size.** Window state control
-      (`Window::set_state`, `set_position` and so on) is already in, so this is
-      small now. Linux and the Web restore only the size and state.
 - [ ] **Popovers** (attached to a widget, showing arbitrary content). `NSPopover`,
       `GtkPopover`, `Flyout`, HTML's `popover` attribute. Showing one beside a
       widget on the Web needs CSS anchor positioning, so the decision waits until
@@ -182,10 +142,6 @@ Medium weight and frequently requested, or a smaller gap between platforms.
       drawing with Direct2D onto a Composition drawing surface, the way the other
       three platforms rasterize. The last would also bring DirectWrite text
       measurement, which broadening `Canvas`'s vocabulary waits on.
-- [ ] *(i18n)* **Write naui's error messages in English.** `Error`'s display
-      ("… に失敗しました") and the context strings passed to it are Japanese, while
-      the documentation is in English. These are messages for developers, so they
-      are not translated, only made English (like `#[deprecated]` notes).
 - [ ] **Button roles** (primary buttons, destructive actions). macOS's
       `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
       WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
@@ -207,13 +163,6 @@ Medium weight and frequently requested, or a smaller gap between platforms.
       panes can go is checked when work starts.
 - [ ] **Rich text** (mixing bold, colors and links within a line).
       `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`.
-- [ ] *(i18n)* **The OS's preferred languages, and notification when they
-      change.** The basis for an app choosing which translation to show.
-      `NSLocale.preferredLanguages` (`NSCurrentLocaleDidChangeNotification`),
-      `GetUserPreferredUILanguages` (`WM_SETTINGCHANGE` with `intl`),
-      `navigator.languages` (`languagechange`). Linux decides the language from
-      environment variables at startup (`g_get_language_names`), so there is no
-      change notification there.
 
 ## P2: Do if there is time
 
