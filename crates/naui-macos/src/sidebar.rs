@@ -812,7 +812,11 @@ impl Sidebar {
         }
         self.0.collapsed.set(true);
         self.0.collapsed_for_size.set(true);
+        // 畳むと分割ビューの大きさの通知が届くことがある (macOS 26)。窓はまだ
+        // 広いままなので、その幅で開き直さないよう通知を聞き流す。
+        self.0.applying.set(true);
         self.0.sidebar_item.setCollapsed(true);
+        self.0.applying.set(false);
         self.on_next_turn(|sidebar| sidebar.0.on_collapse.emit(true));
     }
 
@@ -823,8 +827,7 @@ impl Sidebar {
         if !self.0.collapsed_for_size.get() || self.0.applying.get() {
             return;
         }
-        let width = self.0.controller.splitView().frame().size.width;
-        if width < SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH + EXPAND_HYSTERESIS {
+        if !self.has_room() {
             return;
         }
         self.0.collapsed_for_size.set(false);
@@ -832,11 +835,22 @@ impl Sidebar {
             if !sidebar.0.auto_collapse.get() || !sidebar.is_collapsed() {
                 return;
             }
+            // 頼まれてから窓が狭め直されていたら、開かずに待つ。
+            if !sidebar.has_room() {
+                sidebar.0.collapsed_for_size.set(true);
+                return;
+            }
             sidebar.0.collapsed.set(false);
             sidebar.0.sidebar_item.setCollapsed(false);
             sidebar.apply_width();
             sidebar.0.on_collapse.emit(false);
         });
+    }
+
+    /// Whether the split view is wide enough to expand a sidebar collapsed for size.
+    fn has_room(&self) -> bool {
+        let width = self.0.controller.splitView().frame().size.width;
+        width >= SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH + EXPAND_HYSTERESIS
     }
 
     /// Calls `f` on the next iteration of the main queue, if the sidebar is still alive.

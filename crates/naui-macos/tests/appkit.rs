@@ -11993,7 +11993,17 @@ fn sidebar_collapses_during_live_resize(ui: &Ui) -> Result<()> {
         width -= 10.0;
         resize(width);
     }
-    assert!(sidebar.is_collapsed(), "狭めると畳まれる");
+    assert!(
+        sidebar.is_collapsed(),
+        "狭めると畳まれる: frame={:?} split={:?} seen={:?}",
+        native.frame().size,
+        sidebar
+            .native_split_view_controller()
+            .splitView()
+            .frame()
+            .size,
+        seen.borrow()
+    );
     while width < 800.0 {
         width += 10.0;
         resize(width);
