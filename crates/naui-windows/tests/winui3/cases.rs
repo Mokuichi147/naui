@@ -298,6 +298,10 @@ const CASES: &[Case] = &[
         sidebar_items_map_to_native,
     ),
     (
+        "自動で畳むかを切り替えても、畳んだサイドバーは開かない",
+        sidebar_auto_collapse_toggle_keeps_collapsed,
+    ),
+    (
         "サイドバーの選択が通し番号で往復し、select だけが通知する",
         sidebar_selection_round_trips,
     ),
@@ -3134,6 +3138,52 @@ fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
     );
     window.clear_sidebar(); // 付いていなければ何もしない
     Ok(Box::new(|| Ok(())))
+}
+
+/// `NavigationView` forgets that the pane was closed when `PaneDisplayMode` changes,
+/// and reopens it if it is wide enough. This only happens once its template is
+/// applied, so messages are pumped until it is loaded; in environments where it never
+/// is (CI), the case passes without checking.
+fn sidebar_auto_collapse_toggle_keeps_collapsed(ui: &Ui) -> Result<()> {
+    let window = ui.window("自動で畳む", 900.0, 400.0)?;
+    window.set_child(&ui.label("中身")?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般", "詳細"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    let native = sidebar.native_navigation_view();
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || native.IsLoaded().unwrap_or(false));
+    if !native.IsLoaded().unwrap_or(false) {
+        println!("     (読み込まれない環境なので、確かめずに通す)");
+        window.close();
+        return Ok(());
+    }
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = Rc::clone(&seen);
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    // 開閉の通知はアニメーションの後に届くので、切り替えるたびに少し回す。
+    let toggle = |auto: bool| {
+        sidebar.set_auto_collapse(auto);
+        pump_until(Duration::from_millis(300), || false);
+        sidebar.is_collapsed()
+    };
+    sidebar.set_collapsed(true);
+    let collapsed_off = toggle(false);
+    let collapsed_on = toggle(true);
+    sidebar.set_collapsed(false);
+    let open_off = !toggle(false);
+    let open_on = !toggle(true);
+    window.close();
+
+    assert!(collapsed_off, "切っても畳んだまま");
+    assert!(collapsed_on, "入れ直しても畳んだまま");
+    assert!(open_off, "開いていれば開いたまま");
+    assert!(open_on);
+    assert!(seen.borrow().is_empty(), "切り替えでは通知しない");
+    Ok(())
 }
 
 // ------------------------------------------------------------------ 画像

@@ -559,7 +559,13 @@ impl Sidebar {
         } else {
             NavigationViewPaneDisplayMode::Left
         };
+        // 表示形式が変わると、NavigationView は利用者が閉じた印を消し、広ければ
+        // ペインを開き直す。畳まれていたなら畳み直して、そのままにする。
+        let collapsed = self.is_collapsed();
         let _ = self.0.native.SetPaneDisplayMode(mode);
+        if collapsed {
+            let _ = self.0.native.SetIsPaneOpen(false);
+        }
     }
 
     /// Whether the sidebar collapses by itself when the window narrows.
