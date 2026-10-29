@@ -316,6 +316,8 @@ fn stretch(style: &web_sys::CssStyleDeclaration, align: &str, size: &str) {
 
 struct SpacerInner {
     element: HtmlElement,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A widget that is just empty space (`<div>`).
@@ -326,7 +328,10 @@ impl_widget!(Spacer, element);
 impl Spacer {
     pub(crate) fn new(document: &Document) -> Result<Self> {
         let element: HtmlElement = create(document, "div")?.unchecked_into();
-        let this = Self(Rc::new(SpacerInner { element }));
+        let this = Self(Rc::new(SpacerInner {
+            element,
+            file_drop: Default::default(),
+        }));
         // 中身が無いので、余りをすべて受け取る。
         this.set_sizing(Sizing::fill());
         Ok(this)
@@ -343,6 +348,8 @@ struct GridInner {
     rows: Cell<usize>,
     column_tracks: RefCell<Vec<Track>>,
     row_tracks: RefCell<Vec<Track>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A container that positions children by row and column (a CSS Grid `<div>`).
@@ -370,6 +377,7 @@ impl Grid {
             rows: Cell::new(0),
             column_tracks: RefCell::new(Vec::new()),
             row_tracks: RefCell::new(Vec::new()),
+            file_drop: Default::default(),
         })))
     }
 
@@ -545,6 +553,8 @@ struct ScrollInner {
     /// The subscription to size changes. Dropping it also unsubscribes.
     observer: RefCell<Option<ResizeObserver>>,
     observer_callback: RefCell<Option<Closure<dyn FnMut(JsValue)>>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 impl Drop for ScrollInner {
@@ -577,6 +587,7 @@ impl Scroll {
             reattached_listener: RefCell::new(None),
             observer: RefCell::new(None),
             observer_callback: RefCell::new(None),
+            file_drop: Default::default(),
         }));
         this.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
         this.observe()?;

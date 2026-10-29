@@ -48,6 +48,8 @@ struct FilePickerInner {
     /// Without revoking, the picked files' contents would not be freed until the page's
     /// lifetime ends.
     object_urls: RefCell<Vec<String>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 impl Drop for FilePickerInner {
@@ -97,6 +99,7 @@ impl FilePicker {
             click: RefCell::new(None),
             change: RefCell::new(None),
             object_urls: RefCell::new(Vec::new()),
+            file_drop: Default::default(),
         }));
         this.install_handlers()?;
         Ok(this)

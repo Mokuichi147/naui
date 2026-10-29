@@ -23,6 +23,8 @@ struct ToggleInner {
     element: HtmlElement,
     input: HtmlInputElement,
     listener: RefCell<Option<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// An on/off switch (`<input type="checkbox" switch>`).
@@ -58,6 +60,7 @@ impl Toggle {
             element,
             input,
             listener: RefCell::new(None),
+            file_drop: Default::default(),
         })))
     }
 

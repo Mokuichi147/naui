@@ -5669,6 +5669,94 @@ async fn file_drop_reaches_the_innermost_target() {
     window.close();
 }
 
+/// Drops onto text fields do not reach `on_file_drop`, even the parent's, as on the
+/// other platforms. The document refuses them instead.
+#[wasm_bindgen_test]
+fn file_drop_skips_text_fields() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("入力欄へのドロップ", 400.0, 300.0)?;
+        let outer = ui.stack(Orientation::Vertical)?;
+        let input = ui.text_input("")?;
+        let area = ui.text_area("")?;
+        let plain = ui.label("受け取る")?;
+        outer.append(&input);
+        outer.append(&area);
+        outer.append(&plain);
+        window.set_child(&outer);
+        window.show();
+        kept = Some((window, outer, input, area, plain));
+        Ok(())
+    });
+    let (window, outer, input, area, plain) = kept.expect("widgets");
+    let dropped = Rc::new(Cell::new(0));
+    outer.on_file_drop({
+        let dropped = dropped.clone();
+        move |_| dropped.set(dropped.get() + 1)
+    });
+    // 入力欄自身に設定しても、入力欄へのドロップは届かない。
+    input.on_file_drop({
+        let dropped = dropped.clone();
+        move |_| dropped.set(dropped.get() + 1)
+    });
+
+    let area_element = area
+        .native_element()
+        .query_selector("textarea")
+        .expect("検索")
+        .unwrap_or_else(|| area.native_element());
+    for field in [input.native_element(), area_element] {
+        assert!(
+            fire_drag(&field, "drop", &["メモ.txt"]),
+            "ブラウザがファイルを開かないよう、文書が断る"
+        );
+    }
+    assert_eq!(dropped.get(), 0, "入力欄へのドロップは親へも届かない");
+
+    assert!(fire_drag(&plain.native_element(), "drop", &["メモ.txt"]));
+    assert_eq!(dropped.get(), 1, "入力欄の外なら親が受け取る");
+    window.close();
+}
+
+/// The URLs handed out are revoked when the widget that received them goes away,
+/// not only on the next drop.
+#[wasm_bindgen_test]
+async fn file_drop_revokes_urls_when_the_widget_goes_away() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("受け口の破棄", 400.0, 300.0)?;
+        let stack = ui.stack(Orientation::Vertical)?;
+        let target = ui.label("ここへ落とす")?;
+        stack.append(&target);
+        window.set_child(&stack);
+        window.show();
+        kept = Some((window, stack, target));
+        Ok(())
+    });
+    let (window, stack, target) = kept.expect("widgets");
+    let urls = Rc::new(RefCell::new(Vec::new()));
+    target.on_file_drop({
+        let urls = urls.clone();
+        move |files| {
+            urls.borrow_mut()
+                .extend(files.iter().filter_map(|f| f.source()).map(str::to_string))
+        }
+    });
+    let element = target.native_element();
+    assert!(fire_drag(&element, "drop", &["メモ.txt"]));
+    let url = urls.borrow()[0].clone();
+    assert_eq!(read_blob(&url).await.as_deref(), Some("メモ.txt"));
+
+    stack.clear();
+    drop(target);
+    assert_eq!(
+        read_blob(&url).await,
+        None,
+        "ウィジェットが無くなったら、最後に渡した URL も取り消す"
+    );
+    window.close();
+}
+
 /// Reads the text behind a `blob:` URL. `None` once the URL has been revoked.
 async fn read_blob(url: &str) -> Option<String> {
     let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(

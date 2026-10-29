@@ -279,6 +279,8 @@ struct TabsInner {
     children: RefCell<Vec<Box<dyn Widget>>>,
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Tabs. Holds each tab's content widget.
@@ -323,6 +325,7 @@ impl Tabs {
             children: RefCell::new(Vec::new()),
             handler: SelectHandler::default(),
             selected: Cell::new(None),
+            file_drop: Default::default(),
         })))
     }
 
@@ -534,6 +537,8 @@ struct NavbarInner {
     title: HtmlElement,
     document: Document,
     bar: Bar,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Horizontal navigation placed at the top of the screen (`<nav>`).
@@ -560,6 +565,7 @@ impl Navbar {
             title: title_element,
             document: doc.clone(),
             bar,
+            file_drop: Default::default(),
         })))
     }
 
@@ -579,6 +585,8 @@ struct DockInner {
     element: HtmlElement,
     document: Document,
     bar: Bar,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Horizontal navigation placed at the bottom of the screen (equal widths,
@@ -600,6 +608,7 @@ impl Dock {
             element,
             document: doc.clone(),
             bar,
+            file_drop: Default::default(),
         })))
     }
 }
@@ -610,6 +619,8 @@ struct MenuInner {
     element: HtmlElement,
     document: Document,
     bar: Bar,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A vertical list of navigation items (`<nav><ul>`).
@@ -639,6 +650,7 @@ impl Menu {
             element,
             document: doc.clone(),
             bar,
+            file_drop: Default::default(),
         })))
     }
 }
@@ -649,6 +661,8 @@ struct BreadcrumbsInner {
     element: HtmlElement,
     document: Document,
     bar: Bar,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Breadcrumbs (`<nav><ol>`).
@@ -675,6 +689,7 @@ impl Breadcrumbs {
             element,
             document: doc.clone(),
             bar,
+            file_drop: Default::default(),
         })))
     }
 
@@ -723,6 +738,8 @@ struct PaginationInner {
     bar: Bar,
     /// The subscriptions for previous / next.
     _steps: RefCell<Vec<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Pagination (`<nav>` + `<button>`).
@@ -756,6 +773,7 @@ impl Pagination {
             document: doc.clone(),
             bar,
             _steps: RefCell::new(Vec::new()),
+            file_drop: Default::default(),
         }));
 
         let mut steps = Vec::new();
@@ -837,6 +855,8 @@ impl Pagination {
 struct LinkInner {
     element: HtmlElement,
     listener: RefCell<Option<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A link (`<a>`).
@@ -857,6 +877,7 @@ impl Link {
         let this = Self(Rc::new(LinkInner {
             element,
             listener: RefCell::new(None),
+            file_drop: Default::default(),
         }));
         this.set_href(href);
         Ok(this)

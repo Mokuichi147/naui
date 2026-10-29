@@ -29,6 +29,8 @@ struct DatePickerInner {
     /// The subscriptions for input and for confirmation. Dropping them also
     /// unsubscribes.
     listeners: RefCell<Vec<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A control for picking a date and time (the date-type `<input>`s).
@@ -52,6 +54,7 @@ impl DatePicker {
             max: Cell::new(None),
             on_change: ValueHandler::default(),
             listeners: RefCell::new(Vec::new()),
+            file_drop: Default::default(),
         }));
         this.write_native(this.value());
 

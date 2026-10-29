@@ -126,6 +126,8 @@ struct TreeInner {
     listeners: RefCell<Vec<Listener>>,
     /// The subscription for key operations on the whole tree.
     _keys: RefCell<Option<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A list whose nested items can be expanded and collapsed (`role="tree"`).
@@ -173,6 +175,7 @@ impl Tree {
             expand: ExpandHandler::default(),
             listeners: RefCell::new(Vec::new()),
             _keys: RefCell::new(None),
+            file_drop: Default::default(),
         }));
 
         let keys = Listener::attach_event(this.0.root.as_ref(), "keydown", {

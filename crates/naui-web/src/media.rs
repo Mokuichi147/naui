@@ -35,6 +35,8 @@ struct ImageInner {
     /// Exactly the string that was passed, since `src` gets resolved to an absolute
     /// URL.
     source: RefCell<String>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Image display (`<img>`).
@@ -51,6 +53,7 @@ impl Image {
         let this = Self(Rc::new(ImageInner {
             element,
             source: RefCell::new(String::new()),
+            file_drop: Default::default(),
         }));
         this.set_fit(Fit::default());
         this.set_source(source);
@@ -176,6 +179,8 @@ struct MediaInner {
     /// The event subscriptions for notifying the state. Valid only while the handle is
     /// alive.
     listeners: RefCell<Vec<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 impl MediaInner {
@@ -189,6 +194,7 @@ impl MediaInner {
             handler: StateHandler::default(),
             position: PositionHandler::default(),
             listeners: RefCell::new(Vec::new()),
+            file_drop: Default::default(),
         });
         this.subscribe()?;
         Ok(this)

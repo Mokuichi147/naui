@@ -43,6 +43,8 @@ struct EditableComboBoxInner {
     _listener: RefCell<Option<Listener>>,
     key_down: KeyDown,
     focus: crate::focus::Focus,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A field where the user can either choose from suggestions or type freely
@@ -94,6 +96,7 @@ impl EditableComboBox {
             _listener: RefCell::new(None),
             key_down: KeyDown::default(),
             focus: Default::default(),
+            file_drop: Default::default(),
         });
         // 打鍵でも候補の選択でも `input` が飛ぶので、購読は 1 本で足りる。
         let listener = Listener::attach(inner.input.as_ref(), "input", {

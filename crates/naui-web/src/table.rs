@@ -387,6 +387,8 @@ struct TableInner {
     _keys: RefCell<Option<Listener>>,
     /// The scroll subscription. Used to move the window.
     _scroll: RefCell<Option<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A table with column headings (`<table>`).
@@ -469,6 +471,7 @@ impl Table {
             row_listeners: RefCell::new(Vec::new()),
             _keys: RefCell::new(None),
             _scroll: RefCell::new(None),
+            file_drop: Default::default(),
         }));
         this.apply_mode();
 

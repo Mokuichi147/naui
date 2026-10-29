@@ -65,6 +65,8 @@ struct WindowInner {
     /// The value requested with `set_resizable`. It has no effect on the Web and is just
     /// remembered.
     resizable: Cell<bool>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// The handler passed to `ResizeObserver`.
@@ -159,6 +161,7 @@ impl Window {
             in_flight: Cell::new(None),
             settled: RefCell::new(None),
             resizable: Cell::new(true),
+            file_drop: Default::default(),
         }));
         this.observe_fullscreen();
         this.set_title(title);
@@ -281,10 +284,10 @@ impl Window {
     ///
     /// A widget under the pointer with its own `on_file_drop` takes the drop
     /// instead. As with widgets, the entries carry `blob:` URLs instead of paths,
-    /// valid until the next drop onto the window. Setting it again replaces the
-    /// previous closure.
+    /// valid until the next drop onto the window, or until the window is dropped.
+    /// Setting it again replaces the previous closure.
     pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
-        crate::file_drop::set_handler(&self.0.element, f);
+        self.0.file_drop.set(&self.0.element, f);
     }
 
     /// Notified when the size changes. Receives the new [`size`](Self::size).

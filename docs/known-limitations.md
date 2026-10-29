@@ -384,10 +384,12 @@ that shape are covered in
   `set_state(WindowState::Fullscreen)` at startup or from a timer is refused, and
   the state does not change. Safari on iPhone has no Fullscreen API.
 - `on_file_drop` receives contents, not paths. Each file's `source` is a `blob:`
-  URL that stays valid until the next drop onto the same widget or window. A
-  dropped folder comes with only its name. Once any `on_file_drop` is set, file
-  drops that nothing takes are refused for the whole page, so the browser does not
-  replace the page with the dropped file.
+  URL that stays valid until the next drop onto the same widget or window, or
+  until that widget or window is dropped. A dropped folder comes with only its
+  name. Once any `on_file_drop` is set, file drops that nothing takes are refused
+  for the whole page, so the browser does not replace the page with the dropped
+  file. Drops onto text fields are among them: they reach neither `on_file_drop`
+  nor the field.
 
 ### Other threads and async
 

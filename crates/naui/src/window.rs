@@ -149,7 +149,8 @@ impl Window {
     /// previous closure.
     ///
     /// On the Web the entries carry no path; [`FileEntry::source`] is a `blob:` URL
-    /// that stays valid until the next drop onto the same window. See
+    /// that stays valid until the next drop onto the same window, or until the
+    /// window is dropped. See
     /// [Receiving dropped files](crate::guide#receiving-dropped-files).
     #[inline]
     pub fn on_file_drop(&self, f: impl FnMut(&[FileEntry]) + 'static) {

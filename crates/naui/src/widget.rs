@@ -112,7 +112,8 @@ macro_rules! impl_widget {
             /// takes. Setting it again replaces the previous closure.
             ///
             /// On the Web the entries carry no path; [`FileEntry::source`] is a `blob:`
-            /// URL that stays valid until the next drop onto the same widget. See
+            /// URL that stays valid until the next drop onto the same widget, or until
+            /// the widget is dropped. See
             /// [Receiving dropped files](crate::guide#receiving-dropped-files).
             ///
             /// [`FileEntry::source`]: naui_core::FileEntry::source

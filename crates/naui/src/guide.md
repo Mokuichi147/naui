@@ -2237,15 +2237,18 @@ What arrives differs as with `FilePicker`:
 - **On the Web, `path` is `None`**, because the browser hands over contents, not
   paths. [`FileEntry::source`] is a `blob:` URL that can be passed to
   `Image::set_source` and the like or read with `fetch`. It **stays valid until the
-  next drop onto the same widget (or window)**, which revokes it. A dropped folder
-  comes as one entry with only its name, as with the folder mode of `FilePicker`.
-  Once any `on_file_drop` is set, files dropped where nothing takes them are
-  refused, instead of the browser opening the file in place of the page.
+  next drop onto the same widget (or window)**, which revokes it, or until the
+  widget is dropped. A dropped folder comes as one entry with only its name, as
+  with the folder mode of `FilePicker`. Once any `on_file_drop` is set, files
+  dropped where nothing takes them are refused, instead of the browser opening the
+  file in place of the page.
 - **On Windows the closure is called a moment after the drop**, once the files have
   been read (`GetStorageItemsAsync` completes asynchronously).
 - **Text fields take dropped files as text themselves** on macOS and Linux, and
   `TextBox` handles drags itself on Windows, so drops onto text-input widgets do
-  not reach `on_file_drop`.
+  not reach `on_file_drop`. On the Web they do not reach it either, and are
+  refused like other drops nothing takes, since the browser would otherwise open
+  the file in place of the page.
 
 ## Dialogs
 

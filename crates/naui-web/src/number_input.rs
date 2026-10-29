@@ -29,6 +29,8 @@ struct NumberInputInner {
     listeners: RefCell<Vec<Listener>>,
     key_down: KeyDown,
     focus: crate::focus::Focus,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A control for entering a number (`<input type="number">`).
@@ -55,6 +57,7 @@ impl NumberInput {
             listeners: RefCell::new(Vec::new()),
             key_down: KeyDown::default(),
             focus: Default::default(),
+            file_drop: Default::default(),
         }));
         this.write_native_spec();
         this.write_native(this.value());

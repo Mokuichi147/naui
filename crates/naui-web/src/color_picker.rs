@@ -21,6 +21,8 @@ struct ColorPickerInner {
     on_change: ValueHandler<Color>,
     /// The `change` subscription. Dropping it also unsubscribes.
     _listener: RefCell<Option<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A control for picking a color (`<input type="color">`).
@@ -41,6 +43,7 @@ impl ColorPicker {
             input,
             on_change: ValueHandler::default(),
             _listener: RefCell::new(None),
+            file_drop: Default::default(),
         });
         // 選んでいる最中は `input` が何度も飛ぶので、確定の `change` だけを
         // 受ける (`DatePicker` が確定で表示をそろえるのと同じ考え方)。

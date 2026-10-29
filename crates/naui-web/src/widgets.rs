@@ -96,10 +96,13 @@ macro_rules! impl_widget {
             /// The browser hands over contents, not paths:
             /// [`FileEntry::path`](naui_core::FileEntry::path) is `None`, and
             /// [`FileEntry::source`](naui_core::FileEntry::source) is a `blob:` URL that
-            /// stays valid until the next drop onto this widget. A dropped folder comes
-            /// with only its name.
+            /// stays valid until the next drop onto this widget, or until the widget is
+            /// dropped. A dropped folder comes with only its name. Drops onto text
+            /// fields do not arrive.
             pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
-                crate::file_drop::set_handler(&<$t as Widget>::native_element(self), f);
+                self.0
+                    .file_drop
+                    .set(&<$t as Widget>::native_element(self), f);
             }
 
             /// Creates a weak reference. Capture it when touching this widget from its own
@@ -304,6 +307,8 @@ impl Drop for Listener {
 
 struct LabelInner {
     element: HtmlElement,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Text display (`<span>`).
@@ -315,7 +320,10 @@ impl Label {
     pub(crate) fn new(doc: &Document, text: &str) -> Result<Self> {
         let element: HtmlElement = create(doc, "span")?.unchecked_into();
         element.set_text_content(Some(text));
-        let this = Self(Rc::new(LabelInner { element }));
+        let this = Self(Rc::new(LabelInner {
+            element,
+            file_drop: Default::default(),
+        }));
         this.set_wrap(false);
         // 他の 3 環境のラベルと同じく、既定では選べない。
         this.set_selectable(false);
@@ -416,6 +424,8 @@ fn set_or_clear(element: &HtmlElement, property: &str, value: Option<&str>) {
 struct ButtonInner {
     element: HtmlElement,
     listener: RefCell<Option<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A push button (`<button>`).
@@ -430,6 +440,7 @@ impl Button {
         Ok(Self(Rc::new(ButtonInner {
             element,
             listener: RefCell::new(None),
+            file_drop: Default::default(),
         })))
     }
 
@@ -460,6 +471,8 @@ struct CheckboxInner {
     element: HtmlElement,
     input: HtmlInputElement,
     listener: RefCell<Option<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A check box (`<input type="checkbox">`).
@@ -490,6 +503,7 @@ impl Checkbox {
             element,
             input,
             listener: RefCell::new(None),
+            file_drop: Default::default(),
         })))
     }
 
@@ -529,6 +543,8 @@ struct TextInputInner {
     on_submit: RefCell<Option<Listener>>,
     key_down: KeyDown,
     focus: crate::focus::Focus,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Single-line text input (`<input type="text">`). The browser handles the IME.
@@ -549,6 +565,7 @@ impl TextInput {
             on_submit: RefCell::new(None),
             key_down: KeyDown::default(),
             focus: Default::default(),
+            file_drop: Default::default(),
         })))
     }
 
@@ -613,6 +630,8 @@ struct PasswordInputInner {
     on_submit: RefCell<Option<Listener>>,
     key_down: KeyDown,
     focus: crate::focus::Focus,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Password input (`<input type="password">`).
@@ -636,6 +655,7 @@ impl PasswordInput {
             on_submit: RefCell::new(None),
             key_down: KeyDown::default(),
             focus: Default::default(),
+            file_drop: Default::default(),
         })))
     }
 
@@ -682,6 +702,8 @@ struct SearchInputInner {
     on_search: RefCell<Option<Listener>>,
     key_down: KeyDown,
     focus: crate::focus::Focus,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A search field (`<input type="search">`).
@@ -704,6 +726,7 @@ impl SearchInput {
             on_search: RefCell::new(None),
             key_down: KeyDown::default(),
             focus: Default::default(),
+            file_drop: Default::default(),
         })))
     }
 
@@ -776,6 +799,8 @@ struct TextAreaInner {
     on_change: RefCell<Option<Listener>>,
     key_down: KeyDown,
     focus: crate::focus::Focus,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// Multi-line text input (`<textarea>`). The browser handles the IME.
@@ -794,6 +819,7 @@ impl TextArea {
             on_change: RefCell::new(None),
             key_down: KeyDown::default(),
             focus: Default::default(),
+            file_drop: Default::default(),
         })))
     }
 
@@ -849,6 +875,8 @@ struct SliderInner {
     listener: RefCell<Option<Listener>>,
     min: f64,
     max: f64,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A slider (`<input type="range">`).
@@ -870,6 +898,7 @@ impl Slider {
             listener: RefCell::new(None),
             min,
             max,
+            file_drop: Default::default(),
         })))
     }
 
@@ -906,6 +935,8 @@ struct ProgressInner {
     /// it is kept separately.
     value: Cell<f64>,
     indeterminate: Cell<bool>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A progress bar (`<progress>`).
@@ -922,6 +953,7 @@ impl ProgressBar {
             element,
             value: Cell::new(0.0),
             indeterminate: Cell::new(false),
+            file_drop: Default::default(),
         })))
     }
 
@@ -964,6 +996,8 @@ impl ProgressBar {
 struct SpinnerInner {
     element: HtmlProgressElement,
     spinning: Cell<bool>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A spinning indicator. The DOM has no spinner, so it is an indeterminate
@@ -979,6 +1013,7 @@ impl Spinner {
         Ok(Self(Rc::new(SpinnerInner {
             element,
             spinning: Cell::new(true),
+            file_drop: Default::default(),
         })))
     }
 
@@ -1007,6 +1042,8 @@ struct StackInner {
     element: HtmlElement,
     orientation: Cell<Orientation>,
     children: RefCell<Vec<Box<dyn Widget>>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A container that lays out its children vertically / horizontally (a Flexbox
@@ -1025,6 +1062,7 @@ impl Stack {
             element,
             orientation: Cell::new(orientation),
             children: RefCell::new(Vec::new()),
+            file_drop: Default::default(),
         }));
         this.apply_direction();
         Ok(this)

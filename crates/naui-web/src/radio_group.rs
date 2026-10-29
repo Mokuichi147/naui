@@ -41,6 +41,8 @@ struct RadioGroupInner {
     /// The setting from [`set_enabled`](RadioGroup::set_enabled). Remembered so the
     /// inputs recreated by `set_items` get the same state.
     enabled: Cell<bool>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A radio group that lays out options and lets the user choose exactly one
@@ -70,6 +72,7 @@ impl RadioGroup {
             listeners: RefCell::new(Vec::new()),
             on_select: SelectionHandler::default(),
             enabled: Cell::new(true),
+            file_drop: Default::default(),
         })))
     }
 
