@@ -483,6 +483,18 @@ fn main() {
             sidebar_toggle_button_collapses_and_notifies,
         ),
         (
+            "サイドバーがウィンドウを狭めると畳まれ、広げると開き直す",
+            sidebar_collapses_when_the_window_narrows,
+        ),
+        (
+            "サイドバーを自動で畳む予約は、行う前に窓が戻ったら取り消される",
+            sidebar_drops_a_stale_auto_collapse,
+        ),
+        (
+            "中身に最小幅があっても、サイドバーは元の幅で畳むかを決め、幅を保つ",
+            sidebar_collapses_beside_content_with_a_min_width,
+        ),
+        (
             "すべてのアイコンがテーマに実在する",
             toolbar_icons_exist_in_the_theme,
         ),
@@ -7504,6 +7516,270 @@ fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
         "外すと中身のヘッダーバーが両端のボタンを出し直す"
     );
     window.clear_sidebar(); // 付いていなければ何もしない
+    window.close();
+    Ok(())
+}
+
+/// When the window gets too narrow for the sidebar and
+/// `SIDEBAR_COLLAPSE_CONTENT_WIDTH` of content, the sidebar collapses after the paint
+/// and expands again when it widens. What the user chose is kept.
+fn sidebar_collapses_when_the_window_narrows(ui: &Ui) -> Result<()> {
+    use naui_core::SIDEBAR_COLLAPSE_CONTENT_WIDTH;
+    use std::time::Duration;
+
+    let window = ui.window("サイドバーの自動の開閉", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    assert!(sidebar.auto_collapse(), "既定で自動で畳む");
+    window.set_sidebar(&sidebar);
+    window.show();
+    let paned = sidebar.native_paned();
+    spin_until(Duration::from_secs(2), || paned.width() >= 700);
+    assert!(!sidebar.is_collapsed(), "広いうちは開いている");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    let narrow = DEFAULT_SIDEBAR_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH - 60.0;
+    let wait = |len: usize| spin_until(Duration::from_secs(3), || seen.borrow().len() >= len);
+
+    window.set_size(narrow, 400.0);
+    wait(1);
+    assert!(
+        sidebar.is_collapsed(),
+        "狭めると畳まれる: paned={}",
+        paned.width()
+    );
+    assert_eq!(*seen.borrow(), [true], "畳んだことが届く");
+    assert!(
+        window.native_header_bar().shows_start_title_buttons(),
+        "畳んだ姿はボタンで閉じたときと同じ"
+    );
+
+    window.set_size(800.0, 400.0);
+    wait(2);
+    assert!(!sidebar.is_collapsed(), "広げると開き直す");
+    assert_eq!(*seen.borrow(), [true, false]);
+    assert_eq!(
+        f64::from(paned.position()),
+        DEFAULT_SIDEBAR_WIDTH,
+        "元の幅で開く"
+    );
+
+    // 狭いうちに利用者が開いたら開いたまま。
+    window.set_size(narrow, 400.0);
+    wait(3);
+    sidebar.native_toggle_button().set_active(true);
+    pump();
+    assert_eq!(*seen.borrow(), [true, false, true, false]);
+    window.set_size(narrow - 20.0, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    assert!(!sidebar.is_collapsed(), "狭いまま動かしても閉じない");
+
+    // 利用者が閉じたものは、狭めて広げても開かない。
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    sidebar.native_toggle_button().set_active(false);
+    pump();
+    window.set_size(narrow, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    assert!(sidebar.is_collapsed(), "利用者が閉じたまま");
+    assert_eq!(seen.borrow().len(), 5, "利用者の操作だけが届く");
+
+    // 自動で畳んだあとアプリが畳み直したら、見た目は変わらなくても
+    // アプリが決めたものになり、広げても開かない。
+    sidebar.set_collapsed(false);
+    window.set_size(narrow, 400.0);
+    wait(6);
+    assert!(
+        sidebar.is_collapsed(),
+        "開き直したものもまた狭めると畳まれる"
+    );
+    sidebar.set_collapsed(true);
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    assert!(sidebar.is_collapsed(), "アプリが畳んだまま");
+    assert_eq!(seen.borrow().len(), 6);
+
+    // 切ると畳まない。
+    sidebar.set_collapsed(false);
+    sidebar.set_auto_collapse(false);
+    assert!(!sidebar.auto_collapse());
+    window.set_size(narrow, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    assert!(!sidebar.is_collapsed(), "切っていれば畳まない");
+    assert_eq!(seen.borrow().len(), 6);
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// The automatic collapse is decided after a paint and done in the next main loop
+/// iteration. If the width comes back in between, the scheduled collapse is cancelled
+/// rather than collapsing the sidebar in a wide window, where it would never expand
+/// again.
+fn sidebar_drops_a_stale_auto_collapse(ui: &Ui) -> Result<()> {
+    use naui_core::SIDEBAR_COLLAPSE_CONTENT_WIDTH;
+    use std::time::Duration;
+
+    let window = ui.window("サイドバーの古い予約", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    let paned = sidebar.native_paned();
+    spin_until(Duration::from_secs(2), || paned.width() >= 700);
+    let wide = paned.width();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+
+    // サイドバーの後につなぐので、狭い幅で描いて畳むのを予約した直後に呼ばれる。
+    // そこで窓を戻し、描き直し (GDK_PRIORITY_REDRAW = 120) は通すが idle (200) は
+    // 待たせる source を挟む。予約を行う前に、元の幅で描き直された形になる。
+    let threshold = (DEFAULT_SIDEBAR_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH) as i32;
+    let clock = paned.frame_clock().expect("表示した後は時計がある");
+    let done = Rc::new(Cell::new(false));
+    let held = Rc::new(Cell::new(false));
+    let handler = clock.connect_after_paint({
+        let paned = paned.clone();
+        let window = window.clone();
+        let done = done.clone();
+        let held = held.clone();
+        move |_| {
+            if done.get() || paned.width() >= threshold {
+                return;
+            }
+            done.set(true);
+            window.set_size(800.0, 400.0);
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            let paned = paned.clone();
+            let held = held.clone();
+            glib::idle_add_local_full(glib::Priority::from(150), move || {
+                if paned.width() < wide && std::time::Instant::now() < deadline {
+                    return glib::ControlFlow::Continue;
+                }
+                held.set(paned.width() >= wide);
+                glib::ControlFlow::Break
+            });
+        }
+    });
+    let narrow = DEFAULT_SIDEBAR_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH - 60.0;
+    window.set_size(narrow, 400.0);
+    spin_until(Duration::from_secs(2), || done.get());
+    clock.disconnect(handler);
+    assert!(done.get(), "狭い幅で描かれた");
+    spin_until(Duration::from_secs(3), || held.get());
+    assert!(held.get(), "予約を行う前に元の幅で描き直された");
+    spin_until(Duration::from_millis(500), || false);
+    assert!(
+        !sidebar.is_collapsed(),
+        "広い窓では畳まない: paned={}, 届いた通知={:?}",
+        paned.width(),
+        seen.borrow()
+    );
+
+    // 判断の状態も崩れていない。狭めれば畳まれ、広げれば開き直す。
+    seen.borrow_mut().clear();
+    window.set_size(narrow, 400.0);
+    spin_until(Duration::from_secs(3), || !seen.borrow().is_empty());
+    assert!(sidebar.is_collapsed(), "狭めると畳まれる");
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_secs(3), || seen.borrow().len() >= 2);
+    assert!(!sidebar.is_collapsed(), "広げると開き直す");
+    assert_eq!(*seen.borrow(), [true, false]);
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// When the content has a minimum width, `GtkPaned` narrows the sidebar before the
+/// window gets too narrow for both. That is the layout's doing, not the user's: the
+/// width is kept, collapsing is decided with it, and the sidebar is back at it once
+/// there is room.
+fn sidebar_collapses_beside_content_with_a_min_width(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+
+    let window = ui.window("中身に最小幅", 800.0, 400.0)?;
+    let content = ui.stack(Orientation::Vertical)?;
+    content.native_widget().set_size_request(400, -1);
+    window.set_child(&content);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    let paned = sidebar.native_paned();
+    spin_until(Duration::from_secs(2), || paned.width() >= 700);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
+
+    // サイドバーと中身の最小幅の和 (620) より狭いが、畳む幅 (580) よりは広い。
+    // GtkPaned がサイドバーを詰めても、それは利用者が決めた幅ではない。
+    window.set_size(600.0, 400.0);
+    spin_until(Duration::from_secs(2), || paned.width() < 620);
+    spin_until(Duration::from_millis(300), || false);
+    assert!(!sidebar.is_collapsed(), "まだ畳まない");
+    assert!(
+        paned.position() < DEFAULT_SIDEBAR_WIDTH as i32,
+        "中身に押されて詰まる: position={}",
+        paned.position()
+    );
+    assert_eq!(sidebar.width(), DEFAULT_SIDEBAR_WIDTH, "幅は保つ");
+    assert!(resized.borrow().is_empty(), "幅の通知は来ない");
+
+    // 元の幅で決めるので、畳む幅を切れば畳まれる。
+    window.set_size(560.0, 400.0);
+    spin_until(Duration::from_secs(3), || !seen.borrow().is_empty());
+    assert!(
+        sidebar.is_collapsed(),
+        "畳まれる: paned={}, width={}",
+        paned.width(),
+        sidebar.width()
+    );
+
+    // 広げると元の幅で開き直す。
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_secs(3), || seen.borrow().len() >= 2);
+    assert!(!sidebar.is_collapsed(), "開き直す");
+    assert_eq!(*seen.borrow(), [true, false]);
+    tick(&paned);
+    assert_eq!(
+        paned.position(),
+        DEFAULT_SIDEBAR_WIDTH as i32,
+        "元の幅で開く"
+    );
+
+    // 詰まっただけのものも、場所ができれば元の幅へ戻る。
+    window.set_size(600.0, 400.0);
+    spin_until(Duration::from_secs(2), || paned.width() < 620);
+    spin_until(Duration::from_millis(300), || false);
+    assert!(paned.position() < DEFAULT_SIDEBAR_WIDTH as i32);
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_secs(2), || {
+        paned.width() >= 700 && paned.position() == DEFAULT_SIDEBAR_WIDTH as i32
+    });
+    assert_eq!(
+        paned.position(),
+        DEFAULT_SIDEBAR_WIDTH as i32,
+        "元の幅へ戻る"
+    );
+    assert!(resized.borrow().is_empty(), "幅の通知は来ない");
+    window.clear_sidebar();
     window.close();
     Ok(())
 }

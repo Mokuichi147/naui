@@ -95,12 +95,15 @@ internationalization tracks.
       `AllowDrop`, the DOM's `drop`. Every widget and `Window` have
       `on_file_drop`, and the files arrive as the same `FileEntry`s `FilePicker`
       returns: absolute paths natively, `blob:` URLs on the Web.
-- [ ] *(adaptive)* **Automatic collapsing of `Sidebar`** when the window narrows.
-      `NavigationView`'s `PaneDisplayMode::Auto`, `NSSplitViewItem`'s
-      `canCollapseFromWindowResize`, CSS container queries. On Linux the `Sidebar`
-      is built on `GtkPaned` (so its width can be dragged), not
-      `AdwOverlaySplitView`, so whether an `AdwBreakpoint` on the window can drive
-      it is checked first.
+- [x] *(adaptive)* **Automatic collapsing of `Sidebar`** when the window narrows.
+      On by default (`Sidebar::set_auto_collapse`): it collapses when the content
+      beside it would get narrower than `SIDEBAR_COLLAPSE_CONTENT_WIDTH` (360),
+      expands again when the window widens, and notifies through `on_collapse`.
+      `NSSplitViewItem`'s `canCollapseFromWindowResize` and `NavigationView`'s
+      `PaneDisplayMode::Auto` decide on macOS and Windows. Linux and the Web decide
+      in naui (`SidebarAutoCollapse`): an `AdwBreakpoint` takes away the minimum
+      size of the window (or `AdwBreakpointBin`) holding it, and a CSS container
+      query cannot tell the page when it applies.
 - [ ] **Saving and restoring window position and size.** Window state control
       (`Window::set_state`, `set_position` and so on) is already in, so this is
       small now. Linux and the Web restore only the size and state.

@@ -24,13 +24,20 @@
 //!
 //! To match the other backends it is not a [`Widget`](crate::Widget); it is
 //! attached to the window with [`Window::set_sidebar`](crate::Window::set_sidebar).
+//!
+//! It collapses when the window narrows, deciding with a `ResizeObserver` on the
+//! `SplitView` ([`SidebarAutoCollapse`]), the same rule as on Linux. A CSS container
+//! query could hide the sidebar by itself, but nothing tells the page when one
+//! starts or stops matching, and the collapse button's `aria-expanded`,
+//! [`is_collapsed`](Sidebar::is_collapsed) and `on_collapse` have to follow it.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    sidebar_item, sidebar_len, sidebar_rows, ui_strings, Result, SidebarItem, SidebarRow,
-    SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
+    sidebar_item, sidebar_len, sidebar_rows, ui_strings, Result, SidebarAutoChange,
+    SidebarAutoCollapse, SidebarItem, SidebarRow, SidebarSection, DEFAULT_SIDEBAR_WIDTH,
+    SIDEBAR_MIN_WIDTH,
 };
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
@@ -81,6 +88,24 @@ struct SidebarInner {
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
     id: usize,
+    /// Whether the sidebar collapses automatically when the window narrows.
+    auto_collapse: Cell<bool>,
+    /// What decides the automatic collapsing.
+    auto: Cell<SidebarAutoCollapse>,
+    /// Watches the `SplitView`'s width.
+    observer: RefCell<Option<web_sys::ResizeObserver>>,
+    observer_callback: RefCell<Option<ObserverCallback>>,
+}
+
+/// The handler passed to `ResizeObserver`.
+type ObserverCallback = wasm_bindgen::closure::Closure<dyn FnMut(wasm_bindgen::JsValue)>;
+
+impl Drop for SidebarInner {
+    fn drop(&mut self) {
+        if let Some(observer) = self.observer.borrow_mut().take() {
+            observer.disconnect();
+        }
+    }
 }
 
 /// A sidebar attached to the left of the window.
@@ -157,6 +182,10 @@ impl Sidebar {
             handler: SelectHandler::default(),
             selected: Cell::new(None),
             id,
+            auto_collapse: Cell::new(true),
+            auto: Cell::new(SidebarAutoCollapse::default()),
+            observer: RefCell::new(None),
+            observer_callback: RefCell::new(None),
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
@@ -172,7 +201,43 @@ impl Sidebar {
             }
         })?;
         *this.0.toggle_listener.borrow_mut() = Some(listener);
+
+        // 幅が変わったら畳むかを決める。並べ終えてから描く前に呼ばれるので、
+        // 畳んだ姿のまま最初の 1 枚が描かれる。
+        let weak = Rc::downgrade(&this.0);
+        let callback = ObserverCallback::new(move |_entries: wasm_bindgen::JsValue| {
+            if let Some(inner) = weak.upgrade() {
+                Sidebar(inner).check_width();
+            }
+        });
+        if let Ok(observer) = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()) {
+            observer.observe(&this.0.split.native_element());
+            *this.0.observer.borrow_mut() = Some(observer);
+            *this.0.observer_callback.borrow_mut() = Some(callback);
+        }
         Ok(this)
+    }
+
+    /// Compares the `SplitView`'s width and, if it crossed the width for collapsing,
+    /// collapses or expands and notifies.
+    fn check_width(&self) {
+        if !self.0.auto_collapse.get() {
+            return;
+        }
+        let total = self
+            .0
+            .split
+            .native_element()
+            .get_bounding_client_rect()
+            .width();
+        let mut auto = self.0.auto.get();
+        let change = auto.resized(total, self.width(), self.is_collapsed());
+        self.0.auto.set(auto);
+        if let Some(change) = change {
+            let collapsed = change == SidebarAutoChange::Collapse;
+            self.show_collapsed(collapsed);
+            self.0.on_collapse.emit(collapsed);
+        }
     }
 
     /// Lays out items by group. Each call replaces them.
@@ -389,6 +454,14 @@ impl Sidebar {
     /// and the divider are hidden with `hidden`. [`on_collapse`](Self::on_collapse) is
     /// not called.
     pub fn set_collapsed(&self, collapsed: bool) {
+        // 利用者 (かアプリ) が決めたものは、広がっても開き直さない。
+        let mut auto = self.0.auto.get();
+        auto.overridden();
+        self.0.auto.set(auto);
+        self.show_collapsed(collapsed);
+    }
+
+    fn show_collapsed(&self, collapsed: bool) {
         self.0.split.set_start_hidden(collapsed);
         let _ = self
             .0
@@ -396,13 +469,38 @@ impl Sidebar {
             .set_attribute("aria-expanded", if collapsed { "false" } else { "true" });
     }
 
-    /// The handler called when the user collapses or expands the sidebar. The argument
-    /// is whether it is now collapsed.
+    /// The handler called when the sidebar collapses or expands other than by
+    /// [`set_collapsed`](Self::set_collapsed). The argument is whether it is now
+    /// collapsed.
     ///
-    /// Called when the collapse button is used; not called by
-    /// [`set_collapsed`](Self::set_collapsed).
+    /// Called when the collapse button is used, and when the window narrows or widens
+    /// with [`set_auto_collapse`](Self::set_auto_collapse) on.
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse.set(f);
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows, and expands
+    /// again when it widens. On by default.
+    ///
+    /// It collapses when the content beside it would get narrower than
+    /// [`SIDEBAR_COLLAPSE_CONTENT_WIDTH`](naui_core::SIDEBAR_COLLAPSE_CONTENT_WIDTH),
+    /// before the page is painted at that width (`ResizeObserver`). A sidebar the user
+    /// collapsed stays collapsed, and one opened while narrow stays open. Turning it off
+    /// leaves the sidebar collapsed or expanded as it is.
+    pub fn set_auto_collapse(&self, auto: bool) {
+        if self.0.auto_collapse.replace(auto) == auto {
+            return;
+        }
+        // 入れ直したら、いまの幅から決め直す。
+        self.0.auto.set(SidebarAutoCollapse::default());
+        if auto {
+            self.check_width();
+        }
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows.
+    pub fn auto_collapse(&self) -> bool {
+        self.0.auto_collapse.get()
     }
 
     /// The collapse button. The window places it at the start of the toolbar row. A

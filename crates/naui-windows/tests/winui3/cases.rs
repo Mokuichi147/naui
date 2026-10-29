@@ -298,6 +298,14 @@ const CASES: &[Case] = &[
         sidebar_items_map_to_native,
     ),
     (
+        "自動で畳むかを切り替えても、畳んだサイドバーは開かない",
+        sidebar_auto_collapse_toggle_keeps_collapsed,
+    ),
+    (
+        "自動で畳んだサイドバーを set_collapsed で畳み直すと、広げても開かない",
+        sidebar_set_collapsed_overrides_auto_expand,
+    ),
+    (
         "サイドバーの選択が通し番号で往復し、select だけが通知する",
         sidebar_selection_round_trips,
     ),
@@ -566,6 +574,16 @@ fn checkbox_toggle(ui: &Ui) -> Result<()> {
         seen.borrow().as_slice(),
         [true, false].as_slice(),
         "変わったあとの値が順に届くこと"
+    );
+
+    // プログラムからの `set_checked` は通知しない (4 環境で同じ約束)。
+    checkbox.set_checked(true);
+    assert!(checkbox.is_checked(), "点くこと");
+    checkbox.set_checked(false);
+    assert_eq!(
+        seen.borrow().len(),
+        2,
+        "set_checked では on_toggle を呼ばないこと"
     );
     Ok(())
 }
@@ -2831,9 +2849,34 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
     assert_eq!(sidebar.len(), 4, "見出しと区切りは数えない");
 
     let native = sidebar.native_navigation_view();
+    let collapse = naui_core::SIDEBAR_COLLAPSE_CONTENT_WIDTH;
+    assert!(sidebar.auto_collapse(), "既定で自動で畳む");
     assert_eq!(
         native.PaneDisplayMode().expect("表示形式"),
-        NavigationViewPaneDisplayMode::Left
+        NavigationViewPaneDisplayMode::Auto,
+        "狭くなったら畳む判断は NavigationView に任せる"
+    );
+    assert_eq!(
+        native.ExpandedModeThresholdWidth().expect("しきい値"),
+        DEFAULT_SIDEBAR_WIDTH + collapse,
+        "中身がこれより狭くなると帯になる"
+    );
+    assert_eq!(
+        native.CompactModeThresholdWidth().expect("しきい値"),
+        0.0,
+        "帯ごと消える形 (LeftMinimal) にはしない"
+    );
+    sidebar.set_auto_collapse(false);
+    assert!(!sidebar.auto_collapse());
+    assert_eq!(
+        native.PaneDisplayMode().expect("表示形式"),
+        NavigationViewPaneDisplayMode::Left,
+        "切ると左のペインのまま"
+    );
+    sidebar.set_auto_collapse(true);
+    assert_eq!(
+        native.PaneDisplayMode().expect("表示形式"),
+        NavigationViewPaneDisplayMode::Auto
     );
     assert!(!native.IsSettingsVisible().expect("設定項目"));
     assert!(
@@ -2896,6 +2939,11 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
     sidebar.set_width(160.0);
     assert_eq!(native.OpenPaneLength().expect("幅"), 160.0);
     assert_eq!(divider_left(), 157.0, "仕切りもペインの端へ動く");
+    assert_eq!(
+        native.ExpandedModeThresholdWidth().expect("しきい値"),
+        160.0 + collapse,
+        "畳むしきい値も幅に付いてくる"
+    );
     assert_eq!(sidebar.width(), 160.0);
     sidebar.set_width(-1.0);
     assert_eq!(sidebar.width(), 160.0, "おかしな幅は無視する");
@@ -3104,6 +3152,107 @@ fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
     );
     window.clear_sidebar(); // 付いていなければ何もしない
     Ok(Box::new(|| Ok(())))
+}
+
+/// `NavigationView` forgets that the pane was closed when `PaneDisplayMode` changes,
+/// and reopens it if it is wide enough. This only happens once its template is
+/// applied, so messages are pumped until it is loaded; in environments where it never
+/// is (CI), the case passes without checking.
+fn sidebar_auto_collapse_toggle_keeps_collapsed(ui: &Ui) -> Result<()> {
+    let window = ui.window("自動で畳む", 900.0, 400.0)?;
+    window.set_child(&ui.label("中身")?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般", "詳細"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    let native = sidebar.native_navigation_view();
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || native.IsLoaded().unwrap_or(false));
+    if !native.IsLoaded().unwrap_or(false) {
+        println!("     (読み込まれない環境なので、確かめずに通す)");
+        window.close();
+        return Ok(());
+    }
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = Rc::clone(&seen);
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    // 開閉の通知はアニメーションの後に届くので、切り替えるたびに少し回す。
+    let toggle = |auto: bool| {
+        sidebar.set_auto_collapse(auto);
+        pump_until(Duration::from_millis(300), || false);
+        sidebar.is_collapsed()
+    };
+    sidebar.set_collapsed(true);
+    let collapsed_off = toggle(false);
+    let collapsed_on = toggle(true);
+    sidebar.set_collapsed(false);
+    let open_off = !toggle(false);
+    let open_on = !toggle(true);
+    window.close();
+
+    assert!(collapsed_off, "切っても畳んだまま");
+    assert!(collapsed_on, "入れ直しても畳んだまま");
+    assert!(open_off, "開いていれば開いたまま");
+    assert!(open_on);
+    assert!(seen.borrow().is_empty(), "切り替えでは通知しない");
+    Ok(())
+}
+
+/// A sidebar collapsed automatically expands again when the window widens, unless it
+/// was collapsed with `set_collapsed` in between. Closing the already-closed pane does
+/// not change `IsPaneOpen`, so `NavigationView` would not learn that it was closed on
+/// purpose. As above, it passes without checking where it is never loaded.
+fn sidebar_set_collapsed_overrides_auto_expand(ui: &Ui) -> Result<()> {
+    let window = ui.window("自動で開き直す", 900.0, 400.0)?;
+    window.set_child(&ui.label("中身")?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般", "詳細"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    let native = sidebar.native_navigation_view();
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || native.IsLoaded().unwrap_or(false));
+    if !native.IsLoaded().unwrap_or(false) {
+        println!("     (読み込まれない環境なので、確かめずに通す)");
+        window.close();
+        return Ok(());
+    }
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = Rc::clone(&seen);
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    let resize = |width: f64| {
+        window.set_size(width, 400.0);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            native
+                .ActualWidth()
+                .is_ok_and(|actual| (actual - width).abs() < 40.0)
+        });
+        // 開閉の通知はアニメーションの後に届く。
+        pump_until(Duration::from_millis(300), || false);
+        sidebar.is_collapsed()
+    };
+    let narrowed = resize(400.0);
+    let widened = !resize(900.0);
+    let notified = seen.borrow().clone();
+    let narrowed_again = resize(400.0);
+    seen.borrow_mut().clear();
+    sidebar.set_collapsed(true);
+    pump_until(Duration::from_millis(300), || false);
+    let silent = seen.borrow().is_empty();
+    let stays = resize(900.0);
+    window.close();
+
+    assert!(narrowed, "狭めると畳む");
+    assert!(widened, "広げると開き直す");
+    assert_eq!(notified, [true, false], "自動の開閉は通知する");
+    assert!(narrowed_again);
+    assert!(silent, "set_collapsed では通知しない");
+    assert!(stays, "set_collapsed で畳み直したものは、広げても開かない");
+    Ok(())
 }
 
 // ------------------------------------------------------------------ 画像

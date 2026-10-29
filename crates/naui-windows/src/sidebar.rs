@@ -1,12 +1,12 @@
 //! The sidebar (WinUI 3's `NavigationView`).
 //!
-//! A left-pane (`PaneDisplayMode::Left`) `NavigationView` is used, the same as
-//! Windows Settings. The pane's material, the selection pill, item layout and
+//! A left-pane `NavigationView` is used, the same as Windows Settings (in
+//! `PaneDisplayMode::Auto`, which is the left pane while the window is wide enough). The pane's material, the selection pill, item layout and
 //! keyboard navigation are owned by WinUI.
 //!
 //! | naui | WinUI 3 |
 //! | --- | --- |
-//! | The whole sidebar | `NavigationView` (`PaneDisplayMode::Left`) |
+//! | The whole sidebar | `NavigationView` (`PaneDisplayMode::Auto`, or `Left` without automatic collapsing) |
 //! | Item | `NavigationViewItem` + `FontIcon` (Segoe Fluent Icons) |
 //! | Group heading | `NavigationViewItemHeader` |
 //! | Between groups | `NavigationViewItemSeparator` |
@@ -26,6 +26,13 @@
 //! **a thin strip of icons only** (`IsPaneOpen` false; the button stays in the strip
 //! so it can be reopened). Items without icons show nothing while collapsed. The
 //! back button and the settings item are not shown.
+//!
+//! Collapsing when the window narrows is the `NavigationView`'s own
+//! (`PaneDisplayMode::Auto`). Below `ExpandedModeThresholdWidth` it switches to the
+//! compact strip by itself, and opening the pane there lays it over the content
+//! (dismissed by clicking outside). naui sets the threshold to the sidebar's width
+//! plus [`SIDEBAR_COLLAPSE_CONTENT_WIDTH`], and `CompactModeThresholdWidth` to 0 so
+//! that the strip never disappears entirely (`LeftMinimal`).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -33,7 +40,7 @@ use std::sync::Arc;
 
 use naui_core::{
     clamp_split_position, sidebar_item, sidebar_len, sidebar_rows, Result, SidebarItem, SidebarRow,
-    SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
+    SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Control, FontIcon, Grid as XamlGrid, NavigationView, NavigationViewBackButtonVisible,
@@ -83,6 +90,9 @@ struct SidebarInner {
     /// notified.
     collapsed: Cell<bool>,
     on_collapse: ValueHandler<bool>,
+    /// Whether the pane collapses automatically when the window narrows
+    /// (`PaneDisplayMode::Auto`).
+    auto_collapse: Cell<bool>,
     /// The `Grid` overlaying the `NavigationView` and the divider. This is what is
     /// placed inside the window.
     host: XamlGrid,
@@ -132,8 +142,10 @@ impl Sidebar {
     pub(crate) fn new() -> Result<Self> {
         let native = NavigationView::new().map_err(|e| to_error("NavigationView の生成", e))?;
         native
-            .SetPaneDisplayMode(NavigationViewPaneDisplayMode::Left)
+            .SetPaneDisplayMode(NavigationViewPaneDisplayMode::Auto)
             .map_err(|e| to_error("NavigationView の表示形式の設定", e))?;
+        // 狭くても細い帯は残す (既定の 641 未満では帯ごと消える)。
+        let _ = native.SetCompactModeThresholdWidth(0.0);
         let _ = native.SetIsBackButtonVisible(NavigationViewBackButtonVisible::Collapsed);
         let _ = native.SetIsSettingsVisible(false);
         let _ = native.SetIsPaneToggleButtonVisible(true);
@@ -163,6 +175,7 @@ impl Sidebar {
             on_resize: ValueHandler::new(),
             collapsed: Cell::new(false),
             on_collapse: ValueHandler::new(),
+            auto_collapse: Cell::new(true),
             host,
             grip,
             dragging: Cell::new(false),
@@ -260,8 +273,19 @@ impl Sidebar {
                 .cast::<FrameworkElement>()
                 .and_then(|host| host.ActualWidth())
                 .unwrap_or(0.0);
-            let width =
-                clamp_split_position(x - sidebar.0.grab.get(), total, SIDEBAR_MIN_WIDTH, 0.0);
+            // 自動で畳むときは、中身がしきい値より狭くなるところまでは
+            // 広げさせない (つかんでいる最中に帯へ切り替わらないように)。
+            let min_content = if sidebar.0.auto_collapse.get() {
+                SIDEBAR_COLLAPSE_CONTENT_WIDTH
+            } else {
+                0.0
+            };
+            let width = clamp_split_position(
+                x - sidebar.0.grab.get(),
+                total,
+                SIDEBAR_MIN_WIDTH,
+                min_content,
+            );
             if (width - sidebar.0.width.get()).abs() < 0.5 {
                 return;
             }
@@ -476,10 +500,15 @@ impl Sidebar {
     }
 
     /// Writes the width to the pane and places the divider at the pane's right edge (the
-    /// middle of the grab area is the boundary).
+    /// middle of the grab area is the boundary). The width at which the pane collapses
+    /// automatically follows it.
     fn apply_width(&self) {
         let width = self.0.width.get();
         let _ = self.0.native.SetOpenPaneLength(width);
+        let _ = self
+            .0
+            .native
+            .SetExpandedModeThresholdWidth(width + SIDEBAR_COLLAPSE_CONTENT_WIDTH);
         let _ = self.0.grip.SetMargin(Thickness {
             Left: (width - GRIP_THICKNESS / 2.0).max(0.0),
             Top: 0.0,
@@ -495,8 +524,23 @@ impl Sidebar {
     /// [`on_collapse`](Self::on_collapse) is not called.
     pub fn set_collapsed(&self, collapsed: bool) {
         self.0.collapsed.set(collapsed);
-        let _ = self.0.native.SetIsPaneOpen(!collapsed);
+        if collapsed {
+            self.close_pane();
+        } else {
+            let _ = self.0.native.SetIsPaneOpen(true);
+        }
         self.show_grip(!collapsed);
+    }
+
+    /// Closes the pane so that it stays closed when the window widens.
+    fn close_pane(&self) {
+        // NavigationView は、コードから開いているペインを閉じたときだけ閉じた印を
+        // 付ける。自動で畳まれたものを閉じ直しても何も変わらず、広がると開き直す
+        // ので、いったん開いてから閉じる。
+        if self.is_collapsed() {
+            let _ = self.0.native.SetIsPaneOpen(true);
+        }
+        let _ = self.0.native.SetIsPaneOpen(false);
     }
 
     /// Whether the sidebar is collapsed.
@@ -504,13 +548,46 @@ impl Sidebar {
         !self.0.native.IsPaneOpen().unwrap_or(true)
     }
 
-    /// The handler called when the user collapses or expands the sidebar. The argument
-    /// is whether it is now collapsed.
+    /// The handler called when the sidebar collapses or expands other than by
+    /// [`set_collapsed`](Self::set_collapsed). The argument is whether it is now
+    /// collapsed.
     ///
-    /// Called when the toggle button is used; not called by
-    /// [`set_collapsed`](Self::set_collapsed).
+    /// Called when the toggle button is used, when the pane laid over the content is
+    /// dismissed, and when the window narrows or widens with
+    /// [`set_auto_collapse`](Self::set_auto_collapse) on.
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse.set(f);
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows, and expands
+    /// again when it widens. On by default.
+    ///
+    /// It collapses into the strip when the content beside it would get narrower than
+    /// [`SIDEBAR_COLLAPSE_CONTENT_WIDTH`] (`PaneDisplayMode::Auto`). Opened while
+    /// narrow, the pane is laid over the content. While it is on, the divider does not
+    /// widen the sidebar past that point. Off, it stays `PaneDisplayMode::Left`; the
+    /// sidebar is left collapsed or expanded as it is.
+    pub fn set_auto_collapse(&self, auto: bool) {
+        if self.0.auto_collapse.replace(auto) == auto {
+            return;
+        }
+        let mode = if auto {
+            NavigationViewPaneDisplayMode::Auto
+        } else {
+            NavigationViewPaneDisplayMode::Left
+        };
+        // 表示形式が変わると、NavigationView は利用者が閉じた印を消し、広ければ
+        // ペインを開き直す。畳まれていたなら畳み直して、そのままにする。
+        let collapsed = self.is_collapsed();
+        let _ = self.0.native.SetPaneDisplayMode(mode);
+        if collapsed {
+            let _ = self.0.native.SetIsPaneOpen(false);
+        }
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows.
+    pub fn auto_collapse(&self) -> bool {
+        self.0.auto_collapse.get()
     }
 
     /// The real WinUI 3 object (`NavigationView`). A backend-specific escape hatch.

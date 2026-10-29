@@ -23,6 +23,19 @@
 //! expanding is picked up from the `NSSplitView`'s size changes
 //! (`NSSplitViewDidResizeSubviewsNotification`).
 //!
+//! Collapsing when the window narrows is AppKit's own
+//! (`canCollapseFromWindowResize`). It works only when the content pane has a minimum
+//! width, so the content item gets [`SIDEBAR_COLLAPSE_CONTENT_WIDTH`] as its
+//! `minimumThickness`. When the user narrows the window, the sidebar first narrows
+//! down to [`SIDEBAR_MIN_WIDTH`], then collapses; widening the window again expands it
+//! back to its width.
+//!
+//! AppKit does this only while the user resizes the window (live resize). A size
+//! set from code that is too narrow would instead widen the window to fit both
+//! panes, so there naui collapses the sidebar first ([`make_room`](Sidebar::make_room)),
+//! and expands it again in the next main queue iteration once the window is wide
+//! enough.
+//!
 //! The item list is an `NSTableView` rather than an `NSOutlineView`. naui's sidebar
 //! has at most two levels (groups and items) and no expansion, so
 //! `NSOutlineView`'s group items, which come with disclosure triangles and "Hide"
@@ -31,19 +44,21 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
+use dispatch2::{DispatchQueue, MainThreadBound};
 use naui_core::{
     sidebar_len, sidebar_rows, SidebarItem, SidebarRow, SidebarSection, DEFAULT_SIDEBAR_WIDTH,
-    SIDEBAR_MIN_WIDTH,
+    SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 use objc2::rc::Retained;
-use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSAutoresizingMaskOptions, NSColor, NSControlTextEditingDelegate, NSEventType,
     NSFont, NSImage, NSImageView, NSLayoutConstraint, NSScrollView, NSSplitViewController,
-    NSSplitViewDidResizeSubviewsNotification, NSSplitViewItem, NSTableCellView, NSTableColumn,
-    NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
-    NSTableViewStyle, NSTextField, NSView, NSViewController,
+    NSSplitViewDidResizeSubviewsNotification, NSSplitViewItem, NSSplitViewItemUnspecifiedDimension,
+    NSTableCellView, NSTableColumn, NSTableView, NSTableViewColumnAutoresizingStyle,
+    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSView,
+    NSViewController, NSWindowDidEndLiveResizeNotification,
 };
 use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSNotification, NSNotificationCenter, NSSize, NSString,
@@ -54,6 +69,10 @@ use crate::trampoline::{SelectHandler, ValueHandler};
 
 /// Only one column is used, so the identifier can be fixed.
 const COLUMN_ID: &str = "naui.sidebar.column";
+
+/// How much wider than the collapsing width the window has to get before a sidebar
+/// collapsed by [`Sidebar::make_room`] expands again (logical pixels).
+const EXPAND_HYSTERESIS: f64 = 8.0;
 
 /// The height of the gap left between groups.
 ///
@@ -227,6 +246,7 @@ define_class!(
             };
             let sidebar = Sidebar(inner);
             sidebar.sync_collapsed();
+            sidebar.expand_if_room();
             // 利用者が仕切りをつかんでいる間、`NSSplitView` はマウスの
             // ドラッグのイベントを回しながら区画を並べ直す。開閉のアニメー
             // ションやウィンドウへの取り付けでは、いまのイベントはドラッグでは
@@ -237,6 +257,26 @@ define_class!(
                 .is_some_and(|event| event.r#type() == NSEventType::LeftMouseDragged);
             if dragging {
                 sidebar.sync_width();
+            }
+        }
+
+        /// Live resize of some window ended. Expanding a sidebar collapsed for size
+        /// is decided only then, because during live resize AppKit restores only what
+        /// it collapsed itself.
+        #[unsafe(method(windowDidEndLiveResize:))]
+        fn window_did_end_live_resize(&self, notification: &NSNotification) {
+            let Some(inner) = self.ivars().upgrade() else {
+                return;
+            };
+            let sidebar = Sidebar(inner);
+            let ours = sidebar.0.controller.view().window().is_some_and(|window| {
+                notification
+                    .object()
+                    .is_some_and(|object| std::ptr::eq(&*object, window.as_ref() as &AnyObject))
+            });
+            if ours {
+                // 通知の中ではまだ inLiveResize が立っていることがあるので、次の周回で。
+                sidebar.on_next_turn(|sidebar| sidebar.expand_if_room());
             }
         }
     }
@@ -412,6 +452,22 @@ impl ContentFrame {
 struct SidebarInner {
     controller: Retained<NSSplitViewController>,
     sidebar_item: Retained<NSSplitViewItem>,
+    /// The right pane's item. Its minimum width decides when the sidebar collapses
+    /// automatically.
+    content_item: Retained<NSSplitViewItem>,
+    /// Whether the sidebar collapses automatically when the window narrows.
+    auto_collapse: Cell<bool>,
+    /// Collapsed because the window got too narrow (by [`Sidebar::make_room`] or
+    /// AppKit's live resize), so expanded again when the window gets wide enough from
+    /// code too. AppKit restores only what it collapsed itself, and only during live
+    /// resize.
+    collapsed_for_size: Cell<bool>,
+    /// The `on_collapse(true)` scheduled by [`Sidebar::make_room`] has not been
+    /// delivered yet. Cleared when the state is changed again before then, so the
+    /// stale notification is dropped.
+    collapse_pending: Cell<bool>,
+    /// An expansion by [`Sidebar::expand_if_room`] is scheduled.
+    expand_pending: Cell<bool>,
     /// The stand inside the right pane that holds the window's child.
     content_frame: Retained<ContentFrame>,
     table: Retained<NSTableView>,
@@ -539,6 +595,11 @@ impl Sidebar {
         let this = Self(Rc::new(SidebarInner {
             controller,
             sidebar_item,
+            content_item,
+            auto_collapse: Cell::new(true),
+            collapsed_for_size: Cell::new(false),
+            collapse_pending: Cell::new(false),
+            expand_pending: Cell::new(false),
             content_frame,
             table,
             _source: source,
@@ -555,6 +616,7 @@ impl Sidebar {
             controls,
             observer: RefCell::new(None),
         }));
+        this.apply_auto_collapse();
         this.apply_width();
 
         let observer = ResizeObserver::new(mtm, Rc::downgrade(&this.0));
@@ -565,6 +627,13 @@ impl Sidebar {
                 sel!(splitViewDidResize:),
                 Some(NSSplitViewDidResizeSubviewsNotification),
                 Some(&split),
+            );
+            // どの窓に付くかは後から変わるので、窓を限らずに聞いて受け口で選ぶ。
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                &observer,
+                sel!(windowDidEndLiveResize:),
+                Some(NSWindowDidEndLiveResizeNotification),
+                None,
             );
         }
         *this.0.observer.borrow_mut() = Some(observer);
@@ -693,6 +762,9 @@ impl Sidebar {
     pub fn set_collapsed(&self, collapsed: bool) {
         // 先に覚えておくと、このあと届く大きさの変化を通知しないで済む。
         self.0.collapsed.set(collapsed);
+        // 予約してある自動の開閉と、その通知は取り消す。
+        self.0.collapsed_for_size.set(false);
+        self.0.collapse_pending.set(false);
         self.0.sidebar_item.setCollapsed(collapsed);
         if !collapsed {
             // 開き直した区画を、いま覚えている幅へそろえる。
@@ -700,13 +772,59 @@ impl Sidebar {
         }
     }
 
-    /// The handler called when the user collapses or expands the sidebar. The argument
-    /// is whether it is now collapsed.
+    /// The handler called when the sidebar collapses or expands other than by
+    /// [`set_collapsed`](Self::set_collapsed). The argument is whether it is now
+    /// collapsed.
     ///
-    /// Called when the sidebar button is used; not called by
-    /// [`set_collapsed`](Self::set_collapsed).
+    /// Called when the sidebar button is used, when the divider is dragged past the
+    /// minimum, and when the window narrows or widens with
+    /// [`set_auto_collapse`](Self::set_auto_collapse) on.
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse.set(f);
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows, and expands
+    /// again when it widens. On by default.
+    ///
+    /// It collapses when the content beside it would get narrower than
+    /// [`SIDEBAR_COLLAPSE_CONTENT_WIDTH`]. This is AppKit's
+    /// `canCollapseFromWindowResize`: the content pane gets that minimum width, the
+    /// sidebar first narrows down to [`SIDEBAR_MIN_WIDTH`], and then it collapses. That
+    /// follows the user resizing the window; for a size set from code
+    /// ([`Window::set_size`], or attaching to a narrow window) naui collapses it, and
+    /// expands it again when the window gets wide enough. Turning it off leaves the
+    /// sidebar collapsed or expanded as it is.
+    ///
+    /// [`Window::set_size`]: crate::Window::set_size
+    pub fn set_auto_collapse(&self, auto: bool) {
+        // 同じ値なら何もしない。畳んだ印を消すと、広げても開き直さなくなる。
+        if self.0.auto_collapse.replace(auto) == auto {
+            return;
+        }
+        self.0.collapsed_for_size.set(false);
+        if auto && self.0.controller.view().window().is_some() {
+            // 中身の区画に最小の幅を付けると、狭い窓は AppKit に広げられる。
+            // 先にいまの幅で畳んでおく。
+            self.make_room(self.0.controller.splitView().frame().size.width);
+        }
+        self.apply_auto_collapse();
+    }
+
+    /// Hands [`auto_collapse`](Self::auto_collapse) to the split view items.
+    fn apply_auto_collapse(&self) {
+        let auto = self.0.auto_collapse.get();
+        self.0.sidebar_item.setCanCollapseFromWindowResize(auto);
+        let min = if auto {
+            SIDEBAR_COLLAPSE_CONTENT_WIDTH
+        } else {
+            unsafe { NSSplitViewItemUnspecifiedDimension }
+        };
+        self.0.content_item.setMinimumThickness(min);
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows.
+    pub fn auto_collapse(&self) -> bool {
+        self.0.auto_collapse.get()
     }
 
     /// If the collapsed state changed, records it again and notifies.
@@ -716,8 +834,108 @@ impl Sidebar {
         }
         let now = self.is_collapsed();
         if self.0.collapsed.replace(now) != now {
+            // ウィンドウを狭めて AppKit が畳んだものは、コードで広げたときにも
+            // naui から開く (AppKit が開き直すのはライブリサイズの間だけ)。
+            // 利用者がボタンや仕切りで開閉したものは開かない。
+            self.0.collapsed_for_size.set(now && self.in_live_resize());
+            self.0.collapse_pending.set(false);
             self.0.on_collapse.emit(now);
         }
+    }
+
+    /// Collapses the sidebar when a window content width set from code leaves too
+    /// little room for both panes. Called before the size is applied.
+    ///
+    /// The content pane's minimum width would otherwise make AppKit widen the window.
+    /// `on_collapse` is called in the next main queue iteration, as on Linux and the
+    /// Web.
+    pub(crate) fn make_room(&self, width: f64) {
+        if !self.0.auto_collapse.get()
+            || self.is_collapsed()
+            || width >= SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH
+        {
+            return;
+        }
+        self.0.collapsed.set(true);
+        self.0.collapsed_for_size.set(true);
+        // 畳むと分割ビューの大きさの通知が届くことがある (macOS 26)。窓はまだ
+        // 広いままなので、その幅で開き直さないよう通知を聞き流す。
+        self.0.applying.set(true);
+        self.0.sidebar_item.setCollapsed(true);
+        self.0.applying.set(false);
+        self.0.collapse_pending.set(true);
+        self.on_next_turn(|sidebar| {
+            // 届く前に開き直されていたら、古い通知は捨てる。
+            if sidebar.0.collapse_pending.replace(false) {
+                sidebar.0.on_collapse.emit(true);
+            }
+        });
+    }
+
+    /// Expands a sidebar collapsed by [`make_room`](Self::make_room) once the window is
+    /// wide enough, in the next main queue iteration (not in the middle of the split
+    /// view's layout).
+    fn expand_if_room(&self) {
+        if !self.0.collapsed_for_size.get()
+            || self.0.applying.get()
+            || self.0.expand_pending.get()
+            || !self.has_room()
+        {
+            return;
+        }
+        self.0.expand_pending.set(true);
+        self.on_next_turn(|sidebar| {
+            sidebar.0.expand_pending.set(false);
+            // 頼んでから set_collapsed で決め直されていたら (collapsed_for_size が
+            // 下りる)、窓が狭め直されていたら、開かない。
+            if !sidebar.0.collapsed_for_size.get()
+                || !sidebar.0.auto_collapse.get()
+                || !sidebar.is_collapsed()
+                || !sidebar.has_room()
+            {
+                return;
+            }
+            sidebar.0.collapsed_for_size.set(false);
+            sidebar.0.collapsed.set(false);
+            sidebar.0.sidebar_item.setCollapsed(false);
+            sidebar.apply_width();
+            sidebar.0.on_collapse.emit(false);
+        });
+    }
+
+    /// Whether the split view is wide enough to expand a sidebar collapsed for size.
+    ///
+    /// Never during live resize: AppKit expands what it collapsed by itself then, and
+    /// expanding it from naui as well reopens it while the window is still narrow
+    /// (macOS 26).
+    fn has_room(&self) -> bool {
+        if self.in_live_resize() {
+            return false;
+        }
+        let width = self.0.controller.splitView().frame().size.width;
+        width >= SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH + EXPAND_HYSTERESIS
+    }
+
+    /// Whether the user is resizing the window the sidebar is in.
+    fn in_live_resize(&self) -> bool {
+        self.0
+            .controller
+            .view()
+            .window()
+            .is_some_and(|window| window.inLiveResize())
+    }
+
+    /// Calls `f` on the next iteration of the main queue, if the sidebar is still alive.
+    fn on_next_turn(&self, f: fn(&Sidebar)) {
+        let mtm = MainThreadMarker::from(&*self.0.table);
+        let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
+        DispatchQueue::main().exec_async(move || {
+            // メインキューの仕事はメインスレッドで走る。
+            let mtm = MainThreadMarker::new().expect("メインキューの外で呼ばれた");
+            if let Some(inner) = weak.into_inner(mtm).upgrade() {
+                f(&Sidebar(inner));
+            }
+        });
     }
 
     /// A toolbar with just the sidebar button, used when the app has not attached a

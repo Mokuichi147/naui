@@ -433,6 +433,10 @@ impl Window {
     /// Uses `setContentSize`. While a sidebar is attached, the `contentView` extends
     /// under the title bar, so the overlap is added before passing it.
     pub fn set_size(&self, width: f64, height: f64) {
+        // 狭すぎるとサイドバーと中身の最小に合わせて広がるので、先に畳む。
+        if let Some(sidebar) = self.0.sidebar.borrow().clone() {
+            sidebar.make_room(width);
+        }
         let (extra_width, extra_height) = self.title_bar_overlap();
         self.0.native.setContentSize(NSSize::new(
             width.max(0.0) + extra_width,
@@ -795,6 +799,7 @@ impl Window {
     }
 
     fn attach_sidebar(&self, sidebar: &Sidebar) {
+        let (width, _) = self.size();
         self.detach_sidebar();
         let native = &self.0.native;
         // `contentViewController` を差し替えると、ウィンドウがその大きさへ
@@ -811,6 +816,10 @@ impl Window {
         }
         native.setStyleMask(native.styleMask() | NSWindowStyleMask::FullSizeContentView);
         native.setContentViewController(Some(&sidebar.native_split_view_controller()));
+        // 狭いウィンドウは、両方の区画の最小に合わせて広がらないよう畳む。
+        // 区画がこのウィンドウへ移ってから畳む (前に付いていた閉じたウィンドウの
+        // 中で畳むと、AppKit がキーの巡回をたどって抜けなくなる)。
+        sidebar.make_room(width);
         native.setFrame_display(frame, true);
         sidebar.set_content(child);
         sidebar.apply_width();

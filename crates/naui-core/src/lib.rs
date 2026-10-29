@@ -72,8 +72,9 @@ pub use row_window::{
 };
 pub use scroll::ScrollNotifier;
 pub use sidebar::{
-    sidebar_item, sidebar_len, sidebar_rows, SidebarItem, SidebarRow, SidebarSection,
-    DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
+    sidebar_item, sidebar_len, sidebar_rows, SidebarAutoChange, SidebarAutoCollapse, SidebarItem,
+    SidebarRow, SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH,
+    SIDEBAR_MIN_WIDTH,
 };
 pub use split::{clamp_split_position, DEFAULT_SPLIT_POSITION};
 pub use table::{SortOrder, TableColumn, TableRow};

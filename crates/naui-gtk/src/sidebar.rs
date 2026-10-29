@@ -25,6 +25,16 @@
 //! end of the sidebar's header bar while expanded, and at the left end of the
 //! content's header bar while collapsed.
 //!
+//! libadwaita collapses sidebars by size with `AdwBreakpoint`, but a breakpoint
+//! needs an `AdwBreakpointBin` (or the window itself) around what it changes, and
+//! adding one takes away that container's minimum size: the app would have to give
+//! the window a fixed minimum, and content wider than it overflows with a warning.
+//! That would break [`Window::set_min_size`](crate::Window::set_min_size) and the
+//! window never shrinking below its content. So naui decides itself: after each
+//! paint it compares the `GtkPaned`'s width ([`SidebarAutoCollapse`]), and
+//! collapses or expands in the next main loop iteration (not while GTK is laying
+//! out).
+//!
 //! libadwaita 1.9 has `AdwSidebar`, which handles the list too, but 1.5 (Ubuntu
 //! 24.04), which naui targets, does not. As recommended up to 1.5, it is built from
 //! a `GtkListBox` with `.navigation-sidebar`.
@@ -35,8 +45,8 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::glib;
 use naui_core::{
-    sidebar_item, sidebar_len, sidebar_rows, ui_strings, SidebarItem, SidebarRow, SidebarSection,
-    DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
+    sidebar_item, sidebar_len, sidebar_rows, ui_strings, SidebarAutoChange, SidebarAutoCollapse,
+    SidebarItem, SidebarRow, SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 
 use crate::callback::Notifier;
@@ -72,6 +82,19 @@ struct SidebarInner {
     /// notified.
     collapsed: Cell<bool>,
     on_collapse: Notifier<bool>,
+    /// Whether the sidebar collapses automatically when the window narrows.
+    auto_collapse: Cell<bool>,
+    /// What decides the automatic collapsing.
+    auto: Cell<SidebarAutoCollapse>,
+    /// True while naui collapses or expands it automatically. Other changes are the
+    /// user's (or the app's) choice.
+    auto_applying: Cell<bool>,
+    /// The automatic change scheduled for the next main loop iteration. Cleared when the
+    /// user or the app collapses or expands it before then.
+    auto_pending: Cell<Option<SidebarAutoChange>>,
+    /// The frame clock's `after-paint`, which compares the `GtkPaned`'s width after each
+    /// paint.
+    after_paint: RefCell<Option<(gtk::gdk::FrameClock, glib::SignalHandlerId)>>,
 }
 
 /// A sidebar attached to the left of the window.
@@ -140,6 +163,11 @@ impl Sidebar {
             toggle,
             collapsed: Cell::new(false),
             on_collapse: Notifier::default(),
+            auto_collapse: Cell::new(true),
+            auto: Cell::new(SidebarAutoCollapse::default()),
+            auto_applying: Cell::new(false),
+            auto_pending: Cell::new(None),
+            after_paint: RefCell::new(None),
         }));
         this.apply_width();
 
@@ -154,11 +182,45 @@ impl Sidebar {
                 };
                 let sidebar = Sidebar(inner);
                 sidebar.arrange_for_collapse();
+                if !sidebar.0.auto_applying.get() {
+                    sidebar.override_auto();
+                }
                 let collapsed = sidebar.is_collapsed();
                 if sidebar.0.collapsed.replace(collapsed) != collapsed {
                     sidebar.0.on_collapse.emit(collapsed);
                 }
             });
+
+        // 窓の幅が変わったかは、描き終えた後に比べる (割り当ての途中では
+        // 区画を出し入れできない)。付け直すと時計も変わるので、そのたびにつなぐ。
+        let weak = Rc::downgrade(&this.0);
+        this.0.paned.connect_realize(move |paned| {
+            let Some(clock) = paned.frame_clock() else {
+                return;
+            };
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            let handler = clock.connect_after_paint({
+                let weak = weak.clone();
+                move |_| {
+                    if let Some(inner) = weak.upgrade() {
+                        let sidebar = Sidebar(inner);
+                        sidebar.restore_width();
+                        sidebar.check_width();
+                    }
+                }
+            });
+            if let Some((old, id)) = inner.after_paint.replace(Some((clock, handler))) {
+                old.disconnect(id);
+            }
+        });
+        let weak = Rc::downgrade(&this.0);
+        this.0.paned.connect_unrealize(move |_| {
+            if let Some((clock, id)) = weak.upgrade().and_then(|inner| inner.after_paint.take()) {
+                clock.disconnect(id);
+            }
+        });
 
         // 利用者が仕切りを動かしたら通知する。
         let weak = Rc::downgrade(&this.0);
@@ -171,7 +233,14 @@ impl Sidebar {
                 if inner.applying.get() || !inner.pane.get_visible() {
                     return;
                 }
-                let width = f64::from(paned.position());
+                let position = paned.position();
+                // 窓が中身の最小幅と並べられないほど狭まると、GtkPaned はサイドバーを
+                // 上限 (`max-position`) まで詰める。利用者が決めた幅ではないので覚えず、
+                // 畳むかもこれまでの幅で決める。場所ができたら `restore_width` で戻す。
+                if position >= paned.max_position() && f64::from(position) < inner.width.get() {
+                    return;
+                }
+                let width = f64::from(position);
                 if width > 0.0 && (width - inner.width.replace(width)).abs() >= 0.5 {
                     inner.on_resize.emit(width);
                 }
@@ -333,11 +402,27 @@ impl Sidebar {
         self.0.applying.set(false);
     }
 
+    /// Puts a sidebar the content pushed narrower back at its width once there is room
+    /// again. `GtkPaned` keeps the narrowed position when the window widens.
+    fn restore_width(&self) {
+        if !self.0.pane.get_visible() {
+            return;
+        }
+        let paned = &self.0.paned;
+        let position = paned.position();
+        if position < self.0.width.get().round() as i32 && position < paned.max_position() {
+            self.apply_width();
+        }
+    }
+
     /// Collapses (`true`) or expands (`false`) the sidebar.
     ///
     /// Items, selection and width are kept while collapsed.
     /// [`on_collapse`](Self::on_collapse) is not called.
     pub fn set_collapsed(&self, collapsed: bool) {
+        // 自動で畳んだあとに畳み直したときのように、見た目が変わらず `visible`
+        // の通知が来ない場合もあるので、ここで自動の開閉を取り消す。
+        self.override_auto();
         self.0.collapsed.set(collapsed);
         self.0.pane.set_visible(!collapsed);
         if !collapsed {
@@ -346,13 +431,101 @@ impl Sidebar {
         }
     }
 
-    /// The handler called when the user collapses or expands the sidebar. The argument
-    /// is whether it is now collapsed.
+    /// The handler called when the sidebar collapses or expands other than by
+    /// [`set_collapsed`](Self::set_collapsed). The argument is whether it is now
+    /// collapsed.
     ///
-    /// Called when the sidebar button is used; not called by
-    /// [`set_collapsed`](Self::set_collapsed).
+    /// Called when the sidebar button is used, and when the window narrows or widens
+    /// with [`set_auto_collapse`](Self::set_auto_collapse) on.
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse.set(f);
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows, and expands
+    /// again when it widens. On by default.
+    ///
+    /// It collapses when the content beside it would get narrower than
+    /// [`SIDEBAR_COLLAPSE_CONTENT_WIDTH`](naui_core::SIDEBAR_COLLAPSE_CONTENT_WIDTH),
+    /// in the main loop iteration after the window is painted at that width. A sidebar
+    /// the user collapsed stays collapsed, and one opened while narrow stays open.
+    /// Turning it off leaves the sidebar collapsed or expanded as it is.
+    pub fn set_auto_collapse(&self, auto: bool) {
+        if self.0.auto_collapse.replace(auto) == auto {
+            return;
+        }
+        // 入れ直したら、いまの幅から決め直す。前の判断で予約した開閉も捨てる。
+        self.0.auto.set(SidebarAutoCollapse::default());
+        self.0.auto_pending.set(None);
+        if auto {
+            self.check_width();
+        }
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows.
+    pub fn auto_collapse(&self) -> bool {
+        self.0.auto_collapse.get()
+    }
+
+    /// Compares the `GtkPaned`'s width and, if it crossed the width for collapsing,
+    /// collapses or expands in the next main loop iteration.
+    fn check_width(&self) {
+        if !self.0.auto_collapse.get() {
+            return;
+        }
+        // 予約した開閉は済んだものとして比べる。予約の後に幅が戻ったら、
+        // 逆向きの開閉で予約を打ち消せる。
+        let collapsed = match self.0.auto_pending.get() {
+            Some(change) => change == SidebarAutoChange::Collapse,
+            None => self.is_collapsed(),
+        };
+        let mut auto = self.0.auto.get();
+        let change = auto.resized(
+            f64::from(self.0.paned.width()),
+            self.0.width.get(),
+            collapsed,
+        );
+        self.0.auto.set(auto);
+        let Some(change) = change else {
+            return;
+        };
+        // 予約が残っていれば、それを新しい向きに差し替えるだけにする。
+        if self.0.auto_pending.replace(Some(change)).is_some() {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        glib::idle_add_local_once(move || {
+            if let Some(inner) = weak.upgrade() {
+                Sidebar(inner).apply_auto();
+            }
+        });
+    }
+
+    /// The user or the app collapsed or expanded the sidebar: it is not expanded again
+    /// automatically, and a scheduled automatic change is dropped.
+    fn override_auto(&self) {
+        let mut auto = self.0.auto.get();
+        auto.overridden();
+        self.0.auto.set(auto);
+        self.0.auto_pending.set(None);
+    }
+
+    /// Collapses or expands as scheduled by [`check_width`](Self::check_width). Notifies
+    /// through `on_collapse` (the `visible` handler compares it with the remembered
+    /// state).
+    fn apply_auto(&self) {
+        let Some(change) = self.0.auto_pending.take() else {
+            return;
+        };
+        let collapsed = change == SidebarAutoChange::Collapse;
+        if !self.0.auto_collapse.get() || self.is_collapsed() == collapsed {
+            return;
+        }
+        self.0.auto_applying.set(true);
+        self.0.pane.set_visible(!collapsed);
+        self.0.auto_applying.set(false);
+        if !collapsed {
+            self.apply_width();
+        }
     }
 
     /// The sidebar button. A backend-specific escape hatch.

@@ -21,6 +21,13 @@ pub(crate) fn build(
     let attach = ui.checkbox("Attached")?;
     attach.set_checked(true);
     let collapse = ui.checkbox("Collapsed")?;
+    // ウィンドウを狭めると畳まれ、広げると開き直す (既定で入っている)。
+    let auto = ui.checkbox("Auto-collapse")?;
+    auto.set_checked(sidebar.auto_collapse());
+    auto.on_toggle({
+        let sidebar = sidebar.clone();
+        move |on| sidebar.set_auto_collapse(on)
+    });
     attach.on_toggle({
         let window = window.clone();
         let sidebar = sidebar.clone();
@@ -39,7 +46,8 @@ pub(crate) fn build(
         let sidebar = sidebar.clone();
         move |on| sidebar.set_collapsed(on)
     });
-    // サイドバーボタン (その環境の標準のもの) で開閉されたら、チェックも合わせる。
+    // サイドバーボタン (その環境の標準のもの) やウィンドウの幅で開閉されたら、
+    // チェックも合わせる。
     // collapse の通知が sidebar を捕まえているので、こちらは弱参照にする。
     sidebar.on_collapse({
         let collapse = collapse.downgrade();
@@ -58,6 +66,7 @@ pub(crate) fn build(
     sidebar_row.set_spacing(16.0);
     sidebar_row.append(&attach);
     sidebar_row.append(&collapse);
+    sidebar_row.append(&auto);
     pane.append(&sidebar_row);
 
     build_tabs(ui, &pane, notice)?;

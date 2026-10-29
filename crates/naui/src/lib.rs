@@ -11,8 +11,8 @@ pub use naui_core::{
     ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep,
     SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer,
     ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, WeakWidget, WindowState,
-    DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SIDEBAR_MIN_WIDTH,
-    WHEEL_STEP,
+    DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
+    SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
 };
 
 // ビルド対象のバックエンド。naui の型はこれの型を包む。
