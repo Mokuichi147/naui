@@ -11973,7 +11973,14 @@ fn sidebar_collapses_when_the_window_narrows(ui: &Ui) -> Result<()> {
     pump(0.3);
     assert!(!sidebar.is_collapsed(), "切っていれば畳まない");
     assert_eq!(window.size(), (narrow, 400.0));
+
+    // 狭い窓で入れると、窓を広げずに畳む。
+    seen.borrow_mut().clear();
     sidebar.set_auto_collapse(true);
+    assert!(sidebar.is_collapsed(), "入れると畳まれる");
+    pump(0.3);
+    assert_eq!(window.size(), (narrow, 400.0), "入れても広がらない");
+    assert_eq!(*seen.borrow(), [true]);
     window.clear_sidebar();
     window.close();
     Ok(())
@@ -12047,6 +12054,27 @@ fn sidebar_collapses_during_live_resize(ui: &Ui) -> Result<()> {
         (sidebar.width() - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
         "覚えている幅は変わらない"
     );
+
+    // コードで狭めて畳んだものは AppKit が開き直さないので、利用者が広げ終えたら
+    // naui が開く。
+    seen.borrow_mut().clear();
+    window.set_size(threshold - 60.0, 400.0);
+    assert!(sidebar.is_collapsed());
+    pump(0.1);
+    unsafe {
+        let _: () = msg_send![&*native, _startLiveResize];
+    }
+    let mut width = native.frame().size.width;
+    while width < 800.0 {
+        width += 10.0;
+        resize(width);
+    }
+    unsafe {
+        let _: () = msg_send![&*native, _endLiveResize];
+    }
+    pump_until(2.0, || !sidebar.is_collapsed());
+    assert!(!sidebar.is_collapsed(), "広げ終えると開く");
+    assert_eq!(*seen.borrow(), [true, false]);
     window.clear_sidebar();
     window.close();
     Ok(())

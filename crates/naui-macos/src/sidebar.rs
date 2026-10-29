@@ -50,7 +50,7 @@ use naui_core::{
     SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 use objc2::rc::Retained;
-use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSAutoresizingMaskOptions, NSColor, NSControlTextEditingDelegate, NSEventType,
@@ -58,7 +58,7 @@ use objc2_app_kit::{
     NSSplitViewDidResizeSubviewsNotification, NSSplitViewItem, NSSplitViewItemUnspecifiedDimension,
     NSTableCellView, NSTableColumn, NSTableView, NSTableViewColumnAutoresizingStyle,
     NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSView,
-    NSViewController,
+    NSViewController, NSWindowDidEndLiveResizeNotification,
 };
 use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSNotification, NSNotificationCenter, NSSize, NSString,
@@ -257,6 +257,26 @@ define_class!(
                 .is_some_and(|event| event.r#type() == NSEventType::LeftMouseDragged);
             if dragging {
                 sidebar.sync_width();
+            }
+        }
+
+        /// Live resize of some window ended. Expanding a sidebar collapsed for size
+        /// is decided only then, because during live resize AppKit restores only what
+        /// it collapsed itself.
+        #[unsafe(method(windowDidEndLiveResize:))]
+        fn window_did_end_live_resize(&self, notification: &NSNotification) {
+            let Some(inner) = self.ivars().upgrade() else {
+                return;
+            };
+            let sidebar = Sidebar(inner);
+            let ours = sidebar.0.controller.view().window().is_some_and(|window| {
+                notification
+                    .object()
+                    .is_some_and(|object| std::ptr::eq(&*object, window.as_ref() as &AnyObject))
+            });
+            if ours {
+                // 通知の中ではまだ inLiveResize が立っていることがあるので、次の周回で。
+                sidebar.on_next_turn(|sidebar| sidebar.expand_if_room());
             }
         }
     }
@@ -608,6 +628,13 @@ impl Sidebar {
                 Some(NSSplitViewDidResizeSubviewsNotification),
                 Some(&split),
             );
+            // どの窓に付くかは後から変わるので、窓を限らずに聞いて受け口で選ぶ。
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                &observer,
+                sel!(windowDidEndLiveResize:),
+                Some(NSWindowDidEndLiveResizeNotification),
+                None,
+            );
         }
         *this.0.observer.borrow_mut() = Some(observer);
         this
@@ -775,6 +802,11 @@ impl Sidebar {
             return;
         }
         self.0.collapsed_for_size.set(false);
+        if auto && self.0.controller.view().window().is_some() {
+            // 中身の区画に最小の幅を付けると、狭い窓は AppKit に広げられる。
+            // 先にいまの幅で畳んでおく。
+            self.make_room(self.0.controller.splitView().frame().size.width);
+        }
         self.apply_auto_collapse();
     }
 
