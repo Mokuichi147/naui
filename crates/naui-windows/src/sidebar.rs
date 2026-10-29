@@ -524,8 +524,23 @@ impl Sidebar {
     /// [`on_collapse`](Self::on_collapse) is not called.
     pub fn set_collapsed(&self, collapsed: bool) {
         self.0.collapsed.set(collapsed);
-        let _ = self.0.native.SetIsPaneOpen(!collapsed);
+        if collapsed {
+            self.close_pane();
+        } else {
+            let _ = self.0.native.SetIsPaneOpen(true);
+        }
         self.show_grip(!collapsed);
+    }
+
+    /// Closes the pane so that it stays closed when the window widens.
+    fn close_pane(&self) {
+        // NavigationView は、コードから開いているペインを閉じたときだけ閉じた印を
+        // 付ける。自動で畳まれたものを閉じ直しても何も変わらず、広がると開き直す
+        // ので、いったん開いてから閉じる。
+        if self.is_collapsed() {
+            let _ = self.0.native.SetIsPaneOpen(true);
+        }
+        let _ = self.0.native.SetIsPaneOpen(false);
     }
 
     /// Whether the sidebar is collapsed.
