@@ -153,6 +153,10 @@ const CASES: &[Case] = &[
         file_drop_makes_the_root_a_drop_target,
     ),
     (
+        "子のない窓でも on_file_drop で根が AllowDrop になる",
+        file_drop_works_without_a_child,
+    ),
+    (
         "1 行入力・パスワード入力・数値入力に on_submit を付けられる",
         text_widgets_accept_submit_handlers,
     ),
@@ -3964,6 +3968,30 @@ fn file_drop_makes_the_root_a_drop_target(ui: &Ui) -> Result<()> {
     let root = window.native_window().Content().expect("ウィンドウの中身");
     assert!(root.AllowDrop().expect("AllowDrop"), "根がドロップを受ける");
     // 閉じずに残すと、終わりの `Application::Exit` のあともアプリが終わらない。
+    window.close();
+    Ok(())
+}
+
+/// `on_file_drop` does not require a child: a window without one gets an empty root
+/// that takes drops, and a later `set_child` keeps the new root a drop target.
+fn file_drop_works_without_a_child(ui: &Ui) -> Result<()> {
+    let window = ui.window("子のない窓", 320.0, 200.0)?;
+    window.on_file_drop(|_| {});
+    let root = window.native_window().Content().expect("受け口の根");
+    assert!(
+        root.AllowDrop().expect("AllowDrop"),
+        "子が無くても根がドロップを受ける"
+    );
+    window.on_file_drop(|_| {});
+    let again = window.native_window().Content().expect("受け口の根");
+    assert_eq!(again, root, "付け直しても根は作り直さない");
+    window.set_child(&ui.label("あとから置く")?);
+    let replaced = window.native_window().Content().expect("ウィンドウの中身");
+    assert_ne!(replaced, root, "set_child が根を置き換える");
+    assert!(
+        replaced.AllowDrop().expect("AllowDrop"),
+        "置き換えた根もドロップを受ける"
+    );
     window.close();
     Ok(())
 }

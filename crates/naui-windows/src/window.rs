@@ -543,6 +543,35 @@ impl Window {
     /// a moment after the drop. Setting it again replaces the previous closure.
     pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
         self.0.on_file_drop.set(f);
+        self.ensure_drop_root();
+    }
+
+    /// Gives a window without a child an empty root to receive drops on.
+    ///
+    /// The receiver is normally attached to the root built by
+    /// [`set_child`](Self::set_child), but a window without a child has no content
+    /// at all. A later `set_child` replaces this root and attaches the receiver
+    /// again.
+    fn ensure_drop_root(&self) {
+        if self.0.native.Content().is_ok() {
+            return;
+        }
+        // 背景が無いと当たり判定に入らず、ドラッグのイベントが来ない。
+        let root = XamlReader::Load(&HSTRING::from(
+            r#"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="Transparent"/>"#,
+        ))
+        .and_then(|root| root.cast::<UIElement>());
+        let (Ok(root), Some(hwnd)) = (root, self.hwnd()) else {
+            return;
+        };
+        if self.0.native.SetContent(&root).is_ok() {
+            let _ = crate::file_drop::install(
+                &root,
+                hwnd,
+                self.0.on_file_drop.clone(),
+                self.0.tasks.clone(),
+            );
+        }
     }
 
     pub fn set_title(&self, title: &str) {
