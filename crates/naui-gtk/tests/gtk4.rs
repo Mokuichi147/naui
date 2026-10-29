@@ -7582,6 +7582,21 @@ fn sidebar_collapses_when_the_window_narrows(ui: &Ui) -> Result<()> {
     assert!(sidebar.is_collapsed(), "利用者が閉じたまま");
     assert_eq!(seen.borrow().len(), 5, "利用者の操作だけが届く");
 
+    // 自動で畳んだあとアプリが畳み直したら、見た目は変わらなくても
+    // アプリが決めたものになり、広げても開かない。
+    sidebar.set_collapsed(false);
+    window.set_size(narrow, 400.0);
+    wait(6);
+    assert!(
+        sidebar.is_collapsed(),
+        "開き直したものもまた狭めると畳まれる"
+    );
+    sidebar.set_collapsed(true);
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    assert!(sidebar.is_collapsed(), "アプリが畳んだまま");
+    assert_eq!(seen.borrow().len(), 6);
+
     // 切ると畳まない。
     sidebar.set_collapsed(false);
     sidebar.set_auto_collapse(false);
@@ -7589,7 +7604,7 @@ fn sidebar_collapses_when_the_window_narrows(ui: &Ui) -> Result<()> {
     window.set_size(narrow, 400.0);
     spin_until(Duration::from_millis(500), || false);
     assert!(!sidebar.is_collapsed(), "切っていれば畳まない");
-    assert_eq!(seen.borrow().len(), 5);
+    assert_eq!(seen.borrow().len(), 6);
     window.clear_sidebar();
     window.close();
     Ok(())

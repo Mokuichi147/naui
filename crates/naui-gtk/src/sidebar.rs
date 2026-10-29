@@ -89,6 +89,9 @@ struct SidebarInner {
     /// True while naui collapses or expands it automatically. Other changes are the
     /// user's (or the app's) choice.
     auto_applying: Cell<bool>,
+    /// The automatic change scheduled for the next main loop iteration. Cleared when the
+    /// user or the app collapses or expands it before then.
+    auto_pending: Cell<Option<SidebarAutoChange>>,
     /// The frame clock's `after-paint`, which compares the `GtkPaned`'s width after each
     /// paint.
     after_paint: RefCell<Option<(gtk::gdk::FrameClock, glib::SignalHandlerId)>>,
@@ -163,6 +166,7 @@ impl Sidebar {
             auto_collapse: Cell::new(true),
             auto: Cell::new(SidebarAutoCollapse::default()),
             auto_applying: Cell::new(false),
+            auto_pending: Cell::new(None),
             after_paint: RefCell::new(None),
         }));
         this.apply_width();
@@ -179,10 +183,7 @@ impl Sidebar {
                 let sidebar = Sidebar(inner);
                 sidebar.arrange_for_collapse();
                 if !sidebar.0.auto_applying.get() {
-                    // 利用者 (かアプリ) が決めたものは、広がっても開き直さない。
-                    let mut auto = sidebar.0.auto.get();
-                    auto.overridden();
-                    sidebar.0.auto.set(auto);
+                    sidebar.override_auto();
                 }
                 let collapsed = sidebar.is_collapsed();
                 if sidebar.0.collapsed.replace(collapsed) != collapsed {
@@ -397,6 +398,9 @@ impl Sidebar {
     /// Items, selection and width are kept while collapsed.
     /// [`on_collapse`](Self::on_collapse) is not called.
     pub fn set_collapsed(&self, collapsed: bool) {
+        // 自動で畳んだあとに畳み直したときのように、見た目が変わらず `visible`
+        // の通知が来ない場合もあるので、ここで自動の開閉を取り消す。
+        self.override_auto();
         self.0.collapsed.set(collapsed);
         self.0.pane.set_visible(!collapsed);
         if !collapsed {
@@ -455,17 +459,34 @@ impl Sidebar {
         let Some(change) = change else {
             return;
         };
+        // 予約が残っていれば、それを新しい向きに差し替えるだけにする。
+        if self.0.auto_pending.replace(Some(change)).is_some() {
+            return;
+        }
         let weak = Rc::downgrade(&self.0);
         glib::idle_add_local_once(move || {
             if let Some(inner) = weak.upgrade() {
-                Sidebar(inner).apply_auto(change);
+                Sidebar(inner).apply_auto();
             }
         });
     }
 
-    /// Collapses or expands automatically. Notifies through `on_collapse` (the `visible`
-    /// handler compares it with the remembered state).
-    fn apply_auto(&self, change: SidebarAutoChange) {
+    /// The user or the app collapsed or expanded the sidebar: it is not expanded again
+    /// automatically, and a scheduled automatic change is dropped.
+    fn override_auto(&self) {
+        let mut auto = self.0.auto.get();
+        auto.overridden();
+        self.0.auto.set(auto);
+        self.0.auto_pending.set(None);
+    }
+
+    /// Collapses or expands as scheduled by [`check_width`](Self::check_width). Notifies
+    /// through `on_collapse` (the `visible` handler compares it with the remembered
+    /// state).
+    fn apply_auto(&self) {
+        let Some(change) = self.0.auto_pending.take() else {
+            return;
+        };
         let collapsed = change == SidebarAutoChange::Collapse;
         if !self.0.auto_collapse.get() || self.is_collapsed() == collapsed {
             return;
