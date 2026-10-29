@@ -491,6 +491,10 @@ fn main() {
             sidebar_drops_a_stale_auto_collapse,
         ),
         (
+            "中身に最小幅があっても、サイドバーは元の幅で畳むかを決め、幅を保つ",
+            sidebar_collapses_beside_content_with_a_min_width,
+        ),
+        (
             "すべてのアイコンがテーマに実在する",
             toolbar_icons_exist_in_the_theme,
         ),
@@ -7691,6 +7695,90 @@ fn sidebar_drops_a_stale_auto_collapse(ui: &Ui) -> Result<()> {
     spin_until(Duration::from_secs(3), || seen.borrow().len() >= 2);
     assert!(!sidebar.is_collapsed(), "広げると開き直す");
     assert_eq!(*seen.borrow(), [true, false]);
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// When the content has a minimum width, `GtkPaned` narrows the sidebar before the
+/// window gets too narrow for both. That is the layout's doing, not the user's: the
+/// width is kept, collapsing is decided with it, and the sidebar is back at it once
+/// there is room.
+fn sidebar_collapses_beside_content_with_a_min_width(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+
+    let window = ui.window("中身に最小幅", 800.0, 400.0)?;
+    let content = ui.stack(Orientation::Vertical)?;
+    content.native_widget().set_size_request(400, -1);
+    window.set_child(&content);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    let paned = sidebar.native_paned();
+    spin_until(Duration::from_secs(2), || paned.width() >= 700);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    let resized = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_resize({
+        let resized = resized.clone();
+        move |width| resized.borrow_mut().push(width)
+    });
+
+    // サイドバーと中身の最小幅の和 (620) より狭いが、畳む幅 (580) よりは広い。
+    // GtkPaned がサイドバーを詰めても、それは利用者が決めた幅ではない。
+    window.set_size(600.0, 400.0);
+    spin_until(Duration::from_secs(2), || paned.width() < 620);
+    spin_until(Duration::from_millis(300), || false);
+    assert!(!sidebar.is_collapsed(), "まだ畳まない");
+    assert!(
+        paned.position() < DEFAULT_SIDEBAR_WIDTH as i32,
+        "中身に押されて詰まる: position={}",
+        paned.position()
+    );
+    assert_eq!(sidebar.width(), DEFAULT_SIDEBAR_WIDTH, "幅は保つ");
+    assert!(resized.borrow().is_empty(), "幅の通知は来ない");
+
+    // 元の幅で決めるので、畳む幅を切れば畳まれる。
+    window.set_size(560.0, 400.0);
+    spin_until(Duration::from_secs(3), || !seen.borrow().is_empty());
+    assert!(
+        sidebar.is_collapsed(),
+        "畳まれる: paned={}, width={}",
+        paned.width(),
+        sidebar.width()
+    );
+
+    // 広げると元の幅で開き直す。
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_secs(3), || seen.borrow().len() >= 2);
+    assert!(!sidebar.is_collapsed(), "開き直す");
+    assert_eq!(*seen.borrow(), [true, false]);
+    tick(&paned);
+    assert_eq!(
+        paned.position(),
+        DEFAULT_SIDEBAR_WIDTH as i32,
+        "元の幅で開く"
+    );
+
+    // 詰まっただけのものも、場所ができれば元の幅へ戻る。
+    window.set_size(600.0, 400.0);
+    spin_until(Duration::from_secs(2), || paned.width() < 620);
+    spin_until(Duration::from_millis(300), || false);
+    assert!(paned.position() < DEFAULT_SIDEBAR_WIDTH as i32);
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_secs(2), || {
+        paned.width() >= 700 && paned.position() == DEFAULT_SIDEBAR_WIDTH as i32
+    });
+    assert_eq!(
+        paned.position(),
+        DEFAULT_SIDEBAR_WIDTH as i32,
+        "元の幅へ戻る"
+    );
+    assert!(resized.borrow().is_empty(), "幅の通知は来ない");
     window.clear_sidebar();
     window.close();
     Ok(())

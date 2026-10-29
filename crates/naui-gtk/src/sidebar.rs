@@ -205,7 +205,9 @@ impl Sidebar {
                 let weak = weak.clone();
                 move |_| {
                     if let Some(inner) = weak.upgrade() {
-                        Sidebar(inner).check_width();
+                        let sidebar = Sidebar(inner);
+                        sidebar.restore_width();
+                        sidebar.check_width();
                     }
                 }
             });
@@ -231,7 +233,14 @@ impl Sidebar {
                 if inner.applying.get() || !inner.pane.get_visible() {
                     return;
                 }
-                let width = f64::from(paned.position());
+                let position = paned.position();
+                // 窓が中身の最小幅と並べられないほど狭まると、GtkPaned はサイドバーを
+                // 上限 (`max-position`) まで詰める。利用者が決めた幅ではないので覚えず、
+                // 畳むかもこれまでの幅で決める。場所ができたら `restore_width` で戻す。
+                if position >= paned.max_position() && f64::from(position) < inner.width.get() {
+                    return;
+                }
+                let width = f64::from(position);
                 if width > 0.0 && (width - inner.width.replace(width)).abs() >= 0.5 {
                     inner.on_resize.emit(width);
                 }
@@ -391,6 +400,19 @@ impl Sidebar {
         self.0.applying.set(true);
         self.0.paned.set_position(self.0.width.get().round() as i32);
         self.0.applying.set(false);
+    }
+
+    /// Puts a sidebar the content pushed narrower back at its width once there is room
+    /// again. `GtkPaned` keeps the narrowed position when the window widens.
+    fn restore_width(&self) {
+        if !self.0.pane.get_visible() {
+            return;
+        }
+        let paned = &self.0.paned;
+        let position = paned.position();
+        if position < self.0.width.get().round() as i32 && position < paned.max_position() {
+            self.apply_width();
+        }
     }
 
     /// Collapses (`true`) or expands (`false`) the sidebar.
