@@ -5633,16 +5633,7 @@ async fn file_drop_reaches_the_innermost_target() {
     assert_eq!(to_outer.get(), 0, "内側が受け取ったら外側へは届かない");
 
     // 渡した URL から中身を読める。
-    let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(
-        web_sys::window().expect("window").fetch_with_str(&url),
-    )
-    .await
-    .expect("blob URL を読む")
-    .unchecked_into();
-    let text = wasm_bindgen_futures::JsFuture::from(response.text().expect("text"))
-        .await
-        .expect("中身");
-    assert_eq!(text.as_string().as_deref(), Some("メモ.txt"));
+    assert_eq!(read_blob(&url).await.as_deref(), Some("メモ.txt"));
 
     // 受け取り手のいない所へ落としたものは、窓へ届く。
     let to_window = Rc::new(RefCell::new(Vec::new()));
@@ -5670,5 +5661,24 @@ async fn file_drop_reaches_the_innermost_target() {
     assert!(fire_drag(&on_target, "drop", &["メモ.txt"]));
     assert_eq!(replaced.get(), 1);
     assert_eq!(to_target.borrow().len(), 2, "前のクロージャは呼ばれない");
+    assert_eq!(
+        read_blob(&url).await,
+        None,
+        "設定し直しても、前のクロージャへ渡した URL は次のドロップで取り消す"
+    );
     window.close();
+}
+
+/// Reads the text behind a `blob:` URL. `None` once the URL has been revoked.
+async fn read_blob(url: &str) -> Option<String> {
+    let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(
+        web_sys::window().expect("window").fetch_with_str(url),
+    )
+    .await
+    .ok()?
+    .unchecked_into();
+    let text = wasm_bindgen_futures::JsFuture::from(response.text().ok()?)
+        .await
+        .ok()?;
+    text.as_string()
 }
