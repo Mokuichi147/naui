@@ -303,6 +303,8 @@ struct ListInner {
     context_menu: ValueHandler<(usize, Point)>,
     /// The `dblclick` / `contextmenu` / `keydown` subscriptions on the outer frame.
     _row_listeners: RefCell<Vec<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A vertical list of selectable rows.
@@ -339,6 +341,7 @@ impl List {
             row_activate: ValueHandler::default(),
             context_menu: ValueHandler::default(),
             _row_listeners: RefCell::new(Vec::new()),
+            file_drop: Default::default(),
         }));
         this.build_select(&[])?;
         this.listen_row_events()?;

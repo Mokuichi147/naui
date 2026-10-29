@@ -103,6 +103,19 @@ macro_rules! impl_widget {
                 );
             }
 
+            /// Called with the files dropped onto this widget from Explorer or another
+            /// app.
+            ///
+            /// When widgets with this closure are nested, the innermost one under the
+            /// pointer takes the drop, and the window's
+            /// [`on_file_drop`](crate::Window::on_file_drop) gets only drops no widget
+            /// takes. Text fields (`TextBox`) handle drags themselves, so drops onto them
+            /// do not arrive. The closure is called after the files have been read, a
+            /// moment after the drop. Setting it again replaces the previous closure.
+            pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
+                crate::file_drop::set_widget_handler(&<$t as Widget>::native_element(self), f);
+            }
+
             /// Creates a weak reference. Capture it when touching this widget from its own
             /// notification closures (capturing a `clone()` creates a cycle and it is never
             /// freed).

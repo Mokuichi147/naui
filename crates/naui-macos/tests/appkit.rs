@@ -25,7 +25,7 @@ use naui_core::{
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
-use objc2::runtime::NSObjectProtocol;
+use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::sel;
 use objc2::{
     define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
@@ -292,6 +292,10 @@ fn main() {
         ("ページ送りが範囲内に収まる", pagination_steps),
         ("リンクのクリックがクロージャへ届く", link_click),
         ("テーマを実行中に切り替えられる", theme_switch),
+        (
+            "落とされたファイルがポインターの下のウィジェットか窓へ届く",
+            file_drop_reaches_the_widget_under_the_pointer,
+        ),
         ("大きさの指定が制約として反映される", sizing_constraints),
         (
             "大きさを指定し直しても制約が積み上がらない",
@@ -4517,6 +4521,151 @@ fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
         });
     }
     assert_eq!(got, Some(Some("naui のテスト ✂".to_string())));
+    Ok(())
+}
+
+define_class!(
+    /// Stands in for the `NSDraggingInfo` AppKit passes during a drag. Only the two
+    /// things naui reads are answered: the pasteboard and the pointer position.
+    #[unsafe(super(objc2_foundation::NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiTestDraggingInfo"]
+    #[ivars = (Retained<objc2_app_kit::NSPasteboard>, Cell<NSPoint>)]
+    struct FakeDraggingInfo;
+
+    unsafe impl NSObjectProtocol for FakeDraggingInfo {}
+
+    impl FakeDraggingInfo {
+        #[unsafe(method_id(draggingPasteboard))]
+        fn dragging_pasteboard(&self) -> Retained<objc2_app_kit::NSPasteboard> {
+            self.ivars().0.clone()
+        }
+
+        #[unsafe(method(draggingLocation))]
+        fn dragging_location(&self) -> NSPoint {
+            self.ivars().1.get()
+        }
+    }
+);
+
+/// Files dropped from Finder go to the innermost widget under the pointer that has
+/// `on_file_drop`, and otherwise to the window's. A real drag cannot be synthesized,
+/// so the messages AppKit sends to the window are sent directly.
+fn file_drop_reaches_the_widget_under_the_pointer(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::{NSDragOperation, NSPasteboard, NSPasteboardWriting};
+    use objc2_foundation::{NSArray, NSURL};
+
+    let window = ui.window("ファイルの受け取り", 320.0, 200.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let outer = ui.stack(Orientation::Vertical)?;
+    let target = ui.label("ここへ落とす")?;
+    outer.append(&target);
+    let plain = ui.button("受け取らない")?;
+    stack.append(&outer);
+    stack.append(&plain);
+    window.set_child(&stack);
+    window.show();
+    pump(0.1);
+
+    let to_target = Rc::new(RefCell::new(Vec::new()));
+    let to_outer = Rc::new(Cell::new(0));
+    let to_window = Rc::new(RefCell::new(Vec::new()));
+    target.on_file_drop({
+        let seen = to_target.clone();
+        move |files| seen.borrow_mut().extend(files.iter().cloned())
+    });
+    outer.on_file_drop({
+        let seen = to_outer.clone();
+        move |_| seen.set(seen.get() + 1)
+    });
+
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let pasteboard = NSPasteboard::pasteboardWithUniqueName();
+    let urls: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> =
+        ["/tmp/naui 写真.png", "/tmp/メモ.txt"]
+            .iter()
+            .map(|path| {
+                ProtocolObject::from_retained(NSURL::fileURLWithPath(&NSString::from_str(path)))
+            })
+            .collect();
+    pasteboard.clearContents();
+    assert!(pasteboard.writeObjects(&NSArray::from_retained_slice(&urls)));
+    let info =
+        FakeDraggingInfo::alloc(mtm).set_ivars((pasteboard.clone(), Cell::new(NSPoint::ZERO)));
+    let info: Retained<FakeDraggingInfo> = unsafe { msg_send![super(info), init] };
+    let native = window.native_window();
+
+    let center_of = |view: &NSView| {
+        let bounds = view.bounds();
+        view.convertPoint_toView(
+            NSPoint::new(bounds.size.width / 2.0, bounds.size.height / 2.0),
+            None,
+        )
+    };
+    let operation_at = |point: NSPoint| -> NSDragOperation {
+        info.ivars().1.set(point);
+        unsafe { msg_send![&*native, draggingEntered: &*info] }
+    };
+    let drop_at = |point: NSPoint| -> bool {
+        info.ivars().1.set(point);
+        unsafe { msg_send![&*native, performDragOperation: &*info] }
+    };
+
+    let on_target = center_of(&target.native_view());
+    let on_plain = center_of(&plain.native_view());
+    assert_eq!(
+        operation_at(on_target),
+        NSDragOperation::Copy,
+        "受け取るウィジェットの上ではコピー"
+    );
+    assert_eq!(
+        operation_at(on_plain),
+        NSDragOperation::None,
+        "受け取り手がいなければ断る"
+    );
+    assert!(!drop_at(on_plain));
+
+    assert!(drop_at(on_target));
+    let names: Vec<String> = to_target
+        .borrow()
+        .iter()
+        .map(|f| f.name().to_string())
+        .collect();
+    assert_eq!(names, ["naui 写真.png", "メモ.txt"]);
+    assert_eq!(
+        to_target.borrow()[0].path().and_then(|p| p.to_str()),
+        Some("/tmp/naui 写真.png"),
+        "絶対パスを渡す"
+    );
+    assert_eq!(to_outer.get(), 0, "内側が受け取ったら外側へは届かない");
+
+    window.on_file_drop({
+        let seen = to_window.clone();
+        move |files| {
+            seen.borrow_mut()
+                .extend(files.iter().map(|f| f.name().to_string()))
+        }
+    });
+    assert_eq!(
+        operation_at(on_plain),
+        NSDragOperation::Copy,
+        "窓が受け取る"
+    );
+    assert!(drop_at(on_plain));
+    assert_eq!(to_window.borrow().len(), 2);
+    assert_eq!(
+        to_target.borrow().len(),
+        2,
+        "ほかのウィジェットへは届かない"
+    );
+
+    // ファイルでない中身 (文字列だけ) は受け取らない。
+    pasteboard.clearContents();
+    pasteboard.setString_forType(&NSString::from_str("文字"), unsafe {
+        objc2_app_kit::NSPasteboardTypeString
+    });
+    assert_eq!(operation_at(on_target), NSDragOperation::None);
+    window.close();
     Ok(())
 }
 

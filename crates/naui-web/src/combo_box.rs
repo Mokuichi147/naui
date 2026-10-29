@@ -15,6 +15,8 @@ struct ComboBoxInner {
     on_select: SelectionHandler,
     /// The `change` subscription. Dropping it also unsubscribes.
     _listener: RefCell<Option<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A drop-down for choosing one item (`<select>`).
@@ -37,6 +39,7 @@ impl ComboBox {
             document: document.clone(),
             on_select: SelectionHandler::default(),
             _listener: RefCell::new(None),
+            file_drop: Default::default(),
         });
         let listener = Listener::attach(inner.native.as_ref(), "change", {
             let weak = Rc::downgrade(&inner);

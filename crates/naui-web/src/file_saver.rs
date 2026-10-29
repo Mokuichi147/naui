@@ -51,6 +51,8 @@ struct FileSaverInner {
     /// Revoking them before the download starts would lose the contents, so they are
     /// kept alive until the next save or until the handle is dropped.
     object_urls: RefCell<Vec<String>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 impl Drop for FileSaverInner {
@@ -88,6 +90,7 @@ impl FileSaver {
             on_error: RefCell::new(None),
             click: RefCell::new(None),
             object_urls: RefCell::new(Vec::new()),
+            file_drop: Default::default(),
         }));
 
         // 保存はユーザー操作の中でしか始められないので、クリックのイベント内で

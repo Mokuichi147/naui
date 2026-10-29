@@ -1,7 +1,7 @@
 use crate::sys;
 use crate::Widget;
 use crate::{MenuBar, Sidebar, Toolbar};
-use naui_core::{CloseResponse, EventResponse, KeyEvent, Result, Theme, WindowState};
+use naui_core::{CloseResponse, EventResponse, FileEntry, KeyEvent, Result, Theme, WindowState};
 
 /// A weak reference for referring to a window from event handlers without holding
 /// it strongly.
@@ -139,6 +139,22 @@ impl Window {
     #[inline]
     pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
         self.0.on_resize(f)
+    }
+
+    /// Called with the files dropped onto the window from the OS (Finder, Explorer,
+    /// a file manager).
+    ///
+    /// A widget under the pointer with its own `on_file_drop` takes the drop instead,
+    /// so this gets only the drops no widget takes. Setting it again replaces the
+    /// previous closure.
+    ///
+    /// On the Web the entries carry no path; [`FileEntry::source`] is a `blob:` URL
+    /// that stays valid until the next drop onto the same window, or until the
+    /// window is dropped. See
+    /// [Receiving dropped files](crate::guide#receiving-dropped-files).
+    #[inline]
+    pub fn on_file_drop(&self, f: impl FnMut(&[FileEntry]) + 'static) {
+        self.0.on_file_drop(f)
     }
 
     #[inline]

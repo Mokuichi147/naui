@@ -68,6 +68,8 @@ struct SplitViewInner {
     /// The relays are held with the same lifetime as the handle (so it can be moved from
     /// inside the notification).
     listeners: RefCell<Vec<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A container that divides two panes with a movable divider.
@@ -146,6 +148,7 @@ impl SplitView {
             grab: Cell::new(0.0),
             handler: ValueHandler::default(),
             listeners: RefCell::new(Vec::new()),
+            file_drop: Default::default(),
         }));
         this.0.write_position();
         this.attach_listeners()?;

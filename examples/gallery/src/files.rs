@@ -19,7 +19,7 @@ fn describe_entry(entry: &FileEntry) -> String {
     }
 }
 
-/// 単一ファイル、複数ファイル、フォルダーの選択と、内容の保存。
+/// 単一ファイル、複数ファイル、フォルダーの選択と、落とされたファイルの受け取り、内容の保存。
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
@@ -55,6 +55,27 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     });
     pickers.append(&folder);
     pane.append(&pickers);
+
+    // OS (Finder やエクスプローラー) から落とされたファイルを受け取る。
+    parts::section(ui, &pane, "on_file_drop")?;
+    let drop_target = ui.label("Drop files from Finder, Explorer or a file manager here.")?;
+    drop_target.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(64.0)),
+    );
+    drop_target.on_file_drop({
+        let target = drop_target.downgrade();
+        let notice = notice.clone();
+        move |entries| {
+            let text = format!("Dropped: {}", describe_entries(entries));
+            if let Some(target) = target.upgrade() {
+                target.set_text(&text);
+            }
+            notice.show(&text);
+        }
+    });
+    pane.append(&drop_target);
 
     // 入力した内容を、環境標準の保存ダイアログで書き出す。保存のボタンは
     // 書き出す欄のすぐ下に置く。

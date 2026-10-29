@@ -74,6 +74,8 @@ struct CanvasInner {
     /// When the ratio changes the condition stops matching and `change` fires, so it is
     /// re-attached with the new ratio each time.
     ratio_watch: RefCell<Option<(f64, Listener)>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A surface the app draws on itself (`<canvas>`).
@@ -111,6 +113,7 @@ impl Canvas {
             _observer_callback: RefCell::new(None),
             _listeners: RefCell::new(Vec::new()),
             ratio_watch: RefCell::new(None),
+            file_drop: Default::default(),
         });
 
         // 予約した描画。

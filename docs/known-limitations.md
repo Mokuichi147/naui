@@ -20,6 +20,7 @@ that shape are covered in
 | Maximizing and minimizing | Possible | Possible | Possible (minimizing cannot be detected on Wayland) | Not possible |
 | Full screen | Possible | Possible | Possible | Only from within a user action |
 | `Sender::send` from `std::thread::spawn` | Possible | Possible | Possible | Not possible (no threads) |
+| What a dropped file carries (`on_file_drop`) | The absolute path | The absolute path | The absolute path (local files only) | A `blob:` URL, no path |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -95,6 +96,10 @@ that shape are covered in
   Chromium-based browsers and Firefox deliver them to `on_wheel` as wheel events
   with Ctrl). The amount per wheel notch is normalized to `WHEEL_STEP`, but when a
   browser on the Web passes pixels, the browser's amount is kept.
+- `on_file_drop` takes only files from the OS. Dragging between widgets (to
+  rearrange `List` or `Tree` rows), dragging out of the app, and dropped text or
+  links are not supported. Drops onto text-input widgets go to the field itself
+  and do not reach `on_file_drop`.
 
 ### Window
 
@@ -181,6 +186,10 @@ that shape are covered in
 - The position is converted to logical pixels with this window's display scale, so
   when crossing screens with different DPI, the value is counted with this window's
   scale.
+- `on_file_drop` is called a moment after the drop, once
+  `GetStorageItemsAsync` has read the files. Files without a path (such as the
+  inside of a zip shown by Explorer) are left out. Drops onto the title bar go to
+  the system, not to the window.
 
 ### Other threads and async
 
@@ -305,6 +314,8 @@ that shape are covered in
   window manager (Xvfb and so on), nobody responds to requests made after showing,
   and the state does not change (maximizing and full screen requested before
   showing do take effect when the window appears).
+- `on_file_drop` passes only files with a local path. Files offered only as URIs
+  (remote locations that GVFS does not mount) are left out.
 
 ## Web
 
@@ -372,6 +383,13 @@ that shape are covered in
   full screen from within a user action (a click or key press), so
   `set_state(WindowState::Fullscreen)` at startup or from a timer is refused, and
   the state does not change. Safari on iPhone has no Fullscreen API.
+- `on_file_drop` receives contents, not paths. Each file's `source` is a `blob:`
+  URL that stays valid until the next drop onto the same widget or window, or
+  until that widget or window is dropped. A dropped folder comes with only its
+  name. Once any `on_file_drop` is set, file drops that nothing takes are refused
+  for the whole page, so the browser does not replace the page with the dropped
+  file. Drops onto text fields are among them: they reach neither `on_file_drop`
+  nor the field.
 
 ### Other threads and async
 

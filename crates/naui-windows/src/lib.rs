@@ -37,6 +37,7 @@ mod date_picker;
 mod dialog;
 mod editable_combo_box;
 mod expander;
+mod file_drop;
 mod file_picker;
 mod file_saver;
 mod focus;
@@ -165,7 +166,13 @@ impl Ui {
     /// `width` / `height` are the size of the content area (the same as
     /// [`Window::set_size`]), excluding the title bar, menu bar and window frame.
     pub fn window(&self, title: &str, width: f64, height: f64) -> Result<Window> {
-        let w = Window::new(title, width, height, self.0.theme.get())?;
+        let w = Window::new(
+            title,
+            width,
+            height,
+            self.0.theme.get(),
+            self.0.tasks.clone(),
+        )?;
         w.install_closing_handler(self.0.shutdown);
         self.0.windows.borrow_mut().push(w.clone());
         Ok(w)
@@ -509,9 +516,9 @@ impl Ui {
     }
 }
 
-/// Releases the `on_key_down` and `on_focus_change` handlers.
+/// Releases the `on_key_down`, `on_file_drop` and `on_focus_change` handlers.
 ///
-/// The `on_key_down` handlers are held by a `thread_local!` table rather than by the
+/// The `on_key_down` and `on_file_drop` handlers are held by a `thread_local!` table rather than by the
 /// elements, so they remain even after the XAML tree is removed. Unless the shutdown
 /// path goes through here, the widgets captured by the closures are not released
 /// until the process ends (see [`ui_thread::Registry`]). The `on_focus_change`
@@ -519,6 +526,7 @@ impl Ui {
 /// owner.
 fn release_widget_handlers() {
     keys::release_handlers();
+    file_drop::release_handlers();
     focus::release_handlers();
 }
 

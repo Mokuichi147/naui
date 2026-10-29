@@ -681,6 +681,17 @@ impl Window {
         self.0.on_resize.set(f);
     }
 
+    /// Called with the files dropped onto the window from a file manager or another
+    /// app.
+    ///
+    /// A widget under the pointer with its own `on_file_drop` takes the drop
+    /// instead. Text fields take dropped files as text themselves, so drops onto them
+    /// do not arrive. Only files with a local path are passed. Setting it again
+    /// replaces the previous closure.
+    pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
+        crate::file_drop::set_handler(&self.0.native, f);
+    }
+
     /// The corresponding GTK4 window. Public as a backend-specific escape hatch.
     pub fn native_window(&self) -> adw::ApplicationWindow {
         self.0.native.clone()

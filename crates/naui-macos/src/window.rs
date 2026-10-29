@@ -8,14 +8,15 @@ use naui_core::{CloseHandler, CloseResponse, Result, StateHandler, Theme, Window
 use objc2::rc::Retained;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::NSWindowDelegate;
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
     NSApplication, NSScreen, NSSplitViewController, NSView, NSWindow, NSWindowCollectionBehavior,
     NSWindowStyleMask, NSWindowTitleVisibility,
 };
+use objc2_app_kit::{NSDragOperation, NSDraggingDestination, NSDraggingInfo, NSWindowDelegate};
 use objc2_foundation::{NSNotification, NSObject, NSPoint, NSRect, NSSize, NSString};
 
+use crate::file_drop::FileDropHandler;
 use crate::menu_bar::MenuBar;
 use crate::sidebar::Sidebar;
 use crate::toolbar::Toolbar;
@@ -42,6 +43,8 @@ struct WindowInner {
     sidebar: RefCell<Option<Sidebar>>,
     on_close_request: CloseHandler,
     on_resize: ValueHandler<(f64, f64)>,
+    /// Takes files dropped where no widget under the pointer takes them.
+    on_file_drop: Rc<FileDropHandler>,
     /// The content minimum requested with `set_min_size`. Re-added and passed again
     /// whenever the part overlapping the title bar changes because of a sidebar or
     /// toolbar.
@@ -187,9 +190,39 @@ define_class!(
             }
         }
     }
+
+    // `NSWindow` passes the messages for the file drags it registered for to its
+    // delegate (see `file_drop`).
+    unsafe impl NSDraggingDestination for WindowDelegate {
+        #[unsafe(method(draggingEntered:))]
+        fn dragging_entered(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+            self.drag_operation(sender)
+        }
+
+        #[unsafe(method(draggingUpdated:))]
+        fn dragging_updated(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+            self.drag_operation(sender)
+        }
+
+        #[unsafe(method(performDragOperation:))]
+        fn perform_drag_operation(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
+            self.ivars().upgrade().is_some_and(|inner| {
+                crate::file_drop::perform(&inner.native, sender, &inner.on_file_drop)
+            })
+        }
+    }
 );
 
 impl WindowDelegate {
+    /// Answers whether the files being dragged would be taken at the pointer.
+    fn drag_operation(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+        self.ivars()
+            .upgrade()
+            .map_or(NSDragOperation::None, |inner| {
+                crate::file_drop::operation(&inner.native, sender, &inner.on_file_drop)
+            })
+    }
+
     fn new(mtm: MainThreadMarker, inner: Weak<WindowInner>) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(inner);
         unsafe { msg_send![super(this), init] }
@@ -249,6 +282,7 @@ impl Window {
             sidebar: RefCell::new(None),
             on_close_request: CloseHandler::default(),
             on_resize: ValueHandler::default(),
+            on_file_drop: Rc::default(),
             min_size: Cell::new(None),
             delegate: RefCell::new(None),
             on_state_change: StateHandler::default(),
@@ -268,6 +302,7 @@ impl Window {
             .native
             .setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         *this.0.delegate.borrow_mut() = Some(delegate);
+        crate::file_drop::register_window(&this.0.native);
         this
     }
 
@@ -351,6 +386,15 @@ impl Window {
     /// Notified when the size changes. Receives the new [`size`](Self::size).
     pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
         self.0.on_resize.set(f);
+    }
+
+    /// Called with the files dropped onto the window from Finder or another app.
+    ///
+    /// A widget under the pointer with its own `on_file_drop` takes the drop
+    /// instead. Text fields take dropped files as text themselves, so drops onto them
+    /// do not arrive. Setting it again replaces the previous closure.
+    pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
+        self.0.on_file_drop.set(f);
     }
 
     /// Notified of keys pressed inside this window.

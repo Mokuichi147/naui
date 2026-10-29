@@ -27,6 +27,8 @@ struct ExpanderInner {
     /// The relay is held with the same lifetime as the handle (so it can be expanded
     /// or collapsed from inside the notification).
     listener: RefCell<Option<Listener>>,
+    /// `on_file_drop`.
+    file_drop: crate::file_drop::FileDrop,
 }
 
 /// A container whose contents are shown and hidden by clicking its heading
@@ -53,6 +55,7 @@ impl Expander {
             state: Rc::new(Cell::new(false)),
             handler: Rc::new(ValueHandler::default()),
             listener: RefCell::new(None),
+            file_drop: Default::default(),
         }));
 
         // `toggle` は `open` を書き換えたときにも (あとから) 飛ぶので、

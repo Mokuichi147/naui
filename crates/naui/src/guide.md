@@ -2188,6 +2188,68 @@ OS save dialog appears, but in browsers without it (Firefox / Safari) it becomes
 the downloads folder without confirmation**. In both cases [`FileEntry::path`] is
 `None`, and only the name is returned.
 
+## Receiving dropped files
+
+Every widget and every window can take files dragged in from the OS (Finder,
+Explorer, a file manager) with `on_file_drop`. The files arrive as the same
+[`FileEntry`]s that [`FilePicker`] returns.
+
+```no_run
+# use naui::{Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let window = ui.window("Viewer", 640.0, 480.0)?;
+let preview = ui.image("")?;
+
+// The image takes drops onto itself.
+preview.on_file_drop({
+    let preview = preview.clone();
+    move |files| {
+        if let Some(source) = files.first().and_then(|file| file.source()) {
+            preview.set_source(source);
+        }
+    }
+});
+// Anything dropped elsewhere in the window lands here.
+window.on_file_drop(move |files| {
+    for file in files {
+        println!("dropped {}", file.name());
+    }
+});
+# Ok(())
+# }
+```
+
+**The innermost widget under the pointer that has `on_file_drop` takes the
+drop**, and the window's `on_file_drop` gets only the drops no widget takes. While
+a drag passes over a place where nothing takes it, the pointer shows that it
+cannot be dropped there. Only files are taken; dragged text and links are left to
+the widgets that take them natively.
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `on_file_drop` | `AllowDrop` + `DragOver` / `Drop` on the window root | `registerForDraggedTypes:` on the window | `GtkDropTarget` (`GdkFileList`) | `dragover` / `drop` |
+
+What arrives differs as with `FilePicker`:
+
+- **On macOS, Windows and Linux, [`FileEntry::path`] is the absolute path** of
+  each file or folder. Items without a local path (the inside of a zip shown by
+  Explorer, remote locations) are left out.
+- **On the Web, `path` is `None`**, because the browser hands over contents, not
+  paths. [`FileEntry::source`] is a `blob:` URL that can be passed to
+  `Image::set_source` and the like or read with `fetch`. It **stays valid until the
+  next drop onto the same widget (or window)**, which revokes it, or until the
+  widget is dropped. A dropped folder comes as one entry with only its name, as
+  with the folder mode of `FilePicker`. Once any `on_file_drop` is set, files
+  dropped where nothing takes them are refused, instead of the browser opening the
+  file in place of the page.
+- **On Windows the closure is called a moment after the drop**, once the files have
+  been read (`GetStorageItemsAsync` completes asynchronously).
+- **Text fields take dropped files as text themselves** on macOS and Linux, and
+  `TextBox` handles drags itself on Windows, so drops onto text-input widgets do
+  not reach `on_file_drop`. On the Web they do not reach it either, and are
+  refused like other drops nothing takes, since the browser would otherwise open
+  the file in place of the page.
+
 ## Dialogs
 
 A [`Dialog`] shows the platform's standard modal. It has a heading, a message, an

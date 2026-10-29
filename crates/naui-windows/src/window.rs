@@ -113,6 +113,12 @@ struct WindowInner {
     menu_key_installed: Cell<bool>,
     /// The `on_key_down` handler. Called from the root's `PreviewKeyDown`.
     key_down: Rc<naui_core::KeyHandler>,
+    /// The `on_file_drop` handler. Called from the root's `Drop` when no widget under
+    /// the pointer takes the files.
+    on_file_drop: Rc<crate::file_drop::FileDropHandler>,
+    /// Runs the reading of dropped files (it completes asynchronously) on the UI
+    /// thread.
+    tasks: naui_core::Tasks,
     closing_token: Cell<Option<i64>>,
     on_close_request: naui_core::CloseHandler,
     on_resize: RefCell<Option<Box<ResizeCallback>>>,
@@ -178,7 +184,13 @@ impl Window {
         WeakWindow(Rc::downgrade(&self.0))
     }
 
-    pub(crate) fn new(title: &str, width: f64, height: f64, theme: Theme) -> Result<Self> {
+    pub(crate) fn new(
+        title: &str,
+        width: f64,
+        height: f64,
+        theme: Theme,
+        tasks: naui_core::Tasks,
+    ) -> Result<Self> {
         let native = XamlWindow::new().map_err(|e| to_error("Window の生成", e))?;
         native
             .SetTitle(&HSTRING::from(title))
@@ -206,6 +218,8 @@ impl Window {
             wheel_subclass_installed: Cell::new(false),
             menu_key_installed: Cell::new(false),
             key_down: Rc::default(),
+            on_file_drop: Rc::default(),
+            tasks,
             closing_token: Cell::new(None),
             on_close_request: naui_core::CloseHandler::default(),
             on_resize: RefCell::new(None),
@@ -518,6 +532,46 @@ impl Window {
     /// Notified when the size changes. Receives the new [`size`](Self::size).
     pub fn on_resize(&self, f: impl FnMut((f64, f64)) + 'static) {
         *self.0.on_resize.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Called with the files dropped onto the window from Explorer or another app.
+    ///
+    /// A widget under the pointer with its own `on_file_drop` takes the drop
+    /// instead. Text fields (`TextBox`) handle drags themselves, so drops onto them
+    /// do not arrive. Files without a path (such as the inside of a zip shown by
+    /// Explorer) are left out. The closure is called after the files have been read,
+    /// a moment after the drop. Setting it again replaces the previous closure.
+    pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
+        self.0.on_file_drop.set(f);
+        self.ensure_drop_root();
+    }
+
+    /// Gives a window without a child an empty root to receive drops on.
+    ///
+    /// The receiver is normally attached to the root built by
+    /// [`set_child`](Self::set_child), but a window without a child has no content
+    /// at all. A later `set_child` replaces this root and attaches the receiver
+    /// again.
+    fn ensure_drop_root(&self) {
+        if self.0.native.Content().is_ok() {
+            return;
+        }
+        // 背景が無いと当たり判定に入らず、ドラッグのイベントが来ない。
+        let root = XamlReader::Load(&HSTRING::from(
+            r#"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="Transparent"/>"#,
+        ))
+        .and_then(|root| root.cast::<UIElement>());
+        let (Ok(root), Some(hwnd)) = (root, self.hwnd()) else {
+            return;
+        };
+        if self.0.native.SetContent(&root).is_ok() {
+            let _ = crate::file_drop::install(
+                &root,
+                hwnd,
+                self.0.on_file_drop.clone(),
+                self.0.tasks.clone(),
+            );
+        }
     }
 
     pub fn set_title(&self, title: &str) {
@@ -902,6 +956,14 @@ impl Window {
             if let Some(root) = self.0.theme_root.borrow().as_ref() {
                 let _ = crate::keys::install(root, self.0.key_down.clone());
                 let _ = crate::focus::install(root);
+                if let Some(hwnd) = self.hwnd() {
+                    let _ = crate::file_drop::install(
+                        root,
+                        hwnd,
+                        self.0.on_file_drop.clone(),
+                        self.0.tasks.clone(),
+                    );
+                }
             }
             if !self.0.wheel_subclass_installed.get() {
                 self.0
