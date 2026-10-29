@@ -786,13 +786,7 @@ impl Sidebar {
             // ウィンドウを狭めて AppKit が畳んだものは、コードで広げたときにも
             // naui から開く (AppKit が開き直すのはライブリサイズの間だけ)。
             // 利用者がボタンや仕切りで開閉したものは開かない。
-            let live = self
-                .0
-                .controller
-                .view()
-                .window()
-                .is_some_and(|window| window.inLiveResize());
-            self.0.collapsed_for_size.set(now && live);
+            self.0.collapsed_for_size.set(now && self.in_live_resize());
             self.0.on_collapse.emit(now);
         }
     }
@@ -848,9 +842,25 @@ impl Sidebar {
     }
 
     /// Whether the split view is wide enough to expand a sidebar collapsed for size.
+    ///
+    /// Never during live resize: AppKit expands what it collapsed by itself then, and
+    /// expanding it from naui as well reopens it while the window is still narrow
+    /// (macOS 26).
     fn has_room(&self) -> bool {
+        if self.in_live_resize() {
+            return false;
+        }
         let width = self.0.controller.splitView().frame().size.width;
         width >= SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH + EXPAND_HYSTERESIS
+    }
+
+    /// Whether the user is resizing the window the sidebar is in.
+    fn in_live_resize(&self) -> bool {
+        self.0
+            .controller
+            .view()
+            .window()
+            .is_some_and(|window| window.inLiveResize())
     }
 
     /// Calls `f` on the next iteration of the main queue, if the sidebar is still alive.
