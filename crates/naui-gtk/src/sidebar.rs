@@ -431,8 +431,9 @@ impl Sidebar {
         if self.0.auto_collapse.replace(auto) == auto {
             return;
         }
-        // 入れ直したら、いまの幅から決め直す。
+        // 入れ直したら、いまの幅から決め直す。前の判断で予約した開閉も捨てる。
         self.0.auto.set(SidebarAutoCollapse::default());
+        self.0.auto_pending.set(None);
         if auto {
             self.check_width();
         }
@@ -449,11 +450,17 @@ impl Sidebar {
         if !self.0.auto_collapse.get() {
             return;
         }
+        // 予約した開閉は済んだものとして比べる。予約の後に幅が戻ったら、
+        // 逆向きの開閉で予約を打ち消せる。
+        let collapsed = match self.0.auto_pending.get() {
+            Some(change) => change == SidebarAutoChange::Collapse,
+            None => self.is_collapsed(),
+        };
         let mut auto = self.0.auto.get();
         let change = auto.resized(
             f64::from(self.0.paned.width()),
             self.0.width.get(),
-            self.is_collapsed(),
+            collapsed,
         );
         self.0.auto.set(auto);
         let Some(change) = change else {

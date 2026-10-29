@@ -487,6 +487,10 @@ fn main() {
             sidebar_collapses_when_the_window_narrows,
         ),
         (
+            "サイドバーを自動で畳む予約は、行う前に窓が戻ったら取り消される",
+            sidebar_drops_a_stale_auto_collapse,
+        ),
+        (
             "すべてのアイコンがテーマに実在する",
             toolbar_icons_exist_in_the_theme,
         ),
@@ -7605,6 +7609,88 @@ fn sidebar_collapses_when_the_window_narrows(ui: &Ui) -> Result<()> {
     spin_until(Duration::from_millis(500), || false);
     assert!(!sidebar.is_collapsed(), "切っていれば畳まない");
     assert_eq!(seen.borrow().len(), 6);
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// The automatic collapse is decided after a paint and done in the next main loop
+/// iteration. If the width comes back in between, the scheduled collapse is cancelled
+/// rather than collapsing the sidebar in a wide window, where it would never expand
+/// again.
+fn sidebar_drops_a_stale_auto_collapse(ui: &Ui) -> Result<()> {
+    use naui_core::SIDEBAR_COLLAPSE_CONTENT_WIDTH;
+    use std::time::Duration;
+
+    let window = ui.window("サイドバーの古い予約", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    let paned = sidebar.native_paned();
+    spin_until(Duration::from_secs(2), || paned.width() >= 700);
+    let wide = paned.width();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+
+    // サイドバーの後につなぐので、狭い幅で描いて畳むのを予約した直後に呼ばれる。
+    // そこで窓を戻し、描き直し (GDK_PRIORITY_REDRAW = 120) は通すが idle (200) は
+    // 待たせる source を挟む。予約を行う前に、元の幅で描き直された形になる。
+    let threshold = (DEFAULT_SIDEBAR_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH) as i32;
+    let clock = paned.frame_clock().expect("表示した後は時計がある");
+    let done = Rc::new(Cell::new(false));
+    let held = Rc::new(Cell::new(false));
+    let handler = clock.connect_after_paint({
+        let paned = paned.clone();
+        let window = window.clone();
+        let done = done.clone();
+        let held = held.clone();
+        move |_| {
+            if done.get() || paned.width() >= threshold {
+                return;
+            }
+            done.set(true);
+            window.set_size(800.0, 400.0);
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            let paned = paned.clone();
+            let held = held.clone();
+            glib::idle_add_local_full(glib::Priority::from(150), move || {
+                if paned.width() < wide && std::time::Instant::now() < deadline {
+                    return glib::ControlFlow::Continue;
+                }
+                held.set(paned.width() >= wide);
+                glib::ControlFlow::Break
+            });
+        }
+    });
+    let narrow = DEFAULT_SIDEBAR_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH - 60.0;
+    window.set_size(narrow, 400.0);
+    spin_until(Duration::from_secs(2), || done.get());
+    clock.disconnect(handler);
+    assert!(done.get(), "狭い幅で描かれた");
+    spin_until(Duration::from_secs(3), || held.get());
+    assert!(held.get(), "予約を行う前に元の幅で描き直された");
+    spin_until(Duration::from_millis(500), || false);
+    assert!(
+        !sidebar.is_collapsed(),
+        "広い窓では畳まない: paned={}, 届いた通知={:?}",
+        paned.width(),
+        seen.borrow()
+    );
+
+    // 判断の状態も崩れていない。狭めれば畳まれ、広げれば開き直す。
+    seen.borrow_mut().clear();
+    window.set_size(narrow, 400.0);
+    spin_until(Duration::from_secs(3), || !seen.borrow().is_empty());
+    assert!(sidebar.is_collapsed(), "狭めると畳まれる");
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_secs(3), || seen.borrow().len() >= 2);
+    assert!(!sidebar.is_collapsed(), "広げると開き直す");
+    assert_eq!(*seen.borrow(), [true, false]);
     window.clear_sidebar();
     window.close();
     Ok(())
