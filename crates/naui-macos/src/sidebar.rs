@@ -596,7 +596,7 @@ impl Sidebar {
             controls,
             observer: RefCell::new(None),
         }));
-        this.set_auto_collapse(true);
+        this.apply_auto_collapse();
         this.apply_width();
 
         let observer = ResizeObserver::new(mtm, Rc::downgrade(&this.0));
@@ -770,8 +770,17 @@ impl Sidebar {
     ///
     /// [`Window::set_size`]: crate::Window::set_size
     pub fn set_auto_collapse(&self, auto: bool) {
-        self.0.auto_collapse.set(auto);
+        // 同じ値なら何もしない。畳んだ印を消すと、広げても開き直さなくなる。
+        if self.0.auto_collapse.replace(auto) == auto {
+            return;
+        }
         self.0.collapsed_for_size.set(false);
+        self.apply_auto_collapse();
+    }
+
+    /// Hands [`auto_collapse`](Self::auto_collapse) to the split view items.
+    fn apply_auto_collapse(&self) {
+        let auto = self.0.auto_collapse.get();
         self.0.sidebar_item.setCanCollapseFromWindowResize(auto);
         let min = if auto {
             SIDEBAR_COLLAPSE_CONTENT_WIDTH

@@ -11893,6 +11893,8 @@ fn sidebar_collapses_when_the_window_narrows(ui: &Ui) -> Result<()> {
     );
     pump_until(2.0, || !seen.borrow().is_empty());
     assert_eq!(*seen.borrow(), [true], "畳んだことは次の周回で届く");
+    sidebar.set_auto_collapse(true);
+    assert!(sidebar.is_collapsed(), "同じ値を入れ直しても畳んだまま");
 
     window.set_size(800.0, 400.0);
     pump_until(2.0, || !sidebar.is_collapsed());

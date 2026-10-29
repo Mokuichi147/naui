@@ -553,7 +553,9 @@ impl Sidebar {
     /// widen the sidebar past that point. Off, it stays `PaneDisplayMode::Left`; the
     /// sidebar is left collapsed or expanded as it is.
     pub fn set_auto_collapse(&self, auto: bool) {
-        self.0.auto_collapse.set(auto);
+        if self.0.auto_collapse.replace(auto) == auto {
+            return;
+        }
         let mode = if auto {
             NavigationViewPaneDisplayMode::Auto
         } else {
