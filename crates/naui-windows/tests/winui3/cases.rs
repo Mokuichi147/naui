@@ -575,6 +575,16 @@ fn checkbox_toggle(ui: &Ui) -> Result<()> {
         [true, false].as_slice(),
         "変わったあとの値が順に届くこと"
     );
+
+    // プログラムからの `set_checked` は通知しない (4 環境で同じ約束)。
+    checkbox.set_checked(true);
+    assert!(checkbox.is_checked(), "点くこと");
+    checkbox.set_checked(false);
+    assert_eq!(
+        seen.borrow().len(),
+        2,
+        "set_checked では on_toggle を呼ばないこと"
+    );
     Ok(())
 }
 

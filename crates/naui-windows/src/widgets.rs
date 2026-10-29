@@ -396,6 +396,9 @@ impl Button {
 struct CheckboxInner {
     native: XamlCheckBox,
     tokens: RefCell<Vec<(bool, i64)>>,
+    /// Set during `set_checked`. `Checked` / `Unchecked` also fire when `IsChecked`
+    /// is rewritten from code.
+    silent: Cell<bool>,
 }
 
 /// A check box (CheckBox).
@@ -418,6 +421,7 @@ impl Checkbox {
         Ok(Self(Rc::new(CheckboxInner {
             native,
             tokens: RefCell::new(Vec::new()),
+            silent: Cell::new(false),
         })))
     }
 
@@ -429,15 +433,18 @@ impl Checkbox {
             .unwrap_or(false)
     }
 
+    /// Changes the state from code. `on_toggle` is not called.
     pub fn set_checked(&self, checked: bool) {
+        self.0.silent.set(true);
         let _ = self.0.native.SetIsChecked(bool_ref(checked).ok().as_ref());
+        self.0.silent.set(false);
     }
 
     pub fn set_enabled(&self, enabled: bool) {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
-    /// Called with the new value when the state changes.
+    /// Called with the new value every time the user toggles it.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         for (checked, token) in self.0.tokens.borrow_mut().drain(..) {
             let _ = if checked {
@@ -447,11 +454,18 @@ impl Checkbox {
             };
         }
         let f = std::sync::Arc::new(UiThreadCell::new(f));
+        let target = std::sync::Arc::new(UiThreadCell::new(Rc::downgrade(&self.0)));
         let mut tokens = Vec::new();
         for checked in [true, false] {
             let f = f.clone();
+            let target = target.clone();
             let handler = RoutedEventHandler::new(move |_sender, _args| {
-                f.with_mut(|f| f(checked));
+                let silent = target
+                    .try_with_mut(|weak| weak.upgrade().is_some_and(|inner| inner.silent.get()))
+                    .unwrap_or(false);
+                if !silent {
+                    f.with_mut(|f| f(checked));
+                }
                 Ok(())
             });
             let registered = if checked {
