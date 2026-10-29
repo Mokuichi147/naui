@@ -11933,6 +11933,33 @@ fn sidebar_collapses_when_the_window_narrows(ui: &Ui) -> Result<()> {
         !split.isSubviewCollapsed(&split.arrangedSubviews().objectAtIndex(0))
     });
 
+    // 自動の開閉が届く前に set_collapsed で決め直したら、そちらが勝ち、
+    // 古い通知は届かない。
+    seen.borrow_mut().clear();
+    window.set_size(narrow, 400.0);
+    window.set_size(800.0, 400.0);
+    sidebar.set_collapsed(true);
+    pump(0.3);
+    assert!(sidebar.is_collapsed(), "開き直しの予約は取り消される");
+    assert!(
+        seen.borrow().is_empty(),
+        "決め直した後に届いた: {:?}",
+        seen.borrow()
+    );
+    sidebar.set_collapsed(false);
+    pump(0.1);
+    window.set_size(narrow, 400.0);
+    sidebar.set_collapsed(false);
+    pump(0.3);
+    assert!(!sidebar.is_collapsed());
+    assert!(
+        seen.borrow().is_empty(),
+        "畳んだ通知は捨てられる: {:?}",
+        seen.borrow()
+    );
+    window.set_size(800.0, 400.0);
+    pump(0.1);
+
     // 切ると畳まず、中身の区画の最小も外す。
     sidebar.set_auto_collapse(false);
     assert!(!sidebar.auto_collapse());

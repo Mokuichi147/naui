@@ -442,6 +442,12 @@ struct SidebarInner {
     /// code too. AppKit restores only what it collapsed itself, and only during live
     /// resize.
     collapsed_for_size: Cell<bool>,
+    /// The `on_collapse(true)` scheduled by [`Sidebar::make_room`] has not been
+    /// delivered yet. Cleared when the state is changed again before then, so the
+    /// stale notification is dropped.
+    collapse_pending: Cell<bool>,
+    /// An expansion by [`Sidebar::expand_if_room`] is scheduled.
+    expand_pending: Cell<bool>,
     /// The stand inside the right pane that holds the window's child.
     content_frame: Retained<ContentFrame>,
     table: Retained<NSTableView>,
@@ -572,6 +578,8 @@ impl Sidebar {
             content_item,
             auto_collapse: Cell::new(true),
             collapsed_for_size: Cell::new(false),
+            collapse_pending: Cell::new(false),
+            expand_pending: Cell::new(false),
             content_frame,
             table,
             _source: source,
@@ -727,7 +735,9 @@ impl Sidebar {
     pub fn set_collapsed(&self, collapsed: bool) {
         // 先に覚えておくと、このあと届く大きさの変化を通知しないで済む。
         self.0.collapsed.set(collapsed);
+        // 予約してある自動の開閉と、その通知は取り消す。
         self.0.collapsed_for_size.set(false);
+        self.0.collapse_pending.set(false);
         self.0.sidebar_item.setCollapsed(collapsed);
         if !collapsed {
             // 開き直した区画を、いま覚えている幅へそろえる。
@@ -787,6 +797,7 @@ impl Sidebar {
             // naui から開く (AppKit が開き直すのはライブリサイズの間だけ)。
             // 利用者がボタンや仕切りで開閉したものは開かない。
             self.0.collapsed_for_size.set(now && self.in_live_resize());
+            self.0.collapse_pending.set(false);
             self.0.on_collapse.emit(now);
         }
     }
@@ -811,29 +822,39 @@ impl Sidebar {
         self.0.applying.set(true);
         self.0.sidebar_item.setCollapsed(true);
         self.0.applying.set(false);
-        self.on_next_turn(|sidebar| sidebar.0.on_collapse.emit(true));
+        self.0.collapse_pending.set(true);
+        self.on_next_turn(|sidebar| {
+            // 届く前に開き直されていたら、古い通知は捨てる。
+            if sidebar.0.collapse_pending.replace(false) {
+                sidebar.0.on_collapse.emit(true);
+            }
+        });
     }
 
     /// Expands a sidebar collapsed by [`make_room`](Self::make_room) once the window is
     /// wide enough, in the next main queue iteration (not in the middle of the split
     /// view's layout).
     fn expand_if_room(&self) {
-        if !self.0.collapsed_for_size.get() || self.0.applying.get() {
+        if !self.0.collapsed_for_size.get()
+            || self.0.applying.get()
+            || self.0.expand_pending.get()
+            || !self.has_room()
+        {
             return;
         }
-        if !self.has_room() {
-            return;
-        }
-        self.0.collapsed_for_size.set(false);
+        self.0.expand_pending.set(true);
         self.on_next_turn(|sidebar| {
-            if !sidebar.0.auto_collapse.get() || !sidebar.is_collapsed() {
+            sidebar.0.expand_pending.set(false);
+            // 頼んでから set_collapsed で決め直されていたら (collapsed_for_size が
+            // 下りる)、窓が狭め直されていたら、開かない。
+            if !sidebar.0.collapsed_for_size.get()
+                || !sidebar.0.auto_collapse.get()
+                || !sidebar.is_collapsed()
+                || !sidebar.has_room()
+            {
                 return;
             }
-            // 頼まれてから窓が狭め直されていたら、開かずに待つ。
-            if !sidebar.has_room() {
-                sidebar.0.collapsed_for_size.set(true);
-                return;
-            }
+            sidebar.0.collapsed_for_size.set(false);
             sidebar.0.collapsed.set(false);
             sidebar.0.sidebar_item.setCollapsed(false);
             sidebar.apply_width();
