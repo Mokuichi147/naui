@@ -18,6 +18,17 @@ pub const DEFAULT_SIDEBAR_WIDTH: f64 = 220.0;
 /// unreadable.
 pub const SIDEBAR_MIN_WIDTH: f64 = 140.0;
 
+/// The narrowest the content beside the sidebar gets before the sidebar collapses
+/// automatically (logical pixels).
+///
+/// The same as libadwaita's default minimum window width, the width GNOME designs
+/// for phones, so content that fits there still fits beside the sidebar.
+pub const SIDEBAR_COLLAPSE_CONTENT_WIDTH: f64 = 360.0;
+
+/// How much wider than the collapsing width the window has to get before an
+/// automatically collapsed sidebar expands again (logical pixels).
+const SIDEBAR_EXPAND_HYSTERESIS: f64 = 8.0;
+
 /// One sidebar item.
 ///
 /// It looks like a single row of "icon + text", and the icon can be omitted. Icons
@@ -220,6 +231,98 @@ pub fn sidebar_item(sections: &[SidebarSection], index: usize) -> Option<&Sideba
     sections.iter().flat_map(|s| s.items.iter()).nth(index)
 }
 
+/// A change [`SidebarAutoCollapse`] asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarAutoChange {
+    Collapse,
+    Expand,
+}
+
+/// Decides the automatic collapsing of a sidebar on platforms whose toolkit has no
+/// mechanism of its own (GTK's `GtkPaned`, the DOM). Used by backends.
+///
+/// It follows what `AdwBreakpoint` setters and WinUI's `PaneDisplayMode::Auto` do:
+///
+/// - When the width shared by the sidebar and the content drops below the sidebar's
+///   width plus [`SIDEBAR_COLLAPSE_CONTENT_WIDTH`], an expanded sidebar collapses.
+/// - When it gets wide enough again, a sidebar collapsed that way expands again. Going
+///   back takes a few more pixels than leaving, so a width right at the boundary does
+///   not flip it back and forth.
+/// - A sidebar the user (or the app) collapsed stays collapsed, and one opened while
+///   narrow stays open. Once the user toggles it, it is no longer this one's to
+///   restore ([`overridden`](Self::overridden)).
+///
+/// Only changes of the shared width count. Dragging the divider changes the sidebar's
+/// width but not the shared width, so the sidebar does not collapse under the
+/// pointer.
+///
+/// ```
+/// # use naui_core::{SidebarAutoChange, SidebarAutoCollapse};
+/// let mut auto = SidebarAutoCollapse::default();
+/// assert_eq!(auto.resized(800.0, 220.0, false), None);
+/// assert_eq!(auto.resized(500.0, 220.0, false), Some(SidebarAutoChange::Collapse));
+/// assert_eq!(auto.resized(800.0, 220.0, true), Some(SidebarAutoChange::Expand));
+/// ```
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SidebarAutoCollapse {
+    /// The last shared width. 0 until the first one arrives.
+    total: f64,
+    narrow: bool,
+    /// Collapsed by this, so expanded again when it gets wide.
+    collapsed_here: bool,
+}
+
+impl SidebarAutoCollapse {
+    /// Takes the width shared by the sidebar and the content, and returns the change
+    /// to make, if any.
+    ///
+    /// `width` is the sidebar's width when expanded, and `collapsed` whether it is
+    /// collapsed now. A width of 0 or less (not laid out yet) and the same width as last
+    /// time are ignored.
+    pub fn resized(
+        &mut self,
+        total: f64,
+        width: f64,
+        collapsed: bool,
+    ) -> Option<SidebarAutoChange> {
+        if !total.is_finite() || total <= 0.0 || (total - self.total).abs() < 0.5 {
+            return None;
+        }
+        self.total = total;
+        let threshold = width + SIDEBAR_COLLAPSE_CONTENT_WIDTH;
+        let narrow = if self.narrow {
+            total < threshold + SIDEBAR_EXPAND_HYSTERESIS
+        } else {
+            total < threshold
+        };
+        if narrow == self.narrow {
+            return None;
+        }
+        self.narrow = narrow;
+        if narrow {
+            if collapsed {
+                return None;
+            }
+            self.collapsed_here = true;
+            Some(SidebarAutoChange::Collapse)
+        } else {
+            let restore = std::mem::take(&mut self.collapsed_here);
+            (restore && collapsed).then_some(SidebarAutoChange::Expand)
+        }
+    }
+
+    /// The user or the app collapsed or expanded the sidebar, so it is not expanded
+    /// again automatically.
+    pub fn overridden(&mut self) {
+        self.collapsed_here = false;
+    }
+
+    /// Whether the last width was narrow.
+    pub fn is_narrow(&self) -> bool {
+        self.narrow
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +375,60 @@ mod tests {
         assert_eq!(sidebar_item(&sections, 4), None);
         assert_eq!(rows[1].item_index(), Some(0));
         assert_eq!(rows[0].item_index(), None);
+    }
+
+    #[test]
+    fn auto_collapse_follows_the_shared_width() {
+        use SidebarAutoChange::*;
+        let mut auto = SidebarAutoCollapse::default();
+        assert_eq!(auto.resized(0.0, 220.0, false), None, "まだ並んでいない");
+        assert_eq!(auto.resized(800.0, 220.0, false), None);
+        assert_eq!(auto.resized(580.0, 220.0, false), None, "ちょうどは広い側");
+        assert_eq!(auto.resized(579.0, 220.0, false), Some(Collapse));
+        assert!(auto.is_narrow());
+        assert_eq!(auto.resized(570.0, 220.0, true), None, "狭いまま");
+        assert_eq!(
+            auto.resized(584.0, 220.0, true),
+            None,
+            "境目のすぐ上では戻さない"
+        );
+        assert_eq!(auto.resized(588.0, 220.0, true), Some(Expand));
+        assert!(!auto.is_narrow());
+    }
+
+    #[test]
+    fn auto_collapse_ignores_repeats_and_divider_drags() {
+        let mut auto = SidebarAutoCollapse::default();
+        assert_eq!(auto.resized(700.0, 220.0, false), None);
+        // 仕切りで広げても、共有する幅は変わらないので閉じない。
+        assert_eq!(auto.resized(700.0, 400.0, false), None);
+        // 次にウィンドウが変わったときに、いまの幅で決める。
+        assert_eq!(
+            auto.resized(690.0, 400.0, false),
+            Some(SidebarAutoChange::Collapse)
+        );
+    }
+
+    #[test]
+    fn auto_collapse_leaves_the_users_choice() {
+        use SidebarAutoChange::*;
+        // 利用者が閉じていたものは、広がっても開かない。
+        let mut auto = SidebarAutoCollapse::default();
+        assert_eq!(auto.resized(800.0, 220.0, true), None);
+        assert_eq!(auto.resized(500.0, 220.0, true), None);
+        assert_eq!(auto.resized(800.0, 220.0, true), None);
+
+        // 狭いうちに利用者が開いたら、開いたまま。広がっても何もしない。
+        let mut auto = SidebarAutoCollapse::default();
+        assert_eq!(auto.resized(500.0, 220.0, false), Some(Collapse));
+        auto.overridden();
+        assert_eq!(auto.resized(800.0, 220.0, false), None);
+        // また狭くなれば閉じる。
+        assert_eq!(auto.resized(500.0, 220.0, false), Some(Collapse));
+
+        // 自動で閉じたあと利用者が開いて閉じ直したら、広がっても開かない。
+        auto.overridden();
+        assert_eq!(auto.resized(800.0, 220.0, true), None);
     }
 
     #[test]

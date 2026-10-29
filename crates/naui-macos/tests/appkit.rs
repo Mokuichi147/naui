@@ -726,6 +726,14 @@ fn main() {
             sidebar_toggle_notifies_collapse,
         ),
         (
+            "サイドバーがウィンドウを狭めると畳まれ、広げると開き直す",
+            sidebar_collapses_when_the_window_narrows,
+        ),
+        (
+            "サイドバーの自動の開閉はライブリサイズで AppKit が決める",
+            sidebar_collapses_during_live_resize,
+        ),
+        (
             "サイドバーの通知中に内容と通知先を差し替えられる",
             sidebar_callback_is_reentrant,
         ),
@@ -11841,6 +11849,165 @@ fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
     pump(0.5);
     assert_eq!(seen.borrow()[2], true);
     assert!(!sidebar.is_collapsed(), "通知の中で開き直せる");
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// Narrowing the window from code collapses the sidebar instead of widening the
+/// window to fit both panes, and widening it expands the sidebar again. A sidebar the
+/// user collapsed stays collapsed.
+fn sidebar_collapses_when_the_window_narrows(ui: &Ui) -> Result<()> {
+    use naui_core::{SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH};
+    use objc2_app_kit::NSSplitViewItemUnspecifiedDimension;
+
+    let window = ui.window("サイドバーの自動の開閉", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    assert!(sidebar.auto_collapse(), "既定で自動で畳む");
+    let controller = sidebar.native_split_view_controller();
+    let items = controller.splitViewItems();
+    assert!(items.objectAtIndex(0).canCollapseFromWindowResize());
+    assert_eq!(
+        items.objectAtIndex(1).minimumThickness(),
+        SIDEBAR_COLLAPSE_CONTENT_WIDTH,
+        "中身の区画に最小の幅を持たせる"
+    );
+    window.set_sidebar(&sidebar);
+    window.show();
+    pump(0.3);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    let narrow = SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH - 60.0;
+
+    window.set_size(narrow, 400.0);
+    assert!(sidebar.is_collapsed(), "狭めると畳まれる");
+    assert_eq!(
+        window.size(),
+        (narrow, 400.0),
+        "ウィンドウは両方の区画に合わせて広がらない"
+    );
+    pump_until(2.0, || !seen.borrow().is_empty());
+    assert_eq!(*seen.borrow(), [true], "畳んだことは次の周回で届く");
+
+    window.set_size(800.0, 400.0);
+    pump_until(2.0, || !sidebar.is_collapsed());
+    assert!(!sidebar.is_collapsed(), "広げると開き直す");
+    assert_eq!(*seen.borrow(), [true, false]);
+    let split = controller.splitView();
+    split.layoutSubtreeIfNeeded();
+    let pane = split.arrangedSubviews().objectAtIndex(0).frame().size.width;
+    assert!(
+        (pane - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
+        "元の幅で開く: {pane}"
+    );
+
+    // 狭いウィンドウへ付けても、ウィンドウは広がらず畳まれた姿で付く。
+    window.clear_sidebar();
+    window.set_size(narrow, 400.0);
+    window.set_sidebar(&sidebar);
+    assert!(sidebar.is_collapsed());
+    assert_eq!(window.size(), (narrow, 400.0), "付けても広がらない");
+    pump_until(2.0, || seen.borrow().len() >= 3);
+    assert_eq!(*seen.borrow(), [true, false, true]);
+    window.set_size(800.0, 400.0);
+    pump_until(2.0, || !sidebar.is_collapsed());
+    assert!(!sidebar.is_collapsed());
+    pump(0.2);
+    seen.borrow_mut().clear();
+
+    // 利用者が閉じたものは、狭めて広げても開かない。
+    unsafe { controller.toggleSidebar(None) };
+    pump_until(3.0, || !seen.borrow().is_empty());
+    window.set_size(narrow, 400.0);
+    window.set_size(800.0, 400.0);
+    pump(0.5);
+    assert!(sidebar.is_collapsed(), "利用者が閉じたまま");
+    assert_eq!(*seen.borrow(), [true], "利用者の操作だけが届く");
+    sidebar.set_collapsed(false);
+    pump_until(3.0, || {
+        !split.isSubviewCollapsed(&split.arrangedSubviews().objectAtIndex(0))
+    });
+
+    // 切ると畳まず、中身の区画の最小も外す。
+    sidebar.set_auto_collapse(false);
+    assert!(!sidebar.auto_collapse());
+    assert!(!items.objectAtIndex(0).canCollapseFromWindowResize());
+    assert_eq!(items.objectAtIndex(1).minimumThickness(), unsafe {
+        NSSplitViewItemUnspecifiedDimension
+    });
+    window.set_size(narrow, 400.0);
+    pump(0.3);
+    assert!(!sidebar.is_collapsed(), "切っていれば畳まない");
+    assert_eq!(window.size(), (narrow, 400.0));
+    sidebar.set_auto_collapse(true);
+    window.clear_sidebar();
+    window.close();
+    Ok(())
+}
+
+/// While the user resizes the window, AppKit itself collapses the sidebar
+/// (`canCollapseFromWindowResize`) and expands it again, and naui notifies both.
+///
+/// AppKit only does this during live resize, which only the window server starts
+/// from a real drag of the window edge. The private `_startLiveResize` /
+/// `_endLiveResize` reproduce that state; if they ever go away, this is skipped.
+fn sidebar_collapses_during_live_resize(ui: &Ui) -> Result<()> {
+    use naui_core::{SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH};
+
+    let window = ui.window("ライブリサイズ", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    window.set_sidebar(&sidebar);
+    window.show();
+    pump(0.3);
+    let native = window.native_window();
+    let live: bool = unsafe { msg_send![&*native, respondsToSelector: sel!(_startLiveResize)] };
+    if !live {
+        skip("ライブリサイズを起こせない");
+        window.close();
+        return Ok(());
+    }
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    let resize = |width: f64| {
+        let mut frame = native.frame();
+        frame.size.width = width;
+        native.setFrame_display(frame, true);
+        pump(0.02);
+    };
+    let threshold = SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH;
+    unsafe {
+        let _: () = msg_send![&*native, _startLiveResize];
+    }
+    let mut width = 800.0;
+    while width > threshold - 60.0 {
+        width -= 10.0;
+        resize(width);
+    }
+    assert!(sidebar.is_collapsed(), "狭めると畳まれる");
+    while width < 800.0 {
+        width += 10.0;
+        resize(width);
+    }
+    unsafe {
+        let _: () = msg_send![&*native, _endLiveResize];
+    }
+    pump(0.3);
+    assert!(!sidebar.is_collapsed(), "広げると開き直す");
+    assert_eq!(*seen.borrow(), [true, false], "どちらも届く");
+    assert!(
+        (sidebar.width() - DEFAULT_SIDEBAR_WIDTH).abs() < 1.0,
+        "覚えている幅は変わらない"
+    );
     window.clear_sidebar();
     window.close();
     Ok(())

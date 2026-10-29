@@ -104,14 +104,47 @@ impl Sidebar {
         self.0.set_collapsed(collapsed)
     }
 
-    /// The handler called when the user collapses or expands the sidebar. The argument
-    /// is whether it is now collapsed.
+    /// The handler called when the sidebar collapses or expands other than by
+    /// [`set_collapsed`](Self::set_collapsed). The argument is whether it is now
+    /// collapsed.
     ///
-    /// Called when the sidebar button is used; not called by
-    /// [`set_collapsed`](Self::set_collapsed).
+    /// Called when the sidebar button is used, and when the window narrows or widens
+    /// with [`set_auto_collapse`](Self::set_auto_collapse) on.
     #[inline]
     pub fn on_collapse(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_collapse(f)
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows, and expands
+    /// again when it widens. On by default.
+    ///
+    /// It collapses when the content beside it would get narrower than
+    /// [`SIDEBAR_COLLAPSE_CONTENT_WIDTH`](crate::SIDEBAR_COLLAPSE_CONTENT_WIDTH), and
+    /// notifies through [`on_collapse`](Self::on_collapse). A sidebar the user
+    /// collapsed stays collapsed when the window widens, and one opened while narrow
+    /// stays open. Turning it off leaves the sidebar collapsed or expanded as it is.
+    ///
+    /// Each platform's own mechanism decides where it can:
+    ///
+    /// - **macOS**: `NSSplitViewItem`'s `canCollapseFromWindowResize`. The content pane
+    ///   gets that minimum width; as the user narrows the window, the sidebar first
+    ///   narrows to [`SIDEBAR_MIN_WIDTH`](crate::SIDEBAR_MIN_WIDTH), then collapses. A
+    ///   [`Window::set_size`](crate::Window::set_size) narrower than that stops at that
+    ///   width instead of collapsing it.
+    /// - **Windows**: `NavigationView`'s `PaneDisplayMode::Auto`. It collapses into the
+    ///   strip of icons, and opening it while narrow lays the pane over the content.
+    /// - **Linux** and **Web**: naui decides from the window's width (`AdwBreakpoint`
+    ///   would take away the window's minimum size, and a CSS container query cannot
+    ///   tell the page when it applies).
+    #[inline]
+    pub fn set_auto_collapse(&self, auto: bool) {
+        self.0.set_auto_collapse(auto)
+    }
+
+    /// Whether the sidebar collapses by itself when the window narrows.
+    #[inline]
+    pub fn auto_collapse(&self) -> bool {
+        self.0.auto_collapse()
     }
 
     /// Whether the sidebar is collapsed.

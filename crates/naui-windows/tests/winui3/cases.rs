@@ -2831,9 +2831,34 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
     assert_eq!(sidebar.len(), 4, "見出しと区切りは数えない");
 
     let native = sidebar.native_navigation_view();
+    let collapse = naui_core::SIDEBAR_COLLAPSE_CONTENT_WIDTH;
+    assert!(sidebar.auto_collapse(), "既定で自動で畳む");
     assert_eq!(
         native.PaneDisplayMode().expect("表示形式"),
-        NavigationViewPaneDisplayMode::Left
+        NavigationViewPaneDisplayMode::Auto,
+        "狭くなったら畳む判断は NavigationView に任せる"
+    );
+    assert_eq!(
+        native.ExpandedModeThresholdWidth().expect("しきい値"),
+        DEFAULT_SIDEBAR_WIDTH + collapse,
+        "中身がこれより狭くなると帯になる"
+    );
+    assert_eq!(
+        native.CompactModeThresholdWidth().expect("しきい値"),
+        0.0,
+        "帯ごと消える形 (LeftMinimal) にはしない"
+    );
+    sidebar.set_auto_collapse(false);
+    assert!(!sidebar.auto_collapse());
+    assert_eq!(
+        native.PaneDisplayMode().expect("表示形式"),
+        NavigationViewPaneDisplayMode::Left,
+        "切ると左のペインのまま"
+    );
+    sidebar.set_auto_collapse(true);
+    assert_eq!(
+        native.PaneDisplayMode().expect("表示形式"),
+        NavigationViewPaneDisplayMode::Auto
     );
     assert!(!native.IsSettingsVisible().expect("設定項目"));
     assert!(
@@ -2896,6 +2921,11 @@ fn sidebar_items_map_to_native(ui: &Ui) -> Result<()> {
     sidebar.set_width(160.0);
     assert_eq!(native.OpenPaneLength().expect("幅"), 160.0);
     assert_eq!(divider_left(), 157.0, "仕切りもペインの端へ動く");
+    assert_eq!(
+        native.ExpandedModeThresholdWidth().expect("しきい値"),
+        160.0 + collapse,
+        "畳むしきい値も幅に付いてくる"
+    );
     assert_eq!(sidebar.width(), 160.0);
     sidebar.set_width(-1.0);
     assert_eq!(sidebar.width(), 160.0, "おかしな幅は無視する");

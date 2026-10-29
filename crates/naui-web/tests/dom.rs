@@ -3908,6 +3908,82 @@ fn sidebar_toggle_button_collapses_and_notifies() {
     });
 }
 
+/// When the window gets too narrow for the sidebar and
+/// `SIDEBAR_COLLAPSE_CONTENT_WIDTH` of content, the sidebar collapses before the
+/// paint and expands again when it widens. What the user chose is kept.
+#[wasm_bindgen_test]
+async fn sidebar_collapses_when_the_window_narrows() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("サイドバーの自動の開閉", 760.0, 300.0)?;
+        window.set_child(&ui.label("中身")?);
+        let sidebar = ui.sidebar()?;
+        sidebar.set_items(&SidebarItem::list(["一般"]));
+        assert!(sidebar.auto_collapse(), "既定で自動で畳む");
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sidebar.on_collapse({
+            let seen = seen.clone();
+            move |collapsed| seen.borrow_mut().push(collapsed)
+        });
+        window.set_sidebar(&sidebar);
+        window.show();
+        kept = Some((window, sidebar, seen));
+        Ok(())
+    });
+    let (window, sidebar, seen) = kept.expect("window");
+    next_frames().await;
+    assert!(!sidebar.is_collapsed(), "広いうちは開いている");
+    assert!(seen.borrow().is_empty());
+    let toggle: HtmlElement = sidebar.native_toggle_button().unchecked_into();
+    let narrow = DEFAULT_SIDEBAR_WIDTH + naui_core::SIDEBAR_COLLAPSE_CONTENT_WIDTH - 60.0;
+
+    window.set_size(narrow, 300.0);
+    frames_until(|| !seen.borrow().is_empty()).await;
+    assert!(sidebar.is_collapsed(), "狭めると畳まれる");
+    assert_eq!(*seen.borrow(), [true], "畳んだことが届く");
+    assert_eq!(
+        toggle.get_attribute("aria-expanded").as_deref(),
+        Some("false"),
+        "ボタンも閉じた側"
+    );
+
+    window.set_size(760.0, 300.0);
+    frames_until(|| seen.borrow().len() >= 2).await;
+    assert!(!sidebar.is_collapsed(), "広げると開き直す");
+    assert_eq!(*seen.borrow(), [true, false]);
+    assert_eq!(sidebar.width(), DEFAULT_SIDEBAR_WIDTH, "幅は変わらない");
+
+    // 狭いうちに利用者が開いたら開いたまま。
+    window.set_size(narrow, 300.0);
+    frames_until(|| seen.borrow().len() >= 3).await;
+    toggle.click();
+    assert!(!sidebar.is_collapsed());
+    window.set_size(narrow - 20.0, 300.0);
+    next_frames().await;
+    assert!(!sidebar.is_collapsed(), "狭いまま動かしても閉じない");
+
+    // 利用者が閉じたものは、狭めて広げても開かない。
+    window.set_size(760.0, 300.0);
+    next_frames().await;
+    toggle.click();
+    window.set_size(narrow, 300.0);
+    next_frames().await;
+    window.set_size(760.0, 300.0);
+    next_frames().await;
+    assert!(sidebar.is_collapsed(), "利用者が閉じたまま");
+    assert_eq!(*seen.borrow(), [true, false, true, false, true]);
+
+    // 切ると畳まない。
+    sidebar.set_collapsed(false);
+    sidebar.set_auto_collapse(false);
+    assert!(!sidebar.auto_collapse());
+    window.set_size(narrow, 300.0);
+    next_frames().await;
+    assert!(!sidebar.is_collapsed(), "切っていれば畳まない");
+    assert_eq!(seen.borrow().len(), 5);
+    window.close();
+}
+
 #[wasm_bindgen_test]
 fn sidebar_divider_resizes_and_notifies() {
     with_ui(|ui| {

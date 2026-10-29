@@ -25,7 +25,7 @@ Legend:
 | `SplitView` | 🔴 `Grid` + a divider `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
 | `Toolbar` | ✅ `CommandBar` + `AppBarButton` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 | `MenuBar` | 🟡 A row of `Button` + `MenuFlyout` | ✅ `NSMenu` (`NSApplication.mainMenu`) | ✅ `GtkPopoverMenuBar` + `GMenu` | 🟡 `<div role="menubar">` + `<div role="menu">` |
-| `Sidebar` | 🟡 `NavigationView` (Left) + a divider `Grid` | ✅ `NSSplitViewController` (sidebar item) + `NSTableView` (source list) | 🟡 `GtkPaned` + `GtkListBox` (`.navigation-sidebar`) | 🔴 `<aside>` + `<nav>` + `<div role="separator">` |
+| `Sidebar` | 🟡 `NavigationView` (Auto) + a divider `Grid` | ✅ `NSSplitViewController` (sidebar item) + `NSTableView` (source list) | 🟡 `GtkPaned` + `GtkListBox` (`.navigation-sidebar`) | 🔴 `<aside>` + `<nav>` + `<div role="separator">` |
 
 ### Basics and input
 

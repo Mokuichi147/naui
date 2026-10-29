@@ -483,6 +483,10 @@ fn main() {
             sidebar_toggle_button_collapses_and_notifies,
         ),
         (
+            "サイドバーがウィンドウを狭めると畳まれ、広げると開き直す",
+            sidebar_collapses_when_the_window_narrows,
+        ),
+        (
             "すべてのアイコンがテーマに実在する",
             toolbar_icons_exist_in_the_theme,
         ),
@@ -7504,6 +7508,89 @@ fn sidebar_attaches_to_a_window(ui: &Ui) -> Result<()> {
         "外すと中身のヘッダーバーが両端のボタンを出し直す"
     );
     window.clear_sidebar(); // 付いていなければ何もしない
+    window.close();
+    Ok(())
+}
+
+/// When the window gets too narrow for the sidebar and
+/// `SIDEBAR_COLLAPSE_CONTENT_WIDTH` of content, the sidebar collapses after the paint
+/// and expands again when it widens. What the user chose is kept.
+fn sidebar_collapses_when_the_window_narrows(ui: &Ui) -> Result<()> {
+    use naui_core::SIDEBAR_COLLAPSE_CONTENT_WIDTH;
+    use std::time::Duration;
+
+    let window = ui.window("サイドバーの自動の開閉", 800.0, 400.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let sidebar = ui.sidebar()?;
+    sidebar.set_items(&SidebarItem::list(["一般"]));
+    assert!(sidebar.auto_collapse(), "既定で自動で畳む");
+    window.set_sidebar(&sidebar);
+    window.show();
+    let paned = sidebar.native_paned();
+    spin_until(Duration::from_secs(2), || paned.width() >= 700);
+    assert!(!sidebar.is_collapsed(), "広いうちは開いている");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sidebar.on_collapse({
+        let seen = seen.clone();
+        move |collapsed| seen.borrow_mut().push(collapsed)
+    });
+    let narrow = DEFAULT_SIDEBAR_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH - 60.0;
+    let wait = |len: usize| spin_until(Duration::from_secs(3), || seen.borrow().len() >= len);
+
+    window.set_size(narrow, 400.0);
+    wait(1);
+    assert!(
+        sidebar.is_collapsed(),
+        "狭めると畳まれる: paned={}",
+        paned.width()
+    );
+    assert_eq!(*seen.borrow(), [true], "畳んだことが届く");
+    assert!(
+        window.native_header_bar().shows_start_title_buttons(),
+        "畳んだ姿はボタンで閉じたときと同じ"
+    );
+
+    window.set_size(800.0, 400.0);
+    wait(2);
+    assert!(!sidebar.is_collapsed(), "広げると開き直す");
+    assert_eq!(*seen.borrow(), [true, false]);
+    assert_eq!(
+        f64::from(paned.position()),
+        DEFAULT_SIDEBAR_WIDTH,
+        "元の幅で開く"
+    );
+
+    // 狭いうちに利用者が開いたら開いたまま。
+    window.set_size(narrow, 400.0);
+    wait(3);
+    sidebar.native_toggle_button().set_active(true);
+    pump();
+    assert_eq!(*seen.borrow(), [true, false, true, false]);
+    window.set_size(narrow - 20.0, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    assert!(!sidebar.is_collapsed(), "狭いまま動かしても閉じない");
+
+    // 利用者が閉じたものは、狭めて広げても開かない。
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    sidebar.native_toggle_button().set_active(false);
+    pump();
+    window.set_size(narrow, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    window.set_size(800.0, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    assert!(sidebar.is_collapsed(), "利用者が閉じたまま");
+    assert_eq!(seen.borrow().len(), 5, "利用者の操作だけが届く");
+
+    // 切ると畳まない。
+    sidebar.set_collapsed(false);
+    sidebar.set_auto_collapse(false);
+    assert!(!sidebar.auto_collapse());
+    window.set_size(narrow, 400.0);
+    spin_until(Duration::from_millis(500), || false);
+    assert!(!sidebar.is_collapsed(), "切っていれば畳まない");
+    assert_eq!(seen.borrow().len(), 5);
+    window.clear_sidebar();
     window.close();
     Ok(())
 }

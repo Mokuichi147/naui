@@ -1662,6 +1662,18 @@ platforms: **the left of the window's top edge (at the same height as the
 toolbar)**. The button does not move when toggling, and the content does not shift
 up or down.
 
+**When the window narrows, the sidebar collapses by itself** so the content beside
+it keeps at least [`SIDEBAR_COLLAPSE_CONTENT_WIDTH`] (360), and it expands again
+when the window widens. These changes also call [`Sidebar::on_collapse`], so a
+check mark in a menu stays in step. A sidebar the user collapsed stays collapsed,
+and one opened while the window is narrow stays open.
+[`Sidebar::set_auto_collapse`]`(false)` turns it off. macOS
+(`canCollapseFromWindowResize`) and Windows (`NavigationView`'s
+`PaneDisplayMode::Auto`) decide with their own mechanisms, so the details follow
+them: on macOS the sidebar first narrows to [`SIDEBAR_MIN_WIDTH`] before
+collapsing, and on Windows it becomes the strip of icons, and opening it while
+narrow lays it over the content.
+
 | Platform | Toggle button | When collapsed |
 | --- | --- | --- |
 | macOS | The sidebar button at the start of the toolbar (`NSToolbarToggleSidebarItemIdentifier`). Without a toolbar, a toolbar with just the button is attached | The whole pane is hidden (it also collapses when the divider is dragged left past the minimum) |
