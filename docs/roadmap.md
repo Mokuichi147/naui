@@ -117,16 +117,15 @@ internationalization tracks.
       panic messages and the errors of the Windows App SDK build script are
       English too. These are messages for developers, so they are not translated
       (like `#[deprecated]` notes).
-- [ ] *(i18n)* **The OS's preferred languages, and notification when they
-      change.** The basis for an app choosing which translation to show. Every
-      backend already reads them at startup to choose naui's own strings
-      (`ui_text`), so what remains is making them public and following changes.
-      `NSLocale.preferredLanguages` (`NSCurrentLocaleDidChangeNotification`),
-      `GetUserPreferredUILanguages` (`WM_SETTINGCHANGE` with `intl`),
-      `navigator.languages` (`languagechange`). Linux decides the language from
-      environment variables at startup (`g_get_language_names`), so there is no
-      change notification there. Whether naui's own strings switch along with a
-      change is decided at the same time.
+- [x] *(i18n)* **The OS's preferred languages, and notification when they
+      change.** `Ui::preferred_languages` returns them as BCP 47 tags, and
+      `Ui::on_preferred_languages_change` is called only when the list actually
+      changes: on `NSCurrentLocaleDidChangeNotification` (macOS), `WM_SETTINGCHANGE`
+      with `"intl"` (Windows) and `languagechange` (Web). Linux reads them from
+      environment variables at startup (`g_get_language_names`, `ja_JP.UTF-8`
+      becoming `ja-JP`), so it is never called there. naui's own strings keep the
+      language chosen at startup, like the native controls' own strings, so one
+      screen does not mix two languages.
 
 ## P1: Do next
 

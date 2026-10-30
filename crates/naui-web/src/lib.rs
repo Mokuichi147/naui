@@ -141,12 +141,17 @@ struct UiInner {
     toasts: RefCell<Vec<Toast>>,
     /// The entry point for other threads and async work.
     tasks: Tasks,
+    /// The browser's preferred languages, read again on `languagechange`.
+    languages: naui_core::PreferredLanguages,
+    /// The subscription to `languagechange` on `window`.
+    language_listener: RefCell<Option<widgets::Listener>>,
 }
 
 impl Ui {
     fn new(document: Document, theme: Theme) -> Self {
-        naui_core::set_ui_languages(preferred_languages());
-        Self(Rc::new(UiInner {
+        let languages = preferred_languages();
+        naui_core::set_ui_languages(&languages);
+        let this = Self(Rc::new(UiInner {
             document,
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
@@ -157,7 +162,20 @@ impl Ui {
             sidebars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
             tasks: Tasks::from_main_thread(std::sync::Arc::new(main_thread::Microtask)),
-        }))
+            languages: naui_core::PreferredLanguages::new(languages),
+            language_listener: RefCell::new(None),
+        }));
+        if let Some(window) = web_sys::window() {
+            // 窓は Ui より長く生きるので、弱参照でたどる。
+            let weak = Rc::downgrade(&this.0);
+            let listener = widgets::Listener::attach(&window, "languagechange", move || {
+                if let Some(inner) = weak.upgrade() {
+                    inner.languages.update(preferred_languages());
+                }
+            });
+            *this.0.language_listener.borrow_mut() = listener.ok();
+        }
+        this
     }
 
     /// Creates a window. Browsers have no OS windows, so it is represented as a block
@@ -448,6 +466,24 @@ impl Ui {
     /// Returns the currently selected color theme.
     pub fn theme(&self) -> Theme {
         self.0.theme.get()
+    }
+
+    /// The browser's preferred languages as BCP 47 tags, most preferred first
+    /// (`navigator.languages`). The basis for choosing which translation to show.
+    ///
+    /// Some browsers leave `languages` empty, and `navigator.language` is used then.
+    pub fn preferred_languages(&self) -> Vec<String> {
+        self.0.languages.get()
+    }
+
+    /// Called with the new list when the browser's preferred languages change.
+    /// Setting it again replaces the previous closure.
+    ///
+    /// Read again on `window`'s `languagechange`, and called only when the list
+    /// actually changed. naui's own strings, like the browser's own strings (date
+    /// inputs, validation messages), keep the language chosen at startup.
+    pub fn on_preferred_languages_change(&self, f: impl FnMut(&[String]) + 'static) {
+        self.0.languages.on_change(f);
     }
 
     /// The entry point for updating the screen from other threads or async code.

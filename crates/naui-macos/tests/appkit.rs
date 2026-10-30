@@ -293,6 +293,14 @@ fn main() {
         ("リンクのクリックがクロージャへ届く", link_click),
         ("テーマを実行中に切り替えられる", theme_switch),
         (
+            "OS の優先言語を読め、変わると知らせる",
+            preferred_languages_follow_the_os,
+        ),
+        (
+            "優先言語の知らせの中の panic でアプリが落ちない",
+            preferred_languages_survive_a_panicking_closure,
+        ),
+        (
             "落とされたファイルがポインターの下のウィジェットか窓へ届く",
             file_drop_reaches_the_widget_under_the_pointer,
         ),
@@ -2499,6 +2507,86 @@ fn theme_switch(ui: &Ui) -> Result<()> {
     assert_eq!(ui.theme(), Theme::Light);
     ui.set_theme(Theme::System)?;
     assert_eq!(ui.theme(), Theme::System);
+    Ok(())
+}
+
+/// The preferred languages are `NSLocale.preferredLanguages`, and a change reported
+/// by `NSCurrentLocaleDidChangeNotification` reaches the closure, even when posted
+/// on another thread. naui's own strings stay as chosen at startup.
+fn preferred_languages_follow_the_os(ui: &Ui) -> Result<()> {
+    use objc2_foundation::{NSCurrentLocaleDidChangeNotification, NSLocale, NSNotificationCenter};
+
+    fn post() {
+        unsafe {
+            NSNotificationCenter::defaultCenter()
+                .postNotificationName_object(NSCurrentLocaleDidChangeNotification, None);
+        }
+    }
+
+    let os: Vec<String> = NSLocale::preferredLanguages()
+        .iter()
+        .map(|tag| tag.to_string())
+        .collect();
+    assert_eq!(ui.preferred_languages(), os);
+    let strings = naui_core::ui_strings();
+
+    let seen = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let sink = seen.clone();
+    ui.on_preferred_languages_change(move |tags| sink.borrow_mut().push(tags.to_vec()));
+
+    // 地域だけが変わったときと同じく、言語が変わらなければ呼ばれない。
+    post();
+    pump(0.2);
+    assert!(seen.borrow().is_empty(), "{:?}", seen.borrow());
+
+    let changed = vec!["fr-FR".to_string(), "ja-JP".to_string()];
+    naui_macos::override_preferred_languages_for_test(Some(changed.clone()));
+    post();
+    pump_until(2.0, || !seen.borrow().is_empty());
+    assert_eq!(seen.borrow().as_slice(), std::slice::from_ref(&changed));
+    assert_eq!(ui.preferred_languages(), changed);
+    assert!(
+        std::ptr::eq(naui_core::ui_strings(), strings),
+        "naui の文字列は起動時の言語のまま"
+    );
+
+    // 通知は別のスレッドで来ることもある。
+    let other = vec!["de-DE".to_string()];
+    naui_macos::override_preferred_languages_for_test(Some(other.clone()));
+    std::thread::spawn(post).join().unwrap();
+    pump_until(2.0, || seen.borrow().len() == 2);
+    assert_eq!(seen.borrow().last(), Some(&other));
+
+    naui_macos::override_preferred_languages_for_test(None);
+    post();
+    pump_until(2.0, || seen.borrow().len() == 3);
+    assert_eq!(seen.borrow().last(), Some(&os));
+    assert_eq!(ui.preferred_languages(), os);
+    Ok(())
+}
+
+/// A panic in the closure stops at the main queue's boundary instead of aborting
+/// the process, and the languages are still taken.
+fn preferred_languages_survive_a_panicking_closure(ui: &Ui) -> Result<()> {
+    use objc2_foundation::{NSCurrentLocaleDidChangeNotification, NSNotificationCenter};
+
+    let called = Rc::new(Cell::new(false));
+    let sink = called.clone();
+    ui.on_preferred_languages_change(move |_| {
+        sink.set(true);
+        panic!("知らせの中の panic (テストで意図したもの)");
+    });
+    let changed = vec!["it-IT".to_string()];
+    naui_macos::override_preferred_languages_for_test(Some(changed.clone()));
+    unsafe {
+        NSNotificationCenter::defaultCenter()
+            .postNotificationName_object(NSCurrentLocaleDidChangeNotification, None);
+    }
+    pump_until(2.0, || called.get());
+    naui_macos::override_preferred_languages_for_test(None);
+    // ここへ戻ってこられれば、プロセスは落ちていない。
+    assert!(called.get(), "クロージャが呼ばれること");
+    assert_eq!(ui.preferred_languages(), changed);
     Ok(())
 }
 

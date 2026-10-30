@@ -3533,6 +3533,66 @@ fn sidebar_buttons(aside: &Element) -> Vec<HtmlElement> {
         .collect()
 }
 
+/// The preferred languages are `navigator.languages`, and `languagechange` reads
+/// them again. Only a real change reaches the closure, and naui's own strings stay
+/// as chosen at startup.
+#[wasm_bindgen_test]
+fn preferred_languages_follow_languagechange() {
+    with_ui(|ui| {
+        let window = web_sys::window().expect("window");
+        let navigator = window.navigator();
+        let read = || -> Vec<String> {
+            let languages: Vec<String> = navigator
+                .languages()
+                .iter()
+                .filter_map(|tag| tag.as_string())
+                .collect();
+            if languages.is_empty() {
+                navigator.language().into_iter().collect()
+            } else {
+                languages
+            }
+        };
+        let browser = read();
+        assert_eq!(ui.preferred_languages(), browser);
+        let strings = naui_core::ui_strings();
+
+        let seen = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+        let sink = seen.clone();
+        ui.on_preferred_languages_change(move |tags| sink.borrow_mut().push(tags.to_vec()));
+        let fire = || {
+            let event = web_sys::Event::new("languagechange").unwrap();
+            window.dispatch_event(&event).unwrap();
+        };
+
+        fire();
+        assert!(seen.borrow().is_empty(), "変わっていなければ呼ばれない");
+
+        // `navigator.languages` は書き換えられないので、インスタンスに同名の
+        // 値を置いて原型のゲッターを隠す。
+        let changed = ["fr-FR", "ja-JP"];
+        let array: js_sys::Array = changed.iter().map(|tag| JsValue::from_str(tag)).collect();
+        let descriptor = js_sys::Object::new();
+        js_sys::Reflect::set(&descriptor, &"value".into(), &array).unwrap();
+        js_sys::Reflect::set(&descriptor, &"configurable".into(), &JsValue::TRUE).unwrap();
+        js_sys::Object::define_property(&navigator, &"languages".into(), &descriptor);
+        fire();
+        let restored = js_sys::Reflect::delete_property(&navigator, &"languages".into());
+        assert_eq!(*seen.borrow(), [changed.map(String::from).to_vec()]);
+        assert_eq!(ui.preferred_languages(), changed);
+        assert!(
+            std::ptr::eq(naui_core::ui_strings(), strings),
+            "naui の文字列は起動時の言語のまま"
+        );
+
+        assert_eq!(restored, Ok(true));
+        fire();
+        assert_eq!(seen.borrow().last(), Some(&browser));
+        assert_eq!(ui.preferred_languages(), browser);
+        Ok(())
+    });
+}
+
 /// The labels naui chooses itself come from the table for `navigator.languages`.
 #[wasm_bindgen_test]
 fn own_labels_follow_the_browser_language() {

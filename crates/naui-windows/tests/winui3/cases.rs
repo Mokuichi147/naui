@@ -377,6 +377,10 @@ const CASES: &[Case] = &[
         "編集できるコンボボックスの Enter で文字が残り、Esc で書いた値へ戻る",
         editable_combo_box_commits_and_reverts_text,
     ),
+    (
+        "OS の優先言語を読め、WM_SETTINGCHANGE の intl で変わると知らせる",
+        preferred_languages_follow_settingchange,
+    ),
 ];
 
 /// Work to verify later. Called after the event loop has gone around once.
@@ -4029,6 +4033,77 @@ fn table_rows_follow_scrolling(ui: &Ui) -> Result<()> {
             leading()
         );
     }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// The preferred languages are `GlobalizationPreferences.Languages`, and a window
+/// that receives `WM_SETTINGCHANGE` with `"intl"` has them read again. Other areas
+/// and a list that did not change do not reach the closure, and naui's own strings
+/// stay as chosen at startup.
+fn preferred_languages_follow_settingchange(ui: &Ui) -> Result<()> {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_SETTINGCHANGE};
+
+    let os = ui.preferred_languages();
+    assert!(
+        !os.is_empty(),
+        "GlobalizationPreferences.Languages が何か返すこと"
+    );
+    let strings = naui_core::ui_strings();
+
+    let window = ui.window("言語", 320.0, 240.0)?;
+    let native = window
+        .native_window()
+        .cast::<naui_winui3::IWindowNative>()
+        .expect("IWindowNative");
+    // SAFETY: このウィンドウが生きている間の HWND を UI スレッドで使う。
+    let hwnd = unsafe { native.WindowHandle() }.expect("HWND");
+    let send = |area: &str| {
+        let area: Vec<u16> = area.encode_utf16().chain([0]).collect();
+        // SAFETY: area は SendMessageW が戻るまで生きている。
+        unsafe {
+            SendMessageW(
+                hwnd,
+                WM_SETTINGCHANGE,
+                Some(WPARAM(0)),
+                Some(LPARAM(area.as_ptr() as isize)),
+            );
+        }
+    };
+
+    let seen = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let sink = seen.clone();
+    ui.on_preferred_languages_change(move |tags| sink.borrow_mut().push(tags.to_vec()));
+    let changed = vec!["fr-FR".to_string(), "ja-JP".to_string()];
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        naui_windows::override_preferred_languages_for_test(Some(changed.clone()));
+        send("Environment");
+        pump_until(Duration::from_millis(300), || !seen.borrow().is_empty());
+        assert!(seen.borrow().is_empty(), "intl 以外では読み直さない");
+
+        send("intl");
+        pump_until(Duration::from_secs(2), || !seen.borrow().is_empty());
+        assert_eq!(seen.borrow().as_slice(), std::slice::from_ref(&changed));
+        assert_eq!(ui.preferred_languages(), changed);
+        assert!(
+            std::ptr::eq(naui_core::ui_strings(), strings),
+            "naui の文字列は起動時の言語のまま"
+        );
+
+        send("intl");
+        pump_until(Duration::from_millis(300), || seen.borrow().len() > 1);
+        assert_eq!(seen.borrow().len(), 1, "変わっていなければ呼ばれない");
+
+        naui_windows::override_preferred_languages_for_test(None);
+        send("intl");
+        pump_until(Duration::from_secs(2), || seen.borrow().len() == 2);
+        assert_eq!(seen.borrow().last(), Some(&os));
+    }));
+    naui_windows::override_preferred_languages_for_test(None);
     window.close();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);

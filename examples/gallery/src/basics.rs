@@ -261,6 +261,26 @@ fn system(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     });
     form.row(ui, "URL", &open)?;
 
+    // OS の優先言語。設定を変えると (Linux 以外は) 実行中に書き換わる。
+    let languages_text = |tags: &[String]| {
+        if tags.is_empty() {
+            "(none)".to_string()
+        } else {
+            tags.join(", ")
+        }
+    };
+    let languages = ui.label(&languages_text(&ui.preferred_languages()))?;
+    languages.set_selectable(true);
+    languages.set_wrap(true);
+    languages.set_sizing(naui::Sizing::fill_width());
+    let weak_languages = languages.downgrade();
+    ui.on_preferred_languages_change(move |tags| {
+        if let Some(languages) = weak_languages.upgrade() {
+            languages.set_text(&languages_text(tags));
+        }
+    });
+    form.row(ui, "Languages", &languages)?;
+
     let elapsed = parts::readout(ui, "0 s")?;
     let seconds = Rc::new(Cell::new(0u32));
     ui.tasks().every(std::time::Duration::from_secs(1), {

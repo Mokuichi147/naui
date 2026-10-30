@@ -37,6 +37,7 @@ windows = { version = "0.62", features = [
     "Media_Playback",
     "Storage",
     "System",
+    "System_UserProfile",
     "UI",
     "Win32_Foundation",
     "Win32_Globalization",

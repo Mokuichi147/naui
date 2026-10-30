@@ -489,7 +489,7 @@ impl Window {
     }
 
     /// This window's HWND. `None` if it cannot be obtained.
-    fn hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
+    pub(crate) fn hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
         let native = self.0.native.cast::<naui_winui3::IWindowNative>().ok()?;
         // SAFETY: HWND はこのウィンドウが生きている間有効で、UI スレッドから呼んでいる。
         unsafe { native.WindowHandle() }.ok()

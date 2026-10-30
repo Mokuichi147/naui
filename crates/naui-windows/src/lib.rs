@@ -49,6 +49,7 @@ mod file_saver;
 mod focus;
 mod interaction;
 mod keys;
+mod languages;
 mod layout;
 mod list;
 mod main_thread;
@@ -87,6 +88,8 @@ pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
+#[doc(hidden)]
+pub use languages::override_preferred_languages_for_test;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
@@ -145,12 +148,14 @@ struct UiInner {
     /// The entry point for other threads and async work.
     tasks: Tasks,
     shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>,
+    /// The user's preferred UI languages, followed through `languages::watch`.
+    languages: naui_core::PreferredLanguages,
 }
 
 impl Ui {
     fn new(theme: Theme, shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>) -> Self {
-        naui_core::set_ui_languages(preferred_languages());
-        Self(Rc::new(UiInner {
+        naui_core::set_ui_languages(languages::display_languages());
+        let this = Self(Rc::new(UiInner {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
             dialogs: RefCell::new(Vec::new()),
@@ -164,7 +169,10 @@ impl Ui {
                 main_thread::Dispatcher::for_current_thread(),
             )),
             shutdown,
-        }))
+            languages: naui_core::PreferredLanguages::new(languages::preferred_languages()),
+        }));
+        languages::watch(&this.0);
+        this
     }
 
     /// Creates a window.
@@ -180,6 +188,9 @@ impl Ui {
             self.0.tasks.clone(),
         )?;
         w.install_closing_handler(self.0.shutdown);
+        if let Some(hwnd) = w.hwnd() {
+            languages::watch_window(hwnd);
+        }
         self.0.windows.borrow_mut().push(w.clone());
         Ok(w)
     }
@@ -469,6 +480,27 @@ impl Ui {
         self.0.theme.get()
     }
 
+    /// The user's preferred languages as BCP 47 tags, most preferred first (`"ja"`,
+    /// `"en-US"` and so on), in the order of the list in Settings. The basis for
+    /// choosing which translation to show.
+    ///
+    /// Read with `GlobalizationPreferences.Languages`, falling back to
+    /// `GetUserPreferredUILanguages` if that fails. Empty if both fail.
+    pub fn preferred_languages(&self) -> Vec<String> {
+        self.0.languages.get()
+    }
+
+    /// Called with the new list when the user's preferred languages change.
+    /// Setting it again replaces the previous closure.
+    ///
+    /// Read again when a window receives `WM_SETTINGCHANGE` with `"intl"`, and
+    /// called only when the list actually changed (a change of region alone does not
+    /// call it). naui's own strings, like WinUI's own strings, keep the display
+    /// language chosen at startup.
+    pub fn on_preferred_languages_change(&self, f: impl FnMut(&[String]) + 'static) {
+        self.0.languages.on_change(f);
+    }
+
     /// The entry point for updating the screen from other threads or async code.
     ///
     /// The returned [`Tasks`] can be cloned and moved into callbacks.
@@ -534,42 +566,6 @@ fn release_widget_handlers() {
     keys::release_handlers();
     file_drop::release_handlers();
     focus::release_handlers();
-}
-
-/// The user's preferred UI languages, most preferred first (`"ja-JP"` and so on).
-///
-/// Read with `GetUserPreferredUILanguages`, which works for unpackaged apps too.
-/// Empty if it fails, which leaves naui's strings in English.
-fn preferred_languages() -> Vec<String> {
-    use windows::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
-
-    let mut count = 0u32;
-    let mut len = 0u32;
-    // 1 回目で必要な長さを聞き、2 回目で受け取る。中身は NUL 区切りで、
-    // 最後に NUL が 2 つ続く。
-    if unsafe { GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, None, &mut len) }
-        .is_err()
-    {
-        return Vec::new();
-    }
-    let mut buffer = vec![0u16; len as usize];
-    if unsafe {
-        GetUserPreferredUILanguages(
-            MUI_LANGUAGE_NAME,
-            &mut count,
-            Some(windows_core::PWSTR(buffer.as_mut_ptr())),
-            &mut len,
-        )
-    }
-    .is_err()
-    {
-        return Vec::new();
-    }
-    buffer
-        .split(|&c| c == 0)
-        .filter(|tag| !tag.is_empty())
-        .map(String::from_utf16_lossy)
-        .collect()
 }
 
 /// Starts the app and builds the UI inside `build`.
