@@ -591,8 +591,9 @@ impl Ui {
     ///
     /// Read the way gettext chooses GTK's own strings (`g_get_language_names`): the
     /// `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG` environment variables, with
-    /// `LANGUAGE` ignored under the C locale. `ja_JP.UTF-8` becomes `ja-JP`, and the
-    /// C locale, which names no language, gives an empty list.
+    /// `LANGUAGE` ignored under the C locale. `ja_JP.UTF-8` becomes `ja-JP`, a script
+    /// modifier becomes the script subtag (`sr_RS.UTF-8@latin` becomes `sr-Latn-RS`),
+    /// and the C locale, which names no language, gives an empty list.
     pub fn preferred_languages(&self) -> Vec<String> {
         self.0.languages.get()
     }

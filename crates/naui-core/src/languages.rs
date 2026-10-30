@@ -83,14 +83,22 @@ impl PreferredLanguages {
 /// `g_get_language_names` lists them) into BCP 47 tags (`"ja-JP"`, `"ja"`), keeping
 /// the order and dropping repeats.
 ///
-/// The encoding and the `@modifier` are dropped, and so are `"C"` and `"POSIX"`,
-/// which name no language. Tags that are already BCP 47 pass through.
+/// The encoding is dropped. An `@modifier` naming a script (`@latin`, `@cyrillic`,
+/// `@devanagari` and so on) becomes the script subtag (`"sr_RS@latin"` →
+/// `"sr-Latn-RS"`), and one naming a variant (`@valencia`) the variant subtag
+/// (`"ca_ES@valencia"` → `"ca-ES-valencia"`). Other modifiers, such as `@euro`,
+/// say nothing about the language and are dropped. `"C"` and `"POSIX"`, which name
+/// no language, are dropped too. Tags that are already BCP 47 pass through.
 ///
 /// ```
 /// # use naui_core::language_tags_from_locale_names;
 /// assert_eq!(
 ///     language_tags_from_locale_names(["ja_JP.UTF-8", "ja_JP", "ja.UTF-8", "ja", "C"]),
 ///     ["ja-JP", "ja"]
+/// );
+/// assert_eq!(
+///     language_tags_from_locale_names(["sr_RS.UTF-8@latin", "sr@latin", "sr_RS", "sr"]),
+///     ["sr-Latn-RS", "sr-Latn", "sr-RS", "sr"]
 /// );
 /// ```
 pub fn language_tags_from_locale_names<I, S>(names: I) -> Vec<String>
@@ -100,22 +108,49 @@ where
 {
     let mut tags: Vec<String> = Vec::new();
     for name in names {
-        // "sr_RS.UTF-8@latin" のエンコーディングと修飾子を落とす。
-        let base = name
-            .as_ref()
-            .split(['.', '@'])
-            .next()
-            .unwrap_or_default()
-            .trim();
+        // POSIX の形は language[_territory][.codeset][@modifier]。
+        let name = name.as_ref().trim();
+        let (name, modifier) = name.split_once('@').unwrap_or((name, ""));
+        let base = name.split('.').next().unwrap_or_default();
         if base.is_empty() || base.eq_ignore_ascii_case("C") || base.eq_ignore_ascii_case("POSIX") {
             continue;
         }
-        let tag = base.replace('_', "-");
+        let mut subtags: Vec<&str> = base.split(['_', '-']).collect();
+        let (script, variant) = modifier_subtags(modifier);
+        // 文字体系は言語のすぐ後ろ。すでに文字体系のある名前には足さない。
+        let has_script = subtags
+            .get(1)
+            .is_some_and(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_alphabetic()));
+        if let Some(script) = script.filter(|_| !has_script) {
+            subtags.insert(1, script);
+        }
+        subtags.extend(variant);
+        let tag = subtags.join("-");
         if !tags.contains(&tag) {
             tags.push(tag);
         }
     }
     tags
+}
+
+/// The BCP 47 script and variant subtags that a POSIX locale's `@modifier` stands
+/// for (glibc's and gettext's names). `(None, None)` for modifiers that say nothing
+/// about the language, such as `@euro`.
+fn modifier_subtags(modifier: &str) -> (Option<&'static str>, Option<&'static str>) {
+    match modifier.to_ascii_lowercase().as_str() {
+        "latin" => (Some("Latn"), None),
+        // タタール語のラテン文字 (tt_RU@iqtelif)。
+        "iqtelif" => (Some("Latn"), None),
+        "cyrillic" => (Some("Cyrl"), None),
+        "devanagari" => (Some("Deva"), None),
+        "arabic" => (Some("Arab"), None),
+        "shaw" => (Some("Shaw"), None),
+        "valencia" => (None, Some("valencia")),
+        "tarask" => (None, Some("tarask")),
+        "ijekavian" => (None, Some("ijekavsk")),
+        "ijekavianlatin" => (Some("Latn"), Some("ijekavsk")),
+        _ => (None, None),
+    }
 }
 
 #[cfg(test)]
@@ -176,8 +211,9 @@ mod tests {
             ["pt-BR", "pt", "en-US", "en"]
         );
         assert_eq!(
-            language_tags_from_locale_names(["sr_RS@latin", "de_DE@euro"]),
-            ["sr-RS", "de-DE"]
+            language_tags_from_locale_names(["de_DE@euro", "de_DE.ISO-8859-15@euro"]),
+            ["de-DE"],
+            "文字体系でない修飾子は落とす"
         );
         assert_eq!(
             language_tags_from_locale_names(["zh-Hans-CN", "ja-JP"]),
@@ -185,5 +221,50 @@ mod tests {
             "BCP 47 はそのまま"
         );
         assert!(language_tags_from_locale_names(["C", "POSIX", "C.UTF-8", ""]).is_empty());
+    }
+
+    #[test]
+    fn script_modifiers_become_script_subtags() {
+        // g_get_language_names が "sr_RS.UTF-8@latin" から作る並び。
+        assert_eq!(
+            language_tags_from_locale_names([
+                "sr_RS.UTF-8@latin",
+                "sr_RS@latin",
+                "sr.UTF-8@latin",
+                "sr@latin",
+                "sr_RS.UTF-8",
+                "sr_RS",
+                "sr.UTF-8",
+                "sr",
+                "C"
+            ]),
+            ["sr-Latn-RS", "sr-Latn", "sr-RS", "sr"]
+        );
+        assert_eq!(
+            language_tags_from_locale_names([
+                "uz_UZ@cyrillic",
+                "be_BY@LATIN",
+                "tt_RU@iqtelif",
+                "ks_IN@devanagari",
+                "en@shaw"
+            ]),
+            [
+                "uz-Cyrl-UZ",
+                "be-Latn-BY",
+                "tt-Latn-RU",
+                "ks-Deva-IN",
+                "en-Shaw"
+            ]
+        );
+        assert_eq!(
+            language_tags_from_locale_names(["ca_ES.UTF-8@valencia", "sr@ijekavianlatin"]),
+            ["ca-ES-valencia", "sr-Latn-ijekavsk"],
+            "変種は最後に付く"
+        );
+        assert_eq!(
+            language_tags_from_locale_names(["zh-Hant-TW@latin"]),
+            ["zh-Hant-TW"],
+            "すでにある文字体系は上書きしない"
+        );
     }
 }
