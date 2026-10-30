@@ -6,6 +6,7 @@
 //! to the main queue, where every live `Ui` takes the new list.
 
 use std::cell::{Cell, RefCell};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::{Rc, Weak};
 
 use dispatch2::DispatchQueue;
@@ -41,7 +42,11 @@ define_class!(
     impl LocaleObserver {
         #[unsafe(method(currentLocaleDidChange:))]
         fn current_locale_did_change(&self, _notification: &NSNotification) {
-            DispatchQueue::main().exec_async(refresh);
+            DispatchQueue::main().exec_async(|| {
+                // libdispatch は C なので、アプリのクロージャから巻き戻すと
+                // プロセスごと落ちる。内容は既定の panic hook が stderr へ出す。
+                let _ = catch_unwind(AssertUnwindSafe(refresh));
+            });
         }
     }
 );

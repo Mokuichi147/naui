@@ -297,6 +297,10 @@ fn main() {
             preferred_languages_follow_the_os,
         ),
         (
+            "優先言語の知らせの中の panic でアプリが落ちない",
+            preferred_languages_survive_a_panicking_closure,
+        ),
+        (
             "落とされたファイルがポインターの下のウィジェットか窓へ届く",
             file_drop_reaches_the_widget_under_the_pointer,
         ),
@@ -2558,6 +2562,31 @@ fn preferred_languages_follow_the_os(ui: &Ui) -> Result<()> {
     pump_until(2.0, || seen.borrow().len() == 3);
     assert_eq!(seen.borrow().last(), Some(&os));
     assert_eq!(ui.preferred_languages(), os);
+    Ok(())
+}
+
+/// A panic in the closure stops at the main queue's boundary instead of aborting
+/// the process, and the languages are still taken.
+fn preferred_languages_survive_a_panicking_closure(ui: &Ui) -> Result<()> {
+    use objc2_foundation::{NSCurrentLocaleDidChangeNotification, NSNotificationCenter};
+
+    let called = Rc::new(Cell::new(false));
+    let sink = called.clone();
+    ui.on_preferred_languages_change(move |_| {
+        sink.set(true);
+        panic!("知らせの中の panic (テストで意図したもの)");
+    });
+    let changed = vec!["it-IT".to_string()];
+    naui_macos::override_preferred_languages_for_test(Some(changed.clone()));
+    unsafe {
+        NSNotificationCenter::defaultCenter()
+            .postNotificationName_object(NSCurrentLocaleDidChangeNotification, None);
+    }
+    pump_until(2.0, || called.get());
+    naui_macos::override_preferred_languages_for_test(None);
+    // ここへ戻ってこられれば、プロセスは落ちていない。
+    assert!(called.get(), "クロージャが呼ばれること");
+    assert_eq!(ui.preferred_languages(), changed);
     Ok(())
 }
 
