@@ -402,8 +402,11 @@ mod bundle {
             version = component.version,
         );
         let partial = cache.join(format!("{name}.partial"));
+        // `--retry` alone does not retry a transfer cut off midway (exit code 56),
+        // which CI hits now and then; `--retry-all-errors` (curl 7.71+) does.
         let status = Command::new("curl")
-            .args(["--fail", "--silent", "--show-error", "--location", "--retry", "3", "--output"])
+            .args(["--fail", "--silent", "--show-error", "--location"])
+            .args(["--retry", "3", "--retry-all-errors", "--output"])
             .arg(&partial)
             .arg(&url)
             .status()
