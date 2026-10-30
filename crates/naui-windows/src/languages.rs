@@ -1,10 +1,14 @@
-//! Following changes of the user's preferred UI languages.
+//! Following changes of the user's preferred languages.
 //!
 //! Changing the language or region settings broadcasts `WM_SETTINGCHANGE` with
 //! `"intl"` to every top-level window, which is when
-//! `GetUserPreferredUILanguages` is read again. naui's windows are subclassed to
-//! receive it, and the reading is deferred through the dispatcher so the app's
-//! closure does not run inside the window procedure (a panic there would abort).
+//! `GlobalizationPreferences.Languages` is read again. naui's windows are
+//! subclassed to receive it, and the reading is deferred through the dispatcher so
+//! the app's closure does not run inside the window procedure (a panic there would
+//! abort).
+//!
+//! naui's own strings are chosen from [`display_languages`] instead, which follows
+//! the Windows display language like WinUI's own strings do.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -78,16 +82,39 @@ fn is_intl(lparam: LPARAM) -> bool {
     area.is_ok_and(|area| area.eq_ignore_ascii_case("intl"))
 }
 
-/// The user's preferred UI languages, most preferred first (`"ja-JP"` and so on).
+/// The user's preferred languages, most preferred first (`"ja"`, `"en-US"` and so
+/// on), in the order of the list in Settings.
 ///
-/// Read with `GetUserPreferredUILanguages`, which works for unpackaged apps too.
-/// Empty if it fails, which leaves naui's strings in English.
+/// Read with `GlobalizationPreferences.Languages`, which works for unpackaged apps
+/// too and sees a reordering while the app runs. `GetUserPreferredUILanguages`
+/// does not: it starts with the display language, which changes only after signing
+/// in again. Falls back to [`display_languages`] if it fails.
 pub(crate) fn preferred_languages() -> Vec<String> {
-    use windows::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+    use windows::System::UserProfile::GlobalizationPreferences;
 
     if let Some(languages) = OVERRIDE.with(|o| o.borrow().clone()) {
         return languages;
     }
+    let languages = GlobalizationPreferences::Languages().map(|tags| {
+        tags.into_iter()
+            .map(|tag| tag.to_string())
+            .filter(|tag| !tag.is_empty())
+            .collect::<Vec<_>>()
+    });
+    match languages {
+        Ok(languages) if !languages.is_empty() => languages,
+        _ => display_languages(),
+    }
+}
+
+/// The user's preferred UI languages, starting with the display language
+/// (`"ja-JP"` and so on). What naui's own strings are chosen from.
+///
+/// Read with `GetUserPreferredUILanguages`, which works for unpackaged apps too.
+/// Empty if it fails, which leaves naui's strings in English.
+pub(crate) fn display_languages() -> Vec<String> {
+    use windows::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+
     let mut count = 0u32;
     let mut len = 0u32;
     // 1 回目で必要な長さを聞き、2 回目で受け取る。中身は NUL 区切りで、

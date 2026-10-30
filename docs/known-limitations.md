@@ -47,9 +47,10 @@ that shape are covered in
 - `Ui::on_preferred_languages_change` is never called on Linux, which decides the
   languages from environment variables at startup. Elsewhere it is called only
   when the list itself changes: a change of region or format alone does not call
-  it. Whether a change reaches a running app at all depends on the OS: a new
-  Windows display language takes effect after signing in again, and macOS may
-  reopen the app instead of telling it.
+  it. Whether a change reaches a running app at all depends on the OS: on
+  Windows reordering the language list in Settings is told right away, but a new
+  display language (which naui's own strings follow) takes effect after signing
+  in again, and macOS may reopen the app instead of telling it.
 
 ### Widgets
 

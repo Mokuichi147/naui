@@ -148,8 +148,7 @@ struct UiInner {
 
 impl Ui {
     fn new(theme: Theme, shutdown: &'static ui_thread::UiThreadCell<Option<Ui>>) -> Self {
-        let languages = languages::preferred_languages();
-        naui_core::set_ui_languages(&languages);
+        naui_core::set_ui_languages(languages::display_languages());
         let this = Self(Rc::new(UiInner {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
@@ -164,7 +163,7 @@ impl Ui {
                 main_thread::Dispatcher::for_current_thread(),
             )),
             shutdown,
-            languages: naui_core::PreferredLanguages::new(languages),
+            languages: naui_core::PreferredLanguages::new(languages::preferred_languages()),
         }));
         languages::watch(&this.0);
         this
@@ -475,22 +474,23 @@ impl Ui {
         self.0.theme.get()
     }
 
-    /// The user's preferred UI languages as BCP 47 tags, most preferred first
-    /// (`"ja-JP"`, `"en-US"` and so on). The basis for choosing which translation to
-    /// show.
+    /// The user's preferred languages as BCP 47 tags, most preferred first (`"ja"`,
+    /// `"en-US"` and so on), in the order of the list in Settings. The basis for
+    /// choosing which translation to show.
     ///
-    /// Read with `GetUserPreferredUILanguages`. Empty if that fails.
+    /// Read with `GlobalizationPreferences.Languages`, falling back to
+    /// `GetUserPreferredUILanguages` if that fails. Empty if both fail.
     pub fn preferred_languages(&self) -> Vec<String> {
         self.0.languages.get()
     }
 
-    /// Called with the new list when the user's preferred UI languages change.
+    /// Called with the new list when the user's preferred languages change.
     /// Setting it again replaces the previous closure.
     ///
     /// Read again when a window receives `WM_SETTINGCHANGE` with `"intl"`, and
     /// called only when the list actually changed (a change of region alone does not
-    /// call it). naui's own strings, like WinUI's own strings, keep the language
-    /// chosen at startup.
+    /// call it). naui's own strings, like WinUI's own strings, keep the display
+    /// language chosen at startup.
     pub fn on_preferred_languages_change(&self, f: impl FnMut(&[String]) + 'static) {
         self.0.languages.on_change(f);
     }

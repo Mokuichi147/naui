@@ -338,7 +338,8 @@ impl Ui {
     /// `"en-US"` and so on). The basis for choosing which translation to show.
     ///
     /// Read from `NSLocale.preferredLanguages` on macOS,
-    /// `GetUserPreferredUILanguages` on Windows and `navigator.languages` on the
+    /// `GlobalizationPreferences.Languages` on Windows (the list in Settings, whose
+    /// tags may name only the language, like `"ja"`) and `navigator.languages` on the
     /// Web. Linux reads the `LANGUAGE` / `LC_ALL` / `LC_MESSAGES` / `LANG`
     /// environment variables the way gettext does (`g_get_language_names`), turning
     /// `ja_JP.UTF-8` into `ja-JP`. Empty if the OS names none (the C locale on Linux).

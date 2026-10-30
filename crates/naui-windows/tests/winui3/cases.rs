@@ -3958,16 +3958,19 @@ fn table_rows_follow_scrolling(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// The preferred languages are `GetUserPreferredUILanguages`, and a window that
-/// receives `WM_SETTINGCHANGE` with `"intl"` has them read again. Other areas and a
-/// list that did not change do not reach the closure, and naui's own strings stay as
-/// chosen at startup.
+/// The preferred languages are `GlobalizationPreferences.Languages`, and a window
+/// that receives `WM_SETTINGCHANGE` with `"intl"` has them read again. Other areas
+/// and a list that did not change do not reach the closure, and naui's own strings
+/// stay as chosen at startup.
 fn preferred_languages_follow_settingchange(ui: &Ui) -> Result<()> {
     use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_SETTINGCHANGE};
 
     let os = ui.preferred_languages();
-    assert!(!os.is_empty(), "GetUserPreferredUILanguages が何か返すこと");
+    assert!(
+        !os.is_empty(),
+        "GlobalizationPreferences.Languages が何か返すこと"
+    );
     let strings = naui_core::ui_strings();
 
     let window = ui.window("言語", 320.0, 240.0)?;
