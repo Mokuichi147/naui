@@ -394,6 +394,10 @@ impl Window {
     }
 
     /// Refits once, with the actual laid-out size, to the size requested before layout.
+    ///
+    /// If it was laid out maximized, minimized or in fullscreen (a state requested
+    /// before showing), the refit waits until the window is back to normal, the same
+    /// as a [`set_size`](Self::set_size) there.
     fn finish_pending_fit(&self) {
         let Some(target) = self.0.pending_fit.get() else {
             return;
@@ -402,6 +406,12 @@ impl Window {
             return;
         };
         self.0.pending_fit.set(None);
+        if self.native_state() != WindowState::Normal {
+            if self.0.pending_size.get().is_none() {
+                self.0.pending_size.set(Some(target));
+            }
+            return;
+        }
         if (size.0 - target.0).abs() >= 0.5 || (size.1 - target.1).abs() >= 0.5 {
             self.resize_content(target);
         }
@@ -987,8 +997,11 @@ impl Window {
         self.0.on_state_change.update(self.state());
         if self.native_state() == WindowState::Normal {
             if let Some(size) = self.0.pending_size.take() {
-                self.0.pending_fit.set(None);
                 self.resize_content(size);
+                // 中身はまだ戻る前の大きさで並んでいて、枠との差が通常の状態と
+                // ずれる (最大化からは高さが 1 足りなかった) ので、並べ終わって
+                // から実寸で合わせ直す。
+                self.0.pending_fit.set(Some(size));
             }
         }
     }
@@ -1478,6 +1491,8 @@ impl Window {
     /// [`set_state`](Self::set_state) before showing is applied.
     pub fn show(&self) {
         if let Some(size) = self.0.initial_size.take() {
+            // 最大化などで出すときは、通常の状態で並ぶ前にこれが戻る先の大きさになる。
+            self.0.normal_size.set(size);
             self.resize_content(size);
         }
         if self.0.native.Activate().is_ok() {
