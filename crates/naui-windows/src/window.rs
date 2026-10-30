@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use naui_core::{Result, StateHandler, Theme, WindowState};
+use naui_core::{Rect, Result, StateHandler, Theme, WindowPlacement, WindowState};
 use naui_winui3::Microsoft::UI::Composition::ICompositionSupportsSystemBackdrop;
 use naui_winui3::Microsoft::UI::Composition::SystemBackdrops::{
     MicaController, SystemBackdropConfiguration, SystemBackdropTheme,
@@ -108,6 +108,12 @@ struct WindowInner {
     /// menu bar's height is unknown and the outer frame can only be estimated, so it is
     /// refitted once with the actual size when layout finishes.
     pending_fit: Cell<Option<(f64, f64)>>,
+    /// The content size (DIP) last seen in the normal state. While maximized,
+    /// minimized or in fullscreen, [`Window::placement`] returns it.
+    normal_size: Cell<(f64, f64)>,
+    /// The content size requested with [`Window::set_size`] while maximized,
+    /// minimized or in fullscreen. Applied when the window is back to normal.
+    pending_size: Cell<Option<(f64, f64)>>,
     wheel_subclass_installed: Cell<bool>,
     /// Whether the `KeyDown` that picks up shortcuts has been attached.
     menu_key_installed: Cell<bool>,
@@ -142,11 +148,11 @@ struct WindowInner {
     /// `OverlappedPresenter` is first obtained.
     resizable: Cell<bool>,
     /// The position [`Window::position`] returns while in fullscreen: where it goes back
-    /// to when leaving (DIP). Read when entering fullscreen.
-    fullscreen_return: Cell<Option<(f64, f64)>>,
-    /// The position requested with [`Window::set_position`] while in fullscreen. Applied
-    /// on leaving fullscreen.
-    position_after_fullscreen: Cell<Option<(f64, f64)>>,
+    /// to when leaving (physical pixels). Read when entering fullscreen.
+    fullscreen_return: Cell<Option<(i32, i32)>>,
+    /// The position (physical pixels) requested with [`Window::set_position`] while in
+    /// fullscreen. Applied on leaving fullscreen.
+    position_after_fullscreen: Cell<Option<(i32, i32)>>,
 }
 
 type ResizeCallback = dyn FnMut((f64, f64));
@@ -215,6 +221,8 @@ impl Window {
             theme: Cell::new(theme),
             initial_size: Cell::new(Some((width.max(0.0), height.max(0.0)))),
             pending_fit: Cell::new(None),
+            normal_size: Cell::new((width.max(0.0), height.max(0.0))),
+            pending_size: Cell::new(None),
             wheel_subclass_installed: Cell::new(false),
             menu_key_installed: Cell::new(false),
             key_down: Rc::default(),
@@ -310,6 +318,15 @@ impl Window {
         self.apply_min_size();
         self.finish_pending_fit();
         let size = self.size();
+        // 中身の層が無ければ `Bounds` がそのまま中身なので、並ぶのを待たない。
+        let measured =
+            self.0.content_layer.borrow().is_none() || self.laid_out_content_size().is_some();
+        if self.0.initial_size.get().is_none()
+            && self.native_state() == WindowState::Normal
+            && measured
+        {
+            self.0.normal_size.set(size);
+        }
         if self.0.last_size.replace(Some(size)) == Some(size) {
             return;
         }
@@ -380,6 +397,10 @@ impl Window {
     }
 
     /// Refits once, with the actual laid-out size, to the size requested before layout.
+    ///
+    /// If it was laid out maximized, minimized or in fullscreen (a state requested
+    /// before showing), the refit waits until the window is back to normal, the same
+    /// as a [`set_size`](Self::set_size) there.
     fn finish_pending_fit(&self) {
         let Some(target) = self.0.pending_fit.get() else {
             return;
@@ -388,6 +409,12 @@ impl Window {
             return;
         };
         self.0.pending_fit.set(None);
+        if self.native_state() != WindowState::Normal {
+            if self.0.pending_size.get().is_none() {
+                self.0.pending_size.set(Some(target));
+            }
+            return;
+        }
         if (size.0 - target.0).abs() >= 0.5 || (size.1 - target.1).abs() >= 0.5 {
             self.resize_content(target);
         }
@@ -611,14 +638,100 @@ impl Window {
     /// example) the menu bar's height is unknown, so it is refitted once with the actual
     /// size when layout finishes. When called before it is on screen, it is shown at this
     /// size.
+    ///
+    /// While maximized, minimized or in fullscreen, the state is left as is and the
+    /// size for returning to normal is decided, the same as
+    /// [`set_position`](Self::set_position). It is applied when the window is back to
+    /// normal.
     pub fn set_size(&self, width: f64, height: f64) {
         let size = (width.max(0.0), height.max(0.0));
         if self.0.initial_size.get().is_some() {
             self.0.initial_size.set(Some(size));
             return;
         }
+        if self.native_state() != WindowState::Normal {
+            self.0.pending_size.set(Some(size));
+            return;
+        }
+        self.0.pending_size.set(None);
         self.0.pending_fit.set(None);
         self.resize_content(size);
+    }
+
+    /// The size and position to save, and the state to show it in next time.
+    ///
+    /// The size and position are those of the normal state, the same as
+    /// [`position`](Self::position): while maximized, minimized or in fullscreen, the
+    /// size is the content size last seen in the normal state (or the one requested
+    /// with [`set_size`](Self::set_size) since). A minimized window reports the state
+    /// it returns to (`GetWindowPlacement`'s `WPF_RESTORETOMAXIMIZED`).
+    ///
+    /// The position is divided by the primary monitor's scale, not this window's, so
+    /// it points to the same place on screen whichever monitor the window is on when
+    /// saved and when restored (the window is created on the primary monitor, and
+    /// monitors with different DPIs would otherwise count it differently). On the
+    /// primary monitor, or one with the same scale, it is the same as
+    /// [`position`](Self::position).
+    pub fn placement(&self) -> WindowPlacement {
+        let normal = self.native_state() == WindowState::Normal;
+        let size = match (self.0.initial_size.get(), self.0.pending_size.get()) {
+            (Some(size), _) | (None, Some(size)) => size,
+            (None, None) if normal => self.size(),
+            (None, None) => self.0.normal_size.get(),
+        };
+        let scale = self.placement_scale();
+        WindowPlacement {
+            size,
+            position: self
+                .physical_position()
+                .map(|(x, y)| (f64::from(x) / scale, f64::from(y) / scale)),
+            state: self.state_to_restore(),
+        }
+    }
+
+    /// The scale [`placement`](Self::placement) counts the position with: the primary
+    /// monitor's (`GetDpiForMonitor`), or this window's if it cannot be read.
+    fn placement_scale(&self) -> f64 {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY};
+
+        // SAFETY: 主画面を引くだけ。(0, 0) は常に主画面の左上。
+        let monitor = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
+        monitor_scale(monitor).unwrap_or_else(|| self.rasterization_scale())
+    }
+
+    /// [`state`](Self::state), with minimized replaced by the state it returns to.
+    fn state_to_restore(&self) -> WindowState {
+        use windows::Win32::UI::WindowsAndMessaging::WPF_RESTORETOMAXIMIZED;
+
+        match self.state() {
+            WindowState::Minimized => match self.placement_info() {
+                Some((_, placement)) if placement.flags.0 & WPF_RESTORETOMAXIMIZED.0 != 0 => {
+                    WindowState::Maximized
+                }
+                _ => WindowState::Normal,
+            },
+            state => state,
+        }
+    }
+
+    /// Applies a saved [`placement`](Self::placement): the size, then the position, then
+    /// the state.
+    ///
+    /// The position is used only if the top edge of the window would be on one of the
+    /// monitors connected now (their work areas, `MONITORINFO.rcWork`). Otherwise, such
+    /// as when the monitor it was on has been disconnected, it is placed as if no
+    /// position had been given.
+    pub fn set_placement(&self, placement: &WindowPlacement) {
+        let (width, height) = placement.size;
+        self.set_size(width, height);
+        if let Some(position) = placement.position {
+            let physical = to_physical(position, self.placement_scale());
+            if is_on_some_monitor(physical, width) {
+                self.set_physical_position(physical);
+            }
+        }
+        self.set_state(placement.state);
     }
 
     /// The position (x, y) of the window's top-left corner, in logical pixels (DIP).
@@ -635,10 +748,16 @@ impl Window {
     /// minimized, and the position read before entering for fullscreen.
     pub fn position(&self) -> Option<(f64, f64)> {
         let scale = self.rasterization_scale();
-        let physical = match self.native_state() {
+        let (x, y) = self.physical_position()?;
+        Some((f64::from(x) / scale, f64::from(y) / scale))
+    }
+
+    /// [`position`](Self::position) in physical pixels, before dividing by the scale.
+    fn physical_position(&self) -> Option<(i32, i32)> {
+        match self.native_state() {
             WindowState::Normal => {
                 let position = self.0.native.AppWindow().ok()?.Position().ok()?;
-                (position.X, position.Y)
+                Some((position.X, position.Y))
             }
             WindowState::Fullscreen => {
                 if let Some(position) = self.0.position_after_fullscreen.get() {
@@ -648,15 +767,14 @@ impl Window {
                     return Some(position);
                 }
                 let position = self.0.native.AppWindow().ok()?.Position().ok()?;
-                (position.X, position.Y)
+                Some((position.X, position.Y))
             }
             WindowState::Maximized | WindowState::Minimized => {
-                let (_, placement) = self.placement()?;
+                let (_, placement) = self.placement_info()?;
                 let rect = placement.rcNormalPosition;
-                (rect.left, rect.top)
+                Some((rect.left, rect.top))
             }
-        };
-        Some((f64::from(physical.0) / scale, f64::from(physical.1) / scale))
+        }
     }
 
     /// Moves the window's top left to (x, y). The units and direction are the same as
@@ -669,8 +787,11 @@ impl Window {
     /// `SetWindowPlacement` rewrites `rcNormalPosition`; for fullscreen it is moved on
     /// leaving.
     pub fn set_position(&self, x: f64, y: f64) {
-        let scale = self.rasterization_scale();
-        let physical = ((x * scale).round() as i32, (y * scale).round() as i32);
+        self.set_physical_position(to_physical((x, y), self.rasterization_scale()));
+    }
+
+    /// [`set_position`](Self::set_position) with a position already in physical pixels.
+    fn set_physical_position(&self, physical: (i32, i32)) {
         match self.native_state() {
             WindowState::Normal => {
                 let Ok(app_window) = self.0.native.AppWindow() else {
@@ -681,7 +802,7 @@ impl Window {
                     Y: physical.1,
                 });
             }
-            WindowState::Fullscreen => self.0.position_after_fullscreen.set(Some((x, y))),
+            WindowState::Fullscreen => self.0.position_after_fullscreen.set(Some(physical)),
             WindowState::Maximized | WindowState::Minimized => {
                 self.set_normal_position(physical);
             }
@@ -694,7 +815,7 @@ impl Window {
     /// `rcNormalPosition` is in workspace coordinates (offset by the work area excluding
     /// the taskbar and the like), so the difference between the work area of the screen
     /// the window is on and that screen's top left is added.
-    fn placement(
+    fn placement_info(
         &self,
     ) -> Option<(
         windows::Win32::Foundation::HWND,
@@ -726,7 +847,7 @@ impl Window {
             SetWindowPlacement, SW_SHOWMINIMIZED, SW_SHOWMINNOACTIVE,
         };
 
-        let Some((hwnd, mut placement)) = self.placement() else {
+        let Some((hwnd, mut placement)) = self.placement_info() else {
             return;
         };
         let rect = &mut placement.rcNormalPosition;
@@ -804,7 +925,7 @@ impl Window {
         };
         if target == WindowState::Fullscreen {
             if !self.is_fullscreen() {
-                self.0.fullscreen_return.set(self.position());
+                self.0.fullscreen_return.set(self.physical_position());
                 let _ = app_window.SetPresenterByKind(AppWindowPresenterKind::FullScreen);
             }
             return;
@@ -817,8 +938,8 @@ impl Window {
             self.0.fullscreen_return.set(None);
             // 全画面の間に頼まれた位置は、元の枠へ戻ったところで当てる
             // (最大化のまま戻ったときは、元に戻したときの位置になる)。
-            if let Some((x, y)) = self.0.position_after_fullscreen.take() {
-                self.set_position(x, y);
+            if let Some(physical) = self.0.position_after_fullscreen.take() {
+                self.set_physical_position(physical);
             }
         }
         let _ = match target {
@@ -845,9 +966,22 @@ impl Window {
     }
 
     /// Calls `on_state_change` if the current state differs from the one last reported.
+    ///
+    /// Once back to normal, applies a size requested with [`set_size`](Self::set_size)
+    /// while not normal.
     fn report_state(&self) {
-        if self.0.initial_state.get().is_none() {
-            self.0.on_state_change.update(self.state());
+        if self.0.initial_state.get().is_some() {
+            return;
+        }
+        self.0.on_state_change.update(self.state());
+        if self.native_state() == WindowState::Normal {
+            if let Some(size) = self.0.pending_size.take() {
+                self.resize_content(size);
+                // 中身はまだ戻る前の大きさで並んでいて、枠との差が通常の状態と
+                // ずれる (最大化からは高さが 1 足りなかった) ので、並べ終わって
+                // から実寸で合わせ直す。
+                self.0.pending_fit.set(Some(size));
+            }
         }
     }
 
@@ -1336,6 +1470,8 @@ impl Window {
     /// [`set_state`](Self::set_state) before showing is applied.
     pub fn show(&self) {
         if let Some(size) = self.0.initial_size.take() {
+            // 最大化などで出すときは、通常の状態で並ぶ前にこれが戻る先の大きさになる。
+            self.0.normal_size.set(size);
             self.resize_content(size);
         }
         if self.0.native.Activate().is_ok() {
@@ -1672,6 +1808,95 @@ thread_local! {
     static OWNER_WINDOW: RefCell<Option<XamlWindow>> = const { RefCell::new(None) };
 }
 
+/// Converts a position in logical pixels into physical pixels at `scale`.
+fn to_physical((x, y): (f64, f64), scale: f64) -> (i32, i32) {
+    ((x * scale).round() as i32, (y * scale).round() as i32)
+}
+
+/// How many physical pixels one logical pixel (DIP) is on `monitor`
+/// (`GetDpiForMonitor`). `None` if it cannot be read.
+fn monitor_scale(monitor: windows::Win32::Graphics::Gdi::HMONITOR) -> Option<f64> {
+    use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+
+    let (mut dpi_x, mut dpi_y) = (0, 0);
+    // SAFETY: 画面と、書き込み先の u32 を渡すだけ。
+    unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }.ok()?;
+    (dpi_x > 0).then(|| f64::from(dpi_x) / 96.0)
+}
+
+/// Whether a window `width` (DIP) wide with its outer frame's top left at `physical`
+/// would show enough of its top edge on one of the connected monitors' work areas for
+/// the user to drag it ([`naui_core::is_on_screen`]).
+///
+/// The window takes the scale of the monitor it is on, so each monitor is checked in
+/// its own logical pixels: the position and work area divided by that monitor's
+/// scale, against the width as is.
+fn is_on_some_monitor(physical: (i32, i32), width: f64) -> bool {
+    is_on_monitors(physical, width, &monitor_work_areas())
+}
+
+/// [`is_on_some_monitor`] against the given work areas (physical pixels) and scales.
+fn is_on_monitors(
+    physical: (i32, i32),
+    width: f64,
+    monitors: &[(windows::Win32::Foundation::RECT, f64)],
+) -> bool {
+    monitors.iter().any(|&(area, scale)| {
+        let logical = |value: i32| f64::from(value) / scale;
+        let screen = Rect::new(
+            logical(area.left),
+            logical(area.top),
+            logical(area.right - area.left),
+            logical(area.bottom - area.top),
+        );
+        naui_core::is_on_screen((logical(physical.0), logical(physical.1)), width, &[screen])
+    })
+}
+
+/// The work areas of the connected monitors (excluding the taskbar,
+/// `MONITORINFO.rcWork`) in physical pixels, each with its monitor's scale (1 if it
+/// cannot be read).
+fn monitor_work_areas() -> Vec<(windows::Win32::Foundation::RECT, f64)> {
+    use windows::Win32::Foundation::{LPARAM, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
+    };
+    use windows_core::BOOL;
+
+    unsafe extern "system" fn collect(
+        monitor: HMONITOR,
+        _: HDC,
+        _: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let scale = monitor_scale(monitor).unwrap_or(1.0);
+        // SAFETY: data は下の呼び出しが渡した Vec を指し、列挙の間だけ使う。
+        // 画面は EnumDisplayMonitors が渡したもの。
+        unsafe {
+            if GetMonitorInfoW(monitor, &mut info).as_bool() {
+                (*(data.0 as *mut Vec<(RECT, f64)>)).push((info.rcWork, scale));
+            }
+        }
+        true.into()
+    }
+
+    let mut areas: Vec<(RECT, f64)> = Vec::new();
+    // SAFETY: 列挙は戻る前に終わるので、areas への指し先はその間だけ使われる。
+    let _ = unsafe {
+        EnumDisplayMonitors(
+            None,
+            None,
+            Some(collect),
+            LPARAM(&mut areas as *mut Vec<(RECT, f64)> as isize),
+        )
+    };
+    areas
+}
+
 /// Remembers the window to use as the parent of modal dialogs.
 fn remember_owner(window: &XamlWindow) {
     OWNER_WINDOW.with(|slot| *slot.borrow_mut() = Some(window.clone()));
@@ -1788,4 +2013,35 @@ fn actual_theme(element: &UIElement) -> Result<Theme> {
     } else {
         Theme::Dark
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::RECT;
+
+    fn area(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn on_monitor_check_counts_the_width_with_each_monitors_scale() {
+        // 主画面 100% の左に、物理 [-3840, 0] の 200% の画面。
+        let monitors = [
+            (area(0, 0, 1920, 1040), 1.0),
+            (area(-3840, 0, 0, 2120), 2.0),
+        ];
+        // 幅 800 DIP は左の画面では物理 1600 なので、-5000 から -3400 まで届く。
+        assert!(is_on_monitors((-5000, 100), 800.0, &monitors));
+        // 物理 1600 でも届かないところは画面の外。
+        assert!(!is_on_monitors((-5500, 100), 800.0, &monitors));
+        // 主画面の右へはみ出た位置は、どちらの画面にも無い。
+        assert!(!is_on_monitors((1950, 100), 800.0, &monitors));
+        assert!(is_on_monitors((1800, 100), 800.0, &monitors));
+    }
 }

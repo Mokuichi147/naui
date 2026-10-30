@@ -17,6 +17,7 @@ that shape are covered in
 | Where `MenuBar` goes | Below the title bar | The app's menu | Below the header bar | Start of the window |
 | `Dialog::open` and `PopupMenu::open_at` | Return immediately | Do not return until closed | Return immediately | Return immediately |
 | Window position (`position` / `set_position`) | Possible | Possible | Not possible | Not possible |
+| Restoring a saved window (`set_placement`) | Size, position and state | Size, position and state | Size and state | Size only (fullscreen needs a user action) |
 | Maximizing and minimizing | Possible | Possible | Possible (minimizing cannot be detected on Wayland) | Not possible |
 | Full screen | Possible | Possible | Possible | Only from within a user action |
 | `Sender::send` from `std::thread::spawn` | Possible | Possible | Possible | Not possible (no threads) |
@@ -105,11 +106,16 @@ that shape are covered in
 
 - There is no notification when a window's position changes (because the position
   itself cannot be obtained on Linux and the Web). To save the position, read
-  `Window::position` before closing (for example inside `on_close_request`).
+  `Window::placement` before closing (for example inside `on_close_request`).
 - On Windows and macOS, where positions are supported, `position` /
   `set_position` while maximized, minimized or full screen read and write the
   position for when the window returns to the normal state. A requested position
-  takes effect when it returns to the normal state.
+  takes effect when it returns to the normal state. `set_size` does the same with
+  the size on Windows, macOS and Linux.
+- `placement` / `set_placement` restore only the size and state on Linux, and only
+  the size on the Web (the size requested with `set_size`, not the browser's;
+  fullscreen is refused outside a user action). naui does not store the placement
+  itself: the app writes its text form to its own settings.
 
 ### Other threads and async
 
@@ -185,7 +191,11 @@ that shape are covered in
   returns the window to the same place.
 - The position is converted to logical pixels with this window's display scale, so
   when crossing screens with different DPI, the value is counted with this window's
-  scale.
+  scale. `placement` / `set_placement` count it with the primary screen's scale
+  instead, so a saved position comes back to the same place on any screen; on a
+  screen whose scale differs from the primary one, it differs from `position`.
+  Restoring across screens with different DPI has not been checked on a real
+  device.
 - `on_file_drop` is called a moment after the drop, once
   `GetStorageItemsAsync` has read the files. Files without a path (such as the
   inside of a zip shown by Explorer) are left out. Drops onto the title bar go to

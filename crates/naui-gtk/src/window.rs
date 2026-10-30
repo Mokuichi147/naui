@@ -18,7 +18,9 @@ use std::rc::{Rc, Weak};
 
 use adw::prelude::*;
 use gtk::glib;
-use naui_core::{CloseHandler, CloseResponse, Result, StateHandler, Theme, WindowState};
+use naui_core::{
+    CloseHandler, CloseResponse, Result, StateHandler, Theme, WindowPlacement, WindowState,
+};
 
 use crate::callback::Notifier;
 
@@ -58,6 +60,11 @@ pub(crate) struct WindowInner {
     /// and height given to `ui.window` and is replaced by `set_size` before showing.
     /// Emptied once shown.
     initial_size: Cell<Option<(f64, f64)>>,
+    /// The window's CSS frame ([`Window::frame_size`]) last measured in the normal
+    /// state, or last added to the default size. The frame may differ while maximized
+    /// (window style classes change), so converting the default size (the normal size)
+    /// back to content uses this one.
+    normal_frame: Cell<Option<(f64, f64)>>,
     /// The content size being refitted ([`Window::fit_after_layout`]).
     fit: Cell<Option<Fit>>,
     /// A per-frame callback for refitting is attached.
@@ -175,6 +182,7 @@ impl Window {
             after_paint: RefCell::new(None),
             closing: Cell::new(false),
             initial_size: Cell::new(None),
+            normal_frame: Cell::new(None),
             fit: Cell::new(None),
             fitting: Cell::new(false),
             on_state_change: StateHandler::default(),
@@ -208,9 +216,15 @@ impl Window {
     }
 
     /// The window's default size needed to make the content `(width, height)`.
+    ///
+    /// Remembers the frame it added, so that [`placement`](Self::placement) subtracts
+    /// the same one when converting the default size back.
     fn default_size_for(&self, (width, height): (f64, f64)) -> (i32, i32) {
         let bars = self.top_bars_height();
-        let (frame_width, frame_height) = self.frame_size();
+        let (frame_width, frame_height) = self.normal_frame_size();
+        if self.0.native.is_realized() {
+            self.0.normal_frame.set(Some((frame_width, frame_height)));
+        }
         (
             to_px(width + frame_width),
             to_px(height + bars + frame_height),
@@ -260,6 +274,16 @@ impl Window {
                 (f64::from(bounds.height()) - f64::from(height)).max(0.0),
             )
         })
+    }
+
+    /// The window's CSS frame in the normal state. While out of it (see
+    /// [`out_of_normal_frame`](Self::out_of_normal_frame)), the one last measured in
+    /// the normal state.
+    fn normal_frame_size(&self) -> (f64, f64) {
+        match self.0.normal_frame.get() {
+            Some(frame) if self.out_of_normal_frame() => frame,
+            _ => self.frame_size(),
+        }
     }
 
     /// The height of the top strips (header bar and menu bar).
@@ -444,6 +468,9 @@ impl Window {
     /// Calls `on_resize` if the current [`size`](Self::size) differs from the one last
     /// reported.
     fn report_size(&self) {
+        if self.0.shown.get() && self.0.overlay.height() > 0 && !self.out_of_normal_frame() {
+            self.0.normal_frame.set(Some(self.frame_size()));
+        }
         let size = self.size();
         if self.0.last_size.replace(size) != size {
             self.0.on_resize.emit(size);
@@ -474,13 +501,83 @@ impl Window {
         if width > 0 && height > 0 {
             return (f64::from(width), f64::from(height));
         }
+        self.content_for_default_size(self.frame_size())
+    }
+
+    /// The content size the window's default size makes, given the window's CSS
+    /// `frame` (the reverse of [`default_size_for`](Self::default_size_for)).
+    fn content_for_default_size(&self, (frame_width, frame_height): (f64, f64)) -> (f64, f64) {
         let (width, height) = self.0.native.default_size();
         let bars = self.top_bars_height();
-        let (frame_width, frame_height) = self.frame_size();
         (
             (f64::from(width.max(0)) - frame_width).max(0.0),
             (f64::from(height.max(0)) - bars - frame_height).max(0.0),
         )
+    }
+
+    /// Whether the window is not in its normal frame: maximized, minimized, fullscreen
+    /// (including a request waiting for the compositor) or tiled to a screen edge.
+    fn out_of_normal_frame(&self) -> bool {
+        use gtk::gdk::ToplevelState;
+        let tiled = ToplevelState::TILED
+            | ToplevelState::TOP_TILED
+            | ToplevelState::RIGHT_TILED
+            | ToplevelState::BOTTOM_TILED
+            | ToplevelState::LEFT_TILED;
+        self.state() != WindowState::Normal
+            || self
+                .toplevel()
+                .is_some_and(|toplevel| toplevel.state().intersects(tiled))
+    }
+
+    /// The size and state to save, and to show it in next time. **The position is
+    /// always `None`** (see [`position`](Self::position)).
+    ///
+    /// The size is that of the normal state. GTK4 keeps the size from before
+    /// maximizing, going fullscreen or tiling as the window's default size, so while
+    /// in one of those it is converted from there. A minimized window reports the
+    /// state it returns to (maximized if it was maximized, as far as X11 tells).
+    pub fn placement(&self) -> WindowPlacement {
+        let size = match self.0.initial_size.get() {
+            Some(size) => size,
+            None if self.out_of_normal_frame() => {
+                self.content_for_default_size(self.normal_frame_size())
+            }
+            None => self.size(),
+        };
+        WindowPlacement {
+            size,
+            position: None,
+            state: self.state_to_restore(),
+        }
+    }
+
+    /// [`state`](Self::state), with minimized replaced by the state it returns to.
+    fn state_to_restore(&self) -> WindowState {
+        let state = self.state();
+        if state != WindowState::Minimized {
+            return state;
+        }
+        let Some(flags) = self.toplevel().map(|toplevel| toplevel.state()) else {
+            return WindowState::Normal;
+        };
+        use gtk::gdk::ToplevelState;
+        WindowState::from_flags(
+            false,
+            flags.contains(ToplevelState::FULLSCREEN),
+            flags.contains(ToplevelState::MAXIMIZED),
+        )
+    }
+
+    /// Applies a saved [`placement`](Self::placement): the size, then the state. **The
+    /// position is ignored** (see [`set_position`](Self::set_position)).
+    ///
+    /// While maximized or in fullscreen, the size becomes the one for returning to
+    /// normal (GTK4's default size), as with [`set_size`](Self::set_size).
+    pub fn set_placement(&self, placement: &WindowPlacement) {
+        let (width, height) = placement.size;
+        self.set_size(width, height);
+        self.set_state(placement.state);
     }
 
     /// The position of the window's top-left corner. **It cannot be obtained on Linux,
@@ -760,7 +857,9 @@ impl Window {
     ///
     /// GTK4's `set_default_size` takes the size of the whole window, so the heights of
     /// the header bar and menu bar strips are added. When called before it is on
-    /// screen, it is shown at this size.
+    /// screen, it is shown at this size. While maximized, in fullscreen or tiled, the
+    /// window keeps its frame and this becomes the size it returns to (GTK4 uses the
+    /// default size when it leaves those states).
     pub fn set_size(&self, width: f64, height: f64) {
         let size = (width.max(0.0), height.max(0.0));
         self.apply_default_size(size);

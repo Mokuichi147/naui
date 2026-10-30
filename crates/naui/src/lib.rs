@@ -10,7 +10,7 @@ pub use naui_core::{
     PointerButton, PointerEvent, PointerPhase, PopupItem, Rect, Result, ScrollMetrics,
     ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep,
     SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextStyle, Theme, Time, Timer,
-    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, WeakWidget, WindowState,
+    ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem, WeakWidget, WindowPlacement, WindowState,
     DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
     SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
 };

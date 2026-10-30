@@ -1,7 +1,9 @@
 use crate::sys;
 use crate::Widget;
 use crate::{MenuBar, Sidebar, Toolbar};
-use naui_core::{CloseResponse, EventResponse, FileEntry, KeyEvent, Result, Theme, WindowState};
+use naui_core::{
+    CloseResponse, EventResponse, FileEntry, KeyEvent, Result, Theme, WindowPlacement, WindowState,
+};
 
 /// A weak reference for referring to a window from event handlers without holding
 /// it strongly.
@@ -120,6 +122,40 @@ impl Window {
         self.0.on_state_change(f)
     }
 
+    /// The size, position and state to save when the app quits, for
+    /// [`set_placement`](Self::set_placement) the next time it starts.
+    ///
+    /// The size and position are those of the normal state: while maximized or in
+    /// fullscreen, they are where the window returns to (the same as
+    /// [`position`](Self::position)). On Windows the position is counted with the
+    /// primary screen's scale instead of this window's, so it comes back to the same
+    /// place across screens with different DPIs. A minimized window reports the
+    /// state it returns to, never [`WindowState::Minimized`]. **On Linux and the Web the
+    /// position is `None`.** On Linux, the size is the last one seen in the normal
+    /// state (not while maximized, fullscreen or tiled to a screen edge). On the Web,
+    /// it is the size requested with [`set_size`](Self::set_size), because the
+    /// browser decides the actual size.
+    ///
+    /// See [Saving and restoring the window](crate::guide#saving-and-restoring-the-window).
+    #[inline]
+    pub fn placement(&self) -> WindowPlacement {
+        self.0.placement()
+    }
+
+    /// Applies a saved [`placement`](Self::placement): the size, then the position,
+    /// then the state. Call it before [`show`](Self::show) so the window appears
+    /// where it was.
+    ///
+    /// The position is used only if the window's top edge would be on one of the
+    /// screens connected now; a position on a screen that has been disconnected is
+    /// skipped. **Linux and the Web restore only the size and state**, and browsers
+    /// refuse fullscreen outside a user action, so on the Web only the size applies
+    /// at startup.
+    #[inline]
+    pub fn set_placement(&self, placement: &WindowPlacement) {
+        self.0.set_placement(placement)
+    }
+
     /// Whether the user can resize the window by dragging its edges. `true` by default.
     #[inline]
     pub fn is_resizable(&self) -> bool {
@@ -203,6 +239,11 @@ impl Window {
     /// GTK4's `set_default_size` takes the size of the whole window, so the heights of
     /// the header bar and menu bar strips are added. When called before it is on
     /// screen, it is shown at this size.
+    ///
+    /// While maximized or in fullscreen (on Windows also while minimized), the window
+    /// keeps its frame and this becomes the size it returns to, the same as
+    /// [`set_position`](Self::set_position) does with the position. On the Web only
+    /// the width is used, as the window's `max-width`.
     #[inline]
     pub fn set_size(&self, width: f64, height: f64) {
         self.0.set_size(width, height)
