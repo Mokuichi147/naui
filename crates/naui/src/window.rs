@@ -127,8 +127,10 @@ impl Window {
     ///
     /// The size and position are those of the normal state: while maximized or in
     /// fullscreen, they are where the window returns to (the same as
-    /// [`position`](Self::position)). A minimized window reports the state it
-    /// returns to, never [`WindowState::Minimized`]. **On Linux and the Web the
+    /// [`position`](Self::position)). On Windows the position is counted with the
+    /// primary screen's scale instead of this window's, so it comes back to the same
+    /// place across screens with different DPIs. A minimized window reports the
+    /// state it returns to, never [`WindowState::Minimized`]. **On Linux and the Web the
     /// position is `None`.** On Linux, the size is the last one seen in the normal
     /// state (not while maximized, fullscreen or tiled to a screen edge). On the Web,
     /// it is the size requested with [`set_size`](Self::set_size), because the

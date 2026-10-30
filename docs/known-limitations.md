@@ -191,7 +191,11 @@ that shape are covered in
   returns the window to the same place.
 - The position is converted to logical pixels with this window's display scale, so
   when crossing screens with different DPI, the value is counted with this window's
-  scale.
+  scale. `placement` / `set_placement` count it with the primary screen's scale
+  instead, so a saved position comes back to the same place on any screen; on a
+  screen whose scale differs from the primary one, it differs from `position`.
+  Restoring across screens with different DPI has not been checked on a real
+  device.
 - `on_file_drop` is called a moment after the drop, once
   `GetStorageItemsAsync` has read the files. Files without a path (such as the
   inside of a zip shown by Explorer) are left out. Drops onto the title bar go to

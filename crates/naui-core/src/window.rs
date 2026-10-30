@@ -128,8 +128,9 @@ pub struct WindowPlacement {
     /// `Window::size`.
     pub size: (f64, f64),
     /// The position of the window frame's top-left corner in the normal state, the
-    /// same as `Window::position`. `None` where positions are not available (Linux and
-    /// the Web).
+    /// same as `Window::position`, except that Windows counts it with the primary
+    /// screen's scale (so it comes back to the same place across screens with
+    /// different DPIs). `None` where positions are not available (Linux and the Web).
     pub position: Option<(f64, f64)>,
     /// The state to show the window in. `Window::placement` never returns
     /// [`WindowState::Minimized`]: a minimized window reports the state it returns to

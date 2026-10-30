@@ -270,6 +270,10 @@ const CASES: &[Case] = &[
         window_placement_restores_before_show,
     ),
     (
+        "中身の無いウィンドウも、変えた大きさを最大化の間に保存する",
+        window_placement_without_child,
+    ),
+    (
         "大きさを変えられるかどうかが OverlappedPresenter と往復する",
         window_resizable_round_trips,
     ),
@@ -2635,6 +2639,39 @@ fn window_placement_restores_before_show(ui: &Ui) -> Result<()> {
     let after = window.position();
     window.close();
     assert_eq!(after, before);
+    Ok(())
+}
+
+/// Without a child there is no content layer to wait for, so a size changed in the
+/// normal state is still what `placement` reports once maximized.
+fn window_placement_without_child(ui: &Ui) -> Result<()> {
+    let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0;
+    let window = ui.window("中身の無い枠", 320.0, 200.0)?;
+    window.show();
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        near(window.size(), (320.0, 200.0))
+    });
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.set_size(640.0, 480.0);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            near(window.size(), (640.0, 480.0))
+        });
+        assert!(near(window.size(), (640.0, 480.0)), "{:?}", window.size());
+        window.set_state(WindowState::Maximized);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Maximized
+        });
+        if window.state() != WindowState::Maximized {
+            println!("     (最大化が効かない環境なので、確かめずに通す)");
+            return;
+        }
+        let placement = window.placement();
+        assert!(near(placement.size, (640.0, 480.0)), "{placement:?}");
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 
