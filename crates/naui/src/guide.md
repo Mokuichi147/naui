@@ -209,6 +209,38 @@ fn main() -> naui::Result<()> {
 }
 ```
 
+## Languages
+
+[`Ui::preferred_languages`] returns the OS's preferred languages as BCP 47 tags,
+most preferred first (`"ja-JP"`, `"en-US"`), as the basis for choosing which
+translation to show. Translating is left to libraries such as Fluent or gettext.
+[`Ui::on_preferred_languages_change`] is called when the list changes on macOS,
+Windows and the Web; Linux decides the languages from environment variables at
+startup, so it is never called there. Updating the strings already on screen is up
+to the app.
+
+```no_run
+# use naui::{Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let greeting = |tags: &[String]| match tags.first().map(String::as_str) {
+    Some(tag) if tag.starts_with("ja") => "こんにちは",
+    _ => "Hello",
+};
+let label = ui.label(greeting(&ui.preferred_languages()))?;
+let weak = label.downgrade();
+ui.on_preferred_languages_change(move |tags| {
+    if let Some(label) = weak.upgrade() {
+        label.set_text(greeting(tags));
+    }
+});
+# Ok(())
+# }
+```
+
+The few strings naui shows itself (the default macOS main menu, the `Sidebar`
+toggle and so on) keep the language chosen at startup, like the strings the native
+controls carry themselves (file dialogs, date pickers, text field context menus).
+
 ## Layout and size
 
 Layout uses these six:

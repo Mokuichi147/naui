@@ -23,6 +23,7 @@ mod file_saver;
 mod focus;
 mod interaction;
 mod keys;
+mod languages;
 mod layout;
 mod list;
 mod main_thread;
@@ -55,7 +56,7 @@ use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate,
 };
-use objc2_foundation::{NSLocale, NSNotification};
+use objc2_foundation::NSNotification;
 
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
@@ -67,6 +68,8 @@ pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
+#[doc(hidden)]
+pub use languages::override_preferred_languages_for_test;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
@@ -122,12 +125,15 @@ struct UiInner {
     toasts: RefCell<Vec<Toast>>,
     /// The entry point for other threads and async work.
     tasks: Tasks,
+    /// The OS's preferred languages, followed through `languages::watch`.
+    languages: naui_core::PreferredLanguages,
 }
 
 impl Ui {
     fn new(mtm: MainThreadMarker, app_name: &str, theme: Theme) -> Self {
-        naui_core::set_ui_languages(preferred_languages());
-        Self(Rc::new(UiInner {
+        let languages = languages::preferred_languages();
+        naui_core::set_ui_languages(&languages);
+        let this = Self(Rc::new(UiInner {
             mtm,
             app_name: app_name.to_string(),
             theme: Cell::new(theme),
@@ -139,7 +145,10 @@ impl Ui {
             sidebars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
             tasks: Tasks::from_main_thread(std::sync::Arc::new(main_thread::MainQueue)),
-        }))
+            languages: naui_core::PreferredLanguages::new(languages),
+        }));
+        languages::watch(&this.0);
+        this
     }
 
     /// Creates a window. The framework keeps a reference to it, so dropping the return
@@ -426,6 +435,26 @@ impl Ui {
         self.0.theme.get()
     }
 
+    /// The OS's preferred languages as BCP 47 tags, most preferred first (`"ja-JP"`,
+    /// `"en-US"` and so on). The basis for choosing which translation to show.
+    ///
+    /// Read from `NSLocale.preferredLanguages`, which follows the per-app language in
+    /// System Settings too. Empty if the OS names none.
+    pub fn preferred_languages(&self) -> Vec<String> {
+        self.0.languages.get()
+    }
+
+    /// Called with the new list when the OS's preferred languages change. Setting it
+    /// again replaces the previous closure.
+    ///
+    /// Read again on `NSCurrentLocaleDidChangeNotification`, and called only when the
+    /// list actually changed (a change of region alone does not call it). naui's own
+    /// strings, like the native controls' strings, keep the language chosen at
+    /// startup.
+    pub fn on_preferred_languages_change(&self, f: impl FnMut(&[String]) + 'static) {
+        self.0.languages.on_change(f);
+    }
+
     /// The entry point for updating the screen from other threads or async code.
     ///
     /// The returned [`Tasks`] can be cloned and moved into callbacks.
@@ -580,18 +609,6 @@ where
 #[doc(hidden)]
 pub fn install_menu_bar_for_test(mtm: MainThreadMarker, app_name: &str) {
     menu_bar::install(mtm, app_name);
-}
-
-/// The OS's preferred languages, most preferred first (`"ja-JP"` and so on).
-///
-/// `NSLocale.preferredLanguages` follows the per-app language in System Settings
-/// too. AppKit's own strings follow the app bundle's localizations instead, so an
-/// app without a bundle gets them in English.
-fn preferred_languages() -> Vec<String> {
-    NSLocale::preferredLanguages()
-        .iter()
-        .map(|tag| tag.to_string())
-        .collect()
 }
 
 fn appearance_for_theme(theme: Theme) -> Option<Retained<NSAppearance>> {

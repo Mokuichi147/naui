@@ -8,7 +8,9 @@
 //!
 //! Each backend reads the preferred languages from the OS when the app starts and
 //! passes them to [`set_ui_languages`]; widgets then take their strings from
-//! [`ui_strings`]. Strings the native controls carry themselves (WinUI's
+//! [`ui_strings`]. A later change of the languages (which apps follow through
+//! [`PreferredLanguages`](crate::PreferredLanguages)) does not switch them, so they
+//! stay in the same language as the native controls' strings until a restart. Strings the native controls carry themselves (WinUI's
 //! `NavigationView` toggle, AppKit's sidebar button) are left to the native side.
 //!
 //! Translating the app's own strings is not done here. That is left to libraries

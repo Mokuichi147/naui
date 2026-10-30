@@ -277,11 +277,14 @@ struct UiInner {
     toasts: RefCell<Vec<Toast>>,
     /// The entry point for other threads and async work.
     tasks: Tasks,
+    /// The preferred languages as BCP 47 tags. Decided at startup and never changes.
+    languages: naui_core::PreferredLanguages,
 }
 
 impl Ui {
     fn new(app: adw::Application, theme: Theme) -> Self {
-        naui_core::set_ui_languages(preferred_languages());
+        let languages = preferred_languages();
+        naui_core::set_ui_languages(&languages);
         Self(Rc::new(UiInner {
             app,
             theme: Cell::new(theme),
@@ -293,6 +296,9 @@ impl Ui {
             sidebars: RefCell::new(Vec::new()),
             toasts: RefCell::new(Vec::new()),
             tasks: Tasks::from_main_thread(std::sync::Arc::new(main_thread::Idle)),
+            languages: naui_core::PreferredLanguages::new(
+                naui_core::language_tags_from_locale_names(&languages),
+            ),
         }))
     }
 
@@ -578,6 +584,27 @@ impl Ui {
 
     pub fn theme(&self) -> Theme {
         self.0.theme.get()
+    }
+
+    /// The preferred languages as BCP 47 tags, most preferred first (`"ja-JP"`,
+    /// `"en-US"` and so on). The basis for choosing which translation to show.
+    ///
+    /// Read the way gettext chooses GTK's own strings (`g_get_language_names`): the
+    /// `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG` environment variables, with
+    /// `LANGUAGE` ignored under the C locale. `ja_JP.UTF-8` becomes `ja-JP`, and the
+    /// C locale, which names no language, gives an empty list.
+    pub fn preferred_languages(&self) -> Vec<String> {
+        self.0.languages.get()
+    }
+
+    /// Called with the new list when the preferred languages change. Setting it again
+    /// replaces the previous closure.
+    ///
+    /// Linux decides the languages from environment variables when the app starts,
+    /// and there is no notification of a change, so it is never called. It exists so
+    /// apps can be written the same way on every platform.
+    pub fn on_preferred_languages_change(&self, f: impl FnMut(&[String]) + 'static) {
+        self.0.languages.on_change(f);
     }
 
     /// The entry point for updating the screen from other threads or async code.

@@ -739,6 +739,10 @@ fn main() {
         ),
         ("テーマを実行中に切り替えられる", theme_switch),
         (
+            "優先言語は gettext と同じ環境変数から BCP 47 で読める",
+            preferred_languages_come_from_the_environment,
+        ),
+        (
             "落とされたファイルがウィジェットと窓の受け口へ届く",
             file_drop_reaches_the_drop_targets,
         ),
@@ -6270,6 +6274,38 @@ fn dialog_is_closed_until_opened(ui: &Ui) -> Result<()> {
     assert!(!dialog.is_open());
     assert!(log.borrow().is_empty(), "出していないので何も起きない");
     assert!(dialog.native_dialog().is_none());
+    Ok(())
+}
+
+/// The preferred languages are glib's language names in BCP 47 (`ja_JP.UTF-8`
+/// becomes `ja-JP`), with none under the C locale, and naui's own strings come from
+/// the same list. There is no notification of a change on Linux.
+fn preferred_languages_come_from_the_environment(ui: &Ui) -> Result<()> {
+    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find(|value| !value.is_empty())
+        .unwrap_or_default();
+    let is_c = locale.is_empty() || locale == "POSIX" || locale.split('.').next() == Some("C");
+    let expected = if is_c {
+        Vec::new()
+    } else {
+        naui_core::language_tags_from_locale_names(glib::language_names().iter())
+    };
+    assert_eq!(ui.preferred_languages(), expected, "LANG={locale:?}");
+    assert!(ui
+        .preferred_languages()
+        .iter()
+        .all(|tag| !tag.contains(['_', '.', '@'])));
+    assert_eq!(
+        naui_core::ui_strings(),
+        naui_core::UiStrings::for_languages(if is_c {
+            vec!["C".to_string()]
+        } else {
+            expected
+        })
+    );
+    ui.on_preferred_languages_change(|_| panic!("Linux では呼ばれない"));
     Ok(())
 }
 

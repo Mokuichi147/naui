@@ -334,6 +334,36 @@ impl Ui {
         self.0.theme()
     }
 
+    /// The OS's preferred languages as BCP 47 tags, most preferred first (`"ja-JP"`,
+    /// `"en-US"` and so on). The basis for choosing which translation to show.
+    ///
+    /// Read from `NSLocale.preferredLanguages` on macOS,
+    /// `GetUserPreferredUILanguages` on Windows and `navigator.languages` on the
+    /// Web. Linux reads the `LANGUAGE` / `LC_ALL` / `LC_MESSAGES` / `LANG`
+    /// environment variables the way gettext does (`g_get_language_names`), turning
+    /// `ja_JP.UTF-8` into `ja-JP`. Empty if the OS names none (the C locale on Linux).
+    #[inline]
+    pub fn preferred_languages(&self) -> Vec<String> {
+        self.0.preferred_languages()
+    }
+
+    /// Called with the new list when the OS's preferred languages change. Setting it
+    /// again replaces the previous closure.
+    ///
+    /// Called only when the list actually changed, on
+    /// `NSCurrentLocaleDidChangeNotification` (macOS), `WM_SETTINGCHANGE` with
+    /// `"intl"` (Windows) and `languagechange` (Web). Linux decides the languages from
+    /// environment variables at startup, so it is never called there.
+    ///
+    /// naui's own strings (the default macOS main menu, the `Sidebar` toggle and so
+    /// on) keep the language chosen at startup, like the strings the native controls
+    /// carry themselves. Updating the app's strings is up to the app, for example by
+    /// holding widgets with `downgrade()` and calling `set_text`.
+    #[inline]
+    pub fn on_preferred_languages_change(&self, f: impl FnMut(&[String]) + 'static) {
+        self.0.on_preferred_languages_change(f)
+    }
+
     /// The entry point for updating the screen from other threads or async code.
     ///
     /// The returned [`Tasks`] can be cloned and moved into callbacks.

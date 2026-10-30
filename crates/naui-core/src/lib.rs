@@ -23,6 +23,7 @@ mod dialog;
 mod file;
 mod focus;
 mod key;
+mod languages;
 mod layout;
 mod list;
 mod main_thread;
@@ -59,6 +60,7 @@ pub use file::{
 };
 pub use focus::{FocusHandler, FocusOwner};
 pub use key::{EventResponse, Key, KeyEvent, KeyHandler, Modifiers};
+pub use languages::{language_tags_from_locale_names, PreferredLanguages};
 pub use layout::{GridCell, Length, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing, Track};
 pub use list::{ListItem, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};

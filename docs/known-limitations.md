@@ -42,6 +42,14 @@ that shape are covered in
   `LANGUAGE` / `LC_ALL` / `LC_MESSAGES` / `LANG` environment variables, read the
   way gettext reads them for GTK's own strings, so `LANGUAGE` is ignored under the
   C locale), so changing it while the app runs takes effect on the next launch.
+  This matches the strings the native controls carry themselves, which also stay
+  in the language they started with.
+- `Ui::on_preferred_languages_change` is never called on Linux, which decides the
+  languages from environment variables at startup. Elsewhere it is called only
+  when the list itself changes: a change of region or format alone does not call
+  it. Whether a change reaches a running app at all depends on the OS: a new
+  Windows display language takes effect after signing in again, and macOS may
+  reopen the app instead of telling it.
 
 ### Widgets
 
