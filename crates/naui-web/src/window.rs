@@ -4,7 +4,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use naui_core::{Error, Result, StateHandler, Theme, WindowState};
+use naui_core::{Error, Result, StateHandler, Theme, WindowPlacement, WindowState};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement};
 
@@ -329,6 +329,33 @@ impl Window {
     /// Moves the window. **Does nothing on the Web** (see [`position`](Self::position)).
     pub fn set_position(&self, x: f64, y: f64) {
         let _ = (x, y);
+    }
+
+    /// The size and state to save, and to show it in next time. **The position is
+    /// always `None`** (see [`position`](Self::position)).
+    ///
+    /// The size is the one requested with `ui.window` or [`set_size`](Self::set_size),
+    /// not the measured [`size`](Self::size). The browser decides the actual size, so
+    /// saving the measured one and passing it back would turn a narrow browser window
+    /// into a lasting `max-width`.
+    pub fn placement(&self) -> WindowPlacement {
+        WindowPlacement {
+            size: self.0.size.get(),
+            position: None,
+            state: self.state(),
+        }
+    }
+
+    /// Applies a saved [`placement`](Self::placement): the size, then the state. **The
+    /// position is ignored.**
+    ///
+    /// Browsers refuse fullscreen outside a user action, so a saved
+    /// [`WindowState::Fullscreen`] applied at startup leaves the page as it is (see
+    /// [`set_state`](Self::set_state)).
+    pub fn set_placement(&self, placement: &WindowPlacement) {
+        let (width, height) = placement.size;
+        self.set_size(width, height);
+        self.set_state(placement.state);
     }
 
     /// The current display state. On the Web, only [`WindowState::Normal`] or

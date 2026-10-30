@@ -27,7 +27,7 @@ use naui_core::{
     NavItem, Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
     ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
     TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    WindowState, DEFAULT_SIDEBAR_WIDTH,
+    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -369,6 +369,10 @@ fn main() {
         (
             "表示する前に頼んだ状態で表示される",
             window_state_requested_before_show,
+        ),
+        (
+            "保存した大きさと状態は最大化の間も通常の大きさを指し、位置は持たない",
+            window_placement_keeps_the_normal_size,
         ),
         (
             "最小化して元に戻せる (X11)",
@@ -8611,6 +8615,59 @@ fn window_state_requested_before_show(ui: &Ui) -> Result<()> {
     });
     assert!(window.native_window().is_maximized());
     assert_eq!(window.state(), WindowState::Maximized);
+    window.close();
+    Ok(())
+}
+
+/// A placement applied before showing shows the window maximized, and while
+/// maximized `placement` reports the size it returns to (GTK4's default size), which
+/// `set_size` there also decides. The position is never kept.
+///
+/// Maximizing before showing is honored even without a window manager (see
+/// [`window_state_requested_before_show`]); un-maximizing is SKIPped there.
+fn window_placement_keeps_the_normal_size(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let saved =
+        WindowPlacement::parse("size=380x260 position=150,170 state=maximized").expect("読める");
+    let window = ui.window("保存する枠", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_placement(&saved);
+    let expected = WindowPlacement {
+        position: None,
+        ..saved
+    };
+    assert_eq!(window.placement(), expected, "表示の前");
+    window.show();
+    spin_until(Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    tick(&window.native_window());
+    assert_eq!(window.state(), WindowState::Maximized);
+    assert_eq!(window.placement(), expected, "最大化の間");
+
+    window.set_size(400.0, 280.0);
+    tick(&window.native_window());
+    assert_eq!(window.state(), WindowState::Maximized, "最大化のまま");
+    assert_eq!(window.placement().size, (400.0, 280.0));
+
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal && window.size() == (400.0, 280.0)
+    });
+    if window.state() != WindowState::Normal {
+        skip("ウィンドウマネージャが最大化の解除に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.size(), (400.0, 280.0), "戻ると決めた大きさ");
+    assert_eq!(
+        window.placement(),
+        WindowPlacement {
+            size: (400.0, 280.0),
+            position: None,
+            state: WindowState::Normal,
+        }
+    );
     window.close();
     Ok(())
 }

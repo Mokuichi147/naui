@@ -254,7 +254,12 @@ collected in [Known limitations](known-limitations.md).
   made by swapping `AppWindow`'s presenter for `FullScreenPresenter`; the position
   before entering is remembered and returned, and a requested position is applied
   on leaving full screen. On leaving, the original `OverlappedPresenter` is
-  reattached (to keep the minimum size and `set_resizable` settings).
+  reattached (to keep the minimum size and `set_resizable` settings). For
+  `placement`, the content size last seen in the normal state is remembered, and
+  `set_size` while not normal is applied once `AppWindow.Changed` reports the normal
+  state again. A minimized window's saved state comes from `WPF_RESTORETOMAXIMIZED`,
+  and `set_placement` checks the saved position against the monitors' work areas
+  (`EnumDisplayMonitors`).
 
 ### macOS construction
 
@@ -321,7 +326,10 @@ collected in [Known limitations](known-limitations.md).
   full screen, the position before entering is remembered and returned, and after
   leaving, the window is moved to the requested position or the position before
   entering (because macOS 15's AppKit sometimes forgets moves made with
-  `set_position` and returns to the frame from when the window was shown).
+  `set_position` and returns to the frame from when the window was shown). The
+  content size for `placement` comes from the same frames, and `set_size` while
+  maximized or in full screen is applied together with the position.
+  `set_placement` checks the saved position against `NSScreen`'s `visibleFrame`.
 
 ### Linux construction
 
@@ -380,7 +388,10 @@ collected in [Known limitations](known-limitations.md).
 - **`Window` state**: On X11, the window manager sometimes does not restore a window
   with `unminimize` alone, so restoring from minimized also asks for it to be brought
   to the front with `present`. Minimizing requested before showing is applied after
-  the first state arrives from the compositor.
+  the first state arrives from the compositor. GTK4 keeps the size from before
+  maximizing, full screen or tiling as the window's default size, so `placement`
+  converts it back to the content size (subtracting the window's CSS frame measured
+  in the normal state, which can differ while maximized).
 
 ### Web construction
 
@@ -443,6 +454,7 @@ collected in [Known limitations](known-limitations.md).
 ## Main data types
 
 - `WindowState` / `CloseResponse`: window state (normal, maximized, minimized, full screen) and the response to a close request
+- `WindowPlacement`: a window's normal size, position and state, for saving and restoring it (with a one-line text form)
 - `Sizing` / `Length` / `Track` / `GridCell`: layout and size
 - `Key` / `KeyEvent` / `Modifiers` / `EventResponse`: key input notifications, and whether to pass the key on
 - `NavItem`: navigation items

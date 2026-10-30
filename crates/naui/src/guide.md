@@ -663,8 +663,9 @@ is set with [`set_position`](Window::set_position), macOS's
 While maximized, minimized or in fullscreen, [`Window::position`] returns **the
 position for returning to the normal state**. [`Window::set_position`] leaves the
 state as is and decides that return position (the visible frame does not move).
-Save `position` and [`Window::state`] before closing and apply both the next time
-it opens, and even a maximized window returns to its original placement.
+[`Window::set_size`] does the same with the size on Windows, macOS and Linux. To
+save all of these when the app quits, use [`Window::placement`] (see [Saving and
+restoring the window](#saving-and-restoring-the-window)).
 
 Only one [`WindowState`] is returned. States that can overlap on some platforms
 (minimized while maximized, for example) resolve to the one the user sees
@@ -683,7 +684,7 @@ applied in [`Window::show`] (until then, `state` returns the requested state; on
 Linux it does so until the compositor's first state arrives after showing, too).
 
 There is no notification for position changes, because Linux and the Web cannot
-obtain the position at all. To save the position, read [`Window::position`]
+obtain the position at all. To save the position, read [`Window::placement`]
 before closing (inside [`Window::on_close_request`], for example).
 
 What can be done differs by platform.
@@ -737,6 +738,64 @@ Even a window that cannot be resized can still be resized with
 [`Window::set_size`]. The maximize button stops working on all three platforms
 (macOS cannot zoom, Linux removes the button, and Windows also turns off
 `IsMaximizable`).
+
+## Saving and restoring the window
+
+[`Window::placement`] returns the window's size, position and state as a
+[`WindowPlacement`], to save when the app quits. [`Window::set_placement`] puts
+them back; call it before [`Window::show`] so the window appears where it was.
+`WindowPlacement` turns into one line of text with `to_string()` and back with
+[`WindowPlacement::parse`], so it can go into whatever settings file the app
+already has (naui does not decide where settings are stored).
+
+```no_run
+# use naui::{CloseResponse, Result, Ui, WindowPlacement};
+# fn load_setting(_: &str) -> Option<String> { None }
+# fn save_setting(_: &str, _: &str) {}
+# fn build(ui: &Ui) -> Result<()> {
+let window = ui.window("Editor", 800.0, 600.0)?;
+if let Some(placement) = load_setting("window").and_then(|text| WindowPlacement::parse(&text)) {
+    window.set_placement(&placement);
+}
+let weak = window.downgrade();
+window.on_close_request(move || {
+    if let Some(window) = weak.upgrade() {
+        // "size=800x600 position=80,60 state=maximized"
+        save_setting("window", &window.placement().to_string());
+    }
+    CloseResponse::Close
+});
+window.show();
+# Ok(())
+# }
+```
+
+The size and position are **those of the normal state**. A window closed while
+maximized or in fullscreen reports the frame it returns to, together with the
+state, so the next start shows it maximized again and un-maximizing it returns it
+to where the user had it. A minimized window reports the state it returns to
+(maximized if it was maximized), never [`WindowState::Minimized`], so the app
+does not start minimized.
+
+`set_placement` applies the size, then the position, then the state. The
+position is skipped if the window's top edge would not be on any screen connected
+now (the screen it was on has been disconnected, for example), and the window is
+then placed as if no position had been saved.
+
+| | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| Size | ○ | ○ | ○ | The requested size (the browser decides the actual size) |
+| Position | ○ | ○ | × (always `None`) | × (always `None`) |
+| State | ○ | ○ | ○ (minimization cannot be detected on Wayland) | Fullscreen only, refused at startup |
+| Normal frame while maximized | The content size last seen in the normal state | The frame before `zoom:` / before entering fullscreen | The window's default size (GTK4 keeps the size from before maximizing there) | (none) |
+
+**Linux and the Web restore only the size and state.** On Linux the compositor
+decides where windows go, and on the Web pages have no position on the screen. On
+the Web, [`Window::placement`] returns the size requested with `ui.window` or
+`set_size`, not the measured one: the browser window decides the actual size, and
+passing a narrow browser's width back would keep the page narrow (it becomes the
+`max-width`). Browsers also refuse fullscreen outside a user action, so a saved
+fullscreen does not apply at startup.
 
 ## Collapsible sections
 

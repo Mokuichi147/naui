@@ -4,7 +4,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use dispatch2::{DispatchQueue, MainThreadBound};
-use naui_core::{CloseHandler, CloseResponse, Result, StateHandler, Theme, WindowState};
+use naui_core::{
+    CloseHandler, CloseResponse, Rect, Result, StateHandler, Theme, WindowPlacement, WindowState,
+};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
@@ -82,10 +84,16 @@ struct WindowInner {
     /// to when leaving. Read when entering fullscreen, and cleared after moving there on
     /// the iteration after leaving finishes.
     fullscreen_return: Cell<Option<(f64, f64)>>,
+    /// The content size to go back to when leaving fullscreen, read along with
+    /// [`fullscreen_return`](Self::fullscreen_return).
+    fullscreen_return_size: Cell<Option<(f64, f64)>>,
     /// The position requested with [`Window::set_position`] while maximized or in
     /// fullscreen. Applied after restoring from maximized, or on the iteration after
     /// leaving fullscreen finishes.
     pending_position: Cell<Option<(f64, f64)>>,
+    /// The content size requested with [`Window::set_size`] while maximized or in
+    /// fullscreen. Applied along with [`pending_position`](Self::pending_position).
+    pending_size: Cell<Option<(f64, f64)>>,
 }
 
 define_class!(
@@ -149,8 +157,12 @@ define_class!(
                 // 最大化していなければ、前に頼まれた位置は使われずに残ったもの。
                 if !inner.native.isZoomed() {
                     inner.pending_position.set(None);
+                    inner.pending_size.set(None);
                 }
                 inner.fullscreen_return.set(Some(window.normal_position()));
+                inner
+                    .fullscreen_return_size
+                    .set(Some(window.normal_size()));
                 inner.in_transition.set(true);
             }
         }
@@ -295,7 +307,9 @@ impl Window {
             positioned: Cell::new(false),
             zoom_frame: Cell::new(None),
             fullscreen_return: Cell::new(None),
+            fullscreen_return_size: Cell::new(None),
             pending_position: Cell::new(None),
+            pending_size: Cell::new(None),
         }));
         let delegate = WindowDelegate::new(mtm, Rc::downgrade(&this.0));
         this.0
@@ -432,7 +446,19 @@ impl Window {
     ///
     /// Uses `setContentSize`. While a sidebar is attached, the `contentView` extends
     /// under the title bar, so the overlap is added before passing it.
+    ///
+    /// While maximized or in fullscreen, the state is left as is and the size for
+    /// returning to normal is decided, the same as
+    /// [`set_position`](Self::set_position). While minimized, the frame changes and
+    /// shows when it comes back.
     pub fn set_size(&self, width: f64, height: f64) {
+        if self.in_fullscreen() || self.zoom_frame().is_some() {
+            self.0
+                .pending_size
+                .set(Some((width.max(0.0), height.max(0.0))));
+            return;
+        }
+        self.0.pending_size.set(None);
         // 狭すぎるとサイドバーと中身の最小に合わせて広がるので、先に畳む。
         if let Some(sidebar) = self.0.sidebar.borrow().clone() {
             sidebar.make_room(width);
@@ -492,6 +518,91 @@ impl Window {
         self.top_left(self.0.native.frame())
     }
 
+    /// The content size when back to normal, excluding fullscreen (see
+    /// [`normal_position`](Self::normal_position)).
+    fn normal_size(&self) -> (f64, f64) {
+        let Some(frame) = self.zoom_frame() else {
+            return self.size();
+        };
+        if let Some(size) = self.0.pending_size.get() {
+            return size;
+        }
+        let content = self.0.native.contentRectForFrameRect(frame).size;
+        let (extra_width, extra_height) = self.title_bar_overlap();
+        (
+            (content.width - extra_width).max(0.0),
+            (content.height - extra_height).max(0.0),
+        )
+    }
+
+    /// The size and position to save, and the state to show it in next time.
+    ///
+    /// The size and position are those of the normal state, the same as
+    /// [`position`](Self::position): while maximized it is the frame before `zoom:`,
+    /// and in fullscreen the frame read before entering. A minimized window reports
+    /// the state it returns to (maximized if it was zoomed).
+    pub fn placement(&self) -> WindowPlacement {
+        let size = if self.in_fullscreen() {
+            self.0
+                .pending_size
+                .get()
+                .or(self.0.fullscreen_return_size.get())
+                .unwrap_or_else(|| self.normal_size())
+        } else {
+            self.normal_size()
+        };
+        let state = if self.0.shown.get() {
+            WindowState::from_flags(false, self.0.fullscreen.get(), self.0.native.isZoomed())
+        } else {
+            match self.0.initial_state.get() {
+                WindowState::Minimized => WindowState::Normal,
+                state => state,
+            }
+        };
+        WindowPlacement {
+            size,
+            position: self.position(),
+            state,
+        }
+    }
+
+    /// Applies a saved [`placement`](Self::placement): the size, then the position, then
+    /// the state.
+    ///
+    /// The position is used only if the top edge of the window would be on one of the
+    /// screens connected now (`NSScreen`'s `visibleFrame`). Otherwise, such as when the
+    /// screen it was on has been disconnected, it is placed as if no position had been
+    /// given (centered unless [`set_position`](Self::set_position) was called before).
+    pub fn set_placement(&self, placement: &WindowPlacement) {
+        let (width, height) = placement.size;
+        self.set_size(width, height);
+        if let Some(position) = placement.position {
+            if naui_core::is_on_screen(position, width, &self.screen_work_areas()) {
+                self.set_position(position.0, position.1);
+            }
+        }
+        self.set_state(placement.state);
+    }
+
+    /// The work areas of the connected screens (`visibleFrame`, excluding the menu bar
+    /// and Dock), in the coordinates of [`position`](Self::position).
+    fn screen_work_areas(&self) -> Vec<Rect> {
+        let mtm = MainThreadMarker::from(&*self.0.native);
+        let primary_height = self.primary_screen_height();
+        NSScreen::screens(mtm)
+            .iter()
+            .map(|screen| {
+                let frame = screen.visibleFrame();
+                Rect::new(
+                    frame.origin.x,
+                    primary_height - (frame.origin.y + frame.size.height),
+                    frame.size.width,
+                    frame.size.height,
+                )
+            })
+            .collect()
+    }
+
     /// While maximized with `zoom:`, the frame before maximizing.
     ///
     /// `None` when it became `isZoomed` without going through `zoom:`, such as when the
@@ -548,35 +659,39 @@ impl Window {
         if !native.isZoomed() {
             self.0.zoom_frame.set(Some(native.frame()));
             self.0.pending_position.set(None);
+            self.0.pending_size.set(None);
             return true;
         }
         self.0.zoom_frame.set(None);
-        if self.0.pending_position.get().is_some() {
-            self.on_next_turn(|window| window.apply_pending_position());
+        if self.0.pending_position.get().is_some() || self.0.pending_size.get().is_some() {
+            self.on_next_turn(|window| window.apply_pending_frame());
         }
         true
     }
 
-    /// Applies a position requested while maximized or in fullscreen, once it is back
-    /// to a normal frame.
-    fn apply_pending_position(&self) {
+    /// Applies a size and position requested while maximized or in fullscreen, once it
+    /// is back to a normal frame.
+    fn apply_pending_frame(&self) {
         if self.in_fullscreen() || self.0.native.isZoomed() {
             return;
+        }
+        if let Some((width, height)) = self.0.pending_size.take() {
+            self.set_size(width, height);
         }
         if let Some((x, y)) = self.0.pending_position.take() {
             self.set_position(x, y);
         }
     }
 
-    /// On the iteration after leaving fullscreen finishes, moves to the position
-    /// promised during fullscreen.
+    /// On the iteration after leaving fullscreen finishes, moves to the size and
+    /// position promised during fullscreen.
     ///
-    /// If no position was requested, it goes back to the position before entering.
+    /// If none was requested, it goes back to the size and position before entering.
     /// AppKit should restore the frame from before entering, but on macOS 15 it
     /// sometimes forgets moves made with `setFrameTopLeftPoint:` and restores the frame
     /// from when it was shown. Moving inside the notification that leaving finished
     /// gets undone by AppKit, so it moves on the next iteration. If it came back to the
-    /// maximized frame, the position is kept as the one for restoring.
+    /// maximized frame, the size and position are kept as the ones for restoring.
     fn restore_after_fullscreen(&self) {
         if self.0.fullscreen.get() || self.0.in_transition.get() {
             return;
@@ -584,6 +699,12 @@ impl Window {
         let Some(return_position) = self.0.fullscreen_return.take() else {
             return;
         };
+        let return_size = self.0.fullscreen_return_size.take();
+        if let Some((width, height)) = self.0.pending_size.take().or(return_size) {
+            if self.size() != (width, height) {
+                self.set_size(width, height);
+            }
+        }
         let (x, y) = self.0.pending_position.take().unwrap_or(return_position);
         self.set_position(x, y);
     }
@@ -685,7 +806,7 @@ impl Window {
                     native.zoom(None);
                     // `zoom:` はアニメーションの後に戻るので、ここで当てておけば
                     // `set_state` から戻ったときには頼まれた位置になっている。
-                    self.apply_pending_position();
+                    self.apply_pending_frame();
                 }
             }
             WindowState::Minimized => native.miniaturize(None),

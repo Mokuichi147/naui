@@ -25,8 +25,8 @@ use naui_core::{
     Align, Color, DialogResponse, EventResponse, GridCell, Key, KeyEvent, Length, ListItem,
     MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Point, PointerButton,
     PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem, SidebarSection, Sizing,
-    TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowState,
-    DEFAULT_SIDEBAR_WIDTH,
+    TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement,
+    WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
@@ -5235,6 +5235,45 @@ async fn window_state_is_only_fullscreen() {
     assert!(window.is_resizable());
     window.set_resizable(false);
     assert!(!window.is_resizable());
+    window.close();
+}
+
+/// `placement` keeps the requested size rather than the measured one, and never a
+/// position. Fullscreen is left out: Playwright's WebKit allows it only once per
+/// page, and `window_state_is_only_fullscreen` uses that once.
+#[wasm_bindgen_test]
+async fn window_placement_keeps_the_requested_size() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("保存する枠", 100_000.0, 300.0)?;
+        window.set_child(&ui.label("中身")?);
+        window.show();
+        kept = Some(window);
+        Ok(())
+    });
+    let window = kept.expect("window");
+    next_frames().await;
+    assert!(window.size().0 < 100_000.0, "ブラウザの幅に収まる");
+    assert_eq!(
+        window.placement(),
+        WindowPlacement {
+            size: (100_000.0, 300.0),
+            position: None,
+            state: WindowState::Normal,
+        }
+    );
+    let saved =
+        WindowPlacement::parse("size=640x480 position=150,170 state=normal").expect("読める");
+    window.set_placement(&saved);
+    next_frames().await;
+    assert_eq!(
+        window.placement(),
+        WindowPlacement {
+            position: None,
+            ..saved
+        }
+    );
+    assert_eq!(window.position(), None);
     window.close();
 }
 

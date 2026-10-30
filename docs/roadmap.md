@@ -104,9 +104,13 @@ internationalization tracks.
       in naui (`SidebarAutoCollapse`): an `AdwBreakpoint` takes away the minimum
       size of the window (or `AdwBreakpointBin`) holding it, and a CSS container
       query cannot tell the page when it applies.
-- [ ] **Saving and restoring window position and size.** Window state control
-      (`Window::set_state`, `set_position` and so on) is already in, so this is
-      small now. Linux and the Web restore only the size and state.
+- [x] **Saving and restoring window position and size.** `Window::placement`
+      returns the normal-state size and position with the state as a
+      `WindowPlacement` (one line of text with `to_string` / `parse`), and
+      `Window::set_placement` puts it back, skipping a position on no connected
+      screen. `set_size` while maximized or in fullscreen now decides the size for
+      returning, like `set_position`. Linux restores only the size and state, and
+      the Web only the size. Storing it is left to the app.
 - [x] *(i18n)* **Write naui's error messages in English.** `Error` displays as
       "failed to {context}: {detail}", with the context as a verb phrase
       ("create the Button"). The details, the warnings printed to stderr, the
