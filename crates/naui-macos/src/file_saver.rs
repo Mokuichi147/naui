@@ -166,9 +166,10 @@ impl FileSaver {
             .and_then(|url| url.path())
             .map(|path| PathBuf::from(path.to_string()))
         else {
-            self.0
-                .on_error
-                .emit(&Error::new("保存先の取得", "パスを取れませんでした"));
+            self.0.on_error.emit(&Error::new(
+                "get the save location",
+                "could not get the path",
+            ));
             return;
         };
         self.write_to(&path);
@@ -225,7 +226,7 @@ impl FileSaver {
 
 /// Writes to the chosen location and returns a [`FileEntry`] pointing at it.
 fn write_contents(path: &Path, contents: &[u8]) -> Result<FileEntry> {
-    std::fs::write(path, contents).map_err(|e| Error::new("ファイルの書き出し", e.to_string()))?;
+    std::fs::write(path, contents).map_err(|e| Error::new("write the file", e.to_string()))?;
     Ok(FileEntry::from_path(path))
 }
 
@@ -256,7 +257,7 @@ mod tests {
             .join("naui-無いフォルダー")
             .join("a.txt");
         let error = write_contents(&path, b"x").expect_err("失敗すること");
-        assert_eq!(error.context(), "ファイルの書き出し");
+        assert_eq!(error.context(), "write the file");
         assert!(!error.detail().is_empty());
     }
 }

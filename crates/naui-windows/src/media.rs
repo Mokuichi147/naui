@@ -132,7 +132,7 @@ fn unescape_non_ascii(url: &str) -> String {
             i += 3;
         }
         if run.is_empty() {
-            let c = url[i..].chars().next().expect("i は文字の境目にある");
+            let c = url[i..].chars().next().expect("i is on a char boundary");
             out.push(c);
             i += c.len_utf8();
         } else {
@@ -191,17 +191,17 @@ struct Frame {
 impl Frame {
     /// Builds the parts and puts them into `host`.
     fn new(host: &Grid) -> Result<Self> {
-        let natural = Border::new().map_err(|e| to_error("大きさの要素の生成", e))?;
-        let stage = Canvas::new().map_err(|e| to_error("台の生成", e))?;
+        let natural = Border::new().map_err(|e| to_error("create the size element", e))?;
+        let stage = Canvas::new().map_err(|e| to_error("create the stage", e))?;
         natural
             .SetIsHitTestVisible(false)
-            .map_err(|e| to_error("大きさの要素の設定", e))?;
+            .map_err(|e| to_error("set up the size element", e))?;
         host.Children()
             .and_then(|children| {
                 children.Append(&natural.cast::<UIElement>()?)?;
                 children.Append(&stage.cast::<UIElement>()?)
             })
-            .map_err(|e| to_error("ホストの組み立て", e))?;
+            .map_err(|e| to_error("build the host", e))?;
         Ok(Self { natural, stage })
     }
 
@@ -270,12 +270,12 @@ impl_widget!(Image, native);
 
 impl Image {
     pub(crate) fn new(source: &str) -> Result<Self> {
-        let native = Grid::new().map_err(|e| to_error("Image ホストの生成", e))?;
+        let native = Grid::new().map_err(|e| to_error("create the Image host", e))?;
         let frame = Frame::new(&native)?;
-        let image = XamlImage::new().map_err(|e| to_error("Image の生成", e))?;
+        let image = XamlImage::new().map_err(|e| to_error("create the Image", e))?;
         image
             .SetStretch(stretch(Fit::default()))
-            .map_err(|e| to_error("Image の配置設定", e))?;
+            .map_err(|e| to_error("set the Image alignment", e))?;
         let this = Self(Rc::new(ImageInner {
             native,
             frame,
@@ -303,7 +303,7 @@ impl Image {
         self.0
             .native
             .SizeChanged(&resized)
-            .map_err(|e| to_error("Image の大きさの購読", e))?;
+            .map_err(|e| to_error("subscribe to Image size changes", e))?;
 
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let opened = RoutedEventHandler::new(move |_, _| {
@@ -316,7 +316,7 @@ impl Image {
         self.0
             .image
             .ImageOpened(&opened)
-            .map_err(|e| to_error("Image の読み込みの購読", e))?;
+            .map_err(|e| to_error("subscribe to Image loading", e))?;
 
         // `Fill` かどうかで求める大きさが変わるので、`set_sizing` のたびに求め直す。
         // 実寸が変わらない切り替えもあるので、SizeChanged は待たない。
@@ -428,7 +428,7 @@ impl Image {
         let uri = match Uri::CreateUri(&HSTRING::from(source_uri(&source))) {
             Ok(uri) => uri,
             Err(error) => {
-                eprintln!("naui-windows: Image の場所を URI にできません: {error}");
+                eprintln!("naui-windows: cannot turn the Image location into a URI: {error}");
                 self.take_down(&children);
                 return;
             }
@@ -436,13 +436,13 @@ impl Image {
         let bitmap = match BitmapImage::CreateInstanceWithUriSource(&uri) {
             Ok(bitmap) => bitmap,
             Err(error) => {
-                eprintln!("naui-windows: Image の読み込み指示に失敗: {error}");
+                eprintln!("naui-windows: failed to start loading the Image: {error}");
                 self.take_down(&children);
                 return;
             }
         };
         if let Err(error) = self.0.image.SetSource(&bitmap) {
-            eprintln!("naui-windows: Image の差し替えに失敗: {error}");
+            eprintln!("naui-windows: failed to replace the Image: {error}");
             self.take_down(&children);
             return;
         }
@@ -450,11 +450,11 @@ impl Image {
             return;
         }
         let Ok(element) = self.0.image.cast::<UIElement>() else {
-            eprintln!("naui-windows: Image 要素への変換に失敗");
+            eprintln!("naui-windows: failed to convert to the Image element");
             return;
         };
         if let Err(error) = children.Append(&element) {
-            eprintln!("naui-windows: Image の配置に失敗: {error}");
+            eprintln!("naui-windows: failed to place the Image: {error}");
             return;
         }
         // ホストの大きさが決まったあとで置いたときは SizeChanged が来ないので、
@@ -550,22 +550,22 @@ fn to_time_span(seconds: f64) -> TimeSpan {
 impl MediaInner {
     fn new() -> Result<Rc<Self>> {
         let native =
-            MediaPlayerElement::new().map_err(|e| to_error("MediaPlayerElement の生成", e))?;
-        let player = MediaPlayer::new().map_err(|e| to_error("MediaPlayer の生成", e))?;
+            MediaPlayerElement::new().map_err(|e| to_error("create the MediaPlayerElement", e))?;
+        let player = MediaPlayer::new().map_err(|e| to_error("create the MediaPlayer", e))?;
         // Windows App SDK 2.2.4 の標準 MediaTransportControls は、
         // MediaPlayerElement を visual tree へ追加したときに XAML 内部
         // 例外 (0xc000027b) を起こす環境がある。操作 UI はアプリ側で
         // 用意するため、ここでは常に無効にしておく。
         native
             .SetAreTransportControlsEnabled(false)
-            .map_err(|e| to_error("再生バーの設定", e))?;
+            .map_err(|e| to_error("set the transport controls", e))?;
         native
             .SetMediaPlayer(&player)
-            .map_err(|e| to_error("MediaPlayer の割り当て", e))?;
+            .map_err(|e| to_error("assign the MediaPlayer", e))?;
         // 場所を指定するまで勝手に鳴らさない。
         player
             .SetAutoPlay(false)
-            .map_err(|e| to_error("自動再生の設定", e))?;
+            .map_err(|e| to_error("set autoplay", e))?;
 
         let this = Rc::new(Self {
             native,
@@ -587,11 +587,11 @@ impl MediaInner {
     /// Makes notifications from the playback pipeline receivable via the UI thread.
     fn subscribe(&self) -> Result<()> {
         let queue = DispatcherQueue::GetForCurrentThread()
-            .map_err(|e| to_error("UI スレッドの DispatcherQueue の取得", e))?;
+            .map_err(|e| to_error("get the UI thread's DispatcherQueue", e))?;
         let session = self
             .player
             .PlaybackSession()
-            .map_err(|e| to_error("再生セッションの取得", e))?;
+            .map_err(|e| to_error("get the playback session", e))?;
 
         // スレッドをまたぐのは番号と状態だけ。Rc は渡さない。
         let id = self.id;
@@ -604,7 +604,7 @@ impl MediaInner {
                 let state = match session.PlaybackState() {
                     Ok(state) => map_state(state),
                     Err(error) => {
-                        eprintln!("naui-windows: 再生状態の取得に失敗: {error}");
+                        eprintln!("naui-windows: failed to get the playback state: {error}");
                         return Ok(());
                     }
                 };
@@ -616,7 +616,7 @@ impl MediaInner {
             });
         session
             .PlaybackStateChanged(&handler)
-            .map_err(|e| to_error("再生状態の購読", e))?;
+            .map_err(|e| to_error("subscribe to playback state changes", e))?;
 
         // 再生位置も同じ経路で UI スレッドへ渡す。運ぶのは番号と秒数だけ。
         let position_queue = queue.clone();
@@ -628,7 +628,7 @@ impl MediaInner {
                 let seconds = match session.Position() {
                     Ok(position) => to_seconds(position),
                     Err(error) => {
-                        eprintln!("naui-windows: 再生位置の取得に失敗: {error}");
+                        eprintln!("naui-windows: failed to get the playback position: {error}");
                         return Ok(());
                     }
                 };
@@ -640,7 +640,7 @@ impl MediaInner {
             });
         session
             .PositionChanged(&position)
-            .map_err(|e| to_error("再生位置の購読", e))?;
+            .map_err(|e| to_error("subscribe to playback position changes", e))?;
 
         // 動画の画素の大きさも同じ経路で渡す。運ぶのは番号と大きさだけ。
         let size_queue = queue.clone();
@@ -659,7 +659,7 @@ impl MediaInner {
             });
         session
             .NaturalVideoSizeChanged(&natural_size)
-            .map_err(|e| to_error("動画の大きさの購読", e))?;
+            .map_err(|e| to_error("subscribe to video size changes", e))?;
 
         // MediaPlaybackState に「最後まで再生した」は無いので、別の通知で補う。
         let ended = TypedEventHandler::<MediaPlayer, IInspectable>::new(move |_player, _args| {
@@ -681,7 +681,7 @@ impl MediaInner {
         });
         self.player
             .MediaEnded(&ended)
-            .map_err(|e| to_error("再生終了の購読", e))?;
+            .map_err(|e| to_error("subscribe to playback ending", e))?;
 
         // MediaPlayer の失敗イベントが持つ HRESULT を記録する。これを
         // 登録しておかないと、WinRT の非同期メディアエラーが
@@ -694,24 +694,24 @@ impl MediaInner {
                 let error = args
                     .Error()
                     .map(|error| format!("{error:?}"))
-                    .unwrap_or_else(|error| format!("取得失敗: {error}"));
+                    .unwrap_or_else(|error| format!("unavailable: {error}"));
                 let code = args
                     .ExtendedErrorCode()
                     .map(|code| format!("{code:?}"))
-                    .unwrap_or_else(|error| format!("取得失敗: {error}"));
+                    .unwrap_or_else(|error| format!("unavailable: {error}"));
                 let message = args
                     .ErrorMessage()
                     .map(|message| message.to_string_lossy())
                     .unwrap_or_default();
                 eprintln!(
-                    "naui-windows: MediaPlayer の再生に失敗: error={error}, extended_error={code}, message={message}"
+                    "naui-windows: MediaPlayer playback failed: error={error}, extended_error={code}, message={message}"
                 );
                 Ok(())
             },
         );
         self.player
             .MediaFailed(&failed)
-            .map_err(|e| to_error("再生失敗の購読", e))?;
+            .map_err(|e| to_error("subscribe to playback failures", e))?;
         Ok(())
     }
 
@@ -732,7 +732,7 @@ impl MediaInner {
             let _ = self.player.SetSource(None);
         } else if is_url(source) {
             if let Err(error) = self.set_uri_source(&source_uri(source)) {
-                eprintln!("naui-windows: メディア URL の設定に失敗 ({source}): {error}");
+                eprintln!("naui-windows: failed to set the media URL ({source}): {error}");
             }
         } else {
             // ファイル選択で得たパスは、file:// URI に変換して再生するよりも
@@ -744,12 +744,12 @@ impl MediaInner {
                 .and_then(|media_source| media_source.cast::<IMediaPlaybackSource>())
                 .and_then(|media_source| self.player.SetSource(&media_source));
             if let Err(error) = result {
-                eprintln!("naui-windows: メディアファイルの設定に失敗 ({source}): {error}");
+                eprintln!("naui-windows: failed to set the media file ({source}): {error}");
                 // 相対パスなど、StorageFile として開けない入力は
                 // file:// URI も試す。
                 if let Err(fallback_error) = self.set_uri_source(&file_uri(source)) {
                     eprintln!(
-                        "naui-windows: メディア URL のフォールバックにも失敗 ({source}): {fallback_error}"
+                        "naui-windows: the media URL fallback failed too ({source}): {fallback_error}"
                     );
                 }
             }
@@ -951,7 +951,9 @@ macro_rules! impl_playback {
             /// backend always disables it. Use it together with a playback UI on the app side.
             pub fn set_controls(&self, controls: bool) {
                 if controls {
-                    eprintln!("naui-windows: WinUI 標準の再生バーは安全性のため無効です");
+                    eprintln!(
+                        "naui-windows: WinUI's built-in transport controls are disabled for safety"
+                    );
                 }
                 let _ = self.0.native.SetAreTransportControlsEnabled(false);
             }
@@ -1008,13 +1010,13 @@ impl_playback!(Video);
 impl Video {
     pub(crate) fn new(source: &str) -> Result<Self> {
         let media = MediaInner::new()?;
-        let host = Grid::new().map_err(|e| to_error("Video ホストの生成", e))?;
+        let host = Grid::new().map_err(|e| to_error("create the Video host", e))?;
         let frame = Frame::new(&host)?;
         frame
             .stage
             .Children()
             .and_then(|children| children.Append(&media.native.cast::<UIElement>()?))
-            .map_err(|e| to_error("MediaPlayerElement の配置", e))?;
+            .map_err(|e| to_error("place the MediaPlayerElement", e))?;
         let this = Self(Rc::new(VideoInner {
             host,
             frame,
@@ -1045,7 +1047,7 @@ impl Video {
         self.0
             .host
             .SizeChanged(&resized)
-            .map_err(|e| to_error("Video の大きさの購読", e))?;
+            .map_err(|e| to_error("subscribe to Video size changes", e))?;
 
         let target = Rc::downgrade(&self.0);
         *self.0.natural_size_callback.borrow_mut() = Some(Box::new(move |width, height| {

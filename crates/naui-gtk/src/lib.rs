@@ -604,8 +604,8 @@ impl Ui {
     pub fn open_url(&self, url: &str) -> Result<()> {
         if gtk::glib::Uri::parse(url, gtk::glib::UriFlags::NONE).is_err() {
             return Err(Error::new(
-                "URL を開く",
-                format!("URL として読めません: {url}"),
+                "open the URL",
+                format!("not a valid URL: {url}"),
             ));
         }
         let parent = self.0.app.active_window();
@@ -642,7 +642,7 @@ where
     F: FnOnce(&Ui) -> Result<()>,
 {
     if !gtk::is_initialized() {
-        adw::init().map_err(|e| Error::new("テスト用の起動", e.to_string()))?;
+        adw::init().map_err(|e| Error::new("start for testing", e.to_string()))?;
         // メインループを回さないのでフレームクロックが進まない。`GtkSwitch` の
         // ような、切り替えをアニメーションで見せるウィジェットは、アニメーション
         // が入ったままだと値が変わらないままになる。デスクトップの設定に
@@ -663,7 +663,7 @@ where
             .flags(gio::ApplicationFlags::NON_UNIQUE)
             .build();
         app.register(gio::Cancellable::NONE)
-            .map_err(|e| Error::new("テスト用の起動", e.to_string()))?;
+            .map_err(|e| Error::new("start for testing", e.to_string()))?;
         *slot.borrow_mut() = Some(app.clone());
         Ok(app)
     })?;
@@ -683,10 +683,10 @@ where
     // 落ちるので、ここで弾いて naui のエラーとして返す。
     if !gio::Application::id_is_valid(&settings.app_id) {
         return Err(Error::new(
-            "Linux でのアプリ起動",
+            "start the app on Linux",
             format!(
-                "アプリ ID `{}` は GTK4 が受け付けない形です。\
-                 `Settings::app_id` で逆ドメイン形式 (例: com.example.myapp) を指定してください",
+                "GTK4 does not accept the app ID `{}`. \
+                 Give `Settings::app_id` in reverse-domain form (e.g. com.example.myapp)",
                 settings.app_id
             ),
         ));
@@ -734,8 +734,8 @@ where
     }
     if code != glib::ExitCode::SUCCESS {
         return Err(Error::new(
-            "Linux でのアプリ起動",
-            format!("GtkApplication が {code:?} で終了しました"),
+            "start the app on Linux",
+            format!("GtkApplication exited with {code:?}"),
         ));
     }
     Ok(())

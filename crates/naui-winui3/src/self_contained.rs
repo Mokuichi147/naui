@@ -110,11 +110,11 @@ impl SelfContained {
             ..Default::default()
         };
         let context = unsafe { CreateActCtxW(&request) }
-            .map_err(|e| explain(e, "同梱物のマニフェストの読み込み", &directory))?;
+            .map_err(|e| explain(e, "load the bundled manifest", &directory))?;
         let mut cookie = 0;
         if let Err(e) = unsafe { ActivateActCtx(Some(context), &mut cookie) } {
             unsafe { ReleaseActCtx(context) };
-            return Err(explain(e, "同梱物のマニフェストの有効化", &directory));
+            return Err(explain(e, "activate the bundled manifest", &directory));
         }
         let this = Self {
             context,
@@ -128,7 +128,7 @@ impl SelfContained {
         // 読み込んだままにしておく (WinUI がプロセスの終わりまで使う)。
         let runtime = HSTRING::from(format!("{}\\{}", this.directory, packages::RUNTIME_DLL));
         unsafe { LoadLibraryExW(&runtime, None, LOAD_WITH_ALTERED_SEARCH_PATH) }.map_err(|e| {
-            let step = format!("{} の読み込み", packages::RUNTIME_DLL);
+            let step = format!("load {}", packages::RUNTIME_DLL);
             explain(e, &step, &this.directory)
         })?;
 
@@ -136,9 +136,10 @@ impl SelfContained {
             Error::new(
                 e.code(),
                 format!(
-                    "同梱した Windows App SDK ランタイムから {PROBE_CLASS} を引けません ({})。\
-                     Windows 10 1809 では、{} を exe に埋め込む必要があります \
-                     (naui の docs/windows-self-contained.md「マニフェストを exe に埋め込む」を参照)",
+                    "cannot look up {PROBE_CLASS} in the bundled Windows App SDK runtime ({}). \
+                     On Windows 10 1809, {} must be embedded in the exe \
+                     (see \"Embedding the manifest in the exe\" in naui's \
+                     docs/windows-self-contained.md)",
                     e.message(),
                     packages::MANIFEST_FILE,
                 ),
@@ -161,11 +162,12 @@ impl SelfContained {
 /// `Microsoft.WindowsAppRuntime.dll` when the exe's location was 224 characters).
 /// Adding `\\?\` to the path does not avoid it, so it urges shortening the location.
 fn explain(e: Error, step: &str, directory: &str) -> Error {
-    let mut message = format!("{step}に失敗しました ({})", e.message());
+    let mut message = format!("failed to {step} ({})", e.message());
     if e.code() == ERROR_FILENAME_EXCED_RANGE.to_hresult() {
         message.push_str(&format!(
-            "。exe を置いたフォルダーのパス ({} 文字) が長すぎます。同梱物のファイルの\
-             パスが 260 文字に収まるよう、おおむね 200 文字以内のフォルダーへ置いてください",
+            ". The path of the folder containing the exe ({} characters) is too long. \
+             Place it in a folder of about 200 characters or fewer, so the paths of the \
+             bundled files fit within 260 characters",
             directory.encode_utf16().count(),
         ));
     }

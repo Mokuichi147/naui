@@ -488,8 +488,8 @@ impl Ui {
 
         if url.trim().is_empty() || !url.contains(':') {
             return Err(Error::new(
-                "URL を開く",
-                format!("URL として読めません: {url}"),
+                "open the URL",
+                format!("not a valid URL: {url}"),
             ));
         }
         let target = HSTRING::from(url);
@@ -498,7 +498,7 @@ impl Ui {
         if result.0 as isize > 32 {
             Ok(())
         } else {
-            Err(Error::new("URL を開く", format!("開けませんでした: {url}")))
+            Err(Error::new("open the URL", format!("could not open: {url}")))
         }
     }
 
@@ -581,7 +581,7 @@ where
 
     let _runtime = sdk::initialize()?;
     init_apartment(ApartmentType::SingleThreaded)
-        .map_err(|e| to_error("COM アパートメントの初期化", e))?;
+        .map_err(|e| to_error("initialize the COM apartment", e))?;
 
     let failure: &'static ui_thread::UiThreadCell<Option<Error>> =
         Box::leak(Box::new(ui_thread::UiThreadCell::new(None)));

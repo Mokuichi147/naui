@@ -74,7 +74,7 @@ impl Toast {
         let (native, button, button_label) = build_surface()?;
         native
             .SetMessage(&HSTRING::from(message))
-            .map_err(|e| to_error("トーストの文字設定", e))?;
+            .map_err(|e| to_error("set the toast text", e))?;
 
         let this = Self(Rc::new(ToastInner {
             native,
@@ -105,7 +105,7 @@ impl Toast {
         self.0
             .button
             .Click(&handler)
-            .map_err(|e| to_error("トーストのボタンの購読", e))?;
+            .map_err(|e| to_error("subscribe to the toast button", e))?;
         Ok(())
     }
 
@@ -229,7 +229,7 @@ impl Toast {
         self.0
             .native
             .cast::<UIElement>()
-            .expect("InfoBar は UIElement")
+            .expect("an InfoBar is a UIElement")
     }
 
     /// Starts counting down. Does nothing if it never disappears.
@@ -337,14 +337,14 @@ fn emit(slot: &RefCell<Option<Box<dyn FnMut()>>>) {
 /// `InfoBar` (right of the text, or below when narrow). Making its content a
 /// `TextBlock` is the same construction as other buttons.
 fn build_surface() -> Result<(InfoBar, Button, TextBlock)> {
-    let native = InfoBar::new().map_err(|e| to_error("トーストの生成", e))?;
+    let native = InfoBar::new().map_err(|e| to_error("create the toast", e))?;
     native
         .SetSeverity(InfoBarSeverity::Informational)
-        .map_err(|e| to_error("トーストの種類の設定", e))?;
+        .map_err(|e| to_error("set the toast severity", e))?;
     // × は出さない。消えるのは時間切れ・操作ボタン・dismiss の 3 つだけ。
     native
         .SetIsClosable(false)
-        .map_err(|e| to_error("トーストの閉じるボタンの設定", e))?;
+        .map_err(|e| to_error("set the toast close button", e))?;
     native
         .SetHorizontalAlignment(HorizontalAlignment::Center)
         .and_then(|()| native.SetVerticalAlignment(VerticalAlignment::Bottom))
@@ -356,12 +356,12 @@ fn build_surface() -> Result<(InfoBar, Button, TextBlock)> {
                 Bottom: TOAST_MARGIN,
             })
         })
-        .map_err(|e| to_error("トーストの配置設定", e))?;
+        .map_err(|e| to_error("set the toast alignment", e))?;
 
-    let button = Button::new().map_err(|e| to_error("トーストのボタンの生成", e))?;
-    let button_label = TextBlock::new().map_err(|e| to_error("トーストのボタンの文字の生成", e))?;
+    let button = Button::new().map_err(|e| to_error("create the toast button", e))?;
+    let button_label = TextBlock::new().map_err(|e| to_error("create the toast button text", e))?;
     button
         .SetContent(&button_label)
-        .map_err(|e| to_error("トーストのボタンの文字の配置", e))?;
+        .map_err(|e| to_error("place the toast button text", e))?;
     Ok((native, button, button_label))
 }

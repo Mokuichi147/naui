@@ -89,13 +89,13 @@ impl_widget!(EditableComboBox, native);
 
 impl EditableComboBox {
     pub(crate) fn new() -> Result<Self> {
-        let native = XamlComboBox::new().map_err(|e| to_error("ComboBox の生成", e))?;
+        let native = XamlComboBox::new().map_err(|e| to_error("create the ComboBox", e))?;
         native
             .SetIsEditable(true)
-            .map_err(|e| to_error("ComboBox の編集可否の設定", e))?;
+            .map_err(|e| to_error("set whether the ComboBox is editable", e))?;
         native
             .SetSelectedIndex(-1)
-            .map_err(|e| to_error("ComboBox の選択解除", e))?;
+            .map_err(|e| to_error("clear the ComboBox selection", e))?;
 
         let this = Self(Rc::new(EditableComboBoxInner {
             native,
@@ -125,7 +125,7 @@ impl EditableComboBox {
         this.0
             .native
             .SelectionChanged(&selected)
-            .map_err(|e| to_error("ComboBox の選択購読", e))?;
+            .map_err(|e| to_error("subscribe to ComboBox selection", e))?;
 
         // Enter (またはフォーカスが外れたこと) で、候補に無い文字列が確定した
         // とき。**`Handled` は立てない**。立てると WinUI は既定の処理 (その
@@ -150,7 +150,7 @@ impl EditableComboBox {
         this.0
             .native
             .TextSubmitted(&submitted)
-            .map_err(|e| to_error("ComboBox の確定購読", e))?;
+            .map_err(|e| to_error("subscribe to ComboBox text submission", e))?;
 
         // テンプレートが展開されてから入力欄を探す。
         let state = UiThreadCell::new(Rc::downgrade(&this.0));
@@ -163,7 +163,7 @@ impl EditableComboBox {
         this.0
             .native
             .Loaded(&loaded)
-            .map_err(|e| to_error("ComboBox の読み込み購読", e))?;
+            .map_err(|e| to_error("subscribe to ComboBox Loaded", e))?;
 
         Ok(this)
     }
@@ -183,16 +183,16 @@ impl EditableComboBox {
                 .0
                 .native
                 .Items()
-                .map_err(|e| to_error("ComboBox の項目取得", e))?;
+                .map_err(|e| to_error("get the ComboBox items", e))?;
             children
                 .Clear()
-                .map_err(|e| to_error("ComboBox の項目消去", e))?;
+                .map_err(|e| to_error("clear the ComboBox items", e))?;
             for item in this.0.items.borrow().iter() {
                 let value = PropertyValue::CreateString(&HSTRING::from(item.as_str()))
-                    .map_err(|e| to_error("候補の生成", e))?;
+                    .map_err(|e| to_error("create the suggestion", e))?;
                 children
                     .Append(&value)
-                    .map_err(|e| to_error("候補の追加", e))?;
+                    .map_err(|e| to_error("add the suggestion", e))?;
             }
             this.write_selection(&text);
             Ok(())

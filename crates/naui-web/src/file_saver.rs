@@ -179,7 +179,7 @@ impl FileSaver {
         let name = with_default_extension(&self.0.file_name.borrow(), &self.0.filters.borrow());
         let blob = blob_from(&self.0.contents.borrow())?;
         let window = web_sys::window()
-            .ok_or_else(|| Error::new("保存ダイアログ", "ブラウザ環境ではありません"))?;
+            .ok_or_else(|| Error::new("show the save dialog", "not running in a browser"))?;
 
         match save_file_picker(&window) {
             Some(picker) => {
@@ -197,7 +197,7 @@ impl FileSaver {
         revoke_all(&mut urls);
 
         let url = web_sys::Url::create_object_url_with_blob(blob)
-            .map_err(|e| to_error("ダウンロード URL の生成", e))?;
+            .map_err(|e| to_error("create the download URL", e))?;
         urls.push(url.clone());
         drop(urls);
 
@@ -206,7 +206,7 @@ impl FileSaver {
         anchor
             .set_attribute("href", &url)
             .and_then(|_| anchor.set_attribute("download", name))
-            .map_err(|e| to_error("ダウンロードの組み立て", e))?;
+            .map_err(|e| to_error("build the download", e))?;
         let _ = anchor.style().set_property("display", "none");
 
         // Firefox は文書に入っていない `<a>` のクリックを無視する。
@@ -214,9 +214,9 @@ impl FileSaver {
             .0
             .document
             .body()
-            .ok_or_else(|| Error::new("ダウンロードの実行", "body がありません"))?;
+            .ok_or_else(|| Error::new("start the download", "there is no body"))?;
         body.append_child(&anchor)
-            .map_err(|e| to_error("ダウンロードの実行", e))?;
+            .map_err(|e| to_error("start the download", e))?;
         anchor.click();
         anchor.remove();
 
@@ -255,9 +255,9 @@ fn save_through_picker(
 
     let promise: Promise = picker
         .call1(window, &options)
-        .map_err(|e| to_error("保存ダイアログの表示", e))?
+        .map_err(|e| to_error("show the save dialog", e))?
         .dyn_into()
-        .map_err(|_| Error::new("保存ダイアログの表示", "Promise が返りませんでした"))?;
+        .map_err(|_| Error::new("show the save dialog", "no Promise was returned"))?;
 
     let weak = Rc::downgrade(inner);
     spawn_local(async move {
@@ -280,7 +280,7 @@ async fn write_through_handle(promise: Promise, blob: Blob) -> Result<Option<Str
         Ok(handle) => handle,
         // 取り消しは失敗として扱わない (他のバックエンドと同じ)。
         Err(reason) if is_abort(&reason) => return Ok(None),
-        Err(reason) => return Err(to_error("保存ダイアログの表示", reason)),
+        Err(reason) => return Err(to_error("show the save dialog", reason)),
     };
     let name = Reflect::get(&handle, &JsValue::from_str("name"))
         .ok()
@@ -296,24 +296,24 @@ async fn write_through_handle(promise: Promise, blob: Blob) -> Result<Option<Str
 
 /// Awaits a Promise and maps failures to naui errors.
 async fn await_promise(promise: Promise) -> Result<JsValue> {
-    promise.await.map_err(|e| to_error("ファイルの書き出し", e))
+    promise.await.map_err(|e| to_error("write the file", e))
 }
 
 /// Calls `target.method(arg)` and takes out the returned Promise.
 fn call_promise(target: &JsValue, method: &str, arg: Option<&JsValue>) -> Result<Promise> {
     let function: Function = Reflect::get(target, &JsValue::from_str(method))
-        .map_err(|e| to_error("ファイルの書き出し", e))?
+        .map_err(|e| to_error("write the file", e))?
         .dyn_into()
-        .map_err(|_| Error::new("ファイルの書き出し", format!("{method} がありません")))?;
+        .map_err(|_| Error::new("write the file", format!("{method} is not available")))?;
     let returned = match arg {
         Some(arg) => function.call1(target, arg),
         None => function.call0(target),
     }
-    .map_err(|e| to_error("ファイルの書き出し", e))?;
+    .map_err(|e| to_error("write the file", e))?;
     returned.dyn_into().map_err(|_| {
         Error::new(
-            "ファイルの書き出し",
-            format!("{method} が Promise を返しません"),
+            "write the file",
+            format!("{method} does not return a Promise"),
         )
     })
 }
@@ -357,7 +357,7 @@ fn is_abort(reason: &JsValue) -> bool {
 /// Turns the contents to write into a `Blob`.
 fn blob_from(contents: &[u8]) -> Result<Blob> {
     let parts = Array::of1(&Uint8Array::from(contents));
-    Blob::new_with_u8_array_sequence(&parts).map_err(|e| to_error("保存する内容の組み立て", e))
+    Blob::new_with_u8_array_sequence(&parts).map_err(|e| to_error("build the contents to save", e))
 }
 
 /// Maps the filters onto the `types` of `showSaveFilePicker`.
@@ -388,5 +388,5 @@ fn build_types(filters: &[FileFilter]) -> Result<Option<JsValue>> {
 fn set(target: &Object, key: &str, value: &JsValue) -> Result<()> {
     Reflect::set(target, &JsValue::from_str(key), value)
         .map(|_| ())
-        .map_err(|e| to_error("保存ダイアログの設定", e))
+        .map_err(|e| to_error("set up the save dialog", e))
 }

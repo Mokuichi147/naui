@@ -55,34 +55,34 @@ pub struct Dialog(Rc<DialogInner>);
 
 impl Dialog {
     pub(crate) fn new(title: &str, theme: Theme) -> Result<Self> {
-        let native = ContentDialog::new().map_err(|e| to_error("ContentDialog の生成", e))?;
-        let title_block = TextBlock::new().map_err(|e| to_error("ダイアログ見出しの生成", e))?;
+        let native = ContentDialog::new().map_err(|e| to_error("create the ContentDialog", e))?;
+        let title_block = TextBlock::new().map_err(|e| to_error("create the dialog title", e))?;
         title_block
             .SetText(&HSTRING::from(title))
-            .map_err(|e| to_error("ダイアログ見出しの設定", e))?;
+            .map_err(|e| to_error("set the dialog title", e))?;
         native
             .SetTitle(&title_block)
-            .map_err(|e| to_error("ダイアログ見出しの適用", e))?;
+            .map_err(|e| to_error("apply the dialog title", e))?;
 
-        let content = StackPanel::new().map_err(|e| to_error("ダイアログ中身の生成", e))?;
+        let content = StackPanel::new().map_err(|e| to_error("create the dialog content", e))?;
         content
             .SetOrientation(XamlOrientation::Vertical)
-            .map_err(|e| to_error("ダイアログ中身の向き設定", e))?;
+            .map_err(|e| to_error("set the dialog content orientation", e))?;
         content
             .SetSpacing(12.0)
-            .map_err(|e| to_error("ダイアログ中身の間隔設定", e))?;
-        let message = TextBlock::new().map_err(|e| to_error("ダイアログ本文の生成", e))?;
+            .map_err(|e| to_error("set the dialog content spacing", e))?;
+        let message = TextBlock::new().map_err(|e| to_error("create the dialog body", e))?;
         message
             .SetVisibility(Visibility::Collapsed)
-            .map_err(|e| to_error("ダイアログ本文の表示設定", e))?;
+            .map_err(|e| to_error("set the dialog body visibility", e))?;
         content
             .Children()
-            .map_err(|e| to_error("ダイアログ中身の子取得", e))?
+            .map_err(|e| to_error("get the dialog content children", e))?
             .Append(&message)
-            .map_err(|e| to_error("ダイアログ本文の配置", e))?;
+            .map_err(|e| to_error("place the dialog body", e))?;
         native
             .SetContent(&content)
-            .map_err(|e| to_error("ダイアログ中身の適用", e))?;
+            .map_err(|e| to_error("apply the dialog content", e))?;
 
         let this = Self(Rc::new(DialogInner {
             native,
@@ -128,7 +128,7 @@ impl Dialog {
         self.0
             .native
             .Closing(&handler)
-            .map_err(|e| to_error("ダイアログの終了通知の購読", e))?;
+            .map_err(|e| to_error("subscribe to dialog closing", e))?;
         Ok(())
     }
 
@@ -218,15 +218,15 @@ impl Dialog {
         self.0
             .native
             .SetPrimaryButtonText(&text(DialogResponse::Primary))
-            .map_err(|e| to_error("ダイアログの主ボタン設定", e))?;
+            .map_err(|e| to_error("set the dialog primary button", e))?;
         self.0
             .native
             .SetSecondaryButtonText(&text(DialogResponse::Secondary))
-            .map_err(|e| to_error("ダイアログの副ボタン設定", e))?;
+            .map_err(|e| to_error("set the dialog secondary button", e))?;
         self.0
             .native
             .SetCloseButtonText(&text(DialogResponse::Cancel))
-            .map_err(|e| to_error("ダイアログの取り消しボタン設定", e))?;
+            .map_err(|e| to_error("set the dialog close button", e))?;
         // 主となる操作があれば、それを既定のボタン (Enter) にする。
         let default = if buttons.label(DialogResponse::Primary).is_some() {
             ContentDialogButton::Primary
@@ -236,7 +236,7 @@ impl Dialog {
         self.0
             .native
             .SetDefaultButton(default)
-            .map_err(|e| to_error("ダイアログの既定ボタン設定", e))
+            .map_err(|e| to_error("set the dialog default button", e))
     }
 
     /// Called with the reason when it closes. Setting it again removes the previous
@@ -257,7 +257,7 @@ impl Dialog {
             return;
         }
         if let Err(error) = self.show() {
-            eprintln!("naui-windows: ダイアログを出せませんでした: {error}");
+            eprintln!("naui-windows: could not show the dialog: {error}");
             return;
         }
         self.0.open.set(true);
@@ -267,27 +267,27 @@ impl Dialog {
     fn show(&self) -> Result<()> {
         let root = owner_xaml_root().ok_or_else(|| {
             naui_core::Error::new(
-                "ダイアログの表示",
-                "先に window.show() でウィンドウを表示してください",
+                "show the dialog",
+                "show the window with window.show() first",
             )
         })?;
         self.0
             .native
             .SetXamlRoot(&root)
-            .map_err(|e| to_error("ダイアログの XamlRoot 設定", e))?;
+            .map_err(|e| to_error("set the dialog XamlRoot", e))?;
         // ダイアログはウィンドウの中身とは別の層に出るため、
         // テーマを引き継がない。ここで同じものを指定しておく。
         let element = self
             .0
             .native
             .cast::<UIElement>()
-            .map_err(|e| to_error("ダイアログ要素への変換", e))?;
+            .map_err(|e| to_error("convert the dialog to UIElement", e))?;
         set_theme_on_element(&element, self.0.theme.get())?;
         // 戻り値の非同期操作は使わない。閉じたことは `Closing` で受ける。
         self.0
             .native
             .ShowAsync()
-            .map_err(|e| to_error("ダイアログの表示", e))?;
+            .map_err(|e| to_error("show the dialog", e))?;
         Ok(())
     }
 

@@ -192,14 +192,14 @@ impl RadioGroup {
         let _ = style.set_property("gap", "0.4em");
         label
             .append_child(&input)
-            .map_err(|e| crate::to_error("ラジオボタンの組み立て", e))?;
+            .map_err(|e| crate::to_error("build the radio button", e))?;
         label
             .append_child(&caption)
-            .map_err(|e| crate::to_error("ラジオボタンの組み立て", e))?;
+            .map_err(|e| crate::to_error("build the radio button", e))?;
         self.0
             .element
             .append_child(&label)
-            .map_err(|e| crate::to_error("ラジオグループの組み立て", e))?;
+            .map_err(|e| crate::to_error("build the radio group", e))?;
         Ok(input)
     }
 }

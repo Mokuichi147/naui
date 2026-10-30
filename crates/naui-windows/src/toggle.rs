@@ -64,23 +64,25 @@ impl_widget!(Toggle, native);
 
 impl Toggle {
     pub(crate) fn new(label: &str) -> Result<Self> {
-        let native = ToggleSwitch::new().map_err(|e| to_error("ToggleSwitch の生成", e))?;
+        let native = ToggleSwitch::new().map_err(|e| to_error("create the ToggleSwitch", e))?;
         native
             .SetIsOn(false)
-            .map_err(|e| to_error("ToggleSwitch の初期化", e))?;
+            .map_err(|e| to_error("initialize the ToggleSwitch", e))?;
         // 入り切りのどちらでも同じ文字を出す。切り替わる文字にすると、
         // ほかの環境と読みが変わってしまうため。
         for on in [true, false] {
-            let text = TextBlock::new().map_err(|e| to_error("ToggleSwitch ラベルの生成", e))?;
+            let text =
+                TextBlock::new().map_err(|e| to_error("create the ToggleSwitch label", e))?;
             text.SetText(&HSTRING::from(label))
-                .map_err(|e| to_error("ToggleSwitch ラベルの設定", e))?;
-            let content: IInspectable = text.cast().map_err(|e| to_error("ラベルの変換", e))?;
+                .map_err(|e| to_error("set the ToggleSwitch label text", e))?;
+            let content: IInspectable =
+                text.cast().map_err(|e| to_error("convert the label", e))?;
             let set = if on {
                 native.SetOnContent(&content)
             } else {
                 native.SetOffContent(&content)
             };
-            set.map_err(|e| to_error("ToggleSwitch のラベル設定", e))?;
+            set.map_err(|e| to_error("set the ToggleSwitch label", e))?;
         }
 
         let this = Self(Rc::new(ToggleInner {
@@ -112,7 +114,7 @@ impl Toggle {
         self.0
             .native
             .Toggled(&toggled)
-            .map_err(|e| to_error("ToggleSwitch の購読", e))?;
+            .map_err(|e| to_error("subscribe to the ToggleSwitch", e))?;
         Ok(())
     }
 

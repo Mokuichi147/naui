@@ -145,14 +145,15 @@ impl FileSaver {
             Err(e) => {
                 self.0
                     .on_error
-                    .emit(&Error::new("保存ダイアログ", e.to_string()));
+                    .emit(&Error::new("show the save dialog", e.to_string()));
                 return;
             }
         };
         let Some(path) = file.path() else {
-            self.0
-                .on_error
-                .emit(&Error::new("保存先の取得", "パスを取れませんでした"));
+            self.0.on_error.emit(&Error::new(
+                "get the save location",
+                "could not get the path",
+            ));
             return;
         };
         // 通知の中からこのウィジェットを触れるよう、借用を手放してから呼ぶ。
@@ -194,7 +195,7 @@ fn is_cancelled(error: &glib::Error) -> bool {
 
 /// Writes to the chosen location and returns a [`FileEntry`] pointing at it.
 fn write_contents(path: &Path, contents: &[u8]) -> Result<FileEntry> {
-    std::fs::write(path, contents).map_err(|e| Error::new("ファイルの書き出し", e.to_string()))?;
+    std::fs::write(path, contents).map_err(|e| Error::new("write the file", e.to_string()))?;
     Ok(FileEntry::from_path(path))
 }
 
@@ -219,7 +220,7 @@ mod tests {
             .join("naui-無いフォルダー")
             .join("a.txt");
         let error = write_contents(&path, b"x").expect_err("失敗すること");
-        assert_eq!(error.context(), "ファイルの書き出し");
+        assert_eq!(error.context(), "write the file");
     }
 
     #[test]

@@ -96,10 +96,10 @@ impl Canvas {
         let _ = style.set_property("touch-action", "none");
         let context = canvas
             .get_context("2d")
-            .map_err(|e| to_error("2D コンテキストの取得", e))?
-            .ok_or_else(|| naui_core::Error::new("2D コンテキストの取得", "対応していません"))?
+            .map_err(|e| to_error("get the 2D context", e))?
+            .ok_or_else(|| naui_core::Error::new("get the 2D context", "not supported"))?
             .dyn_into::<CanvasRenderingContext2d>()
-            .map_err(|e| to_error("2D コンテキストの取得", JsValue::from(e)))?;
+            .map_err(|e| to_error("get the 2D context", JsValue::from(e)))?;
 
         let inner = Rc::new(CanvasInner {
             canvas,
@@ -139,7 +139,7 @@ impl Canvas {
             }
         });
         let observer = ResizeObserver::new(observer_callback.as_ref().unchecked_ref())
-            .map_err(|e| to_error("ResizeObserver の生成", e))?;
+            .map_err(|e| to_error("create the ResizeObserver", e))?;
         observer.observe(inner.canvas.as_ref());
         *inner.observer.borrow_mut() = Some(observer);
         *inner._observer_callback.borrow_mut() = Some(observer_callback);

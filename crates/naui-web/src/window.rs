@@ -124,9 +124,9 @@ impl Window {
 
         let body = document
             .body()
-            .ok_or_else(|| Error::new("body の取得", "body がありません"))?;
+            .ok_or_else(|| Error::new("get body", "there is no body"))?;
         body.append_child(&element)
-            .map_err(|e| to_error("ウィンドウの追加", e))?;
+            .map_err(|e| to_error("add the window", e))?;
 
         // ツールバーの行。サイドバーの開閉ボタン (あれば) とツールバーを並べる。
         // macOS でサイドバーボタンがツールバーの先頭に入るのと同じ並び。

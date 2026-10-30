@@ -27,10 +27,7 @@ impl Clipboard {
                 clipboard.set_text(text);
                 Ok(())
             }
-            None => Err(Error::new(
-                "クリップボードへの書き込み",
-                "ディスプレイがありません",
-            )),
+            None => Err(Error::new("write to the clipboard", "there is no display")),
         };
         // その場では呼ばない約束なので、ループを 1 周させてから渡す。
         gtk::glib::idle_add_local_once(move || f(result));

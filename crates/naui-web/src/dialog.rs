@@ -82,17 +82,17 @@ impl Dialog {
 
         for part in [&title_element, &message, &content, &actions] {
             body.append_child(part)
-                .map_err(|e| to_error("ダイアログの組み立て", e))?;
+                .map_err(|e| to_error("build the dialog", e))?;
         }
         element
             .append_child(&body)
-            .map_err(|e| to_error("ダイアログの組み立て", e))?;
+            .map_err(|e| to_error("build the dialog", e))?;
         // `showModal()` は文書に入っている要素にしか効かないため、
         // 作った時点で `<body>` へ入れておく。
         doc.body()
-            .ok_or_else(|| naui_core::Error::new("body の取得", "body がありません"))?
+            .ok_or_else(|| naui_core::Error::new("get body", "there is no body"))?
             .append_child(&element)
-            .map_err(|e| to_error("ダイアログの追加", e))?;
+            .map_err(|e| to_error("add the dialog", e))?;
 
         let this = Self(Rc::new(DialogInner {
             element,
@@ -240,7 +240,7 @@ impl Dialog {
             .0
             .element
             .owner_document()
-            .ok_or_else(|| naui_core::Error::new("document の取得", "文書がありません"))?;
+            .ok_or_else(|| naui_core::Error::new("get document", "there is no document"))?;
         let mut listeners = Vec::new();
         for (role, label) in self.0.buttons.borrow().resolved().in_order(&BUTTON_ORDER) {
             let button: HtmlElement = create(&document, "button")?.unchecked_into();
@@ -248,7 +248,7 @@ impl Dialog {
             self.0
                 .actions
                 .append_child(&button)
-                .map_err(|e| to_error("ダイアログのボタン追加", e))?;
+                .map_err(|e| to_error("add the dialog buttons", e))?;
             let weak = Rc::downgrade(&self.0);
             listeners.push(Listener::attach(button.as_ref(), "click", move || {
                 let Some(inner) = weak.upgrade() else {

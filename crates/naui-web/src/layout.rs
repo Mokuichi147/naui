@@ -618,7 +618,7 @@ impl Scroll {
             }
         });
         let observer = ResizeObserver::new(callback.as_ref().unchecked_ref())
-            .map_err(|e| to_error("ResizeObserver の生成", e))?;
+            .map_err(|e| to_error("create the ResizeObserver", e))?;
         observer.observe(self.0.element.as_ref());
         *self.0.observer.borrow_mut() = Some(observer);
         *self.0.observer_callback.borrow_mut() = Some(callback);

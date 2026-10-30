@@ -191,10 +191,10 @@ impl Window {
         theme: Theme,
         tasks: naui_core::Tasks,
     ) -> Result<Self> {
-        let native = XamlWindow::new().map_err(|e| to_error("Window の生成", e))?;
+        let native = XamlWindow::new().map_err(|e| to_error("create the Window", e))?;
         native
             .SetTitle(&HSTRING::from(title))
-            .map_err(|e| to_error("Window のタイトル設定", e))?;
+            .map_err(|e| to_error("set the Window title", e))?;
         let backdrop = create_backdrop(&native, theme);
 
         let this = Self(Rc::new(WindowInner {
@@ -916,7 +916,7 @@ impl Window {
                     Some(content.content),
                 ),
                 Err(error) => {
-                    eprintln!("naui-windows: テーマ付きウィンドウルートの生成に失敗: {error}");
+                    eprintln!("naui-windows: failed to create the themed window root: {error}");
                     (element.clone(), None, None, None, None, None, None)
                 }
             };
@@ -989,7 +989,7 @@ impl Window {
         match sidebar.element() {
             Ok(navigation) => sidebar.set_content(Some(element)).then_some(navigation),
             Err(error) => {
-                eprintln!("naui-windows: サイドバーを置けませんでした: {error}");
+                eprintln!("naui-windows: could not place the sidebar: {error}");
                 Some(element.clone())
             }
         }
@@ -1324,7 +1324,7 @@ impl Window {
         if let Backdrop::Controller { configuration, .. } = &self.0.backdrop {
             configuration
                 .SetTheme(backdrop_theme(theme))
-                .map_err(|e| to_error("Micaテーマの設定", e))?;
+                .map_err(|e| to_error("set the Mica theme", e))?;
         }
         Ok(())
     }
@@ -1527,14 +1527,14 @@ fn set_title_foreground(label: &TextBlock, root: &UIElement, requested: Theme) -
             RequestedTheme="{theme_name}"
             Foreground="{{ThemeResource TextFillColorPrimaryBrush}}"/>"##
     )))
-    .map_err(|e| to_error("タイトル文字色ブラシの生成", e))?
+    .map_err(|e| to_error("create the title text brush", e))?
     .cast::<TextBlock>()
-    .map_err(|e| to_error("タイトル文字色要素への変換", e))?
+    .map_err(|e| to_error("convert to the title TextBlock", e))?
     .Foreground()
-    .map_err(|e| to_error("タイトル文字色ブラシの取得", e))?;
+    .map_err(|e| to_error("get the title text brush", e))?;
     label
         .SetForeground(&brush)
-        .map_err(|e| to_error("タイトル文字色の設定", e))
+        .map_err(|e| to_error("set the title text color", e))
 }
 
 fn effective_theme(root: &UIElement, requested: Theme) -> Theme {
@@ -1596,63 +1596,63 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
             <Grid Grid.Row="{CONTENT_ROW}" Background="Transparent"/>
         </Grid>"##,
     )))
-    .map_err(|e| to_error("テーマ背景要素の生成", e))?
+    .map_err(|e| to_error("create the themed background element", e))?
     .cast::<Grid>()
-    .map_err(|e| to_error("テーマ背景要素への変換", e))?;
+    .map_err(|e| to_error("convert to the themed background element", e))?;
     let children = root
         .Children()
-        .map_err(|e| to_error("テーマ背景要素の子取得", e))?;
+        .map_err(|e| to_error("get the themed background element children", e))?;
     let title_bar = children
         .GetAt(0)
-        .map_err(|e| to_error("タイトルバーの取得", e))?
+        .map_err(|e| to_error("get the title bar", e))?
         .cast::<Grid>()
-        .map_err(|e| to_error("タイトルバーへの変換", e))?;
+        .map_err(|e| to_error("convert to the title bar", e))?;
     let title_label = title_bar
         .Children()
-        .map_err(|e| to_error("タイトルラベルの子取得", e))?
+        .map_err(|e| to_error("get the title label children", e))?
         .GetAt(0)
-        .map_err(|e| to_error("タイトルラベルの取得", e))?
+        .map_err(|e| to_error("get the title label", e))?
         .cast::<TextBlock>()
-        .map_err(|e| to_error("タイトルラベルへの変換", e))?;
+        .map_err(|e| to_error("convert to the title label", e))?;
     title_label
         .SetText(&HSTRING::from(title))
-        .map_err(|e| to_error("タイトルラベルの設定", e))?;
+        .map_err(|e| to_error("set the title label", e))?;
 
     let toolbar_host = title_bar
         .Children()
-        .map_err(|e| to_error("ツールバー置き場の子取得", e))?
+        .map_err(|e| to_error("get the toolbar slot children", e))?
         .GetAt(1)
-        .map_err(|e| to_error("ツールバー置き場の取得", e))?
+        .map_err(|e| to_error("get the toolbar slot", e))?
         .cast::<Grid>()
-        .map_err(|e| to_error("ツールバー置き場への変換", e))?;
+        .map_err(|e| to_error("convert to the toolbar slot", e))?;
     let drag_area = title_bar
         .Children()
-        .map_err(|e| to_error("ドラッグ領域の子取得", e))?
+        .map_err(|e| to_error("get the drag area children", e))?
         .GetAt(2)
-        .map_err(|e| to_error("ドラッグ領域の取得", e))?;
+        .map_err(|e| to_error("get the drag area", e))?;
     let menu_bar_host = children
         .GetAt(MENU_BAR_ROW)
-        .map_err(|e| to_error("メニューバー置き場の取得", e))?
+        .map_err(|e| to_error("get the menu bar slot", e))?
         .cast::<Grid>()
-        .map_err(|e| to_error("メニューバー置き場への変換", e))?;
+        .map_err(|e| to_error("convert to the menu bar slot", e))?;
     let content = children
         .GetAt(CONTENT_ROW)
-        .map_err(|e| to_error("コンテンツレイヤーの取得", e))?
+        .map_err(|e| to_error("get the content layer", e))?
         .cast::<Grid>()
-        .map_err(|e| to_error("コンテンツレイヤーへの変換", e))?;
+        .map_err(|e| to_error("convert to the content layer", e))?;
     content
         .Children()
-        .map_err(|e| to_error("テーマ背景要素の子取得", e))?
+        .map_err(|e| to_error("get the themed background element children", e))?
         .Append(element)
-        .map_err(|e| to_error("テーマ背景要素への配置", e))?;
+        .map_err(|e| to_error("add to the themed background element", e))?;
     let layer = content.clone();
     Ok(ThemedContent {
         root: root
             .cast::<UIElement>()
-            .map_err(|e| to_error("テーマ背景要素への変換", e))?,
+            .map_err(|e| to_error("convert to the themed background element", e))?,
         title_bar: title_bar
             .cast::<UIElement>()
-            .map_err(|e| to_error("タイトルバーへの変換", e))?,
+            .map_err(|e| to_error("convert to the title bar", e))?,
         title_label,
         toolbar_host,
         menu_bar_host,
@@ -1771,17 +1771,17 @@ fn element_theme(theme: Theme) -> ElementTheme {
 pub(crate) fn set_theme_on_element(element: &UIElement, theme: Theme) -> Result<()> {
     element
         .cast::<FrameworkElement>()
-        .map_err(|e| to_error("テーマ要素への変換", e))?
+        .map_err(|e| to_error("convert to the themed element", e))?
         .SetRequestedTheme(element_theme(theme))
-        .map_err(|e| to_error("テーマの設定", e))
+        .map_err(|e| to_error("set the theme", e))
 }
 
 fn actual_theme(element: &UIElement) -> Result<Theme> {
     let actual = element
         .cast::<FrameworkElement>()
-        .map_err(|e| to_error("実テーマ要素への変換", e))?
+        .map_err(|e| to_error("convert to the element for the actual theme", e))?
         .ActualTheme()
-        .map_err(|e| to_error("実テーマの取得", e))?;
+        .map_err(|e| to_error("get the actual theme", e))?;
     // `ActualTheme` が `Default` を返すことは無いが、念のため暗いほうへ寄せる。
     Ok(if actual == ElementTheme::Light {
         Theme::Light

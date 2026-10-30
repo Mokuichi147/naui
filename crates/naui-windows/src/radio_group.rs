@@ -62,10 +62,10 @@ impl_widget!(RadioGroup, native);
 
 impl RadioGroup {
     pub(crate) fn new() -> Result<Self> {
-        let native = StackPanel::new().map_err(|e| to_error("StackPanel の生成", e))?;
+        let native = StackPanel::new().map_err(|e| to_error("create the StackPanel", e))?;
         native
             .SetOrientation(XamlOrientation::Vertical)
-            .map_err(|e| to_error("ラジオグループの向きの設定", e))?;
+            .map_err(|e| to_error("set the radio group orientation", e))?;
         Ok(Self(Rc::new(RadioGroupInner {
             native,
             group_name: next_group_name(),
@@ -88,32 +88,33 @@ impl RadioGroup {
                 .0
                 .native
                 .Children()
-                .map_err(|e| to_error("ラジオグループの項目取得", e))?;
+                .map_err(|e| to_error("get the radio group items", e))?;
             children
                 .Clear()
-                .map_err(|e| to_error("ラジオグループの項目消去", e))?;
+                .map_err(|e| to_error("clear the radio group items", e))?;
             this.0.buttons.borrow_mut().clear();
 
             let enabled = this.0.enabled.get();
             let mut buttons = Vec::with_capacity(items.len());
             for (index, text) in items.iter().enumerate() {
-                let button = RadioButton::new().map_err(|e| to_error("RadioButton の生成", e))?;
-                let label = TextBlock::new().map_err(|e| to_error("項目ラベルの生成", e))?;
+                let button =
+                    RadioButton::new().map_err(|e| to_error("create the RadioButton", e))?;
+                let label = TextBlock::new().map_err(|e| to_error("create the item label", e))?;
                 label
                     .SetText(&HSTRING::from(text.as_ref()))
-                    .map_err(|e| to_error("項目ラベルの設定", e))?;
+                    .map_err(|e| to_error("set the item label", e))?;
                 button
                     .SetContent(&label)
-                    .map_err(|e| to_error("RadioButton への内容設定", e))?;
+                    .map_err(|e| to_error("set the RadioButton content", e))?;
                 button
                     .SetGroupName(&this.0.group_name)
-                    .map_err(|e| to_error("RadioButton の組の設定", e))?;
+                    .map_err(|e| to_error("set the RadioButton group", e))?;
                 button
                     .SetIsChecked(&bool_ref(false)?)
-                    .map_err(|e| to_error("RadioButton の初期化", e))?;
+                    .map_err(|e| to_error("initialize the RadioButton", e))?;
                 button
                     .SetIsEnabled(enabled)
-                    .map_err(|e| to_error("RadioButton の有効化", e))?;
+                    .map_err(|e| to_error("enable the RadioButton", e))?;
 
                 // WinRT のデリゲートは Send + Sync を要求する一方、XAML の
                 // イベントは UI スレッドで届く。弱参照を UiThreadCell に載せ、
@@ -132,14 +133,14 @@ impl RadioGroup {
                 });
                 button
                     .Checked(&handler)
-                    .map_err(|e| to_error("RadioButton の選択購読", e))?;
+                    .map_err(|e| to_error("subscribe to RadioButton selection", e))?;
 
                 let element = button
                     .cast::<UIElement>()
-                    .map_err(|e| to_error("RadioButton の要素化", e))?;
+                    .map_err(|e| to_error("convert the RadioButton to UIElement", e))?;
                 children
                     .Append(&element)
-                    .map_err(|e| to_error("RadioButton の追加", e))?;
+                    .map_err(|e| to_error("add the RadioButton", e))?;
                 buttons.push(button);
             }
             *this.0.buttons.borrow_mut() = buttons;

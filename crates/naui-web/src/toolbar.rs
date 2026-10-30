@@ -76,7 +76,7 @@ pub(crate) fn path_svg(doc: &Document, d: &str) -> Result<Element> {
     const NS: &str = "http://www.w3.org/2000/svg";
     let svg = doc
         .create_element_ns(Some(NS), "svg")
-        .map_err(|e| to_error("SVG の生成", e))?;
+        .map_err(|e| to_error("create the SVG", e))?;
     let _ = svg.set_attribute("viewBox", "0 0 24 24");
     let _ = svg.set_attribute("width", "16");
     let _ = svg.set_attribute("height", "16");
@@ -90,7 +90,7 @@ pub(crate) fn path_svg(doc: &Document, d: &str) -> Result<Element> {
 
     let path = doc
         .create_element_ns(Some(NS), "path")
-        .map_err(|e| to_error("SVG パスの生成", e))?;
+        .map_err(|e| to_error("create the SVG path", e))?;
     let _ = path.set_attribute("d", d);
     append(&svg, &path)?;
     Ok(svg)
@@ -100,7 +100,7 @@ fn append(parent: &Element, child: &Element) -> Result<()> {
     parent
         .append_child(child)
         .map(|_| ())
-        .map_err(|e| to_error("DOM への追加", e))
+        .map_err(|e| to_error("add to the DOM", e))
 }
 
 /// A row of frequently used actions attached to the top of the window.

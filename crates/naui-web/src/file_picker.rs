@@ -82,10 +82,10 @@ impl FilePicker {
 
         element
             .append_child(&button)
-            .map_err(|e| to_error("ファイル選択の組み立て", e))?;
+            .map_err(|e| to_error("build the file picker", e))?;
         element
             .append_child(&input)
-            .map_err(|e| to_error("ファイル選択の組み立て", e))?;
+            .map_err(|e| to_error("build the file picker", e))?;
         let style = element.style();
         let _ = style.set_property("display", "inline-flex");
 

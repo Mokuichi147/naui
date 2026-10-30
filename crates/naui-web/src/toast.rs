@@ -70,7 +70,7 @@ impl Toast {
         let element: HtmlElement = create(doc, "div")?.unchecked_into();
         element
             .set_attribute("role", "status")
-            .map_err(|e| to_error("トーストの組み立て", e))?;
+            .map_err(|e| to_error("build the toast", e))?;
         // 位置と重なりだけを CSS で作る。色はシステムカラーに任せる。
         style(&element, "position", "fixed");
         style(&element, "display", "none");
@@ -96,13 +96,13 @@ impl Toast {
         for part in [&label, &button] {
             element
                 .append_child(part)
-                .map_err(|e| to_error("トーストの組み立て", e))?;
+                .map_err(|e| to_error("build the toast", e))?;
         }
 
         doc.body()
-            .ok_or_else(|| Error::new("トーストの配置", "body 要素がありません"))?
+            .ok_or_else(|| Error::new("place the toast", "there is no body element"))?
             .append_child(&element)
-            .map_err(|e| to_error("トーストの配置", e))?;
+            .map_err(|e| to_error("place the toast", e))?;
 
         let this = Self(Rc::new(ToastInner {
             element,

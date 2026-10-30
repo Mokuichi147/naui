@@ -455,14 +455,14 @@ impl Ui {
                 .filter(|parsed| parsed.scheme().is_some_and(|scheme| scheme.length() > 0))
         else {
             return Err(Error::new(
-                "URL を開く",
-                format!("URL として読めません: {url}"),
+                "open the URL",
+                format!("not a valid URL: {url}"),
             ));
         };
         if objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(&parsed) {
             Ok(())
         } else {
-            Err(Error::new("URL を開く", format!("開けませんでした: {url}")))
+            Err(Error::new("open the URL", format!("could not open: {url}")))
         }
     }
 
@@ -522,7 +522,7 @@ where
     F: FnOnce(&Ui) -> Result<()> + 'static,
 {
     let mtm = MainThreadMarker::new()
-        .ok_or_else(|| Error::new("naui の起動", "メインスレッドから呼んでください"))?;
+        .ok_or_else(|| Error::new("start naui", "call it from the main thread"))?;
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let appearance = appearance_for_theme(settings.theme);
@@ -566,7 +566,7 @@ where
     F: FnOnce(&Ui) -> Result<()>,
 {
     let mtm = MainThreadMarker::new()
-        .ok_or_else(|| Error::new("テスト用の起動", "メインスレッドから呼んでください"))?;
+        .ok_or_else(|| Error::new("start for testing", "call it from the main thread"))?;
     let app = NSApplication::sharedApplication(mtm);
     // テスト中に Dock アイコンを出さない。
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);

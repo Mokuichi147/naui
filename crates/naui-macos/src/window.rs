@@ -599,7 +599,7 @@ impl Window {
         let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
         DispatchQueue::main().exec_async(move || {
             // メインキューの仕事はメインスレッドで走る。
-            let mtm = MainThreadMarker::new().expect("メインキューの外で呼ばれた");
+            let mtm = MainThreadMarker::new().expect("called outside the main queue");
             if let Some(inner) = weak.into_inner(mtm).upgrade() {
                 f(&Window(inner));
             }

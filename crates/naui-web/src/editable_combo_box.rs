@@ -72,10 +72,10 @@ impl EditableComboBox {
 
         element
             .append_child(&input)
-            .map_err(|e| to_error("コンボボックスの組み立て", e))?;
+            .map_err(|e| to_error("build the combo box", e))?;
         element
             .append_child(&list)
-            .map_err(|e| to_error("コンボボックスの組み立て", e))?;
+            .map_err(|e| to_error("build the combo box", e))?;
 
         // 入れ物は中身ぶんの大きさで、`set_sizing` で広げたときは
         // 入力欄もいっしょに広がるようにしておく。

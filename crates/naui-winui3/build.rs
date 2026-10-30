@@ -31,7 +31,7 @@ fn main() {
     #[cfg(feature = "self-contained")]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         if let Err(message) = bundle::run() {
-            eprintln!("error: Windows App SDK ランタイムを同梱できません: {message}");
+            eprintln!("error: cannot bundle the Windows App SDK runtime: {message}");
             std::process::exit(1);
         }
     }
@@ -95,7 +95,7 @@ mod bundle {
             Ok("aarch64") => "arm64",
             Ok("x86") => "x86",
             Ok("arm64ec") => "arm64ec",
-            other => return Err(format!("対応していないアーキテクチャです: {other:?}")),
+            other => return Err(format!("unsupported architecture: {other:?}")),
         };
 
         // OUT_DIR は <build-dir>/[<triple>/]<profile>/build/naui-winui3-<hash>/out。
@@ -104,7 +104,7 @@ mod bundle {
             (out_dir.ancestors().nth(2), out_dir.ancestors().nth(3))
         else {
             return Err(format!(
-                "OUT_DIR から出力先を割り出せません: {}",
+                "cannot work out the output directory from OUT_DIR: {}",
                 out_dir.display()
             ));
         };
@@ -170,7 +170,7 @@ mod bundle {
         // profile の上に対象のトリプルの階層が入る。
         let profile = build_profile
             .file_name()
-            .ok_or_else(|| format!("profile が分かりません: {}", build_profile.display()))?;
+            .ok_or_else(|| format!("cannot tell the profile: {}", build_profile.display()))?;
         let mut relative = PathBuf::new();
         if let (Some(parent), Ok(target)) = (build_profile.parent(), env::var("TARGET")) {
             if parent.file_name() == Some(target.as_ref()) {
@@ -183,7 +183,7 @@ mod bundle {
             let root = PathBuf::from(root);
             if !root.is_absolute() {
                 return Err(format!(
-                    "{TARGET_DIR_ENV} は絶対パスで指定してください: {}",
+                    "{TARGET_DIR_ENV} must be an absolute path: {}",
                     root.display()
                 ));
             }
@@ -198,9 +198,9 @@ mod bundle {
                 }
             }
             return Err(format!(
-                "Cargo の build-dir (CARGO_BUILD_BUILD_DIR) を分けているため、exe の出力先が\
-                 分かりません。target-dir を {TARGET_DIR_ENV} (または CARGO_TARGET_DIR) に\
-                 絶対パスで指定してください"
+                "cannot tell where the exe is output, because Cargo's build-dir \
+                 (CARGO_BUILD_BUILD_DIR) is separate. Set {TARGET_DIR_ENV} (or \
+                 CARGO_TARGET_DIR) to the target-dir as an absolute path"
             ));
         }
         Ok(build_profile.to_path_buf())
@@ -234,7 +234,7 @@ mod bundle {
         if bundle.exists() {
             fs::remove_dir_all(bundle).map_err(|e| {
                 format!(
-                    "{} を消せません。同梱物を使う exe が動いていれば終了してください: {e}",
+                    "cannot remove {}. If an exe that uses the bundled files is running, quit it: {e}",
                     bundle.display()
                 )
             })?;
@@ -249,7 +249,7 @@ mod bundle {
             let bytes = obtain(component, cache)?;
             let fragments_before = fragments.len();
             let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-                .map_err(|e| format!("{} を開けません: {e}", file_name(component)))?;
+                .map_err(|e| format!("cannot open {}: {e}", file_name(component)))?;
             for index in 0..archive.len() {
                 let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
                 let name = entry.name().to_string();
@@ -280,7 +280,7 @@ mod bundle {
                     .any(|part| part == ".." || part.is_empty())
                 {
                     return Err(format!(
-                        "{} に不正な名前があります: {name}",
+                        "{} contains an invalid name: {name}",
                         file_name(component)
                     ));
                 }
@@ -293,7 +293,7 @@ mod bundle {
             }
             if component.has_fragment && fragments.len() != fragments_before + 1 {
                 return Err(format!(
-                    "{} に package.appxfragment がありません",
+                    "{} has no package.appxfragment",
                     file_name(component)
                 ));
             }
@@ -316,7 +316,7 @@ mod bundle {
         fs::copy(bundle.join(RESOURCES_SOURCE), &resources).map_err(|e| describe(&resources, e))?;
 
         if licenses.is_empty() {
-            return Err("部品のどれにも license.txt がありません".to_string());
+            return Err("none of the components has license.txt".to_string());
         }
         for (file, texts) in [(LICENSE_FILE, &licenses), (NOTICE_FILE, &notices)] {
             if texts.is_empty() {
@@ -391,7 +391,7 @@ mod bundle {
 
         if env::var("CARGO_NET_OFFLINE").as_deref() == Ok("true") {
             return Err(format!(
-                "オフラインのため {name} を取得できません。{PACKAGES_ENV} に .nupkg の置き場を指定してください"
+                "cannot download {name} while offline. Set {PACKAGES_ENV} to a directory containing the .nupkg files"
             ));
         }
 
@@ -411,11 +411,11 @@ mod bundle {
             .arg(&url)
             .status()
             .map_err(|e| {
-                format!("curl を起動できません ({e})。{PACKAGES_ENV} に .nupkg の置き場を指定すれば取得せずに済みます")
+                format!("cannot start curl ({e}). Setting {PACKAGES_ENV} to a directory containing the .nupkg files avoids downloading")
             })?;
         if !status.success() {
             let _ = fs::remove_file(&partial);
-            return Err(format!("{url} を取得できません ({status})"));
+            return Err(format!("cannot download {url} ({status})"));
         }
         let bytes = fs::read(&partial).map_err(|e| describe(&partial, e))?;
         if let Err(e) = verify(component, &bytes) {
@@ -432,7 +432,7 @@ mod bundle {
             Ok(())
         } else {
             Err(format!(
-                "SHA-512 が一致しません (期待 {}、実際 {actual})",
+                "SHA-512 does not match (expected {}, actual {actual})",
                 component.sha512
             ))
         }
@@ -455,7 +455,7 @@ mod bundle {
                 }
                 fs::remove_file(&target).map_err(|e| {
                     format!(
-                        "{} を置き換えられません。同梱物を使う exe が動いていれば終了してください: {e}",
+                        "cannot replace {}. If an exe that uses the bundled files is running, quit it: {e}",
                         target.display()
                     )
                 })?;

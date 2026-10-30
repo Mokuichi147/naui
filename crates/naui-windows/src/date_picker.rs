@@ -84,13 +84,13 @@ impl_widget!(DatePicker, native);
 
 impl DatePicker {
     pub(crate) fn new(mode: DatePickerMode) -> Result<Self> {
-        let native = StackPanel::new().map_err(|e| to_error("StackPanel の生成", e))?;
+        let native = StackPanel::new().map_err(|e| to_error("create the StackPanel", e))?;
         native
             .SetOrientation(XamlOrientation::Horizontal)
-            .map_err(|e| to_error("日付ピッカーの向きの設定", e))?;
+            .map_err(|e| to_error("set the date picker orientation", e))?;
         native
             .SetSpacing(8.0)
-            .map_err(|e| to_error("日付ピッカーの間隔の設定", e))?;
+            .map_err(|e| to_error("set the date picker spacing", e))?;
 
         let date = mode.has_date().then(new_date_picker).transpose()?;
         let time = mode.has_time().then(new_time_picker).transpose()?;
@@ -109,7 +109,7 @@ impl DatePicker {
         if let Some(date) = &this.0.date {
             let element = date
                 .cast::<UIElement>()
-                .map_err(|e| to_error("DatePicker の要素化", e))?;
+                .map_err(|e| to_error("convert the DatePicker to UIElement", e))?;
             this.append(&element)?;
             balance_date_picker_columns(date);
             let loaded_date = Arc::new(UiThreadCell::new(date.clone()));
@@ -119,9 +119,9 @@ impl DatePicker {
             });
             element
                 .cast::<FrameworkElement>()
-                .map_err(|e| to_error("DatePicker のレイアウト要素化", e))?
+                .map_err(|e| to_error("convert the DatePicker to FrameworkElement", e))?
                 .Loaded(&loaded)
-                .map_err(|e| to_error("DatePicker の読み込み購読", e))?;
+                .map_err(|e| to_error("subscribe to DatePicker Loaded", e))?;
             let target = Arc::new(UiThreadCell::new(Rc::downgrade(&this.0)));
             let changed = EventHandler::<DatePickerValueChangedEventArgs>::new(move |_, _| {
                 let _ = target.try_with_mut(|weak| {
@@ -132,13 +132,13 @@ impl DatePicker {
                 Ok(())
             });
             date.DateChanged(&changed)
-                .map_err(|e| to_error("DatePicker の変更購読", e))?;
+                .map_err(|e| to_error("subscribe to DatePicker changes", e))?;
         }
 
         if let Some(time) = &this.0.time {
             let element = time
                 .cast::<UIElement>()
-                .map_err(|e| to_error("TimePicker の要素化", e))?;
+                .map_err(|e| to_error("convert the TimePicker to UIElement", e))?;
             this.append(&element)?;
             compact_time_picker(time);
             let loaded_time = Arc::new(UiThreadCell::new(time.clone()));
@@ -148,9 +148,9 @@ impl DatePicker {
             });
             element
                 .cast::<FrameworkElement>()
-                .map_err(|e| to_error("TimePicker のレイアウト要素化", e))?
+                .map_err(|e| to_error("convert the TimePicker to FrameworkElement", e))?
                 .Loaded(&loaded)
-                .map_err(|e| to_error("TimePicker の読み込み購読", e))?;
+                .map_err(|e| to_error("subscribe to TimePicker Loaded", e))?;
             let target = Arc::new(UiThreadCell::new(Rc::downgrade(&this.0)));
             let changed = EventHandler::<TimePickerValueChangedEventArgs>::new(move |_, _| {
                 let _ = target.try_with_mut(|weak| {
@@ -161,7 +161,7 @@ impl DatePicker {
                 Ok(())
             });
             time.TimeChanged(&changed)
-                .map_err(|e| to_error("TimePicker の変更購読", e))?;
+                .map_err(|e| to_error("subscribe to TimePicker changes", e))?;
         }
 
         this.write_native(this.value());
@@ -302,24 +302,24 @@ impl DatePicker {
         self.0
             .native
             .Children()
-            .map_err(|e| to_error("日付ピッカーの子の取得", e))?
+            .map_err(|e| to_error("get the date picker children", e))?
             .Append(element)
-            .map_err(|e| to_error("日付ピッカーへの追加", e))
+            .map_err(|e| to_error("add to the date picker", e))
     }
 }
 
 fn new_date_picker() -> Result<XamlDatePicker> {
-    let picker = XamlDatePicker::new().map_err(|e| to_error("WinUI DatePicker の生成", e))?;
+    let picker = XamlDatePicker::new().map_err(|e| to_error("create the WinUI DatePicker", e))?;
     let gregorian =
-        CalendarIdentifiers::Gregorian().map_err(|e| to_error("グレゴリオ暦の取得", e))?;
+        CalendarIdentifiers::Gregorian().map_err(|e| to_error("get the Gregorian calendar", e))?;
     picker
         .SetCalendarIdentifier(&gregorian)
-        .map_err(|e| to_error("DatePicker の暦設定", e))?;
+        .map_err(|e| to_error("set the DatePicker calendar", e))?;
     Ok(picker)
 }
 
 pub(crate) fn new_time_picker() -> Result<XamlTimePicker> {
-    XamlTimePicker::new().map_err(|e| to_error("WinUI TimePicker の生成", e))
+    XamlTimePicker::new().map_err(|e| to_error("create the WinUI TimePicker", e))
 }
 
 /// The standard template assumes long English month names, making only the month

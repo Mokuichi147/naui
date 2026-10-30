@@ -824,7 +824,7 @@ impl List {
             .root
             .append_child(element)
             .map(|_| ())
-            .map_err(|e| crate::to_error("リストの組み立て", e))
+            .map_err(|e| crate::to_error("build the list", e))
     }
 
     fn option_id(&self, index: usize) -> String {

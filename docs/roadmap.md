@@ -107,10 +107,12 @@ internationalization tracks.
 - [ ] **Saving and restoring window position and size.** Window state control
       (`Window::set_state`, `set_position` and so on) is already in, so this is
       small now. Linux and the Web restore only the size and state.
-- [ ] *(i18n)* **Write naui's error messages in English.** `Error`'s display
-      ("… に失敗しました") and the context strings passed to it are Japanese, while
-      the documentation is in English. These are messages for developers, so they
-      are not translated, only made English (like `#[deprecated]` notes).
+- [x] *(i18n)* **Write naui's error messages in English.** `Error` displays as
+      "failed to {context}: {detail}", with the context as a verb phrase
+      ("create the Button"). The details, the warnings printed to stderr, the
+      panic messages and the errors of the Windows App SDK build script are
+      English too. These are messages for developers, so they are not translated
+      (like `#[deprecated]` notes).
 - [ ] *(i18n)* **The OS's preferred languages, and notification when they
       change.** The basis for an app choosing which translation to show. Every
       backend already reads them at startup to choose naui's own strings

@@ -127,11 +127,11 @@ impl_widget!(NumberInput, native);
 
 impl NumberInput {
     pub(crate) fn new(value: f64) -> Result<Self> {
-        let native = XamlNumberBox::new().map_err(|e| to_error("NumberBox の生成", e))?;
+        let native = XamlNumberBox::new().map_err(|e| to_error("create the NumberBox", e))?;
         // 増減ボタンは既定では出ない。欄の右へ並べる Inline にする。
         native
             .SetSpinButtonPlacementMode(NumberBoxSpinButtonPlacementMode::Inline)
-            .map_err(|e| to_error("数値入力の増減ボタンの設定", e))?;
+            .map_err(|e| to_error("set the number input spin buttons", e))?;
         // 読めない文字列は確定時に元の値へ戻し、範囲の外は端へ寄せる (既定)。
         //
         // 戻す先も増減の基準も `NumberBox` が持っている値なので、読めない表示に
@@ -140,7 +140,7 @@ impl NumberInput {
         // 打ってから `12x` にしたときに古い値へ戻ってしまう。
         native
             .SetValidationMode(NumberBoxValidationMode::InvalidInputOverwritten)
-            .map_err(|e| to_error("数値入力の検証方法の設定", e))?;
+            .map_err(|e| to_error("set the number input validation mode", e))?;
 
         let this = Self(Rc::new(NumberInputInner {
             native,
@@ -247,7 +247,7 @@ impl NumberInput {
         self.0
             .native
             .ValueChanged(&changed)
-            .map_err(|e| to_error("数値入力の確定購読", e))?;
+            .map_err(|e| to_error("subscribe to number input value changes", e))?;
 
         // Enter。`NumberBox` が値を確定するのはキーを離したとき (`KeyUp`) なので、
         // 押した時点ではまだ古い値のまま。ここで表示を読んで確定させてから
@@ -256,7 +256,7 @@ impl NumberInput {
             .0
             .native
             .cast()
-            .map_err(|e| to_error("数値入力の要素の取得", e))?;
+            .map_err(|e| to_error("get the number input element", e))?;
         let weak = Rc::downgrade(&self.0);
         crate::keys::on_enter(&element, move || {
             if let Some(inner) = weak.upgrade() {
@@ -265,7 +265,7 @@ impl NumberInput {
                 this.0.submit.emit(this.value());
             }
         })
-        .map_err(|e| to_error("数値入力の Enter の購読", e))?;
+        .map_err(|e| to_error("subscribe to Enter on the number input", e))?;
 
         // テンプレートが展開されてから入力欄を探す。
         let loaded = UiThreadCell::new(Rc::downgrade(&self.0));
@@ -278,7 +278,7 @@ impl NumberInput {
         self.0
             .native
             .Loaded(&handler)
-            .map_err(|e| to_error("数値入力の読み込み購読", e))?;
+            .map_err(|e| to_error("subscribe to number input Loaded", e))?;
         Ok(())
     }
 
@@ -472,23 +472,23 @@ impl NumberInput {
         self.0
             .native
             .SetMinimum(spec.min.unwrap_or(-UNBOUNDED))
-            .map_err(|e| to_error("数値入力の下限の設定", e))?;
+            .map_err(|e| to_error("set the number input minimum", e))?;
         self.0
             .native
             .SetMaximum(spec.max.unwrap_or(UNBOUNDED))
-            .map_err(|e| to_error("数値入力の上限の設定", e))?;
+            .map_err(|e| to_error("set the number input maximum", e))?;
         self.0
             .native
             .SetSmallChange(spec.step)
-            .map_err(|e| to_error("数値入力の刻みの設定", e))?;
+            .map_err(|e| to_error("set the number input small step", e))?;
         self.0
             .native
             .SetLargeChange(spec.step * LARGE_CHANGE_STEPS)
-            .map_err(|e| to_error("数値入力の大きい刻みの設定", e))?;
+            .map_err(|e| to_error("set the number input large step", e))?;
         self.0
             .native
             .SetNumberFormatter(&formatter(spec.decimals)?)
-            .map_err(|e| to_error("数値入力の書式の設定", e))?;
+            .map_err(|e| to_error("set the number input formatter", e))?;
         Ok(())
     }
 
@@ -575,16 +575,17 @@ fn parse_with(parser: &INumberParser, text: &str) -> Option<f64> {
 }
 
 fn formatter(decimals: u32) -> Result<DecimalFormatter> {
-    let formatter = DecimalFormatter::new().map_err(|e| to_error("数の書式の生成", e))?;
+    let formatter =
+        DecimalFormatter::new().map_err(|e| to_error("create the number formatter", e))?;
     formatter
         .SetIntegerDigits(1)
-        .map_err(|e| to_error("数の書式の整数桁の設定", e))?;
+        .map_err(|e| to_error("set the number formatter integer digits", e))?;
     formatter
         .SetFractionDigits(decimals as i32)
-        .map_err(|e| to_error("数の書式の小数桁の設定", e))?;
+        .map_err(|e| to_error("set the number formatter fraction digits", e))?;
     formatter
         .SetIsGrouped(false)
-        .map_err(|e| to_error("数の書式の桁区切りの設定", e))?;
+        .map_err(|e| to_error("set the number formatter grouping", e))?;
     Ok(formatter)
 }
 

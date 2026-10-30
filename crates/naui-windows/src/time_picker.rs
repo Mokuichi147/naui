@@ -83,7 +83,7 @@ impl TimePicker {
         let picker = new_time_picker()?;
         let native = picker
             .cast::<FrameworkElement>()
-            .map_err(|e| to_error("TimePicker のレイアウト要素化", e))?;
+            .map_err(|e| to_error("convert the TimePicker to FrameworkElement", e))?;
 
         let this = Self(Rc::new(TimePickerInner {
             native,
@@ -107,7 +107,7 @@ impl TimePicker {
         this.0
             .native
             .Loaded(&loaded)
-            .map_err(|e| to_error("TimePicker の読み込み購読", e))?;
+            .map_err(|e| to_error("subscribe to TimePicker Loaded", e))?;
 
         let target = Arc::new(UiThreadCell::new(Rc::downgrade(&this.0)));
         let changed = EventHandler::<TimePickerValueChangedEventArgs>::new(move |_, _| {
@@ -121,7 +121,7 @@ impl TimePicker {
         this.0
             .picker
             .TimeChanged(&changed)
-            .map_err(|e| to_error("TimePicker の変更購読", e))?;
+            .map_err(|e| to_error("subscribe to TimePicker changes", e))?;
 
         this.write_native(this.value());
         Ok(this)

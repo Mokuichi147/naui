@@ -100,30 +100,30 @@ pub struct Toolbar(Rc<ToolbarInner>);
 
 impl Toolbar {
     pub(crate) fn new() -> Result<Self> {
-        let native = CommandBar::new().map_err(|e| to_error("CommandBar の生成", e))?;
+        let native = CommandBar::new().map_err(|e| to_error("create the CommandBar", e))?;
         native
             .SetDefaultLabelPosition(CommandBarDefaultLabelPosition::Collapsed)
-            .map_err(|e| to_error("ツールバーのラベル位置の設定", e))?;
+            .map_err(|e| to_error("set the toolbar label position", e))?;
         // `CommandBar` は `PrimaryCommands` を右へ寄せる (左は `Content` の
         // 場所)。naui のツールバーはほかの 3 環境と同じく左詰めにしたいので、
         // 帯そのものを左へ寄せて中身の幅にする。
         native
             .SetHorizontalAlignment(HorizontalAlignment::Left)
-            .map_err(|e| to_error("ツールバーの配置設定", e))?;
+            .map_err(|e| to_error("set the toolbar alignment", e))?;
         // 帯もタイトルバーの高さへ収める。テーマの `MinHeight` が 48 なので、
         // `Height` だけでは縮まない。
         native
             .SetMinHeight(ITEM_HEIGHT)
-            .map_err(|e| to_error("ツールバーの最小高さの設定", e))?;
+            .map_err(|e| to_error("set the toolbar minimum height", e))?;
         native
             .SetHeight(ITEM_HEIGHT)
-            .map_err(|e| to_error("ツールバーの高さの設定", e))?;
+            .map_err(|e| to_error("set the toolbar height", e))?;
         // 項目の並びと項目そのものの寸法はテンプレートが持っている。帯へ
         // 入れたリソースは中の要素からも引かれるので、ここで一度だけ渡す。
         apply_compact_resources(
             &native
                 .cast::<FrameworkElement>()
-                .map_err(|e| to_error("ツールバーの変換", e))?,
+                .map_err(|e| to_error("convert the toolbar", e))?,
         )?;
         Ok(Self(Rc::new(ToolbarInner {
             native,
@@ -146,18 +146,18 @@ impl Toolbar {
             .0
             .native
             .PrimaryCommands()
-            .map_err(|e| to_error("ツールバーの項目取得", e))?;
+            .map_err(|e| to_error("get the toolbar items", e))?;
         commands
             .Clear()
-            .map_err(|e| to_error("ツールバーの項目消去", e))?;
+            .map_err(|e| to_error("clear the toolbar items", e))?;
         self.0.buttons.borrow_mut().clear();
 
         let whole = self.0.enabled.get();
         let mut buttons = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
             if item.is_separator() {
-                let separator =
-                    AppBarSeparator::new().map_err(|e| to_error("ツールバーの区切り生成", e))?;
+                let separator = AppBarSeparator::new()
+                    .map_err(|e| to_error("create the toolbar separator", e))?;
                 let _ = separator.SetVerticalAlignment(VerticalAlignment::Top);
                 apply_separator_metrics(&separator);
                 let metrics = RoutedEventHandler::new(|sender, _| {
@@ -172,7 +172,7 @@ impl Toolbar {
                 let _ = separator.Loaded(&metrics);
                 commands
                     .Append(&separator)
-                    .map_err(|e| to_error("ツールバーへの区切り追加", e))?;
+                    .map_err(|e| to_error("add the separator to the toolbar", e))?;
                 buttons.push(None);
                 continue;
             }
@@ -181,7 +181,7 @@ impl Toolbar {
             let _ = button.SetIsEnabled(item.enabled && whole);
             commands
                 .Append(&button)
-                .map_err(|e| to_error("ツールバーへの項目追加", e))?;
+                .map_err(|e| to_error("add the item to the toolbar", e))?;
             buttons.push(Some(button));
         }
 
@@ -192,10 +192,10 @@ impl Toolbar {
     }
 
     fn build_button(&self, icon: ToolbarIcon, label: &str, index: usize) -> Result<AppBarButton> {
-        let button = AppBarButton::new().map_err(|e| to_error("ツールバーのボタン生成", e))?;
+        let button = AppBarButton::new().map_err(|e| to_error("create the toolbar button", e))?;
         button
             .SetVerticalAlignment(VerticalAlignment::Top)
-            .map_err(|e| to_error("ツールバーのボタン配置の設定", e))?;
+            .map_err(|e| to_error("set the toolbar button alignment", e))?;
         apply_button_metrics(&button);
         // 置かれ方が変わると読み込み直されるので、そのたびに渡し直す。
         // ハンドラは `sender` から引くだけにして、ボタンを掴まない
@@ -208,20 +208,20 @@ impl Toolbar {
         });
         button
             .Loaded(&metrics)
-            .map_err(|e| to_error("ツールバーのボタンの読み込み購読", e))?;
-        let glyph = FontIcon::new().map_err(|e| to_error("ツールバーの印の生成", e))?;
+            .map_err(|e| to_error("subscribe to toolbar button Loaded", e))?;
+        let glyph = FontIcon::new().map_err(|e| to_error("create the toolbar icon", e))?;
         glyph
             .SetGlyph(&HSTRING::from(icon.fluent_glyph().to_string()))
-            .map_err(|e| to_error("ツールバーの印の設定", e))?;
+            .map_err(|e| to_error("set the toolbar icon", e))?;
         button
             .SetIcon(&glyph)
-            .map_err(|e| to_error("ツールバーの印の取り付け", e))?;
+            .map_err(|e| to_error("attach the toolbar icon", e))?;
 
         // ラベルは隠すので、読み上げとツールチップへ回す。
         let text = HSTRING::from(label);
         button
             .SetLabel(&text)
-            .map_err(|e| to_error("ツールバーのラベル設定", e))?;
+            .map_err(|e| to_error("set the toolbar label", e))?;
         let _ = AutomationProperties::SetName(&button, &text);
         if let Ok(tip) = PropertyValue::CreateString(&text) {
             let _ = ToolTipService::SetToolTip(&button, &tip);
@@ -239,7 +239,7 @@ impl Toolbar {
         });
         button
             .Click(&handler)
-            .map_err(|e| to_error("AppBarButton の購読", e))?;
+            .map_err(|e| to_error("subscribe to the AppBarButton", e))?;
         Ok(button)
     }
 
@@ -326,7 +326,7 @@ impl Toolbar {
         self.0
             .native
             .cast::<UIElement>()
-            .expect("CommandBar は UIElement である")
+            .expect("a CommandBar is a UIElement")
     }
 }
 
@@ -362,12 +362,12 @@ fn apply_compact_resources(element: &FrameworkElement) -> Result<()> {
             <Thickness x:Key="AppBarButtonInnerBorderCompactMargin">{inset},{inset},{inset},{inset}</Thickness>
         </ResourceDictionary>"##
     )))
-    .map_err(|e| to_error("ツールバーの寸法リソースの生成", e))?
+    .map_err(|e| to_error("create the toolbar size resource", e))?
     .cast::<ResourceDictionary>()
-    .map_err(|e| to_error("ツールバーの寸法リソースへの変換", e))?;
+    .map_err(|e| to_error("convert to the toolbar size resource", e))?;
     element
         .SetResources(&dictionary)
-        .map_err(|e| to_error("ツールバーの寸法リソースの登録", e))
+        .map_err(|e| to_error("register the toolbar size resource", e))
 }
 
 /// Dimensions that should take effect only while in the band.

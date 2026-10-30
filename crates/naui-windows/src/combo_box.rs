@@ -31,13 +31,13 @@ impl_widget!(ComboBox, native);
 
 impl ComboBox {
     pub(crate) fn new() -> Result<Self> {
-        let native = XamlComboBox::new().map_err(|e| to_error("ComboBox の生成", e))?;
+        let native = XamlComboBox::new().map_err(|e| to_error("create the ComboBox", e))?;
         native
             .SetIsEditable(false)
-            .map_err(|e| to_error("ComboBox の編集可否の設定", e))?;
+            .map_err(|e| to_error("set whether the ComboBox is editable", e))?;
         native
             .SetSelectedIndex(-1)
-            .map_err(|e| to_error("ComboBox の選択解除", e))?;
+            .map_err(|e| to_error("clear the ComboBox selection", e))?;
 
         let this = Self(Rc::new(ComboBoxInner {
             native,
@@ -64,7 +64,7 @@ impl ComboBox {
         this.0
             .native
             .SelectionChanged(&handler)
-            .map_err(|e| to_error("ComboBox の選択購読", e))?;
+            .map_err(|e| to_error("subscribe to ComboBox selection", e))?;
 
         Ok(this)
     }
@@ -80,32 +80,33 @@ impl ComboBox {
                 .0
                 .native
                 .Items()
-                .map_err(|e| to_error("ComboBox の項目取得", e))?;
+                .map_err(|e| to_error("get the ComboBox items", e))?;
             children
                 .Clear()
-                .map_err(|e| to_error("ComboBox の項目消去", e))?;
+                .map_err(|e| to_error("clear the ComboBox items", e))?;
 
             for text in items {
-                let item = ComboBoxItem::new().map_err(|e| to_error("ComboBoxItem の生成", e))?;
-                let label = TextBlock::new().map_err(|e| to_error("項目ラベルの生成", e))?;
+                let item =
+                    ComboBoxItem::new().map_err(|e| to_error("create the ComboBoxItem", e))?;
+                let label = TextBlock::new().map_err(|e| to_error("create the item label", e))?;
                 label
                     .SetText(&HSTRING::from(text.as_ref()))
-                    .map_err(|e| to_error("項目ラベルの設定", e))?;
+                    .map_err(|e| to_error("set the item label", e))?;
                 item.SetContent(&label)
-                    .map_err(|e| to_error("ComboBoxItem への内容設定", e))?;
+                    .map_err(|e| to_error("set the ComboBoxItem content", e))?;
                 let element = item
                     .cast::<IInspectable>()
-                    .map_err(|e| to_error("ComboBoxItem の要素化", e))?;
+                    .map_err(|e| to_error("convert the ComboBoxItem to UIElement", e))?;
                 children
                     .Append(&element)
-                    .map_err(|e| to_error("ComboBoxItem の追加", e))?;
+                    .map_err(|e| to_error("add the ComboBoxItem", e))?;
             }
 
             // WinUI が先頭項目を暗黙に選ぶことに依存せず、常に未選択へ戻す。
             this.0
                 .native
                 .SetSelectedIndex(-1)
-                .map_err(|e| to_error("ComboBox の選択解除", e))
+                .map_err(|e| to_error("clear the ComboBox selection", e))
         })
     }
 

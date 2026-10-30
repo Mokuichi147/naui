@@ -205,7 +205,7 @@ impl Canvas {
     pub(crate) fn new() -> Result<Self> {
         let native: XamlGrid = XamlReader::Load(&HSTRING::from(HOST_XAML))
             .and_then(|element| element.cast::<XamlGrid>())
-            .map_err(|e| to_error("Canvas の生成", e))?;
+            .map_err(|e| to_error("create the Canvas", e))?;
         let this = Self(Rc::new(CanvasInner {
             native,
             draw: DrawHandler::new(),
@@ -237,7 +237,7 @@ impl Canvas {
             .native
             .cast::<FrameworkElement>()
             .and_then(|element| element.SizeChanged(&changed))
-            .map_err(|e| to_error("Canvas の大きさの購読", e))?;
+            .map_err(|e| to_error("subscribe to Canvas size changes", e))?;
         Ok(())
     }
 
@@ -246,7 +246,7 @@ impl Canvas {
             .0
             .native
             .cast::<UIElement>()
-            .map_err(|e| to_error("Canvas のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to Canvas pointer events", e))?;
         for phase in [PointerPhase::Down, PointerPhase::Move, PointerPhase::Up] {
             let target = UiThreadCell::new(Rc::downgrade(&self.0));
             let handler = PointerEventHandler::new(move |_, args| {
@@ -313,7 +313,7 @@ impl Canvas {
                 PointerPhase::Up => element.PointerReleased(&handler),
                 _ => element.PointerMoved(&handler),
             }
-            .map_err(|e| to_error("Canvas のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to Canvas pointer events", e))?;
         }
 
         // 動かずに面の上へ来ることもある (外のスライダーを引いて面の上で離すと、
@@ -343,7 +343,7 @@ impl Canvas {
         });
         element
             .PointerEntered(&entered)
-            .map_err(|e| to_error("Canvas のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to Canvas pointer events", e))?;
 
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let exited = PointerEventHandler::new(move |_, args| {
@@ -359,7 +359,7 @@ impl Canvas {
         });
         element
             .PointerExited(&exited)
-            .map_err(|e| to_error("Canvas のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to Canvas pointer events", e))?;
 
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let wheel = PointerEventHandler::new(move |_, args| {
@@ -405,7 +405,7 @@ impl Canvas {
         });
         element
             .PointerWheelChanged(&wheel)
-            .map_err(|e| to_error("Canvas のホイール購読", e))?;
+            .map_err(|e| to_error("subscribe to Canvas wheel events", e))?;
         Ok(())
     }
 

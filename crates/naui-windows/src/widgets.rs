@@ -36,7 +36,7 @@ macro_rules! impl_widget {
                 self.0
                     .$field
                     .cast::<UIElement>()
-                    .expect("WinUI のコントロールは UIElement である")
+                    .expect("a WinUI control is a UIElement")
             }
             fn boxed_clone(&self) -> Box<dyn Widget> {
                 Box::new(self.clone())
@@ -197,13 +197,13 @@ impl Label {
         {
             Ok(native) => native,
             Err(error) => {
-                eprintln!("naui-windows: ラベルの生成に失敗 (省略記号なしで続けます): {error}");
-                TextBlock::new().map_err(|e| to_error("TextBlock の生成", e))?
+                eprintln!("naui-windows: failed to create the label (continuing without an ellipsis): {error}");
+                TextBlock::new().map_err(|e| to_error("create the TextBlock", e))?
             }
         };
         native
             .SetText(&HSTRING::from(text))
-            .map_err(|e| to_error("TextBlock への設定", e))?;
+            .map_err(|e| to_error("set the TextBlock text", e))?;
         let this = Self(Rc::new(LabelInner {
             native,
             style: Cell::new(TextStyle::default()),
@@ -275,7 +275,7 @@ impl Label {
     /// cannot be obtained, nothing is done (the previous look continues).
     fn apply_text_style(&self) {
         let Some(style) = label_style(self.0.style.get(), self.0.color.get()) else {
-            eprintln!("naui-windows: ラベルのスタイルが引けませんでした");
+            eprintln!("naui-windows: could not find the label style");
             return;
         };
         let _ = self.0.native.SetStyle(&style);
@@ -352,14 +352,14 @@ impl_widget!(Button, native);
 
 impl Button {
     pub(crate) fn new(text: &str) -> Result<Self> {
-        let native = XamlButton::new().map_err(|e| to_error("Button の生成", e))?;
-        let label = TextBlock::new().map_err(|e| to_error("Button ラベルの生成", e))?;
+        let native = XamlButton::new().map_err(|e| to_error("create the Button", e))?;
+        let label = TextBlock::new().map_err(|e| to_error("create the Button label", e))?;
         label
             .SetText(&HSTRING::from(text))
-            .map_err(|e| to_error("Button ラベルの設定", e))?;
+            .map_err(|e| to_error("set the Button label", e))?;
         native
             .SetContent(&label)
-            .map_err(|e| to_error("Button への内容設定", e))?;
+            .map_err(|e| to_error("set the Button content", e))?;
         Ok(Self(Rc::new(ButtonInner {
             native,
             label,
@@ -408,16 +408,16 @@ impl_widget!(Checkbox, native);
 
 impl Checkbox {
     pub(crate) fn new(label: &str) -> Result<Self> {
-        let native = XamlCheckBox::new().map_err(|e| to_error("CheckBox の生成", e))?;
-        let text = TextBlock::new().map_err(|e| to_error("CheckBox ラベルの生成", e))?;
+        let native = XamlCheckBox::new().map_err(|e| to_error("create the CheckBox", e))?;
+        let text = TextBlock::new().map_err(|e| to_error("create the CheckBox label", e))?;
         text.SetText(&HSTRING::from(label))
-            .map_err(|e| to_error("CheckBox ラベルの設定", e))?;
+            .map_err(|e| to_error("set the CheckBox label", e))?;
         native
             .SetContent(&text)
-            .map_err(|e| to_error("CheckBox への内容設定", e))?;
+            .map_err(|e| to_error("set the CheckBox content", e))?;
         native
             .SetIsChecked(&bool_ref(false)?)
-            .map_err(|e| to_error("CheckBox の初期化", e))?;
+            .map_err(|e| to_error("initialize the CheckBox", e))?;
         Ok(Self(Rc::new(CheckboxInner {
             native,
             tokens: RefCell::new(Vec::new()),
@@ -500,10 +500,10 @@ impl_widget!(TextInput, native);
 
 impl TextInput {
     pub(crate) fn new(text: &str) -> Result<Self> {
-        let native = TextBox::new().map_err(|e| to_error("TextBox の生成", e))?;
+        let native = TextBox::new().map_err(|e| to_error("create the TextBox", e))?;
         native
             .SetText(&HSTRING::from(text))
-            .map_err(|e| to_error("TextBox への設定", e))?;
+            .map_err(|e| to_error("set the TextBox text", e))?;
         let inner = Rc::new(TextInputInner {
             native,
             token: RefCell::new(None),
@@ -513,7 +513,7 @@ impl TextInput {
         let element: UIElement = inner
             .native
             .cast()
-            .map_err(|e| to_error("TextBox の要素の取得", e))?;
+            .map_err(|e| to_error("get the TextBox element", e))?;
         let weak = Rc::downgrade(&inner);
         crate::keys::on_enter(&element, move || {
             let Some(inner) = weak.upgrade() else {
@@ -526,7 +526,7 @@ impl TextInput {
             let text = inner.native.Text().unwrap_or_default().to_string();
             inner.on_submit.emit(&text);
         })
-        .map_err(|e| to_error("TextBox の Enter の購読", e))?;
+        .map_err(|e| to_error("subscribe to Enter on the TextBox", e))?;
         Ok(Self(inner))
     }
 
@@ -615,7 +615,7 @@ impl_widget!(PasswordInput, native);
 
 impl PasswordInput {
     pub(crate) fn new() -> Result<Self> {
-        let native = PasswordBox::new().map_err(|e| to_error("PasswordBox の生成", e))?;
+        let native = PasswordBox::new().map_err(|e| to_error("create the PasswordBox", e))?;
         let inner = Rc::new(PasswordInputInner {
             native,
             token: RefCell::new(None),
@@ -625,7 +625,7 @@ impl PasswordInput {
         let element: UIElement = inner
             .native
             .cast()
-            .map_err(|e| to_error("PasswordBox の要素の取得", e))?;
+            .map_err(|e| to_error("get the PasswordBox element", e))?;
         let weak = Rc::downgrade(&inner);
         crate::keys::on_enter(&element, move || {
             if let Some(inner) = weak.upgrade() {
@@ -633,7 +633,7 @@ impl PasswordInput {
                 inner.on_submit.emit(&text);
             }
         })
-        .map_err(|e| to_error("PasswordBox の Enter の購読", e))?;
+        .map_err(|e| to_error("subscribe to Enter on the PasswordBox", e))?;
         Ok(Self(inner))
     }
 
@@ -704,21 +704,21 @@ impl_widget!(TextArea, native);
 
 impl TextArea {
     pub(crate) fn new(text: &str) -> Result<Self> {
-        let native = TextBox::new().map_err(|e| to_error("TextBox の生成", e))?;
+        let native = TextBox::new().map_err(|e| to_error("create the TextBox", e))?;
         // 1 行の TextBox との違いはこの 2 つ。Enter が改行になり、
         // 長い行は折り返す。
         native
             .SetAcceptsReturn(true)
-            .map_err(|e| to_error("TextBox の複数行化", e))?;
+            .map_err(|e| to_error("make the TextBox multiline", e))?;
         native
             .SetTextWrapping(TextWrapping::Wrap)
-            .map_err(|e| to_error("TextBox の折り返し設定", e))?;
+            .map_err(|e| to_error("set the TextBox wrapping", e))?;
         // はみ出した分は縦にスクロールさせる。
         ScrollViewer::SetVerticalScrollBarVisibility2(&native, ScrollBarVisibility::Auto)
-            .map_err(|e| to_error("TextBox のスクロール設定", e))?;
+            .map_err(|e| to_error("set the TextBox scrolling", e))?;
         native
             .SetText(&HSTRING::from(text))
-            .map_err(|e| to_error("TextBox への設定", e))?;
+            .map_err(|e| to_error("set the TextBox text", e))?;
         Ok(Self(Rc::new(TextAreaInner {
             native,
             token: RefCell::new(None),
@@ -812,16 +812,16 @@ impl Slider {
         // XamlControlsResources の Fluent テンプレートを明示的に適用する。
         let native = XamlReader::Load(&HSTRING::from(SLIDER_XAML))
             .and_then(|element| element.cast::<XamlSlider>())
-            .map_err(|e| to_error("Slider の生成", e))?;
+            .map_err(|e| to_error("create the Slider", e))?;
         native
             .SetMinimum(min)
-            .map_err(|e| to_error("Slider の範囲設定", e))?;
+            .map_err(|e| to_error("set the Slider range", e))?;
         native
             .SetMaximum(max)
-            .map_err(|e| to_error("Slider の範囲設定", e))?;
+            .map_err(|e| to_error("set the Slider range", e))?;
         native
             .SetStepFrequency((max - min) / 1000.0)
-            .map_err(|e| to_error("Slider の刻み設定", e))?;
+            .map_err(|e| to_error("set the Slider step", e))?;
         Ok(Self(Rc::new(SliderInner { native, min, max })))
     }
 
@@ -896,17 +896,17 @@ impl ProgressBar {
                     Background="{ThemeResource ProgressBarForeground}" CornerRadius="1.5"/>
             </Grid>"##,
         ))
-        .map_err(|e| to_error("ProgressBar の生成", e))?
+        .map_err(|e| to_error("create the ProgressBar", e))?
         .cast::<Grid>()
-        .map_err(|e| to_error("ProgressBar の要素化", e))?;
+        .map_err(|e| to_error("convert the ProgressBar to UIElement", e))?;
         let fill = grid
             .Children()
             .and_then(|children| children.GetAt(1))
             .and_then(|element| element.cast::<FrameworkElement>())
-            .map_err(|e| to_error("ProgressBar の前景要素取得", e))?;
+            .map_err(|e| to_error("get the ProgressBar foreground element", e))?;
         let native = grid
             .cast::<UIElement>()
-            .map_err(|e| to_error("ProgressBar の要素化", e))?;
+            .map_err(|e| to_error("convert the ProgressBar to UIElement", e))?;
         let this = Self(Rc::new(ProgressInner {
             native,
             fill,
@@ -922,7 +922,7 @@ impl ProgressBar {
             .0
             .native
             .cast::<FrameworkElement>()
-            .map_err(|e| to_error("ProgressBar のレイアウト要素化", e))?;
+            .map_err(|e| to_error("convert the ProgressBar to FrameworkElement", e))?;
         let handler = EventHandler::<IInspectable>::new(move |_sender, _args| {
             state.with_mut(|weak| {
                 let Some(inner) = weak.upgrade() else {
@@ -1053,10 +1053,10 @@ impl_widget!(Spinner, native);
 
 impl Spinner {
     pub(crate) fn new() -> Result<Self> {
-        let native = ProgressRing::new().map_err(|e| to_error("ProgressRing の生成", e))?;
+        let native = ProgressRing::new().map_err(|e| to_error("create the ProgressRing", e))?;
         native
             .SetIsActive(true)
-            .map_err(|e| to_error("ProgressRing の開始", e))?;
+            .map_err(|e| to_error("start the ProgressRing", e))?;
         let this = Self(Rc::new(SpinnerInner {
             native,
             auto_width: Cell::new(true),
@@ -1167,7 +1167,7 @@ impl_widget!(Stack, native);
 
 impl Stack {
     pub(crate) fn new(orientation: Orientation) -> Result<Self> {
-        let native = Grid::new().map_err(|e| to_error("Stack の Grid の生成", e))?;
+        let native = Grid::new().map_err(|e| to_error("create the Stack Grid", e))?;
         crate::layout::register_stack(&native);
         Ok(Self(Rc::new(StackInner {
             native,
@@ -1322,5 +1322,5 @@ pub(crate) fn bool_ref(value: bool) -> Result<windows::Foundation::IReference<bo
     use windows_core::Interface;
     windows::Foundation::PropertyValue::CreateBoolean(value)
         .and_then(|v| v.cast())
-        .map_err(|e| to_error("bool の boxing", e))
+        .map_err(|e| to_error("box the bool", e))
 }

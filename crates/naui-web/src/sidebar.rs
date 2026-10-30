@@ -64,7 +64,7 @@ fn append(parent: &Element, child: &Element) -> Result<()> {
     parent
         .append_child(child)
         .map(|_| ())
-        .map_err(|e| to_error("DOM への追加", e))
+        .map_err(|e| to_error("add to the DOM", e))
 }
 
 struct SidebarInner {

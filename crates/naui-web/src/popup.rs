@@ -91,16 +91,16 @@ impl PopupMenu {
         let element: HtmlElement = create(doc, "div")?.unchecked_into();
         element
             .set_attribute("role", "menu")
-            .map_err(|e| to_error("メニューの組み立て", e))?;
+            .map_err(|e| to_error("build the menu", e))?;
         (LOOK.surface)(&element);
         style(&element, "position", "fixed");
         style(&element, "display", "none");
 
         let body = doc
             .body()
-            .ok_or_else(|| Error::new("メニューの配置", "body 要素がありません"))?;
+            .ok_or_else(|| Error::new("place the menu", "there is no body element"))?;
         body.append_child(&element)
-            .map_err(|e| to_error("メニューの配置", e))?;
+            .map_err(|e| to_error("place the menu", e))?;
 
         let this = Self(Rc::new(PopupMenuInner {
             document: doc.clone(),

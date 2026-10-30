@@ -197,7 +197,7 @@ impl_widget!(SplitView, native);
 
 impl SplitView {
     pub(crate) fn new(orientation: Orientation) -> Result<Self> {
-        let native = XamlGrid::new().map_err(|e| to_error("SplitView の Grid の生成", e))?;
+        let native = XamlGrid::new().map_err(|e| to_error("create the SplitView Grid", e))?;
         let start_pane = pane()?;
         let end_pane = pane()?;
         let divider = divider(orientation)?;
@@ -211,12 +211,13 @@ impl SplitView {
         .into_iter()
         .enumerate()
         {
-            let element = element.map_err(|e| to_error("SplitView の区画の要素化", e))?;
+            let element =
+                element.map_err(|e| to_error("convert the SplitView pane to UIElement", e))?;
             place(&element, index as i32, orientation)?;
             native
                 .Children()
                 .and_then(|children| children.Append(&element))
-                .map_err(|e| to_error("SplitView への追加", e))?;
+                .map_err(|e| to_error("add to the SplitView", e))?;
         }
 
         let geometry = Arc::new(UiThreadCell::new(Geometry {
@@ -282,7 +283,7 @@ impl SplitView {
         };
         divider
             .PointerPressed(&pressed)
-            .map_err(|e| to_error("SplitView のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to SplitView pointer events", e))?;
 
         let moved = {
             let geometry = self.0.geometry.clone();
@@ -315,7 +316,7 @@ impl SplitView {
         };
         divider
             .PointerMoved(&moved)
-            .map_err(|e| to_error("SplitView のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to SplitView pointer events", e))?;
 
         let released = {
             let geometry = self.0.geometry.clone();
@@ -333,7 +334,7 @@ impl SplitView {
         };
         divider
             .PointerReleased(&released)
-            .map_err(|e| to_error("SplitView のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to SplitView pointer events", e))?;
 
         let lost = {
             let geometry = self.0.geometry.clone();
@@ -344,7 +345,7 @@ impl SplitView {
         };
         divider
             .PointerCaptureLost(&lost)
-            .map_err(|e| to_error("SplitView のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to SplitView pointer events", e))?;
         Ok(())
     }
 
@@ -364,7 +365,7 @@ impl SplitView {
             .native
             .cast::<FrameworkElement>()
             .and_then(|element| element.LayoutUpdated(&updated))
-            .map_err(|e| to_error("SplitView のレイアウト購読", e))?;
+            .map_err(|e| to_error("subscribe to SplitView layout updates", e))?;
         Ok(())
     }
 
@@ -448,10 +449,10 @@ impl SplitViewInner {
 
 /// The container for one pane. Its content is placed to fill the allotted space.
 fn pane() -> Result<XamlGrid> {
-    let pane = XamlGrid::new().map_err(|e| to_error("SplitView の区画の生成", e))?;
+    let pane = XamlGrid::new().map_err(|e| to_error("create the SplitView pane", e))?;
     let element = pane
         .cast::<FrameworkElement>()
-        .map_err(|e| to_error("SplitView の区画の要素化", e))?;
+        .map_err(|e| to_error("convert the SplitView pane to UIElement", e))?;
     let _ = element.SetHorizontalAlignment(HorizontalAlignment::Stretch);
     let _ = element.SetVerticalAlignment(VerticalAlignment::Stretch);
     Ok(pane)
@@ -470,13 +471,13 @@ fn divider(orientation: Orientation) -> Result<XamlGrid> {
     {
         Ok(divider) => divider,
         Err(error) => {
-            eprintln!("naui-windows: 分割ビューの仕切りの生成に失敗: {error}");
-            XamlGrid::new().map_err(|e| to_error("SplitView の仕切りの生成", e))?
+            eprintln!("naui-windows: failed to create the split view divider: {error}");
+            XamlGrid::new().map_err(|e| to_error("create the SplitView divider", e))?
         }
     };
     let element = divider
         .cast::<FrameworkElement>()
-        .map_err(|e| to_error("SplitView の仕切りの要素化", e))?;
+        .map_err(|e| to_error("convert the SplitView divider to UIElement", e))?;
     let _ = element.SetHorizontalAlignment(HorizontalAlignment::Stretch);
     let _ = element.SetVerticalAlignment(VerticalAlignment::Stretch);
     Ok(divider)
@@ -500,23 +501,23 @@ fn define_tracks(native: &XamlGrid, orientation: Orientation) -> Result<()> {
     ];
     for length in lengths {
         if orientation.is_vertical() {
-            let row = RowDefinition::new().map_err(|e| to_error("SplitView の行の生成", e))?;
+            let row = RowDefinition::new().map_err(|e| to_error("create the SplitView row", e))?;
             row.SetHeight(length)
-                .map_err(|e| to_error("SplitView の行の設定", e))?;
+                .map_err(|e| to_error("set the SplitView row", e))?;
             native
                 .RowDefinitions()
                 .and_then(|rows| rows.Append(&row))
-                .map_err(|e| to_error("SplitView の行の追加", e))?;
+                .map_err(|e| to_error("add the SplitView row", e))?;
         } else {
             let column =
-                ColumnDefinition::new().map_err(|e| to_error("SplitView の列の生成", e))?;
+                ColumnDefinition::new().map_err(|e| to_error("create the SplitView column", e))?;
             column
                 .SetWidth(length)
-                .map_err(|e| to_error("SplitView の列の設定", e))?;
+                .map_err(|e| to_error("set the SplitView column", e))?;
             native
                 .ColumnDefinitions()
                 .and_then(|columns| columns.Append(&column))
-                .map_err(|e| to_error("SplitView の列の追加", e))?;
+                .map_err(|e| to_error("add the SplitView column", e))?;
         }
     }
     Ok(())
@@ -526,11 +527,11 @@ fn define_tracks(native: &XamlGrid, orientation: Orientation) -> Result<()> {
 fn place(element: &UIElement, index: i32, orientation: Orientation) -> Result<()> {
     let framework = element
         .cast::<FrameworkElement>()
-        .map_err(|e| to_error("SplitView の配置", e))?;
+        .map_err(|e| to_error("place the SplitView", e))?;
     if orientation.is_vertical() {
-        XamlGrid::SetRow(&framework, index).map_err(|e| to_error("SplitView の配置", e))?;
+        XamlGrid::SetRow(&framework, index).map_err(|e| to_error("place the SplitView", e))?;
     } else {
-        XamlGrid::SetColumn(&framework, index).map_err(|e| to_error("SplitView の配置", e))?;
+        XamlGrid::SetColumn(&framework, index).map_err(|e| to_error("place the SplitView", e))?;
     }
     Ok(())
 }

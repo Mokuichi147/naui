@@ -95,7 +95,7 @@ struct LayoutState {
 fn element_key(element: &UIElement) -> usize {
     let unknown = element
         .cast::<windows_core::IUnknown>()
-        .expect("UIElement は IUnknown へ変換できる");
+        .expect("a UIElement converts to IUnknown");
     Interface::as_raw(&unknown) as usize
 }
 
@@ -674,7 +674,7 @@ impl_widget!(Spacer, native);
 
 impl Spacer {
     pub(crate) fn new() -> Result<Self> {
-        let native = XamlGrid::new().map_err(|e| to_error("Spacer の生成", e))?;
+        let native = XamlGrid::new().map_err(|e| to_error("create the Spacer", e))?;
         let this = Self(Rc::new(SpacerInner { native }));
         this.set_sizing(Sizing::fill());
         Ok(this)
@@ -729,7 +729,7 @@ impl_widget!(Grid, native);
 
 impl Grid {
     pub(crate) fn new() -> Result<Self> {
-        let native = XamlGrid::new().map_err(|e| to_error("Grid の生成", e))?;
+        let native = XamlGrid::new().map_err(|e| to_error("create the Grid", e))?;
         Ok(Self(Rc::new(GridInner {
             native,
             children: RefCell::new(Vec::new()),
@@ -1354,7 +1354,7 @@ fn track_scroll_pointer(scroll: &Scroll) -> Result<()> {
         .0
         .native
         .PointerEntered(&entered)
-        .map_err(|e| to_error("Scroll のポインター購読", e))?;
+        .map_err(|e| to_error("subscribe to Scroll pointer events", e))?;
 
     let exited_state = scroll.0.hovered.clone();
     let exited = PointerEventHandler::new(move |_, _| {
@@ -1365,7 +1365,7 @@ fn track_scroll_pointer(scroll: &Scroll) -> Result<()> {
         .0
         .native
         .PointerExited(&exited)
-        .map_err(|e| to_error("Scroll のポインター購読", e))?;
+        .map_err(|e| to_error("subscribe to Scroll pointer events", e))?;
 
     // タブ切り替えなどで PointerEntered が発生しない場合にも、次のホイール
     // 入力までに対象を確定できるよう PointerMoved で補正する。
@@ -1382,7 +1382,7 @@ fn track_scroll_pointer(scroll: &Scroll) -> Result<()> {
         .0
         .native
         .PointerMoved(&moved)
-        .map_err(|e| to_error("Scroll のポインター購読", e))?;
+        .map_err(|e| to_error("subscribe to Scroll pointer events", e))?;
 
     Ok(())
 }
@@ -1487,7 +1487,7 @@ fn set_scroll_mode(native: &ScrollViewer, horizontal: ScrollPolicy, vertical: Sc
 
 impl Scroll {
     pub(crate) fn new() -> Result<Self> {
-        let native = ScrollViewer::new().map_err(|e| to_error("ScrollViewer の生成", e))?;
+        let native = ScrollViewer::new().map_err(|e| to_error("create the ScrollViewer", e))?;
         let this = Self(Rc::new(ScrollInner {
             native,
             child: RefCell::new(None),
@@ -1517,7 +1517,7 @@ impl Scroll {
         self.0
             .native
             .ViewChanged(&changed)
-            .map_err(|e| to_error("Scroll の位置の購読", e))?;
+            .map_err(|e| to_error("subscribe to Scroll position changes", e))?;
 
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let resized = SizeChangedEventHandler::new(move |_, _| {
@@ -1531,7 +1531,7 @@ impl Scroll {
         self.0
             .native
             .SizeChanged(&resized)
-            .map_err(|e| to_error("Scroll の大きさの購読", e))?;
+            .map_err(|e| to_error("subscribe to Scroll size changes", e))?;
         Ok(())
     }
 
