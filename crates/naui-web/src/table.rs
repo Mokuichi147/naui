@@ -824,7 +824,7 @@ impl Table {
             .head
             .append_child(&row)
             .map(|_| ())
-            .map_err(|e| crate::to_error("テーブルの見出しの組み立て", e))
+            .map_err(|e| crate::to_error("build the table header", e))
     }
 
     /// Rebuilds the `<tbody>` for just the current window.

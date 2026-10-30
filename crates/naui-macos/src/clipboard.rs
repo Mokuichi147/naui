@@ -33,8 +33,8 @@ impl Clipboard {
             Ok(())
         } else {
             Err(Error::new(
-                "クリップボードへの書き込み",
-                "NSPasteboard が受け付けませんでした",
+                "write to the clipboard",
+                "NSPasteboard did not accept the text",
             ))
         };
         self.tasks.spawn(async move { f(result) });

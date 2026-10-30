@@ -137,13 +137,13 @@ fn build_entry(
 ) -> Result<MenuEntry> {
     let text = HSTRING::from(entry.label.as_str());
     if let Some(children) = &entry.submenu {
-        let native = MenuFlyoutSubItem::new().map_err(|e| to_error("サブメニューの生成", e))?;
+        let native = MenuFlyoutSubItem::new().map_err(|e| to_error("create the submenu", e))?;
         native
             .SetText(&text)
-            .map_err(|e| to_error("サブメニューの文字設定", e))?;
+            .map_err(|e| to_error("set the submenu text", e))?;
         let items = native
             .Items()
-            .map_err(|e| to_error("サブメニューの項目", e))?;
+            .map_err(|e| to_error("get the submenu items", e))?;
         build_entries(&items, children, path, enabled, on_click, built);
         return Ok(MenuEntry::Submenu(native));
     }
@@ -156,29 +156,30 @@ fn build_entry(
     let handler = on_click(path.clone());
     if let Some(checked) = entry.checked {
         // 押されると `ToggleMenuFlyoutItem` が自分で印を反転してから Click が来る。
-        let native = ToggleMenuFlyoutItem::new().map_err(|e| to_error("メニュー項目の生成", e))?;
+        let native =
+            ToggleMenuFlyoutItem::new().map_err(|e| to_error("create the menu item", e))?;
         native
             .SetText(&text)
-            .map_err(|e| to_error("メニュー項目の文字設定", e))?;
+            .map_err(|e| to_error("set the menu item text", e))?;
         let _ = native.SetIsChecked(checked);
         if let Some(shortcut) = &shortcut {
             let _ = native.SetKeyboardAcceleratorTextOverride(shortcut);
         }
         native
             .Click(&handler)
-            .map_err(|e| to_error("メニュー項目の購読", e))?;
+            .map_err(|e| to_error("subscribe to the menu item", e))?;
         Ok(MenuEntry::Toggle(native))
     } else {
-        let native = MenuFlyoutItem::new().map_err(|e| to_error("メニュー項目の生成", e))?;
+        let native = MenuFlyoutItem::new().map_err(|e| to_error("create the menu item", e))?;
         native
             .SetText(&text)
-            .map_err(|e| to_error("メニュー項目の文字設定", e))?;
+            .map_err(|e| to_error("set the menu item text", e))?;
         if let Some(shortcut) = &shortcut {
             let _ = native.SetKeyboardAcceleratorTextOverride(shortcut);
         }
         native
             .Click(&handler)
-            .map_err(|e| to_error("メニュー項目の購読", e))?;
+            .map_err(|e| to_error("subscribe to the menu item", e))?;
         Ok(MenuEntry::Item(native))
     }
 }
@@ -491,11 +492,11 @@ fn title_button(title: &str) -> Result<XamlButton> {
         .and_then(|element| element.cast::<XamlButton>())
     {
         Ok(button) => button,
-        Err(_) => XamlButton::new().map_err(|e| to_error("メニュー見出しの生成", e))?,
+        Err(_) => XamlButton::new().map_err(|e| to_error("create the menu title", e))?,
     };
     button
         .SetContent(&text_block(title)?)
-        .map_err(|e| to_error("メニュー見出しの文字設定", e))?;
+        .map_err(|e| to_error("set the menu title text", e))?;
     Ok(button)
 }
 

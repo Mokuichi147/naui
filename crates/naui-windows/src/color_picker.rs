@@ -113,10 +113,10 @@ impl ColorPicker {
         let swatch: SolidColorBrush = find(&native, "Swatch")?;
         picker
             .SetIsAlphaEnabled(false)
-            .map_err(|e| to_error("ColorPicker の初期化", e))?;
+            .map_err(|e| to_error("initialize the ColorPicker", e))?;
         picker
             .SetColor(to_win_color(Color::BLACK))
-            .map_err(|e| to_error("ColorPicker の初期化", e))?;
+            .map_err(|e| to_error("initialize the ColorPicker", e))?;
 
         let this = Self(Rc::new(ColorPickerInner {
             native,
@@ -157,7 +157,7 @@ impl ColorPicker {
         self.0
             .picker
             .ColorChanged(&changed)
-            .map_err(|e| to_error("ColorPicker の購読", e))?;
+            .map_err(|e| to_error("subscribe to the ColorPicker", e))?;
         Ok(())
     }
 
@@ -200,14 +200,14 @@ impl ColorPicker {
 fn load_button() -> Result<FrameworkElement> {
     XamlReader::Load(&HSTRING::from(COLOR_PICKER_XAML))
         .and_then(|element| element.cast::<FrameworkElement>())
-        .map_err(|e| to_error("色ピッカーの生成", e))
+        .map_err(|e| to_error("create the color picker", e))
 }
 
 /// Looks up an inner element by its XAML `x:Name`.
 fn find<T: Interface>(root: &FrameworkElement, name: &str) -> Result<T> {
     root.FindName(&HSTRING::from(name))
         .and_then(|value| value.cast::<T>())
-        .map_err(|e| to_error("色ピッカーの組み立て", e))
+        .map_err(|e| to_error("build the color picker", e))
 }
 
 fn to_win_color(color: Color) -> WinColor {

@@ -213,7 +213,7 @@ fn build_surface() -> Result<(Border, ListView)> {
     match load_surface() {
         Ok(surface) => Ok(surface),
         Err(error) => {
-            eprintln!("naui-windows: リストのテーマ付き枠の生成に失敗: {error}");
+            eprintln!("naui-windows: failed to create the themed list frame: {error}");
             plain_surface()
         }
     }
@@ -222,20 +222,20 @@ fn build_surface() -> Result<(Border, ListView)> {
 fn load_surface() -> Result<(Border, ListView)> {
     let native = XamlReader::Load(&HSTRING::from(SURFACE_XAML))
         .and_then(|element| element.cast::<Border>())
-        .map_err(|e| to_error("List の枠の生成", e))?;
+        .map_err(|e| to_error("create the List frame", e))?;
     let list_view = native
         .Child()
         .and_then(|child| child.cast::<ListView>())
-        .map_err(|e| to_error("List の ListView の取得", e))?;
+        .map_err(|e| to_error("get the List's ListView", e))?;
     Ok((native, list_view))
 }
 
 fn plain_surface() -> Result<(Border, ListView)> {
-    let list_view = ListView::new().map_err(|e| to_error("ListView の生成", e))?;
-    let native = Border::new().map_err(|e| to_error("List の Border 生成", e))?;
+    let list_view = ListView::new().map_err(|e| to_error("create the ListView", e))?;
+    let native = Border::new().map_err(|e| to_error("create the List Border", e))?;
     native
         .SetChild(&list_view)
-        .map_err(|e| to_error("List の Border への追加", e))?;
+        .map_err(|e| to_error("add to the List Border", e))?;
     Ok((native, list_view))
 }
 
@@ -343,7 +343,7 @@ impl List {
         let (native, list_view) = build_surface()?;
         list_view
             .SetSelectionMode(ListViewSelectionMode::Single)
-            .map_err(|e| to_error("ListView の選択方法の設定", e))?;
+            .map_err(|e| to_error("set the ListView selection mode", e))?;
         // 横スクロールは持たせない (行は幅いっぱいに広げる)。
         let _ = ScrollViewer::SetHorizontalScrollBarVisibility2(
             &list_view,
@@ -391,7 +391,7 @@ impl List {
         this.0
             .list_view
             .SelectionChanged(&handler)
-            .map_err(|e| to_error("ListView の購読", e))?;
+            .map_err(|e| to_error("subscribe to the ListView", e))?;
         this.install_wheel_target()?;
 
         // `layout` のホイール補助は、子要素の上でも `ScrollViewer` を動かせる
@@ -410,11 +410,11 @@ impl List {
         this.0
             .native
             .PointerEntered(&entered)
-            .map_err(|e| to_error("List のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to List pointer events", e))?;
         this.0
             .native
             .PointerExited(&exited)
-            .map_err(|e| to_error("List のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to List pointer events", e))?;
 
         // タブの切り替えなどで PointerEntered が発生しないままポインターが
         // List 上へ移動する場合がある。その場合も次のホイール入力より前に
@@ -431,7 +431,7 @@ impl List {
         this.0
             .native
             .PointerMoved(&moved)
-            .map_err(|e| to_error("List のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to List pointer events", e))?;
         Ok(this)
     }
 
@@ -454,7 +454,7 @@ impl List {
         self.0
             .list_view
             .Loaded(&loaded)
-            .map_err(|e| to_error("List の表示の購読", e))?;
+            .map_err(|e| to_error("subscribe to List Loaded", e))?;
         Ok(())
     }
 
@@ -490,20 +490,20 @@ impl List {
             .0
             .list_view
             .Items()
-            .map_err(|e| to_error("行の取得", e))?;
+            .map_err(|e| to_error("get the rows", e))?;
         self.release_row_contents();
         self.without_notifying(|_| children.Clear())
-            .map_err(|e| to_error("行の消去", e))?;
+            .map_err(|e| to_error("clear the rows", e))?;
         self.0.native_rows.borrow_mut().clear();
 
         let mut native_rows = Vec::with_capacity(rows.len());
         for (index, row) in rows.iter().enumerate() {
-            let native = ListViewItem::new().map_err(|e| to_error("ListViewItem の生成", e))?;
+            let native = ListViewItem::new().map_err(|e| to_error("create the ListViewItem", e))?;
             let _ = native.SetPadding(ROW_PADDING);
             let host = row_host(row)?;
             native
                 .SetContent(&host)
-                .map_err(|e| to_error("行への内容設定", e))?;
+                .map_err(|e| to_error("set the row content", e))?;
             // 選べないだけの行は中のコントロールを押せる必要があるので、
             // 無効にするのは `ListItem::enabled(false)` の行だけ。
             let _ = native.SetIsEnabled(!row.is_disabled_item());
@@ -512,9 +512,9 @@ impl List {
 
             let element = native
                 .cast::<IInspectable>()
-                .map_err(|e| to_error("行の要素化", e))?;
+                .map_err(|e| to_error("convert the row to UIElement", e))?;
             self.without_notifying(|_| children.Append(&element))
-                .map_err(|e| to_error("行の追加", e))?;
+                .map_err(|e| to_error("add the row", e))?;
             native_rows.push(native);
         }
         *self.0.native_rows.borrow_mut() = native_rows;
@@ -544,7 +544,7 @@ impl List {
         });
         native
             .DoubleTapped(&double)
-            .map_err(|e| to_error("行のダブルクリックの購読", e))?;
+            .map_err(|e| to_error("subscribe to row double clicks", e))?;
 
         let activate = self.0.row_activate.clone();
         let keyed = KeyEventHandler::new(move |sender, args| {
@@ -572,7 +572,7 @@ impl List {
         });
         native
             .KeyDown(&keyed)
-            .map_err(|e| to_error("行のキー操作の購読", e))?;
+            .map_err(|e| to_error("subscribe to row key presses", e))?;
 
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let requested = TypedEventHandler::new(
@@ -598,7 +598,7 @@ impl List {
         );
         native
             .ContextRequested(&requested)
-            .map_err(|e| to_error("行の文脈メニューの購読", e))?;
+            .map_err(|e| to_error("subscribe to the row context menu", e))?;
         Ok(())
     }
 
@@ -826,12 +826,14 @@ fn row_host(row: &ListRow) -> Result<XamlGrid> {
         Ok(host) => host,
         // 透明な背景を持てないと余白では押せなくなるが、
         // 文字やアイコンの上では届くので動作を優先する。
-        Err(_) => XamlGrid::new().map_err(|e| to_error("行の器の生成", e))?,
+        Err(_) => XamlGrid::new().map_err(|e| to_error("create the row container", e))?,
     };
-    let children = host.Children().map_err(|e| to_error("行の器の取得", e))?;
+    let children = host
+        .Children()
+        .map_err(|e| to_error("get the row container", e))?;
     children
         .Append(&row_content(row)?)
-        .map_err(|e| to_error("行への追加", e))?;
+        .map_err(|e| to_error("add to the row", e))?;
 
     let activation = row.activation.clone();
     let handler = PointerEventHandler::new(move |_sender, args| {
@@ -909,7 +911,7 @@ const DETAIL_SPACING: f64 = 2.0;
 /// [`TextStyle::Caption`] and [`TextColor::Secondary`], so they are not written
 /// here.
 pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
-    let block = TextBlock::new().map_err(|e| to_error("行ラベルの生成", e))?;
+    let block = TextBlock::new().map_err(|e| to_error("create the row label", e))?;
     if secondary {
         if let Some(style) = label_style(TextStyle::Caption, TextColor::Secondary) {
             let _ = block.SetStyle(&style);
@@ -917,7 +919,7 @@ pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
     }
     block
         .SetText(&HSTRING::from(text))
-        .map_err(|e| to_error("行ラベルの設定", e))?;
+        .map_err(|e| to_error("set the row label", e))?;
     Ok(block)
 }
 

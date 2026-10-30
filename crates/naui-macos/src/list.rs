@@ -523,7 +523,7 @@ fn native_field(label: &Label) -> Retained<NSTextField> {
     label
         .native_view()
         .downcast()
-        .expect("ラベルは NSTextField である")
+        .expect("the label is an NSTextField")
 }
 
 /// Creates an `NSTableCellView` holding one content view.

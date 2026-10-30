@@ -95,14 +95,14 @@ impl_widget!(FilePicker, native);
 
 impl FilePicker {
     pub(crate) fn new(text: &str) -> Result<Self> {
-        let native = XamlButton::new().map_err(|e| to_error("Button の生成", e))?;
-        let label = TextBlock::new().map_err(|e| to_error("Button ラベルの生成", e))?;
+        let native = XamlButton::new().map_err(|e| to_error("create the Button", e))?;
+        let label = TextBlock::new().map_err(|e| to_error("create the Button label", e))?;
         label
             .SetText(&HSTRING::from(text))
-            .map_err(|e| to_error("Button ラベルの設定", e))?;
+            .map_err(|e| to_error("set the Button label", e))?;
         native
             .SetContent(&label)
-            .map_err(|e| to_error("Button への内容設定", e))?;
+            .map_err(|e| to_error("set the Button content", e))?;
 
         let this = Self(Rc::new(FilePickerInner {
             native,

@@ -45,11 +45,11 @@ impl Clipboard {
 }
 
 fn write(text: &str) -> Result<()> {
-    let package = DataPackage::new().map_err(|e| to_error("クリップボードの中身の生成", e))?;
+    let package = DataPackage::new().map_err(|e| to_error("create the clipboard contents", e))?;
     package
         .SetText(&HSTRING::from(text))
-        .map_err(|e| to_error("クリップボードの中身の設定", e))?;
-    WinClipboard::SetContent(&package).map_err(|e| to_error("クリップボードへの書き込み", e))?;
+        .map_err(|e| to_error("set the clipboard contents", e))?;
+    WinClipboard::SetContent(&package).map_err(|e| to_error("write to the clipboard", e))?;
     let _ = WinClipboard::Flush();
     Ok(())
 }

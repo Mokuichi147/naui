@@ -70,18 +70,18 @@ impl_widget!(Expander, native);
 
 impl Expander {
     pub(crate) fn new(text: &str) -> Result<Self> {
-        let native = XamlExpander::new().map_err(|e| to_error("Expander の生成", e))?;
+        let native = XamlExpander::new().map_err(|e| to_error("create the Expander", e))?;
         native
             .SetHorizontalAlignment(HorizontalAlignment::Stretch)
             .and_then(|()| native.SetHorizontalContentAlignment(HorizontalAlignment::Stretch))
-            .map_err(|e| to_error("Expander の配置設定", e))?;
-        let label = TextBlock::new().map_err(|e| to_error("見出しの生成", e))?;
+            .map_err(|e| to_error("set the Expander alignment", e))?;
+        let label = TextBlock::new().map_err(|e| to_error("create the header", e))?;
         label
             .SetText(&HSTRING::from(text))
-            .map_err(|e| to_error("見出しの設定", e))?;
+            .map_err(|e| to_error("set the header", e))?;
         native
             .SetHeader(&label)
-            .map_err(|e| to_error("Expander の見出し設定", e))?;
+            .map_err(|e| to_error("set the Expander header", e))?;
 
         let this = Self(Rc::new(ExpanderInner {
             native,
@@ -111,7 +111,7 @@ impl Expander {
         self.0
             .native
             .Expanding(&expanding)
-            .map_err(|e| to_error("Expander の展開購読", e))?;
+            .map_err(|e| to_error("subscribe to Expander expanding", e))?;
 
         let collapsed_target = Arc::new(UiThreadCell::new(Rc::downgrade(&self.0)));
         let collapsed =
@@ -128,7 +128,7 @@ impl Expander {
         self.0
             .native
             .Collapsed(&collapsed)
-            .map_err(|e| to_error("Expander の折りたたみ購読", e))?;
+            .map_err(|e| to_error("subscribe to Expander collapsing", e))?;
         Ok(())
     }
 

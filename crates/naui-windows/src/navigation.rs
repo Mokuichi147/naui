@@ -93,19 +93,19 @@ impl SelectHandler {
 
 /// Creates a `TextBlock` holding the string.
 pub(crate) fn text_block(text: &str) -> Result<TextBlock> {
-    let block = TextBlock::new().map_err(|e| to_error("TextBlock の生成", e))?;
+    let block = TextBlock::new().map_err(|e| to_error("create the TextBlock", e))?;
     block
         .SetText(&HSTRING::from(text))
-        .map_err(|e| to_error("TextBlock への設定", e))?;
+        .map_err(|e| to_error("set the TextBlock text", e))?;
     Ok(block)
 }
 
 /// Creates a `StackPanel` laying out horizontally or vertically.
 pub(crate) fn panel(orientation: XamlOrientation, spacing: f64) -> Result<StackPanel> {
-    let panel = StackPanel::new().map_err(|e| to_error("StackPanel の生成", e))?;
+    let panel = StackPanel::new().map_err(|e| to_error("create the StackPanel", e))?;
     panel
         .SetOrientation(orientation)
-        .map_err(|e| to_error("StackPanel の向き設定", e))?;
+        .map_err(|e| to_error("set the StackPanel orientation", e))?;
     let _ = panel.SetSpacing(spacing);
     if orientation == XamlOrientation::Horizontal {
         let _ = panel.SetVerticalAlignment(VerticalAlignment::Center);
@@ -117,7 +117,7 @@ pub(crate) fn append(panel: &StackPanel, element: &UIElement) -> Result<()> {
     panel
         .Children()
         .and_then(|children| children.Append(element))
-        .map_err(|e| to_error("StackPanel への追加", e))
+        .map_err(|e| to_error("add to the StackPanel", e))
 }
 
 // -------------------------------------------------------------------- Bar
@@ -205,7 +205,7 @@ impl BarItem {
             Self::Toggle(button) => button.cast::<UIElement>(),
             Self::Navigation(item) => item.cast::<UIElement>(),
         }
-        .map_err(|e| to_error("項目の要素化", e))
+        .map_err(|e| to_error("convert the item to UIElement", e))
     }
 }
 
@@ -233,8 +233,10 @@ impl Bar {
             .0
             .panel
             .Children()
-            .map_err(|e| to_error("項目の取得", e))?;
-        children.Clear().map_err(|e| to_error("項目の消去", e))?;
+            .map_err(|e| to_error("get the items", e))?;
+        children
+            .Clear()
+            .map_err(|e| to_error("clear the items", e))?;
         self.0.buttons.borrow_mut().clear();
 
         let mut buttons = Vec::with_capacity(items.len());
@@ -269,10 +271,11 @@ impl Bar {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         match self.0.kind {
             BarKind::Toggle => {
-                let button = ToggleButton::new().map_err(|e| to_error("ToggleButton の生成", e))?;
+                let button =
+                    ToggleButton::new().map_err(|e| to_error("create the ToggleButton", e))?;
                 button
                     .SetContent(&text_block(&item.label)?)
-                    .map_err(|e| to_error("ToggleButton への内容設定", e))?;
+                    .map_err(|e| to_error("set the ToggleButton content", e))?;
                 let handler = RoutedEventHandler::new(move |_sender, _args| {
                     state.with_mut(|weak| {
                         if let Some(inner) = weak.upgrade() {
@@ -283,14 +286,15 @@ impl Bar {
                 });
                 button
                     .Click(&handler)
-                    .map_err(|e| to_error("ToggleButton の購読", e))?;
+                    .map_err(|e| to_error("subscribe to the ToggleButton", e))?;
                 Ok(BarItem::Toggle(button))
             }
             BarKind::Navigation => {
-                let entry = NavigationViewItem::new().map_err(|e| to_error("項目の生成", e))?;
+                let entry =
+                    NavigationViewItem::new().map_err(|e| to_error("create the item", e))?;
                 entry
                     .SetContent(&text_block(&item.label)?)
-                    .map_err(|e| to_error("項目への内容設定", e))?;
+                    .map_err(|e| to_error("set the item content", e))?;
                 let handler = TappedEventHandler::new(move |_sender, _args| {
                     state.with_mut(|weak| {
                         if let Some(inner) = weak.upgrade() {
@@ -301,7 +305,7 @@ impl Bar {
                 });
                 entry
                     .Tapped(&handler)
-                    .map_err(|e| to_error("項目の購読", e))?;
+                    .map_err(|e| to_error("subscribe to the item", e))?;
 
                 let key_state = UiThreadCell::new(Rc::downgrade(&self.0));
                 let keyed = KeyEventHandler::new(move |_sender, args| {
@@ -322,7 +326,7 @@ impl Bar {
                 });
                 entry
                     .KeyUp(&keyed)
-                    .map_err(|e| to_error("項目のキー操作の購読", e))?;
+                    .map_err(|e| to_error("subscribe to item key presses", e))?;
                 Ok(BarItem::Navigation(entry))
             }
         }
@@ -425,44 +429,46 @@ impl Tabs {
         // テンプレート適用時に Microsoft.UI.Xaml.dll が fail-fast する。
         // ToggleButton と Grid で構成すると、同じ API を保ったまま安定して
         // 実行でき、選択中の内容へウィンドウの余りの高さも渡せる。
-        let native = XamlGrid::new().map_err(|e| to_error("タブGridの生成", e))?;
+        let native = XamlGrid::new().map_err(|e| to_error("create the tab Grid", e))?;
         let headers = panel(XamlOrientation::Horizontal, 4.0)?;
-        let content = XamlGrid::new().map_err(|e| to_error("タブ内容Gridの生成", e))?;
+        let content = XamlGrid::new().map_err(|e| to_error("create the tab content Grid", e))?;
 
         let rows = native
             .RowDefinitions()
-            .map_err(|e| to_error("タブ行定義の取得", e))?;
-        let header_row = RowDefinition::new().map_err(|e| to_error("タブ見出し行の生成", e))?;
+            .map_err(|e| to_error("get the tab row definitions", e))?;
+        let header_row =
+            RowDefinition::new().map_err(|e| to_error("create the tab header row", e))?;
         header_row
             .SetHeight(GridLength {
                 Value: 1.0,
                 GridUnitType: GridUnitType::Auto,
             })
-            .map_err(|e| to_error("タブ見出し行の設定", e))?;
+            .map_err(|e| to_error("set the tab header row", e))?;
         rows.Append(&header_row)
-            .map_err(|e| to_error("タブ見出し行の追加", e))?;
-        let content_row = RowDefinition::new().map_err(|e| to_error("タブ内容行の生成", e))?;
+            .map_err(|e| to_error("add the tab header row", e))?;
+        let content_row =
+            RowDefinition::new().map_err(|e| to_error("create the tab content row", e))?;
         content_row
             .SetHeight(GridLength {
                 Value: 1.0,
                 GridUnitType: GridUnitType::Star,
             })
-            .map_err(|e| to_error("タブ内容行の設定", e))?;
+            .map_err(|e| to_error("set the tab content row", e))?;
         rows.Append(&content_row)
-            .map_err(|e| to_error("タブ内容行の追加", e))?;
+            .map_err(|e| to_error("add the tab content row", e))?;
 
         let headers_element = headers
             .cast::<UIElement>()
-            .map_err(|e| to_error("タブ見出しの要素化", e))?;
+            .map_err(|e| to_error("convert the tab headers to UIElement", e))?;
         let content_element = content
             .cast::<UIElement>()
-            .map_err(|e| to_error("タブ内容の要素化", e))?;
+            .map_err(|e| to_error("convert the tab content to UIElement", e))?;
         let headers_framework = headers
             .cast::<FrameworkElement>()
-            .map_err(|e| to_error("タブ見出しのレイアウト要素化", e))?;
+            .map_err(|e| to_error("convert the tab headers to FrameworkElement", e))?;
         let content_framework = content
             .cast::<FrameworkElement>()
-            .map_err(|e| to_error("タブ内容のレイアウト要素化", e))?;
+            .map_err(|e| to_error("convert the tab content to FrameworkElement", e))?;
         let _ = XamlGrid::SetRow(&headers_framework, 0);
         let _ = XamlGrid::SetRow(&content_framework, 1);
         let _ = content_framework.SetHorizontalAlignment(HorizontalAlignment::Stretch);
@@ -470,11 +476,11 @@ impl Tabs {
         native
             .Children()
             .and_then(|children| children.Append(&headers_element))
-            .map_err(|e| to_error("タブ見出しの追加", e))?;
+            .map_err(|e| to_error("add the tab headers", e))?;
         native
             .Children()
             .and_then(|children| children.Append(&content_element))
-            .map_err(|e| to_error("タブ内容の追加", e))?;
+            .map_err(|e| to_error("add the tab content", e))?;
 
         Ok(Self(Rc::new(TabsInner {
             native,
@@ -670,13 +676,13 @@ impl Navbar {
         let title_block = text_block(title)?;
         let element = title_block
             .cast::<UIElement>()
-            .map_err(|e| to_error("見出しの要素化", e))?;
+            .map_err(|e| to_error("convert the header to UIElement", e))?;
         append(&native, &element)?;
 
         let items = panel(XamlOrientation::Horizontal, 4.0)?;
         let element = items
             .cast::<UIElement>()
-            .map_err(|e| to_error("項目欄の要素化", e))?;
+            .map_err(|e| to_error("convert the item area to UIElement", e))?;
         append(&native, &element)?;
 
         Ok(Self(Rc::new(NavbarInner {
@@ -794,10 +800,10 @@ impl BreadcrumbBar {
             .0
             .panel
             .Children()
-            .map_err(|e| to_error("パンくず項目の取得", e))?;
+            .map_err(|e| to_error("get the breadcrumb items", e))?;
         children
             .Clear()
-            .map_err(|e| to_error("パンくず項目の消去", e))?;
+            .map_err(|e| to_error("clear the breadcrumb items", e))?;
         self.0.links.borrow_mut().clear();
         self.0.labels.borrow_mut().clear();
 
@@ -810,7 +816,7 @@ impl BreadcrumbBar {
 
             let link = crumb_button()?;
             link.SetContent(&crumb_label(&item.label, false)?)
-                .map_err(|e| to_error("パンくずリンクの内容設定", e))?;
+                .map_err(|e| to_error("set the breadcrumb link content", e))?;
             let _ = link.SetIsEnabled(item.enabled);
 
             let state = UiThreadCell::new(Rc::downgrade(&self.0));
@@ -823,11 +829,11 @@ impl BreadcrumbBar {
                 Ok(())
             });
             link.Click(&handler)
-                .map_err(|e| to_error("パンくずリンクの購読", e))?;
+                .map_err(|e| to_error("subscribe to the breadcrumb link", e))?;
 
             let element = link
                 .cast::<UIElement>()
-                .map_err(|e| to_error("パンくずリンクの要素化", e))?;
+                .map_err(|e| to_error("convert the breadcrumb link to UIElement", e))?;
             append(&self.0.panel, &element)?;
             links.push(link);
         }
@@ -901,7 +907,7 @@ impl Breadcrumbs {
                 Right: 0.0,
                 Bottom: 0.0,
             })
-            .map_err(|e| to_error("パンくずの配置設定", e))?;
+            .map_err(|e| to_error("set the breadcrumb alignment", e))?;
         Ok(Self(Rc::new(BreadcrumbsInner {
             native: native.clone(),
             bar: BreadcrumbBar::new(native),
@@ -951,7 +957,7 @@ fn crumb_button() -> Result<XamlButton> {
     let xaml = CRUMB_BUTTON_XAML.replace("{padding}", &CRUMB_PADDING_X.to_string());
     match XamlReader::Load(&HSTRING::from(xaml)).and_then(|element| element.cast::<XamlButton>()) {
         Ok(button) => Ok(button),
-        Err(_) => XamlButton::new().map_err(|e| to_error("パンくずリンクの生成", e)),
+        Err(_) => XamlButton::new().map_err(|e| to_error("create the breadcrumb link", e)),
     }
 }
 
@@ -965,10 +971,10 @@ fn crumb_separator() -> Result<UIElement> {
     let separator = text_block("›")?;
     separator
         .SetVerticalAlignment(VerticalAlignment::Center)
-        .map_err(|e| to_error("パンくず区切りの縦位置設定", e))?;
+        .map_err(|e| to_error("set the breadcrumb separator's vertical alignment", e))?;
     separator
         .cast::<UIElement>()
-        .map_err(|e| to_error("パンくず区切りの要素化", e))
+        .map_err(|e| to_error("convert the breadcrumb separator to UIElement", e))
 }
 
 /// The text of a breadcrumb item. With `current`, it gets the current position's
@@ -984,11 +990,11 @@ fn crumb_label(text: &str, current: bool) -> Result<TextBlock> {
     {
         Ok(block) => block,
         // 色が引けなくても文字は出す。
-        Err(_) => TextBlock::new().map_err(|e| to_error("パンくずの文字の生成", e))?,
+        Err(_) => TextBlock::new().map_err(|e| to_error("create the breadcrumb text", e))?,
     };
     block
         .SetText(&HSTRING::from(text))
-        .map_err(|e| to_error("パンくずの文字の設定", e))?;
+        .map_err(|e| to_error("set the breadcrumb text", e))?;
     Ok(block)
 }
 
@@ -1012,19 +1018,20 @@ impl Pagination {
         let native = panel(XamlOrientation::Horizontal, 4.0)?;
         let numbers = panel(XamlOrientation::Horizontal, 4.0)?;
 
-        let prev = XamlButton::new().map_err(|e| to_error("Button の生成", e))?;
+        let prev = XamlButton::new().map_err(|e| to_error("create the Button", e))?;
         prev.SetContent(&text_block("‹")?)
-            .map_err(|e| to_error("Button への内容設定", e))?;
-        let next = XamlButton::new().map_err(|e| to_error("Button の生成", e))?;
+            .map_err(|e| to_error("set the Button content", e))?;
+        let next = XamlButton::new().map_err(|e| to_error("create the Button", e))?;
         next.SetContent(&text_block("›")?)
-            .map_err(|e| to_error("Button への内容設定", e))?;
+            .map_err(|e| to_error("set the Button content", e))?;
 
         for element in [
             prev.cast::<UIElement>(),
             numbers.cast::<UIElement>(),
             next.cast::<UIElement>(),
         ] {
-            let element = element.map_err(|e| to_error("ページ送りの要素化", e))?;
+            let element =
+                element.map_err(|e| to_error("convert the pagination to UIElement", e))?;
             append(&native, &element)?;
         }
 
@@ -1051,7 +1058,7 @@ impl Pagination {
             });
             button
                 .Click(&handler)
-                .map_err(|e| to_error("ページ送りの購読", e))?;
+                .map_err(|e| to_error("subscribe to pagination", e))?;
         }
 
         this.set_page_count(page_count);
@@ -1126,11 +1133,12 @@ impl_widget!(Link, native);
 
 impl Link {
     pub(crate) fn new(text: &str, href: &str) -> Result<Self> {
-        let native = HyperlinkButton::new().map_err(|e| to_error("HyperlinkButton の生成", e))?;
+        let native =
+            HyperlinkButton::new().map_err(|e| to_error("create the HyperlinkButton", e))?;
         let label = text_block(text)?;
         native
             .SetContent(&label)
-            .map_err(|e| to_error("HyperlinkButton への内容設定", e))?;
+            .map_err(|e| to_error("set the HyperlinkButton content", e))?;
 
         let this = Self(Rc::new(LinkInner {
             native,

@@ -75,7 +75,7 @@ pub struct PopupMenu(Rc<PopupMenuInner>);
 
 impl PopupMenu {
     pub(crate) fn new() -> Result<Self> {
-        let flyout = MenuFlyout::new().map_err(|e| to_error("MenuFlyout の生成", e))?;
+        let flyout = MenuFlyout::new().map_err(|e| to_error("create the MenuFlyout", e))?;
         Ok(Self(Rc::new(PopupMenuInner {
             flyout,
             items: RefCell::new(Vec::new()),

@@ -33,7 +33,7 @@ pub(crate) fn generate(fragments: &[&str]) -> Result<String, String> {
     );
     for fragment in fragments {
         let document = roxmltree::Document::parse(fragment)
-            .map_err(|e| format!("package.appxfragment を読めません: {e}"))?;
+            .map_err(|e| format!("cannot read package.appxfragment: {e}"))?;
         let extensions = document
             .root_element()
             .children()
@@ -104,12 +104,12 @@ fn child_text<'a>(node: &roxmltree::Node<'a, '_>, name: &str) -> Result<&'a str,
         .find(|child| is(child, name))
         .and_then(|child| child.text())
         .map(str::trim)
-        .ok_or_else(|| format!("package.appxfragment の {name} がありません"))
+        .ok_or_else(|| format!("package.appxfragment has no {name}"))
 }
 
 fn attribute<'a>(node: &roxmltree::Node<'a, '_>, name: &str) -> Result<&'a str, String> {
     node.attribute(name)
-        .ok_or_else(|| format!("package.appxfragment の {name} 属性がありません"))
+        .ok_or_else(|| format!("package.appxfragment has no {name} attribute"))
 }
 
 /// Makes it writable as an attribute value enclosed in single quotes.

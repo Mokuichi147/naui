@@ -143,11 +143,11 @@ impl<T: Send + 'static> Sender<T> {
     /// has finished.
     pub fn send(&self, value: T) -> Result<()> {
         if !self.shared.dispatch.is_alive() {
-            return Err(AppDispatch::closed("UI スレッドへの送信"));
+            return Err(AppDispatch::closed("send to the UI thread"));
         }
         self.shared.push(value);
         if !self.shared.schedule() {
-            return Err(AppDispatch::closed("UI スレッドへの送信"));
+            return Err(AppDispatch::closed("send to the UI thread"));
         }
         Ok(())
     }

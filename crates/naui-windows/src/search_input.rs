@@ -92,7 +92,7 @@ impl SearchInput {
         self.0
             .native
             .TextChanged(&changed)
-            .map_err(|e| to_error("AutoSuggestBox の変更購読", e))?;
+            .map_err(|e| to_error("subscribe to AutoSuggestBox text changes", e))?;
 
         let target = Arc::new(UiThreadCell::new(Rc::downgrade(&self.0)));
         let submitted =
@@ -117,7 +117,7 @@ impl SearchInput {
         self.0
             .native
             .QuerySubmitted(&submitted)
-            .map_err(|e| to_error("AutoSuggestBox の確定購読", e))?;
+            .map_err(|e| to_error("subscribe to AutoSuggestBox query submission", e))?;
         Ok(())
     }
 
@@ -160,5 +160,5 @@ impl SearchInput {
 fn load_auto_suggest_box() -> Result<AutoSuggestBox> {
     XamlReader::Load(&HSTRING::from(AUTO_SUGGEST_BOX_XAML))
         .and_then(|element| element.cast::<AutoSuggestBox>())
-        .map_err(|e| to_error("AutoSuggestBox の生成", e))
+        .map_err(|e| to_error("create the AutoSuggestBox", e))
 }

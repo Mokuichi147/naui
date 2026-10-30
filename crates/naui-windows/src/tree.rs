@@ -184,13 +184,15 @@ impl Tree {
         let (native, tree_view) = build_surface()?;
         tree_view
             .SetSelectionMode(TreeViewSelectionMode::Single)
-            .map_err(|e| to_error("ツリーの選択方法の設定", e))?;
+            .map_err(|e| to_error("set the tree selection mode", e))?;
         match item_template() {
             Ok(template) => tree_view
                 .SetItemTemplate(&template)
-                .map_err(|e| to_error("ツリーの行のテンプレートの設定", e))?,
+                .map_err(|e| to_error("set the tree row template", e))?,
             // 読めなくても動きは保てるので、見た目を諦めて先へ進む。
-            Err(error) => eprintln!("naui-windows: ツリーの行のテンプレートの生成に失敗: {error}"),
+            Err(error) => {
+                eprintln!("naui-windows: failed to create the tree row template: {error}")
+            }
         }
         let hovered = Arc::new(UiThreadCell::new(0));
 
@@ -230,7 +232,7 @@ impl Tree {
         });
         *self.0.expanded.borrow_mut() = expanded;
         if let Err(error) = self.rebuild() {
-            eprintln!("naui-windows: ツリーの組み立てに失敗: {error}");
+            eprintln!("naui-windows: failed to build the tree: {error}");
         }
     }
 
@@ -387,7 +389,7 @@ impl Tree {
         self.0
             .tree_view
             .SelectionChanged(&handler)
-            .map_err(|e| to_error("ツリーの購読", e))?;
+            .map_err(|e| to_error("subscribe to the tree", e))?;
         Ok(())
     }
 
@@ -410,7 +412,7 @@ impl Tree {
         self.0
             .tree_view
             .Expanding(&expanding)
-            .map_err(|e| to_error("ツリーの開閉の購読", e))?;
+            .map_err(|e| to_error("subscribe to tree expanding and collapsing", e))?;
 
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let collapsed =
@@ -429,7 +431,7 @@ impl Tree {
         self.0
             .tree_view
             .Collapsed(&collapsed)
-            .map_err(|e| to_error("ツリーの開閉の購読", e))?;
+            .map_err(|e| to_error("subscribe to tree expanding and collapsing", e))?;
         Ok(())
     }
 
@@ -457,7 +459,7 @@ impl Tree {
         self.0
             .tree_view
             .Loaded(&loaded)
-            .map_err(|e| to_error("ツリーの表示の購読", e))?;
+            .map_err(|e| to_error("subscribe to tree Loaded", e))?;
         Ok(())
     }
 
@@ -501,15 +503,15 @@ impl Tree {
         self.0
             .native
             .PointerEntered(&entered)
-            .map_err(|e| to_error("ツリーのポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to tree pointer events", e))?;
         self.0
             .native
             .PointerExited(&exited)
-            .map_err(|e| to_error("ツリーのポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to tree pointer events", e))?;
         self.0
             .native
             .PointerMoved(&moved)
-            .map_err(|e| to_error("ツリーのポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to tree pointer events", e))?;
         Ok(())
     }
 
@@ -525,7 +527,7 @@ impl Tree {
                     .tree_view
                     .RootNodes()
                     .and_then(|roots| roots.Clear())
-                    .map_err(|e| to_error("ツリーの消去", e))?;
+                    .map_err(|e| to_error("clear the tree", e))?;
                 let mut path = Vec::new();
                 append_nodes(&this.0.tree_view, None, &items, true, &mut path, &mut nodes)
             })?;
@@ -825,19 +827,19 @@ fn append_nodes(
         Some(node) => node.Children(),
         None => tree_view.RootNodes(),
     }
-    .map_err(|e| to_error("ツリーの子の取得", e))?;
+    .map_err(|e| to_error("get the tree children", e))?;
     for (index, item) in items.iter().enumerate() {
         path.push(index);
         let selectable = enabled && item.enabled;
-        let node = TreeViewNode::new().map_err(|e| to_error("TreeViewNode の生成", e))?;
+        let node = TreeViewNode::new().map_err(|e| to_error("create the TreeViewNode", e))?;
         let content = row_content(item, selectable)?
             .cast::<IInspectable>()
-            .map_err(|e| to_error("行の要素化", e))?;
+            .map_err(|e| to_error("convert the row to UIElement", e))?;
         node.SetContent(&content)
-            .map_err(|e| to_error("行の内容設定", e))?;
+            .map_err(|e| to_error("set the row content", e))?;
         target
             .Append(&node)
-            .map_err(|e| to_error("ツリーへの追加", e))?;
+            .map_err(|e| to_error("add to the tree", e))?;
         out.push((path.clone(), node.clone()));
         append_nodes(
             tree_view,
@@ -866,10 +868,10 @@ fn row_content(item: &TreeItem, selectable: bool) -> Result<UIElement> {
     blocker
         .Children()
         .and_then(|children| children.Append(&content))
-        .map_err(|e| to_error("行の覆いへの追加", e))?;
+        .map_err(|e| to_error("add to the row cover", e))?;
     blocker
         .cast::<UIElement>()
-        .map_err(|e| to_error("行の要素化", e))
+        .map_err(|e| to_error("convert the row to UIElement", e))
 }
 
 /// Creates the cover that wraps rows that cannot be selected.
@@ -880,7 +882,7 @@ fn row_content(item: &TreeItem, selectable: bool) -> Result<UIElement> {
 fn pointer_blocker() -> Result<XamlGrid> {
     let blocker = XamlReader::Load(&HSTRING::from(BLOCKER_XAML))
         .and_then(|element| element.cast::<XamlGrid>())
-        .map_err(|e| to_error("行の覆いの生成", e))?;
+        .map_err(|e| to_error("create the row cover", e))?;
     let swallow = PointerEventHandler::new(|_, args| {
         if let Some(args) = args.as_ref() {
             let _ = args.SetHandled(true);
@@ -890,10 +892,10 @@ fn pointer_blocker() -> Result<XamlGrid> {
     // 押した / 離したの両方を止める。`TreeViewItem` はどちらでも選ぶ。
     blocker
         .PointerPressed(&swallow)
-        .map_err(|e| to_error("行の覆いの購読", e))?;
+        .map_err(|e| to_error("subscribe to the row cover", e))?;
     blocker
         .PointerReleased(&swallow)
-        .map_err(|e| to_error("行の覆いの購読", e))?;
+        .map_err(|e| to_error("subscribe to the row cover", e))?;
     Ok(blocker)
 }
 
@@ -903,7 +905,7 @@ fn build_surface() -> Result<(Border, TreeView)> {
     let surface = match load_surface() {
         Ok(surface) => surface,
         Err(error) => {
-            eprintln!("naui-windows: ツリーのテーマ付き枠の生成に失敗: {error}");
+            eprintln!("naui-windows: failed to create the themed tree frame: {error}");
             plain_surface()?
         }
     };
@@ -922,7 +924,7 @@ fn item_style() -> Option<Style> {
     {
         Ok(dictionary) => dictionary,
         Err(error) => {
-            eprintln!("naui-windows: ツリーの行のスタイルの生成に失敗: {error}");
+            eprintln!("naui-windows: failed to create the tree row style: {error}");
             return None;
         }
     };
@@ -935,23 +937,23 @@ fn item_style() -> Option<Style> {
 fn load_surface() -> Result<(Border, TreeView)> {
     let native = XamlReader::Load(&HSTRING::from(SURFACE_XAML))
         .and_then(|element| element.cast::<Border>())
-        .map_err(|e| to_error("ツリーの枠の生成", e))?;
+        .map_err(|e| to_error("create the tree frame", e))?;
     let tree_view = native
         .Child()
         .and_then(|child| child.cast::<TreeView>())
-        .map_err(|e| to_error("ツリーの TreeView の取得", e))?;
+        .map_err(|e| to_error("get the tree's TreeView", e))?;
     Ok((native, tree_view))
 }
 
 fn plain_surface() -> Result<(Border, TreeView)> {
-    let tree_view = TreeView::new().map_err(|e| to_error("TreeView の生成", e))?;
-    let native = Border::new().map_err(|e| to_error("ツリーの Border の生成", e))?;
+    let tree_view = TreeView::new().map_err(|e| to_error("create the TreeView", e))?;
+    let native = Border::new().map_err(|e| to_error("create the tree Border", e))?;
     let element = tree_view
         .cast::<UIElement>()
-        .map_err(|e| to_error("TreeView の要素化", e))?;
+        .map_err(|e| to_error("convert the TreeView to UIElement", e))?;
     native
         .SetChild(&element)
-        .map_err(|e| to_error("ツリーの Border への追加", e))?;
+        .map_err(|e| to_error("add to the tree Border", e))?;
     Ok((native, tree_view))
 }
 
@@ -959,5 +961,5 @@ fn plain_surface() -> Result<(Border, TreeView)> {
 fn item_template() -> Result<DataTemplate> {
     XamlReader::Load(&HSTRING::from(ITEM_TEMPLATE_XAML))
         .and_then(|element| element.cast::<DataTemplate>())
-        .map_err(|e| to_error("ツリーの行のテンプレートの生成", e))
+        .map_err(|e| to_error("create the tree row template", e))
 }

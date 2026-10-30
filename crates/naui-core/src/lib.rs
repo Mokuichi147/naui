@@ -103,6 +103,8 @@ pub struct Error {
 }
 
 impl Error {
+    /// Creates an error. `context` names the operation as a verb phrase such as
+    /// `"create the Button"`, and is shown as "failed to {context}: {detail}".
     pub fn new(context: &'static str, detail: impl Into<String>) -> Self {
         Self {
             context,
@@ -123,7 +125,7 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} に失敗しました: {}", self.context, self.detail)
+        write!(f, "failed to {}: {}", self.context, self.detail)
     }
 }
 
@@ -341,7 +343,7 @@ mod tests {
 
     #[test]
     fn error_displays_context_and_detail() {
-        let e = Error::new("ボタンの生成", "E_FAIL");
-        assert_eq!(e.to_string(), "ボタンの生成 に失敗しました: E_FAIL");
+        let e = Error::new("create the button", "E_FAIL");
+        assert_eq!(e.to_string(), "failed to create the button: E_FAIL");
     }
 }

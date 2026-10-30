@@ -140,10 +140,10 @@ pub struct Sidebar(Rc<SidebarInner>);
 
 impl Sidebar {
     pub(crate) fn new() -> Result<Self> {
-        let native = NavigationView::new().map_err(|e| to_error("NavigationView の生成", e))?;
+        let native = NavigationView::new().map_err(|e| to_error("create the NavigationView", e))?;
         native
             .SetPaneDisplayMode(NavigationViewPaneDisplayMode::Auto)
-            .map_err(|e| to_error("NavigationView の表示形式の設定", e))?;
+            .map_err(|e| to_error("set the NavigationView display mode", e))?;
         // 狭くても細い帯は残す (既定の 641 未満では帯ごと消える)。
         let _ = native.SetCompactModeThresholdWidth(0.0);
         let _ = native.SetIsBackButtonVisible(NavigationViewBackButtonVisible::Collapsed);
@@ -153,15 +153,15 @@ impl Sidebar {
         let _ = native.SetIsTitleBarAutoPaddingEnabled(false);
         let _ = native.SetIsPaneOpen(true);
 
-        let host = XamlGrid::new().map_err(|e| to_error("サイドバーの Grid の生成", e))?;
+        let host = XamlGrid::new().map_err(|e| to_error("create the sidebar Grid", e))?;
         let grip = XamlReader::Load(&HSTRING::from(GRIP_XAML))
             .and_then(|grip| grip.cast::<XamlGrid>())
-            .map_err(|e| to_error("サイドバーの仕切りの生成", e))?;
+            .map_err(|e| to_error("create the sidebar divider", e))?;
         for element in [native.cast::<UIElement>(), grip.cast::<UIElement>()] {
-            let element = element.map_err(|e| to_error("サイドバーの要素化", e))?;
+            let element = element.map_err(|e| to_error("convert the sidebar to UIElement", e))?;
             host.Children()
                 .and_then(|children| children.Append(&element))
-                .map_err(|e| to_error("サイドバーの組み立て", e))?;
+                .map_err(|e| to_error("build the sidebar", e))?;
         }
 
         let this = Self(Rc::new(SidebarInner {
@@ -201,7 +201,7 @@ impl Sidebar {
         this.0
             .native
             .SelectionChanged(&changed)
-            .map_err(|e| to_error("NavigationView の購読", e))?;
+            .map_err(|e| to_error("subscribe to the NavigationView", e))?;
 
         // 畳むボタンでの開閉。プログラムからの開閉でも届くので、覚えている
         // 状態と食い違ったときだけ通知する (`set_collapsed` は先に覚える)。
@@ -220,7 +220,7 @@ impl Sidebar {
             } else {
                 this.0.native.PaneClosed(&handler)
             };
-            result.map_err(|e| to_error("NavigationView の開閉の購読", e))?;
+            result.map_err(|e| to_error("subscribe to NavigationView opening and closing", e))?;
         }
         Ok(this)
     }
@@ -259,7 +259,7 @@ impl Sidebar {
             }
             sidebar.0.dragging.set(true);
         }))
-        .map_err(|e| to_error("サイドバーの仕切りの購読", e))?;
+        .map_err(|e| to_error("subscribe to the sidebar divider", e))?;
         grip.PointerMoved(&with(|sidebar, args| {
             if !sidebar.0.dragging.get() {
                 return;
@@ -293,16 +293,16 @@ impl Sidebar {
             sidebar.apply_width();
             sidebar.0.on_resize.emit(width);
         }))
-        .map_err(|e| to_error("サイドバーの仕切りの購読", e))?;
+        .map_err(|e| to_error("subscribe to the sidebar divider", e))?;
         grip.PointerReleased(&with(|sidebar, args| {
             if let Ok(pointer) = args.Pointer() {
                 let _ = sidebar.0.grip.ReleasePointerCapture(&pointer);
             }
             sidebar.0.dragging.set(false);
         }))
-        .map_err(|e| to_error("サイドバーの仕切りの購読", e))?;
+        .map_err(|e| to_error("subscribe to the sidebar divider", e))?;
         grip.PointerCaptureLost(&with(|sidebar, _| sidebar.0.dragging.set(false)))
-            .map_err(|e| to_error("サイドバーの仕切りの購読", e))?;
+            .map_err(|e| to_error("subscribe to the sidebar divider", e))?;
         Ok(())
     }
 
@@ -353,7 +353,7 @@ impl Sidebar {
         *self.0.sections.borrow_mut() = sections.to_vec();
         self.without_notifying(|| {
             if let Err(error) = self.rebuild(sections) {
-                eprintln!("naui-windows: サイドバーの項目を作れませんでした: {error}");
+                eprintln!("naui-windows: could not create the sidebar items: {error}");
             }
         });
         self.0.selected.set(None);
@@ -372,9 +372,9 @@ impl Sidebar {
             .0
             .native
             .MenuItems()
-            .map_err(|e| to_error("NavigationView の項目の取得", e))?;
+            .map_err(|e| to_error("get the NavigationView items", e))?;
         menu.Clear()
-            .map_err(|e| to_error("NavigationView の項目の消去", e))?;
+            .map_err(|e| to_error("clear the NavigationView items", e))?;
         self.0.items.borrow_mut().clear();
 
         let mut items = Vec::new();
@@ -382,31 +382,31 @@ impl Sidebar {
             let entry: IInspectable = match row {
                 SidebarRow::Gap => NavigationViewItemSeparator::new()
                     .and_then(|s| s.cast())
-                    .map_err(|e| to_error("サイドバーの区切りの生成", e))?,
+                    .map_err(|e| to_error("create the sidebar separator", e))?,
                 SidebarRow::Header(title) => {
                     let header = NavigationViewItemHeader::new()
-                        .map_err(|e| to_error("サイドバーの見出しの生成", e))?;
+                        .map_err(|e| to_error("create the sidebar header", e))?;
                     // 見出しの書式 (小さく太く) はテンプレートが文字へ当てる。
                     let text = PropertyValue::CreateString(&HSTRING::from(title))
-                        .map_err(|e| to_error("サイドバーの見出しの文字の生成", e))?;
+                        .map_err(|e| to_error("create the sidebar header text", e))?;
                     header
                         .SetContent(&text)
-                        .map_err(|e| to_error("サイドバーの見出しの設定", e))?;
+                        .map_err(|e| to_error("set the sidebar header", e))?;
                     header
                         .cast()
-                        .map_err(|e| to_error("サイドバーの見出しの変換", e))?
+                        .map_err(|e| to_error("convert the sidebar header", e))?
                 }
                 SidebarRow::Item(_, item) => {
                     let entry = item_entry(item)?;
                     let inspectable = entry
                         .cast()
-                        .map_err(|e| to_error("サイドバーの項目の変換", e))?;
+                        .map_err(|e| to_error("convert the sidebar item", e))?;
                     items.push(entry);
                     inspectable
                 }
             };
             menu.Append(&entry)
-                .map_err(|e| to_error("サイドバーの項目の追加", e))?;
+                .map_err(|e| to_error("add the sidebar item", e))?;
         }
         *self.0.items.borrow_mut() = items;
         Ok(())
@@ -606,7 +606,7 @@ impl Sidebar {
         self.0
             .host
             .cast::<UIElement>()
-            .map_err(|e| to_error("サイドバーの要素化", e))
+            .map_err(|e| to_error("convert the sidebar to UIElement", e))
     }
 
     /// Places the window's child in the right pane. `None` empties it.
@@ -620,7 +620,7 @@ impl Sidebar {
         match result {
             Ok(()) => true,
             Err(error) => {
-                eprintln!("naui-windows: サイドバーの中身を置けませんでした: {error}");
+                eprintln!("naui-windows: could not place the sidebar content: {error}");
                 false
             }
         }
@@ -644,16 +644,16 @@ impl Sidebar {
 
 /// One item. The icon, if any, is attached as a Segoe Fluent Icons glyph.
 fn item_entry(item: &SidebarItem) -> Result<NavigationViewItem> {
-    let entry = NavigationViewItem::new().map_err(|e| to_error("サイドバーの項目の生成", e))?;
+    let entry = NavigationViewItem::new().map_err(|e| to_error("create the sidebar item", e))?;
     // 入りきらないときは、ほかの 3 環境と同じく末尾を省略記号にする。
     // 既定 (`TextTrimming::None`) のままだと、字の途中で断ち切られる。
     let label = text_block(&item.label)?;
     label
         .SetTextTrimming(TextTrimming::CharacterEllipsis)
-        .map_err(|e| to_error("サイドバーの項目の省略の設定", e))?;
+        .map_err(|e| to_error("set the sidebar item trimming", e))?;
     entry
         .SetContent(&label)
-        .map_err(|e| to_error("サイドバーの項目の設定", e))?;
+        .map_err(|e| to_error("set the sidebar item", e))?;
     // テンプレートは項目が画面に載るときに当たる。載り直すたびに当て直すので、
     // そのつど右の溝を外す。送り主から引くので項目を抱え込まない。
     let loaded = RoutedEventHandler::new(|sender, _| {
@@ -667,15 +667,15 @@ fn item_entry(item: &SidebarItem) -> Result<NavigationViewItem> {
     });
     entry
         .Loaded(&loaded)
-        .map_err(|e| to_error("サイドバーの項目の読み込み購読", e))?;
+        .map_err(|e| to_error("subscribe to sidebar item Loaded", e))?;
     if let Some(icon) = item.icon {
-        let glyph = FontIcon::new().map_err(|e| to_error("サイドバーの印の生成", e))?;
+        let glyph = FontIcon::new().map_err(|e| to_error("create the sidebar icon", e))?;
         glyph
             .SetGlyph(&HSTRING::from(icon.fluent_glyph().to_string()))
-            .map_err(|e| to_error("サイドバーの印の設定", e))?;
+            .map_err(|e| to_error("set the sidebar icon", e))?;
         entry
             .SetIcon(&glyph)
-            .map_err(|e| to_error("サイドバーの印の取り付け", e))?;
+            .map_err(|e| to_error("attach the sidebar icon", e))?;
     }
     if !item.enabled {
         let _ = entry.SetIsEnabled(false);

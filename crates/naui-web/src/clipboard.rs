@@ -35,10 +35,10 @@ impl Clipboard {
                 Some(promise) => js_sys::futures::JsFuture::from(promise)
                     .await
                     .map(|_| ())
-                    .map_err(|e| crate::to_error("クリップボードへの書き込み", e)),
+                    .map_err(|e| crate::to_error("write to the clipboard", e)),
                 None => Err(Error::new(
-                    "クリップボードへの書き込み",
-                    "Clipboard API がありません",
+                    "write to the clipboard",
+                    "the Clipboard API is not available",
                 )),
             };
             f(result);

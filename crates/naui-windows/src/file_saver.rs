@@ -98,14 +98,14 @@ impl_widget!(FileSaver, native);
 
 impl FileSaver {
     pub(crate) fn new(text: &str) -> Result<Self> {
-        let native = XamlButton::new().map_err(|e| to_error("Button の生成", e))?;
-        let label = TextBlock::new().map_err(|e| to_error("Button ラベルの生成", e))?;
+        let native = XamlButton::new().map_err(|e| to_error("create the Button", e))?;
+        let label = TextBlock::new().map_err(|e| to_error("create the Button label", e))?;
         label
             .SetText(&HSTRING::from(text))
-            .map_err(|e| to_error("Button ラベルの設定", e))?;
+            .map_err(|e| to_error("set the Button label", e))?;
         native
             .SetContent(&label)
-            .map_err(|e| to_error("Button への内容設定", e))?;
+            .map_err(|e| to_error("set the Button content", e))?;
 
         let this = Self(Rc::new(FileSaverInner {
             native,
@@ -270,7 +270,7 @@ fn show_dialog(file_name: &str, filters: &[FileFilter]) -> Outcome {
         let dialog: IFileSaveDialog =
             match CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER) {
                 Ok(dialog) => dialog,
-                Err(e) => return Outcome::Failed(to_error("保存ダイアログの生成", e)),
+                Err(e) => return Outcome::Failed(to_error("create the save dialog", e)),
             };
 
         // 既定の指定を残したまま、必要なものだけ足す。
@@ -310,28 +310,34 @@ fn show_dialog(file_name: &str, filters: &[FileFilter]) -> Outcome {
             if e.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
                 return Outcome::Cancelled;
             }
-            return Outcome::Failed(to_error("保存ダイアログの表示", e));
+            return Outcome::Failed(to_error("show the save dialog", e));
         }
 
         let item = match dialog.GetResult() {
             Ok(item) => item,
-            Err(e) => return Outcome::Failed(to_error("保存先の取得", e)),
+            Err(e) => return Outcome::Failed(to_error("get the save location", e)),
         };
         let Ok(raw) = item.GetDisplayName(SIGDN_FILESYSPATH) else {
-            return Outcome::Failed(Error::new("保存先の取得", "パスを取れませんでした"));
+            return Outcome::Failed(Error::new(
+                "get the save location",
+                "could not get the path",
+            ));
         };
         let path = raw.to_string();
         CoTaskMemFree(Some(raw.0 as *const std::ffi::c_void));
         match path {
             Ok(path) => Outcome::Chosen(PathBuf::from(path)),
-            Err(_) => Outcome::Failed(Error::new("保存先の取得", "パスを読めませんでした")),
+            Err(_) => Outcome::Failed(Error::new(
+                "get the save location",
+                "could not read the path",
+            )),
         }
     }
 }
 
 /// Writes to the chosen location and returns a [`FileEntry`] pointing at it.
 fn write_contents(path: &Path, contents: &[u8]) -> Result<FileEntry> {
-    std::fs::write(path, contents).map_err(|e| Error::new("ファイルの書き出し", e.to_string()))?;
+    std::fs::write(path, contents).map_err(|e| Error::new("write the file", e.to_string()))?;
     Ok(FileEntry::from_path(path))
 }
 

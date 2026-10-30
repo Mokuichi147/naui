@@ -101,7 +101,7 @@ impl SplitView {
         let divider: HtmlElement = create(doc, "div")?.unchecked_into();
         divider
             .set_attribute("role", "separator")
-            .map_err(|e| to_error("分割ビューの組み立て", e))?;
+            .map_err(|e| to_error("build the split view", e))?;
         let _ = divider.set_attribute(
             "aria-orientation",
             // 区画が横に並ぶとき、仕切りそのものは縦向き。
@@ -130,7 +130,7 @@ impl SplitView {
         for part in [&start_pane, &divider, &end_pane] {
             element
                 .append_child(part)
-                .map_err(|e| to_error("分割ビューの組み立て", e))?;
+                .map_err(|e| to_error("build the split view", e))?;
         }
 
         let this = Self(Rc::new(SplitViewInner {

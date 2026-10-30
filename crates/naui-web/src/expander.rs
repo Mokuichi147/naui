@@ -44,7 +44,7 @@ impl Expander {
         summary.set_text_content(Some(text));
         element
             .append_child(&summary)
-            .map_err(|e| to_error("折りたたみの組み立て", e))?;
+            .map_err(|e| to_error("build the expander", e))?;
         // 見出しは押せるので、指の形にしておく (ブラウザ既定は矢印)。
         let _ = summary.style().set_property("cursor", "pointer");
 

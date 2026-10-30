@@ -206,7 +206,7 @@ impl<T> ValueHandler<T> {
 
 pub(crate) fn create(doc: &Document, tag: &str) -> Result<Element> {
     doc.create_element(tag)
-        .map_err(|e| to_error("DOM 要素の生成", e))
+        .map_err(|e| to_error("create the DOM element", e))
 }
 
 /// Subscribes to events such as clicks, valid only while the handle is alive.
@@ -283,7 +283,7 @@ impl Listener {
     ) -> Result<Self> {
         target
             .add_event_listener_with_callback_and_bool(event, closure.function(), capture)
-            .map_err(|e| to_error("イベントの購読", e))?;
+            .map_err(|e| to_error("subscribe to the event", e))?;
         Ok(Self {
             target: target.clone(),
             event,
@@ -489,10 +489,10 @@ impl Checkbox {
         text.set_text_content(Some(label));
         element
             .append_child(&input)
-            .map_err(|e| to_error("チェックボックスの組み立て", e))?;
+            .map_err(|e| to_error("build the checkbox", e))?;
         element
             .append_child(&text)
-            .map_err(|e| to_error("チェックボックスの組み立て", e))?;
+            .map_err(|e| to_error("build the checkbox", e))?;
         // ラベルと四角を横に並べる。
         let style = element.style();
         let _ = style.set_property("display", "inline-flex");

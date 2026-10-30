@@ -132,7 +132,7 @@ fn header_style() -> Option<Style> {
     let dictionary = match dictionary {
         Ok(dictionary) => dictionary,
         Err(error) => {
-            eprintln!("naui-windows: 見出しのスタイルの生成に失敗: {error}");
+            eprintln!("naui-windows: failed to create the header style: {error}");
             return None;
         }
     };
@@ -193,7 +193,7 @@ fn build_surface() -> Result<Surface> {
     match load_surface() {
         Ok(surface) => Ok(surface),
         Err(error) => {
-            eprintln!("naui-windows: テーブルのテーマ付き枠の生成に失敗: {error}");
+            eprintln!("naui-windows: failed to create the themed table frame: {error}");
             plain_surface()
         }
     }
@@ -202,18 +202,18 @@ fn build_surface() -> Result<Surface> {
 fn load_surface() -> Result<Surface> {
     let root = XamlReader::Load(&HSTRING::from(SURFACE_XAML))
         .and_then(|element| element.cast::<XamlGrid>())
-        .map_err(|e| to_error("Table の枠の生成", e))?;
+        .map_err(|e| to_error("create the Table frame", e))?;
     let children = root
         .Children()
-        .map_err(|e| to_error("Table の枠の取得", e))?;
+        .map_err(|e| to_error("get the Table frame", e))?;
     let header = children
         .GetAt(0)
         .and_then(|child| child.cast::<XamlGrid>())
-        .map_err(|e| to_error("Table の見出しの取得", e))?;
+        .map_err(|e| to_error("get the Table header", e))?;
     let list_view = children
         .GetAt(1)
         .and_then(|child| child.cast::<ListView>())
-        .map_err(|e| to_error("Table の本体の取得", e))?;
+        .map_err(|e| to_error("get the Table body", e))?;
     Ok(Surface {
         root,
         header,
@@ -222,10 +222,10 @@ fn load_surface() -> Result<Surface> {
 }
 
 fn plain_surface() -> Result<Surface> {
-    let root = XamlGrid::new().map_err(|e| to_error("Table の Grid の生成", e))?;
+    let root = XamlGrid::new().map_err(|e| to_error("create the Table Grid", e))?;
     let definitions = root
         .RowDefinitions()
-        .map_err(|e| to_error("Table の行定義の取得", e))?;
+        .map_err(|e| to_error("get the Table row definitions", e))?;
     for height in [
         GridLength {
             Value: 1.0,
@@ -236,16 +236,17 @@ fn plain_surface() -> Result<Surface> {
             GridUnitType: GridUnitType::Star,
         },
     ] {
-        let definition = RowDefinition::new().map_err(|e| to_error("Table の行定義の生成", e))?;
+        let definition =
+            RowDefinition::new().map_err(|e| to_error("create the Table row definition", e))?;
         definition
             .SetHeight(height)
-            .map_err(|e| to_error("Table の行定義の設定", e))?;
+            .map_err(|e| to_error("set the Table row definition", e))?;
         definitions
             .Append(&definition)
-            .map_err(|e| to_error("Table の行定義の追加", e))?;
+            .map_err(|e| to_error("add the Table row definition", e))?;
     }
 
-    let header = XamlGrid::new().map_err(|e| to_error("Table の見出しの生成", e))?;
+    let header = XamlGrid::new().map_err(|e| to_error("create the Table header", e))?;
     let _ = header.SetPadding(Thickness {
         Left: 12.0,
         Top: 6.0,
@@ -254,11 +255,11 @@ fn plain_surface() -> Result<Surface> {
     });
     let list_view = XamlReader::Load(&HSTRING::from(PLAIN_LIST_XAML))
         .and_then(|element| element.cast::<ListView>())
-        .map_err(|e| to_error("ListView の生成", e))?;
+        .map_err(|e| to_error("create the ListView", e))?;
 
     let children = root
         .Children()
-        .map_err(|e| to_error("Table の枠の取得", e))?;
+        .map_err(|e| to_error("get the Table frame", e))?;
     for (row, part) in [
         header.cast::<IInspectable>(),
         list_view.cast::<IInspectable>(),
@@ -266,18 +267,18 @@ fn plain_surface() -> Result<Surface> {
     .into_iter()
     .enumerate()
     {
-        let part = part.map_err(|e| to_error("Table の要素化", e))?;
+        let part = part.map_err(|e| to_error("convert the Table part", e))?;
         // 行の指定は FrameworkElement、追加は UIElement として渡す。
         let framework = part
             .cast::<FrameworkElement>()
-            .map_err(|e| to_error("Table の要素化", e))?;
-        XamlGrid::SetRow(&framework, row as i32).map_err(|e| to_error("Table の行の指定", e))?;
+            .map_err(|e| to_error("convert the Table part", e))?;
+        XamlGrid::SetRow(&framework, row as i32).map_err(|e| to_error("set the Table row", e))?;
         let element = part
             .cast::<UIElement>()
-            .map_err(|e| to_error("Table の要素化", e))?;
+            .map_err(|e| to_error("convert the Table part", e))?;
         children
             .Append(&element)
-            .map_err(|e| to_error("Table の枠への追加", e))?;
+            .map_err(|e| to_error("add to the Table frame", e))?;
     }
     Ok(Surface {
         root,
@@ -301,15 +302,16 @@ fn text_alignment(align: Align) -> TextAlignment {
 /// Giving the same ones to both headings and rows aligns the widths.
 fn apply_columns(grid: &XamlGrid, columns: &[TableColumn]) -> Result<()> {
     grid.SetColumnSpacing(12.0)
-        .map_err(|e| to_error("列間隔の設定", e))?;
+        .map_err(|e| to_error("set the column spacing", e))?;
     let definitions = grid
         .ColumnDefinitions()
-        .map_err(|e| to_error("列定義の取得", e))?;
+        .map_err(|e| to_error("get the column definitions", e))?;
     definitions
         .Clear()
-        .map_err(|e| to_error("列定義の消去", e))?;
+        .map_err(|e| to_error("clear the column definitions", e))?;
     for column in columns {
-        let definition = ColumnDefinition::new().map_err(|e| to_error("列定義の生成", e))?;
+        let definition =
+            ColumnDefinition::new().map_err(|e| to_error("create the column definition", e))?;
         // 幅の指定が無い列だけで、余りを分け合う。
         let width = match column.width {
             Some(width) => GridLength {
@@ -323,10 +325,10 @@ fn apply_columns(grid: &XamlGrid, columns: &[TableColumn]) -> Result<()> {
         };
         definition
             .SetWidth(width)
-            .map_err(|e| to_error("列幅の設定", e))?;
+            .map_err(|e| to_error("set the column width", e))?;
         definitions
             .Append(&definition)
-            .map_err(|e| to_error("列定義の追加", e))?;
+            .map_err(|e| to_error("add the column definition", e))?;
     }
     Ok(())
 }
@@ -345,10 +347,10 @@ fn append_cell(
     let _ = block.SetTextWrapping(TextWrapping::NoWrap);
     let framework = block
         .cast::<FrameworkElement>()
-        .map_err(|e| to_error("セルの要素化", e))?;
+        .map_err(|e| to_error("convert the cell to FrameworkElement", e))?;
     framework
         .SetVerticalAlignment(VerticalAlignment::Center)
-        .map_err(|e| to_error("セルの縦揃え", e))?;
+        .map_err(|e| to_error("set the cell's vertical alignment", e))?;
     // 行ボックスの中央より字面がわずかに下に見えるため、文字だけを
     // 1 DIP 上へ光学補正する。上下の合計は 0 で、行の高さは変えない。
     if !secondary {
@@ -359,15 +361,16 @@ fn append_cell(
                 Right: 0.0,
                 Bottom: 1.0,
             })
-            .map_err(|e| to_error("セルの文字位置の補正", e))?;
+            .map_err(|e| to_error("adjust the cell text position", e))?;
     }
-    XamlGrid::SetColumn(&framework, index as i32).map_err(|e| to_error("セルの列の指定", e))?;
+    XamlGrid::SetColumn(&framework, index as i32)
+        .map_err(|e| to_error("set the cell column", e))?;
     let element = block
         .cast::<UIElement>()
-        .map_err(|e| to_error("セルの要素化", e))?;
+        .map_err(|e| to_error("convert the cell to FrameworkElement", e))?;
     grid.Children()
         .and_then(|children| children.Append(&element))
-        .map_err(|e| to_error("セルの追加", e))?;
+        .map_err(|e| to_error("add the cell", e))?;
     Ok(())
 }
 
@@ -603,7 +606,7 @@ fn append_widget_cell(
     let element = content.native_element();
     let framework = element
         .cast::<FrameworkElement>()
-        .map_err(|e| to_error("セルの要素化", e))?;
+        .map_err(|e| to_error("convert the cell to FrameworkElement", e))?;
     // 列の中のどこへ置くかは列の指定に従う。`Fill` は列いっぱいに広げる。
     let _ = framework.SetHorizontalAlignment(match align {
         Align::Center => HorizontalAlignment::Center,
@@ -612,10 +615,11 @@ fn append_widget_cell(
         Align::Start => HorizontalAlignment::Left,
     });
     let _ = framework.SetVerticalAlignment(VerticalAlignment::Center);
-    XamlGrid::SetColumn(&framework, index as i32).map_err(|e| to_error("セルの列の指定", e))?;
+    XamlGrid::SetColumn(&framework, index as i32)
+        .map_err(|e| to_error("set the cell column", e))?;
     grid.Children()
         .and_then(|children| children.Append(&element))
-        .map_err(|e| to_error("セルの追加", e))?;
+        .map_err(|e| to_error("add the cell", e))?;
     Ok(())
 }
 
@@ -710,7 +714,7 @@ impl Table {
         surface
             .list_view
             .SetSelectionMode(ListViewSelectionMode::Single)
-            .map_err(|e| to_error("ListView の選択方法の設定", e))?;
+            .map_err(|e| to_error("set the ListView selection mode", e))?;
         // 横スクロールは持たせない (列は見出しと同じ幅で並べる)。
         let _ = ScrollViewer::SetHorizontalScrollBarVisibility2(
             &surface.list_view,
@@ -719,8 +723,8 @@ impl Table {
 
         let hovered = Arc::new(UiThreadCell::new(0));
 
-        let top_spacer = XamlGrid::new().map_err(|e| to_error("Table の詰め物の生成", e))?;
-        let bottom_spacer = XamlGrid::new().map_err(|e| to_error("Table の詰め物の生成", e))?;
+        let top_spacer = XamlGrid::new().map_err(|e| to_error("create the Table spacer", e))?;
+        let bottom_spacer = XamlGrid::new().map_err(|e| to_error("create the Table spacer", e))?;
         // ListView 内の Header/Footer で巨大な空白を動かすと、行が存在しても
         // 内部の表示領域のクリップが追従せず描画されないことがある。
         // スクロールと詰め物は外側が持ち、ListView は実体化した行だけを測る。
@@ -728,38 +732,39 @@ impl Table {
             &surface.list_view,
             ScrollBarVisibility::Disabled,
         )
-        .map_err(|e| to_error("行リストのスクロールバー無効化", e))?;
+        .map_err(|e| to_error("disable the row list scroll bar", e))?;
         ScrollViewer::SetVerticalScrollMode2(&surface.list_view, ScrollMode::Disabled)
-            .map_err(|e| to_error("行リストのスクロール無効化", e))?;
-        let body = StackPanel::new().map_err(|e| to_error("Table の本体の生成", e))?;
+            .map_err(|e| to_error("disable the row list scrolling", e))?;
+        let body = StackPanel::new().map_err(|e| to_error("create the Table body", e))?;
         let root_children = surface
             .root
             .Children()
-            .map_err(|e| to_error("枠の取得", e))?;
+            .map_err(|e| to_error("get the frame", e))?;
         root_children
             .RemoveAt(1)
-            .map_err(|e| to_error("行リストの移動", e))?;
-        let body_children = body.Children().map_err(|e| to_error("本体の取得", e))?;
+            .map_err(|e| to_error("move the row list", e))?;
+        let body_children = body.Children().map_err(|e| to_error("get the body", e))?;
         for element in [
             top_spacer.cast::<UIElement>(),
             surface.list_view.cast::<UIElement>(),
             bottom_spacer.cast::<UIElement>(),
         ] {
             body_children
-                .Append(&element.map_err(|e| to_error("本体の要素化", e))?)
-                .map_err(|e| to_error("本体への追加", e))?;
+                .Append(&element.map_err(|e| to_error("convert the body to UIElement", e))?)
+                .map_err(|e| to_error("add to the body", e))?;
         }
-        let scroll = ScrollViewer::new().map_err(|e| to_error("表のスクロール領域の生成", e))?;
+        let scroll =
+            ScrollViewer::new().map_err(|e| to_error("create the table scroll area", e))?;
         scroll
             .SetHorizontalScrollBarVisibility(ScrollBarVisibility::Disabled)
-            .map_err(|e| to_error("横スクロールの無効化", e))?;
+            .map_err(|e| to_error("disable horizontal scrolling", e))?;
         scroll
             .SetContent(&body)
-            .map_err(|e| to_error("表のスクロール内容の設定", e))?;
-        XamlGrid::SetRow(&scroll, 1).map_err(|e| to_error("表の本体の配置", e))?;
+            .map_err(|e| to_error("set the table scroll content", e))?;
+        XamlGrid::SetRow(&scroll, 1).map_err(|e| to_error("place the table body", e))?;
         root_children
             .Append(&scroll)
-            .map_err(|e| to_error("表の本体の追加", e))?;
+            .map_err(|e| to_error("add the table body", e))?;
 
         let this = Self(Rc::new(TableInner {
             native: surface.root,
@@ -811,7 +816,7 @@ impl Table {
         this.0
             .list_view
             .SelectionChanged(&handler)
-            .map_err(|e| to_error("ListView の購読", e))?;
+            .map_err(|e| to_error("subscribe to the ListView", e))?;
         this.install_wheel_target()?;
         this.install_layout_updates()?;
         this.install_scroll_updates()?;
@@ -844,15 +849,15 @@ impl Table {
         this.0
             .native
             .PointerEntered(&entered)
-            .map_err(|e| to_error("Table のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to Table pointer events", e))?;
         this.0
             .native
             .PointerExited(&exited)
-            .map_err(|e| to_error("Table のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to Table pointer events", e))?;
         this.0
             .native
             .PointerMoved(&moved)
-            .map_err(|e| to_error("Table のポインター購読", e))?;
+            .map_err(|e| to_error("subscribe to Table pointer events", e))?;
         Ok(this)
     }
 
@@ -1133,8 +1138,10 @@ impl Table {
             .0
             .header
             .Children()
-            .map_err(|e| to_error("見出しの取得", e))?;
-        children.Clear().map_err(|e| to_error("見出しの消去", e))?;
+            .map_err(|e| to_error("get the headers", e))?;
+        children
+            .Clear()
+            .map_err(|e| to_error("clear the headers", e))?;
         apply_columns(&self.0.header, &columns)?;
 
         let mut buttons = Vec::with_capacity(columns.len());
@@ -1145,7 +1152,7 @@ impl Table {
                 continue;
             }
             // 並べ替えられる列は、見出しそのものをボタンにする。
-            let button = Button::new().map_err(|e| to_error("見出しのボタンの生成", e))?;
+            let button = Button::new().map_err(|e| to_error("create the header button", e))?;
             if let Some(style) = self.0.header_style.as_ref() {
                 let _ = button.SetStyle(style);
             }
@@ -1154,7 +1161,7 @@ impl Table {
             let _ = label.SetTextWrapping(TextWrapping::NoWrap);
             button
                 .SetContent(&label)
-                .map_err(|e| to_error("見出しへの内容設定", e))?;
+                .map_err(|e| to_error("set the header content", e))?;
 
             let state = UiThreadCell::new(Rc::downgrade(&self.0));
             let click = RoutedEventHandler::new(move |_, _| {
@@ -1167,19 +1174,19 @@ impl Table {
             });
             button
                 .Click(&click)
-                .map_err(|e| to_error("見出しの購読", e))?;
+                .map_err(|e| to_error("subscribe to the header", e))?;
 
             let framework = button
                 .cast::<FrameworkElement>()
-                .map_err(|e| to_error("見出しの要素化", e))?;
+                .map_err(|e| to_error("convert the header to UIElement", e))?;
             XamlGrid::SetColumn(&framework, index as i32)
-                .map_err(|e| to_error("見出しの列の指定", e))?;
+                .map_err(|e| to_error("set the header column", e))?;
             let element = button
                 .cast::<UIElement>()
-                .map_err(|e| to_error("見出しの要素化", e))?;
+                .map_err(|e| to_error("convert the header to UIElement", e))?;
             children
                 .Append(&element)
-                .map_err(|e| to_error("見出しの追加", e))?;
+                .map_err(|e| to_error("add the header", e))?;
             buttons.push(Some(button));
         }
         *self.0.header_buttons.borrow_mut() = buttons;
@@ -1236,7 +1243,7 @@ impl Table {
         self.0
             .list_view
             .Loaded(&loaded)
-            .map_err(|e| to_error("Table の表示の購読", e))?;
+            .map_err(|e| to_error("subscribe to Table Loaded", e))?;
         Ok(())
     }
 
@@ -1272,7 +1279,7 @@ impl Table {
         self.0
             .list_view
             .LayoutUpdated(&handler)
-            .map_err(|e| to_error("Table のレイアウト更新の購読", e))?;
+            .map_err(|e| to_error("subscribe to Table layout updates", e))?;
         Ok(())
     }
 
@@ -1298,7 +1305,7 @@ impl Table {
         );
         scroll
             .ViewChanged(&handler)
-            .map_err(|e| to_error("Table のスクロール位置の購読", e))?;
+            .map_err(|e| to_error("subscribe to Table scroll position changes", e))?;
         Ok(())
     }
 
@@ -1323,7 +1330,7 @@ impl Table {
         let result = self.build_window_once();
         self.0.rebuilding.set(false);
         if let Err(error) = result {
-            eprintln!("naui-windows: テーブルの行の組み立てに失敗: {error}");
+            eprintln!("naui-windows: failed to build the table rows: {error}");
         }
     }
 
@@ -1338,8 +1345,10 @@ impl Table {
             .0
             .list_view
             .Items()
-            .map_err(|e| to_error("行の取得", e))?;
-        let previous_count = children.Size().map_err(|e| to_error("行数の取得", e))?;
+            .map_err(|e| to_error("get the rows", e))?;
+        let previous_count = children
+            .Size()
+            .map_err(|e| to_error("get the row count", e))?;
         self.0.row_items.borrow_mut().clear();
         self.0.realized.borrow_mut().clear();
 
@@ -1352,7 +1361,7 @@ impl Table {
             let Some(cells) = self.0.rows.cells(index) else {
                 continue;
             };
-            let item = ListViewItem::new().map_err(|e| to_error("ListViewItem の生成", e))?;
+            let item = ListViewItem::new().map_err(|e| to_error("create the ListViewItem", e))?;
             // 見出しと列をそろえるため、余白と高さは行ごとに書く。
             let _ = item.SetPadding(ROW_PADDING);
             match self.0.fixed_row_height.get() {
@@ -1364,7 +1373,7 @@ impl Table {
                     let _ = item.SetMinHeight(ROW_MIN_HEIGHT);
                 }
             }
-            let content = XamlGrid::new().map_err(|e| to_error("行の Grid の生成", e))?;
+            let content = XamlGrid::new().map_err(|e| to_error("create the row Grid", e))?;
             apply_columns(&content, &columns)?;
             for (column_index, column) in columns.iter().enumerate() {
                 match cells.content(column_index) {
@@ -1379,14 +1388,14 @@ impl Table {
                 }
             }
             item.SetContent(&content)
-                .map_err(|e| to_error("行への内容設定", e))?;
+                .map_err(|e| to_error("set the row content", e))?;
             // 文字だけの行で `enabled` が `false` のときは、行ごと操作できない。
             let _ = item.SetIsEnabled(!cells.dimmed);
             self.attach_row_click(&item, index)?;
 
             let element = item
                 .cast::<IInspectable>()
-                .map_err(|e| to_error("行の要素化", e))?;
+                .map_err(|e| to_error("convert the row to UIElement", e))?;
             let slot = items.len() as u32;
             self.without_notifying(|_| {
                 if slot < previous_count {
@@ -1395,13 +1404,13 @@ impl Table {
                     children.Append(&element)
                 }
             })
-            .map_err(|e| to_error("行の置換", e))?;
+            .map_err(|e| to_error("replace the row", e))?;
             items.push(item);
             realized.push(cells);
         }
         for _ in items.len() as u32..previous_count {
             self.without_notifying(|_| children.RemoveAtEnd())
-                .map_err(|e| to_error("余った行の消去", e))?;
+                .map_err(|e| to_error("remove the extra rows", e))?;
         }
         *self.0.row_items.borrow_mut() = items;
         *self.0.realized.borrow_mut() = realized;
@@ -1416,17 +1425,17 @@ impl Table {
         if let (Some(scroll), Some(offset)) = (scroll, offset) {
             scroll
                 .UpdateLayout()
-                .map_err(|e| to_error("テーブルのレイアウト更新", e))?;
+                .map_err(|e| to_error("update the table layout", e))?;
             // 毎回 ChangeView を呼ぶと、ホイールの進行中の移動まで止めてしまう。
             if (scroll.VerticalOffset().unwrap_or(offset) - offset).abs() < 0.5 {
                 return Ok(());
             }
             let offset = PropertyValue::CreateDouble(offset)
                 .and_then(|value| value.cast::<windows::Foundation::IReference<f64>>())
-                .map_err(|e| to_error("スクロール位置の生成", e))?;
+                .map_err(|e| to_error("box the scroll position", e))?;
             scroll
                 .ChangeViewWithOptionalAnimation(None, &offset, None, true)
-                .map_err(|e| to_error("スクロール位置の復元", e))?;
+                .map_err(|e| to_error("restore the scroll position", e))?;
         }
         Ok(())
     }
@@ -1445,7 +1454,8 @@ impl Table {
             });
             Ok(())
         });
-        item.Tapped(&handler).map_err(|e| to_error("行の購読", e))?;
+        item.Tapped(&handler)
+            .map_err(|e| to_error("subscribe to the row", e))?;
         Ok(())
     }
 

@@ -73,18 +73,17 @@ pub(crate) fn initialize() -> Result<Runtime> {
 /// Attaches the files bundled next to the exe.
 #[cfg(feature = "self-contained")]
 fn initialize_self_contained() -> Result<Runtime> {
-    const CONTEXT: &str = "同梱した Windows App SDK ランタイムの初期化";
+    const CONTEXT: &str = "initialize the bundled Windows App SDK runtime";
     match SelfContained::activate() {
         Ok(Some(bundle)) => Ok(Runtime::SelfContained(bundle)),
         Ok(None) => Err(Error::new(
             CONTEXT,
             format!(
-                "self-contained でビルドした exe ですが、隣に同梱物 ({}) がありません \
-                 (導入済みのランタイムには切り替えません)。ビルドが \
-                 target/<profile>/naui-winappsdk/ に置いた中身を exe の隣へ置いてください。\
-                 Cargo の build.build-dir を設定している場合は、環境変数 \
-                 NAUI_WINAPPSDK_TARGET_DIR に target-dir を絶対パスで指定してビルドし直して\
-                 ください",
+                "the exe was built self-contained, but the bundle ({}) is not next to it \
+                 (naui does not fall back to the installed runtime). Place what the build \
+                 put in target/<profile>/naui-winappsdk/ next to the exe. \
+                 If Cargo's build.build-dir is set, rebuild with the environment variable \
+                 NAUI_WINAPPSDK_TARGET_DIR set to the target-dir as an absolute path",
                 SelfContained::MANIFEST_FILE,
             ),
         )),
@@ -108,8 +107,8 @@ fn initialize_framework() -> Result<Runtime> {
         None => String::new(),
     };
     Err(Error::new(
-        "Windows App SDK ランタイムの初期化",
-        format!("{detail} (試した版: {})", version_list()),
+        "initialize the Windows App SDK runtime",
+        format!("{detail} (versions tried: {})", version_list()),
     ))
 }
 

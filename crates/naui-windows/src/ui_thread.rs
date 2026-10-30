@@ -74,7 +74,7 @@ impl<T> UiThreadCell<T> {
         assert_eq!(
             std::thread::current().id(),
             self.owner,
-            "naui: UI スレッド以外から UI を操作しました"
+            "naui: the UI was used from a thread other than the UI thread"
         );
         f(&mut self.value.borrow_mut())
     }

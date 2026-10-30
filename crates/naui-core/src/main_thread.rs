@@ -87,7 +87,7 @@ impl AppDispatch {
 
     /// An error reporting that the UI has finished.
     pub(crate) fn closed(context: &'static str) -> Error {
-        Error::new(context, "UI はもう受け取れません")
+        Error::new(context, "the UI has already finished")
     }
 }
 

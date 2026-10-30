@@ -101,7 +101,7 @@ pub use window::{WeakWindow, Window};
 pub(crate) fn document() -> Result<Document> {
     web_sys::window()
         .and_then(|w| w.document())
-        .ok_or_else(|| Error::new("document の取得", "ブラウザ環境ではありません"))
+        .ok_or_else(|| Error::new("get document", "not running in a browser"))
 }
 
 pub(crate) fn to_error(context: &'static str, value: wasm_bindgen::JsValue) -> Error {
@@ -474,14 +474,14 @@ impl Ui {
     /// similar. `Err` if the browser blocks the tab.
     pub fn open_url(&self, url: &str) -> Result<()> {
         let window =
-            web_sys::window().ok_or_else(|| Error::new("URL を開く", "window がありません"))?;
+            web_sys::window().ok_or_else(|| Error::new("open the URL", "there is no window"))?;
         // `noopener` を付けると開けたときも `null` が返り、止められたのと
         // 見分けられない。付けずに開き、開いた先から元のページを触れないよう
         // `opener` を外す。
         let opened = window
             .open_with_url_and_target(url, "_blank")
-            .map_err(|e| to_error("URL を開く", e))?
-            .ok_or_else(|| Error::new("URL を開く", "ブラウザが新しいタブを止めました"))?;
+            .map_err(|e| to_error("open the URL", e))?
+            .ok_or_else(|| Error::new("open the URL", "the browser blocked the new tab"))?;
         let _ = opened.set_opener(&wasm_bindgen::JsValue::NULL);
         Ok(())
     }
@@ -550,7 +550,7 @@ fn preferred_languages() -> Vec<String> {
 pub(crate) fn apply_theme(document: &Document, theme: Theme) -> Result<()> {
     let root: HtmlElement = document
         .document_element()
-        .ok_or_else(|| Error::new("document 要素の取得", "html 要素がありません"))?
+        .ok_or_else(|| Error::new("get the document element", "there is no html element"))?
         .unchecked_into();
     let value = match theme {
         Theme::System => "light dark",
@@ -559,5 +559,5 @@ pub(crate) fn apply_theme(document: &Document, theme: Theme) -> Result<()> {
     };
     root.style()
         .set_property("color-scheme", value)
-        .map_err(|e| to_error("color-scheme の設定", e))
+        .map_err(|e| to_error("set color-scheme", e))
 }

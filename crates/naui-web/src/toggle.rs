@@ -46,10 +46,10 @@ impl Toggle {
         text.set_text_content(Some(label));
         element
             .append_child(&input)
-            .map_err(|e| to_error("スイッチの組み立て", e))?;
+            .map_err(|e| to_error("build the switch", e))?;
         element
             .append_child(&text)
-            .map_err(|e| to_error("スイッチの組み立て", e))?;
+            .map_err(|e| to_error("build the switch", e))?;
         // スイッチと文字を横に並べる。
         let style = element.style();
         let _ = style.set_property("display", "inline-flex");
