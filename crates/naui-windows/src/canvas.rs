@@ -32,8 +32,9 @@
 //! the right and delivered as is.
 //!
 //! The wheel arrives by two routes. A real mouse wheel sometimes never reaches
-//! XAML, so naui first receives wheels to the foreground window with a
-//! `WH_MOUSE_LL` hook and moves `Scroll` (`layout.rs`). This hook first delivers to
+//! XAML (a DPI-unaware window with focus gets none), so naui first receives wheels
+//! to the foreground window with a `WH_MOUSE_LL` hook, and in a DPI-unaware window
+//! also moves `Scroll` there (`layout.rs`). This hook first delivers to
 //! a surface with `on_wheel` under the pointer, if any ([`dispatch_wheel`]); with
 //! `Handled`, the message is discarded and not passed to the outer `Scroll`. When
 //! the hook does not receive it (the window is not in the foreground, for example),

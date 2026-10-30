@@ -1174,22 +1174,29 @@ unsafe extern "system" fn low_level_mouse_hook(
     if code >= 0 {
         let input = &*(lparam.0 as *const MSLLHOOKSTRUCT);
         let foreground_root = GetAncestor(GetForegroundWindow(), GA_ROOT);
-        let over_target_window = WHEEL_TARGETS.with(|targets| {
-            targets
-                .borrow()
-                .iter()
-                .any(|target| GetAncestor(*target, GA_ROOT) == foreground_root)
-        });
+        // 前面にあるだけでなく、ポインターがそのウィンドウの上にあること。
+        // DatePicker などの選択欄は別のウィンドウで開くので、その上のホイールは
+        // XAML に任せる。
+        let over_target_window = root_window_at(input.pt) == foreground_root
+            && WHEEL_TARGETS.with(|targets| {
+                targets
+                    .borrow()
+                    .iter()
+                    .any(|target| GetAncestor(*target, GA_ROOT) == foreground_root)
+            });
 
         let message = wparam.0 as u32;
         if over_target_window && (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL) {
             let delta = ((input.mouseData >> 16) as i16) as f64;
             let horizontal = message == WM_MOUSEHWHEEL;
             // ポインターの下の Canvas の `on_wheel` が先。`Handled` なら外側の
-            // Scroll へは回さない。
+            // Scroll へは回さない。Scroll と List を動かすのは、XAML が自分で
+            // 動かせない DPI 非対応のウィンドウのときだけ。
             let handled = delta != 0.0
                 && (crate::canvas::dispatch_wheel(delta, horizontal) == Some(true)
-                    || (!horizontal && apply_wheel_delta(delta)));
+                    || (!horizontal
+                        && is_dpi_unaware(foreground_root)
+                        && apply_wheel_delta(delta)));
             if handled {
                 return windows::Win32::Foundation::LRESULT(1);
             }
@@ -1197,6 +1204,49 @@ unsafe extern "system" fn low_level_mouse_hook(
     }
 
     CallNextHookEx(None, code, wparam, lparam)
+}
+
+/// The top-level window under `point` (physical screen coordinates, as
+/// `MSLLHOOKSTRUCT` gives them).
+///
+/// A flyout such as the `DatePicker`'s opens in a window of its own
+/// (`PopupWindowSiteBridge`), so a wheel over it has a different root from the
+/// window that opened it. When the process is not DPI aware, `WindowFromPoint`
+/// reads logical coordinates, so the thread is switched to Per-Monitor V2 just for
+/// the lookup.
+unsafe fn root_window_at(
+    point: windows::Win32::Foundation::POINT,
+) -> windows::Win32::Foundation::HWND {
+    use windows::Win32::UI::HiDpi::{
+        SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, WindowFromPoint, GA_ROOT};
+
+    let previous = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    let window = WindowFromPoint(point);
+    if !previous.0.is_null() {
+        SetThreadDpiAwarenessContext(previous);
+    }
+    GetAncestor(window, GA_ROOT)
+}
+
+/// Whether `hwnd` runs DPI unaware (`DPI_AWARENESS_UNAWARE`).
+///
+/// [`run`](crate::run) makes the process Per-Monitor V2, but the app's manifest can
+/// choose otherwise. In a DPI-unaware window that the OS stretches, XAML neither
+/// scrolls by the wheel while the window has focus nor animates `ChangeView`, so
+/// only then does naui move `Scroll` and lists itself. Otherwise XAML's own wheel
+/// scrolling, animated the same with or without focus, is left alone.
+fn is_dpi_unaware(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::UI::HiDpi::{
+        GetAwarenessFromDpiAwarenessContext, GetWindowDpiAwarenessContext, DPI_AWARENESS_UNAWARE,
+    };
+
+    // SAFETY: ウィンドウの DPI 対応を読むだけ。
+    unsafe {
+        GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hwnd))
+            == DPI_AWARENESS_UNAWARE
+    }
 }
 
 fn install_low_level_wheel_hook(hwnd: windows::Win32::Foundation::HWND) -> bool {
@@ -1444,6 +1494,11 @@ pub(crate) fn install_wheel_subclass(window: &XamlWindow) -> bool {
         return false;
     };
     let low_level_hook_installed = install_low_level_wheel_hook(hwnd);
+    // サブクラスは Scroll と List を動かすだけなので、XAML が自分で動かせる
+    // ウィンドウには付けない。
+    if !is_dpi_unaware(hwnd) {
+        return low_level_hook_installed;
+    }
     let has_scroll = SCROLLS.with(|scrolls| {
         let mut scrolls = scrolls.borrow_mut();
         scrolls.retain(|scroll| scroll.strong_count() != 0);
