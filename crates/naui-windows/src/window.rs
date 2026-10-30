@@ -694,16 +694,10 @@ impl Window {
     fn placement_scale(&self) -> f64 {
         use windows::Win32::Foundation::POINT;
         use windows::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY};
-        use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 
         // SAFETY: 主画面を引くだけ。(0, 0) は常に主画面の左上。
         let monitor = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
-        let (mut dpi_x, mut dpi_y) = (0, 0);
-        // SAFETY: MonitorFromPoint が返した画面と、書き込み先の u32 を渡す。
-        match unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) } {
-            Ok(()) if dpi_x > 0 => f64::from(dpi_x) / 96.0,
-            _ => self.rasterization_scale(),
-        }
+        monitor_scale(monitor).unwrap_or_else(|| self.rasterization_scale())
     }
 
     /// [`state`](Self::state), with minimized replaced by the state it returns to.
@@ -732,9 +726,9 @@ impl Window {
         let (width, height) = placement.size;
         self.set_size(width, height);
         if let Some(position) = placement.position {
-            let scale = self.placement_scale();
-            if naui_core::is_on_screen(position, width, &monitor_work_areas(scale)) {
-                self.set_physical_position(to_physical(position, scale));
+            let physical = to_physical(position, self.placement_scale());
+            if is_on_some_monitor(physical, width) {
+                self.set_physical_position(physical);
             }
         }
         self.set_state(placement.state);
@@ -1819,9 +1813,50 @@ fn to_physical((x, y): (f64, f64), scale: f64) -> (i32, i32) {
     ((x * scale).round() as i32, (y * scale).round() as i32)
 }
 
+/// How many physical pixels one logical pixel (DIP) is on `monitor`
+/// (`GetDpiForMonitor`). `None` if it cannot be read.
+fn monitor_scale(monitor: windows::Win32::Graphics::Gdi::HMONITOR) -> Option<f64> {
+    use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+
+    let (mut dpi_x, mut dpi_y) = (0, 0);
+    // SAFETY: 画面と、書き込み先の u32 を渡すだけ。
+    unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }.ok()?;
+    (dpi_x > 0).then(|| f64::from(dpi_x) / 96.0)
+}
+
+/// Whether a window `width` (DIP) wide with its outer frame's top left at `physical`
+/// would show enough of its top edge on one of the connected monitors' work areas for
+/// the user to drag it ([`naui_core::is_on_screen`]).
+///
+/// The window takes the scale of the monitor it is on, so each monitor is checked in
+/// its own logical pixels: the position and work area divided by that monitor's
+/// scale, against the width as is.
+fn is_on_some_monitor(physical: (i32, i32), width: f64) -> bool {
+    is_on_monitors(physical, width, &monitor_work_areas())
+}
+
+/// [`is_on_some_monitor`] against the given work areas (physical pixels) and scales.
+fn is_on_monitors(
+    physical: (i32, i32),
+    width: f64,
+    monitors: &[(windows::Win32::Foundation::RECT, f64)],
+) -> bool {
+    monitors.iter().any(|&(area, scale)| {
+        let logical = |value: i32| f64::from(value) / scale;
+        let screen = Rect::new(
+            logical(area.left),
+            logical(area.top),
+            logical(area.right - area.left),
+            logical(area.bottom - area.top),
+        );
+        naui_core::is_on_screen((logical(physical.0), logical(physical.1)), width, &[screen])
+    })
+}
+
 /// The work areas of the connected monitors (excluding the taskbar,
-/// `MONITORINFO.rcWork`), in physical pixels divided by `scale`.
-fn monitor_work_areas(scale: f64) -> Vec<Rect> {
+/// `MONITORINFO.rcWork`) in physical pixels, each with its monitor's scale (1 if it
+/// cannot be read).
+fn monitor_work_areas() -> Vec<(windows::Win32::Foundation::RECT, f64)> {
     use windows::Win32::Foundation::{LPARAM, RECT};
     use windows::Win32::Graphics::Gdi::{
         EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
@@ -1838,37 +1873,28 @@ fn monitor_work_areas(scale: f64) -> Vec<Rect> {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
+        let scale = monitor_scale(monitor).unwrap_or(1.0);
         // SAFETY: data は下の呼び出しが渡した Vec を指し、列挙の間だけ使う。
         // 画面は EnumDisplayMonitors が渡したもの。
         unsafe {
             if GetMonitorInfoW(monitor, &mut info).as_bool() {
-                (*(data.0 as *mut Vec<RECT>)).push(info.rcWork);
+                (*(data.0 as *mut Vec<(RECT, f64)>)).push((info.rcWork, scale));
             }
         }
         true.into()
     }
 
-    let mut areas: Vec<RECT> = Vec::new();
+    let mut areas: Vec<(RECT, f64)> = Vec::new();
     // SAFETY: 列挙は戻る前に終わるので、areas への指し先はその間だけ使われる。
     let _ = unsafe {
         EnumDisplayMonitors(
             None,
             None,
             Some(collect),
-            LPARAM(&mut areas as *mut Vec<RECT> as isize),
+            LPARAM(&mut areas as *mut Vec<(RECT, f64)> as isize),
         )
     };
     areas
-        .into_iter()
-        .map(|area| {
-            Rect::new(
-                f64::from(area.left) / scale,
-                f64::from(area.top) / scale,
-                f64::from(area.right - area.left) / scale,
-                f64::from(area.bottom - area.top) / scale,
-            )
-        })
-        .collect()
 }
 
 /// Remembers the window to use as the parent of modal dialogs.
@@ -1987,4 +2013,35 @@ fn actual_theme(element: &UIElement) -> Result<Theme> {
     } else {
         Theme::Dark
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::RECT;
+
+    fn area(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn on_monitor_check_counts_the_width_with_each_monitors_scale() {
+        // 主画面 100% の左に、物理 [-3840, 0] の 200% の画面。
+        let monitors = [
+            (area(0, 0, 1920, 1040), 1.0),
+            (area(-3840, 0, 0, 2120), 2.0),
+        ];
+        // 幅 800 DIP は左の画面では物理 1600 なので、-5000 から -3400 まで届く。
+        assert!(is_on_monitors((-5000, 100), 800.0, &monitors));
+        // 物理 1600 でも届かないところは画面の外。
+        assert!(!is_on_monitors((-5500, 100), 800.0, &monitors));
+        // 主画面の右へはみ出た位置は、どちらの画面にも無い。
+        assert!(!is_on_monitors((1950, 100), 800.0, &monitors));
+        assert!(is_on_monitors((1800, 100), 800.0, &monitors));
+    }
 }
