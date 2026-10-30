@@ -1,9 +1,9 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{
     Align, Button, Checkbox, ComboBox, Orientation, RadioGroup, Result, Slider, TextColor,
-    TextStyle, Theme, Toggle, Ui, WindowState,
+    TextStyle, Theme, Toggle, Ui, WindowPlacement, WindowState,
 };
 
 use crate::parts::{self, Disabler, Form, Notice};
@@ -274,7 +274,8 @@ fn system(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     Ok(())
 }
 
-/// ウィンドウの最大化・最小化・全画面・位置・大きさを変えられるかどうか。
+/// ウィンドウの最大化・最小化・全画面・位置・大きさを変えられるかどうか、
+/// 大きさ・位置・状態の保存と復元。
 ///
 /// タイトルバーのボタンや Esc で変えたときも、右端の状態が追いかける。
 /// Linux と Web は位置を扱えず、Web は全画面だけ。扱えないことは押したときに
@@ -341,6 +342,41 @@ fn window_controls(
     });
     places.append(&corner);
     form.row(ui, "Position", &places)?;
+
+    // アプリなら終了時に設定ファイルへ書き、次の起動で `show` の前に戻す。
+    // ここでは覚えておくだけにして、動かしたり最大化したりしてから戻せるようにする。
+    let saved = Rc::new(RefCell::new(None::<WindowPlacement>));
+    let placements = parts::row(ui)?;
+    let save = ui.button("Save")?;
+    save.on_click({
+        let weak_window = window.downgrade();
+        let saved = saved.clone();
+        let notice = notice.clone();
+        move || {
+            if let Some(window) = weak_window.upgrade() {
+                let placement = window.placement();
+                notice.show(&format!("Saved \"{placement}\""));
+                *saved.borrow_mut() = Some(placement);
+            }
+        }
+    });
+    placements.append(&save);
+    let restore = ui.button("Restore saved")?;
+    restore.on_click({
+        let weak_window = window.downgrade();
+        let notice = notice.clone();
+        move || {
+            let Some(window) = weak_window.upgrade() else {
+                return;
+            };
+            match *saved.borrow() {
+                Some(placement) => window.set_placement(&placement),
+                None => notice.show("Nothing saved yet"),
+            }
+        }
+    });
+    placements.append(&restore);
+    form.row(ui, "Placement", &placements)?;
 
     let resizable = ui.checkbox("Resizable")?;
     resizable.set_checked(window.is_resizable());

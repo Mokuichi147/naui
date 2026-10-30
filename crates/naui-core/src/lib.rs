@@ -86,7 +86,9 @@ pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
 pub use ui_text::{set_ui_languages, ui_strings, UiStrings};
 pub use weak::WeakWidget;
-pub use window::{CloseHandler, CloseResponse, StateHandler, WindowState};
+pub use window::{
+    is_on_screen, CloseHandler, CloseResponse, StateHandler, WindowPlacement, WindowState,
+};
 
 use std::fmt;
 

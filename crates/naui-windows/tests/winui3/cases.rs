@@ -11,7 +11,7 @@ use std::time::Duration;
 use naui_core::{
     Align, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect, Result,
     ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle, ToolbarIcon,
-    WindowState, DEFAULT_SIDEBAR_WIDTH,
+    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 
@@ -260,6 +260,14 @@ const CASES: &[Case] = &[
     (
         "表示する前に頼んだ状態で表示される",
         window_state_requested_before_show,
+    ),
+    (
+        "保存した大きさ・位置・状態は最大化や全画面の間も通常の枠を指す",
+        window_placement_while_not_normal,
+    ),
+    (
+        "保存した大きさ・位置・状態を表示する前に当てると、その枠で出る",
+        window_placement_restores_before_show,
     ),
     (
         "大きさを変えられるかどうかが OverlappedPresenter と往復する",
@@ -2473,6 +2481,160 @@ fn window_position_while_not_normal(ui: &Ui) -> Result<()> {
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+    Ok(())
+}
+
+/// `placement` keeps the normal frame while maximized, minimized or in fullscreen,
+/// and `set_size` there decides the size for returning without leaving the state.
+fn window_placement_while_not_normal(ui: &Ui) -> Result<()> {
+    let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0;
+    let window = ui.window("保存する枠", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_position(120.0, 140.0);
+    window.show();
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        near(window.size(), (320.0, 200.0))
+    });
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let placement = window.placement();
+        assert!(near(placement.size, (320.0, 200.0)), "{placement:?}");
+        assert!(
+            placement
+                .position
+                .is_some_and(|position| near(position, (120.0, 140.0))),
+            "{placement:?}"
+        );
+        assert_eq!(placement.state, WindowState::Normal);
+
+        let mut normal = (320.0, 200.0);
+        for (index, state) in [
+            WindowState::Maximized,
+            WindowState::Minimized,
+            WindowState::Fullscreen,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            window.set_state(state);
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || window.state() == state);
+            if index == 0 && window.state() != state {
+                println!("     (最大化が効かない環境なので、確かめずに通す)");
+                return;
+            }
+            assert_eq!(window.state(), state);
+            let placement = window.placement();
+            assert!(
+                near(placement.size, normal),
+                "{state:?} の間は元の大きさ: {placement:?}"
+            );
+            normal = (360.0 + 20.0 * index as f64, 240.0 + 10.0 * index as f64);
+            window.set_size(normal.0, normal.1);
+            pump_until(Duration::from_millis(200), || false);
+            assert_eq!(window.state(), state, "{state:?} のまま");
+            assert!(
+                near(window.placement().size, normal),
+                "{state:?} の間に決めた大きさ: {:?}",
+                window.placement()
+            );
+            window.set_state(WindowState::Normal);
+            pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+                window.state() == WindowState::Normal && near(window.size(), normal)
+            });
+            assert_eq!(window.state(), WindowState::Normal);
+            assert!(
+                near(window.size(), normal),
+                "{state:?} から戻ると決めた大きさ: {:?}",
+                window.size()
+            );
+            assert!(
+                window
+                    .position()
+                    .is_some_and(|position| near(position, (120.0, 140.0))),
+                "{state:?} から戻っても位置は動かない: {:?}",
+                window.position()
+            );
+        }
+
+        // 最大化したまま最小化したら、戻す先の最大化を保存する。
+        window.set_state(WindowState::Maximized);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Maximized
+        });
+        window.set_state(WindowState::Minimized);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Minimized
+        });
+        assert_eq!(window.state(), WindowState::Minimized);
+        let placement = window.placement();
+        assert_eq!(placement.state, WindowState::Maximized, "{placement:?}");
+        assert!(near(placement.size, normal), "{placement:?}");
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A placement read back from text and applied before showing puts the window in
+/// that frame and state, and a position on no connected monitor is skipped.
+fn window_placement_restores_before_show(ui: &Ui) -> Result<()> {
+    let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0;
+    let saved =
+        WindowPlacement::parse("size=380x260 position=150,170 state=maximized").expect("読める");
+    let window = ui.window("戻す枠", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.set_placement(&saved);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let before = window.placement();
+        assert!(
+            near(before.size, saved.size)
+                && before
+                    .position
+                    .is_some_and(|position| near(position, (150.0, 170.0)))
+                && before.state == WindowState::Maximized,
+            "表示の前: {before:?}"
+        );
+        window.show();
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Maximized
+        });
+        if window.state() != WindowState::Maximized {
+            println!("     (最大化が効かない環境なので、確かめずに通す)");
+            return;
+        }
+        let placement = window.placement();
+        assert!(near(placement.size, saved.size), "{placement:?}");
+        window.set_state(WindowState::Normal);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            window.state() == WindowState::Normal && near(window.size(), saved.size)
+        });
+        assert!(near(window.size(), saved.size), "{:?}", window.size());
+        assert!(
+            window
+                .position()
+                .is_some_and(|position| near(position, (150.0, 170.0))),
+            "{:?}",
+            window.position()
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+
+    // つながっていない画面の位置は使わない。
+    let window = ui.window("外れた画面", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let before = window.position();
+    window.set_placement(&WindowPlacement {
+        size: (320.0, 200.0),
+        position: Some((-100_000.0, -100_000.0)),
+        state: WindowState::Normal,
+    });
+    let after = window.position();
+    window.close();
+    assert_eq!(after, before);
     Ok(())
 }
 
