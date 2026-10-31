@@ -1,6 +1,8 @@
 use crate::sys;
 use crate::Widget;
-use naui_core::{Align, EventResponse, KeyEvent, Orientation, Padding, TextColor, TextStyle};
+use naui_core::{
+    Align, ButtonRole, EventResponse, KeyEvent, Orientation, Padding, TextColor, TextStyle,
+};
 
 /// A push button (`GtkButton`).
 #[derive(Clone)]
@@ -17,6 +19,16 @@ impl Button {
     #[inline]
     pub fn set_enabled(&self, enabled: bool) {
         self.0.set_enabled(enabled)
+    }
+
+    /// The button's role. The default is [`ButtonRole::Normal`].
+    ///
+    /// Only applies libadwaita's style classes (`.suggested-action` /
+    /// `.destructive-action`), so the theme decides the colors. The role changes only
+    /// the look: Return does not activate a `Primary` button.
+    #[inline]
+    pub fn set_role(&self, role: ButtonRole) {
+        self.0.set_role(role)
     }
 
     /// Called on every click. Calling it again removes the previous one.

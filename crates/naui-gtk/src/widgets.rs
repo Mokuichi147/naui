@@ -16,7 +16,7 @@ use std::rc::Rc;
 use gtk::glib;
 use gtk::pango;
 use gtk::prelude::*;
-use naui_core::{Align, Orientation, Padding, TextColor, TextStyle};
+use naui_core::{Align, ButtonRole, Orientation, Padding, TextColor, TextStyle};
 
 use crate::bin::{apply_padding, SizeBin};
 use crate::callback::{Notifier, TextNotifier};
@@ -286,6 +286,21 @@ impl Button {
 
     pub fn set_enabled(&self, enabled: bool) {
         self.0.native.set_sensitive(enabled);
+    }
+
+    /// The button's role. The default is [`ButtonRole::Normal`].
+    ///
+    /// Only applies libadwaita's style classes (`.suggested-action` /
+    /// `.destructive-action`), so the theme decides the colors.
+    pub fn set_role(&self, role: ButtonRole) {
+        for candidate in ButtonRole::ALL {
+            if let Some(class) = candidate.style_class() {
+                self.0.native.remove_css_class(class);
+            }
+        }
+        if let Some(class) = role.style_class() {
+            self.0.native.add_css_class(class);
+        }
     }
 
     /// Called on every click. Calling it again removes the previous one.
