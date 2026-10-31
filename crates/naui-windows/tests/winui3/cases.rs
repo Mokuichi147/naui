@@ -21,7 +21,6 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Grid, Image as XamlImage, MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider,
     StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
-use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
@@ -294,8 +293,20 @@ const CASES: &[Case] = &[
         text_area_reports_newlines_as_lf,
     ),
     (
-        "描画面の命令が XAML の Path と TextBlock になり、読み込める",
-        canvas_commands_become_xaml_shapes,
+        "描画面の命令が Direct2D で画素になる",
+        canvas_commands_become_pixels,
+    ),
+    (
+        "表示した描画面は物理画素の Composition の面に描かれる",
+        canvas_draws_onto_a_composition_surface,
+    ),
+    (
+        "別のウィンドウへ移した描画面は移った先の XamlRoot を見る",
+        canvas_follows_the_window_it_moves_to,
+    ),
+    (
+        "捨てた描画面は XamlRoot.Changed の購読を外す",
+        canvas_unsubscribes_from_the_root_when_dropped,
     ),
     (
         "ラベルの付くウィジェットが読み上げ名を持つ",
@@ -885,11 +896,28 @@ fn checkbox_toggle(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// The drawing surface places a `Canvas` inside a `Grid` and loads the `on_draw`
-/// commands as XAML `Path`s and `TextBlock`s. It is not on screen, so its size is not
-/// decided; the XAML built by `xaml_for_test` with a given size is read by WinUI,
-/// and the number and kinds of elements are checked.
-fn canvas_commands_become_xaml_shapes(ui: &Ui) -> Result<()> {
+/// One pixel of what `pixels_for_test` returns: (blue, green, red, alpha),
+/// premultiplied.
+fn pixel(pixels: &(u32, u32, Vec<u8>), x: u32, y: u32) -> (u8, u8, u8, u8) {
+    let (width, _, bytes) = pixels;
+    let at = ((y * width + x) * 4) as usize;
+    (bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3])
+}
+
+/// The columns holding any visible pixel within rows `top..bottom`.
+fn inked_columns(pixels: &(u32, u32, Vec<u8>), top: u32, bottom: u32) -> Option<(u32, u32)> {
+    let (width, _, _) = pixels;
+    let inked: Vec<u32> = (0..*width)
+        .filter(|x| (top..bottom).any(|y| pixel(pixels, *x, y).3 > 0))
+        .collect();
+    Some((*inked.first()?, *inked.last()?))
+}
+
+/// The drawing surface replays the `on_draw` commands with Direct2D. It is not on
+/// screen here, so the same replay is drawn into an offscreen bitmap and its pixels
+/// are checked: fills keep their color and opacity, dashes leave gaps, text is drawn
+/// and centered on its point, and the display scale multiplies the pixels.
+fn canvas_commands_become_pixels(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     assert!(
         native::<Grid>(&canvas).Background().is_ok(),
@@ -901,62 +929,300 @@ fn canvas_commands_become_xaml_shapes(ui: &Ui) -> Result<()> {
         move |painter| {
             calls.set(calls.get() + 1);
             painter.fill_rect(Rect::new(10.0, 10.0, 40.0, 20.0), Color::rgb(0xff, 0, 0));
-            painter.set_dash(&[4.0, 2.0]);
-            painter.line(
-                Point::new(0.0, 0.0),
-                Point::new(50.0, 30.0),
-                Color::BLACK,
-                2.0,
+            painter.set_opacity(0.5);
+            painter.fill_rect(Rect::new(60.0, 10.0, 20.0, 20.0), Color::rgb(0, 0, 0xff));
+            painter.set_opacity(1.0);
+            // 長方形でない塗り (ジオメトリを作る側) も描けること。
+            painter.fill_polygon(
+                &[
+                    Point::new(100.0, 10.0),
+                    Point::new(110.0, 30.0),
+                    Point::new(90.0, 30.0),
+                ],
+                Color::rgb(0, 0x80, 0),
             );
+            painter.set_dash(&[4.0, 4.0]);
+            painter.line(
+                Point::new(0.0, 40.5),
+                Point::new(120.0, 40.5),
+                Color::BLACK,
+                1.0,
+            );
+            painter.set_dash(&[]);
             painter.set_text_align(Align::Center);
-            painter.text("naui <&>", Point::new(60.0, 40.0), 12.0, Color::BLACK);
-            // `{` で始まる文字はマークアップ拡張と読まれて面ごと壊れるので、
-            // 文字のまま通ることを見る。
-            painter.text("{Binding}", Point::new(60.0, 60.0), 12.0, Color::BLACK);
+            painter.text("naui <&>", Point::new(60.0, 50.0), 14.0, Color::BLACK);
+            // `{` で始まる文字も文字のまま描けること (XAML で描いていたころは
+            // マークアップ拡張と読まれて面ごと壊れた)。
+            painter.text("{Binding}", Point::new(60.0, 64.0), 10.0, Color::BLACK);
         }
     });
 
-    let xaml = canvas.xaml_for_test(120.0, 80.0);
+    let Some(pixels) = canvas.pixels_for_test(120.0, 80.0, 1.0) else {
+        println!("     (Direct2D を使えない環境なので、確かめずに通す)");
+        return Ok(());
+    };
     assert_eq!(calls.get(), 1, "面の大きさで on_draw が呼ばれること");
-    let scene: XamlCanvas = XamlReader::Load(&HSTRING::from(xaml.as_str()))
-        .and_then(|element| element.cast::<XamlCanvas>())
-        .unwrap_or_else(|e| panic!("組み立てた XAML を WinUI が読めること: {e}\n{xaml}"));
-    let children = scene.Children().expect("子");
+    assert_eq!((pixels.0, pixels.1), (120, 80), "面の大きさの画素");
+    assert_eq!(pixel(&pixels, 30, 20), (0, 0, 0xff, 0xff), "不透明の赤");
     assert_eq!(
-        children.Size().unwrap_or(0),
-        4,
-        "塗り・線・文字 2 つの 4 要素"
+        pixel(&pixels, 5, 5),
+        (0, 0, 0, 0),
+        "描いていないところは透明"
+    );
+    let (blue, _, _, alpha) = pixel(&pixels, 70, 20);
+    assert!(
+        (126..=129).contains(&alpha) && blue == alpha,
+        "半透明の青は乗算済みで半分: {:?}",
+        pixel(&pixels, 70, 20)
+    );
+    assert_eq!(pixel(&pixels, 100, 25).1, 0x80, "三角形の中は緑");
+    assert_eq!(pixel(&pixels, 2, 40).3, 0xff, "破線の線のところ");
+    assert_eq!(pixel(&pixels, 6, 40).3, 0, "破線の隙間");
+    let (left, right) = inked_columns(&pixels, 50, 64).expect("文字が描かれること");
+    let center = f64::from(left + right) / 2.0;
+    assert!(
+        (center - 60.0).abs() <= 2.0 && right - left > 20,
+        "中央揃えの文字は点を中心に置かれる: {left}..{right}"
+    );
+    assert!(
+        inked_columns(&pixels, 64, 80).is_some(),
+        "`{{` で始まる文字も描かれること"
     );
 
-    let root: FrameworkElement = scene.cast().expect("FrameworkElement");
-    assert!(
-        (root.Width().unwrap_or(0.0) - 120.0).abs() < 0.5
-            && (root.Height().unwrap_or(0.0) - 80.0).abs() < 0.5,
-        "面の大きさが Canvas に付くこと"
-    );
-    let text: TextBlock = root
-        .FindName(&HSTRING::from("t2"))
-        .and_then(|value| value.cast())
-        .expect("文字の TextBlock");
+    let doubled = canvas
+        .pixels_for_test(120.0, 80.0, 2.0)
+        .expect("倍率 2 でも描けること");
     assert_eq!(
-        text.Text().map(|t| t.to_string()).as_deref(),
-        Ok("naui <&>")
+        (doubled.0, doubled.1),
+        (240, 160),
+        "倍率の分だけ画素が増える"
     );
-    assert!(
-        (text.FontSize().unwrap_or(0.0) - 12.0).abs() < 0.01,
-        "文字の大きさが FontSize に写ること"
-    );
-    let braced: TextBlock = root
-        .FindName(&HSTRING::from("t3"))
-        .and_then(|value| value.cast())
-        .expect("`{` で始まる文字の TextBlock");
     assert_eq!(
-        braced.Text().map(|t| t.to_string()).as_deref(),
-        Ok("{Binding}"),
-        "`{{}}` の印は表示には出ず、文字がそのまま残ること"
+        pixel(&doubled, 60, 40),
+        (0, 0, 0xff, 0xff),
+        "座標も倍率で伸びる"
+    );
+    assert_eq!(pixel(&doubled, 15, 15), (0, 0, 0, 0));
+
+    // 機器が持てる大きさ (ここでは 16384 画素) を超える面は、倍率を下げて
+    // 全体を描く。右端の印まで描けていること。
+    let wide = ui.canvas()?;
+    wide.on_draw(|painter| {
+        let right = painter.width();
+        painter.fill_rect(
+            Rect::new(right - 1000.0, 0.0, 1000.0, 10.0),
+            Color::rgb(0xff, 0, 0),
+        );
+    });
+    let wide = wide
+        .pixels_for_test(20000.0, 10.0, 1.0)
+        .expect("大きすぎる面も描けること");
+    assert!(wide.0 <= 16384, "面は機器の上限に収める: {} 画素", wide.0);
+    assert_eq!(
+        pixel(&wide, wide.0 - 10, 5),
+        (0, 0, 0xff, 0xff),
+        "倍率を下げて右端まで描くこと"
     );
     Ok(())
 }
+
+/// Shown on screen, the surface is a `SpriteVisual` placed over the `Grid` whose
+/// brush shows a drawing surface covering the surface in physical pixels.
+fn canvas_draws_onto_a_composition_surface(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Composition::{
+        CompositionDrawingSurface, CompositionSurfaceBrush, SpriteVisual,
+    };
+    use naui_winui3::Microsoft::UI::Xaml::Hosting::ElementCompositionPreview;
+
+    let window = ui.window("描画面", 200.0, 150.0)?;
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(Sizing::fixed(120.0, 80.0));
+    let calls = Rc::new(Cell::new(0));
+    canvas.on_draw({
+        let calls = calls.clone();
+        move |painter| {
+            calls.set(calls.get() + 1);
+            painter.fill_rect(painter.bounds(), Color::rgb(0, 0x80, 0xff));
+        }
+    });
+    window.set_child(&canvas);
+    window.show();
+    let element = native::<UIElement>(&canvas);
+    let visual = || {
+        ElementCompositionPreview::GetElementChildVisual(&element)
+            .ok()
+            .and_then(|visual| visual.cast::<SpriteVisual>().ok())
+    };
+    pump_until(CANVAS_TIMEOUT, || calls.get() > 0 && visual().is_some());
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if canvas.size().0 <= 0.0 {
+            println!("     (面に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let visual = visual().expect("面の上に SpriteVisual が置かれること");
+        let scale = element
+            .XamlRoot()
+            .and_then(|root| root.RasterizationScale())
+            .expect("倍率");
+        let surface: CompositionDrawingSurface = visual
+            .Brush()
+            .and_then(|brush| brush.cast::<CompositionSurfaceBrush>())
+            .and_then(|brush| brush.Surface())
+            .and_then(|surface| surface.cast())
+            .expect("ブラシが描画用の面を映すこと");
+        let pixels = surface.SizeInt32().expect("面の画素数");
+        assert_eq!(
+            (pixels.Width, pixels.Height),
+            ((120.0 * scale).ceil() as i32, (80.0 * scale).ceil() as i32),
+            "面は物理画素で作る (倍率 {scale})"
+        );
+        let size = visual.Size().expect("見た目の大きさ");
+        assert!(
+            (f64::from(size.X) - f64::from(pixels.Width) / scale).abs() < 0.01
+                && (f64::from(size.Y) - f64::from(pixels.Height) / scale).abs() < 0.01,
+            "見た目は面の 1 画素が画面の 1 画素になる大きさ: {size:?}"
+        );
+
+        // GPU のリセットを Direct3D の知らせで真似る。アプリが描き直しを頼まなくても、
+        // デバイスを作り直して面を描き直すこと (動かないグラフが消えたままにならない)。
+        let before = calls.get();
+        if !canvas.signal_device_removed_for_test() {
+            println!("     (デバイスの除去を知らせられない環境なので、復旧は確かめない)");
+            return;
+        }
+        pump_until(CANVAS_TIMEOUT, || calls.get() > before);
+        assert!(
+            calls.get() > before,
+            "デバイスの除去が知らされたら、頼まれなくても描き直すこと"
+        );
+        let after = surface.SizeInt32().expect("復旧後の面の画素数");
+        assert_eq!(
+            (after.Width, after.Height),
+            (pixels.Width, pixels.Height),
+            "復旧後も同じ面に描くこと"
+        );
+        assert!(
+            !canvas.signal_device_removed_for_test() || {
+                // 作り直したデバイスにも知らせが付いていること。二度目も描き直す。
+                let second = calls.get();
+                pump_until(CANVAS_TIMEOUT, || calls.get() > second);
+                calls.get() > second
+            },
+            "作り直したデバイスの除去でも描き直すこと"
+        );
+    }));
+    window.close();
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// Moved to another window, a surface watches the new window's `XamlRoot.Changed`
+/// and no longer the old one's.
+///
+/// Both `SizeChanged` (which has so far always come with the move) and `Loaded`
+/// lead there, so this does not tell the two apart. Redrawing at a different scale
+/// needs two displays with different scales and is not checked.
+fn canvas_follows_the_window_it_moves_to(ui: &Ui) -> Result<()> {
+    let first = ui.window("描画面の移動元", 200.0, 150.0)?;
+    let second = ui.window("描画面の移動先", 200.0, 150.0)?;
+    first.show();
+    second.show();
+    let baseline = naui_windows::Canvas::root_watches_for_test();
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        let canvas = ui.canvas()?;
+        canvas.set_sizing(Sizing::fixed(80.0, 60.0));
+        let drawn = Rc::new(Cell::new(false));
+        canvas.on_draw({
+            let drawn = drawn.clone();
+            move |painter| {
+                drawn.set(true);
+                painter.fill_rect(painter.bounds(), Color::BLACK);
+            }
+        });
+        first.set_child(&canvas);
+        pump_until(CANVAS_TIMEOUT, || drawn.get());
+        if !drawn.get() {
+            println!("     (面に実寸が付かない環境なので、確かめずに通す)");
+            return Ok(());
+        }
+        assert!(
+            canvas.watches_current_root_for_test(),
+            "移す前の窓を見ている"
+        );
+
+        first.set_child(&ui.label("空")?);
+        second.set_child(&canvas);
+        pump_until(CANVAS_TIMEOUT, || canvas.watches_current_root_for_test());
+        assert!(
+            canvas.watches_current_root_for_test(),
+            "移った先の窓の XamlRoot.Changed を購読し直すこと"
+        );
+        assert_eq!(
+            naui_windows::Canvas::root_watches_for_test(),
+            baseline + 1,
+            "移す前の窓の購読は外すこと"
+        );
+        Ok(())
+    }));
+    first.close();
+    second.close();
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// A surface watches its window's `XamlRoot.Changed` to notice scale changes. The
+/// `XamlRoot` outlives it, so dropping the surface must unsubscribe; otherwise
+/// remaking surfaces in one window piles up delegates.
+fn canvas_unsubscribes_from_the_root_when_dropped(ui: &Ui) -> Result<()> {
+    let window = ui.window("描画面の作り直し", 200.0, 150.0)?;
+    window.show();
+    let baseline = naui_windows::Canvas::root_watches_for_test();
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        for round in 0..3 {
+            let canvas = ui.canvas()?;
+            canvas.set_sizing(Sizing::fixed(80.0, 60.0));
+            let drawn = Rc::new(Cell::new(false));
+            canvas.on_draw({
+                let drawn = drawn.clone();
+                move |painter| {
+                    drawn.set(true);
+                    painter.fill_rect(painter.bounds(), Color::BLACK);
+                }
+            });
+            window.set_child(&canvas);
+            pump_until(CANVAS_TIMEOUT, || drawn.get());
+            if !drawn.get() {
+                println!("     (面に実寸が付かない環境なので、確かめずに通す)");
+                return Ok(());
+            }
+            assert_eq!(
+                naui_windows::Canvas::root_watches_for_test(),
+                baseline + 1,
+                "{round} 回目: 描いた面は XamlRoot.Changed を 1 つだけ購読する"
+            );
+            window.set_child(&ui.label("空")?);
+            drop(canvas);
+            assert_eq!(
+                naui_windows::Canvas::root_watches_for_test(),
+                baseline,
+                "{round} 回目: 捨てた面は購読を外す"
+            );
+        }
+        Ok(())
+    }));
+    window.close();
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// The maximum time to wait for a shown surface to be drawn.
+const CANVAS_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn toggle_switches_and_notifies(ui: &Ui) -> Result<()> {
     let switch = ui.toggle("通知")?;

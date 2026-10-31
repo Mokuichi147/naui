@@ -23,6 +23,12 @@ const COLLECTION_FALLBACKS: &[&str] = &[
     "CollectionChange",
 ];
 
+/// `windows-numerics` 0.3 に無く、`windows` クレート側にある型。
+///
+/// `Windows.Foundation.Numerics` も丸ごと `windows_numerics` へ向くが、
+/// そちらには行列とベクトルしか無い (`Visual.Orientation` が使う)。
+const NUMERICS_FALLBACKS: &[&str] = &["Quaternion", "Plane"];
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let Some(winmd) = args.next() else {
@@ -83,13 +89,19 @@ fn main() {
     fix_collection_paths(&out);
 }
 
-/// `windows_collections` に無い型への参照を `windows` 側へ向け直す。
+/// `windows_collections` と `windows_numerics` に無い型への参照を `windows` 側へ向け直す。
 fn fix_collection_paths(out: &Path) {
     let mut source = std::fs::read_to_string(out).expect("生成した bindings.rs を読めません");
     for name in COLLECTION_FALLBACKS {
         source = source.replace(
             &format!("windows_collections::{name}"),
             &format!("windows::Foundation::Collections::{name}"),
+        );
+    }
+    for name in NUMERICS_FALLBACKS {
+        source = source.replace(
+            &format!("windows_numerics::{name}"),
+            &format!("windows::Foundation::Numerics::{name}"),
         );
     }
     std::fs::write(out, source).expect("bindings.rs を書き戻せません");

@@ -2,7 +2,7 @@
 //!
 //! ここで描いているものは naui の中に「棒グラフ」や「円」の部品があるわけでは
 //! なく、`on_draw` の中で矩形や円の**命令を積んでいる**だけ。積んだ命令を
-//! 画素にするのは各環境の 2D API (Core Graphics / cairo / XAML の図形 /
+//! 画素にするのは各環境の 2D API (Core Graphics / cairo / Direct2D /
 //! `<canvas>`) で、アンチエイリアスや高解像度の倍率もそちらが持つ。
 
 use std::cell::{Cell, RefCell};

@@ -210,6 +210,7 @@ impl Ui {
             window.clear_content_for_shutdown();
         }
         release_widget_handlers();
+        canvas::release_devices();
     }
 
     pub fn stack(&self, orientation: Orientation) -> Result<Stack> {
@@ -582,6 +583,7 @@ impl Ui {
             window.release_backdrop();
         }
         release_widget_handlers();
+        canvas::release_devices();
         if let Ok(app) = naui_winui3::Microsoft::UI::Xaml::Application::Current() {
             let _ = app.Exit();
         }

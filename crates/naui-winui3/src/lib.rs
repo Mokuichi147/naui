@@ -18,7 +18,8 @@
 //!   `Application` on the Rust side**. `Application::Start` needs not the base class
 //!   itself but a composed object implementing `IApplicationOverrides`
 //! - [`IWindowNative`]: a COM interface that does not appear in WinRT metadata, for
-//!   getting the HWND out of a XAML `Window`
+//!   getting the HWND out of a XAML `Window`, and the Composition interop interfaces
+//!   for drawing with Direct2D ([`ICompositorInterop`] and friends)
 //!
 //! [`windows-bindgen`]: https://crates.io/crates/windows-bindgen
 
@@ -37,7 +38,10 @@ pub mod self_contained;
 
 pub use bindings::{Microsoft, Windows};
 pub use compose::{ChildClass, Compose, CreateInstanceFn};
-pub use native::IWindowNative;
+pub use native::{
+    ICompositionDrawingSurfaceInterop, ICompositionGraphicsDeviceInterop, ICompositorInterop,
+    IWindowNative,
+};
 
 /// The kind of COM apartment.
 pub enum ApartmentType {
