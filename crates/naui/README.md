@@ -62,7 +62,7 @@ Enable the `self-contained` feature to ship the runtime alongside your exe.
 
 ```toml
 [dependencies]
-naui = { version = "0.13", features = ["self-contained"] }
+naui = { version = "0.14", features = ["self-contained"] }
 ```
 
 The [guide](https://docs.rs/naui/latest/naui/guide/) (in Japanese) continues
