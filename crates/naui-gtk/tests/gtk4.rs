@@ -22,12 +22,12 @@ use gtk::gio;
 use gtk::glib;
 use gtk::pango;
 use naui_core::{
-    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, EventResponse,
-    FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    NavItem, Orientation, Padding, PlaybackState, Point, PointerPhase, PopupItem, Rect, Result,
-    ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn,
-    TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
+    EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
+    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, PlaybackState, Point, PointerPhase,
+    PopupItem, Rect, Result, ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing,
+    SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem,
+    Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -433,6 +433,10 @@ fn main() {
         (
             "ラベルの段階と役割が libadwaita のスタイルクラスへ写る",
             label_style_and_color_map_to_style_classes,
+        ),
+        (
+            "ボタンの役割が libadwaita のスタイルクラスへ写る",
+            button_role_maps_to_style_classes,
         ),
         (
             "折り返す中身は幅から高さが決まると親へ伝わる",
@@ -3381,6 +3385,28 @@ fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
     label.set_wrap(false);
     assert!(!native.wraps(), "何度でも切り替えられること");
     assert_eq!(native.ellipsize(), pango::EllipsizeMode::End);
+    Ok(())
+}
+
+/// `set_role` maps to libadwaita's style classes, and switching roles takes off the
+/// previous one.
+fn button_role_maps_to_style_classes(ui: &Ui) -> Result<()> {
+    let button = ui.button("保存")?;
+    let native: gtk::Button = button.native_widget().downcast().expect("GtkButton");
+    let classes = || {
+        ["suggested-action", "destructive-action"]
+            .into_iter()
+            .filter(|class| native.has_css_class(class))
+            .collect::<Vec<_>>()
+    };
+    assert!(classes().is_empty(), "既定ではクラスを付けないこと");
+
+    button.set_role(ButtonRole::Primary);
+    assert_eq!(classes(), ["suggested-action"]);
+    button.set_role(ButtonRole::Destructive);
+    assert_eq!(classes(), ["destructive-action"], "前の役割が外れること");
+    button.set_role(ButtonRole::Normal);
+    assert!(classes().is_empty(), "既定へ戻すとクラスが外れること");
     Ok(())
 }
 

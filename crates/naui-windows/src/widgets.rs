@@ -4,7 +4,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Breakpoint, Orientation, Padding, Result, StackArrangement, TextColor, TextStyle,
+    Align, Breakpoint, ButtonRole, Orientation, Padding, Result, StackArrangement, TextColor,
+    TextStyle,
 };
 use naui_winui3::Microsoft::UI::Dispatching::{
     DispatcherQueue, DispatcherQueueHandler, DispatcherQueueTimer,
@@ -377,6 +378,23 @@ impl Button {
 
     pub fn set_enabled(&self, enabled: bool) {
         let _ = self.0.native.SetIsEnabled(enabled);
+    }
+
+    /// The button's role. The default is [`ButtonRole::Normal`].
+    ///
+    /// `Primary` gets `AccentButtonStyle` from the theme resources. WinUI has no style
+    /// for destructive actions, so `Destructive` looks like an ordinary button
+    /// (the `Style` is cleared, the same as `Normal`).
+    pub fn set_role(&self, role: ButtonRole) {
+        let style = role
+            .xaml_style_key()
+            .and_then(app_resource)
+            .and_then(|style| style.cast::<Style>().ok());
+        if role.xaml_style_key().is_some() && style.is_none() {
+            eprintln!("naui-windows: could not find the button style");
+            return;
+        }
+        let _ = self.0.native.SetStyle(style.as_ref());
     }
 
     /// Called on click. Setting it again removes the previous one.

@@ -6,7 +6,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Breakpoint, Orientation, Padding, Result, StackArrangement, TextColor, TextStyle,
+    Align, Breakpoint, ButtonRole, Orientation, Padding, Result, StackArrangement, TextColor,
+    TextStyle,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
@@ -430,6 +431,9 @@ struct ButtonInner {
     file_drop: crate::file_drop::FileDrop,
 }
 
+/// The attribute that holds the button's role.
+const ROLE_ATTR: &str = "data-naui-role";
+
 /// A push button (`<button>`).
 #[derive(Clone)]
 pub struct Button(Rc<ButtonInner>);
@@ -452,6 +456,22 @@ impl Button {
 
     pub fn set_enabled(&self, enabled: bool) {
         set_disabled(&self.0.element, !enabled);
+    }
+
+    /// The button's role. The default is [`ButtonRole::Normal`].
+    ///
+    /// Browsers have no look for primary or destructive buttons, so **the look does
+    /// not change**. naui only writes the role as the `data-naui-role` attribute
+    /// (`"primary"` / `"destructive"`), which an app's own CSS can select.
+    pub fn set_role(&self, role: ButtonRole) {
+        match role.web_attribute() {
+            Some(value) => {
+                let _ = self.0.element.set_attribute(ROLE_ATTR, value);
+            }
+            None => {
+                let _ = self.0.element.remove_attribute(ROLE_ATTR);
+            }
+        }
     }
 
     /// Called on click. Setting it again removes the previous one.

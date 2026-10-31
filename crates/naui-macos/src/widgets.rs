@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use dispatch2::{DispatchQueue, MainThreadBound};
-use naui_core::{Align, Breakpoint, Orientation, Padding, StackArrangement, TextColor, TextStyle};
+use naui_core::{
+    Align, Breakpoint, ButtonRole, Orientation, Padding, StackArrangement, TextColor, TextStyle,
+};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::NSObjectProtocol;
 use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Message};
@@ -19,7 +21,7 @@ use objc2_app_kit::{
     NSFontTextStyleTitle1, NSFontTextStyleTitle3, NSLayoutAttribute, NSLayoutConstraint,
     NSLineBreakMode, NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField,
     NSSecureTextField, NSSlider, NSStackView, NSStackViewDistribution, NSTextField, NSTextView,
-    NSUserInterfaceLayoutOrientation, NSView, NSViewFrameDidChangeNotification,
+    NSTintProminence, NSUserInterfaceLayoutOrientation, NSView, NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
     NSArray, NSDictionary, NSEdgeInsets, NSNotificationCenter, NSPoint, NSRect, NSSize, NSString,
@@ -376,6 +378,39 @@ impl Button {
 
     pub fn set_enabled(&self, enabled: bool) {
         self.0.native.setEnabled(enabled);
+    }
+
+    /// The button's role. The default is [`ButtonRole::Normal`].
+    ///
+    /// - `Primary`: `tintProminence = .primary` on macOS 26 and later, and
+    ///   `bezelColor = controlAccentColor` before that. Both draw the accent color
+    ///   like the window's default button, but the Return key equivalent is not set,
+    ///   so Return does not activate it.
+    /// - `Destructive`: `hasDestructiveAction`. On macOS 26 and later it also gets
+    ///   the look AppKit gives destructive buttons in alerts (red text on a faint red
+    ///   bezel: `bezelColor = systemRedColor` with `tintProminence = .secondary`).
+    ///   Before that AppKit has no such look, so it looks like an ordinary button.
+    pub fn set_role(&self, role: ButtonRole) {
+        let native = &self.0.native;
+        // macOS 26 で入った API。それより前の AppKit には無い。
+        let has_prominence = native.respondsToSelector(sel!(setTintProminence:));
+        let (bezel, prominence) = match role {
+            ButtonRole::Normal => (None, NSTintProminence::Automatic),
+            ButtonRole::Primary if has_prominence => (None, NSTintProminence::Primary),
+            ButtonRole::Primary => (
+                Some(NSColor::controlAccentColor()),
+                NSTintProminence::Automatic,
+            ),
+            ButtonRole::Destructive if has_prominence => {
+                (Some(NSColor::systemRedColor()), NSTintProminence::Secondary)
+            }
+            ButtonRole::Destructive => (None, NSTintProminence::Automatic),
+        };
+        native.setHasDestructiveAction(role == ButtonRole::Destructive);
+        native.setBezelColor(bezel.as_deref());
+        if has_prominence {
+            native.setTintProminence(prominence);
+        }
     }
 
     /// Called on click. Setting it again removes the previous one.

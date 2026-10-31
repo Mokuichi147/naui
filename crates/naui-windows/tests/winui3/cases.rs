@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use naui_core::{
-    Align, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect, Result,
-    ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle, ToolbarIcon,
+    Align, ButtonRole, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect,
+    Result, ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle, ToolbarIcon,
     WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
@@ -25,8 +25,8 @@ use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, GridUnitType, HorizontalAlignment, RoutedEventHandler, UIElement,
-    VerticalAlignment,
+    Application, FrameworkElement, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
+    UIElement, VerticalAlignment,
 };
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows_core::{Interface, HSTRING};
@@ -42,6 +42,10 @@ const CASES: &[Case] = &[
     (
         "ボタンのラベルがネイティブと往復する",
         button_label_round_trips,
+    ),
+    (
+        "ボタンの役割が AccentButtonStyle へ写り、既定へ戻せる",
+        button_role_maps_to_accent_style,
     ),
     (
         "チェックボックスが反転し新しい値を通知する",
@@ -755,6 +759,38 @@ fn label_round_trips(ui: &Ui) -> Result<()> {
         "差し替え",
         "ネイティブの TextBlock にも届くこと"
     );
+    Ok(())
+}
+
+/// `set_role` gives `Primary` the theme's `AccentButtonStyle`. WinUI has no style for
+/// destructive actions, so `Destructive` clears the `Style` the same as `Normal`.
+fn button_role_maps_to_accent_style(ui: &Ui) -> Result<()> {
+    let button = ui.button("保存")?;
+    let native = native::<XamlButton>(&button);
+    let accent = Application::Current()
+        .and_then(|app| app.Resources())
+        .and_then(|resources| {
+            resources.Lookup(&PropertyValue::CreateString(&HSTRING::from(
+                "AccentButtonStyle",
+            ))?)
+        })
+        .and_then(|value| value.cast::<Style>())
+        .expect("テーマに AccentButtonStyle があること");
+    // `Style` が空なら既定のボタンの見た目になる。
+    let style = || native.Style().ok();
+    assert_eq!(style(), None, "作った直後は Style が空であること");
+
+    button.set_role(ButtonRole::Primary);
+    assert_eq!(
+        style(),
+        Some(accent.clone()),
+        "主ボタンは AccentButtonStyle"
+    );
+    button.set_role(ButtonRole::Destructive);
+    assert_eq!(style(), None, "破壊的な操作は既定の見た目に戻ること");
+    button.set_role(ButtonRole::Primary);
+    button.set_role(ButtonRole::Normal);
+    assert_eq!(style(), None, "既定へ戻すと Style が空になること");
     Ok(())
 }
 

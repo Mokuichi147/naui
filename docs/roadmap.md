@@ -99,7 +99,7 @@ internationalization tracks.
 - [ ] **Dialogs with arbitrary content.** `ContentDialog`, `AdwDialog`, sheets,
       `<dialog>`. Much of the construction can be shared with popovers. The
       existing `Dialog` stays as the short form for a message and buttons.
-- [ ] **Button roles** (primary buttons, destructive actions). Small, and dialogs
+- [x] **Button roles** (primary buttons, destructive actions). Small, and dialogs
       with arbitrary content need it to mark their buttons. macOS's
       `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
       WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
