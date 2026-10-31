@@ -88,12 +88,33 @@ impl Sheet {
     /// The content. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
         let previous = self.0.child.replace(Some(child.boxed_clone()));
-        if let Some(current) = self.0.current.borrow().as_ref() {
-            if let Some(previous) = previous {
-                crate::interaction::clear_focus(&previous.size_bin());
-            }
-            place_child(&current.holder, child);
+        // フォーカスを外すと on_focus_change がその場で呼ばれ、その中でシートを
+        // 閉じたり中身を差し替えたりできる。借用を手放してから触る。
+        let Some(holder) = self.holder() else {
+            return;
+        };
+        if let Some(previous) = previous {
+            crate::interaction::clear_focus(&previous.size_bin());
         }
+        // 通知の中で閉じたか開き直したか、別の中身に差し替えていれば、そちらに任せる。
+        let still_this = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .is_some_and(|current| current.size_bin() == child.size_bin());
+        if self.holder().as_ref() == Some(&holder) && still_this {
+            place_child(&holder, child);
+        }
+    }
+
+    /// The box the content goes in, of the dialog open now.
+    fn holder(&self) -> Option<adw::Bin> {
+        self.0
+            .current
+            .borrow()
+            .as_ref()
+            .map(|current| current.holder.clone())
     }
 
     /// The buttons to show. With none specified, only "OK" is shown. Takes effect
@@ -112,10 +133,17 @@ impl Sheet {
         let mut state = self.0.enabled.get();
         state.set(response, enabled);
         self.0.enabled.set(state);
-        if let Some(current) = self.0.current.borrow().as_ref() {
-            for (role, button) in &current.buttons {
-                button.set_sensitive(state.get(*role));
-            }
+        // 押せなくしたボタンからはフォーカスが外れ、その通知の中でシートを
+        // 閉じられる。借用を手放してから触る。
+        let buttons = self
+            .0
+            .current
+            .borrow()
+            .as_ref()
+            .map(|current| current.buttons.clone())
+            .unwrap_or_default();
+        for (role, button) in buttons {
+            button.set_sensitive(state.get(role));
         }
     }
 
@@ -189,8 +217,16 @@ impl Sheet {
         holder.set_margin_end(MARGIN);
         holder.set_margin_top(MARGIN);
         holder.set_margin_bottom(MARGIN);
-        if let Some(child) = self.0.child.borrow().as_deref() {
-            place_child(&holder, child);
+        // 前のダイアログから外すとフォーカスの通知が走り、その中で中身を
+        // 差し替えられる。借用を手放してから触る。
+        let child = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.boxed_clone());
+        if let Some(child) = child {
+            place_child(&holder, child.as_ref());
         }
         let toolbar = adw::ToolbarView::new();
         toolbar.set_width_request(SHEET_MIN_WIDTH as i32);

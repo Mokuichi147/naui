@@ -770,6 +770,10 @@ fn main() {
             sheet_button_enabled_reaches_the_buttons,
         ),
         (
+            "シートの中身を差し替えたときのフォーカス通知の中で閉じ・差し替えられる",
+            sheet_set_child_allows_changes_in_the_focus_notification,
+        ),
+        (
             "トーストの設定が AdwToast へ届く",
             toast_configuration_reaches_the_native_toast,
         ),
@@ -6805,6 +6809,70 @@ fn sheet_button_enabled_reaches_the_buttons(ui: &Ui) -> Result<()> {
         [("やめる".to_string(), true), ("作成".to_string(), true)],
         "開いている間の切り替えも届く"
     );
+    sheet.close();
+    window.close();
+    Ok(())
+}
+
+fn sheet_set_child_allows_changes_in_the_focus_notification(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+
+    let sheet = ui.sheet("名前")?;
+    let field = ui.text_input("")?;
+    let (log, sink) = recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    let focus_field = |sheet: &naui_gtk::Sheet| {
+        sheet.set_child(&field);
+        sheet.open();
+        wait_until_shown(&sheet.native_dialog().expect("AdwDialog"));
+        assert!(field.request_focus(), "入力欄にフォーカスを移せる");
+    };
+
+    // 差し替えで外れたフォーカスの通知の中で閉じる。
+    focus_field(&sheet);
+    let lost = Rc::new(Cell::new(0));
+    field.on_focus_change({
+        let lost = lost.clone();
+        let sheet = sheet.clone();
+        move |has_focus| {
+            if !has_focus {
+                lost.set(lost.get() + 1);
+                sheet.close();
+            }
+        }
+    });
+    let other = ui.label("差し替え")?;
+    sheet.set_child(&other);
+    assert_eq!(lost.get(), 1, "フォーカスが外れた通知が届く");
+    assert!(!sheet.is_open(), "通知の中で閉じられる");
+    assert!(log.borrow().is_empty(), "close では応答は届かない");
+    assert!(
+        other.size_bin().parent().is_none(),
+        "閉じたシートには置かない"
+    );
+
+    // 通知の中でさらに差し替えれば、そちらが残る。
+    focus_field(&sheet);
+    let third = ui.label("通知の中で差し替え")?;
+    field.on_focus_change({
+        let sheet = sheet.clone();
+        let third = third.clone();
+        move |has_focus| {
+            if !has_focus {
+                sheet.set_child(&third);
+            }
+        }
+    });
+    sheet.set_child(&other);
+    let native = sheet.native_dialog().expect("開いたまま");
+    assert!(
+        third.native_widget().is_ancestor(&native),
+        "通知の中の中身が残る"
+    );
+    assert!(other.size_bin().parent().is_none(), "外側の中身は置かない");
+
+    field.on_focus_change(|_| {});
     sheet.close();
     window.close();
     Ok(())
