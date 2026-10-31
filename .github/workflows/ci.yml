@@ -62,7 +62,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-macos -p naui -p counter -p gallery
+        run: cargo build -p naui-core -p naui-macos -p naui -p counter -p i18n -p gallery
       # AppKit の統合テストは harness = false の自前ランナーで、
       # ネイティブのコントロールを実際に作って操作する。
       #
@@ -72,6 +72,10 @@ jobs:
       - name: テスト
         timeout-minutes: 10
         run: cargo test -p naui-core -p naui-macos -p naui
+
+      # 翻訳の例の、言語の選び方と張り直しの単体テスト (UI を作らない)。
+      - name: テスト (examples/i18n)
+        run: cargo test -p i18n
 
   windows:
     name: Windows (WinUI 3)
@@ -92,7 +96,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p counter -p gallery
+        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p counter -p i18n -p gallery
       # 他の環境と同じく、バックエンドのクレートまで lint をかける。
       # naui-windows は WinRT の生ポインタを触るので、警告を残さない。
       - name: clippy
@@ -165,9 +169,9 @@ jobs:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
       - name: ビルド (フレームワーク依存)
-        run: cargo check -p naui -p counter -p gallery --locked
+        run: cargo check -p naui -p counter -p i18n -p gallery --locked
       - name: ビルド (ランタイム同梱)
-        run: cargo check -p naui -p counter -p gallery --features gallery/self-contained --locked
+        run: cargo check -p naui -p counter -p i18n -p gallery --features gallery/self-contained --locked
 
   # ランタイムを同梱した exe が、Windows 11 24H2 より前の Windows でも動くかを
   # 見る。Windows Server 2022 (ビルド 20348) は 24H2 (26100) より前なので、
@@ -259,7 +263,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-gtk -p naui -p counter -p gallery
+        run: cargo build -p naui-core -p naui-gtk -p naui -p counter -p i18n -p gallery
       # GTK4 はディスプレイを要求する。libadwaita は D-Bus のセッションバスから
       # 配色設定を読むため、dbus-run-session も通す。
       - name: テスト

@@ -73,8 +73,8 @@ direction.
   Translating the app's strings is left to existing libraries (Fluent, gettext,
   ICU4X for dates and numbers), so apps that do not translate gain no dependencies.
 - **No binding mechanism in the core.** Updating widget strings when the language
-  changes is done by the app (or an optional crate) holding widgets with
-  `downgrade()` and calling `set_text`. This keeps the core free of a reactive
+  changes is done by the app holding widgets with `downgrade()` and calling
+  `set_text`, as shown in [Translating apps](translating.md). This keeps the core free of a reactive
   system, in line with keeping declarative UI out of it.
 - **Native strings follow the OS language.** Strings the native controls carry
   themselves (file dialogs, date pickers, text field context menus) use the OS's UI
@@ -119,11 +119,14 @@ internationalization tracks.
       Linux and Windows switch on the next run loop iteration after layout, and the
       Web inside a `ResizeObserver` before paint. Thresholds are widths only, so no
       `Size` type was added.
-- [ ] *(i18n)* **A guide for translating apps.** With `Ui::preferred_languages`
+- [x] *(i18n)* **A guide for translating apps.** With `Ui::preferred_languages`
       and `Ui::on_preferred_languages_change` in place, show how to combine Fluent
       with naui: choosing a translation from the preferred languages, loading it,
-      and re-setting strings via `downgrade()` when the language changes. Whether
-      an optional `naui-i18n` crate is needed is decided after writing it.
+      and re-setting strings via `downgrade()` when the language changes. Written
+      as [Translating apps](translating.md) with `examples/i18n`. An optional
+      `naui-i18n` crate turned out not to be needed for now: the glue is a few
+      dozen lines that depend on the translation library and on how the app is
+      distributed (see [the reasons](translating.md#why-there-is-no-naui-i18n-crate)).
 
 ## P1: Do next
 

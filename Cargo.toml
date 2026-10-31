@@ -9,6 +9,7 @@ members = [
     "crates/naui-gtk",
     "crates/naui",
     "examples/counter",
+    "examples/i18n",
     "examples/gallery",
 ]
 exclude = ["tools/winui3-bindgen"]
