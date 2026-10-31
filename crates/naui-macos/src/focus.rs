@@ -74,14 +74,15 @@ fn adopt_current_focus(view: &NSView) {
     let Some(window) = view.window() else {
         return;
     };
-    let Ok(window) = window.downcast::<FocusWindow>() else {
-        return;
-    };
     let mine = lookup(view);
     let current = owner_of(window.firstResponder());
     if let (Some(mine), Some(current)) = (&mine, &current) {
         if Rc::ptr_eq(mine, current) {
-            window.ivars().owner.reset(Some(current.clone()));
+            if let Ok(window) = window.clone().downcast::<FocusWindow>() {
+                window.ivars().owner.reset(Some(current.clone()));
+            } else if let Ok(sheet) = window.downcast::<crate::sheet::SheetWindow>() {
+                sheet.focus_state().owner.reset(Some(current.clone()));
+            }
         }
     }
 }
@@ -110,10 +111,31 @@ fn owner_of(responder: Option<Retained<NSResponder>>) -> Option<Rc<FocusHandler>
 }
 
 #[derive(Default)]
-struct FocusState {
+pub(crate) struct FocusState {
     owner: FocusOwner,
     /// The depth of nested `makeFirstResponder:` calls.
     depth: Cell<u32>,
+}
+
+impl FocusState {
+    /// The body of an overridden `makeFirstResponder:`. `call_super` makes the move
+    /// itself, and `window` is the window it happens in.
+    ///
+    /// When moving into a text field, AppKit calls `makeFirstResponder:` again from
+    /// inside this one (to end editing in the current field it first moves to the
+    /// window itself, then to the field editor). Intermediate states are not counted;
+    /// counting happens when the outermost call finishes.
+    pub(crate) fn track_move(&self, window: &NSWindow, call_super: impl FnOnce() -> bool) -> bool {
+        self.depth.set(self.depth.get() + 1);
+        let moved = call_super();
+        self.depth.set(self.depth.get() - 1);
+        if self.depth.get() == 0 {
+            // 移せなかったときも、入れ子の移動で持ち主が変わっていることが
+            // あるので、いまの first responder から数え直す。
+            self.owner.move_to(owner_of(window.firstResponder()));
+        }
+        moved
+    }
 }
 
 define_class!(
@@ -127,22 +149,11 @@ define_class!(
     unsafe impl NSObjectProtocol for FocusWindow {}
 
     impl FocusWindow {
-        /// When moving into a text field, AppKit calls `makeFirstResponder:` again from
-        /// inside this one (to end editing in the current field it first moves to the
-        /// window itself, then to the field editor). Intermediate states are not counted;
-        /// counting happens when the outermost call finishes.
         #[unsafe(method(makeFirstResponder:))]
         fn make_first_responder(&self, responder: Option<&NSResponder>) -> bool {
-            let state = self.ivars();
-            state.depth.set(state.depth.get() + 1);
-            let moved: bool = unsafe { msg_send![super(self), makeFirstResponder: responder] };
-            state.depth.set(state.depth.get() - 1);
-            if state.depth.get() == 0 {
-                // 移せなかったときも、入れ子の移動で持ち主が変わっていることが
-                // あるので、いまの first responder から数え直す。
-                state.owner.move_to(owner_of(self.firstResponder()));
-            }
-            moved
+            self.ivars().track_move(self, || unsafe {
+                msg_send![super(self), makeFirstResponder: responder]
+            })
         }
     }
 );

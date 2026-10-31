@@ -214,3 +214,11 @@ impl Dialog {
         }
     }
 }
+
+/// The shown window to place a sheet on: the active one, or failing that the first
+/// shown window the app holds.
+pub(crate) fn parent_window(app: &adw::Application) -> Option<gtk::Window> {
+    app.active_window()
+        .filter(|window| window.is_visible())
+        .or_else(|| app.windows().into_iter().find(|window| window.is_visible()))
+}

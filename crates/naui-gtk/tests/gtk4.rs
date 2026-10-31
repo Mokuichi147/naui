@@ -758,6 +758,26 @@ fn main() {
             dialog_is_closed_until_opened,
         ),
         (
+            "シートが AdwDialog になり、ボタンを見出しの帯に並べる",
+            sheet_builds_an_adw_dialog,
+        ),
+        (
+            "シートのボタンと Esc が役割を通知して閉じる",
+            sheet_buttons_and_escape_respond,
+        ),
+        (
+            "シートのボタンの有効・無効が開いている間も届く",
+            sheet_button_enabled_reaches_the_buttons,
+        ),
+        (
+            "シートの中身を差し替えたときのフォーカス通知の中で閉じ・差し替えられる",
+            sheet_set_child_allows_changes_in_the_focus_notification,
+        ),
+        (
+            "開いた直後に閉じたシートは残らない",
+            sheet_closed_right_after_opening_does_not_stay,
+        ),
+        (
             "トーストの設定が AdwToast へ届く",
             toast_configuration_reaches_the_native_toast,
         ),
@@ -6595,6 +6615,302 @@ fn dialog_is_closed_until_opened(ui: &Ui) -> Result<()> {
     assert!(!dialog.is_open());
     assert!(log.borrow().is_empty(), "出していないので何も起きない");
     assert!(dialog.native_dialog().is_none());
+    Ok(())
+}
+
+/// The `GtkButton`s in `widget` and below it, in tree order.
+fn buttons_in(widget: &gtk::Widget) -> Vec<gtk::Button> {
+    let mut found = Vec::new();
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        match current.clone().downcast::<gtk::Button>() {
+            Ok(button) => found.push(button),
+            Err(other) => found.extend(buttons_in(&other)),
+        }
+        child = current.next_sibling();
+    }
+    found
+}
+
+/// The sheet's buttons with their labels.
+fn sheet_buttons(sheet: &naui_gtk::Sheet) -> Vec<(String, gtk::Button)> {
+    let native = sheet.native_dialog().expect("AdwDialog");
+    buttons_in(native.upcast_ref())
+        .into_iter()
+        .filter_map(|button| button.label().map(|label| (label.to_string(), button)))
+        .collect()
+}
+
+/// Waits until the sheet has opened, as the user sees it.
+///
+/// libadwaita 1.5 opens the sheet inside `AdwDialog` on its second frame after it is
+/// mapped, and closing it before then does nothing, so `closed` never comes (1.6
+/// and later close it anyway). The user can press Esc only once it is shown, so wait
+/// for the focus it takes when it opens.
+fn wait_until_shown(native: &adw::Dialog) {
+    let shown = || {
+        native
+            .root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| focus.is_ancestor(native))
+    };
+    spin_until(std::time::Duration::from_secs(2), shown);
+    assert!(shown(), "シートが開ききる");
+}
+
+fn sheet_builds_an_adw_dialog(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+
+    let sheet = ui.sheet("新しいフォルダ")?;
+    let field = ui.text_input("名称未設定")?;
+    sheet.set_child(&field);
+    sheet.set_buttons(
+        DialogButtons::new()
+            .primary("作成")
+            .secondary("あとで")
+            .cancel("キャンセル"),
+    );
+    let (log, sink) = recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    assert!(!sheet.is_open());
+    assert!(sheet.native_dialog().is_none());
+
+    sheet.open();
+    assert!(sheet.is_open());
+    let native = sheet.native_dialog().expect("AdwDialog");
+    assert_eq!(native.title().to_string(), "新しいフォルダ");
+    assert!(native.follows_content_size(), "中身の大きさに従う");
+    assert!(
+        field.native_widget().is_ancestor(&native),
+        "中身がダイアログの中に入る"
+    );
+
+    let buttons = sheet_buttons(&sheet);
+    let header = buttons[0]
+        .1
+        .ancestor(adw::HeaderBar::static_type())
+        .and_downcast::<adw::HeaderBar>()
+        .expect("ボタンが見出しの帯にある");
+    assert!(
+        !header.shows_end_title_buttons(),
+        "取り消しがあれば閉じるボタンは出さない"
+    );
+    let labels: Vec<_> = buttons.iter().map(|(label, _)| label.as_str()).collect();
+    // 帯の中では、始端に取り消し、終端から主・副の順に詰める。
+    assert_eq!(labels, ["キャンセル", "あとで", "作成"]);
+    let primary = &buttons[2].1;
+    assert!(
+        primary.has_css_class("suggested-action"),
+        "主ボタンの見た目"
+    );
+    assert!(!buttons[1].1.has_css_class("suggested-action"));
+    assert_eq!(
+        native.default_widget().as_ref(),
+        Some(primary.upcast_ref::<gtk::Widget>()),
+        "主ボタンが既定のボタン"
+    );
+
+    sheet.close();
+    assert!(!sheet.is_open());
+    assert!(sheet.native_dialog().is_none());
+    assert!(log.borrow().is_empty(), "アプリが閉じたときは通知しない");
+
+    // 取り消しが無ければ、閉じるボタンを出す。
+    sheet.set_buttons(DialogButtons::new().primary("作成"));
+    sheet.open();
+    let header = sheet_buttons(&sheet)[0]
+        .1
+        .ancestor(adw::HeaderBar::static_type())
+        .and_downcast::<adw::HeaderBar>()
+        .expect("見出しの帯");
+    assert!(header.shows_end_title_buttons());
+    sheet.close();
+    window.close();
+    Ok(())
+}
+
+fn sheet_buttons_and_escape_respond(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+
+    let sheet = ui.sheet("確認")?;
+    let body = ui.label("中身")?;
+    sheet.set_child(&body);
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let reopened = Rc::new(Cell::new(false));
+    sheet.on_response({
+        let log = log.clone();
+        let reopened = reopened.clone();
+        let sheet = sheet.clone();
+        move |response| {
+            log.borrow_mut().push(response);
+            // 1 回目の通知の中で開き直す。
+            if log.borrow().len() == 1 {
+                sheet.open();
+                reopened.set(sheet.is_open());
+            }
+        }
+    });
+
+    sheet.open();
+    let first = sheet.native_dialog().expect("AdwDialog");
+    wait_until_shown(&first);
+    let (_, primary) = sheet_buttons(&sheet).pop().expect("主ボタン");
+    primary.emit_clicked();
+    assert_eq!(log.borrow().as_slice(), [DialogResponse::Primary]);
+    assert!(reopened.get(), "通知の中で開き直せる");
+    let second = sheet.native_dialog().expect("開き直した AdwDialog");
+    assert_ne!(first, second, "開くたびに作り直す");
+    pump();
+    assert!(
+        body.native_widget().is_ancestor(&second),
+        "中身が新しいダイアログへ移る"
+    );
+
+    // Esc は AdwDialog が閉じる。取り消しとして届く。
+    wait_until_shown(&second);
+    second.close();
+    pump();
+    assert_eq!(
+        log.borrow().as_slice(),
+        [DialogResponse::Primary, DialogResponse::Cancel]
+    );
+    assert!(!sheet.is_open());
+    // 閉じ終えたら中身を手放す。
+    assert!(body.size_bin().parent().is_none(), "中身はどこにも属さない");
+
+    sheet.on_response(|_| {});
+    window.close();
+    Ok(())
+}
+
+fn sheet_button_enabled_reaches_the_buttons(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+
+    let sheet = ui.sheet("名前")?;
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+    sheet.set_button_enabled(DialogResponse::Primary, false);
+    sheet.set_button_enabled(DialogResponse::Cancel, false);
+    assert!(!sheet.is_button_enabled(DialogResponse::Primary));
+    assert!(sheet.is_button_enabled(DialogResponse::Cancel));
+    sheet.open();
+    let sensitive = |sheet: &naui_gtk::Sheet| -> Vec<(String, bool)> {
+        sheet_buttons(sheet)
+            .into_iter()
+            .map(|(label, button)| (label, button.is_sensitive()))
+            .collect()
+    };
+    assert_eq!(
+        sensitive(&sheet),
+        [("やめる".to_string(), true), ("作成".to_string(), false)]
+    );
+    sheet.set_button_enabled(DialogResponse::Primary, true);
+    assert_eq!(
+        sensitive(&sheet),
+        [("やめる".to_string(), true), ("作成".to_string(), true)],
+        "開いている間の切り替えも届く"
+    );
+    sheet.close();
+    window.close();
+    Ok(())
+}
+
+fn sheet_set_child_allows_changes_in_the_focus_notification(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+
+    let sheet = ui.sheet("名前")?;
+    let field = ui.text_input("")?;
+    let (log, sink) = recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    let focus_field = |sheet: &naui_gtk::Sheet| {
+        sheet.set_child(&field);
+        sheet.open();
+        wait_until_shown(&sheet.native_dialog().expect("AdwDialog"));
+        assert!(field.request_focus(), "入力欄にフォーカスを移せる");
+    };
+
+    // 差し替えで外れたフォーカスの通知の中で閉じる。
+    focus_field(&sheet);
+    let lost = Rc::new(Cell::new(0));
+    field.on_focus_change({
+        let lost = lost.clone();
+        let sheet = sheet.clone();
+        move |has_focus| {
+            if !has_focus {
+                lost.set(lost.get() + 1);
+                sheet.close();
+            }
+        }
+    });
+    let other = ui.label("差し替え")?;
+    sheet.set_child(&other);
+    assert_eq!(lost.get(), 1, "フォーカスが外れた通知が届く");
+    assert!(!sheet.is_open(), "通知の中で閉じられる");
+    assert!(log.borrow().is_empty(), "close では応答は届かない");
+    assert!(
+        other.size_bin().parent().is_none(),
+        "閉じたシートには置かない"
+    );
+
+    // 通知の中でさらに差し替えれば、そちらが残る。
+    focus_field(&sheet);
+    let third = ui.label("通知の中で差し替え")?;
+    field.on_focus_change({
+        let sheet = sheet.clone();
+        let third = third.clone();
+        move |has_focus| {
+            if !has_focus {
+                sheet.set_child(&third);
+            }
+        }
+    });
+    sheet.set_child(&other);
+    let native = sheet.native_dialog().expect("開いたまま");
+    assert!(
+        third.native_widget().is_ancestor(&native),
+        "通知の中の中身が残る"
+    );
+    assert!(other.size_bin().parent().is_none(), "外側の中身は置かない");
+
+    field.on_focus_change(|_| {});
+    sheet.close();
+    window.close();
+    Ok(())
+}
+
+/// libadwaita 1.5 ignores closing before the sheet has opened (see
+/// `wait_until_shown`), so this checks that naui closes it once it opens.
+fn sheet_closed_right_after_opening_does_not_stay(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+
+    let sheet = ui.sheet("すぐ閉じる")?;
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+    let (log, sink) = recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    // 同じイベント処理の中で開いて閉じる。
+    sheet.open();
+    let native = sheet.native_dialog().expect("AdwDialog");
+    sheet.close();
+    assert!(!sheet.is_open());
+    // 閉じ終えると AdwDialog は窓から外れる。1.5 が開く 2 フレーム目より十分に待つ。
+    let gone = || native.parent().is_none();
+    spin_until(std::time::Duration::from_secs(2), gone);
+    assert!(gone(), "開く前に閉じたシートが窓に残らない");
+    assert!(log.borrow().is_empty(), "close では応答は届かない");
+
+    // 閉じたあとも、開き直して使える。
+    sheet.open();
+    let reopened = sheet.native_dialog().expect("開き直した AdwDialog");
+    wait_until_shown(&reopened);
+    reopened.close();
+    spin_until(std::time::Duration::from_secs(2), || !sheet.is_open());
+    assert_eq!(log.borrow().as_slice(), [DialogResponse::Cancel]);
+    window.close();
     Ok(())
 }
 

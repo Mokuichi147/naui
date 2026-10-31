@@ -16,6 +16,7 @@ that shape are covered in
 | Where `Toolbar` goes | Right of the title | Title bar (the title text is hidden) | Left side of the header bar | Start of the window |
 | Where `MenuBar` goes | Below the title bar | The app's menu | Below the header bar | Start of the window |
 | `Dialog::open` and `PopupMenu::open_at` | Return immediately | Do not return until closed | Return immediately | Return immediately |
+| Where `Sheet`'s buttons go | The dialog's button row (primary on the left) | Bottom right (primary on the right), secondary at the bottom left | The header bar: cancel at the start, primary at the end | Bottom right (primary on the right) |
 | Window position (`position` / `set_position`) | Possible | Possible | Not possible | Not possible |
 | Restoring a saved window (`set_placement`) | Size, position and state | Size, position and state | Size and state | Size only (fullscreen needs a user action) |
 | Maximizing and minimizing | Possible | Possible | Possible (minimizing cannot be detected on Wayland) | Not possible |
@@ -29,7 +30,7 @@ that shape are covered in
 
 ### Scope
 
-- The supported components are the 47 in the table in the
+- The supported components are the 48 in the table in the
   [README](../README.md#widgets).
 - There is no absolute positioning. Layout uses `Stack`, `Grid` and `Spacer`.
 - Supported media formats depend on each OS, browser, and the GStreamer setup on
@@ -94,7 +95,10 @@ that shape are covered in
 - `Tree` has single selection, and its items can hold only strings. Items are
   addressed by paths (`&[usize]`), and they cannot be rearranged by dragging.
 - Only one `Dialog` can be shown at a time, with at most three buttons: Primary,
-  Secondary and Cancel.
+  Secondary and Cancel. `Sheet` has the same three buttons, and its cancel button
+  cannot be disabled (Esc closes it anyway).
+- A `Sheet` takes its content's natural size (at least 320 px wide), so `Fill` in
+  the content has nothing to fill. It cannot be resized by the user.
 - Only one `Toast` is shown at a time too, and a newly shown one replaces the
   previous one (`AdwToastOverlay`'s queueing is aligned to this behavior). There is
   one action button, and the position is fixed at the bottom center.
@@ -189,7 +193,9 @@ that shape are covered in
   does not reach `on_wheel`; the outer `Scroll` moves instead. `ScrollViewer`
   receives touchpad gestures itself, and they do not become wheel notifications
   (mouse wheels do arrive).
-- `Dialog` and `Toast` cannot be shown before `window.show()`.
+- `Dialog`, `Sheet` and `Toast` cannot be shown before `window.show()`.
+- `Sheet` keeps the width `ContentDialog` allows, between 320 and 548 px
+  (`ContentDialogMinWidth` / `ContentDialogMaxWidth`), so wider content is squeezed.
 - `MenuBar` shortcuts are picked up from the window's `KeyDown`, so a key that the
   focused control handles itself does not reach them. Whether F10 and Alt
   combinations, which Windows uses for its own menu keys, arrive has not been
@@ -312,6 +318,10 @@ that shape are covered in
   `GtkCalendar` does not distinguish "a day was pressed" from "the month was
   changed"). The date shown on the button follows the locale's format.
 - `ColorPicker` does not handle opacity.
+- In a `Sheet`, **Enter in a text field does not press the primary button**: a
+  `GtkText` activates the dialog's default widget only with `activates-default`,
+  which naui's text fields leave off. Clicking it or Enter with the focus elsewhere
+  in the dialog does.
 - With `List` set to `SelectionMode::Multiple`, selection with Ctrl / Shift is left
   to GTK4, so **row clicks (`ListRow::on_activate`) arrive on a double press**.
 - `Fit::None` corresponds to GTK4's `SCALE_DOWN`, so it behaves as "do not enlarge"

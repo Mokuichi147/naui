@@ -12,7 +12,8 @@ pub use naui_core::{
     SidebarItem, SidebarSection, Sizing, Sleep, SortOrder, TableColumn, TableRow, Task, Tasks,
     TextColor, TextStyle, Theme, Time, Timer, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
     WeakWidget, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION,
-    ROW_WINDOW_THRESHOLD, SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
+    ROW_WINDOW_THRESHOLD, SHEET_MIN_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH,
+    WHEEL_STEP,
 };
 
 // ビルド対象のバックエンド。naui の型はこれの型を包む。
@@ -69,6 +70,7 @@ mod number_input;
 mod popover;
 mod popup;
 mod radio_group;
+mod sheet;
 mod sidebar;
 mod split_view;
 mod table;
@@ -100,6 +102,7 @@ pub use number_input::NumberInput;
 pub use popover::Popover;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
+pub use sheet::Sheet;
 pub use sidebar::Sidebar;
 pub use split_view::SplitView;
 pub use table::{Table, TableCells};

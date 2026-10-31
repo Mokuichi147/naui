@@ -3,9 +3,9 @@ use crate::{
     Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox, DatePicker,
     Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link,
     List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, Popover, PopupMenu,
-    ProgressBar, RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, Spinner, SplitView,
-    Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Video,
-    Window,
+    ProgressBar, RadioGroup, Scroll, SearchInput, Sheet, Sidebar, Slider, Spacer, Spinner,
+    SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree,
+    Video, Window,
 };
 use naui_core::{DatePickerMode, Orientation, Result, Settings, Tasks, Theme};
 
@@ -331,6 +331,15 @@ impl Ui {
     #[inline]
     pub fn dialog(&self, title: &str) -> Result<Dialog> {
         self.0.dialog(title).map(Dialog)
+    }
+
+    /// A modal dialog holding any widget as its content. `title` is the heading.
+    ///
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
+    #[inline]
+    pub fn sheet(&self, title: &str) -> Result<Sheet> {
+        self.0.sheet(title).map(Sheet)
     }
 
     /// Switches the color theme.

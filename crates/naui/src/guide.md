@@ -2486,6 +2486,8 @@ What arrives differs as with `FilePicker`:
 A [`Dialog`] shows the platform's standard modal. It has a heading, a message, an
 arbitrary widget and buttons with roles (up to three), and the reason it closed is
 returned as a [`DialogResponse`].
+For a form or other content that is more than a message, use a
+[`Sheet`](#sheets).
 
 ```no_run
 # use naui::{DialogButtons, DialogResponse, Result, Ui};
@@ -2522,6 +2524,63 @@ only "OK" is shown.
 Windows, `open()` returns immediately and the notification arrives later. Closing
 with [`Dialog::close`] does not call `on_response` (as with `set_selected`, the
 app's own operations are not notified).
+
+## Sheets
+
+A [`Sheet`] is a modal dialog holding any widget as its content, for forms and
+settings that do not fit a message and buttons. Its buttons are given by role with
+the same [`DialogButtons`] as a [`Dialog`], and each platform places them where its
+own dialogs do. [`Sheet::set_button_enabled`] keeps a button disabled, for example
+until the form is filled in; Return does not press a disabled button either.
+
+```no_run
+# use naui::{DialogButtons, DialogResponse, Orientation, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let form = ui.stack(Orientation::Vertical)?;
+form.append(&ui.label("Name")?);
+let name = ui.text_input("")?;
+form.append(&name);
+
+let sheet = ui.sheet("New folder")?;
+sheet.set_child(&form);
+sheet.set_buttons(DialogButtons::new().primary("Create").cancel("Cancel"));
+sheet.set_button_enabled(DialogResponse::Primary, false);
+name.on_change({
+    let sheet = sheet.clone();
+    move |text| sheet.set_button_enabled(DialogResponse::Primary, !text.is_empty())
+});
+sheet.on_response({
+    let name = name.clone();
+    move |response| {
+        if response == DialogResponse::Primary {
+            println!("create {}", name.text());
+        } // Cancel: the cancel button or Esc
+    }
+});
+sheet.open();
+# Ok(())
+# }
+```
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `Sheet` | `ContentDialog` | A window shown as a sheet | `AdwDialog` + `AdwHeaderBar` | `<dialog>` + `showModal()` |
+
+| Buttons | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| Place | The dialog's button row, primary on the left | Bottom right, primary on the right; secondary at the bottom left | Header bar: cancel at the start, primary at the end | Bottom right, primary on the right |
+
+**[`Sheet::open`] returns right away on every platform** (unlike [`Dialog`] on
+macOS), and the response arrives through [`Sheet::on_response`]: the role of the
+clicked button, or [`DialogResponse::Cancel`] for Esc. As with dialogs,
+[`Sheet::close`] does not call it. The sheet appears over the frontmost window and
+does nothing while no window is shown.
+
+The sheet takes its content's natural size, at least [`SHEET_MIN_WIDTH`] wide, so
+`Fill` in the content has nothing to fill. On Windows `ContentDialog` also keeps it
+at most 548 pixels wide. Return in a text field presses the primary button (or the
+cancel button when there is no primary one), except on Linux (see
+[Known limitations](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md)).
 
 ## Toasts
 

@@ -96,9 +96,12 @@ internationalization tracks.
       (January 2026), so it no longer has to wait. Newer parts such as
       `position-visibility` still differ between engines, so only the basic
       placement is used.
-- [ ] **Dialogs with arbitrary content.** `ContentDialog`, `AdwDialog`, sheets,
-      `<dialog>`. Much of the construction can be shared with popovers. The
-      existing `Dialog` stays as the short form for a message and buttons.
+- [x] **Dialogs with arbitrary content** (`Sheet`). `ContentDialog`, `AdwDialog`,
+      sheets, `<dialog>`. Buttons are given by role as with `Dialog`, and each
+      platform places them; `Sheet::set_button_enabled` keeps the primary button
+      disabled until the content is valid. macOS shares the content's construction
+      with popovers, and Windows and the Web share `Dialog`'s. The existing
+      `Dialog` stays as the short form for a message and buttons.
 - [x] **Button roles** (primary buttons, destructive actions). Small, and dialogs
       with arbitrary content need it to mark their buttons. macOS's
       `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.

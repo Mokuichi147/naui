@@ -35,10 +35,10 @@ use objc2_app_kit::{
     NSControlStateValueOff, NSControlStateValueOn, NSDatePicker, NSDatePickerElementFlags, NSEvent,
     NSEventMask, NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView,
     NSLayoutConstraint, NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder,
-    NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper,
-    NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSTintProminence,
-    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
-    NSWindowTitleVisibility,
+    NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl,
+    NSStandardKeyBindingResponding, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField,
+    NSTextInputClient, NSTextView, NSTintProminence, NSUserInterfaceItemIdentification, NSView,
+    NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
@@ -646,6 +646,34 @@ fn main() {
         (
             "表示中に中身が伸びるとポップオーバーも伸びる",
             popover_grows_with_its_content,
+        ),
+        (
+            "シートがウィンドウに付き、中身とボタンを macOS の順に並べる",
+            sheet_attaches_to_the_window,
+        ),
+        (
+            "シートのボタンと Esc が役割を通知して閉じる",
+            sheet_buttons_and_escape_respond,
+        ),
+        (
+            "on_response の中でシートを開き直せる",
+            sheet_may_open_again_from_the_response,
+        ),
+        (
+            "シートのボタンの有効・無効が差し替え後も残る",
+            sheet_button_enabled_survives_new_buttons,
+        ),
+        (
+            "表示中に中身が伸びるとシートも伸びる",
+            sheet_grows_with_its_content,
+        ),
+        (
+            "シートの中の入力欄でフォーカスの出入りが届く",
+            sheet_content_reports_focus,
+        ),
+        (
+            "外した入力欄のフォーカス通知の中で中身を差し替えられる",
+            sheet_child_may_be_replaced_from_the_focus_notification,
         ),
         (
             "トーストがウィンドウへ重なり、消すと外れる",
@@ -8851,6 +8879,364 @@ fn popover_grows_with_its_content(ui: &Ui) -> Result<()> {
         "開いた中身のぶん高くなること: {before:?} -> {after:?}"
     );
     popover.close();
+    window.close();
+    Ok(())
+}
+
+/// A shown window to put sheets on.
+fn sheet_window(ui: &Ui, title: &str) -> Result<naui_macos::Window> {
+    let window = ui.window(title, 420.0, 320.0)?;
+    window.set_child(&ui.label("本体")?);
+    window.show();
+    Ok(window)
+}
+
+/// The push buttons in `view` and below it, in no particular order.
+fn buttons_in(view: &NSView) -> Vec<Retained<NSButton>> {
+    let mut found = Vec::new();
+    for sub in view.subviews().iter() {
+        if let Ok(button) = sub.clone().downcast::<NSButton>() {
+            found.push(button);
+        } else {
+            found.extend(buttons_in(&sub));
+        }
+    }
+    found
+}
+
+/// The sheet's buttons from left to right, with their titles.
+fn sheet_buttons(sheet: &naui_macos::Sheet) -> Vec<(String, Retained<NSButton>)> {
+    let window = sheet.native_window();
+    let content = window.contentView().expect("シートの中身があること");
+    content.layoutSubtreeIfNeeded();
+    let mut buttons: Vec<_> = buttons_in(&content)
+        .into_iter()
+        .map(|button| {
+            let x = button.convertRect_toView(button.bounds(), None).origin.x;
+            (x, button.title().to_string(), button)
+        })
+        .collect();
+    buttons.sort_by(|a, b| a.0.total_cmp(&b.0));
+    buttons.into_iter().map(|(_, t, b)| (t, b)).collect()
+}
+
+fn sheet_attaches_to_the_window(ui: &Ui) -> Result<()> {
+    let window = sheet_window(ui, "シート")?;
+    let sheet = ui.sheet("新しいフォルダ")?;
+    assert_eq!(sheet.title(), "新しいフォルダ");
+    let field = ui.text_input("名称未設定")?;
+    sheet.set_child(&field);
+    sheet.set_buttons(
+        DialogButtons::new()
+            .primary("作成")
+            .secondary("あとで")
+            .cancel("キャンセル"),
+    );
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sheet.on_response({
+        let seen = seen.clone();
+        move |response| seen.borrow_mut().push(response)
+    });
+    assert!(!sheet.is_open(), "作っただけでは出ていないこと");
+
+    sheet.open();
+    assert!(sheet.is_open());
+    let native = sheet.native_window();
+    pump_until(2.0, || native.isSheet() && native.isVisible());
+    assert!(native.isSheet(), "シートとして出ること");
+    let parent = native.sheetParent().expect("親のウィンドウがあること");
+    assert!(
+        std::ptr::eq(&*parent, &*window.native_window()),
+        "表示中のウィンドウに付くこと"
+    );
+    let content = native.contentView().expect("シートの中身があること");
+    content.layoutSubtreeIfNeeded();
+    let view = field.native_view();
+    assert!(view.isDescendantOf(&content), "中身がシートの中に入ること");
+    assert!(
+        view.frame().size.width >= 200.0,
+        "幅の決まらない入力欄に幅があること: {:?}",
+        view.frame()
+    );
+
+    let titles: Vec<String> = sheet_buttons(&sheet).into_iter().map(|(t, _)| t).collect();
+    assert_eq!(
+        titles,
+        ["あとで", "キャンセル", "作成"],
+        "副は左端、主は右端に並ぶこと"
+    );
+    let buttons = sheet_buttons(&sheet);
+    // 出ている間、Return は窓の既定のボタンとして持たれる (ボタンのキーは空に見える)。
+    assert_eq!(
+        native.defaultButtonCell().map(|c| c.title().to_string()),
+        Some("作成".to_string()),
+        "主ボタンが Return を持つ既定のボタンになること"
+    );
+    assert_eq!(
+        buttons[1].1.keyEquivalent().to_string(),
+        "\u{1b}",
+        "取り消しが Esc"
+    );
+    let label_found = {
+        fn has_text(view: &NSView, text: &str) -> bool {
+            view.subviews().iter().any(|sub| {
+                sub.clone()
+                    .downcast::<NSTextField>()
+                    .is_ok_and(|f| f.stringValue().to_string() == text && !f.isHidden())
+                    || has_text(&sub, text)
+            })
+        }
+        has_text(&content, "新しいフォルダ")
+    };
+    assert!(label_found, "見出しがシートの中に出ること");
+
+    sheet.close();
+    assert!(!sheet.is_open());
+    pump_until(2.0, || !native.isVisible());
+    assert!(!native.isVisible(), "シートが下がること");
+    assert!(
+        window.native_window().attachedSheet().is_none(),
+        "親から外れること"
+    );
+    assert!(
+        seen.borrow().is_empty(),
+        "アプリが閉じたときは通知しないこと"
+    );
+    window.close();
+    Ok(())
+}
+
+fn sheet_buttons_and_escape_respond(ui: &Ui) -> Result<()> {
+    let window = sheet_window(ui, "シートの応答")?;
+    let sheet = ui.sheet("確認")?;
+    sheet.set_child(&ui.label("中身")?);
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("キャンセル"));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    sheet.on_response({
+        let seen = seen.clone();
+        move |response| seen.borrow_mut().push(response)
+    });
+
+    sheet.open();
+    pump(0.3);
+    let primary = sheet_buttons(&sheet).pop().expect("主ボタン").1;
+    unsafe { primary.performClick(None) };
+    assert_eq!(*seen.borrow(), [DialogResponse::Primary]);
+    assert!(!sheet.is_open(), "押したら閉じること");
+    let native = sheet.native_window();
+    pump_until(2.0, || !native.isVisible());
+    assert!(!native.isVisible());
+
+    sheet.open();
+    pump(0.3);
+    assert!(sheet.is_open(), "閉じた後に開き直せること");
+    // Esc は、ボタンが受けなければ cancelOperation: として窓へ届く。
+    unsafe { native.cancelOperation(None) };
+    assert_eq!(
+        *seen.borrow(),
+        [DialogResponse::Primary, DialogResponse::Cancel]
+    );
+    assert!(!sheet.is_open());
+
+    // ボタンが主だけでも Esc は取り消しになる。
+    sheet.set_buttons(DialogButtons::new().primary("作成"));
+    sheet.open();
+    pump(0.3);
+    unsafe { native.cancelOperation(None) };
+    assert_eq!(seen.borrow().last(), Some(&DialogResponse::Cancel));
+    pump_until(2.0, || !native.isVisible());
+
+    // 指定が無ければ OK だけで、それが Return を持つ。
+    sheet.set_buttons(DialogButtons::new());
+    let buttons = sheet_buttons(&sheet);
+    assert_eq!(buttons.len(), 1);
+    assert_eq!(
+        native.defaultButtonCell().map(|c| c.title().to_string()),
+        Some(buttons[0].0.clone())
+    );
+    window.close();
+    Ok(())
+}
+
+fn sheet_may_open_again_from_the_response(ui: &Ui) -> Result<()> {
+    let window = sheet_window(ui, "シートの再入")?;
+    let sheet = ui.sheet("もう一度")?;
+    sheet.set_child(&ui.label("中身")?);
+    let count = Rc::new(Cell::new(0));
+    let reopened = Rc::new(Cell::new(false));
+    sheet.on_response({
+        let count = count.clone();
+        let reopened = reopened.clone();
+        let sheet = sheet.clone();
+        move |_| {
+            count.set(count.get() + 1);
+            if count.get() == 1 {
+                sheet.open();
+                reopened.set(sheet.is_open());
+            }
+        }
+    });
+    sheet.open();
+    pump(0.3);
+    let ok = sheet_buttons(&sheet).pop().expect("OK").1;
+    unsafe { ok.performClick(None) };
+    assert!(reopened.get(), "通知の中で開き直せること");
+    let native = sheet.native_window();
+    pump_until(2.0, || native.isSheet() && native.isVisible());
+    assert!(
+        native.isVisible() && sheet.is_open(),
+        "開き直したシートが出ていること"
+    );
+    sheet.close();
+    pump_until(2.0, || !native.isVisible());
+    assert_eq!(count.get(), 1);
+    // クロージャがシートを握っているので、輪を切る。
+    sheet.on_response(|_| {});
+    window.close();
+    Ok(())
+}
+
+fn sheet_button_enabled_survives_new_buttons(ui: &Ui) -> Result<()> {
+    let sheet = ui.sheet("有効・無効")?;
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("キャンセル"));
+    assert!(sheet.is_button_enabled(DialogResponse::Primary));
+    sheet.set_button_enabled(DialogResponse::Primary, false);
+    sheet.set_button_enabled(DialogResponse::Cancel, false);
+    assert!(!sheet.is_button_enabled(DialogResponse::Primary));
+    assert!(
+        sheet.is_button_enabled(DialogResponse::Cancel),
+        "取り消しは無効にできないこと"
+    );
+    let enabled = |sheet: &naui_macos::Sheet| -> Vec<(String, bool)> {
+        sheet_buttons(sheet)
+            .into_iter()
+            .map(|(t, b)| (t, b.isEnabled()))
+            .collect()
+    };
+    assert_eq!(
+        enabled(&sheet),
+        [
+            ("キャンセル".to_string(), true),
+            ("作成".to_string(), false)
+        ]
+    );
+    sheet.set_buttons(DialogButtons::new().primary("保存").cancel("やめる"));
+    assert_eq!(
+        enabled(&sheet),
+        [("やめる".to_string(), true), ("保存".to_string(), false)],
+        "差し替えたボタンにも残ること"
+    );
+    sheet.set_button_enabled(DialogResponse::Primary, true);
+    assert_eq!(
+        enabled(&sheet),
+        [("やめる".to_string(), true), ("保存".to_string(), true)]
+    );
+    Ok(())
+}
+
+fn sheet_grows_with_its_content(ui: &Ui) -> Result<()> {
+    let window = sheet_window(ui, "シートの伸び")?;
+    let sheet = ui.sheet("詳細")?;
+    let expander = ui.expander("詳細")?;
+    expander.set_child(&ui.label("一行目\n二行目\n三行目\n四行目")?);
+    sheet.set_child(&expander);
+    sheet.open();
+    let native = sheet.native_window();
+    pump_until(2.0, || native.isVisible());
+    pump(0.3);
+    let before = native.frame();
+    expander.set_expanded(true);
+    pump_until(2.0, || {
+        native.frame().size.height > before.size.height + 20.0
+    });
+    let after = native.frame();
+    assert!(
+        after.size.height > before.size.height + 20.0,
+        "開いた中身のぶん高くなること: {before:?} -> {after:?}"
+    );
+    sheet.close();
+    pump_until(2.0, || !native.isVisible());
+    window.close();
+    Ok(())
+}
+
+/// Removing a focused text field moves focus synchronously, so `on_focus_change`
+/// runs inside `set_child`. Replacing the content again from there must not panic,
+/// and the newer replacement wins.
+fn sheet_child_may_be_replaced_from_the_focus_notification(ui: &Ui) -> Result<()> {
+    let window = sheet_window(ui, "シートの差し替え")?;
+    let sheet = ui.sheet("差し替え")?;
+    let field = ui.text_input("")?;
+    sheet.set_child(&field);
+    let from_notification = ui.label("通知の中で入れた中身")?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    field.on_focus_change({
+        let sheet = sheet.clone();
+        let seen = seen.clone();
+        let from_notification = from_notification.clone();
+        move |focused| {
+            seen.borrow_mut().push(focused);
+            if !focused {
+                sheet.set_child(&from_notification);
+            }
+        }
+    });
+    sheet.open();
+    let native = sheet.native_window();
+    pump_until(2.0, || native.isVisible());
+    native.makeFirstResponder(Some(&field.native_view()));
+    assert_eq!(*seen.borrow(), [true]);
+
+    let later = ui.label("あとから頼んだ中身")?;
+    sheet.set_child(&later);
+    assert_eq!(*seen.borrow(), [true, false], "外したときに通知が届くこと");
+    let content = native.contentView().expect("シートの中身があること");
+    let inside = |view: Retained<NSView>| view.isDescendantOf(&content);
+    assert!(
+        inside(from_notification.native_view()),
+        "通知の中で頼んだ中身が残ること"
+    );
+    assert!(!inside(later.native_view()), "古い頼みは捨てること");
+    assert!(!inside(field.native_view()), "外した入力欄は戻らないこと");
+    content.layoutSubtreeIfNeeded();
+    assert!(
+        from_notification.native_view().frame().size.width > 0.0,
+        "残った中身が置かれていること"
+    );
+
+    // そのあとも、ふつうに差し替えられる。
+    sheet.set_child(&later);
+    assert!(inside(later.native_view()));
+    assert!(!inside(from_notification.native_view()));
+    sheet.close();
+    pump_until(2.0, || !native.isVisible());
+    field.on_focus_change(|_| {});
+    window.close();
+    Ok(())
+}
+
+fn sheet_content_reports_focus(ui: &Ui) -> Result<()> {
+    let window = sheet_window(ui, "シートのフォーカス")?;
+    let sheet = ui.sheet("名前")?;
+    let column = ui.stack(Orientation::Vertical)?;
+    let first = ui.text_input("")?;
+    let second = ui.text_input("")?;
+    column.append(&first);
+    column.append(&second);
+    sheet.set_child(&column);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    second.on_focus_change({
+        let seen = seen.clone();
+        move |focused| seen.borrow_mut().push(focused)
+    });
+    sheet.open();
+    let native = sheet.native_window();
+    pump_until(2.0, || native.isVisible());
+    native.makeFirstResponder(Some(&second.native_view()));
+    native.makeFirstResponder(Some(&first.native_view()));
+    assert_eq!(*seen.borrow(), [true, false], "入って出たことが届くこと");
+    sheet.close();
+    pump_until(2.0, || !native.isVisible());
     window.close();
     Ok(())
 }
