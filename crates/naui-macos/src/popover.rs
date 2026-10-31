@@ -163,6 +163,8 @@ impl Popover {
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
         drop(constraints);
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        // 出ている間に差し替えたときも、新しい中身で幅を決め直す。
+        self.apply_fallback_width();
     }
 
     /// The side it prefers to appear on. Bottom by default.
@@ -208,7 +210,8 @@ impl Popover {
             .showRelativeToRect_ofView_preferredEdge(NSRect::ZERO, view, edge);
     }
 
-    /// Gives content that cannot decide its own width a width to show at.
+    /// Gives content that cannot decide its own width a width to show at. Decided
+    /// again on each open and each `set_child`.
     fn apply_fallback_width(&self) {
         if let Some(previous) = self.0.fallback_width.borrow_mut().take() {
             previous.setActive(false);

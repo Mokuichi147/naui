@@ -8642,6 +8642,35 @@ fn popover_gives_width_to_content_without_one(ui: &Ui) -> Result<()> {
     let width = field.native_view().frame().size.width;
     assert!(width >= 200.0, "入力欄に幅があること: {width}");
     popover.close();
+
+    // 出ている間に、幅を持つ中身から入力欄へ差し替えても潰れないこと。
+    // NSPopover は前に出した大きさを覚えているので、新しく作ったもので見る。
+    let popover = ui.popover()?;
+    let label = ui.label("中身")?;
+    popover.set_child(&label);
+    popover.open(&button);
+    let content = popover
+        .native_popover()
+        .contentViewController()
+        .expect("中身のビューコントローラがあること")
+        .view();
+    content.layoutSubtreeIfNeeded();
+    let narrow = label.native_view().frame().size.width;
+    assert!(narrow < 200.0, "幅を持つ中身には幅を足さないこと: {narrow}");
+    let field = ui.text_input("")?;
+    popover.set_child(&field);
+    content.layoutSubtreeIfNeeded();
+    let width = field.native_view().frame().size.width;
+    assert!(width >= 200.0, "差し替えた入力欄に幅があること: {width}");
+    pump_until(2.0, || {
+        popover_frame(&popover).is_some_and(|f| f.size.width >= 200.0)
+    });
+    let frame = popover_frame(&popover).expect("ポップオーバーの窓があること");
+    assert!(
+        frame.size.width >= 200.0,
+        "ポップオーバーも広がること: {frame:?}"
+    );
+    popover.close();
     window.close();
     Ok(())
 }
