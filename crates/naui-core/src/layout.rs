@@ -461,10 +461,11 @@ impl StackArrangement {
     /// Takes the stack's width (including its padding) and returns whether
     /// [`orientation`](Self::orientation) changed.
     ///
-    /// A width of 0 or less (not laid out yet, or hidden) and the same width as last
-    /// time are ignored.
+    /// A width of 0 or less (not laid out yet, or hidden) is ignored. Any other
+    /// width is decided again, however small the change, so a change of a fraction
+    /// of a pixel across the breakpoint still switches.
     pub fn resized(&mut self, width: f64) -> bool {
-        if !width.is_finite() || width <= 0.0 || (width - self.width).abs() < 0.5 {
+        if !width.is_finite() || width <= 0.0 {
             return false;
         }
         self.width = width;
@@ -630,7 +631,7 @@ mod tests {
         assert!(!a.resized(f64::NAN));
         assert!(a.resized(500.0));
         assert_eq!(a.orientation(), Vertical);
-        assert!(!a.resized(500.2), "同じ幅は数えない");
+        assert!(!a.resized(500.2), "向きの変わらない幅は変化として返さない");
 
         // 元の向きを変えても、しきい値より広ければしきい値の向きのまま。
         a.set_base(Vertical);
@@ -647,6 +648,22 @@ mod tests {
         assert_eq!(a.breakpoint(), None);
         assert_eq!(a.orientation(), Horizontal);
         assert!(!a.resized(900.0));
+    }
+
+    #[test]
+    fn arrangement_switches_on_a_fraction_of_a_pixel() {
+        use Orientation::*;
+        let mut a = StackArrangement::new(Vertical);
+        a.set_breakpoint(Some(Breakpoint::new(500.0, Horizontal)));
+        assert!(!a.resized(499.75));
+        assert!(
+            a.resized(500.0),
+            "0.5 に満たない変化でもしきい値をまたげば切り替える"
+        );
+        assert_eq!(a.orientation(), Horizontal);
+        assert!(!a.resized(492.0));
+        assert!(a.resized(491.75));
+        assert_eq!(a.orientation(), Vertical);
     }
 
     #[test]

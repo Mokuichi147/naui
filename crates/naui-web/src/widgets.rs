@@ -1077,6 +1077,14 @@ struct StackInner {
 /// The handler passed to `ResizeObserver`.
 type ObserverCallback = Closure<dyn FnMut(wasm_bindgen::JsValue)>;
 
+/// Watches `element`'s border box, the box the breakpoint is measured on. The
+/// default content box would miss a change of padding alone.
+fn observe_border_box(observer: &web_sys::ResizeObserver, element: &web_sys::Element) {
+    let options = web_sys::ResizeObserverOptions::new();
+    options.set_box(web_sys::ResizeObserverBoxOptions::BorderBox);
+    observer.observe_with_options(element, &options);
+}
+
 impl Drop for StackInner {
     fn drop(&mut self) {
         if let Some(observer) = self.observer.get_mut().take() {
@@ -1176,7 +1184,7 @@ impl Stack {
             }
         });
         if let Ok(observer) = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()) {
-            observer.observe(&self.0.element);
+            observe_border_box(&observer, &self.0.element);
             *self.0.observer.borrow_mut() = Some(observer);
             *self.0.observer_callback.borrow_mut() = Some(callback);
         }
@@ -1207,14 +1215,14 @@ impl Stack {
         let weak = Rc::downgrade(&self.0);
         let watch_again = Closure::once_into_js(move || {
             if weak.upgrade().is_some() {
-                observer.observe(&element);
+                observe_border_box(&observer, &element);
             }
         });
         let requested = web_sys::window()
             .map(|window| window.request_animation_frame(watch_again.unchecked_ref()));
         if !matches!(requested, Some(Ok(_))) {
             if let Some(observer) = self.0.observer.borrow().as_ref() {
-                observer.observe(&self.0.element);
+                observe_border_box(observer, &self.0.element);
             }
         }
     }

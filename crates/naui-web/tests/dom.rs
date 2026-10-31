@@ -1410,6 +1410,46 @@ async fn stack_breakpoint_follows_its_width() {
     );
 }
 
+/// The breakpoint is measured on the stack's border box, so growing only its
+/// padding (the content keeps its width) still crosses it.
+#[wasm_bindgen_test]
+async fn stack_breakpoint_follows_its_padding() {
+    let mut kept = None;
+    with_ui(|ui| {
+        // 横の Stack の子は中身の幅になるので、パディングの分だけ外幅が変わる。
+        let outer = ui.stack(Orientation::Horizontal)?;
+        let form = ui.stack(Orientation::Vertical)?;
+        form.set_padding(Padding::all(10.0));
+        let item = ui.button("項目")?;
+        item.set_sizing(Sizing::fixed(480.0, 30.0));
+        form.append(&item);
+        outer.append(&form);
+        form.set_breakpoint(Some(naui_core::Breakpoint::new(
+            510.0,
+            Orientation::Horizontal,
+        )));
+        let mounted = Mounted::new(&outer);
+        kept = Some((mounted, outer, form, item));
+        Ok(())
+    });
+    let (_mounted, _outer, form, _item) = kept.expect("組み立て");
+    next_frames().await;
+    let width = form.native_element().get_bounding_client_rect().width();
+    assert!(
+        (width - 500.0).abs() < 0.5,
+        "外幅は中身とパディング: {width}"
+    );
+    assert_eq!(form.current_orientation(), Orientation::Vertical);
+
+    form.set_padding(Padding::all(20.0));
+    frames_until(|| form.current_orientation() == Orientation::Horizontal).await;
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Horizontal,
+        "パディングだけで外幅がしきい値を越えても横に並ぶこと"
+    );
+}
+
 /// Switching a `Stack`'s orientation rewrites `flex-direction` and what each child
 /// set for the previous main axis: `Fill` on the width stretches a child across a
 /// column and hands it the leftover width of a row. Later `set_sizing` calls follow
