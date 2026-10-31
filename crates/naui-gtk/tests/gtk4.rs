@@ -758,6 +758,10 @@ fn main() {
             dialog_is_closed_until_opened,
         ),
         (
+            "開いた直後に閉じたダイアログは残らない",
+            dialog_closed_right_after_opening_does_not_stay,
+        ),
+        (
             "トーストの設定が AdwToast へ届く",
             toast_configuration_reaches_the_native_toast,
         ),
@@ -6582,6 +6586,41 @@ fn dialog_response_reaches_the_closure(ui: &Ui) -> Result<()> {
     assert_eq!(closed.borrow().as_slice(), [DialogResponse::Cancel]);
     assert!(!notice.is_open());
 
+    window.close();
+    Ok(())
+}
+
+/// libadwaita 1.5 opens the sheet inside `AdwDialog` on its second frame after it is
+/// mapped and ignores closing before then, so this checks that naui closes it once
+/// it opens. 1.6 and later close it on the first try.
+fn dialog_closed_right_after_opening_does_not_stay(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 320.0, 200.0)?;
+    window.show();
+
+    let dialog = ui.dialog("すぐ閉じる")?;
+    dialog.set_buttons(DialogButtons::new().primary("消す").cancel("やめる"));
+    let (log, sink) = recorder::<DialogResponse>();
+    dialog.on_response(sink);
+    // 同じイベント処理の中で開いて閉じる。
+    dialog.open();
+    let native = dialog.native_dialog().expect("AdwAlertDialog");
+    dialog.close();
+    assert!(!dialog.is_open());
+    assert_eq!(log.borrow().as_slice(), [DialogResponse::Cancel]);
+    // 閉じ終えると AdwAlertDialog は窓から外れる。1.5 が開く 2 フレーム目より十分に待つ。
+    let gone = || native.parent().is_none();
+    spin_until(std::time::Duration::from_secs(2), gone);
+    assert!(gone(), "開く前に閉じたダイアログが窓に残らない");
+    assert_eq!(log.borrow().len(), 1, "取り消しは 1 回だけ届く");
+
+    // 閉じたあとも、開き直して使える。
+    dialog.open();
+    let reopened = dialog.native_dialog().expect("開き直した AdwAlertDialog");
+    reopened.emit_by_name::<()>("response", &[&"primary"]);
+    assert_eq!(
+        log.borrow().as_slice(),
+        [DialogResponse::Cancel, DialogResponse::Primary]
+    );
     window.close();
     Ok(())
 }

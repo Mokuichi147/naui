@@ -184,9 +184,7 @@ impl Dialog {
         };
         // 閉じられれば `AdwAlertDialog` が取り消しの応答を出すので、
         // 後始末はそちらの経路で済む。
-        if !native.close() {
-            native.force_close();
-        }
+        close_native(&native);
         // ウィンドウが無いなど、ネイティブが閉じられなかったときの受け皿。
         // naui の `close` は「必ず閉じて取り消しを知らせる」ものとして扱う。
         if self.0.open.get() {
@@ -213,4 +211,38 @@ impl Dialog {
             native.set_extra_child(None::<&gtk::Widget>);
         }
     }
+}
+
+/// Closes `native`, even before it has opened.
+///
+/// libadwaita 1.5 opens the sheet inside `AdwDialog` on its second frame after it
+/// is mapped, and closing it before then does nothing: the dialog would open
+/// afterwards and stay, though naui has already let it go. If `closed` does not
+/// come, keep it hidden and out of reach of the pointer, and close it again on each
+/// frame until it does. 1.6 and later close it on the first try.
+fn close_native(native: &impl IsA<adw::Dialog>) {
+    let native = native.as_ref();
+    let closed = Rc::new(Cell::new(false));
+    native.connect_closed({
+        let closed = closed.clone();
+        move |_| closed.set(true)
+    });
+    if !native.close() {
+        native.force_close();
+    }
+    if closed.get() {
+        return;
+    }
+    native.set_opacity(0.0);
+    native.set_can_target(false);
+    native.add_tick_callback(move |native, _| {
+        if !closed.get() {
+            native.force_close();
+        }
+        if closed.get() {
+            gtk::glib::ControlFlow::Break
+        } else {
+            gtk::glib::ControlFlow::Continue
+        }
+    });
 }
