@@ -3,16 +3,21 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Align, ButtonRole, Orientation, Padding, Result, TextColor, TextStyle};
-use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
+use naui_core::{
+    Align, Breakpoint, ButtonRole, Orientation, Padding, Result, StackArrangement, TextColor,
+    TextStyle,
+};
+use naui_winui3::Microsoft::UI::Dispatching::{
+    DispatcherQueue, DispatcherQueueHandler, DispatcherQueueTimer,
+};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, Grid, PasswordBox, ProgressRing,
     ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, TextBlock, TextBox,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
-    Application, FrameworkElement, ResourceDictionary, RoutedEventHandler, Style, TextWrapping,
-    Thickness, UIElement,
+    Application, FrameworkElement, ResourceDictionary, RoutedEventHandler, SizeChangedEventHandler,
+    Style, TextWrapping, Thickness, UIElement,
 };
 use windows::Foundation::{EventHandler, PropertyValue, TypedEventHandler};
 use windows_core::{IInspectable, Interface, HSTRING};
@@ -1155,11 +1160,18 @@ impl SpinnerInner {
 
 struct StackInner {
     native: Grid,
+    /// The orientation the children are laid out in now.
     vertical: Cell<bool>,
     /// The default alignment of children on the cross axis. `Fill` children follow their
     /// own setting instead.
     align: Cell<Align>,
     children: RefCell<Vec<Box<dyn Widget>>>,
+    /// The orientation the app gave and the breakpoint, which decide `vertical`.
+    arrangement: Cell<StackArrangement>,
+    /// `SizeChanged` is subscribed (once there is a breakpoint).
+    watching: Cell<bool>,
+    /// Switching to the orientation `arrangement` decided is queued on the dispatcher.
+    switch_scheduled: Cell<bool>,
 }
 
 impl Drop for StackInner {
@@ -1191,6 +1203,9 @@ impl Stack {
             vertical: Cell::new(orientation.is_vertical()),
             align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
+            arrangement: Cell::new(StackArrangement::new(orientation)),
+            watching: Cell::new(false),
+            switch_scheduled: Cell::new(false),
         })))
     }
 
@@ -1199,7 +1214,111 @@ impl Stack {
     /// The children stay in the `Grid`. Each one is told the new direction (giving
     /// back the alignment the previous cross axis overrode) and gets a track on the
     /// new main axis; `arrange_stack` empties the definitions of the other axis.
+    ///
+    /// With a [`set_breakpoint`](Self::set_breakpoint), this is the orientation used
+    /// below the breakpoint's width.
     pub fn set_orientation(&self, orientation: Orientation) {
+        let mut arrangement = self.0.arrangement.get();
+        arrangement.set_base(orientation);
+        self.0.arrangement.set(arrangement);
+        self.switch_to(arrangement.orientation());
+    }
+
+    /// The orientation given at creation or with
+    /// [`set_orientation`](Self::set_orientation).
+    pub fn orientation(&self) -> Orientation {
+        self.0.arrangement.get().base()
+    }
+
+    /// Declares the width from which the children are laid out in another
+    /// orientation. `None` removes it.
+    ///
+    /// `TwoPaneView` switches by its width only between two panes, and
+    /// `AdaptiveTrigger` follows the window rather than the stack. So naui watches the
+    /// `Grid`'s `SizeChanged` and, when the width crosses the breakpoint, switches on
+    /// the next turn of the `DispatcherQueue`, after the layout pass that changed it.
+    pub fn set_breakpoint(&self, breakpoint: Option<Breakpoint>) {
+        let mut arrangement = self.0.arrangement.get();
+        arrangement.resized(self.outer_width());
+        arrangement.set_breakpoint(breakpoint);
+        self.0.arrangement.set(arrangement);
+        if breakpoint.is_some() {
+            self.watch_width();
+        }
+        self.switch_to(arrangement.orientation());
+    }
+
+    pub fn breakpoint(&self) -> Option<Breakpoint> {
+        self.0.arrangement.get().breakpoint()
+    }
+
+    /// The orientation the children are laid out in now.
+    pub fn current_orientation(&self) -> Orientation {
+        if self.0.vertical.get() {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        }
+    }
+
+    /// The `Grid`'s width, its padding included. 0 before layout.
+    fn outer_width(&self) -> f64 {
+        self.0.native.ActualWidth().unwrap_or(0.0)
+    }
+
+    fn watch_width(&self) {
+        if self.0.watching.replace(true) {
+            return;
+        }
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let changed = SizeChangedEventHandler::new(move |_, _| {
+            if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                Stack(inner).check_width();
+            }
+            Ok(())
+        });
+        let subscribed = self
+            .0
+            .native
+            .cast::<FrameworkElement>()
+            .and_then(|element| element.SizeChanged(&changed));
+        if subscribed.is_err() {
+            self.0.watching.set(false);
+        }
+    }
+
+    /// Called after a layout pass changed the size. If the width crossed the
+    /// breakpoint, switches on the next turn of the dispatcher.
+    fn check_width(&self) {
+        let mut arrangement = self.0.arrangement.get();
+        let changed = arrangement.resized(self.outer_width());
+        self.0.arrangement.set(arrangement);
+        if !changed || self.0.switch_scheduled.replace(true) {
+            return;
+        }
+        let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
+            self.0.switch_scheduled.set(false);
+            self.switch_to(arrangement.orientation());
+            return;
+        };
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let enqueued = queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
+            if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                inner.switch_scheduled.set(false);
+                let stack = Stack(inner);
+                // 予約のあとに幅が戻っていれば、いまの向きのままになる。
+                stack.switch_to(stack.0.arrangement.get().orientation());
+            }
+            Ok(())
+        }));
+        if !matches!(enqueued, Ok(true)) {
+            self.0.switch_scheduled.set(false);
+            self.switch_to(arrangement.orientation());
+        }
+    }
+
+    /// Lays the children out in `orientation`.
+    fn switch_to(&self, orientation: Orientation) {
         let vertical = orientation.is_vertical();
         if self.0.vertical.replace(vertical) == vertical {
             return;
@@ -1208,14 +1327,6 @@ impl Stack {
             self.adopt(&child.native_element());
         }
         self.arrange();
-    }
-
-    pub fn orientation(&self) -> Orientation {
-        if self.0.vertical.get() {
-            Orientation::Vertical
-        } else {
-            Orientation::Horizontal
-        }
     }
 
     pub fn set_spacing(&self, spacing: f64) {

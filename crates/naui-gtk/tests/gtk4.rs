@@ -270,6 +270,10 @@ fn main() {
             stack_switches_orientation,
         ),
         (
+            "しきい値を持つスタックが自分の幅で向きを切り替え、境目では遊びを持つ",
+            stack_breakpoint_follows_its_width,
+        ),
+        (
             "置いたあとの set_sizing や列の変更でもグリッドの列の設定が残る",
             grid_track_survives_later_changes,
         ),
@@ -2675,6 +2679,104 @@ fn stack_align_survives_later_sizing(ui: &Ui) -> Result<()> {
         gtk::Align::Start,
         "Fill をやめればスタックの寄せ方へ戻る"
     );
+    Ok(())
+}
+
+/// A `Stack` with a breakpoint lays its children out side by side once it is at least
+/// that wide (its padding included) and one above the other below it, switching after
+/// the paint that showed the new width. Going back takes a few pixels less, and a field
+/// being typed into keeps its focus through the switch.
+fn stack_breakpoint_follows_its_width(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+
+    let window = ui.window("しきい値", 700.0, 240.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    let form = ui.stack(Orientation::Vertical)?;
+    form.set_sizing(Sizing::fill_width());
+    form.set_padding(Padding::all(10.0));
+    let field = ui.text_input("")?;
+    let first = ui.button("前")?;
+    let last = ui.button("後")?;
+    form.append(&field);
+    form.append(&first);
+    form.append(&last);
+    root.append(&form);
+    window.set_child(&root);
+
+    form.set_breakpoint(Some(naui_core::Breakpoint::new(
+        500.0,
+        Orientation::Horizontal,
+    )));
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Vertical,
+        "並ぶ前は自分の向きのまま"
+    );
+    window.show();
+    spin_until(Duration::from_secs(3), || {
+        form.current_orientation() == Orientation::Horizontal
+    });
+    let native: gtk::Box = form.native_widget().downcast().expect("GtkBox");
+    assert_eq!(
+        native.orientation(),
+        gtk::Orientation::Horizontal,
+        "しきい値より広ければ横に並ぶ: 幅 {}",
+        native.width()
+    );
+    assert_eq!(form.orientation(), Orientation::Vertical);
+    assert!(field.request_focus());
+    let entry = field.native_widget();
+
+    let resize = |width: f64, expected: Orientation, message: &str| {
+        window.set_size(width, 240.0);
+        spin_until(Duration::from_secs(2), || {
+            form.current_orientation() == expected
+        });
+        // 変わらないはずの所では、描き直しと予約が済むまで待ってから見る。
+        spin_until(Duration::from_millis(300), || false);
+        assert_eq!(
+            form.current_orientation(),
+            expected,
+            "{message} (窓 {width}、スタック {})",
+            native.width() + 20
+        );
+    };
+    resize(480.0, Orientation::Vertical, "しきい値より狭ければ縦に積む");
+    assert!(
+        entry.has_focus() || entry.focus_child().is_some(),
+        "向きが切り替わっても入力欄のフォーカスが外れない"
+    );
+    resize(496.0, Orientation::Vertical, "しきい値に届くまでは縦のまま");
+    resize(500.0, Orientation::Horizontal, "ちょうどしきい値で横に並ぶ");
+    resize(
+        494.0,
+        Orientation::Horizontal,
+        "しきい値のすぐ下では戻らない",
+    );
+    resize(490.0, Orientation::Vertical, "遊びを越えて狭まれば縦に戻る");
+
+    resize(700.0, Orientation::Horizontal, "広げれば横に戻る");
+    form.set_breakpoint(None);
+    assert_eq!(
+        native.orientation(),
+        gtk::Orientation::Vertical,
+        "しきい値を外すと自分の向きへすぐ戻る"
+    );
+    // しきい値の向きの側にいる間に自分の向きを変えても、並びはしきい値の向きのまま。
+    form.set_breakpoint(Some(naui_core::Breakpoint::new(
+        400.0,
+        Orientation::Vertical,
+    )));
+    form.set_orientation(Orientation::Horizontal);
+    assert_eq!(form.orientation(), Orientation::Horizontal);
+    assert_eq!(form.current_orientation(), Orientation::Vertical);
+    resize(
+        380.0,
+        Orientation::Horizontal,
+        "狭まれば新しい自分の向きになる",
+    );
+    window.close();
     Ok(())
 }
 

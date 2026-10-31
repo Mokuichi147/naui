@@ -2,8 +2,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use naui::{
-    Align, GridCell, Length, Orientation, Padding, Result, ScrollMetrics, ScrollPolicy, Sizing,
-    Track, Ui,
+    Align, Breakpoint, GridCell, Length, Orientation, Padding, Result, ScrollMetrics, ScrollPolicy,
+    Sizing, Track, Ui,
 };
 
 use crate::parts::{self, Notice};
@@ -72,6 +72,24 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     controls.append(&hide);
     controls.append(&turn);
     pane.append(&controls);
+
+    // しきい値を持つ Stack は、自分の幅で向きを切り替える。幅いっぱいに広げて
+    // おくと、窓を狭めたときに縦へ積み直す。
+    parts::group(ui, &pane, "Breakpoint")?;
+    pane.append(&ui.label("Side by side from 560 wide, stacked below that.")?);
+    let arranged = ui.stack(Orientation::Vertical)?;
+    arranged.set_spacing(8.0);
+    arranged.set_align(Align::Start);
+    arranged.set_sizing(Sizing::fill_width());
+    for title in ["Name", "Email", "Phone"] {
+        let field = ui.text_input("")?;
+        field.set_placeholder(title);
+        // 幅の Fill を横に並べると、macOS では配分が決まらず 1 つが余りを取る。
+        field.set_sizing(Sizing::new().width(Length::Fixed(170.0)));
+        arranged.append(&field);
+    }
+    arranged.set_breakpoint(Some(Breakpoint::new(560.0, Orientation::Horizontal)));
+    pane.append(&arranged);
 
     build_dynamic_children(ui, &pane)?;
     build_focus(ui, &pane)?;

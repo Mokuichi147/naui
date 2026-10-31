@@ -16,7 +16,9 @@ use std::rc::Rc;
 use gtk::glib;
 use gtk::pango;
 use gtk::prelude::*;
-use naui_core::{Align, ButtonRole, Orientation, Padding, TextColor, TextStyle};
+use naui_core::{
+    Align, Breakpoint, ButtonRole, Orientation, Padding, StackArrangement, TextColor, TextStyle,
+};
 
 use crate::bin::{apply_padding, SizeBin};
 use crate::callback::{Notifier, TextNotifier};
@@ -1002,6 +1004,26 @@ struct StackInner {
     align: Cell<Align>,
     /// Holds the children's handles, keeping them alive along with their closures.
     children: RefCell<Vec<Box<dyn Widget>>>,
+    /// The orientation the app gave and the breakpoint, which decide the orientation
+    /// the children are laid out in.
+    arrangement: Cell<StackArrangement>,
+    /// Compares the width after each paint while there is a breakpoint.
+    after_paint: RefCell<Option<(gtk::gdk::FrameClock, glib::SignalHandlerId)>>,
+    /// Watches for being realized, to connect `after_paint` to the frame clock.
+    realize_handlers: RefCell<Vec<glib::SignalHandlerId>>,
+    /// Switching to the orientation `arrangement` decided is queued on the main loop.
+    switch_scheduled: Cell<bool>,
+}
+
+impl Drop for StackInner {
+    fn drop(&mut self) {
+        if let Some((clock, id)) = self.after_paint.get_mut().take() {
+            clock.disconnect(id);
+        }
+        for id in self.realize_handlers.get_mut().drain(..) {
+            self.native.disconnect(id);
+        }
+    }
 }
 
 /// A container that lays out its children vertically / horizontally (`GtkBox`).
@@ -1020,6 +1042,10 @@ impl Stack {
             vertical: Cell::new(vertical),
             align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
+            arrangement: Cell::new(StackArrangement::new(orientation)),
+            after_paint: RefCell::new(None),
+            realize_handlers: RefCell::new(Vec::new()),
+            switch_scheduled: Cell::new(false),
         }))
     }
 
@@ -1027,7 +1053,127 @@ impl Stack {
     ///
     /// The children stay in the box. Each one is placed again for the new cross axis,
     /// so the alignment the previous direction gave it does not carry over.
+    ///
+    /// With a [`set_breakpoint`](Self::set_breakpoint), this is the orientation used
+    /// below the breakpoint's width.
     pub fn set_orientation(&self, orientation: Orientation) {
+        let mut arrangement = self.0.arrangement.get();
+        arrangement.set_base(orientation);
+        self.0.arrangement.set(arrangement);
+        self.arrange(arrangement.orientation());
+    }
+
+    /// The orientation given at creation or with
+    /// [`set_orientation`](Self::set_orientation).
+    pub fn orientation(&self) -> Orientation {
+        self.0.arrangement.get().base()
+    }
+
+    /// Declares the width from which the children are laid out in another
+    /// orientation. `None` removes it.
+    ///
+    /// `AdwBreakpointBin` would switch the box by itself, but it takes away the minimum
+    /// size of what it holds (the app would have to give it one, and content wider than
+    /// that overflows). So naui compares the width after each paint, the same as
+    /// `Sidebar`'s automatic collapsing, and switches on the next main loop iteration
+    /// (not while GTK is laying out).
+    pub fn set_breakpoint(&self, breakpoint: Option<Breakpoint>) {
+        let mut arrangement = self.0.arrangement.get();
+        arrangement.resized(self.outer_width());
+        arrangement.set_breakpoint(breakpoint);
+        self.0.arrangement.set(arrangement);
+        if breakpoint.is_some() {
+            self.watch_width();
+        }
+        self.arrange(arrangement.orientation());
+    }
+
+    pub fn breakpoint(&self) -> Option<Breakpoint> {
+        self.0.arrangement.get().breakpoint()
+    }
+
+    /// The orientation the children are laid out in now.
+    pub fn current_orientation(&self) -> Orientation {
+        if self.0.vertical.get() {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        }
+    }
+
+    /// The box's width including its padding (the margins naui puts on it).
+    fn outer_width(&self) -> f64 {
+        let native = &self.0.native;
+        f64::from(native.width() + native.margin_start() + native.margin_end())
+    }
+
+    /// Starts comparing the width after each paint. Reconnects whenever the box is
+    /// realized again, since the frame clock changes with the window.
+    fn watch_width(&self) {
+        if !self.0.realize_handlers.borrow().is_empty() {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        let realize = self.0.native.connect_realize(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                Stack(inner).connect_clock();
+            }
+        });
+        let weak = Rc::downgrade(&self.0);
+        let unrealize = self.0.native.connect_unrealize(move |_| {
+            if let Some((clock, id)) = weak.upgrade().and_then(|inner| inner.after_paint.take()) {
+                clock.disconnect(id);
+            }
+        });
+        self.0
+            .realize_handlers
+            .borrow_mut()
+            .extend([realize, unrealize]);
+        if self.0.native.is_realized() {
+            self.connect_clock();
+        }
+    }
+
+    /// Connects `check_width` to the frame clock of the window the box is in.
+    fn connect_clock(&self) {
+        let Some(clock) = self.0.native.frame_clock() else {
+            return;
+        };
+        let weak = Rc::downgrade(&self.0);
+        let handler = clock.connect_after_paint(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                Stack(inner).check_width();
+            }
+        });
+        if let Some((old, id)) = self.0.after_paint.replace(Some((clock, handler))) {
+            old.disconnect(id);
+        }
+        // つないだ直後の幅で決められるよう、描き直しを頼む。
+        self.0.native.queue_draw();
+    }
+
+    /// Compares the width after a paint. If it crossed the breakpoint, switches on the
+    /// next main loop iteration.
+    fn check_width(&self) {
+        let mut arrangement = self.0.arrangement.get();
+        let changed = arrangement.resized(self.outer_width());
+        self.0.arrangement.set(arrangement);
+        if !changed || self.0.switch_scheduled.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        glib::idle_add_local_once(move || {
+            if let Some(inner) = weak.upgrade() {
+                inner.switch_scheduled.set(false);
+                let stack = Stack(inner);
+                // 予約のあとに幅が戻っていれば、いまの向きのままになる。
+                stack.arrange(stack.0.arrangement.get().orientation());
+            }
+        });
+    }
+
+    /// Lays the children out in `orientation`.
+    fn arrange(&self, orientation: Orientation) {
         let vertical = orientation.is_vertical();
         if self.0.vertical.replace(vertical) == vertical {
             return;
@@ -1039,14 +1185,6 @@ impl Stack {
             child
                 .size_bin()
                 .set_cross_align(self.0.align.get(), vertical);
-        }
-    }
-
-    pub fn orientation(&self) -> Orientation {
-        if self.0.vertical.get() {
-            Orientation::Vertical
-        } else {
-            Orientation::Horizontal
         }
     }
 
