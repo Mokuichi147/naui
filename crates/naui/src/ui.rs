@@ -2,9 +2,10 @@ use crate::sys;
 use crate::{
     Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox, DatePicker,
     Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link,
-    List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, PopupMenu, ProgressBar,
-    RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, Spinner, SplitView, Stack, Table,
-    Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Video, Window,
+    List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, Popover, PopupMenu,
+    ProgressBar, RadioGroup, Scroll, SearchInput, Sidebar, Slider, Spacer, Spinner, SplitView,
+    Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Video,
+    Window,
 };
 use naui_core::{DatePickerMode, Orientation, Result, Settings, Tasks, Theme};
 
@@ -275,6 +276,15 @@ impl Ui {
     #[inline]
     pub fn popup_menu(&self) -> Result<PopupMenu> {
         self.0.popup_menu().map(PopupMenu)
+    }
+
+    /// A panel shown beside a widget, holding any widget as its content.
+    ///
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
+    #[inline]
+    pub fn popover(&self) -> Result<Popover> {
+        self.0.popover().map(Popover)
     }
 
     /// Breadcrumbs.

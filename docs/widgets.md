@@ -73,6 +73,7 @@ Legend:
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
 | `PopupMenu` | ✅ `MenuFlyout` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
+| `Popover` | ✅ `Flyout` | ✅ `NSPopover` | ✅ `GtkPopover` | ✅ `popover` attribute + CSS anchor positioning |
 | `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | ✅ `AdwAlertDialog` | 🟡 `<dialog>` + `showModal()` |
 | `Toast` | 🟡 An overlaid `InfoBar` | 🔴 An overlaid `NSVisualEffectView` | ✅ `AdwToast` + `AdwToastOverlay` | 🔴 `<div role="status">` |
 
@@ -236,6 +237,11 @@ collected in [Known limitations](known-limitations.md).
   from WinUI. Right-click is delegated to `UIElement.ContextFlyout`, so long press
   and the context key open the same menu. Submenus are `MenuFlyoutSubItem`s and
   check items `ToggleMenuFlyoutItem`s, which flip their own check mark.
+- **`Popover`**: A `Flyout` with the content widget as its `Content`, shown with
+  `ShowAt` against the widget's element. The presenter, light dismiss and moving to
+  another side when there is no room come from WinUI; naui sets only `Placement`.
+  `Placement` takes effect the next time it is shown, so changing the side while open
+  shows it again at the same widget.
 - **`Toast`**: It looks like an `InfoBar`. However, `InfoBar` is meant to be a band
   laid out inside a page, so it is moved to the bottom center and overlaid on the
   content layer. The action button goes in `ActionButton`, so WinUI decides whether
@@ -317,6 +323,13 @@ collected in [Known limitations](known-limitations.md).
   without a specified width because AppKit's automatic column resizing cannot
   distribute all leftover space when there are fixed-width columns, leaving the
   right side of the table empty.
+- **`Popover`**: `NSPopover` with `NSPopoverBehaviorTransient` (closes on a click
+  outside or Esc). The content is placed with a 12 pt margin in the view of its
+  `contentViewController`, and the popover's size follows that view's constraints,
+  so content that grows while shown (an opened `Expander`) grows the popover.
+  Content that cannot decide its own width (a lone text field) gets 260 pt, the same
+  as `Dialog`. `preferredEdge` is read in the anchor view's coordinates, so top and
+  bottom are swapped for views that are not flipped.
 - **`Toast`**: AppKit has no toast control, so it is built by overlaying an
   `NSVisualEffectView` (the same material as `NSPopover`) on the window content.
 - **`Window` position and state**: While minimized, `frame` stays the original
@@ -374,6 +387,12 @@ collected in [Known limitations](known-limitations.md).
   display.
 - **`ColorPicker`**: A `GtkColorDialogButton`. Opacity is not handled, so
   `with-alpha` of the `GtkColorDialog` it opens is turned off.
+- **`Popover`**: A `GtkPopover`. A GTK4 popover is a child of the widget it points
+  at, so it is attached to the widget passed to `open` and detached again after it
+  closes (one main loop iteration later, because detaching during `closed` collides
+  with GTK's own cleanup). While attached, the widget is held by naui: a widget
+  finalized first, for example when its window closes, would leave the popover
+  pointing at freed memory.
 - **`List`**: A `GtkListBox` in a `GtkScrolledWindow`. Row clicks
   (`ListRow::on_activate`) are received through `GtkListBox`'s `row-activated`
   (`GtkListBoxRow`'s `activate` is the path for keyboard Enter / Space only). With
@@ -447,6 +466,16 @@ collected in [Known limitations](known-limitations.md).
   unless the page prevents the default action, so closing a dialog would take two
   presses. Esc during composition (`isComposing`) is for cancelling input, so it is
   passed to the IME as is.
+- **`Popover`**: A `<div popover="auto">` directly under `<body>`, shown with
+  `showPopover()`; the top layer, light dismiss and the look (`Canvas` /
+  `CanvasText` and a border) are the browser's. It is placed with CSS anchor
+  positioning: the widget gets an `anchor-name` unique to the popover (added to a
+  comma-separated list, since several popovers can point at the same widget), and
+  the popover gets `position-anchor`, `position-area` for the side and
+  `position-try-fallbacks` (`flip-block` / `flip-inline`) for the opposite side.
+  `inset: auto` replaces the user agent's `inset: 0; margin: auto`, so it lines up
+  with the middle of the widget. Newer parts such as `position-visibility` still
+  differ between engines and are not used.
 - **`Toast`**: Pages have no standard element for transient notifications, so a
   `<div role="status">` is shown at the bottom center with `position: fixed` (the
   `Notification` API goes outside the page and is a different thing).

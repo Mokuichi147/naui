@@ -88,7 +88,7 @@ Gaps that ordinary apps run into right away and that all four platforms have nat
 counterparts for, plus the next steps of the adaptive layout and
 internationalization tracks.
 
-- [ ] **Popovers** (attached to a widget, showing arbitrary content). Settings
+- [x] **Popovers** (attached to a widget, showing arbitrary content). Settings
       panels and pickers next to a button are common, and for now an app has to
       fall back on a modal dialog. `NSPopover`, `GtkPopover`, `Flyout`, HTML's
       `popover` attribute. Placing it beside the widget on the Web uses CSS

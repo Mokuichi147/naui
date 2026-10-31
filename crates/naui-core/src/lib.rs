@@ -30,6 +30,7 @@ mod main_thread;
 pub mod media;
 mod menu;
 mod number;
+mod popover;
 mod popup;
 mod row_window;
 mod scroll;
@@ -67,6 +68,7 @@ pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
 pub use menu::{MenuHandler, MenuItem, MenuShortcut, MenuSpec};
 pub use number::NumberSpec;
+pub use popover::PopoverPosition;
 pub use popup::PopupItem;
 pub use row_window::{
     keeps_hidden_selection, keeps_row_window, row_window, RowWindow, SelectionGesture,

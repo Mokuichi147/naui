@@ -8,8 +8,7 @@
 //! remains WinUI's `ColorPicker`; naui draws nothing.
 //!
 //! The types come from the [`naui_winui3`] projection as is. It is assembled in XAML
-//! passed to `XamlReader` (`Flyout` is not in the projection), and the inner
-//! elements are looked up by `x:Name`.
+//! passed to `XamlReader`, and the inner elements are looked up by `x:Name`.
 //!
 //! Transparency is not handled, so `IsAlphaEnabled` is off (since [`Color`] holds
 //! only opaque colors).

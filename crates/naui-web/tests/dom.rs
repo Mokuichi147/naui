@@ -2618,6 +2618,272 @@ fn table_row_height_can_be_fixed() {
     });
 }
 
+// ------------------------------------------------------------- Popover
+
+/// A button with room on every side to open popovers from, and a popover holding a
+/// label. Counts `on_close` calls.
+fn popover_fixture(
+    ui: &Ui,
+) -> Result<(
+    naui_web::Stack,
+    naui_web::Button,
+    naui_web::Popover,
+    Rc<Cell<usize>>,
+)> {
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_padding(Padding::all(160.0));
+    root.set_align(Align::Start);
+    let button = ui.button("設定")?;
+    root.append(&button);
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    let closed = Rc::new(Cell::new(0));
+    popover.on_close({
+        let closed = closed.clone();
+        move || closed.set(closed.get() + 1)
+    });
+    Ok((root, button, popover, closed))
+}
+
+/// Places the widget on the page, pinned to the top left of the window.
+///
+/// Elements earlier tests left in `<body>` make the document scroll, and WebKit
+/// chooses the popover's side as if it had not scrolled (a widget scrolled into the
+/// middle of the window still gets its popover above). A naui window does not scroll
+/// the document, so the widget is placed the same way.
+fn mount_in_view(widget: &dyn Widget) -> Mounted {
+    let mounted = Mounted::new(widget);
+    let style = mounted.0.unchecked_ref::<HtmlElement>().style();
+    for (property, value) in [("position", "fixed"), ("top", "0"), ("left", "0")] {
+        style.set_property(property, value).expect("位置の指定");
+    }
+    mounted
+}
+
+/// The names in the element's `anchor-name`.
+fn anchor_names(element: &Element) -> Vec<String> {
+    element
+        .unchecked_ref::<HtmlElement>()
+        .style()
+        .get_property_value("anchor-name")
+        .unwrap_or_default()
+        .split(',')
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// The `position-anchor` the popover points at.
+fn popover_anchor(popover: &naui_web::Popover) -> String {
+    popover
+        .native_element()
+        .unchecked_ref::<HtmlElement>()
+        .style()
+        .get_property_value("position-anchor")
+        .unwrap_or_default()
+}
+
+/// Whether the browser places elements with CSS anchor positioning.
+fn supports_anchor_positioning() -> bool {
+    web_sys::window()
+        .and_then(|window| js_sys::Reflect::get(&window, &JsValue::from_str("CSS")).ok())
+        .and_then(|css| {
+            let supports = js_sys::Reflect::get(&css, &JsValue::from_str("supports")).ok()?;
+            let supports: &js_sys::Function = supports.dyn_ref()?;
+            supports
+                .call1(&css, &JsValue::from_str("position-area: bottom"))
+                .ok()
+        })
+        .is_some_and(|value| value.is_truthy())
+}
+
+#[wasm_bindgen_test]
+async fn popover_opens_beside_the_widget_and_closes_quietly() {
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(popover_fixture(ui)?);
+        Ok(())
+    });
+    let (root, button, popover, closed) = kept.expect("組み立て");
+    let _mounted = mount_in_view(&root);
+    assert!(!popover.is_open(), "作っただけでは閉じていること");
+    let element = popover.native_element();
+    assert_eq!(
+        element.get_attribute("popover").as_deref(),
+        Some("auto"),
+        "外側を押すと閉じる種類のポップオーバーであること"
+    );
+
+    popover.open(&button);
+    assert!(popover.is_open());
+    assert!(element.matches(":popover-open").unwrap_or(false));
+    let name = popover_anchor(&popover);
+    assert!(name.starts_with("--"), "アンカーの名前があること: {name}");
+    assert_eq!(
+        anchor_names(&button.native_element()),
+        vec![name.clone()],
+        "押したウィジェットがアンカーになること"
+    );
+    assert!(
+        element.text_content().unwrap_or_default().contains("中身"),
+        "中身がポップオーバーの中に入ること"
+    );
+
+    if supports_anchor_positioning() {
+        next_frames().await;
+        let anchor = button.native_element().get_bounding_client_rect();
+        let rect = element.get_bounding_client_rect();
+        assert!(
+            rect.top() >= anchor.bottom() - 0.5,
+            "ウィジェットの下に出ること: {} / {}",
+            rect.top(),
+            anchor.bottom()
+        );
+        let center = |r: &web_sys::DomRect| r.left() + r.width() / 2.0;
+        assert!(
+            (center(&rect) - center(&anchor)).abs() < 1.0,
+            "ウィジェットの中央にそろうこと: {} / {}",
+            center(&rect),
+            center(&anchor)
+        );
+    }
+
+    popover.close();
+    assert!(!popover.is_open());
+    next_frames().await;
+    assert_eq!(closed.get(), 0, "アプリが閉じたときは通知しないこと");
+    assert!(
+        anchor_names(&button.native_element()).is_empty(),
+        "閉じたらアンカーの名前を外すこと"
+    );
+    element.remove();
+}
+
+#[wasm_bindgen_test]
+async fn popover_dismissed_by_the_user_notifies() {
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(popover_fixture(ui)?);
+        Ok(())
+    });
+    let (root, button, popover, closed) = kept.expect("組み立て");
+    let _mounted = Mounted::new(&root);
+
+    popover.open(&button);
+    popover.dismiss();
+    assert!(!popover.is_open(), "閉じてすぐ閉じた扱いになること");
+    next_frames().await;
+    assert_eq!(closed.get(), 1, "利用者が閉じたら 1 度だけ通知すること");
+
+    // 閉じてすぐ開き直しても、閉じた知らせで外れないこと。
+    popover.open(&button);
+    popover.close();
+    popover.open(&button);
+    next_frames().await;
+    assert!(popover.is_open());
+    assert_eq!(closed.get(), 1);
+    assert_eq!(anchor_names(&button.native_element()).len(), 1);
+    popover.close();
+    popover.native_element().remove();
+}
+
+#[wasm_bindgen_test]
+async fn popover_follows_the_position() {
+    if !supports_anchor_positioning() {
+        return;
+    }
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(popover_fixture(ui)?);
+        Ok(())
+    });
+    let (root, button, popover, _closed) = kept.expect("組み立て");
+    let _mounted = mount_in_view(&root);
+    let anchor = button.native_element().get_bounding_client_rect();
+    let element = popover.native_element();
+
+    popover.open(&button);
+    for position in [
+        naui_core::PopoverPosition::Top,
+        naui_core::PopoverPosition::Left,
+        naui_core::PopoverPosition::Right,
+        naui_core::PopoverPosition::Bottom,
+    ] {
+        // 開いたまま変えても置き直されること。
+        popover.set_position(position);
+        assert_eq!(popover.position(), position);
+        next_frames().await;
+        let rect = element.get_bounding_client_rect();
+        let placed = match position {
+            naui_core::PopoverPosition::Top => rect.bottom() <= anchor.top() + 0.5,
+            naui_core::PopoverPosition::Bottom => rect.top() >= anchor.bottom() - 0.5,
+            naui_core::PopoverPosition::Left => rect.right() <= anchor.left() + 0.5,
+            naui_core::PopoverPosition::Right => rect.left() >= anchor.right() - 0.5,
+        };
+        assert!(
+            placed,
+            "{position:?} の側に出ること: ({}, {}, {}, {}) / ({}, {}, {}, {})",
+            rect.left(),
+            rect.top(),
+            rect.right(),
+            rect.bottom(),
+            anchor.left(),
+            anchor.top(),
+            anchor.right(),
+            anchor.bottom()
+        );
+    }
+    popover.close();
+    element.remove();
+}
+
+#[wasm_bindgen_test]
+fn popover_needs_a_widget_in_the_document() {
+    with_ui(|ui| {
+        let popover = ui.popover()?;
+        let loose = ui.button("どこにもない")?;
+        popover.open(&loose);
+        assert!(!popover.is_open(), "文書に無いウィジェットには開かないこと");
+        assert!(anchor_names(&loose.native_element()).is_empty());
+        popover.native_element().remove();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn popovers_share_an_anchor_and_move_between_widgets() {
+    with_ui(|ui| {
+        let (root, first, popover, closed) = popover_fixture(ui)?;
+        let second = ui.button("表示")?;
+        root.append(&second);
+        let other = ui.popover()?;
+        let _mounted = Mounted::new(&root);
+
+        popover.open(&first);
+        let name = popover_anchor(&popover);
+        // `auto` のポップオーバーは、別のものを開くと閉じる (ブラウザの決まり)。
+        // 名前の付け外しだけを見るため、もう一方は手で付ける。
+        other.open(&first);
+        let both = anchor_names(&first.native_element());
+        assert_eq!(both.len(), 2, "2 つの名前が並ぶこと: {both:?}");
+
+        popover.open(&second);
+        assert!(popover.is_open(), "開いたまま移せること");
+        assert_eq!(anchor_names(&second.native_element()), vec![name.clone()]);
+        assert!(
+            !anchor_names(&first.native_element()).contains(&name),
+            "前のウィジェットから名前を外すこと"
+        );
+        assert_eq!(closed.get(), 0);
+
+        popover.close();
+        other.close();
+        popover.native_element().remove();
+        other.native_element().remove();
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn dialog_escape_closes_and_stops_the_browser_default() {
     with_ui(|ui| {

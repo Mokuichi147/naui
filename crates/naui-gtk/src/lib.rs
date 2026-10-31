@@ -40,6 +40,7 @@
 //! | `Navbar` / `Dock` / `Menu` / `Pagination` | A row of `GtkToggleButton`s |
 //! | `Breadcrumbs` | A `GtkLabel` with links (`<a href>`) + separators |
 //! | `PopupMenu` | `GtkPopoverMenu` + `GMenu` + `GSimpleAction` |
+//! | `Popover` | `GtkPopover` |
 //! | `MenuBar` | `GtkPopoverMenuBar` + `GMenu` + `GSimpleAction` |
 //! | `List` | A `GtkListBox` in a `GtkScrolledWindow` |
 //! | `Link` | `GtkLinkButton` |
@@ -151,6 +152,7 @@ mod media;
 mod menu_bar;
 mod navigation;
 mod number_input;
+mod popover;
 mod popup;
 mod radio_group;
 mod sidebar;
@@ -189,6 +191,7 @@ pub use media::{Audio, Image, Video};
 pub use menu_bar::MenuBar;
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
+pub use popover::Popover;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
 pub use sidebar::Sidebar;
@@ -267,6 +270,8 @@ struct UiInner {
     dialogs: RefCell<Vec<Dialog>>,
     /// Popup menus are not part of the layout, so no parent holds them.
     popups: RefCell<Vec<PopupMenu>>,
+    /// Popovers are not part of the layout either, so they are held here.
+    popovers: RefCell<Vec<Popover>>,
     /// Toolbars are not part of the layout either, so they are held here.
     toolbars: RefCell<Vec<Toolbar>>,
     /// Menu bars are not part of the layout either, so they are held here.
@@ -291,6 +296,7 @@ impl Ui {
             windows: RefCell::new(Vec::new()),
             dialogs: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
+            popovers: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
             menu_bars: RefCell::new(Vec::new()),
             sidebars: RefCell::new(Vec::new()),
@@ -530,6 +536,16 @@ impl Ui {
         let popup = PopupMenu::new();
         self.0.popups.borrow_mut().push(popup.clone());
         Ok(popup)
+    }
+
+    /// A panel shown beside a widget. Backed by `GtkPopover`.
+    ///
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
+    pub fn popover(&self) -> Result<Popover> {
+        let popover = Popover::new();
+        self.0.popovers.borrow_mut().push(popover.clone());
+        Ok(popover)
     }
 
     /// Breadcrumbs.
