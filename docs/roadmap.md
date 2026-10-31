@@ -104,12 +104,21 @@ internationalization tracks.
       `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
       WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
       counterpart, so the differences are documented.
-- [ ] *(adaptive)* **Size-based arrangements.** Declaring in advance which layout
-      to use above and below a width threshold. naui-core computes the thresholds,
-      and the switching is left to `TwoPaneView`, `AdwBreakpointBin` and CSS
-      container queries. Only macOS has no counterpart, so naui decides there,
-      deferred to the next run loop iteration and with some hysteresis. This also
-      adds a `Size` type for thresholds (margins reuse `Padding`).
+- [x] *(adaptive)* **Size-based arrangements.** `Stack::set_breakpoint` declares
+      the width (`Breakpoint`) from which a stack lays its children out in the
+      other orientation; below it the stack keeps its own (`Stack::orientation`),
+      and `Stack::current_orientation` returns the one in use. The switch is the
+      same as `set_orientation`, so focus and IME composition survive it, and going
+      back takes 8 pixels less. naui decides on all four platforms with
+      naui-core's `StackArrangement`: the native mechanisms did not fit when
+      checked. `TwoPaneView` holds only two panes and `AdaptiveTrigger` follows the
+      window, `AdwBreakpointBin` takes away the minimum size of what it holds (as
+      with `Sidebar`), and a CSS container query needs a wrapping element whose
+      width no longer comes from its content (an `Auto` grid column shrinks it to
+      nothing) while the children's direction-dependent styles are inline. macOS,
+      Linux and Windows switch on the next run loop iteration after layout, and the
+      Web inside a `ResizeObserver` before paint. Thresholds are widths only, so no
+      `Size` type was added.
 - [x] *(i18n)* **A guide for translating apps.** With `Ui::preferred_languages`
       and `Ui::on_preferred_languages_change` in place, show how to combine Fluent
       with naui: choosing a translation from the preferred languages, loading it,

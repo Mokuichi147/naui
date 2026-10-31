@@ -340,6 +340,10 @@ fn main() {
             stack_switches_orientation,
         ),
         (
+            "しきい値を持つ Stack が自分の幅で向きを切り替え、境目では遊びを持つ",
+            stack_breakpoint_follows_its_width,
+        ),
+        (
             "向きを変えて同じ向きの Stack に入った Stack は余白を外側へ譲る",
             nested_stack_switched_to_the_same_direction,
         ),
@@ -3000,6 +3004,110 @@ fn stack_switches_orientation(ui: &Ui) -> Result<()> {
             "縦へ戻すと元の位置と大きさへ戻ること: {before:?} / {after:?}"
         );
     }
+    Ok(())
+}
+
+/// A `Stack` with a breakpoint lays its children out side by side once it is at least
+/// that wide (its padding included) and one above the other below it, switching after
+/// the layout pass that changed its width. Going back takes a few pixels less, and a
+/// field being typed into keeps its focus through the switch.
+fn stack_breakpoint_follows_its_width(ui: &Ui) -> Result<()> {
+    let window = ui.window("しきい値", 700.0, 240.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    let form = ui.stack(Orientation::Vertical)?;
+    form.set_sizing(Sizing::fill_width());
+    form.set_padding(Padding::all(10.0));
+    let field = ui.text_input("")?;
+    let first = ui.button("前")?;
+    let last = ui.button("後")?;
+    form.append(&field);
+    form.append(&first);
+    form.append(&last);
+    root.append(&form);
+    window.set_child(&root);
+
+    form.set_breakpoint(Some(naui_core::Breakpoint::new(
+        500.0,
+        Orientation::Horizontal,
+    )));
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Vertical,
+        "並ぶ前は自分の向きのままであること"
+    );
+    window.show();
+    pump_until(3.0, || {
+        form.current_orientation() == Orientation::Horizontal
+    });
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Horizontal,
+        "しきい値より広ければ横に並ぶこと"
+    );
+    assert_eq!(form.orientation(), Orientation::Vertical);
+    form.native_view().layoutSubtreeIfNeeded();
+    let (a, b) = (first.native_view().frame(), last.native_view().frame());
+    assert!(
+        (a.origin.y - b.origin.y).abs() < 1e-6 && b.origin.x > a.origin.x + a.size.width,
+        "子が 1 行に並ぶこと: {a:?} / {b:?}"
+    );
+
+    let field_view: Retained<NSTextField> = field
+        .native_view()
+        .downcast()
+        .expect("TextInput is an NSTextField");
+    assert!(field.request_focus());
+
+    let resize = |width: f64, expected: Orientation, message: &str| {
+        window.set_size(width, 240.0);
+        pump_until(1.0, || form.current_orientation() == expected);
+        // 変わらないはずの所では、予約が走るまで待ってから見る。
+        pump(0.1);
+        assert_eq!(
+            form.current_orientation(),
+            expected,
+            "{message} (幅 {width})"
+        );
+    };
+    resize(480.0, Orientation::Vertical, "しきい値より狭ければ縦に積む");
+    assert!(
+        field_view.currentEditor().is_some(),
+        "向きが切り替わっても入力欄のフォーカスが外れないこと"
+    );
+    resize(496.0, Orientation::Vertical, "しきい値に届くまでは縦のまま");
+    resize(500.0, Orientation::Horizontal, "ちょうどしきい値で横に並ぶ");
+    resize(
+        494.0,
+        Orientation::Horizontal,
+        "しきい値のすぐ下では戻らない",
+    );
+    resize(490.0, Orientation::Vertical, "遊びを越えて狭まれば縦に戻る");
+
+    window.set_size(700.0, 240.0);
+    pump_until(1.0, || {
+        form.current_orientation() == Orientation::Horizontal
+    });
+    form.set_breakpoint(None);
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Vertical,
+        "しきい値を外すと自分の向きへすぐ戻ること"
+    );
+    // しきい値の向きの側にいる間に自分の向きを変えても、並びはしきい値の向きのまま。
+    form.set_breakpoint(Some(naui_core::Breakpoint::new(
+        400.0,
+        Orientation::Vertical,
+    )));
+    form.set_orientation(Orientation::Horizontal);
+    assert_eq!(form.orientation(), Orientation::Horizontal);
+    assert_eq!(form.current_orientation(), Orientation::Vertical);
+    resize(
+        380.0,
+        Orientation::Horizontal,
+        "狭まれば新しい自分の向きになる",
+    );
+    window.close();
     Ok(())
 }
 

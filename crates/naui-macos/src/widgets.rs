@@ -7,7 +7,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use naui_core::{Align, ButtonRole, Orientation, Padding, TextColor, TextStyle};
+use dispatch2::{DispatchQueue, MainThreadBound};
+use naui_core::{
+    Align, Breakpoint, ButtonRole, Orientation, Padding, StackArrangement, TextColor, TextStyle,
+};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::NSObjectProtocol;
 use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Message};
@@ -1127,11 +1130,21 @@ struct StackInner {
     fill_constraints: RefCell<HashMap<usize, [Retained<NSLayoutConstraint>; 2]>>,
     padding: Cell<Padding>,
     spacing: Cell<f64>,
+    /// The orientation the app gave and the breakpoint, which decide the orientation
+    /// the children are laid out in.
+    arrangement: Cell<StackArrangement>,
+    /// Watches the frame while there is a breakpoint.
+    frame_target: RefCell<Option<Retained<ActionTarget>>>,
+    /// Switching to the orientation `arrangement` decided is queued on the main queue.
+    switch_scheduled: Cell<bool>,
 }
 
 impl Drop for StackInner {
     fn drop(&mut self) {
         crate::layout::unregister_container(&self.native);
+        if let Some(target) = self.frame_target.get_mut().take() {
+            unsafe { NSNotificationCenter::defaultCenter().removeObserver(&target) };
+        }
     }
 }
 
@@ -1254,6 +1267,9 @@ impl Stack {
             fill_constraints: RefCell::new(HashMap::new()),
             padding: Cell::new(Padding::ZERO),
             spacing: Cell::new(spacing),
+            arrangement: Cell::new(StackArrangement::new(orientation)),
+            frame_target: RefCell::new(None),
+            switch_scheduled: Cell::new(false),
         }));
         let view: &NSView = this.0.native.as_ref();
         let weak = Rc::downgrade(&this.0);
@@ -1272,7 +1288,104 @@ impl Stack {
     /// focus and IME composition. What depends on the direction is placed again: the
     /// cross-axis alignment and `Fill` constraints, the main-axis hugging, the tail
     /// spacer, and whether nested `Stack`s leave the leftover space to their parent.
+    ///
+    /// With a [`set_breakpoint`](Self::set_breakpoint), this is the orientation used
+    /// below the breakpoint's width.
     pub fn set_orientation(&self, orientation: Orientation) {
+        let mut arrangement = self.0.arrangement.get();
+        arrangement.set_base(orientation);
+        self.0.arrangement.set(arrangement);
+        self.arrange(arrangement.orientation());
+    }
+
+    /// The orientation given at creation or with
+    /// [`set_orientation`](Self::set_orientation).
+    pub fn orientation(&self) -> Orientation {
+        self.0.arrangement.get().base()
+    }
+
+    /// Declares the width from which the children are laid out in another
+    /// orientation. `None` removes it.
+    ///
+    /// AppKit has no container that switches by size, so naui watches the
+    /// `NSStackView`'s frame (`NSViewFrameDidChangeNotification`) and, when the width
+    /// crosses the breakpoint, switches on the next iteration of the main queue rather
+    /// than in the middle of the layout pass that moved the frame.
+    pub fn set_breakpoint(&self, breakpoint: Option<Breakpoint>) {
+        let mut arrangement = self.0.arrangement.get();
+        arrangement.resized(self.0.native.frame().size.width);
+        arrangement.set_breakpoint(breakpoint);
+        self.0.arrangement.set(arrangement);
+        if breakpoint.is_some() {
+            self.watch_frame();
+        }
+        self.arrange(arrangement.orientation());
+    }
+
+    pub fn breakpoint(&self) -> Option<Breakpoint> {
+        self.0.arrangement.get().breakpoint()
+    }
+
+    /// The orientation the children are laid out in now.
+    pub fn current_orientation(&self) -> Orientation {
+        if self.is_vertical() {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        }
+    }
+
+    /// Starts telling `arrangement` the width after each change of the frame.
+    fn watch_frame(&self) {
+        if self.0.frame_target.borrow().is_some() {
+            return;
+        }
+        let mtm = MainThreadMarker::from(&*self.0.native);
+        let target = ActionTarget::new(mtm, {
+            let weak = Rc::downgrade(&self.0);
+            move || {
+                if let Some(inner) = weak.upgrade() {
+                    Stack(inner).frame_changed();
+                }
+            }
+        });
+        self.0.native.setPostsFrameChangedNotifications(true);
+        unsafe {
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                &target,
+                sel!(invoke:),
+                Some(NSViewFrameDidChangeNotification),
+                Some(&self.0.native),
+            );
+        }
+        *self.0.frame_target.borrow_mut() = Some(target);
+    }
+
+    /// The frame changed, in the middle of a layout pass. If the width crossed the
+    /// breakpoint, switches once the pass is over.
+    fn frame_changed(&self) {
+        let mut arrangement = self.0.arrangement.get();
+        let changed = arrangement.resized(self.0.native.frame().size.width);
+        self.0.arrangement.set(arrangement);
+        if !changed || self.0.switch_scheduled.replace(true) {
+            return;
+        }
+        let mtm = MainThreadMarker::from(&*self.0.native);
+        let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
+        DispatchQueue::main().exec_async(move || {
+            // メインキューの仕事はメインスレッドで走る。
+            let mtm = MainThreadMarker::new().expect("called outside the main queue");
+            if let Some(inner) = weak.into_inner(mtm).upgrade() {
+                inner.switch_scheduled.set(false);
+                let stack = Stack(inner);
+                // 予約のあとに幅が戻っていれば、いまの向きのままになる。
+                stack.arrange(stack.0.arrangement.get().orientation());
+            }
+        });
+    }
+
+    /// Lays the children out in `orientation`.
+    fn arrange(&self, orientation: Orientation) {
         let vertical = orientation.is_vertical();
         if self.is_vertical() == vertical {
             return;
@@ -1312,14 +1425,6 @@ impl Stack {
         }
         self.update_tail();
         self.invalidate_natural_size();
-    }
-
-    pub fn orientation(&self) -> Orientation {
-        if self.is_vertical() {
-            Orientation::Vertical
-        } else {
-            Orientation::Horizontal
-        }
     }
 
     pub fn set_spacing(&self, spacing: f64) {

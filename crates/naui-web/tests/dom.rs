@@ -1238,6 +1238,338 @@ fn sizing_after_attach_reaches_the_grid() {
     });
 }
 
+/// A `Stack` with a breakpoint lays its children out side by side once it is at least
+/// that wide (its padding included) and one above the other below it, before the page
+/// is painted at the new width. Going back takes a few pixels less, a field being typed
+/// into keeps its focus, and the browser reports no `ResizeObserver` loop.
+#[wasm_bindgen_test]
+async fn stack_breakpoint_follows_its_width() {
+    let errors = Rc::new(RefCell::new(Vec::<String>::new()));
+    let on_error = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue)>::new({
+        let errors = errors.clone();
+        move |event: JsValue| {
+            let message = js_sys::Reflect::get(&event, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|message| message.as_string())
+                .unwrap_or_default();
+            errors.borrow_mut().push(message);
+        }
+    });
+    let window = web_sys::window().expect("window");
+    window
+        .add_event_listener_with_callback("error", on_error.as_ref().unchecked_ref())
+        .expect("error の購読");
+
+    let mut kept = None;
+    with_ui(|ui| {
+        let outer = ui.stack(Orientation::Vertical)?;
+        outer.set_sizing(Sizing::fixed(700.0, 300.0));
+        let form = ui.stack(Orientation::Vertical)?;
+        form.set_sizing(Sizing::fill_width());
+        form.set_padding(Padding::all(10.0));
+        let field = ui.text_input("")?;
+        let first = ui.button("前")?;
+        let last = ui.button("後")?;
+        form.append(&field);
+        form.append(&first);
+        form.append(&last);
+        outer.append(&form);
+        form.set_breakpoint(Some(naui_core::Breakpoint::new(
+            500.0,
+            Orientation::Horizontal,
+        )));
+        assert_eq!(
+            form.current_orientation(),
+            Orientation::Vertical,
+            "並ぶ前は自分の向きのままであること"
+        );
+        let mounted = Mounted::new(&outer);
+        kept = Some((mounted, outer, form, field, first, last));
+        Ok(())
+    });
+    let (_mounted, outer, form, field, first, last) = kept.expect("組み立て");
+    frames_until(|| form.current_orientation() == Orientation::Horizontal).await;
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Horizontal,
+        "しきい値より広ければ横に並ぶこと"
+    );
+    assert_eq!(form.orientation(), Orientation::Vertical);
+    assert_eq!(computed(&form.native_element(), "flex-direction"), "row");
+    let (a, b) = (
+        first.native_element().get_bounding_client_rect(),
+        last.native_element().get_bounding_client_rect(),
+    );
+    assert!(
+        (a.top() - b.top()).abs() < 1.0 && b.left() >= a.right() - 0.5,
+        "子が 1 行に並ぶこと: {} / {}",
+        a.right(),
+        b.left()
+    );
+
+    let input: HtmlElement = field.native_element().unchecked_into();
+    input.focus().expect("フォーカス");
+    let resize = |width: f64| outer.set_sizing(Sizing::fixed(width, 300.0));
+    let check = |width: f64, expected: Orientation, message: &str| {
+        assert_eq!(
+            form.current_orientation(),
+            expected,
+            "{message} (幅 {width})"
+        );
+    };
+    for (width, expected, message) in [
+        (480.0, Orientation::Vertical, "しきい値より狭ければ縦に積む"),
+        (496.0, Orientation::Vertical, "しきい値に届くまでは縦のまま"),
+        (500.0, Orientation::Horizontal, "ちょうどしきい値で横に並ぶ"),
+        (
+            494.0,
+            Orientation::Horizontal,
+            "しきい値のすぐ下では戻らない",
+        ),
+        (490.0, Orientation::Vertical, "遊びを越えて狭まれば縦に戻る"),
+    ] {
+        resize(width);
+        frames_until(|| form.current_orientation() == expected).await;
+        // 変わらないはずの所では、監視を付け直したあとの報告まで待ってから見る。
+        next_frames().await;
+        check(width, expected, message);
+    }
+    let document = window.document().expect("document");
+    assert!(
+        document
+            .active_element()
+            .is_some_and(|active| active == *input.as_ref()),
+        "向きが切り替わっても入力欄のフォーカスが外れないこと"
+    );
+
+    // 描く前に切り替える。あとから作った ResizeObserver は同じフレームの中で
+    // naui の後に呼ばれるので、そこではもう横に並んでいる。
+    let painted = Rc::new(RefCell::new(Vec::new()));
+    let watch = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue)>::new({
+        let painted = painted.clone();
+        let element = form.native_element();
+        move |_: JsValue| {
+            let width = element.get_bounding_client_rect().width();
+            painted
+                .borrow_mut()
+                .push((width, computed(&element, "flex-direction")));
+        }
+    });
+    let observer =
+        web_sys::ResizeObserver::new(watch.as_ref().unchecked_ref()).expect("ResizeObserver");
+    observer.observe(&outer.native_element());
+    next_frames().await;
+    painted.borrow_mut().clear();
+    resize(700.0);
+    next_frames().await;
+    observer.disconnect();
+    assert_eq!(
+        painted
+            .borrow()
+            .first()
+            .map(|(_, direction)| direction.as_str()),
+        Some("row"),
+        "広がった幅の最初の報告で、もう横に並んでいること: {:?}",
+        painted.borrow()
+    );
+
+    form.set_breakpoint(None);
+    assert_eq!(
+        computed(&form.native_element(), "flex-direction"),
+        "column",
+        "しきい値を外すと自分の向きへすぐ戻ること"
+    );
+    // しきい値の向きの側にいる間に自分の向きを変えても、並びはしきい値の向きのまま。
+    form.set_breakpoint(Some(naui_core::Breakpoint::new(
+        400.0,
+        Orientation::Vertical,
+    )));
+    form.set_orientation(Orientation::Horizontal);
+    assert_eq!(form.orientation(), Orientation::Horizontal);
+    assert_eq!(form.current_orientation(), Orientation::Vertical);
+    resize(380.0);
+    frames_until(|| form.current_orientation() == Orientation::Horizontal).await;
+    check(
+        380.0,
+        Orientation::Horizontal,
+        "狭まれば新しい自分の向きになる",
+    );
+
+    window
+        .remove_event_listener_with_callback("error", on_error.as_ref().unchecked_ref())
+        .expect("error の購読の解除");
+    let loops: Vec<_> = errors
+        .borrow()
+        .iter()
+        .filter(|message| message.contains("ResizeObserver"))
+        .cloned()
+        .collect();
+    assert!(
+        loops.is_empty(),
+        "ResizeObserver のループが報告されないこと: {loops:?}"
+    );
+}
+
+/// Collects the messages of the page's `error` events while it is alive.
+struct PageErrors {
+    messages: Rc<RefCell<Vec<String>>>,
+    listener: wasm_bindgen::closure::Closure<dyn FnMut(JsValue)>,
+}
+
+impl PageErrors {
+    fn listen() -> Self {
+        let messages = Rc::new(RefCell::new(Vec::new()));
+        let listener = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue)>::new({
+            let messages = messages.clone();
+            move |event: JsValue| {
+                let message = js_sys::Reflect::get(&event, &JsValue::from_str("message"))
+                    .ok()
+                    .and_then(|message| message.as_string())
+                    .unwrap_or_default();
+                messages.borrow_mut().push(message);
+            }
+        });
+        web_sys::window()
+            .expect("window")
+            .add_event_listener_with_callback("error", listener.as_ref().unchecked_ref())
+            .expect("error の購読");
+        Self { messages, listener }
+    }
+
+    /// The `ResizeObserver` loop reports seen so far.
+    fn resize_loops(&self) -> Vec<String> {
+        self.messages
+            .borrow()
+            .iter()
+            .filter(|message| message.contains("ResizeObserver"))
+            .cloned()
+            .collect()
+    }
+}
+
+impl Drop for PageErrors {
+    fn drop(&mut self) {
+        if let Some(window) = web_sys::window() {
+            let _ = window.remove_event_listener_with_callback(
+                "error",
+                self.listener.as_ref().unchecked_ref(),
+            );
+        }
+    }
+}
+
+/// A stack switching inside other stacks with breakpoints resizes them in the same
+/// frame: a parent with an `Auto` height gets shorter, and a sibling in a row gets
+/// another width. Neither is reported as a `ResizeObserver` loop.
+#[wasm_bindgen_test]
+async fn nested_stack_breakpoints_do_not_loop() {
+    let errors = PageErrors::listen();
+    let mut kept = None;
+    with_ui(|ui| {
+        let outer = ui.stack(Orientation::Vertical)?;
+        outer.set_sizing(Sizing::fixed(700.0, 400.0));
+        // 親は 700 では切り替わらないが、子が横に並ぶと背が縮む。
+        let parent = ui.stack(Orientation::Vertical)?;
+        parent.set_sizing(Sizing::fill_width());
+        parent.set_breakpoint(Some(naui_core::Breakpoint::new(
+            1000.0,
+            Orientation::Horizontal,
+        )));
+        let child = ui.stack(Orientation::Vertical)?;
+        child.set_sizing(Sizing::fill_width());
+        for title in ["一", "二", "三"] {
+            child.append(&ui.button(title)?);
+        }
+        child.set_breakpoint(Some(naui_core::Breakpoint::new(
+            500.0,
+            Orientation::Horizontal,
+        )));
+        parent.append(&child);
+        // 横の並びで両方が余りを分け合うと、片方が向きを変えて中身の幅が
+        // 変わるだけで、隣の幅も変わる。
+        let row = ui.stack(Orientation::Horizontal)?;
+        row.set_sizing(Sizing::fill_width());
+        let left = ui.stack(Orientation::Vertical)?;
+        left.set_sizing(Sizing::fill_width());
+        for title in ["左の一つ目", "左の二つ目"] {
+            left.append(&ui.button(title)?);
+        }
+        left.set_breakpoint(Some(naui_core::Breakpoint::new(
+            250.0,
+            Orientation::Horizontal,
+        )));
+        let right = ui.stack(Orientation::Vertical)?;
+        right.set_sizing(Sizing::fill_width());
+        right.append(&ui.button("右")?);
+        right.set_breakpoint(Some(naui_core::Breakpoint::new(
+            2000.0,
+            Orientation::Horizontal,
+        )));
+        row.append(&left);
+        row.append(&right);
+        parent.append(&row);
+        outer.append(&parent);
+        let mounted = Mounted::new(&outer);
+        kept = Some((mounted, outer, parent, child, left));
+        Ok(())
+    });
+    let (_mounted, _outer, parent, child, left) = kept.expect("組み立て");
+    frames_until(|| {
+        child.current_orientation() == Orientation::Horizontal
+            && left.current_orientation() == Orientation::Horizontal
+    })
+    .await;
+    next_frames().await;
+    assert_eq!(child.current_orientation(), Orientation::Horizontal);
+    assert_eq!(left.current_orientation(), Orientation::Horizontal);
+    assert_eq!(parent.current_orientation(), Orientation::Vertical);
+    let loops = errors.resize_loops();
+    assert!(
+        loops.is_empty(),
+        "ResizeObserver のループが報告されないこと: {loops:?}"
+    );
+}
+
+/// The breakpoint is measured on the stack's border box, so growing only its
+/// padding (the content keeps its width) still crosses it.
+#[wasm_bindgen_test]
+async fn stack_breakpoint_follows_its_padding() {
+    let mut kept = None;
+    with_ui(|ui| {
+        // 横の Stack の子は中身の幅になるので、パディングの分だけ外幅が変わる。
+        let outer = ui.stack(Orientation::Horizontal)?;
+        let form = ui.stack(Orientation::Vertical)?;
+        form.set_padding(Padding::all(10.0));
+        let item = ui.button("項目")?;
+        item.set_sizing(Sizing::fixed(480.0, 30.0));
+        form.append(&item);
+        outer.append(&form);
+        form.set_breakpoint(Some(naui_core::Breakpoint::new(
+            510.0,
+            Orientation::Horizontal,
+        )));
+        let mounted = Mounted::new(&outer);
+        kept = Some((mounted, outer, form, item));
+        Ok(())
+    });
+    let (_mounted, _outer, form, _item) = kept.expect("組み立て");
+    next_frames().await;
+    let width = form.native_element().get_bounding_client_rect().width();
+    assert!(
+        (width - 500.0).abs() < 0.5,
+        "外幅は中身とパディング: {width}"
+    );
+    assert_eq!(form.current_orientation(), Orientation::Vertical);
+
+    form.set_padding(Padding::all(20.0));
+    frames_until(|| form.current_orientation() == Orientation::Horizontal).await;
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Horizontal,
+        "パディングだけで外幅がしきい値を越えても横に並ぶこと"
+    );
+}
+
 /// Switching a `Stack`'s orientation rewrites `flex-direction` and what each child
 /// set for the previous main axis: `Fill` on the width stretches a child across a
 /// column and hands it the leftover width of a row. Later `set_sizing` calls follow

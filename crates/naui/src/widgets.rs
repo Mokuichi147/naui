@@ -1,7 +1,8 @@
 use crate::sys;
 use crate::Widget;
 use naui_core::{
-    Align, ButtonRole, EventResponse, KeyEvent, Orientation, Padding, TextColor, TextStyle,
+    Align, Breakpoint, ButtonRole, EventResponse, KeyEvent, Orientation, Padding, TextColor,
+    TextStyle,
 };
 
 /// A push button (`GtkButton`).
@@ -377,14 +378,72 @@ impl Stack {
     /// child across a vertical stack now hands it the leftover space of a
     /// horizontal one. Spacing, padding and [`set_align`](Self::set_align) carry
     /// over, the alignment now applying to the new cross axis.
+    ///
+    /// With a [`set_breakpoint`](Self::set_breakpoint), this is the orientation used
+    /// below the breakpoint's width.
     #[inline]
     pub fn set_orientation(&self, orientation: Orientation) {
         self.0.set_orientation(orientation)
     }
 
+    /// The orientation given at creation or with
+    /// [`set_orientation`](Self::set_orientation). With a breakpoint, the children
+    /// may be laid out in the other one ([`current_orientation`](Self::current_orientation)).
     #[inline]
     pub fn orientation(&self) -> Orientation {
         self.0.orientation()
+    }
+
+    /// Declares the width from which the children are laid out in another
+    /// orientation. `None` removes it, going back to
+    /// [`orientation`](Self::orientation).
+    ///
+    /// While the stack is at least [`Breakpoint::min_width`] wide (its padding
+    /// included), it lays its children out in [`Breakpoint::orientation`], and below
+    /// that in its own orientation. The switch is the same as
+    /// [`set_orientation`](Self::set_orientation): the children stay where they are,
+    /// keeping focus and IME composition. Going back takes a few pixels less than the
+    /// threshold, so a width right at the boundary does not flip it back and forth.
+    ///
+    /// What counts is the width the stack gets, so it follows the window only where
+    /// its parent stretches it: give it `Fill` on the width (or put it in a vertical
+    /// stack with [`Align::Fill`]). A stack that fits its content is only as wide as
+    /// its children in its current orientation. A threshold narrower than the
+    /// children need side by side is never crossed going down, because the window
+    /// cannot get that narrow.
+    ///
+    /// The toolkits' own ways of switching by size (`AdwBreakpointBin`, CSS container
+    /// queries) stop the container from taking its size from its content, so naui
+    /// decides instead: it compares the width once layout is done and switches on the
+    /// next main loop iteration (macOS, Linux, Windows), or before the page is painted
+    /// (`ResizeObserver` on the Web). Before the first layout the stack uses its own
+    /// orientation.
+    ///
+    /// ```no_run
+    /// # use naui::{Breakpoint, Orientation, Sizing};
+    /// # fn build(ui: &naui::Ui) -> naui::Result<()> {
+    /// let form = ui.stack(Orientation::Vertical)?;
+    /// form.set_sizing(Sizing::fill_width());
+    /// // Side by side from 600 wide, one above the other below that.
+    /// form.set_breakpoint(Some(Breakpoint::new(600.0, Orientation::Horizontal)));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn set_breakpoint(&self, breakpoint: Option<Breakpoint>) {
+        self.0.set_breakpoint(breakpoint)
+    }
+
+    #[inline]
+    pub fn breakpoint(&self) -> Option<Breakpoint> {
+        self.0.breakpoint()
+    }
+
+    /// The orientation the children are laid out in now: the breakpoint's while the
+    /// stack is at least that wide, [`orientation`](Self::orientation) otherwise.
+    #[inline]
+    pub fn current_orientation(&self) -> Orientation {
+        self.0.current_orientation()
     }
 
     #[inline]
