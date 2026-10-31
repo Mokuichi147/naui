@@ -6633,6 +6633,23 @@ fn sheet_buttons(sheet: &naui_gtk::Sheet) -> Vec<(String, gtk::Button)> {
         .collect()
 }
 
+/// Waits until the sheet has opened, as the user sees it.
+///
+/// libadwaita 1.5 opens the sheet inside `AdwDialog` on its second frame after it is
+/// mapped, and closing it before then does nothing, so `closed` never comes (1.6
+/// and later close it anyway). The user can press Esc only once it is shown, so wait
+/// for the focus it takes when it opens.
+fn wait_until_shown(native: &adw::Dialog) {
+    let shown = || {
+        native
+            .root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| focus.is_ancestor(native))
+    };
+    spin_until(std::time::Duration::from_secs(2), shown);
+    assert!(shown(), "シートが開ききる");
+}
+
 fn sheet_builds_an_adw_dialog(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 480.0, 360.0)?;
     window.show();
@@ -6731,6 +6748,7 @@ fn sheet_buttons_and_escape_respond(ui: &Ui) -> Result<()> {
 
     sheet.open();
     let first = sheet.native_dialog().expect("AdwDialog");
+    wait_until_shown(&first);
     let (_, primary) = sheet_buttons(&sheet).pop().expect("主ボタン");
     primary.emit_clicked();
     assert_eq!(log.borrow().as_slice(), [DialogResponse::Primary]);
@@ -6744,6 +6762,7 @@ fn sheet_buttons_and_escape_respond(ui: &Ui) -> Result<()> {
     );
 
     // Esc は AdwDialog が閉じる。取り消しとして届く。
+    wait_until_shown(&second);
     second.close();
     pump();
     assert_eq!(
