@@ -74,7 +74,8 @@ use naui_winui3::Microsoft::UI::Xaml::Hosting::ElementCompositionPreview;
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, SizeChangedEventHandler, UIElement, XamlRoot, XamlRootChangedEventArgs,
+    FrameworkElement, RoutedEventHandler, SizeChangedEventHandler, UIElement, XamlRoot,
+    XamlRootChangedEventArgs,
 };
 use windows::Foundation::TypedEventHandler;
 use windows::Graphics::SizeInt32;
@@ -272,6 +273,12 @@ impl Canvas {
     }
 
     /// Redraws when the size is decided (changes). The first draw starts here too.
+    ///
+    /// Also watches the new window's `XamlRoot` whenever the surface joins a window
+    /// (`Loaded`), and redraws if its display scale differs from the last draw's.
+    /// Moving to another window has so far always brought a `SizeChanged` too, but
+    /// nothing promises one when the size stays the same, and without it the surface
+    /// would stay stretched from the old scale and watching the old window.
     fn track_size(&self) -> Result<()> {
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let changed = SizeChangedEventHandler::new(move |_, _| {
@@ -282,11 +289,32 @@ impl Canvas {
             });
             Ok(())
         });
-        self.0
+        let element = self
+            .0
             .native
             .cast::<FrameworkElement>()
-            .and_then(|element| element.SizeChanged(&changed))
             .map_err(|e| to_error("subscribe to Canvas size changes", e))?;
+        element
+            .SizeChanged(&changed)
+            .map_err(|e| to_error("subscribe to Canvas size changes", e))?;
+
+        // 別のウィンドウへ移ったとき、大きさが変わらなければ `SizeChanged` が
+        // 来る保証は無い。移った先の `XamlRoot` を購読し直し、その倍率で描き直す。
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let loaded = RoutedEventHandler::new(move |_, _| {
+            let _ = target.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.watch_root();
+                    if inner.rasterization_scale() != inner.scale.get() {
+                        schedule_paint(&inner);
+                    }
+                }
+            });
+            Ok(())
+        });
+        element
+            .Loaded(&loaded)
+            .map_err(|e| to_error("subscribe to Canvas loading", e))?;
         Ok(())
     }
 
@@ -535,6 +563,20 @@ impl Canvas {
         render::signal_removal_for_test()
     }
 
+    /// Whether the surface watches `XamlRoot.Changed` of the window it is in now.
+    /// **For automated tests only.**
+    #[doc(hidden)]
+    pub fn watches_current_root_for_test(&self) -> bool {
+        let Ok(current) = self.0.native.XamlRoot() else {
+            return false;
+        };
+        self.0
+            .root
+            .borrow()
+            .as_ref()
+            .is_some_and(|(watched, _)| *watched == current)
+    }
+
     /// How many `XamlRoot.Changed` subscriptions the surfaces on this thread hold.
     /// **For automated tests only.**
     #[doc(hidden)]
@@ -758,10 +800,9 @@ impl CanvasInner {
         scale: f64,
         commands: &[DrawCommand],
     ) -> windows_core::Result<()> {
-        let pixels = (
-            render::pixel_extent(width, scale),
-            render::pixel_extent(height, scale),
-        );
+        // 機器が持てる大きさに収まらないときは、倍率を下げた面を引き伸ばして出す。
+        let (scale, pixels) =
+            render::surface_size(width, height, scale, renderer.max_surface_pixels());
         let size = SizeInt32 {
             Width: pixels.0 as i32,
             Height: pixels.1 as i32,

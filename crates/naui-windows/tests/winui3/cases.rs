@@ -301,6 +301,10 @@ const CASES: &[Case] = &[
         canvas_draws_onto_a_composition_surface,
     ),
     (
+        "別のウィンドウへ移した描画面は移った先の XamlRoot を見る",
+        canvas_follows_the_window_it_moves_to,
+    ),
+    (
         "捨てた描画面は XamlRoot.Changed の購読を外す",
         canvas_unsubscribes_from_the_root_when_dropped,
     ),
@@ -999,6 +1003,26 @@ fn canvas_commands_become_pixels(ui: &Ui) -> Result<()> {
         "座標も倍率で伸びる"
     );
     assert_eq!(pixel(&doubled, 15, 15), (0, 0, 0, 0));
+
+    // 機器が持てる大きさ (ここでは 16384 画素) を超える面は、倍率を下げて
+    // 全体を描く。右端の印まで描けていること。
+    let wide = ui.canvas()?;
+    wide.on_draw(|painter| {
+        let right = painter.width();
+        painter.fill_rect(
+            Rect::new(right - 1000.0, 0.0, 1000.0, 10.0),
+            Color::rgb(0xff, 0, 0),
+        );
+    });
+    let wide = wide
+        .pixels_for_test(20000.0, 10.0, 1.0)
+        .expect("大きすぎる面も描けること");
+    assert!(wide.0 <= 16384, "面は機器の上限に収める: {} 画素", wide.0);
+    assert_eq!(
+        pixel(&wide, wide.0 - 10, 5),
+        (0, 0, 0xff, 0xff),
+        "倍率を下げて右端まで描くこと"
+    );
     Ok(())
 }
 
@@ -1090,6 +1114,62 @@ fn canvas_draws_onto_a_composition_surface(ui: &Ui) -> Result<()> {
     window.close();
     match outcome {
         Ok(()) => Ok(()),
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// Moved to another window, a surface watches the new window's `XamlRoot.Changed`
+/// and no longer the old one's.
+///
+/// Both `SizeChanged` (which has so far always come with the move) and `Loaded`
+/// lead there, so this does not tell the two apart. Redrawing at a different scale
+/// needs two displays with different scales and is not checked.
+fn canvas_follows_the_window_it_moves_to(ui: &Ui) -> Result<()> {
+    let first = ui.window("描画面の移動元", 200.0, 150.0)?;
+    let second = ui.window("描画面の移動先", 200.0, 150.0)?;
+    first.show();
+    second.show();
+    let baseline = naui_windows::Canvas::root_watches_for_test();
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        let canvas = ui.canvas()?;
+        canvas.set_sizing(Sizing::fixed(80.0, 60.0));
+        let drawn = Rc::new(Cell::new(false));
+        canvas.on_draw({
+            let drawn = drawn.clone();
+            move |painter| {
+                drawn.set(true);
+                painter.fill_rect(painter.bounds(), Color::BLACK);
+            }
+        });
+        first.set_child(&canvas);
+        pump_until(CANVAS_TIMEOUT, || drawn.get());
+        if !drawn.get() {
+            println!("     (面に実寸が付かない環境なので、確かめずに通す)");
+            return Ok(());
+        }
+        assert!(
+            canvas.watches_current_root_for_test(),
+            "移す前の窓を見ている"
+        );
+
+        first.set_child(&ui.label("空")?);
+        second.set_child(&canvas);
+        pump_until(CANVAS_TIMEOUT, || canvas.watches_current_root_for_test());
+        assert!(
+            canvas.watches_current_root_for_test(),
+            "移った先の窓の XamlRoot.Changed を購読し直すこと"
+        );
+        assert_eq!(
+            naui_windows::Canvas::root_watches_for_test(),
+            baseline + 1,
+            "移す前の窓の購読は外すこと"
+        );
+        Ok(())
+    }));
+    first.close();
+    second.close();
+    match outcome {
+        Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }
 }

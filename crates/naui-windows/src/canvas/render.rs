@@ -38,7 +38,8 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
 };
 use windows::Win32::Graphics::Direct3D::{
-    D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP,
+    D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL,
+    D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_9_3,
 };
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, ID3D11Device4, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -71,6 +72,8 @@ const MAX_TEXT_FORMATS: usize = 32;
 /// device it was made from.
 struct Devices {
     d2d: ID2D1Device,
+    /// The widest and tallest surface the device can hold, in pixels.
+    max_surface: u32,
     /// Counts up each time the devices are made again, so that one loss reported
     /// twice (by a failed draw and by the removal event) is recovered from once.
     generation: u64,
@@ -85,11 +88,26 @@ impl Devices {
         let dxgi: IDXGIDevice = d3d.cast()?;
         // SAFETY: 作ったばかりの DXGI デバイスを渡すだけ。
         let d2d = unsafe { factory.CreateDevice(&dxgi)? };
+        // SAFETY: 作ったばかりのデバイスに問い合わせるだけ。
+        let max_surface = max_texture_size(unsafe { d3d.GetFeatureLevel() });
         Ok(Self {
             d2d,
+            max_surface,
             generation,
             watch: RemovalWatch::new(&d3d, generation).ok(),
         })
+    }
+}
+
+/// The widest and tallest texture a device of `level` can hold. Devices are made
+/// with Direct3D's default list of feature levels, which goes down to 9_1, so older
+/// or basic GPUs can be well under 16384.
+fn max_texture_size(level: D3D_FEATURE_LEVEL) -> u32 {
+    match level {
+        level if level.0 >= D3D_FEATURE_LEVEL_11_0.0 => 16384,
+        level if level.0 >= D3D_FEATURE_LEVEL_10_0.0 => 8192,
+        D3D_FEATURE_LEVEL_9_3 => 4096,
+        _ => 2048,
     }
 }
 
@@ -557,8 +575,14 @@ impl Renderer {
         }
     }
 
+    /// The widest and tallest surface the current device can hold, in pixels.
+    pub(super) fn max_surface_pixels(&self) -> u32 {
+        self.devices.max_surface
+    }
+
     /// Draws `commands` into an offscreen bitmap of `width` × `height` logical pixels at
-    /// `scale`, and returns its size in pixels and its premultiplied BGRA pixels.
+    /// `scale` (lowered as on screen when it would not fit, see [`surface_size`]), and
+    /// returns its size in pixels and its premultiplied BGRA pixels.
     pub(super) fn pixels(
         &mut self,
         width: f64,
@@ -566,7 +590,8 @@ impl Renderer {
         scale: f64,
         commands: &[DrawCommand],
     ) -> windows_core::Result<(u32, u32, Vec<u8>)> {
-        let (pixel_width, pixel_height) = (pixel_extent(width, scale), pixel_extent(height, scale));
+        let (scale, (pixel_width, pixel_height)) =
+            surface_size(width, height, scale, self.max_surface_pixels());
         let size = D2D_SIZE_U {
             width: pixel_width,
             height: pixel_height,
@@ -627,14 +652,32 @@ pub(super) fn is_device_lost(error: &windows_core::Error) -> bool {
     .contains(&error.code())
 }
 
+/// The scale to draw a `width` × `height` surface at, and its size in pixels, on a
+/// device whose surfaces are at most `max` pixels wide and tall.
+///
+/// Normally the display scale, so that one surface pixel is one screen pixel. A
+/// surface that would not fit is drawn at a lower scale instead, so it is still
+/// shown whole, stretched and a little soft, rather than failing to be made.
+pub(super) fn surface_size(width: f64, height: f64, scale: f64, max: u32) -> (f64, (u32, u32)) {
+    let mut fit = scale;
+    for length in [width, height] {
+        if length > 0.0 && length * scale > f64::from(max) {
+            fit = fit.min(f64::from(max) / length);
+        }
+    }
+    let pixels = (
+        pixel_extent(width, fit, max),
+        pixel_extent(height, fit, max),
+    );
+    (fit, pixels)
+}
+
 /// The number of pixels covering `length` logical pixels at `scale`. At least 1, and
-/// at most what a Direct3D 11 texture can hold.
-pub(super) fn pixel_extent(length: f64, scale: f64) -> u32 {
-    /// `D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION`.
-    const MAX: f64 = 16384.0;
+/// at most `max`.
+fn pixel_extent(length: f64, scale: f64, max: u32) -> u32 {
     let pixels = (length * scale).ceil();
     if pixels.is_finite() {
-        pixels.clamp(1.0, MAX) as u32
+        pixels.clamp(1.0, f64::from(max)) as u32
     } else {
         1
     }
@@ -868,6 +911,10 @@ impl FigureSink for D2dSink<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Graphics::Direct3D::{
+        D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_9_1,
+        D3D_FEATURE_LEVEL_9_2,
+    };
 
     #[derive(Default)]
     struct Recorder(Vec<String>);
@@ -982,8 +1029,8 @@ mod tests {
     fn clearing_covers_the_rounded_up_pixels() {
         // 幅 100.1・倍率 2 は 201 列。最後の列は描く範囲 (200.2 列目まで) から
         // はみ出すが、表示されるので消す範囲には入れる。
-        let pixels = (pixel_extent(100.1, 2.0), pixel_extent(50.0, 2.0));
-        assert_eq!(pixels, (201, 100));
+        let (scale, pixels) = surface_size(100.1, 50.0, 2.0, 16384);
+        assert_eq!((scale, pixels), (2.0, (201, 100)));
         let (surface, logical) = surface_rects(pixels, 2.0, 100.1, 50.0);
         assert_eq!(
             f64::from(surface.right) * 2.0,
@@ -997,11 +1044,42 @@ mod tests {
 
     #[test]
     fn surfaces_cover_whole_pixels() {
-        assert_eq!(pixel_extent(100.0, 1.0), 100);
-        assert_eq!(pixel_extent(100.5, 1.5), 151);
-        assert_eq!(pixel_extent(0.0, 1.0), 1, "0 の面は作れないので 1");
-        assert_eq!(pixel_extent(1.0e9, 2.0), 16384);
-        assert_eq!(pixel_extent(f64::NAN, 1.0), 1);
+        assert_eq!(pixel_extent(100.0, 1.0, 16384), 100);
+        assert_eq!(pixel_extent(100.5, 1.5, 16384), 151);
+        assert_eq!(pixel_extent(0.0, 1.0, 16384), 1, "0 の面は作れないので 1");
+        assert_eq!(pixel_extent(1.0e9, 2.0, 16384), 16384);
+        assert_eq!(pixel_extent(f64::NAN, 1.0, 16384), 1);
+    }
+
+    #[test]
+    fn surfaces_too_big_for_the_device_are_drawn_at_a_lower_scale() {
+        // 上限 2048 の機器で、幅 1500 を倍率 2 で描くと 3000 画素になって作れない。
+        // 倍率を下げて 2048 画素に収め、見た目は同じ幅に引き伸ばす。
+        let (scale, pixels) = surface_size(1500.0, 300.0, 2.0, 2048);
+        assert!((scale - 2048.0 / 1500.0).abs() < 1e-9, "倍率 {scale}");
+        assert_eq!(pixels, (2048, (300.0 * scale).ceil() as u32));
+        assert!(
+            (f64::from(pixels.0) / scale - 1500.0).abs() < 1.0,
+            "見た目の幅は論理の幅のまま"
+        );
+        // 縦と横で厳しいほうに合わせる (倍率は 1 つ)。
+        let (scale, pixels) = surface_size(1000.0, 3000.0, 1.5, 4096);
+        assert!((scale - 4096.0 / 3000.0).abs() < 1e-9);
+        assert_eq!(pixels.1, 4096);
+        assert!(pixels.0 <= 4096);
+        // 収まるならそのまま。
+        assert_eq!(surface_size(800.0, 600.0, 1.25, 2048), (1.25, (1000, 750)));
+    }
+
+    #[test]
+    fn the_surface_limit_follows_the_feature_level() {
+        assert_eq!(max_texture_size(D3D_FEATURE_LEVEL_12_1), 16384);
+        assert_eq!(max_texture_size(D3D_FEATURE_LEVEL_11_0), 16384);
+        assert_eq!(max_texture_size(D3D_FEATURE_LEVEL_10_1), 8192);
+        assert_eq!(max_texture_size(D3D_FEATURE_LEVEL_10_0), 8192);
+        assert_eq!(max_texture_size(D3D_FEATURE_LEVEL_9_3), 4096);
+        assert_eq!(max_texture_size(D3D_FEATURE_LEVEL_9_2), 2048);
+        assert_eq!(max_texture_size(D3D_FEATURE_LEVEL_9_1), 2048);
     }
 
     #[test]

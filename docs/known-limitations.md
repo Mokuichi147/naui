@@ -189,8 +189,9 @@ that shape are covered in
   `TabView`).
 - `Canvas` text uses Segoe UI Variable (Segoe UI on Windows 10) drawn by
   DirectWrite, not XAML's `TextBlock`, so its lines can sit a pixel or so apart
-  from a `Label` of the same size. Surfaces wider or taller than 16384 physical
-  pixels (the Direct3D 11 texture limit) are cut off there.
+  from a `Label` of the same size. A surface wider or taller in physical pixels
+  than the GPU's texture limit (16384, or 2048 to 8192 on older GPUs) is drawn at
+  a lower resolution and stretched, so it looks softer.
 - Two-finger scrolling on a precision touchpad over a `Canvas` inside a `Scroll`
   does not reach `on_wheel`; the outer `Scroll` moves instead. `ScrollViewer`
   receives touchpad gestures itself, and they do not become wheel notifications
