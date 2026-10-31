@@ -523,6 +523,15 @@ impl Canvas {
             .ok()
     }
 
+    /// Signals the device-removal event as Direct3D does after a GPU reset, so the
+    /// devices are made again and every surface is redrawn. **For automated tests
+    /// only.** Returns whether there was an event to signal (the surfaces share one
+    /// set of devices per thread, made at the first draw).
+    #[doc(hidden)]
+    pub fn signal_device_removed_for_test(&self) -> bool {
+        render::signal_removal_for_test()
+    }
+
     /// The base `Grid`. Public as a backend-specific escape hatch.
     ///
     /// What is drawn is a `SpriteVisual` placed over it with
@@ -563,6 +572,18 @@ fn schedule_paint(inner: &Rc<CanvasInner>) {
 /// way to shutting down, while Composition is still running (see `render::Slot`).
 pub(crate) fn release_devices() {
     render::release();
+}
+
+/// Replaces lost devices and draws every surface again.
+///
+/// Called when a draw fails with a lost device, and when Direct3D reports the device
+/// removed (`render::RemovalWatch`), which also covers surfaces that are never
+/// redrawn by the app. `generation` is the devices that were lost; if they were
+/// already replaced (both routes reported the same loss), nothing is done.
+fn recover_devices(generation: u64) {
+    if render::recover_if_current(generation) {
+        repaint_all();
+    }
 }
 
 /// Draws every surface on this thread again (after the device was replaced, which
@@ -711,10 +732,10 @@ impl CanvasInner {
             self.present(renderer, width, height, scale, painter.commands())
         });
         if let Some(Err(error)) = drawn {
-            if render::is_device_lost(&error)
-                && render::with_renderer(|r| r.recover().is_ok()) == Some(true)
-            {
-                repaint_all();
+            if let Some(generation) = render::current_generation() {
+                if render::is_device_lost(&error) {
+                    recover_devices(generation);
+                }
             }
         }
     }
@@ -760,6 +781,7 @@ impl CanvasInner {
             let drawn = renderer.draw_on_surface(
                 &context,
                 (offset.x, offset.y),
+                pixels,
                 scale,
                 width,
                 height,

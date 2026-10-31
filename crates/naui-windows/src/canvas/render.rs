@@ -8,15 +8,19 @@
 //! When the GPU is reset or removed, drawing fails with `DXGI_ERROR_DEVICE_REMOVED`
 //! and friends. Then new devices are made and handed to the existing graphics
 //! devices (`SetRenderingDevice`), which keeps every surface valid but empties it,
-//! so every surface is drawn again.
+//! so every surface is drawn again. Loss is noticed when a draw fails, or before
+//! that when Direct3D signals its removal event ([`RemovalWatch`]).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use naui_core::{Align, Color, DrawCommand, Path, PathSegment, Point};
 use naui_winui3::Microsoft::UI::Composition::{CompositionGraphicsDevice, Compositor};
+use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::{ICompositionGraphicsDeviceInterop, ICompositorInterop};
-use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, E_FAIL, HMODULE};
+use windows::Win32::Foundation::{
+    CloseHandle, D2DERR_RECREATE_TARGET, E_FAIL, HANDLE, HMODULE, INVALID_HANDLE_VALUE,
+};
 use windows::Win32::Globalization::GetUserDefaultLocaleName;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED,
@@ -37,7 +41,8 @@ use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+    D3D11CreateDevice, ID3D11Device, ID3D11Device4, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    D3D11_SDK_VERSION,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED,
@@ -47,6 +52,10 @@ use windows::Win32::Graphics::DirectWrite::{
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Dxgi::{
     IDXGIDevice, DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_RESET,
+};
+use windows::Win32::System::Threading::{
+    CreateEventW, RegisterWaitForSingleObject, SetEvent, UnregisterWaitEx, INFINITE,
+    WT_EXECUTEONLYONCE,
 };
 use windows_core::{Interface, HSTRING};
 use windows_numerics::{Matrix3x2, Vector2};
@@ -62,17 +71,114 @@ const MAX_TEXT_FORMATS: usize = 32;
 /// device it was made from.
 struct Devices {
     d2d: ID2D1Device,
+    /// Counts up each time the devices are made again, so that one loss reported
+    /// twice (by a failed draw and by the removal event) is recovered from once.
+    generation: u64,
+    /// Absent when Direct3D cannot report removal (before Windows 10 1703).
+    watch: Option<RemovalWatch>,
 }
 
 impl Devices {
-    fn new(factory: &ID2D1Factory1) -> windows_core::Result<Self> {
+    fn new(factory: &ID2D1Factory1, generation: u64) -> windows_core::Result<Self> {
         let d3d = create_d3d_device(D3D_DRIVER_TYPE_HARDWARE)
             .or_else(|_| create_d3d_device(D3D_DRIVER_TYPE_WARP))?;
         let dxgi: IDXGIDevice = d3d.cast()?;
         // SAFETY: 作ったばかりの DXGI デバイスを渡すだけ。
         let d2d = unsafe { factory.CreateDevice(&dxgi)? };
-        Ok(Self { d2d })
+        Ok(Self {
+            d2d,
+            generation,
+            watch: RemovalWatch::new(&d3d, generation).ok(),
+        })
     }
+}
+
+/// Waits for Direct3D to report the device removed (a GPU reset, a driver update),
+/// and then makes the devices again and redraws every surface on the UI thread.
+///
+/// Without it, loss is noticed only when a draw fails, so a surface the app never
+/// redraws (a chart that does not change) would stay empty. The event is waited on
+/// by the thread pool, which hands the work to the UI thread's `DispatcherQueue`.
+struct RemovalWatch {
+    device: ID3D11Device4,
+    cookie: u32,
+    event: HANDLE,
+    wait: HANDLE,
+    /// Read by [`on_device_removed`] until the wait is unregistered.
+    context: *mut RemovalContext,
+}
+
+struct RemovalContext {
+    queue: DispatcherQueue,
+    generation: u64,
+}
+
+impl RemovalWatch {
+    fn new(d3d: &ID3D11Device, generation: u64) -> windows_core::Result<Self> {
+        let device: ID3D11Device4 = d3d.cast()?;
+        let queue = DispatcherQueue::GetForCurrentThread()?;
+        // SAFETY: 作ったイベントと待機は、失敗したところまでを戻してから返す。
+        // 成功したものは `Drop` で外す。
+        unsafe {
+            let event = CreateEventW(None, false, false, None)?;
+            let cookie = match device.RegisterDeviceRemovedEvent(event) {
+                Ok(cookie) => cookie,
+                Err(error) => {
+                    let _ = CloseHandle(event);
+                    return Err(error);
+                }
+            };
+            let context = Box::into_raw(Box::new(RemovalContext { queue, generation }));
+            let mut wait = HANDLE::default();
+            if let Err(error) = RegisterWaitForSingleObject(
+                &mut wait,
+                event,
+                Some(on_device_removed),
+                Some(context as *const core::ffi::c_void),
+                INFINITE,
+                WT_EXECUTEONLYONCE,
+            ) {
+                device.UnregisterDeviceRemoved(cookie);
+                let _ = CloseHandle(event);
+                drop(Box::from_raw(context));
+                return Err(error);
+            }
+            Ok(Self {
+                device,
+                cookie,
+                event,
+                wait,
+                context,
+            })
+        }
+    }
+}
+
+impl Drop for RemovalWatch {
+    fn drop(&mut self) {
+        // SAFETY: 待機を外し (走っている呼び出しがあれば終わるまで待つ)、
+        // もう読まれなくなってから文脈を解放する。
+        unsafe {
+            let _ = UnregisterWaitEx(self.wait, Some(INVALID_HANDLE_VALUE));
+            self.device.UnregisterDeviceRemoved(self.cookie);
+            let _ = CloseHandle(self.event);
+            drop(Box::from_raw(self.context));
+        }
+    }
+}
+
+/// Runs on a thread-pool thread when the device is removed. Only hands the work to
+/// the UI thread, where the devices and surfaces live.
+unsafe extern "system" fn on_device_removed(context: *mut core::ffi::c_void, _timed_out: bool) {
+    // SAFETY: `RemovalWatch` が待機を外すまで文脈は生きている。
+    let context = unsafe { &*(context as *const RemovalContext) };
+    let generation = context.generation;
+    let _ = context
+        .queue
+        .TryEnqueue(&DispatcherQueueHandler::new(move || {
+            super::recover_devices(generation);
+            Ok(())
+        }));
 }
 
 fn create_d3d_device(driver: D3D_DRIVER_TYPE) -> windows_core::Result<ID3D11Device> {
@@ -140,6 +246,42 @@ pub(super) fn with_renderer<R>(f: impl FnOnce(&mut Renderer) -> R) -> Option<R> 
     })
 }
 
+/// The generation of this thread's devices. `None` before any surface was drawn.
+pub(super) fn current_generation() -> Option<u64> {
+    RENDERER
+        .try_with(|slot| slot.borrow().0.as_ref().map(|r| r.devices.generation))
+        .ok()
+        .flatten()
+}
+
+/// Makes the devices again if `generation` is still the current one, and returns
+/// whether it did (every surface then needs drawing again).
+pub(super) fn recover_if_current(generation: u64) -> bool {
+    RENDERER
+        .try_with(|slot| match slot.borrow_mut().0.as_mut() {
+            Some(renderer) if renderer.devices.generation == generation => {
+                renderer.recover().is_ok()
+            }
+            _ => false,
+        })
+        .unwrap_or(false)
+}
+
+/// Signals the removal event as Direct3D would. **For automated tests only.**
+/// Returns whether there was an event to signal.
+pub(super) fn signal_removal_for_test() -> bool {
+    RENDERER
+        .try_with(|slot| {
+            let slot = slot.borrow();
+            let Some(watch) = slot.0.as_ref().and_then(|r| r.devices.watch.as_ref()) else {
+                return false;
+            };
+            // SAFETY: 生きている自前のイベントを立てるだけ。
+            unsafe { SetEvent(watch.event).is_ok() }
+        })
+        .unwrap_or(false)
+}
+
 /// Releases this thread's renderer while Composition is still running. A surface
 /// drawn after this makes a new one.
 pub(super) fn release() {
@@ -157,7 +299,7 @@ impl Renderer {
         // SAFETY: 既定の設定でファクトリを作るだけ。
         let factory: ID2D1Factory1 =
             unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)? };
-        let devices = Devices::new(&factory)?;
+        let devices = Devices::new(&factory, 0)?;
         // SAFETY: 共有のファクトリを取るだけ。
         let dwrite: IDWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
         let font_family = HSTRING::from(pick_font_family(&dwrite));
@@ -189,8 +331,8 @@ impl Renderer {
 
     /// Replaces lost devices. Every surface made from the graphics devices is kept but
     /// emptied, so the caller draws all of them again.
-    pub(super) fn recover(&mut self) -> windows_core::Result<()> {
-        self.devices = Devices::new(&self.factory)?;
+    fn recover(&mut self) -> windows_core::Result<()> {
+        self.devices = Devices::new(&self.factory, self.devices.generation + 1)?;
         for (_, device) in &self.graphics {
             let interop: ICompositionGraphicsDeviceInterop = device.cast()?;
             // SAFETY: 作り直したばかりの Direct2D デバイスを渡す。
@@ -356,39 +498,61 @@ impl Renderer {
         unsafe { self.factory.CreateStrokeStyle(&properties, dashes)?.cast() }
     }
 
-    /// Draws `commands` onto a Composition drawing surface covering `width` × `height`
-    /// logical pixels at `scale`.
+    /// Draws `commands` onto a Composition drawing surface of `pixels` physical pixels
+    /// covering `width` × `height` logical pixels at `scale`.
     ///
     /// `context` and `offset` are what the surface's `BeginDraw` returned. The surface
     /// may sit inside a texture shared with others, starting `offset` pixels in, so
-    /// drawing is moved there and clipped to the surface.
+    /// drawing is moved there and kept inside the surface.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn draw_on_surface(
         &mut self,
         context: &ID2D1DeviceContext,
         offset: (i32, i32),
+        pixels: (u32, u32),
         scale: f64,
         width: f64,
         height: f64,
         commands: &[DrawCommand],
     ) -> windows_core::Result<()> {
         let dpi = (96.0 * scale) as f32;
-        let clip = D2D_RECT_F {
-            left: 0.0,
-            top: 0.0,
-            right: width as f32,
-            bottom: height as f32,
-        };
-        // SAFETY: `BeginDraw` 済みのコンテキストの状態を整え、描いてから戻す。
+        // SAFETY: `BeginDraw` 済みのコンテキストの状態を整えるだけ。
         unsafe {
             context.SetDpi(dpi, dpi);
             context.SetTransform(&Matrix3x2::translation(
                 (f64::from(offset.0) / scale) as f32,
                 (f64::from(offset.1) / scale) as f32,
             ));
-            context.PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_ALIASED);
+        }
+        let (surface, logical) = surface_rects(pixels, scale, width, height);
+        self.clear_and_draw(context, Some(surface), logical, commands)
+    }
+
+    /// Clears `surface` (all of the target when `None`) to transparent, then draws
+    /// `commands` clipped to `logical`.
+    ///
+    /// Surfaces are whole pixels, rounded up from the logical size, so the last
+    /// column and row can lie partly outside `logical`. They are still shown, so they
+    /// are cleared too; otherwise they keep whatever the texture held before.
+    fn clear_and_draw(
+        &mut self,
+        context: &ID2D1DeviceContext,
+        surface: Option<D2D_RECT_F>,
+        logical: D2D_RECT_F,
+        commands: &[DrawCommand],
+    ) -> windows_core::Result<()> {
+        // SAFETY: 描画中のコンテキストで、積んだ切り抜きは必ず同じ数だけ戻す。
+        unsafe {
+            if let Some(surface) = &surface {
+                context.PushAxisAlignedClip(surface, D2D1_ANTIALIAS_MODE_ALIASED);
+            }
             context.Clear(Some(&color_f(Color::BLACK, 0.0)));
+            context.PushAxisAlignedClip(&logical, D2D1_ANTIALIAS_MODE_ALIASED);
             let drawn = self.draw(context, commands);
             context.PopAxisAlignedClip();
+            if surface.is_some() {
+                context.PopAxisAlignedClip();
+            }
             drawn
         }
     }
@@ -429,8 +593,8 @@ impl Renderer {
             context.SetTarget(&target);
             context.SetDpi(dpi, dpi);
             context.BeginDraw();
-            context.Clear(Some(&color_f(Color::BLACK, 0.0)));
-            let drawn = self.draw(&context, commands);
+            let (_, logical) = surface_rects((pixel_width, pixel_height), scale, width, height);
+            let drawn = self.clear_and_draw(&context, None, logical, commands);
             context.EndDraw(None, None)?;
             drawn?;
             let readable = context.CreateBitmap(
@@ -474,6 +638,27 @@ pub(super) fn pixel_extent(length: f64, scale: f64) -> u32 {
     } else {
         1
     }
+}
+
+/// The rectangles, in logical pixels, of a surface of `pixels` physical pixels at
+/// `scale` (all of it, to clear) and of the `width` × `height` drawn on it (to clip
+/// drawing to).
+fn surface_rects(
+    pixels: (u32, u32),
+    scale: f64,
+    width: f64,
+    height: f64,
+) -> (D2D_RECT_F, D2D_RECT_F) {
+    let rect = |right: f64, bottom: f64| D2D_RECT_F {
+        left: 0.0,
+        top: 0.0,
+        right: right as f32,
+        bottom: bottom as f32,
+    };
+    (
+        rect(f64::from(pixels.0) / scale, f64::from(pixels.1) / scale),
+        rect(width, height),
+    )
 }
 
 /// The first of [`FONT_FAMILIES`] installed.
@@ -791,6 +976,23 @@ mod tests {
         assert_eq!(finite(f64::INFINITY), 0.0);
         assert_eq!(color_f(Color::rgb(255, 0, 0), 2.0).a, 1.0);
         assert_eq!(color_f(Color::rgb(255, 0, 0), 0.5).r, 1.0);
+    }
+
+    #[test]
+    fn clearing_covers_the_rounded_up_pixels() {
+        // 幅 100.1・倍率 2 は 201 列。最後の列は描く範囲 (200.2 列目まで) から
+        // はみ出すが、表示されるので消す範囲には入れる。
+        let pixels = (pixel_extent(100.1, 2.0), pixel_extent(50.0, 2.0));
+        assert_eq!(pixels, (201, 100));
+        let (surface, logical) = surface_rects(pixels, 2.0, 100.1, 50.0);
+        assert_eq!(
+            f64::from(surface.right) * 2.0,
+            201.0,
+            "消すのは確保した 201 列すべて"
+        );
+        assert_eq!(f64::from(surface.bottom) * 2.0, 100.0);
+        assert!((logical.right - 100.1).abs() < 1e-4, "描くのは論理の幅まで");
+        assert!(surface.right > logical.right);
     }
 
     #[test]

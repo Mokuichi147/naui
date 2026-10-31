@@ -1054,6 +1054,34 @@ fn canvas_draws_onto_a_composition_surface(ui: &Ui) -> Result<()> {
                 && (f64::from(size.Y) - f64::from(pixels.Height) / scale).abs() < 0.01,
             "見た目は面の 1 画素が画面の 1 画素になる大きさ: {size:?}"
         );
+
+        // GPU のリセットを Direct3D の知らせで真似る。アプリが描き直しを頼まなくても、
+        // デバイスを作り直して面を描き直すこと (動かないグラフが消えたままにならない)。
+        let before = calls.get();
+        if !canvas.signal_device_removed_for_test() {
+            println!("     (デバイスの除去を知らせられない環境なので、復旧は確かめない)");
+            return;
+        }
+        pump_until(CANVAS_TIMEOUT, || calls.get() > before);
+        assert!(
+            calls.get() > before,
+            "デバイスの除去が知らされたら、頼まれなくても描き直すこと"
+        );
+        let after = surface.SizeInt32().expect("復旧後の面の画素数");
+        assert_eq!(
+            (after.Width, after.Height),
+            (pixels.Width, pixels.Height),
+            "復旧後も同じ面に描くこと"
+        );
+        assert!(
+            !canvas.signal_device_removed_for_test() || {
+                // 作り直したデバイスにも知らせが付いていること。二度目も描き直す。
+                let second = calls.get();
+                pump_until(CANVAS_TIMEOUT, || calls.get() > second);
+                calls.get() > second
+            },
+            "作り直したデバイスの除去でも描き直すこと"
+        );
     }));
     window.close();
     match outcome {
