@@ -1,6 +1,6 @@
 # Roadmap
 
-This lists features commonly expected of a GUI toolkit that naui (as of v0.12.0)
+This lists features commonly expected of a GUI toolkit that naui (as of v0.13.0)
 does not have yet, with priorities.
 
 The native counterparts written for each item are estimates. When work starts,
@@ -52,11 +52,10 @@ one or two panes.
 
 Each step builds on the ones before it. Steps 1 to 3 (main-axis `Fill` and
 `Spacer` in Windows's `Stack`, the contract for changes after adding to a
-container, and `Stack::set_orientation`) were released in v0.12.0.
+container, and `Stack::set_orientation`) were released in v0.12.0, and step 4
+(automatic collapsing of `Sidebar`) in v0.13.0.
 
-4. **Automatic collapsing of `Sidebar`** (P0). Uses only the native mechanisms, so
-   it does not wait for step 5.
-5. **Size-based arrangements** (P1).
+5. **Size-based arrangements** (P0).
 6. **`AdaptivePanes`** (P1).
 
 `Flow` (P2) does not depend on these and can start at any time. The items in P3 are
@@ -89,54 +88,38 @@ Gaps that ordinary apps run into right away and that all four platforms have nat
 counterparts for, plus the next steps of the adaptive layout and
 internationalization tracks.
 
-- [x] **Receiving file drops** (from the OS onto widgets and windows). Opening a
-      file by dropping it is expected of any app that edits files, and all four
-      platforms have it natively. `registerForDraggedTypes`, `GtkDropTarget`,
-      `AllowDrop`, the DOM's `drop`. Every widget and `Window` have
-      `on_file_drop`, and the files arrive as the same `FileEntry`s `FilePicker`
-      returns: absolute paths natively, `blob:` URLs on the Web.
-- [x] *(adaptive)* **Automatic collapsing of `Sidebar`** when the window narrows.
-      On by default (`Sidebar::set_auto_collapse`): it collapses when the content
-      beside it would get narrower than `SIDEBAR_COLLAPSE_CONTENT_WIDTH` (360),
-      expands again when the window widens, and notifies through `on_collapse`.
-      `NSSplitViewItem`'s `canCollapseFromWindowResize` and `NavigationView`'s
-      `PaneDisplayMode::Auto` decide on macOS and Windows. Linux and the Web decide
-      in naui (`SidebarAutoCollapse`): an `AdwBreakpoint` takes away the minimum
-      size of the window (or `AdwBreakpointBin`) holding it, and a CSS container
-      query cannot tell the page when it applies.
-- [x] **Saving and restoring window position and size.** `Window::placement`
-      returns the normal-state size and position with the state as a
-      `WindowPlacement` (one line of text with `to_string` / `parse`), and
-      `Window::set_placement` puts it back, skipping a position on no connected
-      screen. `set_size` while maximized or in fullscreen now decides the size for
-      returning, like `set_position`. Linux restores only the size and state, and
-      the Web only the size. Storing it is left to the app.
-- [x] *(i18n)* **Write naui's error messages in English.** `Error` displays as
-      "failed to {context}: {detail}", with the context as a verb phrase
-      ("create the Button"). The details, the warnings printed to stderr, the
-      panic messages and the errors of the Windows App SDK build script are
-      English too. These are messages for developers, so they are not translated
-      (like `#[deprecated]` notes).
-- [x] *(i18n)* **The OS's preferred languages, and notification when they
-      change.** `Ui::preferred_languages` returns them as BCP 47 tags, and
-      `Ui::on_preferred_languages_change` is called only when the list actually
-      changes: on `NSCurrentLocaleDidChangeNotification` (macOS), `WM_SETTINGCHANGE`
-      with `"intl"` (Windows) and `languagechange` (Web). Linux reads them from
-      environment variables at startup (`g_get_language_names`, `ja_JP.UTF-8`
-      becoming `ja-JP`), so it is never called there. naui's own strings keep the
-      language chosen at startup, like the native controls' own strings, so one
-      screen does not mix two languages.
+- [ ] **Popovers** (attached to a widget, showing arbitrary content). Settings
+      panels and pickers next to a button are common, and for now an app has to
+      fall back on a modal dialog. `NSPopover`, `GtkPopover`, `Flyout`, HTML's
+      `popover` attribute. Placing it beside the widget on the Web uses CSS
+      anchor positioning, which every major engine has supported since Firefox 147
+      (January 2026), so it no longer has to wait. Newer parts such as
+      `position-visibility` still differ between engines, so only the basic
+      placement is used.
+- [ ] **Dialogs with arbitrary content.** `ContentDialog`, `AdwDialog`, sheets,
+      `<dialog>`. Much of the construction can be shared with popovers. The
+      existing `Dialog` stays as the short form for a message and buttons.
+- [ ] **Button roles** (primary buttons, destructive actions). Small, and dialogs
+      with arbitrary content need it to mark their buttons. macOS's
+      `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
+      WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
+      counterpart, so the differences are documented.
+- [ ] *(adaptive)* **Size-based arrangements.** Declaring in advance which layout
+      to use above and below a width threshold. naui-core computes the thresholds,
+      and the switching is left to `TwoPaneView`, `AdwBreakpointBin` and CSS
+      container queries. Only macOS has no counterpart, so naui decides there,
+      deferred to the next run loop iteration and with some hysteresis. This also
+      adds a `Size` type for thresholds (margins reuse `Padding`).
+- [ ] *(i18n)* **A guide for translating apps.** With `Ui::preferred_languages`
+      and `Ui::on_preferred_languages_change` in place, show how to combine Fluent
+      with naui: choosing a translation from the preferred languages, loading it,
+      and re-setting strings via `downgrade()` when the language changes. Whether
+      an optional `naui-i18n` crate is needed is decided after writing it.
 
 ## P1: Do next
 
 Medium weight and frequently requested, or a smaller gap between platforms.
 
-- [ ] **Popovers** (attached to a widget, showing arbitrary content). `NSPopover`,
-      `GtkPopover`, `Flyout`, HTML's `popover` attribute. Showing one beside a
-      widget on the Web needs CSS anchor positioning, so the decision waits until
-      browser support has been checked.
-- [ ] **Dialogs with arbitrary content.** `ContentDialog`, `AdwDialog`, sheets,
-      `<dialog>`. Much of the construction can be shared with popovers.
 - [ ] **Row windowing for large `List`s.** Extend `Table`'s mechanism
       (`row_window` in naui-core) to `List`.
 - [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** Today they
@@ -151,20 +134,11 @@ Medium weight and frequently requested, or a smaller gap between platforms.
       drawing with Direct2D onto a Composition drawing surface, the way the other
       three platforms rasterize. The last would also bring DirectWrite text
       measurement, which broadening `Canvas`'s vocabulary waits on.
-- [ ] **Button roles** (primary buttons, destructive actions). macOS's
-      `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
-      WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
-      counterpart, so the differences are documented.
 - [ ] **Separators and framed groups.** `NSBox`, `GtkSeparator` / `GtkFrame`.
       WinUI has no standalone separator, so what to substitute is investigated
       first.
 - [ ] **More image sources** (bytes in memory, SVG, pixel buffers). For now only
       paths and URLs. The Web can use Blob URLs.
-- [ ] *(adaptive)* **Size-based arrangements.** Declaring in advance which layout
-      to use above and below a width threshold. naui-core computes the thresholds,
-      and the switching is left to `TwoPaneView`, `AdwBreakpointBin` and CSS
-      container queries. Only macOS has no counterpart, so naui decides there. This
-      also adds a `Size` type for thresholds (margins reuse `Padding`).
 - [ ] *(adaptive)* **`AdaptivePanes`.** Showing list and detail side by side when
       wide, and one at a time when narrow. In the one-pane state a way back to the
       list is needed. `TwoPaneView`, `AdwNavigationSplitView`, `NSSplitView`, CSS
@@ -172,6 +146,12 @@ Medium weight and frequently requested, or a smaller gap between platforms.
       panes can go is checked when work starts.
 - [ ] **Rich text** (mixing bold, colors and links within a line).
       `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`.
+- [ ] *(i18n)* **Telling the native side the app's language.** The language
+      affects which glyphs are chosen for CJK text and how screen readers
+      pronounce it (`lang` on the Web, `FrameworkElement.Language` on WinUI).
+      Without it, an app showing Japanese on an OS set to another language can
+      get Chinese glyph forms. Which platforms can take it per window or per widget is
+      investigated first.
 
 ## P2: Do if there is time
 
@@ -206,14 +186,6 @@ Heavy, or supported on a limited set of platforms.
       `FlowDirection`, the `dir` attribute. First check how much each native
       toolkit mirrors automatically, and which widgets must not be mirrored
       (`Canvas`, number inputs, media controls).
-- [ ] *(i18n)* **Telling the native side the app's language.** The language
-      affects which glyphs are chosen for CJK text and how screen readers
-      pronounce it (`lang` on the Web, `FrameworkElement.Language` on WinUI).
-      Which platforms can take it per window or per widget is investigated first.
-- [ ] *(i18n)* **A guide for translating apps.** Show how to combine Fluent with
-      naui (loading translations, re-setting strings via `downgrade()` when the
-      language changes). Whether an optional `naui-i18n` crate is needed is
-      decided after writing it.
 
 ## P3: Decide after investigating
 
