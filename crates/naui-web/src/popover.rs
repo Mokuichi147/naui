@@ -13,17 +13,25 @@
 //! opposite side when there is no room. Newer parts of the specification, such as
 //! `position-visibility`, still differ between engines, so they are not used.
 //!
-//! The element lives in `<body>`, or in the `<dialog>` holding the widget while it
-//! is shown beside one: a modal dialog makes everything outside it inert, and the
-//! top layer does not change that, so a popover left in `<body>` could not be
-//! clicked or focused. It goes back to `<body>` once closed, because WebKit stops
-//! rendering for good when a modal dialog holding an element with
-//! `position-try-fallbacks` closes (shown or not).
+//! The element lives in `<body>`, or, while shown beside a widget inside a
+//! `<dialog>` or another popover, inside that element:
+//!
+//! - a modal dialog makes everything outside it inert, and the top layer does not
+//!   change that, so a popover left in `<body>` could not be clicked or focused;
+//! - the browser treats a popover as nested in another only when it is inside it in
+//!   the DOM (or names it as the source, which not every engine supports yet).
+//!   Otherwise showing it closes the other, and the widget it points at with it.
+//!
+//! It goes back to `<body>` once closed, because WebKit stops rendering for good
+//! when a modal dialog or a popover holding an element with
+//! `position-try-fallbacks` closes (shown or not). The `toggle` that would put a
+//! nested popover back arrives too late for its parent closing with it, so a
+//! closing popover moves the closed popovers inside it out on `beforetoggle`.
 //!
 //! Hiding the window or dialog the widget is in does not hide the popover (it is in
 //! the top layer), so [`crate::Window::close`] and the dialog's closing close the
 //! popovers shown beside widgets inside them, the way a click outside does. Esc in a
-//! dialog closes such a popover first rather than the dialog.
+//! dialog closes the topmost such popover first rather than the dialog.
 //!
 //! ## Differences from other platforms
 //!
@@ -70,8 +78,8 @@ struct PopoverInner {
     /// `hidePopover()`, so the `toggle` that follows is not passed on.
     open: Cell<bool>,
     on_close: RefCell<Option<Box<dyn FnMut()>>>,
-    /// The receiver of `toggle`.
-    listener: RefCell<Option<Listener>>,
+    /// The receivers of `toggle` and `beforetoggle`.
+    listeners: RefCell<Vec<Listener>>,
 }
 
 /// A panel shown beside a widget (an element with the `popover` attribute).
@@ -113,7 +121,7 @@ impl Popover {
             position: Cell::new(PopoverPosition::default()),
             open: Cell::new(false),
             on_close: RefCell::new(None),
-            listener: RefCell::new(None),
+            listeners: RefCell::new(Vec::new()),
         }));
         this.apply_position();
 
@@ -139,7 +147,18 @@ impl Popover {
                 Popover(inner).emit_close();
             }
         })?;
-        *this.0.listener.borrow_mut() = Some(listener);
+        // 入れ子の子は親より先に閉じるので、親が閉じる直前には閉じ終えている。
+        let weak = Rc::downgrade(&this.0);
+        let before =
+            Listener::attach_event(this.0.element.as_ref(), "beforetoggle", move |event| {
+                let closing = event
+                    .dyn_ref::<ToggleEvent>()
+                    .is_some_and(|event| event.new_state() == "closed");
+                if let (true, Some(inner)) = (closing, weak.upgrade()) {
+                    park_closed_within(&inner.element);
+                }
+            })?;
+        *this.0.listeners.borrow_mut() = vec![listener, before];
         POPOVERS.with(|popovers| {
             let mut popovers = popovers.borrow_mut();
             popovers.retain(|weak| weak.strong_count() > 0);
@@ -163,7 +182,10 @@ impl Popover {
 
     /// The content. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
-        self.0.element.set_inner_html("");
+        // 中身だけを外す。入れ子で開いたポップオーバーもこの要素の中にいる。
+        if let Some(previous) = self.0.child.borrow_mut().take() {
+            previous.native_element().remove();
+        }
         let element = child.native_element();
         if self.0.element.append_child(&element).is_ok() {
             // あとから `set_sizing` したときと同じ扱いにし、前の親のための指定を残さない。
@@ -206,9 +228,11 @@ impl Popover {
             return;
         }
         // モーダルの `<dialog>` の外は inert になり、top layer に出ても押せない。
-        // ウィジェットと同じダイアログの中へ移す。出ている要素を移すと、`toggle` を
-        // 出さずに閉じる (HTML の removing steps) ので、下で出し直す。
-        let host = match target.closest("dialog") {
+        // また、ブラウザはポップオーバーの入れ子を DOM の親子で見分けるので、別の
+        // ポップオーバーの中から開くときはその中に置かないと、開いた時点で相手が閉じる。
+        // どちらも、ウィジェットにいちばん近いその要素の中へ移す。出ている要素を移すと、
+        // `toggle` を出さずに閉じる (HTML の removing steps) ので、下で出し直す。
+        let host = match target.closest("[popover], dialog") {
             Ok(Some(dialog)) => Some(dialog),
             _ => target
                 .owner_document()
@@ -315,6 +339,55 @@ pub(crate) fn dismiss_within(container: &Element) -> bool {
         }
     }
     dismissed
+}
+
+/// Closes the topmost open popover shown beside a widget inside `container`, the
+/// way Esc does (`on_close` is notified). Returns whether there was one.
+pub(crate) fn dismiss_topmost_within(container: &Element) -> bool {
+    let open: Vec<Popover> = POPOVERS.with(|popovers| {
+        popovers
+            .borrow()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .map(Popover)
+            .filter(|popover| {
+                popover.is_open()
+                    && popover.0.anchor.borrow().as_ref().is_some_and(|anchor| {
+                        container.contains(Some(anchor.native_element().as_ref()))
+                    })
+            })
+            .collect()
+    });
+    // 入れ子の子は親の要素の中にいるので、ほかを中に持たないものがいちばん上。
+    let topmost = open.iter().find(|popover| {
+        !open.iter().any(|other| {
+            !Rc::ptr_eq(&popover.0, &other.0)
+                && popover.0.element.contains(Some(other.0.element.as_ref()))
+        })
+    });
+    match topmost {
+        Some(popover) => {
+            popover.dismiss();
+            true
+        }
+        None => false,
+    }
+}
+
+/// Moves the closed popover elements inside `container` back to `<body>`.
+fn park_closed_within(container: &Element) {
+    let Ok(nested) = container.query_selector_all("[popover]:not(:popover-open)") else {
+        return;
+    };
+    let body = container.owner_document().and_then(|doc| doc.body());
+    let Some(body) = body else {
+        return;
+    };
+    for index in 0..nested.length() {
+        if let Some(node) = nested.item(index) {
+            let _ = body.append_child(&node);
+        }
+    }
 }
 
 /// Whether the browser has CSS anchor positioning (`position-area`).

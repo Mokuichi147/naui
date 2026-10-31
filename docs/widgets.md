@@ -469,14 +469,17 @@ collected in [Known limitations](known-limitations.md).
 - **`Popover`**: A `<div popover="auto">` under `<body>`, shown with
   `showPopover()`; the top layer, light dismiss and the look (`Canvas` /
   `CanvasText` and a border) are the browser's. When the widget is inside a
-  `<dialog>`, the popover moves into that dialog on opening: a modal dialog makes
-  everything outside it inert, and the top layer does not change that. It goes
-  back to `<body>` once closed, since WebKit stops rendering when a modal dialog
-  holding an element with `position-try-fallbacks` closes. Hiding a window or
+  `<dialog>` or another popover, the popover moves into that element on opening: a
+  modal dialog makes everything outside it inert, and the top layer does not
+  change that, and the browser treats popovers as nested only when one is inside
+  the other in the DOM (otherwise opening the inner one closes the outer). It goes
+  back to `<body>` once closed (a closing popover moves the closed ones inside it
+  out on `beforetoggle`), since WebKit stops rendering when a modal dialog or a
+  popover holding an element with `position-try-fallbacks` closes. Hiding a window or
   dialog does not hide a popover in the top layer, so `Window::close` and the
   dialog's closing close the popovers opened from widgets inside them (notifying
-  `on_close`, as a click outside does), and Esc in a dialog closes such a popover
-  before the dialog. It is placed with CSS anchor
+  `on_close`, as a click outside does), and Esc in a dialog closes the topmost
+  such popover before the dialog. It is placed with CSS anchor
   positioning: the widget gets an `anchor-name` unique to the popover (added to a
   comma-separated list, since several popovers can point at the same widget), and
   the popover gets `position-anchor`, `position-area` for the side and

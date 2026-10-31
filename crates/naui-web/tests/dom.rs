@@ -3055,6 +3055,131 @@ async fn popover_escape_in_a_dialog_closes_only_the_popover() {
 }
 
 #[wasm_bindgen_test]
+async fn popover_opened_from_another_keeps_both_open() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let (root, button, parent, parent_closed) = popover_fixture(ui)?;
+        let inner = ui.button("詳細")?;
+        parent.set_child(&inner);
+        let child = ui.popover()?;
+        child.set_child(&ui.label("子")?);
+        let child_closed = Rc::new(Cell::new(0));
+        child.on_close({
+            let closed = child_closed.clone();
+            move || closed.set(closed.get() + 1)
+        });
+        kept = Some((
+            root,
+            button,
+            parent,
+            parent_closed,
+            inner,
+            child,
+            child_closed,
+        ));
+        Ok(())
+    });
+    let (root, button, parent, parent_closed, inner, child, child_closed) = kept.expect("組み立て");
+    let _mounted = mount_in_view(&root);
+    let element = child.native_element();
+
+    parent.open(&button);
+    child.open(&inner);
+    assert!(child.is_open());
+    assert!(parent.is_open(), "子を開いても親は閉じないこと");
+    assert_eq!(
+        element.parent_element().as_ref(),
+        Some(&parent.native_element()),
+        "子は親の中に置くこと (ブラウザが入れ子と分かるように)"
+    );
+    next_frames().await;
+    assert!(parent.is_open() && child.is_open());
+    assert_eq!((parent_closed.get(), child_closed.get()), (0, 0));
+    if supports_anchor_positioning() {
+        let anchor = inner.native_element().get_bounding_client_rect();
+        let rect = element.get_bounding_client_rect();
+        assert!(
+            anchor.height() > 0.0 && rect.top() >= anchor.bottom() - 0.5,
+            "子は親の中のウィジェットの下に出ること: {} / {}",
+            rect.top(),
+            anchor.bottom()
+        );
+    }
+
+    // 子だけ閉じると、子は `<body>` へ戻り、親は残ること。
+    child.close();
+    assert!(parent.is_open());
+    assert_eq!(
+        element.parent_element().as_ref(),
+        Some(&body().unchecked_into())
+    );
+
+    // 親の中身を替えても、中で開いている子の要素は消さないこと。
+    child.open(&inner);
+    with_ui(|ui| {
+        parent.set_child(&ui.label("別の中身")?);
+        Ok(())
+    });
+    assert!(element.is_connected());
+    child.close();
+
+    // 親を閉じると、子もブラウザが一緒に閉じること。
+    parent.set_child(&inner);
+    child.open(&inner);
+    parent.close();
+    assert!(!parent.is_open() && !child.is_open());
+    next_frames().await;
+    assert_eq!(parent_closed.get(), 0, "アプリが閉じた親は知らせないこと");
+    assert_eq!(
+        element.parent_element().as_ref(),
+        Some(&body().unchecked_into()),
+        "閉じた子は `<body>` へ戻ること"
+    );
+    parent.native_element().remove();
+    element.remove();
+}
+
+#[wasm_bindgen_test]
+async fn popover_escape_in_a_dialog_closes_the_topmost_first() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let dialog = ui.dialog("確認")?;
+        let opener = ui.button("設定")?;
+        dialog.set_child(&opener);
+        let parent = ui.popover()?;
+        let inner = ui.button("詳細")?;
+        parent.set_child(&inner);
+        let child = ui.popover()?;
+        let field = ui.text_input("")?;
+        child.set_child(&field);
+        kept = Some((dialog, opener, parent, inner, child, field));
+        Ok(())
+    });
+    let (dialog, opener, parent, inner, child, field) = kept.expect("組み立て");
+
+    dialog.open();
+    parent.open(&opener);
+    child.open(&inner);
+    assert!(parent.is_open() && child.is_open());
+
+    press_escape(field.native_element().as_ref(), false);
+    assert!(!child.is_open(), "いちばん上の子が閉じること");
+    assert!(parent.is_open(), "親は残ること");
+    assert!(dialog.is_open());
+
+    press_escape(inner.native_element().as_ref(), false);
+    assert!(!parent.is_open());
+    assert!(dialog.is_open());
+
+    press_escape(opener.native_element().as_ref(), false);
+    assert!(!dialog.is_open());
+    next_frames().await;
+    parent.native_element().remove();
+    child.native_element().remove();
+    dialog.native_element().remove();
+}
+
+#[wasm_bindgen_test]
 async fn popover_closes_with_its_window_or_dialog() {
     let mut kept = None;
     with_ui(|ui| {

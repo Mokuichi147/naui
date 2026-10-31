@@ -144,9 +144,9 @@ impl Dialog {
                     return;
                 }
                 event.prevent_default();
-                // 中のウィジェットから開いたポップオーバーがあれば、先にそれを閉じる
-                // (ブラウザの Esc と同じ順)。
-                if crate::popover::dismiss_within(inner.element.as_ref()) {
+                // 中のウィジェットから開いたポップオーバーがあれば、先にいちばん上の
+                // ものを閉じる (ブラウザの Esc と同じ順)。
+                if crate::popover::dismiss_topmost_within(inner.element.as_ref()) {
                     return;
                 }
                 Dialog(inner).dismiss();
