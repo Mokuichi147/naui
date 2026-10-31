@@ -497,7 +497,10 @@ collected in [Known limitations](known-limitations.md).
   viewport allows). Enter in a text field (an `<input>` other than check boxes,
   radio buttons, sliders and the like) presses the default button, the primary one
   or else cancel, unless the button is disabled or a widget already handled the
-  key. A `<form>` would give the browser's implicit submission instead, but that
+  key. Enter and Esc that belong to an IME conversion are passed to the IME: those
+  with `isComposing`, and those with `keyCode` 229, which is how Safari sends the
+  Enter that confirms a conversion (the same check as `TextInput::on_submit`). A
+  `<form>` would give the browser's implicit submission instead, but that
   presses the first submit button in the form, which would be a `<button>` in the
   content. The primary button carries `data-naui-role="primary"`, the same mark as
   `Button::set_role`.

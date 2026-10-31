@@ -155,7 +155,9 @@ impl Dialog {
                     return;
                 };
                 // 変換中のキーは入力を確定・取り消すためのものなので、IME へ渡す。
-                if key.is_composing() {
+                // Safari は確定の Enter を isComposing なし・keyCode 229 で送るので、
+                // ほかの入力欄と同じ判定を使う。
+                if crate::keys::is_ime_key(key) {
                     return;
                 }
                 if key.key() == "Enter" {

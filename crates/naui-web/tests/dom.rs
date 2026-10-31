@@ -3871,6 +3871,18 @@ fn sheet_enter_in_a_text_field_presses_the_default_button() {
             "変換中は IME へ渡すこと"
         );
         assert!(sheet.is_open());
+        // Safari は変換を確定する Enter を isComposing なし・keyCode 229 で送る。
+        assert!(
+            !key_down(input.as_ref(), "Enter", false, false, 229),
+            "Safari の変換確定の Enter も IME へ渡すこと"
+        );
+        assert!(sheet.is_open(), "変換確定の Enter では押さないこと");
+        assert!(
+            !key_down(input.as_ref(), "Escape", false, false, 229),
+            "Safari の変換取り消しの Esc も IME へ渡すこと"
+        );
+        assert!(sheet.is_open(), "変換取り消しの Esc では閉じないこと");
+        assert!(seen.borrow().is_empty());
 
         let checkbox = check
             .native_element()
