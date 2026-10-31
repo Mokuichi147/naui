@@ -4,7 +4,7 @@
 //! combining standard controls. naui therefore provides only the drawing surface,
 //! and the app writes what to draw into a [`Painter`]. A `Painter` **only records**
 //! drawing commands; turning them into pixels is the job of each platform's 2D API
-//! (Core Graphics / cairo / XAML's `Path` / the 2D context of `<canvas>`). There
+//! (Core Graphics / cairo / Direct2D / the 2D context of `<canvas>`). There
 //! is no rasterization or font measurement here.
 //!
 //! Coordinates are **logical pixels** with the origin at the top left and positive

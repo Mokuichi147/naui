@@ -140,15 +140,19 @@ Medium weight and frequently requested, or a smaller gap between platforms.
 - [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** Today they
       are distributed evenly there. `NSGridView` and `GtkGrid` have no weights, so
       naui distributes the space itself.
-- [ ] **Make Windows's `Canvas` keep up with large drawings.** On every redraw,
-      all commands become one XAML string that `XamlReader` parses, and the result
-      replaces the whole surface, so drawings with thousands of commands are slow.
-      Candidates, investigated in this order: reusing the previous elements when
-      only some commands change (may need `PathGeometry` in the projection),
-      merging consecutive commands with the same style into one `Path`, and
-      drawing with Direct2D onto a Composition drawing surface, the way the other
-      three platforms rasterize. The last would also bring DirectWrite text
-      measurement, which broadening `Canvas`'s vocabulary waits on.
+- [x] **Make Windows's `Canvas` keep up with large drawings.** Windows now draws
+      the commands with Direct2D (text with DirectWrite) onto a Composition drawing
+      surface, the way the other three platforms rasterize, instead of turning them
+      into one XAML string of `Path` and `TextBlock` elements for `XamlReader`.
+      Measured with 5000 short lines, a redraw went from about 590 ms to under one
+      frame. Of those 590 ms, about 200 went to parsing, 80 to replacing the tree,
+      and most of the rest to rendering the 5000 elements. Because the per-element
+      cost remained, the two cheaper candidates were not taken. Reusing the
+      previous elements helps only when few commands change. Merging commands of
+      the same style into one `Path` changes the result where translucent shapes
+      overlap or windings cancel, and does nothing for drawings whose colors vary.
+      DirectWrite text measurement is now available to broaden `Canvas`'s
+      vocabulary.
 - [ ] **Separators and framed groups.** `NSBox`, `GtkSeparator` / `GtkFrame`.
       WinUI has no standalone separator, so what to substitute is investigated
       first.
@@ -189,8 +193,8 @@ Heavy, or supported on a limited set of platforms.
       Community Toolkit), and AppKit has nothing besides `NSCollectionView`'s flow
       layout. Which platforms need naui to lay it out itself is investigated first.
 - [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
-      gradients). Text width measurement on Windows waits for the `Canvas` drawing
-      item in P1.
+      gradients). Text width measurement on Windows can use the DirectWrite that
+      `Canvas` now draws with.
 - [ ] **Multiple selection in `Tree`, and placing widgets in items.**
 - [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,

@@ -27,6 +27,8 @@ windows-core = "0.62"
 # メニューの項目の並び (`IVector<MenuFlyoutItemBase>`) を受け渡すため。投影
 # (naui-winui3) と同じ版にそろえる。
 windows-collections = "0.3"
+# Direct2D の変換行列と Composition の大きさ (`Matrix3x2` / `Vector2`)。
+windows-numerics = "0.3"
 windows = { version = "0.62", features = [
     "ApplicationModel_DataTransfer",
     "Foundation",
@@ -41,6 +43,13 @@ windows = { version = "0.62", features = [
     "UI",
     "Win32_Foundation",
     "Win32_Globalization",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_System_Com",
     "Win32_UI_Input_KeyboardAndMouse",

@@ -795,6 +795,7 @@ dependencies = [
  "windows",
  "windows-collections",
  "windows-core",
+ "windows-numerics",
 ]
 
 [[package]]

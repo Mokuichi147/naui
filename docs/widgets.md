@@ -82,7 +82,7 @@ Legend:
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
-| `Canvas` | 🔴 `Grid` + `Canvas` + `Path` / `TextBlock` | ✅ `NSView` + `drawRect:` | ✅ `GtkDrawingArea` | ✅ `<canvas>` |
+| `Canvas` | 🔴 `Grid` + `CompositionDrawingSurface` (Direct2D) | ✅ `NSView` + `drawRect:` | ✅ `GtkDrawingArea` | ✅ `<canvas>` |
 
 ### Navigation
 
@@ -254,11 +254,15 @@ collected in [Known limitations](known-limitations.md).
   it is placed to the right of or below the text. No close button (×) is shown
   (`IsClosable` is turned off). It disappears in three ways — timeout, the action
   button and `dismiss` — because the other three platforms have no × either.
-- **`Canvas`**: XAML's `Canvas` is placed inside a `Grid`, and the `on_draw`
-  commands are assembled with `XamlReader` as `Path`s (path syntax `M` / `L` / `C` /
-  `Z`) and `TextBlock`s. Dashes are converted to **units where the stroke width is
-  1**, as XAML requires. For centered and right-aligned text, the loaded
-  `TextBlock` is measured and `Canvas.Left` is rewritten.
+- **`Canvas`**: a `SpriteVisual` showing a `CompositionDrawingSurface` is placed
+  over a `Grid` with `ElementCompositionPreview::SetElementChildVisual`, and the
+  `on_draw` commands are replayed onto it with Direct2D (text with DirectWrite).
+  The surface is sized in physical pixels (the logical size times
+  `RasterizationScale`), so one surface pixel is one screen pixel; a change of
+  scale alone is caught with `XamlRoot.Changed`. Dashes are converted to **units
+  where the stroke width is 1**, as Direct2D requires. Centered and right-aligned
+  text is moved by the width DirectWrite measures. When the GPU is reset, the
+  devices are made again and every surface is redrawn.
 - **`Window` position and state**: `position` is `AppWindow.Position` in physical
   pixels divided by this window's `RasterizationScale`. While maximized or
   minimized, `rcNormalPosition` (the frame when restored) of

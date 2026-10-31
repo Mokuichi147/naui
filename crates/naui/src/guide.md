@@ -1445,7 +1445,7 @@ chart.redraw();
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Canvas` | `Grid` + `Canvas` + `Path` / `TextBlock` | `NSView` + `drawRect:` (`NSBezierPath`) | `GtkDrawingArea` (cairo + Pango) | `<canvas>` + 2D context |
+| `Canvas` | `Grid` + `CompositionDrawingSurface` (Direct2D + DirectWrite) | `NSView` + `drawRect:` (`NSBezierPath`) | `GtkDrawingArea` (cairo + Pango) | `<canvas>` + 2D context |
 
 The `Painter` **only records** drawing commands; turning them into pixels is the
 job of the platform's 2D API (naui has neither rasterization nor font metrics).
