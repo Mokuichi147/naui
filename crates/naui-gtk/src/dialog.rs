@@ -147,12 +147,15 @@ impl Dialog {
 
         {
             let weak = Rc::downgrade(&self.0);
-            native.connect_response(None, move |_, id| {
+            native.connect_response(None, move |native, id| {
                 let Some(inner) = weak.upgrade() else {
                     return;
                 };
                 // 1 回開くごとに応答は 1 回だけ。閉じたあとに来たものは捨てる。
-                if !inner.open.get() {
+                // 開き直していれば、前のダイアログが遅れて閉じたときの応答も
+                // 捨てる (libadwaita 1.5 は開く前の close を後回しにする)。
+                let mine = inner.current.borrow().as_ref() == Some(native);
+                if !inner.open.get() || !mine {
                     return;
                 }
                 Dialog(inner.clone()).finish();
