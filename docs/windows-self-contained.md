@@ -5,7 +5,7 @@ together with the exe, so users do not need to install it separately.
 
 ```toml
 [dependencies]
-naui = { version = "0.13", features = ["self-contained"] }
+naui = { version = "0.14", features = ["self-contained"] }
 ```
 
 At build time, the Windows App SDK 2.5.1 components are fetched from nuget.org,
