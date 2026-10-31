@@ -1,0 +1,16 @@
+[package]
+name = "i18n"
+description = "Example of translating a naui app with Fluent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+naui.workspace = true
+fluent = "0.17"
+# fluent-bundle と同じ版に揃える。0.14 からは icu_locid の型を受け取るので、
+# unic-langid の型をそのまま渡せない。
+fluent-langneg = "0.13"
+unic-langid = { version = "0.9", features = ["macros"] }

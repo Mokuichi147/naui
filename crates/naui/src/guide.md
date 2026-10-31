@@ -217,7 +217,10 @@ translation to show. Translating is left to libraries such as Fluent or gettext.
 [`Ui::on_preferred_languages_change`] is called when the list changes on macOS,
 Windows and the Web; Linux decides the languages from environment variables at
 startup, so it is never called there. Updating the strings already on screen is up
-to the app.
+to the app. How to combine this with Fluent, from choosing a translation to
+re-setting every string, is in
+[Translating apps](https://github.com/mokuichi147/naui/blob/main/docs/translating.md)
+and [`examples/i18n`](https://github.com/mokuichi147/naui/tree/main/examples/i18n).
 
 ```no_run
 # use naui::{Result, Ui};
