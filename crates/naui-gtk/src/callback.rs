@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use naui_core::{Error, FileEntry, SortOrder};
 
 /// The slot for one closure.
-type Slot<F> = RefCell<Option<Box<F>>>;
+pub(crate) type Slot<F> = RefCell<Option<Box<F>>>;
 
 /// Takes it out, calls it, and puts it back unless it was replaced.
 fn emit<F: ?Sized + FnMut(T), T>(slot: &Slot<F>, value: T) {
@@ -135,7 +135,10 @@ impl SortNotifier {
 /// It receives two values, so it is written by hand instead of with
 /// [`borrowed_notifier!`].
 #[derive(Default)]
-pub(crate) struct ExpandNotifier(Slot<dyn FnMut(&[usize], bool)>);
+pub(crate) struct ExpandNotifier(Slot<ExpandCallback>);
+
+/// What [`ExpandNotifier`] holds: the item's path and whether it is now expanded.
+type ExpandCallback = dyn FnMut(&[usize], bool);
 
 impl ExpandNotifier {
     pub(crate) fn set(&self, f: impl FnMut(&[usize], bool) + 'static) {
