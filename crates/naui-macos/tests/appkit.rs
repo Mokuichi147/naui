@@ -672,6 +672,10 @@ fn main() {
             sheet_content_reports_focus,
         ),
         (
+            "外した入力欄のフォーカス通知の中で中身を差し替えられる",
+            sheet_child_may_be_replaced_from_the_focus_notification,
+        ),
+        (
             "トーストがウィンドウへ重なり、消すと外れる",
             toast_is_placed_over_the_window,
         ),
@@ -9152,6 +9156,61 @@ fn sheet_grows_with_its_content(ui: &Ui) -> Result<()> {
     );
     sheet.close();
     pump_until(2.0, || !native.isVisible());
+    window.close();
+    Ok(())
+}
+
+/// Removing a focused text field moves focus synchronously, so `on_focus_change`
+/// runs inside `set_child`. Replacing the content again from there must not panic,
+/// and the newer replacement wins.
+fn sheet_child_may_be_replaced_from_the_focus_notification(ui: &Ui) -> Result<()> {
+    let window = sheet_window(ui, "シートの差し替え")?;
+    let sheet = ui.sheet("差し替え")?;
+    let field = ui.text_input("")?;
+    sheet.set_child(&field);
+    let from_notification = ui.label("通知の中で入れた中身")?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    field.on_focus_change({
+        let sheet = sheet.clone();
+        let seen = seen.clone();
+        let from_notification = from_notification.clone();
+        move |focused| {
+            seen.borrow_mut().push(focused);
+            if !focused {
+                sheet.set_child(&from_notification);
+            }
+        }
+    });
+    sheet.open();
+    let native = sheet.native_window();
+    pump_until(2.0, || native.isVisible());
+    native.makeFirstResponder(Some(&field.native_view()));
+    assert_eq!(*seen.borrow(), [true]);
+
+    let later = ui.label("あとから頼んだ中身")?;
+    sheet.set_child(&later);
+    assert_eq!(*seen.borrow(), [true, false], "外したときに通知が届くこと");
+    let content = native.contentView().expect("シートの中身があること");
+    let inside = |view: Retained<NSView>| view.isDescendantOf(&content);
+    assert!(
+        inside(from_notification.native_view()),
+        "通知の中で頼んだ中身が残ること"
+    );
+    assert!(!inside(later.native_view()), "古い頼みは捨てること");
+    assert!(!inside(field.native_view()), "外した入力欄は戻らないこと");
+    content.layoutSubtreeIfNeeded();
+    assert!(
+        from_notification.native_view().frame().size.width > 0.0,
+        "残った中身が置かれていること"
+    );
+
+    // そのあとも、ふつうに差し替えられる。
+    sheet.set_child(&later);
+    assert!(inside(later.native_view()));
+    assert!(!inside(from_notification.native_view()));
+    sheet.close();
+    pump_until(2.0, || !native.isVisible());
+    field.on_focus_change(|_| {});
     window.close();
     Ok(())
 }

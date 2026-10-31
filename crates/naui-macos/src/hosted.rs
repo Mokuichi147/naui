@@ -5,7 +5,7 @@
 //! handling: replacing the content, keeping its handle alive, and giving content
 //! that cannot decide its own width (a lone text field) a width to show at.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use objc2::rc::Retained;
 use objc2::MainThreadMarker;
@@ -28,6 +28,9 @@ pub(crate) struct HostedChild {
     constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
     /// The width given to content that cannot decide its own.
     fallback_width: RefCell<Option<Retained<NSLayoutConstraint>>>,
+    /// Counts replacements, so a replacement made while the previous content is
+    /// being removed can be told apart (see [`HostedChild::set`]).
+    generation: Cell<u64>,
 }
 
 impl HostedChild {
@@ -39,6 +42,7 @@ impl HostedChild {
             child: RefCell::new(None),
             constraints: RefCell::new(Vec::new()),
             fallback_width: RefCell::new(None),
+            generation: Cell::new(0),
         }
     }
 
@@ -48,22 +52,32 @@ impl HostedChild {
     }
 
     /// Replaces the content.
+    ///
+    /// Removing content that holds the focus moves the focus on the spot, so the
+    /// content's `on_focus_change` runs inside this call and may replace the content
+    /// again. Nothing is borrowed while the previous content is removed, and when
+    /// it was replaced from in there, that newer replacement is kept.
     pub(crate) fn set(&self, child: &dyn Widget) {
+        let generation = self.generation.get().wrapping_add(1);
+        self.generation.set(generation);
         let container = &self.container;
-        if let Some(previous) = self.child.borrow_mut().take() {
-            previous.native_view().removeFromSuperview();
-        }
-        let mut constraints = self.constraints.borrow_mut();
+        let previous = self.child.borrow_mut().take();
+        let constraints = std::mem::take(&mut *self.constraints.borrow_mut());
         if !constraints.is_empty() {
             NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&constraints));
-            constraints.clear();
+        }
+        if let Some(previous) = previous {
+            previous.native_view().removeFromSuperview();
+        }
+        if self.generation.get() != generation {
+            return; // 外したときの通知の中で、もう差し替えられた。
         }
 
         let view = child.native_view();
         crate::layout::prepare_child(&view);
         container.addSubview(&view);
         let padding = self.padding;
-        constraints.extend([
+        let constraints = [
             view.leadingAnchor()
                 .constraintEqualToAnchor_constant(&container.leadingAnchor(), padding),
             container
@@ -74,9 +88,9 @@ impl HostedChild {
             container
                 .bottomAnchor()
                 .constraintEqualToAnchor_constant(&view.bottomAnchor(), padding),
-        ]);
+        ];
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
-        drop(constraints);
+        *self.constraints.borrow_mut() = constraints.into();
         *self.child.borrow_mut() = Some(child.boxed_clone());
         // 出ている間に差し替えたときも、新しい中身で幅を決め直す。
         self.apply_fallback_width();
