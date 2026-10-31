@@ -1,8 +1,8 @@
-use naui::{DialogButtons, DialogResponse, Result, Ui};
+use naui::{DialogButtons, DialogResponse, Orientation, PopoverPosition, Result, Ui};
 
 use crate::parts::{self, Notice};
 
-/// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。Toast の出し方。
+/// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。Popover と Toast の出し方。
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
@@ -57,6 +57,52 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     });
     dialogs.append(&open_roles);
     pane.append(&dialogs);
+
+    // ボタンの横に出る小さな画面。外側を押すか Esc で閉じ、出す側に場所が
+    // 無ければ反対側へ回る (どれも OS の部品が自分で行う)。
+    parts::section(ui, &pane, "Popover")?;
+    let popover = ui.popover()?;
+    let content = ui.stack(Orientation::Vertical)?;
+    content.set_spacing(8.0);
+    content.append(&ui.checkbox("Wrap lines")?);
+    content.append(&ui.toggle("Show line numbers")?);
+    let done = ui.button("Done")?;
+    content.append(&done);
+    popover.set_child(&content);
+    // 利用者が閉じたときだけ届く。close() はアプリ自身の操作なので呼ばれない。
+    popover.on_close({
+        let notice = notice.clone();
+        move || notice.show("Popover closed by the user (on_close)")
+    });
+    done.on_click({
+        let popover = popover.clone();
+        let notice = notice.clone();
+        move || {
+            popover.close();
+            notice.show("Popover: Done");
+        }
+    });
+    let open_popover = ui.button("Settings…")?;
+    open_popover.on_click({
+        // 自分の通知の中から自分を指すので、弱い参照で持つ。
+        let button = open_popover.downgrade();
+        let popover = popover.clone();
+        move || {
+            if let Some(button) = button.upgrade() {
+                popover.open(&button);
+            }
+        }
+    });
+    let sides = [
+        ("Bottom", PopoverPosition::Bottom),
+        ("Top", PopoverPosition::Top),
+        ("Left", PopoverPosition::Left),
+        ("Right", PopoverPosition::Right),
+    ];
+    let (side_row, side) = parts::choice(ui, "Side", &sides.map(|(name, _)| name))?;
+    side.on_select(move |index| popover.set_position(sides[index].1));
+    pane.append(&open_popover);
+    pane.append(&side_row);
 
     // 画面の下端に出て自分で消える通知。同時に出るのは 1 つで、新しいものが
     // 前のものを置き換える。

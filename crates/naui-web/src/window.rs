@@ -696,6 +696,8 @@ impl Window {
         if let Some(menu_bar) = menu_bar {
             menu_bar.close();
         }
+        // top layer にあるポップオーバーは、ウィンドウを隠しても残る。
+        crate::popover::dismiss_within(self.0.element.as_ref());
         let _ = self.0.element.style().set_property("display", "none");
     }
 

@@ -620,6 +620,34 @@ fn main() {
             dialog_is_closed_until_opened,
         ),
         (
+            "ポップオーバーがウィジェットの横に中身を出し、閉じても通知しない",
+            popover_shows_its_content_beside_the_widget,
+        ),
+        (
+            "利用者がポップオーバーを閉じると on_close が呼ばれる",
+            popover_dismissed_by_the_user_notifies,
+        ),
+        (
+            "on_close の中でポップオーバーを開いて閉じ直せる",
+            popover_on_close_may_open_and_close_again,
+        ),
+        (
+            "ポップオーバーが指定した側に出る",
+            popover_follows_the_position,
+        ),
+        (
+            "画面に出ていないウィジェットにはポップオーバーを開かない",
+            popover_needs_a_shown_widget,
+        ),
+        (
+            "幅の決まらない中身のポップオーバーにも幅がある",
+            popover_gives_width_to_content_without_one,
+        ),
+        (
+            "表示中に中身が伸びるとポップオーバーも伸びる",
+            popover_grows_with_its_content,
+        ),
+        (
             "トーストがウィンドウへ重なり、消すと外れる",
             toast_is_placed_over_the_window,
         ),
@@ -8549,6 +8577,284 @@ fn dialog_is_closed_until_opened(ui: &Ui) -> Result<()> {
 }
 
 /// The toast is overlaid on the window's `contentView` and removed when dismissed.
+/// A window with a button to open popovers from, shown on screen (`NSPopover` does
+/// nothing for views in windows that are not).
+fn popover_window(ui: &Ui, title: &str) -> Result<(naui_macos::Window, naui_macos::Button)> {
+    let window = ui.window(title, 360.0, 320.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_padding(Padding::all(120.0));
+    let button = ui.button("設定")?;
+    root.append(&button);
+    window.set_child(&root);
+    window.show();
+    window.native_window().layoutIfNeeded();
+    Ok((window, button))
+}
+
+/// The screen frame of the window `NSPopover` shows its content in.
+fn popover_frame(popover: &naui_macos::Popover) -> Option<NSRect> {
+    let controller = popover.native_popover().contentViewController()?;
+    controller.view().window().map(|window| window.frame())
+}
+
+fn popover_shows_its_content_beside_the_widget(ui: &Ui) -> Result<()> {
+    let (window, button) = popover_window(ui, "ポップオーバー")?;
+    let popover = ui.popover()?;
+    let body = ui.label("中身")?;
+    popover.set_child(&body);
+    let closed = Rc::new(Cell::new(0));
+    popover.on_close({
+        let closed = closed.clone();
+        move || closed.set(closed.get() + 1)
+    });
+    assert!(!popover.is_open(), "作っただけでは閉じていること");
+
+    popover.open(&button);
+    assert!(popover.is_open());
+    let native = popover.native_popover();
+    assert!(native.isShown(), "NSPopover が出ていること");
+    let content = native
+        .contentViewController()
+        .expect("中身のビューコントローラがあること")
+        .view();
+    assert!(
+        contains_subview(&content, &body.native_view()),
+        "中身がポップオーバーの中に入ること"
+    );
+    content.layoutSubtreeIfNeeded();
+    // 制約は揃え用の矩形どうしで張られる (ラベルの frame はそれより左右に広い)。
+    let size = content.frame().size;
+    let view = body.native_view();
+    let label = view.alignmentRectForFrame(view.frame());
+    assert!(
+        (label.origin.x - 12.0).abs() < 1.0
+            && (size.width - label.size.width - 24.0).abs() < 1.0
+            && (size.height - label.size.height - 24.0).abs() < 1.0,
+        "中身の周りに余白を取ること: {size:?} / {label:?}"
+    );
+
+    popover.close();
+    assert!(!popover.is_open());
+    pump_until(2.0, || !native.isShown());
+    assert!(!native.isShown(), "NSPopover が閉じること");
+    assert_eq!(closed.get(), 0, "アプリが閉じたときは通知しないこと");
+    window.close();
+    Ok(())
+}
+
+fn popover_dismissed_by_the_user_notifies(ui: &Ui) -> Result<()> {
+    let (window, button) = popover_window(ui, "ポップオーバー")?;
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    let closed = Rc::new(Cell::new(0));
+    popover.on_close({
+        let closed = closed.clone();
+        move || closed.set(closed.get() + 1)
+    });
+
+    popover.open(&button);
+    assert!(popover.is_open());
+    popover.dismiss();
+    pump_until(2.0, || closed.get() > 0);
+    assert_eq!(closed.get(), 1, "利用者が閉じたら 1 度だけ通知すること");
+    assert!(!popover.is_open());
+
+    // 閉じてから開き直せること。
+    popover.open(&button);
+    assert!(popover.is_open());
+    popover.close();
+    pump(0.3);
+    assert_eq!(closed.get(), 1);
+    window.close();
+    Ok(())
+}
+
+/// `close` sends `popoverDidClose:` again from inside the notification, so the
+/// receiver must not hold a borrow while calling it.
+fn popover_on_close_may_open_and_close_again(ui: &Ui) -> Result<()> {
+    let (window, button) = popover_window(ui, "ポップオーバーの再入")?;
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    // アニメーションが無いと、`close` の中で `popoverDidClose:` が届く。
+    popover.native_popover().setAnimates(false);
+    let closed = Rc::new(Cell::new(0));
+    let reopened = Rc::new(Cell::new(false));
+    popover.on_close({
+        let closed = closed.clone();
+        let reopened = reopened.clone();
+        let popover = popover.clone();
+        let button = button.clone();
+        move || {
+            closed.set(closed.get() + 1);
+            if closed.get() == 1 {
+                popover.open(&button);
+                reopened.set(popover.is_open());
+                popover.close();
+            }
+        }
+    });
+
+    popover.open(&button);
+    popover.dismiss();
+    pump_until(2.0, || closed.get() > 0);
+    pump(0.3);
+    assert!(reopened.get(), "通知の中で開き直せること");
+    assert_eq!(closed.get(), 1, "アプリが閉じ直したぶんは知らせないこと");
+    assert!(!popover.is_open());
+
+    // 通知の後も、ふつうに開けること。
+    popover.open(&button);
+    assert!(popover.is_open());
+    popover.close();
+    // クロージャがポップオーバーを握っているので、輪を切る。
+    popover.on_close(|| {});
+    window.close();
+    Ok(())
+}
+
+fn popover_follows_the_position(ui: &Ui) -> Result<()> {
+    let (window, button) = popover_window(ui, "ポップオーバーの向き")?;
+    let view = button.native_view();
+    let on_screen = window
+        .native_window()
+        .convertRectToScreen(view.convertRect_toView(view.bounds(), None));
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    // 開いて動きが落ち着いてから、出た窓の枠を読む。
+    let frame_at = |position| {
+        popover.set_position(position);
+        popover.open(&button);
+        pump(0.3);
+        let frame = popover_frame(&popover).expect("ポップオーバーの窓があること");
+        popover.close();
+        pump(0.3);
+        frame
+    };
+    assert_eq!(popover.position(), naui_core::PopoverPosition::Bottom);
+
+    let mid_x = |r: NSRect| r.origin.x + r.size.width / 2.0;
+    let mid_y = |r: NSRect| r.origin.y + r.size.height / 2.0;
+    // 画面の座標は上が大きい。
+    let below = frame_at(naui_core::PopoverPosition::Bottom);
+    assert!(
+        mid_y(below) < mid_y(on_screen),
+        "下に出ること: {below:?} / {on_screen:?}"
+    );
+    let above = frame_at(naui_core::PopoverPosition::Top);
+    assert!(
+        mid_y(above) > mid_y(on_screen),
+        "上に出ること: {above:?} / {on_screen:?}"
+    );
+    let left = frame_at(naui_core::PopoverPosition::Left);
+    assert!(
+        mid_x(left) < mid_x(on_screen),
+        "左に出ること: {left:?} / {on_screen:?}"
+    );
+    let right = frame_at(naui_core::PopoverPosition::Right);
+    assert!(
+        mid_x(right) > mid_x(on_screen),
+        "右に出ること: {right:?} / {on_screen:?}"
+    );
+    window.close();
+    Ok(())
+}
+
+fn popover_needs_a_shown_widget(ui: &Ui) -> Result<()> {
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    let loose = ui.button("どこにもない")?;
+    popover.open(&loose);
+    assert!(
+        !popover.is_open(),
+        "ウィンドウに無いウィジェットには開かないこと"
+    );
+
+    let window = ui.window("出していない", 200.0, 120.0)?;
+    let hidden = ui.button("隠れている")?;
+    window.set_child(&hidden);
+    popover.open(&hidden);
+    assert!(
+        !popover.is_open(),
+        "画面に出ていないウィンドウでは開かないこと"
+    );
+    popover.close();
+    window.close();
+    Ok(())
+}
+
+fn popover_gives_width_to_content_without_one(ui: &Ui) -> Result<()> {
+    let (window, button) = popover_window(ui, "ポップオーバーの幅")?;
+    let popover = ui.popover()?;
+    let field = ui.text_input("")?;
+    popover.set_child(&field);
+    popover.open(&button);
+    let content = popover
+        .native_popover()
+        .contentViewController()
+        .expect("中身のビューコントローラがあること")
+        .view();
+    content.layoutSubtreeIfNeeded();
+    let width = field.native_view().frame().size.width;
+    assert!(width >= 200.0, "入力欄に幅があること: {width}");
+    popover.close();
+
+    // 出ている間に、幅を持つ中身から入力欄へ差し替えても潰れないこと。
+    // NSPopover は前に出した大きさを覚えているので、新しく作ったもので見る。
+    let popover = ui.popover()?;
+    let label = ui.label("中身")?;
+    popover.set_child(&label);
+    popover.open(&button);
+    let content = popover
+        .native_popover()
+        .contentViewController()
+        .expect("中身のビューコントローラがあること")
+        .view();
+    content.layoutSubtreeIfNeeded();
+    let narrow = label.native_view().frame().size.width;
+    assert!(narrow < 200.0, "幅を持つ中身には幅を足さないこと: {narrow}");
+    let field = ui.text_input("")?;
+    popover.set_child(&field);
+    content.layoutSubtreeIfNeeded();
+    let width = field.native_view().frame().size.width;
+    assert!(width >= 200.0, "差し替えた入力欄に幅があること: {width}");
+    pump_until(2.0, || {
+        popover_frame(&popover).is_some_and(|f| f.size.width >= 200.0)
+    });
+    let frame = popover_frame(&popover).expect("ポップオーバーの窓があること");
+    assert!(
+        frame.size.width >= 200.0,
+        "ポップオーバーも広がること: {frame:?}"
+    );
+    popover.close();
+    window.close();
+    Ok(())
+}
+
+fn popover_grows_with_its_content(ui: &Ui) -> Result<()> {
+    let (window, button) = popover_window(ui, "ポップオーバーの伸び")?;
+    let popover = ui.popover()?;
+    let expander = ui.expander("詳細")?;
+    let body = ui.label("一行目\n二行目\n三行目\n四行目")?;
+    expander.set_child(&body);
+    popover.set_child(&expander);
+    popover.open(&button);
+    pump(0.3);
+    let before = popover_frame(&popover).expect("ポップオーバーの窓があること");
+
+    expander.set_expanded(true);
+    pump_until(2.0, || {
+        popover_frame(&popover).is_some_and(|f| f.size.height > before.size.height + 20.0)
+    });
+    let after = popover_frame(&popover).expect("ポップオーバーの窓があること");
+    assert!(
+        after.size.height > before.size.height + 20.0,
+        "開いた中身のぶん高くなること: {before:?} -> {after:?}"
+    );
+    popover.close();
+    window.close();
+    Ok(())
+}
+
 fn toast_is_placed_over_the_window(ui: &Ui) -> Result<()> {
     let window = ui.window("トースト", 360.0, 240.0)?;
     let root = ui.stack(Orientation::Vertical)?;

@@ -389,7 +389,202 @@ const CASES: &[Case] = &[
         "OS の優先言語を読め、WM_SETTINGCHANGE の intl で変わると知らせる",
         preferred_languages_follow_settingchange,
     ),
+    (
+        "ポップオーバーの向きが Flyout の Placement へ届く",
+        popover_position_reaches_the_flyout,
+    ),
+    (
+        "画面に出ていないウィジェットにはポップオーバーを開かない",
+        popover_needs_a_shown_widget,
+    ),
+    (
+        "ポップオーバーが Flyout で開き、閉じても通知せず、利用者が閉じると通知する",
+        popover_opens_and_notifies_only_user_closes,
+    ),
 ];
+
+fn popover_position_reaches_the_flyout(ui: &Ui) -> Result<()> {
+    use naui_core::PopoverPosition;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::FlyoutPlacementMode;
+
+    let popover = ui.popover()?;
+    let placement = || popover.native_flyout().Placement().expect("Placement");
+    assert_eq!(popover.position(), PopoverPosition::Bottom);
+    assert_eq!(placement(), FlyoutPlacementMode::Bottom);
+    for (position, mode) in [
+        (PopoverPosition::Top, FlyoutPlacementMode::Top),
+        (PopoverPosition::Left, FlyoutPlacementMode::Left),
+        (PopoverPosition::Right, FlyoutPlacementMode::Right),
+        (PopoverPosition::Bottom, FlyoutPlacementMode::Bottom),
+    ] {
+        popover.set_position(position);
+        assert_eq!(popover.position(), position);
+        assert_eq!(placement(), mode);
+    }
+    Ok(())
+}
+
+fn popover_needs_a_shown_widget(ui: &Ui) -> Result<()> {
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    let loose = ui.button("どこにもない")?;
+    popover.open(&loose);
+    assert!(
+        !popover.is_open(),
+        "ウィンドウに無いウィジェットには開かないこと"
+    );
+    assert!(!popover.native_flyout().IsOpen().unwrap_or(true));
+    Ok(())
+}
+
+/// The maximum time to wait for a window's elements to load, and for a flyout to
+/// open or close.
+const POPOVER_TIMEOUT: Duration = Duration::from_secs(3);
+
+fn popover_opens_and_notifies_only_user_closes(ui: &Ui) -> Result<()> {
+    use naui_core::PopoverPosition;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::FlyoutPlacementMode;
+
+    let window = ui.window("ポップオーバー", 360.0, 240.0)?;
+    let root = ui.stack(Orientation::Horizontal)?;
+    let first = ui.button("設定")?;
+    let second = ui.button("表示")?;
+    root.append(&first);
+    root.append(&second);
+    window.set_child(&root);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let button = native::<FrameworkElement>(&first);
+        pump_until(POPOVER_TIMEOUT, || button.IsLoaded().unwrap_or(false));
+        if !button.IsLoaded().unwrap_or(false) {
+            println!("     (ウィンドウの要素が読み込まれない環境なので、確かめずに通す)");
+            return;
+        }
+
+        let popover = ui.popover().expect("ポップオーバー");
+        let body = ui.label("中身").expect("ラベル");
+        popover.set_child(&body);
+        let closed = Rc::new(Cell::new(0));
+        popover.on_close({
+            let closed = closed.clone();
+            move || closed.set(closed.get() + 1)
+        });
+        let flyout = popover.native_flyout();
+        assert_eq!(
+            flyout.Content().ok(),
+            Some(body.native_element()),
+            "中身が Flyout の Content になること"
+        );
+        let is_open = || flyout.IsOpen().unwrap_or(false);
+        let shown_at = |widget: &dyn Widget| {
+            is_open() && flyout.Target().ok().as_ref() == Some(&native::<FrameworkElement>(widget))
+        };
+        // Flyout は閉じ終えてから `Closed` を出す。その知らせと、そのあとに出し直す分を
+        // 待つ。
+        let settle = || pump_until(Duration::from_millis(800), || false);
+
+        popover.open(&first);
+        assert!(popover.is_open());
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        assert!(shown_at(&first), "Flyout が開くこと");
+
+        // 開いたまま別のウィジェットへ移しても、閉じたことにはしない。
+        popover.open(&second);
+        assert!(popover.is_open());
+        pump_until(POPOVER_TIMEOUT, || shown_at(&second));
+        settle();
+        assert!(popover.is_open(), "移したあとも開いていること");
+        assert!(shown_at(&second), "移した先の横に出ること");
+        assert_eq!(closed.get(), 0, "移すだけなら通知しないこと");
+
+        // 同じウィジェットへもう一度開いても、閉じずにそのまま。
+        popover.open(&second);
+        assert!(shown_at(&second), "同じ場所なら閉じないこと");
+
+        // 開いている間に向きを変えると、新しい向きで出し直す。
+        popover.set_position(PopoverPosition::Right);
+        pump_until(POPOVER_TIMEOUT, || {
+            flyout.Placement().ok() == Some(FlyoutPlacementMode::Right) && shown_at(&second)
+        });
+        settle();
+        assert!(popover.is_open());
+        assert!(shown_at(&second), "向きを変えても開いていること");
+        assert_eq!(closed.get(), 0, "向きを変えるだけなら通知しないこと");
+
+        popover.close();
+        assert!(!popover.is_open());
+        assert!(!is_open(), "Flyout が閉じること");
+        // 閉じ終える前に開き直しても、閉じた知らせを利用者が閉じたものと取り違えない。
+        popover.open(&first);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        settle();
+        assert!(shown_at(&first), "閉じかけから開き直せること");
+        assert_eq!(closed.get(), 0, "アプリが閉じたときは通知しないこと");
+
+        // 移している途中で閉じたら、移した先で開き直さない。
+        popover.open(&second);
+        popover.close();
+        settle();
+        assert!(!popover.is_open());
+        assert!(!is_open(), "移す途中で閉じたら開き直さないこと");
+        assert_eq!(closed.get(), 0);
+
+        // 移している途中で利用者が閉じたら、開き直さずに 1 度だけ通知する。
+        popover.open(&first);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        popover.open(&second);
+        popover.dismiss();
+        settle();
+        assert!(!popover.is_open());
+        assert!(!is_open(), "移す途中で利用者が閉じたら開き直さないこと");
+        assert_eq!(closed.get(), 1, "移す途中で利用者が閉じたら通知すること");
+
+        popover.open(&first);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        popover.dismiss();
+        pump_until(POPOVER_TIMEOUT, || closed.get() > 1);
+        settle();
+        assert_eq!(closed.get(), 2, "利用者が閉じたら 1 度だけ通知すること");
+        assert!(!popover.is_open());
+        assert!(!is_open());
+
+        // `on_close` の中から同じウィジェットへ開き直すと、閉じ終えたあとで出る。
+        let reopened = Rc::new(Cell::new(false));
+        popover.on_close({
+            let popover = popover.clone();
+            let first = first.clone();
+            let reopened = reopened.clone();
+            move || {
+                if !reopened.replace(true) {
+                    popover.open(&first);
+                }
+            }
+        });
+        popover.open(&first);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        popover.dismiss();
+        pump_until(POPOVER_TIMEOUT, || reopened.get());
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        settle();
+        assert!(reopened.get());
+        assert!(popover.is_open());
+        assert!(shown_at(&first), "on_close から開き直せること");
+        // 開き直したあとも、ふつうに閉じて開ける。
+        popover.close();
+        settle();
+        assert!(!is_open(), "開き直したあとも閉じられること");
+        popover.open(&second);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&second));
+        assert!(shown_at(&second), "開き直したあとも開けること");
+        popover.close();
+        settle();
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
 
 /// Work to verify later. Called after the event loop has gone around once.
 type Deferred = Box<dyn FnOnce() -> Result<()>>;

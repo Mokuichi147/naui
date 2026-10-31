@@ -56,6 +56,7 @@ Microsoft.UI.Xaml.Controls.DatePickerValueChangedEventArgs
 Microsoft.UI.Xaml.Controls.Expander
 Microsoft.UI.Xaml.Controls.ExpanderCollapsedEventArgs
 Microsoft.UI.Xaml.Controls.ExpanderExpandingEventArgs
+Microsoft.UI.Xaml.Controls.Flyout
 Microsoft.UI.Xaml.Controls.FontIcon
 Microsoft.UI.Xaml.Controls.Grid
 Microsoft.UI.Xaml.Controls.HyperlinkButton
@@ -94,6 +95,8 @@ Microsoft.UI.Xaml.Controls.Panel
 Microsoft.UI.Xaml.Controls.PasswordBox
 Microsoft.UI.Xaml.Controls.Primitives.ButtonBase
 Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase
+Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode
+Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
 Microsoft.UI.Xaml.Controls.Primitives.RangeBase
 Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventHandler
 Microsoft.UI.Xaml.Controls.Primitives.ScrollBar

@@ -7,10 +7,10 @@ pub use naui_core::{
     DateTime, DialogButtons, DialogResponse, DrawCommand, Error, EventResponse, FileEntry,
     FileFilter, FilePickerMode, Fit, GridCell, Key, KeyEvent, Length, ListItem, MenuItem,
     MenuShortcut, MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Painter, Path,
-    PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase, PopupItem, Rect,
-    Result, ScrollMetrics, ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem,
-    SidebarSection, Sizing, Sleep, SortOrder, TableColumn, TableRow, Task, Tasks, TextColor,
-    TextStyle, Theme, Time, Timer, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase, PopoverPosition,
+    PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy, SelectionMode, Sender, Settings,
+    SidebarItem, SidebarSection, Sizing, Sleep, SortOrder, TableColumn, TableRow, Task, Tasks,
+    TextColor, TextStyle, Theme, Time, Timer, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
     WeakWidget, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION,
     ROW_WINDOW_THRESHOLD, SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
 };
@@ -66,6 +66,7 @@ mod media_widgets;
 mod menu_bar;
 mod navigation;
 mod number_input;
+mod popover;
 mod popup;
 mod radio_group;
 mod sidebar;
@@ -96,6 +97,7 @@ pub use media_widgets::{Audio, Image, Video};
 pub use menu_bar::MenuBar;
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
+pub use popover::Popover;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
 pub use sidebar::Sidebar;

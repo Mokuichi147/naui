@@ -678,6 +678,30 @@ fn main() {
             tree_remembers_expansion_inside_a_closed_branch,
         ),
         (
+            "ポップオーバーがウィジェットに付いて中身を出し、閉じても通知しない",
+            popover_shows_its_content_beside_the_widget,
+        ),
+        (
+            "利用者がポップオーバーを閉じると on_close が呼ばれる",
+            popover_dismissed_by_the_user_notifies,
+        ),
+        (
+            "ポップオーバーの向きが GtkPopover へ届く",
+            popover_position_reaches_the_native,
+        ),
+        (
+            "ポップオーバーを別のウィジェットへ移しても通知しない",
+            popover_moves_between_widgets,
+        ),
+        (
+            "スクロールに付けたポップオーバーが中身の伸びに追従する",
+            popover_follows_its_content_on_a_scroll,
+        ),
+        (
+            "画面に出ていないウィジェットにはポップオーバーを開かない",
+            popover_needs_a_shown_widget,
+        ),
+        (
             "ポップアップが GMenu へ写る",
             popup_items_reach_the_menu_model,
         ),
@@ -5812,6 +5836,175 @@ fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
 }
 
 // ---------------------------------------------------------------- ポップアップ
+
+/// A shown window with two buttons to open popovers from.
+fn popover_window(ui: &Ui) -> Result<(naui_gtk::Window, naui_gtk::Button, naui_gtk::Button)> {
+    let window = ui.window("ポップオーバー", 360.0, 240.0)?;
+    let root = ui.stack(Orientation::Horizontal)?;
+    let first = ui.button("設定")?;
+    let second = ui.button("表示")?;
+    root.append(&first);
+    root.append(&second);
+    window.set_child(&root);
+    window.show();
+    tick(&first.native_widget());
+    Ok((window, first, second))
+}
+
+/// Counts `on_close` calls.
+fn count_closes(popover: &naui_gtk::Popover) -> Rc<Cell<usize>> {
+    let closed = Rc::new(Cell::new(0));
+    popover.on_close({
+        let closed = closed.clone();
+        move || closed.set(closed.get() + 1)
+    });
+    closed
+}
+
+fn popover_shows_its_content_beside_the_widget(ui: &Ui) -> Result<()> {
+    let (window, button, _) = popover_window(ui)?;
+    let popover = ui.popover()?;
+    let body = ui.label("中身")?;
+    popover.set_child(&body);
+    let closed = count_closes(&popover);
+    assert!(!popover.is_open(), "作っただけでは閉じていること");
+
+    popover.open(&button);
+    assert!(popover.is_open());
+    let native = popover.native_popover();
+    assert!(native.is_visible(), "GtkPopover が出ていること");
+    assert_eq!(
+        native.parent(),
+        button.native_widget().parent(),
+        "押したウィジェットを包む SizeBin に付くこと"
+    );
+    assert!(
+        body.native_widget().is_ancestor(&native),
+        "中身がポップオーバーの中に入ること"
+    );
+
+    popover.close();
+    assert!(!popover.is_open());
+    assert!(!native.is_visible());
+    pump();
+    assert_eq!(closed.get(), 0, "アプリが閉じたときは通知しないこと");
+    assert!(
+        native.parent().is_none(),
+        "閉じたらウィジェットから外れること"
+    );
+
+    // 外れたあとも開き直せること。
+    popover.open(&button);
+    assert!(popover.is_open());
+    popover.close();
+    window.close();
+    Ok(())
+}
+
+fn popover_dismissed_by_the_user_notifies(ui: &Ui) -> Result<()> {
+    let (window, button, _) = popover_window(ui)?;
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    let closed = count_closes(&popover);
+
+    popover.open(&button);
+    popover.dismiss();
+    pump();
+    assert_eq!(closed.get(), 1, "利用者が閉じたら 1 度だけ通知すること");
+    assert!(!popover.is_open());
+    window.close();
+    Ok(())
+}
+
+fn popover_position_reaches_the_native(ui: &Ui) -> Result<()> {
+    let popover = ui.popover()?;
+    assert_eq!(popover.position(), naui_core::PopoverPosition::Bottom);
+    assert_eq!(
+        popover.native_popover().position(),
+        gtk::PositionType::Bottom
+    );
+    for (position, native) in [
+        (naui_core::PopoverPosition::Top, gtk::PositionType::Top),
+        (naui_core::PopoverPosition::Left, gtk::PositionType::Left),
+        (naui_core::PopoverPosition::Right, gtk::PositionType::Right),
+        (
+            naui_core::PopoverPosition::Bottom,
+            gtk::PositionType::Bottom,
+        ),
+    ] {
+        popover.set_position(position);
+        assert_eq!(popover.position(), position);
+        assert_eq!(popover.native_popover().position(), native);
+    }
+    Ok(())
+}
+
+fn popover_moves_between_widgets(ui: &Ui) -> Result<()> {
+    let (window, first, second) = popover_window(ui)?;
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    let closed = count_closes(&popover);
+
+    popover.open(&first);
+    popover.open(&second);
+    pump();
+    assert!(popover.is_open(), "移したあとも開いていること");
+    let native = popover.native_popover();
+    assert!(native.is_visible());
+    assert_eq!(native.parent(), second.native_widget().parent());
+    assert_eq!(closed.get(), 0, "移すだけなら通知しないこと");
+    popover.close();
+    window.close();
+    Ok(())
+}
+
+fn popover_follows_its_content_on_a_scroll(ui: &Ui) -> Result<()> {
+    let window = ui.window("ポップオーバー", 360.0, 240.0)?;
+    let scroll = ui.scroll()?;
+    scroll.set_child(&ui.label("本文")?);
+    window.set_child(&scroll);
+    window.show();
+    tick(&scroll.native_widget());
+
+    let popover = ui.popover()?;
+    let body = ui.label("中身")?;
+    popover.set_child(&body);
+    popover.open(&scroll);
+    let native = popover.native_popover();
+    tick(&native);
+    tick(&native);
+    let (width, height) = (native.width(), native.height());
+    assert!(width > 0 && height > 0, "開いた時点で大きさがあること");
+
+    // GtkScrolledWindow は子のポップオーバーを置き直さないので、付け先が
+    // 割り当てを受け持たないと、中身が伸びたときに 0×0 へ潰れる。
+    body.set_text("ずっと長くなった中身\n2 行目\n3 行目");
+    tick(&native);
+    tick(&scroll.native_widget());
+    tick(&native);
+    assert!(
+        native.width() > width && native.height() > height,
+        "中身に合わせて伸びること ({width}×{height} → {}×{})",
+        native.width(),
+        native.height()
+    );
+    popover.close();
+    window.close();
+    Ok(())
+}
+
+fn popover_needs_a_shown_widget(ui: &Ui) -> Result<()> {
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    let loose = ui.button("どこにもない")?;
+    popover.open(&loose);
+    assert!(
+        !popover.is_open(),
+        "ウィンドウに無いウィジェットには開かないこと"
+    );
+    assert!(popover.native_popover().parent().is_none());
+    Ok(())
+}
 
 fn popup_items_reach_the_menu_model(ui: &Ui) -> Result<()> {
     let popup = ui.popup_menu()?;

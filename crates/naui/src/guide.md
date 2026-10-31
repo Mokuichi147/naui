@@ -1905,6 +1905,61 @@ browser's default menu is suppressed **only over the attached widgets**. `select
 notifies just like a user action (for tests and automation), and ignores
 separators, submenu headings and items that cannot be chosen.
 
+## Popovers
+
+A [`Popover`] is a small panel shown beside a widget, holding any widget as its
+content. Use it for settings and pickers opened from a button, where a modal
+[`Dialog`] would be too heavy. Like [`PopupMenu`] it is not laid out on screen, so
+it is not a [`Widget`].
+
+```no_run
+# use naui::{PopoverPosition, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let button = ui.button("Settings…")?;
+
+let content = ui.stack(naui::Orientation::Vertical)?;
+content.append(&ui.checkbox("Wrap lines")?);
+let done = ui.button("Done")?;
+content.append(&done);
+
+let popover = ui.popover()?;
+popover.set_child(&content);
+popover.set_position(PopoverPosition::Bottom); // the default
+popover.on_close(|| println!("closed by the user")); // a click outside, Esc
+done.on_click({
+    let popover = popover.clone();
+    move || popover.close() // the app's own close: on_close is not called
+});
+button.on_click({
+    // The button's own closure refers to the button, so hold it weakly.
+    let weak = button.downgrade();
+    move || {
+        if let Some(button) = weak.upgrade() {
+            popover.open(&button);
+        }
+    }
+});
+# Ok(())
+# }
+```
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `Popover` | `Flyout` | `NSPopover` | `GtkPopover` | `popover` attribute + CSS anchor positioning |
+
+Closing on a click outside or Esc, the arrow (on macOS and Linux) and **moving to
+the opposite side when there is no room on the preferred one** are all the native
+popover's own, so [`PopoverPosition`] is a preference. Opening it again with
+another widget while it is open moves it there, and changing the position while
+it is open moves it too. [`Popover::open`] does nothing while the widget is not
+shown in a window.
+
+The popover takes its content's natural size, so `Fill` in the content has nothing
+to fill; give the content a fixed or minimum size to make it larger. On the Web,
+the browser decides the placement with CSS anchor positioning, and older browsers
+show the popover in the middle of the window instead (see
+[Known limitations](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md)).
+
 ## Lists
 
 A [`List`] is a list of rows stacked vertically that scrolls by itself. Rows are

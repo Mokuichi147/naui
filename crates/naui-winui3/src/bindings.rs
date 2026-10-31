@@ -101286,6 +101286,528 @@ pub mod Microsoft {
                 unsafe impl Sync for ExpanderExpandingEventArgs {}
                 #[repr(transparent)]
                 #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct Flyout(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    Flyout,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                windows_core::imp::required_hierarchy!(
+                    Flyout,
+                    Primitives::FlyoutBase,
+                    super::DependencyObject
+                );
+                impl Flyout {
+                    pub fn Dispatcher(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Core::CoreDispatcher>
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Dispatcher)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn DispatcherQueue(
+                        &self,
+                    ) -> windows_core::Result<super::super::Dispatching::DispatcherQueue>
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DispatcherQueue)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn Content(&self) -> windows_core::Result<super::UIElement> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Content)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContent<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::UIElement>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContent)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FlyoutPresenterStyle(&self) -> windows_core::Result<super::Style> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FlyoutPresenterStyle)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetFlyoutPresenterStyle<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Style>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFlyoutPresenterStyle)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Placement(
+                        &self,
+                    ) -> windows_core::Result<Primitives::FlyoutPlacementMode> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Placement)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetPlacement(
+                        &self,
+                        value: Primitives::FlyoutPlacementMode,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetPlacement)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Target(&self) -> windows_core::Result<super::FrameworkElement> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Target)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn AllowFocusOnInteraction(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AllowFocusOnInteraction)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetAllowFocusOnInteraction(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetAllowFocusOnInteraction)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn AllowFocusWhenDisabled(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AllowFocusWhenDisabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetAllowFocusWhenDisabled(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetAllowFocusWhenDisabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn InputDevicePrefersPrimaryCommands(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .InputDevicePrefersPrimaryCommands)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn AreOpenCloseAnimationsEnabled(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AreOpenCloseAnimationsEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetAreOpenCloseAnimationsEnabled(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            ( windows_core::Interface::vtable ( this ) . SetAreOpenCloseAnimationsEnabled ) ( windows_core::Interface::as_raw ( this ) , value , ) . ok ( )
+                        }
+                    }
+                    pub fn ShouldConstrainToRootBounds(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ShouldConstrainToRootBounds)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetShouldConstrainToRootBounds(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetShouldConstrainToRootBounds)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsConstrainedToRootBounds(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsConstrainedToRootBounds)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn OverlayInputPassThroughElement(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyObject> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OverlayInputPassThroughElement)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetOverlayInputPassThroughElement<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .SetOverlayInputPassThroughElement)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsOpen(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsOpen)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn XamlRoot(&self) -> windows_core::Result<super::XamlRoot> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).XamlRoot)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::XamlRoot>,
+                    {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Opened<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::EventHandler<windows_core::IInspectable>,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Opened)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveOpened(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveOpened)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Closed<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::EventHandler<windows_core::IInspectable>,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Closed)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveClosed(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveClosed)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Opening<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::EventHandler<windows_core::IInspectable>,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Opening)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveOpening(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveOpening)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveClosing(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveClosing)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ShowAt<P0>(&self, placementtarget: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::FrameworkElement>,
+                    {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).ShowAt)(
+                                windows_core::Interface::as_raw(this),
+                                placementtarget.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ShowAtWithOptions<P0, P1>(
+                        &self,
+                        placementtarget: P0,
+                        showoptions: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                        P1: windows_core::Param<Primitives::FlyoutShowOptions>,
+                    {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).ShowAtWithOptions)(
+                                windows_core::Interface::as_raw(this),
+                                placementtarget.param().abi(),
+                                showoptions.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Hide(&self) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).Hide)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SystemBackdrop(
+                        &self,
+                    ) -> windows_core::Result<super::Media::SystemBackdrop> {
+                        let this =
+                            &windows_core::Interface::cast::<Primitives::IFlyoutBase2>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SystemBackdrop)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSystemBackdrop<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::SystemBackdrop>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<Primitives::IFlyoutBase2>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSystemBackdrop)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CreatePresenter(&self) -> windows_core::Result<Control> {
+                        let this = &windows_core::Interface::cast::<
+                            Primitives::IFlyoutBaseOverrides,
+                        >(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CreatePresenter)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn new() -> windows_core::Result<Flyout> {
+                        Self::IFlyoutFactory(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CreateInstance)(
+                                windows_core::Interface::as_raw(this),
+                                core::ptr::null_mut(),
+                                &mut core::ptr::null_mut(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    fn IFlyoutFactory<R, F: FnOnce(&IFlyoutFactory) -> windows_core::Result<R>>(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<Flyout, IFlyoutFactory> =
+                            windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                    fn IFlyoutStatics<R, F: FnOnce(&IFlyoutStatics) -> windows_core::Result<R>>(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<Flyout, IFlyoutStatics> =
+                            windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                }
+                impl windows_core::RuntimeType for Flyout {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<Self, IFlyout>();
+                }
+                unsafe impl windows_core::Interface for Flyout {
+                    type Vtable = <IFlyout as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID = <IFlyout as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for Flyout {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.Flyout";
+                }
+                unsafe impl Send for Flyout {}
+                unsafe impl Sync for Flyout {}
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
                 pub struct FontIcon(windows_core::IUnknown);
                 windows_core::imp::interface_hierarchy!(
                     FontIcon,
@@ -124794,6 +125316,249 @@ pub mod Microsoft {
                     HeaderTemplateSelectorProperty: usize,
                     IsExpandedProperty: usize,
                     ExpandDirectionProperty: usize,
+                }
+                windows_core::imp::define_interface!(
+                    IFlyout,
+                    IFlyout_Vtbl,
+                    0xd4a1eb7d_59b8_5df9_87c3_bd5e3856923f
+                );
+                impl windows_core::RuntimeType for IFlyout {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IFlyout {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.IFlyout";
+                }
+                pub trait IFlyout_Impl: windows_core::IUnknownImpl {
+                    fn Content(&self) -> windows_core::Result<super::UIElement>;
+                    fn SetContent(
+                        &self,
+                        value: windows_core::Ref<'_, super::UIElement>,
+                    ) -> windows_core::Result<()>;
+                    fn FlyoutPresenterStyle(&self) -> windows_core::Result<super::Style>;
+                    fn SetFlyoutPresenterStyle(
+                        &self,
+                        value: windows_core::Ref<'_, super::Style>,
+                    ) -> windows_core::Result<()>;
+                }
+                impl IFlyout_Vtbl {
+                    pub const fn new<Identity: IFlyout_Impl, const OFFSET: isize>() -> Self {
+                        unsafe extern "system" fn Content<
+                            Identity: IFlyout_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IFlyout_Impl::Content(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetContent<
+                            Identity: IFlyout_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IFlyout_Impl::SetContent(this, core::mem::transmute_copy(&value))
+                                    .into()
+                            }
+                        }
+                        unsafe extern "system" fn FlyoutPresenterStyle<
+                            Identity: IFlyout_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IFlyout_Impl::FlyoutPresenterStyle(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFlyoutPresenterStyle<
+                            Identity: IFlyout_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IFlyout_Impl::SetFlyoutPresenterStyle(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<Identity, IFlyout, OFFSET>(
+                            ),
+                            Content: Content::<Identity, OFFSET>,
+                            SetContent: SetContent::<Identity, OFFSET>,
+                            FlyoutPresenterStyle: FlyoutPresenterStyle::<Identity, OFFSET>,
+                            SetFlyoutPresenterStyle: SetFlyoutPresenterStyle::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IFlyout as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IFlyout_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub Content: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetContent: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub FlyoutPresenterStyle: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetFlyoutPresenterStyle: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    IFlyoutFactory,
+                    IFlyoutFactory_Vtbl,
+                    0xfd19002e_66b3_5656_b49c_b2aca11e9602
+                );
+                impl windows_core::RuntimeType for IFlyoutFactory {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IFlyoutFactory {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.IFlyoutFactory";
+                }
+                pub trait IFlyoutFactory_Impl: windows_core::IUnknownImpl {
+                    fn CreateInstance(
+                        &self,
+                        baseInterface: windows_core::Ref<'_, windows_core::IInspectable>,
+                        innerInterface: windows_core::OutRef<'_, windows_core::IInspectable>,
+                    ) -> windows_core::Result<Flyout>;
+                }
+                impl IFlyoutFactory_Vtbl {
+                    pub const fn new<Identity: IFlyoutFactory_Impl, const OFFSET: isize>() -> Self {
+                        unsafe extern "system" fn CreateInstance<
+                            Identity: IFlyoutFactory_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            baseinterface: *mut core::ffi::c_void,
+                            innerinterface: *mut *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IFlyoutFactory_Impl::CreateInstance(
+                                    this,
+                                    core::mem::transmute_copy(&baseinterface),
+                                    core::mem::transmute_copy(&innerinterface),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                IFlyoutFactory,
+                                OFFSET,
+                            >(),
+                            CreateInstance: CreateInstance::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IFlyoutFactory as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IFlyoutFactory_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub CreateInstance: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    IFlyoutStatics,
+                    IFlyoutStatics_Vtbl,
+                    0x23ae001a_aaa6_5d19_9947_917ecbd883ca
+                );
+                impl windows_core::RuntimeType for IFlyoutStatics {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IFlyoutStatics {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.IFlyoutStatics";
+                }
+                pub trait IFlyoutStatics_Impl: windows_core::IUnknownImpl {}
+                impl IFlyoutStatics_Vtbl {
+                    pub const fn new<Identity: IFlyoutStatics_Impl, const OFFSET: isize>() -> Self {
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                IFlyoutStatics,
+                                OFFSET,
+                            >(),
+                            ContentProperty: 0,
+                            FlyoutPresenterStyleProperty: 0,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IFlyoutStatics as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IFlyoutStatics_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    ContentProperty: usize,
+                    FlyoutPresenterStyleProperty: usize,
                 }
                 windows_core::imp::define_interface!(
                     IFontIcon,
@@ -191016,6 +191781,32 @@ pub mod Microsoft {
                             .and_then(|| windows_core::Type::from_abi(result__))
                         }
                     }
+                    pub fn Placement(
+                        &self,
+                    ) -> windows_core::Result<Primitives::FlyoutPlacementMode> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Placement)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetPlacement(
+                        &self,
+                        value: Primitives::FlyoutPlacementMode,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetPlacement)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn Target(&self) -> windows_core::Result<super::FrameworkElement> {
                         let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
                         unsafe {
@@ -191307,6 +192098,25 @@ pub mod Microsoft {
                             (windows_core::Interface::vtable(this).ShowAt)(
                                 windows_core::Interface::as_raw(this),
                                 placementtarget.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ShowAtWithOptions<P0, P1>(
+                        &self,
+                        placementtarget: P0,
+                        showoptions: P1,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                        P1: windows_core::Param<Primitives::FlyoutShowOptions>,
+                    {
+                        let this = &windows_core::Interface::cast::<Primitives::IFlyoutBase>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).ShowAtWithOptions)(
+                                windows_core::Interface::as_raw(this),
+                                placementtarget.param().abi(),
+                                showoptions.param().abi(),
                             )
                             .ok()
                         }
@@ -292787,6 +293597,30 @@ pub mod Microsoft {
                                 .and_then(|| windows_core::Type::from_abi(result__))
                             }
                         }
+                        pub fn Placement(&self) -> windows_core::Result<FlyoutPlacementMode> {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).Placement)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
+                        pub fn SetPlacement(
+                            &self,
+                            value: FlyoutPlacementMode,
+                        ) -> windows_core::Result<()> {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetPlacement)(
+                                    windows_core::Interface::as_raw(this),
+                                    value,
+                                )
+                                .ok()
+                            }
+                        }
                         pub fn Target(
                             &self,
                         ) -> windows_core::Result<super::super::FrameworkElement>
@@ -293096,6 +293930,25 @@ pub mod Microsoft {
                                 .ok()
                             }
                         }
+                        pub fn ShowAtWithOptions<P0, P1>(
+                            &self,
+                            placementtarget: P0,
+                            showoptions: P1,
+                        ) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<super::super::DependencyObject>,
+                            P1: windows_core::Param<FlyoutShowOptions>,
+                        {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).ShowAtWithOptions)(
+                                    windows_core::Interface::as_raw(this),
+                                    placementtarget.param().abi(),
+                                    showoptions.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
                         pub fn Hide(&self) -> windows_core::Result<()> {
                             let this = self;
                             unsafe {
@@ -293253,6 +294106,164 @@ pub mod Microsoft {
                     }
                     unsafe impl Send for FlyoutBase {}
                     unsafe impl Sync for FlyoutBase {}
+                    #[repr(transparent)]
+                    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+                    pub struct FlyoutPlacementMode(pub i32);
+                    impl FlyoutPlacementMode {
+                        pub const Top: Self = Self(0i32);
+                        pub const Bottom: Self = Self(1i32);
+                        pub const Left: Self = Self(2i32);
+                        pub const Right: Self = Self(3i32);
+                        pub const Full: Self = Self(4i32);
+                        pub const TopEdgeAlignedLeft: Self = Self(5i32);
+                        pub const TopEdgeAlignedRight: Self = Self(6i32);
+                        pub const BottomEdgeAlignedLeft: Self = Self(7i32);
+                        pub const BottomEdgeAlignedRight: Self = Self(8i32);
+                        pub const LeftEdgeAlignedTop: Self = Self(9i32);
+                        pub const LeftEdgeAlignedBottom: Self = Self(10i32);
+                        pub const RightEdgeAlignedTop: Self = Self(11i32);
+                        pub const RightEdgeAlignedBottom: Self = Self(12i32);
+                        pub const Auto: Self = Self(13i32);
+                    }
+                    impl windows_core::TypeKind for FlyoutPlacementMode {
+                        type TypeKind = windows_core::CopyType;
+                    }
+                    impl windows_core::RuntimeType for FlyoutPlacementMode {
+                        const SIGNATURE :windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice ( b"enum(Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode;i4)" ) ;
+                    }
+                    #[repr(transparent)]
+                    #[derive(Clone, Debug, Eq, PartialEq)]
+                    pub struct FlyoutShowOptions(windows_core::IUnknown);
+                    windows_core::imp::interface_hierarchy!(
+                        FlyoutShowOptions,
+                        windows_core::IUnknown,
+                        windows_core::IInspectable
+                    );
+                    impl FlyoutShowOptions {
+                        pub fn Position(
+                            &self,
+                        ) -> windows_core::Result<
+                            windows::Foundation::IReference<windows::Foundation::Point>,
+                        > {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).Position)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn SetPosition<P0>(&self, value: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::IReference<windows::Foundation::Point>,
+                            >,
+                        {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetPosition)(
+                                    windows_core::Interface::as_raw(this),
+                                    value.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn ExclusionRect(
+                            &self,
+                        ) -> windows_core::Result<
+                            windows::Foundation::IReference<windows::Foundation::Rect>,
+                        > {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).ExclusionRect)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn SetExclusionRect<P0>(&self, value: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::IReference<windows::Foundation::Rect>,
+                            >,
+                        {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetExclusionRect)(
+                                    windows_core::Interface::as_raw(this),
+                                    value.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn Placement(&self) -> windows_core::Result<FlyoutPlacementMode> {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).Placement)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
+                        pub fn SetPlacement(
+                            &self,
+                            value: FlyoutPlacementMode,
+                        ) -> windows_core::Result<()> {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetPlacement)(
+                                    windows_core::Interface::as_raw(this),
+                                    value,
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn new() -> windows_core::Result<FlyoutShowOptions> {
+                            Self::IFlyoutShowOptionsFactory(|this| unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).CreateInstance)(
+                                    windows_core::Interface::as_raw(this),
+                                    core::ptr::null_mut(),
+                                    &mut core::ptr::null_mut(),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            })
+                        }
+                        fn IFlyoutShowOptionsFactory<
+                            R,
+                            F: FnOnce(&IFlyoutShowOptionsFactory) -> windows_core::Result<R>,
+                        >(
+                            callback: F,
+                        ) -> windows_core::Result<R> {
+                            static SHARED: windows_core::imp::FactoryCache<
+                                FlyoutShowOptions,
+                                IFlyoutShowOptionsFactory,
+                            > = windows_core::imp::FactoryCache::new();
+                            SHARED.call(callback)
+                        }
+                    }
+                    impl windows_core::RuntimeType for FlyoutShowOptions {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_class::<Self, IFlyoutShowOptions>();
+                    }
+                    unsafe impl windows_core::Interface for FlyoutShowOptions {
+                        type Vtable = <IFlyoutShowOptions as windows_core::Interface>::Vtable;
+                        const IID: windows_core::GUID =
+                            <IFlyoutShowOptions as windows_core::Interface>::IID;
+                    }
+                    impl windows_core::RuntimeName for FlyoutShowOptions {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions";
+                    }
+                    unsafe impl Send for FlyoutShowOptions {}
+                    unsafe impl Sync for FlyoutShowOptions {}
                     windows_core::imp::define_interface!(
                         IButtonBase,
                         IButtonBase_Vtbl,
@@ -293597,6 +294608,11 @@ pub mod Microsoft {
                             "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBase";
                     }
                     pub trait IFlyoutBase_Impl: windows_core::IUnknownImpl {
+                        fn Placement(&self) -> windows_core::Result<FlyoutPlacementMode>;
+                        fn SetPlacement(
+                            &self,
+                            value: FlyoutPlacementMode,
+                        ) -> windows_core::Result<()>;
                         fn Target(&self) -> windows_core::Result<super::super::FrameworkElement>;
                         fn AllowFocusOnInteraction(&self) -> windows_core::Result<bool>;
                         fn SetAllowFocusOnInteraction(
@@ -293662,11 +294678,50 @@ pub mod Microsoft {
                             &self,
                             placementTarget: windows_core::Ref<'_, super::super::FrameworkElement>,
                         ) -> windows_core::Result<()>;
+                        fn ShowAtWithOptions(
+                            &self,
+                            placementTarget: windows_core::Ref<'_, super::super::DependencyObject>,
+                            showOptions: windows_core::Ref<'_, FlyoutShowOptions>,
+                        ) -> windows_core::Result<()>;
                         fn Hide(&self) -> windows_core::Result<()>;
                     }
                     impl IFlyoutBase_Vtbl {
                         pub const fn new<Identity: IFlyoutBase_Impl, const OFFSET: isize>() -> Self
                         {
+                            unsafe extern "system" fn Placement<
+                                Identity: IFlyoutBase_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                result__: *mut FlyoutPlacementMode,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match IFlyoutBase_Impl::Placement(this) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn SetPlacement<
+                                Identity: IFlyoutBase_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                value: FlyoutPlacementMode,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    IFlyoutBase_Impl::SetPlacement(this, value).into()
+                                }
+                            }
                             unsafe extern "system" fn Target<
                                 Identity: IFlyoutBase_Impl,
                                 const OFFSET: isize,
@@ -294111,6 +295166,26 @@ pub mod Microsoft {
                                     .into()
                                 }
                             }
+                            unsafe extern "system" fn ShowAtWithOptions<
+                                Identity: IFlyoutBase_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                placementtarget: *mut core::ffi::c_void,
+                                showoptions: *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    IFlyoutBase_Impl::ShowAtWithOptions(
+                                        this,
+                                        core::mem::transmute_copy(&placementtarget),
+                                        core::mem::transmute_copy(&showoptions),
+                                    )
+                                    .into()
+                                }
+                            }
                             unsafe extern "system" fn Hide<
                                 Identity: IFlyoutBase_Impl,
                                 const OFFSET: isize,
@@ -294130,8 +295205,8 @@ pub mod Microsoft {
                                     IFlyoutBase,
                                     OFFSET,
                                 >(),
-                                Placement: 0,
-                                SetPlacement: 0,
+                                Placement: Placement::<Identity, OFFSET>,
+                                SetPlacement: SetPlacement::<Identity, OFFSET>,
                                 Target: Target::<Identity, OFFSET>,
                                 AllowFocusOnInteraction: AllowFocusOnInteraction::<Identity, OFFSET>,
                                 SetAllowFocusOnInteraction: SetAllowFocusOnInteraction::<
@@ -294189,7 +295264,7 @@ pub mod Microsoft {
                                 Closing: 0,
                                 RemoveClosing: RemoveClosing::<Identity, OFFSET>,
                                 ShowAt: ShowAt::<Identity, OFFSET>,
-                                ShowAtWithOptions: 0,
+                                ShowAtWithOptions: ShowAtWithOptions::<Identity, OFFSET>,
                                 Hide: Hide::<Identity, OFFSET>,
                                 TryInvokeKeyboardAccelerator: 0,
                             }
@@ -294202,8 +295277,16 @@ pub mod Microsoft {
                     #[doc(hidden)]
                     pub struct IFlyoutBase_Vtbl {
                         pub base__: windows_core::IInspectable_Vtbl,
-                        Placement: usize,
-                        SetPlacement: usize,
+                        pub Placement: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut FlyoutPlacementMode,
+                        )
+                            -> windows_core::HRESULT,
+                        pub SetPlacement: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            FlyoutPlacementMode,
+                        )
+                            -> windows_core::HRESULT,
                         pub Target: unsafe extern "system" fn(
                             *mut core::ffi::c_void,
                             *mut *mut core::ffi::c_void,
@@ -294346,7 +295429,12 @@ pub mod Microsoft {
                             *mut core::ffi::c_void,
                         )
                             -> windows_core::HRESULT,
-                        ShowAtWithOptions: usize,
+                        pub ShowAtWithOptions: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
                         pub Hide: unsafe extern "system" fn(
                             *mut core::ffi::c_void,
                         )
@@ -294782,6 +295870,299 @@ pub mod Microsoft {
                     pub struct IFlyoutBaseStatics2_Vtbl {
                         pub base__: windows_core::IInspectable_Vtbl,
                         SystemBackdropProperty: usize,
+                    }
+                    windows_core::imp::define_interface!(
+                        IFlyoutShowOptions,
+                        IFlyoutShowOptions_Vtbl,
+                        0x30774a93_2803_50d3_b406_904aec3e175d
+                    );
+                    impl windows_core::RuntimeType for IFlyoutShowOptions {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_interface::<Self>();
+                    }
+                    impl windows_core::RuntimeName for IFlyoutShowOptions {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptions";
+                    }
+                    pub trait IFlyoutShowOptions_Impl: windows_core::IUnknownImpl {
+                        fn Position(
+                            &self,
+                        ) -> windows_core::Result<
+                            windows::Foundation::IReference<windows::Foundation::Point>,
+                        >;
+                        fn SetPosition(
+                            &self,
+                            value: windows_core::Ref<
+                                '_,
+                                windows::Foundation::IReference<windows::Foundation::Point>,
+                            >,
+                        ) -> windows_core::Result<()>;
+                        fn ExclusionRect(
+                            &self,
+                        ) -> windows_core::Result<
+                            windows::Foundation::IReference<windows::Foundation::Rect>,
+                        >;
+                        fn SetExclusionRect(
+                            &self,
+                            value: windows_core::Ref<
+                                '_,
+                                windows::Foundation::IReference<windows::Foundation::Rect>,
+                            >,
+                        ) -> windows_core::Result<()>;
+                        fn Placement(&self) -> windows_core::Result<FlyoutPlacementMode>;
+                        fn SetPlacement(
+                            &self,
+                            value: FlyoutPlacementMode,
+                        ) -> windows_core::Result<()>;
+                    }
+                    impl IFlyoutShowOptions_Vtbl {
+                        pub const fn new<Identity: IFlyoutShowOptions_Impl, const OFFSET: isize>(
+                        ) -> Self {
+                            unsafe extern "system" fn Position<
+                                Identity: IFlyoutShowOptions_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                result__: *mut *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match IFlyoutShowOptions_Impl::Position(this) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            core::mem::forget(ok__);
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn SetPosition<
+                                Identity: IFlyoutShowOptions_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                value: *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    IFlyoutShowOptions_Impl::SetPosition(
+                                        this,
+                                        core::mem::transmute_copy(&value),
+                                    )
+                                    .into()
+                                }
+                            }
+                            unsafe extern "system" fn ExclusionRect<
+                                Identity: IFlyoutShowOptions_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                result__: *mut *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match IFlyoutShowOptions_Impl::ExclusionRect(this) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            core::mem::forget(ok__);
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn SetExclusionRect<
+                                Identity: IFlyoutShowOptions_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                value: *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    IFlyoutShowOptions_Impl::SetExclusionRect(
+                                        this,
+                                        core::mem::transmute_copy(&value),
+                                    )
+                                    .into()
+                                }
+                            }
+                            unsafe extern "system" fn Placement<
+                                Identity: IFlyoutShowOptions_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                result__: *mut FlyoutPlacementMode,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match IFlyoutShowOptions_Impl::Placement(this) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn SetPlacement<
+                                Identity: IFlyoutShowOptions_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                value: FlyoutPlacementMode,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    IFlyoutShowOptions_Impl::SetPlacement(this, value).into()
+                                }
+                            }
+                            Self {
+                                base__: windows_core::IInspectable_Vtbl::new::<
+                                    Identity,
+                                    IFlyoutShowOptions,
+                                    OFFSET,
+                                >(),
+                                Position: Position::<Identity, OFFSET>,
+                                SetPosition: SetPosition::<Identity, OFFSET>,
+                                ExclusionRect: ExclusionRect::<Identity, OFFSET>,
+                                SetExclusionRect: SetExclusionRect::<Identity, OFFSET>,
+                                ShowMode: 0,
+                                SetShowMode: 0,
+                                Placement: Placement::<Identity, OFFSET>,
+                                SetPlacement: SetPlacement::<Identity, OFFSET>,
+                            }
+                        }
+                        pub fn matches(iid: &windows_core::GUID) -> bool {
+                            iid == &<IFlyoutShowOptions as windows_core::Interface>::IID
+                        }
+                    }
+                    #[repr(C)]
+                    #[doc(hidden)]
+                    pub struct IFlyoutShowOptions_Vtbl {
+                        pub base__: windows_core::IInspectable_Vtbl,
+                        pub Position: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
+                        pub SetPosition: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
+                        pub ExclusionRect: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
+                        pub SetExclusionRect: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
+                        ShowMode: usize,
+                        SetShowMode: usize,
+                        pub Placement: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut FlyoutPlacementMode,
+                        )
+                            -> windows_core::HRESULT,
+                        pub SetPlacement: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            FlyoutPlacementMode,
+                        )
+                            -> windows_core::HRESULT,
+                    }
+                    windows_core::imp::define_interface!(
+                        IFlyoutShowOptionsFactory,
+                        IFlyoutShowOptionsFactory_Vtbl,
+                        0x17426d30_70d9_54d7_bd39_e7c4c940c0f4
+                    );
+                    impl windows_core::RuntimeType for IFlyoutShowOptionsFactory {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_interface::<Self>();
+                    }
+                    impl windows_core::RuntimeName for IFlyoutShowOptionsFactory {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptionsFactory";
+                    }
+                    pub trait IFlyoutShowOptionsFactory_Impl: windows_core::IUnknownImpl {
+                        fn CreateInstance(
+                            &self,
+                            baseInterface: windows_core::Ref<'_, windows_core::IInspectable>,
+                            innerInterface: windows_core::OutRef<'_, windows_core::IInspectable>,
+                        ) -> windows_core::Result<FlyoutShowOptions>;
+                    }
+                    impl IFlyoutShowOptionsFactory_Vtbl {
+                        pub const fn new<
+                            Identity: IFlyoutShowOptionsFactory_Impl,
+                            const OFFSET: isize,
+                        >() -> Self {
+                            unsafe extern "system" fn CreateInstance<
+                                Identity: IFlyoutShowOptionsFactory_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                baseinterface: *mut core::ffi::c_void,
+                                innerinterface: *mut *mut core::ffi::c_void,
+                                result__: *mut *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match IFlyoutShowOptionsFactory_Impl::CreateInstance(
+                                        this,
+                                        core::mem::transmute_copy(&baseinterface),
+                                        core::mem::transmute_copy(&innerinterface),
+                                    ) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            core::mem::forget(ok__);
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            Self {
+                                base__: windows_core::IInspectable_Vtbl::new::<
+                                    Identity,
+                                    IFlyoutShowOptionsFactory,
+                                    OFFSET,
+                                >(),
+                                CreateInstance: CreateInstance::<Identity, OFFSET>,
+                            }
+                        }
+                        pub fn matches(iid: &windows_core::GUID) -> bool {
+                            iid == &<IFlyoutShowOptionsFactory as windows_core::Interface>::IID
+                        }
+                    }
+                    #[repr(C)]
+                    #[doc(hidden)]
+                    pub struct IFlyoutShowOptionsFactory_Vtbl {
+                        pub base__: windows_core::IInspectable_Vtbl,
+                        pub CreateInstance: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
                     }
                     windows_core::imp::define_interface!(
                         IRangeBase,

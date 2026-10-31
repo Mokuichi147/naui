@@ -29,7 +29,7 @@ that shape are covered in
 
 ### Scope
 
-- The supported components are the 46 in the table in the
+- The supported components are the 47 in the table in the
   [README](../README.md#widgets).
 - There is no absolute positioning. Layout uses `Stack`, `Grid` and `Spacer`.
 - Supported media formats depend on each OS, browser, and the GStreamer setup on
@@ -401,6 +401,14 @@ that shape are covered in
   Browsers draw no check marks or submenu arrows for menu roles, so naui puts `✓`
   and `▸` as text beside the label (hidden from screen readers, which read
   `aria-checked` and `aria-haspopup`).
+- `Popover` is placed with CSS anchor positioning. In a browser without it (Firefox
+  before 147, Safari before 26, Chromium before 129), it is shown in the middle of
+  the window instead. **WebKit (Safari 26) chooses the side as if the document had
+  not scrolled**, so a popover over a scrolled page can appear on the wrong side.
+  naui's windows do not scroll the document itself (`Scroll` scrolls inside an
+  element), so this only matters for pages that put a window below other content.
+- `Popover::on_close` arrives with the browser's `toggle` event, a task after the
+  popover has closed (`is_open` already returns `false` before that).
 - Due to browser restrictions, autoplay of media may be refused.
 
 ### Window

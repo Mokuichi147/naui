@@ -78,6 +78,19 @@ mod imp {
             };
             (cap >= 0).then_some(cap)
         }
+
+        /// Places the popovers attached to it. They come after the content, which is
+        /// set once in [`wrap`](super::SizeBin::wrap), so the content stays the first
+        /// child.
+        fn present_popovers(&self) {
+            let mut next = self.obj().first_child();
+            while let Some(widget) = next {
+                next = widget.next_sibling();
+                if let Some(popover) = widget.downcast_ref::<gtk::Popover>() {
+                    popover.present();
+                }
+            }
+        }
     }
 
     impl WidgetImpl for SizeBin {
@@ -201,7 +214,12 @@ mod imp {
         /// `-18` and a warning). The content is placed at its minimum, and whatever
         /// overflows is hidden with `Overflow::Hidden` (the same pairing as CSS's
         /// `min-width: 0` and `overflow: hidden`).
+        ///
+        /// It also places the naui popovers attached to it (see `crate::popover`): a
+        /// `GtkPopover` is laid out only when its parent calls `gtk_popover_present` from
+        /// its own `size_allocate`.
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
+            self.present_popovers();
             let Some(child) = self.obj().first_child() else {
                 return;
             };
