@@ -694,6 +694,10 @@ fn main() {
             popover_moves_between_widgets,
         ),
         (
+            "スクロールに付けたポップオーバーが中身の伸びに追従する",
+            popover_follows_its_content_on_a_scroll,
+        ),
+        (
             "画面に出ていないウィジェットにはポップオーバーを開かない",
             popover_needs_a_shown_widget,
         ),
@@ -5870,9 +5874,9 @@ fn popover_shows_its_content_beside_the_widget(ui: &Ui) -> Result<()> {
     let native = popover.native_popover();
     assert!(native.is_visible(), "GtkPopover が出ていること");
     assert_eq!(
-        native.parent().as_ref(),
-        Some(&button.native_widget()),
-        "押したウィジェットに付くこと"
+        native.parent(),
+        button.native_widget().parent(),
+        "押したウィジェットを包む SizeBin に付くこと"
     );
     assert!(
         body.native_widget().is_ancestor(&native),
@@ -5947,8 +5951,43 @@ fn popover_moves_between_widgets(ui: &Ui) -> Result<()> {
     assert!(popover.is_open(), "移したあとも開いていること");
     let native = popover.native_popover();
     assert!(native.is_visible());
-    assert_eq!(native.parent().as_ref(), Some(&second.native_widget()));
+    assert_eq!(native.parent(), second.native_widget().parent());
     assert_eq!(closed.get(), 0, "移すだけなら通知しないこと");
+    popover.close();
+    window.close();
+    Ok(())
+}
+
+fn popover_follows_its_content_on_a_scroll(ui: &Ui) -> Result<()> {
+    let window = ui.window("ポップオーバー", 360.0, 240.0)?;
+    let scroll = ui.scroll()?;
+    scroll.set_child(&ui.label("本文")?);
+    window.set_child(&scroll);
+    window.show();
+    tick(&scroll.native_widget());
+
+    let popover = ui.popover()?;
+    let body = ui.label("中身")?;
+    popover.set_child(&body);
+    popover.open(&scroll);
+    let native = popover.native_popover();
+    tick(&native);
+    tick(&native);
+    let (width, height) = (native.width(), native.height());
+    assert!(width > 0 && height > 0, "開いた時点で大きさがあること");
+
+    // GtkScrolledWindow は子のポップオーバーを置き直さないので、付け先が
+    // 割り当てを受け持たないと、中身が伸びたときに 0×0 へ潰れる。
+    body.set_text("ずっと長くなった中身\n2 行目\n3 行目");
+    tick(&native);
+    tick(&scroll.native_widget());
+    tick(&native);
+    assert!(
+        native.width() > width && native.height() > height,
+        "中身に合わせて伸びること ({width}×{height} → {}×{})",
+        native.width(),
+        native.height()
+    );
     popover.close();
     window.close();
     Ok(())

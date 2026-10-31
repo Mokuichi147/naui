@@ -392,7 +392,10 @@ collected in [Known limitations](known-limitations.md).
   closes (one main loop iteration later, because detaching during `closed` collides
   with GTK's own cleanup). While attached, the widget is held by naui: a widget
   finalized first, for example when its window closes, would leave the popover
-  pointing at freed memory.
+  pointing at freed memory. It is attached to the `SizeBin` wrapping the widget
+  rather than to the native widget: a popover is laid out only when its parent
+  calls `gtk_popover_present` from its `size_allocate`, which `GtkScrolledWindow`
+  does not do (a popover on a `Scroll` collapsed to 0×0 once its content grew).
 - **`List`**: A `GtkListBox` in a `GtkScrolledWindow`. Row clicks
   (`ListRow::on_activate`) are received through `GtkListBox`'s `row-activated`
   (`GtkListBoxRow`'s `activate` is the path for keyboard Enter / Space only). With
