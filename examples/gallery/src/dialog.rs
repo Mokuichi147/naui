@@ -1,8 +1,8 @@
-use naui::{DialogButtons, DialogResponse, Orientation, PopoverPosition, Result, Ui};
+use naui::{Align, DialogButtons, DialogResponse, Orientation, PopoverPosition, Result, Ui};
 
 use crate::parts::{self, Notice};
 
-/// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。Popover と Toast の出し方。
+/// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。Sheet・Popover・Toast の出し方。
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
@@ -57,6 +57,55 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     });
     dialogs.append(&open_roles);
     pane.append(&dialogs);
+
+    // 任意の中身を持つダイアログ。ボタンは役割で渡し、置き場所は OS に従う
+    // (macOS はシートの右下、Linux は見出しの帯、Windows は ContentDialog の下端)。
+    parts::section(ui, &pane, "Sheet")?;
+    let sheet = ui.sheet("New folder")?;
+    let form = ui.stack(Orientation::Vertical)?;
+    form.set_spacing(8.0);
+    form.set_align(Align::Start);
+    form.append(&ui.label("Name")?);
+    let name = ui.text_input("")?;
+    form.append(&name);
+    let open_after = ui.checkbox("Open after creating")?;
+    form.append(&open_after);
+    sheet.set_child(&form);
+    sheet.set_buttons(DialogButtons::new().primary("Create").cancel("Cancel"));
+    // 名前が空の間は作成できない。Enter でも押せない。
+    sheet.set_button_enabled(DialogResponse::Primary, false);
+    name.on_change({
+        let sheet = sheet.clone();
+        move |text| sheet.set_button_enabled(DialogResponse::Primary, !text.trim().is_empty())
+    });
+    sheet.on_response({
+        let notice = notice.clone();
+        let name = name.clone();
+        let open_after = open_after.clone();
+        move |response| match response {
+            DialogResponse::Primary => notice.show(&format!(
+                "Sheet: create “{}”{}",
+                name.text().trim(),
+                if open_after.is_checked() {
+                    " and open it"
+                } else {
+                    ""
+                }
+            )),
+            _ => notice.show("Sheet: Cancel"),
+        }
+    });
+    let open_sheet = ui.button("New folder…")?;
+    open_sheet.on_click({
+        let sheet = sheet.clone();
+        let name = name.clone();
+        move || {
+            name.set_text("");
+            sheet.set_button_enabled(DialogResponse::Primary, false);
+            sheet.open();
+        }
+    });
+    pane.append(&open_sheet);
 
     // ボタンの横に出る小さな画面。外側を押すか Esc で閉じ、出す側に場所が
     // 無ければ反対側へ回る (どれも OS の部品が自分で行う)。

@@ -220,7 +220,7 @@ impl Dialog {
 /// afterwards and stay, though naui has already let it go. If `closed` does not
 /// come, keep it hidden and out of reach of the pointer, and close it again on each
 /// frame until it does. 1.6 and later close it on the first try.
-fn close_native(native: &impl IsA<adw::Dialog>) {
+pub(crate) fn close_native(native: &impl IsA<adw::Dialog>) {
     let native = native.as_ref();
     let closed = Rc::new(Cell::new(false));
     native.connect_closed({
@@ -245,4 +245,12 @@ fn close_native(native: &impl IsA<adw::Dialog>) {
             gtk::glib::ControlFlow::Continue
         }
     });
+}
+
+/// The shown window to place a sheet on: the active one, or failing that the first
+/// shown window the app holds.
+pub(crate) fn parent_window(app: &adw::Application) -> Option<gtk::Window> {
+    app.active_window()
+        .filter(|window| window.is_visible())
+        .or_else(|| app.windows().into_iter().find(|window| window.is_visible()))
 }

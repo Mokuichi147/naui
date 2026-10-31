@@ -401,7 +401,81 @@ const CASES: &[Case] = &[
         "ポップオーバーが Flyout で開き、閉じても通知せず、利用者が閉じると通知する",
         popover_opens_and_notifies_only_user_closes,
     ),
+    (
+        "シートの設定が ContentDialog へ届く",
+        sheet_configuration_reaches_the_content_dialog,
+    ),
 ];
+
+fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
+    use naui_core::{DialogButtons, DialogResponse};
+    use naui_winui3::Microsoft::UI::Xaml::Controls::ContentDialogButton;
+
+    let sheet = ui.sheet("新しいフォルダ")?;
+    let native = sheet.native_dialog();
+    assert_eq!(sheet.title(), "新しいフォルダ");
+    // null の見出しは、投影では Err として返る。
+    assert!(native.Title().is_ok(), "見出しが出ること");
+    sheet.set_title("");
+    assert!(native.Title().is_err(), "空の見出しは出さないこと");
+
+    let field = ui.text_input("名称未設定")?;
+    sheet.set_child(&field);
+    let content = native
+        .Content()
+        .expect("Content")
+        .cast::<StackPanel>()
+        .expect("中身を並べる StackPanel");
+    let children = content.Children().expect("Children");
+    let mut found = false;
+    for i in 0..children.Size().expect("Size") {
+        if children.GetAt(i).ok() == Some(field.native_element()) {
+            found = true;
+        }
+    }
+    assert!(found, "中身が ContentDialog の中に入ること");
+
+    sheet.set_buttons(
+        DialogButtons::new()
+            .primary("作成")
+            .secondary("あとで")
+            .cancel("キャンセル"),
+    );
+    assert_eq!(native.PrimaryButtonText().expect("主").to_string(), "作成");
+    assert_eq!(
+        native.SecondaryButtonText().expect("副").to_string(),
+        "あとで"
+    );
+    assert_eq!(
+        native.CloseButtonText().expect("取り消し").to_string(),
+        "キャンセル"
+    );
+    assert_eq!(
+        native.DefaultButton().expect("既定"),
+        ContentDialogButton::Primary
+    );
+
+    sheet.set_button_enabled(DialogResponse::Primary, false);
+    sheet.set_button_enabled(DialogResponse::Cancel, false);
+    assert!(!native.IsPrimaryButtonEnabled().expect("主の有効"));
+    assert!(native.IsSecondaryButtonEnabled().expect("副の有効"));
+    assert!(sheet.is_button_enabled(DialogResponse::Cancel));
+    // ボタンを差し替えても、有効・無効は残る。
+    sheet.set_buttons(DialogButtons::new().primary("保存").cancel("やめる"));
+    assert!(!native.IsPrimaryButtonEnabled().expect("主の有効"));
+    sheet.set_button_enabled(DialogResponse::Primary, true);
+    assert!(native.IsPrimaryButtonEnabled().expect("主の有効"));
+
+    // 主ボタンが無ければ、取り消しが既定のボタンになる。
+    sheet.set_buttons(DialogButtons::new());
+    assert_eq!(
+        native.DefaultButton().expect("既定"),
+        ContentDialogButton::Close
+    );
+    assert!(!sheet.is_open());
+    sheet.close();
+    Ok(())
+}
 
 fn popover_position_reaches_the_flyout(ui: &Ui) -> Result<()> {
     use naui_core::PopoverPosition;

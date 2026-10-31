@@ -14,11 +14,14 @@
 //! - `ContentDialog` appears over a `XamlRoot`, so it cannot be shown **until a
 //!   window has been shown**.
 //! - Two dialogs cannot be shown on the same `XamlRoot` (a WinUI restriction).
+//!
+//! [`Sheet`](crate::Sheet) is the same `ContentDialog` without the body text, so it
+//! is built on this type.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use naui_core::{DialogButtons, DialogResponse, Result, Theme};
+use naui_core::{default_response, DialogButtons, DialogResponse, EnabledButtons, Result, Theme};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ContentDialog, ContentDialogButton, ContentDialogClosingEventArgs, ContentDialogResult,
     Orientation as XamlOrientation, StackPanel, TextBlock,
@@ -41,6 +44,7 @@ struct DialogInner {
     message: TextBlock,
     child: RefCell<Option<Box<dyn Widget>>>,
     buttons: RefCell<DialogButtons>,
+    enabled: Cell<EnabledButtons>,
     on_response: RefCell<Slot<dyn FnMut(DialogResponse)>>,
     theme: Cell<Theme>,
     open: Cell<bool>,
@@ -57,12 +61,6 @@ impl Dialog {
     pub(crate) fn new(title: &str, theme: Theme) -> Result<Self> {
         let native = ContentDialog::new().map_err(|e| to_error("create the ContentDialog", e))?;
         let title_block = TextBlock::new().map_err(|e| to_error("create the dialog title", e))?;
-        title_block
-            .SetText(&HSTRING::from(title))
-            .map_err(|e| to_error("set the dialog title", e))?;
-        native
-            .SetTitle(&title_block)
-            .map_err(|e| to_error("apply the dialog title", e))?;
 
         let content = StackPanel::new().map_err(|e| to_error("create the dialog content", e))?;
         content
@@ -91,11 +89,13 @@ impl Dialog {
             message,
             child: RefCell::new(None),
             buttons: RefCell::new(DialogButtons::new()),
+            enabled: Cell::new(EnabledButtons::default()),
             on_response: RefCell::new(None),
             theme: Cell::new(theme),
             open: Cell::new(false),
             closed_by_app: Cell::new(false),
         }));
+        this.set_title(title);
         this.apply_buttons()?;
         this.install_closing_handler()?;
         Ok(this)
@@ -154,8 +154,14 @@ impl Dialog {
         }
     }
 
+    /// The heading. An empty string shows none (the title area is left out).
     pub fn set_title(&self, title: &str) {
         let _ = self.0.title.SetText(&HSTRING::from(title));
+        let _ = if title.is_empty() {
+            self.0.native.SetTitle(None)
+        } else {
+            self.0.native.SetTitle(&self.0.title)
+        };
     }
 
     pub fn title(&self) -> String {
@@ -209,6 +215,31 @@ impl Dialog {
         self.0.buttons.borrow().clone()
     }
 
+    /// Enables or disables the button for `response`. The Close button (cancel)
+    /// cannot be disabled.
+    pub(crate) fn set_button_enabled(&self, response: DialogResponse, enabled: bool) {
+        let mut state = self.0.enabled.get();
+        state.set(response, enabled);
+        self.0.enabled.set(state);
+        let _ = self.apply_enabled();
+    }
+
+    pub(crate) fn is_button_enabled(&self, response: DialogResponse) -> bool {
+        self.0.enabled.get().get(response)
+    }
+
+    fn apply_enabled(&self) -> Result<()> {
+        let state = self.0.enabled.get();
+        self.0
+            .native
+            .SetIsPrimaryButtonEnabled(state.get(DialogResponse::Primary))
+            .map_err(|e| to_error("enable the dialog primary button", e))?;
+        self.0
+            .native
+            .SetIsSecondaryButtonEnabled(state.get(DialogResponse::Secondary))
+            .map_err(|e| to_error("enable the dialog secondary button", e))
+    }
+
     /// Maps the buttons for each role onto the `ContentDialog`'s three slots.
     ///
     /// Cancel becomes the Close button. WinUI assigns Esc to it.
@@ -228,15 +259,16 @@ impl Dialog {
             .SetCloseButtonText(&text(DialogResponse::Cancel))
             .map_err(|e| to_error("set the dialog close button", e))?;
         // 主となる操作があれば、それを既定のボタン (Enter) にする。
-        let default = if buttons.label(DialogResponse::Primary).is_some() {
-            ContentDialogButton::Primary
-        } else {
-            ContentDialogButton::Close
+        let default = match default_response(&buttons) {
+            Some(DialogResponse::Primary) => ContentDialogButton::Primary,
+            Some(_) => ContentDialogButton::Close,
+            None => ContentDialogButton::None,
         };
         self.0
             .native
             .SetDefaultButton(default)
-            .map_err(|e| to_error("set the dialog default button", e))
+            .map_err(|e| to_error("set the dialog default button", e))?;
+        self.apply_enabled()
     }
 
     /// Called with the reason when it closes. Setting it again removes the previous

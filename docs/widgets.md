@@ -75,6 +75,7 @@ Legend:
 | `PopupMenu` | ✅ `MenuFlyout` | ✅ `NSMenu` | ✅ `GtkPopoverMenu` + `GMenu` | 🟡 `<div role="menu">` |
 | `Popover` | ✅ `Flyout` | ✅ `NSPopover` | ✅ `GtkPopover` | ✅ `popover` attribute + CSS anchor positioning |
 | `Dialog` | ✅ `ContentDialog` | 🟡 `NSAlert` + `accessoryView` | ✅ `AdwAlertDialog` | 🟡 `<dialog>` + `showModal()` |
+| `Sheet` | ✅ `ContentDialog` | 🟡 An `NSWindow` shown as a sheet + `NSButton`s | 🟡 `AdwDialog` + `AdwHeaderBar` | 🟡 `<dialog>` + `showModal()` |
 | `Toast` | 🟡 An overlaid `InfoBar` | 🔴 An overlaid `NSVisualEffectView` | ✅ `AdwToast` + `AdwToastOverlay` | 🔴 `<div role="status">` |
 
 ### Drawing
@@ -242,6 +243,11 @@ collected in [Known limitations](known-limitations.md).
   another side when there is no room come from WinUI; naui sets only `Placement`.
   `Placement` takes effect the next time it is shown, so changing the side while open
   shows it again at the same widget.
+- **`Sheet`**: The same `ContentDialog` as `Dialog`, with the body text left empty
+  and the content widget as the only thing in its content area. The roles map onto
+  its three buttons as in `Dialog`, and `set_button_enabled` onto
+  `IsPrimaryButtonEnabled` / `IsSecondaryButtonEnabled`. An empty title sets
+  `Title` to null, which leaves the title area out (for `Dialog` too).
 - **`Toast`**: It looks like an `InfoBar`. However, `InfoBar` is meant to be a band
   laid out inside a page, so it is moved to the bottom center and overlaid on the
   content layer. The action button goes in `ActionButton`, so WinUI decides whether
@@ -330,6 +336,20 @@ collected in [Known limitations](known-limitations.md).
   Content that cannot decide its own width (a lone text field) gets 260 pt, the same
   as `Dialog`. `preferredEdge` is read in the anchor view's coordinates, so top and
   bottom are swapped for views that are not flipped.
+- **`Sheet`**: A titled `NSWindow` shown with `beginSheet:completionHandler:` on the
+  key window (or the main window, or the first window on screen), so a sheet opened
+  from a sheet stacks on it. A sheet shows no title bar, so the title is a bold
+  label at the top, the same look as `NSAlert`'s heading. Below it are the content
+  (in the same container as `Popover`'s, which gives content without a width
+  260 pt) and a row of `NSButton`s in an `NSStackView`: the secondary action in
+  the leading gravity area, cancel and the primary action in the trailing one. The
+  default button (primary, or cancel when there is none) gets the Return key
+  equivalent, which makes AppKit draw it as the window's default button, and
+  cancel otherwise gets Esc. Esc that no button takes reaches the window as
+  `cancelOperation:`, which the sheet's window class turns into a cancel. That
+  class also tracks focus like naui's other windows, so `on_focus_change` works in
+  the content. The window's size follows the content's constraints through its
+  `contentViewController`, with a minimum width of 320 pt (`SHEET_MIN_WIDTH`).
 - **`Toast`**: AppKit has no toast control, so it is built by overlaying an
   `NSVisualEffectView` (the same material as `NSPopover`) on the window content.
 - **`Window` position and state**: While minimized, `frame` stays the original
@@ -396,6 +416,15 @@ collected in [Known limitations](known-limitations.md).
   rather than to the native widget: a popover is laid out only when its parent
   calls `gtk_popover_present` from its `size_allocate`, which `GtkScrolledWindow`
   does not do (a popover on a `Scroll` collapsed to 0×0 once its content grew).
+- **`Sheet`**: An `AdwDialog` holding an `AdwToolbarView`, laid out the way the
+  GNOME guidelines describe: an `AdwHeaderBar` showing the title, with cancel at its
+  start and the primary action (`.suggested-action`, the dialog's default widget)
+  at its end, the secondary action beside it, and the content below with an 18 px
+  margin. The header bar's close button is shown only when there is no cancel
+  button. `follows-content-size` is on, so the dialog grows with its content, and
+  the toolbar view asks for at least 320 px (`SHEET_MIN_WIDTH`). As with `Dialog`,
+  the `AdwDialog` is built on each `open`; the content moves into the new one, and
+  is let go once the old one has finished closing.
 - **`List`**: A `GtkListBox` in a `GtkScrolledWindow`. Row clicks
   (`ListRow::on_activate`) are received through `GtkListBox`'s `row-activated`
   (`GtkListBoxRow`'s `activate` is the path for keyboard Enter / Space only). With
@@ -463,6 +492,18 @@ collected in [Known limitations](known-limitations.md).
   Space). Column widths are decided by `<col>` in a `<colgroup>` and
   `table-layout: fixed`. Sortable headers are `<button>`s inside `<th>`, and the
   direction is shown with `aria-sort` and an arrow.
+- **`Dialog` and `Sheet`**: The same `<dialog>`; a sheet leaves the body text
+  empty and has a minimum width of 320 px (`SHEET_MIN_WIDTH`, but no wider than the
+  viewport allows). Enter in a text field (an `<input>` other than check boxes,
+  radio buttons, sliders and the like) presses the default button, the primary one
+  or else cancel, unless the button is disabled or a widget already handled the
+  key. Enter and Esc that belong to an IME conversion are passed to the IME: those
+  with `isComposing`, and those with `keyCode` 229, which is how Safari sends the
+  Enter that confirms a conversion (the same check as `TextInput::on_submit`). A
+  `<form>` would give the browser's implicit submission instead, but that
+  presses the first submit button in the form, which would be a `<button>` in the
+  content. The primary button carries `data-naui-role="primary"`, the same mark as
+  `Button::set_role`.
 - **`Dialog` and `PopupMenu`**: For Esc, **naui prevents the default action of
   `keydown` and closes them itself**, rather than relying on `<dialog>`'s `cancel`
   event. When the window is full screen, Safari first uses Esc to exit full screen
@@ -517,7 +558,7 @@ collected in [Known limitations](known-limitations.md).
 - `ToolbarItem` / `ToolbarIcon`: toolbar items and icons
 - `MenuSpec` / `MenuItem` / `MenuShortcut`: menu bar headings, items and shortcuts
 - `SidebarSection` / `SidebarItem`: sidebar groups (headings) and items (text and icons)
-- `DialogButtons` / `DialogResponse`: dialog buttons and responses
+- `DialogButtons` / `DialogResponse`: dialog and sheet buttons and responses
 - `ToastSpec`: toast text, action button and time until it disappears
 
 `WeakWidget`, the weak reference used to touch a widget itself from inside its

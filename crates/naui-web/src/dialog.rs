@@ -17,16 +17,26 @@
 //! `keydown`**, not from the `<dialog>`'s `close` event. `close` cannot tell the
 //! side that called `close()` (including the app's own [`Dialog::close`]) from
 //! user actions, and some embedded browsers never deliver it.
+//!
+//! Enter in a text field presses the default button (the primary one, or failing
+//! that cancel), as the default button of an `NSAlert` or a `ContentDialog` does. A
+//! `<form>` would give the browser's own implicit submission, but it presses the
+//! first submit button in the form, which would be a `<button>` in the content.
+//!
+//! [`Sheet`](crate::Sheet) is the same `<dialog>` without the body text, so it is
+//! built on this type.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{DialogButtons, DialogResponse, Result};
+use naui_core::{
+    default_response, ButtonRole, DialogButtons, DialogResponse, EnabledButtons, Result,
+};
 use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, HtmlDialogElement, HtmlElement, KeyboardEvent};
+use web_sys::{Document, Element, HtmlDialogElement, HtmlElement, HtmlInputElement, KeyboardEvent};
 
 use crate::to_error;
-use crate::widgets::{create, Listener, Widget};
+use crate::widgets::{create, set_disabled, Listener, Widget};
 
 /// The order in which buttons are laid out from the left. Following macOS, the
 /// primary action goes at the right end.
@@ -46,6 +56,9 @@ struct DialogInner {
     actions: HtmlElement,
     child: RefCell<Option<Box<dyn Widget>>>,
     buttons: RefCell<DialogButtons>,
+    enabled: Cell<EnabledButtons>,
+    /// The `<button>`s laid out now, with their roles.
+    button_elements: RefCell<Vec<(DialogResponse, HtmlElement)>>,
     /// The receivers of button clicks. Replaced each time it is rebuilt.
     listeners: RefCell<Vec<Listener>>,
     /// The receivers for being closed as a cancel, by Esc and the like.
@@ -102,6 +115,8 @@ impl Dialog {
             actions,
             child: RefCell::new(None),
             buttons: RefCell::new(DialogButtons::new()),
+            enabled: Cell::new(EnabledButtons::default()),
+            button_elements: RefCell::new(Vec::new()),
             listeners: RefCell::new(Vec::new()),
             dismiss: RefCell::new(Vec::new()),
             on_response: RefCell::new(None),
@@ -139,8 +154,17 @@ impl Dialog {
                 let Some(key) = event.dyn_ref::<KeyboardEvent>() else {
                     return;
                 };
-                // 変換中の Esc は入力を取り消すためのものなので、IME へ渡す。
-                if key.key() != "Escape" || key.is_composing() {
+                // 変換中のキーは入力を確定・取り消すためのものなので、IME へ渡す。
+                // Safari は確定の Enter を isComposing なし・keyCode 229 で送るので、
+                // ほかの入力欄と同じ判定を使う。
+                if crate::keys::is_ime_key(key) {
+                    return;
+                }
+                if key.key() == "Enter" {
+                    Dialog(inner).press_default(key);
+                    return;
+                }
+                if key.key() != "Escape" {
                     return;
                 }
                 event.prevent_default();
@@ -168,6 +192,45 @@ impl Dialog {
 
         *self.0.dismiss.borrow_mut() = listeners;
         Ok(())
+    }
+
+    /// Presses the default button for Enter in a text field. Enter elsewhere (on a
+    /// button, in a text area, or one a widget already handled) is left alone.
+    fn press_default(&self, key: &KeyboardEvent) {
+        if key.default_prevented()
+            || key.shift_key()
+            || key.ctrl_key()
+            || key.alt_key()
+            || key.meta_key()
+        {
+            return;
+        }
+        let in_text_field = key
+            .target()
+            .and_then(|target| target.dyn_into::<HtmlInputElement>().ok())
+            .is_some_and(|input| is_text_field(&input.type_()));
+        if !in_text_field {
+            return;
+        }
+        let Some(role) = default_response(&self.0.buttons.borrow().resolved()) else {
+            return;
+        };
+        // 無効にしたボタンは、Enter でも押せない。
+        if !self.0.enabled.get().get(role) {
+            return;
+        }
+        key.prevent_default();
+        self.respond(role);
+    }
+
+    /// Closes and notifies `role`, as a click on that button does.
+    fn respond(&self, role: DialogResponse) {
+        if !self.0.element.open() {
+            return;
+        }
+        crate::popover::dismiss_within(self.0.element.as_ref());
+        self.0.element.close();
+        self.emit(role);
     }
 
     /// Closes as a cancel and notifies. Does nothing if already closed.
@@ -248,25 +311,48 @@ impl Dialog {
             .owner_document()
             .ok_or_else(|| naui_core::Error::new("get document", "there is no document"))?;
         let mut listeners = Vec::new();
+        let mut elements = Vec::new();
+        let enabled = self.0.enabled.get();
         for (role, label) in self.0.buttons.borrow().resolved().in_order(&BUTTON_ORDER) {
             let button: HtmlElement = create(&document, "button")?.unchecked_into();
             button.set_text_content(Some(&label));
+            // `Button::set_role` と同じ印。アプリの CSS が選べる。
+            if role == DialogResponse::Primary {
+                if let Some(value) = ButtonRole::Primary.web_attribute() {
+                    let _ = button.set_attribute("data-naui-role", value);
+                }
+            }
+            set_disabled(&button, !enabled.get(role));
             self.0
                 .actions
                 .append_child(&button)
                 .map_err(|e| to_error("add the dialog buttons", e))?;
             let weak = Rc::downgrade(&self.0);
             listeners.push(Listener::attach(button.as_ref(), "click", move || {
-                let Some(inner) = weak.upgrade() else {
-                    return;
-                };
-                crate::popover::dismiss_within(inner.element.as_ref());
-                inner.element.close();
-                Dialog(inner).emit(role);
+                if let Some(inner) = weak.upgrade() {
+                    Dialog(inner).respond(role);
+                }
             })?);
+            elements.push((role, button));
         }
         *self.0.listeners.borrow_mut() = listeners;
+        *self.0.button_elements.borrow_mut() = elements;
         Ok(())
+    }
+
+    /// Enables or disables the button for `response`. The cancel button cannot be
+    /// disabled.
+    pub(crate) fn set_button_enabled(&self, response: DialogResponse, enabled: bool) {
+        let mut state = self.0.enabled.get();
+        state.set(response, enabled);
+        self.0.enabled.set(state);
+        for (role, button) in self.0.button_elements.borrow().iter() {
+            set_disabled(button, !state.get(*role));
+        }
+    }
+
+    pub(crate) fn is_button_enabled(&self, response: DialogResponse) -> bool {
+        self.0.enabled.get().get(response)
     }
 
     /// Called with the reason when it closes. Setting it again removes the previous
@@ -306,4 +392,23 @@ impl Dialog {
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()
     }
+}
+
+/// Whether Enter in an `<input>` of this `type` is a "submit" (the inputs where a
+/// form's implicit submission applies: text-like ones, not toggles, sliders and
+/// buttons).
+fn is_text_field(kind: &str) -> bool {
+    !matches!(
+        kind,
+        "checkbox"
+            | "radio"
+            | "range"
+            | "color"
+            | "file"
+            | "button"
+            | "submit"
+            | "reset"
+            | "image"
+            | "hidden"
+    )
 }
