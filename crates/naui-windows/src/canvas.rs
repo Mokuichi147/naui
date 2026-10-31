@@ -190,6 +190,9 @@ thread_local! {
     /// Every surface on this thread. All of them are drawn again after the device is
     /// lost.
     static CANVASES: RefCell<Vec<Weak<CanvasInner>>> = const { RefCell::new(Vec::new()) };
+    /// How many `XamlRoot.Changed` subscriptions surfaces hold. Read by tests to see
+    /// that dropped surfaces unsubscribe.
+    static ROOT_WATCHES: Cell<usize> = const { Cell::new(0) };
 }
 
 /// How long until `PointerWheelChanged` is treated as the same wheel the hook
@@ -532,6 +535,13 @@ impl Canvas {
         render::signal_removal_for_test()
     }
 
+    /// How many `XamlRoot.Changed` subscriptions the surfaces on this thread hold.
+    /// **For automated tests only.**
+    #[doc(hidden)]
+    pub fn root_watches_for_test() -> usize {
+        ROOT_WATCHES.with(Cell::get)
+    }
+
     /// The base `Grid`. Public as a backend-specific escape hatch.
     ///
     /// What is drawn is a `SpriteVisual` placed over it with
@@ -836,7 +846,7 @@ impl CanvasInner {
             return;
         }
         if let Some((previous, token)) = watched.take() {
-            let _ = previous.RemoveChanged(token);
+            unwatch_root(&previous, token);
         }
         let target = UiThreadCell::new(Rc::downgrade(self));
         let changed = TypedEventHandler::<XamlRoot, XamlRootChangedEventArgs>::new(move |_, _| {
@@ -851,8 +861,25 @@ impl CanvasInner {
         });
         if let Ok(token) = root.Changed(&changed) {
             *watched = Some((root, token));
+            let _ = ROOT_WATCHES.try_with(|count| count.set(count.get() + 1));
         }
     }
+}
+
+impl Drop for CanvasInner {
+    /// Unsubscribes from `XamlRoot.Changed`. The `XamlRoot` outlives the surface (it
+    /// is the window's), so without this every surface made and dropped in a window
+    /// would leave a delegate behind, run on every resize and scale change.
+    fn drop(&mut self) {
+        if let Some((root, token)) = self.root.get_mut().take() {
+            unwatch_root(&root, token);
+        }
+    }
+}
+
+fn unwatch_root(root: &XamlRoot, token: i64) {
+    let _ = root.RemoveChanged(token);
+    let _ = ROOT_WATCHES.try_with(|count| count.set(count.get().saturating_sub(1)));
 }
 
 #[cfg(test)]

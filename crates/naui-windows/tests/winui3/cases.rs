@@ -301,6 +301,10 @@ const CASES: &[Case] = &[
         canvas_draws_onto_a_composition_surface,
     ),
     (
+        "捨てた描画面は XamlRoot.Changed の購読を外す",
+        canvas_unsubscribes_from_the_root_when_dropped,
+    ),
+    (
         "ラベルの付くウィジェットが読み上げ名を持つ",
         widgets_expose_accessible_names,
     ),
@@ -1086,6 +1090,53 @@ fn canvas_draws_onto_a_composition_surface(ui: &Ui) -> Result<()> {
     window.close();
     match outcome {
         Ok(()) => Ok(()),
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// A surface watches its window's `XamlRoot.Changed` to notice scale changes. The
+/// `XamlRoot` outlives it, so dropping the surface must unsubscribe; otherwise
+/// remaking surfaces in one window piles up delegates.
+fn canvas_unsubscribes_from_the_root_when_dropped(ui: &Ui) -> Result<()> {
+    let window = ui.window("描画面の作り直し", 200.0, 150.0)?;
+    window.show();
+    let baseline = naui_windows::Canvas::root_watches_for_test();
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        for round in 0..3 {
+            let canvas = ui.canvas()?;
+            canvas.set_sizing(Sizing::fixed(80.0, 60.0));
+            let drawn = Rc::new(Cell::new(false));
+            canvas.on_draw({
+                let drawn = drawn.clone();
+                move |painter| {
+                    drawn.set(true);
+                    painter.fill_rect(painter.bounds(), Color::BLACK);
+                }
+            });
+            window.set_child(&canvas);
+            pump_until(CANVAS_TIMEOUT, || drawn.get());
+            if !drawn.get() {
+                println!("     (面に実寸が付かない環境なので、確かめずに通す)");
+                return Ok(());
+            }
+            assert_eq!(
+                naui_windows::Canvas::root_watches_for_test(),
+                baseline + 1,
+                "{round} 回目: 描いた面は XamlRoot.Changed を 1 つだけ購読する"
+            );
+            window.set_child(&ui.label("空")?);
+            drop(canvas);
+            assert_eq!(
+                naui_windows::Canvas::root_watches_for_test(),
+                baseline,
+                "{round} 回目: 捨てた面は購読を外す"
+            );
+        }
+        Ok(())
+    }));
+    window.close();
+    match outcome {
+        Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }
 }
@@ -2263,6 +2314,14 @@ fn toast_overlays_the_content_below_the_menu_bar(ui: &Ui) -> Result<Deferred> {
 
     let toast_element = toast.native_element();
     assert!(toast.is_visible(), "トーストが出ていること");
+    // 中身に重なるので、下が透けない背景を持つこと (InfoBar の既定はほぼ透明)。
+    let background = toast_element
+        .cast::<naui_winui3::Microsoft::UI::Xaml::Controls::Control>()
+        .and_then(|control| control.Background())
+        .and_then(|brush| brush.cast::<SolidColorBrush>())
+        .and_then(|brush| brush.Color())
+        .expect("トーストの背景は単色のブラシ");
+    assert_eq!(background.A, 0xff, "トーストの背景は不透明: {background:?}");
     assert!(
         row(2).contains(&toast_element),
         "トーストは中身の行に重なること"
