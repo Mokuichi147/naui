@@ -434,6 +434,9 @@ fn popover_needs_a_shown_widget(ui: &Ui) -> Result<()> {
 const POPOVER_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn popover_opens_and_notifies_only_user_closes(ui: &Ui) -> Result<()> {
+    use naui_core::PopoverPosition;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::FlyoutPlacementMode;
+
     let window = ui.window("ポップオーバー", 360.0, 240.0)?;
     let root = ui.stack(Orientation::Horizontal)?;
     let first = ui.button("設定")?;
@@ -465,31 +468,77 @@ fn popover_opens_and_notifies_only_user_closes(ui: &Ui) -> Result<()> {
             "中身が Flyout の Content になること"
         );
         let is_open = || flyout.IsOpen().unwrap_or(false);
+        let shown_at = |widget: &dyn Widget| {
+            is_open() && flyout.Target().ok().as_ref() == Some(&native::<FrameworkElement>(widget))
+        };
+        // Flyout は閉じ終えてから `Closed` を出す。その知らせと、そのあとに出し直す分を
+        // 待つ。
+        let settle = || pump_until(Duration::from_millis(800), || false);
 
         popover.open(&first);
         assert!(popover.is_open());
-        pump_until(POPOVER_TIMEOUT, is_open);
-        assert!(is_open(), "Flyout が開くこと");
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        assert!(shown_at(&first), "Flyout が開くこと");
 
         // 開いたまま別のウィジェットへ移しても、閉じたことにはしない。
         popover.open(&second);
-        pump_until(Duration::from_millis(500), || false);
+        assert!(popover.is_open());
+        pump_until(POPOVER_TIMEOUT, || shown_at(&second));
+        settle();
         assert!(popover.is_open(), "移したあとも開いていること");
-        assert!(is_open());
+        assert!(shown_at(&second), "移した先の横に出ること");
         assert_eq!(closed.get(), 0, "移すだけなら通知しないこと");
+
+        // 同じウィジェットへもう一度開いても、閉じずにそのまま。
+        popover.open(&second);
+        assert!(shown_at(&second), "同じ場所なら閉じないこと");
+
+        // 開いている間に向きを変えると、新しい向きで出し直す。
+        popover.set_position(PopoverPosition::Right);
+        pump_until(POPOVER_TIMEOUT, || {
+            flyout.Placement().ok() == Some(FlyoutPlacementMode::Right) && shown_at(&second)
+        });
+        settle();
+        assert!(popover.is_open());
+        assert!(shown_at(&second), "向きを変えても開いていること");
+        assert_eq!(closed.get(), 0, "向きを変えるだけなら通知しないこと");
 
         popover.close();
         assert!(!popover.is_open());
-        pump_until(POPOVER_TIMEOUT, || !is_open());
         assert!(!is_open(), "Flyout が閉じること");
+        // 閉じ終える前に開き直しても、閉じた知らせを利用者が閉じたものと取り違えない。
+        popover.open(&first);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        settle();
+        assert!(shown_at(&first), "閉じかけから開き直せること");
         assert_eq!(closed.get(), 0, "アプリが閉じたときは通知しないこと");
 
-        popover.open(&first);
-        pump_until(POPOVER_TIMEOUT, is_open);
-        popover.dismiss();
-        pump_until(POPOVER_TIMEOUT, || closed.get() > 0);
-        assert_eq!(closed.get(), 1, "利用者が閉じたら 1 度だけ通知すること");
+        // 移している途中で閉じたら、移した先で開き直さない。
+        popover.open(&second);
+        popover.close();
+        settle();
         assert!(!popover.is_open());
+        assert!(!is_open(), "移す途中で閉じたら開き直さないこと");
+        assert_eq!(closed.get(), 0);
+
+        // 移している途中で利用者が閉じたら、開き直さずに 1 度だけ通知する。
+        popover.open(&first);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        popover.open(&second);
+        popover.dismiss();
+        settle();
+        assert!(!popover.is_open());
+        assert!(!is_open(), "移す途中で利用者が閉じたら開き直さないこと");
+        assert_eq!(closed.get(), 1, "移す途中で利用者が閉じたら通知すること");
+
+        popover.open(&first);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        popover.dismiss();
+        pump_until(POPOVER_TIMEOUT, || closed.get() > 1);
+        settle();
+        assert_eq!(closed.get(), 2, "利用者が閉じたら 1 度だけ通知すること");
+        assert!(!popover.is_open());
+        assert!(!is_open());
     }));
     window.close();
     if let Err(panic) = outcome {

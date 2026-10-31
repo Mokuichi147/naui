@@ -4,11 +4,20 @@
 //! it with `ShowAt` against the widget's element. The presenter's look, light
 //! dismiss (a click outside, Esc) and moving to another side when there is no room
 //! are all `Flyout`'s own. naui only chooses the `Placement`.
+//!
+//! Closing a `Flyout` is asynchronous: `Hide` (or `ShowAt` against another element)
+//! clears `IsOpen` on the spot, but `Closed` arrives only after the close finishes.
+//! A `ShowAt` in between is queued by `Flyout` and runs after `Closed`, and a later
+//! `Hide` does not cancel it. So naui never calls `ShowAt` while the flyout is shown
+//! or closing. Moving it (another widget, another side) hides it and shows it again
+//! on the turn of the loop after `Closed` (inside `Closed`, `ShowAt` against the same
+//! element does not open it).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{PopoverPosition, Result};
+use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Controls::Flyout;
 use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::FlyoutPlacementMode;
 use naui_winui3::Microsoft::UI::Xaml::FrameworkElement;
@@ -31,7 +40,47 @@ struct PopoverInner {
     /// Whether it is open as far as naui knows. Cleared by `close` before `Hide`, so
     /// the `Closed` that follows is not passed on.
     open: Cell<bool>,
+    /// Whether `ShowAt` has been called and its `Closed` has not arrived yet (the
+    /// flyout is shown or still closing).
+    shown: Cell<bool>,
+    /// Set when it was hidden only to be shown again (beside another widget, or on
+    /// another side). The `Closed` that follows shows it again instead of notifying.
+    reshow: Cell<bool>,
+    /// Set between that `Closed` and the next turn of the loop, where it is shown
+    /// again. The flyout is already closed, so `Hide` would do nothing.
+    queued: Cell<bool>,
     on_close: ActivationHandler,
+}
+
+impl PopoverInner {
+    /// Shows it beside `anchor` with `ShowAt`. Only while it is neither shown nor
+    /// closing. Gives up being open when that is not possible.
+    fn show(&self) {
+        let target = self
+            .anchor
+            .borrow()
+            .as_ref()
+            .and_then(|anchor| anchor.native_element().cast::<FrameworkElement>().ok());
+        let shown = target.is_some_and(|target| {
+            target.IsLoaded().unwrap_or(false) && self.flyout.ShowAt(&target).is_ok()
+        });
+        self.shown.set(shown);
+        if !shown {
+            self.open.set(false);
+            self.anchor.borrow_mut().take();
+        }
+    }
+
+    /// Hides it and shows it again beside `anchor` once `Closed` arrives.
+    fn show_again(&self) {
+        // 出し直しを待っているなら、その時に今の `anchor` で出る。
+        if self.queued.get() {
+            return;
+        }
+        self.reshow.set(true);
+        // 閉じかけているなら `Hide` は何もせず、すでに来る予定の `Closed` を待つ。
+        let _ = self.flyout.Hide();
+    }
 }
 
 /// A panel shown beside a widget (`Flyout`).
@@ -51,6 +100,9 @@ impl Popover {
             anchor: RefCell::new(None),
             position: Cell::new(PopoverPosition::default()),
             open: Cell::new(false),
+            shown: Cell::new(false),
+            reshow: Cell::new(false),
+            queued: Cell::new(false),
             on_close: ActivationHandler::new(),
         }));
         this.apply_placement();
@@ -59,16 +111,45 @@ impl Popover {
         let closed = EventHandler::<IInspectable>::new(move |_, _| {
             let inner = state.try_with_mut(|weak| weak.upgrade()).flatten();
             if let Some(inner) = inner {
-                // 別のウィジェットへ移すあいだに閉じた知らせが遅れて届いても、
-                // もう開き直している。
-                if inner.flyout.IsOpen().unwrap_or(false) {
+                let reshow = inner.reshow.replace(false);
+                // `close` が先に下ろしていれば、アプリが閉じたので知らせない。
+                if !inner.open.get() {
+                    inner.shown.set(false);
                     return Ok(());
                 }
-                inner.anchor.borrow_mut().take();
-                // `close` が先に下ろしていれば、アプリが閉じたので知らせない。
-                if inner.open.replace(false) {
-                    inner.on_close.emit();
+                // 移すために隠しただけなら、閉じ終えたあとで新しい場所に出し直す。
+                // `Closed` の中で同じ要素へ `ShowAt` しても開き直らないので、
+                // 抜けてからにする。それまでは閉じかけと同じに扱う。
+                if reshow {
+                    let queued = DispatcherQueue::GetForCurrentThread().is_ok_and(|queue| {
+                        let weak = Rc::downgrade(&inner);
+                        let state = UiThreadCell::new(weak);
+                        queue
+                            .TryEnqueue(&DispatcherQueueHandler::new(move || {
+                                let inner = state.try_with_mut(|weak| weak.upgrade()).flatten();
+                                if let Some(inner) = inner {
+                                    inner.queued.set(false);
+                                    inner.shown.set(false);
+                                    inner.reshow.set(false);
+                                    if inner.open.get() {
+                                        inner.show();
+                                    }
+                                }
+                                Ok(())
+                            }))
+                            .is_ok()
+                    });
+                    inner.queued.set(queued);
+                    if !queued {
+                        inner.shown.set(false);
+                        inner.show();
+                    }
+                    return Ok(());
                 }
+                inner.shown.set(false);
+                inner.open.set(false);
+                inner.anchor.borrow_mut().take();
+                inner.on_close.emit();
             }
             Ok(())
         });
@@ -92,14 +173,13 @@ impl Popover {
 
     /// The side it prefers to appear on. Bottom by default.
     pub fn set_position(&self, position: PopoverPosition) {
-        self.0.position.set(position);
+        if self.0.position.replace(position) == position {
+            return;
+        }
         self.apply_placement();
         // `Placement` は次に出すときに効くので、出ている間は同じ場所で出し直す。
-        if self.0.open.get() {
-            let anchor = self.0.anchor.borrow().as_ref().map(|a| a.boxed_clone());
-            if let Some(anchor) = anchor {
-                self.open(anchor.as_ref());
-            }
+        if self.0.open.get() && self.0.shown.get() {
+            self.0.show_again();
         }
     }
 
@@ -128,11 +208,20 @@ impl Popover {
         if !target.IsLoaded().unwrap_or(false) {
             return;
         }
-        // 開いたまま移すときに `Closed` が来ても知らせないよう、出し終えるまで下ろしておく。
-        self.0.open.set(false);
-        if self.0.flyout.ShowAt(&target).is_ok() {
-            self.0.open.set(true);
-            *self.0.anchor.borrow_mut() = Some(widget.boxed_clone());
+        // 同じウィジェットの横にもう出ているなら、そのままでよい。
+        let in_place = self.0.open.get()
+            && !self.0.reshow.get()
+            && self.0.flyout.IsOpen().unwrap_or(false)
+            && self.0.flyout.Target().ok().as_ref() == Some(&target);
+        self.0.open.set(true);
+        *self.0.anchor.borrow_mut() = Some(widget.boxed_clone());
+        if in_place {
+            return;
+        }
+        if self.0.shown.get() {
+            self.0.show_again();
+        } else {
+            self.0.show();
         }
     }
 
@@ -142,6 +231,7 @@ impl Popover {
             return;
         }
         self.0.anchor.borrow_mut().take();
+        self.0.reshow.set(false);
         let _ = self.0.flyout.Hide();
     }
 
@@ -161,9 +251,18 @@ impl Popover {
     /// Closes it the way a click outside does, notifying `on_close` (for tests and
     /// automation).
     pub fn dismiss(&self) {
-        if self.0.open.get() {
-            let _ = self.0.flyout.Hide();
+        if !self.0.open.get() {
+            return;
         }
+        // 出し直しを待っている間はもう閉じているので、`Closed` は来ない。ここで閉じる。
+        if self.0.queued.get() {
+            self.0.open.set(false);
+            self.0.anchor.borrow_mut().take();
+            self.0.on_close.emit();
+            return;
+        }
+        self.0.reshow.set(false);
+        let _ = self.0.flyout.Hide();
     }
 
     /// The `Flyout` itself. Public as a backend-specific escape hatch.
