@@ -24,7 +24,6 @@ use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTi
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button, Grid, InfoBar, InfoBarSeverity, TextBlock,
 };
-use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
     HorizontalAlignment, RoutedEventHandler, Thickness, UIElement, VerticalAlignment,
 };
@@ -37,18 +36,6 @@ use crate::window::owner_content_layer;
 
 /// The overlay position: 24 away from the bottom center.
 const TOAST_MARGIN: f64 = 24.0;
-
-/// The overlaid `InfoBar`, with an opaque background.
-///
-/// `InfoBar`'s own backgrounds are made for a band laid inside the page:
-/// `Informational`'s is nearly transparent (`#08FFFFFF` in the dark theme,
-/// `#80F6F6F6` in the light one), so overlaid on content (a light `Canvas`, an
-/// image, text) the toast became hard to read. Its `Background` is drawn over the
-/// severity color, so the solid fill for raised surfaces is set there. It is
-/// written as a `ThemeResource` so that it follows theme changes.
-const TOAST_XAML: &str = r##"<InfoBar
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    Background="{ThemeResource SolidBackgroundFillColorQuarternaryBrush}"/>"##;
 
 /// One millisecond of `TimeSpan` (in 100-nanosecond units).
 const TICKS_PER_MILLI: i64 = 10_000;
@@ -350,9 +337,7 @@ fn emit(slot: &RefCell<Option<Box<dyn FnMut()>>>) {
 /// `InfoBar` (right of the text, or below when narrow). Making its content a
 /// `TextBlock` is the same construction as other buttons.
 fn build_surface() -> Result<(InfoBar, Button, TextBlock)> {
-    let native = XamlReader::Load(&HSTRING::from(TOAST_XAML))
-        .and_then(|element| element.cast::<InfoBar>())
-        .map_err(|e| to_error("create the toast", e))?;
+    let native = InfoBar::new().map_err(|e| to_error("create the toast", e))?;
     native
         .SetSeverity(InfoBarSeverity::Informational)
         .map_err(|e| to_error("set the toast severity", e))?;

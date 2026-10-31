@@ -2314,14 +2314,6 @@ fn toast_overlays_the_content_below_the_menu_bar(ui: &Ui) -> Result<Deferred> {
 
     let toast_element = toast.native_element();
     assert!(toast.is_visible(), "トーストが出ていること");
-    // 中身に重なるので、下が透けない背景を持つこと (InfoBar の既定はほぼ透明)。
-    let background = toast_element
-        .cast::<naui_winui3::Microsoft::UI::Xaml::Controls::Control>()
-        .and_then(|control| control.Background())
-        .and_then(|brush| brush.cast::<SolidColorBrush>())
-        .and_then(|brush| brush.Color())
-        .expect("トーストの背景は単色のブラシ");
-    assert_eq!(background.A, 0xff, "トーストの背景は不透明: {background:?}");
     assert!(
         row(2).contains(&toast_element),
         "トーストは中身の行に重なること"
