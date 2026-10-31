@@ -10,8 +10,9 @@
 //! A `ShowAt` in between is queued by `Flyout` and runs after `Closed`, and a later
 //! `Hide` does not cancel it. So naui never calls `ShowAt` while the flyout is shown
 //! or closing. Moving it (another widget, another side) hides it and shows it again
-//! on the turn of the loop after `Closed` (inside `Closed`, `ShowAt` against the same
-//! element does not open it).
+//! on the turn of the loop after `Closed`. Inside `Closed` (including `on_close`),
+//! `ShowAt` against the same element is ignored, so an `open` from there waits for
+//! that turn as well.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -49,6 +50,9 @@ struct PopoverInner {
     /// Set between that `Closed` and the next turn of the loop, where it is shown
     /// again. The flyout is already closed, so `Hide` would do nothing.
     queued: Cell<bool>,
+    /// Set while the `Closed` handler runs, including `on_close`. `ShowAt` against
+    /// the same element is ignored there, so showing waits for the next turn.
+    in_closed: Cell<bool>,
     on_close: ActivationHandler,
 }
 
@@ -68,6 +72,33 @@ impl PopoverInner {
         if !shown {
             self.open.set(false);
             self.anchor.borrow_mut().take();
+        }
+    }
+
+    /// Shows it beside `anchor` on the next turn of the loop. Until then it counts
+    /// as closing.
+    fn show_later(self: &Rc<Self>) {
+        let queued = DispatcherQueue::GetForCurrentThread().is_ok_and(|queue| {
+            let state = UiThreadCell::new(Rc::downgrade(self));
+            queue
+                .TryEnqueue(&DispatcherQueueHandler::new(move || {
+                    let inner = state.try_with_mut(|weak| weak.upgrade()).flatten();
+                    if let Some(inner) = inner {
+                        inner.queued.set(false);
+                        inner.shown.set(false);
+                        inner.reshow.set(false);
+                        if inner.open.get() {
+                            inner.show();
+                        }
+                    }
+                    Ok(())
+                }))
+                .is_ok()
+        });
+        self.queued.set(queued);
+        self.shown.set(queued);
+        if !queued {
+            self.show();
         }
     }
 
@@ -103,6 +134,7 @@ impl Popover {
             shown: Cell::new(false),
             reshow: Cell::new(false),
             queued: Cell::new(false),
+            in_closed: Cell::new(false),
             on_close: ActivationHandler::new(),
         }));
         this.apply_placement();
@@ -111,45 +143,9 @@ impl Popover {
         let closed = EventHandler::<IInspectable>::new(move |_, _| {
             let inner = state.try_with_mut(|weak| weak.upgrade()).flatten();
             if let Some(inner) = inner {
-                let reshow = inner.reshow.replace(false);
-                // `close` が先に下ろしていれば、アプリが閉じたので知らせない。
-                if !inner.open.get() {
-                    inner.shown.set(false);
-                    return Ok(());
-                }
-                // 移すために隠しただけなら、閉じ終えたあとで新しい場所に出し直す。
-                // `Closed` の中で同じ要素へ `ShowAt` しても開き直らないので、
-                // 抜けてからにする。それまでは閉じかけと同じに扱う。
-                if reshow {
-                    let queued = DispatcherQueue::GetForCurrentThread().is_ok_and(|queue| {
-                        let weak = Rc::downgrade(&inner);
-                        let state = UiThreadCell::new(weak);
-                        queue
-                            .TryEnqueue(&DispatcherQueueHandler::new(move || {
-                                let inner = state.try_with_mut(|weak| weak.upgrade()).flatten();
-                                if let Some(inner) = inner {
-                                    inner.queued.set(false);
-                                    inner.shown.set(false);
-                                    inner.reshow.set(false);
-                                    if inner.open.get() {
-                                        inner.show();
-                                    }
-                                }
-                                Ok(())
-                            }))
-                            .is_ok()
-                    });
-                    inner.queued.set(queued);
-                    if !queued {
-                        inner.shown.set(false);
-                        inner.show();
-                    }
-                    return Ok(());
-                }
-                inner.shown.set(false);
-                inner.open.set(false);
-                inner.anchor.borrow_mut().take();
-                inner.on_close.emit();
+                inner.in_closed.set(true);
+                Self::closed(&inner);
+                inner.in_closed.set(false);
             }
             Ok(())
         });
@@ -158,6 +154,27 @@ impl Popover {
             .Closed(&closed)
             .map_err(|e| to_error("subscribe to the Flyout closing", e))?;
         Ok(this)
+    }
+
+    /// Handles `Closed`: shows it again when it was hidden only to move, otherwise
+    /// notifies `on_close` unless the app closed it.
+    fn closed(inner: &Rc<PopoverInner>) {
+        let reshow = inner.reshow.replace(false);
+        // `close` が先に下ろしていれば、アプリが閉じたので知らせない。
+        if !inner.open.get() {
+            inner.shown.set(false);
+            return;
+        }
+        // 移すために隠しただけなら、閉じ終えたあとで新しい場所に出し直す。
+        if reshow {
+            inner.show_later();
+            return;
+        }
+        inner.shown.set(false);
+        inner.open.set(false);
+        inner.anchor.borrow_mut().take();
+        // ここで `open` されても、`in_closed` を見て次の周回で出す。
+        inner.on_close.emit();
     }
 
     /// The content. Each call replaces it.
@@ -220,6 +237,9 @@ impl Popover {
         }
         if self.0.shown.get() {
             self.0.show_again();
+        } else if self.0.in_closed.get() {
+            // `on_close` の中など。WinUI はまだ出ているつもりで `ShowAt` を無視する。
+            self.0.show_later();
         } else {
             self.0.show();
         }
