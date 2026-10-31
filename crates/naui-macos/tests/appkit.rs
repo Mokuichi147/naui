@@ -16,12 +16,12 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use naui_core::{
-    Align, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, EventResponse,
-    FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    NavItem, Orientation, Padding, PlaybackState, Point, PointerButton, PointerPhase, PopupItem,
-    Rect, Result, ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing, SortOrder,
-    TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem, Track,
-    TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
+    EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
+    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, PlaybackState, Point, PointerButton,
+    PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, SidebarItem,
+    SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
+    ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
@@ -36,7 +36,7 @@ use objc2_app_kit::{
     NSEventMask, NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView,
     NSLayoutConstraint, NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder,
     NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl, NSStepper,
-    NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView,
+    NSSwitch, NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSTintProminence,
     NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
     NSWindowTitleVisibility,
 };
@@ -561,6 +561,10 @@ fn main() {
         (
             "ラベルの段階と役割が AppKit のフォントと色へ写る",
             label_style_and_color_map_to_appkit,
+        ),
+        (
+            "ボタンの役割が NSButton の属性へ写り、既定へ戻せる",
+            button_role_maps_to_appkit,
         ),
         (
             "分割ビューがネイティブの NSSplitView に 2 区画を並べる",
@@ -3710,6 +3714,67 @@ fn label_wraps_only_when_asked(ui: &Ui) -> Result<()> {
         "戻すと 1 行に戻ること: {:?}",
         wrapped.native_view().frame()
     );
+    Ok(())
+}
+
+/// `set_role` maps to `NSButton`'s properties. The role changes only the look, so
+/// the Return key equivalent (which makes the window's default button) stays empty.
+fn button_role_maps_to_appkit(ui: &Ui) -> Result<()> {
+    let button = ui.button("保存")?;
+    let native: Retained<NSButton> = button
+        .native_view()
+        .downcast()
+        .expect("ボタンは NSButton であること");
+    // `tintProminence` は macOS 26 から。CI の macOS 15 では代わりに `bezelColor` を見る。
+    let has_prominence = native.respondsToSelector(sel!(setTintProminence:));
+    let assert_normal = |when: &str| {
+        assert!(!native.hasDestructiveAction(), "{when}: 破壊的でないこと");
+        assert!(native.bezelColor().is_none(), "{when}: 地の色が無いこと");
+        if has_prominence {
+            assert_eq!(
+                native.tintProminence(),
+                NSTintProminence::Automatic,
+                "{when}: 強調が既定であること"
+            );
+        }
+    };
+    assert_normal("作った直後");
+
+    button.set_role(ButtonRole::Primary);
+    assert!(!native.hasDestructiveAction(), "主ボタンは破壊的でないこと");
+    if has_prominence {
+        assert_eq!(native.tintProminence(), NSTintProminence::Primary);
+    } else {
+        assert_eq!(
+            native.bezelColor().as_deref(),
+            Some(&*NSColor::controlAccentColor()),
+            "macOS 26 より前はアクセント色の地にすること"
+        );
+    }
+    assert_eq!(
+        native.keyEquivalent().to_string(),
+        "",
+        "Return のキー割り当ては付けないこと"
+    );
+
+    button.set_role(ButtonRole::Destructive);
+    assert!(native.hasDestructiveAction(), "破壊的な操作であること");
+    if has_prominence {
+        assert_eq!(native.tintProminence(), NSTintProminence::Secondary);
+        assert_eq!(
+            native.bezelColor().as_deref(),
+            Some(&*NSColor::systemRedColor()),
+            "警告パネルと同じ赤の地にすること"
+        );
+    } else {
+        assert!(
+            native.bezelColor().is_none(),
+            "主ボタンの地の色が残らないこと"
+        );
+    }
+
+    button.set_role(ButtonRole::Normal);
+    assert_normal("既定へ戻した後");
     Ok(())
 }
 

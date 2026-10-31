@@ -15,6 +15,7 @@
 /// are preserved.
 pub(crate) type Slot<F> = Option<Box<F>>;
 
+mod button;
 mod canvas;
 mod channel;
 mod color;
@@ -46,6 +47,7 @@ mod ui_text;
 mod weak;
 mod window;
 
+pub use button::ButtonRole;
 pub use canvas::{
     DrawCommand, Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase,
     Rect, WheelHandler, WHEEL_STEP,

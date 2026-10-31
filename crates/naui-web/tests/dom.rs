@@ -22,11 +22,11 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Color, DialogResponse, EventResponse, GridCell, Key, KeyEvent, Length, ListItem,
-    MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Point, PointerButton,
-    PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem, SidebarSection, Sizing,
-    TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement,
-    WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Align, ButtonRole, Color, DialogResponse, EventResponse, GridCell, Key, KeyEvent, Length,
+    ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Point,
+    PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem,
+    SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
+    ToolbarItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
@@ -990,6 +990,36 @@ fn label_wraps_only_when_asked() {
             (element.get_bounding_client_rect().height() - single).abs() < 0.5,
             "1 行へ戻っていません"
         );
+        Ok(())
+    });
+}
+
+/// `set_role` only marks the button with `data-naui-role`. Browsers have no look for
+/// the roles, so the drawn background stays that of an ordinary button.
+#[wasm_bindgen_test]
+fn button_role_only_marks_the_button() {
+    with_ui(|ui| {
+        let button = ui.button("保存")?;
+        let _mounted = Mounted::new(&button);
+        let element: HtmlElement = button.native_element().unchecked_into();
+        let role = || element.get_attribute("data-naui-role");
+        let background = || {
+            web_sys::window()
+                .and_then(|w| w.get_computed_style(&element).ok().flatten())
+                .and_then(|s| s.get_property_value("background-color").ok())
+                .unwrap_or_default()
+        };
+        assert_eq!(role(), None, "既定では属性を書かないこと");
+        let normal = background();
+
+        button.set_role(ButtonRole::Primary);
+        assert_eq!(role().as_deref(), Some("primary"));
+        assert_eq!(background(), normal, "見た目は変えないこと");
+        button.set_role(ButtonRole::Destructive);
+        assert_eq!(role().as_deref(), Some("destructive"));
+        assert_eq!(background(), normal, "見た目は変えないこと");
+        button.set_role(ButtonRole::Normal);
+        assert_eq!(role(), None, "既定へ戻すと属性が消えること");
         Ok(())
     });
 }

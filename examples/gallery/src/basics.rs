@@ -2,8 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{
-    Align, Button, Checkbox, ComboBox, Orientation, RadioGroup, Result, Slider, TextColor,
-    TextStyle, Theme, Toggle, Ui, WindowPlacement, WindowState,
+    Align, Button, ButtonRole, Checkbox, ComboBox, Orientation, RadioGroup, Result, Slider,
+    TextColor, TextStyle, Theme, Toggle, Ui, WindowPlacement, WindowState,
 };
 
 use crate::parts::{self, Disabler, Form, Notice};
@@ -47,6 +47,24 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
     buttons.append(&reset);
     buttons.append(&disabled);
     form.row(ui, "Button", &buttons)?;
+
+    // 役割は見た目だけを変える。Web には対応する見た目が無いので、どれも同じに見える。
+    let roles = parts::row(ui)?;
+    for (title, role) in [
+        ("Cancel", ButtonRole::Normal),
+        ("Save", ButtonRole::Primary),
+        ("Delete", ButtonRole::Destructive),
+    ] {
+        let button = ui.button(title)?;
+        button.set_role(role);
+        disabler.add(&button, Button::set_enabled);
+        button.on_click({
+            let notice = notice.clone();
+            move || notice.show(&format!("{title} ({role:?})"))
+        });
+        roles.append(&button);
+    }
+    form.row(ui, "Button role", &roles)?;
 
     let checkbox = ui.checkbox("Enable item")?;
     disabler.add(&checkbox, Checkbox::set_enabled);
