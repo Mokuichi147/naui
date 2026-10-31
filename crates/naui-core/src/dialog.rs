@@ -115,6 +115,79 @@ impl DialogButtons {
     }
 }
 
+/// The narrowest a sheet gets, in logical pixels, however narrow its content.
+///
+/// The same as WinUI's `ContentDialogMinWidth`, which `ContentDialog` keeps by
+/// itself; the other platforms would otherwise shrink to the content and the
+/// buttons.
+pub const SHEET_MIN_WIDTH: f64 = 320.0;
+
+/// Which of a sheet's buttons are enabled. All are by default.
+///
+/// The cancel button is always enabled: Esc closes the sheet as a cancel on every
+/// platform, so disabling the button would not stop it.
+///
+/// ```
+/// # use naui_core::{DialogResponse, EnabledButtons};
+/// let mut enabled = EnabledButtons::default();
+/// enabled.set(DialogResponse::Primary, false);
+/// enabled.set(DialogResponse::Cancel, false);
+/// assert!(!enabled.get(DialogResponse::Primary));
+/// assert!(enabled.get(DialogResponse::Secondary));
+/// assert!(enabled.get(DialogResponse::Cancel));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnabledButtons {
+    primary: bool,
+    secondary: bool,
+}
+
+impl Default for EnabledButtons {
+    fn default() -> Self {
+        Self {
+            primary: true,
+            secondary: true,
+        }
+    }
+}
+
+impl EnabledButtons {
+    /// Enables or disables the button for `response`. [`DialogResponse::Cancel`] is
+    /// ignored.
+    pub fn set(&mut self, response: DialogResponse, enabled: bool) {
+        match response {
+            DialogResponse::Primary => self.primary = enabled,
+            DialogResponse::Secondary => self.secondary = enabled,
+            DialogResponse::Cancel => {}
+        }
+    }
+
+    /// Whether the button for `response` is enabled.
+    pub fn get(&self, response: DialogResponse) -> bool {
+        match response {
+            DialogResponse::Primary => self.primary,
+            DialogResponse::Secondary => self.secondary,
+            DialogResponse::Cancel => true,
+        }
+    }
+}
+
+/// The button that Return (Enter) presses: the primary one if there is one,
+/// otherwise the cancel one (the "OK" of a sheet with only that button).
+///
+/// ```
+/// # use naui_core::{default_response, DialogButtons, DialogResponse};
+/// let buttons = DialogButtons::new().primary("Create").cancel("Cancel");
+/// assert_eq!(default_response(&buttons), Some(DialogResponse::Primary));
+/// assert_eq!(default_response(&DialogButtons::ok()), Some(DialogResponse::Cancel));
+/// assert_eq!(default_response(&DialogButtons::new().secondary("Later")), None);
+/// ```
+pub fn default_response(buttons: &DialogButtons) -> Option<DialogResponse> {
+    [DialogResponse::Primary, DialogResponse::Cancel]
+        .into_iter()
+        .find(|&role| buttons.label(role).is_some())
+}
+
 fn non_empty(label: impl Into<String>) -> Option<String> {
     let label = label.into();
     if label.is_empty() {

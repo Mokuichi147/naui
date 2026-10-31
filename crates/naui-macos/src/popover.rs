@@ -1,9 +1,10 @@
 //! Popovers (AppKit's `NSPopover`).
 //!
-//! The content widget is put into a plain `NSView` with a margin around it, which
-//! becomes the view of the popover's `contentViewController`. The popover's size
-//! follows that view's constraints, so content that grows while it is shown (an
-//! `Expander` being opened) grows the popover too.
+//! The content widget is put into a plain `NSView` with a margin around it (the
+//! same [`HostedChild`] as sheets), which becomes the view of the popover's
+//! `contentViewController`. The popover's size follows that view's constraints, so
+//! content that grows while it is shown (an `Expander` being opened) grows the
+//! popover too.
 //!
 //! The arrow, the material, closing on a click outside or Esc
 //! (`NSPopoverBehaviorTransient`) and moving to the opposite side when there is no
@@ -16,20 +17,15 @@ use naui_core::PopoverPosition;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{
-    NSLayoutConstraint, NSPopover, NSPopoverBehavior, NSPopoverDelegate, NSView, NSViewController,
-};
-use objc2_foundation::{NSArray, NSNotification, NSRect, NSRectEdge};
+use objc2_app_kit::{NSPopover, NSPopoverBehavior, NSPopoverDelegate, NSView, NSViewController};
+use objc2_foundation::{NSNotification, NSRect, NSRectEdge};
 
+use crate::hosted::HostedChild;
 use crate::trampoline::ValueHandler;
 use crate::widgets::Widget;
 
 /// The margin between the popover's edge and the content.
 const PADDING: f64 = 12.0;
-
-/// The width given to content that cannot decide its own width (a text field on its
-/// own). About the same as `Dialog`'s.
-const FALLBACK_WIDTH: f64 = 260.0;
 
 define_class!(
     /// Receives `popoverDidClose:` and hands it to the closure.
@@ -62,14 +58,8 @@ impl PopoverObserver {
 
 struct PopoverInner {
     native: Retained<NSPopover>,
-    /// The `contentViewController`'s view. The content goes inside it.
-    container: Retained<NSView>,
-    /// The content's handle. Held to keep it alive along with its trampolines.
-    child: RefCell<Option<Box<dyn Widget>>>,
-    /// The constraints placing the content inside the container.
-    child_constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
-    /// The width given to content that cannot decide its own. Set on each open.
-    fallback_width: RefCell<Option<Retained<NSLayoutConstraint>>>,
+    /// The content, inside the `contentViewController`'s view.
+    content: HostedChild,
     /// The handle of the widget it is shown beside. `NSPopover` does not hold it.
     anchor: RefCell<Option<Box<dyn Widget>>>,
     position: Cell<PopoverPosition>,
@@ -94,17 +84,14 @@ impl Popover {
         let native = NSPopover::new(mtm);
         // 外側を押す・Esc で閉じる。メニューやほかのポップオーバーと同じ扱い。
         native.setBehavior(NSPopoverBehavior::Transient);
-        let container = NSView::new(mtm);
+        let content = HostedChild::new(mtm, PADDING);
         let controller = NSViewController::new(mtm);
-        controller.setView(&container);
+        controller.setView(content.container());
         native.setContentViewController(Some(&controller));
 
         let this = Self(Rc::new(PopoverInner {
             native,
-            container,
-            child: RefCell::new(None),
-            child_constraints: RefCell::new(Vec::new()),
-            fallback_width: RefCell::new(None),
+            content,
             anchor: RefCell::new(None),
             position: Cell::new(PopoverPosition::default()),
             open: Cell::new(false),
@@ -138,36 +125,7 @@ impl Popover {
 
     /// The content. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
-        let container = &self.0.container;
-        if let Some(previous) = self.0.child.borrow_mut().take() {
-            previous.native_view().removeFromSuperview();
-        }
-        let mut constraints = self.0.child_constraints.borrow_mut();
-        if !constraints.is_empty() {
-            NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&constraints));
-            constraints.clear();
-        }
-
-        let view = child.native_view();
-        crate::layout::prepare_child(&view);
-        container.addSubview(&view);
-        constraints.extend([
-            view.leadingAnchor()
-                .constraintEqualToAnchor_constant(&container.leadingAnchor(), PADDING),
-            container
-                .trailingAnchor()
-                .constraintEqualToAnchor_constant(&view.trailingAnchor(), PADDING),
-            view.topAnchor()
-                .constraintEqualToAnchor_constant(&container.topAnchor(), PADDING),
-            container
-                .bottomAnchor()
-                .constraintEqualToAnchor_constant(&view.bottomAnchor(), PADDING),
-        ]);
-        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
-        drop(constraints);
-        *self.0.child.borrow_mut() = Some(child.boxed_clone());
-        // 出ている間に差し替えたときも、新しい中身で幅を決め直す。
-        self.apply_fallback_width();
+        self.0.content.set(child);
     }
 
     /// The side it prefers to appear on. Bottom by default.
@@ -197,7 +155,7 @@ impl Popover {
         if !window.isVisible() {
             return;
         }
-        self.apply_fallback_width();
+        self.0.content.apply_fallback_width();
         self.show_beside(&view);
         if self.0.native.isShown() {
             self.0.open.set(true);
@@ -211,25 +169,6 @@ impl Popover {
         self.0
             .native
             .showRelativeToRect_ofView_preferredEdge(NSRect::ZERO, view, edge);
-    }
-
-    /// Gives content that cannot decide its own width a width to show at. Decided
-    /// again on each open and each `set_child`.
-    fn apply_fallback_width(&self) {
-        if let Some(previous) = self.0.fallback_width.borrow_mut().take() {
-            previous.setActive(false);
-        }
-        let Some(child) = self.0.child.borrow().as_ref().map(|c| c.native_view()) else {
-            return;
-        };
-        if child.fittingSize().width > 0.0 {
-            return;
-        }
-        let constraint = child
-            .widthAnchor()
-            .constraintGreaterThanOrEqualToConstant(FALLBACK_WIDTH);
-        constraint.setActive(true);
-        *self.0.fallback_width.borrow_mut() = Some(constraint);
     }
 
     /// Closes it. `on_close` is not called. Does nothing if it is not open.

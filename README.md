@@ -129,7 +129,7 @@ python3 -m http.server 8080
 | Data selection | `ComboBox`, `EditableComboBox`, `RadioGroup`, `DatePicker`, `TimePicker`, `ColorPicker`, `List`, `Table`, `Tree` |
 | Files & media | `FilePicker`, `FileSaver`, `Image`, `Video`, `Audio` |
 | Drawing | `Canvas` |
-| Overlays | `PopupMenu`, `Popover`, `Dialog`, `Toast` |
+| Overlays | `PopupMenu`, `Popover`, `Dialog`, `Sheet`, `Toast` |
 | Navigation | `Tabs`, `Navbar`, `Dock`, `Menu`, `Breadcrumbs`, `Pagination`, `Link` |
 
 Which control each widget becomes on each platform is listed in

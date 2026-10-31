@@ -62,6 +62,7 @@ mod popup;
 mod radio_group;
 mod sdk;
 mod search_input;
+mod sheet;
 mod sidebar;
 mod split_view;
 mod table;
@@ -101,6 +102,7 @@ pub use popover::Popover;
 pub use popup::PopupMenu;
 pub use radio_group::RadioGroup;
 pub use search_input::SearchInput;
+pub use sheet::Sheet;
 pub use sidebar::Sidebar;
 pub use split_view::SplitView;
 pub use table::{Table, TableCells};
@@ -137,6 +139,8 @@ struct UiInner {
     windows: RefCell<Vec<Window>>,
     /// Dialogs are never appended anywhere, so they are held here.
     dialogs: RefCell<Vec<Dialog>>,
+    /// Sheets are not part of the layout either, so they are held here.
+    sheets: RefCell<Vec<Sheet>>,
     /// Popup menus are not part of the layout, so no parent holds them.
     popups: RefCell<Vec<PopupMenu>>,
     /// Popovers are not part of the layout either, so they are held here.
@@ -163,6 +167,7 @@ impl Ui {
             theme: Cell::new(theme),
             windows: RefCell::new(Vec::new()),
             dialogs: RefCell::new(Vec::new()),
+            sheets: RefCell::new(Vec::new()),
             popups: RefCell::new(Vec::new()),
             popovers: RefCell::new(Vec::new()),
             toolbars: RefCell::new(Vec::new()),
@@ -477,6 +482,17 @@ impl Ui {
         Ok(d)
     }
 
+    /// A modal dialog holding any widget as its content. `title` is the heading.
+    /// Backed by `ContentDialog`.
+    ///
+    /// The framework keeps a reference to it, so dropping the return value does not
+    /// stop notifications.
+    pub fn sheet(&self, title: &str) -> Result<Sheet> {
+        let sheet = Sheet::new(title, self.0.theme.get())?;
+        self.0.sheets.borrow_mut().push(sheet.clone());
+        Ok(sheet)
+    }
+
     /// Switches the color theme at runtime.
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         for window in self.0.windows.borrow().iter() {
@@ -485,6 +501,9 @@ impl Ui {
         // ダイアログはウィンドウとは別の層に出るので、個別に伝える。
         for dialog in self.0.dialogs.borrow().iter() {
             dialog.set_theme(theme);
+        }
+        for sheet in self.0.sheets.borrow().iter() {
+            sheet.set_theme(theme);
         }
         self.0.theme.set(theme);
         Ok(())

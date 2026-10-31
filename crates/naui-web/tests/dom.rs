@@ -22,9 +22,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, ButtonRole, Color, DialogResponse, EventResponse, GridCell, Key, KeyEvent, Length,
-    ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Point,
-    PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem,
+    Align, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, GridCell, Key,
+    KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
+    Point, PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem,
     SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
     ToolbarItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
@@ -92,6 +92,19 @@ fn dispatch(target: &EventTarget, kind: &str) {
 fn press_escape(target: &EventTarget, composing: bool) -> bool {
     let init = KeyboardEventInit::new();
     init.set_key("Escape");
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    init.set_is_composing(composing);
+    let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+        .expect("キーイベントの生成");
+    !target.dispatch_event(&event).expect("イベントの配送")
+}
+
+/// Fires an Enter `keydown`. **The return value is whether the default action was
+/// prevented.**
+fn press_enter(target: &EventTarget, composing: bool) -> bool {
+    let init = KeyboardEventInit::new();
+    init.set_key("Enter");
     init.set_bubbles(true);
     init.set_cancelable(true);
     init.set_is_composing(composing);
@@ -2154,18 +2167,6 @@ fn center_within(list: &Element, target: &Element) -> (f64, f64) {
     )
 }
 
-/// Fires an Enter `keydown`.
-fn press_enter(target: &EventTarget, composing: bool) {
-    let init = KeyboardEventInit::new();
-    init.set_key("Enter");
-    init.set_bubbles(true);
-    init.set_cancelable(true);
-    init.set_is_composing(composing);
-    let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
-        .expect("キーイベントの生成");
-    target.dispatch_event(&event).expect("イベントの配送");
-}
-
 /// With text-only rows (`<select size>`), double-clicks and Enter become row
 /// activations, and right-clicks pass the row and position. Not called for rows
 /// that cannot be selected.
@@ -3720,6 +3721,189 @@ fn dialog_leaves_escape_to_the_ime_while_composing() {
 
         dialog.close();
         dialog.native_element().remove();
+        Ok(())
+    });
+}
+
+// --------------------------------------------------------------- Sheet
+
+/// The labels of a sheet's buttons, from the left.
+fn sheet_button_labels(sheet: &naui_web::Sheet) -> Vec<String> {
+    sheet_button_elements(sheet)
+        .iter()
+        .map(|button| button.text_content().unwrap_or_default())
+        .collect()
+}
+
+fn sheet_button_elements(sheet: &naui_web::Sheet) -> Vec<HtmlElement> {
+    let list = sheet
+        .native_element()
+        .query_selector_all("button")
+        .expect("ボタンの検索");
+    (0..list.length())
+        .filter_map(|i| list.get(i))
+        .map(|node| node.unchecked_into::<HtmlElement>())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn sheet_lays_out_title_content_and_buttons() {
+    with_ui(|ui| {
+        let sheet = ui.sheet("新しいフォルダ")?;
+        let field = ui.text_input("名称未設定")?;
+        sheet.set_child(&field);
+        sheet.set_buttons(
+            DialogButtons::new()
+                .primary("作成")
+                .secondary("あとで")
+                .cancel("キャンセル"),
+        );
+        let element = sheet.native_element();
+        assert_eq!(element.tag_name(), "DIALOG");
+        let heading = element
+            .query_selector("h2")
+            .expect("見出しの検索")
+            .expect("見出し");
+        assert_eq!(heading.text_content().as_deref(), Some("新しいフォルダ"));
+        assert!(
+            element.contains(Some(&field.native_element())),
+            "中身が <dialog> の中に入ること"
+        );
+        let message: HtmlElement = element
+            .query_selector("p")
+            .expect("本文の検索")
+            .expect("本文")
+            .unchecked_into();
+        assert!(message.hidden(), "本文は出さないこと");
+        assert_eq!(
+            sheet_button_labels(&sheet),
+            ["あとで", "キャンセル", "作成"]
+        );
+        let buttons = sheet_button_elements(&sheet);
+        assert_eq!(
+            buttons[2].get_attribute("data-naui-role").as_deref(),
+            Some("primary"),
+            "主ボタンに Button::set_role と同じ印"
+        );
+        assert_eq!(buttons[1].get_attribute("data-naui-role"), None);
+        let min_width = element
+            .unchecked_ref::<HtmlElement>()
+            .style()
+            .get_property_value("min-width")
+            .unwrap_or_default();
+        assert!(
+            min_width.contains("320px"),
+            "最小の幅を持つこと: {min_width}"
+        );
+
+        sheet.set_title("");
+        assert!(
+            heading.unchecked_ref::<HtmlElement>().hidden(),
+            "空の見出しは出さない"
+        );
+
+        sheet.open();
+        assert!(sheet.is_open());
+        sheet.close();
+        assert!(!sheet.is_open());
+        element.remove();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sheet_buttons_respond_and_can_be_disabled() {
+    with_ui(|ui| {
+        let sheet = ui.sheet("確認")?;
+        sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sheet.on_response({
+            let seen = seen.clone();
+            move |response| seen.borrow_mut().push(response)
+        });
+
+        sheet.set_button_enabled(DialogResponse::Primary, false);
+        sheet.set_button_enabled(DialogResponse::Cancel, false);
+        assert!(!sheet.is_button_enabled(DialogResponse::Primary));
+        assert!(sheet.is_button_enabled(DialogResponse::Cancel));
+        let disabled = |sheet: &naui_web::Sheet| -> Vec<bool> {
+            sheet_button_elements(sheet)
+                .iter()
+                .map(|button| button.has_attribute("disabled"))
+                .collect()
+        };
+        assert_eq!(disabled(&sheet), [false, true]);
+        sheet.set_buttons(DialogButtons::new().primary("保存").cancel("やめる"));
+        assert_eq!(disabled(&sheet), [false, true], "差し替えても残ること");
+        sheet.set_button_enabled(DialogResponse::Primary, true);
+        assert_eq!(disabled(&sheet), [false, false]);
+
+        sheet.open();
+        sheet_button_elements(&sheet)[1].click();
+        assert_eq!(*seen.borrow(), [DialogResponse::Primary]);
+        assert!(!sheet.is_open(), "押したら閉じること");
+        sheet.native_element().remove();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn sheet_enter_in_a_text_field_presses_the_default_button() {
+    with_ui(|ui| {
+        let sheet = ui.sheet("名前")?;
+        let column = ui.stack(Orientation::Vertical)?;
+        let field = ui.text_input("")?;
+        let check = ui.checkbox("あとで開く")?;
+        column.append(&field);
+        column.append(&check);
+        sheet.set_child(&column);
+        sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        sheet.on_response({
+            let seen = seen.clone();
+            move |response| seen.borrow_mut().push(response)
+        });
+        sheet.open();
+        let input = field.native_element();
+
+        assert!(
+            !press_enter(input.as_ref(), true),
+            "変換中は IME へ渡すこと"
+        );
+        assert!(sheet.is_open());
+
+        let checkbox = check
+            .native_element()
+            .query_selector("input")
+            .expect("チェックボックスの検索")
+            .unwrap_or_else(|| check.native_element());
+        press_enter(checkbox.as_ref(), false);
+        assert!(sheet.is_open(), "チェックボックスの Enter では押さないこと");
+
+        sheet.set_button_enabled(DialogResponse::Primary, false);
+        assert!(!press_enter(input.as_ref(), false));
+        assert!(sheet.is_open(), "無効な主ボタンは Enter でも押せないこと");
+
+        sheet.set_button_enabled(DialogResponse::Primary, true);
+        assert!(press_enter(input.as_ref(), false), "既定の動作を止めること");
+        assert_eq!(*seen.borrow(), [DialogResponse::Primary]);
+        assert!(!sheet.is_open());
+
+        // 主ボタンが無ければ、OK (取り消し) が既定のボタン。
+        sheet.set_buttons(DialogButtons::new());
+        sheet.open();
+        press_enter(input.as_ref(), false);
+        assert_eq!(
+            *seen.borrow(),
+            [DialogResponse::Primary, DialogResponse::Cancel]
+        );
+
+        // Esc は取り消し。
+        sheet.open();
+        press_escape(input.as_ref(), false);
+        assert_eq!(seen.borrow().last(), Some(&DialogResponse::Cancel));
+        assert!(!sheet.is_open());
+        sheet.native_element().remove();
         Ok(())
     });
 }

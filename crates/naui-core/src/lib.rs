@@ -56,7 +56,9 @@ pub use canvas::{
 pub use channel::Sender;
 pub use color::Color;
 pub use datetime::{days_in_month, is_leap_year, DatePickerMode, DateTime, Time};
-pub use dialog::{DialogButtons, DialogResponse};
+pub use dialog::{
+    default_response, DialogButtons, DialogResponse, EnabledButtons, SHEET_MIN_WIDTH,
+};
 pub use file::{
     accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
     FilePickerMode,
