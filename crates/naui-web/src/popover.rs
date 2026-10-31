@@ -13,10 +13,17 @@
 //! opposite side when there is no room. Newer parts of the specification, such as
 //! `position-visibility`, still differ between engines, so they are not used.
 //!
+//! The element lives in `<body>`, or in the `<dialog>` holding the widget while it
+//! is shown beside one: a modal dialog makes everything outside it inert, and the
+//! top layer does not change that, so a popover left in `<body>` could not be
+//! clicked or focused.
+//!
 //! ## Differences from other platforms
 //!
 //! In a browser without anchor positioning, the popover is shown in the middle of
-//! the window (the user agent's default for `[popover]`).
+//! the window (the user agent's default for `[popover]`). The placement styles are
+//! only set where the browser supports them, since without `position-area` they
+//! would only undo that centering.
 //!
 //! That the user closed it is learned from the `toggle` event, which arrives after
 //! the fact (a task later), so [`Popover::is_open`] reads `:popover-open` rather
@@ -73,12 +80,15 @@ impl Popover {
         let id = NEXT_ID.with(|next| next.replace(next.get() + 1));
         let anchor_name = format!("--naui-popover-{id}");
         let style = element.style();
-        let _ = style.set_property("position-anchor", &anchor_name);
-        // 既定の `inset: 0; margin: auto` は画面の中央に置くためのもの。外すと
-        // `position-area` の側で、ウィジェットの中央にそろう。
-        let _ = style.set_property("inset", "auto");
-        let _ = style.set_property("margin", GAP);
         let _ = style.set_property("padding", PADDING);
+        // 既定の `inset: 0; margin: auto` は画面の中央に置くためのもの。外すと
+        // `position-area` の側で、ウィジェットの中央にそろう。アンカー配置のない
+        // ブラウザで外すと左上へずれて画面から出るので、そのときは中央のままにする。
+        if supports_anchor_positioning() {
+            let _ = style.set_property("position-anchor", &anchor_name);
+            let _ = style.set_property("inset", "auto");
+            let _ = style.set_property("margin", GAP);
+        }
         // `showPopover()` は文書に入っている要素にしか効かないため、
         // 作った時点で `<body>` へ入れておく (`Dialog` と同じ)。
         doc.body()
@@ -168,11 +178,29 @@ impl Popover {
 
     /// Shows it beside `widget`. If it is already open, it moves to `widget`.
     ///
-    /// Does nothing while `widget` is not in the document.
+    /// Does nothing while `widget` is not shown (not in the document, or in a closed
+    /// window).
     pub fn open(&self, widget: &dyn Widget) {
         let target = widget.native_element();
-        if !target.is_connected() {
+        // 閉じたウィンドウは `display: none` で文書に残るので、箱があるかも見る。
+        if !target.is_connected() || target.get_client_rects().length() == 0 {
             return;
+        }
+        // モーダルの `<dialog>` の外は inert になり、top layer に出ても押せない。
+        // ウィジェットと同じダイアログの中へ移す。出ている要素を移すと、`toggle` を
+        // 出さずに閉じる (HTML の removing steps) ので、下で出し直す。
+        let host = match target.closest("dialog") {
+            Ok(Some(dialog)) => Some(dialog),
+            _ => target
+                .owner_document()
+                .and_then(|doc| doc.body())
+                .map(|body| body.unchecked_into()),
+        };
+        if let Some(host) = host {
+            let parent = self.0.element.parent_element();
+            if parent.as_ref() != Some(&host) && host.append_child(&self.0.element).is_err() {
+                return;
+            }
         }
         self.release_anchor();
         set_anchor_name(&target, &self.0.anchor_name, true);
@@ -196,6 +224,7 @@ impl Popover {
         if !self.0.open.replace(false) {
             return;
         }
+        self.release_anchor();
         let _ = self.0.element.hide_popover();
     }
 
@@ -223,6 +252,11 @@ impl Popover {
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()
     }
+}
+
+/// Whether the browser has CSS anchor positioning (`position-area`).
+fn supports_anchor_positioning() -> bool {
+    web_sys::css::supports_with_value("position-area", "bottom").unwrap_or(false)
 }
 
 /// Adds `name` to, or removes it from, the element's `anchor-name` (a

@@ -2717,13 +2717,16 @@ async fn popover_opens_beside_the_widget_and_closes_quietly() {
     popover.open(&button);
     assert!(popover.is_open());
     assert!(element.matches(":popover-open").unwrap_or(false));
-    let name = popover_anchor(&popover);
-    assert!(name.starts_with("--"), "アンカーの名前があること: {name}");
-    assert_eq!(
-        anchor_names(&button.native_element()),
-        vec![name.clone()],
-        "押したウィジェットがアンカーになること"
-    );
+    // アンカー配置の無いブラウザは `anchor-name` などを読み捨てる。
+    if supports_anchor_positioning() {
+        let name = popover_anchor(&popover);
+        assert!(name.starts_with("--"), "アンカーの名前があること: {name}");
+        assert_eq!(
+            anchor_names(&button.native_element()),
+            vec![name.clone()],
+            "押したウィジェットがアンカーになること"
+        );
+    }
     assert!(
         element.text_content().unwrap_or_default().contains("中身"),
         "中身がポップオーバーの中に入ること"
@@ -2782,7 +2785,9 @@ async fn popover_dismissed_by_the_user_notifies() {
     next_frames().await;
     assert!(popover.is_open());
     assert_eq!(closed.get(), 1);
-    assert_eq!(anchor_names(&button.native_element()).len(), 1);
+    if supports_anchor_positioning() {
+        assert_eq!(anchor_names(&button.native_element()).len(), 1);
+    }
     popover.close();
     popover.native_element().remove();
 }
@@ -2852,6 +2857,9 @@ fn popover_needs_a_widget_in_the_document() {
 
 #[wasm_bindgen_test]
 fn popovers_share_an_anchor_and_move_between_widgets() {
+    if !supports_anchor_positioning() {
+        return;
+    }
     with_ui(|ui| {
         let (root, first, popover, closed) = popover_fixture(ui)?;
         let second = ui.button("表示")?;
@@ -2882,6 +2890,140 @@ fn popovers_share_an_anchor_and_move_between_widgets() {
         other.native_element().remove();
         Ok(())
     });
+}
+
+#[wasm_bindgen_test]
+async fn popover_stays_inside_the_window() {
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(popover_fixture(ui)?);
+        Ok(())
+    });
+    let (root, button, popover, _closed) = kept.expect("組み立て");
+    let _mounted = mount_in_view(&root);
+    let element = popover.native_element();
+    let inset = element
+        .unchecked_ref::<HtmlElement>()
+        .style()
+        .get_property_value("inset")
+        .unwrap_or_default();
+    // アンカー配置が無いと、中央に置く既定を外すだけになるので残すこと。
+    if supports_anchor_positioning() {
+        assert_eq!(inset, "auto");
+    } else {
+        assert_eq!(
+            inset, "",
+            "アンカー配置が無いときは既定の中央のままにすること"
+        );
+    }
+
+    popover.open(&button);
+    next_frames().await;
+    let window = web_sys::window().expect("window");
+    let width = window
+        .inner_width()
+        .ok()
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let height = window
+        .inner_height()
+        .ok()
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let rect = element.get_bounding_client_rect();
+    assert!(
+        rect.left() >= 0.0 && rect.top() >= 0.0 && rect.right() <= width && rect.bottom() <= height,
+        "画面の中に出ること: ({}, {}, {}, {}) / {width}x{height}",
+        rect.left(),
+        rect.top(),
+        rect.right(),
+        rect.bottom()
+    );
+    popover.close();
+    element.remove();
+}
+
+#[wasm_bindgen_test]
+fn popover_needs_a_shown_window() {
+    with_ui(|ui| {
+        let window = ui.window("ポップオーバー", 400.0, 300.0)?;
+        let button = ui.button("設定")?;
+        window.set_child(&button);
+        let popover = ui.popover()?;
+        popover.set_child(&ui.label("中身")?);
+
+        popover.open(&button);
+        assert!(popover.is_open(), "出ているウィンドウでは開くこと");
+        popover.close();
+
+        // 閉じたウィンドウは文書に残るが、そこからは開かないこと。
+        window.close();
+        popover.open(&button);
+        assert!(!popover.is_open(), "閉じたウィンドウからは開かないこと");
+        assert!(anchor_names(&button.native_element()).is_empty());
+
+        window.show();
+        popover.open(&button);
+        assert!(popover.is_open(), "出し直したウィンドウでは開くこと");
+        popover.close();
+        window.close();
+        popover.native_element().remove();
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+async fn popover_in_a_modal_dialog_can_be_used() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let (root, outside, popover, closed) = popover_fixture(ui)?;
+        let field = ui.text_input("")?;
+        popover.set_child(&field);
+        let dialog = ui.dialog("確認")?;
+        let inside = ui.button("詳細")?;
+        dialog.set_child(&inside);
+        kept = Some((root, outside, popover, closed, field, dialog, inside));
+        Ok(())
+    });
+    let (root, outside, popover, closed, field, dialog, inside) = kept.expect("組み立て");
+    let _mounted = Mounted::new(&root);
+    let element = popover.native_element();
+
+    dialog.open();
+    popover.open(&inside);
+    assert!(popover.is_open());
+    assert_eq!(
+        element.parent_element().as_ref(),
+        Some(&dialog.native_element()),
+        "ウィジェットと同じダイアログの中に置くこと"
+    );
+    // モーダルの外 (inert) に置かれていると、フォーカスを受け取れない。
+    let input = field.native_element();
+    input
+        .unchecked_ref::<HtmlElement>()
+        .focus()
+        .expect("フォーカス");
+    assert_eq!(
+        body().owner_document().and_then(|doc| doc.active_element()),
+        Some(input.clone()),
+        "ダイアログの中のポップオーバーを操作できること"
+    );
+
+    // ダイアログの外のウィジェットへ開いたまま移しても、閉じた知らせは出ないこと。
+    popover.open(&outside);
+    assert!(popover.is_open(), "開いたまま移せること");
+    assert_eq!(
+        element.parent_element().as_ref(),
+        Some(&body().unchecked_into())
+    );
+    next_frames().await;
+    assert!(popover.is_open());
+    assert_eq!(closed.get(), 0, "移しただけで通知しないこと");
+
+    popover.close();
+    dialog.close();
+    element.remove();
+    dialog.native_element().remove();
 }
 
 #[wasm_bindgen_test]

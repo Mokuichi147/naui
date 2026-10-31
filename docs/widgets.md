@@ -466,15 +466,19 @@ collected in [Known limitations](known-limitations.md).
   unless the page prevents the default action, so closing a dialog would take two
   presses. Esc during composition (`isComposing`) is for cancelling input, so it is
   passed to the IME as is.
-- **`Popover`**: A `<div popover="auto">` directly under `<body>`, shown with
+- **`Popover`**: A `<div popover="auto">` under `<body>`, shown with
   `showPopover()`; the top layer, light dismiss and the look (`Canvas` /
-  `CanvasText` and a border) are the browser's. It is placed with CSS anchor
+  `CanvasText` and a border) are the browser's. When the widget is inside a
+  `<dialog>`, the popover moves into that dialog on opening: a modal dialog makes
+  everything outside it inert, and the top layer does not change that. It is placed with CSS anchor
   positioning: the widget gets an `anchor-name` unique to the popover (added to a
   comma-separated list, since several popovers can point at the same widget), and
   the popover gets `position-anchor`, `position-area` for the side and
   `position-try-fallbacks` (`flip-block` / `flip-inline`) for the opposite side.
   `inset: auto` replaces the user agent's `inset: 0; margin: auto`, so it lines up
-  with the middle of the widget. Newer parts such as `position-visibility` still
+  with the middle of the widget. These are set only when `CSS.supports` reports
+  `position-area`; otherwise they would undo the centering and push the popover
+  off screen. Newer parts such as `position-visibility` still
   differ between engines and are not used.
 - **`Toast`**: Pages have no standard element for transient notifications, so a
   `<div role="status">` is shown at the bottom center with `position: fixed` (the
