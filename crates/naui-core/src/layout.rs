@@ -2,7 +2,11 @@
 //!
 //! Everything here only describes "how you want things placed"; no layout is
 //! computed. The actual placement is done by each backend's native layout system
-//! (Auto Layout / the XAML layout pass / CSS).
+//! (Auto Layout / the XAML layout pass / CSS). The one decision here,
+//! [`StackArrangement`], is for platforms whose toolkit cannot switch a stack's
+//! orientation by its width.
+
+use crate::Orientation;
 
 /// How a width or height is determined.
 ///
@@ -354,6 +358,137 @@ fn clamp_offset(value: f64, max: f64) -> f64 {
     }
 }
 
+/// How much narrower than [`Breakpoint::min_width`] a stack has to get before it
+/// goes back to its own orientation (logical pixels).
+///
+/// The same slack as a sidebar's automatic collapsing, so a width right at the
+/// boundary does not flip the arrangement back and forth.
+const BREAKPOINT_HYSTERESIS: f64 = 8.0;
+
+/// The width from which a `Stack` lays its children out in another orientation.
+///
+/// Declared in advance with `Stack::set_breakpoint`: while the stack is at least
+/// `min_width` wide (its padding included), its children are laid out in
+/// `orientation`, and below that in the orientation the stack was made with (or
+/// given with `set_orientation`). Going back takes a few pixels less than the
+/// threshold, so a width right at the boundary does not flip it back and forth.
+///
+/// ```
+/// # use naui_core::{Breakpoint, Orientation};
+/// // Side by side from 600 wide, stacked below that.
+/// let breakpoint = Breakpoint::new(600.0, Orientation::Horizontal);
+/// assert_eq!(breakpoint.min_width, 600.0);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Breakpoint {
+    /// The narrowest width (logical pixels, including the stack's padding) at which
+    /// `orientation` applies.
+    pub min_width: f64,
+    /// The orientation while the stack is at least `min_width` wide.
+    pub orientation: Orientation,
+}
+
+impl Breakpoint {
+    pub const fn new(min_width: f64, orientation: Orientation) -> Self {
+        Self {
+            min_width,
+            orientation,
+        }
+    }
+}
+
+/// Decides a `Stack`'s orientation from its width. Used by backends.
+///
+/// It holds the orientation the app gave the stack (the *base*) and its
+/// [`Breakpoint`], and is told the stack's width after each layout:
+///
+/// - Narrower than the breakpoint, the base applies; at least as wide, the
+///   breakpoint's orientation.
+/// - Once the breakpoint applies, it keeps applying until the width drops
+///   a few pixels (8) below the threshold.
+/// - Before the first width arrives, the base applies. Setting a breakpoint later
+///   decides again from the last width, without slack.
+///
+/// ```
+/// # use naui_core::{Breakpoint, Orientation, StackArrangement};
+/// let mut arrangement = StackArrangement::new(Orientation::Vertical);
+/// arrangement.set_breakpoint(Some(Breakpoint::new(600.0, Orientation::Horizontal)));
+/// assert!(arrangement.resized(700.0));
+/// assert_eq!(arrangement.orientation(), Orientation::Horizontal);
+/// assert!(arrangement.resized(500.0));
+/// assert_eq!(arrangement.orientation(), Orientation::Vertical);
+/// ```
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StackArrangement {
+    base: Orientation,
+    breakpoint: Option<Breakpoint>,
+    /// The last width. 0 until the first one arrives.
+    width: f64,
+    /// Whether the breakpoint applies.
+    wide: bool,
+}
+
+impl StackArrangement {
+    pub const fn new(base: Orientation) -> Self {
+        Self {
+            base,
+            breakpoint: None,
+            width: 0.0,
+            wide: false,
+        }
+    }
+
+    /// Changes the orientation used below the breakpoint (or always, without one).
+    pub fn set_base(&mut self, base: Orientation) {
+        self.base = base;
+    }
+
+    /// The orientation used below the breakpoint.
+    pub fn base(&self) -> Orientation {
+        self.base
+    }
+
+    /// Sets or removes the breakpoint, deciding again from the last width.
+    pub fn set_breakpoint(&mut self, breakpoint: Option<Breakpoint>) {
+        self.breakpoint = breakpoint;
+        self.wide = breakpoint.is_some_and(|b| self.width > 0.0 && self.width >= b.min_width);
+    }
+
+    pub fn breakpoint(&self) -> Option<Breakpoint> {
+        self.breakpoint
+    }
+
+    /// Takes the stack's width (including its padding) and returns whether
+    /// [`orientation`](Self::orientation) changed.
+    ///
+    /// A width of 0 or less (not laid out yet, or hidden) and the same width as last
+    /// time are ignored.
+    pub fn resized(&mut self, width: f64) -> bool {
+        if !width.is_finite() || width <= 0.0 || (width - self.width).abs() < 0.5 {
+            return false;
+        }
+        self.width = width;
+        let Some(breakpoint) = self.breakpoint else {
+            return false;
+        };
+        let before = self.orientation();
+        self.wide = if self.wide {
+            width >= breakpoint.min_width - BREAKPOINT_HYSTERESIS
+        } else {
+            width >= breakpoint.min_width
+        };
+        self.orientation() != before
+    }
+
+    /// The orientation the children are laid out in now.
+    pub fn orientation(&self) -> Orientation {
+        match self.breakpoint {
+            Some(breakpoint) if self.wide => breakpoint.orientation,
+            _ => self.base,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +600,61 @@ mod tests {
         assert_eq!(ScrollPolicy::default(), ScrollPolicy::Auto);
         assert!(ScrollPolicy::Always.is_enabled());
         assert!(!ScrollPolicy::Never.is_enabled());
+    }
+
+    #[test]
+    fn arrangement_follows_the_width_with_slack() {
+        use Orientation::*;
+        let mut a = StackArrangement::new(Vertical);
+        assert!(!a.resized(800.0), "しきい値が無ければ変わらない");
+        assert_eq!(a.orientation(), Vertical);
+        a.set_breakpoint(Some(Breakpoint::new(600.0, Horizontal)));
+        assert_eq!(a.orientation(), Horizontal, "最後の幅から決め直す");
+        assert!(!a.resized(600.0), "ちょうどは広い側");
+        assert!(!a.resized(593.0), "しきい値のすぐ下では戻さない");
+        assert_eq!(a.orientation(), Horizontal);
+        assert!(a.resized(591.0));
+        assert_eq!(a.orientation(), Vertical);
+        assert!(!a.resized(599.0), "戻ったあとは、しきい値までは縦のまま");
+        assert!(a.resized(600.0));
+        assert_eq!(a.orientation(), Horizontal);
+    }
+
+    #[test]
+    fn arrangement_waits_for_a_width_and_keeps_the_base() {
+        use Orientation::*;
+        let mut a = StackArrangement::new(Horizontal);
+        a.set_breakpoint(Some(Breakpoint::new(400.0, Vertical)));
+        assert_eq!(a.orientation(), Horizontal, "幅が来るまでは元の向き");
+        assert!(!a.resized(0.0), "並ぶ前の 0 は数えない");
+        assert!(!a.resized(f64::NAN));
+        assert!(a.resized(500.0));
+        assert_eq!(a.orientation(), Vertical);
+        assert!(!a.resized(500.2), "同じ幅は数えない");
+
+        // 元の向きを変えても、しきい値より広ければしきい値の向きのまま。
+        a.set_base(Vertical);
+        assert_eq!(a.base(), Vertical);
+        assert_eq!(a.orientation(), Vertical);
+        a.set_base(Horizontal);
+        assert!(a.resized(300.0));
+        assert_eq!(a.orientation(), Horizontal);
+
+        // 外せば元の向きに戻り、幅が変わっても動かない。
+        a.set_breakpoint(Some(Breakpoint::new(200.0, Vertical)));
+        assert_eq!(a.orientation(), Vertical);
+        a.set_breakpoint(None);
+        assert_eq!(a.breakpoint(), None);
+        assert_eq!(a.orientation(), Horizontal);
+        assert!(!a.resized(900.0));
+    }
+
+    #[test]
+    fn arrangement_with_the_same_orientation_never_changes() {
+        let mut a = StackArrangement::new(Orientation::Vertical);
+        a.set_breakpoint(Some(Breakpoint::new(100.0, Orientation::Vertical)));
+        assert!(!a.resized(500.0));
+        assert!(!a.resized(50.0));
+        assert_eq!(a.orientation(), Orientation::Vertical);
     }
 }

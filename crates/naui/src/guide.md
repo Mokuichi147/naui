@@ -316,6 +316,45 @@ limited area, specify `Fixed` or `Fill`. [`Tree`], [`Table`], `Scroll`, `SplitVi
 and [`TextArea`] do not decide their height from their content, so you normally
 specify it with `set_sizing`.
 
+### Switching the arrangement by width
+
+A [`Stack`] can declare in advance the width from which it lays its children out in
+the other orientation, with [`Stack::set_breakpoint`]. While the stack is at least
+[`Breakpoint::min_width`] wide (its padding included) the children follow
+[`Breakpoint::orientation`], and below that the stack's own orientation. The switch
+is the same as [`Stack::set_orientation`]: the children stay where they are, and a
+field being typed into keeps its focus. Going back takes a few pixels less than the
+threshold, so a width right at the boundary does not flip it back and forth.
+
+```no_run
+# use naui::{Breakpoint, Orientation, Result, Sizing, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let fields = ui.stack(Orientation::Vertical)?;
+fields.set_sizing(Sizing::fill_width()); // follow the width the parent offers
+fields.set_spacing(8.0);
+fields.append(&ui.text_input("")?);
+fields.append(&ui.text_input("")?);
+// Side by side from 560 wide, one above the other below that.
+fields.set_breakpoint(Some(Breakpoint::new(560.0, Orientation::Horizontal)));
+# Ok(())
+# }
+```
+
+The width that counts is the one the stack gets, so give it `Fill` on the width
+(or put it in a vertical stack with [`Align::Fill`]): a stack that fits its content
+is only as wide as its children. [`Stack::orientation`] keeps returning the
+stack's own orientation, and [`Stack::current_orientation`] the one in use now.
+There is no notification when it switches; the arrangement is declared, not
+rebuilt from a callback.
+
+None of the four toolkits switches a stack by its own width without changing how
+it is sized (`AdwBreakpointBin` and CSS container queries stop the container from
+taking its size from its content, and WinUI's `TwoPaneView` holds only two panes),
+so naui decides on every platform. It compares the width once layout is done and
+switches on the next main loop iteration on macOS, Linux and Windows, and before
+the page is painted on the Web (`ResizeObserver`). Before the first layout, and
+while the stack is hidden, it keeps its own orientation.
+
 ## Scroll position
 
 [`Scroll`] returns its current position and sizes from

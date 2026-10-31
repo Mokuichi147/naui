@@ -318,6 +318,10 @@ const CASES: &[Case] = &[
         sidebar_auto_collapse_toggle_keeps_collapsed,
     ),
     (
+        "しきい値を持つスタックが自分の幅で向きを切り替え、境目では遊びを持つ",
+        stack_breakpoint_follows_its_width,
+    ),
+    (
         "自動で畳んだサイドバーを set_collapsed で畳み直すと、広げても開かない",
         sidebar_set_collapsed_overrides_auto_expand,
     ),
@@ -3437,6 +3441,93 @@ fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
     );
     window.clear_sidebar(); // 付いていなければ何もしない
     Ok(Box::new(|| Ok(())))
+}
+
+/// A Stack with a breakpoint lays its children out side by side once it is at least
+/// that wide (its padding included) and one above the other below it, switching on the
+/// dispatcher after the layout pass that changed its width. Going back takes a few
+/// pixels less. The width comes from a fixed-width parent, so the window's frame does
+/// not matter. Where the window is never laid out, it passes without checking.
+fn stack_breakpoint_follows_its_width(ui: &Ui) -> Result<()> {
+    let window = ui.window("しきい値", 900.0, 400.0)?;
+    let outer = ui.stack(Orientation::Vertical)?;
+    outer.set_sizing(Sizing::fixed(700.0, 300.0));
+    let form = ui.stack(Orientation::Vertical)?;
+    form.set_sizing(Sizing::fill_width());
+    form.set_padding(naui_core::Padding::all(10.0));
+    let first = ui.button("前")?;
+    let last = ui.button("後")?;
+    form.append(&first);
+    form.append(&last);
+    outer.append(&form);
+    window.set_child(&outer);
+    form.set_breakpoint(Some(naui_core::Breakpoint::new(
+        500.0,
+        Orientation::Horizontal,
+    )));
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Vertical,
+        "並ぶ前は自分の向きのままであること"
+    );
+    window.show();
+    let grid = native::<Grid>(&form);
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        form.current_orientation() == Orientation::Horizontal
+    });
+    if grid.ActualWidth().unwrap_or(0.0) <= 0.0 {
+        println!("     (並べられない環境なので、確かめずに通す)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Horizontal,
+        "しきい値より広ければ横に並ぶこと: 幅 {:?}",
+        grid.ActualWidth()
+    );
+    assert_eq!(form.orientation(), Orientation::Vertical);
+    assert_eq!(
+        Grid::GetColumn(&native::<FrameworkElement>(&last)).expect("列"),
+        1,
+        "子が横の列に並ぶこと"
+    );
+
+    for (width, expected, message) in [
+        (480.0, Orientation::Vertical, "しきい値より狭ければ縦に積む"),
+        (496.0, Orientation::Vertical, "しきい値に届くまでは縦のまま"),
+        (500.0, Orientation::Horizontal, "ちょうどしきい値で横に並ぶ"),
+        (
+            494.0,
+            Orientation::Horizontal,
+            "しきい値のすぐ下では戻らない",
+        ),
+        (490.0, Orientation::Vertical, "遊びを越えて狭まれば縦に戻る"),
+    ] {
+        outer.set_sizing(Sizing::fixed(width, 300.0));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            grid.ActualWidth()
+                .is_ok_and(|actual| (actual - width).abs() < 0.5)
+                && form.current_orientation() == expected
+        });
+        // 変わらないはずの所では、予約が走るまで待ってから見る。
+        pump_until(Duration::from_millis(200), || false);
+        assert_eq!(
+            form.current_orientation(),
+            expected,
+            "{message} (幅 {width}、実際 {:?})",
+            grid.ActualWidth()
+        );
+    }
+
+    form.set_breakpoint(None);
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Vertical,
+        "しきい値を外すと自分の向きへすぐ戻ること"
+    );
+    window.close();
+    Ok(())
 }
 
 /// `NavigationView` forgets that the pane was closed when `PaneDisplayMode` changes,

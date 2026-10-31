@@ -1208,6 +1208,178 @@ fn sizing_after_attach_reaches_the_grid() {
     });
 }
 
+/// A `Stack` with a breakpoint lays its children out side by side once it is at least
+/// that wide (its padding included) and one above the other below it, before the page
+/// is painted at the new width. Going back takes a few pixels less, a field being typed
+/// into keeps its focus, and the browser reports no `ResizeObserver` loop.
+#[wasm_bindgen_test]
+async fn stack_breakpoint_follows_its_width() {
+    let errors = Rc::new(RefCell::new(Vec::<String>::new()));
+    let on_error = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue)>::new({
+        let errors = errors.clone();
+        move |event: JsValue| {
+            let message = js_sys::Reflect::get(&event, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|message| message.as_string())
+                .unwrap_or_default();
+            errors.borrow_mut().push(message);
+        }
+    });
+    let window = web_sys::window().expect("window");
+    window
+        .add_event_listener_with_callback("error", on_error.as_ref().unchecked_ref())
+        .expect("error の購読");
+
+    let mut kept = None;
+    with_ui(|ui| {
+        let outer = ui.stack(Orientation::Vertical)?;
+        outer.set_sizing(Sizing::fixed(700.0, 300.0));
+        let form = ui.stack(Orientation::Vertical)?;
+        form.set_sizing(Sizing::fill_width());
+        form.set_padding(Padding::all(10.0));
+        let field = ui.text_input("")?;
+        let first = ui.button("前")?;
+        let last = ui.button("後")?;
+        form.append(&field);
+        form.append(&first);
+        form.append(&last);
+        outer.append(&form);
+        form.set_breakpoint(Some(naui_core::Breakpoint::new(
+            500.0,
+            Orientation::Horizontal,
+        )));
+        assert_eq!(
+            form.current_orientation(),
+            Orientation::Vertical,
+            "並ぶ前は自分の向きのままであること"
+        );
+        let mounted = Mounted::new(&outer);
+        kept = Some((mounted, outer, form, field, first, last));
+        Ok(())
+    });
+    let (_mounted, outer, form, field, first, last) = kept.expect("組み立て");
+    frames_until(|| form.current_orientation() == Orientation::Horizontal).await;
+    assert_eq!(
+        form.current_orientation(),
+        Orientation::Horizontal,
+        "しきい値より広ければ横に並ぶこと"
+    );
+    assert_eq!(form.orientation(), Orientation::Vertical);
+    assert_eq!(computed(&form.native_element(), "flex-direction"), "row");
+    let (a, b) = (
+        first.native_element().get_bounding_client_rect(),
+        last.native_element().get_bounding_client_rect(),
+    );
+    assert!(
+        (a.top() - b.top()).abs() < 1.0 && b.left() >= a.right() - 0.5,
+        "子が 1 行に並ぶこと: {} / {}",
+        a.right(),
+        b.left()
+    );
+
+    let input: HtmlElement = field.native_element().unchecked_into();
+    input.focus().expect("フォーカス");
+    let resize = |width: f64| outer.set_sizing(Sizing::fixed(width, 300.0));
+    let check = |width: f64, expected: Orientation, message: &str| {
+        assert_eq!(
+            form.current_orientation(),
+            expected,
+            "{message} (幅 {width})"
+        );
+    };
+    for (width, expected, message) in [
+        (480.0, Orientation::Vertical, "しきい値より狭ければ縦に積む"),
+        (496.0, Orientation::Vertical, "しきい値に届くまでは縦のまま"),
+        (500.0, Orientation::Horizontal, "ちょうどしきい値で横に並ぶ"),
+        (
+            494.0,
+            Orientation::Horizontal,
+            "しきい値のすぐ下では戻らない",
+        ),
+        (490.0, Orientation::Vertical, "遊びを越えて狭まれば縦に戻る"),
+    ] {
+        resize(width);
+        frames_until(|| form.current_orientation() == expected).await;
+        // 変わらないはずの所では、監視を付け直したあとの報告まで待ってから見る。
+        next_frames().await;
+        check(width, expected, message);
+    }
+    let document = window.document().expect("document");
+    assert!(
+        document
+            .active_element()
+            .is_some_and(|active| active == *input.as_ref()),
+        "向きが切り替わっても入力欄のフォーカスが外れないこと"
+    );
+
+    // 描く前に切り替える。あとから作った ResizeObserver は同じフレームの中で
+    // naui の後に呼ばれるので、そこではもう横に並んでいる。
+    let painted = Rc::new(RefCell::new(Vec::new()));
+    let watch = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue)>::new({
+        let painted = painted.clone();
+        let element = form.native_element();
+        move |_: JsValue| {
+            let width = element.get_bounding_client_rect().width();
+            painted
+                .borrow_mut()
+                .push((width, computed(&element, "flex-direction")));
+        }
+    });
+    let observer =
+        web_sys::ResizeObserver::new(watch.as_ref().unchecked_ref()).expect("ResizeObserver");
+    observer.observe(&outer.native_element());
+    next_frames().await;
+    painted.borrow_mut().clear();
+    resize(700.0);
+    next_frames().await;
+    observer.disconnect();
+    assert_eq!(
+        painted
+            .borrow()
+            .first()
+            .map(|(_, direction)| direction.as_str()),
+        Some("row"),
+        "広がった幅の最初の報告で、もう横に並んでいること: {:?}",
+        painted.borrow()
+    );
+
+    form.set_breakpoint(None);
+    assert_eq!(
+        computed(&form.native_element(), "flex-direction"),
+        "column",
+        "しきい値を外すと自分の向きへすぐ戻ること"
+    );
+    // しきい値の向きの側にいる間に自分の向きを変えても、並びはしきい値の向きのまま。
+    form.set_breakpoint(Some(naui_core::Breakpoint::new(
+        400.0,
+        Orientation::Vertical,
+    )));
+    form.set_orientation(Orientation::Horizontal);
+    assert_eq!(form.orientation(), Orientation::Horizontal);
+    assert_eq!(form.current_orientation(), Orientation::Vertical);
+    resize(380.0);
+    frames_until(|| form.current_orientation() == Orientation::Horizontal).await;
+    check(
+        380.0,
+        Orientation::Horizontal,
+        "狭まれば新しい自分の向きになる",
+    );
+
+    window
+        .remove_event_listener_with_callback("error", on_error.as_ref().unchecked_ref())
+        .expect("error の購読の解除");
+    let loops: Vec<_> = errors
+        .borrow()
+        .iter()
+        .filter(|message| message.contains("ResizeObserver"))
+        .cloned()
+        .collect();
+    assert!(
+        loops.is_empty(),
+        "ResizeObserver のループが報告されないこと: {loops:?}"
+    );
+}
+
 /// Switching a `Stack`'s orientation rewrites `flex-direction` and what each child
 /// set for the previous main axis: `Fill` on the width stretches a child across a
 /// column and hands it the leftover width of a row. Later `set_sizing` calls follow

@@ -5,7 +5,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{Align, Orientation, Padding, Result, TextColor, TextStyle};
+use naui_core::{
+    Align, Breakpoint, Orientation, Padding, Result, StackArrangement, TextColor, TextStyle,
+};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::{
@@ -1040,10 +1042,27 @@ impl Spinner {
 
 struct StackInner {
     element: HtmlElement,
+    /// The orientation the children are laid out in now.
     orientation: Cell<Orientation>,
     children: RefCell<Vec<Box<dyn Widget>>>,
     /// `on_file_drop`.
     file_drop: crate::file_drop::FileDrop,
+    /// The orientation the app gave and the breakpoint, which decide `orientation`.
+    arrangement: Cell<StackArrangement>,
+    /// Watches the width while there is a breakpoint.
+    observer: RefCell<Option<web_sys::ResizeObserver>>,
+    observer_callback: RefCell<Option<ObserverCallback>>,
+}
+
+/// The handler passed to `ResizeObserver`.
+type ObserverCallback = Closure<dyn FnMut(wasm_bindgen::JsValue)>;
+
+impl Drop for StackInner {
+    fn drop(&mut self) {
+        if let Some(observer) = self.observer.get_mut().take() {
+            observer.disconnect();
+        }
+    }
 }
 
 /// A container that lays out its children vertically / horizontally (a Flexbox
@@ -1063,6 +1082,9 @@ impl Stack {
             orientation: Cell::new(orientation),
             children: RefCell::new(Vec::new()),
             file_drop: Default::default(),
+            arrangement: Cell::new(StackArrangement::new(orientation)),
+            observer: RefCell::new(None),
+            observer_callback: RefCell::new(None),
         }));
         this.apply_direction();
         Ok(this)
@@ -1072,7 +1094,113 @@ impl Stack {
     ///
     /// The children stay in the element. Their `flex-grow` and `align-self` are
     /// rewritten for the new main axis, the same as when they are put into a `Stack`.
+    ///
+    /// With a [`set_breakpoint`](Self::set_breakpoint), this is the orientation used
+    /// below the breakpoint's width.
     pub fn set_orientation(&self, orientation: Orientation) {
+        let mut arrangement = self.0.arrangement.get();
+        arrangement.set_base(orientation);
+        self.0.arrangement.set(arrangement);
+        self.arrange(arrangement.orientation());
+    }
+
+    /// The orientation given at creation or with
+    /// [`set_orientation`](Self::set_orientation).
+    pub fn orientation(&self) -> Orientation {
+        self.0.arrangement.get().base()
+    }
+
+    /// Declares the width from which the children are laid out in another
+    /// orientation. `None` removes it.
+    ///
+    /// A CSS container query would switch `flex-direction` without script, but it
+    /// needs a wrapping element (a query styles only what is inside the container),
+    /// and `container-type: inline-size` stops the container from taking its width
+    /// from its content: in an `Auto` grid column or a horizontal stack it would
+    /// shrink to nothing. The children's `flex-grow` and `align-self`, which depend on
+    /// the direction, are inline styles too. So naui watches the element's width with
+    /// a `ResizeObserver` and switches before the page is painted at that width.
+    pub fn set_breakpoint(&self, breakpoint: Option<Breakpoint>) {
+        let mut arrangement = self.0.arrangement.get();
+        arrangement.resized(self.outer_width());
+        arrangement.set_breakpoint(breakpoint);
+        self.0.arrangement.set(arrangement);
+        if breakpoint.is_some() {
+            self.watch_width();
+        }
+        self.arrange(arrangement.orientation());
+    }
+
+    pub fn breakpoint(&self) -> Option<Breakpoint> {
+        self.0.arrangement.get().breakpoint()
+    }
+
+    /// The orientation the children are laid out in now.
+    pub fn current_orientation(&self) -> Orientation {
+        self.0.orientation.get()
+    }
+
+    /// The element's width including its padding. 0 while it is not laid out.
+    fn outer_width(&self) -> f64 {
+        self.0.element.get_bounding_client_rect().width()
+    }
+
+    fn watch_width(&self) {
+        if self.0.observer.borrow().is_some() {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        let callback = ObserverCallback::new(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                Stack(inner).check_width();
+            }
+        });
+        if let Ok(observer) = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()) {
+            observer.observe(&self.0.element);
+            *self.0.observer.borrow_mut() = Some(observer);
+            *self.0.observer_callback.borrow_mut() = Some(callback);
+        }
+    }
+
+    /// Called by the `ResizeObserver`, after layout and before paint. If the width
+    /// crossed the breakpoint, switches right away, so the page is painted in the new
+    /// orientation.
+    ///
+    /// Switching changes the stack's own height, which the observer would report in
+    /// the same frame and the browser would flag as a loop ("ResizeObserver loop
+    /// completed with undelivered notifications"). So it stops watching until the next
+    /// frame, and the first report after watching again catches up with any change in
+    /// between.
+    fn check_width(&self) {
+        let mut arrangement = self.0.arrangement.get();
+        let changed = arrangement.resized(self.outer_width());
+        self.0.arrangement.set(arrangement);
+        if !changed {
+            return;
+        }
+        self.arrange(arrangement.orientation());
+        let Some(observer) = self.0.observer.borrow().clone() else {
+            return;
+        };
+        observer.unobserve(&self.0.element);
+        let element = self.0.element.clone();
+        let weak = Rc::downgrade(&self.0);
+        let watch_again = Closure::once_into_js(move || {
+            if weak.upgrade().is_some() {
+                observer.observe(&element);
+            }
+        });
+        let requested = web_sys::window()
+            .map(|window| window.request_animation_frame(watch_again.unchecked_ref()));
+        if !matches!(requested, Some(Ok(_))) {
+            if let Some(observer) = self.0.observer.borrow().as_ref() {
+                observer.observe(&self.0.element);
+            }
+        }
+    }
+
+    /// Lays the children out in `orientation`.
+    fn arrange(&self, orientation: Orientation) {
         if self.0.orientation.replace(orientation) == orientation {
             return;
         }
@@ -1081,10 +1209,6 @@ impl Stack {
         for child in self.0.children.borrow().iter() {
             crate::layout::layout_for_parent(&child.native_element(), parent);
         }
-    }
-
-    pub fn orientation(&self) -> Orientation {
-        self.0.orientation.get()
     }
 
     fn apply_direction(&self) {
