@@ -22,6 +22,7 @@ that shape are covered in
 | Full screen | Possible | Possible | Possible | Only from within a user action |
 | `Sender::send` from `std::thread::spawn` | Possible | Possible | Possible | Not possible (no threads) |
 | What a dropped file carries (`on_file_drop`) | The absolute path | The absolute path | The absolute path (local files only) | A `blob:` URL, no path |
+| Looks of `ButtonRole` | Only `Primary` (accent) | `Primary` (accent), `Destructive` (red text, macOS 26 and later) | Both (`suggested-action` / `destructive-action`) | Neither (only `data-naui-role` is written) |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -158,6 +159,8 @@ that shape are covered in
 
 ### Widgets
 
+- `ButtonRole::Destructive` **looks like an ordinary button**. WinUI has a style
+  only for the primary button (`AccentButtonStyle`), not for destructive actions.
 - Over a `SplitView` divider, no divider-specific cursor (⇔) is shown.
 - `NumberInput` is limited to **10 significant digits**. `NumberBox` rounds the
   value to 10 significant digits before building its display, so passing
@@ -237,6 +240,11 @@ that shape are covered in
 
 ### Widgets
 
+- `ButtonRole::Destructive` sets `hasDestructiveAction`, but **only macOS 26 and
+  later give it a look** (red text on a faint red bezel, the same as destructive
+  buttons in alerts). Before that it looks like an ordinary button.
+  `ButtonRole::Primary` draws the accent color like the window's default button,
+  but is not given the Return key equivalent, so Return does not activate it.
 - `Toggle` switches **only when the switch is pressed**; pressing the label text
   does not switch it.
 - `EditableComboBox` completes the rest when you type characters matching the start
@@ -340,6 +348,10 @@ that shape are covered in
 
 ### Widgets
 
+- `ButtonRole` **does not change the look**. Browsers have no look for primary or
+  destructive buttons, so naui only writes the role as the `data-naui-role`
+  attribute (`"primary"` / `"destructive"`). An app that wants a look can select
+  it in its own CSS, such as `button[data-naui-role="primary"]`.
 - `Window` is not an OS window; it is represented by an element directly under
   `<body>` and `document.title`.
 - `FilePicker::open` and `FileSaver::open` must be called inside a user-action

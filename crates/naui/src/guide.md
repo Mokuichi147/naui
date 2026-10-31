@@ -217,7 +217,10 @@ translation to show. Translating is left to libraries such as Fluent or gettext.
 [`Ui::on_preferred_languages_change`] is called when the list changes on macOS,
 Windows and the Web; Linux decides the languages from environment variables at
 startup, so it is never called there. Updating the strings already on screen is up
-to the app.
+to the app. How to combine this with Fluent, from choosing a translation to
+re-setting every string, is in
+[Translating apps](https://github.com/mokuichi147/naui/blob/main/docs/translating.md)
+and [`examples/i18n`](https://github.com/mokuichi147/naui/tree/main/examples/i18n).
 
 ```no_run
 # use naui::{Result, Ui};
@@ -981,6 +984,37 @@ but there are no system colors for success, warning and danger, so naui decides
 just those values with `light-dark()`. Also, **Chromium-based browsers return
 gray for `AccentColor` instead of the OS accent color** (Firefox and Safari return
 the OS color).
+
+## Button roles
+
+[`Button::set_role`] marks the button that carries the main action (Save, OK) as
+[`ButtonRole::Primary`], and one that destroys data (Delete, Discard) as
+[`ButtonRole::Destructive`]. As with typography, what you pass is a role, and the
+platform's own look for it is used.
+
+```no_run
+# use naui::{ButtonRole, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let save = ui.button("Save")?;
+save.set_role(ButtonRole::Primary);
+
+let delete = ui.button("Delete")?;
+delete.set_role(ButtonRole::Destructive);
+# Ok(())
+# }
+```
+
+| Platform | `Primary` | `Destructive` |
+| --- | --- | --- |
+| macOS | Accent color (`tintProminence`, or `bezelColor` before macOS 26) | `hasDestructiveAction`, and red text on macOS 26 and later |
+| Windows | `AccentButtonStyle` | **No look** (WinUI has no style for it) |
+| Linux | `.suggested-action` | `.destructive-action` |
+| Web | **No look** | **No look** |
+
+The role changes **only the look**. Return does not activate a `Primary` button,
+and `Destructive` asks for no confirmation. Browsers have no look for either role,
+so the Web only writes the role as `data-naui-role="primary"` /
+`"destructive"`, which your own CSS can select.
 
 ## Text input
 
