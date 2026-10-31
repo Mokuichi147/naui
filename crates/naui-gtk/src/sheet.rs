@@ -40,6 +40,37 @@ struct Current {
     /// The box the content goes in.
     holder: adw::Bin,
     buttons: Vec<(DialogResponse, gtk::Button)>,
+    /// Whether `AdwDialog` has emitted `closed`.
+    closed: Rc<Cell<bool>>,
+}
+
+impl Current {
+    /// Closes the dialog, even before it has opened.
+    ///
+    /// libadwaita 1.5 opens the sheet inside `AdwDialog` on its second frame after
+    /// it is mapped, and `force_close` before then does nothing: the dialog would
+    /// open afterwards and stay, with nothing left to close it. Until `closed`
+    /// comes, keep it hidden and out of reach of the pointer, and close it again on
+    /// each frame. 1.6 and later close it on the first try.
+    fn close(self) {
+        self.native.force_close();
+        if self.closed.get() {
+            return;
+        }
+        self.native.set_opacity(0.0);
+        self.native.set_can_target(false);
+        let closed = self.closed;
+        self.native.add_tick_callback(move |native, _| {
+            if !closed.get() {
+                native.force_close();
+            }
+            if closed.get() {
+                gtk::glib::ControlFlow::Break
+            } else {
+                gtk::glib::ControlFlow::Continue
+            }
+        });
+    }
 }
 
 struct SheetInner {
@@ -236,7 +267,10 @@ impl Sheet {
 
         let weak = Rc::downgrade(&self.0);
         let closed_holder = holder.clone();
+        let closed = Rc::new(Cell::new(false));
+        let closed_flag = closed.clone();
         native.connect_closed(move |native| {
+            closed_flag.set(true);
             // 閉じ終えたら中身を手放し、ほかの場所でも使えるようにする
             // (開き直していれば、もう新しいほうへ移っている)。
             closed_holder.set_child(None::<&gtk::Widget>);
@@ -259,6 +293,7 @@ impl Sheet {
             native,
             holder,
             buttons: views,
+            closed,
         }
     }
 
@@ -270,7 +305,7 @@ impl Sheet {
         // `force_close` はその場で `closed` を出すので、借用を先に手放す。
         let current = self.0.current.borrow_mut().take();
         if let Some(current) = current {
-            current.native.force_close();
+            current.close();
         }
     }
 
@@ -281,7 +316,7 @@ impl Sheet {
         }
         let current = self.0.current.borrow_mut().take();
         if let Some(current) = current {
-            current.native.force_close();
+            current.close();
         }
         self.0.on_response.emit(response);
     }

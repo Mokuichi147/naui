@@ -774,6 +774,10 @@ fn main() {
             sheet_set_child_allows_changes_in_the_focus_notification,
         ),
         (
+            "開いた直後に閉じたシートは残らない",
+            sheet_closed_right_after_opening_does_not_stay,
+        ),
+        (
             "トーストの設定が AdwToast へ届く",
             toast_configuration_reaches_the_native_toast,
         ),
@@ -6874,6 +6878,38 @@ fn sheet_set_child_allows_changes_in_the_focus_notification(ui: &Ui) -> Result<(
 
     field.on_focus_change(|_| {});
     sheet.close();
+    window.close();
+    Ok(())
+}
+
+/// libadwaita 1.5 ignores closing before the sheet has opened (see
+/// `wait_until_shown`), so this checks that naui closes it once it opens.
+fn sheet_closed_right_after_opening_does_not_stay(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+
+    let sheet = ui.sheet("すぐ閉じる")?;
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+    let (log, sink) = recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    // 同じイベント処理の中で開いて閉じる。
+    sheet.open();
+    let native = sheet.native_dialog().expect("AdwDialog");
+    sheet.close();
+    assert!(!sheet.is_open());
+    // 閉じ終えると AdwDialog は窓から外れる。1.5 が開く 2 フレーム目より十分に待つ。
+    let gone = || native.parent().is_none();
+    spin_until(std::time::Duration::from_secs(2), gone);
+    assert!(gone(), "開く前に閉じたシートが窓に残らない");
+    assert!(log.borrow().is_empty(), "close では応答は届かない");
+
+    // 閉じたあとも、開き直して使える。
+    sheet.open();
+    let reopened = sheet.native_dialog().expect("開き直した AdwDialog");
+    wait_until_shown(&reopened);
+    reopened.close();
+    spin_until(std::time::Duration::from_secs(2), || !sheet.is_open());
+    assert_eq!(log.borrow().as_slice(), [DialogResponse::Cancel]);
     window.close();
     Ok(())
 }
