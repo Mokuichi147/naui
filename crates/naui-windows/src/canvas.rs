@@ -1,18 +1,26 @@
-//! The drawing surface (WinUI 3's `Canvas` holding `Path`s and `TextBlock`s).
+//! The drawing surface (a `Grid` showing a Composition drawing surface that
+//! Direct2D draws on).
 //!
 //! WinUI 3 has no "surface the app paints pixels on". Win2D is a separate package
-//! rather than part of the Windows App SDK, and `SwapChainPanel` is a door for
-//! driving DirectX yourself, so it is built by placing XAML's **shape elements**
-//! (`Microsoft.UI.Xaml.Shapes.Path` and `TextBlock`) into a `Canvas`. Fills,
-//! strokes and text are all drawn by the XAML renderer (Composition), so
-//! antialiasing, display scaling and dark-theme text get the same quality as other
-//! controls.
+//! rather than part of the Windows App SDK, so the surface is put together from
+//! what the SDK has: a `CompositionDrawingSurface` made from a
+//! `CompositionGraphicsDevice` backed by a Direct2D device, painted with a
+//! `CompositionSurfaceBrush` on a `SpriteVisual` that
+//! `ElementCompositionPreview::SetElementChildVisual` places over the `Grid`.
+//! Like the other three platforms (Core Graphics, cairo, `<canvas>`), the commands
+//! are rasterized by a 2D API (Direct2D, with DirectWrite for text; see
+//! `render.rs`).
 //!
-//! On every redraw, the commands `on_draw` recorded in the [`Painter`] become one
-//! XAML string (a `<Canvas>` and its children) passed to `XamlReader`, and the
-//! resulting elements replace the previous surface wholesale. `Path` shapes are
-//! given in XAML's path syntax (`M` / `L` / `C` / `Z`), so the `Path` and
-//! `PathGeometry` types need not be added to the projection.
+//! On every redraw, the commands `on_draw` recorded in the [`Painter`] are replayed
+//! onto the whole surface. The surface is sized in physical pixels (the logical size
+//! times `XamlRoot.RasterizationScale`) and the visual in logical pixels, so one
+//! surface pixel is one screen pixel. A change of scale alone (moving to another
+//! display) does not change the size, so `XamlRoot.Changed` is watched too.
+//!
+//! Earlier versions turned the commands into one XAML string of `Path` and
+//! `TextBlock` elements for `XamlReader`. Drawings with thousands of commands took
+//! over half a second per redraw that way, most of it parsing the string and
+//! rendering the elements, so it was replaced.
 //!
 //! Size changes are caught with `SizeChanged`, and the pointer comes from
 //! `PointerPressed` / `PointerMoved` / `PointerReleased`. Whether the cursor is over
@@ -42,25 +50,38 @@
 //! wheel that the hook delivered and got `Continue` for, arriving from XAML too, is
 //! discarded as the second delivery.
 
+mod render;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use naui_core::{
-    Align, Color, DrawCommand, EventResponse, Painter, Path, PathSegment, Point, PointerButton,
-    PointerEvent, PointerPhase, Result, WheelHandler, WHEEL_STEP,
+    DrawCommand, EventResponse, Painter, Point, PointerButton, PointerEvent, PointerPhase, Result,
+    WheelHandler, WHEEL_STEP,
+};
+use naui_winui3::ICompositionDrawingSurfaceInterop;
+use naui_winui3::Microsoft::Graphics::DirectX::{DirectXAlphaMode, DirectXPixelFormat};
+use naui_winui3::Microsoft::UI::Composition::{
+    CompositionDrawingSurface, CompositionStretch, SpriteVisual,
 };
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Input::{PointerDeviceType, PointerPointProperties};
-use naui_winui3::Microsoft::UI::Xaml::Controls::{Canvas as XamlCanvas, Grid as XamlGrid};
+use naui_winui3::Microsoft::UI::Xaml::Controls::Grid as XamlGrid;
+use naui_winui3::Microsoft::UI::Xaml::Hosting::ElementCompositionPreview;
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
-use naui_winui3::Microsoft::UI::Xaml::{FrameworkElement, SizeChangedEventHandler, UIElement};
-use windows::Foundation::Size;
+use naui_winui3::Microsoft::UI::Xaml::{
+    FrameworkElement, RoutedEventHandler, SizeChangedEventHandler, UIElement, XamlRoot,
+    XamlRootChangedEventArgs,
+};
+use windows::Foundation::TypedEventHandler;
+use windows::Graphics::SizeInt32;
+use windows::Win32::Graphics::Direct2D::ID2D1DeviceContext;
 use windows_core::{Interface, HSTRING};
+use windows_numerics::Vector2;
 
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
@@ -147,12 +168,32 @@ struct CanvasInner {
     /// When the hook last delivered a wheel and got `Continue`. If the same wheel also
     /// arrives through `PointerWheelChanged`, it is discarded.
     hook_wheel: Cell<Option<Instant>>,
+    /// The Composition surface drawn on. Made at the first draw with a size.
+    surface: RefCell<Option<Surface>>,
+    /// The `XamlRoot` whose `Changed` is watched, with the subscription's token.
+    root: RefCell<Option<(XamlRoot, i64)>>,
+    /// The `RasterizationScale` of the last draw.
+    scale: Cell<f64>,
+}
+
+/// The visual placed over the `Grid` and the surface its brush shows.
+struct Surface {
+    visual: SpriteVisual,
+    surface: CompositionDrawingSurface,
+    /// The surface's size in physical pixels.
+    pixels: (u32, u32),
 }
 
 thread_local! {
     /// The surfaces with `on_wheel` set. The destination of wheels received by the hook
     /// is looked up here.
     static WHEEL_CANVASES: RefCell<Vec<Weak<CanvasInner>>> = const { RefCell::new(Vec::new()) };
+    /// Every surface on this thread. All of them are drawn again after the device is
+    /// lost.
+    static CANVASES: RefCell<Vec<Weak<CanvasInner>>> = const { RefCell::new(Vec::new()) };
+    /// How many `XamlRoot.Changed` subscriptions surfaces hold. Read by tests to see
+    /// that dropped surfaces unsubscribe.
+    static ROOT_WATCHES: Cell<usize> = const { Cell::new(0) };
 }
 
 /// How long until `PointerWheelChanged` is treated as the same wheel the hook
@@ -194,7 +235,7 @@ pub(crate) fn dispatch_wheel(delta: f64, horizontal: bool) -> Option<bool> {
     Some(handled)
 }
 
-/// A surface the app draws on itself (`Grid` + `Canvas` + `Path` / `TextBlock`).
+/// A surface the app draws on itself (`Grid` + a Composition surface Direct2D draws on).
 ///
 /// Its size is not determined by its contents, so set it with `set_sizing` (the
 /// same as `Scroll`).
@@ -217,13 +258,27 @@ impl Canvas {
             hover: Cell::new(None),
             wheel_registered: Cell::new(false),
             hook_wheel: Cell::new(None),
+            surface: RefCell::new(None),
+            root: RefCell::new(None),
+            scale: Cell::new(1.0),
         }));
+        CANVASES.with(|canvases| {
+            let mut canvases = canvases.borrow_mut();
+            canvases.retain(|canvas| canvas.strong_count() != 0);
+            canvases.push(Rc::downgrade(&this.0));
+        });
         this.track_size()?;
         this.track_pointer()?;
         Ok(this)
     }
 
     /// Redraws when the size is decided (changes). The first draw starts here too.
+    ///
+    /// Also watches the new window's `XamlRoot` whenever the surface joins a window
+    /// (`Loaded`), and redraws if its display scale differs from the last draw's.
+    /// Moving to another window has so far always brought a `SizeChanged` too, but
+    /// nothing promises one when the size stays the same, and without it the surface
+    /// would stay stretched from the old scale and watching the old window.
     fn track_size(&self) -> Result<()> {
         let target = UiThreadCell::new(Rc::downgrade(&self.0));
         let changed = SizeChangedEventHandler::new(move |_, _| {
@@ -234,11 +289,32 @@ impl Canvas {
             });
             Ok(())
         });
-        self.0
+        let element = self
+            .0
             .native
             .cast::<FrameworkElement>()
-            .and_then(|element| element.SizeChanged(&changed))
             .map_err(|e| to_error("subscribe to Canvas size changes", e))?;
+        element
+            .SizeChanged(&changed)
+            .map_err(|e| to_error("subscribe to Canvas size changes", e))?;
+
+        // 別のウィンドウへ移ったとき、大きさが変わらなければ `SizeChanged` が
+        // 来る保証は無い。移った先の `XamlRoot` を購読し直し、その倍率で描き直す。
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let loaded = RoutedEventHandler::new(move |_, _| {
+            let _ = target.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.watch_root();
+                    if inner.rasterization_scale() != inner.scale.get() {
+                        schedule_paint(&inner);
+                    }
+                }
+            });
+            Ok(())
+        });
+        element
+            .Loaded(&loaded)
+            .map_err(|e| to_error("subscribe to Canvas loading", e))?;
         Ok(())
     }
 
@@ -422,28 +498,7 @@ impl Canvas {
     /// Requests a redraw. Nothing is drawn on the spot; `on_draw` is called once the UI
     /// thread is free (calling it many times in a row collapses into one).
     pub fn redraw(&self) {
-        if self.0.scheduled.replace(true) {
-            return;
-        }
-        let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
-            self.0.scheduled.set(false);
-            self.0.paint();
-            return;
-        };
-        let target = UiThreadCell::new(Rc::downgrade(&self.0));
-        let enqueued = queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
-            let _ = target.try_with_mut(|weak| {
-                if let Some(inner) = weak.upgrade() {
-                    inner.scheduled.set(false);
-                    inner.paint();
-                }
-            });
-            Ok(())
-        }));
-        if !matches!(enqueued, Ok(true)) {
-            self.0.scheduled.set(false);
-            self.0.paint();
-        }
+        schedule_paint(&self.0);
     }
 
     /// Pointer (mouse, touch, pen) presses, moves and releases. Positions are logical
@@ -480,23 +535,119 @@ impl Canvas {
         self.0.paint();
     }
 
-    /// Returns the `on_draw` commands as XAML for a surface of the given size. **For
-    /// automated tests only.**
+    /// Draws the `on_draw` commands for a surface of `width` × `height` logical pixels
+    /// at `scale` into an offscreen bitmap, and returns its size in pixels and its
+    /// pixels (premultiplied BGRA, top row first). **For automated tests only.**
     ///
-    /// Lets you check how commands map to XAML shapes without showing anything on
-    /// screen.
+    /// Lets you check what Direct2D draws without showing anything on screen. `None`
+    /// when Direct2D cannot be used.
     #[doc(hidden)]
-    pub fn xaml_for_test(&self, width: f64, height: f64) -> String {
+    pub fn pixels_for_test(
+        &self,
+        width: f64,
+        height: f64,
+        scale: f64,
+    ) -> Option<(u32, u32, Vec<u8>)> {
         let mut painter = Painter::new(width, height);
         self.0.draw.emit(&mut painter);
-        scene_xaml(width, height, painter.commands())
+        render::with_renderer(|renderer| renderer.pixels(width, height, scale, painter.commands()))?
+            .ok()
+    }
+
+    /// Signals the device-removal event as Direct3D does after a GPU reset, so the
+    /// devices are made again and every surface is redrawn. **For automated tests
+    /// only.** Returns whether there was an event to signal (the surfaces share one
+    /// set of devices per thread, made at the first draw).
+    #[doc(hidden)]
+    pub fn signal_device_removed_for_test(&self) -> bool {
+        render::signal_removal_for_test()
+    }
+
+    /// Whether the surface watches `XamlRoot.Changed` of the window it is in now.
+    /// **For automated tests only.**
+    #[doc(hidden)]
+    pub fn watches_current_root_for_test(&self) -> bool {
+        let Ok(current) = self.0.native.XamlRoot() else {
+            return false;
+        };
+        self.0
+            .root
+            .borrow()
+            .as_ref()
+            .is_some_and(|(watched, _)| *watched == current)
+    }
+
+    /// How many `XamlRoot.Changed` subscriptions the surfaces on this thread hold.
+    /// **For automated tests only.**
+    #[doc(hidden)]
+    pub fn root_watches_for_test() -> usize {
+        ROOT_WATCHES.with(Cell::get)
     }
 
     /// The base `Grid`. Public as a backend-specific escape hatch.
     ///
-    /// What is drawn is placed as children of the single `Canvas` inside it.
+    /// What is drawn is a `SpriteVisual` placed over it with
+    /// `ElementCompositionPreview::SetElementChildVisual`, not one of its children.
     pub fn native_grid(&self) -> XamlGrid {
         self.0.native.clone()
+    }
+}
+
+/// Queues a draw on the `DispatcherQueue`. Requests made before it runs collapse
+/// into one.
+fn schedule_paint(inner: &Rc<CanvasInner>) {
+    if inner.scheduled.replace(true) {
+        return;
+    }
+    let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
+        inner.scheduled.set(false);
+        inner.paint();
+        return;
+    };
+    let target = UiThreadCell::new(Rc::downgrade(inner));
+    let enqueued = queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
+        let _ = target.try_with_mut(|weak| {
+            if let Some(inner) = weak.upgrade() {
+                inner.scheduled.set(false);
+                inner.paint();
+            }
+        });
+        Ok(())
+    }));
+    if !matches!(enqueued, Ok(true)) {
+        inner.scheduled.set(false);
+        inner.paint();
+    }
+}
+
+/// Releases the Direct2D and Composition devices the surfaces share. Called on the
+/// way to shutting down, while Composition is still running (see `render::Slot`).
+pub(crate) fn release_devices() {
+    render::release();
+}
+
+/// Replaces lost devices and draws every surface again.
+///
+/// Called when a draw fails with a lost device, and when Direct3D reports the device
+/// removed (`render::RemovalWatch`), which also covers surfaces that are never
+/// redrawn by the app. `generation` is the devices that were lost; if they were
+/// already replaced (both routes reported the same loss), nothing is done.
+fn recover_devices(generation: u64) {
+    if render::recover_if_current(generation) {
+        repaint_all();
+    }
+}
+
+/// Draws every surface on this thread again (after the device was replaced, which
+/// empties them all).
+fn repaint_all() {
+    let canvases: Vec<Rc<CanvasInner>> = CANVASES.with(|canvases| {
+        let mut canvases = canvases.borrow_mut();
+        canvases.retain(|canvas| canvas.strong_count() != 0);
+        canvases.iter().filter_map(Weak::upgrade).collect()
+    });
+    for canvas in &canvases {
+        schedule_paint(canvas);
     }
 }
 
@@ -606,293 +757,175 @@ impl CanvasInner {
         )
     }
 
-    /// Calls `on_draw` and replaces the surface with the resulting XAML.
-    fn paint(&self) {
+    /// The display scale of the window the surface is in (1.0 before it is in one).
+    fn rasterization_scale(&self) -> f64 {
+        self.native
+            .XamlRoot()
+            .and_then(|root| root.RasterizationScale())
+            .ok()
+            .filter(|scale| scale.is_finite() && *scale > 0.0)
+            .unwrap_or(1.0)
+    }
+
+    /// Calls `on_draw` and replays the commands onto the surface.
+    fn paint(self: &Rc<Self>) {
         let (width, height) = self.actual_size();
         if width <= 0.0 || height <= 0.0 {
             return;
         }
+        self.watch_root();
+        let scale = self.rasterization_scale();
         let mut painter = Painter::new(width, height);
         if !self.draw.emit(&mut painter) {
             return;
         }
-        let xaml = scene_xaml(width, height, painter.commands());
-        let Ok(scene) = XamlReader::Load(&HSTRING::from(xaml)).and_then(|e| e.cast::<UIElement>())
-        else {
+        self.scale.set(scale);
+        let drawn = render::with_renderer(|renderer| {
+            self.present(renderer, width, height, scale, painter.commands())
+        });
+        if let Some(Err(error)) = drawn {
+            if let Some(generation) = render::current_generation() {
+                if render::is_device_lost(&error) {
+                    recover_devices(generation);
+                }
+            }
+        }
+    }
+
+    fn present(
+        &self,
+        renderer: &mut render::Renderer,
+        width: f64,
+        height: f64,
+        scale: f64,
+        commands: &[DrawCommand],
+    ) -> windows_core::Result<()> {
+        // 機器が持てる大きさに収まらないときは、倍率を下げた面を引き伸ばして出す。
+        let (scale, pixels) =
+            render::surface_size(width, height, scale, renderer.max_surface_pixels());
+        let size = SizeInt32 {
+            Width: pixels.0 as i32,
+            Height: pixels.1 as i32,
+        };
+        let mut slot = self.surface.borrow_mut();
+        match slot.as_mut() {
+            Some(current) if current.pixels == pixels => {}
+            Some(current) => {
+                current.surface.Resize(size)?;
+                current.pixels = pixels;
+            }
+            None => *slot = Some(self.attach_surface(renderer, size, pixels)?),
+        }
+        let Some(current) = slot.as_ref() else {
+            return Ok(());
+        };
+        // 面の 1 画素が画面の 1 画素になるよう、見た目の大きさは画素数から決める。
+        current.visual.SetSize(Vector2::new(
+            (f64::from(pixels.0) / scale) as f32,
+            (f64::from(pixels.1) / scale) as f32,
+        ))?;
+        let interop: ICompositionDrawingSurfaceInterop = current.surface.cast()?;
+        // SAFETY: 成功した `BeginDraw` には必ず `EndDraw` を対にし、その前に
+        // 描画用のコンテキストを手放す。
+        unsafe {
+            let (context, offset) = interop.BeginDraw::<ID2D1DeviceContext>()?;
+            let drawn = renderer.draw_on_surface(
+                &context,
+                (offset.x, offset.y),
+                pixels,
+                scale,
+                width,
+                height,
+                commands,
+            );
+            drop(context);
+            let ended = interop.EndDraw();
+            drawn.and(ended)
+        }
+    }
+
+    /// Makes the surface and the visual showing it, and places the visual over the
+    /// `Grid`.
+    fn attach_surface(
+        &self,
+        renderer: &mut render::Renderer,
+        size: SizeInt32,
+        pixels: (u32, u32),
+    ) -> windows_core::Result<Surface> {
+        let element: UIElement = self.native.cast()?;
+        let compositor = ElementCompositionPreview::GetElementVisual(&element)?.Compositor()?;
+        let device = renderer.graphics_device(&compositor)?;
+        let surface = device.CreateDrawingSurface2(
+            size,
+            DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            DirectXAlphaMode::Premultiplied,
+        )?;
+        let brush = compositor.CreateSurfaceBrushWithSurface(&surface)?;
+        brush.SetStretch(CompositionStretch::Fill)?;
+        let visual = compositor.CreateSpriteVisual()?;
+        visual.SetBrush(&brush)?;
+        ElementCompositionPreview::SetElementChildVisual(&element, &visual)?;
+        Ok(Surface {
+            visual,
+            surface,
+            pixels,
+        })
+    }
+
+    /// Watches `XamlRoot.Changed` of the window the surface is in, to draw again when
+    /// only the display scale changes. Moves to the new `XamlRoot` when the surface
+    /// moves to another window.
+    fn watch_root(self: &Rc<Self>) {
+        let Ok(root) = self.native.XamlRoot() else {
             return;
         };
-        align_text(&scene, painter.commands());
-        if let Ok(children) = self.native.Children() {
-            let _ = children.Clear();
-            let _ = children.Append(&scene);
+        let mut watched = self.root.borrow_mut();
+        if watched
+            .as_ref()
+            .is_some_and(|(current, _)| *current == root)
+        {
+            return;
         }
-    }
-}
-
-/// The XAML for the whole surface. `Canvas` only places its children and has no size
-/// of its own, so it is given a width and height, and overflow is cut off with
-/// `Clip`.
-fn scene_xaml(width: f64, height: f64, commands: &[DrawCommand]) -> String {
-    let mut xaml = String::new();
-    let _ = write!(
-        xaml,
-        r##"<Canvas xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="{w}" Height="{h}" IsHitTestVisible="False"><Canvas.Clip><RectangleGeometry Rect="0,0,{w},{h}"/></Canvas.Clip>"##,
-        w = number(width),
-        h = number(height),
-    );
-    for (index, command) in commands.iter().enumerate() {
-        match command {
-            DrawCommand::Fill {
-                path,
-                color,
-                opacity,
-            } => {
-                let _ = write!(
-                    xaml,
-                    r##"<Path Fill="{}" Data="{}"/>"##,
-                    argb(*color, *opacity),
-                    path_data(path),
-                );
-            }
-            DrawCommand::Stroke {
-                path,
-                color,
-                width,
-                dash,
-                opacity,
-            } => {
-                let _ = write!(
-                    xaml,
-                    r##"<Path Stroke="{}" StrokeThickness="{}" StrokeLineJoin="Miter" StrokeStartLineCap="Flat" StrokeEndLineCap="Flat""##,
-                    argb(*color, *opacity),
-                    number(*width),
-                );
-                if !dash.is_empty() {
-                    // XAML の破線は**線の太さを 1 とする単位**で指定する。
-                    let pattern: Vec<String> = dash.iter().map(|v| number(v / width)).collect();
-                    let _ = write!(xaml, r##" StrokeDashArray="{}""##, pattern.join(" "));
+        if let Some((previous, token)) = watched.take() {
+            unwatch_root(&previous, token);
+        }
+        let target = UiThreadCell::new(Rc::downgrade(self));
+        let changed = TypedEventHandler::<XamlRoot, XamlRootChangedEventArgs>::new(move |_, _| {
+            let _ = target.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    if inner.rasterization_scale() != inner.scale.get() {
+                        schedule_paint(&inner);
+                    }
                 }
-                let _ = write!(xaml, r##" Data="{}"/>"##, path_data(path));
-            }
-            DrawCommand::Text {
-                text,
-                at,
-                size,
-                color,
-                opacity,
-                ..
-            } => {
-                let _ = write!(
-                    xaml,
-                    r##"<TextBlock x:Name="{}" Canvas.Left="{}" Canvas.Top="{}" FontSize="{}" Foreground="{}" TextWrapping="NoWrap" Text="{}"/>"##,
-                    text_name(index),
-                    number(at.x),
-                    number(at.y),
-                    number(*size),
-                    argb(*color, *opacity),
-                    escape(text),
-                );
-            }
-        }
-    }
-    xaml.push_str("</Canvas>");
-    xaml
-}
-
-/// Shifts centered and right-aligned text left by its measured width.
-///
-/// XAML's `Canvas` can only place things by their top left, so the loaded
-/// `TextBlock`s are measured and `Canvas.Left` is rewritten.
-fn align_text(scene: &UIElement, commands: &[DrawCommand]) {
-    let Ok(root) = scene.cast::<FrameworkElement>() else {
-        return;
-    };
-    for (index, command) in commands.iter().enumerate() {
-        let DrawCommand::Text { at, align, .. } = command else {
-            continue;
-        };
-        if matches!(align, Align::Start | Align::Fill) {
-            continue;
-        }
-        let Ok(block) = root
-            .FindName(&HSTRING::from(text_name(index)))
-            .and_then(|value| value.cast::<UIElement>())
-        else {
-            continue;
-        };
-        let _ = block.Measure(Size {
-            Width: f32::INFINITY,
-            Height: f32::INFINITY,
+            });
+            Ok(())
         });
-        let Ok(desired) = block.DesiredSize() else {
-            continue;
-        };
-        let width = f64::from(desired.Width);
-        let left = if matches!(align, Align::Center) {
-            at.x - width / 2.0
-        } else {
-            at.x - width
-        };
-        let _ = XamlCanvas::SetLeft(&block, left);
-    }
-}
-
-fn text_name(index: usize) -> String {
-    format!("t{index}")
-}
-
-/// XAML's path syntax. `F1` is nonzero (the same as the other three platforms'
-/// default).
-fn path_data(path: &Path) -> String {
-    let mut data = String::from("F1");
-    for segment in path.segments() {
-        match *segment {
-            PathSegment::MoveTo(p) => {
-                let _ = write!(data, " M{},{}", number(p.x), number(p.y));
-            }
-            PathSegment::LineTo(p) => {
-                let _ = write!(data, " L{},{}", number(p.x), number(p.y));
-            }
-            PathSegment::CubicTo {
-                control1,
-                control2,
-                to,
-            } => {
-                let _ = write!(
-                    data,
-                    " C{},{} {},{} {},{}",
-                    number(control1.x),
-                    number(control1.y),
-                    number(control2.x),
-                    number(control2.y),
-                    number(to.x),
-                    number(to.y),
-                );
-            }
-            PathSegment::Close => data.push_str(" Z"),
+        if let Ok(token) = root.Changed(&changed) {
+            *watched = Some((root, token));
+            let _ = ROOT_WATCHES.try_with(|count| count.set(count.get() + 1));
         }
     }
-    data
 }
 
-/// A number that can be written into XAML. Infinities and NaN cannot be read by the
-/// parser, so they become 0.
-fn number(value: f64) -> String {
-    if value.is_finite() {
-        format!("{value}")
-    } else {
-        "0".to_string()
-    }
-}
-
-/// `#AARRGGBB`. The opacity maps to alpha.
-fn argb(color: Color, opacity: f64) -> String {
-    let alpha = (opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
-    format!(
-        "#{:02X}{:02X}{:02X}{:02X}",
-        alpha, color.r, color.g, color.b
-    )
-}
-
-/// Converts XML's reserved characters into entity references so it can be written as
-/// an attribute value.
-///
-/// XAML tries to read attribute values starting with `{` as markup extensions
-/// (`{Binding}` and so on) and fails, so `{}` is put at the start to make it read
-/// as a string (by XAML's rules, `{}` marks "what follows is text").
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    if text.starts_with('{') {
-        out.push_str("{}");
-    }
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            '\n' | '\r' | '\t' => out.push(' '),
-            c => out.push(c),
+impl Drop for CanvasInner {
+    /// Unsubscribes from `XamlRoot.Changed`. The `XamlRoot` outlives the surface (it
+    /// is the window's), so without this every surface made and dropped in a window
+    /// would leave a delegate behind, run on every resize and scale change.
+    fn drop(&mut self) {
+        if let Some((root, token)) = self.root.get_mut().take() {
+            unwatch_root(&root, token);
         }
     }
-    out
+}
+
+fn unwatch_root(root: &XamlRoot, token: i64) {
+    let _ = root.RemoveChanged(token);
+    let _ = ROOT_WATCHES.try_with(|count| count.set(count.get().saturating_sub(1)));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use naui_core::Rect;
-
-    #[test]
-    fn path_data_uses_the_xaml_mini_language() {
-        let path = Path::new()
-            .move_to(Point::new(1.0, 2.0))
-            .line_to(Point::new(3.5, 4.0))
-            .cubic_to(
-                Point::new(0.0, 0.0),
-                Point::new(1.0, 1.0),
-                Point::new(2.0, 2.0),
-            )
-            .close();
-        assert_eq!(path_data(&path), "F1 M1,2 L3.5,4 C0,0 1,1 2,2 Z");
-    }
-
-    #[test]
-    fn scene_carries_fill_stroke_and_text() {
-        let mut painter = Painter::new(100.0, 50.0);
-        painter.set_opacity(0.5);
-        painter.fill_rect(
-            Rect::new(0.0, 0.0, 10.0, 10.0),
-            Color::rgb(0xff, 0x88, 0x00),
-        );
-        painter.set_opacity(1.0);
-        painter.set_dash(&[4.0, 2.0]);
-        painter.line(
-            Point::new(0.0, 0.0),
-            Point::new(9.0, 9.0),
-            Color::BLACK,
-            2.0,
-        );
-        painter.text("a<b>&\"c\"", Point::new(5.0, 6.0), 12.0, Color::WHITE);
-        let xaml = scene_xaml(100.0, 50.0, painter.commands());
-        assert!(xaml.starts_with("<Canvas "), "{xaml}");
-        assert!(xaml.contains(r#"Width="100" Height="50""#));
-        assert!(xaml.contains(r#"<RectangleGeometry Rect="0,0,100,50"/>"#));
-        assert!(xaml.contains(r##"<Path Fill="#80FF8800" Data="F1 M0,0 L10,0 L10,10 L0,10 Z"/>"##));
-        assert!(
-            xaml.contains(r##"Stroke="#FF000000" StrokeThickness="2""##),
-            "{xaml}"
-        );
-        assert!(
-            xaml.contains(r#"StrokeDashArray="2 1""#),
-            "破線は太さを 1 とする単位に直す: {xaml}"
-        );
-        assert!(
-            xaml.contains(r#"Text="a&lt;b&gt;&amp;&quot;c&quot;""#),
-            "{xaml}"
-        );
-        assert!(xaml.contains(r#"x:Name="t2""#));
-        assert!(xaml.ends_with("</Canvas>"));
-    }
-
-    #[test]
-    fn leading_brace_is_not_a_markup_extension() {
-        assert_eq!(escape("{Binding}"), "{}{Binding}");
-        assert_eq!(escape("{"), "{}{");
-        assert_eq!(escape("a{b}"), "a{b}", "先頭でなければそのまま");
-        assert_eq!(escape(""), "");
-    }
-
-    #[test]
-    fn numbers_stay_parsable() {
-        assert_eq!(number(1.5), "1.5");
-        assert_eq!(number(-0.25), "-0.25");
-        assert_eq!(number(f64::NAN), "0");
-        assert_eq!(number(f64::INFINITY), "0");
-        assert_eq!(argb(Color::rgb(1, 2, 3), 2.0), "#FF010203");
-        assert_eq!(argb(Color::rgb(1, 2, 3), 0.0), "#00010203");
-    }
 
     #[test]
     fn wheel_amount_reads_down_and_right_as_positive() {
