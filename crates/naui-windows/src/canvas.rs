@@ -559,6 +559,12 @@ fn schedule_paint(inner: &Rc<CanvasInner>) {
     }
 }
 
+/// Releases the Direct2D and Composition devices the surfaces share. Called on the
+/// way to shutting down, while Composition is still running (see `render::Slot`).
+pub(crate) fn release_devices() {
+    render::release();
+}
+
 /// Draws every surface on this thread again (after the device was replaced, which
 /// empties them all).
 fn repaint_all() {

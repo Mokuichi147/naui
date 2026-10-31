@@ -109,20 +109,45 @@ pub(super) struct Renderer {
     formats: HashMap<u32, IDWriteTextFormat>,
 }
 
+/// Where this thread's renderer is kept.
+///
+/// What is still here when the thread ends is **leaked rather than released**.
+/// Thread-local values are dropped while the process exits, after the Windows App
+/// SDK has shut Composition down, and releasing the graphics device then ends the
+/// process with `STATUS_INVALID_PARAMETER` (seen with WARP, the device used where
+/// there is no GPU). The shutdown path releases it earlier with [`release`].
+struct Slot(Option<Renderer>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        std::mem::forget(self.0.take());
+    }
+}
+
 thread_local! {
-    static RENDERER: RefCell<Option<Renderer>> = const { RefCell::new(None) };
+    static RENDERER: RefCell<Slot> = const { RefCell::new(Slot(None)) };
 }
 
 /// Runs `f` with this thread's renderer, making it the first time. `None` when the
 /// devices cannot be made (nothing can be drawn then).
 pub(super) fn with_renderer<R>(f: impl FnOnce(&mut Renderer) -> R) -> Option<R> {
     RENDERER.with(|slot| {
-        let mut slot = slot.borrow_mut();
+        let slot = &mut slot.borrow_mut().0;
         if slot.is_none() {
             *slot = Renderer::new().ok();
         }
         slot.as_mut().map(f)
     })
+}
+
+/// Releases this thread's renderer while Composition is still running. A surface
+/// drawn after this makes a new one.
+pub(super) fn release() {
+    let _ = RENDERER.try_with(|slot| {
+        // 中の COM の解放が何かを呼び返しても借用が重ならないよう、外へ出してから落とす。
+        let renderer = slot.borrow_mut().0.take();
+        drop(renderer);
+    });
 }
 
 impl Renderer {
