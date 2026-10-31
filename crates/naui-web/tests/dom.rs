@@ -1410,6 +1410,126 @@ async fn stack_breakpoint_follows_its_width() {
     );
 }
 
+/// Collects the messages of the page's `error` events while it is alive.
+struct PageErrors {
+    messages: Rc<RefCell<Vec<String>>>,
+    listener: wasm_bindgen::closure::Closure<dyn FnMut(JsValue)>,
+}
+
+impl PageErrors {
+    fn listen() -> Self {
+        let messages = Rc::new(RefCell::new(Vec::new()));
+        let listener = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue)>::new({
+            let messages = messages.clone();
+            move |event: JsValue| {
+                let message = js_sys::Reflect::get(&event, &JsValue::from_str("message"))
+                    .ok()
+                    .and_then(|message| message.as_string())
+                    .unwrap_or_default();
+                messages.borrow_mut().push(message);
+            }
+        });
+        web_sys::window()
+            .expect("window")
+            .add_event_listener_with_callback("error", listener.as_ref().unchecked_ref())
+            .expect("error の購読");
+        Self { messages, listener }
+    }
+
+    /// The `ResizeObserver` loop reports seen so far.
+    fn resize_loops(&self) -> Vec<String> {
+        self.messages
+            .borrow()
+            .iter()
+            .filter(|message| message.contains("ResizeObserver"))
+            .cloned()
+            .collect()
+    }
+}
+
+impl Drop for PageErrors {
+    fn drop(&mut self) {
+        if let Some(window) = web_sys::window() {
+            let _ = window.remove_event_listener_with_callback(
+                "error",
+                self.listener.as_ref().unchecked_ref(),
+            );
+        }
+    }
+}
+
+/// A stack switching inside other stacks with breakpoints resizes them in the same
+/// frame: a parent with an `Auto` height gets shorter, and a sibling in a row gets
+/// another width. Neither is reported as a `ResizeObserver` loop.
+#[wasm_bindgen_test]
+async fn nested_stack_breakpoints_do_not_loop() {
+    let errors = PageErrors::listen();
+    let mut kept = None;
+    with_ui(|ui| {
+        let outer = ui.stack(Orientation::Vertical)?;
+        outer.set_sizing(Sizing::fixed(700.0, 400.0));
+        // 親は 700 では切り替わらないが、子が横に並ぶと背が縮む。
+        let parent = ui.stack(Orientation::Vertical)?;
+        parent.set_sizing(Sizing::fill_width());
+        parent.set_breakpoint(Some(naui_core::Breakpoint::new(
+            1000.0,
+            Orientation::Horizontal,
+        )));
+        let child = ui.stack(Orientation::Vertical)?;
+        child.set_sizing(Sizing::fill_width());
+        for title in ["一", "二", "三"] {
+            child.append(&ui.button(title)?);
+        }
+        child.set_breakpoint(Some(naui_core::Breakpoint::new(
+            500.0,
+            Orientation::Horizontal,
+        )));
+        parent.append(&child);
+        // 横の並びで両方が余りを分け合うと、片方が向きを変えて中身の幅が
+        // 変わるだけで、隣の幅も変わる。
+        let row = ui.stack(Orientation::Horizontal)?;
+        row.set_sizing(Sizing::fill_width());
+        let left = ui.stack(Orientation::Vertical)?;
+        left.set_sizing(Sizing::fill_width());
+        for title in ["左の一つ目", "左の二つ目"] {
+            left.append(&ui.button(title)?);
+        }
+        left.set_breakpoint(Some(naui_core::Breakpoint::new(
+            250.0,
+            Orientation::Horizontal,
+        )));
+        let right = ui.stack(Orientation::Vertical)?;
+        right.set_sizing(Sizing::fill_width());
+        right.append(&ui.button("右")?);
+        right.set_breakpoint(Some(naui_core::Breakpoint::new(
+            2000.0,
+            Orientation::Horizontal,
+        )));
+        row.append(&left);
+        row.append(&right);
+        parent.append(&row);
+        outer.append(&parent);
+        let mounted = Mounted::new(&outer);
+        kept = Some((mounted, outer, parent, child, left));
+        Ok(())
+    });
+    let (_mounted, _outer, parent, child, left) = kept.expect("組み立て");
+    frames_until(|| {
+        child.current_orientation() == Orientation::Horizontal
+            && left.current_orientation() == Orientation::Horizontal
+    })
+    .await;
+    next_frames().await;
+    assert_eq!(child.current_orientation(), Orientation::Horizontal);
+    assert_eq!(left.current_orientation(), Orientation::Horizontal);
+    assert_eq!(parent.current_orientation(), Orientation::Vertical);
+    let loops = errors.resize_loops();
+    assert!(
+        loops.is_empty(),
+        "ResizeObserver のループが報告されないこと: {loops:?}"
+    );
+}
+
 /// The breakpoint is measured on the stack's border box, so growing only its
 /// padding (the content keeps its width) still crosses it.
 #[wasm_bindgen_test]

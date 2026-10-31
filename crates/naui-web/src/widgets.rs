@@ -3,7 +3,7 @@
 //! The look stays the browser's default. CSS is used only for Flexbox layout.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use naui_core::{
     Align, Breakpoint, ButtonRole, Orientation, Padding, Result, StackArrangement, TextColor,
@@ -1069,13 +1069,161 @@ struct StackInner {
     file_drop: crate::file_drop::FileDrop,
     /// The orientation the app gave and the breakpoint, which decide `orientation`.
     arrangement: Cell<StackArrangement>,
-    /// Watches the width while there is a breakpoint.
-    observer: RefCell<Option<web_sys::ResizeObserver>>,
-    observer_callback: RefCell<Option<ObserverCallback>>,
+    /// Whether [`WidthWatch`] watches this stack (from its first breakpoint on).
+    watched: Cell<bool>,
+}
+
+impl Drop for StackInner {
+    fn drop(&mut self) {
+        if self.watched.get() {
+            WidthWatch::forget(&self.element);
+        }
+    }
 }
 
 /// The handler passed to `ResizeObserver`.
-type ObserverCallback = Closure<dyn FnMut(wasm_bindgen::JsValue)>;
+type ObserverCallback = Closure<dyn FnMut(js_sys::Array)>;
+
+/// One `ResizeObserver` for every stack with a breakpoint.
+///
+/// A stack that switches inside the observer's callback resizes more than itself:
+/// its height changes, a parent with an `Auto` height follows, and in a row the
+/// siblings sharing the leftover width get another width. The browser reports an
+/// observed element that changed at the depth just delivered or above it as a loop
+/// ("ResizeObserver loop completed with undelivered notifications"), so after a
+/// switch every stack stops being watched until the next frame. Watching again
+/// reports each stack once, which catches up with any change in between before
+/// that frame is painted.
+struct WidthWatch {
+    observer: web_sys::ResizeObserver,
+    _callback: ObserverCallback,
+    stacks: Vec<(web_sys::Element, Weak<StackInner>)>,
+    /// Watching stopped after a switch, until the next frame.
+    paused: bool,
+}
+
+thread_local! {
+    static WIDTH_WATCH: RefCell<Option<WidthWatch>> = const { RefCell::new(None) };
+}
+
+impl WidthWatch {
+    fn watch(stack: &Rc<StackInner>) {
+        WIDTH_WATCH.with(|cell| {
+            let mut watch = cell.borrow_mut();
+            if watch.is_none() {
+                let callback = ObserverCallback::new(Self::resized);
+                let Ok(observer) = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref())
+                else {
+                    return;
+                };
+                *watch = Some(Self {
+                    observer,
+                    _callback: callback,
+                    stacks: Vec::new(),
+                    paused: false,
+                });
+            }
+            let Some(watch) = watch.as_mut() else {
+                return;
+            };
+            let element: web_sys::Element = stack.element.clone().into();
+            if !watch.paused {
+                observe_border_box(&watch.observer, &element);
+            }
+            watch.stacks.push((element, Rc::downgrade(stack)));
+            stack.watched.set(true);
+        });
+    }
+
+    fn forget(element: &HtmlElement) {
+        let _ = WIDTH_WATCH.try_with(|cell| {
+            // 借りられている間は外せない。消えた分は付け直すときに除く。
+            let Ok(mut watch) = cell.try_borrow_mut() else {
+                return;
+            };
+            let Some(watch) = watch.as_mut() else {
+                return;
+            };
+            watch
+                .stacks
+                .retain(|(watched, _)| watched != element.as_ref());
+            if !watch.paused {
+                watch.observer.unobserve(element);
+            }
+        });
+    }
+
+    /// Called after layout and before paint.
+    fn resized(entries: js_sys::Array) {
+        let stacks: Vec<Rc<StackInner>> = WIDTH_WATCH.with(|cell| {
+            let watch = cell.borrow();
+            let Some(watch) = watch.as_ref() else {
+                return Vec::new();
+            };
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let target = entry
+                        .unchecked_into::<web_sys::ResizeObserverEntry>()
+                        .target();
+                    let (_, stack) = watch
+                        .stacks
+                        .iter()
+                        .find(|(element, _)| *element == target)?;
+                    stack.upgrade()
+                })
+                .collect()
+        });
+        let mut switched = false;
+        for stack in stacks {
+            switched |= Stack(stack).check_width();
+        }
+        if switched {
+            Self::pause();
+        }
+    }
+
+    /// Stops watching every stack until the next frame.
+    fn pause() {
+        let paused = WIDTH_WATCH.with(|cell| {
+            let mut watch = cell.borrow_mut();
+            let Some(watch) = watch.as_mut() else {
+                return false;
+            };
+            if !watch.paused {
+                watch.observer.disconnect();
+                watch.paused = true;
+            }
+            true
+        });
+        if !paused {
+            return;
+        }
+        let resume = Closure::once_into_js(Self::resume);
+        let requested =
+            web_sys::window().map(|window| window.request_animation_frame(resume.unchecked_ref()));
+        if !matches!(requested, Some(Ok(_))) {
+            Self::resume();
+        }
+    }
+
+    fn resume() {
+        WIDTH_WATCH.with(|cell| {
+            let mut watch = cell.borrow_mut();
+            let Some(watch) = watch.as_mut() else {
+                return;
+            };
+            if !watch.paused {
+                return;
+            }
+            watch.paused = false;
+            watch.stacks.retain(|(_, stack)| stack.strong_count() > 0);
+            for (element, _) in &watch.stacks {
+                observe_border_box(&watch.observer, element);
+            }
+        });
+    }
+}
 
 /// Watches `element`'s border box, the box the breakpoint is measured on. The
 /// default content box would miss a change of padding alone.
@@ -1083,14 +1231,6 @@ fn observe_border_box(observer: &web_sys::ResizeObserver, element: &web_sys::Ele
     let options = web_sys::ResizeObserverOptions::new();
     options.set_box(web_sys::ResizeObserverBoxOptions::BorderBox);
     observer.observe_with_options(element, &options);
-}
-
-impl Drop for StackInner {
-    fn drop(&mut self) {
-        if let Some(observer) = self.observer.get_mut().take() {
-            observer.disconnect();
-        }
-    }
 }
 
 /// A container that lays out its children vertically / horizontally (a Flexbox
@@ -1111,8 +1251,7 @@ impl Stack {
             children: RefCell::new(Vec::new()),
             file_drop: Default::default(),
             arrangement: Cell::new(StackArrangement::new(orientation)),
-            observer: RefCell::new(None),
-            observer_callback: RefCell::new(None),
+            watched: Cell::new(false),
         }));
         this.apply_direction();
         Ok(this)
@@ -1153,8 +1292,8 @@ impl Stack {
         arrangement.resized(self.outer_width());
         arrangement.set_breakpoint(breakpoint);
         self.0.arrangement.set(arrangement);
-        if breakpoint.is_some() {
-            self.watch_width();
+        if breakpoint.is_some() && !self.0.watched.get() {
+            WidthWatch::watch(&self.0);
         }
         self.arrange(arrangement.orientation());
     }
@@ -1173,58 +1312,17 @@ impl Stack {
         self.0.element.get_bounding_client_rect().width()
     }
 
-    fn watch_width(&self) {
-        if self.0.observer.borrow().is_some() {
-            return;
-        }
-        let weak = Rc::downgrade(&self.0);
-        let callback = ObserverCallback::new(move |_| {
-            if let Some(inner) = weak.upgrade() {
-                Stack(inner).check_width();
-            }
-        });
-        if let Ok(observer) = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()) {
-            observe_border_box(&observer, &self.0.element);
-            *self.0.observer.borrow_mut() = Some(observer);
-            *self.0.observer_callback.borrow_mut() = Some(callback);
-        }
-    }
-
-    /// Called by the `ResizeObserver`, after layout and before paint. If the width
-    /// crossed the breakpoint, switches right away, so the page is painted in the new
-    /// orientation.
-    ///
-    /// Switching changes the stack's own height, which the observer would report in
-    /// the same frame and the browser would flag as a loop ("ResizeObserver loop
-    /// completed with undelivered notifications"). So it stops watching until the next
-    /// frame, and the first report after watching again catches up with any change in
-    /// between.
-    fn check_width(&self) {
+    /// Called by [`WidthWatch`], after layout and before paint. If the width crossed
+    /// the breakpoint, switches right away, so the page is painted in the new
+    /// orientation. Returns whether it switched.
+    fn check_width(&self) -> bool {
         let mut arrangement = self.0.arrangement.get();
         let changed = arrangement.resized(self.outer_width());
         self.0.arrangement.set(arrangement);
-        if !changed {
-            return;
+        if changed {
+            self.arrange(arrangement.orientation());
         }
-        self.arrange(arrangement.orientation());
-        let Some(observer) = self.0.observer.borrow().clone() else {
-            return;
-        };
-        observer.unobserve(&self.0.element);
-        let element = self.0.element.clone();
-        let weak = Rc::downgrade(&self.0);
-        let watch_again = Closure::once_into_js(move || {
-            if weak.upgrade().is_some() {
-                observe_border_box(&observer, &element);
-            }
-        });
-        let requested = web_sys::window()
-            .map(|window| window.request_animation_frame(watch_again.unchecked_ref()));
-        if !matches!(requested, Some(Ok(_))) {
-            if let Some(observer) = self.0.observer.borrow().as_ref() {
-                observe_border_box(observer, &self.0.element);
-            }
-        }
+        changed
     }
 
     /// Lays the children out in `orientation`.
