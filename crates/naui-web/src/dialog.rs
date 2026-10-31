@@ -144,6 +144,11 @@ impl Dialog {
                     return;
                 }
                 event.prevent_default();
+                // 中のウィジェットから開いたポップオーバーがあれば、先にそれを閉じる
+                // (ブラウザの Esc と同じ順)。
+                if crate::popover::dismiss_within(inner.element.as_ref()) {
+                    return;
+                }
                 Dialog(inner).dismiss();
             },
         )?);
@@ -170,6 +175,7 @@ impl Dialog {
         if !self.0.element.open() {
             return;
         }
+        crate::popover::dismiss_within(self.0.element.as_ref());
         self.0.element.close();
         self.emit(DialogResponse::Cancel);
     }
@@ -254,6 +260,7 @@ impl Dialog {
                 let Some(inner) = weak.upgrade() else {
                     return;
                 };
+                crate::popover::dismiss_within(inner.element.as_ref());
                 inner.element.close();
                 Dialog(inner).emit(role);
             })?);
@@ -286,6 +293,7 @@ impl Dialog {
         if !self.0.element.open() {
             return;
         }
+        crate::popover::dismiss_within(self.0.element.as_ref());
         self.0.element.close();
     }
 

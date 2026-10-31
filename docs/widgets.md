@@ -470,7 +470,13 @@ collected in [Known limitations](known-limitations.md).
   `showPopover()`; the top layer, light dismiss and the look (`Canvas` /
   `CanvasText` and a border) are the browser's. When the widget is inside a
   `<dialog>`, the popover moves into that dialog on opening: a modal dialog makes
-  everything outside it inert, and the top layer does not change that. It is placed with CSS anchor
+  everything outside it inert, and the top layer does not change that. It goes
+  back to `<body>` once closed, since WebKit stops rendering when a modal dialog
+  holding an element with `position-try-fallbacks` closes. Hiding a window or
+  dialog does not hide a popover in the top layer, so `Window::close` and the
+  dialog's closing close the popovers opened from widgets inside them (notifying
+  `on_close`, as a click outside does), and Esc in a dialog closes such a popover
+  before the dialog. It is placed with CSS anchor
   positioning: the widget gets an `anchor-name` unique to the popover (added to a
   comma-separated list, since several popovers can point at the same widget), and
   the popover gets `position-anchor`, `position-area` for the side and

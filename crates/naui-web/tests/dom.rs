@@ -2973,6 +2973,107 @@ fn popover_needs_a_shown_window() {
 }
 
 #[wasm_bindgen_test]
+async fn popover_escape_in_a_dialog_closes_only_the_popover() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let popover = ui.popover()?;
+        let field = ui.text_input("")?;
+        popover.set_child(&field);
+        let dialog = ui.dialog("確認")?;
+        let inside = ui.button("詳細")?;
+        dialog.set_child(&inside);
+        let closed = Rc::new(Cell::new(0));
+        popover.on_close({
+            let closed = closed.clone();
+            move || closed.set(closed.get() + 1)
+        });
+        let responses = Rc::new(RefCell::new(Vec::new()));
+        dialog.on_response({
+            let responses = responses.clone();
+            move |response| responses.borrow_mut().push(response)
+        });
+        kept = Some((popover, field, dialog, inside, closed, responses));
+        Ok(())
+    });
+    let (popover, field, dialog, inside, closed, responses) = kept.expect("組み立て");
+
+    dialog.open();
+    popover.open(&inside);
+    let prevented = press_escape(field.native_element().as_ref(), false);
+    assert!(prevented, "Esc の既定動作を止めていること");
+    assert!(
+        !popover.is_open(),
+        "ポップオーバーの中の Esc でそれが閉じること"
+    );
+    assert!(dialog.is_open(), "親のダイアログは閉じないこと");
+    next_frames().await;
+    assert_eq!(closed.get(), 1, "利用者が閉じたものとして知らせること");
+    assert!(responses.borrow().is_empty());
+
+    // ダイアログのほかの場所の Esc でも、先にポップオーバーを閉じること。
+    popover.open(&inside);
+    press_escape(inside.native_element().as_ref(), false);
+    assert!(!popover.is_open());
+    assert!(dialog.is_open());
+
+    // ポップオーバーが無ければ、ダイアログが閉じること。
+    press_escape(inside.native_element().as_ref(), false);
+    assert!(!dialog.is_open());
+    assert_eq!(*responses.borrow(), vec![DialogResponse::Cancel]);
+    popover.native_element().remove();
+    dialog.native_element().remove();
+}
+
+#[wasm_bindgen_test]
+async fn popover_closes_with_its_window_or_dialog() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("ポップオーバー", 400.0, 300.0)?;
+        let button = ui.button("設定")?;
+        window.set_child(&button);
+        let dialog = ui.dialog("確認")?;
+        let inside = ui.button("詳細")?;
+        dialog.set_child(&inside);
+        let popover = ui.popover()?;
+        popover.set_child(&ui.label("中身")?);
+        let closed = Rc::new(Cell::new(0));
+        popover.on_close({
+            let closed = closed.clone();
+            move || closed.set(closed.get() + 1)
+        });
+        kept = Some((window, button, dialog, inside, popover, closed));
+        Ok(())
+    });
+    let (window, button, dialog, inside, popover, closed) = kept.expect("組み立て");
+
+    popover.open(&button);
+    assert!(popover.is_open());
+    window.close();
+    assert!(!popover.is_open(), "ウィンドウを閉じたら一緒に閉じること");
+    next_frames().await;
+    assert_eq!(closed.get(), 1, "外側を押したときと同じく知らせること");
+
+    // 別のウィンドウのものは閉じないこと。
+    dialog.open();
+    popover.open(&inside);
+    window.close();
+    assert!(popover.is_open(), "ほかのウィンドウを閉じても残ること");
+
+    dialog.close();
+    assert!(!popover.is_open(), "ダイアログを閉じたら一緒に閉じること");
+    // WebKit は `position-try-fallbacks` を持つ要素を中に残したままモーダルを
+    // 閉じると描画が止まるので、閉じる前に `<body>` へ戻っていること。
+    assert_eq!(
+        popover.native_element().parent_element().as_ref(),
+        Some(&body().unchecked_into())
+    );
+    next_frames().await;
+    assert_eq!(closed.get(), 2);
+    popover.native_element().remove();
+    dialog.native_element().remove();
+}
+
+#[wasm_bindgen_test]
 async fn popover_in_a_modal_dialog_can_be_used() {
     let mut kept = None;
     with_ui(|ui| {

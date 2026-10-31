@@ -16,7 +16,14 @@
 //! The element lives in `<body>`, or in the `<dialog>` holding the widget while it
 //! is shown beside one: a modal dialog makes everything outside it inert, and the
 //! top layer does not change that, so a popover left in `<body>` could not be
-//! clicked or focused.
+//! clicked or focused. It goes back to `<body>` once closed, because WebKit stops
+//! rendering for good when a modal dialog holding an element with
+//! `position-try-fallbacks` closes (shown or not).
+//!
+//! Hiding the window or dialog the widget is in does not hide the popover (it is in
+//! the top layer), so [`crate::Window::close`] and the dialog's closing close the
+//! popovers shown beside widgets inside them, the way a click outside does. Esc in a
+//! dialog closes such a popover first rather than the dialog.
 //!
 //! ## Differences from other platforms
 //!
@@ -30,7 +37,7 @@
 //! than waiting for it.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use naui_core::{PopoverPosition, Result};
 use wasm_bindgen::JsCast;
@@ -47,6 +54,8 @@ const PADDING: &str = "12px";
 thread_local! {
     /// The number for the next popover's anchor name.
     static NEXT_ID: Cell<u64> = const { Cell::new(0) };
+    /// Every popover made, for closing the ones inside a window or dialog that closes.
+    static POPOVERS: RefCell<Vec<Weak<PopoverInner>>> = const { RefCell::new(Vec::new()) };
 }
 
 struct PopoverInner {
@@ -119,13 +128,23 @@ impl Popover {
             if !closed {
                 return;
             }
-            Popover(inner.clone()).release_anchor();
+            let popover = Popover(inner.clone());
+            popover.release_anchor();
+            // 知らせを待つ間に開き直していれば、その置き場所のままにする。
+            if !popover.is_open() {
+                popover.park();
+            }
             // `close` が先に下ろしていれば、アプリが閉じたので知らせない。
             if inner.open.replace(false) {
                 Popover(inner).emit_close();
             }
         })?;
         *this.0.listener.borrow_mut() = Some(listener);
+        POPOVERS.with(|popovers| {
+            let mut popovers = popovers.borrow_mut();
+            popovers.retain(|weak| weak.strong_count() > 0);
+            popovers.push(Rc::downgrade(&this.0));
+        });
         Ok(this)
     }
 
@@ -219,6 +238,17 @@ impl Popover {
         }
     }
 
+    /// Puts the element back in `<body>` (see the module docs). Only while it is
+    /// hidden, since moving a shown popover closes it.
+    fn park(&self) {
+        let body = self.0.element.owner_document().and_then(|doc| doc.body());
+        if let Some(body) = body {
+            if self.0.element.parent_element().as_deref() != Some(body.as_ref()) {
+                let _ = body.append_child(&self.0.element);
+            }
+        }
+    }
+
     /// Closes it. `on_close` is not called. Does nothing if it is not open.
     pub fn close(&self) {
         if !self.0.open.replace(false) {
@@ -226,6 +256,7 @@ impl Popover {
         }
         self.release_anchor();
         let _ = self.0.element.hide_popover();
+        self.park();
     }
 
     /// Whether it is open.
@@ -252,6 +283,38 @@ impl Popover {
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()
     }
+}
+
+/// Closes the open popovers shown beside widgets inside `container`, the way a click
+/// outside does (`on_close` is notified), and moves any popover element inside it
+/// back to `<body>`. Returns whether any was open.
+pub(crate) fn dismiss_within(container: &Element) -> bool {
+    let popovers: Vec<Popover> = POPOVERS.with(|popovers| {
+        popovers
+            .borrow()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .map(Popover)
+            .collect()
+    });
+    let mut dismissed = false;
+    for popover in &popovers {
+        let anchored = popover
+            .0
+            .anchor
+            .borrow()
+            .as_ref()
+            .is_some_and(|anchor| container.contains(Some(anchor.native_element().as_ref())));
+        if anchored && popover.is_open() {
+            popover.dismiss();
+            dismissed = true;
+        }
+        // 知らせ (`toggle`) を待たずに、ダイアログが閉じる前に出しておく。
+        if !popover.is_open() && container.contains(Some(popover.0.element.as_ref())) {
+            popover.park();
+        }
+    }
+    dismissed
 }
 
 /// Whether the browser has CSS anchor positioning (`position-area`).
