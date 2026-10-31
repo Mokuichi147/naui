@@ -20,7 +20,7 @@ use gtk::{gdk, glib, graphene};
 use naui_core::{Align, ListItem, Orientation, Point, SelectionMode, Sizing, TextColor, TextStyle};
 
 use crate::bin::SizeBin;
-use crate::callback::{Notifier, SelectionNotifier};
+use crate::callback::{Notifier, SelectionNotifier, Slot};
 use crate::widgets::{impl_widget, without_signal, Label, Stack, Widget};
 
 /// The spacing between the label and the secondary text.
@@ -30,7 +30,7 @@ const DETAIL_SPACING: f64 = 2.0;
 ///
 /// Replacing the same row's callback during the call does not double-borrow.
 #[derive(Clone, Default)]
-pub(crate) struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
+pub(crate) struct ActivationHandler(Rc<Slot<dyn FnMut()>>);
 
 impl ActivationHandler {
     pub(crate) fn set(&self, f: impl FnMut() + 'static) {
