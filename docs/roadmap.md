@@ -1,6 +1,6 @@
 # Roadmap
 
-This lists features commonly expected of a GUI toolkit that naui (as of v0.13.0)
+This lists features commonly expected of a GUI toolkit that naui (as of v0.14.0)
 does not have yet, with priorities.
 
 The native counterparts written for each item are estimates. When work starts,
@@ -24,7 +24,9 @@ once a release includes them.
 Items marked *(adaptive)* belong to the [adaptive layout](#adaptive-layout) track.
 That track has its own order and proceeds alongside the other items, rather than
 waiting until every P1 item is done. Items marked *(i18n)* belong to
-[internationalization](#internationalization).
+[internationalization](#internationalization), items marked *(app)* to the
+[application layer](#application-layer), and items marked *(drawing)* to
+[drawing in separate crates](#drawing-in-separate-crates).
 
 ## Adaptive layout
 
@@ -52,11 +54,11 @@ one or two panes.
 
 Each step builds on the ones before it. Steps 1 to 3 (main-axis `Fill` and
 `Spacer` in Windows's `Stack`, the contract for changes after adding to a
-container, and `Stack::set_orientation`) were released in v0.12.0, and step 4
-(automatic collapsing of `Sidebar`) in v0.13.0.
+container, and `Stack::set_orientation`) were released in v0.12.0, step 4
+(automatic collapsing of `Sidebar`) in v0.13.0, and step 5 (size-based
+arrangements, `Stack::set_breakpoint`) in v0.14.0.
 
-5. **Size-based arrangements** (P0).
-6. **`AdaptivePanes`** (P1).
+6. **`AdaptivePanes`** (P0).
 
 `Flow` (P2) does not depend on these and can start at any time. The items in P3 are
 decided after investigating.
@@ -82,54 +84,144 @@ direction.
   languages inside a running app therefore leaves those in the OS language, so the
   default is to follow the OS language, and the differences are documented.
 
+## Application layer
+
+An optional crate on top of naui's widget API (tentatively `naui-app`) that gives
+large apps a structure for their state, events and lifecycles: Model–View–Update,
+split into components, with asynchronous work managed as effects. Apps that do not
+use it are unaffected, and naui's own API stays as it is.
+
+The aim is to manage state, events and lifecycles safely, not to automate building
+the UI. In return, apps get:
+
+- **Checks at compile time.** Each part of the app has a typed model and message,
+  so a message `update` forgets to handle is a compile error (`match` has to be
+  exhaustive).
+- **Fewer panics at run time.** Events cannot re-enter `update`, so the model is
+  free of the double borrows of `Rc<RefCell<_>>` that compile but panic.
+- **Testable logic.** `update` is plain Rust, so it can be tested without a window.
+- **Division of work.** Screens and features become components that can be written
+  and tested on their own.
+
+### Approach
+
+- **Build the tree once and update it with setters.** Widgets are created once, as
+  today, and `render` updates them with `set_text`, `set_enabled`, `append` and the
+  like. There is no virtual widget tree, no diffing and no automatic detection of
+  changed properties: `render` calls the setters it needs every time. This keeps
+  declarative UI and reactive systems out of naui (see
+  [Not planned](#not-planned)), and the backends need no changes.
+- **Messages go one way, through a queue.** Callbacks only send a typed message
+  (a click, a changed input, a finished load). Messages are handled one at a time,
+  in the order they were sent: `update` changes the model and may request
+  effects, the mutable borrow of the model ends, and only then does `render`
+  touch widgets and the effects start. A message sent in the meantime, from
+  `render`, from a nested run loop such as macOS's modal `Dialog::open`, or from
+  another thread, waits in the queue instead of re-entering `update`.
+- **Panics are contained and reported, not prevented.** Indexing out of bounds or
+  an explicit `panic!` can still happen. Today naui stops a panic at the callback
+  boundary (no backend can unwind across the C / WinRT boundary), and only the
+  panic hook's message on stderr shows it happened. naui-app catches panics per
+  message, and hands them, together with the message that caused them, to one
+  error handler that also receives the errors `update` and effects return, so they
+  can be logged or shown to the user.
+- **Components hold widgets rather than being widgets.** `naui::Widget` is sealed,
+  so a component owns its model, its message type and its widget handles, and gives
+  its parent a root widget to place in a container. Parent and child talk only
+  through typed messages.
+- **Asynchronous work builds on `Tasks`.** An effect runs a future on the UI thread
+  with `Tasks::spawn`, or hands blocking work to another thread and brings the
+  result back through `Tasks::channel`; either way the result arrives as a
+  message. naui-app does not depend on an async runtime, so I/O that needs one
+  (tokio and the like) runs in the app's own runtime and comes back the same way.
+
+### Order
+
+Each step builds on the ones before it, and comes with tests of its own: the queue's
+order and its guarantee against re-entry, a component's lifecycle, the
+cancellation of effects.
+
+1. **Message queue and the split of `update` and `render`** (P0).
+2. **Components** (P1).
+3. **Effects and lifecycles** (P1).
+4. **Unified error handling** (P1).
+5. **A guide for structuring large apps** (P2).
+
+## Drawing in separate crates
+
+Widening what apps can draw (charts, GPU-rendered 2D and 3D, viewers, CAD, games)
+while naui stays a light toolkit of native UI. naui is not to become a rendering or
+game engine: it gains one widget that hosts a native view made elsewhere, and the
+drawing is done by separate crates.
+
+### Approach
+
+- **naui adds only `NativeHost`.** It places a native view created by another
+  crate among ordinary widgets. naui handles its layout, size and scale-factor
+  changes, and its lifecycle (when it is attached and released), and has no part
+  in GPU setup, drawing or game loops.
+- **`Widget` stays sealed.** Extension goes through `NativeHost`, not through
+  widget types implemented outside naui.
+- **No GPU dependencies in naui.** wgpu and the like are dependencies of the
+  separate crates only.
+- **`Canvas` stays for simple 2D.** Static shapes and charts keep using `Canvas`,
+  which draws with each platform's own 2D API.
+- **What the separate crates cover.** These are sketches, not commitments:
+
+  | Crate | Role | Needs from naui |
+  | --- | --- | --- |
+  | `naui-charts` | Line, bar and scatter charts | Nothing new (draws on `Canvas`) |
+  | `naui-wgpu` | Fast 2D and 3D drawing with wgpu | `NativeHost` |
+  | A scene crate | 3D models, cameras, lights | Nothing beyond `naui-wgpu` |
+  | Game crates | ECS, physics, audio, game loop | Nothing beyond `naui-wgpu` |
+
+  The last two are left to whoever needs them and are not on this roadmap.
+
+### Order
+
+1. **`NativeHost`** (P2), placing an external view on all four platforms.
+2. **`naui-wgpu`** (P3), connecting a GPU surface through it and checking basic 2D
+   and 3D drawing and resizing.
+
+`naui-charts` (P3) draws on `Canvas`, so it does not wait for these.
+
 ## P0: Do now
 
 Gaps that ordinary apps run into right away and that all four platforms have native
-counterparts for, plus the next steps of the adaptive layout and
-internationalization tracks.
+counterparts for, plus the next steps of the adaptive layout,
+internationalization and application layer tracks.
 
-- [x] **Popovers** (attached to a widget, showing arbitrary content). Settings
-      panels and pickers next to a button are common, and for now an app has to
-      fall back on a modal dialog. `NSPopover`, `GtkPopover`, `Flyout`, HTML's
-      `popover` attribute. Placing it beside the widget on the Web uses CSS
-      anchor positioning, which every major engine has supported since Firefox 147
-      (January 2026), so it no longer has to wait. Newer parts such as
-      `position-visibility` still differ between engines, so only the basic
-      placement is used.
-- [x] **Dialogs with arbitrary content** (`Sheet`). `ContentDialog`, `AdwDialog`,
-      sheets, `<dialog>`. Buttons are given by role as with `Dialog`, and each
-      platform places them; `Sheet::set_button_enabled` keeps the primary button
-      disabled until the content is valid. macOS shares the content's construction
-      with popovers, and Windows and the Web share `Dialog`'s. The existing
-      `Dialog` stays as the short form for a message and buttons.
-- [x] **Button roles** (primary buttons, destructive actions). Small, and dialogs
-      with arbitrary content need it to mark their buttons. macOS's
-      `hasDestructiveAction`, GTK's `suggested-action` / `destructive-action`.
-      WinUI has only the primary button (`AccentButtonStyle`), and the Web has no
-      counterpart, so the differences are documented.
-- [x] *(adaptive)* **Size-based arrangements.** `Stack::set_breakpoint` declares
-      the width (`Breakpoint`) from which a stack lays its children out in the
-      other orientation; below it the stack keeps its own (`Stack::orientation`),
-      and `Stack::current_orientation` returns the one in use. The switch is the
-      same as `set_orientation`, so focus and IME composition survive it, and going
-      back takes 8 pixels less. naui decides on all four platforms with
-      naui-core's `StackArrangement`: the native mechanisms did not fit when
-      checked. `TwoPaneView` holds only two panes and `AdaptiveTrigger` follows the
-      window, `AdwBreakpointBin` takes away the minimum size of what it holds (as
-      with `Sidebar`), and a CSS container query needs a wrapping element whose
-      width no longer comes from its content (an `Auto` grid column shrinks it to
-      nothing) while the children's direction-dependent styles are inline. macOS,
-      Linux and Windows switch on the next run loop iteration after layout, and the
-      Web inside a `ResizeObserver` before paint. Thresholds are widths only, so no
-      `Size` type was added.
-- [x] *(i18n)* **A guide for translating apps.** With `Ui::preferred_languages`
-      and `Ui::on_preferred_languages_change` in place, show how to combine Fluent
-      with naui: choosing a translation from the preferred languages, loading it,
-      and re-setting strings via `downgrade()` when the language changes. Written
-      as [Translating apps](translating.md) with `examples/i18n`. An optional
-      `naui-i18n` crate turned out not to be needed for now: the glue is a few
-      dozen lines that depend on the translation library and on how the app is
-      distributed (see [the reasons](translating.md#why-there-is-no-naui-i18n-crate)).
+- [ ] *(adaptive)* **`AdaptivePanes`.** Showing list and detail side by side when
+      wide, and one at a time when narrow. In the one-pane state a way back to the
+      list is needed. `TwoPaneView`, `AdwNavigationSplitView`, `NSSplitView`, CSS
+      container queries. The native ones are mostly two-pane, so how far three
+      panes can go is checked when work starts. Where the native mechanism does
+      not fit, as with size-based arrangements, naui decides with the thresholds
+      and hysteresis of naui-core's `StackArrangement`.
+- [ ] *(i18n)* **Telling the native side the app's language.** The language
+      affects which glyphs are chosen for CJK text and how screen readers
+      pronounce it (`lang` on the Web, `FrameworkElement.Language` on WinUI).
+      Without it, an app showing Japanese on an OS set to another language can
+      get Chinese glyph forms. Which platforms can take it per window or per widget is
+      investigated first.
+- [ ] **Separators and framed groups.** Settings screens, and now the content of
+      `Popover` and `Sheet`, need a way to divide and group controls. `NSBox`,
+      `GtkSeparator` / `GtkFrame`, `<hr>` / `<fieldset>`. WinUI has no standalone
+      separator, so what to substitute is investigated first.
+- [ ] **More image sources** (bytes in memory, SVG, pixel buffers). For now only
+      paths and URLs, so an app cannot show an icon embedded with `include_bytes!`
+      without writing it to a file. The Web can use Blob URLs.
+- [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** Today they
+      are distributed evenly there, so the same code lays out differently than on
+      Windows and the Web. `NSGridView` and `GtkGrid` have no weights, so naui
+      distributes the space itself.
+- [ ] *(app)* **Message queue and the split of `update` and `render`.** Create the
+      crate with the model, message, `update` and `render`, and the queue that runs
+      them as described in [Application layer](#application-layer). Since `render` sets every
+      value each time, first check on each platform that a setter given the value
+      already shown does nothing: `set_text` on a focused text field must not move
+      the caret or break IME composition. Where it does something, naui's setter is
+      made to skip it, which also helps apps that do not use naui-app.
 
 ## P1: Do next
 
@@ -137,9 +229,6 @@ Medium weight and frequently requested, or a smaller gap between platforms.
 
 - [ ] **Row windowing for large `List`s.** Extend `Table`'s mechanism
       (`row_window` in naui-core) to `List`.
-- [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** Today they
-      are distributed evenly there. `NSGridView` and `GtkGrid` have no weights, so
-      naui distributes the space itself.
 - [x] **Make Windows's `Canvas` keep up with large drawings.** Windows now draws
       the commands with Direct2D (text with DirectWrite) onto a Composition drawing
       surface, the way the other three platforms rasterize, instead of turning them
@@ -153,24 +242,24 @@ Medium weight and frequently requested, or a smaller gap between platforms.
       overlap or windings cancel, and does nothing for drawings whose colors vary.
       DirectWrite text measurement is now available to broaden `Canvas`'s
       vocabulary.
-- [ ] **Separators and framed groups.** `NSBox`, `GtkSeparator` / `GtkFrame`.
-      WinUI has no standalone separator, so what to substitute is investigated
-      first.
-- [ ] **More image sources** (bytes in memory, SVG, pixel buffers). For now only
-      paths and URLs. The Web can use Blob URLs.
-- [ ] *(adaptive)* **`AdaptivePanes`.** Showing list and detail side by side when
-      wide, and one at a time when narrow. In the one-pane state a way back to the
-      list is needed. `TwoPaneView`, `AdwNavigationSplitView`, `NSSplitView`, CSS
-      container queries. The native ones are mostly two-pane, so how far three
-      panes can go is checked when work starts.
 - [ ] **Rich text** (mixing bold, colors and links within a line).
       `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`.
-- [ ] *(i18n)* **Telling the native side the app's language.** The language
-      affects which glyphs are chosen for CJK text and how screen readers
-      pronounce it (`lang` on the Web, `FrameworkElement.Language` on WinUI).
-      Without it, an app showing Japanese on an OS set to another language can
-      get Chinese glyph forms. Which platforms can take it per window or per widget is
-      investigated first.
+- [ ] *(app)* **Components.** A component has its own model, messages, `update`
+      and widgets, and goes through `mount` (building its widgets), `update`,
+      `render` and `unmount` (cleaning up). A child's messages are turned into the
+      parent's. How `unmount` pairs with removing the root widget from its
+      container is decided when work starts.
+- [ ] *(app)* **Effects and lifecycles.** `Effect<Message>` gathers asynchronous
+      work: tasks (`Tasks::spawn`), work on other threads (`Tasks::channel`) and
+      timers (`Tasks::after`). A component's tasks and timers are cancelled on
+      `unmount` (dropping a `Task` or `Timer` does not stop it), results of effects
+      superseded by newer ones are discarded (a search overtaken by further
+      typing), and failures are reported.
+- [ ] *(app)* **Unified error handling.** One handler, set by the app, receives the
+      panics caught per message and the errors from `update` and effects, with the
+      message involved. Whether naui itself should also report panics in ordinary
+      callbacks to a handler, rather than only through the panic hook, is decided
+      then.
 
 ## P2: Do if there is time
 
@@ -180,9 +269,10 @@ Heavy, or supported on a limited set of platforms.
       testing APIs (`click`, `activate`, and so on) for app developers. Also
       provide a way to resize windows in tests, so apps can check their adaptive
       layouts.
-- [ ] **Relax the limits on dialogs and toasts** (number of buttons, toast queueing,
-      position). Decided after dialogs with arbitrary content, which may cover part
-      of it.
+- [ ] **Relax the limits on toasts** (queueing, more than one action, position).
+      Dialogs needing more than three buttons can now put the extra controls in a
+      `Sheet`'s content, so only toasts remain. Queueing has a native counterpart
+      only in `AdwToastOverlay`, so the others would be built in naui.
 - [ ] **Images on the clipboard.**
 - [ ] **Desktop notifications.** macOS needs a bundle, Linux a `.desktop` file, and
       Windows registration, so the conditions for each distribution method need to
@@ -194,11 +284,28 @@ Heavy, or supported on a limited set of platforms.
       layout. Which platforms need naui to lay it out itself is investigated first.
 - [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
       gradients). Text width measurement on Windows can use the DirectWrite that
-      `Canvas` now draws with.
+      `Canvas` now draws with. Image drawing builds on more image sources (P0).
 - [ ] **Multiple selection in `Tree`, and placing widgets in items.**
 - [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
       so it is heavy.
+- [ ] *(drawing)* **`NativeHost`.** A widget that places a native view created by
+      another crate: an `NSView` on macOS, a `GtkWidget` on Linux, a XAML element
+      on Windows, a DOM element on the Web. The view is platform-specific, so how
+      the crate receives the native object (and whether `raw-window-handle` fits,
+      which has no form for GTK widgets or WinUI's `SwapChainPanel`) is decided
+      first. Linux needs the most checking: GTK4 has no native child windows, so a
+      GPU surface cannot simply be placed, and the candidates are `GtkGLArea` with
+      wgpu's GL backend, or rendering offscreen and handing frames over as
+      textures (`GdkDmabufTexture` from GTK 4.14). Windows needs `SwapChainPanel`
+      in the projection, and the Web a `<canvas>` for WebGPU or WebGL.
+- [ ] *(app)* **A guide for structuring large apps.** Like
+      [Translating apps](translating.md), with an example under `examples/`: how to
+      split an app into crates by feature (an app crate, a core crate with the
+      models and `update` that does not depend on naui, a crate per screen, and
+      services) so that Cargo reuses the build of crates that did not change. A
+      change to a crate's public API still rebuilds the crates that depend on it,
+      so where to draw the boundaries is part of the guide.
 
 - [ ] *(i18n)* **Writing direction** (`LayoutDirection` with `Auto`, `Ltr` and
       `Rtl`). `userInterfaceLayoutDirection`, `gtk_widget_set_default_direction`,
@@ -218,8 +325,15 @@ Not yet clear whether they fit the approach, or whether they are needed.
       none either, so it would be built with Win32, and the Web has no counterpart.
 - [ ] **Printing.**
 - [ ] **Font choosers, and an always-visible calendar widget.**
-- [ ] **WebView, a code editor, Markdown rendering, charts.** These seem better
-      suited to separate crates than to the core.
+- [ ] **WebView, a code editor, Markdown rendering.** These seem better suited to
+      separate crates than to the core. A WebView (`WKWebView`, WebKitGTK,
+      WebView2, `<iframe>`) could be one built on `NativeHost`.
+- [ ] *(drawing)* **`naui-charts`.** Line, bar and scatter charts in a separate
+      crate drawing on `Canvas`, so it can start before `NativeHost`. Windows's
+      `Canvas` now keeps up with charts of many points (P1).
+- [ ] *(drawing)* **`naui-wgpu`.** A separate crate that connects a wgpu surface
+      through `NativeHost` on all four platforms, and checks basic 2D and 3D
+      drawing, resizing and scale-factor changes.
 - [ ] *(adaptive)* **Swapping whole compositions by size** (a different widget tree
       per size class). First check whether size-based arrangements and
       `AdaptivePanes` leave real cases uncovered.
@@ -237,8 +351,12 @@ Not yet clear whether they fit the approach, or whether they are needed.
 Things that do not fit naui's approach.
 
 - **Free per-widget colors or corner radii, animations, custom-drawn widgets, GPU
-  integration.** These go against the approach of not drawing widgets ourselves.
-- **Declarative UI syntax, hot reload.** If built at all, they would be separate
-  crates on top, not part of the core.
+  rendering or game loops in naui itself.** These go against the approach of not
+  drawing widgets ourselves. GPU drawing is left to separate crates through
+  `NativeHost` (see [drawing in separate crates](#drawing-in-separate-crates)).
+- **Declarative UI syntax, a virtual widget tree with diffing, hot reload.** If
+  built at all, they would be separate crates on top, not part of the core. The
+  [application layer](#application-layer) is not one of these: it builds the tree
+  with the existing API and updates it with setters.
 - **iOS, Android, embedded devices.** There are no mobile backends, and they
   cannot be checked in CI either, so they are on hold.
