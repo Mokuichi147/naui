@@ -628,6 +628,10 @@ fn main() {
             popover_dismissed_by_the_user_notifies,
         ),
         (
+            "on_close の中でポップオーバーを開いて閉じ直せる",
+            popover_on_close_may_open_and_close_again,
+        ),
+        (
             "ポップオーバーが指定した側に出る",
             popover_follows_the_position,
         ),
@@ -8661,6 +8665,49 @@ fn popover_dismissed_by_the_user_notifies(ui: &Ui) -> Result<()> {
     popover.close();
     pump(0.3);
     assert_eq!(closed.get(), 1);
+    window.close();
+    Ok(())
+}
+
+/// `close` sends `popoverDidClose:` again from inside the notification, so the
+/// receiver must not hold a borrow while calling it.
+fn popover_on_close_may_open_and_close_again(ui: &Ui) -> Result<()> {
+    let (window, button) = popover_window(ui, "ポップオーバーの再入")?;
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("中身")?);
+    // アニメーションが無いと、`close` の中で `popoverDidClose:` が届く。
+    popover.native_popover().setAnimates(false);
+    let closed = Rc::new(Cell::new(0));
+    let reopened = Rc::new(Cell::new(false));
+    popover.on_close({
+        let closed = closed.clone();
+        let reopened = reopened.clone();
+        let popover = popover.clone();
+        let button = button.clone();
+        move || {
+            closed.set(closed.get() + 1);
+            if closed.get() == 1 {
+                popover.open(&button);
+                reopened.set(popover.is_open());
+                popover.close();
+            }
+        }
+    });
+
+    popover.open(&button);
+    popover.dismiss();
+    pump_until(2.0, || closed.get() > 0);
+    pump(0.3);
+    assert!(reopened.get(), "通知の中で開き直せること");
+    assert_eq!(closed.get(), 1, "アプリが閉じ直したぶんは知らせないこと");
+    assert!(!popover.is_open());
+
+    // 通知の後も、ふつうに開けること。
+    popover.open(&button);
+    assert!(popover.is_open());
+    popover.close();
+    // クロージャがポップオーバーを握っているので、輪を切る。
+    popover.on_close(|| {});
     window.close();
     Ok(())
 }

@@ -33,10 +33,14 @@ const FALLBACK_WIDTH: f64 = 260.0;
 
 define_class!(
     /// Receives `popoverDidClose:` and hands it to the closure.
+    ///
+    /// The closure is `Fn` and called without a borrow: `on_close` may open and
+    /// close the popover again, and `close` sends `popoverDidClose:` again from
+    /// inside the call.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "NauiPopoverObserver"]
-    #[ivars = RefCell<Box<dyn FnMut()>>]
+    #[ivars = Box<dyn Fn()>]
     struct PopoverObserver;
 
     unsafe impl NSObjectProtocol for PopoverObserver {}
@@ -44,15 +48,14 @@ define_class!(
     unsafe impl NSPopoverDelegate for PopoverObserver {
         #[unsafe(method(popoverDidClose:))]
         fn popover_did_close(&self, _notification: &NSNotification) {
-            let mut f = self.ivars().borrow_mut();
-            (f)();
+            (self.ivars())();
         }
     }
 );
 
 impl PopoverObserver {
-    fn new(mtm: MainThreadMarker, f: impl FnMut() + 'static) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(RefCell::new(Box::new(f) as Box<dyn FnMut()>));
+    fn new(mtm: MainThreadMarker, f: impl Fn() + 'static) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(Box::new(f) as Box<dyn Fn()>);
         unsafe { msg_send![super(this), init] }
     }
 }

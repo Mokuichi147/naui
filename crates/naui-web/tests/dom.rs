@@ -3472,6 +3472,75 @@ async fn popover_opened_from_another_keeps_both_open() {
 }
 
 #[wasm_bindgen_test]
+async fn popover_moving_a_parent_closes_its_children() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let (root, outside, parent, parent_closed) = popover_fixture(ui)?;
+        let dialog = ui.dialog("確認")?;
+        let opener = ui.button("設定")?;
+        dialog.set_child(&opener);
+        let inner = ui.button("詳細")?;
+        parent.set_child(&inner);
+        let child = ui.popover()?;
+        child.set_child(&ui.label("子")?);
+        let child_closed = Rc::new(Cell::new(0));
+        child.on_close({
+            let closed = child_closed.clone();
+            move || closed.set(closed.get() + 1)
+        });
+        kept = Some((
+            root,
+            outside,
+            parent,
+            parent_closed,
+            dialog,
+            opener,
+            inner,
+            child,
+            child_closed,
+        ));
+        Ok(())
+    });
+    let (root, outside, parent, parent_closed, dialog, opener, inner, child, child_closed) =
+        kept.expect("組み立て");
+    let _mounted = Mounted::new(&root);
+
+    dialog.open();
+    parent.open(&opener);
+    child.open(&inner);
+    assert!(parent.is_open() && child.is_open());
+
+    // 親をダイアログの外のウィジェットへ移すと、要素が動くので中の子も閉じる。
+    parent.open(&outside);
+    assert!(parent.is_open(), "親は移った先で開いていること");
+    assert!(!child.is_open(), "中の子は閉じること");
+    next_frames().await;
+    assert_eq!(child_closed.get(), 1, "子が閉じたことを知らせること");
+    assert_eq!(parent_closed.get(), 0, "移しただけの親は知らせないこと");
+    assert!(
+        anchor_names(&inner.native_element()).is_empty(),
+        "子のアンカーの名前を外すこと"
+    );
+    assert_eq!(
+        child.native_element().parent_element().as_ref(),
+        Some(&body().unchecked_into()),
+        "閉じた子は `<body>` へ戻ること"
+    );
+
+    // 子はまた開けること。
+    child.open(&inner);
+    assert!(child.is_open() && parent.is_open());
+
+    child.close();
+    parent.close();
+    dialog.close();
+    next_frames().await;
+    parent.native_element().remove();
+    child.native_element().remove();
+    dialog.native_element().remove();
+}
+
+#[wasm_bindgen_test]
 async fn popover_escape_in_a_dialog_closes_the_topmost_first() {
     let mut kept = None;
     with_ui(|ui| {

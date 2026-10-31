@@ -240,9 +240,17 @@ impl Popover {
                 .map(|body| body.unchecked_into()),
         };
         if let Some(host) = host {
-            let parent = self.0.element.parent_element();
-            if parent.as_ref() != Some(&host) && host.append_child(&self.0.element).is_err() {
+            // 自分の中身の横には出せない (自分の中へは移せない)。
+            if self.0.element.contains(Some(host.as_ref())) {
                 return;
+            }
+            if self.0.element.parent_element().as_ref() != Some(&host) {
+                // 移すと、中で開いている入れ子の子も `toggle` 無しで閉じる。先に閉じて
+                // 知らせを通し、外へ出しておく (中に残すと WebKit が止まる)。
+                dismiss_within(self.0.element.as_ref());
+                if host.append_child(&self.0.element).is_err() {
+                    return;
+                }
             }
         }
         self.release_anchor();
@@ -310,8 +318,8 @@ impl Popover {
 }
 
 /// Closes the open popovers shown beside widgets inside `container`, the way a click
-/// outside does (`on_close` is notified), and moves any popover element inside it
-/// back to `<body>`. Returns whether any was open.
+/// outside does (`on_close` is notified), and moves the closed popover elements
+/// inside it back to `<body>`. Returns whether any was open.
 pub(crate) fn dismiss_within(container: &Element) -> bool {
     let popovers: Vec<Popover> = POPOVERS.with(|popovers| {
         popovers
