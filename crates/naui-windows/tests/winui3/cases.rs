@@ -543,6 +543,37 @@ fn popover_opens_and_notifies_only_user_closes(ui: &Ui) -> Result<()> {
         assert_eq!(closed.get(), 2, "利用者が閉じたら 1 度だけ通知すること");
         assert!(!popover.is_open());
         assert!(!is_open());
+
+        // `on_close` の中から同じウィジェットへ開き直すと、閉じ終えたあとで出る。
+        let reopened = Rc::new(Cell::new(false));
+        popover.on_close({
+            let popover = popover.clone();
+            let first = first.clone();
+            let reopened = reopened.clone();
+            move || {
+                if !reopened.replace(true) {
+                    popover.open(&first);
+                }
+            }
+        });
+        popover.open(&first);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        popover.dismiss();
+        pump_until(POPOVER_TIMEOUT, || reopened.get());
+        pump_until(POPOVER_TIMEOUT, || shown_at(&first));
+        settle();
+        assert!(reopened.get());
+        assert!(popover.is_open());
+        assert!(shown_at(&first), "on_close から開き直せること");
+        // 開き直したあとも、ふつうに閉じて開ける。
+        popover.close();
+        settle();
+        assert!(!is_open(), "開き直したあとも閉じられること");
+        popover.open(&second);
+        pump_until(POPOVER_TIMEOUT, || shown_at(&second));
+        assert!(shown_at(&second), "開き直したあとも開けること");
+        popover.close();
+        settle();
     }));
     window.close();
     if let Err(panic) = outcome {
