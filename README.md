@@ -145,6 +145,7 @@ The guides below are currently written in Japanese.
 - [Widget implementations](docs/widgets.md): the native control and construction per platform, key data types, access to native objects
 - [Known limitations](docs/known-limitations.md): limitations per platform
 - [Bundling the runtime](docs/windows-self-contained.md): shipping the Windows App SDK with your exe
+- [Translating apps](docs/translating.md): combining Fluent with naui, following the OS language and its changes ([`examples/i18n`](examples/i18n))
 - [Development](docs/development.md): verification, crate layout, tests, CI, releases
 - [Roadmap](docs/roadmap.md): missing features and priorities
 - [API reference (docs.rs)](https://docs.rs/naui)
